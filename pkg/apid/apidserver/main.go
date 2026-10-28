@@ -766,8 +766,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return err
 	}
 	defer stopEventWriter()
+	scopedBinding, err := api.TrafficScopedBindingGuardEnabled(deps.getenv("FAAS_TRAFFIC_SCOPED_BINDING_GUARD"))
+	if err != nil {
+		return err
+	}
 	deps.store = func() state.Store {
-		return state.NewPgStore(pool, state.WithTrafficAppsDomain(cfg.GetAppsDomain(deps.getenv)))
+		return state.NewPgStore(pool, state.WithTrafficAppsDomain(cfg.GetAppsDomain(deps.getenv)),
+			state.WithTrafficScopedBindingGuard(scopedBinding))
 	}
 	// The first start of a release that knows the object storage timeline
 	// fence accepts the database's current timeline, so every later backup

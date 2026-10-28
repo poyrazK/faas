@@ -181,6 +181,28 @@ A `before` or `validate` phase near 2 s is a time refusal. A large
 ([ADR 20261027163626](../adr/20261027163626-traffic-binding-guard-per-host.md)).
 To find the slow phase:
 `histogram_quantile(0.99, sum by (writer, phase, le) (rate(traffic_policy_analysis_seconds_bucket[5m])))`.
+
+#### Scoped binding guard
+
+`FAAS_TRAFFIC_SCOPED_BINDING_GUARD=true` on apid makes app and tenant binding
+writes, which include deployment create and status changes, run a scoped guard
+(ADR 20261027163626).
+- **What changes:** each write locks and analyses only the hostnames it
+  declares: its account's claims, the hostnames it names, and its app's
+  primary and alias URLs. Route candidates come from
+  `edge_rules.match_host_scope`, and only accounts with candidate routes join
+  as owners. Writes on unrelated hostnames run concurrently. Custom-domain
+  publication and removal, route-rule writes and other daemons keep the
+  fleet-wide guard.
+- **Mixing:** the two guards exclude each other through the root lock, so
+  they can run side by side.
+- **Refusals:** a scoped write that changes a hostname it did not declare is
+  refused (`traffic_policy_too_complex`, scope `binding_scope`), because its
+  analysis never read or locked that hostname.
+- **Before turning it on:** every binding write already audits its
+  declaration, so `traffic_binding_scope_misses_total` must read zero over a
+  representative period.
+- **To roll back:** unset the variable and restart apid.
 Legacy action aliases whose decoding cannot be verified by this projection
 also refuse analysis; replace the affected rule through the supported API
 shape or disable/delete it to repair that graph. Caller cancellation still

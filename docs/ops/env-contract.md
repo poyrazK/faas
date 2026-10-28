@@ -41,6 +41,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_APID_INTERNAL_BASE_URL` | meterd | `default` |  | http://127.0.0.1:9101 | `` | Safe Deploy meterd-to-apid operator listener; must remain a loopback HTTP origin |
 | `FAAS_APID_LISTEN` | apid | `default` |  |  | `` |  |
 | `FAAS_APID_LIVE_KEY_RECIPIENT_FILE` | apid | `dropin` |  |  | `` | operator-only live-query preview (ADR-20261016151947): livequeryd's age recipient file, delivered by livequeryd_service's 99-faas-live-queries.conf; apid seals each database's live secret to it and cannot read one back; unset leaves live queries unavailable |
+| `FAAS_APID_LIVE_SIGNING_KEY_FILE` | apid | `dropin` |  |  | `` | live-query writer signing key (ADR 20261028161502): an Ed25519 PKCS#8 key apid signs live keys and logins with, delivered as a credential by livequeryd_service's 99-faas-live-queries.conf drop-in; unset writes unsigned rows |
 | `FAAS_APID_LOOPBACK` | gatewayd-internal | `default` |  |  | `` |  |
 | `FAAS_APID_METRICS_ADDR` | apid | `default` |  |  | `` |  |
 | `FAAS_APID_OTEL_SPANS_WRITER_SOCKET` | apid, gatewayd-internal, gatewayd-public, outboundd, vmmd | `default` |  |  | `` |  |
@@ -872,6 +873,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_TRACE_RING_CAP` | shared | `default` |  |  | `` |  |
 | `FAAS_TRACING_ENABLED` | guest, shared | `guest` |  |  | `` | stamped by guest-init when the local OTLP bridge is the trace exporter; gates the runtime bootstraps (ADR-958) |
 | `FAAS_TRAFFIC_AUTHORITATIVE_HOST_POLICY` | gatewayd-internal | `default` |  |  | `` | ADR-570; off by default; true reads host ownership and the compiled edge policy in a Postgres snapshot on every public request instead of the route and edge-rule caches |
+| `FAAS_TRAFFIC_SCOPED_BINDING_GUARD` | apid | `default` |  | false | `` | ADR-20261027163626; off by default; true makes apid binding writes lock and analyse only the hostnames they declare instead of the whole fleet; keep off until traffic_binding_scope_misses_total reads zero |
 | `FAAS_TRIGGER_BATCH_DELIVERY_PREVIEW_ENABLED` | apid, shared | `default` |  | 0 | `` | admit `delivery: batch` on triggers (ADR-1321); off, apid refuses it with 422; boot fallback for the trigger_batch_delivery platform flag (ADR-1700), ignored once an operator writes platform_flag.trigger_batch_delivery |
 | `FAAS_TRIGGER_LEDGER_RETENTION_ENABLED` | schedd | `default` |  | 0 | `` | exact opt-in (`1`) for the trigger_records reaper: terminal rows past their explicit retention or the default ages (7 days, 30 for dead letters) |
 | `FAAS_TRUSTED_INGRESS_CIDRS` | gatewayd-public | `unit` |  |  | `` | upstream TLS edge CIDRs allowed to provide canonical forwarding context |

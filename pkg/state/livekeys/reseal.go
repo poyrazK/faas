@@ -17,6 +17,8 @@ type Sealed struct {
 	DatabaseID string
 	Blob       []byte
 	Recipient  string
+	// Signature is the row's writer signature; empty when unsigned.
+	Signature []byte
 }
 
 // SealedKeysAfter returns up to limit live keys whose key ID sorts after
@@ -28,7 +30,7 @@ func (s *Store) SealedKeysAfter(ctx context.Context, after string, limit int) ([
 	}
 	out := make([]Sealed, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, Sealed{ID: r.Kid, DatabaseID: r.DatabaseID, Blob: r.SealedSecret, Recipient: r.Recipient})
+		out = append(out, Sealed{ID: r.Kid, DatabaseID: r.DatabaseID, Blob: r.SealedSecret, Recipient: r.Recipient, Signature: r.SealedSecretSig})
 	}
 	return out, nil
 }
@@ -53,7 +55,7 @@ func (s *Store) SealedLoginsAfter(ctx context.Context, after string, limit int) 
 	}
 	out := make([]Sealed, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, Sealed{ID: r.DatabaseID, DatabaseID: r.DatabaseID, Blob: r.SealedLogin, Recipient: r.Recipient})
+		out = append(out, Sealed{ID: r.DatabaseID, DatabaseID: r.DatabaseID, Blob: r.SealedLogin, Recipient: r.Recipient, Signature: r.SealedLoginSig})
 	}
 	return out, nil
 }
@@ -65,6 +67,28 @@ func (s *Store) DropLegacyLogin(ctx context.Context, login Sealed) (bool, error)
 	n, err := s.q.DropLegacyLiveLogin(ctx, s.pool, sqlc.DropLegacyLiveLoginParams{DatabaseID: login.DatabaseID, Previous: login.Blob, Recipient: login.Recipient})
 	if err != nil {
 		return false, fmt.Errorf("livekeys: drop legacy live login: %w", err)
+	}
+	return n == 1, nil
+}
+
+// SignKey stores sig on an unsigned key, only while the row still holds the
+// ciphertext and recipient the caller read (the operator backfill, ADR
+// 20261028161502).
+func (s *Store) SignKey(ctx context.Context, key Sealed, sig []byte) (bool, error) {
+	n, err := s.q.SignLiveKey(ctx, s.pool, sqlc.SignLiveKeyParams{SealedSecretSig: sig, Kid: key.ID, DatabaseID: key.DatabaseID,
+		SealedSecret: key.Blob, Recipient: key.Recipient})
+	if err != nil {
+		return false, fmt.Errorf("livekeys: sign live key: %w", err)
+	}
+	return n == 1, nil
+}
+
+// SignLogin is SignKey for a login.
+func (s *Store) SignLogin(ctx context.Context, login Sealed, sig []byte) (bool, error) {
+	n, err := s.q.SignLiveLogin(ctx, s.pool, sqlc.SignLiveLoginParams{SealedLoginSig: sig, DatabaseID: login.DatabaseID,
+		SealedLogin: login.Blob, Recipient: login.Recipient})
+	if err != nil {
+		return false, fmt.Errorf("livekeys: sign live login: %w", err)
 	}
 	return n == 1, nil
 }
@@ -109,7 +133,8 @@ func (s *Store) IssueMissingLogin(ctx context.Context, accountID, databaseID str
 			return err
 		}
 		err = s.q.UpsertLiveLogin(ctx, tx, sqlc.UpsertLiveLoginParams{DatabaseID: databaseID, AccountID: accountID,
-			SealedLogin: login.Sealed, Recipient: login.Recipient, ProviderIdentityID: login.Identity, Slot: login.Slot, Awake: login.Awake})
+			SealedLogin: login.Sealed, Recipient: login.Recipient, ProviderIdentityID: login.Identity, Slot: login.Slot, Awake: login.Awake,
+			SealedLoginSig: login.Signature})
 		if err != nil {
 			return fmt.Errorf("livekeys: store login: %w", err)
 		}

@@ -21,11 +21,12 @@ type KeySource func(ctx context.Context, databaseID string) ([]livekeys.SealedKe
 
 // WatchKeys keeps the hub's key ring equal to the keys apid stored for its
 // database, reading them every interval until ctx ends. It opens each key
-// with identities (livequeryd's age identity). A key that does not open is
-// skipped and logged. A failed read keeps the last ring, so a control-plane
-// outage does not stop live queries; nothing can be revoked during one
-// either, since apid is down with it.
-func WatchKeys(ctx context.Context, hub *Hub, source KeySource, identities []*age.X25519Identity, every time.Duration, log *slog.Logger) {
+// with identities (livequeryd's age identity) once verify accepts its writer
+// signature (ADR 20261028161502; nil checks none). A key that is refused or
+// does not open is skipped and logged. A failed read keeps the last ring, so
+// a control-plane outage does not stop live queries; nothing can be revoked
+// during one either, since apid is down with it.
+func WatchKeys(ctx context.Context, hub *Hub, source KeySource, identities []*age.X25519Identity, verify *livekeys.Verifier, every time.Duration, log *slog.Logger) {
 	if every <= 0 {
 		every = 5 * time.Second
 	}
@@ -39,7 +40,7 @@ func WatchKeys(ctx context.Context, hub *Hub, source KeySource, identities []*ag
 			}
 			return
 		}
-		ring, id := OpenKeys(hub.cfg.Database, keys, identities, log)
+		ring, id := OpenKeys(hub.cfg.Database, keys, identities, verify, log)
 		hub.cfg.Metrics.keyRefresh("ok")
 		if id == last {
 			return
@@ -62,15 +63,21 @@ func WatchKeys(ctx context.Context, hub *Hub, source KeySource, identities []*ag
 	}
 }
 
-// OpenKeys opens a database's sealed keys into a key ring. It returns an
-// identity of the ring's contents (key IDs and retirement times) so callers
-// can tell when it changed.
-func OpenKeys(database string, keys []livekeys.SealedKey, identities []*age.X25519Identity, log *slog.Logger) (*seal.Keyring, string) {
+// OpenKeys opens a database's sealed keys into a key ring. A key whose
+// writer signature verify refuses is left out: a value a database writer
+// stored would otherwise let them mint seals for this database. It returns
+// an identity of the ring's contents (key IDs and retirement times) so
+// callers can tell when it changed.
+func OpenKeys(database string, keys []livekeys.SealedKey, identities []*age.X25519Identity, verify *livekeys.Verifier, log *slog.Logger) (*seal.Keyring, string) {
 	var (
 		opened []seal.Key
 		ids    []string
 	)
 	for _, k := range keys {
+		if err := verify.Check(livekeys.SignatureKindKey, database, k.KID, k.Recipient, k.Sealed, k.Signature); err != nil {
+			log.Error("livequeryd: a live key's writer signature is refused; seals made with it are refused", "kid", k.KID, "err", err)
+			continue
+		}
 		secret, err := openKey(k, database, identities)
 		if err != nil {
 			log.Error("livequeryd: a live key does not open; seals made with it are refused", "kid", k.KID, "err", err)
