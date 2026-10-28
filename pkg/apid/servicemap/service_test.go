@@ -405,7 +405,7 @@ func TestDashboardRendersEdgesAndKeepsValidRange(t *testing.T) {
 		t.Fatalf("query range = %q, want 24h", gotRange)
 	}
 	for _, want := range []string{
-		"public-api", "payments", `class="num bad"`, "10.00%", "60 (60%)", "<code>gregale wake-ahead public-api on</code>",
+		"public-api", "payments", `class="num bad"`, "10.00%", "60 (60%)", "<code>gregale app wake-ahead public-api on</code>",
 		// The TCP-only payments → ledger edge: sessions, no HTTP latency.
 		`8 <span class="bad">(1 failed, 0 woke)</span>`, `<td class="num"><span class="muted">—</span></td>`,
 	} {

@@ -46,6 +46,12 @@ $ gregale project get shop
     worker  shop-worker  failed      -
 ```
 
+The project's page in the dashboard shows the same, plus which services call
+each one. Where the [service map](service-map.md) is available to your
+account, it also shows the measured calls between the project's services over
+the last hour: volume, errors, p95 latency, and how often a call woke a parked
+service.
+
 ## What becomes a service
 
 Gregale reads, in this order:

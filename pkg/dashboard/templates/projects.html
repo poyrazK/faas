@@ -16,6 +16,9 @@
     .card { border: 1px solid #ddd; border-radius: 6px; padding: 1rem; margin: 1rem 0; }
     .flash { border: 1px solid #7c9; background: #e8f7ef; color: #164; padding: 0.75rem; border-radius: 5px; }
     .muted { color: #777; }
+    .num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .scroll { overflow-x: auto; }
+    .bad { color: #b91c1c; font-weight: 600; }
     .danger { border-color: #c66; }
     label { display: block; margin: 0.7rem 0; }
     input { display: block; min-width: 22rem; padding: 0.4rem; margin-top: 0.2rem; }
@@ -54,10 +57,19 @@
 
       <h2>Workloads</h2>
       {{if $project.Workloads}}
-        <table><thead><tr><th>App</th><th>Workload</th><th>Lifecycle</th><th>Deployment</th><th>Build</th></tr></thead><tbody>
-        {{range $project.Workloads}}<tr><td><a href="/dashboard/apps/{{.Slug}}"><code>{{.Slug}}</code></a></td><td>{{.WorkloadName}}</td><td>{{.Status}}</td><td>{{if .DeploymentStatus}}{{.DeploymentStatus}}{{else}}—{{end}}</td><td>{{if .BuildStatus}}{{.BuildStatus}}{{else}}—{{end}}</td></tr>{{end}}
+        <table><thead><tr><th>App</th><th>Workload</th><th>Lifecycle</th><th>Deployment</th><th>Build</th><th>Calls</th><th>Called by</th></tr></thead><tbody>
+        {{range $project.Workloads}}<tr><td><a href="/dashboard/apps/{{.Slug}}"><code>{{.Slug}}</code></a></td><td>{{.WorkloadName}}</td><td>{{.Status}}</td><td>{{if .DeploymentStatus}}{{.DeploymentStatus}}{{else}}—{{end}}</td><td>{{if .BuildStatus}}{{.BuildStatus}}{{else}}—{{end}}</td><td>{{if .DependsOn}}{{range $i, $name := .DependsOn}}{{if $i}}, {{end}}<code>{{$name}}</code>{{end}}{{else}}—{{end}}</td><td>{{with index $.Data.CalledBy .WorkloadName}}{{range $i, $name := .}}{{if $i}}, {{end}}<code>{{$name}}</code>{{end}}{{else}}—{{end}}</td></tr>{{end}}
         </tbody></table>
       {{else}}<p class="muted">No active workloads are attached.</p>{{end}}
+      {{if .Data.ServiceCallsRange}}
+      <h2>Service calls, last {{.Data.ServiceCallsRange}}</h2>
+      {{if .Data.ServiceCallsNote}}<p class="card" role="status">{{.Data.ServiceCallsNote}}</p>
+      {{else if .Data.ServiceCalls}}
+        <div class="scroll"><table><thead><tr><th>Caller</th><th>Service</th><th class="num">Calls</th><th class="num">Errors</th><th class="num">p95</th><th class="num">Woke target</th></tr></thead><tbody>
+        {{range .Data.ServiceCalls}}<tr><td><a href="/dashboard/apps/{{.CallerAppSlug}}"><code>{{.CallerAppSlug}}</code></a></td><td><a href="/dashboard/apps/{{.TargetAppSlug}}"><code>{{.TargetAppSlug}}</code></a></td><td class="num">{{.Calls}}</td><td class="num{{if ge .ErrorRatePct $.Data.HighErrorRatePct}} bad{{end}}">{{.Errors}} ({{printf "%.2f" .ErrorRatePct}}%)</td><td class="num">{{if .Calls}}{{printf "%.1f" .LatencyP95MS}} ms{{else}}<span class="muted">—</span>{{end}}</td><td class="num">{{.ColdCalls}} ({{printf "%.0f" .ColdCallPct}}%)</td></tr>{{end}}
+        </tbody></table></div>
+      {{else}}<p class="muted">No calls between these services in the last {{.Data.ServiceCallsRange}}.</p>{{end}}
+      {{else if .Data.ServiceCallsNote}}<p class="card" role="status">{{.Data.ServiceCallsNote}}</p>{{end}}
       <p><strong>Persisted exclusions:</strong> {{if $project.Exclusions}}{{range $project.Exclusions}}<code>{{.}}</code> {{end}}{{else}}none{{end}}</p>
 
       <section class="card">
