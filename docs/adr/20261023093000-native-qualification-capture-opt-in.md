@@ -180,7 +180,23 @@ ADR-568 requires.
     capture, restore, guest receipt, restored-graph smoke and retirement.
   - Activation evidence then lacked only framework-ready (both candidates
     are image apps), activation and serving.
-- Pending: the n2 native GitOps journey with the framework-ready rule.
+- 2026-10-27, n2, the branch merged with main (1da4b81a7e):
+  - vmmd refused the shared native journal. Another session's older vmmd had
+    left launch records without the newer lease fields.
+  - With the user's approval, the journal was moved aside, not deleted.
+  - The rerun passed restore and receipts. The restored-graph smoke then
+    failed on HTTP forward admission, as described above.
+- 2026-10-28, n2, rerun with 46e36b254e:
+  - The gitlab graph completed the whole native qualification dispatch on
+    the merged tree.
+  - The github candidates failed to deploy before qualification. imaged
+    staged the shared minimal base for two plain-image deployments at once.
+    The first one's scan publication then failed as stale (`state: runtime
+    inputs changed after admission`).
+  - ac56849e87 serializes minimal-base staging, as runtime bases already
+    were.
+- Pending: the n2 native GitOps journey with ac56849e87, through activation
+  and serving.
 
 ## Rejected alternatives
 
