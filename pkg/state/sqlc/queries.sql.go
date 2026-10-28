@@ -85367,6 +85367,53 @@ func (q *Queries) ReadTrafficAliasHostnameConflict(ctx context.Context, db DBTX,
 	return conflict, err
 }
 
+const readTrafficAppBindingHosts = `-- name: ReadTrafficAppBindingHosts :many
+SELECT host::text FROM (
+    SELECT lower(a.slug)||$1::text AS host FROM apps a
+    WHERE a.id=$2::uuid OR ($2::uuid IS NULL AND a.account_id=$3::uuid)
+    UNION
+    SELECT lower('tag-'||z.name||'-'||replace(a.id::text,'-',''))||$1::text
+    FROM deployment_aliases z JOIN apps a ON a.id=z.app_id
+    WHERE a.id=$2::uuid OR ($2::uuid IS NULL AND a.account_id=$3::uuid)
+) hosts WHERE $1::text<>''
+ORDER BY host LIMIT ($4::integer+1)
+`
+
+type ReadTrafficAppBindingHostsParams struct {
+	AppsSuffix string
+	AppID      pgtype.UUID
+	AccountID  pgtype.UUID
+	MaxInputs  int32
+}
+
+// The synthetic hostnames a binding write on one app, or on every app of an
+// account, may publish or release: each primary and alias URL, whatever the
+// app's status (ADR-20261027163626).
+func (q *Queries) ReadTrafficAppBindingHosts(ctx context.Context, db DBTX, arg ReadTrafficAppBindingHostsParams) ([]string, error) {
+	rows, err := db.Query(ctx, readTrafficAppBindingHosts,
+		arg.AppsSuffix,
+		arg.AppID,
+		arg.AccountID,
+		arg.MaxInputs,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var host string
+		if err := rows.Scan(&host); err != nil {
+			return nil, err
+		}
+		items = append(items, host)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const readTrafficBindingClaims = `-- name: ReadTrafficBindingClaims :one
 WITH domains AS (
     SELECT jsonb_build_object('Domain',d.domain,'App',d.app_id,
