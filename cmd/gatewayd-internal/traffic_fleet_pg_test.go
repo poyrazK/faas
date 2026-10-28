@@ -139,7 +139,10 @@ func TestTrafficFleetDaemonRateAdmissionAndRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	response := fleetDaemonCall(t, second, f.apps[0], "/work", http.StatusServiceUnavailable)
-	if response.duration > time.Second || !strings.Contains(response.body, "rate_limit_unavailable") {
+	// A locked counter row holds the consult for the gateway's whole 1 s
+	// consume deadline (ADR-570 amendment 2026-10-28, #5755), so the refusal
+	// arrives just after 1 s; the bound allows that plus request overhead.
+	if response.duration > 1500*time.Millisecond || !strings.Contains(response.body, "rate_limit_unavailable") {
 		t.Fatalf("bounded lock response=%+v", response)
 	}
 	if err := tx.Rollback(t.Context()); err != nil {
