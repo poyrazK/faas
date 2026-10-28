@@ -225,6 +225,11 @@ type Handler struct {
 	// runtimeGrypeRun scans the native composed directory without treating a
 	// customer file named rootfs.ext4 as a nested image.
 	runtimeGrypeRun func(context.Context, string) (*ScanResult, error)
+	// scannerIdentityProbe reads the installed scanner and vulnerability
+	// database without scanning (ADR-20261028102540). Nil disables scan
+	// reuse, so every renewal scans.
+	scannerIdentityProbe func(context.Context) (scannerIdentity, error)
+	scannerIdentityCache scannerIdentityCache
 	// Active entries live only for a job; restart reconstructs work from durable
 	// producer selections and scan leases. Storage/native fences remain authoritative.
 	runtimeScanMu     sync.Mutex
@@ -909,10 +914,21 @@ func (h *Handler) CloseVMMClient() error {
 // placeholder). Production wires the default; tests wire a stub
 // via WithGrypeRun.
 func (h *Handler) runGrype(ctx context.Context, dir string) (*ScanResult, error) {
+	var (
+		result *ScanResult
+		err    error
+	)
 	if h.grypeRun != nil {
-		return h.grypeRun(ctx, dir)
+		result, err = h.grypeRun(ctx, dir)
+	} else {
+		result, err = defaultGrypeRun(ctx, dir)
 	}
-	return defaultGrypeRun(ctx, dir)
+	if err == nil && result != nil {
+		// A real scan may have updated the database; reuse decisions must not
+		// compare against an identity read before it.
+		h.scannerIdentityCache.observe(result.ScannerVersion, result.ScannerDBVersion, result.ScannerDBBuiltAt, time.Now())
+	}
+	return result, err
 }
 
 // runDeployScan runs the per-deploy grype scan and stamps the
