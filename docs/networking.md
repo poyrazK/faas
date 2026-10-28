@@ -9,155 +9,8 @@ gregale app APP_ID network attach NETWORK_ID --region REGION --cidrs CIDR[,CIDR.
 gregale app APP_ID network detach
 ```
 
-Gregale-owned private networks are account-scoped API resources. They are not
-DigitalOcean VPCs and do not require cloud credentials. Use `GET/POST
-/v1/networks` and `GET/DELETE /v1/networks/{id}` with the API or SDK.
-
-Gregale-owned networks can be connected without a provider-specific VPC
-operation. `POST /v1/networks/{id}/peerings` with
-`{"peer_network_id":"net-..."}` creates account-scoped peering intent and
-returns `202` with `status: "pending"`; inspect it with the sibling `GET` or
-list endpoint, and remove it with `DELETE`. Both networks must be in the same
-region and use non-overlapping IPv4 CIDRs. Pending and error peerings are
-fail-closed, so they never imply reachability; the provider-neutral peering
-reconciler is the only component allowed to mark one `ready`, and it does so
-only after the configured route applier accepts the complete bidirectional
-route set. In Gregale-owned fabric mode, schedd applies that set through the
-existing vmmd app-netns attachment update, once per ready attachment and live
-compute node; each replay replaces the complete effective CIDR set, so stale
-peering destinations are withdrawn. A network referenced by a peering cannot
-be deleted until that peering is removed.
-
-`GET /v1/networks/{id}/members` provides the account-scoped member inventory:
-each stable address reservation includes its owner type, opaque owner ID, and
-address. The response also reports allocatable capacity, used addresses, and
-remaining addresses; network, gateway, and broadcast addresses are excluded
-from capacity. This is an inventory read only and does not probe workloads or
-call DigitalOcean.
-
-The fabric slice persists the network definition and reserves stable member
-addresses (network+1 is reserved as the gateway; allocation starts at
-network+2). When the fabric flag is enabled, schedd first asks every vmmd
-hosting the app to reconcile a dedicated, account-scoped host bridge for that
-network, then activates app routes. A bridge failure leaves the attachment in
-`error` and traffic blocked. Ready Gregale-owned attachments now get a
-node-local private veth side-link into the `gpn-*` bridge, with the stable
-network member address allocated at attach time. Private ingress is DNATed to
-the guest's fixed `10.0.0.2:8080` contract and guest-originated private traffic
-is SNATed back to that member address; the existing `br-tenants` veth remains
-the public-egress path. Cross-node transport is converged separately by the
-regional `gpx-*` VXLAN link described below.
-Set
-`FAAS_PRIVATE_NETWORK_FABRIC_ENABLED=1` to dark-launch the resource API; app
-attachment remains separately gated by
-`FAAS_PRIVATE_NETWORK_ENABLED=1` and stays fail-closed until reconciliation.
-
-`network show` combines the app's outbound CIDR allowlist, static egress
-address (when available), same-account service discovery, and captured
-upstream observations. Upstream hostnames stay redacted; only the safe hash
-fragment, port, and probe metadata are shown.
-
-`network doctor` is non-invasive. It reads configuration and existing probe
-telemetry but never sends traffic or credentials to an upstream. A fresh probe
-means Gregale has observed a successful RTT within the last 15 minutes; it is
-not a new connectivity test.
-
-Same-account apps can call one another as
-`http://APP_SLUG.svc.gregale:10081`. For external VPC resources, Pro and Scale
-customers can record a provider-neutral attachment intent with `network attach`.
-The API accepts non-overlapping RFC1918 IPv4 ranges (up to 16 on Pro and 64 on
-Scale), returns `pending`, and keeps traffic blocked until a provider connector
-reports `ready`. `network doctor` surfaces pending and failed reconciliation;
-it never probes the private network itself. `network detach` is idempotent.
-
-The attachment resource is intentionally provider-neutral: `NETWORK_ID` and
-`REGION` are stable lowercase identifiers. A node's connector verifies that
-the provider attachment is usable; the runtime reconciler then installs the
-requested routes and nftables exceptions before changing the row to `ready`.
-Route activation is idempotent, and any connector or host-route failure leaves
-the row in `error` with traffic blocked. Until a connector is configured, the
-API remains an intent surface and every attachment stays `pending`.
-
-Private-network security policy is opt-in per attachment. Include
-`allowed_cidrs` in the PUT body to restrict both private egress destinations
-and private ingress sources; every range must be contained by the attached
-network CIDR. Omitting it (or sending an empty list) preserves the existing
-allow-all behavior, while a pending/error attachment remains fail-closed:
-
-```json
-{
-  "network_id": "prod-vpc",
-  "allowed_cidrs": ["10.42.8.0/24"]
-}
-```
-
-The policy is persisted with the attachment and sent to each vmmd as part of
-the same live update as the stable member address. vmmd installs the nft
-accept/drop rules before publishing the new cached state; a failed update is
-reported as reconciliation error and never widens access.
-
-Networks can also carry a reusable, account-scoped firewall baseline. Set
-`allowed_cidrs` and optional `firewall_rules` when creating a network or
-replace them with `PUT /v1/networks/{id}/policy`; every rule is contained by
-the network CIDR and is applied to every attached workload. A rule's
-`direction` is `ingress` or `egress`, `protocol` is `tcp`, `udp`, or `icmp`,
-and TCP/UDP rules carry ports such as `443` or `8000-8080`. Rule CIDRs are
-sources for ingress and destinations for egress; an omitted list means the
-whole network CIDR. An attachment policy may only narrow the CIDR baseline,
-never broaden it. Updating the network policy is asynchronous: schedd
-replays the effective policy to every live node immediately after the durable
-mutation wakeup, with the periodic sweep as a recovery backstop, and nftables
-keeps traffic blocked until each update succeeds. Empty rule lists preserve the legacy
-CIDR-only behavior; the PUT body replaces both lists, so include a list when
-you intend to retain an existing restriction.
-
-Schedd applies a ready attachment once per live compute node and records a
-per-node convergence observation in its reconciliation logs. A partial node
-failure keeps the attachment in `error` and is retried by the next sweep;
-successful nodes are still reported so operators can identify the unhealthy
-box without guessing from aggregate status.
-
-The attachment read endpoint also exposes the last durable per-node result in
-`attachment.nodes`. Each row separates `fabric_status` from `route_status`,
-includes bounded failure detail, and carries `observed_at`. A node can have a
-ready bridge while route policy is still failing; this projection is the
-operator view of that partial convergence and is replaced on the next replay.
-
-For multi-node Gregale networks, vmmd can add a provider-neutral VXLAN link
-over an operator-managed encrypted overlay (Tailscale, WireGuard, or another
-routable underlay). This is disabled by default and does not call DigitalOcean:
-
-```toml
-[compute_node]
-private_network_transport_enabled = true
-private_network_transport_interface = "tailscale0"
-private_network_transport_peers = ["100.64.0.11", "100.64.0.12"]
-overlay_ip = "100.64.0.10"
-```
-
-`FAAS_PRIVATE_NETWORK_TRANSPORT_*` environment variables provide the same
-overrides. vmmd derives a stable `gpx-*` link and VNI per account/network,
-installs static peer FDB entries, and removes the link before deleting the
-bridge. Once every active node has registered an overlay address, schedd
-authoritatively refreshes each node's regional peer set and vmmd flushes stale
-FDB entries before replacing the current set. During a rolling upgrade, an
-incomplete roster falls back to the startup-configured peer list; a node join
-or drain converges on the next fabric reconciliation. Every node in a region
-must use the same encrypted overlay; leave the flag off until the control-plane
-mTLS and underlay policy are validated. When the capture-capable host runner is
-available, vmmd also verifies the bridge, VXLAN link, bridge membership, and
-exact FDB peer set after each reconcile. Any missing or stale peer is reported
-as transport drift and schedd keeps the attachment fail-closed until the next
-reconcile repairs it; older vmmds without the probe remain compatible during
-the rolling upgrade.
-
-Legacy external-network attachments still use the operator-managed connector
-and are enabled in schedd with
-`FAAS_PRIVATE_NETWORK_ENABLED=1` plus a `FAAS_PRIVATE_NETWORKS` JSON registry,
-for example `[{"id":"corp-vpc","region":"fra1","ready":true}]`. This
-keeps cloud credentials out of the control plane while the provider adapter is
-rolled out; a future connector can replace the registry without changing the
-customer-facing attachment contract.
+`network attach` and `network detach` belong to private networks, a preview;
+see [private networks](private-networks.md).
 
 ## Outbound connections
 
@@ -608,18 +461,17 @@ The method must be GET or HEAD, the canonical path must fit the integration's
 route policy, and the expected status must be 2xx. This declaration sends no
 provider requests. `bindings verify --all` includes configured outbound probes;
 use `bindings probe-policy INTEGRATION_ID --delete` to remove a policy. Calls
-use the candidate task's workload identity through outboundd, with normal
+use the candidate task's workload identity through Gregale's outbound gateway, with normal
 credential injection, route restrictions and admission budgets. Probes bypass
 response caching and never include provider bodies, headers or credentials in
 reports. Evidence becomes stale when credentials, probe policy, binding policy
 or integration configuration change. A failed configured probe remains a
 blocker even with `--allow-unsupported`.
 
-Operators configure `outbound_probe_gateway_url = "https://outbound.example.com"`
-in apid.toml and route that trusted, guest-reachable origin to outboundd. Normal
-TLS verification applies. Operator-environment credentials, missing probe
-policies and installations without this gateway configuration retain unsupported
-coverage. A successful probe establishes only the configured endpoint. See
+Probes use normal TLS verification. Operator-environment credentials, missing
+probe policies and installations without an outbound probe gateway keep
+unsupported coverage. A successful probe establishes only the configured
+endpoint. See
 [ADR-522](adr/522-outbound-binding-verification.md).
 
 Each declared outbound dependency can carry a request deadline and retry
@@ -746,10 +598,8 @@ Unbound `.internal` names are passed to the configured upstream DNS resolver;
 Gregale does not claim the customer's entire private namespace. The existing
 `*.svc.gregale` endpoint and default generated URLs remain unchanged for
 rolling-upgrade compatibility; callers may opt into HTTPS-first URLs after the
-listener and trust are ready. Operators may enable the private HTTPS listener
-after distributing a dedicated service CA to all compute nodes.
-The CA must have a critical permitted DNS name constraint for `.internal`.
-When configured, guest-init builds a per-workload bundle in `/tmp`, exports
+listener and trust are ready. The private HTTPS listener is not enabled on
+every installation. Where it is, guest-init builds a per-workload bundle in `/tmp`, exports
 `GREGALE_SERVICE_CA_BUNDLE`, and configures common TLS clients (`SSL_CERT_FILE`,
 Python Requests, and curl) to trust the private endpoint when the image includes
 a standard system CA bundle. Node receives the CA through its additive
@@ -1153,16 +1003,13 @@ stripped before the hop, so the marker cannot be forged. Production callers
 carry neither header, so a service that ignores them is unaffected.
 
 Use them to skip irreversible work, tag writes as test data, or refuse the call
-outright. Operators can compare isolated traffic in
-`gateway_service_preview_to_preview_total` with allowed production fallbacks
-in `gateway_service_preview_to_production_total`; policy rejections use
-`gateway_service_call_total{outcome="preview_denied"}`.
+outright.
 
 ### Verifying the caller (preview)
 
-By default a service learns who called it from platform-set headers. Operators
-who need the target to verify that claim itself can enable signed caller
-assertions with `FAAS_SERVICE_CALLER_ASSERTIONS=1` on each node.
+By default a service learns who called it from platform-set headers. Signed
+caller assertions let the target verify that claim itself. They are a preview
+and are not enabled on every installation.
 
 Every internal call then carries `X-Faas-Caller-Assertion`: a short-lived
 (30 s) EdDSA JWT stating `sub` = calling app id, `aud` = receiving app id,
@@ -1264,11 +1111,8 @@ authorize that app; handlers must still apply their caller/business policy.
 Non-`net/http` integrations can use the lower-level
 `FetchTrustedKeys` and `Verify` functions.
 
-The signer remains opt-in and is not made a fleet-wide default by this
-endpoint. Enable `FAAS_SERVICE_CALLER_ASSERTIONS=1` on every node that may
-originate calls before making verified identity mandatory in a workload; while
-rollout is mixed, an absent assertion is still possible and must not be treated
-as verified identity.
+Until signed assertions are enabled everywhere a call can come from, an absent
+assertion is still possible; never treat it as verified identity.
 
 ## Internal-only ingress
 
@@ -1443,7 +1287,7 @@ traffic increase.
 
 ### Binding-checked service handoffs
 
-A service rollout under enforcement keeps its predecessor serving while APID
+A service rollout under enforcement keeps its predecessor serving while Gregale
 checks the exact ready candidate. Missing evidence appears as bounded blockers
 in `service_rollout_handoff.bindings_check`; supplying current verification lets
 the worker retry without changing the policy. The routing transaction rechecks
@@ -1467,8 +1311,8 @@ routing, missing gateway acknowledgements and drain progress. With `--wait`, a
 service abort succeeds only at `rollout_state=aborted` and handoff phase
 `complete`; promotion waits for its corresponding complete handoff. Status and
 wait use GETs only, never run verification, and preserve the last status on a
-timeout. Add `--json` for the exact deployment response. APID restarts resume
-the durable request; a missing pinned predecessor cannot be replaced silently.
+timeout. Add `--json` for the exact deployment response. A restart of the
+Gregale API resumes the durable request; a missing pinned predecessor cannot be replaced silently.
 See [ADR-600](adr/600-binding-checked-service-handoffs.md).
 
 Completed deployments can be restored through an exact binding-checked rollback:
@@ -1627,7 +1471,7 @@ Exact service evidence can be inspected through the binding inventory's
 `service_targets` JSON query parameter together with `deployment_id`.
 Ordinary inventory remains separate from evidence for proposed targets.
 Generic graph publication and deactivation stay blocked under enforcement;
-Checked fallback deactivation is described below; GitOps candidate staging remains a follow-up.
+Checked fallback deactivation is described below.
 
 
 ### Recover a retained project release graph
@@ -1705,7 +1549,7 @@ unchecked deactivation and GitOps-managed workloads remain blocked under enforce
 
 A prepared forward or rollback graph may select a dark service deployment with
 no ready replicas. Service probes do not wake targets. Use a temporary staging
-lease to bring those exact service deployments up through schedd's normal
+lease to bring those exact service deployments up through the normal
 admission and readiness gates, while keeping current weighted and graph routes.
 Selected deployments must already be live and materialized; use the existing
 dark-deployment preparation workflow first. GitOps-managed workloads, active

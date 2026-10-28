@@ -6410,6 +6410,14 @@ func (m *MemStore) ReassignAppOwner(_ context.Context, appID, fromNodeID, toNode
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.reassignableAppLocked(appID, fromNodeID); err != nil {
+		return err
+	}
+	m.reassignAppOwnerLocked(appID, fromNodeID, toNodeID)
+	return nil
+}
+
+func (m *MemStore) reassignableAppLocked(appID, fromNodeID string) error {
 	a, ok := m.apps[appID]
 	if !ok {
 		return ErrNotFound
@@ -6420,6 +6428,11 @@ func (m *MemStore) ReassignAppOwner(_ context.Context, appID, fromNodeID, toNode
 	if a.Status != AppActive && a.Status != AppEvictedCold {
 		return ErrConflict
 	}
+	return nil
+}
+
+func (m *MemStore) reassignAppOwnerLocked(appID, fromNodeID, toNodeID string) {
+	a := m.apps[appID]
 	now := time.Now()
 	a.NodeID = toNodeID
 	if fromNodeID != toNodeID {
@@ -6427,7 +6440,6 @@ func (m *MemStore) ReassignAppOwner(_ context.Context, appID, fromNodeID, toNode
 	}
 	a.ReassignedAt = &now
 	m.apps[appID] = a
-	return nil
 }
 
 // ListLiveInstancesOnNode mirrors
@@ -15794,6 +15806,9 @@ func (m *MemStore) CreateInstanceWithMode(ctx context.Context, appID, deployment
 		if err := m.checkNodeAdmissionLocked(ctx, nodeID); err != nil {
 			return Instance{}, err
 		}
+	}
+	if err := m.checkAppOwnerFenceLocked(ctx, appID, strings.ToLower(state)); err != nil {
+		return Instance{}, err
 	}
 	if err := m.requireInstanceLayerArtifactsLocked(deploymentID, state); err != nil {
 		return Instance{}, err

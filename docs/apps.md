@@ -222,9 +222,9 @@ cutover activates the graph and desired settings atomically, and rollback restor
 both. Target physical placement and managed data bindings remain in the target.
 Concurrent target settings edits stop publication or rollback.
 
-The full clone workflow is still being implemented: these settings operations
-do not yet copy and publish active deployments with a coordinated database and
-object-storage capture, or isolate every related resource and runtime control.
+These settings operations do not copy active deployments together with a
+coordinated database and object-storage capture, and they do not isolate every
+related resource and runtime control.
 
 ## Retained deleted apps
 
@@ -272,8 +272,9 @@ The session ends when the process exits, after `--timeout-seconds` (default
 Gregale stores who started the session, the command and the exit code, never
 the terminal output.
 
-Interactive sessions are an operator-gated preview (ADR-1037). A deployment
-whose guest predates interactive sessions reports `interactive_unsupported`;
+Interactive sessions are in preview and may not be enabled for your account.
+A deployment whose guest predates interactive sessions reports
+`interactive_unsupported`;
 redeploy it and retry. Attaching to an already-running serving instance is not
 supported yet.
 

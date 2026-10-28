@@ -131,6 +131,7 @@ type workloadSeed struct {
 	allowedServiceCallers     *[]string
 	allowedServiceCallScopes  *api.ServiceCallerScopes
 	platformTenantRequired    *bool
+	renamedFrom               string
 
 	class     Class
 	schedule  string

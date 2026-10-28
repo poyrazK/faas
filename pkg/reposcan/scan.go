@@ -166,6 +166,10 @@ type Workload struct {
 	// PlatformTenantRequired is an explicit ingress policy declaration.
 	// Nil preserves an existing app's policy during reconciliation.
 	PlatformTenantRequired *bool
+	// RenamedFrom is the service's previous name (Compose
+	// x-gregale-renamed-from). A deploy updates that name's app in place
+	// instead of removing it and creating a new one (ADR-20261029090000).
+	RenamedFrom string
 	// Unpublished marks a Compose service without `ports:`, which Docker does
 	// not publish, or a service .gregale/project.yaml declares internal. A new
 	// app for it is internal (ADR-20261022131852, ADR-20261025093331).
