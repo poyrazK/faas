@@ -33,3 +33,7 @@ faas_udpd_vmmd_tls_key_path: ''
 # ADR-520: on-demand customer-domain certificates at the public edge.
 # Rendered from the manifest's public_edge.custom_domains.
 faas_custom_domain_tls: false
+
+# ADR-20261026195952: route /mcp on the api. host to the hosted management MCP
+# server. Keep it equal to control_plane_service's faas_mcp_bridge_enabled.
+faas_mcp_bridge_enabled: true

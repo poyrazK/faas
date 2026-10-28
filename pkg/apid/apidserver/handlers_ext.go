@@ -3843,9 +3843,13 @@ func (s *server) buildDoctorReport(ctx context.Context, d state.CustomDomain) (a
 		// Stale: fall through to a synchronous re-probe so
 		// the next reader gets fresh data. The re-probe
 		// shares the dns_poller's helper path (runDoctorForDomain
-		// is the load-bearing engine).
+		// is the load-bearing engine). A refreshed observation
+		// is fresh; only a failed refresh or reload reports the
+		// old row as stale (issue #2659).
 		if refreshErr := s.refreshDoctorObservation(ctx, d.Domain); refreshErr == nil {
-			obs, _ = s.store.GetDoctorObservation(ctx, d.Domain)
+			if fresh, reloadErr := s.store.GetDoctorObservation(ctx, d.Domain); reloadErr == nil {
+				return doctorReportFromObs(d, fresh, false), nil
+			}
 		}
 		return doctorReportFromObs(d, obs, true), nil
 	}
@@ -3859,7 +3863,7 @@ func (s *server) buildDoctorReport(ctx context.Context, d state.CustomDomain) (a
 	if err != nil {
 		return api.DomainDoctorReport{}, err
 	}
-	return doctorReportFromObs(d, obs, true), nil
+	return doctorReportFromObs(d, obs, false), nil
 }
 
 // refreshDoctorObservation is the synchronous re-probe

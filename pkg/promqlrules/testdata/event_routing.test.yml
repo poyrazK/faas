@@ -1,0 +1,137 @@
+# Event routing operator signals (ADR-1236 amendment 2026-10-28).
+rule_files:
+- ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+evaluation_interval: 1m
+tests:
+- name: no routing sweep completes anywhere
+  interval: 1m
+  input_series:
+  - series: 'schedd_loop_work_duration_seconds_count{kind="event_fanout",job="schedd",instance="a"}'
+    values: '0+0x40'
+  - series: 'schedd_loop_work_duration_seconds_count{kind="event_fanout",job="schedd-compute",instance="b"}'
+    values: '0+0x40'
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasEventRoutingStalled
+    exp_alerts:
+    - exp_labels:
+        severity: page
+        component: schedd
+        family: event_routing
+        public_status: internal
+      exp_annotations:
+        summary: "Event routing has stopped on every schedd"
+        description: "No schedd has completed an event routing sweep for fifteen minutes, so published events, object notifications and webhook automations are accepted but not delivered. Check schedd health, the event_fanout work kind and database latency."
+        runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEventDriven.md"
+- name: one schedd still sweeping keeps routing alive
+  interval: 1m
+  input_series:
+  - series: 'schedd_loop_work_duration_seconds_count{kind="event_fanout",job="schedd",instance="a"}'
+    values: '0+0x40'
+  - series: 'schedd_loop_work_duration_seconds_count{kind="event_fanout",job="schedd-compute",instance="b"}'
+    values: '0+12x40'
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasEventRoutingStalled
+    exp_alerts: []
+- name: slow sweeps
+  interval: 1m
+  input_series:
+  - series: 'schedd_loop_work_duration_seconds_bucket{kind="event_fanout",le="30"}'
+    values: '0+0x40'
+  - series: 'schedd_loop_work_duration_seconds_bucket{kind="event_fanout",le="60"}'
+    values: '0+1x40'
+  - series: 'schedd_loop_work_duration_seconds_bucket{kind="event_fanout",le="+Inf"}'
+    values: '0+1x40'
+  - series: 'schedd_loop_work_duration_seconds_count{kind="event_fanout"}'
+    values: '0+1x40'
+  alert_rule_test:
+  - eval_time: 30m
+    alertname: FaasEventRoutingSweepSlow
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: event_routing
+        public_status: internal
+      exp_annotations:
+        summary: "Event routing sweeps are slow"
+        description: "The p95 event routing sweep has taken longer than 30 seconds for fifteen minutes. Events still route, but late. Check the routing claim and recovery queries, database latency and the events backlog."
+        runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEventDriven.md"
+- name: deliveries waiting for capacity
+  interval: 1m
+  input_series:
+  - series: 'schedd_event_delivery_capacity_waiting{job="schedd",instance="a"}'
+    values: '20000x60'
+  alert_rule_test:
+  - eval_time: 40m
+    alertname: FaasEventDeliveryCapacityBacklog
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: event_routing
+        public_status: internal
+      exp_annotations:
+        summary: "Many event deliveries are waiting for consumer capacity"
+        description: "20000 event deliveries platform-wide have waited for consumer capacity for thirty minutes. One account's slow consumer is the usual cause; many accounts at once point at the invocation drain or node capacity."
+        runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEventDriven.md"
+- name: dead letters arriving fast
+  interval: 1m
+  input_series:
+  - series: 'faas_dlq_events_total{app="a",error_kind="failed"}'
+    values: '0+50x30'
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasDeadLetterSpike
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: event_routing
+        public_status: internal
+      exp_annotations:
+        summary: "Dead letters are arriving fast"
+        description: "More than 200 invocations and trigger records reached the dead-letter queue in ten minutes, fleet-wide. One app's failing handler is the usual cause; many apps at once point at the gateway, wakes or a broker."
+        runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEventDriven.md"
+- name: broker polls failing
+  interval: 1m
+  input_series:
+  - series: 'schedd_esm_polls_total{source="kafka",outcome="error"}'
+    values: '0+10x40'
+  - series: 'schedd_esm_polls_total{source="kafka",outcome="success"}'
+    values: '0+2x40'
+  - series: 'schedd_esm_polls_total{source="nats",outcome="success"}'
+    values: '0+10x40'
+  alert_rule_test:
+  - eval_time: 30m
+    alertname: FaasBrokerTriggerPollErrors
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: event_routing
+        public_status: internal
+        source: kafka
+      exp_annotations:
+        summary: "Most kafka trigger polls are failing"
+        description: "More than half of the kafka broker trigger polls have failed for fifteen minutes. One customer's unreachable broker can do this on a small fleet; many triggers at once point at egress, DNS or credentials."
+        runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEventDriven.md"
+- name: publishes refused by the kill switch
+  interval: 1m
+  input_series:
+  - series: 'apid_capability_hidden_requests_total{capability="events",stage="kill_switch"}'
+    values: '0+5x90'
+  alert_rule_test:
+  - eval_time: 45m
+    alertname: FaasEventsPublishingPaused
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: apid
+        family: event_routing
+        public_status: internal
+      exp_annotations:
+        summary: "The events kill switch is refusing publishes"
+        description: "The events capability's kill switch has been off for at least an hour while producers kept publishing: every publish answers 503 events_paused and routing is held. Turn it back on once the incident is over."
+        runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEventDriven.md"

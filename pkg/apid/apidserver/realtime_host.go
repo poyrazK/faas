@@ -34,15 +34,20 @@ func (h realtimeHost) EmitAudit(ctx context.Context, kind string, accountID *str
 
 func (h realtimeHost) Ops() *wire.OpsMetrics { return h.s.ops }
 
-func (h realtimeHost) SecretRecipient() *age.X25519Recipient {
-	if setSecretRecipient == nil {
-		return nil
-	}
-	return hostSecretRecipient()
+// SecretRecipients seal realtime credentials, account values (ADR
+// 20261022111812), with the fleet recipient as their legacy recipient.
+func (h realtimeHost) SecretRecipients() ([]*age.X25519Recipient, error) {
+	return accountRecipients(hostSecretRecipient())
 }
 
+// HostIdentitiesForUnseal opens realtime credentials: the account domain
+// first, then the host identities they were opened with before it.
 func (h realtimeHost) HostIdentitiesForUnseal(ctx context.Context) []*age.X25519Identity {
-	return hostIdentitiesForUnseal(ctx)
+	var legacy []*age.X25519Identity
+	if hostIdentitiesForUnseal != nil {
+		legacy = hostIdentitiesForUnseal(ctx)
+	}
+	return accountIdentitiesWith(legacy)
 }
 
 func (h realtimeHost) ResolveAndCheckEgress(ctx context.Context, rawURL string) *api.Problem {

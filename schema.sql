@@ -7355,6 +7355,24 @@ $$;
 
 
 --
+-- Name: edge_rule_match_host_scope(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.edge_rule_match_host_scope(match_host text) RETURNS text
+    LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+    AS $$
+  SELECT CASE
+    WHEN host = '@app' THEN NULL
+    WHEN host !~ '[][*?%_\\]' THEN host
+    WHEN strpos(tail, '.') = 0 THEN ''
+    ELSE substr(tail, strpos(tail, '.') + 1)
+  END
+  FROM (SELECT host, regexp_replace(host, '^.*[][*?%_\\]', '') AS tail
+          FROM (SELECT lower(btrim(match_host)) AS host) normalized) parts
+$$;
+
+
+--
 -- Name: edge_rule_set_snapshot(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -7465,6 +7483,19 @@ BEGIN
     RETURN NULL;
 END;
 $$;
+
+
+--
+-- Name: edge_rules_set_match_host_scope(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.edge_rules_set_match_host_scope() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    NEW.match_host_scope := edge_rule_match_host_scope(NEW.match_host);
+    RETURN NEW;
+END $$;
 
 
 --
@@ -35549,6 +35580,7 @@ CREATE TABLE public.edge_rules (
     expires_at timestamp with time zone,
     match_expr jsonb,
     mode text DEFAULT 'enforce'::text NOT NULL,
+    match_host_scope text,
     CONSTRAINT edge_rules_description_chk CHECK (((description IS NULL) OR (length(description) <= 1000))),
     CONSTRAINT edge_rules_kind_check CHECK ((kind = ANY (ARRAY['route'::text, 'rewrite'::text, 'redirect'::text, 'headers'::text, 'cors'::text, 'jwt'::text, 'ip'::text, 'validate'::text, 'limit'::text, 'geo'::text, 'maintenance'::text, 'throttle'::text, 'budget'::text, 'cache'::text, 'respond'::text, 'retry'::text, 'circuit_breaker'::text, 'async'::text, 'waf'::text, 'challenge'::text]))),
     CONSTRAINT edge_rules_match_expr_shape_chk CHECK (((match_expr IS NULL) OR ((jsonb_typeof(match_expr) = 'object'::text) AND (octet_length((match_expr)::text) <= 65536)))),
@@ -71200,6 +71232,13 @@ CREATE INDEX edge_rules_match_host_pattern_idx ON public.edge_rules USING btree 
 
 
 --
+-- Name: edge_rules_route_match_host_scope_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX edge_rules_route_match_host_scope_idx ON public.edge_rules USING btree (match_host_scope) WHERE (enabled AND (kind = 'route'::text));
+
+
+--
 -- Name: egress_flow_log_account_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -80728,6 +80767,13 @@ CREATE TRIGGER deployments_runtime_upgrade_traffic_fence BEFORE INSERT OR UPDATE
 --
 
 CREATE TRIGGER deployments_traffic_security_epoch AFTER INSERT OR DELETE OR UPDATE OF parked_reason ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.deployment_traffic_security_epoch_trigger();
+
+
+--
+-- Name: edge_rules edge_rules_match_host_scope; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER edge_rules_match_host_scope BEFORE INSERT OR UPDATE OF match_host, match_host_scope ON public.edge_rules FOR EACH ROW EXECUTE FUNCTION public.edge_rules_set_match_host_scope();
 
 
 --
