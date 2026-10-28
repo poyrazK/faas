@@ -26074,6 +26074,17 @@ FROM managed_postgres_usage u JOIN managed_postgres_databases d ON d.id=u.databa
 WHERE managed_postgres_usage_subject(d.org_id,d.account_id)=sqlc.arg(subject_id)::uuid
 AND u.window_from>=sqlc.arg(period_start)::timestamptz AND u.window_from<sqlc.arg(period_end)::timestamptz;
 
+-- name: ManagedPostgresFleetTotals :one
+-- ADR-20261028103115: the fleet database cap counts what reservation limits
+-- count; the spend breaker sums the month through the usage primary key, one
+-- index range per database, so the ledger's growth never forces a full scan.
+SELECT
+ ((SELECT count(*) FROM managed_postgres_databases d WHERE d.state<>'deleted')
+  + (SELECT count(*) FROM project_environment_clone_postgres_snapshot_restores r WHERE r.state<>'deleted' AND r.adopted_database_id IS NULL))::bigint AS databases,
+ (SELECT COALESCE(sum(c.cost),0) FROM managed_postgres_databases d CROSS JOIN LATERAL (
+   SELECT COALESCE(sum(u.cost_millicents),0) AS cost FROM managed_postgres_usage u
+   WHERE u.database_id=d.id AND u.window_from>=sqlc.arg(period_start)::timestamptz AND u.window_from<sqlc.arg(period_end)::timestamptz) c)::bigint AS cost_millicents;
+
 -- name: LockManagedPostgresReservationOwner :one
 SELECT o.id,o.personal_org,o.resource_ownership_enabled FROM orgs o
 WHERE o.id=coalesce(sqlc.narg(org_id)::uuid,(SELECT p.id FROM orgs p WHERE p.personal_org AND p.personal_owner_account_id=sqlc.arg(account_id)::uuid))

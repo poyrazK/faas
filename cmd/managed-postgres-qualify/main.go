@@ -64,11 +64,18 @@ func main() {
 		}
 		os.Exit(runComputeCap(os.Getenv, os.Stdout, os.Stderr))
 	}
+	if len(os.Args) > 1 && os.Args[1] == "--check-production" {
+		if len(os.Args) != 2 {
+			_, _ = fmt.Fprintln(os.Stderr, "usage: managed-postgres-qualify --check-production")
+			os.Exit(2)
+		}
+		os.Exit(runProductionCheck(os.Getenv, time.Now(), os.Stdout, os.Stderr))
+	}
 	if len(os.Args) > 1 && os.Args[1] == "--verify" {
 		os.Exit(runVerificationArguments(os.Args[2:], os.Getenv, os.Stdout, os.Stderr))
 	}
 	if len(os.Args) > 1 {
-		_, _ = fmt.Fprintln(os.Stderr, "usage: managed-postgres-qualify [--check-config | --compute-cap | --verify [--approval PATH] [--rollout --guest-report PATH --runtime-manifest PATH]]")
+		_, _ = fmt.Fprintln(os.Stderr, "usage: managed-postgres-qualify [--check-config | --check-production | --compute-cap | --verify [--approval PATH] [--rollout --guest-report PATH --runtime-manifest PATH]]")
 		os.Exit(2)
 	}
 	os.Exit(run(os.Getenv, os.Stdout, os.Stderr))
