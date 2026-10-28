@@ -134,14 +134,21 @@ run had at least one deploy refused with `traffic_policy_too_complex` (the 2 s
 policy-check limit, H14-78); the route case needed four attempts while it
 served about 30 requests a second. The drill retries, as the problem asks.
 
+GA follow-ups closed on 2026-10-28:
+
+- **Timed-out policy checks.** A 422 `traffic_policy_too_complex` from the 2 s
+  time ceiling carries `Retry-After`. apid no longer replays it for the deploy's
+  Idempotency-Key; before, a retried `gregale deploy` got the stored refusal for
+  24 hours. The CLI and the SDK retry layers resend it (ADR-570 amendment).
+- **Runtime upgrade cutover.** It waits while a freeze is active, instead of
+  switching traffic (ADR-20261019071733 amendment 2).
+- **Route-health report.** After a guard abort, the report shows the saved abort
+  evidence instead of `unknown` (ADR-458 amendment).
+
 Still open:
 
 - real Slack/Resend delivery has not been drilled;
-- no database switch has been drilled with a real provider restore;
-- runtime-upgrade cutover must also hold for freezes before customer admission
-  ships;
-- the CLI and SDKs do not retry a timed-out traffic policy check, so a deploy
-  on a busy control plane can fail outright.
+- no database switch has been drilled with a real provider restore.
 
 ## Routes at public scale — 2026-10-24
 
@@ -700,6 +707,24 @@ listener behind a socket unit each restarted five times under load with 0 of
 138,179 and 0 of 127,987 requests failing; without the socket unit the gateway
 returned 103,323 502s. Open: the first socket conversion through `node_join`
 and deployctl, and the listeners the ADR leaves without socket activation.
+
+## Worker end-to-end fixes — 2026-10-27
+
+`worker.scale` in gregale.yaml now becomes the app's queue scaling policy on
+CLI, repository and GitHub deploys, and a first deploy of a worker is no longer
+refused for its queue target. `gregale worker scale` keeps the app's queue
+metric (default `queue_depth`), and a scaling policy's `min_instances: 0` lets
+the pool stop when worker replica bounds are unset
+([ADR-20261018101500](adr/20261018101500-worker-pool-scale-out-off-loop.md)
+amendment 2026-10-27). Queue gauges refresh every 30 seconds for every worker
+app from bounded reads, and `queue_backlog` / `queue_oldest_age_seconds` alert
+on the durable queue. Single-process apps report OOM kills, and only a release
+that is not yet fully live fails on one
+([ADR-121](adr/121-runtime-oom-detection-on-workload-cgroup.md) amendment).
+On the nested-KVM test node at 81723d5f4a, `TestSingleProcessOOMMetal` (live
+release keeps serving; startup OOM fails the deployment with `app_runtime_oom`,
+peak 456 MB) and `TestDirectOCIMainHealthcheckMetal` passed with a clean leak
+check. This change is not deployed.
 
 ## Worker admission explanations — 2026-10-18
 

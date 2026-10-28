@@ -148,6 +148,12 @@ func (s *Service) Portal(w http.ResponseWriter, r *http.Request) {
 		selfServiceUnavailable(w, "this account is not billed through Stripe; ask the API owner")
 		return
 	}
+	// The portal opens the customer in the Stripe account of the app's
+	// creator, which a company app stops using once its creator left.
+	if !s.Host.CreatorBills(ctx, c.app) {
+		selfServiceUnavailable(w, "the billing portal is not available right now; ask the API owner")
+		return
+	}
 	returnURL := strings.TrimSpace(req.ReturnURL)
 	if returnURL != "" && !api.ValidSignupURL(returnURL) {
 		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Invalid return URL", "return_url must be an https URL"))

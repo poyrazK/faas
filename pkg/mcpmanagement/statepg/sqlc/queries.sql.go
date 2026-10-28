@@ -39,6 +39,17 @@ func (q *Queries) AcquireMCPBridgeLease(ctx context.Context, db DBTX, arg Acquir
 	return epoch, err
 }
 
+const deleteAllMCPBridgeState = `-- name: DeleteAllMCPBridgeState :exec
+DELETE FROM mcp_bridge_state
+WHERE bridge = $1
+`
+
+// Drops state that no longer opens with the bridge's key.
+func (q *Queries) DeleteAllMCPBridgeState(ctx context.Context, db DBTX, bridge string) error {
+	_, err := db.Exec(ctx, deleteAllMCPBridgeState, bridge)
+	return err
+}
+
 const deleteMCPBridgeState = `-- name: DeleteMCPBridgeState :exec
 DELETE FROM mcp_bridge_state
 WHERE bridge = $1 AND namespace = $2

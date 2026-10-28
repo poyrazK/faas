@@ -41,6 +41,11 @@ type Host interface {
 	KeyScopesProblem(accountID string, scopes []string) *api.Problem
 	// StripeKey opens the account's Stripe billing connection (ADR-1502).
 	StripeKey(ctx context.Context, accountID string) (key string, livemode bool, problem *api.Problem)
+	// CreatorBills reports whether app's customers may be billed through
+	// the account that created it, whose billing connection they use: always
+	// for a personal app, and for a company app only while that account is a
+	// member of the company (ADR-20261026151103 amendment 2).
+	CreatorBills(ctx context.Context, app state.App) bool
 	// IssueConsumerKey creates a key for consumer within the account's key
 	// quotas and returns its plaintext once.
 	IssueConsumerKey(ctx context.Context, acct state.Account, consumer state.APIConsumer, name string, scopes []string) (state.ConsumerKey, string, *api.Problem)

@@ -14,6 +14,10 @@ Alerts:
   refusing more than 0.2 requests per second for five minutes.
 - `FaasPublicTrafficSecurityUnverified` (warn): a public edge has passed
   responses without the revocation check for 30 minutes.
+- `FaasRateLimitCounterFallback` (warn): a gateway cannot reach the central
+  rate counters and is enforcing limits from its own buckets inside the
+  5-minute outage grace (`gateway_ratelimit_local_fallback_total`,
+  ADR-20261027173012).
 
 ## Symptom
 
@@ -54,8 +58,10 @@ journalctl -u faas-gatewayd-internal --since -15m | grep -E 'refused with policy
 - `security_unavailable`: the revocation refresher has not verified the scope
   within the 5-minute outage grace. Check Postgres reachability from the
   gateway and the refresher's errors.
-- `rate_limit_unavailable`: the central counter consume failed. Check
-  `pg_ratelimit_counters` lock waits and pool saturation.
+- `rate_limit_unavailable`: the central counter has failed for longer than
+  the 5-minute outage grace (before that the gateway decides locally and
+  `FaasRateLimitCounterFallback` warns). Check `pg_ratelimit_counters` lock
+  waits, pool saturation and control-plane CPU pressure.
 - `node_admission_unavailable`: vmmd has no plan for the instance. Check the
   instance's wake plan and whether vmmd restarted without adopting it.
 
