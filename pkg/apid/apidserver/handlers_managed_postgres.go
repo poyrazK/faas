@@ -25,6 +25,8 @@ func managedPostgresProblem(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, managedpostgres.ErrProvisioningClosed):
 		status, code, title, detail = http.StatusServiceUnavailable, "managed_postgres_provisioning_not_enabled", "Managed PostgreSQL provisioning is closed", managedpostgres.ProvisioningClosedDetail
+	case errors.Is(err, managedpostgres.ErrFleetPaused):
+		status, code, title, detail = http.StatusServiceUnavailable, "managed_postgres_new_databases_paused", "New managed PostgreSQL databases are paused", managedpostgres.FleetPausedDetail
 	case errors.Is(err, managedpostgres.ErrUnavailable):
 		status, code, title, detail = http.StatusServiceUnavailable, "managed_postgres_unavailable", "Managed PostgreSQL unavailable", managedpostgres.UnavailableDetail
 	case errors.Is(err, managedpostgres.ErrNotFound):

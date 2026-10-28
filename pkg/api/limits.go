@@ -444,6 +444,18 @@ const OperationBusinessConditionDescriptionMaxBytes = 1024
 // PostgreSQL databases before the cap suspends them (ADR-20261025094915).
 const ManagedPostgresOverageCeilingMultiplier = 2
 
+// Production managed PostgreSQL provisioning (ADR-20261028103115). An
+// operator approval pins one backend for at most the approval window; the
+// expiry alert fires the warning lead before it closes provisioning.
+const ManagedPostgresProductionApprovalMaxWindow = 90 * 24 * time.Hour
+const ManagedPostgresProductionApprovalWarning = 14 * 24 * time.Hour
+
+// Fleet safety ceilings bound what operators may configure as the platform's
+// total managed PostgreSQL databases and monthly provider cost (integer
+// millicents). They are COGS breakers across every account, not plan quotas.
+const ManagedPostgresFleetDatabasesCeiling = 100000
+const ManagedPostgresFleetMonthlyCostCeilingMillicents = 10_000_000_000
+
 // Bounded recovery of explicitly requested PostgreSQL cutover retirements.
 const ManagedPostgresCutoverDrainBatchMax = 32
 const ManagedPostgresCutoverDrainTimeout = 20 * time.Second

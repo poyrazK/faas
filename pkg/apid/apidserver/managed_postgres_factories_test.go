@@ -24,7 +24,7 @@ func TestManagedPostgresProductionRejectsFixtureDriver(t *testing.T) {
 			return path
 		}
 		return "test-token"
-	}, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	}, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "unknown driver sqlfixture") {
 		t.Fatalf("production admitted test provider: %v", err)
 	}

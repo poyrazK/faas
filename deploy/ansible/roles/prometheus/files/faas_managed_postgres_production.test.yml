@@ -1,0 +1,104 @@
+# ADR-20261028103115: production approval window and fleet ceiling alerts.
+rule_files:
+  - faas.rules.yml
+evaluation_interval: 30s
+tests:
+  - name: an approval warns two weeks before it ends and pages once it has
+    interval: 1m
+    input_series:
+      # Ends 13 days after the test starts.
+      - series: apid_managed_postgres_production_approval_until_timestamp_seconds{job="apid",instance="ending"}
+        values: 1123200+0x30
+      # Ends one minute after the test starts.
+      - series: apid_managed_postgres_production_approval_until_timestamp_seconds{job="apid",instance="ended"}
+        values: 60+0x30
+      # Ends in 30 days, and a host outside production reports zero.
+      - series: apid_managed_postgres_production_approval_until_timestamp_seconds{job="apid",instance="fresh"}
+        values: 2592000+0x30
+      - series: apid_managed_postgres_production_approval_until_timestamp_seconds{job="apid",instance="staging"}
+        values: 0+0x30
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: FaasManagedPostgresProductionApprovalExpiring
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: apid
+              family: managed_postgres
+              job: apid
+              instance: ending
+            exp_annotations:
+              summary: Production managed PostgreSQL approval ends within 14 days
+              description: When the production approval ends, new databases, bindings, restores and resizes close until an operator approves the backend again. Review the backend and set a new FAAS_MANAGED_POSTGRES_PRODUCTION_APPROVED_AT/UNTIL window before it ends.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasManagedPostgresDegraded.md
+      - eval_time: 12m
+        alertname: FaasManagedPostgresProductionApprovalExpired
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              component: apid
+              family: managed_postgres
+              job: apid
+              instance: ended
+            exp_annotations:
+              summary: Production managed PostgreSQL approval has ended
+              description: "Production provisioning is closed: customers cannot create databases, bindings, restores or resizes. Existing databases and credentials keep working. Approve the backend again with a new window and restart apid."
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasManagedPostgresDegraded.md
+
+  - name: fleet ceilings warn at 80% and page at the ceiling; unset ceilings never alert
+    interval: 1m
+    input_series:
+      # Database cap 10: 8 databases is near the ceiling.
+      - series: apid_managed_postgres_fleet_max_databases{job="apid",instance="near"}
+        values: 10+0x30
+      - series: apid_managed_postgres_fleet_databases{job="apid",instance="near"}
+        values: 8+0x30
+      - series: apid_managed_postgres_fleet_max_monthly_cost_millicents{job="apid",instance="near"}
+        values: 1000+0x30
+      - series: apid_managed_postgres_fleet_cost_millicents{job="apid",instance="near"}
+        values: 10+0x30
+      # Spend breaker reached.
+      - series: apid_managed_postgres_fleet_max_databases{job="apid",instance="spent"}
+        values: 10+0x30
+      - series: apid_managed_postgres_fleet_databases{job="apid",instance="spent"}
+        values: 1+0x30
+      - series: apid_managed_postgres_fleet_max_monthly_cost_millicents{job="apid",instance="spent"}
+        values: 1000+0x30
+      - series: apid_managed_postgres_fleet_cost_millicents{job="apid",instance="spent"}
+        values: 1000+0x30
+      # No ceilings configured.
+      - series: apid_managed_postgres_fleet_max_databases{job="apid",instance="unset"}
+        values: 0+0x30
+      - series: apid_managed_postgres_fleet_databases{job="apid",instance="unset"}
+        values: 500+0x30
+      - series: apid_managed_postgres_fleet_max_monthly_cost_millicents{job="apid",instance="unset"}
+        values: 0+0x30
+      - series: apid_managed_postgres_fleet_cost_millicents{job="apid",instance="unset"}
+        values: 99999+0x30
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasManagedPostgresFleetNearCeiling
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: apid
+              family: managed_postgres
+              job: apid
+              instance: near
+            exp_annotations:
+              summary: Managed PostgreSQL fleet is near its database cap or spend breaker
+              description: The fleet has reached 80% of its database cap or of its monthly provider-spend breaker. At the ceiling new databases (and, for spend, restores and compute increases) pause for every account; raise the fleet ceiling deliberately or review the largest consumers.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasManagedPostgresDegraded.md
+      - eval_time: 20m
+        alertname: FaasManagedPostgresFleetPaused
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              component: apid
+              family: managed_postgres
+              job: apid
+              instance: spent
+            exp_annotations:
+              summary: New managed PostgreSQL databases are paused fleet-wide
+              description: "The fleet database cap or the monthly provider-spend breaker is reached: every account gets managed_postgres_new_databases_paused for new databases, and at the spend breaker also for restores and compute increases. Existing databases keep working. The spend breaker reopens at the next UTC month."
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasManagedPostgresDegraded.md

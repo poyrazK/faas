@@ -59174,6 +59174,35 @@ func (q *Queries) ManagedPostgresDueBindings(ctx context.Context, db DBTX, arg M
 	return items, nil
 }
 
+const managedPostgresFleetTotals = `-- name: ManagedPostgresFleetTotals :one
+SELECT
+ ((SELECT count(*) FROM managed_postgres_databases d WHERE d.state<>'deleted')
+  + (SELECT count(*) FROM project_environment_clone_postgres_snapshot_restores r WHERE r.state<>'deleted' AND r.adopted_database_id IS NULL))::bigint AS databases,
+ (SELECT COALESCE(sum(c.cost),0) FROM managed_postgres_databases d CROSS JOIN LATERAL (
+   SELECT COALESCE(sum(u.cost_millicents),0) AS cost FROM managed_postgres_usage u
+   WHERE u.database_id=d.id AND u.window_from>=$1::timestamptz AND u.window_from<$2::timestamptz) c)::bigint AS cost_millicents
+`
+
+type ManagedPostgresFleetTotalsParams struct {
+	PeriodStart pgtype.Timestamptz
+	PeriodEnd   pgtype.Timestamptz
+}
+
+type ManagedPostgresFleetTotalsRow struct {
+	Databases      int64
+	CostMillicents int64
+}
+
+// ADR-20261028103115: the fleet database cap counts what reservation limits
+// count; the spend breaker sums the month through the usage primary key, one
+// index range per database, so the ledger's growth never forces a full scan.
+func (q *Queries) ManagedPostgresFleetTotals(ctx context.Context, db DBTX, arg ManagedPostgresFleetTotalsParams) (ManagedPostgresFleetTotalsRow, error) {
+	row := db.QueryRow(ctx, managedPostgresFleetTotals, arg.PeriodStart, arg.PeriodEnd)
+	var i ManagedPostgresFleetTotalsRow
+	err := row.Scan(&i.Databases, &i.CostMillicents)
+	return i, err
+}
+
 const managedPostgresPersonalBindingReference = `-- name: ManagedPostgresPersonalBindingReference :one
 SELECT EXISTS(SELECT 1 FROM managed_postgres_bindings b JOIN managed_postgres_databases d ON d.id=b.database_id JOIN orgs o ON o.id=d.org_id
  WHERE b.id=$1 AND b.account_id=$2 AND o.personal_org)::boolean
