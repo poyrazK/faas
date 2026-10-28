@@ -746,7 +746,10 @@ to a legacy overload remain possible when analysis completes and none of the
 over-limit dimensions increases. New or increased overload refuses with 422,
 rolling back saved intent and transactional change events. Analysis exhaustion
 has its own `traffic_policy_too_complex` code and generic limit/observed fields;
-byte bounds additionally retain the explicit byte fields.
+byte bounds additionally retain the explicit byte fields. A time ceiling also
+carries `Retry-After` (2 s): apid does not replay it for the Idempotency-Key, and
+`api.Client` and the SDK retry layers resend the request (ADR-570 amendment,
+2026-10-28).
 
 Metadata, nodes, states, retained state buffers/overhead, transitions and phase
 time are bounded centrally. A local 1,750 ms SQL timeout precedes each two-second

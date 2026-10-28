@@ -39,6 +39,7 @@ permissions:
   id-token: write
   actions: read
   packages: read
+  attestations: write # SLSA build provenance (issue #295)
 
 jobs:
   # No full-CI gate (docs/adr/20261018104452-release-decoupled-from-full-ci.md).
@@ -188,6 +189,15 @@ jobs:
           cp archives/*.tar.gz .
           sha256sum gregale gregale-darwin-arm64 gregale_*.tar.gz > CLI-SHA256SUMS
           cat CLI-SHA256SUMS
+
+      # SLSA build provenance (issue #295): a signed statement of the
+      # workflow, commit and inputs that produced each CLI archive, kept in
+      # the repository's attestations; verify with
+      # `gh attestation verify <archive> -R poyrazK/faas`.
+      - name: Attest CLI build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: /tmp/gregale-build/gregale_*.tar.gz
 
       # Handed to publish-npm, which stages the five npm packages from
       # these exact archives rather than rebuilding the CLI. One build per
@@ -939,6 +949,14 @@ jobs:
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             "$OUT_DIR/release.tar.gz"
           (cd "$OUT_DIR" && sha256sum release.tar.gz release.cosign.bundle release.sbom.json production-manifest.yaml runtime-bases.env > SHA256SUMS)
+
+      # SLSA build provenance (issue #295) for the daemon bundle, beside the
+      # cosign signature hosts already verify; verify with
+      # `gh attestation verify release.tar.gz -R poyrazK/faas`.
+      - name: Attest daemon bundle build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ runner.temp }}/gregale-release/release.tar.gz
 
       - name: Upload canonical release artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

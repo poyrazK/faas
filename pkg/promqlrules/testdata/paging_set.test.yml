@@ -94,6 +94,31 @@ tests:
         alertname: FaasEdgeRuleCompileError
         exp_alerts: []
 
+  # ADR-091 amendment (2026-10-27, GA hardening): a dropped geo rule lets
+  # denied countries through, so it pages like jwt, ip, waf and challenge.
+  - interval: 1m
+    name: "a dropped geo rule pages and stays out of the warn alert"
+    input_series:
+      - series: 'gateway_edge_rule_compile_error_total{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092",kind="geo"}'
+        values: '0+1x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasEdgeRuleAuthCompileError
+        exp_alerts:
+          - exp_labels:
+              kind: "geo"
+              severity: "page"
+              component: "gatewayd-internal"
+              family: "edge_rules"
+              public_status: "internal"
+            exp_annotations:
+              summary: "An access-gating geo edge rule failed to compile"
+              description: "gatewayd-internal dropped a geo edge rule at load time in the last 10m. A dropped access rule is not enforced, so the route it protected is serving without that check. Fix or disable the rule now."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeRuleCompileError.md"
+      - eval_time: 20m
+        alertname: FaasEdgeRuleCompileError
+        exp_alerts: []
+
   - interval: 1m
     name: "a dropped route rule warns without paging"
     input_series:

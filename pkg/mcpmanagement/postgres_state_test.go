@@ -124,6 +124,39 @@ func TestPostgresStateRefusesWrongKeyAndSwappedRows(t *testing.T) {
 	}
 }
 
+func TestPostgresStateDiscardsWhatANewKeyCannotOpen(t *testing.T) {
+	pool := openStatePool(t)
+	store, err := openPGState(t, pool, writeStateKey(t, 7))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.update("plans/a", map[string]int{"n": 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var discarded error
+	fresh, err := openPGState(t, pool, writeStateKey(t, 9), func(o *PostgresStateOptions) {
+		o.DiscardUnreadable, o.OnDiscard = true, func(err error) { discarded = err }
+	})
+	if err != nil || discarded == nil {
+		t.Fatalf("open with a new key: %v, discarded=%v", err, discarded)
+	}
+	defer func() { _ = fresh.Close() }()
+	var plan map[string]int
+	if err := fresh.read("plans/a", &plan); err != nil || plan != nil {
+		t.Fatalf("unreadable state survived: %v %v", plan, err)
+	}
+	var rows int
+	if err := pool.QueryRow(t.Context(), `SELECT count(*) FROM mcp_bridge_state`).Scan(&rows); err != nil || rows != 0 {
+		t.Fatalf("rows left = %d %v", rows, err)
+	}
+	if err := fresh.update("plans/b", map[string]int{"n": 2}); err != nil {
+		t.Fatalf("the new key cannot write: %v", err)
+	}
+}
+
 func TestPostgresStateLeaseFencesAFormerHolder(t *testing.T) {
 	pool := openStatePool(t)
 	key := writeStateKey(t, 7)

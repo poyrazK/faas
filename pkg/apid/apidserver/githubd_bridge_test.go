@@ -92,6 +92,7 @@ type bridgeStubStore struct {
 	accountUnverified bool
 	deployRate        state.AccountDeployRateSnapshot
 	deployRateErr     error
+	deployRateLimit   int // the limit the last admission was checked against
 }
 
 func (s *bridgeStubStore) AppByID(_ context.Context, _ string) (state.App, error) {
@@ -115,6 +116,7 @@ func (s *bridgeStubStore) AccountByID(_ context.Context, id string) (state.Accou
 }
 
 func (s *bridgeStubStore) ConsumeAccountDeployRate(_ context.Context, _ string, limit int, now time.Time) (state.AccountDeployRateSnapshot, error) {
+	s.deployRateLimit = limit
 	if s.deployRateErr != nil {
 		return state.AccountDeployRateSnapshot{}, s.deployRateErr
 	}
@@ -590,6 +592,34 @@ func TestEnqueueBuild_OverCapacitySourceBytes(t *testing.T) {
 	}
 }
 
+// githubd fetches every push with Scale's limits, so the bridge holds the
+// account to its own plan's source limit (bug hunt 2026-10-27 B7).
+func TestEnqueueBuild_SourceAbovePlanLimit(t *testing.T) {
+	for _, tc := range []struct {
+		plan api.Plan
+		want codes.Code
+	}{
+		{api.PlanFree, codes.ResourceExhausted},
+		{api.PlanScale, codes.OK},
+	} {
+		t.Run(string(tc.plan), func(t *testing.T) {
+			store := &bridgeStubStore{
+				app:     state.App{ID: "a", AccountID: "a", Status: state.AppActive},
+				account: state.Account{ID: "a", Plan: tc.plan},
+			}
+			g := newBridge(t, store, &bridgeStubNotifier{})
+			path, _ := stageFixtureFile(t, g.stagingRoot, "a/a/x", []byte("x"))
+			_, err := g.EnqueueBuild(context.Background(), &githubdpb.EnqueueBuildRequest{
+				AccountId: "a", AppId: "a", CommitSha: "x", SourcePath: path, SourceUrl: "https://x",
+				SourceBytes: 150 << 20,
+			})
+			if got := status.Code(err); got == codes.ResourceExhausted != (tc.want == codes.ResourceExhausted) {
+				t.Fatalf("150 MB source on %s: %v, want %s", tc.plan, err, tc.want)
+			}
+		})
+	}
+}
+
 func TestEnqueueBuild_NotRegularFile(t *testing.T) {
 	// Source path is a directory, not a regular file.
 	stagingRoot := t.TempDir()
@@ -936,6 +966,11 @@ func TestEnqueueBuild_AnnotationsThreaded(t *testing.T) {
 	// Kind is derived from EventKind: pull_request → preview_deploy.
 	if created.Kind != state.DeploymentKindPreview {
 		t.Errorf("dep.Kind = %q, want %q (EventKind=pull_request → preview)", created.Kind, state.DeploymentKindPreview)
+	}
+	// A PR preview build is admitted against its share of the hourly
+	// window, not the whole budget (ADR-20261028100000).
+	if want := api.PlanFree.PreviewDeploysPerHour(); store.deployRateLimit != want || want >= api.PlanFree.DeploysPerHour() {
+		t.Errorf("preview admission limit = %d, want the preview share %d", store.deployRateLimit, want)
 	}
 }
 

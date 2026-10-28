@@ -127,6 +127,29 @@ func (q *Queries) DeleteRetiringLiveKeys(ctx context.Context, db DBTX, databaseI
 	return err
 }
 
+const dropLegacyLiveLogin = `-- name: DropLegacyLiveLogin :execrows
+DELETE FROM managed_postgres_live_logins
+ WHERE database_id=$1::text::uuid AND sealed_login=$2::bytea
+   AND recipient=$3::text
+`
+
+type DropLegacyLiveLoginParams struct {
+	DatabaseID string
+	Previous   []byte
+	Recipient  string
+}
+
+// Removes a login the re-seal found under the legacy namespace, only while it
+// still holds the seal the re-seal read (amended 2026-10-28). apid then
+// issues the database a new login, sealed bound to it.
+func (q *Queries) DropLegacyLiveLogin(ctx context.Context, db DBTX, arg DropLegacyLiveLoginParams) (int64, error) {
+	result, err := db.Exec(ctx, dropLegacyLiveLogin, arg.DatabaseID, arg.Previous, arg.Recipient)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const hasActiveLiveKey = `-- name: HasActiveLiveKey :one
 SELECT EXISTS(SELECT 1 FROM managed_postgres_live_keys WHERE database_id=$1::text::uuid AND retires_at IS NULL)::boolean
 `
@@ -273,6 +296,42 @@ func (q *Queries) LiveDatabases(ctx context.Context, db DBTX, backendIds []strin
 	return items, nil
 }
 
+const liveDatabasesWithoutLogin = `-- name: LiveDatabasesWithoutLogin :many
+SELECT DISTINCT k.database_id::text AS database_id,k.account_id::text AS account_id
+ FROM managed_postgres_live_keys k
+ JOIN managed_postgres_databases d ON d.id=k.database_id
+ WHERE k.retires_at IS NULL AND d.deleted_at IS NULL AND d.state NOT IN ('deleting','deleted')
+   AND NOT EXISTS (SELECT 1 FROM managed_postgres_live_logins l WHERE l.database_id=k.database_id)
+ ORDER BY 1 LIMIT $1::int
+`
+
+type LiveDatabasesWithoutLoginRow struct {
+	DatabaseID string
+	AccountID  string
+}
+
+// Databases with an active live key and no login, the ones apid issues a
+// login for: a login the re-seal dropped, or one never stored.
+func (q *Queries) LiveDatabasesWithoutLogin(ctx context.Context, db DBTX, pageSize int32) ([]LiveDatabasesWithoutLoginRow, error) {
+	rows, err := db.Query(ctx, liveDatabasesWithoutLogin, pageSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LiveDatabasesWithoutLoginRow{}
+	for rows.Next() {
+		var i LiveDatabasesWithoutLoginRow
+		if err := rows.Scan(&i.DatabaseID, &i.AccountID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const liveKeyRing = `-- name: LiveKeyRing :many
 SELECT k.kid,k.sealed_secret,k.recipient,k.retires_at FROM managed_postgres_live_keys k
  JOIN managed_postgres_databases d ON d.id=k.database_id
@@ -387,33 +446,6 @@ func (q *Queries) ResealLiveKey(ctx context.Context, db DBTX, arg ResealLiveKeyP
 	result, err := db.Exec(ctx, resealLiveKey,
 		arg.SealedSecret,
 		arg.Kid,
-		arg.DatabaseID,
-		arg.Previous,
-		arg.Recipient,
-	)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
-const resealLiveLogin = `-- name: ResealLiveLogin :execrows
-UPDATE managed_postgres_live_logins SET sealed_login=$1::bytea
- WHERE database_id=$2::text::uuid AND sealed_login=$3::bytea
-   AND recipient=$4::text
-`
-
-type ResealLiveLoginParams struct {
-	SealedLogin []byte
-	DatabaseID  string
-	Previous    []byte
-	Recipient   string
-}
-
-// Replaces a login's seal only while it still holds the one the re-seal read.
-func (q *Queries) ResealLiveLogin(ctx context.Context, db DBTX, arg ResealLiveLoginParams) (int64, error) {
-	result, err := db.Exec(ctx, resealLiveLogin,
-		arg.SealedLogin,
 		arg.DatabaseID,
 		arg.Previous,
 		arg.Recipient,

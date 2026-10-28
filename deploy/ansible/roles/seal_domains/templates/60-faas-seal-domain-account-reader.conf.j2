@@ -1,9 +1,13 @@
 # Managed by the seal_domains role (ADR 20261022111812): apid opens and seals
 # account values (TOTP secrets, inbound webhook secrets, billing keys,
 # workflow plans, PagerDuty acknowledgement secrets, GitLab, Slack and Linear
-# credentials, product email values) with the account seal domain. The fleet identity stays in the base unit until the domain
+# credentials, product email values, managed realtime credentials) with the
+# account seal domain. The fleet identity stays in the base unit until the domain
 # re-seal and the contract step complete.
 [Service]
 LoadCredential=faas_seal_domain_account:/etc/faas/secrets/domains/account.age
+{% if faas_seal_domain_account_previous_identity_src | length > 0 %}
+LoadCredential=faas_seal_domain_account_previous:/etc/faas/secrets/domains/account.age.previous
+{% endif %}
 Environment=FAAS_SEAL_DOMAIN_ACCOUNT_IDENTITY_PATH=%d/faas_seal_domain_account
 Environment=FAAS_SEAL_DOMAIN_ACCOUNT_WRITES={{ faas_seal_domain_account_writes }}

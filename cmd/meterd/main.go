@@ -1268,7 +1268,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithProbe(probe).
 		WithPartitionCreate(gatedPartitionCreate).
 		WithCanaryProgression(canaryProg).
-		WithSafeDeploy(safeDeployOrch)
+		WithSafeDeploy(safeDeployOrch).
+		// ADR-20261023171905: quiet_pause_unbilled = "on" subtracts paused
+		// seconds only for the accounts the quiet_pause_unbilled platform
+		// flag releases; the runtime-config watcher keeps it current.
+		WithQuietPauseRelease(func(subject platformflags.Subject) bool {
+			return capabilityFlags.Enabled(platformflags.QuietPauseUnbilled, subject)
+		})
 	if canaryProg != nil && safeDeployOrch != nil {
 		go safeReleaseWorkerLeaseLoop(ctx, loop, store, canaryAPID, log)
 	}
@@ -1410,6 +1416,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// the same mux as /healthz + /metrics. defer stop so the
 	// SIGTERM drain window surfaces in daemon_ready as 0.
 	meterdProbe := BuildReadinessProbe(loop)
+	if pool != nil {
+		registerDatabaseReadiness(ctx, meterdProbe, pool)
+	}
 	meterdProbe.SetReadyObserver(func(ready bool, reason string) {
 		ops.MarkReady("meterd", ready, reason)
 	})

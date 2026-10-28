@@ -661,6 +661,16 @@ const (
 	AccountSealedProductEmailPause       = "product_email_pause"
 	AccountSealedProductEmailRecipient   = "product_email_recipient"
 	AccountSealedProductEmailUnsubscribe = "product_email_unsubscribe"
+	// Managed realtime: an endpoint's callback token, client auth token and
+	// previous auth token, a push device's target and a push provider's
+	// config. A push device's id is "<endpoint>:<principal key>:<device>"
+	// and a provider's "<endpoint>:<provider>", the suffixes of their
+	// namespaces.
+	AccountSealedRealtimeCallback     = "realtime_callback"
+	AccountSealedRealtimeAuth         = "realtime_auth"
+	AccountSealedRealtimeAuthPrevious = "realtime_auth_previous"
+	AccountSealedRealtimePushDevice   = "realtime_push_device"
+	AccountSealedRealtimePushProvider = "realtime_push_provider"
 )
 
 // AccountSealedValue is one sealed account value, listed for the account
@@ -733,6 +743,23 @@ func (s *PgStore) ListAccountSealedValues(ctx context.Context, kind, afterID str
 	case AccountSealedProductEmailUnsubscribe:
 		query = `SELECT id::text, unsubscribe_sealed, '' FROM product_control_email_deliveries
 		          WHERE octet_length(unsubscribe_sealed) > 0 AND id > $1::uuid ORDER BY id LIMIT $2`
+	case AccountSealedRealtimeCallback:
+		query = `SELECT id::text, callback_auth_token_sealed, '' FROM managed_realtime_endpoints
+		          WHERE octet_length(callback_auth_token_sealed) > 0 AND id > $1::uuid ORDER BY id LIMIT $2`
+	case AccountSealedRealtimeAuth:
+		query = `SELECT id::text, auth_token_sealed, '' FROM managed_realtime_endpoints
+		          WHERE octet_length(auth_token_sealed) > 0 AND id > $1::uuid ORDER BY id LIMIT $2`
+	case AccountSealedRealtimeAuthPrevious:
+		query = `SELECT id::text, auth_token_previous_sealed, '' FROM managed_realtime_endpoints
+		          WHERE octet_length(auth_token_previous_sealed) > 0 AND id > $1::uuid ORDER BY id LIMIT $2`
+	case AccountSealedRealtimePushDevice:
+		query, after = `SELECT k, sealed, '' FROM (
+		           SELECT endpoint_id::text || ':' || principal || ':' || device AS k, sealed FROM managed_realtime_push_devices
+		         ) d WHERE k > $1 ORDER BY k LIMIT $2`, afterID
+	case AccountSealedRealtimePushProvider:
+		query, after = `SELECT k, sealed, '' FROM (
+		           SELECT endpoint_id::text || ':' || provider AS k, sealed FROM managed_realtime_push_providers
+		         ) p WHERE k > $1 ORDER BY k LIMIT $2`, afterID
 	case AccountSealedBillingKey:
 		query, after = `SELECT k, sealed_secret, '' FROM (
 		           SELECT account_id::text || '/' || provider AS k, sealed_secret FROM account_billing_connections
@@ -821,6 +848,29 @@ func (s *PgStore) ResealAccountValue(ctx context.Context, v AccountSealedValue, 
 	case AccountSealedProductEmailUnsubscribe:
 		tag, err = s.pool.Exec(ctx, `UPDATE product_control_email_deliveries SET unsubscribe_sealed = $3
 		                             WHERE id = $1::uuid AND unsubscribe_sealed = $2`, v.ID, v.Sealed, sealed)
+	case AccountSealedRealtimeCallback:
+		tag, err = s.pool.Exec(ctx, `UPDATE managed_realtime_endpoints SET callback_auth_token_sealed = $3
+		                             WHERE id = $1::uuid AND callback_auth_token_sealed = $2`, v.ID, v.Sealed, sealed)
+	case AccountSealedRealtimeAuth:
+		tag, err = s.pool.Exec(ctx, `UPDATE managed_realtime_endpoints SET auth_token_sealed = $3
+		                             WHERE id = $1::uuid AND auth_token_sealed = $2`, v.ID, v.Sealed, sealed)
+	case AccountSealedRealtimeAuthPrevious:
+		tag, err = s.pool.Exec(ctx, `UPDATE managed_realtime_endpoints SET auth_token_previous_sealed = $3
+		                             WHERE id = $1::uuid AND auth_token_previous_sealed = $2`, v.ID, v.Sealed, sealed)
+	case AccountSealedRealtimePushDevice:
+		parts := strings.SplitN(v.ID, ":", 3)
+		if len(parts) != 3 {
+			return false, fmt.Errorf("state: reseal realtime push device: malformed id %q", v.ID)
+		}
+		tag, err = s.pool.Exec(ctx, `UPDATE managed_realtime_push_devices SET sealed = $5
+		                             WHERE endpoint_id = $1::uuid AND principal = $2 AND device = $3 AND sealed = $4`, parts[0], parts[1], parts[2], v.Sealed, sealed)
+	case AccountSealedRealtimePushProvider:
+		endpoint, provider, ok := strings.Cut(v.ID, ":")
+		if !ok {
+			return false, fmt.Errorf("state: reseal realtime push provider: malformed id %q", v.ID)
+		}
+		tag, err = s.pool.Exec(ctx, `UPDATE managed_realtime_push_providers SET sealed = $4
+		                             WHERE endpoint_id = $1::uuid AND provider = $2 AND sealed = $3`, endpoint, provider, v.Sealed, sealed)
 	case AccountSealedBillingKey:
 		account, provider, ok := strings.Cut(v.ID, "/")
 		if !ok {

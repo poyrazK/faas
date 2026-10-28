@@ -5223,6 +5223,7 @@
       "match_expr",
       "match_headers",
       "match_host",
+      "match_host_scope",
       "match_methods",
       "match_path",
       "mode",
@@ -16691,6 +16692,7 @@
       "mem_bytes",
       "recovery_generation",
       "stale",
+      "stale_at",
       "storage_key",
       "stored_bytes",
       "tier"

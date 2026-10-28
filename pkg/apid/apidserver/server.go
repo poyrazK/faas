@@ -421,6 +421,14 @@ type server struct {
 	// turns the existing per-IP failure limiter into a generic
 	// per-IP rate limiter without dragging in x/time/rate.
 	dashboardExportLimiter *middleware.Limiter
+	// securityMail caps sign-in mail per account (security_mail_limit.go).
+	securityMail *securityMailLimiter
+	// signups caps self-service accounts per address and network a day
+	// (signup_network_limit.go).
+	signups *signupNetworkLimiter
+	// exportsInFlight holds the account IDs with a REST export bundle being
+	// built: one at a time per account.
+	exportsInFlight sync.Map
 	// domainCreateLimiter caps pending DNS challenges per client IP. The
 	// durable store separately enforces per-account outstanding-claim quotas;
 	// this edge bucket prevents one source from cycling accounts to create an
@@ -746,6 +754,11 @@ func (s *server) WithOpsMetrics(ctx context.Context, ops *wire.OpsMetrics) *serv
 		s.routeJobMetrics = nil
 	} else if s.routeJobMetrics.Registry() != ops.Registry() {
 		s.routeJobMetrics = routejobs.NewMetrics(ops.Registry(), ops.MetricPrefix())
+	}
+	if ops == nil {
+		s.edgeRules.Metrics = nil
+	} else if s.edgeRules.Metrics.Registry() != ops.Registry() {
+		s.edgeRules.Metrics = edgerules.NewMetrics(ops.Registry(), ops.MetricPrefix())
 	}
 	if ops == nil {
 		s.honeytokenMetrics = nil
@@ -1442,6 +1455,8 @@ func newServerWithDeps(
 		cliAuthLimiter:         cliAuthLimiter,
 		cliAuthSubmitLimiter:   cliAuthSubmitLimiter,
 		dashboardExportLimiter: dashboardExportLimiter,
+		securityMail:           newSecurityMailLimiter(),
+		signups:                newSignupNetworkLimiter(),
 		domainCreateLimiter:    domainCreateLimiter,
 		audit:                  aud,
 		runtimeConfig:          newRuntimeConfigManager(nil),
@@ -2039,7 +2054,14 @@ func (s *server) handler() http.Handler {
 	// can take a final export or cancel during the 30-day grace.
 	// DELETE /v1/account is admin-only — losing the account is
 	// irreversible.
-	mux.HandleFunc("GET /v1/account/export", s.auth(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.exportAccount))))
+	// The export shares the dashboard twin's 3/min/IP bucket: each bundle
+	// scans every per-account table and spools to disk.
+	mux.Handle("GET /v1/account/export", middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{
+		Log:           s.log,
+		Window:        time.Minute,
+		MaxFailures:   3,
+		CountStatuses: []int{middleware.CountEveryAttempt},
+	}, s.dashboardExportLimiter)(s.auth(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.exportAccount)))))
 	mux.HandleFunc("DELETE /v1/account", s.auth(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireStepUp(5*time.Minute)(s.idempotent(s.deleteAccount))))))
 	mux.HandleFunc("POST /v1/account/restore", s.auth(s.requireScope(api.ScopesDeployWriteSurface...)(s.restoreAccount)))
 	mux.HandleFunc("GET /v1/account/dpa", s.dpaTemplate)
@@ -4702,7 +4724,15 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PUT /v1/apps/{slug}/inbound-webhooks/{id}/operation-binding", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.endpointOperation(s.operation.PutOperationWebhookBinding))))))
 	mux.HandleFunc("GET /v1/apps/{slug}/inbound-webhooks/{id}/operation-binding", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.endpointOperation(s.operation.GetOperationWebhookBinding)))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/inbound-webhooks/{id}/operation-binding", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.endpointOperation(s.operation.DeleteOperationWebhookBinding)))))
-	mux.HandleFunc("POST /v1/hooks/{token}", s.receiveInboundWebhook)
+	// Unauthenticated: any string with the token prefix cost a CP Postgres
+	// lookup. Unknown tokens (404) and failed signatures (401) count against
+	// a per-IP bucket; a provider delivering valid events is never limited.
+	mux.Handle("POST /v1/hooks/{token}", middleware.AuthLimit(middleware.AuthLimitConfig{
+		Log:           s.log,
+		Window:        time.Minute,
+		MaxFailures:   api.InboundWebhookFailuresPerIPPerMinute,
+		CountStatuses: []int{http.StatusNotFound, http.StatusUnauthorized},
+	})(http.HandlerFunc(s.receiveInboundWebhook)))
 
 	// Operator admin surface (issue #98 / ADR-028). Auth lives in
 	// s.adminAllows (email allowlist via FAAS_ADMIN_EMAILS); handlers
@@ -5893,7 +5923,7 @@ func (s *server) idempotentWithInEnvironment(environmentID string, next accountH
 		}
 		cap := &captureWriter{ResponseWriter: w, status: http.StatusOK}
 		next(cap, r, acct)
-		if idempotencyResponseReplayable(cap.status, cap.body.Bytes()) && !cap.skipReplay {
+		if cap.replayable() {
 			_ = s.store.PutIdempotent(r.Context(), acct.ID, key, cap.status, cap.body.Bytes())
 		}
 	}
@@ -6041,8 +6071,9 @@ func (s *server) idempotentReserved(w http.ResponseWriter, r *http.Request, acct
 		next(cap, r, acct)
 		ctx := context.WithoutCancel(r.Context())
 		// A response with a one-time credential (httpkit.SkipIdempotentReplay)
-		// releases the key: a retry runs the operation again.
-		if idempotencyResponseReplayable(cap.status, cap.body.Bytes()) && !cap.skipReplay {
+		// or a refusal that asks to be retried releases the key: a retry runs
+		// the operation again.
+		if cap.replayable() {
 			_ = s.store.PutIdempotent(ctx, acct.ID, key, cap.status, cap.body.Bytes())
 			return
 		}
@@ -6096,6 +6127,18 @@ type captureWriter struct {
 
 // SkipIdempotentReplay implements httpkit.IdempotentReplaySkipper.
 func (c *captureWriter) SkipIdempotentReplay() { c.skipReplay = true }
+
+// replayable reports whether the captured response may be stored for its
+// Idempotency-Key. A refusal with Retry-After says it can clear, like a 429
+// or 503: a policy check that ran out of time on a busy control plane kept
+// answering the same `gregale deploy` for 24 hours, whose key is the deploy's
+// content digest, although its hint said to retry in a few seconds.
+func (c *captureWriter) replayable() bool {
+	if c.skipReplay || c.status >= 400 && c.Header().Get("Retry-After") != "" {
+		return false
+	}
+	return idempotencyResponseReplayable(c.status, c.body.Bytes())
+}
 
 func (c *captureWriter) WriteHeader(status int) {
 	c.status = status

@@ -12,7 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/secretbox"
 )
 
-// adr: 20261026090000 — a builder VM gets the built app's registry logins
+// adr: 20261026091500 — a builder VM gets the built app's registry logins
 // as a Docker config in its secrets.env.
 
 func sealRegistryPassword(t *testing.T, m *Manager, ns, password string) []byte {

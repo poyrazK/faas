@@ -378,23 +378,24 @@ func TestLoadConfig_OwnerCache(t *testing.T) {
 	}
 }
 
-// ADR-1151 step 3: frozen_tier_apps extends the tier to apps, off by default.
+// ADR-1151 step 3: frozen_tier_apps extends the tier to apps, on by default
+// since the 2026-10-27 amendment; TOML or FAAS_FROZEN_TIER_APPS turns it off.
 func TestLoadConfig_FrozenTierApps(t *testing.T) {
 	t.Setenv("FAAS_FROZEN_TIER_APPS", "")
 	cfg, err := LoadConfig(filepath.Join(t.TempDir(), "missing.toml"))
-	if err != nil || cfg.FrozenTierApps {
-		t.Fatalf("default FrozenTierApps = %v, %v; want off", cfg != nil && cfg.FrozenTierApps, err)
+	if err != nil || !cfg.FrozenTierApps {
+		t.Fatalf("default FrozenTierApps = %v, %v; want on", cfg != nil && cfg.FrozenTierApps, err)
 	}
 	tomlPath := filepath.Join(t.TempDir(), "schedd.toml")
-	if err := os.WriteFile(tomlPath, []byte("frozen_tier_apps = true\n"), 0o600); err != nil {
+	if err := os.WriteFile(tomlPath, []byte("frozen_tier_apps = false\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if cfg, err = LoadConfig(tomlPath); err != nil || !cfg.FrozenTierApps {
-		t.Fatalf("frozen_tier_apps = true: FrozenTierApps = %v, %v", cfg != nil && cfg.FrozenTierApps, err)
-	}
-	t.Setenv("FAAS_FROZEN_TIER_APPS", "false")
 	if cfg, err = LoadConfig(tomlPath); err != nil || cfg.FrozenTierApps {
-		t.Fatalf("FAAS_FROZEN_TIER_APPS=false over TOML: FrozenTierApps = %v, %v", cfg != nil && cfg.FrozenTierApps, err)
+		t.Fatalf("frozen_tier_apps = false: FrozenTierApps = %v, %v", cfg != nil && cfg.FrozenTierApps, err)
+	}
+	t.Setenv("FAAS_FROZEN_TIER_APPS", "true")
+	if cfg, err = LoadConfig(tomlPath); err != nil || !cfg.FrozenTierApps {
+		t.Fatalf("FAAS_FROZEN_TIER_APPS=true over TOML: FrozenTierApps = %v, %v", cfg != nil && cfg.FrozenTierApps, err)
 	}
 	t.Setenv("FAAS_FROZEN_TIER_APPS", "maybe")
 	if _, err := LoadConfig(tomlPath); err == nil {
