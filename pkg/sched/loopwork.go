@@ -74,6 +74,9 @@ const (
 	// amendment 2026-10-26).
 	workAppWake              workKind = "app_wake"
 	workRuntimeConfigRestart workKind = "runtime_config_restart"
+	// workWatchdog is the §6.1 stuck-row sweep. Each KillStuck can wait 5 s
+	// on a destroy, so it runs off the loop (ADR-20261028200212).
+	workWatchdog workKind = "watchdog"
 )
 
 // workKinds is the iteration order for metric pre-instantiation.
@@ -82,7 +85,7 @@ var workKinds = []workKind{
 	workPrime, workRestart, workAppReconcile, workDeploymentReconcile, workJobCancel, workJobDispatch, workPrimeRecovery,
 	workWorkflowDispatch, workWorkflowSchedules, workTriggerDispatch, workQueuePushDispatch, workBrokerTriggerDispatch, workEventFanout,
 	workReaper, workAdoptionReport, workRehearsalFault, workRehearsalSuspend, workRehearsalSweep, workWorkerRecovery, workWorkerRecoverySweep,
-	workAppWake, workRuntimeConfigRestart,
+	workAppWake, workRuntimeConfigRestart, workWatchdog,
 }
 
 // overflowPolicy decides what submit does when a kind has no free slot.
@@ -168,6 +171,10 @@ var workSpecs = map[workKind]workSpec{
 	// wakeup grace period.
 	workAppWake:              {slots: 8, overflow: overflowDrop},
 	workRuntimeConfigRestart: {slots: 4, overflow: overflowDrop},
+	// One sweep at a time. A tick that fires while a sweep still waits on
+	// destroys coalesces into it; the rows stay stuck, so the next tick
+	// finds them again.
+	workWatchdog: {slots: 1, overflow: overflowDrop},
 }
 
 // workPool runs bounded, coalesced, off-loop tasks for Loop.

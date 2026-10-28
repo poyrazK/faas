@@ -1269,7 +1269,7 @@ func (l *Loop) Run(ctx context.Context) error {
 		case <-cronTicks:
 			l.runCronTick(ctx)
 		case <-watchdogTick(watchdogT):
-			l.runWatchdog(ctx)
+			l.dispatchWatchdog(ctx)
 		case <-heartbeatTick(heartbeatT):
 			l.runHeartbeat(ctx)
 		case <-diskDriftTick(diskDriftT):
@@ -1676,6 +1676,13 @@ func (l *Loop) runInstanceStats(ctx context.Context) {
 // goroutine.
 func (l *Loop) runWatchdog(ctx context.Context) {
 	l.watchdog.sweepRuns(ctx)
+}
+
+// dispatchWatchdog runs the sweep on the work pool: a stuck row's destroy
+// can wait 5 s, and a partitioned node's rows retry every tick
+// (ADR-20261028200212).
+func (l *Loop) dispatchWatchdog(ctx context.Context) {
+	l.submitWork(workWatchdog, "tick", func() { l.runWatchdog(ctx) })
 }
 
 // runRetention dispatches one sweep of the §17 retention sweep. Same

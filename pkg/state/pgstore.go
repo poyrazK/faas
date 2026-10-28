@@ -17665,6 +17665,7 @@ func scanCreatedInstance(row pgx.Row, wakeID, appID string) (Instance, error) {
 // non-empty string from state.InstanceMode{normal,mirror};
 // the engine validates before calling (Engine.AdmitMirrorInstance).
 func (s *PgStore) CreateInstanceWithMode(ctx context.Context, appID, deploymentID, state string, ramMB int, nodeID, wakeID, mode string) (Instance, error) {
+	ctx = fenceApp(ctx, appID)
 	var reserve func(pgx.Tx) error
 	if mode == string(InstanceModeWorker) && State(state).CountsForRAM() {
 		reserve = func(tx pgx.Tx) error {
