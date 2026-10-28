@@ -71,8 +71,18 @@ func WorkloadAdmissionReasonsWithManaged(workloads []reposcan.Workload, managed 
 	}
 
 	bySlug := make(map[string]state.App, len(accountApps))
+	var projectApps []state.App
 	for _, app := range accountApps {
 		bySlug[app.Slug] = app
+		if projectID != "" && app.ProjectID == projectID {
+			projectApps = append(projectApps, app)
+		}
+	}
+	// A renamed service keeps its previous name's app (ADR-20261029090000),
+	// so that app is this workload's member.
+	renamed := RenamedWorkloads(workloads, projectApps)
+	member := func(app state.App, workload reposcan.Workload) bool {
+		return app.WorkloadName == workload.Name || renamed[app.WorkloadName] == workload.Name
 	}
 	seen := make(map[string]string, len(workloads))
 	var reasons []string
@@ -113,7 +123,7 @@ func WorkloadAdmissionReasonsWithManaged(workloads []reposcan.Workload, managed 
 			// fresh allocation (or a collision outside this exact member) is
 			// rejected.
 			app, exists := bySlug[slug]
-			if !exists || projectID == "" || app.ProjectID != projectID || app.WorkloadName != workload.Name || app.PreviewOfSlug != "" {
+			if !exists || projectID == "" || app.ProjectID != projectID || !member(app, workload) || app.PreviewOfSlug != "" {
 				reasons = append(reasons, fmt.Sprintf(
 					"workload %q uses app slug %q reserved for a Gregale service",
 					workload.Name, slug))
@@ -134,7 +144,7 @@ func WorkloadAdmissionReasonsWithManaged(workloads []reposcan.Workload, managed 
 		}
 		seen[slug] = workload.RootDir
 		if app, exists := bySlug[slug]; exists &&
-			(projectID == "" || app.ProjectID != projectID || app.WorkloadName != workload.Name || app.PreviewOfSlug != "") {
+			(projectID == "" || app.ProjectID != projectID || !member(app, workload) || app.PreviewOfSlug != "") {
 			reasons = append(reasons, fmt.Sprintf(
 				"workload %q conflicts with existing app slug %q outside this project member",
 				workload.Name, app.Slug))

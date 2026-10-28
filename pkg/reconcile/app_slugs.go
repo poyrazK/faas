@@ -26,12 +26,24 @@ func AppSlug(w reposcan.Workload) string {
 // so admission can reject a rename before any mutations.
 func PreserveAppSlugs(workloads []reposcan.Workload, apps []state.App, projectID string) []reposcan.Workload {
 	out := slices.Clone(workloads)
+	var projectApps []state.App
+	for _, app := range apps {
+		if app.ProjectID == projectID && app.Status != state.AppDeleted && app.PreviewOfSlug == "" {
+			projectApps = append(projectApps, app)
+		}
+	}
+	// A renamed service keeps its previous name's app (ADR-20261029090000).
+	renamed := RenamedWorkloads(workloads, projectApps)
 	for i := range out {
 		if out[i].AppSlug != "" || projectID == "" {
 			continue
 		}
-		for _, app := range apps {
-			if app.ProjectID == projectID && app.WorkloadName == out[i].Name && app.Status != state.AppDeleted && app.PreviewOfSlug == "" {
+		name := out[i].Name
+		if previous := out[i].RenamedFrom; renamed[previous] == name {
+			name = previous
+		}
+		for _, app := range projectApps {
+			if app.WorkloadName == name {
 				out[i].AppSlug = app.Slug
 				break
 			}

@@ -36,9 +36,12 @@ forwards over vmmd's bridge. Every call is counted in
   the project, or the dependent excluded it with `--exclude`. Run
   `gregale project get <project>` to see what each service calls.
 - **A service disappeared after a deploy.** It was removed from or renamed in
-  Compose. The plan listed the removal. The old app is soft-deleted; adding the
-  service back under the same name and deploying restores that app while its
-  row still exists.
+  Compose without `x-gregale-renamed-from`. The plan listed the removal. The old
+  app is soft-deleted; adding the service back under the same name and
+  deploying restores that app while its row still exists.
+- **A rename failed with a conflict.** The new name belonged to a service
+  deleted earlier, and the project still holds that member
+  (ADR-20261029090000). Restore and remove it, or choose another name.
 
 ## Wake-ahead
 
