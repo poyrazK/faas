@@ -929,7 +929,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "release",
 		DocSlug: "release",
-		Short:   "Cluster-shipped release bundle (release bundle|install|kgv|reconcile; PR-3 / ADR-110, PR-B / ADR-113)",
+		Short:   "Cluster-shipped release bundle (release bundle|install|kgv|reconcile|history; PR-3 / ADR-110, PR-B / ADR-113)",
 		Subcommands: []cliSub{
 			{
 				Name:  subReleaseBundle,
@@ -976,6 +976,15 @@ var cliCommands = []cliCommand{
 					{Name: "releases-root", Short: "releases root (default /opt/faas/releases)"},
 					{Name: "retention", Short: "minimum abandoned-row age (default 24h)"},
 					{Name: "dry-run", Short: "report eligible rows without deleting"},
+					{Name: "json", Short: "emit structured JSON to stdout"},
+				},
+			},
+			{
+				Name:  subReleaseHistory,
+				Short: "List release activations (deploys and rollbacks) on control-plane hosts, newest first (issue #574)",
+				Flags: []cliFlag{
+					{Name: "host", Short: "only this host (default: every host)"},
+					{Name: "limit", Short: "most rows to show, 1-1000 (default 20)"},
 					{Name: "json", Short: "emit structured JSON to stdout"},
 				},
 			},

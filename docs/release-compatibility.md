@@ -473,6 +473,49 @@ The unit lanes enforce the rules above in their workflows:
   expand-only schema, and their startup migration ignores ledger versions
   they do not embed.
 
+## Release history
+
+Every `deployctl deploy` and `deployctl rollback` on a control-plane host
+records one row in `platform_release_activations` (issue #574). The row
+holds the host, the kind, the release and the release it replaced, the
+commit, the `--only` services, the actor and the start and finish times.
+deployctl inserts it as `in_progress` under the host's deploy lock and
+finishes it with one of these statuses:
+
+- `succeeded`;
+- `failed`;
+- `rolled_back`: the deploy changed the host, failed, and was unwound to the
+  previous release.
+
+A deployctl that dies mid-activation leaves its row `in_progress`. The
+host's next activation marks it `interrupted`.
+
+To see what ran when:
+
+```
+gregalectl release history [--host NAME] [--limit 20] [--json]
+```
+
+It reads `FAAS_PG_DSN` (or `DATABASE_URL`, or `/etc/faas/sealed.env` as
+root), as the other `gregalectl release` commands do.
+
+- **Actor.** CD sets it to its workflow run (`FAAS_DEPLOY_ACTOR`). A deploy
+  run by hand records the operator's sudo or login name.
+- **Writes.** deployctl writes as the schema owner over the local socket.
+  Daemons can read the table but not change it: the migration and the
+  postgres role's `runtime-roles.sql` revoke their writes, as for the audit
+  log.
+- **Failures.** Recording is best effort. An unreachable Postgres costs a
+  deploy at most a few seconds and a warning on stderr; it never fails or
+  blocks the deploy.
+- **First rollout.** The table only exists once the release's migrations
+  have run, so the first deploy is recorded when it finishes.
+- **Not recorded:**
+  - a rerun that finds its release already active;
+  - a refused deploy (`--expect-current` mismatch);
+  - compute hosts, which have no local Postgres. Their current release is
+    `compute_nodes.release_id`.
+
 ## Not covered yet
 
 - guest-init decodes `job.json`, `app-task.json` and `execution.json` with

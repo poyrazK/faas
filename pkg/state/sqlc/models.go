@@ -10811,6 +10811,22 @@ type PlatformMailProducerOutbox struct {
 	DeploymentFailureAt              pgtype.Timestamptz
 }
 
+// Release activations (deploy, rollback) per control-plane host, written by deployctl as the schema owner. Read with gregalectl release history (issue #574).
+type PlatformReleaseActivation struct {
+	ID                pgtype.UUID
+	Host              string
+	Kind              string
+	ReleaseID         string
+	CommitSha         pgtype.Text
+	PreviousReleaseID pgtype.Text
+	Services          []string
+	Actor             string
+	Status            string
+	Detail            string
+	StartedAt         pgtype.Timestamptz
+	FinishedAt        pgtype.Timestamptz
+}
+
 type PlatformTenant struct {
 	ID          pgtype.UUID
 	AccountID   pgtype.UUID
