@@ -614,11 +614,11 @@ type ingestResponse struct {
 // metadata.gb_ram_hours, while mb_seconds remains in the event for exact
 // local reconciliation and operator auditability.
 //
-// The event is timestamped when it is sent, not at the window start: a Polar
-// meter counts only events stamped after its last reset (the subscription
-// start or renewal), so a window-start stamp loses the hour that straddles a
-// reset and anything delivered after it. The window stays in metadata and in
-// the external ID, which is what deduplicates retries.
+// The event is timestamped when it is sent, not at the window start: Polar
+// buckets events by timestamp into the meter period between two resets (the
+// subscription start and each renewal), so a backdated event can land in a
+// period whose usage line Polar has already computed. The window stays in
+// metadata and in the external ID, which is what deduplicates retries.
 func (p *Provider) PushUsageRecord(ctx context.Context, acct state.Account, hour time.Time, mbSeconds int64) error {
 	if mbSeconds < 0 {
 		return fmt.Errorf("polar: %w (account=%s)", ErrNegativeMBSeconds, acct.ID)

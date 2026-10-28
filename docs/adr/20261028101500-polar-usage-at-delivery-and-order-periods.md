@@ -10,17 +10,23 @@ when parallel changes pick the next number.
 
 ## Context
 
-A Polar sandbox run against `main` (2026-10-27) exercised checkout, a forced
-renewal with metered usage, and a failed renewal. It found three defects.
+A Polar sandbox run against `main` (2026-10-27) exercised checkout, forced
+renewals with metered usage, and a failed renewal. It found two defects and
+one risk.
 
-1. **Usage before a meter reset is never billed.** meterd sends each final UTC
-   hour of compute (and egress) overage as one Polar event stamped at the
-   hour's start. A Polar meter counts only events stamped after its last reset,
-   which happens when the subscription starts and at every renewal. The hour
-   that contains a reset is delivered after it, but stamped before it, so it
-   is dropped from both cycles. A renewal billed "0 consumed units" for 10 GB-h
-   of delivered overage. A meterd backlog near a renewal widens the loss to the
-   whole backlog (up to the 24-hour catch-up window).
+1. **Usage events are backdated into a meter period that may already be
+   billed.** meterd sends each final UTC hour of compute (and egress) overage
+   as one Polar event stamped at the hour's start, an hour or more after that
+   hour (up to the 24-hour catch-up window after an outage). Polar buckets
+   events by their timestamp into the meter period between two resets (the
+   subscription start and each renewal) and bills a meter period on a later
+   renewal order. In the sandbox, with renewals forced minutes apart, each
+   order's usage line covered the meter period before the one that had just
+   ended, so backdated events were still billed one order later (a first
+   reading of "0 consumed units" was this lag, not a loss). Whether that
+   margin holds for monthly cycles is Polar behaviour Gregale does not
+   control: an event stamped into a period whose usage line Polar has
+   already computed is never billed.
 2. **Every Polar invoice has an empty period, so credits never apply.** Polar
    puts the service period on each order line (`items[].start_timestamp` /
    `end_timestamp`), not on the order. The webhook parser read top-level fields
@@ -35,14 +41,16 @@ renewal with metered usage, and a failed renewal. It found three defects.
 ## Decision
 
 1. **Usage events are stamped when they are sent.** Compute and egress events
-   carry the delivery time as their Polar timestamp, so they land in the cycle
-   that is open when they arrive. The usage hour stays in `metadata.window_start`
-   and in the external ID, which still deduplicates retries. Usage that crosses
-   a renewal is billed on the next invoice instead of being lost. This matches
+   carry the delivery time as their Polar timestamp, so they always land in
+   the meter period that is open when they arrive, never in one Polar may
+   have closed. The usage hour stays in `metadata.window_start` and in the
+   external ID, which still deduplicates retries. Usage that crosses a renewal
+   is billed one meter period later instead of risking loss. This matches
    object-storage charge steps (ADR-20261027093220).
-2. **An order's period comes from its lines.** The recurring plan line spans
-   the service period; a metered line can have start == end. Lines with a real
-   span decide the period, then any line, then the subscription's current
+2. **An order's period comes from its lines.** The fixed plan line spans the
+   service period it pays for in advance; a metered line covers an earlier
+   meter period or has start == end. Fixed-price lines decide the period, then
+   any line with a real span, then any line, then the subscription's current
    period, then the creation time. Webhook projection and invoice-history
    import share one parser.
 3. **Credits offset the usage an invoice billed.** When an invoice has a
@@ -61,8 +69,11 @@ renewal with metered usage, and a failed renewal. It found three defects.
 
 - Operators add `order.created` and `order.updated` to the Polar webhook
   endpoint (docs/ops/billing-provider-switch.md lists the full set).
-- A Polar invoice's usage line covers usage delivered during the previous
-  cycle, which is usually the previous cycle's usage shifted by about an hour.
+- A Polar invoice's usage line covers usage delivered during an earlier meter
+  period, which is that period's usage shifted by about an hour.
+- Verified in the sandbox (2026-10-28, this change): an hour delivered after a
+  forced renewal was stamped after it and billed; a 100¢ credit offset the
+  10¢ usage line of the paid renewal and Polar refunded 10¢.
 - Invoices already stored with an empty period keep it until Polar redelivers
   them or the invoice-history import refreshes them.
 - Rejected: stamping events at the hour start clamped to the subscription's
