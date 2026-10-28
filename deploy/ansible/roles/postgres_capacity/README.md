@@ -81,7 +81,9 @@ therefore needs more connections than the figures above; re-derive the
 ceiling before enabling that mode on more than one node.
 
 `pkg/db.DaemonMinConnections` keeps a small warm floor of each listed
-daemon's connections open while idle (schedd: 4 per process), so wakes reuse
-backends that have already compiled the instance triggers. A floor never
-exceeds the daemon's maximum: it raises the idle session count, not the
-ceiling this role derives.
+daemon's connections open while idle (schedd: 4 per process, so wakes reuse
+backends that have already compiled the instance triggers;
+gatewayd-internal: 2, so a route-cache miss reads its host policy on a warm
+backend within the 250 ms ADR-570 budget). A floor never exceeds the
+daemon's maximum: it raises the idle session count, not the ceiling this
+role derives.

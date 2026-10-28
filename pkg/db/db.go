@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/reqbudget"
@@ -142,10 +143,18 @@ const defaultMaxConnections int32 = 4
 // minute ran on new backends. pgxpool hands out the most recently released
 // idle connection, so a small floor keeps the connections wakes reuse warm.
 //
+// gatewayd-internal answers a host that misses its route cache with a store
+// read bounded by api.TrafficPublicHostReadTimeout (250 ms, ADR-570), and a
+// read that runs out of time refuses the request (traffic_policy_unavailable).
+// On PostgreSQL 16 that read took 6-15 ms on a freshly dialed backend and
+// about 1 ms on a warm one; dialing and warming a backend under that budget
+// took 348 ms on a loaded node and refused a deployment's first request.
+//
 // A floor never exceeds the daemon's maximum, which postgres_capacity already
 // provisions: it keeps sessions idle but needs no extra capacity.
 var DaemonMinConnections = map[string]int32{
-	"schedd": 4,
+	"schedd":            4,
+	"gatewayd-internal": 2,
 }
 
 // warmFloorLifetimeJitter spreads the replacement of a floor's connections.
@@ -157,6 +166,57 @@ const warmFloorLifetimeJitter = 10 * time.Minute
 func daemonMinConnections(appName string) int32 {
 	name := strings.TrimPrefix(strings.TrimSpace(appName), "faas-")
 	return min(DaemonMinConnections[name], daemonMaxConnections(appName))
+}
+
+// DaemonConnectionWarmups is a statement each new connection of a daemon's
+// ordinary pool runs before the pool hands it out. Most of a new backend's
+// first-use cost is loading the catalog of the tables a read touches; one
+// statement over those tables pays it outside the request that would
+// otherwise wait for it. A floor's connections open in the background, so
+// their warm-up never runs on a request path.
+//
+// gatewayd-internal's statement covers the tables its public host policy read
+// touches (cmd/gatewayd-internal pgRouter.resolveHost): on PostgreSQL 16 the
+// first resolution on a dialed backend fell from 6-15 ms to 2-3 ms once they
+// were touched. A table missing here only leaves that read cold.
+var DaemonConnectionWarmups = map[string]string{
+	"gatewayd-internal": `select
+		(select 1 from apps limit 0),
+		(select 1 from accounts limit 0),
+		(select 1 from orgs limit 0),
+		(select 1 from resource_namespaces limit 0),
+		(select 1 from deployments limit 0),
+		(select 1 from deployment_aliases limit 0),
+		(select 1 from custom_domains limit 0),
+		(select 1 from tenant_surfaces limit 0),
+		(select 1 from tenant_hostnames limit 0),
+		(select 1 from project_environments limit 0)`,
+}
+
+// connectionWarmupTimeout bounds a warm-up so a slow database cannot hold a
+// new connection out of the pool.
+const connectionWarmupTimeout = 2 * time.Second
+
+// warmConnection returns the AfterConnect hook for appName's warm-up, or nil.
+// A warm-up is best effort: when it fails the connection joins the pool cold,
+// unless the failure closed it.
+func warmConnection(appName string) func(context.Context, *pgx.Conn) error {
+	statement := DaemonConnectionWarmups[strings.TrimPrefix(strings.TrimSpace(appName), "faas-")]
+	if statement == "" {
+		return nil
+	}
+	return runWarmup(statement)
+}
+
+func runWarmup(statement string) func(context.Context, *pgx.Conn) error {
+	return func(ctx context.Context, conn *pgx.Conn) error {
+		warmCtx, cancel := context.WithTimeout(ctx, connectionWarmupTimeout)
+		defer cancel()
+		if _, err := conn.Exec(warmCtx, statement); err != nil && conn.IsClosed() {
+			return fmt.Errorf("db: warm connection: %w", err)
+		}
+		return nil
+	}
 }
 
 // Shared with direct.go so both pools age and probe identically.
@@ -274,6 +334,7 @@ func poolConfig(dsn, appName string, readOnly bool) (*pgxpool.Config, error) {
 	}
 	cfg.MaxConnIdleTime = time.Minute
 	cfg.HealthCheckPeriod = healthCheckPeriod
+	cfg.AfterConnect = warmConnection(appName)
 	if appName != "" {
 		cfg.ConnConfig.RuntimeParams["application_name"] = appName
 	}
