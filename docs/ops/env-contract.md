@@ -498,6 +498,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_LOG_ARCHIVE_INTERVAL` | shared | `default` |  |  | `` |  |
 | `FAAS_LOG_ARCHIVE_KEY_ID` | shared | `default` |  |  | `` |  |
 | `FAAS_LOG_ARCHIVE_LOCAL_BYTES_MAX` | shared | `default` |  |  | `` |  |
+| `FAAS_LOG_ARCHIVE_PART_OBJECTS` | shared | `default` |  |  | `` | 1 makes apid's and vmmd's archive shippers upload one part object per flush instead of re-uploading the whole day (ADR-20261028110000); set only once every gatewayd-internal reads parts |
 | `FAAS_LOG_ARCHIVE_REGION` | shared | `default` |  |  | `` |  |
 | `FAAS_LOG_ARCHIVE_RETENTION_DAYS` | shared | `default` |  |  | `` |  |
 | `FAAS_LOG_ARCHIVE_SECRET` | shared | `default` |  |  | `` |  |

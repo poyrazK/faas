@@ -374,7 +374,6 @@ func (h *ArchiveLogsHandler) serveArchiveWithAccount(ctx_ context.Context, w htt
 		renderArchiveTerminal(w, flusher, archiveReasonMissing)
 		return
 	}
-	key := archiveObjectKey(instance, day)
 	identity := resolveRuntimeLogIdentity(ctx_, h.Store, scheddgrpc.LogFrame{InstanceID: instance}, accountID, appID, "", make(map[string]api.PlatformIdentity))
 	backstop := h.Backstop
 	if backstop <= 0 {
@@ -393,7 +392,8 @@ func (h *ArchiveLogsHandler) serveArchiveWithAccount(ctx_ context.Context, w htt
 	// whenever this handler returns.
 	streamCtx, cancel := context.WithCancel(ctx_)
 	defer cancel()
-	body, err := h.S3.OpenObject(streamCtx, key)
+	// The whole-day object, then the day's part objects (ADR-20261028110000).
+	body, err := h.S3.OpenDay(streamCtx, instance, day)
 	if err != nil {
 		// 4xx → archive_missing; 5xx / network → archive_degraded.
 		h.logArchiveReadError(appID, instance, day, err)
@@ -490,22 +490,6 @@ func (h *ArchiveLogsHandler) instanceInScope(ctx context.Context, accountID, app
 		return false, fmt.Errorf("parse archive date %q: %w", day, err)
 	}
 	return h.Scope.InstanceLogsOwnedByApp(ctx, accountID, appID, instance, start.AddDate(0, 0, -1), start.AddDate(0, 0, 2))
-}
-
-// archiveObjectKey mirrors pkg/logarchive.Shipper.bucketKey's
-// layout (the shipper writes the same shape) so the read-back
-// path lands on the same S3 prefix without a constant-table
-// trip. The day shape is YYYY-MM-DD; we slice into year / month
-// for the {YYYY}/{MM}/{DD} layout. A day shorter than 10 chars
-// (defensive — the upstream validator caps at exactly 10) is
-// rendered flat into a single segment so a malformed caller
-// can't sneak a `/` into the path.
-func archiveObjectKey(instance, day string) string {
-	if len(day) < 10 {
-		return fmt.Sprintf("faas-logs/%s/%s.jsonl.gz", instance, day)
-	}
-	return fmt.Sprintf("faas-logs/%s/%s/%s/%s.jsonl.gz",
-		instance, day[:4], day[5:7], day[:10])
 }
 
 // renderArchiveLine parses one spoolLine JSON blob and renders
