@@ -97,6 +97,50 @@ func TestDeployTokensReachEachRoute(t *testing.T) {
 	}
 }
 
+// --json prints the API objects: one NDJSON line per listed token, and the
+// minted token with its plaintext.
+func TestDeployTokensJSONOutput(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			_ = json.NewEncoder(w).Encode(api.DeployTokenResponse{ID: "dt-2", Prefix: "fdt_cd", Plaintext: "fdt_secret"})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(api.ListDeployTokensResponse{Tokens: []api.DeployTokenResponse{{ID: "dt-1"}, {ID: "dt-0"}}})
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_test_x")
+	for _, tc := range []struct {
+		args []string
+		want []string
+	}{
+		{args: []string{"--json", "deploy-tokens", "list", "--app", "web"}, want: []string{"dt-1", "dt-0"}},
+		{args: []string{"--json", "deploy-tokens", "add", "--app", "web"}, want: []string{"dt-2"}},
+	} {
+		main.ResetJSONOut(t)
+		out, restore := main.CaptureStdout(t)
+		code := main.Run(tc.args)
+		restore()
+		if code != 0 {
+			t.Fatalf("%v exit %d:\n%s", tc.args, code, out.String())
+		}
+		var got []string
+		dec := json.NewDecoder(strings.NewReader(out.String()))
+		for dec.More() {
+			var token api.DeployTokenResponse
+			if err := dec.Decode(&token); err != nil {
+				t.Fatalf("%v printed non-JSON output: %v\n%s", tc.args, err, out.String())
+			}
+			got = append(got, token.ID)
+		}
+		if strings.Join(got, ",") != strings.Join(tc.want, ",") {
+			t.Fatalf("%v printed tokens %v, want %v:\n%s", tc.args, got, tc.want, out.String())
+		}
+	}
+}
+
 func TestDeployTokensRejectBadArgumentsWithoutACall(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		t.Errorf("no request expected for invalid arguments")
