@@ -224,7 +224,10 @@ company apps' rules. An integration that predates authorship counts as the app
 creator's. Drains an application standard manages are left alone. The removal's
 activity entry says how many were paused, and an owner or admin re-points and
 re-enables them. Their account-scope release webhooks stop receiving the
-company's deployment, rollout and GitOps events.
+company's deployment, rollout and GitOps events. Company apps they created stop
+billing customers through their account: their billing runs skip those
+customers, sign-up closes and the customer portal is unavailable (see
+[API monetization](api-monetization.md#company-apps)).
 
 An in-flight shared-app or organization mutation must still hold its original
 membership revision when its database transaction begins. A change that already
