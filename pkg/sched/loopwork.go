@@ -57,13 +57,16 @@ const (
 	workWorkflowSchedules    workKind = "workflow_schedules"
 	workTriggerDispatch      workKind = "trigger_dispatch"
 	workQueuePushDispatch    workKind = "queue_push_dispatch"
-	workEventFanout          workKind = "event_fanout"
-	workReaper               workKind = "reaper"
-	workRehearsalFault       workKind = "rehearsal_worker_fault"
-	workRehearsalSuspend     workKind = "rehearsal_suspend_resume"
-	workRehearsalSweep       workKind = "rehearsal_sweep"
-	workWorkerRecovery       workKind = "worker_recovery"
-	workWorkerRecoverySweep  workKind = "worker_recovery_sweep"
+	// workBrokerTriggerDispatch runs one external broker trigger's batch;
+	// its key is the trigger, so a trigger has one batch in flight.
+	workBrokerTriggerDispatch workKind = "broker_trigger_dispatch"
+	workEventFanout           workKind = "event_fanout"
+	workReaper                workKind = "reaper"
+	workRehearsalFault        workKind = "rehearsal_worker_fault"
+	workRehearsalSuspend      workKind = "rehearsal_suspend_resume"
+	workRehearsalSweep        workKind = "rehearsal_sweep"
+	workWorkerRecovery        workKind = "worker_recovery"
+	workWorkerRecoverySweep   workKind = "worker_recovery_sweep"
 	// workAdoptionReport applies restarted vmmds' adoption reports.
 	workAdoptionReport workKind = "adoption_report"
 	// workAppWake and workRuntimeConfigRestart deliver the durable app_wake
@@ -77,7 +80,7 @@ const (
 var workKinds = []workKind{
 	workServiceRecovery, workServiceRecoverySweep,
 	workPrime, workRestart, workAppReconcile, workDeploymentReconcile, workJobCancel, workJobDispatch, workPrimeRecovery,
-	workWorkflowDispatch, workWorkflowSchedules, workTriggerDispatch, workQueuePushDispatch, workEventFanout,
+	workWorkflowDispatch, workWorkflowSchedules, workTriggerDispatch, workQueuePushDispatch, workBrokerTriggerDispatch, workEventFanout,
 	workReaper, workAdoptionReport, workRehearsalFault, workRehearsalSuspend, workRehearsalSweep, workWorkerRecovery, workWorkerRecoverySweep,
 	workAppWake, workRuntimeConfigRestart,
 }
@@ -95,9 +98,16 @@ const (
 )
 
 // workSpec is one kind's budget and overflow behaviour.
+//
+// rerunCoalesced makes a submit that coalesces into an in-flight task ask
+// for one more pass when that task finishes, instead of being dropped. Use
+// it where a wake carries news the running pass may already have read past:
+// event fanout's event_published arrives while a sweep runs, and without the
+// extra pass the new event waits for the safety ticker.
 type workSpec struct {
-	slots    int
-	overflow overflowPolicy
+	slots          int
+	overflow       overflowPolicy
+	rerunCoalesced bool
 }
 
 // workSpecs is the per-kind policy table.
@@ -115,7 +125,8 @@ type workSpec struct {
 // coalesces ticks, and a dropped tick is retried the next minute. Workflow
 // dispatch gets four slots for independent runs; trigger polling and event
 // fanout get one slot each because their tick work is already bounded and
-// durable state makes the next tick a safe retry.
+// durable state makes the next tick a safe retry. Event fanout reruns once
+// after a pass during which an event_published wake arrived.
 var workSpecs = map[workKind]workSpec{
 	workServiceRecovery:      {slots: api.ServiceRecoveryConcurrentApps, overflow: overflowDrop},
 	workServiceRecoverySweep: {slots: 1, overflow: overflowDrop},
@@ -134,7 +145,10 @@ var workSpecs = map[workKind]workSpec{
 	// Push-queue lanes (ADR-972) claim durable leases; a dropped lane is
 	// retried by the next trigger tick.
 	workQueuePushDispatch: {slots: api.QueuePushDispatchSlotsPerNode, overflow: overflowDrop},
-	workEventFanout:       {slots: 1, overflow: overflowDrop},
+	// Broker trigger lanes (ADR-20261027162741): a dropped or coalesced
+	// lane is resubmitted by the next trigger tick.
+	workBrokerTriggerDispatch: {slots: api.BrokerTriggerDispatchSlotsPerNode, overflow: overflowDrop},
+	workEventFanout:           {slots: 1, overflow: overflowDrop, rerunCoalesced: true},
 	// One reaper tick at a time, sequential inside, as before it moved off
 	// the loop. A tick that fires while the previous one still runs
 	// coalesces into it; the next tick re-reads the instance table.
@@ -167,7 +181,10 @@ type workPool struct {
 
 	mu       sync.Mutex
 	inFlight map[workKind]map[string]struct{}
-	closing  bool
+	// rerun holds the latest coalesced submit per in-flight key of a
+	// rerunCoalesced kind; the running task takes it when its pass ends.
+	rerun   map[workKind]map[string]func()
+	closing bool
 
 	// wg tracks dispatched workers so drain can wait for them. Tests
 	// need this because submit moves work off the caller's goroutine.
@@ -180,10 +197,12 @@ func newWorkPool(log *slog.Logger, ops *wire.OpsMetrics) *workPool {
 		ops:      ops,
 		slots:    make(map[workKind]chan struct{}, len(workSpecs)),
 		inFlight: make(map[workKind]map[string]struct{}, len(workSpecs)),
+		rerun:    make(map[workKind]map[string]func(), len(workSpecs)),
 	}
 	for kind, spec := range workSpecs {
 		p.slots[kind] = make(chan struct{}, spec.slots)
 		p.inFlight[kind] = make(map[string]struct{})
+		p.rerun[kind] = make(map[string]func())
 	}
 	return p
 }
@@ -191,8 +210,9 @@ func newWorkPool(log *slog.Logger, ops *wire.OpsMetrics) *workPool {
 // submit runs fn off the caller's goroutine.
 //
 // key coalesces: while a task with the same (kind, key) is in flight, a
-// second submit is a no-op counted as "coalesced". An empty key disables
-// coalescing for that call.
+// second submit is a no-op counted as "coalesced", or for a rerunCoalesced
+// kind a request for one more pass once the running one ends. An empty key
+// disables coalescing for that call.
 //
 // Returns the outcome it recorded, so callers and tests can assert on it
 // without scraping Prometheus.
@@ -211,6 +231,9 @@ func (p *workPool) submit(kind workKind, key string, fn func()) string {
 	}
 	if key != "" {
 		if _, exists := p.inFlight[kind][key]; exists {
+			if workSpecs[kind].rerunCoalesced {
+				p.rerun[kind][key] = fn
+			}
 			p.mu.Unlock()
 			p.observe(kind, "coalesced")
 			if p.log != nil {
@@ -236,12 +259,28 @@ func (p *workPool) submit(kind workKind, key string, fn func()) string {
 		return true
 	}
 
-	run := func() {
+	// run executes fn, then any pass a coalesced submit asked for. release
+	// frees the task's slot (nil when it runs inline without one). Ending
+	// the task drops its key and frees its slot under mu, so a submit sees
+	// either a running task to coalesce into or a free slot, never the
+	// moment between, where it used to be dropped as saturated.
+	run := func(release func()) {
 		started := time.Now()
-		defer func() {
+		finished := false
+		finish := func() { // caller holds p.mu
 			if key != "" {
-				p.mu.Lock()
 				delete(p.inFlight[kind], key)
+				delete(p.rerun[kind], key)
+			}
+			if release != nil {
+				release()
+			}
+			finished = true
+		}
+		defer func() {
+			if !finished {
+				p.mu.Lock()
+				finish()
 				p.mu.Unlock()
 			}
 			// A panicking task must not take the daemon down or leak
@@ -256,7 +295,20 @@ func (p *workPool) submit(kind workKind, key string, fn func()) string {
 			p.observeDuration(kind, time.Since(started))
 			p.wg.Done()
 		}()
-		fn()
+		for {
+			fn()
+			p.mu.Lock()
+			next := p.rerun[kind][key]
+			if next == nil || p.closing {
+				finish()
+				p.mu.Unlock()
+				return
+			}
+			delete(p.rerun[kind], key)
+			p.mu.Unlock()
+			p.observe(kind, "rerun")
+			fn = next
+		}
 	}
 
 	slots := p.slots[kind]
@@ -267,10 +319,7 @@ func (p *workPool) submit(kind workKind, key string, fn func()) string {
 			p.observe(kind, "dropped")
 			return "dropped"
 		}
-		go func() {
-			defer func() { <-slots }()
-			run()
-		}()
+		go run(func() { <-slots })
 		p.observe(kind, "queued")
 		return "queued"
 	default:
@@ -286,7 +335,7 @@ func (p *workPool) submit(kind workKind, key string, fn func()) string {
 				"kind", string(kind), "key", key, "slots", workSpecs[kind].slots)
 		}
 		p.observe(kind, "inline")
-		run()
+		run(nil)
 		return "inline"
 	}
 	if p.log != nil {

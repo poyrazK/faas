@@ -94,6 +94,17 @@ The Go client exposes `GetOrgBillingStatus`, `GetOrgUsage`, `ListOrgInvoices`,
 and Python clients include these operations. Paid plan changes remain pending
 until the provider confirms them.
 
+## Billing status
+
+An organization follows the account dunning ladder (spec §4.7). While it is
+past due its apps keep serving and members keep their roles: they read,
+configure, rotate secrets, and revoke or remove credentials and integrations
+as usual, across apps, projects and managed PostgreSQL. As for a past-due
+personal account, deploys are refused with 402 `billing_past_due` and dev
+bridges do not relay. Once
+suspended, its apps park and the organization's resources answer 402 until
+billing is resolved.
+
 ## Organization projects and environments
 
 Use `/v1/orgs/{organization}/projects` for company projects. Ownership comes from

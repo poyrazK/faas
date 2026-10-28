@@ -60,14 +60,14 @@ func TestCmdInit_AllTemplatesMaterialize(t *testing.T) {
 		{
 			name:      "customer-platform",
 			files:     []string{"app/server.js", "app/http.js", "app/store.js", "app/schema.sql", "app/migrate.js", "tools/customer.js", "tools/client.js", "Procfile", "Dockerfile", "package.json", "package-lock.json", "README.md"},
-			readmeHas: []string{"platform_tenant_required", "DATABASE_URL", "BYPASSRLS", "gregale secrets set", "retry", "suspend"},
+			readmeHas: []string{"platform_tenant_required", "DATABASE_URL", "BYPASSRLS", "gregale env set", "retry", "suspend"},
 		},
 		{
 			name:  "s3-uploader",
 			files: []string{"handler.js", "package.json", "README.md"},
 			readmeHas: []string{
 				"S3_BUCKET",
-				"gregale secrets set",
+				"gregale env set",
 				"--create-only",
 				"AWS S3", // mentions S3-compatible provider
 			},
@@ -77,7 +77,7 @@ func TestCmdInit_AllTemplatesMaterialize(t *testing.T) {
 			files: []string{"handler.js", "package.json", "README.md"},
 			readmeHas: []string{
 				"SLACK_SIGNING_SECRET",
-				"gregale secrets set",
+				"gregale env set",
 				"--create-only",
 				"HMAC-SHA256",
 			},
@@ -88,7 +88,7 @@ func TestCmdInit_AllTemplatesMaterialize(t *testing.T) {
 			readmeHas: []string{
 				"MIGRATION_DATABASE_URL",
 				"DATABASE_URL",
-				"gregale secrets set",
+				"gregale env set",
 				"--create-only",
 				"Neon",
 			},
@@ -96,7 +96,7 @@ func TestCmdInit_AllTemplatesMaterialize(t *testing.T) {
 		{
 			name:      "rest-api-postgres-python",
 			files:     []string{"handler.py", "app.py", "database.py", "migrate.py", "schema.sql", "Procfile", "gregale.yaml", "Dockerfile", "requirements.txt", "runtime/__init__.py", "runtime/_binding_client_runtime.py", "runtime/async_postgres_pool_runtime.py", "runtime/async_secret_reload_runtime.py", "README.md"},
-			readmeHas: []string{"DATABASE_URL", "MIGRATION_DATABASE_URL", "--create-only", "Neon", "after_restore", "gregale secrets set"},
+			readmeHas: []string{"DATABASE_URL", "MIGRATION_DATABASE_URL", "--create-only", "Neon", "after_restore", "gregale env set"},
 		},
 		{
 			name:  "secret-reload-node",
@@ -104,7 +104,7 @@ func TestCmdInit_AllTemplatesMaterialize(t *testing.T) {
 			readmeHas: []string{
 				"SIGHUP",
 				"DATABASE_URL",
-				"gregale secrets rotate",
+				"gregale env rotate",
 				"--wait-for-ack",
 			},
 		},
@@ -115,7 +115,7 @@ func TestCmdInit_AllTemplatesMaterialize(t *testing.T) {
 				"QSTASH_CURRENT_SIGNING_KEY",
 				"QSTASH_NEXT_SIGNING_KEY",
 				"UPSTASH_REDIS_REST_URL",
-				"gregale secrets set",
+				"gregale env set",
 				"--create-only",
 			},
 		},
@@ -125,7 +125,7 @@ func TestCmdInit_AllTemplatesMaterialize(t *testing.T) {
 			readmeHas: []string{
 				"WEBHOOK_SECRET",
 				"X-Webhook-Secret",
-				"gregale secrets set",
+				"gregale env set",
 			},
 		},
 		{
@@ -134,7 +134,7 @@ func TestCmdInit_AllTemplatesMaterialize(t *testing.T) {
 			readmeHas: []string{
 				"OPENAI_API_KEY",
 				"ANTHROPIC_API_KEY",
-				"gregale secrets set",
+				"gregale env set",
 				"--create-only",
 			},
 		},
@@ -143,7 +143,7 @@ func TestCmdInit_AllTemplatesMaterialize(t *testing.T) {
 			files: []string{"handler.js", "package.json", "gregale.yaml", "README.md"},
 			readmeHas: []string{
 				"event_triggers",
-				"gregale events publish",
+				"gregale event publish",
 				"invoice.paid",
 			},
 		},
@@ -294,9 +294,9 @@ func TestCmdInit_EventWorkerQuickstartContract(t *testing.T) {
 	steps := []string{
 		"gregale init --template event-worker",
 		"gregale deploy --name invoice-worker",
-		"gregale events publish billing.stripe invoice.paid",
-		"gregale invocations list --limit 10",
-		"gregale events subscriptions invoice-worker",
+		"gregale event publish billing.stripe invoice.paid",
+		"gregale invocation list --limit 10",
+		"gregale event subscription list invoice-worker",
 	}
 	last := -1
 	for _, step := range steps {

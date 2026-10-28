@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "image": "agent-base",
+  "presets": [
+    {
+      "name": "codex",
+      "harness": "Codex CLI",
+      "package": "@openai/codex",
+      "version": "0.163.0",
+      "license": "Apache-2.0",
+      "binary": "/usr/local/bin/codex",
+      "run": ["codex", "exec", "--skip-git-repo-check", "-s", "workspace-write", "{prompt}"],
+      "models": {"openai": "OPENAI_BASE_URL"},
+      "default_ram_mb": 1024
+    },
+    {
+      "name": "opencode",
+      "harness": "OpenCode",
+      "package": "opencode-ai",
+      "version": "1.19.3",
+      "license": "MIT",
+      "binary": "/usr/local/bin/opencode",
+      "run": ["opencode", "run", "{prompt}"],
+      "models": {"anthropic": "ANTHROPIC_BASE_URL"},
+      "default_ram_mb": 1024
+    },
+    {
+      "name": "claude-code",
+      "harness": "Claude Code (the unmodified published binary)",
+      "package": "@anthropic-ai/claude-code",
+      "version": "2.1.302",
+      "license": "Proprietary; Anthropic Commercial Terms of Service",
+      "binary": "/usr/local/bin/claude",
+      "run": ["claude", "-p", "{prompt}", "--output-format", "json", "--permission-mode", "acceptEdits"],
+      "models": {"anthropic": "ANTHROPIC_BASE_URL"},
+      "env": {"DISABLE_AUTOUPDATER": "1", "USE_BUILTIN_RIPGREP": "0"},
+      "default_ram_mb": 1024
+    }
+  ]
+}

@@ -49,7 +49,8 @@ native_e2e_phase_files() {
     # Source -> builderd -> builder microVM -> OCI image. The most expensive
     # phase by far (a stalled build rides out its 10-minute budget), and the
     # one everything below depends on.
-    build) printf '%s\n' build_metal_test.go catalog_runtime_metal_test.go binary_function_metal_test.go ;;
+    build) printf '%s\n' build_metal_test.go catalog_runtime_metal_test.go binary_function_metal_test.go \
+      dockerfile_healthcheck_metal_test.go ;;
     # Deploy and safe-release paths: image, canary progression, healthcheck,
     # rollback, port override and secrets.
     deploy) printf '%s\n' \
@@ -72,6 +73,7 @@ native_e2e_phase_files() {
       deploy_wake_metal_test.go \
       safe_release_drill_metal_test.go \
       release_guards_drill_metal_test.go \
+      release_guards_ga_drill_metal_test.go \
       dev_loop_metal_test.go \
       direct_oci_autoscale_metal_test.go \
       direct_oci_fullrootfs_metal_test.go \
@@ -86,6 +88,7 @@ native_e2e_phase_files() {
       workload_identity_metal_test.go \
       image_process_identity_metal_test.go \
       source_deploy_wake_metal_test.go \
+      shared_runtime_rollback_metal_test.go \
       secrets_image_deploy_e2e_test.go \
       object_storage_native_metal_test.go \
       queue_binding_native_metal_test.go \

@@ -2,6 +2,7 @@ package main_test
 
 import (
 	"bytes"
+	"slices"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -18,30 +19,30 @@ func enableEveryCLIFeature(t *testing.T) {
 	t.Setenv("FAAS_FRONTEND_HOSTING_ENABLED", "1")
 }
 
-func TestCliHelpGroupsCoverCustomerCommands(t *testing.T) {
+// cliTreeUnplacedCommands are customer commands the command tree does not
+// place yet; root help lists them under "More". The list only shrinks.
+var cliTreeUnplacedCommands = []string{
+	"auth", "diff", "man",
+}
+
+// Every customer command is a shortcut, a noun, or reached through a noun
+// (ADR-20261026145832), so a new command has to take a place in the tree.
+func TestCliTreePlacesCustomerCommands(t *testing.T) {
 	enableEveryCLIFeature(t)
 	customer := map[string]bool{}
 	for _, command := range main.CustomerCliCommands() {
 		customer[command.Name] = true
-		if group := main.CliHelpGroup(command); group == "" || group == "Other" {
-			t.Errorf("customer command %q has no help group; add it to cliHelpGroups", command.Name)
+		placed, allowed := main.CliTreePlaces(command.Name), slices.Contains(cliTreeUnplacedCommands, command.Name)
+		switch {
+		case !placed && !allowed:
+			t.Errorf("customer command %q has no place in the command tree; add a noun path for it in cli_tree.go", command.Name)
+		case placed && allowed:
+			t.Errorf("%q now has a place in the command tree; remove it from cliTreeUnplacedCommands", command.Name)
 		}
 	}
-	seen := map[string]string{}
-	for _, group := range *main.CliHelpGroups {
-		for _, name := range group.Commands {
-			if previous, ok := seen[name]; ok {
-				t.Errorf("%q is listed in both %q and %q", name, previous, group.Title)
-			}
-			seen[name] = group.Title
-			if !customer[name] {
-				t.Errorf("help group %q lists %q, which is not a customer command", group.Title, name)
-			}
-		}
-	}
-	for _, command := range main.AdvancedCliCommands() {
-		if group := main.CliHelpGroup(command); group != "" {
-			t.Errorf("operator command %q is in customer group %q", command.Name, group)
+	for _, name := range cliTreeUnplacedCommands {
+		if !customer[name] {
+			t.Errorf("cliTreeUnplacedCommands lists %q, which is not a customer command", name)
 		}
 	}
 }

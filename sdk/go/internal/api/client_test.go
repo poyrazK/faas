@@ -248,6 +248,7 @@ func TestDo_MutatingCallsCarryIdempotencyKey(t *testing.T) {
 			return err
 		}},
 		{"DeleteCron", func(c *Client) error { return c.DeleteCron(context.Background(), "1") }},
+		{"FireCron", func(c *Client) error { _, err := c.FireCron(context.Background(), "1"); return err }},
 		{"CreateKey", func(c *Client) error { _, err := c.CreateKey(context.Background(), "lbl", nil); return err }},
 		{"DeleteKey", func(c *Client) error { return c.DeleteKey(context.Background(), "1") }},
 		{"SetSecret", func(c *Client) error { return c.SetSecret(context.Background(), "x", "K", "v") }},
@@ -334,6 +335,12 @@ func TestDo_GETCallsDoNotCarryIdempotencyKey(t *testing.T) {
 			return err
 		}},
 		{"ListCrons", func(c *Client) error { _, err := c.ListCrons(context.Background(), "x"); return err }},
+		{"GetCron", func(c *Client) error { _, err := c.GetCron(context.Background(), "1"); return err }},
+		{"ListCronRuns", func(c *Client) error { _, err := c.ListCronRuns(context.Background(), "1", "", 0); return err }},
+		{"GetFireCronRequest", func(c *Client) error {
+			_, err := c.GetFireCronRequest(context.Background(), "r1")
+			return err
+		}},
 		{"ListKeys", func(c *Client) error { _, err := c.ListKeys(context.Background()); return err }},
 		{"ListSecrets", func(c *Client) error { _, err := c.ListSecrets(context.Background(), "x"); return err }},
 		{"GetUsage", func(c *Client) error { _, err := c.GetUsage(context.Background(), ""); return err }},
@@ -487,11 +494,9 @@ func TestDo_NonProblemErrorFallsBack(t *testing.T) {
 
 // --- ListCrons URL building -------------------------------------------------
 
-// TestListCrons_OmitsQueryWhenSlugEmpty pins the spec/SDK alignment
-// (api/openapi.yaml lines 670-686 — listCrons documents zero query
-// parameters; cmd/apid/handlers_ext.go listCrons ignores the query
-// anyway). The SDK used to always emit "?slug="; with empty slug
-// the wire path must be exactly "/v1/crons" with no query string.
+// TestListCrons_OmitsQueryWhenSlugEmpty: listCrons documents an optional
+// ?slug= filter; with an empty slug the wire path must be exactly
+// "/v1/crons", so the server lists every cron on the account.
 func TestListCrons_OmitsQueryWhenSlugEmpty(t *testing.T) {
 	var gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -527,6 +532,49 @@ func TestListCrons_PassesSlugWhenNonEmpty(t *testing.T) {
 	}
 	if gotPath != "/v1/crons?slug=my-app" {
 		t.Errorf("RequestURI = %q, want %q", gotPath, "/v1/crons?slug=my-app")
+	}
+	if _, err := c.ListCrons(context.Background(), "a&b=c"); err != nil {
+		t.Fatalf("ListCrons: %v", err)
+	}
+	if gotPath != "/v1/crons?slug=a%26b%3Dc" {
+		t.Errorf("RequestURI = %q: the slug must be query-escaped", gotPath)
+	}
+}
+
+// TestCronRunCalls pins the wire shape of the manual-run and history calls.
+func TestCronRunCalls(t *testing.T) {
+	var gotMethod, gotURI string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotURI = r.Method, r.URL.RequestURI()
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/v1/crons/c1/run":
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte(`{"request_id":"r1","cron_id":"c1","status":"pending"}`))
+		case r.URL.Path == "/v1/cron-fire-now-requests/r1":
+			_, _ = w.Write([]byte(`{"request_id":"r1","cron_id":"c1","status":"failed","requested_at":"2026-10-27T10:00:00Z","error":"invoke: 500"}`))
+		default:
+			_, _ = w.Write([]byte(`{"runs":[{"id":"i1","started_at":"2026-10-27T10:00:00Z","outcome":"timeout","attempts":1}]}`))
+		}
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL, "fp_test")
+	ctx := context.Background()
+
+	fired, err := c.FireCron(ctx, "c1")
+	if err != nil || gotMethod != http.MethodPost || fired.RequestID != "r1" || fired.Status != "pending" {
+		t.Fatalf("FireCron = %+v, %v (%s %s)", fired, err, gotMethod, gotURI)
+	}
+	req, err := c.GetFireCronRequest(ctx, "r1")
+	if err != nil || req.Status != "failed" || req.Error == nil || *req.Error != "invoke: 500" || req.FinishedAt != nil {
+		t.Fatalf("GetFireCronRequest = %+v, %v", req, err)
+	}
+	runs, err := c.ListCronRuns(ctx, "c1", "i9", 5)
+	if err != nil || gotURI != "/v1/crons/c1/runs?before=i9&limit=5" {
+		t.Fatalf("ListCronRuns: %v, RequestURI = %q", err, gotURI)
+	}
+	if len(runs.Runs) != 1 || runs.Runs[0].Outcome != CronRunTimeout || runs.Runs[0].DurationMs != nil {
+		t.Fatalf("ListCronRuns = %+v", runs)
 	}
 }
 

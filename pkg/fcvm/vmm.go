@@ -4571,6 +4571,11 @@ func (v *JailerVMM) WaitBuilderReady(ctx context.Context, instance string, deadl
 // DeleteWarmSnapshot removes the memory and vmstate objects for a builder
 // warm capture. Deletion is idempotent because expiry and restore failure can
 // race a daemon restart or a previous cleanup attempt.
+//
+// A delete the backend refuses for good (GitHub Packages keeps versions past
+// its download threshold; some registries cannot delete at all) is final, as
+// imaged's snapshot GC treats it: the object stays for manual retention and
+// builderd does not retry it every sweep (issue #2673).
 func (v *JailerVMM) DeleteWarmSnapshot(ctx context.Context, storageKey, vmstateStorageKey string) error {
 	if v == nil || v.storage == nil {
 		return fmt.Errorf("vmm: delete warm snapshot: storage backend unavailable")
@@ -4581,7 +4586,13 @@ func (v *JailerVMM) DeleteWarmSnapshot(ctx context.Context, storageKey, vmstateS
 		if key == "" {
 			continue
 		}
-		if err := v.storage.Delete(ctx, key); err != nil && !storage.IsNotFound(err) {
+		err := v.storage.Delete(ctx, key)
+		switch {
+		case err == nil || storage.IsNotFound(err):
+		case errors.Is(err, storage.ErrDeleteQuarantined) || errors.Is(err, storage.ErrDeleteUnsupported):
+			slog.Warn("vmm: warm snapshot object kept; the backend refuses to delete it",
+				"key", key, "disposition", "remote_quarantine_manual_retention", "err", err)
+		default:
 			errs = append(errs, fmt.Errorf("delete %q: %w", key, err))
 		}
 	}

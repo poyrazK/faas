@@ -89,9 +89,9 @@ Useful follow-ups:
 
 ```bash
 gregale logs my-api --follow
-gregale metrics my-api
+gregale metric my-api
 gregale open my-api
-gregale capabilities
+gregale feature list
 ```
 
 Apps park when idle and wake on the next request; this saves idle cost but the

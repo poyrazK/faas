@@ -1763,3 +1763,13 @@ Bounds and limits:
   consecutive releases have run with every member reporting the wiring, and
   not before rc.297. That is a separate change, with the release-compatibility
   tests updated to match.
+
+### Amendment: the binding guard is scoped to the hostnames a write changes (2026-10-27)
+
+[ADR 20261027163626](20261027163626-traffic-binding-guard-per-host.md)
+replaces the exclusive `gregale.traffic.global-routes.v1` lock with
+hierarchical per-name locks. The global key becomes their shared root. The
+guard analyses only hostnames whose claim changes, against the owned rules and
+the route candidates that can match them. The write-time guarantee, ceilings,
+error codes and the 2 s phase bound are unchanged. Until its switch is on, the
+sections above describe production.

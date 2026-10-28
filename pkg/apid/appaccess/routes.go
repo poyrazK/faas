@@ -34,6 +34,8 @@ var routeActions = map[string]authz.OrgAction{
 	"PUT /v1/apps/{slug}/secrets/{key}":               authz.OrgActionManageAppSecrets,
 	"DELETE /v1/apps/{slug}/secrets/{key}":            authz.OrgActionManageAppSecrets,
 	"POST /v1/apps/{slug}/secrets/{key}/rotate":       authz.OrgActionManageAppSecrets,
+	"POST /v1/apps/{slug}/secret-requests":            authz.OrgActionManageAppSecrets,
+	"POST /v1/apps/{slug}/secret-requests/status":     authz.OrgActionManageAppSecrets,
 	"GET /v1/apps/{slug}/security":                    authz.OrgActionReadApp,
 	"PATCH /v1/apps/{slug}/security":                  authz.OrgActionManageAppSecurity,
 	"POST /v1/apps/{slug}/security/recover":           authz.OrgActionDeployApp,

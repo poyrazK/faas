@@ -10326,6 +10326,27 @@
     "kind": "operational"
   },
   {
+    "table": "mcp_bridge_leases",
+    "columns": [
+      "bridge",
+      "epoch",
+      "expires_at",
+      "holder"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "mcp_bridge_state",
+    "columns": [
+      "bridge",
+      "epoch",
+      "namespace",
+      "sealed",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "mcp_catalog_monitors",
     "columns": [
       "account_id",

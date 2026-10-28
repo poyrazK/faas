@@ -5970,9 +5970,12 @@ func (m *Manager) bringUpScanCheck(ctx context.Context, baseKey string) error {
 	scanKey := wire.ScanKeyForBaseKey(baseKey)
 	if err := m.ensureBaseGeneration(ctx, baseKey, scanKey); err != nil {
 		m.imageScanMetrics.ObserveBaseScanRefusal(baseKey, "generation_unavailable")
+		if m.log != nil {
+			m.log.Warn("fcvm: runtime base could not adopt its configured generation", "base", baseKey, "err", err)
+		}
 		return api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
 			"runtime base generation unavailable",
-			fmt.Sprintf("runtime base %q could not adopt its configured generation: %v", baseKey, err))
+			fmt.Sprintf("runtime base %q could not adopt its configured generation", baseKey))
 	}
 	scan, readErr := m.readBaseScan(ctx, scanKey)
 	reason, gateErr := m.baseScanVerdict(baseKey, scanKey, scan, readErr)

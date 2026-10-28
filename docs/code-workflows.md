@@ -9,7 +9,7 @@ execution continues where it stopped. The design is
 
 Code-first workflows use the same engine, plans and quotas as
 [declarative workflows](event-driven.md#durable-workflow-waits): runs, steps
-and attempts appear in `gregale workflows list`, `steps` and `attempts`, and
+and attempts appear in `gregale workflow list`, `steps` and `attempts`, and
 triggers (manual, schedule, event) work unchanged. Workflow execution remains a
 preview feature on Hobby and higher plans.
 
@@ -130,7 +130,7 @@ once. `faas.RunWorkflowLocally` is the local test runner.
 |---|---|
 | `step(name, fn, { retry })` | Runs `fn` and records its JSON result. A thrown error is retried under the step's policy (`retry` option, else `code.retry`, else 3 attempts with exponential back-off). After the last attempt the next call throws `WorkflowStepError` into your function, where you may catch it. Throw `NonRetryableError` to fail at once. |
 | `sleep(name, duration)` | Parks the run for 1 s up to the plan's maximum wait (30 days on Hobby, 90 on Pro, 365 on Scale). |
-| `waitForEvent(name, { event, timeout })` | Waits for an event named `event` (default: `name`) sent with `gregale workflows events RUN_ID approved --payload '{...}'` or `POST /v1/workflows/runs/{id}/events`. Resolves with the payload, or `null` after `timeout` (default: the plan's maximum wait). |
+| `waitForEvent(name, { event, timeout })` | Waits for an event named `event` (default: `name`) sent with `gregale workflow events RUN_ID approved --payload '{...}'` or `POST /v1/workflows/runs/{id}/events`. Resolves with the payload, or `null` after `timeout` (default: the plan's maximum wait). |
 
 - **Parallel steps.** `Promise.all([wf.step(...), wf.step(...)])` (or
   `asyncio.gather`) runs the steps concurrently in one call.
@@ -178,9 +178,9 @@ key from the step.
   non-2xx or returns a malformed body: 5 s back-off doubling to 5 minutes, at
   least 5 consecutive attempts (or `code.retry.max_attempts` when larger),
   then the run is `dead`. Each call is recorded as the `$driver` step:
-  `gregale workflows attempts RUN_ID '$driver'`.
+  `gregale workflow attempts RUN_ID '$driver'`.
 - A run that exceeds a limit, or replays non-deterministically, is `dead`.
-- Code-first runs cannot be resumed with `gregale workflows resume`, linked to
+- Code-first runs cannot be resumed with `gregale workflow resume`, linked to
   Operations or simulated by the automation simulator; start a new run instead.
 
 ## Test locally

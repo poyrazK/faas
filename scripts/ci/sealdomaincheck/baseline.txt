@@ -111,6 +111,7 @@ plain managed_realtime_publisher_receipts.content_hash
 plain managed_realtime_schedules.data
 plain managed_realtime_subscription_tickets.token_hash
 plain managed_realtime_worker_credentials.token_hash
+plain mcp_bridge_state.sealed
 plain mfa_disable_requests.token_hash
 plain mfa_disable_tokens.token_hash
 plain migration_admissions.adoption_receipt
