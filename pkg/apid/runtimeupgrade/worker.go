@@ -26,7 +26,7 @@ func RunWorker(ctx context.Context, log *slog.Logger, store state.RuntimeUpgrade
 	var ready atomic.Bool
 	stopReady := daemonunit.NotifyReadyWhen(ctx, ready.Load)
 	defer stopReady()
-	executor := Executor{Store: store, VerificationStore: verification, Observe: func(err error) {
+	executor := Executor{Store: store, VerificationStore: verification, ReleaseFrozen: ReleaseFreezeHold(store), Observe: func(err error) {
 		live.Beat("runtime_upgrade") // errors are completed work; a hung call is not
 		if err != nil {
 			// Database errors can include credentials/values; retain no raw text.

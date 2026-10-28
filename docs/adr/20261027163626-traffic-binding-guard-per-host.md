@@ -148,12 +148,15 @@ them.
 
 6. **Rollout.**
    1. Phase metrics (decision 1).
-   2. An expand migration adds and backfills `match_host_scope`, plus indexes
-      for claim lookup by name and by suffix. Nothing reads them yet.
+   2. An expand migration adds and backfills `match_host_scope`, with an
+      index for enabled routes. A trigger fills it on every write, including
+      the previous release's. `@app` rules get NULL, because they cover only
+      their own app's hosts. Nothing reads it yet.
    3. The scoped guard ships behind apid's `FAAS_TRAFFIC_SCOPED_BINDING_GUARD`,
       off by default, with the equivalence tests and a Postgres benchmark at
       10,000 apps and 1,000 route-owning accounts. Target: deploy create p99
-      under 250 ms.
+      under 250 ms. The claim lookup indexes, by name and by suffix, ship
+      with the queries that read them.
    4. The switch is turned on in staging, then in production after a release
       with no refusal or `lock_wait` regression. It is removed one release
       after that, together with the global path, except as the test oracle.

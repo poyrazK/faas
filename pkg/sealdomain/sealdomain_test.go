@@ -183,7 +183,7 @@ func TestRegistry_EdgeIsWiredToGatewaydInternalAlone(t *testing.T) {
 }
 
 // imaged opens registry passwords to pull images; vmmd opens them into a
-// builder VM's Docker config for its base-image pulls (ADR-20261026090000).
+// builder VM's Docker config for its base-image pulls (ADR-20261026091500).
 // Both run on compute nodes, where root already holds the build identity.
 func TestRegistry_BuildIsWiredToImagedAndVmmd(t *testing.T) {
 	s, ok := sealdomain.Lookup(sealdomain.Build)

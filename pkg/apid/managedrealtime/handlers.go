@@ -87,11 +87,11 @@ func (s *Service) sealRealtimeToken(plaintext, label string) ([]byte, *api.Probl
 	if plaintext == "" {
 		return []byte{}, nil
 	}
-	recipient := s.Host.SecretRecipient()
-	if recipient == nil {
+	recipients, err := s.Host.SecretRecipients()
+	if err != nil {
 		return nil, api.ErrCapacity("host age recipient not loaded — refusing to seal realtime credential")
 	}
-	sealed, err := secretbox.SealBytes(recipient, label, []byte(plaintext), api.RealtimeCallbackAuthTokenMaxBytes)
+	sealed, err := secretbox.SealBytesTo(recipients, label, []byte(plaintext), api.RealtimeCallbackAuthTokenMaxBytes)
 	if err != nil {
 		if prob := api.AsProblem(err); prob != nil {
 			return nil, prob
@@ -433,7 +433,7 @@ func (s *Service) CreateManagedRealtimeEndpoint(w http.ResponseWriter, r *http.R
 		api.WriteProblem(w, prob)
 		return
 	}
-	callbackSealed, prob := s.sealRealtimeToken(req.CallbackAuthToken, "REALTIME_CALLBACK_AUTH")
+	callbackSealed, prob := s.sealRealtimeToken(req.CallbackAuthToken, api.RealtimeCallbackAuthNamespace)
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -442,7 +442,7 @@ func (s *Service) CreateManagedRealtimeEndpoint(w http.ResponseWriter, r *http.R
 	if authMode != api.RealtimeAuthModeStaticBearer {
 		authToken = ""
 	}
-	authSealed, prob := s.sealRealtimeToken(authToken, "REALTIME_AUTH")
+	authSealed, prob := s.sealRealtimeToken(authToken, api.RealtimeAuthTokenNamespace)
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -582,7 +582,7 @@ func (s *Service) UpdateManagedRealtimeEndpoint(w http.ResponseWriter, r *http.R
 			api.WriteProblem(w, prob)
 			return
 		}
-		sealed, prob := s.sealRealtimeToken(*req.CallbackAuthToken, "REALTIME_CALLBACK_AUTH")
+		sealed, prob := s.sealRealtimeToken(*req.CallbackAuthToken, api.RealtimeCallbackAuthNamespace)
 		if prob != nil {
 			api.WriteProblem(w, prob)
 			return
@@ -594,7 +594,7 @@ func (s *Service) UpdateManagedRealtimeEndpoint(w http.ResponseWriter, r *http.R
 			api.WriteProblem(w, prob)
 			return
 		}
-		sealed, prob := s.sealRealtimeToken(*req.AuthToken, "REALTIME_AUTH")
+		sealed, prob := s.sealRealtimeToken(*req.AuthToken, api.RealtimeAuthTokenNamespace)
 		if prob != nil {
 			api.WriteProblem(w, prob)
 			return
@@ -753,7 +753,7 @@ func (s *Service) RotateManagedRealtimeAuth(w http.ResponseWriter, r *http.Reque
 		api.WriteProblem(w, api.ErrRealtimeInvalid(fmt.Sprintf("grace_period_seconds must be between 0 and %d", api.RealtimeAuthRotationMaxGraceSeconds)))
 		return
 	}
-	sealed, prob := s.sealRealtimeToken(req.NewAuthToken, "REALTIME_AUTH")
+	sealed, prob := s.sealRealtimeToken(req.NewAuthToken, api.RealtimeAuthTokenNamespace)
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
