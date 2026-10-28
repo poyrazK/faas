@@ -22,7 +22,7 @@ const eventFanoutReplayBatchMax = 100
 // subscriptions and deliveries inspect declarations and delivery outcomes.
 func cmdEvents(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale events <deadline-alert-investigate|subscription-circuit-status|subscription-circuit-set|subscription-circuit-disable|subscription-circuit-reset|subscription-pause|subscription-resume|subscription-status|recovery-preflight|recovery-health|notification-retry-reconcile|notification-retry-plan|notification-retry-apply|notification-retry-backlog|recovery-notification-retry-history|recovery-notification-retry-preview|recovery-notification-retry|recovery-notifications|recovery-history|recovery-list|recovery-preview|recovery-create|recovery-status|recovery-items|recovery-cancel|recovery-pause|recovery-resume|recovery-rate|preview|replay-preview|workflow-replay-preview|backfill|workflow-backfill|backfill-status|backfill-items|backfill-retry|publish|publish-app-verify|publish-app-status|publish-app|publish-batch|retention|backlog|inspect|recover|attempts|subscriptions|deliveries|fanout-history|replay|replay-retryable>", "events")
+		PrintUsage(os.Stderr, "usage: gregale events <deadline-alert-investigate|subscription-circuit-status|subscription-circuit-set|subscription-circuit-disable|subscription-circuit-reset|subscription-pause|subscription-resume|subscription-status|recovery-preflight|recovery-health|notification-retry-reconcile|notification-retry-plan|notification-retry-apply|notification-retry-backlog|recovery-notification-retry-history|recovery-notification-retry-preview|recovery-notification-retry|recovery-notifications|recovery-history|recovery-list|recovery-preview|recovery-create|recovery-status|recovery-items|recovery-cancel|recovery-pause|recovery-resume|recovery-rate|preview|replay-preview|workflow-replay-preview|backfill|workflow-backfill|backfill-status|backfill-items|backfill-retry|backfill-cancel|publish|publish-app-verify|publish-app-status|publish-app|publish-batch|retention|backlog|inspect|recover|attempts|subscriptions|deliveries|fanout-history|replay|replay-retryable>", "events")
 		return 1
 	}
 	switch args[0] {
@@ -172,6 +172,8 @@ func cmdEvents(args []string) int {
 		return cmdEventsBackfillItems(args[1:])
 	case "backfill-retry":
 		return cmdEventsBackfillRetry(args[1:])
+	case "backfill-cancel":
+		return cmdEventsBackfillCancel(args[1:])
 	case "inspect":
 		return cmdEventsInspect(args[1:])
 	case "recover":

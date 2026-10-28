@@ -52,6 +52,20 @@ SELECT * FROM event_recovery_jobs WHERE state IN ('running','paused')
  AND (window_started_at+interval '1 second'<=sqlc.arg(now_at)::timestamptz OR window_count<rate_per_second)))
 ORDER BY CASE WHEN expires_at<=sqlc.arg(now_at)::timestamptz THEN expires_at ELSE next_attempt_at END,id LIMIT 1 FOR NO KEY UPDATE SKIP LOCKED;
 
+-- name: EventRecoveryRecordFailure :one
+-- ADR-20261028095548: a failed pass backs the job off, doubling from the
+-- minimum to the maximum delay, so the next job in line goes ahead.
+UPDATE event_recovery_jobs SET failure_count=least(failure_count+1,sqlc.arg(failure_limit)::integer),
+ next_attempt_at=sqlc.arg(now_at)::timestamptz+least(
+  make_interval(secs=>sqlc.arg(backoff_min_seconds)::double precision*power(2::double precision,failure_count)),
+  make_interval(secs=>sqlc.arg(backoff_max_seconds)::double precision)),
+ last_failure=sqlc.arg(last_failure)::text,updated_at=clock_timestamp()
+WHERE id=sqlc.arg(id)::uuid AND state='running'
+RETURNING account_id,failure_count;
+
+-- name: EventRecoveryClearFailures :exec
+UPDATE event_recovery_jobs SET failure_count=0,last_failure='' WHERE id=sqlc.arg(id)::uuid AND failure_count>0;
+
 -- name: EventRecoveryNextItem :one
 SELECT * FROM event_recovery_items WHERE job_id=sqlc.arg(job_id)::uuid AND state='pending' ORDER BY position LIMIT 1;
 

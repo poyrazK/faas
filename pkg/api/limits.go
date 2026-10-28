@@ -905,6 +905,18 @@ const (
 	EventReplayBackfillRequestTimeout      = 5 * time.Second
 )
 
+// Event job lifecycle (ADR-20261028095548). A running backfill that makes no
+// progress for EventReplayBackfillIdleExpiry ends as expired. A recovery or
+// backfill job whose processing fails backs off from EventJobFailureBackoffMin
+// doubling to EventJobFailureBackoffMax, and ends after EventJobFailureLimit
+// failures in a row (about 85 minutes).
+const (
+	EventReplayBackfillIdleExpiry = 24 * time.Hour
+	EventJobFailureLimit          = 10
+	EventJobFailureBackoffMin     = 5 * time.Second
+	EventJobFailureBackoffMax     = time.Hour
+)
+
 // Workflow reliability bounds (ADR-725, ADR-726, ADR-649).
 //
 // WorkflowDispatchSlots bounds the runs one schedd executes at once; a slot

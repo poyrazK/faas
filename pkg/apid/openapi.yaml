@@ -51071,7 +51071,7 @@ paths:
           in: query
           schema:
             type: string
-            enum: [pending, processing, enqueued, filtered, failed, skipped_captured, skipped_unknown, skipped_existing, skipped_unsettled]
+            enum: [pending, processing, enqueued, filtered, failed, skipped_captured, skipped_unknown, skipped_existing, skipped_unsettled, cancelled]
           description: Filter items to one durable routing outcome.
         - name: after
           in: query
@@ -51133,6 +51133,36 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503':
           description: Retry request timed out.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/event-replays/{jobID}/cancel:
+    post:
+      tags: [events]
+      operationId: cancelEventReplayBackfill
+      summary: Cancel a running backfill.
+      description: Ends a running backfill as cancelled. Deliveries already admitted finish; undelivered ones are dropped and their receipts released. Cancelling an ended job returns it unchanged.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: jobID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+          description: Backfill job to cancel.
+      responses:
+        '200':
+          description: The job after cancellation.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventReplayBackfillJobResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Cancel request timed out.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -100700,6 +100730,7 @@ components:
             - skipped_unknown
             - skipped_existing
             - skipped_unsettled
+            - cancelled
         attempts:
           type: integer
           minimum: 0
@@ -100761,6 +100792,7 @@ components:
         skipped_unknown: { type: integer, format: int64, minimum: 0 }
         skipped_existing: { type: integer, format: int64, minimum: 0 }
         skipped_unsettled: { type: integer, format: int64, minimum: 0 }
+        cancelled: { type: integer, format: int64, minimum: 0, description: Deliveries the job dropped undelivered when it ended early. }
     EventReplayBackfillJobResponse:
       description: Progress and immutable selection details for one durable event backfill.
       type: object
@@ -100780,7 +100812,14 @@ components:
         earliest_retained_at: { type: string, format: date-time, description: Account-wide earliest event surviving when the job was created; does not establish complete coverage. }
         history_complete: { type: boolean, enum: [false], description: Always false; retained receipts are not an archive. }
         duplicate_policy: { type: string, enum: [skip_existing] }
-        state: { type: string, enum: [running, completed, completed_with_failures] }
+        state:
+          type: string
+          enum: [running, completed, completed_with_failures, cancelled, expired, failed]
+          description: "cancelled: ended by a cancel request. expired: no progress for 24 hours. failed: processing failed ten times in a row; see last_failure."
+        last_failure:
+          type: string
+          enum: [conflict, invalid_job, timeout, internal]
+          description: Class of the most recent processing failure while the job backs off or after it failed.
         scan_complete: { type: boolean, description: Whether the retained range has been fully examined. }
         progress: { $ref: '#/components/schemas/EventReplayBackfillProgress' }
         created_at: { type: string, format: date-time }

@@ -528,10 +528,7 @@ func (l *Loop) runEventFanoutSweep(ctx context.Context) {
 	if recovery, ok := l.engine.store.(state.EventRecoveryStore); ok {
 		for i := 0; i < eventFanoutRecoveryBatch; i++ {
 			worked, err := recovery.ProcessNextEventRecovery(ctx, now)
-			if err != nil {
-				if l.log != nil {
-					l.log.Warn("sched: process event recovery failed", "err", err)
-				}
+			if err != nil && !l.eventJobContinue("event recovery", err) {
 				break
 			}
 			if !worked {
@@ -633,17 +630,49 @@ func (l *Loop) runEventReplayBackfillSweep(ctx context.Context, now time.Time) {
 	if !ok {
 		return
 	}
+	l.runEventReplayBackfillLifecycle(ctx, now)
 	for i := 0; i < eventFanoutRecoveryBatch; i++ {
 		worked, err := store.ProcessNextEventReplayBackfill(ctx, now)
-		if err != nil {
-			if l.log != nil {
-				l.log.Warn("sched: process event replay backfill page failed", "err", err)
-			}
+		if err != nil && !l.eventJobContinue("event replay backfill page", err) {
 			return
 		}
 		if !worked {
 			return
 		}
+	}
+}
+
+// eventJobContinue logs a failed recovery or backfill pass and reports
+// whether the sweep may go on: a job whose own work failed was backed off
+// (ADR-20261028095548), so the next job in line goes ahead.
+func (l *Loop) eventJobContinue(work string, err error) bool {
+	var jobErr *state.EventJobError
+	if !errors.As(err, &jobErr) {
+		if l.log != nil {
+			l.log.Warn("sched: process "+work+" failed", "err", err)
+		}
+		return false
+	}
+	if l.log != nil {
+		l.log.Warn("sched: "+work+" job failed", "job_id", jobErr.JobID, "failure", jobErr.Code, "ended", jobErr.Ended, "err", jobErr.Err)
+	}
+	return true
+}
+
+// runEventReplayBackfillLifecycle expires idle backfills and finishes
+// releasing ended ones (ADR-20261028095548), at most every 10 s. It runs only
+// while routing is released, so a paused event bus expires nothing.
+func (l *Loop) runEventReplayBackfillLifecycle(ctx context.Context, now time.Time) {
+	lifecycle, ok := l.engine.store.(state.EventReplayBackfillLifecycleStore)
+	if !ok || now.Sub(l.eventBackfillLifecycleAt) < 10*time.Second {
+		return
+	}
+	l.eventBackfillLifecycleAt = now
+	if _, err := lifecycle.ExpireIdleEventReplayBackfills(ctx, now, api.EventReplayBackfillPruneBatch); err != nil && l.log != nil {
+		l.log.Warn("sched: expire idle event replay backfills failed", "err", err)
+	}
+	if _, err := lifecycle.ReleaseEndedEventReplayBackfills(ctx, api.EventReplayBackfillPruneBatch); err != nil && l.log != nil {
+		l.log.Warn("sched: release ended event replay backfills failed", "err", err)
 	}
 }
 

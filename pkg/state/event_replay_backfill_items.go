@@ -41,7 +41,7 @@ func normalizeEventReplayBackfillItemsQuery(accountID, jobID string, query *api.
 		return "", "", eventReplayBackfillItemsCursor{}, ErrEventReplayBackfillQuery
 	}
 	switch query.State {
-	case "", "pending", "processing", "enqueued", "filtered", "failed", "skipped_captured", "skipped_unknown", "skipped_existing", "skipped_unsettled":
+	case "", "pending", "processing", "enqueued", "filtered", "failed", "skipped_captured", "skipped_unknown", "skipped_existing", "skipped_unsettled", "cancelled":
 	default:
 		return "", "", eventReplayBackfillItemsCursor{}, ErrEventReplayBackfillQuery
 	}

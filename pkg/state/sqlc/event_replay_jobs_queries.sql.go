@@ -81,6 +81,21 @@ func (q *Queries) EventReplayBackfillAdvance(ctx context.Context, db DBTX, arg E
 	return err
 }
 
+const eventReplayBackfillCancelEndedItems = `-- name: EventReplayBackfillCancelEndedItems :execrows
+UPDATE event_replay_job_items i SET state='cancelled',updated_at=clock_timestamp()
+FROM event_replay_jobs j
+WHERE i.job_id=j.id AND j.id=$1::uuid AND j.state IN ('cancelled','expired','failed')
+  AND i.state IN ('pending','processing')
+`
+
+func (q *Queries) EventReplayBackfillCancelEndedItems(ctx context.Context, db DBTX, jobID pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, eventReplayBackfillCancelEndedItems, jobID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const eventReplayBackfillCandidates = `-- name: EventReplayBackfillCandidates :many
 SELECT o.id, o.created_at, o.payload, o.recipient_snapshot, o.state,
        o.source, o.event_id, o.event_type, coalesce(o.schema_version,'') AS schema_version,
@@ -233,6 +248,16 @@ func (q *Queries) EventReplayBackfillClaimValid(ctx context.Context, db DBTX, ar
 	return exists, err
 }
 
+const eventReplayBackfillClearFailures = `-- name: EventReplayBackfillClearFailures :exec
+UPDATE event_replay_jobs SET failure_count=0,next_attempt_at=NULL,last_failure=''
+WHERE id=$1::uuid AND failure_count>0
+`
+
+func (q *Queries) EventReplayBackfillClearFailures(ctx context.Context, db DBTX, id pgtype.UUID) error {
+	_, err := db.Exec(ctx, eventReplayBackfillClearFailures, id)
+	return err
+}
+
 const eventReplayBackfillCountRetryableFailed = `-- name: EventReplayBackfillCountRetryableFailed :one
 SELECT count(*)::bigint FROM event_replay_job_items i
 JOIN event_fanout_recipients r ON r.outbox_id=i.outbox_id AND r.backfill_job_id=i.job_id
@@ -294,6 +319,76 @@ func (q *Queries) EventReplayBackfillCreate(ctx context.Context, db DBTX, arg Ev
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const eventReplayBackfillDropEndedRecipients = `-- name: EventReplayBackfillDropEndedRecipients :execrows
+DELETE FROM event_fanout_recipients r USING event_replay_jobs j
+WHERE r.backfill_job_id=j.id AND j.id=$1::uuid AND j.state IN ('cancelled','expired','failed')
+  AND r.outbox_id=ANY($2::bigint[]) AND r.state IN ('pending','processing')
+`
+
+type EventReplayBackfillDropEndedRecipientsParams struct {
+	JobID     pgtype.UUID
+	OutboxIds []int64
+}
+
+func (q *Queries) EventReplayBackfillDropEndedRecipients(ctx context.Context, db DBTX, arg EventReplayBackfillDropEndedRecipientsParams) (int64, error) {
+	result, err := db.Exec(ctx, eventReplayBackfillDropEndedRecipients, arg.JobID, arg.OutboxIds)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const eventReplayBackfillEnd = `-- name: EventReplayBackfillEnd :execrows
+UPDATE event_replay_jobs SET state=$1::text,completed_at=clock_timestamp(),
+       updated_at=clock_timestamp(),next_attempt_at=NULL
+WHERE id=$2::uuid AND state='running'
+  AND ($3::timestamptz IS NULL OR updated_at<=$3::timestamptz)
+`
+
+type EventReplayBackfillEndParams struct {
+	State      string
+	ID         pgtype.UUID
+	IdleBefore pgtype.Timestamptz
+}
+
+// Ends a running job as cancelled, expired or failed. An expiry passes the
+// idle cutoff, so a job that moved since it was read keeps running.
+func (q *Queries) EventReplayBackfillEnd(ctx context.Context, db DBTX, arg EventReplayBackfillEndParams) (int64, error) {
+	result, err := db.Exec(ctx, eventReplayBackfillEnd, arg.State, arg.ID, arg.IdleBefore)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const eventReplayBackfillEndedJobs = `-- name: EventReplayBackfillEndedJobs :many
+SELECT j.id FROM event_replay_jobs j
+WHERE j.state IN ('cancelled','expired','failed')
+  AND EXISTS (SELECT 1 FROM event_replay_job_items i WHERE i.job_id=j.id AND i.state IN ('pending','processing'))
+ORDER BY j.completed_at,j.id LIMIT $1::integer
+`
+
+// Ended jobs whose undelivered items are not yet cancelled.
+func (q *Queries) EventReplayBackfillEndedJobs(ctx context.Context, db DBTX, pageLimit int32) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, eventReplayBackfillEndedJobs, pageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const eventReplayBackfillExists = `-- name: EventReplayBackfillExists :one
@@ -377,7 +472,9 @@ SELECT j.id, j.account_id, j.app_id, a.slug AS app_slug, j.subscription_id,
        count(i.outbox_id) FILTER (WHERE i.state='skipped_captured')::bigint AS skipped_captured_count,
        count(i.outbox_id) FILTER (WHERE i.state='skipped_unknown')::bigint AS skipped_unknown_count,
        count(i.outbox_id) FILTER (WHERE i.state='skipped_existing')::bigint AS skipped_existing_count,
-       count(i.outbox_id) FILTER (WHERE i.state='skipped_unsettled')::bigint AS skipped_unsettled_count
+       count(i.outbox_id) FILTER (WHERE i.state='skipped_unsettled')::bigint AS skipped_unsettled_count,
+       count(i.outbox_id) FILTER (WHERE i.state='cancelled')::bigint AS cancelled_count,
+       j.last_failure
 FROM event_replay_jobs j
 JOIN apps a ON a.id=j.app_id AND a.account_id=j.account_id
 LEFT JOIN event_replay_job_items i ON i.job_id=j.id
@@ -421,6 +518,8 @@ type EventReplayBackfillGetRow struct {
 	SkippedUnknownCount   int64
 	SkippedExistingCount  int64
 	SkippedUnsettledCount int64
+	CancelledCount        int64
+	LastFailure           string
 }
 
 func (q *Queries) EventReplayBackfillGet(ctx context.Context, db DBTX, arg EventReplayBackfillGetParams) (EventReplayBackfillGetRow, error) {
@@ -457,8 +556,41 @@ func (q *Queries) EventReplayBackfillGet(ctx context.Context, db DBTX, arg Event
 		&i.SkippedUnknownCount,
 		&i.SkippedExistingCount,
 		&i.SkippedUnsettledCount,
+		&i.CancelledCount,
+		&i.LastFailure,
 	)
 	return i, err
+}
+
+const eventReplayBackfillIdleJobs = `-- name: EventReplayBackfillIdleJobs :many
+SELECT id FROM event_replay_jobs
+WHERE state='running' AND updated_at<=$1::timestamptz
+ORDER BY updated_at,id LIMIT $2::integer
+`
+
+type EventReplayBackfillIdleJobsParams struct {
+	IdleBefore pgtype.Timestamptz
+	PageLimit  int32
+}
+
+func (q *Queries) EventReplayBackfillIdleJobs(ctx context.Context, db DBTX, arg EventReplayBackfillIdleJobsParams) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, eventReplayBackfillIdleJobs, arg.IdleBefore, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const eventReplayBackfillInFlightCount = `-- name: EventReplayBackfillInFlightCount :one
@@ -719,6 +851,43 @@ func (q *Queries) EventReplayBackfillLockAnyJob(ctx context.Context, db DBTX, ar
 	return id, err
 }
 
+const eventReplayBackfillLockEndedReceipts = `-- name: EventReplayBackfillLockEndedReceipts :many
+SELECT o.id FROM event_fanout_outbox o
+WHERE o.id IN (SELECT r.outbox_id FROM event_fanout_recipients r
+               JOIN event_replay_jobs j ON j.id=r.backfill_job_id
+               WHERE j.id=$1::uuid AND j.state IN ('cancelled','expired','failed')
+                 AND r.state IN ('pending','processing'))
+ORDER BY o.id LIMIT $2::integer
+FOR UPDATE OF o
+`
+
+type EventReplayBackfillLockEndedReceiptsParams struct {
+	JobID     pgtype.UUID
+	PageLimit int32
+}
+
+// The receipts of an ended job's undelivered recipients, locked in id order
+// before their recipients, as routing locks them.
+func (q *Queries) EventReplayBackfillLockEndedReceipts(ctx context.Context, db DBTX, arg EventReplayBackfillLockEndedReceiptsParams) ([]int64, error) {
+	rows, err := db.Query(ctx, eventReplayBackfillLockEndedReceipts, arg.JobID, arg.PageLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []int64{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const eventReplayBackfillLockJob = `-- name: EventReplayBackfillLockJob :one
 SELECT id FROM event_replay_jobs
 WHERE id=$1::uuid AND state='running' FOR UPDATE
@@ -793,14 +962,22 @@ func (q *Queries) EventReplayBackfillMaterializeSnapshot(ctx context.Context, db
 }
 
 const eventReplayBackfillNextJob = `-- name: EventReplayBackfillNextJob :one
-SELECT id, account_id, app_id, subscription_id, subscription_revision, recipient, from_at, until_at, cutoff_at, earliest_retained_at, cursor_at, cursor_outbox_id, duplicate_policy, state, scan_complete, scanned_count, matched_count, filtered_count, skipped_captured_count, skipped_unknown_count, skipped_existing_count, skipped_unsettled_count, created_at, updated_at, completed_at, consumer_kind, workflow_name FROM event_replay_jobs WHERE state='running' AND NOT scan_complete
+SELECT id, account_id, app_id, subscription_id, subscription_revision, recipient, from_at, until_at, cutoff_at, earliest_retained_at, cursor_at, cursor_outbox_id, duplicate_policy, state, scan_complete, scanned_count, matched_count, filtered_count, skipped_captured_count, skipped_unknown_count, skipped_existing_count, skipped_unsettled_count, created_at, updated_at, completed_at, consumer_kind, workflow_name, failure_count, next_attempt_at, last_failure FROM event_replay_jobs WHERE state='running' AND NOT scan_complete
+  AND (next_attempt_at IS NULL OR next_attempt_at<=$1::timestamptz)
   AND (SELECT count(*) FROM event_replay_job_items i
-       WHERE i.job_id=event_replay_jobs.id AND i.state IN ('pending','processing')) < $1::bigint
+       WHERE i.job_id=event_replay_jobs.id AND i.state IN ('pending','processing')) < $2::bigint
 ORDER BY created_at,id FOR UPDATE SKIP LOCKED LIMIT 1
 `
 
-func (q *Queries) EventReplayBackfillNextJob(ctx context.Context, db DBTX, inFlightMax int64) (EventReplayJob, error) {
-	row := db.QueryRow(ctx, eventReplayBackfillNextJob, inFlightMax)
+type EventReplayBackfillNextJobParams struct {
+	NowAt       pgtype.Timestamptz
+	InFlightMax int64
+}
+
+// A job backed off after a failed pass waits for its next_attempt_at
+// (ADR-20261028095548), so the next job in line goes ahead.
+func (q *Queries) EventReplayBackfillNextJob(ctx context.Context, db DBTX, arg EventReplayBackfillNextJobParams) (EventReplayJob, error) {
+	row := db.QueryRow(ctx, eventReplayBackfillNextJob, arg.NowAt, arg.InFlightMax)
 	var i EventReplayJob
 	err := row.Scan(
 		&i.ID,
@@ -830,6 +1007,9 @@ func (q *Queries) EventReplayBackfillNextJob(ctx context.Context, db DBTX, inFli
 		&i.CompletedAt,
 		&i.ConsumerKind,
 		&i.WorkflowName,
+		&i.FailureCount,
+		&i.NextAttemptAt,
+		&i.LastFailure,
 	)
 	return i, err
 }
@@ -986,6 +1166,41 @@ func (q *Queries) EventReplayBackfillRecipientJob(ctx context.Context, db DBTX, 
 	return id, err
 }
 
+const eventReplayBackfillRecordFailure = `-- name: EventReplayBackfillRecordFailure :one
+UPDATE event_replay_jobs SET failure_count=least(failure_count+1,$1::integer),
+       next_attempt_at=$2::timestamptz+least(
+           make_interval(secs=>$3::double precision*power(2::double precision,failure_count)),
+           make_interval(secs=>$4::double precision)),
+       last_failure=$5::text
+WHERE id=$6::uuid AND state='running'
+RETURNING failure_count
+`
+
+type EventReplayBackfillRecordFailureParams struct {
+	FailureLimit      int32
+	NowAt             pgtype.Timestamptz
+	BackoffMinSeconds float64
+	BackoffMaxSeconds float64
+	LastFailure       string
+	ID                pgtype.UUID
+}
+
+// ADR-20261028095548: a failed pass backs the job off, doubling from the
+// minimum to the maximum delay. updated_at stays, so a failing job is idle.
+func (q *Queries) EventReplayBackfillRecordFailure(ctx context.Context, db DBTX, arg EventReplayBackfillRecordFailureParams) (int32, error) {
+	row := db.QueryRow(ctx, eventReplayBackfillRecordFailure,
+		arg.FailureLimit,
+		arg.NowAt,
+		arg.BackoffMinSeconds,
+		arg.BackoffMaxSeconds,
+		arg.LastFailure,
+		arg.ID,
+	)
+	var failure_count int32
+	err := row.Scan(&failure_count)
+	return failure_count, err
+}
+
 const eventReplayBackfillResetItem = `-- name: EventReplayBackfillResetItem :execrows
 UPDATE event_replay_job_items SET state='pending',failure_code='',last_error='',retryable=false,updated_at=clock_timestamp()
 WHERE job_id=$1::uuid AND outbox_id=$2::bigint AND state='failed'
@@ -1077,6 +1292,20 @@ WHERE id=$1::uuid AND state='completed_with_failures'
 
 func (q *Queries) EventReplayBackfillSetRunning(ctx context.Context, db DBTX, id pgtype.UUID) error {
 	_, err := db.Exec(ctx, eventReplayBackfillSetRunning, id)
+	return err
+}
+
+const eventReplayBackfillSettleReceipts = `-- name: EventReplayBackfillSettleReceipts :exec
+UPDATE event_fanout_outbox o
+SET state = CASE WHEN EXISTS (SELECT 1 FROM event_fanout_recipients r
+        WHERE r.outbox_id = o.id AND r.state IN ('pending', 'processing')) THEN 'processing' ELSE 'delivered' END,
+    delivered_at = CASE WHEN EXISTS (SELECT 1 FROM event_fanout_recipients r
+        WHERE r.outbox_id = o.id AND r.state IN ('pending', 'processing')) THEN NULL ELSE now() END
+WHERE o.id = ANY($1::bigint[]) AND o.recipient_claims
+`
+
+func (q *Queries) EventReplayBackfillSettleReceipts(ctx context.Context, db DBTX, ids []int64) error {
+	_, err := db.Exec(ctx, eventReplayBackfillSettleReceipts, ids)
 	return err
 }
 

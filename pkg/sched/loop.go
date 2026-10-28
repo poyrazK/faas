@@ -130,6 +130,7 @@ type Loop struct {
 	work                        *workPool
 	workOnce                    sync.Once
 	eventFanoutLastPrune        time.Time
+	eventBackfillLifecycleAt    time.Time
 	eventFanoutHistoryLastPrune time.Time
 	eventRecipientClaims        bool
 	// eventRoutingHealthAt is the last routing health read; the fanout sweep
