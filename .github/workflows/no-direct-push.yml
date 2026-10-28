@@ -8,8 +8,8 @@
 # Implementation: on `push` events, fetch the commit's associated PRs via the
 # REST API. GitHub can briefly lag indexing a newly-created merge commit, so
 # retry the lookup and fall back to verifying the PR number in the merge
-# subject. If neither path proves a merged PR, fail. Bots (dependabot) are
-# exempt because they push branches, not main.
+# subject. If neither path proves a merged PR, fail. No actor is exempt: bots
+# such as Dependabot land through pull requests too.
 #
 # Triggers:
 #   - push: branches: [main]        (a direct push or a squash-merge push)
@@ -88,15 +88,9 @@ jobs:
 
           if [ "$pr_count" -eq 0 ]; then
             actor="${GITHUB_ACTOR:-unknown}"
-            # Bots are exempt — they push feature branches, never main.
-            case "$actor" in
-              *"[bot]"|"dependabot"|"github-actions"|"renovate")
-                echo "Actor '$actor' is a bot; direct push allowed."
-                echo "ok=true" >> "$GITHUB_OUTPUT"
-                exit 0
-                ;;
-            esac
-
+            # No actor is exempt (issue #584): bots push feature branches and
+            # land through pull requests like everyone else, so a bot commit
+            # on main without a merged PR is as wrong as a human one.
             echo "::error::Direct push to main detected."
             echo "::error::Commit ${SHA} on branch ${GITHUB_REF} has no associated PR."
             echo "::error::Actor: ${actor}"

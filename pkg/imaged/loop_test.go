@@ -797,6 +797,74 @@ func TestFCSweep_RunsTwiceOnFailOpen(t *testing.T) {
 // snap mem / vmstate keys (snap/<dep>/mem, snap/<dep>/vmstate). The
 // GC's deleteTarget tuple carries (snapID, deploymentID, slug), so the
 // seam we test here is the key resolution + Delete propagation.
+// releaseNewerDeployments makes n newer live releases of the app in scope,
+// each superseding the one before, so older superseded deployments there leave
+// the rollback window (Hunt 21 H21-1).
+func releaseNewerDeployments(t *testing.T, store *state.MemStore, appID, scope string, n int) {
+	t.Helper()
+	for i := range n {
+		newer, err := store.CreateDeployment(context.Background(), state.Deployment{
+			AppID: appID, Scope: scope, Kind: state.DeploymentKindImage, ImageDigest: fmt.Sprintf("sha256:newer-%s-%d", scope, i),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.MarkDeploymentLive(context.Background(), newer.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// Hunt 21 H21-1: a superseded deployment inside the rollback window is a
+// rollback target, so its cold-boot layer outlives its last snapshot. It used
+// to be deleted with it, and a rollback then failed its readiness boot.
+func TestLoopDeleteSnapshotsAndFilesKeepsRollbackWindowLayer(t *testing.T) {
+	store := state.NewMemStore()
+	acct, _ := store.CreateAccount(context.Background(), "window@x.com", "pro")
+	app, _ := store.CreateApp(context.Background(), state.App{
+		AccountID: acct.ID, Slug: "gc-window", RAMMB: 256, IdleTimeoutS: 30, MaxConcurrency: 2,
+	})
+	dep, _ := store.CreateDeployment(context.Background(), state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:window",
+	})
+	if err := store.MarkDeploymentLive(context.Background(), dep.ID); err != nil {
+		t.Fatal(err)
+	}
+	snap, _ := store.CreateSnapshot(context.Background(), state.Snapshot{
+		DeploymentID: dep.ID, MemBytes: 100, DiskBytes: 100, FCVersion: "1.8.0", StorageKey: state.SnapMemKey(dep.ID),
+	})
+	// One newer release: dep is the previous one, inside the window.
+	releaseNewerDeployments(t, store, app.ID, "", 1)
+	appsRoot := t.TempDir()
+	be, err := storage.NewLocalStorageBackend(appsRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	appsKey := sched.AppLayerKey(app.Slug, dep.ID)
+	for k, body := range map[string]string{appsKey: "layer", sched.SnapshotMemKey(dep.ID): "m", sched.SnapshotVMStateKey(dep.ID): "v"} {
+		if err := be.Put(context.Background(), k, strings.NewReader(body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	loop := &Loop{
+		store: store, log: slog.New(slog.NewTextHandler(io.Discard, nil)), appsRoot: appsRoot,
+		handler: &Handler{store: store, log: slog.New(slog.NewTextHandler(io.Discard, nil)), appsRoot: appsRoot, storage: be},
+	}
+	ts := []deleteTarget{{ID: snap.ID, DeploymentID: dep.ID, AppSlug: app.Slug, DeploymentStatus: state.DeploySuperseded}}
+	if err := loop.deleteSnapshotsAndFiles(context.Background(), ts); err != nil {
+		t.Fatalf("deleteSnapshotsAndFiles: %v", err)
+	}
+	if rc, err := be.Get(context.Background(), appsKey); err != nil {
+		t.Fatalf("rollback target's layer deleted with its last snapshot: %v", err)
+	} else {
+		_ = rc.Close()
+	}
+	if rc, err := be.Get(context.Background(), sched.SnapshotMemKey(dep.ID)); err == nil {
+		_ = rc.Close()
+		t.Error("the evicted snapshot's files survived")
+	}
+}
+
 func TestLoopDeleteSnapshotsAndFiles_RemovesExt4AndSnapKeys(t *testing.T) {
 	store := state.NewMemStore()
 	acct, _ := store.CreateAccount(context.Background(), "u@x.com", "pro")
@@ -812,10 +880,12 @@ func TestLoopDeleteSnapshotsAndFiles_RemovesExt4AndSnapKeys(t *testing.T) {
 		StorageKey: state.SnapMemKey(dep.ID),
 	})
 
-	// ADR-590: only a retired deployment may lose its cold-boot layer.
+	// ADR-590: only a retired deployment may lose its cold-boot layer, and
+	// only outside the rollback window (Hunt 21 H21-1).
 	if err := store.MarkDeploymentSuperseded(context.Background(), dep.ID); err != nil {
 		t.Fatal(err)
 	}
+	releaseNewerDeployments(t, store, app.ID, "", api.SnapshotRollbackRetentionDeployments)
 	appsRoot := t.TempDir()
 	be, err := storage.NewLocalStorageBackend(appsRoot)
 	if err != nil {
@@ -874,10 +944,12 @@ func TestLoopDeleteSnapshotsAndFiles_RetainsLayerUntilLastTier(t *testing.T) {
 		DeploymentID: dep.ID, MemBytes: 100, DiskBytes: 100, FCVersion: "1.8.0",
 		StorageKey: state.WarmSnapMemKey(dep.ID), Tier: state.SnapshotTierWarm,
 	})
-	// ADR-590: only a retired deployment may lose its cold-boot layer.
+	// ADR-590: only a retired deployment may lose its cold-boot layer, and
+	// only outside the rollback window (Hunt 21 H21-1).
 	if err := store.MarkDeploymentSuperseded(context.Background(), dep.ID); err != nil {
 		t.Fatal(err)
 	}
+	releaseNewerDeployments(t, store, app.ID, "", api.SnapshotRollbackRetentionDeployments)
 	appsRoot := t.TempDir()
 	be, err := storage.NewLocalStorageBackend(appsRoot)
 	if err != nil {

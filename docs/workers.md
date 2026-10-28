@@ -85,7 +85,7 @@ Messages are delivered at least once: make handlers idempotent.
 `worker.scale` says how many waiting messages one worker should take:
 `metric: queue_depth` with `target: 100` runs `ceil(depth / 100)` workers,
 between `min` and `max`, and never more than the binding's `max_concurrency`
-allows. With `min: 0` the pool stops when the queue is empty and starts a
+allows. The target is at most 10,000 messages per worker. With `min: 0` the pool stops when the queue is empty and starts a
 worker when the next message arrives. A worker that reads an external broker
 (Kafka, NATS, SQS and others) through `worker.source` scales on
 `metric: queue_lag` instead. A `scaling` block with a `queue_depth` target

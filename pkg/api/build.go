@@ -79,6 +79,9 @@ func ValidGoCommand(name string) bool { return goCommandNameRE.MatchString(name)
 // from builderd (host) to guest-init (inside the builder VM). Its fields
 // cover everything guest-init needs to run one build to completion without
 // further host contact.
+// BuildLayerCompressionZstd is the only BuildManifest.LayerCompression value.
+const BuildLayerCompressionZstd = "zstd"
+
 type BuildManifest struct {
 	BuildDependencyDigest string            `json:"build_dependency_digest,omitempty"`
 	PublicBuildURLs       map[string]string `json:"public_build_urls,omitempty"`
@@ -127,6 +130,11 @@ type BuildManifest struct {
 	// otherwise-ephemeral builder VM.
 	DependencyCache       bool `json:"dependency_cache,omitempty"`
 	DependencyCacheImport bool `json:"dependency_cache_import,omitempty"`
+	// LayerCompression is "" (BuildKit's gzip) or BuildLayerCompressionZstd,
+	// which compresses the exported OCI image and the dependency cache with
+	// zstd (builderd's FAAS_BUILD_LAYER_ZSTD, ADR-20261028084018). An older
+	// guest ignores it and keeps gzip.
+	LayerCompression string `json:"layer_compression,omitempty"`
 	// KeepWarm leaves a successful builder guest alive in a host-controlled
 	// wait state so vmmd can capture a paused snapshot. Failed builds still
 	// power off immediately; the warm path is only a successful-build handoff.
