@@ -311,6 +311,8 @@ func TestPg_AlertPresetCatalog_AllEnabledAfterFlip(t *testing.T) {
 	defer rows.Close()
 	expectedNames := map[string]bool{
 		"route_insights_detected":            true,
+		"route_monitor_incidents":            true,
+		"route_health_holds":                 true,
 		"mcp_readiness_unhealthy":            true,
 		"mcp_oauth_issuance_unknown":         true,
 		"mcp_oauth_reauthorization_required": true,

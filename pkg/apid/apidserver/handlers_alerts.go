@@ -175,6 +175,10 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, prob)
 		return
 	}
+	if prob := api.ValidateRouteAlert(req.Metric, req.WindowSpec, app.ID); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	if prob := s.anomalyAlertsGate(appFlagSubject(acct, app), req.Comparison); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -847,6 +851,8 @@ var alertMetricCapabilities = map[string]string{
 	api.AlertRuleMetricCustomMetric:      "custom-metric-history",
 	api.AlertRuleMetricLogSearchMatches:  "log-search",
 	api.AlertMetricRouteInsightsDetected: routeInsightsCapability,
+	api.AlertMetricRouteMonitorIncidents: routeMonitorCapability,
+	api.AlertMetricRouteHealthHolds:      routeHealthCapability,
 }
 
 // alertMetricCapabilityProblem refuses an alert on a metric whose capability
@@ -965,6 +971,9 @@ func validateAlertRuleRowUpdate(merged state.AlertRule) *api.Problem {
 		return p
 	}
 	if p := api.ValidateRouteInsightAlert(string(merged.Metric), string(merged.WindowSpec), merged.AppID); p != nil {
+		return p
+	}
+	if p := api.ValidateRouteAlert(string(merged.Metric), string(merged.WindowSpec), merged.AppID); p != nil {
 		return p
 	}
 	if api.IsMCPProtocolMetric(string(merged.Metric)) && merged.AppID == "" {

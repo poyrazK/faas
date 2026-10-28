@@ -126,6 +126,9 @@ func (s *server) advanceCanaryWithLeasePolicy(w http.ResponseWriter, r *http.Req
 		api.WriteProblem(w, gateProblem)
 		return
 	}
+	if requireWorkerLease && err != nil {
+		s.abortRouteHealthHoldPastDeadline(r.Context(), err, app, d)
+	}
 	if !s.writeCanaryAdvanceError(r.Context(), w, err, d.ID, req.ExpectedStep, d.CanaryStep) {
 		return
 	}

@@ -53,6 +53,11 @@ func (s *server) putRouteHealthGate(w http.ResponseWriter, r *http.Request, acct
 		return
 	}
 	s.audit.Emit(r.Context(), "route_health.updated", &acct.ID, map[string]any{"app_id": app.ID, "mode": gate.Mode, "on_regression": gate.OnRegression, "revision": gate.Revision, "route_count": len(gate.Routes)})
+	labels := make([]string, 0, len(gate.Routes))
+	for _, route := range gate.Routes {
+		labels = append(labels, routehealth.RouteLabel(route.Method, route.Path))
+	}
+	gate.Warnings = append(s.routeHealthAbortWarning(r.Context(), gate), s.unobservedRouteWarnings(r.Context(), acct, app.ID, labels)...)
 	writeJSON(w, http.StatusOK, gate)
 }
 func (s *server) getRouteHealthReport(w http.ResponseWriter, r *http.Request, acct state.Account) {

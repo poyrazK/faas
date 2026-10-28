@@ -16,5 +16,9 @@ export type RouteHealthGate = {
   revision: number;
   routes: Array<RouteHealthRoute>;
   updated_at?: string;
+  /**
+   * Returned by a save: an on_regression abort no Safe Deploy worker can run now, and selectors no request matched within the plan's telemetry lookback (at most 7 days). An enforced guard holds a canary on such a route until the 24-hour route health hold deadline aborts it.
+   */
+  warnings?: Array<string>;
 };
 

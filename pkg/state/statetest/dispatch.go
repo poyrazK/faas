@@ -174,6 +174,8 @@ var memDispatched = map[string]bool{
 	"RouteAwakeMinutes":                                       true,
 	"RouteInsightCandidateApps":                               true,
 	"RouteInsightsDetectedSince":                              true,
+	"RouteMonitorIncidentsSince":                              true,
+	"RouteHealthHoldsSince":                                   true,
 	"UpsertRouteInsight":                                      true,
 	"RouteAwakeRouteMinutes":                                  true,
 	"RouteAwakeSourceMinutes":                                 true,
@@ -639,6 +641,24 @@ func (s *Mem) RouteInsightsDetectedSince(p0 context.Context, p1 string, p2 time.
 		return o.RouteInsightsDetectedSince(p0, p1, p2, p3)
 	}
 	return s.MemStore.RouteInsightsDetectedSince(p0, p1, p2, p3)
+}
+
+func (s *Mem) RouteMonitorIncidentsSince(p0 context.Context, p1 string, p2 time.Time, p3 int) ([]state.RouteMonitorIncidentAlert, int64, error) {
+	if o, ok := s.over.(interface {
+		RouteMonitorIncidentsSince(context.Context, string, time.Time, int) ([]state.RouteMonitorIncidentAlert, int64, error)
+	}); ok {
+		return o.RouteMonitorIncidentsSince(p0, p1, p2, p3)
+	}
+	return s.MemStore.RouteMonitorIncidentsSince(p0, p1, p2, p3)
+}
+
+func (s *Mem) RouteHealthHoldsSince(p0 context.Context, p1 string, p2 time.Time, p3 int) ([]state.RouteHealthHoldAlert, int64, error) {
+	if o, ok := s.over.(interface {
+		RouteHealthHoldsSince(context.Context, string, time.Time, int) ([]state.RouteHealthHoldAlert, int64, error)
+	}); ok {
+		return o.RouteHealthHoldsSince(p0, p1, p2, p3)
+	}
+	return s.MemStore.RouteHealthHoldsSince(p0, p1, p2, p3)
 }
 
 func (s *Mem) EnvironmentWorkloadAdmissionRetired(p0 context.Context, p1 string, p2 string) (bool, error) {
