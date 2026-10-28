@@ -271,7 +271,7 @@ same choice as `service_binding_transport` for standalone apps. `gregale
 bindings <app>` reports the effective transport.
 
 The same declared edges are exposed as service bindings by the app API and by
-`gregale bindings public-api`, alongside database, object-storage, queue,
+`gregale app binding public-api`, alongside database, object-storage, queue,
 and outbound integration bindings. New project workloads use the `project`
 caller policy
 ([ADR-20261022111119](adr/20261022111119-project-service-binding-policy.md)):
@@ -308,7 +308,7 @@ hatch, set `x-gregale-service-policy: account` on the caller. Under the
 `GET /v1/apps/{slug}/bindings` provides the shared binding inventory used by
 the CLI and SDKs. It batches app-scoped catalog reads for services, PostgreSQL,
 object storage, queues, and outbound integrations. Omit `scope` to inspect all
-resource scopes, or use `?scope=staging` / `gregale bindings public-api --scope
+resource scopes, or use `?scope=staging` / `gregale app binding public-api --scope
 staging` to filter database, bucket, and environment queue bindings. Shared
 legacy queues and app-wide service and outbound bindings remain included; the filter does not create or isolate
 resources for that environment.
@@ -369,7 +369,7 @@ the available results, `complete: false`, sanitized `warnings`, and structured
 results and warnings in the same document; failed queue status reads remain
 `unknown`. Error issues, including denied resource permissions, return CLI exit status 1 after printing the partial
 inventory. A gated, unavailable PostgreSQL preview remains a warning by
-default; use `gregale bindings public-api --require-complete` to return status 1 for
+default; use `gregale app binding public-api --require-complete` to return status 1 for
 any incomplete inventory, including that preview. `complete: true` means all
 inventory and status reads succeeded, not that every dependency is healthy.
 The response is a best-effort projection, not an atomic snapshot, and uses
@@ -381,8 +381,8 @@ providers. Use `bindings verify` for service, PostgreSQL or object-storage conne
 Use `bindings check` to evaluate those recorded observations in CI:
 
 ```sh
-gregale bindings verify public-api --all
-gregale bindings check public-api --scope production --max-verification-age 10m --json
+gregale app binding verify public-api --all
+gregale app binding check public-api --scope production --max-verification-age 10m --json
 ```
 
 The default check makes one inventory GET and returns exit status 0 when its policy
@@ -411,9 +411,9 @@ returns 130. Failed reads stop the wait with a nonzero result.
 For a staged rollout, verify and check the same deployment before promotion:
 
 ```sh
-gregale bindings verify public-api --deployment v12 --all
-gregale bindings check public-api --deployment v12 --max-verification-age 10m --json
-gregale traffic promote --app public-api --deployment v12 --if-serving v11 --require-bindings --max-verification-age 10m
+gregale app binding verify public-api --deployment v12 --all
+gregale app binding check public-api --deployment v12 --max-verification-age 10m --json
+gregale release traffic promote --app public-api --deployment v12 --if-serving v11 --require-bindings --max-verification-age 10m
 ```
 
 `--require-bindings` makes the server repeat the exact deployment check and
@@ -482,8 +482,8 @@ A stored release policy can explicitly require scheduler readiness for individua
 push queue bindings while retaining strict verification for other dependencies:
 
 ```sh
-gregale bindings release-policy set public-api --scope production --mode enforce --expected-revision 0 --queue-require orders=consumer_readiness
-gregale bindings check public-api --deployment v12 --release-policy --json
+gregale app binding release-policy set public-api --scope production --mode enforce --expected-revision 0 --queue-require orders=consumer_readiness
+gregale app binding check public-api --deployment v12 --release-policy --json
 ```
 
 `orders` is the binding name. The requirement needs exactly one shared or
@@ -518,8 +518,8 @@ To prepare all dependencies for an enforced release policy with one command,
 preview the plan and then run it for the same candidate:
 
 ```sh
-gregale bindings verify public-api --deployment v12 --release-policy --dry-run --json
-gregale bindings verify public-api --deployment v12 --release-policy --wait-timeout 5m --json
+gregale app binding verify public-api --deployment v12 --release-policy --dry-run --json
+gregale app binding verify public-api --deployment v12 --release-policy --wait-timeout 5m --json
 ```
 
 The policy need not contain storage requirements. The plan covers services,
@@ -570,10 +570,10 @@ Customer-sealed outbound integrations can opt into verification by declaring a
 provider endpoint safe to call:
 
 ```sh
-gregale bindings probe-policy INTEGRATION_ID --path /health --method GET --expect-status 200
-gregale bindings verify public-api --deployment v12 --outbound INTEGRATION_ID
-gregale bindings check public-api --deployment v12
-gregale traffic promote --app public-api --deployment v12 --require-bindings
+gregale app binding probe-policy INTEGRATION_ID --path /health --method GET --expect-status 200
+gregale app binding verify public-api --deployment v12 --outbound INTEGRATION_ID
+gregale app binding check public-api --deployment v12
+gregale release traffic promote --app public-api --deployment v12 --require-bindings
 ```
 
 The method must be GET or HEAD, the canonical path must fit the integration's
@@ -737,9 +737,9 @@ for listener rollout, and [ADR-273](adr/273-workload-scoped-service-ca-trust.md)
 for guest trust and CA requirements. See [ADR-275](adr/275-https-service-binding-canary.md)
 for caller-side verification.
 
-`gregale bindings verify <app> <service>` runs a platform-owned HTTPS canary
+`gregale app binding verify <app> <service>` runs a platform-owned HTTPS canary
 inside a disposable task guest attached to the caller's deployment. Use
-`gregale bindings verify <app> --all` to check every declared service before
+`gregale app binding verify <app> --all` to check every declared service before
 switching the caller to HTTPS-first transport. The all-bindings form also
 checks managed PostgreSQL and object-storage bindings in the scope selected for manual app tasks,
 reported as `verification_scope` in the inventory. Other resource scopes and
@@ -758,7 +758,7 @@ for listener rollout, [ADR-273](adr/273-workload-scoped-service-ca-trust.md) for
 hostname.
 
 To test an app's managed PostgreSQL binding, run
-`gregale bindings verify <app> --postgres DATABASE_URL` with the binding's
+`gregale app binding verify <app> --postgres DATABASE_URL` with the binding's
 environment key. The CLI confirms that the key belongs to a managed database
 binding, then starts a bounded platform task in the app's live deployment. The
 task reads the injected URL inside the guest, checks URL configuration and
@@ -777,7 +777,7 @@ deployment change, binding replacement, credential generation change, or app
 runtime-configuration change marks prior evidence `stale`. Unsupported or
 unrecorded results remain `unknown`.
 
-`gregale bindings verify <app> --object-storage GREGALE_S3_ASSETS` checks the
+`gregale app binding verify <app> --object-storage GREGALE_S3_ASSETS` checks the
 six injected S3 environment variables and makes one signed, path-style
 `ListObjectsV2` request with `MaxKeys=1`. It has a five-second deadline, does
 not retry or follow redirects, and caps provider response XML at 64 KiB.
@@ -918,15 +918,15 @@ deployment can belong to multiple live release sets.
 ### Inspect a project's release graph
 
 ```sh
-gregale projects environments inspect shop production
-gregale projects environments inspect shop production --json
-gregale projects environments release-sets shop production --limit 20
+gregale environment get shop production
+gregale environment get shop production --json
+gregale environment release-sets shop production --limit 20
 ```
 
 `inspect` compares active release-set membership with each workload's ordinary
 live deployment, which is what its stable environment URL currently selects.
 It reports different selections and project membership gaps explicitly. A bare
-`gregale projects environments inspect` uses the linked project and selected
+`gregale environment get` uses the linked project and selected
 environment; supplying both positional arguments overrides that context.
 
 The overview includes the configuration version, last promotion, and managed
@@ -974,9 +974,9 @@ workloads:
 Then run:
 
 ```sh
-gregale projects environments qualify shop staging --profile gregale-qualification.yaml
-gregale projects environments preview shop --from staging --to production
-gregale projects environments preflight shop --from staging --to production \
+gregale environment qualify shop staging --profile gregale-qualification.yaml
+gregale environment preview shop --from staging --to production
+gregale environment preflight shop --from staging --to production \
   --profile gregale-qualification.yaml --json
 ```
 
@@ -1015,19 +1015,19 @@ All release inventory reads require the owning account's read access.
 
 ### Smoke-test a downstream deployment
 
-`gregale bindings verify` checks the private transport and current route
+`gregale app binding verify` checks the private transport and current route
 availability without invoking customer code. To exercise a handler on one
 exact deployment, use an explicit smoke request from the caller:
 
 ```bash
-gregale bindings smoke public-api billing \
+gregale app binding smoke public-api billing \
   --caller-deployment v12 \
   --target-deployment TARGET_DEPLOYMENT_ID \
   --path /health \
   --expect-status 200
 ```
 
-Find the target ID with `gregale traffic status billing`. `--caller-deployment`
+Find the target ID with `gregale release traffic status billing`. `--caller-deployment`
 selects an exact app-owned live caller deployment, including a candidate at 0%
 traffic; `v12` resolves within `public-api`. Omit it to retain automatic caller
 selection. `--deployment` remains an alias for `--target-deployment`; conflicting
@@ -1307,8 +1307,8 @@ It contains no credential values, hashes or private binding owner IDs.
 To require application acknowledgements during a rollout:
 
 ```sh
-gregale bindings check public-api --deployment v12 --require-application-ack --json
-gregale traffic promote --app public-api --deployment v12 --if-serving v11 --require-bindings --require-application-ack
+gregale app binding check public-api --deployment v12 --require-application-ack --json
+gregale release traffic promote --app public-api --deployment v12 --if-serving v11 --require-bindings --require-application-ack
 ```
 
 Strict mode requires current version-bound acknowledgements from every
@@ -1350,8 +1350,8 @@ Enable verification enforcement for an app's deployment scope after establishing
 its stable serving deployment:
 
 ```sh
-gregale bindings release-policy get public-api --scope production
-gregale bindings release-policy set public-api --scope production \
+gregale app binding release-policy get public-api --scope production
+gregale app binding release-policy set public-api --scope production \
   --require-verification --max-age 10m --expected-revision 0
 ```
 
@@ -1378,7 +1378,7 @@ To abort an active canary while enforcement stays enabled, first verify the
 exact retained predecessor, then pin both deployments:
 
 ```sh
-gregale bindings verify public-api --deployment v41 --all
+gregale app binding verify public-api --deployment v41 --all
 gregale rollouts recover public-api --action abort --deployment v42 \
   --expected-predecessor v41 --reason 'Restore verified predecessor'
 ```
@@ -1402,7 +1402,7 @@ activation is not yet supported. During an incident, explicitly disable the
 policy with a reason before using an unguarded recovery path:
 
 ```sh
-gregale bindings release-policy set public-api --scope production \
+gregale app binding release-policy set public-api --scope production \
   --mode off --expected-revision 1 --reason 'Restore stable deployment during incident'
 ```
 
@@ -1427,7 +1427,7 @@ live predecessor at zero weight after service cutover. Verify that predecessor,
 then request the abort and wait for the selected rollout:
 
 ```sh
-gregale bindings verify public-api --deployment v41 --all
+gregale app binding verify public-api --deployment v41 --all
 gregale rollouts recover public-api --action abort --deployment v42 \
   --expected-predecessor v41 --reason 'Restore verified predecessor'
 gregale rollouts status public-api --deployment v42 --wait --timeout 10m
@@ -1452,7 +1452,7 @@ gregale rollback api --to v41 --expected-current v42 --reason "restore previous 
 The accepted operation retains both deployments through readiness and binding
 checks. The current release keeps serving while the target prepares at zero
 traffic. If bindings are blocked, verify the exact target with the existing
-`gregale bindings verify-all api --deployment v41` command, then inspect or resume
+`gregale app binding verify-all api --deployment v41` command, then inspect or resume
 waiting for the accepted operation:
 
 ```sh
@@ -1566,13 +1566,13 @@ UUIDs for each workload:
 ```
 
 ```bash
-gregale projects environments release-sets prepare shop production \
+gregale environment release-sets prepare shop production \
   --file release-selection.json > release-manifest.json
-gregale projects environments release-sets verify shop production \
+gregale environment release-sets verify shop production \
   --file release-manifest.json --dry-run --json
-gregale projects environments release-sets verify shop production \
+gregale environment release-sets verify shop production \
   --file release-manifest.json --json
-gregale projects environments release-sets activate shop production \
+gregale environment release-sets activate shop production \
   --file release-manifest.json --json
 ```
 
@@ -1612,13 +1612,13 @@ UUID and the desired release retention as `rollback-selection.json`:
 ```
 
 ```bash
-gregale projects environments release-sets prepare-rollback shop production \
+gregale environment release-sets prepare-rollback shop production \
   --file rollback-selection.json > rollback-manifest.json
-gregale projects environments release-sets verify shop production \
+gregale environment release-sets verify shop production \
   --file rollback-manifest.json --dry-run --json
-gregale projects environments release-sets verify shop production \
+gregale environment release-sets verify shop production \
   --file rollback-manifest.json --json
-gregale projects environments release-sets rollback shop production \
+gregale environment release-sets rollback shop production \
   --file rollback-manifest.json --json
 ```
 
@@ -1646,13 +1646,13 @@ live 100% fallback in the environment and an enforced binding policy. Missing
 fallbacks and traffic splits block preparation.
 
 ```bash
-gregale projects environments release-sets prepare-deactivation shop production \
+gregale environment release-sets prepare-deactivation shop production \
   --json > deactivation-manifest.json
-gregale projects environments release-sets verify shop production \
+gregale environment release-sets verify shop production \
   --file deactivation-manifest.json --dry-run --json
-gregale projects environments release-sets verify shop production \
+gregale environment release-sets verify shop production \
   --file deactivation-manifest.json --json
-gregale projects environments release-sets deactivate shop production \
+gregale environment release-sets deactivate shop production \
   --file deactivation-manifest.json --json
 ```
 
@@ -1684,14 +1684,14 @@ dark-deployment preparation workflow first. GitOps-managed workloads, active
 service rollouts, mirror recipients and deactivation manifests are excluded.
 
 ```bash
-gregale projects environments release-sets stage shop production \
+gregale environment release-sets stage shop production \
   --file manifest.json --ttl-seconds 600 --json > stage.json
 stage_id=$(jq -r .id stage.json)
-gregale projects environments release-sets stage-status shop production \
+gregale environment release-sets stage-status shop production \
   --stage "$stage_id" --json
 # Once status is ready, qualify exact targets and explicitly publish the graph.
-gregale projects environments release-sets verify shop production --file manifest.json
-gregale projects environments release-sets activate shop production --file manifest.json
+gregale environment release-sets verify shop production --file manifest.json
+gregale environment release-sets activate shop production --file manifest.json
 # Use rollback instead of activate for a prepared rollback manifest.
 ```
 
@@ -1710,7 +1710,7 @@ and expiry. Another manifest conflicts while that scope has an unexpired,
 uncancelled stage. Cancel before staging a different selection:
 
 ```bash
-gregale projects environments release-sets cancel-stage shop production \
+gregale environment release-sets cancel-stage shop production \
   --stage "$stage_id" --json
 ```
 
@@ -1741,10 +1741,10 @@ The deployment declares supported logical binding names in its `override_env`:
 The consumer must recognize `{"gregale_queue_canary":"v1","canary_id":"<unique UUID>","binding":"orders"}` and handle it safely. Return success only after the safe test handler finishes. Successful HTTP handling does not certify application-specific business effects. Pull consumers are unsupported. Shared legacy bindings support canaries in production/default only; other environments require an explicitly scoped queue binding.
 
 ```sh
-gregale bindings release-policy set my-api --scope production --require-verification --queue-require orders=handler_completion --expected-revision 0
-gregale bindings verify my-api --deployment v12 --release-policy --dry-run --json
-gregale bindings verify my-api --deployment v12 --release-policy --queue-publish --json
-gregale bindings verify my-api --deployment v12 --queue orders --queue-publish --json
+gregale app binding release-policy set my-api --scope production --require-verification --queue-require orders=handler_completion --expected-revision 0
+gregale app binding verify my-api --deployment v12 --release-policy --dry-run --json
+gregale app binding verify my-api --deployment v12 --release-policy --queue-publish --json
+gregale app binding verify my-api --deployment v12 --queue orders --queue-publish --json
 ```
 
 Checked graph verification also accepts `--queue-publish`. It reviews every member and publication consent requirement before admitting messages. Dry runs never publish; compatible pending canaries are observed and fresh successful evidence is reused.
@@ -1770,13 +1770,13 @@ remain registered until ordinary retention removes them. See
 
 ### Parallel binding qualification
 
-`gregale bindings verify APP --deployment ID --release-policy --concurrency 2`
+`gregale app binding verify APP --deployment ID --release-policy --concurrency 2`
 runs independent required probes concurrently. The default is 2; `--concurrency`
 accepts 1–8 and applies only to release-policy verification. Use 1 for serial
 execution when provider or application capacity requires it. Server admission
 limits still apply.
 
-`gregale projects environments release-sets verify PROJECT ENV --file release.json
+`gregale environment release-sets verify PROJECT ENV --file release.json
 --concurrency 2` shares the same limit across all graph members. Review with
 `--dry-run`; planned object writes still require `--object-storage-write`, and
 planned queue publication still requires `--queue-publish`. No probe starts until
@@ -1795,7 +1795,7 @@ expiry and the atomic checks at activation remain unchanged. See
 Use a durable receipt when a CI job or CLI session may disconnect:
 
 ```sh
-gregale bindings verify my-api --deployment v12 --release-policy --durable \
+gregale app binding verify my-api --deployment v12 --release-policy --durable \
   --object-storage-write --queue-publish --concurrency 2 --json
 ```
 
@@ -1808,9 +1808,9 @@ The CLI prints the run ID before requesting creation and includes `run_id` in
 its verification report.
 
 ```sh
-gregale bindings verification-runs status my-api RUN_ID --json
-gregale bindings verification-runs resume my-api RUN_ID --concurrency 2 --json
-gregale bindings verification-runs cancel my-api RUN_ID --json
+gregale app binding verification-runs status my-api RUN_ID --json
+gregale app binding verification-runs resume my-api RUN_ID --concurrency 2 --json
+gregale app binding verification-runs cancel my-api RUN_ID --json
 ```
 
 Status shows the original plan, resource IDs, ownership and current progress.
@@ -1842,7 +1842,7 @@ one app; graph verification retains its existing prepared-manifest workflow. See
 Persist the prepared graph and every member's review before admitting probes:
 
 ```sh
-gregale projects environments release-sets verify my-project production \
+gregale environment release-sets verify my-project production \
   --file prepared.json --durable --run-id RUN_UUID \
   --queue-publish --object-storage-write --concurrency 2 --json
 ```
@@ -1855,9 +1855,9 @@ receipt commit together and share that fixed deadline. The CLI prints the parent
 ID before creation, so a lost creation response is recoverable with the same UUID.
 
 ```sh
-gregale projects environments release-sets verification-runs status my-project production RUN_UUID --json
-gregale projects environments release-sets verification-runs resume my-project production RUN_UUID --concurrency 2 --json
-gregale projects environments release-sets verification-runs cancel my-project production RUN_UUID --json
+gregale environment release-sets verification-runs status my-project production RUN_UUID --json
+gregale environment release-sets verification-runs resume my-project production RUN_UUID --concurrency 2 --json
+gregale environment release-sets verification-runs cancel my-project production RUN_UUID --json
 ```
 
 Resume retains membership, routing expectations, policy revisions, exact service
@@ -1899,7 +1899,7 @@ SDK transport failures, caller stops and progress callback failures preserve ser
 
 ### Explain blocked verification receipts
 
-Use `gregale bindings verification-runs diagnostics APP RUN_ID --json` or `gregale projects environments release-sets verification-runs diagnostics PROJECT ENVIRONMENT RUN_ID --json` to inspect blockers and recovery suggestions. The corresponding GET endpoints end in `/verification-runs/{run}/diagnostics` on the app binding or project environment release-set surface.
+Use `gregale app binding verification-runs diagnostics APP RUN_ID --json` or `gregale environment release-sets verification-runs diagnostics PROJECT ENVIRONMENT RUN_ID --json` to inspect blockers and recovery suggestions. The corresponding GET endpoints end in `/verification-runs/{run}/diagnostics` on the app binding or project environment release-set surface.
 
 Responses preserve the original run ID and expiry and include `complete`, optional `check_passed`, `blockers`, `changes` and `recovery`. `complete` means applicable diagnostic reads succeeded; `check_passed` describes current public policy/evidence. Neither grants admission, confirms receipt completion or authorizes traffic changes. A previously passed or expired receipt can have current blockers.
 
@@ -1937,7 +1937,7 @@ Set `--status-read-retries 0` on durable CLI verify or receipt resume to disable
 
 ### Discover retained verification receipts
 
-Use `gregale bindings verification-runs list APP --json` or `gregale projects environments release-sets verification-runs list PROJECT ENVIRONMENT --json` when you need to recover a receipt ID. Lists are read-only summaries; they do not refresh evidence, admit work, resume or cancel receipts. A listed passed state does not establish current qualification.
+Use `gregale app binding verification-runs list APP --json` or `gregale environment release-sets verification-runs list PROJECT ENVIRONMENT --json` when you need to recover a receipt ID. Lists are read-only summaries; they do not refresh evidence, admit work, resume or cancel receipts. A listed passed state does not establish current qualification.
 
 Pages default to 20 entries (maximum 100), newest first by creation time and UUID. Use `--limit`, `--cursor`, `--deployment UUID` and `--status pending|passed|cancelled|expired`. App lists additionally accept `--scope` and `--include-members`; by default they omit graph members. Project lists show root receipts and match deployment filters against reviewed members. Included app members expose their original `graph_run_id`.
 
@@ -1962,8 +1962,8 @@ Durable app/graph verify and receipt resume accept `--progress auto|plain|ndjson
 For CI, keep stdout as one final JSON report and stream typed events on stderr:
 
 ```sh
-gregale bindings verify api --release-policy --durable --json --progress ndjson
-gregale projects environments release-sets verification-runs resume project production RUN_ID --json --progress ndjson
+gregale app binding verify api --release-policy --durable --json --progress ndjson
+gregale environment release-sets verification-runs resume project production RUN_ID --json --progress ndjson
 ```
 
 `binding_verification_progress` events include root/member IDs, step/resource status, `waiting_for_qualification` conditions, read retries and `reconciling` operations. Graph events also identify project and environment. During execution, cleanup failures use `binding_verification_notice` with code `cleanup_failed`. Pre-execution argument/authentication failures retain the normal CLI error contract.

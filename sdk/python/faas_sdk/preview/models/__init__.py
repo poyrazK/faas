@@ -1204,6 +1204,9 @@ from .debug_request_critical_path import DebugRequestCriticalPath
 from .debug_request_dependency_latency import DebugRequestDependencyLatency
 from .debug_request_dependency_latency_type import DebugRequestDependencyLatencyType
 from .debug_request_evidence_response import DebugRequestEvidenceResponse
+from .debug_rollout_explanation import DebugRolloutExplanation
+from .debug_rollout_explanation_state import DebugRolloutExplanationState
+from .debug_rollout_route import DebugRolloutRoute
 from .debug_running_cause import DebugRunningCause
 from .debug_running_cause_code import DebugRunningCauseCode
 from .debug_running_config import DebugRunningConfig
@@ -1211,6 +1214,11 @@ from .debug_running_flow_summary import DebugRunningFlowSummary
 from .debug_running_observation import DebugRunningObservation
 from .debug_running_request_attribution import DebugRunningRequestAttribution
 from .debug_running_response import DebugRunningResponse
+from .debug_status_deployment import DebugStatusDeployment
+from .debug_status_health import DebugStatusHealth
+from .debug_status_oom_kill import DebugStatusOOMKill
+from .debug_status_response import DebugStatusResponse
+from .debug_status_response_verdict import DebugStatusResponseVerdict
 from .debug_suspected_dependency import DebugSuspectedDependency
 from .debug_suspected_dependency_reason import DebugSuspectedDependencyReason
 from .debug_suspected_dependency_type import DebugSuspectedDependencyType
@@ -7380,6 +7388,9 @@ __all__ = (
     "DebugRequestDependencyLatency",
     "DebugRequestDependencyLatencyType",
     "DebugRequestEvidenceResponse",
+    "DebugRolloutExplanation",
+    "DebugRolloutExplanationState",
+    "DebugRolloutRoute",
     "DebugRunningCause",
     "DebugRunningCauseCode",
     "DebugRunningConfig",
@@ -7387,6 +7398,11 @@ __all__ = (
     "DebugRunningObservation",
     "DebugRunningRequestAttribution",
     "DebugRunningResponse",
+    "DebugStatusDeployment",
+    "DebugStatusHealth",
+    "DebugStatusOOMKill",
+    "DebugStatusResponse",
+    "DebugStatusResponseVerdict",
     "DebugSuspectedDependency",
     "DebugSuspectedDependencyReason",
     "DebugSuspectedDependencyType",

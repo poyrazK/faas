@@ -98,7 +98,7 @@ Reopening a PR takes an environment again. The 7-day default TTL and the
 janitor's per-tick sweep keep the steady-state preview count bounded — a
 customer who opens 20 PRs today will not have 20 previews live a week from now.
 To free an environment immediately, close the PR or run
-`gregale preview destroy <preview-slug>`; destroying any workload of a PR's
+`gregale preview delete <preview-slug>`; destroying any workload of a PR's
 preview tears down the whole environment.
 
 ## Fork PRs
@@ -165,7 +165,7 @@ Create a `respond` edge rule for the preview app, then disable or delete it when
 the implementation is deployed:
 
 ```bash
-gregale edge-rules create --app pr-42-checkout \
+gregale edge rule create --app pr-42-checkout \
   --kind respond \
   --match-host pr-42-checkout.gregale.dev \
   --match-path /shipping/estimate \

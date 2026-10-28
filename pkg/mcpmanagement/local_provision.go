@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -80,16 +81,30 @@ type checkDomainArgs struct {
 }
 
 func registerLocalProvisioning(s *mcp.Server, m *management) {
-	if m.opts.LocalCLI == nil || m.opts.AllowedApps != nil || m.opts.Environments != nil {
+	// A hosted grant provisions through the bridge's runner as itself, only
+	// with write consent and each scope its consent added
+	// (ADR-20261026195952). Local app consent stays out.
+	remote := m.opts.Environments != nil
+	if m.opts.LocalCLI == nil || !remote && m.opts.AllowedApps != nil || remote && !m.opts.AllowWrites {
 		return
 	}
+	consented := func(scope string) bool { return !remote || slices.Contains(m.opts.Capabilities, scope) }
 	register(s, m, "gregale_plan_domain", "Review attaching a custom domain to an app. Apply returns the DNS records the user must create at their DNS provider; then check with gregale_check_domain.", m.planDomain)
-	register(s, m, "gregale_plan_bucket", "Review creating a private object storage bucket for an app and binding it; the app receives GREGALE_S3_<NAME>_* variables on its next start.", m.planBucket)
-	register(s, m, "gregale_plan_postgres", "Review creating a managed PostgreSQL database for an app and binding it as DATABASE_URL. Apply can take up to ten minutes.", m.planPostgres)
+	if consented(api.ScopeStorageManage) {
+		register(s, m, "gregale_plan_bucket", "Review creating a private object storage bucket for an app and binding it; the app receives GREGALE_S3_<NAME>_* variables on its next start.", m.planBucket)
+	}
+	if consented(api.ScopeManagedPostgresManage) {
+		register(s, m, "gregale_plan_postgres", "Review creating a managed PostgreSQL database for an app and binding it as DATABASE_URL. Apply can take up to ten minutes.", m.planPostgres)
+	}
 	register(s, m, "gregale_plan_cron", "Review adding a cron that POSTs to an app path on a schedule.", m.planCron)
-	register(s, m, "gregale_check_domain", "Check a custom domain's DNS verification and TLS certificate; returns the DNS records still needed.", m.checkDomain)
+	const checkDomain = "Check a custom domain's DNS verification and TLS certificate; returns the DNS records still needed."
 	if m.opts.AllowWrites {
+		// `domains verify` asks Gregale to re-check DNS now (a POST), so the
+		// check is a write; a read-only connection reads the last result.
+		registerTool(s, m, "gregale_check_domain", checkDomain, false, m.verifyDomain)
 		registerTool(s, m, "gregale_apply_provision", "Apply a reviewed domain, bucket, database or cron plan through the gregale CLI. Retry with the same plan ID after ambiguous errors.", false, m.applyProvision)
+	} else {
+		register(s, m, "gregale_check_domain", checkDomain, m.showDomain)
 	}
 }
 
@@ -300,7 +315,15 @@ func (m *management) applyCron(ctx context.Context, p *releasePlan, retry bool) 
 	return cliObject(ctx, m, p.Provision.Command...)
 }
 
-func (m *management) checkDomain(ctx context.Context, args checkDomainArgs) (any, error) {
+func (m *management) verifyDomain(ctx context.Context, args checkDomainArgs) (any, error) {
+	return m.checkDomain(ctx, args, "verify")
+}
+
+func (m *management) showDomain(ctx context.Context, args checkDomainArgs) (any, error) {
+	return m.checkDomain(ctx, args, "show")
+}
+
+func (m *management) checkDomain(ctx context.Context, args checkDomainArgs, verb string) (any, error) {
 	domain := strings.ToLower(strings.TrimSuffix(args.Domain, "."))
 	if err := validateSegment(args.App, "app"); err != nil {
 		return nil, err
@@ -312,7 +335,7 @@ func (m *management) checkDomain(ctx context.Context, args checkDomainArgs) (any
 	if err != nil {
 		return nil, err
 	}
-	return m.domainOnApp(ctx, app.ID, domain, "verify")
+	return m.domainOnApp(ctx, app.ID, domain, verb)
 }
 
 // domainOnApp runs `domains show` or `domains verify` and keeps the fields an

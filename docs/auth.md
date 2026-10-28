@@ -10,8 +10,8 @@ gregale logout
 
 Browser-approved logins mint a 30-day CLI key tied to this device. The CLI
 stores that key's non-secret id and `gregale logout` revokes exactly that key
-before clearing the local keychain. Use `gregale keys list` and
-`gregale keys rm <id>` to remove a session from a lost device; CLI sessions are
+before clearing the local keychain. Use `gregale key list` and
+`gregale key delete <id>` to remove a session from a lost device; CLI sessions are
 labelled `cli-login` and never expose their plaintext after creation.
 
 For CI, create a scoped project or organization token and expose it as `FAAS_TOKEN`, or pass it once with `gregale login --token "$FAAS_TOKEN"`. Prefer the narrowest scope and a short expiration. Do not commit tokens or pass them as command-line arguments where process listings can expose them.
@@ -22,7 +22,7 @@ For a Runs-only agent, mint an account key with `runs:write` instead of the
 default full-access `admin` key:
 
 ```sh
-gregale keys add agent-runner --scopes runs:write
+gregale key create agent-runner --scopes runs:write
 ```
 
 `runs:read` can inspect the Runs capability contract, receipts, and event

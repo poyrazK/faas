@@ -56,13 +56,13 @@ Omitting it on redeployment does not carry forward the previous opt-in.
 Use the returned deployment UUID below:
 
 ```sh
-gregale bindings release-policy set orders-worker --scope default --require-verification --queue-require default=handler_completion --expected-revision 0
-gregale bindings verify orders-worker --deployment DEPLOYMENT_UUID --release-policy --dry-run --json
-gregale bindings verify orders-worker --deployment DEPLOYMENT_UUID --release-policy --durable --queue-publish --json
+gregale app binding release-policy set orders-worker --scope default --require-verification --queue-require default=handler_completion --expected-revision 0
+gregale app binding verify orders-worker --deployment DEPLOYMENT_UUID --release-policy --dry-run --json
+gregale app binding verify orders-worker --deployment DEPLOYMENT_UUID --release-policy --durable --queue-publish --json
 ```
 
 The final command explicitly consents to publishing a safe test message. Save
-its run ID and resume it with `gregale bindings verification-runs resume
+its run ID and resume it with `gregale app binding verification-runs resume
 orders-worker RUN_ID --json` after a disconnected session. Resume retains the
 original message and deadline. Verification does not promote traffic; promotion
 rechecks fresh completion evidence. Cancelled, expired or other-deployment

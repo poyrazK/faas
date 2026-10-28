@@ -7903,6 +7903,19 @@ type ManagedPostgresBinding struct {
 	DatabaseAccountID          pgtype.UUID
 }
 
+// Compute cap thresholds a managed PostgreSQL usage subject reached in a UTC month; written only by apid (ADR-20261025094915).
+type ManagedPostgresCapEvent struct {
+	SubjectID            pgtype.UUID
+	PeriodStart          pgtype.Timestamptz
+	Threshold            string
+	ReachedAt            pgtype.Timestamptz
+	UsedUnitSeconds      int64
+	AllowanceUnitSeconds int64
+	CeilingUnitSeconds   int64
+	OverageEnabled       bool
+	MailIntentID         pgtype.UUID
+}
+
 type ManagedPostgresCheckpointMaintenance struct {
 	ID                       pgtype.UUID
 	SourceDatabaseID         pgtype.UUID
@@ -8942,6 +8955,21 @@ type ManagedRealtimeWorkerHeartbeat struct {
 	StatusCode   string
 	LastSeenAt   pgtype.Timestamptz
 	Lost         bool
+}
+
+type McpBridgeLease struct {
+	Bridge    string
+	Holder    string
+	Epoch     int64
+	ExpiresAt pgtype.Timestamptz
+}
+
+type McpBridgeState struct {
+	Bridge    string
+	Namespace string
+	Sealed    []byte
+	Epoch     int64
+	UpdatedAt pgtype.Timestamptz
 }
 
 type McpCatalogMonitor struct {

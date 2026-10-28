@@ -885,7 +885,8 @@ func validateAlertRuleBody(req api.CreateAlertRuleRequest) *api.Problem {
 	if p := edgerules.ValidateActivityAlert(req.Metric, req.EdgeRuleID, req.WindowSpec); p != nil {
 		return p
 	}
-	if p := validateAlertRollbackWindow(alertRollbackWindowFrom(req.PostDeployRollbackWindowSeconds), string(alertRuleActionFrom(req.Action))); p != nil {
+	if p := validateAlertRollbackWindow(alertRollbackWindowFrom(req.PostDeployRollbackWindowSeconds), string(alertRuleActionFrom(req.Action)),
+		req.Metric, req.Comparison, req.WindowSpec, req.Threshold); p != nil {
 		return p
 	}
 	if !api.AllowedAlertRuleMetric(req.Metric) {
@@ -978,7 +979,8 @@ func validateAlertRuleRowUpdate(merged state.AlertRule) *api.Problem {
 	if merged.PostDeployRollbackWindowSeconds > 0 && merged.AppID == "" {
 		return api.ErrAlertRuleInvalid("post-deploy rollback requires an app-scoped rule")
 	}
-	if p := validateAlertRollbackWindow(merged.PostDeployRollbackWindowSeconds, string(merged.Action)); p != nil {
+	if p := validateAlertRollbackWindow(merged.PostDeployRollbackWindowSeconds, string(merged.Action),
+		string(merged.Metric), string(merged.Comparison), string(merged.WindowSpec), merged.Threshold); p != nil {
 		return p
 	}
 	if _, ok := api.TrimNonEmpty(merged.Name); !ok {

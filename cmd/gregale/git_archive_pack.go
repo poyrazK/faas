@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -31,7 +32,11 @@ const (
 // The archive is streamed entry-by-entry. Only files small enough for the
 // source-tree scanner are held in memory; all other regular files are copied
 // directly through the tar writer.
-func packGitArchive(srcPath string, capMB int, mode secretScanMode, buildOnly map[string][]byte, excludes ...string) (outPath string, regularFileCount int, findings []secretscan.Finding, err error) {
+//
+// dockerfile selects the Dockerfile file-selection defaults (packRules). The
+// packed archive may not exceed capMB and the expanded source may not exceed
+// api.SourceArchiveMaxExpandedBytes, the limits apid enforces.
+func packGitArchive(srcPath string, capMB int, mode secretScanMode, buildOnly map[string][]byte, dockerfile bool, excludes ...string) (outPath string, regularFileCount int, findings []secretscan.Finding, err error) {
 	if capMB <= 0 {
 		return "", 0, nil, fmt.Errorf("invalid source cap %d MB", capMB)
 	}
@@ -39,9 +44,9 @@ func packGitArchive(srcPath string, capMB int, mode secretScanMode, buildOnly ma
 	for _, name := range excludes {
 		excluded[filepath.ToSlash(filepath.Clean(name))] = true
 	}
-	patterns, err := readGitArchiveIgnore(srcPath)
+	rules, err := readGitArchiveRules(srcPath, dockerfile)
 	if err != nil {
-		return "", 0, nil, fmt.Errorf("read .gregaleignore: %w", err)
+		return "", 0, nil, err
 	}
 
 	in, err := openCustomerFile(srcPath)
@@ -69,7 +74,9 @@ func packGitArchive(srcPath string, capMB int, mode secretScanMode, buildOnly ma
 		}
 	}()
 
-	gzOut := gzip.NewWriter(out)
+	capBytes := int64(capMB) * 1024 * 1024
+	expandedCap := api.SourceArchiveMaxExpandedBytes
+	gzOut := gzip.NewWriter(&capWriter{w: out, limit: capBytes})
 	tw := tar.NewWriter(gzOut)
 	defer func() {
 		_ = tw.Close()
@@ -77,7 +84,6 @@ func packGitArchive(srcPath string, capMB int, mode secretScanMode, buildOnly ma
 		_ = out.Close()
 	}()
 
-	capBytes := int64(capMB) * 1024 * 1024
 	var totalUncompressed int64
 	archiveEntryCount := 0
 	existingEntries := make(map[string]bool)
@@ -105,7 +111,7 @@ func packGitArchive(srcPath string, capMB int, mode secretScanMode, buildOnly ma
 		if name == "" {
 			continue
 		}
-		if excluded[name] || gitArchiveShouldExclude(name, isDir, patterns) {
+		if excluded[name] || gitArchiveShouldExclude(name, isDir, rules) {
 			continue
 		}
 		if hdr.Typeflag != tar.TypeDir && hdr.Typeflag != tar.TypeReg {
@@ -127,11 +133,8 @@ func packGitArchive(srcPath string, capMB int, mode secretScanMode, buildOnly ma
 			hdr.Name = name + "/"
 			hdr.Size = 0
 		case tar.TypeReg:
-			if inputSize < 0 || inputSize > capBytes {
-				return "", 0, findings, fmt.Errorf("git archive entry %q exceeds the %d MB per-file cap", name, capMB)
-			}
-			if inputSize > capBytes-totalUncompressed {
-				return "", 0, findings, fmt.Errorf("uncompressed git archive is over the %d MB zero-config cap", capMB)
+			if inputSize < 0 || inputSize > expandedCap-totalUncompressed {
+				return "", 0, findings, sourceExpandedLimitError()
 			}
 			hdr.Name = name
 			body, scanThis = readGitArchiveEntryForScan(name, inputSize, mode)
@@ -147,8 +150,8 @@ func packGitArchive(srcPath string, capMB int, mode secretScanMode, buildOnly ma
 				body, entryFindings = scanGitArchiveEntry(name, body, mode)
 				findings = append(findings, entryFindings...)
 				hdr.Size = int64(len(body))
-				if hdr.Size > capBytes || hdr.Size > capBytes-totalUncompressed {
-					return "", 0, findings, fmt.Errorf("redacted git archive entry %q exceeds the %d MB zero-config cap", name, capMB)
+				if hdr.Size > expandedCap-totalUncompressed {
+					return "", 0, findings, sourceExpandedLimitError()
 				}
 			}
 		}
@@ -158,7 +161,7 @@ func packGitArchive(srcPath string, capMB int, mode secretScanMode, buildOnly ma
 		hdr.ChangeTime = time.Time{}
 		hdr.PAXRecords = nil
 		if err := tw.WriteHeader(hdr); err != nil {
-			return "", 0, findings, fmt.Errorf("write git archive header %q: %w", name, err)
+			return "", 0, findings, packWriteError(capMB, name, err)
 		}
 		if isDir {
 			continue
@@ -166,18 +169,18 @@ func packGitArchive(srcPath string, capMB int, mode secretScanMode, buildOnly ma
 
 		if scanThis {
 			if n, writeErr := tw.Write(body); writeErr != nil {
-				return "", 0, findings, fmt.Errorf("write git archive entry %q: %w", name, writeErr)
+				return "", 0, findings, packWriteError(capMB, name, writeErr)
 			} else if n != len(body) {
 				return "", 0, findings, fmt.Errorf("short write for git archive entry %q: wrote %d of %d bytes", name, n, len(body))
 			}
 		} else if _, copyErr := io.CopyN(tw, tr, hdr.Size); copyErr != nil {
-			return "", 0, findings, fmt.Errorf("copy git archive entry %q: %w", name, copyErr)
+			return "", 0, findings, packWriteError(capMB, name, copyErr)
 		}
 		totalUncompressed += hdr.Size
 		regularFileCount++
 	}
 	if len(buildOnly) > 0 {
-		added, addErr := writeGitArchiveBuildOnlyFiles(tw, buildOnly, existingEntries, capBytes-totalUncompressed, archiveEntryCount)
+		added, addErr := writeGitArchiveBuildOnlyFiles(tw, buildOnly, existingEntries, expandedCap-totalUncompressed, archiveEntryCount)
 		if addErr != nil {
 			return "", 0, findings, addErr
 		}
@@ -190,10 +193,10 @@ func packGitArchive(srcPath string, capMB int, mode secretScanMode, buildOnly ma
 		}
 	}
 	if err := tw.Close(); err != nil {
-		return "", 0, findings, fmt.Errorf("close filtered tar: %w", err)
+		return "", 0, findings, packWriteError(capMB, "tar trailer", err)
 	}
 	if err := gzOut.Close(); err != nil {
-		return "", 0, findings, fmt.Errorf("close filtered gzip: %w", err)
+		return "", 0, findings, packWriteError(capMB, "gzip trailer", err)
 	}
 	if err := out.Close(); err != nil {
 		return "", 0, findings, fmt.Errorf("close filtered archive: %w", err)
@@ -203,7 +206,7 @@ func packGitArchive(srcPath string, capMB int, mode secretScanMode, buildOnly ma
 		return "", 0, findings, fmt.Errorf("stat filtered archive: %w", err)
 	}
 	if st.Size() > capBytes {
-		return "", 0, findings, fmt.Errorf("filtered git archive is %d MB, over the %d MB zero-config cap", st.Size()/(1024*1024), capMB)
+		return "", 0, findings, sourceUploadLimitError(capMB)
 	}
 	success = true
 	return outPath, regularFileCount, findings, nil
@@ -233,7 +236,7 @@ func writeGitArchiveBuildOnlyFiles(tw *tar.Writer, files map[string][]byte, exis
 	for _, file := range virtual {
 		size := int64(len(file.body))
 		if size > remaining-writtenBytes {
-			return 0, fmt.Errorf("uncompressed git archive plus build-only files exceeds source cap")
+			return 0, sourceExpandedLimitError()
 		}
 		hdr := &tar.Header{Name: file.name, Mode: 0o644, Size: size, Typeflag: tar.TypeReg, ModTime: packEpoch}
 		if err := tw.WriteHeader(hdr); err != nil {
@@ -380,45 +383,48 @@ func detectGitArchiveShape(srcPath, sourceRoot string) (shape, string, string, e
 	}
 }
 
-// readGitArchiveIgnore reads the root .gregaleignore entry before the second
-// archive pass. A bounded read prevents a tracked configuration file from
-// turning the zero-config pack into an unbounded allocation.
-func readGitArchiveIgnore(srcPath string) ([]gregaleignorePattern, error) {
-	f, err := openCustomerFile(srcPath)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = f.Close() }()
-	gz, err := gzip.NewReader(f)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = gz.Close() }()
-
-	tr := tar.NewReader(gz)
-	for {
-		hdr, err := tr.Next()
-		if errors.Is(err, io.EOF) {
-			return nil, nil
+// readGitArchiveRules builds the file-selection policy from the archive
+// before the second pass: the root .gregaleignore (and, for a Dockerfile
+// build, .dockerignore) and the Go vendor directories (vendor/modules.txt).
+// Bounded reads keep a tracked configuration file from turning the pack into
+// an unbounded allocation.
+func readGitArchiveRules(srcPath string, dockerfile bool) (packRules, error) {
+	rules := packRules{dockerfile: dockerfile}
+	goVendor := map[string]bool{}
+	var ignore, dockerignore []byte
+	err := forEachArchiveEntry(srcPath, func(hdr *tar.Header, body io.Reader) error {
+		name := strings.TrimSuffix(hdr.Name, "/")
+		if path.Base(name) == "modules.txt" && path.Base(path.Dir(name)) == "vendor" && hdr.Typeflag == tar.TypeReg {
+			goVendor[path.Dir(name)] = true
 		}
-		if err != nil {
-			return nil, err
-		}
-		if strings.TrimSuffix(hdr.Name, "/") != gregaleignoreFile {
-			continue
+		var dst *[]byte
+		switch {
+		case name == gregaleignoreFile:
+			dst = &ignore
+		case name == dockerignoreFile && dockerfile:
+			dst = &dockerignore
+		default:
+			return nil
 		}
 		if hdr.Typeflag != tar.TypeReg {
-			return nil, fmt.Errorf("%s is not a regular file", gregaleignoreFile)
+			return fmt.Errorf("%s is not a regular file", name)
 		}
-		data, err := io.ReadAll(io.LimitReader(tr, maxGitignoreBytes+1))
+		data, err := io.ReadAll(io.LimitReader(body, maxGitignoreBytes+1))
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if len(data) > maxGitignoreBytes {
-			return nil, fmt.Errorf("%s exceeds %d bytes", gregaleignoreFile, maxGitignoreBytes)
+			return fmt.Errorf("%s exceeds %d bytes", name, maxGitignoreBytes)
 		}
-		return parseGregaleignore(data), nil
+		*dst = data
+		return nil
+	})
+	if err != nil {
+		return rules, fmt.Errorf("read deploy ignore files: %w", err)
 	}
+	rules.patterns = append(parseDockerignore(dockerignore), parseGregaleignore(ignore)...)
+	rules.goVendor = func(rel string) bool { return goVendor[rel] }
+	return rules, nil
 }
 
 func gitArchiveEntrySafe(name string) bool {
@@ -441,14 +447,14 @@ func gitArchiveEntrySafe(name string) bool {
 // archives that omit explicit directory headers (git archive commonly does).
 // Checking only the file basename would otherwise let a tracked file below
 // node_modules/.git/etc. survive the filter.
-func gitArchiveShouldExclude(name string, isDir bool, patterns []gregaleignorePattern) bool {
-	if shouldExclude(name, isDir, patterns) {
+func gitArchiveShouldExclude(name string, isDir bool, rules packRules) bool {
+	if rules.exclude(name, isDir) {
 		return true
 	}
 	trimmed := strings.TrimSuffix(name, "/")
 	parts := strings.Split(trimmed, "/")
 	for i := 1; i < len(parts); i++ {
-		if shouldExclude(strings.Join(parts[:i], "/"), true, patterns) {
+		if rules.exclude(strings.Join(parts[:i], "/"), true) {
 			return true
 		}
 	}
