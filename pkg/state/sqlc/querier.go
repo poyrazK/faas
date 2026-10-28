@@ -3429,6 +3429,13 @@ type Querier interface {
 	// newest excludes rollback targets, which are older than what they replaced.
 	// An immediate release may not stamp rollout_started_at; its baseline then
 	// ends when it completed.
+	// The predecessor is the release a plain rollback returns to
+	// (LatestRetainedRollbackDeployment): the one that served most recently, never
+	// a canary candidate aborted before it completed. Ordered by created_at, a
+	// canary aborted between v1 and v3 (retired as superseded when v3 completed)
+	// or a build superseded before it went live was chosen, so the watch compared
+	// v3 with a release that never served and rolled back to it (release review
+	// 2026-10-28).
 	ListPostReleaseWatchCandidates(ctx context.Context, db DBTX, arg ListPostReleaseWatchCandidatesParams) ([]ListPostReleaseWatchCandidatesRow, error)
 	ListProductionDeadLetterEvents(ctx context.Context, db DBTX, arg ListProductionDeadLetterEventsParams) ([]DeadLetterEvent, error)
 	ListProductionLifecycleHistory(ctx context.Context, db DBTX, arg ListProductionLifecycleHistoryParams) ([][]byte, error)
