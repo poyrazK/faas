@@ -195,8 +195,18 @@ ADR-568 requires.
     inputs changed after admission`).
   - ac56849e87 serializes minimal-base staging, as runtime bases already
     were.
-- Pending: the n2 native GitOps journey with ac56849e87, through activation
-  and serving.
+- 2026-10-28, n2, rerun with ac56849e87:
+  - Every candidate in both graphs finished preparation.
+  - The gitlab graph qualified natively for the first time: two captures,
+    two restores, two guest config acknowledgements and two smokes. Its
+    evidence reported `Qualified`. Activation had not happened when the
+    test's 12-minute window closed, about 4.5 minutes after qualification.
+  - The github capture's cold boot spent 33.8 s provisioning the jail chroot
+    on the busy shared disk. It overran schedd's cold-boot budget, and the
+    5-minute qualification lease held the retry past the test window.
+  - 939289c79e makes the test report the GitOps runs and the graph,
+    qualification and release rows when it times out.
+- Pending: the n2 native GitOps journey through activation and serving.
 
 ## Rejected alternatives
 
