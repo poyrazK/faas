@@ -175,7 +175,7 @@ func cmdEventsBackfillRetry(args []string) int {
 
 // cmdEventsBackfillCancel ends a running backfill (ADR-20261028095548).
 func cmdEventsBackfillCancel(args []string) int {
-	const usage = "usage: gregale events backfill-cancel <job-id> --yes"
+	const usage = "usage: gregale event backfill cancel <job-id> --yes"
 	flags, positional := splitArgsForFlags(args, "yes")
 	fs := newFlagSet("events backfill-cancel", flag.ContinueOnError)
 	yes := fs.Bool("yes", false, "confirm dropping the job's undelivered events")
