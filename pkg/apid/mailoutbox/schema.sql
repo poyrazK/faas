@@ -961,7 +961,7 @@ ALTER TABLE platform_mail_producer_outbox ADD CONSTRAINT platform_mail_producer_
 
 
 -- Replacing the template CHECKs locks the two mail outbox tables briefly; each
--- replacement is added NOT VALID and 20261027141127468 validates it, so the
+-- replacement is added NOT VALID and 20261027221027468 validates it, so the
 -- full check runs without the exclusive lock.
 SET LOCAL lock_timeout = '5s';
 -- ADR-20261027090010 §8: an agent run may mail a short summary to its account's own
@@ -984,10 +984,12 @@ BEGIN
         SELECT pg_get_constraintdef(oid) INTO STRICT definition FROM pg_constraint
             WHERE conrelid = target.rel::regclass AND conname = target.name;
         CONTINUE WHEN position('agent_run_delivered' IN definition) > 0;
-        IF (length(definition) - length(replace(definition, '''deployment_failed''::text]', ''))) / length('''deployment_failed''::text]') <> target.lists THEN
+        -- The template ends each list that holds deployment_failed, after
+        -- any template a later migration added behind it.
+        IF (SELECT count(*) FROM regexp_matches(definition, '''deployment_failed''::text(, ''[a-z_]+''::text)*\]', 'g')) <> target.lists THEN
             RAISE EXCEPTION '% has an unexpected shape: %', target.name, definition;
         END IF;
-        widened := replace(definition, '''deployment_failed''::text]', '''deployment_failed''::text, ''agent_run_delivered''::text]');
+        widened := regexp_replace(definition, '(''deployment_failed''::text(, ''[a-z_]+''::text)*)\]', '\1, ''agent_run_delivered''::text]', 'g');
         EXECUTE format('ALTER TABLE %I DROP CONSTRAINT %I', target.rel, target.name);
         EXECUTE format('ALTER TABLE %I ADD CONSTRAINT %I %s NOT VALID', target.rel, target.name, widened);
     END LOOP;

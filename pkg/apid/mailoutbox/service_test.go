@@ -76,7 +76,7 @@ func migrationParts(t *testing.T) (string, string) {
 	endedUp, endedDown := migrationFileParts(t, "20261017142138994_platform_mail_subscription_ended_outbox.sql")
 	deployUp, deployDown := migrationFileParts(t, "20261017155842001_platform_mail_deployment_failed_outbox.sql")
 	scopeShapeUp, scopeShapeDown := migrationSectionParts(t, "20261018162329975_platform_mail_deployment_scope_shape.sql")
-	agentUp, agentDown := migrationFileParts(t, "20261027141052602_platform_mail_agent_run_delivered_outbox.sql")
+	agentUp, agentDown := migrationFileParts(t, "20261027220952602_platform_mail_agent_run_delivered_outbox.sql")
 	return up + "\n" + reconcileUp + "\n" + verificationUp + "\n" + resetUp + "\n" + magicUp + "\n" + alertUp + "\n" + disableUp + "\n" + disabledUp + "\n" + changedUp + "\n" + enabledUp + "\n" + paymentUp + "\n" + restoredUp + "\n" + suspendedUp + "\n" + nonpaymentUp + "\n" + quotaUp + "\n" + endedUp + "\n" + deployUp + "\n" + scopeShapeUp + "\n" + agentUp, agentDown + "\n" + scopeShapeDown + "\n" + deployDown + "\n" + endedDown + "\n" + quotaDown + "\n" + nonpaymentDown + "\n" + suspendedDown + "\n" + restoredDown + "\n" + paymentDown + "\n" + enabledDown + "\n" + changedDown + "\n" + disabledDown + "\n" + disableDown + "\n" + alertDown + "\n" + magicDown + "\n" + resetDown + "\n" + verificationDown + "\n" + reconcileDown + "\n" + down
 }
 

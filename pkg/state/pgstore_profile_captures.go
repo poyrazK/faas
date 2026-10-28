@@ -24,8 +24,10 @@ func (s *PgStore) QueueAutomaticProfileCapture(ctx context.Context, accountID, a
 }
 
 // insertProfileCapture enforces, under the account and app locks, the
-// account quota, one active capture per app, for automatic captures the
-// per-trigger minimum interval, and the account's capture storage limit.
+// account's hourly quota for the capture's kind (manual or automatic), one
+// active capture per app, for automatic captures the per-trigger minimum
+// interval, and the account's capture storage limit, rotating out the
+// oldest automatic captures when an automatic one needs their room.
 func (s *PgStore) insertProfileCapture(ctx context.Context, accountID, appID string, c api.ProfileCapture, automaticInterval time.Duration, storageLimit int64) error {
 	doc, err := profileCaptureRequestDoc(c)
 	if err != nil {
@@ -45,11 +47,12 @@ func (s *PgStore) insertProfileCapture(ctx context.Context, accountID, appID str
 	if _, err := q.LockProfileCaptureApp(ctx, tx, sqlc.LockProfileCaptureAppParams{AppID: appID, AccountID: accountID}); err != nil {
 		return routePolicyReadError(err)
 	}
-	recent, err := q.CountRecentProfileCaptures(ctx, tx, sqlc.CountRecentProfileCapturesParams{AccountID: accountID, Since: pgtypeFromTime(c.CreatedAt.Add(-time.Hour))})
+	automatic := c.Automatic()
+	recent, err := q.CountRecentProfileCaptures(ctx, tx, sqlc.CountRecentProfileCapturesParams{AccountID: accountID, Since: pgtypeFromTime(c.CreatedAt.Add(-time.Hour)), Automatic: automatic})
 	if err != nil {
 		return fmt.Errorf("count profile captures: %w", err)
 	}
-	if recent >= api.ProfileCaptureMaxPerAccountHour {
+	if recent >= profileCaptureHourlyLimit(automatic) {
 		return ErrProfileCaptureQuota
 	}
 	active, err := q.CountActiveProfileCaptures(ctx, tx, appID)
@@ -68,12 +71,29 @@ func (s *PgStore) insertProfileCapture(ctx context.Context, accountID, appID str
 			return ErrProfileCaptureRecent
 		}
 	}
-	usage, err := q.ProfileCaptureAccountStorage(ctx, tx, sqlc.ProfileCaptureAccountStorageParams{AccountID: accountID, Now: pgtypeFromTime(c.CreatedAt)})
+	row, err := q.ProfileCaptureAccountStorage(ctx, tx, sqlc.ProfileCaptureAccountStorageParams{AccountID: accountID, Now: pgtypeFromTime(c.CreatedAt)})
 	if err != nil {
 		return fmt.Errorf("profile capture storage: %w", err)
 	}
-	if err := checkProfileCaptureStorage(usage.StoredBytes, usage.Active, storageLimit); err != nil {
+	usage := profileCaptureUsage{StoredBytes: row.StoredBytes, Active: row.Active, AutomaticStoredBytes: row.AutomaticStoredBytes, AutomaticActive: row.AutomaticActive}
+	var candidates []rotatableProfileCapture
+	if automatic && usage.automaticShareFull(storageLimit) {
+		rows, err := q.ListEvictableAutomaticProfileCaptures(ctx, tx, sqlc.ListEvictableAutomaticProfileCapturesParams{AccountID: accountID, Now: pgtypeFromTime(c.CreatedAt), MaxRows: api.ProfileCaptureMaxRotated})
+		if err != nil {
+			return fmt.Errorf("list rotatable profile captures: %w", err)
+		}
+		for _, r := range rows {
+			candidates = append(candidates, rotatableProfileCapture{ID: r.ID, Bytes: r.Bytes})
+		}
+	}
+	rotate, err := planProfileCaptureStorage(usage, automatic, storageLimit, candidates)
+	if err != nil {
 		return err
+	}
+	if len(rotate) > 0 {
+		if _, err := q.DeleteAccountProfileCaptures(ctx, tx, sqlc.DeleteAccountProfileCapturesParams{AccountID: accountID, Ids: rotate}); err != nil {
+			return fmt.Errorf("rotate out automatic profile captures: %w", err)
+		}
 	}
 	if err := q.InsertProfileCapture(ctx, tx, sqlc.InsertProfileCaptureParams{ID: c.ID, AppID: appID, AccountID: accountID, Capture: doc,
 		CreatedAt: pgtypeFromTime(c.CreatedAt), ExpiresAt: pgtypeFromTime(c.ExpiresAt)}); err != nil {
@@ -102,6 +122,17 @@ func (s *PgStore) GetProfileCapture(ctx context.Context, accountID, appID, id st
 		return api.ProfileCapture{}, routePolicyReadError(err)
 	}
 	return decodeProfileCapture(body)
+}
+
+func (s *PgStore) DeleteProfileCapture(ctx context.Context, accountID, appID, id string) error {
+	n, err := sqlc.New().DeleteProfileCapture(ctx, s.pool, sqlc.DeleteProfileCaptureParams{ID: id, AppID: appID, AccountID: accountID})
+	if err != nil {
+		return fmt.Errorf("delete profile capture: %w", err)
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (s *PgStore) ListProfileCaptures(ctx context.Context, accountID, appID string) ([]api.ProfileCapture, error) {

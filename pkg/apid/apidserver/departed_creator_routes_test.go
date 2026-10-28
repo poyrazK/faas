@@ -26,15 +26,20 @@ import (
 // reason. Keep it empty unless a route is public by design.
 var departedCreatorAllowed = map[string]string{}
 
-var appRoutePattern = regexp.MustCompile(`^(GET|POST|PUT|PATCH|DELETE) /v1/apps/\{slug\}(/.*)?$`)
+var appRoutePattern = regexp.MustCompile(`^(GET|POST|PUT|PATCH|DELETE) /(v1/apps|dashboard/apps|dashboard/mcp/apps)/\{slug\}(/.*)?$`)
+
+// dashboardAppPages are pages the "GET /dashboard/" subtree serves by path
+// rather than by a route pattern; they share one gate on the app's slug.
+var dashboardAppPages = []string{"GET /dashboard/apps/{slug}", "GET /dashboard/apps/{slug}/logs"}
 
 // A member removed from an organization keeps no access to its apps, the
 // ones they created included. A company app's account_id still names its
 // creator, so a handler that loads the app by the caller's account instead
 // of through the organization's access check hands it back to someone who
-// left; the 2026-10 security audits found that class four times. This calls
-// every /v1/apps/{slug} route written in apid as the departed creator and
-// expects a refusal from each.
+// left; the 2026-10 security audits found that class five times. This calls
+// every /v1/apps/{slug}, /dashboard/apps/{slug} and /dashboard/mcp/apps/{slug}
+// route written in apid as the departed creator and expects a refusal from
+// each.
 //
 // adr: 20261026151103
 func TestDepartedCreatorReachesNoCompanyAppRoute(t *testing.T) {
@@ -146,6 +151,9 @@ func appRoutes(t *testing.T) []string {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	for _, page := range dashboardAppPages {
+		seen[page] = true
 	}
 	rank := func(route string) int {
 		switch {

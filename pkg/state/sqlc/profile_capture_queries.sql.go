@@ -13,7 +13,8 @@ import (
 
 const claimQueuedProfileCapture = `-- name: ClaimQueuedProfileCapture :one
 UPDATE profile_captures SET status = 'capturing', claimed_at = $1::timestamptz
-WHERE id = (SELECT q.id FROM profile_captures q WHERE q.status = 'queued' ORDER BY q.created_at, q.id FOR UPDATE SKIP LOCKED LIMIT 1)
+WHERE id = (SELECT q.id FROM profile_captures q WHERE q.status = 'queued'
+  ORDER BY (coalesce(q.capture->>'trigger', 'manual') <> 'manual'), q.created_at, q.id FOR UPDATE SKIP LOCKED LIMIT 1)
 RETURNING id::text AS id, app_id::text AS app_id, account_id::text AS account_id, capture, created_at
 `
 
@@ -25,6 +26,7 @@ type ClaimQueuedProfileCaptureRow struct {
 	CreatedAt pgtype.Timestamptz
 }
 
+// Manual captures are claimed before automatic ones: someone is waiting.
 func (q *Queries) ClaimQueuedProfileCapture(ctx context.Context, db DBTX, now pgtype.Timestamptz) (ClaimQueuedProfileCaptureRow, error) {
 	row := db.QueryRow(ctx, claimQueuedProfileCapture, now)
 	var i ClaimQueuedProfileCaptureRow
@@ -72,18 +74,39 @@ func (q *Queries) CountRecentAutomaticProfileCaptures(ctx context.Context, db DB
 const countRecentProfileCaptures = `-- name: CountRecentProfileCaptures :one
 SELECT count(*) FROM profile_captures
 WHERE account_id = $1::text::uuid AND created_at >= $2::timestamptz
+  AND (coalesce(capture->>'trigger', 'manual') <> 'manual') = $3::boolean
 `
 
 type CountRecentProfileCapturesParams struct {
 	AccountID string
 	Since     pgtype.Timestamptz
+	Automatic bool
 }
 
+// Manual and automatic captures have separate hourly quotas (ADR-1155).
 func (q *Queries) CountRecentProfileCaptures(ctx context.Context, db DBTX, arg CountRecentProfileCapturesParams) (int64, error) {
-	row := db.QueryRow(ctx, countRecentProfileCaptures, arg.AccountID, arg.Since)
+	row := db.QueryRow(ctx, countRecentProfileCaptures, arg.AccountID, arg.Since, arg.Automatic)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
+}
+
+const deleteAccountProfileCaptures = `-- name: DeleteAccountProfileCaptures :execrows
+DELETE FROM profile_captures
+WHERE account_id = $1::text::uuid AND id = ANY($2::text[]::uuid[])
+`
+
+type DeleteAccountProfileCapturesParams struct {
+	AccountID string
+	Ids       []string
+}
+
+func (q *Queries) DeleteAccountProfileCaptures(ctx context.Context, db DBTX, arg DeleteAccountProfileCapturesParams) (int64, error) {
+	result, err := db.Exec(ctx, deleteAccountProfileCaptures, arg.AccountID, arg.Ids)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const deleteExpiredProfileCaptures = `-- name: DeleteExpiredProfileCaptures :execrows
@@ -92,6 +115,28 @@ DELETE FROM profile_captures WHERE expires_at < $1::timestamptz
 
 func (q *Queries) DeleteExpiredProfileCaptures(ctx context.Context, db DBTX, now pgtype.Timestamptz) (int64, error) {
 	result, err := db.Exec(ctx, deleteExpiredProfileCaptures, now)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteProfileCapture = `-- name: DeleteProfileCapture :execrows
+DELETE FROM profile_captures p USING apps a
+WHERE p.id = $1::text::uuid AND p.app_id = $2::text::uuid
+  AND p.account_id = $3::text::uuid AND a.id = p.app_id
+  AND a.account_id = p.account_id AND a.status <> 'deleted'
+`
+
+type DeleteProfileCaptureParams struct {
+	ID        string
+	AppID     string
+	AccountID string
+}
+
+// A customer deletes one capture of a live app; its profiles cascade.
+func (q *Queries) DeleteProfileCapture(ctx context.Context, db DBTX, arg DeleteProfileCaptureParams) (int64, error) {
+	result, err := db.Exec(ctx, deleteProfileCapture, arg.ID, arg.AppID, arg.AccountID)
 	if err != nil {
 		return 0, err
 	}
@@ -222,6 +267,51 @@ func (q *Queries) LatestOOMProfileCapture(ctx context.Context, db DBTX, arg Late
 	return capture, err
 }
 
+const listEvictableAutomaticProfileCaptures = `-- name: ListEvictableAutomaticProfileCaptures :many
+SELECT p.id::text AS id, coalesce(sum(octet_length(d.profile)), 0)::bigint AS bytes
+FROM profile_captures p LEFT JOIN profile_capture_data d ON d.capture_id = p.id
+WHERE p.account_id = $1::text::uuid AND p.status IN ('ready', 'failed')
+  AND coalesce(p.capture->>'trigger', 'manual') <> 'manual' AND p.capture->>'oom_killed_at' IS NULL
+  AND p.expires_at >= $2::timestamptz
+GROUP BY p.id, p.created_at
+ORDER BY p.created_at, p.id
+LIMIT $3::int
+`
+
+type ListEvictableAutomaticProfileCapturesParams struct {
+	AccountID string
+	Now       pgtype.Timestamptz
+	MaxRows   int32
+}
+
+type ListEvictableAutomaticProfileCapturesRow struct {
+	ID    string
+	Bytes int64
+}
+
+// The account's finished, unexpired automatic captures without an OOM link,
+// oldest first, with their stored bytes. The oldest are rotated out to make
+// room for a newer automatic capture (ADR-1155).
+func (q *Queries) ListEvictableAutomaticProfileCaptures(ctx context.Context, db DBTX, arg ListEvictableAutomaticProfileCapturesParams) ([]ListEvictableAutomaticProfileCapturesRow, error) {
+	rows, err := db.Query(ctx, listEvictableAutomaticProfileCaptures, arg.AccountID, arg.Now, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListEvictableAutomaticProfileCapturesRow{}
+	for rows.Next() {
+		var i ListEvictableAutomaticProfileCapturesRow
+		if err := rows.Scan(&i.ID, &i.Bytes); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listProfileCaptureData = `-- name: ListProfileCaptureData :many
 SELECT d.kind, d.process_id, d.profile FROM profile_capture_data d
 JOIN profile_captures p ON p.id = d.capture_id JOIN apps a ON a.id = p.app_id
@@ -333,7 +423,14 @@ SELECT
      JOIN profile_captures p ON p.id = d.capture_id
    WHERE p.account_id = $1::text::uuid AND p.expires_at >= $2::timestamptz)::bigint AS stored_bytes,
   (SELECT count(*) FROM profile_captures
-   WHERE account_id = $1::text::uuid AND status IN ('queued', 'capturing'))::bigint AS active
+   WHERE account_id = $1::text::uuid AND status IN ('queued', 'capturing'))::bigint AS active,
+  (SELECT coalesce(sum(octet_length(d.profile)), 0) FROM profile_capture_data d
+     JOIN profile_captures p ON p.id = d.capture_id
+   WHERE p.account_id = $1::text::uuid AND p.expires_at >= $2::timestamptz
+     AND coalesce(p.capture->>'trigger', 'manual') <> 'manual')::bigint AS automatic_stored_bytes,
+  (SELECT count(*) FROM profile_captures
+   WHERE account_id = $1::text::uuid AND status IN ('queued', 'capturing')
+     AND coalesce(capture->>'trigger', 'manual') <> 'manual')::bigint AS automatic_active
 `
 
 type ProfileCaptureAccountStorageParams struct {
@@ -342,16 +439,24 @@ type ProfileCaptureAccountStorageParams struct {
 }
 
 type ProfileCaptureAccountStorageRow struct {
-	StoredBytes int64
-	Active      int64
+	StoredBytes          int64
+	Active               int64
+	AutomaticStoredBytes int64
+	AutomaticActive      int64
 }
 
-// Stored bytes of the account's unexpired captures, and how many of its
-// captures are still queued or running.
+// Stored bytes of the account's unexpired captures and how many of its
+// captures are still queued or running, in total and for automatic captures
+// alone. A capture without a trigger predates automatic captures: manual.
 func (q *Queries) ProfileCaptureAccountStorage(ctx context.Context, db DBTX, arg ProfileCaptureAccountStorageParams) (ProfileCaptureAccountStorageRow, error) {
 	row := db.QueryRow(ctx, profileCaptureAccountStorage, arg.AccountID, arg.Now)
 	var i ProfileCaptureAccountStorageRow
-	err := row.Scan(&i.StoredBytes, &i.Active)
+	err := row.Scan(
+		&i.StoredBytes,
+		&i.Active,
+		&i.AutomaticStoredBytes,
+		&i.AutomaticActive,
+	)
 	return i, err
 }
 

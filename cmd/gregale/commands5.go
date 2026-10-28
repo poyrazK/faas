@@ -224,12 +224,26 @@ func humanizeInstanceState(state string) string {
 func cmdStatus(args []string) int {
 	fs := newFlagSet(statusLiteral, flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "emit the raw status page as JSON")
+	platform := fs.Bool("platform", false, "show Gregale's platform status")
+	app := fs.String("app", "", "show this app instead of the linked one")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	if fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale status [--json]", "status")
+	if fs.NArg() != 0 || *platform && *app != "" {
+		PrintUsage(os.Stderr, "usage: gregale status [--app SLUG] | --platform [--json]", "status")
 		return 1
+	}
+	if !*platform {
+		target, ok, err := statusTarget(*app)
+		if err != nil {
+			return printErr("Could not read the linked project", err)
+		}
+		if ok {
+			if *asJSON {
+				jsonOutput = true
+			}
+			return cmdStatusCheckout(target)
+		}
 	}
 	// Use the raw Client (not authedClient) so the public endpoint
 	// works without a stored token. The Client still sends the bearer

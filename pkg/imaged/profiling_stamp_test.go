@@ -16,7 +16,8 @@ import (
 // pprof_port also serves on-demand captures.
 func TestStampProfilingFollowsInstallationFlags(t *testing.T) {
 	profiled := func() *api.ProfilingConfig {
-		return &api.ProfilingConfig{Enabled: true, WindowSeconds: 15, Kinds: []string{api.ProfileKindCPU, api.ProfileKindHeap}, PprofPort: 6060}
+		off := false
+		return &api.ProfilingConfig{Enabled: true, WindowSeconds: 15, Kinds: []string{api.ProfileKindCPU, api.ProfileKindHeap}, PprofPort: 6060, AutomaticCaptures: &off}
 	}
 	cases := []struct {
 		name                    string
@@ -53,7 +54,10 @@ func TestStampProfilingFollowsInstallationFlags(t *testing.T) {
 			if got.Profiling.PprofPort != 6060 || got.Profiling.WindowSeconds != 15 || len(got.Profiling.Kinds) != 2 {
 				t.Fatalf("profiling settings changed: %+v", got.Profiling)
 			}
-			if !tc.profiling.Enabled {
+			if got.Profiling.AutomaticCaptures != nil {
+				t.Fatal("automatic_captures, a control-plane setting, reached the guest manifest")
+			}
+			if !tc.profiling.Enabled || tc.profiling.AutomaticCaptures == nil {
 				t.Fatal("stampProfiling changed the app's own configuration")
 			}
 			if err := got.Validate(); err != nil {
