@@ -21,12 +21,14 @@ const requestBodyMemoryThreshold int64 = 1 << 20
 // body releases the descriptor and removes the file on every proxy exit path.
 type admittedFileBody struct {
 	*os.File
-	path string
+	path  string
+	lease *requestBodyLease
 }
 
 func (b *admittedFileBody) Close() error {
 	err := b.File.Close()
 	removeErr := os.Remove(b.path)
+	b.lease.release()
 	if err != nil {
 		return err
 	}
@@ -44,7 +46,10 @@ func (b *admittedFileBody) Close() error {
 // This phase has its own size-derived total deadline and a sliding idle read
 // deadline. The app execution budget is stamped only after this function and
 // platform wake/capacity selection have completed.
-func admitRequestBody(w http.ResponseWriter, r *http.Request, app App) bool {
+//
+// Spooled bytes count against spoolBudget, node-wide and per client; a body
+// that would exceed it is refused with 503 and Retry-After.
+func admitRequestBody(w http.ResponseWriter, r *http.Request, app App, spoolBudget *requestBodyBudget) bool {
 	mediaType, _, mediaErr := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if app.AppProtocol == api.AppProtocolGRPC && mediaErr == nil &&
 		(mediaType == "application/grpc" || strings.HasPrefix(mediaType, "application/grpc+")) {
@@ -59,10 +64,14 @@ func admitRequestBody(w http.ResponseWriter, r *http.Request, app App) bool {
 	if r.ContentLength >= 0 && r.ContentLength <= limit {
 		allowance = api.RequestUploadTimeoutForBytes(r.ContentLength)
 	}
-	return admitRequestBodyWithin(w, r, limit, allowance)
+	return admitRequestBodyBudgeted(w, r, limit, allowance, spoolBudget)
 }
 
 func admitRequestBodyWithin(w http.ResponseWriter, r *http.Request, limit int64, allowance time.Duration) bool {
+	return admitRequestBodyBudgeted(w, r, limit, allowance, nil)
+}
+
+func admitRequestBodyBudgeted(w http.ResponseWriter, r *http.Request, limit int64, allowance time.Duration, spoolBudget *requestBodyBudget) bool {
 	defer measureTrafficPhase(r.Context(), trafficBody)()
 	if r.Body == nil || r.Body == http.NoBody || isUpgradeRequest(r) {
 		return false
@@ -83,12 +92,14 @@ func admitRequestBodyWithin(w http.ResponseWriter, r *http.Request, limit int64,
 	// whole upload allowance.
 	var memory bytes.Buffer
 	var spool *os.File
+	var lease *requestBodyLease
 	cleanupSpool := func() {
 		if spool != nil {
 			path := spool.Name()
 			_ = spool.Close()
 			_ = os.Remove(path)
 		}
+		lease.release()
 	}
 
 	var total int64
@@ -110,9 +121,17 @@ func admitRequestBodyWithin(w http.ResponseWriter, r *http.Request, limit int64,
 				return true
 			}
 			if spool == nil && total > requestBodyMemoryThreshold {
+				var ok bool
+				if lease, ok = spoolBudget.lease(requestBodyClient(r)); !ok || !lease.grow(int64(memory.Len())) {
+					cleanupSpool()
+					_ = original.Close()
+					api.WriteProblem(w, api.ErrRequestBodyBudget())
+					return true
+				}
 				var err error
 				spool, err = os.CreateTemp("", "gregale-request-body-*")
 				if err != nil {
+					lease.release()
 					_ = original.Close()
 					api.WriteProblem(w, api.ErrInternal("request body admission storage is unavailable"))
 					return true
@@ -126,6 +145,12 @@ func admitRequestBodyWithin(w http.ResponseWriter, r *http.Request, limit int64,
 				memory.Reset()
 			}
 			var writeErr error
+			if spool != nil && !lease.grow(int64(n)) {
+				cleanupSpool()
+				_ = original.Close()
+				api.WriteProblem(w, api.ErrRequestBodyBudget())
+				return true
+			}
 			if spool != nil {
 				_, writeErr = spool.Write(buf[:n])
 			} else {
@@ -197,7 +222,7 @@ func admitRequestBodyWithin(w http.ResponseWriter, r *http.Request, limit int64,
 			api.WriteProblem(w, api.ErrInternal("request body admission storage is unavailable"))
 			return true
 		}
-		r.Body = &admittedFileBody{File: spool, path: spool.Name()}
+		r.Body = &admittedFileBody{File: spool, path: spool.Name(), lease: lease}
 		r.GetBody = func() (io.ReadCloser, error) {
 			if _, err := spool.Seek(0, io.SeekStart); err != nil {
 				return nil, err

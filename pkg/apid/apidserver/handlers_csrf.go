@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -41,6 +42,10 @@ func (s *server) issueCSRFToken(w http.ResponseWriter, r *http.Request, acct sta
 			"Invalid CSRF action", "the requested action is not available to browser clients"))
 		return
 	}
+	if credentialAction(action) && requestUsesAPIKey(r) {
+		writeSessionRequired(w)
+		return
+	}
 
 	var tok string
 	var err error
@@ -69,4 +74,24 @@ func (s *server) issueCSRFToken(w http.ResponseWriter, r *http.Request, acct sta
 		setDashboardCSRFCookie(w, s, tok)
 	}
 	writeJSON(w, http.StatusOK, api.CSRFTokenResponse{CSRFToken: tok})
+}
+
+// credentialAction reports whether a CSRF action changes the account's
+// sign-in factors. Those need a dashboard session: an API key skips the MFA
+// gate, so a key bought with a stolen password could otherwise switch MFA
+// off or replace the password.
+func credentialAction(action string) bool {
+	return strings.HasPrefix(action, "mfa_") || action == csrfActionSetPassword
+}
+
+// requestUsesAPIKey reports whether the request authenticated with a bearer
+// key rather than a session cookie.
+func requestUsesAPIKey(r *http.Request) bool {
+	_, key, ok := authmw.AccountFromContext(r)
+	return ok && key != nil
+}
+
+func writeSessionRequired(w http.ResponseWriter) {
+	api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeMFARequired, "Session required",
+		"two-factor settings and the password can only be changed from a signed-in dashboard session, not with an API key"))
 }

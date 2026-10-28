@@ -52,8 +52,8 @@ found no account and were retried forever.
 2. **Deleting an account or organization cancels its subscription at period
    end.** The already paid period runs out and nothing is charged again. A
    subscription the provider reports as ended or unknown needs nothing. The
-   cancellation runs before the deletion is recorded; if the provider refuses
-   it, the deletion is refused with 503 and the customer retries.
+   cancellation runs after the deletion is recorded (amendment 1); if the
+   provider refuses it, the request answers 503 and the customer retries.
    - Restoring an account within the grace window does not resume the
      subscription. It ends at period end, the account moves to Free, and the
      customer re-subscribes through checkout.
@@ -73,3 +73,22 @@ found no account and were retried forever.
   deferred) instead of leaving a deleted customer paying.
 - Lost success deliveries are still not detected: the dunning sweeper does not
   ask the provider before suspending. That remains a known gap.
+
+## Amendment 1 (2026-10-27): cancel after the deletion is recorded
+
+Bug hunt 2026-10-27 (B3) found that cancelling first ends a paid plan when the
+deletion is then refused: an account with live managed databases or pending
+company-app ownership, or an organization that still has an object bucket,
+gets a 409, keeps working, and drops to Free at period end with no warning.
+
+Decision 2 changes: **the cancellation runs after the deletion is recorded.**
+Every refusal therefore happens before the provider is touched. If the
+provider then refuses the cancellation, the deletion stays recorded and the
+request answers 503; a repeat request (account or organization deletion is
+idempotent) retries the cancellation, and the grace hard delete still retries
+it before erasure. For organizations the cancellation runs after
+`SoftDeleteOrg` succeeds.
+
+Restoring a paid account now says the subscription was not resumed: a
+`Warning` header on `POST /v1/account/restore` and the dashboard's restored
+banner carry the notice and the billing link.

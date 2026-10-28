@@ -359,6 +359,15 @@ func (s *server) createManagedPostgresDatabase(w http.ResponseWriter, r *http.Re
 		managedPostgresPlanDenied(w, acct.Plan, "upgrade to a paid plan to create a database")
 		return
 	}
+	// Free has no overage to pay for compute past its allowance, and only
+	// enforced caps (FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT=on) suspend it
+	// there. Under shadow or off a Free database with steady traffic ran
+	// its provider compute all month (~730 compute-unit hours against 5) at
+	// Gregale's cost, and Free sign-ups are unlimited.
+	if acct.Plan == api.PlanFree && s.managedPostgresCapMode != managedpostgres.CapEnforcementOn {
+		managedPostgresPlanDenied(w, acct.Plan, "managed PostgreSQL opens to the Free plan once compute caps are enforced; upgrade to a paid plan to create a database")
+		return
+	}
 	var req api.CreateManagedPostgresDatabaseRequest
 	if err := decodeJSON(r, &req); err != nil {
 		managedPostgresProblem(w, managedpostgres.ErrInvalid)

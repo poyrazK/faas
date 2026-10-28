@@ -592,6 +592,34 @@ func TestEnqueueBuild_OverCapacitySourceBytes(t *testing.T) {
 	}
 }
 
+// githubd fetches every push with Scale's limits, so the bridge holds the
+// account to its own plan's source limit (bug hunt 2026-10-27 B7).
+func TestEnqueueBuild_SourceAbovePlanLimit(t *testing.T) {
+	for _, tc := range []struct {
+		plan api.Plan
+		want codes.Code
+	}{
+		{api.PlanFree, codes.ResourceExhausted},
+		{api.PlanScale, codes.OK},
+	} {
+		t.Run(string(tc.plan), func(t *testing.T) {
+			store := &bridgeStubStore{
+				app:     state.App{ID: "a", AccountID: "a", Status: state.AppActive},
+				account: state.Account{ID: "a", Plan: tc.plan},
+			}
+			g := newBridge(t, store, &bridgeStubNotifier{})
+			path, _ := stageFixtureFile(t, g.stagingRoot, "a/a/x", []byte("x"))
+			_, err := g.EnqueueBuild(context.Background(), &githubdpb.EnqueueBuildRequest{
+				AccountId: "a", AppId: "a", CommitSha: "x", SourcePath: path, SourceUrl: "https://x",
+				SourceBytes: 150 << 20,
+			})
+			if got := status.Code(err); got == codes.ResourceExhausted != (tc.want == codes.ResourceExhausted) {
+				t.Fatalf("150 MB source on %s: %v, want %s", tc.plan, err, tc.want)
+			}
+		})
+	}
+}
+
 func TestEnqueueBuild_NotRegularFile(t *testing.T) {
 	// Source path is a directory, not a regular file.
 	stagingRoot := t.TempDir()

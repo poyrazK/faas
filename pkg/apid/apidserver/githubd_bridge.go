@@ -90,6 +90,25 @@ type githubdBridge struct {
 	spoolRoot   string // allowed prefix for SourcePath (FAAS_SPOOL_ROOT) — kept for future expansion
 }
 
+// checkSourcePlanLimit refuses a GitHub build whose source is above the
+// account's plan limit. githubd fetches every push with Scale's limits, so
+// without it the Free and Hobby 100 MB source cap held only for CLI uploads.
+func (g *githubdBridge) checkSourcePlanLimit(ctx context.Context, accountID string, sourceBytes int64) error {
+	acct, err := g.store.AccountByID(ctx, accountID)
+	if err != nil {
+		return status.Errorf(codes.Internal, "EnqueueBuild: account lookup: %v", err)
+	}
+	limits, ok := api.LimitsFor(acct.Plan)
+	if !ok {
+		return status.Errorf(codes.FailedPrecondition, "EnqueueBuild: account %q has unknown plan %q", accountID, acct.Plan)
+	}
+	if maxBytes := int64(limits.SourceTarballMaxMB) << 20; sourceBytes > maxBytes {
+		return status.Errorf(codes.ResourceExhausted,
+			"EnqueueBuild: source is %d bytes, above the %s plan's %d MB source limit", sourceBytes, acct.Plan, limits.SourceTarballMaxMB)
+	}
+	return nil
+}
+
 // stagingPathAllowed reports whether sourcePath is under one of the
 // allowed roots after Clean. The unix-socket DAC is the only auth in
 // v1.0 (ADR-015), but allowing arbitrary host paths on a deployment
@@ -237,6 +256,9 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 	if app.Status != state.AppActive {
 		return nil, status.Errorf(codes.FailedPrecondition,
 			"EnqueueBuild: app %q is not active (status=%q)", req.AppId, app.Status)
+	}
+	if err := g.checkSourcePlanLimit(ctx, req.AccountId, req.SourceBytes); err != nil {
+		return nil, err
 	}
 
 	// Source-path allowlist (issue #432 phase 5 review follow-up):
