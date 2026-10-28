@@ -220,9 +220,10 @@ func TestStreamBridgeVersion_DefaultIsV2(t *testing.T) {
 }
 
 func TestStreamBridgeVersion_EnvWins(t *testing.T) {
+	// The v1 shell bridge is no longer selectable (bug hunt 2026-10-28 B23).
 	t.Setenv("FAAS_STREAM_BRIDGE_VERSION", "v1")
-	if got := currentStreamBridgeVersion(); got != "v1" {
-		t.Errorf("env=v1: got %q, want v1", got)
+	if got := currentStreamBridgeVersion(); got != "v2" {
+		t.Errorf("env=v1: got %q, want v2", got)
 	}
 	t.Setenv("FAAS_STREAM_BRIDGE_VERSION", "v3.14")
 	if got := currentStreamBridgeVersion(); got != "v3.14" {

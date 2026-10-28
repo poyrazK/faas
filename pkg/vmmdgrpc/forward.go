@@ -683,8 +683,15 @@ func SetStreamBridgeVersion(v string) {
 // default "v2". This is the function production code calls; reading
 // the package var directly is a test-only path. Reading the env
 // per-request keeps the documented no-deploy rollback honest.
+//
+// FAAS_STREAM_BRIDGE_VERSION=v1 no longer selects the shell bridge: its
+// body loop dropped newlines and the unterminated last line, cut slow
+// uploads, and turned a blank line into a zero-length chunk, ending the body
+// early and smuggling the rest past the gateway's edge rules as a second
+// request (bug hunt 2026-10-28 B23). Roll back by installing the previous
+// vmmd-stream-bridge binary instead (docs/ops/h2c-rollback.md).
 func currentStreamBridgeVersion() string {
-	if v := os.Getenv("FAAS_STREAM_BRIDGE_VERSION"); v != "" {
+	if v := os.Getenv("FAAS_STREAM_BRIDGE_VERSION"); v != "" && v != "v1" {
 		return v
 	}
 	return "v2"
