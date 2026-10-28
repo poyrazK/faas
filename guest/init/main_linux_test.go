@@ -493,16 +493,22 @@ func TestBuildArgv_DependencyCacheExportIsConditional(t *testing.T) {
 // ADR-20261028084018: with LayerCompression zstd both exporters compress with
 // zstd; without it the arguments are exactly as before.
 func TestBuildArgv_LayerCompression(t *testing.T) {
-	for _, fw := range []api.BuildFramework{api.FrameworkRailpackNode, api.FrameworkDockerfile} {
-		t.Run(string(fw), func(t *testing.T) {
-			base := api.BuildManifest{Framework: fw, Workdir: "/build/src", OutDir: "/build/out", DependencyCache: true}
+	for _, tt := range []struct {
+		framework api.BuildFramework
+		quote     string // the Railpack shell quotes the destination
+	}{
+		{framework: api.FrameworkRailpackNode, quote: "'"},
+		{framework: api.FrameworkDockerfile},
+	} {
+		t.Run(string(tt.framework), func(t *testing.T) {
+			base := api.BuildManifest{Framework: tt.framework, Workdir: "/build/src", OutDir: "/build/out", DependencyCache: true}
 			gzip := strings.Join(buildArgv(base), " ")
 			if strings.Contains(gzip, "compression=") {
 				t.Fatalf("gzip argv sets a compression: %s", gzip)
 			}
 			base.LayerCompression = api.BuildLayerCompressionZstd
 			zstd := strings.Join(buildArgv(base), " ")
-			for _, want := range []string{"image.tar,compression=zstd", "mode=max,compression=zstd"} {
+			for _, want := range []string{"image.tar" + tt.quote + ",compression=zstd", "mode=max,compression=zstd"} {
 				if !strings.Contains(zstd, want) {
 					t.Fatalf("zstd argv missing %q: %s", want, zstd)
 				}
