@@ -366,7 +366,7 @@ func (s *sqsPoller) BrokerStats(ctx context.Context, _ sqlc.Trigger) BrokerStats
 	var stats struct {
 		ApproximateMessageCount int64 `json:"approximate_message_count"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&stats); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, api.TriggerBrokerStatsMaxBytes)).Decode(&stats); err != nil {
 		return BrokerStats{Available: false}
 	}
 	return BrokerStats{
