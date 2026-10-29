@@ -324,6 +324,13 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 			if err != nil || prefix.Bits() == 0 {
 				return api.ErrInvalidEgressAllowlist(raw, errOrZero("parse failed", err))
 			}
+			// Allowlisted destinations skip the SMTP block, the port
+			// policy and the DNS gate, so 0.0.0.0/1 plus 128.0.0.0/1
+			// lifted every abuse control for the whole internet (bug hunt
+			// 2026-10-28 H51). Entries may be at most a v4 /8 or v6 /32.
+			if prefix.Addr().Is4() && prefix.Bits() < 8 || !prefix.Addr().Is4() && !prefix.Addr().Is4In6() && prefix.Bits() < 32 {
+				return api.ErrInvalidEgressAllowlist(raw, errors.New("prefix is broader than a v4 /8 or v6 /32"))
+			}
 			// v4-mapped v6 → v4. RFC 4291 §2.5.5.2: ::ffff:0:0/96
 			// is the v4-mapped block; any prefix inside that block
 			// (bits >= 96) is a v4 prefix translated to v6 form.
@@ -1183,7 +1190,13 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	// is either nil, 'best_effort' (always allowed), or 'reserved'
 	// (plan unlocked). The cap only triggers when the value is
 	// 'reserved' AND the current app is not already reserved — a
-	// no-op PATCH on a reserved app must not exhaust the cap.
+	// no-op PATCH on a reserved app must not exhaust the cap. acct.Plan
+	// is the app's billing subject's plan, so the count is that
+	// subject's reserved apps (ADR-202610171904): a company's once it
+	// adopted billing, whoever created them, else the creator's. With
+	// ?environment= the app here carries that environment's settings and
+	// the PATCH writes only its workload spec, so an app counts once
+	// whether its row or any environment reserves it.
 	//
 	// The cap is advisory (no FOR UPDATE lock); a racing PATCH from
 	// the same account could land one extra reserved app. The
@@ -1192,17 +1205,15 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if req.EvictionPriority != nil && *req.EvictionPriority == string(api.EvictionPriorityReserved) && app.EvictionPriority != string(api.EvictionPriorityReserved) {
 		cap := acct.Plan.ReservedConcurrencyPerAccount()
 		if cap > 0 {
-			n, err := s.store.CountAppsWithEvictionPriority(r.Context(), acct.ID, string(api.EvictionPriorityReserved))
+			n, err := s.store.CountOtherBillingSubjectAppsWithEvictionPriority(r.Context(), app.ID, string(api.EvictionPriorityReserved))
 			if err != nil {
 				writeCustomerInternalProblem(w, r, s.log, "count reserved applications",
 					"Gregale could not check this account's reserved application limit.",
 					"Retry the request in a moment; if it continues, contact support.", err)
 				return
 			}
-			// n excludes the current app already (CountAppsWithEvictionPriority
-			// counts the full set; the current app is reserved if and only
-			// if app.EvictionPriority == 'reserved'). The flip-up direction
-			// adds 1 to the post-PATCH count.
+			// n excludes the current app, which counts once after the
+			// PATCH whether or not another environment already reserves it.
 			if n+1 > cap {
 				api.WriteProblem(w, api.ErrPlanEvictionPriorityReservedQuota(acct.Plan, n+1, cap))
 				return
@@ -4665,6 +4676,10 @@ func (s *server) createKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 	var expiresAt *time.Time
 	if !slices.Contains(scopes, api.ScopeAdmin) {
 		t := time.Now().UTC().Add(time.Duration(api.DefaultAPIKeyLifetimeDays) * 24 * time.Hour)
+		// Agent keys run unattended, so they expire sooner (ADR-20261029085359).
+		if slices.Contains(scopes, api.ScopeAgent) {
+			t = time.Now().UTC().Add(api.AgentKeyLifetime)
+		}
 		expiresAt = &t
 	}
 	// PR 6 (issue #190 / IAM-6) dual-write: the legacy /v1/keys

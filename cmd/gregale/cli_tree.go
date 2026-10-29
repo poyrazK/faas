@@ -512,11 +512,12 @@ func walkCliTreeNode(command cliCommand, words []string) (cliTreeNode, bool) {
 	return node, true
 }
 
-// leadingTreeWords returns up to three words before the first flag.
+// leadingTreeWords returns up to four words before the first flag: a tree
+// path is at most four words long (ADR-20261026145832 rule 1).
 func leadingTreeWords(args []string) []string {
 	var words []string
 	for _, arg := range args {
-		if strings.HasPrefix(arg, "-") || len(words) == 3 {
+		if strings.HasPrefix(arg, "-") || len(words) == 4 {
 			break
 		}
 		words = append(words, arg)

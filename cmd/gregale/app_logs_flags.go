@@ -81,7 +81,7 @@ func formatRuntimeLogLine(data string) string {
 		WrittenAt string  `json:"written_at"`
 	}
 	if json.Unmarshal([]byte(data), &event) != nil || event.Line == nil {
-		return data
+		return terminalSafe(data)
 	}
 	stamp := event.WrittenAt
 	if t, err := time.Parse(time.RFC3339Nano, event.WrittenAt); err == nil {
@@ -95,5 +95,5 @@ func formatRuntimeLogLine(data string) string {
 	if event.Level != "" {
 		prefix += " " + strings.ToUpper(event.Level)
 	}
-	return prefix + " " + strings.TrimRight(*event.Line, "\r\n")
+	return prefix + " " + terminalSafe(strings.TrimRight(*event.Line, "\r\n"))
 }

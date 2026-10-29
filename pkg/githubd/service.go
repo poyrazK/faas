@@ -226,6 +226,9 @@ type Service struct {
 	// behaviour; tests that don't care about source staging
 	// keep working unchanged).
 	WorkDir string
+	// AutomationEvents forwards pull_request deliveries to apid as
+	// gregale.github events (ADR-20261027090010 §9); nil forwards none.
+	AutomationEvents AutomationEventPublisher
 	// CapabilityAllowed decides a product capability's platform flag for an
 	// account (ADR-20261023115741). nil releases every capability.
 	CapabilityAllowed func(capability, accountID string) bool
@@ -257,6 +260,16 @@ func webhookDeliveryID(ctx context.Context) string {
 	return deliveryID
 }
 
+// errUnprocessableWebhook marks a delivery whose payload cannot be decoded
+// or validated, or whose event githubd does not route. Retrying cannot change
+// the stored bytes, so the worker dead-letters it on the first attempt and the
+// dead-delivery alert surfaces it at once instead of after the retry budget.
+var errUnprocessableWebhook = errors.New("githubd: unprocessable webhook delivery")
+
+func unprocessableWebhook(err error) error {
+	return fmt.Errorf("%w: %w", errUnprocessableWebhook, err)
+}
+
 // HandleWebhookEvent routes the standard X-GitHub-Event value. Keeping the
 // router beside the business service prevents the HTTP transport and durable
 // worker from drifting into push-only behavior.
@@ -267,27 +280,35 @@ func (s *Service) HandleWebhookEvent(ctx context.Context, eventType string, body
 	case "push":
 		event, err := DecodePush(body)
 		if err != nil {
-			return err
+			return unprocessableWebhook(err)
 		}
 		if event.Installation.ID <= 0 {
-			return errors.New("githubd: push missing installation.id")
+			return unprocessableWebhook(errors.New("githubd: push missing installation.id"))
 		}
 		_, err = s.HandlePushRequest(ctx, body)
 		return err
 	case "pull_request":
-		event, err := DecodePullRequest(body)
-		if err != nil {
+		// Automations come first and decode on their own: the preview
+		// path refuses actions it does not handle.
+		if err := s.forwardPullRequest(ctx, body); err != nil {
 			return err
 		}
+		event, err := DecodePullRequest(body)
+		if errors.Is(err, ErrPullRequestActionIgnored) {
+			return ErrIgnored
+		}
+		if err != nil {
+			return unprocessableWebhook(err)
+		}
 		if event.Installation.ID <= 0 {
-			return errors.New("githubd: pull_request missing installation.id")
+			return unprocessableWebhook(errors.New("githubd: pull_request missing installation.id"))
 		}
 		_, err = s.handlePullRequest(ctx, body)
 		return err
 	case "installation", "installation_repositories", "repository":
 		return s.HandleInstallationLifecycle(ctx, eventType, body)
 	default:
-		return fmt.Errorf("githubd: unsupported webhook event %q", eventType)
+		return unprocessableWebhook(fmt.Errorf("githubd: unsupported webhook event %q", eventType))
 	}
 }
 
@@ -522,7 +543,7 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 	// the Service.Scan field. The production-branch guard
 	// returns ErrIgnored when the pushed branch differs from
 	// project.ProductionBranch — the caller renders 200-ignored.
-	scan, err := s.Reconcile.Scan(tree.FS())
+	scan, err := s.Reconcile.Scan(tree.FS(), s.scanOptions(project.AccountID))
 	if err != nil {
 		return reconcile.Result{}, fmt.Errorf("githubd: scan: %w", err)
 	}
@@ -1390,6 +1411,9 @@ func (s *Service) writePreviewComment(ctx context.Context, installationID int64,
 //   - any other error → 500 (logged with op context).
 func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile.Result, error) {
 	ev, err := DecodePullRequest(body)
+	if errors.Is(err, ErrPullRequestActionIgnored) {
+		return reconcile.Result{WasIgnored: true}, ErrIgnored
+	}
 	if err != nil {
 		return reconcile.Result{}, err
 	}
@@ -1641,7 +1665,7 @@ func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, tar
 			return reconcile.Result{}, fmt.Errorf("githubd: fetch preview source: %w", err)
 		}
 		defer func() { _ = tree.Close() }()
-		scan, err = s.Reconcile.Scan(tree.FS())
+		scan, err = s.Reconcile.Scan(tree.FS(), s.scanOptions(binding.AccountID))
 		if err != nil {
 			return reconcile.Result{}, previewSetupFailure("Gregale could not read the project at this commit: %s", strings.TrimPrefix(err.Error(), "reposcan: "))
 		}

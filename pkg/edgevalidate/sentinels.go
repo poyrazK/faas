@@ -54,6 +54,12 @@ const MaxCompiledSchemas = 1024
 // in pkg/api).
 const MaxSchemaBytes = 64 * 1024
 
+// MaxSchemaCombinatorDepth bounds how deeply anyOf, oneOf, allOf, not and
+// if/then/else nest, following local $refs. Validation cost grows about
+// fourfold per level: a 1.8 KB schema of 22 nested anyOf levels took 2.6 s
+// to validate {"a":1} in the shared gateway (bug hunt 2026-10-28 H58).
+const MaxSchemaCombinatorDepth = 8
+
 // Sentinel errors. handler.go (and tests) match on errors.Is to pick
 // the right audit kind / metric outcome. mapParseError translates
 // jsonschema/v6's typed errors into this set so the failure modes
@@ -83,6 +89,10 @@ var (
 	// that bypasses apid-Validate) cannot ship a runtime that
 	// resolves external references.
 	ErrSchemaExternalRef = errors.New("edgevalidate: schema contains an external $ref or $id")
+
+	// ErrSchemaTooComplex is returned when combinators nest deeper than
+	// MaxSchemaCombinatorDepth.
+	ErrSchemaTooComplex = errors.New("edgevalidate: schema combinators nest too deeply")
 
 	// ErrValidationFailed is returned when the inbound body
 	// fails the compiled schema. The detail string is the

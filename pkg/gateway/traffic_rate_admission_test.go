@@ -61,3 +61,38 @@ func TestCacheHitConsumesAccountAndAppAllowance(t *testing.T) {
 		t.Fatal("cache hit woke the guest")
 	}
 }
+
+// A stored response carries the X-RateLimit-* values of the request that
+// filled the cache. A hit sends only this request's values, once.
+func TestCacheHitSendsRateLimitHeadersOnce(t *testing.T) {
+	h, backend, _ := newTestHandler(t)
+	central := newFakeCentral()
+	central.consumeResult = func() (int, bool, error) { return 8, true, nil }
+	h.WithCentralBackend(central)
+	cache := NewResponseCache()
+	h.WithResponseCache(cache)
+	rule := EdgeRuleCacheResolved{ID: "cached", AccountID: backend.app.AccountID, AppID: backend.app.ID, MaxAgeSeconds: 60}
+	seedCacheRule(t, h, backend.host, rule)
+	now := time.Now()
+	key := CacheKey{AppID: backend.app.ID, RuleID: rule.ID, Method: http.MethodGet, NormalizedPath: "/catalog", VaryHash: hostVaryHash(backend.host)}
+	stored := http.Header{
+		"X-Ratelimit-Limit":     {"999"},
+		"X-Ratelimit-Remaining": {"998"},
+		"X-Ratelimit-Reset":     {"99999"},
+		"X-Catalog-Version":     {"7"},
+	}
+	cache.Put(key, http.StatusOK, stored, []byte("cached"), now.Add(time.Minute), now.Add(time.Minute), rule.toStateEdgeRuleCacheAction())
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://"+backend.host+"/catalog", nil))
+	if rec.Code != http.StatusOK || rec.Header().Get("x-faas-cache") != "hit" {
+		t.Fatalf("status=%d cache=%q", rec.Code, rec.Header().Get("x-faas-cache"))
+	}
+	for _, name := range []string{"X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset"} {
+		if got := rec.Header().Values(name); len(got) != 1 || got[0] == stored.Get(name) {
+			t.Fatalf("%s = %q, want this request's single value", name, got)
+		}
+	}
+	if got := rec.Header().Values("X-Catalog-Version"); len(got) != 1 || got[0] != "7" {
+		t.Fatalf("origin header = %q, want the stored value", got)
+	}
+}

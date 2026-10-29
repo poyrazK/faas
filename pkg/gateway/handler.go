@@ -1307,6 +1307,10 @@ type Handler struct {
 	// response-cache key. The customer request returns the stale body while
 	// one background wake + origin fetch repopulates the entry.
 	cacheRefresh singleflight.Group
+	// cacheRefreshing holds the keys with a refresh in flight, so a stale
+	// hit for one neither clones its request nor parks a goroutine in
+	// cacheRefresh.Do (bug hunt 2026-10-28 O15).
+	cacheRefreshing sync.Map
 	// publicAuthUnsealer turns an APP_BASIC_AUTH secretbox
 	// sealed blob into the username/password pair the
 	// request header carries. nil = unseal disabled (unit
@@ -5995,6 +5999,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r.Header.Del("x-faas-stream")
 	r.Header.Del("x-faas-protocol")
 	r.Header.Del(trafficdeadline.Header)
+	// The public edge's nonce for a not-dispatched marker lives in the
+	// request context from here on (ADR-20261022184531 step 5).
+	r = takeDispatchNonce(r)
 	if h.devBridgeAuthorize != nil {
 		if problem := h.devBridgeAuthorize(r); problem != nil {
 			api.WriteProblem(w, problem)
@@ -7486,6 +7493,9 @@ haveApp:
 			h.logWakeFailure(app.ID, err)
 			if served, _ := h.tryServeStaleOnWakeError(w, r, app, rec); served {
 				return
+			}
+			if reason, ok := wakeNotDispatchedReason(err); ok {
+				markNotDispatched(w, r, reason)
 			}
 			writeWakeError(w, err)
 			h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})

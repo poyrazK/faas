@@ -259,3 +259,17 @@ func TestComputeCapRunRefusesOutsideLiveStaging(t *testing.T) {
 		t.Fatalf("code %d, output %q, error %q", code, output.String(), errorOutput.String())
 	}
 }
+
+// adr: 20261025094915 — the storage pool run is live-only too.
+func TestStorageCapRunRefusesOutsideLiveStaging(t *testing.T) {
+	var output, errorOutput strings.Builder
+	code := runStorageCap(func(key string) string {
+		if key == "FAAS_ENVIRONMENT" {
+			return "production"
+		}
+		return ""
+	}, &output, &errorOutput)
+	if code != 2 || output.Len() != 0 || !strings.Contains(errorOutput.String(), "FAAS_ENVIRONMENT=staging") {
+		t.Fatalf("code %d, output %q, error %q", code, output.String(), errorOutput.String())
+	}
+}

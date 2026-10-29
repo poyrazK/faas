@@ -88,6 +88,13 @@ func hostHMACKeyBytes() []byte {
 	return hostHMACKey()
 }
 
+// displayValueHash is the value_hash a response shows for a secret owned by
+// ownerID: the stored fingerprint re-keyed per owner, so fingerprints cannot
+// be compared across tenants (bug hunt 2026-10-28 H37).
+func displayValueHash(ownerID, stored string) string {
+	return secretbox.OwnerValueFingerprint(stored, ownerID, hostHMACKeyBytes())
+}
+
 // listSecrets returns every secret on the app, key + timestamps only.
 // Ciphertext never leaves apid except via schedd → vmmd. Quota info is
 // included so the CLI can show "3/25 secrets" without a separate call.
@@ -155,7 +162,7 @@ func (s *server) listSecretsInScope(w http.ResponseWriter, r *http.Request, acct
 		out = append(out, api.AppSecretResponse{
 			Key: row.Key, Scope: row.Scope, SecretClass: row.SecretClass,
 			CreatedAt: row.CreatedAt.UTC().Format(time.RFC3339), UpdatedAt: row.UpdatedAt.UTC().Format(time.RFC3339),
-			Kid: row.Kid, ValueHash: row.ValueHash,
+			Kid: row.Kid, ValueHash: displayValueHash(row.AccountID, row.ValueHash),
 			DeliveryVersion: row.DeliveryVersion, DeliveredVersion: row.DeliveredVersion,
 			DeliveryStatus:               string(row.DeliveryStatus),
 			LastDeliveryAttemptAt:        formatOptionalSecretTime(row.LastDeliveryAttemptAt),
@@ -200,7 +207,7 @@ func writeSecretListAll(w http.ResponseWriter, rows []state.AppSecret, quota int
 		bucket[r.Scope] = append(bucket[r.Scope], api.ScopedAppSecretResponse{
 			Scope: r.Scope, Key: r.Key, SecretClass: r.SecretClass,
 			CreatedAt: r.CreatedAt.UTC().Format(time.RFC3339), UpdatedAt: r.UpdatedAt.UTC().Format(time.RFC3339),
-			Kid: r.Kid, ValueHash: r.ValueHash,
+			Kid: r.Kid, ValueHash: displayValueHash(r.AccountID, r.ValueHash),
 			DeliveryVersion: r.DeliveryVersion, DeliveredVersion: r.DeliveredVersion,
 			DeliveryStatus:               string(r.DeliveryStatus),
 			LastDeliveryAttemptAt:        formatOptionalSecretTime(r.LastDeliveryAttemptAt),

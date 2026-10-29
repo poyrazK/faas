@@ -8,8 +8,15 @@ package githubd
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 )
+
+// ErrPullRequestActionIgnored marks a pull_request action previews do not
+// act on (labeled, edited, review_requested, ...). GitHub sends every action
+// to an App subscribed to pull_request, so this is an ignored delivery, not a
+// malformed one.
+var ErrPullRequestActionIgnored = errors.New("githubd: pull_request action not in {opened,synchronize,reopened,closed}")
 
 // PullRequestAction enumerates the GitHub `pull_request` webhook
 // actions githubd reacts to. Anything not in this set is logged
@@ -116,12 +123,11 @@ func (ev *PullRequestEvent) HeadRepoFullName() string {
 func (ev *PullRequestEvent) IsFork() bool {
 	head := ev.HeadRepoFullName()
 	if head == "" {
-		// Head repo missing — treat conservatively as not-fork
-		// (we cannot prove it IS a fork, so don't refuse). This
-		// means a malformed payload where head.repo is absent
-		// gets the regular path; we'll surface the missing-field
-		// error from DecodePullRequest if the SHA is also missing.
-		return false
+		// GitHub sends head.repo null when the head repository was
+		// deleted, which is a deleted fork: refuse it rather than build
+		// code nobody can trace back to a repository (bug hunt 2026-10-28
+		// B27).
+		return true
 	}
 	return head != ev.Repository.FullName
 }
@@ -253,7 +259,7 @@ func DecodePullRequest(body []byte) (PullRequestEvent, error) {
 		ev.PullRequest.HeadRef = ev.PullRequest.Head.Ref
 	}
 	if !ev.Action.IsPreviewAction() {
-		return ev, errors.New("githubd: pull_request action not in {opened,synchronize,reopened,closed}: " + string(ev.Action))
+		return ev, fmt.Errorf("%w: %s", ErrPullRequestActionIgnored, ev.Action)
 	}
 	if ev.Number <= 0 {
 		return ev, errors.New("githubd: pull_request number must be > 0")
@@ -352,7 +358,28 @@ type RepositoryNameFrom struct {
 }
 
 type RepositoryOwnerChange struct {
-	From PushRepositoryOwner `json:"from"`
+	From RepositoryPreviousOwner `json:"from"`
+}
+
+// RepositoryPreviousOwner is changes.owner.from of a transferred
+// repository. GitHub nests the previous owner one level deeper, as user or
+// organization; reading a login directly under from always found it empty,
+// so a transfer never moved its binding (bug hunt 2026-10-28 B28). Login is
+// kept as a fallback for older fixtures.
+type RepositoryPreviousOwner struct {
+	Login        string              `json:"login"`
+	User         PushRepositoryOwner `json:"user"`
+	Organization PushRepositoryOwner `json:"organization"`
+}
+
+// PreviousLogin returns the previous owner's login, or "".
+func (o RepositoryPreviousOwner) PreviousLogin() string {
+	for _, login := range []string{o.User.Login, o.Organization.Login, o.Login} {
+		if login != "" {
+			return login
+		}
+	}
+	return ""
 }
 
 func DecodeRepository(body []byte) (RepositoryEvent, error) {

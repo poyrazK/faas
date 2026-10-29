@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"sync"
 	"time"
 
@@ -200,11 +201,21 @@ type Sampler struct {
 	// record write that failed never makes a minute roll twice (H5-55).
 	appRolled map[time.Time]bool
 	jobRolled map[time.Time]bool
-	// caughtUp and jobCaughtUp list the earlier closed minutes the latest
-	// SampleAndRoll and SampleJobsAndRoll calls rolled in full, oldest
-	// first.
-	caughtUp    []time.Time
-	jobCaughtUp []time.Time
+	// caughtUp lists the earlier closed minutes the latest SampleAndRoll
+	// call rolled in full, oldest first.
+	caughtUp []time.Time
+	// recorded holds the minutes in appRolled whose compute-complete record
+	// is written. A minute both samplers rolled stays unrecorded until a
+	// tick writes its record (ADR-20261029180000).
+	recorded map[time.Time]bool
+	// firstIncomplete is the oldest closed minute of the catch-up window the
+	// latest SampleAndRoll found not recorded compute-complete, or the newest
+	// closed minute when every earlier one is. The provider pusher delivers
+	// only the hours before it (ADR-1162).
+	firstIncomplete time.Time
+	// catchUp holds what every caught-up minute of one SampleAndRoll shares;
+	// nil outside a catch-up.
+	catchUp *catchUpReads
 
 	// quietPause is the quiet_pause_unbilled mode (ADR-20261023171905):
 	// whether exact-residency minutes subtract the quiet-paused seconds the
@@ -403,12 +414,17 @@ func (s *Sampler) SampleAndRoll(ctx context.Context) ([]RolledRow, error) {
 		return s.rollApps(ctx, observedAt, MinuteKey(observedAt), false, false)
 	}
 	newest := observedAt.Truncate(time.Minute).Add(-time.Minute)
-	pending, rolled, err := s.minutesToCatchUp(ctx, s.appRolled, newest)
+	pending, rolled, firstIncomplete, err := s.minutesToCatchUp(ctx, s.appRolled, newest)
 	s.appRolled = rolled
 	if err != nil {
 		return nil, err
 	}
+	s.firstIncomplete = firstIncomplete
 	var out []RolledRow
+	if len(pending) > 0 {
+		s.catchUp = &catchUpReads{since: pending[0].Add(-api.MeterCatchUpWindow), end: pending[len(pending)-1].Add(time.Minute)}
+		defer func() { s.catchUp = nil }()
+	}
 	for _, minute := range pending {
 		rows, err := s.rollApps(ctx, minute.Add(time.Minute), minute, true, true)
 		for i := range rows {
@@ -430,30 +446,41 @@ func (s *Sampler) SampleAndRoll(ctx context.Context) ([]RolledRow, error) {
 	return out, nil
 }
 
-// CaughtUpMinutes returns the earlier closed minutes that the latest
-// SampleAndRoll and SampleJobsAndRoll calls both rolled in full, oldest
-// first.
-func (s *Sampler) CaughtUpMinutes() []time.Time {
-	jobs := make(map[time.Time]bool, len(s.jobCaughtUp))
-	for _, m := range s.jobCaughtUp {
-		jobs[m] = true
+// UnrecordedMinutes returns, oldest first, the closed minutes both samplers
+// rolled in full in this process whose compute-complete record is not yet
+// written. A rolled minute is never rolled again in this process (ADR-790),
+// so its record is what a later tick retries (ADR-20261029180000).
+func (s *Sampler) UnrecordedMinutes() []time.Time {
+	for m := range s.recorded {
+		if !s.appRolled[m] {
+			delete(s.recorded, m)
+		}
 	}
 	var out []time.Time
-	for _, m := range s.caughtUp {
-		if jobs[m] {
+	for m := range s.appRolled {
+		if s.jobRolled[m] && !s.recorded[m] {
 			out = append(out, m)
 		}
 	}
+	slices.SortFunc(out, func(a, b time.Time) int { return a.Compare(b) })
 	return out
 }
 
-// minutesToCatchUp returns the closed minutes before newest, within
-// api.MeterCatchUpWindow, that the store has no compute-complete record for
-// and rolled does not hold, oldest first and at most
-// api.MeterCatchUpMinutesPerTick. It also returns rolled pruned to the
-// window. A store without the record catches up every minute this process
-// has not rolled.
-func (s *Sampler) minutesToCatchUp(ctx context.Context, rolled map[time.Time]bool, newest time.Time) ([]time.Time, map[time.Time]bool, error) {
+// FirstIncompleteMinute is the oldest closed minute the latest SampleAndRoll
+// found not recorded compute-complete (zero before the first exact tick).
+func (s *Sampler) FirstIncompleteMinute() time.Time {
+	return s.firstIncomplete
+}
+
+// MarkRecorded notes that minute's compute-complete record is written.
+func (s *Sampler) MarkRecorded(minute time.Time) {
+	if s.recorded == nil {
+		s.recorded = map[time.Time]bool{}
+	}
+	s.recorded[minute] = true
+}
+
+func (s *Sampler) minutesToCatchUp(ctx context.Context, rolled map[time.Time]bool, newest time.Time) ([]time.Time, map[time.Time]bool, time.Time, error) {
 	start := newest.Add(-api.MeterCatchUpWindow)
 	if rolled == nil {
 		rolled = map[time.Time]bool{}
@@ -467,19 +494,26 @@ func (s *Sampler) minutesToCatchUp(ctx context.Context, rolled map[time.Time]boo
 	if record, ok := s.store.(state.FinancialStore); ok {
 		minutes, err := record.FinancialCompletedComputeMinutes(ctx, start, newest)
 		if err != nil {
-			return nil, rolled, fmt.Errorf("meter: read completed minutes: %w", err)
+			return nil, rolled, time.Time{}, fmt.Errorf("meter: read completed minutes: %w", err)
 		}
 		for _, minute := range minutes {
 			complete[minute.UTC()] = true
 		}
 	}
 	var out []time.Time
-	for minute := start; minute.Before(newest) && len(out) < api.MeterCatchUpMinutesPerTick; minute = minute.Add(time.Minute) {
-		if !complete[minute] && !rolled[minute] {
+	firstIncomplete := newest
+	for minute := start; minute.Before(newest); minute = minute.Add(time.Minute) {
+		if complete[minute] {
+			continue
+		}
+		if minute.Before(firstIncomplete) {
+			firstIncomplete = minute
+		}
+		if !rolled[minute] && len(out) < api.MeterCatchUpMinutesPerTick {
 			out = append(out, minute)
 		}
 	}
-	return out, rolled, nil
+	return out, rolled, firstIncomplete, nil
 }
 
 // rollApps rolls one minute of app usage. exactResidency reads the minute's
@@ -505,7 +539,7 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 			return nil, err
 		}
 	}
-	apps, err := s.store.ListAllApps(ctx)
+	apps, err := s.listAllApps(ctx, catchUp)
 	if err != nil {
 		return nil, err
 	}
@@ -537,13 +571,13 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 	// treats empty as free) so a transient Postgres blip doesn't
 	// drop the entire tick's metric.
 	planByAccount := make(map[string]api.Plan)
-	if accounts, accErr := state.ListBillingResourceAccounts(ctx, s.store); accErr == nil {
+	if accounts, accErr := s.listBillingResourceAccounts(ctx, catchUp); accErr == nil {
 		for _, a := range accounts {
 			planByAccount[a.ID] = a.Plan
 		}
 	}
 	floorHeld := newFloorHolders(s.store)
-	instancesByApp, err := s.billingWindowInstances(ctx, minute)
+	instancesByApp, err := s.catchUpWindowInstances(ctx, minute, catchUp)
 	if err != nil {
 		return nil, err
 	}
@@ -1016,17 +1050,83 @@ func (s *Sampler) cpuDeltaForMinute(instanceID string, minute time.Time) int64 {
 	return int64(delta)
 }
 
+// catchUpReads are the fleet reads every caught-up minute of one tick shares.
+// Each caught-up minute re-read every app, every billing account and a day
+// of instances, so a lagging meterd scanned a day of instances up to
+// api.MeterCatchUpMinutesPerTick times per tick (bug hunt 2026-10-28 O2).
+// The shared instance window spans every caught-up minute's own window; an
+// instance outside one minute's window has no residency in that minute and
+// a caught-up minute carries no live usage, so the roll skips it.
+type catchUpReads struct {
+	since, end time.Time
+	apps       []state.App
+	appsRead   bool
+	accounts   []state.Account
+	accountErr error
+	accRead    bool
+	instances  map[string][]state.Instance
+	instRead   bool
+}
+
+// listAllApps returns every app, read once per tick across caught-up
+// minutes. The caller may modify the returned slice.
+func (s *Sampler) listAllApps(ctx context.Context, catchUp bool) ([]state.App, error) {
+	c := s.catchUp
+	if !catchUp || c == nil {
+		return s.store.ListAllApps(ctx)
+	}
+	if !c.appsRead {
+		apps, err := s.store.ListAllApps(ctx)
+		if err != nil {
+			return nil, err
+		}
+		c.apps, c.appsRead = apps, true
+	}
+	return append([]state.App(nil), c.apps...), nil
+}
+
+func (s *Sampler) listBillingResourceAccounts(ctx context.Context, catchUp bool) ([]state.Account, error) {
+	c := s.catchUp
+	if !catchUp || c == nil {
+		return state.ListBillingResourceAccounts(ctx, s.store)
+	}
+	if !c.accRead {
+		c.accounts, c.accountErr = state.ListBillingResourceAccounts(ctx, s.store)
+		c.accRead = true
+	}
+	return c.accounts, c.accountErr
+}
+
+func (s *Sampler) catchUpWindowInstances(ctx context.Context, minute time.Time, catchUp bool) (map[string][]state.Instance, error) {
+	c := s.catchUp
+	if !catchUp || c == nil {
+		return s.billingWindowInstances(ctx, minute)
+	}
+	if !c.instRead {
+		byApp, err := s.billingInstancesBetween(ctx, c.since, c.end)
+		if err != nil {
+			return nil, err
+		}
+		c.instances, c.instRead = byApp, true
+	}
+	return c.instances, nil
+}
+
 // billingWindowInstances groups by app the instances a roll of minute can
 // write rows for, in one store read. The window reaches back
 // api.MeterCatchUpWindow so an instance that ended recently still drains the
 // gateway and network telemetry its sources hold for it. nil means the store
 // cannot list the window and the caller reads each app's history instead.
 func (s *Sampler) billingWindowInstances(ctx context.Context, minute time.Time) (map[string][]state.Instance, error) {
+	return s.billingInstancesBetween(ctx, minute.Add(-api.MeterCatchUpWindow), minute.Add(time.Minute))
+}
+
+func (s *Sampler) billingInstancesBetween(ctx context.Context, since, end time.Time) (map[string][]state.Instance, error) {
 	windowStore, ok := s.store.(billingWindowInstanceStore)
 	if !ok {
 		return nil, nil
 	}
-	rows, err := windowStore.ListBillingWindowInstances(ctx, minute.Add(-api.MeterCatchUpWindow), minute.Add(time.Minute))
+	rows, err := windowStore.ListBillingWindowInstances(ctx, since, end)
 	if err != nil {
 		return nil, fmt.Errorf("meter: list billing window instances: %w", err)
 	}

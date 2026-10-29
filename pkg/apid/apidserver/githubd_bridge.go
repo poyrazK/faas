@@ -89,6 +89,9 @@ type githubdBridge struct {
 	spool       string // build-spool root for the build.log path
 	stagingRoot string // allowed prefix for SourcePath (FAAS_GITHUBD_WORK_DIR/build-sources)
 	spoolRoot   string // allowed prefix for SourcePath (FAAS_SPOOL_ROOT) — kept for future expansion
+	// agentSteps reports whether an account may deploy workflow agent steps
+	// (ADR-20261027090010 §1); nil refuses them.
+	agentSteps func(state.Account) bool
 }
 
 // checkSourcePlanLimit refuses a GitHub build whose source is above the
@@ -341,7 +344,7 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 	if err := bridgeSourcePolicy(g.log, req.SourcePath, app, resource.Plan); err != nil {
 		return nil, err
 	}
-	manifest, manifestProblem := loadSourceRefManifest(req.SourcePath, app, resource.Plan)
+	manifest, manifestProblem := loadSourceRefManifest(req.SourcePath, app, resource.Plan, g.agentSteps != nil && g.agentSteps(acct))
 	if manifestProblem != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "EnqueueBuild: source manifest: %s", manifestProblem.Detail)
 	}
@@ -763,7 +766,7 @@ func deploymentKindToWireLabel(k state.DeploymentKind) string {
 // allowlist-checks req.SourcePath against. Empty stagingRoot
 // disables the check (test-only path; production wiring MUST set
 // it).
-func registerGithubdBridge(s *grpc.Server, store githubdBridgeStore, notif githubdBridgeNotifier, log *slog.Logger, ops *wire.OpsMetrics, spool string, stagingRoot string) {
+func registerGithubdBridge(s *grpc.Server, store githubdBridgeStore, notif githubdBridgeNotifier, log *slog.Logger, ops *wire.OpsMetrics, spool string, stagingRoot string, agentSteps func(state.Account) bool) {
 	githubdpb.RegisterGithubdServer(s, &githubdBridge{
 		store:       store,
 		notif:       notif,
@@ -772,5 +775,6 @@ func registerGithubdBridge(s *grpc.Server, store githubdBridgeStore, notif githu
 		spool:       spool,
 		stagingRoot: filepath.Join(stagingRoot, "build-sources"),
 		spoolRoot:   spool,
+		agentSteps:  agentSteps,
 	})
 }

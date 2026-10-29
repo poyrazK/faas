@@ -312,6 +312,13 @@ func loadManagedPostgresCapEnforcer(registry *managedpostgres.Registry, store *m
 		}
 		options.Qualification = &qualification
 	}
+	if storageMode == managedpostgres.CapEnforcementOn {
+		qualification, err := managedpostgres.LoadStorageCapQualification(getenv(managedpostgres.StorageCapQualificationPathEnv))
+		if err != nil {
+			return nil, fmt.Errorf("%s=on needs a readable %s: %w", managedpostgres.StorageCapEnforcementEnv, managedpostgres.StorageCapQualificationPathEnv, err)
+		}
+		options.StorageQualification = &qualification
+	}
 	if len(registerers) > 0 {
 		metrics, err := managedpostgres.NewCapMetrics(registerers[0], "apid", mode, storageMode)
 		if err != nil {

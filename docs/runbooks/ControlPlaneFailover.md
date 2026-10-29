@@ -176,6 +176,13 @@ standby is lost too, rebuild from the off-host state backup instead
 
    A planned switchover loses nothing and the promote play accepts the new
    timeline itself.
+
+   Published events, webhook automations and object notifications accepted
+   within the reported lag are lost with the old primary
+   (ADR 20261029093000). Tell the affected accounts the window, from the
+   promote play's last replay time to the crash, so producers that must not
+   lose an event republish it with the same identity: a survivor answers
+   `duplicate`, and a lost one is accepted again.
 5. **Rebuild the old host as the standby later**, with planned step 10, and
    only after you've checked it: it holds writes the new primary never
    received. If those writes matter, extract them before wiping (export the
@@ -189,3 +196,9 @@ every change to this runbook. Record:
 - each step's duration;
 - any file bootstrap asked for that the "Before you need it" list misses;
 - that a commit made just before step 2 is present after the promotion.
+
+The event GA gate (ADR 20261029093000) adds an unplanned drill of the event
+pipeline: `make drill-event-failover` publishes at the target rate, crashes
+the primary, promotes the standby, and reports the events lost, the time to
+the first accepted publish on the new primary, and whether routing resumed
+(`docs/ops/event-failover-drill.md`).

@@ -105,7 +105,9 @@ type RealService struct {
 	// source-ref promotion guard.
 	BranchHeads    BranchHeadClient
 	CIPullRequests CIPullRequestClient
-	CIChanges      CIChangedFilesClient
+	// IssueComments writes agent deliveries' marker comments (ADR-20261027090010 §8).
+	IssueComments IssueCommentClient
+	CIChanges     CIChangedFilesClient
 	// ProtectedBranches observes policy evidence without approving revisions.
 	ProtectedBranches ProtectedBranchClient
 	ReviewedMerges    ReviewedMergeClient
@@ -342,6 +344,9 @@ func (s *RealService) ExchangeOAuthCode(accountID, code, stateStr string) (strin
 	}
 	pick, err := s.selectOAuthInstallation(context.Background(), accountID, stateStr, installs)
 	if err != nil {
+		return "", "", err
+	}
+	if err := s.Auth.AuthorizeInstallationBinder(context.Background(), userToken, pick); err != nil {
 		return "", "", err
 	}
 	// Defense-in-depth §11 re-verify.

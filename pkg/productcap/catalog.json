@@ -66,6 +66,23 @@
       ]
     },
     {
+      "id": "agents",
+      "name": "Agents",
+      "category": "runtime",
+      "description": "Run a coding-agent harness in a one-shot microVM from the API, an automation step or a broker trigger.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/adr/20261027090010-agent-runs-and-agent-step",
+      "acceptance_test": "pkg/e2etest/agentchain/agentchain_metal_test.go::TestMetalAgentPRTriage",
+      "routes": [
+        "/v1/agent-runs",
+        "/v1/agents"
+      ],
+      "consumers": [
+        "schedd"
+      ]
+    },
+    {
       "id": "ai-access-tokens",
       "name": "AI access tokens",
       "category": "data",
@@ -1942,7 +1959,7 @@
         "scale"
       ],
       "docs_url": "/docs/edge-rules",
-      "acceptance_test": "cmd/gatewayd-internal/edge_rules_app_wide_test.go::TestAppWideEdgeRules",
+      "acceptance_test": "cmd/e2e/edge_rules_api_e2e_test.go::TestE2E_EdgeRules_KindsActOnPublicTraffic",
       "settings": [
         "app.maintenance_mode",
         "app.request_rate_limit_burst",
@@ -2378,7 +2395,7 @@
       "id": "event-triggers",
       "name": "Event triggers",
       "category": "async",
-      "description": "Consume Kafka, NATS, Redis Streams, AMQP, SQS-compatible and bucket events.",
+      "description": "Consume Kafka, NATS JetStream and Redis Streams records and Gregale queues.",
       "maturity": "preview",
       "plans": [
         "hobby",
@@ -2970,6 +2987,25 @@
       ],
       "cli": [
         "jobs"
+      ]
+    },
+    {
+      "id": "kubernetes-manifests",
+      "name": "Kubernetes manifests",
+      "category": "delivery",
+      "description": "Deploy a repository's Kubernetes Deployments and CronJobs with their sizes, healthchecks and process settings, and see what does not apply.",
+      "maturity": "preview",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/multi-service-apps",
+      "acceptance_test": "pkg/reposcan/k8s_pod_test.go::TestScanWith_KubernetesManifestsReachesWorkloads",
+      "parent": "projects",
+      "consumers": [
+        "githubd"
       ]
     },
     {
