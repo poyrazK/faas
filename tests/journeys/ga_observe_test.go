@@ -1,6 +1,7 @@
 package journeys
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -194,6 +195,20 @@ func skipUnreleased(t *testing.T, code, problem string) {
 	}
 }
 
+// listOut decodes a CLI list that prints as one JSON array (`alerts
+// deliveries`, `channels list`), or as one object per line.
+func listOut(t *testing.T, out []byte) []map[string]any {
+	t.Helper()
+	if !bytes.HasPrefix(bytes.TrimSpace(out), []byte("[")) {
+		return objects(t, out)
+	}
+	var docs []map[string]any
+	if err := json.Unmarshal(out, &docs); err != nil {
+		t.Fatalf("decode CLI JSON array: %v\noutput: %s", err, tail(string(out), 2000))
+	}
+	return docs
+}
+
 // httpProblemCode is the RFC 7807 code of an API response, if any.
 func httpProblemCode(r httpResult) string {
 	var p struct {
@@ -291,7 +306,7 @@ func TestAlertsAndChannels(t *testing.T) {
 				return false, res.problem()
 			}
 			var seen []string
-			for _, d := range objects(t, res.stdout) {
+			for _, d := range listOut(t, res.stdout) {
 				if str(d, "status") == "delivered" && num(d, "last_status_code") == http.StatusOK {
 					return true, ""
 				}
@@ -333,7 +348,7 @@ func findChannel(t *testing.T, tg *target, id string) (map[string]any, string) {
 	if res.exit != 0 {
 		return nil, res.problem()
 	}
-	for _, ch := range objects(t, res.stdout) {
+	for _, ch := range listOut(t, res.stdout) {
 		if str(ch, "id") == id {
 			return ch, ""
 		}
