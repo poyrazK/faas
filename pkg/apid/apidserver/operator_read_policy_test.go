@@ -12,6 +12,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -20,6 +23,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/auth"
+	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -88,6 +92,35 @@ func (e operatorPolicyEnv) enroll(t *testing.T) {
 	}
 }
 
+// operatorSessionCookie enrolls accountID and issues it an MFA-completed
+// session on the server whose session manager is sessions. Provider reads of
+// customer data refuse keys (ADR 20261023214253), so tests read them this way.
+func operatorSessionCookie(t *testing.T, store *state.MemStore, sessions **session.Manager, accountID string) *http.Cookie {
+	t.Helper()
+	ctx := context.Background()
+	acct, err := store.AccountByID(ctx, accountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !acct.MFAEnrolled() {
+		if err := store.SetMFASecret(ctx, accountID, []byte("sealed-test-secret"), nil); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.MarkMFAEnrolled(ctx, accountID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sid := uuid.NewString()
+	if _, err := store.CreateSession(ctx, sid, accountID, "192.0.2.10", "operator-policy-test"); err != nil {
+		t.Fatal(err)
+	}
+	token, err := (*sessions).IssueWithSessionAndBindingHash(sid, accountID, "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &http.Cookie{Name: apidserver.SessionCookie, Value: token}
+}
+
 func (e operatorPolicyEnv) get(t *testing.T, path string, cookie *http.Cookie) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, path, nil)
@@ -132,6 +165,16 @@ func sessionOnlyOperatorReads(tenantID string) []string {
 		"/v1/admin/ops/deployments/" + id,
 		"/v1/admin/accounts/" + id + "/flags",
 		"/v1/audit-log/all",
+		// Amendment 1: provider reads outside obs that name tenants.
+		"/v1/admin/ops/data-repairs",
+		"/v1/admin/operator-intents/" + id,
+		"/v1/admin/ops/github/recovery",
+		"/v1/admin/config",
+		"/v1/admin/config-operations/" + id,
+		"/v1/admin/config/platform_flag.example/revisions",
+		"/v1/admin/flags",
+		"/v1/admin/flags/example",
+		"/v1/admin/flags/example/decision?account_id=" + tenantID,
 	}
 }
 
@@ -151,6 +194,74 @@ var bearerReadableOperatorReads = []string{
 	"/v1/admin/obs/incidents/platform_alert/summary",
 	"/v1/admin/obs/incidents/platform_alert/response-times",
 	"/v1/admin/obs/incidents/platform_alert/" + strings.Repeat("a", 64) + "/triage-history",
+	// Amendment 1.
+	"/v1/admin/billing-paddle-catalog",
+	"/v1/admin/billing-paddle-overage/preflight",
+	"/v1/admin/secrets/rekey-progress",
+}
+
+// strictOperatorSessionReads were session-only before the ADR and never take
+// the FAAS_OPERATOR_BEARER_READS grace.
+var strictOperatorSessionReads = map[string]bool{"GET /v1/admin/status/incidents": true}
+
+// Every provider read picks a policy at the route table, so a new GET
+// /v1/admin route cannot fall back to the admin scope alone, which every
+// customer's own key and dashboard session hold.
+func TestEveryAdminReadUsesAnOperatorReadPolicy(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	route := regexp.MustCompile(`mux\.Handle(?:Func)?\(\s*"(GET /v1/admin/[^"]*)"`)
+	seen := 0
+	for _, file := range files {
+		if strings.HasSuffix(file, "_test.go") {
+			continue
+		}
+		raw, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		src := string(raw)
+		for _, loc := range route.FindAllStringSubmatchIndex(src, -1) {
+			seen++
+			pattern, call := src[loc[2]:loc[3]], registrationCall(src, loc[0])
+			line := strings.Count(src[:loc[0]], "\n") + 1
+			switch {
+			case strictOperatorSessionReads[pattern]:
+				for _, gate := range []string{"s.requireOperator(", "s.requireSessionPrincipal(", "s.requireEnrolledOperatorSession("} {
+					if !strings.Contains(call, gate) {
+						t.Errorf("%s:%d: %s lacks %s", file, line, pattern, gate)
+					}
+				}
+			case strings.Contains(call, "s.requireOperatorSessionRead(") || strings.Contains(call, "s.requireOperatorRead("):
+			default:
+				t.Errorf("%s:%d: %s uses neither requireOperatorRead nor requireOperatorSessionRead", file, line, pattern)
+			}
+		}
+	}
+	if seen < 50 {
+		t.Fatalf("found %d GET /v1/admin registrations; the scan no longer matches the route table", seen)
+	}
+}
+
+// registrationCall is the text of the mux.Handle/HandleFunc call at start,
+// through its closing parenthesis.
+func registrationCall(src string, start int) string {
+	open := strings.IndexByte(src[start:], '(') + start
+	depth := 0
+	for i := open; i < len(src); i++ {
+		switch src[i] {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				return src[start : i+1]
+			}
+		}
+	}
+	return src[start:]
 }
 
 func refusedForSession(rec *httptest.ResponseRecorder) bool {
@@ -187,7 +298,7 @@ func TestOperatorPasswordLoginIsConfinedToMFAEnrollment(t *testing.T) {
 func TestOperatorSessionWithoutAuthenticatorIsRefused(t *testing.T) {
 	e := newOperatorPolicyEnv(t, "")
 	cookie := e.issue(t, false)
-	for _, path := range []string{"/v1/admin/obs/tenants/" + e.acct.ID + "/360", "/v1/admin/obs/health"} {
+	for _, path := range []string{"/v1/admin/obs/tenants/" + e.acct.ID + "/360", "/v1/admin/obs/health", "/v1/admin/status/incidents"} {
 		apidserver.AssertProblem(t, e.get(t, path, cookie), http.StatusForbidden, api.CodeMFARequired)
 	}
 	e.enroll(t)

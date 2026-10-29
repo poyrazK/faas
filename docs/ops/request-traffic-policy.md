@@ -170,6 +170,7 @@ When the exhausted ceiling is analysis time (the 2 s phase or 1.75 s SQL
 timeout, unit `milliseconds`), the hint leads with a retry: a busy control
 plane can trip it for an account with no edge rules (Hunt 14 H14-78). Size
 and automaton ceilings keep the simplify-the-policy hint.
+
 apid's `traffic_policy_analysis_seconds{writer,phase}` histogram times each
 phase of a guarded write, whether it is accepted or refused.
 - `writer` is `app_binding`, `tenant_binding`, `domain_binding`, `route_rule`
@@ -186,18 +187,24 @@ A `before` or `validate` phase near 2 s is a time refusal. A large
 To find the slow phase:
 `histogram_quantile(0.99, sum by (writer, phase, le) (rate(traffic_policy_analysis_seconds_bucket[5m])))`.
 
-#### Scoped binding guard
-
-`FAAS_TRAFFIC_SCOPED_BINDING_GUARD=true` on apid makes app and tenant binding
-writes, which include deployment create and status changes, run a scoped guard
-(ADR 20261027163626).
+**Scoped binding guard.** `FAAS_TRAFFIC_SCOPED_BINDING_GUARD=true` on apid
+makes binding writes run a scoped guard (ADR 20261027163626). Binding writes
+here are app and tenant writes, including deployment create and status
+changes, and custom-domain publication, verification and removal. Route-rule
+create, update and rollback are scoped too.
 - **What changes:** each write locks and analyses only the hostnames it
   declares: its account's claims, the hostnames it names, and its app's
   primary and alias URLs. Route candidates come from
   `edge_rules.match_host_scope`, and only accounts with candidate routes join
-  as owners. Writes on unrelated hostnames run concurrently. Custom-domain
-  publication and removal, route-rule writes and other daemons keep the
-  fleet-wide guard.
+  as owners. Binding writes on unrelated hostnames run concurrently. Other
+  daemons keep the fleet-wide guard.
+- **Route-rule writes:** a write locks where its patterns can match. An exact
+  pattern locks its host. Any other pattern locks the subtree of its
+  `match_host_scope`. `*`, `api.*` and `@app` lock the whole fleet. The write
+  analyses only the routes that can match there. Rule writes still take
+  ADR-570's `service_capacity_policy` EXCLUSIVE guard, so they stay
+  serialized with each other and with binding writes; what the scope saves
+  is analysis time.
 - **Mixing:** the two guards exclude each other through the root lock, so
   they can run side by side.
 - **Refusals:** a scoped write that changes a hostname it did not declare is
@@ -207,6 +214,7 @@ writes, which include deployment create and status changes, run a scoped guard
   declaration, so `traffic_binding_scope_misses_total` must read zero over a
   representative period.
 - **To roll back:** unset the variable and restart apid.
+
 Legacy action aliases whose decoding cannot be verified by this projection
 also refuse analysis; replace the affected rule through the supported API
 shape or disable/delete it to repair that graph. Caller cancellation still

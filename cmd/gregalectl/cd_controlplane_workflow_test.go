@@ -521,3 +521,40 @@ func TestCDControlPlaneConvergesControlPlaneRolesBeforeActivation(t *testing.T) 
 		t.Error("control-plane convergence must use the verified fleet known_hosts, not trust-on-first-use")
 	}
 }
+
+// TestCDControlPlaneHostedRunnerRefusesSilentRoleSkip: a GitHub-hosted runner
+// cannot reach the fleet's private names, so it cannot converge the
+// control-plane roles (ADR-580). It used to activate anyway with only a
+// warning, shipping a release whose role changes never landed. It now
+// refuses before touching the host unless the operator sets
+// skip_role_convergence, and cd-platform passes that choice through.
+func TestCDControlPlaneHostedRunnerRefusesSilentRoleSkip(t *testing.T) {
+	workflow := readWorkflow(t, "cd-controlplane.yml")
+	if got := strings.Count(workflow, "      skip_role_convergence:\n"); got != 2 {
+		t.Errorf("cd-controlplane declares skip_role_convergence on %d triggers, want workflow_call and workflow_dispatch", got)
+	}
+	refuse := strings.Index(workflow, "- name: Require role convergence or an explicit skip")
+	firstMutation := strings.Index(workflow, "- name: Converge APID lifecycle storage credential")
+	if refuse < 0 || firstMutation < 0 || refuse > firstMutation {
+		t.Fatalf("the hosted-runner refusal must run before the first host change: refuse=%d first=%d", refuse, firstMutation)
+	}
+	step := workflow[refuse:firstMutation]
+	for _, required := range []string{
+		"if: ${{ inputs.hosted_runner && !inputs.skip_role_convergence }}",
+		"exit 1",
+	} {
+		if !strings.Contains(step, required) {
+			t.Errorf("hosted-runner refusal is missing %q", required)
+		}
+	}
+
+	platform := readWorkflow(t, "cd-platform.yml")
+	for _, required := range []string{
+		"      skip_role_convergence:\n",
+		"skip_role_convergence: ${{ inputs.skip_role_convergence }}",
+	} {
+		if !strings.Contains(platform, required) {
+			t.Errorf("cd-platform does not pass the role-convergence skip: missing %q", required)
+		}
+	}
+}

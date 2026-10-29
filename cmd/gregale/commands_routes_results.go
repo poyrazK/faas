@@ -32,7 +32,7 @@ func cmdRoutesResults(args []string) int {
 	fs.Visit(func(f *flag.Flag) { pinned = pinned || f.Name == "expected-revision" })
 	id, err := uuid.Parse(*deployment)
 	if len(positional) != 1 || !validCLISlug(positional[0]) || err != nil || id.String() != *deployment || *timeout <= 0 || *timeout > api.RouteCheckMaxWait || pinned && (*revision < 1 || *revision > api.RouteRequirementsMaxRevision) {
-		return printErr("Invalid route result lookup", errors.New("usage: gregale api route results <slug> --deployment ID [--expected-revision N] [--refresh] [--wait] [--changes] [--timeout 2m] [--out PATH] [--fail-on-requirements] [--json]"))
+		return printErr("Invalid route result lookup", errors.New("usage: gregale api route results <slug> --release ID [--expected-revision N] [--refresh] [--wait] [--changes] [--timeout 2m] [--out PATH] [--fail-on-requirements] [--json]"))
 	}
 	client, err := authedClient()
 	if err != nil {

@@ -57,8 +57,8 @@ Use the returned deployment UUID below:
 
 ```sh
 gregale app binding release-policy set orders-worker --scope default --require-verification --queue-require default=handler_completion --expected-revision 0
-gregale app binding verify orders-worker --deployment DEPLOYMENT_UUID --release-policy --dry-run --json
-gregale app binding verify orders-worker --deployment DEPLOYMENT_UUID --release-policy --durable --queue-publish --json
+gregale app binding verify orders-worker --release DEPLOYMENT_UUID --release-policy --dry-run --json
+gregale app binding verify orders-worker --release DEPLOYMENT_UUID --release-policy --durable --queue-publish --json
 ```
 
 The final command explicitly consents to publishing a safe test message. Save

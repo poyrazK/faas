@@ -831,6 +831,40 @@ older apid decodes that approval strictly. Re-run it after a Neon plan or API
 change. A shadow week whose logged quotas match the ledger then completes
 ADR-20261025094915 decision 10.
 
+### Storage pool
+
+A plan's storage is pooled per account (ADR-1430), but each database may grow
+to its own spec limit, so an account with several databases could store more
+than its pool. The same sweep also works out, for each Neon project, the
+`settings.quota.logical_size_bytes` that keeps the usage subject inside its
+pool (decision 9):
+
+- The pool is the plan's storage limit, or twice it with overage on.
+- What remains is the pool minus the subject's current logical size.
+- Neon applies the limit to each branch of a project, not to their total. A
+  restore is a branch in its source's project, so the limit is set so that
+  the project's branches together can grow by at most what remains. A project
+  with one database gets its size plus what remains.
+- The limit is never above the smallest spec limit among the project's
+  databases, and never zero, which is no limit to Neon.
+- At the pool, writes that would grow a database fail; reads, deletes and
+  `VACUUM` keep working. Nothing is suspended or deleted.
+
+`FAAS_MANAGED_POSTGRES_STORAGE_CAP_ENFORCEMENT` selects the mode:
+
+- `shadow` (the default) logs `managed postgres storage cap (shadow)` with the
+  limit it would set, and writes nothing.
+- `off` does nothing.
+- `on` is refused until staging has qualified Neon's per-branch write blocking.
+
+The storage pass is counted apart from the compute sweep: a subject it cannot
+observe is logged and counted as `failed`, and never marks the compute sweep
+stale or holds back a compute cap email. Metrics:
+
+- `apid_managed_postgres_storage_cap_accounts{state}`
+- `apid_managed_postgres_storage_cap_limit_decisions_total{outcome}`
+- `apid_managed_postgres_storage_cap_enforcement_mode{mode}`
+
 ## Restore-to-new-database safety
 
 The control plane exposes restore as a new logical database intent. A restore
@@ -865,7 +899,7 @@ After restoring to a ready target, stage every runtime and migration binding
 for one app and scope, then request SQL verification:
 
 ```sh
-gregale postgres cutover prepare orders orders-copy api --scope production
+gregale postgres cutover prepare orders orders-copy api --env production
 gregale postgres cutover get CUTOVER_ID
 gregale postgres cutover verify CUTOVER_ID
 gregale postgres cutover get CUTOVER_ID
@@ -1206,12 +1240,17 @@ gregale postgres usage
 gregale postgres create orders --region eu --class development
 gregale postgres get DATABASE_ID
 gregale postgres restore DATABASE_ID --name orders-copy --point-in-time 2026-09-09T10:00:00Z
-gregale postgres bindings create DATABASE_ID --app APP_ID --scope production --environment-key DATABASE_URL
+gregale postgres bindings create DATABASE_ID --app APP_ID --env production --environment-key DATABASE_URL
 gregale postgres bindings list DATABASE_ID
 gregale postgres bindings rotate BINDING_ID --wait
 gregale postgres attach orders api --scope production --env DATABASE_URL
 gregale postgres delete DATABASE_ID
 ```
+
+`postgres delete` asks you to type the database's name: deletion removes the
+database and its point-in-time restore history at the provider and cannot be
+undone. Scripts pass `--yes` (or `--quiet`); JSON and `--non-interactive` mode
+require it.
 
 Binding rotation returns as soon as the new credential is active. Add
 `--wait` to poll until `rotation_pending` clears; the wait defaults to five
