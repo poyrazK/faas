@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "465905067842384ca27b39c1238b8b89952ffef239c85156256b8f9936c486a6",
+      "revision": "b6d9eeadc68b956377ac57cbedd092789d42f8d3a40794e9b364be38f3946b35",
       "files": [
         "faas.rules.yml"
       ],
@@ -1609,6 +1609,19 @@
           }
         },
         {
+          "id": "3b7c56651d8edb57a634e0b14595c2a4e8748b5e7d723cd0b287dc8fb960c001",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_customer_observability",
+          "rule_name": "FaasAlertRulesDeferred",
+          "definition": {
+            "expression_hash": "467ecfa94c34af68fc82b229b1ea3951d20930f1801942dbe6690a1a2fa23e2c",
+            "labels_hash": "baf3254f31226170fd41d129ca13fbeb71df85ea84878f43959023d5ed3bb091",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "5c9dee99272a76fd56f7ba72ea96b741ce47fddaf999f9eaec9b1c92fd49e38c"
+          }
+        },
+        {
           "id": "3c35553a077d6cad1c7b8f4535c1b8d98c26d748d805942176505b05d635a9d1",
           "file_name": "faas.rules.yml",
           "group_name": "faas_slo",
@@ -2948,6 +2961,19 @@
           }
         },
         {
+          "id": "75b833b90085738045ec4299e785ed5690f23d3275a203a34eab0eafd191657d",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo",
+          "rule_name": "FaasGithubAppDeliveryLogUnreadable",
+          "definition": {
+            "expression_hash": "f99e4abf87b089c74408c9f32ef8871ecafd4718576677b2deda9a79ac857445",
+            "labels_hash": "b5856f030109c8ffc4f9dd260c19fa574f99320c956686647b2838faec2df0a3",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "24cd363ef73c51ed32e5a464b8c9d9f8f13c60030ff2113e8c10c9c4eb0a7b7e"
+          }
+        },
+        {
           "id": "75c5cbf256b5a295525af1e96fd8a9b4ba641a126ff6184a3a8d3d927bddf04e",
           "file_name": "faas.rules.yml",
           "group_name": "faas_slo",
@@ -2971,6 +2997,19 @@
             "for_seconds": 3600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "70fd0fd36a2a7c20b3b8729b23cbc66f8f00524b5259f6b2ff4c18fe2ebd5c10"
+          }
+        },
+        {
+          "id": "76305f84e31caccbca2a55cec2ab327573ae53ffcc37d9c9d19dcce21097ec76",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_customer_observability",
+          "rule_name": "FaasAlertEvaluationSlow",
+          "definition": {
+            "expression_hash": "4d424f4e9d88f9efa28291cba6e79e89ca6c6b52ca91893a846ec07ae52622ab",
+            "labels_hash": "baf3254f31226170fd41d129ca13fbeb71df85ea84878f43959023d5ed3bb091",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "ab32c1fced0fa264d7d0990f9fed939462592cc4684ec290a242b92be5484897"
           }
         },
         {
@@ -4089,6 +4128,19 @@
             "for_seconds": 120,
             "keep_firing_for_seconds": 0,
             "fingerprint": "54f51e75c6ca6ab6292e1899aab2c39215e4a9ddf91b11ca2d753a2ce30a2df4"
+          }
+        },
+        {
+          "id": "aae68c6dce7f76df303f161ff45ffcd4eeeb9d0fe92f6c1c45622350c173a614",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo",
+          "rule_name": "FaasGithubAppWebhookFailing",
+          "definition": {
+            "expression_hash": "6796a22a94a53674ed67005a7b2172b30a6f7186cf6e172d46d68d9f58051610",
+            "labels_hash": "b5856f030109c8ffc4f9dd260c19fa574f99320c956686647b2838faec2df0a3",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "15137921034c7cc3b429e88116b0f7feea4b98eeb3756f415fb2508dd6ce12a7"
           }
         },
         {
@@ -5665,6 +5717,19 @@
           }
         },
         {
+          "id": "ed22086f0f5d8fa84cbd2a0ff80480c036e3582a190d97fcc2ff533e6fb012c2",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo",
+          "rule_name": "FaasGithubAppWebhookDeliveriesLost",
+          "definition": {
+            "expression_hash": "c5ca8e96940a11549e5a36a3b71aa1b0509b6156a2c36a995bdbae2c5af961a3",
+            "labels_hash": "b5856f030109c8ffc4f9dd260c19fa574f99320c956686647b2838faec2df0a3",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "ce85699ddbc986edb8be29da82267a8066caacf1bdbb66cc67bb39ce6c6dcb76"
+          }
+        },
+        {
           "id": "edc3d47b00939ce809b1ae2d0386e495dd100dbbbb472f8b842518907463aba5",
           "file_name": "faas.rules.yml",
           "group_name": "faas_spec12_operator_signals",
@@ -6175,7 +6240,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "3aefbb0e8fa2f3302aaa6a45b5468230bd721722256e0a3485657c752bdc5a61",
+      "revision": "8ae916601e884017efb59496e1a7ca3fb714c3c04381722089545cfe2cf61da0",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -7862,6 +7927,19 @@
           }
         },
         {
+          "id": "3b7c56651d8edb57a634e0b14595c2a4e8748b5e7d723cd0b287dc8fb960c001",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_customer_observability",
+          "rule_name": "FaasAlertRulesDeferred",
+          "definition": {
+            "expression_hash": "467ecfa94c34af68fc82b229b1ea3951d20930f1801942dbe6690a1a2fa23e2c",
+            "labels_hash": "baf3254f31226170fd41d129ca13fbeb71df85ea84878f43959023d5ed3bb091",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "5c9dee99272a76fd56f7ba72ea96b741ce47fddaf999f9eaec9b1c92fd49e38c"
+          }
+        },
+        {
           "id": "3c35553a077d6cad1c7b8f4535c1b8d98c26d748d805942176505b05d635a9d1",
           "file_name": "faas.rules.yml",
           "group_name": "faas_slo",
@@ -9240,6 +9318,19 @@
           }
         },
         {
+          "id": "75b833b90085738045ec4299e785ed5690f23d3275a203a34eab0eafd191657d",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo",
+          "rule_name": "FaasGithubAppDeliveryLogUnreadable",
+          "definition": {
+            "expression_hash": "f99e4abf87b089c74408c9f32ef8871ecafd4718576677b2deda9a79ac857445",
+            "labels_hash": "b5856f030109c8ffc4f9dd260c19fa574f99320c956686647b2838faec2df0a3",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "24cd363ef73c51ed32e5a464b8c9d9f8f13c60030ff2113e8c10c9c4eb0a7b7e"
+          }
+        },
+        {
           "id": "75c5cbf256b5a295525af1e96fd8a9b4ba641a126ff6184a3a8d3d927bddf04e",
           "file_name": "faas.rules.yml",
           "group_name": "faas_slo",
@@ -9263,6 +9354,19 @@
             "for_seconds": 3600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "70fd0fd36a2a7c20b3b8729b23cbc66f8f00524b5259f6b2ff4c18fe2ebd5c10"
+          }
+        },
+        {
+          "id": "76305f84e31caccbca2a55cec2ab327573ae53ffcc37d9c9d19dcce21097ec76",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_customer_observability",
+          "rule_name": "FaasAlertEvaluationSlow",
+          "definition": {
+            "expression_hash": "4d424f4e9d88f9efa28291cba6e79e89ca6c6b52ca91893a846ec07ae52622ab",
+            "labels_hash": "baf3254f31226170fd41d129ca13fbeb71df85ea84878f43959023d5ed3bb091",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "ab32c1fced0fa264d7d0990f9fed939462592cc4684ec290a242b92be5484897"
           }
         },
         {
@@ -10472,6 +10576,19 @@
             "for_seconds": 120,
             "keep_firing_for_seconds": 0,
             "fingerprint": "54f51e75c6ca6ab6292e1899aab2c39215e4a9ddf91b11ca2d753a2ce30a2df4"
+          }
+        },
+        {
+          "id": "aae68c6dce7f76df303f161ff45ffcd4eeeb9d0fe92f6c1c45622350c173a614",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo",
+          "rule_name": "FaasGithubAppWebhookFailing",
+          "definition": {
+            "expression_hash": "6796a22a94a53674ed67005a7b2172b30a6f7186cf6e172d46d68d9f58051610",
+            "labels_hash": "b5856f030109c8ffc4f9dd260c19fa574f99320c956686647b2838faec2df0a3",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "15137921034c7cc3b429e88116b0f7feea4b98eeb3756f415fb2508dd6ce12a7"
           }
         },
         {
@@ -12097,6 +12214,19 @@
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "3b51d281e69b5c52ff3c32c8ad2cecb85b3137286580ae8904963d3d34c88b89"
+          }
+        },
+        {
+          "id": "ed22086f0f5d8fa84cbd2a0ff80480c036e3582a190d97fcc2ff533e6fb012c2",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo",
+          "rule_name": "FaasGithubAppWebhookDeliveriesLost",
+          "definition": {
+            "expression_hash": "c5ca8e96940a11549e5a36a3b71aa1b0509b6156a2c36a995bdbae2c5af961a3",
+            "labels_hash": "b5856f030109c8ffc4f9dd260c19fa574f99320c956686647b2838faec2df0a3",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "ce85699ddbc986edb8be29da82267a8066caacf1bdbb66cc67bb39ce6c6dcb76"
           }
         },
         {

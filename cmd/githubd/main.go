@@ -21,6 +21,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -41,7 +42,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/gitfetch"
 	"github.com/onebox-faas/faas/pkg/githubd"
 	"github.com/onebox-faas/faas/pkg/githubdgrpc"
+	"github.com/onebox-faas/faas/pkg/imagelisten"
 	"github.com/onebox-faas/faas/pkg/reconcile"
+	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/sealdomain"
 	"github.com/onebox-faas/faas/pkg/secretbox"
@@ -199,6 +202,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	wire.RegisterPoolMetrics(ops, pool)
 	ghAud := audit.New(store, log, ops, "githubd")
 	ghReconcile := buildGithubdReconcileService(store, ghAud, log)
+	// Push deploys classify a prebuilt Compose image the way apid's plan does
+	// (ADR-20261029120000 amendment 2).
+	imageListening := imagelisten.NewRegistry().Listening
+	ghReconcile.Scan = func(fsys fs.FS) (reposcan.Result, error) {
+		return reposcan.ScanWithOptions(fsys, reposcan.ScanOptions{ImageListening: imageListening})
+	}
 
 	// PR-H: source fetcher for the push-dispatch path. The
 	// work dir is operator-configurable (default
@@ -480,6 +489,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				webhookSvc.WritePreviewCheckForkRefused = checks.WritePreviewCheckForkRefused
 				webhookSvc.WritePreviewCheckForkRefusedForInstallation = checks.WritePreviewCheckForkRefusedForInstallation
 				webhookSvc.WritePreviewCommentForInstallation = checks.UpsertPreviewComment
+				// GitHub's own delivery log is the only witness of a delivery
+				// that never reached this listener (wrong webhook URL, stale
+				// secret, githubd down).
+				hookDeliveryMetrics := githubd.NewHookDeliveryMetrics()
+				ops.Registry().MustRegister(hookDeliveryMetrics)
+				go githubd.RunHookDeliveryMonitor(ctx, &githubd.HookDeliveryMonitor{
+					MintJWT: auth.MintAppJWT,
+					Client:  deps.httpClient(),
+					Metrics: hookDeliveryMetrics,
+					Log:     log,
+				}, githubd.DefaultHookDeliveryPollInterval, log)
 				log.Info("githubd: OAuth + Checks wired", "app_id", appID)
 			}
 		}

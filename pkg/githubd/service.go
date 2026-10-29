@@ -260,6 +260,16 @@ func webhookDeliveryID(ctx context.Context) string {
 	return deliveryID
 }
 
+// errUnprocessableWebhook marks a delivery whose payload cannot be decoded
+// or validated, or whose event githubd does not route. Retrying cannot change
+// the stored bytes, so the worker dead-letters it on the first attempt and the
+// dead-delivery alert surfaces it at once instead of after the retry budget.
+var errUnprocessableWebhook = errors.New("githubd: unprocessable webhook delivery")
+
+func unprocessableWebhook(err error) error {
+	return fmt.Errorf("%w: %w", errUnprocessableWebhook, err)
+}
+
 // HandleWebhookEvent routes the standard X-GitHub-Event value. Keeping the
 // router beside the business service prevents the HTTP transport and durable
 // worker from drifting into push-only behavior.
@@ -270,10 +280,10 @@ func (s *Service) HandleWebhookEvent(ctx context.Context, eventType string, body
 	case "push":
 		event, err := DecodePush(body)
 		if err != nil {
-			return err
+			return unprocessableWebhook(err)
 		}
 		if event.Installation.ID <= 0 {
-			return errors.New("githubd: push missing installation.id")
+			return unprocessableWebhook(errors.New("githubd: push missing installation.id"))
 		}
 		_, err = s.HandlePushRequest(ctx, body)
 		return err
@@ -284,18 +294,21 @@ func (s *Service) HandleWebhookEvent(ctx context.Context, eventType string, body
 			return err
 		}
 		event, err := DecodePullRequest(body)
+		if errors.Is(err, ErrPullRequestActionIgnored) {
+			return ErrIgnored
+		}
 		if err != nil {
-			return err
+			return unprocessableWebhook(err)
 		}
 		if event.Installation.ID <= 0 {
-			return errors.New("githubd: pull_request missing installation.id")
+			return unprocessableWebhook(errors.New("githubd: pull_request missing installation.id"))
 		}
 		_, err = s.handlePullRequest(ctx, body)
 		return err
 	case "installation", "installation_repositories", "repository":
 		return s.HandleInstallationLifecycle(ctx, eventType, body)
 	default:
-		return fmt.Errorf("githubd: unsupported webhook event %q", eventType)
+		return unprocessableWebhook(fmt.Errorf("githubd: unsupported webhook event %q", eventType))
 	}
 }
 
@@ -1398,6 +1411,9 @@ func (s *Service) writePreviewComment(ctx context.Context, installationID int64,
 //   - any other error → 500 (logged with op context).
 func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile.Result, error) {
 	ev, err := DecodePullRequest(body)
+	if errors.Is(err, ErrPullRequestActionIgnored) {
+		return reconcile.Result{WasIgnored: true}, ErrIgnored
+	}
 	if err != nil {
 		return reconcile.Result{}, err
 	}
