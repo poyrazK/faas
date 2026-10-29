@@ -27,7 +27,7 @@ type planUploadDeployArgs struct {
 // registerUploadDeploys lists remote deploys on a hosted grant with write
 // consent (ADR-20261026195952).
 func registerUploadDeploys(s *mcp.Server, m *management) {
-	if m.opts.uploads == nil || m.opts.LocalCLI == nil || m.opts.Environments == nil || !m.opts.AllowWrites {
+	if m.opts.uploads == nil || m.opts.LocalCLI == nil || !m.remote() || !m.opts.AllowWrites {
 		return
 	}
 	register(s, m, "gregale_create_source_upload", "Get a one-time URL to upload a project as a .tar.gz, valid for 15 minutes. Upload it with the returned command, then call gregale_plan_upload_deploy with upload_id. For a few small files, pass them to gregale_plan_upload_deploy instead.", m.createSourceUpload)

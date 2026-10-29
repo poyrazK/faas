@@ -84430,6 +84430,7 @@ components:
         business_name: { type: string, maxLength: 256, description: "Legal business name used on future invoices." }
         billing_address: { type: string, maxLength: 1000, description: "Free-form billing address used on future invoices." }
         tax_id: { type: string, maxLength: 128, description: "Customer tax/VAT identifier used on future invoices." }
+        key_scopes: { type: array, items: { type: string }, description: "Scopes of the API key that authenticated this request; absent for a dashboard session. An agent key (scope agent) lists the tools the hosted MCP server offers it." }
         abuse_hold: { $ref: '#/components/schemas/AccountAbuseHold' }
 
     AccountAbuseHold:

@@ -55,6 +55,34 @@ deploy:
 Uploads may contain only regular files and directories. Links, devices and
 anything named `.git` are refused.
 
+### Headless agents with an agent key
+
+An agent with no person at a browser, such as one in CI or a scheduled job,
+connects with an agent key instead of signing in (ADR-20261029085359):
+
+```sh
+gregale key create ci-agent --scopes agent,deploy:write
+claude mcp add --transport http gregale https://api.gregale.dev/mcp \
+  --header "Authorization: Bearer $GREGALE_AGENT_KEY"
+```
+
+Only keys with the `agent` scope work here; a deploy key or an admin key is
+refused with a pointer to agent keys. The key's other scopes stand in for the
+consent screen:
+
+| Key scope | Tools |
+|---|---|
+| `agent` (always with `apps:read`) | Inspection |
+| `deploy:write` | Upload deploys, promotion, rollback, domains, crons |
+| `secrets:request` | Asking a person to enter a secret on a Gregale page |
+| `storage:manage` | Buckets |
+| `postgres:manage`, `postgres:read` | PostgreSQL databases |
+
+The key reaches every app in its account. Agent keys expire after 90 days by
+default; rotate them like any key. Revoking the key ends the agent's access at
+its next request. Release plans made with a key are kept in memory, so after a
+server restart the agent plans again.
+
 ## Connect a local agent to Gregale
 
 `gregale mcp serve` exposes Gregale management tools over stdio, with writes

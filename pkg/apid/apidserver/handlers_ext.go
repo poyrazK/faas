@@ -4665,6 +4665,10 @@ func (s *server) createKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 	var expiresAt *time.Time
 	if !slices.Contains(scopes, api.ScopeAdmin) {
 		t := time.Now().UTC().Add(time.Duration(api.DefaultAPIKeyLifetimeDays) * 24 * time.Hour)
+		// Agent keys run unattended, so they expire sooner (ADR-20261029085359).
+		if slices.Contains(scopes, api.ScopeAgent) {
+			t = time.Now().UTC().Add(api.AgentKeyLifetime)
+		}
 		expiresAt = &t
 	}
 	// PR 6 (issue #190 / IAM-6) dual-write: the legacy /v1/keys
