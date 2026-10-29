@@ -206,6 +206,22 @@ ADR-568 requires.
     5-minute qualification lease held the retry past the test window.
   - 939289c79e makes the test report the GitOps runs and the graph,
     qualification and release rows when it times out.
+- 2026-10-29, n2, rerun with the timeout diagnostics:
+  - gitlab qualified again. Every apid pass then ended
+    `environment_runtime_unacknowledged`, and no release set existed.
+    - The test fixture's apps had no revision pin TTL. Activation publishes a
+      project release set, which refuses such an app, so it returned "not
+      activated" without an error.
+    - a52d0adfb6 sets the TTL, as the source-Jobs journey already did.
+  - The github capture failed with `create original snapshot: unexpected
+    EOF`.
+    - vmmd's cgroup fence repair had written the ordinary `memory.max` back
+      into the capture's scope, and the kernel OOM-killed Firecracker while it
+      wrote the snapshot.
+    - The native snapshot allowance (ADR-568) raised the limit without moving
+      the fence record, unlike `widenSnapshotFence` on the ordinary path. This
+      affects every native capture, runtime capture included.
+    - 66cf2736ae records each limit in the fence before writing it.
 - Pending: the n2 native GitOps journey through activation and serving.
 
 ## Rejected alternatives
