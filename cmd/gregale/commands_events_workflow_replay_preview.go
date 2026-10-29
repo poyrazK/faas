@@ -27,7 +27,7 @@ func cmdEventsWorkflowReplayPreview(args []string) int {
 	options := api.WorkflowEventReplayPreviewOptions{From: start, Until: end, After: *after, Limit: *limit}
 	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) || strings.TrimSpace(*workflowName) == "" || startErr != nil || endErr != nil ||
 		options.Validate() != nil || validateCLILimit("limit", *limit, api.EventReplayPreviewPageMax) != nil {
-		PrintUsage(os.Stderr, "usage: gregale event workflow-replay-preview <app> --workflow-name NAME --from RFC3339 --until RFC3339 [--after CURSOR] [--limit N]", "events")
+		PrintUsage(os.Stderr, "usage: gregale event workflow-replay-preview <app> --workflow-name NAME --since RFC3339 --until RFC3339 [--cursor CURSOR] [--limit N]", "events")
 		return 1
 	}
 	client, err := authedClient()
