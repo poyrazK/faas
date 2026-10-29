@@ -161,8 +161,8 @@ func sealCheckpointPostgresCredential(p state.ProjectEnvironmentCloneCheckpointP
 	if setSecretRecipient == nil || mfaIdentities == nil {
 		return "", nil, errCloneCheckpointUnavailable
 	}
-	recipient := hostSecretRecipient()
-	if recipient == nil || !cloneInventoryCanOpen(recipient, mfaIdentities()) {
+	recipient := cloneSealRecipient()
+	if recipient == nil || !cloneInventoryCanOpen(recipient, accountIdentities()) {
 		return "", nil, errCloneCheckpointUnavailable
 	}
 	seed := make([]byte, api.PostgresCheckpointCredentialPasswordBytes)
@@ -189,7 +189,7 @@ func openCheckpointPostgresCredential(in state.ProjectEnvironmentCloneCheckpoint
 	if mfaIdentities == nil || len(in.Ciphertext) == 0 || len(in.Ciphertext) > api.PostgresCheckpointCredentialCiphertextMaxBytes || state.ProjectEnvironmentCloneCheckpointPostgresCredentialCiphertextSHA256(in.Ciphertext) != in.CiphertextSHA256 {
 		return out, errCloneCheckpointUnavailable
 	}
-	identities := mfaIdentities()
+	identities := accountIdentities()
 	match := false
 	for _, id := range identities {
 		if id != nil && id.Recipient().String() == in.KeyID {

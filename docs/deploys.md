@@ -675,7 +675,7 @@ or email, up to five) hear when the release starts and when it can't.
 
 While a release waits for its time, `gregale release traffic set` and `gregale
 traffic promote` refuse it with `release_scheduled`; move or cancel the
-schedule instead. `gregale release traffic promote --deployment v44 --at 09:00`
+schedule instead. `gregale release traffic promote --release v44 --at 09:00`
 schedules a release you deployed with `--no-traffic`.
 
 A scheduled release is a production release of a request app: previews,
@@ -699,7 +699,7 @@ Use a revision anywhere a deployment ID is accepted:
 
 ```bash
 gregale rollback my-api --to v41
-gregale release traffic set --app my-api --deployment v42 --percent 10
+gregale release traffic set --app my-api --release v42 --percent 10
 ```
 
 `gregale release traffic status my-api` lists the live revisions and their weights.
@@ -723,7 +723,7 @@ command after readiness succeeds. For example:
 ✓ Staged v44 with 0% production traffic.
   Preview: https://deploy-44-my-api.gregale.dev
   Production remains on v43. https://my-api.gregale.dev
-  Promote: gregale release traffic promote --app my-api --deployment v44 --if-serving v43
+  Promote: gregale release traffic promote --app my-api --release v44 --if-serving v43
 ```
 
 `--no-traffic` is the discoverable spelling for `--traffic-percent 0`. It is
@@ -1010,7 +1010,7 @@ Run a read-only check before uploading source or starting builds:
 ```sh
 gregale deploy check --project --project-slug shop --json
 gregale deploy check --project --project-slug shop --atomic --verify --config-file release.json
-gregale deploy check --project --project-slug shop --from staging --environment production --sync-config --verify --workers
+gregale deploy check --project --project-slug shop --from staging --env production --sync-config --verify --workers
 ```
 
 The report collects missing runtime keys, invalid dependencies, quota and rollback

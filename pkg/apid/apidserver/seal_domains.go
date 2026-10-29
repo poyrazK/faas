@@ -429,6 +429,20 @@ func holdsIdentityFor(ids []*age.X25519Identity, kid string) bool {
 	return false
 }
 
+// cloneSealRecipient is who project environment clone values are sealed to
+// (ADR 20261022111812). They take one recipient, recorded as each row's
+// key_id: clone records bind each other by ciphertext hash and open only
+// with the identity their key id names, so they are never re-sealed in
+// place. The fleet recipient until the account domain is domain-only, the
+// domain's after; rows sealed before stay on the fleet key until their
+// clone finishes.
+func cloneSealRecipient() *age.X25519Recipient {
+	if accountWriteMode == sealdomain.WriteDomain {
+		return accountDomainRecipient()
+	}
+	return hostSecretRecipient()
+}
+
 // accountIdentitiesFor is accountIdentities for a handler that takes the
 // request context.
 func accountIdentitiesFor(context.Context) []*age.X25519Identity { return accountIdentities() }
