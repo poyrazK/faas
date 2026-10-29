@@ -18,6 +18,10 @@ type Querier interface {
 	AbandonProjectEnvironmentCloneConfiguration(ctx context.Context, db DBTX, arg AbandonProjectEnvironmentCloneConfigurationParams) (int64, error)
 	AbortLockedInstanceMigration(ctx context.Context, db DBTX, arg AbortLockedInstanceMigrationParams) (int64, error)
 	AbortProfileGatedCanary(ctx context.Context, db DBTX, arg AbortProfileGatedCanaryParams) (int64, error)
+	// ADR-20261028110044 amendment 2: the hold deadline ended a held canary, so
+	// its notification state records the abort. Returns the hold's first blocking
+	// decision; no row when the canary was not held.
+	AbortRouteHealthHold(ctx context.Context, db DBTX, arg AbortRouteHealthHoldParams) (string, error)
 	AcceptObjectStorageTimeline(ctx context.Context, db DBTX, acceptedBy string) (string, error)
 	AccountByEmail(ctx context.Context, db DBTX, email interface{}) (AccountByEmailRow, error)
 	AccountByID(ctx context.Context, db DBTX, id pgtype.UUID) (AccountByIDRow, error)
@@ -31,6 +35,8 @@ type Querier interface {
 	// GitHub Actions subject to such an account.
 	AccountByOIDCIssuerSubject(ctx context.Context, db DBTX, arg AccountByOIDCIssuerSubjectParams) (AccountByOIDCIssuerSubjectRow, error)
 	AccountDeletedAppByID(ctx context.Context, db DBTX, arg AccountDeletedAppByIDParams) (AccountDeletedAppByIDRow, error)
+	// An installation ID is globally unique (github_installations_installation_id_uidx).
+	AccountIDByGitHubInstallation(ctx context.Context, db DBTX, installationID int64) (pgtype.UUID, error)
 	// First-use GitHub Actions bootstrap through an OAuth-verified install
 	// binding. Immutable subjects must match both persisted numeric IDs as well
 	// as the current repository name; a zero ID preserves legacy name-only
@@ -1142,8 +1148,13 @@ type Querier interface {
 	EventConsumerPressureTarget(ctx context.Context, db DBTX, arg EventConsumerPressureTargetParams) (pgtype.UUID, error)
 	EventConsumerPressureWaits(ctx context.Context, db DBTX, arg EventConsumerPressureWaitsParams) (EventConsumerPressureWaitsRow, error)
 	EventConsumerProcessingHealth(ctx context.Context, db DBTX, arg EventConsumerProcessingHealthParams) (EventConsumerProcessingHealthRow, error)
-	// Reads the account's live slots (event_delivery_slots_live), not its whole
-	// delivery history; the invocation's state still decides.
+	// ADR-614 amendment (2026-10-29): counts the account's live slots from the
+	// event_delivery_slots_live index alone. A slot's live flag is exact: it is
+	// stamped when the slot is written, with or after its invocation, and every
+	// state change re-syncs it. Joining each slot to its invocation planned a
+	// scan of every pending invocation on the platform, so each routed delivery
+	// paid for everyone's backlog. A keyed replace subtracts the pending
+	// deliveries it would replace, found through the work-lane index.
 	EventDeliveryCounts(ctx context.Context, db DBTX, arg EventDeliveryCountsParams) (EventDeliveryCountsRow, error)
 	EventDeliveryInsertSlot(ctx context.Context, db DBTX, arg EventDeliveryInsertSlotParams) error
 	EventDeliveryLockCapacity(ctx context.Context, db DBTX, arg EventDeliveryLockCapacityParams) error
@@ -5050,6 +5061,10 @@ type Querier interface {
 	PutGitLabOAuthConnection(ctx context.Context, db DBTX, arg PutGitLabOAuthConnectionParams) (GitlabOauthConnection, error)
 	PutMCPCatalogMonitor(ctx context.Context, db DBTX, arg PutMCPCatalogMonitorParams) (int64, error)
 	PutMCPOAuthRetirement(ctx context.Context, db DBTX, arg PutMCPOAuthRetirementParams) (int64, error)
+	// ADR 20261028161502 amendment 1: a runtime secret envelope's writer
+	// signature, by its SHA-256. A signature is deterministic for one envelope and
+	// key, so writing it again replaces only a row that held something else.
+	PutRuntimeSecretSignature(ctx context.Context, db DBTX, arg PutRuntimeSecretSignatureParams) error
 	PutTCPListenerTLSObservation(ctx context.Context, db DBTX, arg PutTCPListenerTLSObservationParams) (int64, error)
 	QueueApplicationStandardExceptionChange(ctx context.Context, db DBTX, arg QueueApplicationStandardExceptionChangeParams) (int64, error)
 	// This runs in the same transaction as the installed enrollment and target.
@@ -5592,6 +5607,7 @@ type Querier interface {
 	ReadRuntimeInstanceConfigProof(ctx context.Context, db DBTX, arg ReadRuntimeInstanceConfigProofParams) (ReadRuntimeInstanceConfigProofRow, error)
 	ReadRuntimeScalingStateForDeployment(ctx context.Context, db DBTX, arg ReadRuntimeScalingStateForDeploymentParams) (ReadRuntimeScalingStateForDeploymentRow, error)
 	ReadRuntimeSecretDeliveryVersions(ctx context.Context, db DBTX, arg ReadRuntimeSecretDeliveryVersionsParams) ([]ReadRuntimeSecretDeliveryVersionsRow, error)
+	ReadRuntimeSecretSignatures(ctx context.Context, db DBTX, digests [][]byte) ([]ReadRuntimeSecretSignaturesRow, error)
 	ReadRuntimeUpgradeBaselineDeployments(ctx context.Context, db DBTX, arg ReadRuntimeUpgradeBaselineDeploymentsParams) ([]ReadRuntimeUpgradeBaselineDeploymentsRow, error)
 	// ADR-689: private apid cutover, original environment -> app -> deployment order.
 	ReadRuntimeUpgradeCutoverOwner(ctx context.Context, db DBTX, id pgtype.UUID) (ReadRuntimeUpgradeCutoverOwnerRow, error)
@@ -6272,12 +6288,27 @@ type Querier interface {
 	// first, for the route_monitor_incidents alert metric. total counts every
 	// match, not only the rows returned.
 	RouteMonitorIncidentsSince(ctx context.Context, db DBTX, arg RouteMonitorIncidentsSinceParams) ([]RouteMonitorIncidentsSinceRow, error)
+	// The app's production routing lane (state.ProductionRoutingDeployments): a
+	// project's named production scope once it carries traffic, or while the
+	// legacy default lane is dark; otherwise the default scope
+	// (ADR-20261028110044 amendment 1).
 	RouteMonitorServingDeployments(ctx context.Context, db DBTX, appID string) ([]RouteMonitorServingDeploymentsRow, error)
 	RouteProbeObservations(ctx context.Context, db DBTX, arg RouteProbeObservationsParams) ([]RouteProbeObservationsRow, error)
 	// ADR-1446: probe totals per deployment over a canary stage, for meterd's
 	// circuit breaker.
 	RouteProbeTotalsByDeployment(ctx context.Context, db DBTX, arg RouteProbeTotalsByDeploymentParams) ([]RouteProbeTotalsByDeploymentRow, error)
 	RouteRemovalCoverageBlockers(ctx context.Context, db DBTX, arg RouteRemovalCoverageBlockersParams) ([]byte, error)
+	// ADR-20261028110044 amendments 1 and 2: whether a gateway may have lost
+	// request telemetry that route evidence over [window_from, window_until)
+	// reads. An active node whose last coverage report is at most
+	// RouteTelemetrySilenceGrace older than window_from counts when its telemetry
+	// is off or sampled, when it has not been continuously healthy since
+	// window_from (a restart, a heartbeat gap, or rows it could not attribute to
+	// an app), or when it fell silent before window_until. A gateway silent since
+	// before the windows serves none of them, so it cannot hold every app's
+	// evidence. Rows a gateway attributes to an app and drops (an account over its
+	// telemetry rate) do not count: the app's remaining rows stay comparable.
+	RouteTelemetryLost(ctx context.Context, db DBTX, arg RouteTelemetryLostParams) (bool, error)
 	// Authenticated post-readiness verification targets one current candidate.
 	// Filter history and deployment ownership before choosing its newest resident;
 	// snapshotting candidates remain outside ordinary customer placement discovery.
@@ -6539,6 +6570,10 @@ type Querier interface {
 	SetServiceWakeAhead(ctx context.Context, db DBTX, arg SetServiceWakeAheadParams) (SetServiceWakeAheadRow, error)
 	SetSyntheticCheckEnabled(ctx context.Context, db DBTX, arg SetSyntheticCheckEnabledParams) (SyntheticCheck, error)
 	SetTrafficTenantSurfaceStatus(ctx context.Context, db DBTX, arg SetTrafficTenantSurfaceStatusParams) (int64, error)
+	// ADR-20261027090010 §9: point a just-created public broker trigger at an agent. The
+	// CHECK constraint refuses other kinds, batch delivery and binding-owned
+	// projections.
+	SetTriggerAgent(ctx context.Context, db DBTX, arg SetTriggerAgentParams) (int64, error)
 	// ADR-1321: switch a public trigger between per-record and batch delivery.
 	// The CHECK constraint refuses batch for cron and queue triggers.
 	SetTriggerDelivery(ctx context.Context, db DBTX, arg SetTriggerDeliveryParams) (int64, error)

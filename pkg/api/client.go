@@ -50,6 +50,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -579,12 +580,28 @@ func apiErrorFromResponse(resp *http.Response, data []byte) error {
 			p.RetryAfterSeconds = &seconds
 		}
 	}
-	for _, name := range []string{"RateLimit-Limit", "RateLimit-Remaining", "RateLimit-Reset"} {
+	for _, name := range []string{"RateLimit-Limit", "RateLimit-Remaining", "RateLimit-Reset", EdgeRulesStateHeader} {
 		if value := resp.Header.Get(name); value != "" {
 			p = *p.WithHeader(name, value)
 		}
 	}
 	return &APIError{Problem: p}
+}
+
+// EdgeRulesStateHeader reports whether the serving gateways have applied an
+// edge-rule, rule-list or CORS-preset change (ADR-091): "active" once they
+// all have, "converging" on a 503 that saved the change before every gateway
+// acknowledged it.
+const (
+	EdgeRulesStateHeader     = "X-Faas-Edge-Rules-State"
+	EdgeRulesStateConverging = "converging"
+)
+
+// EdgeRuleChangeConverging reports whether p is a 503 for an edge-rule change
+// that was saved but not yet applied by every serving gateway. Resending it
+// would repeat a change that already happened.
+func EdgeRuleChangeConverging(p Problem) bool {
+	return slices.Contains(p.HasHeader(EdgeRulesStateHeader), EdgeRulesStateConverging)
 }
 
 // ErrNoBody is returned by helpers that expected a body but got none.

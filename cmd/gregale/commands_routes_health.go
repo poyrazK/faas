@@ -277,6 +277,9 @@ func validateRouteHealthReport(r api.RouteHealthReport, deployment string) error
 }
 func renderRouteHealthReport(r api.RouteHealthReport, appSlug string) {
 	_, _ = fmt.Fprintf(osStdout, "Route health: %s (%s, revision %d)\nCandidate: %s (%s)\nStable: %s (%s)\nCoverage: observed telemetry only; full capture unknown\n", r.Status, r.Mode, r.Revision, r.DeploymentID, previewReportText(r.CandidateCommitSHA), r.StableDeploymentID, previewReportText(r.StableCommitSHA))
+	if r.Hold != nil {
+		_, _ = fmt.Fprintf(osStdout, "Held since %s; Gregale aborts this canary at %s if it is still held\n", r.Hold.Since.UTC().Format(time.RFC3339), r.Hold.AbortsAt.UTC().Format(time.RFC3339))
+	}
 	for _, f := range r.Routes {
 		_, _ = fmt.Fprintf(osStdout, "\n%s %s: %s\n", f.Method, previewReportText(f.Path), f.Status)
 		if f.EvidenceWindow == "synthetic" && len(f.SyntheticWindows) > 0 {

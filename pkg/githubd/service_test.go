@@ -102,7 +102,7 @@ func newRig(t *testing.T, scanFn func(fs.FS) (reposcan.Result, error)) *testRig 
 	aud := audit.New(mem, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, "githubd_test")
 	rec := reconcile.NewService(mem, aud, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if scanFn != nil {
-		rec.Scan = scanFn
+		rec.Scan = func(fsys fs.FS, _ reposcan.ScanOptions) (reposcan.Result, error) { return scanFn(fsys) }
 	}
 	acct, err := mem.CreateAccount(context.Background(), "octo@example.com", "hobby")
 	if err != nil {

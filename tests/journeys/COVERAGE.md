@@ -18,7 +18,7 @@ covered. Update this table when a journey or a GA row changes.
 | 16 | Stateless-contract checks and source review | `TestGitHubDeploys/source_review` | stateless advisories |
 | 19 | Projects: multi-app apply, submissions, project previews | `TestMultiServiceProject` (`deploy_project`: a Compose repository as one project; `project_lists_services`) | submissions, project previews, `--only`/`--exclude`, renames |
 | 24 | Rollback to a named revision | `TestReleaseAndRollback` (checked rollback) | — |
-| 27 | Pull-request previews | `TestGitHubDeploys`: `pull_request_preview` (preview serves the PR, production unchanged), `preview_created_on_pr_open`, `preview_removed_on_pr_close`, `preview_destroy` | automatic creation on PR open and removal on PR close are known failures (GitHub App webhooks look unprocessed, 2026-10-27/28); the lifecycle falls back to `preview create` and `preview destroy` |
+| 27 | Pull-request previews | `TestGitHubDeploys`: `pull_request_preview` (preview serves the PR, production unchanged), `preview_created_on_pr_open`, `preview_removed_on_pr_close` (the close is recorded with its 24h grace), `preview_destroy` | automatic creation on PR open and the recorded close are known failures until #5862 is released (the App webhook URL and secret were wrong until 2026-10-29, and githubd rejected real pull_request payloads); the lifecycle falls back to `preview create` and `preview destroy` |
 | 38 | Scale to zero | `TestScaleToZero`, `TestGuestGuarantees` (burst wake, wake latency) | — |
 | 39 | Browser wake page | `TestBrowserWakePage` (shown when a wake exceeds 1.5 s; never for fetch) | forcing a wake slower than 1.5 s |
 | 40 | Firecracker isolation | `TestGuestGuarantees` (egress denylist, RNG and clock after restore) | jailer/cgroup internals (metal tests) |
@@ -36,7 +36,7 @@ covered. Update this table when a journey or a GA row changes.
 | 65 | Internal services (call apps by name) | `TestMultiServiceProject`: `api_has_no_public_url`, `call_by_internal_name` (`<service>.internal`), `parked_service_wakes_on_call` | the HTTPS alias, raw TCP services |
 | 66 | Service bindings, verification and probes | `TestMultiServiceProject/call_by_injected_url` (`GREGALE_SERVICE_<NAME>_URL` from `depends_on`) | the `declared` policy, caller allowlists, call scopes, `gregale bindings verify` |
 | 77 | App access control | `TestMaintenanceAndAccess` (require-authn, basic auth, IP allowlist) | public bearer auth |
-| 92 | Crons, fire-now | `TestCronDelivery` | scheduled (non-manual) fires |
+| 92 | Crons, fire-now | `TestCronDelivery`: `manual_run` (followed to `succeeded`), `scheduled_fire`, `trigger_inventory` (refuses `--kind cron`) | command crons (preview) |
 | 118 | Logs, tail, archive | `TestServeAndObserve` (runtime and HTTP logs), `TestTailAnalyticsAndMetrics/tail`, `TestLogArchive` | HTTP request logs while the production debugger (ADR-127) is not released for the account: the step skips on the CLI's explanation |
 | 121 | Metrics, request analytics | `TestServeAndObserve/metrics`, `TestTailAnalyticsAndMetrics` | service metrics |
 | 136 | Wake timeline | `TestWakeTimelineAndCosts/wake_timeline` | — |
@@ -66,6 +66,7 @@ custom metric history, SLOs and synthetic checks were hidden for it.
 
 | # | Capability (tier today) | Journeys and steps | Not covered |
 |---|---|---|---|
+| 74 | Edge rules, rule lists (beta) | `TestEdgeRules` (redirect, response header and its update, IP refusal covering HEAD, a list-keyed rule and the list's edit, history and rollback, delete; each change checked on 12 requests across the edge gateways as soon as the CLI returns, #2683) | the other kinds (covered by `TestE2E_EdgeRules_*` in `cmd/e2e`), `gregale.yaml` routing, trace, WAF and challenge |
 | 122 | Custom metrics and OTLP metric ingest (beta) | `TestCustomMetricsSLOsAndSynthetics`: `custom_metric` (push and read back through the API), `otlp_metrics` (OTLP/HTTP JSON gauge, name normalised) | OTLP protobuf exports; counters; custom metric history (`gregale metrics --custom`, internal); OTLP needs the custom metric history operator switch |
 | 125 | Alerts and notification channels (beta) | `TestAlertsAndChannels`: `rule_fires` (request_count rule), `webhook_verified` (the probe's `/hook` answers 200 only for a valid signature), `channel_notified` (the fire is recorded on a Slack channel), `channel_test_send` | real Slack, PagerDuty and email deliveries (no test workspace or inbox: the channel targets a Slack webhook Slack refuses); alert presets; rollback actions; incidents |
 | 128 | SLOs and error budgets (preview) | `TestCustomMetricsSLOsAndSynthetics/slo` (create, status) | attainment, budget and burn numbers (hourly rollups; a fresh app has none); SLO alerts |

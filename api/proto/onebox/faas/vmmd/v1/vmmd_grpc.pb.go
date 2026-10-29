@@ -47,6 +47,8 @@ const (
 	Vmmd_ExecuteExecutionStream_FullMethodName                  = "/onebox.faas.vmmd.v1.Vmmd/ExecuteExecutionStream"
 	Vmmd_ExecuteExecutionBrokerStream_FullMethodName            = "/onebox.faas.vmmd.v1.Vmmd/ExecuteExecutionBrokerStream"
 	Vmmd_RestoreExecution_FullMethodName                        = "/onebox.faas.vmmd.v1.Vmmd/RestoreExecution"
+	Vmmd_RunAgent_FullMethodName                                = "/onebox.faas.vmmd.v1.Vmmd/RunAgent"
+	Vmmd_CaptureAgentSnapshot_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/CaptureAgentSnapshot"
 	Vmmd_RestoreAppTask_FullMethodName                          = "/onebox.faas.vmmd.v1.Vmmd/RestoreAppTask"
 	Vmmd_RestoreRehearsalAppTask_FullMethodName                 = "/onebox.faas.vmmd.v1.Vmmd/RestoreRehearsalAppTask"
 	Vmmd_ExecuteAppTask_FullMethodName                          = "/onebox.faas.vmmd.v1.Vmmd/ExecuteAppTask"
@@ -181,6 +183,17 @@ type VmmdClient interface {
 	// The envelope contains only immutable machine/artifact metadata; caller
 	// source and input cross the boundary later through ExecuteExecution.
 	RestoreExecution(ctx context.Context, in *RestoreExecutionRequest, opts ...grpc.CallOption) (*RestoreExecutionResponse, error)
+	// RunAgent boots one agent run VM (ADR-20261027090010 §6), sends it the run, and
+	// streams the run's output. The first client frame must be start; a later
+	// cancel frame asks the guest to stop the harness. The run payload reaches
+	// the guest only after the VM is up. vmmd destroys the VM before the
+	// result frame, and also when the stream ends early, so a run never
+	// outlives its call.
+	RunAgent(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[RunAgentRequest, RunAgentEvent], error)
+	// CaptureAgentSnapshot cold-boots an agent run VM that carries no run,
+	// waits for guest-init, and captures a preset snapshot for its machine
+	// shape (ADR-20261027090010 §2, rollout step 9). The VM is destroyed afterwards.
+	CaptureAgentSnapshot(ctx context.Context, in *CaptureAgentSnapshotRequest, opts ...grpc.CallOption) (*CaptureAgentSnapshotResponse, error)
 	// RestoreAppTask creates a fresh deployment-attached VM without carrying
 	// command data. The command crosses the trust boundary only after schedd
 	// has committed the durable running fence.
@@ -917,6 +930,29 @@ func (c *vmmdClient) RestoreExecution(ctx context.Context, in *RestoreExecutionR
 	return out, nil
 }
 
+func (c *vmmdClient) RunAgent(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[RunAgentRequest, RunAgentEvent], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[3], Vmmd_RunAgent_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[RunAgentRequest, RunAgentEvent]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Vmmd_RunAgentClient = grpc.BidiStreamingClient[RunAgentRequest, RunAgentEvent]
+
+func (c *vmmdClient) CaptureAgentSnapshot(ctx context.Context, in *CaptureAgentSnapshotRequest, opts ...grpc.CallOption) (*CaptureAgentSnapshotResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CaptureAgentSnapshotResponse)
+	err := c.cc.Invoke(ctx, Vmmd_CaptureAgentSnapshot_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *vmmdClient) RestoreAppTask(ctx context.Context, in *RestoreAppTaskRequest, opts ...grpc.CallOption) (*RestoreAppTaskResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(RestoreAppTaskResponse)
@@ -959,7 +995,7 @@ func (c *vmmdClient) ExecForkCommand(ctx context.Context, in *ExecuteAppTaskRequ
 
 func (c *vmmdClient) ExecuteAppTaskStream(ctx context.Context, in *ExecuteAppTaskRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ExecuteAppTaskEvent], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[3], Vmmd_ExecuteAppTaskStream_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[4], Vmmd_ExecuteAppTaskStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -978,7 +1014,7 @@ type Vmmd_ExecuteAppTaskStreamClient = grpc.ServerStreamingClient[ExecuteAppTask
 
 func (c *vmmdClient) AttachAppTask(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[AttachAppTaskRequest, AttachAppTaskEvent], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[4], Vmmd_AttachAppTask_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[5], Vmmd_AttachAppTask_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1331,7 +1367,7 @@ func (c *vmmdClient) SeccompStatus(ctx context.Context, in *SeccompStatusRequest
 
 func (c *vmmdClient) Logs(ctx context.Context, in *LogsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[LogsResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[5], Vmmd_Logs_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[6], Vmmd_Logs_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1350,7 +1386,7 @@ type Vmmd_LogsClient = grpc.ServerStreamingClient[LogsResponse]
 
 func (c *vmmdClient) ForwardHTTPStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardHTTPStreamRequest, ForwardHTTPStreamResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[6], Vmmd_ForwardHTTPStream_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[7], Vmmd_ForwardHTTPStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1363,7 +1399,7 @@ type Vmmd_ForwardHTTPStreamClient = grpc.BidiStreamingClient[ForwardHTTPStreamRe
 
 func (c *vmmdClient) ForwardRawStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardRawRequest, ForwardRawResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[7], Vmmd_ForwardRawStream_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[8], Vmmd_ForwardRawStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1376,7 +1412,7 @@ type Vmmd_ForwardRawStreamClient = grpc.BidiStreamingClient[ForwardRawRequest, F
 
 func (c *vmmdClient) ForwardTCPStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardTCPRequest, ForwardTCPResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[8], Vmmd_ForwardTCPStream_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[9], Vmmd_ForwardTCPStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1389,7 +1425,7 @@ type Vmmd_ForwardTCPStreamClient = grpc.BidiStreamingClient[ForwardTCPRequest, F
 
 func (c *vmmdClient) ForwardUDPStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardUDPRequest, ForwardUDPResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[9], Vmmd_ForwardUDPStream_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[10], Vmmd_ForwardUDPStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1622,6 +1658,17 @@ type VmmdServer interface {
 	// The envelope contains only immutable machine/artifact metadata; caller
 	// source and input cross the boundary later through ExecuteExecution.
 	RestoreExecution(context.Context, *RestoreExecutionRequest) (*RestoreExecutionResponse, error)
+	// RunAgent boots one agent run VM (ADR-20261027090010 §6), sends it the run, and
+	// streams the run's output. The first client frame must be start; a later
+	// cancel frame asks the guest to stop the harness. The run payload reaches
+	// the guest only after the VM is up. vmmd destroys the VM before the
+	// result frame, and also when the stream ends early, so a run never
+	// outlives its call.
+	RunAgent(grpc.BidiStreamingServer[RunAgentRequest, RunAgentEvent]) error
+	// CaptureAgentSnapshot cold-boots an agent run VM that carries no run,
+	// waits for guest-init, and captures a preset snapshot for its machine
+	// shape (ADR-20261027090010 §2, rollout step 9). The VM is destroyed afterwards.
+	CaptureAgentSnapshot(context.Context, *CaptureAgentSnapshotRequest) (*CaptureAgentSnapshotResponse, error)
 	// RestoreAppTask creates a fresh deployment-attached VM without carrying
 	// command data. The command crosses the trust boundary only after schedd
 	// has committed the durable running fence.
@@ -2181,6 +2228,12 @@ func (UnimplementedVmmdServer) ExecuteExecutionBrokerStream(grpc.BidiStreamingSe
 }
 func (UnimplementedVmmdServer) RestoreExecution(context.Context, *RestoreExecutionRequest) (*RestoreExecutionResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RestoreExecution not implemented")
+}
+func (UnimplementedVmmdServer) RunAgent(grpc.BidiStreamingServer[RunAgentRequest, RunAgentEvent]) error {
+	return status.Error(codes.Unimplemented, "method RunAgent not implemented")
+}
+func (UnimplementedVmmdServer) CaptureAgentSnapshot(context.Context, *CaptureAgentSnapshotRequest) (*CaptureAgentSnapshotResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CaptureAgentSnapshot not implemented")
 }
 func (UnimplementedVmmdServer) RestoreAppTask(context.Context, *RestoreAppTaskRequest) (*RestoreAppTaskResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RestoreAppTask not implemented")
@@ -2764,6 +2817,31 @@ func _Vmmd_RestoreExecution_Handler(srv interface{}, ctx context.Context, dec fu
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VmmdServer).RestoreExecution(ctx, req.(*RestoreExecutionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Vmmd_RunAgent_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(VmmdServer).RunAgent(&grpc.GenericServerStream[RunAgentRequest, RunAgentEvent]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Vmmd_RunAgentServer = grpc.BidiStreamingServer[RunAgentRequest, RunAgentEvent]
+
+func _Vmmd_CaptureAgentSnapshot_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CaptureAgentSnapshotRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).CaptureAgentSnapshot(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_CaptureAgentSnapshot_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).CaptureAgentSnapshot(ctx, req.(*CaptureAgentSnapshotRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -3867,6 +3945,10 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Vmmd_RestoreExecution_Handler,
 		},
 		{
+			MethodName: "CaptureAgentSnapshot",
+			Handler:    _Vmmd_CaptureAgentSnapshot_Handler,
+		},
+		{
 			MethodName: "RestoreAppTask",
 			Handler:    _Vmmd_RestoreAppTask_Handler,
 		},
@@ -4093,6 +4175,12 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "ExecuteExecutionBrokerStream",
 			Handler:       _Vmmd_ExecuteExecutionBrokerStream_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "RunAgent",
+			Handler:       _Vmmd_RunAgent_Handler,
 			ServerStreams: true,
 			ClientStreams: true,
 		},

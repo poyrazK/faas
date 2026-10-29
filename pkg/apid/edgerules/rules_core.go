@@ -238,6 +238,7 @@ func (s *Service) createRule(ctx context.Context, acct state.Account, app state.
 		case errors.Is(err, state.ErrConflict):
 			return m, api.ErrEdgeRuleConflict(err.Error())
 		default:
+			s.Host.Logger().Warn("edge rule create failed", "app", app.Slug, "kind", logsanitize.Field(req.Kind), "err", err)
 			return m, trafficproblem.Policy(err, api.ErrCapacity("could not create edge rule"))
 		}
 	}
@@ -417,6 +418,7 @@ func (s *Service) updateRule(ctx context.Context, acct state.Account, row state.
 		if prob := listMissingProblem(err); prob != nil {
 			return m, prob
 		}
+		s.Host.Logger().Warn("edge rule update failed", "rule", logsanitize.Field(row.ID), "err", err)
 		return m, trafficproblem.Policy(err, api.ErrCapacity("could not update edge rule"))
 	}
 	s.Host.Logger().Info("edge rule updated",

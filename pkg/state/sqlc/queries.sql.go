@@ -289,6 +289,18 @@ func (q *Queries) AccountDeletedAppByID(ctx context.Context, db DBTX, arg Accoun
 	return i, err
 }
 
+const accountIDByGitHubInstallation = `-- name: AccountIDByGitHubInstallation :one
+select account_id from github_installations where installation_id = $1::bigint
+`
+
+// An installation ID is globally unique (github_installations_installation_id_uidx).
+func (q *Queries) AccountIDByGitHubInstallation(ctx context.Context, db DBTX, installationID int64) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, accountIDByGitHubInstallation, installationID)
+	var account_id pgtype.UUID
+	err := row.Scan(&account_id)
+	return account_id, err
+}
+
 const accountIDByGitHubOIDCRepositoryIdentity = `-- name: AccountIDByGitHubOIDCRepositoryIdentity :one
 select min(a.github_install_account_id::text)::uuid as account_id
 from apps a
@@ -46121,7 +46133,7 @@ const listEnabledTriggers = `-- name: ListEnabledTriggers :many
 select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id, queue_binding_scope, queue_binding_environment_id,
        batch_size_max, batch_window_ms, max_attempts,
        cron_id, source, payload_max_bytes, broker_poison_strategy,
-       filter_criteria, delivery,
+       filter_criteria, delivery, agent,
        created_at, updated_at
 from triggers where enabled = true AND NOT environment_workload_admission_retired(app_id,queue_binding_scope)
 AND NOT (kind IN ('kafka','nats','redis_streams','sqs_compat')
@@ -46148,6 +46160,7 @@ type ListEnabledTriggersRow struct {
 	BrokerPoisonStrategy      string
 	FilterCriteria            []byte
 	Delivery                  string
+	Agent                     pgtype.Text
 	CreatedAt                 pgtype.Timestamptz
 	UpdatedAt                 pgtype.Timestamptz
 }
@@ -46192,6 +46205,7 @@ func (q *Queries) ListEnabledTriggers(ctx context.Context, db DBTX) ([]ListEnabl
 			&i.BrokerPoisonStrategy,
 			&i.FilterCriteria,
 			&i.Delivery,
+			&i.Agent,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -52031,7 +52045,7 @@ const listTriggersForApp = `-- name: ListTriggersForApp :many
 select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id, queue_binding_scope, queue_binding_environment_id,
        batch_size_max, batch_window_ms, max_attempts,
        cron_id, source, payload_max_bytes, broker_poison_strategy,
-       filter_criteria, delivery,
+       filter_criteria, delivery, agent,
        created_at, updated_at
 from triggers where app_id = $1 order by created_at desc
 `
@@ -52056,6 +52070,7 @@ type ListTriggersForAppRow struct {
 	BrokerPoisonStrategy      string
 	FilterCriteria            []byte
 	Delivery                  string
+	Agent                     pgtype.Text
 	CreatedAt                 pgtype.Timestamptz
 	UpdatedAt                 pgtype.Timestamptz
 }
@@ -52092,6 +52107,7 @@ func (q *Queries) ListTriggersForApp(ctx context.Context, db DBTX, appID pgtype.
 			&i.BrokerPoisonStrategy,
 			&i.FilterCriteria,
 			&i.Delivery,
+			&i.Agent,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -71792,7 +71808,7 @@ payload_max_bytes=coalesce($6::integer,payload_max_bytes),
 broker_poison_strategy=coalesce($7::text,broker_poison_strategy),
 filter_criteria=coalesce($8::jsonb,filter_criteria),
 source=coalesce($9::text,source)
-where id=$10 and queue_binding_id is null returning id, account_id, app_id, kind, slug, enabled, config, batch_size_max, batch_window_ms, max_attempts, cron_id, source, created_at, updated_at, payload_max_bytes, broker_poison_strategy, filter_criteria, queue_binding_id, queue_binding_scope, queue_binding_environment_id, delivery
+where id=$10 and queue_binding_id is null returning id, account_id, app_id, kind, slug, enabled, config, batch_size_max, batch_window_ms, max_attempts, cron_id, source, created_at, updated_at, payload_max_bytes, broker_poison_strategy, filter_criteria, queue_binding_id, queue_binding_scope, queue_binding_environment_id, delivery, agent
 `
 
 type PublicPatchTriggerParams struct {
@@ -71844,6 +71860,7 @@ func (q *Queries) PublicPatchTrigger(ctx context.Context, db DBTX, arg PublicPat
 		&i.QueueBindingScope,
 		&i.QueueBindingEnvironmentID,
 		&i.Delivery,
+		&i.Agent,
 	)
 	return i, err
 }
@@ -72730,6 +72747,26 @@ func (q *Queries) PutGitLabOAuthConnection(ctx context.Context, db DBTX, arg Put
 	return i, err
 }
 
+const putRuntimeSecretSignature = `-- name: PutRuntimeSecretSignature :exec
+INSERT INTO runtime_secret_signatures (ciphertext_sha256, signature)
+VALUES ($1::bytea, $2::bytea)
+ON CONFLICT (ciphertext_sha256) DO UPDATE SET signature = EXCLUDED.signature, created_at = now()
+WHERE runtime_secret_signatures.signature IS DISTINCT FROM EXCLUDED.signature
+`
+
+type PutRuntimeSecretSignatureParams struct {
+	CiphertextSha256 []byte
+	Signature        []byte
+}
+
+// ADR 20261028161502 amendment 1: a runtime secret envelope's writer
+// signature, by its SHA-256. A signature is deterministic for one envelope and
+// key, so writing it again replaces only a row that held something else.
+func (q *Queries) PutRuntimeSecretSignature(ctx context.Context, db DBTX, arg PutRuntimeSecretSignatureParams) error {
+	_, err := db.Exec(ctx, putRuntimeSecretSignature, arg.CiphertextSha256, arg.Signature)
+	return err
+}
+
 const putTCPListenerTLSObservation = `-- name: PutTCPListenerTLSObservation :execrows
 INSERT INTO app_tcp_listener_tls_observations
     (listener_id, edge_id, hostname, intent_updated_at, observed_at, ready, not_after)
@@ -73259,7 +73296,7 @@ insert into triggers (account_id,app_id,queue_binding_id,kind,source,slug,enable
 batch_size_max,batch_window_ms,max_attempts,payload_max_bytes,broker_poison_strategy)
 values ($1,$2,$3::uuid,'queue','queue',$4,
 $5,$6::jsonb,$7,$8,
-$9,$10,'commit') returning id, account_id, app_id, kind, slug, enabled, config, batch_size_max, batch_window_ms, max_attempts, cron_id, source, created_at, updated_at, payload_max_bytes, broker_poison_strategy, filter_criteria, queue_binding_id, queue_binding_scope, queue_binding_environment_id, delivery
+$9,$10,'commit') returning id, account_id, app_id, kind, slug, enabled, config, batch_size_max, batch_window_ms, max_attempts, cron_id, source, created_at, updated_at, payload_max_bytes, broker_poison_strategy, filter_criteria, queue_binding_id, queue_binding_scope, queue_binding_environment_id, delivery, agent
 `
 
 type QueueConsumerCreateTriggerParams struct {
@@ -73311,6 +73348,7 @@ func (q *Queries) QueueConsumerCreateTrigger(ctx context.Context, db DBTX, arg Q
 		&i.QueueBindingScope,
 		&i.QueueBindingEnvironmentID,
 		&i.Delivery,
+		&i.Agent,
 	)
 	return i, err
 }
@@ -84125,6 +84163,36 @@ func (q *Queries) ReadRuntimeSecretDeliveryVersions(ctx context.Context, db DBTX
 	for rows.Next() {
 		var i ReadRuntimeSecretDeliveryVersionsRow
 		if err := rows.Scan(&i.Key, &i.DeliveryVersion); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const readRuntimeSecretSignatures = `-- name: ReadRuntimeSecretSignatures :many
+SELECT ciphertext_sha256, signature FROM runtime_secret_signatures
+WHERE ciphertext_sha256 = ANY($1::bytea[])
+`
+
+type ReadRuntimeSecretSignaturesRow struct {
+	CiphertextSha256 []byte
+	Signature        []byte
+}
+
+func (q *Queries) ReadRuntimeSecretSignatures(ctx context.Context, db DBTX, digests [][]byte) ([]ReadRuntimeSecretSignaturesRow, error) {
+	rows, err := db.Query(ctx, readRuntimeSecretSignatures, digests)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadRuntimeSecretSignaturesRow{}
+	for rows.Next() {
+		var i ReadRuntimeSecretSignaturesRow
+		if err := rows.Scan(&i.CiphertextSha256, &i.Signature); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -95263,9 +95331,18 @@ func (q *Queries) RouteMonitorCustomerObservations(ctx context.Context, db DBTX,
 }
 
 const routeMonitorServingDeployments = `-- name: RouteMonitorServingDeployments :many
-SELECT id::text AS id,commit_sha,source_url,source_root,created_at,canary_step_started_at,rollout_completed_at,traffic_percent,canary_step,canary_total_steps
-FROM deployments WHERE app_id=$1::text::uuid AND status='live' AND deleted_at IS NULL AND traffic_percent>0
- AND coalesce(nullif(scope,''),'default')='default' ORDER BY id LIMIT 2
+WITH lanes AS (
+ SELECT id,commit_sha,source_url,source_root,created_at,canary_step_started_at,rollout_completed_at,traffic_percent,canary_step,canary_total_steps,
+  CASE WHEN scope='production' THEN 'production' ELSE 'default' END AS lane
+ FROM deployments WHERE app_id=$1::text::uuid AND status='live' AND deleted_at IS NULL
+  AND coalesce(nullif(scope,''),'default') IN ('default','production')
+), chosen AS (
+ SELECT CASE WHEN EXISTS (SELECT 1 FROM lanes WHERE lane='production' AND traffic_percent>0)
+  OR (NOT EXISTS (SELECT 1 FROM lanes WHERE lane='default' AND traffic_percent>0) AND EXISTS (SELECT 1 FROM lanes WHERE lane='production'))
+  THEN 'production' ELSE 'default' END AS lane
+)
+SELECT l.id::text AS id,l.commit_sha,l.source_url,l.source_root,l.created_at,l.canary_step_started_at,l.rollout_completed_at,l.traffic_percent,l.canary_step,l.canary_total_steps
+FROM lanes l JOIN chosen c ON c.lane=l.lane WHERE l.traffic_percent>0 ORDER BY l.id LIMIT 2
 `
 
 type RouteMonitorServingDeploymentsRow struct {
@@ -95281,6 +95358,10 @@ type RouteMonitorServingDeploymentsRow struct {
 	CanaryTotalSteps    int32
 }
 
+// The app's production routing lane (state.ProductionRoutingDeployments): a
+// project's named production scope once it carries traffic, or while the
+// legacy default lane is dark; otherwise the default scope
+// (ADR-20261028110044 amendment 1).
 func (q *Queries) RouteMonitorServingDeployments(ctx context.Context, db DBTX, appID string) ([]RouteMonitorServingDeploymentsRow, error) {
 	rows, err := db.Query(ctx, routeMonitorServingDeployments, appID)
 	if err != nil {
@@ -97654,6 +97735,27 @@ func (q *Queries) SetTrafficTenantSurfaceStatus(ctx context.Context, db DBTX, ar
 	return result.RowsAffected(), nil
 }
 
+const setTriggerAgent = `-- name: SetTriggerAgent :execrows
+update triggers set agent = $2, updated_at = now()
+where id = $1 and queue_binding_id is null
+`
+
+type SetTriggerAgentParams struct {
+	ID    pgtype.UUID
+	Agent pgtype.Text
+}
+
+// ADR-20261027090010 §9: point a just-created public broker trigger at an agent. The
+// CHECK constraint refuses other kinds, batch delivery and binding-owned
+// projections.
+func (q *Queries) SetTriggerAgent(ctx context.Context, db DBTX, arg SetTriggerAgentParams) (int64, error) {
+	result, err := db.Exec(ctx, setTriggerAgent, arg.ID, arg.Agent)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const setTriggerDelivery = `-- name: SetTriggerDelivery :execrows
 update triggers set delivery = $2, updated_at = now()
 where id = $1 and queue_binding_id is null
@@ -99849,7 +99951,7 @@ const triggerByID = `-- name: TriggerByID :one
 select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id, queue_binding_scope, queue_binding_environment_id,
        batch_size_max, batch_window_ms, max_attempts,
        cron_id, source, payload_max_bytes, broker_poison_strategy,
-       filter_criteria, delivery,
+       filter_criteria, delivery, agent,
        created_at, updated_at
 from triggers where id = $1
 `
@@ -99874,6 +99976,7 @@ type TriggerByIDRow struct {
 	BrokerPoisonStrategy      string
 	FilterCriteria            []byte
 	Delivery                  string
+	Agent                     pgtype.Text
 	CreatedAt                 pgtype.Timestamptz
 	UpdatedAt                 pgtype.Timestamptz
 }
@@ -99907,6 +100010,7 @@ func (q *Queries) TriggerByID(ctx context.Context, db DBTX, id pgtype.UUID) (Tri
 		&i.BrokerPoisonStrategy,
 		&i.FilterCriteria,
 		&i.Delivery,
+		&i.Agent,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

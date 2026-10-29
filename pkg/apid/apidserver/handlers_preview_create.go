@@ -203,7 +203,8 @@ func previewAppFromParent(parent state.App, slug string, prNumber int, expiresAt
 	// A PR preview runs unpromoted code, and production env values can hold
 	// credentials (ADR-310): keep only the platform-owned service binding URLs,
 	// as the GitHub webhook path does. A preview scales to zero: production's
-	// warm instances (MinInstances) are not copied.
+	// warm instances (MinInstances) are not copied, nor is its reserved
+	// eviction tier, which the plan caps per account and only a PATCH admits.
 	manifest := parent.Manifest
 	manifest.Env = api.ServiceBindingEnvForTransport(nil, parent.Manifest.ServiceBindings, parent.Manifest.ServiceBindingTransport)
 	return state.App{
@@ -223,7 +224,7 @@ func previewAppFromParent(parent state.App, slug string, prNumber int, expiresAt
 		PublicAuthMode: parent.PublicAuthMode, ConsumerAuthMode: parent.ConsumerAuthMode,
 		PublicAuthBasicSealed:   append([]byte(nil), parent.PublicAuthBasicSealed...),
 		WarmSnapshotMinRequests: parent.WarmSnapshotMinRequests, WarmSnapshotMinMs: parent.WarmSnapshotMinMs,
-		EvictionPriority: parent.EvictionPriority, Status: state.AppActive,
+		Status:        state.AppActive,
 		PreviewOfSlug: parent.Slug, PreviewPrNumber: prNumber, PreviewPrState: state.PreviewPrStateOpen,
 		PreviewExpiresAt: &expiresAt,
 	}

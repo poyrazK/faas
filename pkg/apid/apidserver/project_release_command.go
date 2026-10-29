@@ -20,7 +20,7 @@ func (s *server) prepareSafeProjectCommands(ctx context.Context, acct state.Acco
 	for i, app := range apps {
 		workload := scan.Workloads[i]
 		resolved := deploymentReleaseCommand{command: workload.ReleaseCommand, shell: workload.ReleaseCommandShell}
-		manifest, problem := loadSourceRefManifest(source, app, acct.Plan)
+		manifest, problem := loadSourceRefManifest(source, app, acct.Plan, s.agentStepsAllowed(acct))
 		if problem != nil {
 			return problem
 		}

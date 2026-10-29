@@ -440,6 +440,11 @@ func TestAdoptionKind(t *testing.T) {
 			t.Errorf("adoptionKind(%+v) = %q, want %q", inst, got, want)
 		}
 	}
+	// adr: 20261027090010 — an agent run is killed at adoption, like an
+	// execution.
+	if got := adoptionKind(&Instance{AgentRunOnly: true}); got != adoptionKindExecution {
+		t.Errorf("agent run adoption kind = %q, want %q", got, adoptionKindExecution)
+	}
 }
 
 func TestAdoptionClassifier(t *testing.T) {

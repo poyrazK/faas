@@ -67,6 +67,10 @@ func diagnosticProblem(p api.Problem) api.Problem {
 			p.Hint = "Check the selected profile, account membership, and credential permissions with gregale config profile check."
 		case p.Status == 429:
 			p.Hint = "Wait for Retry-After when provided, then retry."
+		case api.EdgeRuleChangeConverging(p):
+			// The 503 came after the write: resending would repeat a change
+			// that already happened (#2683).
+			p.Hint = "The change is saved; some serving gateways have not applied it yet and will within seconds. Don't resend it: check the current rules with gregale edge rule list."
 		case p.Code == "long_poll_timeout":
 			// The server stopped waiting, not working: a sync invoke past its
 			// wait keeps running, so a retry would run it twice.
