@@ -41,6 +41,14 @@ on:
           always need the fleet runner.
         type: boolean
         default: false
+      skip_role_convergence:
+        description: >-
+          With hosted_runners only: activate the control plane without
+          converging its roles (ADR-580). Hosted runners cannot reach the
+          fleet's private names, so a hosted rollout refuses to start
+          without this acknowledgement.
+        type: boolean
+        default: false
       release_tag:
         description: "Existing signed pre-1.0 release tag"
         required: true
@@ -247,6 +255,7 @@ jobs:
     with:
       deploy_environment: ${{ inputs.deploy_environment }}
       hosted_runner: ${{ inputs.hosted_runners }}
+      skip_role_convergence: ${{ inputs.skip_role_convergence }}
       release_tag: ${{ inputs.release_tag }}
     secrets: inherit
 
