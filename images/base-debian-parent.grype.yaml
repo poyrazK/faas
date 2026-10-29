@@ -1,5 +1,6 @@
-# Publication-gate exceptions for base-debian-parent ONLY (scripts/ci/
-# scan-oci-image.sh reads this via GRYPE_CONFIG on that one matrix lane).
+# Publication-gate exceptions for base-debian-parent. scan-oci-image.sh and
+# scan-published-images.sh read images/<image>.grype.yaml for the image they
+# scan, so this file applies to the parent only.
 #
 # The parent is staging-only (ADR-053): it must stay a bare `FROM` of the
 # Debian slim image so imaged can compose children by OCI diff ID, so it

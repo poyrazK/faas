@@ -79,14 +79,14 @@ func TestManagedPostgresAccountingDiagnosticsRoute(t *testing.T) {
 		t.Fatalf("missing admin scope: %d %s", rec.Code, rec.Body)
 	}
 	for _, query := range []string{"?limit=0", "?limit=101", "?limit=x", "?after=bad"} {
-		if rec := e.Do(t, http.MethodGet, path+query, nil, nil); rec.Code != http.StatusBadRequest {
+		if rec := e.DoOperator(t, http.MethodGet, path+query, nil, nil); rec.Code != http.StatusBadRequest {
 			t.Fatalf("invalid query: %d %s", rec.Code, rec.Body)
 		}
 	}
 	if catalog.lookups != 0 {
 		t.Fatal("invalid pagination resolved tenant")
 	}
-	rec := e.Do(t, http.MethodGet, path+"?limit=2", nil, nil)
+	rec := e.DoOperator(t, http.MethodGet, path+"?limit=2", nil, nil)
 	if rec.Code != http.StatusOK || rec.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("report: %d %s", rec.Code, rec.Body)
 	}
@@ -94,7 +94,7 @@ func TestManagedPostgresAccountingDiagnosticsRoute(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil || page.AccountID != target.ID || page.Items == nil || len(page.Items) != 0 {
 		t.Fatalf("report: %+v %v", page, err)
 	}
-	if rec := e.Do(t, http.MethodGet, "/v1/admin/managed-postgres/accounting/"+uuid.NewString(), nil, nil); rec.Code != http.StatusNotFound {
+	if rec := e.DoOperator(t, http.MethodGet, "/v1/admin/managed-postgres/accounting/"+uuid.NewString(), nil, nil); rec.Code != http.StatusNotFound {
 		t.Fatalf("missing account: %d %s", rec.Code, rec.Body)
 	}
 	if _, err := (*e.Store()).SetMFARequired(context.Background(), (*e.Acct()).ID, true); err != nil {

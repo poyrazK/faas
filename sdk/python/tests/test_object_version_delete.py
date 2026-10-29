@@ -4,9 +4,9 @@ from uuid import UUID
 
 import httpx
 
-from faas_sdk.api.storage import delete_object_bucket_version
+from faas_sdk.preview.api.storage import delete_object_bucket_version
 from faas_sdk.client import AuthenticatedClient
-from faas_sdk.models import ObjectVersionDeleteResult
+from faas_sdk.preview.models import ObjectVersionDeleteResult
 
 
 def test_owned_version_deletion() -> None:
@@ -30,8 +30,8 @@ def test_owned_version_deletion() -> None:
 
 
 def test_native_inventory_progress_is_typed() -> None:
-    from faas_sdk.api.storage import get_object_capacity_reconciliation
-    from faas_sdk.models import ObjectCapacityReconciliation
+    from faas_sdk.preview.api.storage import get_object_capacity_reconciliation
+    from faas_sdk.preview.models import ObjectCapacityReconciliation
 
     bucket = UUID("ad7b43a1-4a3f-4f6d-9518-d1f0e4c79b78")
     job = UUID("7ddfe5e3-11f5-46f8-9a76-787cff7a315e")

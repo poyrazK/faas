@@ -22,6 +22,14 @@ func onDemandTLSFixture(t *testing.T) (*state.MemStore, *OnDemandTLSPolicy, *pro
 	t.Helper()
 	ctx := context.Background()
 	s := state.NewMemStore()
+	owner, err := s.CreateAccount(ctx, "tls-owner@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := s.CreateApp(ctx, state.App{AccountID: owner.ID, Slug: "tls-app", Type: state.AppTypeApp, RAMMB: 256})
+	if err != nil {
+		t.Fatal(err)
+	}
 	for domain, verified := range map[string]bool{
 		"shop.example.com":          true,
 		"pending.example.com":       false,
@@ -29,7 +37,7 @@ func onDemandTLSFixture(t *testing.T) (*state.MemStore, *OnDemandTLSPolicy, *pro
 		"*.unverified.example.org":  false,
 		"exact.tenants.example.net": false,
 	} {
-		if _, err := s.CreateCustomDomain(ctx, domain, "app-1", "tok"); err != nil {
+		if _, err := s.CreateCustomDomain(ctx, domain, app.ID, "tok"); err != nil {
 			t.Fatal(err)
 		}
 		if verified {
@@ -74,6 +82,27 @@ func TestOnDemandTLSPolicyDecide(t *testing.T) {
 				t.Fatalf("Decide(%q) = %v, %q; want %v, %q", tc.host, allowed, decision, tc.allowed, tc.decision)
 			}
 		})
+	}
+}
+
+// The plan is checked when a wildcard domain is created; after a downgrade
+// to a plan without wildcard domains it must stop drawing new certificates.
+// Exact domains are unaffected.
+func TestOnDemandTLSPolicyWildcardFollowsOwnersPlan(t *testing.T) {
+	s, p, _ := onDemandTLSFixture(t)
+	ctx := context.Background()
+	owner, err := s.AccountByEmail(ctx, "tls-owner@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateAccountPlan(ctx, owner.ID, api.PlanFree); err != nil {
+		t.Fatal(err)
+	}
+	if ok, decision := p.Decide(ctx, "new.tenants.example.net"); ok || decision != OnDemandTLSDenyPlan {
+		t.Fatalf("wildcard host after downgrade = %v, %q; want deny %q", ok, decision, OnDemandTLSDenyPlan)
+	}
+	if ok, decision := p.Decide(ctx, "shop.example.com"); !ok {
+		t.Fatalf("exact domain after downgrade refused: %s", decision)
 	}
 }
 
@@ -185,6 +214,46 @@ func TestOnDemandTLSPolicyLookupBudget(t *testing.T) {
 	now = now.Add(time.Second)
 	if ok, decision := p.Decide(ctx, "shop.example.com"); !ok {
 		t.Fatalf("lookup after refill = %q, want allow", decision)
+	}
+}
+
+// The lookup bucket is shared by every server name a client can send. A
+// flood of random names used to deny a real domain its renewal or its
+// certificate load after an edge reload. A host the policy recently allowed
+// now skips the bucket, and its lookup stays authoritative.
+func TestOnDemandTLSPolicyLookupBudgetSparesKnownHosts(t *testing.T) {
+	s, p, _ := onDemandTLSFixture(t)
+	now := time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
+	p.SetNow(func() time.Time { return now })
+	ctx := context.Background()
+	for _, host := range []string{"shop.example.com", "a.tenants.example.net"} {
+		if ok, decision := p.Decide(ctx, host); !ok {
+			t.Fatalf("first ask for %s = %q, want allow", host, decision)
+		}
+	}
+	for i := 0; i < 2*api.OnDemandTLSAskLookupBurst; i++ {
+		p.Decide(ctx, fmt.Sprintf("flood-%d.example.org", i))
+	}
+	if _, decision := p.Decide(ctx, "new.example.com"); decision != OnDemandTLSDenyOverload {
+		t.Fatalf("unknown host during the flood = %q, want %q", decision, OnDemandTLSDenyOverload)
+	}
+	for _, host := range []string{"shop.example.com", "a.tenants.example.net"} {
+		if ok, decision := p.Decide(ctx, host); !ok {
+			t.Fatalf("known host %s during the flood = %q, want allow", host, decision)
+		}
+	}
+	if err := s.DeleteCustomDomain(ctx, "shop.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if ok, decision := p.Decide(ctx, "shop.example.com"); ok || decision != OnDemandTLSDenyUnknown {
+		t.Fatalf("known host after its domain was deleted = %v, %q; want deny %q", ok, decision, OnDemandTLSDenyUnknown)
+	}
+	now = now.Add(time.Duration(api.OnDemandTLSAskKnownHostSeconds)*time.Second + time.Second)
+	for i := 0; i < 2*api.OnDemandTLSAskLookupBurst; i++ {
+		p.Decide(ctx, fmt.Sprintf("flood-again-%d.example.org", i))
+	}
+	if _, decision := p.Decide(ctx, "a.tenants.example.net"); decision != OnDemandTLSDenyOverload {
+		t.Fatalf("known host after its bypass expired, bucket drained = %q, want %q", decision, OnDemandTLSDenyOverload)
 	}
 }
 

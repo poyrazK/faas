@@ -1,5 +1,5 @@
-from faas_sdk.models.project_deployment_check_request import ProjectDeploymentCheckRequest
-from faas_sdk.models.project_deployment_readiness import ProjectDeploymentReadiness
+from faas_sdk.preview.models.project_deployment_check_request import ProjectDeploymentCheckRequest
+from faas_sdk.preview.models.project_deployment_readiness import ProjectDeploymentReadiness
 
 
 def test_deployment_readiness_preserves_unknown_and_quota_evidence():

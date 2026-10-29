@@ -12,10 +12,28 @@ import (
 )
 
 // ServiceWakeAheadSetting is an app's ADR-977 opt-in. A zero UpdatedAt means
-// the app never changed it from the default (off).
+// the app never changed it from its default (ServiceWakeAheadDefault).
 type ServiceWakeAheadSetting struct {
 	Enabled   bool
 	UpdatedAt time.Time
+}
+
+// ServiceWakeAheadDefault is wake-ahead for an app that never set it: on for a
+// production project member under the project service policy, which calls
+// its siblings without declaring them, and off otherwise
+// (ADR-20261025105812). ServiceWakeAheadEnabled's query encodes the same rule.
+func ServiceWakeAheadDefault(app App) bool {
+	return app.ProjectID != "" && app.PreviewOfSlug == "" &&
+		app.Manifest.ServiceBindingPolicy == api.ServiceBindingPolicyProject
+}
+
+// EffectiveServiceWakeAhead is the setting a gateway applies: the app's own
+// choice when it made one, else the default.
+func EffectiveServiceWakeAhead(setting ServiceWakeAheadSetting, app App) bool {
+	if !setting.UpdatedAt.IsZero() {
+		return setting.Enabled
+	}
+	return ServiceWakeAheadDefault(app)
 }
 
 // ServiceWakeAheadStore persists the wake-ahead opt-in (written by apid) and
@@ -94,7 +112,7 @@ func (m *MemStore) SetServiceWakeAhead(_ context.Context, accountID, appID strin
 func (m *MemStore) ServiceWakeAheadEnabled(_ context.Context, appID string) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.serviceWakeAhead[appID].setting.Enabled, nil
+	return EffectiveServiceWakeAhead(m.serviceWakeAhead[appID].setting, m.apps[appID]), nil
 }
 
 func (m *MemStore) ServiceWakeAheadFleetResidency(context.Context) (int64, int64, error) {

@@ -170,9 +170,9 @@ func serviceBindingInventory(app state.App) []api.AppBindingInventoryItem {
 	}
 	for _, binding := range app.Manifest.ServiceBindings {
 		item := inventoryItem(api.BindingTypeService, binding.Service, binding.Binding, "app", "invoke", config)
-		item.HTTPURL = fmt.Sprintf("http://%s.svc.gregale:%d", binding.Service, api.ServiceBindingPort)
+		item.HTTPURL = api.ServiceBindingCanonicalURL(binding.Service, api.ServiceBindingTransportHTTP)
 		item.HTTPSEnv = api.ServiceBindingHTTPSEnvKey(binding.Service)
-		item.HTTPSURL = fmt.Sprintf("https://%s.internal", binding.Service)
+		item.HTTPSURL = api.ServiceBindingCanonicalURL(binding.Service, api.ServiceBindingTransportHTTPS)
 		item.Transport = string(app.Manifest.ServiceBindingTransport.Effective())
 		items = append(items, item)
 	}

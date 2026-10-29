@@ -50,7 +50,9 @@ import (
 
 	"filippo.io/age"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/webhookout"
@@ -81,7 +83,7 @@ func isOperatorOnlyAlertPreset(name string) bool {
 // minimum_plan see enabled_in_catalog=true iff the catalog has it
 // enabled at the migration level (the seed sets this column for
 // the 3 shipped-in-PR-A vs 5 staged-for-future rows).
-func (s *server) listAlertPresets(w http.ResponseWriter, r *http.Request, _ state.Account) {
+func (s *server) listAlertPresets(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	rows, err := s.store.ListAlertPresets(r.Context())
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not list alert presets"))
@@ -90,6 +92,11 @@ func (s *server) listAlertPresets(w http.ResponseWriter, r *http.Request, _ stat
 	out := make([]api.AlertPresetResponse, 0, len(rows))
 	for _, row := range rows {
 		if isOperatorOnlyAlertPreset(row.Name) {
+			continue
+		}
+		// A preset on a metric whose capability is not released for the
+		// account is not offered (ADR-20261028110044).
+		if s.alertMetricCapabilityProblem(flagSubject(r, acct), row.Metric) != nil {
 			continue
 		}
 		out = append(out, api.AlertPresetResponseFromRow(api.AlertPresetRow{
@@ -223,6 +230,9 @@ func (s *server) loadAndGateAlertPreset(ctx context.Context, acct state.Account,
 	if !api.PlanMeetsMinimumPlan(acct.Plan, api.Plan(preset.MinimumPlan)) {
 		return state.AlertPreset{}, api.ErrPlanAlertPresetsNotAllowed(acct.Plan, preset.Name, preset.MinimumPlan)
 	}
+	if prob := s.alertMetricCapabilityProblem(platformflags.Subject{AccountID: acct.ID, Plan: string(acct.Plan)}, preset.Metric); prob != nil {
+		return state.AlertPreset{}, prob
+	}
 	return preset, nil
 }
 
@@ -258,11 +268,11 @@ func validateAndDeriveEnablePresetOpts(req api.EnableAlertPresetRequest, default
 // The 1 KiB plaintext ceiling is enforced by the secretbox layer
 // (api.AlertRuleWebhookSecretMaxBytes).
 func sealPresetWebhookSecret(ctx context.Context, plaintext string) (sealed []byte, prob *api.Problem) {
-	recipient := hostSecretRecipient()
-	if recipient == nil {
-		return nil, api.ErrCapacity("host age recipient not loaded — refusing to seal webhook secret")
+	recipients, err := alertingCredentialRecipients()
+	if err != nil {
+		return nil, api.ErrCapacity("alerting recipient not loaded — refusing to seal webhook secret")
 	}
-	out, err := secretbox.SealBytes(recipient, alertRuleSecretSealLabel, []byte(plaintext), api.AlertRuleWebhookSecretMaxBytes)
+	out, err := secretbox.SealBytesTo(recipients, alertRuleSecretSealLabel, []byte(plaintext), api.AlertRuleWebhookSecretMaxBytes)
 	if err != nil {
 		if p := api.AsProblem(err); p != nil {
 			return nil, p
@@ -303,15 +313,20 @@ func (s *server) persistInstantiatedAlertRule(ctx context.Context, acct state.Ac
 	// otherwise get sliced mid-rune, producing invalid UTF-8 that
 	// Postgres rejects with SQLSTATE 22021 at INSERT time.
 	displayName := api.TruncateRunes(preset.DisplayName+" ("+app.Slug+")", api.AlertRuleNameMaxChars)
+	actor := acct
+	if a, _, ok := middleware.AccountFromCtx(ctx); ok {
+		actor = a
+	}
 	row, err := s.store.CreateAlertRuleIfUnderQuota(ctx, state.AlertRule{
-		AccountID:  acct.ID,
-		AppID:      app.ID,
-		Name:       displayName,
-		Enabled:    enabled,
-		Metric:     state.AlertMetric(preset.Metric),
-		Comparison: state.AlertComparison(preset.Comparison),
-		Threshold:  preset.Threshold,
-		WindowSpec: state.AlertWindowSpec(preset.WindowSpec),
+		AccountID:          acct.ID,
+		AppID:              app.ID,
+		CreatedByAccountID: actor.ID,
+		Name:               displayName,
+		Enabled:            enabled,
+		Metric:             state.AlertMetric(preset.Metric),
+		Comparison:         state.AlertComparison(preset.Comparison),
+		Threshold:          preset.Threshold,
+		WindowSpec:         state.AlertWindowSpec(preset.WindowSpec),
 		// Preset rows never carry a failure_source (the catalog's
 		// metrics are the closed vocabulary at pkg/api/alerts.go:66
 		// — none of them are failed_invocations).
@@ -427,19 +442,14 @@ func (s *server) sendTestAlertPresetCore(ctx context.Context, acct state.Account
 	if rule.WebhookURL == "" {
 		return api.TestAlertPresetResponse{}, api.ErrAlertPresetInvalid("this preset rule delivers only to notification channels; test them with POST /v1/notification-channels/{id}/test")
 	}
-	plaintext, prob := unsealAlertRuleWebhookSecret(ctx, rule.WebhookSecretSealed)
-	if prob != nil {
-		return api.TestAlertPresetResponse{}, prob
-	}
 	deliveryID, evt, observed, prob := buildTestAlertEvent(acct, app, rule, preset)
 	if prob != nil {
 		return api.TestAlertPresetResponse{}, prob
 	}
-	disp := webhookout.NewDispatcher(webhookout.DispatcherOptions{HeaderSet: webhookout.HeaderSetAlert})
-	result := disp.DispatchTest(ctx, webhookout.Target{
-		URL:    rule.WebhookURL,
-		Signer: webhookout.NewSigner(plaintext),
-	}, evt)
+	result, prob := s.dispatchRuleWebhookTest(ctx, acct, rule, evt)
+	if prob != nil {
+		return api.TestAlertPresetResponse{}, prob
+	}
 	// ADR-123 PR-D: stamp an alert_deliveries row with IsTest=true so
 	// operators can reach it via the `?include_test=true` toggle on
 	// the deliveries endpoint. The production fire path
@@ -514,6 +524,33 @@ func (s *server) sendTestAlertPresetCore(ctx context.Context, acct state.Account
 		DeliveryID: deliveryID,
 		Attempts:   result.Attempts,
 	}, nil
+}
+
+// dispatchRuleWebhookTest sends evt to the rule's webhook. A secret apid
+// cannot open is sealed to the alerting domain: meterd sends it and reports
+// the result (ADR 20261022111812, section 3).
+func (s *server) dispatchRuleWebhookTest(ctx context.Context, acct state.Account, rule state.AlertRule, evt webhookout.Event) (webhookout.Result, *api.Problem) {
+	plaintext, prob := unsealAlertRuleWebhookSecret(ctx, rule.WebhookSecretSealed)
+	if prob == nil {
+		disp := webhookout.NewDispatcher(webhookout.DispatcherOptions{HeaderSet: webhookout.HeaderSetAlert})
+		return disp.DispatchTest(ctx, webhookout.Target{URL: rule.WebhookURL, Signer: webhookout.NewSigner(plaintext)}, evt), nil
+	}
+	body, err := json.Marshal(evt)
+	if err != nil {
+		return webhookout.Result{}, api.ErrCapacity("could not encode the test alert")
+	}
+	res, relayProb := s.relayTestSend(ctx, acct.ID, state.AlertTestSendRuleWebhook, rule.ID, body, webhookTestRelayWait)
+	switch {
+	case relayProb != nil:
+		return webhookout.Result{}, relayProb
+	case res.Failure != "":
+		return webhookout.Result{}, prob
+	}
+	out := webhookout.Result{StatusCode: res.StatusCode, Attempts: res.Attempts}
+	if !res.Delivered {
+		out.Err = errors.New(res.Error)
+	}
+	return out, nil
 }
 
 // unsealAlertRuleWebhookSecret pulls the host X25519 identity slice

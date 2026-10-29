@@ -86,6 +86,12 @@
     rules) and both headers are stripped before the guest. Any refusal is
     the same `404 fork_not_found`, so the route is not an oracle. A guest
     exec channel over vsock is out of scope.
+    *Amendment (2026-10-26):* the token is a bearer credential its creator
+    keeps, the fork holds production memory for up to four hours, and a
+    company cannot cancel a fork its creator made. The route therefore also
+    requires the app's creator to still hold `manage_app_security` on it
+    (`appaccess.Standing`). A creator who leaves the company, is demoted, or
+    whose organization is suspended loses fork access at once.
 - **Why:** reproducing a production bug today means redeploying and
   replaying traffic, which loses the in-memory state that caused it. A
   capture already holds that state (warm captures are taken from a running,

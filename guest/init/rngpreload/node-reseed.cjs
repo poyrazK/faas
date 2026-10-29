@@ -11,6 +11,13 @@
 // that reads a cache drains it (ADR-981). guest-init waits for that reply
 // before the instance can serve traffic.
 //
+// With GREGALE_RESEED_MODE=thread (ADR-20261024105607) the addon answers
+// the barrier from its own native thread instead: RAND_poll(), then a bump
+// of the process-wide restore generation, then "ok", without waking the event
+// loop. Math.random and the cache wrappers check that generation before they
+// return a value and adopt a new one first; the addon also wakes the event
+// loop to adopt it right away, alongside the platform's readiness work.
+//
 // It must never write to stdout (function adapters frame responses there) and
 // must never keep the event loop alive.
 (function gregaleRestoreReseed() {
@@ -48,6 +55,21 @@
     addon = null; // reported as a failed reseed on resume, never at boot
   }
 
+  // Thread mode: generation[0] is the process-wide restore generation the
+  // addon's thread bumps after RAND_poll() and before it answers the barrier;
+  // generation[1] is 1 while that thread is registered.
+  let generation = null;
+  if (String(process.env.GREGALE_RESEED_MODE).toLowerCase() === 'thread' && addon &&
+      typeof addon.shared === 'function' && typeof addon.start === 'function') {
+    try {
+      const words = addon.shared();
+      if (words instanceof ArrayBuffer) generation = new Int32Array(words, 0, 2);
+    } catch (_) {
+      generation = null; // the event-loop client below registers instead
+    }
+  }
+  let adoptedGeneration = generation === null ? 0 : Atomics.load(generation, 0);
+
   // Math.random: V8 keeps its generator state in the isolate and exposes no
   // way to reseed it, so replace it with xoshiro128** that can be reseeded.
   const state = new Uint32Array(4);
@@ -71,6 +93,7 @@
   }
   seedMathRandom(crypto.randomBytes(16));
   const random = function random() {
+    if (generation !== null && Atomics.load(generation, 0) !== adoptedGeneration) adoptRestore();
     return ((next32() >>> 5) * 67108864 + (next32() >>> 6)) / 9007199254740992;
   };
   Object.defineProperty(Math, 'random', { value: random, writable: true, configurable: true, enumerable: false });
@@ -99,14 +122,30 @@
   // first (ADR-981): an app that never calls them never pays the drain.
   const stale = { uuid: false, int: false };
   exposed.stale = stale;
+
+  // adoptRestore applies a restore the addon's thread already confirmed:
+  // OpenSSL is reseeded, so randomBytes draws fresh bytes for Math.random and
+  // a cache drain refills from the reseeded generator.
+  function adoptRestore() {
+    if (generation === null) return;
+    const current = Atomics.load(generation, 0);
+    if (current === adoptedGeneration) return;
+    adoptedGeneration = current;
+    seedMathRandom(crypto.randomBytes(16));
+    stale.uuid = true;
+    stale.int = true;
+  }
+  exposed.adoptRestore = adoptRestore;
   const nodeRandomUUID = crypto.randomUUID;
   const nodeRandomInt = crypto.randomInt;
   function drainUUIDs() {
+    adoptRestore();
     if (!stale.uuid) return;
     stale.uuid = false;
     for (let i = 0; i < 128; i++) nodeRandomUUID();
   }
   function drainInts() {
+    adoptRestore();
     if (!stale.int) return;
     stale.int = false;
     // A range of 1 accepts every 6-byte entry and returns 0, so each call
@@ -146,6 +185,8 @@
     return 'ok';
   }
 
+  if (generation !== null && startReseedThread()) return;
+
   let conn;
   try {
     conn = net.createConnection(socketPath);
@@ -175,6 +216,43 @@
       conn.write(reply + '\n');
     }
   });
+
+  // startReseedThread registers through the addon's thread. Only the main
+  // thread starts it: it answers for the whole process, and worker isolates
+  // adopt each restore from the shared generation on first use. The pipe
+  // only wakes the event loop to adopt a restore early.
+  function startReseedThread() {
+    let isMainThread = true;
+    try {
+      isMainThread = require('node:worker_threads').isMainThread;
+    } catch (_) {
+      isMainThread = true;
+    }
+    if (!isMainThread) {
+      if (Atomics.load(generation, 1) === 1) return true;
+      generation = null; // the main thread fell back: register this isolate itself
+      return false;
+    }
+    let wakeFd = -1;
+    try {
+      wakeFd = addon.start(socketPath);
+    } catch (_) {
+      wakeFd = -1;
+    }
+    if (typeof wakeFd !== 'number' || wakeFd < 0) {
+      generation = null;
+      return false;
+    }
+    try {
+      const wake = new net.Socket({ fd: wakeFd, readable: true, writable: false });
+      wake.unref();
+      wake.on('error', () => {});
+      wake.on('data', adoptRestore);
+    } catch (_) {
+      // Lazy adoption on first use still holds without the early wake.
+    }
+    return true;
+  }
 })();
 
 // isPackageManagerLauncher matches the entry script only when it resolves into

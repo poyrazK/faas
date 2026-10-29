@@ -8,14 +8,14 @@ import (
 	"time"
 )
 
-// slowDirectorySync makes every directory fsync take at least d, so the
-// sync time a test reads back has a known floor.
+// slowDirectorySync makes every commit's sync step take at least d, durable
+// or not, so the sync time a test reads back has a known floor.
 func slowDirectorySync(t *testing.T, j *ResourceJournal, d time.Duration) {
 	t.Helper()
-	real := j.directorySync
-	j.directorySync = func() error {
+	real := j.commitSync
+	j.commitSync = func(durable bool) error {
 		time.Sleep(d)
-		return real()
+		return real(durable)
 	}
 }
 

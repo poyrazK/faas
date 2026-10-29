@@ -7,7 +7,7 @@ import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class TelemetryService {
   /**
-   * OTel spans writer (ADR-127 PR-D).
+   * OTel spans writer.
    * Standard OTLP/HTTP endpoint for the OTel spans sidecar
    * protocol (POST ExportTraceServiceRequest). Auth via
    * Authorization: Bearer <api-key>. Plan-gated by

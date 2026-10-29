@@ -13,6 +13,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -20,6 +21,8 @@ import (
 
 // Config is the on-disk representation of schedd's TOML config.
 type Config struct {
+	// AppsDomain matches public routing for deployment alias activation checks.
+	AppsDomain                      string `toml:"apps_domain"`
 	EventAcknowledgmentWriterSlot   string `toml:"event_acknowledgment_writer_slot"`
 	EventAcknowledgmentWriterRoster string `toml:"event_acknowledgment_writer_roster"`
 	// SocketPath is the unix-domain socket schedd's gRPC server binds when
@@ -206,8 +209,8 @@ type Config struct {
 	FrozenTier bool `toml:"frozen_tier"`
 	// FrozenTierApps (ADR-1151 step 3) extends the frozen tier from
 	// functions to request-mode apps whose declared pause is not never.
-	// Off by default and ignored unless frozen_tier is on.
-	// FAAS_FROZEN_TIER_APPS overrides it.
+	// On by default (ADR-1151 amendment 2026-10-27) and ignored unless
+	// frozen_tier is on. FAAS_FROZEN_TIER_APPS overrides it.
 	FrozenTierApps bool `toml:"frozen_tier_apps"`
 	// FrozenTierWorkers (ADR-20261019103000) lets a worker pool freeze a
 	// surplus worker that holds no queue lease instead of stopping it, and
@@ -367,6 +370,13 @@ func (c *Config) ResolveVMMTarget() string {
 	return "unix://" + c.VMMDSocket
 }
 
+func (c *Config) GetAppsDomain(env func(string) string) string {
+	if value := env("FAAS_APPS_DOMAIN"); value != "" {
+		return value
+	}
+	return c.AppsDomain
+}
+
 // LoadServerTLS returns the server's mTLS config when all three TLS
 // paths are set, or (nil, nil) when none are set. Partial cluster is
 // rejected — wire.LoadServerTLSConfig names the missing fields.
@@ -450,6 +460,7 @@ func (c *Config) MetricsListener() (read, write, idle time.Duration, maxHeaderBy
 // is not an error — the defaults produce a working daemon.
 func LoadConfig(path string) (*Config, error) {
 	c := &Config{
+		AppsDomain:         hostidentity.DefaultAppsDomain,
 		SocketPath:         "/run/faas/schedd.sock",
 		VMMDSocket:         "/run/faas/vmmd.sock",
 		GatewaySynthSocket: "/run/faas/gatewayd-internal.sock",
@@ -479,6 +490,10 @@ func LoadConfig(path string) (*Config, error) {
 		ReaperAggressive: true,
 		// ADR-909 (accepted 2026-10-12): admit by measured memory.
 		MeasuredAdmission: true,
+		// ADR-1151 amendment 2026-10-27: request-mode apps join the frozen
+		// tier whenever frozen_tier is on. FAAS_FROZEN_TIER_APPS=false or
+		// frozen_tier_apps = false keeps the tier to functions.
+		FrozenTierApps: true,
 		// ADR-067: 0 means "use the api.* default"
 		// (api.MigratingWatchdogTickLimit = 50,
 		// api.MigratingWatchdogIntervalSeconds = 1). cmd/schedd/main.go

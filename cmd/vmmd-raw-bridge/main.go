@@ -54,6 +54,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/bridgeproc"
+	"github.com/onebox-faas/faas/pkg/instancebridge"
 	"github.com/onebox-faas/faas/pkg/netns"
 )
 
@@ -198,43 +199,12 @@ func main() {
 // head remain buffered for the caller to consume via io.Copy on
 // the same reader. parseBridgeOutput on the caller side consumes
 // the head shape unchanged.
+//
+// It is the session bridge's reader (pkg/instancebridge), which reads
+// at most 64 KiB of head: a guest's endless header line must not make
+// this process, which runs in vmmd's cgroup, buffer it.
 func readResponseHead(r *bufio.Reader) (head, body []byte, err error) {
-	var acc []byte
-	for {
-		frag, ferr := r.ReadBytes('\n')
-		if len(frag) > 0 {
-			// Strip the trailing CR (if present) while keeping
-			// the LF so the head shape matches the existing
-			// shell bridge's `printf '\n'` output. The body
-			// bytes that arrive after the head are preserved
-			// untouched (bodies are not CRLF-stripped; the
-			// gateway sees the raw bytes the guest sent).
-			if frag[len(frag)-1] == '\n' {
-				if len(frag) >= 2 && frag[len(frag)-2] == '\r' {
-					// "...\r\n" → "...\n"
-					frag = append([]byte(nil), frag[:len(frag)-2]...)
-					frag = append(frag, '\n')
-				}
-				acc = append(acc, frag...)
-				if idx := indexDoubleLF(acc); idx >= 0 {
-					headEnd := idx
-					return acc[:headEnd], acc[headEnd+2:], nil
-				}
-			} else {
-				// No trailing \n — partial line at EOF.
-				acc = append(acc, frag...)
-			}
-		}
-		if errors.Is(ferr, io.EOF) {
-			// No terminator found. The guest sent a partial
-			// response; surface as a head-read error so the
-			// caller can log the bridge state.
-			return acc, nil, fmt.Errorf("unexpected EOF before head terminator (got %d bytes)", len(acc))
-		}
-		if ferr != nil {
-			return acc, nil, ferr
-		}
-	}
+	return instancebridge.ReadResponseHead(r)
 }
 
 // indexDoubleLF returns the index of the first "\n\n" in b,

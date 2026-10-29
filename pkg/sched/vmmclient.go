@@ -309,6 +309,9 @@ type LogLine struct {
 type PingOutcome struct {
 	FcVersion  string
 	ServerTime time.Time
+	// BaseGenerations is vmmd's report on each configured runtime base
+	// (ADR-20261022184531). Empty from a vmmd that predates the report.
+	BaseGenerations []BaseGenerationReadiness
 }
 
 // StatsSnapshot is the typed wrapper over vmmdpb.StatsResponse.
@@ -328,8 +331,11 @@ type StatsSnapshot struct {
 	LiveCount          int32
 	LeasedCount        int32
 	TotalResidentBytes *int64
-	Instances          []VMInstanceStat
-	SampledAt          time.Time
+	// InstanceBridgeResidentBytes is the node's instance bridge units'
+	// memory (connection-survival ADR §2); nil when vmmd reports none.
+	InstanceBridgeResidentBytes *int64
+	Instances                   []VMInstanceStat
+	SampledAt                   time.Time
 }
 
 // VMInstanceStat is the sched-side view of vmmdpb.InstanceStats —
@@ -439,12 +445,15 @@ type AppSpec struct {
 	// envelope. The flat APIEnv/sealed inputs already carry the boot payload.
 	migrationRuntime     *migrationRuntimeInputs
 	migrationAdmissionID string
-	BaseKey              string // drive0 base rootfs StorageBackend key (e.g. "base/runtime-node22.ext4")
-	LayerKey             string // drive1 per-app layer StorageBackend key (e.g. "apps/<slug>/<depID>.ext4")
-	VCPUCount            int32  // 2, or 4 for Scale
-	MemSizeMiB           int32  // plan RAM; the slice fences at +8 MiB (pkg/api/limits.go)
-	CPUMillicores        int32  // sustained cgroup CPU allowance; 250, 500, or 1000
-	EgressMbit           int32  // per-plan tc cap (pkg/api/limits.EgressMbit); 0 = no cap
+	// WakeID preserves an existing VM lifetime through migration or pool restore metadata.
+	// It is control-plane identity, independent of the guest AppSpec proto.
+	WakeID        string
+	BaseKey       string // drive0 base rootfs StorageBackend key (e.g. "base/runtime-node22.ext4")
+	LayerKey      string // drive1 per-app layer StorageBackend key (e.g. "apps/<slug>/<depID>.ext4")
+	VCPUCount     int32  // 2, or 4 for Scale
+	MemSizeMiB    int32  // plan RAM; the slice fences at +8 MiB (pkg/api/limits.go)
+	CPUMillicores int32  // sustained cgroup CPU allowance; 250, 500, or 1000
+	EgressMbit    int32  // per-plan tc cap (pkg/api/limits.EgressMbit); 0 = no cap
 	// StartupDeadlineS is the plan-resolved readiness budget. 0 preserves the
 	// vmmd default for legacy callers.
 	StartupDeadlineS int32
@@ -1126,6 +1135,9 @@ func (c *VMMClient) createFromSnapshot(ctx context.Context, instance string, app
 	}
 	// issue #517: see CreateColdBoot above for the rationale.
 	fields, _ := wire.FromContext(ctx)
+	if keepPaused && app.WakeID != "" {
+		fields.WakeID, fields.AppID, fields.InstanceID, fields.DeploymentID = app.WakeID, app.AppID, instance, app.DeploymentID
+	}
 	ctx = wire.WithCorrelationOutgoing(ctx, fields)
 	boot := c.cli.CreateFromSnapshot
 	if app.RehearsalRunID != "" {
@@ -1647,6 +1659,7 @@ func (c *VMMClient) AdoptMigratedInstance(ctx context.Context, _, instanceID str
 		return LiveMigrationAdopt{}, err
 	}
 	fields, _ := wire.FromContext(ctx)
+	fields.WakeID, fields.AppID, fields.InstanceID, fields.DeploymentID = app.WakeID, app.AppID, instanceID, app.DeploymentID
 	if app.migrationRuntime != nil {
 		fields.WakeID = app.migrationRuntime.WakeID
 	}
@@ -1740,6 +1753,12 @@ func (c *VMMClient) Ping(ctx context.Context) (*PingOutcome, error) {
 	if t := resp.GetServerTime(); t != nil {
 		out.ServerTime = t.AsTime()
 	}
+	for _, base := range resp.GetBaseGenerations() {
+		out.BaseGenerations = append(out.BaseGenerations, BaseGenerationReadiness{
+			BaseKey: base.GetBaseKey(), Generation: base.GetGeneration(),
+			Adoptable: base.GetAdoptable(), Reason: base.GetReason(),
+		})
+	}
 	return out, nil
 }
 
@@ -1761,6 +1780,10 @@ func (c *VMMClient) Stats(ctx context.Context) (*StatsSnapshot, error) {
 	if v := resp.GetTotalResidentBytes(); v != nil {
 		b := v.GetValue()
 		out.TotalResidentBytes = &b
+	}
+	if v := resp.GetInstanceBridgeResidentBytes(); v != nil {
+		b := v.GetValue()
+		out.InstanceBridgeResidentBytes = &b
 	}
 	for _, in := range resp.GetInstances() {
 		row := vmInstanceStatFromProto(in)

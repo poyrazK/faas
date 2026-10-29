@@ -81,12 +81,22 @@ func (s *server) adminAllows(acct state.Account) (bool, *api.Problem) {
 			"Admin access required",
 			"FAAS_ADMIN_EMAILS is empty on this deployment; no admin endpoints are reachable")
 	}
-	if _, ok := s.adminAllowlist.emails[strings.ToLower(acct.Email)]; !ok {
+	// An unverified address proves nothing: anyone could sign up with an
+	// allowlisted address nobody has claimed (an ops@ alias, an operator
+	// added before signing up or erased since) and hold operator access.
+	if _, ok := s.adminAllowlist.emails[strings.ToLower(acct.Email)]; !ok || !acct.EmailVerified() {
 		return false, api.NewProblem(http.StatusForbidden, "admin_required",
 			"Admin access required",
 			"this account is not in the operator allowlist for /v1/compute-nodes")
 	}
 	return true, nil
+}
+
+// isOperator reports whether acct is a platform operator: its email is in
+// FAAS_ADMIN_EMAILS.
+func (s *server) isOperator(acct state.Account) bool {
+	ok, _ := s.adminAllows(acct)
+	return ok
 }
 
 // computeNodePayload is the JSON shape POST /v1/compute-nodes
@@ -186,8 +196,9 @@ func (s *server) listComputeNodes(w http.ResponseWriter, r *http.Request, acct s
 	includeInactive := r.URL.Query().Get("include_inactive") == "1"
 	rows, err := s.store.ListComputeNodes(r.Context(), includeInactive)
 	if err != nil {
+		logCustomerFailure(s.log, "List failed", err)
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal",
-			"List failed", err.Error()))
+			"List failed", api.DetailServerFailure))
 		return
 	}
 	out := make([]computeNodeResponse, 0, len(rows))
@@ -221,8 +232,9 @@ func (s *server) createOrUpdateComputeNode(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if err != nil {
+		logCustomerFailure(s.log, "Lookup failed", err)
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal",
-			"Lookup failed", err.Error()))
+			"Lookup failed", api.DetailServerFailure))
 		return
 	}
 	row, err := s.store.UpsertComputeNodeFromOperator(r.Context(), node)
@@ -232,8 +244,9 @@ func (s *server) createOrUpdateComputeNode(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if err != nil {
+		logCustomerFailure(s.log, "Upsert failed", err)
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal",
-			"Upsert failed", err.Error()))
+			"Upsert failed", api.DetailServerFailure))
 		return
 	}
 	s.emitComputeNodeEnrollmentAudit(r, acct, row, reason, existed, p.DeferActivation)
@@ -437,7 +450,8 @@ func (s *server) hardDeleteRetiredComputeNode(w http.ResponseWriter, r *http.Req
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "node_has_history", "Node has workload history", "hard deletion is limited to unused mistaken enrollments"))
 		return
 	} else if err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal", "Delete failed", err.Error()))
+		logCustomerFailure(s.log, "Delete failed", err)
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal", "Delete failed", api.DetailServerFailure))
 		return
 	}
 	s.emitComputeNodeDeleteAudit(r, acct, row, reason)

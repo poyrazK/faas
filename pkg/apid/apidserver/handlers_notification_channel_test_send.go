@@ -34,23 +34,41 @@ func (s *server) testNotificationChannel(w http.ResponseWriter, r *http.Request,
 		s.notFound(w, "no such notification channel")
 		return
 	}
-	target, prob := openChannelTarget(r.Context(), row)
+	now := time.Now()
+	errMsg, prob := s.sendChannelTest(r.Context(), acct, row, now)
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
-	now := time.Now()
-	msg := alertchannels.Message{Event: alertchannels.EventTest, RuleName: "test", DedupKey: "test-" + row.ID, OccurredAt: now}
-	sendErr := channelSender(apidChannelMailer{s.mailer}).Send(r.Context(), target, msg)
-	errMsg := ""
-	if sendErr != nil {
-		errMsg = sendErr.Error()
-	}
 	if err := store.RecordNotificationChannelDelivery(r.Context(), row.ID, now, errMsg); err != nil {
 		s.log.Warn("record notification channel test", "channel", row.ID, "err", err)
 	}
-	s.audit.Emit(r.Context(), "notification_channel.tested", &acct.ID, map[string]any{"channel_id": row.ID, "delivered": sendErr == nil})
-	writeJSON(w, http.StatusOK, api.TestNotificationChannelResponse{Delivered: sendErr == nil, Error: errMsg})
+	s.audit.Emit(r.Context(), "notification_channel.tested", &acct.ID, map[string]any{"channel_id": row.ID, "delivered": errMsg == ""})
+	writeJSON(w, http.StatusOK, api.TestNotificationChannelResponse{Delivered: errMsg == "", Error: errMsg})
+}
+
+// sendChannelTest sends the test message and returns the delivery error,
+// empty on success. A destination apid cannot open is sealed to the
+// alerting domain: meterd sends it (ADR 20261022111812, section 3).
+func (s *server) sendChannelTest(ctx context.Context, acct state.Account, row state.NotificationChannel, now time.Time) (string, *api.Problem) {
+	target, prob := openChannelTarget(ctx, row)
+	if prob != nil {
+		res, relayProb := s.relayTestSend(ctx, acct.ID, state.AlertTestSendChannel, row.ID, nil, channelTestRelayWait)
+		switch {
+		case relayProb != nil:
+			return "", relayProb
+		case res.Failure != "":
+			return "", prob
+		}
+		return res.Error, nil
+	}
+	msg := alertchannels.Message{Event: alertchannels.EventTest, RuleName: "test", DedupKey: "test-" + row.ID, OccurredAt: now}
+	// A failed delivery is the test's result, not an apid error.
+	deliveryErr := ""
+	if err := channelSender(apidChannelMailer{s.mailer}).Send(ctx, target, msg); err != nil {
+		deliveryErr = err.Error()
+	}
+	return deliveryErr, nil
 }
 
 // openChannelTarget unseals a channel's destination. Error details stay in

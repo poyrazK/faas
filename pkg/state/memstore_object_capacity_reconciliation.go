@@ -12,10 +12,19 @@ import (
 var _ ObjectCapacityStore = (*MemStore)(nil)
 
 func (m *MemStore) objectCapacityFencedLocked(bucket string) bool {
+	return m.activeDeletionLocked(bucket) || m.objectBucketTransitionLocked(bucket)
+}
+
+// objectCapacityFencedForKeyLocked is objectCapacityFencedLocked, except that
+// only a deletion of key fences it (ADR-20261025115958).
+func (m *MemStore) objectCapacityFencedForKeyLocked(bucket, key string) bool {
+	return m.activeVersionProtectionLocked(bucket) || m.activeKeyDeletionLocked(bucket, key) || m.objectBucketTransitionLocked(bucket)
+}
+
+// objectBucketTransitionLocked reports an Object Lock, versioning or capacity
+// transition in progress.
+func (m *MemStore) objectBucketTransitionLocked(bucket string) bool {
 	if objectLockActive(m.objectBucketObjectLock[bucket]) {
-		return true
-	}
-	if m.activeDeletionLocked(bucket) {
 		return true
 	}
 	if j, ok := m.objectBucketVersioning[bucket]; ok && versioningActive(j) {
@@ -113,6 +122,31 @@ func (m *MemStore) capacityReadinessLocked(bucket string) (pending int64, unsafe
 	}
 	for id, u := range m.objectMultipartUploads {
 		if u.BucketID == bucket && (objectMultipartLive(u.State) || u.State != ObjectMultipartCompleted && len(m.objectMultipartPartGrants[id]) > 0) {
+			multipart = true
+		}
+	}
+	return
+}
+
+// deletionReadinessLocked is capacityReadinessLocked for a deletion of key:
+// only work on that key is pending or multipart (ADR-20261025115958).
+func (m *MemStore) deletionReadinessLocked(bucket, key string) (pending int64, unsafe, multipart, versions bool) {
+	_, unsafe, _, versions = m.capacityReadinessLocked(bucket)
+	if m.activeVersionProtectionLocked(bucket) {
+		pending++
+	}
+	if m.activeKeyDeletionLocked(bucket, key) {
+		pending++
+	}
+	hash := objectKeyHash(key)
+	for _, w := range m.objectWriteAdmissions {
+		if w.BucketID == bucket && w.KeyHash == hash && !w.Settled &&
+			(w.MultipartID == "" || objectMultipartLive(m.objectMultipartUploads[w.MultipartID].State)) {
+			pending++
+		}
+	}
+	for id, u := range m.objectMultipartUploads {
+		if u.BucketID == bucket && u.Key == key && (objectMultipartLive(u.State) || u.State != ObjectMultipartCompleted && len(m.objectMultipartPartGrants[id]) > 0) {
 			multipart = true
 		}
 	}

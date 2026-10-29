@@ -261,3 +261,22 @@ a VM that did not boot with it. The secret fence is unaffected. A
 deployment pinned to a project environment workload spec never had the
 problem: its fingerprint hashes the spec's settings, not the app row's
 class.
+
+## Amendment (2026-10-25): the in-guest port ladder is retired
+
+The host no longer dials a fixed `:8080`. Since #1892 it routes the
+readiness probe and traffic to the deployment's port
+(`AppManifest.EffectivePort()`, which source inference sets to 3000 for a
+Node app), and ADR-1170 keeps production images on the listen-on-`$PORT`
+contract; guest-init always injects `PORT`. The ladder's later rungs had
+stopped reaching the probe: guests ship no `iptables`, and the fallback
+forwarder listened on `127.0.0.1:8080`, which the host never dials, while
+holding that loopback port inside the guest. guest-init no longer installs
+either and always reports `port_norm_mode: "none"`; hosts still accept
+`dnat` and `forward` from older guests.
+
+An app that listens, but not on the routed port, now fails readiness with
+`app_not_listening` naming both ports and the fix: listen on `$PORT`, or
+declare the port (`hosting.port` in gregale.yaml, `overrides.port` for an
+image deployment). Before, the failure said the app never listened.
+Watch-mode development images keep the ADR-1170 bridge.

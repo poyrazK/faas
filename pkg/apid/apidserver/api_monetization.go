@@ -7,6 +7,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/apid/monetization"
+	"github.com/onebox-faas/faas/pkg/apid/realtimepreview"
 	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -67,9 +68,14 @@ func (s *server) monetizationAccount(next accountHandler) accountHandler {
 	}
 }
 
-// appWebhookEvents is the app webhook vocabulary an account may choose.
+// appWebhookEvents is the app webhook vocabulary an account may choose:
+// without API monetization's events unless the release includes the account,
+// or the realtime preview's events unless the account sees the preview
+// (ADR-20261019102657).
 func (s *server) appWebhookEvents(accountID string) []string {
-	return monetization.VisibleWebhookEvents(api.AllowedAppWebhookEvents, s.apiMonetizationFor(accountID))
+	return realtimepreview.VisibleWebhookEvents(
+		monetization.VisibleWebhookEvents(api.AllowedAppWebhookEvents, s.apiMonetizationFor(accountID)),
+		s.realtime.PreviewVisible(accountID))
 }
 
 // hiddenTenantWebhookEvent reports whether filter names a monetization event

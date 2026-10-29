@@ -45,12 +45,14 @@ type runtimeConfigPatchRequest struct {
 	Value           json.RawMessage `json:"value"`
 	Reason          string          `json:"reason"`
 	ExpectedVersion *int64          `json:"expected_version"`
+	Force           bool            `json:"force,omitempty"`
 }
 
 type runtimeConfigRollbackRequest struct {
 	Version         int64  `json:"version"`
 	Reason          string `json:"reason"`
 	ExpectedVersion *int64 `json:"expected_version"`
+	Force           bool   `json:"force,omitempty"`
 }
 
 func runtimeConfigOperationResponse(operation state.RuntimeConfigOperation) api.OperatorRuntimeConfigOperation {
@@ -173,7 +175,7 @@ func (s *server) adminRuntimeConfigPatch(w http.ResponseWriter, r *http.Request,
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid configuration value", "value must be valid JSON matching the catalog type"))
 		return
 	}
-	value, prob := s.checkRuntimeConfigChange(def, req.Value)
+	value, prob := s.checkRuntimeConfigChange(def, req.Value, req.Force)
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -364,7 +366,7 @@ func (s *server) adminRuntimeConfigRollback(w http.ResponseWriter, r *http.Reque
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Configuration revision is incompatible", "the catalog type changed and this revision cannot be applied"))
 		return
 	}
-	if _, prob := s.checkRuntimeConfigChange(def, revision.NewValue); prob != nil {
+	if _, prob := s.checkRuntimeConfigChange(def, revision.NewValue, req.Force); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}

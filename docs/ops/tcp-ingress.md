@@ -61,6 +61,12 @@ The fleet dashboard panels 418-419 graph these signals, and Prometheus alerts
 on sustained account-quota rejection or idle-timeout spikes; see
 `docs/runbooks/FaasTCPIngress.md` for triage.
 
+When the app's routed port (gregale.yaml `hosting.port`, or the image's port)
+is itself a declared TCP listener, startup readiness is a TCP accept on it, not
+the default `GET /healthz` a raw TCP server cannot answer. A declared health
+path (`hosting.health` or a deploy override) keeps HTTP readiness
+(ADR-20261027090000).
+
 The named port must already be declared on the app. List durable endpoints with
 `gregale apps tcp <slug> list`; use `enable NAME` or `disable NAME` to change
 exposure and `rm NAME` to remove the endpoint. The public address is the configured

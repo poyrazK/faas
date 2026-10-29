@@ -20,8 +20,8 @@ class MFAConfirmRequest:
     csrf_token: str | Unset = UNSET
     """Dashboard CSRF token. The dashboard sets a
     `faas_csrf` cookie on every authenticated response; the
-    same value rides in this JSON-body field so
-    `pkg/middleware.VerifyAuthenticated` can compare them.
+    same value rides in this JSON-body field so the
+    server can compare them.
     The token is opaque to the wire (sealed session
     reference); size matches the cookie value.
     """

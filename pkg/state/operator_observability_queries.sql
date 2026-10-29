@@ -691,7 +691,7 @@ FROM timed GROUP BY kind,class;
 -- separate intentional cohorts. Nonempty ownership matches ListOwnedCrons;
 -- legacy listing also applies Engine.ownsAppDecision's local fallback.
 -- name: OperatorCommandCronObservations :many
-SELECT c.schedule,c.timezone,c.created_at,c.last_fired_at,c.enabled,c.skip_if_running,c.schedule_policy,
+SELECT c.schedule,c.timezone,c.created_at,c.last_fired_at,c.schedule_anchor_at,c.enabled,c.skip_if_running,c.schedule_policy,
  (c.suspended_reason<>'')::boolean AS suspended,(a.status='deleted')::boolean AS app_deleted,
  (account.status IN ('active','past_due') AND account.abuse_hold_at IS NULL)::boolean AS account_active,
  EXISTS(SELECT 1 FROM deployments d WHERE d.app_id=c.app_id AND d.status='live'

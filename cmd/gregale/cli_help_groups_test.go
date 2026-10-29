@@ -2,6 +2,7 @@ package main_test
 
 import (
 	"bytes"
+	"slices"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -19,30 +20,30 @@ func enableEveryCLIFeature(t *testing.T) {
 	t.Setenv("FAAS_FULL_ENVIRONMENT_CLONES_ENABLED", "1")
 }
 
-func TestCliHelpGroupsCoverCustomerCommands(t *testing.T) {
+// cliTreeUnplacedCommands are customer commands the command tree does not
+// place yet; root help lists them under "More". The list only shrinks.
+var cliTreeUnplacedCommands = []string{
+	"auth", // unreleased; placed when it launches
+}
+
+// Every customer command is a shortcut, a noun, or reached through a noun
+// (ADR-20261026145832), so a new command has to take a place in the tree.
+func TestCliTreePlacesCustomerCommands(t *testing.T) {
 	enableEveryCLIFeature(t)
 	customer := map[string]bool{}
 	for _, command := range main.CustomerCliCommands() {
 		customer[command.Name] = true
-		if group := main.CliHelpGroup(command); group == "" || group == "Other" {
-			t.Errorf("customer command %q has no help group; add it to cliHelpGroups", command.Name)
+		placed, allowed := main.CliTreePlaces(command.Name), slices.Contains(cliTreeUnplacedCommands, command.Name)
+		switch {
+		case !placed && !allowed:
+			t.Errorf("customer command %q has no place in the command tree; add a noun path for it in cli_tree.go", command.Name)
+		case placed && allowed:
+			t.Errorf("%q now has a place in the command tree; remove it from cliTreeUnplacedCommands", command.Name)
 		}
 	}
-	seen := map[string]string{}
-	for _, group := range *main.CliHelpGroups {
-		for _, name := range group.Commands {
-			if previous, ok := seen[name]; ok {
-				t.Errorf("%q is listed in both %q and %q", name, previous, group.Title)
-			}
-			seen[name] = group.Title
-			if !customer[name] {
-				t.Errorf("help group %q lists %q, which is not a customer command", group.Title, name)
-			}
-		}
-	}
-	for _, command := range main.AdvancedCliCommands() {
-		if group := main.CliHelpGroup(command); group != "" {
-			t.Errorf("operator command %q is in customer group %q", command.Name, group)
+	for _, name := range cliTreeUnplacedCommands {
+		if !customer[name] {
+			t.Errorf("cliTreeUnplacedCommands lists %q, which is not a customer command", name)
 		}
 	}
 }
@@ -121,7 +122,7 @@ func TestCliHelpTextOmitsADRReferences(t *testing.T) {
 
 func TestCliRelatedCommandsCrossReference(t *testing.T) {
 	enableEveryCLIFeature(t)
-	customer := main.CustomerCliCommands()
+	customer := main.CustomerManifest() // related sets name earlier names
 	for _, set := range *main.CliRelatedCommands {
 		if len(set) < 2 {
 			t.Errorf("related set %v needs at least two commands", set)
@@ -139,22 +140,12 @@ func TestCliRelatedCommandsCrossReference(t *testing.T) {
 	}
 	oldOut := (*main.OsStdout)
 	t.Cleanup(func() { (*main.OsStdout) = oldOut })
-	for _, tc := range []struct{ args []string }{
-		{[]string{"slo", "--help"}},
-		{[]string{"help", "slos"}},
-	} {
-		var out bytes.Buffer
-		(*main.OsStdout) = &out
-		if code := main.Run(tc.args); code != 0 {
-			t.Fatalf("%v exit = %d", tc.args, code)
-		}
-		other := "gregale slos"
-		if tc.args[1] == "slos" {
-			other = "gregale slo"
-		}
-		if !strings.Contains(out.String(), "See also: "+other+"\n") {
-			t.Errorf("%v help does not point at %q:\n%s", tc.args, other, out.String())
-		}
+	// Help reached by an earlier name speaks the command tree and leaves
+	// out "See also" (ADR-20261026145832); man pages keep it.
+	var help bytes.Buffer
+	(*main.OsStdout) = &help
+	if code := main.Run([]string{"help", "slos"}); code != 0 || strings.Contains(help.String(), "See also:") || !strings.Contains(help.String(), "gregale alert slo") {
+		t.Errorf("help slos = %d, want tree help without See also:\n%s", code, help.String())
 	}
 	var man bytes.Buffer
 	(*main.OsStdout) = &man

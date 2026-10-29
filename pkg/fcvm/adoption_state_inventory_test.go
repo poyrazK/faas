@@ -24,7 +24,10 @@ var adoptionStateInventory = map[string]map[string]string{
 		"appCPUPolicies":                    "repushed", // per-app CPU policy revisions; the lease keeps the applied quota
 		"appEgressPolicies":                 "repushed", // egress policy revisions; per-netns rules survive in the netns
 		"appResolved":                       "reset",    // DNS-gated egress resolution cache
+		"appDatabaseResolved":               "reset",    // bound database pairs for seeding (ADR-20261026150000)
 		"backingDigests":                    "reset",    // file digest cache
+		"backingHashing":                    "reset",    // in-flight file digests
+		"backingPending":                    "reset",    // in-flight instance identities; adoption restores instanceBacking
 		"baseGenerations":                   "reset",    // base image generation cache
 		"cidToID":                           "rebuilt",
 		"cooldownByDeployment":              "reset",    // crash-loop cooldown timestamps
@@ -63,6 +66,10 @@ var adoptionStateInventory = map[string]map[string]string{
 		"functionStarting":                  "bootonly",
 		"provenWorkers":                     "reset",   // costs one full characterization window per deployment
 		"rehearsalRecorders":                "refused", // rehearsal guests are refused (block network.rehearsal_run_id)
+		"httpForwards":                      "reset",   // forwarding bridges die with the predecessor
+		"egressCircuitNetworks":             "refused", // egress-circuit guests are refused (block network.egress_circuits)
+		"appEgressCircuits":                 "reset",   // reloaded from the durable source by the next registration or update
+		"appEgressCircuitRevisions":         "reset",
 	},
 	"JailerVMM": {
 		"bindMounts":               "rebuilt",
@@ -114,6 +121,8 @@ var adoptionInstanceInventory = map[string]string{
 	"Frozen":                          "rebuilt",
 	"FrozenSince":                     "rebuilt",
 	"freezing":                        "reset",   // no freeze is in flight at startup
+	"parking":                         "reset",   // no park is in flight at startup
+	"parkHeld":                        "reset",   // nor a forward held on one
 	"IsJob":                           "rebuilt", // job kind
 	"JobStartGateEnabled":             "rebuilt",
 	"JobInteractive":                  "rebuilt",
@@ -124,6 +133,9 @@ var adoptionInstanceInventory = map[string]string{
 	"RestoreError":                    "reset",
 	"RestoreFallbackReason":           "reset",
 	"AppID":                           "rebuilt",
+	"WakeID":                          "rebuilt", // channel and readiness identity (ADR-570)
+	"NodeID":                          "rebuilt",
+	"httpForwardGeneration":           "reset", // no forward outlives the predecessor; minted on first use
 	"AccountID":                       "rebuilt",
 	"DeploymentID":                    "rebuilt",
 	"LivenessProbe":                   "rebuilt",
@@ -150,12 +162,14 @@ var adoptionInstanceInventory = map[string]string{
 	"EgressFanoutValid":               "reset",
 	"EgressFloodDropsPerMin":          "reset",
 	"resolvedEgress":                  "reset", // cache; the nft entries keep their own timeouts
+	"databaseEgress":                  "reset", // same for egress_db pairs (ADR-20261026150000)
 	"TailCount":                       "reset", // the host only ever sees decrements
 	"tailSecondsAccum":                "reset", // informational, not billed
 	"adoptionVCPUs":                   "rebuilt",
 	"adoptionMemSizeMiB":              "rebuilt",
 	"adoptionOp":                      "reset", // resolved before adoption (slice 3)
 	"devPatched":                      "rebuilt",
+	"bridge":                          "rebuilt",
 	"migrationPaused":                 "rebuilt",
 	"warmSpare":                       "rebuilt",
 	"DataRepairOnly":                  "refused", // a data repair runs as an execution, which adoption kills

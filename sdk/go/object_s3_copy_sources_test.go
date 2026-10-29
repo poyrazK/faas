@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/poyrazK/faas/sdk/go/preview"
+
 	faas "github.com/poyrazK/faas/sdk/go"
 )
 
@@ -30,7 +32,7 @@ func TestCopySourceClient(t *testing.T) {
 			return
 		}
 		if r.Method == "PUT" {
-			var in faas.SetObjectS3CopySourceRequest
+			var in preview.SetObjectS3CopySourceRequest
 			if json.NewDecoder(r.Body).Decode(&in) != nil || in.Prefix != "allowed/" {
 				t.Error(in)
 			}
@@ -47,7 +49,7 @@ func TestCopySourceClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	grant, err := c.SetObjectS3CopySource(context.Background(), "demo/x", "bucket/x", "credential/x", "source/x", faas.SetObjectS3CopySourceRequest{Prefix: "allowed/"})
+	grant, err := c.SetObjectS3CopySource(context.Background(), "demo/x", "bucket/x", "credential/x", "source/x", preview.SetObjectS3CopySourceRequest{Prefix: "allowed/"})
 	if err != nil || grant.SourceBucketID != "source/x" {
 		t.Fatal(grant, err)
 	}

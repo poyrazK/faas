@@ -1,4 +1,4 @@
-// adr:683
+// adr:683, 20261024100000
 package frameworkprofile
 
 import "encoding/json"
@@ -29,16 +29,15 @@ func RequiresImageHealthcheck(profile []byte) bool {
 	return *required
 }
 
-// RequiresSourceImageHealthcheck applies the receipt to a built service only
-// when its profile froze a Compose healthcheck (ADR-20261019195000). Other
-// source deployments never require a command check, whatever else their
-// profile holds.
+// RequiresSourceImageHealthcheck applies the receipt to a source-built
+// deployment. imaged records it for every build whose image declares a
+// command HEALTHCHECK, from the Dockerfile or a Compose override
+// (ADR-20261019195000, ADR-20261024100000). Unlike an image deployment's, a
+// source profile that is missing or malformed never requires a check, so
+// builds assembled before the receipt existed keep their readiness.
 func RequiresSourceImageHealthcheck(profile []byte) bool {
 	var fields map[string]json.RawMessage
 	if len(profile) == 0 || json.Unmarshal(profile, &fields) != nil {
-		return false
-	}
-	if _, captured := fields["image_healthcheck"]; !captured {
 		return false
 	}
 	return RequiresImageHealthcheck(profile)

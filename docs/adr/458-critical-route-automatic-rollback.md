@@ -62,3 +62,13 @@ rollback after traffic/audit/history/outbox failures, concurrent callers and res
 API checks enforce action-token isolation and fresh evaluation without response
 caching. Worker checks cover early recovery and fail-closed transport behavior.
 CLI/SDK checks preserve legacy defaults and explain committed abort evidence.
+
+## Amendment (2026-10-28): the report shows a saved abort
+
+After an abort the candidate serves no traffic, so `GET
+/v1/apps/{slug}/route-health/deployments/{id}` re-evaluated windows it could no
+longer fill and read `unknown` (`comparisons_incomplete_or_unsettled`). The
+release-guards GA drill saw this right after the guard aborted its canary. When
+the deployment's newest saved decision is an abort, the report now returns the
+evidence that abort was saved with (`routehealth.WithSavedAbort`); customer
+impact stays live. The schema and status vocabulary are unchanged.

@@ -38,6 +38,8 @@ type Host interface {
 	// SourceProvenance is the deployment origin continuous profiles link
 	// frames against; captures link the same way.
 	SourceProvenance(app state.App, dep state.Deployment) profiling.SourceProvenance
+	// Audit records a customer action in the account's audit log.
+	Audit(ctx context.Context, action, accountID string, details map[string]any)
 }
 
 // Service is the profile capture surface.
@@ -110,7 +112,7 @@ func (s *Service) Queue(ctx context.Context, acct state.Account, app state.App, 
 	capture := api.ProfileCapture{ID: uuid.NewString(), AppID: app.ID, Status: api.ProfileCaptureQueued, Kinds: req.Kinds,
 		DurationSeconds: req.DurationSeconds, RequestedInstanceID: req.InstanceID, Profiles: []api.ProfileCaptureProfile{},
 		CreatedAt: now, ExpiresAt: now.Add(api.ProfileCaptureRetention)}
-	if err := store.CreateProfileCapture(ctx, acct.ID, app.ID, capture); err != nil {
+	if err := store.CreateProfileCapture(ctx, acct.ID, app.ID, capture, api.MustLimitsFor(acct.Plan).Profiling.CaptureStorageBytes); err != nil {
 		return capture, createProblem(err)
 	}
 	payload, _ := json.Marshal(map[string]string{"capture_id": capture.ID})
@@ -130,6 +132,14 @@ func createProblem(err error) *api.Problem {
 		return api.NewProblem(http.StatusTooManyRequests, api.CodeQuotaExhausted, "Profile capture limit reached",
 			fmt.Sprintf("an account can start %d profile captures per hour", api.ProfileCaptureMaxPerAccountHour)).
 			WithLimit(api.ProfileCaptureMaxPerAccountHour, api.ProfileCaptureMaxPerAccountHour)
+	}
+	var full *state.ProfileCaptureStorageError
+	if errors.As(err, &full) {
+		return api.NewProblem(http.StatusTooManyRequests, api.CodeQuotaExhausted, "Profile capture storage full",
+			fmt.Sprintf("the account's profile captures use %d of %d bytes; captures expire %d days after they are taken",
+				full.Used, full.Limit, int(api.ProfileCaptureRetention.Hours()/24))).
+			WithByteLimit(full.Limit, full.Used).
+			WithDocs("https://gregale.dev/docs/profiling#capture-a-running-instance-on-demand")
 	}
 	return api.ErrCapacity("profile capture could not be queued")
 }
@@ -171,8 +181,35 @@ func (s *Service) Owned(w http.ResponseWriter, r *http.Request, acct state.Accou
 	return capture, true
 }
 
+// Delete handles DELETE /v1/apps/{slug}/profiles/captures/{id}. Its
+// storage frees at once; a capture still running finishes into nothing.
+func (s *Service) Delete(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	app, store, ok := s.Target(w, r, acct)
+	if !ok {
+		return
+	}
+	id := r.PathValue("id")
+	if _, err := uuid.Parse(id); err != nil {
+		api.WriteProblem(w, captureNotFound())
+		return
+	}
+	if err := store.DeleteProfileCapture(r.Context(), acct.ID, app.ID, id); errors.Is(err, state.ErrNotFound) {
+		api.WriteProblem(w, captureNotFound())
+		return
+	} else if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("profile capture could not be deleted"))
+		return
+	}
+	s.Host.Audit(r.Context(), "profile_capture.deleted", acct.ID, map[string]any{"app_id": app.ID, "capture_id": id})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func captureNotFound() *api.Problem {
+	return api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Capture not found", "profile capture does not exist")
+}
+
 func load(ctx context.Context, acct state.Account, app state.App, store state.ProfileCaptureStore, id string) (api.ProfileCapture, *api.Problem) {
-	notFound := api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Capture not found", "profile capture does not exist")
+	notFound := captureNotFound()
 	if _, err := uuid.Parse(id); err != nil {
 		return api.ProfileCapture{}, notFound
 	}

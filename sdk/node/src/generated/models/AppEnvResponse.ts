@@ -9,13 +9,13 @@ import type { ConfigChangeReceipt } from './ConfigChangeReceipt.js';
 export type AppEnvResponse = {
   key: string;
   /**
-   * Env-var scope (ADR-090). Always 'default' for the pre-PR-B flat response; varies for the nested `env_by_scope` response.
+   * Env-var scope. Always 'default' for the legacy flat response; varies for the nested `env_by_scope` response.
    */
   scope: string;
   created_at: string;
   updated_at: string;
   /**
-   * Present on env writes: the revision this write recorded and the config guard watching it (ADR-1451).
+   * Present on env writes: the revision this write recorded and the config guard watching it.
    */
   config_change?: ConfigChangeReceipt;
 };

@@ -41,6 +41,10 @@ import (
 // for recovery. Acceptable for an operator-initiated action.
 const fireNowSafetyTick = 60 * time.Second
 
+// fireNowClaimsPerSweep bounds the requests one drainPendingFireNowRequests
+// call claims. Each is a handful of store writes (ADR-20261026201726).
+const fireNowClaimsPerSweep = 256
+
 // Histogram label values for sched_cron_fire_now_dispatch_duration_seconds.
 // Pre-declared so goconst stops flagging the repeated literals across
 // the switch arms in processFireNowRequest (the file has 4 resultLabel
@@ -50,8 +54,8 @@ const (
 	fireNowResultLabelFailed    = "failed"
 )
 
-// drainPendingFireNowRequests claims + dispatches every pending row,
-// one at a time. A single drain call claims all currently-pending
+// drainPendingFireNowRequests claims + dispatches pending rows, one at
+// a time. A single drain call claims up to fireNowClaimsPerSweep
 // rows sequentially; a follow-up notify or tick will pick up anything
 // that arrives mid-drain. The single-row LIMIT is the contention
 // primitive — N schedd instances process N rows in parallel without
@@ -61,7 +65,9 @@ const (
 // and the row is stamped to `failed` so a poison row cannot wedge the
 // queue forever.
 func (l *Loop) drainPendingFireNowRequests(ctx context.Context) {
-	for {
+	// Bounded so a burst of requests cannot hold the scheduler loop; the
+	// next notify or safety tick continues the queue.
+	for range fireNowClaimsPerSweep {
 		req, err := l.engine.Store().ClaimPendingFireNowRequestForNode(ctx, l.engine.nodeForRoute(l.engine.OwnerNodeID()))
 		if errors.Is(err, state.ErrFireNowRequestNotFound) {
 			return // empty queue — caller exits cleanly
@@ -106,6 +112,13 @@ func (l *Loop) processFireNowRequest(ctx context.Context, req state.FireNowReque
 	resultLabel := fireNowResultLabelSucceeded
 
 	switch {
+	case err == nil && run.Queued:
+		// ADR-20261026201726: the drain delivers the invocation. The
+		// request stays running with its invocation id, and the
+		// invocation's terminal state settles it.
+		l.markFireNowRequestQueued(ctx, req, run.InvocationID)
+		l.log.Info("sched: fire_now: invocation queued", "request_id", req.ID, "cron_id", req.CronID, "invocation_id", run.InvocationID)
+
 	case err == nil && run.Success:
 		// Best-effort: RunCronNow returns CronRun{Success: true} with
 		// InvocationID="" when the dispatch path took the
@@ -175,6 +188,22 @@ func (l *Loop) processFireNowRequest(ctx context.Context, req state.FireNowReque
 
 // Ownership can move after the atomic claim. Do not turn that handoff into a
 // customer-visible failed fire; leave the durable request for the new owner.
+// markFireNowRequestQueued records the invocation an HTTP fire-now request
+// queued. A store without invocation settlement marks the request
+// succeeded at admission, as command-cron requests are.
+func (l *Loop) markFireNowRequestQueued(ctx context.Context, req state.FireNowRequest, invocationID string) {
+	store := l.engine.Store()
+	if queued, ok := store.(state.CronFireNowInvocationStore); ok {
+		if err := queued.MarkFireNowRequestQueued(ctx, req.ID, invocationID); err != nil {
+			l.log.Warn("sched: fire_now: mark queued failed", "request_id", req.ID, "err", err)
+		}
+		return
+	}
+	if err := store.MarkFireNowRequestSucceeded(ctx, req.ID, invocationID, ""); err != nil {
+		l.log.Warn("sched: fire_now: mark succeeded failed", "request_id", req.ID, "err", err)
+	}
+}
+
 func (l *Loop) requeueFireNowOnOwnerChange(ctx context.Context, req state.FireNowRequest) bool {
 	cron, err := l.engine.Store().CronByID(ctx, req.CronID)
 	if err != nil {

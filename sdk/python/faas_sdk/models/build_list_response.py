@@ -17,8 +17,7 @@ T = TypeVar("T", bound="BuildListResponse")
 
 @_attrs_define
 class BuildListResponse:
-    """DEPLOY-PROV-6 follow-up / ADR-091 (issue #741 close-out):
-    the page shape for GET /v1/builds. Items is one page of
+    """The page shape for GET /v1/builds. Items is one page of
     builds ordered started_at DESC NULLS LAST — queued builds
     (started_at IS NULL) sink to the bottom of the first page
     per the new index builds_deployment_started_idx. The
@@ -36,7 +35,7 @@ class BuildListResponse:
     (state layer) make this O(page-size) regardless of
     account size; the unlimited
     ListBuildsForAccount(ctx, accountID) stays intact for the
-    GDPR export at cmd/apid/handlers_account.go.
+    GDPR export.
 
     """
 

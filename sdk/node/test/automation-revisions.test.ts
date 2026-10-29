@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
 import test from 'node:test';
-import { FaaSClient, WorkflowsService } from '../src/index.js';
+import { FaaSClient, WorkflowsService } from '../src/preview.js';
 
 test('automation revision SDK lists, reads, and restores immutable revisions as drafts', async t => {
   const server = createServer((req, res) => {

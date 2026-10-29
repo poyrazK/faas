@@ -42,7 +42,7 @@ func EventConsumerHealthWindow(spec string) (time.Duration, error) {
 	}
 	return 0, fmt.Errorf("window must be 5m, 15m, 1h, 6h, or 24h")
 }
-func (c *Client) GetEventConsumerHealth(ctx context.Context, app, id, window string) (EventConsumerHealth, error) {
+func (c *PreviewClient) GetEventConsumerHealth(ctx context.Context, app, id, window string) (EventConsumerHealth, error) {
 	var out EventConsumerHealth
 	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(app)+"/event-subscriptions/"+url.PathEscape(id)+"/health?window="+url.QueryEscape(window), nil, &out)
 	return out, err

@@ -8,7 +8,11 @@
 // supply-chain-gate seam so a refactor that changes the gate
 // semantics fails loudly at unit-test time. Uses an in-memory
 // fake StorageBackend (pkg/storage has no in-memory backend so a
-// trivial map-backed fake lives here in the test file).
+// trivial map-backed fake lives here in the test file). Its misses wrap
+// storage.ErrNotFound, which vmmd's generation adoption distinguishes from a
+// read failure.
+//
+// adr: 20261026181418
 package fcvm
 
 import (
@@ -16,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -60,7 +65,7 @@ func (m *memStorage) Get(_ context.Context, key string) (io.ReadCloser, error) {
 	}
 	b, ok := m.blobs[key]
 	if !ok {
-		return nil, errors.New("fcvm-test: storage miss")
+		return nil, fmt.Errorf("fcvm-test: storage miss: %w", storage.ErrNotFound)
 	}
 	return io.NopCloser(bytes.NewReader(b)), nil
 }

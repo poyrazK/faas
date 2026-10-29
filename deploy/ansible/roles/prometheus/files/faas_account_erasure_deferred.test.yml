@@ -1,0 +1,35 @@
+# apid_account_grace_deferred_accounts is set by every grace sweep tick.
+rule_files:
+  - faas.rules.yml
+evaluation_interval: 30s
+tests:
+  - name: a hold that lasts a day fires
+    interval: 5m
+    input_series:
+      - series: apid_account_grace_deferred_accounts{job="apid",instance="cp"}
+        values: 0x11 2x300
+    alert_rule_test:
+      - eval_time: 23h
+        alertname: FaasAccountErasureDeferred
+        exp_alerts: []
+      - eval_time: 26h
+        alertname: FaasAccountErasureDeferred
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: apid
+              family: account_lifecycle
+              public_status: internal
+            exp_annotations:
+              summary: Expired account deletions are held by unfinished external cleanup
+              description: "2 account(s) are past their deletion grace but the grace sweep keeps their rows because external cleanup (object buckets, managed PostgreSQL, archived runtime logs) is not finished. apid logs each one as 'grace: external cleanup deferred' with the failing step. The DPA promises erasure within 30 days of the grace ending."
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAccountErasureDeferred.md
+  - name: a hold cleared within the day stays quiet
+    interval: 5m
+    input_series:
+      - series: apid_account_grace_deferred_accounts{job="apid",instance="cp"}
+        values: 1x200 0x200
+    alert_rule_test:
+      - eval_time: 30h
+        alertname: FaasAccountErasureDeferred
+        exp_alerts: []

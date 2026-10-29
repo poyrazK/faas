@@ -73,21 +73,45 @@ only where it is planted.
   reported, with `retired=true` in the event: an attacker may hold an old
   dump.
 
-### 2. Unseal telemetry (second slice)
+### 2. Unseal telemetry
 
-Every reader daemon counts what it opens:
+Every daemon counts what it opens in
+`faas_secret_unseal_total{identity, result}`. The scrape's `job` label names
+the daemon, so the metric has one name across daemons and one alert covers
+them all.
 
-- `faas_secret_unseal_total{daemon, identity, result}`, where `identity` is
-  the domain, `fleet` or `host` key that opened the envelope, and `result`
-  is `ok` or `failed`;
-- an age `Identity` wrapper in `pkg/secretbox` records which identity
-  unwrapped each file key, so the label costs nothing extra;
-- each daemon registers its identities' labels at startup.
+- **Where it is counted.** `pkg/secretbox` performs every decryption of a
+  sealed value: `Open`, `OpenMulti`, `OpenMultiBound`, `OpenBytes` and
+  `OpenBytesMulti` all reach one `age.Decrypt` call.
+  - There, an age `Identity` wrapper notes which key unwrapped the file key.
+  - The outcome goes to an observer that `wire.RegisterDefaultOps` installs,
+    as it already does for the LISTEN hub's counters. Every daemon counts
+    with no wiring of its own.
+- **The `identity` label** comes from the file the key was loaded from:
+  - `LoadHostKey` records each key's label: the domain name, `fleet` or
+    `host`, whether the file is read directly or through a systemd
+    credential, and whether it is the current key or the previous one kept
+    for a rotation;
+  - a key not loaded from a file is `unknown`;
+  - a decryption no key opened is `none`.
+- **`result`** is `ok` or `failed`; a payload that fails to decrypt after
+  its file key opened counts as `failed`.
 
-Alerts fire when a daemon opens far more envelopes than its own one-day
-baseline, and when failed opens climb. A reader used for bulk decryption,
-or a key tried against envelopes it does not open, then shows up. The
-second slice ships the counter, the wrapper and the alerts.
+Two alerts read it. Both warn rather than page, because each has an
+ordinary cause:
+
+- **`FaasSecretUnsealSurge`:** for 10 minutes a daemon opens values at over
+  ten times its 24-hour average, and more than one per second. A traffic
+  surge does this too; the runbook compares the opens with the daemon's work
+  over the same window.
+- **`FaasSecretUnsealFailures`:** a daemon fails to open more than 20 values
+  in 15 minutes. That is usually a missing seal-domain key; it can also be
+  someone trying envelopes from another domain through the daemon.
+
+Decryptions outside `pkg/secretbox` are not counted yet: crash captures,
+managed Postgres copy archives, control-plane state and operator backups.
+They use their own keys and paths, and can report to the same observer
+later.
 
 ## Consequences
 

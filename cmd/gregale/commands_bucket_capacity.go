@@ -42,6 +42,9 @@ func cmdBucket(args []string) int {
 	if len(args) > 0 && args[0] == "notifications" {
 		return cmdBucketNotifications(args[1:])
 	}
+	if len(args) > 0 && args[0] == "cors" {
+		return cmdBucketCORS(args[1:])
+	}
 	if len(args) > 0 && args[0] == "lifecycle" {
 		return cmdBucketLifecycle(args[1:])
 	}
@@ -63,8 +66,8 @@ func cmdBucket(args []string) int {
 	if len(args) > 0 && args[0] != "reconcile" {
 		// Unknown subcommands used to fall through to the capacity parser and
 		// print `bucket reconcile` usage (H9-141).
-		printCommandValidation(osStderr, "unknown bucket subcommand %q; run `gregale bucket --help`\n", args[0])
-		return 1
+		printCommandValidation(osStderr, "unknown bucket subcommand %q\n", args[0])
+		return unknownSubcommandChoices(osStderr, "bucket", nestedCliCommand("bucket"), args[0])
 	}
 	return cmdBucketCapacity(args)
 }
@@ -106,7 +109,7 @@ func cmdBucketCapacity(args []string) int {
 	return 0
 }
 func bucketCapacityUsage() int {
-	PrintUsage(osStderr, "usage: gregale bucket reconcile start <app> <bucket-id> | gregale bucket reconcile <status|cancel> <app> <bucket-id> <job-id>", "bucket")
+	PrintUsage(osStderr, "usage: gregale bucket inventory start <app> <bucket-id> | gregale bucket inventory <status|cancel> <app> <bucket-id> <job-id>", "bucket")
 	return 1
 }
 

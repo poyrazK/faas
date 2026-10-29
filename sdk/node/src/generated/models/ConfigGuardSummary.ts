@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * The config guard an env or secret write opened or joined (ADR-1451).
+ * The config guard an env or secret write opened or joined.
  */
 export type ConfigGuardSummary = {
   id: string;

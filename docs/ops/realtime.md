@@ -18,6 +18,23 @@ These features stay off until realtime has been tested end to end. Each flag
 defaults to `0`; with all of them off, realtimed, apid and schedd behave as
 they did before the features existed.
 
+**Who sees a preview.** A daemon flag says the daemon is ready for a feature;
+the `realtime_preview` platform flag says which accounts see it
+(ADR-20261019102657, [platform flags](platform-flags.md)).
+`FAAS_REALTIME_PREVIEW_ACCOUNTS` on apid seeds the flag until an operator
+writes it: comma-separated account IDs while you test on production, `*` at
+launch, empty (the default) for nobody. It covers retained
+history and everything built on it (consumer groups, inbox, push, schedules,
+snapshots, reducers, read progress, realtime triggers, publisher and worker
+credentials), tickets, access controls, occupancy, the usage API, and on
+realtimed the v2 protocol, SSE and live occupancy, which apply only to
+endpoints apid marks for a listed account. For any other account the routes
+answer as unregistered ones. The served OpenAPI document and `/docs` list the
+preview only at `*`. The CLI shows its verbs, `--delivery retained` and the
+gregale.yaml `realtime:` section only when `FAAS_REALTIME_PREVIEW_ACCOUNTS` is
+set in the shell. Turn a preview on by setting its flag on apid and every
+realtime node and listing your account, then widen to `*`.
+
 | Flag | Daemons | Turns on |
 |---|---|---|
 | `FAAS_REALTIME_FAIR_USE_ENABLED` | apid, realtimed | plan connection limits per account, the 50% per-node account share, and the 6,000 node connection default (otherwise 10,000) (ADR-1323) |
@@ -26,6 +43,11 @@ they did before the features existed.
 | `FAAS_REALTIME_OCCUPANCY_PREVIEW_ENABLED` | apid, realtimed | `GET …/occupancy` on apid, live occupancy frames and SSE events on realtimed (ADR-1324) |
 | `FAAS_TRIGGER_BATCH_DELIVERY_PREVIEW_ENABLED` | apid | `delivery: batch` on triggers; off, apid refuses it with 422 (ADR-1321) |
 | `FAAS_TRIGGER_LEDGER_RETENTION_ENABLED` | schedd | the `trigger_records` reaper (default ages 7 days, 30 for dead letters) |
+
+The generated apid and realtimed units set `FAAS_REALTIME_FAIR_USE_ENABLED=1`
+and the realtimed unit sets `FAAS_REALTIME_OUTBOUND_BUDGET_ENABLED=1`: they are
+protections that keep realtimed inside its 512 MB `MemoryMax`, not previews
+(ADR-1323, amendment of 2026-10-26).
 
 Set a two-daemon flag on apid and on every realtime node. Realtime function
 triggers (ADR-1322) stay behind `FAAS_REALTIME_RETAINED_PREVIEW_ENABLED`, and
@@ -1185,7 +1207,7 @@ Web Push payloads use RFC 8291 encryption and RFC 8188 `aes128gcm` framing.
 Browser/Node SDK consumers receive push actions after subscribing:
 
 ```ts
-import { realtimeWebPushRegistration } from '@gregale/sdk-node/browser';
+import { realtimeWebPushRegistration } from '@gregale/sdk-node/preview/browser';
 
 const inbox = {
   consumerId: 'browser-main',
@@ -2840,7 +2862,7 @@ scopes are required):
 
 ```typescript
 import { revokeRealtimeChannelAccess, restoreRealtimeChannelAccess,
-  revokeRealtimeSessions, RealtimeService } from '@gregale/sdk-node';
+  revokeRealtimeSessions, RealtimeService } from '@gregale/sdk-node/preview';
 
 const user = { slug: 'workspace', id: endpointId, principal: 'user-123' };
 await revokeRealtimeChannelAccess(user, 'project-42');
@@ -2937,7 +2959,7 @@ that SQL from `commit.RealtimeChangefeedSchema`. The platform never installs it
 for you. Use a regular table with a primary key; partitioned tables are unsupported.
 
 ```ts
-import { installRealtimeChangefeed, removeRealtimeChangefeed } from '@gregale/sdk-node';
+import { installRealtimeChangefeed, removeRealtimeChangefeed } from '@gregale/sdk-node/preview';
 
 // Run using the customer database owner connection, inside its own transaction.
 await installRealtimeChangefeed(ownerTx, 'public.orders', {
@@ -3012,7 +3034,7 @@ produce `resync_required` and close the stream. Refresh your application snapsho
 and explicitly choose the subsequent cursor; do not automatically skip history.
 
 ```ts
-import { subscribeRealtimeSSE } from '@gregale/sdk-node/browser';
+import { subscribeRealtimeSSE } from '@gregale/sdk-node/preview/browser';
 
 for await (const message of subscribeRealtimeSSE({
   url: `https://your-gateway/__gregale/realtime/${endpointId}`,
@@ -3138,7 +3160,7 @@ Browser WebSocket example:
 
 ```ts
 import { createBrowserRealtimeTicketSocketFactory, consumeRealtimeChannel }
-  from '@gregale/sdk-node/browser';
+  from '@gregale/sdk-node/preview/browser';
 
 const createSocket = createBrowserRealtimeTicketSocketFactory(async () => {
   const response = await fetch('/api/realtime-ticket', { method: 'POST' });
@@ -3208,7 +3230,7 @@ Requires the existing server resume/SSE preview and matching browser allowed
 origins; ticket authentication also requires ticket preview.
 
 ```ts
-import { consumeRealtimeChannelWithFallback } from '@gregale/sdk-node/browser';
+import { consumeRealtimeChannelWithFallback } from '@gregale/sdk-node/preview/browser';
 
 await consumeRealtimeChannelWithFallback({
   url: `https://your-gateway/__gregale/realtime/${endpointId}`,
@@ -3431,7 +3453,7 @@ completion count survive. A reset does not assert skipped work was completed.
 The Node worker helper renews leases while a handler runs and ACKs after success:
 
 ```ts
-import { consumeRealtimeConsumerGroup, RealtimeService } from '@gregale/sdk-node';
+import { consumeRealtimeConsumerGroup, RealtimeService } from '@gregale/sdk-node/preview';
 
 const target = { slug: 'my-app', id: endpointId, channel: 'tasks', group: 'email-workers' };
 await consumeRealtimeConsumerGroup({
@@ -3542,7 +3564,7 @@ The isolated Node client does not change global SDK credentials:
 import {
   createRealtimeConsumerGroupWorkerClient,
   consumeRealtimeConsumerGroupWithCredential,
-} from '@gregale/sdk-node';
+} from '@gregale/sdk-node/preview';
 
 const client = createRealtimeConsumerGroupWorkerClient({
   groupId: issued.info.group_id,
@@ -4390,7 +4412,7 @@ Apply migration `20261012102700538_realtime_replay_job_dry_runs.sql` and upgrade
 
 ### Python worker lifecycle
 
-The Python SDK exports account and scoped-credential async consumer-group helpers in `faas_sdk.realtime_workers` and at the package root. They handle bounded concurrent batch claims, lease renewal/expiry, handler complete/retry settlement and optional readiness heartbeats. Supply an async handler that awaits every effect and observes its context stop event; enforce idempotency and fencing at downstream writes. Callers own the async HTTP client and must disable custom mutation retries.
+The Python SDK exports account and scoped-credential async consumer-group helpers in `faas_sdk.preview.realtime_workers` and at the package root. They handle bounded concurrent batch claims, lease renewal/expiry, handler complete/retry settlement and optional readiness heartbeats. Supply an async handler that awaits every effect and observes its context stop event; enforce idempotency and fencing at downstream writes. Callers own the async HTTP client and must disable custom mutation retries.
 
 Use an asyncio.Event for graceful shutdown. Opt-in release waits for handlers and lease monitors to stop and only releases valid leases after caller shutdown. Task cancellation joins the same owned tasks before propagating. Expired/lost leases and uncertain terminal settlements are not followed by release. Python `settlement_retries=0` is the default; opt in to 1–3 receipt-backed retries for complete/retry/release on temporary network errors or HTTP 408/500/502/503/504. Each logical settlement reuses one UUID key and body, with 100/200/400 ms backoff. Claims and renewals never retry automatically. Cancellation interrupts requests/backoff; release still has a total five-second budget. Auth, validation, conflicts, capacity and malformed responses stop retries. Requires server settlement receipt support (ADR 1055). Scoped workers require status/claim/renew/complete/retry grants and optional heartbeat/release grants. SDK runtime validation remains deferred; this addition needs no migration.
 

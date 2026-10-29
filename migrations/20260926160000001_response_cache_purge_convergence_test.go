@@ -16,7 +16,7 @@ import (
 
 func TestMigrations_ResponseCachePurgeIsDurableAndNotified(t *testing.T) {
 	ctx := context.Background()
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatalf("db.MigrateUp: %v", err)
 	}
@@ -92,10 +92,23 @@ func TestMigrations_ResponseCachePurgeIsDurableAndNotified(t *testing.T) {
 	if err != nil || len(changes) != 1 || changes[0].ID != secondID || changes[0].Tag != "product:42" {
 		t.Fatalf("purge replay after %d = %+v, %v; want canonical tag revision %d", firstID, changes, err, secondID)
 	}
-	if err := store.UpsertGatewayResponseCachePurgeWatermark(ctx, nodeName, secondID); err != nil {
+	role, gatewayURL := "compute-only", "tcp://127.0.0.1:9090"
+	node, err := store.CreateComputeNode(ctx, state.ComputeNode{Name: nodeName, TargetURL: "unix:///run/vmmd.sock", VPCPUs: 1, MemMB: 1024, MaxConcurrency: 1, AdmissionCeilingMB: 512, VCPUBudget: 1, Active: true, Role: &role, GatewayTargetURL: &gatewayURL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.DeleteComputeNode(ctx, node.ID) })
+	epoch, err := store.RegisterGatewayTrafficEpoch(ctx, nodeName, uuid.NewString(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ReportGatewayTrafficRuntime(ctx, epoch, state.GatewayTrafficFeatures{RateCounterMode: "local", RetryCounterMode: "local"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ReportGatewayPolicyProgress(ctx, epoch, state.GatewayPolicyCachePurge, secondID); err != nil {
 		t.Fatalf("publish gateway watermark: %v", err)
 	}
-	if err := store.UpsertGatewayResponseCachePurgeWatermark(ctx, nodeName, firstID); err != nil {
+	if err := store.ReportGatewayPolicyProgress(ctx, epoch, state.GatewayPolicyCachePurge, firstID); err != nil {
 		t.Fatalf("attempt watermark regression: %v", err)
 	}
 	cursor, err := store.BootstrapGatewayResponseCachePurgeCursor(ctx, nodeName)

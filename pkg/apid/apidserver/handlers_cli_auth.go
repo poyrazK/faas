@@ -211,6 +211,10 @@ func (h *cliAuthHandlers) renderCliAuthPage(w http.ResponseWriter, r *http.Reque
 		h.renderPromotionApprovalPage(w, r)
 		return
 	}
+	if r.URL.Query().Has("secret") {
+		h.renderSecretEntryPage(w, r)
+		return
+	}
 	hash, ok := normalizeCliAuthCode(r.URL.Query().Get("code"))
 	if !ok {
 		h.renderCliAuthError(w, r, "Code looks malformed", "Codes are 8 characters, like ABCD-1234.")
@@ -250,19 +254,24 @@ func (h *cliAuthHandlers) renderCliAuthPage(w http.ResponseWriter, r *http.Reque
 	})
 
 	title := "Authorize CLI session"
+	// A CLI code is typed from the terminal, never carried from the link
+	// into the form, so a link someone sent cannot authorize their
+	// terminal. MCP codes arrive through the bridge's own OAuth redirect.
+	shownCode := ""
 	if isMCPAuthCode(raw) {
 		title = "Authorize MCP connection"
+		shownCode = raw
 	}
 	page := dashboard.Page{
 		Title:   title,
 		Body:    "cli_auth",
 		Account: dashboardAccountView(acct, 0),
 		Data: map[string]any{
-			"Code":         raw,
-			"CSRFToken":    token,
-			"AccountEmail": acct.Email,
-			"MCP":          isMCPAuthCode(raw),
-			"MCPWrites":    strings.HasPrefix(raw, "MCPW"),
+			"Code":            shownCode,
+			"CSRFToken":       token,
+			"AccountEmail":    acct.Email,
+			"MCP":             isMCPAuthCode(raw),
+			"MCPCapabilities": mcpCapabilities(raw),
 		},
 	}
 	if err := dashboard.Render(w, h.log, httpsec.NonceFromContext(r.Context()), page); err != nil {
@@ -295,6 +304,10 @@ func (h *cliAuthHandlers) postCliAuthPage(w http.ResponseWriter, r *http.Request
 	}
 	if r.PostForm.Has("approval") {
 		h.postPromotionApprovalPage(w, r)
+		return
+	}
+	if r.PostForm.Has("secret") {
+		h.postSecretEntryPage(w, r)
 		return
 	}
 	// Resolve the code first so we can pass it as the CSRF subject.

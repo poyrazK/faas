@@ -53,7 +53,7 @@ func (s Service) GetCleanupPlan(w http.ResponseWriter, r *http.Request, a state.
 	httpkit.WriteJSON(w, 200, plan)
 }
 func cleanupQueryRules(r *http.Request) (*api.HostingRetentionRules, error) {
-	q, err := r.URL.Query(), error(nil)
+	q := r.URL.Query()
 	if !q.Has("pending_age_seconds") && !q.Has("staged_age_seconds") {
 		return nil, nil
 	}
@@ -61,6 +61,7 @@ func cleanupQueryRules(r *http.Request) (*api.HostingRetentionRules, error) {
 		return nil, state.ErrInvalidArgument
 	}
 	var rules api.HostingRetentionRules
+	var err error
 	rules.PendingAgeSeconds, err = strconv.ParseInt(q.Get("pending_age_seconds"), 10, 64)
 	if err != nil {
 		return nil, err

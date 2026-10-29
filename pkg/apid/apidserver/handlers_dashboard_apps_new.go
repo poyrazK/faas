@@ -27,13 +27,13 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/onebox-faas/faas/cmd/gregale/templates"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/dashboard/views"
 	"github.com/onebox-faas/faas/pkg/githubdgrpc"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/middleware"
+	"github.com/onebox-faas/faas/pkg/sessioncookie"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -71,7 +71,7 @@ func (s *server) renderAppNew(w http.ResponseWriter, r *http.Request, log *slog.
 	// the dashboard catalog endpoint; starter projects are currently created
 	// locally with `gregale init`, not written into a GitHub repository by this
 	// server-side flow.
-	view.Templates = projectAppsNewTemplates(fetchTemplatesForWizard(log))
+	view.Templates = projectAppsNewTemplates(s.templateRows(flagSubject(r, acct)))
 
 	// §11 ownership proof. Empty env.GithubLogin → render the
 	// "Connect GitHub first" CTA only; the install/repo/template
@@ -224,40 +224,6 @@ func renderAppsNewPage(w http.ResponseWriter, log *slog.Logger, r *http.Request,
 	}
 }
 
-// fetchTemplatesForWizard is a tiny adapter that calls the in-process
-// listTemplates logic without going through the HTTP wire. Same sort
-// + filter logic, no JSON marshal round-trip.
-//
-// Re-derives from templates.Names; this avoids a second HTTP
-// round-trip through /v1/templates. The handler is the
-// canonical sort/filter path; a future refactor that hoists
-// listTemplates into a service method will let both surfaces
-// share one implementation.
-func fetchTemplatesForWizard(log *slog.Logger) []templateView {
-	_ = log
-	rows := make([]templateView, 0, len(templates.Names))
-	for _, name := range templates.ListedNames() {
-		cat := templates.CategoryFor(name)
-		desc := templateDescription(name)
-		if cat == "" || desc == "" {
-			continue
-		}
-		rows = append(rows, templateView{Name: name, Category: cat, Description: desc})
-	}
-	catOrder := map[string]int{}
-	for i, c := range templates.CategoryOrder {
-		catOrder[c] = i
-	}
-	sort.SliceStable(rows, func(i, j int) bool {
-		oi, oj := catOrder[rows[i].Category], catOrder[rows[j].Category]
-		if oi != oj {
-			return oi < oj
-		}
-		return rows[i].Name < rows[j].Name
-	})
-	return rows
-}
-
 // Compile-time check: githubdgrpc.Repo is the wire type referenced
 // from the wizard's repo projection.
 var _ = githubdgrpc.Repo{}
@@ -271,7 +237,7 @@ var _ = githubdgrpc.Repo{}
 // re-runs sessionGithubLogin), so the wizard's "peek" path is
 // read-only by design.
 func peekSessionGithubLogin(s *server, r *http.Request) (string, bool) {
-	c, err := r.Cookie(sessionCookie)
+	c, err := sessioncookie.Get(r)
 	if err != nil || c.Value == "" {
 		return "", false
 	}

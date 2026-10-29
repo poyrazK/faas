@@ -221,6 +221,10 @@ type Handler struct {
 	// sidecar write at base_stage.go::writeScanSidecar reads the
 	// counts off the struct to build the legacy sidecar JSON.
 	grypeRun func(ctx context.Context, dir string) (*ScanResult, error)
+	// lastDeployScanner is the scanner and database the last per-deploy
+	// Grype run used; a redeploy of an unchanged artifact reuses a result
+	// only from that same scanner (scan_reuse.go).
+	lastDeployScanner scannerMemo
 
 	// runtimeGrypeRun scans the native composed directory without treating a
 	// customer file named rootfs.ext4 as a nested image.
@@ -272,6 +276,10 @@ type Handler struct {
 	// Interface (not concrete *VMMClient) so tests can inject a
 	// fakeVMMClient (defined in vmmclient.go) without dialing.
 	vmmClient VMMClientIface
+	// nativeSnapshotRoot is vmmd's private tree for native runtime
+	// snapshots (ADR 20261022184951 amendment 1). imaged reads it to learn
+	// which objects vmmd must remove; "" keeps every delete on the backend.
+	nativeSnapshotRoot string
 	// runtimeBaseMu serializes on-demand runtime-base staging. Multiple
 	// deployments can arrive together after a cold start; without this
 	// guard they could concurrently rebuild the same ext4 and race the
@@ -535,9 +543,12 @@ func (h *Handler) WithContinuousProfiling(enabled bool) *Handler {
 func (h *Handler) stampProfiling(manifest api.AppManifest, acct state.Account) api.AppManifest {
 	limits, ok := api.LimitsFor(acct.Plan)
 	manifest.ProfilingOnDemand = h.profilingOnDemand && ok && limits.Profiling.Enabled
-	if manifest.Profiling != nil && manifest.Profiling.Enabled && !h.continuousProfiling {
+	if manifest.Profiling != nil && (manifest.Profiling.Enabled && !h.continuousProfiling || manifest.Profiling.AutomaticCaptures != nil) {
 		cfg := *manifest.Profiling
-		cfg.Enabled = false
+		cfg.Enabled = cfg.Enabled && h.continuousProfiling
+		// Automatic captures are the control plane's decision; the guest
+		// manifest stays what guests of every release understand.
+		cfg.AutomaticCaptures = nil
 		manifest.Profiling = &cfg
 	}
 	return manifest
@@ -1061,6 +1072,7 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 		return verifiedScanFailure(app.SecurityPolicy, "scan handler is not wired")
 	}
 	start := time.Now()
+	ctx, timing := withScanTiming(ctx)
 	be, err := h.storageFor()
 	if err != nil {
 		// storageFor only errors when h.appsRoot is empty /
@@ -1105,14 +1117,25 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 		return verifiedScanFailure(app.SecurityPolicy, "scan staging failed: "+err.Error())
 	}
 	defer cleanup()
+	markScanPhase(ctx, "stage")
 	artifactDigest, artifactErr := digestScanArtifact(scanDir)
+	markScanPhase(ctx, "digest")
 	if artifactErr != nil {
 		h.log.Warn("imaged: hash scan artifact", "deployment", dep.ID, "app", app.Slug, "err", artifactErr)
 		if app.SecurityPolicy == api.AppSecurityPolicyEnforce {
 			return verifiedScanFailure(app.SecurityPolicy, "hash scan artifact failed: "+artifactErr.Error())
 		}
 	}
-	result, err := h.runGrype(ctx, scanDir)
+	var result *ScanResult
+	if artifactErr == nil {
+		result = h.reusableDeployScan(ctx, app, dep, artifactDigest)
+	}
+	if result != nil {
+		markScanPhase(ctx, "reuse")
+	} else {
+		result, err = h.runGrype(ctx, scanDir)
+		h.lastDeployScanner.record(result, err, time.Now())
+	}
 	if err != nil {
 		// Fail the scan, not the deploy. Log the grype error
 		// so the operator sees the underlying cause.
@@ -1155,7 +1178,10 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 	// stale or cross-deployment results instead of trusting severity counts.
 	result.ImageDigest = dep.ImageDigest
 	result.ArtifactDigest = artifactDigest
-	result.ScannedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	if result.ReusedFrom == "" {
+		// A reused result keeps the time its scan ran.
+		result.ScannedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	}
 	b, mErr := json.Marshal(result)
 	if mErr != nil {
 		h.log.Warn("imaged: marshal scan result",
@@ -1181,10 +1207,13 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 	} {
 		h.ops.ObserveDeployScanVulns(app.Slug, sev, n)
 	}
-	h.log.Info("imaged: per-deploy scan stamped",
+	markScanPhase(ctx, "record")
+	h.log.Info("imaged: per-deploy scan stamped", append([]any{
 		"deployment", dep.ID, "app", app.Slug,
 		"critical", result.SeverityCounts.Critical, "high", result.SeverityCounts.High,
-		"medium", result.SeverityCounts.Medium, "low", result.SeverityCounts.Low, "unknown", result.SeverityCounts.Unknown)
+		"medium", result.SeverityCounts.Medium, "low", result.SeverityCounts.Low, "unknown", result.SeverityCounts.Unknown,
+		"reused_from", result.ReusedFrom,
+	}, timing.attrs()...)...)
 	return checkVerifiedScanGate(app.SecurityPolicy, dep, "complete", result)
 }
 
@@ -1818,6 +1847,11 @@ type snapshotWrittenPayload struct {
 	StoredBytes      int64  `json:"stored_bytes"`
 	FCVersion        string `json:"fc_version"`
 	BaseImageVersion string `json:"base_image_version,omitempty"`
+	// CPUTemplate and CPUModel are the capturing node's CPU identity
+	// (ADR-20261024225612); absent on payloads from an older schedd or an
+	// unregistered node, which leaves a legacy row.
+	CPUTemplate string `json:"cpu_template,omitempty"`
+	CPUModel    string `json:"cpu_model,omitempty"`
 	// Tier (issue #470 / PR #470-FU-B) is the snapshot tier this
 	// row belongs to: "init" (taken right after guest-init binds
 	// :8080; restore pays framework warmup) or "warm" (taken
@@ -2425,6 +2459,10 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 		_ = h.markDeployFailed(ctx, dep.ID, err, "manifest invalid")
 		return fmt.Errorf("imaged: validate manifest: %w", err)
 	}
+	if err := checkCompanionPorts(manifest, dep); err != nil {
+		_ = h.markDeployFailed(ctx, dep.ID, err, "workload ports")
+		return fmt.Errorf("imaged: workload ports: %w", err)
+	}
 	if err := h.store.SetDeploymentSecretReloadSignal(ctx, dep.ID, manifest.SecretReloadSignal); err != nil {
 		_ = h.markDeployFailed(ctx, dep.ID, err, "persist secret reload support")
 		return fmt.Errorf("imaged: persist secret reload support: %w", err)
@@ -2693,6 +2731,14 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 	upsertDeploymentSecretFindings(ctx, h.store, dep.ID,
 		allFindings, layerSecretScanStatusCompleteWithRedactions,
 		dep.ImageDigest, scannedAt, h.log)
+	// Every finding is recorded for `gregale deployment ID
+	// --show-secret-scan`; only credential formats fail the deploy
+	// (ADR-20261026152731). Heuristic findings stay advisory.
+	if len(secretscan.Blocking(allFindings)) == 0 {
+		h.log.Info("imaged: layer secret scan advisory findings",
+			"deployment", dep.ID, "app", app.Slug, "findings", len(allFindings))
+		return nil
+	}
 	if markErr := h.markDeployFailed(ctx, dep.ID, errImageSecretDetected, "image-layer secret detected"); markErr != nil {
 		h.log.Warn("imaged: mark deploy failed on layer secret",
 			"deployment", dep.ID, "app", app.Slug, "err", markErr)
@@ -3579,7 +3625,9 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 			DeploymentID:                    snapshot.DeploymentID,
 			FCVersion:                       snapshot.FCVersion,        // pins Firecracker restore compatibility (ADR-005)
 			BaseImageVersion:                snapshot.BaseImageVersion, // pins H2C runner/base compatibility
-			StorageKey:                      snapshot.StorageKey,       // see snapshotWrittenPayload.StorageKey
+			CPUTemplate:                     snapshot.CPUTemplate,      // pins CPU restore compatibility (ADR-20261024225612)
+			CPUModel:                        snapshot.CPUModel,
+			StorageKey:                      snapshot.StorageKey, // see snapshotWrittenPayload.StorageKey
 			MemBytes:                        snapshot.MemBytes,
 			DiskBytes:                       snapshot.VMStateBytes,
 			StoredBytes:                     snapshot.StoredBytes,
@@ -3605,7 +3653,9 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 				h.ops.RecordSnapshotPublication(snap.Tier, wire.SnapshotPublicationWriteError)
 				return fmt.Errorf("imaged: create snapshot: %w", createErr)
 			}
-			stored, createErr = h.store.LatestSnapshotForTier(ctx, snapshot.DeploymentID, snap.Tier)
+			// The conflicting row is this capture's CPU platform's live row
+			// (ADR-20261024225612 amendment 1): other platforms keep theirs.
+			stored, createErr = liveSnapshotOnPlatform(ctx, h.store, snapshot.DeploymentID, snap.Tier, snap.CPUPlatform())
 			if createErr != nil {
 				h.ops.RecordSnapshotPublication(snap.Tier, wire.SnapshotPublicationWriteError)
 				return fmt.Errorf("imaged: load existing snapshot: %w", createErr)
@@ -3811,13 +3861,14 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 	// deliberately activates an older revision. Like a checked rollback it
 	// must skip the latest-revision fence and the source-branch freshness
 	// check, which would otherwise supersede every rollback target.
+	preparedRollback := false
 	if !checkedRollback {
 		if prepared, ok := h.store.(state.RollbackPreparedStore); ok {
 			isPrepared, err := prepared.DeploymentRollbackPrepared(ctx, dep.ID)
 			if err != nil && !errors.Is(err, state.ErrNotFound) {
 				return fmt.Errorf("imaged: read rollback marker: %w", err)
 			}
-			checkedRollback = isPrepared
+			checkedRollback, preparedRollback = isPrepared, isPrepared
 		}
 	}
 
@@ -3856,6 +3907,10 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		promoteErr = h.store.MarkMCPTaskRecoveryDeploymentLive(ctx, dep.ID, !checkedRollback && dep.Kind.RequiresLatestRevision())
 	} else if !checkedRollback && dep.Kind.RequiresLatestRevision() {
 		promoteErr = h.store.MarkDeploymentLiveIfLatest(ctx, dep.ID)
+	} else if preparedRollback {
+		// The store rechecks the marker under its lock: a rollback withdrawn
+		// since the read above (its receipt failed) must not cut over.
+		promoteErr = h.store.MarkDeploymentLive(state.WithPreparedRollbackPromotion(ctx), dep.ID)
 	} else {
 		promoteErr = h.store.MarkDeploymentLive(ctx, dep.ID)
 	}
@@ -4002,15 +4057,32 @@ func (h *Handler) discardStaleSnapshotCapture(ctx context.Context, snap state.Sn
 	if !state.IsSnapshotCaptureKey(snap.StorageKey) {
 		return nil
 	}
-	live, err := h.store.LatestSnapshotForTier(ctx, snap.DeploymentID, snap.Tier)
-	if err != nil && !errors.Is(err, state.ErrNotFound) {
+	live, err := state.LiveSnapshotsForTier(ctx, h.store, snap.DeploymentID, snap.Tier)
+	if err != nil {
 		return fmt.Errorf("imaged: inspect stale capture before cleanup: %w", err)
 	}
-	if err == nil && live.StorageKey == snap.StorageKey {
-		return nil
+	for _, row := range live {
+		if row.StorageKey == snap.StorageKey {
+			return nil
+		}
 	}
 	h.deleteSnapshotPair(ctx, snap)
 	return nil
+}
+
+// liveSnapshotOnPlatform is the deployment's live row of tier on one CPU
+// platform (ADR-20261024225612 amendment 1); ErrNotFound when there is none.
+func liveSnapshotOnPlatform(ctx context.Context, store state.Store, deploymentID, tier, platform string) (state.Snapshot, error) {
+	rows, err := state.LiveSnapshotsForTier(ctx, store, deploymentID, tier)
+	if err != nil {
+		return state.Snapshot{}, err
+	}
+	for _, row := range rows {
+		if row.CPUPlatform() == platform {
+			return row, nil
+		}
+	}
+	return state.Snapshot{}, state.ErrNotFound
 }
 
 func (h *Handler) notifyDeploymentState(ctx context.Context, appID, deploymentID string, status state.DeploymentStatus) {
@@ -4708,8 +4780,10 @@ func pullBlobWithAuth(ctx context.Context, mp oci.ManifestPuller, repo, digest s
 //
 // App soft-delete cleanup drops the ext4 AND the snap blobs for every
 // deployment of the app. Superseded deployments are intentionally left
-// intact here; the imaged GC owns the bounded rollback window and removes
-// both artifacts together once no restoreable snapshot remains.
+// intact here; the imaged GC owns the bounded rollback window. A rollback
+// target inside it keeps its cold-boot layers whatever state its snapshots
+// are in (Hunt 21 H21-1); outside it, a deployment's layers go once no
+// restoreable snapshot remains.
 
 // cleanupDeploymentFiles removes the on-disk artifacts for a single deployment.
 // It remains available for explicit destructive cleanup paths and tests;

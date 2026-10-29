@@ -47,6 +47,14 @@ func (s *Service) ListTraces(w http.ResponseWriter, r *http.Request, acct state.
 		return
 	}
 	traces, err := store.ListOutboundAITraces(r.Context(), acct.ID, integrationID, query)
+	var visible map[string]bool
+	if err == nil {
+		callers := make([]string, 0, len(traces))
+		for _, trace := range traces {
+			callers = append(callers, trace.Caller)
+		}
+		visible, err = s.visibleCallers(r, acct, callers)
+	}
 	switch {
 	case errors.Is(err, state.ErrNotFound):
 		httpkit.NotFound(w, "outbound integration not found")
@@ -57,7 +65,9 @@ func (s *Service) ListTraces(w http.ResponseWriter, r *http.Request, acct state.
 	default:
 		out := api.OutboundAITraceList{Items: make([]api.OutboundAITrace, 0, len(traces))}
 		for _, trace := range traces {
-			out.Items = append(out.Items, traceResponse(trace))
+			if visible[trace.Caller] {
+				out.Items = append(out.Items, traceResponse(trace))
+			}
 		}
 		if len(traces) == limit && len(traces) > 0 {
 			next := traces[len(traces)-1].LastAt
@@ -85,8 +95,16 @@ func (s *Service) GetTrace(w http.ResponseWriter, r *http.Request, acct state.Ac
 		return
 	}
 	detail, err := store.GetOutboundAITrace(r.Context(), acct.ID, integrationID, traceID)
+	var visible map[string]bool
+	if err == nil {
+		callers := []string{detail.Trace.Caller}
+		for _, entry := range detail.Calls {
+			callers = append(callers, entry.Caller)
+		}
+		visible, err = s.visibleCallers(r, acct, callers)
+	}
 	switch {
-	case errors.Is(err, state.ErrNotFound):
+	case errors.Is(err, state.ErrNotFound), err == nil && !visible[detail.Trace.Caller]:
 		httpkit.NotFound(w, "AI trace not found")
 	case err != nil:
 		problem(w, http.StatusServiceUnavailable, "outbound_ai_unavailable", "Outbound AI traces are unavailable")
@@ -94,6 +112,9 @@ func (s *Service) GetTrace(w http.ResponseWriter, r *http.Request, acct state.Ac
 		out := api.OutboundAITraceResponse{Trace: traceResponse(detail.Trace), CallsTruncated: detail.CallsTruncated,
 			Calls: make([]api.OutboundAITraceCall, 0, len(detail.Calls))}
 		for _, entry := range detail.Calls {
+			if !visible[entry.Caller] {
+				continue
+			}
 			out.Calls = append(out.Calls, api.OutboundAITraceCall{
 				ID: entry.ID, CreatedAt: entry.CreatedAt, Caller: entry.Caller, Model: entry.Model, Status: entry.Status,
 				Outcome: entry.Outcome, InputTokens: entry.InputTokens, OutputTokens: entry.OutputTokens,

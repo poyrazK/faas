@@ -27,7 +27,7 @@ func TestMemStorePRPreviewBatchAtomicQuotaAndRetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	limits := api.Limits{DeployedApps: 5, PreviewApps: 2}
+	limits := api.Limits{DeployedApps: 2, PreviewApps: 2} // one environment holds at most two workloads
 	previews := []state.App{
 		{AccountID: account.ID, ProjectID: project.ID, Slug: "pr-42-api", PreviewOfSlug: "api", PreviewPrNumber: 42, Status: state.AppActive},
 		{AccountID: account.ID, ProjectID: project.ID, Slug: "pr-42-db", PreviewOfSlug: "db", PreviewPrNumber: 42, Status: state.AppActive},
@@ -58,11 +58,11 @@ func TestMemStorePRPreviewBatchAtomicQuotaAndRetry(t *testing.T) {
 		}
 	}
 	// Increasing the cap makes the same batch succeed without replacing root.
-	created, err := store.CreatePRPreviewAppsIfUnderQuota(ctx, previews, api.Limits{DeployedApps: 5, PreviewApps: 3})
+	created, err := store.CreatePRPreviewAppsIfUnderQuota(ctx, previews, api.Limits{DeployedApps: 3, PreviewApps: 3})
 	if err != nil || len(created) != len(previews) || created[0].ID != root.ID {
 		t.Fatalf("idempotent batch = (%+v, %v)", created, err)
 	}
-	if _, err := store.CreatePRPreviewAppsIfUnderQuota(ctx, previews, api.Limits{DeployedApps: 5, PreviewApps: 3}); err != nil {
+	if _, err := store.CreatePRPreviewAppsIfUnderQuota(ctx, previews, api.Limits{DeployedApps: 3, PreviewApps: 3}); err != nil {
 		t.Fatalf("full-capacity retry: %v", err)
 	}
 }

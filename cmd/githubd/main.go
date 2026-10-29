@@ -44,6 +44,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/sealdomain"
 	"github.com/onebox-faas/faas/pkg/secretbox"
+	"github.com/onebox-faas/faas/pkg/sourcespool"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -180,7 +181,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// reconcile service shares the same state.Store as the
 	// apid-side reconcile (one PgStore per daemon — no
 	// cross-process shared state).
-	store := state.NewPgStore(pool)
+	store := state.NewPgStore(pool, state.WithTrafficAppsDomain(cfg.AppsDomain))
 	wire.BootStamps(ctx, "githubd", ops)
 	wire.RegisterDefaultOps(ops)
 	// ADR-190 follow-up: export this pool's live statistics so the
@@ -287,12 +288,21 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	webhookSvc.Installs = installsAdapter
 	webhookSvc.Source = source
 	webhookSvc.Reconcile = ghReconcile
+	capabilityAllowed, err := startCapabilityFlags(ctx, store, pool, log)
+	if err != nil {
+		return err
+	}
+	webhookSvc.CapabilityAllowed = capabilityAllowed
 	// Issue #432 phase 5: workDir is the root under which
 	// the per-app source tarballs land during the dispatch
 	// loop (pkg/githubd/staging.go). Same value as the
 	// gitfetch temp dir hoisted at line 123-127; both
 	// producers share the operator-controlled dir tree.
 	webhookSvc.WorkDir = workDir
+	// ADR-20261026152731: each push stages a full repository archive under
+	// build-sources/<account>/<app>/<commit>; expire them like apid's spool.
+	go sourcespool.Sweeper{Root: filepath.Join(workDir, "build-sources"), Layout: sourcespool.GithubdStaging,
+		Store: store, MaxAge: api.SourceSpoolRetention, Log: log}.Run(ctx, api.SourceSpoolSweepInterval)
 	// Issue #432 phase 5: build fan-out. The production
 	// enqueuer dials the apid gRPC bridge via the
 	// ApidBridgeClient (cmd/githubd/apid_bridge.go). The
@@ -355,6 +365,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					return fmt.Errorf("githubd: new checks api: %w", checksErr)
 				}
 				checks.WithCheckRunStore(deliveryStore).WithGitHubDeploymentStore(deliveryStore)
+				if id, parseErr := strconv.ParseInt(appID, 10, 64); parseErr == nil && id > 0 {
+					checks.AppID = id
+				}
 				// PR-C: load the host age keypair so the install
 				// token can be sealed at rest (SealOne at mint)
 				// and unsealed at cold-start rehydrate (Open).

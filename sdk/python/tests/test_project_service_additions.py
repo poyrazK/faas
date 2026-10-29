@@ -1,8 +1,8 @@
 from io import BytesIO
 
-from faas_sdk.api.projects import safe_apply_project
-from faas_sdk.models.project_apply_request import ProjectApplyRequest
-from faas_sdk.models.project_safe_release import ProjectSafeRelease
+from faas_sdk.preview.api.projects import safe_apply_project
+from faas_sdk.preview.models.project_apply_request import ProjectApplyRequest
+from faas_sdk.preview.models.project_safe_release import ProjectSafeRelease
 from faas_sdk.types import File
 
 

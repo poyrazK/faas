@@ -94,6 +94,23 @@
       {{if .Data.ErrorMessage}}<p class="error">{{.Data.ErrorMessage}}</p>{{end}}
       {{if .Data.ActionMessage}}<p class="{{if .Data.ActionError}}error{{else}}notice{{end}}">{{.Data.ActionMessage}}</p>{{end}}
 
+      {{with .Data.DebugStatus}}
+        <h2 id="status">Status: {{.VerdictLabel}}</h2>
+        <div class="debug-status">
+          <p><strong>{{.Headline}}</strong></p>
+          <p class="muted">Last {{.Since}}: {{.Requests}} requests · {{.ServerErrors}} server errors · p95 {{.P95MS}} ms{{if .Regressions}} · <a href="#regressions">{{.Regressions}} open regressions</a>{{end}}{{if not .TracingEnabled}} · tracing is off; set <code>tracing.enabled: true</code> to see spans and request logs{{end}}</p>
+          {{if .Release}}<p>Release: {{.Release}}</p>{{end}}
+          {{if .Examples}}<p class="muted">Requests behind the release decision:</p>
+            <ul>{{range .Examples}}<li><a href="{{.URL}}">{{.ReceivedAt}} · {{.Label}}</a></li>{{end}}</ul>{{end}}
+          {{if .Failures}}<p class="muted">Recent server errors:</p>
+            <ul>{{range .Failures}}<li><a href="{{.URL}}">{{.ReceivedAt}} · {{.Label}}</a></li>{{end}}</ul>{{end}}
+          {{if .OOMKills}}<p class="muted">Out-of-memory kills ({{.OOMKillsTotal}}):</p>
+            <ul>{{range .OOMKills}}<li>{{.}}</li>{{end}}</ul>
+            {{if .OOMFix}}<ul class="muted">{{range .OOMFix}}<li>{{.}}</li>{{end}}</ul>{{end}}{{end}}
+          <p class="muted">CLI: <code>{{.CLICommand}}</code></p>
+        </div>
+      {{end}}
+
       <h2 id="running">Why is this app running?</h2>
       {{if .Data.RunningError}}
         <div class="running"><p class="error">{{.Data.RunningError}}</p></div>
@@ -514,6 +531,20 @@
             {{if .Data.Selected.SpansTruncated}}<p class="muted">Evidence was truncated to the 100 slowest spans.</p>{{end}}
           {{else}}
             <p class="muted">No linked OTel spans were captured for this request.</p>
+          {{end}}
+          <h3>Request logs</h3>
+          {{if .Data.Selected.Logs}}
+            <table class="span-table" aria-label="Log lines emitted by this request">
+              <thead><tr><th>Time</th><th>Level</th><th>Source</th><th>Message</th></tr></thead>
+              <tbody>
+              {{range .Data.Selected.Logs}}
+                <tr><td><small><code>{{.OccurredAt}}</code></small></td><td>{{if .Level}}{{.Level}}{{else}}—{{end}}</td><td>{{.Source}}{{if .Stream}} <small class="muted">{{.Stream}}</small>{{end}}</td><td><code>{{.Message}}</code></td></tr>
+              {{end}}
+              </tbody>
+            </table>
+            {{if .Data.Selected.LogsTruncated}}<p class="muted">Showing the request's last 20 log lines.</p>{{end}}
+          {{else}}
+            <p class="muted">No app log lines carry this request's trace ID. With tracing enabled, Python <code>logging</code> and Node pino or bunyan logs are linked automatically.</p>
           {{end}}
           <small class="muted">Evidence generated {{.Data.Selected.GeneratedAt}}. Values are bounded and redacted before rendering.</small>
         </div>

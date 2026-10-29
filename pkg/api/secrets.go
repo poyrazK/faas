@@ -341,3 +341,47 @@ type RotateAppSecretResponse struct {
 	RotatedAt string `json:"rotated_at"`
 	Kid       string `json:"kid,omitempty"`
 }
+
+// Secret entry lets an agent ask the account owner for a secret without the
+// value passing through the agent (ADR-20261026174727). The owner types it on
+// a one-time page in a signed-in Gregale session; the requester learns only
+// whether it was set.
+const (
+	SecretEntryPending = "pending"
+	SecretEntrySet     = "set"
+)
+
+// SecretEntryRequest names the secret to collect and why.
+type SecretEntryRequest struct {
+	Key string `json:"key"`
+	// Scope is the env scope; empty means the default scope.
+	Scope string `json:"scope,omitempty"`
+	// Reason is shown to the owner on the entry page; at most 280 characters.
+	Reason string `json:"reason"`
+}
+
+// SecretEntryResponse is private to the requesting bridge. Ticket and
+// ExchangeCode check the request's status; they must never reach a model.
+// EntryURL is safe to show: it works only in the owner's signed-in session.
+type SecretEntryResponse struct {
+	EntryURL     string `json:"entry_url"`
+	Ticket       string `json:"ticket"`
+	ExchangeCode string `json:"exchange_code"`
+	ExpiresAt    string `json:"expires_at"`
+}
+
+// SecretEntryStatusRequest carries the private material from the response.
+type SecretEntryStatusRequest struct {
+	Ticket       string `json:"ticket"`
+	ExchangeCode string `json:"exchange_code"`
+}
+
+// SecretEntryStatus never includes the value.
+type SecretEntryStatus struct {
+	// Status is pending or set. An expired or unknown request is 410.
+	Status    string `json:"status"`
+	App       string `json:"app"`
+	Key       string `json:"key"`
+	Scope     string `json:"scope"`
+	ExpiresAt string `json:"expires_at"`
+}

@@ -27,7 +27,7 @@ func (s *server) renderCustomMetricsDashboard(w http.ResponseWriter, r *http.Req
 		http.NotFound(w, r)
 		return
 	}
-	data, err := s.dashboardCustomMetricsData(r, app)
+	data, err := s.dashboardCustomMetricsData(r, acct, app)
 	if err != nil {
 		renderProblem(w, s.log, err)
 		return
@@ -38,8 +38,9 @@ func (s *server) renderCustomMetricsDashboard(w http.ResponseWriter, r *http.Req
 	}
 }
 
-func (s *server) dashboardCustomMetricsData(r *http.Request, app state.App) (dashboard.CustomMetricsData, error) {
-	data := dashboard.CustomMetricsData{Enabled: s.customMetricHistoryEnabled, AppSlug: app.Slug, MaxMetrics: api.MaxCustomMetricsPerApp}
+func (s *server) dashboardCustomMetricsData(r *http.Request, acct state.Account, app state.App) (dashboard.CustomMetricsData, error) {
+	enabled := s.customMetricHistoryEnabled && s.capabilityEnabledFor("custom-metric-history", acct, app)
+	data := dashboard.CustomMetricsData{Enabled: enabled, AppSlug: app.Slug, MaxMetrics: api.MaxCustomMetricsPerApp}
 	if !data.Enabled {
 		return data, nil
 	}

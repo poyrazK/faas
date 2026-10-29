@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — Gregale</title>
+  <style nonce="{{.Nonce}}">
+    :root { color-scheme: light dark; --muted: #666; }
+    @media (prefers-color-scheme: dark) { :root { --muted: #aaa; } }
+    body { font: 16px/1.5 system-ui, sans-serif; max-width: 1100px; margin: auto; padding: 0 1.5rem; }
+    header { padding: 1rem 0; border-bottom: 1px solid #8886; } nav { display: flex; gap: 1rem; flex-wrap: wrap; }
+    table { border-collapse: collapse; width: 100%; } th, td { text-align: left; padding: .55rem; border-bottom: 1px solid #8884; vertical-align: top; }
+    .scroll { overflow-x: auto; } .muted { color: var(--muted); } .card { border: 1px solid #8886; border-radius: 8px; padding: 1rem; margin: 1rem 0; }
+    .card h2 { margin-top: 0; font-size: 1.15rem; } .warn { padding: .6rem; background: #d4900022; } .frozen { padding: .6rem; background: #c0392b22; }
+    code { overflow-wrap: anywhere; }
+  </style>
+</head>
+<body>
+<header><nav><strong>Gregale</strong><a href="/dashboard/">Overview</a>{{with .Data}}<a href="/dashboard/apps/{{.AppSlug}}">{{.AppSlug}}</a>{{end}}</nav></header>
+<main>
+{{template "email-verification-banner" .}}
+<h1>Release safety</h1>
+{{with .Data}}
+<p class="muted">What holds back production releases of {{.AppSlug}}. Change these settings with the CLI or API; the commands are shown in each section.</p>
+{{range .Unavailable}}<p class="warn" role="status">{{.}} could not be read right now.</p>{{end}}
+
+{{with .Freezes}}
+<section class="card" aria-labelledby="freezes">
+  <h2 id="freezes">Deploy freezes</h2>
+  {{if .Frozen}}<p class="frozen" role="status">Production releases are frozen. Deploys, retries and promotions are refused unless they override the freeze with a reason.</p>
+  <div class="scroll"><table><thead><tr><th>Reason</th><th>Kind</th><th>Until</th><th>By</th></tr></thead><tbody>
+  {{range .Active}}<tr><td>{{.Reason}}</td><td>{{.Kind}}</td><td>{{if .EndsAt}}<time datetime="{{.EndsAt}}">{{.EndsAt}}</time>{{else}}lifted{{end}}</td><td>{{.CreatedBy}}</td></tr>{{end}}
+  </tbody></table></div>
+  {{else}}<p>Not frozen.</p>{{end}}
+  {{with .Next}}<p>Next: “{{.Reason}}” starts <time datetime="{{.StartsAt}}">{{.StartsAt}}</time>.</p>{{end}}
+  <p class="muted"><code>gregale freeze create --app {{$.Data.AppSlug}} --reason TEXT --for 2h</code> · <code>gregale freeze lift &lt;id&gt;</code></p>
+</section>
+{{end}}
+
+{{if .GatesEnabled}}
+<section class="card" aria-labelledby="gates">
+  <h2 id="gates">Release gates</h2>
+  {{if .Gates}}
+  <div class="scroll"><table><thead><tr><th>Name</th><th>Kind</th><th>Judges</th></tr></thead><tbody>
+  {{range .Gates}}<tr><td>{{.Name}}</td><td>{{.Kind}}</td><td>{{if .SLO}}SLO {{.SLO}}{{if .MaxBurnRate}}, burn rate above {{.MaxBurnRate}}{{end}}{{else if .Metric}}{{.Metric}}{{if .Comparison}} {{.Comparison}}{{end}}{{if .Threshold}} {{.Threshold}}{{end}}{{else}}new error groups{{end}}</td></tr>{{end}}
+  </tbody></table></div>
+  <p class="muted">A failing gate aborts the canary, or rolls the release back after it completes.</p>
+  {{else}}<p>No gates. Canaries are judged on request errors and latency only.</p>{{end}}
+  <p class="muted"><code>gregale release-gates add --app {{.AppSlug}} --name NAME …</code> · <code>gregale release-gates list --app {{.AppSlug}}</code></p>
+</section>
+{{end}}
+
+{{if .ApprovalsEnabled}}
+<section class="card" aria-labelledby="approvals">
+  <h2 id="approvals">Release approvals</h2>
+  {{with .Policy}}
+  <p>{{.RequiredApprovals}} approval(s) from {{.Approvers}}s before stage {{.AfterStage}} ends; a release waits at most {{.TimeoutMinutes}} minutes.{{if .AllowSelfApproval}} The deployer may approve.{{else}} The deployer may not approve their own release.{{end}}{{if .NotifyChannels}} Notifies {{range $i, $c := .NotifyChannels}}{{if $i}}, {{end}}{{$c}}{{end}}.{{end}}</p>
+  {{else}}<p>Releases do not wait for approval.</p>{{end}}
+  {{if .Waiting}}
+  <div class="scroll"><table><thead><tr><th>Release</th><th>State</th><th>Approvals</th><th>Expires</th></tr></thead><tbody>
+  {{range .Waiting}}<tr><td><a href="/dashboard/releases/{{.DeploymentID}}/approval">{{.DeploymentID}}</a></td><td>{{.State}}</td><td>{{.Approvals}} of {{.RequiredApprovals}}</td><td>{{if .ExpiresAt}}<time datetime="{{.ExpiresAt}}">{{.ExpiresAt}}</time>{{end}}</td></tr>{{end}}
+  </tbody></table></div>
+  {{else if .Policy}}<p class="muted">No release is waiting.</p>{{end}}
+  <p class="muted"><code>gregale approvals require --app {{.AppSlug}} --approvals 1</code> · <code>gregale approvals pending --app {{.AppSlug}}</code></p>
+</section>
+{{end}}
+
+{{if .SchedulesEnabled}}
+<section class="card" aria-labelledby="schedules">
+  <h2 id="schedules">Scheduled releases</h2>
+  {{if .Schedules}}
+  <div class="scroll"><table><thead><tr><th>Release</th><th>At</th><th>State</th><th>Outcome</th></tr></thead><tbody>
+  {{range .Schedules}}<tr><td>{{if .Revision}}v{{.Revision}}{{else}}{{.DeploymentID}}{{end}}</td><td><time datetime="{{.ReleaseAt}}">{{.ReleaseAt}}</time></td><td>{{.State}}</td><td>{{.OutcomeDetail}}</td></tr>{{end}}
+  </tbody></table></div>
+  {{else}}<p>No scheduled releases.</p>{{end}}
+  <p class="muted"><code>gregale deploy --at TIME</code> · <code>gregale scheduled-releases list --app {{.AppSlug}}</code></p>
+</section>
+{{end}}
+
+{{if not (or .Freezes .GatesEnabled .ApprovalsEnabled .SchedulesEnabled)}}
+<p>Release freezes, gates, approvals and scheduled releases are not enabled for this account.</p>
+{{end}}
+{{end}}
+</main>
+</body>
+</html>

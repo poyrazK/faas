@@ -185,7 +185,11 @@ func (m *MemStore) applyDeploymentCronStagingLocked(appID string, p DeploymentCr
 			if exists && (c.Schedule != desired.Schedule || c.Timezone != desired.Timezone) {
 				c.ScheduleRevision++
 			}
+			before := c
 			c.Schedule, c.Path, c.Enabled, c.Timezone, c.SkipIfRunning = desired.Schedule, desired.Path, desired.Enabled, desired.Timezone, desired.SkipIfRunning
+			if exists {
+				c = anchorCronSchedule(before, c, time.Now())
+			}
 			m.crons[c.ID] = c
 		}
 		for _, c := range current {

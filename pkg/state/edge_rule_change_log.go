@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -109,7 +110,9 @@ func (s *PgStore) PruneEdgeRuleChangeLog(ctx context.Context, before time.Time) 
 	if before.IsZero() {
 		return 0, fmt.Errorf("state: edge-rule change log prune requires cutoff")
 	}
-	removed, err := sqlc.New().PruneEdgeRuleReplayHistory(ctx, s.pool, pgtype.Timestamptz{Time: before.UTC(), Valid: true})
+	removed, err := sqlc.New().PruneEdgeRuleReplayHistory(ctx, s.pool, sqlc.PruneEdgeRuleReplayHistoryParams{
+		Before: pgtype.Timestamptz{Time: before.UTC(), Valid: true}, FreshnessSeconds: api.TrafficRuntimeObservationFreshness.Seconds(),
+	})
 	if err != nil {
 		return 0, fmt.Errorf("state: prune edge-rule change log: %w", err)
 	}

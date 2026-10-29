@@ -34,7 +34,7 @@ func TestObsIncidentEvidenceBoundedAndReadableAfterRecovery(t *testing.T) {
 		}
 	}
 	path := "/v1/admin/obs/incidents/deployment/" + dep.ID + "/evidence?limit=2"
-	rec := e.Do(t, http.MethodGet, path, nil, nil)
+	rec := e.DoOperator(t, http.MethodGet, path, nil, nil)
 	var response api.ObsIncidentEvidenceResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
@@ -51,7 +51,7 @@ func TestObsIncidentEvidenceBoundedAndReadableAfterRecovery(t *testing.T) {
 	if err := (*e.Store()).UpdateDeploymentStatus(ctx, dep.ID, state.DeployLive, ""); err != nil {
 		t.Fatal(err)
 	}
-	rec = e.Do(t, http.MethodGet, path, nil, nil)
+	rec = e.DoOperator(t, http.MethodGet, path, nil, nil)
 	response = api.ObsIncidentEvidenceResponse{}
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
@@ -80,7 +80,7 @@ func TestObsIncidentEvidenceJobAndNodeCurrentState(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct{ kind, id, status string }{{"job_run", run.ID, "cancelled"}, {"compute_node", node.ID, "active"}} {
-		rec := e.Do(t, http.MethodGet, "/v1/admin/obs/incidents/"+tc.kind+"/"+tc.id+"/evidence", nil, nil)
+		rec := e.DoOperator(t, http.MethodGet, "/v1/admin/obs/incidents/"+tc.kind+"/"+tc.id+"/evidence", nil, nil)
 		var response api.ObsIncidentEvidenceResponse
 		if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 			t.Fatal(err)
@@ -106,7 +106,7 @@ func TestObsIncidentEvidenceValidationMissingAndUnavailable(t *testing.T) {
 		{"compute_node/" + uuid.NewString(), "", 404},
 		{"platform_alert/" + strings.Repeat("a", 64), "", 503},
 	} {
-		rec := e.Do(t, http.MethodGet, "/v1/admin/obs/incidents/"+tc.ref+"/evidence"+tc.query, nil, nil)
+		rec := e.DoOperator(t, http.MethodGet, "/v1/admin/obs/incidents/"+tc.ref+"/evidence"+tc.query, nil, nil)
 		if rec.Code != tc.want {
 			t.Errorf("%s%s: status=%d want=%d body=%s", tc.ref, tc.query, rec.Code, tc.want, rec.Body.String())
 		}
@@ -145,7 +145,7 @@ func (s *obsEvidenceUnavailable) DeploymentByID(context.Context, string) (state.
 func TestObsIncidentEvidenceStoreFailureIsNotMissingResource(t *testing.T) {
 	e := gapEnv(t)
 	*(*e.S()).Store() = statetest.NewStore(&obsEvidenceUnavailable{Store: *(*e.S()).Store()})
-	rec := e.Do(t, http.MethodGet, "/v1/admin/obs/incidents/deployment/"+uuid.NewString()+"/evidence", nil, nil)
+	rec := e.DoOperator(t, http.MethodGet, "/v1/admin/obs/incidents/deployment/"+uuid.NewString()+"/evidence", nil, nil)
 	if rec.Code != 503 || strings.Contains(rec.Body.String(), "private database failure") {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}

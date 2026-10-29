@@ -87,8 +87,8 @@ def sync_detailed(
 ) -> Response[AppsMetricsResponse | Problem]:
     r"""Account-wide per-app metrics rollup.
 
-     One call replaces N per-app `/v1/apps/{slug}/metrics` calls
-    (issue #393). Returns the same `AppMetricsResponse` shape
+     One call replaces N per-app `/v1/apps/{slug}/metrics` calls. Returns the same `AppMetricsResponse`
+    shape
     per app, keyed by `app_slug`, so the dashboard can render
     all apps on a single page without a per-app fan-out.
 
@@ -100,7 +100,7 @@ def sync_detailed(
     per-app contract exactly.
 
     PromQL cost: 6 round-trips regardless of N apps (vs. 7N
-    for the naive per-app loop) — see `pkg/promql.Client.QueryMap`
+    for the naive per-app loop)
     and `Client.QueryBuckets`. This rollup exposes the same
     Hobby+ signals as the per-app endpoint, so Free accounts
     receive 402.
@@ -134,8 +134,8 @@ def sync(
 ) -> AppsMetricsResponse | Problem | None:
     r"""Account-wide per-app metrics rollup.
 
-     One call replaces N per-app `/v1/apps/{slug}/metrics` calls
-    (issue #393). Returns the same `AppMetricsResponse` shape
+     One call replaces N per-app `/v1/apps/{slug}/metrics` calls. Returns the same `AppMetricsResponse`
+    shape
     per app, keyed by `app_slug`, so the dashboard can render
     all apps on a single page without a per-app fan-out.
 
@@ -147,7 +147,7 @@ def sync(
     per-app contract exactly.
 
     PromQL cost: 6 round-trips regardless of N apps (vs. 7N
-    for the naive per-app loop) — see `pkg/promql.Client.QueryMap`
+    for the naive per-app loop)
     and `Client.QueryBuckets`. This rollup exposes the same
     Hobby+ signals as the per-app endpoint, so Free accounts
     receive 402.
@@ -176,8 +176,8 @@ async def asyncio_detailed(
 ) -> Response[AppsMetricsResponse | Problem]:
     r"""Account-wide per-app metrics rollup.
 
-     One call replaces N per-app `/v1/apps/{slug}/metrics` calls
-    (issue #393). Returns the same `AppMetricsResponse` shape
+     One call replaces N per-app `/v1/apps/{slug}/metrics` calls. Returns the same `AppMetricsResponse`
+    shape
     per app, keyed by `app_slug`, so the dashboard can render
     all apps on a single page without a per-app fan-out.
 
@@ -189,7 +189,7 @@ async def asyncio_detailed(
     per-app contract exactly.
 
     PromQL cost: 6 round-trips regardless of N apps (vs. 7N
-    for the naive per-app loop) — see `pkg/promql.Client.QueryMap`
+    for the naive per-app loop)
     and `Client.QueryBuckets`. This rollup exposes the same
     Hobby+ signals as the per-app endpoint, so Free accounts
     receive 402.
@@ -221,8 +221,8 @@ async def asyncio(
 ) -> AppsMetricsResponse | Problem | None:
     r"""Account-wide per-app metrics rollup.
 
-     One call replaces N per-app `/v1/apps/{slug}/metrics` calls
-    (issue #393). Returns the same `AppMetricsResponse` shape
+     One call replaces N per-app `/v1/apps/{slug}/metrics` calls. Returns the same `AppMetricsResponse`
+    shape
     per app, keyed by `app_slug`, so the dashboard can render
     all apps on a single page without a per-app fan-out.
 
@@ -234,7 +234,7 @@ async def asyncio(
     per-app contract exactly.
 
     PromQL cost: 6 round-trips regardless of N apps (vs. 7N
-    for the naive per-app loop) — see `pkg/promql.Client.QueryMap`
+    for the naive per-app loop)
     and `Client.QueryBuckets`. This rollup exposes the same
     Hobby+ signals as the per-app endpoint, so Free accounts
     receive 402.

@@ -40,7 +40,7 @@ func (s *Service) tracesPage(w http.ResponseWriter, r *http.Request, acct state.
 		s.Host.Render(w, r, acct, page)
 		return
 	}
-	apps := s.appNames(ctx, acct.ID)
+	apps, hidden := s.appNames(ctx, acct)
 	appID := query.Get("app_id")
 	for id, slug := range apps {
 		data.Apps = append(data.Apps, dashboard.AIOption{Value: id, Label: slug, Selected: id == appID})
@@ -72,7 +72,9 @@ func (s *Service) tracesPage(w http.ResponseWriter, r *http.Request, acct state.
 		return
 	}
 	for _, trace := range list {
-		data.Traces = append(data.Traces, traceRow(integrationID, trace, apps, offer.AITraceMaxRepeatedToolCalls))
+		if !hidden[trace.Caller] {
+			data.Traces = append(data.Traces, traceRow(integrationID, trace, apps, offer.AITraceMaxRepeatedToolCalls))
+		}
 	}
 	if len(list) == tracesPageSize {
 		older := url.Values{"before": {list[len(list)-1].LastAt.UTC().Format(time.RFC3339Nano)}}
@@ -121,7 +123,18 @@ func (s *Service) tracePage(w http.ResponseWriter, r *http.Request, acct state.A
 		s.Host.Render(w, r, acct, page)
 		return
 	}
-	apps := s.appNames(ctx, acct.ID)
+	apps, hidden := s.appNames(ctx, acct)
+	if hidden[detail.Trace.Caller] {
+		http.NotFound(w, r)
+		return
+	}
+	calls := detail.Calls[:0:0]
+	for _, call := range detail.Calls {
+		if !hidden[call.Caller] {
+			calls = append(calls, call)
+		}
+	}
+	detail.Calls = calls
 	data.Trace = traceRow(integrationID, detail.Trace, apps, offer.AITraceMaxRepeatedToolCalls)
 	data.FirstCall = timestamp(detail.Trace.FirstAt)
 	data.Span = duration(max(detail.Trace.LastAt.Sub(detail.Trace.FirstAt).Milliseconds(), 0))

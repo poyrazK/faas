@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { FaaSClient, SecretsService } from '../src/index.js';
+import { FaaSClient, SecretsService } from '../src/preview.js';
 
 for (const environment of ['production', 'a', '1', 'qa', '12', 'a'.repeat(33)]) {
   test(`secret references preserve catalog environment ${environment}`, async () => {

@@ -23,18 +23,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// containsNat reports whether the byte slice lists "nat" as a line.
-// Avoids a strings.Contains that could match e.g. "nat1234"; the
-// file format is one table per line — exact match on the trimmed line.
-func containsNat(data []byte) bool {
-	for _, line := range strings.Split(string(data), "\n") {
-		if strings.TrimSpace(line) == "nat" {
-			return true
-		}
-	}
-	return false
-}
-
 // procNetInodeColumn is the inode's position in a /proc/net/tcp{,6} row:
 // sl local_address rem_address st tx:rx tr:tm->when retrnsmt uid timeout inode.
 const procNetInodeColumn = 9
@@ -210,9 +198,6 @@ func truncateLog(s string, n int) string {
 	return s[len(s)-n:]
 }
 
-// choosePortNormMode lives in portnorm_common.go (it depends on the
-// PortNormMode type + ladder constants, which are platform-agnostic).
-
 // probeListening is the cross-platform entry point. The no-child
 // early-out is here (testable on every platform); the /proc walk
 // is delegated to probeListeningLinux (gated `//go:build linux`)
@@ -237,6 +222,10 @@ type probeResult struct {
 	OpenAPIDoc          []byte
 	OpenAPIDocTruncated bool
 	HTTP1               bool
+	// Stalled: the listener accepted the request but sent nothing before the
+	// probe's timeout. An HTTP/1 app still importing its code does that on a
+	// cold boot; a prior-knowledge gRPC server rejects HTTP/1.1 at once.
+	Stalled bool
 }
 
 // collectL7Probes runs the HTTP/1.1 probes concurrently and returns the
@@ -266,7 +255,10 @@ func collectL7Probes(ctx context.Context, http1Probes []func() probeResult, h2Pr
 			if r.Class != "" {
 				return r.Class, openAPIDoc, truncated
 			}
-			spokeHTTP1 = spokeHTTP1 || r.HTTP1
+			// A stalled listener is not a gRPC server either: the preface
+			// reached gunicorn while its workers were still booting (Hunt
+			// 14 H14-21).
+			spokeHTTP1 = spokeHTTP1 || r.HTTP1 || r.Stalled
 		}
 	}
 	if spokeHTTP1 || h2Probe == nil {

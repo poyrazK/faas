@@ -18,14 +18,16 @@ func TestFeatureLeavesStayOutOfTheRequiredSets(t *testing.T) {
 	for _, role := range Roles() {
 		required[role.Directory] = true
 	}
-	for _, box := range []string{"control-plane", "compute-only", "single-box"} {
-		roles := FeatureRoles(FeatureLiveQueries, box)
-		if len(roles) == 0 {
-			t.Fatalf("%s carries no live-query leaf", box)
-		}
-		for _, role := range roles {
-			if required[role.Directory] {
-				t.Errorf("%s: feature leaf %s/%s shares a required leaf's directory", box, role.Directory, role.Filename)
+	for _, feature := range Features() {
+		for _, box := range []string{"control-plane", "compute-only", "single-box"} {
+			roles := FeatureRoles(feature, box)
+			if len(roles) == 0 {
+				t.Fatalf("%s: %s carries no leaf", feature, box)
+			}
+			for _, role := range roles {
+				if required[role.Directory] {
+					t.Errorf("%s: %s: feature leaf %s/%s shares a required leaf's directory", feature, box, role.Directory, role.Filename)
+				}
 			}
 		}
 	}
@@ -101,5 +103,65 @@ func TestEnsureFeatureLeaves(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(out, "ca")); !os.IsNotExist(err) {
 		t.Error("feature issuance wrote a CA into the output directory")
+	}
+}
+
+// adr: 20261023124955 — the platform-log leaves: Loki's server leaf and the
+// Promtail, Prometheus and Grafana client leaves on the control plane, and
+// only Promtail's on a compute node. Each verifies against the fleet CA under
+// the name its peer checks, and a single box carries Promtail's leaf once.
+func TestPlatformLogsFeatureLeaves(t *testing.T) {
+	names := func(roles []Role) []string {
+		var out []string
+		for _, r := range roles {
+			out = append(out, r.Directory+"/"+r.Filename)
+		}
+		return out
+	}
+	if got := names(FeatureRoles(FeaturePlatformLogs, "compute-only")); strings.Join(got, ",") != "promtail/loki-client" {
+		t.Fatalf("compute-only leaves = %v", got)
+	}
+	if got := names(FeatureRoles(FeaturePlatformLogs, "single-box")); len(got) != 4 {
+		t.Fatalf("single-box leaves = %v, want the four control-plane leaves once each", got)
+	}
+
+	ca := t.TempDir()
+	caCert, _, err := EnsureCA(ca, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := t.TempDir()
+	issued, err := EnsureFeatureLeaves(ca, out, FeaturePlatformLogs, "control-plane")
+	if err != nil || len(issued) != 4 {
+		t.Fatalf("issue = %v, %v", names(issued), err)
+	}
+	pool := x509.NewCertPool()
+	pool.AddCert(caCert)
+	want := map[string]struct {
+		name  string
+		usage x509.ExtKeyUsage
+	}{
+		"loki/server":            {LokiServerName, x509.ExtKeyUsageServerAuth},
+		"promtail/loki-client":   {PromtailLokiClient, x509.ExtKeyUsageClientAuth},
+		"prometheus/loki-client": {PrometheusLokiClient, x509.ExtKeyUsageClientAuth},
+		"grafana/loki-client":    {GrafanaLokiClient, x509.ExtKeyUsageClientAuth},
+	}
+	for _, role := range issued {
+		w := want[role.Directory+"/"+role.Filename]
+		certPath, keyPath := LeafPaths(out, role)
+		pair, err := tls.LoadX509KeyPair(certPath, keyPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		leaf, err := x509.ParseCertificate(pair.Certificate[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := leaf.Verify(x509.VerifyOptions{Roots: pool, DNSName: w.name, KeyUsages: []x509.ExtKeyUsage{w.usage}}); err != nil {
+			t.Errorf("%s does not verify as %s: %v", certPath, w.name, err)
+		}
+	}
+	if again, err := EnsureFeatureLeaves(ca, out, FeaturePlatformLogs, "control-plane"); err != nil || len(again) != 0 {
+		t.Fatalf("second issue = %v, %v; want the leaves kept", names(again), err)
 	}
 }

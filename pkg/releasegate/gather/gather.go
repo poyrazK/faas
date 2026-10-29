@@ -20,6 +20,12 @@ type Window struct {
 	Until time.Time
 }
 
+// CustomMetricHistory reads the values an app pushed for a custom metric over
+// a window (ADR-745's exported history).
+type CustomMetricHistory interface {
+	CustomMetricWindow(ctx context.Context, appID, name string, since, until time.Time) (samples int64, average float64, err error)
+}
+
 // Request names whose evidence to gather. BaselineID may be empty when the
 // release has no predecessor.
 type Request struct {
@@ -30,6 +36,10 @@ type Request struct {
 	BaselineWindow Window
 	// Evidence overrides the store's evidence reader (tests).
 	Evidence state.ReleaseGateEvidenceStore
+	// CustomMetrics reads custom_metric gate windows from the metric's
+	// history (ADR-20261019071734 amendment 1). Without it the store holds
+	// only each metric's latest value, which is at most one sample.
+	CustomMetrics CustomMetricHistory
 }
 
 // Gather loads the app's gates and their evidence. A store without gates
@@ -106,7 +116,11 @@ func Gather(ctx context.Context, store any, req Request) ([]releasegate.Gate, ma
 				ev.NewGroups = append(ev.NewGroups, releasegate.ErrorGroup(g))
 			}
 		case state.ReleaseGateCustomMetric:
-			samples, average, err := reader.ReleaseGateCustomMetricWindow(ctx, req.AppID, row.MetricName, req.ReleaseWindow.Since, req.ReleaseWindow.Until)
+			window := reader.ReleaseGateCustomMetricWindow
+			if req.CustomMetrics != nil {
+				window = req.CustomMetrics.CustomMetricWindow
+			}
+			samples, average, err := window(ctx, req.AppID, row.MetricName, req.ReleaseWindow.Since, req.ReleaseWindow.Until)
 			if err != nil {
 				note(fmt.Errorf("release gate %s: read metric: %w", row.Name, err))
 				ev.Unavailable = true

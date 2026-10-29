@@ -36,7 +36,7 @@ func requireCloneSourceInventoryTx(ctx context.Context, tx pgx.Tx, op ProjectEnv
 		}
 	}
 	slugs := []string{op.SourceEnvironment}
-	if IsProductionDeploymentScope(op.SourceEnvironment) {
+	if IsProductionScope(op.SourceEnvironment) {
 		slugs = append(slugs, DefaultEnvScope)
 	}
 	tables, err := q.ReadProjectEnvironmentCloneInventoryPresent(ctx, tx, sqlc.ReadProjectEnvironmentCloneInventoryPresentParams{

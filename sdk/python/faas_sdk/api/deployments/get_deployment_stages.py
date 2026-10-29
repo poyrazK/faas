@@ -70,7 +70,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[DeploymentStageState | Problem]:
-    """Get per-deploy closed-stage summary (ADR-117 follow-up).
+    """Get per-deploy closed-stage summary.
 
      Returns the closed 6-stage summary for a deployment. Companion
     to `/v1/deployments/{id}/logs` (which streams `event: stage`
@@ -80,7 +80,7 @@ def sync_detailed(
     the future dashboard widget.
 
     The body is the same JSON shape already stored on
-    `deployments.stage_state` (ADR-117, migration 00302). The
+    `deployments.stage_state`. The
     handler does NOT add a typed DTO — the column's jsonb IS the
     wire. The closed vocabulary (`source_download` /
     `dependency_restore` / `image_build` / `security_scan` /
@@ -126,7 +126,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> DeploymentStageState | Problem | None:
-    """Get per-deploy closed-stage summary (ADR-117 follow-up).
+    """Get per-deploy closed-stage summary.
 
      Returns the closed 6-stage summary for a deployment. Companion
     to `/v1/deployments/{id}/logs` (which streams `event: stage`
@@ -136,7 +136,7 @@ def sync(
     the future dashboard widget.
 
     The body is the same JSON shape already stored on
-    `deployments.stage_state` (ADR-117, migration 00302). The
+    `deployments.stage_state`. The
     handler does NOT add a typed DTO — the column's jsonb IS the
     wire. The closed vocabulary (`source_download` /
     `dependency_restore` / `image_build` / `security_scan` /
@@ -177,7 +177,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[DeploymentStageState | Problem]:
-    """Get per-deploy closed-stage summary (ADR-117 follow-up).
+    """Get per-deploy closed-stage summary.
 
      Returns the closed 6-stage summary for a deployment. Companion
     to `/v1/deployments/{id}/logs` (which streams `event: stage`
@@ -187,7 +187,7 @@ async def asyncio_detailed(
     the future dashboard widget.
 
     The body is the same JSON shape already stored on
-    `deployments.stage_state` (ADR-117, migration 00302). The
+    `deployments.stage_state`. The
     handler does NOT add a typed DTO — the column's jsonb IS the
     wire. The closed vocabulary (`source_download` /
     `dependency_restore` / `image_build` / `security_scan` /
@@ -231,7 +231,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> DeploymentStageState | Problem | None:
-    """Get per-deploy closed-stage summary (ADR-117 follow-up).
+    """Get per-deploy closed-stage summary.
 
      Returns the closed 6-stage summary for a deployment. Companion
     to `/v1/deployments/{id}/logs` (which streams `event: stage`
@@ -241,7 +241,7 @@ async def asyncio(
     the future dashboard widget.
 
     The body is the same JSON shape already stored on
-    `deployments.stage_state` (ADR-117, migration 00302). The
+    `deployments.stage_state`. The
     handler does NOT add a typed DTO — the column's jsonb IS the
     wire. The closed vocabulary (`source_download` /
     `dependency_restore` / `image_build` / `security_scan` /

@@ -22,9 +22,9 @@ T = TypeVar("T", bound="OutboundAIBudgetThresholdWebhookPayload")
 
 @_attrs_define
 class OutboundAIBudgetThresholdWebhookPayload:
-    """Data delivered with outbound.ai_budget.threshold when an AI budget reaches 80% or 100% in its period (ADR-991).
-    alert_id is stable across retries; integration budgets notify every bound app, app budgets only that app, and an end
-    user's or a tag's budget only the app whose call crossed it (ADR-995, ADR-1438).
+    """Data delivered with outbound.ai_budget.threshold when an AI budget reaches 80% or 100% in its period. alert_id is
+    stable across retries; integration budgets notify every bound app, app budgets only that app, and an end user's or a
+    tag's budget only the app whose call crossed it.
 
     """
 
@@ -34,14 +34,14 @@ class OutboundAIBudgetThresholdWebhookPayload:
     budget: OutboundAIBudgetThresholdWebhookPayloadBudget
     app_id: None | UUID
     end_user: None | str
-    """The X-Gregale-AI-User value whose daily budget crossed the threshold (ADR-995)."""
+    """The X-Gregale-AI-User value whose daily budget crossed the threshold."""
     period_start: datetime.date
     threshold_percent: OutboundAIBudgetThresholdWebhookPayloadThresholdPercent
     limit: int
     used: int
     crossed_at: datetime.datetime
     tag: None | str
-    """The tag whose daily cost limit crossed the threshold (ADR-1438)."""
+    """The tag whose daily cost limit crossed the threshold."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

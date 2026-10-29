@@ -88,6 +88,11 @@ func UnitApid() daemonunit.Unit {
 		EnvironmentFile: "/etc/faas/sealed.env -/etc/faas/storage.env -/etc/faas/profiling.env -/etc/faas/otel.env",
 		Environment: []daemonunit.KV{
 			{Key: "GOMEMLIMIT", Value: fmt.Sprintf("%dMiB", api.APIDGoMemLimitMB)},
+			// Operation artifacts and account exports spool to TMPDIR.
+			// PrivateTmp puts /tmp on the host /tmp, tmpfs on some hosts,
+			// where those bytes count against MemoryMax; the state
+			// directory is on disk (bug hunt 2026-10-27 B5).
+			{Key: "TMPDIR", Value: "/var/lib/faas-apid"},
 			{Key: "FAAS_INTERNAL_MAIL_PRODUCER_OUTBOX_ENABLED", Value: "0"},
 			{Key: "FAAS_INTERNAL_MAIL_OUTBOX_RECONCILIATION_ENABLED", Value: "0"},
 			{Key: "FAAS_INTERNAL_MAIL_VERIFICATION_OUTBOX_ENABLED", Value: "0"},
@@ -119,6 +124,8 @@ func UnitApid() daemonunit.Unit {
 			{Key: "FAAS_STATUSPAGE_PATH", Value: "/etc/faas/statuspage/index.html"},
 			{Key: "FAAS_DPA_PATH", Value: "/etc/faas/dpa.md"},
 			{Key: "FAAS_REALTIME_SOCKET", Value: "/run/faas/realtimed.sock"},
+			// Realtime fair use (ADR-1323), set on every realtime node too.
+			{Key: "FAAS_REALTIME_FAIR_USE_ENABLED", Value: "1"},
 			{Key: "FAAS_APP_TASK_API_ENABLED", Value: "0"},
 			{Key: "FAAS_EXECUTION_API_ENABLED", Value: "0"},
 			{Key: "FAAS_CI_INTERNAL_ENABLED", Value: "0"},
@@ -169,6 +176,7 @@ func UnitApid() daemonunit.Unit {
 
 		ReadOnlyPaths:  []string{"/etc/faas"},
 		ReadWritePaths: []string{"/srv/fc", "/var/lib/faas", "/var/log/faas", "/var/spool/faas"},
+		StateDirectory: "faas-apid",
 
 		WantedBy: "multi-user.target",
 	}

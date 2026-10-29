@@ -44,7 +44,10 @@ Separate the migration role from the roles daemons run as, in three steps.
   `ALTER DEFAULT PRIVILEGES FOR ROLE faas` gives tables and sequences created by
   later migrations the same grants. It has no `TRUNCATE`, `REFERENCES` or
   `TRIGGER`, owns nothing, and so cannot alter, drop or re-grant an object.
-  The migration ledger `goose_db_version` is read-only to it.
+  The migration ledger `goose_db_version` is read-only to it, and `audit_log`
+  is append-only (`SELECT`, `INSERT`): no code path updates or deletes audit
+  rows, so a compromised daemon cannot rewrite or erase what it did
+  (amendment, 2026-10-24; `TestAuditLogStaysAppendOnly` keeps it that way).
 - One LOGIN role per daemon OS user, each a member of `faas_runtime`:
   `faas_apid`, `faas_schedd`, `faas_meterd`, `faas_githubd`,
   `faas_outboundd`, `faas_bridged`, and `faas_shared` for the daemons that share
@@ -92,8 +95,9 @@ From then on the owner is reachable only from root on the control plane.
 
 Replace each daemon's membership in `faas_runtime` with a grant set derived
 from production `pg_stat_statements` grouped by role, one daemon at a time,
-starting with the ones on compute nodes. The audit log becomes insert-only for
-every runtime role.
+starting with the ones on compute nodes. (The audit log's append-only grant
+moved into step 1; tamper evidence against the owner role, such as hash
+anchors kept off the host, remains open.)
 
 ## Consequences
 

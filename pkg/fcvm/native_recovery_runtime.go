@@ -43,6 +43,18 @@ type nativeProcessRecoveryRuntime struct {
 	producerExited func(context.Context, nativeProducerIdentity) error // startup/test wiring; never supplied by a request
 }
 
+// WithNativeLaunchOwners publishes ordinary native launches as version-three
+// records that name this vmmd incarnation, so a later vmmd can prove it exited
+// and clean up after it (ADR-2026101710 Amendment 1). Either order with
+// WithNativeProcessRecovery works; vmmd refuses the setting without it.
+func (v *JailerVMM) WithNativeLaunchOwners() *JailerVMM {
+	v.nativeLaunchOwners = true
+	if v.nativeRecovery != nil {
+		v.nativeRecovery.journal.owners = true
+	}
+	return v
+}
+
 // WithNativeProcessRecovery enables the journal-backed lifecycle. Configure it
 // before constructing Manager, and recover ownership before serving requests.
 // It remains opt-in until the dedicated native VM/leak acceptance gates pass.
@@ -54,7 +66,7 @@ func (v *JailerVMM) WithNativeProcessRecovery() *JailerVMM {
 	}
 	tun := newNativeTunBindBackend(v.chrootBase)
 	v.nativeRecovery = &nativeProcessRecoveryRuntime{
-		journal:         &nativeLaunchJournal{root: filepath.Join(v.chrootBase, ".native-processes"), loopMounts: loops, imageSources: images, tunBinds: tun, jailDevices: newNativeJailDeviceBackend(v.chrootBase)},
+		journal:         &nativeLaunchJournal{root: filepath.Join(v.chrootBase, ".native-processes"), loopMounts: loops, imageSources: images, tunBinds: tun, jailDevices: newNativeJailDeviceBackend(v.chrootBase), owners: v.nativeLaunchOwners},
 		retirer:         nativeProcessRetirer{probe: nativeProcessProbe{root: "/proc", chrootBase: v.chrootBase}},
 		owned:           make(map[string]string),
 		lockWait:        v.readyTimeout,

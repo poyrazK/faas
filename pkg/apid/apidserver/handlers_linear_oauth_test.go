@@ -184,7 +184,7 @@ func TestNativeIssueLinearOAuthConsentRefreshFencesAndRevocation(t *testing.T) {
 	apidserver.IssueNativeSetClients(e, nil, statuses)
 	apidserver.IssueDecode[api.NativeLinearIssueTrackerStatus](t, e.Do(t, "GET", base+"/issues/"+accepted.IssueID+"/tracker-links/"+link.ID+"/native-linear-status", nil, nil), 200)
 	account := apidserver.IssueNativeAccount(e)
-	service := issuetrackers.LinearOAuthService{Store: store, Provider: provider, Verifier: &nativeLinearFake{}, Config: cfg, Recipient: key.Recipient(), Identities: []*age.X25519Identity{key}}
+	service := issuetrackers.LinearOAuthService{Store: store, Provider: provider, Verifier: &nativeLinearFake{}, Config: cfg, Recipients: []*age.X25519Recipient{key.Recipient()}, Identities: []*age.X25519Identity{key}}
 	getRecord := func() state.IssueTrackerLinearRecord {
 		t.Helper()
 		r, err := store.GetIssueTrackerLinearConnection(t.Context(), app.ID, account.ID)

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -21,6 +21,8 @@ class ProjectWorkloadResponse:
     deployment_status: str | Unset = UNSET
     rollout_state: str | Unset = UNSET
     build_status: str | Unset = UNSET
+    depends_on: list[str] | Unset = UNSET
+    """The project services this one declares it calls (Compose depends_on), sorted. Omitted when none."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -35,6 +37,10 @@ class ProjectWorkloadResponse:
         rollout_state = self.rollout_state
 
         build_status = self.build_status
+
+        depends_on: list[str] | Unset = UNSET
+        if not isinstance(self.depends_on, Unset):
+            depends_on = self.depends_on
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -51,6 +57,8 @@ class ProjectWorkloadResponse:
             field_dict["rollout_state"] = rollout_state
         if build_status is not UNSET:
             field_dict["build_status"] = build_status
+        if depends_on is not UNSET:
+            field_dict["depends_on"] = depends_on
 
         return field_dict
 
@@ -69,6 +77,8 @@ class ProjectWorkloadResponse:
 
         build_status = d.pop("build_status", UNSET)
 
+        depends_on = cast(list[str], d.pop("depends_on", UNSET))
+
         project_workload_response = cls(
             slug=slug,
             workload_name=workload_name,
@@ -76,6 +86,7 @@ class ProjectWorkloadResponse:
             deployment_status=deployment_status,
             rollout_state=rollout_state,
             build_status=build_status,
+            depends_on=depends_on,
         )
 
         project_workload_response.additional_properties = d

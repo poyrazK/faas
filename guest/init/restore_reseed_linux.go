@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"sync/atomic"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // activeRestoreReseedBarrier is the barrier the resume hook drives. nil means
@@ -47,6 +49,7 @@ func startRestoreReseedServer(log *slog.Logger, uid int) error {
 	}
 	barrier := newRestoreReseedBarrier(log)
 	activeRestoreReseedBarrier.Store(barrier)
+	restoreReseedThread.Store(bootArgSet(api.RestoreReseedThreadBootArg))
 	restoreReseedEnabled.Store(true)
 	go barrier.serve(ln)
 	return nil

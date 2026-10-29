@@ -24,7 +24,7 @@ type CentralBatchBackend interface {
 }
 
 // errCentralBatchWait marks a request whose batched consume did not finish
-// within centralConsultTimeout of joining it.
+// within centralConsumeTimeout of joining it.
 var errCentralBatchWait = errors.New("ratelimit central: batched consume did not finish in time")
 
 type centralBatchKey struct {
@@ -66,7 +66,7 @@ func (c *centralCoalescer) consume(ctx context.Context, single CentralBackend, b
 	if !busy {
 		c.inflight[key] = nil
 		c.mu.Unlock()
-		consultCtx, cancel := context.WithTimeout(ctx, centralConsultTimeout)
+		consultCtx, cancel := context.WithTimeout(ctx, centralConsumeTimeout)
 		remaining, admitted, err := single.ConsumeToken(consultCtx, scope, subjectID, plan, rps, burst)
 		cancel()
 		c.handOff(ctx, key, batch)
@@ -81,7 +81,7 @@ func (c *centralCoalescer) consume(ctx context.Context, single CentralBackend, b
 	next.rps, next.burst = rps, burst
 	c.mu.Unlock()
 
-	timer := time.NewTimer(centralConsultTimeout)
+	timer := time.NewTimer(centralConsumeTimeout)
 	defer timer.Stop()
 	select {
 	case <-next.done:
@@ -119,7 +119,7 @@ func (c *centralCoalescer) handOff(ctx context.Context, key centralBatchKey, bat
 
 func (c *centralCoalescer) runBatches(ctx context.Context, key centralBatchKey, b *centralBatch, batch CentralBatchBackend) {
 	for b != nil {
-		batchCtx, cancel := context.WithTimeout(ctx, centralConsultTimeout)
+		batchCtx, cancel := context.WithTimeout(ctx, centralConsumeTimeout)
 		b.granted, b.remaining, b.err = batch.ConsumeTokens(batchCtx, key.scope, key.subjectID, key.plan, b.rps, b.burst, b.n)
 		cancel()
 		close(b.done)

@@ -95,12 +95,11 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     since: None | str | Unset = UNSET,
 ) -> Response[DebugRegressionsResponse | Problem]:
-    """Active regression observations (ADR-127 / PR-B).
+    """Active regression observations.
 
      Returns regression observations written by the
     debug_regression_observations table — surfaces per-route
-    p95 regressions detected by the regression cron
-    (cmd/apid/debug_regression_cron.go). Ordered by
+    p95 regressions detected by the regression cron. Ordered by
     regression_factor DESC, last_detected_at DESC (worst
     first). Plan-gated by DebugTelemetryEnabled. The window
     is clamped to DebugTelemetryRetentionDays.
@@ -135,12 +134,11 @@ def sync(
     client: AuthenticatedClient | Client,
     since: None | str | Unset = UNSET,
 ) -> DebugRegressionsResponse | Problem | None:
-    """Active regression observations (ADR-127 / PR-B).
+    """Active regression observations.
 
      Returns regression observations written by the
     debug_regression_observations table — surfaces per-route
-    p95 regressions detected by the regression cron
-    (cmd/apid/debug_regression_cron.go). Ordered by
+    p95 regressions detected by the regression cron. Ordered by
     regression_factor DESC, last_detected_at DESC (worst
     first). Plan-gated by DebugTelemetryEnabled. The window
     is clamped to DebugTelemetryRetentionDays.
@@ -170,12 +168,11 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     since: None | str | Unset = UNSET,
 ) -> Response[DebugRegressionsResponse | Problem]:
-    """Active regression observations (ADR-127 / PR-B).
+    """Active regression observations.
 
      Returns regression observations written by the
     debug_regression_observations table — surfaces per-route
-    p95 regressions detected by the regression cron
-    (cmd/apid/debug_regression_cron.go). Ordered by
+    p95 regressions detected by the regression cron. Ordered by
     regression_factor DESC, last_detected_at DESC (worst
     first). Plan-gated by DebugTelemetryEnabled. The window
     is clamped to DebugTelemetryRetentionDays.
@@ -208,12 +205,11 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     since: None | str | Unset = UNSET,
 ) -> DebugRegressionsResponse | Problem | None:
-    """Active regression observations (ADR-127 / PR-B).
+    """Active regression observations.
 
      Returns regression observations written by the
     debug_regression_observations table — surfaces per-route
-    p95 regressions detected by the regression cron
-    (cmd/apid/debug_regression_cron.go). Ordered by
+    p95 regressions detected by the regression cron. Ordered by
     regression_factor DESC, last_detected_at DESC (worst
     first). Plan-gated by DebugTelemetryEnabled. The window
     is clamped to DebugTelemetryRetentionDays.

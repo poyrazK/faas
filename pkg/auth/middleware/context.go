@@ -147,6 +147,16 @@ func AccountFromContext(r *http.Request) (state.Account, *state.APIKey, bool) {
 	return p.Acct, p.Key, true
 }
 
+// AccountFromCtx is AccountFromContext for code that holds only the
+// request's context, such as a service resolving apps for an account view.
+func AccountFromCtx(ctx context.Context) (state.Account, *state.APIKey, bool) {
+	p, ok := ctx.Value(principalCtxKey).(principal)
+	if !ok {
+		return state.Account{}, nil, false
+	}
+	return p.Acct, p.Key, true
+}
+
 // PrincipalFrom returns the full authenticated shape — Account,
 // APIKey, and the active-org Membership — stashed by RequireSession
 // + pkg/authz.LoadOrgWithResolver (issue #190 / IAM-6 / ADR-061).

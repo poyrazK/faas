@@ -5,7 +5,7 @@
 import type { OperationSubjectSpec } from './OperationSubjectSpec.js';
 import type { OperationWebhookSignal } from './OperationWebhookSignal.js';
 /**
- * Bind a verified provider endpoint to a customer operation with revision control (ADR-1193).
+ * Bind a verified provider endpoint to a customer operation with revision control.
  */
 export type PutOperationWebhookBindingRequest = {
   expected_version: number;
@@ -27,7 +27,7 @@ export type PutOperationWebhookBindingRequest = {
   event_types?: Array<string>;
   take_over_delivery: boolean;
   /**
-   * start admits a new operation per event; signal resumes waiting operations (ADR-20261016100929).
+   * start admits a new operation per event; signal resumes waiting operations.
    */
   mode?: 'start' | 'signal';
   /**

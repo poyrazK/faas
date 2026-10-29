@@ -111,7 +111,7 @@ func admitEventWorkflowTx(ctx context.Context, queries *sqlc.Queries, tx pgx.Tx,
 	if paused {
 		return "", false, ErrWorkflowEventTargetUnavailable
 	}
-	active, err := queries.CountActiveWorkflowRunsForAdmission(ctx, tx, sqlc.CountActiveWorkflowRunsForAdmissionParams{AppID: mustPgUUID(recipient.AppID)})
+	active, err := queries.CountActiveWorkflowRunsForAdmission(ctx, tx, sqlc.CountActiveWorkflowRunsForAdmissionParams{AppID: mustPgUUID(recipient.AppID), ParkedMax: int64(plan.WorkflowMaxParkedRuns())})
 	if err != nil {
 		return "", false, err
 	}

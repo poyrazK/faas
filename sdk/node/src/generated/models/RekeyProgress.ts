@@ -25,7 +25,7 @@ export type RekeyProgress = {
    */
   skipped: number;
   /**
-   * Rows where the unseal step threw. A non-zero value warrants operator action (toggle FAAS_REKEY_ENABLED and restart apid to retry).
+   * Rows where the unseal step threw. A non-zero value warrants operator action (toggle FAAS_REKEY_ENABLED and restart the API to retry).
    */
   failed: number;
   /**

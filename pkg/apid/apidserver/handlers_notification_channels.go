@@ -110,11 +110,11 @@ func sealChannel(acct state.Account, req api.CreateNotificationChannelRequest) (
 		in.Email, in.TargetHint = acct.Email, acct.Email
 		return in, nil
 	}
-	recipient := hostSecretRecipient()
-	if recipient == nil {
-		return in, api.ErrCapacity("host age recipient not loaded — refusing to seal the channel destination")
+	recipients, err := alertingCredentialRecipients()
+	if err != nil {
+		return in, api.ErrCapacity("alerting recipient not loaded — refusing to seal the channel destination")
 	}
-	sealed, err := secretbox.SealBytes(recipient, alertchannels.SealNamespace, []byte(secret), channelTargetMaxBytes)
+	sealed, err := secretbox.SealBytesTo(recipients, alertchannels.SealNamespace, []byte(secret), channelTargetMaxBytes)
 	if err != nil {
 		return in, api.ErrCapacity("could not seal the channel destination")
 	}

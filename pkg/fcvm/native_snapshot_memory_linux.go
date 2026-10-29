@@ -410,14 +410,11 @@ func (v *JailerVMM) checkNativeSnapshotMemoryRestorationOwner(ctx context.Contex
 	if err != nil || !sameNativeSnapshotProcess(current, owner) {
 		return errors.Join(err, errors.New("native snapshot memory: original physical owner changed"))
 	}
-	q := r.journal.qualifications(permit.Incoming.Execution.NodeID)
-	incoming, err := q.read(owner.Lease.Instance)
-	if err != nil || incoming != permit.Incoming {
-		return errors.Join(err, errors.New("native snapshot memory: original incoming changed"))
+	if permit.instanceID() != owner.Lease.Instance {
+		return errors.New("native snapshot memory: original capture belongs to another VM")
 	}
-	capture, err := q.readCapture(incoming)
-	if err != nil || !capture.Equal(permit.Capture) {
-		return errors.Join(err, errors.New("native snapshot memory: original capture changed"))
+	if err := permit.requireCurrent(r.journal, false); err != nil {
+		return errors.Join(err, errors.New("native snapshot memory: original capture authority changed"))
 	}
 	publication, ok := original.Value(nativeSnapshotPublicationContextKey{}).(nativeSnapshotPublicationPermit)
 	if !ok || publication.journal != r.publications {

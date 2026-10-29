@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * One extra provider key of an integration's pool (ADR-991). The value is write-only.
+ * One extra provider key of an integration's pool. The value is write-only.
  */
 export type OutboundCredentialKey = {
   id: string;

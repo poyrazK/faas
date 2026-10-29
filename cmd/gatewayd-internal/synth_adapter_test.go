@@ -137,8 +137,10 @@ func TestSynthAdapterSendsTheAppsAsyncDeadline(t *testing.T) {
 				w.WriteHeader(http.StatusOK)
 			})
 		}}
-		if _, err := a.forwardInvocation(ctx, gateway.Target{InstanceID: "i", NodeID: "n"},
-			state.Invocation{ID: "inv-" + tc.slug, AppID: app.ID, Source: state.InvocationAsyncInvoke}); err != nil {
+		// The deadline is stamped after dispatch verification (ADR-570),
+		// which invocation_scope_test.go covers; call the forwarding layer.
+		if _, _, _, err := a.forwardInvocationWithStatusAndBody(ctx, gateway.Target{InstanceID: "i", NodeID: "n"},
+			state.Invocation{ID: "inv-" + tc.slug, AppID: app.ID, Source: state.InvocationAsyncInvoke}, false); err != nil {
 			t.Fatalf("%s: forwardInvocation: %v", tc.slug, err)
 		}
 		// The budget starts at the timeout and only counts down.

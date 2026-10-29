@@ -23,7 +23,7 @@
 ## Consequences
 
 - Flag-off nodes have the pre-rehearsal wake and resume behavior. With the flag on, ADR-20261017201005's recheck-before-resume behavior is unchanged.
-- Row triggers on `invocations`, `app_tasks` and webhook deliveries still run on every node. Each returns after one primary-key lookup on `scenario_test_action_policies`. Removing them needs a migration and is not part of this decision.
+- Row triggers on `invocations`, `app_tasks` and webhook deliveries still run on every node. Each returns after one primary-key lookup on `scenario_test_action_policies`. Removing them needs a migration and is not part of this decision. The webhook delivery fence also locked the delivery's `apps` rows on every write; [ADR-20261024230731](20261024230731-rehearsal-webhook-and-dns-hot-paths.md) limits that lock to inserts and bounds the private DNS chaos read.
 - Webhook capture registration (ADR-20261017201003) stays ungated. It affects only the caller's own fresh preview apps, and a gate would not remove the triggers above.
 - Not changed here: retention of `scenario_*` rows, the purge guards that block app/account deletion while a fixture is undroppable, and the one-second fault reconcile tick.
 

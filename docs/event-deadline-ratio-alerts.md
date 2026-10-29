@@ -15,15 +15,15 @@ SLO or a historical expiry rate.
 
 ```go
 recovery := int64(500) // 5%, inclusive
-options := faas.EventDeliveryHealthWatchOptions{
+options := preview.EventDeliveryHealthWatchOptions{
     Window: "5m",
     Interval: 5 * time.Second,
     Timeout: 10 * time.Minute,
     MaxAge: 30 * time.Second,
-    RateRisk: &faas.EventDeliveryRateRiskOptions{
-        DeadlineWindow: &faas.EventDeliveryDeadlineWindowOptions{
+    RateRisk: &preview.EventDeliveryRateRiskOptions{
+        DeadlineWindow: &preview.EventDeliveryDeadlineWindowOptions{
             Within: 5 * time.Minute,
-            ExpiredRatio: &faas.EventDeliveryDeadlineRatioOptions{
+            ExpiredRatio: &preview.EventDeliveryDeadlineRatioOptions{
                 WarningBasisPoints: 1000, // 10%, inclusive
                 RecoveryBasisPoints: &recovery,
                 MinimumRecipients: 100,

@@ -10,6 +10,9 @@ import (
 )
 
 func (s *server) getRouteLifecycleHistory(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if !requireRouteControlsPlan(w, acct) {
+		return
+	}
 	limit := api.RouteLifecycleHistoryPageSize
 	if raw := r.URL.Query().Get("limit"); raw != "" {
 		var err error

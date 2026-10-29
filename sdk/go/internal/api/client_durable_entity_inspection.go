@@ -6,7 +6,7 @@ import (
 	"net/url"
 )
 
-func (c *Client) InspectDurableEntity(ctx context.Context, slug string, request DurableEntityInspectRequest) (DurableEntityInspectResponse, error) {
+func (c *PreviewClient) InspectDurableEntity(ctx context.Context, slug string, request DurableEntityInspectRequest) (DurableEntityInspectResponse, error) {
 	var out DurableEntityInspectResponse
 	if request.Namespace == "" || request.Key == "" {
 		return out, errors.New("durable entity inspection requires namespace and key")

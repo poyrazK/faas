@@ -69,7 +69,7 @@ func (v *JailerVMM) captureEnvironmentQualificationSnapshot(ctx context.Context,
 	if err != nil {
 		return info, err
 	}
-	ctx, cancel := context.WithDeadline(ctx, permit.Incoming.Deadline)
+	ctx, cancel := context.WithDeadline(ctx, permit.deadline())
 	defer cancel()
 	if err := v.captureNativeSnapshotBackings(ctx, lease, backing); err != nil {
 		return info, err
@@ -186,10 +186,10 @@ func (v *JailerVMM) preflightNativeSnapshotCapture(ctx context.Context, lease Le
 	if err != nil {
 		return permit, err
 	}
-	ctx, cancel := context.WithDeadline(ctx, permit.Incoming.Deadline)
+	ctx, cancel := context.WithDeadline(ctx, permit.deadline())
 	defer cancel()
 	r := v.nativeRecovery
-	if r == nil || r.journal == nil || r.publications == nil || r.snapshotControl == nil || r.snapshotMemory == nil || r.generation(lease.Instance) != permit.Incoming.NativeGeneration {
+	if r == nil || r.journal == nil || r.publications == nil || r.snapshotControl == nil || r.snapshotMemory == nil || r.generation(lease.Instance) != permit.nativeGeneration() {
 		return permit, errors.New("native snapshot capture: original native producer is unavailable")
 	}
 	_, input := r.imageSources.(nativeSnapshotInputBackend)

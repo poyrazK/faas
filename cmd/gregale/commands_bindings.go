@@ -79,7 +79,7 @@ func cmdBindings(args []string) int {
 	parseErr := fs.Parse(flags)
 	positionals, mergeErr := mergeAppFlag(positionals, *app, 1)
 	if parseErr != nil || mergeErr != nil || fs.NArg() != 0 || len(positionals) != 1 || !api.ValidAppSlug(strings.TrimSpace(positionals[0])) {
-		PrintUsage(osStderr, "usage: gregale bindings <app> [--scope SCOPE] [--deployment ID|vN] [--require-complete] | gregale bindings check <app> [--scope SCOPE] [--max-verification-age DURATION] [--allow-unsupported] | gregale bindings object-storage <list|rotate|revoke> ... | gregale bindings verify <app> <service>|--all | gregale bindings smoke <app> <service> --deployment <id> --path </path>", "bindings")
+		PrintUsage(osStderr, "usage: gregale app binding <app> [--scope SCOPE] [--deployment ID|vN] [--require-complete] | gregale app binding check <app> [--scope SCOPE] [--max-verification-age DURATION] [--allow-unsupported] | gregale app binding object-storage <list|rotate|revoke> ... | gregale app binding verify <app> <service>|--all | gregale app binding smoke <app> <service> --deployment <id> --path </path>", "bindings")
 		return 1
 	}
 	if *scope != "" {
@@ -124,7 +124,7 @@ func cmdBindings(args []string) int {
 
 func cmdBindingsObjectStorage(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(osStderr, "usage: gregale bindings object-storage <list|rotate|revoke> ...", "bindings")
+		PrintUsage(osStderr, "usage: gregale app binding object-storage <list|rotate|revoke> ...", "bindings")
 		return 1
 	}
 	switch args[0] {
@@ -173,7 +173,7 @@ func cmdBindingsObjectStorageList(args []string) int {
 }
 
 func cmdBindingsObjectStorageRotate(args []string) int {
-	usage := "usage: gregale bindings object-storage rotate <app> <bucket> <binding-id> [--wait] [--wait-timeout DURATION] [--poll-interval DURATION]"
+	usage := "usage: gregale app binding object-storage rotate <app> <bucket> <binding-id> [--wait] [--wait-timeout DURATION] [--poll-interval DURATION]"
 	positionals, waitOptions, ok := parseBindingRotationWaitArgs(args, "bindings object-storage rotate", 3)
 	if !ok {
 		PrintUsage(osStderr, usage, "bindings")

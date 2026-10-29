@@ -60,7 +60,7 @@ func TestGitOpsUnchangedBuildReuseAndTrustFallback(t *testing.T) {
 					t.Fatal(err)
 				}
 				scope, _ := gitOpsReuseScope(effective, origin)
-				recipe := testBuildCacheRecipe(origin.SourceSHA256, FrameworkNode, api.PlanPro, "registry.example/node@sha256:"+strings.Repeat("1", 64))
+				recipe := withAccount(testBuildCacheRecipe(origin.SourceSHA256, FrameworkNode, api.PlanPro, "registry.example/node@sha256:"+strings.Repeat("1", 64)), app.AccountID)
 				recipe.SourceRoot = "src"
 				recipe.GitOpsReuseScope = scope
 				key, err := recipe.key()
@@ -132,7 +132,7 @@ func TestGitOpsUnchangedBuildReuseAndTrustFallback(t *testing.T) {
 						t.Fatal(err)
 					}
 					scope, _ := gitOpsReuseScope(effective, origin)
-					recipe := testBuildCacheRecipe(origin.SourceSHA256, FrameworkNode, api.PlanPro, "registry.example/node@sha256:"+strings.Repeat("1", 64))
+					recipe := withAccount(testBuildCacheRecipe(origin.SourceSHA256, FrameworkNode, api.PlanPro, "registry.example/node@sha256:"+strings.Repeat("1", 64)), app.AccountID)
 					recipe.SourceRoot, recipe.GitOpsReuseScope = "src", scope
 					entry, ok := cache.LookupBuild(recipe)
 					if !ok || entry.Toolchain.OriginDeploymentID != origin.ID || entry.Toolchain.NextOriginDeploymentID != target.ID || entry.Toolchain.NextOriginBuildID != target.BuildID {

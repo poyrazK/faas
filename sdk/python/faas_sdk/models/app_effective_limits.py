@@ -49,7 +49,7 @@ class AppEffectiveLimits:
     account_request_rate_rpm: int
     """Account-wide edge token-bucket refill rate across all apps, in requests per minute."""
     request_budget_ms: int
-    """Default end-to-end request budget before a route override, in milliseconds."""
+    """Default execution budget after upload, wake and admission, before a route override, in milliseconds."""
     request_budget_max_ms: int
     """Maximum end-to-end request budget allowed through route overrides, in milliseconds."""
     response_write_timeout_s: int

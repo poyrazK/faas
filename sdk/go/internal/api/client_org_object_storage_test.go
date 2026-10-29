@@ -43,7 +43,7 @@ func TestOrgObjectClientPreservesTenantAndBucketPaths(t *testing.T) {
 			return err
 		}},
 		{"GET /v1/orgs/my%20company/object-storage-usage", func() error {
-			_, err := c.GetOrgObjectStorageUsage(ctx, "my company")
+			_, err := NewPreviewClient(c).GetOrgObjectStorageUsage(ctx, "my company")
 			return err
 		}},
 	} {

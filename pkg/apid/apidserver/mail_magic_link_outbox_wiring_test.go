@@ -19,6 +19,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/mailoutbox"
 	"github.com/onebox-faas/faas/pkg/internalmail"
 	"github.com/onebox-faas/faas/pkg/secretbox"
+	"github.com/onebox-faas/faas/pkg/sessioncookie"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -127,7 +128,8 @@ func TestMagicLinkOutboxPublicWiringUniformResponseAndRollback(t *testing.T) {
 			}
 			var cookie *http.Cookie
 			for _, c := range verify.Result().Cookies() {
-				if c.Name == "faas_sid" {
+				// HTTPS sign-in sets __Host-faas_sid and expires the legacy name (#5522).
+				if sessioncookie.IsName(c.Name) && c.Value != "" {
 					cookie = c
 				}
 			}

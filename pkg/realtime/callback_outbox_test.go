@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -114,7 +115,7 @@ func TestManagerRegistrationUpdatesOutboxCredentialForFutureEvents(t *testing.T)
 	queue := newTestCallbackOutbox(t, CallbackOutboxConfig{})
 	manager := NewManager(Config{}, HTTPHooks{DurableQueue: queue})
 	defer func() { _ = manager.Close() }()
-	if err := manager.RegisterEndpoint(Endpoint{ID: "endpoint-1", CallbackAuthToken: "callback-secret-next"}); err != nil {
+	if err := manager.RegisterEndpoint(Endpoint{Preview: true, ID: "endpoint-1", CallbackAuthToken: "callback-secret-next"}); err != nil {
 		t.Fatalf("RegisterEndpoint: %v", err)
 	}
 	event := testCallbackEvent()
@@ -914,6 +915,45 @@ func TestCallbackOutboxRejectsFullPayload(t *testing.T) {
 	queue := newTestCallbackOutbox(t, CallbackOutboxConfig{MaxBytes: 1})
 	if _, err := queue.EnqueueAndClaim(testCallbackEvent()); !errors.Is(err, ErrCallbackOutboxFull) {
 		t.Fatalf("EnqueueAndClaim full = %v, want ErrCallbackOutboxFull", err)
+	}
+}
+
+// One endpoint whose callback stays slow fills only its share of the
+// node-wide spool; other tenants' callbacks keep being accepted.
+func TestCallbackOutboxLimitsEachEndpointToItsShare(t *testing.T) {
+	queue := newTestCallbackOutbox(t, CallbackOutboxConfig{MaxBytes: 64 << 10, MaxEndpointBytes: 4 << 10})
+	event := func(endpoint string, n int) Event {
+		e := testCallbackEvent()
+		e.ID = fmt.Sprintf("evt_%s_%d", endpoint, n)
+		e.EndpointID = endpoint
+		e.ConnectionID = fmt.Sprintf("conn_%s_%d", endpoint, n)
+		return e
+	}
+	var accepted []string
+	for n := 0; ; n++ {
+		e := event("noisy", n)
+		if _, err := queue.EnqueueAndClaim(e); errors.Is(err, ErrCallbackOutboxFull) {
+			break
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		accepted = append(accepted, e.ID)
+		if n > 1000 {
+			t.Fatal("the endpoint share never filled")
+		}
+	}
+	if stats := queue.Stats(); stats.PendingBytes > 4<<10 || len(accepted) == 0 {
+		t.Fatalf("noisy endpoint holds %d bytes in %d events, want at most its 4 KiB share", stats.PendingBytes, len(accepted))
+	}
+	if _, err := queue.EnqueueAndClaim(event("quiet", 0)); err != nil {
+		t.Fatalf("another endpoint's callback refused: %v", err)
+	}
+	// Delivered callbacks give the share back.
+	if err := queue.Ack(accepted[0]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queue.EnqueueAndClaim(event("noisy", 9999)); err != nil {
+		t.Fatalf("the endpoint's share was not returned after an ack: %v", err)
 	}
 }
 

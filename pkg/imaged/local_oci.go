@@ -3,7 +3,6 @@ package imaged
 import (
 	"archive/tar"
 	"bytes"
-	"compress/gzip"
 	"context"
 	"encoding/hex"
 	"encoding/json"
@@ -40,8 +39,8 @@ type localOCIIndex struct {
 const maxFunctionAppUncompressedBytes int64 = 2 << 30
 
 // loadLocalOCIArchive verifies a builderd-produced OCI content chain before
-// exposing its gzip layers or config. The returned readers are ordered
-// bottom-to-top and remain valid until cleanup is called.
+// exposing its compressed (gzip or zstd) layers or config. The returned
+// readers are ordered bottom-to-top and remain valid until cleanup is called.
 func loadLocalOCIArchive(archivePath string) (oci.Config, []io.ReadCloser, func(), error) {
 	return loadLocalOCIArchiveContext(context.Background(), archivePath)
 }
@@ -94,7 +93,7 @@ func loadLocalOCIArchiveContext(ctx context.Context, archivePath string) (oci.Co
 		return fail(err)
 	}
 	for i := range manifest.Layers {
-		f, err := os.Create(filepath.Join(tmpDir, fmt.Sprintf("layer-%03d.tar.gz", i)))
+		f, err := os.Create(filepath.Join(tmpDir, fmt.Sprintf("layer-%03d.blob", i)))
 		if err != nil {
 			return fail(fmt.Errorf("create OCI layer %d: %w", i, err))
 		}
@@ -112,7 +111,7 @@ func loadLocalOCIArchiveContext(ctx context.Context, archivePath string) (oci.Co
 	if len(manifest.Layers) != len(config.DiffIDs) {
 		return fail(fmt.Errorf("OCI layer count mismatch: manifest=%d config=%d", len(manifest.Layers), len(config.DiffIDs)))
 	}
-	if err := verifyLocalOCIDiffIDs(ctx, layerFiles, config.DiffIDs, api.LocalOCIMaxUncompressedLayerBytes); err != nil {
+	if err := verifyLocalOCIDiffIDs(ctx, manifest.Layers, layerFiles, config.DiffIDs, api.LocalOCIMaxUncompressedLayerBytes); err != nil {
 		return fail(err)
 	}
 	for i, f := range layerFiles {
@@ -278,16 +277,23 @@ func filterAppLayers(layers []io.ReadCloser, report *appLayerReport) ([]io.Reade
 	}
 
 	for i, layer := range layers {
-		zr, err := gzip.NewReader(layer)
+		zr, err := rootfs.OpenCompressedLayer(layer)
 		if err != nil {
 			return fail(fmt.Errorf("open function layer %d: %w", i, err))
 		}
-		out, err := os.Create(filepath.Join(tmpDir, fmt.Sprintf("layer-%03d.tar.gz", i)))
+		out, err := os.Create(filepath.Join(tmpDir, fmt.Sprintf("layer-%03d.tar.zst", i)))
 		if err != nil {
 			_ = zr.Close()
 			return fail(fmt.Errorf("create filtered function layer %d: %w", i, err))
 		}
-		zw := gzip.NewWriter(out)
+		// The filtered layer is read once by rootfs assembly on this node, so
+		// it takes zstd: gzip here cost several seconds per hundred MiB.
+		zw, err := rootfs.NewLayerWriter(out)
+		if err != nil {
+			_ = out.Close()
+			_ = zr.Close()
+			return fail(fmt.Errorf("compress filtered function layer %d: %w", i, err))
+		}
 		tw := tar.NewWriter(zw)
 		tr := tar.NewReader(zr)
 		entries := 0
@@ -431,11 +437,15 @@ func makeGoHandlerLayer(layers []io.ReadCloser, executable string) (io.ReadClose
 		return nil, func() {}, fmt.Errorf("create Go handler staging dir: %w", err)
 	}
 	cleanupStaging := func() { _ = os.RemoveAll(staging) }
+	// The tenant's build produced these layers; one budget across all of them
+	// keeps a compressed layer from filling the staging filesystem.
+	readers := make([]io.Reader, len(layers))
 	for i, layer := range layers {
-		if err := rootfs.ApplyLayerGz(staging, layer); err != nil {
-			cleanupStaging()
-			return nil, func() {}, fmt.Errorf("apply Go build layer %d: %w", i, err)
-		}
+		readers[i] = layer
+	}
+	if err := rootfs.ApplyLayersGzWithin(staging, readers, api.GoFunctionLayerExtractionMaxBytes); err != nil {
+		cleanupStaging()
+		return nil, func() {}, fmt.Errorf("apply Go build layers: %w", err)
 	}
 	src, info, err := openGoFunctionExecutable(staging, executable)
 	if err != nil {
@@ -444,7 +454,7 @@ func makeGoHandlerLayer(layers []io.ReadCloser, executable string) (io.ReadClose
 	}
 	defer func() { _ = src.Close() }()
 
-	archive, err := os.CreateTemp("", "faas-go-handler-*.tar.gz")
+	archive, err := os.CreateTemp("", "faas-go-handler-*.tar.zst")
 	if err != nil {
 		cleanupStaging()
 		return nil, func() {}, fmt.Errorf("create Go handler layer: %w", err)
@@ -454,7 +464,11 @@ func makeGoHandlerLayer(layers []io.ReadCloser, executable string) (io.ReadClose
 		_ = os.Remove(archive.Name())
 		cleanupStaging()
 	}
-	zw := gzip.NewWriter(archive)
+	zw, err := rootfs.NewLayerWriter(archive)
+	if err != nil {
+		removeArchive()
+		return nil, func() {}, fmt.Errorf("compress Go handler layer: %w", err)
+	}
 	tw := tar.NewWriter(zw)
 	hdr := &tar.Header{Name: "app/server", Mode: int64(info.Mode().Perm()), Size: info.Size(), Typeflag: tar.TypeReg}
 	if err := tw.WriteHeader(hdr); err != nil {
@@ -477,7 +491,7 @@ func makeGoHandlerLayer(layers []io.ReadCloser, executable string) (io.ReadClose
 	}
 	if err := zw.Close(); err != nil {
 		removeArchive()
-		return nil, func() {}, fmt.Errorf("close Go handler gzip: %w", err)
+		return nil, func() {}, fmt.Errorf("close Go handler compression: %w", err)
 	}
 	if _, err := archive.Seek(0, io.SeekStart); err != nil {
 		removeArchive()
@@ -568,10 +582,13 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 	if err := manifest.Validate(); err != nil {
 		return fmt.Errorf("imaged: built OCI manifest invalid: %w", err)
 	}
-	if healthcheck != nil {
-		if err := h.recordSourceHealthcheck(ctx, dep, manifest); err != nil {
-			return err
-		}
+	if err := checkCompanionPorts(manifest, *dep); err != nil {
+		return fmt.Errorf("imaged: workload ports: %w", err)
+	}
+	// The built image's command HEALTHCHECK gates readiness whether it came
+	// from the Dockerfile or a Compose override (ADR-20261024100000).
+	if err := h.recordSourceHealthcheck(ctx, dep, manifest); err != nil {
+		return err
 	}
 	if err := h.store.SetDeploymentSecretReloadSignal(ctx, dep.ID, manifest.SecretReloadSignal); err != nil {
 		return fmt.Errorf("imaged: persist local OCI secret reload support: %w", err)

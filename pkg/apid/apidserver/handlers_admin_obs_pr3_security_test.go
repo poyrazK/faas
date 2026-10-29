@@ -61,7 +61,7 @@ func TestObsSecurity_AuditLogSearch_AccountEmailSurfaces(t *testing.T) {
 	acctID := uuid.New()
 	apidserver.SeedAuditLogRow(t, (*e.Store()), "auth.login", &acctID, "user@example.com", "user@example.com", nil)
 
-	rec := e.Do(t, "GET", "/v1/admin/obs/audit-log/search", nil, nil)
+	rec := e.DoOperator(t, "GET", "/v1/admin/obs/audit-log/search", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("audit-log/search: got %d, body=%s", rec.Code, rec.Body.String())
 	}
@@ -92,7 +92,7 @@ func TestObsSecurity_AuditLogSearch_NoSealedBlobs(t *testing.T) {
 	acctID := uuid.New()
 	apidserver.SeedAuditLogRow(t, (*e.Store()), "auth.login", &acctID, "user@example.com", "user@example.com", []byte(`{"ip":"1.2.3.4"}`))
 
-	rec := e.Do(t, "GET", "/v1/admin/obs/audit-log/search", nil, nil)
+	rec := e.DoOperator(t, "GET", "/v1/admin/obs/audit-log/search", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("audit-log/search: got %d", rec.Code)
 	}
@@ -122,7 +122,7 @@ func TestObsSecurity_Events_DataProjectedVerbatim(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rec := e.Do(t, "GET", "/v1/admin/obs/events", nil, nil)
+	rec := e.DoOperator(t, "GET", "/v1/admin/obs/events", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("events: got %d", rec.Code)
 	}
@@ -150,7 +150,7 @@ func TestObsSecurity_Events_DataProjectedVerbatim(t *testing.T) {
 // body content (the client sees EOF on the first read).
 func TestObsSecurity_NodesEvents_FrameShapeAbsent(t *testing.T) {
 	e := apidserver.NewObsPR3Env(t, api.ScopesAdminOnly, apidserver.Pr3AdminEmail, apidserver.Pr3AdminEmail)
-	rec := e.Do(t, "GET", "/v1/admin/obs/nodes/events", nil, nil)
+	rec := e.DoOperator(t, "GET", "/v1/admin/obs/nodes/events", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("nodes/events: got %d", rec.Code)
 	}

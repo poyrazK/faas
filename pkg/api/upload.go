@@ -197,6 +197,13 @@ func (c *Client) doResumableUpload(ctx context.Context, method, path string, bod
 		if start && resp.StatusCode == http.StatusNotFound {
 			return nil, nil, ErrResumableUploadUnsupported
 		}
+		// An apid from before deploy tokens could open upload sessions
+		// answers them 403 (their scope was /v1/apps/* only). Fall back to
+		// the legacy endpoint, which authorizes the token as before; a
+		// refusal there is reported as usual.
+		if start && resp.StatusCode == http.StatusForbidden && ValidDeployTokenFormat(c.token) {
+			return nil, nil, ErrResumableUploadUnsupported
+		}
 		return nil, nil, apiErrorFromResponse(resp, data)
 	}
 

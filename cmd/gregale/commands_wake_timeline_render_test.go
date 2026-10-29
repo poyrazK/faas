@@ -342,3 +342,24 @@ func TestRenderWakeTimelinePage_PreRPCBreakdown(t *testing.T) {
 		t.Fatalf("default output shows implementation phases:\n%s", buf.String())
 	}
 }
+
+// The ~85 ms between the gateway's scheduler_wake and schedd's wake phases is
+// EnsureWake's work before the wake starts. --verbose shows its steps.
+func TestRenderWakeTimelinePage_PreWakeBreakdown(t *testing.T) {
+	resp := api.WakeTimelineResponse{WakeID: "wake-1", AppID: "app-1", Events: []api.WakeTimelineEvent{{
+		Kind: "wake.boot_started", Actor: "schedd", Data: map[string]any{
+			"pre_wake_authorize_ms": float64(3), "pre_wake_environment_ms": float64(21),
+			"pre_wake_coordinate_ms": float64(0), "pre_wake_transition_ms": float64(9),
+		},
+	}}}
+	var buf bytes.Buffer
+	main.RenderWakeTimelinePageWithOptions(&buf, "", resp, true)
+	if want := "pre-wake authorize=3ms environment=21ms coordinate=0ms transition=9ms"; !strings.Contains(buf.String(), want) {
+		t.Fatalf("verbose output missing %q:\n%s", want, buf.String())
+	}
+	buf.Reset()
+	main.RenderWakeTimelinePage(&buf, resp)
+	if strings.Contains(buf.String(), "pre-wake") {
+		t.Fatalf("default output shows implementation phases:\n%s", buf.String())
+	}
+}

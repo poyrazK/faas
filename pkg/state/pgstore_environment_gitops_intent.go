@@ -538,14 +538,38 @@ func (s *PgStore) ApplyEnvironmentGitOpsWithEffects(ctx context.Context, lease E
 }
 
 func (s *PgStore) applyEnvironmentGitOps(ctx context.Context, lease EnvironmentGitOpsLease, reviewed environmentsync.Plan, effects []EnvironmentGitOpsEffectSpec, requireEffects bool) ([]EnvironmentGitOpsStep, error) {
-	tx, err := s.pool.Begin(ctx)
+	if !gitOpsPlanChangesPolicies(reviewed) {
+		return s.applyEnvironmentGitOpsOnce(ctx, lease, reviewed, effects, requireEffects, false)
+	}
+	return retryTrafficSerialization(ctx, func() ([]EnvironmentGitOpsStep, error) {
+		return s.applyEnvironmentGitOpsOnce(ctx, lease, reviewed, effects, requireEffects, true)
+	})
+}
+
+// Environment edge policies are part of every bound hostname's policy
+// projection, so a plan that changes them applies inside the binding guard
+// (ADR-570). The reviewed plan must match the recomputed one before any write.
+func gitOpsPlanChangesPolicies(plan environmentsync.Plan) bool {
+	for _, change := range plan.Changes {
+		if change.Path == "policies" {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *PgStore) applyEnvironmentGitOpsOnce(ctx context.Context, lease EnvironmentGitOpsLease, reviewed environmentsync.Plan, effects []EnvironmentGitOpsEffectSpec, requireEffects, guarded bool) ([]EnvironmentGitOpsStep, error) {
+	var tx pgx.Tx
+	var err error
+	if guarded {
+		tx, err = s.gitOpsBindingEffectTx(ctx, lease)
+	} else {
+		tx, err = s.gitOpsEffectTx(ctx, lease)
+	}
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	if err := lockEnvironmentGitOps(ctx, tx, lease, time.Now()); err != nil {
-		return nil, err
-	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	if lease.Source.Spec.Mode != "enforce" {
 		return nil, ErrConflict
 	}

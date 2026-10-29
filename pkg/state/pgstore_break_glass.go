@@ -17,12 +17,15 @@ import (
 const (
 	BreakGlassSessions           = "sessions"
 	BreakGlassAPIKeys            = "api_keys"
+	BreakGlassDeployTokens       = "deploy_tokens"
+	BreakGlassHostingCredentials = "hosting_automation_credentials"
 	BreakGlassAIAccessTokens     = "outbound_ai_access_tokens"
 	BreakGlassTenantAccessTokens = "platform_tenant_access_tokens"
 )
 
 // BreakGlassCredentialKinds lists every kind in the order they are revoked.
-var BreakGlassCredentialKinds = []string{BreakGlassSessions, BreakGlassAPIKeys, BreakGlassAIAccessTokens, BreakGlassTenantAccessTokens}
+var BreakGlassCredentialKinds = []string{BreakGlassSessions, BreakGlassAPIKeys, BreakGlassDeployTokens,
+	BreakGlassHostingCredentials, BreakGlassAIAccessTokens, BreakGlassTenantAccessTokens}
 
 // breakGlassQueries maps a kind to the count of its live rows and the
 // statement that revokes them. Static SQL only.
@@ -34,6 +37,18 @@ var breakGlassQueries = map[string]struct{ count, revoke string }{
 	BreakGlassAPIKeys: {
 		count:  `SELECT count(*) FROM api_keys WHERE status <> 'revoked'`,
 		revoke: `UPDATE api_keys SET status = 'revoked', revoked_at = coalesce(revoked_at, now()) WHERE status <> 'revoked'`,
+	},
+	// App-bound CI deploy tokens live up to a year; a revoked one fails
+	// AuthenticateDeployToken like an API key.
+	BreakGlassDeployTokens: {
+		count:  `SELECT count(*) FROM deploy_tokens WHERE status <> 'revoked' AND expires_at > now()`,
+		revoke: `UPDATE deploy_tokens SET status = 'revoked', revoked_at = coalesce(revoked_at, now()) WHERE status <> 'revoked' AND expires_at > now()`,
+	},
+	// Hosting stage and preview credentials live up to 30 days and have no
+	// revoked state: revoking one deletes its row, as the API does.
+	BreakGlassHostingCredentials: {
+		count:  `SELECT count(*) FROM hosting_automation_credentials WHERE expires_at > clock_timestamp()`,
+		revoke: `DELETE FROM hosting_automation_credentials WHERE expires_at > clock_timestamp()`,
 	},
 	BreakGlassAIAccessTokens: {
 		count:  `SELECT count(*) FROM outbound_ai_access_tokens WHERE revoked_at IS NULL AND expires_at > now()`,

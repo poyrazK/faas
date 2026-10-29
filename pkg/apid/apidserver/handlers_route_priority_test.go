@@ -68,3 +68,24 @@ func TestRoutePrioritiesRejects(t *testing.T) {
 		}
 	}
 }
+
+// adr: 20261026143210 — the catalog lists route controls for Hobby and above.
+func TestRouteControlsRefuseFreePlan(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanFree)
+	apidserver.MustSeedApp(t, e, "api")
+	for _, c := range []struct {
+		method, path string
+		body         any
+	}{
+		{"GET", "/v1/apps/api/route-priorities", nil},
+		{"PUT", "/v1/apps/api/route-priorities", api.SetRoutePrioritiesRequest{Routes: []api.RoutePriorityRule{}}},
+		{"DELETE", "/v1/apps/api/route-priorities", nil},
+		{"GET", "/v1/apps/api/throttle-suggestions", nil},
+		{"GET", "/v1/apps/api/route-lifecycle/history", nil},
+	} {
+		res := e.Do(t, c.method, c.path, c.body, nil)
+		if res.Code != http.StatusPaymentRequired {
+			t.Fatalf("%s %s on Free: %d %s, want 402", c.method, c.path, res.Code, res.Body.String())
+		}
+	}
+}

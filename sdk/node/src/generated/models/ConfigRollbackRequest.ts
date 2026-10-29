@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * The config revision whose variables a rollback restores (ADR-1451).
+ * The config revision whose variables a rollback restores.
  */
 export type ConfigRollbackRequest = {
   revision: number;

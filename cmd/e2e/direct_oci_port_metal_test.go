@@ -82,15 +82,11 @@ func TestDirectOCIPort3000Metal(t *testing.T) {
 		t.Fatalf("deployment policy = kind:%s full_rootfs:%t rootfs_key:%q; want direct full-rootfs image", dep.Kind, dep.FullRootfsAllowAuto, dep.RootfsKey)
 	}
 
-	initialCtx, initialCancel := context.WithTimeout(context.Background(), 35*time.Second)
-	defer initialCancel()
-	if _, err := e2etest.WaitForInstanceState(initialCtx, t, pool, appID, state.StateRunning, 30*time.Second); err != nil {
-		t.Fatalf("port-3000 instance did not reach running: %v", err)
-	}
-
-	hotBody, hotStatus := doGetWithHost(t, h.HTTPClient(), gatewayAppURL(h, "oci-port-3000"), "oci-port-3000.apps.test.example", 30*time.Second)
-	if hotStatus != http.StatusOK || strings.TrimSpace(string(hotBody)) != "hello from port 3000" {
-		t.Fatalf("hot request: status=%d body=%q", hotStatus, hotBody)
+	// A deployment goes live parked on its priming snapshot, so the first
+	// request wakes it; nothing runs the app before then.
+	firstBody, firstStatus := doGetWithHost(t, h.HTTPClient(), gatewayAppURL(h, "oci-port-3000"), "oci-port-3000.apps.test.example", 30*time.Second)
+	if firstStatus != http.StatusOK || strings.TrimSpace(string(firstBody)) != "hello from port 3000" {
+		t.Fatalf("first request: status=%d body=%q", firstStatus, firstBody)
 	}
 
 	zeroCtx, zeroCancel := context.WithTimeout(context.Background(), 40*time.Second)

@@ -74,7 +74,7 @@ func TestObsTenantDetailExactReadProjection(t *testing.T) {
 	}
 	fake := &obsReadProjectionStore{Store: *(*e.S()).Store()}
 	*(*e.S()).Store() = statetest.NewStore(fake)
-	rec := e.Do(t, "GET", "/v1/admin/obs/tenants/"+(*e.Acct()).ID, nil, nil)
+	rec := e.DoOperator(t, "GET", "/v1/admin/obs/tenants/"+(*e.Acct()).ID, nil, nil)
 	var got api.ObsTenantDetailResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
@@ -119,7 +119,7 @@ func TestObsReadProjectionFailuresAreUnavailable(t *testing.T) {
 				}
 			}
 			*(*e.S()).Store() = statetest.NewStore(fake)
-			rec := e.Do(t, "GET", path, nil, nil)
+			rec := e.DoOperator(t, "GET", path, nil, nil)
 			if rec.Code != http.StatusServiceUnavailable || fake.legacyReads.Load() != 0 {
 				t.Fatalf("legacy_reads=%d status=%d body=%s", fake.legacyReads.Load(), rec.Code, rec.Body.String())
 			}

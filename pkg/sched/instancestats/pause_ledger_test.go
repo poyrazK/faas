@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -214,7 +216,122 @@ func TestPauseLedgerWaitsForOpenPauses(t *testing.T) {
 	}
 }
 
+// withTotal sets vmmd's completed paused total, in seconds, on row.
+func withTotal(row InstanceStat, sec int) InstanceStat {
+	total := time.Duration(sec) * time.Second
+	row.QuietPause.PausedTotal = &total
+	return row
+}
+
+// The ledger counts the paused time vmmd measured between reports, the
+// reference meterd's subtracted seconds must stay under: completed pauses
+// plus open pause time, from each instance's first report on, with a new
+// incarnation's time counted whole.
+func TestPauseLedgerMeasuresVMMDPausedTime(t *testing.T) {
+	metrics := NewPauseLedgerMetrics(nil)
+	ledger := NewPauseLedger(&fakePauseStore{}, 0, nil, metrics)
+	steps := []struct {
+		rows []InstanceStat
+		want float64 // measured seconds so far
+	}{
+		// First sighting: the baseline, nothing counted.
+		{[]InstanceStat{pausedRow("a", 10, 8)}, 0},
+		// Still paused: 10 more open seconds.
+		{[]InstanceStat{pausedRow("a", 20, 8)}, 10},
+		// Resumed at :25: the total holds the whole pause, 5 s are new.
+		{[]InstanceStat{withTotal(withLast(runningRow("a", 30), 8, 25), 17)}, 15},
+		// Paused again since :35.
+		{[]InstanceStat{withTotal(withLast(pausedRow("a", 40, 35), 8, 25), 17)}, 20},
+		// A new incarnation (smaller total): its 2 paused seconds are new.
+		{[]InstanceStat{pausedRow("a", 50, 48)}, 22},
+		// Gone from the report, then seen again: a new baseline.
+		{[]InstanceStat{runningRow("b", 60)}, 22},
+		{[]InstanceStat{pausedRow("a", 70, 65)}, 22},
+		{[]InstanceStat{pausedRow("a", 80, 65)}, 32},
+	}
+	for i, step := range steps {
+		ledger.Observe(t.Context(), step.rows, step.rows[0].SampledAt)
+		if got := testutil.ToFloat64(metrics.measuredS.WithLabelValues("n1")); got != step.want {
+			t.Fatalf("step %d: measured = %v s, want %v", i, got, step.want)
+		}
+	}
+}
+
 func TestPauseLedgerNilIsInert(t *testing.T) {
 	var ledger *PauseLedger
 	ledger.Observe(t.Context(), []InstanceStat{pausedRow("a", 10, 8)}, ts(10))
+}
+
+// timestamptzPauseStore keeps pauses the way PostgreSQL does: keyed by
+// instance and started_at at microsecond precision, refusing a write that
+// touches one row twice (ON CONFLICT DO UPDATE cannot affect a row twice).
+type timestamptzPauseStore struct {
+	fakePauseStore
+	rows map[pauseKey]time.Time
+}
+
+func (s *timestamptzPauseStore) RecordQuietPauses(ctx context.Context, node string, covered time.Time, pauses []state.QuietPause) error {
+	touched := make(map[pauseKey]bool, len(pauses))
+	for _, p := range pauses {
+		k := pauseKey{instance: p.InstanceID, start: p.StartedAt.Truncate(time.Microsecond)}
+		if touched[k] {
+			return errors.New("ON CONFLICT DO UPDATE command cannot affect row a second time")
+		}
+		touched[k] = true
+	}
+	if s.rows == nil {
+		s.rows = make(map[pauseKey]time.Time)
+	}
+	for _, p := range pauses {
+		k := pauseKey{instance: p.InstanceID, start: p.StartedAt.Truncate(time.Microsecond)}
+		end := p.EndedAt.Truncate(time.Microsecond)
+		if prev, ok := s.rows[k]; !ok || (!end.IsZero() && (prev.IsZero() || end.After(prev))) {
+			s.rows[k] = end
+		}
+	}
+	return s.fakePauseStore.RecordQuietPauses(ctx, node, covered, pauses)
+}
+
+func (s *timestamptzPauseStore) OpenQuietPauses(_ context.Context, node string) ([]state.QuietPause, error) {
+	s.loads++
+	var open []state.QuietPause
+	for k, end := range s.rows {
+		if end.IsZero() {
+			open = append(open, state.QuietPause{InstanceID: k.instance, StartedAt: k.start})
+		}
+	}
+	return open, nil
+}
+
+// vmmd stamps a pause's start in nanoseconds; the ledger reads it back in
+// microseconds after a schedd restart. The still-open pause must match its
+// next report instead of being closed and reopened under the same key, which
+// failed every later write for the node.
+func TestPauseLedgerRestartMatchesNanosecondStarts(t *testing.T) {
+	start := ledgerT0.Add(8*time.Second + 123_456_789*time.Nanosecond)
+	end := start.Add(17*time.Second + 999*time.Nanosecond)
+	paused := func(sampled int) InstanceStat {
+		return InstanceStat{InstanceID: "a", NodeID: "n1", SampledAt: ts(sampled), QuietPaused: true,
+			QuietPause: sched.QuietPauseRecord{Since: start}}
+	}
+	store := &timestamptzPauseStore{}
+	ctx := t.Context()
+	NewPauseLedger(store, 0, nil, nil).Observe(ctx, []InstanceStat{paused(10)}, ts(10))
+
+	restarted := NewPauseLedger(store, 0, nil, nil)
+	restarted.Observe(ctx, []InstanceStat{paused(20)}, ts(20))
+	ran := runningRow("a", 30)
+	ran.QuietPause.LastStarted, ran.QuietPause.LastEnded = start, end
+	restarted.Observe(ctx, []InstanceStat{ran}, ts(30))
+
+	if len(store.writes) != 3 {
+		t.Fatalf("writes = %d, want one per report (a failed write is not recorded)", len(store.writes))
+	}
+	if got := store.writes[1].pauses; len(got) != 0 {
+		t.Fatalf("report after the restart wrote %+v, want nothing: the pause is still the one recorded", got)
+	}
+	want := map[pauseKey]time.Time{{instance: "a", start: start.Truncate(time.Microsecond)}: end.Truncate(time.Microsecond)}
+	if !reflect.DeepEqual(store.rows, want) {
+		t.Fatalf("ledger rows = %v, want %v", store.rows, want)
+	}
 }

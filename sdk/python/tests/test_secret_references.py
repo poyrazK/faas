@@ -6,8 +6,8 @@ import httpx
 import pytest
 
 from faas_sdk import FaaSClient
-from faas_sdk.api.secrets import delete_app_secret_reference, list_app_secret_references, set_app_secret_reference
-from faas_sdk.models import AppSecretReferenceListResponse, AppSecretReferenceResponse, PutAppSecretReferenceRequest
+from faas_sdk.preview.api.secrets import delete_app_secret_reference, list_app_secret_references, set_app_secret_reference
+from faas_sdk.preview.models import AppSecretReferenceListResponse, AppSecretReferenceResponse, PutAppSecretReferenceRequest
 
 
 @pytest.mark.parametrize("environment", ["production", "a", "1", "qa", "12", "a" * 33])

@@ -19,6 +19,18 @@ import (
 )
 
 func (h *Handler) ensureProducedBaseScan(ctx context.Context, be storage.StorageBackend, base state.BaseImageProducer, out string) (state.BaseImageScan, error) {
+	// A fresh complete scan of these exact producer bytes already vouches for
+	// them, so republish it without first invalidating the shared sidecar. The
+	// invalidation below is for a rebuilt or refreshed base; running it on
+	// every reuse made vmmd refuse every cold boot on the base, on every node,
+	// until the reload finished, and a transient store error (review busy)
+	// held the refusal for minutes (Hunt 14 H14-102).
+	if current, ok := h.reusableProducedBaseScan(ctx, be, base); ok {
+		if err := writeProducedBaseScanCompatibility(ctx, be, base.Input.Artifact.StorageKey, base.Input.SourceReference, out, current); err != nil {
+			return state.BaseImageScan{}, err
+		}
+		return current, nil
+	}
 	if err := writeProducedBaseScanCompatibility(ctx, be, base.Input.Artifact.StorageKey, base.Input.SourceReference, out, state.BaseImageScan{}); err != nil {
 		return state.BaseImageScan{}, err
 	}
@@ -32,12 +44,33 @@ func (h *Handler) ensureProducedBaseScan(ctx context.Context, be storage.Storage
 	return value, nil
 }
 
+// reusableProducedBaseScan returns the stored scan that still vouches for this
+// producer's exact bytes: complete, not due for renewal, and the stored
+// artifact unchanged. The second read closes the window in which another
+// writer replaced the evidence during the artifact check.
+func (h *Handler) reusableProducedBaseScan(ctx context.Context, be storage.StorageBackend, base state.BaseImageProducer) (state.BaseImageScan, bool) {
+	store, ok := h.store.(state.BaseImageScanStore)
+	if !ok {
+		return state.BaseImageScan{}, false
+	}
+	expected := scanArtifactTarget{StorageKey: base.Input.Artifact.StorageKey, ArtifactIdentity: rootfs.ArtifactIdentity{Digest: base.Input.Artifact.Digest, Bytes: base.Input.Artifact.Bytes}}
+	current, err := store.GetFreshBaseImageScan(ctx, base.ID, base.InputHash)
+	if err != nil || current.Input.Status != "complete" || producedEvidenceRenewalDue(current.ScannedAt, current.ExpiresAt, time.Now().UTC()) || checkStoredScanArtifact(ctx, be, expected) != nil {
+		return state.BaseImageScan{}, false
+	}
+	again, err := store.GetFreshBaseImageScan(ctx, base.ID, base.InputHash)
+	if err != nil || again.ID != current.ID || again.Input.Status != "complete" {
+		return state.BaseImageScan{}, false
+	}
+	return again, true
+}
+
 func (h *Handler) loadOrRunProducedBaseScan(ctx context.Context, be storage.StorageBackend, base state.BaseImageProducer) (state.BaseImageScan, error) {
 	store, ok := h.store.(state.BaseImageScanStore)
 	if !ok {
 		return state.BaseImageScan{}, fmt.Errorf("imaged: durable shared-base scan store unavailable")
 	}
-	ctx, cancel := context.WithTimeout(ctx, api.ApplicationStandardArtifactScanTimeout)
+	ctx, cancel := context.WithTimeout(ctx, api.ApplicationStandardBaseScanTimeout)
 	defer cancel()
 	expected := scanArtifactTarget{StorageKey: base.Input.Artifact.StorageKey, ArtifactIdentity: rootfs.ArtifactIdentity{Digest: base.Input.Artifact.Digest, Bytes: base.Input.Artifact.Bytes}}
 	current, err := store.GetFreshBaseImageScan(ctx, base.ID, base.InputHash)
@@ -51,7 +84,12 @@ func (h *Handler) loadOrRunProducedBaseScan(ctx context.Context, be storage.Stor
 		return state.BaseImageScan{}, err
 	}
 	in := state.BaseImageScanInput{ID: uuid.NewString(), BaseProducerID: base.ID, BaseInputHash: base.InputHash, Artifact: base.Input.Artifact, SourceReference: base.Input.SourceReference}
+	started := time.Now()
 	result, failure := h.readProducedArtifactScan(ctx, be, expected)
+	if h.log != nil {
+		h.log.Info("imaged: shared base scanned", "key", expected.StorageKey, "bytes", expected.Bytes,
+			"duration", time.Since(started).Round(time.Second), "failure", failure)
+	}
 	if failure != "" {
 		return h.publishBaseScanFailure(ctx, store, in, failure)
 	}
@@ -117,16 +155,44 @@ func scanResultFromAPI(report api.ScanResult) (*ScanResult, error) {
 // Compatibility output comes only from the separately retained private scan.
 // It is not a native receipt or company approval. Failed evidence retains the
 // legacy refusal sentinel; those numbers are never private scanner findings.
+//
+// A concurrent owner of the review inputs (another deploy staging the same
+// base) makes publication busy. Waiting for it lets this stage publish or
+// reuse the result instead of failing the deploy with "review inputs are
+// being modified" (#5709); the wait is bounded.
 func (h *Handler) writeProducedBaseScanSidecar(ctx context.Context, r verifiedBaseRequest, base state.BaseImageProducer) error {
-	_, err := h.ensureProducedBaseScan(ctx, r.be, base, r.out)
-	return err
+	wait := producedBaseScanBusyFirstWait
+	deadline := time.Now().Add(producedBaseScanBusyWait)
+	for {
+		_, err := h.ensureProducedBaseScan(ctx, r.be, base, r.out)
+		if err == nil || !producedEvidenceBusy(err) || !time.Now().Add(wait).Before(deadline) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(wait):
+		}
+		wait = min(2*wait, producedBaseScanBusyMaxStep)
+	}
 }
+
+// How long a base stage waits for a concurrent owner of the review inputs, and
+// its backoff between attempts. The owner can be scanning the same base, so
+// the bound is the base scan's own; each attempt reuses that owner's result as
+// soon as it is published. Giving up earlier left the fail-closed sidecar in
+// place: fsn-2 refused every cold boot for five hours (2026-10-27, #5709).
+var (
+	producedBaseScanBusyWait      = api.ApplicationStandardBaseScanTimeout
+	producedBaseScanBusyFirstWait = 250 * time.Millisecond
+	producedBaseScanBusyMaxStep   = 5 * time.Second
+)
 
 // An empty value is a preflight refusal, not a scan attempt: its clock stays
 // zero. Invalidate old compatibility output before rebuilding or refreshing;
 // only a successfully retained private result can replace that refusal.
 func writeProducedBaseScanCompatibility(ctx context.Context, be storage.StorageBackend, key, ref, out string, value state.BaseImageScan) error {
-	findings := map[string]int{SeverityCritical: 9999, SeverityHigh: 9999, SeverityMedium: 9999, SeverityLow: 9999, SeverityUnknown: 0}
+	findings := map[string]int{SeverityCritical: wire.BaseScanFailedCount, SeverityHigh: wire.BaseScanFailedCount, SeverityMedium: wire.BaseScanFailedCount, SeverityLow: wire.BaseScanFailedCount, SeverityUnknown: 0}
 	fixAvailable := findings
 	if value.Input.Status == "complete" {
 		result, err := scanResultFromAPI(value.Result)

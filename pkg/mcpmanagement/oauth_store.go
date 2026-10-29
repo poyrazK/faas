@@ -40,6 +40,9 @@ type authorizationRequest struct {
 	Expires    time.Time
 	NativeCode string
 	NativeURL  string
+	// Capabilities are the extra scopes chosen before sign-in; the browser
+	// code carries exactly these (ADR-20261026195952).
+	Capabilities []string
 }
 
 type authorizationCode struct {
@@ -51,11 +54,17 @@ type authorizationCode struct {
 }
 
 type oauthGrant struct {
-	id                    string
-	clientID              string
-	accountID             string
-	scopes                []string
+	id        string
+	clientID  string
+	accountID string
+	scopes    []string
+	// approved is set once consent completes. server and management are
+	// built on first use and dropped when idle (grant_servers.go); inflight
+	// counts the requests using them.
+	approved              bool
 	server                *mcp.Server
+	inflight              int
+	lastUsed              time.Time
 	client                *api.Client
 	expires               time.Time
 	accessExpires         time.Time
@@ -68,6 +77,7 @@ type oauthGrant struct {
 	credentialExpires     time.Time
 	environments          *EnvironmentConsent
 	availableEnvironments []EnvironmentGrant
+	capabilities          []string
 }
 
 func randomToken(prefix string) (string, error) {
@@ -114,6 +124,7 @@ func (r *remoteServer) pruneLocked() {
 			delete(r.usedRefresh, key)
 		}
 	}
+	r.dropIdleServersLocked(now)
 }
 
 func (r *remoteServer) revokeLocked(g *oauthGrant) {

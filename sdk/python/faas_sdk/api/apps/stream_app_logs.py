@@ -146,10 +146,10 @@ def sync_detailed(
     - **Live** — `?follow=1` holds the connection open and streams new
       entries from the per-instance ring buffer. The stream terminates
       with `event: end` when the backstop fires (10 minutes idle), the
-      schedd returns NotFound (parked app), or the connection closes.
+      scheduler returns NotFound (parked app), or the connection closes.
 
     - **Archive (`?archive=1`)** — fetches a single day's
-      per-instance log batch from the S3 bucket the apid shipper
+      per-instance log batch from the S3 bucket the API shipper
       writes into. `?instance=<id>` selects the Firecracker instance
       id; `?date=YYYY-MM-DD` selects the day. The response is the
       same SSE shape as the live stream (`event: log` per line,
@@ -230,10 +230,10 @@ def sync(
     - **Live** — `?follow=1` holds the connection open and streams new
       entries from the per-instance ring buffer. The stream terminates
       with `event: end` when the backstop fires (10 minutes idle), the
-      schedd returns NotFound (parked app), or the connection closes.
+      scheduler returns NotFound (parked app), or the connection closes.
 
     - **Archive (`?archive=1`)** — fetches a single day's
-      per-instance log batch from the S3 bucket the apid shipper
+      per-instance log batch from the S3 bucket the API shipper
       writes into. `?instance=<id>` selects the Firecracker instance
       id; `?date=YYYY-MM-DD` selects the day. The response is the
       same SSE shape as the live stream (`event: log` per line,
@@ -309,10 +309,10 @@ async def asyncio_detailed(
     - **Live** — `?follow=1` holds the connection open and streams new
       entries from the per-instance ring buffer. The stream terminates
       with `event: end` when the backstop fires (10 minutes idle), the
-      schedd returns NotFound (parked app), or the connection closes.
+      scheduler returns NotFound (parked app), or the connection closes.
 
     - **Archive (`?archive=1`)** — fetches a single day's
-      per-instance log batch from the S3 bucket the apid shipper
+      per-instance log batch from the S3 bucket the API shipper
       writes into. `?instance=<id>` selects the Firecracker instance
       id; `?date=YYYY-MM-DD` selects the day. The response is the
       same SSE shape as the live stream (`event: log` per line,
@@ -391,10 +391,10 @@ async def asyncio(
     - **Live** — `?follow=1` holds the connection open and streams new
       entries from the per-instance ring buffer. The stream terminates
       with `event: end` when the backstop fires (10 minutes idle), the
-      schedd returns NotFound (parked app), or the connection closes.
+      scheduler returns NotFound (parked app), or the connection closes.
 
     - **Archive (`?archive=1`)** — fetches a single day's
-      per-instance log batch from the S3 bucket the apid shipper
+      per-instance log batch from the S3 bucket the API shipper
       writes into. `?instance=<id>` selects the Firecracker instance
       id; `?date=YYYY-MM-DD` selects the day. The response is the
       same SSE shape as the live stream (`event: log` per line,

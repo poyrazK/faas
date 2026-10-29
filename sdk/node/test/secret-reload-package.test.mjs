@@ -80,8 +80,8 @@ test('isolated runtime subpaths run without template sources and handle real SIG
   const address=server.address();assert.ok(address&&typeof address!=='string');
   const script=`
     import {SecretReloadCoordinator} from '@gregale/sdk-node/secrets/runtime';
-    import {ObjectStorageBinding} from '@gregale/sdk-node/object-storage/runtime';
-    import {PostgresPoolBinding} from '@gregale/sdk-node/postgres/runtime';
+    import {ObjectStorageBinding} from '@gregale/sdk-node/preview/object-storage/runtime';
+    import {PostgresPoolBinding} from '@gregale/sdk-node/preview/postgres/runtime';
     const binding=new ObjectStorageBinding('ASSETS',()=>({}));
     const database=new PostgresPoolBinding('DATABASE_URL',()=>({}),{validate:()=>{},retire:()=>{}});
     const shutdown=new AbortController();

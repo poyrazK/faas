@@ -1,0 +1,17 @@
+# vmmd restart adoption (docs/adr/20261017-vmmd-restart-adoption.md).
+#
+# Step 1: every present and future compute node writes version-7 adoption
+# blocks. Every release since rc.294 reads them, so a rollback target still
+# adopts or quarantines as before. Each vmmd start classifies the records in a
+# dry run ("vmmd: adoption dry run" in the journal).
+vmmd_adoption_record: true
+
+# Step 2: the canary nodes adopt their running guests across a vmmd restart.
+# Names are the canonical database node names (gregalectl compute-nodes list).
+# A node's first rollout with it on still drains, because its serving vmmd does
+# not hand off yet (node_join reads that from the running process); the rollout
+# after that skips the drain when `vmmd adoption-check` proves every guest.
+# Widen the list only after the canary has restarted cleanly.
+vmmd_adoption_canary_nodes:
+  - fsn-2.faas
+vmmd_adopt_running_vms: "{{ (faas_join_database_node | default(faas_node_name | default(''))) in vmmd_adoption_canary_nodes }}"

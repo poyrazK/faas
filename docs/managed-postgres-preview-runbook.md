@@ -202,6 +202,38 @@ then expand the list deliberately. Leave the variable empty only when every
 qualified staging account is an intentional canary. The gate is fail-closed on
 malformed entries and never blocks database deletion or credential revocation.
 
+## Production rollout
+
+Production does not use a qualification artifact
+([ADR-20261028103115](adr/20261028103115-managed-postgres-production-provisioning.md)).
+To open it:
+
+1. In the managed PostgreSQL configuration, set `provisioning_enabled`, turn
+   on `usage` with real prices and ceilings, and add
+   `"fleet": {"max_databases": N, "max_monthly_cost_millicents": M}` sized to
+   the provider budget.
+2. With `FAAS_ENVIRONMENT=production`, run
+   `managed-postgres-qualify --check-production`. It prints the readiness
+   codes and the configured backend's ID and fingerprint, and never contacts
+   the provider.
+3. Set `FAAS_MANAGED_POSTGRES_PRODUCTION_BACKEND` and
+   `FAAS_MANAGED_POSTGRES_PRODUCTION_FINGERPRINT` to those values,
+   `FAAS_MANAGED_POSTGRES_PRODUCTION_APPROVED_AT` to now and
+   `FAAS_MANAGED_POSTGRES_PRODUCTION_UNTIL` at most 90 days later. Rerun the
+   check until it exits 0, then restart apid. apid logs the closed reasons at
+   startup.
+4. Release accounts with the `managed-postgres` capability flag: an account
+   rule first, then plan rules or a ramp. Releasing an account is a flag
+   change, not a deploy; the kill switch closes every account.
+5. Renew the approval before `FaasManagedPostgresProductionApprovalExpiring`
+   turns into `FaasManagedPostgresProductionApprovalExpired`. Changing the
+   backend configuration changes its fingerprint and closes provisioning
+   until step 3 is repeated.
+
+`FaasManagedPostgresFleetNearCeiling` and `FaasManagedPostgresFleetPaused`
+follow the fleet ceilings; see
+[FaasManagedPostgresDegraded](runbooks/FaasManagedPostgresDegraded.md).
+
 ## Admission failures
 
 - `managed_postgres_usage_stale`: stop new reservations, verify the provider
@@ -221,6 +253,12 @@ malformed entries and never blocks database deletion or credential revocation.
   canary account allowlist). Nothing is down; existing databases and
   bindings keep working. Reopen the gate deliberately; an expired operator
   test window closes it without any other signal.
+- `managed_postgres_new_databases_paused`: the fleet database cap or the
+  monthly provider-spend breaker is reached for every account. Existing
+  databases keep working. Check `apid_managed_postgres_fleet_*` against the
+  configured ceilings and raise one deliberately, or wait: the database cap
+  reopens as databases are deleted and the spend breaker at the next UTC
+  month.
 - `managed_postgres_unavailable`: keep provisioning disabled and use the
   lifecycle reconciler to finish deletion of known resources.
 
@@ -247,11 +285,36 @@ when verification fails. Worker restarts repeat verification before readiness.
 
 ## Account deletion
 
-The account status transition is blocked while any managed database is not a
-provider-confirmed `deleted` tombstone. Ask the customer to delete the
-database and wait for reconciliation. The final deletion transaction removes
-only deleted managed-Postgres metadata and usage rows; it never erases an
-active provider resource as a shortcut.
+An account deletion can include the account's personal managed databases
+([ADR-20261024150500](adr/20261024150500-account-deletion-includes-managed-postgres.md)).
+Personal means the ones the account created in its personal organization or in
+an organization without resource ownership. Company-owned databases are never
+included.
+
+- **Non-payment deletion** always includes them, unless the operator sets
+  `FAAS_NONPAYMENT_DELETION_MANAGED_POSTGRES=off` on apid and meterd. With the
+  kill switch off, such an account stays suspended and counts in
+  `meterd_dunning_deletion_blocked_accounts`
+  ([`FaasDunningDeletionBlocked`](runbooks/FaasDunningDeletionBlocked.md)).
+- **Self-service** includes them only when the customer asks
+  (`include_managed_postgres_databases=true`, `--include-postgres-databases`, or
+  the dashboard checkbox). Until launch, only accounts listed in
+  `FAAS_ACCOUNT_DELETION_MANAGED_POSTGRES_ACCOUNTS` see the option. Without it,
+  the deletion is refused with `409 account_deletion_managed_postgres_databases`
+  until the customer deletes each database.
+
+Nothing is deleted when the account enters `deleted_pending`, so an account
+restored or paid back during the 30-day grace keeps its databases and loses the
+opt-in. When the grace ends, apid's grace sweep deletes the bindings and then
+the databases through the normal lifecycle. It retries every tick and logs
+`grace: external cleanup deferred` until every database is a provider-confirmed
+`deleted` tombstone. A database with a restore descendant waits for the
+descendant, and one held by an environment clone waits for the hold.
+
+The final deletion transaction then removes only deleted managed-Postgres
+metadata and usage rows. It never erases an active provider resource as a
+shortcut. Never delete the rows or provider projects by hand, and never disable
+the guard trigger.
 
 ## Billing evidence
 
@@ -549,6 +612,34 @@ Live queries are invisible to customers until launch.
 An app reaches a database's live queries only through its own realtime
 endpoints, and only while it holds a ready binding to that database. Other
 seals are refused with `forbidden` in realtimed.
+
+### Writer signatures
+
+ADR 20261028161502. apid signs each live key and login it seals, and
+livequeryd refuses a value whose signature does not verify. A control-plane
+database writer cannot then store a key or login of their own.
+
+1. Make the key pair on the operator workstation:
+   `gregalectl live-query signing-keygen --sign-key live-signing.key --verify-key live-signing.pub`.
+   Keep the private key with the other control-plane secrets.
+2. Set `faas_livequeryd_signing_key_src` (apid's private key) and
+   `faas_livequeryd_signing_pub_src` (livequeryd's verify keys), and
+   converge the control plane. apid signs what it writes from its restart.
+   livequeryd verifies every signature present, and still serves unsigned
+   rows.
+3. After the at-rest re-seal (`livequeryd -reseal`, which clears the
+   signature of each key it rewrites), sign the existing rows once:
+   `sudo gregalectl live-query sign-existing --db-env /etc/faas/compute-db.env`.
+   It signs every unsigned row as it stands and reports the counts. Run it
+   again until it reports nothing changed meanwhile. Check that the number
+   signed matches the live databases you expect: the backfill trusts what is
+   stored.
+4. Set `faas_livequeryd_require_signatures: true` and converge. livequeryd
+   then refuses unsigned keys and logins too.
+
+To rotate the key, add the new public key to the verify key file (it may
+hold several PEM blocks) and converge, then switch apid's private key.
+Rows signed with the old key stay valid while the old public key is listed.
 
 ### RLS mode
 

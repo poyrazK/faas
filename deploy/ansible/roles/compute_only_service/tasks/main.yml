@@ -532,6 +532,45 @@
     group: root
     mode: "0644"
 
+- name: compute_only_service — install traffic apps-domain drop-in
+  notify:
+    - restart faas-imaged
+    - restart faas-schedd
+  ansible.builtin.template:
+    src: ../../_shared/templates/99-faas-apps-domain.conf.j2
+    dest: "/etc/systemd/system/{{ item }}.service.d/99-faas-apps-domain.conf"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - faas-imaged
+    - faas-schedd
+
+- name: compute_only_service — install domain layout drop-in (ADR-20261026100000)
+  notify:
+    - restart faas-imaged
+    - restart faas-schedd
+  ansible.builtin.template:
+    src: ../../_shared/templates/99-faas-domain-layout.conf.j2
+    dest: "/etc/systemd/system/{{ item }}.service.d/99-faas-domain-layout.conf"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - faas-imaged
+    - faas-schedd
+
+# ADR-20261025114554: imaged pulls anonymous Docker Hub images through the
+# operator's mirrors (faas_docker_hub_mirrors) before Docker Hub.
+- name: compute_only_service — install Docker Hub mirrors drop-in
+  notify: restart faas-imaged
+  ansible.builtin.template:
+    src: ../../_shared/templates/99-faas-docker-hub-mirrors.conf.j2
+    dest: /etc/systemd/system/faas-imaged.service.d/99-faas-docker-hub-mirrors.conf
+    owner: root
+    group: root
+    mode: "0644"
+
 # Mega-PR-C (issue #911 / ADR-110): wire the per-box role gate
 # through to imaged via FAAS_IMAGED_ROLE so cmd/imaged/main.go
 # picks up faas_box_role (compute-only on fsn-2). See
@@ -647,6 +686,18 @@
   ansible.builtin.command:
     cmd: "find /srv/fc/snap -mindepth 1 -type d -exec chown root:faas {} + -exec chmod 2770 {} +"
   changed_when: false
+
+# ADR 20261022184951 amendment 1: native runtime snapshots live in a tree only
+# vmmd (root) writes. The faas group reads it for imaged's collection and
+# schedd's drift sweep; vmmd removes objects on imaged's request. vmmd refuses
+# a root with group write or any access for others, so never widen this mode.
+- name: compute_only_service — create the native runtime snapshot tree
+  ansible.builtin.file:
+    path: /srv/fc/native-snap
+    state: directory
+    owner: root
+    group: faas
+    mode: "2750"
 
 # The compute daemons share selected subdirectories below /var/lib/faas.
 # postgres creates this parent as root-only on control-plane images; compute

@@ -1,4 +1,4 @@
-// adr: 20261019195000
+// adr: 20261019195000, 20261024100000
 package imaged
 
 import (
@@ -64,8 +64,10 @@ func TestSourceBuildAppliesComposeHealthcheck(t *testing.T) {
 		{"frozen override wins over the app's", nil, captured, &api.ComposeHealthcheck{Test: []string{"NONE"}}, []string{"CMD", "/app/check"}, 2, true, true},
 		{"timing override on the image's own check", []string{"CMD", "/image"}, freeze(&api.ComposeHealthcheck{Retries: 5}), nil, []string{"CMD", "/image"}, 5, true, true},
 		{"disabled override", []string{"CMD", "/image"}, freeze(&api.ComposeHealthcheck{Test: []string{"NONE"}}), nil, []string{"NONE"}, 0, false, true},
-		{"an app override alone is not applied", []string{"CMD", "/image"}, nil, &api.ComposeHealthcheck{Retries: 5}, []string{"CMD", "/image"}, 0, false, false},
-		{"no override keeps the image check unenforced", []string{"CMD", "/image"}, nil, nil, []string{"CMD", "/image"}, 0, false, false},
+		{"an app override alone is not applied", []string{"CMD", "/image"}, nil, &api.ComposeHealthcheck{Retries: 5}, []string{"CMD", "/image"}, 0, true, false},
+		// ADR-20261024100000: the Dockerfile's own command check is enforced.
+		{"Dockerfile HEALTHCHECK alone is enforced", []string{"CMD", "/image"}, nil, nil, []string{"CMD", "/image"}, 0, true, false},
+		{"Dockerfile HEALTHCHECK NONE keeps ordinary readiness", []string{"NONE"}, nil, nil, []string{"NONE"}, 0, false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
@@ -108,6 +110,81 @@ func TestSourceBuildAppliesComposeHealthcheck(t *testing.T) {
 			}
 			if required := frameworkprofile.RequiresSourceImageHealthcheck(stored.InferredProfile); required != tc.wantRequired {
 				t.Fatalf("required = %v; want %v (profile %s)", required, tc.wantRequired, stored.InferredProfile)
+			}
+		})
+	}
+}
+
+// The verdict merges into the profile as stored: fields this binary does not
+// know survive, a build without a profile gets one, and a build without a
+// command HEALTHCHECK writes nothing (ADR-20261024100000).
+func TestSourceBuildRecordsDockerfileHealthcheck(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		imageCheck   []string
+		profile      []byte
+		wantRequired bool
+		wantProfile  func(t *testing.T, stored []byte)
+	}{
+		{"keeps unknown profile fields", []string{"CMD-SHELL", "curl -f localhost"},
+			[]byte(`{"version":"v1","framework":"docker","dockerfile_path":"Dockerfile","newer_field":{"kept":true}}`), true,
+			func(t *testing.T, stored []byte) {
+				var fields map[string]json.RawMessage
+				if err := json.Unmarshal(stored, &fields); err != nil || string(fields["newer_field"]) != `{"kept":true}` ||
+					string(fields["dockerfile_path"]) != `"Dockerfile"` {
+					t.Fatalf("profile lost fields: %s (%v)", stored, err)
+				}
+			}},
+		{"starts a profile when inference left none", []string{"CMD", "/image"}, nil, true,
+			func(t *testing.T, stored []byte) {
+				var profile frameworkprofile.Profile
+				if err := json.Unmarshal(stored, &profile); err != nil || profile.Version != frameworkprofile.Version || profile.Framework != "unknown" {
+					t.Fatalf("new profile = %s (%v)", stored, err)
+				}
+			}},
+		{"no HEALTHCHECK writes nothing", nil, []byte(`{"version":"v1","framework":"docker"}`), false,
+			func(t *testing.T, stored []byte) {
+				if string(stored) != `{"version":"v1","framework":"docker"}` {
+					t.Fatalf("profile rewritten without a check: %s", stored)
+				}
+			}},
+		{"a copied verdict is cleared when the check is gone", nil, []byte(`{"version":"v1","framework":"docker","image_healthcheck_required":true}`), false, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			store := state.NewMemStore()
+			acct, err := store.CreateAccount(ctx, "dockerfile-healthcheck@example.com", api.PlanPro)
+			if err != nil {
+				t.Fatal(err)
+			}
+			app, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "dockerfile-healthcheck", Type: state.AppTypeApp,
+				Manifest: state.AppManifest{BuildDockerfile: "Dockerfile"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindDockerfile, Status: state.DeployImaging, InferredProfile: tc.profile})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := store.SetDeploymentRootfs(ctx, dep.ID, sourceBuildArchive(t, tc.imageCheck), "builder/source", 1); err != nil {
+				t.Fatal(err)
+			}
+			if dep, err = store.DeploymentByID(ctx, dep.ID); err != nil {
+				t.Fatal(err)
+			}
+			h := New(store, &fakeNotifier{}, nil, &fakeBuilder{bytesOut: 128}, "", t.TempDir(), silentLogger())
+			if err := h.buildLocalOCIAppLayer(ctx, app, &dep, acct, nil); err != nil {
+				t.Fatal(err)
+			}
+			stored, err := store.DeploymentByID(ctx, dep.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if required := frameworkprofile.RequiresSourceImageHealthcheck(stored.InferredProfile); required != tc.wantRequired {
+				t.Fatalf("required = %v; want %v (profile %s)", required, tc.wantRequired, stored.InferredProfile)
+			}
+			if tc.wantProfile != nil {
+				tc.wantProfile(t, stored.InferredProfile)
 			}
 		})
 	}

@@ -29,6 +29,11 @@ const (
 	edgeHeadHeaderMaxBytes = 64 * 1024
 
 	defaultRobotsTxt = "User-agent: *\nAllow: /\n"
+
+	// A preview answers every crawler with these, whatever robots.txt its
+	// production app serves.
+	previewRobotsTxt = "User-agent: *\nDisallow: /\n"
+	previewRobotsTag = "noindex, nofollow"
 )
 
 const defaultHealthPath = "/healthz"
@@ -277,6 +282,9 @@ func (h *Handler) serveEdgeAnswer(w http.ResponseWriter, r *http.Request, app Ap
 		if body == "" {
 			body = defaultRobotsTxt
 		}
+		if app.IsPreview {
+			body = previewRobotsTxt
+		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Header().Set("Cache-Control", "public, max-age=300")
 		w.Header().Set("Content-Length", itoa(uint64(len(body))))
@@ -289,6 +297,13 @@ func (h *Handler) serveEdgeAnswer(w http.ResponseWriter, r *http.Request, app Ap
 
 	case "/":
 		if r.Method != http.MethodHead || app.HeadWakes || h.headWakes {
+			return false
+		}
+		// The cached headers come from a live response to a client the
+		// app's public access gate admitted, and this answer runs before
+		// that gate: an IP-allowlisted or credential-gated app replayed them,
+		// with a 200, to clients the gate refuses. Its HEAD takes the gate.
+		if mode := app.PublicAuth.Mode; mode != "" && mode != publicAuthModeOpen {
 			return false
 		}
 		if h.backend.HealthyCount(app.ID) != 0 {

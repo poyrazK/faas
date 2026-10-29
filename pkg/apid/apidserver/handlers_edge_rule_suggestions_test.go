@@ -12,6 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/middleware"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/state/statetest"
@@ -70,6 +71,13 @@ func TestDashboardEdgeRuleSuggestions(t *testing.T) {
 		}
 		return body[start : start+end]
 	}
+
+	// adr: 20261023113721 — no challenge alternative until challenge rules
+	// are released to the account.
+	if section := suggestions(); strings.Contains(section, `value="challenge-path"`) {
+		t.Errorf("unreleased account offered a challenge alternative:\n%s", section)
+	}
+	srv.SeedPlatformFlag(platformflags.EdgeChallenge, platformflags.Definition{Enabled: true, Default: true})
 
 	section := suggestions()
 	for _, want := range []string{

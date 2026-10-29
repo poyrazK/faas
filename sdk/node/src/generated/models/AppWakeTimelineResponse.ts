@@ -12,13 +12,13 @@ import type { WakeTimelineJSONRow } from './WakeTimelineJSONRow.js';
  *
  * `trigger_histogram` is a JSON object (map[string]int) — empty
  * `{}` on a fresh app, never null. The dashboard SPA must
- * treat missing keys as 0 (JSON.parse() returns undefined for
+ * treat missing keys as 0 (JSON.parse returns undefined for
  * missing keys, not 0 — the render code adds the explicit
  * `?? 0` fallback).
  *
  * `at_capacity_pct` is the share of `wake_count_with_meta`
  * rows where the events.wake.boot_started join succeeded AND
- * the at_capacity flag is true. Pre-PR-A fleet rows
+ * the at_capacity flag is true. Older rows
  * contribute to `wake_count_24h` but not the denominator.
  *
  */

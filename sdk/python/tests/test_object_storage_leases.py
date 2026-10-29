@@ -6,7 +6,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from test_object_storage_runtime import values
 
-from faas_sdk.object_storage_runtime import ObjectStorageBinding, ObjectStorageBindingError
+from faas_sdk.preview.object_storage_runtime import ObjectStorageBinding, ObjectStorageBindingError
 
 
 class Client:

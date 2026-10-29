@@ -31,6 +31,8 @@ func cmdPostgres(args []string) int {
 		return cmdPostgresCapabilities(args[1:])
 	case "usage":
 		return cmdPostgresUsage(args[1:])
+	case "overage":
+		return cmdPostgresOverage(args[1:])
 	case "diagnostics":
 		return cmdPostgresDiagnostics(args[1:])
 	case "usage-import":
@@ -63,7 +65,7 @@ func cmdPostgres(args []string) int {
 		return cmdPostgresLive(args[1:])
 	default:
 		printCommandValidation(os.Stderr, "unknown postgres subcommand %q\n", args[0])
-		return 1
+		return unknownSubcommandChoices(os.Stderr, "postgres", nestedCliCommand("postgres"), args[0])
 	}
 }
 
@@ -171,6 +173,49 @@ func (a *stringAlias) Set(value string) error {
 	return nil
 }
 
+// cmdPostgresOverage shows or changes the account's compute overage
+// (ADR-20261025094915): with it on, databases keep running past the monthly
+// allowance until twice it; off, the default, suspends them at the allowance.
+func cmdPostgresOverage(args []string) int {
+	fs := newFlagSet("postgres overage", flag.ContinueOnError)
+	if err := fs.Parse(args); err != nil {
+		PrintUsage(os.Stderr, "usage: gregale postgres overage [on|off]", "postgres")
+		return 1
+	}
+	choice := ""
+	if fs.NArg() != 0 {
+		choice = fs.Arg(0)
+		if fs.NArg() != 1 || (choice != "on" && choice != "off") {
+			PrintUsage(os.Stderr, "usage: gregale postgres overage [on|off]", "postgres")
+			return 1
+		}
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	var result api.ManagedPostgresOverage
+	if choice == "" {
+		result, err = client.GetManagedPostgresOverage(context.Background())
+	} else {
+		result, err = client.SetManagedPostgresOverage(context.Background(), choice == "on")
+	}
+	if err != nil {
+		return printErr("Could not update managed PostgreSQL compute overage", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(result))
+	}
+	state := "off: databases are suspended at the monthly allowance"
+	if result.Enabled {
+		state = "on: databases keep running past the allowance until the ceiling"
+	}
+	_, _ = fmt.Fprintf(osStdout, "compute overage %s\n", state)
+	_, _ = fmt.Fprintf(osStdout, "  compute_allowance:            %s\n", formatComputeUnitHours(result.ComputeAllowanceUnitSeconds))
+	_, _ = fmt.Fprintf(osStdout, "  compute_ceiling:              %s\n", formatComputeUnitHours(result.ComputeCeilingUnitSeconds))
+	return 0
+}
+
 func cmdPostgresUsage(args []string) int {
 	fs := newFlagSet("postgres usage", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil || fs.NArg() != 0 {
@@ -196,6 +241,13 @@ func cmdPostgresUsage(args []string) int {
 	_, _ = fmt.Fprintf(osStdout, "  guardrail_state:              %s\n", result.GuardrailState)
 	_, _ = fmt.Fprintf(osStdout, "  ready_databases:              %d / %d\n", result.ReadyDatabases, result.DatabaseLimit)
 	_, _ = fmt.Fprintf(osStdout, "  compute_unit_seconds:         %d (%s)\n", result.ComputeUnitSeconds, formatComputeUnitHours(result.ComputeUnitSeconds))
+	if result.ComputeAllowanceUnitSeconds > 0 {
+		_, _ = fmt.Fprintf(osStdout, "  compute_allowance:            %s\n", formatComputeUnitHours(result.ComputeAllowanceUnitSeconds))
+		if result.ComputeCeilingUnitSeconds > 0 {
+			_, _ = fmt.Fprintf(osStdout, "  compute_ceiling:              %s\n", formatComputeUnitHours(result.ComputeCeilingUnitSeconds))
+		}
+		_, _ = fmt.Fprintf(osStdout, "  compute_cap_state:            %s\n", result.ComputeCapState)
+	}
 	_, _ = fmt.Fprintf(osStdout, "  storage_byte_seconds:         %d / %d (remaining %d)\n", result.StorageByteSeconds, result.StorageByteSecondsLimit, result.StorageByteSecondsRemaining)
 	_, _ = fmt.Fprintf(osStdout, "                                (%s of %s used)\n", formatGiBMonths(result.StorageByteSeconds), formatGiBMonths(result.StorageByteSecondsLimit))
 	_, _ = fmt.Fprintf(osStdout, "  history_byte_seconds:         %d (%s)\n", result.HistoryByteSeconds, formatGiBMonths(result.HistoryByteSeconds))
@@ -426,7 +478,7 @@ func cmdPostgresBindings(args []string) int {
 		return cmdPostgresBindingsDelete(args[1:])
 	default:
 		printCommandValidation(os.Stderr, "unknown postgres bindings subcommand %q\n", args[0])
-		return 1
+		return unknownSubcommandChoices(os.Stderr, "postgres bindings", nestedCliCommand("postgres", "bindings"), args[0])
 	}
 }
 

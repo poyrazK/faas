@@ -14,6 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	"github.com/onebox-faas/faas/pkg/apid/release"
+	"github.com/onebox-faas/faas/pkg/apid/trafficproblem"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/meter"
@@ -97,8 +98,9 @@ func (s *server) resolveOverflowNode(ctx context.Context, wire *string, strictEm
 		if errors.Is(err, state.ErrNotFound) {
 			return "", api.ErrInvalidOverflowNode(*wire)
 		}
+		logCustomerFailure(s.log, "lookup overflow_node", err)
 		return "", api.NewProblem(http.StatusInternalServerError, api.CodeCapacity,
-			"Capacity", fmt.Sprintf("lookup overflow_node %q: %v", *wire, err))
+			"Capacity", api.DetailServerFailure)
 	}
 	if !row.Active {
 		return "", api.NewProblem(http.StatusUnprocessableEntity, api.CodeInvalidOverflowNode,
@@ -191,6 +193,10 @@ func (s *server) createAppInOrg(w http.ResponseWriter, r *http.Request, acct sta
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
 		return
 	}
+	if problem := s.appCreateSettingsProblem(r, acct, req); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	// Tier A10 / ADR-088: per-app overflow_node preference.
 	// Resolve the wire name → UUID server-side before buildApp
 	// runs, so the resulting state.App carries the resolved
@@ -245,8 +251,8 @@ func (s *server) createAppInOrg(w http.ResponseWriter, r *http.Request, acct sta
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
 				"Slug taken", fmt.Sprintf("app slug %q is already in use", req.Slug)))
 		default:
-			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeCapacity,
-				"Capacity", "could not create app"))
+			api.WriteProblem(w, trafficproblem.Policy(err, api.NewProblem(http.StatusInternalServerError, api.CodeCapacity,
+				"Capacity", "could not create app")))
 		}
 		return
 	}
@@ -649,6 +655,10 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 	// JSON branch is the rest of this handler. Extracted to
 	// loadAppAndPreflight so createDeployment stays under the
 	// CLAUDE.md 50-line handler cap.
+	if !s.deploymentBodyCapabilityAllowed(r, acct) {
+		writeMissingRoute(w, r)
+		return
+	}
 	app, ok, limits := s.loadAppAndPreflight(w, r, acct)
 	if !ok {
 		return
@@ -1432,7 +1442,9 @@ func (s *server) accountResponse(ctx context.Context, acct state.Account, r *htt
 	return resp
 }
 
-func validSlug(s string) bool { return api.ValidAppSlug(s) }
+// validSlug accepts app slugs and the longer PR preview slugs githubd
+// allocates; every creation path rejects the preview shape as reserved first.
+func validSlug(s string) bool { return api.ValidAppSlug(s) || api.ValidPreviewAppSlug(s) }
 
 // digestPinnedRE matches a digest-pinned OCI reference end-to-end:
 //

@@ -60,6 +60,11 @@ def _parse_response(
 
         return response_404
 
+    if response.status_code == 409:
+        response_409 = Problem.from_dict(response.json())
+
+        return response_409
+
     if response.status_code == 412:
         response_412 = Problem.from_dict(response.json())
 
@@ -104,7 +109,9 @@ def sync_detailed(
      Every field is optional. `kind` is NOT patchable — rotating
     kind mid-life would break the action union. To change kind,
     delete and recreate. `action` replaces the jsonb column
-    whole (no partial-update shape).
+    whole (no partial-update shape). The app's attack-mode rule
+    (`managed_by: attack_mode`) is refused with 409; change it through
+    `/v1/apps/{slug}/edge-protection/attack-mode`.
 
     Args:
         id (str):
@@ -145,7 +152,9 @@ def sync(
      Every field is optional. `kind` is NOT patchable — rotating
     kind mid-life would break the action union. To change kind,
     delete and recreate. `action` replaces the jsonb column
-    whole (no partial-update shape).
+    whole (no partial-update shape). The app's attack-mode rule
+    (`managed_by: attack_mode`) is refused with 409; change it through
+    `/v1/apps/{slug}/edge-protection/attack-mode`.
 
     Args:
         id (str):
@@ -181,7 +190,9 @@ async def asyncio_detailed(
      Every field is optional. `kind` is NOT patchable — rotating
     kind mid-life would break the action union. To change kind,
     delete and recreate. `action` replaces the jsonb column
-    whole (no partial-update shape).
+    whole (no partial-update shape). The app's attack-mode rule
+    (`managed_by: attack_mode`) is refused with 409; change it through
+    `/v1/apps/{slug}/edge-protection/attack-mode`.
 
     Args:
         id (str):
@@ -220,7 +231,9 @@ async def asyncio(
      Every field is optional. `kind` is NOT patchable — rotating
     kind mid-life would break the action union. To change kind,
     delete and recreate. `action` replaces the jsonb column
-    whole (no partial-update shape).
+    whole (no partial-update shape). The app's attack-mode rule
+    (`managed_by: attack_mode`) is refused with 409; change it through
+    `/v1/apps/{slug}/edge-protection/attack-mode`.
 
     Args:
         id (str):

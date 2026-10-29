@@ -8,11 +8,62 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemRuntimeAppValuesScopeGrantsAndLifetime(t *testing.T) {
 	testRuntimeAppValuesScopeGrantsAndLifetime(t, state.NewMemStore())
+}
+
+func TestMemRuntimeAppValuesPreviewSkipsProjectEnvironment(t *testing.T) {
+	testRuntimeAppValuesPreviewSkipsProjectEnvironment(t, state.NewMemStore())
+}
+
+// A PR preview keeps its parent's project, and its builds land in the default
+// scope, which maps to production. Every wake handed the preview's unreviewed
+// code the production project environment's configuration and secrets.
+func testRuntimeAppValuesPreviewSkipsProjectEnvironment(t *testing.T, store runtimeAppEnvTestStore) {
+	f := seedRuntimeAppEnv(t, store)
+	ctx := t.Context()
+	secrets, ok := any(store).(state.ProjectEnvironmentSecretStore)
+	if !ok {
+		t.Fatalf("%T does not keep project environment secrets", store)
+	}
+	values, hash, err := api.NormalizeProjectEnvironmentConfig(json.RawMessage(`{"SHARED_MODE":"production"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateProjectEnvironmentConfigVersion(ctx, state.ProjectEnvironmentConfig{AccountID: f.account.ID,
+		ProjectID: f.project.ID, EnvironmentSlug: "production", ConfigHash: hash, Values: values}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := secrets.SetProjectEnvironmentSecret(ctx, state.ProjectEnvironmentSecret{AccountID: f.account.ID, ProjectID: f.project.ID,
+		EnvironmentSlug: "production", Key: "STRIPE_KEY", Ciphertext: []byte("production-sealed"), Kid: "age1previewtestkid", ValueHash: "hash-1"}, 10); err != nil {
+		t.Fatal(err)
+	}
+	parent, err := store.RuntimeAppValuesForDeployment(ctx, f.account.ID, f.app.ID, f.deployments["default"].ID)
+	if err != nil || len(parent.Inherited) != 1 || len(parent.InheritedSecrets) != 1 || parent.InheritedSecrets[0].Key != "STRIPE_KEY" {
+		t.Fatalf("parent inheritance = %+v / %+v, %v; want the production config and secret", parent.Inherited, parent.InheritedSecrets, err)
+	}
+	preview, err := store.CreateApp(ctx, state.App{AccountID: f.account.ID, ProjectID: f.project.ID, Slug: "pr-7-" + f.app.Slug,
+		Type: state.AppTypeApp, WorkloadClass: state.WorkloadClassWorker, WorkloadName: "preview", RAMMB: 256, MaxConcurrency: 1,
+		PreviewOfSlug: f.app.Slug, PreviewPrNumber: 7, PreviewPrState: state.PreviewPrStateOpen})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: preview.ID, Kind: state.DeploymentKindPreview})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.RuntimeAppValuesForDeployment(ctx, f.account.ID, preview.ID, dep.ID)
+	if err != nil || len(got.Inherited) != 0 || len(got.InheritedSecrets) != 0 {
+		t.Fatalf("preview inherited %+v / %+v (%v); want neither production config nor secrets", got.Inherited, got.InheritedSecrets, err)
+	}
+	env, err := store.RuntimeAppEnvForDeployment(ctx, f.account.ID, preview.ID, dep.ID)
+	if err != nil || len(env.Inherited) != 0 {
+		t.Fatalf("preview env inherited %+v (%v); want no production config", env.Inherited, err)
+	}
 }
 
 func testRuntimeAppValuesScopeGrantsAndLifetime(t *testing.T, store runtimeAppEnvTestStore) {

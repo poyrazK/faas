@@ -206,10 +206,11 @@ func (t *EdgeRuleTemplate) Expand(in EdgeRuleTemplateInput) string {
 		b.WriteString(t.escape(s, t.value(s, in)))
 	}
 	out := b.String()
-	if t.mode == EdgeRuleTemplateRedirect {
-		for strings.HasPrefix(out, "//") || strings.HasPrefix(out, "/\\") {
-			out = out[1:]
-		}
+	if t.mode == EdgeRuleTemplateRedirect && strings.HasPrefix(out, "/") {
+		// Keep exactly one leading "/": browsers read "//host" and "/\host"
+		// as protocol-relative, and stripping one character from "/\host"
+		// leaves "\host", which http.Redirect turns back into "/\host".
+		out = "/" + strings.TrimLeft(out, `/\`)
 	}
 	return out
 }
@@ -225,7 +226,9 @@ func (t *EdgeRuleTemplate) escape(s templateSegment, v string) string {
 		return truncateUTF8(v, EdgeRuleTemplateMaxValueBytes)
 	}
 	if s.name == "" && (s.kind == "path" || s.kind == "query") {
-		return v // already in escaped form
+		// Already in escaped form, except that a raw query may carry "\",
+		// which browsers treat as "/".
+		return strings.ReplaceAll(v, `\`, "%5C")
 	}
 	if s.kind == "host" {
 		return url.PathEscape(v)

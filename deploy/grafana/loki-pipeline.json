@@ -9,7 +9,7 @@
   "panels": [
     {
       "type": "stat",
-      "title": "Promtail targets up",
+      "title": "Journal shippers up",
       "id": 1,
       "gridPos": {"h": 6, "w": 8, "x": 0, "y": 0},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
@@ -23,7 +23,7 @@
       "id": 2,
       "gridPos": {"h": 8, "w": 16, "x": 8, "y": 0},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "targets": [{"expr": "sum by (instance) (increase(promtail_sent_entries_total[10m]))", "legendFormat": "{{instance}}", "refId": "A"}],
+      "targets": [{"expr": "sum by (instance) (increase(promtail_sent_entries_total[10m])) or sum by (instance) (increase(loki_write_sent_entries_total{job=~\"promtail|promtail-compute\"}[10m]))", "legendFormat": "{{instance}}", "refId": "A"}],
       "fieldConfig": {"defaults": {"unit": "short", "color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "fillOpacity": 10, "showPoints": "never"}}},
       "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
     },
@@ -33,7 +33,7 @@
       "id": 3,
       "gridPos": {"h": 6, "w": 8, "x": 0, "y": 6},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "targets": [{"expr": "sum(increase(promtail_dropped_entries_total[10m]))", "refId": "A"}],
+      "targets": [{"expr": "sum(increase(promtail_dropped_entries_total[10m])) or sum(increase(loki_write_dropped_entries_total{job=~\"promtail|promtail-compute\"}[10m]))", "refId": "A"}],
       "fieldConfig": {"defaults": {"unit": "short", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}},
       "options": {"colorMode": "value", "graphMode": "none", "justifyMode": "center", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}}
     },
@@ -43,7 +43,7 @@
       "id": 4,
       "gridPos": {"h": 8, "w": 16, "x": 8, "y": 8},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "targets": [{"expr": "sum by (instance) (increase(promtail_journal_target_lines_total[10m]))", "legendFormat": "{{instance}}", "refId": "A"}],
+      "targets": [{"expr": "sum by (instance) (increase(promtail_journal_target_lines_total[10m])) or sum by (instance) (increase(loki_source_journal_target_lines_total{job=~\"promtail|promtail-compute\"}[10m]))", "legendFormat": "{{instance}}", "refId": "A"}],
       "fieldConfig": {"defaults": {"unit": "short", "color": {"mode": "palette-classic"}, "custom": {"drawStyle": "line", "fillOpacity": 10, "showPoints": "never"}}},
       "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "desc"}}
     },

@@ -12,5 +12,9 @@ export type ProjectWorkloadResponse = {
   deployment_status?: string;
   rollout_state?: string;
   build_status?: string;
+  /**
+   * The project services this one declares it calls (Compose depends_on), sorted. Omitted when none.
+   */
+  depends_on?: Array<string>;
 };
 

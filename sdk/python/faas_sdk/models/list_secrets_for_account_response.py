@@ -17,7 +17,7 @@ T = TypeVar("T", bound="ListSecretsForAccountResponse")
 
 @_attrs_define
 class ListSecretsForAccountResponse:
-    """Page shape for `GET /v1/secrets` (issue #393). `secrets` is
+    """Page shape for `GET /v1/secrets`. `secrets` is
     the page in (app_slug ASC, key ASC) order. `next_before` is
     the cursor the caller passes on the next request — encoded as
     `<slug>|<key>`. Empty / null at the end.

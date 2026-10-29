@@ -34,7 +34,7 @@ func TestPrivateControlAddr(t *testing.T) {
 
 func TestPrivateControlMuxServesOnlyApidRoutes(t *testing.T) {
 	ok := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusTeapot) })
-	mux := newPrivateControlMux(ok, ok)
+	mux := newPrivateControlMux(ok, ok, ok)
 	tests := []struct {
 		path string
 		want int
@@ -44,6 +44,7 @@ func TestPrivateControlMuxServesOnlyApidRoutes(t *testing.T) {
 		{"/v1/internal/apps/web/routes", http.StatusTeapot},
 		{"/v1/internal/apps/web/streaming-cap", http.StatusTeapot},
 		{api.DeploymentResponseCheckCapabilitiesControlPath, http.StatusTeapot},
+		{"/v1/internal/realtime/internal/connections", http.StatusTeapot},
 		{"/metrics", http.StatusNotFound},
 		{"/v1/internal/quota", http.StatusNotFound},
 		{"/v1/internal/services/web", http.StatusNotFound},

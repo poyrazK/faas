@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { FaaSClient, ProjectsService } from '../src/index.js';
-import type { EnvironmentGitOpsExplanation } from '../src/index.js';
-import type { PreviewEnvironmentGitPromotionResponse, PreviewEnvironmentGitRollbackResponse } from '../src/index.js';
-import type { EnvironmentGitOpsChangedWebhookPayload } from '../src/index.js';
+import { FaaSClient, ProjectsService } from '../src/preview.js';
+import type { EnvironmentGitOpsExplanation } from '../src/preview.js';
+import type { PreviewEnvironmentGitPromotionResponse, PreviewEnvironmentGitRollbackResponse } from '../src/preview.js';
+import type { EnvironmentGitOpsChangedWebhookPayload } from '../src/preview.js';
 
 test('GitOps rollout webhook preserves exact approval identity and safe diagnostics', () => {
   for (const status of ['serving', 'failed', 'superseded'] as const) {
@@ -240,11 +240,11 @@ test('recovery catalog binds the immutable target and source-scoped cursor using
 
 
 test('unchanged source build reuse preserves pending target qualification', () => {
-  const source: import('../src/index.js').EnvironmentWorkloadSource = {
+  const source: import('../src/preview.js').EnvironmentWorkloadSource = {
     kind: 'source', directory: 'workspace/apps/api', reuse_unchanged_build: true, build_context: 'workspace',
   };
   assert.deepEqual(JSON.parse(JSON.stringify(source)), source);
-  const progress: import('../src/index.js').EnvironmentWorkloadProgress = {
+  const progress: import('../src/preview.js').EnvironmentWorkloadProgress = {
     resource: 'workload/api', app_id: 'app', execution_mode: 'http', build_status: 'succeeded',
     build_cache_status: 'hit', build_cache_key_sha256: 'a'.repeat(64), preparation: 'complete',
     qualification: 'pending', activation: 'pending', serving: 'unknown', blocking_reasons: [],

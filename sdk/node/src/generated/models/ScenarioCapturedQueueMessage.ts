@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * A queue send, inbox message, delayed task or asynchronous invoke an enrolled app requested through the run-local platform API. It was never enqueued (ADR-20261021090000, ADR-20261022082721).
+ * A queue send, inbox message, delayed task or asynchronous invoke an enrolled app requested through the run-local platform API. It was never enqueued.
  */
 export type ScenarioCapturedQueueMessage = {
   id: string;

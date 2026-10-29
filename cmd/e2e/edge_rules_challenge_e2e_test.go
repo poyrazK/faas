@@ -63,7 +63,7 @@ func TestEdgeRulesChallenge_E2E(t *testing.T) {
 	if err := json.Unmarshal(createRec, &app); err != nil {
 		t.Fatalf("decode app: %v body=%s", err, createRec)
 	}
-	host := "edgectl-challenge.apps.test.example"
+	host := "edgectl-challenge.edge-e2e.example"
 	seedRouteSubstitute(t, ctx, pool, accountID, app.ID, host, slug)
 	ruleID := seedEdgeRuleDirect(t, ctx, pool, accountID, app.ID, host, state.EdgeRuleKindChallenge,
 		map[string]any{"kind": "challenge", "challenge": map[string]any{"difficulty": 10, "pass_ttl_seconds": 300}})

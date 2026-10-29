@@ -1,0 +1,57 @@
+---
+# cgroup_metrics (ADR-20261023124955). See defaults/main.yml.
+
+- name: cgroup_metrics — validate configuration
+  ansible.builtin.assert:
+    that:
+      - faas_cgroup_metrics_paths | length > 0
+      - faas_cgroup_metrics_paths | select('match', '^[A-Za-z0-9@._*-]+(/[A-Za-z0-9@._*-]+)*$') | list | length == faas_cgroup_metrics_paths | length
+      - faas_cgroup_metrics_paths | select('search', 'faas-tenant\.slice/') | list | length == 0
+      - faas_cgroup_metrics_interval | string is match('^[0-9]+(s|min)$')
+    fail_msg: >-
+      faas_cgroup_metrics_paths must be relative glob patterns without spaces,
+      and never below faas-tenant.slice (per-VM labels would grow with
+      tenants); the interval must be a systemd span such as 30s.
+
+- name: cgroup_metrics — create the configuration directory
+  ansible.builtin.file:
+    path: /etc/faas
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: cgroup_metrics — install the collector
+  ansible.builtin.copy:
+    src: faas-cgroup-metrics
+    dest: /usr/local/sbin/faas-cgroup-metrics
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: cgroup_metrics — render configuration
+  ansible.builtin.template:
+    src: faas-cgroup-metrics.env.j2
+    dest: /etc/faas/cgroup-metrics.env
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: cgroup_metrics — install service and timer
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - faas-cgroup-metrics.service
+    - faas-cgroup-metrics.timer
+  notify: daemon-reload cgroup metrics
+
+- name: cgroup_metrics — enable the timer
+  ansible.builtin.systemd:
+    name: faas-cgroup-metrics.timer
+    enabled: true
+    state: started
+    daemon_reload: true

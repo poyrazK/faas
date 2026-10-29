@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/poyrazK/faas/sdk/go/preview"
+
 	faas "github.com/poyrazK/faas/sdk/go"
 )
 
@@ -47,19 +49,19 @@ func TestQueueEnvironmentTransport(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	binding, err := client.CreateQueueBinding(ctx, "worker", faas.CreateQueueBindingRequest{Environment: "staging", Name: "orders", QueueName: "orders"})
+	binding, err := preview.Wrap(client).CreateQueueBinding(ctx, "worker", faas.CreateQueueBindingRequest{Environment: "staging", Name: "orders", QueueName: "orders"})
 	if err != nil || binding.ID != bindingID || binding.EnvironmentID != environmentID || binding.Environment != "staging" {
 		t.Fatalf("binding: %+v %v", binding, err)
 	}
-	sent, err := client.QueueSend(ctx, "worker", faas.QueueSendRequest{Environment: "staging", QueueName: "orders", Payload: json.RawMessage(`{}`), FlagContext: "flags"})
+	sent, err := preview.Wrap(client).QueueSend(ctx, "worker", faas.QueueSendRequest{Environment: "staging", QueueName: "orders", Payload: json.RawMessage(`{}`), FlagContext: "flags"})
 	if err != nil || sent.QueueBindingID != bindingID || sent.Environment != "staging" {
 		t.Fatalf("queue: %+v %v", sent, err)
 	}
-	inbox, err := client.SendAppMessage(ctx, "worker", faas.SendAppMessageRequest{Environment: "staging", QueueName: "orders", Type: "order.created", Data: json.RawMessage(`{}`)})
+	inbox, err := preview.Wrap(client).SendAppMessage(ctx, "worker", preview.SendAppMessageRequest{Environment: "staging", QueueName: "orders", Type: "order.created", Data: json.RawMessage(`{}`)})
 	if err != nil || inbox.QueueBindingID != bindingID || inbox.Environment != "staging" {
 		t.Fatalf("inbox: %+v %v", inbox, err)
 	}
-	status, err := client.GetQueueBindingStatus(ctx, "worker", bindingID)
+	status, err := preview.Wrap(client).GetQueueBindingStatus(ctx, "worker", bindingID)
 	if err != nil || status.EnvironmentID != environmentID || status.ConsumerStateReason != "environment_unavailable" {
 		t.Fatalf("status: %+v %v", status, err)
 	}

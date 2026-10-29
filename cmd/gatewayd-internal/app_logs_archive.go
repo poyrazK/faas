@@ -58,7 +58,6 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"compress/gzip"
 	"context"
 	"encoding/json"
@@ -77,6 +76,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/logarchive"
 	"github.com/onebox-faas/faas/pkg/scheddgrpc"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/trafficrevocation"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -162,11 +162,20 @@ type ArchiveLogsHandler struct {
 	Scope state.LogArchiveScopeStore
 	Log   *slog.Logger
 	Ops   *wire.OpsMetrics
+	// Traffic enrolls the read under the app's security scopes
+	// (admitPlatformTraffic); nil only in legacy fixtures.
+	Traffic *trafficrevocation.Registry
+	// CapabilityAllowed hides the route while the logs capability is off
+	// for the caller's account (logsReleased); nil releases it.
+	CapabilityAllowed func(capability, accountID string) bool
 
 	// Backstop is the SSE stream idle timeout. 0 = use the
 	// production default (10 minutes, mirroring
 	// AppLogsHandler).
 	Backstop time.Duration
+	// Heartbeat is the comment-frame interval while the bucket read is
+	// slow. 0 = the production default (15 s, mirroring AppLogsHandler).
+	Heartbeat time.Duration
 }
 
 // ServeHTTP is the http.Handler entry point. The auth chain is
@@ -197,7 +206,7 @@ func (h *ArchiveLogsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	inner := mwauth.AccountHandler(func(w http.ResponseWriter, r *http.Request, acct state.Account) {
 		h.stream(w, r, acct, slug)
 	})
-	chain := h.Auth.RequireScope(api.ScopesReadSurface...)(h.Auth.RequireMFA(appaccess.Wrap(h.Store, h.Auth.Audit, inner)))
+	chain := h.Auth.RequireScope(api.ScopesReadSurface...)(h.Auth.RequireMFA(logsReleased(h.CapabilityAllowed, appaccess.Wrap(h.Store, h.Auth.Audit, inner))))
 	h.Auth.RequireLimited(chain)(w, r)
 }
 
@@ -212,6 +221,11 @@ func (h *ArchiveLogsHandler) stream(w http.ResponseWriter, r *http.Request, acct
 	if !ok {
 		return
 	}
+	ctx, release, ok := admitPlatformTraffic(r.Context(), w, r, h.Traffic, w.Header(), acct.ID, app.ID)
+	if !ok {
+		return
+	}
+	defer release()
 	// Plan gate (issue #562 AC3). Unknown/off-plan customers get a
 	// clean 402 + CodePlanLogArchiveNotAllowed; Free is entitled to
 	// the one-day demo window.
@@ -253,7 +267,7 @@ func (h *ArchiveLogsHandler) stream(w http.ResponseWriter, r *http.Request, acct
 	}
 	apislogs.StartSSE(w)
 	flusher, _ := w.(http.Flusher)
-	h.serveArchiveWithAccount(r.Context(), w, flusher, app.ID, acct.ID, instance, day)
+	h.serveArchiveWithAccount(ctx, w, flusher, app.ID, acct.ID, instance, day)
 }
 
 // streamUnauth is the whitebox seam. Mirrors stream()'s body
@@ -329,22 +343,26 @@ func (h *ArchiveLogsHandler) withinRetention(plan api.Plan, day string) bool {
 	return !d.Before(cutoff)
 }
 
-// serveArchive is the S3 fetch + gzip-decompress + SSE pump body.
-// Mirrors the receive-pump shape AppLogsHandler.serveAppLogs uses
-// (heartbeat ticker, backstop timer, ctx-cancel drain) so the
-// production wiring is uniform across the two paths.
-//
-// Implementation: GetObject streams the .jsonl.gz body into an
-// in-memory buffer (one day's logs cap at ~hundreds of MiB on
-// the noisiest apps; well within the stdlib heap budget), then
-// a bufio.Scanner over gzip.NewReader walks the inflated
-// JSONL line-by-line. The simpler buffer-then-decompress shape
-// keeps the error handling linear (no pipe dance, no goroutine
-// leak risk) at the cost of holding the full archive in memory
-// for the duration of the stream. A future optimisation can
-// pipe-through-the-gzip-reader if any single-day archive ever
-// exceeds the stdlib heap budget; the wire shape stays the
-// same.
+// archiveMaxLineBytes bounds one archived JSONL record. A log line is at
+// most logbuf.MaxPartialLineBytes (1 MiB), and JSON escaping can grow it up
+// to six times (`<` becomes `<`), so the record bound is larger.
+const archiveMaxLineBytes = 8 << 20
+
+// archiveScan is one result from the archive reader goroutine: a record, or
+// the scan's end (err nil on a clean end).
+type archiveScan struct {
+	line []byte
+	err  error
+	done bool
+}
+
+// serveArchiveWithAccount streams one archived (instance, day) object to the
+// client as SSE `event: log` frames. The object is read from the bucket,
+// inflated and split into records as the client consumes them, so a large
+// day never sits in gatewayd-internal's memory: at most a few records are
+// in flight. A goroutine does the blocking reads; this loop keeps the
+// heartbeat and backstop running while the bucket is slow (the same shape
+// AppLogsHandler.serveAppLogs uses).
 func (h *ArchiveLogsHandler) serveArchiveWithAccount(ctx_ context.Context, w http.ResponseWriter, flusher http.Flusher, appID, accountID, instance, day string) {
 	switch owned, err := h.instanceInScope(ctx_, accountID, appID, instance, day); {
 	case err != nil:
@@ -359,54 +377,36 @@ func (h *ArchiveLogsHandler) serveArchiveWithAccount(ctx_ context.Context, w htt
 		renderArchiveTerminal(w, flusher, archiveReasonMissing)
 		return
 	}
-	key := archiveObjectKey(instance, day)
 	identity := resolveRuntimeLogIdentity(ctx_, h.Store, scheddgrpc.LogFrame{InstanceID: instance}, accountID, appID, "", make(map[string]api.PlatformIdentity))
 	backstop := h.Backstop
 	if backstop <= 0 {
 		backstop = defaultAppLogsBackstop
 	}
+	heartbeat := h.Heartbeat
+	if heartbeat <= 0 {
+		heartbeat = defaultAppLogsHeartbeat
+	}
 	backstopTimer := time.NewTimer(backstop)
 	defer backstopTimer.Stop()
-	heartbeat := defaultAppLogsHeartbeat
 	ticker := time.NewTicker(heartbeat)
 	defer ticker.Stop()
 
-	// Fetch the gzipped body into memory. GetObject returns
-	// *Permanent on 4xx and a plain error on 5xx / network;
-	// archiveTerminalForError maps both to the terminal
-	// reason vocabulary the SDK decodes.
-	var body bytes.Buffer
-	if _, err := h.S3.GetObject(ctx_, key, &body); err != nil {
+	// Cancelling streamCtx ends the bucket read and the reader goroutine
+	// whenever this handler returns.
+	streamCtx, cancel := context.WithCancel(ctx_)
+	defer cancel()
+	// The whole-day object, then the day's part objects (ADR-20261028110000).
+	body, err := h.S3.OpenDay(streamCtx, instance, day)
+	if err != nil {
 		// 4xx → archive_missing; 5xx / network → archive_degraded.
 		h.logArchiveReadError(appID, instance, day, err)
 		renderArchiveTerminal(w, flusher, archiveTerminalForError(err))
 		return
 	}
+	defer func() { _ = body.Close() }()
 
-	// Wrap the bytes in a gzip reader so the scanner walks the
-	// inflated JSONL. A malformed gzip body (someone wrote
-	// raw JSONL into the bucket) surfaces as a gzip header
-	// error here — treated as archive_degraded because the
-	// archive exists, just isn't readable.
-	gz, gzErr := gzip.NewReader(&body)
-	if gzErr != nil {
-		renderArchiveTerminal(w, flusher, archiveReasonDegraded)
-		return
-	}
-	defer func() { _ = gz.Close() }()
-
-	scanner := bufio.NewScanner(gz)
-	// Bump the scanner buffer so 64 KiB log lines (a
-	// multi-line stack trace, a JSON payload from an app)
-	// pass through without scanner-buffer overruns. The cap
-	// matches logbuf.MaxPartialLineBytes (1 MiB) so any line
-	// the producer could have written fits the consumer.
-	scanner.Buffer(make([]byte, 0, 64*1024), 1<<20)
-
-	// Heartbeat ticker fires ":" (comment) frames so a
-	// long-decompressing archive doesn't look like a dead
-	// connection. Same trick the live handler uses.
-	heartbeatCh := ticker.C
+	records := make(chan archiveScan, 16)
+	go scanArchive(streamCtx, body, records)
 	for {
 		select {
 		case <-ctx_.Done():
@@ -414,41 +414,71 @@ func (h *ArchiveLogsHandler) serveArchiveWithAccount(ctx_ context.Context, w htt
 		case <-backstopTimer.C:
 			renderArchiveTerminal(w, flusher, archiveReasonDegraded)
 			return
-		case <-heartbeatCh:
+		case <-ticker.C:
+			// A comment frame keeps a slow read from looking like a dead
+			// connection.
 			_, _ = fmt.Fprint(w, ":\n\n")
 			if flusher != nil {
 				flusher.Flush()
 			}
-		default:
-		}
-		// Scan one line; the select above gives the timers a
-		// chance to fire even on a slow S3 stream.
-		if !scanner.Scan() {
-			break
-		}
-		if !renderArchiveLineWithIdentity(w, flusher, appID, instance, scanner.Bytes(), identity, h.Ops) {
-			// Malformed JSON line — the producer side
-			// shouldn't generate these, but a third-party
-			// tool writing into the bucket could. Render
-			// a degraded terminal + return.
-			renderArchiveTerminal(w, flusher, archiveReasonDegraded)
-			return
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		// gzip / pipe read error after at least one line
-		// rendered. Treat as degraded so the SDK surfaces a
-		// partial-stream error rather than a clean success.
-		if !errors.Is(err, io.EOF) {
-			if h.Log != nil {
-				h.Log.Warn("logarchive.readback.scan_error",
-					"app", appID, "instance", instance, "day", day, "err", err)
+		case rec := <-records:
+			if rec.done {
+				if rec.err != nil {
+					// A gzip header error means the object exists but is not
+					// a readable archive; a read error mid-stream means the
+					// client saw only part of the day. Both are degraded, not
+					// a clean success.
+					if h.Log != nil {
+						h.Log.Warn("logarchive.readback.scan_error",
+							"app", appID, "instance", instance, "day", day, "err", rec.err)
+					}
+					renderArchiveTerminal(w, flusher, archiveReasonDegraded)
+					return
+				}
+				renderArchiveTerminal(w, flusher, archiveReasonComplete)
+				return
 			}
-			renderArchiveTerminal(w, flusher, archiveReasonDegraded)
+			if !renderArchiveLineWithIdentity(w, flusher, appID, instance, rec.line, identity, h.Ops) {
+				// Malformed JSON line — the producer side shouldn't
+				// generate these, but a third-party tool writing into
+				// the bucket could.
+				renderArchiveTerminal(w, flusher, archiveReasonDegraded)
+				return
+			}
+		}
+	}
+}
+
+// scanArchive inflates the gzip JSONL body and sends each record, then one
+// done result. It stops when ctx is cancelled.
+func scanArchive(ctx context.Context, body io.Reader, out chan<- archiveScan) {
+	send := func(rec archiveScan) bool {
+		select {
+		case out <- rec:
+			return true
+		case <-ctx.Done():
+			return false
+		}
+	}
+	gz, err := gzip.NewReader(body)
+	if err != nil {
+		send(archiveScan{done: true, err: fmt.Errorf("open gzip: %w", err)})
+		return
+	}
+	defer func() { _ = gz.Close() }()
+	scanner := bufio.NewScanner(gz)
+	scanner.Buffer(make([]byte, 0, 64*1024), archiveMaxLineBytes)
+	for scanner.Scan() {
+		// The scanner reuses its buffer; the handler renders the copy.
+		if !send(archiveScan{line: append([]byte(nil), scanner.Bytes()...)}) {
 			return
 		}
 	}
-	renderArchiveTerminal(w, flusher, archiveReasonComplete)
+	err = scanner.Err()
+	if errors.Is(err, io.EOF) {
+		err = nil
+	}
+	send(archiveScan{done: true, err: err})
 }
 
 // instanceInScope reports whether the instance's archived logs for day belong
@@ -463,22 +493,6 @@ func (h *ArchiveLogsHandler) instanceInScope(ctx context.Context, accountID, app
 		return false, fmt.Errorf("parse archive date %q: %w", day, err)
 	}
 	return h.Scope.InstanceLogsOwnedByApp(ctx, accountID, appID, instance, start.AddDate(0, 0, -1), start.AddDate(0, 0, 2))
-}
-
-// archiveObjectKey mirrors pkg/logarchive.Shipper.bucketKey's
-// layout (the shipper writes the same shape) so the read-back
-// path lands on the same S3 prefix without a constant-table
-// trip. The day shape is YYYY-MM-DD; we slice into year / month
-// for the {YYYY}/{MM}/{DD} layout. A day shorter than 10 chars
-// (defensive — the upstream validator caps at exactly 10) is
-// rendered flat into a single segment so a malformed caller
-// can't sneak a `/` into the path.
-func archiveObjectKey(instance, day string) string {
-	if len(day) < 10 {
-		return fmt.Sprintf("faas-logs/%s/%s.jsonl.gz", instance, day)
-	}
-	return fmt.Sprintf("faas-logs/%s/%s/%s/%s.jsonl.gz",
-		instance, day[:4], day[5:7], day[:10])
 }
 
 // renderArchiveLine parses one spoolLine JSON blob and renders

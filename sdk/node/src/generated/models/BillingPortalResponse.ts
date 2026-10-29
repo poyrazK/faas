@@ -4,8 +4,8 @@
 /* eslint-disable */
 import type { PaymentMethodSummary } from './PaymentMethodSummary.js';
 /**
- * Provider-authenticated or operator-configured billing portal URL (issue #253) plus the
- * card-on-file summary (issue #242). The url field is omitted
+ * Provider-authenticated or operator-configured billing portal URL plus the
+ * card-on-file summary. The url field is omitted
  * when neither a provider session nor FAAS_BILLING_PORTAL_URL is
  * available — that is the "absent" sentinel; the CLI branches on it
  * to print a friendly hint instead of opening the browser to "". The payment_method

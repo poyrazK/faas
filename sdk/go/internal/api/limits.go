@@ -248,9 +248,10 @@ const (
 )
 
 type ProfilingLimits struct {
-	Enabled          bool
-	RetentionDays    int
-	UploadsPerMinute int
+	Enabled             bool
+	RetentionDays       int
+	UploadsPerMinute    int
+	CaptureStorageBytes int64
 }
 
 const (

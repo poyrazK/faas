@@ -23,20 +23,20 @@ T = TypeVar("T", bound="SourceTarballDeployRequest")
 
 @_attrs_define
 class SourceTarballDeployRequest:
-    """Body for the informational `sidecar` form field on POST /v1/apps/{slug}/deployments/source-tarball (issue #961 /
-    Mega-A PR-1, ADR-115). The CLI is the trust root for this deploy path; apid does NOT consult `github_installations`
-    and does NOT attempt a server-side git fetch. The sidecar fields are recorded on the build row for provenance only —
-    the build pipeline does NOT use them to fetch upstream.
+    """Body for the informational `sidecar` form field on POST /v1/apps/{slug}/deployments/source-tarball. The CLI is the
+    trust root for this deploy path; the API does NOT consult `github_installations` and does NOT attempt a server-side
+    git fetch. The sidecar fields are recorded on the build row for provenance only — the build pipeline does NOT use
+    them to fetch upstream.
 
     """
 
     healthcheck: DeploymentHealthcheck | Unset = UNSET
-    """Startup healthcheck shape on the deploy-time override object (issue #460 /
-    ADR-053). Exactly one of `path` (HTTP) or `grpc` (standard gRPC health
+    """Startup healthcheck shape on the deploy-time override object. Exactly one of `path` (HTTP) or `grpc`
+    (standard gRPC health
     Check) selects the startup admission action. The gRPC probe uses the
     app's published port; an empty service checks overall server health.
 
-    Validation rules (enforced in `pkg/api/dto.go::CreateDeploymentOverrides.Validate`):
+    Validation rules (enforced):
     - Exactly one of `path` and `grpc` must be set.
     - `path`, when set, must start with `/`.
     - `grpc.service` is optional and limited to 256 characters.
@@ -48,8 +48,7 @@ class SourceTarballDeployRequest:
     readiness gate uses only the selected HTTP path or gRPC health RPC.
     """
     repo: None | str | Unset = UNSET
-    """`owner/repo` from the customer's git remote, parsed by `cmd/gregale/git_local.go::parseGitRemoteURL`. nil
-    when the sidecar is omitted entirely."""
+    """`owner/repo` from the customer's git remote, parsed by the CLI. nil when the sidecar is omitted entirely."""
     ref: None | str | Unset = UNSET
     """40-char lowercase SHA from `git rev-parse HEAD`. Informational only; the build pipeline does NOT pin to this
     SHA."""
@@ -64,11 +63,11 @@ class SourceTarballDeployRequest:
     tag: SourceTarballDeployRequestTag | Unset = UNSET
     """Closed-set annotation tag on the tarball deploy request for grouping/filtering."""
     deployed_by: str | Unset = UNSET
-    """Human-readable actor label on the tarball deploy request. CLI auto-captures from `git config user.name`;
-    githubd stamps pusher.name; the GitHub Action defaults to ${{ github.actor }}."""
+    """Human-readable actor label on the tarball deploy request. CLI auto-captures from `git config user.name`; the
+    GitHub integration stamps pusher.name; the GitHub Action defaults to ${{ github.actor }}."""
     pr_number: int | Unset = UNSET
-    """Pull-request number that drove this tarball deploy request (githubd pull_request.number; Action ${{
-    github.event.pull_request.number }}). NULL for push-to-main with no inferred PR."""
+    """Pull-request number that drove this tarball deploy request (the GitHub integration pull_request.number;
+    Action ${{ github.event.pull_request.number }}). NULL for push-to-main with no inferred PR."""
     traffic_percent: int | None | Unset = UNSET
     """Explicit initial traffic weight for this source-tarball deployment. Omitted uses the normal stable rollout;
     zero stages a dark live revision."""
@@ -81,11 +80,10 @@ class SourceTarballDeployRequest:
     """One-use operator override to allow this deployment to cut over while queued MCP tasks still need handler
     versions it does not provide."""
     override_freeze: str | Unset = UNSET
-    """Release this source tarball to production while a deploy freeze is active; the reason is audited
-    (ADR-20261019071733)."""
+    """Release this source tarball to production while a deploy freeze is active; the reason is audited."""
     release_at: datetime.datetime | Unset = UNSET
     """Build this source tarball now, keep it live without traffic, and start its production rollout at this time;
-    deploy freezes are checked at that time (ADR-20261021152201)."""
+    deploy freezes are checked at that time."""
     release_notify: list[str] | Unset = UNSET
     """Slack or email notification channels told when this source tarball, scheduled with release_at, starts or
     cannot start."""

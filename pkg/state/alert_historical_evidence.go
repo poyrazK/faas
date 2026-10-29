@@ -68,9 +68,17 @@ func historicalAlertEvidenceMatches(fresh, current api.AlertRollback) bool {
 }
 
 func historicalAlertEvidenceSupported(e *api.AlertRollbackDeploymentEvidence) bool {
-	return e != nil && e.Version == 1 && e.Metric == string(AlertMetricErrorRate) &&
-		(e.Comparison == string(AlertGt) || e.Comparison == string(AlertGte)) && api.IsFiniteFloat(e.Threshold) &&
-		e.Threshold >= 0 && e.Threshold <= 100 && historicalAlertMetricWindow(AlertWindowSpec(e.WindowSpec)) > 0
+	return e != nil && e.Version == 1 && HistoricalAlertRollbackSupported(e.Metric, e.Comparison, e.WindowSpec, e.Threshold)
+}
+
+// HistoricalAlertRollbackSupported reports whether a rule can roll a
+// completed release back (ADR-604): only an error_rate_pct rule compared with
+// gt or gte, over a window the deployment evidence can measure. apid refuses
+// a post-deploy rollback window on any other rule, which could fire but never
+// roll back.
+func HistoricalAlertRollbackSupported(metric, comparison, windowSpec string, threshold float64) bool {
+	return metric == string(AlertMetricErrorRate) && (comparison == string(AlertGt) || comparison == string(AlertGte)) &&
+		api.IsFiniteFloat(threshold) && threshold >= 0 && threshold <= 100 && historicalAlertMetricWindow(AlertWindowSpec(windowSpec)) > 0
 }
 
 // qualifyHistoricalAlertEvidence returns whether an intent may be accepted.

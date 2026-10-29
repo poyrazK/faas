@@ -30,9 +30,10 @@ func TestReadinessProbeConfigDefaultsAndOverrides(t *testing.T) {
 func TestManagerOwnsReadinessLoopLifecycle(t *testing.T) {
 	mgr := NewManager(nil, nil, Paths{}, "", nil, nil)
 	mgr.live["instance-1"] = &Instance{
-		Lease: Lease{Slot: 4},
-		AppID: "app-1",
-		Port:  8081,
+		Lease:  Lease{Slot: 4},
+		AppID:  "app-1",
+		WakeID: "wake-1", NodeID: "node-1",
+		Port: 8081,
 	}
 	type startedLoop struct {
 		ctx      context.Context
@@ -47,7 +48,7 @@ func TestManagerOwnsReadinessLoopLifecycle(t *testing.T) {
 	})
 	mgr.startReadinessLoop(context.Background(), "instance-1", 4, json.RawMessage(`{"path":"/readyz"}`))
 	loop := <-started
-	if loop.instance != "instance-1" || loop.slot != 4 || loop.appID != "app-1" || loop.cfg.Port != 8081 {
+	if loop.instance != "instance-1" || loop.slot != 4 || loop.appID != "app-1" || loop.cfg.Port != 8081 || loop.cfg.WakeID != "wake-1" || loop.cfg.NodeID != "node-1" {
 		t.Fatalf("started loop = %+v", loop)
 	}
 	mgr.cancelReadinessLoop("instance-1")

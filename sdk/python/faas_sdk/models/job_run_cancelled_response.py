@@ -19,8 +19,8 @@ class JobRunCancelledResponse:
     """POST .../runs/{id}/cancel body. Returns the post-cancel run aggregate + cancelled_at timestamp."""
 
     run: JobRunResponse
-    """Wire projection of state.JobRun. Aggregate counters are recomputed by schedd after every terminal task
-    transition."""
+    """Wire projection of state.JobRun. Aggregate counters are recomputed by the scheduler after every terminal
+    task transition."""
     cancelled_at: datetime.datetime
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

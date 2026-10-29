@@ -50,15 +50,15 @@ export type Problem = {
   expected_sequence?: number;
   bindings_check?: BindingCheckReport;
   /**
-   * rollback_crosses_release: release commands the rollback would not undo (ADR-1448).
+   * rollback_crosses_release: release commands the rollback would not undo.
    */
   crossed_releases?: Array<RollbackCrossedRelease>;
   /**
-   * rollback_crosses_release: how to restore each managed PostgreSQL database to before those releases (ADR-1448).
+   * rollback_crosses_release: how to restore each managed PostgreSQL database to before those releases.
    */
   restore_points?: Array<ReleaseRestorePoint>;
   /**
-   * release_frozen: the freezes refusing the release (ADR-20261019071733).
+   * release_frozen: the freezes refusing the release.
    */
   freezes?: Array<ReleaseFreeze>;
   release_approval?: ReleaseApprovalStatus;
@@ -70,7 +70,7 @@ export type Problem = {
    */
   instance?: string;
   /**
-   * Stable machine-readable error code. See StatusForCode in pkg/api/errors.go.
+   * Stable machine-readable error code. See StatusForCode.
    */
   code: string;
   detail?: string;
@@ -120,9 +120,8 @@ export type Problem = {
   errors?: Array<FieldError>;
   /**
    * Per-line secret-scan detail. Populated by 422 sites with
-   * `code: secret_scan_strict` (cmd/apid/secretscan.go
-   * server-side scan rejection; cmd/gregale printErr
-   * --secret-scan=strict client-side rejection). The shape
+   * `code: secret_scan_strict` (the server-side scan rejection,
+   * and the CLI's `--secret-scan=strict` client-side rejection). The shape
    * is shared with the on-disk `SecretScanResult` so a
    * programmatic consumer can render the same UI for both
    * rejection paths. Optional + omitempty.
@@ -141,8 +140,7 @@ export type Problem = {
   secret_hint?: string;
   /**
    * Single short next-action line lifted from the
-   * `pkg/whycopy` catalog (error-explanations cluster,
-   * spec §6.4 amendment 1). Populated by the 9 cluster-
+   * error-explanation catalog. Populated by the 9 cluster-
    * owned RFC 7807 codes (app_not_listening,
    * app_loopback_bound, app_arch_mismatch,
    * env_var_missing, app_healthz_unauthorized,
@@ -157,17 +155,16 @@ export type Problem = {
   hint?: string;
   /**
    * Human-readable cause with the observed value templated
-   * in (error-explanations cluster, spec §6.4 amendment 1).
+   * in (error-explanations cluster).
    * Distinct from `detail`: `detail` is the platform's
    * machine-stable message; `why` is the customer-facing
-   * explanation. Multi-line (≤512 bytes per `pkg/whycopy`
-   * catalog row). Optional + omitempty.
+   * explanation. Multi-line (≤512 bytes per catalog row). Optional + omitempty.
    *
    */
   why?: string;
   /**
    * Prescriptive remediation (1-3 lines, error-explanations
-   * cluster, spec §6.4 amendment 1). Distinct from `hint`:
+   * cluster). Distinct from `hint`:
    * `hint` is a single line, `fix` is the bulleted
    * remediation list. The CLI renders this as
    * `→ fix: <fix>` with literal newlines preserved so the
@@ -177,7 +174,7 @@ export type Problem = {
   fix?: string;
   /**
    * Per-line log excerpts that explain the failure (error-
-   * explanations cluster, spec §6.4 amendment 1). The
+   * explanations cluster). The
    * detection site attaches the last N log lines that
    * caused the failure (capped at 20 entries × 512 bytes
    * each per CLI tripwire). The CLI renders the first 5

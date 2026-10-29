@@ -25,7 +25,7 @@ export type RequestAnalyticsRoute = {
    */
   cold_request_p95_ms?: number | null;
   /**
-   * p95 from schedd wake.boot_started to wake.boot_completed (instance RUNNING) for distinct wake IDs correlated to this route; null when event pairs are unavailable.
+   * p95 from the scheduler wake.boot_started to wake.boot_completed (instance RUNNING) for distinct wake IDs correlated to this route; null when event pairs are unavailable.
    */
   wake_boot_p95_ms?: number | null;
   /**
@@ -73,7 +73,7 @@ export type RequestAnalyticsRoute = {
    */
   other_deployment_estimated_compute_cost_millicents?: number;
   /**
-   * Estimated raw RAM-hour value allocated to this route by its share of observed request time (ADR-743), or by request share when no timing exists; excludes account-level included allowance and egress.
+   * Estimated raw RAM-hour value allocated to this route by its share of observed request time, or by request share when no timing exists; excludes account-level included allowance and egress.
    */
   estimated_compute_cost_millicents?: number;
   request_share_pct?: number;

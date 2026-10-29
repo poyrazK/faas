@@ -528,12 +528,17 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 				p.Log.Warn("apidsource.Enqueue: infer source profile", "app", p.AppID, "err", profileErr)
 			}
 		}
-		if profileErr == nil || p.Kind == state.DeploymentKindDockerfile {
+		// An explicit Dockerfile selection (a gregale.yaml build: section, a
+		// Compose build) makes a Dockerfile build whatever the deployment's
+		// provenance kind, so a GitHub or source-ref deploy honours it too
+		// (ADR-20261026152731).
+		dockerfileBuild := p.Kind == state.DeploymentKindDockerfile || p.DockerfilePath != ""
+		if profileErr == nil || dockerfileBuild {
 			// The explicit deployment kind is authoritative. A source tree can
 			// contain language markers alongside its Dockerfile; persisting a
 			// Railpack profile would make builderd ignore the customer's
 			// Dockerfile selection.
-			if p.Kind == state.DeploymentKindDockerfile {
+			if dockerfileBuild {
 				profile.Version = frameworkprofile.Version
 				profile.Framework = string(markers.FrameworkDocker)
 				profile.FrameworkVer = ""

@@ -59,6 +59,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/session"
+	"github.com/onebox-faas/faas/pkg/sessioncookie"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -192,8 +193,10 @@ type Middleware struct {
 	// (host-only cookie; dev/test default).
 	CookieDomain string
 
-	// SessionCookieName is the cookie name RequireSession reads
-	// (and clearSessionCookie writes). Empty = "faas_sid".
+	// SessionCookieName overrides the cookie RequireSession reads (and
+	// ClearSessionCookie writes). Empty or the default reads
+	// pkg/sessioncookie's __Host-faas_sid, then the legacy faas_sid
+	// (ADR-20261026112500).
 	SessionCookieName string
 
 	// keyDebounce gates per-key last_used_at touches to one
@@ -382,7 +385,15 @@ func New(authn Authenticator, sessions Sessions, lookups SessionLookup,
 	}
 }
 
-const defaultSessionCookieName = "faas_sid"
+const defaultSessionCookieName = sessioncookie.LegacyName
+
+// sessionCookie returns the request's session cookie.
+func (m *Middleware) sessionCookie(r *http.Request) (*http.Cookie, error) {
+	if m.SessionCookieName == "" || m.SessionCookieName == defaultSessionCookieName {
+		return sessioncookie.Get(r)
+	}
+	return r.Cookie(m.SessionCookieName)
+}
 
 // keyTouchWindow is the per-key debounce window for last_used_at
 // touches. 30s matches cmd/apid's server.touchDebounce. Hot keys
@@ -679,12 +690,24 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 			if deployAuth, ok := m.Authn.(DeployTokenAuthenticator); ok {
 				acct, key, err := deployAuth.AuthenticateDeployToken(r.Context(), api.HashAPIKey(tok))
 				if err == nil {
-					if !strings.HasPrefix(r.URL.Path, "/v1/apps/") {
+					// The resumable upload routes are the CLI's default source
+					// deploy path. They name their app in the request body or the
+					// stored session, so the app binding is enforced where the
+					// handlers resolve it (appaccess.Authorize refuses a token
+					// bound to another app) instead of from the path here.
+					uploadRoute := IsUploadSessionPath(r.URL.Path)
+					if !strings.HasPrefix(r.URL.Path, "/v1/apps/") && !uploadRoute {
 						api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden,
-							"Deploy token scope is app-bound", "this token may only access routes under /v1/apps/{slug}"))
+							"Deploy token scope is app-bound", "this token may only access routes under /v1/apps/{slug} and /v1/uploads"))
 						return
 					}
-					bound, bindErr := m.deployTokenBoundTo(r, key)
+					var bound bool
+					var bindErr error
+					if uploadRoute {
+						bound = key.AppID != ""
+					} else {
+						bound, bindErr = m.deployTokenBoundTo(r, key)
+					}
 					if bindErr != nil {
 						m.storeUnavailable(w, r, bindErr, "could not load the app; retry shortly")
 						return
@@ -735,7 +758,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 		// (2) Session-cookie branch — verify AEAD, cross-check
 		//     live row, stamp principal.
 		if m.Sessions != nil && m.Lookups != nil {
-			if c, err := r.Cookie(m.SessionCookieName); err == nil && c.Value != "" {
+			if c, err := m.sessionCookie(r); err == nil && c.Value != "" {
 				env, err := m.Sessions.Verify(c.Value)
 				if err == nil {
 					sess, handled, cookieErr := m.RequireSessionCookie(w, r, env)
@@ -1572,6 +1595,21 @@ func (m *Middleware) LoadApp(w http.ResponseWriter, r *http.Request, acct state.
 // handlers resolve the app with a direct store lookup and never reach
 // LoadApp's AppID check. A route without a {slug} (the account-wide
 // /v1/apps/metrics) is outside a deploy token's reach.
+// IsUploadSessionPath reports whether path is one of the resumable upload
+// routes: POST /v1/uploads and /v1/uploads/{id}[/commit].
+func IsUploadSessionPath(path string) bool {
+	const root = "/v1/uploads"
+	if path == root {
+		return true
+	}
+	rest, ok := strings.CutPrefix(path, root+"/")
+	if !ok || rest == "" {
+		return false
+	}
+	id, tail, _ := strings.Cut(rest, "/")
+	return id != "" && (tail == "" || tail == "commit")
+}
+
 func (m *Middleware) deployTokenBoundTo(r *http.Request, key state.APIKey) (bool, error) {
 	slug := r.PathValue("slug")
 	if slug == "" || key.AppID == "" {
@@ -1725,8 +1763,9 @@ func (m *Middleware) clearSessionCookie(w http.ResponseWriter) {
 // session-revoke).
 func (m *Middleware) ClearSessionCookie(w http.ResponseWriter) {
 	name := m.SessionCookieName
-	if name == "" {
-		name = defaultSessionCookieName
+	if name == "" || name == defaultSessionCookieName {
+		sessioncookie.Clear(w, m.CookieDomain)
+		return
 	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     name,

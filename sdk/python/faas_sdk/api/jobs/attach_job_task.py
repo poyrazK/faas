@@ -107,8 +107,8 @@ def sync_detailed(
 ) -> Response[Any | Problem]:
     """Attach to an interactive image run's task (WebSocket).
 
-     ADR-1330. Served by the compute gateway, not apid. The session uses
-    the interactive app-task wire contract (ADR-1037): the account
+     Served by the compute gateway, not the API. The session uses
+    the interactive app-task wire contract: the account
     credential, deploy-write scope, the `X-Gregale-Attach-Token` from the
     image run's create response, and the `gregale-app-task-attach-v1`
     WebSocket subprotocol. Optional `rows`/`cols` set the initial terminal
@@ -156,8 +156,8 @@ def sync(
 ) -> Any | Problem | None:
     """Attach to an interactive image run's task (WebSocket).
 
-     ADR-1330. Served by the compute gateway, not apid. The session uses
-    the interactive app-task wire contract (ADR-1037): the account
+     Served by the compute gateway, not the API. The session uses
+    the interactive app-task wire contract: the account
     credential, deploy-write scope, the `X-Gregale-Attach-Token` from the
     image run's create response, and the `gregale-app-task-attach-v1`
     WebSocket subprotocol. Optional `rows`/`cols` set the initial terminal
@@ -200,8 +200,8 @@ async def asyncio_detailed(
 ) -> Response[Any | Problem]:
     """Attach to an interactive image run's task (WebSocket).
 
-     ADR-1330. Served by the compute gateway, not apid. The session uses
-    the interactive app-task wire contract (ADR-1037): the account
+     Served by the compute gateway, not the API. The session uses
+    the interactive app-task wire contract: the account
     credential, deploy-write scope, the `X-Gregale-Attach-Token` from the
     image run's create response, and the `gregale-app-task-attach-v1`
     WebSocket subprotocol. Optional `rows`/`cols` set the initial terminal
@@ -247,8 +247,8 @@ async def asyncio(
 ) -> Any | Problem | None:
     """Attach to an interactive image run's task (WebSocket).
 
-     ADR-1330. Served by the compute gateway, not apid. The session uses
-    the interactive app-task wire contract (ADR-1037): the account
+     Served by the compute gateway, not the API. The session uses
+    the interactive app-task wire contract: the account
     credential, deploy-write scope, the `X-Gregale-Attach-Token` from the
     image run's create response, and the `gregale-app-task-attach-v1`
     WebSocket subprotocol. Optional `rows`/`cols` set the initial terminal

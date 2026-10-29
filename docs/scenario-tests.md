@@ -1163,6 +1163,21 @@ not sandbox hostile code or automatically block external actions. Supply trusted
 recipes and suitable test credentials. Unix command cancellation stops the active
 process group; ordinary scenario cleanup and hosted resource expiry still apply.
 
+Real-VM execution runs the applications in microVMs, but recipe commands still
+run on the invoking machine unless the recipe uses `command_execution`: `setup`,
+`trigger`, `command`, step commands and `cleanup` start inside each extracted
+revision, so a candidate's scripts run there with your environment (`FAAS_TOKEN`
+is removed). The command prints a warning before it starts. Rehearse only
+revisions you trust.
+
+When the platform has not enabled a capability the scenario needs, it answers
+`501` with code `rehearsal_not_enabled`. Retrying does not help: the command
+records the refusal on the first run and skips the remaining runs. An
+interrupted run (Ctrl-C, SIGTERM, or the scenario timeout) destroys its
+developer sessions first and skips evidence sealing and diagnostics, so CI
+cancellation does not leave sessions holding developer-app slots until their
+lease expires.
+
 Use `--validate` instead of output flags to prepare both snapshots without running
 commands, logging in or provisioning resources. JSON mode prints the resolved
 revision and input identities. Execution requires `--report`; all requested output

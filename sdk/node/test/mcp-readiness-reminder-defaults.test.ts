@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { FaaSClient, McpService, type SetMCPReadinessReminderDefaultsRequest, type MCPReadinessReminderDefaults, type MCPReadinessIncidentAttention } from '../src/index.js';
+import { FaaSClient, McpService, type SetMCPReadinessReminderDefaultsRequest, type MCPReadinessReminderDefaults, type MCPReadinessIncidentAttention } from '../src/preview.js';
 
 test('rule reminder defaults preserve explicit zero policy and inherited version zero', { timeout: 10000 }, async (t) => {
   const rule = '00000000-0000-0000-0000-000000000001';

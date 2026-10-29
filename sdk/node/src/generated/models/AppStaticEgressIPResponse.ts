@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * GET /v1/apps/{slug}/static-egress-ip response body (ADR-119).
+ * GET /v1/apps/{slug}/static-egress-ip response body.
  * IP / SetAt are pointers so the wire shape is stable: a Scale
  * customer with no pin yet sees `ip=null`, `set_at=null`,
  * `plan_cap=1`, `plan_allowed=true`. PlanCap is the

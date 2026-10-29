@@ -88,3 +88,31 @@ func TestSettleTriggerDeadLettersOrdersQueueNackFirst(t *testing.T) {
 		})
 	}
 }
+
+type settleErrorPoller struct{ settlePoller }
+
+func (p settleErrorPoller) NackTerminalWithError(_ context.Context, _ sqlc.Trigger, ids []string, reason, lastError string) error {
+	p.log.calls = append(p.log.calls, fmt.Sprintf("nack %s %v last_error=%s", reason, ids, sched.QueueDeadLetterError(reason, lastError)))
+	return nil
+}
+
+// Production-us rc.294: a queue message whose handler threw dead-lettered
+// with last_error "max_attempts", so `gregale dlq inspect` never said why it
+// failed (Hunt 14 H14-6). The queue poller now keeps the last attempt's error.
+func TestSettleTriggerDeadLettersKeepsTheQueueItemsLastError(t *testing.T) {
+	const r1, r2, r3 = "11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-222222222222", "33333333-3333-3333-3333-333333333333"
+	log := &settleLog{failNack: map[string]bool{}}
+	l := sched.NewLoop(nil, nil, discardLog())
+	l.SettleTriggerDeadLetters(context.Background(), sqlc.Trigger{Kind: "queue"}, settleErrorPoller{settlePoller{log}},
+		settleStore{FakeDeadLetterStore: &sched.FakeDeadLetterStore{}, log: log}, true,
+		[]string{r1, r2, r3}, []string{"i1", "i2", "i3"}, []string{"max_attempts", "max_attempts", "poison_record"},
+		[]string{"function_failed: Queue verification payload is invalid", "function_failed: Queue verification payload is invalid", ""}, []int32{3, 3, 1})
+	want := []string{
+		"nack max_attempts [i1 i2] last_error=max_attempts: function_failed: Queue verification payload is invalid",
+		"nack poison_record [i3] last_error=poison_record",
+		"dead-letter " + r1 + " max_attempts", "dead-letter " + r2 + " max_attempts", "dead-letter " + r3 + " poison_record",
+	}
+	if !slices.Equal(log.calls, want) {
+		t.Fatalf("calls:\n%q\nwant:\n%q", log.calls, want)
+	}
+}

@@ -38,12 +38,13 @@ func (h *Handler) recordChallengeEvent(r *http.Request, ruleID, appID, outcome s
 	if !ok || ruleID == "" || !rec.SampleEdgeRuleDetection(ruleID) {
 		return
 	}
-	rec.RecordEdgeRuleEvent(challengeEvent(r, ruleID, appID, outcome))
+	rec.RecordEdgeRuleEvent(outcomeEvent(r, ruleID, appID, outcome))
 }
 
-// challengeEvent snapshots the request like a sampled match, from the
-// request's match context when the handler built one.
-func challengeEvent(r *http.Request, ruleID, appID, outcome string) EdgeRuleEvent {
+// outcomeEvent snapshots the request like a sampled match, from the
+// request's match context when the handler built one, for an outcome
+// recorded instead of a match: a challenge outcome or a penalty box.
+func outcomeEvent(r *http.Request, ruleID, appID, outcome string) EdgeRuleEvent {
 	if m := edgeRuleMatchContextFrom(r.Context()); m != nil {
 		ev := m.event(ruleID, appID, false)
 		ev.Outcome = outcome

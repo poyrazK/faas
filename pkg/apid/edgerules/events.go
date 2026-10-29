@@ -69,7 +69,7 @@ func EdgeRuleEventsQuery(r *http.Request, plan api.Plan, appID string, now time.
 		return out, api.ErrValidation(fmt.Sprintf("request_id must be at most %d bytes", edgeRuleEventsMaxRequestID))
 	}
 	if out.Outcome != "" && !state.IsEdgeRuleEventOutcome(out.Outcome) {
-		return out, api.ErrValidation("outcome must be matched, logged, detected, warned, blocked, challenged, rejected, solved or failed")
+		return out, api.ErrValidation("outcome must be matched, logged, detected, warned, blocked, challenged, rejected, solved, failed or boxed")
 	}
 	since, err := parseEdgeRuleEventsSince(q.Get("since"))
 	if err != nil {

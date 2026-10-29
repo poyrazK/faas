@@ -67,7 +67,7 @@ WITH candidate AS (
     JOIN event_fanout_outbox o ON o.id=r.outbox_id
     LEFT JOIN event_routing_fairness fa ON fa.account_id=o.account_id AND fa.subscription_id=''
     LEFT JOIN event_routing_fairness fc ON fc.account_id=o.account_id AND fc.subscription_id=r.subscription_id
-    WHERE ((r.state = 'pending' AND (r.available_at <= sqlc.arg(now_at)::timestamptz OR r.delivery_deadline_at <= sqlc.arg(now_at)::timestamptz OR event_recipient_schema_version_mismatch(r.recipient,o.payload)))
+    WHERE ((r.state = 'pending' AND (r.available_at <= sqlc.arg(now_at)::timestamptz OR r.delivery_deadline_at <= sqlc.arg(now_at)::timestamptz))
        OR (r.state = 'processing' AND r.lease_until <= sqlc.arg(now_at)::timestamptz))
       AND (sqlc.arg(include_workflows)::boolean OR NOT r.recipient ? 'workflow')
       AND (r.backfill_job_id IS NULL OR EXISTS (
@@ -82,7 +82,7 @@ WITH candidate AS (
 ), claimed AS (
     UPDATE event_fanout_recipients r
     SET state = 'processing', claim_token = gen_random_uuid(),
-        lease_until = sqlc.arg(now_at)::timestamptz + interval '5 minutes',
+        lease_until = sqlc.arg(now_at)::timestamptz + interval '1 minute',
         attempts = r.attempts + 1, total_attempts = r.total_attempts + 1
     FROM candidate c
     WHERE r.outbox_id = c.outbox_id AND r.subscription_id = c.subscription_id
@@ -112,9 +112,13 @@ FROM claimed c JOIN event_fanout_outbox o ON o.id = c.outbox_id;
 -- in service order and rotates the account's consumers. A consumer with
 -- delivery controls contributes one recipient per batch, so its admission
 -- gate sees current counters before its next claim.
+--
+-- The due test is index-shaped (ADR-614 amendment 2026-10-27): a recipient is
+-- due by its available_at, its delivery deadline or its lapsed lease, never by
+-- a per-row function, so recipients backing off are not read. A schema
+-- mismatch is fixed at capture and filtered on the recipient's first claim.
 WITH eligible AS MATERIALIZED (
     SELECT r.outbox_id, r.subscription_id, o.account_id, r.available_at,
-        event_recipient_schema_version_mismatch(r.recipient,o.payload) AS schema_mismatch,
         coalesce(fa.last_claimed_at,'epoch'::timestamptz) AS account_served,
         coalesce(fc.last_claimed_at,'epoch'::timestamptz) AS consumer_served,
         (EXISTS (SELECT 1 FROM event_subscription_delivery_controls c
@@ -125,7 +129,7 @@ WITH eligible AS MATERIALIZED (
     JOIN event_fanout_outbox o ON o.id=r.outbox_id
     LEFT JOIN event_routing_fairness fa ON fa.account_id=o.account_id AND fa.subscription_id=''
     LEFT JOIN event_routing_fairness fc ON fc.account_id=o.account_id AND fc.subscription_id=r.subscription_id
-    WHERE ((r.state = 'pending' AND (r.available_at <= sqlc.arg(now_at)::timestamptz OR r.delivery_deadline_at <= sqlc.arg(now_at)::timestamptz OR event_recipient_schema_version_mismatch(r.recipient,o.payload)))
+    WHERE ((r.state = 'pending' AND (r.available_at <= sqlc.arg(now_at)::timestamptz OR r.delivery_deadline_at <= sqlc.arg(now_at)::timestamptz))
        OR (r.state = 'processing' AND r.lease_until <= sqlc.arg(now_at)::timestamptz))
       AND (sqlc.arg(include_workflows)::boolean OR NOT r.recipient ? 'workflow')
       AND (r.backfill_job_id IS NULL OR EXISTS (
@@ -154,7 +158,7 @@ WITH eligible AS MATERIALIZED (
     FROM account_rounds a
     WINDOW account_order AS (PARTITION BY a.account_id ORDER BY a.account_round)
 ), ordered AS (
-    SELECT f.outbox_id, f.subscription_id, f.schema_mismatch,
+    SELECT f.outbox_id, f.subscription_id,
         row_number() OVER (ORDER BY f.account_round, f.account_served, f.first_consumer_served,
             f.first_available_at, f.first_outbox_id, f.first_subscription_id) AS position
     FROM account_firsts f
@@ -167,14 +171,14 @@ WITH eligible AS MATERIALIZED (
     FROM event_fanout_recipients r
     JOIN ordered k ON k.outbox_id=r.outbox_id AND k.subscription_id=r.subscription_id
     WHERE k.position <= 2 * sqlc.arg(batch_limit)::integer
-      AND ((r.state = 'pending' AND (r.available_at <= sqlc.arg(now_at)::timestamptz OR r.delivery_deadline_at <= sqlc.arg(now_at)::timestamptz OR k.schema_mismatch))
+      AND ((r.state = 'pending' AND (r.available_at <= sqlc.arg(now_at)::timestamptz OR r.delivery_deadline_at <= sqlc.arg(now_at)::timestamptz))
        OR (r.state = 'processing' AND r.lease_until <= sqlc.arg(now_at)::timestamptz))
     ORDER BY k.position
     FOR UPDATE OF r SKIP LOCKED LIMIT sqlc.arg(batch_limit)::integer
 ), claimed AS (
     UPDATE event_fanout_recipients r
     SET state = 'processing', claim_token = gen_random_uuid(),
-        lease_until = sqlc.arg(now_at)::timestamptz + interval '5 minutes',
+        lease_until = sqlc.arg(now_at)::timestamptz + interval '1 minute',
         attempts = r.attempts + 1, total_attempts = r.total_attempts + 1
     FROM candidate c
     WHERE r.outbox_id = c.outbox_id AND r.subscription_id = c.subscription_id
@@ -368,7 +372,7 @@ WITH candidate AS (
  FOR UPDATE OF o SKIP LOCKED LIMIT 1
 ), claimed AS (
  UPDATE event_fanout_outbox o SET state='processing',claim_token=gen_random_uuid(),
- lease_until=sqlc.arg(now_at)::timestamptz+interval '5 minutes',attempts=o.attempts+1
+ lease_until=sqlc.arg(now_at)::timestamptz+interval '1 minute',attempts=o.attempts+1
  FROM candidate c WHERE o.id=c.id RETURNING o.*
 ), fairness AS (
  INSERT INTO event_routing_fairness
@@ -428,7 +432,7 @@ WITH eligible AS MATERIALIZED (
  FOR UPDATE OF o SKIP LOCKED LIMIT sqlc.arg(batch_limit)::integer
 ), claimed AS (
  UPDATE event_fanout_outbox o SET state='processing',claim_token=gen_random_uuid(),
- lease_until=sqlc.arg(now_at)::timestamptz+interval '5 minutes',attempts=o.attempts+1
+ lease_until=sqlc.arg(now_at)::timestamptz+interval '1 minute',attempts=o.attempts+1
  FROM candidate c WHERE o.id=c.id RETURNING o.*, c.position
 ), stamp AS MATERIALIZED (
  SELECT clock_timestamp() AS at
@@ -604,3 +608,17 @@ WHERE o.account_id=sqlc.arg(account_id)::uuid AND o.source=sqlc.arg(event_source
  AND r.recipient->>'app_id'=a.id::text AND r.recipient->>'id'=sqlc.arg(subscription_id)::text
  AND r.recipient->'workflow'->>'name'=sqlc.arg(workflow_name)::text
  AND p.progress->>'state'='failed';
+
+-- name: EventRoutingRenewReceiptClaims :execrows
+-- ADR-20261028131500: a sweep renews the receipt claims it still holds; a
+-- claim another worker took since has a new token and stays. The arrays
+-- are parallel: the select list unnests them in step.
+UPDATE event_fanout_outbox o SET lease_until=sqlc.arg(now_at)::timestamptz+interval '1 minute'
+WHERE o.state='processing' AND (o.id,o.claim_token) IN (
+    SELECT unnest(sqlc.arg(ids)::bigint[]), unnest(sqlc.arg(claim_tokens)::uuid[]));
+
+-- name: EventRecipientRenewClaims :execrows
+-- ADR-20261028131500: a sweep renews the recipient claims it still holds.
+UPDATE event_fanout_recipients r SET lease_until=sqlc.arg(now_at)::timestamptz+interval '1 minute'
+WHERE r.state='processing' AND (r.outbox_id,r.subscription_id,r.claim_token) IN (
+    SELECT unnest(sqlc.arg(outbox_ids)::bigint[]), unnest(sqlc.arg(subscription_ids)::text[]), unnest(sqlc.arg(claim_tokens)::uuid[]));

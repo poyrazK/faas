@@ -15,7 +15,14 @@ const (
 	CutoverVerified   CutoverState = "verified"
 	CutoverCancelling CutoverState = "cancelling"
 	CutoverCancelled  CutoverState = "cancelled"
+	// CutoverActivated is final: the app's bindings moved to the target. Only
+	// a rollback database switch activates a cutover (ADR-20261023181931).
+	CutoverActivated CutoverState = "activated"
 )
+
+// Closed reports whether the cutover no longer pins its databases, bindings
+// or the app's admission.
+func (s CutoverState) Closed() bool { return s == CutoverCancelled || s == CutoverActivated }
 
 // CutoverPrepared means target credentials are sealed, not that workloads have
 // moved or SQL connectivity has been verified. Activation requires writer drain.

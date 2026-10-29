@@ -24,12 +24,10 @@ func (s *server) slackOAuthService() (issueslack.OAuthService, bool) {
 		client = issueslack.NewClient(nil)
 	}
 	service := issueslack.OAuthService{Store: st, Client: client, Config: s.issueSlackOAuthConfig}
-	if setSecretRecipient != nil {
-		service.Recipient = setSecretRecipient()
-	}
-	if mfaIdentities != nil {
-		service.Identities = mfaIdentities()
-	}
+	// Slack tokens, signing secrets and consent flows are account values
+	// (ADR 20261022111812). No recipient leaves the service unconfigured.
+	service.Recipients, _ = accountRecipients(hostSecretRecipient())
+	service.Identities = accountIdentities()
 	return service, ok
 }
 func slackOAuthNonce(r *http.Request, value string) bool {

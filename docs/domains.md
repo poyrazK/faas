@@ -3,9 +3,9 @@
 Custom domains are attached to an app after it has a live deployment.
 
 ```bash
-gregale domains add --app my-api --domain api.example.com
-gregale domains verify api.example.com
-gregale domains list
+gregale domain create --app my-api --domain api.example.com
+gregale domain verify api.example.com
+gregale domain list
 ```
 
 `domains add` prints the DNS records to publish:
@@ -31,8 +31,8 @@ To send a custom hostname to one project environment rather than the app's
 application-wide route, pass `--environment`:
 
 ```bash
-gregale domains add --app my-api --domain staging.example.com --environment staging
-gregale projects environments diff shop --from production --to staging
+gregale domain create --app my-api --domain staging.example.com --environment staging
+gregale environment diff shop --from production --to staging
 ```
 
 Environment-bound domains follow only that environment's active project
@@ -40,7 +40,7 @@ release set. They are not used as the app's default domain, are shown in the
 environment state and diff, and are not copied when cloning an environment
 because their DNS and certificate ownership is external to Gregale.
 
-`gregale domains doctor` checks DNS, certificate state, and the route without
+`gregale domain doctor` checks DNS, certificate state, and the route without
 changing the domain.
 
 ## Serve several apps on one domain
@@ -65,7 +65,7 @@ routes:
 
 Requests that match no route go to the domain's own app, for example the web
 frontend. Each route becomes a `kind=route` edge rule on its target app, plus a
-`kind=rewrite` rule when `strip_prefix` is set; `gregale edge-rules list --app
+`kind=rewrite` rule when `strip_prefix` is set; `gregale edge rule list --app
 api` shows them. Route names are stable per target app: later deploys update a
 route with the same name and remove manifest-owned routes that are no longer
 declared. Rules you created yourself are never adopted or deleted; a manifest
@@ -82,9 +82,9 @@ organization-owned projects.
 Without a manifest, create the same rules directly:
 
 ```bash
-gregale edge-rules create --app api --kind route --match-host shop.example.com \
+gregale edge rule create --app api --kind route --match-host shop.example.com \
   --match-path '/api/**' --route-target-slug api
-gregale edge-rules create --app api --kind rewrite --match-host shop.example.com \
+gregale edge rule create --app api --kind rewrite --match-host shop.example.com \
   --match-path '/api/**' --rewrite-from /api --rewrite-to /
 ```
 

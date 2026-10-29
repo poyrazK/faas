@@ -742,12 +742,25 @@ func (s *server) promoteProjectEnvironment(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, problem)
 		return
 	}
+	if problem := s.promotionApprovalProblem(r.Context(), plan, toEnvironment); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	if plan.Preview.ApprovalRequired {
 		approvalToken := strings.TrimSpace(req.ApprovalToken)
 		if approvalToken == "" {
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeProjectEnvironmentApprovalRequired,
 				"Protected environment approval required", "approve this exact promotion before executing it"))
 			return
+		}
+		// The approval stands in for each app's own release approval policy,
+		// so it is held to it: who approved, against who promotes.
+		if approval, err := s.store.ProjectEnvironmentApprovalByToken(r.Context(), acct.ID, projectSlug, toEnvironment,
+			hashProjectEnvironmentApprovalMaterial(promotionToken), hashProjectEnvironmentApprovalMaterial(approvalToken)); err == nil {
+			if problem := s.protectedPromotionApprovalProblem(r.Context(), plan, toEnvironment, approval.ApprovedByAccountID, actorAccount(r, acct).ID); problem != nil {
+				api.WriteProblem(w, problem)
+				return
+			}
 		}
 
 	}
@@ -1235,11 +1248,9 @@ func (s *server) executeProjectEnvironmentPromotion(ctx context.Context, acct st
 			if err := s.durable.CheckProjectValidatorMembers(ctx, []state.ProjectReleaseMember{{AppID: existing.AppID, DeploymentID: existing.ID}}); err != nil {
 				return api.ProjectEnvironmentPromotionResponse{}, api.ErrCapacity("validator binding unavailable for resumed promotion")
 			}
-			updated, updateErr := s.store.UpdateProjectEnvironmentPromotionWorkload(ctx, acct.ID, promotion.ID, workload.ID, "promoted", existing.ID, "")
-			if updateErr != nil {
+			if _, updateErr := s.store.UpdateProjectEnvironmentPromotionWorkload(ctx, acct.ID, promotion.ID, workload.ID, "promoted", existing.ID, ""); updateErr != nil {
 				return api.ProjectEnvironmentPromotionResponse{}, api.ErrCapacity("could not update environment promotion checkpoint")
 			}
-			workload = updated
 			continue
 		}
 		var promoted state.Deployment

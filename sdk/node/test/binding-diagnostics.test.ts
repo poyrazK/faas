@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { AppsService,ProjectsService,OpenAPI } from '../src/index.js';
-import type {BindingVerificationRunDiagnostics} from '../src/index.js';
+import { AppsService,ProjectsService,OpenAPI } from '../src/preview.js';
+import type {BindingVerificationRunDiagnostics} from '../src/preview.js';
 test('typed diagnostics preserve public changes, blockers and recovery through read-only routes',async()=>{
  const oldFetch=globalThis.fetch,oldBase=OpenAPI.BASE,id='11111111-1111-4111-8111-111111111111';const calls:string[]=[];
  const member:BindingVerificationRunDiagnostics={budget:{run_id:id,max_concurrency:1,active_resources:1,waiting_steps:2,full:true},run_id:id,app:'api',deployment_id:'22222222-2222-4222-8222-222222222222',scope:'production',status:'pending',checked_at:'2026-10-14T00:00:00Z',expires_at:'2026-10-14T00:01:00Z',complete:true,check_passed:false,blockers:[{code:'credential_generation_changed',message:'Generation changed.',recovery:'review_new_run',type:'object_storage',binding:'ASSETS'}],changes:[{field:'credential_generation',reviewed:'1',current:'2'}],recovery:[{action:'review_new_run',message:'Review a new run.'}]};

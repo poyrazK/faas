@@ -78,7 +78,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     scope: str | Unset = UNSET,
 ) -> Response[ConfigGuard | Problem]:
-    """Read a scope's newest config guard (ADR-1451).
+    """Read a scope's newest config guard.
 
      A guard judges the first traffic served with a changed config against the config before it, and
     restores the previous config when the new one fails. 404 `config_guard_not_found` when no change in
@@ -114,7 +114,7 @@ def sync(
     client: AuthenticatedClient | Client,
     scope: str | Unset = UNSET,
 ) -> ConfigGuard | Problem | None:
-    """Read a scope's newest config guard (ADR-1451).
+    """Read a scope's newest config guard.
 
      A guard judges the first traffic served with a changed config against the config before it, and
     restores the previous config when the new one fails. 404 `config_guard_not_found` when no change in
@@ -145,7 +145,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     scope: str | Unset = UNSET,
 ) -> Response[ConfigGuard | Problem]:
-    """Read a scope's newest config guard (ADR-1451).
+    """Read a scope's newest config guard.
 
      A guard judges the first traffic served with a changed config against the config before it, and
     restores the previous config when the new one fails. 404 `config_guard_not_found` when no change in
@@ -179,7 +179,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     scope: str | Unset = UNSET,
 ) -> ConfigGuard | Problem | None:
-    """Read a scope's newest config guard (ADR-1451).
+    """Read a scope's newest config guard.
 
      A guard judges the first traffic served with a changed config against the config before it, and
     restores the previous config when the new one fails. 404 `config_guard_not_found` when no change in

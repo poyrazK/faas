@@ -34,8 +34,8 @@ func TestNftCommandsUnchangedWhenEgressCircuitDisabled(t *testing.T) {
 	}
 
 	on := joinCmds(circuitConfig(true).NftCommands())
-	if len(on) != len(off)+3 {
-		t.Fatalf("enabled emitted %d commands, disabled %d; want exactly 3 more (set, counter, rule)", len(on), len(off))
+	if len(on) != len(off)+6 {
+		t.Fatalf("enabled emitted %d commands, disabled %d; want set, counter and rule for both families", len(on), len(off))
 	}
 }
 
@@ -44,24 +44,31 @@ func TestNftCommandsUnchangedWhenEgressCircuitDisabled(t *testing.T) {
 // recoverable blip into a guaranteed failure for every request already running.
 func TestEgressCircuitRuleFollowsEstablishedAccept(t *testing.T) {
 	cmds := joinCmds(circuitConfig(true).NftCommands())
-	established, circuit := -1, -1
-	for i, cmd := range cmds {
-		if strings.Contains(cmd, "ct state established,related accept") && established < 0 {
-			established = i
-		}
-		if strings.Contains(cmd, "@"+EgressCircuitSetName) && circuit < 0 {
-			circuit = i
-		}
-	}
-	if established < 0 {
-		t.Fatal("no established/related accept rule found")
-	}
-	if circuit < 0 {
-		t.Fatal("no egress-circuit reject rule found")
-	}
-	if circuit < established {
-		t.Fatalf("egress-circuit rule at %d precedes the established/related accept at %d; "+
-			"an open circuit must refuse NEW connections only", circuit, established)
+	for _, family := range []string{"ip", "ip6"} {
+		t.Run(family, func(t *testing.T) {
+			established, circuit := -1, -1
+			for i, cmd := range cmds {
+				if !strings.Contains(cmd, "add rule "+family+" faas forward") {
+					continue
+				}
+				if strings.Contains(cmd, "ct state established,related accept") && established < 0 {
+					established = i
+				}
+				if strings.Contains(cmd, "@"+EgressCircuitSetName) && circuit < 0 {
+					circuit = i
+				}
+			}
+			if established < 0 {
+				t.Fatal("no established/related accept rule found")
+			}
+			if circuit < 0 {
+				t.Fatal("no egress-circuit reject rule found")
+			}
+			if circuit < established {
+				t.Fatalf("egress-circuit rule at %d precedes the established/related accept at %d; "+
+					"an open circuit must refuse NEW connections only", circuit, established)
+			}
+		})
 	}
 }
 

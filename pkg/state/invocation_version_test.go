@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -87,6 +89,67 @@ func TestResolveInvocationVersionCapturesAndRechecksRelease(t *testing.T) {
 	}
 }
 
+type invocationPoolOnlyReader struct{ *invocationMinimalReader }
+type invocationMinimalReader struct{ app state.App }
+
+func (s *invocationMinimalReader) AppByID(context.Context, string) (state.App, error) {
+	return s.app, nil
+}
+func (*invocationPoolOnlyReader) ResolveProjectRelease(context.Context, string, string, string) (string, string, error) {
+	panic("independent release pool read")
+}
+func (*invocationPoolOnlyReader) ResolveRevisionPin(context.Context, string, string, string) (state.Deployment, error) {
+	panic("independent revision pool read")
+}
+
+func TestResolveInvocationVersionPinRequiresSnapshot(t *testing.T) {
+	app := state.App{ID: uuid.NewString(), AccountID: uuid.NewString()}
+	reader := &invocationPoolOnlyReader{&invocationMinimalReader{app: app}}
+	if _, _, err := state.ResolveInvocationVersion(t.Context(), reader, state.Invocation{AppID: app.ID, Headers: json.RawMessage(`{"X-Gregale-Revision":"` + uuid.NewString() + `"}`)}); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("pin without snapshot = %v", err)
+	}
+	if _, _, err := state.ResolveInvocationVersion(t.Context(), reader, state.Invocation{AppID: app.ID}); err != nil {
+		t.Fatalf("minimal unpinned adapter = %v", err)
+	}
+	reader.app.ProjectID = uuid.NewString()
+	if _, _, err := state.ResolveInvocationVersion(t.Context(), reader, state.Invocation{AppID: app.ID}); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("project without snapshot = %v", err)
+	}
+}
+
+func TestMemInvocationVersionSnapshotProjectionAndCancellation(t *testing.T) {
+	store, ctx, _, app, _ := state.MemDeploymentFixture(t)
+	manifest := app.Manifest
+	manifest.Env = map[string]string{"SECRET": "not-version-input"}
+	if _, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{Manifest: &manifest}); err != nil {
+		t.Fatal(err)
+	}
+	err := store.WithInvocationVersionSnapshot(ctx, func(reader state.InvocationVersionReader) error {
+		projected, err := reader.AppByID(ctx, app.ID)
+		want := state.App{ID: app.ID, AccountID: app.AccountID, ProjectID: app.ProjectID, PreviewOfSlug: app.PreviewOfSlug, Status: app.Status}
+		if err != nil || !reflect.DeepEqual(projected, want) {
+			t.Fatalf("projection contains unrelated app metadata: %+v %v", projected, err)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	if err := store.WithInvocationVersionSnapshot(ctx, func(state.InvocationVersionReader) error { cancel(); return nil }); !errors.Is(err, context.Canceled) {
+		t.Fatalf("callback cancellation = %v", err)
+	}
+	if err := store.WithInvocationVersionSnapshot(ctx, func(state.InvocationVersionReader) error { t.Fatal("cancelled snapshot executed"); return nil }); !errors.Is(err, context.Canceled) {
+		t.Fatalf("entry cancellation = %v", err)
+	}
+	if err := store.WithInvocationVersionSnapshot(t.Context(), nil); !errors.Is(err, state.ErrInvalidArgument) {
+		t.Fatalf("nil callback = %v", err)
+	}
+	if _, err := store.AppByID(t.Context(), app.ID); err != nil {
+		t.Fatalf("snapshot leaked its mutex: %v", err)
+	}
+}
+
 func TestResolveInvocationVersionExactRevisionAndMalformedHeaders(t *testing.T) {
 	ctx := context.Background()
 	store, _, _, app, old := state.MemDeploymentFixture(t)
@@ -107,10 +170,42 @@ func TestResolveInvocationVersionExactRevisionAndMalformedHeaders(t *testing.T) 
 	if err := json.Unmarshal(forwarded.Headers, &headers); err != nil || headers[api.RevisionHeader] != old.ID || len(headers) != 1 {
 		t.Fatalf("revision headers = %s, %v", forwarded.Headers, err)
 	}
+	canonical := uuid.MustParse(old.ID).String()
+	for _, pin := range []string{canonical, strings.ToUpper(canonical), "urn:uuid:" + canonical, "{" + canonical + "}"} {
+		request.Headers = json.RawMessage(`{"X-Gregale-Revision":"` + pin + `"}`)
+		if _, selected, err := state.ResolveInvocationVersion(ctx, store, request); err != nil || selected.DeploymentID != old.ID {
+			t.Fatalf("revision spelling %q: %+v %v", pin, selected, err)
+		}
+	}
 	for _, bad := range []string{`[]`, `{"X-Gregale-Revision":"bad"}`, `{"X-Gregale-Revision":"` + old.ID + `","x-gregale-revision":"` + old.ID + `"}`} {
 		if _, _, err := state.ResolveInvocationVersion(ctx, store, state.Invocation{AppID: app.ID, Headers: json.RawMessage(bad)}); !errors.Is(err, state.ErrInvalidArgument) {
 			t.Fatalf("headers %s: %v", bad, err)
 		}
+	}
+}
+
+func TestResolveInvocationVersionRejectsRetiredOrForeignOwner(t *testing.T) {
+	for _, kind := range []string{"foreign account", "deleted status", "deleted timestamp"} {
+		t.Run(kind, func(t *testing.T) {
+			store, ctx, account, app, _ := state.MemDeploymentFixture(t)
+			inv := state.Invocation{AppID: app.ID, AccountID: account.ID}
+			(*store.Mu()).Lock()
+			current := (*store.Apps())[app.ID]
+			switch kind {
+			case "foreign account":
+				inv.AccountID = uuid.NewString()
+			case "deleted status":
+				current.Status = state.AppDeleted
+			case "deleted timestamp":
+				at := time.Now().UTC()
+				current.DeletedAt = &at
+			}
+			(*store.Apps())[app.ID] = current
+			(*store.Mu()).Unlock()
+			if _, _, err := state.ResolveInvocationVersion(ctx, store, inv); !errors.Is(err, state.ErrNotFound) {
+				t.Fatalf("unsafe invocation accepted: %v", err)
+			}
+		})
 	}
 }
 

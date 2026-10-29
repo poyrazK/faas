@@ -38,7 +38,7 @@ func TestJWTIdentityUsesVerifiedSessionAndRequiresExpiry(t *testing.T) {
 		if signErr != nil {
 			t.Fatal(signErr)
 		}
-		custom := map[string]any{"session_id": "d654628b-965b-4f84-965b-cc994ff0411b"}
+		custom := map[string]any{"session_id": "d654628b-965b-4f84-965b-cc994ff0411b", "org_id": "org-7"}
 		for i := range 80 {
 			custom["aaa_"+strconv.Itoa(i)] = "filler"
 		}
@@ -52,6 +52,16 @@ func TestJWTIdentityUsesVerifiedSessionAndRequiresExpiry(t *testing.T) {
 	identity, err := authorizer.AuthorizeIdentity(t.Context(), mint(key, expiry), policy)
 	if err != nil || identity.Principal != "user" || identity.SessionID != "d654628b-965b-4f84-965b-cc994ff0411b" || !identity.ExpiresAt.Equal(expiry.Time()) {
 		t.Fatalf("verified identity = %+v, err=%v", identity, err)
+	}
+	if identity.Claims != nil {
+		t.Fatalf("claims without channel rules = %v", identity.Claims)
+	}
+	// adr: 20261019102657 — channel rules ask for the claims they read.
+	withRules := policy
+	withRules.ExtractClaims = []string{"org_id", "team_id"}
+	identity, err = authorizer.AuthorizeIdentity(t.Context(), mint(key, expiry), withRules)
+	if err != nil || identity.Claims["org_id"] != "org-7" || len(identity.Claims) != 1 || identity.SessionID == "" {
+		t.Fatalf("identity with rule claims = %+v, err=%v", identity, err)
 	}
 	otherKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {

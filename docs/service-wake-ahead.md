@@ -16,8 +16,16 @@ gregale wake-ahead public-api off
 ```
 
 The API is `GET` and `PUT /v1/apps/{slug}/service-wake-ahead` with
-`{"enabled": true}`. The setting is off by default and takes effect within 30
-seconds.
+`{"enabled": true}`. Changes take effect within 30 seconds.
+
+Wake-ahead is **on by default** for a service in a project under the `project`
+service policy, the default for new project services, because those services
+call their siblings without declaring them
+([ADR-20261025105812](adr/20261025105812-wake-ahead-default-for-project-services.md)).
+It is off by default for every other app and for PR previews. Your own choice
+always wins: `gregale wake-ahead <app> off` turns the default off for that app.
+`GET` reports the effective setting; an empty `updated_at` means the app is on
+its default.
 
 ## What gets woken
 

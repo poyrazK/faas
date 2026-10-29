@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import {once} from 'node:events';
-import {AppsService, FaaSClient, type ProfileDeploymentPolicy, type ProfileDeploymentCheck} from '../src/index.js';
+import {AppsService, FaaSClient, type ProfileDeploymentPolicy, type ProfileDeploymentCheck} from '../src/preview.js';
 
 test('automatic profiling operations retain revision zero and pending windows', async t => {
   const config = {enabled: true, runtime: 'node24', window_seconds: 300, warmup_seconds: 120, options: {relative_increase_percent: 20, absolute_increase_cpu_per_second: .01, minimum_profiles: 3, minimum_coverage_ratio: .8}};

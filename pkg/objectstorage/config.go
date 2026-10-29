@@ -147,8 +147,10 @@ func NewRegistry(c Config, getenv func(string) string, factories map[string]Fact
 		if r.Accounting.GatewaySafety() && r.Accounting.GatewayMeteringSince.After(time.Now().UTC()) {
 			return nil, errors.New("object storage: gateway metering coverage cannot begin in the future")
 		}
-		if r.Accounting.GatewaySafety() && (c.Pricing != nil || c.PublicEndpoint == "" || r.Transfer.Profile != "proxied") {
-			return nil, errors.New("object storage: gateway safety accounting requires a public gateway, proxied transfers and no pricing")
+		// Gateway safety meters stored bytes itself but not provider-side
+		// requests or egress, so it prices storage only (ADR-20261024132844).
+		if r.Accounting.GatewaySafety() && (c.Pricing != nil && !c.Pricing.StorageOnly() || c.PublicEndpoint == "" || r.Transfer.Profile != "proxied") {
+			return nil, errors.New("object storage: gateway safety accounting requires a public gateway, proxied transfers and storage-only pricing")
 		}
 	}
 	if c.Pricing != nil {
@@ -301,7 +303,9 @@ func (r *Registry) Backends() []Backend {
 // deployments can qualify accounting and safety budgets before choosing
 // customer prices. The allowance is the account plan's included usage.
 func (r *Registry) ChargeForUsage(usage api.ObjectStorageUsage, allowance api.ObjectStorageAllowance) (*api.ObjectStorageCharge, error) {
-	if r == nil || r.Pricing == nil || r.Accounting.GatewaySafety() {
+	// Gateway safety charges once Gregale meters every live bucket's storage
+	// (ADR-20261024132844); until then there is no estimate.
+	if r == nil || r.Pricing == nil || r.Accounting.GatewaySafety() && !usage.Chargeable() {
 		return nil, nil
 	}
 	charge, err := CalculateCharge(*r.Pricing, usage, allowance)

@@ -212,6 +212,9 @@ func (s *Service) create(ctx context.Context, request CreateRequest, reservedID 
 			return Database{}, err
 		}
 	}
+	if err := s.admitFleet(ctx, true); err != nil {
+		return Database{}, err
+	}
 	now := s.now()
 	reservationLimit, err := s.reservationLimit(ctx, request.AccountID)
 	if err != nil {
@@ -376,6 +379,9 @@ func (s *Service) AdmitRestoreReservation(ctx context.Context, accountID string,
 		if err := s.admit(ctx, PolicySubject(ctx, accountID)); err != nil {
 			return 0, err
 		}
+	}
+	if err := s.admitFleet(ctx, true); err != nil {
+		return 0, err
 	}
 	backend, err := s.registry.Resolve(definition.BackendID, definition.BackendFingerprint)
 	if err != nil {

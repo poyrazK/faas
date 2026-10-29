@@ -1,7 +1,7 @@
 // ADR-521: the public generated client preserves stable submissions and durable cursors.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DevService, OperationsService, OpenAPI } from '../src/index.js';
+import { DevService, OperationsService, OpenAPI } from '../src/preview.js';
 
 test('rehearsal simulation preserves fixture acknowledgement and individual attempts', async () => {
   const previousFetch = globalThis.fetch, previousBase = OpenAPI.BASE;

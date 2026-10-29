@@ -41,8 +41,8 @@ class FinancialBudgetAlert:
     attempts: int
     next_attempt_at: datetime.datetime
     kind: FinancialBudgetAlertKind | Unset = UNSET
-    """Absent for a crossed threshold. projection marks a projected-overrun alert (ADR-20261019193500), whose
-    threshold_millicents is the limit."""
+    """Absent for a crossed threshold. projection marks a projected-overrun alert, whose threshold_millicents is
+    the limit."""
     delivered_at: datetime.datetime | Unset = UNSET
     last_error: FinancialBudgetAlertLastError | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

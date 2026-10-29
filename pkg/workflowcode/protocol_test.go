@@ -97,11 +97,11 @@ func TestValidateNewOperations(t *testing.T) {
 	if plan.Ops[1].Descriptor.Duration() != 72*time.Hour || plan.Ops[1].Attempt != 0 {
 		t.Fatalf("sleep descriptor %+v", plan.Ops[1])
 	}
-	if plan.Ops[2].Descriptor.Timeout() != 30*24*time.Hour || plan.Ops[2].Descriptor.Occurrence != 0 {
-		t.Fatalf("event default timeout/occurrence %+v", plan.Ops[2].Descriptor)
+	if plan.Ops[2].Descriptor.Timeout() != 30*24*time.Hour || plan.Ops[2].Descriptor.Event != "approved" || plan.Ops[2].Descriptor.EventID != "" {
+		t.Fatalf("event default timeout %+v", plan.Ops[2].Descriptor)
 	}
-	if plan.Ops[3].Descriptor.Occurrence != 1 || plan.Ops[3].Descriptor.Timeout() != time.Minute {
-		t.Fatalf("second wait for the same event must take the next occurrence: %+v", plan.Ops[3].Descriptor)
+	if plan.Ops[3].Descriptor.Timeout() != time.Minute || plan.Ops[3].Descriptor.EventID != "" {
+		t.Fatalf("a new wait has consumed no event yet: %+v", plan.Ops[3].Descriptor)
 	}
 }
 
@@ -216,5 +216,34 @@ func TestRetryDelay(t *testing.T) {
 	}
 	if workflowcode.RetryDelay(api.WorkflowRetrySpec{MaxAttempts: 3}, 9) != time.Second {
 		t.Fatal("fixed delay")
+	}
+}
+
+// A retrying step whose back-off has not elapsed is sent as scheduled, so an
+// SDK does not run it early when another operation settles; a call that
+// leaves it suspended and reports nothing else is still progress, and an
+// older SDK that runs it anyway is accepted.
+func TestSentMarksRetriesThatAreNotDueAsScheduled(t *testing.T) {
+	now := time.Now().UTC()
+	later, earlier := now.Add(time.Minute), now.Add(-time.Second)
+	rows := []workflowcode.Row{
+		{Name: "flaky", Status: workflowcode.RowPending, Attempt: 2, NextRetry: &later, Input: workflowcode.EncodeDescriptor(workflowcode.Descriptor{Seq: 0, Kind: workflowcode.KindStep})},
+		{Name: "due", Status: workflowcode.RowPending, Attempt: 1, NextRetry: &earlier, Input: workflowcode.EncodeDescriptor(workflowcode.Descriptor{Seq: 1, Kind: workflowcode.KindStep})},
+	}
+	journal, err := workflowcode.BuildJournal(rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sent := journal.Sent(now)
+	if sent[0].Status != workflowcode.EntryScheduled || sent[1].Status != workflowcode.EntryRetrying || journal.Entries[0].Status != workflowcode.EntryRetrying {
+		t.Fatalf("sent=%+v journal=%+v", sent, journal.Entries)
+	}
+	if _, err := workflowcode.Validate(journal, response(workflowcode.ResultRunning), limits()); err != nil {
+		t.Fatalf("a call that waits for a scheduled retry must be accepted: %v", err)
+	}
+	if _, err := workflowcode.Validate(journal, response(workflowcode.ResultRunning,
+		workflowcode.ReportedOp{Seq: 0, Name: "flaky", Kind: workflowcode.KindStep, Status: workflowcode.ResultSucceeded, Output: json.RawMessage(`1`)},
+	), limits()); err != nil {
+		t.Fatalf("an early re-run from an older SDK must stay accepted: %v", err)
 	}
 }

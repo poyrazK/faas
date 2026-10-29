@@ -96,6 +96,15 @@
     group: root
     mode: "0644"
 
+- name: gatewayd_public_edge_service — install domain layout drop-in (ADR-20261026100000)
+  notify: restart faas-gatewayd-public-edge
+  ansible.builtin.template:
+    src: ../../_shared/templates/99-faas-domain-layout.conf.j2
+    dest: /etc/systemd/system/faas-gatewayd-public-edge.service.d/99-faas-domain-layout.conf
+    owner: root
+    group: root
+    mode: "0644"
+
 # Release activation restarts gatewayd-internal on every compute release. The
 # edge follows it both ways: PartOf= carries stop and restart to the edge,
 # and Wants= on gatewayd-internal carries start, so the edge always runs the

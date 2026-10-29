@@ -576,7 +576,7 @@ func TestAdoptionClassifier(t *testing.T) {
 				r.Version, r.Adoption = resourceAdoptionVersion, &block
 				f.must(r.validate())
 				f.journal.mu.Lock()
-				err := f.journal.persist(r)
+				err := f.journal.persist(r, true)
 				f.journal.mu.Unlock()
 				f.must(err)
 			}

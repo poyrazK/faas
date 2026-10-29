@@ -9,7 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const wakeAheadUsage = "usage: gregale wake-ahead <slug> [on|off]"
+const wakeAheadUsage = "usage: gregale app wake-ahead <slug> [on|off]"
 
 // cmdWakeAhead reads or changes an app's service wake-ahead opt-in (ADR-977).
 func cmdWakeAhead(args []string) int {
@@ -49,6 +49,10 @@ func renderWakeAhead(w io.Writer, s api.ServiceWakeAheadResponse) {
 	} else {
 		_, _ = fmt.Fprintf(w, "Service wake-ahead is on for %s: when it wakes, Gregale also starts the services it declares (depends_on) until measurements show which it calls soon after waking.\n", s.Slug)
 		_, _ = fmt.Fprintln(w, "Those services run, and are billed, from that moment; an unused one parks again after its idle timeout.")
+		if s.UpdatedAt == "" {
+			// A server reports the project default as on only when never set.
+			_, _ = fmt.Fprintf(w, "This is the default for a service in a project under the project service policy; `gregale app wake-ahead %s off` turns it off.\n", s.Slug)
+		}
 	}
 	if s.Learned != nil {
 		renderWakeAheadLearned(w, *s.Learned)

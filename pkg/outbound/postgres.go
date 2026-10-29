@@ -181,6 +181,7 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 	}, userLimited, policy, reserve, bindingAppID != uuid.Nil)
 	if reason == "" && spec.AITraceID != "" {
 		// ADR 20261020202035: the trace's limits; a trace never resets.
+		state.trace.named = spec.AITraceNamed
 		reason = aiTraceRejection(state.trace, policy.traceLimits, reserve)
 	}
 	write := admissionWrite{integrationID: integrationID, today: today, thisMonth: thisMonth, state: state}

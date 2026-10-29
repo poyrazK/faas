@@ -4,6 +4,8 @@ import (
 	"context"
 	"sort"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // CreateManagedRealtimeEndpointIfUnderQuota mirrors the Postgres transaction:
@@ -17,7 +19,7 @@ func (m *MemStore) CreateManagedRealtimeEndpointIfUnderQuota(_ context.Context, 
 		return ManagedRealtimeEndpoint{}, ErrNotFound
 	}
 	for _, existing := range m.managedRealtimeEndpoints {
-		if existing.ID == in.ID && in.ID != "" {
+		if existing.ID == in.ID && in.ID != "" || in.Slug != "" && existing.AppID == in.AppID && existing.Slug == in.Slug {
 			return ManagedRealtimeEndpoint{}, ErrConflict
 		}
 	}
@@ -53,6 +55,7 @@ func (m *MemStore) CreateManagedRealtimeEndpointIfUnderQuota(_ context.Context, 
 	in.AuthAlgorithms = append([]string(nil), in.AuthAlgorithms...)
 	in.AuthRequiredClaims = cloneManagedRealtimeClaims(in.AuthRequiredClaims)
 	in.AllowedOrigins = append([]string(nil), in.AllowedOrigins...)
+	in.ChannelRules = append([]api.RealtimeChannelRule(nil), in.ChannelRules...)
 	m.managedRealtimeEndpoints[in.ID] = in
 	return in, nil
 }
@@ -141,6 +144,19 @@ func (m *MemStore) UpdateManagedRealtimeEndpoint(_ context.Context, id string, p
 	}
 	if p.Enabled != nil {
 		e.Enabled = *p.Enabled
+	}
+	if p.Slug != nil && *p.Slug != "" {
+		for _, other := range m.managedRealtimeEndpoints {
+			if other.ID != e.ID && other.AppID == e.AppID && other.Slug == *p.Slug {
+				return ManagedRealtimeEndpoint{}, ErrConflict
+			}
+		}
+	}
+	if p.Slug != nil {
+		e.Slug = *p.Slug
+	}
+	if p.ChannelRules != nil {
+		e.ChannelRules = append([]api.RealtimeChannelRule(nil), (*p.ChannelRules)...)
 	}
 	e.UpdatedAt = time.Now()
 	m.managedRealtimeEndpoints[id] = e

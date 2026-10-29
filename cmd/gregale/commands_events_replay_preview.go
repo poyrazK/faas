@@ -27,7 +27,7 @@ func cmdEventsReplayPreview(args []string) int {
 	subscriptionID, subErr := uuid.Parse(*sub)
 	options := api.EventReplayPreviewOptions{From: start, Until: end, After: *after, Limit: *limit}
 	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) || startErr != nil || endErr != nil || subErr != nil || options.Validate() != nil || validateCLILimit("limit", *limit, api.EventReplayPreviewPageMax) != nil {
-		PrintUsage(os.Stderr, "usage: gregale events replay-preview <app> --subscription-id UUID --from RFC3339 --until RFC3339 [--after CURSOR] [--limit N]", "events")
+		PrintUsage(os.Stderr, "usage: gregale event replay-preview <app> --subscription-id UUID --from RFC3339 --until RFC3339 [--after CURSOR] [--limit N]", "events")
 		return 1
 	}
 	client, err := authedClient()

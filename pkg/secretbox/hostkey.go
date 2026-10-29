@@ -133,6 +133,9 @@ func LoadHostKey(path string) (*age.X25519Identity, error) {
 	if err != nil {
 		return nil, fmt.Errorf("secretbox: parse host key %q: %w", path, err)
 	}
+	// Decryptions under this key are counted under the file's label
+	// (ADR 20261024014500).
+	labelIdentity(path, id)
 	return id, nil
 }
 

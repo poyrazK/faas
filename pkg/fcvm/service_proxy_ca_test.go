@@ -47,6 +47,21 @@ func TestPreBootStagesServiceProxyCAOnlyForNetworkedGuests(t *testing.T) {
 	}
 }
 
+func serviceCAFile(t *testing.T) driveFile {
+	t.Helper()
+	files, _, err := preBootFileWriters(nil, nil, nil, "10.100.0.1", false, []byte("public-root"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		if f.path == serviceProxyCAPath {
+			return f
+		}
+	}
+	t.Fatal("no service CA writer")
+	return driveFile{}
+}
+
 func TestWriteServiceProxyCAConfinedAndGuestReadable(t *testing.T) {
 	for _, fullRootfs := range []bool{false, true} {
 		root := t.TempDir()
@@ -59,14 +74,10 @@ func TestWriteServiceProxyCAConfinedAndGuestReadable(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if err := writeServiceProxyCA(root, []byte("public-root")); err != nil {
+		if err := stageOnDir(root, serviceCAFile(t)); err != nil {
 			t.Fatal(err)
 		}
-		path, err := stagedDrivePath(root, serviceProxyCAPath)
-		if err != nil {
-			t.Fatal(err)
-		}
-		info, err := os.Stat(path)
+		info, err := os.Stat(filepath.Join(root, filepath.FromSlash(driveImagePath(fullRootfs, serviceProxyCAPath))))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -82,7 +93,7 @@ func TestWriteServiceProxyCAConfinedAndGuestReadable(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(root, "upper/etc/faas")); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeServiceProxyCA(root, []byte("public-root")); err == nil {
+	if err := stageOnDir(root, serviceCAFile(t)); err == nil {
 		t.Fatal("followed guest symlink outside drive")
 	}
 	if _, err := os.Stat(filepath.Join(outside, "service-proxy-ca.crt")); !os.IsNotExist(err) {

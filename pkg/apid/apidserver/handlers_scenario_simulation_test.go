@@ -26,7 +26,7 @@ func TestRehearsalSimulationEnrollmentCommitsExactFixtures(t *testing.T) {
 	plan := api.ScenarioSimulationPlan{Version: 1, Fixtures: []api.ScenarioSimulationFixture{{Workload: "primary", Name: "notify", Integration: "email", Adapter: "resend", Method: "POST", Path: "/emails", Responses: []api.ScenarioSimulationResponse{{Status: 200, Body: `{"id":"simulated-1"}`}}}}}
 	req := api.RegisterScenarioTestRequest{WebhookMode: "capture", NetworkMode: "contained", ActionEvidenceVersion: 2, Simulation: &plan, Members: []api.ScenarioTestWorkload{{Workload: "primary", AppSlug: session.App.Slug}}}
 	r = e.Do(t, "PUT", "/v1/dev/test-runs/"+run, req, nil)
-	if r.Code != http.StatusServiceUnavailable {
+	if r.Code != http.StatusNotImplemented {
 		t.Fatalf("unqualified simulation enrollment: %d %s", r.Code, r.Body.String())
 	}
 	*s.RehearsalSimulationEnabled() = true

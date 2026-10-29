@@ -25,7 +25,7 @@ func (c *Client) DeleteObjectBucketNotifications(ctx context.Context, slug, buck
 	return out, err
 }
 
-func (c *Client) ReconcileObjectStorageComputeTriggers(ctx context.Context, slug, bucket string, in ReconcileObjectStorageComputeTriggersRequest) (ObjectBucketNotifications, error) {
+func (c *PreviewClient) ReconcileObjectStorageComputeTriggers(ctx context.Context, slug, bucket string, in ReconcileObjectStorageComputeTriggersRequest) (ObjectBucketNotifications, error) {
 	var out ObjectBucketNotifications
 	err := c.do(ctx, http.MethodPut, "/v1/apps/"+url.PathEscape(slug)+"/buckets/"+url.PathEscape(bucket)+"/compute-triggers", in, &out)
 	return out, err

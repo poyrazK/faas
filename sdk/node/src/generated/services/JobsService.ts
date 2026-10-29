@@ -28,8 +28,8 @@ import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class JobsService {
   /**
-   * Run one command from an OCI image (ADR-1161).
-   * `docker run`-shaped entry point. apid keeps one platform-managed
+   * Run one command from an OCI image.
+   * `docker run`-shaped entry point. The API keeps one platform-managed
    * runner job (kind `image_run`) per account and normalized image, so
    * the image is pulled once and later runs start from the cached
    * artifact. While the image is being pulled the call returns 202
@@ -40,7 +40,7 @@ export class JobsService {
    * set) and `args` replaces the image CMD. Runs, logs and cancellation
    * use `/v1/jobs/{job}/runs`. Free accounts get 402
    * `jobs_not_allowed`; the route returns 404 until the operator sets
-   * `FAAS_IMAGE_RUNS=1`. With `interactive: true` (ADR-1330) the 201
+   * `FAAS_IMAGE_RUNS=1`. With `interactive: true` the 201
    * response carries a one-time `attach` credential for
    * `GET /v1/jobs/{job}/runs/{run_id}/tasks/0/attach` and is never stored
    * for Idempotency-Key replay.
@@ -128,7 +128,7 @@ export class JobsService {
    * Plan-tier gate (Free → 402 jobs_not_allowed) precedes
    * per-plan cap clamping (RAM, task_timeout, parallelism,
    * retry_max). The per-account JobMaxPerAccount quota is
-   * enforced atomically (PR-A → PR-B style follow-up).
+   * enforced atomically.
    *
    * @returns JobResponse The new job.
    * @throws ApiError
@@ -343,7 +343,7 @@ export class JobsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -531,7 +531,7 @@ export class JobsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -584,7 +584,7 @@ export class JobsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,
@@ -631,7 +631,7 @@ export class JobsService {
    * Cancel a run.
    * Transitions every non-terminal task of the run to
    * status='cancelled'. For claimed (running) tasks,
-   * schedd SIGTERMs the guest; the supervisor catches
+   * the scheduler SIGTERMs the guest; the supervisor catches
    * SIGTERM, writes job_exit{error_class='cancelled',
    * exit_code=143}, then poweroff.
    *
@@ -812,7 +812,7 @@ export class JobsService {
   }
   /**
    * Stream a task's output live (SSE).
-   * ADR-1163. Served by the compute gateway, not apid. Waits while the
+   * Served by the compute gateway, not the API. Waits while the
    * task is queued, then relays the task VM's console output as it is
    * written, including each retry attempt in turn. Frames match the app
    * log stream: `event: log` (seq, instance, stream, line, written_at),
@@ -875,8 +875,8 @@ export class JobsService {
   }
   /**
    * Attach to an interactive image run's task (WebSocket).
-   * ADR-1330. Served by the compute gateway, not apid. The session uses
-   * the interactive app-task wire contract (ADR-1037): the account
+   * Served by the compute gateway, not the API. The session uses
+   * the interactive app-task wire contract: the account
    * credential, deploy-write scope, the `X-Gregale-Attach-Token` from the
    * image run's create response, and the `gregale-app-task-attach-v1`
    * WebSocket subprotocol. Optional `rows`/`cols` set the initial terminal
@@ -1037,7 +1037,7 @@ export class JobsService {
         404: `code: not_found`,
         409: `code: conflict`,
         422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
-        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
         `,

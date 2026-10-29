@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * How the releases' release commands, which run database migrations, differ (ADR-1448).
+ * How the releases' release commands, which run database migrations, differ.
  */
 export type ReleaseDiffDatabase = {
   changed: boolean;

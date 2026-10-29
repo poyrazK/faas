@@ -15,7 +15,7 @@ const projectServiceAppIDs = `-- name: ProjectServiceAppIDs :many
 SELECT id FROM apps
 WHERE account_id = $1 AND project_id = $2
   AND preview_of_slug IS NULL AND status <> 'deleted'
-  AND lower(workload_name) = lower($3::text)
+  AND translate(lower(workload_name), '_.', '--') = translate(lower($3::text), '_.', '--')
 ORDER BY id
 LIMIT 2
 `

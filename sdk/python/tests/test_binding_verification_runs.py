@@ -1,4 +1,4 @@
-from faas_sdk.api.apps import (
+from faas_sdk.preview.api.apps import (
     admit_binding_verification_run_step,
     cancel_binding_verification_run,
     complete_binding_verification_run,
@@ -6,7 +6,7 @@ from faas_sdk.api.apps import (
     get_binding_verification_run,
     resume_binding_verification_run,
 )
-from faas_sdk.models.create_binding_verification_run_request import CreateBindingVerificationRunRequest
+from faas_sdk.preview.models.create_binding_verification_run_request import CreateBindingVerificationRunRequest
 
 
 def test_verification_run_identity_consent_and_atomic_step_routes():
@@ -32,8 +32,8 @@ def test_verification_run_identity_consent_and_atomic_step_routes():
 
 
 def test_app_review_selects_live_without_client_hashing():
-    from faas_sdk.api.apps import review_binding_verification
-    from faas_sdk.models.review_binding_verification_request import ReviewBindingVerificationRequest
+    from faas_sdk.preview.api.apps import review_binding_verification
+    from faas_sdk.preview.models.review_binding_verification_request import ReviewBindingVerificationRequest
 
     wire = review_binding_verification._get_kwargs("app", body=ReviewBindingVerificationRequest())
     assert wire["method"] == "post"
@@ -42,7 +42,7 @@ def test_app_review_selects_live_without_client_hashing():
 
 
 def test_app_review_response_forwards_server_selection():
-    from faas_sdk.models.binding_verification_review import BindingVerificationReview
+    from faas_sdk.preview.models.binding_verification_review import BindingVerificationReview
 
     identity = "11111111-1111-4111-8111-111111111111"
     target = "22222222-2222-4222-8222-222222222222"

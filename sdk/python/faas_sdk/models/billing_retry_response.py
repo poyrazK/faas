@@ -14,7 +14,7 @@ T = TypeVar("T", bound="BillingRetryResponse")
 
 @_attrs_define
 class BillingRetryResponse:
-    """Returned by POST /v1/billing/retry (issue #242). The CLI
+    """Returned by POST /v1/billing/retry. The CLI
     prints attempt_id and provider_ref_id so the customer can
     quote them to support if the charge still fails. status is
     "pending_provider_confirmation" — the CLI does not poll for

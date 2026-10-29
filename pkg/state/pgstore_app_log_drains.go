@@ -13,11 +13,11 @@ import (
 func (s *PgStore) CreateAppLogDrain(ctx context.Context, in AppLogDrain) (AppLogDrain, error) {
 	row := s.pool.QueryRow(ctx, `
 		insert into app_log_drains
-			(app_id, account_id, kind, target_url, auth_header_sealed, enabled)
-		values ($1, $2, $3, $4, $5, $6)
+			(app_id, account_id, kind, target_url, auth_header_sealed, enabled, created_by_account_id)
+		values ($1, $2, $3, $4, $5, $6, NULLIF($7, '')::uuid)
 		returning id, app_id, account_id, kind, target_url,
 		          auth_header_sealed, enabled, created_at, updated_at
-	`, in.AppID, in.AccountID, string(in.Kind), in.TargetURL, in.AuthHeaderSealed, in.Enabled)
+	`, in.AppID, in.AccountID, string(in.Kind), in.TargetURL, in.AuthHeaderSealed, in.Enabled, in.CreatedByAccountID)
 	drain, err := scanAppLogDrain(row)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -70,11 +70,11 @@ func (s *PgStore) CreateAppLogDrainIfUnderQuota(ctx context.Context, in AppLogDr
 
 	row := tx.QueryRow(ctx, `
 		insert into app_log_drains
-			(app_id, account_id, kind, target_url, auth_header_sealed, enabled)
-		values ($1, $2, $3, $4, $5, $6)
+			(app_id, account_id, kind, target_url, auth_header_sealed, enabled, created_by_account_id)
+		values ($1, $2, $3, $4, $5, $6, NULLIF($7, '')::uuid)
 		returning id, app_id, account_id, kind, target_url,
 		          auth_header_sealed, enabled, created_at, updated_at
-	`, in.AppID, accountID, string(in.Kind), in.TargetURL, in.AuthHeaderSealed, in.Enabled)
+	`, in.AppID, accountID, string(in.Kind), in.TargetURL, in.AuthHeaderSealed, in.Enabled, in.CreatedByAccountID)
 	drain, err := scanAppLogDrain(row)
 	if err != nil {
 		if isUniqueViolation(err) {

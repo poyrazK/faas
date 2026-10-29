@@ -1,5 +1,6 @@
 //go:build !no_pg
 
+// adr: 570
 package migrations_test
 
 import (
@@ -23,10 +24,7 @@ func TestMigrationQueueReplayDeliveryFenceRetainsHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "replay-fence-migration", Type: state.AppTypeApp, WorkloadClass: state.WorkloadClassWorker})
-	if err != nil {
-		t.Fatal(err)
-	}
+	app := seedHistoricalInvocationApp(t, ctx, pool, state.App{AccountID: account.ID, Slug: "replay-fence-migration", Type: state.AppTypeApp, WorkloadClass: state.WorkloadClassWorker})
 	binding := seedLegacyQueueBindingConsumer(t, pool, account.ID, app.ID, "jobs", true)
 	var id string
 	if err := pool.QueryRow(ctx, `insert into invocations(account_id,app_id,source,queue_name,deployment_scope,state,attempts,last_replayed_at,lease_expires_at,payload)

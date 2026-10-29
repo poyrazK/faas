@@ -110,6 +110,32 @@ for (const status of [400, 401, 403, 404, 409, 422]) {
   });
 }
 
+// A traffic policy check that ran out of time saved nothing and asks to be
+// resent (422 traffic_policy_too_complex with Retry-After). A 422 without
+// Retry-After, or with another code, is a verdict and fails at once.
+for (const { name, code, retryAfter, attempts: want } of [
+  { name: 'is resent', code: 'traffic_policy_too_complex', retryAfter: '0', attempts: 2 },
+  { name: 'without Retry-After fails at once', code: 'traffic_policy_too_complex', retryAfter: undefined, attempts: 1 },
+  { name: 'with another code fails at once', code: 'validation_error', retryAfter: '0', attempts: 1 },
+]) {
+  test('a timed-out policy check ' + name, async t => {
+    let attempts = 0;
+    const bodies: unknown[] = [];
+    clientFixture(t, async (_input, init) => {
+      bodies.push(init?.body);
+      if (++attempts === 1) return Response.json({ status: 422, code, detail: 'Policy check ran out of time' }, {
+        status: 422, headers: { 'Content-Type': 'application/problem+json', ...(retryAfter === undefined ? {} : { 'Retry-After': retryAfter }) },
+      });
+      return Response.json({ id: 'app', slug: 'report' });
+    });
+    const result = AppsService.createApp({ requestBody: { slug: 'report' } });
+    if (want === 2) assert.equal((await result).id, 'app');
+    else await assert.rejects(result, error => isFaasError(error) && error.status === 422 && error.problem.code === code);
+    assert.equal(attempts, want);
+    assert.equal(new Set(bodies).size, 1);
+  });
+}
+
 test('the default policy still makes one attempt', async t => {
   let attempts = 0;
   clientFixture(t, async () => { attempts++; return unavailable(); }, { retry: undefined });

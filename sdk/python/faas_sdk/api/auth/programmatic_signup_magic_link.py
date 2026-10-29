@@ -72,7 +72,7 @@ def sync_detailed(
 ) -> Response[Problem | ProgrammaticSignupMagicLinkResponse200]:
     """Magic-link signup (JSON-only, no password).
 
-     Issue #311 / `gregale signup --email-only EMAIL` — emails
+     `gregale signup --email-only EMAIL` — emails
     a one-time signup link to the given address. Always
     returns 200 with the same body regardless of whether the
     email is bound, unbound, malformed, or missing in the
@@ -116,7 +116,7 @@ def sync(
 ) -> Problem | ProgrammaticSignupMagicLinkResponse200 | None:
     """Magic-link signup (JSON-only, no password).
 
-     Issue #311 / `gregale signup --email-only EMAIL` — emails
+     `gregale signup --email-only EMAIL` — emails
     a one-time signup link to the given address. Always
     returns 200 with the same body regardless of whether the
     email is bound, unbound, malformed, or missing in the
@@ -155,7 +155,7 @@ async def asyncio_detailed(
 ) -> Response[Problem | ProgrammaticSignupMagicLinkResponse200]:
     """Magic-link signup (JSON-only, no password).
 
-     Issue #311 / `gregale signup --email-only EMAIL` — emails
+     `gregale signup --email-only EMAIL` — emails
     a one-time signup link to the given address. Always
     returns 200 with the same body regardless of whether the
     email is bound, unbound, malformed, or missing in the
@@ -197,7 +197,7 @@ async def asyncio(
 ) -> Problem | ProgrammaticSignupMagicLinkResponse200 | None:
     """Magic-link signup (JSON-only, no password).
 
-     Issue #311 / `gregale signup --email-only EMAIL` — emails
+     `gregale signup --email-only EMAIL` — emails
     a one-time signup link to the given address. Always
     returns 200 with the same body regardless of whether the
     email is bound, unbound, malformed, or missing in the

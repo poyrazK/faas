@@ -85,17 +85,17 @@ func (c *Client) GetBindingReleasePolicy(ctx context.Context, slug, scope string
 }
 func (c *Client) SetBindingReleasePolicy(ctx context.Context, slug, scope string, request SetBindingReleasePolicyRequest) (BindingReleasePolicy, error) {
 	if request.QueueRequirements != nil {
-		return c.SetQueueBindingReleasePolicy(ctx, slug, scope, SetQueueBindingReleasePolicyRequest{request, request.QueueRequirements})
+		return NewPreviewClient(c).SetQueueBindingReleasePolicy(ctx, slug, scope, SetQueueBindingReleasePolicyRequest{request, request.QueueRequirements})
 	}
 	if request.ObjectStorageRequirements != nil {
-		return c.SetObjectStorageBindingReleasePolicy(ctx, slug, scope, SetObjectStorageBindingReleasePolicyRequest{request, request.ObjectStorageRequirements})
+		return NewPreviewClient(c).SetObjectStorageBindingReleasePolicy(ctx, slug, scope, SetObjectStorageBindingReleasePolicyRequest{request, request.ObjectStorageRequirements})
 	}
 	var result BindingReleasePolicy
 	err := c.do(ctx, http.MethodPut, bindingReleasePolicyPath(slug, scope), request, &result)
 	return result, err
 }
 
-func (c *Client) SetQueueBindingReleasePolicy(ctx context.Context, slug, scope string, request SetQueueBindingReleasePolicyRequest) (BindingReleasePolicy, error) {
+func (c *PreviewClient) SetQueueBindingReleasePolicy(ctx context.Context, slug, scope string, request SetQueueBindingReleasePolicyRequest) (BindingReleasePolicy, error) {
 	var result BindingReleasePolicy
 	if request.QueueRequirements == nil {
 		return result, fmt.Errorf("supply explicit queue_requirements (an empty object clears them)")
@@ -121,7 +121,7 @@ func ValidateQueueReleaseRequirements(requirements map[string]string) error {
 	return nil
 }
 
-func (c *Client) SetObjectStorageBindingReleasePolicy(ctx context.Context, slug, scope string, request SetObjectStorageBindingReleasePolicyRequest) (BindingReleasePolicy, error) {
+func (c *PreviewClient) SetObjectStorageBindingReleasePolicy(ctx context.Context, slug, scope string, request SetObjectStorageBindingReleasePolicyRequest) (BindingReleasePolicy, error) {
 	var result BindingReleasePolicy
 	if request.ObjectStorageRequirements == nil {
 		return result, fmt.Errorf("supply explicit object_storage_requirements (an empty object clears them)")

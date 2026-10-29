@@ -93,12 +93,12 @@ func cmdCronsRun(args []string) int {
 		return printErr("Invalid run flags", fmt.Errorf("--app and --timeout require --interactive"))
 	}
 	if len(pos) != 1 {
-		printCommandValidation(os.Stderr, "usage: gregale crons run <id>\n")
+		printCommandValidation(os.Stderr, "usage: gregale cron run <id>\n")
 		return 1
 	}
 	id := pos[0]
 	if !cronIDPattern.MatchString(id) {
-		printCommandValidation(os.Stderr, "usage: gregale crons run <id>\n")
+		printCommandValidation(os.Stderr, "usage: gregale cron run <id>\n")
 		return 1
 	}
 	client, err := authedClient()
@@ -112,7 +112,7 @@ func cmdCronsRun(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(resp))
 	}
-	_, _ = fmt.Fprintf(osStdout, "Fire-now request enqueued: %s (poll via `gregale crons fire-now %s`)\n",
+	_, _ = fmt.Fprintf(osStdout, "Fire-now request enqueued: %s (poll via `gregale cron fire-now %s`)\n",
 		resp.RequestID, resp.RequestID)
 	return 0
 }
@@ -133,12 +133,12 @@ func cmdCronsFireNowGet(args []string) int {
 		return 1
 	}
 	if len(pos) != 1 {
-		printCommandValidation(os.Stderr, "usage: gregale crons fire-now <request-id>\n")
+		printCommandValidation(os.Stderr, "usage: gregale cron fire-now <request-id>\n")
 		return 1
 	}
 	requestID := pos[0]
 	if !fireNowRequestIDPattern.MatchString(requestID) {
-		printCommandValidation(os.Stderr, "usage: gregale crons fire-now <request-id>\n")
+		printCommandValidation(os.Stderr, "usage: gregale cron fire-now <request-id>\n")
 		return 1
 	}
 	if *timeout <= 0 || logsFlagWasSet(fs, "timeout") && !*wait {
@@ -158,7 +158,7 @@ func cmdCronsFireNowGet(args []string) int {
 		// the id is a cron, say which command fires it.
 		if isNotFound(err) {
 			if cron, cronErr := client.GetCron(context.Background(), requestID); cronErr == nil && cron.ID != "" {
-				return printErr("Not a fire-now request", fmt.Errorf("%s is a cron rule; fire it with `gregale crons run %s`, which prints the request id that `crons fire-now` follows", requestID, requestID))
+				return printErr("Not a fire-now request", fmt.Errorf("%s is a cron rule; fire it with `gregale cron run %s`, which prints the request id that `crons fire-now` follows", requestID, requestID))
 			}
 		}
 		return printErr("Could not load fire-now request", err)

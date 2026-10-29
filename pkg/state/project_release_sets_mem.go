@@ -454,7 +454,7 @@ func (m *MemStore) releaseSetHasManagedMembersLocked(release ProjectReleaseSet) 
 	return false
 }
 
-func (m *MemStore) PublishProjectEnvironmentPromotionReleaseSet(_ context.Context, accountID, promotionID string, ttlSeconds int, members []ProjectReleaseMember) (ProjectReleaseSet, error) {
+func (m *MemStore) PublishProjectEnvironmentPromotionReleaseSet(ctx context.Context, accountID, promotionID string, ttlSeconds int, members []ProjectReleaseMember) (ProjectReleaseSet, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	promotion, ok := m.projectEnvironmentPromotions[promotionID]
@@ -520,6 +520,9 @@ func (m *MemStore) PublishProjectEnvironmentPromotionReleaseSet(_ context.Contex
 	if err != nil {
 		return ProjectReleaseSet{}, err
 	}
+	if err := m.checkMemPromotionWorkloadBindingsLocked(ctx, promotion.AccountID, changes); err != nil {
+		return ProjectReleaseSet{}, err
+	}
 	flagVersion, err := m.preparePromotionFeatureFlagsLocked(promotion, false, false)
 	if err != nil {
 		return ProjectReleaseSet{}, err
@@ -546,7 +549,7 @@ func (m *MemStore) PublishProjectEnvironmentPromotionReleaseSet(_ context.Contex
 	return cloneProjectReleaseSet(release), nil
 }
 
-func (m *MemStore) RollbackProjectEnvironmentPromotionReleaseSet(_ context.Context, accountID, promotionID string, ttlSeconds int, members []ProjectReleaseMember) (ProjectReleaseSet, error) {
+func (m *MemStore) RollbackProjectEnvironmentPromotionReleaseSet(ctx context.Context, accountID, promotionID string, ttlSeconds int, members []ProjectReleaseMember) (ProjectReleaseSet, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	promotion, ok := m.projectEnvironmentPromotions[promotionID]
@@ -602,6 +605,9 @@ func (m *MemStore) RollbackProjectEnvironmentPromotionReleaseSet(_ context.Conte
 	if err != nil {
 		return ProjectReleaseSet{}, err
 	}
+	if err := m.checkMemPromotionWorkloadBindingsLocked(ctx, promotion.AccountID, changes); err != nil {
+		return ProjectReleaseSet{}, err
+	}
 	flagVersion, err := m.preparePromotionFeatureFlagsLocked(promotion, true, false)
 	if err != nil {
 		return ProjectReleaseSet{}, err
@@ -624,7 +630,7 @@ func (m *MemStore) RollbackProjectEnvironmentPromotionReleaseSet(_ context.Conte
 
 func (m *MemStore) releaseTargetLiveLocked(appID, deploymentID string) bool {
 	dep, ok := m.deployments[deploymentID]
-	if !ok || dep.AppID != appID || dep.Status != DeployLive || m.migrationDeploymentRetiredLocked(deploymentID) {
+	if !ok || dep.AppID != appID || dep.Status != DeployLive || dep.DeletedAt != nil || m.migrationDeploymentRetiredLocked(deploymentID) {
 		return false
 	}
 	if dep.TrafficPercent > 0 {
@@ -678,7 +684,7 @@ func (m *MemStore) ResolveProjectRelease(_ context.Context, appID, scope, reques
 
 func (m *MemStore) resolveProjectReleaseLocked(appID, scope, requestedID string) (string, string, error) {
 	app, ok := m.apps[appID]
-	if !ok || app.Status == AppDeleted {
+	if !ok || app.Status == AppDeleted || app.DeletedAt != nil {
 		return "", "", ErrNotFound
 	}
 	if app.ProjectID == "" {
@@ -702,7 +708,8 @@ func (m *MemStore) resolveProjectReleaseLocked(appID, scope, requestedID string)
 		return "", "", nil
 	}
 	depID := releaseMemberForApp(release, appID)
-	if depID == "" || !m.releaseTargetLiveLocked(appID, depID) {
+	dep := m.deployments[depID]
+	if depID == "" || normalizedDeploymentScope(dep.Scope) != normalizedDeploymentScope(scope) || !m.releaseTargetLiveLocked(appID, depID) {
 		return "", "", ErrConflict
 	}
 	return id, depID, nil

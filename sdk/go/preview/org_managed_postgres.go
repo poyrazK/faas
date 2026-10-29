@@ -1,0 +1,12 @@
+package preview
+
+import "github.com/poyrazK/faas/sdk/go/internal/api"
+
+type ManagedPostgresDatabase = api.ManagedPostgresDatabase
+type ManagedPostgresHealth = api.ManagedPostgresHealth
+type ManagedPostgresDatabaseList = api.ManagedPostgresDatabaseList
+type CreateManagedPostgresDatabaseRequest = api.CreateManagedPostgresDatabaseRequest
+type RestoreManagedPostgresDatabaseRequest = api.RestoreManagedPostgresDatabaseRequest
+type ManagedPostgresBinding = api.ManagedPostgresBinding
+type ManagedPostgresBindingList = api.ManagedPostgresBindingList
+type CreateManagedPostgresBindingRequest = api.CreateManagedPostgresBindingRequest

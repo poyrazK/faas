@@ -12,12 +12,19 @@ import (
 	core "github.com/onebox-faas/faas/pkg/datarepair"
 )
 
-const nativeRepairProducerProtocol = "data-repair-coldboot-v1"
+const (
+	nativeRepairProducerProtocol = "data-repair-coldboot-v1"
+	// nativeLaunchOwnerProtocol names the vmmd incarnation that published an
+	// ordinary version-three launch record (ADR-2026101710 Amendment 1).
+	nativeLaunchOwnerProtocol = "vmmd-launch-owner-v1"
+)
 
 // Version two enrolls only repair's fixed cold-boot path. Out-of-process
 // producers use the existing gated helper/resource journals; in-process
 // filesystem producers belong to this exact daemon kernel incarnation.
 // Native builder export remains disabled. Version-one ownership is not upgraded.
+// Version three gives an ordinary launch the same daemon identity, as its
+// owner, so a later vmmd can prove that incarnation exited before cleanup.
 type nativeProducerIdentity struct {
 	Protocol  string `json:"protocol"`
 	PID       int    `json:"pid"`
@@ -36,28 +43,36 @@ func (p *nativeProducerIdentity) UnmarshalJSON(b []byte) error {
 }
 
 func (p nativeProducerIdentity) validate() error {
-	if p.Protocol != nativeRepairProducerProtocol || p.PID <= 0 || p.PID > math.MaxInt32 || p.UID < 0 || uint64(p.UID) > math.MaxUint32 || p.StartTime == 0 {
+	if p.Protocol != nativeRepairProducerProtocol && p.Protocol != nativeLaunchOwnerProtocol || p.PID <= 0 || p.PID > math.MaxInt32 || p.UID < 0 || uint64(p.UID) > math.MaxUint32 || p.StartTime == 0 {
 		return errors.New("native producer: invalid daemon incarnation or protocol")
 	}
 	return nil
 }
 
 func (r nativeLaunchRecord) validateProducer() error {
-	if r.Version == 1 && r.Producer == (nativeProducerIdentity{}) {
+	none := nativeProducerIdentity{}
+	if r.Version == 1 && r.Producer == none && r.Owner == none {
 		return nil
 	}
-	if r.Version != 2 || r.Producer == (nativeProducerIdentity{}) || !r.Lease.Networkless || r.Lease.IsBuilder || !canonicalNativeHelperID(r.Lease.Instance) {
+	if r.Version == 3 && r.Producer == none && r.Owner.Protocol == nativeLaunchOwnerProtocol {
+		return r.Owner.validate()
+	}
+	if r.Version != 2 || r.Owner != none || r.Producer.Protocol != nativeRepairProducerProtocol || !r.Lease.Networkless || r.Lease.IsBuilder || !canonicalNativeHelperID(r.Lease.Instance) {
 		return errors.New("native producer: record version or enrolled workload is invalid")
 	}
 	return r.Producer.validate()
 }
 
 func nativeCurrentProducer() (nativeProducerIdentity, error) {
+	return nativeCurrentIdentity(nativeRepairProducerProtocol)
+}
+
+func nativeCurrentIdentity(protocol string) (nativeProducerIdentity, error) {
 	start, err := nativeHostHelperStartTime(os.Getpid())
 	if err != nil {
 		return nativeProducerIdentity{}, err
 	}
-	p := nativeProducerIdentity{Protocol: nativeRepairProducerProtocol, PID: os.Getpid(), UID: os.Geteuid(), StartTime: start}
+	p := nativeProducerIdentity{Protocol: protocol, PID: os.Getpid(), UID: os.Geteuid(), StartTime: start}
 	return p, p.validate()
 }
 
@@ -127,14 +142,32 @@ func (v *JailerVMM) requireNativeProducerRetirement(ctx context.Context, record 
 				return errors.New("native producer: local producer identity changed")
 			}
 		}
+		if record.Owner != (nativeProducerIdentity{}) {
+			current, err := nativeCurrentIdentity(nativeLaunchOwnerProtocol)
+			if err != nil || current != record.Owner {
+				return errors.New("native owner: local daemon identity changed")
+			}
+		}
 		return nil
-	}
-	if record.Producer == (nativeProducerIdentity{}) {
-		return errors.New("native recovery: recovered host helper ownership is not yet attested")
 	}
 	probe := r.producerExited
 	if probe == nil {
 		probe = nativeProducerExited
+	}
+	if record.Producer == (nativeProducerIdentity{}) {
+		if record.Owner == (nativeProducerIdentity{}) {
+			return errors.New("native recovery: recovered host helper ownership is not yet attested")
+		}
+		// An earlier vmmd published this ordinary generation with its own
+		// identity. Its in-process writers end with it; helpers keep their
+		// journals. Prove it exited under the ownership lock, never signal it.
+		if err := record.validateProducer(); err != nil {
+			return err
+		}
+		if err := r.checkDaemonOwnership(); err != nil {
+			return err
+		}
+		return probe(ctx, record.Owner)
 	}
 	return probe(ctx, record.Producer)
 }

@@ -154,7 +154,7 @@ func (e *recordingSidecarEmitter) EmitSidecarRestart(_ context.Context, _, _, _ 
 	e.restarts = append(e.restarts, wire.Sidecar)
 }
 
-func (e *recordingSidecarEmitter) EmitSidecarHealth(_ context.Context, _, _, _ string, wire sidecarHealthWire) {
+func (e *recordingSidecarEmitter) EmitSidecarHealth(_ context.Context, _, _, _, _ string, wire sidecarHealthWire) {
 	e.health = append(e.health, wire.Sidecar)
 }
 
@@ -169,9 +169,11 @@ func TestGuestEventStreamDropsUndeclaredSidecars(t *testing.T) {
 		SetInstanceSidecarsForTest("instance-1", "worker", "migrate")
 	emitter := &recordingSidecarEmitter{}
 	receiver := &FrameworkReadyReceiver{ctx: context.Background(), log: slog.New(slog.NewTextHandler(io.Discard, nil)), mgr: mgr, emitter: emitter}
+	// Health also requires the stream's prepared VM identity (ADR-570).
+	conn := fcvm.GuestVsockOriginConnForTest(nil, fcvm.GuestVsockStreamOrigin{AppID: "app-1"})
 	for _, name := range []string{"worker", "attacker-1", "main", ""} {
 		receiver.dispatchSidecarRestart("instance-1", sidecarRestartWire{Sidecar: name, Attempt: 1})
-		receiver.dispatchSidecarHealth("instance-1", sidecarHealthWire{Sidecar: name, Status: sidecarHealthHealthy})
+		receiver.dispatchSidecarHealth("instance-1", conn, sidecarHealthWire{Sidecar: name, Status: sidecarHealthHealthy})
 	}
 	for _, name := range []string{"migrate", "attacker-2"} {
 		receiver.dispatchSidecarInitExit("instance-1", sidecarInitExitWire{Sidecar: name, Status: sidecarStatusInitOK})

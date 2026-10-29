@@ -142,7 +142,7 @@ export class SecurityService {
     });
   }
   /**
-   * Read the per-app static egress IP pin (ADR-119).
+   * Read the per-app static egress IP pin.
    * Returns the customer's pinned IPv4 + the audit timestamp +
    * the per-app quota cap (StaticEgressIPsPerApp, 1 in v1). A
    * Scale customer with no pin yet sees `ip=null`,
@@ -268,8 +268,7 @@ export class SecurityService {
   }
   /**
    * List the per-app trusted-publisher list (admin).
-   * Lists every (signer_name, public_key_pem) row for this app
-   * (issue #472 / ADR-054). Admin-scoped; the wire form is the
+   * Lists every (signer_name, public_key_pem) row for this app. Admin-scoped; the wire form is the
    * base64-encoded DER SPKI bytes, NOT a PEM-armoured block.
    * Empty list is the EXPECTED state for any app with
    * require_signed=false. Mounted with `authLimited → requireMFA →
@@ -303,8 +302,8 @@ export class SecurityService {
   /**
    * Onboard (or replace) a trusted publisher (admin + MFA).
    * Writes the (app_id, signer_name) row with the supplied base64-DER
-   * blob (issue #472 / ADR-054). apid decodes the blob and persists it
-   * verbatim; imaged mirrors the row to `/etc/faas/secrets/trusted-publishers/{name}.pem`
+   * blob. The API decodes the blob and persists it
+   * verbatim; the image service mirrors the row to `/etc/faas/secrets/trusted-publishers/{name}.pem`
    * and refreshes its in-memory trust cache on `pg_notify('trusted_signer_changed')`.
    * PUT semantics: idempotent re-PUT replaces the previous blob.
    *

@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/poyrazK/faas/sdk/go/preview"
+
 	faas "github.com/poyrazK/faas/sdk/go"
 )
 
@@ -19,7 +21,7 @@ func TestPublicLifecycleClient(t *testing.T) {
 			t.Error("missing authentication")
 		}
 		if r.Method == http.MethodPut {
-			var in faas.ObjectBucketLifecycleRequest
+			var in preview.ObjectBucketLifecycleRequest
 			if json.NewDecoder(r.Body).Decode(&in) != nil || len(in.Rules) != 1 || in.Rules[0].Expiration == nil || in.Rules[0].Expiration.ExpiredObjectDeleteMarker == nil || *in.Rules[0].Expiration.ExpiredObjectDeleteMarker {
 				t.Error(in)
 			}
@@ -36,7 +38,7 @@ func TestPublicLifecycleClient(t *testing.T) {
 	}
 	marker := false
 	ctx := context.Background()
-	in := faas.ObjectBucketLifecycleRequest{Rules: []faas.ObjectLifecycleRule{{Status: "Enabled", Filter: faas.ObjectLifecycleFilter{}, Expiration: &faas.ObjectLifecycleExpiration{ExpiredObjectDeleteMarker: &marker}}}}
+	in := preview.ObjectBucketLifecycleRequest{Rules: []preview.ObjectLifecycleRule{{Status: "Enabled", Filter: preview.ObjectLifecycleFilter{}, Expiration: &preview.ObjectLifecycleExpiration{ExpiredObjectDeleteMarker: &marker}}}}
 	if p, e := c.PutObjectBucketLifecycle(ctx, "demo/x", "bucket/x", in); e != nil || p.Revision != 2 {
 		t.Fatal(p, e)
 	}

@@ -310,7 +310,7 @@ func (s *server) createWorkflowRunWithTenant(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	maxConcurrent := acct.Plan.WorkflowMaxConcurrentRuns()
+	maxConcurrent, maxParked := acct.Plan.WorkflowMaxConcurrentRuns(), acct.Plan.WorkflowMaxParkedRuns()
 
 	run := &state.WorkflowRun{
 		DeploymentID:       dep.ID,
@@ -326,9 +326,9 @@ func (s *server) createWorkflowRunWithTenant(w http.ResponseWriter, r *http.Requ
 	var activeRuns int
 	var replayed bool
 	if idempotencyKey != "" {
-		activeRuns, replayed, err = s.store.CreateWorkflowRunAdmittedWithIdempotencyKey(r.Context(), run, maxConcurrent, idempotencyKey, requestFingerprint)
+		activeRuns, replayed, err = s.store.CreateWorkflowRunAdmittedWithIdempotencyKey(r.Context(), run, maxConcurrent, maxParked, idempotencyKey, requestFingerprint)
 	} else {
-		activeRuns, err = s.store.CreateWorkflowRunAdmitted(r.Context(), run, maxConcurrent)
+		activeRuns, err = s.store.CreateWorkflowRunAdmitted(r.Context(), run, maxConcurrent, maxParked)
 	}
 	if errors.Is(err, state.ErrWorkflowRunQuotaExceeded) {
 		api.WriteProblem(w, api.ErrPlanWorkflowsQuota(acct.Plan, maxConcurrent, activeRuns))
@@ -879,7 +879,7 @@ func (s *server) retryWorkflowStep(w http.ResponseWriter, r *http.Request, acct 
 		return
 	}
 	maxActive := acct.Plan.WorkflowMaxConcurrentRuns()
-	run, active, err := retryStore.RetryWorkflowStep(r.Context(), run.ID, r.PathValue("step"), maxActive)
+	run, active, err := retryStore.RetryWorkflowStep(r.Context(), run.ID, r.PathValue("step"), maxActive, acct.Plan.WorkflowMaxParkedRuns())
 	if errors.Is(err, state.ErrWorkflowRunNotFound) {
 		api.WriteProblem(w, api.ErrWorkflowRunNotFound())
 		return

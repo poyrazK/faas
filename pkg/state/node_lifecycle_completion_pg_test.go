@@ -7,8 +7,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -240,8 +238,7 @@ func TestNodeLifecycleCompletionPostgresConcurrentResidentTransition(t *testing.
 
 func lifecycleCompletionMigration(t *testing.T) (string, string) {
 	t.Helper()
-	_, source, _, _ := runtime.Caller(0)
-	body, err := os.ReadFile(filepath.Join(filepath.Dir(source), "../../migrations/20261017140000001_node_lifecycle_completion.sql"))
+	body, err := os.ReadFile("../../migrations/20261017140000001_node_lifecycle_completion.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

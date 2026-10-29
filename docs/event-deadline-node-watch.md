@@ -15,7 +15,7 @@ import {
   watchEventSubscriptionDeadlines,
   validateEventDeadlineCheckpoint,
   acknowledgeEventDeadlineAlerts,
-} from '@gregale/sdk-node';
+} from '@gregale/sdk-node/preview';
 
 const abortController = new AbortController();
 const result = await watchEventSubscriptionDeadlines({

@@ -15,9 +15,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const cacheDeclareUsage = "usage: gregale cache GET|HEAD <path> for <duration> [--app SLUG] [--host HOST] [--stale-while-revalidate DURATION] [--stale-if-error DURATION] [--vary-on HEADER] [--priority N]"
+const cacheDeclareUsage = "usage: gregale edge cache GET|HEAD <path> for <duration> [--app SLUG] [--host HOST] [--stale-while-revalidate DURATION] [--stale-if-error DURATION] [--vary-on HEADER] [--priority N]"
 
-const cachePurgeUsage = "usage: gregale cache purge [<slug> | --app SLUG] [--path GLOB | --tag TAG]"
+const cachePurgeUsage = "usage: gregale edge cache purge [<slug> | --app SLUG] [--path GLOB | --tag TAG]"
 
 // cmdCache implements the declarative cache shorthand and explicit purges.
 // The shorthand resolves --app from linked project context when omitted, so
@@ -35,8 +35,13 @@ func cmdCache(args []string) int {
 	case "PURGE":
 		return cmdCachePurge(args[1:])
 	default:
-		PrintUsage(os.Stderr, cacheDeclareUsage+"\n       "+strings.TrimPrefix(cachePurgeUsage, "usage: "), "cache")
-		return 1
+		printCommandValidation(os.Stderr, "unknown cache subcommand %q\n", args[0])
+		if args[0] == subList || args[0] == "ls" {
+			// Cache rules are edge rules of kind cache; `cache list` found
+			// no way to see them on production-us rc.294 (Hunt 14 H14-64).
+			_, _ = fmt.Fprintln(os.Stderr, "  Cache rules are edge rules: gregale edge rule list <slug>")
+		}
+		return unknownSubcommandChoices(os.Stderr, "cache", nestedCliCommand("cache"), args[0])
 	}
 }
 

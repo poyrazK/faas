@@ -148,6 +148,18 @@ func parseChallenge(header string) authChallenge {
 	return ch
 }
 
+// challengeOffersBasic reports whether a WWW-Authenticate field offers the
+// Basic scheme in any of its challenges.
+func challengeOffersBasic(header string) bool {
+	for _, part := range splitParams(header) {
+		scheme, _, _ := strings.Cut(strings.TrimSpace(part), " ")
+		if strings.EqualFold(scheme, "Basic") {
+			return true
+		}
+	}
+	return false
+}
+
 // splitParams splits a challenge's comma-separated key="value" params
 // without breaking on commas inside quoted values (scopes can contain
 // them).

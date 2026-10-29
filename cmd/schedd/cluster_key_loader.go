@@ -102,15 +102,23 @@ func loadClusterInternalSvcKey(
 		return nil, "", fmt.Errorf("schedd: load cluster_signing_keys: %w", err)
 	}
 
-	identities, err := secretbox.LoadFleetAndHostKeys(scheddHostAgeKeyDir())
+	// ADR 20261022111812: the control seal-domain identity, once staged,
+	// opens the cluster key ahead of the fleet and host identities, and
+	// alone once the contract step removes fleet.age from schedd.
+	control, err := loadControlSealDomain(os.Getenv)
 	if err != nil {
-		// A populated cluster-key row without a usable fleet identity
-		// is unsafe: fail closed instead of minting with a host-local key.
-		log.Warn("schedd: cannot load fleet.age identity for cluster key unseal",
-			"err", err.Error())
+		log.Warn("schedd: cannot load the control seal-domain identity for cluster key unseal", "err", err.Error())
 		return nil, "", fmt.Errorf("%w: %w", ErrClusterKeyUnavailable, ErrClusterKeyUnsealable)
 	}
+	legacy, legacyErr := secretbox.LoadFleetAndHostKeys(scheddHostAgeKeyDir())
+	identities := domainReaders(control, legacy)
 	if len(identities) == 0 {
+		// A populated cluster-key row without a usable identity is unsafe:
+		// fail closed instead of minting with a host-local key.
+		if legacyErr != nil {
+			log.Warn("schedd: cannot load fleet.age identity for cluster key unseal",
+				"err", legacyErr.Error())
+		}
 		return nil, "", fmt.Errorf("%w: %w", ErrClusterKeyUnavailable, ErrClusterKeyUnsealable)
 	}
 

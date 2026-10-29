@@ -6,12 +6,12 @@ import (
 	"encoding/json"
 	"testing"
 
-	faas "github.com/poyrazK/faas/sdk/go"
+	"github.com/poyrazK/faas/sdk/go/preview"
 )
 
 func TestRouteHealthNotificationPayload(t *testing.T) {
 	body := []byte(`{"version":1,"app_id":"app","deployment_id":"candidate","stable_deployment_id":"stable","decision_id":"healthy","blocked_decision_id":"held","status":"resumed","health_status":"healthy","reason":"selected_routes_healthy","source":"worker","canary_step":0,"revision":1,"observation_anchor":"2026-10-02T18:00:00Z","checked_at":"2026-10-02T19:00:00Z","previous_traffic_percent":1,"requested_traffic_percent":10,"history_path":"/v1/apps/demo/route-health/deployments/candidate/history/healthy"}`)
-	var payload faas.RouteHealthTransitionWebhookPayload
+	var payload preview.RouteHealthTransitionWebhookPayload
 	if err := json.Unmarshal(body, &payload); err != nil {
 		t.Fatal(err)
 	}

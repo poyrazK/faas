@@ -22,6 +22,15 @@ func (s *PgStore) ResolveProjectServiceBinding(ctx context.Context, callerAppID,
 	if len(requested) > 0 {
 		requestedID = requested[0]
 	}
+	// Without the pin ReadProjectServiceGraph's owner, and so its caller,
+	// is empty and the result is "not managed" (Hunt 14 H14-35).
+	pinned, err := sqlc.New().ProjectServiceGraphCallerPinned(ctx, s.pool, sqlc.ProjectServiceGraphCallerPinnedParams{CallerAppID: callerAppID, CallerDeploymentID: callerDeploymentID})
+	if err != nil {
+		return zero, false, false, mapErr(err)
+	}
+	if !pinned {
+		return zero, false, false, nil
+	}
 	raw, err := sqlc.New().ReadProjectServiceGraph(ctx, s.pool, sqlc.ReadProjectServiceGraphParams{CallerAppID: callerAppID, CallerDeploymentID: callerDeploymentID, RequestedID: requestedID})
 	if err != nil {
 		return zero, false, false, mapErr(err)

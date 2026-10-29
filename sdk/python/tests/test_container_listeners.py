@@ -4,11 +4,11 @@ import json
 
 import httpx
 
-from faas_sdk.api.apps import app_tcp_listener_tls_status, create_app_udp_listener, update_app_tcp_listener
+from faas_sdk.preview.api.apps import app_tcp_listener_tls_status, create_app_udp_listener, update_app_tcp_listener
 from faas_sdk.client import AuthenticatedClient
-from faas_sdk.models.create_udp_listener_request import CreateUDPListenerRequest
-from faas_sdk.models.tcp_listener_tls_config import TCPListenerTLSConfig
-from faas_sdk.models.update_tcp_listener_request import UpdateTCPListenerRequest
+from faas_sdk.preview.models.create_udp_listener_request import CreateUDPListenerRequest
+from faas_sdk.preview.models.tcp_listener_tls_config import TCPListenerTLSConfig
+from faas_sdk.preview.models.update_tcp_listener_request import UpdateTCPListenerRequest
 from faas_sdk.types import UNSET
 
 

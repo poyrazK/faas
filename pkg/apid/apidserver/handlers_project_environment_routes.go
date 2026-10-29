@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/trafficproblem"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -17,7 +18,7 @@ import (
 // project plan or promotion, like its other workload settings.
 func (s *server) updateProjectEnvironmentRoutes(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	project, environment, _, problem := s.loadProjectEnvironmentConfig(r.Context(), acct, r.PathValue("slug"), r.PathValue("environment"))
-	if problem == nil && environment.Protected && !state.IsProductionDeploymentScope(environment.Slug) {
+	if problem == nil && environment.Protected && !state.IsProductionScope(environment.Slug) {
 		problem = api.NewProblem(http.StatusConflict, api.CodeConflict, "Protected environment", "apply configuration through an approved project plan or environment promotion")
 	}
 	if problem != nil {
@@ -46,7 +47,7 @@ func (s *server) updateProjectEnvironmentRoutes(w http.ResponseWriter, r *http.R
 		if errors.Is(err, state.ErrNotFound) {
 			api.WriteProblem(w, projectEnvironmentNotFound(project.Slug, environment.Slug))
 		} else {
-			api.WriteProblem(w, api.ErrCapacity("could not store environment routes"))
+			api.WriteProblem(w, trafficproblem.Policy(err, api.ErrCapacity("could not store environment routes")))
 		}
 		return
 	}

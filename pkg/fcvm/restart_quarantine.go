@@ -23,6 +23,19 @@ type restartInventoryOptions struct {
 	procRoot, netRoot, netnsRoot, jailRoot string
 }
 
+// readProcFile reads a file under /proc. Tests replace it to make a process
+// exit while it is being read.
+var readProcFile = os.ReadFile
+
+// processExited reports whether a read of a process's /proc file failed
+// because the process is gone. One that exited before the open reports
+// ENOENT; one reaped between the open and the read reports ESRCH. Either way
+// the startup inventory skips it, as it does any process that exits during
+// enumeration.
+func processExited(err error) bool {
+	return errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ESRCH)
+}
+
 type restartInventory struct {
 	slots     map[int]struct{}
 	instances map[string]struct{}
@@ -152,8 +165,8 @@ func (inv *restartInventory) scanProcesses(ctx context.Context, root string) err
 			continue
 		}
 		path := filepath.Join(root, entry.Name())
-		raw, err := os.ReadFile(filepath.Join(path, "cmdline"))
-		if errors.Is(err, os.ErrNotExist) {
+		raw, err := readProcFile(filepath.Join(path, "cmdline"))
+		if processExited(err) {
 			continue // Exited during enumeration.
 		}
 		if err != nil {
@@ -177,8 +190,8 @@ func (inv *restartInventory) scanProcesses(ctx context.Context, root string) err
 		if jailer {
 			slot = restartJailerSlot(args)
 		} else {
-			status, err := os.ReadFile(filepath.Join(path, "status"))
-			if errors.Is(err, os.ErrNotExist) {
+			status, err := readProcFile(filepath.Join(path, "status"))
+			if processExited(err) {
 				continue
 			}
 			if err != nil {
@@ -201,8 +214,8 @@ func (inv *restartInventory) scanProcesses(ctx context.Context, root string) err
 // the bridge survives would give a new tenant's bridge the same uid. Every
 // uid field counts: any of them lets the process signal a same-uid bridge.
 func (inv *restartInventory) scanBridgeProcess(path string) error {
-	status, err := os.ReadFile(filepath.Join(path, "status"))
-	if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ESRCH) {
+	status, err := readProcFile(filepath.Join(path, "status"))
+	if processExited(err) {
 		return nil // Exited during enumeration.
 	}
 	if err != nil {

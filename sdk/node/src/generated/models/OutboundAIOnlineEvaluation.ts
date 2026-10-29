@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Score sample_percent of answered app calls from 1 to 5 with judge_model through judge_integration_id, one of the account's AI integrations, metered under the caller evaluation (ADR 20261021171712).
+ * Score sample_percent of answered app calls from 1 to 5 with judge_model through judge_integration_id, one of the account's AI integrations, metered under the caller evaluation.
  */
 export type OutboundAIOnlineEvaluation = {
   sample_percent: number;

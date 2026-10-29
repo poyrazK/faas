@@ -28,7 +28,7 @@ type routeMonitorCLIOptions struct {
 func parseRouteMonitorCLI(args []string) (routeMonitorCLIOptions, error) {
 	o := routeMonitorCLIOptions{}
 	if len(args) == 0 {
-		return o, errors.New("usage: gregale routes monitor <get|set|preview|report|incidents|explain> APP [flags]")
+		return o, errors.New("usage: gregale api route monitor <get|set|preview|report|incidents|explain> APP [flags]")
 	}
 	o.action = args[0]
 	flags, pos := splitArgsForFlags(args[1:], "fail-on-unhealthy", "customer-details")
@@ -189,6 +189,7 @@ func cmdRoutesMonitor(args []string) int {
 		for _, r := range config.Routes {
 			renderRouteMonitorBudget(r)
 		}
+		printRouteSelectorWarnings(config.Warnings)
 		return 0
 	case "report":
 		r, err := c.GetRouteMonitorReportWithOptions(ctx, o.slug, api.RouteMonitorReadOptions{CustomerDetails: o.customerDetails})
@@ -281,11 +282,15 @@ func cmdRoutesMonitor(args []string) int {
 		if jsonOutput {
 			return jsonOut(writeJSON(page))
 		}
+		if len(page.Incidents) == 0 && page.NextBefore == "" {
+			// It printed nothing at all (Hunt 14 H14-60).
+			_, _ = fmt.Fprintf(osStdout, "No route incidents for %s.\n", o.slug)
+		}
 		for _, i := range page.Incidents {
 			_, _ = fmt.Fprintf(osStdout, "%s  %s  %s  deployment %s\n", i.ID, i.Status, i.OpenedAt.Format("2006-01-02 15:04:05Z"), i.DeploymentID)
 		}
 		if page.NextBefore != "" {
-			_, _ = fmt.Fprintf(osStdout, "Next: gregale routes monitor incidents %s --before %s\n", o.slug, page.NextBefore)
+			_, _ = fmt.Fprintf(osStdout, "Next: gregale api route monitor incidents %s --before %s\n", o.slug, page.NextBefore)
 		}
 		return 0
 	}
@@ -340,7 +345,13 @@ func renderRouteMonitorBudget(r api.RouteMonitorRoute) {
 	_, _ = fmt.Fprintln(osStdout)
 }
 func renderRouteMonitorReport(r api.RouteMonitorReport) {
-	_, _ = fmt.Fprintf(osStdout, "Production route health: %s (%s, revision %d)\nDeployment: %s (%s)\nCoverage: observed telemetry only; full capture unknown\n", r.Status, previewReportText(r.Reason), r.Revision, r.DeploymentID, previewReportText(r.CommitSHA))
+	_, _ = fmt.Fprintf(osStdout, "Production route health: %s (%s, revision %d)\n", r.Status, previewReportText(r.Reason), r.Revision)
+	// A disabled monitor has no deployment; it printed "Deployment:  ()"
+	// (Hunt 14 H14-60).
+	if r.DeploymentID != "" {
+		_, _ = fmt.Fprintf(osStdout, "Deployment: %s (%s)\n", r.DeploymentID, previewReportText(r.CommitSHA))
+	}
+	_, _ = fmt.Fprintln(osStdout, "Coverage: observed telemetry only; full capture unknown")
 	for _, f := range r.Routes {
 		renderRouteMonitorBudget(f.Route)
 		_, _ = fmt.Fprintf(osStdout, "    %s; errors %s, latency %s\n", f.Status, f.ErrorStatus, f.LatencyStatus)
@@ -400,7 +411,11 @@ func renderRouteMonitorIncident(i api.RouteMonitorIncident, slug string) {
 		case "requested":
 			_, _ = fmt.Fprintf(osStdout, "Automatic rollback: requested to %s for %s (operation %s)\n", rb.TargetDeploymentID, rb.Route, rb.OperationID)
 		case "skipped":
-			_, _ = fmt.Fprintf(osStdout, "Automatic rollback: skipped (%s)\n", rb.Reason)
+			reason := rb.Reason
+			if rb.RefusalCode != "" {
+				reason += ": " + previewReportText(rb.RefusalCode)
+			}
+			_, _ = fmt.Fprintf(osStdout, "Automatic rollback: skipped (%s)\n", reason)
 		default:
 			_, _ = fmt.Fprintf(osStdout, "Automatic rollback: %s\n", rb.Status)
 		}

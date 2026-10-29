@@ -70,9 +70,7 @@ func cmdAI(args []string) int {
 		return cmdAITokens(args[1:])
 	}
 	printCommandValidation(osStderr, "unknown ai subcommand %q\n", args[0])
-	sug, _ := suggestSubcommand(args[0], parent)
-	maybeSuggestSub(sug)
-	return 1
+	return unknownSubcommandChoices(osStderr, "ai", parent, args[0])
 }
 
 func boolToExit(failed bool) int {

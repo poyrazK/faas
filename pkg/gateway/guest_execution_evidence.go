@@ -241,7 +241,7 @@ func forwardedResponseHeader(ctx context.Context, dst http.Header, name, value s
 }
 
 func forwardedResponseHeaderWithUpgrade(ctx context.Context, dst http.Header, name, value string, preserveUpgrade bool) {
-	if platformOwnsLifecycleHeader(ctx, name) {
+	if isTrafficResponseControlHeader(name) || platformOwnsLifecycleHeader(ctx, name) {
 		return
 	}
 	// Response headers cross the internal bridge before they reach the
@@ -272,7 +272,7 @@ func forwardedResponseHeaderWithUpgrade(ctx context.Context, dst http.Header, na
 		return
 	}
 	if !recordGuestExecutionEvidence(ctx, name, value) && !platformResponseHeader(ctx, name) {
-		dst.Add(name, value)
+		dst.Add(name, scopeTenantCookie(name, value))
 	}
 }
 
@@ -285,9 +285,6 @@ func stripGuestManagedPlatformCookiesResponseHeader(resp *http.Response) {
 		return
 	}
 	ctx := resp.Request.Context()
-	if !managedVersionCookieProtected(ctx) && !managedReleaseContextCookieProtected(ctx) {
-		return
-	}
 	values := resp.Header.Values("Set-Cookie")
 	if len(values) == 0 {
 		return
@@ -296,7 +293,7 @@ func stripGuestManagedPlatformCookiesResponseHeader(resp *http.Response) {
 	for _, value := range values {
 		if !guestSetsManagedVersionCookie(ctx, "Set-Cookie", value) &&
 			!guestSetsManagedReleaseContextCookie(ctx, "Set-Cookie", value) {
-			resp.Header.Add("Set-Cookie", value)
+			resp.Header.Add("Set-Cookie", scopeTenantCookie("Set-Cookie", value))
 		}
 	}
 }
@@ -329,6 +326,16 @@ func stripGuestEvidenceResponseHeaders(resp *http.Response) {
 	resp.Header.Del(api.ReleaseHeader)
 	resp.Header.Del(api.DeploymentIDHeader)
 	resp.Header.Del(apihostingreceipt.ServedResponseHeader)
+	for name := range resp.Header {
+		if isTrafficResponseControlHeader(name) {
+			resp.Header.Del(name)
+		}
+	}
+	stripTrafficControlTrailerDeclarations(resp.Header)
+	stripTrafficControlTrailers(resp.Trailer)
+	if resp.Body != nil {
+		resp.Body = &contextResponseBody{Reader: resp.Body, Closer: resp.Body, response: resp}
+	}
 	ctx := context.Background()
 	if resp.Request != nil {
 		ctx = resp.Request.Context()

@@ -106,6 +106,8 @@ func TestDrainOldGenerationKeepsStreamsUntilStopped(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set(api.StreamingStatusHeader, string(api.StreamingStatusStreaming))
+		// gatewayd-internal's authenticated long-lived marker (ADR-570).
+		w.Header().Set("X-Faas-Traffic-Response-Session", "long-lived")
 		_, _ = io.WriteString(w, "data: 1\n\n")
 		http.NewResponseController(w).Flush()
 		<-r.Context().Done()

@@ -25,6 +25,10 @@ type Binding struct {
 // an account other than the one it is being opened for.
 var ErrBindingMismatch = errors.New("secretbox: envelope is bound to another account")
 
+// ErrUnbound is returned by Binding.Require for an envelope that carries no
+// binding.
+var ErrUnbound = errors.New("secretbox: envelope is not bound to an account")
+
 var bindingAccountPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)
 
 // IsZero reports whether b is the binding of an unbound envelope.
@@ -48,6 +52,15 @@ func (b Binding) Check(accountID string) error {
 		return ErrBindingMismatch
 	}
 	return nil
+}
+
+// Require is Check that also refuses an unbound envelope, for readers that
+// run after every stored envelope was bound (the contract step).
+func (b Binding) Require(accountID string) error {
+	if b.IsZero() {
+		return ErrUnbound
+	}
+	return b.Check(accountID)
 }
 
 // boundEnvelopeVersion marks the bound plaintext. A pre-binding reader

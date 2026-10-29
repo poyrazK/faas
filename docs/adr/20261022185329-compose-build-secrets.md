@@ -3,6 +3,7 @@
 Date: 2026-10-22
 Status: Accepted
 Amends: ADR-20261019142544 (Dockerfile build options), ADR-1337 (Compose key reporting)
+Amended by: ADR-20261024140000 (aliases and project environment secrets resolve for builds)
 Related: ADR-20261022111812 (seal domains), ADR-003 (builder microVMs), ADR-423 (sealed env)
 
 ## Context

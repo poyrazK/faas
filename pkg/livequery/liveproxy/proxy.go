@@ -201,8 +201,13 @@ func (s *Session) subscribe(ctx context.Context, f liveproto.ClientFrame) {
 	if code == "" {
 		f.Role, code, msg = loginFor(route, f)
 	}
-	if code == "" && keyless(f) {
+	switch {
+	case code == "" && keyless(f):
 		code, msg = admitKeyless(route, &f, f.Rest, f.Schema, time.Now())
+	case code == "" && f.RLS():
+		// A renewal keeps the schema it subscribed, so subscribe is the
+		// only place a token read chooses one.
+		code, msg = admitTokenSchema(route, &f)
 	}
 	if code != "" {
 		s.refuse(f.Subscription, code, msg, true)

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { FaaSClient, AppsService, DeploymentsService, type AppManifest, type BindingApplicationAdoption } from '../src/index.js';
+import { FaaSClient, AppsService, DeploymentsService, type AppManifest, type BindingApplicationAdoption } from '../src/preview.js';
 
 test('strict promotion uses its dedicated route and preserves adoption evidence', async (t) => {
  const id = '01234567-89ab-cdef-0123-456789abcdef';

@@ -33,6 +33,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid"
 	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/role"
@@ -250,28 +251,32 @@ func (d *localFirstDialer) run(ctx context.Context) {
 	}
 }
 
-// isAppHost reports whether host is an app host under appsDomain: one or more
-// labels in front of it, and not a platform host (apex, api., operations., an
-// IP literal) or the storage host s3.
-func isAppHost(host, appsDomain string) bool {
+// isAppHost reports whether host is an app host: one or more labels in front
+// of an apps domain (or an alias, or the deployment-preview domain), and not
+// a platform host (apex, api., operations., an IP literal) or the storage
+// host s3 of the platform domain.
+func isAppHost(host string, domains hostidentity.Domains) bool {
 	h := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(host), "."))
 	if name, _, err := net.SplitHostPort(h); err == nil {
 		h = name
 	}
-	domain := strings.Trim(strings.ToLower(appsDomain), ".")
-	if domain == "" || apid.IsPlatformHost(h, domain) || h == "s3."+domain {
+	if domains.Apps == "" || apid.IsPlatformHost(h, domains.Platform) || h == "s3."+domains.Platform {
 		return false
 	}
-	label, ok := strings.CutSuffix(h, "."+domain)
-	return ok && label != ""
+	for _, domain := range append(domains.AppDomains(), domains.Deploy) {
+		if label, ok := strings.CutSuffix(h, "."+domain); ok && label != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // appHostsOnly answers every non-app host with 421. The DNS split keeps them
 // away from a compute edge; this keeps the edge from ever becoming a path to
 // the control plane's API if a record is wrong.
-func appHostsOnly(next http.Handler, appsDomain string, misdirected prometheus.Counter) http.Handler {
+func appHostsOnly(next http.Handler, domains hostidentity.Domains, misdirected prometheus.Counter) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if isAppHost(r.Host, appsDomain) {
+		if isAppHost(r.Host, domains) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -345,9 +350,9 @@ func newControlPlaneForwarder(target string, trusted []netip.Prefix, log *slog.L
 // computeEdgeRoot puts the credential-bound object-storage routes in front of
 // next: upload routes and their receipts, then public bucket reads, are
 // forwarded; everything else goes to next.
-func computeEdgeRoot(next, forward http.Handler, store objectstorage.PublicReadStore, appsDomain string, log *slog.Logger) (http.Handler, error) {
+func computeEdgeRoot(next, forward http.Handler, store objectstorage.PublicReadStore, domains hostidentity.Domains, log *slog.Logger) (http.Handler, error) {
 	publicRead, err := objectstorage.NewPublicReadForwarder(objectstorage.PublicReadForwardConfig{
-		Store: store, AppsDomain: appsDomain, Forward: forward, Next: next, Log: log,
+		Store: store, AppsDomain: domains.Apps, Forward: forward, Next: next, Log: log,
 	})
 	if err != nil {
 		return nil, err

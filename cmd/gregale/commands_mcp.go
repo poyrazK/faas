@@ -90,7 +90,8 @@ func cmdMCP(args []string) int {
 	case "tools", "resources", "resource-read", "prompts", "prompt-get", "call", "task-get", "task-wait", "task-cancel", "config":
 		return cmdMCPRemote(args[0], args[1:])
 	default:
-		return printErr("Unknown MCP command", fmt.Errorf("%q", args[0]))
+		printCommandValidation(os.Stderr, "unknown mcp subcommand %q\n", args[0])
+		return unknownSubcommandChoices(os.Stderr, "mcp", nestedCliCommand("mcp"), args[0])
 	}
 }
 

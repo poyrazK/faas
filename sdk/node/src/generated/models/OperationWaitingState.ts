@@ -12,7 +12,7 @@ export type OperationWaitingState = {
   until?: string;
   approver?: 'account' | 'customer';
   /**
-   * The event an event wait expects (ADR-1197).
+   * The event an event wait expects.
    */
   event?: string;
 };

@@ -2,19 +2,19 @@ from uuid import UUID
 
 
 def test_pagerduty_acknowledgement_contracts():
-    from faas_sdk.api.mcp import (
+    from faas_sdk.preview.api.mcp import (
         get_mcp_readiness_pager_duty_acknowledgements,
         list_mcp_readiness_pager_duty_acknowledgement_events,
         set_mcp_readiness_pager_duty_acknowledgements,
     )
-    from faas_sdk.models.mcp_readiness_acknowledgement import MCPReadinessAcknowledgement
-    from faas_sdk.models.mcp_readiness_pager_duty_acknowledgement_events import (
+    from faas_sdk.preview.models.mcp_readiness_acknowledgement import MCPReadinessAcknowledgement
+    from faas_sdk.preview.models.mcp_readiness_pager_duty_acknowledgement_events import (
         MCPReadinessPagerDutyAcknowledgementEvents,
     )
-    from faas_sdk.models.mcp_readiness_pager_duty_acknowledgement_policy import (
+    from faas_sdk.preview.models.mcp_readiness_pager_duty_acknowledgement_policy import (
         MCPReadinessPagerDutyAcknowledgementPolicy,
     )
-    from faas_sdk.models.set_mcp_readiness_pager_duty_acknowledgements_request import (
+    from faas_sdk.preview.models.set_mcp_readiness_pager_duty_acknowledgements_request import (
         SetMCPReadinessPagerDutyAcknowledgementsRequest,
     )
 
@@ -83,8 +83,8 @@ def test_pagerduty_acknowledgement_contracts():
 
 
 def test_pagerduty_hold_contract():
-    from faas_sdk.models.mcp_readiness_incident_attention import MCPReadinessIncidentAttention
-    from faas_sdk.models.mcp_readiness_pager_duty_acknowledgement_hold import MCPReadinessPagerDutyAcknowledgementHold
+    from faas_sdk.preview.models.mcp_readiness_incident_attention import MCPReadinessIncidentAttention
+    from faas_sdk.preview.models.mcp_readiness_pager_duty_acknowledgement_hold import MCPReadinessPagerDutyAcknowledgementHold
 
     hold = dict(
         destination="primary",

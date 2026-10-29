@@ -19,7 +19,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"regexp"
 
 	"filippo.io/age"
@@ -164,21 +163,7 @@ func openPlaintext(identities []*age.X25519Identity, blob []byte) ([]byte, error
 	if len(filtered) == 0 {
 		return nil, errors.New("secretbox: all identities nil")
 	}
-	// age.Decrypt takes []age.Identity (interface type); widen the
-	// X25519Identity pointer slice into the interface slice once.
-	asInterface := make([]age.Identity, len(filtered))
-	for i, id := range filtered {
-		asInterface[i] = id
-	}
-	r, err := age.Decrypt(bytes.NewReader(blob), asInterface...)
-	if err != nil {
-		return nil, fmt.Errorf("secretbox: open age reader: %w", err)
-	}
-	raw, err := io.ReadAll(r)
-	if err != nil {
-		return nil, fmt.Errorf("secretbox: read plaintext: %w", err)
-	}
-	return raw, nil
+	return decryptAll(filtered, blob)
 }
 
 // SealOne seals a single (key, value) pair. Convenience wrapper for apid's
@@ -316,20 +301,9 @@ func OpenBytesMulti(identities []*age.X25519Identity, blob []byte) (namespace st
 	if len(filtered) == 0 {
 		return "", nil, errors.New("secretbox: all identities nil")
 	}
-	// age.Decrypt takes []age.Identity (interface type); widen the
-	// X25519Identity pointer slice into the interface slice once
-	// (same shape as OpenMulti above).
-	asInterface := make([]age.Identity, len(filtered))
-	for i, id := range filtered {
-		asInterface[i] = id
-	}
-	r, err := age.Decrypt(bytes.NewReader(blob), asInterface...)
+	raw, err := decryptAll(filtered, blob)
 	if err != nil {
-		return "", nil, fmt.Errorf("secretbox: open age reader: %w", err)
-	}
-	raw, err := io.ReadAll(r)
-	if err != nil {
-		return "", nil, fmt.Errorf("secretbox: read plaintext: %w", err)
+		return "", nil, err
 	}
 	// Split on the first NUL. If no NUL, namespace is empty.
 	for i, b := range raw {

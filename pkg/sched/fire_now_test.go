@@ -75,14 +75,18 @@ func TestRunCronNow_FiresImmediateSkipBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunCronNow: %v", err)
 	}
-	if !out.Success {
-		t.Errorf("Success = false, want true; out=%+v", out)
+	if !out.Queued || out.InvocationID == "" {
+		t.Errorf("RunCronNow = %+v, want a queued invocation", out)
 	}
 
-	// Synth must have been invoked once — the dispatch path reached
-	// the synth step.
+	// ADR-20261026201726: the manual fire is queued, not delivered inline;
+	// the drain delivers it once.
+	if got := synth.calls.Load(); got != 0 {
+		t.Errorf("synth calls = %d before the drain, want 0", got)
+	}
+	NewDrain(store, eng, WithDrainGatewaySynth(synth)).Tick(ctx)
 	if got := synth.calls.Load(); got != 1 {
-		t.Errorf("synth calls = %d, want 1 (manual fire should reach the gateway-Invoke step)", got)
+		t.Errorf("synth calls = %d, want 1 (the drain delivers the manual fire)", got)
 	}
 
 	// Hard rule (ADR-090 §"Reuse of schedd"): RunCronNow does NOT call
@@ -124,9 +128,10 @@ func TestRunCronNow_AppliesHTTPOutcomePolicy(t *testing.T) {
 		eng, _ := makeEngine(t, store, &fakeWakeVMM{})
 		loop := NewLoop(nil, eng, slog.Default()).WithGatewaySynth(synth)
 		run, err := loop.RunCronNow(ctx, updated.ID, acct.ID)
-		if err != nil || run.Success {
-			t.Fatalf("RunCronNow = %+v, err=%v; want classified permanent result", run, err)
+		if err != nil || !run.Queued {
+			t.Fatalf("RunCronNow = %+v, err=%v; want a queued invocation", run, err)
 		}
+		NewDrain(store, eng, WithDrainGatewaySynth(synth)).Tick(ctx)
 		inv, err := store.InvocationByID(ctx, run.InvocationID)
 		if err != nil || inv.State != state.InvocationFailed || inv.OutcomeCode != "invalid_record" || inv.WorkDecision == nil || inv.WorkDecision.Action != "fail_partition" {
 			t.Fatalf("classified manual invocation = %+v, err=%v", inv, err)
@@ -150,9 +155,10 @@ func TestRunCronNow_AppliesHTTPOutcomePolicy(t *testing.T) {
 		eng, _ := makeEngine(t, store, &fakeWakeVMM{})
 		loop := NewLoop(nil, eng, slog.Default()).WithGatewaySynth(synth)
 		run, err := loop.RunCronNow(ctx, updated.ID, acct.ID)
-		if err != nil || run.Success {
-			t.Fatalf("RunCronNow = %+v, err=%v; want uncertain result", run, err)
+		if err != nil || !run.Queued {
+			t.Fatalf("RunCronNow = %+v, err=%v; want a queued invocation", run, err)
 		}
+		NewDrain(store, eng, WithDrainGatewaySynth(synth)).Tick(ctx)
 		inv, err := store.InvocationByID(ctx, run.InvocationID)
 		if err != nil || inv.State != state.InvocationFailed || inv.Outcome == nil || *inv.Outcome != state.OutcomeUncertain || inv.WorkDecision == nil || inv.WorkDecision.Classification != "uncertain" {
 			t.Fatalf("uncertain manual invocation = %+v, err=%v", inv, err)
@@ -208,6 +214,12 @@ type fireNowHarness struct {
 	now   time.Time
 }
 
+// deliverInvocations runs one invocation-drain tick: an HTTP fire-now
+// request queues an invocation that the drain delivers (ADR-20261026201726).
+func (h *fireNowHarness) deliverInvocations(ctx context.Context) {
+	NewDrain(h.store, h.loop.engine, WithDrainGatewaySynth(h.synth)).Tick(ctx)
+}
+
 func newFireNowHarness(t *testing.T) *fireNowHarness {
 	t.Helper()
 	store := state.NewMemStore()
@@ -255,7 +267,13 @@ func TestDrainPending_HappyPathStampsSucceeded(t *testing.T) {
 
 	h.loop.drainPendingFireNowRequests(ctx)
 
-	// Row is now terminal: succeeded (RunCronNow returned Success).
+	// ADR-20261026201726: the request runs until the drain delivers its
+	// invocation, then reports that invocation's outcome.
+	queued, err := h.store.GetFireNowRequest(ctx, requestID)
+	if err != nil || queued.Status != state.FireNowStatusRunning || queued.InvocationID == nil {
+		t.Fatalf("queued request = %+v, err=%v; want running with an invocation", queued, err)
+	}
+	h.deliverInvocations(ctx)
 	got, err := h.store.GetFireNowRequest(ctx, requestID)
 	if err != nil {
 		t.Fatalf("GetFireNowRequest: %v", err)
@@ -428,6 +446,7 @@ func TestDrainPending_AllRowsDrained(t *testing.T) {
 	}
 
 	h.loop.drainPendingFireNowRequests(ctx)
+	h.deliverInvocations(ctx)
 
 	for i, id := range ids {
 		got, err := h.store.GetFireNowRequest(ctx, id)
@@ -565,6 +584,7 @@ func TestDrainPending_NilOpsDoesNotPanic(t *testing.T) {
 	}
 	// If the nil-safety contract breaks, this panics.
 	h.loop.drainPendingFireNowRequests(ctx)
+	h.deliverInvocations(ctx)
 	got, err := h.store.GetFireNowRequest(ctx, requestID)
 	if err != nil {
 		t.Fatalf("GetFireNowRequest: %v", err)
@@ -574,14 +594,10 @@ func TestDrainPending_NilOpsDoesNotPanic(t *testing.T) {
 	}
 }
 
-// TestDrainPending_DispatchAdmittedButInvokeFailed pins the
-// code-review fix: when dispatchCronLocked admitted the fire but the
-// invocation did not complete (audit row status="err"), the fire-now
-// row must also stamp failed. Previously the row stamped succeeded
-// because RunCronNow discarded the fireSucceeded boolean. The test
-// exercises the err == nil && run.Success == false branch added by
-// PR-D, driven by the package's shared failingSynth (cron_loop_test.go)
-// whose Invoke + SynthesizeRequest both error.
+// TestDrainPending_DispatchAdmittedButInvokeFailed pins that a fire-now
+// request whose queued invocation fails reports failed with the delivery
+// error, not succeeded (ADR-20261026201726). Driven by the package's shared
+// failingSynth (cron_loop_test.go), whose Invoke errors.
 func TestDrainPending_DispatchAdmittedButInvokeFailed(t *testing.T) {
 	t.Parallel()
 	store := state.NewMemStore()
@@ -598,14 +614,12 @@ func TestDrainPending_DispatchAdmittedButInvokeFailed(t *testing.T) {
 	}
 
 	loop.drainPendingFireNowRequests(ctx)
+	NewDrain(store, eng, WithDrainGatewaySynth(synth)).Tick(ctx)
 
 	got, err := store.GetFireNowRequest(ctx, requestID)
 	if err != nil {
 		t.Fatalf("GetFireNowRequest: %v", err)
 	}
-	// RunCronNow's new semantics propagate fireSucceeded through
-	// the CronRun return value. The failingSynth makes the dispatch
-	// path return Success=false; the fire-now row must agree.
 	if got.Status != state.FireNowStatusFailed {
 		t.Errorf("status = %q, want failed (admit-but-invoke-failed must not stamp succeeded)", got.Status)
 	}

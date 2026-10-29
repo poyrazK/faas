@@ -230,7 +230,7 @@ func (r *FrameworkReadyReceiver) handleGuestStream(instance string, conn net.Con
 	case parseFWReadyKindRestart:
 		r.dispatchSidecarRestart(instance, msg.Restart)
 	case parseFWReadyKindSidecarHealth:
-		r.dispatchSidecarHealth(instance, msg.SidecarHealth)
+		r.dispatchSidecarHealth(instance, conn, msg.SidecarHealth)
 	case parseFWReadyKindTail:
 		r.dispatchTailEvent(instance, msg.Tail)
 	case parseFWReadyKindWorkloadOOM:
@@ -383,7 +383,7 @@ func (r *FrameworkReadyReceiver) dispatchSidecarRestart(instance string, wire si
 // dispatchSidecarHealth translates the type=0x08 lifecycle signal into the
 // platform emitter. The closed status set keeps the event stream bounded and
 // makes dashboards safe to group by status.
-func (r *FrameworkReadyReceiver) dispatchSidecarHealth(instance string, wire sidecarHealthWire) {
+func (r *FrameworkReadyReceiver) dispatchSidecarHealth(instance string, conn net.Conn, wire sidecarHealthWire) {
 	switch wire.Status {
 	case sidecarHealthStarting, sidecarHealthHealthy, sidecarHealthUnhealthy,
 		sidecarHealthRestarting, sidecarHealthFailed, sidecarHealthReady,
@@ -393,12 +393,21 @@ func (r *FrameworkReadyReceiver) dispatchSidecarHealth(instance string, wire sid
 		return
 	}
 	wire.Reason = clampSidecarHealthReason(wire.Reason)
-	_, appID, perr := r.mgr.InstanceSidecarOwner(instance, wire.Sidecar)
+	appID, wakeID, nodeID, perr := r.mgr.InstanceTrafficIdentity(instance)
+	if perr == nil {
+		// Only a sidecar the instance declared may report health.
+		_, _, perr = r.mgr.InstanceSidecarOwner(instance, wire.Sidecar)
+	}
 	if perr != nil {
 		r.log.Debug("sidecar_health dropped", "instance", instance, "err", perr)
 		return
 	}
-	r.emitter.EmitSidecarHealth(r.ctx, instance, appID, "", wire)
+	origin, identified := fcvm.GuestVsockOrigin(conn)
+	if !identified || origin.AppID != appID || origin.WakeID != wakeID || origin.NodeID != nodeID {
+		r.log.Debug("sidecar_health retired or unidentified VM stream", "instance", instance)
+		return
+	}
+	r.emitter.EmitSidecarHealth(r.ctx, instance, origin.AppID, origin.WakeID, origin.NodeID, wire)
 }
 
 func clampSidecarHealthReason(reason string) string {

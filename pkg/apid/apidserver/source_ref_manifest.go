@@ -134,6 +134,9 @@ func (s *server) applyManifestWorkloads(
 	if manifest == nil {
 		return nil, false, nil
 	}
+	if problem := s.manifestSettingsProblem(acct, manifest); problem != nil {
+		return nil, false, problem
+	}
 	dependencies := manifest.MainWorkloadDependencies()
 	if len(manifest.Companions) == 0 && len(manifest.Extensions) == 0 && len(dependencies) == 0 {
 		return nil, false, nil
@@ -349,12 +352,18 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 				fmt.Sprintf(`{"kind":"updated","slug":"%s","app_id":"%s","retry_policy_changed":true}`, app.Slug, app.ID))
 		}
 	}
-	if m.Scaling != nil {
+	// A worker block's scale applies here too, as the CLI applies it
+	// (ADR-20261018101500 amendment 2026-10-27).
+	if policy := m.ScalingPolicyRequest(); policy != nil {
 		limits, ok := api.LimitsFor(acct.Plan)
 		if !ok {
 			return staged, api.ErrCapacity("could not resolve account plan limits")
 		}
-		scalingReq := &api.UpdateAppRequest{ScalingPolicy: m.Scaling.ToAPI()}
+		scalingReq := &api.UpdateAppRequest{ScalingPolicy: policy}
+		if lifecycle, ok := m.LifecycleRequest(); ok {
+			// The lifecycle step below sets the mode a queue target needs.
+			scalingReq.ExecutionMode = lifecycle.ExecutionMode
+		}
 		if prob := validateUpdateApp(scalingReq, acct, limits, app); prob != nil {
 			return staged, prob
 		}
@@ -479,6 +488,9 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 			}
 			if limits.CronLimitPerApp == 0 {
 				return staged, api.ErrPlanCronsNotAllowed(acct.Plan)
+			}
+			if problem := api.ValidateCronPath(declaration.Path); problem != nil {
+				return staged, problem
 			}
 			cron, createErr := s.store.CreateCronIfUnderQuota(ctx, app.ID, declaration.Schedule, declaration.Path, declaration.IsEnabled(), limits)
 			if createErr != nil {

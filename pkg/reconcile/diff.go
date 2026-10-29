@@ -97,6 +97,13 @@ func workloadDiff(
 	for _, a := range existing {
 		existingByName[a.WorkloadName] = a
 	}
+	// A renamed service updates its previous name's app in place
+	// (ADR-20261029090000), so that app is neither removed nor recreated.
+	renamed := RenamedWorkloads(scan.Workloads, existing)
+	for previous, current := range renamed {
+		existingByName[current] = existingByName[previous]
+		delete(existingByName, previous)
+	}
 
 	// Build the workload-name index of scan workloads.
 	scanByName := make(map[string]reposcan.Workload, len(scan.Workloads))
@@ -135,6 +142,9 @@ func workloadDiff(
 
 	for _, a := range existing {
 		if _, ok := scanByName[a.WorkloadName]; ok {
+			continue
+		}
+		if _, ok := renamed[a.WorkloadName]; ok {
 			continue
 		}
 		removes = append(removes, Action{
@@ -278,6 +288,9 @@ func diffFieldsChanged(a state.App, w reposcan.Workload, startCmd string, availa
 	}
 	if a.Manifest.DockerfileBuild.SHA256() != w.DockerfileBuild.SHA256() {
 		changed = append(changed, "dockerfile_build")
+	}
+	if a.Manifest.BuildGoCommand != w.GoCommand {
+		changed = append(changed, "go_command")
 	}
 	imageManifest := state.AppManifest{}
 	applyProjectImage(&imageManifest, w)

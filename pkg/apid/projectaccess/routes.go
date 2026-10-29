@@ -43,6 +43,13 @@ var routeActions = map[string]authz.OrgAction{
 	"POST /v1/projects/{slug}/environments/{environment}/release-sets":                    authz.OrgActionDeployProject,
 	"POST /v1/projects/{slug}/environments/{environment}/promote":                         authz.OrgActionDeployProject,
 	"POST /v1/projects/{slug}/environments/{environment}/promotions/{promotion}/rollback": authz.OrgActionDeployProject,
+	// A member who may start and roll back a promotion may also stop or
+	// recover it (abort/recover), recover its migration, and preview one that
+	// carries release secrets (the handler still requires secrets:write).
+	// They use the same resource-owner account as promote and rollback.
+	"POST /v1/projects/{slug}/environments/{environment}/promotions/{promotion}/{action}":          authz.OrgActionDeployProject,
+	"POST /v1/projects/{slug}/environments/{environment}/promotions/{promotion}/recover-migration": authz.OrgActionDeployProject,
+	"POST /v1/projects/{slug}/environments/{environment}/promotion-preview":                        authz.OrgActionDeployProject,
 	"PATCH /v1/projects/{slug}":                                                        authz.OrgActionManageProjectSecurity,
 	"PATCH /v1/projects/{slug}/environments/{environment}":                             authz.OrgActionManageProjectSecurity,
 	"PUT /v1/projects/{slug}/environments/{environment}/workloads/{workload}/policies": authz.OrgActionManageProjectSecurity,

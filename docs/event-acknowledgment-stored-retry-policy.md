@@ -14,9 +14,9 @@ ignore its limit.
 
 ## Install or upgrade first
 
-Fresh installations explicitly apply `faas.EventAcknowledgmentIntentSchema`.
+Fresh installations explicitly apply `preview.EventAcknowledgmentIntentSchema`.
 For an existing table, apply
-`faas.EventAcknowledgmentIntentStoredRetryPolicySchema` once inside an application
+`preview.EventAcknowledgmentIntentStoredRetryPolicySchema` once inside an application
 migration transaction **before upgrading intent workers**. The upgrade adds
 three nullable columns and one CHECK constraint:
 
@@ -47,12 +47,12 @@ schema, upgrade recovery, then enable staging.
 ## Save the completion and policy together
 
 ```go
-policy := faas.EventAcknowledgmentIntentRetryPolicy{
+policy := preview.EventAcknowledgmentIntentRetryPolicy{
     InitialBackoff: time.Second,
     MaxBackoff: 5 * time.Minute,
 }
 queued, err := worker.RunDurableWithRetryPolicy(ctx, db, policy,
-    func(workCtx context.Context, tx faas.EventConsumerSQLTransaction) (json.RawMessage, error) {
+    func(workCtx context.Context, tx preview.EventConsumerSQLTransaction) (json.RawMessage, error) {
         _, err := tx.ExecContext(workCtx,
             "UPDATE invoices SET paid = true WHERE id = $1", invoiceID)
         if err != nil { return nil, err }

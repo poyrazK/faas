@@ -43,7 +43,7 @@ func (s *server) tryMFAEnabledAlert(w http.ResponseWriter, r *http.Request, acct
 	}
 	err := internalmail.ErrDisabled
 	if s.deletionMailOutbox != nil {
-		err = s.deletionMailOutbox.ConfirmMFAEnrollmentWithAlert(r.Context(), acct.ID, acct.Email, code, s.mfaHostIdentities())
+		err = s.deletionMailOutbox.ConfirmMFAEnrollmentWithAlert(r.Context(), acct.ID, acct.Email, code, accountIdentities())
 	}
 	if err != nil {
 		s.writeMFAEnabledAlertError(w, r, acct, err)

@@ -36,6 +36,22 @@ func (s *PgStore) gitOpsEffectTx(ctx context.Context, lease EnvironmentGitOpsLea
 	return tx, nil
 }
 
+// gitOpsBindingEffectTx is gitOpsEffectTx for an effect that publishes a
+// hostname binding (a new app or revision URL): it begins through the
+// account's binding guard (ADR-570), so the commit runs the before/after
+// analysis.
+func (s *PgStore) gitOpsBindingEffectTx(ctx context.Context, lease EnvironmentGitOpsLease) (pgx.Tx, error) {
+	tx, err := s.beginAccountAppTrafficMutation(ctx, lease.Source.AccountID, "")
+	if err != nil {
+		return nil, err
+	}
+	if err := lockEnvironmentGitOps(ctx, tx, lease, time.Now()); err != nil {
+		_ = tx.Rollback(context.WithoutCancel(ctx))
+		return nil, err
+	}
+	return tx, nil
+}
+
 func (s *PgStore) PendingEnvironmentGitOpsEffects(ctx context.Context, lease EnvironmentGitOpsLease) ([]EnvironmentGitOpsEffect, error) {
 	tx, err := s.gitOpsEffectTx(ctx, lease)
 	if err != nil {

@@ -224,3 +224,76 @@ Still open:
 - Metal: grow every VM on a node to plan RAM at once. The host must stay up
   through freeze/park eviction, with no kernel OOM kill of vmmd or the
   control plane.
+
+## Amendment 1 — The durable node reservation honours the overcommit bound (2026-10-26)
+
+**Problem.** ADR-193's durable per-node reservation (the
+`admission_reserve_node` function and its statement and MemStore mirrors)
+refused any instance once Σ(plan RAM + 8 MB) on a node passed
+`admission_ceiling_mb`. Measured admission never reached the 2× bound this
+ADR accepted: every admission past the bare ceiling failed inside the insert.
+Placement made it worse. vmmd reports measured RSS only to its own node's
+schedd, so that schedd saw headroom on its node, kept choosing it, and the
+insert refused with `ErrNodeCapacity`. Placement retried only a stale
+placement (ADR-1528), so the wake failed with a capacity Problem and a
+gateway wake parked another tenant's idle instance (ADR-643), even when a
+peer node had room. `TestWakeFailover_PropertyKeepsInvariants` checked only
+the 2× upper bound, so it did not catch the 1× cap.
+
+**Decision.**
+
+1. The placement binding (`state.NodeAdmission`) carries a reservation
+   allowance. schedd sets it from its ledger when it binds the placement:
+   `MeasuredAdmissionMaxOvercommitPercent` while a fresh measurement of that
+   node drives admission, otherwise 100. The durable guard bounds
+   Σ(ram_mb + overhead) by that percent of the ceiling, clamped to
+   [100, 200]. An unbound or reservation-only admission keeps the bare
+   ceiling, as do migrations and qualification admissions.
+2. Only the scheduler that measures a node can book past its ceiling. A
+   peer's placement reads the reservation sum from the database against the
+   bare ceiling, and its admissions carry 100, so a peer never adds to a
+   node above its ceiling.
+3. A durable capacity refusal is re-placed: placement excludes the refused
+   node and chooses again, within `NodeAdmissionPlacementAttempts`. No VM
+   call or ledger admission precedes the insert, so the retry has no side
+   effect to undo. When no other node fits, the original refusal is
+   returned, as before.
+4. Migration `20261026090412734` adds `admission_reserve_node(…, integer)`
+   and `admit_wake_instance(…, integer)`. The previous signatures stay for
+   the previous release and delegate at 100, so release N-1 behaves exactly
+   as before. schedd uses the functions only when the new signatures exist
+   and otherwise takes the statement path, which applies the same allowance.
+
+**Bound.** Invariant 2 as accepted above now holds as written: the ledger
+keeps a node's measured charge under its ceiling, and the database keeps
+Σ(plan RAM + 8 MB) under twice it. The window in which the measuring
+scheduler misses a peer's new admission is one stats tick: the next tick
+books that instance at its full reservation until it has an RSS sample.
+
+**Validation.** `checkReservationAllowance` (MemStore, PostgreSQL function
+and statement paths), `TestMeasuredAdmissionBooksPastTheCeiling`,
+`TestReservationAdmissionStopsAtTheCeiling` and
+`TestWakeReplacesANodeTheDurableReservationFindsFull`.
+
+## Amendment 2 — Startup recovery keeps rows past the bare ceiling (2026-10-26)
+
+**Problem (Hunt 18 H18-1).** A schedd restart rebuilds its ledger from the
+instances table (`SeedLedger`) before measured admission is enabled and
+before any node measurement exists, so every resident row was re-admitted
+against the node's bare ceiling. Rows past 1x, which measured admission
+books by design, failed that check and were skipped with a warning. Their
+apps' concurrency then undercounted, and the next wake booted an instance
+past `max_concurrency` (invariant §6.2-1); the node's RAM also undercounted
+until those instances parked.
+
+**Decision.** The recovery flag `AllowCPUOvercommitRecovery` becomes
+`AllowResidentRecovery` and skips the RAM and vCPU headroom checks as well
+as the physical CPU check. `SeedLedger`, financial preview command recovery
+and data-repair rehearsal recovery set it. It never authorizes a new VM:
+the ledger records the full resident total, so ordinary admissions on that
+node stay refused until a measurement arrives or the node drains under its
+bound. Quiet-pause admission (ADR-1151), which lets vCPU bookings pass the
+nominal budget, is covered the same way.
+
+**Validation.** `TestSeedLedgerKeepsResidentRowsPastTheBareCeiling` and
+`TestAdmit_ResidentRecoveryAccountsRAMAndVCPUWithoutAllowingGrowth`.

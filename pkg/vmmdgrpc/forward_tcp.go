@@ -14,6 +14,7 @@ import (
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/instancebridge"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -22,6 +23,8 @@ import (
 const (
 	vmmdTCPBridgePath = "/opt/faas/current/bin/vmmd-tcp-bridge"
 	tcpBridgePathEnv  = "FAAS_VMMD_TCP_BRIDGE_PATH"
+	vmmdUDPBridgePath = "/opt/faas/current/bin/vmmd-udp-bridge"
+	udpBridgePathEnv  = "FAAS_VMMD_UDP_BRIDGE_PATH"
 )
 
 // ForwardTCPStream is the protocol-neutral bridge for a declared public TCP
@@ -46,7 +49,8 @@ func (s *Server) ForwardTCPStream(stream grpc.BidiStreamingServer[vmmdpb.Forward
 	// Instance teardown ends the session through this context (H9-129).
 	ctx, release := s.forwardSessions.track(stream.Context(), instance)
 	defer release()
-	if _, ok := s.vmm.NetnsFor(instance); !ok {
+	netnsName, ok := s.vmm.NetnsFor(instance)
+	if !ok {
 		return status.Errorf(codes.NotFound, "instance %q not live", instance)
 	}
 	pid, ok := s.vmm.InstancePID(instance)
@@ -72,25 +76,23 @@ func (s *Server) ForwardTCPStream(stream grpc.BidiStreamingServer[vmmdpb.Forward
 	if err != nil {
 		return sendTCPInitError(stream, err)
 	}
-	cmd, stdinW, stdoutR, readyR, stderr, err := tcpBridgeSpawn(ctx, bridgeID, pid, port)
+	conn, err := s.openBridgeConn(ctx, instancebridge.KindTCP, instance, netnsName, bridgeID, pid, port)
 	if err != nil {
 		return sendTCPInitError(stream, err)
 	}
-	defer func() { _ = stdinW.Close() }()
-	defer func() { _ = stdoutR.Close() }()
-	defer func() { _ = readyR.Close() }()
+	defer conn.close()
 
 	if err := stream.Send(&vmmdpb.ForwardTCPResponse{
 		Frame: &vmmdpb.ForwardTCPResponse_Init{Init: &vmmdpb.ForwardTCPResponseInit{}},
 	}); err != nil {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
+		conn.kill()
+		_ = conn.run.Wait()
 		return status.Errorf(codes.Canceled, "send TCP readiness: %v", err)
 	}
 
-	bodyErrCh, bodyWG := tcpBridgeBodyLoop(stream, stdinW, init.GetMaxBytes())
-	pumpErr := tcpBridgePumpBody(stream, stdoutR, init.GetMaxBytes())
-	bridgeErr := tcpBridgeFinish(cmd, bodyErrCh, bodyWG, ctx, stderr.String())
+	bodyErrCh, bodyWG := tcpBridgeBodyLoop(stream, conn.input, init.GetMaxBytes())
+	pumpErr := tcpBridgePumpBody(stream, conn.output, init.GetMaxBytes())
+	bridgeErr := tcpBridgeFinish(conn.run, bodyErrCh, bodyWG, ctx, conn.stderr)
 	if pumpErr != nil {
 		return pumpErr
 	}
@@ -105,10 +107,6 @@ func sendTCPInitError(stream grpc.BidiStreamingServer[vmmdpb.ForwardTCPRequest, 
 		Frame: &vmmdpb.ForwardTCPResponse_Init{Init: &vmmdpb.ForwardTCPResponseInit{Error: err.Error()}},
 	})
 	return err
-}
-
-func tcpBridgeSpawn(ctx context.Context, id bridgeIdentity, instancePID int, port uint32) (*exec.Cmd, *os.File, *os.File, *os.File, *bytes.Buffer, error) {
-	return namespaceBridgeSpawn(ctx, id, instancePID, port, tcpBridgePathEnv, vmmdTCPBridgePath)
 }
 
 func namespaceBridgeSpawn(ctx context.Context, id bridgeIdentity, instancePID int, port uint32, pathEnv, defaultPath string) (*exec.Cmd, *os.File, *os.File, *os.File, *bytes.Buffer, error) {
@@ -192,7 +190,7 @@ func closeFiles(files ...*os.File) {
 	}
 }
 
-func tcpBridgeBodyLoop(stream grpc.BidiStreamingServer[vmmdpb.ForwardTCPRequest, vmmdpb.ForwardTCPResponse], stdinW *os.File, requestedMax int64) (chan error, *sync.WaitGroup) {
+func tcpBridgeBodyLoop(stream grpc.BidiStreamingServer[vmmdpb.ForwardTCPRequest, vmmdpb.ForwardTCPResponse], stdinW io.WriteCloser, requestedMax int64) (chan error, *sync.WaitGroup) {
 	maxBytes := api.RawTCPStreamMaxBytes
 	if requestedMax > 0 && requestedMax < maxBytes {
 		maxBytes = requestedMax
@@ -240,7 +238,7 @@ func tcpBridgeBodyLoop(stream grpc.BidiStreamingServer[vmmdpb.ForwardTCPRequest,
 	return errCh, &wg
 }
 
-func tcpBridgePumpBody(stream grpc.BidiStreamingServer[vmmdpb.ForwardTCPRequest, vmmdpb.ForwardTCPResponse], stdoutR *os.File, requestedMax int64) error {
+func tcpBridgePumpBody(stream grpc.BidiStreamingServer[vmmdpb.ForwardTCPRequest, vmmdpb.ForwardTCPResponse], stdoutR io.Reader, requestedMax int64) error {
 	maxBytes := api.RawTCPStreamMaxBytes
 	if requestedMax > 0 && requestedMax < maxBytes {
 		maxBytes = requestedMax
@@ -269,8 +267,8 @@ func tcpBridgePumpBody(stream grpc.BidiStreamingServer[vmmdpb.ForwardTCPRequest,
 	}
 }
 
-func tcpBridgeFinish(cmd *exec.Cmd, bodyErrCh <-chan error, bodyWG *sync.WaitGroup, streamCtx context.Context, stderr string) error {
-	waitErr := cmd.Wait()
+func tcpBridgeFinish(run bridgeWaiter, bodyErrCh <-chan error, bodyWG *sync.WaitGroup, streamCtx context.Context, stderr func() string) error {
+	waitErr := run.Wait()
 	if instanceStopped(streamCtx) {
 		return status.Error(codes.Unavailable, "TCP stream: instance stopped")
 	}
@@ -295,7 +293,7 @@ func tcpBridgeFinish(cmd *exec.Cmd, bodyErrCh <-chan error, bodyWG *sync.WaitGro
 		return status.Errorf(codes.Unavailable, "TCP stream request: %v", bodyErr)
 	}
 	if waitErr != nil {
-		return status.Errorf(codes.Unavailable, "TCP bridge exited: %v (stderr=%q)", waitErr, stderr)
+		return status.Errorf(codes.Unavailable, "TCP bridge exited: %v (stderr=%q)", waitErr, stderr())
 	}
 	return nil
 }

@@ -17,7 +17,7 @@ import (
 
 func TestObsIncidents_EmptyResponseIsStable(t *testing.T) {
 	e := apidserver.NewObsEnv(t, api.ScopesAdminOnly, "ops@faas.dev", "ops@faas.dev")
-	rec := e.Do(t, http.MethodGet, "/v1/admin/obs/incidents", nil, nil)
+	rec := e.DoOperator(t, http.MethodGet, "/v1/admin/obs/incidents", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
@@ -69,7 +69,7 @@ func TestObsIncidents_ComposesSourcesAndPaginates(t *testing.T) {
 		t.Fatalf("UpsertComputeNodeFromOperator: %v", err)
 	}
 
-	rec := e.Do(t, http.MethodGet, "/v1/admin/obs/incidents?limit=2", nil, nil)
+	rec := e.DoOperator(t, http.MethodGet, "/v1/admin/obs/incidents?limit=2", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
@@ -85,7 +85,7 @@ func TestObsIncidents_ComposesSourcesAndPaginates(t *testing.T) {
 		t.Fatalf("decode next cursor: key=%+v err=%v", key, err)
 	}
 
-	rec = e.Do(t, http.MethodGet, "/v1/admin/obs/incidents?limit=2&cursor="+first.NextCursor, nil, nil)
+	rec = e.DoOperator(t, http.MethodGet, "/v1/admin/obs/incidents?limit=2&cursor="+first.NextCursor, nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("second page status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
@@ -121,7 +121,7 @@ func TestObsIncidents_RejectsInvalidFiltersAndCursor(t *testing.T) {
 		"/v1/admin/obs/incidents?since=not-a-time",
 		"/v1/admin/obs/incidents?cursor=not-a-cursor",
 	} {
-		rec := e.Do(t, http.MethodGet, path, nil, nil)
+		rec := e.DoOperator(t, http.MethodGet, path, nil, nil)
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("%s status = %d, want 400; body=%s", path, rec.Code, rec.Body.String())
 		}

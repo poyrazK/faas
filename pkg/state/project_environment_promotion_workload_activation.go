@@ -1,6 +1,9 @@
 package state
 
-import "errors"
+import (
+	"context"
+	"errors"
+)
 
 type promotionWorkloadActivation struct {
 	environmentID string
@@ -66,6 +69,22 @@ func (m *MemStore) promotionWorkloadActivationsLocked(promotion ProjectEnvironme
 			appID: app.ID, specID: targetID, app: projected, projectApp: promotion.ToEnvironment == "production"})
 	}
 	return changes, nil
+}
+
+// A production promotion can change an app's visibility, which publishes or
+// withdraws its hostnames (ADR-570). Analyze the projected apps before the
+// release set or any setting is published.
+func (m *MemStore) checkMemPromotionWorkloadBindingsLocked(ctx context.Context, accountID string, changes []promotionWorkloadActivation) error {
+	staged := make(map[string]App)
+	for _, change := range changes {
+		if change.projectApp && m.apps[change.appID].Visibility != change.app.Visibility {
+			staged[change.appID] = change.app
+		}
+	}
+	if len(staged) == 0 {
+		return nil
+	}
+	return appTrafficBindingError(m.checkMemTrafficBindingLocked(ctx, accountID, nil, "", memTrafficPolicyChange{Apps: staged}))
 }
 
 func (m *MemStore) applyPromotionWorkloadActivationsLocked(changes []promotionWorkloadActivation) {

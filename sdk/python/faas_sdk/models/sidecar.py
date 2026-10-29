@@ -30,8 +30,7 @@ class Sidecar:
     at the API, runtime, and database layers).
     Stateless only — stateful base images (Postgres, Redis,
     MySQL, MongoDB, etc.) are rejected at the API gate
-    with 403 `sidecar_stateful_denied` and again at imaged
-    (PR-B). Image references must be digest-pinned
+    with 403 `sidecar_stateful_denied` and again at the image service. Image references must be digest-pinned
     (`repo@sha256:...`); tag references are rejected with
     400 `sidecar_invalid_image`. Env values are
     envelope-sealed at rest via secretbox (namespace
@@ -48,7 +47,7 @@ class Sidecar:
       + dash, 1..63 chars, starts with [a-z0-9]). Unique
       within a single request.
     - `preset` selects a platform-managed helper. A preset may omit
-      `image`; apid resolves an operator-pinned immutable digest.
+      `image`; the API resolves an operator-pinned immutable digest.
     - `image` is required for a custom helper and must be a
       digest-pinned OCI reference. Tag references are rejected.
     - `type` ∈ {`init`, `sidecar`}. At most one init helper and

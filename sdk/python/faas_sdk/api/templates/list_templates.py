@@ -57,15 +57,13 @@ def _build_response(
 
 def sync_detailed(
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
 ) -> Response[Problem | list[TemplateView]]:
     r"""Catalog of starter templates the dashboard wizard renders.
 
-     Cookie-session-authenticated (NOT API-key). Mirrors the
-    embed.FS in cmd/gregale/templates/ via cmd/gregale/templates.Names
-    without importing the CLI's main package — the dashboard and
-    the CLI read the same 13-entry list through independent paths.
-    Adding a template means a new entry in cmd/gregale/templates/embed.go
+     Cookie-session-authenticated (NOT API-key). The dashboard and
+    the CLI read the same template list.
+    Adding a template means a new entry
     + the same category + description wiring here.
 
     Used by the dashboard's /dashboard/apps/new wizard to populate
@@ -92,15 +90,13 @@ def sync_detailed(
 
 def sync(
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
 ) -> Problem | list[TemplateView] | None:
     r"""Catalog of starter templates the dashboard wizard renders.
 
-     Cookie-session-authenticated (NOT API-key). Mirrors the
-    embed.FS in cmd/gregale/templates/ via cmd/gregale/templates.Names
-    without importing the CLI's main package — the dashboard and
-    the CLI read the same 13-entry list through independent paths.
-    Adding a template means a new entry in cmd/gregale/templates/embed.go
+     Cookie-session-authenticated (NOT API-key). The dashboard and
+    the CLI read the same template list.
+    Adding a template means a new entry
     + the same category + description wiring here.
 
     Used by the dashboard's /dashboard/apps/new wizard to populate
@@ -123,15 +119,13 @@ def sync(
 
 async def asyncio_detailed(
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
 ) -> Response[Problem | list[TemplateView]]:
     r"""Catalog of starter templates the dashboard wizard renders.
 
-     Cookie-session-authenticated (NOT API-key). Mirrors the
-    embed.FS in cmd/gregale/templates/ via cmd/gregale/templates.Names
-    without importing the CLI's main package — the dashboard and
-    the CLI read the same 13-entry list through independent paths.
-    Adding a template means a new entry in cmd/gregale/templates/embed.go
+     Cookie-session-authenticated (NOT API-key). The dashboard and
+    the CLI read the same template list.
+    Adding a template means a new entry
     + the same category + description wiring here.
 
     Used by the dashboard's /dashboard/apps/new wizard to populate
@@ -156,15 +150,13 @@ async def asyncio_detailed(
 
 async def asyncio(
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
 ) -> Problem | list[TemplateView] | None:
     r"""Catalog of starter templates the dashboard wizard renders.
 
-     Cookie-session-authenticated (NOT API-key). Mirrors the
-    embed.FS in cmd/gregale/templates/ via cmd/gregale/templates.Names
-    without importing the CLI's main package — the dashboard and
-    the CLI read the same 13-entry list through independent paths.
-    Adding a template means a new entry in cmd/gregale/templates/embed.go
+     Cookie-session-authenticated (NOT API-key). The dashboard and
+    the CLI read the same template list.
+    Adding a template means a new entry
     + the same category + description wiring here.
 
     Used by the dashboard's /dashboard/apps/new wizard to populate

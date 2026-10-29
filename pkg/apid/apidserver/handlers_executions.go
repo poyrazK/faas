@@ -153,16 +153,12 @@ func (s *server) createExecution(w http.ResponseWriter, r *http.Request, acct st
 		return
 	}
 
-	if setSecretRecipient == nil {
-		api.WriteProblem(w, api.ErrCapacity("host age recipient is not loaded; refusing to seal execution payload"))
+	recipients, kid, err := executionPayloadRecipients()
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("execution payload recipient is not loaded; refusing to seal execution payload"))
 		return
 	}
-	recipient := hostSecretRecipient()
-	if recipient == nil {
-		api.WriteProblem(w, api.ErrCapacity("host age recipient is not loaded; refusing to seal execution payload"))
-		return
-	}
-	sealed, err := executionpayload.SealRequest(recipient, resolved)
+	sealed, err := executionpayload.SealRequestTo(recipients, resolved)
 	if err != nil {
 		if errors.Is(err, executionpayload.ErrInvalid) {
 			api.WriteProblem(w, api.NewProblem(
@@ -193,7 +189,7 @@ func (s *server) createExecution(w http.ResponseWriter, r *http.Request, acct st
 		AdmittedAt:             admittedAt,
 		DeadlineAt:             admittedAt.Add(time.Duration(resolved.Limits.TimeoutMS) * time.Millisecond),
 		SealedPayload:          sealed,
-		PayloadKID:             recipient.String(),
+		PayloadKID:             kid,
 	}
 	for _, grant := range artifactGrants {
 		params.ArtifactGrantRedemptions = append(params.ArtifactGrantRedemptions, state.ExecutionArtifactGrantRedemption{

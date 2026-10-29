@@ -32,7 +32,7 @@ func TestObsIncidentContextReadAndValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := "/v1/admin/obs/incidents/deployment/" + d.ID + "/context"
-	rec := e.Do(t, "GET", path+"?limit=1&history_limit=1", nil, nil)
+	rec := e.DoOperator(t, "GET", path+"?limit=1&history_limit=1", nil, nil)
 	var out api.ObsIncidentContextResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
@@ -40,12 +40,12 @@ func TestObsIncidentContextReadAndValidation(t *testing.T) {
 	if rec.Code != 200 || out.Counts == nil || out.Counts.Apps != 1 || out.Counts.FailedResources != 1 || out.NextCursor == "" || len(out.Resources) != 1 || len(out.Timeline) != 1 || out.Timeline[0].Entry.TracePath == "" || strings.Contains(rec.Body.String(), "private-") {
 		t.Fatalf("context: %d %s", rec.Code, rec.Body.String())
 	}
-	next := e.Do(t, "GET", path+"?limit=1&cursor="+out.NextCursor, nil, nil)
+	next := e.DoOperator(t, "GET", path+"?limit=1&cursor="+out.NextCursor, nil, nil)
 	if next.Code != 200 {
 		t.Fatalf("next: %d %s", next.Code, next.Body.String())
 	}
 	for _, query := range []string{"?limit=101", "?history_limit=0", "?cursor=garbage"} {
-		rec = e.Do(t, "GET", path+query, nil, nil)
+		rec = e.DoOperator(t, "GET", path+query, nil, nil)
 		if rec.Code != 400 {
 			t.Fatalf("bad query=%s status=%d", query, rec.Code)
 		}
@@ -54,7 +54,7 @@ func TestObsIncidentContextReadAndValidation(t *testing.T) {
 		kind, id string
 		status   int
 	}{{"deployment", "not-uuid", 400}, {"app", a.ID, 400}, {"deployment", uuid.NewString(), 404}, {"platform_alert", strings.Repeat("a", 64), 404}} {
-		rec = e.Do(t, "GET", "/v1/admin/obs/incidents/"+ref.kind+"/"+ref.id+"/context", nil, nil)
+		rec = e.DoOperator(t, "GET", "/v1/admin/obs/incidents/"+ref.kind+"/"+ref.id+"/context", nil, nil)
 		if rec.Code != ref.status {
 			t.Fatalf("reference %s: %d %s", ref.kind, rec.Code, rec.Body.String())
 		}
@@ -71,7 +71,7 @@ func TestObsIncidentContextFailClosedAndAuthorization(t *testing.T) {
 	e := gapEnv(t)
 	*(*e.S()).Store() = statetest.NewStore(&obsContextFailureStore{Store: *(*e.S()).Store()})
 	path := "/v1/admin/obs/incidents/compute_node/" + uuid.NewString() + "/context"
-	rec := e.Do(t, http.MethodGet, path, nil, nil)
+	rec := e.DoOperator(t, http.MethodGet, path, nil, nil)
 	if rec.Code != 503 || strings.Contains(rec.Body.String(), "private-") {
 		t.Fatalf("database error: %d %s", rec.Code, rec.Body.String())
 	}

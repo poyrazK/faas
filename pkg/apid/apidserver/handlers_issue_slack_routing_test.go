@@ -91,7 +91,7 @@ func TestSlackRuleRoutingDashboardPreviewAndActionsPostgres(t *testing.T) {
 	})})
 	apidserver.IssueSetSlackOAuth(e, cfg, client)
 	*(*e.S()).IssueSlackResponses() = client
-	service := issueslack.OAuthService{Store: st, Client: client, Config: cfg, Recipient: id.Recipient(), Identities: []*age.X25519Identity{id}}
+	service := issueslack.OAuthService{Store: st, Client: client, Config: cfg, Recipients: []*age.X25519Recipient{id.Recipient()}, Identities: []*age.X25519Identity{id}}
 	nonce, _, err := service.Start(t.Context(), app.ID, app.AccountID, 0)
 	if err != nil {
 		t.Fatal(err)

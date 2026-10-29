@@ -9,18 +9,18 @@ separate setting. Ordering and deduplication guarantees remain unchanged.
 ## Install and configure
 
 Drain and replace older workers before relying on this limit. Install the
-application-owned `faas.EventOutboxRateLimitSchema` explicitly before upgrading
+application-owned `preview.EventOutboxRateLimitSchema` explicitly before upgrading
 recovery workers or health readers. New installations can use the complete
-`faas.EventOutboxSchema`. Helpers never execute DDL. Missing scope configuration
+`preview.EventOutboxSchema`. Helpers never execute DDL. Missing scope configuration
 means disabled; missing tables or unreadable configuration fail closed.
 
 ```go
-current, err := faas.GetEventOutboxRateLimit(ctx, db, accountID, appID)
+current, err := preview.GetEventOutboxRateLimit(ctx, db, accountID, appID)
 if err != nil {
     return err
 }
-receipt, err := faas.SetEventOutboxRateLimit(ctx, db, accountID, appID,
-    faas.EventOutboxRateLimitOptions{
+receipt, err := preview.SetEventOutboxRateLimit(ctx, db, accountID, appID,
+    preview.EventOutboxRateLimitOptions{
         CommandID:        commandID, // Persist a nonzero UUID before submitting.
         ExpectedRevision: current.Revision,
         Enabled:          true,

@@ -32,14 +32,14 @@ func jobFixtureBinary() ([]byte, error) {
 			return
 		}
 		defer func() { _ = os.RemoveAll(dir) }()
-		_, thisFile, _, ok := runtime.Caller(0)
-		if !ok {
-			jobFixtureErr = fmt.Errorf("job fixture: cannot locate source")
+		src, err := CallerDir()
+		if err != nil {
+			jobFixtureErr = fmt.Errorf("job fixture: %w", err)
 			return
 		}
 		out := filepath.Join(dir, "job-fixture")
 		cmd := exec.Command("go", "build", "-trimpath", "-ldflags=-s -w", "-o", out, ".")
-		cmd.Dir = filepath.Join(filepath.Dir(thisFile), "testdata", "jobfixture")
+		cmd.Dir = filepath.Join(src, "testdata", "jobfixture")
 		cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH="+runtime.GOARCH)
 		if output, err := cmd.CombinedOutput(); err != nil {
 			jobFixtureErr = fmt.Errorf("job fixture: build: %w\n%s", err, output)

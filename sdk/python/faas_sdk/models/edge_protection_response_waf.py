@@ -16,8 +16,8 @@ T = TypeVar("T", bound="EdgeProtectionResponseWaf")
 
 @_attrs_define
 class EdgeProtectionResponseWaf:
-    """kind=waf inspections (ADR-831). Sampled detections are never blocked; block rules' 403s also appear in rejections
-    under gate waf.
+    """kind=waf inspections. Sampled detections are never blocked; block rules' 403s also appear in rejections under gate
+    waf.
 
     """
 

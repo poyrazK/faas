@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	faas "github.com/poyrazK/faas/sdk/go"
+	"github.com/poyrazK/faas/sdk/go/preview"
 )
 
 // RecoveryWorkerMetricsHost adds actual pass activity to the existing independent
@@ -14,7 +14,7 @@ import (
 type RecoveryWorkerMetricsHost struct {
 	Server *http.Server
 	health *RecoveryHealthMetricsHost
-	worker *faas.EventAcknowledgmentIntentRecoveryWorkerMetrics
+	worker *preview.EventAcknowledgmentIntentRecoveryWorkerMetrics
 }
 
 // NewRecoveryWorkerMetricsHost uses the same protected 9468 endpoint as the
@@ -24,12 +24,12 @@ func NewRecoveryWorkerMetricsHost(db *sql.DB, accountID, appID string) (*Recover
 	if err != nil {
 		return nil, err
 	}
-	worker, err := faas.NewEventAcknowledgmentIntentRecoveryWorkerMetrics(accountID, appID,
-		faas.EventAcknowledgmentIntentRecoveryWorkerMetricsOptions{MaxIdle: time.Minute, MaxPassDuration: 5 * time.Minute})
+	worker, err := preview.NewEventAcknowledgmentIntentRecoveryWorkerMetrics(accountID, appID,
+		preview.EventAcknowledgmentIntentRecoveryWorkerMetricsOptions{MaxIdle: time.Minute, MaxPassDuration: 5 * time.Minute})
 	if err != nil {
 		return nil, err
 	}
-	handler, err := faas.NewEventAcknowledgmentIntentRecoveryMetricsHandler(health.metrics, worker)
+	handler, err := preview.NewEventAcknowledgmentIntentRecoveryMetricsHandler(health.metrics, worker)
 	if err != nil {
 		return nil, err
 	}
@@ -45,10 +45,10 @@ func (h *RecoveryWorkerMetricsHost) RunHealth(ctx context.Context) error {
 
 // RecoverCallbacks runs one finite monitored pass. Process progress and err
 // before choosing another pass; metrics authorize no retry or scheduling action.
-func (h *RecoveryWorkerMetricsHost) RecoverCallbacks(ctx context.Context, client *faas.Client) (faas.EventAcknowledgmentIntentRecoveryPassResult, error) {
-	return faas.RecoverEventAcknowledgmentIntentsWithMetrics(ctx, h.health.db, client, h.health.accountID, h.health.appID,
-		faas.EventAcknowledgmentIntentRecoveryPassOptions{
+func (h *RecoveryWorkerMetricsHost) RecoverCallbacks(ctx context.Context, client *preview.Client) (preview.EventAcknowledgmentIntentRecoveryPassResult, error) {
+	return preview.RecoverEventAcknowledgmentIntentsWithMetrics(ctx, h.health.db, client, h.health.accountID, h.health.appID,
+		preview.EventAcknowledgmentIntentRecoveryPassOptions{
 			MaxAttempts: 100, Concurrency: 4, ClaimDuration: 30 * time.Second,
-			RetryPolicy: &faas.EventAcknowledgmentIntentRetryPolicy{InitialBackoff: time.Second, MaxBackoff: 5 * time.Minute},
+			RetryPolicy: &preview.EventAcknowledgmentIntentRetryPolicy{InitialBackoff: time.Second, MaxBackoff: 5 * time.Minute},
 		}, h.worker)
 }

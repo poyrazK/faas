@@ -1011,6 +1011,11 @@ message CapacityReport {
   // Absence means an older producer; complete=false means unknown. A complete
   // empty inventory explicitly asserts that this node has no running VMs.
   NodeInstanceInventory instance_inventory = 11;
+  // StatsResponse.instance_bridge_resident_bytes from the same sample: the
+  // node's instance bridge units (connection-survival ADR §2). Telemetry
+  // like the instance rows, outside the capacity signature; absent when
+  // bridge units are off or on an older vmmd.
+  google.protobuf.Int64Value instance_bridge_resident_bytes = 12;
 }
 
 // Inherits node_id, sampled_at_unix_ms and node_key_id from CapacityReport.

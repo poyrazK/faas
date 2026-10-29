@@ -152,7 +152,8 @@ func authorize(r *http.Request, store Store, audit authz.AuditEmitter, actor sta
 	if !supported {
 		return zero, member, fence, api.ErrOrgRoleForbidden("use a database operation without a reviewed organization permission")
 	}
-	if org.Status != state.OrgStatusActive && action != authz.OrgActionReadPostgres && action != authz.OrgActionReadPostgresUsage {
+	// Past due loses only deploys (spec §4.7); the owner account carries it.
+	if org.Status != state.OrgStatusActive && org.Status != state.OrgStatusPastDue && action != authz.OrgActionReadPostgres && action != authz.OrgActionReadPostgresUsage {
 		return zero, member, fence, api.ErrOrgRoleForbidden("change a database in an inactive organization")
 	}
 	ctx := authmw.WithPrincipal(r.Context(), actor, key, &member)
@@ -239,9 +240,11 @@ func PersonalContext(ctx context.Context, store interface {
 
 // DeleteOrganization closes the organization only after provider cleanup. The
 // production trigger serializes this check with database reservations.
+// beforeDelete, when set, runs after the database check and immediately before
+// the organization closes; its problem keeps the organization open.
 func DeleteOrganization(ctx context.Context, store interface {
 	SoftDeleteOrg(context.Context, string) error
-}, service *managedpostgres.Service, org state.Org) *api.Problem {
+}, service *managedpostgres.Service, org state.Org, afterDelete func(context.Context) *api.Problem) *api.Problem {
 	if service != nil {
 		rows, err := service.List(managedpostgres.WithOwnership(ctx, org.ID, org.ID), org.ID)
 		if err != nil {
@@ -256,6 +259,13 @@ func DeleteOrganization(ctx context.Context, store interface {
 			return api.NewProblem(http.StatusConflict, api.CodeConflict, "Organization has data resources", "delete the organization's object buckets and managed databases before deleting the organization")
 		}
 		return api.ErrCapacity("could not delete organization")
+	}
+	// afterDelete (ending the subscription) runs only once the deletion
+	// is recorded: run first, a refusal above left a paid plan cancelled
+	// on an organization that stays in use. Soft delete is idempotent, so
+	// a retried DELETE retries afterDelete.
+	if afterDelete != nil {
+		return afterDelete(ctx)
 	}
 	return nil
 }

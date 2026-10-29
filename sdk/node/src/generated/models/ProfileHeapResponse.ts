@@ -8,7 +8,7 @@ import type { ProfileCaptureStack } from './ProfileCaptureStack.js';
 import type { ProfileQuery } from './ProfileQuery.js';
 import type { ProfileSource } from './ProfileSource.js';
 /**
- * Continuous live heap near query.end (ADR-1155).
+ * Continuous live heap near query.end.
  */
 export type ProfileHeapResponse = {
   query: ProfileQuery;

@@ -39,8 +39,8 @@
     <nav>
       <a href="/dashboard/">Overview</a>
       <a href="/dashboard/apps">Apps</a>
-      <a href="/dashboard/jobs">Jobs &amp; queues</a>
-      <a href="/dashboard/failed-events">Failed events</a>
+      {{if $.On "workflows-and-jobs"}}<a href="/dashboard/jobs">Jobs &amp; queues</a>{{end}}
+      {{if $.On "events"}}<a href="/dashboard/failed-events">Failed events</a>{{end}}
       <a href="/dashboard/usage">Usage</a>
       <a href="/dashboard/billing">Billing</a>
       <a href="/dashboard/account">Account</a>
@@ -58,12 +58,15 @@
     {{if eq .Data.Action "deleted"}}<div class="flash ok" role="status">Edge rule deleted.</div>{{end}}
     {{if eq .Data.Action "security_headers_enabled"}}<div class="flash ok" role="status">Security headers preset is enabled.</div>{{end}}
     {{if eq .Data.Action "mode_enforce"}}<div class="flash ok" role="status">Rule is now enforced.</div>{{end}}
+    {{if eq .Data.Action "waf_excluded"}}<div class="flash ok" role="status">CRS rule excluded. It no longer counts toward that WAF rule's score.</div>{{end}}
     {{if eq .Data.Action "mode_log"}}<div class="flash ok" role="status">Rule is now in log mode: it is matched and counted but never acts.</div>{{end}}
     {{if eq .Data.Action "recipe_log"}}<div class="flash ok" role="status">Recipe added in log mode. Watch its matches in the rules table, then choose Start enforcing.</div>{{end}}
     {{if eq .Data.Action "recipe_enforce"}}<div class="flash ok" role="status">Recipe added and enforced.</div>{{end}}
     {{if eq .Data.Action "recipe_log_alert"}}<div class="flash ok" role="status">Recipe added in log mode with a spike alert. Watch its matches in the rules table, then choose Start enforcing.</div>{{end}}
     {{if eq .Data.Action "recipe_enforce_alert"}}<div class="flash ok" role="status">Recipe added and enforced, with a spike alert.</div>{{end}}
     {{if eq .Data.Action "recipe_alert_failed"}}<div class="flash error" role="alert">Recipe added, but its alert could not be created. Check the webhook URL and secret, then add it with gregale alerts add --metric edge_rule_activity --edge-rule-id.</div>{{end}}
+    {{if eq .Data.Action "attack_mode_on"}}<div class="flash ok" role="status">Attack mode is on. Every visitor is now challenged until it ends.</div>{{end}}
+    {{if eq .Data.Action "attack_mode_off"}}<div class="flash ok" role="status">Attack mode is off.</div>{{end}}
     {{if eq .Data.Action "error"}}<div class="flash error" role="alert">The edge-rule action could not be completed. Refresh and try again.</div>{{end}}
     {{if .Data.ErrorMessage}}<div class="flash error" role="alert">{{.Data.ErrorMessage}}</div>{{end}}
 
@@ -188,6 +191,7 @@
           <p><code>{{.Method}} {{.Host}}{{.Path}}</code> · final path <code>{{.Simulation.FinalPath}}</code></p>
           {{if .BodyProvided}}<p>Request body: {{.BodyBytes}} bytes supplied; contents withheld.</p>{{end}}
           <p>{{.Simulation.Reason}}</p>
+          {{with .Simulation.TotalDeadlinePolicy}}<p>Ingress total deadline: {{.DeadlineMS}} ms effective (configured {{.ConfiguredMS}} ms; plan ceiling {{.PlanMaxMS}} ms). Rule <code>{{.RuleID}}</code> selected on original path <code>{{.SelectionPath}}</code>; status <code>{{.Status}}</code>; enforcement <code>{{.EnforcementStatus}}</code>. Covers ordinary public HTTP and stream/upgrade handshake, includes upload/wake/queue, and pins the execution rule. Execution overrides cannot increase it.</p>{{end}}
           {{if .Simulation.StatusCode}}<p>Response status: <strong>{{.Simulation.StatusCode}}</strong>{{if .Simulation.ProblemCode}} · problem <code>{{.Simulation.ProblemCode}}</code>{{end}}{{if .Simulation.Location}} · location <code>{{.Simulation.Location}}</code>{{end}}{{if .Simulation.RetryAfterSeconds}} · Retry-After {{.Simulation.RetryAfterSeconds}}s{{end}}</p>{{end}}
           {{if .Simulation.Message}}<p>Response message: {{.Simulation.Message}}</p>{{end}}
           {{if .Simulation.TargetApp}}<p>Routed target app: <code>{{.Simulation.TargetApp}}</code></p>{{end}}
@@ -237,6 +241,30 @@
 
     <section aria-labelledby="edge-protection-heading">
       <h2 id="edge-protection-heading">Edge protection (last {{.Data.Protection.Range}})</h2>
+      <div id="attack-mode" class="card">
+        <h3>Attack mode</h3>
+        {{with .Data.Protection.AttackMode}}{{if .Active}}
+          <p role="status"><strong>Attack mode is on</strong>{{with .ExpiresAt}} until {{.UTC.Format "2006-01-02 15:04 UTC"}}{{end}}. Every visitor is challenged: browsers solve a short check once and continue, verified search crawlers and requests with a verified API key or JWT pass straight through, and other clients (scripts, webhooks, uptime checks) get 403 until it ends.</p>
+        {{else}}
+          <p>Under attack? Attack mode challenges every visitor to every host of this app for a while, then ends on its own. Browsers solve a short check once and continue; verified search crawlers and requests with a verified API key or JWT pass straight through; other clients (scripts, webhooks, uptime checks) get 403 until it ends.</p>
+        {{end}}{{end}}
+        {{if not .Data.AttackModeAvailable}}<p class="muted">Attack mode is not yet available to this account.</p>{{else}}
+        <form method="POST" action="/dashboard/apps/{{$.Data.App.Slug}}/edge-protection/attack-mode" class="inline">
+          <input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}">
+          <input type="hidden" name="attack_mode" value="on">
+          <label>{{if .Data.Protection.AttackMode.Active}}Extend to{{else}}Turn on for{{end}}
+            <select name="duration_seconds"><option value="3600">1 hour</option><option value="21600">6 hours</option><option value="86400">24 hours</option></select></label>
+          <button type="submit">{{if .Data.Protection.AttackMode.Active}}Extend attack mode{{else}}Turn on attack mode{{end}}</button>
+        </form>{{end}}
+        {{if .Data.Protection.AttackMode.Active}}
+        <form method="POST" action="/dashboard/apps/{{$.Data.App.Slug}}/edge-protection/attack-mode" class="inline">
+          <input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}">
+          <input type="hidden" name="attack_mode" value="off">
+          <button type="submit">Turn off attack mode</button>
+        </form>
+        {{end}}
+        <p class="muted">CLI: <code>gregale edge-rules attack-mode on --app {{$.Data.App.Slug}} --for 1h</code>.</p>
+      </div>
       {{with .Data.Protection}}
         {{if ne .Source "prometheus"}}
           <p class="muted" role="status">Edge protection counts are unavailable right now ({{.Source}}). This is not the same as zero.</p>
@@ -260,6 +288,9 @@
             {{if .Categories}}<p>Detections by category: {{range $i, $c := .Categories}}{{if $i}}, {{end}}{{$c.Name}} <strong>{{$c.Count}}</strong>{{end}}.</p>{{end}}
             {{if .TopRules}}<p>Top CRS rules: {{range $i, $c := .TopRules}}{{if $i}}, {{end}}<code>{{$c.Name}}</code> <strong>{{$c.Count}}</strong>{{end}}. Exclude a false positive with <code>exclude_rule_ids</code>.</p>{{end}}
           {{end}}{{end}}
+          {{if .AICrawlers}}
+            <p>AI crawlers: {{range $i, $c := .AICrawlers}}{{if $i}}, {{end}}<code>{{$c.Name}}</code> <strong>{{$c.Count}}</strong> <span class="muted">({{$c.Operator}}, {{$c.Purpose}})</span>{{end}}. Block or challenge them by purpose with the <em>Control AI crawlers</em> recipe.</p>
+          {{end}}
           {{with .Penalty}}{{if or .Boxed .Rejected}}
             <p>Penalty box: <strong>{{.Boxed}}</strong> clients boxed, <strong>{{.Rejected}}</strong> requests refused while boxed.</p>
           {{end}}{{end}}
@@ -301,22 +332,51 @@
           {{range .Data.Rules}}
             <tr>
               <td>{{.Priority}}</td>
-              <td>{{if .Name}}<strong>{{.Name}}</strong><br>{{end}}<strong>{{.Kind}}</strong>{{if .SecurityPreset}}<br><small class="muted">security preset</small>{{end}}<br><small class="muted"><code>{{.ID}}</code></small></td>
+              <td>{{if .Name}}<strong>{{.Name}}</strong><br>{{end}}<strong>{{.Kind}}</strong>{{if .SecurityPreset}}<br><small class="muted">security preset</small>{{end}}{{if .AttackMode}}<br><small class="muted">managed by attack mode</small>{{end}}<br><small class="muted"><code>{{.ID}}</code></small></td>
               <td>{{if .AppWide}}<em>every app host</em> <code>{{.MatchPath}}</code>{{else}}<code>{{.MatchHost}}{{.MatchPath}}</code>{{end}}</td>
               <td>{{if .MatchMethods}}{{.MatchMethods}}{{else}}any{{end}}</td>
-              <td>{{if .Enabled}}<span class="enabled">enabled</span>{{else}}<span class="disabled">disabled</span>{{end}}{{if eq .Mode "log"}}<br><span class="muted">log mode</span>{{end}}</td>
+              <td>{{if .Enabled}}<span class="enabled">enabled</span>{{else}}<span class="disabled">disabled</span>{{end}}{{if eq .Mode "log"}}<br><span class="muted">log mode</span>{{end}}{{range .Unreleased}}<br><span class="muted">not enforced: {{.}} not yet available</span>{{end}}</td>
               <td>{{if eq .Mode "log"}}{{.Logged24h}} logged{{else}}{{.Matched24h}}{{end}}{{if .SparkPoints}}<br><svg class="sparkline" width="84" height="20" viewBox="0 0 84 20" role="img" aria-label="{{.Matches7d}} matches in the last 7 days"><title>{{.Matches7d}} matches in the last 7 days</title><polyline points="{{.SparkPoints}}" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>{{end}}{{if or .Matched24h .Logged24h}}<br><a href="/dashboard/apps/{{$.Data.App.Slug}}/edge-rules?rule={{.ID}}#security-events">events</a>{{end}}</td>
               <td><span class="muted">{{.ActionSummary}}</span><br><code class="rule-action">{{.ActionJSON}}</code></td>
               <td class="actions nowrap">
+                {{if .AttackMode}}<a href="#attack-mode">Attack mode controls</a>{{else}}
                 <form method="POST" action="/dashboard/apps/{{$.Data.App.Slug}}/edge-rules/{{.ID}}/mode"><input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}">{{if eq .Mode "log"}}<input type="hidden" name="mode" value="enforce"><button type="submit">Start enforcing</button>{{else}}<input type="hidden" name="mode" value="log"><button type="submit">Log only</button>{{end}}</form>
                 <form method="POST" action="/dashboard/apps/{{$.Data.App.Slug}}/edge-rules/{{.ID}}/toggle"><input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}"><button type="submit">{{if .Enabled}}Disable{{else}}Enable{{end}}</button></form>
                 <form method="POST" action="/dashboard/apps/{{$.Data.App.Slug}}/edge-rules/{{.ID}}/delete"><input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}"><button type="submit">Delete</button></form>
+                {{end}}
               </td>
             </tr>
           {{end}}
         </tbody>
       </table>
     {{else}}<p class="muted">No edge rules yet.</p>{{end}}
+
+    {{if .Data.WAFReview.Show}}
+    <section class="card" id="waf-review" aria-labelledby="waf-review-heading">
+      <h2 id="waf-review-heading">WAF review</h2>
+      <p class="muted">WAF detections grouped by CRS rule and path. Many unrelated clients flagged on one path usually means legitimate traffic; clients flagged across many paths are usually scanning. Excluding a CRS rule stops it counting on that WAF rule only. Detections are sampled, so counts are lower bounds.</p>
+      {{if .Data.WAFReview.ErrorMessage}}<div class="flash error" role="alert">{{.Data.WAFReview.ErrorMessage}}</div>
+      {{else if .Data.WAFReview.Groups}}
+        <table aria-label="WAF review">
+          <thead><tr><th>Assessment</th><th>CRS rule</th><th>Path</th><th>Detections</th><th>Clients</th><th>WAF rule</th><th>Manage</th></tr></thead>
+          <tbody>
+            {{range .Data.WAFReview.Groups}}
+              <tr>
+                <td><strong>{{.AssessmentLabel}}</strong><br><small class="muted">{{.Reason}}</small></td>
+                <td><code>{{.CRSRuleID}}</code><br><small class="muted">{{.Category}}</small></td>
+                <td><code>{{.Path}}</code>{{if .ExampleRequestID}}<br><a href="/dashboard/apps/{{$.Data.App.Slug}}/edge-rules?rule={{.RuleID}}&amp;since=7d#security-events">examples</a>{{end}}</td>
+                <td>{{.Events}}</td>
+                <td>{{.Clients}}</td>
+                <td>{{.RuleLabel}}{{if .RuleMode}} <span class="muted">({{.RuleMode}})</span>{{end}}</td>
+                <td class="actions nowrap">{{if not .Excluded}}<form method="POST" action="/dashboard/apps/{{$.Data.App.Slug}}/edge-rules/{{.RuleID}}/waf-exclusions"><input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}"><input type="hidden" name="crs_rule_id" value="{{.CRSRuleID}}"><button type="submit">Exclude {{.CRSRuleID}}</button></form>{{end}}</td>
+              </tr>
+            {{end}}
+          </tbody>
+        </table>
+        <p class="muted">{{.Data.WAFReview.Scanned}} detections since {{.Data.WAFReview.SinceLabel}}.{{if .Data.WAFReview.Truncated}} More than one review reads: the oldest were left out.{{end}}</p>
+      {{else}}<p class="muted">No WAF detections since {{.Data.WAFReview.SinceLabel}}.</p>{{end}}
+    </section>
+    {{end}}
 
     <section class="card" id="security-events" aria-labelledby="security-events-heading">
       <h2 id="security-events-heading">Security events</h2>
@@ -326,7 +386,7 @@
           <select name="rule"><option value="">all rules</option>{{range .Data.Rules}}<option value="{{.ID}}" {{if eq .ID $.Data.Events.Rule}}selected{{end}}>{{if .Name}}{{.Name}}{{else}}{{.Kind}} {{.MatchHost}}{{.MatchPath}}{{end}}</option>{{end}}</select>
         </label>
         <label>Outcome
-          <select name="outcome"><option value="">any</option><option value="matched" {{if eq .Data.Events.Outcome "matched"}}selected{{end}}>matched (enforced)</option><option value="logged" {{if eq .Data.Events.Outcome "logged"}}selected{{end}}>logged (log mode)</option><option value="detected" {{if eq .Data.Events.Outcome "detected"}}selected{{end}}>WAF detected (sampled)</option><option value="warned" {{if eq .Data.Events.Outcome "warned"}}selected{{end}}>WAF warned</option><option value="blocked" {{if eq .Data.Events.Outcome "blocked"}}selected{{end}}>WAF blocked</option><option value="challenged" {{if eq .Data.Events.Outcome "challenged"}}selected{{end}}>challenge page served</option><option value="rejected" {{if eq .Data.Events.Outcome "rejected"}}selected{{end}}>challenge: non-browser refused</option><option value="solved" {{if eq .Data.Events.Outcome "solved"}}selected{{end}}>challenge solved</option><option value="failed" {{if eq .Data.Events.Outcome "failed"}}selected{{end}}>challenge solution refused</option></select>
+          <select name="outcome"><option value="">any</option><option value="matched" {{if eq .Data.Events.Outcome "matched"}}selected{{end}}>matched (enforced)</option><option value="logged" {{if eq .Data.Events.Outcome "logged"}}selected{{end}}>logged (log mode)</option><option value="detected" {{if eq .Data.Events.Outcome "detected"}}selected{{end}}>WAF detected (sampled)</option><option value="warned" {{if eq .Data.Events.Outcome "warned"}}selected{{end}}>WAF warned</option><option value="blocked" {{if eq .Data.Events.Outcome "blocked"}}selected{{end}}>WAF blocked</option><option value="challenged" {{if eq .Data.Events.Outcome "challenged"}}selected{{end}}>challenge page served</option><option value="rejected" {{if eq .Data.Events.Outcome "rejected"}}selected{{end}}>challenge: non-browser refused</option><option value="solved" {{if eq .Data.Events.Outcome "solved"}}selected{{end}}>challenge solved</option><option value="failed" {{if eq .Data.Events.Outcome "failed"}}selected{{end}}>challenge solution refused</option><option value="boxed" {{if eq .Data.Events.Outcome "boxed"}}selected{{end}}>client put in a penalty box</option></select>
         </label>
         <label>Since
           <select name="since"><option value="1h" {{if eq .Data.Events.Since "1h"}}selected{{end}}>1h</option><option value="24h" {{if eq .Data.Events.Since "24h"}}selected{{end}}>24h</option><option value="72h" {{if eq .Data.Events.Since "72h"}}selected{{end}}>72h</option><option value="7d" {{if eq .Data.Events.Since "7d"}}selected{{end}}>7d</option></select>

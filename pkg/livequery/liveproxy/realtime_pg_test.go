@@ -81,7 +81,7 @@ func TestRealtimeCarriesLiveQueries(t *testing.T) {
 	defer proxy.Close()
 	m := realtime.NewManager(realtime.Config{JWTAuthorizer: allowJWT{}, ResumePreview: true, HistoryReader: noHistory{}, Live: ForRealtime(proxy)}, hooks{})
 	defer func() { _ = m.Close() }()
-	if err := m.RegisterEndpoint(realtime.Endpoint{
+	if err := m.RegisterEndpoint(realtime.Endpoint{Preview: true,
 		ID: "ep", AppID: "app-1", AccountID: "acct-1", CallbackURL: "https://app.example",
 		AllowedOrigins: []string{"https://app.example"},
 		ClientAuth: realtime.AuthPolicy{Mode: realtime.AuthModeOIDCJWT, Issuer: "https://issuer.example",
@@ -162,7 +162,7 @@ func TestRealtimeCarriesLiveQueries(t *testing.T) {
 	// An endpoint whose app is bound to no live database (or whose account
 	// is outside the rollout) has no live routes: realtimed answers the
 	// live frame like an unknown one, and nothing reaches the proxy.
-	unbound := realtime.Endpoint{
+	unbound := realtime.Endpoint{Preview: true,
 		ID: "unbound", AppID: "app-2", AccountID: "acct-1", CallbackURL: "https://app.example",
 		AllowedOrigins: []string{"https://app.example"},
 		ClientAuth: realtime.AuthPolicy{Mode: realtime.AuthModeOIDCJWT, Issuer: "https://issuer.example",

@@ -206,7 +206,9 @@ func (m *MemStore) RemoveOrgMemberWithActivity(ctx context.Context, orgID, accou
 	now := time.Now().UTC()
 	removed := current
 	removed.RemovedAt = &now
-	activity, err := withOrgActivityData(activity, map[string]any{"role": string(removed.Role)})
+	data := m.pauseDepartedMemberIntegrationsLocked(orgID, accountID).activityData()
+	data["role"] = string(removed.Role)
+	activity, err := withOrgActivityData(activity, data)
 	if err != nil {
 		return OrgMembership{}, 0, err
 	}

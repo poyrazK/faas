@@ -128,11 +128,11 @@ func TestDeployHealthcheckMetal(t *testing.T) {
 
 	// Multipart deploy via builderd (same path build_metal_test uses)
 	// — the fixture's source tarball carries index.js with the
-	// /healthz handler, and the multipart form carries
-	// Overrides.Healthcheck.Path="/healthz".
+	// /healthz handler, and the multipart `healthcheck` field sets
+	// the startup probe path to /healthz.
 	src := NodeFixtureHealthcheck(t)
-	raw, status := postMultipartDeploymentWithOverrides(t, h, key, slug, src, false, &api.CreateDeploymentOverrides{
-		Healthcheck: &api.DeploymentHealthcheck{Path: "/healthz"},
+	raw, status := postMultipartDeploymentWithFields(t, h, key, slug, src, false, map[string]string{
+		"healthcheck": `{"path":"/healthz"}`,
 	}, "")
 	if status != http.StatusAccepted {
 		t.Fatalf("create deployment: status=%d body=%s", status, raw)

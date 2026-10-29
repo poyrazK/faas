@@ -27,27 +27,66 @@ const (
 	RealtimedLiveClient  = "realtimed.faas"
 )
 
+// FeaturePlatformLogs is the platform log pipeline's mTLS
+// (ADR-20261023124955 §2): Loki's server leaf on the control plane, and the
+// client leaves of the Promtail on every host and of Prometheus and Grafana
+// on the control plane. Every client verifies Loki as loki.faas. Loki
+// accepts any leaf this CA signed, so the private-network rule on its port is
+// what keeps other hosts out.
+const FeaturePlatformLogs = "platform-logs"
+
+// Platform-log leaf identities.
+const (
+	LokiServerName       = "loki.faas"
+	PromtailLokiClient   = "promtail.faas"
+	PrometheusLokiClient = "prometheus.faas"
+	GrafanaLokiClient    = "grafana.faas"
+)
+
 // Features lists the known feature-leaf sets.
-func Features() []string { return []string{FeatureLiveQueries} }
+func Features() []string { return []string{FeatureLiveQueries, FeaturePlatformLogs} }
 
 // FeatureRoles returns the leaves a host of boxRole carries for feature, or
 // nil for an unknown feature or a box role that carries none of it.
 func FeatureRoles(feature, boxRole string) []Role {
-	if feature != FeatureLiveQueries {
-		return nil
-	}
-	server := Role{CommonName: LivequerydServerName, Kind: KindServer, Directory: "livequeryd", Filename: "server", AltNames: ProductionSANs(LivequerydServerName)}
-	client := Role{CommonName: RealtimedLiveClient, Kind: KindClient, Directory: "realtimed", Filename: "livequeryd-client", AltNames: ProductionSANs(RealtimedLiveClient)}
-	switch boxRole {
-	case "control-plane":
-		return []Role{server}
-	case "compute-only":
-		return []Role{client}
-	case "single-box", "":
-		return []Role{server, client}
+	var controlPlane, compute []Role
+	switch feature {
+	case FeatureLiveQueries:
+		controlPlane = []Role{{CommonName: LivequerydServerName, Kind: KindServer, Directory: "livequeryd", Filename: "server", AltNames: ProductionSANs(LivequerydServerName)}}
+		compute = []Role{{CommonName: RealtimedLiveClient, Kind: KindClient, Directory: "realtimed", Filename: "livequeryd-client", AltNames: ProductionSANs(RealtimedLiveClient)}}
+	case FeaturePlatformLogs:
+		promtail := Role{CommonName: PromtailLokiClient, Kind: KindClient, Directory: "promtail", Filename: "loki-client", AltNames: ProductionSANs(PromtailLokiClient)}
+		controlPlane = []Role{
+			{CommonName: LokiServerName, Kind: KindServer, Directory: "loki", Filename: "server", AltNames: ProductionSANs(LokiServerName)},
+			promtail,
+			{CommonName: PrometheusLokiClient, Kind: KindClient, Directory: "prometheus", Filename: "loki-client", AltNames: ProductionSANs(PrometheusLokiClient)},
+			{CommonName: GrafanaLokiClient, Kind: KindClient, Directory: "grafana", Filename: "loki-client", AltNames: ProductionSANs(GrafanaLokiClient)},
+		}
+		compute = []Role{promtail}
 	default:
 		return nil
 	}
+	switch boxRole {
+	case "control-plane":
+		return controlPlane
+	case "compute-only":
+		return compute
+	case "single-box", "":
+		return featureUnion(controlPlane, compute)
+	default:
+		return nil
+	}
+}
+
+// featureUnion joins two leaf lists, keeping one copy of a leaf both hold.
+func featureUnion(a, b []Role) []Role {
+	out := append([]Role{}, a...)
+	for _, role := range b {
+		if !slices.ContainsFunc(out, func(r Role) bool { return r.Directory == role.Directory && r.Filename == role.Filename }) {
+			out = append(out, role)
+		}
+	}
+	return out
 }
 
 // EnsureFeatureLeaves issues feature's leaves for boxRole under rootDir,

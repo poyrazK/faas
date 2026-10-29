@@ -28,6 +28,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/trafficproblem"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -280,7 +281,7 @@ func hostnameCreateProblem(err error, plan api.Plan, surfaceID string) *api.Prob
 		return api.NewProblem(http.StatusNotFound, api.CodeValidation,
 			"Surface missing", "parent surface not found")
 	default:
-		return api.ErrCapacity("could not add tenant hostname")
+		return trafficproblem.TenantBinding(err, api.ErrCapacity("could not add tenant hostname"))
 	}
 }
 
@@ -322,25 +323,34 @@ func (s *server) listTenantSurfaces(w http.ResponseWriter, r *http.Request, acct
 }
 
 // getTenantSurface — GET /v1/apps/{slug}/tenant-surfaces/{id}.
-// Single surface + its hostnames. The id is a UUID; we
-// re-resolve through the store so we can apply the
-// AccountID == acct.ID check (the surface row carries
-// AccountID; we don't need to hop through the app again).
-// Soft-deleted surfaces return 404 — the route is read-only
-// for active surfaces; the cert history / audit trail stay
+// tenantSurfaceForSlug loads the active surface {id} of the {slug} app.
+// Matching AccountID alone is not enough: an organization's company apps
+// and their creator's personal apps share AccountID, and appaccess
+// authorized the caller for {slug} only, so a removed creator or an
+// app-bound key must not reach another app's surface through it.
+// Soft-deleted surfaces return 404 — the cert history / audit trail stay
 // in the DB but the API hides them.
+func (s *server) tenantSurfaceForSlug(w http.ResponseWriter, r *http.Request, acct state.Account) (state.TenantSurface, bool) {
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return state.TenantSurface{}, false
+	}
+	surf, err := s.store.GetTenantSurfaceByID(r.Context(), r.PathValue("id"))
+	if err != nil || surf.AccountID != acct.ID || surf.AppID != app.ID || surf.Status == state.SurfaceStatusDeleted {
+		s.notFound(w, "no such surface")
+		return state.TenantSurface{}, false
+	}
+	return surf, true
+}
+
+// Single surface + its hostnames.
 func (s *server) getTenantSurface(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if !s.runtimeBool(runtimeConfigTenantSurfaces, api.TenantSurfacesEnabled()) {
 		api.WriteProblem(w, api.ErrTenantSurfacesNotEnabled())
 		return
 	}
-	if _, ok := s.loadApp(w, r, acct, r.PathValue("slug")); !ok {
-		return
-	}
-	id := r.PathValue("id")
-	surf, err := s.store.GetTenantSurfaceByID(r.Context(), id)
-	if err != nil || surf.AccountID != acct.ID || surf.Status == state.SurfaceStatusDeleted {
-		s.notFound(w, "no such surface")
+	surf, ok := s.tenantSurfaceForSlug(w, r, acct)
+	if !ok {
 		return
 	}
 	hostnames, herr := s.store.ListTenantHostnamesForSurface(r.Context(), surf.ID)
@@ -354,45 +364,19 @@ func (s *server) getTenantSurface(w http.ResponseWriter, r *http.Request, acct s
 // deleteTenantSurface — DELETE /v1/apps/{slug}/tenant-surfaces/{id}.
 // Soft-delete (PR-A: DeleteTenantSurface flips status to 'deleted'
 // so the audit + cert_history paths keep referencing the row).
-// We also cascade-delete the hostnames — the surface is gone
-// from a routing perspective; orphan hostnames serve no
-// purpose and trip the UQ on a future re-add. The notify fires
-// so gatewayd drops any in-flight cert work. Soft-deleted
-// surfaces are NOT re-deletable (404 — same as missing).
+// The authorized surface and hostname reservations are removed atomically.
+// Soft-deleted surfaces are not re-deletable (404, as for a missing row).
 func (s *server) deleteTenantSurface(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if !s.runtimeBool(runtimeConfigTenantSurfaces, api.TenantSurfacesEnabled()) {
 		api.WriteProblem(w, api.ErrTenantSurfacesNotEnabled())
 		return
 	}
-	if _, ok := s.loadApp(w, r, acct, r.PathValue("slug")); !ok {
+	surf, ok := s.tenantSurfaceForSlug(w, r, acct)
+	if !ok {
 		return
 	}
-	id := r.PathValue("id")
-	surf, err := s.store.GetTenantSurfaceByID(r.Context(), id)
-	if err != nil || surf.AccountID != acct.ID || surf.Status == state.SurfaceStatusDeleted {
-		s.notFound(w, "no such surface")
-		return
-	}
-	// Cascade hostnames first so a future re-add of the same
-	// hostname to a new surface doesn't trip ErrConflict. The
-	// first failure (list OR per-row delete) is propagated to
-	// the caller as a 500 — a partial-cascade leaves orphan
-	// hostname rows that block the re-add via the global UQ
-	// (migrations/00243:99). Surface is NOT deleted if the
-	// cascade fails; the operator can retry the DELETE.
-	hostnames, err := s.store.ListTenantHostnamesForSurface(r.Context(), surf.ID)
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not list tenant hostnames for cascade"))
-		return
-	}
-	for _, h := range hostnames {
-		if err := s.store.DeleteTenantHostname(r.Context(), h.Hostname); err != nil {
-			api.WriteProblem(w, api.ErrCapacity("could not cascade delete tenant hostname"))
-			return
-		}
-	}
-	if err := s.store.DeleteTenantSurface(r.Context(), surf.ID); err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not delete tenant surface"))
+	if problem := s.deleteTenantSurfaceIntent(r.Context(), surf.ID, acct.ID); problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
 	// No explicit notify: the trigger at migrations/00243:127-145
@@ -420,13 +404,8 @@ func (s *server) addTenantHostname(w http.ResponseWriter, r *http.Request, acct 
 		api.WriteProblem(w, api.ErrTenantSurfacesNotEnabled())
 		return
 	}
-	if _, ok := s.loadApp(w, r, acct, r.PathValue("slug")); !ok {
-		return
-	}
-	id := r.PathValue("id")
-	surf, err := s.store.GetTenantSurfaceByID(r.Context(), id)
-	if err != nil || surf.AccountID != acct.ID || surf.Status == state.SurfaceStatusDeleted {
-		s.notFound(w, "no such surface")
+	surf, ok := s.tenantSurfaceForSlug(w, r, acct)
+	if !ok {
 		return
 	}
 	var req api.AddTenantHostnameRequest
@@ -475,7 +454,8 @@ func (s *server) removeTenantHostname(w http.ResponseWriter, r *http.Request, ac
 		api.WriteProblem(w, api.ErrTenantSurfacesNotEnabled())
 		return
 	}
-	if _, ok := s.loadApp(w, r, acct, r.PathValue("slug")); !ok {
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
 		return
 	}
 	surfID := r.PathValue("id")
@@ -490,12 +470,12 @@ func (s *server) removeTenantHostname(w http.ResponseWriter, r *http.Request, ac
 		return
 	}
 	surf, err := s.store.GetTenantSurfaceByID(r.Context(), surfID)
-	if err != nil || surf.AccountID != acct.ID {
+	if err != nil || surf.AccountID != acct.ID || surf.AppID != app.ID {
 		s.notFound(w, "no such hostname")
 		return
 	}
-	if err := s.store.DeleteTenantHostname(r.Context(), hostname); err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not delete tenant hostname"))
+	if problem := s.deleteTenantHostnameIntent(r.Context(), hostname, surfID); problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
 	// No explicit notify: the trigger at migrations/00243:127-145
@@ -564,4 +544,32 @@ func hostnameStrings(hostnames []state.TenantHostname) []string {
 		out[i] = h.Hostname
 	}
 	return out
+}
+
+func (s *server) deleteTenantSurfaceIntent(ctx context.Context, surface, account string) *api.Problem {
+	removal, ok := s.store.(state.TenantSurfaceRemovalOwnerStore)
+	if !ok {
+		return api.ErrCapacity("atomic tenant surface removal is unavailable")
+	}
+	if err := removal.DeleteTenantSurfaceWithHostnames(ctx, surface, account); err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			return api.NewProblem(http.StatusNotFound, api.CodeValidation, "Surface missing", "no such surface")
+		}
+		return trafficproblem.TenantBinding(err, api.ErrCapacity("could not delete tenant surface"))
+	}
+	return nil
+}
+
+func (s *server) deleteTenantHostnameIntent(ctx context.Context, hostname, surface string) *api.Problem {
+	removal, ok := s.store.(state.TenantHostnameRemovalOwnerStore)
+	if !ok {
+		return api.ErrCapacity("owner-bound tenant hostname removal is unavailable")
+	}
+	if err := removal.DeleteTenantHostnameForSurface(ctx, hostname, surface); err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			return api.NewProblem(http.StatusNotFound, api.CodeValidation, "Hostname missing", "no such hostname")
+		}
+		return trafficproblem.TenantBinding(err, api.ErrCapacity("could not delete tenant hostname"))
+	}
+	return nil
 }

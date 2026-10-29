@@ -22,7 +22,7 @@ export type ServiceMapEdge = {
   latency_p50_ms: number;
   latency_p95_ms: number;
   /**
-   * Calls that found the target parked and waited for it to restore (ADR-196).
+   * Calls that found the target parked and waited for it to restore.
    */
   cold_calls: number;
   /**
@@ -30,15 +30,15 @@ export type ServiceMapEdge = {
    */
   cold_call_pct: number;
   /**
-   * The caller has not opted into wake-ahead (ADR-977) and its calls
+   * The caller has not opted into wake-ahead and its calls
    * mostly wake the target: at least 20 cold calls in the window,
    * making up at least half of the edge's calls. Private TCP sessions
-   * count as calls (ADR-1134).
+   * count as calls.
    *
    */
   suggest_wake_ahead: boolean;
   /**
-   * Wake-aheads (ADR-977) the caller's wakes started for this target in the window.
+   * Wake-aheads the caller's wakes started for this target in the window.
    */
   wake_ahead_started: number;
   /**
@@ -46,7 +46,7 @@ export type ServiceMapEdge = {
    */
   wake_ahead_used: number;
   /**
-   * Private TCP sessions (ADR-576) from the caller to the target in the window, excluding identity, authorization and plan session-limit refusals.
+   * Private TCP sessions from the caller to the target in the window, excluding identity, authorization and plan session-limit refusals.
    */
   tcp_sessions: number;
   /**

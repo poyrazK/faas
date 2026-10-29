@@ -158,10 +158,10 @@ func TestResourcePreparedCommitFailuresRetainAndRetry(t *testing.T) {
 	for _, phase := range []string{"intent", "transfer", "adoption", "retirement", "transfer_before_rename"} {
 		t.Run(phase, func(t *testing.T) {
 			m, p, j, f := preparedJournalFixture(t)
-			syncDir := j.directorySync
+			syncDir := j.commitSync
 			injected := errors.New("prepared directory fsync unavailable")
 			if phase == "intent" {
-				j.directorySync = func() error { return injected }
+				j.commitSync = func(durable bool) error { return injected }
 				fillTestPreparedPool(t, m, p, 100)
 				if len(f.bindings)+len(f.links) != 0 || len(p.ready) != 0 || len(p.retired) != 1 || len(m.alloc.reserved) != 1 {
 					t.Fatal("failed spare commit created resources or returned slot")
@@ -183,7 +183,7 @@ func TestResourcePreparedCommitFailuresRetainAndRetry(t *testing.T) {
 					return
 				}
 				if phase == "transfer" {
-					j.directorySync = func() error { return injected }
+					j.commitSync = func(durable bool) error { return injected }
 					p.move = func(string, string) error { t.Fatal("namespace moved after failed transfer commit"); return nil }
 					if p.claim(idLive, policy) != nil || len(p.retired) != 1 || m.LeasedCount() != 1 {
 						t.Fatal("failed transfer released adopted slot")
@@ -193,7 +193,7 @@ func TestResourcePreparedCommitFailuresRetainAndRetry(t *testing.T) {
 					if e == nil {
 						t.Fatal("claim failed")
 					}
-					j.directorySync = func() error { return injected }
+					j.commitSync = func(durable bool) error { return injected }
 					if phase == "adoption" {
 						if err := m.journalLease(journalTestLease(idLive, e.lease.Slot)); !errors.Is(err, injected) {
 							t.Fatalf("adoption commit: %v", err)
@@ -205,7 +205,7 @@ func TestResourcePreparedCommitFailuresRetainAndRetry(t *testing.T) {
 					}
 				}
 			}
-			j.directorySync = syncDir
+			j.commitSync = syncDir
 			retired := p.retired
 			p.retired = nil
 			for _, e := range retired {

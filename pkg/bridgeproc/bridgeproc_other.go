@@ -8,7 +8,7 @@ import "errors"
 // them, so the bridge packages still build and unit-test. A requested
 // credential check cannot be honoured, so it fails closed.
 func harden(getenv func(string) string) error {
-	if getenv(ExpectUIDEnv) != "" {
+	if getenv(ExpectUIDEnv) != "" || getenv(DropToUIDEnv) != "" {
 		return errors.New("bridge credential checks are supported only on linux")
 	}
 	return nil

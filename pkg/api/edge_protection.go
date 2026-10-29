@@ -24,10 +24,25 @@ type EdgeProtectionResponse struct {
 	// Challenge counts kind=challenge decisions (ADR-831 amendment 7). Its
 	// 403s also appear in Rejections under gate "challenge".
 	Challenge EdgeProtectionChallenge `json:"challenge"`
+	// AttackMode is the app's attack-mode switch (ADR-20261021220456). It is
+	// read from the rules, not Prometheus, so it is current even when the
+	// counts are degraded. Its challenges count in Challenge.
+	AttackMode EdgeAttackModeStatus `json:"attack_mode"`
+	// AICrawlers counts requests whose User-Agent names an AI crawler
+	// (ADR-20261022083601), largest first, before any rule acted on them.
+	AICrawlers []EdgeProtectionAICrawler `json:"ai_crawlers"`
 	// Penalty counts penalty boxes (ADR-20261022105846): Boxed clients a
 	// rule's penalty boxed, Rejected requests refused from boxed clients.
 	// The refusals also appear in Rejections under gate "penalty".
 	Penalty EdgeProtectionPenalty `json:"penalty"`
+}
+
+// EdgeProtectionAICrawler is one AI crawler's requests over the range.
+type EdgeProtectionAICrawler struct {
+	Name     string `json:"name"`
+	Operator string `json:"operator"`
+	Purpose  string `json:"purpose"`
+	Count    int64  `json:"count"`
 }
 
 // EdgeProtectionPenalty is the penalty-box part of an

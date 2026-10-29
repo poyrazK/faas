@@ -5,7 +5,7 @@ from uuid import UUID
 
 import httpx
 
-from faas_sdk.api.storage import (
+from faas_sdk.preview.api.storage import (
     get_object_version_legal_hold,
     get_object_version_protection,
     get_object_version_retention,
@@ -13,7 +13,7 @@ from faas_sdk.api.storage import (
     put_object_version_retention,
 )
 from faas_sdk.client import AuthenticatedClient
-from faas_sdk.models import (
+from faas_sdk.preview.models import (
     ObjectVersionLegalHold,
     ObjectVersionLegalHoldRequest,
     ObjectVersionProtection,
@@ -85,7 +85,7 @@ def test_version_protection_roundtrip() -> None:
 
 
 def test_event_hold_protection_requests() -> None:
-    from faas_sdk.models import ObjectRetentionPeriod
+    from faas_sdk.preview.models import ObjectRetentionPeriod
 
     operation = UUID("00000000-0000-4000-8000-000000000001")
     bucket = UUID("00000000-0000-4000-8000-000000000002")

@@ -33,20 +33,26 @@ const (
 )
 
 // EdgeRuleKnownBot is a crawler the gateway can verify: a request whose
-// User-Agent carries one of Tokens is that bot only when the client IP's
-// reverse DNS name ends in one of DNSSuffixes and resolves back to the IP.
+// User-Agent carries one of Tokens is that bot only when the client IP is
+// in the operator's published ranges at RangesURL (ADR-20261022083601), or
+// its reverse DNS name ends in one of DNSSuffixes and resolves back to the
+// IP.
 type EdgeRuleKnownBot struct {
 	Name        string
 	Tokens      []string // lowercase User-Agent substrings
 	DNSSuffixes []string // lowercase, each starting with "."
+	RangesURL   string   // "" = DNS only
 }
 
 // EdgeRuleKnownBots are the verifiable crawlers, from each operator's
 // published verification guidance.
 var EdgeRuleKnownBots = []EdgeRuleKnownBot{
-	{Name: "googlebot", Tokens: []string{"googlebot", "google-inspectiontool", "adsbot-google", "mediapartners-google", "storebot-google", "googleother"}, DNSSuffixes: []string{".googlebot.com", ".google.com"}},
-	{Name: "bingbot", Tokens: []string{"bingbot", "adidxbot", "bingpreview", "microsoftpreview"}, DNSSuffixes: []string{".search.msn.com"}},
-	{Name: "applebot", Tokens: []string{"applebot"}, DNSSuffixes: []string{".applebot.apple.com"}},
+	{Name: "googlebot", Tokens: []string{"googlebot", "google-inspectiontool", "adsbot-google", "mediapartners-google", "storebot-google", "googleother"}, DNSSuffixes: []string{".googlebot.com", ".google.com"},
+		RangesURL: "https://developers.google.com/static/crawling/ipranges/common-crawlers.json"},
+	{Name: "bingbot", Tokens: []string{"bingbot", "adidxbot", "bingpreview", "microsoftpreview"}, DNSSuffixes: []string{".search.msn.com"},
+		RangesURL: "https://www.bing.com/toolbox/bingbot.json"},
+	{Name: "applebot", Tokens: []string{"applebot"}, DNSSuffixes: []string{".applebot.apple.com"},
+		RangesURL: "https://search.developer.apple.com/applebot.json"},
 	{Name: "yandexbot", Tokens: []string{"yandexbot", "yandeximages", "yandexmobilebot"}, DNSSuffixes: []string{".yandex.ru", ".yandex.net", ".yandex.com"}},
 	{Name: "baiduspider", Tokens: []string{"baiduspider"}, DNSSuffixes: []string{".baidu.com", ".baidu.jp"}},
 	{Name: "yahoo", Tokens: []string{"yahoo! slurp"}, DNSSuffixes: []string{".crawl.yahoo.net"}},
@@ -68,15 +74,6 @@ func ClaimedEdgeRuleBot(userAgent string) (EdgeRuleKnownBot, bool) {
 		}
 	}
 	return EdgeRuleKnownBot{}, false
-}
-
-func knownEdgeRuleBot(name string) bool {
-	for _, b := range EdgeRuleKnownBots {
-		if b.Name == name {
-			return true
-		}
-	}
-	return false
 }
 
 var (

@@ -5,8 +5,8 @@
 /**
  * Slim per-app identification embedded in `AppWakeTimelineResponse`.
  * Carries only the fields the dashboard SPA needs for the
- * wake-timeline header (slug + app_id). The wider
- * pkg/dashboard.AppListItem type carries template-specific
+ * wake-timeline header (slug + app_id). The dashboard's wider
+ * app list item carries template-specific
  * glyph/badge fields (SLO badge, StateBadge*, QuotaLabel) that
  * don't belong on the wire.
  *

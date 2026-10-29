@@ -33,6 +33,27 @@ func TestRetryBudgetCapsAggregateAmplificationAndResets(t *testing.T) {
 	}
 }
 
+func TestRetryBudgetCounterModeIsWiringRatherThanHealth(t *testing.T) {
+	var unwired *RetryBudget
+	if unwired.CounterMode() != "unwired" || NewRetryBudget(time.Second, nil).CounterMode() != "local" {
+		t.Fatal("nil or process-local budget claimed shared wiring")
+	}
+	shared, err := NewSharedRetryBudget(&failingOriginalBudget{})
+	if err != nil || shared.CounterMode() != "shared" {
+		t.Fatalf("shared wiring = %v, %v", shared, err)
+	}
+	server := miniredis.RunT(t)
+	remote, err := NewRedisRetryBudget(t.Context(), "redis://"+server.Addr(), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer remote.Close()
+	server.Close()
+	if remote.CounterMode() != "redis" {
+		t.Fatal("backend outage changed the wiring observation")
+	}
+}
+
 func TestRedisRetryBudgetSharesAllowanceAcrossGateways(t *testing.T) {
 	server := miniredis.RunT(t)
 	url := "redis://" + server.Addr()

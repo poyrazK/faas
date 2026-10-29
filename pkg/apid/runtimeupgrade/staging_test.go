@@ -290,6 +290,31 @@ func TestStagingRechecksPublishedBytesAndQualification(t *testing.T) {
 	}
 }
 
+// adr: 20261019071733 amendment 1 — a runtime upgrade is a production
+// release, so a deploy freeze on the app refuses it until lifted.
+func TestStagingRefusesFrozenApp(t *testing.T) {
+	store := state.NewMemStore()
+	s, r, _ := stagingFixture(t, store)
+	now := time.Now().UTC()
+	frozen, err := store.CreateReleaseFreeze(t.Context(), state.ReleaseFreeze{AccountID: r.AccountID, AppID: r.AppID,
+		Kind: state.ReleaseFreezeWindow, StartsAt: &now, Reason: "launch week", CreatedBy: "ops"}, api.ReleaseFreezesMax, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.StageAndRegister(t.Context(), r); !errors.Is(err, ErrReleaseFrozen) {
+		t.Fatalf("StageAndRegister during a freeze = %v, want ErrReleaseFrozen", err)
+	}
+	if _, err := store.RuntimeUpgradeOperation(t.Context(), r.AccountID, r.ID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatal("a frozen app's upgrade was registered", err)
+	}
+	if _, err := store.LiftReleaseFreeze(t.Context(), r.AccountID, frozen.ID, "ops", now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.StageAndRegister(t.Context(), r); err != nil {
+		t.Fatal("upgrade after the freeze lifted:", err)
+	}
+}
+
 func TestStagingRejectsCorruptSourceAndUnsafePaths(t *testing.T) {
 	for _, fault := range []string{"digest", "short", "long", "symlink", "directory_link", "fifo", "outside", "candidate_corrupt", "candidate_link", "object_corrupt", "outage", "foreign_account", "invalid_id", "noncanonical_operation", "changed_handler"} {
 		t.Run(fault, func(t *testing.T) {

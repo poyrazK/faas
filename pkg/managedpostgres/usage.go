@@ -58,6 +58,9 @@ type UsageCollectorOptions struct {
 	Logger       *slog.Logger
 	Observe      func(UsageCollectionObservation)
 	ObserveSweep func(UsageCollectionSummary, error)
+	// AfterSweep runs after every sweep, successful or not, on the
+	// collector's goroutine (the compute cap enforcer, ADR-20261025094915).
+	AfterSweep func(context.Context)
 }
 
 // UsageCollector imports complete provider windows into the durable ledger.
@@ -74,6 +77,7 @@ type UsageCollector struct {
 	logger       *slog.Logger
 	observe      func(UsageCollectionObservation)
 	observeSweep func(UsageCollectionSummary, error)
+	afterSweep   func(context.Context)
 }
 
 func NewUsageCollector(registry *Registry, store UsageStore, options UsageCollectorOptions) (*UsageCollector, error) {
@@ -112,6 +116,7 @@ func NewUsageCollector(registry *Registry, store UsageStore, options UsageCollec
 		logger:       options.Logger,
 		observe:      options.Observe,
 		observeSweep: options.ObserveSweep,
+		afterSweep:   options.AfterSweep,
 	}, nil
 }
 
@@ -451,6 +456,9 @@ func (c *UsageCollector) Run(ctx context.Context) error {
 	for {
 		if _, err := c.Collect(ctx); err != nil && ctx.Err() == nil {
 			c.logger.Warn("managed postgres usage collection sweep failed", "error", err)
+		}
+		if c.afterSweep != nil && ctx.Err() == nil {
+			c.afterSweep(ctx)
 		}
 		select {
 		case <-ctx.Done():

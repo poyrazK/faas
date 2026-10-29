@@ -6,7 +6,7 @@ import type { ProfileCapture } from './ProfileCapture.js';
 import type { ProfileCaptureFunctionDelta } from './ProfileCaptureFunctionDelta.js';
 import type { ProfileCaptureStackDelta } from './ProfileCaptureStackDelta.js';
 /**
- * One kind compared between two ready captures of an app (ADR-1155). Values keep the kind's unit and are not rescaled.
+ * One kind compared between two ready captures of an app. Values keep the kind's unit and are not rescaled.
  */
 export type ProfileCaptureDiff = {
   baseline: ProfileCapture;

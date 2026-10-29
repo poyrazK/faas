@@ -7,7 +7,7 @@ import type { DeploymentDependencyGate } from './DeploymentDependencyGate.js';
 import type { DeploymentHostingVerification } from './DeploymentHostingVerification.js';
 import type { DeploymentStageHistoryEntry } from './DeploymentStageHistoryEntry.js';
 /**
- * Customer-visible deployment stage progress (ADR-117). `current` is the open stage, or an empty string once the deployment is live, failed or cancelled and that stage has moved into `history`.
+ * Customer-visible deployment stage progress. `current` is the open stage, or an empty string once the deployment is live, failed or cancelled and that stage has moved into `history`.
  */
 export type DeploymentStageState = {
   current: '' | 'source_download' | 'dependency_restore' | 'image_build' | 'security_scan' | 'snapshot_prepare' | 'readiness';
@@ -20,7 +20,7 @@ export type DeploymentStageState = {
    */
   history: Array<DeploymentStageHistoryEntry>;
   /**
-   * Stage a retry asked to resume from (ADR-162). Present only on retry deployments, which always restart at source_download.
+   * Stage a retry asked to resume from. Present only on retry deployments, which always restart at source_download.
    */
   retry_requested_stage?: 'source_download' | 'dependency_restore' | 'image_build' | 'security_scan' | 'snapshot_prepare' | 'readiness';
   /**

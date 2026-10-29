@@ -384,7 +384,7 @@ func TestEventRecipientClaimsConcurrentReplayIsScoped(t *testing.T) {
 			}
 		}
 		workers.Wait()
-		if n, err := store.PruneDeliveredPublishedEvents(ctx, time.Now().Add(state.PublishedEventIdentityRetention+time.Minute), 100); err != nil || n != 1 {
+		if n, err := store.PruneSettledPublishedEvents(ctx, time.Now().Add(api.EventSettledRetentionMax()+time.Minute), 100); err != nil || n != 1 {
 			t.Fatalf("concurrent settlement = %d, %v", n, err)
 		}
 	})
@@ -411,7 +411,7 @@ func TestEventRecipientClaimsFenceExpiredWorkersAndRetainActiveWork(t *testing.T
 		if err := store.FinishPublishedEventRecipient(ctx, claim, progress, expiredAt); !errors.Is(err, state.ErrConflict) {
 			t.Fatalf("expired worker acknowledged before reclaim: %v", err)
 		}
-		if n, err := store.PruneDeliveredPublishedEvents(ctx, expiredAt.Add(state.PublishedEventIdentityRetention), 100); err != nil || n != 0 {
+		if n, err := store.PruneSettledPublishedEvents(ctx, expiredAt.Add(api.EventSettledRetentionMax()+time.Hour), 100); err != nil || n != 0 {
 			t.Fatalf("active receipt pruned: %d, %v", n, err)
 		}
 		var replacement *state.PublishedEventRecipientWork
@@ -431,7 +431,7 @@ func TestEventRecipientClaimsFenceExpiredWorkersAndRetainActiveWork(t *testing.T
 		if err := store.FinishPublishedEventRecipient(ctx, claim, progress, expiredAt); !errors.Is(err, state.ErrConflict) {
 			t.Fatalf("old worker acknowledged after reclaim: %v", err)
 		}
-		if n, err := store.PruneDeliveredPublishedEvents(ctx, expiredAt.Add(state.PublishedEventIdentityRetention), 100); err != nil || n != 1 {
+		if n, err := store.PruneSettledPublishedEvents(ctx, expiredAt.Add(api.EventSettledRetentionMax()+time.Hour), 100); err != nil || n != 1 {
 			t.Fatalf("settled receipt retention = %d, %v", n, err)
 		}
 		if _, err := store.ClaimDuePublishedEventRecipient(ctx, expiredAt.Add(time.Hour)); !errors.Is(err, state.ErrNotFound) {

@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { ReleaseApprovalDecision } from './ReleaseApprovalDecision.js';
 /**
- * A release's approval state (ADR-20261020085706).
+ * A release's approval state.
  */
 export type ReleaseApprovalStatus = {
   deployment_id: string;

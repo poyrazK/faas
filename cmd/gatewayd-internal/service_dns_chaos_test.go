@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -115,5 +117,31 @@ func TestServiceDNSChaosResolverRejectsAmbiguousLiveSourceIP(t *testing.T) {
 	resolve := newServiceDNSChaosResolver(f.store, f.node.Name)
 	if policy, err := resolve(f.ctx, "10.100.0.4:53", "cache"); err != nil || policy.RunID != "" || len(policy.Lease.Rules) != 0 {
 		t.Fatalf("ambiguous source address policy = (%+v, %v), want no chaos", policy, err)
+	}
+}
+
+type dnsChaosPolicyStoreFunc func(context.Context, string, string, string) (state.ScenarioTestDNSChaosPolicy, error)
+
+func (f dnsChaosPolicyStoreFunc) ScenarioTestDNSChaosByHostIP(ctx context.Context, nodeName, hostIP, target string) (state.ScenarioTestDNSChaosPolicy, error) {
+	return f(ctx, nodeName, hostIP, target)
+}
+
+// A private name that cannot be a workload has no policy: it must not count as
+// an unavailable store, which would log and pause chaos for the whole node.
+func TestServiceDNSChaosResolverTreatsUnaddressableTargetsAsNoPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		err     error
+		wantErr bool
+	}{
+		{err: state.ErrInvalidArgument},
+		{err: errors.New("store unavailable"), wantErr: true},
+	} {
+		resolve := newServiceDNSChaosResolver(dnsChaosPolicyStoreFunc(func(context.Context, string, string, string) (state.ScenarioTestDNSChaosPolicy, error) {
+			return state.ScenarioTestDNSChaosPolicy{}, tc.err
+		}), "node-a")
+		policy, err := resolve(context.Background(), "10.100.0.5:53", "x")
+		if (err != nil) != tc.wantErr || policy.RunID != "" {
+			t.Fatalf("store error %v: policy=%+v err=%v, want error=%v", tc.err, policy, err, tc.wantErr)
+		}
 	}
 }

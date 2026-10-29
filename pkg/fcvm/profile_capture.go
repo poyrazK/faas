@@ -15,7 +15,10 @@ import (
 
 // Typed guest refusals for an on-demand profile capture (ADR-1155).
 var (
-	ErrProfileCaptureUnsupported = errors.New("guest has no profile collectors for on-demand capture")
+	// The collectors are stamped into a deployment when it is created, so a
+	// deployment made before on-demand profiling reached its installation or
+	// plan needs a redeploy.
+	ErrProfileCaptureUnsupported = errors.New("this deployment has no profile collectors; redeploy the app to enable on-demand captures")
 	ErrProfileCaptureBusy        = errors.New("a profile capture is already running on this instance")
 	ErrProfileCaptureSuspended   = errors.New("instance is checkpointing")
 	ErrProfileCaptureNotRunning  = errors.New("instance is not running on this host")

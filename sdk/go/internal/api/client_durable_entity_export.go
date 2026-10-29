@@ -6,7 +6,7 @@ import (
 	"net/url"
 )
 
-func (c *Client) ExportDurableEntity(ctx context.Context, slug string, request DurableEntityInspectRequest) (DurableEntityStateExport, error) {
+func (c *PreviewClient) ExportDurableEntity(ctx context.Context, slug string, request DurableEntityInspectRequest) (DurableEntityStateExport, error) {
 	var out DurableEntityStateExport
 	if request.Namespace == "" || request.Key == "" {
 		return out, errors.New("entity export requires namespace and key")
@@ -23,7 +23,7 @@ func (c *Client) ExportDurableEntity(ctx context.Context, slug string, request D
 
 // RestoreDurableEntity requires an explicit stable ID. Retry uncertain outcomes
 // with the identical request, including the original expected version.
-func (c *Client) RestoreDurableEntity(ctx context.Context, slug string, request DurableEntityRestoreRequest) (DurableEntityRestoreResponse, error) {
+func (c *PreviewClient) RestoreDurableEntity(ctx context.Context, slug string, request DurableEntityRestoreRequest) (DurableEntityRestoreResponse, error) {
 	var out DurableEntityRestoreResponse
 	if request.Namespace == "" || request.Key == "" || request.RequestID == "" || request.ExpectedVersion == 0 {
 		return out, errors.New("entity restore requires selectors, request_id and expected_version")

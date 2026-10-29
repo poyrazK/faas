@@ -58,7 +58,7 @@ app disablement, and normal tenant/environment admission are rechecked.
 Import the standalone browser-safe subpath:
 
 ```ts
-import {connectDurableEntityBrowserSession} from '@gregale/sdk-node/durable-entities/browser';
+import {connectDurableEntityBrowserSession} from '@gregale/sdk-node/preview/durable-entities/browser';
 const socket = connectDurableEntityBrowserSession('https://api.example.com', grant);
 ```
 

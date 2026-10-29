@@ -34,7 +34,7 @@ func (s *Service) CreateReplay(w http.ResponseWriter, r *http.Request, acct stat
 		return
 	}
 	store, ok := s.replayStore(w)
-	if !ok {
+	if !ok || !s.requestVisible(w, r, acct, integrationID, requestID, "logged AI call not found") {
 		return
 	}
 	replay := state.OutboundAIReplay{AccountID: acct.ID, IntegrationID: integrationID, LogID: requestID}
@@ -77,6 +77,8 @@ func (s *Service) GetReplay(w http.ResponseWriter, r *http.Request, acct state.A
 		httpkit.NotFound(w, "AI replay not found")
 	case err != nil:
 		problem(w, http.StatusServiceUnavailable, "outbound_ai_unavailable", "The AI replay is unavailable")
+	case !s.requestVisible(w, r, acct, replay.IntegrationID, replay.LogID, "AI replay not found"):
+		// requestVisible wrote the problem.
 	default:
 		w.Header().Set("Cache-Control", "no-store")
 		httpkit.WriteJSON(w, http.StatusOK, replayResponse(replay))

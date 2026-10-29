@@ -169,21 +169,7 @@ func previewScalingPolicyFromManifest(cwd string) *api.ScalingPolicy {
 	if err != nil || !ok || m == nil {
 		return nil
 	}
-	if m.Worker != nil && m.Worker.Scale.Metric != "" {
-		return &api.ScalingPolicy{
-			MinInstances: m.Worker.Scale.Min,
-			MaxInstances: m.Worker.Scale.Max,
-			Target: &api.ScalingTarget{
-				Metric: m.Worker.Scale.Metric,
-				Name:   m.Worker.Scale.Name,
-				Value:  m.Worker.Scale.Target,
-			},
-		}
-	}
-	if m.Scaling == nil {
-		return nil
-	}
-	return m.Scaling.ToAPI()
+	return m.ScalingPolicyRequest()
 }
 
 // buildPreviewBuildPlan projects the same source signals used by the deploy
@@ -481,7 +467,30 @@ func buildPending(ctx context.Context, client *api.Client, opts diffCLIOptions, 
 	if !opts.NoTriggers {
 		p.Crons = previewCronsFromManifest(opts.Cwd, opts.Slug)
 	}
+	p.Companions, p.CompanionsKnown = previewCompanionsFromManifest(opts.Cwd)
 	return p
+}
+
+// previewCompanionsFromManifest returns the companions the deploy would send
+// from cwd's gregale.yaml: none when there is no manifest, as the deploy
+// itself sends none (Hunt 14 H14-53). ok is false when the preview cannot
+// tell, so the diff leaves companions out rather than guess.
+func previewCompanionsFromManifest(cwd string) ([]api.DeploymentCompanion, bool) {
+	if cwd == "" {
+		return nil, false
+	}
+	m, found, err := gregalemanifest.Load(cwd)
+	if err != nil {
+		return nil, false
+	}
+	if !found || m == nil {
+		return nil, true
+	}
+	companions, err := m.ToSidecars()
+	if err != nil {
+		return nil, false
+	}
+	return companions.Summaries(), true
 }
 
 // previewCronsFromManifest projects the deploy manifest's cron triggers into

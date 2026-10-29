@@ -17,6 +17,10 @@ package e2e_test
 // the WAF rule's mode (warn by default; observe, or none for no WAF rule) to
 // measure the same path without the in-path check. Run it on the node being
 // measured, with any competing load started from a separate process.
+// FAAS_E2E_WAF_LOAD_GATE=1 turns the report into the edge-waf-blocking
+// release gate (ADR-20261024082000): at 100-500 req/s each rate fails unless
+// the in-path check's p95 is at most 2 ms and at most 0.1% of checks were
+// skipped.
 
 import (
 	"bufio"
@@ -132,7 +136,7 @@ func TestEdgeWAFInlineLoad_E2E(t *testing.T) {
 		before, cpuBefore := scrapeWAFInline(t, h), processCPUSeconds(gatewayPID)
 		got := driveWAFLoad(t, client, h.EdgeURL(), hosts, benign, attacks, rate, time.Duration(seconds)*time.Second)
 		after, cpuAfter := scrapeWAFInline(t, h), processCPUSeconds(gatewayPID)
-		reportWAFLoad(t, rate, got, after.minus(before), cpuAfter-cpuBefore)
+		reportWAFLoad(t, rate, got, after.minus(before), cpuAfter-cpuBefore, os.Getenv("FAAS_E2E_WAF_LOAD_GATE") == "1")
 	}
 }
 
@@ -169,7 +173,7 @@ func seedWAFLoadApps(t *testing.T, h *e2etest.Harness, pool *pgxpool.Pool, key s
 			t.Fatalf("insert preview %s: %v", slug, err)
 		}
 		app := getAppBySlug(t, pool, slug)
-		hosts[i] = fmt.Sprintf("wafload-%d.apps.test.example", i)
+		hosts[i] = fmt.Sprintf("wafload-%d.edge-e2e.example", i)
 		seedRouteSubstitute(t, ctx, pool, accountID, app.ID, hosts[i], slug)
 		if mode != "none" {
 			seedEdgeRuleDirect(t, ctx, pool, accountID, app.ID, hosts[i], state.EdgeRuleKindWAF,
@@ -366,7 +370,16 @@ func (s wafInlineScrape) fractionWithin(bound float64) float64 {
 	return s.buckets[bound] / total
 }
 
-func reportWAFLoad(t *testing.T, rate int, got *wafLoadResult, checks wafInlineScrape, gatewayCPU float64) {
+// The edge-waf-blocking release gate's targets (ADR-20261024082000), held at
+// up to wafGateMaxRate req/s on the reference compute node.
+const (
+	wafGateMaxRate      = 500
+	wafGateP95Seconds   = 0.002
+	wafGateMaxSkipped   = 0.001
+	wafGateMinChecksRun = 1000
+)
+
+func reportWAFLoad(t *testing.T, rate int, got *wafLoadResult, checks wafInlineScrape, gatewayCPU float64, gate bool) {
 	t.Helper()
 	requests := len(got.latencies) + got.requestsFailed
 	checked := checks.buckets[math.Inf(1)]
@@ -390,6 +403,16 @@ func reportWAFLoad(t *testing.T, rate int, got *wafLoadResult, checks wafInlineS
 	}
 	if got.benignWarned > 0 {
 		t.Errorf("rate %d: %d benign requests warned", rate, got.benignWarned)
+	}
+	if gate && rate <= wafGateMaxRate {
+		switch skippedFraction := skipped / math.Max(checked+skipped, 1); {
+		case checked < wafGateMinChecksRun:
+			t.Errorf("gate: rate %d ran %.0f in-path checks, too few to judge (want at least %d)", rate, checked, wafGateMinChecksRun)
+		case checks.quantile(0.95) > wafGateP95Seconds:
+			t.Errorf("gate: rate %d in-path check p95 %.2f ms exceeds %.0f ms", rate, 1000*checks.quantile(0.95), 1000*wafGateP95Seconds)
+		case skippedFraction > wafGateMaxSkipped:
+			t.Errorf("gate: rate %d skipped %.2f%% of in-path checks, over %.1f%%", rate, 100*skippedFraction, 100*wafGateMaxSkipped)
+		}
 	}
 }
 

@@ -4244,9 +4244,15 @@ func (q *Queries) SavePendingMFAEnrollment(ctx context.Context, db DBTX, arg Sav
 }
 
 const scheduleDeletion = `-- name: ScheduleDeletion :one
-UPDATE accounts SET status='deleted_pending',deletion_requested_at=coalesce(deletion_requested_at,clock_timestamp())
-WHERE id=$1 AND status IN ('active','deleted_pending') RETURNING id,email,deletion_requested_at
+UPDATE accounts SET status='deleted_pending',deletion_requested_at=coalesce(deletion_requested_at,clock_timestamp()),
+    deletion_includes_managed_postgres=deletion_includes_managed_postgres OR $1::boolean
+WHERE id=$2 AND status IN ('active','deleted_pending') RETURNING id,email,deletion_requested_at
 `
+
+type ScheduleDeletionParams struct {
+	IncludeManagedPostgres bool
+	ID                     pgtype.UUID
+}
 
 type ScheduleDeletionRow struct {
 	ID                  pgtype.UUID
@@ -4254,26 +4260,32 @@ type ScheduleDeletionRow struct {
 	DeletionRequestedAt pgtype.Timestamptz
 }
 
-func (q *Queries) ScheduleDeletion(ctx context.Context, db DBTX, id pgtype.UUID) (ScheduleDeletionRow, error) {
-	row := db.QueryRow(ctx, scheduleDeletion, id)
+func (q *Queries) ScheduleDeletion(ctx context.Context, db DBTX, arg ScheduleDeletionParams) (ScheduleDeletionRow, error) {
+	row := db.QueryRow(ctx, scheduleDeletion, arg.IncludeManagedPostgres, arg.ID)
 	var i ScheduleDeletionRow
 	err := row.Scan(&i.ID, &i.Email, &i.DeletionRequestedAt)
 	return i, err
 }
 
 const scheduleNonpaymentDeletionAccount = `-- name: ScheduleNonpaymentDeletionAccount :one
-UPDATE accounts SET status='deleted_pending',suspended_reason=NULL,deletion_requested_at=clock_timestamp()
-WHERE id=$1 AND status='suspended' AND deletion_requested_at IS NULL
+UPDATE accounts SET status='deleted_pending',suspended_reason=NULL,deletion_requested_at=clock_timestamp(),
+    deletion_includes_managed_postgres=$1::boolean
+WHERE id=$2 AND status='suspended' AND deletion_requested_at IS NULL
 RETURNING billing_mail_revision,deletion_requested_at
 `
+
+type ScheduleNonpaymentDeletionAccountParams struct {
+	IncludeManagedPostgres bool
+	ID                     pgtype.UUID
+}
 
 type ScheduleNonpaymentDeletionAccountRow struct {
 	BillingMailRevision int64
 	DeletionRequestedAt pgtype.Timestamptz
 }
 
-func (q *Queries) ScheduleNonpaymentDeletionAccount(ctx context.Context, db DBTX, id pgtype.UUID) (ScheduleNonpaymentDeletionAccountRow, error) {
-	row := db.QueryRow(ctx, scheduleNonpaymentDeletionAccount, id)
+func (q *Queries) ScheduleNonpaymentDeletionAccount(ctx context.Context, db DBTX, arg ScheduleNonpaymentDeletionAccountParams) (ScheduleNonpaymentDeletionAccountRow, error) {
+	row := db.QueryRow(ctx, scheduleNonpaymentDeletionAccount, arg.IncludeManagedPostgres, arg.ID)
 	var i ScheduleNonpaymentDeletionAccountRow
 	err := row.Scan(&i.BillingMailRevision, &i.DeletionRequestedAt)
 	return i, err

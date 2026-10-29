@@ -1,7 +1,7 @@
-from faas_sdk.models.mcp_readiness_attention_action import MCPReadinessAttentionAction
-from faas_sdk.models.mcp_readiness_attention_history import MCPReadinessAttentionHistory
-from faas_sdk.models.mcp_readiness_attention_page import MCPReadinessAttentionPage
-from faas_sdk.models.mcp_readiness_incident_event import MCPReadinessIncidentEvent
+from faas_sdk.preview.models.mcp_readiness_attention_action import MCPReadinessAttentionAction
+from faas_sdk.preview.models.mcp_readiness_attention_history import MCPReadinessAttentionHistory
+from faas_sdk.preview.models.mcp_readiness_attention_page import MCPReadinessAttentionPage
+from faas_sdk.preview.models.mcp_readiness_incident_event import MCPReadinessIncidentEvent
 
 
 def test_incident_attention_round_trip():
@@ -72,7 +72,7 @@ def test_incident_attention_round_trip():
 def test_incident_attention_request_paths():
     from uuid import UUID
 
-    from faas_sdk.api.mcp import act_mcp_readiness_attention, list_mcp_readiness_attention
+    from faas_sdk.preview.api.mcp import act_mcp_readiness_attention, list_mcp_readiness_attention
 
     incident = UUID("00000000-0000-0000-0000-000000000001")
     body = MCPReadinessAttentionAction.from_dict(

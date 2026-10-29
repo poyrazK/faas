@@ -220,6 +220,10 @@ func (s *server) createTrigger(w http.ResponseWriter, r *http.Request, acct stat
 		s.notFound(w, "no such app")
 		return
 	}
+	if prob := s.authorizeNamedApp(r, acct, app); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	enabled := true
 	if req.Enabled != nil {
 		enabled = *req.Enabled
@@ -610,12 +614,12 @@ func setRetryPolicyInConfig(config *json.RawMessage, policy *api.RetryPolicyDTO)
 	}
 	b, err := json.Marshal(policy)
 	if err != nil {
-		return api.NewProblem(http.StatusInternalServerError, api.CodeCapacity, "Could not persist retry policy", err.Error())
+		return api.NewProblem(http.StatusInternalServerError, api.CodeCapacity, "Could not persist retry policy", "The retry policy could not be encoded.")
 	}
 	top["retry_policy"] = b
 	merged, err := json.Marshal(top)
 	if err != nil {
-		return api.NewProblem(http.StatusInternalServerError, api.CodeCapacity, "Could not persist retry policy", err.Error())
+		return api.NewProblem(http.StatusInternalServerError, api.CodeCapacity, "Could not persist retry policy", "The trigger config could not be encoded.")
 	}
 	*config = merged
 	return nil
@@ -771,6 +775,12 @@ func (s *server) updateTrigger(w http.ResponseWriter, r *http.Request, acct stat
 	}
 	if req.Schedule != nil {
 		if problem := cronScheduleProblem(*req.Schedule); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
+	}
+	if req.Path != nil {
+		if problem := api.ValidateCronPath(*req.Path); problem != nil {
 			api.WriteProblem(w, problem)
 			return
 		}
@@ -1209,6 +1219,10 @@ func (s *server) batchCreateTrigger(w http.ResponseWriter, r *http.Request, acct
 	app, err := s.store.AppByID(r.Context(), req.AppID)
 	if err != nil || app.AccountID != acct.ID {
 		s.notFound(w, "no such app")
+		return
+	}
+	if prob := s.authorizeNamedApp(r, acct, app); prob != nil {
+		api.WriteProblem(w, prob)
 		return
 	}
 	limits, ok := api.LimitsFor(acct.Plan)

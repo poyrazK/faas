@@ -61,6 +61,13 @@ func (e *Engine) promoteFrozenInstanceLocked(ctx context.Context, app state.App,
 		// The ordinary admission gate owns the capacity result.
 		return WakeResult{}, false, nil
 	}
+	// Frozen time is not billed and a thaw starts billing again, so a thaw
+	// honours the account's spend cap like any wake (ADR-1162, Hunt 18). It
+	// ran before the request gates; the ordinary gate answers the refusal
+	// and the reaper parks the frozen VMs.
+	if e.spendCapReached(ctx, app.AccountID) {
+		return WakeResult{}, false, nil
+	}
 	thawer, ok := e.vmm.(FrozenVMM)
 	if !ok || runtimeValuesHaveEphemeralSecrets(values.Snapshot) {
 		for _, candidate := range candidates {

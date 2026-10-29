@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -21,6 +22,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/platformflags"
+	"github.com/onebox-faas/faas/pkg/productcap"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -245,8 +247,50 @@ func (v view) flag(spec platformflags.Spec) api.OperatorPlatformFlag {
 	out.Convergence = convergence(spec.Consumers, v.receipts[configKey], out.Version, out.Source == "operator")
 	optIns, optInsVersion := v.snapshot.OptIns(spec.Key)
 	out.OptIns = api.OperatorPlatformFlagOptIns{Accounts: len(optIns.Accounts), Orgs: len(optIns.Orgs), Version: optInsVersion}
+	out.Parent, out.Core = spec.Parent, spec.Core
+	out.Maturity, out.Enforcement = capabilityFacts(spec)
 	return out
 }
+
+// capabilityFacts reports the tier of the capability a flag releases and what
+// the flag enforces today (ADR-20261023115741).
+func capabilityFacts(spec platformflags.Spec) (maturity, enforcement string) {
+	enforcement = "handler"
+	if spec.Generated {
+		enforcement = "none"
+	}
+	capability, ok := capabilityIndex()[spec.Capability]
+	if !ok {
+		return "", enforcement
+	}
+	var parts []string
+	if len(capability.Routes) > 0 {
+		parts = append(parts, "routes")
+	}
+	if len(capability.Settings) > 0 {
+		parts = append(parts, "settings")
+	}
+	if len(capability.Consumers) > 0 {
+		parts = append(parts, "daemons")
+	}
+	if len(parts) > 0 {
+		enforcement = strings.Join(parts, "+")
+	}
+	return string(capability.Maturity), enforcement
+}
+
+// capabilityIndex is the embedded product catalog by id, parsed once.
+var capabilityIndex = sync.OnceValue(func() map[string]productcap.Capability {
+	catalog, err := productcap.Load()
+	if err != nil {
+		return nil
+	}
+	out := make(map[string]productcap.Capability, len(catalog.Capabilities))
+	for _, capability := range catalog.Capabilities {
+		out[capability.ID] = capability
+	}
+	return out
+})
 
 func (v view) groups() api.OperatorPlatformFlagGroups {
 	groups, version := v.snapshot.Groups()

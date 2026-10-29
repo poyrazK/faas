@@ -182,6 +182,9 @@ func cmdContext(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
+	if rejectUnexpectedFlagArgs(fs) {
+		return 1
+	}
 	timeoutSet := false
 	fs.Visit(func(f *flag.Flag) {
 		if f.Name == "timeout" {

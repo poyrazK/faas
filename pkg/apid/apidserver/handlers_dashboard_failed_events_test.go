@@ -569,3 +569,74 @@ func TestDashboardFailedEvents_PaginatesAtPageSize(t *testing.T) {
 		t.Fatalf("rendered table rows = %d, want %d including header", rows, apidserver.DashboardFailedEventsPageSize+1)
 	}
 }
+
+// The failed-events console is an account view too: once the creator has left
+// a company, that company's app is gone from the page, cannot be selected,
+// and account-wide or selected actions leave its dead letters alone.
+func TestDashboardFailedEvents_HidesCompanyAppsAfterOffboarding(t *testing.T) {
+	env := newDashboardFailedEventsTestEnv(t)
+	ctx := t.Context()
+	owner, err := env.store.CreateAccount(ctx, "acme-owner@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	org, err := env.store.CreateOrg(ctx, state.Org{Slug: "acme", Name: "Acme", Plan: api.PlanPro})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := env.store.AddOrgMember(ctx, org.ID, owner.ID, state.OrgRoleOwner, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := env.store.AddOrgMember(ctx, org.ID, env.account.ID, state.OrgRoleDeveloper, nil); err != nil {
+		t.Fatal(err)
+	}
+	company, err := env.store.CreateApp(ctx, state.App{AccountID: env.account.ID, OrgID: org.ID, Slug: "acme-worker",
+		Type: state.AppTypeApp, Runtime: "node22", Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	own, err := env.store.CreateApp(ctx, state.App{AccountID: env.account.ID, Slug: "own-worker",
+		Type: state.AppTypeApp, Runtime: "node22", Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	companyInv, companyEvent := seedDashboardFailedInvocation(t, env.store, env.account.ID, company.ID)
+	seedDashboardFailedInvocation(t, env.store, env.account.ID, own.ID)
+	if err := env.store.RemoveOrgMember(ctx, org.ID, env.account.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	get := func(path string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.AddCookie(env.session)
+		env.h.ServeHTTP(rec, req)
+		return rec
+	}
+	if page := get("/dashboard/failed-events"); page.Code != http.StatusOK || strings.Contains(page.Body.String(), company.Slug) || strings.Contains(page.Body.String(), companyEvent) {
+		t.Fatalf("failed events page = %d, still shows the company app", page.Code)
+	}
+	if page := get("/dashboard/failed-events?app=" + company.Slug); page.Code != http.StatusNotFound {
+		t.Fatalf("selecting the company app = %d, want 404", page.Code)
+	}
+	csrf := dashboardFailedEventsCSRF(t, env)
+	replayAll := apidserver.DashboardPOST(t, env.h, env.session, "/dashboard/failed-events/replay-all", map[string]string{
+		middleware.FormFieldName: csrf.Value,
+	}, csrf)
+	if loc := replayAll.Header().Get("Location"); replayAll.Code != http.StatusSeeOther || !strings.Contains(loc, "count=1") {
+		t.Fatalf("account replay-all = %d %q, want only the creator's own event", replayAll.Code, loc)
+	}
+	discard := dashboardPOSTForm(t, env.h, env.session, "/dashboard/failed-events/discard-selected", url.Values{
+		middleware.FormFieldName: []string{csrf.Value},
+		"event_id":               []string{companyEvent},
+	}, csrf)
+	if loc := discard.Header().Get("Location"); !strings.Contains(loc, "error") {
+		t.Fatalf("discarding the company event = %q, want an error flash", loc)
+	}
+	if got, err := env.store.InvocationByID(ctx, companyInv.ID); err != nil || got.State != state.InvocationDeadLetter {
+		t.Fatalf("company dead letter after the creator's actions = %+v, %v", got.State, err)
+	}
+	if _, err := env.store.DeadLetterEventByAccountID(ctx, env.account.ID, companyEvent); err != nil {
+		t.Fatalf("company dead letter was purged: %v", err)
+	}
+}

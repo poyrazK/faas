@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { ProjectsService, OpenAPI } from '../src/index.js';
+import { ProjectsService, OpenAPI } from '../src/preview.js';
 
 test('migration applies the reviewed source and request-only initial configuration', async () => {
   const originalFetch = globalThis.fetch;

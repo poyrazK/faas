@@ -20,6 +20,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sessioncookie"
 )
 
 const (
@@ -330,7 +331,7 @@ func (c *operatorHTTPClient) doJSONWithHeaders(ctx context.Context, method, path
 		}
 	}
 	if c.session != nil && c.session.Cookie != "" {
-		req.AddCookie(&http.Cookie{Name: "faas_sid", Value: c.session.Cookie})
+		sessioncookie.AddToRequest(req, c.session.Cookie)
 	}
 	for _, cookie := range extraCookies {
 		req.AddCookie(cookie)
@@ -340,10 +341,7 @@ func (c *operatorHTTPClient) doJSONWithHeaders(ctx context.Context, method, path
 		return fmt.Errorf("dial apid: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	for _, cookie := range resp.Cookies() {
-		if cookie.Name != "faas_sid" {
-			continue
-		}
+	if cookie, ok := sessioncookie.FromResponse(resp); ok {
 		c.session.Cookie = cookie.Value
 		if cookie.MaxAge > 0 {
 			c.session.ExpiresAt = time.Now().UTC().Add(time.Duration(cookie.MaxAge) * time.Second)

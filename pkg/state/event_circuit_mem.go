@@ -160,3 +160,13 @@ func (m *MemStore) observeCircuitLocked(work *PublishedEventWork, sub string, p 
 func EventCircuitWaitProgress(previous PublishedEventRecipientProgress, total int, reason string, next time.Time) PublishedEventRecipientProgress {
 	return eventSubscriptionControlProgress(previous, total, reason, next)
 }
+
+// EventCapabilityWaitReason marks a recipient held while the events
+// capability is off for its app's account (ADR-20261027125625).
+const EventCapabilityWaitReason = "events_paused"
+
+// EventCapabilityWaitProgress holds a recipient until next without spending
+// the routing attempt its claim took.
+func EventCapabilityWaitProgress(previous PublishedEventRecipientProgress, total int, next time.Time) PublishedEventRecipientProgress {
+	return eventSubscriptionControlProgress(previous, total, EventCapabilityWaitReason, next)
+}

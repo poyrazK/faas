@@ -17,6 +17,10 @@ import (
 // compiler a wrapper per method (teststorecheck).
 type profileCaptureBackend = contractTestStore
 
+// profileCaptureStorage is the capture storage limit the queue tests pass;
+// TestProfileCaptureStorageLimit covers the limit itself.
+var profileCaptureStorage = api.MustLimitsFor(api.PlanPro).Profiling.CaptureStorageBytes
+
 func TestProfileCaptureLifecycle(t *testing.T) {
 	t.Setenv(pgtest.UseTemplateDatabase, "1")
 	for _, backend := range []string{"mem", "pg"} {
@@ -47,13 +51,13 @@ func TestProfileCaptureLifecycle(t *testing.T) {
 				return api.ProfileCapture{ID: uuid.NewString(), Kinds: []string{"cpu", "heap"}, DurationSeconds: 5, CreatedAt: at, ExpiresAt: at.Add(api.ProfileCaptureRetention)}
 			}
 			c := newCapture(now)
-			if err := store.CreateProfileCapture(ctx, other.ID, app.ID, c); !errors.Is(err, state.ErrNotFound) {
+			if err := store.CreateProfileCapture(ctx, other.ID, app.ID, c, profileCaptureStorage); !errors.Is(err, state.ErrNotFound) {
 				t.Fatalf("foreign account queued a capture: %v", err)
 			}
-			if err := store.CreateProfileCapture(ctx, acct.ID, app.ID, c); err != nil {
+			if err := store.CreateProfileCapture(ctx, acct.ID, app.ID, c, profileCaptureStorage); err != nil {
 				t.Fatal(err)
 			}
-			if err := store.CreateProfileCapture(ctx, acct.ID, app.ID, newCapture(now)); !errors.Is(err, state.ErrProfileCaptureActive) {
+			if err := store.CreateProfileCapture(ctx, acct.ID, app.ID, newCapture(now), profileCaptureStorage); !errors.Is(err, state.ErrProfileCaptureActive) {
 				t.Fatalf("second active capture admitted: %v", err)
 			}
 			got, err := store.GetProfileCapture(ctx, acct.ID, app.ID, c.ID)
@@ -90,7 +94,7 @@ func TestProfileCaptureLifecycle(t *testing.T) {
 			}
 
 			stale := newCapture(now.Add(time.Second))
-			if err := store.CreateProfileCapture(ctx, acct.ID, app.ID, stale); err != nil {
+			if err := store.CreateProfileCapture(ctx, acct.ID, app.ID, stale, profileCaptureStorage); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := store.ClaimProfileCapture(ctx, now.Add(time.Second)); err != nil {

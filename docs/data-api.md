@@ -3,7 +3,19 @@
 Data APIs expose PostgreSQL relations as authenticated REST endpoints and
 generate TypeScript application types from the same schema. This is a managed
 PostgreSQL preview: your account and region must already be enabled for managed
-databases, `data_api` bindings, port 5432 egress, and app tasks.
+PostgreSQL and the Data API, which is released only together with managed
+PostgreSQL. Creating a `data_api` binding, through the API or a `gregale.yaml`
+database dependency, needs the Data API: otherwise it answers
+`403 capability_not_released`. The binding opens the database's port for the
+API on every plan.
+
+Schema inspection (`data-api types`, `diff`, `check`, `sync`, `clients` and the
+dashboard) runs as a contract task: one fixed command inside a fresh VM from
+the app's live deployment, through `POST /v1/apps/{slug}/data-api/contract-tasks`
+with `{"kind": "types" | "validators" | "schema"}` and
+`GET /v1/apps/{slug}/data-api/contract-tasks/{id}`. These routes belong to the
+Data API, so they do not need the general app-task API released to the account;
+the receipt is an ordinary app task receipt with the output in `stdout_tail`.
 
 For a complete application starting point, run
 `gregale init --template data-api-starter --path notes`. The
@@ -884,7 +896,7 @@ starters include their explicit project config, excluded from deployment uploads
 Open **Data API** from an app's dashboard. The workspace shows managed Data API
 binding status and offers **Inspect schema**, **Generate TypeScript**, and
 **Refresh Data API**. Schema and type operations require a deployed `data-api`
-runtime and enabled app tasks; each action runs the existing catalog generator
+runtime; each action runs the existing catalog generator as a contract task
 inside the deployed app. No database credentials or application tokens are
 needed in the browser.
 
@@ -923,6 +935,14 @@ Repeat the command with the same settings and `--resume` to continue; the bindin
 request uses a stable idempotency key. Use ordinary app/database commands to
 inspect or remove retained resources.
 
+The API verifies the database's TLS certificate against the public root store
+(plus `NODE_EXTRA_CA_CERTS`, if set). Like any app, it parks when idle. Creation
+also registers `before_checkpoint` and `after_restore` hooks, so a parked API
+holds no database connection: the first request after a wake waits while the
+API reconnects, within the request deadline. For an API created before these
+hooks existed, `data-api create NAME ... --resume` (or `data-api deploy` for a
+single-app project) adds them with the current runtime.
+
 ## Define your application schema and authorization
 
 Create tables and policies with your existing migration tool, using a managed
@@ -949,11 +969,32 @@ CREATE POLICY own_notes ON api.notes
 
 Every valid application token uses the same restricted SQL role, with the
 original JWT subject and claims available to RLS. A token's external `role`
-claim cannot select an administrator. A table without RLS grants every
-authenticated user the binding's table access, so define policies before
-exposing user-specific data. On PostgreSQL 15+, use `security_invoker=true`
-for exposed views that must follow the underlying table's RLS; ordinary views
-can run with their owner's privileges. Only explicitly opted-in security-invoker RPC functions are exposed; see the RPC section below.
+claim cannot select an administrator. Only explicitly opted-in security-invoker RPC functions are exposed; see the RPC section below.
+
+### Row-level security is required
+
+Signed-in requests reach only relations whose rows PostgreSQL decides: tables
+with RLS enabled, and views created `WITH (security_invoker = true)` (PostgreSQL
+15+), which follow the RLS of the tables they read. The rule covers the request
+target, every relation embedded with `select=...,other(...)`, and the target
+table of a computed relationship. Any other relation (a table without RLS, a
+view running as its owner, a materialized view) answers `403 rls_required`
+without reaching the database, for reads and writes alike.
+
+To share a relation with every signed-in user on purpose, for example a
+reference table, exempt it:
+
+```sh
+gregale data-api configure notes-data --allow-without-rls api.countries,api.plans
+gregale data-api configure notes-data --no-allow-without-rls   # remove all exemptions
+```
+
+Exemptions use the `--public-read` format (at most 64 `schema.relation`
+names). In local development, list them as `"allow_without_rls": [...]` in
+`data-api.dev.json`. The API reads its relations at startup: a table created
+later answers `404 not_found` until `gregale data-api refresh`. Server keys are
+trusted backends and are not checked; anonymous requests follow the
+[public read](#public-reads) rules.
 
 ## Generate types and use the client
 
@@ -1067,7 +1108,9 @@ overwrites any value an application token tries to supply. Every access kind
 still uses the binding's restricted SQL login.
 
 Anonymous traffic is always rate limited per client address, using the address
-the Gregale edge stamps on each request (IPv6 is grouped by /64). The limit is
+the Gregale edge stamps on each request (IPv6 is grouped by /64, or by /48 once
+an instance tracks 3,072 anonymous or concurrent clients, so one network
+cannot crowd other visitors out). The limit is
 your `DATA_API_RATE_LIMIT_*` policy, or 10 requests per second with a burst of
 20 when you have not set one. Anonymous budgets are tracked separately from
 signed-in users. Request logs and `data-api diagnostics` record the access kind,
@@ -1176,8 +1219,8 @@ cached response is tagged `data-api` plus `data-api:SCHEMA.RELATION` for every
 relation it contains, embedded ones included:
 
 ```sh
-gregale cache purge shop-data --tag data-api:api.products   # one table
-gregale cache purge shop-data --tag data-api                # every public read
+gregale edge cache purge shop-data --tag data-api:api.products   # one table
+gregale edge cache purge shop-data --tag data-api                # every public read
 ```
 
 A public RPC response is tagged `data-api-rpc:SCHEMA.FUNCTION` plus its
@@ -1420,9 +1463,16 @@ Each route asks PostgreSQL first, as the caller:
 - **Safe serving.** Downloads are served with `Content-Security-Policy:
   sandbox` and `nosniff`, so an uploaded page cannot run as your API's
   origin.
-- **Before the migration.** Until `storage_objects` exists with RLS and its
-  guard trigger, storage routes answer `503 storage_unavailable` and the rest
-  of the API keeps serving.
+- **Versions.** Each upload stores its bytes under a new `object_key` and
+  replaces the previous version only once its row commits, so two uploads
+  racing for one name never mix their bytes; a refused upload leaves the
+  existing file untouched. A row you insert yourself without `object_key`
+  names its bytes by `name`.
+- **Before the migration.** Until `storage_objects` exists with RLS, its
+  guard trigger and `object_key`, storage routes answer
+  `503 storage_unavailable` and the rest of the API keeps serving. A table
+  created before `object_key` existed needs
+  `gregale data-api storage sql --upgrade` applied as a migration.
 
 ## Aggregates
 
@@ -2950,7 +3000,7 @@ gregale --json data-api diff notes-data --baseline schema.json --check
 ```
 
 Diff inspects the current database with a bounded, owner-authenticated private
-app task using the restricted Data API binding. It does not refresh the serving
+contract task using the restricted Data API binding. It does not refresh the serving
 app or run migrations. The runtime must include snapshot export support; older
 runtime deployments fail rather than report a compatible schema. The baseline
 is validated before starting a remote task and is never rewritten by diff.
@@ -3370,8 +3420,8 @@ gregale data-api sync notes-data --config data-api.json --resume-only --check
 workflow configuration, the application's coordinated runtime and phase, and
 owner setup. For a new refresh it also compares the live schema and saved
 baseline. It does not pause, run migrations/permissions/client checks, restart,
-write types, or release traffic. Private schema inspection uses the existing
-owner-authenticated app task, which can wake an idle app. Commands in the JSON
+write types, or release traffic. Private schema inspection uses an
+owner-authenticated contract task, which can wake an idle app. Commands in the JSON
 are trusted project code: use the shipped read-only helper for `setup_check`.
 Older configurations remain accepted; without this field they do not perform
 the additional owner privilege check. All coordinated syncs now reject an

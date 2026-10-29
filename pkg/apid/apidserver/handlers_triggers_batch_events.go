@@ -17,7 +17,13 @@ func (s *server) applyBatchEventTriggers(ctx context.Context, acct state.Account
 	if len(declared) == 0 {
 		return nil
 	}
-	staged, problem := s.applySourceRefManifest(ctx, acct, app, &gregalemanifest.Manifest{EventTriggers: declared}, "", true)
+	manifest := &gregalemanifest.Manifest{EventTriggers: declared}
+	// A source deploy refuses event_triggers while event subscriptions are
+	// off for the account; this path does too (ADR-20261027125625).
+	if problem := s.manifestSettingsProblem(acct, manifest); problem != nil {
+		return &batchError{Message: "event_triggers: " + problem.Detail}
+	}
+	staged, problem := s.applySourceRefManifest(ctx, acct, app, manifest, "", true)
 	if problem == nil {
 		return nil
 	}

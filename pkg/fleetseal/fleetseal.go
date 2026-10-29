@@ -50,6 +50,10 @@ type MigrationReport struct {
 	// 20261022111812). They are left as they are.
 	SecretsInOtherDomains int  `json:"secrets_in_other_domains"`
 	ProbeWritten          bool `json:"probe_written"`
+	// ClusterKeySealedTo is "fleet", or "control" when the cluster key is
+	// sealed to the control seal domain (ADR 20261022111812) and was left
+	// there.
+	ClusterKeySealedTo string `json:"cluster_key_sealed_to,omitempty"`
 }
 
 type VerificationReport struct {
@@ -60,12 +64,19 @@ type VerificationReport struct {
 	ProbeOK          bool   `json:"probe_ok"`
 	JWTRoundTripOK   bool   `json:"jwt_round_trip_ok"`
 	HostIdentityKept bool   `json:"host_identity_kept"`
+	// ClusterKeySealedTo names the identity that opened the cluster key:
+	// "fleet", or "control" once it is sealed to the control seal domain.
+	ClusterKeySealedTo string `json:"cluster_key_sealed_to,omitempty"`
 }
 
 // Migrate re-seals the singleton cluster key and every customer app secret
 // to fleet. Compare-and-swap writes retain a valid encrypted old or new value
 // across interruption and reject concurrent customer/key rotation.
-func Migrate(ctx context.Context, store Store, fleet *age.X25519Identity, legacy []*age.X25519Identity) (MigrationReport, error) {
+//
+// control are the control seal-domain identities, when the node holds them
+// (ADR 20261022111812). A cluster key they open is sealed to the domain and
+// is left there: re-sealing it to fleet would undo the domain.
+func Migrate(ctx context.Context, store Store, fleet *age.X25519Identity, legacy, control []*age.X25519Identity) (MigrationReport, error) {
 	if store == nil || fleet == nil {
 		return MigrationReport{}, errors.New("fleetseal: store and fleet identity are required")
 	}
@@ -89,10 +100,14 @@ func Migrate(ctx context.Context, store Store, fleet *age.X25519Identity, legacy
 		return report, fmt.Errorf("fleetseal: load cluster key: %w", err)
 	}
 	report.ClusterKID = cluster.KeyID
+	report.ClusterKeySealedTo = "fleet"
 	ns, plaintext, fleetErr := secretbox.OpenBytes(fleet, cluster.SealedBlob)
-	if fleetErr == nil && ns == clusterSigningNamespace {
+	switch {
+	case fleetErr == nil && ns == clusterSigningNamespace:
 		zero(plaintext)
-	} else {
+	case fleetErr != nil && opensWith(control, cluster.SealedBlob):
+		report.ClusterKeySealedTo = "control"
+	default:
 		if fleetErr != nil {
 			var openErr error
 			ns, plaintext, openErr = secretbox.OpenBytesMulti(openers, cluster.SealedBlob)
@@ -182,8 +197,10 @@ func Migrate(ctx context.Context, store Store, fleet *age.X25519Identity, legacy
 
 // Verify proves the customer-path probe and cluster signing key using only the
 // shared fleet identity. Passing a host identity additionally proves that node
-// adoption retained a distinct per-host identity.
-func Verify(ctx context.Context, store Store, fleet, host *age.X25519Identity) (VerificationReport, error) {
+// adoption retained a distinct per-host identity. Once the cluster key is
+// sealed to the control seal domain (ADR 20261022111812), the control
+// identities open it instead; a node without them fails, as its schedd would.
+func Verify(ctx context.Context, store Store, fleet, host *age.X25519Identity, control []*age.X25519Identity) (VerificationReport, error) {
 	if store == nil || fleet == nil {
 		return VerificationReport{}, errors.New("fleetseal: store and fleet identity are required")
 	}
@@ -215,9 +232,15 @@ func Verify(ctx context.Context, store Store, fleet, host *age.X25519Identity) (
 	if err != nil {
 		return report, fmt.Errorf("fleetseal: load cluster key: %w", err)
 	}
+	report.ClusterKeySealedTo = "fleet"
 	ns, plaintext, err := secretbox.OpenBytes(fleet, cluster.SealedBlob)
+	if err != nil && len(control) > 0 {
+		if ns, plaintext, err = secretbox.OpenBytesMulti(control, cluster.SealedBlob); err == nil {
+			report.ClusterKeySealedTo = "control"
+		}
+	}
 	if err != nil {
-		return report, fmt.Errorf("fleetseal: cluster signing key is not sealed to fleet identity: %w", err)
+		return report, fmt.Errorf("fleetseal: cluster signing key opens with neither the fleet nor a control identity: %w", err)
 	}
 	if ns != clusterSigningNamespace {
 		zero(plaintext)
@@ -329,4 +352,14 @@ func zero(value []byte) {
 	for i := range value {
 		value[i] = 0
 	}
+}
+
+// opensWith reports whether any of ids opens blob.
+func opensWith(ids []*age.X25519Identity, blob []byte) bool {
+	if len(ids) == 0 {
+		return false
+	}
+	_, plaintext, err := secretbox.OpenBytesMulti(ids, blob)
+	zero(plaintext)
+	return err == nil
 }

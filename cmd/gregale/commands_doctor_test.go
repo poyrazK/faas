@@ -305,29 +305,58 @@ func TestExecutableHeaderMismatchUsesBinaryFormat(t *testing.T) {
 }
 
 // TestRunDoctorChecks_StatelessOnlyDir pins the stateless-only
-// check's persistence-signal detection. Fixture has a top-level
-// data/ directory → check fires with code=stateless_only_violation.
+// check's persistence-signal detection. Fixture has a database file
+// under a top-level data/ directory → check fires with
+// code=stateless_only_violation.
 func TestRunDoctorChecks_StatelessOnlyDir(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.Mkdir(filepath.Join(dir, "data"), 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	rep := main.RunDoctorChecks(dir)
-	var statCheck *main.DoctorCheck
-	for i := range rep.Checks {
-		if rep.Checks[i].Name == "stateless-only" {
-			statCheck = &rep.Checks[i]
-		}
-	}
-	if statCheck == nil {
-		t.Fatalf("stateless-only check missing")
-	}
+	writeStatelessFixture(t, dir, "data/app.sqlite", "SQLite format 3\x00")
+	statCheck := doctorStatelessCheck(t, dir)
 	if statCheck.Status != "error" {
 		t.Fatalf("expected error, got %q", statCheck.Status)
 	}
 	if statCheck.Code != api.CodeStatelessOnlyViolation {
 		t.Fatalf("expected code %q, got %q", api.CodeStatelessOnlyViolation, statCheck.Code)
 	}
+}
+
+// TestRunDoctorChecks_StatelessAllowsMigrations pins ADR-20261026152731:
+// source in data/ or db/ (migrations, schemas, seed files) and an empty
+// state directory are ordinary stateless code.
+func TestRunDoctorChecks_StatelessAllowsMigrations(t *testing.T) {
+	dir := t.TempDir()
+	writeStatelessFixture(t, dir, "db/migrations/20260101_init.sql", "create table t (id int);\n")
+	writeStatelessFixture(t, dir, "db/schema.ts", "export const t = 1;\n")
+	writeStatelessFixture(t, dir, "data/seed.json", "{}\n")
+	if err := os.Mkdir(filepath.Join(dir, "var"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if statCheck := doctorStatelessCheck(t, dir); statCheck.Status != "ok" {
+		t.Fatalf("stateless-only = %q (%v), want ok", statCheck.Status, statCheck.Sources)
+	}
+}
+
+func writeStatelessFixture(t *testing.T, dir, rel, body string) {
+	t.Helper()
+	p := filepath.Join(dir, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func doctorStatelessCheck(t *testing.T, dir string) main.DoctorCheck {
+	t.Helper()
+	rep := main.RunDoctorChecks(dir)
+	for _, check := range rep.Checks {
+		if check.Name == "stateless-only" {
+			return check
+		}
+	}
+	t.Fatalf("stateless-only check missing")
+	return main.DoctorCheck{}
 }
 
 // TestScanSource_SkipsVendoredDirs pins the noise-reduction
@@ -426,9 +455,7 @@ func TestDoctorReport_HasErrorsAndHasWarnings(t *testing.T) {
 	})
 	t.Run("stateless fixture trips HasErrors only", func(t *testing.T) {
 		dir := t.TempDir()
-		if err := os.Mkdir(filepath.Join(dir, "data"), 0o755); err != nil {
-			t.Fatalf("mkdir: %v", err)
-		}
+		writeStatelessFixture(t, dir, "data/payments.db", "")
 		rep := main.RunDoctorChecks(dir)
 		if !rep.HasErrors() {
 			t.Errorf("stateless fixture: HasErrors=false, want true")

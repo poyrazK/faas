@@ -48,7 +48,7 @@ surface but not customer API:
 | `POST /v1/webhooks/stripe`    | HMAC-signed webhook for the legacy Stripe compatibility provider (operator-side).   |
 | `GET\|POST\|DELETE /v1/compute-nodes` | Operator-only (ADR-029).         |
 | `GET /v1/events`              | SSE — cookie OR Bearer, not `s.auth`.  |
-| `GET\|POST /login`, `POST /logout`, `GET /auth/verify` | Dashboard magic-link.       |
+| `GET\|POST /login`, `POST /logout`, `GET\|POST /auth/verify` | Dashboard magic-link.       |
 | `GET /oauth/callback`         | GitHub App install callback.            |
 | `GET /dashboard*`             | HTML dashboard chrome.                  |
 | `POST /v1/cli-auth/code`      | CLI device-code mint.                   |

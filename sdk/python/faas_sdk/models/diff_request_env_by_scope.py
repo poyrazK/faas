@@ -16,7 +16,7 @@ T = TypeVar("T", bound="DiffRequestEnvByScope")
 @_attrs_define
 class DiffRequestEnvByScope:
     """Per-scope env write. Full-replacement semantics per
-    scope (ADR-090 D3). Keys are scope names ("default",
+    scope. Keys are scope names ("default",
     "staging", ...); values are DiffEnvRow arrays.
 
     """

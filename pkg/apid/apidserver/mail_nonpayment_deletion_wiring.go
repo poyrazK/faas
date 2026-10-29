@@ -9,6 +9,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/internalmail"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func (s *server) mountInternalMailNonpaymentDeletion(mux *http.ServeMux, listenerAddr string, getenv func(string) string) error {
@@ -52,12 +53,32 @@ func (s *server) internalMailScheduleNonpaymentDeletion(w http.ResponseWriter, r
 		return
 	}
 	result, err := s.deletionMailOutbox.ScheduleNonpaymentDeletionWithNotice(r.Context(), r.PathValue("id"), input.PastDueAt, input.RequestID)
+	if blocked := nonpaymentDeletionBlocked(err); blocked != nil {
+		s.log.Warn("apid: non-payment deletion blocked", "account_id", r.PathValue("id"),
+			"reason", blocked.Reason, "managed_postgres_databases", blocked.ManagedPostgresDatabases)
+		writeJSON(w, http.StatusConflict, blocked)
+		return
+	}
 	if err != nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(result)
+}
+
+// nonpaymentDeletionBlocked names the deletion guard behind err, or nil when
+// err is not one. A guard holds until someone resolves it, so meterd must see
+// it as a block rather than the 503 it treats as an outage.
+func nonpaymentDeletionBlocked(err error) *api.InternalMailNonpaymentDeletionBlocked {
+	var databases *state.AccountManagedPostgresDatabasesError
+	switch {
+	case errors.As(err, &databases):
+		return &api.InternalMailNonpaymentDeletionBlocked{Reason: api.NonpaymentDeletionBlockedManagedPostgres, ManagedPostgresDatabases: databases.Live}
+	case errors.Is(err, state.ErrOrgAppOwnershipPending):
+		return &api.InternalMailNonpaymentDeletionBlocked{Reason: api.NonpaymentDeletionBlockedSharedAppOwnership}
+	}
+	return nil
 }
 
 func (s *server) internalMailNonpaymentDeletionComplete(w http.ResponseWriter, r *http.Request) {

@@ -83,7 +83,7 @@ def sync_detailed(
     slug: str,
     name: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
     body: EnableAlertPresetRequest,
 ) -> Response[Any | Problem]:
     """Form-POST sibling of enableAlertPreset for the dashboard.
@@ -131,7 +131,7 @@ def sync(
     slug: str,
     name: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
     body: EnableAlertPresetRequest,
 ) -> Any | Problem | None:
     """Form-POST sibling of enableAlertPreset for the dashboard.
@@ -174,7 +174,7 @@ async def asyncio_detailed(
     slug: str,
     name: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
     body: EnableAlertPresetRequest,
 ) -> Response[Any | Problem]:
     """Form-POST sibling of enableAlertPreset for the dashboard.
@@ -220,7 +220,7 @@ async def asyncio(
     slug: str,
     name: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
     body: EnableAlertPresetRequest,
 ) -> Any | Problem | None:
     """Form-POST sibling of enableAlertPreset for the dashboard.

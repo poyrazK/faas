@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
 import test from 'node:test';
-import { FaaSClient, AlertRulesService, type AlertRuleResponse } from '../src/index.js';
+import { FaaSClient, AlertRulesService, type AlertRuleResponse } from '../src/preview.js';
 
 test('automation backlog preset decodes the due-age metric and preserves notification defaults', async t => {
   const rule: AlertRuleResponse = {

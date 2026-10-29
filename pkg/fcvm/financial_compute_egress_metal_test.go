@@ -47,7 +47,7 @@ func TestMetalFinancialEgressPacketCredits(t *testing.T) {
 		if err != nil {
 			t.Errorf("packet namespace cleanup: %v %s", err, out)
 		}
-		if out, err := exec.Command("ip", "link", "show", nc.VethHost).CombinedOutput(); err == nil {
+		if out, leaked := financialEgressVethRetained(nc.VethHost); leaked {
 			t.Errorf("packet veth leaked: %s", out)
 		}
 	})
@@ -105,8 +105,22 @@ func TestMetalFinancialEgressPacketCredits(t *testing.T) {
 	t.Logf("kernel interface bounds: first=%s total=%s financed=%d", strconv.FormatUint(first, 10), strconv.FormatUint(second, 10), 2*nc.EgressBudgetBytes)
 }
 
+// financialEgressVethRetained reports a root veth that outlives its deleted
+// namespace. The kernel tears a namespace down asynchronously, so the peer's
+// removal of the root end is polled for a few seconds.
+func financialEgressVethRetained(name string) ([]byte, bool) {
+	var out []byte
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+		var err error
+		if out, err = exec.Command("ip", "link", "show", name).CombinedOutput(); err != nil {
+			return nil, false
+		}
+	}
+	return out, true
+}
+
 const financialRawEgressBurst = `
-import socket,struct,threading,sys
+import errno,socket,struct,threading,sys
 peer=sys.argv[1]
 def send(index):
     s=socket.socket(socket.AF_PACKET,socket.SOCK_RAW,socket.htons(3));s.bind((peer,0))
@@ -117,7 +131,9 @@ def send(index):
              eth+struct.pack('!H',0x0800)+bytes.fromhex('450005dc0000000040110000c6120002c6120001')+bytes(1480),
              eth+struct.pack('!H',0x88b5)+bytes(40), eth+struct.pack('!H',0x0800)]
     for i in range(600):
-        s.send(packets[(i+index)%len(packets)])
+        try: s.send(packets[(i+index)%len(packets)])
+        except OSError as error:
+            if error.errno != errno.ENOBUFS: raise
     s.close()
 errors=[]
 def checked_send(index):
@@ -249,7 +265,7 @@ func TestMetalFinancialEgressOffloadCredits(t *testing.T) {
 				t.Errorf("offload namespace cleanup: %v %s", err, out)
 			}
 		}
-		if out, err := exec.Command("ip", "link", "show", nc.VethHost).CombinedOutput(); err == nil {
+		if out, leaked := financialEgressVethRetained(nc.VethHost); leaked {
 			t.Errorf("offload public veth leaked: %s", out)
 		}
 	})
@@ -302,6 +318,114 @@ func TestMetalFinancialEgressOffloadCredits(t *testing.T) {
 		t.Fatalf("offload expanded beyond funded interface bytes: before=%d after=%d funded=%d", before, after, nc.EgressBudgetBytes)
 	}
 }
+
+// adr: 1748 amendment 1 — a guest TCP stream crosses the segmentation IFB,
+// after which the kernel skips the peer's netdev egress hook for every packet.
+// Before the inet postrouting gate this stream ran unmetered past its quota.
+func TestMetalFinancialEgressGuestStreamAfterSegmentation(t *testing.T) {
+	if os.Getenv("FAAS_FINANCIAL_COMPUTE_ACCEPTANCE") != "1" {
+		t.Skip("opt-in financial native acceptance")
+	}
+	if os.Geteuid() != 0 {
+		t.Fatal("financial stream acceptance requires root")
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	suffix := uuid.NewString()[:8]
+	guest := "fc-egst-g-" + suffix
+	nc := netns.Config{Netns: "fc-egst-" + suffix, Tap: "tap0", VethHost: "vht" + suffix, VethPeer: "vpt" + suffix, EgressBudgetBytes: 64 * 1024, EgressBudgetUntil: time.Now().Add(20 * time.Second)}
+	run := func(argv ...string) {
+		t.Helper()
+		if out, err := exec.CommandContext(ctx, argv[0], argv[1:]...).CombinedOutput(); err != nil {
+			t.Fatalf("stream fixture %v: %v: %s", argv, err, out)
+		}
+	}
+	run("ip", "netns", "add", nc.Netns)
+	run("ip", "netns", "add", guest)
+	t.Cleanup(func() {
+		for _, name := range []string{guest, nc.Netns} {
+			if out, err := exec.Command("ip", "netns", "del", name).CombinedOutput(); err != nil {
+				t.Errorf("stream namespace cleanup: %v %s", err, out)
+			}
+		}
+		if out, leaked := financialEgressVethRetained(nc.VethHost); leaked {
+			t.Errorf("stream public veth leaked: %s", out)
+		}
+	})
+	run("ip", "link", "add", nc.VethHost, "type", "veth", "peer", "name", nc.VethPeer)
+	run("ip", "link", "set", nc.VethPeer, "netns", nc.Netns)
+	for _, argv := range nc.EgressBudgetSetupCommands() {
+		run(argv...)
+	}
+	run("ip", "addr", "add", "198.18.238.1/30", "dev", nc.VethHost)
+	run("ip", "link", "set", nc.VethHost, "up")
+	run("ip", "netns", "exec", nc.Netns, "ip", "addr", "add", "198.18.238.2/30", "dev", nc.VethPeer)
+	run("ip", "netns", "exec", nc.Netns, "ip", "link", "set", nc.VethPeer, "up")
+	// A TSO-capable stand-in for the guest TAP, so the stream arrives as GSO.
+	run("ip", "netns", "exec", nc.Netns, "ip", "link", "add", nc.Tap, "type", "veth", "peer", "name", "g0")
+	run("ip", "netns", "exec", nc.Netns, "ip", "link", "set", "g0", "netns", guest)
+	for _, argv := range nc.EgressBudgetSegmentationCommands() {
+		run(argv...)
+	}
+	run("ip", "netns", "exec", nc.Netns, "ip", "addr", "add", "10.0.0.1/30", "dev", nc.Tap)
+	run("ip", "netns", "exec", nc.Netns, "ip", "link", "set", nc.Tap, "up")
+	run("ip", "netns", "exec", nc.Netns, "sysctl", "-w", "net.ipv4.ip_forward=1")
+	run("ip", "netns", "exec", guest, "ip", "addr", "add", "10.0.0.2/30", "dev", "g0")
+	run("ip", "netns", "exec", guest, "ip", "link", "set", "g0", "up")
+	run("ip", "netns", "exec", guest, "ip", "route", "add", "default", "via", "10.0.0.1")
+	// The host opens the connection, as the gateway does; host policy may
+	// refuse connections a tenant namespace opens. The route dies with VethHost.
+	run("ip", "route", "add", "10.0.0.2/32", "via", "198.18.238.2", "dev", nc.VethHost)
+	before, err := netns.ReadVethRXBytes(nc.VethHost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := exec.CommandContext(ctx, "ip", "netns", "exec", guest, "python3", "-I", "-c", financialGuestTCPServer)
+	if err := server.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = server.Process.Kill(); _ = server.Wait() })
+	var conn net.Conn
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(50 * time.Millisecond) {
+		var err error
+		if conn, err = net.DialTimeout("tcp4", "10.0.0.2:8080", time.Second); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("guest stream server unreachable: %v", err)
+		}
+	}
+	defer func() { _ = conn.Close() }()
+	// Once the gate drops the guest's segments the read times out.
+	var got int64
+	buffer := make([]byte, 64*1024)
+	for {
+		_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		n, err := conn.Read(buffer)
+		got += int64(n)
+		if err != nil {
+			break
+		}
+	}
+	after, err := netns.ReadVethRXBytes(nc.VethHost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got <= 0 || after <= before || after-before > uint64(nc.EgressBudgetBytes) || got >= 2<<20 {
+		t.Fatalf("guest stream escaped its gate: received=%d interface=%d -> %d funded=%d", got, before, after, nc.EgressBudgetBytes)
+	}
+	t.Logf("guest stream bounds: received=%d interface_delta=%d funded=%d", got, after-before, nc.EgressBudgetBytes)
+}
+
+// Accepts one connection and streams 2 MiB, far past the 64 KiB credit.
+const financialGuestTCPServer = `
+import socket
+s=socket.socket(); s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1); s.bind(("10.0.0.2",8080)); s.listen(1)
+c,_=s.accept(); c.settimeout(5)
+try: c.sendall(b'x'*(2<<20))
+except OSError: pass
+c.close()
+`
 
 const financialUDPSegmentedBurst = `
 import socket,struct,sys

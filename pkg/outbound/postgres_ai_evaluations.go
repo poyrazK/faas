@@ -13,10 +13,12 @@ import (
 
 var _ AIEvaluationStore = (*PostgresBackend)(nil)
 
-// ClaimAIEvaluation fails evaluations that stopped mid-run, then claims the
-// oldest pending one with the route's two targets and the first target's
-// latest replayable captures (ADR-1431). An evaluation whose target is gone
-// fails without a claim.
+// ClaimAIEvaluation fails evaluations that stopped mid-run, then claims a
+// pending one with the route's two targets and the first target's latest
+// replayable captures (ADR-1431): the oldest of the accounts running the
+// fewest, so one account's queue of evaluations cannot hold every other
+// account's behind it. An evaluation whose target is gone fails without a
+// claim.
 func (b *PostgresBackend) ClaimAIEvaluation(ctx context.Context) (AIEvaluationJob, bool, error) {
 	if _, err := b.pool.Exec(ctx, `
 		UPDATE outbound_ai_evaluations SET state = 'failed', error_code = 'outbound_ai_evaluation_interrupted', finished_at = now()
@@ -30,7 +32,10 @@ func (b *PostgresBackend) ClaimAIEvaluation(ctx context.Context) (AIEvaluationJo
 	err := b.pool.QueryRow(ctx, `
 		UPDATE outbound_ai_evaluations evaluation SET state = 'running', started_at = now()
 		 WHERE evaluation.id = (SELECT pending.id FROM outbound_ai_evaluations pending
-		                         WHERE pending.state = 'pending' ORDER BY pending.created_at
+		                         WHERE pending.state = 'pending'
+		                         ORDER BY (SELECT count(*) FROM outbound_ai_evaluations running
+		                                    WHERE running.account_id = pending.account_id AND running.state = 'running'),
+		                                  pending.created_at
 		                         LIMIT 1 FOR UPDATE SKIP LOCKED)
 		RETURNING evaluation.id, evaluation.account_id, evaluation.route_id, evaluation.position,
 		          evaluation.judge_integration_id, evaluation.judge_model, evaluation.sample_size, evaluation.max_loss_rate`).

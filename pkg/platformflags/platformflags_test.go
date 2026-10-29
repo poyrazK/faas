@@ -382,7 +382,7 @@ func TestCatalogIsWellFormed(t *testing.T) {
 			t.Fatalf("flag %q retire_by %q must be YYYY-MM-DD", spec.Key, spec.RetireBy)
 		}
 		if spec.Capability != "" {
-			if key, ok := FlagForCapability(spec.Capability); !ok || key != spec.Key {
+			if key, ok := CapabilityFlag(spec.Capability); !ok || key != spec.Key {
 				t.Fatalf("capability %q does not resolve to %q", spec.Capability, spec.Key)
 			}
 		}

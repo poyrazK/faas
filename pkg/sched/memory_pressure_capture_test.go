@@ -114,6 +114,19 @@ func TestQueueSlowRequestCapture(t *testing.T) {
 	if queued, reason, _ := e.QueueSlowRequestCapture(ctx, free.ID, "req-3", "trace-3", "GET /", 10*time.Second); queued || !strings.Contains(reason, "plan") {
 		t.Fatalf("free plan: queued=%v reason=%q", queued, reason)
 	}
+	off := false
+	optedOut, err := mem.CreateApp(ctx, state.App{AccountID: app.AccountID, Slug: "slow-opted-out", RAMMB: 256, MaxConcurrency: 2, IdleTimeoutS: 60,
+		Manifest: state.AppManifest{Profiling: &api.ProfilingConfig{AutomaticCaptures: &off}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	optedOutIns, err := mem.CreateInstance(ctx, optedOut.ID, "", string(state.StateRunning), 256, "node-1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if queued, reason, _ := e.QueueSlowRequestCapture(ctx, optedOutIns.ID, "req-4", "trace-4", "GET /", 10*time.Second); queued || !strings.Contains(reason, "turned automatic captures off") {
+		t.Fatalf("app that turned automatic captures off: queued=%v reason=%q", queued, reason)
+	}
 }
 
 func TestLinkOOMProfileCapture(t *testing.T) {
@@ -131,7 +144,7 @@ func TestLinkOOMProfileCapture(t *testing.T) {
 	now := time.Now().UTC()
 	capture := api.ProfileCapture{ID: "11111111-1111-4111-8111-111111111111", Kinds: []string{api.ProfileKindHeap}, DurationSeconds: 10,
 		Trigger: api.ProfileCaptureTriggerMemoryPressure, CreatedAt: now.Add(-5 * time.Second), ExpiresAt: now.Add(api.ProfileCaptureRetention)}
-	if err := mem.QueueAutomaticProfileCapture(ctx, acct.ID, app.ID, capture, api.ProfileCaptureAutomaticMinInterval); err != nil {
+	if err := mem.QueueAutomaticProfileCapture(ctx, acct.ID, app.ID, capture, api.ProfileCaptureAutomaticMinInterval, api.MustLimitsFor(api.PlanPro).Profiling.CaptureStorageBytes); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := mem.ClaimProfileCapture(ctx, now); err != nil {

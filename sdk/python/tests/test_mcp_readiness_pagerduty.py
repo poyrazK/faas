@@ -2,10 +2,10 @@ from uuid import UUID
 
 
 def test_pagerduty_config_and_provider_contracts():
-    from faas_sdk.api.mcp import get_mcp_readiness_pager_duty, set_mcp_readiness_pager_duty
-    from faas_sdk.models.mcp_readiness_destination_delivery import MCPReadinessDestinationDelivery
-    from faas_sdk.models.mcp_readiness_pager_duty_policy import MCPReadinessPagerDutyPolicy
-    from faas_sdk.models.set_mcp_readiness_pager_duty_request import SetMCPReadinessPagerDutyRequest
+    from faas_sdk.preview.api.mcp import get_mcp_readiness_pager_duty, set_mcp_readiness_pager_duty
+    from faas_sdk.preview.models.mcp_readiness_destination_delivery import MCPReadinessDestinationDelivery
+    from faas_sdk.preview.models.mcp_readiness_pager_duty_policy import MCPReadinessPagerDutyPolicy
+    from faas_sdk.preview.models.set_mcp_readiness_pager_duty_request import SetMCPReadinessPagerDutyRequest
 
     rule = UUID("00000000-0000-0000-0000-000000000001")
     request = dict(expected_version=0, enabled=True, integration_key="a" * 32, region="eu")

@@ -16,7 +16,9 @@ fires before an operator stages a domain.
     writers seal to);
   - the database was unreachable.
 - **FaasSealDomainIdentityMissing:** a reader daemon (outboundd for
-  `outbound`, vmmd for `runtime`, githubd for `source`, imaged for `build`)
+  `outbound`, vmmd for `runtime`, githubd for `source`, imaged for `build`,
+  gatewayd-internal for `edge`, meterd for `alerting`, s3-gatewayd for
+  `storage`, schedd for `control` and `delivery`, apid for `account`)
   started without the domain identity while other readers of the same
   domain hold it. This is usually a node that joined or was rebuilt after
   the rollout, before the domain's `SEAL_DOMAIN_*` secrets were in CD, or a

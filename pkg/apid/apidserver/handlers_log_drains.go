@@ -182,6 +182,10 @@ func (s *server) createAppLogDrain(w http.ResponseWriter, r *http.Request, acct 
 		api.WriteProblem(w, prob)
 		return
 	}
+	if prob := s.datadogIntegrationProblem(appFlagSubject(acct, app), req.Kind == api.AppLogDrainKindDatadog); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	if prob := validateDatadogAppLogDrain(req.Kind, req.TargetURL, &req.AuthHeader, true); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -202,6 +206,7 @@ func (s *server) createAppLogDrain(w http.ResponseWriter, r *http.Request, acct 
 	row, err := s.store.CreateAppLogDrainIfUnderQuota(r.Context(), state.AppLogDrain{
 		AppID: app.ID, AccountID: acct.ID, Kind: state.AppLogDrainKind(req.Kind),
 		TargetURL: req.TargetURL, AuthHeaderSealed: sealed, Enabled: enabled,
+		CreatedByAccountID: actorAccount(r, acct).ID,
 	}, limits)
 	if err != nil {
 		var quotaErr *state.AppLogDrainQuotaError
@@ -331,6 +336,11 @@ func (s *server) updateAppLogDrain(w http.ResponseWriter, r *http.Request, acct 
 		}
 		params.AuthHeaderSealed = &sealed
 	}
+	switching := params.Kind != nil && string(*params.Kind) == api.AppLogDrainKindDatadog && string(existing.Kind) != api.AppLogDrainKindDatadog
+	if prob := s.datadogIntegrationProblem(appFlagSubject(acct, app), switching); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	if prob := validateUpdatedDatadogAppLogDrain(existing, params, req.AuthHeader); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -381,18 +391,18 @@ func (s *server) deleteAppLogDrain(w http.ResponseWriter, r *http.Request, acct 
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// sealAppLogDrainAuthHeader seals a log drain's authentication header to the
+// edge domain (and the fleet recipient until it is in domain mode, ADR
+// 20261022111812); gatewayd-internal opens it to deliver logs.
 func sealAppLogDrainAuthHeader(plaintext string) ([]byte, error) {
 	if plaintext == "" {
 		return nil, nil
 	}
-	if setSecretRecipient == nil {
-		return nil, errors.New("host age recipient not loaded")
+	recipients, err := edgeCredentialRecipients()
+	if err != nil {
+		return nil, fmt.Errorf("seal log drain credential: %w", err)
 	}
-	recipient := hostSecretRecipient()
-	if recipient == nil {
-		return nil, errors.New("host age recipient not loaded")
-	}
-	return secretbox.SealBytes(recipient, appLogDrainSecretSealLabel, []byte(plaintext), api.AppLogDrainAuthHeaderMaxBytes)
+	return secretbox.SealBytesTo(recipients, appLogDrainSecretSealLabel, []byte(plaintext), api.AppLogDrainAuthHeaderMaxBytes)
 }
 
 func appLogDrainHealthResponse(health state.AppLogDrainHealth) api.AppLogDrainHealthResponse {

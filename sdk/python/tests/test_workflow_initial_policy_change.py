@@ -1,5 +1,5 @@
-from faas_sdk.models import WorkflowRecoveryInitialPolicyChangePreview
-from faas_sdk.models.workflow_recovery_policy_change_preview import WorkflowRecoveryPolicyChangePreview
+from faas_sdk.preview.models import WorkflowRecoveryInitialPolicyChangePreview
+from faas_sdk.preview.models.workflow_recovery_policy_change_preview import WorkflowRecoveryPolicyChangePreview
 
 
 def test_initial_policy_change_round_trip_with_execution_pressure():

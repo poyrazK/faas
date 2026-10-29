@@ -156,6 +156,9 @@ type Lease struct {
 	// captured secrets files from the fork's private drive1 copy before the
 	// guest resumes.
 	Quarantine bool
+	// AppPort is the guest port the host routes the app's traffic and
+	// readiness probe to (WakeRequest.Port). Zero means api.DefaultAppPort.
+	AppPort int
 }
 
 // Allocator hands out unique Leases and recycles slots on release. Safe for

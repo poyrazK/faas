@@ -59,19 +59,19 @@ export type Invocation = {
    */
   received_at?: string | null;
   /**
-   * ADR-134 PR-B. Optional hard-stop. Drain transitions the row to dead_letter when this time passes while still pending|dispatching.
+   * Optional hard-stop. Drain transitions the row to dead_letter when this time passes while still pending|dispatching.
    */
   deadline_at?: string | null;
   /**
-   * ADR-134 PR-B. Optional per-row retry curve override; decodes into dispatch.RetryPolicy (max_attempts, base_seconds, max_seconds, jitter_seconds).
+   * Optional per-row retry curve override; decodes into dispatch.RetryPolicy (max_attempts, base_seconds, max_seconds, jitter_seconds).
    */
   retry_policy?: any | null;
   /**
-   * ADR-134 PR-B. Optional explicit retention horizon. NULL means 'use plan default' (Limits.MaxAsyncResultRetentionSeconds).
+   * Optional explicit retention horizon. NULL means 'use plan default' (Limits.MaxAsyncResultRetentionSeconds).
    */
   result_retention_until?: string | null;
   /**
-   * ADR-134 PR-C. When this row was most recently replayed from dead_letter via POST /v1/apps/{slug}/queues/dead_letter/{id}/replay. NULL until first replay.
+   * When this row was most recently replayed from dead_letter via POST /v1/apps/{slug}/queues/dead_letter/{id}/replay. NULL until first replay.
    */
   last_replayed_at?: string | null;
   /**

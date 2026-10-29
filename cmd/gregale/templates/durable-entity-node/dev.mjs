@@ -1,7 +1,7 @@
 // This file is excluded from source deployments. No account or bucket credentials are used.
 import {createServer} from 'node:http';
 import {fileURLToPath} from 'node:url';
-import {DurableEntitySimulator} from '@gregale/sdk-node/durable-entities/testing';
+import {DurableEntitySimulator} from '@gregale/sdk-node/preview/durable-entities/testing';
 import {registry} from './registry.mjs';
 import {readBody} from './server.mjs';
 
@@ -35,7 +35,7 @@ export function createLocalServer() {
   return {server, simulator};
 }
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  createLocalServer().server.listen(Number(process.env.PORT ?? 8787), '127.0.0.1', () => {
+  createLocalServer().server.listen(Number(process.env.PORT ?? 8787), '127.0.0.1', () => { // gregale:local-only — local development server
     process.stdout.write('Local entity simulator: http://127.0.0.1:8787 (virtual clock starts at 2000-01-01T00:00:00Z)\n');
   });
 }

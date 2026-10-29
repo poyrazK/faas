@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 
-import { AppsService, FaaSClient, type RouteCustomerUsageResponse } from '../src/index.js';
+import { AppsService, FaaSClient, type RouteCustomerUsageResponse } from '../src/preview.js';
 
 test('route customer usage preserves deployment scope and incomplete coverage', async (t) => {
   const deployment = '11111111-1111-4111-8111-111111111111';

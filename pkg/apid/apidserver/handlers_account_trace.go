@@ -5,13 +5,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"regexp"
-	"slices"
 	"sort"
 	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appaccess"
+	"github.com/onebox-faas/faas/pkg/apid/logsearch"
 	"github.com/onebox-faas/faas/pkg/apid/wakehistory"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
@@ -44,7 +45,12 @@ func (s *server) accountTraceLookup(w http.ResponseWriter, r *http.Request, acct
 		limit = n
 	}
 
+	// Every source below is read for these apps only, so a company app the
+	// caller may no longer see contributes no invocation, log or request.
 	apps, err := s.store.ListApps(r.Context(), acct.ID)
+	if err == nil {
+		apps, err = appaccess.VisibleApps(r, s.store, actorAccount(r, acct), apps)
+	}
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("list apps for trace lookup"))
 		return
@@ -146,7 +152,7 @@ func (s *server) addAccountTraceEvidence(ctx context.Context, accountID string, 
 		appSlugs[app.ID] = app.Slug
 		appIDs = append(appIDs, app.ID)
 	}
-	logEvents, hasMoreLogs, err := s.store.ListAccountTraceLogEvents(ctx, state.AccountTraceLogFilter{
+	logEvents, hasMoreLogs, err := s.logEvents().ListAccountTraceLogEvents(ctx, state.AccountTraceLogFilter{
 		AccountID: accountID, AppIDs: appIDs, TraceID: traceID,
 		Source: state.LogEventSourceHTTP, Since: since, Until: until, Limit: logLimit,
 	})
@@ -156,7 +162,7 @@ func (s *server) addAccountTraceEvidence(ctx context.Context, accountID string, 
 	} else {
 		result.LogsTruncated = result.LogsTruncated || hasMoreLogs
 		for _, event := range logEvents {
-			result.Logs = append(result.Logs, accountTraceLogQueryEvent(appSlugs[event.AppID], event))
+			result.Logs = append(result.Logs, logsearch.QueryEvent(appSlugs[event.AppID], event))
 		}
 	}
 
@@ -172,7 +178,7 @@ func (s *server) addAccountTraceEvidence(ctx context.Context, accountID string, 
 		return
 	}
 	seenSpans := make(map[string]struct{})
-	var wakeApps, wakeIDs []string
+	var wakeRequests []wakehistory.TraceRequest
 	for _, row := range rows {
 		appID := uuidFromPg(row.AppID)
 		slug, ok := appSlugs[appID]
@@ -180,12 +186,9 @@ func (s *server) addAccountTraceEvidence(ctx context.Context, accountID string, 
 			continue // retained rows of a deleted app stay out of the trace
 		}
 		match := api.AccountTraceMatch{App: slug, Request: debugTelemetryGetRowToItem(accountTraceTelemetryRow(row))}
-		if wakeID := match.Request.WakeID; wakeID != "" && !slices.Contains(wakeIDs, wakeID) && len(wakeIDs) < api.AccountTraceWakesMax {
-			wakeIDs = append(wakeIDs, wakeID)
-			if !slices.Contains(wakeApps, appID) {
-				wakeApps = append(wakeApps, appID)
-			}
-		}
+		wakeRequests = append(wakeRequests, wakehistory.TraceRequest{
+			AppID: appID, WakeID: match.Request.WakeID, ColdBoot: row.ColdBoot, ReceivedAt: row.ReceivedAt.Time, LatencyMS: int(row.LatencyMs),
+		})
 		result.Matches = append(result.Matches, match)
 		spans, truncated := parseDebugEvidenceSpans(row.SpansSummary)
 		result.SpansTruncated = result.SpansTruncated || truncated
@@ -200,17 +203,15 @@ func (s *server) addAccountTraceEvidence(ctx context.Context, accountID string, 
 		}
 	}
 	// How each matched request's app was woken, so a hop's latency can be
-	// read as restore plus everything else.
-	wakes, err := wakehistory.TraceWakes(ctx, s.store, wakeApps, wakeIDs)
+	// read as restore (or thaw) plus everything else.
+	wakes, err := wakehistory.TraceWakes(ctx, s.store, wakeRequests)
 	if err != nil {
 		result.Partial = true
 		result.Errors = append(result.Errors, api.AccountTraceLookupError{Detail: "wake history unavailable"})
 		return
 	}
-	for i := range result.Matches {
-		if wake, ok := wakes[result.Matches[i].Request.WakeID]; ok {
-			result.Matches[i].Wake = &wake
-		}
+	for i, wake := range wakes {
+		result.Matches[i].Wake = wake
 	}
 }
 
@@ -225,31 +226,5 @@ func accountTraceTelemetryRow(row sqlc.ListRequestTelemetryByAccountTraceRow) sq
 		GuestRuntime: row.GuestRuntime, GuestOutcome: row.GuestOutcome, GuestErrorClass: row.GuestErrorClass,
 		ConsumerID: row.ConsumerID, NodeID: row.NodeID, Region: row.Region, CommitSha: row.CommitSha,
 		DeploymentTag: row.DeploymentTag, DeploymentCreatedAt: row.DeploymentCreatedAt, ImageDigest: row.ImageDigest,
-	}
-}
-
-func accountTraceLogQueryEvent(app string, event state.LogEvent) api.LogQueryEvent {
-	latencyMS := 0
-	if event.LatencyMS != nil {
-		latencyMS = *event.LatencyMS
-	}
-	return api.LogQueryEvent{
-		ID:           event.ID,
-		App:          app,
-		Timestamp:    event.OccurredAt.UTC().Format(time.RFC3339Nano),
-		Source:       api.LogSource(event.Source),
-		DeploymentID: event.DeploymentID,
-		InstanceID:   event.InstanceID,
-		RequestID:    event.RequestID,
-		TraceID:      event.TraceID,
-		Route:        event.Route,
-		Method:       event.Method,
-		Status:       event.Status,
-		Level:        event.Level,
-		Stream:       event.Stream,
-		Message:      event.Message,
-		LatencyMS:    latencyMS,
-		Count:        event.Occurrences,
-		ColdBoot:     event.ColdBoot,
 	}
 }

@@ -17,6 +17,15 @@ func (m *MemStore) storeComputeNodeLifecycleLocked(node ComputeNode) (ComputeNod
 	if (node.Lifecycle == NodeLifecycleMaintenance || node.Lifecycle == NodeLifecycleRetired) && m.nodeMigrationPendingLocked(node.ID) {
 		return ComputeNode{}, ErrConflict
 	}
+	// Mirror the readiness column: a write that does not set it keeps the
+	// stored value, and a new row defaults to ready.
+	if node.Readiness == "" {
+		if prior, ok := m.computeNodes[node.ID]; ok && prior.Readiness != "" {
+			node.Readiness, node.ReadinessReason = prior.Readiness, prior.ReadinessReason
+		} else {
+			node.Readiness = NodeReadinessReady
+		}
+	}
 	next, err := nextNodeLifecycle(m.computeNodes[node.ID], node, false)
 	if err != nil {
 		return ComputeNode{}, err

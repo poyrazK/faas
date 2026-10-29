@@ -64,6 +64,17 @@ func (s *server) polarWebhook(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, api.ErrCapacity("billing webhook temporarily unavailable"))
 		return
 	}
+	ev, stale := s.freshBillingEvent(r.Context(), ev)
+	if stale {
+		acctID := acct.ID
+		s.audit.Emit(r.Context(), "billing.webhook_stale_ignored", &acctID, map[string]any{
+			"provider":    webhookdedupe.ProviderPolar,
+			"event_type":  ev.Type.Name(),
+			"delivery_id": logsanitize.Field(ev.EventID),
+		})
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 	if s.handleSubscriptionEndedOutbox(w, r, "polar", ev, acct) {
 		return
 	}

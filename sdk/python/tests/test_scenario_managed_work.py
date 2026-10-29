@@ -1,5 +1,5 @@
-from faas_sdk.models.register_scenario_test_request import RegisterScenarioTestRequest
-from faas_sdk.models.scenario_managed_work_evidence import ScenarioManagedWorkEvidence
+from faas_sdk.preview.models.register_scenario_test_request import RegisterScenarioTestRequest
+from faas_sdk.preview.models.scenario_managed_work_evidence import ScenarioManagedWorkEvidence
 
 
 def test_managed_worker_capabilities_and_retry_receipts_round_trip():

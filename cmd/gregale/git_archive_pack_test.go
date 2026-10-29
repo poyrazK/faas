@@ -23,7 +23,7 @@ func TestPackGitArchive_RedactsAndExcludes(t *testing.T) {
 		"tail.txt":                "tail survives\n",
 	})
 
-	outPath, count, findings, err := packGitArchive(inPath, defaultZeroConfigSourceCapMB, modeSourceTree, nil)
+	outPath, count, findings, err := packGitArchive(inPath, defaultZeroConfigSourceCapMB, modeSourceTree, nil, false)
 	if err != nil {
 		t.Fatalf("packGitArchive: %v", err)
 	}
@@ -71,7 +71,7 @@ func TestGitArchiveGoFunctionDetectionAndBuildModule(t *testing.T) {
 		t.Fatalf("detected = (%v, %q, %q), want Go function", sh, runtime, handler)
 	}
 	buildOnly := map[string][]byte{"services/worker/go.mod": []byte(functionGoBuildModule)}
-	outPath, count, _, err := packGitArchive(inPath, defaultZeroConfigSourceCapMB, modeOff, buildOnly)
+	outPath, count, _, err := packGitArchive(inPath, defaultZeroConfigSourceCapMB, modeOff, buildOnly, false)
 	if err != nil {
 		t.Fatal(err)
 	}

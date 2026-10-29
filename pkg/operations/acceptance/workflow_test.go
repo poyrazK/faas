@@ -194,7 +194,7 @@ func TestOperationWorkflowResumePreservesConfirmedSteps(t *testing.T) {
 		if _, _, _, err := store.(state.WorkflowResumeStore).ResumeWorkflowRun(ctx, state.WorkflowResumeOptions{RunID: run.ID, AppID: f.app.ID, AccountID: f.account.ID}); !errors.Is(err, state.ErrWorkflowResumeUnsafe) {
 			t.Fatal("direct resume bypassed recovery", err)
 		}
-		if _, _, err := store.(state.WorkflowRetryStore).RetryWorkflowStep(ctx, run.ID, "transform", f.account.Plan.WorkflowMaxConcurrentRuns()); !errors.Is(err, state.ErrWorkflowRetryNotAllowed) {
+		if _, _, err := store.(state.WorkflowRetryStore).RetryWorkflowStep(ctx, run.ID, "transform", f.account.Plan.WorkflowMaxConcurrentRuns(), 0); !errors.Is(err, state.ErrWorkflowRetryNotAllowed) {
 			t.Fatal("direct step retry bypassed recovery", err)
 		}
 		next, err := store.CreateDeployment(ctx, state.Deployment{AppID: f.app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:new"})

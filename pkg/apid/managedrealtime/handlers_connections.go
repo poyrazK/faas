@@ -1183,6 +1183,11 @@ func (s *Service) PublishManagedRealtimeChannel(w http.ResponseWriter, r *http.R
 	}
 	var retainedSequence int64
 	if delivery == api.ManagedRealtimeDeliveryRetained {
+		// Outside the preview rollout retained is answered like any unknown delivery value.
+		if !s.PreviewVisible(acct.ID) {
+			api.WriteProblem(w, api.ErrRealtimeInvalid("delivery must be live or retained, and may be specified once"))
+			return
+		}
 		if !s.HistoryPreviewEnabled {
 			httpkit.NotFound(w, "retained realtime publishing unavailable")
 			return

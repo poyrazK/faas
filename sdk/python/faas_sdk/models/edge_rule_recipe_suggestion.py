@@ -18,10 +18,10 @@ T = TypeVar("T", bound="EdgeRuleRecipeSuggestion")
 
 @_attrs_define
 class EdgeRuleRecipeSuggestion:
-    """One suggested protection recipe and why (ADR-20261020105000)."""
+    """One suggested protection recipe and why."""
 
     recipe: str
-    """Recipe id to add (ADR-986)."""
+    """Recipe id to add."""
     title: str
     """The recipe's title."""
     reason: str
@@ -29,8 +29,7 @@ class EdgeRuleRecipeSuggestion:
     params: EdgeRuleRecipeSuggestionParams | Unset = UNSET
     """Recipe parameters to add it with; required parameters not listed must be supplied."""
     alternative: EdgeRuleRecipeSuggestionAlternative | Unset = UNSET
-    """A softer recipe for the same observation, such as challenging browsers instead of rate-limiting (ADR-831
-    amendment 7)."""
+    """A softer recipe for the same observation, such as challenging browsers instead of rate-limiting."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

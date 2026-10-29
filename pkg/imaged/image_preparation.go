@@ -105,11 +105,21 @@ func (h *Handler) handleSnapshotBoot(ctx context.Context, payload snapshotBootPa
 	return h.resumeImagePreparation(workCtx, images, app, dep, p)
 }
 
-func (h *Handler) resumeImagePreparation(ctx context.Context, images state.DeploymentImagePreparationStore, app state.App, dep state.Deployment, p state.ImagePreparation) error {
+func (h *Handler) resumeImagePreparation(ctx context.Context, images state.DeploymentImagePreparationStore, app state.App, dep state.Deployment, p state.ImagePreparation) (err error) {
+	resumedAt := string(p.Phase)
+	ctx, timing := withPhaseTimer(ctx, preparationTimingKey{})
+	defer func() {
+		if err == nil && h.log != nil {
+			h.log.Info("imaged: image preparation timing", append([]any{
+				"deployment", dep.ID, "app", app.Slug, "resumed_at", resumedAt,
+			}, timing.attrs()...)...)
+		}
+	}()
 	if p.Phase == state.ImagePreparing {
 		if err := h.prepareImageLayer(ctx, images, app, dep, p); err != nil {
 			return err
 		}
+		markPreparationPhase(ctx, "layer")
 		p.Phase = state.ImageLayerPublished
 	}
 	// Always reload the final artifact and current status. The original input
@@ -130,7 +140,11 @@ func (h *Handler) resumeImagePreparation(ctx context.Context, images state.Deplo
 	if p.Phase != state.ImageScanComplete {
 		return errors.New("imaged: unsupported image preparation checkpoint")
 	}
-	return h.finishImageHandoff(ctx, images, current, p)
+	if err := h.finishImageHandoff(ctx, images, current, p); err != nil {
+		return err
+	}
+	markPreparationPhase(ctx, "handoff")
+	return nil
 }
 
 func (h *Handler) prepareImageLayer(ctx context.Context, images state.DeploymentImagePreparationStore, app state.App, dep state.Deployment, p state.ImagePreparation) error {
@@ -216,9 +230,11 @@ func (h *Handler) prepareImageScan(ctx context.Context, images state.DeploymentI
 	if err := h.replicateLayer(ctx, dep.RootfsKey); err != nil {
 		return imageRecoveryError(err)
 	}
+	markPreparationPhase(ctx, "replicate")
 	if err := h.ensureDeploymentRuntimeBaseForDeployment(ctx, app, dep); err != nil {
 		return err
 	}
+	markPreparationPhase(ctx, "runtime_base")
 	var stages state.StageState
 	if len(dep.StageState) > 0 {
 		if err := json.Unmarshal(dep.StageState, &stages); err != nil {
@@ -233,6 +249,7 @@ func (h *Handler) prepareImageScan(ctx context.Context, images state.DeploymentI
 	if err := h.runDeployScan(ctx, app, dep); err != nil {
 		return err
 	}
+	markPreparationPhase(ctx, "scan")
 	if err := ctx.Err(); err != nil {
 		return err
 	}

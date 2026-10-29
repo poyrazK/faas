@@ -47,13 +47,18 @@ func TestWorkerScopedBindingNamesAndCapsDoNotCrossEnvironments(t *testing.T) {
 	engine := &Engine{store: store}
 	check := func(scope string, want int) {
 		t.Helper()
-		got, err := engine.workerQueueDemandForScope(ctx, app, scope, 10)
+		got, err := engine.workerQueueDemandForScope(ctx, app, scope, 10, 5)
 		if err != nil || got != want {
 			t.Fatalf("scope %s demand=%d want=%d err=%v", scope, got, want, err)
 		}
 	}
 	check("production", 1)
 	check("staging", 3)
+	// The depth read stops where the pool saturates: two workers at ten
+	// messages each need no more than twenty of the thirty.
+	if got, err := engine.workerQueueDemandForScope(ctx, app, "staging", 10, 2); err != nil || got != 2 {
+		t.Fatalf("bounded staging demand=%d err=%v, want 2", got, err)
+	}
 	disabled := false
 	if _, err := store.UpdateQueueBindingWithConsumer(ctx, account.ID, app.ID, bindings["production"].ID, state.UpdateQueueBindingParams{Enabled: &disabled}); err != nil {
 		t.Fatal(err)

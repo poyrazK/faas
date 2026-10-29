@@ -384,6 +384,9 @@ func RunWebhookDeliveryWorker(ctx context.Context, store WebhookDeliveryStore, s
 			}
 			log.Warn("githubd: webhook delivery failed", "delivery_id", delivery.DeliveryID,
 				"event", delivery.EventType, "attempt", delivery.Attempts, "dead", dead, "err", dispatchErr)
+			if dead {
+				service.ReportUndeliverablePullRequest(ctx, delivery)
+			}
 		}
 
 		select {

@@ -13,7 +13,7 @@ import (
 func TestChannelOccupancyIndex(t *testing.T) {
 	m := NewManager(Config{}, nil)
 	defer func() { _ = m.Close() }()
-	if err := m.RegisterEndpoint(Endpoint{ID: "e", MaxMessageBytes: 1 << 10}); err != nil {
+	if err := m.RegisterEndpoint(Endpoint{Preview: true, ID: "e", MaxMessageBytes: 1 << 10}); err != nil {
 		t.Fatal(err)
 	}
 	first, _ := outboundTestConnection(t, m, "e")
@@ -59,7 +59,7 @@ func TestChannelOccupancyIndex(t *testing.T) {
 func TestChannelOccupancyInternalEndpoint(t *testing.T) {
 	m := NewManager(Config{OccupancyPreview: true}, nil)
 	defer func() { _ = m.Close() }()
-	if err := m.RegisterEndpoint(Endpoint{ID: "e", MaxMessageBytes: 1 << 10}); err != nil {
+	if err := m.RegisterEndpoint(Endpoint{Preview: true, ID: "e", MaxMessageBytes: 1 << 10}); err != nil {
 		t.Fatal(err)
 	}
 	c, _ := outboundTestConnection(t, m, "e")
@@ -92,7 +92,7 @@ func TestChannelOccupancyInternalEndpoint(t *testing.T) {
 func TestChannelOccupancyPreviewOff(t *testing.T) {
 	m := NewManager(Config{}, nil)
 	defer func() { _ = m.Close() }()
-	if err := m.RegisterEndpoint(Endpoint{ID: "e", MaxMessageBytes: 1 << 10}); err != nil {
+	if err := m.RegisterEndpoint(Endpoint{Preview: true, ID: "e", MaxMessageBytes: 1 << 10}); err != nil {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()

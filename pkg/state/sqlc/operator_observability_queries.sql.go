@@ -1195,7 +1195,7 @@ func (q *Queries) OperatorCapacityProfiles(ctx context.Context, db DBTX, resourc
 }
 
 const operatorCommandCronObservations = `-- name: OperatorCommandCronObservations :many
-SELECT c.schedule,c.timezone,c.created_at,c.last_fired_at,c.enabled,c.skip_if_running,c.schedule_policy,
+SELECT c.schedule,c.timezone,c.created_at,c.last_fired_at,c.schedule_anchor_at,c.enabled,c.skip_if_running,c.schedule_policy,
  (c.suspended_reason<>'')::boolean AS suspended,(a.status='deleted')::boolean AS app_deleted,
  (account.status IN ('active','past_due') AND account.abuse_hold_at IS NULL)::boolean AS account_active,
  EXISTS(SELECT 1 FROM deployments d WHERE d.app_id=c.app_id AND d.status='live'
@@ -1223,6 +1223,7 @@ type OperatorCommandCronObservationsRow struct {
 	Timezone            string
 	CreatedAt           pgtype.Timestamptz
 	LastFiredAt         pgtype.Timestamptz
+	ScheduleAnchorAt    pgtype.Timestamptz
 	Enabled             bool
 	SkipIfRunning       bool
 	SchedulePolicy      []byte
@@ -1253,6 +1254,7 @@ func (q *Queries) OperatorCommandCronObservations(ctx context.Context, db DBTX, 
 			&i.Timezone,
 			&i.CreatedAt,
 			&i.LastFiredAt,
+			&i.ScheduleAnchorAt,
 			&i.Enabled,
 			&i.SkipIfRunning,
 			&i.SchedulePolicy,

@@ -97,8 +97,8 @@ func (f *namespaceFixture) Run(ctx context.Context, argv []string) error {
 
 func TestResourcePlacementJailCheckpointReopenAndReplacement(t *testing.T) {
 	v, j := assetFixture(t)
-	syncDir := j.directorySync
-	j.directorySync = func() error {
+	syncDir := j.commitSync
+	j.commitSync = func(durable bool) error {
 		for _, a := range j.records[idLive].Assets {
 			if a.File == nil {
 				if _, err := os.Lstat(a.Path); !os.IsNotExist(err) {
@@ -111,7 +111,7 @@ func TestResourcePlacementJailCheckpointReopenAndReplacement(t *testing.T) {
 				}
 			}
 		}
-		return syncDir()
+		return syncDir(durable)
 	}
 	root, err := v.mkChroot(idLive)
 	if err != nil {
@@ -121,7 +121,7 @@ func TestResourcePlacementJailCheckpointReopenAndReplacement(t *testing.T) {
 	if r.Version != 3 || len(r.Assets) != 2 || r.Assets[0].File == nil || r.Assets[1].File == nil {
 		t.Fatalf("incomplete jail checkpoint: %+v", r)
 	}
-	j.directorySync = syncDir
+	j.commitSync = syncDir
 	path := j.dir.Name()
 	_ = j.Close()
 	j = openTestResourceJournal(t, path)
@@ -207,21 +207,21 @@ func TestResourcePlacementJailCommitFailures(t *testing.T) {
 	for _, phase := range []string{"intent", "checkpoint", "retirement"} {
 		t.Run(phase, func(t *testing.T) {
 			v, j := assetFixture(t)
-			syncDir := j.directorySync
+			syncDir := j.commitSync
 			injected := errors.New("placement fsync fixture")
-			j.directorySync = func() error {
+			j.commitSync = func(durable bool) error {
 				a := j.records[idLive].Assets
 				if len(a) > 0 && ((phase == "intent" && a[0].File == nil) || (phase == "checkpoint" && a[0].File != nil)) {
 					return injected
 				}
-				return syncDir()
+				return syncDir(durable)
 			}
 			root, err := v.mkChroot(idLive)
 			if phase == "retirement" {
 				if err != nil {
 					t.Fatal(err)
 				}
-				j.directorySync = func() error { return injected }
+				j.commitSync = func(durable bool) error { return injected }
 				err = v.removeOwnedJail(idLive)
 				if len(v.jailAssets(idLive)) != 2 {
 					t.Fatal("uncertain retirement dropped live identity")
@@ -232,7 +232,7 @@ func TestResourcePlacementJailCommitFailures(t *testing.T) {
 			if !errors.Is(err, injected) {
 				t.Fatalf("commit failure acknowledged: %v", err)
 			}
-			j.directorySync = syncDir
+			j.commitSync = syncDir
 			if err := v.removeOwnedJail(idLive); err != nil {
 				t.Fatal(err)
 			}
@@ -282,15 +282,15 @@ func TestResourcePlacementNetworkOrderingReplacementAndRetirement(t *testing.T) 
 	}
 	f.bindings[name] = owned
 	injected := errors.New("namespace retirement fsync fixture")
-	syncDir := j.directorySync
-	j.directorySync = func() error { return injected }
+	syncDir := j.commitSync
+	j.commitSync = func(durable bool) error { return injected }
 	if err := m.Destroy(t.Context(), idLive); !errors.Is(err, injected) || m.LeasedCount() != 1 {
 		t.Fatalf("uncertain retirement released lease: %v", err)
 	}
 	if _, ok := m.namespaceOwner(name); !ok {
 		t.Fatal("uncertain retirement lost live identity")
 	}
-	j.directorySync = syncDir
+	j.commitSync = syncDir
 	if err := m.Destroy(t.Context(), idLive); err != nil || m.LeasedCount() != 0 {
 		t.Fatalf("retirement retry: %v", err)
 	}
@@ -352,13 +352,13 @@ func TestResourcePlacementNetworkCheckpointFailure(t *testing.T) {
 	if err := j.begin(l); err != nil {
 		t.Fatal(err)
 	}
-	syncDir := j.directorySync
+	syncDir := j.commitSync
 	injected := errors.New("namespace checkpoint fsync fixture")
-	j.directorySync = func() error {
+	j.commitSync = func(durable bool) error {
 		if len(j.records[idLive].Assets) > 0 && j.records[idLive].Assets[0].File != nil {
 			return injected
 		}
-		return syncDir()
+		return syncDir(durable)
 	}
 	nc := netns.NewConfig(l.Instance, l.Netns, l.VethHost, l.VethPeer, l.HostIP)
 	if err := m.setupNetwork(t.Context(), nc); !errors.Is(err, injected) {
@@ -367,7 +367,7 @@ func TestResourcePlacementNetworkCheckpointFailure(t *testing.T) {
 	if len(f.next.(*fakeRunner).commands) != 1 {
 		t.Fatal("commands ran after failed checkpoint")
 	}
-	j.directorySync = syncDir
+	j.commitSync = syncDir
 	if err := m.removeNamespaceForRebuild(t.Context(), nc); err != nil {
 		t.Fatal(err)
 	}

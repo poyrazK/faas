@@ -34,6 +34,7 @@ func TestTrafficResilienceMetricsAreRegistered(t *testing.T) {
 		"gateway_retry_attempts_total",
 		"gateway_retry_exhausted_total",
 		"gateway_retry_budget_shared",
+		"gateway_rate_limit_shared",
 		"gateway_retry_budget_backend_info",
 		"gateway_retry_budget_backend_operations_total",
 		"gateway_circuit_transitions_total",

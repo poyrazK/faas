@@ -168,6 +168,17 @@ class ShardTest(unittest.TestCase):
         shards = [ap.shard(["cmd/gregale", "pkg/state", "pkg/x"], i, 3) for i in (1, 2, 3)]
         self.assertEqual(shards, [[], [], ["pkg/x"]])
 
+    def test_slowest_race_packages_avoid_the_shard_with_two_selective_packages(self):
+        # The #4153 timeout: both 17-minute race packages beside the
+        # pkg/sched and pkg/state builds on one shard.
+        slow = ["cmd/gatewayd-internal", "pkg/environmentsync/pgintegration"]
+        dirs = slow + ["cmd/gregale", "pkg/sched", "pkg/state", "pkg/apid/apidserver",
+                       "pkg/e2etest", "pkg/gateway", "cmd/gregalectl", "pkg/operations/acceptance"]
+        busy = ap.SELECTIVE_SHARD["pkg/sched"]
+        shards = {i: ap.shard(dirs, i, 3) for i in (1, 2, 3)}
+        self.assertFalse(set(slow) & set(shards[busy]), shards)
+        self.assertEqual(len([i for i in shards if set(slow) & set(shards[i])]), 2, shards)
+
     def test_every_shard_owns_a_selective_package(self):
         self.assertEqual(sorted(set(ap.SELECTIVE_SHARD.values())), [1, 2, 3])
 

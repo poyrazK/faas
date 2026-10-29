@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from faas_sdk import EventAcknowledgmentIntentRetryPolicy
+from faas_sdk.preview import EventAcknowledgmentIntentRetryPolicy
 
 
 async def stage_completion_with_stored_policy(worker: Any, connection: Any, handler: Any, stop_event: Any) -> Any:

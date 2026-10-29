@@ -15,7 +15,7 @@ T = TypeVar("T", bound="ListJobsResponse")
 
 @_attrs_define
 class ListJobsResponse:
-    """Page of jobs on the account (issue"""
+    """Page of jobs on the account."""
 
     jobs: list[JobResponse]
     limit: int

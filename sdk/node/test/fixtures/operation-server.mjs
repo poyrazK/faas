@@ -1,6 +1,6 @@
 import http from 'node:http';
 import pg from 'pg';
-import { operationRequestFromHeaders, withOperationTransaction, GregaleOperations } from '../../dist/index.js';
+import { operationRequestFromHeaders, withOperationTransaction, GregaleOperations } from '../../dist/preview.js';
 
 const pool = new pg.Pool({ connectionString: process.env.OPERATION_DATABASE_URL, max: 10 });
 const mode = process.env.OPERATION_FAULT;

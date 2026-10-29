@@ -1,6 +1,7 @@
 package apidserver
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 
@@ -25,6 +26,10 @@ func (h profileCaptureHost) Store() state.Store { return h.s.store }
 func (h profileCaptureHost) Logger() *slog.Logger { return h.s.log }
 
 func (h profileCaptureHost) Notifier() profilecapture.Notifier { return h.s.notif }
+
+func (h profileCaptureHost) Audit(ctx context.Context, action, accountID string, details map[string]any) {
+	h.s.audit.Emit(ctx, action, &accountID, details)
+}
 
 func (h profileCaptureHost) SourceProvenance(app state.App, dep state.Deployment) profiling.SourceProvenance {
 	return profileSourceProvenance(app, dep)

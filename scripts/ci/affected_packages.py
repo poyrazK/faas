@@ -97,9 +97,15 @@ GO_STRING = re.compile(r'^"([^"\\*]*)"$')
 # Relative cost of a package's race test run, used only to balance shards.
 # Unlisted packages weigh 1. Measured from the mega tier's shard timings.
 WEIGHTS = {
+    # About 17 minutes each with -race on a light shard (#4153, 2026-10-24).
+    # Weighed at 1, both landed beside pkg/sched and pkg/state, and that shard
+    # ran out of its 40 minutes before the large-package builds finished.
+    "cmd/gatewayd-internal": 8,
+    "pkg/environmentsync/pgintegration": 8,
     "pkg/e2etest": 6,
     "pkg/gateway": 5,
     "cmd/gregalectl": 4,
+    "pkg/operations/acceptance": 4,
     "pkg/reconcile": 4,
     "pkg/meter": 3,
 }

@@ -1,7 +1,7 @@
 import { createServer } from 'node:http';
 import { performance } from 'node:perf_hooks';
 import { EventAcknowledgmentIntentHealthMetrics, formatEventAcknowledgmentIntentHealthMetrics,
-  EVENT_ACKNOWLEDGMENT_INTENT_HEALTH_PROMETHEUS_CONTENT_TYPE, getEventAcknowledgmentIntentHealth } from '@gregale/sdk-node';
+  EVENT_ACKNOWLEDGMENT_INTENT_HEALTH_PROMETHEUS_CONTENT_TYPE, getEventAcknowledgmentIntentHealth } from '@gregale/sdk-node/preview';
 
 function wait(signal) {
   signal.throwIfAborted();

@@ -71,6 +71,14 @@ func applicationStandardRuntimeProblem(err error) error {
 	if !errors.Is(err, state.ErrApplicationStandardsPending) && !errors.Is(err, state.ErrApplicationStandardRuntimeStale) && !errors.Is(err, state.ErrApplicationStandardRuntimeBusy) {
 		return err
 	}
+	if errors.Is(err, state.ErrApplicationStandardRuntimeBusy) && !errors.Is(err, state.ErrApplicationStandardsPending) && !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
+		// A busy fence means another operation on the app held its runtime
+		// state; nothing about its standards changed. The old wording sent a
+		// customer whose deploy hit a busy fence looking for a policy update
+		// (Hunt 14 H14-32).
+		return errors.Join(err, api.NewProblem(http.StatusConflict, api.CodeApplicationStandardsPending,
+			"Runtime state busy", "Another operation on this app was updating its runtime state. Retry the request; it is safe to repeat."))
+	}
 	return errors.Join(err, api.NewProblem(http.StatusConflict, api.CodeApplicationStandardsPending,
 		"Application standards pending", "Application standards changed during startup. Retry the request once the policy update has finished."))
 }

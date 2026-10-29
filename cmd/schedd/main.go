@@ -31,6 +31,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/audit"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
+	"github.com/onebox-faas/faas/pkg/capflags"
 	"github.com/onebox-faas/faas/pkg/ci"
 	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
@@ -41,6 +42,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/heartbeatretention"
 	mirrorRollup "github.com/onebox-faas/faas/pkg/mirror"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/privatenetwork"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/runtimeconfig"
@@ -54,6 +56,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/sched/scaleup"
 	"github.com/onebox-faas/faas/pkg/sched/targets"
 	"github.com/onebox-faas/faas/pkg/scheddgrpc"
+	"github.com/onebox-faas/faas/pkg/sealdomain"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
@@ -340,6 +343,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			return err
 		}
 	}
+	// ADR 20261022111812: the delivery seal-domain identity opens the
+	// execution payloads, app webhook secrets and commit-source connections
+	// apid seals for schedd, ahead of the fleet and host identities. A
+	// configured identity that does not load fails startup.
+	deliveryIdentities, err := loadDeliverySealDomain(os.Getenv)
+	if err != nil {
+		return err
+	}
 	var executionHostAgeIdentities []*age.X25519Identity
 	if executionEnabled {
 		if deps.executionArtifacts == nil {
@@ -355,7 +366,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			if identityErr != nil {
 				return fmt.Errorf("schedd: authenticated payload decoder unavailable: load host age identities: %w", identityErr)
 			}
-			deps.executionPayloadDecoder = sched.NewAgeExecutionBundlePayloadDecoder(executionHostAgeIdentities)
+			deps.executionPayloadDecoder = sched.NewAgeExecutionBundlePayloadDecoder(domainReaders(deliveryIdentities, executionHostAgeIdentities))
 			if deps.executionPayloadDecoder == nil {
 				return errors.New("schedd: authenticated payload decoder unavailable: no host age identities")
 			}
@@ -390,6 +401,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := deps.migrate(ctx, pool); err != nil {
 		return err
 	}
+	invocationTrafficRegistry, err := newInvocationTrafficRegistry(ctx, pool)
+	if err != nil {
+		return err
+	}
+	defer runInvocationTrafficRegistry(ctx, invocationTrafficRegistry)()
 
 	// ADR-056: handshake-layer NodeVerifier. Gated on cfg.NodeName
 	// (the multi-box gate, mirroring vmmd's cfg.ComputeNode.NodeName
@@ -449,7 +465,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("schedd: load vmmd TLS: %w", err)
 	}
 	vmmRotator.Set(vmmTLS)
-	store := state.NewPgStore(pool)
+	store := state.NewPgStore(pool, state.WithTrafficAppsDomain(cfg.GetAppsDomain(os.Getenv)))
 	stopEventWriter, err := eventrecording.Start(ctx, store, "schedd", cfg.EventAcknowledgmentWriterSlot, cfg.EventAcknowledgmentWriterRoster, log)
 	if err != nil {
 		return err
@@ -575,16 +591,29 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// was soft-deleted between NOTIFY and the SELECT — write "" so
 	// the next resolveFor returns ErrCapacity (the same path an
 	// unknown node takes).
+	// ADR-20261024225612: say once, and again whenever it changes, when the
+	// active nodes cannot share snapshots. The watcher runs on one goroutine.
+	lastCPUWarning := ""
+	warnCPUIdentities := func() {
+		distinct, warning := sched.CPUIdentityWarning(nodeRegistry.Snapshot())
+		if warning != lastCPUWarning && warning != "" {
+			log.Warn("schedd: "+warning, "cpu_identities", distinct)
+		}
+		lastCPUWarning = warning
+	}
+	warnCPUIdentities()
 	routerRefreshFn := func(rctx context.Context, nodeID string) error {
 		row, err := store.ComputeNodeByID(rctx, nodeID)
 		switch {
 		case err == nil:
 			vmmRouter.Refresh(nodeID, row.TargetURL)
 			nodeRegistry.Refresh(row)
+			warnCPUIdentities()
 			return nil
 		case errors.Is(err, state.ErrNotFound):
 			vmmRouter.Refresh(nodeID, "")
 			nodeRegistry.Remove(nodeID)
+			warnCPUIdentities()
 			return nil
 		default:
 			return err
@@ -602,6 +631,21 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	go repairHealth.Run(ctx)
 	wire.BootStamps(ctx, "schedd", ops)
 	wire.RegisterDefaultOps(ops)
+	// ADR 20261022111812: report whether this schedd holds the control
+	// seal-domain identity; a configured identity that does not load fails
+	// startup, as for the other domains' readers.
+	controlIdentities, err := loadControlSealDomain(os.Getenv)
+	if err != nil {
+		return err
+	}
+	// One gauge, one series per domain: registering it per domain would
+	// collide on the same registry.
+	sealdomain.RegisterLoadedDomains(ops.Registry(), map[sealdomain.Domain]bool{
+		sealdomain.Control:  len(controlIdentities) > 0,
+		sealdomain.Delivery: len(deliveryIdentities) > 0,
+	})
+	log.Info("control seal domain", "domain_identity", len(controlIdentities) > 0)
+	log.Info("delivery seal domain", "domain_identity", len(deliveryIdentities) > 0)
 	// ADR-190 follow-up: export this pool's live statistics so the
 	// DaemonMaxConnections cap above is measurable rather than arithmetic.
 	wire.RegisterPoolMetrics(ops, pool)
@@ -674,6 +718,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	engine.WithStoreOutageAtStartup(storeOutageAtStartup)
 	engine.WithOpsMetrics(ops)
 	engine.WithJobFlexibleMetrics(wire.NewJobFlexibleMetrics(ops.Registry(), ops.MetricPrefix()))
+	engine.WithJobDispatchMetrics(wire.NewJobDispatchMetrics(ops.Registry(), ops.MetricPrefix()))
 	// Keep the engine's ownership scope aligned with the gRPC server,
 	// heartbeat, and floor trigger. An empty owner preserves the central
 	// scheduler's fleet-wide placement; a configured owner pins this
@@ -690,6 +735,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// vmmd confirms attempt-bound native retirement.
 	startEnvironmentQualificationRecovery(ctx, engine, store, ownerNodeID, log)
 	startManagedPostgresDrainRecovery(ctx, engine, store, ownerNodeID, log)
+	startDatabaseSwitchDrainCapture(ctx, engine, store, store, ownerNodeID, log)
 	// ADR-098 PR-D: connection-aware upstream affinity. The
 	// FAAS_UPSTREAM_AFFINITY environment value is the bootstrap
 	// fallback; the durable data-placement flag can switch the
@@ -719,7 +765,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// atomically when the acknowledged runtime value changes.
 	runtimeCtx, runtimeCancel := context.WithCancel(ctx)
 	defer runtimeCancel()
-	watcher := runtimeconfig.New(store, pool, []string{runtimeconfig.KeyDataPlacement, runtimeconfig.KeyFullEnvironmentClones},
+	// ADR-20261023115741: schedd holds a capability's background work
+	// (crons, triggers, queued deliveries, jobs, workflows) while its
+	// platform flag is off for the owning account. The flags ride the same
+	// runtime-config watcher and report apply receipts as schedd.
+	capabilityFlags := platformflags.NewSet(capflags.Bootstrap(os.Getenv))
+	capabilities, err := capflags.Load(capabilityFlags.Snapshot)
+	if err != nil {
+		return fmt.Errorf("schedd: load capability catalog: %w", err)
+	}
+	engine.WithCapabilities(capabilities)
+	runtimeKeys, runtimeApply := runtimeconfig.WithPlatformFlags([]string{runtimeconfig.KeyDataPlacement, runtimeconfig.KeyFullEnvironmentClones},
 		func(ctx context.Context, key string, value json.RawMessage, _ int64) error {
 			enabled, err := runtimeconfig.Bool(value)
 			if err != nil {
@@ -737,7 +793,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				}
 			}
 			return nil
-		}, log)
+		}, capabilityFlags)
+	watcher := runtimeconfig.New(store, pool, runtimeKeys, runtimeApply, log)
 	watcher.Daemon = "schedd" // ADR-1700 apply receipts
 	if err := watcher.Reconcile(runtimeCtx); err != nil {
 		log.Warn("schedd: initial runtime config reconcile failed", "err", err)
@@ -754,7 +811,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// health signal at all, so enabling one without the other would be a
 	// silent no-op that looks like protection. That combination is a
 	// startup error rather than a warning, per the ADR's rollout section.
-	if os.Getenv("FAAS_EGRESS_CIRCUIT_BREAKER") != "" {
+	egressCircuitEnabled, err := api.EgressCircuitBreakerEnabled(os.Getenv("FAAS_EGRESS_CIRCUIT_BREAKER"))
+	if err != nil {
+		return err
+	}
+	if egressCircuitEnabled {
 		if os.Getenv("FAAS_UPSTREAM_PROBE") == "" {
 			log.Error("schedd: FAAS_EGRESS_CIRCUIT_BREAKER is set but FAAS_UPSTREAM_PROBE is not; " +
 				"the breaker has no health signal without the ADR-098 probe")
@@ -763,20 +824,20 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		applier := sched.NewRoutedEgressCircuitApplier(
 			vmmRouter,
 			sched.NewStoreEgressCircuitNodeLister(store),
-		)
+		).WithDesiredStore(store)
 		// The resolver is the node's own DNS. schedd resolves the upstream
 		// locally so the plaintext host never crosses the vmmd wire — the
 		// RPC carries a resolved address, and every label and log line
 		// carries only host_redacted_hash (ADR-098 §11).
-		resolver := func(ctx context.Context, host string) (string, error) {
+		resolver := func(ctx context.Context, host string) ([]string, error) {
 			addrs, err := net.DefaultResolver.LookupHost(ctx, host)
 			if err != nil {
-				return "", err
+				return nil, err
 			}
 			if len(addrs) == 0 {
-				return "", fmt.Errorf("schedd: egress circuit: no address for upstream")
+				return nil, fmt.Errorf("schedd: egress circuit: no address for upstream")
 			}
-			return addrs[0], nil
+			return addrs, nil
 		}
 		egressBreaker := sched.NewEgressCircuitBreaker(applier, resolver, log).WithMetrics(ops)
 		egressLoop := sched.NewEgressCircuitLoop(
@@ -785,7 +846,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			api.UpstreamAffinityTTL, // one probe cadence
 			0,                       // default: four intervals
 			log,
-		)
+		).WithAppLister(store.ListAppEgressCircuitAppIDs).WithAppAllowed(engine.EgressCircuitAllowed)
 		// One pass before the first tick so a schedd restart re-derives
 		// breaker state from the probe history instead of starting blind
 		// with every circuit closed.
@@ -906,6 +967,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("schedd: load sign pub %q: %w (run `faas sign-keys init` on imaged's host if missing)", signPubPath, err)
 	}
 	log.Info("schedd: build attestation verifier ready", "pub", signPubPath)
+	// ADR-038 amendment (2026-10-24): remember verified layers across
+	// restarts, so the first wakes after a restart do not wait for whole
+	// layers to be read and hashed again.
+	recordsPath := envOr("FAAS_LAYER_ATTESTATION_RECORDS", cosign.DefaultAttestationRecordsPath)
+	if err := verifier.RememberVerifications(recordsPath, time.Duration(api.LayerAttestationRecordMaxAgeHours)*time.Hour); err != nil {
+		log.Warn("schedd: layer verifications stay in memory only", "path", recordsPath, "err", err)
+	}
 	engine.WithVerifier(verifier)
 	attestationWarmCtx, cancelAttestationWarm := context.WithCancel(ctx)
 	defer cancelAttestationWarm()
@@ -1631,6 +1699,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithStoreOutageAtStartup(storeOutageAtStartup).
 		WithNodeRegistry(nodeRegistry).
 		WithEvents(eventsPlatform).
+		WithOpsMetrics(ops).
 		WithReachableHook(engine.DestroyLostVMs)
 	if leaseGuard != nil {
 		hb.WithTakeoverGuard(leaseGuard)
@@ -1699,13 +1768,6 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log.Info("quiet pause ledger enabled (ADR-20261023171905)",
 			"flush_seconds", api.QuietPauseLedgerFlushSeconds)
 	}
-	if cfg.QuietPauseAdmission {
-		engine.Ledger().EnableQuietPauseAdmission(func(nodeID string) (map[string]struct{}, time.Time, bool) {
-			return reader.QuietPaused(nodeID, time.Now())
-		})
-		log.Info("quiet pause admission enabled (ADR-1151)",
-			"max_overcommit_percent", api.QuietPauseMaxVCPUOvercommitPercent)
-	}
 	if cfg.FrozenTier {
 		engine.EnableFrozenTier()
 		if cfg.FrozenTierApps {
@@ -1758,6 +1820,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log.Info("owner fleet instance stats enabled",
 			"owner_node_id", ownerNodeID,
 			"interval", fleetInterval)
+	}
+	// ADR-1151 quiet pause admission discounts this schedd's bookings that
+	// vmmd reports quiet-paused: on its own node from the local reader, on
+	// peer nodes from the owner fleet reader above.
+	if cfg.QuietPauseAdmission {
+		quietPaused := instancestats.QuietPausedAcross(reader, autoscaleReader, ownerNodeID)
+		engine.Ledger().EnableQuietPauseAdmission(func(nodeID string) (map[string]struct{}, time.Time, bool) {
+			return quietPaused(nodeID, time.Now())
+		})
+		log.Info("quiet pause admission enabled (ADR-1151)",
+			"max_overcommit_percent", api.QuietPauseMaxVCPUOvercommitPercent,
+			"peer_nodes", ownerNodeID != "")
 	}
 	// Register the gRPC server with the Reader wired so the
 	// ListInstanceStats RPC (issue #279 / PR-B) can serve the
@@ -1817,7 +1891,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if hostAgeErr != nil {
 		log.Warn("trigger credentials: host age identities unavailable", "path", hostAgePath, "err", hostAgeErr)
 	}
-	if err := startCommitRelay(ctx, store, hostAgeIdentities, log, ops.Registry()); err != nil {
+	// Trigger configs stay sealed to the fleet key (hostAgeIdentities):
+	// apid still opens a stored config to merge an update into it.
+	deliveryReaders := domainReaders(deliveryIdentities, hostAgeIdentities)
+	if err := startCommitRelay(ctx, store, deliveryReaders, log, ops.Registry()); err != nil {
 		return err
 	}
 	// ADR-098: app-delete handler. Built here (not via the
@@ -1881,7 +1958,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			// /srv/fc/snap. The byte-comparison path stays in
 			// place for the local backend; a remote backend (OCI)
 			// degrades to a presence check.
-			WithStorage(storageBackend)).
+			WithStorage(storageBackend).
+			// ADR 20261022184951 amendment 1: native runtime snapshots
+			// sit in vmmd's private tree under the same snap/ keys.
+			WithNativeRuntimeSnapshots(nativeRuntimeSnapshotLister(log))).
 		// Audit seam (lifted from cmd/apid/audit.go into pkg/audit
 		// for cross-daemon reuse). schedd uses actor="schedd" so the
 		// cron-fire path can emit a `cron.fired` events row after
@@ -2528,6 +2608,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	drain := sched.NewDrain(engine.Store(), engine,
 		sched.WithDrainGatewaySynth(drainGateway),
+		sched.WithDrainTrafficRevocations(invocationTrafficRegistry),
 		sched.WithDrainAppTaskCoordinator(appTaskCoordinator),
 		sched.WithDrainNotifier(engine.Notifier()),
 		sched.WithDrainLogger(log),
@@ -2562,7 +2643,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		Store: store, Metrics: webhookDispatcher.HealthMetrics, Log: log,
 	}).Run(ctx)
 	webhookDispatcher.IdentityLoader = func() []*age.X25519Identity {
-		return append([]*age.X25519Identity(nil), hostAgeIdentities...)
+		return append([]*age.X25519Identity(nil), deliveryReaders...)
 	}
 	// Propagate the dispatcher's lifecycle error through loopErr so
 	// a non-context-canceled exit (e.g. a poisoned row) tears down
@@ -3016,9 +3097,11 @@ func (s schedFloorLedger) ResidentRAM() int {
 	return s.ledger.ResidentRAM()
 }
 
-// HeadroomMB implements floor.Ledger.
+// HeadroomMB implements floor.Ledger with the best single node's admission
+// headroom, the figure Admit places against; the fleet sum went negative
+// under measured admission and stopped every floor refill.
 func (s schedFloorLedger) HeadroomMB() int {
-	return s.ledger.HeadroomMB()
+	return s.ledger.AdmissionHeadroomMB()
 }
 
 // schedTargetsLedger (PR-C, issue #462) adapts *sched.NodeLedger

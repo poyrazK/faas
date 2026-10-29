@@ -1,6 +1,6 @@
 // Explicit alternative to the version 2 unleased integration; see README.
 import { eventAcknowledgmentWorkerFromHeaders, eventConsumerRequestFromHeaders,
-  claimEventConsumerProcessing, inspectEventConsumerProcessing } from '@gregale/sdk-node';
+  claimEventConsumerProcessing, inspectEventConsumerProcessing } from '@gregale/sdk-node/preview';
 import { acceptAuthenticatedDelivery } from './consumer.mjs';
 
 /** Authenticate/authorize first, as for the ordinary ingress. Commit protected original inputs before 202. */

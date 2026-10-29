@@ -238,5 +238,17 @@ func cmdDataAPIDeploy(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale data-api deploy NAME --migrations DIR [--release-command COMMAND] [--scope SCOPE] [--timeout DURATION]", "data-api")
 		return 1
 	}
-	return deploySingleAppDataAPI(context.Background(), fs.Arg(0), *scope, *migrations, *releaseCommand, *timeout)
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	// Apps created before the runtime had lifecycle hooks get them with the
+	// runtime that serves them.
+	ctx := context.Background()
+	update := api.UpdateAppRequest{}
+	setDataAPILifecycle(&update)
+	if _, err = client.UpdateApp(ctx, fs.Arg(0), update); err != nil {
+		return printErr("Could not set the Data API lifecycle hooks", err)
+	}
+	return deploySingleAppDataAPI(ctx, fs.Arg(0), *scope, *migrations, *releaseCommand, *timeout)
 }

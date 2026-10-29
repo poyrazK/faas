@@ -40,8 +40,8 @@
     <nav>
       <a href="/dashboard/">Overview</a>
       <a href="/dashboard/apps">Apps</a>
-      <a href="/dashboard/developers">Developer environments</a>
-      <a href="/dashboard/previews">Previews</a>
+      {{if $.On "developer-environments"}}<a href="/dashboard/developers">Developer environments</a>{{end}}
+      {{if $.On "pr-previews"}}<a href="/dashboard/previews">Previews</a>{{end}}
       <a href="/dashboard/usage">Usage</a>
       <a href="/dashboard/billing">Billing</a>
       <a href="/dashboard/pricing">Pricing</a>
@@ -52,6 +52,7 @@
   <main>
     {{template "email-verification-banner" .}}
     <h1>{{.Title}}</h1>
+    {{if .Flash}}<p role="status">{{.Flash}}</p>{{end}}
     {{if .Data}}
       {{$items := .Data}}
       {{if $items}}
@@ -68,6 +69,7 @@
                 <td><a href="https://{{.Hostname}}">{{.Hostname}}</a></td>
                 <td>
                   <form method="POST" action="{{.DestroyAction}}" style="display:inline">
+                    <input type="hidden" name="csrf_token" value="{{.DestroyCSRF}}">
                     <button type="submit" class="btn-danger" onclick="return confirm('Tear down preview {{.Slug}}?')">Tear down</button>
                   </form>
                 </td>

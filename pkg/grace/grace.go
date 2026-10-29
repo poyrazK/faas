@@ -158,6 +158,8 @@ func (g *Grace) RunOnce(ctx context.Context) error {
 		return err
 	}
 	cutoff := g.p.Now().Add(-state.DeletionGraceDuration())
+	deferred := 0
+	defer func() { g.metrics.setAccountsDeferred(deferred) }()
 	for _, acct := range rows {
 		if acct.Status != state.AccountDeletedPending {
 			continue
@@ -171,6 +173,7 @@ func (g *Grace) RunOnce(ctx context.Context) error {
 		if g.p.BeforeAccountDelete != nil {
 			if err := g.p.BeforeAccountDelete(ctx, acct); err != nil {
 				g.p.Log.Warn("grace: external cleanup deferred", "account", acct.ID, "err", err)
+				deferred++
 				continue
 			}
 		}

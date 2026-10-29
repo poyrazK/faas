@@ -119,11 +119,11 @@ def sync_detailed(
     Args:
         slug (str):
         idempotency_key (str | Unset):
-        body (RollbackRequest | Unset): Body for POST /v1/apps/{slug}/rollback (SAFE-RELEASES-G,
-            issue #976). All fields optional. Without a body the handler falls back to rolling back to
-            the most-recent superseded deployment (pre-#976 behaviour). With `target_deployment_id`
-            set, the handler validates that the named deployment belongs to this app and is superseded
-            or live with zero traffic.
+        body (RollbackRequest | Unset): Body for POST /v1/apps/{slug}/rollback. All fields
+            optional. Without a body the handler falls back to rolling back to the most-recent
+            superseded deployment (pre-#976 behaviour). With `target_deployment_id` set, the handler
+            validates that the named deployment belongs to this app and is superseded or live with
+            zero traffic.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -177,11 +177,11 @@ def sync(
     Args:
         slug (str):
         idempotency_key (str | Unset):
-        body (RollbackRequest | Unset): Body for POST /v1/apps/{slug}/rollback (SAFE-RELEASES-G,
-            issue #976). All fields optional. Without a body the handler falls back to rolling back to
-            the most-recent superseded deployment (pre-#976 behaviour). With `target_deployment_id`
-            set, the handler validates that the named deployment belongs to this app and is superseded
-            or live with zero traffic.
+        body (RollbackRequest | Unset): Body for POST /v1/apps/{slug}/rollback. All fields
+            optional. Without a body the handler falls back to rolling back to the most-recent
+            superseded deployment (pre-#976 behaviour). With `target_deployment_id` set, the handler
+            validates that the named deployment belongs to this app and is superseded or live with
+            zero traffic.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -230,11 +230,11 @@ async def asyncio_detailed(
     Args:
         slug (str):
         idempotency_key (str | Unset):
-        body (RollbackRequest | Unset): Body for POST /v1/apps/{slug}/rollback (SAFE-RELEASES-G,
-            issue #976). All fields optional. Without a body the handler falls back to rolling back to
-            the most-recent superseded deployment (pre-#976 behaviour). With `target_deployment_id`
-            set, the handler validates that the named deployment belongs to this app and is superseded
-            or live with zero traffic.
+        body (RollbackRequest | Unset): Body for POST /v1/apps/{slug}/rollback. All fields
+            optional. Without a body the handler falls back to rolling back to the most-recent
+            superseded deployment (pre-#976 behaviour). With `target_deployment_id` set, the handler
+            validates that the named deployment belongs to this app and is superseded or live with
+            zero traffic.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -286,11 +286,11 @@ async def asyncio(
     Args:
         slug (str):
         idempotency_key (str | Unset):
-        body (RollbackRequest | Unset): Body for POST /v1/apps/{slug}/rollback (SAFE-RELEASES-G,
-            issue #976). All fields optional. Without a body the handler falls back to rolling back to
-            the most-recent superseded deployment (pre-#976 behaviour). With `target_deployment_id`
-            set, the handler validates that the named deployment belongs to this app and is superseded
-            or live with zero traffic.
+        body (RollbackRequest | Unset): Body for POST /v1/apps/{slug}/rollback. All fields
+            optional. Without a body the handler falls back to rolling back to the most-recent
+            superseded deployment (pre-#976 behaviour). With `target_deployment_id` set, the handler
+            validates that the named deployment belongs to this app and is superseded or live with
+            zero traffic.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

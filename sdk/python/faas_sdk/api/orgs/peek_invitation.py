@@ -76,7 +76,7 @@ def sync_detailed(
     (email, role, org slug, expires_at) without consuming the
     token. Used by the dashboard to render \"you've been invited
     to Acme Inc. as developer\" without forcing the invitee
-    to accept yet. PR 7 added the accept surface at
+    to accept yet. added the accept surface at
     `POST /v1/invitations/{token}/accept`.
 
     Args:
@@ -112,7 +112,7 @@ def sync(
     (email, role, org slug, expires_at) without consuming the
     token. Used by the dashboard to render \"you've been invited
     to Acme Inc. as developer\" without forcing the invitee
-    to accept yet. PR 7 added the accept surface at
+    to accept yet. added the accept surface at
     `POST /v1/invitations/{token}/accept`.
 
     Args:
@@ -143,7 +143,7 @@ async def asyncio_detailed(
     (email, role, org slug, expires_at) without consuming the
     token. Used by the dashboard to render \"you've been invited
     to Acme Inc. as developer\" without forcing the invitee
-    to accept yet. PR 7 added the accept surface at
+    to accept yet. added the accept surface at
     `POST /v1/invitations/{token}/accept`.
 
     Args:
@@ -177,7 +177,7 @@ async def asyncio(
     (email, role, org slug, expires_at) without consuming the
     token. Used by the dashboard to render \"you've been invited
     to Acme Inc. as developer\" without forcing the invitee
-    to accept yet. PR 7 added the accept surface at
+    to accept yet. added the accept surface at
     `POST /v1/invitations/{token}/accept`.
 
     Args:

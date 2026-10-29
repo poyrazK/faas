@@ -96,5 +96,5 @@ func (j *ResourceJournal) WriteEpoch(e JournalEpoch) error {
 	if j.closed {
 		return errResourceJournalClosed
 	}
-	return j.persistFile(resourceEpochFile, b, "", nil)
+	return j.persistFile(resourceEpochFile, b, "", true, nil)
 }

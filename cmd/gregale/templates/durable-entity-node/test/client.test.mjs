@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
-import {FaaSClient, DurableEntityResultDecodeError} from '@gregale/sdk-node';
+import {FaaSClient, DurableEntityResultDecodeError} from '@gregale/sdk-node/preview';
 import {counter} from '../client.mjs';
 
 test('generated client validates inputs, binds scope, preserves request ID and exposes observation', async t => {

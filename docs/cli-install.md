@@ -37,6 +37,19 @@ curl -fsSL https://get.gregale.dev | sh -s -- --version v0.1.18 --dir /usr/local
 | `--version <tag>` | `GREGALE_VERSION` | newest stable with matching CLI assets; otherwise newest compatible release |
 | `--dir <path>` | `GREGALE_INSTALL_DIR` | `$HOME/.local/bin`, or `/usr/local/bin` as root |
 
+### How it picks a version
+
+Without `--version`, the script reads two one-line pointers that the
+release workflow keeps on the `cli-channel` release: `CLI-STABLE`, the
+newest stable tag, then `CLI-LATEST`, the newest tag, which may be a
+prerelease (the script warns when it installs one). Both are read through
+`releases/download`, which GitHub does not count against its anonymous API
+limit of 60 requests an hour per address, so installs from a shared office,
+CI or conference address keep working. If neither pointer names a release
+with your platform, the script falls back to the GitHub API
+([ADR-20261025092617](adr/20261025092617-cli-install-channel-pointer.md)).
+If that fallback is rate limited too, pass `--version`.
+
 Upgrading is re-running the script; it replaces the binary in place. A
 running `gregale logs -f` keeps its open inode and is unaffected.
 

@@ -40,19 +40,24 @@ const secretsEnvPath = "/etc/faas/secrets.env"
 // the call site at main_linux.go:boot can pick its policy per-error —
 // unreadable ≠ parse-fail ≠ absent.
 func loadSecrets(log *slog.Logger) (map[string]string, error) {
-	data, err := os.ReadFile(secretsEnvPath)
+	return loadSecretsFile(secretsEnvPath, log)
+}
+
+// loadSecretsFile is loadSecrets for the secrets file at path.
+func loadSecretsFile(path string, log *slog.Logger) (map[string]string, error) {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		if isNotExist(err) {
 			return nil, nil // no file — most apps have no secrets
 		}
-		return nil, fmt.Errorf("secrets: read %q: %w", secretsEnvPath, err)
+		return nil, fmt.Errorf("secrets: read %q: %w", path, err)
 	}
 	if len(data) == 0 {
 		return nil, nil // empty file == no secrets
 	}
 	out := map[string]string{}
 	if err := json.Unmarshal(data, &out); err != nil {
-		return nil, fmt.Errorf("secrets: parse %q: %w", secretsEnvPath, err)
+		return nil, fmt.Errorf("secrets: parse %q: %w", path, err)
 	}
 	if log != nil {
 		log.Info("secrets loaded", "count", len(out))

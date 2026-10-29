@@ -14,7 +14,7 @@ from queue import Queue
 
 import pytest
 
-from faas_sdk.object_storage_runtime import ObjectStorageBinding, ObjectStorageBindingError
+from faas_sdk.preview.object_storage_runtime import ObjectStorageBinding, ObjectStorageBindingError
 from faas_sdk.secret_reload_runtime import (
     SecretConsumer,
     SecretReloadCancellation,
@@ -601,7 +601,7 @@ def test_real_child_atomic_rotation_revocation_and_shutdown(tmp_path):
     child = r"""
 import signal
 import threading
-from faas_sdk.object_storage_runtime import ObjectStorageBinding, ObjectStorageBindingError
+from faas_sdk.preview.object_storage_runtime import ObjectStorageBinding, ObjectStorageBindingError
 from faas_sdk.secret_reload_runtime import SecretReloadCoordinator
 binding = ObjectStorageBinding("ASSETS", lambda c: c.secret_access_key)
 done = threading.Event()

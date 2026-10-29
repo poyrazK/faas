@@ -119,6 +119,18 @@ type DiskDrift struct {
 	// stays in place for local backends; remote backends (OCI)
 	// degrade the comparison to a presence check. ADR-054 §3.
 	storage storage.LocalArtifactLister
+	// native lists vmmd's private tree for native runtime snapshots (ADR
+	// 20261022184951 amendment 1). Keys there are the same snap/ keys; an
+	// object counts as present when either tree holds it.
+	native storage.LocalArtifactLister
+}
+
+// WithNativeRuntimeSnapshots adds vmmd's private snapshot tree to the
+// storage-backed sweep. A nil lister, or a tree that does not exist, leaves
+// the sweep unchanged.
+func (d *DiskDrift) WithNativeRuntimeSnapshots(lister storage.LocalArtifactLister) *DiskDrift {
+	d.native = lister
+	return d
 }
 
 // WithSnapDir sets the on-disk snapshot root used by this sweep. It is
@@ -557,6 +569,14 @@ func (d *DiskDrift) tickWithStorage(ctx context.Context, expected map[string]sta
 		d.log.Warn("disk-drift: storage.List failed",
 			"err", err, "snap_dir", d.snapshotRoot())
 		return 0, fmt.Errorf("disk-drift: storage list incomplete: %w", err)
+	}
+	if d.native != nil {
+		nativeKeys, err := d.native.List(ctx, "snap/")
+		if err != nil {
+			d.log.Warn("disk-drift: native runtime snapshot list failed", "err", err)
+			return 0, fmt.Errorf("disk-drift: native runtime snapshot list: %w", err)
+		}
+		keys = append(keys, nativeKeys...)
 	}
 
 	// Bucket keys by deploymentID. Each depID has up to 2 keys:

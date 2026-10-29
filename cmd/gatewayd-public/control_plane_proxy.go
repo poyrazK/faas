@@ -14,6 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid"
 	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/middleware"
 )
@@ -26,8 +27,9 @@ type controlPlaneProxy struct {
 	next                http.Handler
 	proxy               *httputil.ReverseProxy
 	githubProxy         *httputil.ReverseProxy
+	mcpProxy            *httputil.ReverseProxy
 	log                 *slog.Logger
-	appsDomain          string
+	platformDomain      string
 	trustedIngressCIDRs []netip.Prefix
 }
 
@@ -40,9 +42,8 @@ func newControlPlaneProxy(rawTarget string, next http.Handler, log *slog.Logger,
 		log = slog.Default()
 	}
 
-	appsDomain := platformAppsDomain()
 	p := &controlPlaneProxy{
-		target: target, next: next, log: log, appsDomain: appsDomain,
+		target: target, next: next, log: log, platformDomain: platformDomain(),
 		trustedIngressCIDRs: append([]netip.Prefix(nil), trustedIngressCIDRs...),
 	}
 	p.proxy = &httputil.ReverseProxy{
@@ -61,14 +62,14 @@ func newControlPlaneProxy(rawTarget string, next http.Handler, log *slog.Logger,
 				req.Out.Header.Set("X-Forwarded-For", clientIP)
 			}
 			req.Out.Header.Set("X-Forwarded-Proto", proto)
-			if !isPlatformSessionHost(req.In.Host, p.appsDomain) {
+			if !isPlatformSessionHost(req.In.Host, p.platformDomain) {
 				req.Out.Header.Del("Cookie")
 			}
 		},
 		ModifyResponse: func(resp *http.Response) error {
 			// The outer gatewayd-public middleware owns these headers.
 			httpsec.StripStaticHeaders(resp.Header)
-			if resp.Request != nil && !isPlatformSessionHost(resp.Request.Host, p.appsDomain) {
+			if resp.Request != nil && !isPlatformSessionHost(resp.Request.Host, p.platformDomain) {
 				resp.Header.Del("Set-Cookie")
 			}
 			// httputil.ReverseProxy copies response headers with Add.
@@ -117,7 +118,84 @@ func newControlPlaneProxy(rawTarget string, next http.Handler, log *slog.Logger,
 			api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, "github_integration_unavailable", "GitHub integration unavailable", "the GitHub webhook receiver is not reachable"))
 		},
 	}
+	if err := p.configureMCPBridge(strings.TrimSpace(os.Getenv("FAAS_MCP_BRIDGE_LOOPBACK"))); err != nil {
+		return nil, err
+	}
 	return p, nil
+}
+
+// mcpFlowCookie is the hosted management MCP bridge's browser-flow cookie
+// (pkg/mcpmanagement oauth_browser.go). It is the only cookie that crosses to
+// the bridge or back: apid's session never reaches it.
+const mcpFlowCookie = "__Host-gregale-mcp-flow"
+
+// configureMCPBridge routes the hosted management MCP bridge
+// (ADR-20261026195952), which is optional and loopback-only on the
+// control-plane host. Unset leaves its paths to the compute data plane, as
+// before.
+func (p *controlPlaneProxy) configureMCPBridge(targetText string) error {
+	if targetText == "" {
+		return nil
+	}
+	target, err := url.Parse(targetText)
+	if err != nil || target.Scheme == "" || target.Host == "" || target.Path != "" {
+		return fmt.Errorf("MCP bridge target must be an absolute URL, got %q", targetText)
+	}
+	p.mcpProxy = &httputil.ReverseProxy{
+		Rewrite: func(req *httputil.ProxyRequest) {
+			req.SetURL(target)
+			req.Out.Host = req.In.Host
+			req.Out.Header.Set(api.RequestIDHeader, req.In.Header.Get(api.RequestIDHeader))
+			req.Out.Header.Del("X-Forwarded-For")
+			req.Out.Header.Del("X-Forwarded-Host")
+			req.Out.Header.Del("X-Forwarded-Proto")
+			clientIP, proto := gateway.CanonicalForwardingContext(req.In, p.trustedIngressCIDRs)
+			if clientIP != "" {
+				req.Out.Header.Set("X-Forwarded-For", clientIP)
+			}
+			req.Out.Header.Set("X-Forwarded-Proto", proto)
+			req.Out.Header.Del("Cookie")
+			if flow, err := req.In.Cookie(mcpFlowCookie); err == nil {
+				req.Out.AddCookie(flow)
+			}
+		},
+		// Streamable HTTP answers with server-sent events.
+		FlushInterval: -1,
+		ModifyResponse: func(resp *http.Response) error {
+			httpsec.StripStaticHeaders(resp.Header)
+			resp.Header.Del(api.RequestIDHeader)
+			cookies := resp.Header.Values("Set-Cookie")
+			resp.Header.Del("Set-Cookie")
+			for _, cookie := range cookies {
+				if strings.HasPrefix(cookie, mcpFlowCookie+"=") {
+					resp.Header.Add("Set-Cookie", cookie)
+				}
+			}
+			return nil
+		},
+		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			p.log.Error("management MCP bridge unavailable", "path", r.URL.Path, "err", err)
+			api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, "mcp_unavailable", "Management MCP unavailable", "the hosted management MCP server is not reachable"))
+		},
+	}
+	return nil
+}
+
+// isMCPBridgePath reports the hosted bridge's paths: its resource, its
+// path-scoped OAuth endpoints and uploads under /mcp/, and its metadata
+// documents for the issuer https://api.<platform domain>/mcp.
+func isMCPBridgePath(path string) bool {
+	switch path {
+	case "/mcp", "/.well-known/oauth-protected-resource/mcp", "/.well-known/oauth-authorization-server/mcp", "/.well-known/openid-configuration/mcp":
+		return true
+	}
+	return strings.HasPrefix(path, "/mcp/")
+}
+
+// isAPIHost is the platform API host exactly; the bridge serves no other.
+func isAPIHost(rawHost, platformDomain string) bool {
+	domain := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(platformDomain)), ".")
+	return domain != "" && hostWithoutPort(rawHost) == "api."+domain
 }
 
 func (p *controlPlaneProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -139,8 +217,12 @@ func (p *controlPlaneProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// and custom-domain workloads may still own the same path on their hosts.
 	// githubd remains the authority for method, body-limit, signature, and
 	// delivery de-duplication checks.
-	if r.URL.Path == "/webhooks/github" && isPlatformHealthHost(r.Host, p.appsDomain) {
+	if r.URL.Path == "/webhooks/github" && isPlatformHealthHost(r.Host, p.platformDomain) {
 		p.githubProxy.ServeHTTP(w, r)
+		return
+	}
+	if p.mcpProxy != nil && isMCPBridgePath(r.URL.Path) && isAPIHost(r.Host, p.platformDomain) {
+		p.mcpProxy.ServeHTTP(w, r)
 		return
 	}
 	// Prometheus consumes this registry-backed service-discovery endpoint only
@@ -154,13 +236,13 @@ func (p *controlPlaneProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// The platform API has no public Prometheus surface. Customer app hosts,
 	// however, may legitimately implement /metrics themselves, so keep those
 	// requests on the ordinary compute data plane.
-	if r.URL.Path == "/metrics" && isPlatformHealthHost(r.Host, p.appsDomain) {
+	if r.URL.Path == "/metrics" && isPlatformHealthHost(r.Host, p.platformDomain) {
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
 			"Not found", "the requested API route does not exist"))
 		return
 	}
 	if r.URL.Path == apid.ApidRootHealthz || r.URL.Path == apid.ApidRootReadyz {
-		if isPlatformHealthHost(r.Host, p.appsDomain) {
+		if isPlatformHealthHost(r.Host, p.platformDomain) {
 			p.proxy.ServeHTTP(w, r)
 			return
 		}
@@ -175,7 +257,7 @@ func (p *controlPlaneProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// platform sessions off tenant origins entirely: a session issued
 		// on attacker.<apps domain>/login was readable by the attacker's
 		// same-origin JavaScript.
-		if !isPlatformSessionHost(r.Host, p.appsDomain) {
+		if !isPlatformSessionHost(r.Host, p.platformDomain) {
 			p.next.ServeHTTP(w, r)
 			return
 		}
@@ -185,29 +267,27 @@ func (p *controlPlaneProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p.next.ServeHTTP(w, r)
 }
 
-// platformAppsDomain is the apps domain whose apex, api. and operations.
-// hosts are platform-owned (FAAS_APPS_DOMAIN, default gregale.dev).
-func platformAppsDomain() string {
-	if domain := strings.TrimSpace(os.Getenv("FAAS_APPS_DOMAIN")); domain != "" {
-		return domain
-	}
-	return "gregale.dev"
+// platformDomain is the domain whose apex, api. and operations. hosts are
+// platform-owned (ADR-20261026100000: FAAS_PLATFORM_DOMAIN, else
+// FAAS_APPS_DOMAIN, else gregale.dev).
+func platformDomain() string {
+	return hostidentity.Configured().Platform
 }
 
 // isPlatformSessionHost reports whether Host is a platform-owned origin that
 // may carry the dashboard session: the apex, the API host, the operator
 // console, or a direct loopback/IP probe. Every other Host is an app
 // subdomain or a customer domain and runs tenant code.
-func isPlatformSessionHost(rawHost, appsDomain string) bool {
-	return apid.IsPlatformHost(rawHost, appsDomain)
+func isPlatformSessionHost(rawHost, platformDomain string) bool {
+	return apid.IsPlatformHost(rawHost, platformDomain)
 }
 
 // isPlatformHealthHost scopes the public platform probe to the apex/API host
 // (plus direct loopback/IP probes used by rollout tooling). Wildcard app and
 // custom-domain Hosts must route /healthz through the app data plane.
-func isPlatformHealthHost(rawHost, appsDomain string) bool {
+func isPlatformHealthHost(rawHost, platformDomain string) bool {
 	host := hostWithoutPort(rawHost)
-	domain := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(appsDomain)), ".")
+	domain := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(platformDomain)), ".")
 	if host == "localhost" || net.ParseIP(host) != nil {
 		return true
 	}

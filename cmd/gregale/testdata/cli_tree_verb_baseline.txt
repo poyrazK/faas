@@ -1,0 +1,226 @@
+# Paths in the ADR-20261026145832 tree that still break its naming rules.
+# This list only shrinks: give a path a tree name in cli_tree.go instead of adding it.
+account billing-connection  # hyphenated billing-connection, verb billing-connection
+account billing-run schedule  # verb schedule
+account dpa  # verb dpa
+account slo  # verb slo
+ai app-limit  # hyphenated app-limit, verb app-limit
+ai content-policy  # hyphenated content-policy, verb content-policy
+ai quality-alerts  # hyphenated quality-alerts, verb quality-alerts
+ai tag-limits  # hyphenated tag-limits, verb tag-limits
+alert incident note  # verb note
+api consumer plan-history  # hyphenated plan-history, verb plan-history
+api consumer quote  # verb quote
+api consumer usage-alerts  # hyphenated usage-alerts, verb usage-alerts
+api route awake  # verb awake
+api route health profile-history  # hyphenated profile-history, verb profile-history
+api route health review-release  # hyphenated review-release, verb review-release
+api route lifecycle prepare-approval  # hyphenated prepare-approval, verb prepare-approval
+api route migration gate  # verb gate
+api route migration server-check  # hyphenated server-check, verb server-check
+api route monitor preview  # verb preview
+api spec dry-run  # hyphenated dry-run, verb dry-run
+api spec preview  # verb preview
+api tenant activation  # verb activation
+api tenant plan-history  # hyphenated plan-history, verb plan-history
+app binding object-storage  # hyphenated object-storage
+app binding object-storage list  # hyphenated object-storage
+app binding object-storage revoke  # hyphenated object-storage
+app binding object-storage rotate  # hyphenated object-storage
+app binding probe-policy  # hyphenated probe-policy, verb probe-policy
+app binding release-policy  # hyphenated release-policy
+app binding release-policy get  # hyphenated release-policy
+app binding release-policy set  # hyphenated release-policy
+app binding smoke  # verb smoke
+app binding verification-runs  # hyphenated verification-runs
+app binding verification-runs cancel  # hyphenated verification-runs
+app binding verification-runs diagnostics  # hyphenated verification-runs
+app binding verification-runs list  # hyphenated verification-runs
+app binding verification-runs resume  # hyphenated verification-runs
+app binding verification-runs status  # hyphenated verification-runs
+app list tcp  # verb tcp
+app list udp  # verb udp
+automation event-recovery-plan  # hyphenated event-recovery-plan, verb event-recovery-plan
+automation failure-recovery-evidence  # hyphenated failure-recovery-evidence, verb failure-recovery-evidence
+automation failure-recovery-plan  # hyphenated failure-recovery-plan, verb failure-recovery-plan
+automation failure-recovery-reviews  # hyphenated failure-recovery-reviews, verb failure-recovery-reviews
+automation live gate  # verb gate
+automation live suite  # verb suite
+automation recovery-cancel-preview  # hyphenated recovery-cancel-preview, verb recovery-cancel-preview
+automation recovery-policy  # verb recovery-policy
+automation recovery-policy-reviews  # hyphenated recovery-policy-reviews, verb recovery-policy-reviews
+automation recovery-preview  # hyphenated recovery-preview, verb recovery-preview
+automation recovery-response-plan  # hyphenated recovery-response-plan, verb recovery-response-plan
+automation recovery-response-preview  # hyphenated recovery-response-preview, verb recovery-response-preview
+automation recovery-retry-evidence  # hyphenated recovery-retry-evidence, verb recovery-retry-evidence
+automation recovery-retry-plan  # hyphenated recovery-retry-plan, verb recovery-retry-plan
+billing budget-preview  # hyphenated budget-preview, verb budget-preview
+billing payment-method  # hyphenated payment-method, verb payment-method
+billing portal  # verb portal
+billing usage object-storage  # hyphenated object-storage, verb object-storage
+bucket copy-sources  # hyphenated copy-sources
+bucket copy-sources grant  # hyphenated copy-sources
+bucket copy-sources list  # hyphenated copy-sources
+bucket copy-sources revoke  # hyphenated copy-sources
+bucket encryption set AES256  # verb AES256
+bucket encryption set aws:kms  # verb aws:kms
+bucket encryption set aws:kms:dsse  # verb aws:kms:dsse
+bucket encryption-keys  # hyphenated encryption-keys, verb encryption-keys
+bucket object-lock set COMPLIANCE  # verb COMPLIANCE
+bucket object-lock set GOVERNANCE  # verb GOVERNANCE
+bucket object-lock set clear-default  # hyphenated clear-default, verb clear-default
+bucket protection event-hold  # hyphenated event-hold, verb event-hold
+bucket protection legal-hold  # hyphenated legal-hold, verb legal-hold
+config upload-cache cleanup  # verb cleanup
+cron fire-now  # hyphenated fire-now, verb fire-now
+cron next  # verb next
+data-api dev  # verb dev
+data-api fixture build  # verb build
+data-api migration guide  # verb guide
+data-api migration preview  # verb preview
+data-api rotation preflight  # verb preflight
+data-api server-key  # hyphenated server-key
+data-api server-key create  # hyphenated server-key
+data-api server-key list  # hyphenated server-key
+data-api server-key revoke  # hyphenated server-key
+data-api storage sql  # verb sql
+data-api verify release  # verb release
+debug capture-diff  # hyphenated capture-diff, verb capture-diff
+debug issue bulk  # verb bulk
+debug issue compound-alerts  # hyphenated compound-alerts, verb compound-alerts
+debug issue impact-alert  # hyphenated impact-alert, verb impact-alert
+debug issue lifecycle-alerts  # hyphenated lifecycle-alerts, verb lifecycle-alerts
+debug issue ownership-rules  # hyphenated ownership-rules, verb ownership-rules
+debug issue source-maps  # hyphenated source-maps, verb source-maps
+debug regressions acknowledge  # verb acknowledge
+edge cache GET  # verb GET
+edge cache HEAD  # verb HEAD
+edge rule attack-mode  # hyphenated attack-mode, verb attack-mode
+edge rule recipe  # verb recipe
+edge rule waf-exclude  # hyphenated waf-exclude, verb waf-exclude
+environment abort  # verb abort
+environment gitops adoption-preview  # hyphenated adoption-preview, verb adoption-preview
+environment gitops promotion-plan  # hyphenated promotion-plan, verb promotion-plan
+environment gitops promotion-pr  # hyphenated promotion-pr, verb promotion-pr
+environment gitops remove-override  # hyphenated remove-override, verb remove-override
+environment gitops rollback-plan  # hyphenated rollback-plan, verb rollback-plan
+environment gitops rollback-pr  # hyphenated rollback-pr, verb rollback-pr
+environment preflight  # verb preflight
+environment preview  # verb preview
+environment release-sets prepare-rollback  # hyphenated prepare-rollback, verb prepare-rollback
+environment release-sets stage  # verb stage
+environment release-sets verification-runs  # hyphenated verification-runs
+environment release-sets verification-runs cancel  # hyphenated verification-runs
+environment release-sets verification-runs diagnostics  # hyphenated verification-runs
+environment release-sets verification-runs list  # hyphenated verification-runs
+environment release-sets verification-runs resume  # hyphenated verification-runs
+environment release-sets verification-runs status  # hyphenated verification-runs
+event delivery-dead-letter  # hyphenated delivery-dead-letter, verb delivery-dead-letter
+event delivery-health-alerts  # hyphenated delivery-health-alerts, verb delivery-health-alerts
+event fanout-history  # hyphenated fanout-history, verb fanout-history
+event notification-retry-backlog  # hyphenated notification-retry-backlog, verb notification-retry-backlog
+event notification-retry-plan  # hyphenated notification-retry-plan, verb notification-retry-plan
+event preview  # verb preview
+event publish-app  # hyphenated publish-app, verb publish-app
+event publish-app-status  # hyphenated publish-app-status, verb publish-app-status
+event publish-app-verify  # hyphenated publish-app-verify, verb publish-app-verify
+event publish-batch  # hyphenated publish-batch, verb publish-batch
+event recovery-notification-retry-history  # hyphenated recovery-notification-retry-history, verb recovery-notification-retry-history
+event recovery-notification-retry-preview  # hyphenated recovery-notification-retry-preview, verb recovery-notification-retry-preview
+event recovery-notifications  # hyphenated recovery-notifications, verb recovery-notifications
+event recovery-preflight  # hyphenated recovery-preflight, verb recovery-preflight
+event recovery-preview  # hyphenated recovery-preview, verb recovery-preview
+event replay-preview  # hyphenated replay-preview, verb replay-preview
+event replay-retryable  # hyphenated replay-retryable, verb replay-retryable
+event schema-rollout-preview  # hyphenated schema-rollout-preview, verb schema-rollout-preview
+event subscription-capacity-preview  # hyphenated subscription-capacity-preview, verb subscription-capacity-preview
+event subscription-delivery-health  # hyphenated subscription-delivery-health, verb subscription-delivery-health
+event subscription-execution-health  # hyphenated subscription-execution-health, verb subscription-execution-health
+event subscription-execution-reconciliation  # hyphenated subscription-execution-reconciliation, verb subscription-execution-reconciliation
+event subscription-lineage-case-backfill  # hyphenated subscription-lineage-case-backfill, verb subscription-lineage-case-backfill
+event subscription-lineage-case-backfill-cancel  # hyphenated subscription-lineage-case-backfill-cancel, verb subscription-lineage-case-backfill-cancel
+event subscription-lineage-case-backfill-pause  # hyphenated subscription-lineage-case-backfill-pause, verb subscription-lineage-case-backfill-pause
+event subscription-lineage-case-backfill-request  # hyphenated subscription-lineage-case-backfill-request, verb subscription-lineage-case-backfill-request
+event subscription-lineage-case-backfill-resume  # hyphenated subscription-lineage-case-backfill-resume, verb subscription-lineage-case-backfill-resume
+event subscription-lineage-cases  # hyphenated subscription-lineage-cases, verb subscription-lineage-cases
+event subscription-lineage-retry  # hyphenated subscription-lineage-retry, verb subscription-lineage-retry
+event subscription-lineage-retry-control-plan-apply  # hyphenated subscription-lineage-retry-control-plan-apply, verb subscription-lineage-retry-control-plan-apply
+event subscription-lineage-retry-control-plan-export  # hyphenated subscription-lineage-retry-control-plan-export, verb subscription-lineage-retry-control-plan-export
+event subscription-lineage-retry-control-plan-preflight  # hyphenated subscription-lineage-retry-control-plan-preflight, verb subscription-lineage-retry-control-plan-preflight
+event subscription-lineage-retry-control-plan-reconcile  # hyphenated subscription-lineage-retry-control-plan-reconcile, verb subscription-lineage-retry-control-plan-reconcile
+event subscription-lineage-retry-export  # hyphenated subscription-lineage-retry-export, verb subscription-lineage-retry-export
+event subscription-lineage-retry-job  # hyphenated subscription-lineage-retry-job, verb subscription-lineage-retry-job
+event subscription-lineage-retry-job-cancel  # hyphenated subscription-lineage-retry-job-cancel, verb subscription-lineage-retry-job-cancel
+event subscription-lineage-retry-job-controls  # hyphenated subscription-lineage-retry-job-controls, verb subscription-lineage-retry-job-controls
+event subscription-lineage-retry-job-controls-export  # hyphenated subscription-lineage-retry-job-controls-export, verb subscription-lineage-retry-job-controls-export
+event subscription-lineage-retry-job-controls-inspect  # hyphenated subscription-lineage-retry-job-controls-inspect, verb subscription-lineage-retry-job-controls-inspect
+event subscription-lineage-retry-job-create  # hyphenated subscription-lineage-retry-job-create, verb subscription-lineage-retry-job-create
+event subscription-lineage-retry-job-export  # hyphenated subscription-lineage-retry-job-export, verb subscription-lineage-retry-job-export
+event subscription-lineage-retry-job-pause  # hyphenated subscription-lineage-retry-job-pause, verb subscription-lineage-retry-job-pause
+event subscription-lineage-retry-job-resume  # hyphenated subscription-lineage-retry-job-resume, verb subscription-lineage-retry-job-resume
+event subscription-lineage-retry-job-watch  # hyphenated subscription-lineage-retry-job-watch, verb subscription-lineage-retry-job-watch
+event subscription-lineage-retry-jobs  # hyphenated subscription-lineage-retry-jobs, verb subscription-lineage-retry-jobs
+event subscription-lineage-retry-preflight  # hyphenated subscription-lineage-retry-preflight, verb subscription-lineage-retry-preflight
+event subscription-lineage-retry-preview  # hyphenated subscription-lineage-retry-preview, verb subscription-lineage-retry-preview
+event subscription-reconcile-execution  # hyphenated subscription-reconcile-execution, verb subscription-reconcile-execution
+event workflow-backfill  # hyphenated workflow-backfill, verb workflow-backfill
+event workflow-replay-preview  # hyphenated workflow-replay-preview, verb workflow-replay-preview
+job artifact-url  # hyphenated artifact-url, verb artifact-url
+job next  # verb next
+job replay-failed  # hyphenated replay-failed, verb replay-failed
+key grace-window  # hyphenated grace-window, verb grace-window
+mcp server config  # verb config
+mcp server monitor provider-check  # hyphenated provider-check, verb provider-check
+mcp server readiness attention acknowledge  # more than four words, verb acknowledge
+mcp server readiness attention configure  # more than four words
+mcp server readiness attention history  # more than four words
+mcp server readiness attention list  # more than four words
+mcp server readiness attention release  # more than four words, verb release
+mcp server readiness fallback disable  # more than four words
+mcp server readiness fallback get  # more than four words
+mcp server readiness fallback set  # more than four words
+mcp server readiness notifications abandon  # more than four words
+mcp server readiness notifications list  # more than four words
+mcp server readiness notifications retry  # more than four words
+mcp server readiness pagerduty acknowledgements  # more than four words
+mcp server readiness policy diff  # more than four words
+mcp server readiness policy get  # more than four words
+mcp server readiness policy history  # more than four words
+mcp server readiness policy restore  # more than four words
+mcp server readiness policy set  # more than four words
+mcp server readiness reminder-defaults  # hyphenated reminder-defaults
+mcp server readiness reminder-defaults disable  # more than four words, hyphenated reminder-defaults
+mcp server readiness reminder-defaults get  # more than four words, hyphenated reminder-defaults
+mcp server readiness reminder-defaults set  # more than four words, hyphenated reminder-defaults
+mcp server retirements acknowledge-manual  # hyphenated acknowledge-manual, verb acknowledge-manual
+mcp server tasks observer setup  # more than four words
+mcp server tasks observer status  # more than four words
+mcp server tasks release  # verb release
+org invitation list-all  # hyphenated list-all, verb list-all
+org members change-role  # hyphenated change-role, verb change-role
+org seat-usage  # hyphenated seat-usage, verb seat-usage
+org standards application  # verb application
+org standards local-intent  # hyphenated local-intent, verb local-intent
+org standards operation abort  # verb abort
+org standards reviews preview  # verb preview
+org transfer-ownership  # hyphenated transfer-ownership, verb transfer-ownership
+postgres compute-policy  # verb compute-policy
+postgres compute-policy-status  # hyphenated compute-policy-status, verb compute-policy-status
+postgres overage  # verb overage
+postgres resize-status  # hyphenated resize-status, verb resize-status
+queue dead-letter  # hyphenated dead-letter, verb dead-letter
+realtime drain-status  # hyphenated drain-status, verb drain-status
+realtime send-principal  # hyphenated send-principal, verb send-principal
+release approval off  # verb off
+release canary gate  # verb gate
+release rollback switch  # verb switch
+test coverage-trend  # hyphenated coverage-trend, verb coverage-trend
+test recovery-trend  # hyphenated recovery-trend, verb recovery-trend
+trigger dlq  # verb dlq
+workflow cancel-queued  # hyphenated cancel-queued, verb cancel-queued
+workflow cancel-queued-preview  # hyphenated cancel-queued-preview, verb cancel-queued-preview
+workflow resume-wait  # hyphenated resume-wait, verb resume-wait
+workflow schedule-history  # hyphenated schedule-history
+workflow schedule-history replay  # hyphenated schedule-history
+workflow schedule-history replay-preview  # hyphenated schedule-history, hyphenated replay-preview, verb replay-preview
+workflow schedules preview  # verb preview

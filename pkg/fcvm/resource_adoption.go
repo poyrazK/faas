@@ -84,6 +84,8 @@ type resourceAdoption struct {
 	// Backing is the kernel, base and timer identity the guest booted with.
 	// A capture of the adopted guest needs it to be restorable.
 	Backing *BackingIdentity `json:"backing,omitempty"`
+	// Bridge is the instance's bridge unit run (instance_bridge.go).
+	Bridge *resourceAdoptionBridge `json:"bridge,omitempty"`
 }
 
 // resourceAdoptionFirecracker identifies the guest's Firecracker process.
@@ -105,8 +107,12 @@ type resourceAdoptionFirecracker struct {
 // resourceAdoptionInstance is the schedd-owned identity and the monitor
 // configuration an adopting vmmd needs to restart its loops.
 type resourceAdoptionInstance struct {
-	AppID           string `json:"app_id,omitempty"`
-	AccountID       string `json:"account_id,omitempty"`
+	AppID     string `json:"app_id,omitempty"`
+	AccountID string `json:"account_id,omitempty"`
+	// WakeID and NodeID are the identity the guest's channels and readiness
+	// observations carry (ADR-570); a successor binds them to the same wake.
+	WakeID          string `json:"wake_id,omitempty"`
+	NodeID          string `json:"node_id,omitempty"`
 	DeploymentID    string `json:"deployment_id,omitempty"`
 	Port            int    `json:"port,omitempty"`
 	HealthcheckPath string `json:"healthcheck_path,omitempty"`
@@ -205,6 +211,9 @@ type resourceAdoptionNetwork struct {
 	// network carries (ADR-20261017201005). Adoption refuses such a guest:
 	// the containment and the run's recorder are not rebuilt.
 	RehearsalRunID string `json:"rehearsal_run_id,omitempty"`
+	// EgressCircuits: the guest's netns carries ADR-570 egress-circuit sets.
+	// Adoption refuses such a guest: its circuit registration is not rebuilt.
+	EgressCircuits bool `json:"egress_circuits,omitempty"`
 	// Private is the guest's attachment to a Gregale private network, when
 	// it has one. The side-link names follow from the slot.
 	Private *resourceAdoptionPrivateNetwork `json:"private,omitempty"`
@@ -248,6 +257,7 @@ func (a *resourceAdoption) clone() *resourceAdoption {
 		b := *a.Backing
 		c.Backing = &b
 	}
+	c.Bridge = a.Bridge.clone()
 	c.Instance.WorkloadNames = append([]string(nil), a.Instance.WorkloadNames...)
 	c.Instance.LivenessProbe = append(json.RawMessage(nil), a.Instance.LivenessProbe...)
 	c.Instance.ReadinessProbe = append(json.RawMessage(nil), a.Instance.ReadinessProbe...)
@@ -392,6 +402,9 @@ func (r resourceJournalRecord) validateAdoption() error {
 	if b := a.Backing; b != nil && (!b.complete() || !adoptionString(b.Kernel) || !adoptionString(b.Base) || !adoptionString(b.Timer)) {
 		return errors.New("invalid adoption backing identity")
 	}
+	if err := a.Bridge.validate(r.Lease); err != nil {
+		return err
+	}
 	switch a.Lifecycle.State {
 	case adoptionStateReady, adoptionStateStopping:
 		if a.Lifecycle.FrozenSince != nil {
@@ -425,7 +438,9 @@ func (j *ResourceJournal) recordAdoption(l Lease, process resourceProcessIdentit
 	if err := r.validate(); err != nil {
 		return err
 	}
-	return j.persist(r)
+	// Durable: adoption writes run off the wake path, and an op intent names
+	// the artifacts its effect creates on disk (vmmd restart adoption ADR §1).
+	return j.persist(r, true)
 }
 
 var errAdoptionRecordStale = errors.New("resource journal: adoption block no longer matches the recorded guest")
@@ -466,6 +481,8 @@ func (m *Manager) adoptionBlockFor(inst *Instance, now time.Time) resourceAdopti
 		Instance: resourceAdoptionInstance{
 			AppID:                    inst.AppID,
 			AccountID:                inst.AccountID,
+			WakeID:                   inst.WakeID,
+			NodeID:                   inst.NodeID,
 			DeploymentID:             inst.DeploymentID,
 			Port:                     inst.Port,
 			HealthcheckPath:          inst.HealthcheckPath,
@@ -492,6 +509,7 @@ func (m *Manager) adoptionBlockFor(inst *Instance, now time.Time) resourceAdopti
 			PrivateNetworkHandleV6: inst.PrivateNetworkHandleV6,
 			Private:                adoptionPrivateNetworkFor(inst.Net),
 			RehearsalRunID:         inst.Net.RehearsalRunID,
+			EgressCircuits:         inst.Net.EgressCircuitEnabled,
 		},
 		Lifecycle: resourceAdoptionLifecycle{State: adoptionStateReady},
 	}
@@ -522,6 +540,7 @@ func (m *Manager) adoptionBlockFor(inst *Instance, now time.Time) resourceAdopti
 		block.Lifecycle = resourceAdoptionLifecycle{State: adoptionStateFrozen, FrozenSince: &since}
 	}
 	block.Lifecycle.Op = inst.adoptionOp.clone()
+	block.Bridge = inst.bridge.clone()
 	return block
 }
 

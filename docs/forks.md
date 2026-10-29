@@ -111,7 +111,10 @@ curl -H "X-Gregale-Fork: $FORK_ID" \
 
 The gateway sends the request to the fork only, strips both headers, and
 never wakes your app for it. A wrong token, an unknown fork, or a fork that is
-not running all answer `404 fork_not_found`.
+not running all answer `404 fork_not_found`. So does a company app's fork once
+its creator leaves the company or loses the owner/admin role, or the
+organization is suspended: the gateway rechecks the creator's organization
+access on every fork request.
 
 ## What a fork can and cannot do
 

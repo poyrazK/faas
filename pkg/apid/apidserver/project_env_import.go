@@ -29,8 +29,15 @@ func (s *server) importComposeEnv(r *http.Request, acct state.Account, projectID
 		writes []configguard.VariableWrite
 	}
 	var plans []pending
+	callable := make([]string, 0, len(workloads)+len(apps))
 	for _, w := range workloads {
-		values := projectsetup.PlanEnvImport(env, w.Name, limits).Values
+		callable = append(callable, w.Name)
+	}
+	for _, app := range apps {
+		callable = append(callable, app.WorkloadName)
+	}
+	for _, w := range workloads {
+		values := projectsetup.PlanEnvImport(env, w.Name, callable, limits).Values
 		if len(values) == 0 {
 			continue
 		}

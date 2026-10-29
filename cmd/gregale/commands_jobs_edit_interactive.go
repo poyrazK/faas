@@ -54,7 +54,7 @@ func cmdJobsUpdateInteractive() int {
 		}
 		return n
 	}
-	ram, err := scalePromptInt(ctx, prompt, "RAM per task (MB)", job.RAMMB, 1, maximum(api.JobRAMMB[:]))
+	ram, err := scalePromptInt(ctx, prompt, "RAM per task (MB)", job.RAMMB, api.JobMinRAMMB, maximum(api.JobRAMMB[:]))
 	if err != nil {
 		return startInputExit(err)
 	}

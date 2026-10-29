@@ -69,7 +69,7 @@ func (s *Service) PutRequestFeedback(w http.ResponseWriter, r *http.Request, acc
 		return
 	}
 	store, ok := s.qualityStore(w)
-	if !ok {
+	if !ok || !s.requestVisible(w, r, acct, integrationID, r.PathValue("request"), "logged AI call not found") {
 		return
 	}
 	switch err := store.SetOutboundAIRequestFeedback(r.Context(), acct.ID, integrationID, r.PathValue("request"), req.Rating, req.Label); {

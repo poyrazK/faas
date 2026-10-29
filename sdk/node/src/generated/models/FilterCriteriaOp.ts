@@ -3,6 +3,6 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Filter operation primitive (ADR-118 §6).
+ * Filter operation primitive.
  */
 export type FilterCriteriaOp = 'eq' | 'neq' | 'exists' | 'jsonpath';

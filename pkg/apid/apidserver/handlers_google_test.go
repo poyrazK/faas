@@ -226,3 +226,40 @@ func TestGoogleAuthCallbackRejectsUntrustedSignedIDToken(t *testing.T) {
 		t.Fatal("Google callback verifier accepted an ID token signed by an untrusted issuer")
 	}
 }
+
+// Over HTTPS the OAuth flow cookies are host-only __Host- cookies, which a
+// tenant app on a sibling host cannot set; a callback carrying only the bare
+// names (as a tenant could plant them) is refused (security audit
+// 2026-10-27).
+func TestGoogleOAuthFlowCookiesAreHostOnlyOverHTTPS(t *testing.T) {
+	cfg := auth.SignInConfig{Google: auth.SignInProvider{Status: auth.SignInProviderConfigured,
+		ClientID: "test_google_client_id", ClientSecret: "test_google_client_secret"}}
+	srv := apidserver.NewServer(state.NewMemStore(), slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev",
+		apidserver.NoopNotifier{}).WithOAuthConfig(cfg)
+	req := httptest.NewRequest("GET", "/v1/auth/google", nil)
+	req.Header.Set("X-Forwarded-Proto", "https")
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, req)
+	want := map[string]bool{"__Host-" + apidserver.GoogleAuthStateCookie: false, "__Host-" + apidserver.GoogleAuthNonceCookie: false,
+		"__Host-" + apidserver.GoogleAuthPKCECookie: false}
+	for _, c := range w.Result().Cookies() {
+		if _, ok := want[c.Name]; ok {
+			want[c.Name] = c.Secure && c.Path == "/" && c.Domain == "" && c.HttpOnly
+		}
+	}
+	for name, ok := range want {
+		if !ok {
+			t.Errorf("cookie %s missing or not Secure, Path=/, host-only: %+v", name, w.Result().Cookies())
+		}
+	}
+	callback := httptest.NewRequest("GET", apidserver.GoogleCallbackPath+"?state=planted&code=attacker", nil)
+	callback.Header.Set("X-Forwarded-Proto", "https")
+	callback.AddCookie(&http.Cookie{Name: apidserver.GoogleAuthStateCookie, Value: "planted"})
+	callback.AddCookie(&http.Cookie{Name: apidserver.GoogleAuthNonceCookie, Value: "planted"})
+	callback.AddCookie(&http.Cookie{Name: apidserver.GoogleAuthPKCECookie, Value: "planted"})
+	w = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, callback)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "invalid_state") {
+		t.Fatalf("callback with only bare-name flow cookies over HTTPS = %d %s, want 400 invalid_state", w.Code, w.Body)
+	}
+}

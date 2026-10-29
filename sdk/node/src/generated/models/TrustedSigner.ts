@@ -4,11 +4,11 @@
 /* eslint-disable */
 /**
  * One entry in the per-app cosign trusted-publisher list. `name` is the
- * apid-side label (matches `app_trusted_signers.signer_name`); `public_key_pem`
+ * API-side label (matches `app_trusted_signers.signer_name`); `public_key_pem`
  * is the base64-encoded DER SubjectPublicKeyInfo bytes — NOT a PEM-armoured
  * block. The wire form strips the PEM armour at upload time so the
- * on-disk mirror (imaged reads `/etc/faas/secrets/trusted-publishers/`) is
- * a single blob per publisher. ECDSA P-256 only (ADR-038); apid rejects
+ * on-disk mirror (the image service reads `/etc/faas/secrets/trusted-publishers/`) is
+ * a single blob per publisher. ECDSA P-256 only; the API rejects
  * other curves at PUT time with `trusted_signer_invalid`.
  *
  */

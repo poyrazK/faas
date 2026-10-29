@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 import psycopg
 from database import make_binding
 from faas_sdk.async_secret_reload_runtime import AsyncSecretReloadCoordinator
-from faas_sdk.postgres_pool_runtime import PostgresPoolBindingError
+from faas_sdk.preview.postgres_pool_runtime import PostgresPoolBindingError
 
 logger = logging.getLogger(__name__)
 from fastapi import FastAPI, HTTPException

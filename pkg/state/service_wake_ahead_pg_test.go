@@ -59,6 +59,45 @@ func TestServiceWakeAheadStore(t *testing.T) {
 				t.Fatalf("foreign set must not change it: %+v %v", got, err)
 			}
 
+			// ADR-20261025105812: a production project member under the project
+			// policy that never chose has wake-ahead on; an explicit choice,
+			// another policy, or a preview keeps the off default.
+			project, err := s.CreateProject(t.Context(), state.Project{AccountID: a.ID, Slug: "wake-" + uuid.NewString()[:8]})
+			if err != nil {
+				t.Fatal(err)
+			}
+			member := func(slug string, policy api.ServiceBindingPolicy, previewOf string) state.App {
+				t.Helper()
+				created, err := s.CreateApp(t.Context(), state.App{AccountID: a.ID, ProjectID: project.ID, Slug: slug + "-" + uuid.NewString()[:8],
+					WorkloadName: slug, Type: state.AppTypeApp, RAMMB: 256, MaxConcurrency: 1, PreviewOfSlug: previewOf,
+					Manifest: state.AppManifest{ServiceBindingPolicy: policy}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				return created
+			}
+			sibling := member("web", api.ServiceBindingPolicyProject, "")
+			declared := member("admin", api.ServiceBindingPolicyDeclared, "")
+			preview := member("pr", api.ServiceBindingPolicyProject, sibling.Slug)
+			for _, tc := range []struct {
+				app  state.App
+				want bool
+			}{{sibling, true}, {declared, false}, {preview, false}} {
+				if enabled, err := w.ServiceWakeAheadEnabled(t.Context(), tc.app.ID); err != nil || enabled != tc.want {
+					t.Errorf("%s default = %v, %v; want %v", tc.app.Slug, enabled, err, tc.want)
+				}
+				setting, err := w.GetServiceWakeAhead(t.Context(), a.ID, tc.app.ID)
+				if err != nil || state.EffectiveServiceWakeAhead(setting, tc.app) != tc.want {
+					t.Errorf("%s effective = %v, %v; want %v", tc.app.Slug, state.EffectiveServiceWakeAhead(setting, tc.app), err, tc.want)
+				}
+			}
+			if _, err := w.SetServiceWakeAhead(t.Context(), a.ID, sibling.ID, false); err != nil {
+				t.Fatal(err)
+			}
+			if enabled, err := w.ServiceWakeAheadEnabled(t.Context(), sibling.ID); err != nil || enabled {
+				t.Fatalf("explicit off overridden by the default: %v, %v", enabled, err)
+			}
+
 			before, ceiling, err := w.ServiceWakeAheadFleetResidency(t.Context())
 			if err != nil || ceiling <= 0 {
 				t.Fatalf("residency = %d/%d, %v", before, ceiling, err)

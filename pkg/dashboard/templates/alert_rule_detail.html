@@ -41,8 +41,8 @@
     <nav>
       <a href="/dashboard/">Home</a>
       <a href="/dashboard/apps">Apps</a>
-      <a href="/dashboard/safe-releases">Safe-releases</a>
-      <a href="/dashboard/audit-events">Audit</a>
+      {{if $.On "progressive-rollouts"}}<a href="/dashboard/safe-releases">Safe-releases</a>{{end}}
+      {{if $.On "audit-log"}}<a href="/dashboard/audit-events">Audit</a>{{end}}
       <strong>Alert rule</strong>
     </nav>
     <span><code>{{.Account.ID}}</code></span>
