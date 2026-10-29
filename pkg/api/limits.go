@@ -6868,6 +6868,11 @@ const (
 	// Node cache export took about 115 s. The builder slot stays held for the
 	// run, so the bound also caps how long it delays the next build.
 	BuildCacheExportTimeoutSeconds = 600
+	// BuildTimingMaxSteps and BuildTimingStepNameMaxBytes bound the slowest
+	// BuildKit steps a builder guest reports in build-done.json, which vmmd
+	// reads up to 1 MiB.
+	BuildTimingMaxSteps         = 8
+	BuildTimingStepNameMaxBytes = 160
 	// BuildDiskCapacityRetryDelay is how long a builder without room for a
 	// build drive waits before returning the build to the queue
 	// (ADR-20261029103512). The deployment watchdog's queued-build bound
