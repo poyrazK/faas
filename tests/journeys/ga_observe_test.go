@@ -158,6 +158,31 @@ func TestWakeTimelineAndCosts(t *testing.T) {
 // deliveries as failed without posting anywhere.
 const fakeSlackWebhook = "https://hooks.slack.com/services/T00000000/B00000000/e2ejourneysnotarealhook"
 
+// hiddenCapabilities is the account's hidden capabilities, read from
+// `gregale capabilities`. A hidden capability's commands are unknown to
+// the CLI and its API routes answer 404 (ADR-20261023115741), so a journey
+// skips its steps instead of failing them.
+func hiddenCapabilities(t *testing.T, tg *target) map[string]bool {
+	t.Helper()
+	doc := object(t, tg.ok(t, time.Minute, "capabilities").stdout)
+	ids, _ := field(doc, "hidden_capabilities").([]any)
+	hidden := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		if s, ok := id.(string); ok {
+			hidden[s] = true
+		}
+	}
+	return hidden
+}
+
+// skipHidden skips a step whose capability is hidden for the account.
+func skipHidden(t *testing.T, hidden map[string]bool, capability string) {
+	t.Helper()
+	if hidden[capability] {
+		t.Skipf("%s is not released to this account (`gregale capabilities` lists it hidden)", capability)
+	}
+}
+
 // skipUnreleased skips a step whose capability is not released to the
 // account, or whose operator switch is off on this installation: that is
 // the documented answer, not a platform failure.
@@ -185,6 +210,8 @@ func httpProblemCode(r httpResult) string {
 func TestAlertsAndChannels(t *testing.T) {
 	tg := needs(t, tierFull, true)
 	t.Parallel()
+	hidden := hiddenCapabilities(t, tg)
+	skipHidden(t, hidden, "alerts")
 	slug, base := tg.deployProbe(t, "alerts")
 	secret := randomHex(t, 16)
 	s := newStory(t)
@@ -205,6 +232,7 @@ func TestAlertsAndChannels(t *testing.T) {
 		}
 	})
 	s.step("add_channel", func(t *testing.T) {
+		skipHidden(t, hidden, "notification-channels")
 		res := tg.execStdin(t, fakeSlackWebhook+"\n", time.Minute, "channels", "add",
 			"--name", tg.slug("slack"), "--kind", "slack", "--secret-stdin")
 		skipUnreleased(t, res.problemCode(), res.problem())
@@ -321,12 +349,17 @@ func findChannel(t *testing.T, tg *target, id string) (map[string]any, string) {
 func TestCustomMetricsSLOsAndSynthetics(t *testing.T) {
 	tg := needs(t, tierFull, true)
 	t.Parallel()
+	hidden := hiddenCapabilities(t, tg)
+	if hidden["custom-metrics"] && hidden["custom-slos"] && hidden["synthetic-checks"] {
+		t.Skip("custom metrics, SLOs and synthetic checks are all hidden for this account")
+	}
 	slug, base := tg.deployProbe(t, "observe")
 	// Minted on the journey so it outlives the steps; revoked at the end.
 	key := tg.scopedKey(t, "metrics", "metrics:write", "apps:read")
 	s := newStory(t)
 
 	s.check("custom_metric", func(t *testing.T) {
+		skipHidden(t, hidden, "custom-metrics")
 		r := tg.apiCall(http.MethodPut, "/v1/apps/"+slug+"/custom-metrics/e2e_queue_depth", map[string]float64{"value": 7}, key)
 		skipUnreleased(t, httpProblemCode(r), r.String())
 		if r.status != http.StatusNoContent {
@@ -341,6 +374,7 @@ func TestCustomMetricsSLOsAndSynthetics(t *testing.T) {
 		}
 	})
 	s.check("otlp_metrics", func(t *testing.T) {
+		skipHidden(t, hidden, "custom-metric-history")
 		// An OTLP/HTTP JSON export of one gauge; the dotted name is stored
 		// as e2e_otlp_gauge.
 		export := map[string]any{"resourceMetrics": []any{map[string]any{
@@ -366,6 +400,7 @@ func TestCustomMetricsSLOsAndSynthetics(t *testing.T) {
 		}
 	})
 	s.check("slo", func(t *testing.T) {
+		skipHidden(t, hidden, "custom-slos")
 		res := tg.run(t, time.Minute, "slos", "create", "--app", slug, "--name", "availability",
 			"--objective", "99", "--sli", "availability", "--window-days", "7")
 		skipUnreleased(t, res.problemCode(), res.problem())
@@ -383,6 +418,7 @@ func TestCustomMetricsSLOsAndSynthetics(t *testing.T) {
 		t.Logf("slo status: %s", compact(field(doc, "status")))
 	})
 	s.check("synthetic_check", func(t *testing.T) {
+		skipHidden(t, hidden, "synthetic-checks")
 		res := tg.run(t, time.Minute, "synthetics", "create", "--app", slug, "--name", "home",
 			"--path", "/", "--expect-status", "200", "--every-minutes", "5")
 		skipUnreleased(t, res.problemCode(), res.problem())

@@ -60,7 +60,9 @@ inbox and a browser. The "Not covered" column lists the remaining gaps.
 
 Rows not yet GA whose journeys exist ahead of a promotion, so the
 evidence is in place before the tier changes. A step whose capability is
-not released to the account skips with the API's explanation.
+hidden for the account (`gregale capabilities`) skips, so the evidence
+needs the capability released to the test account first; on 2026-10-29
+custom metric history, SLOs and synthetic checks were hidden for it.
 
 | # | Capability (tier today) | Journeys and steps | Not covered |
 |---|---|---|---|
