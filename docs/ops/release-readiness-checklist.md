@@ -37,7 +37,19 @@ Track the release workflow in GitHub Actions (`.github/workflows/release.yml`):
 - Cross-compilation of `gregale` CLI binaries.
 - Creation of `release.tar.gz` and SPDX SBOM (`release.sbom.json`).
 - Keyless signing with GitHub OIDC via Cosign/Rekor (`release.cosign.bundle`).
+- SLSA build provenance attestations for `release.tar.gz` and the CLI
+  archives (issue #295).
 - Release publication with SHA256 checksums.
+
+Platform images on ghcr carry the same kind of attestation. `images.yml`
+attests each promoted image's platform digests on main: builder-base for
+linux/amd64 and linux/arm64, each runtime base for linux/amd64. These are the
+digests the release pins in `runtime-bases.env`. To check an image or an asset:
+
+```bash
+gh attestation verify oci://ghcr.io/poyrazk/base-minimal@sha256:<digest> --owner poyrazK
+gh attestation verify release.tar.gz --owner poyrazK
+```
 
 The deployment workflows consume these published assets; they do not rebuild
 daemon binaries. After the release workflow is green, deploy the exact tag in
