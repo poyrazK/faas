@@ -25,7 +25,7 @@ func cmdDebugProfiles(args []string) int {
 		return 1
 	}
 	if len(positional) != 1 {
-		PrintUsage(osStderr, "usage: gregale debug profiles <slug> --deployment-id UUID --runtime NAME --start RFC3339 --end RFC3339 [--type cpu|heap] [--route LABEL] [--baseline-id UUID --baseline-start RFC3339 --baseline-end RFC3339]", debugCmdDocsTopic)
+		PrintUsage(osStderr, "usage: gregale debug profiles <slug> --release UUID --runtime NAME --start RFC3339 --end RFC3339 [--type cpu|heap] [--route LABEL] [--baseline-id UUID --baseline-start RFC3339 --baseline-end RFC3339]", debugCmdDocsTopic)
 		return 1
 	}
 	q, err := profileCLIQuery(*deployment, *runtime, *start, *end)
