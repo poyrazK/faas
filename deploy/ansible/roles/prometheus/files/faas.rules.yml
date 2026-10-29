@@ -455,6 +455,18 @@ groups:
           description: "The gateway aborted billable responses because their usage events could not be fsynced to the local outbox (ADR-1505). Clients saw failed requests. Check outbox capacity and disk health; readiness should already be draining the node."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasConsumerUsageDelivery.md"
 
+      - alert: FaasConsumerUsageQuarantined
+        expr: increase(gateway_consumer_usage_quarantined_total[15m]) > 0
+        for: 0m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: consumer_usage_delivery
+        annotations:
+          summary: "apid permanently rejected a financial usage event"
+          description: "The gateway moved a usage event apid rejected as invalid to quarantine.jsonl in its outbox directory so later events keep flowing. Reconcile it before trusting that window's usage totals."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasConsumerUsageDelivery.md"
+
       - alert: FaasConsumerUsageOutboxNearCapacity
         expr: gateway_consumer_usage_outbox_pending_bytes > 53687091
         for: 2m
@@ -4006,6 +4018,90 @@ groups:
           summary: "Billing reconciliation is unavailable for {{ $labels.provider }}"
           description: "Live billing is enabled but the active provider does not expose a usable reconciliation surface, so provider-vs-local billing drift cannot be measured. Treat drift gauges as unknown until the provider configuration is corrected."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/BillingDrift.md"
+      # ADR-20261029180000: the meterd billing pipeline and the Polar webhook
+      # each fail loudly. The provider pusher delivers only hours before the
+      # oldest minute not recorded compute-complete, so a stuck record holds
+      # back every account's usage; a webhook endpoint Polar sees failing ten
+      # times in a row is disabled.
+      - alert: FaasMeterdUsageDeliveryStalled
+        expr: meterd_usage_final_lag_seconds > 1800
+        for: 30m
+        labels:
+          severity: warn
+          component: meterd
+          family: billing_delivery
+          public_status: internal
+        annotations:
+          summary: "meterd holds back usage older than 30 minutes"
+          description: "The oldest closed minute of meterd's 24 h catch-up window that is not recorded compute-complete is {{ $value | humanizeDuration }} old. The provider pusher delivers usage only for hours before that minute, so every account's usage waits and cost reports lose coverage (ADR-1162, ADR-20261029180000). A new environment shows this until its first catch-up finishes, about 100 minutes."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/MeterdBillingPipeline.md"
+      - alert: FaasMeterdSampleFailing
+        expr: increase(meterd_ops_total{op="sample",code="err"}[15m]) >= 5
+        for: 15m
+        labels:
+          severity: warn
+          component: meterd
+          family: billing_delivery
+          public_status: internal
+        annotations:
+          summary: "meterd sample ticks keep failing"
+          description: "At least five of meterd's one-minute sample ticks failed in 15 minutes, for 15 minutes. Usage rows, price capture or the compute-complete record are not being written; catch-up re-rolls the minutes once the cause clears, within 24 h."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/MeterdBillingPipeline.md"
+      - alert: FaasMeterdBillingPushFailing
+        expr: increase(meterd_ops_total{op="stripe",code="err"}[3h]) >= 2
+        labels:
+          severity: warn
+          component: meterd
+          family: billing_delivery
+          public_status: internal
+        annotations:
+          summary: "meterd usage delivery to the billing provider is failing"
+          description: "Two hourly billing pushes in three hours ended with an error: the provider refused or timed out, or an account's billing identity could not be read. Pending hours retry every hour; the provider ignores repeated events by external ID."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/MeterdBillingPipeline.md"
+      - alert: FaasMeterdDunningFailing
+        expr: increase(meterd_ops_total{op="dunning",code="err"}[3h]) >= 2
+        labels:
+          severity: warn
+          component: meterd
+          family: billing_delivery
+          public_status: internal
+        annotations:
+          summary: "meterd dunning sweeps are failing"
+          description: "Two hourly dunning sweeps in three hours ended with an error, so past-due accounts are not moving to suspended or deleted_pending on schedule and their notices are not sent."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/MeterdBillingPipeline.md"
+      - alert: FaasPolarWebhookFailing
+        expr: sum(increase(apid_ops_total{op="polar_webhook",code=~"rejected|unavailable"}[30m])) >= 3
+        labels:
+          severity: warn
+          component: apid
+          family: billing_webhooks
+          public_status: internal
+        annotations:
+          summary: "apid answered {{ $value | humanize }} Polar webhooks with an error in 30 minutes"
+          description: "Polar disables a webhook endpoint after ten consecutive non-2xx deliveries. rejected means a bad signature or body (check the webhook secret); unavailable means apid could not apply the event. Reconciliation repairs subscription state every 30 minutes, but invoices and refunds arrive only by webhook."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/PolarBillingWebhooks.md"
+      - alert: FaasBillingReconcileFailing
+        expr: increase(apid_billing_reconcile_passes_total{result="failed"}[2h]) >= 2
+        labels:
+          severity: warn
+          component: apid
+          family: billing_webhooks
+          public_status: internal
+        annotations:
+          summary: "Billing subscription reconciliation is failing"
+          description: "Two 30-minute reconciliation passes in two hours failed, so a missed Polar webhook is no longer repaired (ADR-20261029094512)."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/PolarBillingWebhooks.md"
+      - alert: FaasBillingReconcileCorrected
+        expr: sum by (correction) (increase(apid_billing_reconcile_corrections_total[6h])) > 0
+        labels:
+          severity: warn
+          component: apid
+          family: billing_webhooks
+          public_status: internal
+        annotations:
+          summary: "Reconciliation applied a missed {{ $labels.correction }} event"
+          description: "An account's plan or payment state disagreed with its Polar subscription on two passes and reconciliation applied the event a webhook should have carried. Find out why the delivery was missed: Polar's webhook delivery log, FaasPolarWebhookFailing, apid restarts."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/PolarBillingWebhooks.md"
 
       # ─────────────────────────────────────────────────────────────────
       # ADR-120 Tier A1: domain doctor staleness alerts.
@@ -7138,6 +7234,35 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
           summary: "s3-gatewayd is answering more than 5% of requests with 5xx"
           description: "Provider failures, stale accounting or sustained SlowDown contention. Check s3-gatewayd logs by request status and the provider's status page."
+      # ADR-20261029174627: a region places new buckets across a pool of
+      # backends, each capped by max_buckets below its provider's quota.
+      - alert: FaasObjectStorageRegionNearlyFull
+        expr: |
+          sum by (region) (
+            max by (region, backend) (faas_object_storage_backend_buckets)
+              and on (region, backend) max by (region, backend) (faas_object_storage_backend_bucket_limit)
+          )
+            / sum by (region) (max by (region, backend) (faas_object_storage_backend_bucket_limit)) > 0.8
+        for: 30m
+        labels:
+          severity: warn
+          component: apid
+          family: object_storage
+        annotations:
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
+          summary: "Object storage region {{ $labels.region }} is over 80% of its bucket capacity"
+          description: "The backends that receive new buckets in {{ $labels.region }} hold more than 80% of their max_buckets. Add a provider project to the region's pool before bucket creation is refused."
+      - alert: FaasObjectStorageRegionFull
+        expr: max by (region) (faas_object_storage_region_full) == 1
+        for: 5m
+        labels:
+          severity: warn
+          component: apid
+          family: object_storage
+        annotations:
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
+          summary: "Object storage region {{ $labels.region }} refuses new buckets"
+          description: "No backend in {{ $labels.region }}'s pool has room under max_buckets, so customers get 503 object_storage_region_full when they create a bucket. Existing buckets work. Add a provider project to the pool."
       - alert: FaasObjectStorageUsageExportStale
         expr: time() - s3_gateway_usage_export_last_success_timestamp_seconds > 3600
         for: 15m
@@ -8920,3 +9045,40 @@ groups:
           summary: "Some alert rules keep missing their tick"
           description: "For an hour some account has spent its alert tick budget, so part of its rules run a tick late. meterd logs the account (\"account spent its tick budget\"); look at its slow rules: log-search queries, an unresponsive webhook, or Prometheus."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomerObservability.md"
+
+  # ADR-1155 on-demand profile captures: apid queues them, schedd claims them
+  # and runs them on the instance's vmmd. docs/runbooks/FaasProfileCaptures.md
+  # covers both alerts.
+  - name: faas_profile_captures
+    interval: 30s
+    rules:
+      - alert: FaasProfileCapturesFailing
+        expr: |
+          (
+            sum (increase(schedd_profile_captures_total{result=~"instance_stopped|timeout|unreachable|not_stored"}[30m]))
+            / sum (increase(schedd_profile_captures_total[30m]))
+          ) > 0.5
+          and on () sum (increase(schedd_profile_captures_total[30m])) >= 5
+        for: 10m
+        labels:
+          severity: warn
+          component: schedd
+          family: profile_captures
+          public_status: internal
+        annotations:
+          summary: "Most on-demand profile captures are failing on the platform side"
+          description: "More than half of the profile captures that finished in 30 minutes (at least five) timed out, lost their instance, could not reach its host, or could not be stored. Results the customer causes (no running instance, a deployment without collectors) do not count. Check schedd's profile_capture log lines and vmmd's CaptureProfile errors."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasProfileCaptures.md"
+      - alert: FaasProfileCaptureQueueBacklog
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(schedd_profile_capture_queue_wait_seconds_bucket{trigger="manual"}[15m]))) > 120
+        for: 10m
+        labels:
+          severity: warn
+          component: schedd
+          family: profile_captures
+          public_status: internal
+        annotations:
+          summary: "Manual profile captures wait more than two minutes to start"
+          description: "The 95th percentile time a manual capture waited queued exceeded 120 s for 10 minutes. Each schedd runs four captures at a time and claims manual captures first; a capture still queued after 10 minutes fails as interrupted. Check that schedd drains captures and how long captures hold their slots."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasProfileCaptures.md"

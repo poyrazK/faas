@@ -246,11 +246,13 @@
       "evidence": [
         {"kind": "test", "locator": "cmd/gatewayd-internal/async_routes_test.go::TestAsyncRouteEnqueuerCapturesProjectRelease"},
         {"kind": "test", "locator": "cmd/gatewayd-internal/edge_rules_app_wide_test.go::TestAppWideEdgeRules"},
+        {"kind": "test", "locator": "cmd/e2e/edge_rules_api_e2e_test.go::TestE2E_EdgeRules_KindsActOnPublicTraffic"},
         {"kind": "test", "locator": "cmd/gatewayd-internal/tenant_surfaces_routing_test.go::TestPgRouter_TenantSurfaceRouted"},
         {"kind": "test", "locator": "pkg/api/limits_test.go::TestWildcardDomainsAllowedIsProPlus"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_apps_static_egress_ip_test.go::TestStaticEgressIP_DeleteClears"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_cors_presets_test.go::TestGetCorsPreset_HappyPath"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_dashboard_edge_rules_test.go::TestDashboardEdgeRuleTraceShowsRetryPolicy"},
+        {"kind": "test", "locator": "cmd/e2e/edge_rules_trace_e2e_test.go::TestE2E_EdgeRules_TraceMatchesGateway"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_dashboard_edge_rules_test.go::TestDashboardSecurityHeadersCreatesStandardRule"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_doctor_test.go::TestGetDomainDoctor_IDOR"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_edge_protection_test.go::TestAppEdgeProtectionSummarizesPerAppCounters"},

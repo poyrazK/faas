@@ -128,7 +128,7 @@ func runLatestFailureLogs(slug string) int {
 					Line       string `json:"line"`
 				}{"log", dep.ID, entry.Line})
 			} else {
-				_, outputErr = fmt.Fprintln(osStdout, entry.Line)
+				_, outputErr = fmt.Fprintln(osStdout, terminalSafe(entry.Line))
 			}
 			if outputErr != nil {
 				return true, 1

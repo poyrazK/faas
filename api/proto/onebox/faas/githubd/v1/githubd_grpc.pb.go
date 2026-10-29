@@ -54,6 +54,8 @@ const (
 	Githubd_RetryWebhookDelivery_FullMethodName       = "/onebox.faas.githubd.v1.Githubd/RetryWebhookDelivery"
 	Githubd_RetryCheckUpdate_FullMethodName           = "/onebox.faas.githubd.v1.Githubd/RetryCheckUpdate"
 	Githubd_RetryAppActivity_FullMethodName           = "/onebox.faas.githubd.v1.Githubd/RetryAppActivity"
+	Githubd_UpsertIssueComment_FullMethodName         = "/onebox.faas.githubd.v1.Githubd/UpsertIssueComment"
+	Githubd_PublishGitHubEvent_FullMethodName         = "/onebox.faas.githubd.v1.Githubd/PublishGitHubEvent"
 )
 
 // GithubdClient is the client API for Githubd service.
@@ -216,6 +218,34 @@ type GithubdClient interface {
 	// updates for one account-owned app. The customer-facing action returns
 	// counts only; queue identifiers, payloads, and worker errors stay private.
 	RetryAppActivity(ctx context.Context, in *RetryAppActivityRequest, opts ...grpc.CallOption) (*RetryAppActivityResponse, error)
+	// UpsertIssueComment keeps one comment per marker on an issue or pull
+	// request: it finds the comment carrying the marker and updates it, or
+	// creates one (ADR-20261027090010 §8). agentd's delivery worker calls it on the
+	// local socket. Because it reads the issue before writing, repeating it
+	// after a lost answer reconciles instead of adding a second comment.
+	//
+	// Errors:
+	//   - INVALID_ARGUMENT when the request is malformed or the body is over
+	//     GitHub's limit.
+	//   - NOT_FOUND when the account has no such installation.
+	//   - FAILED_PRECONDITION when GitHub refuses the write for good (no
+	//     access, a missing or locked issue, an invalid body).
+	//   - UNAVAILABLE when nothing was written and a retry may succeed.
+	//   - UNKNOWN when a write may have landed and could not be confirmed.
+	UpsertIssueComment(ctx context.Context, in *UpsertIssueCommentRequest, opts ...grpc.CallOption) (*UpsertIssueCommentResponse, error)
+	// PublishGitHubEvent is served by apid's bridge, not by githubd (ADR-20261027090010
+	// §9). githubd's delivery worker hands it each pull_request delivery it
+	// forwards; apid publishes the event as a gregale.github platform event of
+	// the installation's account, so workflow event triggers start from it.
+	// Repeating a delivery publishes nothing twice: the delivery ID is the
+	// event ID.
+	//
+	// Errors:
+	//   - INVALID_ARGUMENT when the request or event is malformed; retrying
+	//     cannot help.
+	//   - ALREADY_EXISTS when the delivery ID names a different event.
+	//   - UNAVAILABLE when nothing was published and a retry may succeed.
+	PublishGitHubEvent(ctx context.Context, in *PublishGitHubEventRequest, opts ...grpc.CallOption) (*PublishGitHubEventResponse, error)
 }
 
 type githubdClient struct {
@@ -455,6 +485,26 @@ func (c *githubdClient) RetryAppActivity(ctx context.Context, in *RetryAppActivi
 	return out, nil
 }
 
+func (c *githubdClient) UpsertIssueComment(ctx context.Context, in *UpsertIssueCommentRequest, opts ...grpc.CallOption) (*UpsertIssueCommentResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UpsertIssueCommentResponse)
+	err := c.cc.Invoke(ctx, Githubd_UpsertIssueComment_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *githubdClient) PublishGitHubEvent(ctx context.Context, in *PublishGitHubEventRequest, opts ...grpc.CallOption) (*PublishGitHubEventResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PublishGitHubEventResponse)
+	err := c.cc.Invoke(ctx, Githubd_PublishGitHubEvent_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // GithubdServer is the server API for Githubd service.
 // All implementations must embed UnimplementedGithubdServer
 // for forward compatibility.
@@ -615,6 +665,34 @@ type GithubdServer interface {
 	// updates for one account-owned app. The customer-facing action returns
 	// counts only; queue identifiers, payloads, and worker errors stay private.
 	RetryAppActivity(context.Context, *RetryAppActivityRequest) (*RetryAppActivityResponse, error)
+	// UpsertIssueComment keeps one comment per marker on an issue or pull
+	// request: it finds the comment carrying the marker and updates it, or
+	// creates one (ADR-20261027090010 §8). agentd's delivery worker calls it on the
+	// local socket. Because it reads the issue before writing, repeating it
+	// after a lost answer reconciles instead of adding a second comment.
+	//
+	// Errors:
+	//   - INVALID_ARGUMENT when the request is malformed or the body is over
+	//     GitHub's limit.
+	//   - NOT_FOUND when the account has no such installation.
+	//   - FAILED_PRECONDITION when GitHub refuses the write for good (no
+	//     access, a missing or locked issue, an invalid body).
+	//   - UNAVAILABLE when nothing was written and a retry may succeed.
+	//   - UNKNOWN when a write may have landed and could not be confirmed.
+	UpsertIssueComment(context.Context, *UpsertIssueCommentRequest) (*UpsertIssueCommentResponse, error)
+	// PublishGitHubEvent is served by apid's bridge, not by githubd (ADR-20261027090010
+	// §9). githubd's delivery worker hands it each pull_request delivery it
+	// forwards; apid publishes the event as a gregale.github platform event of
+	// the installation's account, so workflow event triggers start from it.
+	// Repeating a delivery publishes nothing twice: the delivery ID is the
+	// event ID.
+	//
+	// Errors:
+	//   - INVALID_ARGUMENT when the request or event is malformed; retrying
+	//     cannot help.
+	//   - ALREADY_EXISTS when the delivery ID names a different event.
+	//   - UNAVAILABLE when nothing was published and a retry may succeed.
+	PublishGitHubEvent(context.Context, *PublishGitHubEventRequest) (*PublishGitHubEventResponse, error)
 	mustEmbedUnimplementedGithubdServer()
 }
 
@@ -690,6 +768,12 @@ func (UnimplementedGithubdServer) RetryCheckUpdate(context.Context, *RetryCheckU
 }
 func (UnimplementedGithubdServer) RetryAppActivity(context.Context, *RetryAppActivityRequest) (*RetryAppActivityResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RetryAppActivity not implemented")
+}
+func (UnimplementedGithubdServer) UpsertIssueComment(context.Context, *UpsertIssueCommentRequest) (*UpsertIssueCommentResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpsertIssueComment not implemented")
+}
+func (UnimplementedGithubdServer) PublishGitHubEvent(context.Context, *PublishGitHubEventRequest) (*PublishGitHubEventResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method PublishGitHubEvent not implemented")
 }
 func (UnimplementedGithubdServer) mustEmbedUnimplementedGithubdServer() {}
 func (UnimplementedGithubdServer) testEmbeddedByValue()                 {}
@@ -1101,6 +1185,42 @@ func _Githubd_RetryAppActivity_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Githubd_UpsertIssueComment_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpsertIssueCommentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GithubdServer).UpsertIssueComment(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Githubd_UpsertIssueComment_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GithubdServer).UpsertIssueComment(ctx, req.(*UpsertIssueCommentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Githubd_PublishGitHubEvent_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PublishGitHubEventRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GithubdServer).PublishGitHubEvent(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Githubd_PublishGitHubEvent_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GithubdServer).PublishGitHubEvent(ctx, req.(*PublishGitHubEventRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Githubd_ServiceDesc is the grpc.ServiceDesc for Githubd service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1191,6 +1311,14 @@ var Githubd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RetryAppActivity",
 			Handler:    _Githubd_RetryAppActivity_Handler,
+		},
+		{
+			MethodName: "UpsertIssueComment",
+			Handler:    _Githubd_UpsertIssueComment_Handler,
+		},
+		{
+			MethodName: "PublishGitHubEvent",
+			Handler:    _Githubd_PublishGitHubEvent_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

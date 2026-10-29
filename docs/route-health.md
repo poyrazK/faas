@@ -359,7 +359,8 @@ route-specific automatic recovery while retaining the rest of the guard.
 
 The guard reads request telemetry the gateways record. When a gateway may have
 lost some of it in the evidence windows (it restarted, missed a heartbeat, or
-has telemetry off or sampled), every window is unknown with reason
+has telemetry off or sampled; a gateway already silent before the windows is
+ignored), every window is unknown with reason
 `telemetry_incomplete` and the advance waits. This is Gregale's gap, not your
 traffic: it sends no `routes.health.blocked` webhook, starts no hold, is not
 counted by `route_health_holds`, and never triggers the hold deadline. The
@@ -373,9 +374,14 @@ An enforced guard holds a canary for at most 24 hours. When the canary worker's
 advance is still held after that, counted from the hold's first blocking
 decision in its stage and configuration, Gregale aborts the rollout and restores
 the stable deployment, as for a timed-out release approval. The decision history
-records rule `abort_route_health_timeout`. Changing the guard's configuration or
-the canary stage starts a new hold. The deadline is applied on the worker's
-advance: with no Safe Deploy worker running, nothing advances or aborts.
+records rule `abort_route_health_timeout`, app webhooks receive
+`routes.health.aborted` with reason `hold_deadline_exceeded` (naming the hold's
+first blocking decision), and `route_health_holds` counts the abort for its
+window. Changing the guard's configuration or the canary stage starts a new
+hold. The deadline is applied on the worker's advance: with no Safe Deploy
+worker running, nothing advances or aborts. While the canary is held,
+`gregale routes health report` shows when the hold began and when it aborts
+(`hold.since`, `hold.aborts_at`).
 
 To hear about a hold before the deadline without a webhook receiver, alert on
 `route_health_holds`: the app's canaries the guard holds now plus those it

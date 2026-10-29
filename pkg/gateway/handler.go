@@ -1307,6 +1307,10 @@ type Handler struct {
 	// response-cache key. The customer request returns the stale body while
 	// one background wake + origin fetch repopulates the entry.
 	cacheRefresh singleflight.Group
+	// cacheRefreshing holds the keys with a refresh in flight, so a stale
+	// hit for one neither clones its request nor parks a goroutine in
+	// cacheRefresh.Do (bug hunt 2026-10-28 O15).
+	cacheRefreshing sync.Map
 	// publicAuthUnsealer turns an APP_BASIC_AUTH secretbox
 	// sealed blob into the username/password pair the
 	// request header carries. nil = unseal disabled (unit

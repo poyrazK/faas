@@ -70,3 +70,12 @@ within +0.11–0.33 % per hour.
 - The app's current status and floor policy decide a caught-up minute's
   synthetic floor; a policy change inside the window applies to minutes
   caught up after it.
+
+## Amendment 1 — ADR-20261029180000
+
+Decision 3 left a minute rolled but not recorded (a failed price capture, job
+sampler or record write) incomplete for the rest of the process, which held
+provider delivery (ADR-1162) for every account for up to 24 h. A minute both
+samplers rolled in full is now recorded on the next tick whose price capture
+succeeds, without rolling it again; decision 6's "caught up in full in one
+tick" becomes "rolled in full by both samplers, in any ticks".

@@ -215,6 +215,11 @@
         - faas_cp_converge_roles | default(none) is none or 'livequeryd_service' in faas_cp_converge_roles
     - role: githubd_service
       when: faas_cp_converge_roles | default(none) is none or 'githubd_service' in faas_cp_converge_roles
+    # ADR-20261027090010, ADR-20261027090014: agent runs, after schedd and githubd whose sockets they use.
+    - role: agentd_service
+      when:
+        - faas_agentd_managed | default(false) | bool
+        - faas_cp_converge_roles | default(none) is none or 'agentd_service' in faas_cp_converge_roles
     - role: log_archive
       when: faas_cp_converge_roles | default(none) is none or 'log_archive' in faas_cp_converge_roles
     - role: optional_credentials
