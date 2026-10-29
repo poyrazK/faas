@@ -9604,6 +9604,8 @@ Run apps from message brokers
 
 `gregale trigger [<subcommand>]`
 
+Crons are managed with `gregale cron`.
+
 ### trigger list
 
 List triggers

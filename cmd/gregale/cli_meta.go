@@ -2213,9 +2213,10 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
-		Name:    "triggers",
-		DocSlug: "triggers",
-		Short:   "Manage event triggers from message brokers and queues (crons: gregale cron)",
+		Name:      "triggers",
+		DocSlug:   "triggers",
+		Short:     "Manage event triggers from message brokers and queues",
+		HelpNotes: []string{"Crons are managed with `gregale cron`."},
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List triggers", Flags: []cliFlag{
 				{Name: "app", Short: "filter to an app slug", Value: "slug"},
