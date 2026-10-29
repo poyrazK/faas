@@ -854,3 +854,109 @@ func mustAuditEventGitHub(t *testing.T, ev *state.Event, msg string) *state.Even
 	}
 	return ev
 }
+
+// A GitHub sign-in started from /login?next= returns there instead of the
+// website, and an unsafe next falls back to the dashboard
+// (ADR-20261028205920).
+func TestGitHubSignInReturnsToNext(t *testing.T) {
+	t.Setenv("GITHUB_CLIENT_ID", "test_gh_client_id")
+	t.Setenv("GITHUB_CLIENT_SECRET", "test_gh_client_secret")
+	t.Setenv("WEBSITE_URL", "https://dashboard.example.com/welcome")
+	f := newFakeGitHubAPI(t)
+	f.userBody = []byte(`{"id":4343,"login":"bob","name":"Bob","avatar_url":"https://x","email":""}`)
+	f.emailsBody = []byte(`[{"email":"bob@example.com","primary":true,"verified":true}]`)
+	restore := withGitHubTransport(t, f)
+	defer restore()
+	h := newServer(state.NewMemStore(), slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{}).
+		WithOAuthConfig(defaultGitHubTestOAuthCfg).handler()
+	keptNext := func(next string) *http.Cookie {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/auth/github?next="+url.QueryEscape(next), nil))
+		for _, c := range rec.Result().Cookies() {
+			if c.Name == oauthNextCookie && c.Value != "" {
+				return c
+			}
+		}
+		t.Fatalf("no %s cookie for next=%q", oauthNextCookie, next)
+		return nil
+	}
+
+	next := "/cli-auth?code=MCPR-" + strings.Repeat("ab", 32) + "&return=mcp"
+	req := newSignedGitHubRequest("st", "cd")
+	req.AddCookie(keptNext(next))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusFound || rec.Header().Get("Location") != next {
+		t.Fatalf("callback = %d %q, want back to %q", rec.Code, rec.Header().Get("Location"), next)
+	}
+	cleared := false
+	for _, c := range rec.Result().Cookies() {
+		cleared = cleared || c.Name == oauthNextCookie && c.MaxAge < 0
+	}
+	if !cleared {
+		t.Fatal("the callback left the next cookie set")
+	}
+
+	offsite := newSignedGitHubRequest("st", "cd")
+	offsite.AddCookie(keptNext("https://evil.example/phish"))
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, offsite)
+	if rec.Header().Get("Location") != "/dashboard/" {
+		t.Fatalf("an off-site next redirected to %q", rec.Header().Get("Location"))
+	}
+}
+
+// GitHub sign-up counts against the same per-network daily cap as password
+// sign-up (ADR-20261028205920).
+func TestGitHubSignUpPassesTheNetworkCap(t *testing.T) {
+	t.Setenv("GITHUB_CLIENT_ID", "test_gh_client_id")
+	t.Setenv("GITHUB_CLIENT_SECRET", "test_gh_client_secret")
+	f := newFakeGitHubAPI(t)
+	f.userBody = []byte(`{"id":4444,"login":"capped","name":"Capped","avatar_url":"https://x","email":""}`)
+	f.emailsBody = []byte(`[{"email":"capped@example.com","primary":true,"verified":true}]`)
+	restore := withGitHubTransport(t, f)
+	defer restore()
+	store := state.NewMemStore()
+	s := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{}).WithOAuthConfig(defaultGitHubTestOAuthCfg)
+	req := newSignedGitHubRequest("st", "cd")
+	for range api.SignupAccountsPerAddressPerDay {
+		s.signups.record(clientIPFromRequest(req))
+	}
+	rec := httptest.NewRecorder()
+	s.handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("sign-up over the network cap = %d, want 429", rec.Code)
+	}
+	if _, err := store.AccountByEmail(context.Background(), "capped@example.com"); err == nil {
+		t.Fatal("an account was created over the cap")
+	}
+}
+
+func TestSignupSourceNamesWhereSignInWasHeading(t *testing.T) {
+	mcp := "MCPR-" + strings.Repeat("ab", 32)
+	for next, want := range map[string]string{
+		"":                                       signupSourceDirect,
+		"/dashboard/":                            signupSourceDirect,
+		"/cli-auth":                              signupSourceDirect,
+		"/cli-auth?code=" + mcp + "&return=mcp":  signupSourceAgent,
+		"/cli-auth?code=" + strings.ToLower(mcp): signupSourceAgent,
+		"/cli-auth?code=ABCD-1234":               signupSourceCLI,
+	} {
+		if got := signupSource(next); got != want {
+			t.Errorf("signupSource(%q) = %q, want %q", next, got, want)
+		}
+	}
+}
+
+// /login hands its next to "Continue with GitHub" so a new user lands back
+// on the approval they were sent from.
+func TestLoginOAuthLinksKeepNext(t *testing.T) {
+	h := newServer(state.NewMemStore(), slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", noopNotifier{}).
+		WithOAuthConfig(defaultGitHubTestOAuthCfg).handler()
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/login?next="+url.QueryEscape("/cli-auth?code=ABCD-1234"), nil))
+	if body := strings.ToLower(rec.Body.String()); rec.Code != http.StatusOK || !strings.Contains(body, "/v1/auth/github?next=%2fcli-auth%3fcode%3dabcd-1234") {
+		t.Fatalf("login = %d; GitHub link lacks next: %s", rec.Code, rec.Body.String())
+	}
+}
