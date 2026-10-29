@@ -76,12 +76,19 @@ func (s *server) getRouteHealthReport(w http.ResponseWriter, r *http.Request, ac
 	if !ok {
 		return
 	}
+	if opts.Customers {
+		if p := s.routeCustomerGroupingProblem(acct, app, opts.CustomerGroupBy); p != nil {
+			api.WriteProblem(w, p)
+			return
+		}
+	}
 	report, err := s.readRouteHealthReport(r.Context(), store, acct.ID, app.ID, id.String(), opts)
 	if err != nil {
 		s.routeHealthError(w, err)
 		return
 	}
 	report = s.routeHealthReportAfterAbort(r.Context(), acct.ID, app.ID, id.String(), report)
+	report.Hold = s.routeHealthHold(r.Context(), report, app.ID, id.String())
 	if candidate, err := s.store.DeploymentByID(r.Context(), id.String()); err == nil && candidate.AppID == app.ID {
 		report.ProfileSignal = s.profileCanarySignal(r.Context(), acct, app, candidate)
 	}

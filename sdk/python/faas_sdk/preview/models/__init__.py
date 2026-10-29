@@ -5201,6 +5201,7 @@ from .route_health_probe import RouteHealthProbe
 from .route_health_report import RouteHealthReport
 from .route_health_report_client_error_status import RouteHealthReportClientErrorStatus
 from .route_health_report_coverage import RouteHealthReportCoverage
+from .route_health_report_hold import RouteHealthReportHold
 from .route_health_report_mode import RouteHealthReportMode
 from .route_health_report_on_regression import RouteHealthReportOnRegression
 from .route_health_report_status import RouteHealthReportStatus
@@ -11104,6 +11105,7 @@ __all__ = (
     "RouteHealthReport",
     "RouteHealthReportClientErrorStatus",
     "RouteHealthReportCoverage",
+    "RouteHealthReportHold",
     "RouteHealthReportMode",
     "RouteHealthReportOnRegression",
     "RouteHealthReportStatus",

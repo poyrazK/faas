@@ -45,5 +45,12 @@ export type RouteHealthReport = {
   minimum_latency_requests?: number;
   routes: Array<RouteHealthFinding>;
   profile_signal?: CanaryProfileSignal;
+  /**
+   * Present on a read while the enforced guard holds this canary: when the hold began (its first blocking decision) and when the hold deadline aborts the canary if the rollout worker still finds it held.
+   */
+  hold?: {
+    since: string;
+    aborts_at: string;
+  };
 };
 

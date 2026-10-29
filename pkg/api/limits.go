@@ -12890,6 +12890,13 @@ const RouteGroupPlanMaxChanges = 32
 // route_health_holds alert reports the hold well before it.
 const RouteHealthHoldDeadline = 24 * time.Hour
 
+// RouteTelemetrySilenceGrace is how long before the evidence windows a
+// gateway's last coverage report may be and still count (ADR-20261028110044
+// amendment 2): a gateway that fell silent within it may have lost rows the
+// windows read; one silent longer serves none of them and is ignored, so one
+// stopped gateway cannot make every app's route evidence unavailable.
+const RouteTelemetrySilenceGrace = 30 * time.Second
+
 // RouteSelectorObservationTimeout bounds the read behind a route guard or
 // monitor save's unobserved-selector warnings; a slower read warns nothing
 // (ADR-20261028110044).

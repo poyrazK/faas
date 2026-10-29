@@ -11,6 +11,43 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const abortRouteHealthHold = `-- name: AbortRouteHealthHold :one
+WITH held AS (
+  SELECT deployment_id, blocked_decision_id FROM route_health_notification_state
+  WHERE deployment_id = $2::text::uuid
+    AND app_id = $3::text::uuid
+    AND account_id = $4::text::uuid
+    AND status IN ('blocked_unknown', 'blocked_regressed')
+  FOR UPDATE
+)
+UPDATE route_health_notification_state s
+SET status = 'aborted', blocked_decision_id = NULL, updated_at = $1
+FROM held WHERE s.deployment_id = held.deployment_id
+RETURNING coalesce(held.blocked_decision_id::text, '')::text AS blocked_decision_id
+`
+
+type AbortRouteHealthHoldParams struct {
+	AbortedAt    pgtype.Timestamptz
+	DeploymentID string
+	AppID        string
+	AccountID    string
+}
+
+// ADR-20261028110044 amendment 2: the hold deadline ended a held canary, so
+// its notification state records the abort. Returns the hold's first blocking
+// decision; no row when the canary was not held.
+func (q *Queries) AbortRouteHealthHold(ctx context.Context, db DBTX, arg AbortRouteHealthHoldParams) (string, error) {
+	row := db.QueryRow(ctx, abortRouteHealthHold,
+		arg.AbortedAt,
+		arg.DeploymentID,
+		arg.AppID,
+		arg.AccountID,
+	)
+	var blocked_decision_id string
+	err := row.Scan(&blocked_decision_id)
+	return blocked_decision_id, err
+}
+
 const observedRouteLabels = `-- name: ObservedRouteLabels :many
 SELECT DISTINCT route::text AS route
 FROM request_telemetry
@@ -187,27 +224,31 @@ const routeTelemetryLost = `-- name: RouteTelemetryLost :one
 SELECT EXISTS (
   SELECT 1 FROM request_telemetry_coverage c
   JOIN compute_nodes n ON n.name = c.node_name AND n.active
-  WHERE NOT c.enabled OR c.sampling_basis_points <> 10000
-     OR c.healthy_since > $1::timestamptz
-     OR c.source_at < $2::timestamptz
+  WHERE c.source_at >= $1::timestamptz
+    AND (NOT c.enabled OR c.sampling_basis_points <> 10000
+      OR c.healthy_since > $2::timestamptz
+      OR c.source_at < $3::timestamptz)
 )::boolean AS lost
 `
 
 type RouteTelemetryLostParams struct {
-	WindowFrom  pgtype.Timestamptz
-	WindowUntil pgtype.Timestamptz
+	ReportedSince pgtype.Timestamptz
+	WindowFrom    pgtype.Timestamptz
+	WindowUntil   pgtype.Timestamptz
 }
 
-// ADR-20261028110044 amendment 1: whether a gateway may have lost request
-// telemetry that route evidence over [window_from, window_until) reads. An
-// active node that reports coverage counts when its telemetry is off or
-// sampled, when it has not been continuously healthy since window_from (a
-// restart, a heartbeat gap, or rows it could not attribute to an app), or
-// when its last report predates window_until. Rows a gateway attributes to an
-// app and drops (an account over its telemetry rate) do not count: the app's
-// remaining rows stay comparable.
+// ADR-20261028110044 amendments 1 and 2: whether a gateway may have lost
+// request telemetry that route evidence over [window_from, window_until)
+// reads. An active node whose last coverage report is at most
+// RouteTelemetrySilenceGrace older than window_from counts when its telemetry
+// is off or sampled, when it has not been continuously healthy since
+// window_from (a restart, a heartbeat gap, or rows it could not attribute to
+// an app), or when it fell silent before window_until. A gateway silent since
+// before the windows serves none of them, so it cannot hold every app's
+// evidence. Rows a gateway attributes to an app and drops (an account over its
+// telemetry rate) do not count: the app's remaining rows stay comparable.
 func (q *Queries) RouteTelemetryLost(ctx context.Context, db DBTX, arg RouteTelemetryLostParams) (bool, error) {
-	row := db.QueryRow(ctx, routeTelemetryLost, arg.WindowFrom, arg.WindowUntil)
+	row := db.QueryRow(ctx, routeTelemetryLost, arg.ReportedSince, arg.WindowFrom, arg.WindowUntil)
 	var lost bool
 	err := row.Scan(&lost)
 	return lost, err
