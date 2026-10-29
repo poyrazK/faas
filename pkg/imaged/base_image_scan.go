@@ -83,6 +83,9 @@ func (h *Handler) loadOrRunProducedBaseScan(ctx context.Context, be storage.Stor
 	if err != nil && !errors.Is(err, state.ErrNotFound) && !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 		return state.BaseImageScan{}, err
 	}
+	if reused, ok := h.renewProducedBaseScanWithoutScanning(ctx, store, be, base, expected); ok {
+		return reused, nil
+	}
 	in := state.BaseImageScanInput{ID: uuid.NewString(), BaseProducerID: base.ID, BaseInputHash: base.InputHash, Artifact: base.Input.Artifact, SourceReference: base.Input.SourceReference}
 	started := time.Now()
 	result, failure := h.readProducedArtifactScan(ctx, be, expected)
@@ -103,6 +106,46 @@ func (h *Handler) loadOrRunProducedBaseScan(ctx context.Context, be storage.Stor
 		return state.BaseImageScan{}, err
 	}
 	return value, nil
+}
+
+// renewProducedBaseScanWithoutScanning renews shared-base scan evidence
+// without running Grype (ADR-20261028102540). It applies only when the selected
+// scan is complete and covers these exact producer bytes, and Grype and its
+// vulnerability database are still the ones that made it, so a new scan
+// could only repeat that report. The new record gets its own storage-clock
+// lease and names the scan it copies. Any doubt (no identity, a mismatch,
+// changed bytes, a refused publication) returns false and the caller scans.
+func (h *Handler) renewProducedBaseScanWithoutScanning(ctx context.Context, store state.BaseImageScanStore, be storage.StorageBackend, base state.BaseImageProducer, expected scanArtifactTarget) (state.BaseImageScan, bool) {
+	prior, err := store.GetCurrentBaseImageScan(ctx, base.Input.Artifact.StorageKey)
+	if err != nil || prior.Input.Status != "complete" || prior.Input.Report == nil ||
+		prior.Input.BaseProducerID != base.ID || prior.Input.BaseInputHash != base.InputHash || prior.Input.Artifact != base.Input.Artifact {
+		return state.BaseImageScan{}, false
+	}
+	current, err := h.currentScannerIdentity(ctx)
+	report := prior.Input.Report
+	if err != nil || !current.matches(report.ScannerVersion, report.ScannerDBVersion, report.ScannerDBBuiltAt) {
+		return state.BaseImageScan{}, false
+	}
+	if checkStoredScanArtifact(ctx, be, expected) != nil {
+		return state.BaseImageScan{}, false
+	}
+	in := state.BaseImageScanInput{
+		ID: uuid.NewString(), BaseProducerID: base.ID, BaseInputHash: base.InputHash,
+		Artifact: base.Input.Artifact, SourceReference: base.Input.SourceReference,
+		Status: "complete", ScannerName: prior.Input.ScannerName, Report: report, ReusedScanID: prior.ID,
+	}
+	value, err := store.PublishBaseImageScan(ctx, in)
+	if err != nil {
+		if h.log != nil {
+			h.log.Warn("imaged: shared base scan reuse refused; scanning", "key", expected.StorageKey, "err", err)
+		}
+		return state.BaseImageScan{}, false
+	}
+	if h.log != nil {
+		h.log.Info("imaged: shared base scan renewed without rescanning", "key", expected.StorageKey,
+			"reused_scan", prior.ID, "scanner_version", current.Version, "scanner_db_built_at", current.DBBuiltAt)
+	}
+	return value, true
 }
 
 func (h *Handler) publishBaseScanFailure(ctx context.Context, store state.BaseImageScanStore, in state.BaseImageScanInput, failure string) (state.BaseImageScan, error) {

@@ -17,16 +17,23 @@ func TestOperatorDataRepairHealthAuthorization(t *testing.T) {
 	for _, tc := range []struct {
 		name, allowlist, email string
 		scopes                 []string
+		session                bool // an MFA-completed operator session, else the account's key
 		status                 int
 	}{
-		{"operator", "ops@example.com", "ops@example.com", api.ScopesAdminOnly, http.StatusOK},
-		{"customer scope", "ops@example.com", "ops@example.com", []string{api.ScopeAppsRead}, http.StatusForbidden},
-		{"unlisted admin", "ops@example.com", "other@example.com", api.ScopesAdminOnly, http.StatusForbidden},
-		{"no allowlist", "", "ops@example.com", api.ScopesAdminOnly, http.StatusForbidden},
+		{"operator session", "ops@example.com", "ops@example.com", api.ScopesAdminOnly, true, http.StatusOK},
+		// Items carry account ids, so an operator key is refused (ADR 20261023214253).
+		{"operator key", "ops@example.com", "ops@example.com", api.ScopesAdminOnly, false, http.StatusForbidden},
+		{"customer scope", "ops@example.com", "ops@example.com", []string{api.ScopeAppsRead}, false, http.StatusForbidden},
+		{"unlisted admin", "ops@example.com", "other@example.com", api.ScopesAdminOnly, true, http.StatusForbidden},
+		{"no allowlist", "", "ops@example.com", api.ScopesAdminOnly, true, http.StatusForbidden},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := apidserver.NewObsEnv(t, tc.scopes, tc.allowlist, tc.email)
-			w := e.Do(t, http.MethodGet, "/v1/admin/ops/data-repairs?limit=2", nil, nil)
+			do := e.Do
+			if tc.session {
+				do = e.DoOperator
+			}
+			w := do(t, http.MethodGet, "/v1/admin/ops/data-repairs?limit=2", nil, nil)
 			if w.Code != tc.status {
 				t.Fatalf("status = %d: %s", w.Code, w.Body.String())
 			}
@@ -40,7 +47,7 @@ func TestOperatorDataRepairHealthAuthorization(t *testing.T) {
 			if h.ObservedAt.IsZero() || len(h.Phases) != len(api.DataRepairHealthPhases()) || h.Items == nil || h.Limit != 2 || w.Header().Get("Cache-Control") != "no-store" {
 				t.Fatalf("health projection: %+v", h)
 			}
-			w = e.Do(t, http.MethodGet, "/v1/admin/ops/data-repairs?cursor=bad", nil, nil)
+			w = do(t, http.MethodGet, "/v1/admin/ops/data-repairs?cursor=bad", nil, nil)
 			if w.Code != http.StatusBadRequest {
 				t.Fatalf("cursor validation: %d %s", w.Code, w.Body.String())
 			}
@@ -57,7 +64,7 @@ func TestOperatorDataRepairHealthUnavailable(t *testing.T) {
 		t.Fatal("fixture unexpectedly exposes repair health")
 	}
 	*(*e.S()).Store() = withoutHealth
-	w := e.Do(t, http.MethodGet, "/v1/admin/ops/data-repairs", nil, nil)
+	w := e.DoOperator(t, http.MethodGet, "/v1/admin/ops/data-repairs", nil, nil)
 	if w.Code != http.StatusServiceUnavailable || strings.Contains(w.Body.String(), `"held_slots":0`) || w.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("unavailable observation: %d %s", w.Code, w.Body.String())
 	}

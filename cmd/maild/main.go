@@ -87,6 +87,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 			return errors.New("maild: account suspension notification schema is unavailable")
 		}
 	}
+	if internalmail.ManagedPostgresCapOutboxEnabled(os.Getenv) {
+		if err := store.ManagedPostgresCapOutboxReady(ctx); err != nil {
+			return errors.New("maild: managed postgres cap notification schema is unavailable")
+		}
+	}
 	if internalmail.AccountRestoredOutboxEnabled(os.Getenv) {
 		if err := store.AccountRestoredOutboxReady(ctx); err != nil {
 			return errors.New("maild: account restoration notification schema is unavailable")
@@ -150,6 +155,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		QuotaWarningOutboxEnabled:         func() bool { return internalmail.QuotaWarningOutboxEnabled(os.Getenv) },
 		NonpaymentDeletionOutboxEnabled:   func() bool { return internalmail.NonpaymentDeletionOutboxEnabled(os.Getenv) },
 		AccountSuspendedOutboxEnabled:     func() bool { return internalmail.AccountSuspendedOutboxEnabled(os.Getenv) },
+		ManagedPostgresCapOutboxEnabled:   func() bool { return internalmail.ManagedPostgresCapOutboxEnabled(os.Getenv) },
 		AccountRestoredOutboxEnabled:      func() bool { return internalmail.AccountRestoredOutboxEnabled(os.Getenv) },
 		PaymentFailedOutboxEnabled:        func() bool { return internalmail.PaymentFailedOutboxEnabled(os.Getenv) },
 		MFAEnabledAlertOutboxEnabled:      func() bool { return internalmail.MFAEnabledAlertOutboxEnabled(os.Getenv) },
