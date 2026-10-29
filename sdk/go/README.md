@@ -560,7 +560,7 @@ policy, err := c.PutObjectBucketLifecycle(ctx, "demo", bucketID,
 A replacement must contain at least one rule; use DELETE to clear it. Starting
 or resuming a due scan returns its durable ID. A completed scan means discovery
 finished; admitted cleanup can still be retrying. Removing rules preserves that
-cleanup. See the [lifecycle guide](../../docs/object-storage.md#lifecycle-rules-and-discovery).
+cleanup. See the [lifecycle guide](../../docs/object-storage.md#lifecycle-rules).
 ## Internal HTTP Operations preview
 
 Operations is staged; production admission remains disabled. The typed client
@@ -604,7 +604,7 @@ protection operation inspection. Use an explicit owned public version UUIDv4
 operation ID and return a durable receipt; retain the returned ID for retries
 and status. Fixed GOVERNANCE/COMPLIANCE retention and independent ON/OFF legal
 holds are supported. Event-hold changes and governance bypass are unsupported.
-See [the protection contract](../../docs/object-storage.md#per-version-retention-and-legal-holds)
+See [the protection contract](../../docs/object-storage.md#object-lock-retention-and-legal-holds)
 for enrollment, pending-operation fences and recovery behavior.
 
 ## Recovery receipt protection

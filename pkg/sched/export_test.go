@@ -935,3 +935,12 @@ func (l *Loop) XKeepEventClaims(ctx context.Context, every time.Duration, renew 
 	l.eventClaimRenewalEvery = every
 	return l.keepEventClaims(ctx, renew)
 }
+
+// XDispatchEventFanoutSweep submits a fanout sweep as the loop's wakes and
+// safety tick do.
+// adr: 20261029012000 — a pass that used its whole budget runs the next.
+func (l *Loop) XDispatchEventFanoutSweep(ctx context.Context) { l.dispatchEventFanoutSweep(ctx) }
+
+// XRepeatFullBatches is invocation retention's batch repeater.
+// adr: 20261029012000 — a step repeats while its batches come back full.
+var XRepeatFullBatches = repeatFullBatches
