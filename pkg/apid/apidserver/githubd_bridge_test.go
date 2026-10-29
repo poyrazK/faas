@@ -44,6 +44,7 @@ import (
 
 	githubdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/githubd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/appstandards"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -90,12 +91,22 @@ type bridgeStubStore struct {
 	updateStatusCalls []state.DeploymentStatus
 	account           state.Account
 	accountUnverified bool
+	org               state.Org
 	deployRate        state.AccountDeployRateSnapshot
 	deployRateErr     error
+	deployRateSubject string
+	deployRateLimit   int // the limit the last admission was checked against
 }
 
 func (s *bridgeStubStore) AppByID(_ context.Context, _ string) (state.App, error) {
 	return s.app, s.appErr
+}
+
+func (s *bridgeStubStore) OrgByID(_ context.Context, id string) (state.Org, error) {
+	if s.org.ID == id {
+		return s.org, nil
+	}
+	return state.Org{}, state.ErrNotFound
 }
 
 func (s *bridgeStubStore) AccountByID(_ context.Context, id string) (state.Account, error) {
@@ -114,7 +125,9 @@ func (s *bridgeStubStore) AccountByID(_ context.Context, id string) (state.Accou
 	return state.Account{ID: id, Plan: api.PlanFree, Status: state.AccountActive, EmailVerifiedAt: &verified}, nil
 }
 
-func (s *bridgeStubStore) ConsumeAccountDeployRate(_ context.Context, _ string, limit int, now time.Time) (state.AccountDeployRateSnapshot, error) {
+func (s *bridgeStubStore) ConsumeAccountDeployRate(_ context.Context, subject string, limit int, now time.Time) (state.AccountDeployRateSnapshot, error) {
+	s.deployRateSubject = subject
+	s.deployRateLimit = limit
 	if s.deployRateErr != nil {
 		return state.AccountDeployRateSnapshot{}, s.deployRateErr
 	}
@@ -362,6 +375,57 @@ func TestEnqueueBuild_HappyPath(t *testing.T) {
 	}
 }
 
+// bridgeStandardsStubStore adds an admitted application standards
+// enrollment, which an organization app needs before a build is enqueued.
+type bridgeStandardsStubStore struct {
+	*bridgeStubStore
+	enrollment state.ApplicationStandardEnrollment
+}
+
+func (s bridgeStandardsStubStore) GetApplicationStandardEnrollment(context.Context, string, string) (state.ApplicationStandardEnrollment, error) {
+	return s.enrollment, nil
+}
+
+func (s bridgeStandardsStubStore) ListApplicationStandardAssignments(context.Context, string) ([]appstandards.Assignment, error) {
+	return nil, nil
+}
+
+// An organization app's push is admitted against the organization, as the
+// API path is: its billing status gates the deploy and its deploy rate is
+// charged, not the namespace account's.
+func TestEnqueueBuild_OrganizationAppUsesResourceAccount(t *testing.T) {
+	const acctID, appID, orgID = "33333333-3333-4333-8333-333333333333", "11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"
+	for _, tc := range []struct {
+		name        string
+		org         state.Org
+		wantCode    codes.Code
+		wantSubject string
+	}{
+		{"suspended organization refused", state.Org{ID: orgID, Status: state.OrgStatusSuspended}, codes.FailedPrecondition, ""},
+		{"rate charged to the organization", state.Org{ID: orgID, Status: state.OrgStatusActive, ResourceOwnershipEnabled: true, Plan: api.PlanPro}, codes.OK, orgID},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stagingRoot, spoolRoot := t.TempDir(), t.TempDir()
+			path, size := stageFixtureFile(t, stagingRoot, filepath.Join(acctID, appID, "abc123"), []byte("tiny-tar"))
+			store := &bridgeStubStore{app: state.App{ID: appID, AccountID: acctID, OrgID: orgID, Status: state.AppActive}, org: tc.org}
+			enrolled := bridgeStandardsStubStore{bridgeStubStore: store, enrollment: state.ApplicationStandardEnrollment{
+				AppID: appID, OrgID: orgID, DesiredRevision: 1, State: "unmanaged"}}
+			g := &githubdBridge{store: enrolled, notif: &bridgeStubNotifier{}, log: discLog(), ops: wire.NewOpsMetrics("apid"),
+				spool: spoolRoot, stagingRoot: stagingRoot, spoolRoot: spoolRoot}
+			_, err := g.EnqueueBuild(context.Background(), &githubdpb.EnqueueBuildRequest{
+				AccountId: acctID, AppId: appID, CommitSha: "abc123", SourcePath: path, SourceBytes: size,
+				SourceUrl: "https://codeload.example.com/repo/tar.gz/abc123", RepoFullName: "owner/repo", Branch: "main",
+			})
+			if got := status.Code(err); got != tc.wantCode {
+				t.Fatalf("EnqueueBuild code = %v (%v), want %v", got, err, tc.wantCode)
+			}
+			if store.deployRateSubject != tc.wantSubject {
+				t.Fatalf("deploy rate charged to %q, want %q", store.deployRateSubject, tc.wantSubject)
+			}
+		})
+	}
+}
+
 func TestEnqueueBuild_AppNotFound(t *testing.T) {
 	store := &bridgeStubStore{appErr: state.ErrNotFound}
 	notif := &bridgeStubNotifier{}
@@ -587,6 +651,34 @@ func TestEnqueueBuild_OverCapacitySourceBytes(t *testing.T) {
 	})
 	if got := status.Code(err); got != codes.ResourceExhausted {
 		t.Errorf("err code = %s, want ResourceExhausted", got)
+	}
+}
+
+// githubd fetches every push with Scale's limits, so the bridge holds the
+// account to its own plan's source limit (bug hunt 2026-10-27 B7).
+func TestEnqueueBuild_SourceAbovePlanLimit(t *testing.T) {
+	for _, tc := range []struct {
+		plan api.Plan
+		want codes.Code
+	}{
+		{api.PlanFree, codes.ResourceExhausted},
+		{api.PlanScale, codes.OK},
+	} {
+		t.Run(string(tc.plan), func(t *testing.T) {
+			store := &bridgeStubStore{
+				app:     state.App{ID: "a", AccountID: "a", Status: state.AppActive},
+				account: state.Account{ID: "a", Plan: tc.plan},
+			}
+			g := newBridge(t, store, &bridgeStubNotifier{})
+			path, _ := stageFixtureFile(t, g.stagingRoot, "a/a/x", []byte("x"))
+			_, err := g.EnqueueBuild(context.Background(), &githubdpb.EnqueueBuildRequest{
+				AccountId: "a", AppId: "a", CommitSha: "x", SourcePath: path, SourceUrl: "https://x",
+				SourceBytes: 150 << 20,
+			})
+			if got := status.Code(err); got == codes.ResourceExhausted != (tc.want == codes.ResourceExhausted) {
+				t.Fatalf("150 MB source on %s: %v, want %s", tc.plan, err, tc.want)
+			}
+		})
 	}
 }
 
@@ -936,6 +1028,11 @@ func TestEnqueueBuild_AnnotationsThreaded(t *testing.T) {
 	// Kind is derived from EventKind: pull_request → preview_deploy.
 	if created.Kind != state.DeploymentKindPreview {
 		t.Errorf("dep.Kind = %q, want %q (EventKind=pull_request → preview)", created.Kind, state.DeploymentKindPreview)
+	}
+	// A PR preview build is admitted against its share of the hourly
+	// window, not the whole budget (ADR-20261028100000).
+	if want := api.PlanFree.PreviewDeploysPerHour(); store.deployRateLimit != want || want >= api.PlanFree.DeploysPerHour() {
+		t.Errorf("preview admission limit = %d, want the preview share %d", store.deployRateLimit, want)
 	}
 }
 

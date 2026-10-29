@@ -31,7 +31,7 @@ func TestRegisterLoaded(t *testing.T) {
 	}
 }
 
-// vmmd reads the runtime and build domains (ADR-20261026090000); a second
+// vmmd reads the runtime and build domains (ADR-20261026091500); a second
 // RegisterLoaded call would register the gauge twice and panic.
 func TestRegisterLoadedDomains(t *testing.T) {
 	reg := prometheus.NewRegistry()

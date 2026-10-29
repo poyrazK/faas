@@ -133,7 +133,7 @@ func cmdDLQList(args []string) int {
 
 func cmdDLQInspect(args []string) int {
 	flags, pos := splitArgsForFlags(args)
-	usage := "usage: gregale dlq inspect <app> <event-id>"
+	usage := "usage: gregale dlq get <app> <event-id>"
 	fs := dlqFlagSet("dlq inspect", usage)
 	if err := fs.Parse(flags); err != nil {
 		return 1

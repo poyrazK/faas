@@ -82,7 +82,7 @@ def _build_response(
 def sync_detailed(
     slug: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
     body: GitHubInstallMutationRequest,
 ) -> Response[GitHubInstallStatus | Problem]:
     """Reconcile an app's GitHub repository access immediately.
@@ -123,7 +123,7 @@ def sync_detailed(
 def sync(
     slug: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
     body: GitHubInstallMutationRequest,
 ) -> GitHubInstallStatus | Problem | None:
     """Reconcile an app's GitHub repository access immediately.
@@ -159,7 +159,7 @@ def sync(
 async def asyncio_detailed(
     slug: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
     body: GitHubInstallMutationRequest,
 ) -> Response[GitHubInstallStatus | Problem]:
     """Reconcile an app's GitHub repository access immediately.
@@ -198,7 +198,7 @@ async def asyncio_detailed(
 async def asyncio(
     slug: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
     body: GitHubInstallMutationRequest,
 ) -> GitHubInstallStatus | Problem | None:
     """Reconcile an app's GitHub repository access immediately.

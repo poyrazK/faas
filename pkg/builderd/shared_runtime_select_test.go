@@ -9,10 +9,11 @@ import (
 
 // spec: §4.6
 // H10-140: only Node container apps without a runtime, a Dockerfile or job
-// mode build on a shared runner base, and only with the flag on.
+// mode build on a shared runner base, unless the node turns it off
+// (default on, ADR-20261029103512).
 func TestSharedSourceAppRuntime(t *testing.T) {
-	on := func(string) string { return "1" }
-	off := func(string) string { return "" }
+	on := func(string) string { return "" }
+	off := func(string) string { return "0" }
 	app := state.App{Type: state.AppTypeApp}
 	job := app
 	job.Manifest.ExecutionMode = api.ExecutionModeJob
@@ -26,11 +27,14 @@ func TestSharedSourceAppRuntime(t *testing.T) {
 		want       string
 	}{
 		{"node app defaults to node24", app, FrameworkNode, "", "", on, "node24"},
-		{"engines 22.11.0", app, FrameworkNode, "22.11.0", "", on, "node22"},
-		{"engines bare 22", app, FrameworkNode, "22", "", on, "node22"},
+		// runner-node22 is musl; the glibc toolchain keeps its own base.
+		{"engines 22.11.0", app, FrameworkNode, "22.11.0", "", on, ""},
+		{"engines bare 22", app, FrameworkNode, "22", "", on, ""},
+		{"lower bound 22", app, FrameworkNode, ">=22", "", on, "node24"},
 		{"engines 24", app, FrameworkNode, "24", "", on, "node24"},
 		{"declared 20 keeps its toolchain", app, FrameworkNode, "20", "", on, ""},
 		{"flag off", app, FrameworkNode, "", "", off, ""},
+		{"explicit on", app, FrameworkNode, "24", "", func(string) string { return "1" }, "node24"},
 		{"function", state.App{Type: state.AppTypeFunction, Runtime: "node22"}, FrameworkNode, "", "", on, ""},
 		{"own runtime", state.App{Type: state.AppTypeApp, Runtime: "go124"}, FrameworkNode, "", "", on, ""},
 		{"python", app, FrameworkPython, "", "", on, ""},

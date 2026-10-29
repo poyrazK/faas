@@ -58,3 +58,15 @@ On by default for every release that keeps automatic rollback. Tests cover:
 - the release guard skip.
 
 The safe-release drill on n2 adds a case: a release that answers slowly at full traffic is rolled back by the watch.
+
+## Amendment 1 (2026-10-28): the predecessor is the plain rollback's target
+
+The watch, like the first-wake 5xx guard (ADR-625), took the newest superseded
+deployment created before the release as its predecessor. That row can be a
+canary candidate aborted before it completed (a completed release retires it
+as superseded) or a build superseded before it went live. The watch then
+compared the release with a deployment that never served and rolled back to
+it. Both now use the target a plain `gregale rollback` returns to
+(`LatestRetainedRollbackDeployment`, the H5-62 rule): the deployment that
+served most recently (`serving_ended_at`), never a canary aborted before it
+completed, created before the release.

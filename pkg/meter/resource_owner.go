@@ -14,6 +14,22 @@ func meterAppSubject(app state.App, plans map[string]api.Plan) string {
 	return app.AccountID
 }
 
+// planFloorCap is the most warm instances schedd's floor trigger holds for
+// app under plan (pkg/sched/floor): none when the plan has no floors, else
+// no more than the plan's MaxMinInstances and the app's effective max
+// concurrency.
+func planFloorCap(app state.App, plan api.Plan) int {
+	limits, ok := api.LimitsFor(plan)
+	if !ok || !plan.MinInstancesAllowed() {
+		return 0
+	}
+	maxConcurrency := limits.MaxConcurrency
+	if app.MaxConcurrency > 0 && app.MaxConcurrency < maxConcurrency {
+		maxConcurrency = app.MaxConcurrency
+	}
+	return min(limits.MaxMinInstances, maxConcurrency)
+}
+
 // floorHolders answers, once per account and organization per tick, whether
 // schedd holds an app's capacity floor. It reads the same resource account
 // schedd's reaper and lifecycle reconcile use, so a company app follows its

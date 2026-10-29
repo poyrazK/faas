@@ -214,6 +214,12 @@ func privateKeyValue(daemon string, dc *manifest.DaemonConfig, dbURL, appsDomain
 		return boolConfigValue(dc.RouteMetricsEnabled, true), nil
 	case "streaming_enabled":
 		return boolConfigValue(dc.StreamingEnabled, true), nil
+	case "frozen_tier_early_freeze_after_s":
+		// Omitted renders nothing so schedd keeps its default (off).
+		if dc.FrozenTierEarlyFreezeAfterS == nil {
+			return "", nil
+		}
+		return strconv.Itoa(*dc.FrozenTierEarlyFreezeAfterS), nil
 	case "service_proxy_https_listen":
 		return dc.ServiceProxyHTTPSListen, nil
 	case "service_proxy_ca_path":
@@ -584,7 +590,7 @@ func writeTOMLKV(buf *bytes.Buffer, key, value string) {
 	}
 	_, _ = buf.WriteString(key)
 	_, _ = buf.WriteString(" = ")
-	if isTOMLBoolKey(key) {
+	if isTOMLBoolKey(key) || isTOMLIntKey(key) {
 		_, _ = buf.WriteString(value)
 	} else {
 		_, _ = buf.WriteString(tomlQuote(value))
@@ -594,6 +600,10 @@ func writeTOMLKV(buf *bytes.Buffer, key, value string) {
 
 func isTOMLBoolKey(key string) bool {
 	return key == "route_metrics_enabled" || key == "streaming_enabled" || key == "lease"
+}
+
+func isTOMLIntKey(key string) bool {
+	return key == "frozen_tier_early_freeze_after_s"
 }
 
 // tomlQuote serialises a string value as a TOML basic string. The

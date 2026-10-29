@@ -505,7 +505,7 @@ Use `faas_sdk.preview.api.events.publish_event_batch.sync_detailed` or
 1–100 stable-id envelopes in at most 1 MiB. Inspect each parsed result: HTTP 200
 can include rejected or unknown items. Retry with the original source/id/content;
 duplicates retain their original receipt and do not create more deliveries.
-See [batch publication](../../docs/event-driven.md#batch-event-publishing).
+See [batch publication](../../docs/events.md#batch-event-publishing).
 
 ## Event retention health
 
@@ -513,7 +513,7 @@ The generated events service exposes `getEventRetentionHealth` (Node) or
 `faas_sdk.preview.api.events.get_event_retention_health` (Python). Filter receipt
 observations by source/app and choose an expiry lookahead; storage utilization
 remains account-wide. Recovery preflight also returns current receipt expiry
-warnings and current retention holds. See [retention health](../../docs/event-driven.md#retention-health-and-expiry-alerts).
+warnings and current retention holds. See [retention health](../../docs/events.md#retention-health-and-expiry-alerts).
 
 ## Recovery receipt protection
 
@@ -521,7 +521,7 @@ Set `protect_receipts: true` when creating an event recovery job (Go:
 `EventRecoveryRequest.ProtectReceipts`). Selected receipts remain held while
 items are pending and the job is active, until its original 24-hour expiry.
 Preview reserves nothing. Held receipts continue counting against account
-storage limits. See [recovery protection](../../docs/event-driven.md#protect-receipts-during-bulk-recovery).
+storage limits. See [recovery protection](../../docs/events.md#protect-receipts-during-bulk-recovery).
 
 ## Durable recovery outcomes
 
@@ -530,7 +530,7 @@ exact admitted replay generation. `execution.source` is `recovery_result`, with
 `recorded_at` and original `evidence_source`; job execution summaries include
 `saved_results`. These results survive execution-history pruning until the
 recovery job is pruned. Uncertain outcomes remain unknown. See
-[terminal recovery results](../../docs/event-driven.md#durable-terminal-recovery-results).
+[terminal recovery results](../../docs/events.md#durable-terminal-recovery-results).
 
 Recovery webhook filters support `event_recovery.execution_finished`, separately
 from admission completion. Its `EventRecoveryExecutionFinishedWebhookPayload`
@@ -548,7 +548,7 @@ retained terminal recovery in the same app. Child creation requires a stable
 retained child. Changed selections conflict, and the original audit reason wins.
 Items expose historical `parent_job_id`/`parent_position` links. Changed or pruned
 execution evidence is skipped at admission; newer replays are never substituted.
-See [parent-scoped retries](../../docs/event-driven.md#retry-failures-from-one-recovery-job).
+See [parent-scoped retries](../../docs/events.md#retry-failures-from-one-recovery-job).
 
 `get_event_recovery_health` includes optional execution health for the oldest
 retained unresolved terminal-admission jobs. `counts_complete=False` marks

@@ -32,7 +32,7 @@ func cmdEventsSubscriptionControl(args []string, action string) int {
 		return 1
 	}
 	if len(positional) != 2 || rejectUnexpectedFlagArgs(fs) || action != "status" && !*yes || rate != nil && (*rate < 0 || *rate > api.EventSubscriptionDrainRateMax) || capacity != nil && *capacity < 0 {
-		usage := "usage: gregale events subscription-" + action + " <app> <subscription-id>"
+		usage := "usage: gregale event subscription-" + action + " <app> <subscription-id>"
 		if action == "capacity" {
 			usage += " --max-pending N"
 		}

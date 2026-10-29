@@ -14,7 +14,7 @@ import (
 
 func cmdRoutesRequirements(args []string) int {
 	if len(args) == 0 {
-		return printErr("Invalid route requirements command", errors.New("usage: gregale routes requirements <get|set> <slug> [flags]"))
+		return printErr("Invalid route requirements command", errors.New("usage: gregale api route requirements <get|set> <slug> [flags]"))
 	}
 	switch args[0] {
 	case "set":
@@ -22,7 +22,7 @@ func cmdRoutesRequirements(args []string) int {
 	case "get":
 		return cmdRoutesRequirementsGet(args[1:])
 	default:
-		return printErr("Invalid route requirements command", errors.New("usage: gregale routes requirements <get|set> <slug> [flags]"))
+		return printErr("Invalid route requirements command", errors.New("usage: gregale api route requirements <get|set> <slug> [flags]"))
 	}
 }
 
@@ -35,7 +35,7 @@ func cmdRoutesRequirementsSet(args []string) int {
 		return 1
 	}
 	if len(positional) != 1 || !validCLISlug(positional[0]) || *path == "" || *revision < 0 || *revision > api.RouteRequirementsMaxRevision {
-		return printErr("Invalid route requirements save", errors.New("usage: gregale routes requirements set <slug> --requirements PATH --expected-revision N (0 for first save)"))
+		return printErr("Invalid route requirements save", errors.New("usage: gregale api route requirements set <slug> --requirements PATH --expected-revision N (0 for first save)"))
 	}
 	config, _, err := readPreviewCoverageRequirements(*path)
 	if err == nil {
@@ -77,7 +77,7 @@ func cmdRoutesRequirementsGet(args []string) int {
 		return 1
 	}
 	if len(positional) != 1 || !validCLISlug(positional[0]) {
-		return printErr("Invalid route requirements read", errors.New("usage: gregale routes requirements get <slug> [--out PATH]"))
+		return printErr("Invalid route requirements read", errors.New("usage: gregale api route requirements get <slug> [--out PATH]"))
 	}
 	client, err := authedClient()
 	if err != nil {
@@ -92,7 +92,7 @@ func cmdRoutesRequirementsGet(args []string) int {
 		// deployment" left the customer to guess (Hunt 14 H14-60).
 		if isNotFound(err) && !jsonOutput {
 			if _, appErr := client.GetApp(ctx, positional[0]); appErr == nil {
-				return printErr("No saved route requirements", fmt.Errorf("%s has none saved yet; save them with `gregale routes requirements set %s --requirements PATH --expected-revision 0`", positional[0], positional[0]))
+				return printErr("No saved route requirements", fmt.Errorf("%s has none saved yet; save them with `gregale api route requirements set %s --requirements PATH --expected-revision 0`", positional[0], positional[0]))
 			}
 		}
 		return printErr("Could not read saved route requirements", err)

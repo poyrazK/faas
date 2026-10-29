@@ -99,6 +99,21 @@ func Summary(appSlug string, active []state.ReleaseFreeze) string {
 	return fmt.Sprintf("production releases of %s are frozen: %s; lift the freeze or deploy with --override-freeze", appSlug, strings.Join(parts, "; "))
 }
 
+// CurrentStart reports when f's active period began: a window's start or the
+// start of the weekly occurrence that contains now.
+func CurrentStart(f state.ReleaseFreeze, now time.Time) (time.Time, bool) {
+	if !IsActive(f, now) {
+		return time.Time{}, false
+	}
+	switch f.Kind {
+	case state.ReleaseFreezeWindow:
+		return *f.StartsAt, true
+	case state.ReleaseFreezeWeekly:
+		return weeklyOccurrence(f, now, false)
+	}
+	return time.Time{}, false
+}
+
 // NextStart reports when f next starts after now, within NextHorizon. An
 // active freeze has no next start.
 func NextStart(f state.ReleaseFreeze, now time.Time) (time.Time, bool) {

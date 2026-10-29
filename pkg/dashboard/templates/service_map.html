@@ -46,7 +46,7 @@
     <td class="num">{{if .TCPSessions}}{{.TCPSessions}} <span class="{{if .TCPErrors}}bad{{else}}muted{{end}}">({{.TCPErrors}} failed, {{.TCPColdSessions}} woke)</span>{{else}}<span class="muted">—</span>{{end}}</td>
   </tr>{{end}}</tbody></table></div>
   {{range .Edges}}{{if .SuggestWakeAhead}}
-  <p class="card" role="note">Most calls from <strong>{{.CallerAppSlug}}</strong> to <strong>{{.TargetAppSlug}}</strong> found it parked and waited for it to restore. Turn on wake-ahead to restore the services {{.CallerAppSlug}} calls while it wakes: <code>gregale wake-ahead {{.CallerAppSlug}} on</code></p>
+  <p class="card" role="note">Most calls from <strong>{{.CallerAppSlug}}</strong> to <strong>{{.TargetAppSlug}}</strong> found it parked and waited for it to restore. Turn on wake-ahead to restore the services {{.CallerAppSlug}} calls while it wakes: <code>gregale app wake-ahead {{.CallerAppSlug}} on</code></p>
   {{end}}{{end}}
   {{if .Truncated}}<p class="muted">Showing the {{len .Edges}} busiest connections; quieter ones are omitted.</p>{{end}}
   {{else}}<p class="muted">No calls between your apps in the last {{.Range}}. Apps call each other by internal name — see the networking docs.</p>{{end}}

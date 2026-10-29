@@ -1746,13 +1746,6 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log.Info("quiet pause ledger enabled (ADR-20261023171905)",
 			"flush_seconds", api.QuietPauseLedgerFlushSeconds)
 	}
-	if cfg.QuietPauseAdmission {
-		engine.Ledger().EnableQuietPauseAdmission(func(nodeID string) (map[string]struct{}, time.Time, bool) {
-			return reader.QuietPaused(nodeID, time.Now())
-		})
-		log.Info("quiet pause admission enabled (ADR-1151)",
-			"max_overcommit_percent", api.QuietPauseMaxVCPUOvercommitPercent)
-	}
 	if cfg.FrozenTier {
 		engine.EnableFrozenTier()
 		if cfg.FrozenTierApps {
@@ -1805,6 +1798,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log.Info("owner fleet instance stats enabled",
 			"owner_node_id", ownerNodeID,
 			"interval", fleetInterval)
+	}
+	// ADR-1151 quiet pause admission discounts this schedd's bookings that
+	// vmmd reports quiet-paused: on its own node from the local reader, on
+	// peer nodes from the owner fleet reader above.
+	if cfg.QuietPauseAdmission {
+		quietPaused := instancestats.QuietPausedAcross(reader, autoscaleReader, ownerNodeID)
+		engine.Ledger().EnableQuietPauseAdmission(func(nodeID string) (map[string]struct{}, time.Time, bool) {
+			return quietPaused(nodeID, time.Now())
+		})
+		log.Info("quiet pause admission enabled (ADR-1151)",
+			"max_overcommit_percent", api.QuietPauseMaxVCPUOvercommitPercent,
+			"peer_nodes", ownerNodeID != "")
 	}
 	// Register the gRPC server with the Reader wired so the
 	// ListInstanceStats RPC (issue #279 / PR-B) can serve the
@@ -3070,9 +3075,11 @@ func (s schedFloorLedger) ResidentRAM() int {
 	return s.ledger.ResidentRAM()
 }
 
-// HeadroomMB implements floor.Ledger.
+// HeadroomMB implements floor.Ledger with the best single node's admission
+// headroom, the figure Admit places against; the fleet sum went negative
+// under measured admission and stopped every floor refill.
 func (s schedFloorLedger) HeadroomMB() int {
-	return s.ledger.HeadroomMB()
+	return s.ledger.AdmissionHeadroomMB()
 }
 
 // schedTargetsLedger (PR-C, issue #462) adapts *sched.NodeLedger

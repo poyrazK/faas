@@ -168,7 +168,8 @@ func (r *remoteServer) approveLocked(w http.ResponseWriter, req *http.Request, f
 		oauthError(w, 400, "invalid_request", "Regression triage requires explicit write scope and diagnostic access to each selected app")
 		return
 	}
-	server, management, err := newManagementServer(g.client, Options{Lifecycle: r.opts.Lifecycle, Telemetry: r.opts.Telemetry, auditLogger: r.opts.AuditLogger, accountID: g.accountID, grantID: g.id, AllowedApps: apps, Environments: environments, planStore: r.opts.StateStore, planNamespace: g.id, Profile: "oauth", APIBase: r.opts.APIBase, Version: r.opts.Version, Timeout: r.opts.Timeout, Token: g.client.Token(), AllowWrites: r.opts.AllowWrites && slices.Contains(g.scopes, scopeWrite), Toolsets: r.opts.Toolsets, Capabilities: g.capabilities, LocalCLI: r.grantCLI(g.client.Token()), uploads: r.uploads})
+	// Building the server here checks the consent; the first request uses it.
+	server, management, err := newManagementServer(g.client, r.grantOptions(g, apps, environments))
 	if err != nil {
 		oauthError(w, 500, "server_error", "Could not prepare account tools")
 		return
@@ -182,7 +183,7 @@ func (r *remoteServer) approveLocked(w http.ResponseWriter, req *http.Request, f
 		oauthError(w, 429, "temporarily_unavailable", "Authorization code capacity reached")
 		return
 	}
-	g.server, g.management = server, management
+	g.server, g.management, g.approved, g.lastUsed = server, management, true, time.Now()
 	g.allowedApps, g.environments = apps, environments
 	g.expires = minTime(g.credentialExpires, time.Now().Add(oauthGrantTTL))
 	g.availableApps = nil

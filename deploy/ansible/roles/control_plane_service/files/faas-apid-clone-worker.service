@@ -54,6 +54,7 @@ ProtectClock=yes
 ProtectProc=invisible
 ReadOnlyPaths=/etc/faas
 ReadWritePaths=/var/spool/faas/apid-clone-worker
+StateDirectory=faas-apid
 
 [Install]
 WantedBy=multi-user.target

@@ -138,7 +138,7 @@ func (m *MemStore) createObjectS3ComputeBindingLocked(req ObjectS3ComputeBinding
 		if !ok || deployment.AppID != c.ManagedAppID || m.snapshots[i].Stale {
 			continue
 		}
-		m.snapshots[i].Stale = true
+		m.markSnapshotStaleLocked(i)
 		m.deleteSnapshotReplicasLocked(m.snapshots[i].ID)
 	}
 	return cloneObjectS3Credential(c), nil
@@ -240,7 +240,7 @@ func (m *MemStore) RevokeObjectS3ComputeBinding(ctx context.Context, accountID, 
 		if !ok || deployment.AppID != c.ManagedAppID || m.snapshots[i].Stale {
 			continue
 		}
-		m.snapshots[i].Stale = true
+		m.markSnapshotStaleLocked(i)
 		m.deleteSnapshotReplicasLocked(m.snapshots[i].ID)
 	}
 	return true, nil

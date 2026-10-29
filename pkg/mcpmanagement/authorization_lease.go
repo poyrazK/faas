@@ -12,7 +12,7 @@ type authorizationLeaseExpiresKey struct{}
 // Caller holds r.mu. Access expiry remains specific to the presented token.
 func (r *remoteServer) accessLeaseLocked(key string) (*oauthGrant, time.Time, bool) {
 	grant := r.access[key]
-	if grant == nil || grant.server == nil || grant.client == nil || grant.revoked {
+	if grant == nil || !grant.approved || grant.client == nil || grant.revoked {
 		return nil, time.Time{}, false
 	}
 	expiry := grant.accessExpires

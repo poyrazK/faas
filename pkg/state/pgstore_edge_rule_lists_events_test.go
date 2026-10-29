@@ -83,6 +83,22 @@ func TestPgStore_EdgeRuleLists(t *testing.T) {
 	if err := s.DeleteEdgeRuleList(ctx, acct, "office"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("delete missing = %v, want ErrNotFound", err)
 	}
+
+	// ADR-091 amendment 2026-10-28: the write itself refuses a reference to
+	// a list that is gone (a delete that raced apid's own check), so no rule
+	// can be left pointing at a missing list.
+	var missing *state.EdgeRuleListMissingError
+	if _, err := s.CreateEdgeRuleIfUnderQuota(ctx, params, api.MustLimitsFor(api.PlanPro)); !errors.As(err, &missing) || missing.Name != "office" {
+		t.Fatalf("create referencing a deleted list = %v, want EdgeRuleListMissingError", err)
+	}
+	plain := pgSampleEdgeRuleParams(acct, app, "lists.example.com")
+	kept, err := s.CreateEdgeRule(ctx, plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpdateEdgeRule(ctx, kept.ID, state.UpdateEdgeRuleParams{Match: params.Match}); !errors.As(err, &missing) {
+		t.Fatalf("update referencing a deleted list = %v, want EdgeRuleListMissingError", err)
+	}
 }
 
 // ADR-964 against Postgres: batch insert (inet and empty client IPs),

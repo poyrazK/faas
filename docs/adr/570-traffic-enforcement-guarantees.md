@@ -141,6 +141,11 @@ deployment and port; this primes deployment weights outside the timed request.
 
 ## Shared traffic accounting
 
+Amended by ADR-20261027173012: for 5 minutes after the shared counter last
+decided a request on a gateway, a store error is decided by that gateway's
+own bucket (the limit holds per gateway); past that grace the refusal below
+applies.
+
 `[ratelimit] mode = "central"` is the daemon default and requires its Postgres
 pool. `local` remains an explicit operator/development exception; unknown
 values refuse startup. Central app/account/rule consumes are atomic. Store
@@ -1782,3 +1787,27 @@ guard analyses only hostnames whose claim changes, against the owned rules and
 the route candidates that can match them. The write-time guarantee, ceilings,
 error codes and the 2 s phase bound are unchanged. Until its switch is on, the
 sections above describe production.
+
+### Amendment: a timed-out policy check asks to be resent (2026-10-28)
+
+A policy check that runs out of time (the 2 s phase bound or the 1,750 ms SQL
+timeout, unit `milliseconds`) is not a verdict on the policy: on a busy control
+plane a deploy of an app with no edge rules was refused and passed on retry
+(H14-78). The release-guards drill on n2 hit it in every run, and once needed
+four sends while the app served about 30 requests a second. Its hint said to
+retry, but apid stored the 422 for the request's Idempotency-Key, and the CLI's
+deploy key is the deploy's content digest, so the same `gregale deploy` got the
+stored refusal back for 24 hours. Nothing retried it either.
+
+- The time-ceiling `traffic_policy_too_complex` problem carries `Retry-After`
+  (`api.TrafficPolicyAnalysisRetryAfter`, 2 s) and `retry_after_seconds`. Size
+  ceilings are unchanged and remain verdicts.
+- apid never stores a refusal (status ≥ 400) that carries `Retry-After` for
+  idempotent replay; like a 429 or 503 it releases the key, so the resend runs.
+- `api.Client` (the CLI) resends such a refusal after the wait, with the same
+  Idempotency-Key and Deployment-Attempt-ID, up to four sends. A refused send
+  saved nothing and left no submission receipt.
+- The Go, Node and Python SDK retry layers (opt-in) also resend it. They match
+  the code, not every 4xx with `Retry-After`: an MFA cooldown sends a 24-hour one.
+
+The bound, ceilings, codes and fail-closed behaviour are unchanged.
