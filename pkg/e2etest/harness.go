@@ -3428,6 +3428,9 @@ func startImaged(t *testing.T, h *Harness, bin, dbURL, tmp, appsRoot string, ext
 		env = append(env, "FAAS_APPS_DOMAIN="+testDomain)
 	}
 	env = append(env, h.nativeRuntimeSnapshotEnv(tmp))
+	if grype := grypeReplayBin(t); grype != "" {
+		env = append(env, "FAAS_GRYPE_BIN="+grype)
+	}
 	// extraEnv last so a caller can override a harness default — a test
 	// that needs FAAS_STORAGE_ROOT somewhere writable, for instance.
 	env = append(env, extraEnv...)
