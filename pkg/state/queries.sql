@@ -8156,13 +8156,18 @@ WITH metadata AS (
         AND legacy.account_id=a.account_id AND legacy.project_id=a.project_id AND legacy.slug=d.scope
         AND legacy.created_at<=d.created_at
 )
+-- 'active' pages by app (after_app_id, ordered by app): the rollback window
+-- needs every row of an app, and a newest-first cut over the whole fleet
+-- dropped exactly the oldest generations GC exists to reclaim once the live
+-- set passed the limit (bug hunt 2026-10-28 H66).
 SELECT * FROM metadata
-WHERE (sqlc.arg(mode)::text='active' AND (NOT stale OR runtime_owner_invalid))
+WHERE (sqlc.arg(mode)::text='active' AND (NOT stale OR runtime_owner_invalid) AND app_id>sqlc.arg(after_app_id)::text)
     OR (sqlc.arg(mode)::text='stale' AND stale AND stale_since<now()-sqlc.arg(retention_seconds)::bigint*interval '1 second')
     OR (sqlc.arg(mode)::text='pending' AND delete_pending)
-ORDER BY CASE WHEN sqlc.arg(mode)::text='active' THEN created_at END DESC,
+ORDER BY CASE WHEN sqlc.arg(mode)::text='active' THEN app_id END ASC,
+    CASE WHEN sqlc.arg(mode)::text='active' THEN created_at END DESC,
     CASE WHEN sqlc.arg(mode)::text<>'active' THEN created_at END ASC, id ASC
-LIMIT 10000;
+LIMIT sqlc.arg(row_limit)::integer;
 
 -- name: ReadRuntimeScalingStateForDeployment :one
 WITH owner AS (

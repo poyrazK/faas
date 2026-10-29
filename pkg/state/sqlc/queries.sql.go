@@ -85159,17 +85159,20 @@ WITH metadata AS (
         AND legacy.created_at<=d.created_at
 )
 SELECT id, deployment_id, app_id, account_id, app_slug, app_status, deployment_status, fc_version, mem_bytes, disk_bytes, storage_key, stale, delete_pending, created_at, tier, stale_since, scope, environment_id, deployment_rootfs_key, warm_snapshot_enabled, runtime_owner_invalid FROM metadata
-WHERE ($1::text='active' AND (NOT stale OR runtime_owner_invalid))
-    OR ($1::text='stale' AND stale AND stale_since<now()-$2::bigint*interval '1 second')
+WHERE ($1::text='active' AND (NOT stale OR runtime_owner_invalid) AND app_id>$2::text)
+    OR ($1::text='stale' AND stale AND stale_since<now()-$3::bigint*interval '1 second')
     OR ($1::text='pending' AND delete_pending)
-ORDER BY CASE WHEN $1::text='active' THEN created_at END DESC,
+ORDER BY CASE WHEN $1::text='active' THEN app_id END ASC,
+    CASE WHEN $1::text='active' THEN created_at END DESC,
     CASE WHEN $1::text<>'active' THEN created_at END ASC, id ASC
-LIMIT 10000
+LIMIT $4::integer
 `
 
 type ReadSnapshotGarbageCollectionParams struct {
 	Mode             string
+	AfterAppID       string
 	RetentionSeconds int64
+	RowLimit         int32
 }
 
 type ReadSnapshotGarbageCollectionRow struct {
@@ -85196,8 +85199,17 @@ type ReadSnapshotGarbageCollectionRow struct {
 	RuntimeOwnerInvalid bool
 }
 
+// 'active' pages by app (after_app_id, ordered by app): the rollback window
+// needs every row of an app, and a newest-first cut over the whole fleet
+// dropped exactly the oldest generations GC exists to reclaim once the live
+// set passed the limit (bug hunt 2026-10-28 H66).
 func (q *Queries) ReadSnapshotGarbageCollection(ctx context.Context, db DBTX, arg ReadSnapshotGarbageCollectionParams) ([]ReadSnapshotGarbageCollectionRow, error) {
-	rows, err := db.Query(ctx, readSnapshotGarbageCollection, arg.Mode, arg.RetentionSeconds)
+	rows, err := db.Query(ctx, readSnapshotGarbageCollection,
+		arg.Mode,
+		arg.AfterAppID,
+		arg.RetentionSeconds,
+		arg.RowLimit,
+	)
 	if err != nil {
 		return nil, err
 	}
