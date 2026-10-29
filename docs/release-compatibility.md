@@ -427,7 +427,10 @@ the host's units back to the release that was active before
 (`deployctl rollback --only … --expect-current <overlay> --to <base>`) and
 stops the run.
 `scripts/ci/observe_rollout_availability.sh` keeps doing the black-box
-probing during the control plane's activation itself.
+probing during the control plane's activation itself. Its canary app is the
+`ROLLOUT_APP_PROBE_URL` repository or environment variable, defaulting to
+`https://e2e-probe.gregale.dev/`; a canary whose baseline is unhealthy gates
+nothing, so the run carries a warning annotation and step-summary callout.
 
 ## Deploy order and skew in the unit lanes
 
