@@ -5525,8 +5525,8 @@ Group WAF detections by rule and path to find false positives
 Examples:
 
 ```sh
-gregale edge rule waf-review --app my-api
-gregale edge rule waf-review --app my-api --rule RULE_ID --since 24h
+gregale edge rule waf review --app my-api
+gregale edge rule waf review --app my-api --rule RULE_ID --since 24h
 ```
 
 Each group is assessed: likely_false_positive (a documented false positive, or many clients flagged on one path), likely_attack (clients flagged on many paths), excluded or review.
@@ -7142,7 +7142,7 @@ Examples:
 
 ```sh
 gregale api consumer create my-api --external-ref customer-42 --name "Customer 42"
-gregale api consumer key-create my-api CONSUMER_ID --name production --scopes read,write
+gregale api consumer key create my-api CONSUMER_ID --name production --scopes read,write
 ```
 
 #### api consumer key

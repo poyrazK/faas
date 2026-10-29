@@ -79,7 +79,7 @@ func (s *server) diffApp(w http.ResponseWriter, r *http.Request, acct state.Acco
 		return
 	}
 	if len(req.Workflows) > 0 {
-		if problem := validateWorkflowDefinitionsAgainstPlan(req.Workflows, acct.Plan); problem != nil {
+		if problem := validateWorkflowDefinitionsAgainstPlan(req.Workflows, acct.Plan, s.agentStepsAllowed(acct)); problem != nil {
 			api.WriteProblem(w, problem)
 			return
 		}

@@ -285,6 +285,22 @@ func testAPIKeyRotationGrace(t *testing.T, fx *Fixture) {
 	if _, _, err := fx.Store.RotateAPIKey(fx.Ctx, fx.Account.ID, successor.ID, randomTokenHash(t), "revived", time.Hour); err == nil {
 		t.Fatal("RotateAPIKey revived a revoked key")
 	}
+
+	// Rotation keeps the predecessor's deadline: it dropped expires_at, so
+	// an expiring key (a 30-day sign-in key) rotated into a permanent one
+	// (bug hunt 2026-10-28 B25).
+	deadline := time.Now().Add(48 * time.Hour).UTC().Truncate(time.Second)
+	expiring, err := fx.Store.CreateAPIKeyWithExpiry(fx.Ctx, fx.Account.ID, randomTokenHash(t), "expiring", api.ScopesAdminOnly, &deadline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, _, err := fx.Store.RotateAPIKey(fx.Ctx, fx.Account.ID, expiring.ID, randomTokenHash(t), "", time.Hour)
+	if err != nil {
+		t.Fatalf("RotateAPIKey(expiring): %v", err)
+	}
+	if next.ExpiresAt == nil || !next.ExpiresAt.Equal(deadline) {
+		t.Fatalf("successor expires_at = %v, want the predecessor's %v", next.ExpiresAt, deadline)
+	}
 }
 
 // testConsumerKeyLookupIsAppScoped pins the gateway's consumer-key lookup:
@@ -442,5 +458,44 @@ func testOIDCRepositoryBindingResolution(t *testing.T, fx *Fixture) {
 	}
 	if acct, err := resolver.AccountByOIDCRepositoryBinding(fx.Ctx, issuer, "repo:acme/app:ref:refs/heads/main"); err == nil {
 		t.Fatalf("a deleted app's binding still resolved %q", acct.ID)
+	}
+}
+
+// testOIDCRepositoryIDsForSubject pins the immutable IDs the OIDC exchange
+// requires of a name-only GitHub subject: the ones the account's binding of
+// that repository recorded, and none for another repository or account
+// (bug hunt 2026-10-28 H68).
+func testOIDCRepositoryIDsForSubject(t *testing.T, fx *Fixture) {
+	resolver, ok := fx.Store.(state.OIDCRepositoryIDResolver)
+	if !ok {
+		t.Skip("store has no repository-ID resolver")
+	}
+	const issuer = "https://token.actions.githubusercontent.com"
+	if err := fx.Store.UpsertGitHubInstall(fx.Ctx, state.GitHubInstall{
+		AccountID: fx.Account.ID, InstallationID: 4243, AuditGithubLogin: "octo",
+		SealedToken: []byte("sealed"), TokenExpiresAt: time.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("UpsertGitHubInstall: %v", err)
+	}
+	if err := fx.Store.UpsertGithubInstallBinding(fx.Ctx, state.GitHubBinding{
+		AppID: fx.App.ID, AccountID: fx.Account.ID, BindingID: "bind-" + fx.App.ID,
+		InstallID: 4243, RepoFullName: "Acme/App", OwnerID: 583231, RepoID: 1296269,
+		ProductionBranch: "main", LinkedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("UpsertGithubInstallBinding: %v", err)
+	}
+	for _, tc := range []struct {
+		name, accountID, issuer, subject string
+		owner, repo                      int64
+	}{
+		{"bound repository", fx.Account.ID, issuer, "repo:acme/app:ref:refs/heads/main", 583231, 1296269},
+		{"other repository", fx.Account.ID, issuer, "repo:acme/other:ref:refs/heads/main", 0, 0},
+		{"other issuer", fx.Account.ID, "https://gitlab.example", "repo:acme/app:ref:refs/heads/main", 0, 0},
+		{"other account", uuid.NewString(), issuer, "repo:acme/app:ref:refs/heads/main", 0, 0},
+	} {
+		owner, repo, err := resolver.GitHubRepositoryIDsForOIDCSubject(fx.Ctx, tc.accountID, tc.issuer, tc.subject)
+		if err != nil || owner != tc.owner || repo != tc.repo {
+			t.Fatalf("%s: GitHubRepositoryIDsForOIDCSubject = %d, %d, %v; want %d, %d", tc.name, owner, repo, err, tc.owner, tc.repo)
+		}
 	}
 }

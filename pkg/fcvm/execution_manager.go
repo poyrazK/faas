@@ -61,7 +61,7 @@ func (m *Manager) ExecuteExecutionWithBroker(ctx context.Context, instance strin
 	m.mu.Lock()
 	inst, ok := m.live[instance]
 	m.mu.Unlock()
-	if !ok || inst == nil || !inst.ExecutionOnly || inst.DataRepairOnly {
+	if !ok || inst == nil || !inst.ExecutionOnly || inst.DataRepairOnly || inst.AgentRunOnly {
 		return zero, ErrExecutionInstanceNotFound
 	}
 	if req.OutboundEnabled && len(inst.ExecutionOutboundIntegrationIDs) == 0 {

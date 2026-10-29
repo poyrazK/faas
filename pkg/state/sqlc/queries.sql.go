@@ -289,6 +289,18 @@ func (q *Queries) AccountDeletedAppByID(ctx context.Context, db DBTX, arg Accoun
 	return i, err
 }
 
+const accountIDByGitHubInstallation = `-- name: AccountIDByGitHubInstallation :one
+select account_id from github_installations where installation_id = $1::bigint
+`
+
+// An installation ID is globally unique (github_installations_installation_id_uidx).
+func (q *Queries) AccountIDByGitHubInstallation(ctx context.Context, db DBTX, installationID int64) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, accountIDByGitHubInstallation, installationID)
+	var account_id pgtype.UUID
+	err := row.Scan(&account_id)
+	return account_id, err
+}
+
 const accountIDByGitHubOIDCRepositoryIdentity = `-- name: AccountIDByGitHubOIDCRepositoryIdentity :one
 select min(a.github_install_account_id::text)::uuid as account_id
 from apps a
@@ -660,7 +672,7 @@ func (q *Queries) ActiveSafeProjectReleaseID(ctx context.Context, db DBTX, proje
 const activeTCPListenerByPublicPort = `-- name: ActiveTCPListenerByPublicPort :one
 SELECT l.id, l.account_id, l.app_id, l.listener_name, l.guest_port, l.public_port, l.protocol, l.enabled, l.created_at, l.updated_at, l.tls_mode, l.tls_hostname FROM app_tcp_listeners l JOIN apps a ON a.id = l.app_id
 WHERE l.public_port = $1 AND l.enabled
-  AND a.status <> 'deleted' AND a.account_id = l.account_id
+  AND a.status <> 'deleted' AND a.visibility <> 'internal' AND a.account_id = l.account_id
 `
 
 func (q *Queries) ActiveTCPListenerByPublicPort(ctx context.Context, db DBTX, publicPort int32) (AppTcpListener, error) {
@@ -27879,6 +27891,37 @@ func (q *Queries) GetWorkflowScheduleOccurrenceForReplay(ctx context.Context, db
 	return i, err
 }
 
+const gitHubRepositoryIDsBoundToAccount = `-- name: GitHubRepositoryIDsBoundToAccount :one
+select coalesce(max(a.github_owner_id), 0)::bigint as owner_id,
+       coalesce(max(a.github_repo_id), 0)::bigint as repo_id
+from apps a
+where a.account_id = $1::uuid
+  and lower(a.github_repo_full_name) = lower($2::text)
+  and a.deleted_at is null
+`
+
+type GitHubRepositoryIDsBoundToAccountParams struct {
+	AccountID    pgtype.UUID
+	RepoFullName string
+}
+
+type GitHubRepositoryIDsBoundToAccountRow struct {
+	OwnerID int64
+	RepoID  int64
+}
+
+// The immutable owner and repository IDs an account's app binding recorded
+// for a repository name (bug hunt 2026-10-28 H68): the OIDC exchange
+// requires a token's repository_owner_id and repository_id claims to match
+// them, so a recreated repository under a freed owner name does not pass.
+// Zero when no binding of the name records them.
+func (q *Queries) GitHubRepositoryIDsBoundToAccount(ctx context.Context, db DBTX, arg GitHubRepositoryIDsBoundToAccountParams) (GitHubRepositoryIDsBoundToAccountRow, error) {
+	row := db.QueryRow(ctx, gitHubRepositoryIDsBoundToAccount, arg.AccountID, arg.RepoFullName)
+	var i GitHubRepositoryIDsBoundToAccountRow
+	err := row.Scan(&i.OwnerID, &i.RepoID)
+	return i, err
+}
+
 const guardWorkflowAdmissionSnapshot = `-- name: GuardWorkflowAdmissionSnapshot :exec
 SELECT guard_workflow_admission_snapshot($1::text::uuid)
 `
@@ -40602,7 +40645,7 @@ func (q *Queries) ListActiveRegressionsByApp(ctx context.Context, db DBTX, arg L
 
 const listActiveTCPListeners = `-- name: ListActiveTCPListeners :many
 SELECT l.id, l.account_id, l.app_id, l.listener_name, l.guest_port, l.public_port, l.protocol, l.enabled, l.created_at, l.updated_at, l.tls_mode, l.tls_hostname FROM app_tcp_listeners l JOIN apps a ON a.id = l.app_id
-WHERE l.enabled AND a.status <> 'deleted' AND a.account_id = l.account_id
+WHERE l.enabled AND a.status <> 'deleted' AND a.visibility <> 'internal' AND a.account_id = l.account_id
 ORDER BY l.public_port
 `
 
@@ -46121,7 +46164,7 @@ const listEnabledTriggers = `-- name: ListEnabledTriggers :many
 select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id, queue_binding_scope, queue_binding_environment_id,
        batch_size_max, batch_window_ms, max_attempts,
        cron_id, source, payload_max_bytes, broker_poison_strategy,
-       filter_criteria, delivery,
+       filter_criteria, delivery, agent,
        created_at, updated_at
 from triggers where enabled = true AND NOT environment_workload_admission_retired(app_id,queue_binding_scope)
 AND NOT (kind IN ('kafka','nats','redis_streams','sqs_compat')
@@ -46148,6 +46191,7 @@ type ListEnabledTriggersRow struct {
 	BrokerPoisonStrategy      string
 	FilterCriteria            []byte
 	Delivery                  string
+	Agent                     pgtype.Text
 	CreatedAt                 pgtype.Timestamptz
 	UpdatedAt                 pgtype.Timestamptz
 }
@@ -46192,6 +46236,7 @@ func (q *Queries) ListEnabledTriggers(ctx context.Context, db DBTX) ([]ListEnabl
 			&i.BrokerPoisonStrategy,
 			&i.FilterCriteria,
 			&i.Delivery,
+			&i.Agent,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -46207,7 +46252,7 @@ func (q *Queries) ListEnabledTriggers(ctx context.Context, db DBTX) ([]ListEnabl
 
 const listEnabledUDPListeners = `-- name: ListEnabledUDPListeners :many
 SELECT id, account_id, app_id, listener_name, guest_port, public_port, protocol, enabled, created_at, updated_at FROM app_udp_listeners l
-WHERE enabled AND EXISTS (SELECT 1 FROM apps a WHERE a.id = l.app_id AND a.account_id = l.account_id AND a.status <> 'deleted')
+WHERE enabled AND EXISTS (SELECT 1 FROM apps a WHERE a.id = l.app_id AND a.account_id = l.account_id AND a.status <> 'deleted' AND a.visibility <> 'internal')
 ORDER BY public_port ASC
 `
 
@@ -52031,7 +52076,7 @@ const listTriggersForApp = `-- name: ListTriggersForApp :many
 select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id, queue_binding_scope, queue_binding_environment_id,
        batch_size_max, batch_window_ms, max_attempts,
        cron_id, source, payload_max_bytes, broker_poison_strategy,
-       filter_criteria, delivery,
+       filter_criteria, delivery, agent,
        created_at, updated_at
 from triggers where app_id = $1 order by created_at desc
 `
@@ -52056,6 +52101,7 @@ type ListTriggersForAppRow struct {
 	BrokerPoisonStrategy      string
 	FilterCriteria            []byte
 	Delivery                  string
+	Agent                     pgtype.Text
 	CreatedAt                 pgtype.Timestamptz
 	UpdatedAt                 pgtype.Timestamptz
 }
@@ -52092,6 +52138,7 @@ func (q *Queries) ListTriggersForApp(ctx context.Context, db DBTX, appID pgtype.
 			&i.BrokerPoisonStrategy,
 			&i.FilterCriteria,
 			&i.Delivery,
+			&i.Agent,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -71792,7 +71839,7 @@ payload_max_bytes=coalesce($6::integer,payload_max_bytes),
 broker_poison_strategy=coalesce($7::text,broker_poison_strategy),
 filter_criteria=coalesce($8::jsonb,filter_criteria),
 source=coalesce($9::text,source)
-where id=$10 and queue_binding_id is null returning id, account_id, app_id, kind, slug, enabled, config, batch_size_max, batch_window_ms, max_attempts, cron_id, source, created_at, updated_at, payload_max_bytes, broker_poison_strategy, filter_criteria, queue_binding_id, queue_binding_scope, queue_binding_environment_id, delivery
+where id=$10 and queue_binding_id is null returning id, account_id, app_id, kind, slug, enabled, config, batch_size_max, batch_window_ms, max_attempts, cron_id, source, created_at, updated_at, payload_max_bytes, broker_poison_strategy, filter_criteria, queue_binding_id, queue_binding_scope, queue_binding_environment_id, delivery, agent
 `
 
 type PublicPatchTriggerParams struct {
@@ -71844,6 +71891,7 @@ func (q *Queries) PublicPatchTrigger(ctx context.Context, db DBTX, arg PublicPat
 		&i.QueueBindingScope,
 		&i.QueueBindingEnvironmentID,
 		&i.Delivery,
+		&i.Agent,
 	)
 	return i, err
 }
@@ -72928,14 +72976,14 @@ select
   ((select count(*) from (
      select 1 from invocations i, b
      where i.app_id=$1::uuid and i.queue_binding_id=b.id and i.account_id=b.account_id
-       and i.source='queue' and i.state in ('pending','dispatching')
+       and i.source='queue' and i.state in ('pending','dispatching') and (i.state='dispatching' or i.due_at <= now())
        and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
      limit $2::integer) own)
   + (select count(*) from (
      select 1 from invocations i, b
      where b.deployment_scope='' and i.app_id=$1::uuid and i.queue_binding_id is null
        and i.queue_name=b.queue_name and i.account_id=b.account_id
-       and i.source='queue' and i.state in ('pending','dispatching')
+       and i.source='queue' and i.state in ('pending','dispatching') and (i.state='dispatching' or i.due_at <= now())
      limit $2::integer) legacy))::bigint as depth,
   (select count(*) from (
      select 1 from owned where state='dispatching' and lease_expires_at > now()
@@ -72946,13 +72994,13 @@ select
   (select min(first.created_at) from (
      (select i.created_at from invocations i, b
       where i.app_id=$1::uuid and i.queue_binding_id=b.id and i.account_id=b.account_id
-        and i.source='queue' and i.state='pending'
+        and i.source='queue' and i.state='pending' and i.due_at <= now()
         and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
       order by i.due_at, i.created_at, i.id limit 1)
      union all
      (select i.created_at from invocations i, b
       where b.deployment_scope='' and i.app_id=$1::uuid and i.queue_binding_id is null
-        and i.queue_name=b.queue_name and i.account_id=b.account_id and i.source='queue' and i.state='pending'
+        and i.queue_name=b.queue_name and i.account_id=b.account_id and i.source='queue' and i.state='pending' and i.due_at <= now()
       order by i.due_at, i.created_at, i.id limit 1)
   ) first)::timestamptz as oldest_pending_at
 `
@@ -73279,7 +73327,7 @@ insert into triggers (account_id,app_id,queue_binding_id,kind,source,slug,enable
 batch_size_max,batch_window_ms,max_attempts,payload_max_bytes,broker_poison_strategy)
 values ($1,$2,$3::uuid,'queue','queue',$4,
 $5,$6::jsonb,$7,$8,
-$9,$10,'commit') returning id, account_id, app_id, kind, slug, enabled, config, batch_size_max, batch_window_ms, max_attempts, cron_id, source, created_at, updated_at, payload_max_bytes, broker_poison_strategy, filter_criteria, queue_binding_id, queue_binding_scope, queue_binding_environment_id, delivery
+$9,$10,'commit') returning id, account_id, app_id, kind, slug, enabled, config, batch_size_max, batch_window_ms, max_attempts, cron_id, source, created_at, updated_at, payload_max_bytes, broker_poison_strategy, filter_criteria, queue_binding_id, queue_binding_scope, queue_binding_environment_id, delivery, agent
 `
 
 type QueueConsumerCreateTriggerParams struct {
@@ -73331,6 +73379,7 @@ func (q *Queries) QueueConsumerCreateTrigger(ctx context.Context, db DBTX, arg Q
 		&i.QueueBindingScope,
 		&i.QueueBindingEnvironmentID,
 		&i.Delivery,
+		&i.Agent,
 	)
 	return i, err
 }
@@ -73642,7 +73691,7 @@ select
   (select count(*) from (
      select 1 from invocations i, b
      where i.app_id=$1::uuid and i.queue_binding_id=b.id and i.account_id=b.account_id
-       and i.source='queue' and i.state in ('pending','dispatching')
+       and i.source='queue' and i.state in ('pending','dispatching') and (i.state='dispatching' or i.due_at <= now())
        and ($2::text is null or i.deployment_scope=$2::text)
        and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
      limit $3::integer) own)::bigint
@@ -73650,7 +73699,7 @@ select
      select 1 from invocations i, b
      where b.deployment_scope='' and i.app_id=$1::uuid and i.queue_binding_id is null
        and i.queue_name=b.queue_name and i.account_id=b.account_id
-       and i.source='queue' and i.state in ('pending','dispatching')
+       and i.source='queue' and i.state in ('pending','dispatching') and (i.state='dispatching' or i.due_at <= now())
        and ($2::text is null or i.deployment_scope=$2::text)
      limit $3::integer) legacy)::bigint as depth
 `
@@ -73681,7 +73730,7 @@ const queueDepthInScope = `-- name: QueueDepthInScope :one
 select count(*)::bigint as depth from (
   select 1 from invocations
   where app_id=$1::uuid and deployment_scope=$2::text
-    and source='queue' and state in ('pending','dispatching')
+    and source='queue' and state in ('pending','dispatching') and (state='dispatching' or due_at <= now())
   limit $3::integer
 ) bounded
 `
@@ -74167,10 +74216,10 @@ func (q *Queries) QueueRuntimeUpgradeOperationBuild(ctx context.Context, db DBTX
 
 const queueStateForBinding = `-- name: QueueStateForBinding :one
 select
-  count(*) filter (where i.state in ('pending','dispatching'))::bigint as depth,
+  count(*) filter (where i.state='dispatching' or (i.state='pending' and i.due_at <= now()))::bigint as depth,
   count(*) filter (where i.state='dispatching' and i.lease_expires_at > now())::bigint as in_flight,
   count(*) filter (where i.state='dead_letter')::bigint as dead_letter,
-  min(i.created_at) filter (where i.state='pending')::timestamptz as oldest_pending_at
+  min(i.created_at) filter (where i.state='pending' and i.due_at <= now())::timestamptz as oldest_pending_at
 from invocations i join queue_bindings b on b.app_id=i.app_id and b.account_id=i.account_id
 where b.id=$1::uuid and b.app_id=$2::uuid
   and ($3::text is null or i.deployment_scope=$3::text)
@@ -74208,10 +74257,10 @@ func (q *Queries) QueueStateForBinding(ctx context.Context, db DBTX, arg QueueSt
 
 const queueStateInScope = `-- name: QueueStateInScope :one
 select
-  count(*) filter (where state in ('pending','dispatching'))::bigint as depth,
+  count(*) filter (where state='dispatching' or (state='pending' and due_at <= now()))::bigint as depth,
   count(*) filter (where state='dispatching' and lease_expires_at > now())::bigint as in_flight,
   count(*) filter (where state='dead_letter')::bigint as dead_letter,
-  min(created_at) filter (where state='pending')::timestamptz as oldest_pending_at
+  min(created_at) filter (where state='pending' and due_at <= now())::timestamptz as oldest_pending_at
 from invocations
 where app_id=$1 and deployment_scope=$2
   and source='queue' and state in ('pending','dispatching','dead_letter')
@@ -85187,17 +85236,20 @@ WITH metadata AS (
         AND legacy.created_at<=d.created_at
 )
 SELECT id, deployment_id, app_id, account_id, app_slug, app_status, deployment_status, fc_version, mem_bytes, disk_bytes, storage_key, stale, delete_pending, created_at, tier, stale_since, scope, environment_id, deployment_rootfs_key, warm_snapshot_enabled, runtime_owner_invalid FROM metadata
-WHERE ($1::text='active' AND (NOT stale OR runtime_owner_invalid))
-    OR ($1::text='stale' AND stale AND stale_since<now()-$2::bigint*interval '1 second')
+WHERE ($1::text='active' AND (NOT stale OR runtime_owner_invalid) AND app_id>$2::text)
+    OR ($1::text='stale' AND stale AND stale_since<now()-$3::bigint*interval '1 second')
     OR ($1::text='pending' AND delete_pending)
-ORDER BY CASE WHEN $1::text='active' THEN created_at END DESC,
+ORDER BY CASE WHEN $1::text='active' THEN app_id END ASC,
+    CASE WHEN $1::text='active' THEN created_at END DESC,
     CASE WHEN $1::text<>'active' THEN created_at END ASC, id ASC
-LIMIT 10000
+LIMIT $4::integer
 `
 
 type ReadSnapshotGarbageCollectionParams struct {
 	Mode             string
+	AfterAppID       string
 	RetentionSeconds int64
+	RowLimit         int32
 }
 
 type ReadSnapshotGarbageCollectionRow struct {
@@ -85224,8 +85276,17 @@ type ReadSnapshotGarbageCollectionRow struct {
 	RuntimeOwnerInvalid bool
 }
 
+// 'active' pages by app (after_app_id, ordered by app): the rollback window
+// needs every row of an app, and a newest-first cut over the whole fleet
+// dropped exactly the oldest generations GC exists to reclaim once the live
+// set passed the limit (bug hunt 2026-10-28 H66).
 func (q *Queries) ReadSnapshotGarbageCollection(ctx context.Context, db DBTX, arg ReadSnapshotGarbageCollectionParams) ([]ReadSnapshotGarbageCollectionRow, error) {
-	rows, err := db.Query(ctx, readSnapshotGarbageCollection, arg.Mode, arg.RetentionSeconds)
+	rows, err := db.Query(ctx, readSnapshotGarbageCollection,
+		arg.Mode,
+		arg.AfterAppID,
+		arg.RetentionSeconds,
+		arg.RowLimit,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -97717,6 +97778,27 @@ func (q *Queries) SetTrafficTenantSurfaceStatus(ctx context.Context, db DBTX, ar
 	return result.RowsAffected(), nil
 }
 
+const setTriggerAgent = `-- name: SetTriggerAgent :execrows
+update triggers set agent = $2, updated_at = now()
+where id = $1 and queue_binding_id is null
+`
+
+type SetTriggerAgentParams struct {
+	ID    pgtype.UUID
+	Agent pgtype.Text
+}
+
+// ADR-20261027090010 §9: point a just-created public broker trigger at an agent. The
+// CHECK constraint refuses other kinds, batch delivery and binding-owned
+// projections.
+func (q *Queries) SetTriggerAgent(ctx context.Context, db DBTX, arg SetTriggerAgentParams) (int64, error) {
+	result, err := db.Exec(ctx, setTriggerAgent, arg.ID, arg.Agent)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const setTriggerDelivery = `-- name: SetTriggerDelivery :execrows
 update triggers set delivery = $2, updated_at = now()
 where id = $1 and queue_binding_id is null
@@ -99933,7 +100015,7 @@ const triggerByID = `-- name: TriggerByID :one
 select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id, queue_binding_scope, queue_binding_environment_id,
        batch_size_max, batch_window_ms, max_attempts,
        cron_id, source, payload_max_bytes, broker_poison_strategy,
-       filter_criteria, delivery,
+       filter_criteria, delivery, agent,
        created_at, updated_at
 from triggers where id = $1
 `
@@ -99958,6 +100040,7 @@ type TriggerByIDRow struct {
 	BrokerPoisonStrategy      string
 	FilterCriteria            []byte
 	Delivery                  string
+	Agent                     pgtype.Text
 	CreatedAt                 pgtype.Timestamptz
 	UpdatedAt                 pgtype.Timestamptz
 }
@@ -99991,6 +100074,7 @@ func (q *Queries) TriggerByID(ctx context.Context, db DBTX, id pgtype.UUID) (Tri
 		&i.BrokerPoisonStrategy,
 		&i.FilterCriteria,
 		&i.Delivery,
+		&i.Agent,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -100245,7 +100329,7 @@ func (q *Queries) UDPListenerByID(ctx context.Context, db DBTX, id string) (AppU
 const uDPListenerByPublicPort = `-- name: UDPListenerByPublicPort :one
 SELECT id, account_id, app_id, listener_name, guest_port, public_port, protocol, enabled, created_at, updated_at FROM app_udp_listeners l
 WHERE public_port = $1 AND enabled
-AND EXISTS (SELECT 1 FROM apps a WHERE a.id = l.app_id AND a.account_id = l.account_id AND a.status <> 'deleted')
+AND EXISTS (SELECT 1 FROM apps a WHERE a.id = l.app_id AND a.account_id = l.account_id AND a.status <> 'deleted' AND a.visibility <> 'internal')
 `
 
 func (q *Queries) UDPListenerByPublicPort(ctx context.Context, db DBTX, publicPort int32) (AppUdpListener, error) {

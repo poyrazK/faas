@@ -261,7 +261,7 @@ func projectEnvironmentSecrets(rows []state.AppSecret) []api.ProjectEnvironmentS
 	for _, row := range rows {
 		managedBy, bindingID := projectEnvironmentSecretOwner(row)
 		out = append(out, api.ProjectEnvironmentSecretResponse{
-			Key: row.Key, ValueHash: row.ValueHash, Version: row.SecretVersion, ManagedBy: managedBy, BindingID: bindingID,
+			Key: row.Key, ValueHash: displayValueHash(row.AccountID, row.ValueHash), Version: row.SecretVersion, ManagedBy: managedBy, BindingID: bindingID,
 			CredentialGeneration: row.ManagedCredentialGeneration,
 			UpdatedAt:            row.UpdatedAt.UTC().Format(time.RFC3339Nano),
 		})

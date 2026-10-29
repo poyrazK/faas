@@ -6,7 +6,7 @@ import (
 )
 
 // consentCapabilityChoices are the optional scopes chosen before sign-in.
-const consentCapabilityChoices = `<fieldset><legend>With write access, also allow (optional)</legend><label><input type="checkbox" name="capability" value="secrets:request"> Asking you to enter secrets on a Gregale page; the agent never sees their values</label><br><label><input type="checkbox" name="capability" value="storage:manage"> Creating object storage buckets and binding them to apps</label><br><label><input type="checkbox" name="capability" value="postgres:manage"> Creating managed PostgreSQL databases and binding them to apps (billed)</label></fieldset>`
+const consentCapabilityChoices = `<fieldset><legend>With write access, also allow (optional)</legend><label><input type="checkbox" name="capability" value="secrets:request"> Asking you to enter secrets on a Gregale page; the agent cannot read their values through Gregale, but code it deploys can</label><br><label><input type="checkbox" name="capability" value="storage:manage"> Creating object storage buckets and binding them to apps</label><br><label><input type="checkbox" name="capability" value="postgres:manage"> Creating managed PostgreSQL databases and binding them to apps (billed)</label></fieldset>`
 
 // connectionLifetime states how long an approved connection lasts: a browser
 // sign-in's slides while used (ADR-20261028205920), a pasted key's does not.

@@ -61,7 +61,7 @@ func cmdDeploysLogs(args []string) int {
 			Line string `json:"line"`
 		}
 		if e.Event == "log" && json.Unmarshal([]byte(e.Data), &entry) == nil && entry.Line != "" {
-			_, _ = fmt.Fprintln(osStdout, entry.Line)
+			_, _ = fmt.Fprintln(osStdout, terminalSafe(entry.Line))
 			printed++
 		}
 	}

@@ -310,6 +310,15 @@ service Schedd {
   // end; existing field tags are untouched.
   rpc ReportWorkloadOOM(ReportWorkloadOOMRequest) returns (ReportWorkloadOOMAck);
 
+  // RunAgent runs one agent run for agentd (ADR-20261027090010 §6, ADR-20261027090014 §1). schedd
+  // admits it on an agent-pool node, streams it through that node's vmmd,
+  // and releases the reservation once vmmd has destroyed the VM. The first
+  // client frame is start. After the placed event (the reservation is held,
+  // nothing booted) schedd waits for proceed, which agentd sends once it has
+  // recorded the run as running: that is ADR-20261027090010's at-most-once fence.
+  // Cancel stops the harness, or ends the run before the boot. Events after
+  // proceed: booted, output chunks, then one result.
+  rpc RunAgent(stream AgentRunRequest) returns (stream AgentRunEvent);
   // ReportMemoryPressure (ADR-1155) is vmmd's best-effort relay of a guest
   // memory-pressure report: MemAvailable fell to the pressure share of
   // MemTotal while a profile collector was registered. schedd queues one
@@ -1160,6 +1169,81 @@ message FlowSummary {
   string state = 4;
   string direction = 5;
   int64 count = 6;
+}
+
+// AgentRunRequest is a client frame on RunAgent. Start occurs exactly once,
+// first.
+message AgentRunRequest {
+  oneof frame {
+    AgentRunStart start = 1;
+    AgentRunCancel cancel = 2;
+    AgentRunProceed proceed = 3;
+  }
+}
+
+// AgentRunProceed lets a placed run boot.
+message AgentRunProceed {}
+
+// AgentRunStart is the run's machine, already checked against the account's
+// plan, and the run itself: an agentrunproto.Request in JSON. relay is the
+// identity vmmd binds to the run's outbound relay; without it the run gets
+// no relay.
+message AgentRunStart {
+  string run_id = 1;
+  string account_id = 2;
+  string plan = 3;
+  int32 ram_mb = 4;
+  int32 vcpu = 5;
+  int32 cpu_millicores = 6;
+  bytes run = 7;
+  AgentRunRelay relay = 8;
+  // input_key is the storage key of the run's input drive, the checkout
+  // image agentd prepared (ADR-20261027090010 §3). Empty: no input drive.
+  string input_key = 9;
+}
+
+// AgentRunRelay is placement data for the run's relay assertion (ADR-20261027090010
+// §7, ADR-20261027090016): agentd's lease token fences it, and the tenant names the
+// end user the AI gateway attributes the run's model calls to. None of it
+// comes from the guest.
+message AgentRunRelay {
+  string lease_token = 1;
+  string tenant_id = 2;
+  string agent_id = 3;
+  int32 agent_version = 4;
+}
+
+message AgentRunCancel {}
+
+message AgentRunEvent {
+  oneof frame {
+    AgentRunPlaced placed = 1;
+    AgentRunBooted booted = 2;
+    AgentRunOutput output = 3;
+    AgentRunResult result = 4;
+  }
+}
+
+message AgentRunPlaced {
+  string instance = 1;
+  string node_id = 2;
+}
+
+message AgentRunBooted {
+  string method = 1;
+  int64 boot_ms = 2;
+}
+
+message AgentRunOutput {
+  // stream is "stdout" or "stderr".
+  string stream = 1;
+  bytes chunk = 2;
+}
+
+// AgentRunResult is the guest's agentrunproto.Result in JSON, without the
+// stdout and stderr the output frames already carried.
+message AgentRunResult {
+  bytes result = 1;
 }
 
 message ReportMemoryPressureRequest {

@@ -110,7 +110,10 @@ func syncDeploymentCheck(ctx context.Context, pool *pgxpool.Pool, checks *github
 		LogURL:                logsURL,
 		TransientEnvironment:  kind == string(state.DeploymentKindPreview) || previewOf != "",
 		ProductionEnvironment: kind == string(state.DeploymentKindGitHub) && scope == string(state.DefaultEnvScope),
-	}); err != nil {
+	}); err != nil && !errors.Is(err, githubd.ErrGitHubDeploymentsForbidden) {
+		// An App without the Deployments permission loses only the PR's
+		// environment link; the Check Run and comment below need only Checks
+		// and Issues. ChecksAPI counts and logs the refusal.
 		return err
 	}
 	summary := fmt.Sprintf("Gregale deployment %s is %s.", deploymentID, status)
@@ -248,7 +251,7 @@ func syncTornDownPreview(ctx context.Context, checks *githubd.ChecksAPI, preview
 				RepoFullName: preview.repo, CommitSHA: preview.commitSHA, Ref: preview.commitSHA,
 				Environment: preview.environment, Status: githubd.GitHubDeploymentStatusTornDown,
 				Description: "Gregale preview torn down", TransientEnvironment: true,
-			}); err != nil {
+			}); err != nil && !errors.Is(err, githubd.ErrGitHubDeploymentsForbidden) {
 				return err
 			}
 		case !errors.Is(err, githubd.ErrGitHubDeploymentNotFound):

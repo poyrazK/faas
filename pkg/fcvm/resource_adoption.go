@@ -452,6 +452,11 @@ func adoptionKind(inst *Instance) string {
 		return adoptionKindQualification
 	case inst.ExecutionOnly:
 		return adoptionKindExecution
+	case inst.AgentRunOnly:
+		// An agent run is one-shot like an execution: the RunAgent stream
+		// that owns it ends with the predecessor, so a successor kills it
+		// (ADR-20261027090010).
+		return adoptionKindExecution
 	case inst.AppTaskOnly:
 		return adoptionKindAppTask
 	case inst.IsJob:

@@ -169,11 +169,16 @@ func (h *Handler) startCacheRefresh(r *http.Request, app App, rule *EdgeRuleCach
 	if h.authorizedDeploymentSmoke(r, app) {
 		return
 	}
+	refreshKey := key.String()
+	if _, inFlight := h.cacheRefreshing.LoadOrStore(refreshKey, struct{}{}); inFlight {
+		return
+	}
 	detached := withoutTrafficDecision(context.WithoutCancel(r.Context()))
 	request := r.Clone(detached)
 	request.Body = http.NoBody
 	go func(ctx context.Context) {
-		_, _, _ = h.cacheRefresh.Do(key.String(), func() (any, error) {
+		defer h.cacheRefreshing.Delete(refreshKey)
+		_, _, _ = h.cacheRefresh.Do(refreshKey, func() (any, error) {
 			ctx, cancel := context.WithTimeout(ctx, time.Duration(api.WakeQueueTTLSeconds)*time.Second)
 			defer cancel()
 			if routing, pinned := publicRoutingSnapshot(ctx); pinned {

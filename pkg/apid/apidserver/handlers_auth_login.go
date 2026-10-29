@@ -107,7 +107,7 @@ const (
 // the only auth artifact; programmatic auth stays on the device-code
 // flow (cmd/apid/handlers_cli_auth.go).
 func (s *server) postLoginEmail(w http.ResponseWriter, r *http.Request) {
-	email, password, ok := decodeEmailPasswordRequest(w, r)
+	email, password, ok := s.decodeCredentials(w, r)
 	if !ok {
 		return
 	}
@@ -148,7 +148,7 @@ func (s *server) postLoginEmail(w http.ResponseWriter, r *http.Request) {
 // handler can "recover" by signing up with the same email + the
 // password they want, and the existing password row is overwritten.
 func (s *server) postSignup(w http.ResponseWriter, r *http.Request) {
-	email, password, ok := decodeEmailPasswordRequest(w, r)
+	email, password, ok := s.decodeCredentials(w, r)
 	if !ok {
 		return
 	}
@@ -423,6 +423,9 @@ func (s *server) finishPasswordReset(w http.ResponseWriter, r *http.Request, acc
 		return
 	}
 	s.revokeSignInKeysAfterPasswordChange(r, acct)
+	// The reset link proved control of the address: lift a failed-sign-in
+	// pause someone else's guessing put on it.
+	s.loginFailures.reset(auth.HashEmail(acct.Email))
 	s.issueSessionCookie(w, r, acct)
 	http.Redirect(w, r, "/dashboard/", http.StatusFound)
 }
@@ -702,18 +705,27 @@ func (s *server) verifyPasswordOrPad(ctx context.Context, email, password string
 func (s *server) verifyPasswordOrPadWith(ctx context.Context, email, password string, verify func(string, string) (bool, error)) (state.Account, bool) {
 	acct, err := s.store.AccountByEmail(ctx, email)
 	if err != nil {
-		// Email unbound. Run the Argon2id pad and return.
+		// Email unbound. Run the Argon2id pad and return. Unbound
+		// addresses count toward the per-address budget too, so its 429
+		// does not tell which addresses have accounts.
 		_, _ = verify(auth.DummyPHC, password)
+		if errors.Is(err, state.ErrNotFound) {
+			s.recordLoginFailure(ctx, email, nil)
+		}
 		return state.Account{}, false
 	}
 	hash, err := s.store.AccountPasswordByAccountID(ctx, acct.ID)
 	if err != nil {
 		// Bound account, no password row (OAuth-only). Pad.
 		_, _ = verify(auth.DummyPHC, password)
+		if errors.Is(err, state.ErrNotFound) {
+			s.recordLoginFailure(ctx, email, &acct)
+		}
 		return state.Account{}, false
 	}
 	ok, err := verify(hash, password)
 	if err != nil || !ok {
+		s.recordLoginFailure(ctx, email, &acct)
 		return state.Account{}, false
 	}
 	return acct, true
@@ -868,7 +880,7 @@ const magicLinkPath = "/auth/verify"
 // The wire shape is identical to postV1AuthLogin so the CLI can reuse
 // the same ProgrammaticAuthResponse unmarshaler.
 func (s *server) postV1AuthSignup(w http.ResponseWriter, r *http.Request) {
-	email, password, ok := decodeEmailPasswordRequest(w, r)
+	email, password, ok := s.decodeCredentials(w, r)
 	if !ok {
 		return
 	}
@@ -965,7 +977,7 @@ func (s *server) postV1AuthSignup(w http.ResponseWriter, r *http.Request) {
 // anti-enumeration posture of postLoginEmail: Argon2id pad on the
 // no-row branch, identical 401 on wrong-password vs unbound email.
 func (s *server) postV1AuthLogin(w http.ResponseWriter, r *http.Request) {
-	email, password, ok := decodeEmailPasswordRequest(w, r)
+	email, password, ok := s.decodeCredentials(w, r)
 	if !ok {
 		return
 	}

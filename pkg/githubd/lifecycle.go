@@ -33,7 +33,20 @@ func (s *Service) HandleInstallationLifecycle(ctx context.Context, eventType str
 			return nil
 		}
 		switch strings.ToLower(ev.Action) {
-		case "deleted", "suspend", "suspended":
+		case "suspend", "suspended", "unsuspend", "unsuspended":
+			// Suspension is reversible: GitHub stops minting tokens and
+			// sending events for the installation while it lasts. It used to
+			// detach every bound app, so after unsuspend pushes were ignored
+			// until each app was reconnected by hand (bug hunt 2026-10-28
+			// B29). Keep the bindings; drop cached tokens either way.
+			if s.InvalidateInstallation != nil {
+				s.InvalidateInstallation(ev.Installation.ID)
+			}
+			if s.InvalidateInstallationSecrets != nil {
+				s.InvalidateInstallationSecrets(ev.Installation.ID)
+			}
+			s.Log.Info("githubd: GitHub installation suspension changed; bindings kept", "installation_id", ev.Installation.ID, "action", logsanitize.Field(ev.Action), "sender", logsanitize.Field(ev.Sender.Login))
+		case "deleted":
 			if err := s.Lifecycle.RevokeGitHubInstallation(ctx, ev.Installation.ID); err != nil {
 				return fmt.Errorf("githubd: revoke installation %d: %w", ev.Installation.ID, err)
 			}
@@ -81,7 +94,11 @@ func (s *Service) HandleInstallationLifecycle(ctx context.Context, eventType str
 			return nil
 		}
 		switch strings.ToLower(ev.Action) {
-		case "deleted", "archived":
+		case "archived", "unarchived":
+			// An archived repository receives no pushes and can be
+			// unarchived; keep its binding (B29).
+			s.Log.Info("githubd: repository archive state changed; binding kept", "installation_id", ev.Installation.ID, "repo", logsanitize.Field(ev.Repository.FullName), "action", logsanitize.Field(ev.Action))
+		case "deleted":
 			if err := s.Lifecycle.RemoveGitHubRepositories(ctx, ev.Installation.ID, []string{ev.Repository.FullName}); err != nil {
 				return fmt.Errorf("githubd: detach repository %q: %w", ev.Repository.FullName, err)
 			}
@@ -90,8 +107,8 @@ func (s *Service) HandleInstallationLifecycle(ctx context.Context, eventType str
 			}
 		case "renamed", "transferred":
 			oldName := ev.Changes.Repository.Name.From
-			if strings.EqualFold(ev.Action, "transferred") && ev.Changes.Owner.From.Login != "" {
-				oldName = ev.Changes.Owner.From.Login + "/" + ev.Repository.Name
+			if previous := ev.Changes.Owner.From.PreviousLogin(); strings.EqualFold(ev.Action, "transferred") && previous != "" {
+				oldName = previous + "/" + ev.Repository.Name
 			}
 			if oldName == "" {
 				// GitHub normally includes changes.repository.name.from;

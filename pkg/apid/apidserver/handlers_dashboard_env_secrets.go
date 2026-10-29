@@ -160,7 +160,7 @@ func projectDashboardSecrets(rows []state.AppSecret, selectedScope string) []das
 		if scope == "" {
 			scope = selectedScope
 		}
-		prefix := row.ValueHash
+		prefix := displayValueHash(row.AccountID, row.ValueHash)
 		if len(prefix) > 8 {
 			prefix = prefix[:8]
 		}
