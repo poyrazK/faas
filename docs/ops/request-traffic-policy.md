@@ -141,6 +141,10 @@ ordinary direct pools.
 This also serializes the existing account preset quota across different apps.
 Ordinary owned host overlap validation uses that transaction boundary;
 there is no account-wide policy byte quota.
+Route policy apply and edge-rule rollback take the same guard. Apply writes
+only throttle and budget rules, so it uses the account lock. A rollback takes
+the global route lock when the current rules or the restored version contain
+a route.
 
 Before commit, Postgres returns selector groups, counts, measured sizes and
 referenced preset IDs for the account. Action bodies remain in the database.
