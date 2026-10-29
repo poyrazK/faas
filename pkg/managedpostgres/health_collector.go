@@ -191,6 +191,7 @@ func (c *HealthCollector) observe(ctx context.Context, database Database) Health
 	}
 	result.ProviderStatus, result.ComputeState = string(observed.Status), observed.ComputeState
 	result.Succeeded = true
+	observed.Spec = SpecForObservation(database.Spec, observed.Spec)
 	if observed.Status == ProviderStatusFailed {
 		result.LastErrorCode = "provider_failed"
 	}

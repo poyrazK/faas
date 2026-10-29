@@ -38,6 +38,23 @@ WHERE d.app_id = sqlc.arg(app_id)::text::uuid
 ORDER BY s.updated_at DESC, s.deployment_id
 LIMIT sqlc.arg(row_limit)::int;
 
+-- name: RouteTelemetryLost :one
+-- ADR-20261028110044 amendment 1: whether a gateway may have lost request
+-- telemetry that route evidence over [window_from, window_until) reads. An
+-- active node that reports coverage counts when its telemetry is off or
+-- sampled, when it has not been continuously healthy since window_from (a
+-- restart, a heartbeat gap, or rows it could not attribute to an app), or
+-- when its last report predates window_until. Rows a gateway attributes to an
+-- app and drops (an account over its telemetry rate) do not count: the app's
+-- remaining rows stay comparable.
+SELECT EXISTS (
+  SELECT 1 FROM request_telemetry_coverage c
+  JOIN compute_nodes n ON n.name = c.node_name AND n.active
+  WHERE NOT c.enabled OR c.sampling_basis_points <> 10000
+     OR c.healthy_since > sqlc.arg(window_from)::timestamptz
+     OR c.source_at < sqlc.arg(window_until)::timestamptz
+)::boolean AS lost;
+
 -- name: ObservedRouteLabels :many
 -- ADR-20261028110044: which of the given route labels ("METHOD /path") the
 -- app served at or after since, so saving a route guard or monitor can warn
