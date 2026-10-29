@@ -50,7 +50,7 @@ on:
           faas-fleet, production-us (gregale-prod, us-east1) uses
           faas-fleet-us, so one fleet's runner never deploys the other.
         required: false
-        default: production
+        default: production-us
         type: string
       release_tag:
         description: "Existing pre-1.0 release tag published by release.yml (empty with units_run_id)"
@@ -84,6 +84,14 @@ on:
           fleet runner host is unavailable; hosted jobs queue behind CI.
         type: boolean
         default: false
+      skip_role_convergence:
+        description: >-
+          With hosted_runner only: activate without converging the
+          control-plane roles (ADR-580). A hosted runner cannot reach the
+          fleet's private names, so without this a hosted deploy refuses to
+          start rather than ship a release whose role changes never land.
+        type: boolean
+        default: false
   workflow_dispatch:  # manual trigger for deliberate deployment
     inputs:
       deploy_environment:
@@ -93,7 +101,7 @@ on:
           faas-fleet, production-us (gregale-prod, us-east1) uses
           faas-fleet-us, so one fleet's runner never deploys the other.
         required: false
-        default: production
+        default: production-us
         type: choice
         options:
           - production
@@ -128,6 +136,14 @@ on:
           Run this workflow's coordination job on a GitHub-hosted runner
           instead of the dedicated fleet runner. Escape hatch for when the
           fleet runner host is unavailable; hosted jobs queue behind CI.
+        type: boolean
+        default: false
+      skip_role_convergence:
+        description: >-
+          With hosted_runner only: activate without converging the
+          control-plane roles (ADR-580). A hosted runner cannot reach the
+          fleet's private names, so without this a hosted deploy refuses to
+          start rather than ship a release whose role changes never land.
         type: boolean
         default: false
 
@@ -177,6 +193,12 @@ jobs:
             echo "::error::set release_tag (a full release) or units_run_id (a unit release)" >&2
             exit 1
           }
+
+      - name: Require role convergence or an explicit skip
+        if: ${{ inputs.hosted_runner && !inputs.skip_role_convergence }}
+        run: |
+          echo "::error::a GitHub-hosted runner cannot converge the control-plane roles (ADR-580); rerun on the fleet runner, or set skip_role_convergence to activate without them" >&2
+          exit 1
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -855,7 +877,7 @@ jobs:
       - name: Report skipped control-plane convergence
         if: ${{ inputs.hosted_runner }}
         run: |
-          echo "::warning::GitHub-hosted runners cannot resolve the fleet's private names; control-plane roles were not converged this run (ADR-580)"
+          echo "::warning::skip_role_convergence: GitHub-hosted runners cannot resolve the fleet's private names; control-plane roles were not converged this run (ADR-580)"
 
       - name: Upload and activate immutable release
         id: activate
@@ -964,8 +986,11 @@ jobs:
           done
           # The standalone controller path does not run the postgres Ansible
           # role on every release. Converge its textfile collector here so the
-          # PostgreSQL connection saturation alerts have live input.
-          install -d -o postgres -g node_exporter -m 0755 \
+          # PostgreSQL connection saturation alerts have live input. The
+          # directory keeps the node_exporter roles' owner and mode: the
+          # collector writes through its node_exporter group, and so do the
+          # other collectors sharing the directory (Hunt 14 H14-114).
+          install -d -o node_exporter -g node_exporter -m 0775 \
             /var/lib/node_exporter/textfile_collector
           install -o root -g root -m 0755 \
             "$release_dir/host-config/faas-postgres-connection-metrics" \

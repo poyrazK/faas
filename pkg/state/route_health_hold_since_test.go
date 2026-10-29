@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/routehealth"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -42,5 +43,21 @@ func TestRouteHealthHoldSince(t *testing.T) {
 		if st.Status != step.stateStatus || !st.Since.Equal(start.Add(step.wantSince)) {
 			t.Fatalf("step %d: status %s since %s, want %s since %s", i, st.Status, st.Since, step.stateStatus, start.Add(step.wantSince))
 		}
+	}
+}
+
+// A hold on evidence a gateway may have lost starts no customer-visible hold
+// and sends no blocked webhook (ADR-20261028110044 amendment 1).
+func TestRouteHealthTransitionIgnoresLostEvidence(t *testing.T) {
+	entry := notificationEntry("unknown")
+	entry.Report.Routes = []api.RouteHealthFinding{{Method: "POST", Path: "/checkout", Windows: routehealth.Windows(entry.CheckedAt)}}
+	routehealth.Evaluate(&entry.Report, entry.Report.ObservationAnchor, routehealth.TelemetryIncomplete)
+	entry.Decision = routehealth.Decision(entry.Report)
+	if entry.Decision.Status != "blocked" || !routehealth.EvidenceLost(entry.Report) {
+		t.Fatalf("fixture decision %+v is not a hold on lost evidence", entry.Decision)
+	}
+	next, err := state.RouteHealthTransition(state.RouteHealthNotificationState{}, entry, "demo")
+	if err != nil || next.Event != "" || next.State.Status != "clear" || len(next.Payload) != 0 {
+		t.Fatalf("lost evidence transition = %+v %v; want no event and no hold", next, err)
 	}
 }

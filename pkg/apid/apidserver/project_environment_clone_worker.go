@@ -88,6 +88,11 @@ func runProjectEnvironmentCloneWorker(ctx context.Context, log *slog.Logger) (er
 	}
 	hostidentity.Configure(domains)
 	store := state.NewPgStore(pool)
+	uninstallRuntimeSigner, err := installRuntimeSigner(ctx, os.Getenv, store, log)
+	if err != nil {
+		return err
+	}
+	defer uninstallRuntimeSigner()
 	srv := newServer(store, log, cfg.GetAppsDomain(os.Getenv), pgNotifier{pool: pool, log: log}).WithCompanionImages(cfg.CompanionImages).
 		WithPlatformDomain(platformDomainFromConfig(cfg, os.Getenv))
 	srv.clonePostgresContentsReadPool, srv.cloneWorkerAdmission = reads, admit

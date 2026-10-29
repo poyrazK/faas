@@ -504,6 +504,7 @@ func (s *Service) Reconcile(ctx context.Context, accountID, databaseID string) (
 	if err != nil {
 		return Database{}, s.releaseProviderError(ctx, database, StateProvisioning, err)
 	}
+	observed.Spec = SpecForObservation(database.Spec, observed.Spec)
 	if err := validateCloneRestoreObservation(database, observed); err != nil {
 		code := "restore_lineage_unavailable"
 		if errors.Is(err, ErrConflict) {

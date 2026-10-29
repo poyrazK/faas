@@ -90,6 +90,9 @@ func runBoundedGrypeView(ctx context.Context, bin, source string) (result *ScanR
 	if err != nil {
 		return nil, err
 	}
+	// Snapshotting and copying the view is logged apart from the scanner run
+	// that the caller marks as "grype".
+	markScanPhase(ctx, "view")
 	defer func() {
 		if cleanupErr := cleanup(); cleanupErr != nil {
 			result, err = nil, errors.Join(err, cleanupErr)

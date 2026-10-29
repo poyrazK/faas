@@ -7,7 +7,7 @@
  */
 export type RouteMonitorIncidentRollback = {
   status: 'claimed' | 'requested' | 'skipped';
-  reason?: 'latency_only_violation' | 'outside_rollback_window' | 'no_healthy_baseline' | 'rollback_target_ineligible';
+  reason?: 'latency_only_violation' | 'outside_rollback_window' | 'no_healthy_baseline' | 'rollback_target_ineligible' | 'project_release';
   /**
    * First error-budget route that triggered the decision, as METHOD /path.
    */
