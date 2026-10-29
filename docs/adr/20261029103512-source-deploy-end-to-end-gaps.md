@@ -141,3 +141,15 @@ push and a tarball from the edge to a serving app and found six gaps:
   `TestProcessOne_SkipsBuildOutpacedByNewerDeployment`.
 - `TestBuildFailureCodeCoversEveryClass`, `TestEveryCodeHasWhycopyEntry`.
 - `TestEnqueueBuild_OrganizationAppUsesResourceAccount`.
+
+## Amendment 1 (2026-10-29): an app layer over the plan cap keeps its code
+
+imaged marked every failure without an OCI sentinel `deploy_failed`, so an
+app layer over the plan cap reached the customer as `deploy_failed` with
+imaged's internal wrapping instead of `app_layer_too_large` and the plan
+cap it names. `markDeployFailed` now keeps a typed problem's code and
+customer-safe detail and stores whycopy's hint, why and fix. For a Node source app that
+did not build on the shared runtime because it declares Node 22 (musl runner)
+or a version with no shared base, the fix names the cause and says to
+declare Node 24, whose layer holds only the app. Validation:
+`TestNodeVersionLayerFix`, `TestMarkDeployFailedKeepsAppLayerProblem`.
