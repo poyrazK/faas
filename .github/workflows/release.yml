@@ -989,6 +989,27 @@ jobs:
             SYFT_BIN="$SYFT_BIN" \
             scripts/build-canonical-tarball.sh
 
+      # ADR-20261029155852: run the imaged this release ships, with its own
+      # trusted root and the pinned cosign, on every digest the release pins.
+      # A release cannot ship a root, bundle location or policy its own imaged
+      # would reject. No --legacy: every pin must verify.
+      - name: Verify pinned bases with the release's imaged
+        env:
+          OUT_DIR: ${{ runner.temp }}/gregale-release
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/base-provenance"
+          mkdir -p "$work"
+          tar -xzf "$OUT_DIR/release.tar.gz" -C "$work" imaged sigstore-trusted-root.json
+          args=(--ref "ghcr.io/poyrazk/builder-base@sha256:${BUILDER_BASE_DIGEST}")
+          while IFS='=' read -r _ ref; do
+            args+=(--ref "$ref")
+          done < "$OUT_DIR/runtime-bases.env"
+          "$work/imaged" verify-base-provenance \
+            --cosign "$RUNNER_TEMP/release-tools/cosign" \
+            --trusted-root "$work/sigstore-trusted-root.json" \
+            "${args[@]}"
+
       - name: Sign canonical tarball with GitHub OIDC
         env:
           OUT_DIR: ${{ runner.temp }}/gregale-release

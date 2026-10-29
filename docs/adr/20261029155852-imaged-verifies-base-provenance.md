@@ -57,11 +57,11 @@ Facts measured on 2026-10-29 that shape the decision:
 
 5. **Trust root.** The release ships public-good Sigstore's `trusted_root.json` as `bin/sigstore-trusted-root.json`. It is catalogued with `vmlinux` in `pkg/releaseinstall/names.go` and hashed into the signed manifest's `tool_hashes`, the same way `mcp-bridged` joined the catalog in #5697. release.yml takes the root from `gh attestation trusted-root`, which fetches it through Sigstore's TUF repository. It keeps the entry whose certificate authority is `https://fulcio.sigstore.dev`. imaged reads the file beside its own executable, so the root it uses is always the one its own release shipped and it updates with every release.
 
-6. **Verdict cache.** imaged persists each `verified` verdict per digest at `/srv/fc/sigs/base-provenance/sha256-<hex>.json`. The record holds the digest, identity, bundle sha256, trust root sha256, cosign version and time. imaged already writes `/srv/fc/sigs`. The per-release rebuild of an already verified digest reads the record and needs neither the registry nor cosign. Failures are never cached; the next stage tries again.
+6. **Verdict cache.** imaged persists each `verified` verdict per digest at `<FAAS_STORAGE_ROOT>/sigs/base-provenance/sha256-<hex>.json` (`/srv/fc/sigs/…` in production). The record holds the digest, identity, bundle sha256, trust root sha256 and time. imaged's unit already grants it write access to `/srv/fc/sigs`. The per-release rebuild of an already verified digest reads the record and needs neither the registry nor cosign. Failures are never cached; the next stage tries again.
 
 7. **Bases from before attestations.** ADR-736 runtime releases build the base ref each build recorded. A redeploy or rollback of a build made on a pre-#5835 base would otherwise be refused in `enforce`. The release ships a frozen list of the base digests that signed releases pinned before the first release with attested bases: `bin/base-provenance-legacy.txt`, catalogued like the root. Its source is `images/base-provenance-legacy.txt`, generated once by `scripts/base-provenance-legacy.sh --through v0.1.18-rc.304` from the `runtime-bases.env` asset of every release up to the last one cut before #5895's gate. It holds 243 digests and is never appended to. Builder-base digests are left out: imaged builds the builder base only from the ref its release configures, never from a ref a build recorded. A change to it needs an amendment to this ADR. A listed digest is reported as `legacy` and is staged in every mode. It is a genuine images.yml output from before images.yml attested anything, and the list admits nothing newer.
 
-8. **Modes.** `FAAS_IMAGED_BASE_PROVENANCE` takes `off`, `observe` or `enforce`; unset means `observe`. Any other value stops imaged at startup. The compute and control-plane roles write it from the Ansible variable `faas_imaged_base_provenance_mode`.
+8. **Modes.** `FAAS_IMAGED_BASE_PROVENANCE` takes `off`, `observe` or `enforce`; unset means `observe`. Any other value stops imaged at startup. imaged runs only on compute hosts (`compute_only_service`); that role's `99-faas-base-provenance.conf` drop-in writes the value from the Ansible variable `faas_imaged_base_provenance_mode`, where empty means `observe`.
    - `off`: no check.
    - `observe`: check, record and log, then build the base whatever the result.
    - `enforce`: a digest that is not `verified`, `cached` or `legacy` is not built. `ensureVerifiedBaseExt4` returns an error wrapping `ErrBaseProvenanceUnverified` with the ref and the result. Bases already staged keep serving. A node rolled onto a release whose bases it refuses stays drained under the existing activation gate (ADR-20261024191249).
@@ -76,7 +76,7 @@ Facts measured on 2026-10-29 that shape the decision:
      - `unavailable`: no cosign or no trust root
      - `error`: a registry error or the timeout
    - One `slog` line per check with ref, digest, result and mode.
-   - The alert `FaasBaseProvenanceUnverified` (severity `warn`, family `base_provenance`): `sum by (node, base, result) (increase(imaged_base_provenance_verifications_total{result!~"verified|cached|legacy"}[1h])) > 0`, with the runbook `docs/runbooks/FaasBaseProvenanceUnverified.md`.
+   - The alert `FaasBaseProvenanceUnverified` (severity `warn`, family `base_provenance`): `sum by (instance, base, result) (imaged_base_provenance_verifications_total{result!~"verified|cached|legacy"}) > 0` for 5 minutes, with the runbook `docs/runbooks/FaasBaseProvenanceUnverified.md`. The expression reads the counter, not its `increase()`. A series appears only on its first check, and `increase()` cannot see that first count. A base is checked when it is built, so a failure stays visible until imaged restarts, and re-pinning a base restarts imaged anyway.
 
 10. **Operator and release check.** `imaged verify-base-provenance --ref <ref>` runs the same check without staging and prints the result. release.yml runs it, using the release's own imaged binary, cosign and shipped root, against every digest it pins, after #5895's gate. A release therefore cannot ship a root, a bundle location or a policy that its own imaged would reject.
 
@@ -85,7 +85,7 @@ Facts measured on 2026-10-29 that shape the decision:
 1. The release ships the trust root and the legacy list, with their catalog entries.
 2. `pkg/oci` gets the bundle reader, tested against a fake registry with the referrers API and with the tag schema.
 3. imaged gets the verifier: cosign exec, runner check, verdict cache, legacy list, mode, metric, log, `verify-base-provenance` and the hook. The default is `observe`.
-4. release.yml runs `imaged verify-base-provenance` on every pinned digest. This step also adds the alert, the runbook and the Ansible variable, and has the control-plane role stage the same pinned cosign as node join (until then those hosts report `unavailable`).
+4. release.yml runs `imaged verify-base-provenance` on every pinned digest. This step also adds the alert, the runbook and the compute role's mode drop-in.
 5. Turn on `enforce` on one node, then on the fleet. Do this only after a release with attested bases has rolled out, every node reports `verified`, `cached` or `legacy` for every base, and there has been no other result for 7 days. The owner decides when.
 
 ## Consequences
@@ -95,7 +95,7 @@ Facts measured on 2026-10-29 that shape the decision:
 - Each new digest costs one extra registry round trip and one cosign exec (0.27 s measured offline, including hashing a 33 MB file), next to pulling hundreds of MiB of layers.
 - A base ref pointing outside `poyrazK/faas` images.yml, for example a mirror that does not copy referrers, fails the check. `off` remains the escape hatch.
 - The cosign version on hosts now matters to imaged as well as to release verification. A cosign upgrade can move to `verify-attestation --new-bundle-format` once both hosts and release.yml carry a version that supports it.
-- Development nodes default to `observe` and usually have no cosign, so they report `unavailable` and keep working.
+- Development nodes default to `observe` and usually have no cosign, so they report `unavailable` and keep working. The same goes for a compute host bootstrapped without node join (`make bootstrap-compute`), because only node join stages `/usr/local/bin/cosign`.
 
 ## Rejected alternatives
 
