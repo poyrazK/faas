@@ -69,13 +69,17 @@ subscription does not wake your app:
       channels:
         - pattern: "org:{org_id}:room:*"   # {org_id} must equal the token's org_id claim
           read: true
+          presence: true                   # members may also set presence state and send signals
         - pattern: "user:{sub}"            # sub is the token's subject
           read: true
 ```
 
 A pattern is literal text, `{claim}` placeholders and an optional trailing `*`.
-A channel that matches a rule is granted (presence included) for as long as the
-token is valid; any other channel goes to your authorize callback as before.
+A channel that matches a rule is granted for as long as the token is valid; any
+other channel goes to your authorize callback as before. `read` lets a client
+subscribe and appear in presence; `presence: true` also lets it set presence
+state and send signals. Without it, presence state and signals on that channel
+go to your callback with `permission: "presence"`.
 Use claims your identity provider sets, never ones users can edit. Revoking a
 user takes effect when their token expires, so keep channels that need faster
 revocation on the callback. Activity-scope channels always use the callback.

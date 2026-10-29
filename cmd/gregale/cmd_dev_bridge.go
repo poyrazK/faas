@@ -30,7 +30,7 @@ func cmdDevBridge(args []string) (exit int) {
 		}
 	}
 	if len(args) == 0 {
-		return printErr("Missing service", errors.New("usage: gregale dev bridge APP --environment development --local-port 8080"))
+		return printErr("Missing service", errors.New("usage: gregale dev bridge APP --env development --local-port 8080"))
 	}
 	app := args[0]
 	var command []string
