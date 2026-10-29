@@ -17,3 +17,24 @@
   - **Making the repository the owner of visibility** (re-deriving it on every sync). It would undo an owner's `--visibility` change on the next push, and a repository change would publish a service without anyone reviewing the plan.
   - **An `x-gregale-visibility` extension in this slice.** `ports:` already expresses the intent; an extension can follow if create-only `ports:` proves insufficient.
   - **Leaving previews public.** A preview runs the same code with the same internal endpoints, so a public preview of an internal service exposes what the owner hid.
+
+## Amendment (2026-10-29): `expose:` makes an unpublished service HTTP
+
+The consequence above said a service without `ports:` is classified `worker`
+"until its first boot observes a listener (ADR-051)". Since H9-170 a built
+Compose worker also takes the explicit `worker` execution mode, and vmmd
+refuses a worker that binds a port with `execution_mode_conflict`, so that
+first boot fails instead of reclassifying the service (Hunt 14 H14-115: an
+internal API with no `ports:` failed its first deploy after a successful
+build).
+
+- A Compose service with `expose:` entries and no `ports:` is classified
+  `http`: `expose:` declares an internal listener, which a worker may not
+  have. It stays internal, as before.
+- A service with neither `ports:` nor `expose:` is still a worker. The docs
+  and the `execution_mode_conflict` explanation tell the owner to add
+  `expose:` (internal) or `ports:` (public) to a service that serves HTTP.
+- Rejected: dropping the explicit worker mode for scan-inferred workers so
+  the first boot decides. A worker-class app without the worker mode is
+  refused request wakes and skipped by the worker reconciler, so a real
+  queue consumer would never restart after parking (H9-170).

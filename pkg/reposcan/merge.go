@@ -244,10 +244,14 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		cls := b.class
 		if cls == "" && b.det == detCompose {
 			// Compose has no explicit workload-class field. A published
-			// port is an unambiguous HTTP service signal; without one the
-			// service is a background worker. Run this after all detector
-			// fields merge so an explicit Procfile or platform hint wins.
-			if len(b.ports) > 0 {
+			// port is an unambiguous HTTP service signal, and so is an
+			// `expose:` entry: it declares an internal listener, and a
+			// worker that binds one fails its boot with
+			// execution_mode_conflict (Hunt 14 H14-115). Without either
+			// the service is a background worker. Run this after all
+			// detector fields merge so an explicit Procfile or platform
+			// hint wins.
+			if len(b.ports) > 0 || len(b.internalPorts) > 0 {
 				cls = ClassHTTP
 			} else {
 				cls = ClassWorker

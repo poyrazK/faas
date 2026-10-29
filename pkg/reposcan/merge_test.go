@@ -4,6 +4,8 @@ import (
 	"sort"
 	"testing"
 	"testing/fstest"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // adr: 678
@@ -89,6 +91,14 @@ func TestMerge_ComposeInfersClassAfterExplicitHints(t *testing.T) {
 			seeds: []workloadSeed{{
 				tier: TierCompose, det: detCompose, source: "compose.yaml: api",
 				name: "api", ports: []int{8080},
+			}},
+			want: ClassHTTP,
+		},
+		{
+			name: "internal expose port is HTTP",
+			seeds: []workloadSeed{{
+				tier: TierCompose, det: detCompose, source: "compose.yaml: ledger",
+				name: "ledger", internalPorts: []api.WorkloadPort{{Port: 3000, Internal: true}},
 			}},
 			want: ClassHTTP,
 		},

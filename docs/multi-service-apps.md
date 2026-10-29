@@ -110,6 +110,19 @@ The plan lists every public service under **Public on the internet** and marks
 the rest `visibility=internal`. Visibility is set when the app is created; see
 [networking](networking.md) for changing it later.
 
+An internal service that serves HTTP names its port in `expose:`:
+
+```yaml
+services:
+  ledger:
+    build: ./ledger
+    expose: ["3000"]
+```
+
+A service with neither `ports:` nor `expose:` deploys as a background worker.
+A worker must not listen on a port, so a server deployed that way fails its
+first boot with `execution_mode_conflict`; add `expose:` and deploy again.
+
 ## Call another service
 
 Services in the same project and environment can call each other by name:

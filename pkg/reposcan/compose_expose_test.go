@@ -94,3 +94,34 @@ func TestDetectComposeExposeBecomesInternalPorts(t *testing.T) {
 		}
 	}
 }
+
+// TestScanComposeExposeOnlyServiceIsInternalHTTP reproduces Hunt 14 H14-115:
+// an internal API with expose: and no ports: was classified worker, so its
+// first boot failed with execution_mode_conflict when it bound the port.
+func TestScanComposeExposeOnlyServiceIsInternalHTTP(t *testing.T) {
+	fsys := fstest.MapFS{
+		"compose.yaml": &fstest.MapFile{Data: []byte(`services:
+  ledger:
+    build: ./ledger
+    expose: ["3000"]
+  jobs:
+    build: ./jobs
+`)},
+		"ledger/Dockerfile": &fstest.MapFile{Data: []byte("FROM scratch\n")},
+		"jobs/Dockerfile":   &fstest.MapFile{Data: []byte("FROM scratch\n")},
+	}
+	result, err := Scan(fsys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]Workload{}
+	for _, w := range result.Workloads {
+		byName[w.Name] = w
+	}
+	if ledger := byName["ledger"]; ledger.Class != ClassHTTP || !ledger.Unpublished {
+		t.Fatalf("ledger class = %q unpublished = %v, want an internal http service", ledger.Class, ledger.Unpublished)
+	}
+	if jobs := byName["jobs"]; jobs.Class != ClassWorker || !jobs.Unpublished {
+		t.Fatalf("jobs class = %q unpublished = %v, want an internal worker", jobs.Class, jobs.Unpublished)
+	}
+}

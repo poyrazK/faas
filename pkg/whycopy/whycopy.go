@@ -178,7 +178,7 @@ var catalog = map[string]Render{
 		Title: "Execution mode conflict",
 		Hint:  "your app did not behave like its execution mode",
 		Why:   "a worker must keep running without listening on a port, and a job must run to completion without serving; at startup your app did the other thing (the detail shows the port it bound or the code it exited with)",
-		Fix:   "• set `execution_mode` in gregale.yaml to match the app: `request` or `service` for a server, `worker` for a long-running consumer, `job` for a run-to-completion task\n• or change the start command so the process matches the mode you declared",
+		Fix:   "• set `execution_mode` in gregale.yaml to match the app: `request` or `service` for a server, `worker` for a long-running consumer, `job` for a run-to-completion task\n• in a Compose project, give a service that serves HTTP `ports:` (public) or `expose:` (internal); without either it deploys as a worker\n• or change the start command so the process matches the mode you declared",
 	},
 	api.CodeStatelessOnlyViolation: {
 		Title: "Stateless-only platform",
