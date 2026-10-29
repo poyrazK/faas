@@ -51,7 +51,7 @@
   },
   {
     "step": "TestGitHubDeploys/preview_removed_on_pr_close",
-    "bug": "closing the pull request did not remove its preview (a preview from a closed PR was still live the next day); with push-to-deploy, auto-preview and Checks also failing, GitHub App webhooks for this installation look unprocessed",
+    "bug": "closing the pull request did not record the close (the step now checks pr_state=closed with a 24h grace; teardown after the grace is by design); root cause shared with push_to_deploy: the App webhook URL and secret were wrong (fixed on GitHub 2026-10-29) and githubd rejected every real pull_request payload (#5862), known until #5862 is released",
     "since": "2026-10-28"
   },
   {

@@ -63,7 +63,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: deployctl <generate|check|diff|deploy|rollback|restart-changed|bundle-create|unit-overlay|bundle-check|bundle-check-installed|migration-dry-run|legacy-import|upgrade-node> [args...]")
+		fmt.Fprintln(os.Stderr, "usage: deployctl <generate|check|diff|deploy|rollback|record|restart-changed|bundle-create|unit-overlay|bundle-check|bundle-check-installed|migration-dry-run|legacy-import|upgrade-node> [args...]")
 		os.Exit(2)
 	}
 	cmd := os.Args[1]
@@ -112,6 +112,11 @@ func main() {
 	case "rollback":
 		if err := runRollback(args); err != nil {
 			fmt.Fprintln(os.Stderr, "deployctl rollback:", err)
+			os.Exit(1)
+		}
+	case "record":
+		if err := runRecord(args); err != nil {
+			fmt.Fprintln(os.Stderr, "deployctl record:", err)
 			os.Exit(1)
 		}
 	case "restart-changed":

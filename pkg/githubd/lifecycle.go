@@ -26,7 +26,7 @@ func (s *Service) HandleInstallationLifecycle(ctx context.Context, eventType str
 	case "installation":
 		ev, err := DecodeInstallation(body)
 		if err != nil {
-			return err
+			return unprocessableWebhook(err)
 		}
 		if s.Lifecycle == nil {
 			s.Log.Warn("githubd: lifecycle event received without lifecycle store", "event_type", logsanitize.Field(eventType))
@@ -52,7 +52,7 @@ func (s *Service) HandleInstallationLifecycle(ctx context.Context, eventType str
 	case "installation_repositories":
 		ev, err := DecodeInstallationRepositories(body)
 		if err != nil {
-			return err
+			return unprocessableWebhook(err)
 		}
 		if s.Lifecycle == nil {
 			s.Log.Warn("githubd: lifecycle event received without lifecycle store", "event_type", logsanitize.Field(eventType))
@@ -74,7 +74,7 @@ func (s *Service) HandleInstallationLifecycle(ctx context.Context, eventType str
 	case "repository":
 		ev, err := DecodeRepository(body)
 		if err != nil {
-			return err
+			return unprocessableWebhook(err)
 		}
 		if s.Lifecycle == nil {
 			s.Log.Warn("githubd: lifecycle event received without lifecycle store", "event_type", logsanitize.Field(eventType))

@@ -125,6 +125,7 @@ func (m *CapMetrics) observeStorage(summary CapSweepSummary) {
 	m.storageAccounts.WithLabelValues("uncapped").Set(float64(summary.StorageUncapped))
 	m.storageAccounts.WithLabelValues("unsupported").Set(float64(summary.StorageUnsupported))
 	m.storageAccounts.WithLabelValues("failed").Set(float64(summary.StorageFailed))
+	m.storageScopes.WithLabelValues("applied").Add(float64(summary.StorageScopesApplied))
 	m.storageScopes.WithLabelValues("shadowed").Add(float64(summary.StorageScopesShadowed))
 	m.storageScopes.WithLabelValues("unchanged").Add(float64(summary.StorageScopesUnchanged))
 }

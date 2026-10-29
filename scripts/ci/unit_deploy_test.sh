@@ -206,6 +206,28 @@ remote_stage="$(bash "$helper" stage "$plan" "$units" "$units/tools/deployctl")"
 bash "$helper" cleanup "$remote_stage"
 [[ ! -e "$remote_stage" ]] || fail "cleanup left the stage dir"
 
+# 6a. record copies the node's activation spool to the control plane's
+#     deployctl under the node's compute_nodes name (issue #574); an empty
+#     spool imports nothing.
+spool="$test_root/activations.jsonl"
+fake_deployctl="$test_root/fake-deployctl"
+cat > "$fake_deployctl" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" > "$STUB_LOG.record-args"
+cat > "$STUB_LOG.record-stdin"
+EOF
+chmod +x "$fake_deployctl"
+ACTIVATION_SPOOL="$spool" CP_DEPLOYCTL="$fake_deployctl" bash "$helper" record fsn-3 | grep -Fq "fsn-3 spooled no activations" \
+  || fail "record did not report an empty spool"
+[[ ! -e "$STUB_LOG.record-args" ]] || fail "record imported an empty spool"
+printf '%s\n' '{"id":"a"}' '{"id":"b"}' > "$spool"
+ACTIVATION_SPOOL="$spool" CP_DEPLOYCTL="$fake_deployctl" bash "$helper" record fsn-3
+[[ "$(cat "$STUB_LOG.record-args")" == "record --host fsn-3.faas" ]] || fail "record ran: $(cat "$STUB_LOG.record-args")"
+cmp -s "$spool" "$STUB_LOG.record-stdin" || fail "record did not pass the spool through whole"
+ACTIVATION_SPOOL="$spool" CP_DEPLOYCTL="$fake_deployctl" bash "$helper" record fsn-4.faas
+[[ "$(cat "$STUB_LOG.record-args")" == "record --host fsn-4.faas" ]] || fail "record renamed a canonical node: $(cat "$STUB_LOG.record-args")"
+if bash "$helper" record 'fsn-3;rm' 2>/dev/null; then fail "record accepted a bad node name"; fi
+
 # 7. Host configuration (docs/adr/20261018133100-host-configuration-lane.md):
 #    the record is written only whole and valid, with the contract.
 record="$test_root/record.json"

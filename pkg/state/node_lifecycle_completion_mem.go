@@ -26,6 +26,10 @@ func (m *MemStore) storeComputeNodeLifecycleLocked(node ComputeNode) (ComputeNod
 			node.Readiness = NodeReadinessReady
 		}
 	}
+	// The wake breaker changes only through its own writes.
+	if prior, ok := m.computeNodes[node.ID]; ok && node.WakeBreakerOpenUntil == nil {
+		node.WakeBreakerOpenUntil, node.WakeBreakerReason = prior.WakeBreakerOpenUntil, prior.WakeBreakerReason
+	}
 	next, err := nextNodeLifecycle(m.computeNodes[node.ID], node, false)
 	if err != nil {
 		return ComputeNode{}, err

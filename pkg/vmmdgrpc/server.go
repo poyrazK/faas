@@ -731,7 +731,7 @@ func (s *Server) CreateFromSnapshot(ctx context.Context, req *vmmdpb.CreateFromS
 	finishWakeSpan(wakeSpan, err)
 	s.ops.Observe(op, time.Since(start), err)
 	if err != nil {
-		return nil, grpcerr.ToStatus(toProblem(err))
+		return nil, wakeStatus(err)
 	}
 	if inst.Method == fcvm.WakeColdBoot && inst.RestoreError != "" {
 		s.log.Warn("vmmd: restore fell back to cold boot", "instance", req.GetInstance(), "err", inst.RestoreError)
@@ -797,7 +797,7 @@ func (s *Server) CreateColdBoot(ctx context.Context, req *vmmdpb.CreateColdBootR
 	s.ops.Observe(op, time.Since(start), err)
 	if err != nil {
 		s.log.Error("vmmd: cold boot failed", "instance", req.GetInstance(), "err", err.Error())
-		return nil, grpcerr.ToStatus(toProblem(err))
+		return nil, wakeStatus(err)
 	}
 	return wakeResponseFromInstance(req.GetInstance(), wr, inst, vmmdpb.WakeMethod_WAKE_COLD_BOOT), nil
 }
@@ -2459,6 +2459,17 @@ func ParseSeccompLines(r io.Reader) (string, int32, error) {
 		return "", 0, fmt.Errorf("no Seccomp line (kernel too old?)")
 	}
 	return mode, filterLen, nil
+}
+
+// wakeStatus is a wake RPC's error status. A failure before the VM started
+// carries wake_stage=pre_start beside the Problem (ADR-20261022184531), so
+// schedd may place the wake on another node; the Problem itself is
+// unchanged.
+func wakeStatus(err error) error {
+	if errors.Is(err, fcvm.ErrWakeNotStarted) {
+		return grpcerr.ToStatusWithMetadata(toProblem(err), map[string]string{grpcerr.MetadataWakeStage: grpcerr.WakeStagePreStart})
+	}
+	return grpcerr.ToStatus(toProblem(err))
 }
 
 // toProblem lifts a plain error to *api.Problem if it isn't one already.

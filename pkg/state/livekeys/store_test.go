@@ -470,14 +470,20 @@ func TestStoreKeepsWriterSignatures(t *testing.T) {
 	if err != nil || len(logins) != 1 || !bytes.Equal(logins[0].Signature, sig(2)) {
 		t.Fatalf("login page = %+v, %v", logins, err)
 	}
-	if ok, err := store.SignLogin(ctx, logins[0], sig(5)); err != nil || ok {
-		t.Fatalf("sign a signed login = %v, %v; want it refused", ok, err)
+	staleLogin := logins[0]
+	staleLogin.Signature = sig(9)
+	if ok, err := store.SignLogin(ctx, staleLogin, sig(5)); err != nil || ok {
+		t.Fatalf("re-sign from a stale signature = %v, %v; want it refused", ok, err)
+	}
+	// A key rotation signs a signed row again, compared on the signature read.
+	if ok, err := store.SignLogin(ctx, logins[0], sig(5)); err != nil || !ok {
+		t.Fatalf("re-sign the login = %v, %v", ok, err)
 	}
 	if _, err := pool.Exec(ctx, `UPDATE managed_postgres_live_logins SET sealed_login_sig=NULL`); err != nil {
 		t.Fatal(err)
 	}
 	logins[0].Signature = nil
-	if ok, err := store.SignLogin(ctx, logins[0], sig(5)); err != nil || !ok {
+	if ok, err := store.SignLogin(ctx, logins[0], sig(6)); err != nil || !ok {
 		t.Fatalf("sign the unsigned login = %v, %v", ok, err)
 	}
 }

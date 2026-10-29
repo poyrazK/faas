@@ -463,6 +463,14 @@ func run(ctx context.Context, log *slog.Logger) error {
 			transport.DisableKeepAlives = true
 		}
 	}
+	// ADR-20261022184531 step 5: retry a response gatewayd-internal marked
+	// not dispatched on another compute node. Off by default for a measured
+	// rollout; safe beside N-1 gatewayd-internal, which never marks. It
+	// needs a node-choosing dialer (the compute pool, or a compute edge's
+	// local-first dialer).
+	if envBoolOr("FAAS_GATEWAY_WAKE_FAILOVER", false) {
+		proxy.WithWakeFailover(gateway.NewWakeFailover(edgeMetricsSet.observeWakeFailover))
+	}
 	if err := configureRuntimeIngressProxy(proxy, pgStore, os.Getenv); err != nil {
 		return err
 	}
