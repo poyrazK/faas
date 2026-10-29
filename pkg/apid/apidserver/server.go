@@ -87,6 +87,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/profiling"
 	"github.com/onebox-faas/faas/pkg/promotionrollout"
 	"github.com/onebox-faas/faas/pkg/promql"
+	"github.com/onebox-faas/faas/pkg/ratelimit/peraccount"
 	"github.com/onebox-faas/faas/pkg/realtime"
 	"github.com/onebox-faas/faas/pkg/reconcile"
 	objruntime "github.com/onebox-faas/faas/pkg/rehearsalobj/runtime"
@@ -394,6 +395,10 @@ type server struct {
 	// to a fresh bucket in authLimited for unit tests; production
 	// wires it in newServer.
 	apiAuthLimiter *middleware.Limiter
+	// channelTests caps notification channel test sends per account
+	// (ADR-20261028101615); built on first use.
+	channelTestsOnce sync.Once
+	channelTests     *peraccount.Limiter
 	// dashboardAuthLimiter is the shared per-IP bucket for the
 	// dashboard auth surface (/login, /auth/verify). Separate from
 	// apiAuthLimiter because the two surfaces count different
