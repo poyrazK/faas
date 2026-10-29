@@ -283,7 +283,7 @@ func downloadBucketFile(ctx context.Context, c bucketTransferClient, o bucketTra
 
 func cmdUsageObjectStorage(args []string) int {
 	if len(args) != 0 {
-		PrintUsage(osStderr, "usage: gregale usage object-storage", "usage")
+		PrintUsage(osStderr, "usage: gregale billing usage object-storage", "usage")
 		return 1
 	}
 	c, err := authedClient()

@@ -111,7 +111,7 @@ func ValidateShape(path string, maxEntries int, maxExpandedBytes int64) error {
 // symlink's target is relative to the directory holding the link, so
 // "packages/api/LICENSE -> ../../LICENSE" names the root LICENSE; a hard
 // link's target is an archive entry name. ok is false for an absolute
-// target or one resolving outside the archive (ADR-20261028090000).
+// target or one resolving outside the archive (ADR-20261029103512).
 // Checking the raw target for ".." refused ordinary in-repository links.
 func LinkTarget(name, linkname string, hard bool) (string, bool) {
 	if linkname == "" || strings.HasPrefix(linkname, "/") {

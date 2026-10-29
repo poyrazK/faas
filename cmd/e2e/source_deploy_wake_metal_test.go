@@ -121,7 +121,7 @@ func TestSourceDeployWakeMetal(t *testing.T) {
 	// the build_queued pg_notify and spin up a builder microVM. Use All.
 	// The Node fixture declares Node 22, whose runner base is musl, so it
 	// keeps its own toolchain on the app's base even with the shared runtime
-	// on (ADR-20261028090000); TestSharedRuntimeRollbackMetal covers the
+	// on (ADR-20261029103512); TestSharedRuntimeRollbackMetal covers the
 	// shared runner base.
 	h := e2etest.Start(t, pool, e2etest.All, commitOperationEnvironment(t, "FAAS_COMMIT_API_ENABLED=true")...)
 	key := h.SeedAccount(context.Background(), api.PlanHobby)

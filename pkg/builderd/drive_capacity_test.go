@@ -2,7 +2,7 @@
 
 package builderd
 
-// adr: 20261028090000 — the developer dependency cache yields its bytes before
+// adr: 20261029103512 — the developer dependency cache yields its bytes before
 // a build drive is refused.
 
 import (
@@ -22,10 +22,10 @@ func TestCheckBuildDriveCapacityReclaimsDependencyCacheFirst(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(entry, "layer"), make([]byte, 1024), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	previous := buildDriveAvailable
-	t.Cleanup(func() { buildDriveAvailable = previous })
+	previous := driveFilesystemAvailable
+	t.Cleanup(func() { driveFilesystemAvailable = previous })
 	// The filesystem has room only once the cache entry is gone.
-	buildDriveAvailable = func(string) (uint64, error) {
+	driveFilesystemAvailable = func(string) (uint64, error) {
 		if _, err := os.Stat(entry); err == nil {
 			return BuildDriveMinFreeBytes - 1, nil
 		}
@@ -38,7 +38,7 @@ func TestCheckBuildDriveCapacityReclaimsDependencyCacheFirst(t *testing.T) {
 		t.Fatalf("dependency cache entry was not reclaimed: %v", err)
 	}
 
-	buildDriveAvailable = func(string) (uint64, error) { return BuildDriveMinFreeBytes - 1, nil }
+	driveFilesystemAvailable = func(string) (uint64, error) { return BuildDriveMinFreeBytes - 1, nil }
 	if err := checkBuildDriveCapacity(filepath.Join(driveDir, "build.ext4")); !errors.Is(err, ErrBuildDiskFull) {
 		t.Fatalf("full disk = %v, want ErrBuildDiskFull", err)
 	}

@@ -9,7 +9,7 @@ import (
 )
 
 // OutpacedBuildStore is the optional capability builderd uses to skip a
-// build whose deployment can no longer go live (ADR-20261028090000).
+// build whose deployment can no longer go live (ADR-20261029103512).
 //
 // A latest-revision deployment (DeploymentKind.RequiresLatestRevision) is
 // superseded at promotion when any deployment of the same app and scope has a

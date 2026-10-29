@@ -68,7 +68,7 @@ acknowledge adoption:
 ```sh
 printf 'New database URL: ' >&2
 read -r -s DATABASE_URL
-echo "DATABASE_URL=$DATABASE_URL" | gregale secrets rotate --app <slug> --from-stdin --wait-for-ack
+echo "DATABASE_URL=$DATABASE_URL" | gregale env rotate --app <slug> --from-stdin --wait-for-ack
 unset DATABASE_URL
 ```
 

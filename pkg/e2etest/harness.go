@@ -187,6 +187,9 @@ type Harness struct {
 	apidEnv              []string
 	apidListen           string
 	requestTelemetrySock string
+	// meterdBin/meterdEnv retain meterd's launch recipe for RestartMeterd.
+	meterdBin string
+	meterdEnv []string
 	// killed holds daemons stopped on purpose by KillAPID or KillSchedd.
 	killed map[*exec.Cmd]bool
 }
@@ -899,6 +902,12 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 			"FAAS_SPOOL_ROOT="+spoolRoot,
 			"FAAS_SCAN_SPOOL_ROOT="+scanRoot,
 		)
+		// As in Start: apid's rollback precheck verifies the signatures
+		// schedd does, so it gets the same key when schedd runs. Without it
+		// every checked rollback was refused with capacity_unavailable.
+		if which&Schedd != 0 {
+			env = append(env, "FAAS_SIGN_PUB="+h.ensureSignPub(t))
+		}
 		env = append(env, extraEnv...)
 		// Keep the named-control-plane acceptance knob scoped to apid. The
 		// surrounding harness shares extraEnv across daemons, while setting
@@ -1809,7 +1818,34 @@ func startMeterd(t *testing.T, h *Harness, bin, dbURL string, extraEnv ...[]stri
 	for _, e := range extraEnv {
 		env = append(env, e...)
 	}
+	h.meterdBin, h.meterdEnv = bin, append([]string(nil), env...)
 	h.procs = append(h.procs, startProc(t, bin, "meterd", env))
+}
+
+// RestartMeterd launches a fresh meterd with the retained environment, so a
+// test can prove that work meterd owns (canary progression, release notices)
+// resumes from durable state after a meterd restart.
+func (h *Harness) RestartMeterd() error {
+	if h == nil || h.T == nil {
+		return fmt.Errorf("e2etest: nil harness")
+	}
+	if h.meterdBin == "" || len(h.meterdEnv) == 0 {
+		return fmt.Errorf("e2etest: meterd launch recipe unavailable")
+	}
+	if err := h.KillMeterd(); err != nil {
+		return err
+	}
+	procs := h.procs[:0]
+	for _, candidate := range h.procs {
+		if candidate != nil && filepath.Base(candidate.Path) == "meterd" && candidate.ProcessState != nil {
+			continue
+		}
+		procs = append(procs, candidate)
+	}
+	h.procs = procs
+	h.procs = append(h.procs, startProc(h.T, h.meterdBin, "meterd", append([]string(nil), h.meterdEnv...)))
+	h.requireDaemonsAlive(h.T)
+	return nil
 }
 
 // stop SIGTERMs every daemon, waits up to 5s, then SIGKILL stragglers. Owns

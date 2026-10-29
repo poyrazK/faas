@@ -10,7 +10,7 @@ import (
 // spec: §4.6
 // H10-140: only Node container apps without a runtime, a Dockerfile or job
 // mode build on a shared runner base, unless the node turns it off
-// (default on, ADR-20261028090000).
+// (default on, ADR-20261029103512).
 func TestSharedSourceAppRuntime(t *testing.T) {
 	on := func(string) string { return "" }
 	off := func(string) string { return "0" }

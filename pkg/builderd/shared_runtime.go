@@ -22,7 +22,7 @@ func sharedRuntimeBuildLog(v *api.SharedRuntimeVerdict) string {
 
 // SharedRuntimeEnv controls building source container apps on the shared
 // runner base (docs/adr/1500-shared-runtime-source-apps.md). On by default
-// since the metal acceptance run (ADR-20261028090000); "0" turns it off.
+// since the metal acceptance run (ADR-20261029103512); "0" turns it off.
 const SharedRuntimeEnv = "FAAS_SOURCE_APP_SHARED_RUNTIME"
 
 // sharedSourceAppRuntime picks the runner base a source build of app runs

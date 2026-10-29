@@ -175,6 +175,10 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, prob)
 		return
 	}
+	if prob := api.ValidateRouteAlert(req.Metric, req.WindowSpec, app.ID); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	if prob := s.anomalyAlertsGate(appFlagSubject(acct, app), req.Comparison); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -844,8 +848,11 @@ func alertRuleActionFrom(p *string) state.AlertAction {
 // alertMetricCapabilities names the capability an alert metric needs beyond
 // alerts' own (ADR-20261023115741).
 var alertMetricCapabilities = map[string]string{
-	api.AlertRuleMetricCustomMetric:     "custom-metric-history",
-	api.AlertRuleMetricLogSearchMatches: "log-search",
+	api.AlertRuleMetricCustomMetric:      "custom-metric-history",
+	api.AlertRuleMetricLogSearchMatches:  "log-search",
+	api.AlertMetricRouteInsightsDetected: routeInsightsCapability,
+	api.AlertMetricRouteMonitorIncidents: routeMonitorCapability,
+	api.AlertMetricRouteHealthHolds:      routeHealthCapability,
 }
 
 // alertMetricCapabilityProblem refuses an alert on a metric whose capability
@@ -885,7 +892,8 @@ func validateAlertRuleBody(req api.CreateAlertRuleRequest) *api.Problem {
 	if p := edgerules.ValidateActivityAlert(req.Metric, req.EdgeRuleID, req.WindowSpec); p != nil {
 		return p
 	}
-	if p := validateAlertRollbackWindow(alertRollbackWindowFrom(req.PostDeployRollbackWindowSeconds), string(alertRuleActionFrom(req.Action))); p != nil {
+	if p := validateAlertRollbackWindow(alertRollbackWindowFrom(req.PostDeployRollbackWindowSeconds), string(alertRuleActionFrom(req.Action)),
+		req.Metric, req.Comparison, req.WindowSpec, req.Threshold); p != nil {
 		return p
 	}
 	if !api.AllowedAlertRuleMetric(req.Metric) {
@@ -965,6 +973,9 @@ func validateAlertRuleRowUpdate(merged state.AlertRule) *api.Problem {
 	if p := api.ValidateRouteInsightAlert(string(merged.Metric), string(merged.WindowSpec), merged.AppID); p != nil {
 		return p
 	}
+	if p := api.ValidateRouteAlert(string(merged.Metric), string(merged.WindowSpec), merged.AppID); p != nil {
+		return p
+	}
 	if api.IsMCPProtocolMetric(string(merged.Metric)) && merged.AppID == "" {
 		return api.ErrAlertRuleInvalid("MCP performance alerts require an app")
 	}
@@ -978,7 +989,8 @@ func validateAlertRuleRowUpdate(merged state.AlertRule) *api.Problem {
 	if merged.PostDeployRollbackWindowSeconds > 0 && merged.AppID == "" {
 		return api.ErrAlertRuleInvalid("post-deploy rollback requires an app-scoped rule")
 	}
-	if p := validateAlertRollbackWindow(merged.PostDeployRollbackWindowSeconds, string(merged.Action)); p != nil {
+	if p := validateAlertRollbackWindow(merged.PostDeployRollbackWindowSeconds, string(merged.Action),
+		string(merged.Metric), string(merged.Comparison), string(merged.WindowSpec), merged.Threshold); p != nil {
 		return p
 	}
 	if _, ok := api.TrimNonEmpty(merged.Name); !ok {

@@ -10,8 +10,9 @@ remaining an opt-in operator preview. The API exposes account-scoped database
 CRUD/status, restore-to-new-database, and workload bindings under
 `/v1/postgres/*`. Provider IDs, passwords, connection URLs, and secret
 ciphertext never cross that API boundary. `provisioning_enabled` must remain
-false until an isolated provider qualification is approved; reads and durable
-deletion reconciliation remain safe while provisioning is disabled.
+false until an isolated provider qualification, or in production an operator
+approval, opens it; reads and durable deletion reconciliation remain safe while
+provisioning is disabled.
 
 Plan entitlements are enforced before provider work and again at the atomic
 database reservation boundary:
@@ -38,8 +39,8 @@ operations and `postgres:manage` for create, restore, delete, and binding
 operations. Binding credentials are delivered through the existing app-secret
 surface after the binding saga reaches `ready`.
 
-Keep `provisioning_enabled` false outside an isolated provider qualification
-environment. The lifecycle service and background discovery also require all
+Outside production ([below](#production)), keep `provisioning_enabled` false
+except in an isolated provider qualification environment. The lifecycle service and background discovery also require all
 of the following runtime gates before they will provision: `FAAS_ENVIRONMENT`
 must be `staging`, `FAAS_MANAGED_POSTGRES_QUALIFIED=true`,
 `FAAS_MANAGED_POSTGRES_QUALIFIED_VERSION=8`,
@@ -58,6 +59,37 @@ than 255 characters, or lists larger than 100 accounts fail closed. Reads and
 all deletion/revocation paths remain available outside the allowlist so an
 operator can drain a canary safely before expanding it.
 
+### Production
+
+In `FAAS_ENVIRONMENT=production` no qualification artifact is used
+([ADR-20261028103115](adr/20261028103115-managed-postgres-production-provisioning.md)).
+Provisioning opens while all of the following hold:
+
+- `provisioning_enabled` is true;
+- usage metering (`usage.enabled`) is on;
+- the `fleet` block sets both `max_databases` and
+  `max_monthly_cost_millicents`;
+- an operator approval pins the single default backend:
+  `FAAS_MANAGED_POSTGRES_PRODUCTION_BACKEND` and
+  `FAAS_MANAGED_POSTGRES_PRODUCTION_FINGERPRINT`, approved from
+  `FAAS_MANAGED_POSTGRES_PRODUCTION_APPROVED_AT` until
+  `FAAS_MANAGED_POSTGRES_PRODUCTION_UNTIL` (RFC 3339, at most 90 days).
+
+`managed-postgres-qualify --check-production` prints the readiness codes and
+the configured backend's fingerprint without contacting the provider.
+
+The `managed-postgres` capability flag decides which accounts may create
+databases. The staging canary list is not read in production. When the
+approval ends, new databases, bindings, restores and resizes close; existing
+databases and credentials keep working.
+
+The fleet ceilings apply across every account:
+
+- At `max_databases`, new databases, restores and snapshot copies answer
+  `503 managed_postgres_new_databases_paused`.
+- Once this UTC month's provider cost reaches `max_monthly_cost_millicents`,
+  cost-raising resizes pause as well, until the next month.
+
 ## Provider health
 
 `gregale postgres get <database>` and database GET/list responses include cached
@@ -67,7 +99,7 @@ not turn a ready catalog row into a provisioning request.
 
 Health reads provider metadata only. Suspended compute is healthy when the
 resource is ready and its configuration matches. A healthy signal does not
-prove SQL connectivity; use `gregale bindings verify <app> --postgres DATABASE_URL`
+prove SQL connectivity; use `gregale app binding verify <app> --postgres DATABASE_URL`
 for the existing application connection check. Monitoring does not wake compute,
 retrieve credentials, repair roles, or recreate resources. API GET/list never
 contact the provider.

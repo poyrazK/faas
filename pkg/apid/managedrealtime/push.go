@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/realtimepush"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -72,7 +73,7 @@ func (s *Service) RunManagedRealtimePush(ctx context.Context) {
 				var cfg realtimepush.Config
 				var target realtimepush.Target
 				result := realtimepush.Result{Retry: true, Code: "credential_unavailable"}
-				label := "realtime-push-device:" + batch.EndpointID + ":" + batch.Principal + ":" + batch.Device
+				label := api.RealtimePushDeviceNamespacePrefix + batch.EndpointID + ":" + batch.Principal + ":" + batch.Device
 				if s.openPush(pass, batch.Config, pushProviderLabel(batch.EndpointID, batch.Provider), &cfg) == nil && s.openPush(pass, batch.Target, label, &target) == nil && cfg.Provider == batch.Provider {
 					batch, e = digests.PrepareManagedRealtimePushDigest(pass, batch.DigestID, batch.Lease)
 					if e != nil || batch == nil {

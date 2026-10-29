@@ -60,7 +60,7 @@ tests:
       - series: 'faas_internal_mtls_renewal_last_success_timestamp_seconds{instance="overdue"}'
         values: '0x40'
       - series: 'node_boot_time_seconds{job="node-compute",instance="overdue"}'
-        values: '-100000x40'
+        values: '-140000x40'
     alert_rule_test:
       - eval_time: 16m
         alertname: FaasInternalMTLSRenewalNeverCompleted
@@ -73,8 +73,42 @@ tests:
               instance: overdue
             exp_annotations:
               summary: "Scheduled internal mTLS renewal is stale"
-              description: "The host has not recorded a successful renewal check within one daily renewal interval. Verify the self-hosted runner and complete fleet inventory."
+              description: "The host has not recorded a successful renewal check for over 36 hours, so a daily run was missed. Verify the self-hosted runner and complete fleet inventory."
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInternalMTLSRenewal.md"
+
+  # Issue #2482: the control plane's node_exporter is job="node"; a control
+  # plane that never renewed alerts too.
+  - interval: 30s
+    input_series:
+      - series: 'faas_internal_mtls_renewal_last_success_timestamp_seconds{instance="control"}'
+        values: '0x40'
+      - series: 'node_boot_time_seconds{job="node",instance="control"}'
+        values: '-140000x40'
+    alert_rule_test:
+      - eval_time: 16m
+        alertname: FaasInternalMTLSRenewalNeverCompleted
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: gregalectl
+              family: internal_mtls_lifecycle
+              public_status: internal
+              instance: control
+            exp_annotations:
+              summary: "Scheduled internal mTLS renewal is stale"
+              description: "The host has not recorded a successful renewal check for over 36 hours, so a daily run was missed. Verify the self-hosted runner and complete fleet inventory."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInternalMTLSRenewal.md"
+
+  # A daily run that starts hours late (28 h since the last success) is not
+  # a missed day.
+  - interval: 30s
+    input_series:
+      - series: 'faas_internal_mtls_renewal_last_success_timestamp_seconds{instance="late"}'
+        values: '-100800x40'
+    alert_rule_test:
+      - eval_time: 16m
+        alertname: FaasInternalMTLSRenewalNeverCompleted
+        exp_alerts: []
 
   - interval: 30s
     input_series:

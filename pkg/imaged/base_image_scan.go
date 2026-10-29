@@ -155,16 +155,44 @@ func scanResultFromAPI(report api.ScanResult) (*ScanResult, error) {
 // Compatibility output comes only from the separately retained private scan.
 // It is not a native receipt or company approval. Failed evidence retains the
 // legacy refusal sentinel; those numbers are never private scanner findings.
+//
+// A concurrent owner of the review inputs (another deploy staging the same
+// base) makes publication busy. Waiting for it lets this stage publish or
+// reuse the result instead of failing the deploy with "review inputs are
+// being modified" (#5709); the wait is bounded.
 func (h *Handler) writeProducedBaseScanSidecar(ctx context.Context, r verifiedBaseRequest, base state.BaseImageProducer) error {
-	_, err := h.ensureProducedBaseScan(ctx, r.be, base, r.out)
-	return err
+	wait := producedBaseScanBusyFirstWait
+	deadline := time.Now().Add(producedBaseScanBusyWait)
+	for {
+		_, err := h.ensureProducedBaseScan(ctx, r.be, base, r.out)
+		if err == nil || !producedEvidenceBusy(err) || !time.Now().Add(wait).Before(deadline) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(wait):
+		}
+		wait = min(2*wait, producedBaseScanBusyMaxStep)
+	}
 }
+
+// How long a base stage waits for a concurrent owner of the review inputs, and
+// its backoff between attempts. The owner can be scanning the same base, so
+// the bound is the base scan's own; each attempt reuses that owner's result as
+// soon as it is published. Giving up earlier left the fail-closed sidecar in
+// place: fsn-2 refused every cold boot for five hours (2026-10-27, #5709).
+var (
+	producedBaseScanBusyWait      = api.ApplicationStandardBaseScanTimeout
+	producedBaseScanBusyFirstWait = 250 * time.Millisecond
+	producedBaseScanBusyMaxStep   = 5 * time.Second
+)
 
 // An empty value is a preflight refusal, not a scan attempt: its clock stays
 // zero. Invalidate old compatibility output before rebuilding or refreshing;
 // only a successfully retained private result can replace that refusal.
 func writeProducedBaseScanCompatibility(ctx context.Context, be storage.StorageBackend, key, ref, out string, value state.BaseImageScan) error {
-	findings := map[string]int{SeverityCritical: 9999, SeverityHigh: 9999, SeverityMedium: 9999, SeverityLow: 9999, SeverityUnknown: 0}
+	findings := map[string]int{SeverityCritical: wire.BaseScanFailedCount, SeverityHigh: wire.BaseScanFailedCount, SeverityMedium: wire.BaseScanFailedCount, SeverityLow: wire.BaseScanFailedCount, SeverityUnknown: 0}
 	fixAvailable := findings
 	if value.Input.Status == "complete" {
 		result, err := scanResultFromAPI(value.Result)

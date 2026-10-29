@@ -1,6 +1,6 @@
 package builderd
 
-// adr: 20261028090000 — a builder without disk for a build drive returns the
+// adr: 20261029103512 — a builder without disk for a build drive returns the
 // build to the queue; it does not fail the deployment.
 
 import (

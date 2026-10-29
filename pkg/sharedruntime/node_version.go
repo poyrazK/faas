@@ -15,7 +15,7 @@ const (
 // Alpine. A source build's toolchain and native addons are glibc builds
 // (Railpack's mise Node), so on that base neither the full-layer fallback of
 // an ineligible build nor an eligible app's addon can run. Builds for such a
-// runtime keep their own base (ADR-20261028090000).
+// runtime keep their own base (ADR-20261029103512).
 func MuslRunner(runtime string) bool { return runtime == RuntimeNode22 }
 
 // nodeLTS maps the LTS codenames of the shared bases' majors.

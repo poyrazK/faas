@@ -373,7 +373,7 @@ func TestFetch_CapEnforcedWhenContentLengthMissing(t *testing.T) {
 
 // TestFetch_EscapingLinkIsLeftOut pins H3 for links: a link to an absolute
 // path or out of the tree is never created and never followed
-// (ADR-20261028090000). It would dangle in any other checkout, so the
+// (ADR-20261029103512). It would dangle in any other checkout, so the
 // fetched tree simply has no entry there.
 func TestFetch_EscapingLinkIsLeftOut(t *testing.T) {
 	body := buildLinkArchive(t, []linkEntry{

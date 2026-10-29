@@ -12,7 +12,7 @@ Create a dedicated key instead of sharing your own login. Scope it to what the
 agent needs:
 
 ```sh
-gregale keys add coding-agent --scopes apps:read,deploy:write
+gregale key create coding-agent --scopes apps:read,deploy:write
 ```
 
 `apps:read` lets the agent inspect apps, deployments, logs and metrics.
@@ -26,7 +26,7 @@ secrets API. Add `storage:manage` for buckets, and `postgres:manage` with
 Put the key in the agent's environment as `FAAS_TOKEN`. It overrides the
 saved login for every `gregale` command and for the MCP server. Don't paste
 it into a prompt, a command argument or a committed file. Remove it with
-`gregale keys rm <id>` when the agent no longer needs it.
+`gregale key delete <id>` when the agent no longer needs it.
 
 ## Run the CLI non-interactively
 
@@ -59,7 +59,7 @@ credentials are redacted from both.
 A deploy writes a receipt with the deployment `id`, its `status` and the
 `app_url`. If `timed_out` is true, run the receipt's `resume_command` instead
 of deploying again. After a temporary failure, the server may already have
-accepted the deploy: check `gregale deploys status <id> --app <slug>` first.
+accepted the deploy: check `gregale release get <id> --app <slug>` first.
 
 Commands that delete or replace something need explicit approval, such as
 `--yes` for app deletion. Preview them with `--dry-run` first. Missing
@@ -67,6 +67,24 @@ approval exits `1`; `--non-interactive` never approves on the agent's behalf.
 
 See [CLI configuration](cli-config.md) for the full contract, including
 pagination and profiles.
+
+## Connect a cloud agent
+
+Agents that run in the cloud, such as claude.ai, ChatGPT and hosted coding
+agents, connect to Gregale's hosted MCP server at
+`https://api.gregale.dev/mcp`. There's nothing to install:
+1. Add the URL as a connector.
+2. When the agent connects, sign in to Gregale and choose what it may do and
+   which apps it may use.
+
+The agent can then:
+- inspect and deploy apps, promote and roll back;
+- upload a project it wrote, or pass small projects as files;
+- ask you for secrets, and add domains, crons, buckets and databases, if you
+  allowed those.
+
+See
+[Connect a cloud agent to Gregale](mcp.md#connect-a-cloud-agent-to-gregale).
 
 ## Connect the management MCP server
 
@@ -147,7 +165,7 @@ was set. The page works only in your own signed-in session and expires after
 
 With `--tools core,provision` the agent can also attach a custom domain, add a
 bucket or a PostgreSQL database, and add a cron. Each is planned first and
-runs the matching `gregale domains add`, `add bucket`, `add postgres` or
+runs the matching `gregale domain create`, `add bucket`, `add postgres` or
 `crons add` command. For a domain it returns the DNS records you create at
 your DNS provider; `gregale_check_domain` reports when they verify. See
 [Provision a domain, data and crons](mcp.md#provision-a-domain-data-and-crons).

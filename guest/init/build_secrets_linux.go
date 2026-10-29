@@ -15,7 +15,7 @@ func buildSecretEnvName(i int) string {
 }
 
 // buildDockerConfigDir holds the Docker config a Dockerfile build pulls its
-// base images with (ADR-20261026090000). It is on the guest's RAM-backed
+// base images with (ADR-20261026091500). It is on the guest's RAM-backed
 // /tmp, so the credentials never reach the exported build drive.
 const buildDockerConfigDir = "/tmp/gregale-build-docker"
 

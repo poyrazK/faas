@@ -1,7 +1,8 @@
 // adr: 570
 // Package publicrouting keeps each gateway's refreshed view of the routing
-// state an ordinary public request needs: the app's owner, its deployment
-// roster and its project's release graph (ADR-20261027085556).
+// state a public request needs: the app's owner, its deployment roster and
+// its project's release graph (ADR-20261027085556), and what host, revision
+// and release pins check (ADR-20261028095914).
 //
 // A request admits from the view an app's last successful read left, when
 // that read is within api.TrafficPublicRoutingOutageGrace. Otherwise the app

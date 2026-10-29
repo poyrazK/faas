@@ -109,9 +109,9 @@ A log drain forwards your app's runtime lines to your own logging service as
 they are written. Drains are available on Hobby and above.
 
 ```sh
-LOG_TOKEN='Bearer …' gregale log-drains add --app my-api \
+LOG_TOKEN='Bearer …' gregale logs drain create --app my-api \
   --url https://logs.example.com/ingest --auth-header-env LOG_TOKEN
-gregale log-drains health my-api <drain-id>
+gregale logs drain health my-api <drain-id>
 ```
 
 - `--kind http_json` (the default) posts batches of JSON lines; `--kind otlp`

@@ -173,7 +173,7 @@ func TestCapEnforcerOnNeedsQualification(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ceiling := func(context.Context, string) (int64, error) { return 1, nil }
+	ceiling := func(context.Context, string) (CapLimits, error) { return CapLimits{Allowance: 1, Ceiling: 1}, nil }
 	if _, err := NewCapEnforcer(registry, &capTestStore{}, CapEnforcerOptions{Mode: CapEnforcementOn, Ceiling: ceiling}); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("on without qualification: %v", err)
 	}

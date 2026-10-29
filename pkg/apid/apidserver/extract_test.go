@@ -242,7 +242,7 @@ func mustExtractProblem(t *testing.T, p *api.Problem, msg string) *api.Problem {
 	return p
 }
 
-// TestExtractTarGz_InTreeLinksAreSkipped pins ADR-20261028090000: a link
+// TestExtractTarGz_InTreeLinksAreSkipped pins ADR-20261029103512: a link
 // whose target stays inside the archive passes the scan extraction without
 // being created on the host; an escaping link is still refused.
 func TestExtractTarGz_InTreeLinksAreSkipped(t *testing.T) {

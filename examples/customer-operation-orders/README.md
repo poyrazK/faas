@@ -47,7 +47,7 @@ schemas, and keeps the default `reconcile_on_unknown` recovery policy. Validate
 it locally for the selected app and plan:
 
 ```sh
-gregale customer-operations validate --app orders --plan pro --dir .
+gregale operation validate --app orders --plan pro --dir .
 npm run bindings:check
 ```
 
@@ -65,7 +65,7 @@ or installed dependencies:
 ```sh
 bundle=$(npm run --silent bundle)
 npm ci --ignore-scripts --prefix "$bundle"
-gregale customer-operations validate --app orders --plan pro --dir "$bundle"
+gregale operation validate --app orders --plan pro --dir "$bundle"
 ```
 
 Use the resulting directory as source for an operator-qualified preview app,
@@ -83,8 +83,8 @@ enable admission. Ordinary source deployment pins transaction support into the
 immutable definition, and build retry retains it. Inspect that pin with:
 
 ```sh
-gregale customer-operations definitions list --app orders --deployment '<deployment UUID>'
-gregale customer-operations definitions get fulfill-order --app orders --deployment '<deployment UUID>'
+gregale operation definitions list --app orders --deployment '<deployment UUID>'
+gregale operation definitions get fulfill-order --app orders --deployment '<deployment UUID>'
 ```
 
 Submit `POST /orders/fulfill` with `{"order_id":"<owned order UUID>","workflow_run_id":"<workflow run UUID>"}`, an app
@@ -134,7 +134,7 @@ captures the submitted order ID once and preserves it through lost-response
 recovery. Inspect related work without retaining the Operation UUID:
 
 ```sh
-gregale customer-operations list --app orders --scope default \
+gregale operation list --app orders --scope default \
   --subject-type order --subject-id '<order UUID>'
 ```
 
@@ -145,4 +145,4 @@ links the same reference to related work. A reference grants no access to the
 order; business authorization in this example still checks customer ownership.
 
 
-The example declares workflow contract version `1`. Its `pending → fulfilled` transition is scoped to `fulfill-order` and requires the `order-fulfilled` milestone in the same committed application transaction. The workflow maps that milestone to the process, with `pending` and `fulfilled` as its states, `fulfilled` as terminal, and `pending` stale after 30 minutes. Supply one stable workflow-run UUID across all Operations participating in the process; separate runs for the same order use different UUIDs. The callback locks the order row, checks that it is pending, changes it to fulfilled, and records both the transition and milestone with the business write and result receipt. Gregale checks the transition contract and verifies the evidence references before the application transaction commits. State and milestone publication then use the durable outbox, and authorized recovery publishes the saved reports without repeating fulfillment. Inspect the order timeline with `gregale customer-operations milestones --app YOUR_APP --scope default --subject-type order --subject-id ORDER_UUID`; add `--workflow order-fulfillment --workflow-instance-id RUN_UUID` to read one run's ordered state changes, or `--stale-only` to show only stale current states. The CLI and dashboard label the reported current state as active or terminal, and the dashboard shows state history and retained workflow steps grouped under the run ID.
+The example declares workflow contract version `1`. Its `pending → fulfilled` transition is scoped to `fulfill-order` and requires the `order-fulfilled` milestone in the same committed application transaction. The workflow maps that milestone to the process, with `pending` and `fulfilled` as its states, `fulfilled` as terminal, and `pending` stale after 30 minutes. Supply one stable workflow-run UUID across all Operations participating in the process; separate runs for the same order use different UUIDs. The callback locks the order row, checks that it is pending, changes it to fulfilled, and records both the transition and milestone with the business write and result receipt. Gregale checks the transition contract and verifies the evidence references before the application transaction commits. State and milestone publication then use the durable outbox, and authorized recovery publishes the saved reports without repeating fulfillment. Inspect the order timeline with `gregale operation milestones --app YOUR_APP --scope default --subject-type order --subject-id ORDER_UUID`; add `--workflow order-fulfillment --workflow-instance-id RUN_UUID` to read one run's ordered state changes, or `--stale-only` to show only stale current states. The CLI and dashboard label the reported current state as active or terminal, and the dashboard shows state history and retained workflow steps grouped under the run ID.

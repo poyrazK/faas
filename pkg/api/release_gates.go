@@ -76,6 +76,10 @@ type ReleaseGateResult struct {
 	// ErrorClasses are the new groups' error classes (new_errors gates).
 	ErrorClasses []string `json:"error_classes,omitempty"`
 	Summary      string   `json:"summary"`
+	// NotJudged marks a gate with too few samples or unreadable evidence.
+	// It did not hold the rollout (gates never hold on missing evidence);
+	// Summary says what it was waiting for (release review 2026-10-28).
+	NotJudged bool `json:"not_judged,omitempty"`
 }
 
 func (r ReleaseGateResult) valid() bool {

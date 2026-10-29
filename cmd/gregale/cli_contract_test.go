@@ -103,7 +103,7 @@ func TestKeysAddHelpNeverCreatesCredential(t *testing.T) {
 			if calls != 0 {
 				t.Fatalf("keys add %s made %d API request(s)", help, calls)
 			}
-			if !strings.Contains(stdout.String(), "gregale keys add <label>") {
+			if !strings.Contains(stdout.String(), "gregale key create <label>") {
 				t.Fatalf("help output = %q", stdout.String())
 			}
 		})
@@ -155,7 +155,9 @@ func TestGeneratedHelpUsesDispatcherArgumentOrder(t *testing.T) {
 			oldOut := (*main.OsStdout)
 			(*main.OsStdout) = &stdout
 			t.Cleanup(func() { (*main.OsStdout) = oldOut })
-			if code := main.Run([]string{tc.command, "--help"}); code != 0 {
+			// Plain --help on a tree noun lists the tree's verbs; --all asks
+			// for the command's full manifest help.
+			if code := main.Run([]string{tc.command, "--help", "--all"}); code != 0 {
 				t.Fatalf("%s --help = %d", tc.command, code)
 			}
 			if got := stdout.String(); !strings.Contains(got, tc.want) || strings.Contains(got, tc.reject) {

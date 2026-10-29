@@ -57,13 +57,16 @@ const (
 	workWorkflowSchedules    workKind = "workflow_schedules"
 	workTriggerDispatch      workKind = "trigger_dispatch"
 	workQueuePushDispatch    workKind = "queue_push_dispatch"
-	workEventFanout          workKind = "event_fanout"
-	workReaper               workKind = "reaper"
-	workRehearsalFault       workKind = "rehearsal_worker_fault"
-	workRehearsalSuspend     workKind = "rehearsal_suspend_resume"
-	workRehearsalSweep       workKind = "rehearsal_sweep"
-	workWorkerRecovery       workKind = "worker_recovery"
-	workWorkerRecoverySweep  workKind = "worker_recovery_sweep"
+	// workBrokerTriggerDispatch runs one external broker trigger's batch;
+	// its key is the trigger, so a trigger has one batch in flight.
+	workBrokerTriggerDispatch workKind = "broker_trigger_dispatch"
+	workEventFanout           workKind = "event_fanout"
+	workReaper                workKind = "reaper"
+	workRehearsalFault        workKind = "rehearsal_worker_fault"
+	workRehearsalSuspend      workKind = "rehearsal_suspend_resume"
+	workRehearsalSweep        workKind = "rehearsal_sweep"
+	workWorkerRecovery        workKind = "worker_recovery"
+	workWorkerRecoverySweep   workKind = "worker_recovery_sweep"
 	// workAdoptionReport applies restarted vmmds' adoption reports.
 	workAdoptionReport workKind = "adoption_report"
 	// workAppWake and workRuntimeConfigRestart deliver the durable app_wake
@@ -71,15 +74,18 @@ const (
 	// amendment 2026-10-26).
 	workAppWake              workKind = "app_wake"
 	workRuntimeConfigRestart workKind = "runtime_config_restart"
+	// workWatchdog is the §6.1 stuck-row sweep. Each KillStuck can wait 5 s
+	// on a destroy, so it runs off the loop (ADR-20261028200212).
+	workWatchdog workKind = "watchdog"
 )
 
 // workKinds is the iteration order for metric pre-instantiation.
 var workKinds = []workKind{
 	workServiceRecovery, workServiceRecoverySweep,
 	workPrime, workRestart, workAppReconcile, workDeploymentReconcile, workJobCancel, workJobDispatch, workPrimeRecovery,
-	workWorkflowDispatch, workWorkflowSchedules, workTriggerDispatch, workQueuePushDispatch, workEventFanout,
+	workWorkflowDispatch, workWorkflowSchedules, workTriggerDispatch, workQueuePushDispatch, workBrokerTriggerDispatch, workEventFanout,
 	workReaper, workAdoptionReport, workRehearsalFault, workRehearsalSuspend, workRehearsalSweep, workWorkerRecovery, workWorkerRecoverySweep,
-	workAppWake, workRuntimeConfigRestart,
+	workAppWake, workRuntimeConfigRestart, workWatchdog,
 }
 
 // overflowPolicy decides what submit does when a kind has no free slot.
@@ -142,7 +148,10 @@ var workSpecs = map[workKind]workSpec{
 	// Push-queue lanes (ADR-972) claim durable leases; a dropped lane is
 	// retried by the next trigger tick.
 	workQueuePushDispatch: {slots: api.QueuePushDispatchSlotsPerNode, overflow: overflowDrop},
-	workEventFanout:       {slots: 1, overflow: overflowDrop, rerunCoalesced: true},
+	// Broker trigger lanes (ADR-20261027162741): a dropped or coalesced
+	// lane is resubmitted by the next trigger tick.
+	workBrokerTriggerDispatch: {slots: api.BrokerTriggerDispatchSlotsPerNode, overflow: overflowDrop},
+	workEventFanout:           {slots: 1, overflow: overflowDrop, rerunCoalesced: true},
 	// One reaper tick at a time, sequential inside, as before it moved off
 	// the loop. A tick that fires while the previous one still runs
 	// coalesces into it; the next tick re-reads the instance table.
@@ -162,6 +171,10 @@ var workSpecs = map[workKind]workSpec{
 	// wakeup grace period.
 	workAppWake:              {slots: 8, overflow: overflowDrop},
 	workRuntimeConfigRestart: {slots: 4, overflow: overflowDrop},
+	// One sweep at a time. A tick that fires while a sweep still waits on
+	// destroys coalesces into it; the rows stay stuck, so the next tick
+	// finds them again.
+	workWatchdog: {slots: 1, overflow: overflowDrop},
 }
 
 // workPool runs bounded, coalesced, off-loop tasks for Loop.

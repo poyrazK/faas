@@ -27,6 +27,7 @@ EnvironmentFile=-/etc/faas/storage.env
 EnvironmentFile=-/etc/faas/profiling.env
 EnvironmentFile=-/etc/faas/otel.env
 Environment=GOMEMLIMIT=256MiB
+Environment=TMPDIR=/var/lib/faas-apid
 Environment=FAAS_INTERNAL_MAIL_PRODUCER_OUTBOX_ENABLED=0
 Environment=FAAS_INTERNAL_MAIL_OUTBOX_RECONCILIATION_ENABLED=0
 Environment=FAAS_INTERNAL_MAIL_VERIFICATION_OUTBOX_ENABLED=0
@@ -99,6 +100,7 @@ ProtectClock=yes
 ProtectProc=invisible
 ReadOnlyPaths=/etc/faas
 ReadWritePaths=/srv/fc /var/lib/faas /var/log/faas /var/spool/faas
+StateDirectory=faas-apid
 
 [Install]
 WantedBy=multi-user.target

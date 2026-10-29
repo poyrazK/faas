@@ -1,7 +1,7 @@
 //go:build metal
 
 // shared_runtime_rollback_metal_test.go — ADR-1500 slice 4 acceptance
-// (ADR-20261028090000): rollback across Node app bases and layer kinds.
+// (ADR-20261029103512): rollback across Node app bases and layer kinds.
 //
 // One app gets three deployments:
 //   - legacy: Node 22 keeps its own base (base-minimal drive0, the toolchain
@@ -13,6 +13,11 @@
 // Each serves when deployed, and legacy and shared each serve after a
 // rollback onto them, from a cold boot and from a snapshot restore: a
 // deployment boots the base it recorded, not the app's current one.
+//
+// TestSharedRuntimeRollbackAcrossLayerKindsMetal crosses the other full-layer
+// kind: a Dockerfile build on the minimal base (runtime_base empty) and a
+// Node 24 source build on the shared runner base (runtime_base node24),
+// rolled back in both directions.
 package e2e_test
 
 import (
@@ -23,6 +28,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
@@ -258,4 +265,141 @@ func TestSharedRuntimeRollbackMetal(t *testing.T) {
 		park(t)
 		coldThenRestore(t, shared, sharedBody)
 	})
+}
+
+const (
+	sharedRollbackSlug       = "rtrollback"
+	sharedRollbackFullBody   = "hello from faas (dockerfile fixture)"
+	sharedRollbackSharedBody = sourceDeployHelloBody
+)
+
+func TestSharedRuntimeRollbackAcrossLayerKindsMetal(t *testing.T) {
+	if os.Getenv("FAAS_TEST_KERNEL") == "" {
+		t.Skip("FAAS_TEST_KERNEL unset; skipping metal shared-runtime rollback test")
+	}
+	if _, err := os.Stat("/dev/kvm"); err != nil {
+		t.Skipf("/dev/kvm not available: %v", err)
+	}
+	if os.Getenv("FAAS_BUILDER_BASE_PATH") == "" {
+		t.Skip("FAAS_BUILDER_BASE_PATH unset; skipping metal shared-runtime rollback test")
+	}
+
+	pool := pgtest.OpenMigrated(t)
+	if pool == nil {
+		return
+	}
+	if err := dbMigrateUp(t, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	// Same builder and deploy bases as TestSourceDeployWakeMetal.
+	registry := e2etest.NewFakeRegistry()
+	t.Cleanup(func() { registry.Close() })
+	builderImg, _ := e2etest.HelloImage("onebox-faas/builder-base", "")
+	builderBaseRef := registry.AddImage("onebox-faas/builder-base", builderImg)
+	deployBaseImg, _ := e2etest.BaseLayerImage("onebox-faas/deploy-base", sourceDeployHelloBody)
+	_ = registry.AddImage("onebox-faas/deploy-base", deployBaseImg)
+	e2etest.OverrideBuilderBase(t, builderBaseRef)
+	e2etest.OverrideDeployBase(t, registry.Host()+"/onebox-faas/deploy-base:latest")
+
+	h := e2etest.Start(t, pool, e2etest.All, "FAAS_SOURCE_APP_SHARED_RUNTIME=1")
+	defer h.DumpLogs(t)
+	key := h.SeedAccount(context.Background(), api.PlanHobby)
+	falsy := false
+	if got := postOK(t, h, key, "/v1/apps", api.CreateAppRequest{Slug: sharedRollbackSlug, Type: "app", RequireAuthn: &falsy}); got != http.StatusCreated {
+		t.Fatalf("create app: status=%d", got)
+	}
+	appID := mustGetAppID(t, h, key, sharedRollbackSlug)
+	t.Cleanup(func() {
+		if _, status := doReq(t, h, key, http.MethodPost, "/v1/apps/"+sharedRollbackSlug+"/park", nil); status != http.StatusNoContent {
+			t.Errorf("cleanup park: status=%d", status)
+		}
+	})
+
+	full := sharedRollbackDeploy(t, h, pool, key, DockerfileFixture(t), true)
+	if full.RuntimeBase != "" {
+		t.Fatalf("Dockerfile deployment runtime_base = %q, want the minimal base", full.RuntimeBase)
+	}
+	// Node 24: the Node 22 runner is musl and never shared (ADR-20261029103512).
+	shared := sharedRollbackDeploy(t, h, pool, key, layerKindFixture(t, "24", sharedRollbackSharedBody, false), false)
+	if shared.RuntimeBase != "node24" {
+		t.Fatalf("Node deployment runtime_base = %q, want node24 (the shared runner base)", shared.RuntimeBase)
+	}
+	sharedRollbackServes(t, h, key, appID, sharedRollbackSharedBody)
+
+	// Body-less rollback targets the newest superseded deployment, so two
+	// rollbacks cross the layer kinds in both directions.
+	for _, step := range []struct {
+		name, wantID, wantBody string
+	}{
+		{"shared-to-full", full.ID, sharedRollbackFullBody},
+		{"full-to-shared", shared.ID, sharedRollbackSharedBody},
+	} {
+		t.Run(step.name, func(t *testing.T) {
+			raw, status := doReq(t, h, key, http.MethodPost, "/v1/apps/"+sharedRollbackSlug+"/rollback", nil)
+			if status != http.StatusAccepted {
+				t.Fatalf("rollback: status=%d body=%s", status, raw)
+			}
+			var out api.DeploymentResponse
+			if err := json.Unmarshal(raw, &out); err != nil {
+				t.Fatalf("decode rollback: %v body=%s", err, raw)
+			}
+			if out.ID != step.wantID {
+				t.Fatalf("rollback target = %s, want %s", out.ID, step.wantID)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+			defer cancel()
+			if _, err := e2etest.WaitForDeploymentLive(ctx, t, pool, out.ID, 3*time.Minute); err != nil {
+				t.Fatalf("rolled-back deployment did not reach live: %v", err)
+			}
+			sharedRollbackServes(t, h, key, appID, step.wantBody)
+		})
+	}
+}
+
+// sharedRollbackDeploy uploads source and waits for its deployment to go live.
+// Each deployment may stage its base in this harness, so it gets the staging
+// bounds.
+func sharedRollbackDeploy(t *testing.T, h *e2etest.Harness, pool *pgxpool.Pool, key string, source []byte, dockerfile bool) state.Deployment {
+	t.Helper()
+	raw, status := postMultipartDeployment(t, h, key, sharedRollbackSlug, source, dockerfile, "")
+	if status != http.StatusAccepted {
+		t.Fatalf("create deployment: status=%d body=%s", status, raw)
+	}
+	depID, _ := parseQueuedDeployment(t, raw)
+	ctx, cancel := context.WithTimeout(context.Background(), sharedBaseCeiling+5*time.Minute)
+	defer cancel()
+	dep, _, err := e2etest.WaitForSourceDeployment(ctx, t, pool, depID, sharedBaseStallWindow, sharedBaseCeiling)
+	if err != nil {
+		t.Fatalf("deployment %s did not reach live: %v", depID, err)
+	}
+	return dep
+}
+
+// sharedRollbackServes parks the app, then wakes it with one request and
+// checks the live deployment answered.
+func sharedRollbackServes(t *testing.T, h *e2etest.Harness, key, appID, wantBody string) {
+	t.Helper()
+	// A capture that outlasts apid's drain wait answers a retryable 503.
+	raw, status := doReq(t, h, key, http.MethodPost, "/v1/apps/"+sharedRollbackSlug+"/park", nil)
+	for attempt := 0; attempt < 3 && status == http.StatusServiceUnavailable; attempt++ {
+		t.Logf("park: status=%d body=%s; retrying", status, raw)
+		time.Sleep(5 * time.Second)
+		raw, status = doReq(t, h, key, http.MethodPost, "/v1/apps/"+sharedRollbackSlug+"/park", nil)
+	}
+	if status != http.StatusNoContent {
+		t.Fatalf("park: status=%d body=%s", status, raw)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	if _, err := waitForSourceAppParked(ctx, h, appID, 55*time.Second); err != nil {
+		t.Fatalf("app did not park: %v", err)
+	}
+	host := sharedRollbackSlug + ".apps.test.example"
+	body, wakeID, status := doGetWithHostCapturingWakeID(t, h.HTTPClient(), gatewayAppURL(h, sharedRollbackSlug), host, 60*time.Second)
+	if status != http.StatusOK {
+		t.Fatalf("wake request: status=%d body=%s", status, body)
+	}
+	if got := strings.TrimSpace(string(body)); got != wantBody {
+		t.Fatalf("wake %s served %q, want %q", wakeID, got, wantBody)
+	}
 }

@@ -1,6 +1,6 @@
 package imaged
 
-// adr: 20261028090000 — a child base finds a parent staged from a tag ref,
+// adr: 20261029103512 — a child base finds a parent staged from a tag ref,
 // whose producer records repository@digest.
 
 import (

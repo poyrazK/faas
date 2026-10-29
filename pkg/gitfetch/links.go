@@ -15,7 +15,7 @@ type pendingLink struct {
 	name, target string
 }
 
-// linkCopier dereferences links after extraction (ADR-20261028090000). A
+// linkCopier dereferences links after extraction (ADR-20261029103512). A
 // repository's in-tree links (a shared LICENSE, CLAUDE.md -> AGENTS.md, a
 // monorepo package pointing at a sibling) used to fail every push with
 // "entry type 50 not allowed". The fetched tree is re-packed for the build,

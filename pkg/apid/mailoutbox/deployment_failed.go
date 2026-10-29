@@ -42,8 +42,34 @@ func deploymentFailureDiagnostic(v string) string {
 	return v
 }
 
+// deploymentFailureURL opens the deployment on its app's Deployments tab. The
+// customer dashboard serves an app page and selects views with its query; it
+// has no per-deployment path.
 func deploymentFailureURL(origin, slug, id string) string {
+	return origin + "/dashboard/apps/" + url.PathEscape(slug) + "?" + url.Values{"tab": {"Deployments"}, "deployment": {id}}.Encode()
+}
+
+// legacyDeploymentFailureURL is the per-deployment path earlier releases
+// queued. Such an intent still verifies, and is sent with the working link.
+func legacyDeploymentFailureURL(origin, slug, id string) string {
 	return origin + "/dashboard/apps/" + url.PathEscape(slug) + "/deployments/" + url.PathEscape(id)
+}
+
+// verifiedDeploymentFailureURL checks a queued intent's link against the one
+// its origin, app and deployment produce, and returns the link to send.
+func verifiedDeploymentFailureURL(dashboardURL, slug, id string) (string, bool) {
+	u, err := url.Parse(dashboardURL)
+	if err != nil || u.Scheme != "https" || u.User != nil || u.Host == "" || u.Fragment != "" {
+		return "", false
+	}
+	origin := u.Scheme + "://" + u.Host
+	if len(origin) > api.InternalMailDeploymentFailedOriginMaxBytes {
+		return "", false
+	}
+	if dashboardURL != deploymentFailureURL(origin, slug, id) && dashboardURL != legacyDeploymentFailureURL(origin, slug, id) {
+		return "", false
+	}
+	return deploymentFailureURL(origin, slug, id), true
 }
 
 func (s *Service) saveDeploymentFailed(ctx context.Context, tx pgx.Tx, id pgtype.UUID, address string, recovery pgtype.UUID, slug string, d q.DeploymentFailureSnapshotRow) (pgtype.UUID, error) {
@@ -128,18 +154,15 @@ func deploymentFailedPayloadFor(config *credentialConfig, r q.PlatformMailProduc
 		return deploymentFailedPayload{}, errVerificationPayloadUnavailable
 	}
 	f := payload.Failure
-	u, urlErr := url.Parse(f.DashboardURL)
+	link, linkOK := verifiedDeploymentFailureURL(f.DashboardURL, f.AppSlug, f.DeploymentID)
 	if !r.DeploymentFailureID.Valid || !r.DeploymentFailureAppID.Valid || !r.DeploymentFailureScope.Valid || !r.DeploymentFailureRevision.Valid || r.DeploymentFailureRevision.Int64 < 1 ||
 		!r.DeploymentFailureAccountRevision.Valid || r.DeploymentFailureAccountRevision.Int64 < 1 || !r.DeploymentFailureAppRevision.Valid || r.DeploymentFailureAppRevision.Int64 < 1 ||
 		!r.DeploymentFailureSuccessRevision.Valid || r.DeploymentFailureSuccessRevision.Int64 < 0 || !r.DeploymentFailureAt.Valid || f.FailedAt.IsZero() || !f.FailedAt.Equal(r.DeploymentFailureAt.Time) ||
 		!f.FailedAt.Add(api.InternalMailDeploymentFailedTTL).Equal(r.ExpiresAt.Time) || f.DeploymentID != uuidString(r.DeploymentFailureID.Bytes) || len(f.RelevantLogs) != 0 ||
-		urlErr != nil || u.Scheme != "https" || u.User != nil || u.Host == "" || u.RawQuery != "" || u.Fragment != "" || f.AppSlug == "" || len(f.AppSlug) > api.InternalMailDeploymentFailedDiagnosticMaxBytes {
+		!linkOK || f.AppSlug == "" || len(f.AppSlug) > api.InternalMailDeploymentFailedDiagnosticMaxBytes {
 		return deploymentFailedPayload{}, errVerificationPayloadUnavailable
 	}
-	origin := u.Scheme + "://" + u.Host
-	if len(origin) > api.InternalMailDeploymentFailedOriginMaxBytes || deploymentFailureURL(origin, f.AppSlug, f.DeploymentID) != f.DashboardURL {
-		return deploymentFailedPayload{}, errVerificationPayloadUnavailable
-	}
+	payload.Failure.DashboardURL = link
 	for _, v := range []string{f.ErrorCode, f.Error, f.ErrorHint, f.ErrorWhy, f.ErrorFix} {
 		if len(v) > api.InternalMailDeploymentFailedDiagnosticMaxBytes || deploymentFailureDiagnostic(v) != v {
 			return deploymentFailedPayload{}, errVerificationPayloadUnavailable

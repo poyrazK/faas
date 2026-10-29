@@ -10,6 +10,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/release"
+	"github.com/onebox-faas/faas/pkg/appmetrics"
 	"github.com/onebox-faas/faas/pkg/canary"
 	"github.com/onebox-faas/faas/pkg/releasegate"
 	"github.com/onebox-faas/faas/pkg/releasegate/gather"
@@ -81,10 +82,14 @@ func (s *server) evaluatePostRelease(ctx context.Context, store state.PostReleas
 		// ADR-20261019071734: the app's own signals, judged against the
 		// predecessor's traffic before the rollout.
 		var gateErr error
-		gates, gateErr = gather.Verdict(ctx, s.store, gather.Request{AppID: c.AppID, ReleaseID: c.DeploymentID, BaselineID: c.PredecessorID,
+		req := gather.Request{AppID: c.AppID, ReleaseID: c.DeploymentID, BaselineID: c.PredecessorID,
 			ReleaseWindow:  gather.Window{Since: since, Until: until},
 			BaselineWindow: gather.Window{Since: baselineEnd.Add(-api.PostReleaseWatchBaseline), Until: baselineEnd},
-			Evidence:       s.releaseGateEvidence})
+			Evidence:       s.releaseGateEvidence}
+		if history := appmetrics.NewCustomMetricHistory(s.promqlClient); history != nil {
+			req.CustomMetrics = history
+		}
+		gates, gateErr = gather.Verdict(ctx, s.store, req)
 		if gateErr != nil {
 			s.log.Warn("post-release watch: some release gates could not be read; judging the rest", "app", c.AppID, "deployment", c.DeploymentID, "err", gateErr)
 		}

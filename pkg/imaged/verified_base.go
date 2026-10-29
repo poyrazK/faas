@@ -208,7 +208,7 @@ func (h *Handler) buildVerifiedBase(ctx context.Context, r verifiedBaseRequest, 
 // digest. A tag ref (dev, CI and test nodes) never equals it, and every child
 // base (node24, python312) failed to stage there; it matches on the
 // repository, and the child's layer chain must still extend the parent's
-// (ADR-20261028090000).
+// (ADR-20261029103512).
 func parentSourceMatches(recorded, ref string) bool {
 	if recorded == ref {
 		return true

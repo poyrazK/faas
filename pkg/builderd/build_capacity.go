@@ -12,7 +12,7 @@ import (
 
 // ErrBuildDiskFull marks a builder node without room for a build drive. The
 // build waits in the queue for capacity instead of failing its deployment
-// (ADR-20261028090000).
+// (ADR-20261029103512).
 var ErrBuildDiskFull = errors.New("builderd: insufficient host free space for build drive")
 
 // buildDiskCapacityRetryDelay is a variable so tests need not wait.

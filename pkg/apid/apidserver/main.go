@@ -42,6 +42,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/issueslack"
+	"github.com/onebox-faas/faas/pkg/apid/livequeries"
 
 	"github.com/onebox-faas/faas/pkg/apid/apptaskattach"
 	"github.com/onebox-faas/faas/pkg/apid/deploywatchdog"
@@ -765,8 +766,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return err
 	}
 	defer stopEventWriter()
+	scopedBinding, err := api.TrafficScopedBindingGuardEnabled(deps.getenv("FAAS_TRAFFIC_SCOPED_BINDING_GUARD"))
+	if err != nil {
+		return err
+	}
 	deps.store = func() state.Store {
-		return state.NewPgStore(pool, state.WithTrafficAppsDomain(cfg.GetAppsDomain(deps.getenv)))
+		return state.NewPgStore(pool, state.WithTrafficAppsDomain(cfg.GetAppsDomain(deps.getenv)),
+			state.WithTrafficScopedBindingGuard(scopedBinding))
 	}
 	// The first start of a release that knows the object storage timeline
 	// fence accepts the database's current timeline, so every later backup
@@ -996,6 +1002,14 @@ func run(ctx context.Context, log *slog.Logger) error {
 			Log:   log,
 		})
 		go func() { _ = loginTokenCleanup.Run(ctx) }()
+		// ADR-20261016151947 at-rest binding (amended 2026-10-28): the
+		// operator re-seal drops legacy live logins; issue each live
+		// database left without one a new login, sealed bound to it.
+		if lq := srv.liveQueries; lq != nil && lq.Recipient != nil && lq.Databases != nil {
+			if missing, ok := lq.Keys.(livequeries.MissingLogins); ok {
+				go lq.RunMissingLogins(ctx, missing, livequeries.MissingLoginsInterval)
+			}
+		}
 		// ADR-075: 90-day audit retention. The events table grows
 		// ~3-4 GB/year/active-tier through the auth / key / secret
 		// / account / stateless audit namespaces plus the future
@@ -1022,7 +1036,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// evaluator records which routes keep running apps awake and which are
 		// measured safe to cache; a trigger notifies subscribed app webhooks.
 		if insightStore, ok := srv.store.(routeinsights.Store); ok {
-			insights := &routeinsights.Evaluator{Store: insightStore, Log: log}
+			insights := &routeinsights.Evaluator{Store: insightStore, Log: log,
+				Released: func(acct state.Account, app state.App) bool {
+					return srv.capabilityEnabledFor(routeInsightsCapability, acct, app)
+				}}
 			if srv.ops != nil {
 				insights.Metrics = routeinsights.NewMetrics(srv.ops.Registry(), srv.ops.MetricPrefix())
 			}
@@ -1667,7 +1684,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := srv.configureDurableEntities(ctx, deps.getenv); err != nil {
 		return fmt.Errorf("apid durable entities configuration: %w", err)
 	}
-	managedPostgresService, managedPostgresReconciler, managedPostgresBindings, managedPostgresBindingReconciler, managedPostgresUsageCollector, managedPostgresHealthCollector, err := loadManagedPostgres(deps.pool, deps.getenv, log, srv.managedPostgresOverageAvailable, ops.Registry())
+	managedPostgresService, managedPostgresReconciler, managedPostgresBindings, managedPostgresBindingReconciler, managedPostgresUsageCollector, managedPostgresHealthCollector, err := loadManagedPostgres(deps.pool, deps.getenv, log, srv.managedPostgresOverageAvailable, srv.managedPostgresReleased, ops.Registry())
 	if err != nil {
 		return fmt.Errorf("apid managed postgres configuration: %w", err)
 	}
@@ -1848,6 +1865,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	srv.WithOpsMetrics(ctx, ops)
 	// ADR 20261027163626: time each phase of the traffic binding guard.
 	state.SetTrafficPolicyPhaseObserver(ops.ObserveTrafficPolicyPhase)
+	state.SetTrafficBindingScopeObserver(ops.ObserveTrafficBindingScope)
 
 	// ADR-093 / PR-D: end-to-end request budgets on the apid
 	// listener. Same shape as gatewayd-public PR-B: a fresh

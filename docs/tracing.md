@@ -86,7 +86,7 @@ To keep your logs out of Gregale, set `OTEL_LOGS_EXPORTER=none`, or point
 
 ## Following a request across services
 
-`gregale trace <trace-id>` shows every retained request of one trace across
+`gregale debug trace <trace-id>` shows every retained request of one trace across
 your apps, with the logs, queued invocations and spans linked to it. The trace
 id is on each request in `gregale debug requests get`.
 

@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
@@ -350,58 +351,78 @@ func (s *PgStore) ListEventRecoveryItems(ctx context.Context, accountID, jobID s
 	}
 	return out, tx.Commit(ctx)
 }
+
+// ProcessNextEventRecovery processes one item of the next due job. A job
+// whose item fails is backed off and the failure returned as an
+// *EventJobError, so the caller can go on to the next job
+// (ADR-20261028095548).
 func (s *PgStore) ProcessNextEventRecovery(ctx context.Context, now time.Time) (bool, error) {
+	jobID, worked, err := s.processNextEventRecovery(ctx, now)
+	if err == nil || !jobID.Valid || ctx.Err() != nil {
+		return worked, err
+	}
+	return s.recordEventRecoveryFailure(ctx, jobID, now, err)
+}
+func (s *PgStore) processNextEventRecovery(ctx context.Context, now time.Time) (pgtype.UUID, bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, api.EventRecoveryRequestTimeout)
 	defer cancel()
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return false, err
+		return pgtype.UUID{}, false, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
 	job, err := q.EventRecoveryNextJob(ctx, tx, pgtypeFromTime(now))
 	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
+		return pgtype.UUID{}, false, nil
 	}
 	if err != nil {
-		return false, err
+		return pgtype.UUID{}, false, err
+	}
+	commit := func() (pgtype.UUID, bool, error) {
+		if job.FailureCount > 0 {
+			if err := q.EventRecoveryClearFailures(ctx, tx, job.ID); err != nil {
+				return job.ID, false, err
+			}
+		}
+		return job.ID, true, tx.Commit(ctx)
 	}
 	if !timeFromPgtype(job.ExpiresAt).After(now) {
 		if err = cancelEventRecoveryTx(ctx, q, tx, uuidString(job.ID), now, "expired"); err != nil {
-			return false, err
+			return job.ID, false, err
 		}
-		return true, tx.Commit(ctx)
+		return commit()
 	}
 	item, err := q.EventRecoveryNextItem(ctx, tx, job.ID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = scheduleRecoveryNotification(ctx, q, tx, sqlc.EventRecoveryScheduleParams{JobID: job.ID, NowAt: pgtypeFromTime(now), NextAt: pgtypeFromTime(now)})
 		if err != nil {
-			return false, err
+			return job.ID, false, err
 		}
-		return true, tx.Commit(ctx)
+		return commit()
 	}
 	if err != nil {
-		return false, err
+		return job.ID, false, err
 	}
 	state, reason := "queued", ""
 	var selection api.EventRecoveryRequest
 	if err = json.Unmarshal(job.Selection, &selection); err != nil {
-		return false, err
+		return job.ID, false, fmt.Errorf("%w: decode recovery selection: %w", errEventJobInvalid, err)
 	}
 	if selection.WorkflowRuns != nil {
 		state, reason, err = processWorkflowRunRecoveryTx(ctx, tx, job, item, selection)
 		if err != nil {
-			return false, err
+			return job.ID, false, err
 		}
 	} else if selection.WorkflowRouting != nil {
 		state, reason, err = processWorkflowRecoveryTx(ctx, q, tx, job, item, selection, now)
 		if err != nil {
-			return false, err
+			return job.ID, false, err
 		}
 	} else if selection.Mode == "execution" {
 		state, reason, err = processEventExecutionRecoveryTx(ctx, q, tx, job, item, now)
 		if err != nil {
-			return false, err
+			return job.ID, false, err
 		}
 	} else {
 		target, err := q.EventRecoveryTarget(ctx, tx, sqlc.EventRecoveryTargetParams{AccountID: job.AccountID, AppID: job.AppID, OutboxID: item.OutboxID.Int64, SubscriptionID: item.SubscriptionID, ExpectedProgress: item.ExpectedProgress})
@@ -409,7 +430,7 @@ func (s *PgStore) ProcessNextEventRecovery(ctx context.Context, now time.Time) (
 		case errors.Is(err, pgx.ErrNoRows):
 			state, reason = "skipped", "receipt_expired"
 		case err != nil:
-			return false, err
+			return job.ID, false, err
 		case !target.TargetAvailable:
 			state, reason = "skipped", "target_unavailable"
 		case !target.Unchanged:
@@ -417,17 +438,17 @@ func (s *PgStore) ProcessNextEventRecovery(ctx context.Context, now time.Time) (
 		case !target.RecipientClaims && target.ReceiptState == "processing":
 			// A legacy receipt claim owns all routing. Defer without consuming this item.
 			if err = q.EventRecoveryWait(ctx, tx, sqlc.EventRecoveryWaitParams{JobID: job.ID, WaitReason: "legacy_claim", NowAt: pgtypeFromTime(now)}); err != nil {
-				return false, err
+				return job.ID, false, err
 			}
 			if err = scheduleRecoveryNotification(ctx, q, tx, sqlc.EventRecoveryScheduleParams{JobID: job.ID, NowAt: pgtypeFromTime(now), NextAt: pgtypeFromTime(now.Add(time.Second))}); err != nil {
-				return false, err
+				return job.ID, false, err
 			}
-			return true, tx.Commit(ctx)
+			return commit()
 		default:
 			if err = replayEventRecipientTx(ctx, q, tx, target.ID, uuidString(job.AppID), item.SubscriptionID, target.Progress, target.RecipientClaims, now); errors.Is(err, ErrEventDeliveryExpired) {
 				state, reason = "skipped", "expired"
 			} else if err != nil {
-				return false, err
+				return job.ID, false, err
 			}
 		}
 
@@ -437,29 +458,29 @@ func (s *PgStore) ProcessNextEventRecovery(ctx context.Context, now time.Time) (
 		itemReason = ""
 	}
 	if err = q.EventRecoverySetItem(ctx, tx, sqlc.EventRecoverySetItemParams{JobID: job.ID, Position: item.Position, State: state, Reason: itemReason}); err != nil {
-		return false, err
+		return job.ID, false, err
 	}
 	next := now
 	if err = scheduleRecoveryNotification(ctx, q, tx, sqlc.EventRecoveryScheduleParams{JobID: job.ID, NowAt: pgtypeFromTime(now), NextAt: pgtypeFromTime(next)}); err != nil {
-		return false, err
+		return job.ID, false, err
 	}
 	if err = q.EventRecoveryUsePermit(ctx, tx, sqlc.EventRecoveryUsePermitParams{JobID: job.ID, NowAt: pgtypeFromTime(now)}); err != nil {
-		return false, err
+		return job.ID, false, err
 	}
 	if state != "pending" {
 		if err = q.EventRecoveryProgress(ctx, tx, sqlc.EventRecoveryProgressParams{JobID: job.ID, NowAt: pgtypeFromTime(now)}); err != nil {
-			return false, err
+			return job.ID, false, err
 		}
 	}
 	if state == "pending" {
 		if err = q.EventRecoveryWait(ctx, tx, sqlc.EventRecoveryWaitParams{JobID: job.ID, WaitReason: "capacity", CapacityScope: reason, NowAt: pgtypeFromTime(now)}); err != nil {
-			return false, err
+			return job.ID, false, err
 		}
 		if err = scheduleRecoveryNotification(ctx, q, tx, sqlc.EventRecoveryScheduleParams{JobID: job.ID, NowAt: pgtypeFromTime(now), NextAt: pgtypeFromTime(now.Add(EventDeliveryCapacityRetryDelay))}); err != nil {
-			return false, err
+			return job.ID, false, err
 		}
 	}
-	return true, tx.Commit(ctx)
+	return commit()
 }
 func (s *PgStore) PruneEventRecoveries(ctx context.Context, now time.Time, limit int) (int64, error) {
 	if limit < 1 || limit > api.EventRecoveryItemsPageMax {

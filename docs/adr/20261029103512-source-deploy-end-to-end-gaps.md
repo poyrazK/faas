@@ -1,4 +1,4 @@
-# ADR 20261028090000 · Source deploys: the end-to-end gaps
+# ADR 20261029103512 · Source deploys: the end-to-end gaps
 
 - **Status:** accepted
 - **Date:** 2026-10-28

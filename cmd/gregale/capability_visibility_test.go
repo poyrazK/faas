@@ -146,8 +146,8 @@ func TestLoggedOutHelpShowsTierDefaults(t *testing.T) {
 	t.Setenv("FAAS_COMPLETION_CACHE_PATH", filepath.Join(t.TempDir(), "cache.json"))
 
 	_, help, _ := runCLI(t, "help", "--all")
-	if !listsCommand(help, "crons") || listsCommand(help, "realtime") {
-		t.Fatalf("logged-out help must list GA crons and hide preview realtime:\n%s", help)
+	if !listsCommand(help, "cron") || listsCommand(help, "realtime") {
+		t.Fatalf("logged-out help must list GA cron and hide preview realtime:\n%s", help)
 	}
 	if code, _, stderr := runCLI(t, "realtime", "--help"); code == 0 || !strings.Contains(stderr, `unknown command "realtime"`) {
 		t.Fatalf("realtime --help = %d %q, want unknown command", code, stderr)
@@ -203,7 +203,7 @@ func TestAccountViewHidesCommandsAndRereadsBeforeRefusing(t *testing.T) {
 	api.setHidden("crons", "object-lifecycle")
 
 	_, help, _ := runCLI(t, "help", "--all")
-	if listsCommand(help, "crons") || !listsCommand(help, "realtime") {
+	if listsCommand(help, "cron") || !listsCommand(help, "realtime") {
 		t.Fatalf("account help must follow the server, not tier defaults:\n%s", help)
 	}
 	if got := api.reads.Load(); got != 1 {

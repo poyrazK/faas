@@ -93,7 +93,7 @@ func cmdAuditEventsList(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 0 || (*appSlug != "" && *appID != "") {
-		printCommandValidation(os.Stderr, "usage: gregale audit-events list [--kind-prefix P] [--app <slug> | --app-id <uuid>] [--since RFC3339] [--limit N] [--include-anonymous] [--verbose]\n")
+		printCommandValidation(os.Stderr, "usage: gregale audit list [--kind-prefix P] [--app <slug> | --app-id <uuid>] [--since RFC3339] [--limit N] [--include-anonymous] [--verbose]\n")
 		return 1
 	}
 	if err := validateCLILimit("limit", *limit, 100); err != nil {
@@ -151,7 +151,7 @@ func cmdAuditEventsGet(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale audit-events get <id>", "audit-events")
+		PrintUsage(os.Stderr, "usage: gregale audit get <id>", "audit-events")
 		return 1
 	}
 	id := fs.Arg(0)

@@ -1,6 +1,6 @@
 package gitfetch
 
-// adr: 20261028090000 — repository links become copies of their in-tree
+// adr: 20261029103512 — repository links become copies of their in-tree
 // targets; nothing outside the tree is ever read.
 
 import (

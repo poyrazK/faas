@@ -103,7 +103,7 @@ func TestValidateShapeCapsExpandedSize(t *testing.T) {
 
 // A symlink target is relative to the link's directory, so an in-repository
 // "../" link is accepted and only a target leaving the archive is refused
-// (ADR-20261028090000).
+// (ADR-20261029103512).
 func TestLinkTarget(t *testing.T) {
 	for _, tc := range []struct {
 		name, link string

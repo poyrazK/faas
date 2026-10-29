@@ -53,3 +53,23 @@ func TestAutomaticRecoveryRequiresConfirmedRouteErrors(t *testing.T) {
 		t.Fatal("legacy callers opted into abort")
 	}
 }
+
+// After an abort the candidate serves nothing and a fresh report reads
+// unknown; the report shows the saved abort evidence instead.
+func TestWithSavedAbortReportsTheAbortEvidence(t *testing.T) {
+	live := api.RouteHealthReport{AppID: "app", DeploymentID: "candidate", Status: "unknown", Reason: "comparisons_incomplete_or_unsettled",
+		Customers: &api.RouteCustomerHealthReport{}}
+	saved := api.RouteHealthReport{AppID: "app", DeploymentID: "candidate", Status: "regressed", Reason: "server_error_regression"}
+	abort := &api.RouteHealthHistoryEntry{Purpose: "abort", Decision: AbortDecision(saved), Report: saved}
+	got := WithSavedAbort(live, abort)
+	if got.Status != "regressed" || got.Reason != "server_error_regression" || got.Customers != live.Customers {
+		t.Fatalf("report after abort = %+v, want the saved evidence with live customers", got)
+	}
+	advance := &api.RouteHealthHistoryEntry{Decision: Decision(saved), Report: saved}
+	other := &api.RouteHealthHistoryEntry{Purpose: "abort", Decision: AbortDecision(saved), Report: api.RouteHealthReport{AppID: "app", DeploymentID: "other"}}
+	for name, entry := range map[string]*api.RouteHealthHistoryEntry{"no history": nil, "advance decision": advance, "other deployment": other} {
+		if got := WithSavedAbort(live, entry); got.Status != "unknown" {
+			t.Errorf("%s: report = %+v, want the live report", name, got)
+		}
+	}
+}

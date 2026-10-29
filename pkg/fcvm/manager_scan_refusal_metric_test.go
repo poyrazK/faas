@@ -40,6 +40,8 @@ func TestBringUpScanCheckCountsRefusals(t *testing.T) {
 		{"missing sidecar", func(*memStorage) {}, "sidecar_missing", ""},
 		{"no CRITICAL total", sidecar(map[string]int{"HIGH": 1}, nil), "incomplete", ""},
 		{"fix-available CRITICAL", sidecar(map[string]int{"CRITICAL": 2}, map[string]int{"CRITICAL": 2}), "critical", "platform problem, not your code"},
+		// #5709: imaged's failed-scan placeholder is not 9999 vulnerabilities.
+		{"failed scan placeholder", sidecar(map[string]int{"CRITICAL": wire.BaseScanFailedCount}, map[string]int{"CRITICAL": wire.BaseScanFailedCount}), "scan_failed", "could not finish the vulnerability scan"},
 		{"clean", sidecar(map[string]int{"CRITICAL": 0}, map[string]int{"CRITICAL": 0}), "", ""},
 	}
 	for _, tt := range tests {

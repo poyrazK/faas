@@ -36,5 +36,9 @@ export type ManagedPostgresUsageResponse = {
    * True while the account runs its databases past the allowance, up to the ceiling.
    */
   overage_enabled?: boolean;
+  /**
+   * When the compute cap suspended the account's databases this month; present while compute_cap_state is suspended.
+   */
+  compute_suspended_at?: string;
 };
 

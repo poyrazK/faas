@@ -835,6 +835,31 @@ func (l *NodeLedger) HeadroomMB() int {
 	return head
 }
 
+// AdmissionHeadroomMB is the most RAM one more reservation can take on a
+// single node under the rule Admit applies: the largest
+// ceiling - AdmissionUsedMB over the nodes the ledger knows, or the global
+// ceiling when it knows none. Unlike HeadroomMB it does not sum the nodes:
+// under measured admission (ADR-909) a node's reservations may pass its bare
+// ceiling, and that negative term made every floor report ram_ceiling while
+// Admit would have placed it.
+func (l *NodeLedger) AdmissionHeadroomMB() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if len(l.resident) == 0 {
+		return api.RAMAdmissionCeilingMB
+	}
+	best := 0
+	for nodeID, r := range l.resident {
+		ceiling := r.ceilingMB
+		if ceiling <= 0 {
+			ceiling = l.ceilingForNode_locked(nodeID, api.Limits{})
+		}
+		used, _ := l.admissionUsed_locked(nodeID, r.residentRAM, r.frozenRAM, ceiling)
+		best = max(best, ceiling-used)
+	}
+	return best
+}
+
 // Concurrency returns the number of instances of appID counting toward its cap.
 func (l *NodeLedger) Concurrency(appID string) int {
 	l.mu.Lock()

@@ -459,6 +459,18 @@ func (s *Server) handleWebhookPush(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		installationID, repoFullName, commitSHA := webhookDeliveryMetadata(eventType, body)
+		// Legacy mode picks the HMAC secret by the header's installation, so
+		// the body must name that installation for every event, not only
+		// issues: otherwise a holder of one installation's secret could sign
+		// a push naming another installation's repository.
+		if len(s.WebhookSecret) == 0 && installationID != 0 {
+			headerID, parseErr := strconv.ParseInt(r.Header.Get("X-GitHub-Installation-id"), 10, 64)
+			if parseErr != nil || headerID != installationID {
+				http.Error(w, "installation scope mismatch", http.StatusUnauthorized)
+				observe(errors.New("githubd: webhook installation scope mismatch"))
+				return
+			}
+		}
 		inserted, enqueueErr := s.Deliveries.Enqueue(r.Context(), WebhookDelivery{
 			DeliveryID:     deliveryID,
 			EventType:      eventType,

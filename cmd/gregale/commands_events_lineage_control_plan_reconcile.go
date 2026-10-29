@@ -23,7 +23,7 @@ func cmdEventsLineageControlPlanReconcile(args []string) int {
 		return 1
 	}
 	if len(positional) != 2 || rejectUnexpectedFlagArgs(fs) || *file == "" || *source == "" || *destination == "" || *timeout <= 0 {
-		PrintUsage(os.Stderr, "usage: gregale events subscription-lineage-retry-control-plan-reconcile APP SUB --file PLAN --source-report PREVIOUS --report NEW [--timeout 2m]", "events")
+		PrintUsage(os.Stderr, "usage: gregale event subscription-lineage-retry-control-plan-reconcile APP SUB --file PLAN --source-report PREVIOUS --report NEW [--timeout 2m]", "events")
 		return 1
 	}
 	sub, err := uuid.Parse(positional[1])

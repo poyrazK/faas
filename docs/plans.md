@@ -64,4 +64,4 @@ Included storage is the average over the month, so 20 GiB held for half a month 
 
 Start on **Free** for a small public API or a trial. **Hobby** unlocks the paid observability, async, and data surfaces. **Pro** is the normal production tier for teams, while **Scale** raises the app, concurrency, RAM, and usage ceilings. Feature maturity and entitlement are listed in the [capability matrix](capabilities.md).
 
-Plan changes are safe to preview with `gregale plan`; quota errors include the exact observed value, limit, and next action.
+Plan changes are safe to preview with `gregale billing plan`; quota errors include the exact observed value, limit, and next action.

@@ -141,6 +141,11 @@ deployment and port; this primes deployment weights outside the timed request.
 
 ## Shared traffic accounting
 
+Amended by ADR-20261027173012: for 5 minutes after the shared counter last
+decided a request on a gateway, a store error is decided by that gateway's
+own bucket (the limit holds per gateway); past that grace the refusal below
+applies.
+
 `[ratelimit] mode = "central"` is the daemon default and requires its Postgres
 pool. `local` remains an explicit operator/development exception; unknown
 values refuse startup. Central app/account/rule consumes are atomic. Store
@@ -158,6 +163,15 @@ but do not open the breaker: the next request must be able to verify counter
 table or row-lock recovery immediately. Neither path admits a local token or
 resets shared debt. Backends that cannot classify failures retain bounded
 consult backoff; caller cancellation does not open it.
+
+*Amendment 2026-10-28.* The app and account consume, including coalesced
+batches and their followers, has one second to complete; pre-auth and lease
+consults keep 250 ms. Connection acquisition stays bounded by 250 ms inside
+that budget, so a saturated pool still fails fast and opens the breaker.
+Before, one commit slower than 250 ms (a checkpoint or fsync stall, a
+row-lock wait) refused a customer request with `rate_limit_unavailable`/503
+even though the counter was healthy. A consume that does not finish within
+the budget still refuses; nothing is admitted unverified.
 
 ADR-104 consult coalescing preserves these rules for queued batches. Batch
 consumes and initial counter creation use SQLC, retain fractional refill and
@@ -1773,3 +1787,27 @@ guard analyses only hostnames whose claim changes, against the owned rules and
 the route candidates that can match them. The write-time guarantee, ceilings,
 error codes and the 2 s phase bound are unchanged. Until its switch is on, the
 sections above describe production.
+
+### Amendment: a timed-out policy check asks to be resent (2026-10-28)
+
+A policy check that runs out of time (the 2 s phase bound or the 1,750 ms SQL
+timeout, unit `milliseconds`) is not a verdict on the policy: on a busy control
+plane a deploy of an app with no edge rules was refused and passed on retry
+(H14-78). The release-guards drill on n2 hit it in every run, and once needed
+four sends while the app served about 30 requests a second. Its hint said to
+retry, but apid stored the 422 for the request's Idempotency-Key, and the CLI's
+deploy key is the deploy's content digest, so the same `gregale deploy` got the
+stored refusal back for 24 hours. Nothing retried it either.
+
+- The time-ceiling `traffic_policy_too_complex` problem carries `Retry-After`
+  (`api.TrafficPolicyAnalysisRetryAfter`, 2 s) and `retry_after_seconds`. Size
+  ceilings are unchanged and remain verdicts.
+- apid never stores a refusal (status ≥ 400) that carries `Retry-After` for
+  idempotent replay; like a 429 or 503 it releases the key, so the resend runs.
+- `api.Client` (the CLI) resends such a refusal after the wait, with the same
+  Idempotency-Key and Deployment-Attempt-ID, up to four sends. A refused send
+  saved nothing and left no submission receipt.
+- The Go, Node and Python SDK retry layers (opt-in) also resend it. They match
+  the code, not every 4xx with `Retry-After`: an MFA cooldown sends a 24-hour one.
+
+The bound, ceilings, codes and fail-closed behaviour are unchanged.

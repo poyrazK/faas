@@ -124,6 +124,10 @@ func (s *PgStore) createCheckedRollbackTx(ctx context.Context, tx pgx.Tx, acct, 
 	if d.EnvironmentWorkloadHeld() || d.Status != DeploySuperseded && (d.Status != DeployLive || d.TrafficPercent != 0) {
 		return api.RollbackOperation{}, ErrNoRollbackTarget
 	}
+	// A target whose layers were reclaimed cannot cold boot (Hunt 21 H21-1).
+	if err := requireDeploymentLayerArtifactsTx(ctx, tx, target); err != nil {
+		return api.RollbackOperation{}, err
+	}
 	a, err := s.AppByID(ctx, app)
 	if err != nil {
 		return api.RollbackOperation{}, err

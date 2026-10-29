@@ -1,6 +1,6 @@
 package state_test
 
-// adr: 20261028090000 — a claimed build whose deployment a newer revision
+// adr: 20261029103512 — a claimed build whose deployment a newer revision
 // already outpaces is cancelled and its deployment superseded, fenced on the
 // claim; the newest revision's build always runs.
 

@@ -51,7 +51,7 @@ func cmdDebugRollout(args []string) int {
 		return 1
 	}
 	if len(positional) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale debug rollout [--deployment-id UUID] <slug>", debugCmdDocsTopic)
+		PrintUsage(os.Stderr, "usage: gregale debug explain [--deployment-id UUID] <slug>", debugCmdDocsTopic)
 		return 1
 	}
 	client, err := authedClient()
@@ -136,7 +136,7 @@ func renderDebugStatus(w io.Writer, slug string, resp api.DebugStatusResponse) {
 func debugStatusNext(slug string, resp api.DebugStatusResponse) []string {
 	var next []string
 	if resp.Rollout != nil && resp.Rollout.State != api.DebugRolloutRollingOut {
-		next = append(next, "gregale debug rollout "+slug)
+		next = append(next, "gregale debug explain "+slug)
 	}
 	if len(resp.RecentFailures) > 0 {
 		next = append(next, "gregale debug requests inspect "+slug+" "+debugRequestRef(resp.RecentFailures[0]))

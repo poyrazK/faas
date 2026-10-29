@@ -243,7 +243,7 @@ func extractTarGzInto(src, dst string, lim extractLimits) *api.Problem {
 			// target is a regular entry of the same archive, scanned there;
 			// the build guest extracts the link itself. Repositories carry
 			// in-tree links (a shared LICENSE, CLAUDE.md -> AGENTS.md), and
-			// refusing every link refused them all (ADR-20261028090000).
+			// refusing every link refused them all (ADR-20261029103512).
 			if _, ok := tarball.LinkTarget(hdr.Name, hdr.Linkname, hdr.Typeflag == tar.TypeLink); !ok {
 				return api.ErrSourceInvalid("links with an absolute target or one outside the archive are rejected")
 			}

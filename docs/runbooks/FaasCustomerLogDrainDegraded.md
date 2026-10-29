@@ -9,7 +9,8 @@ Alerts:
 
 These are customer-runtime log export warnings. The application request path
 is independent from the drain and should remain available while the external
-destination is unhealthy.
+destination is unhealthy. The `log_drains` kill switch, ownership and
+recovery are in [FaasLogs](FaasLogs.md).
 
 ## Symptom
 

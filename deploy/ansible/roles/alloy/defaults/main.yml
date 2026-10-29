@@ -41,6 +41,7 @@ alloy_journal_units:
   - faas-imaged.service
   - faas-builderd.service
   - faas-bridged.service
+  - faas-mcp-bridge.service
   - faas-outboundd.service
   - faas-realtimed.service
   - faas-profiled.service

@@ -140,6 +140,9 @@ type Config struct {
 	// resumes a guest kernel whose mounted ext4 state predates builderd's
 	// offline edits of the same drive (see prepareWarmBuilder).
 	DisableWarmBuilders bool `toml:"-"`
+	// LayerCompression is "" (gzip) or api.BuildLayerCompressionZstd, from
+	// LayerZstdEnv. It reaches every build manifest and cache key.
+	LayerCompression string `toml:"-"`
 	// BuilderNodeID is the compute_node name stamped onto every
 	// provenance row this Builderd writes (ADR-038, Tier 3 / issue
 	// #197 B3.1). Defaulted to "default-local" on the one-box by
@@ -644,7 +647,7 @@ func (b *Builderd) stopIfBuildCancelled(ctx context.Context, claim state.Build) 
 
 // stopIfBuildOutpaced cancels a claimed build whose deployment a newer
 // revision has already outpaced: promotion would supersede it, so building it
-// only delays the newer deployment queued behind it (ADR-20261028090000).
+// only delays the newer deployment queued behind it (ADR-20261029103512).
 func (b *Builderd) stopIfBuildOutpaced(ctx context.Context, claim state.Build) bool {
 	store, ok := b.store.(state.OutpacedBuildStore)
 	if !ok {
@@ -990,7 +993,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 			b.emitBuildLog(ctx, build.ID, fmt.Sprintf("mounting %d build secrets\n", len(dockerfileBuild.Secrets)))
 		}
 	}
-	// ADR-20261026090000: a Dockerfile build pulls its base images with the
+	// ADR-20261026091500: a Dockerfile build pulls its base images with the
 	// app's registry credentials, so it can build FROM a private image.
 	var registryCreds []SealedRegistryCredential
 	if fw == FrameworkDocker {
@@ -1016,6 +1019,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		DevWatchHost:    watch.Host,
 		AccountID:       app.AccountID,
 	}
+	recipe.LayerCompression = b.cfg.LayerCompression
 	recipe.BuildSecretScope = buildSecretScope(app.AccountID, app.ID, dep.Scope, buildSecrets)
 	recipe.RegistryAuthScope = registryAuthScope(app.ID, registryCreds)
 	reuseScope, reuseOptedIn := gitOpsReuseScope(app, dep)
@@ -1160,6 +1164,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		DevWatchCommand:       watch.Command,
 		DevWatchHost:          watch.Host,
 		DependencyCacheKey:    dependencyCacheKey,
+		LayerCompression:      b.cfg.LayerCompression,
 		LogPath:               dep.LogPath,
 		RAMMB:                 api.BuildVMRAMMB,
 		TimeoutSec:            b.cfg.BuildTimeoutSeconds,
@@ -1169,7 +1174,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	if len(buildSecrets) > 0 || len(registryCreds) > 0 {
 		// A build with secrets or registry credentials never restores or
 		// leaves a warm builder, so a value cannot outlive its build in a
-		// snapshot (ADR-20261022185329, ADR-20261026090000).
+		// snapshot (ADR-20261022185329, ADR-20261026091500).
 		vmReq.WarmScopeKey = ""
 	}
 	warmVM, warmResult, warmSnapshot, warmStarted := b.prepareWarmBuilder(ctx, slot, vmReq)
@@ -1241,7 +1246,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 			return BuildResult{}, err
 		}
 		// A node without build disk is capacity, not a failed build: the
-		// deployment waits in the queue (ADR-20261028090000).
+		// deployment waits in the queue (ADR-20261029103512).
 		if errors.Is(err, ErrBuildDiskFull) {
 			cancel()
 			if b.requeueForBuildCapacity(ctx, build, err) {
@@ -1642,7 +1647,7 @@ func (b *Builderd) emitBuildSucceeded(ctx context.Context, buildID string, durat
 // The deployment row also gets the failure class's code and guidance. Before,
 // only markFailedEx's classified failures carried one; every other failed
 // source deployment showed a bare message such as "build exited 1" or a
-// daemon error with no hint (ADR-20261028090000).
+// daemon error with no hint (ADR-20261029103512).
 func (b *Builderd) markFailed(ctx context.Context, claim state.Build, fc state.FailureClass, msg string, buildStart time.Time) bool {
 	if !b.failBuild(ctx, claim, fc, msg, buildStart) {
 		return false

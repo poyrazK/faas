@@ -26,11 +26,19 @@ import (
 // rather than O(n) when every bucket is mid-drain.
 const LimiterEvictScan = 32
 
-// centralConsultTimeout bounds the authoritative central-mode token consume
-// before refusing admission during a Postgres outage. Central
-// mode requires a successful consume for every admitted request so replicas
-// share one burst. The consult breaker refuses requests during an outage.
+// centralConsultTimeout bounds the pre-auth and lease consults before they
+// refuse admission during a Postgres outage. Central mode requires a
+// successful consume for every admitted request so replicas share one burst.
+// The consult breaker refuses requests during an outage.
 const centralConsultTimeout = 250 * time.Millisecond
+
+// centralConsumeTimeout bounds the authoritative app and account consume
+// (ADR-570 amendment 2026-10-28). A committed counter write occasionally
+// takes longer than 250 ms (a checkpoint or fsync stall, a row-lock wait),
+// and refusing then turned one slow commit into a customer 503. The
+// PostgreSQL backend still bounds connection acquisition by 250 ms, so a
+// saturated pool fails fast and opens the breaker.
+const centralConsumeTimeout = time.Second
 
 // centralBreakerWindow is how long a limiter refuses unverified admission
 // after connection acquisition failed, before it consults Postgres again. Without it
@@ -113,10 +121,19 @@ type Limiter struct {
 	// visible without coupling this token-bucket primitive to Prometheus,
 	// logging, or the gateway audit sink.
 	centralErrorObserver func(context.Context, string, error)
+	// centralFallbackObserver is called for a request decided by the local
+	// bucket because the central counter failed inside the outage grace.
+	centralFallbackObserver func(context.Context, string, error)
 	// centralOpenUntil (unix nanoseconds, from now) is set when a central
-	// consult fails; until then requests refuse unverified admission without
-	// waiting on Postgres.
+	// consult fails; until then requests are decided without waiting on
+	// Postgres: locally inside the outage grace, refused after it.
 	centralOpenUntil atomic.Int64
+	// centralVerifiedAt (unix nanoseconds) is when the shared counter last
+	// decided an admission, the start of the outage grace.
+	centralVerifiedAt atomic.Int64
+	// centralOutageGrace overrides api.TrafficRateLimitOutageGrace when
+	// positive; negative disables the grace. Set before serving.
+	centralOutageGrace time.Duration
 	// coalescer batches concurrent consults for one central counter when the
 	// backend implements CentralBatchBackend.
 	coalescer centralCoalescer
@@ -736,9 +753,17 @@ func (l *Limiter) allowTokenWithCentralKey(ctx context.Context, id string, rps, 
 	}
 	remaining, admitted, err := l.consumeCentral(ctx, scope, subjectID, plan, rps, burst)
 	if err != nil {
+		// A counter that answered within the outage grace keeps its limit on
+		// this gateway's own bucket (ADR-20261027173012); past the grace,
+		// unverified admission is refused.
+		if l.centralWithinOutageGrace(now) {
+			l.observeCentralFallback(ctx, scope, err)
+			return localAllowed
+		}
 		l.observeCentralError(ctx, scope, err)
 		return false
 	}
+	l.centralVerifiedAt.Store(l.now().UnixNano())
 	// Keep response headers aligned with the latest
 	// authoritative balance. Remaining==0 is a valid final-token admit.
 	l.mu.Lock()
@@ -776,7 +801,7 @@ func (l *Limiter) consumeCentral(ctx context.Context, scope, subjectID, plan str
 	if batch, ok := l.central.(CentralBatchBackend); ok {
 		remaining, admitted, err = l.coalescer.consume(ctx, l.central, batch, scope, subjectID, plan, rps, burst)
 	} else {
-		consultCtx, cancel := context.WithTimeout(ctx, centralConsultTimeout)
+		consultCtx, cancel := context.WithTimeout(ctx, centralConsumeTimeout)
 		remaining, admitted, err = l.central.ConsumeToken(consultCtx, scope, subjectID, plan, rps, burst)
 		cancel()
 	}
@@ -800,6 +825,28 @@ func (l *Limiter) observeCentralError(ctx context.Context, scope string, err err
 		return
 	}
 	l.centralErrorObserver(ctx, scope, err)
+}
+
+// centralWithinOutageGrace reports whether the shared counter last decided
+// an admission on this limiter no longer than api.TrafficRateLimitOutageGrace
+// ago. A limiter that never reached the counter has no grace.
+func (l *Limiter) centralWithinOutageGrace(now time.Time) bool {
+	grace := api.TrafficRateLimitOutageGrace
+	if l.centralOutageGrace != 0 {
+		grace = l.centralOutageGrace
+	}
+	verified := l.centralVerifiedAt.Load()
+	return grace > 0 && verified != 0 && now.UnixNano()-verified <= int64(grace)
+}
+
+// observeCentralFallback reports a request decided by this gateway's bucket
+// because the shared counter failed inside the outage grace. The request is
+// not marked unavailable: an over-limit one gets the ordinary 429.
+func (l *Limiter) observeCentralFallback(ctx context.Context, scope string, err error) {
+	if l == nil || l.centralFallbackObserver == nil {
+		return
+	}
+	l.centralFallbackObserver(ctx, scope, err)
 }
 
 // isNoopBackend reports whether the central field is the default

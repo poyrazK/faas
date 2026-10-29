@@ -91,13 +91,18 @@ type FinancialAppCostAllocation struct {
 }
 
 type FinancialForecastResponse struct {
-	PeriodStart           time.Time             `json:"period_start"`
-	PeriodEnd             time.Time             `json:"period_end"`
-	AsOf                  time.Time             `json:"as_of"`
-	Currency              string                `json:"currency"`
-	Meters                []FinancialMeterCosts `json:"meters"`
-	BillEstimateAvailable bool                  `json:"bill_estimate_available"`
-	MissingBillComponents []string              `json:"missing_bill_components"`
+	PeriodStart time.Time             `json:"period_start"`
+	PeriodEnd   time.Time             `json:"period_end"`
+	AsOf        time.Time             `json:"as_of"`
+	Currency    string                `json:"currency"`
+	Meters      []FinancialMeterCosts `json:"meters"`
+	// ProjectedSubtotalMillicents is the plan fee plus every meter's projected
+	// usage charge for the month (issue #264), set only when every meter has
+	// an available forecast. It is not the bill: MissingBillComponents still
+	// lists what it leaves out, and BillEstimateAvailable stays false.
+	ProjectedSubtotalMillicents *int64   `json:"projected_subtotal_millicents,omitempty"`
+	BillEstimateAvailable       bool     `json:"bill_estimate_available"`
+	MissingBillComponents       []string `json:"missing_bill_components"`
 }
 
 type FinancialBudgetPreviewRequest struct {

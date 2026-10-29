@@ -23,12 +23,15 @@ func pgRouteHealthNotification(ctx context.Context, tx pgx.Tx, snapshot RoutePol
 		return fmt.Errorf("read route health notification state: %w", err)
 	}
 	previous := routeHealthNotificationState{ContextKey: row.ContextKey, Status: row.Status, BlockedDecisionID: row.BlockedDecisionID}
+	if row.UpdatedAt.Valid {
+		previous.Since = row.UpdatedAt.Time.UTC()
+	}
 	next, err := routeHealthTransition(previous, entry, snapshot.App.Slug)
 	if err != nil || next.State == previous {
 		return err
 	}
 	if err := q.WriteRouteHealthNotificationState(ctx, tx, sqlc.WriteRouteHealthNotificationStateParams{DeploymentID: entry.Report.DeploymentID, AppID: snapshot.App.ID, AccountID: snapshot.Account.ID,
-		ContextKey: next.State.ContextKey, Status: next.State.Status, BlockedDecisionID: next.State.BlockedDecisionID, UpdatedAt: NewPgtypeTime(entry.CheckedAt)}); err != nil {
+		ContextKey: next.State.ContextKey, Status: next.State.Status, BlockedDecisionID: next.State.BlockedDecisionID, UpdatedAt: NewPgtypeTime(next.State.Since)}); err != nil {
 		return fmt.Errorf("write route health notification state: %w", err)
 	}
 	if next.Event == "" {

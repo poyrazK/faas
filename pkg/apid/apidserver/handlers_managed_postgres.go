@@ -25,6 +25,8 @@ func managedPostgresProblem(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, managedpostgres.ErrProvisioningClosed):
 		status, code, title, detail = http.StatusServiceUnavailable, "managed_postgres_provisioning_not_enabled", "Managed PostgreSQL provisioning is closed", managedpostgres.ProvisioningClosedDetail
+	case errors.Is(err, managedpostgres.ErrFleetPaused):
+		status, code, title, detail = http.StatusServiceUnavailable, "managed_postgres_new_databases_paused", "New managed PostgreSQL databases are paused", managedpostgres.FleetPausedDetail
 	case errors.Is(err, managedpostgres.ErrUnavailable):
 		status, code, title, detail = http.StatusServiceUnavailable, "managed_postgres_unavailable", "Managed PostgreSQL unavailable", managedpostgres.UnavailableDetail
 	case errors.Is(err, managedpostgres.ErrNotFound):
@@ -254,12 +256,20 @@ func (s *server) getManagedPostgresUsage(w http.ResponseWriter, r *http.Request,
 		managedPostgresPlanDenied(w, acct.Plan, "managed PostgreSQL usage is not available for this plan")
 		return
 	}
-	summary, overage, err := s.managedPostgresUsageFor(r.Context(), acct, acct.ResourceOwnerID(), limits)
+	subject := acct.ResourceOwnerID()
+	summary, overage, err := s.managedPostgresUsageFor(r.Context(), acct, subject, limits)
 	if err != nil {
 		managedPostgresProblem(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, managedPostgresUsageView(summary, limits, s.managedPostgresCapMode, overage))
+	view := managedPostgresUsageView(summary, limits, s.managedPostgresCapMode, overage)
+	if view.ComputeCapState == api.ManagedPostgresComputeCapSuspended {
+		if view.ComputeSuspendedAt, err = s.managedPostgres.CapSuspendedAt(r.Context(), subject, time.Now().UTC()); err != nil {
+			managedPostgresProblem(w, err)
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, view)
 }
 
 func managedPostgresUsageOperatorView(accountID string, summary managedpostgres.UsageSummary, limits api.ManagedPostgresPlanLimits, capMode managedpostgres.CapEnforcementMode, overage bool) (api.ManagedPostgresUsageOperatorResponse, error) {
@@ -347,6 +357,15 @@ func (s *server) createManagedPostgresDatabase(w http.ResponseWriter, r *http.Re
 	limits, ok := api.ManagedPostgresLimitsFor(acct.Plan)
 	if !ok || limits.DatabasesMax == 0 {
 		managedPostgresPlanDenied(w, acct.Plan, "upgrade to a paid plan to create a database")
+		return
+	}
+	// Free has no overage to pay for compute past its allowance, and only
+	// enforced caps (FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT=on) suspend it
+	// there. Under shadow or off a Free database with steady traffic ran
+	// its provider compute all month (~730 compute-unit hours against 5) at
+	// Gregale's cost, and Free sign-ups are unlimited.
+	if acct.Plan == api.PlanFree && s.managedPostgresCapMode != managedpostgres.CapEnforcementOn {
+		managedPostgresPlanDenied(w, acct.Plan, "managed PostgreSQL opens to the Free plan once compute caps are enforced; upgrade to a paid plan to create a database")
 		return
 	}
 	var req api.CreateManagedPostgresDatabaseRequest

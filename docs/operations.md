@@ -81,7 +81,7 @@ lifecycle integrations. The HTTP, Job and workflow starters use the controller
 and the same host adapter contract. See [ADR-673](adr/673-shared-customer-operations-auth.md)
 and [ADR-674](adr/674-customer-operation-feature-controller.md).
 
-Run `gregale customer-operations types --dir . --app <slug> --plan <plan>` to
+Run `gregale operation types --dir . --app <slug> --plan <plan>` to
 generate a source-local TypeScript declaration file from the validated input
 and output schemas. The HTTP, Job and Workflow starter browser apps reference
 these generated types through JSDoc, so editors can type `session.start()` and
@@ -146,7 +146,7 @@ until, approver}`; history records `waiting` and `resumed` events. The declared
 approver decides with `POST /v1/apps/{slug}/operations/{id}/approvals/{step}`
 (account) or `POST /v1/platform-tenant-self/customer-operations/{id}/approvals/{step}`
 (customer), sending `expected_generation`, `decision` (`approved` or `rejected`)
-and an optional comment, or run `gregale customer-operations approve OP_ID --app
+and an optional comment, or run `gregale operation approve OP_ID --app
 SLUG --expected-generation N --step STEP --decision approved` (`--self` with a
 customer token). The decision and the deciding key or token are recorded as an
 `approval_decided` event. Repeating a decision is idempotent; a different
@@ -172,10 +172,10 @@ An event wait needs a `timeout`. While parked, the operation is `waiting` with
 `waiting.kind: event` and `waiting.event`. Deliver the event with a signal:
 
 ```sh
-gregale customer-operations signal OP_ID --app shop --event payment.succeeded \
+gregale operation signal OP_ID --app shop --event payment.succeeded \
   --signal-id evt_3Nx --payload '{"charge":"ch_1"}'
 # Or reach every active operation about one business subject:
-gregale customer-operations signal --app shop --scope production --operation fulfil \
+gregale operation signal --app shop --scope production --operation fulfil \
   --subject order:ord_42 --event payment.succeeded --signal-id evt_3Nx
 ```
 
@@ -202,8 +202,8 @@ A customer resumes its own operations with its tenant credentials and the
 `platform_tenant:operations:manage` scope, without the account's token:
 
 ```sh
-gregale customer-operations signal OP_ID --self --event payment.succeeded --signal-id evt_3Nx
-gregale customer-operations signal --self --definition DEF_ID --subject order:ord_42 \
+gregale operation signal OP_ID --self --event payment.succeeded --signal-id evt_3Nx
+gregale operation signal --self --definition DEF_ID --subject order:ord_42 \
   --event payment.succeeded --signal-id evt_3Nx
 ```
 
@@ -257,7 +257,7 @@ and `safe_to_retry` recovery is refused once the budget is spent. Workflow steps
 never retry automatically, so `max_attempts` is HTTP-only.
 
 Job definitions accept no limits. Reads return `limits`, `deadline_at` and
-`usage {execution_ms, attempts}`, and `gregale customer-operations get` prints
+`usage {execution_ms, attempts}`, and `gregale operation get` prints
 the deadline and budget. See
 [ADR-1196](adr/1196-operation-deadlines-and-budgets.md).
 
@@ -324,7 +324,7 @@ The browser client accepts `{appID, scope, subjectType: 'order', subjectID:
 them. An operator can use:
 
 ```sh
-gregale customer-operations list --app orders --scope default \
+gregale operation list --app orders --scope default \
   --subject-type order --subject-id ord-123
 ```
 
@@ -645,8 +645,8 @@ operations:
 Account operators can read the retained recovery view before recording a decision:
 
 ```sh
-gregale customer-operations inspect OPERATION_ID --app exports --json
-gregale customer-operations recover OPERATION_ID --app exports --preview \
+gregale operation inspect OPERATION_ID --app exports --json
+gregale operation recover OPERATION_ID --app exports --preview \
   --expected-generation 1 --resolution safe_to_retry --json
 ```
 
@@ -682,8 +682,8 @@ one page ordered by time. It requires account read scope and MFA; platform tenan
 read events instead.
 
 ```sh
-gregale customer-operations timeline OPERATION_ID --app exports --all
-gregale customer-operations timeline OPERATION_ID --app exports --all --logs
+gregale operation timeline OPERATION_ID --app exports --all
+gregale operation timeline OPERATION_ID --app exports --all --logs
 ```
 
 Each source pages after its own position, so following `next_cursor` never skips
@@ -743,7 +743,7 @@ admission verification and rollback. The proposed
 cohort, for each native execution kind and for general admission per kind.
 
 Owning accounts can observe submission prerequisites with
-`gregale customer-operations doctor --app SLUG --deployment DEPLOYMENT_UUID
+`gregale operation doctor --app SLUG --deployment DEPLOYMENT_UUID
 --tenant TENANT_UUID [--name NAME] [--json]`. The account read endpoint reports the
 responding API node's current preview decision, tenant and plan, pending capacity,
 deployment/definition/release pins and configuration presence.
@@ -913,8 +913,8 @@ Authorize the order before this call and recheck it under the business row lock.
 Read retained facts using `GregaleOperationClient.milestones(operationID)` or `businessMilestones({appID, scope, subjectType, subjectID})`. The Go and Python clients expose the equivalent Operation and business-reference feeds. Go and Python also support transaction-backed milestone and workflow-state validation and publication through their application runtimes. Account operators can inspect them with:
 
 ```sh
-gregale customer-operations milestones OPERATION_UUID --app orders
-gregale customer-operations milestones --app orders --scope default --subject-type order --subject-id ORDER_ID
+gregale operation milestones OPERATION_UUID --app orders
+gregale operation milestones --app orders --scope default --subject-type order --subject-id ORDER_ID
 ```
 
 Tenant credentials use `--self`; an Operation UUID needs no app argument, while business-reference reads require an app UUID. Feed pages use `--limit` and `--cursor`. The dashboard shows milestones on Operation detail pages and when an exact business reference is selected. Payloads are public fields defined by the application schema. Customer identity comes from credentials, and business-reference selectors never override ownership.
@@ -957,9 +957,9 @@ Generate bindings from the app's validated manifest and bundled schemas before
 building application code:
 
 ```sh
-gregale customer-operations bindings --app orders --plan pro --dir . \
+gregale operation binding generate --app orders --plan pro --dir . \
   --language typescript --output workflow-bindings.ts
-gregale customer-operations bindings --app orders --plan pro --dir . \
+gregale operation binding generate --app orders --plan pro --dir . \
   --language typescript --output workflow-bindings.ts --check
 ```
 
@@ -1145,10 +1145,10 @@ you browse. Refresh the first page for the latest view. The queue observes facts
 it neither authorizes nor performs business Operations.
 
 ```sh
-gregale customer-operations attention --app orders --scope production
-gregale customer-operations attention --app orders --scope production \
+gregale operation attention list --app orders --scope production
+gregale operation attention list --app orders --scope production \
   --workflow order-fulfillment --target-operation fulfill-order --reason blocked
-gregale customer-operations attention --self --app-id APP_UUID --scope production
+gregale operation attention list --self --app-id APP_UUID --scope production
 ```
 
 Go exposes `ListAccountWorkflowAttention` and
@@ -1219,9 +1219,9 @@ workflows without blockers are not unassigned work. Identifiers retain their
 128 UTF-8 byte limit and may not contain control characters.
 
 ```sh
-gregale customer-operations attention --app orders --scope production --owner billing-team
-gregale customer-operations attention --app orders --scope production --unassigned
-gregale customer-operations attention-summary --app orders --scope production --group-by owner
+gregale operation attention list --app orders --scope production --owner billing-team
+gregale operation attention list --app orders --scope production --unassigned
+gregale operation attention summary --app orders --scope production --group-by owner
 ```
 
 The account and customer-self attention endpoints accept the same query
@@ -1278,8 +1278,8 @@ blocker removes it from the current escalation queue; retained resolution histor
 remains available through the existing workflow links.
 
 ```sh
-gregale customer-operations attention --app orders --scope production --reason escalated
-gregale customer-operations attention-summary --app orders --scope production --reason escalated --group-by owner
+gregale operation attention list --app orders --scope production --reason escalated
+gregale operation attention summary --app orders --scope production --reason escalated --group-by owner
 ```
 
 Account and customer-self attention endpoints and SDKs accept `reason=escalated`.
@@ -1387,8 +1387,8 @@ workflow queue page or the bounded group page. Choose `workflow` (default),
 `blocker_code`, `target_operation`, or account-only `customer` grouping.
 
 ```sh
-gregale customer-operations attention-summary --app orders --scope production --group-by blocker_code
-gregale customer-operations attention --app orders --scope production --blocker-code payment-pending
+gregale operation attention summary --app orders --scope production --group-by blocker_code
+gregale operation attention list --app orders --scope production --blocker-code payment-pending
 ```
 
 Account API: `GET /v1/apps/{slug}/workflow-attention/summary`.
@@ -1479,8 +1479,8 @@ makes an active retained workflow overdue. Dates normalize to UTC microseconds.
 Reports remain idempotent and older revisions cannot replace newer snapshots.
 
 ```sh
-gregale customer-operations attention --app orders --scope production --reason overdue
-gregale customer-operations attention-summary --app orders --scope production --reason overdue --group-by workflow
+gregale operation attention list --app orders --scope production --reason overdue
+gregale operation attention summary --app orders --scope production --reason overdue --group-by workflow
 ```
 
 The existing attention APIs accept `reason=overdue`. They evaluate overdue
@@ -1548,8 +1548,8 @@ text of at most 512 bytes without control characters. Descriptions should not
 contain private business details. Outcome codes are defined by the application.
 
 ```sh
-gregale customer-operations outcomes --app orders --scope production --code fulfilled
-gregale customer-operations outcome-summary --app orders --scope production --group-by outcome
+gregale operation outcomes --app orders --scope production --code fulfilled
+gregale operation outcome summary --app orders --scope production --group-by outcome
 ```
 
 Listings use `GET /v1/apps/{slug}/workflow-outcomes` or credential-scoped

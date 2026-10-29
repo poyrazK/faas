@@ -88,6 +88,11 @@ func UnitApid() daemonunit.Unit {
 		EnvironmentFile: "/etc/faas/sealed.env -/etc/faas/storage.env -/etc/faas/profiling.env -/etc/faas/otel.env",
 		Environment: []daemonunit.KV{
 			{Key: "GOMEMLIMIT", Value: fmt.Sprintf("%dMiB", api.APIDGoMemLimitMB)},
+			// Operation artifacts and account exports spool to TMPDIR.
+			// PrivateTmp puts /tmp on the host /tmp, tmpfs on some hosts,
+			// where those bytes count against MemoryMax; the state
+			// directory is on disk (bug hunt 2026-10-27 B5).
+			{Key: "TMPDIR", Value: "/var/lib/faas-apid"},
 			{Key: "FAAS_INTERNAL_MAIL_PRODUCER_OUTBOX_ENABLED", Value: "0"},
 			{Key: "FAAS_INTERNAL_MAIL_OUTBOX_RECONCILIATION_ENABLED", Value: "0"},
 			{Key: "FAAS_INTERNAL_MAIL_VERIFICATION_OUTBOX_ENABLED", Value: "0"},
@@ -171,6 +176,7 @@ func UnitApid() daemonunit.Unit {
 
 		ReadOnlyPaths:  []string{"/etc/faas"},
 		ReadWritePaths: []string{"/srv/fc", "/var/lib/faas", "/var/log/faas", "/var/spool/faas"},
+		StateDirectory: "faas-apid",
 
 		WantedBy: "multi-user.target",
 	}

@@ -382,6 +382,32 @@ const guardsDeployerEmail = "e2e+hobby+guards@test.example"
 type guardsDrill struct {
 	d    *safeReleaseDrill
 	pool *state.PgStore
+	// plan, name and org name the drill account and its org; zero values are
+	// this drill's Hobby "guards" account in org rg-org.
+	plan api.Plan
+	name string
+	org  string
+}
+
+// account returns the drill account's plan, SeedAccount label and org slug.
+func (g *guardsDrill) account() (api.Plan, string, string) {
+	plan, name, org := g.plan, g.name, g.org
+	if plan == "" {
+		plan = api.PlanHobby
+	}
+	if name == "" {
+		name = "guards"
+	}
+	if org == "" {
+		org = "rg-org"
+	}
+	return plan, name, org
+}
+
+// email is the address SeedAccount gave the drill account.
+func (g *guardsDrill) email() string {
+	plan, name, _ := g.account()
+	return "e2e+" + string(plan) + "+" + name + "@test.example"
 }
 
 // mustStatus sends a request and decodes the body into out when the status
@@ -433,12 +459,13 @@ func (g *guardsDrill) waitAudit(t *testing.T, kind, text string) {
 func (g *guardsDrill) orgWithApprover(t *testing.T, ctx context.Context, app string) (deployerKey, approverKey string) {
 	t.Helper()
 	h, store := g.d.h, g.pool
-	h.SeedAccount(ctx, api.PlanHobby, "guards-approver")
-	deployer, err := store.AccountByEmail(ctx, guardsDeployerEmail)
+	plan, name, orgSlug := g.account()
+	h.SeedAccount(ctx, plan, name+"-approver")
+	deployer, err := store.AccountByEmail(ctx, g.email())
 	if err != nil {
 		t.Fatal(err)
 	}
-	approver, err := store.AccountByEmail(ctx, "e2e+hobby+guards-approver@test.example")
+	approver, err := store.AccountByEmail(ctx, "e2e+"+string(plan)+"+"+name+"-approver@test.example")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -447,8 +474,8 @@ func (g *guardsDrill) orgWithApprover(t *testing.T, ctx context.Context, app str
 			t.Fatalf("verify %s: %v", id, err)
 		}
 	}
-	org := h.SeedOrg(ctx, deployer.ID, "rg-org", "Release guards drill", state.OrgRoleOwner)
-	if err := store.UpdateOrgPlan(ctx, org.ID, api.PlanHobby); err != nil {
+	org := h.SeedOrg(ctx, deployer.ID, orgSlug, "Release guards drill", state.OrgRoleOwner)
+	if err := store.UpdateOrgPlan(ctx, org.ID, plan); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.AddOrgMember(ctx, org.ID, approver.ID, state.OrgRoleAdmin, &deployer.ID); err != nil {
@@ -456,7 +483,7 @@ func (g *guardsDrill) orgWithApprover(t *testing.T, ctx context.Context, app str
 	}
 	deployerKey, approverKey = g.orgKey(t, ctx, org.ID, deployer.ID), g.orgKey(t, ctx, org.ID, approver.ID)
 	falsy := false
-	g.mustStatus(t, deployerKey, http.MethodPost, "/v1/orgs/rg-org/apps",
+	g.mustStatus(t, deployerKey, http.MethodPost, "/v1/orgs/"+orgSlug+"/apps",
 		api.CreateAppRequest{Slug: app, Type: "app", RequireAuthn: &falsy}, http.StatusCreated, nil)
 	key := deployerKey
 	g.d.t.Cleanup(func() {

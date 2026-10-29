@@ -1442,7 +1442,9 @@ func (s *server) accountResponse(ctx context.Context, acct state.Account, r *htt
 	return resp
 }
 
-func validSlug(s string) bool { return api.ValidAppSlug(s) }
+// validSlug accepts app slugs and the longer PR preview slugs githubd
+// allocates; every creation path rejects the preview shape as reserved first.
+func validSlug(s string) bool { return api.ValidAppSlug(s) || api.ValidPreviewAppSlug(s) }
 
 // digestPinnedRE matches a digest-pinned OCI reference end-to-end:
 //

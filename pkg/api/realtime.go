@@ -8,6 +8,22 @@ import (
 	"time"
 )
 
+// Secretbox namespaces of managed realtime credentials, account seal-domain
+// values (ADR 20261022111812), shared by apid and the operator re-seal.
+const (
+	RealtimeAuthTokenNamespace    = "REALTIME_AUTH"
+	RealtimeCallbackAuthNamespace = "REALTIME_CALLBACK_AUTH"
+	// A push device's target is sealed under the prefix followed by
+	// "<endpoint>:<principal key>:<device>", a provider's config under its
+	// prefix followed by "<endpoint>:<provider>".
+	RealtimePushDeviceNamespacePrefix   = "realtime-push-device:"
+	RealtimePushProviderNamespacePrefix = "realtime-push-provider:"
+	// RealtimePushTargetSealMaxBytes and RealtimePushConfigSealMaxBytes
+	// bound a sealed push target and provider config.
+	RealtimePushTargetSealMaxBytes = 8192
+	RealtimePushConfigSealMaxBytes = 16384
+)
+
 const (
 	RealtimeCallbackAuthTokenMaxBytes = 256
 	RealtimeAuthTokenMaxBytes         = 256

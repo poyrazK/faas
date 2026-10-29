@@ -73,10 +73,12 @@ native_e2e_phase_files() {
       deploy_wake_metal_test.go \
       safe_release_drill_metal_test.go \
       release_guards_drill_metal_test.go \
+      release_guards_ga_drill_metal_test.go \
       dev_loop_metal_test.go \
       direct_oci_autoscale_metal_test.go \
       direct_oci_fullrootfs_metal_test.go \
       direct_oci_port_metal_test.go \
+      real_image_smoke_metal_test.go \
       function_concurrency_metal_test.go \
       guest_tracing_metal_test.go \
       single_process_oom_metal_test.go \

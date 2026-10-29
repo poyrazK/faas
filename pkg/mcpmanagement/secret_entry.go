@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 	"unicode/utf8"
 
@@ -58,8 +59,9 @@ const secretInputID = "secret_entry"
 
 func registerSecretEntry(s *mcp.Server, m *management) {
 	// A request starts a change the user completes, so a read-only connection
-	// (and read consent) never lists it.
-	if !m.opts.AllowWrites {
+	// (and read consent) never lists it. A remote grant also needs the
+	// consented secrets:request scope (ADR-20261026195952).
+	if !m.opts.AllowWrites || m.opts.Environments != nil && !slices.Contains(m.opts.Capabilities, api.ScopeSecretsRequest) {
 		return
 	}
 	registerTool(s, m, "gregale_request_secret", "Ask the user to set a secret for an app on a one-time Gregale page; the value never passes through you. Opens the page in the client when it supports URL elicitation; otherwise give the user entry_url. Then call gregale_get_secret_request. Never ask the user to paste a secret into the conversation.", false, m.requestSecret)

@@ -34,6 +34,7 @@ type trafficDomainBindingTx struct {
 	accounts      []string
 	appsSuffix    string
 	appID         pgtype.UUID
+	scope         trafficBindingScope
 	release       func(context.Context)
 }
 
@@ -45,7 +46,7 @@ func trafficDomainBindingOwners(ctx context.Context, reader sqlc.DBTX, claims []
 		}
 	}
 	owners = append(owners, originalAccount)
-	routes, err := sqlc.New().ReadTrafficGlobalRouteAccounts(ctx, reader, api.TrafficPolicyMaxAnalysisInputs)
+	routes, err := readTrafficRouteOwners(ctx, reader, nil)
 	if err != nil {
 		return nil, fmt.Errorf("state: read global route owners: %w", mapErr(err))
 	}
@@ -151,6 +152,9 @@ func (s *PgStore) tryBeginTrafficDomainBinding(ctx context.Context, domain strin
 			return err
 		}
 		guarded.beforeClaims, guarded.beforeTenants, guarded.beforeAliases = claims.Domains, claims.Tenants, claims.Aliases
+		if guarded.scope, err = declareTrafficBindingScope(bounded, tx, claims, originalAccount.String(), []string{domain}, originalApp.String(), s.trafficAppsSuffix); err != nil {
+			return err
+		}
 		account, err := sqlc.New().ReadAppTrafficAccount(bounded, tx, originalApp)
 		if err != nil {
 			return err
@@ -219,6 +223,10 @@ func (tx *trafficDomainBindingTx) validate(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		// This transaction keeps no primary claims, so neither side compares them.
+		before := trafficBindingClaims{Domains: tx.beforeClaims, Tenants: tx.beforeTenants, Aliases: tx.beforeAliases}
+		after := trafficBindingClaims{Domains: claims.Domains, Tenants: claims.Tenants, Aliases: claims.Aliases}
+		auditTrafficBindingScope(TrafficPolicyWriterDomainBinding, tx.scope, trafficBindingChanges(before, after, tx.globalBefore.Reservations, globalAfter.Reservations))
 		return checkTrafficHostAnalysis(bounded, tx.globalBefore, globalAfter)
 	})); err != nil {
 		return err
@@ -237,10 +245,18 @@ func (tx *trafficDomainBindingTx) validate(ctx context.Context) error {
 	})
 }
 
-func (s *PgStore) acquireTrafficDomainBindingSession(ctx context.Context, keys []string) (conn *pgxpool.Conn, release func(context.Context), busy bool, err error) {
+func (s *PgStore) acquireTrafficDomainBindingSession(ctx context.Context, keys []string) (*pgxpool.Conn, func(context.Context), bool, error) {
+	locks := make([]trafficSessionLock, len(keys))
+	for i, key := range keys {
+		locks[i] = trafficSessionLock{Key: key}
+	}
+	return s.acquireTrafficBindingSessionLocks(ctx, locks)
+}
+
+func (s *PgStore) acquireTrafficBindingSessionLocks(ctx context.Context, locks []trafficSessionLock) (conn *pgxpool.Conn, release func(context.Context), busy bool, err error) {
 	err = boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
 		var acquireErr error
-		conn, release, busy, acquireErr = s.tryAcquireTrafficPolicySessionKeys(bounded, keys)
+		conn, release, busy, acquireErr = s.tryAcquireTrafficPolicySessionLocks(bounded, locks)
 		return acquireErr
 	})
 	if err != nil && release != nil {

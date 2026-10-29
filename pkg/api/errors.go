@@ -518,7 +518,7 @@ const (
 	// CodeBuildFailed marks a source build whose own install or build step
 	// exited non-zero; CodeBuildInfrastructure marks one the platform could
 	// not run (builder VM, disk, or control-plane failure). Both are stamped
-	// on the deployment row with whycopy guidance (ADR-20261028090000).
+	// on the deployment row with whycopy guidance (ADR-20261029103512).
 	CodeBuildFailed         = "build_failed"
 	CodeBuildInfrastructure = "build_infrastructure_failed"
 	// CodeDeploymentQueueTimeout and CodeDeploymentStalled are the
@@ -2809,6 +2809,13 @@ func ErrCapacity(detail string) *Problem {
 		WithDocs("https://gregale.dev/status")
 }
 
+// ErrRequestBodyBudget reports that the gateway is already holding as many
+// request-body bytes as it may (RequestBodySpoolNodeBytes and friends).
+func ErrRequestBodyBudget() *Problem {
+	return ErrCapacity("this node is receiving too many large request bodies at once; retry shortly").
+		WithHeader("Retry-After", strconv.Itoa(int(RequestBodyBudgetRetryAfter.Seconds())))
+}
+
 // ErrIdempotencyKeyReused reports an Idempotency-Key sent with a request
 // other than the one it was first used for (ADR-20261022204036).
 func ErrIdempotencyKeyReused() *Problem {
@@ -3046,7 +3053,7 @@ func ErrEventPublishRateLimited(perSecond, events int, retryAfter time.Duration)
 		fmt.Sprintf("This account publishes at most %d events per second; retry the same events after the indicated back-off.", perSecond)).
 		WithLimit(int64(perSecond), int64(events)).
 		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
-		WithDocs("https://gregale.dev/docs/event-driven#publish-rate")
+		WithDocs("https://gregale.dev/docs/events#publish-rate")
 }
 
 // ErrAuthRateLimited reports that the caller's source IP exhausted the
@@ -3161,10 +3168,25 @@ func ErrTrafficPolicyTooComplex(scope, unit string, limit, observed int64) *Prob
 		WithLimit(limit, observed).
 		WithDocs(docsBase + "/plans#edge-rules").
 		WithHint(trafficPolicyTooComplexHint(unit))
-	if unit == "bytes" {
+	switch unit {
+	case "bytes":
 		problem = problem.WithByteLimit(limit, observed)
+	case "milliseconds":
+		// A time ceiling is not a verdict on the policy. Retry-After marks the
+		// refusal as temporary: apid does not replay it for the request's
+		// Idempotency-Key, and clients resend after the wait.
+		seconds := int64(TrafficPolicyAnalysisRetryAfter / time.Second)
+		problem.RetryAfterSeconds = &seconds
+		problem = problem.WithHeader("Retry-After", strconv.FormatInt(seconds, 10))
 	}
 	return problem
+}
+
+// TrafficPolicyCheckTimedOut reports a refusal whose policy check ran out of
+// time and that asks to be resent. Nothing was saved, so resending the same
+// request, with the same Idempotency-Key, is safe.
+func TrafficPolicyCheckTimedOut(p Problem) bool {
+	return p.Status == http.StatusUnprocessableEntity && p.Code == CodeTrafficPolicyTooComplex && p.RetryAfterSeconds != nil
 }
 
 // trafficPolicyTooComplexHint tells a time ceiling apart from a size one. The

@@ -294,6 +294,7 @@
       faas_map faas-githubd faas
       faas_map faas-outboundd faas
       faas_map faas-bridged faas
+      faas_map faas-mcp-bridge faas
       # ADR-20261023104734: each daemon user may also log in as its own
       # faas_runtime member (FAAS_DB_ROLE). The lines mapping it to the owner
       # above are removed once every unit has moved.
@@ -304,6 +305,7 @@
       faas_map faas-githubd faas_githubd
       faas_map faas-outboundd faas_outboundd
       faas_map faas-bridged faas_bridged
+      faas_map faas-mcp-bridge faas_mcp_bridge
   register: pg_ident
   failed_when: false
   notify: reload postgresql

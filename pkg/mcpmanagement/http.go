@@ -42,23 +42,44 @@ type HTTPOptions struct {
 	AuditLogger *slog.Logger
 	// APIHTTPClient allows transport configuration, including private CA trust.
 	APIHTTPClient *http.Client
+	// UploadDir, on the hosted bridge, holds source uploads and the
+	// directories plans deploy from. It is emptied on start.
+	UploadDir string
+	// CLIRunner, on the hosted bridge, runs the gregale CLI as a grant with
+	// its own credential; provisioning tools use it.
+	CLIRunner func(token string) LocalCLI
+	// Hosted serves Gregale's own bridge at https://api.<platform>/mcp
+	// (ADR-20261026195952). The issuer is the resource URL itself, so the
+	// OAuth endpoints live under /mcp and the metadata at the RFC 8414 path
+	// insertion URLs; the host's root metadata belongs to the API.
+	Hosted bool
 }
 
 type remoteServer struct {
-	opts        HTTPOptions
-	origin      string
-	host        string
-	mu          sync.Mutex
-	clients     map[string]*oauthClient
-	requests    map[string]*authorizationRequest
-	codes       map[string]*authorizationCode
-	grants      map[string]*oauthGrant
-	access      map[string]*oauthGrant
-	refresh     map[string]*oauthGrant
-	usedRefresh map[string]*oauthGrant
+	opts   HTTPOptions
+	origin string
+	// issuer is the origin, or the resource URL on the hosted bridge; every
+	// OAuth endpoint is issuer + "/oauth/...".
+	issuer  string
+	host    string
+	uploads *uploadStore
+	// registrations counts client registrations per address on the hosted
+	// bridge, in fixed windows.
+	registrations map[string]registrationWindow
+	mu            sync.Mutex
+	clients       map[string]*oauthClient
+	requests      map[string]*authorizationRequest
+	codes         map[string]*authorizationCode
+	grants        map[string]*oauthGrant
+	access        map[string]*oauthGrant
+	refresh       map[string]*oauthGrant
+	usedRefresh   map[string]*oauthGrant
 }
 
 type grantContextKey struct{}
+
+// grantServerKey carries the connection's MCP server, held for the request.
+type grantServerKey struct{}
 
 // NewHTTPHandler exposes stateless Streamable HTTP and an OAuth 2.1 bridge.
 // Each grant owns a separate SDK server/client/plan store and account credential.
@@ -114,10 +135,24 @@ func NewHTTPService(opts HTTPOptions) (*RemoteService, error) {
 	if opts.Lifecycle == nil {
 		opts.Lifecycle = NewLifecycle()
 	}
-	r := &remoteServer{opts: opts, origin: u.Scheme + "://" + u.Host, host: u.Host, clients: map[string]*oauthClient{}, requests: map[string]*authorizationRequest{}, codes: map[string]*authorizationCode{}, grants: map[string]*oauthGrant{}, access: map[string]*oauthGrant{}, refresh: map[string]*oauthGrant{}, usedRefresh: map[string]*oauthGrant{}}
+	if opts.Hosted && opts.Onboarding != "browser" {
+		return nil, errors.New("the hosted bridge uses browser onboarding")
+	}
+	origin := u.Scheme + "://" + u.Host
+	issuer := origin
+	if opts.Hosted {
+		issuer = opts.ResourceURL
+	}
+	r := &remoteServer{opts: opts, origin: origin, issuer: issuer, host: u.Host, clients: map[string]*oauthClient{}, requests: map[string]*authorizationRequest{}, codes: map[string]*authorizationCode{}, grants: map[string]*oauthGrant{}, access: map[string]*oauthGrant{}, refresh: map[string]*oauthGrant{}, usedRefresh: map[string]*oauthGrant{}}
+	if opts.Hosted && opts.UploadDir != "" {
+		if r.uploads, err = newUploadStore(opts.UploadDir, opts.ResourceURL); err != nil {
+			return nil, err
+		}
+	}
 	if err := r.restoreOAuth(); err != nil {
 		return nil, err
 	}
+	opts.Telemetry.attachConnections(r)
 	return &RemoteService{public: opts.Lifecycle.wrapHTTP(r.durableHandler(r.handler())), remote: r}, nil
 }
 
@@ -181,19 +216,23 @@ func (r *remoteServer) redirectAllowed(value string) bool {
 func (r *remoteServer) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /.well-known/oauth-protected-resource/mcp", r.resourceMetadata)
-	mux.HandleFunc("GET /.well-known/oauth-protected-resource", r.resourceMetadata)
-	mux.HandleFunc("GET /.well-known/oauth-authorization-server", r.authorizationMetadata)
-	mux.HandleFunc("POST /oauth/register", r.registerClient)
-	mux.HandleFunc("GET /oauth/authorize", r.authorize)
-	mux.HandleFunc("POST /oauth/consent", r.consent)
-	mux.HandleFunc("POST /oauth/token", r.token)
-	mux.HandleFunc("POST /oauth/revoke", r.revoke)
+	prefix := ""
+	if r.opts.Hosted {
+		prefix = "/mcp"
+		mux.HandleFunc("GET /.well-known/oauth-authorization-server/mcp", r.authorizationMetadata)
+		mux.HandleFunc("GET /.well-known/openid-configuration/mcp", r.authorizationMetadata)
+	} else {
+		mux.HandleFunc("GET /.well-known/oauth-protected-resource", r.resourceMetadata)
+		mux.HandleFunc("GET /.well-known/oauth-authorization-server", r.authorizationMetadata)
+	}
+	mux.HandleFunc("POST "+prefix+"/oauth/register", r.registerClient)
+	mux.HandleFunc("GET "+prefix+"/oauth/authorize", r.authorize)
+	mux.HandleFunc("POST "+prefix+"/oauth/consent", r.consent)
+	mux.HandleFunc("POST "+prefix+"/oauth/token", r.token)
+	mux.HandleFunc("POST "+prefix+"/oauth/revoke", r.revoke)
 	getServer := func(req *http.Request) *mcp.Server {
-		g, _ := req.Context().Value(grantContextKey{}).(*oauthGrant)
-		if g == nil {
-			return nil
-		}
-		return g.server
+		server, _ := req.Context().Value(grantServerKey{}).(*mcp.Server)
+		return server
 	}
 	mux.Handle("/mcp", r.authenticate(newWatchHTTPHandler(getServer)))
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -204,6 +243,11 @@ func (r *remoteServer) handler() http.Handler {
 		}
 		if origin := req.Header.Get("Origin"); origin != "" && origin != r.origin {
 			http.Error(w, "Origin is not allowed", http.StatusForbidden)
+			return
+		}
+		if r.uploads != nil && strings.HasPrefix(req.URL.Path, "/mcp/uploads/") {
+			// The capability URL authorizes the body; its limit is the plan's.
+			r.uploads.receive(w, req)
 			return
 		}
 		r.mu.Lock()
@@ -240,11 +284,11 @@ func (r *remoteServer) scopes() []string {
 }
 
 func (r *remoteServer) resourceMetadata(w http.ResponseWriter, _ *http.Request) {
-	writeOAuthJSON(w, http.StatusOK, map[string]any{"resource": r.opts.ResourceURL, "authorization_servers": []string{r.origin}, "scopes_supported": r.scopes(), "bearer_methods_supported": []string{"header"}, "resource_name": "Gregale management"})
+	writeOAuthJSON(w, http.StatusOK, map[string]any{"resource": r.opts.ResourceURL, "authorization_servers": []string{r.issuer}, "scopes_supported": r.scopes(), "bearer_methods_supported": []string{"header"}, "resource_name": "Gregale management"})
 }
 
 func (r *remoteServer) authorizationMetadata(w http.ResponseWriter, _ *http.Request) {
-	writeOAuthJSON(w, http.StatusOK, map[string]any{"issuer": r.origin, "authorization_endpoint": r.origin + "/oauth/authorize", "token_endpoint": r.origin + "/oauth/token", "registration_endpoint": r.origin + "/oauth/register", "revocation_endpoint": r.origin + "/oauth/revoke", "response_types_supported": []string{"code"}, "grant_types_supported": []string{"authorization_code", "refresh_token"}, "token_endpoint_auth_methods_supported": []string{"none"}, "code_challenge_methods_supported": []string{"S256"}, "scopes_supported": r.scopes()})
+	writeOAuthJSON(w, http.StatusOK, map[string]any{"issuer": r.issuer, "authorization_endpoint": r.issuer + "/oauth/authorize", "token_endpoint": r.issuer + "/oauth/token", "registration_endpoint": r.issuer + "/oauth/register", "revocation_endpoint": r.issuer + "/oauth/revoke", "response_types_supported": []string{"code"}, "grant_types_supported": []string{"authorization_code", "refresh_token"}, "token_endpoint_auth_methods_supported": []string{"none"}, "code_challenge_methods_supported": []string{"S256"}, "scopes_supported": r.scopes()})
 }
 
 func (r *remoteServer) authenticate(next http.Handler) http.Handler {
@@ -267,13 +311,20 @@ func (r *remoteServer) authenticate(next http.Handler) http.Handler {
 		verifyCtx, stopVerify := context.WithTimeout(leaseCtx, r.opts.Timeout)
 		account, err := g.client.Whoami(verifyCtx)
 		stopVerify()
-		r.mu.Lock()
-		current, currentExpiry, stillValid := r.accessLeaseLocked(key)
-		r.mu.Unlock()
-		if err != nil || account.ID != g.accountID || !stillValid || current != g || leaseCtx.Err() != nil {
+		if err != nil || account.ID != g.accountID || leaseCtx.Err() != nil {
 			r.challenge(w)
 			return
 		}
+		server, currentExpiry, release, err := r.holdServer(key, g)
+		if errors.Is(err, errStaleAccess) {
+			r.challenge(w)
+			return
+		}
+		if err != nil {
+			oauthError(w, http.StatusInternalServerError, "server_error", "Could not prepare account tools")
+			return
+		}
+		defer release()
 		// Reverification may shorten a lease, but refresh cannot extend this request.
 		if currentExpiry.Before(leaseExpires) {
 			leaseExpires = currentExpiry
@@ -281,7 +332,8 @@ func (r *remoteServer) authenticate(next http.Handler) http.Handler {
 		requestCtx, stopRequest := context.WithDeadline(leaseCtx, leaseExpires)
 		defer stopRequest()
 		requestCtx = context.WithValue(requestCtx, authorizationLeaseExpiresKey{}, leaseExpires)
-		next.ServeHTTP(w, req.WithContext(context.WithValue(requestCtx, grantContextKey{}, g)))
+		requestCtx = context.WithValue(requestCtx, grantContextKey{}, g)
+		next.ServeHTTP(w, req.WithContext(context.WithValue(requestCtx, grantServerKey{}, server)))
 	})
 }
 

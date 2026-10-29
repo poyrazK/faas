@@ -63,14 +63,16 @@ func newPgCore(pool *pgxpool.Pool) pgCore {
 // is safe for concurrent use.
 type PgStore struct {
 	pgCore
-	trafficAppsSuffix string
+	trafficAppsSuffix    string
+	trafficScopedBinding bool
 }
 
 // NewPgStore wraps a pool. The pool is owned by the caller; PgStore does not
 // close it on shutdown so daemons can share a single pool across a Store and
 // their LISTEN goroutine.
 func NewPgStore(pool *pgxpool.Pool, options ...StoreOption) *PgStore {
-	return &PgStore{pgCore: newPgCore(pool), trafficAppsSuffix: configuredTrafficAppsSuffix(options)}
+	return &PgStore{pgCore: newPgCore(pool), trafficAppsSuffix: configuredTrafficAppsSuffix(options),
+		trafficScopedBinding: configuredTrafficScopedBinding(options)}
 }
 
 // Ping tests database connectivity through the underlying connection pool.
@@ -2854,11 +2856,13 @@ func (s *PgStore) PreviewAppsByParent(ctx context.Context, accountID, parentSlug
 	return scanApps(rows)
 }
 
+// PreviewAppByProjectWorkload answers ErrConflict when two of the PR's
+// previews share the name in DNS form, like ProjectAppByWorkload.
 func (s *PgStore) PreviewAppByProjectWorkload(ctx context.Context, accountID, projectID string, previewPRNumber int, workloadName string) (App, error) {
 	if accountID == "" || projectID == "" || previewPRNumber <= 0 || workloadName == "" {
 		return App{}, ErrNotFound
 	}
-	row := s.pool.QueryRow(ctx, `
+	rows, err := s.pool.Query(ctx, `
 		select `+appsSelectColumns+`
 		  from apps
 		 where account_id = $1
@@ -2867,8 +2871,24 @@ func (s *PgStore) PreviewAppByProjectWorkload(ctx context.Context, accountID, pr
 		   and translate(lower(workload_name), '_.', '--') = translate(lower($4), '_.', '--')
 		   and preview_of_slug is not null
 		   and status <> 'deleted'
+		 order by id
+		 limit 2
 	`, accountID, projectID, previewPRNumber, workloadName)
-	return scanApp(row)
+	if err != nil {
+		return App{}, fmt.Errorf("state: preview app by project workload: %w", mapErr(err))
+	}
+	defer rows.Close()
+	apps, err := scanApps(rows)
+	if err != nil {
+		return App{}, err
+	}
+	switch len(apps) {
+	case 0:
+		return App{}, ErrNotFound
+	case 1:
+		return apps[0], nil
+	}
+	return App{}, ErrConflict
 }
 
 // ListPreviewsForAccount (Mega-C PR-1 / issue #961 leaf 3) is the
@@ -8527,7 +8547,12 @@ func (s *PgStore) AdvanceCanary(ctx context.Context, id string, params CanaryAdv
 		}
 		return pgAbortProfileGatedCanary(ctx, tx, snapshot.Account.ID, dep, params, safeReleaseLeaseExpiresAt)
 	}
-	if err := pgCheckCanaryRouteGate(ctx, tx, snapshot, dep, params, now); err != nil {
+	// A guard whose capability is not released for the account neither holds
+	// the rollout nor records evidence (ADR-20261028110044).
+	guards := routeGuardRelease(ctx)
+	if !guards.Requirements {
+		params.RouteGateDecision = nil
+	} else if err := pgCheckCanaryRouteGate(ctx, tx, snapshot, dep, params, now); err != nil {
 		var blocked *RouteGateBlockedError
 		if errors.As(err, &blocked) {
 			if commitErr := tx.Commit(ctx); commitErr != nil {
@@ -8540,7 +8565,9 @@ func (s *PgStore) AdvanceCanary(ctx context.Context, id string, params CanaryAdv
 	if err := s.authorizeProductionLifecycle(ctx, tx, id, false); err != nil {
 		return Deployment{}, 0, err
 	}
-	if err := pgCheckRouteHealth(ctx, tx, snapshot, dep, now, params); err != nil {
+	if !guards.Health {
+		params.RouteHealthDecision = nil
+	} else if err := pgCheckRouteHealth(ctx, tx, snapshot, dep, now, params); err != nil {
 		var blocked *RouteHealthBlockedError
 		if errors.As(err, &blocked) {
 			if commitErr := tx.Commit(ctx); commitErr != nil {
@@ -9451,19 +9478,24 @@ func (s *PgStore) recoverRolloutTx(ctx context.Context, tx pgx.Tx, appID, deploy
 		if err := legacyProfileCanaryGate(p, dep); err != nil {
 			return dep, 0, err
 		}
-		gate, err := pgCanaryRouteGate(ctx, tx, owner.AccountID, dep.AppID)
-		if err != nil {
-			return dep, 0, err
+		guards := routeGuardRelease(ctx)
+		if guards.Requirements {
+			gate, err := pgCanaryRouteGate(ctx, tx, owner.AccountID, dep.AppID)
+			if err != nil {
+				return dep, 0, err
+			}
+			if err := legacyCanaryRouteGate(gate, dep, action); err != nil {
+				return dep, 0, err
+			}
 		}
-		if err := legacyCanaryRouteGate(gate, dep, action); err != nil {
-			return dep, 0, err
-		}
-		healthGate, err := pgRouteHealthGate(ctx, tx, owner.AccountID, dep.AppID)
-		if err != nil {
-			return dep, 0, err
-		}
-		if err := legacyRouteHealth(healthGate, dep, action); err != nil {
-			return dep, 0, err
+		if guards.Health {
+			healthGate, err := pgRouteHealthGate(ctx, tx, owner.AccountID, dep.AppID)
+			if err != nil {
+				return dep, 0, err
+			}
+			if err := legacyRouteHealth(healthGate, dep, action); err != nil {
+				return dep, 0, err
+			}
 		}
 	}
 	if emergencyGrace != nil {
@@ -11555,6 +11587,11 @@ func (s *PgStore) prepareDeploymentRollbackOnce(ctx context.Context, appID, targ
 	if target.Status != DeploySuperseded && (target.Status != DeployLive || target.TrafficPercent != 0) {
 		return Deployment{}, ErrRollbackTargetAlreadyLive
 	}
+	// A target whose layers were reclaimed cannot cold boot; refuse it here
+	// rather than fail its readiness prime later (Hunt 21 H21-1).
+	if err := requireDeploymentLayerArtifactsTx(ctx, tx, target.ID); err != nil {
+		return Deployment{}, err
+	}
 
 	now := time.Now().UTC()
 	prepared, err := scanDeploymentWithRootfs(tx.QueryRow(ctx, `
@@ -13097,12 +13134,18 @@ func (s *PgStore) QueuedBuildsCount(ctx context.Context) (int, error) {
 // when the row is missing OR already in another status — that second
 // case is what lets builderd drop duplicate build_queued notifications
 // (apid write path + imaged reaper) without spawning two builder VMs.
-// Equivalent to a compare-and-swap at the row level.
+// Equivalent to a compare-and-swap at the row level. A PR preview build is
+// not claimed while another build is queued; the polling claim takes it once
+// production work is drained (ADR-20261028100000).
 func (s *PgStore) ClaimQueuedBuild(ctx context.Context, id string) (Build, error) {
 	row := s.pool.QueryRow(ctx,
 		`update builds
 		   set status = 'running', started_at = now()
 		 where id = $1 and status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=builds.deployment_id and g.check_after>now())
+		   and not (kind = 'preview' and exists (
+		     select 1 from builds o
+		      where o.status = 'queued' and o.kind <> 'preview'
+		        and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=o.deployment_id and g.check_after>now())))
 		 returning id, deployment_id, kind, source_bytes, status,
 		           coalesce(failure_class,''), coalesce(log_path,''),
 		           started_at, finished_at, enqueued_at,
@@ -13134,6 +13177,10 @@ func (s *PgStore) ClaimQueuedBuildWithNodeAffinity(ctx context.Context, id, node
 		  from deployments d
 		 where b.id = $1
 		   and b.status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=b.deployment_id and g.check_after>now())
+		   and not (b.kind = 'preview' and exists (
+		     select 1 from builds o
+		      where o.status = 'queued' and o.kind <> 'preview'
+		        and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=o.deployment_id and g.check_after>now())))
 		   and d.id = b.deployment_id
 		   and (
 		     b.enqueued_at <= now() - $3::interval
@@ -13182,7 +13229,7 @@ func (s *PgStore) ClaimNextQueuedBuild(ctx context.Context) (Build, error) {
 		 where id = (
 		   select id from builds
 		    where status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=builds.deployment_id and g.check_after>now())
-		    order by enqueued_at asc
+		    order by (kind = 'preview'), enqueued_at asc
 		    limit 1
 		    for update skip locked
 		 )
@@ -13201,7 +13248,8 @@ func (s *PgStore) ClaimNextQueuedBuild(ctx context.Context) (Build, error) {
 	return b, nil
 }
 
-// ClaimNextQueuedBuildWithFairness prefers accounts without a recent claim,
+// ClaimNextQueuedBuildWithFairness claims every other build before a PR
+// preview build (ADR-20261028100000), prefers accounts without a recent claim,
 // then falls back to FIFO. Lock the build row itself before returning it so
 // polling workers and direct notification claims cannot execute one build
 // twice. Ranking rather than filtering also lets a worker skip a locked quiet
@@ -13215,7 +13263,7 @@ func (s *PgStore) ClaimNextQueuedBuildWithFairness(ctx context.Context, fairness
         join deployments d on d.id = b.deployment_id
         join apps a on a.id = d.app_id
        where b.status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=b.deployment_id and g.check_after>now())
-       order by exists (
+       order by (b.kind = 'preview'), exists (
          select 1 from recent_build_claims r
           where r.account_id = a.account_id
             and r.claimed_at > now() - $1::interval
@@ -13273,7 +13321,7 @@ func (s *PgStore) ClaimNextQueuedBuildWithNodeAffinity(ctx context.Context, node
 		           limit 1
 		        ), $1) = $1
 		      )
-		    order by exists (
+		    order by (b.kind = 'preview'), exists (
 		      select 1 from recent_build_claims r
 		       where $3::interval > interval '0 milliseconds'
 		         and r.account_id = a.account_id
@@ -14783,6 +14831,9 @@ func (s *PgStore) CreateEdgeRuleIfUnderQuota(ctx context.Context, in CreateEdgeR
 			return EdgeRule{}, exceeded
 		}
 	}
+	if err := lockEdgeRuleListRefs(ctx, tx, in.AccountID, in.Match); err != nil {
+		return EdgeRule{}, err
+	}
 
 	actionBytes, err := json.Marshal(in.Action)
 	if err != nil {
@@ -15661,6 +15712,15 @@ func (s *PgStore) UpdateEdgeRule(ctx context.Context, id string, p UpdateEdgeRul
 	if p.ValidateMode != nil {
 		validateModeArg = *p.ValidateMode
 	}
+	if p.Match != nil {
+		var accountID string
+		if err := tx.QueryRow(ctx, `select account_id::text from edge_rules where id = $1`, id).Scan(&accountID); err != nil {
+			return EdgeRule{}, mapErr(err)
+		}
+		if err := lockEdgeRuleListRefs(ctx, tx, accountID, p.Match); err != nil {
+			return EdgeRule{}, err
+		}
+	}
 
 	row := tx.QueryRow(ctx, `
 		update edge_rules set
@@ -15767,6 +15827,7 @@ func (s *PgStore) MatchEdgeRulesForHost(ctx context.Context, host string) ([]Edg
 		select `+edgeRuleSelectCols+` from edge_rules
 		 where enabled = true
 		   and (expires_at is null or expires_at > now())
+		   and not exists (select 1 from apps a where a.id = edge_rules.app_id and a.status = 'deleted')
 		   and (
 		   	match_host = $1
 		   	or match_host = '*'
@@ -17631,6 +17692,7 @@ func scanCreatedInstance(row pgx.Row, wakeID, appID string) (Instance, error) {
 // non-empty string from state.InstanceMode{normal,mirror};
 // the engine validates before calling (Engine.AdmitMirrorInstance).
 func (s *PgStore) CreateInstanceWithMode(ctx context.Context, appID, deploymentID, state string, ramMB int, nodeID, wakeID, mode string) (Instance, error) {
+	ctx = fenceApp(ctx, appID)
 	var reserve func(pgx.Tx) error
 	if mode == string(InstanceModeWorker) && State(state).CountsForRAM() {
 		reserve = func(tx pgx.Tx) error {
@@ -18852,10 +18914,12 @@ func (s *PgStore) MarkSnapshotStaleByAppProtocol(ctx context.Context, snapshotID
 // (typically 7 days per api.SnapshotStaleRetention) so an operator
 // rollback across an FC upgrade doesn't pay an extra cold boot.
 // F-07 closes the gap where the prior sweep only flipped stale=true
-// and stale rows accumulated indefinitely.
+// and stale rows accumulated indefinitely. Retention counts from the stale
+// mark; a row older than the window but marked stale today used to go on
+// the next sweep (Hunt 21 H21-2).
 func (s *PgStore) DeleteSnapshotsStaleOlderThan(ctx context.Context, retention time.Duration) (int64, error) {
 	tag, err := s.pool.Exec(ctx,
-		`delete from snapshots where stale = true and created_at < now() - $1::interval`,
+		`delete from snapshots where stale = true and greatest(stale_at, created_at) < now() - $1::interval`,
 		fmt.Sprintf("%d seconds", int64(retention.Seconds())))
 	if err != nil {
 		return 0, err
@@ -26905,20 +26969,43 @@ func (s *PgStore) MarkAccountEmailVerified(ctx context.Context, accountID string
 }
 
 // DeleteOldEvents (ADR-075) prunes audit-log events whose `at` is
-// older than the cutoff. Returns the row count. The
-// (subject, at desc) partial index on the events table keeps the
-// WHERE a partial range scan; the per-tick cost is bounded by
-// (cutoff × recent rows added in that window).
+// older than the cutoff. Returns the row count.
+//
+// It deletes in batches of eventRetentionBatchRows, each found through the
+// events_at_brin_idx BRIN index, with a short pause between them. One
+// unbatched DELETE of a day's rows (several days after a missed run) held a
+// long transaction and flooded WAL and vacuum across all of the table's
+// indexes on the CP Postgres every request path shares (bug hunt O9).
 //
 // Used by pkg/eventretention's daily loop; the maintenance floor
 // is 90 days (SOC 2 CC6.2).
 func (s *PgStore) DeleteOldEvents(ctx context.Context, before time.Time) (int64, error) {
-	tag, err := s.pool.Exec(ctx, `delete from events where at < $1`, before)
-	if err != nil {
-		return 0, err
+	var total int64
+	for {
+		tag, err := s.pool.Exec(ctx, `delete from events
+			 where ctid = any(array(select ctid from events where at < $1 limit $2))`,
+			before, eventRetentionBatchRows)
+		if err != nil {
+			return total, err
+		}
+		total += tag.RowsAffected()
+		if tag.RowsAffected() < eventRetentionBatchRows {
+			return total, nil
+		}
+		select {
+		case <-ctx.Done():
+			return total, ctx.Err()
+		case <-time.After(eventRetentionBatchPause):
+		}
 	}
-	return tag.RowsAffected(), nil
 }
+
+// The events retention deletes this many rows per statement and pauses this
+// long between statements.
+const (
+	eventRetentionBatchRows  = 5000
+	eventRetentionBatchPause = 50 * time.Millisecond
+)
 
 // SetAccountPassword upserts the Argon2id PHC hash for an account.
 // ON CONFLICT (account_id) DO UPDATE so a password change / set

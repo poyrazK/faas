@@ -1219,8 +1219,8 @@ cached response is tagged `data-api` plus `data-api:SCHEMA.RELATION` for every
 relation it contains, embedded ones included:
 
 ```sh
-gregale cache purge shop-data --tag data-api:api.products   # one table
-gregale cache purge shop-data --tag data-api                # every public read
+gregale edge cache purge shop-data --tag data-api:api.products   # one table
+gregale edge cache purge shop-data --tag data-api                # every public read
 ```
 
 A public RPC response is tagged `data-api-rpc:SCHEMA.FUNCTION` plus its

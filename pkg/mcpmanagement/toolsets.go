@@ -50,6 +50,10 @@ var toolsetOf = map[string]string{
 	"gregale_get_rollback":         ToolsetCore,
 	"gregale_request_secret":       ToolsetCore,
 	"gregale_get_secret_request":   ToolsetCore,
+	// Hosted grants deploy code they wrote by upload (ADR-20261026195952).
+	"gregale_create_source_upload": ToolsetCore,
+	"gregale_plan_upload_deploy":   ToolsetCore,
+	"gregale_apply_upload_deploy":  ToolsetCore,
 
 	"gregale_list_deployments":            ToolsetRelease,
 	"gregale_preflight":                   ToolsetRelease,

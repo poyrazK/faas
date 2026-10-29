@@ -659,14 +659,14 @@ func TestProcessOne_FrameworkDetectFailsFlipsDeployment(t *testing.T) {
 	if !contains(dep.Error, "framework detect") {
 		t.Errorf("deployment Error = %q, want substring %q", dep.Error, "framework detect")
 	}
-	// adr: 20261028090000 — a plain build failure carries its class's code
+	// adr: 20261029103512 — a plain build failure carries its class's code
 	// and guidance, not only the message.
 	if dep.ErrorCode != api.CodeBuildFailed || dep.ErrorHint == "" {
 		t.Errorf("deployment error_code=%q hint=%q, want %q with a hint", dep.ErrorCode, dep.ErrorHint, api.CodeBuildFailed)
 	}
 }
 
-// adr: 20261028090000 — a build whose deployment a newer revision of the same
+// adr: 20261029103512 — a build whose deployment a newer revision of the same
 // app has outpaced is skipped: promotion would supersede it, and building it
 // first held the builder slot the newer deployment was queued for.
 func TestProcessOne_SkipsBuildOutpacedByNewerDeployment(t *testing.T) {

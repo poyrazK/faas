@@ -341,7 +341,7 @@ http.createServer((req, res) => {
 // realistic durations (200 ms ≤ interval ≤ 1000 ms) way inside that
 // range. The fixture binds $PORT, the port the host routes to (see
 // NodeFixtureHealthcheck). It declares Node 24 so it builds on the shared
-// glibc runner base and fits Free's layer cap (ADR-20261028090000).
+// glibc runner base and fits Free's layer cap (ADR-20261029103512).
 func NodeFixtureStreaming(t *testing.T) []byte {
 	t.Helper()
 	const pkgJSON = `{
