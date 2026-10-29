@@ -17,7 +17,7 @@ import (
 
 func cmdReleaseGates(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale release-gates <list|add|rm>", "release-gates")
+		PrintUsage(os.Stderr, "usage: gregale release gate <list|add|rm>", "release-gates")
 		return 1
 	}
 	switch args[0] {
@@ -28,7 +28,7 @@ func cmdReleaseGates(args []string) int {
 	case "rm", "delete":
 		return releaseGatesRemove(args[1:])
 	}
-	printCommandValidation(os.Stderr, "gregale release-gates: unknown subcommand %q\n", args[0])
+	printCommandValidation(os.Stderr, "gregale release gate: unknown subcommand %q\n", args[0])
 	return unknownSubcommandChoices(os.Stderr, "release-gates", nestedCliCommand("release-gates"), args[0])
 }
 
@@ -55,7 +55,7 @@ func releaseGatesList(args []string) int {
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
-	slug, ok := releaseGatesApp(*app, "usage: gregale release-gates list [--app <slug>]")
+	slug, ok := releaseGatesApp(*app, "usage: gregale release gate list [--app <slug>]")
 	if !ok {
 		return 1
 	}
@@ -71,7 +71,7 @@ func releaseGatesList(args []string) int {
 		return jsonOut(writeJSON(out))
 	}
 	if len(out.Gates) == 0 {
-		_, _ = fmt.Fprintln(osStdout, "No release gates. Add one with `gregale release-gates add`.")
+		_, _ = fmt.Fprintln(osStdout, "No release gates. Add one with `gregale release gate create`.")
 		return 0
 	}
 	w := tabwriter.NewWriter(osStdout, 0, 4, 2, ' ', 0)
@@ -124,7 +124,7 @@ func releaseGatesAdd(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	usage := "usage: gregale release-gates add --name NAME (--slo NAME [--max-burn-rate N] | --new-errors [--max-new-groups N] [--min-events N] | --metric NAME (--below V | --above V) | --ai METRIC [--max-increase PCT]) [--min-samples N] [--app <slug>]"
+	usage := "usage: gregale release gate create --name NAME (--slo NAME [--max-burn-rate N] | --new-errors [--max-new-groups N] [--min-events N] | --metric NAME (--below V | --above V) | --ai METRIC [--max-increase PCT]) [--min-samples N] [--app <slug>]"
 	if rejectUnexpectedFlagArgs(fs) || *name == "" {
 		PrintUsage(os.Stderr, usage, "release-gates")
 		return 1

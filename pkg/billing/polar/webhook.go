@@ -183,16 +183,17 @@ func mapPolarEventType(eventType string, data map[string]any) billing.EventType 
 			return billing.EventPaymentSucceeded
 		}
 		return billing.EventUnknown
-	case "subscription.updated", "subscription.uncanceled":
+	case "subscription.updated", "subscription.uncanceled", "subscription.cycled":
 		// Do not let an incomplete subscription.updated event set a paid
 		// plan before the first successful payment either.
+		// subscription.cycled starts a new period before its renewal order
+		// is paid, so it is a period change, not a payment: order.paid
+		// reports the payment and subscription.past_due a failed one.
 		if stringValue(data["status"]) != "active" {
 			return billing.EventUnknown
 		}
 		return billing.EventSubscriptionUpdated
 	case "subscription.active":
-		return billing.EventPaymentSucceeded
-	case "subscription.cycled":
 		return billing.EventPaymentSucceeded
 	case "subscription.past_due":
 		return billing.EventSubscriptionPastDue

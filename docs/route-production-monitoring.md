@@ -30,6 +30,17 @@ the same budgets. Such findings report `evidence_window: pooled` and their
 `pooled_windows`, and can open incidents and trigger an
 [automatic rollback](#automatic-rollback).
 Select at most 20 distinct labels, with no wildcards, expanded URLs or queries.
+Saving an enabled monitor returns `warnings` (the CLI prints them to stderr)
+for each selector whose label had no request within your plan's request
+telemetry retention, at most the last 7 days. Such a selector usually has a
+method or path that does not match the gateway's label; it would never report.
+
+Each gateway keeps its own bounded set of route labels per app. Declared routes
+(an imported OpenAPI document or `routes` in `gregale.yaml`) keep their labels
+on every gateway. Undeclared routes are learned per gateway, so with several
+gateways a rarely used route can carry its label on one gateway while another
+counts it under `__route_other__`, until it is established there. Selectors
+count only labeled requests: declare the routes you monitor.
 
 ```sh
 gregale routes monitor set my-api --mode enabled \
@@ -91,10 +102,16 @@ customer UUID unless `customer_details=true` is requested.
 ## Sustained observations
 
 APID polls due monitors every 30 seconds, evaluates every due monitor (several
-at a time) and schedules each successful evaluation one minute later. It selects the sole default-scope live deployment receiving
-100% traffic whose canary steps have completed. Deployments without canary steps
-also qualify. Preview traffic and retired deployments are excluded. A split,
-missing/ambiguous deployment, lost entitlement or missing observations is unknown.
+at a time) and schedules each successful evaluation one minute later. It selects the sole live deployment receiving
+100% traffic in the app's production lane whose canary steps have completed: a
+project's named `production` environment once it serves traffic (or while the
+default lane is dark), otherwise the default scope. Deployments without canary
+steps also qualify. Preview and staging traffic and retired deployments are
+excluded. A split, missing/ambiguous deployment, lost entitlement or missing
+observations is unknown. When a gateway may have lost request telemetry in the
+windows (it restarted, missed a heartbeat, or has telemetry off or sampled), the
+report is unknown with reason `telemetry_unavailable`: no incident opens or
+recovers on partial counts, and no healthy baseline is recorded.
 
 Two consecutive closed UTC minute windows sit behind a 30-second ingestion
 allowance. Both must begin after the latest intent update, deployment creation,
@@ -245,7 +262,10 @@ incident, using its saved opening evidence:
   incident opened later than 30 minutes after release
   (`outside_rollback_window`), no healthy baseline was saved
   (`no_healthy_baseline`), or the checked rollback could not be requested
-  (`rollback_target_ineligible`).
+  (`rollback_target_ineligible`, with the checked rollback's problem code in
+  `refusal_code`, for example `rollback_in_progress`), or a project release
+  serves the app (`project_release`): a project rolls back as a whole, so roll
+  back the project's release instead of one of its apps.
 - **Not decided** while a rollout, another rollback or a traffic split owns the
   deployment.
 
@@ -254,6 +274,14 @@ decision and the rollback operation ID. Follow it with
 `gregale rollback status my-api --operation OPERATION_UUID`.
 The audit log records `route_monitor.rollback_requested`. Switching back to
 `--on-violation report` stops new decisions.
+
+## Alerts
+
+Without a webhook receiver, send incidents to your
+[notification channels](alerts.md#route-monitor-and-canary-hold-alerts) with an
+alert on `route_monitor_incidents`: the number of the app's incidents open at
+any time within the window. The "Route monitor incident" preset fires on any
+incident over 15 minutes.
 
 ## Transition notifications
 

@@ -36,10 +36,10 @@ func ensurePostgresEgress(ctx context.Context, client postgresEgressClient, app 
 			PrintOK(osStderr, "App %s's plan has no extra egress ports; the binding opens outbound TCP %d to this database's own addresses instead.", app.Slug, managedPostgresPort)
 			return
 		}
-		PrintWarn(osStderr, "Could not open outbound TCP %d for app %s (%v); its connections will time out until you run: gregale app %s egress-ports add %d", managedPostgresPort, app.Slug, err, app.Slug, managedPostgresPort)
+		PrintWarn(osStderr, "Could not open outbound TCP %d for app %s (%v); its connections will time out until you run: gregale app egress-ports add %s %d", managedPostgresPort, app.Slug, err, app.Slug, managedPostgresPort)
 		return
 	}
-	PrintOK(osStderr, "Opened outbound TCP %d for app %s so it can reach the database (undo: gregale app %s egress-ports remove %d).", managedPostgresPort, app.Slug, app.Slug, managedPostgresPort)
+	PrintOK(osStderr, "Opened outbound TCP %d for app %s so it can reach the database (undo: gregale app egress-ports remove %s %d).", managedPostgresPort, app.Slug, app.Slug, managedPostgresPort)
 }
 
 type postgresBindingLister interface {
@@ -71,5 +71,5 @@ func printPostgresBindingDelivery(w io.Writer, appSlug, key, access string) {
 		_, _ = fmt.Fprintf(w, "%s is delivered only to the release task (release.command); serving instances never receive migration credentials.\n", key)
 		return
 	}
-	_, _ = fmt.Fprintf(w, "Running instances keep their current environment; %s applies when the app next starts. Run `gregale app %s restart` to apply it now.\n", key, appSlug)
+	_, _ = fmt.Fprintf(w, "Running instances keep their current environment; %s applies when the app next starts. Run `gregale app restart %s` to apply it now.\n", key, appSlug)
 }

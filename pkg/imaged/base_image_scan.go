@@ -21,7 +21,7 @@ import (
 func (h *Handler) ensureProducedBaseScan(ctx context.Context, be storage.StorageBackend, base state.BaseImageProducer, out string) (state.BaseImageScan, error) {
 	// A fresh complete scan of these exact producer bytes already vouches for
 	// them, so republish it without first invalidating the shared sidecar. The
-	// invalidation below is for a rebuilt or refreshed base; running it on
+	// invalidation below is for bytes no complete scan covers; running it on
 	// every reuse made vmmd refuse every cold boot on the base, on every node,
 	// until the reload finished, and a transient store error (review busy)
 	// held the refusal for minutes (Hunt 14 H14-102).
@@ -31,8 +31,16 @@ func (h *Handler) ensureProducedBaseScan(ctx context.Context, be storage.Storage
 		}
 		return current, nil
 	}
-	if err := writeProducedBaseScanCompatibility(ctx, be, base.Input.Artifact.StorageKey, base.Input.SourceReference, out, state.BaseImageScan{}); err != nil {
-		return state.BaseImageScan{}, err
+	// Renewing a complete scan of these unchanged bytes keeps its verdict in
+	// the sidecar until the new result replaces it, exactly as the sidecar
+	// stands between deploys. Invalidating first refused every cold boot on
+	// the base, on that node, for the whole rescan: 503 scan_critical for
+	// ~50 s on prod rc.304 (2026-10-29 15:14, Hunt 14 H14-117). A failed
+	// rescan still publishes the refusal below.
+	if !h.producedBaseScanCoversBytes(ctx, be, base) {
+		if err := writeProducedBaseScanCompatibility(ctx, be, base.Input.Artifact.StorageKey, base.Input.SourceReference, out, state.BaseImageScan{}); err != nil {
+			return state.BaseImageScan{}, err
+		}
 	}
 	value, err := h.loadOrRunProducedBaseScan(ctx, be, base)
 	if err != nil {
@@ -65,6 +73,28 @@ func (h *Handler) reusableProducedBaseScan(ctx context.Context, be storage.Stora
 	return again, true
 }
 
+// producedBaseScanCoversBytes reports whether the base's selected scan is
+// complete, was made for this producer, and the stored artifact still has the
+// bytes it scanned. Its expiry does not matter: vmmd keeps booting on that
+// verdict between deploys, which is all a renewal leaves in place.
+func (h *Handler) producedBaseScanCoversBytes(ctx context.Context, be storage.StorageBackend, base state.BaseImageProducer) bool {
+	store, ok := h.store.(state.BaseImageScanStore)
+	if !ok {
+		return false
+	}
+	prior, err := store.GetCurrentBaseImageScan(ctx, base.Input.Artifact.StorageKey)
+	if err != nil || !producedBaseScanCoversProducer(prior, base) {
+		return false
+	}
+	expected := scanArtifactTarget{StorageKey: base.Input.Artifact.StorageKey, ArtifactIdentity: rootfs.ArtifactIdentity{Digest: base.Input.Artifact.Digest, Bytes: base.Input.Artifact.Bytes}}
+	return checkStoredScanArtifact(ctx, be, expected) == nil
+}
+
+func producedBaseScanCoversProducer(scan state.BaseImageScan, base state.BaseImageProducer) bool {
+	return scan.Input.Status == "complete" && scan.Input.BaseProducerID == base.ID &&
+		scan.Input.BaseInputHash == base.InputHash && scan.Input.Artifact == base.Input.Artifact
+}
+
 func (h *Handler) loadOrRunProducedBaseScan(ctx context.Context, be storage.StorageBackend, base state.BaseImageProducer) (state.BaseImageScan, error) {
 	store, ok := h.store.(state.BaseImageScanStore)
 	if !ok {
@@ -82,6 +112,9 @@ func (h *Handler) loadOrRunProducedBaseScan(ctx context.Context, be storage.Stor
 	}
 	if err != nil && !errors.Is(err, state.ErrNotFound) && !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 		return state.BaseImageScan{}, err
+	}
+	if reused, ok := h.renewProducedBaseScanWithoutScanning(ctx, store, be, base, expected); ok {
+		return reused, nil
 	}
 	in := state.BaseImageScanInput{ID: uuid.NewString(), BaseProducerID: base.ID, BaseInputHash: base.InputHash, Artifact: base.Input.Artifact, SourceReference: base.Input.SourceReference}
 	started := time.Now()
@@ -103,6 +136,45 @@ func (h *Handler) loadOrRunProducedBaseScan(ctx context.Context, be storage.Stor
 		return state.BaseImageScan{}, err
 	}
 	return value, nil
+}
+
+// renewProducedBaseScanWithoutScanning renews shared-base scan evidence
+// without running Grype (ADR-20261028102540). It applies only when the selected
+// scan is complete and covers these exact producer bytes, and Grype and its
+// vulnerability database are still the ones that made it, so a new scan
+// could only repeat that report. The new record gets its own storage-clock
+// lease and names the scan it copies. Any doubt (no identity, a mismatch,
+// changed bytes, a refused publication) returns false and the caller scans.
+func (h *Handler) renewProducedBaseScanWithoutScanning(ctx context.Context, store state.BaseImageScanStore, be storage.StorageBackend, base state.BaseImageProducer, expected scanArtifactTarget) (state.BaseImageScan, bool) {
+	prior, err := store.GetCurrentBaseImageScan(ctx, base.Input.Artifact.StorageKey)
+	if err != nil || prior.Input.Report == nil || !producedBaseScanCoversProducer(prior, base) {
+		return state.BaseImageScan{}, false
+	}
+	current, err := h.currentScannerIdentity(ctx)
+	report := prior.Input.Report
+	if err != nil || !current.matches(report.ScannerVersion, report.ScannerDBVersion, report.ScannerDBBuiltAt) {
+		return state.BaseImageScan{}, false
+	}
+	if checkStoredScanArtifact(ctx, be, expected) != nil {
+		return state.BaseImageScan{}, false
+	}
+	in := state.BaseImageScanInput{
+		ID: uuid.NewString(), BaseProducerID: base.ID, BaseInputHash: base.InputHash,
+		Artifact: base.Input.Artifact, SourceReference: base.Input.SourceReference,
+		Status: "complete", ScannerName: prior.Input.ScannerName, Report: report, ReusedScanID: prior.ID,
+	}
+	value, err := store.PublishBaseImageScan(ctx, in)
+	if err != nil {
+		if h.log != nil {
+			h.log.Warn("imaged: shared base scan reuse refused; scanning", "key", expected.StorageKey, "err", err)
+		}
+		return state.BaseImageScan{}, false
+	}
+	if h.log != nil {
+		h.log.Info("imaged: shared base scan renewed without rescanning", "key", expected.StorageKey,
+			"reused_scan", prior.ID, "scanner_version", current.Version, "scanner_db_built_at", current.DBBuiltAt)
+	}
+	return value, true
 }
 
 func (h *Handler) publishBaseScanFailure(ctx context.Context, store state.BaseImageScanStore, in state.BaseImageScanInput, failure string) (state.BaseImageScan, error) {

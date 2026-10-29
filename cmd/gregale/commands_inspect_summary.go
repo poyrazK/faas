@@ -573,16 +573,16 @@ func inspectRecommendations(summary inspectSummary) []inspectRecommendation {
 		// park` (Hunt 14 H14-43). A crash-looped app, or a worker, service
 		// or job that no request wakes, still needs attention.
 		message := "This app is parked: its instances are stopped until the next request wakes it."
-		next := "Send a request, or run `gregale wake " + summary.App.Slug + "` to start it now."
+		next := "Send a request, or run `gregale app wake " + summary.App.Slug + "` to start it now."
 		severity := "info"
 		switch {
 		case summary.App.ParkedReason == "liveness_exhausted":
 			message = "This app is parked because its instances repeatedly failed liveness checks or crashed; the next request starts it again."
-			next = "Fix the failure (see `gregale logs " + summary.App.Slug + " --since 1h`), deploy, then run `gregale wake " + summary.App.Slug + "`."
+			next = "Fix the failure (see `gregale logs " + summary.App.Slug + " --since 1h`), deploy, then run `gregale app wake " + summary.App.Slug + "`."
 			severity = "error"
 		case summary.App.ExecutionMode == api.ExecutionModeWorker:
 			message = "This worker is parked: requests do not wake a worker, so it stays stopped until you wake it."
-			next = "Run `gregale wake " + summary.App.Slug + "` to start it."
+			next = "Run `gregale app wake " + summary.App.Slug + "` to start it."
 			severity = "error"
 		case summary.App.ExecutionMode != "":
 			severity = "error"
@@ -601,7 +601,7 @@ func inspectRecommendations(summary inspectSummary) []inspectRecommendation {
 		// before promotion and inspect led with a profile warning while every
 		// request got 404 (Hunt 12 H12-59).
 		add("no_traffic", "error", "No deployment receives traffic, so requests to this app fail.",
-			"Check why deployment "+summary.Release.DeploymentID+" was not promoted, then run `gregale traffic promote --app "+summary.App.Slug+" --deployment "+summary.Release.DeploymentID+"`.")
+			"Check why deployment "+summary.Release.DeploymentID+" was not promoted, then run `gregale release traffic promote --app "+summary.App.Slug+" --deployment "+summary.Release.DeploymentID+"`.")
 	} else if summary.Release.Status == "live" && !inspectServesNoRequests(summary.App) && (summary.Runtime.Health == nil || summary.Runtime.Health.Status != apihostingreceipt.SmokeVerified) {
 		if summary.Runtime.Health != nil && (summary.Runtime.Health.ErrorCode == apihostingreceipt.SmokeErrorNotConfigured || summary.Runtime.Health.ErrorCode == apihostingreceipt.SmokeErrorVerifierNotConfigured) {
 			add("health_verifier_unconfigured", "error", "The public smoke verifier is not configured, so this deployment is not externally verified.", "External health verification is not available on this Gregale installation right now; contact support.")

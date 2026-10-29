@@ -223,6 +223,8 @@ func buildManifestForRequest(req VMRequest, timeoutSec int) (api.BuildManifest, 
 		DevWatchHost:          req.DevWatchHost,
 		DependencyCache:       req.DependencyCacheKey != "",
 		LayerCompression:      req.LayerCompression,
+		BuildKitSnapshotter:   req.BuildKitSnapshotter,
+		DeferCacheExport:      req.DeferCacheExport && req.DependencyCacheKey != "" && !req.KeepWarm,
 		KeepWarm:              req.KeepWarm,
 		TimeoutSec:            timeoutSec,
 		LogTailBytes:          64 * 1024,
@@ -341,6 +343,9 @@ func (d *VMMDriver) Spawn(ctx context.Context, req VMRequest) (BuildHandle, erro
 		WarmScopeKey:                req.WarmScopeKey,
 		BuilderSliceOOMKillsAtStart: oomKillsAtStart,
 		BuilderSliceOOMCounterValid: oomCounterErr == nil,
+	}
+	if bManifest.DeferCacheExport {
+		handle.DeferredCache = &DeferredCacheSpec{Manifest: bManifest, Plan: req.Plan}
 	}
 	resp, err := d.cli.CreateColdBoot(ctx, &vmmdpb.CreateColdBootRequest{
 		Instance: instance,
@@ -677,8 +682,10 @@ func (d *VMMDriver) waitForCompletion(ctx context.Context, h BuildHandle, retain
 	if d == nil || d.cli == nil {
 		return BuildOutcome{}, fmt.Errorf("builderd: VMMDriver not wired")
 	}
+	// A deferred cache export keeps the drive for ExportDeferredCache.
+	deferred := false
 	defer func() {
-		if h.HostDrive1 != "" && !retainDrive {
+		if h.HostDrive1 != "" && !retainDrive && !deferred {
 			_ = os.Remove(h.HostDrive1)
 		}
 	}()
@@ -745,6 +752,9 @@ func (d *VMMDriver) waitForCompletion(ctx context.Context, h BuildHandle, retain
 		res.DevPatch = done.DevPatch
 		res.SharedRuntime = done.SharedRuntime
 		res.DependencyCacheUnchanged = done.DependencyCacheUnchanged
+		// Only a build whose manifest asked for it may leave the cache owed.
+		deferred = done.DependencyCacheDeferred && h.DeferredCache != nil && !retainDrive && exitCode == 0
+		res.DependencyCacheDeferred = deferred
 	} else if exitCode == 0 {
 		// A clean host exit alone does not prove that a customer build ran.
 		exitCode = -1
@@ -757,6 +767,9 @@ func (d *VMMDriver) waitForCompletion(ctx context.Context, h BuildHandle, retain
 			switch {
 			case pathErr != nil:
 				res.DependencyCacheStoreError = pathErr.Error()
+				deferred, res.DependencyCacheDeferred = false, false
+			case res.DependencyCacheDeferred:
+				// ExportDeferredCache exports and publishes it.
 			case res.DependencyCacheUnchanged:
 				// The guest kept the imported cache: nothing was exported, and
 				// the stored generation is still the right one. Refresh its
@@ -793,6 +806,137 @@ func (d *VMMDriver) waitForCompletion(ctx context.Context, h BuildHandle, retain
 		res.FailureClass, res.FailureCode, res.FailurePkg = classifyBuildFailure(exitCode, h.ExportDir)
 	}
 	return res, nil
+}
+
+// The orchestrator finds the capability by type assertion; keep it compiled.
+var _ DeferredCacheVM = (*VMMDriver)(nil)
+
+// ExportDeferredCache implements DeferredCacheVM (ADR-20261029171525). The
+// second VM boots on the drive the build left, with its BuildKit state and
+// plan, and its solve hits that state at every step. It therefore spends its
+// time on the cache export the build skipped.
+func (d *VMMDriver) ExportDeferredCache(ctx context.Context, h BuildHandle) error {
+	if d == nil || d.cli == nil {
+		return fmt.Errorf("builderd: VMMDriver not wired")
+	}
+	if h.DeferredCache == nil || h.HostDrive1 == "" || h.DependencyCacheKey == "" {
+		d.DiscardDeferredCache(h)
+		return errors.New("builderd: build did not defer its dependency cache export")
+	}
+	manifest := h.DeferredCache.Manifest
+	manifest.DeferCacheExport = false
+	manifest.CacheExportOnly = true
+	manifest.DependencyCacheImport = h.DependencyCacheRestored
+	manifest.TimeoutSec = api.BuildCacheExportTimeoutSeconds
+	exportDir := filepath.Join(d.exportDir, h.BuildID+DeferredCacheInstanceSuffix)
+	defer func() { _ = os.RemoveAll(exportDir) }()
+	if err := prepareCacheExportDrive(ctx, h.HostDrive1, manifest); err != nil {
+		d.DiscardDeferredCache(h)
+		return fmt.Errorf("builderd: prepare cache export drive: %w", err)
+	}
+	oomKillsAtStart, oomCounterErr := readCgroupOOMKills(builderSliceMemoryEventsPath)
+	cacheHandle := BuildHandle{
+		Instance:                    h.Instance + DeferredCacheInstanceSuffix,
+		HostDrive1:                  h.HostDrive1,
+		ExportDir:                   exportDir,
+		BuildID:                     h.BuildID,
+		TimeoutSec:                  manifest.TimeoutSec,
+		StartedAt:                   time.Now(),
+		DependencyCacheKey:          h.DependencyCacheKey,
+		BuilderSliceOOMKillsAtStart: oomKillsAtStart,
+		BuilderSliceOOMCounterValid: oomCounterErr == nil,
+	}
+	// The second VM gets no build secrets or registry credentials: builderd
+	// defers only builds that have neither.
+	resp, err := d.cli.CreateColdBoot(ctx, &vmmdpb.CreateColdBootRequest{
+		Instance: cacheHandle.Instance,
+		App: &vmmdpb.AppSpec{
+			BaseKey:    storagekey.Base("builder"),
+			LayerKey:   h.HostDrive1,
+			VcpuCount:  api.BuildVMVCPU,
+			MemSizeMib: int32(api.BuildVMRAMMB),
+		},
+		Build: &vmmdpb.BuildSpec{
+			ExportDir:  exportDir,
+			TimeoutSec: int32(manifest.TimeoutSec),
+		},
+		Plan:      h.DeferredCache.Plan,
+		AccountId: manifest.TenantID,
+	})
+	if err == nil && resp == nil {
+		err = errors.New("nil wake outcome")
+	}
+	if err != nil {
+		d.DiscardDeferredCache(h)
+		return fmt.Errorf("builderd: cold boot cache export: %w", err)
+	}
+	out, err := d.waitForCompletion(ctx, cacheHandle, false)
+	switch {
+	case err != nil:
+		return fmt.Errorf("builderd: wait for cache export: %w", err)
+	case out.ExitCode != 0:
+		return fmt.Errorf("builderd: cache export exited %d (%s)", out.ExitCode, out.FailureClass)
+	case out.DependencyCacheStoreError != "":
+		return fmt.Errorf("builderd: store exported dependency cache: %s", out.DependencyCacheStoreError)
+	case !out.DependencyCacheStored:
+		return errors.New("builderd: cache export stored nothing")
+	}
+	return nil
+}
+
+// DiscardDeferredCache implements DeferredCacheVM.
+func (d *VMMDriver) DiscardDeferredCache(h BuildHandle) {
+	if h.HostDrive1 != "" {
+		_ = os.Remove(h.HostDrive1)
+	}
+}
+
+// prepareCacheExportDrive turns a deferred build's offline drive into a cache
+// export run's: the CacheExportOnly manifest and a fresh one-shot entropy
+// seed. It also drops the build's result. A second VM that dies before
+// writing its own result still publishes nothing, because only that run
+// writes /build/out/cache. The edits use debugfs, as refreshWarmBuilderDrive's
+// do.
+func prepareCacheExportDrive(ctx context.Context, drivePath string, manifest api.BuildManifest) error {
+	manifestData, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal manifest: %w", err)
+	}
+	if err := replaceDriveFileData(ctx, drivePath, manifestData, "/upper/etc/faas/build.json", true); err != nil {
+		return fmt.Errorf("replace build manifest: %w", err)
+	}
+	seed := make([]byte, 256)
+	if _, err := rand.Read(seed); err != nil {
+		return fmt.Errorf("generate entropy seed: %w", err)
+	}
+	if err := replaceDriveFileData(ctx, drivePath, seed, "/upper/etc/faas/entropy.seed", false); err != nil {
+		return fmt.Errorf("replace entropy seed: %w", err)
+	}
+	_ = runDebugfs(ctx, drivePath, "rm /upper/etc/faas/build-done.json")
+	return nil
+}
+
+// replaceDriveFileData stages data in a private temporary file and writes it
+// to guestPath in an offline drive image.
+func replaceDriveFileData(ctx context.Context, image string, data []byte, guestPath string, requireRemove bool) error {
+	f, err := os.CreateTemp("", "faas-drive-file-")
+	if err != nil {
+		return fmt.Errorf("create staging file: %w", err)
+	}
+	path := f.Name()
+	defer func() { _ = os.Remove(path) }()
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("stage file: %w", err)
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("sync staging file: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("close staging file: %w", err)
+	}
+	return replaceWarmFile(ctx, image, path, guestPath, requireRemove)
 }
 
 // refreshWarmBuilderDrive updates the manifest, source archive, and one-shot

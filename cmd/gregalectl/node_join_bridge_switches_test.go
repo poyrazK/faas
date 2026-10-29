@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 var bridgeSwitches = []struct{ variable, env string }{
@@ -77,5 +79,33 @@ func TestVMMDServiceBridgeSwitchesDefaultOff(t *testing.T) {
 	}
 	if !strings.Contains(string(tasks), "not (vmmd_instance_bridge_unit | bool) or (vmmd_bridge_unprivileged | bool)") {
 		t.Error("vmmd_service does not require the unprivileged bridge for bridge units")
+	}
+}
+
+// Production turns the bridge switches on per canary node, never fleet-wide,
+// and all three together (a unit needs the unprivileged bridge).
+func TestComputeBridgeSwitchesAreACanary(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "group_vars", "compute_nodes", "vmmd_bridge.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vars map[string]any
+	if err := yaml.Unmarshal(body, &vars); err != nil {
+		t.Fatal(err)
+	}
+	if canary, _ := vars["vmmd_bridge_canary_nodes"].([]any); len(canary) == 0 {
+		t.Fatalf("vmmd_bridge_canary_nodes = %v, want the canary nodes", vars["vmmd_bridge_canary_nodes"])
+	}
+	var expr string
+	for _, sw := range bridgeSwitches {
+		got, _ := vars[sw.variable].(string)
+		if !strings.Contains(got, "in vmmd_bridge_canary_nodes") {
+			t.Errorf("%s = %v, want it limited to vmmd_bridge_canary_nodes", sw.variable, vars[sw.variable])
+		}
+		if expr == "" {
+			expr = got
+		} else if got != expr {
+			t.Errorf("%s = %q differs from %q: the three switches turn on together", sw.variable, got, expr)
+		}
 	}
 }

@@ -1,6 +1,7 @@
 from typing import Literal
 
 EventReplayBackfillItemResponseState = Literal[
+    "cancelled",
     "enqueued",
     "failed",
     "filtered",
@@ -13,6 +14,7 @@ EventReplayBackfillItemResponseState = Literal[
 ]
 
 EVENT_REPLAY_BACKFILL_ITEM_RESPONSE_STATE_VALUES: set[EventReplayBackfillItemResponseState] = {
+    "cancelled",
     "enqueued",
     "failed",
     "filtered",

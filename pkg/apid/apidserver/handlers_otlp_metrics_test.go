@@ -3,6 +3,7 @@ package apidserver
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -96,6 +97,56 @@ func TestPostOTLPMetrics_ReportsPartialSuccessInJSON(t *testing.T) {
 	// One negative value plus every name beyond the per-app cap.
 	if got := resp.GetPartialSuccess().GetRejectedDataPoints(); got != 2 {
 		t.Fatalf("rejected = %d (%q), want 2", got, resp.GetPartialSuccess().GetErrorMessage())
+	}
+}
+
+// adr: 20261028101615 — an export naming many new metrics writes the app's
+// known names and admits new ones, in name order, only up to its limit.
+func TestPostOTLPMetrics_AdmitsNewNamesOnlyWithinTheLimit(t *testing.T) {
+	e := customHistoryEnv(t)
+	app := createApp(t, e, "shop")
+	known := []string{"known_a", "known_b", "known_c", "known_d"}
+	var metrics []*metricspb.Metric
+	for _, name := range known {
+		metrics = append(metrics, otlpGauge(name, 1))
+	}
+	body, err := proto.Marshal(otlpExport(metrics...))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec := postOTLP(t, e, "application/x-protobuf", body); rec.Code != http.StatusOK {
+		t.Fatalf("seed status %d: %s", rec.Code, rec.Body)
+	}
+
+	metrics = []*metricspb.Metric{otlpGauge("known_a", 9)}
+	for i := 99; i >= 0; i-- {
+		metrics = append(metrics, otlpGauge(fmt.Sprintf("new_%02d", i), 1))
+	}
+	body, err = proto.Marshal(otlpExport(metrics...))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := postOTLP(t, e, "application/x-protobuf", body)
+	var resp colmetricspb.ExportMetricsServiceResponse
+	if rec.Code != http.StatusOK || proto.Unmarshal(rec.Body.Bytes(), &resp) != nil {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	if got := resp.GetPartialSuccess().GetRejectedDataPoints(); got != 99 {
+		t.Fatalf("rejected = %d, want the 99 new names beyond the one free slot", got)
+	}
+	rows, err := e.store.ListCustomMetrics(context.Background(), app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := map[string]float64{}
+	for _, row := range rows {
+		values[row.Name] = row.Value
+	}
+	if len(values) != api.MaxCustomMetricsPerApp || values["known_a"] != 9 {
+		t.Fatalf("stored = %v, want the known names (known_a updated) and one new name", values)
+	}
+	if _, ok := values["new_00"]; !ok {
+		t.Fatalf("stored = %v, want the first new name in name order", values)
 	}
 }
 

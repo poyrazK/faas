@@ -74,8 +74,8 @@ func TestScheduledReleaseLines(t *testing.T) {
 		NotifyChannels: []string{"releases"}, OverrideFreeze: "launch night", OverriddenFreezes: []string{"f1"}}
 	out := strings.Join(main.ScheduledReleaseLines(sr, now), "\n")
 	for _, want := range []string{"v42 of shop: starts", "(in 4h)", "Rollout: safe canary.", "Notifies: releases",
-		"Overrides 1 deploy freeze(s): launch night", "gregale scheduled-releases set v42 --app shop --at <when>",
-		"gregale scheduled-releases cancel v42 --app shop"} {
+		"Overrides 1 deploy freeze(s): launch night", "gregale release schedule set v42 --app shop --at <when>",
+		"gregale release schedule cancel v42 --app shop"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("output lacks %q:\n%s", want, out)
 		}

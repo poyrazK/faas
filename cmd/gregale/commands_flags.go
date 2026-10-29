@@ -68,7 +68,7 @@ func cmdFlags(args []string) int {
 		valid = *version > 0 && *expected >= 0
 	}
 	if !valid {
-		PrintUsage(os.Stderr, fmt.Sprintf("gregale flags %s needs %s", args[0], flagsVerbRequirements[args[0]]), "flags")
+		PrintUsage(os.Stderr, fmt.Sprintf("gregale %s needs %s", cliTreeSpellPath("flags "+args[0]), flagsVerbRequirements[args[0]]), "flags")
 		return 1
 	}
 	client, err := authedClient()

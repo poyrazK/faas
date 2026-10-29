@@ -22,6 +22,15 @@ if [[ "$SHARED_RETRY_BUDGET_REQUIRED" == true ]]; then
 		echo "EXPECTED_GATEWAY_COUNT must be a positive integer" >&2
 		exit 2
 	}
+	# cd-platform pipes this script to the control plane over `bash -s`,
+	# where a path relative to the checkout does not exist. Resolve the gate
+	# next to this file, or take it from the caller, and check it before any
+	# deployment rather than after twenty minutes of them.
+	SHARED_RETRY_BUDGET_SCRIPT="${SHARED_RETRY_BUDGET_SCRIPT:-$(dirname "${BASH_SOURCE[0]:-.}")/verify-shared-retry-budget.sh}"
+	[[ -x "$SHARED_RETRY_BUDGET_SCRIPT" ]] || {
+		echo "shared retry-budget gate is missing: ${SHARED_RETRY_BUDGET_SCRIPT}; set SHARED_RETRY_BUDGET_SCRIPT" >&2
+		exit 2
+	}
 fi
 
 GREGALE_BIN="${GREGALE_BIN:-/opt/faas/current/bin/gregale}"
@@ -30,6 +39,13 @@ FAAS_API="${FAAS_API:-https://api.gregale.dev}"
 FAAS_APPS_DOMAIN="${FAAS_APPS_DOMAIN:-gregale.dev}"
 DEPLOY_TIMEOUT_SECONDS="${DEPLOY_TIMEOUT_SECONDS:-1200}"
 INFRA_RETRY_DELAY_SECONDS="${INFRA_RETRY_DELAY_SECONDS:-30}"
+# ACCEPTANCE_NODE selects the per-node canary below instead of the fleet gate.
+ACCEPTANCE_NODE="${ACCEPTANCE_NODE:-}"
+NODE_CANARY_MAX_DEPLOYMENTS="${NODE_CANARY_MAX_DEPLOYMENTS:-6}"
+if [[ -n "$ACCEPTANCE_NODE" ]]; then
+	[[ "$ACCEPTANCE_NODE" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]] || { echo "invalid ACCEPTANCE_NODE" >&2; exit 2; }
+	[[ "$NODE_CANARY_MAX_DEPLOYMENTS" =~ ^[1-9][0-9]*$ ]] || { echo "invalid NODE_CANARY_MAX_DEPLOYMENTS" >&2; exit 2; }
+fi
 
 [[ -x "$GREGALE_BIN" ]] || { echo "candidate gregale binary is missing: $GREGALE_BIN" >&2; exit 1; }
 [[ -x "$GREGALECTL_BIN" ]] || { echo "candidate gregalectl binary is missing: $GREGALECTL_BIN" >&2; exit 1; }
@@ -182,6 +198,14 @@ set_app_policy() {
 	FAAS_JSON=1 "$GREGALE_BIN" app "$slug" "$@" --json >"$output"
 }
 
+# capability_released reports whether a catalog capability is released to the
+# acceptance account, from the `gregale capabilities` response verify_app_policy_controls
+# saves. Internal capabilities are released per account (ADR-20261023115741);
+# while one is hidden apid refuses its settings with 403 capability_not_released.
+capability_released() {
+	jq -e --arg id "$1" '(.hidden_capabilities // []) | index($id) == null' "$workdir/capabilities.json" >/dev/null
+}
+
 wait_for_http_status() {
 	local url="$1" expected="$2" headers="$3" body="$4" status=""
 	for _ in $(seq 1 15); do
@@ -212,6 +236,7 @@ verify_app_policy_controls() {
 	local body="$workdir/${slug}-policy-body"
 
 	read_app_policy "$slug" "$original"
+	FAAS_JSON=1 "$GREGALE_BIN" capabilities >"$workdir/capabilities.json"
 	# Release acceptance deploys a fresh Scale-plan app. Pin its documented
 	# defaults so this contract always exercises a real transition and a later
 	# default change gets reviewed alongside the CLI behavior.
@@ -240,21 +265,38 @@ verify_app_policy_controls() {
 
 	# Consumer auth is an independent gateway gate. Verify anonymous traffic is
 	# rejected in required mode, then restore the original optional mode.
-	set_app_policy "$slug" "$receipt" --consumer-auth-mode required
-	jq -e '.consumer_auth_mode == "required"' "$receipt" >/dev/null
-	wait_for_http_status "${app_url%/}/" 401 "$headers" "$body"
-	jq -e '.code == "consumer_key_required"' "$body" >/dev/null
-	set_app_policy "$slug" "$receipt" --consumer-auth-mode optional
-	jq -e '.consumer_auth_mode == "optional"' "$receipt" >/dev/null
-	wait_for_http_status "${app_url%/}/" 200 "$headers" "$body"
+	# Required mode belongs to the internal API consumers capability (rc.302).
+	if capability_released api-consumers; then
+		set_app_policy "$slug" "$receipt" --consumer-auth-mode required
+		jq -e '.consumer_auth_mode == "required"' "$receipt" >/dev/null
+		wait_for_http_status "${app_url%/}/" 401 "$headers" "$body"
+		jq -e '.code == "consumer_key_required"' "$body" >/dev/null
+		set_app_policy "$slug" "$receipt" --consumer-auth-mode optional
+		jq -e '.consumer_auth_mode == "optional"' "$receipt" >/dev/null
+		wait_for_http_status "${app_url%/}/" 200 "$headers" "$body"
+	else
+		echo "consumer auth check skipped: api-consumers is not released to the acceptance account" >&2
+	fi
 
-	# Toggle the three plan-enabled transport/telemetry settings together and
-	# read back each value. A disabled WebSocket upgrade has a deterministic
-	# 501 response, which proves the gateway consumed the new app policy.
-	set_app_policy "$slug" "$receipt" --no-streaming-enabled --no-websocket --no-route-metrics
+	# Toggle the plan-enabled transport/telemetry settings together and read
+	# back each value. A disabled WebSocket upgrade has a deterministic 501
+	# response, which proves the gateway consumed the new app policy. Route
+	# metrics belong to the internal route insights capability (rc.303).
+	local disable=(--no-streaming-enabled --no-websocket) enable=(--streaming-enabled --websocket-enabled)
+	local route_metrics=false
+	if capability_released route-insights; then
+		disable+=(--no-route-metrics)
+		enable+=(--route-metrics)
+		route_metrics=true
+	else
+		echo "route metrics check skipped: route-insights is not released to the acceptance account" >&2
+	fi
+	set_app_policy "$slug" "$receipt" "${disable[@]}"
 	assert_policy_bool "$receipt" streaming_enabled false
 	assert_policy_bool "$receipt" websocket_enabled false
-	assert_policy_bool "$receipt" route_metrics_enabled false
+	if [[ "$route_metrics" == true ]]; then
+		assert_policy_bool "$receipt" route_metrics_enabled false
+	fi
 	local ws_status
 	ws_status="$(curl --http1.1 --silent --show-error --connect-timeout 3 --max-time 10 \
 		--dump-header "$headers" --output "$body" --write-out '%{http_code}' \
@@ -266,13 +308,59 @@ verify_app_policy_controls() {
 
 	# Restore every changed value and verify the CLI readback matches the saved
 	# response before the acceptance app is removed by cleanup.
-	set_app_policy "$slug" "$receipt" --streaming-enabled --websocket-enabled --route-metrics
+	set_app_policy "$slug" "$receipt" "${enable[@]}"
 	assert_policy_bool "$receipt" maintenance_mode false
 	assert_policy_bool "$receipt" streaming_enabled true
 	assert_policy_bool "$receipt" websocket_enabled true
 	assert_policy_bool "$receipt" route_metrics_enabled true
 	jq -e '.consumer_auth_mode == "optional"' "$receipt" >/dev/null
 }
+
+# Per-node canary: cd-platform runs it after each compute node activates and
+# before the next one starts. Placement and build claims are fleet-wide, so it
+# deploys fresh apps, alternating both shapes, until the just-activated node
+# serves one and has built one. rc.301's fsn-2 served traffic while its
+# builderd failed every build, and only an operator's manual hold kept fsn-3
+# on the old release. Any failed deployment ends the canary.
+if [[ -n "$ACCEPTANCE_NODE" ]]; then
+	# Slugs stay reserved after cleanup, so each node's apps carry its name
+	# (a valid slug is at most 40 characters).
+	node_tag="$(printf '%s' "${ACCEPTANCE_NODE%%.*}" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9-' '-' | cut -c1-10)"
+	node_report="$workdir/node.json"
+	canary_deadline=$((SECONDS + 20 * 60))
+	for ((i=1; i<=NODE_CANARY_MAX_DEPLOYMENTS; i++)); do
+		if ((SECONDS >= canary_deadline)); then
+			break
+		fi
+		template=hello-node
+		if ((i % 2 == 0)); then
+			template=function-node
+		fi
+		canary_slug="ra-${short_sha}-${run_suffix}-${node_tag}-${i}"
+		canary_output="$workdir/${canary_slug}.json"
+		slugs+=("$canary_slug")
+		rc=0
+		deploy_one "$template" "$canary_slug" "$canary_output" || rc=$?
+		if (( rc != 0 )); then
+			report_failed_deploy "$canary_slug" "$canary_output" "$rc"
+			echo "node canary deployment for ${ACCEPTANCE_NODE} failed" >&2
+			exit 1
+		fi
+		verify_receipt "$canary_output"
+		node_exit=0
+		"$GREGALECTL_BIN" release-acceptance verify-node --node "$ACCEPTANCE_NODE" \
+			--slugs "$(IFS=,; echo "${slugs[*]}")" >"$node_report" || node_exit=$?
+		if (( node_exit == 0 )); then
+			printf 'node canary passed: release=%s node=%s deployments=%s\n' \
+				"$RELEASE_SHA" "$ACCEPTANCE_NODE" "${#slugs[@]}"
+			exit 0
+		fi
+		(( node_exit == 3 )) || exit "$node_exit"
+	done
+	echo "node canary did not see ${ACCEPTANCE_NODE} serve and build an acceptance app within ${NODE_CANARY_MAX_DEPLOYMENTS} deployments and 20 minutes" >&2
+	jq -c . "$node_report" >&2 || true
+	exit 1
+fi
 
 # Submit both execution shapes. Placement is capacity-ranked, not round-robin,
 # so this first wave proves both shapes but cannot guarantee node coverage.
@@ -408,7 +496,7 @@ verify_receipt "$redeploy_final" "$(jq -er '.app_url' "${outputs[0]}")"
 if [[ "$SHARED_RETRY_BUDGET_REQUIRED" == true ]]; then
 	PROMETHEUS_URL="$PROMETHEUS_URL" \
 		EXPECTED_GATEWAY_COUNT="$EXPECTED_GATEWAY_COUNT" \
-		deploy/scripts/verify-shared-retry-budget.sh
+		"$SHARED_RETRY_BUDGET_SCRIPT"
 fi
 
 printf 'production acceptance passed: release=%s nodes=%s deployments=%s\n' \

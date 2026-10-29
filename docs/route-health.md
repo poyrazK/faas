@@ -355,6 +355,43 @@ reopen an aborted candidate or claim a healthy resume.
 means hold. Use `--on-regression hold` with the current revision to turn off
 route-specific automatic recovery while retaining the rest of the guard.
 
+## Lost telemetry
+
+The guard reads request telemetry the gateways record. When a gateway may have
+lost some of it in the evidence windows (it restarted, missed a heartbeat, or
+has telemetry off or sampled), every window is unknown with reason
+`telemetry_incomplete` and the advance waits. This is Gregale's gap, not your
+traffic: it sends no `routes.health.blocked` webhook, starts no hold, is not
+counted by `route_health_holds`, and never triggers the hold deadline. The
+canary advances once complete windows show healthy evidence, usually within a
+few minutes. Rows dropped because an account exceeds its telemetry rate are not
+lost evidence: the remaining rows stay comparable.
+
+## Hold deadline
+
+An enforced guard holds a canary for at most 24 hours. When the canary worker's
+advance is still held after that, counted from the hold's first blocking
+decision in its stage and configuration, Gregale aborts the rollout and restores
+the stable deployment, as for a timed-out release approval. The decision history
+records rule `abort_route_health_timeout`. Changing the guard's configuration or
+the canary stage starts a new hold. The deadline is applied on the worker's
+advance: with no Safe Deploy worker running, nothing advances or aborts.
+
+To hear about a hold before the deadline without a webhook receiver, alert on
+`route_health_holds`: the app's canaries the guard holds now plus those it
+aborted within the window. The "Canary held by route health" preset fires on
+any hold over 15 minutes; see
+[route alerts](alerts.md#route-monitor-and-canary-hold-alerts).
+
+Saving the guard returns `warnings` (the CLI prints them to stderr):
+
+- each selector whose method/path label had no request within your plan's
+  request telemetry retention, at most the last 7 days; an enforced guard on
+  such a route holds every canary on unknown evidence until the deadline;
+- `on_regression: abort` while no Safe Deploy worker holds the rollout lease,
+  because only that worker runs the recovery; until one does, a confirmed
+  regression holds the canary.
+
 ## Notifications for held and resumed releases
 
 Subscribe through an app webhook:

@@ -30,13 +30,15 @@ const testRedirect = "https://client.example/oauth/callback"
 const testVerifier = "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNO"
 
 type remoteFixture struct {
-	t          *testing.T
-	server     *httptest.Server
-	client     *http.Client
-	resource   string
-	clientID   string
-	mu         sync.Mutex
-	accounts   map[string]string
+	t        *testing.T
+	server   *httptest.Server
+	client   *http.Client
+	resource string
+	clientID string
+	mu       sync.Mutex
+	accounts map[string]string
+	// keyScopes are the scopes /v1/account reports for a key (agent keys).
+	keyScopes  map[string][]string
 	apiHook    func(http.ResponseWriter, *http.Request, string) bool
 	mints      []api.CliAuthCodeRequest
 	opts       HTTPOptions
@@ -124,7 +126,10 @@ func newRemoteFixtureWithOptions(t *testing.T, writes bool, options HTTPOptions)
 			}
 			_ = json.NewEncoder(w).Encode(api.ProjectEnvironmentResponse{ID: account + "-" + slug, ProjectID: account + "-project", Slug: slug, Protected: slug == "production"})
 		case "/v1/account":
-			_ = json.NewEncoder(w).Encode(api.AccountResponse{ID: account, Plan: "free", Status: "active"})
+			f.mu.Lock()
+			scopes := f.keyScopes[strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer ")]
+			f.mu.Unlock()
+			_ = json.NewEncoder(w).Encode(api.AccountResponse{ID: account, Plan: "free", Status: "active", KeyScopes: scopes})
 		case "/v1/capabilities":
 			_ = json.NewEncoder(w).Encode(api.CapabilitiesResponse{Plan: "free"})
 		case "/v1/apps":

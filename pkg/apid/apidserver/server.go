@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/onebox-faas/faas/pkg/apid/issueslack"
+	"io/fs"
 
 	"github.com/onebox-faas/faas/pkg/apid/devloop"
 	"log/slog"
@@ -22,6 +23,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/apid/automationconsole"
 	"github.com/onebox-faas/faas/pkg/apid/billingruns"
+	"github.com/onebox-faas/faas/pkg/apid/billingsync"
 	"github.com/onebox-faas/faas/pkg/apid/capgate"
 	"github.com/onebox-faas/faas/pkg/apid/ciapi"
 	"github.com/onebox-faas/faas/pkg/apid/consumerbilling"
@@ -87,11 +89,13 @@ import (
 	"github.com/onebox-faas/faas/pkg/profiling"
 	"github.com/onebox-faas/faas/pkg/promotionrollout"
 	"github.com/onebox-faas/faas/pkg/promql"
+	"github.com/onebox-faas/faas/pkg/ratelimit/peraccount"
 	"github.com/onebox-faas/faas/pkg/realtime"
 	"github.com/onebox-faas/faas/pkg/reconcile"
 	objruntime "github.com/onebox-faas/faas/pkg/rehearsalobj/runtime"
 	pgruntime "github.com/onebox-faas/faas/pkg/rehearsalpg/runtime"
 	"github.com/onebox-faas/faas/pkg/releasemetrics"
+	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
 	usagestore "github.com/onebox-faas/faas/pkg/state/dataapiusage"
@@ -178,6 +182,7 @@ type server struct {
 	flagsWorkloadVerifier *workloadidentity.Verifier
 	statementInvoices     statementinvoices.Service // ADR-1502; Host wired in newServer
 	billingRuns           billingruns.Service       // ADR-1503; Host wired in newServer
+	billingSync           billingsync.Service       // ADR-20261029094512; Host wired in newServer
 	consumerBilling       consumerbilling.Service   // ADR-1506; Host wired in newServer
 	consumerCredits       consumercredits.Service   // ADR-1306; Host wired in newServer
 	consumerControls      consumercontrols.Service  // ADR-1314, ADR-1315; Host wired in newServer
@@ -394,6 +399,10 @@ type server struct {
 	// to a fresh bucket in authLimited for unit tests; production
 	// wires it in newServer.
 	apiAuthLimiter *middleware.Limiter
+	// channelTests caps notification channel test sends per account
+	// (ADR-20261028101615); built on first use.
+	channelTestsOnce sync.Once
+	channelTests     *peraccount.Limiter
 	// dashboardAuthLimiter is the shared per-IP bucket for the
 	// dashboard auth surface (/login, /auth/verify). Separate from
 	// apiAuthLimiter because the two surfaces count different
@@ -692,6 +701,9 @@ type server struct {
 	// Service.Reconcile) route through this seam — there is no
 	// other workload-mutation path post PR-G.
 	reconcileSvc *reconcile.Service
+	// imageListening answers whether a prebuilt Compose image listens
+	// (ADR-20261029120000 amendment 2); nil scans the repository alone.
+	imageListening reposcan.ImageListening
 }
 
 // anonymousAccountLabel is the literal value of the `account_id`
@@ -755,6 +767,11 @@ func (s *server) WithOpsMetrics(ctx context.Context, ops *wire.OpsMetrics) *serv
 		s.routeJobMetrics = nil
 	} else if s.routeJobMetrics.Registry() != ops.Registry() {
 		s.routeJobMetrics = routejobs.NewMetrics(ops.Registry(), ops.MetricPrefix())
+	}
+	if ops == nil {
+		s.billingSync.Metrics = nil
+	} else if s.billingSync.Metrics.Registry() != ops.Registry() {
+		s.billingSync.Metrics = billingsync.NewMetrics(ops.Registry(), ops.MetricPrefix())
 	}
 	if ops == nil {
 		s.edgeRules.Metrics = nil
@@ -971,6 +988,20 @@ func (s *server) MarkRekeyRunnerOptedIn() *server {
 // zero value (both providers Disabled → consent routes 503).
 func (s *server) WithOAuthConfig(cfg auth.SignInConfig) *server {
 	s.oauthConfig = cfg
+	return s
+}
+
+// WithImageListening lets project scans ask a registry whether a prebuilt
+// Compose image listens (ADR-20261029120000 amendment 2), and gives the
+// reconcile service's own scan the same answer. Tests leave it unset and scan
+// the repository alone.
+func (s *server) WithImageListening(lookup reposcan.ImageListening) *server {
+	s.imageListening = lookup
+	if s.reconcileSvc != nil {
+		s.reconcileSvc.Scan = func(fsys fs.FS) (reposcan.Result, error) {
+			return reposcan.ScanWithOptions(fsys, reposcan.ScanOptions{ImageListening: lookup})
+		}
+	}
 	return s
 }
 
@@ -1587,6 +1618,7 @@ func newServerWithDeps(
 	s.outboundAI.Host = outboundAIHost{s}
 	s.statementInvoices.Host = statementInvoicesHost{s}
 	s.billingRuns.Host = billingRunsHost{s}
+	s.billingSync.Host = billingSyncHost{s}
 	s.consumerBilling.Host = consumerBillingHost{s}
 	s.consumerCredits.Host = consumerCreditsHost{s}
 	s.consumerControls.Host = consumerControlsHost{s}
@@ -3215,6 +3247,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/event-replays/{jobID}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.appEvents.GetEventReplayBackfill))))
 	mux.HandleFunc("GET /v1/event-replays/{jobID}/items", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.appEvents.ListEventReplayBackfillItems))))
 	mux.HandleFunc("POST /v1/event-replays/{jobID}/retry-failed", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.appEvents.RetryFailedEventReplayBackfill)))))
+	mux.HandleFunc("POST /v1/event-replays/{jobID}/cancel", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.appEvents.CancelEventReplayBackfill))))
 	mux.HandleFunc("GET /v1/apps/{slug}/work-policies", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listWorkPolicies))))
 	mux.HandleFunc("GET /v1/account/operation-policies", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listExclusivePolicies))))
 	mux.HandleFunc("PUT /v1/account/operation-policies/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.upsertExclusivePolicy))))
@@ -4209,7 +4242,7 @@ func (s *server) handler() http.Handler {
 	// implements billing.Provider.ReconcileUsage (Stripe today; Paddle
 	// returns ErrNotImplemented and maps to 501 via the handler).
 	mux.HandleFunc("GET /v1/admin/billing-paddle-catalog",
-		s.authLimited(s.requireScope(api.ScopesAdminOnly...)(s.listPaddleCatalog)))
+		s.authLimited(s.requireOperatorRead(s.listPaddleCatalog)))
 	mux.HandleFunc("POST /v1/admin/billing-paddle-catalog/sync",
 		s.authLimited(s.requireAdminMutation(s.syncPaddleCatalog)))
 	mux.HandleFunc("DELETE /v1/admin/billing-paddle-catalog",
@@ -4217,7 +4250,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/admin/billing-reconcile/{id}",
 		s.authLimited(s.requireAdminMutation(s.reconcileAccount)))
 	mux.HandleFunc("GET /v1/admin/billing-paddle-overage/preflight",
-		s.authLimited(s.requireScope(api.ScopesAdminOnly...)(s.paddleOveragePreflight)))
+		s.authLimited(s.requireOperatorRead(s.paddleOveragePreflight)))
 
 	// Operator observability backend (issue #777 / ADR-091). The
 	// /v1/admin/obs/* surface gives the platform owner read-only
@@ -4313,7 +4346,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/admin/obs/recording-coverage", s.authLimited(s.requireOperatorRead(s.obsRecordingCoverage)))
 	mux.HandleFunc("GET /v1/admin/obs/input-health", s.authLimited(s.requireOperatorRead(s.obsInputHealth)))
 	mux.HandleFunc("GET /v1/admin/ops/data-repairs",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.getOperatorDataRepairHealth))))
+		s.authLimited(s.requireOperatorSessionRead(s.getOperatorDataRepairHealth)))
 	// Unified incident inbox. This is a read-only correlation projection over
 	// the existing deployment, job-run, compute-node, and alert surfaces;
 	// it keeps operator triage out of the deployment request path.
@@ -4364,7 +4397,7 @@ func (s *server) handler() http.Handler {
 	// closure — fleet-level intents with account_id=NULL are
 	// visible to any admin).
 	mux.HandleFunc("GET /v1/admin/operator-intents/{id}",
-		s.authLimited(s.requireScope(api.ScopesAdminOnly...)(s.requireOperator(s.getOperatorIntent))))
+		s.authLimited(s.requireOperatorSessionRead(s.getOperatorIntent)))
 	// P2c (reclaim-stuck-build) — fleet-level sweep that calls
 	// state.Store.SweepStuckRunningBuilds directly (per user
 	// decision, NO builderd gRPC server). ?older_than= is
@@ -4396,7 +4429,7 @@ func (s *server) handler() http.Handler {
 	// retry paths use the strict provider-mutation policy; apid never opens or
 	// writes githubd's queue tables directly.
 	mux.HandleFunc("GET /v1/admin/ops/github/recovery",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.getGithubRecoveryStatus))))
+		s.authLimited(s.requireOperatorSessionRead(s.getGithubRecoveryStatus)))
 	mux.Handle("POST /v1/admin/ops/github/deliveries/{id}/retry",
 		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postGithubDeliveryRetry))))
 	mux.Handle("POST /v1/admin/ops/github/check-updates/{id}/retry",
@@ -4426,24 +4459,24 @@ func (s *server) handler() http.Handler {
 	// Filesystem/bootstrap settings remain visible as deployment-managed
 	// entries.
 	mux.HandleFunc("GET /v1/admin/config",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.adminRuntimeConfigList))))
+		s.authLimited(s.requireOperatorSessionRead(s.adminRuntimeConfigList)))
 	mux.Handle("PATCH /v1/admin/config/{key}",
 		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.adminRuntimeConfigPatch))))
 	mux.Handle("POST /v1/admin/config/{key}/rollback",
 		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.adminRuntimeConfigRollback))))
 	mux.HandleFunc("GET /v1/admin/config-operations/{id}",
-		s.authLimited(s.requireScope(api.ScopesAdminOnly...)(s.adminRuntimeConfigOperationGet)))
+		s.authLimited(s.requireOperatorSessionRead(s.adminRuntimeConfigOperationGet)))
 	mux.HandleFunc("GET /v1/admin/config/{key}/revisions",
-		s.authLimited(s.requireScope(api.ScopesAdminOnly...)(s.adminRuntimeConfigRevisions)))
+		s.authLimited(s.requireOperatorSessionRead(s.adminRuntimeConfigRevisions)))
 	// ADR-1700 — platform flags. Reads join the catalog, the durable rows,
 	// apid's compiled snapshot and per-daemon apply receipts; writes go
 	// through PATCH /v1/admin/config/platform_flag.<key>.
 	mux.HandleFunc("GET /v1/admin/flags",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.platformFlagAdmin.List))))
+		s.authLimited(s.requireOperatorSessionRead(s.platformFlagAdmin.List)))
 	mux.HandleFunc("GET /v1/admin/flags/{key}",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.platformFlagAdmin.Get))))
+		s.authLimited(s.requireOperatorSessionRead(s.platformFlagAdmin.Get)))
 	mux.HandleFunc("GET /v1/admin/flags/{key}/decision",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.platformFlagAdmin.Decision))))
+		s.authLimited(s.requireOperatorSessionRead(s.platformFlagAdmin.Decision)))
 	mux.HandleFunc("GET /v1/admin/accounts/{id}/flags",
 		s.authLimited(s.requireOperatorSessionRead(s.platformFlagAdmin.AccountFlags)))
 
@@ -4480,7 +4513,7 @@ func (s *server) handler() http.Handler {
 	// "feature is on and the table is empty". See
 	// handlers_rekey.go for the handler body.
 	mux.HandleFunc("GET /v1/admin/secrets/rekey-progress",
-		s.authLimited(s.requireScope(api.ScopesAdminOnly...)(s.getRekeyProgress)))
+		s.authLimited(s.requireOperatorRead(s.getRekeyProgress)))
 
 	// Issue #517 / PR-C / ADR-064: customer-facing wake-timeline
 	// surface. Sub-resource of /v1/apps/{slug} — same auth chain
@@ -5351,7 +5384,9 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PATCH /v1/admin/status/incidents/{public_id}", s.authLimited(s.requireAdminMutation(s.editAdminStatusEvent)))
 	mux.HandleFunc("POST /v1/admin/status/incidents/{public_id}/updates", s.authLimited(s.requireAdminMutation(s.updateAdminStatusEvent)))
 	mux.HandleFunc("PATCH /v1/admin/status/incidents/{public_id}/updates/{update_id}", s.authLimited(s.requireAdminMutation(s.editAdminStatusUpdate)))
-	mux.HandleFunc("GET /v1/admin/status/incidents", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireSessionPrincipal(s.listAdminStatusEvents)))))
+	// Session only with no FAAS_OPERATOR_BEARER_READS grace: this route was
+	// session-only before ADR 20261023214253 (its Migration section).
+	mux.HandleFunc("GET /v1/admin/status/incidents", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireOperator(s.requireSessionPrincipal(s.requireEnrolledOperatorSession(s.listAdminStatusEvents)))))))
 
 	// CLI auth device-code flow (spec §2.2). Code minting and exchange
 	// are anonymous because the CLI has no credential yet; the browser

@@ -335,10 +335,20 @@ func computeAffectedPartition(
 	projectID string,
 ) affectedPartition {
 	idx := make(map[string]state.App, len(existingApps))
+	projectApps := make([]state.App, 0, len(existingApps))
 	for _, a := range existingApps {
 		if projectID != "" && a.ProjectID == projectID && a.PreviewOfSlug == "" {
 			idx[a.WorkloadName] = a
+			projectApps = append(projectApps, a)
 		}
+	}
+	// A renamed service updates its previous name's app (ADR-20261029090000),
+	// matching reconcile's diff, so the plan shows neither a remove nor a
+	// create for it.
+	renamed := reconcile.RenamedWorkloads(allScanWl, projectApps)
+	for previous, current := range renamed {
+		idx[current] = idx[previous]
+		delete(idx, previous)
 	}
 	// scanNames is keyed on durable workload identity. RootDir can change
 	// between applies without turning the workload into a remove/create pair.
@@ -350,6 +360,9 @@ func computeAffectedPartition(
 	scanNames := make(map[string]struct{}, len(allScanWl))
 	for _, w := range allScanWl {
 		scanNames[w.Name] = struct{}{}
+	}
+	for previous := range renamed {
+		scanNames[previous] = struct{}{}
 	}
 	// WillDeploy: filteredW (no excluded) → create or update. Order
 	// preserved so the i-alignment with respWorkloads stays intact.
@@ -1471,7 +1484,7 @@ func (s *server) scanService(
 		}
 	}
 
-	result, scanErr := reposcan.Scan(os.DirFS(req.ScanDir))
+	result, scanErr := reposcan.ScanWithOptions(os.DirFS(req.ScanDir), reposcan.ScanOptions{ImageListening: s.imageListening})
 	if scanErr != nil {
 		return nil, state.Project{}, nil, nil, nil, nil, api.NewProblem(
 			http.StatusBadRequest, api.CodeSourceInvalid,

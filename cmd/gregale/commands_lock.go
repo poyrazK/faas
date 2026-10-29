@@ -91,7 +91,7 @@ func bindExclusiveLock(ctx context.Context, client *Client, source, id string, l
 	return &row, nil
 }
 
-const jobsRunLockedUsage = "usage: gregale jobs run <name> --lock POLICY --lock-key JSON [--tasks N | --run-file FILE] [--idempotency-key KEY]"
+const jobsRunLockedUsage = "usage: gregale job run <name> --lock POLICY --lock-key JSON [--tasks N | --run-file FILE] [--idempotency-key KEY]"
 
 // cmdJobsRunLocked is `jobs run <name> --lock POLICY --lock-key JSON`: the
 // run is submitted through the lock, as `operations start-job` does.

@@ -156,7 +156,11 @@ them.
       off by default, with the equivalence tests and a Postgres benchmark at
       10,000 apps and 1,000 route-owning accounts. Target: deploy create p99
       under 250 ms. The claim lookup indexes, by name and by suffix, ship
-      with the queries that read them.
+      with the queries that read them. The first cut covers app and tenant
+      binding writers in apid; custom-domain publication, verification and
+      removal, then route-rule create, update and rollback (decision 4),
+      followed under the same switch. Other daemons keep the fleet-wide guard
+      until they get their own scoped paths.
    4. The switch is turned on in staging, then in production after a release
       with no refusal or `lock_wait` regression. It is removed one release
       after that, together with the global path, except as the test oracle.
@@ -169,6 +173,13 @@ them.
   projection still can, as ADR-570 intends.
 - A `*` route write still serializes with every binding write and analyses
   every route in the fleet.
+- **Not addressed here:** every rule and policy write also takes ADR-570's
+  `service_capacity_policy` EXCLUSIVE table guard
+  (`LockTrafficCapacitySnapshot`) for its whole transaction. Rule writes
+  therefore stay serialized fleet-wide, and each one makes binding writes
+  retry until it commits. The guard also blocks any statement that fires a
+  capacity trigger, which includes instance state changes. Scoped name locks
+  only shorten that window; removing it needs its own decision.
 - A write takes more lock keys: name depth times hostnames, usually under 20.
 - Every route write maintains the new `edge_rules` column. The change is in
   `pkg/state`, so every daemon rebuilds.

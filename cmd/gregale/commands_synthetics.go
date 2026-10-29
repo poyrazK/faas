@@ -13,7 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const syntheticsUsage = "usage: gregale synthetics <list|create|status|pause|resume|rm> --app <slug>"
+const syntheticsUsage = "usage: gregale alert check <list|create|status|pause|resume|rm> --app <slug>"
 
 // cmdSynthetics implements `gregale synthetics` (ADR-748): scheduled HTTP
 // checks against an app's own hostname.
@@ -48,7 +48,7 @@ func cmdSyntheticsList(args []string) int {
 		return 1
 	}
 	if *slug == "" || fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale synthetics list --app <slug>", "synthetics")
+		PrintUsage(os.Stderr, "usage: gregale alert check list --app <slug>", "synthetics")
 		return 1
 	}
 	client, err := authedClient()
@@ -68,7 +68,7 @@ func cmdSyntheticsList(args []string) int {
 
 func renderSyntheticList(w io.Writer, checks []api.SyntheticCheckResponse) {
 	if len(checks) == 0 {
-		_, _ = fmt.Fprintln(w, "No synthetic checks. Create one with `gregale synthetics create`.")
+		_, _ = fmt.Fprintln(w, "No synthetic checks. Create one with `gregale alert check create`.")
 		return
 	}
 	_, _ = fmt.Fprintf(w, "%-36s  %-20s  %-6s  %-8s  %-7s  %s\n", "ID", "NAME", "EVERY", "EXPECT", "STATE", "REQUEST")
@@ -101,7 +101,7 @@ func cmdSyntheticsCreate(args []string) int {
 		return 1
 	}
 	if *slug == "" || *name == "" || fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale synthetics create --app <slug> --name <name> [--path /healthz] [--method GET|HEAD] [--expect-status N] [--timeout-ms N] [--every-minutes 5|15|60]", "synthetics")
+		PrintUsage(os.Stderr, "usage: gregale alert check create --app <slug> --name <name> [--path /healthz] [--method GET|HEAD] [--expect-status N] [--timeout-ms N] [--every-minutes 5|15|60]", "synthetics")
 		return 1
 	}
 	// The API's check names interval_seconds and [300 900 3600], which
@@ -143,7 +143,7 @@ func cmdSyntheticsSetEnabled(args []string, enabled bool) int {
 		return 1
 	}
 	if *slug == "" || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale synthetics "+verb+" --app <slug> <check-id>", "synthetics")
+		PrintUsage(os.Stderr, "usage: gregale alert check "+verb+" --app <slug> <check-id>", "synthetics")
 		return 1
 	}
 	client, err := authedClient()
@@ -170,7 +170,7 @@ func cmdSyntheticsRm(args []string) int {
 		return 1
 	}
 	if *slug == "" || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale synthetics rm --app <slug> <check-id> [--yes]", "synthetics")
+		PrintUsage(os.Stderr, "usage: gregale alert check delete --app <slug> <check-id> [--yes]", "synthetics")
 		return 1
 	}
 	client, err := authedClient()

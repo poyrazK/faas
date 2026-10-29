@@ -1,11 +1,14 @@
 package apidserver
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"mime"
 	"net/http"
+	"slices"
+	"strings"
 	"time"
 
 	colmetricspb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
@@ -46,21 +49,58 @@ func (s *server) postOTLPMetrics(w http.ResponseWriter, r *http.Request, acct st
 		return
 	}
 	res := otlpmetrics.Translate(req, time.Now().UTC())
-	for _, p := range res.Points {
-		err := store.PutCustomMetricOfKind(r.Context(), app.ID, p.Name, p.Kind, p.Value, p.ObservedAt, api.MaxCustomMetricsPerApp)
-		switch {
-		case errors.Is(err, state.ErrCustomMetricLimit):
-			res.Rejected++
-			if res.Reason == "" {
-				res.Reason = fmt.Sprintf("metric %q: app is at its limit of %d custom metrics", p.Name, api.MaxCustomMetricsPerApp)
-			}
-		case err != nil:
-			writeCustomerInternalProblem(w, r, s.log, "store OTLP metrics",
-				"Gregale could not store these metrics.", "Retry the export; OTLP exporters retry automatically.", err)
-			return
-		}
+	if err := s.storeOTLPPoints(r.Context(), store, app.ID, &res); err != nil {
+		writeCustomerInternalProblem(w, r, s.log, "store OTLP metrics",
+			"Gregale could not store these metrics.", "Retry the export; OTLP exporters retry automatically.", err)
+		return
 	}
 	writeOTLPMetricsResponse(w, res, jsonBody)
+}
+
+// storeOTLPPoints writes an export's points (ADR-20261028101615). The app's
+// metric names are read once: points for names it has are written, new names
+// are admitted, in name order, only while the app is under its limit, and the
+// rest are rejected without a database write, so one export naming thousands
+// of metrics costs at most MaxCustomMetricsPerApp writes. The store still
+// enforces the limit against concurrent exports.
+func (s *server) storeOTLPPoints(ctx context.Context, store state.CustomMetricKindStore, appID string, res *otlpmetrics.Result) error {
+	rows, err := s.store.ListCustomMetrics(ctx, appID)
+	if err != nil {
+		return fmt.Errorf("list custom metrics: %w", err)
+	}
+	known := make(map[string]bool, len(rows))
+	for _, row := range rows {
+		known[row.Name] = true
+	}
+	room := api.MaxCustomMetricsPerApp - len(known)
+	reject := func(name string) {
+		res.Rejected++
+		if res.Reason == "" {
+			res.Reason = fmt.Sprintf("metric %q: app is at its limit of %d custom metrics", name, api.MaxCustomMetricsPerApp)
+		}
+	}
+	slices.SortFunc(res.Points, func(a, b otlpmetrics.Point) int { return strings.Compare(a.Name, b.Name) })
+	stored := res.Points[:0]
+	for _, p := range res.Points {
+		if !known[p.Name] {
+			if room <= 0 {
+				reject(p.Name)
+				continue
+			}
+			room--
+		}
+		err := store.PutCustomMetricOfKind(ctx, appID, p.Name, p.Kind, p.Value, p.ObservedAt, api.MaxCustomMetricsPerApp)
+		switch {
+		case errors.Is(err, state.ErrCustomMetricLimit):
+			reject(p.Name)
+		case err != nil:
+			return fmt.Errorf("store %q: %w", p.Name, err)
+		default:
+			stored = append(stored, p)
+		}
+	}
+	res.Points = stored
+	return nil
 }
 
 // decodeOTLPMetrics reads a bounded body as protobuf (the OTLP/HTTP default)

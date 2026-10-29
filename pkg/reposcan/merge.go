@@ -72,6 +72,7 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		allowedServiceCallers     *[]string
 		allowedServiceCallScopes  *api.ServiceCallerScopes
 		platformTenantRequired    *bool
+		renamedFrom               string
 
 		schedules []CronSchedule
 		ports     []int
@@ -212,6 +213,9 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			value := *s.platformTenantRequired
 			b.platformTenantRequired = &value
 		}
+		if b.renamedFrom == "" {
+			b.renamedFrom = s.renamedFrom
+		}
 		if !b.schedSet && (len(s.schedules) > 0 || s.schedule != "") {
 			if len(s.schedules) > 0 {
 				b.schedules = append([]CronSchedule(nil), s.schedules...)
@@ -238,15 +242,19 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 	for _, k := range ordered {
 		b := buckets[k]
 		cls := b.class
+		composeDefaultWorker := false
 		if cls == "" && b.det == detCompose {
 			// Compose has no explicit workload-class field. A published
 			// port is an unambiguous HTTP service signal; without one the
-			// service is a background worker. Run this after all detector
-			// fields merge so an explicit Procfile or platform hint wins.
+			// service is a background worker until Scan finds another
+			// service calling it (ADR-20261029120000). Run this after all
+			// detector fields merge so an explicit Procfile or platform
+			// hint wins.
 			if len(b.ports) > 0 {
 				cls = ClassHTTP
 			} else {
 				cls = ClassWorker
+				composeDefaultWorker = true
 			}
 		}
 		if cls == "" {
@@ -279,16 +287,18 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			AllowedServiceCallers:     b.allowedServiceCallers,
 			AllowedServiceCallScopes:  b.allowedServiceCallScopes,
 			PlatformTenantRequired:    b.platformTenantRequired,
+			RenamedFrom:               b.renamedFrom,
 			Unpublished:               b.det == detCompose && len(b.ports) == 0,
 			InternalPorts:             b.internalPorts,
 
-			Class:     cls,
-			Schedule:  primarySchedule,
-			Schedules: append([]CronSchedule(nil), b.schedules...),
-			Ports:     b.ports,
-			EnvKeys:   b.envKeys,
-			Source:    b.source,
-			Tier:      b.tier,
+			Class:                cls,
+			composeDefaultWorker: composeDefaultWorker,
+			Schedule:             primarySchedule,
+			Schedules:            append([]CronSchedule(nil), b.schedules...),
+			Ports:                b.ports,
+			EnvKeys:              b.envKeys,
+			Source:               b.source,
+			Tier:                 b.tier,
 			DetectedBy: Detection{
 				Detector:         b.det.String(),
 				Priority:         b.det.priority(),

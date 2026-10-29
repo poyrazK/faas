@@ -166,6 +166,10 @@ type Workload struct {
 	// PlatformTenantRequired is an explicit ingress policy declaration.
 	// Nil preserves an existing app's policy during reconciliation.
 	PlatformTenantRequired *bool
+	// RenamedFrom is the service's previous name (Compose
+	// x-gregale-renamed-from). A deploy updates that name's app in place
+	// instead of removing it and creating a new one (ADR-20261029090000).
+	RenamedFrom string
 	// Unpublished marks a Compose service without `ports:`, which Docker does
 	// not publish, or a service .gregale/project.yaml declares internal. A new
 	// app for it is internal (ADR-20261022131852, ADR-20261025093331).
@@ -174,9 +178,18 @@ type Workload struct {
 	// (ADR-576). Nil means the source declares none, so reconcile keeps the
 	// app's existing internal listeners; non-nil replaces them.
 	InternalPorts []api.WorkloadPort
+	// ListenerUnknown marks a worker whose prebuilt image the scan could not
+	// read, so it cannot tell whether the service listens. Reconcile keeps
+	// an existing app's serving class for it (ADR-20261029120000
+	// amendment 2).
+	ListenerUnknown bool
 
-	Class    Class  // http|graphql|grpc|job|worker|server|unknown
-	Schedule string // primary cron expression retained for the existing plan wire
+	Class Class // http|graphql|grpc|job|worker|server|unknown
+	// composeDefaultWorker marks a Compose service that is a worker only
+	// because it publishes no ports. Scan makes it an HTTP service when
+	// another service calls it, then clears the mark (ADR-20261029120000).
+	composeDefaultWorker bool
+	Schedule             string // primary cron expression retained for the existing plan wire
 	// Schedules is the complete desired cron set. Schedule remains the first
 	// expression for compatibility with clients that predate multi-schedule
 	// workloads; callers that reconcile crons must use CronSchedules.
@@ -328,6 +341,20 @@ type Result struct {
 // merge rule can prefer an explicit source on a (RootDir, Name)
 // collision.
 func Scan(fsys fs.FS) (Result, error) {
+	return ScanWithOptions(fsys, ScanOptions{})
+}
+
+// ScanOptions extends Scan with lookups outside the repository. The zero
+// value scans the repository alone.
+type ScanOptions struct {
+	// ImageListening, when set, tells whether a prebuilt Compose image
+	// that a request-serving service depends on listens, so it can deploy
+	// as an HTTP service (ADR-20261029120000 amendment 2).
+	ImageListening ImageListening
+}
+
+// ScanWithOptions is Scan with opts.
+func ScanWithOptions(fsys fs.FS, opts ScanOptions) (Result, error) {
 	var (
 		seeds             []workloadSeed
 		managed           []Managed
@@ -425,6 +452,7 @@ func Scan(fsys fs.FS) (Result, error) {
 	if err := applyProjectConfig(fsys, workloads); err != nil {
 		return Result{}, err
 	}
+	warnings = append(warnings, classifyCalledComposeServices(fsys, workloads, opts.ImageListening)...)
 	detectionWarnings = append(detectionWarnings, mergedDetectionWarnings(workloads)...)
 	sortDetectionWarnings(detectionWarnings)
 	for i := range workloads {

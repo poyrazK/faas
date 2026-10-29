@@ -36,6 +36,9 @@ class RouteMonitorIncidentRollback:
     target_deployment_id: UUID | Unset = UNSET
     operation_id: UUID | Unset = UNSET
     """Checked rollback operation readable at /v1/apps/{slug}/rollbacks/{operation}."""
+    refusal_code: str | Unset = UNSET
+    """The checked rollback's problem code when it refused a rollback_target_ineligible request, for example
+    rollback_in_progress."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -57,6 +60,8 @@ class RouteMonitorIncidentRollback:
         if not isinstance(self.operation_id, Unset):
             operation_id = str(self.operation_id)
 
+        refusal_code = self.refusal_code
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -73,6 +78,8 @@ class RouteMonitorIncidentRollback:
             field_dict["target_deployment_id"] = target_deployment_id
         if operation_id is not UNSET:
             field_dict["operation_id"] = operation_id
+        if refusal_code is not UNSET:
+            field_dict["refusal_code"] = refusal_code
 
         return field_dict
 
@@ -106,6 +113,8 @@ class RouteMonitorIncidentRollback:
         else:
             operation_id = UUID(_operation_id)
 
+        refusal_code = d.pop("refusal_code", UNSET)
+
         route_monitor_incident_rollback = cls(
             status=status,
             decided_at=decided_at,
@@ -113,6 +122,7 @@ class RouteMonitorIncidentRollback:
             route=route,
             target_deployment_id=target_deployment_id,
             operation_id=operation_id,
+            refusal_code=refusal_code,
         )
 
         route_monitor_incident_rollback.additional_properties = d

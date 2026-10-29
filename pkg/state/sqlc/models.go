@@ -2704,6 +2704,8 @@ type ComputeNode struct {
 	ReadinessReason pgtype.Text
 	// Last time this node's gatewayd-internal edge-rule listener reported alive (database clock); NULL before its first report (ADR-091).
 	EdgeListenerHeartbeatAt pgtype.Timestamptz
+	WakeBreakerOpenUntil    pgtype.Timestamptz
+	WakeBreakerReason       pgtype.Text
 }
 
 type ComputeNodeHeartbeat struct {
@@ -5150,6 +5152,8 @@ type EventRecoveryJob struct {
 	NotificationReceipts          []byte
 	NotificationRetryReceipts     []byte
 	ExecutionAttentionNextAt      pgtype.Timestamptz
+	FailureCount                  int32
+	LastFailure                   string
 }
 
 type EventRecoveryWorkflowResult struct {
@@ -5191,6 +5195,9 @@ type EventReplayJob struct {
 	CompletedAt           pgtype.Timestamptz
 	ConsumerKind          string
 	WorkflowName          string
+	FailureCount          int32
+	NextAttemptAt         pgtype.Timestamptz
+	LastFailure           string
 }
 
 type EventReplayJobItem struct {
@@ -8040,13 +8047,14 @@ type ManagedPostgresHealth struct {
 
 // ADR-20261016151947 live-query secrets per managed database, sealed to livequeryd; at most one active and one retiring key.
 type ManagedPostgresLiveKey struct {
-	Kid          string
-	AccountID    pgtype.UUID
-	DatabaseID   pgtype.UUID
-	SealedSecret []byte
-	Recipient    string
-	CreatedAt    pgtype.Timestamptz
-	RetiresAt    pgtype.Timestamptz
+	Kid             string
+	AccountID       pgtype.UUID
+	DatabaseID      pgtype.UUID
+	SealedSecret    []byte
+	Recipient       string
+	CreatedAt       pgtype.Timestamptz
+	RetiresAt       pgtype.Timestamptz
+	SealedSecretSig []byte
 }
 
 // ADR-20261016151947 replication login per live managed database, sealed to livequeryd; livequeryd discovers its databases here.
@@ -8059,6 +8067,7 @@ type ManagedPostgresLiveLogin struct {
 	Slot               string
 	Awake              string
 	CreatedAt          pgtype.Timestamptz
+	SealedLoginSig     []byte
 }
 
 type ManagedPostgresResize struct {
@@ -10809,6 +10818,22 @@ type PlatformMailProducerOutbox struct {
 	DeploymentFailureAppRevision     pgtype.Int8
 	DeploymentFailureSuccessRevision pgtype.Int8
 	DeploymentFailureAt              pgtype.Timestamptz
+}
+
+// Release activations: control-plane deploys and rollbacks written by deployctl as the schema owner, and compute release installs recorded from compute_nodes.release_id. Read with gregalectl release history (issue #574).
+type PlatformReleaseActivation struct {
+	ID                pgtype.UUID
+	Host              string
+	Kind              string
+	ReleaseID         string
+	CommitSha         pgtype.Text
+	PreviousReleaseID pgtype.Text
+	Services          []string
+	Actor             string
+	Status            string
+	Detail            string
+	StartedAt         pgtype.Timestamptz
+	FinishedAt        pgtype.Timestamptz
 }
 
 type PlatformTenant struct {
@@ -13766,6 +13791,12 @@ type RuntimeReleaseQualification struct {
 	RecordedAt        pgtype.Timestamptz
 	RevokedAt         pgtype.Timestamptz
 	RevocationSha256  pgtype.Text
+}
+
+type RuntimeSecretSignature struct {
+	CiphertextSha256 []byte
+	Signature        []byte
+	CreatedAt        pgtype.Timestamptz
 }
 
 type RuntimeSnapshot struct {

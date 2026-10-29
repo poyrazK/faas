@@ -23,8 +23,11 @@ groups:
   # ADR 20261021080640: preview platform flags carry a retire-by date. Past it,
   # a ticket reminds operators to fold the preview into general availability
   # or remove the flag, so flags do not accumulate as permanent gates.
+  # The query is one small gauge. Every alerting group must evaluate within
+  # the operator alert collector's freshness window (2 min), or each snapshot
+  # is rejected and platform alert history records nothing (Hunt 14 H14-111).
   - name: faas_platform_flags
-    interval: 1h
+    interval: 30s
     rules:
       - alert: FaasPlatformFlagPastRetireBy
         expr: |
@@ -2310,12 +2313,19 @@ groups:
           sum_over_time(faas_slo_builds_ok:rate5m[30d])
             / (sum_over_time(faas_slo_builds_eligible:rate5m[30d]) > 0)
 
-      # The rolling 30 d ratio is below a public SLO (spec §12). Warn, not
-      # page: the burn-rate alerts in faas_slo already page on the fast
-      # burns; this is the daily-review signal that the month is lost or close.
-
+  # The rolling 30 d ratio is below a public SLO (spec §12). Warn, not
+  # page: the burn-rate alerts in faas_slo already page on the fast
+  # burns; this is the daily-review signal that the month is lost or close.
+  # The alerts evaluate every 30s, inside the operator alert collector's
+  # 2 min freshness window; at 5m their evaluations were stale most of the
+  # time, which made the collector reject every snapshot (Hunt 14 H14-111).
+  # last_over_time spans two 5m recording intervals, so one late recording
+  # never empties the series and resets the 1h for:.
+  - name: faas_slo_monthly_alerts
+    interval: 30s
+    rules:
       - alert: FaasMonthlyApiAvailabilityBelowSLO
-        expr: faas_slo_api_availability:ratio_30d < 0.995
+        expr: last_over_time(faas_slo_api_availability:ratio_30d[10m]) < 0.995
         for: 1h
         labels:
           severity: warn
@@ -2328,7 +2338,7 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasMonthlySLO.md"
 
       - alert: FaasMonthlyWakeLatencyBelowSLO
-        expr: faas_slo_wakes_within_1s:ratio_30d < 0.95
+        expr: last_over_time(faas_slo_wakes_within_1s:ratio_30d[10m]) < 0.95
         for: 1h
         labels:
           severity: warn
@@ -2341,7 +2351,7 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasMonthlySLO.md"
 
       - alert: FaasMonthlyPlatformWakeGateMissed
-        expr: faas_slo_platform_wakes_within_350ms:ratio_30d < 0.95
+        expr: last_over_time(faas_slo_platform_wakes_within_350ms:ratio_30d[10m]) < 0.95
         for: 1h
         labels:
           severity: warn
@@ -2354,7 +2364,7 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasMonthlySLO.md"
 
       - alert: FaasMonthlyBuildSuccessBelowSLO
-        expr: faas_slo_build_success:ratio_30d < 0.99
+        expr: last_over_time(faas_slo_build_success:ratio_30d[10m]) < 0.99
         for: 1h
         labels:
           severity: warn
@@ -3105,6 +3115,35 @@ groups:
           summary: "schedd sees {{ $value }} instances vmmd does not have"
           description: "Live instance rows were absent from the owning vmmd's telemetry on two consecutive sweeps, outside the startup grace window, on a node that was otherwise reporting. They are being billed and are holding admission slots. Check whether vmmd restarted or the host OOM-killed Firecracker."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInstanceDivergence.md"
+
+      # ADR-20261022184531: schedd marks a node degraded when it answers its
+      # heartbeat but has proven it cannot serve a wake (its vmmd cannot
+      # adopt a configured base generation, or its wake breaker opened after
+      # consecutive platform failures). Placement already avoids it while a
+      # ready node fits; someone still has to fix the node.
+      - alert: FaasComputeNodeDegraded
+        expr: max by (node) (schedd_compute_node_readiness{state="degraded"}) == 1
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: node_readiness
+        annotations:
+          summary: "compute node {{ $labels.node }} is degraded"
+          description: "Node {{ $labels.node }} answers its heartbeat but cannot serve wakes. compute_nodes.readiness_reason and wake_breaker_reason say why. Placement sends it wakes only when no ready node has capacity."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeNodeDegraded.md"
+
+      - alert: FaasNoComputeNodeReady
+        expr: sum(max by (node) (schedd_compute_node_readiness{state="ready"})) == 0
+        for: 2m
+        labels:
+          severity: page
+          component: schedd
+          family: node_readiness
+        annotations:
+          summary: "no compute node is ready"
+          description: "Every heartbeated compute node is degraded, draining or unavailable. Wakes are refused or placed on nodes that refuse them."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeNodeDegraded.md"
 
       - alert: FaasVMMDGuestReceiverDown
         expr: vmmd_guest_vsock_receiver_up{receiver=~"events|workload_identity"} == 0
@@ -3869,6 +3908,46 @@ groups:
           summary: "githubd cannot inspect its durable recovery queues"
           description: "The recovery collector cannot query Postgres, so dead or stalled GitHub work may be hidden. Check database reachability and confirm the github_check_updates migration is applied."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasGithubRecoveryQueue.md"
+
+      # GitHub's own App delivery log (githubd polls GET /app/hook/deliveries)
+      # is the only witness of a delivery that never reached githubd: a wrong
+      # webhook URL, a stale secret, or githubd down. GitHub does not redeliver
+      # failed App deliveries, so each one is a lost push or PR event.
+      - alert: FaasGithubAppWebhookFailing
+        expr: max(githubd_github_hook_latest_delivery_failed) == 1
+        for: 15m
+        labels:
+          severity: warn
+          component: githubd
+          family: github_recovery
+        annotations:
+          summary: "GitHub cannot deliver App webhooks to Gregale"
+          description: "GitHub's newest App webhook delivery got no 2xx response and nothing has succeeded since, so push-to-deploy and PR previews are not receiving events. githubd_github_hook_latest_delivery_status_code names the cause: 404 is a wrong webhook URL, 401 a secret that differs from githubd's, 0 a timeout or githubd down."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasGithubAppWebhook.md"
+
+      - alert: FaasGithubAppWebhookDeliveriesLost
+        expr: max(githubd_github_hook_deliveries_recent{outcome="failed"}) > 0 unless max(githubd_github_hook_latest_delivery_failed) == 1
+        for: 5m
+        labels:
+          severity: warn
+          component: githubd
+          family: github_recovery
+        annotations:
+          summary: "GitHub failed to deliver some App webhooks in the last hour"
+          description: "{{ $value }} App webhook deliveries failed in the last hour although the newest succeeded (often a githubd restart). GitHub does not retry them; redeliver the GUIDs githubd logged."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasGithubAppWebhook.md"
+
+      - alert: FaasGithubAppDeliveryLogUnreadable
+        expr: time() - max(githubd_github_hook_delivery_last_poll_success_timestamp_seconds) > 3600
+        for: 15m
+        labels:
+          severity: warn
+          component: githubd
+          family: github_recovery
+        annotations:
+          summary: "githubd cannot read GitHub's App webhook delivery log"
+          description: "No successful poll of GET /app/hook/deliveries for over an hour, so a broken GitHub webhook would go unnoticed. Check the App private key and GitHub API reachability from the control plane."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasGithubAppWebhook.md"
 
   # Billing drift detector (ADR-049 §B.1). The reconciler
   # (pkg/billing/reconciler) computes abs(local-pushed) / max(local,
@@ -8809,4 +8888,35 @@ groups:
         annotations:
           summary: "Alert notifications to a channel kind are failing platform-wide"
           description: "meterd could not unseal a channel's credentials, or every Slack, PagerDuty or email delivery failed for 30 minutes (at least three attempts, none delivered). One customer's broken destination does not fire this while others deliver; a platform failure such as the unseal key, the mail relay or egress does."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomerObservability.md"
+      # ADR-20261028101615: accounts are evaluated in parallel with a tick
+      # budget each, so a slow tick means many accounts are slow at once, and
+      # persistent deferral means one account keeps outrunning its budget.
+      - alert: FaasAlertEvaluationSlow
+        expr: |
+          (
+            sum by (job, instance) (rate(meterd_op_duration_seconds_sum{op="alerts"}[15m]))
+            / sum by (job, instance) (rate(meterd_op_duration_seconds_count{op="alerts"}[15m]))
+          ) > 50
+        for: 15m
+        labels:
+          severity: warn
+          component: meterd
+          family: customer_observability
+          public_status: internal
+        annotations:
+          summary: "Alert evaluation ticks take most of their minute"
+          description: "meterd's alert ticks have averaged over 50 seconds for 15 minutes, so customers' alerts fire late. Accounts are evaluated in parallel, so many accounts are slow at once: check Prometheus and the database before any one account."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomerObservability.md"
+      - alert: FaasAlertRulesDeferred
+        expr: sum by (job, instance) (increase(meterd_alert_rules_skipped_total{reason="deferred"}[30m])) > 0
+        for: 30m
+        labels:
+          severity: warn
+          component: meterd
+          family: customer_observability
+          public_status: internal
+        annotations:
+          summary: "Some alert rules keep missing their tick"
+          description: "For an hour some account has spent its alert tick budget, so part of its rules run a tick late. meterd logs the account (\"account spent its tick budget\"); look at its slow rules: log-search queries, an unresponsive webhook, or Prometheus."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomerObservability.md"

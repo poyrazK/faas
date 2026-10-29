@@ -794,6 +794,13 @@ type Engine struct {
 	// restartNotices are the nodes whose vmmd is restarting under a planned
 	// notice (vmmd restart adoption ADR §3); placement tries others first.
 	restartNotices *RestartNotices
+	// breaker counts platform-attributable wake failures per node and opens
+	// the node's durable wake breaker (ADR-20261022184531 step 3).
+	breaker *nodeWakeBreaker
+	// nodeBoots is this scheduler's per-node boot breaker and streams its
+	// view of the capacity streams it receives (ADR-20261029085904).
+	nodeBoots *nodeBootBreaker
+	streams   *capacityStreamWatch
 
 	// telemetryCache is the receiver for the batched vmmd Stats rows carried
 	// on the persistent ReportCapacity stream. The instance-stats poller
@@ -928,6 +935,21 @@ func (e *Engine) OwnsApp(app state.App) bool {
 	return e.ownsAppDecision(app)
 }
 
+// ownsInstanceApp reports whether this scheduler owns the app of an instance
+// row, as wakes decide. An instance with no app, or whose app cannot be read,
+// counts as owned, as the stuck-row watchdog swept every row before
+// ADR-20261028200212.
+func (e *Engine) ownsInstanceApp(ctx context.Context, appID string) bool {
+	if appID == "" || e.ownerNodeID == "" && e.defaultLocalNodeID == "" {
+		return true
+	}
+	app, err := e.store.AppByID(ctx, appID)
+	if err != nil {
+		return true
+	}
+	return e.ownsAppDecision(app)
+}
+
 // claimNodeID is the node whose apps ownsAppDecision accepts besides apps
 // with no node, or "" when this engine owns every app.
 func (e *Engine) claimNodeID() string {
@@ -986,8 +1008,11 @@ func NewEngine(ctx context.Context, store state.Store, ledger *NodeLedger, vmm R
 		serviceAppMu:             map[string]*sync.Mutex{},
 		serviceMu:                map[string]*sync.Mutex{},
 		wakeCoord:                newWakeCoord(),
+		breaker:                  newNodeWakeBreaker(),
 		warmBroadcaster:          newWarmHintBroadcaster(),
 		capacityTable:            newNodeCapacityTable(),
+		nodeBoots:                newNodeBootBreaker(),
+		streams:                  newCapacityStreamWatch(),
 		telemetryCache:           NewNodeTelemetryCache(),
 		nodePresence:             newNodePresenceTracker(),
 		usageCache:               NewNodeUsageCache(),
@@ -2015,7 +2040,8 @@ func (e *Engine) runningInstanceForWake(ctx context.Context, appID, deploymentID
 	for _, instance := range instances {
 		// ADR-732: a running fork shares the live deployment but never
 		// serves a wake; skipping it lets the wake find a real replica.
-		if instance.DeploymentID == deploymentID && instance.State == string(state.StateRunning) && !state.IsFork(instance.Mode) {
+		if instance.DeploymentID == deploymentID && instance.State == string(state.StateRunning) && !state.IsFork(instance.Mode) &&
+			e.instanceNodeServes(ctx, instance.NodeID) {
 			return instance, nil
 		}
 	}
@@ -3544,7 +3570,10 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		placementRequest.restoreSnapshot = &restoreSnap
 	}
 	createInstance := func(admitCtx context.Context, p Placement) (state.Instance, error) {
-		return e.store.CreateInstanceWithMode(state.WithSnapshotRecoveryAdmission(admitCtx, recovery), appID, dep.ID, string(initState), app.RAMMB, p.NodeID, wakeID, mode)
+		// ADR-20261028200212: the insert refuses if a pressure rebalance moved
+		// the app after the ownership check above.
+		admitCtx = state.WithAppOwnerFence(state.WithSnapshotRecoveryAdmission(admitCtx, recovery), e.ownerNodeID)
+		return e.store.CreateInstanceWithMode(admitCtx, appID, dep.ID, string(initState), app.RAMMB, p.NodeID, wakeID, mode)
 	}
 	ins, placement, releaseRestorePressure, err = e.createWithNodePlacement(withPlacementPrefetch(ctx, placementAhead), placementRequest, restore, createInstance)
 	if err != nil && restore && isCapacityProblem(err) && e.snapshotExcludesNodes(ctx, snap) {
@@ -3606,6 +3635,9 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		if capErr := e.nodeCapacityProblem(err); errors.Is(err, state.ErrNodeCapacity) {
 			return WakeResult{}, capErr
 		}
+		if errors.Is(err, state.ErrAppOwnerMoved) {
+			return WakeResult{}, fmt.Errorf("sched: wake: create instance: %w: %w", ErrAppOwnedByAnotherNode, err)
+		}
 		return WakeResult{}, fmt.Errorf("sched: wake: create instance: %w", applicationStandardRuntimeProblem(err))
 	}
 	noteWakePlacement(ctx, placement.NodeID)
@@ -3634,7 +3666,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		// replaces this conservative deadline with the observed ready window.
 		provisionalCPUBoostUntil = time.Now().Add(startupDeadline + fcvm.StartupCPUBoostTailDuration + 30*time.Second)
 		if err := e.store.SetInstanceStartupCPUBoostUntil(ctx, ins.ID, &provisionalCPUBoostUntil); err != nil {
-			_ = e.store.DeleteInstance(ctx, ins.ID)
+			_ = e.store.DeleteInstance(context.WithoutCancel(ctx), ins.ID)
 			release()
 			return WakeResult{}, fmt.Errorf("sched: wake: persist provisional startup CPU reservation: %w", err)
 		}
@@ -3645,7 +3677,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	// mapping without guessing which host port was in use.
 	hostPortRequests := hostPortRequestsForManifest(app.Manifest)
 	if err := e.acquireHostPortLeases(ctx, placement.NodeID, ins.ID, hostPortRequests); err != nil {
-		_ = e.store.DeleteInstance(ctx, ins.ID)
+		_ = e.store.DeleteInstance(context.WithoutCancel(ctx), ins.ID)
 		release()
 		if errors.Is(err, hostport.ErrExhausted) {
 			return WakeResult{}, explainAdmission(api.ErrCapacity("no host ports are available on the selected compute node"),
@@ -4305,8 +4337,10 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		logVMMBootFailure(e.log, bootCtx, bootInput.appID, bootInput.insID, bootInput.wakeID, bootInput.nodeID, method, rpcEndedAt.Sub(rpcStartedAt), err)
 		e.transitionWithKind(transitionCtx, bootInput.insID, bootInput.appID, state.StateFailed, "wake_boot_error", "vmm_boot_failed")
 		noteWakeBootError(ctx, bootInput.nodeID, err)
+		e.noteNodeBoot(bootInput.nodeID, bootInput.appID, err)
 		return WakeResult{}, err
 	}
+	e.noteNodeBoot(bootInput.nodeID, bootInput.appID, nil)
 	configuredBootCPU := int(bootInput.spec.CPUMillicores)
 	startupBootCPU := configuredBootCPU
 	if !bootInput.spec.DisableStartupCPUBoost {
@@ -5096,6 +5130,9 @@ func (e *Engine) loadPlacementSnapshotFresh(ctx context.Context, r Request) (pla
 			return placementSnapshot{}, fmt.Errorf("sched: placement: list active compute_nodes: %w", err)
 		}
 	}
+	// ADR-20261029085904: a node this scheduler's boots keep failing on is
+	// placed like a degraded one.
+	nodes = e.markUnprovenNodes(nodes)
 	if isServiceReplicaPlacementSpread(ctx) {
 		capacity, err := e.store.ServiceCapacityPlacement(ctx)
 		if err != nil {
@@ -5569,7 +5606,19 @@ func (e *Engine) RebalancePressuredApps(ctx context.Context, appID string) error
 	// Atomic reassign of apps.node_id. RowsAffected==0 (the
 	// peer-claim race) is the only conflict path; the engine
 	// sees ErrConflict and increments the conflict metric.
-	if err := e.store.ReassignAppOwner(ctx, app.ID, app.NodeID, peer); err != nil {
+	// ADR-20261028200212: the parked-only move re-checks for resident
+	// instances under the app row lock admissions take, so a wake that
+	// passed its ownership check before the move cannot land an instance
+	// after it; the check above is only the cheap early exit.
+	reassign := e.store.ReassignAppOwner
+	if parked, ok := e.store.(state.ParkedAppOwnerReassigner); ok {
+		reassign = parked.ReassignParkedAppOwner
+	}
+	if err := reassign(ctx, app.ID, app.NodeID, peer); err != nil {
+		if errors.Is(err, state.ErrAppResident) {
+			e.observePressure("no_eligibility")
+			return nil
+		}
 		if errors.Is(err, state.ErrConflict) {
 			e.observePressure("conflict")
 			return nil
@@ -6716,7 +6765,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		}
 		provisionalPrimeCPUBoostUntil = time.Now().Add(startupDeadline + fcvm.StartupCPUBoostTailDuration + 30*time.Second)
 		if err := e.store.SetInstanceStartupCPUBoostUntil(ctx, ins.ID, &provisionalPrimeCPUBoostUntil); err != nil {
-			_ = e.store.DeleteInstance(ctx, ins.ID)
+			_ = e.store.DeleteInstance(context.WithoutCancel(ctx), ins.ID)
 			return fmt.Errorf("sched: prime: persist provisional startup CPU reservation: %w", err)
 		}
 	}
@@ -6942,6 +6991,24 @@ func refinesWatchdogStartupTimeout(dep state.Deployment, cause error) bool {
 		errors.As(cause, &problem) && problem != nil && problem.Code != ""
 }
 
+// projectServiceModeConflict reports a project service that was deployed as a
+// worker and listens: the scan found nothing calling it, so the customer's fix
+// is in Compose, not in gregale.yaml (ADR-20261029120000).
+func (e *Engine) projectServiceModeConflict(ctx context.Context, appID, code string, cause error) (whycopy.ProjectServiceModeConflict, bool) {
+	if code != api.CodeExecutionModeConflict || appID == "" {
+		return whycopy.ProjectServiceModeConflict{}, false
+	}
+	conflict, ok := api.ParseExecutionModeConflict(cause.Error())
+	if !ok || !conflict.ListeningWorker() {
+		return whycopy.ProjectServiceModeConflict{}, false
+	}
+	app, err := e.store.AppByID(ctx, appID)
+	if err != nil || app.ProjectID == "" || app.WorkloadName == "" {
+		return whycopy.ProjectServiceModeConflict{}, false
+	}
+	return whycopy.ProjectServiceModeConflict{Service: app.WorkloadName, Conflict: conflict}, true
+}
+
 // markPrimeFailed closes the deployment lifecycle when the scheduler cannot
 // produce the first snapshot. Prime already transitions its instance to
 // FAILED, but historically the deployment row was left in SNAPSHOTTING, so
@@ -6992,7 +7059,12 @@ func (e *Engine) markPrimeFailed(ctx context.Context, deploymentID string, cause
 			fmt.Sprintf("startup_phase=scheduler_timeout: snapshot prime exceeded the %s cold-boot RPC budget", e.budgetFor(state.StateColdBooting)))
 		code = problem.Code
 	}
-	_ = whycopy.Decorate(problem, code, nil)
+	var observed any
+	serviceConflict, isServiceConflict := e.projectServiceModeConflict(markCtx, dep.AppID, code, cause)
+	if isServiceConflict {
+		observed = serviceConflict
+	}
+	_ = whycopy.Decorate(problem, code, observed)
 
 	now := time.Now().UTC()
 	message := "snapshot prime failed: " + cause.Error()
@@ -7003,6 +7075,13 @@ func (e *Engine) markPrimeFailed(ctx context.Context, deploymentID string, cause
 		// Keep the customer-facing deployment row independent of vmmd's
 		// transport wording and any guest-local callback detail.
 		message = "snapshot prime failed: before_checkpoint callback did not complete successfully"
+	case api.CodeExecutionModeConflict:
+		if isServiceConflict {
+			// A project deploy shows only this message per service, so it
+			// names the Compose fix itself (ADR-20261029120000).
+			message += fmt.Sprintf("; %s listens on port %d, so if other services call it give it expose: [\"%d\"] in Compose",
+				serviceConflict.Service, serviceConflict.Conflict.Port, serviceConflict.Conflict.Port)
+		}
 	}
 	if _, err := e.store.SetDeploymentFailedEx(markCtx, deploymentID, code, message, problem.Hint, problem.Why, problem.Fix, nil); err != nil {
 		e.log.Warn("sched: prime failure: mark deployment failed", "deployment", deploymentID, "err", err)

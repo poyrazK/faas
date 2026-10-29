@@ -12,7 +12,7 @@ import (
 
 func cmdRoutesGate(args []string) int {
 	if len(args) == 0 || args[0] != "get" && args[0] != "set" {
-		return printErr("Invalid route gate command", errors.New("usage: gregale routes gate <get|set> <slug> [--mode report|enforce --expected-revision N]"))
+		return printErr("Invalid route gate command", errors.New("usage: gregale api route gate <get|set> <slug> [--mode report|enforce --expected-revision N]"))
 	}
 	action := args[0]
 	flags, positional := splitArgsForFlags(args[1:])

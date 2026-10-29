@@ -31,7 +31,7 @@ func TestReleaseManagementHelpPaths(t *testing.T) {
 		{
 			name:      "rollouts status leaf",
 			args:      []string{"rollouts", "status", "--help"},
-			wantUsage: "usage: gregale rollouts status <slug> --deployment ID|vN",
+			wantUsage: "usage: gregale rollouts status <slug> --release ID|vN",
 		},
 		{
 			name:      "rollback",

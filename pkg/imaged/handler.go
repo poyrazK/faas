@@ -42,6 +42,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/storagekey"
+	"github.com/onebox-faas/faas/pkg/whycopy"
 	"github.com/onebox-faas/faas/pkg/wire"
 
 	"filippo.io/age"
@@ -229,6 +230,13 @@ type Handler struct {
 	// runtimeGrypeRun scans the native composed directory without treating a
 	// customer file named rootfs.ext4 as a nested image.
 	runtimeGrypeRun func(context.Context, string) (*ScanResult, error)
+	// scannerIdentityProbe reads the installed scanner and vulnerability
+	// database without scanning (ADR-20261028102540). Nil disables scan
+	// reuse, so every renewal scans.
+	scannerIdentityProbe func(context.Context) (installedScanner, error)
+	scannerIdentityCache scannerIdentityCache
+	// scannerDBUpdater refreshes the vulnerability database outside any scan.
+	scannerDBUpdater func(context.Context) error
 	// Active entries live only for a job; restart reconstructs work from durable
 	// producer selections and scan leases. Storage/native fences remain authoritative.
 	runtimeScanMu     sync.Mutex
@@ -913,10 +921,21 @@ func (h *Handler) CloseVMMClient() error {
 // placeholder). Production wires the default; tests wire a stub
 // via WithGrypeRun.
 func (h *Handler) runGrype(ctx context.Context, dir string) (*ScanResult, error) {
+	var (
+		result *ScanResult
+		err    error
+	)
 	if h.grypeRun != nil {
-		return h.grypeRun(ctx, dir)
+		result, err = h.grypeRun(ctx, dir)
+	} else {
+		result, err = defaultGrypeRun(ctx, dir)
 	}
-	return defaultGrypeRun(ctx, dir)
+	if err == nil && result != nil {
+		// A real scan may have updated the database; reuse decisions must not
+		// compare against an identity read before it.
+		h.scannerIdentityCache.observe(result.ScannerVersion, result.ScannerDBVersion, result.ScannerDBBuiltAt, time.Now())
+	}
+	return result, err
 }
 
 // runDeployScan runs the per-deploy grype scan and stamps the
@@ -4444,14 +4463,33 @@ func (h *Handler) markDeployFailed(ctx context.Context, depID string, err error,
 	if errors.Is(err, errImageAbuseDetected) {
 		code = api.CodeImageAbuseDetected
 	}
-	if code == "" {
-		code = api.CodeDeployFailed
-	}
 	detail := err.Error()
 	if prefix != "" {
 		detail = prefix + ": " + detail
 	}
-	row, err := h.store.SetDeploymentFailed(ctx, depID, code, detail)
+	// A typed problem (an app layer over the plan cap) keeps its stable code
+	// and customer-safe detail; before, it reached the customer as
+	// deploy_failed with imaged's wrapping (ADR-20261029103512 amendment 1).
+	var hint, why, fix string
+	if p := api.AsProblem(err); code == "" && p != nil && p.Code != "" {
+		code, detail = p.Code, p.Detail
+		explained := whycopy.Decorate(&api.Problem{Code: p.Code, Hint: p.Hint, Why: p.Why, Fix: p.Fix}, p.Code, nil)
+		hint, why, fix = explained.Hint, explained.Why, explained.Fix
+		if code == api.CodeAppLayerTooBig {
+			if nodeFix := h.layerTooLargeNodeFix(ctx, depID); nodeFix != "" {
+				fix = strings.TrimSpace(nodeFix + "\n" + fix)
+			}
+		}
+	}
+	if code == "" {
+		code = api.CodeDeployFailed
+	}
+	var row state.Deployment
+	if hint != "" || why != "" || fix != "" {
+		row, err = h.store.SetDeploymentFailedEx(ctx, depID, code, detail, hint, why, fix, nil)
+	} else {
+		row, err = h.store.SetDeploymentFailed(ctx, depID, code, detail)
+	}
 	if err != nil {
 		return fmt.Errorf("imaged: mark failed: %w", err)
 	}

@@ -189,7 +189,7 @@ func packGitArchive(srcPath string, capMB int, mode secretScanMode, buildOnly ma
 	if mode.isStrict() && len(findings) > 0 {
 		return "", 0, findings, &StrictSecretScanError{
 			Findings: findings,
-			Hint:     "move detected secrets to gregale secrets set (see " + cliDocsURL + ")",
+			Hint:     "move detected secrets to gregale env set (see " + cliDocsURL + ")",
 		}
 	}
 	if err := tw.Close(); err != nil {

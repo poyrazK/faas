@@ -72730,6 +72730,26 @@ func (q *Queries) PutGitLabOAuthConnection(ctx context.Context, db DBTX, arg Put
 	return i, err
 }
 
+const putRuntimeSecretSignature = `-- name: PutRuntimeSecretSignature :exec
+INSERT INTO runtime_secret_signatures (ciphertext_sha256, signature)
+VALUES ($1::bytea, $2::bytea)
+ON CONFLICT (ciphertext_sha256) DO UPDATE SET signature = EXCLUDED.signature, created_at = now()
+WHERE runtime_secret_signatures.signature IS DISTINCT FROM EXCLUDED.signature
+`
+
+type PutRuntimeSecretSignatureParams struct {
+	CiphertextSha256 []byte
+	Signature        []byte
+}
+
+// ADR 20261028161502 amendment 1: a runtime secret envelope's writer
+// signature, by its SHA-256. A signature is deterministic for one envelope and
+// key, so writing it again replaces only a row that held something else.
+func (q *Queries) PutRuntimeSecretSignature(ctx context.Context, db DBTX, arg PutRuntimeSecretSignatureParams) error {
+	_, err := db.Exec(ctx, putRuntimeSecretSignature, arg.CiphertextSha256, arg.Signature)
+	return err
+}
+
 const putTCPListenerTLSObservation = `-- name: PutTCPListenerTLSObservation :execrows
 INSERT INTO app_tcp_listener_tls_observations
     (listener_id, edge_id, hostname, intent_updated_at, observed_at, ready, not_after)
@@ -77418,18 +77438,19 @@ func (q *Queries) ReadDomainTrafficVerificationOwner(ctx context.Context, db DBT
 }
 
 const readEdgeRuleTrafficAccount = `-- name: ReadEdgeRuleTrafficAccount :one
-SELECT account_id,kind FROM edge_rules WHERE id = $1::uuid
+SELECT account_id,kind,match_host FROM edge_rules WHERE id = $1::uuid
 `
 
 type ReadEdgeRuleTrafficAccountRow struct {
 	AccountID pgtype.UUID
 	Kind      string
+	MatchHost string
 }
 
 func (q *Queries) ReadEdgeRuleTrafficAccount(ctx context.Context, db DBTX, ruleID pgtype.UUID) (ReadEdgeRuleTrafficAccountRow, error) {
 	row := db.QueryRow(ctx, readEdgeRuleTrafficAccount, ruleID)
 	var i ReadEdgeRuleTrafficAccountRow
-	err := row.Scan(&i.AccountID, &i.Kind)
+	err := row.Scan(&i.AccountID, &i.Kind, &i.MatchHost)
 	return i, err
 }
 
@@ -83571,7 +83592,7 @@ func (q *Queries) ReadRouteHealthHistoryEntry(ctx context.Context, db DBTX, arg 
 }
 
 const readRouteHealthNotificationState = `-- name: ReadRouteHealthNotificationState :one
-SELECT context_key, status, COALESCE(blocked_decision_id::text, '')::text AS blocked_decision_id
+SELECT context_key, status, COALESCE(blocked_decision_id::text, '')::text AS blocked_decision_id, updated_at
 FROM route_health_notification_state WHERE deployment_id = $1::text::uuid
  AND app_id = $2::text::uuid AND account_id = $3::text::uuid
 `
@@ -83586,12 +83607,20 @@ type ReadRouteHealthNotificationStateRow struct {
 	ContextKey        string
 	Status            string
 	BlockedDecisionID string
+	UpdatedAt         pgtype.Timestamptz
 }
 
+// updated_at is when the status began; a hold keeps its first blocking
+// decision's time while its context lasts (ADR-20261028110044).
 func (q *Queries) ReadRouteHealthNotificationState(ctx context.Context, db DBTX, arg ReadRouteHealthNotificationStateParams) (ReadRouteHealthNotificationStateRow, error) {
 	row := db.QueryRow(ctx, readRouteHealthNotificationState, arg.DeploymentID, arg.AppID, arg.AccountID)
 	var i ReadRouteHealthNotificationStateRow
-	err := row.Scan(&i.ContextKey, &i.Status, &i.BlockedDecisionID)
+	err := row.Scan(
+		&i.ContextKey,
+		&i.Status,
+		&i.BlockedDecisionID,
+		&i.UpdatedAt,
+	)
 	return i, err
 }
 
@@ -84116,6 +84145,36 @@ func (q *Queries) ReadRuntimeSecretDeliveryVersions(ctx context.Context, db DBTX
 	for rows.Next() {
 		var i ReadRuntimeSecretDeliveryVersionsRow
 		if err := rows.Scan(&i.Key, &i.DeliveryVersion); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const readRuntimeSecretSignatures = `-- name: ReadRuntimeSecretSignatures :many
+SELECT ciphertext_sha256, signature FROM runtime_secret_signatures
+WHERE ciphertext_sha256 = ANY($1::bytea[])
+`
+
+type ReadRuntimeSecretSignaturesRow struct {
+	CiphertextSha256 []byte
+	Signature        []byte
+}
+
+func (q *Queries) ReadRuntimeSecretSignatures(ctx context.Context, db DBTX, digests [][]byte) ([]ReadRuntimeSecretSignaturesRow, error) {
+	rows, err := db.Query(ctx, readRuntimeSecretSignatures, digests)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadRuntimeSecretSignaturesRow{}
+	for rows.Next() {
+		var i ReadRuntimeSecretSignaturesRow
+		if err := rows.Scan(&i.CiphertextSha256, &i.Signature); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -85359,6 +85418,53 @@ func (q *Queries) ReadTrafficAliasHostnameConflict(ctx context.Context, db DBTX,
 	return conflict, err
 }
 
+const readTrafficAppBindingHosts = `-- name: ReadTrafficAppBindingHosts :many
+SELECT host::text FROM (
+    SELECT lower(a.slug)||$1::text AS host FROM apps a
+    WHERE a.id=$2::uuid OR ($2::uuid IS NULL AND a.account_id=$3::uuid)
+    UNION
+    SELECT lower('tag-'||z.name||'-'||replace(a.id::text,'-',''))||$1::text
+    FROM deployment_aliases z JOIN apps a ON a.id=z.app_id
+    WHERE a.id=$2::uuid OR ($2::uuid IS NULL AND a.account_id=$3::uuid)
+) hosts WHERE $1::text<>''
+ORDER BY host LIMIT ($4::integer+1)
+`
+
+type ReadTrafficAppBindingHostsParams struct {
+	AppsSuffix string
+	AppID      pgtype.UUID
+	AccountID  pgtype.UUID
+	MaxInputs  int32
+}
+
+// The synthetic hostnames a binding write on one app, or on every app of an
+// account, may publish or release: each primary and alias URL, whatever the
+// app's status (ADR-20261027163626).
+func (q *Queries) ReadTrafficAppBindingHosts(ctx context.Context, db DBTX, arg ReadTrafficAppBindingHostsParams) ([]string, error) {
+	rows, err := db.Query(ctx, readTrafficAppBindingHosts,
+		arg.AppsSuffix,
+		arg.AppID,
+		arg.AccountID,
+		arg.MaxInputs,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var host string
+		if err := rows.Scan(&host); err != nil {
+			return nil, err
+		}
+		items = append(items, host)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const readTrafficBindingClaims = `-- name: ReadTrafficBindingClaims :one
 WITH domains AS (
     SELECT jsonb_build_object('Domain',d.domain,'App',d.app_id,
@@ -85762,6 +85868,41 @@ func (q *Queries) ReadTrafficHostAnalysis(ctx context.Context, db DBTX, arg Read
 	var i ReadTrafficHostAnalysisRow
 	err := row.Scan(&i.Data, &i.Inputs, &i.Bytes)
 	return i, err
+}
+
+const readTrafficRouteWriteScopes = `-- name: ReadTrafficRouteWriteScopes :many
+SELECT coalesce(edge_rule_match_host_scope(pattern), '')::text AS scope,
+       (edge_rule_match_host_scope(pattern) IS NULL)::boolean AS app_only,
+       coalesce(edge_rule_match_host_scope(pattern) = lower(btrim(pattern)), false)::boolean AS exact
+FROM unnest($1::text[]) AS pattern
+`
+
+type ReadTrafficRouteWriteScopesRow struct {
+	Scope   string
+	AppOnly bool
+	Exact   bool
+}
+
+// Each route pattern's match_host_scope, as the edge_rules trigger computes it
+// (ADR-20261027163626). An exact pattern is its own scope; '@app' has none.
+func (q *Queries) ReadTrafficRouteWriteScopes(ctx context.Context, db DBTX, patterns []string) ([]ReadTrafficRouteWriteScopesRow, error) {
+	rows, err := db.Query(ctx, readTrafficRouteWriteScopes, patterns)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadTrafficRouteWriteScopesRow{}
+	for rows.Next() {
+		var i ReadTrafficRouteWriteScopesRow
+		if err := rows.Scan(&i.Scope, &i.AppOnly, &i.Exact); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const readTrafficSecurityEpochs = `-- name: ReadTrafficSecurityEpochs :many
@@ -95172,9 +95313,18 @@ func (q *Queries) RouteMonitorCustomerObservations(ctx context.Context, db DBTX,
 }
 
 const routeMonitorServingDeployments = `-- name: RouteMonitorServingDeployments :many
-SELECT id::text AS id,commit_sha,source_url,source_root,created_at,canary_step_started_at,rollout_completed_at,traffic_percent,canary_step,canary_total_steps
-FROM deployments WHERE app_id=$1::text::uuid AND status='live' AND deleted_at IS NULL AND traffic_percent>0
- AND coalesce(nullif(scope,''),'default')='default' ORDER BY id LIMIT 2
+WITH lanes AS (
+ SELECT id,commit_sha,source_url,source_root,created_at,canary_step_started_at,rollout_completed_at,traffic_percent,canary_step,canary_total_steps,
+  CASE WHEN scope='production' THEN 'production' ELSE 'default' END AS lane
+ FROM deployments WHERE app_id=$1::text::uuid AND status='live' AND deleted_at IS NULL
+  AND coalesce(nullif(scope,''),'default') IN ('default','production')
+), chosen AS (
+ SELECT CASE WHEN EXISTS (SELECT 1 FROM lanes WHERE lane='production' AND traffic_percent>0)
+  OR (NOT EXISTS (SELECT 1 FROM lanes WHERE lane='default' AND traffic_percent>0) AND EXISTS (SELECT 1 FROM lanes WHERE lane='production'))
+  THEN 'production' ELSE 'default' END AS lane
+)
+SELECT l.id::text AS id,l.commit_sha,l.source_url,l.source_root,l.created_at,l.canary_step_started_at,l.rollout_completed_at,l.traffic_percent,l.canary_step,l.canary_total_steps
+FROM lanes l JOIN chosen c ON c.lane=l.lane WHERE l.traffic_percent>0 ORDER BY l.id LIMIT 2
 `
 
 type RouteMonitorServingDeploymentsRow struct {
@@ -95190,6 +95340,10 @@ type RouteMonitorServingDeploymentsRow struct {
 	CanaryTotalSteps    int32
 }
 
+// The app's production routing lane (state.ProductionRoutingDeployments): a
+// project's named production scope once it carries traffic, or while the
+// legacy default lane is dark; otherwise the default scope
+// (ADR-20261028110044 amendment 1).
 func (q *Queries) RouteMonitorServingDeployments(ctx context.Context, db DBTX, appID string) ([]RouteMonitorServingDeploymentsRow, error) {
 	rows, err := db.Query(ctx, routeMonitorServingDeployments, appID)
 	if err != nil {

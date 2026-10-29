@@ -18,8 +18,9 @@ import (
 // admissionFunctionProbe remembers whether the database has the instance
 // admission functions (migration 20261018153840637, ADR-1741) in the form
 // that takes a reservation allowance (migration 20261026090412734, ADR-909
-// amendment 1) and the admission's vCPU and CPU (migration
-// 20261027220445082, ADR-20261027220445). A schedd can start before its
+// amendment 1), the admission's vCPU and CPU (migration 20261027220445082,
+// ADR-20261027220445) and the app owner fence (migration 20261028200212696,
+// ADR-20261028200212). A schedd can start before its
 // release's migrations run; until they do, admission keeps its
 // statement-by-statement transaction. A missing function is probed again
 // after a minute.
@@ -42,7 +43,8 @@ func (s *PgStore) admissionFunctionsUsable(ctx context.Context) bool {
 		return p.ok
 	}
 	var ok bool
-	err := s.pool.QueryRow(ctx, `select to_regprocedure('admit_wake_instance(uuid,text,text,integer,uuid,text,text,bigint,boolean,integer,boolean,uuid,bigint,integer,integer,integer,integer,integer,integer,integer)') is not null
+	err := s.pool.QueryRow(ctx, `select to_regprocedure('admit_wake_instance(uuid,text,text,integer,uuid,text,text,bigint,boolean,integer,boolean,uuid,bigint,integer,integer,integer,integer,integer,integer,integer,uuid)') is not null
+		and to_regprocedure('admission_check_app_owner(uuid,uuid)') is not null
 		and to_regprocedure('admission_reserve_node(uuid,bigint,integer,boolean,integer,integer,integer,integer,integer,integer,integer,integer)') is not null
 		and to_regprocedure('snapshot_restore_pressure_acquire(text)') is not null
 		and to_regprocedure('publish_instance_on_generation(uuid,uuid,uuid,uuid,uuid,text,text,text,inet,integer,text,uuid,text,text,text,jsonb,text,text,boolean,text,timestamptz,jsonb,jsonb,boolean,jsonb,jsonb,bigint)') is not null`).Scan(&ok)
@@ -61,9 +63,9 @@ func (s *PgStore) markAdmissionFunctionsMissing() {
 	}
 }
 
-// reserveNodeDB is checkNodeAdmissionDB, the per-node advisory lock and the
-// RAM, vCPU and CPU headroom checks in one statement, inside the caller's
-// transaction.
+// reserveNodeDB is checkNodeAdmissionDB, the per-node advisory lock, the
+// RAM, vCPU and CPU headroom checks and ctx's app owner fence in one
+// statement, inside the caller's transaction.
 func reserveNodeDB(ctx context.Context, tx pgx.Tx, nodeID, newState string, ramMB int) error {
 	expected, bound, err := nodeAdmissionExpectation(ctx, nodeID)
 	if err != nil {
@@ -77,11 +79,23 @@ func reserveNodeDB(ctx context.Context, tx pgx.Tx, nodeID, newState string, ramM
 		expectedGeneration = &expected.Generation
 	}
 	compute := nodeComputeAdmission(ctx, nodeID)
+	fenceAppID, fenceOwner := fenceParams(ctx)
 	_, err = tx.Exec(ctx, `select admission_reserve_node($1::uuid, $2::bigint, $3::integer, $4::boolean, $5::integer, $6::integer,
-		$7::integer, $8::integer, $9::integer, $10::integer, $11::integer, $12::integer)`,
+		$7::integer, $8::integer, $9::integer, $10::integer, $11::integer, $12::integer),
+		admission_check_app_owner($13::uuid, $14::uuid)`,
 		nodeID, expectedGeneration, ramMB, nodeUsageCounts(State(newState)), api.PerVMOverheadMB, nodeReservationPercent(ctx, nodeID),
-		compute.VCPU, compute.QuietVCPU, compute.CPUMillicores, compute.QuietCPUMillicores, api.DefaultAppCPUMillicores, api.CPUOvercommit)
+		compute.VCPU, compute.QuietVCPU, compute.CPUMillicores, compute.QuietCPUMillicores, api.DefaultAppCPUMillicores, api.CPUOvercommit,
+		fenceAppID, fenceOwner)
 	return admissionFunctionError(err, nodeID)
+}
+
+// fenceParams is ctx's app owner fence as nullable function arguments.
+func fenceParams(ctx context.Context) (appID, ownerNodeID *string) {
+	app, owner, ok := fencedApp(ctx)
+	if !ok {
+		return nil, nil
+	}
+	return &app, &owner
 }
 
 // admitWakeInstance makes a wake's whole admission in one statement: the
@@ -124,17 +138,19 @@ func (s *PgStore) admitWakeInstance(ctx context.Context, appID, deploymentID, ne
 		}
 	}
 	compute := nodeComputeAdmission(ctx, nodeID)
+	_, fenceOwner := fenceParams(fenceApp(ctx, appID))
 	inst, err := retryRuntimeAdmissionBusy(ctx, func() (Instance, error) {
 		row := s.pool.QueryRow(ctx, `
 		select id, coalesce(app_id::text, ''), coalesce(deployment_id::text, ''), state, coalesce(netns,''), coalesce(guest_uid,0),
 		       coalesce(host(host_ip),''), ram_mb, started_at, last_request_at, parked_at, node_id, wake_id, framework_ready_at, tail_count, mode, request_count
 		  from admit_wake_instance($1::uuid, $2::text, $3::text, $4::integer, $5::uuid, $6::text, $7::text,
 		                           $8::bigint, $9::boolean, $10::integer, $11::boolean, $12::uuid, $13::bigint, $14::integer,
-		                           $15::integer, $16::integer, $17::integer, $18::integer, $19::integer, $20::integer)`,
+		                           $15::integer, $16::integer, $17::integer, $18::integer, $19::integer, $20::integer, $21::uuid)`,
 			appID, deploymentID, newState, ramMB, nodeID, wakeID, mode,
 			expectedGeneration, nodeUsageCounts(State(newState)), api.PerVMOverheadMB, binding, snapshotID, guardGeneration,
 			nodeReservationPercent(ctx, nodeID),
-			compute.VCPU, compute.QuietVCPU, compute.CPUMillicores, compute.QuietCPUMillicores, api.DefaultAppCPUMillicores, api.CPUOvercommit)
+			compute.VCPU, compute.QuietVCPU, compute.CPUMillicores, compute.QuietCPUMillicores, api.DefaultAppCPUMillicores, api.CPUOvercommit,
+			fenceOwner)
 		inst, err := scanInstanceCols(row.Scan)
 		if err == nil {
 			return inst, nil
@@ -180,6 +196,8 @@ func mapAdmissionFunctionError(err error, nodeID string) (error, bool) {
 		return fmt.Errorf("state: %w: node=%s %s", ErrNodeCapacity, nodeID, strings.TrimSpace(pgErr.Detail)), true
 	case "app_runtime_generation_current":
 		return ErrRuntimeGenerationMoved, true
+	case "app_owner_current":
+		return fmt.Errorf("state: %w: %s", ErrAppOwnerMoved, strings.TrimSpace(pgErr.Detail)), true
 	}
 	return nil, false
 }

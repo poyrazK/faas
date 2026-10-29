@@ -53,6 +53,20 @@ func TestNodeJoinRendersTheAdoptionSwitches(t *testing.T) {
 	if skip, _ := decide["faas_join_skip_drain"].(string); !strings.Contains(skip, "faas_join_serving_vmmd_adopts.stdout") {
 		t.Errorf("faas_join_skip_drain = %q ignores whether the serving vmmd hands off", skip)
 	}
+	// After a no-drain restart, only guests the check already found gone
+	// are excused from the adoption report.
+	report, _ := nodeJoinTask(t, "Wait for the restarted vmmd to report a clean adoption")["ansible.builtin.command"].(map[string]any)
+	argv, _ := report["argv"].([]any)
+	gone := false
+	for i, a := range argv {
+		if a == "--already-gone" && i+1 < len(argv) {
+			next, _ := argv[i+1].(string)
+			gone = strings.Contains(next, "faas_join_adoption_check.stdout") && strings.Contains(next, ".gone")
+		}
+	}
+	if !gone {
+		t.Errorf("adoption-report argv %v does not pass the check's gone guests", argv)
+	}
 	// The switches are written before the drain decision asks the candidate.
 	playbook := nodeJoinPlaybook(t)
 	if strings.Index(playbook, "zz-faas-adoption.conf") > strings.Index(playbook, "- adoption-check") {
