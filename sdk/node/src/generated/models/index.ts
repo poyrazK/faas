@@ -2733,6 +2733,7 @@ export type { RouteHealthFinding } from './RouteHealthFinding.js';
 export type { RouteHealthGate } from './RouteHealthGate.js';
 export type { RouteHealthHistoryEntry } from './RouteHealthHistoryEntry.js';
 export type { RouteHealthHistoryPage } from './RouteHealthHistoryPage.js';
+export type { RouteHealthHold } from './RouteHealthHold.js';
 export type { RouteHealthInvestigation } from './RouteHealthInvestigation.js';
 export type { RouteHealthInvestigationExample } from './RouteHealthInvestigationExample.js';
 export type { RouteHealthInvestigationSelection } from './RouteHealthInvestigationSelection.js';

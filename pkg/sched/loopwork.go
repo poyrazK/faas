@@ -55,6 +55,7 @@ const (
 	workPrimeRecovery        workKind = "prime_recovery"
 	workWorkflowDispatch     workKind = "workflow_dispatch"
 	workWorkflowSchedules    workKind = "workflow_schedules"
+	workWorkflowAgentRuns    workKind = "workflow_agent_runs"
 	workTriggerDispatch      workKind = "trigger_dispatch"
 	workQueuePushDispatch    workKind = "queue_push_dispatch"
 	// workBrokerTriggerDispatch runs one external broker trigger's batch;
@@ -77,15 +78,18 @@ const (
 	// workWatchdog is the §6.1 stuck-row sweep. Each KillStuck can wait 5 s
 	// on a destroy, so it runs off the loop (ADR-20261028200212).
 	workWatchdog workKind = "watchdog"
+	// workInvocationsRetention is the minute's invocation retention pass. It
+	// repeats full batches, so it runs off the loop (ADR-20261029012000).
+	workInvocationsRetention workKind = "invocations_retention"
 )
 
 // workKinds is the iteration order for metric pre-instantiation.
 var workKinds = []workKind{
 	workServiceRecovery, workServiceRecoverySweep,
 	workPrime, workRestart, workAppReconcile, workDeploymentReconcile, workJobCancel, workJobDispatch, workPrimeRecovery,
-	workWorkflowDispatch, workWorkflowSchedules, workTriggerDispatch, workQueuePushDispatch, workBrokerTriggerDispatch, workEventFanout,
+	workWorkflowDispatch, workWorkflowSchedules, workWorkflowAgentRuns, workTriggerDispatch, workQueuePushDispatch, workBrokerTriggerDispatch, workEventFanout,
 	workReaper, workAdoptionReport, workRehearsalFault, workRehearsalSuspend, workRehearsalSweep, workWorkerRecovery, workWorkerRecoverySweep,
-	workAppWake, workRuntimeConfigRestart, workWatchdog,
+	workAppWake, workRuntimeConfigRestart, workWatchdog, workInvocationsRetention,
 }
 
 // overflowPolicy decides what submit does when a kind has no free slot.
@@ -144,6 +148,7 @@ var workSpecs = map[workKind]workSpec{
 	workPrimeRecovery:        {slots: 1, overflow: overflowDrop},
 	workWorkflowDispatch:     {slots: api.WorkflowDispatchSlots, overflow: overflowDrop},
 	workWorkflowSchedules:    {slots: 1, overflow: overflowDrop},
+	workWorkflowAgentRuns:    {slots: 1, overflow: overflowDrop},
 	workTriggerDispatch:      {slots: 1, overflow: overflowDrop},
 	// Push-queue lanes (ADR-972) claim durable leases; a dropped lane is
 	// retried by the next trigger tick.
@@ -175,6 +180,9 @@ var workSpecs = map[workKind]workSpec{
 	// destroys coalesces into it; the rows stay stuck, so the next tick
 	// finds them again.
 	workWatchdog: {slots: 1, overflow: overflowDrop},
+	// One retention pass at a time; a tick while one runs coalesces, and
+	// the next minute's tick carries on where it stopped.
+	workInvocationsRetention: {slots: 1, overflow: overflowDrop},
 }
 
 // workPool runs bounded, coalesced, off-loop tasks for Loop.
@@ -270,7 +278,10 @@ func (p *workPool) submit(kind workKind, key string, fn func()) string {
 	// frees the task's slot (nil when it runs inline without one). Ending
 	// the task drops its key and frees its slot under mu, so a submit sees
 	// either a running task to coalesce into or a free slot, never the
-	// moment between, where it used to be dropped as saturated.
+	// moment between, where it used to be dropped as saturated. Each pass,
+	// reruns included, records its own duration: a busy rerunCoalesced kind
+	// can rerun for minutes, and its sweep alerts count passes
+	// (ADR-20261029012000).
 	run := func(release func()) {
 		started := time.Now()
 		finished := false
@@ -313,6 +324,8 @@ func (p *workPool) submit(kind workKind, key string, fn func()) string {
 			}
 			delete(p.rerun[kind], key)
 			p.mu.Unlock()
+			p.observeDuration(kind, time.Since(started))
+			started = time.Now()
 			p.observe(kind, "rerun")
 			fn = next
 		}

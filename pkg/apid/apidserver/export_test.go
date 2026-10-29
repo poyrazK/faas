@@ -27,9 +27,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
 
+	githubdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/githubd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/agents"
 	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/apid/billingruns"
+	"github.com/onebox-faas/faas/pkg/apid/billingsync"
 	"github.com/onebox-faas/faas/pkg/apid/consumerbilling"
 	"github.com/onebox-faas/faas/pkg/apid/consumercontrols"
 	"github.com/onebox-faas/faas/pkg/apid/consumercredits"
@@ -293,6 +296,9 @@ var RuntimeSecretRecipient = runtimeSecretRecipient
 var RuntimeSealDomainBlocksRekey = runtimeSealDomainBlocksRekey
 var RuntimeSecretsBound = &runtimeSecretsBound
 var LoadRuntimeSecretBinding = loadRuntimeSecretBinding
+var LoadCloneWorkerSealing = loadCloneWorkerSealing
+var RuntimeSecretBinding = runtimeSecretBinding
+var InstallRuntimeSigner = installRuntimeSigner
 var PgBackupStateRoot = &pgBackupStateRoot
 var PlanCache = &planCache
 var PlanCacheRoot = &planCacheRoot
@@ -1001,6 +1007,7 @@ func (r *server) RuntimeConfig() **runtimeConfigManager         { return &r.runt
 func (r *server) Sessions() **session.Manager                   { return &r.sessions }
 func (r *server) StatementInvoices() *statementinvoices.Service { return &r.statementInvoices }
 func (r *server) BillingRuns() *billingruns.Service             { return &r.billingRuns }
+func (r *server) BillingSync() *billingsync.Service             { return &r.billingSync }
 func (r *server) ConsumerBilling() *consumerbilling.Service     { return &r.consumerBilling }
 func (r *server) ConsumerCredits() *consumercredits.Service     { return &r.consumerCredits }
 func (r *server) ConsumerControls() *consumercontrols.Service   { return &r.consumerControls }
@@ -1671,11 +1678,26 @@ func (s *server) ConfigureLiveQueriesForTest(getenv func(string) string) error {
 	return s.configureLiveQueries(nil, getenv)
 }
 
+// ConfigureAgentsForTest wires the agent API without Postgres: the agents
+// capability decides who sees it, and released accounts meet
+// capacity_unavailable.
+func (s *server) ConfigureAgentsForTest() { s.configureAgents(nil) }
+
 // LiveRoutesForTest lists an app's live routes; accounts outside the rollout
 // get none before the store is read.
 func (s *server) LiveRoutesForTest(ctx context.Context, accountID, appID string) ([]realtime.LiveRoute, error) {
 	return s.liveRoutes(ctx, nil, accountID, appID)
 }
+
+// NewGithubdBridgeForTest builds apid's githubd bridge on store; agentSteps
+// decides the agents capability for an account.
+func NewGithubdBridgeForTest(store githubdBridgeStore, notif githubdBridgeNotifier, agentSteps func(state.Account) bool) githubdpb.GithubdServer {
+	return &githubdBridge{store: store, notif: notif, log: slog.New(slog.DiscardHandler), agentSteps: agentSteps}
+}
+
+// SetAgentStoreForTest gives the configured agent API a store; call it
+// after ConfigureAgentsForTest.
+func (s *server) SetAgentStoreForTest(store agents.Store) { s.agentAPI.Store = store }
 
 // RealtimePreviewEveryone shows realtime preview features to every account
 // (ADR-20261019102657).

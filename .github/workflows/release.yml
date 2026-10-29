@@ -866,6 +866,39 @@ jobs:
           echo "RUNTIME_SOURCE_SHA=$RUNTIME_SOURCE_SHA" >> "$GITHUB_ENV"
           echo "materialized release runtime-base contract from source $RUNTIME_SOURCE_SHA"
 
+      # Issue #295: every platform image this release pins must carry the
+      # provenance images.yml attests on main (#5835): signed for this
+      # repository by images.yml, from refs/heads/main, on a GitHub-hosted
+      # runner. Both source commits above follow images.yml, so a release cut
+      # after #5835 pins only images built with that attestation. imaged
+      # verifies the same attestation again when it pulls a base.
+      - name: Verify platform image provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DOCKER_CONFIG: ${{ runner.temp }}/crane-config
+          OUT_DIR: ${{ runner.temp }}/gregale-release
+        run: |
+          set -euo pipefail
+          refs=("ghcr.io/poyrazk/builder-base@sha256:${BUILDER_BASE_DIGEST}")
+          while IFS='=' read -r _ ref; do
+            refs+=("$ref")
+          done < "$OUT_DIR/runtime-bases.env"
+          for ref in "${refs[@]}"; do
+            [[ "$ref" =~ ^ghcr\.io/poyrazk/[a-z0-9-]+@sha256:[0-9a-f]{64}$ ]] || {
+              echo "::error::pinned image $ref is not a ghcr.io/poyrazk digest reference" >&2
+              exit 1
+            }
+            if ! gh attestation verify "oci://${ref}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/images.yml" \
+              --source-ref refs/heads/main \
+              --deny-self-hosted-runners > /dev/null; then
+              echo "::error::$ref has no valid provenance attestation from images.yml on main" >&2
+              exit 1
+            fi
+            echo "provenance verified: $ref"
+          done
+
       - name: Reuse a prior signed Firecracker kernel
         id: reuse_kernel
         env:

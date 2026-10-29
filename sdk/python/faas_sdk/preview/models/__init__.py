@@ -1890,6 +1890,7 @@ from .event_replay_backfill_items_response import EventReplayBackfillItemsRespon
 from .event_replay_backfill_job_response import EventReplayBackfillJobResponse
 from .event_replay_backfill_job_response_consumer_kind import EventReplayBackfillJobResponseConsumerKind
 from .event_replay_backfill_job_response_duplicate_policy import EventReplayBackfillJobResponseDuplicatePolicy
+from .event_replay_backfill_job_response_last_failure import EventReplayBackfillJobResponseLastFailure
 from .event_replay_backfill_job_response_state import EventReplayBackfillJobResponseState
 from .event_replay_backfill_progress import EventReplayBackfillProgress
 from .event_replay_backfill_request import EventReplayBackfillRequest
@@ -5182,6 +5183,7 @@ from .route_health_history_entry_purpose import RouteHealthHistoryEntryPurpose
 from .route_health_history_entry_source import RouteHealthHistoryEntrySource
 from .route_health_history_entry_version import RouteHealthHistoryEntryVersion
 from .route_health_history_page import RouteHealthHistoryPage
+from .route_health_hold import RouteHealthHold
 from .route_health_investigation import RouteHealthInvestigation
 from .route_health_investigation_coverage import RouteHealthInvestigationCoverage
 from .route_health_investigation_evidence_status import RouteHealthInvestigationEvidenceStatus
@@ -8046,6 +8048,7 @@ __all__ = (
     "EventReplayBackfillJobResponse",
     "EventReplayBackfillJobResponseConsumerKind",
     "EventReplayBackfillJobResponseDuplicatePolicy",
+    "EventReplayBackfillJobResponseLastFailure",
     "EventReplayBackfillJobResponseState",
     "EventReplayBackfillProgress",
     "EventReplayBackfillRequest",
@@ -11084,6 +11087,7 @@ __all__ = (
     "RouteHealthHistoryEntrySource",
     "RouteHealthHistoryEntryVersion",
     "RouteHealthHistoryPage",
+    "RouteHealthHold",
     "RouteHealthInvestigation",
     "RouteHealthInvestigationCoverage",
     "RouteHealthInvestigationEvidenceStatus",

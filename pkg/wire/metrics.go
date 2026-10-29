@@ -118,6 +118,9 @@ type OpsMetrics struct {
 	// computeNodeReadiness is one-hot per node: 1 for the node's current
 	// readiness, 0 for the others (ADR-20261022184531).
 	computeNodeReadiness *prometheus.GaugeVec
+	// nodeWakeBreaker counts node wake breaker transitions
+	// (ADR-20261022184531 step 3).
+	nodeWakeBreaker *prometheus.CounterVec
 	// warmPoolSize (issue #1056 / ADR-074) exposes the desired paused
 	// warm-pool size by plan. Runtime reconciliation will update the
 	// gauge in a follow-up; registering it here makes the contract
@@ -2249,6 +2252,15 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 			}
 		}
 	}
+	nodeWakeBreaker := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_node_wake_breaker_total",
+		Help: "Node wake breaker transitions this schedd wrote (ADR-20261022184531): opened after consecutive platform-attributable wake failures on a node, reopened when the first wake after the cooldown failed too, closed when a wake there succeeded.",
+	}, []string{"transition"})
+	if prefix == "schedd" {
+		for _, transition := range NodeWakeBreakerTransitions {
+			nodeWakeBreaker.WithLabelValues(transition)
+		}
+	}
 	computeNodeReadiness := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: prefix + "_compute_node_readiness",
 		Help: "One-hot readiness of each compute node this schedd heartbeats (ADR-20261022184531): 1 on the state the node last proved, 0 on the others. state is ready, degraded (answers but cannot serve a wake), unavailable or draining (both mirror lifecycle). node is the compute node name.",
@@ -4100,7 +4112,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		planGateRescuedByExclude,
 	}
 	if prefix == "schedd" {
-		commonCollectors = append(commonCollectors, initSnapshotAttempts, initSnapshotCaptureDuration, wakeFailover, computeNodeReadiness)
+		commonCollectors = append(commonCollectors, initSnapshotAttempts, initSnapshotCaptureDuration, wakeFailover, computeNodeReadiness, nodeWakeBreaker)
 	}
 	if prefix == "imaged" {
 		commonCollectors = append(commonCollectors, snapshotPublication)
@@ -4955,7 +4967,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	}, []string{"kind", "outcome"})
 	loopWorkDuration := prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name: prefix + "_loop_work_duration_seconds",
-		Help: "How long one off-loop task ran (ADR-191), labelled by kind. The prime bucket carries cold boot plus snapshot capture, so its tail is tens of seconds by design.",
+		Help: "How long one pass of an off-loop task ran (ADR-191), labelled by kind; each rerun of a rerunCoalesced kind such as event_fanout is its own pass (ADR-20261029012000). The prime bucket carries cold boot plus snapshot capture, so its tail is tens of seconds by design.",
 		// Reconciles are millisecond-scale database work; prime is
 		// tens of seconds. One set of buckets has to span both.
 		Buckets: []float64{0.005, 0.025, 0.1, 0.5, 1, 5, 15, 30, 60, 120},
@@ -5543,6 +5555,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		initSnapshotCaptureDuration:                initSnapshotCaptureDuration,
 		wakeFailover:                               wakeFailover,
 		computeNodeReadiness:                       computeNodeReadiness,
+		nodeWakeBreaker:                            nodeWakeBreaker,
 		snapshotPublication:                        snapshotPublication,
 		warmPoolSize:                               warmPoolSize,
 		warmPoolResumeTotal:                        warmPoolResumeTotal,
@@ -6280,6 +6293,9 @@ func (m *OpsMetrics) RecordInitSnapshotAttempt(site, outcome string, duration ti
 const (
 	WakeFailoverReasonBaseGeneration     = "base_generation"
 	WakeFailoverReasonScanSidecarMissing = "scan_sidecar_missing"
+	// WakeFailoverReasonNodeSetup: vmmd failed to acquire a jail lease or
+	// set up the network before the VM started (wake_stage=pre_start).
+	WakeFailoverReasonNodeSetup = "node_setup"
 	// WakeFailoverReasonVMMDUnreachable: the boot request never reached the
 	// node's vmmd (ADR-20261029085904).
 	WakeFailoverReasonVMMDUnreachable = "vmmd_unreachable"
@@ -6294,9 +6310,22 @@ const (
 // WakeFailoverReasons and WakeFailoverOutcomes are pre-instantiated so the
 // counter reads zero, not absent, on a fleet that has never failed over.
 var (
-	WakeFailoverReasons  = []string{WakeFailoverReasonBaseGeneration, WakeFailoverReasonScanSidecarMissing, WakeFailoverReasonVMMDUnreachable}
+	WakeFailoverReasons  = []string{WakeFailoverReasonBaseGeneration, WakeFailoverReasonScanSidecarMissing, WakeFailoverReasonNodeSetup, WakeFailoverReasonVMMDUnreachable}
 	WakeFailoverOutcomes = []string{WakeFailoverOutcomeSucceeded, WakeFailoverOutcomeRefusedAgain, WakeFailoverOutcomeNoAlternate, WakeFailoverOutcomeOutOfTime, WakeFailoverOutcomeFailed}
 )
+
+// NodeWakeBreakerTransitions are the closed transition label values of
+// schedd_node_wake_breaker_total.
+var NodeWakeBreakerTransitions = []string{"opened", "reopened", "closed"}
+
+// RecordNodeWakeBreaker counts one breaker transition. Only schedd exports
+// the counter; an unknown transition is dropped.
+func (m *OpsMetrics) RecordNodeWakeBreaker(transition string) {
+	if m == nil || m.nodeWakeBreaker == nil || m.metricPrefix != "schedd" || !slices.Contains(NodeWakeBreakerTransitions, transition) {
+		return
+	}
+	m.nodeWakeBreaker.WithLabelValues(transition).Inc()
+}
 
 // ComputeNodeReadinessStates are the closed state label values of
 // schedd_compute_node_readiness; they mirror compute_nodes_readiness_chk.

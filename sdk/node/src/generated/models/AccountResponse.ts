@@ -40,6 +40,10 @@ export type AccountResponse = {
    * Customer tax/VAT identifier used on future invoices.
    */
   tax_id?: string;
+  /**
+   * Scopes of the API key that authenticated this request; absent for a dashboard session. An agent key (scope agent) lists the tools the hosted MCP server offers it.
+   */
+  key_scopes?: Array<string>;
   abuse_hold?: AccountAbuseHold;
 };
 

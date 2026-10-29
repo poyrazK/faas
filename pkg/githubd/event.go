@@ -8,8 +8,15 @@ package githubd
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 )
+
+// ErrPullRequestActionIgnored marks a pull_request action previews do not
+// act on (labeled, edited, review_requested, ...). GitHub sends every action
+// to an App subscribed to pull_request, so this is an ignored delivery, not a
+// malformed one.
+var ErrPullRequestActionIgnored = errors.New("githubd: pull_request action not in {opened,synchronize,reopened,closed}")
 
 // PullRequestAction enumerates the GitHub `pull_request` webhook
 // actions githubd reacts to. Anything not in this set is logged
@@ -253,7 +260,7 @@ func DecodePullRequest(body []byte) (PullRequestEvent, error) {
 		ev.PullRequest.HeadRef = ev.PullRequest.Head.Ref
 	}
 	if !ev.Action.IsPreviewAction() {
-		return ev, errors.New("githubd: pull_request action not in {opened,synchronize,reopened,closed}: " + string(ev.Action))
+		return ev, fmt.Errorf("%w: %s", ErrPullRequestActionIgnored, ev.Action)
 	}
 	if ev.Number <= 0 {
 		return ev, errors.New("githubd: pull_request number must be > 0")

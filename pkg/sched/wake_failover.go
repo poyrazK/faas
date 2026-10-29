@@ -89,6 +89,10 @@ func nodeRefusalReason(err error) (string, bool) {
 	if vmmdNotReached(err) {
 		return wire.WakeFailoverReasonVMMDUnreachable, true
 	}
+	// vmmd failed before the VM started (wake_stage=pre_start, step 3).
+	if errors.Is(err, ErrVMMWakeNotStarted) {
+		return wire.WakeFailoverReasonNodeSetup, true
+	}
 	var problem *api.Problem
 	if !errors.As(err, &problem) || problem.Code != api.CodeScanCritical {
 		return "", false
@@ -117,6 +121,7 @@ func (e *Engine) admitWithWakeFailover(ctx context.Context, appID, mode string, 
 	failover := &wakeFailover{}
 	ctx = context.WithValue(ctx, wakeFailoverKey{}, failover)
 	result, err := attempt(ctx)
+	e.noteWakeAttempt(ctx, failover, result, err)
 	for err != nil && failover.refusal.nodeID != "" {
 		refusal, refusalErr := failover.refusal, err
 		failover.excluded = append(failover.excluded, refusal.nodeID)
@@ -129,6 +134,7 @@ func (e *Engine) admitWithWakeFailover(ctx context.Context, appID, mode string, 
 		}
 		failover.alternate, failover.placedOn, failover.refusal = true, "", nodeRefusal{}
 		result, err = attempt(ctx)
+		e.noteWakeAttempt(ctx, failover, result, err)
 		switch {
 		case err == nil && result.InstanceID != "":
 			e.ops.RecordWakeFailover(refusal.reason, wire.WakeFailoverOutcomeSucceeded)
@@ -149,6 +155,23 @@ func (e *Engine) admitWithWakeFailover(ctx context.Context, appID, mode string, 
 		}
 	}
 	return result, err
+}
+
+// noteWakeAttempt feeds one attempt's outcome to the node wake breaker: a
+// node refusal counts against its node, a VM placed and started on a node
+// proves it. Customer failures and ambiguous errors do neither. A request
+// that never reached vmmd is this schedd's own view of the node, which its
+// process-local boot breaker keeps (ADR-20261029085904); it must not open
+// the durable breaker every schedd reads.
+func (e *Engine) noteWakeAttempt(ctx context.Context, failover *wakeFailover, result WakeResult, err error) {
+	switch {
+	case failover.refusal.nodeID != "":
+		if failover.refusal.reason != wire.WakeFailoverReasonVMMDUnreachable {
+			e.noteNodeWakeFailure(ctx, failover.refusal.nodeID, failover.refusal.reason)
+		}
+	case err == nil && failover.placedOn != "" && result.InstanceID != "":
+		e.noteNodeWakeSuccess(ctx, failover.placedOn)
+	}
 }
 
 // wakeFailoverStop reports whether a refused wake must end without another

@@ -79,3 +79,16 @@ A read-only dry run of these rules against the production-us journals on
 2026-10-10 retires 12 of 16 records on fsn-2 and 7 of 13 on fsn-3. The kept
 records are live guests, one wedged build VM whose jail is still present, and
 held or uncheckpointed namespaces.
+
+## Amendment 2026-10-29: claimed prepared networks
+
+Decision item "a non-prepared instance record" predates prepared networks
+(ADR-149) being on in production. A guest that claims a prepared network keeps
+an instance record carrying the spare's identity (`prepared.target` set), so
+every such guest that died left a record no path retired: production-us fsn-2
+held 11 on 2026-10-29, each quarantining a slot and refusing the vmmd restart
+adoption check. Such a record is now an instance record for this ADR: the same
+six conditions apply unchanged. Only an unclaimed spare stays on ADR-478's
+prior-boot path. A read-only dry run on fsn-2's journal retired all 11 and
+kept every live guest and a dead build VM whose jail and namespace survive.
+

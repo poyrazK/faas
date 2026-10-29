@@ -95,6 +95,10 @@ type edgeMetrics struct {
 	misdirected prometheus.Counter
 	localReady  prometheus.Gauge
 	nodeDrained prometheus.Gauge
+	// wakeFailover counts responses gatewayd-internal marked not
+	// dispatched, by reason and by what the edge did (ADR-20261022184531
+	// step 5).
+	wakeFailover *prometheus.CounterVec
 }
 
 func newEdgeMetrics() *edgeMetrics {
@@ -116,9 +120,23 @@ func newEdgeMetrics() *edgeMetrics {
 			Name: "gatewayd_public_edge_node_drained",
 			Help: "1 while this compute node is drained in the registry and its edge sends every request to the other nodes (ADR-1343 §6).",
 		}),
+		wakeFailover: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_wake_failover_total",
+			Help: "Responses gatewayd-internal marked not dispatched (no request byte reached a guest), by reason and outcome: retried on another compute node (succeeded, refused_again, failed) or not retried and why (ADR-20261022184531 step 5).",
+		}, []string{"reason", "outcome"}),
 	}
-	m.registry.MustRegister(m.fallbacks, m.misdirected, m.localReady, m.nodeDrained)
+	for _, reason := range gateway.NotDispatchedReasons {
+		for _, outcome := range gateway.FailoverOutcomes {
+			m.wakeFailover.WithLabelValues(reason, outcome)
+		}
+	}
+	m.registry.MustRegister(m.fallbacks, m.misdirected, m.localReady, m.nodeDrained, m.wakeFailover)
 	return m
+}
+
+// observeWakeFailover is the gateway.WakeFailover observer.
+func (m *edgeMetrics) observeWakeFailover(reason, outcome string) {
+	m.wakeFailover.WithLabelValues(reason, outcome).Inc()
 }
 
 // localFirstDialer sends upstream connections to this node's gatewayd-internal
@@ -164,19 +182,26 @@ func (d *localFirstDialer) withDrainWatch(nodeName string, inventory nodeInvento
 }
 
 func (d *localFirstDialer) DialContext(ctx context.Context, target string) (net.Conn, error) {
-	if d.healthy.Load() {
+	// A retry of a response this node's gateway refused goes to the other
+	// nodes: a planned route, like a drain, not a fallback
+	// (ADR-20261022184531 step 5).
+	rec := gateway.DialRecordFrom(ctx)
+	localExcluded := d.nodeName != "" && rec.Excluded(d.nodeName)
+	if d.healthy.Load() && !localExcluded {
 		conn, err := d.local.DialContext(ctx, target)
 		if err == nil {
+			// An unnamed node records "", and the edge then does not retry.
+			rec.RecordDialed(d.nodeName)
 			return conn, nil
 		}
 		if ctx.Err() != nil {
 			return nil, err
 		}
 		d.log.Warn("gatewayd-public: local gatewayd-internal refused the dial; using the compute pool", "err", err)
-	} else if d.drained.Load() {
+	} else if d.drained.Load() || localExcluded {
 		conn, err := d.fallback.DialContext(ctx, target)
 		if err != nil {
-			return nil, fmt.Errorf("compute edge: node drained and compute pool failed: %w", err)
+			return nil, fmt.Errorf("compute edge: local path withdrawn (node drained or already tried) and compute pool failed: %w", err)
 		}
 		return conn, nil
 	}
@@ -186,6 +211,13 @@ func (d *localFirstDialer) DialContext(ctx context.Context, target string) (net.
 		return nil, fmt.Errorf("compute edge: local gateway unavailable and compute pool failed: %w", err)
 	}
 	return conn, nil
+}
+
+// HasAlternate reports whether the compute pool holds a node a retry has
+// not tried yet (gateway.AlternateDialer).
+func (d *localFirstDialer) HasAlternate(ctx context.Context, rec *gateway.DialRecord) bool {
+	alternates, ok := d.fallback.(gateway.AlternateDialer)
+	return ok && alternates.HasAlternate(ctx, rec)
 }
 
 // checkLocal runs one health check of the local gateway and records it.

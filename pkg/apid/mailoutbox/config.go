@@ -37,6 +37,7 @@ type Service struct {
 	accountSuspended          *credentialConfig
 	managedPostgresCap        *credentialConfig
 	deploymentFailed          *credentialConfig
+	agentRunDelivered         *credentialConfig
 	deploymentDashboardOrigin string
 	subscriptionEnded         *credentialConfig
 	accountRestored           *credentialConfig

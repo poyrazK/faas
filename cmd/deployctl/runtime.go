@@ -44,6 +44,9 @@ type hostRuntime struct {
 	// (docs/adr/1650-per-unit-control-plane-releases.md) replaces only
 	// their binaries, and every other daemon keeps running untouched.
 	only map[string]struct{}
+	// historySpool is where a compute host spools its activations for CD to
+	// import on the control plane (history.go); empty spools nothing.
+	historySpool string
 }
 
 const (
@@ -1134,5 +1137,6 @@ func defaultHostRuntime() hostRuntime {
 		databaseURL:  "postgres:///faas?host=/run/postgresql&user=faas",
 		serviceOrder: order,
 		readyTimeout: 60 * time.Second,
+		historySpool: historySpoolPath,
 	}
 }

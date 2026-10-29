@@ -178,8 +178,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	// ADR 20261022111812: customer credentials open with the outbound seal
 	// domain identity once the seal_domains role stages it, and with the
-	// fleet identity (and either one's previous twin) until the re-seal
-	// moves every row to the domain.
+	// fleet identity (and either one's previous twin) until the domain is
+	// contracted: the seal_domains role then drops the fleet credential
+	// and unsets its path.
 	domainPath := os.Getenv("FAAS_SEAL_DOMAIN_OUTBOUND_IDENTITY_PATH")
 	fleetPath := os.Getenv("FAAS_FLEET_AGE_IDENTITY_PATH")
 	domainLoaded, err := outboundSealDomainLoaded(domainPath)
@@ -197,7 +198,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 			return fmt.Errorf("outboundd: customer credential resolver: %w", err)
 		}
 		handler.CredentialResolver = credentialResolver
-		log.Info("outbound customer credential identities loaded", "domain_identity", domainLoaded, "identities", len(identities))
+		log.Info("outbound customer credential identities loaded", "domain_identity", domainLoaded, "fleet_identity", fleetPath != "", "identities", len(identities))
 	} else if needCustomerCredentials {
 		return errors.New("outboundd: customer-sealed credentials require FAAS_SEAL_DOMAIN_OUTBOUND_IDENTITY_PATH or FAAS_FLEET_AGE_IDENTITY_PATH")
 	}
@@ -205,6 +206,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 	handler.IdentityVerifier = identityVerifier
 	handler.ExecutionIdentityVerifier = executionIdentityVerifier
 	handler.ExecutionAuthorizer = executionAuthorizer
+	if cfg.AgentRunsEnabled {
+		agentRuns, err := outbound.NewPostgresAgentRuns(pool)
+		if err != nil {
+			return err
+		}
+		handler.AgentRunAuthorizer, handler.AgentRunSpend = agentRuns, agentRuns
+	}
 	if cfg.WorkflowOutboundEnabled || os.Getenv("FAAS_WORKFLOW_OUTBOUND_ENABLED") == "1" {
 		authorizer, err := outbound.NewPostgresWorkflowAuthorizer(pool)
 		if err != nil {
@@ -217,6 +225,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("outboundd: register metrics: %w", err)
 	}
 	handler.Metrics = outboundMetrics
+	handler.Log = log
 	handler.MaxBodyBytes = cfg.MaxBodyBytes
 	// ADR-1700: the gate and rollout are the live ai_gateway platform flag.
 	handler.AIGatewayFlags = aiGatewayFlags
