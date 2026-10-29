@@ -22,6 +22,15 @@ if [[ "$SHARED_RETRY_BUDGET_REQUIRED" == true ]]; then
 		echo "EXPECTED_GATEWAY_COUNT must be a positive integer" >&2
 		exit 2
 	}
+	# cd-platform pipes this script to the control plane over `bash -s`,
+	# where a path relative to the checkout does not exist. Resolve the gate
+	# next to this file, or take it from the caller, and check it before any
+	# deployment rather than after twenty minutes of them.
+	SHARED_RETRY_BUDGET_SCRIPT="${SHARED_RETRY_BUDGET_SCRIPT:-$(dirname "${BASH_SOURCE[0]:-.}")/verify-shared-retry-budget.sh}"
+	[[ -x "$SHARED_RETRY_BUDGET_SCRIPT" ]] || {
+		echo "shared retry-budget gate is missing: ${SHARED_RETRY_BUDGET_SCRIPT}; set SHARED_RETRY_BUDGET_SCRIPT" >&2
+		exit 2
+	}
 fi
 
 GREGALE_BIN="${GREGALE_BIN:-/opt/faas/current/bin/gregale}"
@@ -434,7 +443,7 @@ verify_receipt "$redeploy_final" "$(jq -er '.app_url' "${outputs[0]}")"
 if [[ "$SHARED_RETRY_BUDGET_REQUIRED" == true ]]; then
 	PROMETHEUS_URL="$PROMETHEUS_URL" \
 		EXPECTED_GATEWAY_COUNT="$EXPECTED_GATEWAY_COUNT" \
-		deploy/scripts/verify-shared-retry-budget.sh
+		"$SHARED_RETRY_BUDGET_SCRIPT"
 fi
 
 printf 'production acceptance passed: release=%s nodes=%s deployments=%s\n' \
