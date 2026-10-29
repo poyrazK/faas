@@ -118,6 +118,10 @@ func (s *Service) ProducerOutboxAdmission(ctx context.Context, id string) (Produ
 		review.CanAcknowledge = false
 		review.BlockReason = "account_suspended_disabled"
 	}
+	if review.Template == ProducerOutboxManagedPostgresCapTemplate && !s.managedPostgresCapOutboxEnabled() {
+		review.CanAcknowledge = false
+		review.BlockReason = "managed_postgres_cap_disabled"
+	}
 	return review, err
 }
 
