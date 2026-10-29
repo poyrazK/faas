@@ -29,6 +29,26 @@ func (q *Queries) AccountAgentLoad(ctx context.Context, db DBTX, accountID strin
 	return i, err
 }
 
+const agentRunQueueStats = `-- name: AgentRunQueueStats :one
+SELECT count(*)::integer AS queued,
+  coalesce(extract(epoch FROM now()-min(queued_at)), 0)::float8 AS oldest_seconds
+ FROM agent_runs WHERE state='queued'
+`
+
+type AgentRunQueueStatsRow struct {
+	Queued        int32
+	OldestSeconds float64
+}
+
+// Every account's queued runs and how long the oldest has waited, for
+// agentd's queue gauges. agent_runs_queue_idx covers it.
+func (q *Queries) AgentRunQueueStats(ctx context.Context, db DBTX) (AgentRunQueueStatsRow, error) {
+	row := db.QueryRow(ctx, agentRunQueueStats)
+	var i AgentRunQueueStatsRow
+	err := row.Scan(&i.Queued, &i.OldestSeconds)
+	return i, err
+}
+
 const bumpAgentVersion = `-- name: BumpAgentVersion :one
 UPDATE agents SET latest_version=latest_version+1, updated_at=now()
  WHERE id=$1::text::uuid AND account_id=$2::text::uuid AND state='active'
@@ -568,7 +588,7 @@ const getAgentRunClaim = `-- name: GetAgentRunClaim :one
 SELECT r.id::text AS id, r.account_id::text AS account_id, a.plan, r.agent_id::text AS agent_id, ag.name AS agent_name,
   r.agent_version, coalesce(r.tenant_id::text, '')::text AS tenant_id, r.prompt, r.inputs, r.ram_mb, r.timeout_sec, r.attempt,
   v.harness_preset, v.harness_image, v.harness_run, v.harness_models, v.prompt_template, v.model_integrations, v.ai_budget_millicents,
-  r.checkout_repository, r.checkout_commit, r.checkout_installation_id
+  r.checkout_repository, r.checkout_commit, r.checkout_installation_id, r.queued_at
  FROM agent_runs r JOIN accounts a ON a.id=r.account_id JOIN agents ag ON ag.id=r.agent_id
   JOIN agent_versions v ON v.agent_id=r.agent_id AND v.version=r.agent_version
  WHERE r.id=$1::text::uuid
@@ -597,6 +617,7 @@ type GetAgentRunClaimRow struct {
 	CheckoutRepository     pgtype.Text
 	CheckoutCommit         pgtype.Text
 	CheckoutInstallationID pgtype.Int8
+	QueuedAt               pgtype.Timestamptz
 }
 
 func (q *Queries) GetAgentRunClaim(ctx context.Context, db DBTX, runID string) (GetAgentRunClaimRow, error) {
@@ -625,6 +646,7 @@ func (q *Queries) GetAgentRunClaim(ctx context.Context, db DBTX, runID string) (
 		&i.CheckoutRepository,
 		&i.CheckoutCommit,
 		&i.CheckoutInstallationID,
+		&i.QueuedAt,
 	)
 	return i, err
 }
