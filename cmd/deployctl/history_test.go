@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -73,6 +74,62 @@ func TestHistoryActivationNamesHostServicesAndActor(t *testing.T) {
 	}
 	if every := (hostRuntime{}).historyActivation(a); every.Services != nil {
 		t.Fatalf("services without --only = %v, want nil (every service)", every.Services)
+	}
+}
+
+// A per-unit activation on a compute host (a release without units) is
+// spooled, not written: the host has no owner access to the history.
+func TestComputeActivationsAreSpooled(t *testing.T) {
+	compute := t.TempDir()
+	spool := filepath.Join(t.TempDir(), "deploy", "activations.jsonl")
+	runtime := defaultHostRuntime()
+	runtime.historySpool = spool
+	runtime.only = map[string]struct{}{"gatewayd-internal": {}}
+	t.Setenv(deployActorEnv, "cd-edge-units run 9")
+	a := deploycontroller.Activation{Kind: deploycontroller.ActivationRollback, ReleaseID: "base", ReleaseRoot: compute,
+		CommitSHA: "abc", Previous: "overlay-1", StartedAt: time.Now().UTC()}
+
+	if id := runtime.StartActivation(context.Background(), a); id != "" {
+		t.Fatalf("StartActivation on a compute host = %q, want nothing recorded", id)
+	}
+	runtime.FinishActivation(context.Background(), "", a, deploycontroller.ActivationFailed, "unit install failed")
+
+	f, err := os.Open(spool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	lines, err := releasehistory.ReadSpool(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lines) != 1 {
+		t.Fatalf("spooled %d lines, want 1", len(lines))
+	}
+	l := lines[0]
+	if l.ID == "" || l.Kind != "rollback" || l.ReleaseID != "base" || l.PreviousReleaseID != "overlay-1" || l.Status != "failed" ||
+		l.Detail != "unit install failed" || l.Actor != "cd-edge-units run 9" || len(l.Services) != 1 || l.FinishedAt.Before(l.StartedAt) {
+		t.Fatalf("spooled %+v", l)
+	}
+
+	// A control-plane activation (a release with units) never spools.
+	controlPlane := t.TempDir()
+	if err := os.Mkdir(filepath.Join(controlPlane, "systemd"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.spoolsHistory(deploycontroller.Activation{ReleaseRoot: controlPlane}) {
+		t.Fatal("a control-plane activation would spool")
+	}
+}
+
+// CD reads the spool where deployctl writes it.
+func TestUnitDeployRecordsTheSpoolPath(t *testing.T) {
+	script, err := os.ReadFile(filepath.Join("..", "..", "scripts", "ci", "unit_deploy.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(script), "ACTIVATION_SPOOL:-"+historySpoolPath+"}") {
+		t.Fatalf("scripts/ci/unit_deploy.sh does not read the spool at %s", historySpoolPath)
 	}
 }
 
