@@ -52,6 +52,14 @@ fi
 command -v jq >/dev/null
 command -v curl >/dev/null
 
+# phase stamps each step on stderr, so a slow release shows which step held
+# it: rc.304's acceptance printed nothing for twenty minutes, all of them one
+# canary redeploy.
+acceptance_started=$SECONDS
+phase() {
+	printf '%s +%ds %s\n' "$(date -u +%H:%M:%SZ)" "$((SECONDS - acceptance_started))" "$*" >&2
+}
+
 workdir="$(mktemp -d)"
 chmod 0700 "$workdir"
 credential_file="$workdir/credential.json"
@@ -339,6 +347,7 @@ if [[ -n "$ACCEPTANCE_NODE" ]]; then
 		canary_slug="ra-${short_sha}-${run_suffix}-${node_tag}-${i}"
 		canary_output="$workdir/${canary_slug}.json"
 		slugs+=("$canary_slug")
+		phase "node canary ${ACCEPTANCE_NODE}: deployment ${i} (${template})"
 		rc=0
 		deploy_one "$template" "$canary_slug" "$canary_output" || rc=$?
 		if (( rc != 0 )); then
@@ -362,6 +371,7 @@ if [[ -n "$ACCEPTANCE_NODE" ]]; then
 	exit 1
 fi
 
+phase "first wave: $((ACTIVE_NODE_COUNT * 2)) deployments"
 # Submit both execution shapes. Placement is capacity-ranked, not round-robin,
 # so this first wave proves both shapes but cannot guarantee node coverage.
 pids=()
@@ -398,9 +408,11 @@ done
 # The released customer binary owns the complete app-policy mutation path.
 # Exercise it against one fresh production app before placement and rollout
 # checks, then restore every tested setting before the app is deleted.
+phase "first wave live; app policy controls"
 verify_app_policy_controls "${slugs[0]}"
 
 slug_csv="$(IFS=,; echo "${slugs[*]}")"
+phase "placement check"
 placement_file="$workdir/placement.json"
 placement_ok=false
 if "$GREGALECTL_BIN" release-acceptance verify-placement --slugs "$slug_csv" >"$placement_file"; then
@@ -425,6 +437,7 @@ for ((i=1; i<=max_extra; i++)); do
 		break
 	fi
 	extra_slug="ra-${short_sha}-${run_suffix}-x${i}"
+	phase "coverage deployment ${i}"
 	extra_output="$workdir/${extra_slug}.json"
 	slugs+=("$extra_slug")
 	rc=0
@@ -456,6 +469,7 @@ jq -e --argjson expected "$ACTIVE_NODE_COUNT" \
 # /healthz defaults to an edge answer and cannot prove workload continuity.
 # The final wait uses the shipped CLI, proving it does not return during the
 # temporary live state.
+phase "redeploy with continuity probes"
 redeploy_queued="$workdir/redeploy-queued.json"
 FAAS_JSON=1 "$GREGALE_BIN" deploy \
 	--template hello-node --name "${slugs[0]}" --no-wait --yes --no-require-authn \
@@ -492,8 +506,18 @@ while kill -0 "$wait_pid" 2>/dev/null; do
 done
 wait "$wait_pid"
 verify_receipt "$redeploy_final" "$(jq -er '.app_url' "${outputs[0]}")"
+# Report how the canary finished: advance_probe_evidence is the quiet-release
+# path, advance_low_traffic means stages waited CanaryLowTrafficMaxHold.
+phase "redeploy rollout complete: $(jq -r '[
+	"preset=\(.canary_preset // "none")",
+	"last_advance=\(.rollout_decision.rule // "none")",
+	"rollout_seconds=\(if .rollout_started_at and .rollout_completed_at then
+		(.rollout_completed_at | sub("\\.[0-9]+"; "") | fromdateiso8601) - (.rollout_started_at | sub("\\.[0-9]+"; "") | fromdateiso8601)
+	else "unknown" end)"
+] | join(" ")' "$redeploy_final" 2>/dev/null || echo "summary unavailable")"
 
 if [[ "$SHARED_RETRY_BUDGET_REQUIRED" == true ]]; then
+	phase "shared retry-budget gate"
 	PROMETHEUS_URL="$PROMETHEUS_URL" \
 		EXPECTED_GATEWAY_COUNT="$EXPECTED_GATEWAY_COUNT" \
 		"$SHARED_RETRY_BUDGET_SCRIPT"
