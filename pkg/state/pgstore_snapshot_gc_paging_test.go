@@ -31,7 +31,7 @@ func TestPgSnapshotGCPagesActiveRowsByWholeApp(t *testing.T) {
 			t.Fatal(err)
 		}
 		for range a + 1 {
-			dep, err := store.CreateDeployment(ctx, state.Deployment{ID: uuid.NewString(), AppID: app.ID, Status: state.DeployLive})
+			dep, err := store.CreateDeployment(ctx, state.Deployment{ID: uuid.NewString(), AppID: app.ID, Kind: state.DeploymentKindImage, Status: state.DeployLive})
 			if err != nil {
 				t.Fatal(err)
 			}

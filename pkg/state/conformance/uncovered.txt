@@ -109,7 +109,6 @@ CrashCapturesToEncrypt
 CrashCapturesToPurge
 CrashCapturesToStage
 CrashSnapshotSettingsFor
-CreateAPIKeyWithExpiry
 CreateAccountWithPersonalOrg
 CreateAlertRuleIfUnderQuota
 CreateAppFork
