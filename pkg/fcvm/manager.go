@@ -1664,17 +1664,13 @@ func (m *Manager) WithRuntimeSecretSignatures(checker *sealsig.RuntimeChecker) *
 
 // checkRuntimeSignatures refuses the entries if any envelope's signature
 // does not verify, naming the entry.
-func (m *Manager) checkRuntimeSignatures(entries []SealedEnvEntry) error {
+func (m *Manager) checkRuntimeSignatures(ctx context.Context, entries []SealedEnvEntry) error {
 	if m.runtimeSignatures == nil {
 		return nil
 	}
 	blobs := make([][]byte, len(entries))
 	for i, entry := range entries {
 		blobs[i] = entry.Ciphertext
-	}
-	ctx := m.lifecycleCtx
-	if ctx == nil {
-		ctx = context.Background()
 	}
 	err := m.runtimeSignatures.Check(ctx, blobs)
 	var refused *sealsig.BlobError
@@ -3525,10 +3521,10 @@ func jsonMarshalEnvelope(e secretbox.Envelope) ([]byte, error) {
 // is still closed; keeping the preparation here preserves the Manager as the
 // only secret-unseal boundary without allowing guest-init to race a late
 // loopback write.
-func (m *Manager) prepareWakeFiles(req WakeRequest) (secretsJSON, apiJSON []byte, err error) {
+func (m *Manager) prepareWakeFiles(ctx context.Context, req WakeRequest) (secretsJSON, apiJSON []byte, err error) {
 	var merged secretbox.Envelope
 	if len(req.SealedEnvEntries) > 0 {
-		merged, err = m.openSealedEnvEntries(req.SealedEnvEntries, req.AccountID)
+		merged, err = m.openSealedEnvEntries(ctx, req.SealedEnvEntries, req.AccountID)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -3566,14 +3562,14 @@ func (m *Manager) prepareWakeFiles(req WakeRequest) (secretsJSON, apiJSON []byte
 // openSealedEnvEntries opens a workload's selected ciphertext for accountID,
 // the account the workload runs for. An envelope bound to another account
 // (ADR-20261023173624) is refused before any of its values are used.
-func (m *Manager) openSealedEnvEntries(entries []SealedEnvEntry, accountID string) (secretbox.Envelope, error) {
+func (m *Manager) openSealedEnvEntries(ctx context.Context, entries []SealedEnvEntry, accountID string) (secretbox.Envelope, error) {
 	if len(entries) == 0 {
 		return nil, nil
 	}
 	if len(m.hostIdentities) == 0 {
 		return nil, ErrNoHostKey
 	}
-	if err := m.checkRuntimeSignatures(entries); err != nil {
+	if err := m.checkRuntimeSignatures(ctx, entries); err != nil {
 		return nil, err
 	}
 	merged := secretbox.Envelope{}
@@ -3603,14 +3599,14 @@ func (m *Manager) openSealedEnvEntries(entries []SealedEnvEntry, accountID strin
 // remains in caller memory only; callers must not log or persist it outside
 // the guest's runtime projection. accountID is the account the workload runs
 // for; an envelope bound to another account is refused.
-func (m *Manager) UnsealRuntimeSecrets(entries []SealedEnvEntry, accountID string) (map[string]string, error) {
+func (m *Manager) UnsealRuntimeSecrets(ctx context.Context, entries []SealedEnvEntry, accountID string) (map[string]string, error) {
 	if len(entries) == 0 {
 		return map[string]string{}, nil
 	}
 	if len(m.hostIdentities) == 0 {
 		return nil, ErrNoHostKey
 	}
-	if err := m.checkRuntimeSignatures(entries); err != nil {
+	if err := m.checkRuntimeSignatures(ctx, entries); err != nil {
 		return nil, err
 	}
 	secrets := make(map[string]string, len(entries))
@@ -3662,7 +3658,7 @@ func selectedSealedValue(entry SealedEnvEntry, inner secretbox.Envelope) (string
 // by apid and keeps plaintext only in the wake request until the concrete VMM
 // writes it to that sidecar's workload-specific env file in the instance's
 // writable main upper. It never modifies the shared sidecar image.
-func (m *Manager) prepareSidecarEnvFiles(req *WakeRequest) error {
+func (m *Manager) prepareSidecarEnvFiles(ctx context.Context, req *WakeRequest) error {
 	for i := range req.Sidecars {
 		entries := req.Sidecars[i].SealedEnv
 		secretEntries := req.Sidecars[i].SealedSecrets
@@ -3697,7 +3693,7 @@ func (m *Manager) prepareSidecarEnvFiles(req *WakeRequest) error {
 			}
 			merged[entry.Key] = string(plaintext)
 		}
-		secrets, err := m.UnsealRuntimeSecrets(secretEntries, req.AccountID)
+		secrets, err := m.UnsealRuntimeSecrets(ctx, secretEntries, req.AccountID)
 		if err != nil {
 			return fmt.Errorf("open sidecar app secrets: %w", err)
 		}
@@ -4301,7 +4297,7 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 	// per-task secrets.env file before Firecracker starts.
 	var secretsEnvJSON []byte
 	if len(req.SealedEnvEntries) > 0 {
-		secretsEnvJSON, _, err = m.prepareWakeFiles(WakeRequest{SealedEnvEntries: req.SealedEnvEntries, AccountID: req.AccountID})
+		secretsEnvJSON, _, err = m.prepareWakeFiles(ctx, WakeRequest{SealedEnvEntries: req.SealedEnvEntries, AccountID: req.AccountID})
 		if err != nil {
 			return nil, fmt.Errorf("manager: BootJob %s: prepare sealed env: %w", req.Instance, err)
 		}
@@ -4873,12 +4869,12 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	// stages these bytes before releasing Firecracker's config FIFO; test VMMs
 	// without the pre-boot marker keep the legacy post-ready staging hooks
 	// below for compatibility.
-	req.preparedSecretsEnvJSON, req.preparedAPIEnvJSON, err = m.prepareWakeFiles(req)
+	req.preparedSecretsEnvJSON, req.preparedAPIEnvJSON, err = m.prepareWakeFiles(ctx, req)
 	if err != nil {
 		err = fmt.Errorf("wake %s: prepare runtime env: %w", req.Instance, err)
 		return nil, err
 	}
-	if err = m.prepareSidecarEnvFiles(&req); err != nil {
+	if err = m.prepareSidecarEnvFiles(ctx, &req); err != nil {
 		err = fmt.Errorf("wake %s: prepare sidecar env: %w", req.Instance, err)
 		return nil, err
 	}

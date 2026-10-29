@@ -80,8 +80,8 @@ func TestRuntimeSecretSignaturesGateOpening(t *testing.T) {
 				t.Fatal(err)
 			}
 			m.WithRuntimeSecretSignatures(checker)
-			secrets, err := m.UnsealRuntimeSecrets(tc.entries, "acct")
-			files, _, wakeErr := m.prepareWakeFiles(WakeRequest{AccountID: "acct", SealedEnvEntries: tc.entries})
+			secrets, err := m.UnsealRuntimeSecrets(context.Background(), tc.entries, "acct")
+			files, _, wakeErr := m.prepareWakeFiles(context.Background(), WakeRequest{AccountID: "acct", SealedEnvEntries: tc.entries})
 			if tc.want == nil {
 				if err != nil || wakeErr != nil || secrets["DB_URL"] != "postgres://x" || len(files) == 0 {
 					t.Fatalf("UnsealRuntimeSecrets = %v, %v; prepareWakeFiles = %v", secrets, err, wakeErr)
