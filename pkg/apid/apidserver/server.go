@@ -456,6 +456,8 @@ type server struct {
 	// page). Wired in production via WithStatusCache; nil keeps the
 	// route functional but degraded (returns source=empty payload).
 	statusCache *statusCache
+	// statusOverlay caches slo.json's operator-event read (status.go).
+	statusOverlay statusOverlayCache
 
 	// preflightOnce guards lazy construction of the public migration
 	// preflight handler (GET /v1/preflight). It is built on first use so the

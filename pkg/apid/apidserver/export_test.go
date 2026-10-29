@@ -899,6 +899,14 @@ func (r *invocationCompletionWaiter) AppWaiterCount(appID string) int {
 
 const InvocationCompletionRecentCap = invocationCompletionRecentCap
 
+var NextExecutionEventsPoll = nextExecutionEventsPoll
+
+// StatusJSONHandler serves GET /status/slo.json from a server over store
+// whose status cache reads prometheusURL.
+func StatusJSONHandler(store state.Store, prometheusURL string) http.HandlerFunc {
+	return newServer(store, slog.Default(), "gregale.dev", nil).WithStatusCache(prometheusURL, "").statusJSONHandler
+}
+
 func NewAPIRequestBudgetAt(now func() time.Time) *apiRequestBudget {
 	b := newAPIRequestBudget()
 	b.now = now
