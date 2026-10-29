@@ -467,6 +467,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				webhookSvc.WritePreviewCheckForkRefused = checks.WritePreviewCheckForkRefused
 				webhookSvc.WritePreviewCheckForkRefusedForInstallation = checks.WritePreviewCheckForkRefusedForInstallation
 				webhookSvc.WritePreviewCommentForInstallation = checks.UpsertPreviewComment
+				// GitHub's own delivery log is the only witness of a delivery
+				// that never reached this listener (wrong webhook URL, stale
+				// secret, githubd down).
+				hookDeliveryMetrics := githubd.NewHookDeliveryMetrics()
+				ops.Registry().MustRegister(hookDeliveryMetrics)
+				go githubd.RunHookDeliveryMonitor(ctx, &githubd.HookDeliveryMonitor{
+					MintJWT: auth.MintAppJWT,
+					Client:  deps.httpClient(),
+					Metrics: hookDeliveryMetrics,
+					Log:     log,
+				}, githubd.DefaultHookDeliveryPollInterval, log)
 				log.Info("githubd: OAuth + Checks wired", "app_id", appID)
 			}
 		}
