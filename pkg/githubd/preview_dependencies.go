@@ -178,9 +178,9 @@ func previewManifest(parent state.AppManifest) state.AppManifest {
 // rules as a project deploy (ADR-20261026181020). They come from the PR's own
 // source, so a preview may run with them (ADR-20261028090000). An unreadable
 // Compose environment imports nothing, as on a project deploy.
-func prHeadComposeValues(fsys fs.FS, scan reposcan.Result, limits api.Limits) map[string]map[string]string {
-	env, err := reposcan.ReadComposeEnv(fsys)
-	if err != nil || !env.Import {
+func prHeadComposeValues(fsys fs.FS, scan reposcan.Result, opts reposcan.ScanOptions, limits api.Limits) map[string]map[string]string {
+	env, err := reposcan.ReadProjectEnv(fsys, opts)
+	if err != nil || !env.ImportsAny() {
 		return nil
 	}
 	callable := make([]string, 0, len(scan.Workloads))

@@ -1978,7 +1978,7 @@ func (s *server) scanService(
 	// reposcan type carries. See toPlanWorkload / toPlanManaged.
 	// The Compose environment's values are read apart from the scan so they
 	// never enter a plan; an unreadable one only means nothing is imported.
-	composeEnv, composeEnvErr := reposcan.ReadComposeEnv(os.DirFS(req.ScanDir))
+	composeEnv, composeEnvErr := reposcan.ReadProjectEnv(os.DirFS(req.ScanDir), s.projectScanOptions(acct))
 	if composeEnvErr != nil {
 		composeEnv = reposcan.ComposeEnv{}
 	}
