@@ -2902,7 +2902,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if leaseErr != nil {
 			return fmt.Errorf("gatewayd-internal: %w", leaseErr)
 		}
-		leaseEnabled = deps.config.RateLimit.leaseEnabled()
+		leaseEnabled = deps.config.RateLimit.Lease
 	}
 	if mode == "central" {
 		backend, rps := buildCentralRateLimitBackend(deps.pool, log)
