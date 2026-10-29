@@ -83,12 +83,23 @@ case "$1" in
         --no-websocket) websocket=false ;;
         --route-metrics) route_metrics=true ;;
         --no-route-metrics) route_metrics=false ;;
-        --consumer-auth-mode) consumer_auth="$2"; shift ;;
+        --consumer-auth-mode)
+          if [[ "${TEST_CONSUMERS_HIDDEN:-}" == 1 && "$2" == required ]]; then
+            printf '{"status":403,"code":"capability_not_released"}\n'; exit 1
+          fi
+          consumer_auth="$2"; shift ;;
       esac
       shift
     done
     printf '{"slug":"%s","maintenance_mode":%s,"streaming_enabled":%s,"websocket_enabled":%s,"route_metrics_enabled":%s,"consumer_auth_mode":"%s"}\n' \
       "$slug" "$maintenance" "$streaming" "$websocket" "$route_metrics" "$consumer_auth"
+    exit 0 ;;
+  capabilities)
+    if [[ "${TEST_CONSUMERS_HIDDEN:-}" == 1 ]]; then
+      printf '{"plan":"scale","capabilities":[],"hidden_capabilities":["api-consumers"]}\n'
+    else
+      printf '{"plan":"scale","capabilities":[]}\n'
+    fi
     exit 0 ;;
 esac
 exit 2
@@ -140,6 +151,8 @@ if [[ "$*" == *"--write-out"* ]]; then
   if [[ -f "$count_file" ]]; then read -r count <"$count_file"; fi
   count=$((count + 1))
   printf '%s\n' "$count" >"$count_file"
+  # Without the consumer auth leg the WebSocket probe is the third request.
+  if [[ "${TEST_CONSUMERS_HIDDEN:-}" == 1 && "$count" -ge 3 ]]; then count=$((count + 2)); fi
   case "$count" in
     1) status=503; response='{"code":"app_maintenance_mode"}'; extra='Retry-After: 60' ;;
     2|4) status=200; response='{}'; extra='' ;;
@@ -191,6 +204,24 @@ fi
 	}
 	if _, err := os.Stat(revokeLog); err != nil {
 		t.Fatalf("acceptance token was not revoked: %v", err)
+	}
+
+	// rc.302: required consumer auth belongs to the internal API consumers
+	// capability. While it is hidden from the acceptance account apid answers
+	// 403, so the gate is skipped and every other policy check still runs.
+	hiddenCmd := exec.Command("bash", script)
+	hiddenCmd.Env = append(os.Environ(),
+		"PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"RELEASE_SHA="+strings.Repeat("a", 40), "RUN_ID=12345678", "ACTIVE_NODE_COUNT=2",
+		"GREGALE_BIN="+gregale, "GREGALECTL_BIN="+gregalectl,
+		"TEST_DEPLOY_LOG="+filepath.Join(dir, "hidden-deploys"),
+		"TEST_CURL_LOG="+filepath.Join(dir, "hidden-curls"),
+		"TEST_REVOKE_LOG="+filepath.Join(dir, "hidden-revokes"), "TEST_CONSUMERS_HIDDEN=1",
+	)
+	hiddenOutput, err := hiddenCmd.CombinedOutput()
+	if err != nil || !strings.Contains(string(hiddenOutput), "consumer auth check skipped") ||
+		!strings.Contains(string(hiddenOutput), "production acceptance passed") {
+		t.Fatalf("hidden api-consumers capability failed acceptance: err=%v output=%s", err, hiddenOutput)
 	}
 
 	// A continuity failure stays a hard gate but leaves the exact response
