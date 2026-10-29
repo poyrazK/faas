@@ -280,7 +280,9 @@ func TestE2E_EdgeRules_ListsAndRollback(t *testing.T) {
 		t.Fatalf("delete list: status=%d body=%s", code, body)
 	}
 	body, code := doReq(t, f.h, f.key, http.MethodPost, "/v1/apps/"+slug+"/edge-rules/rollback", api.RollbackEdgeRulesRequest{Version: withList})
-	if code != http.StatusBadRequest || !strings.Contains(string(body), `"blocked"`) {
+	var refusal api.Problem
+	_ = json.Unmarshal(body, &refusal)
+	if code != http.StatusBadRequest || !strings.Contains(refusal.Detail, `unknown list "blocked"`) {
 		t.Fatalf("rollback to a version whose list is gone: status=%d body=%s, want 400 naming the list", code, body)
 	}
 }
