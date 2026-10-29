@@ -12,7 +12,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 
@@ -34,11 +33,6 @@ type StateStore struct {
 	records map[string]json.RawMessage
 	failure error
 	closed  bool
-	// pending names records changed in memory whose commit failed; the next
-	// update commits them. Only a lost lease disables the store: one failed
-	// commit used to latch every later request into 503 until a restart
-	// (bug hunt 2026-10-28 B16).
-	pending map[string]bool
 	// seqs is the snapshot sequence of each record set through
 	// updateSnapshot, so an older snapshot committed late never replaces a
 	// newer one.
@@ -183,9 +177,6 @@ func (s *StateStore) updateSnapshot(namespace string, value any, seq uint64) err
 	if err != nil {
 		return err
 	}
-	if s.pending == nil {
-		s.pending = map[string]bool{}
-	}
 	if s.seqs == nil {
 		s.seqs = map[string]uint64{}
 	}
@@ -216,25 +207,15 @@ func (s *StateStore) updateSnapshot(namespace string, value any, seq uint64) err
 			}
 		}
 	}
-	for key := range s.pending {
-		if !slices.Contains(changed, key) {
-			changed = append(changed, key)
-		}
-	}
 	if len(changed) == 0 {
 		return nil
 	}
+	// Memory is now ahead of storage, so a failed commit disables the store
+	// and the bridge exits to reload (ADR-20261026195952 amendment 2).
 	if err := s.persist.commit(s.records, changed); err != nil {
-		if errors.Is(err, ErrStateLeaseLost) {
-			s.failure = err
-			return errors.New("MCP state could not be committed; further access disabled")
-		}
-		for _, key := range changed {
-			s.pending[key] = true
-		}
-		return fmt.Errorf("MCP state could not be committed: %w", err)
+		s.failure = err
+		return errors.New("MCP state could not be committed; further access disabled")
 	}
-	clear(s.pending)
 	return nil
 }
 

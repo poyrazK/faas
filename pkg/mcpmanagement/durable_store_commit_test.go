@@ -21,9 +21,10 @@ func (p *countingPersistence) commit(map[string]json.RawMessage, []string) error
 }
 
 // The hosted bridge rewrote its whole OAuth state after every request,
-// discovery GETs included, and one failed commit latched every later request
-// into 503 until a restart (bug hunt 2026-10-28 B16).
-func TestStateStoreCommitsChangesOnlyAndRetriesFailures(t *testing.T) {
+// discovery GETs included (bug hunt 2026-10-28 B16). A failed commit still
+// disables the store so the bridge exits and reloads (ADR-20261026195952
+// amendment 2).
+func TestStateStoreCommitsChangesOnly(t *testing.T) {
 	persist := &countingPersistence{}
 	s := &StateStore{persist: persist, records: map[string]json.RawMessage{}}
 	if err := s.update("oauth", map[string]int{"a": 1}); err != nil || persist.commits != 1 {
@@ -32,17 +33,6 @@ func TestStateStoreCommitsChangesOnlyAndRetriesFailures(t *testing.T) {
 	if err := s.update("oauth", map[string]int{"a": 1}); err != nil || persist.commits != 1 {
 		t.Fatalf("unchanged update committed again: %v, %d commits", err, persist.commits)
 	}
-	persist.err = errors.New("CP blip")
-	if err := s.update("oauth", map[string]int{"a": 2}); err == nil {
-		t.Fatal("a failed commit was reported as committed")
-	}
-	if !s.available() {
-		t.Fatal("one failed commit disabled the store")
-	}
-	persist.err = nil
-	if err := s.update("oauth", map[string]int{"a": 2}); err != nil || persist.commits != 3 {
-		t.Fatalf("the change that failed was not retried: %v, %d commits", err, persist.commits)
-	}
 	// A snapshot taken earlier but committed later never replaces a newer one.
 	if err := s.updateSnapshot("oauth", map[string]int{"a": 4}, 9); err != nil {
 		t.Fatal(err)
@@ -50,13 +40,15 @@ func TestStateStoreCommitsChangesOnlyAndRetriesFailures(t *testing.T) {
 	if err := s.updateSnapshot("oauth", map[string]int{"a": 3}, 8); err != nil {
 		t.Fatal(err)
 	}
-	if got := string(s.records["oauth"]); got != `{"a":4}` {
-		t.Fatalf("record = %s, want the newer snapshot", got)
+	if got := string(s.records["oauth"]); got != `{"a":4}` || persist.commits != 2 {
+		t.Fatalf("record = %s after %d commits, want the newer snapshot committed once", got, persist.commits)
 	}
-	persist.err = ErrStateLeaseLost
-	_ = s.update("oauth", map[string]int{"a": 5})
+	persist.err = errors.New("CP blip")
+	if err := s.update("oauth", map[string]int{"a": 5}); err == nil {
+		t.Fatal("a failed commit was reported as committed")
+	}
 	if s.available() {
-		t.Fatal("a lost lease left the store writable")
+		t.Fatal("a failed commit left the store writable")
 	}
 }
 
