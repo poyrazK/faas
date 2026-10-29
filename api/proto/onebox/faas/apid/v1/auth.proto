@@ -41,6 +41,50 @@ service Auth {
   //   - Unauthenticated when no api_keys row matches the hash
   //   - Internal on Postgres errors
   rpc AuthenticateKey(AuthenticateKeyRequest) returns (AuthenticateKeyResponse);
+
+  // AuthenticateCredential resolves a bearer credential for a gateway
+  // (ADR 20261029202403). Credential hashes are keyed by a secret only
+  // apid holds, so gatewayd-internal and gatewayd-public cannot look
+  // them up themselves; they send the presented token's SHA-256 and get
+  // back the account and key the shared auth middleware needs. An
+  // unknown, expired or revoked credential is an outcome, not an error;
+  // errors are Internal (store failures) and InvalidArgument.
+  rpc AuthenticateCredential(AuthenticateCredentialRequest) returns (AuthenticateCredentialResponse);
+}
+
+// CredentialKind names which credential family a lookup is for.
+enum CredentialKind {
+  CREDENTIAL_KIND_UNSPECIFIED = 0;
+  // An account API key (api_keys).
+  CREDENTIAL_KIND_API_KEY = 1;
+  // A short-lived OIDC-exchanged bearer (oidc_exchanged_tokens).
+  CREDENTIAL_KIND_OIDC_BEARER = 2;
+}
+
+// CredentialOutcome is what a lookup found.
+enum CredentialOutcome {
+  CREDENTIAL_OUTCOME_UNSPECIFIED = 0;
+  CREDENTIAL_OUTCOME_OK = 1;
+  CREDENTIAL_OUTCOME_NOT_FOUND = 2;
+  CREDENTIAL_OUTCOME_EXPIRED = 3;
+  CREDENTIAL_OUTCOME_REVOKED = 4;
+}
+
+message AuthenticateCredentialRequest {
+  CredentialKind kind = 1;
+  // sha256 — the SHA-256 of the presented token (32 bytes). The raw
+  // token never leaves the gateway.
+  bytes sha256 = 2;
+}
+
+message AuthenticateCredentialResponse {
+  CredentialOutcome outcome = 1;
+  // account_json and key_json are the JSON of state.Account and
+  // state.APIKey; set only when outcome is OK. JSON, not a mirrored
+  // message, so a field apid adds reaches the gateway's middleware
+  // without a protocol change.
+  bytes account_json = 2;
+  bytes key_json = 3;
 }
 
 // AuthenticateKeyRequest is one bearer-token lookup. The token field

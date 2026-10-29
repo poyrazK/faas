@@ -3276,8 +3276,12 @@ func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, 
 	)...)
 	receivers.RegisterAppErrorsReceiver(srv, store, ops, appErrorsEnabled, ingest)
 	// The private history reader shares this authenticated listener for
-	// compute-only realtimed nodes in split-box deployments.
+	// compute-only realtimed nodes in split-box deployments. So does
+	// credential lookup: a compute node's gatewayd-internal cannot key a
+	// credential hash itself (ADR 20261029202403); single-box gateways ask
+	// over /run/faas/auth.sock.
 	if !isUnixSocketPath(target) {
+		receivers.RegisterAuthReceiver(srv, store)
 		receivers.RegisterRealtimeHistoryReceiver(srv, store)
 		if len(fleetRouter) > 0 {
 			receivers.RegisterRealtimeFleetReceiver(srv, store, fleetRouter[0], registerPush)

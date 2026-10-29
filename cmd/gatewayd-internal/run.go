@@ -2323,8 +2323,13 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	}
 	deps.apiAuthLimiter = middleware.NewLimiter(middleware.AuthLimitConfig{Log: log})
 	deps.audit = audit.New(pgStore, log, nil, "gatewayd")
+	credentialAuth, err := dialCredentialAuth(ctx, cfg, osGetenv)
+	if err != nil {
+		return fmt.Errorf("gatewayd: dial apid credential auth: %w", err)
+	}
+	defer func() { _ = credentialAuth.Close() }()
 	deps.authMw = authmw.New(
-		storeAsAuthenticator(pgStore),
+		storeAsAuthenticator(pgStore, apidgrpc.CredentialLookup{Apid: credentialAuth, Fallback: pgStore, Log: log}),
 		sessions,
 		storeAsSessionLookup(pgStore),
 		auditorAsAuthAuditor(deps.audit),
