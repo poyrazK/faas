@@ -31,6 +31,9 @@ import (
 
 const debugStatusSlug = "normal-debug-status"
 
+// debugStatusRoute is how request telemetry names GET /checkout.
+const debugStatusRoute = "GET /checkout"
+
 // TestE2E_NormalPath_DebugStatusExplainsRollbackAndOOM walks the three
 // answers `gregale debug status` gives: a healthy app, a canary rolled back
 // for server errors (with the candidate's own failing requests as examples),
@@ -88,18 +91,18 @@ func TestE2E_NormalPath_DebugStatusExplainsRollbackAndOOM(t *testing.T) {
 		rollout.Decision == nil || rollout.Decision.Rule != api.RolloutRuleAbort5xx {
 		t.Fatalf("rollout = %+v", rollout)
 	}
-	if len(rollout.Routes) == 0 || rollout.Routes[0].Route != "/checkout" || rollout.Routes[0].CandidateServerErrors != int64(failed) ||
+	if len(rollout.Routes) == 0 || rollout.Routes[0].Route != debugStatusRoute || rollout.Routes[0].CandidateServerErrors != int64(failed) ||
 		rollout.Routes[0].CandidateRequests != int64(failed) || rollout.Routes[0].StableServerErrors != 0 || rollout.Routes[0].StableRequests < int64(served) {
 		t.Fatalf("rollout routes = %+v; want /checkout with the candidate's %d failures against %d stable successes", rollout.Routes, failed, served)
 	}
-	if !strings.HasPrefix(rollout.Headline, "Rolled back at 50% traffic") || !strings.Contains(rollout.Headline, "Worst route /checkout") {
+	if !strings.HasPrefix(rollout.Headline, "Rolled back at 50% traffic") || !strings.Contains(rollout.Headline, "Worst route "+debugStatusRoute) {
 		t.Fatalf("rollout headline = %q", rollout.Headline)
 	}
 	if len(rollout.Examples) == 0 || len(rollout.Examples) > api.DebugRolloutMaxExamples {
 		t.Fatalf("rollout examples = %+v", rollout.Examples)
 	}
 	for _, example := range rollout.Examples {
-		if example.Status != http.StatusInternalServerError || example.DeploymentID != candidate.ID || example.Route != "/checkout" {
+		if example.Status != http.StatusInternalServerError || example.DeploymentID != candidate.ID || example.Route != debugStatusRoute {
 			t.Fatalf("rollout example = %+v; want one of the candidate's failed /checkout requests", example)
 		}
 	}
