@@ -106,7 +106,7 @@ func parseLogSearchArgs(fs *flag.FlagSet, f logSearchFlags, args []string, usage
 
 // cmdLogsSearch implements `gregale logs search [<slug>]`.
 func cmdLogsSearch(args []string) int {
-	const usage = "usage: gregale logs search [<slug>] [--q TEXT] [--since 1h] [--until RFC3339] [--source S] [--level error,warn] [--route R] [--status 5xx] [--deployment ID] [--request ID] [--trace ID] [--saved NAME] [--limit N] [--cursor C]"
+	const usage = "usage: gregale logs search [<slug>] [--q TEXT] [--since 1h] [--until RFC3339] [--source S] [--level error,warn] [--route R] [--status 5xx] [--release ID] [--request ID] [--trace ID] [--saved NAME] [--limit N] [--cursor C]"
 	fs := newFlagSet("logs search", flag.ContinueOnError)
 	f := newLogSearchFlags(fs)
 	limit := fs.Int("limit", 100, "events per page (1..200)")
@@ -133,7 +133,7 @@ func cmdLogsSearch(args []string) int {
 
 // cmdLogsFacets implements `gregale logs facets [<slug>]`.
 func cmdLogsFacets(args []string) int {
-	const usage = "usage: gregale logs facets [<slug>] [--q TEXT] [--since 1h] [--until RFC3339] [--source S] [--level error,warn] [--route R] [--status 5xx] [--deployment ID] [--request ID] [--trace ID] [--saved NAME]"
+	const usage = "usage: gregale logs facets [<slug>] [--q TEXT] [--since 1h] [--until RFC3339] [--source S] [--level error,warn] [--route R] [--status 5xx] [--release ID] [--request ID] [--trace ID] [--saved NAME]"
 	fs := newFlagSet("logs facets", flag.ContinueOnError)
 	f := newLogSearchFlags(fs)
 	slug, ok := parseLogSearchArgs(fs, f, args, usage)

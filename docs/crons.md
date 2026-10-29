@@ -139,7 +139,7 @@ have five manual runs waiting or running at once; another request gets
 
 ```bash
 gregale cron runs CRON_ID                 # newest first
-gregale cron runs CRON_ID --before CURSOR # older runs
+gregale cron runs CRON_ID --cursor CURSOR # older runs
 ```
 
 Each run shows when it started, how long it took, its outcome (`success`,

@@ -37,7 +37,7 @@ func cmdOpenapiPreview(args []string) int {
 		return 1
 	}
 	if len(pos) > 1 {
-		PrintUsage(osStderr, "usage: gregale api spec preview [<slug>] [--scope <scope>] [--fail-on-unavailable]", "openapi")
+		PrintUsage(osStderr, "usage: gregale api spec preview [<slug>] [--env <scope>] [--fail-on-unavailable]", "openapi")
 		return 1
 	}
 	resolvedScope, scopeErr := resolveEnvironmentFlagOrContext(*scope)
@@ -56,7 +56,7 @@ func cmdOpenapiPreview(args []string) int {
 		slug, resolveErr = resolveRequiredAppSlug("")
 		if resolveErr != nil {
 			if errors.Is(resolveErr, errProjectContextNotFound) {
-				PrintUsage(osStderr, "usage: gregale api spec preview [<slug>] [--scope <scope>] [--fail-on-unavailable] (or run `gregale link <project-slug>`)", "openapi")
+				PrintUsage(osStderr, "usage: gregale api spec preview [<slug>] [--env <scope>] [--fail-on-unavailable] (or run `gregale link <project-slug>`)", "openapi")
 				return 1
 			}
 			return printErr("Could not read local project context", resolveErr)

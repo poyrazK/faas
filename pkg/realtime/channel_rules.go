@@ -26,8 +26,9 @@ func channelRuleClaims(rules []api.RealtimeChannelRule) []string {
 }
 
 // channelRulesAllow reports whether one of the endpoint's rules grants
-// channel to identity.
-func channelRulesAllow(endpoint *Endpoint, identity JWTIdentity, channel string) bool {
+// channel to identity: to read it, or with presence, also to set presence
+// state and send signals on it.
+func channelRulesAllow(endpoint *Endpoint, identity JWTIdentity, channel string, presence bool) bool {
 	if endpoint == nil || len(endpoint.ChannelRules) == 0 || identity.Principal == "" {
 		return false
 	}
@@ -40,7 +41,7 @@ func channelRulesAllow(endpoint *Endpoint, identity JWTIdentity, channel string)
 	}
 	claims["sub"] = identity.Principal
 	for _, rule := range endpoint.ChannelRules {
-		if rule.Read && api.MatchRealtimeChannelRule(rule, channel, claims) {
+		if rule.Read && (!presence || rule.Presence) && api.MatchRealtimeChannelRule(rule, channel, claims) {
 			return true
 		}
 	}
