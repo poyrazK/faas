@@ -198,7 +198,7 @@ func TestOperatorOptInAndSelfServeWritesAreChecked(t *testing.T) {
 	if code := patchPlatformConfig(t, e, platformflags.OptInsConfigKey(platformflags.ApplicationAuth), orgOptIn, 0); code != http.StatusOK {
 		t.Fatalf("org opt-in on application_auth = %d, want 200", code)
 	}
-	list := e.Do(t, http.MethodGet, "/v1/admin/flags/"+platformflags.ApplicationAuth, nil, nil)
+	list := e.DoOperator(t, http.MethodGet, "/v1/admin/flags/"+platformflags.ApplicationAuth, nil, nil)
 	if item := decodeBody[api.OperatorPlatformFlag](t, list.Code, list.Body.Bytes(), http.StatusOK); item.OptIns.Orgs != 1 || item.OptIns.Version != 1 {
 		t.Fatalf("operator opt-in counts = %+v", item.OptIns)
 	}

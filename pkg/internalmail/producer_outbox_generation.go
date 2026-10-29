@@ -20,6 +20,7 @@ const ProducerOutboxSubscriptionEndedTemplate = "subscription_ended"
 const ProducerOutboxQuotaWarningTemplate = "quota_warning"
 const ProducerOutboxNonpaymentDeletionTemplate = "nonpayment_deletion"
 const ProducerOutboxAccountSuspendedTemplate = "account_suspended"
+const ProducerOutboxManagedPostgresCapTemplate = "managed_postgres_cap"
 const ProducerOutboxAccountRestoredTemplate = "account_restored"
 const ProducerOutboxPaymentFailedTemplate = "payment_failed"
 const ProducerOutboxMFAEnabledAlertTemplate = "mfa_enabled"
@@ -48,6 +49,10 @@ func (s *Service) mfaDisableOutboxEnabled() bool {
 
 func (s *Service) accountSuspendedOutboxEnabled() bool {
 	return s.producerOutboxEnabled() && s.AccountSuspendedOutboxEnabled != nil && s.AccountSuspendedOutboxEnabled()
+}
+
+func (s *Service) managedPostgresCapOutboxEnabled() bool {
+	return s.producerOutboxEnabled() && s.ManagedPostgresCapOutboxEnabled != nil && s.ManagedPostgresCapOutboxEnabled()
 }
 
 func (s *Service) accountRestoredOutboxEnabled() bool {
@@ -107,6 +112,8 @@ func (s *Service) producerOutboxContext(ctx context.Context, header http.Header)
 			gate = s.nonpaymentDeletionOutboxEnabled
 		case ProducerOutboxAccountSuspendedTemplate:
 			gate = s.accountSuspendedOutboxEnabled
+		case ProducerOutboxManagedPostgresCapTemplate:
+			gate = s.managedPostgresCapOutboxEnabled
 		case ProducerOutboxAccountRestoredTemplate:
 			gate = s.accountRestoredOutboxEnabled
 		case ProducerOutboxPaymentFailedTemplate:
@@ -120,7 +127,7 @@ func (s *Service) producerOutboxContext(ctx context.Context, header http.Header)
 		case ProducerOutboxMFARecoveryAlertTemplate:
 			gate = s.mfaRecoveryAlertOutboxEnabled
 		default:
-			if !s.verificationOutboxEnabled() && !s.passwordResetOutboxEnabled() && !s.magicLinkOutboxEnabled() && !s.mfaRecoveryAlertOutboxEnabled() && !s.mfaDisableOutboxEnabled() && !s.mfaDisabledAlertOutboxEnabled() && !s.passwordChangedAlertOutboxEnabled() && !s.mfaEnabledAlertOutboxEnabled() && !s.paymentFailedOutboxEnabled() && !s.accountRestoredOutboxEnabled() && !s.accountSuspendedOutboxEnabled() && !s.nonpaymentDeletionOutboxEnabled() && !s.quotaWarningOutboxEnabled() && !s.subscriptionEndedOutboxEnabled() && !s.deploymentFailedOutboxEnabled() {
+			if !s.verificationOutboxEnabled() && !s.passwordResetOutboxEnabled() && !s.magicLinkOutboxEnabled() && !s.mfaRecoveryAlertOutboxEnabled() && !s.mfaDisableOutboxEnabled() && !s.mfaDisabledAlertOutboxEnabled() && !s.passwordChangedAlertOutboxEnabled() && !s.mfaEnabledAlertOutboxEnabled() && !s.paymentFailedOutboxEnabled() && !s.accountRestoredOutboxEnabled() && !s.accountSuspendedOutboxEnabled() && !s.nonpaymentDeletionOutboxEnabled() && !s.quotaWarningOutboxEnabled() && !s.subscriptionEndedOutboxEnabled() && !s.deploymentFailedOutboxEnabled() && !s.managedPostgresCapOutboxEnabled() {
 				return ctx, ErrDisabled
 			}
 			return ctx, ErrInvalid
