@@ -1,6 +1,6 @@
 # ADR-20261029155852: imaged verifies a platform base's build provenance before it builds it
 
-- **Status:** proposed
+- **Status:** accepted
 - **Date:** 2026-10-29
 - **Owner:** @poyrazK
 - **Related:** issue #295; #5835 (images.yml attests every platform image it promotes on `main`); #5895 (release.yml verifies the digests it pins); ADR-736 (immutable runtime releases); ADR-20261024191249 (a rolled node stays drained until it can boot its bases)
@@ -59,7 +59,7 @@ Facts measured on 2026-10-29 that shape the decision:
 
 6. **Verdict cache.** imaged persists each `verified` verdict per digest at `/srv/fc/sigs/base-provenance/sha256-<hex>.json`. The record holds the digest, identity, bundle sha256, trust root sha256, cosign version and time. imaged already writes `/srv/fc/sigs`. The per-release rebuild of an already verified digest reads the record and needs neither the registry nor cosign. Failures are never cached; the next stage tries again.
 
-7. **Bases from before attestations.** ADR-736 runtime releases build the base ref each build recorded. A redeploy or rollback of a build made on a pre-#5835 base would otherwise be refused in `enforce`. The release ships a frozen list of the base digests that signed releases pinned before the first release with attested bases: `bin/base-provenance-legacy.txt`, catalogued like the root. It is generated once from the `runtime-bases.env` and builder-base digests of every published release up to that point and never appended to. A change to it needs an amendment to this ADR. A listed digest is reported as `legacy` and is staged in every mode. It is a genuine images.yml output from before images.yml attested anything, and the list admits nothing newer.
+7. **Bases from before attestations.** ADR-736 runtime releases build the base ref each build recorded. A redeploy or rollback of a build made on a pre-#5835 base would otherwise be refused in `enforce`. The release ships a frozen list of the base digests that signed releases pinned before the first release with attested bases: `bin/base-provenance-legacy.txt`, catalogued like the root. Its source is `images/base-provenance-legacy.txt`, generated once by `scripts/base-provenance-legacy.sh --through v0.1.18-rc.304` from the `runtime-bases.env` asset of every release up to the last one cut before #5895's gate. It holds 243 digests and is never appended to. Builder-base digests are left out: imaged builds the builder base only from the ref its release configures, never from a ref a build recorded. A change to it needs an amendment to this ADR. A listed digest is reported as `legacy` and is staged in every mode. It is a genuine images.yml output from before images.yml attested anything, and the list admits nothing newer.
 
 8. **Modes.** `FAAS_IMAGED_BASE_PROVENANCE` takes `off`, `observe` or `enforce`; unset means `observe`. Any other value stops imaged at startup. The compute and control-plane roles write it from the Ansible variable `faas_imaged_base_provenance_mode`.
    - `off`: no check.

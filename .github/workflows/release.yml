@@ -899,6 +899,26 @@ jobs:
             echo "provenance verified: $ref"
           done
 
+      # ADR-20261029155852: imaged verifies base provenance offline against a
+      # Sigstore root shipped in this signed release. Attestations of this
+      # public repository are signed by public-good Sigstore, so keep only
+      # that root (gh fetches it through Sigstore's TUF repository).
+      - name: Fetch the Sigstore trusted root for imaged
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SIGSTORE_TRUSTED_ROOT_FILE: ${{ runner.temp }}/sigstore/trusted-root.json
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname "$SIGSTORE_TRUSTED_ROOT_FILE")"
+          gh attestation trusted-root > "$RUNNER_TEMP/sigstore/trusted-roots.jsonl"
+          jq -c 'select(any(.certificateAuthorities[]?; .uri == "https://fulcio.sigstore.dev"))' \
+            "$RUNNER_TEMP/sigstore/trusted-roots.jsonl" > "$SIGSTORE_TRUSTED_ROOT_FILE"
+          [[ "$(wc -l < "$SIGSTORE_TRUSTED_ROOT_FILE")" -eq 1 ]] || {
+            echo "::error::gh attestation trusted-root did not return exactly one public-good Sigstore root" >&2
+            exit 1
+          }
+          jq -e '.tlogs | length > 0' "$SIGSTORE_TRUSTED_ROOT_FILE" > /dev/null
+
       - name: Reuse a prior signed Firecracker kernel
         id: reuse_kernel
         env:
@@ -951,6 +971,7 @@ jobs:
           OUT_DIR: ${{ runner.temp }}/gregale-release
           SYFT_BIN: syft
           KERNEL_FILE: ${{ runner.temp }}/gregale-release/vmlinux
+          SIGSTORE_TRUSTED_ROOT_FILE: ${{ runner.temp }}/sigstore/trusted-root.json
         run: |
           set -euo pipefail
           MANIFEST_FILE="$OUT_DIR/production-manifest.yaml"
