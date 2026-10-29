@@ -188,6 +188,15 @@ The owner decided the policy on 2026-10-25.
       so this holds either way.
     - The counters reset at the UTC month start (decision 7).
 
+    *Amended in delivery:* the storage pool (decision 9) has its own switch,
+    `FAAS_MANAGED_POSTGRES_STORAGE_CAP_ENFORCEMENT` (default `shadow`), and its
+    own staging evidence: `managed-postgres-qualify --storage-cap` writes the
+    artifact storage `on` requires. On a disposable project it must show that
+    a branch at its limit refuses a growing write with Neon's size-limit
+    error; that reads keep working and the compute is not suspended (Neon's
+    guides disagree on this); that raising the limit lets writes through; and
+    that the storage limit writes leave the compute quota as it was.
+
 11. **The overage setting is a sub-feature capability.** It is
     `postgres-overage`, a child of `managed-postgres`, at maturity `internal`.
     Under ADR-20261023115741 it stays hidden until an operator releases it:

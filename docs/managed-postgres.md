@@ -854,8 +854,15 @@ pool (decision 9):
 
 - `shadow` (the default) logs `managed postgres storage cap (shadow)` with the
   limit it would set, and writes nothing.
+- `on` writes the limits that changed, and requires a storage pool
+  qualification (below). A limit the pool lowered reads as the database's
+  spec everywhere apid compares the two, so it is not `spec_mismatch`.
 - `off` does nothing.
-- `on` is refused until staging has qualified Neon's per-branch write blocking.
+
+Limits written earlier stay on the projects in every mode, so switching to
+`off` or rolling back never lifts a write block. A limit is rewritten when it
+moves by at least 1/64 of the pool (at least 1 MiB), or when it starts or
+stops blocking a branch.
 
 The storage pass is counted apart from the compute sweep: a subject it cannot
 observe is logged and counted as `failed`, and never marks the compute sweep
@@ -864,6 +871,35 @@ stale or holds back a compute cap email. Metrics:
 - `apid_managed_postgres_storage_cap_accounts{state}`
 - `apid_managed_postgres_storage_cap_limit_decisions_total{outcome}`
 - `apid_managed_postgres_storage_cap_enforcement_mode{mode}`
+
+### Qualifying the storage pool
+
+Neon's documentation disagrees on what happens at the limit: the API reference
+says writes fail and the compute keeps running, while the consumption-limits
+guide says the compute is suspended. Storage `on` refuses to start without a
+qualification that settles it, read from
+`FAAS_MANAGED_POSTGRES_STORAGE_CAP_QUALIFICATION_PATH`, made in staging with
+the same environment as the compute cap qualification:
+
+```bash
+managed-postgres-qualify --storage-cap > storage-cap-qualification.json
+```
+
+The run creates a disposable database, probes it, and deletes it. The probe:
+
+1. Writes about 2 MB and waits for Neon to report the branch's size growing.
+2. Sets the limit to that size, then retries a growing write until Neon
+   refuses it with its size-limit error (`53100`). A refused connection does
+   not count.
+3. Checks that reads work and, for a minute, that the compute is never
+   reported suspended.
+4. Raises the limit by 1 GiB and retries the write until it succeeds.
+5. Checks that the compute quota did not change, and puts the original limit
+   back.
+
+The command exits non-zero, and `on` refuses the file, if any observation
+fails. If the compute is suspended at the limit, the pool would stop
+databases rather than block writes, and must not be turned on as specified.
 
 ## Restore-to-new-database safety
 

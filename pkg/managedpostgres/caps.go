@@ -210,12 +210,14 @@ func capThresholds(used int64, limits CapLimits, ceiling int64) []string {
 
 type CapEnforcerOptions struct {
 	Mode CapEnforcementMode
-	// StorageMode runs the storage pool pass (decision 9): off or shadow.
+	// StorageMode runs the storage pool pass (decision 9): off, shadow or on.
 	StorageMode CapEnforcementMode
-	Ceiling     CapCeiling
-	Now         func() time.Time
-	Logger      *slog.Logger
-	Observe     func(CapSweepSummary)
+	// StorageQualification is the staging evidence storage `on` requires.
+	StorageQualification *StorageCapQualification
+	Ceiling              CapCeiling
+	Now                  func() time.Time
+	Logger               *slog.Logger
+	Observe              func(CapSweepSummary)
 	// BatchSize pages the catalog; zero uses the usage collector's default.
 	BatchSize int
 	// Qualification is the staging evidence `on` requires (decision 10).
@@ -253,6 +255,7 @@ type CapSweepSummary struct {
 	StorageFailed          int
 	StorageScopesUnchanged int
 	StorageScopesShadowed  int
+	StorageScopesApplied   int
 }
 
 // CapEnforcer applies compute ceilings to running databases.
@@ -293,8 +296,14 @@ func NewCapEnforcer(registry *Registry, store UsageStore, options CapEnforcerOpt
 	case "":
 		options.StorageMode = CapEnforcementOff
 	case CapEnforcementOff, CapEnforcementShadow:
+	case CapEnforcementOn:
+		if options.StorageQualification == nil {
+			return nil, fmt.Errorf("%s=on needs a storage cap qualification at %s: %w", StorageCapEnforcementEnv, StorageCapQualificationPathEnv, ErrInvalid)
+		}
+		if err := registry.VerifyStorageCapQualification(*options.StorageQualification); err != nil {
+			return nil, fmt.Errorf("%s=on: %w", StorageCapEnforcementEnv, err)
+		}
 	default:
-		// `on` needs the storage qualification (delivery step 6c).
 		return nil, ErrInvalid
 	}
 	if options.BatchSize == 0 {
