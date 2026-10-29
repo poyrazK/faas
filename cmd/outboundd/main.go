@@ -178,8 +178,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	// ADR 20261022111812: customer credentials open with the outbound seal
 	// domain identity once the seal_domains role stages it, and with the
-	// fleet identity (and either one's previous twin) until the re-seal
-	// moves every row to the domain.
+	// fleet identity (and either one's previous twin) until the domain is
+	// contracted: the seal_domains role then drops the fleet credential
+	// and unsets its path.
 	domainPath := os.Getenv("FAAS_SEAL_DOMAIN_OUTBOUND_IDENTITY_PATH")
 	fleetPath := os.Getenv("FAAS_FLEET_AGE_IDENTITY_PATH")
 	domainLoaded, err := outboundSealDomainLoaded(domainPath)
@@ -197,7 +198,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 			return fmt.Errorf("outboundd: customer credential resolver: %w", err)
 		}
 		handler.CredentialResolver = credentialResolver
-		log.Info("outbound customer credential identities loaded", "domain_identity", domainLoaded, "identities", len(identities))
+		log.Info("outbound customer credential identities loaded", "domain_identity", domainLoaded, "fleet_identity", fleetPath != "", "identities", len(identities))
 	} else if needCustomerCredentials {
 		return errors.New("outboundd: customer-sealed credentials require FAAS_SEAL_DOMAIN_OUTBOUND_IDENTITY_PATH or FAAS_FLEET_AGE_IDENTITY_PATH")
 	}

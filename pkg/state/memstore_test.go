@@ -758,50 +758,52 @@ func TestCountDeployedApps(t *testing.T) {
 	_ = a1
 }
 
-// TestCountBillingSubjectAppsWithEvictionPriority (issue #475) pins the per-account
-// reserved-tier cap reader. The Hobby+ plans gate the reader: Hobby
-// caps reserved at 1, Pro at 2, Scale at 4. The reader counts APPS
-// (not instances) and excludes soft-deleted apps so a recently
-// deleted reserved app doesn't leak into the cap and reject a
-// subsequent recreate. Mirrors TestCountDeployedApps above.
-func TestCountBillingSubjectAppsWithEvictionPriority(t *testing.T) {
+// TestCountOtherBillingSubjectAppsWithEvictionPriority (issue #475) pins
+// the per-account reserved-tier cap reader. The Hobby+ plans gate the
+// reader: Hobby caps reserved at 1, Pro at 2, Scale at 4. The reader counts
+// APPS (not instances) other than the one asked about, and excludes
+// soft-deleted apps so a recently deleted reserved app doesn't leak into
+// the cap and reject a subsequent recreate. Mirrors TestCountDeployedApps
+// above.
+func TestCountOtherBillingSubjectAppsWithEvictionPriority(t *testing.T) {
 	m := NewMemStore()
 	ctx := context.Background()
 	acc, _ := m.CreateAccount(ctx, "cap-pro@x.com", api.PlanPro)
 	reserved := string(api.EvictionPriorityReserved)
+	a1, _ := m.CreateApp(ctx, App{AccountID: acc.ID, Slug: "a1", Status: AppActive})
+	a2, _ := m.CreateApp(ctx, App{AccountID: acc.ID, Slug: "a2", Status: AppActive})
+	a3, _ := m.CreateApp(ctx, App{AccountID: acc.ID, Slug: "a3", Status: AppActive})
 
 	// 0 reserved initially — fresh accounts always read 0, and so does
 	// an unknown app.
-	a1, _ := m.CreateApp(ctx, App{AccountID: acc.ID, Slug: "a1", Status: AppActive})
-	for _, id := range []string{a1.ID, "missing"} {
-		if n, err := m.CountBillingSubjectAppsWithEvictionPriority(ctx, id, reserved); err != nil || n != 0 {
+	for _, id := range []string{a3.ID, "missing"} {
+		if n, err := m.CountOtherBillingSubjectAppsWithEvictionPriority(ctx, id, reserved); err != nil || n != 0 {
 			t.Fatalf("initial count for %s = (%d, %v), want (0, nil)", id, n, err)
 		}
 	}
 
-	// Seed 2 more apps; flip 2 to reserved via UpdateApp. The reader
-	// must return 2 — Pro caps reserved at 2 (the apid handler is
-	// the load-bearing gate, but the reader is what the gate
-	// consults).
-	a2, _ := m.CreateApp(ctx, App{AccountID: acc.ID, Slug: "a2", Status: AppActive})
-	_, _ = m.CreateApp(ctx, App{AccountID: acc.ID, Slug: "a3", Status: AppActive})
-
+	// Flip 2 apps to reserved via UpdateApp. The reader must return 2 for
+	// a third app — Pro caps reserved at 2 (the apid handler is the
+	// load-bearing gate, but the reader is what the gate consults) — and 1
+	// for a reserved app, which never counts itself.
 	if _, err := m.UpdateApp(ctx, a1.ID, UpdateAppParams{EvictionPriority: &reserved, SetEvictionPriority: true}); err != nil {
 		t.Fatalf("update a1: %v", err)
 	}
 	if _, err := m.UpdateApp(ctx, a2.ID, UpdateAppParams{EvictionPriority: &reserved, SetEvictionPriority: true}); err != nil {
 		t.Fatalf("update a2: %v", err)
 	}
-
-	if n, _ := m.CountBillingSubjectAppsWithEvictionPriority(ctx, a1.ID, reserved); n != 2 {
+	if n, _ := m.CountOtherBillingSubjectAppsWithEvictionPriority(ctx, a3.ID, reserved); n != 2 {
 		t.Errorf("two apps at reserved: count = %d, want 2 (Pro cap)", n)
+	}
+	if n, _ := m.CountOtherBillingSubjectAppsWithEvictionPriority(ctx, a1.ID, reserved); n != 1 {
+		t.Errorf("count for a reserved app = %d, want 1 (itself excluded)", n)
 	}
 
 	// best_effort apps don't count toward the reserved cap; the
 	// fresh a3 (and any pre-#475 row) snap-to-default lands as
 	// best_effort via CreateApp. The reader lets operators query
 	// either tier independently.
-	if n, _ := m.CountBillingSubjectAppsWithEvictionPriority(ctx, a1.ID, string(api.EvictionPriorityBestEffort)); n != 1 {
+	if n, _ := m.CountOtherBillingSubjectAppsWithEvictionPriority(ctx, a1.ID, string(api.EvictionPriorityBestEffort)); n != 1 {
 		t.Errorf("best_effort reader = %d, want 1 (only a3 is best_effort)", n)
 	}
 
@@ -810,7 +812,7 @@ func TestCountBillingSubjectAppsWithEvictionPriority(t *testing.T) {
 	// count.
 	a2.Status = AppDeleted
 	m.apps[a2.ID] = a2
-	if n, _ := m.CountBillingSubjectAppsWithEvictionPriority(ctx, a1.ID, reserved); n != 1 {
+	if n, _ := m.CountOtherBillingSubjectAppsWithEvictionPriority(ctx, a3.ID, reserved); n != 1 {
 		t.Errorf("after soft-delete: count = %d, want 1 (deleted apps excluded)", n)
 	}
 
@@ -829,10 +831,10 @@ func TestCountBillingSubjectAppsWithEvictionPriority(t *testing.T) {
 		}
 		scaleApp = created
 	}
-	if n, _ := m.CountBillingSubjectAppsWithEvictionPriority(ctx, scaleApp.ID, reserved); n != 4 {
-		t.Errorf("Scale at cap: count = %d, want 4", n)
+	if n, _ := m.CountOtherBillingSubjectAppsWithEvictionPriority(ctx, scaleApp.ID, reserved); n != 3 {
+		t.Errorf("Scale at cap: count = %d, want 3 (itself excluded)", n)
 	}
-	if n, _ := m.CountBillingSubjectAppsWithEvictionPriority(ctx, a1.ID, reserved); n != 1 {
+	if n, _ := m.CountOtherBillingSubjectAppsWithEvictionPriority(ctx, a3.ID, reserved); n != 1 {
 		t.Errorf("Pro account cross-leak: count = %d, want 1 (only a1 reserved)", n)
 	}
 }

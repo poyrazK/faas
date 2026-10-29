@@ -135,7 +135,7 @@ func quotaSubjectKinds() []quotaSubjectKind {
 		name: "reserved apps",
 		onApp: func(ctx context.Context, store state.Store, app state.App) error {
 			reserved := string(api.EvictionPriorityReserved)
-			n, err := store.CountBillingSubjectAppsWithEvictionPriority(ctx, app.ID, reserved)
+			n, err := store.CountOtherBillingSubjectAppsWithEvictionPriority(ctx, app.ID, reserved)
 			if err != nil {
 				return err
 			}
