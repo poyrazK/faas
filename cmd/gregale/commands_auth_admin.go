@@ -152,12 +152,12 @@ func restartAuthApp(ctx context.Context, client *api.Client, app string) {
 			return
 		}
 		if !errors.As(err, &problem) || problem.Problem.Status != http.StatusConflict || time.Now().After(deadline) {
-			PrintWarn(osStderr, "restarting %s failed (%v); run `gregale app %s restart --fresh` to apply the change", app, err, app)
+			PrintWarn(osStderr, "restarting %s failed (%v); run `gregale app restart %s --fresh` to apply the change", app, err, app)
 			return
 		}
 		select {
 		case <-ctx.Done():
-			PrintWarn(osStderr, "a restart of %s was already in progress; run `gregale app %s restart --fresh` once it finishes to apply the change", app, app)
+			PrintWarn(osStderr, "a restart of %s was already in progress; run `gregale app restart %s --fresh` once it finishes to apply the change", app, app)
 			return
 		case <-time.After(authRestartRetryPause):
 		}

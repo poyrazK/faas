@@ -3,6 +3,7 @@ package gateway
 import (
 	"crypto/rand"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -68,7 +69,7 @@ func (h *Handler) applyEdgeRuleChallenge(w http.ResponseWriter, r *http.Request,
 		return false
 	}
 	now := h.challengeClock()
-	if validPass(h.challengeKey, r, app.ID, now) {
+	if validPass(h.challengeKey, r, app, now) {
 		h.observeChallenge(rule, app.ID, "passed")
 		return false
 	}
@@ -82,7 +83,8 @@ func (h *Handler) applyEdgeRuleChallenge(w http.ResponseWriter, r *http.Request,
 	nonce := make([]byte, 16)
 	_, _ = rand.Read(nonce)
 	token := sealChallenge(h.challengeKey, "token", challengeTokenPrefix, challengeToken{
-		AppID: app.ID, RuleID: rule.ID, Nonce: nonce, Difficulty: difficulty, PassTTL: rule.PassTTLSeconds,
+		AppID: app.ID, AccountID: app.AccountID, Host: challengeHost(r), RuleID: rule.ID,
+		Nonce: nonce, Difficulty: difficulty, PassTTL: rule.PassTTLSeconds,
 		Expires: now.Add(api.EdgeChallengeTokenTTLSeconds * time.Second).Unix(),
 	}, bindingFor(r))
 	writeChallengePage(w, r, token, difficulty)
@@ -119,12 +121,16 @@ func (h *Handler) challengeDifficulty(rule *EdgeRuleChallengeResolved, appID str
 	return difficulty
 }
 
-// handleChallengeSolve checks a solution posted to ChallengeSolvePath and,
-// when it holds, sets the pass and redirects back with 303. It reports false
-// for any request it does not own, so on hosts without a challenge rule the
-// path belongs to the app. An expired token sends the browser back for a
-// fresh challenge; any other failure is 403 challenge_required.
-func (h *Handler) handleChallengeSolve(w http.ResponseWriter, r *http.Request, app App) bool {
+// challengeSolveRequest reports whether r is a solution for this gateway to
+// check: a POST to ChallengeSolvePath carrying a challenge token in its query,
+// as the page posts it, or on a host with an enforced challenge rule of the
+// app's account. Otherwise the path belongs to the app. ServeHTTP asks before
+// the redirect, rewrite and declared-route gates, which would otherwise move
+// or refuse the post and leave the visitor unable to pass (ADR-831 amendment
+// 17); the query token also finds the solve on a host whose challenged paths
+// route to another of the account's apps, whose rules the host's app does
+// not load.
+func (h *Handler) challengeSolveRequest(r *http.Request, app App) bool {
 	if r.URL.Path != ChallengeSolvePath || r.Method != http.MethodPost {
 		return false
 	}
@@ -132,46 +138,82 @@ func (h *Handler) handleChallengeSolve(w http.ResponseWriter, r *http.Request, a
 	if m == nil || !h.edgeFeatureReleased(platformflags.EdgeChallenge, app) {
 		return false
 	}
+	if strings.HasPrefix(r.URL.Query().Get("token"), challengeTokenPrefix) {
+		return true
+	}
 	rule := m.HostChallengeRule(r.Context(), hostname(r.Host))
-	if rule == nil || rule.AccountID != app.AccountID {
+	return rule != nil && rule.AccountID == app.AccountID
+}
+
+// handleChallengeSolve checks the solution when challengeSolveRequest owns
+// r, and reports whether it answered.
+func (h *Handler) handleChallengeSolve(w http.ResponseWriter, r *http.Request, app App) bool {
+	if !h.challengeSolveRequest(r, app) {
 		return false
 	}
+	h.serveChallengeSolve(w, r, app)
+	return true
+}
+
+// serveChallengeSolve checks a solution posted to ChallengeSolvePath and,
+// when it holds, sets the pass and redirects back with 303. The token must
+// have been issued on this host while the app's account owned it. An expired
+// token sends the browser back for a fresh challenge; any other failure is
+// 403 challenge_required.
+func (h *Handler) serveChallengeSolve(w http.ResponseWriter, r *http.Request, app App) {
 	r.Body = http.MaxBytesReader(w, r.Body, challengeSolveMaxBody)
 	if r.ParseForm() != nil {
-		return h.rejectChallengeSolve(w, r, app, rule.ID)
+		h.rejectChallengeSolve(w, r, app.ID, h.hostChallengeRuleID(r, app))
+		return
 	}
-	token, counter := r.PostForm.Get("token"), r.PostForm.Get("counter")
-	back := safeReturnPath(r.PostForm.Get("return"))
+	token := r.URL.Query().Get("token")
+	if token == "" {
+		token = r.PostForm.Get("token")
+	}
+	counter, back := r.PostForm.Get("counter"), safeReturnPath(r.PostForm.Get("return"))
 	binding := bindingFor(r)
 	var t challengeToken
-	if !openChallenge(h.challengeKey, "token", challengeTokenPrefix, token, binding, &t) || t.AppID != app.ID {
-		return h.rejectChallengeSolve(w, r, app, rule.ID)
+	if !openChallenge(h.challengeKey, "token", challengeTokenPrefix, token, binding, &t) ||
+		t.AccountID != app.AccountID || t.Host != challengeHost(r) {
+		h.rejectChallengeSolve(w, r, app.ID, h.hostChallengeRuleID(r, app))
+		return
 	}
 	now := h.challengeClock()
 	w.Header().Set("Cache-Control", "no-store")
 	if now.Unix() >= t.Expires {
-		h.metrics.ObserveEdgeChallenge(app.ID, "expired")
+		h.metrics.ObserveEdgeChallenge(t.AppID, "expired")
 		http.Redirect(w, r, back, http.StatusSeeOther)
-		return true
+		return
 	}
 	if !challengeWorkValid(token, counter, t.Difficulty) {
-		return h.rejectChallengeSolve(w, r, app, t.RuleID)
+		h.rejectChallengeSolve(w, r, t.AppID, t.RuleID)
+		return
 	}
 	pass := sealChallenge(h.challengeKey, "pass", challengePassPrefix, challengePass{
-		AppID: app.ID, Expires: now.Add(time.Duration(t.PassTTL) * time.Second).Unix(),
+		AccountID: t.AccountID, Host: t.Host, Expires: now.Add(time.Duration(t.PassTTL) * time.Second).Unix(),
 	}, binding)
 	http.SetCookie(w, challengeCookie(pass, t.PassTTL))
-	h.metrics.ObserveEdgeChallenge(app.ID, "solved")
-	h.recordChallengeEvent(r, t.RuleID, app.ID, EdgeRuleEventSolved)
+	h.metrics.ObserveEdgeChallenge(t.AppID, "solved")
+	h.recordChallengeEvent(r, t.RuleID, t.AppID, EdgeRuleEventSolved)
 	http.Redirect(w, r, back, http.StatusSeeOther)
-	return true
+}
+
+// hostChallengeRuleID is the rule a failed solution is reported against when
+// its token did not open: the host's challenge rule, or "" when the host's
+// app loads none.
+func (h *Handler) hostChallengeRuleID(r *http.Request, app App) string {
+	if m := h.challengeMatcher(); m != nil {
+		if rule := m.HostChallengeRule(r.Context(), hostname(r.Host)); rule != nil && rule.AccountID == app.AccountID {
+			return rule.ID
+		}
+	}
+	return ""
 }
 
 // rejectChallengeSolve answers a solution that does not hold with 403.
-// ruleID is the token's rule once the token opened, else the host's.
-func (h *Handler) rejectChallengeSolve(w http.ResponseWriter, r *http.Request, app App, ruleID string) bool {
+// appID and ruleID are the token's once it opened.
+func (h *Handler) rejectChallengeSolve(w http.ResponseWriter, r *http.Request, appID, ruleID string) {
 	api.WriteProblem(w, api.ErrChallengeRequired(ruleID))
-	h.metrics.ObserveEdgeChallenge(app.ID, "invalid")
-	h.recordChallengeEvent(r, ruleID, app.ID, EdgeRuleEventFailed)
-	return true
+	h.metrics.ObserveEdgeChallenge(appID, "invalid")
+	h.recordChallengeEvent(r, ruleID, appID, EdgeRuleEventFailed)
 }

@@ -1,7 +1,10 @@
 package api
 
 import (
+	"fmt"
+	"net/http"
 	"path"
+	"slices"
 	"strings"
 )
 
@@ -149,6 +152,39 @@ func MatchProtectiveEdgeRulePath(glob, requestPath string) (bool, error) {
 		return MatchEdgeRulePath(foldedGlob, folded)
 	}
 	return false, nil
+}
+
+// edgeRuleMatchMethods is the closed vocabulary of match_methods: the RFC 9110
+// methods and PATCH.
+var edgeRuleMatchMethods = []string{
+	http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut, http.MethodPatch,
+	http.MethodDelete, http.MethodOptions, http.MethodConnect, http.MethodTrace,
+}
+
+// NormalizeEdgeRuleMatchMethods validates a rule's match_methods and returns
+// them upper-cased, without duplicates. The gateway compares methods exactly,
+// so an entry outside the vocabulary ("*", a typo, a trailing space) matched
+// no request, and a jwt or ip rule scoped by it silently never applied
+// (ADR-091 amendment 2026-10-28). An empty list matches every method and is
+// returned as given.
+func NormalizeEdgeRuleMatchMethods(methods []string) ([]string, *Problem) {
+	if len(methods) == 0 {
+		return methods, nil
+	}
+	out := make([]string, 0, len(methods))
+	for _, method := range methods {
+		if method == "*" {
+			return nil, ErrValidation(`match_methods cannot contain "*"; omit match_methods to match every method`)
+		}
+		upper := strings.ToUpper(method)
+		if !slices.Contains(edgeRuleMatchMethods, upper) {
+			return nil, ErrValidation(fmt.Sprintf("match_methods entry %q is not an HTTP method (%s)", method, strings.Join(edgeRuleMatchMethods, ", ")))
+		}
+		if !slices.Contains(out, upper) {
+			out = append(out, upper)
+		}
+	}
+	return out, nil
 }
 
 // MatchEdgeRuleKindPath applies the matching mode the gateway uses for kind.

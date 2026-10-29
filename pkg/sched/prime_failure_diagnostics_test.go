@@ -91,3 +91,40 @@ func TestMarkPrimeFailedPersistsStartupPhaseGuidance(t *testing.T) {
 		})
 	}
 }
+
+// #5709: a release whose /healthz answered 503 was refused as
+// "cold_boot_timeout: instance=…". The watchdog stops the priming guest and
+// fails the deployment first; vmmd's reason for that guest arrives after it
+// and now replaces the generic timeout. Any other terminal reason stays.
+func TestMarkPrimeFailedRefinesTheWatchdogTimeout(t *testing.T) {
+	healthcheck := api.NewProblem(422, api.CodeAppStartupTimeout, "app healthcheck did not become ready in time",
+		"startup_phase=handler_healthcheck: guest i-1 answered 9 readiness probes at /healthz without a 2xx response (last status 503) before 24s")
+	for _, tc := range []struct {
+		name      string
+		code      string
+		message   string
+		cause     error
+		wantError string
+	}{
+		{"watchdog timeout, then vmmd's reason", api.CodeAppStartupTimeout, "cold_boot_timeout: instance=i-1", healthcheck, "last status 503"},
+		{"watchdog timeout, then an untyped error", api.CodeAppStartupTimeout, "cold_boot_timeout: instance=i-1", errors.New("vmm: readiness: context canceled"), "cold_boot_timeout: instance=i-1"},
+		{"another failure is kept", api.CodeDeployFailed, "image scan refused", healthcheck, "image scan refused"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := state.NewMemStore()
+			_, _, dep := sched.SeedApp(t, store, api.PlanScale, 1024, 10)
+			if _, err := store.SetDeploymentFailedEx(context.Background(), dep.ID, tc.code, tc.message, "", "", "", nil); err != nil {
+				t.Fatal(err)
+			}
+			e := sched.XNewEngine(t, store, &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0")
+			e.MarkPrimeFailed(context.Background(), dep.ID, tc.cause)
+			got, err := store.DeploymentByID(context.Background(), dep.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Status != state.DeployFailed || !strings.Contains(got.Error, tc.wantError) {
+				t.Fatalf("status=%s error=%q, want failed with %q", got.Status, got.Error, tc.wantError)
+			}
+		})
+	}
+}

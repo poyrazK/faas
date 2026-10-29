@@ -57,7 +57,7 @@ def _build_response(
 
 def sync_detailed(
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
 ) -> Response[Problem | list[TemplateView]]:
     r"""Catalog of starter templates the dashboard wizard renders.
 
@@ -90,7 +90,7 @@ def sync_detailed(
 
 def sync(
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
 ) -> Problem | list[TemplateView] | None:
     r"""Catalog of starter templates the dashboard wizard renders.
 
@@ -119,7 +119,7 @@ def sync(
 
 async def asyncio_detailed(
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
 ) -> Response[Problem | list[TemplateView]]:
     r"""Catalog of starter templates the dashboard wizard renders.
 
@@ -150,7 +150,7 @@ async def asyncio_detailed(
 
 async def asyncio(
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
 ) -> Problem | list[TemplateView] | None:
     r"""Catalog of starter templates the dashboard wizard renders.
 

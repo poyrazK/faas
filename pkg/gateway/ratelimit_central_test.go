@@ -9,6 +9,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -202,6 +203,74 @@ func TestLimiter_CentralBreakerSkipsConsultsAfterFailure(t *testing.T) {
 	}
 }
 
+// #5709: one failed consult refused every request on the gateway for the
+// breaker window. A counter that answered within the outage grace keeps the
+// limit on the gateway's own bucket instead (ADR-20261027173012).
+func TestLimiter_CentralOutageGraceDecidesLocally(t *testing.T) {
+	const centralKey = "app:00000000-0000-0000-0000-000000000002:hobby"
+	for _, tc := range []struct {
+		name      string
+		grace     time.Duration
+		after     time.Duration
+		wantLocal bool
+	}{
+		{name: "inside the default grace", after: centralBreakerWindow, wantLocal: true},
+		{name: "past the default grace", after: api.TrafficRateLimitOutageGrace + time.Second},
+		{name: "grace disabled", grace: -1, after: time.Millisecond},
+		{name: "inside a shortened grace", grace: time.Minute, after: 30 * time.Second, wantLocal: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := newFakeCentral()
+			var failing atomic.Bool
+			fake.consumeResult = func() (int, bool, error) {
+				if failing.Load() {
+					return 0, false, errors.New("postgres down")
+				}
+				return 2, true, nil
+			}
+			now := time.Unix(1_700_000_000, 0)
+			l := NewLimiterWithCentralAndClock(fake, func() time.Time { return now })
+			l.centralOutageGrace = tc.grace
+			var fallbacks, refusals atomic.Int64
+			l.centralFallbackObserver = func(context.Context, string, error) { fallbacks.Add(1) }
+			l.centralErrorObserver = func(context.Context, string, error) { refusals.Add(1) }
+			allow := func() (bool, bool) {
+				ctx := withRateAdmissionEvidence(t.Context())
+				// A negligible refill rate keeps the expected admissions exact
+				// however far the clock moves.
+				allowed := l.AllowWithCentralParams(ctx, "appid", 0.001, 10, centralKey)
+				unavailable, _ := ctx.Value(rateAdmissionKey{}).(*atomic.Bool)
+				return allowed, unavailable.Load()
+			}
+			if allowed, _ := allow(); !allowed {
+				t.Fatal("verified admission refused")
+			}
+			failing.Store(true)
+			now = now.Add(tc.after)
+			// The bucket mirrors the counter's last answer (2 left), so it
+			// admits two and then refuses as over the limit.
+			var got []bool
+			for range 3 {
+				allowed, unavailable := allow()
+				if unavailable == tc.wantLocal {
+					t.Fatalf("unavailable=%v during the outage, want %v", unavailable, !tc.wantLocal)
+				}
+				got = append(got, allowed)
+			}
+			want := []bool{false, false, false}
+			if tc.wantLocal {
+				want = []bool{true, true, false}
+			}
+			if !slices.Equal(got, want) {
+				t.Fatalf("outage admissions=%v, want %v", got, want)
+			}
+			if tc.wantLocal && (fallbacks.Load() != 3 || refusals.Load() != 0) || !tc.wantLocal && (fallbacks.Load() != 0 || refusals.Load() != 3) {
+				t.Fatalf("fallbacks=%d refusals=%d", fallbacks.Load(), refusals.Load())
+			}
+		})
+	}
+}
+
 func TestLimiter_CentralBreakerIgnoresCallerCancellation(t *testing.T) {
 	fake := newFakeCentral()
 	fake.consumeResult = func() (int, bool, error) { return 0, false, context.Canceled }
@@ -242,6 +311,21 @@ func TestHandler_CentralFallbackIsObservableAndAuditCooledDown(t *testing.T) {
 	m.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
 	if want := `gateway_ratelimit_degraded_total{scope="app"} 2`; !strings.Contains(rec.Body.String(), want) {
 		t.Fatalf("metrics missing %q:\n%s", want, rec.Body.String())
+	}
+	// Inside the outage grace the same failure is a local decision, counted
+	// and logged separately (ADR-20261027173012).
+	h.limiter.centralVerifiedAt.Store(time.Now().UnixNano())
+	h.limiter.centralOpenUntil.Store(0)
+	if !h.limiter.AllowWithCentralParams(t.Context(), "app-2", 10, 10, centralKey) {
+		t.Fatal("outage inside the grace refused a request within its limit")
+	}
+	rec = httptest.NewRecorder()
+	m.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
+	if want := `gateway_ratelimit_local_fallback_total{scope="app"} 1`; !strings.Contains(rec.Body.String(), want) {
+		t.Fatalf("metrics missing %q:\n%s", want, rec.Body.String())
+	}
+	if !strings.Contains(logs.String(), "enforcing limits per gateway within the outage grace") {
+		t.Errorf("missing fallback warning; logs=%s", logs.String())
 	}
 	if got := strings.Count(logs.String(), "gateway shared rate admission unavailable"); got != 1 {
 		t.Errorf("degraded warning count=%d, want 1 within cooldown; logs=%s", got, logs.String())

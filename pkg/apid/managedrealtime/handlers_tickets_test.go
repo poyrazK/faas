@@ -3,6 +3,7 @@ package managedrealtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -38,7 +39,9 @@ func (h *ticketTestHost) Ops() *wire.OpsMetrics { return nil }
 func (h *ticketTestHost) EmitAudit(_ context.Context, kind string, _ *string, _ map[string]any) {
 	h.audits = append(h.audits, kind)
 }
-func (h *ticketTestHost) SecretRecipient() *age.X25519Recipient                         { return nil }
+func (h *ticketTestHost) SecretRecipients() ([]*age.X25519Recipient, error) {
+	return nil, errors.New("no recipient")
+}
 func (h *ticketTestHost) HostIdentitiesForUnseal(context.Context) []*age.X25519Identity { return nil }
 func (h *ticketTestHost) ResolveAndCheckEgress(context.Context, string) *api.Problem    { return nil }
 

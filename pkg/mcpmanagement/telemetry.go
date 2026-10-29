@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -20,6 +21,8 @@ type Telemetry struct {
 	duration *prometheus.HistogramVec
 	active   *prometheus.GaugeVec
 	updates  prometheus.Counter
+	// connections reads a remote bridge's state at scrape time.
+	connections atomic.Pointer[func() connectionStats]
 }
 
 // NewTelemetry creates a process-level aggregate registry for management MCP.
@@ -29,7 +32,7 @@ func NewTelemetry() *Telemetry {
 		duration: prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "gregale_management_mcp_request_duration_seconds", Help: "Bridge handler duration including admission, validation and customer API reads.", Buckets: []float64{.005, .025, .1, .5, 1, 5, 15, 30, 60, 120}}, []string{"operation", "tool"}),
 		active:   prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "gregale_management_mcp_active", Help: "Process aggregate reserved bridge capacity by fixed kind."}, []string{"kind"}),
 		updates:  prometheus.NewCounter(prometheus.CounterOpts{Name: "gregale_management_mcp_resource_updates_total", Help: "URI invalidations successfully sent to individual subscription recipients."})}
-	t.registry.MustRegister(t.requests, t.duration, t.active, t.updates)
+	t.registry.MustRegister(t.requests, t.duration, t.active, t.updates, connectionCollector{t})
 	for _, kind := range []string{"short_requests", "rollout_watches", "listen_streams", "resource_slots"} {
 		t.active.WithLabelValues(kind).Set(0)
 	}
@@ -41,6 +44,10 @@ func NewTelemetry() *Telemetry {
 func (t *Telemetry) Handler() http.Handler {
 	return promhttp.HandlerFor(t.registry, promhttp.HandlerOpts{})
 }
+
+// Gatherer exposes the same registry to an embedder that serves it beside
+// its own process metrics.
+func (t *Telemetry) Gatherer() prometheus.Gatherer { return t.registry }
 
 func (t *Telemetry) change(kind string, amount float64) {
 	if t != nil {

@@ -34,6 +34,13 @@ default.
   `FAAS_APID_LIVE_KEY_RECIPIENT_FILE`
   (`faas-apid.service.d/99-faas-live-queries.conf`). It does not set
   `FAAS_LIVE_QUERIES_ACCOUNTS`, which is only the flag's boot fallback.
+- With `faas_livequeryd_signing_key_src` and
+  `faas_livequeryd_signing_pub_src` (ADR 20261028161502), gives apid its
+  live signing key as a credential (`FAAS_APID_LIVE_SIGNING_KEY_FILE`) and
+  the hub the verify keys (`-live-signature-keys`). The hub refuses a key or
+  login whose signature does not verify.
+  `faas_livequeryd_require_signatures: true` also refuses unsigned ones;
+  set it only after `gregalectl live-query sign-existing` reports none.
 - Keeps one checkpoint per database in `/var/lib/faas/livequeryd`
   (`<id>.checkpoint`), so a restart resumes from each replication slot.
 - Starts the hub, waits for `/readyz` on `faas_livequeryd_metrics_listen`

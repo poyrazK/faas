@@ -69,6 +69,11 @@ const (
 	// layer verification and failover refusals before the boot budget
 	// starts.
 	wakeLeaderAdmissionAllowance = 10 * time.Second
+
+	// DefaultWakeLeaderBudget is wakeLeaderBudget with the default boot
+	// budgets. The gateway holds its own wake generation at least this
+	// long, so it never gives up on a wake schedd may still finish.
+	DefaultWakeLeaderBudget = ColdBootTimeout + wakeLeaderAdmissionAllowance
 )
 
 // wakeLeaderBudget bounds a coordinated wake's detached leader. The queue

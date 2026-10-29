@@ -12,7 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const deploysLogsUsage = "usage: gregale deploys logs <id|vN> [--app SLUG] [--limit N]"
+const deploysLogsUsage = "usage: gregale release logs <id|vN> [--app SLUG] [--limit N]"
 
 // cmdDeploysLogs prints one deployment's build and deploy log, whatever its
 // status. `gregale logs --deployment` reads that log only for a deployment

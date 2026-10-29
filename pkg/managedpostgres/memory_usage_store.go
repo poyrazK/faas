@@ -206,3 +206,31 @@ func (s *MemoryStore) UsageSnapshot(_ context.Context, accountID string, periodS
 	}
 	return snapshot, nil
 }
+
+// FleetTotals reports the fleet's database count and month-to-date provider
+// cost (ADR-20261028103115).
+func (s *MemoryStore) FleetTotals(_ context.Context, periodStart time.Time) (FleetTotals, error) {
+	if periodStart.IsZero() {
+		return FleetTotals{}, ErrInvalid
+	}
+	periodStart = monthStart(periodStart)
+	periodEnd := monthStart(periodStart.AddDate(0, 1, 0))
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var totals FleetTotals
+	for _, database := range s.databases {
+		if database.State != StateDeleted {
+			totals.Databases++
+		}
+	}
+	for _, record := range s.usage {
+		if record.WindowFrom.Before(periodStart) || !record.WindowFrom.Before(periodEnd) {
+			continue
+		}
+		var err error
+		if totals.CostMillicents, err = addUsage(totals.CostMillicents, record.CostMillicents); err != nil {
+			return FleetTotals{}, err
+		}
+	}
+	return totals, nil
+}

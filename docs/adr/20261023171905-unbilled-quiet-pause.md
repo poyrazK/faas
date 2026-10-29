@@ -207,6 +207,14 @@ The table predates ADR-1430's USD plans. **Before acceptance:**
    then everyone after the financial-model sign-off. Turning it back to `off`
    restores today's billing from the next rolled minute; already-rolled
    minutes stay as rolled.
+   (Amended 2026-10-28: "internal accounts first" needs a per-account switch,
+   and meterd's mode is fleet-wide. In `on` mode meterd subtracts paused
+   seconds only for the accounts the `quiet_pause_unbilled` platform flag
+   (ADR-1700) releases, off by default; it counts every other account's
+   paused seconds as in shadow mode and bills them in full, so
+   `FaasQuietPauseUnbilledExceedsMeasured` still sees the whole fleet. The
+   rollout is: mode `on`, then the flag to internal accounts or an org, then
+   to everyone.)
 3. **Customer surface.** Pricing page, usage views with paused seconds,
    `gregale usage`, the changelog: "billed while running requests, plus 2 s".
 

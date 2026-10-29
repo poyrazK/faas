@@ -41,7 +41,7 @@ func cmdRoutesHealth(args []string) int {
 		return cmdRoutesHealthExplain(args[1:])
 	}
 	if len(args) == 0 || args[0] != "get" && args[0] != "set" && args[0] != "report" {
-		return printErr("Invalid route health command", errors.New("usage: gregale routes health <get|set|suggest|review|review-release|report|profile-history|explain|investigate|correlate> [APP] [flags]"))
+		return printErr("Invalid route health command", errors.New("usage: gregale api route health <get|set|suggest|review|review-release|report|profile-history|explain|investigate|correlate> [APP] [flags]"))
 	}
 	action := args[0]
 	flags, positional := splitArgsForFlags(args[1:], "fail-on-unhealthy", "customers", "customer-details")
@@ -154,8 +154,18 @@ func cmdRoutesHealth(args []string) int {
 		}
 		_, _ = fmt.Fprintln(osStdout)
 	}
+	printRouteSelectorWarnings(gate.Warnings)
 	return 0
 }
+
+// printRouteSelectorWarnings prints a save's unobserved-selector warnings
+// (ADR-20261028110044) to stderr.
+func printRouteSelectorWarnings(warnings []string) {
+	for _, warning := range warnings {
+		_, _ = fmt.Fprintf(osStderr, "Warning: %s\n", previewReportText(warning))
+	}
+}
+
 func readRouteHealthSelectors(path string) ([]api.RouteHealthRoute, error) {
 	file, err := openCustomerFile(path)
 	if err != nil {
@@ -320,7 +330,7 @@ func renderCanaryProfileSignal(signal *api.CanaryProfileSignal, appSlug string) 
 	}
 	if signal.ComparisonURL != "" && signal.Baseline != nil && signal.Candidate != nil {
 		baseline, candidate := *signal.Baseline, *signal.Candidate
-		_, _ = fmt.Fprintf(osStdout, "  Full comparison: gregale debug profiles %s --deployment-id %s --runtime %s --start %s --end %s --baseline-id %s --baseline-start %s --baseline-end %s\n",
+		_, _ = fmt.Fprintf(osStdout, "  Full comparison: gregale debug profiles %s --release %s --runtime %s --start %s --end %s --baseline-id %s --baseline-start %s --baseline-end %s\n",
 			appSlug, candidate.DeploymentID, candidate.Runtime, candidate.Start.Format(time.RFC3339Nano), candidate.End.Format(time.RFC3339Nano),
 			baseline.DeploymentID, baseline.Start.Format(time.RFC3339Nano), baseline.End.Format(time.RFC3339Nano))
 	}

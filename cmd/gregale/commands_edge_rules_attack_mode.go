@@ -15,7 +15,7 @@ import (
 // attackModeTimeLayout is how the CLI prints attack mode's end.
 const attackModeTimeLayout = "2006-01-02 15:04 MST"
 
-const edgeRulesAttackModeUsage = "usage: gregale edge-rules attack-mode [on|off|status] [--app SLUG] [--for 1h] [--json]"
+const edgeRulesAttackModeUsage = "usage: gregale edge rule attack-mode [on|off|status] [--app SLUG] [--for 1h] [--json]"
 
 // cmdEdgeRulesAttackMode implements `gregale edge-rules attack-mode`
 // (ADR-20261021220456): switch the app's attack mode on for a while, extend
@@ -94,5 +94,5 @@ func renderEdgeAttackMode(w io.Writer, slug string, s api.EdgeAttackModeStatus, 
 	_, _ = fmt.Fprintln(w, "  Every visitor is challenged; browsers solve it once and continue.")
 	_, _ = fmt.Fprintln(w, "  Verified search crawlers and requests with a verified API key or JWT pass straight through.")
 	_, _ = fmt.Fprintln(w, "  Other clients (scripts, webhooks, uptime checks) get 403 challenge_required until it ends.")
-	_, _ = fmt.Fprintf(w, "  Extend: gregale edge-rules attack-mode on --app %s --for 6h   Stop: gregale edge-rules attack-mode off --app %s\n", slug, slug)
+	_, _ = fmt.Fprintf(w, "  Extend: gregale edge rule attack-mode on --app %s --for 6h   Stop: gregale edge rule attack-mode off --app %s\n", slug, slug)
 }

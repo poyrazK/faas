@@ -204,6 +204,20 @@ repository through the GitHub installation before deploying. A transfer to a
 different owner also requires a rebind; a repository rename keeps the same
 identity.
 
+### Deploy tokens
+
+Other CI systems deploy with a deploy token: a credential that can only deploy
+one app. Minting and rotating one needs an MFA step-up from the last five
+minutes, so run `gregale account mfa verify` first. The token is shown once;
+store it as `FAAS_TOKEN` in the CI secret store.
+
+```bash
+gregale app deploy-token create --app my-api --label ci   # default expiry: 90 days
+gregale app deploy-token list --app my-api
+gregale app deploy-token rotate <token-id> --app my-api   # the old token stops working
+gregale app deploy-token delete <token-id> --app my-api
+```
+
 ## Safe changes
 
 Preview a change with `gregale deploy --diff` or `--dry-run`. For a bad live
@@ -409,7 +423,11 @@ How each gate judges:
   `gregale ai deployments` lists them by deployment.
 
 A gate that has too few requests or values (`--min-samples`, default 20) is
-not judged. A gate never holds a rollout on missing evidence.
+not judged. A gate never holds a rollout on missing evidence. The rollout
+decision still lists it, with `not_judged: true` and what it was waiting for,
+such as "not judged: 4 of 20 requests so far", so a canary that completes on a
+quiet app shows which gates never ran. An SLO that a gate judges cannot be
+deleted until the gate is removed.
 
 ## What changed between releases
 
@@ -487,7 +505,12 @@ Who may approve:
   and admins; `developer` adds developers.
 - **The deployer:** their own approval does not count unless you pass
   `--allow-self-approval`. An app outside an organization has one person,
-  whose own approval always counts.
+  whose own approval always counts. A GitHub push names a GitHub login, not a
+  Gregale account, so its author can't be recognised; without
+  `--allow-self-approval` a pushed release needs one more approval than the
+  policy asks.
+- **Once approved:** a release that has its approvals is decided. Further
+  approvals and rejections are refused; to stop it, abort its rollout.
 - **Changing the policy:** only owners and admins can change or remove it.
 
 Tell people when a release waits, is approved or rejected, or times out:
@@ -562,6 +585,10 @@ with `release_frozen`, which names the freeze, its reason and its creator:
 - promotions into `production`;
 - `gregale release retry` and the dashboard's retry button. A retry can't
   carry an override; deploy again with `--override-freeze` instead.
+- giving traffic to a release deployed without traffic before the freeze
+  began (`traffic`, promote, or a rollback to it): it has never served, so it
+  waits like a new deploy. A release deployed during the freeze, or one that
+  served before, is not refused.
 
 A GitOps source managing the `production` environment keeps its sync
 unconverged while a freeze covers one of its apps, and activates the new
@@ -584,7 +611,7 @@ gregale environment promote shop --from staging --to production --override-freez
 ```
 
 The override is recorded in the audit log (`release.freeze_overridden`) with
-the freezes it overrode. A GitHub push can't carry an override, so a frozen
+the freezes it overrode and the deployment it created. A GitHub push can't carry an override, so a frozen
 push fails, and the commit shows why.
 
 An `--after-rollback` freeze is a policy. Each time the rollout circuit
@@ -648,7 +675,7 @@ or email, up to five) hear when the release starts and when it can't.
 
 While a release waits for its time, `gregale release traffic set` and `gregale
 traffic promote` refuse it with `release_scheduled`; move or cancel the
-schedule instead. `gregale release traffic promote --deployment v44 --at 09:00`
+schedule instead. `gregale release traffic promote --release v44 --at 09:00`
 schedules a release you deployed with `--no-traffic`.
 
 A scheduled release is a production release of a request app: previews,
@@ -672,7 +699,7 @@ Use a revision anywhere a deployment ID is accepted:
 
 ```bash
 gregale rollback my-api --to v41
-gregale release traffic set --app my-api --deployment v42 --percent 10
+gregale release traffic set --app my-api --release v42 --percent 10
 ```
 
 `gregale release traffic status my-api` lists the live revisions and their weights.
@@ -696,7 +723,7 @@ command after readiness succeeds. For example:
 ✓ Staged v44 with 0% production traffic.
   Preview: https://deploy-44-my-api.gregale.dev
   Production remains on v43. https://my-api.gregale.dev
-  Promote: gregale release traffic promote --app my-api --deployment v44 --if-serving v43
+  Promote: gregale release traffic promote --app my-api --release v44 --if-serving v43
 ```
 
 `--no-traffic` is the discoverable spelling for `--traffic-percent 0`. It is
@@ -983,7 +1010,7 @@ Run a read-only check before uploading source or starting builds:
 ```sh
 gregale deploy check --project --project-slug shop --json
 gregale deploy check --project --project-slug shop --atomic --verify --config-file release.json
-gregale deploy check --project --project-slug shop --from staging --environment production --sync-config --verify --workers
+gregale deploy check --project --project-slug shop --from staging --env production --sync-config --verify --workers
 ```
 
 The report collects missing runtime keys, invalid dependencies, quota and rollback
@@ -1386,7 +1413,7 @@ SQL. Read the current health generation with `projects environments status`.
 If the expected expansion is present and compatible with both releases:
 
 ```sh
-gregale environment recover-migration shop PROMOTION_ID --to production \
+gregale environment migration recover shop PROMOTION_ID --to production \
   --action resume --task-id TASK_ID --generation GENERATION \
   --database-state-checked --schema-compatible --evidence-sha256 EVIDENCE_SHA256 --wait
 ```
@@ -1402,7 +1429,7 @@ release without another migration, then complete a normal verified promotion int
 the same destination. Close the old incident against that repair promotion:
 
 ```sh
-gregale environment recover-migration shop PROMOTION_ID --to production \
+gregale environment migration recover shop PROMOTION_ID --to production \
   --action resolve --replacement-promotion REPAIR_PROMOTION_ID \
   --task-id TASK_ID --generation GENERATION --database-state-checked \
   --evidence-sha256 EVIDENCE_SHA256 --wait

@@ -82,7 +82,7 @@ def _build_response(
 def sync_detailed(
     slug: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
     body: InstallBindRequest,
 ) -> Response[InstallBindResponse | Problem]:
     """Persist the (account, app, installation, repo, branch) bind row.
@@ -132,7 +132,7 @@ def sync_detailed(
 def sync(
     slug: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
     body: InstallBindRequest,
 ) -> InstallBindResponse | Problem | None:
     """Persist the (account, app, installation, repo, branch) bind row.
@@ -177,7 +177,7 @@ def sync(
 async def asyncio_detailed(
     slug: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
     body: InstallBindRequest,
 ) -> Response[InstallBindResponse | Problem]:
     """Persist the (account, app, installation, repo, branch) bind row.
@@ -225,7 +225,7 @@ async def asyncio_detailed(
 async def asyncio(
     slug: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
     body: InstallBindRequest,
 ) -> InstallBindResponse | Problem | None:
     """Persist the (account, app, installation, repo, branch) bind row.

@@ -62,6 +62,9 @@ type composeCandidate struct {
 	AllowedServiceCallers     *[]string                               `yaml:"x-gregale-allow-callers"`
 	AllowedServiceCallScopes  *api.ServiceCallerScopes                `yaml:"x-gregale-allow-call-scopes"`
 	PlatformTenantRequired    *bool                                   `yaml:"x-gregale-platform-tenant-required"`
+	// RenamedFrom names the service this one was called before, so a
+	// rename keeps its app (ADR-20261029090000).
+	RenamedFrom string `yaml:"x-gregale-renamed-from"`
 }
 
 // buildFromAny returns (context, dockerfile, present) from any
@@ -221,6 +224,7 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 		return nil, nil, nil, fmt.Errorf("reposcan: %s: %w", src, err)
 	}
 	activeProfiles := composeActiveProfiles(composeEnv)
+	renamedBy := make(map[string]string)
 	for _, name := range svcNames {
 		s := c.Services[name]
 		if !activeProfiles.enables(s.Profiles) {
@@ -302,6 +306,10 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 		conditions, dependencyErr := composeDependencyConditions(s.DependsOn)
 		if dependencyErr != nil {
 			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, dependencyErr)
+		}
+		renamedFrom, renameErr := composeRenamedFrom(c.Services, name, s.RenamedFrom, hasWorkload, renamedBy)
+		if renameErr != nil {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, renameErr)
 		}
 		command, commandShell := commandSpec(s.Command)
 		if hasBuild {
@@ -421,6 +429,7 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 			allowedServiceCallers:     allowedCallers,
 			allowedServiceCallScopes:  allowedCallScopes,
 			platformTenantRequired:    s.PlatformTenantRequired,
+			renamedFrom:               renamedFrom,
 
 			ports:         ports,
 			internalPorts: internalPorts,

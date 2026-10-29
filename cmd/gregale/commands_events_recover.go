@@ -13,7 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const eventRecoverUsage = "usage: gregale events recover --source SOURCE --id ID --subscription SUB [--dry-run]"
+const eventRecoverUsage = "usage: gregale event recover --source SOURCE --id ID --subscription SUB [--dry-run]"
 
 type eventRecoveryResult struct {
 	EventSource    string                          `json:"event_source"`

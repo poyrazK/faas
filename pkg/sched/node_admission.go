@@ -16,14 +16,21 @@ func freshNodePlacement(ctx context.Context) bool {
 	return fresh
 }
 
-// nodePlacementContext binds the placement's node generation (ADR-1528) and
-// the reservation allowance this scheduler may claim on that node: a measured
-// admission may book past the bare ceiling up to ADR-909's bound (ADR-909
-// amendment 1).
-func (e *Engine) nodePlacementContext(ctx context.Context, p Placement) context.Context {
+// nodePlacementContext binds the placement's node generation (ADR-1528), the
+// reservation allowance this scheduler may claim on that node (a measured
+// admission may book past the bare ceiling up to ADR-909's bound, ADR-909
+// amendment 1), and the vCPU and CPU r books there with the quiet-pause
+// discount placement applied, so the durable guard checks the node's vCPU
+// and CPU budgets as placement did (ADR-20261027220445).
+func (e *Engine) nodePlacementContext(ctx context.Context, p Placement, r Request) context.Context {
 	admission := state.NodeAdmission{NodeID: p.NodeID, Generation: p.LifecycleGeneration}
 	if e.ledger != nil {
 		admission.ReservationPercent = e.ledger.ReservationPercent(p.NodeID)
+		if !r.AllowResidentRecovery {
+			quietVCPU, quietCPU := e.ledger.QuietDiscount(p.NodeID)
+			admission.Compute = state.NodeCompute{VCPU: r.VCPU, CPUMillicores: r.CPUMillicores,
+				QuietVCPU: quietVCPU, QuietCPUMillicores: quietCPU}
+		}
 	}
 	return state.WithNodeAdmission(ctx, admission)
 }
@@ -55,7 +62,7 @@ func (e *Engine) createWithNodePlacement(ctx context.Context, request Request, r
 		if p.LifecycleGeneration <= 0 {
 			err = state.ErrNodeAdmissionStale
 		} else {
-			instance, err = create(e.nodePlacementContext(ctx, p), p)
+			instance, err = create(e.nodePlacementContext(ctx, p, request), p)
 		}
 		if err == nil {
 			return instance, p, release, nil
@@ -66,7 +73,8 @@ func (e *Engine) createWithNodePlacement(ctx context.Context, request Request, r
 		switch {
 		case errors.Is(err, state.ErrNodeCapacity):
 			// The scheduler's view missed reservations the durable guard
-			// counts: a peer's admission, or a node it judged by measurement.
+			// counts: a peer's admission of RAM, vCPU or CPU, or a node it
+			// judged by measurement.
 			nodeFull = err
 			request.ExcludeNodeIDs = append(slices.Clone(request.ExcludeNodeIDs), p.NodeID)
 		case errors.Is(err, state.ErrNodeAdmissionStale):
