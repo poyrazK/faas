@@ -67,14 +67,16 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if registry == nil {
 		return errors.New("s3-gatewayd: FAAS_OBJECT_STORAGE_CONFIG is required")
 	}
-	identities, err := loadIdentities(os.Getenv)
-	if err != nil {
-		return err
-	}
 	// ADR 20261022111812: once the seal_domains role stages the storage
 	// domain, its identity opens S3 credentials ahead of the fleet and host
 	// identities. The startup rekey below leaves the rows it opens alone.
+	// Once the domain is contracted the role gives the gateway no fleet or
+	// host identity at all.
 	storageIdentities, err := loadStorageSealDomain(os.Getenv)
+	if err != nil {
+		return err
+	}
+	identities, err := loadIdentities(os.Getenv, len(storageIdentities) > 0)
 	if err != nil {
 		return err
 	}
@@ -110,11 +112,15 @@ func run(ctx context.Context, log *slog.Logger) error {
 		})
 	}
 	sealdomain.RegisterLoaded(ops.Registry(), sealdomain.Storage, len(storageIdentities) > 0)
-	log.Info("storage seal domain", "domain_identity", len(storageIdentities) > 0)
-	if count, err := s3gateway.RekeyCredentials(ctx, store, identities, storageIdentities); err != nil {
-		return fmt.Errorf("s3-gatewayd: rekey credentials: %w", err)
-	} else if count > 0 {
-		log.Info("s3-gatewayd: credentials re-sealed under current host identity", "count", count)
+	log.Info("storage seal domain", "domain_identity", len(storageIdentities) > 0, "fleet_identity", len(identities) > 0)
+	// A contracted gateway has no fleet or host identity to rekey from:
+	// the role contracts only once every credential opens with the domain.
+	if len(identities) > 0 {
+		if count, err := s3gateway.RekeyCredentials(ctx, store, identities, storageIdentities); err != nil {
+			return fmt.Errorf("s3-gatewayd: rekey credentials: %w", err)
+		} else if count > 0 {
+			log.Info("s3-gatewayd: credentials re-sealed under current host identity", "count", count)
+		}
 	}
 
 	enabled := runtimeconfig.NewBoolFlag(false)
@@ -227,10 +233,16 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 }
 
-func loadIdentities(getenv func(string) string) ([]*age.X25519Identity, error) {
+// loadIdentities loads the fleet and host identities. With the storage
+// domain staged an unset path loads none: the seal_domains role unsets it
+// when it contracts the domain (ADR 20261022111812, step 4).
+func loadIdentities(getenv func(string) string, domainStaged bool) ([]*age.X25519Identity, error) {
 	currentPath := getenv("FAAS_HOST_AGE_IDENTITY_PATH")
 	if currentPath == "" {
-		return nil, errors.New("s3-gatewayd: FAAS_HOST_AGE_IDENTITY_PATH is required")
+		if domainStaged {
+			return nil, nil
+		}
+		return nil, errors.New("s3-gatewayd: FAAS_HOST_AGE_IDENTITY_PATH is required until the storage seal domain is staged")
 	}
 	identities, err := secretbox.LoadFleetAndHostKeys(filepath.Dir(currentPath))
 	if errors.Is(err, secretbox.ErrHostKeyNotFound) {

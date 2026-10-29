@@ -72,6 +72,16 @@ func (r *MigrationReport) count(outcome resealOutcome, replaced bool) {
 	}
 }
 
+// checked records one envelope's outcome in a check run, which writes
+// nothing: an envelope a legacy identity opens is pending.
+func (r *MigrationReport) checked(outcome resealOutcome) {
+	if outcome == resealWrite {
+		r.Pending++
+		return
+	}
+	r.count(outcome, false)
+}
+
 // MigrationReport counts one migrate run. Resealed rows changed; Current
 // rows were already sealed as the target asks; Changed rows were rotated
 // by a customer between read and write and are left for the next run;
@@ -145,8 +155,8 @@ func walkOutbound(ctx context.Context, store OutboundLister, domain *age.X25519I
 			if err != nil {
 				return report, fmt.Errorf("sealmigrate: reseal outbound %s %s: %w", c.Kind, c.ID, err)
 			}
-			if outcome == resealWrite && reseal == nil {
-				report.Pending++
+			if reseal == nil {
+				report.checked(outcome)
 				continue
 			}
 			replaced := false
