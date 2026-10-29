@@ -5,6 +5,7 @@
 import type { CanaryProfileSignal } from './CanaryProfileSignal.js';
 import type { RouteCustomerHealthReport } from './RouteCustomerHealthReport.js';
 import type { RouteHealthFinding } from './RouteHealthFinding.js';
+import type { RouteHealthHold } from './RouteHealthHold.js';
 /**
  * Current observed-only critical-route health comparison with candidate, predecessor, policy, and telemetry provenance. When the app's automatic profile policy is enabled, profile_signal adds an ephemeral report-only comparison for an active canary; it never affects canary advancement or rollback and is not persisted.
  */
@@ -45,12 +46,6 @@ export type RouteHealthReport = {
   minimum_latency_requests?: number;
   routes: Array<RouteHealthFinding>;
   profile_signal?: CanaryProfileSignal;
-  /**
-   * Present on a read while the enforced guard holds this canary: when the hold began (its first blocking decision) and when the hold deadline aborts the canary if the rollout worker still finds it held.
-   */
-  hold?: {
-    since: string;
-    aborts_at: string;
-  };
+  hold?: RouteHealthHold;
 };
 

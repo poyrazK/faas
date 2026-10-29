@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from ..models.canary_profile_signal import CanaryProfileSignal
     from ..models.route_customer_health_report import RouteCustomerHealthReport
     from ..models.route_health_finding import RouteHealthFinding
-    from ..models.route_health_report_hold import RouteHealthReportHold
+    from ..models.route_health_hold import RouteHealthHold
 
 
 T = TypeVar("T", bound="RouteHealthReport")
@@ -79,9 +79,10 @@ class RouteHealthReport:
     the assessment. Route-health reads return the saved result and never query profile storage. Checks are advisory
     unless canary_gate is explicitly configured. Gate evidence requires consecutive distinct qualified route
     windows; timeout behavior is configured explicitly. Completed assessments are retained for 30 days."""
-    hold: RouteHealthReportHold | Unset = UNSET
-    """Present on a read while the enforced guard holds this canary: when the hold began (its first blocking
-    decision) and when the hold deadline aborts the canary if the rollout worker still finds it held."""
+    hold: RouteHealthHold | Unset = UNSET
+    """Present on a route health report read while the enforced guard holds the canary: when the hold began (its
+    first blocking decision) and when the hold deadline aborts the canary if the rollout worker still finds it held.
+   """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -188,7 +189,7 @@ class RouteHealthReport:
         from ..models.canary_profile_signal import CanaryProfileSignal
         from ..models.route_customer_health_report import RouteCustomerHealthReport
         from ..models.route_health_finding import RouteHealthFinding
-        from ..models.route_health_report_hold import RouteHealthReportHold
+        from ..models.route_health_hold import RouteHealthHold
 
         d = dict(src_dict)
         app_id = UUID(d.pop("app_id"))
@@ -264,11 +265,11 @@ class RouteHealthReport:
             profile_signal = CanaryProfileSignal.from_dict(_profile_signal)
 
         _hold = d.pop("hold", UNSET)
-        hold: RouteHealthReportHold | Unset
+        hold: RouteHealthHold | Unset
         if isinstance(_hold, Unset):
             hold = UNSET
         else:
-            hold = RouteHealthReportHold.from_dict(_hold)
+            hold = RouteHealthHold.from_dict(_hold)
 
         route_health_report = cls(
             app_id=app_id,

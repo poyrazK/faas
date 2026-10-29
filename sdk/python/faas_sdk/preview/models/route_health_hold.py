@@ -7,13 +7,13 @@ from typing import Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
-T = TypeVar("T", bound="RouteHealthReportHold")
+T = TypeVar("T", bound="RouteHealthHold")
 
 
 @_attrs_define
-class RouteHealthReportHold:
-    """Present on a read while the enforced guard holds this canary: when the hold began (its first blocking decision) and
-    when the hold deadline aborts the canary if the rollout worker still finds it held.
+class RouteHealthHold:
+    """Present on a route health report read while the enforced guard holds the canary: when the hold began (its first
+    blocking decision) and when the hold deadline aborts the canary if the rollout worker still finds it held.
 
     """
 
@@ -44,13 +44,13 @@ class RouteHealthReportHold:
 
         aborts_at = datetime.datetime.fromisoformat(d.pop("aborts_at"))
 
-        route_health_report_hold = cls(
+        route_health_hold = cls(
             since=since,
             aborts_at=aborts_at,
         )
 
-        route_health_report_hold.additional_properties = d
-        return route_health_report_hold
+        route_health_hold.additional_properties = d
+        return route_health_hold
 
     @property
     def additional_keys(self) -> list[str]:

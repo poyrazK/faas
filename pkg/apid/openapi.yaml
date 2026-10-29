@@ -78691,6 +78691,13 @@ components:
         reason: { type: string }
         customers_limit: { type: integer, minimum: 20, maximum: 20 }
         routes: { type: array, maxItems: 20, items: { $ref: '#/components/schemas/RouteCustomerHealthRoute' } }
+    RouteHealthHold:
+      type: object
+      description: "Present on a route health report read while the enforced guard holds the canary: when the hold began (its first blocking decision) and when the hold deadline aborts the canary if the rollout worker still finds it held."
+      required: [since, aborts_at]
+      properties:
+        since: { type: string, format: date-time }
+        aborts_at: { type: string, format: date-time }
     RouteHealthReport:
       type: object
       description: Current observed-only critical-route health comparison with candidate, predecessor, policy, and telemetry provenance. When the app's automatic profile policy is enabled, profile_signal adds an ephemeral report-only comparison for an active canary; it never affects canary advancement or rollback and is not persisted.
@@ -78717,13 +78724,7 @@ components:
         minimum_latency_requests: { type: integer, format: int64, minimum: 100, maximum: 100, description: Present when any route has a latency check selected. Applies to each deployment per route per window. }
         routes: { type: array, maxItems: 20, items: { $ref: '#/components/schemas/RouteHealthFinding' } }
         profile_signal: { $ref: '#/components/schemas/CanaryProfileSignal' }
-        hold:
-          type: object
-          description: "Present on a read while the enforced guard holds this canary: when the hold began (its first blocking decision) and when the hold deadline aborts the canary if the rollout worker still finds it held."
-          required: [since, aborts_at]
-          properties:
-            since: { type: string, format: date-time }
-            aborts_at: { type: string, format: date-time }
+        hold: { $ref: '#/components/schemas/RouteHealthHold' }
     CanaryProfileSignal:
       type: object
       description: Latest retained sampled CPU comparison for a deployment's canary stages, produced by a background worker using the app's enabled automatic profile policy and equal fixed windows. The stage and policy revision identify the assessment. Route-health reads return the saved result and never query profile storage. Checks are advisory unless canary_gate is explicitly configured. Gate evidence requires consecutive distinct qualified route windows; timeout behavior is configured explicitly. Completed assessments are retained for 30 days.

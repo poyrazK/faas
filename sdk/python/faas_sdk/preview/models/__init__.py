@@ -5183,6 +5183,7 @@ from .route_health_history_entry_purpose import RouteHealthHistoryEntryPurpose
 from .route_health_history_entry_source import RouteHealthHistoryEntrySource
 from .route_health_history_entry_version import RouteHealthHistoryEntryVersion
 from .route_health_history_page import RouteHealthHistoryPage
+from .route_health_hold import RouteHealthHold
 from .route_health_investigation import RouteHealthInvestigation
 from .route_health_investigation_coverage import RouteHealthInvestigationCoverage
 from .route_health_investigation_evidence_status import RouteHealthInvestigationEvidenceStatus
@@ -5201,7 +5202,6 @@ from .route_health_probe import RouteHealthProbe
 from .route_health_report import RouteHealthReport
 from .route_health_report_client_error_status import RouteHealthReportClientErrorStatus
 from .route_health_report_coverage import RouteHealthReportCoverage
-from .route_health_report_hold import RouteHealthReportHold
 from .route_health_report_mode import RouteHealthReportMode
 from .route_health_report_on_regression import RouteHealthReportOnRegression
 from .route_health_report_status import RouteHealthReportStatus
@@ -11087,6 +11087,7 @@ __all__ = (
     "RouteHealthHistoryEntrySource",
     "RouteHealthHistoryEntryVersion",
     "RouteHealthHistoryPage",
+    "RouteHealthHold",
     "RouteHealthInvestigation",
     "RouteHealthInvestigationCoverage",
     "RouteHealthInvestigationEvidenceStatus",
@@ -11105,7 +11106,6 @@ __all__ = (
     "RouteHealthReport",
     "RouteHealthReportClientErrorStatus",
     "RouteHealthReportCoverage",
-    "RouteHealthReportHold",
     "RouteHealthReportMode",
     "RouteHealthReportOnRegression",
     "RouteHealthReportStatus",
