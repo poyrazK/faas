@@ -77418,18 +77418,19 @@ func (q *Queries) ReadDomainTrafficVerificationOwner(ctx context.Context, db DBT
 }
 
 const readEdgeRuleTrafficAccount = `-- name: ReadEdgeRuleTrafficAccount :one
-SELECT account_id,kind FROM edge_rules WHERE id = $1::uuid
+SELECT account_id,kind,match_host FROM edge_rules WHERE id = $1::uuid
 `
 
 type ReadEdgeRuleTrafficAccountRow struct {
 	AccountID pgtype.UUID
 	Kind      string
+	MatchHost string
 }
 
 func (q *Queries) ReadEdgeRuleTrafficAccount(ctx context.Context, db DBTX, ruleID pgtype.UUID) (ReadEdgeRuleTrafficAccountRow, error) {
 	row := db.QueryRow(ctx, readEdgeRuleTrafficAccount, ruleID)
 	var i ReadEdgeRuleTrafficAccountRow
-	err := row.Scan(&i.AccountID, &i.Kind)
+	err := row.Scan(&i.AccountID, &i.Kind, &i.MatchHost)
 	return i, err
 }
 
@@ -85817,6 +85818,41 @@ func (q *Queries) ReadTrafficHostAnalysis(ctx context.Context, db DBTX, arg Read
 	var i ReadTrafficHostAnalysisRow
 	err := row.Scan(&i.Data, &i.Inputs, &i.Bytes)
 	return i, err
+}
+
+const readTrafficRouteWriteScopes = `-- name: ReadTrafficRouteWriteScopes :many
+SELECT coalesce(edge_rule_match_host_scope(pattern), '')::text AS scope,
+       (edge_rule_match_host_scope(pattern) IS NULL)::boolean AS app_only,
+       coalesce(edge_rule_match_host_scope(pattern) = lower(btrim(pattern)), false)::boolean AS exact
+FROM unnest($1::text[]) AS pattern
+`
+
+type ReadTrafficRouteWriteScopesRow struct {
+	Scope   string
+	AppOnly bool
+	Exact   bool
+}
+
+// Each route pattern's match_host_scope, as the edge_rules trigger computes it
+// (ADR-20261027163626). An exact pattern is its own scope; '@app' has none.
+func (q *Queries) ReadTrafficRouteWriteScopes(ctx context.Context, db DBTX, patterns []string) ([]ReadTrafficRouteWriteScopesRow, error) {
+	rows, err := db.Query(ctx, readTrafficRouteWriteScopes, patterns)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadTrafficRouteWriteScopesRow{}
+	for rows.Next() {
+		var i ReadTrafficRouteWriteScopesRow
+		if err := rows.Scan(&i.Scope, &i.AppOnly, &i.Exact); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const readTrafficSecurityEpochs = `-- name: ReadTrafficSecurityEpochs :many
