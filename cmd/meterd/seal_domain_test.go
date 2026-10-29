@@ -7,6 +7,8 @@ import (
 	"filippo.io/age"
 
 	"github.com/onebox-faas/faas/pkg/secretbox"
+	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 func newAlertingTestIdentity(t *testing.T) *age.X25519Identity {
@@ -55,5 +57,22 @@ func TestAlertingReaders(t *testing.T) {
 		if got[i].Recipient().String() != want[i].Recipient().String() {
 			t.Fatalf("reader %d = %s, want %s (alerting first, then legacy, each once)", i, got[i].Recipient(), want[i].Recipient())
 		}
+	}
+}
+
+// TestBuildAlertEvaluator_ContractedRunsOnTheAlertingDomain: once the
+// alerting domain is contracted (ADR 20261022111812) meterd has no fleet or
+// host identity path, and the evaluator still runs, enabled, on the domain
+// identity alone.
+func TestBuildAlertEvaluator_ContractedRunsOnTheAlertingDomain(t *testing.T) {
+	domain := newAlertingTestIdentity(t)
+	deps := runDeps{getenv: envReader(map[string]string{"FAAS_PROMETHEUS_URL": "", "FAAS_HOST_AGE_IDENTITY_PATH": ""})}
+	ops := wire.NewOpsMetrics("meterd_test_alerting_contract")
+	ev := buildAlertEvaluatorWithPromQL(deps, state.NewMemStore(), discardLog(), ops, nil, domain)
+	if ev == nil {
+		t.Fatal("no evaluator with the alerting domain staged and no legacy identity")
+	}
+	if !ops.AlertEvaluatorEnabled() {
+		t.Fatal("the evaluator reports disabled with the alerting domain as its identity")
 	}
 }
