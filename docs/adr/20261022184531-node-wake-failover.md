@@ -238,6 +238,15 @@ As built (step 3):
   - The readiness gauge reads degraded while the breaker is open.
   - `FaasComputeNodeDegraded` (warn, 5 m) and `FaasNoComputeNodeReady`
     (page, 2 m), with a promtool fixture and a runbook.
+- **Beside ADR-20261029085904's boot breaker.** That breaker is
+  process-local: each schedd counts its own node-caused boot failures (three
+  from three apps) and treats the node as degraded for itself. It covers the
+  ambiguous failures this breaker ignores, because three different apps make
+  an app fault unlikely. This breaker is durable and counts only refusals
+  vmmd proves are node-local. Placement avoids a node either one marks.
+  - A `vmmd_unreachable` refusal is re-placed (step 1), but it does not count
+    here. One schedd failing to reach a vmmd says nothing about the others,
+    so only that schedd's boot breaker counts it.
 - **Not built:** the canary wake.
 
 ### 4. The previous base generation stays adoptable

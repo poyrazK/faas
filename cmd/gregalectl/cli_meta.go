@@ -153,6 +153,7 @@ var cliCommands = []cliCommand{
 			{Name: "mint-token", Short: "Mint a short-lived token for the production ingress gate", Flags: []cliFlag{{Name: "ttl", Short: "credential lifetime (15m..6h)"}, {Name: "yes", Short: "acknowledge the production database mutation", Req: true}, {Name: "reason", Short: "fixed production_release_acceptance audit reason", Req: true}}},
 			{Name: "revoke-token", Short: "Revoke one production ingress gate token", Flags: []cliFlag{{Name: "key-id", Short: "acceptance API key id", Req: true}, {Name: "yes", Short: "acknowledge the production database mutation", Req: true}, {Name: "reason", Short: "fixed production_release_acceptance audit reason", Req: true}}},
 			{Name: "verify-placement", Short: "Require every active node plus both app and function shapes", Flags: []cliFlag{{Name: "slugs", Short: "comma-separated acceptance app slugs", Req: true}}},
+			{Name: "verify-node", Short: "Require one node to serve and to have built an acceptance app", Flags: []cliFlag{{Name: "node", Short: "compute node name", Req: true}, {Name: "slugs", Short: "comma-separated acceptance app slugs", Req: true}}},
 		},
 	},
 	{

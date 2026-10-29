@@ -14,6 +14,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func breakerOf(t *testing.T, f *failoverFleet, nodeID string) state.ComputeNode {
@@ -104,6 +106,10 @@ func TestNodeWakeBreaker_CountsOnlyPlatformFailures(t *testing.T) {
 			failures: []error{appCrash(), appCrash(), appCrash(), appCrash()}},
 		{name: "an internal error may have started a VM",
 			failures: []error{internalError(), internalError(), internalError(), internalError()}},
+		// Re-placed, but this schedd's own view of the node: its
+		// process-local boot breaker keeps it (ADR-20261029085904).
+		{name: "a request that never reached vmmd stays this schedd's view",
+			failures: []error{vmmdUnreachable(), vmmdUnreachable(), vmmdUnreachable(), vmmdUnreachable()}},
 		{name: "a success on the node resets the count",
 			failures: []error{generationRefusal(), generationRefusal(), nil, generationRefusal(), generationRefusal()}},
 	} {
@@ -133,6 +139,10 @@ func TestNodeWakeBreaker_CountsOnlyPlatformFailures(t *testing.T) {
 
 func appCrash() error {
 	return api.NewProblem(422, api.CodeAppStartupCrash, "App crashed during startup", "exit 1")
+}
+
+func vmmdUnreachable() error {
+	return status.Error(codes.Unavailable, `connection error: desc = "transport: Error while dialing: dial unix /run/faas/vmmd.sock: connect: connection refused"`)
 }
 
 func internalError() error {

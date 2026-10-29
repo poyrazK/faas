@@ -797,6 +797,10 @@ type Engine struct {
 	// breaker counts platform-attributable wake failures per node and opens
 	// the node's durable wake breaker (ADR-20261022184531 step 3).
 	breaker *nodeWakeBreaker
+	// nodeBoots is this scheduler's per-node boot breaker and streams its
+	// view of the capacity streams it receives (ADR-20261029085904).
+	nodeBoots *nodeBootBreaker
+	streams   *capacityStreamWatch
 
 	// telemetryCache is the receiver for the batched vmmd Stats rows carried
 	// on the persistent ReportCapacity stream. The instance-stats poller
@@ -1007,6 +1011,8 @@ func NewEngine(ctx context.Context, store state.Store, ledger *NodeLedger, vmm R
 		breaker:                  newNodeWakeBreaker(),
 		warmBroadcaster:          newWarmHintBroadcaster(),
 		capacityTable:            newNodeCapacityTable(),
+		nodeBoots:                newNodeBootBreaker(),
+		streams:                  newCapacityStreamWatch(),
 		telemetryCache:           NewNodeTelemetryCache(),
 		nodePresence:             newNodePresenceTracker(),
 		usageCache:               NewNodeUsageCache(),
@@ -2034,7 +2040,8 @@ func (e *Engine) runningInstanceForWake(ctx context.Context, appID, deploymentID
 	for _, instance := range instances {
 		// ADR-732: a running fork shares the live deployment but never
 		// serves a wake; skipping it lets the wake find a real replica.
-		if instance.DeploymentID == deploymentID && instance.State == string(state.StateRunning) && !state.IsFork(instance.Mode) {
+		if instance.DeploymentID == deploymentID && instance.State == string(state.StateRunning) && !state.IsFork(instance.Mode) &&
+			e.instanceNodeServes(ctx, instance.NodeID) {
 			return instance, nil
 		}
 	}
@@ -4330,8 +4337,10 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		logVMMBootFailure(e.log, bootCtx, bootInput.appID, bootInput.insID, bootInput.wakeID, bootInput.nodeID, method, rpcEndedAt.Sub(rpcStartedAt), err)
 		e.transitionWithKind(transitionCtx, bootInput.insID, bootInput.appID, state.StateFailed, "wake_boot_error", "vmm_boot_failed")
 		noteWakeBootError(ctx, bootInput.nodeID, err)
+		e.noteNodeBoot(bootInput.nodeID, bootInput.appID, err)
 		return WakeResult{}, err
 	}
+	e.noteNodeBoot(bootInput.nodeID, bootInput.appID, nil)
 	configuredBootCPU := int(bootInput.spec.CPUMillicores)
 	startupBootCPU := configuredBootCPU
 	if !bootInput.spec.DisableStartupCPUBoost {
@@ -5121,6 +5130,9 @@ func (e *Engine) loadPlacementSnapshotFresh(ctx context.Context, r Request) (pla
 			return placementSnapshot{}, fmt.Errorf("sched: placement: list active compute_nodes: %w", err)
 		}
 	}
+	// ADR-20261029085904: a node this scheduler's boots keep failing on is
+	// placed like a degraded one.
+	nodes = e.markUnprovenNodes(nodes)
 	if isServiceReplicaPlacementSpread(ctx) {
 		capacity, err := e.store.ServiceCapacityPlacement(ctx)
 		if err != nil {

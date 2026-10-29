@@ -6296,6 +6296,9 @@ const (
 	// WakeFailoverReasonNodeSetup: vmmd failed to acquire a jail lease or
 	// set up the network before the VM started (wake_stage=pre_start).
 	WakeFailoverReasonNodeSetup = "node_setup"
+	// WakeFailoverReasonVMMDUnreachable: the boot request never reached the
+	// node's vmmd (ADR-20261029085904).
+	WakeFailoverReasonVMMDUnreachable = "vmmd_unreachable"
 
 	WakeFailoverOutcomeSucceeded    = "succeeded"
 	WakeFailoverOutcomeRefusedAgain = "refused_again"
@@ -6307,7 +6310,7 @@ const (
 // WakeFailoverReasons and WakeFailoverOutcomes are pre-instantiated so the
 // counter reads zero, not absent, on a fleet that has never failed over.
 var (
-	WakeFailoverReasons  = []string{WakeFailoverReasonBaseGeneration, WakeFailoverReasonScanSidecarMissing, WakeFailoverReasonNodeSetup}
+	WakeFailoverReasons  = []string{WakeFailoverReasonBaseGeneration, WakeFailoverReasonScanSidecarMissing, WakeFailoverReasonNodeSetup, WakeFailoverReasonVMMDUnreachable}
 	WakeFailoverOutcomes = []string{WakeFailoverOutcomeSucceeded, WakeFailoverOutcomeRefusedAgain, WakeFailoverOutcomeNoAlternate, WakeFailoverOutcomeOutOfTime, WakeFailoverOutcomeFailed}
 )
 

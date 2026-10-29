@@ -190,13 +190,21 @@ To find the slow phase:
 **Scoped binding guard.** `FAAS_TRAFFIC_SCOPED_BINDING_GUARD=true` on apid
 makes binding writes run a scoped guard (ADR 20261027163626). Binding writes
 here are app and tenant writes, including deployment create and status
-changes, and custom-domain publication, verification and removal.
+changes, and custom-domain publication, verification and removal. Route-rule
+create, update and rollback are scoped too.
 - **What changes:** each write locks and analyses only the hostnames it
   declares: its account's claims, the hostnames it names, and its app's
   primary and alias URLs. Route candidates come from
   `edge_rules.match_host_scope`, and only accounts with candidate routes join
-  as owners. Writes on unrelated hostnames run concurrently. Route-rule writes
-  and other daemons keep the fleet-wide guard.
+  as owners. Binding writes on unrelated hostnames run concurrently. Other
+  daemons keep the fleet-wide guard.
+- **Route-rule writes:** a write locks where its patterns can match. An exact
+  pattern locks its host. Any other pattern locks the subtree of its
+  `match_host_scope`. `*`, `api.*` and `@app` lock the whole fleet. The write
+  analyses only the routes that can match there. Rule writes still take
+  ADR-570's `service_capacity_policy` EXCLUSIVE guard, so they stay
+  serialized with each other and with binding writes; what the scope saves
+  is analysis time.
 - **Mixing:** the two guards exclude each other through the root lock, so
   they can run side by side.
 - **Refusals:** a scoped write that changes a hostname it did not declare is

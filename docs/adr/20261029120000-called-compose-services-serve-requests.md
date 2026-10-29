@@ -12,7 +12,8 @@
 
   An app an earlier deploy created as a worker becomes an HTTP service on the next deploy: its class changes, and the worker execution mode the scan gave it (H9-170) is cleared (`reconcile.releaseScanWorkerMode`). A mode its owner set on an app that was not a worker, or any mode other than worker, is kept.
 - **Why:** ADR-20261022131852 made a Compose service without `ports:` internal, the way Docker treats it: reachable only by the project's other services. That is how a developer marks an API only the frontend calls. The scan kept classifying such a service as a worker, expecting the first boot to observe its listener and correct the class (ADR-051). That correction never happened. H9-170 (2026-10-13) gave every scanned worker the worker execution mode, and #5138 (2026-10-22) stopped a worker-mode app from ever being reclassified as HTTP. So every internal API in a Compose project ran as a worker:
-  - it never parked, so it ran and was billed around the clock;
+  - its deploy failed: a worker-mode boot that finds an HTTP listener ends in `execution_mode_conflict` (H14-98). The customer journey `TestMultiServiceProject` hit this on production on 2026-10-29 (`execution mode "worker" conflicts with characterized class "http"`);
+  - one that did run never parked, so it ran and was billed around the clock;
   - when it was not running (after a node failure, for example) a call could not wake it, because request wakes refuse workers, and the caller got 503 `wake_failed`;
   - a release set refused calls to it, because a worker cannot be a binding target;
   - pull request previews left it out, so a preview's calls to it reached production or were refused;
