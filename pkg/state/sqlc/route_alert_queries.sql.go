@@ -182,3 +182,33 @@ func (q *Queries) RouteMonitorIncidentsSince(ctx context.Context, db DBTX, arg R
 	}
 	return items, nil
 }
+
+const routeTelemetryLost = `-- name: RouteTelemetryLost :one
+SELECT EXISTS (
+  SELECT 1 FROM request_telemetry_coverage c
+  JOIN compute_nodes n ON n.name = c.node_name AND n.active
+  WHERE NOT c.enabled OR c.sampling_basis_points <> 10000
+     OR c.healthy_since > $1::timestamptz
+     OR c.source_at < $2::timestamptz
+)::boolean AS lost
+`
+
+type RouteTelemetryLostParams struct {
+	WindowFrom  pgtype.Timestamptz
+	WindowUntil pgtype.Timestamptz
+}
+
+// ADR-20261028110044 amendment 1: whether a gateway may have lost request
+// telemetry that route evidence over [window_from, window_until) reads. An
+// active node that reports coverage counts when its telemetry is off or
+// sampled, when it has not been continuously healthy since window_from (a
+// restart, a heartbeat gap, or rows it could not attribute to an app), or
+// when its last report predates window_until. Rows a gateway attributes to an
+// app and drops (an account over its telemetry rate) do not count: the app's
+// remaining rows stay comparable.
+func (q *Queries) RouteTelemetryLost(ctx context.Context, db DBTX, arg RouteTelemetryLostParams) (bool, error) {
+	row := db.QueryRow(ctx, routeTelemetryLost, arg.WindowFrom, arg.WindowUntil)
+	var lost bool
+	err := row.Scan(&lost)
+	return lost, err
+}

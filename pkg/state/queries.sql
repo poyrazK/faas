@@ -16433,9 +16433,22 @@ UPDATE route_monitors SET next_check_at=sqlc.arg(next_check_at),last_deployment_
 	last_healthy_deployment=sqlc.arg(last_healthy_deployment)::jsonb WHERE app_id=sqlc.arg(app_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid;
 
 -- name: RouteMonitorServingDeployments :many
-SELECT id::text AS id,commit_sha,source_url,source_root,created_at,canary_step_started_at,rollout_completed_at,traffic_percent,canary_step,canary_total_steps
-FROM deployments WHERE app_id=sqlc.arg(app_id)::text::uuid AND status='live' AND deleted_at IS NULL AND traffic_percent>0
- AND coalesce(nullif(scope,''),'default')='default' ORDER BY id LIMIT 2;
+-- The app's production routing lane (state.ProductionRoutingDeployments): a
+-- project's named production scope once it carries traffic, or while the
+-- legacy default lane is dark; otherwise the default scope
+-- (ADR-20261028110044 amendment 1).
+WITH lanes AS (
+ SELECT id,commit_sha,source_url,source_root,created_at,canary_step_started_at,rollout_completed_at,traffic_percent,canary_step,canary_total_steps,
+  CASE WHEN scope='production' THEN 'production' ELSE 'default' END AS lane
+ FROM deployments WHERE app_id=sqlc.arg(app_id)::text::uuid AND status='live' AND deleted_at IS NULL
+  AND coalesce(nullif(scope,''),'default') IN ('default','production')
+), chosen AS (
+ SELECT CASE WHEN EXISTS (SELECT 1 FROM lanes WHERE lane='production' AND traffic_percent>0)
+  OR (NOT EXISTS (SELECT 1 FROM lanes WHERE lane='default' AND traffic_percent>0) AND EXISTS (SELECT 1 FROM lanes WHERE lane='production'))
+  THEN 'production' ELSE 'default' END AS lane
+)
+SELECT l.id::text AS id,l.commit_sha,l.source_url,l.source_root,l.created_at,l.canary_step_started_at,l.rollout_completed_at,l.traffic_percent,l.canary_step,l.canary_total_steps
+FROM lanes l JOIN chosen c ON c.lane=l.lane WHERE l.traffic_percent>0 ORDER BY l.id LIMIT 2;
 
 -- name: ReadRouteMonitorIncident :one
 SELECT entry FROM route_monitor_incidents WHERE id=sqlc.arg(id)::text::uuid AND app_id=sqlc.arg(app_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid;

@@ -6269,12 +6269,25 @@ type Querier interface {
 	// first, for the route_monitor_incidents alert metric. total counts every
 	// match, not only the rows returned.
 	RouteMonitorIncidentsSince(ctx context.Context, db DBTX, arg RouteMonitorIncidentsSinceParams) ([]RouteMonitorIncidentsSinceRow, error)
+	// The app's production routing lane (state.ProductionRoutingDeployments): a
+	// project's named production scope once it carries traffic, or while the
+	// legacy default lane is dark; otherwise the default scope
+	// (ADR-20261028110044 amendment 1).
 	RouteMonitorServingDeployments(ctx context.Context, db DBTX, appID string) ([]RouteMonitorServingDeploymentsRow, error)
 	RouteProbeObservations(ctx context.Context, db DBTX, arg RouteProbeObservationsParams) ([]RouteProbeObservationsRow, error)
 	// ADR-1446: probe totals per deployment over a canary stage, for meterd's
 	// circuit breaker.
 	RouteProbeTotalsByDeployment(ctx context.Context, db DBTX, arg RouteProbeTotalsByDeploymentParams) ([]RouteProbeTotalsByDeploymentRow, error)
 	RouteRemovalCoverageBlockers(ctx context.Context, db DBTX, arg RouteRemovalCoverageBlockersParams) ([]byte, error)
+	// ADR-20261028110044 amendment 1: whether a gateway may have lost request
+	// telemetry that route evidence over [window_from, window_until) reads. An
+	// active node that reports coverage counts when its telemetry is off or
+	// sampled, when it has not been continuously healthy since window_from (a
+	// restart, a heartbeat gap, or rows it could not attribute to an app), or
+	// when its last report predates window_until. Rows a gateway attributes to an
+	// app and drops (an account over its telemetry rate) do not count: the app's
+	// remaining rows stay comparable.
+	RouteTelemetryLost(ctx context.Context, db DBTX, arg RouteTelemetryLostParams) (bool, error)
 	// Authenticated post-readiness verification targets one current candidate.
 	// Filter history and deployment ownership before choosing its newest resident;
 	// snapshotting candidates remain outside ordinary customer placement discovery.
