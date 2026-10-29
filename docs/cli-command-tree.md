@@ -253,6 +253,7 @@ touch them. The tables below map each earlier name.
 | `gregale deploys status` | `gregale release get` |
 | `gregale domains set-default` | `gregale domain default set` |
 | `gregale edge-rules waf-review` | `gregale edge rule waf review` |
+| `gregale events backfill-cancel` | `gregale event backfill cancel` |
 | `gregale events backfill-items` | `gregale event backfill items` |
 | `gregale events backfill-retry` | `gregale event backfill retry` |
 | `gregale events backfill-status` | `gregale event backfill get` |
