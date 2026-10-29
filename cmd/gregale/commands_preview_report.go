@@ -124,7 +124,7 @@ func cmdPreviewReport(args []string) int {
 	customerDetails := fs.Bool("customer-details", false, "include observed consumer and tenant IDs in the report")
 	baseline := fs.String("baseline-deployment", "", "explicit parent deployment ID")
 	tests := fs.String("test-report", "", "JSON receipts from gregale test")
-	sourceImpact := fs.String("source-impact", "", "route impact report from gregale routes impact")
+	sourceImpact := fs.String("source-impact", "", "route impact report from gregale api route impact")
 	requirements := fs.String("requirements", "", "versioned route requirements YAML or JSON file")
 	removalMode := fs.String("route-removal-mode", "report", "route-removal CLI gate: report or enforce")
 	removalReadiness := fs.String("route-readiness", "", "migration readiness report for the serving production deployment")

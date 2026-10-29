@@ -175,3 +175,30 @@ func TestCreatePreviewDoesNotCopyProductionEnv(t *testing.T) {
 		t.Fatalf("preview binding URL = %q, want the platform-owned service URL", got)
 	}
 }
+
+// adr: 20261028100000 — a preview of a 40-character app is created (its slug
+// is longer than an app slug may be) and does not keep production's warm
+// instances.
+func TestCreatePreviewOfLongWarmApp(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	store := *e.Store()
+	parent := "a" + strings.Repeat("b", 38) + "c"
+	if _, err := store.CreateAppIfUnderQuota(context.Background(), state.App{AccountID: (*e.Acct()).ID, Slug: parent,
+		Type: state.AppTypeApp, RAMMB: 128, MaxConcurrency: 1, MinInstances: 2, Status: state.AppActive},
+		api.MustLimitsFor(api.PlanPro)); err != nil {
+		t.Fatal(err)
+	}
+	if rec := e.Do(t, http.MethodPost, "/v1/apps/"+parent+"/previews", api.CreatePreviewRequest{PRNumber: 12}, nil); rec.Code != http.StatusCreated {
+		t.Fatalf("create preview = %d %s", rec.Code, rec.Body)
+	}
+	preview, err := store.AppBySlug(context.Background(), "pr-12-"+parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preview.MinInstances != 0 {
+		t.Fatalf("preview min instances = %d, want 0 (previews scale to zero)", preview.MinInstances)
+	}
+	if rec := e.Do(t, http.MethodGet, "/v1/apps/pr-12-"+parent, nil, nil); rec.Code != http.StatusOK {
+		t.Fatalf("read long preview = %d %s", rec.Code, rec.Body)
+	}
+}

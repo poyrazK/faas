@@ -82,7 +82,7 @@ func isTicket(token string) bool { return strings.HasPrefix(token, "grt_") }
 
 func (m *Manager) startTicketSubscription(ctx context.Context, c *connection, frame resumeClientFrame, page state.ManagedRealtimeChannelHistory) bool {
 	subCtx, cancel := context.WithCancel(ctx)
-	sub := &resumeSubscription{filter: frame.Filter, cancel: cancel, wake: make(chan struct{}, 1), lastSent: frame.After, lastAck: frame.After}
+	sub := &resumeSubscription{presence: channelAuthorization{presence: true}, filter: frame.Filter, cancel: cancel, wake: make(chan struct{}, 1), lastSent: frame.After, lastAck: frame.After}
 	c.mu.Lock()
 	c.resumeSubs[frame.Channel] = sub
 	c.addChannelLocked(frame.Channel)

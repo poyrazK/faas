@@ -19,9 +19,10 @@ import (
 // in. ProjectID is "" for an app outside a project.
 type PublicRoutingViewKey struct{ AppID, AccountID, ProjectID, Scope string }
 
-// PublicRoutingView is what a public request without a host, smoke, release
-// or revision pin needs from the store, as PublicRoutingPolicyReader would
-// read it in one snapshot. A view exists only for a verified owner.
+// PublicRoutingView is what a public request needs from the store, as
+// PublicRoutingPolicyReader would read it in one snapshot: the roster and
+// release graph of an ordinary request, and what host, revision and release
+// pins check (ADR-20261028095914). A view exists only for a verified owner.
 type PublicRoutingView struct {
 	Weights []ServiceDeploymentWeight
 	// Lane is the scope a production-lane roster came from, as
@@ -29,6 +30,53 @@ type PublicRoutingView struct {
 	Lane string
 	// Release is the project's release graph; nil outside a project.
 	Release *PublicRoutingReleaseView
+	// Live is every live deployment of the app, in every scope. LiveComplete
+	// is false when api.TrafficPublicRoutingMaxLiveDeployments cut the list.
+	Live         []PublicRoutingLiveDeployment
+	LiveComplete bool
+	// RevisionPins is the app's revision_pin_ttl_seconds > 0.
+	// RevisionPinsKnown is false when the stored value is not an integer.
+	RevisionPins, RevisionPinsKnown bool
+}
+
+// PublicRoutingLiveDeployment is one live deployment as host and revision
+// pins check it. PinExpiresAt is zero without a revision pin.
+type PublicRoutingLiveDeployment struct {
+	ID, Scope      string
+	TrafficPercent int
+	PinExpiresAt   time.Time
+}
+
+func (v PublicRoutingView) live(deployment string) (PublicRoutingLiveDeployment, bool) {
+	for _, d := range v.Live {
+		if d.ID == deployment {
+			return d, true
+		}
+	}
+	return PublicRoutingLiveDeployment{}, false
+}
+
+// HostPinAllowed answers PublicHostPinAllowed for a deployment-preview or
+// named-environment host. ok is false when the view cannot answer.
+func (v PublicRoutingView) HostPinAllowed(scope, deployment string) (allowed, ok bool) {
+	d, found := v.live(deployment)
+	if !found {
+		return false, v.LiveComplete
+	}
+	return d.Scope == normalizedDeploymentScope(scope), true
+}
+
+// RevisionAllowed answers PublicRevisionAllowed at now. ok is false when the
+// view cannot answer.
+func (v PublicRoutingView) RevisionAllowed(scope, deployment string, now time.Time) (allowed, ok bool) {
+	if !v.RevisionPinsKnown {
+		return false, false
+	}
+	d, found := v.live(deployment)
+	if !found {
+		return false, v.LiveComplete
+	}
+	return v.RevisionPins && d.Scope == normalizedDeploymentScope(scope) && (d.TrafficPercent > 0 || d.PinExpiresAt.After(now)), true
 }
 
 // PublicRoutingReleaseView holds ResolvePublicProjectCanary's inputs for an
@@ -38,6 +86,36 @@ type PublicRoutingReleaseView struct {
 	Active PublicRoutingReleaseTarget
 	// Canary is the project's canary when the scope is production.
 	Canary *PublicRoutingCanaryView
+	// Graphs are the scope's graphs a release pin can name. GraphsComplete
+	// is false when api.TrafficPublicRoutingMaxReleaseGraphs cut the list.
+	Graphs         []PublicRoutingReleaseGraph
+	GraphsComplete bool
+}
+
+// PublicRoutingReleaseGraph is one graph a release pin can name, with what
+// ResolvePublicProjectRelease answers for it while it is usable.
+type PublicRoutingReleaseGraph struct {
+	ID        string
+	Active    bool
+	ExpiresAt time.Time
+	Target    PublicRoutingReleaseTarget
+}
+
+// Requested answers ResolvePublicProjectRelease for a release pin at now.
+// ok is false when the view cannot answer.
+func (v *PublicRoutingReleaseView) Requested(requested string, now time.Time) (target PublicRoutingReleaseTarget, ok bool) {
+	if v == nil {
+		return PublicRoutingReleaseTarget{Err: ErrNotFound}, true
+	}
+	for _, graph := range v.Graphs {
+		if graph.ID == requested {
+			if graph.Active || graph.ExpiresAt.After(now) {
+				return graph.Target, true
+			}
+			return PublicRoutingReleaseTarget{Err: ErrNotFound}, true
+		}
+	}
+	return PublicRoutingReleaseTarget{Err: ErrNotFound}, v.GraphsComplete
 }
 
 // PublicRoutingReleaseTarget is one ResolvePublicProjectRelease answer.
@@ -91,7 +169,7 @@ type PublicRoutingViewStore interface {
 var _ PublicRoutingViewStore = (*PgStore)(nil)
 
 // ReadPublicRoutingViews reads every key in one read-only repeatable-read
-// transaction with four queries, whatever the number of keys. An error is a
+// transaction with five queries, whatever the number of keys. An error is a
 // store failure; per-key refusals are in the results.
 func (s *PgStore) ReadPublicRoutingViews(ctx context.Context, keys []PublicRoutingViewKey) (map[PublicRoutingViewKey]PublicRoutingViewResult, error) {
 	if s == nil || s.pool == nil {
@@ -132,13 +210,14 @@ type publicRoutingViewRows struct {
 	weights  map[string][]sqlc.ReadPublicRoutingViewWeightsRow
 	canaries map[string]sqlc.ReadPublicRoutingViewCanariesRow
 	releases map[string][]sqlc.ReadPublicRoutingViewReleasesRow
+	live     map[string][]sqlc.ReadPublicRoutingViewLiveRow
 }
 
 func readPublicRoutingViewRows(ctx context.Context, tx pgx.Tx, ids []pgtype.UUID) (publicRoutingViewRows, error) {
 	q := sqlc.New()
 	view := publicRoutingViewRows{owners: map[string]sqlc.ReadPublicRoutingViewOwnersRow{},
 		weights: map[string][]sqlc.ReadPublicRoutingViewWeightsRow{}, canaries: map[string]sqlc.ReadPublicRoutingViewCanariesRow{},
-		releases: map[string][]sqlc.ReadPublicRoutingViewReleasesRow{}}
+		releases: map[string][]sqlc.ReadPublicRoutingViewReleasesRow{}, live: map[string][]sqlc.ReadPublicRoutingViewLiveRow{}}
 	owners, err := q.ReadPublicRoutingViewOwners(ctx, tx, ids)
 	if err != nil {
 		return view, fmt.Errorf("read public routing view owners: %w", err)
@@ -167,13 +246,23 @@ func readPublicRoutingViewRows(ctx context.Context, tx pgx.Tx, ids []pgtype.UUID
 			named = append(named, uuidToPgtype(policy.BaselineReleaseID), uuidToPgtype(policy.CandidateReleaseID))
 		}
 	}
-	releases, err := q.ReadPublicRoutingViewReleases(ctx, tx, sqlc.ReadPublicRoutingViewReleasesParams{AppIds: ids, ReleaseIds: named})
+	releases, err := q.ReadPublicRoutingViewReleases(ctx, tx, sqlc.ReadPublicRoutingViewReleasesParams{AppIds: ids, ReleaseIds: named,
+		RowLimit: int32(api.TrafficPublicRoutingMaxReleaseGraphs + 1)})
 	if err != nil {
 		return view, fmt.Errorf("read public routing view releases: %w", err)
 	}
 	for _, row := range releases {
 		app := pgUUIDString(row.AppID)
 		view.releases[app] = append(view.releases[app], row)
+	}
+	live, err := q.ReadPublicRoutingViewLive(ctx, tx, sqlc.ReadPublicRoutingViewLiveParams{AppIds: ids,
+		RowLimit: int32(api.TrafficPublicRoutingMaxLiveDeployments + 1)})
+	if err != nil {
+		return view, fmt.Errorf("read public routing view live deployments: %w", err)
+	}
+	for _, row := range live {
+		app := pgUUIDString(row.AppID)
+		view.live[app] = append(view.live[app], row)
 	}
 	return view, nil
 }
@@ -183,11 +272,12 @@ func (v publicRoutingViewRows) result(key PublicRoutingViewKey) PublicRoutingVie
 	if !ok || pgUUIDString(owner.AccountID) != key.AccountID || pgUUIDString(owner.ProjectID) != key.ProjectID {
 		return PublicRoutingViewResult{Err: ErrNotFound}
 	}
-	var view PublicRoutingView
+	view := PublicRoutingView{RevisionPins: owner.RevisionPins, RevisionPinsKnown: owner.RevisionPinTtlValid}
 	var err error
 	if view.Weights, view.Lane, err = v.roster(key); err != nil {
 		return PublicRoutingViewResult{Err: err}
 	}
+	view.Live, view.LiveComplete = v.liveDeployments(key.AppID)
 	if key.ProjectID != "" {
 		if view.Release, err = v.release(key); err != nil {
 			return PublicRoutingViewResult{Err: err}
@@ -230,7 +320,18 @@ func (v publicRoutingViewRows) roster(key PublicRoutingViewKey) ([]ServiceDeploy
 // project canary's baseline and candidate.
 func (v publicRoutingViewRows) release(key PublicRoutingViewKey) (*PublicRoutingReleaseView, error) {
 	scope := normalizedDeploymentScope(key.Scope)
-	view := &PublicRoutingReleaseView{Active: v.releaseTarget(key.AppID, scope, "")}
+	view := &PublicRoutingReleaseView{Active: v.releaseTarget(key.AppID, scope, ""),
+		GraphsComplete: len(v.releases[key.AppID]) <= api.TrafficPublicRoutingMaxReleaseGraphs}
+	seen := map[string]bool{}
+	for _, row := range v.releases[key.AppID] {
+		id := pgUUIDString(row.ID)
+		if row.EnvironmentSlug != scope || seen[id] {
+			continue
+		}
+		seen[id] = true
+		view.Graphs = append(view.Graphs, PublicRoutingReleaseGraph{ID: id, Active: row.Active,
+			ExpiresAt: row.ExpiresAt.Time, Target: v.releaseTarget(key.AppID, scope, id)})
+	}
 	canary, ok := v.canaries[key.AppID]
 	if !ok || scope != "production" {
 		return view, nil
@@ -246,6 +347,25 @@ func (v publicRoutingViewRows) release(key PublicRoutingViewKey) (*PublicRouting
 		}
 	}
 	return view, nil
+}
+
+// liveDeployments keeps at most api.TrafficPublicRoutingMaxLiveDeployments
+// and reports whether that was all of them.
+func (v publicRoutingViewRows) liveDeployments(app string) ([]PublicRoutingLiveDeployment, bool) {
+	rows := v.live[app]
+	complete := len(rows) <= api.TrafficPublicRoutingMaxLiveDeployments
+	if !complete {
+		rows = rows[:api.TrafficPublicRoutingMaxLiveDeployments]
+	}
+	out := make([]PublicRoutingLiveDeployment, 0, len(rows))
+	for _, row := range rows {
+		d := PublicRoutingLiveDeployment{ID: pgUUIDString(row.ID), Scope: row.Scope, TrafficPercent: int(row.TrafficPercent)}
+		if row.PinExpiresAt.Valid {
+			d.PinExpiresAt = row.PinExpiresAt.Time
+		}
+		out = append(out, d)
+	}
+	return out, complete
 }
 
 // releaseTarget mirrors ResolvePublicProjectRelease over the view's rows.

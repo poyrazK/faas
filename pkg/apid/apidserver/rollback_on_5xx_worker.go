@@ -132,20 +132,24 @@ func (s *server) autoRollbackOn5xx(ctx context.Context, c state.RollbackOn5xxCan
 	return nil
 }
 
-// rollbackOn5xxTarget is the release the candidate replaced: the newest
-// superseded deployment in the same scope created before it.
+// rollbackOn5xxTarget is the release the candidate replaced: the one a plain
+// rollback returns to, the most recently serving in the same scope and never a
+// canary aborted before it completed. The newest superseded row by creation
+// could be such a canary, or a build superseded before it went live, so the
+// guard rolled back to a release that never served (release review
+// 2026-10-28).
 func (s *server) rollbackOn5xxTarget(ctx context.Context, c state.RollbackOn5xxCandidate) (state.Deployment, error) {
-	deployments, err := s.store.ListDeploymentsForApp(ctx, c.AppID, 50, 0)
+	target, err := s.store.LatestSupersededDeployment(ctx, c.AppID, recoveryScope(c.Scope))
 	if err != nil {
-		return state.Deployment{}, fmt.Errorf("list deployments: %w", err)
-	}
-	for _, d := range deployments {
-		if d.ID != c.DeploymentID && d.Status == state.DeploySuperseded &&
-			recoveryScope(d.Scope) == recoveryScope(c.Scope) && d.CreatedAt.Before(c.CreatedAt) {
-			return d, nil
+		if errors.Is(err, state.ErrNotFound) {
+			return state.Deployment{}, state.ErrNotFound
 		}
+		return state.Deployment{}, fmt.Errorf("read rollback target: %w", err)
 	}
-	return state.Deployment{}, state.ErrNotFound
+	if target.ID == c.DeploymentID || !target.CreatedAt.Before(c.CreatedAt) {
+		return state.Deployment{}, state.ErrNotFound
+	}
+	return target, nil
 }
 
 func (s *server) runRollbackOn5xxWorker(ctx context.Context) {

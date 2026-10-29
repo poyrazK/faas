@@ -1774,3 +1774,41 @@ func TestValidateBucketComputeTriggers(t *testing.T) {
 		}
 	}
 }
+
+// ADR-20261018101500 amendment 2026-10-27: the CLI and apid's source deploys
+// apply one scaling policy. A worker block's metric takes the bounds and
+// target, and the cooldowns are never zero, which the API refuses.
+func TestScalingPolicyRequest(t *testing.T) {
+	parse := func(t *testing.T, content string) *Manifest {
+		t.Helper()
+		m, err := ParseBytes([]byte(content))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return m
+	}
+	worker := parse(t, "worker:\n  scale:\n    min: 0\n    max: 3\n    metric: queue_depth\n    target: 100\n")
+	policy := worker.ScalingPolicyRequest()
+	if policy == nil || policy.MinInstances != 0 || policy.MaxInstances != 3 || policy.Target == nil ||
+		policy.Target.Metric != api.ScalingMetricQueueDepth || policy.Target.Value != 100 ||
+		policy.ScaleOutCooldownS != defaultScaleOutCooldownS || policy.ScaleInCooldownS != defaultScaleInCooldownS {
+		t.Fatalf("worker block policy = %+v", policy)
+	}
+
+	both := parse(t, "worker:\n  scale:\n    min: 1\n    max: 4\n    metric: queue_depth\n    target: 20\n"+
+		"scaling:\n  scale_in_cooldown_s: 120\n  targets:\n    - metric: cpu\n      value: 70\n")
+	policy = both.ScalingPolicyRequest()
+	if policy == nil || policy.MinInstances != 1 || policy.MaxInstances != 4 || len(policy.Targets) != 0 ||
+		policy.Target == nil || policy.Target.Metric != api.ScalingMetricQueueDepth || policy.ScaleInCooldownS != 120 {
+		t.Fatalf("worker over scaling block = %+v", policy)
+	}
+
+	scalingOnly := parse(t, "scaling:\n  min_instances: 0\n  max_instances: 2\n")
+	if policy := scalingOnly.ScalingPolicyRequest(); policy == nil || policy.MaxInstances != 2 || policy.Target != nil {
+		t.Fatalf("scaling block policy = %+v", policy)
+	}
+	noMetric := parse(t, "worker:\n  scale:\n    min: 1\n    max: 1\n")
+	if policy := noMetric.ScalingPolicyRequest(); policy != nil {
+		t.Fatalf("worker without a metric asked for a policy: %+v", policy)
+	}
+}

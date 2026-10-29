@@ -63,6 +63,11 @@ daemons:
     # The control-plane schedd reaches the local edge; compute schedds use
     # their node-local gatewayd-internal socket after host rendering.
     gateway_synth_target: tcp://127.0.0.1:8080
+    # ADR-20261021215353 early freeze. Releases re-render schedd.toml from
+    # this manifest, so a value set by hand on a node is lost at the next
+    # rollout. Set it here only after a release whose gregalectl and imaged
+    # parse the key is live on every node: older ones reject unknown keys.
+    # frozen_tier_early_freeze_after_s: 10
   vmmd:
     bind: tcp://0.0.0.0:50051
     tls:
@@ -153,6 +158,14 @@ egress:
 # tunnel: docs/runbooks/AppEdgeCutover.md.
 public_edge:
   compute_nodes: true
+
+# Customer log archive (pkg/logarchive). Keyless: every node's attached
+# service account holds roles/storage.objectUser on the bucket, whose
+# lifecycle rule deletes faas-logs/ objects after 90 days.
+log_archive:
+  bucket: gregale-prod-280686321025-log-archive
+  endpoint: https://storage.googleapis.com
+  auth: gcp_metadata
 
 dns:
   apps_domain: gregale.dev

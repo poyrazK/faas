@@ -66,6 +66,11 @@ BEGIN
 	IF to_regclass('public.audit_log_anchors') IS NOT NULL THEN
 		REVOKE UPDATE, DELETE ON public.audit_log_anchors FROM faas_runtime;
 	END IF;
+	-- Issue #574: deployctl writes the release history as the owner; daemons
+	-- only read it, so none can rewrite what was deployed.
+	IF to_regclass('public.platform_release_activations') IS NOT NULL THEN
+		REVOKE INSERT, UPDATE, DELETE ON public.platform_release_activations FROM faas_runtime;
+	END IF;
 END
 $$;
 -- Objects the next migrations create carry the same grants. Only objects the

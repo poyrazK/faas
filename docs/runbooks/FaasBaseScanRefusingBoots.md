@@ -21,6 +21,7 @@ says why the boot was refused:
 | `critical` | The scan found a fix-available CRITICAL finding. A base that passed the release scan can fail here later, because the node scans with a newer vulnerability database |
 | `sidecar_missing` | No sidecar for the base (not staged yet, or the storage read failed) |
 | `incomplete` | The sidecar has no CRITICAL total |
+| `scan_failed` | imaged's Grype scan of the base failed, and it wrote the fail-closed `CRITICAL=9999` placeholder (`wire.BaseScanFailedCount`). Customers see "Base image scan unavailable" |
 | `generation_mismatch`, `generation_unavailable` | The sidecar names a different base generation than the release configured, or the node could not adopt the configured one |
 
 ## Triage
@@ -37,5 +38,8 @@ says why the boot was refused:
 - `critical`: rebuild the runtime image (for Wolfi bases a rebuild picks up
   the patched packages), release it, and let imaged stage the new base. Do not
   edit the sidecar by hand.
-- Missing or stale sidecar: restart `faas-imaged` on the node so it restages and
-  rescans the base; a fail-closed `CRITICAL=9999` sidecar is replaced on restart.
+- Missing or stale sidecar, or `scan_failed`: check why Grype failed in the
+  `faas-imaged` logs (`grype scan failed; writing fail-closed sidecar`; a full
+  `/srv/fc` or a stale vulnerability database are the usual causes), fix that,
+  then restart `faas-imaged` on the node so it restages and rescans the base;
+  the fail-closed `CRITICAL=9999` sidecar is replaced on restart.

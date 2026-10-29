@@ -2169,6 +2169,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/event-replays/{jobID}":                                     "GetEventReplayBackfill",
 	"GET /v1/event-replays/{jobID}/items":                               "ListEventReplayBackfillItems",
 	"POST /v1/event-replays/{jobID}/retry-failed":                       "RetryFailedEventReplayBackfill",
+	"POST /v1/event-replays/{jobID}/cancel":                             "CancelEventReplayBackfill",
 
 	// Workflow recovery policy and operator routes use the public client names.
 	"GET /v1/apps/{slug}/event-recoveries/by-request/{requestID}":                                       "GetEventRecoveryByRequest",

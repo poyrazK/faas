@@ -348,7 +348,7 @@ func printSubcommandChoices(w io.Writer, path string, command cliCommand, got st
 	}
 	_, _ = fmt.Fprintf(w, "  Subcommands: %s\n", strings.Join(names, ", "))
 	if listApp != "" && api.ValidAppSlug(got) && !commonVerbWord(got) {
-		_, _ = fmt.Fprintf(w, "  If %s is an app, the subcommand comes first: gregale %s list %s\n", got, path, listApp)
+		_, _ = fmt.Fprintf(w, "  If %s is an app, the subcommand comes first: gregale %s %s\n", got, cliTreeSpellPath(path+" list"), listApp)
 	}
 }
 

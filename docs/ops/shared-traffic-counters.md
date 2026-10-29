@@ -21,7 +21,9 @@ Inspect `gateway_rate_limit_shared` and `gateway_retry_budget_shared` (1 means
 shared, 0 means local), plus `gateway_retry_budget_backend_info{backend_id}`
 for a credential-free endpoint identity. Compare all gateways. The legacy
 `gateway_ratelimit_degraded_total` now counts refused shared rate admission;
-it does not mean a private allowance was granted. Retry backend operations
+it does not mean a private allowance was granted. Requests the gateway decided
+from its own bucket during the outage grace count in
+`gateway_ratelimit_local_fallback_total` instead. Retry backend operations
 report observe/admit results, including errors. Endpoint identity and selected
 mode are diagnostic evidence; runtime failure checks are still required.
 
@@ -47,9 +49,17 @@ and never count additional attempts in the denominator.
 
 ## Failure and recovery
 
-Rate exhaustion returns 429. An unavailable or timed-out central counter
-returns 503 with `rate_limit_unavailable` and no unverified guest admission.
-An already-expired request deadline takes precedence and returns its 504.
+Rate exhaustion returns 429. An unavailable or timed-out central counter is
+covered by a 5-minute outage grace (`api.TrafficRateLimitOutageGrace`,
+ADR-20261027173012): for that long after the counter last decided a request
+on a gateway, the gateway enforces the same limits from its own bucket, so a
+request over its limit still gets 429 and one within it is served. Each such
+decision counts in `gateway_ratelimit_local_fallback_total{scope}`, and
+`FaasRateLimitCounterFallback` warns. Past the grace, or on a gateway that
+never reached the counter, the request gets 503 `rate_limit_unavailable`
+with no unverified guest admission. During the grace a limit can admit up to
+once per gateway. An already-expired request deadline takes precedence and
+returns its 504.
 Restarting a gateway cannot reset a durable bucket. Fractional refill time is
 preserved; statements reaching a row out of timestamp order cannot subtract
 tokens through negative elapsed refill.

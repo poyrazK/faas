@@ -384,7 +384,10 @@ A matched request without a valid pass never reaches your app:
   challenged, so API clients keep working.
 
 The pass lasts an hour by default and is tied to the browser's address
-range and User-Agent, so it cannot be copied to another machine. Start in
+range and User-Agent, so it cannot be copied to another machine. It covers
+the whole host: one pass lets the browser through every challenge rule on
+that host, including paths a route rule sends to another of your apps, but
+not on your other hosts. Start in
 log mode to see what the rule would challenge, and add a `verified_bot
 missing` condition so search engine crawlers still reach your pages:
 

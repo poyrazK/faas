@@ -42,6 +42,9 @@ func (s *Service) AdmitSnapshotCopyTargetReservation(ctx context.Context, accoun
 			return 0, err
 		}
 	}
+	if err := s.admitFleet(ctx, true); err != nil {
+		return 0, err
+	}
 	backend, err := s.checkpointBackend(definition)
 	if err != nil {
 		return 0, err

@@ -23,7 +23,7 @@ func cmdDeployResume(ctx context.Context, args []string) int {
 		return 1
 	}
 	if (*app == "" && len(positionals) != 1) || (*app != "" && len(positionals) != 0 && len(positionals) != 1) || *timeout <= 0 || (*app != "" && !api.ValidAppSlug(*app)) {
-		return printErr("Invalid deploy resume arguments", errors.New("usage: gregale deploy resume SESSION_ID [--timeout SECONDS] or gregale deploy resume --app SLUG"))
+		return printErr("Invalid deploy resume arguments", errors.New("usage: gregale release resume SESSION_ID [--timeout SECONDS] or gregale release resume --app SLUG"))
 	}
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt)
 	defer stop()

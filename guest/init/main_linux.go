@@ -1858,9 +1858,9 @@ func buildArgv(m api.BuildManifest) []string {
 			argv = append(argv, "--import-cache", "type=local,src=/build/cache")
 		}
 		if m.DependencyCache {
-			argv = append(argv, "--export-cache", "type=local,dest=/build/out/cache,mode=max")
+			argv = append(argv, "--export-cache", dependencyCacheExport(m))
 		}
-		return append(argv, "--output", "type=oci,dest="+m.OutDir+"/image.tar")
+		return append(argv, "--output", "type=oci,dest="+m.OutDir+"/image.tar"+layerCompressionAttrs(m))
 	}
 	// Railpack plans local COPY paths relative to the directory passed to
 	// prepare. A repository-wide context would copy a different package.json
@@ -1897,7 +1897,9 @@ func buildArgv(m api.BuildManifest) []string {
 	if m.DependencyCacheImport {
 		build += " --import-cache " + shellQuote("type=local,src=/build/cache")
 	}
-	output := " --output type=oci,dest=" + shellQuote(filepath.Join(m.OutDir, "image.tar")) + " --progress plain"
+	// The compression attributes are shell-safe literals; appended unquoted
+	// they join the quoted destination into one buildctl argument.
+	output := " --output type=oci,dest=" + shellQuote(filepath.Join(m.OutDir, "image.tar")) + layerCompressionAttrs(m) + " --progress plain"
 	if m.IssueSourceMaps != nil {
 		// Both exporters consume the same final LLB result; source directories
 		// and intermediate stages cannot describe the deployed bundle bytes.
@@ -1912,8 +1914,26 @@ func buildArgv(m api.BuildManifest) []string {
 	check := dependencyInputsHelperEnv + "=" + dependencyInputsHelperValue + " /proc/1/exe " + strings.Join([]string{
 		shellQuote(planPath), shellQuote(m.Workdir), shellQuote("/build/cache"), shellQuote(m.OutDir),
 	}, " ")
-	choose := `case "$(` + check + `)" in keep) set -- ;; *) set -- --export-cache ` + shellQuote("type=local,dest=/build/out/cache,mode=max") + " ;; esac"
+	choose := `case "$(` + check + `)" in keep) set -- ;; *) set -- --export-cache ` + shellQuote(dependencyCacheExport(m)) + " ;; esac"
 	return []string{"/bin/sh", "-c", "set -x; " + prepare + " && " + choose + " && exec " + build + ` "$@"` + output}
+}
+
+// layerCompressionAttrs returns the BuildKit exporter attributes that switch
+// a build's layers from gzip to zstd (builderd's FAAS_BUILD_LAYER_ZSTD), or ""
+// to keep gzip.
+// force-compression stays off, so layers inherited from a gzip base image are
+// reused as they are rather than recompressed.
+func layerCompressionAttrs(m api.BuildManifest) string {
+	if m.LayerCompression != api.BuildLayerCompressionZstd {
+		return ""
+	}
+	return ",compression=zstd"
+}
+
+// dependencyCacheExport is the app-scoped BuildKit cache exporter. mode=max
+// writes every layer, so its compression decides most of the export time.
+func dependencyCacheExport(m api.BuildManifest) string {
+	return "type=local,dest=/build/out/cache,mode=max" + layerCompressionAttrs(m)
 }
 
 func manifestBuildContext(m api.BuildManifest) string {

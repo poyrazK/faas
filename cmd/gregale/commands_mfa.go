@@ -42,7 +42,7 @@ import (
 func cmdMfa(args []string) int {
 	parent, _ := lookupCliCommand("mfa")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale mfa <enroll|confirm|verify|recover|disable> [args]", "mfa")
+		PrintUsage(os.Stderr, "usage: gregale account mfa <enroll|confirm|verify|recover|disable> [args]", "mfa")
 		return 1
 	}
 	switch args[0] {
@@ -58,7 +58,7 @@ func cmdMfa(args []string) int {
 		return cmdMfaDisable(args[1:])
 	default:
 		sug, _ := suggestSubcommand(args[0], parent)
-		fmt.Fprintf(os.Stderr, "gregale mfa: unknown subcommand %q (known: enroll, confirm, verify, recover, disable)\n", args[0])
+		fmt.Fprintf(os.Stderr, "gregale account mfa: unknown subcommand %q (known: enroll, confirm, verify, recover, disable)\n", args[0])
 		maybeSuggestSub(sug)
 		return 1
 	}
@@ -81,7 +81,7 @@ func cmdMfaEnroll(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale mfa enroll [--qr-out <path>]", "mfa")
+		PrintUsage(os.Stderr, "usage: gregale account mfa enroll [--qr-out <path>]", "mfa")
 		return 1
 	}
 	client, err := authedClient()
@@ -126,7 +126,7 @@ func cmdMfaEnroll(args []string) int {
 	for _, code := range resp.RecoveryCodes {
 		PrintProgress(osStdout, "  %s", code)
 	}
-	PrintProgress(osStdout, "Confirm with: gregale mfa confirm <6-digit-code>")
+	PrintProgress(osStdout, "Confirm with: gregale account mfa confirm <6-digit-code>")
 	return 0
 }
 
@@ -143,7 +143,7 @@ func cmdMfaConfirm(args []string) int {
 		return 1
 	}
 	if *code == "" && fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale mfa confirm <6-digit-code>", "mfa")
+		PrintUsage(os.Stderr, "usage: gregale account mfa confirm <6-digit-code>", "mfa")
 		return 1
 	}
 	if *code == "" {
@@ -175,7 +175,7 @@ func cmdMfaVerify(args []string) int {
 		return 1
 	}
 	if *code == "" && fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale mfa verify <6-digit-code>", "mfa")
+		PrintUsage(os.Stderr, "usage: gregale account mfa verify <6-digit-code>", "mfa")
 		return 1
 	}
 	if *code == "" {
@@ -206,7 +206,7 @@ func cmdMfaRecover(args []string) int {
 		return 1
 	}
 	if *code == "" && fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale mfa recover <recovery-code>", "mfa")
+		PrintUsage(os.Stderr, "usage: gregale account mfa recover <recovery-code>", "mfa")
 		return 1
 	}
 	if *code == "" {

@@ -31,6 +31,31 @@
     - faas_public_edge_enabled | bool
     - faas_public_edge_platform_tls | bool
 
+- name: public_edge — inspect the Cloudflare origin-pull CA
+  ansible.builtin.stat:
+    path: "{{ faas_public_edge_origin_pull_ca }}"
+  register: faas_public_edge_origin_pull_ca_stat
+  when:
+    - faas_public_edge_enabled | bool
+    - faas_public_edge_platform_tls | bool
+    - faas_public_edge_authenticated_origin_pulls | bool
+
+- name: public_edge — require the origin-pull CA before requiring client certificates
+  ansible.builtin.assert:
+    that:
+      - faas_public_edge_origin_pull_ca_stat.stat.exists
+      - faas_public_edge_origin_pull_ca_stat.stat.size > 0
+    fail_msg: >-
+      faas_public_edge_authenticated_origin_pulls is on but
+      {{ faas_public_edge_origin_pull_ca }} is missing. Install Cloudflare's
+      origin-pull CA certificate there, and turn on Authenticated Origin Pulls
+      for the zone in Cloudflare first: Caddy refuses every request without
+      the client certificate.
+  when:
+    - faas_public_edge_enabled | bool
+    - faas_public_edge_platform_tls | bool
+    - faas_public_edge_authenticated_origin_pulls | bool
+
 - name: public_edge — require an ACME contact for on-demand customer certificates
   ansible.builtin.assert:
     that:
@@ -173,7 +198,16 @@
       {% endfor %}
       {% for site in faas_public_edge_sites %}
       {{ site[0] }}, *.{{ site[0] }} {
+      {% if faas_public_edge_authenticated_origin_pulls | default(false) | bool %}
+          tls {{ site[1] }} {{ site[2] }} {
+              client_auth {
+                  mode require_and_verify
+                  trust_pool file {{ faas_public_edge_origin_pull_ca }}
+              }
+          }
+      {% else %}
           tls {{ site[1] }} {{ site[2] }}
+      {% endif %}
       {% if faas_custom_domain_tls | default(false) | bool %}
           @direct not remote_ip {{ faas_public_edge_cloudflare_cidrs | join(' ') }}
       {% if faas_public_edge_grpc_h2c | default(false) | bool %}

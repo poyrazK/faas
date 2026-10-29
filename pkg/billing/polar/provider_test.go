@@ -263,14 +263,15 @@ func TestPushMeterUsageRecordRequiresLiveAndUsesDistinctEvent(t *testing.T) {
 	}
 	acct := state.Account{ID: "acct-1", ProviderCustomerID: "polar-customer"}
 	hour := time.Date(2026, 9, 11, 10, 0, 0, 0, time.UTC)
+	p.now = func() time.Time { return hour.Add(65 * time.Minute) }
 	if err := p.PushMeterUsageRecord(context.Background(), acct, hour, state.BillingMeterEgress, 3*(1<<30)); err != nil {
 		t.Fatal(err)
 	}
 	if handlerErr != nil {
 		t.Fatal(handlerErr)
 	}
-	if got.Name != "egress_usage" || got.ExternalID != "faas-egress-acct-1-2026-09-11T10:00:00Z" {
-		t.Fatalf("egress event = %+v", got)
+	if got.Name != "egress_usage" || got.ExternalID != "faas-egress-acct-1-2026-09-11T10:00:00Z" || got.Timestamp != "2026-09-11T11:05:00Z" {
+		t.Fatalf("egress event = %+v, want the hourly id stamped at delivery", got)
 	}
 	if got.Metadata["egress_gib"] != float64(3) {
 		t.Fatalf("egress_gib = %#v, want 3", got.Metadata["egress_gib"])
@@ -868,6 +869,8 @@ func TestPushUsageRecordUsesGBRamHoursAndDedupe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sentAt := time.Date(2026, 8, 31, 8, 3, 27, 500, time.UTC)
+	p.now = func() time.Time { return sentAt }
 	hour := time.Date(2026, 8, 31, 10, 37, 0, 0, time.FixedZone("TRT", 3*60*60))
 	acct := state.Account{ID: "acct-1", ProviderCustomerID: "customer-1"}
 	mbSeconds := int64(1024 * 3600)
@@ -888,6 +891,14 @@ func TestPushUsageRecordUsesGBRamHoursAndDedupe(t *testing.T) {
 	}
 	if received.ExternalID != "faas-usage-acct-1-2026-08-31T07:00:00Z" {
 		t.Errorf("external_id = %q, want stable hourly id", received.ExternalID)
+	}
+	// ADR-20261028101500: a Polar meter counts events stamped after its last
+	// reset, so the event is stamped when sent; the window stays in metadata.
+	if received.Timestamp != "2026-08-31T08:03:27Z" {
+		t.Errorf("timestamp = %q, want the delivery time", received.Timestamp)
+	}
+	if got := received.Metadata["window_start"]; got != "2026-08-31T07:00:00Z" {
+		t.Errorf("window_start = %v, want the usage hour", got)
 	}
 }
 

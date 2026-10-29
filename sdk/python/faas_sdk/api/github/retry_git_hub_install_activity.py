@@ -82,7 +82,7 @@ def _build_response(
 def sync_detailed(
     slug: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
     body: GitHubInstallMutationRequest,
 ) -> Response[GitHubActivityRetryResponse | Problem]:
     """Retry failed GitHub activity from the signed-in dashboard session.
@@ -123,7 +123,7 @@ def sync_detailed(
 def sync(
     slug: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
     body: GitHubInstallMutationRequest,
 ) -> GitHubActivityRetryResponse | Problem | None:
     """Retry failed GitHub activity from the signed-in dashboard session.
@@ -159,7 +159,7 @@ def sync(
 async def asyncio_detailed(
     slug: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
     body: GitHubInstallMutationRequest,
 ) -> Response[GitHubActivityRetryResponse | Problem]:
     """Retry failed GitHub activity from the signed-in dashboard session.
@@ -198,7 +198,7 @@ async def asyncio_detailed(
 async def asyncio(
     slug: str,
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
     body: GitHubInstallMutationRequest,
 ) -> GitHubActivityRetryResponse | Problem | None:
     """Retry failed GitHub activity from the signed-in dashboard session.

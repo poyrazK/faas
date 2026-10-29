@@ -490,6 +490,63 @@ func TestBuildArgv_DependencyCacheExportIsConditional(t *testing.T) {
 	}
 }
 
+// ADR-20261028084018: with LayerCompression zstd both exporters compress with
+// zstd; without it the arguments are exactly as before.
+func TestBuildArgv_LayerCompression(t *testing.T) {
+	for _, tt := range []struct {
+		framework api.BuildFramework
+		quote     string // the Railpack shell quotes the destination
+	}{
+		{framework: api.FrameworkRailpackNode, quote: "'"},
+		{framework: api.FrameworkDockerfile},
+	} {
+		t.Run(string(tt.framework), func(t *testing.T) {
+			base := api.BuildManifest{Framework: tt.framework, Workdir: "/build/src", OutDir: "/build/out", DependencyCache: true}
+			gzip := strings.Join(buildArgv(base), " ")
+			if strings.Contains(gzip, "compression=") {
+				t.Fatalf("gzip argv sets a compression: %s", gzip)
+			}
+			base.LayerCompression = api.BuildLayerCompressionZstd
+			zstd := strings.Join(buildArgv(base), " ")
+			for _, want := range []string{"image.tar" + tt.quote + ",compression=zstd", "mode=max,compression=zstd"} {
+				if !strings.Contains(zstd, want) {
+					t.Fatalf("zstd argv missing %q: %s", want, zstd)
+				}
+			}
+			if strings.Contains(zstd, "force-compression") {
+				t.Fatalf("zstd argv recompresses inherited layers: %s", zstd)
+			}
+		})
+	}
+}
+
+// The Railpack shell must hand buildctl one --output argument and one
+// --export-cache argument even with the appended attributes.
+func TestBuildArgv_LayerCompressionShellWords(t *testing.T) {
+	argv := buildArgv(api.BuildManifest{Framework: api.FrameworkRailpackNode, Workdir: "/build/src", OutDir: "/build/out", DependencyCache: true, LayerCompression: api.BuildLayerCompressionZstd})
+	helper := filepath.Join(t.TempDir(), "helper")
+	if err := os.WriteFile(helper, []byte("#!/bin/sh\necho export\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stubbed := strings.NewReplacer(
+		"/usr/local/bin/railpack", "true",
+		"/proc/1/exe", helper,
+		"exec /usr/local/bin/buildctl", `exec printf '[%s]\n' buildctl`,
+	).Replace(argv[2])
+	out, err := exec.Command("/bin/sh", "-c", stubbed).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"[type=oci,dest=/build/out/image.tar,compression=zstd]",
+		"[type=local,dest=/build/out/cache,mode=max,compression=zstd]",
+	} {
+		if !strings.Contains(string(out), want) {
+			t.Fatalf("buildctl argument %s missing from:\n%s", want, out)
+		}
+	}
+}
+
 func TestRemoveOversizedDependencyCache(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "cache")
 	if err := os.MkdirAll(filepath.Join(root, "blobs"), 0o700); err != nil {

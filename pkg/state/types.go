@@ -3638,8 +3638,13 @@ const (
 	AlertMetricCertExpirySeconds                            AlertMetric = "cert_expiry_seconds"
 	AlertMetricCertIssuanceFailed                           AlertMetric = "cert_issuance_failed"
 	AlertMetricQueueDepth                                   AlertMetric = "queue_depth"
-	AlertMetricPreAuthTargetThreshold                       AlertMetric = "pre_auth_target_threshold"
-	AlertMetricPreAuthTargetSignalGapPct                    AlertMetric = "pre_auth_target_signal_gap_pct"
+	// AlertMetricQueueBacklog and AlertMetricQueueOldestAge watch the app's
+	// durable queue: messages waiting for its workers and the age of the
+	// oldest (ADR-20261018101500 amendment 2026-10-27). Webhook-only.
+	AlertMetricQueueBacklog              AlertMetric = "queue_backlog"
+	AlertMetricQueueOldestAge            AlertMetric = "queue_oldest_age_seconds"
+	AlertMetricPreAuthTargetThreshold    AlertMetric = "pre_auth_target_threshold"
+	AlertMetricPreAuthTargetSignalGapPct AlertMetric = "pre_auth_target_signal_gap_pct"
 	// AlertMetricPreAuthPressure counts pre-auth source-limit blocks and
 	// observe-mode would-blocks; AlertMetricEdgeValidationFailures counts
 	// kind=validate mismatches in any mode; AlertMetricEdgeRejections counts
@@ -3667,6 +3672,10 @@ const (
 	// AlertMetricRouteInsightsDetected counts the app's route insights that
 	// became active in the window (ADR-20261020161310).
 	AlertMetricRouteInsightsDetected AlertMetric = "route_insights_detected"
+	// Route monitor incidents open within the window and canaries the route
+	// health guard holds or aborted (ADR-20261028110044).
+	AlertMetricRouteMonitorIncidents AlertMetric = "route_monitor_incidents"
+	AlertMetricRouteHealthHolds      AlertMetric = "route_health_holds"
 	// AlertMetricSLOBurnRate is the customer-facing ADR-082 API
 	// availability burn-rate signal. The evaluator combines the 1h
 	// 14.4x and 6h 6x Google SRE windows into one effective value.
