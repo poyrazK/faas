@@ -77,6 +77,14 @@ type PullRequestPayload struct {
 	HeadSHA string             `json:"head_sha"`
 	HeadRef string             `json:"head_ref"` // branch name
 	Head    PullRequestHeadRef `json:"head"`
+	// Base is the branch the PR merges into; it selects the binding when a
+	// repository binds apps on several production branches.
+	Base PullRequestBaseRef `json:"base"`
+}
+
+// PullRequestBaseRef carries the base side of a PR.
+type PullRequestBaseRef struct {
+	Ref string `json:"ref"` // branch name
 }
 
 // PullRequestHeadRef carries the head side of a PR — used to

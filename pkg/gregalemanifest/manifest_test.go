@@ -826,7 +826,9 @@ func TestValidate_RedisStreams_Happy(t *testing.T) {
 	}
 }
 
-func TestValidate_SQSCompat_Happy(t *testing.T) {
+// sqs_compat is delisted (2026-10-29): a manifest declaring it is refused
+// like amqp, as a trigger and as a worker source.
+func TestValidate_SQSCompat_Unavailable(t *testing.T) {
 	m := &Manifest{Triggers: []Trigger{{
 		Kind: TriggerKindSQSCompat, App: "my-api", Slug: "ext-jobs",
 		Config: map[string]any{
@@ -834,21 +836,8 @@ func TestValidate_SQSCompat_Happy(t *testing.T) {
 			"long_poll_secs": 20,
 		},
 	}}}
-	if err := m.Validate(); err != nil {
-		t.Errorf("err = %v, want nil", err)
-	}
-}
-
-func TestValidate_SQSCompat_BadLongPoll(t *testing.T) {
-	m := &Manifest{Triggers: []Trigger{{
-		Kind: TriggerKindSQSCompat, App: "my-api", Slug: "ext-jobs",
-		Config: map[string]any{
-			"queue_url":      "http://faas-queue:9090/queues/ext-jobs",
-			"long_poll_secs": 25,
-		},
-	}}}
-	if err := m.Validate(); err == nil || !strings.Contains(err.Error(), "long_poll_secs") {
-		t.Errorf("err = %v, want long_poll_secs range message", err)
+	if err := m.Validate(); err == nil || !strings.Contains(err.Error(), "sqs_compat triggers are not available yet") {
+		t.Errorf("err = %v, want the unavailable-kind refusal", err)
 	}
 }
 
@@ -954,7 +943,7 @@ func TestValidate_MaxAttemptsOutOfRange(t *testing.T) {
 }
 
 // Happy-path mixed manifest: cron + kafka + nats + redis_streams +
-// sqs_compat + queue. The combined Validate() runs every kind's
+// queue. The combined Validate() runs every kind's
 // validator in a single pass; the cron path keeps its (schedule,
 // path) shape, the five new kinds carry (slug, config).
 func TestValidate_AllSixKinds(t *testing.T) {
@@ -966,9 +955,6 @@ func TestValidate_AllSixKinds(t *testing.T) {
 		}},
 		{Kind: TriggerKindRedisStreams, App: "my-api", Slug: "cache", Config: map[string]any{
 			"addr": "redis:6379", "stream": "s", "group": "g",
-		}},
-		{Kind: TriggerKindSQSCompat, App: "my-api", Slug: "ext", Config: map[string]any{
-			"queue_url": "http://q:9090/queues/ext",
 		}},
 		{Kind: TriggerKindQueue, App: "my-api", Slug: "in", Config: map[string]any{"mode": "queue"}},
 	}}

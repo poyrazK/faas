@@ -429,7 +429,13 @@ func validateCreateTriggerRequest(req *api.CreateTriggerRequest) *api.Problem {
 			"")
 	}
 	switch req.Kind {
-	case api.TriggerKindKafka, api.TriggerKindNATS, api.TriggerKindRedisStreams, api.TriggerKindSQSCompat, api.TriggerKindQueue, api.TriggerKindRealtime:
+	case api.TriggerKindSQSCompat:
+		// Delisted 2026-10-29: the poller speaks an invented wire protocol
+		// with no SigV4, so it reaches neither AWS SQS nor Gregale queues.
+		// Existing triggers keep their rows; no new one is created.
+		return api.NewProblem(http.StatusUnprocessableEntity, "trigger_kind_unavailable", "Trigger kind unavailable",
+			"sqs_compat triggers are not available; consume Gregale queues with kind=queue")
+	case api.TriggerKindKafka, api.TriggerKindNATS, api.TriggerKindRedisStreams, api.TriggerKindQueue, api.TriggerKindRealtime:
 		if req.Slug == "" {
 			return api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", "slug is required for non-cron triggers")
 		}
@@ -442,7 +448,7 @@ func validateCreateTriggerRequest(req *api.CreateTriggerRequest) *api.Problem {
 		return nil
 	default:
 		return api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request",
-			"unknown kind: must be one of cron|kafka|nats|redis_streams|sqs_compat|queue|realtime")
+			"unknown kind: must be one of cron|kafka|nats|redis_streams|queue|realtime")
 	}
 }
 

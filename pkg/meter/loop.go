@@ -114,6 +114,11 @@ type Loop struct {
 	// lastTickErr records the latest error for each timer. A failed billing
 	// pass must not leave /healthz green merely because the ticker fired.
 	lastTickErr map[string]string
+
+	// pricedTerms maps an account to the month and terms whose price
+	// snapshots recordFinancialPricing last confirmed stored. Only the sample
+	// goroutine touches it.
+	pricedTerms map[string]string
 }
 
 // NewLoop wires the loop. The interfaces are local to pkg/meter so the
@@ -302,6 +307,7 @@ func (l *Loop) Run(ctx context.Context) error {
 			"per_account_flag", l.quietPauseRelease != nil)
 	}
 	pusher := NewPusher(l.store, l.pusher, l.log, l.now, l.ops)
+	finalLag := newUsageFinalLagGauge(l.ops.Registry())
 	// One result slot per possible worker, including monitoring and delivery;
 	// a cancelled Run must not strand workers trying to report their exit.
 	errc := make(chan error, 12)
@@ -337,8 +343,11 @@ func (l *Loop) Run(ctx context.Context) error {
 				l.log.Warn("meter: job sampler tick failed",
 					slog.String("err", jerr.Error()))
 			}
-			sampleErr := errors.Join(err, jerr, pricingErr)
-			return errors.Join(sampleErr, l.recordFinancialSample(c, sampler, observedAt, sampleErr))
+			sampleErr := errors.Join(err, jerr)
+			if first := sampler.FirstIncompleteMinute(); !first.IsZero() {
+				finalLag.Set(observedAt.Sub(first).Seconds())
+			}
+			return errors.Join(sampleErr, pricingErr, l.recordFinancialSample(c, sampler, observedAt, sampleErr, pricingErr))
 		}, "sample")
 	}()
 	go func() { errc <- l.runQuotaTicks(ctx) }()

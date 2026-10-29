@@ -100,11 +100,21 @@ const (
 	LoginFailureEmailsTrackedMax = 100_000
 )
 
-// Self-service accounts (password and magic-link sign-up) one client
-// address, and one network (IPv4 /24, IPv6 /48), may create per day.
+// Self-service accounts (password, magic-link, Google and GitHub sign-up) one
+// client address, and one network (IPv4 /24, IPv6 /48), may create per day.
 const (
 	SignupAccountsPerAddressPerDay = 10
 	SignupAccountsPerNetworkPerDay = 50
+)
+
+// An agent connection's mcp-login key slides (ADR-20261028205920): each use
+// extends it to MCPLoginKeyIdle from now, never past MCPLoginKeyMaxAge after
+// it was created. A connection unused for a week ends; every one ends within
+// 30 days of consent.
+const (
+	MCPLoginKeyLabel  = "mcp-login"
+	MCPLoginKeyIdle   = 7 * 24 * time.Hour
+	MCPLoginKeyMaxAge = 30 * 24 * time.Hour
 )
 
 // AgentKeyLifetime is an agent key's default expiry (ADR-20261029085359):
@@ -7311,6 +7321,15 @@ const (
 	// lookup needed to resolve a narrower plan budget is temporarily
 	// unavailable, so lookup failures can never turn into infinite retry.
 	DurableRetryMaxAttempts = 25
+	// EventDeliveryRetryBaseSeconds, EventDeliveryRetryMaxSeconds and
+	// EventDeliveryRetryJitter pace the retries of a failed event delivery
+	// whose app sets no retry_policy (ADR-20261029190000): 5 s doubling to
+	// 5 minutes, ±20 %. The plan's MaxQueueAttempts still caps the attempts,
+	// so a delivery that keeps failing is dead-lettered after about 15 s on
+	// Hobby, 20 minutes on Pro and 95 minutes on Scale.
+	EventDeliveryRetryBaseSeconds = 5
+	EventDeliveryRetryMaxSeconds  = 300
+	EventDeliveryRetryJitter      = 0.2
 	// MaxAsyncRouteAgeSeconds bounds a customer-authored async edge
 	// rule age before the serving plan applies its lower deadline cap.
 	// The Scale plan currently owns the largest invocation deadline.
@@ -9443,6 +9462,22 @@ func (p Plan) PlanIncludedGBHours() int {
 	return l.IncludedGBHours
 }
 
+// DefaultOverageCapAllowances is the overage a paid plan's spend cap allows
+// by default, counted in the plan's included GB-RAM-hours at the overage
+// rate: the "2 × allowance" ceiling managed PostgreSQL uses with overage on
+// (ADR-20261025094915), so a runaway month costs at most one more allowance
+// unless the customer raises or clears the cap (ADR-20261029180000).
+const DefaultOverageCapAllowances = ManagedPostgresOverageCeilingMultiplier - 1
+
+// DefaultOverageCapCents returns the spend cap a paid plan starts with:
+// Hobby $2, Pro $10, Scale $30. Free stops at its allowance and has none.
+func (p Plan) DefaultOverageCapCents() (int64, bool) {
+	if !p.IsPaid() {
+		return 0, false
+	}
+	return int64(p.PlanIncludedGBHours()) * DefaultOverageCapAllowances * OverageMillicentsPerGBHour / MillicentsPerCent, true
+}
+
 // Valid reports whether p is a known plan.
 func (p Plan) Valid() bool {
 	_, ok := planLimits[p]
@@ -11043,11 +11078,12 @@ func (p Plan) TriggersAllowed() bool {
 	return l.TriggersAllowed
 }
 
+// externalTriggerKinds leaves out sqs_compat (delisted 2026-10-29): its
+// poller speaks no real SQS wire protocol, so no plan may create one.
 var externalTriggerKinds = []TriggerKind{
 	TriggerKindKafka,
 	TriggerKindNATS,
 	TriggerKindRedisStreams,
-	TriggerKindSQSCompat,
 	TriggerKindQueue,
 	TriggerKindRealtime,
 }
@@ -11058,7 +11094,7 @@ func (p Plan) AllowedTriggerKinds() []TriggerKind {
 	var kinds []TriggerKind
 	switch p {
 	case PlanHobby:
-		kinds = []TriggerKind{TriggerKindSQSCompat, TriggerKindQueue, TriggerKindRealtime}
+		kinds = []TriggerKind{TriggerKindQueue, TriggerKindRealtime}
 	case PlanPro, PlanScale:
 		kinds = externalTriggerKinds
 	}
