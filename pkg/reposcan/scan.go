@@ -178,6 +178,11 @@ type Workload struct {
 	// (ADR-576). Nil means the source declares none, so reconcile keeps the
 	// app's existing internal listeners; non-nil replaces them.
 	InternalPorts []api.WorkloadPort
+	// ListenerUnknown marks a worker whose prebuilt image the scan could not
+	// read, so it cannot tell whether the service listens. Reconcile keeps
+	// an existing app's serving class for it (ADR-20261029120000
+	// amendment 2).
+	ListenerUnknown bool
 
 	Class Class // http|graphql|grpc|job|worker|server|unknown
 	// composeDefaultWorker marks a Compose service that is a worker only
@@ -336,16 +341,21 @@ type Result struct {
 // merge rule can prefer an explicit source on a (RootDir, Name)
 // collision.
 func Scan(fsys fs.FS) (Result, error) {
-	return ScanWith(fsys, ScanOptions{})
+	return ScanWithOptions(fsys, ScanOptions{})
 }
 
 // KubernetesManifestsCapability is the product capability that releases
 // ScanOptions.KubernetesManifests (pkg/productcap/catalog.json).
 const KubernetesManifestsCapability = "kubernetes-manifests"
 
-// ScanOptions turns on scan behaviour a product capability releases per
-// account. The zero value is the behaviour every account gets.
+// ScanOptions extends Scan with lookups outside the repository and with
+// behaviour a product capability releases per account. The zero value
+// scans the repository alone, with the behaviour every account gets.
 type ScanOptions struct {
+	// ImageListening, when set, tells whether a prebuilt Compose image
+	// that a request-serving service depends on listens, so it can deploy
+	// as an HTTP service (ADR-20261029120000 amendment 2).
+	ImageListening ImageListening
 	// KubernetesManifests maps a Kubernetes container's resources,
 	// readiness/startup exec probe and process fields onto the workload,
 	// and reports the pod-spec fields it does not apply
@@ -353,10 +363,10 @@ type ScanOptions struct {
 	KubernetesManifests bool
 }
 
-// ScanWith is Scan with capability-gated behaviour. Every caller that
-// scans a project for an account must pass the same options for it, so a
-// push deploy and a reviewed deploy produce the same workloads.
-func ScanWith(fsys fs.FS, opts ScanOptions) (Result, error) {
+// ScanWithOptions is Scan with opts. Every caller that scans a project for
+// an account must pass the same capability options for it, so a push
+// deploy and a reviewed deploy produce the same workloads.
+func ScanWithOptions(fsys fs.FS, opts ScanOptions) (Result, error) {
 	var (
 		seeds             []workloadSeed
 		managed           []Managed
@@ -454,7 +464,7 @@ func ScanWith(fsys fs.FS, opts ScanOptions) (Result, error) {
 	if err := applyProjectConfig(fsys, workloads); err != nil {
 		return Result{}, err
 	}
-	warnings = append(warnings, classifyCalledComposeServices(fsys, workloads)...)
+	warnings = append(warnings, classifyCalledComposeServices(fsys, workloads, opts.ImageListening)...)
 	detectionWarnings = append(detectionWarnings, mergedDetectionWarnings(workloads)...)
 	sortDetectionWarnings(detectionWarnings)
 	for i := range workloads {

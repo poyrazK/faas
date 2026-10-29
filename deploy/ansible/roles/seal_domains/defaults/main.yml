@@ -24,6 +24,12 @@ faas_seal_domain_outbound_writes: ""
 # the rollback window. Required for writes=domain.
 faas_seal_domain_outbound_readers_verified: false
 
+# The contract step: outboundd drops the fleet identity and opens customer
+# credentials with the domain identity alone. Needs writes=domain, and the
+# role refuses it while `gregalectl seal-domain migrate --domain outbound
+# --check` finds a credential the fleet or host identity still opens.
+faas_seal_domain_outbound_contracted: false
+
 # Operator-local files from `gregalectl seal-domain init --domain runtime`.
 # Compute hosts stage the identity (vmmd reads it at start), control-plane
 # hosts the recipient (apid seals to it).

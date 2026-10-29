@@ -408,20 +408,20 @@ spec:
 }
 
 // TestScanWith_KubernetesManifestsReachesWorkloads — the option flows from
-// ScanWith through merge into the planned workload.
+// ScanWithOptions through merge into the planned workload.
 func TestScanWith_KubernetesManifestsReachesWorkloads(t *testing.T) {
 	t.Parallel()
 	for _, on := range []bool{false, true} {
-		result, err := ScanWith(k8sPodFS(k8sFullDeployment), ScanOptions{KubernetesManifests: on})
+		result, err := ScanWithOptions(k8sPodFS(k8sFullDeployment), ScanOptions{KubernetesManifests: on})
 		if err != nil {
-			t.Fatalf("ScanWith(%v): %v", on, err)
+			t.Fatalf("ScanWithOptions(%v): %v", on, err)
 		}
 		if len(result.Workloads) != 1 {
-			t.Fatalf("ScanWith(%v) workloads = %d, want 1", on, len(result.Workloads))
+			t.Fatalf("ScanWithOptions(%v) workloads = %d, want 1", on, len(result.Workloads))
 		}
 		w := result.Workloads[0]
 		if mapped := w.Resources != nil && w.ImageHealthcheck != nil && w.ImageProcess != nil; mapped != on {
-			t.Errorf("ScanWith(%v): resources=%+v healthcheck=%+v process=%+v", on, w.Resources, w.ImageHealthcheck, w.ImageProcess)
+			t.Errorf("ScanWithOptions(%v): resources=%+v healthcheck=%+v process=%+v", on, w.Resources, w.ImageHealthcheck, w.ImageProcess)
 		}
 	}
 }

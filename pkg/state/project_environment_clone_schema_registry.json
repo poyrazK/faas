@@ -3410,6 +3410,8 @@
       "vmmd_predecessor_incarnation",
       "vmmd_restart_notice_until",
       "vpcpus",
+      "wake_breaker_open_until",
+      "wake_breaker_reason",
       "zone"
     ],
     "kind": "platform_configuration"

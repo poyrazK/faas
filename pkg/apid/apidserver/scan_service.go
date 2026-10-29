@@ -1485,7 +1485,9 @@ func (s *server) scanService(
 		}
 	}
 
-	result, scanErr := reposcan.ScanWith(os.DirFS(req.ScanDir), s.projectScanOptions(acct))
+	scanOpts := s.projectScanOptions(acct)
+	scanOpts.ImageListening = s.imageListening
+	result, scanErr := reposcan.ScanWithOptions(os.DirFS(req.ScanDir), scanOpts)
 	if scanErr != nil {
 		return nil, state.Project{}, nil, nil, nil, nil, api.NewProblem(
 			http.StatusBadRequest, api.CodeSourceInvalid,

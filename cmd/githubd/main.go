@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -40,7 +41,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/gitfetch"
 	"github.com/onebox-faas/faas/pkg/githubd"
 	"github.com/onebox-faas/faas/pkg/githubdgrpc"
+	"github.com/onebox-faas/faas/pkg/imagelisten"
 	"github.com/onebox-faas/faas/pkg/reconcile"
+	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/sealdomain"
 	"github.com/onebox-faas/faas/pkg/secretbox"
@@ -189,6 +192,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	wire.RegisterPoolMetrics(ops, pool)
 	ghAud := audit.New(store, log, ops, "githubd")
 	ghReconcile := buildGithubdReconcileService(store, ghAud, log)
+	// Push deploys classify a prebuilt Compose image the way apid's plan does
+	// (ADR-20261029120000 amendment 2).
+	imageListening := imagelisten.NewRegistry().Listening
+	ghReconcile.Scan = func(fsys fs.FS, opts reposcan.ScanOptions) (reposcan.Result, error) {
+		opts.ImageListening = imageListening
+		return reposcan.ScanWithOptions(fsys, opts)
+	}
 
 	// PR-H: source fetcher for the push-dispatch path. The
 	// work dir is operator-configurable (default
