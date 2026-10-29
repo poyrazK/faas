@@ -554,7 +554,7 @@ func cmdTriggersRecordAction(args []string, retry bool) int {
 
 func cmdTriggersDLQ(args []string) int {
 	flags, pos := splitArgsForFlags(args)
-	usage := "usage: gregale trigger dlq <id> [--reason REASON]"
+	usage := "usage: gregale trigger dlq list <id> [--reason REASON]"
 	fs := triggerFlagSet("triggers-dlq", usage)
 	reason := fs.String("reason", "", "filter by dead-letter reason")
 	if err := fs.Parse(flags); err != nil {

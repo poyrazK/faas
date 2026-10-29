@@ -5899,7 +5899,7 @@ func cmdKeysGraceWindow(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale key grace-window [--reset | --days N]", "keys")
+		PrintUsage(os.Stderr, "usage: gregale key grace-window set [--reset | --days N]", "keys")
 		return 1
 	}
 	if *reset && *days >= 0 {

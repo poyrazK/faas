@@ -2318,7 +2318,7 @@ gregale mcp client read --app my-mcp --uri 'customer://records/example-1'
 gregale mcp client prompts --app my-mcp
 gregale mcp client render --app my-mcp --prompt summarize --arguments '{"text":"weekly report"}'
 gregale mcp client complete --app my-mcp --prompt summarize --argument style --value exec
-gregale mcp server config --app my-mcp --name my-mcp
+gregale mcp server export --app my-mcp --name my-mcp
 gregale mcp server watch --app my-mcp --baseline gregale-mcp.lock.json
 ```
 
@@ -3267,9 +3267,9 @@ gregale mcp server tasks status --app mcp-worker
 Use the observer onboarding commands before linking the worker:
 
 ```sh
-gregale mcp server tasks observer setup --app mcp-observer --worker-app mcp-worker --config ./gregale-mcp.json
-gregale mcp server tasks observer setup --app mcp-observer --worker-app mcp-worker --config ./gregale-mcp.json --apply
-gregale mcp server tasks observer status --app mcp-observer --worker-app mcp-worker --config ./gregale-mcp.json
+gregale mcp observer setup --app mcp-observer --worker-app mcp-worker --config ./gregale-mcp.json
+gregale mcp observer setup --app mcp-observer --worker-app mcp-worker --config ./gregale-mcp.json --apply
+gregale mcp observer status --app mcp-observer --worker-app mcp-worker --config ./gregale-mcp.json
 ```
 
 `observer setup` checks that Tasks are enabled, the observer entrypoint names
@@ -4025,7 +4025,7 @@ failed release; inspect the reported stage and reconcile candidate processes.
 
 #### Native deployment adapter and recovery
 
-Use `gregale mcp server tasks release --plan release.json --state release-state.json`
+Use `gregale mcp server tasks deploy --plan release.json --state release-state.json`
 to run the Task gate through Gregale's deployment APIs without custom hooks.
 The plan is JSON; source and policy paths are relative to the plan file:
 
@@ -4068,7 +4068,7 @@ have disappeared. The adapter never parks the web or observer apps.
 
 Keep the journal and its `.gate` checkpoint outside both source directories.
 They contain deployment/worker IDs and progress, never credentials. Use
-`gregale mcp server tasks release status --plan release.json --state release-state.json`
+`gregale mcp server tasks deploy status --plan release.json --state release-state.json`
 to inspect progress; rerun the same release command with the same source files,
 plan and journal to resume. Known candidate deployment IDs are reused; a
 promotion committed before its response was lost is reconciled against the
@@ -4097,7 +4097,7 @@ verification tests.
 
 ### Recovering a failed native Task rollout
 
-`gregale mcp server tasks release recover --plan release.json --state release-state.json`
+`gregale mcp server tasks deploy recover --plan release.json --state release-state.json`
 reads the actual serving revision, candidate endpoint and worker health, observer
 freshness, and previous worker readiness. Its JSON includes a `checks` list with
 individual `passed`/`failed` status and a detail for serving generation, candidate
@@ -4111,7 +4111,7 @@ Add `--resume` to continue the original release through its namespace-locked gat
 when candidate health and the serving-generation checks pass.
 
 For an incomplete rollout that already promoted its candidate web revision, use
-`gregale mcp server tasks release restore --plan release.json --state release-state.json`.
+`gregale mcp server tasks deploy restore --plan release.json --state release-state.json`.
 Restoration holds the same PostgreSQL namespace lock as deployment, verifies
 retained and admitted handlers, checks fresh previous workers, probes the exact
 previous web artifact against the pinned configuration and role policy, and
@@ -4139,7 +4139,7 @@ keep the sources pinned and do not modify a running release's journal or sources
 
 ### Quarantining and retiring recovered candidate workers
 
-After restoring web traffic, run `gregale mcp server tasks release quarantine --plan release.json --state release-state.json`
+After restoring web traffic, run `gregale mcp server tasks deploy quarantine --plan release.json --state release-state.json`
 to stop the journal's candidate worker IDs from acquiring new Task leases. This
 requires the restored web revision, healthy observer, and fresh, compatible
 previous worker generations. It holds the release namespace lock and fences
@@ -4148,7 +4148,7 @@ Heartbeats and expired-registration cleanup preserve the fence until confirmed
 shutdown or retirement removes it. Existing active handlers retain their leases and
 may finish; quarantine does not cancel Tasks or revoke leases during execution.
 
-Use `gregale mcp server tasks release retire --plan release.json --state release-state.json`
+Use `gregale mcp server tasks deploy retire --plan release.json --state release-state.json`
 to fence those workers, recheck replacement capacity and exact candidate
 generation/worker IDs, and park only the candidate worker app. Its stop grace
 must exceed the configured Task shutdown deadline. Graceful shutdown
@@ -5128,7 +5128,7 @@ to enable metadata checks. Supply the correct explicit OAuth or OIDC metadata UR
 for your provider. Then run:
 
 ```sh
-gregale mcp server monitor provider-check --app APP --role reader
+gregale mcp server monitor check --app APP --role reader
 gregale mcp server monitor connect --app APP --role reader
 ```
 
@@ -5207,7 +5207,7 @@ gregale mcp server retirements retry --id RETIREMENT_UUID --allow-active-grant-r
 For provider-console revocation, record your manual acknowledgement:
 
 ```sh
-gregale mcp server retirements acknowledge-manual --id RETIREMENT_UUID
+gregale mcp server retirements ack --id RETIREMENT_UUID
 ```
 
 History distinguishes `awaiting_issuance`, `pending`, `held`, `installed`,
@@ -5617,7 +5617,7 @@ Check a zero-traffic candidate or serving deployment through its public preview
 endpoint without moving traffic:
 
 ```sh
-gregale mcp server readiness --app my-mcp --release <deployment-uuid> \
+gregale mcp readiness --app my-mcp --release <deployment-uuid> \
   --token-env MCP_PROBE_TOKEN --baseline gregale-mcp.lock.json --json > readiness.json
 ```
 
@@ -5654,7 +5654,7 @@ probe itself; uploading a local success report cannot satisfy the gate.
 3. Deploy a zero-traffic candidate and record each role's platform probe:
 
 ```sh
-gregale mcp server readiness --app my-mcp --release <uuid> --record \
+gregale mcp readiness --app my-mcp --release <uuid> --record \
   --role reader --token-env MCP_READER_PROBE_TOKEN --json
 ```
 
@@ -5760,7 +5760,7 @@ Scheduled checks refresh expiring tokens under the existing connection lease and
 Explicit platform probes also use the managed connection:
 
 ```sh
-gregale mcp server readiness --app my-mcp --release <uuid> --role reader --record --json
+gregale mcp readiness --app my-mcp --release <uuid> --role reader --record --json
 ```
 
 Omit `--token-env` for an OAuth-bound role. Supplying a probe token header is rejected. The platform never exports the managed token. Local checks in a release policy continue to use their configured local credentials; platform evidence recording selects the managed connection automatically.
@@ -5807,8 +5807,8 @@ policies remain in `default`. Updating staging's catalog expectations or pinned
 OAuth connection requires new staging evidence; production evidence stays valid.
 
 ```sh
-gregale mcp server readiness policy get --app my-mcp --env staging
-gregale mcp server readiness policy set --app my-mcp --env staging --file staging-readiness.json
+gregale mcp readiness policy get --app my-mcp --env staging
+gregale mcp readiness policy set --app my-mcp --env staging --file staging-readiness.json
 ```
 
 The file contains the existing policy fields, `expected_revision` from the selected
@@ -5833,11 +5833,11 @@ existing behavior. Existing serving traffic and traffic decreases continue.
 Inspect policy revisions separately for each environment:
 
 ```sh
-gregale mcp server readiness policy history --app my-mcp --env staging --limit 20
-gregale mcp server readiness policy history --app my-mcp --env staging --before-revision <cursor>
-gregale mcp server readiness policy diff --app my-mcp --env staging --from-revision <old-revision>
-gregale mcp server readiness policy diff --app my-mcp --env staging --from-revision <old-revision> --to-revision <new-revision>
-gregale mcp server readiness policy restore --app my-mcp --env staging --revision <old-revision> --expected-revision <current-revision> --reason 'Restore reviewed catalog expectations'
+gregale mcp readiness policy history --app my-mcp --env staging --limit 20
+gregale mcp readiness policy history --app my-mcp --env staging --before-revision <cursor>
+gregale mcp readiness policy diff --app my-mcp --env staging --from-revision <old-revision>
+gregale mcp readiness policy diff --app my-mcp --env staging --from-revision <old-revision> --to-revision <new-revision>
+gregale mcp readiness policy restore --app my-mcp --env staging --revision <old-revision> --expected-revision <current-revision> --reason 'Restore reviewed catalog expectations'
 ```
 
 History contains author, time, audit reason and restore provenance. Diffs compare
@@ -5897,8 +5897,8 @@ next observed breach.
 Inspect events and delivery attempts for one environment:
 
 ```sh
-gregale mcp server readiness incidents --app my-mcp --env staging --limit 20
-gregale mcp server readiness incidents --app my-mcp --env staging --cursor '<next_before>'
+gregale mcp readiness incidents --app my-mcp --env staging --limit 20
+gregale mcp readiness incidents --app my-mcp --env staging --cursor '<next_before>'
 ```
 
 The read-only `GET /v1/apps/{slug}/mcp-readiness-incidents` endpoint accepts
@@ -5981,7 +5981,7 @@ suppressed delivery state.
 Inspect delivery separately from MCP readiness:
 
 ```sh
-gregale mcp server readiness notifications list --app demo --env production
+gregale mcp readiness notification list --app demo --env production
 ```
 
 The API is `GET /v1/apps/{slug}/mcp-readiness-notifications`, with optional
@@ -5996,7 +5996,7 @@ pending suppression until the evaluator next reconciles it.
 After fixing a receiver, use the head's current `event_id` and `delivery_version`:
 
 ```sh
-gregale mcp server readiness notifications retry --app demo \
+gregale mcp readiness notification retry --app demo \
   --event EVENT_UUID --expected-version 2 --request-id REQUEST_UUID \
   --reason 'Receiver credentials repaired'
 ```
@@ -6035,16 +6035,16 @@ resolving it. Initial failure, recovery and maintenance-end notifications contin
 only reminders pause. An in-flight reminder may finish.
 
 ```sh
-gregale mcp server readiness attention list --app demo --env production
-gregale mcp server readiness attention acknowledge --app demo --incident '<incident UUID>' \
+gregale mcp readiness attention list --app demo --env production
+gregale mcp readiness attention acknowledge --app demo --incident '<incident UUID>' \
   --expected-version 0 --request-id '<stable decision UUID>' \
   --reason 'Investigating provider outage' --expires-at 2026-10-18T12:00:00+03:00
-gregale mcp server readiness attention release --app demo --incident '<incident UUID>' \
+gregale mcp readiness attention release --app demo --incident '<incident UUID>' \
   --expected-version 1 --request-id '<new stable decision UUID>' --reason 'Handing back to on-call'
-gregale mcp server readiness attention configure --app demo --incident '<incident UUID>' \
+gregale mcp readiness attention configure --app demo --incident '<incident UUID>' \
   --expected-version 2 --request-id '<new stable decision UUID>' --reason 'Remind during investigation' \
   --interval 15m --max-reminders 3
-gregale mcp server readiness attention history --app demo --incident '<incident UUID>' --limit 20
+gregale mcp readiness attention history --app demo --incident '<incident UUID>' --limit 20
 ```
 
 Use the current `version` from attention inspection for each new decision. Versions
@@ -6099,12 +6099,12 @@ primary is unavailable. Fallback is disabled by default. Read the policy with re
 scope and MFA; replacing it requires admin scope and MFA:
 
 ```sh
-gregale mcp server readiness fallback get --app demo --rule '<rule UUID>'
+gregale mcp readiness fallback get --app demo --rule '<rule UUID>'
 # Set MCP_FALLBACK_SECRET through your secret manager before this command.
-gregale mcp server readiness fallback set --app demo --rule '<rule UUID>' \
+gregale mcp readiness fallback set --app demo --rule '<rule UUID>' \
   --expected-version 0 --webhook-url https://fallback.example.com/alerts \
   --secret-env MCP_FALLBACK_SECRET --after-failures 3
-gregale mcp server readiness fallback disable --app demo --rule '<rule UUID>' \
+gregale mcp readiness fallback disable --app demo --rule '<rule UUID>' \
   --expected-version 1
 ```
 
@@ -6186,7 +6186,7 @@ The dashboard exposes these receiver controls, and the Go, Node and Python SDKs
 include the same fields.
 
 ```sh
-gregale mcp server readiness notifications retry --app demo \
+gregale mcp readiness notification retry --app demo \
   --destination primary --event EVENT_UUID --expected-version VERSION \
   --request-id REQUEST_UUID --reason 'Primary receiver repaired'
 ```
@@ -6208,10 +6208,10 @@ for future incidents. The MCP dashboard provides “Save reminder defaults” an
 “Disable future reminders” controls beside each readiness webhook alert.
 
 ```sh
-gregale mcp server readiness reminder-defaults get --app demo --rule RULE_UUID
-gregale mcp server readiness reminder-defaults set --app demo --rule RULE_UUID \
+gregale mcp readiness reminder get --app demo --rule RULE_UUID
+gregale mcp readiness reminder set --app demo --rule RULE_UUID \
   --expected-version 0 --interval-seconds 300 --max-reminders 3
-gregale mcp server readiness reminder-defaults disable --app demo --rule RULE_UUID \
+gregale mcp readiness reminder disable --app demo --rule RULE_UUID \
   --expected-version 1
 ```
 
@@ -6337,14 +6337,14 @@ preserved, and already resolved incidents are never reopened.
    server captures the integration fingerprint and US/EU region automatically.
 
 ```sh
-gregale mcp server readiness pagerduty acknowledgements get --app demo --rule RULE_UUID
+gregale mcp readiness pagerduty acknowledgements get --app demo --rule RULE_UUID
 export PAGERDUTY_WEBHOOK_SECRET=YOUR_SUBSCRIPTION_SIGNING_SECRET
-gregale mcp server readiness pagerduty acknowledgements set --app demo --rule RULE_UUID \
+gregale mcp readiness pagerduty acknowledgements set --app demo --rule RULE_UUID \
   --expected-version 0 --expected-pagerduty-version 1 --service-id PSVC001 \
   --secret-env PAGERDUTY_WEBHOOK_SECRET
-gregale mcp server readiness pagerduty acknowledgements events --app demo --rule RULE_UUID \
+gregale mcp readiness pagerduty acknowledgements events --app demo --rule RULE_UUID \
   --limit 20
-gregale mcp server readiness pagerduty acknowledgements disable --app demo --rule RULE_UUID \
+gregale mcp readiness pagerduty acknowledgements disable --app demo --rule RULE_UUID \
   --expected-version 1
 ```
 
@@ -6435,10 +6435,10 @@ A blocked primary queue can activate fallback with `primary_queue_blocked` as be
 
 ```sh
 # Set the integration key through your secret manager first.
-gregale mcp server readiness fallback set --app demo --rule RULE_UUID \
+gregale mcp readiness fallback set --app demo --rule RULE_UUID \
   --expected-version 0 --provider pagerduty --region eu \
   --key-env PAGERDUTY_FALLBACK_KEY --after-failures 3
-gregale mcp server readiness fallback get --app demo --rule RULE_UUID
+gregale mcp readiness fallback get --app demo --rule RULE_UUID
 ```
 
 GET/PUT `/v1/apps/{slug}/alerts/{id}/mcp-readiness-fallback` accepts the same
@@ -6476,9 +6476,9 @@ or disabling future fallback cannot silently discard an outstanding recovery.
 Signed acknowledgement sync can select the native fallback:
 
 ```sh
-gregale mcp server readiness pagerduty acknowledgements get --app demo --rule RULE_UUID --destination fallback
+gregale mcp readiness pagerduty acknowledgements get --app demo --rule RULE_UUID --destination fallback
 # Create the v3 subscription using webhook_path as described above.
-gregale mcp server readiness pagerduty acknowledgements set --app demo --rule RULE_UUID \
+gregale mcp readiness pagerduty acknowledgements set --app demo --rule RULE_UUID \
   --expected-version 0 --destination fallback --expected-fallback-version 1 \
   --service-id PSVC001 --secret-env PAGERDUTY_FALLBACK_WEBHOOK_SECRET
 ```
@@ -6518,10 +6518,10 @@ Configure both primary and fallback acknowledgement sync on the same readiness
 rule. Read each binding explicitly before creating its PagerDuty v3 subscription:
 
 ```sh
-gregale mcp server readiness pagerduty acknowledgements get --app demo --rule RULE_UUID --destination primary
-gregale mcp server readiness pagerduty acknowledgements get --app demo --rule RULE_UUID --destination fallback
+gregale mcp readiness pagerduty acknowledgements get --app demo --rule RULE_UUID --destination primary
+gregale mcp readiness pagerduty acknowledgements get --app demo --rule RULE_UUID --destination fallback
 # Use each response's webhook_path with your API origin and a separate signing secret.
-gregale mcp server readiness pagerduty acknowledgements disable --app demo --rule RULE_UUID \
+gregale mcp readiness pagerduty acknowledgements disable --app demo --rule RULE_UUID \
   --destination fallback --expected-version 1
 ```
 
@@ -6576,7 +6576,7 @@ to acknowledgement-only; other provider events, including `incident.resolved`,
 never change readiness health. Probes remain authoritative for recovery.
 
 ```sh
-gregale mcp server readiness pagerduty acknowledgements set --app demo --rule RULE_UUID \
+gregale mcp readiness pagerduty acknowledgements set --app demo --rule RULE_UUID \
   --destination primary --expected-version CURRENT_BINDING_VERSION \
   --expected-pagerduty-version CURRENT_PRIMARY_VERSION --service-id PSVC001 \
   --secret-env PAGERDUTY_WEBHOOK_SECRET --sync-unacknowledgements

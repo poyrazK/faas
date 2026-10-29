@@ -339,7 +339,7 @@ until the copy is ready and its credentials are verified:
 5. **Resume.** The fence lifts. The first request cold-boots the target with
    the copy's credentials.
 
-Until the switch reaches step 4, any failure (or `gregale rollback switch
+Until the switch reaches step 4, any failure (or `gregale release rollback status
 my-api <id> --cancel`) unwinds it, and the app keeps serving its current
 release on the original database. The restored copy is kept either way;
 delete it with `gregale postgres delete` if you do not need it.
@@ -474,7 +474,7 @@ gregale release approval pending                 # releases waiting right now
 gregale release approve <deployment> --comment "canary looks clean"
 gregale release reject <deployment> --reason "checkout latency is up"
 gregale release approval status <deployment>
-gregale release approval off
+gregale release approval disable
 ```
 
 A production release is one to the default scope or to the project's
@@ -1509,7 +1509,7 @@ health generation and available operator action. For a health-gated HTTP promoti
 including supported production push workers:
 
 ```bash
-gregale environment abort shop PROMOTION_ID --to production --generation 7 --wait
+gregale environment cancel shop PROMOTION_ID --to production --generation 7 --wait
 # After a blocked restoration and dependency repair, inspect status again:
 gregale environment recover shop PROMOTION_ID --to production --generation 12 --wait
 ```

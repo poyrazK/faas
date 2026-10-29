@@ -10,7 +10,7 @@ import (
 
 func cmdBucketEncryptionKeys(args []string) int {
 	if len(args) != 2 || args[0] == "" {
-		PrintUsage(osStderr, "usage: gregale bucket encryption-keys <app> <bucket-id>", "bucket")
+		PrintUsage(osStderr, "usage: gregale bucket encryption keys <app> <bucket-id>", "bucket")
 		return 1
 	}
 	if _, err := uuid.Parse(args[1]); err != nil {

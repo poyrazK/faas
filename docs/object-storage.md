@@ -447,9 +447,9 @@ itself a canonical UUID, use its bucket ID for a same-bucket copy. Other
 same-bucket names keep their current behavior.
 
 ```sh
-gregale bucket copy-sources grant <destination-app> <destination-bucket-id> <credential-id> <source-bucket-id> 'allowed/'
-gregale bucket copy-sources list <destination-app> <destination-bucket-id> <credential-id>
-gregale bucket copy-sources revoke <destination-app> <destination-bucket-id> <credential-id> <source-bucket-id>
+gregale bucket copy-source grant <destination-app> <destination-bucket-id> <credential-id> <source-bucket-id> 'allowed/'
+gregale bucket copy-source list <destination-app> <destination-bucket-id> <credential-id>
+gregale bucket copy-source revoke <destination-app> <destination-bucket-id> <credential-id> <source-bucket-id>
 ```
 
 Use `CopySource: "<source-bucket-id>/allowed/object"` in CopyObject or
@@ -2041,7 +2041,7 @@ without a new enabled-key probe. Enrollment removal or remapping defers recovery
 
 ### Explicit encryption through the S3 gateway
 
-Use `gregale bucket encryption-keys <app> <bucket-id>` or
+Use `gregale bucket encryption keys <app> <bucket-id>` or
 `GET /v1/apps/{slug}/buckets/{bucket}/encryption-capabilities` to discover the
 placement's algorithms and your enrolled key references. Discovery requires
 storage write scope and a bucket write grant. It reports enrollment and makes
@@ -2192,7 +2192,7 @@ gregale bucket object-lock set capabilities <app> <bucket-id>
 gregale bucket object-lock set enable <app> <bucket-id>
 gregale bucket object-lock set COMPLIANCE <app> <bucket-id> --days 7 --event-years 1
 gregale bucket object-lock set status <app> <bucket-id>
-gregale bucket object-lock set clear-default <app> <bucket-id>
+gregale bucket object-lock clear <app> <bucket-id>
 ```
 
 [ADR-584](adr/584-durable-object-version-protection.md) adds the per-version

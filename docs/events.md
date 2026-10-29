@@ -927,7 +927,7 @@ routing outcomes and replay requests for one published event, use
 `events fanout-history`:
 
 ```bash
-gregale event fanout-history APP \
+gregale event fanout history APP \
   --event-source billing.stripe \
   --event-id evt-123
 ```
@@ -1402,7 +1402,7 @@ Before switching a producer to a new version, check consumer version coverage
 and validate event data with a read-only rollout preview:
 
 ```sh
-gregale event schema-rollout-preview billing.stripe invoice.paid \
+gregale event schema check billing.stripe invoice.paid \
   --version v2 --schema @invoice-v2.schema.json \
   --samples @invoice-samples.json \
   --from 2026-10-01T00:00:00Z --until 2026-10-08T00:00:00Z \
@@ -1672,7 +1672,7 @@ Opt in when creating a routing or execution recovery job:
 ```sh
 gregale event recovery-preview APP --protect-receipts
 gregale event recovery create APP --protect-receipts --rate 2 --yes
-gregale event recovery-preflight JOB_ID
+gregale event recovery check JOB_ID
 gregale event retention --app APP
 ```
 
@@ -1966,8 +1966,8 @@ healthy zero. Scheduler stalls and expiry risks remain separate metrics. See
 Assess a frozen recovery job before resuming it:
 
 ```sh
-gregale event recovery-preflight JOB_ID
-gregale event recovery-preflight JOB_ID --json
+gregale event recovery check JOB_ID
+gregale event recovery check JOB_ID --json
 ```
 
 Preflight is read-only. It reports all pending items as currently eligible,
@@ -2109,8 +2109,8 @@ fields. See [ADR-916](adr/916-parent-scoped-execution-recovery-retries.md).
 ### Inspect recovery notification delivery
 
 ```bash
-gregale event recovery-notifications JOB_ID
-gregale event recovery-notifications JOB_ID --json
+gregale event recovery-notification list JOB_ID
+gregale event recovery-notification list JOB_ID --json
 ```
 
 This read-only report separates admission notification capture from execution
@@ -2173,7 +2173,7 @@ are lower bounds. Historical jobs can remain unknown until retention pruning.
 The bound limits report observations, while finding candidates can scan retained
 metadata within the existing five-second request budget. Reads do not capture,
 relay, retry, or mutate notification state. Use
-`gregale event recovery-notifications JOB_ID` for each receiver's evidence.
+`gregale event recovery-notification list JOB_ID` for each receiver's evidence.
 
 Eight optional app-scoped webhook alert metrics are available:
 `event_recovery_notification_{admission,execution}_{overdue,dead,unknown,no_receivers}_jobs`.
@@ -2252,15 +2252,15 @@ before API rollout. See [ADR-920](adr/920-selective-recovery-notification-retrie
 List saved decisions for a retained recovery job:
 
 ```bash
-gregale event recovery-notification-retry-history JOB_ID
-gregale event recovery-notification-retry-history JOB_ID --json
+gregale event recovery-notification history JOB_ID
+gregale event recovery-notification history JOB_ID --json
 ```
 
 Inspect one request and compare its frozen queued/skipped result with the latest
 retained delivery state:
 
 ```bash
-gregale event recovery-notification-retry-history JOB_ID --request-id REQUEST_ID
+gregale event recovery-notification history JOB_ID --request-id REQUEST_ID
 ```
 
 The summary shows decision time and queued/skipped counts. Detail shows each
@@ -2280,12 +2280,12 @@ Go, Node, and Python expose list and detail methods. See
 
 Request-specific notification retry history also reports `retry_outcome` for the originally queued `replay_generation`: `pending`, `succeeded`, `failed`, or `unknown`. Skipped decisions report `not_applicable`. Retained terminal attempts establish success/failure and `completed_at`; a later delivery generation cannot establish the earlier generation's outcome. Removed evidence reports unknown.
 
-`retained_attempt_count` counts completed attempts from that generation only. `attempt_count_complete` indicates whether the retained sequence is complete for the known outcome; unknown outcomes always report false. Attempts still in flight are excluded. Read these fields using `gregale event recovery-notification-retry-history JOB_ID --request-id REQUEST_ID --json` or the existing request detail API/SDK method.
+`retained_attempt_count` counts completed attempts from that generation only. `attempt_count_complete` indicates whether the retained sequence is complete for the known outcome; unknown outcomes always report false. Attempts still in flight are excluded. Read these fields using `gregale event recovery-notification history JOB_ID --request-id REQUEST_ID --json` or the existing request detail API/SDK method.
 
 ### Wait for a saved notification retry
 
 ```bash
-gregale event recovery-notification-retry-history JOB_ID \
+gregale event recovery-notification history JOB_ID \
   --request-id REQUEST_ID --wait --timeout 5m --json
 ```
 
@@ -2309,12 +2309,12 @@ The retry history list now includes `succeeded_count`, `failed_count`, `pending_
 
 `status` is `failed` if any queued generation failed, otherwise `inconclusive` for unknown evidence or no queued targets, otherwise `pending` while any target remains pending, otherwise `succeeded`. Later retries do not establish earlier generation outcomes. `completed_at` is the latest terminal attempt finish time and appears only when every queued target has a known terminal outcome and at least one target was queued.
 
-`evidence_complete` requires known outcomes and complete retained attempt sequences for every queued target. An intact terminal attempt can prove success or failure even when earlier attempts are missing; completeness remains false in that case. All-skipped requests have complete empty evidence but are inconclusive. Removed deliveries remain unknown. Use `gregale event recovery-notification-retry-history JOB_ID --json` to scan request summaries, then inspect an individual request for receiver details.
+`evidence_complete` requires known outcomes and complete retained attempt sequences for every queued target. An intact terminal attempt can prove success or failure even when earlier attempts are missing; completeness remains false in that case. All-skipped requests have complete empty evidence but are inconclusive. Removed deliveries remain unknown. Use `gregale event recovery-notification history JOB_ID --json` to scan request summaries, then inspect an individual request for receiver details.
 
 ### Filter unresolved notification retry requests
 
 ```bash
-gregale event recovery-notification-retry-history JOB_ID \
+gregale event recovery-notification history JOB_ID \
   --status failed,inconclusive --json
 ```
 
@@ -2327,7 +2327,7 @@ Go callers can pass `api.EventRecoveryNotificationRetryHistoryQuery{Status: "fai
 ### App-wide notification retry backlog
 
 ```bash
-gregale event notification-retry-backlog my-app \
+gregale event notification-retry list my-app \
   --status failed,pending,inconclusive --page-size 5 --json
 ```
 
@@ -2342,7 +2342,7 @@ Every page is a fresh read-only snapshot with its own `observed_at`. Restart wit
 To inspect or prepare a retry after finding a request:
 
 ```bash
-gregale event recovery-notification-retry-history JOB_ID --request-id REQUEST_ID --json
+gregale event recovery-notification history JOB_ID --request-id REQUEST_ID --json
 gregale event recovery-notification-retry-preview JOB_ID --json
 ```
 
@@ -2422,9 +2422,9 @@ The CLI always prints JSON. Go exposes `PublishAppEvent`; Node and Python expose
 ### Reconcile an application producer key without republishing
 
 ```sh
-gregale event publish-app-status my-app --key order-123-created --json
+gregale event publication get my-app --key order-123-created --json
 # Continue the bounded consumer evidence page:
-gregale event publish-app-status my-app --key order-123-created --after CURSOR --limit 100 --json
+gregale event publication get my-app --key order-123-created --after CURSOR --limit 100 --json
 ```
 
 `GET /v1/apps/{slug}/events/publish-status?key=KEY` derives the same identity as app-key publishing and only reads retained receipts. It requires apps:read/admin, MFA and existing app ownership and rate limits. The exact original key is required; optional expected_accepted_at pins a saved receipt instant. Repeated, empty, unknown or malformed query parameters are rejected. No publish, claim, replay or retention refresh occurs.
@@ -2446,7 +2446,7 @@ The CLI always prints JSON and exits 2 for unavailable, 0 for retained acceptanc
 ### Verify original publication content without publishing
 
 ```sh
-gregale event publish-app-verify my-app --file event.json --json
+gregale event publication verify my-app --file event.json --json
 ```
 
 `POST /v1/apps/{slug}/events/verify-publication` accepts the same original JSON body as app-key publishing, including its exact key, type, data and optional schema version/time. Despite POST, it only reads: apps:read/admin, MFA, app ownership and rate limits apply. It accepts only the optional expected_accepted_at query guard and uses the existing 1 MiB body limit and five-second deadline.
@@ -2466,8 +2466,8 @@ Go exposes `VerifyAppEventPublication`; Node and Python expose `verifyAppEventPu
 ### Pin reconciliation to a saved acceptance
 
 ```sh
-gregale event publish-app-status my-app --key order-123-created --expected-accepted-at '2026-10-09T12:34:56.123456Z' --json
-gregale event publish-app-verify my-app --file event.json --expected-accepted-at '2026-10-09T12:34:56.123456Z' --json
+gregale event publication get my-app --key order-123-created --expected-accepted-at '2026-10-09T12:34:56.123456Z' --json
+gregale event publication verify my-app --file event.json --expected-accepted-at '2026-10-09T12:34:56.123456Z' --json
 ```
 
 Copy the exact `accepted_at` from the saved receipt, including its fractional digits. Both existing read endpoints accept optional `expected_accepted_at` in the query string. Verification still takes the original publish body. Timestamps must be nonzero RFC3339 with up to nanosecond precision; offset spellings compare by the exact UTC instant. No rounding or tolerance is applied.
