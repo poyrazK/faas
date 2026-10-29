@@ -98,14 +98,19 @@ func runEnvironmentGitOpsNative(t *testing.T, providerName string) {
 	}
 	// Graph activation publishes a project release set, which requires a
 	// revision pin TTL on every project app; without one it never activates.
+	// Queue deliveries route through the app's node, which apid would assign.
+	node, err := store.ComputeNodeByName(t.Context(), state.DefaultLocalNodeName)
+	if err != nil {
+		t.Fatal(err)
+	}
 	app, err := store.CreateApp(t.Context(), state.App{AccountID: account.ID, ProjectID: project.ID, Slug: "shop-api",
-		WorkloadName: "api", Type: state.AppTypeApp, Status: state.AppActive,
+		WorkloadName: "api", Type: state.AppTypeApp, Status: state.AppActive, NodeID: node.ID,
 		RAMMB: 256, MaxConcurrency: 1, Manifest: state.AppManifest{Port: 8080, StartupDeadlineS: 30, RevisionPinTTLSeconds: 3600}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	worker, err := store.CreateApp(t.Context(), state.App{AccountID: account.ID, ProjectID: project.ID, Slug: "shop-worker",
-		WorkloadName: "worker", Type: state.AppTypeApp, Status: state.AppActive,
+		WorkloadName: "worker", Type: state.AppTypeApp, Status: state.AppActive, NodeID: node.ID,
 		WorkloadClass: state.WorkloadClassWorker, RAMMB: 256, MaxConcurrency: 1,
 		Manifest: state.AppManifest{Port: 8080, ExecutionMode: api.ExecutionModeWorker, StartupDeadlineS: 30, RevisionPinTTLSeconds: 3600}})
 	if err != nil {
