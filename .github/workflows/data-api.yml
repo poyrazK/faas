@@ -167,4 +167,6 @@ jobs:
           GOGC: 30
           GOMEMLIMIT: 2GiB
           GOMAXPROCS: 2
-        run: go test -p 1 ./pkg/managedpostgres/... ./cmd/gregale ./pkg/gregalemanifest -count=1
+        # cmd/gregale alone takes 8.5–10 min at GOMAXPROCS=2, past go test's
+        # 10 min default; the job's own limit is 45 min.
+        run: go test -p 1 -timeout 20m ./pkg/managedpostgres/... ./cmd/gregale ./pkg/gregalemanifest -count=1
