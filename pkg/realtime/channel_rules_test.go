@@ -118,8 +118,25 @@ func TestChannelRulesAllowEdgeCases(t *testing.T) {
 		{"no principal", endpoint, JWTIdentity{Claims: identity.Claims}, "org:o1:room", false},
 		{"activity scope uses the callback", endpoint, identity, activity, false},
 	} {
-		if got := channelRulesAllow(tc.endpoint, tc.identity, tc.channel); got != tc.want {
+		if got := channelRulesAllow(tc.endpoint, tc.identity, tc.channel, false); got != tc.want {
 			t.Errorf("%s: %v, want %v", tc.name, got, tc.want)
+		}
+	}
+	// adr: 369 — a read rule does not grant presence state or signals.
+	presence := &Endpoint{ChannelRules: []api.RealtimeChannelRule{{Pattern: "org:{org_id}:room:*", Read: true, Presence: true}, {Pattern: "org:{org_id}:feed", Read: true}}}
+	for _, tc := range []struct {
+		channel        string
+		read, presence bool
+	}{
+		{"org:o1:room:lobby", true, true},
+		{"org:o1:feed", true, false},
+		{"org:o2:room:lobby", false, false},
+	} {
+		if got := channelRulesAllow(presence, identity, tc.channel, false); got != tc.read {
+			t.Errorf("%s read: %v, want %v", tc.channel, got, tc.read)
+		}
+		if got := channelRulesAllow(presence, identity, tc.channel, true); got != tc.presence {
+			t.Errorf("%s presence: %v, want %v", tc.channel, got, tc.presence)
 		}
 	}
 	if got := channelRuleClaims([]api.RealtimeChannelRule{{Pattern: "org:{org_id}:{sub}"}, {Pattern: "t:{org_id}:{team}"}}); !slices.Equal(got, []string{"org_id", "team"}) {

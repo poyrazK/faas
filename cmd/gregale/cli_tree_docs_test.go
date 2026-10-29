@@ -25,7 +25,7 @@ var cliTreeDocs = []string{
 }
 
 // cliTreeDocsGenerated are rendered from the manifest, not edited.
-var cliTreeDocsGenerated = []string{"../../docs/cli-reference.md"}
+var cliTreeDocsGenerated = []string{"../../docs/cli-reference.md", "../../docs/cli-command-tree.md"}
 
 // customerDocPages returns the docs site's page sources.
 func customerDocPages(t *testing.T, dir string) []string {
@@ -56,32 +56,64 @@ func customerDocPages(t *testing.T, dir string) []string {
 // after those, which can change what the words mean (`app api --ram 512`).
 var cliTreeCommandWords = regexp.MustCompile(`\bgregale((?: [a-z0-9][a-z0-9._/-]*)+)( --?[a-z][a-z0-9-]*)?`)
 
+// cliTreeCommandFlags matches the flags of one command, up to the next
+// shell operator.
+var cliTreeCommandFlags = regexp.MustCompile(`^[^|;&)]*`)
+
+// cliTreeFlagToken matches a long flag and what ends it.
+var cliTreeFlagToken = regexp.MustCompile(`--([a-z][a-z0-9-]*)([= ]|$)`)
+
 // spellDocLine rewrites the commands inside the code spans of line, or the
-// whole line in a code block, in the tree's names. A spelling that would
-// move the flag after the words is left alone: the rest of the line
-// follows that flag.
+// whole line in a code block, in the tree's names: the command path, and
+// each flag that has a canonical spelling (ADR-20261026145832 step 4). A
+// spelling that would move the flag after the words is left alone: the
+// rest of the line follows that flag.
 func spellDocLine(line string, inBlock bool) string {
-	spell := func(code string) string {
-		return cliTreeCommandWords.ReplaceAllStringFunc(code, func(match string) string {
-			words := strings.Fields(strings.TrimPrefix(match, "gregale"))
-			spelled, ok := main.CliTreeSpelling(words)
-			if !ok {
-				return match
-			}
-			if last := words[len(words)-1]; strings.HasPrefix(last, "-") && spelled[len(spelled)-1] != last {
-				return match
-			}
-			return "gregale " + strings.Join(spelled, " ")
-		})
-	}
 	if inBlock {
-		return spell(line)
+		return spellDocCode(line)
 	}
 	parts := strings.Split(line, "`")
 	for i := 1; i < len(parts); i += 2 {
-		parts[i] = spell(parts[i])
+		parts[i] = spellDocCode(parts[i])
 	}
 	return strings.Join(parts, "`")
+}
+
+// spellDocCode respells every gregale command in a piece of code.
+func spellDocCode(code string) string {
+	var out strings.Builder
+	for {
+		loc := cliTreeCommandWords.FindStringSubmatchIndex(code)
+		if loc == nil {
+			out.WriteString(code)
+			return out.String()
+		}
+		out.WriteString(code[:loc[0]])
+		words := strings.Fields(code[loc[2]:loc[3]])
+		head := "gregale " + strings.Join(words, " ")
+		lookup := words
+		if loc[4] >= 0 {
+			lookup = append(append([]string{}, words...), strings.TrimSpace(code[loc[4]:loc[5]]))
+		}
+		if spelled, ok := main.CliTreeSpelling(lookup); ok {
+			if loc[4] < 0 {
+				head = "gregale " + strings.Join(spelled, " ")
+			} else if spelled[len(spelled)-1] == lookup[len(lookup)-1] {
+				head = "gregale " + strings.Join(spelled[:len(spelled)-1], " ")
+			}
+		}
+		rest := code[loc[3]:]
+		flags := cliTreeCommandFlags.FindString(rest)
+		flags = cliTreeFlagToken.ReplaceAllStringFunc(flags, func(token string) string {
+			name := cliTreeFlagToken.FindStringSubmatch(token)
+			if canonical, ok := main.CliTreeCanonicalFlag(words, name[1]); ok {
+				return "--" + canonical + name[2]
+			}
+			return token
+		})
+		out.WriteString(head + flags)
+		code = rest[len(cliTreeCommandFlags.FindString(rest)):]
+	}
 }
 
 // spellDoc rewrites a page's commands in the tree's names.

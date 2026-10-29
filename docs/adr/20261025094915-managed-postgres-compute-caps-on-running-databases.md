@@ -169,6 +169,21 @@ The owner decided the policy on 2026-10-25.
      read as `spec_mismatch` everywhere. First, the adapter must report the
      plan limit as the spec and the enforced limit separately.
 
+   *Amended in delivery:* the adapter cannot report the spec's limit on its
+   own, because Neon keeps only the one quota and `Inspect` gets only the
+   resource ID. Instead, every place that reads a provider observation of a
+   known database (the reconciler, the health collector, a resize and the
+   pipeline SQL check) reads it through `SpecForObservation`. A storage limit
+   above zero and below the spec's reads as the spec's: the pool only ever
+   lowers it, and a resize never changes it. A limit above the spec's, zero
+   (no limit to Neon), and every other difference still read as drift. A limit
+   someone lowers by hand at Neon no longer reads as drift; once the pool is
+   enforced, its next sweep rewrites that limit.
+   - Neon applies `logical_size_bytes` to each branch, not to the project.
+     A restore is a branch in its source's project, so the two share one
+     quota value, and the enforcer has to size it for every branch in the
+     project.
+
 10. **Shadow before enforce.** `FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT` on apid:
     - `shadow` (the default for the first release): computes every quota, logs
       it and exports it as metrics, but sends nothing to the provider.
@@ -232,7 +247,11 @@ Each step is its own PR, in this order:
    passes every check. Then an operator step: `on` in staging, then in
    production, after a shadow week whose logged quotas match the ledger. The
    warning emails (step 3) land before `on`.
-6. The storage pool (decision 9).
+6. The storage pool (decision 9), in three PRs:
+   - observations read a pool-lowered storage limit as the spec's;
+   - the Neon storage quota and the enforcer's storage pass, in shadow first;
+   - the staging qualification of Neon's per-branch write blocking, which
+     `on` requires for storage.
 
 ## Release compatibility
 

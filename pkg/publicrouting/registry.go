@@ -101,9 +101,7 @@ func (r *Registry) View(ctx context.Context, key Key) (state.PublicRoutingView, 
 	}
 	result := r.reads.DoChan(fmt.Sprintf("%q", key), func() (any, error) {
 		// One caller's cancellation must not fail the others' shared read.
-		read, cancel := context.WithTimeout(context.WithoutCancel(ctx), api.TrafficPublicRoutingReadTimeout)
-		defer cancel()
-		return r.readKeys(read, []Key{key})
+		return r.readCold(context.WithoutCancel(ctx), key)
 	})
 	select {
 	case <-ctx.Done():
@@ -118,6 +116,24 @@ func (r *Registry) View(ctx context.Context, key Key) (state.PublicRoutingView, 
 		}
 		return answer.View, nil
 	}
+}
+
+// readCold reads a key the registry cannot admit from memory. The first
+// attempt keeps the warm read's bound; a failed attempt is retried once
+// within api.TrafficPublicRoutingColdReadTimeout. An idle app's first request
+// met every short control-plane stall with 503 traffic_policy_unavailable
+// (ADR-20261027085556 amendment 1). A store answer, refusals included, is
+// never retried.
+func (r *Registry) readCold(ctx context.Context, key Key) (map[Key]state.PublicRoutingViewResult, error) {
+	cold, cancel := context.WithTimeout(ctx, api.TrafficPublicRoutingColdReadTimeout)
+	defer cancel()
+	first, cancelFirst := context.WithTimeout(cold, api.TrafficPublicRoutingReadTimeout)
+	results, err := r.readKeys(first, []Key{key})
+	cancelFirst()
+	if err == nil || cold.Err() != nil {
+		return results, err
+	}
+	return r.readKeys(cold, []Key{key})
 }
 
 func validKey(key Key) bool {

@@ -62,3 +62,25 @@ commercial entitlements or billing promises. Promotion requires normal acceptanc
 and product review. This change has not been validated with tests/builds or applied
 migrations; the release PR records that explicitly. Live signal acceptance never
 means subscriber receipt, and ephemeral activity never gains reconnect replay.
+
+## Amendment (2026-10-27): presence state and signals need their own permission
+
+A security review (2026-10-24, low) found that read permission also let a
+connection write: any subscriber could set presence state other members see and
+send signals to them. Writing is now a separate permission.
+
+- Reading a channel still lets a connection subscribe and join its presence
+  with an empty state.
+- Setting presence state (on subscribe or with a `presence` frame) and sending
+  signals need the `presence` permission: a channel rule with `presence: true`,
+  or the authorize callback answering `permission: "presence"`. The grant is
+  cached per subscription for the same 30 seconds as read.
+- Without it, a subscribe that carries a state joins with an empty state, and
+  the state or signal is answered with an `error` frame, code
+  `presence_not_authorized`; the subscription stays open. Ticket connections
+  never get the permission.
+- The Gregale Auth template maps the permission to its own action,
+  `realtime:presence`, so reading a channel no longer implies it.
+- Callbacks that ignore `permission` keep granting presence, so existing apps
+  behave as before; callbacks that check it can now separate the two.
+

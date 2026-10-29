@@ -935,7 +935,7 @@ After restoring to a ready target, stage every runtime and migration binding
 for one app and scope, then request SQL verification:
 
 ```sh
-gregale postgres cutover prepare orders orders-copy api --scope production
+gregale postgres cutover prepare orders orders-copy api --env production
 gregale postgres cutover get CUTOVER_ID
 gregale postgres cutover verify CUTOVER_ID
 gregale postgres cutover get CUTOVER_ID
@@ -1276,12 +1276,17 @@ gregale postgres usage
 gregale postgres create orders --region eu --class development
 gregale postgres get DATABASE_ID
 gregale postgres restore DATABASE_ID --name orders-copy --point-in-time 2026-09-09T10:00:00Z
-gregale postgres bindings create DATABASE_ID --app APP_ID --scope production --environment-key DATABASE_URL
+gregale postgres bindings create DATABASE_ID --app APP_ID --env production --environment-key DATABASE_URL
 gregale postgres bindings list DATABASE_ID
 gregale postgres bindings rotate BINDING_ID --wait
 gregale postgres attach orders api --scope production --env DATABASE_URL
 gregale postgres delete DATABASE_ID
 ```
+
+`postgres delete` asks you to type the database's name: deletion removes the
+database and its point-in-time restore history at the provider and cannot be
+undone. Scripts pass `--yes` (or `--quiet`); JSON and `--non-interactive` mode
+require it.
 
 Binding rotation returns as soon as the new credential is active. Add
 `--wait` to poll until `rotation_pending` clears; the wait defaults to five

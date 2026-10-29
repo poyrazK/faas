@@ -57,7 +57,7 @@ func (s *server) projectEnvironmentClonePostgresVerificationWithRetries(ctx cont
 		if setSecretRecipient == nil {
 			return zero, managedpostgres.ErrUnavailable
 		}
-		recipient := hostSecretRecipient()
+		recipient := cloneSealRecipient()
 		if !cloneInventoryCanOpen(recipient, w.identities) {
 			return zero, managedpostgres.ErrUnavailable
 		}
@@ -130,7 +130,7 @@ func (s *server) openProjectEnvironmentClonePostgresVerificationRetry(ctx contex
 	if s.managedPostgres == nil || mfaIdentities == nil {
 		return nil, managedpostgres.ErrUnavailable
 	}
-	w := &clonePostgresVerificationRetryWorker{server: s, lease: l, source: source, exports: exports, oid: oid, original: original, history: history, identities: mfaIdentities()}
+	w := &clonePostgresVerificationRetryWorker{server: s, lease: l, source: source, exports: exports, oid: oid, original: original, history: history, identities: accountIdentities()}
 	var ok bool
 	w.attempts, ok = s.store.(state.ProjectEnvironmentClonePostgresVerificationAttemptStore)
 	if !ok {

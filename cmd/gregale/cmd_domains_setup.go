@@ -15,7 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const domainsSetupUsage = "usage: gregale domain setup <domain> --app SLUG [--environment SLUG] [--timeout 10m] [--poll-interval 10s]"
+const domainsSetupUsage = "usage: gregale domain setup <domain> --app SLUG [--env SLUG] [--timeout 10m] [--poll-interval 10s]"
 
 func cmdDomainsSetup(args []string) int {
 	if hasHelpFlag(args) {
