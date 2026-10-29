@@ -197,6 +197,13 @@ jobs:
     if: needs.runtime-change.outputs.builder == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    # Issue #295: main pushes attest the promoted image's provenance
+    # (Sigstore keyless, through the workflow's OIDC token).
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
     # Issue #938 / PR-B / ADR-114: PR builds push to a local
     # registry service container so the verify step can `crane
     # export` the just-built image. Service containers stay
@@ -459,6 +466,36 @@ jobs:
             --tag "${IMAGE_NAME}:sha-${GITHUB_SHA}" \
             "${IMAGE_NAME}:ci-${GITHUB_SHA}"
 
+      # Issue #295: a Sigstore-signed SLSA provenance attestation for each
+      # platform image, the digests operators and hosts pin (`crane digest
+      # --platform`). It is pushed to ghcr beside the image and kept in the
+      # repository's attestations. Verify with
+      #   gh attestation verify oci://ghcr.io/poyrazk/builder-base@<digest> --owner poyrazK
+      - name: Resolve platform digests (main)
+        id: platform-digests
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          set -euo pipefail
+          for arch in amd64 arm64; do
+            echo "${arch}=$(crane digest --platform "linux/${arch}" "${IMAGE_NAME}:ci-${GITHUB_SHA}")" >> "$GITHUB_OUTPUT"
+          done
+
+      - name: Attest builder base provenance (main, linux/amd64)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.platform-digests.outputs.amd64 }}
+          push-to-registry: true
+
+      - name: Attest builder base provenance (main, linux/arm64)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.platform-digests.outputs.arm64 }}
+          push-to-registry: true
+
   # Runtime bases are single-arch artifacts today because the image lock and
   # the production compute fleet pin linux/amd64 children. They are published
   # separately from the multi-arch builder image so an operator can resolve a
@@ -469,6 +506,13 @@ jobs:
     if: needs.runtime-change.outputs.bases == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # Issue #295: main pushes attest the promoted image's provenance
+    # (Sigstore keyless, through the workflow's OIDC token).
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
     strategy:
       fail-fast: false
       matrix:
@@ -600,6 +644,32 @@ jobs:
           docker buildx imagetools create \
             --tag "${IMAGE_NAME}:sha-${GITHUB_SHA}" \
             "${IMAGE_NAME}:ci-${GITHUB_SHA}"
+
+      # Issue #295: as for builder-base, attest the linux/amd64 image the
+      # release pins in runtime-bases.env.
+      - name: Resolve platform digest (main)
+        id: platform-digest
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          set -euo pipefail
+          # The same checksum-pinned crane as builder-base, and the lookup
+          # release.yml uses for runtime-bases.env.
+          CRANE_SHA256=ffca5eafe0af8078f2c627fb852104f9d762fad1eb36c04e93ca14fce76d47d2
+          curl --fail --silent --show-error --location \
+            --retry 3 --retry-all-errors --retry-delay 2 \
+            -o "$RUNNER_TEMP/crane.tgz" \
+            https://github.com/google/go-containerregistry/releases/download/v0.21.1/go-containerregistry_Linux_x86_64.tar.gz
+          echo "${CRANE_SHA256}  $RUNNER_TEMP/crane.tgz" | sha256sum --check --strict
+          tar -C "$RUNNER_TEMP" -xzf "$RUNNER_TEMP/crane.tgz" crane
+          echo "amd64=$("$RUNNER_TEMP/crane" digest --platform linux/amd64 "${IMAGE_NAME}:ci-${GITHUB_SHA}")" >> "$GITHUB_OUTPUT"
+
+      - name: Attest runtime base provenance (main, linux/amd64)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.platform-digest.outputs.amd64 }}
+          push-to-registry: true
 
   # Keep source-artifact tests parallel with the image matrix. This job runs
   # on every PR because it is small enough to be a useful always-on signal;

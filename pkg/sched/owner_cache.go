@@ -209,7 +209,7 @@ func (e *Engine) runningInstanceOfDeployment(ctx context.Context, appID string, 
 		return state.Instance{}, err
 	}
 	for _, instance := range instances {
-		if instance.DeploymentID == dep.ID && instance.State == string(state.StateRunning) {
+		if instance.DeploymentID == dep.ID && instance.State == string(state.StateRunning) && e.instanceNodeServes(ctx, instance.NodeID) {
 			return instance, nil
 		}
 	}

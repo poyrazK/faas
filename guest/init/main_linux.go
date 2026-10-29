@@ -1191,7 +1191,7 @@ func runBuildOnce(m api.BuildManifest) error {
 		// fuse-overlayfs and the guest kernel has FUSE built in; use the
 		// rootless COW snapshotter so committing a layer does not scan/copy the
 		// complete native snapshot tree after every RUN instruction.
-		"--oci-worker-snapshotter", "fuse-overlayfs",
+		"--oci-worker-snapshotter", buildkitSnapshotter(m),
 		"--oci-worker-net", "host",
 	}
 	// ADR-20261025114554: BuildKit tries the operator's Docker Hub mirrors
@@ -1937,6 +1937,21 @@ func buildArgv(m api.BuildManifest) []string {
 	}, " ")
 	choose := `case "$(` + check + `)" in keep) set -- ;; *) set -- --export-cache ` + shellQuote(dependencyCacheExport(m)) + " ;; esac"
 	return []string{"/bin/sh", "-c", "set -x; " + prepare + " && " + choose + " && exec " + build + ` "$@"` + output}
+}
+
+// buildkitSnapshotter returns BuildKit's worker snapshotter. fuse-overlayfs
+// is the default. With BuildKitSnapshotterAuto (ADR-20261029105325) rootless
+// BuildKit prefers kernel overlayfs, whose layer diffs read only the overlay
+// upper directory, and falls back to fuse-overlayfs, then native, when the
+// kernel refuses an unprivileged overlay mount. A FUSE snapshotter sends every
+// file operation of a dependency install through a userspace daemon and diffs
+// each layer by walking both trees. The builder VM is the sandbox (ADR-003),
+// so a kernel overlay mount inside it adds no reach beyond the VM.
+func buildkitSnapshotter(m api.BuildManifest) string {
+	if m.BuildKitSnapshotter == api.BuildKitSnapshotterAuto {
+		return "auto"
+	}
+	return "fuse-overlayfs"
 }
 
 // layerCompressionAttrs returns the BuildKit exporter attributes that switch

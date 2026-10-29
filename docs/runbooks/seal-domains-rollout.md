@@ -1157,10 +1157,15 @@ apid both seals and opens account values, so it holds `account.age` itself;
 there is no recipient file. It covers TOTP secrets, inbound webhook
 secrets, billing provider keys, managed workflow plans, PagerDuty
 acknowledgement secrets, GitLab, Slack and Linear credentials, product
-email values and managed realtime credentials. The project clone columns
-stay on the fleet key until a later release (ADR 20261022111812, tenth to
-thirteenth slices). Data pipeline values are not part of this stage: they
-have always been sealed to the pipeline workers' own `pipeline.age`.
+email values, managed realtime credentials and project environment clone
+values (ADR 20261022111812, tenth to fourteenth slices). Data pipeline
+values are not part of this stage: they have always been sealed to the
+pipeline workers' own `pipeline.age`.
+
+Project environment clones are forward-only. apid and the clone worker seal
+new clone values to the domain only once writes are `domain`; earlier clone
+rows stay on the fleet key until their clones finish, and 12d's migration
+reports them as left on the fleet key instead of re-sealing them.
 
 ### 12a. Create the identity (operator machine)
 
@@ -1184,7 +1189,7 @@ faas_seal_domain_account_identity_src: /Users/<you>/gregale-seal/<environment>/a
 ```
 
 and converge the role on the control plane. The role installs `account.age`,
-restarts apid with it and proves the probe. With
+restarts apid and the clone worker with it and proves the probe. With
 `faas_seal_domain_account_writes` left empty, apid then seals new account
 values to the domain and the fleet key.
 
@@ -1194,7 +1199,9 @@ Check:
   `faas_seal_domain_ready{domain="account"} 1`;
 - `faas_seal_domain_loaded{domain="account"}` is 1 on every apid, and
   FaasSealDomainIdentityMissing does not fire;
-- apid logs `"account seal domain"` with `"domain_identity":true`;
+- apid and the clone worker (`journalctl -u faas-apid-clone-worker`) log
+  `"account seal domain"` with `"domain_identity":true`; the clone worker
+  exports no metrics, so this log line is its check;
 - on a test account, enroll MFA and sign in with it; send a test delivery
   to an inbound webhook; send a test issue to a connected Slack workspace.
 
@@ -1203,8 +1210,9 @@ saved in the meantime also carry the fleet key.
 
 ### 12c. Wait out the rollback window
 
-Go on only when every apid reports `faas_seal_domain_loaded{domain="account"} 1`
-and apid's previous release (N-1) also carries the account reader.
+Go on only when every apid reports `faas_seal_domain_loaded{domain="account"} 1`,
+every clone worker logs the identity loaded, and apid's previous release
+(N-1) also carries the account reader.
 
 ### 12d. Seal to the domain only; re-seal stored values
 
@@ -1224,7 +1232,10 @@ sudo gregalectl seal-domain migrate --domain account --readers-verified --db-env
 - Expect `0 failed`.
 - `changed concurrently` counts values a customer changed during the run.
   Run the migration again later.
-- A second run reports every row `current`.
+- A second run reports every other row `current`.
+- `left on the fleet key` counts project environment clone rows sealed
+  before the switch. Wait for it to reach 0, as running clones finish,
+  before any step removes `fleet.age` from apid or the clone worker.
 - If `failed` is not 0, apid cannot open those values today either: the
   owners must set them again (MFA: enroll again).
 
@@ -1267,3 +1278,56 @@ dead-letters. Use the domain's own reader hosts and writer (sections 2–12).
 
 Never clear the previous identity before step 4 finishes: a value still
 sealed to it no longer opens.
+
+## 14. Runtime secret writer signatures
+
+ADR 20261028161502 amendment 1. apid signs every runtime secret it seals and
+stores the signature in `runtime_secret_signatures`. vmmd looks each
+signature up and refuses a runtime secret whose signature does not verify.
+After the contract step it also refuses unsigned ones. Run this after
+section 4: the signature covers the envelope as stored, so sign after the
+runtime re-seal and the binding pass, or pass `--runtime-signing-key` to
+them.
+
+1. Make the key pair on the operator workstation:
+   `gregalectl runtime-secret signing-keygen --sign-key runtime-signing.key --verify-key runtime-signing.pub`.
+2. Set `faas_seal_domain_runtime_signing_pub_src` and converge the compute
+   hosts. vmmd reads the key at its next start (the next release restart).
+   Each vmmd that has it reports
+   `faas_runtime_secret_signature_enforcement 1`. It refuses only a
+   signature that does not verify, and logs each unsigned secret once.
+3. Set `faas_seal_domain_runtime_signing_key_src` and converge the control
+   plane. apid and its clone worker restart and sign every runtime secret
+   they seal from then on. Their logs say `runtime secret signing enabled`.
+4. Sign what is stored, once, on a control-plane host:
+   `sudo gregalectl runtime-secret sign-existing --db-env /etc/faas/compute-db.env`.
+   It signs every stored runtime envelope that has no signature, as it
+   stands. Check the count against the secrets you expect: the backfill
+   trusts what is stored. It fails if an envelope carries a signature this
+   key did not make, or a document cannot be read. Look at those before you
+   go on. Run it again until it reports 0 signed.
+5. Once every vmmd reports `faas_runtime_secret_signature_enforcement 1`
+   and a rerun of step 4 signs nothing, set
+   `faas_seal_domain_runtime_signatures_required: true` and converge the
+   compute hosts. vmmd refuses unsigned runtime secrets from its next start
+   and reports `faas_runtime_secret_signature_enforcement 2`.
+
+After step 5, operator re-seals must sign what they write. Pass
+`--runtime-signing-key /etc/faas/secrets/domains/runtime-signing.key` to
+`gregalectl seal-domain migrate --domain runtime` (with or without
+`--bind-accounts`) and to `gregalectl fleet-seal migrate`, or run step 4
+straight after them. A wake that meets an unsigned secret fails with
+`the value carries no writer signature`.
+
+Rollback: set `faas_seal_domain_runtime_signatures_required: false` and
+converge the compute hosts. vmmd serves unsigned secrets again from its
+next start. To stop checking altogether, clear
+`faas_seal_domain_runtime_signing_pub_src`.
+
+Key rotation: generate a new pair and list both public keys in
+the file `faas_seal_domain_runtime_signing_pub_src` names. Converge the
+compute hosts, then switch `faas_seal_domain_runtime_signing_key_src` to the
+new private key. Envelopes signed with the old key keep the old signature,
+so keep the old public key listed. Do not run step 4 with the new key: it
+reports those envelopes as signed by another key. Re-signing them under the
+new key is follow-up work, as for live queries (ADR 20261028161502, item 5).
