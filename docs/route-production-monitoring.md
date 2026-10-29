@@ -70,7 +70,10 @@ unknown, violated and disabled reports exit nonzero with the report printed.
 ## Customer impact
 
 Customer evaluation is opt-in with `--customer-group-by tenant` or
-`--customer-group-by consumer`; omitting the option disables it. Each request is
+`--customer-group-by consumer`; omitting the option disables it. Grouping by
+tenant needs platform tenants, and by consumer needs API consumers, released
+for your account; otherwise the request is refused with
+`capability_not_released`. Each request is
 grouped by the tenant or API-consumer UUID recorded when the request arrived.
 The same absolute route budgets and observation windows are then evaluated for
 each observed cohort. A sustained violation by even one cohort makes the overall
