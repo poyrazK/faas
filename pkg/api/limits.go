@@ -1006,6 +1006,15 @@ const (
 	EventReplayBackfillRequestTimeout      = 5 * time.Second
 )
 
+// Invocation retention (ADR-20261029012000). Each minute's pass reaps,
+// stamps and prunes in InvocationRetentionBatch rows, repeating a step while
+// its batches come back full, at most InvocationRetentionBatchesPerPass
+// times: up to 10,000 rows a minute per step on each schedd, from 500.
+const (
+	InvocationRetentionBatch          = 500
+	InvocationRetentionBatchesPerPass = 20
+)
+
 // Event job lifecycle (ADR-20261028095548). A running backfill that makes no
 // progress for EventReplayBackfillIdleExpiry ends as expired. A recovery or
 // backfill job whose processing fails backs off from EventJobFailureBackoffMin
@@ -8679,6 +8688,25 @@ const (
 	// bodies keep streaming and can still fail in that window
 	// (docs/adr/1736-zero-downtime-daemon-restarts.md).
 	InternalHopReplayableBodyBytes = 64 << 10 // 64 KiB
+
+	// GatewayFailover* bound gatewayd-public's retry of a response that
+	// gatewayd-internal marked not dispatched: no request byte reached a
+	// guest, so the request can go to another node (ADR-20261022184531
+	// step 5).
+	//   - MaxBufferedBodyBytes: only a body the edge buffered, at most this
+	//     large, is replayed; it is the same buffer as the internal hop's.
+	//   - RetryBudgetPct: retries stay within this share of requests, with
+	//     RetryBudgetBurst retries available to a quiet edge.
+	//   - MaxExtraNodes: other nodes one request may be retried on.
+	//   - MaxRefusalBodyBytes: the largest refusal the edge holds while it
+	//     retries, so it can still answer with it if every retry fails.
+	// A retry also needs api.WakeFailoverMinRemainingMs of the request's
+	// deadline left.
+	GatewayFailoverMaxBufferedBodyBytes = InternalHopReplayableBodyBytes
+	GatewayFailoverRetryBudgetPct       = 10
+	GatewayFailoverRetryBudgetBurst     = 10
+	GatewayFailoverMaxExtraNodes        = 2
+	GatewayFailoverMaxRefusalBodyBytes  = 64 << 10 // 64 KiB
 )
 
 // EdgeWAFInlineSlots is the number of in-path WAF check slots for a

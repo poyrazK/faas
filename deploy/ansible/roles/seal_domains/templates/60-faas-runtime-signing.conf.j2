@@ -1,7 +1,0 @@
-# Managed by the seal_domains role (ADR 20261028161502 amendment 1): the
-# clone worker seals runtime secrets too, so it signs them with apid's key.
-[Service]
-{% if faas_seal_domain_runtime_signing_key_src | length > 0 %}
-LoadCredential=faas_runtime_signing_key:/etc/faas/secrets/domains/runtime-signing.key
-Environment=FAAS_APID_RUNTIME_SIGNING_KEY_FILE=%d/faas_runtime_signing_key
-{% endif %}

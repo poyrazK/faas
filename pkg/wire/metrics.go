@@ -4967,7 +4967,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	}, []string{"kind", "outcome"})
 	loopWorkDuration := prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name: prefix + "_loop_work_duration_seconds",
-		Help: "How long one off-loop task ran (ADR-191), labelled by kind. The prime bucket carries cold boot plus snapshot capture, so its tail is tens of seconds by design.",
+		Help: "How long one pass of an off-loop task ran (ADR-191), labelled by kind; each rerun of a rerunCoalesced kind such as event_fanout is its own pass (ADR-20261029012000). The prime bucket carries cold boot plus snapshot capture, so its tail is tens of seconds by design.",
 		// Reconciles are millisecond-scale database work; prime is
 		// tens of seconds. One set of buckets has to span both.
 		Buckets: []float64{0.005, 0.025, 0.1, 0.5, 1, 5, 15, 30, 60, 120},

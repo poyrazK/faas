@@ -244,6 +244,12 @@ func forwardedResponseHeaderWithUpgrade(ctx context.Context, dst http.Header, na
 	if isTrafficResponseControlHeader(name) || platformOwnsLifecycleHeader(ctx, name) {
 		return
 	}
+	// Only gatewayd-internal says a request was not dispatched
+	// (ADR-20261022184531 step 5); a guest's copy would ask the public edge
+	// to replay a request the guest already saw.
+	if strings.EqualFold(strings.TrimSpace(name), NotDispatchedHeader) {
+		return
+	}
 	// Response headers cross the internal bridge before they reach the
 	// customer-facing writer. Connection-management headers belong only to
 	// that hop (RFC 7230 §6.1) and must not be exposed as guest application
