@@ -186,6 +186,10 @@ func TestSecretLeakGuard_FAAS_EnvToLog(t *testing.T) {
 		"FAAS_BUILDER_BASE_PATH": "path",
 		"FAAS_DEPLOY_BASE_REF":   "identifier",
 		"FAAS_MAIL_TRANSPORT":    "enum-shaped transport identifier; see pkg/mail/factory.go (logs the value when unknown — operator-supplied, not a credential)",
+		// ADR-20261027090014: cmd/schedd/main.go logs the agent pool when
+		// agent runs are enabled, so an operator can see which nodes take
+		// agent runs.
+		"FAAS_SCHEDD_AGENT_RUN_NODES": "identifier list (comma-separated compute node IDs or names); see pkg/daemonunitspec/envcontract.go",
 		// ADR-127 §D3 Layer 7 — the bridge's framing-selection slog
 		// line at cmd/vmmd-stream-bridge/main.go::newHandler logs the
 		// env value verbatim so an operator can correlate the env
