@@ -516,8 +516,8 @@
     mode: "0644"
   when: (faas_box_role | default('single-box')) == 'control-plane'
 
-# ADR-847: synthetic route probes stay off until route_probes_enabled is set;
-# the drop-in then points apid at the public gateway origin.
+# ADR-847: synthetic route probes, on unless route_probes_enabled is false;
+# the drop-in points apid at the local gatewayd-public listener.
 - name: control_plane_service — configure synthetic route probes
   notify: restart faas-apid
   ansible.builtin.template:

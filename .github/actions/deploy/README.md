@@ -58,7 +58,7 @@ Manual dispatch is limited to the configured production and mapped branches.
 | Input | Description | Required | Default |
 |---|---|---|---|
 | `api-key` | Optional Gregale bearer. Omit to exchange GitHub OIDC for a five-minute token. | no | — |
-| `oidc-audience` | Audience requested from GitHub and sent to the Gregale exchange. | no | `gregale` |
+| `oidc-audience` | Audience requested from GitHub and sent to the Gregale exchange. Another value needs an account trust policy that names it. | no | `gregale` |
 | `api-base` | Gregale API base URL. | no | `https://api.gregale.dev` |
 | `app` | App slug to deploy. | yes | — |
 | `repo` | OWNER/NAME of the source GitHub repo. | no | `${{ github.repository }}` |

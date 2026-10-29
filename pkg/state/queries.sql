@@ -3223,6 +3223,19 @@ where lower(a.github_repo_full_name) = lower(sqlc.arg(repo_full_name)::text)
   and (sqlc.arg(repo_id)::bigint = 0 or a.github_repo_id = sqlc.arg(repo_id)::bigint)
 having count(distinct a.github_install_account_id) = 1;
 
+-- name: GitHubRepositoryIDsBoundToAccount :one
+-- The immutable owner and repository IDs an account's app binding recorded
+-- for a repository name (bug hunt 2026-10-28 H68): the OIDC exchange
+-- requires a token's repository_owner_id and repository_id claims to match
+-- them, so a recreated repository under a freed owner name does not pass.
+-- Zero when no binding of the name records them.
+select coalesce(max(a.github_owner_id), 0)::bigint as owner_id,
+       coalesce(max(a.github_repo_id), 0)::bigint as repo_id
+from apps a
+where a.account_id = sqlc.arg(account_id)::uuid
+  and lower(a.github_repo_full_name) = lower(sqlc.arg(repo_full_name)::text)
+  and a.deleted_at is null;
+
 -- name: InsertOIDCExchangedToken :one
 -- Fresh-token insert. The id is server-minted by sqlc (gen_random_uuid).
 -- Returns the full row (with created_at server-stamped).
@@ -8154,13 +8167,18 @@ WITH metadata AS (
         AND legacy.account_id=a.account_id AND legacy.project_id=a.project_id AND legacy.slug=d.scope
         AND legacy.created_at<=d.created_at
 )
+-- 'active' pages by app (after_app_id, ordered by app): the rollback window
+-- needs every row of an app, and a newest-first cut over the whole fleet
+-- dropped exactly the oldest generations GC exists to reclaim once the live
+-- set passed the limit (bug hunt 2026-10-28 H66).
 SELECT * FROM metadata
-WHERE (sqlc.arg(mode)::text='active' AND (NOT stale OR runtime_owner_invalid))
+WHERE (sqlc.arg(mode)::text='active' AND (NOT stale OR runtime_owner_invalid) AND app_id>sqlc.arg(after_app_id)::text)
     OR (sqlc.arg(mode)::text='stale' AND stale AND stale_since<now()-sqlc.arg(retention_seconds)::bigint*interval '1 second')
     OR (sqlc.arg(mode)::text='pending' AND delete_pending)
-ORDER BY CASE WHEN sqlc.arg(mode)::text='active' THEN created_at END DESC,
+ORDER BY CASE WHEN sqlc.arg(mode)::text='active' THEN app_id END ASC,
+    CASE WHEN sqlc.arg(mode)::text='active' THEN created_at END DESC,
     CASE WHEN sqlc.arg(mode)::text<>'active' THEN created_at END ASC, id ASC
-LIMIT 10000;
+LIMIT sqlc.arg(row_limit)::integer;
 
 -- name: ReadRuntimeScalingStateForDeployment :one
 WITH owner AS (
@@ -8995,6 +9013,12 @@ FOR UPDATE OF n NOWAIT;
 -- LOCK takes no data snapshot. Exclude the RowShare locks acquired by the
 -- fleet capacity triggers before the repeatable-read account view begins.
 LOCK TABLE service_capacity_policy IN EXCLUSIVE MODE NOWAIT;
+
+-- name: ReadTrafficCapacityLockHeld :one
+-- A rule-only traffic policy write holds no lock on the fleet capacity policy
+-- unless one of its statements fired a capacity trigger (ADR-20261029150627).
+SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_locks WHERE pid = pg_backend_pid() AND locktype = 'relation'
+    AND relation = 'service_capacity_policy'::regclass AND mode <> 'AccessShareLock')::boolean AS held;
 
 -- name: LockTrafficCapacityWriter :exec
 -- A binding mutation takes its capacity triggers' RowShare lock first. Taken
@@ -11906,10 +11930,10 @@ and queue_binding_id is not distinct from sqlc.narg(binding_id)::uuid for share;
 -- One snapshot includes active work and dead letters. A NULL queue selects
 -- every name in this scope; an empty string selects only legacy unnamed work.
 select
-  count(*) filter (where state in ('pending','dispatching'))::bigint as depth,
+  count(*) filter (where state='dispatching' or (state='pending' and due_at <= now()))::bigint as depth,
   count(*) filter (where state='dispatching' and lease_expires_at > now())::bigint as in_flight,
   count(*) filter (where state='dead_letter')::bigint as dead_letter,
-  min(created_at) filter (where state='pending')::timestamptz as oldest_pending_at
+  min(created_at) filter (where state='pending' and due_at <= now())::timestamptz as oldest_pending_at
 from invocations
 where app_id=sqlc.arg(app_id) and deployment_scope=sqlc.arg(deployment_scope)
   and source='queue' and state in ('pending','dispatching','dead_letter')
@@ -12538,10 +12562,10 @@ and i.state in ('waking','cold_booting','running','draining','snapshotting','mig
 -- Legacy unassigned work remains visible under its historical name; pinned
 -- work never follows a replacement binding that reuses that name.
 select
-  count(*) filter (where i.state in ('pending','dispatching'))::bigint as depth,
+  count(*) filter (where i.state='dispatching' or (i.state='pending' and i.due_at <= now()))::bigint as depth,
   count(*) filter (where i.state='dispatching' and i.lease_expires_at > now())::bigint as in_flight,
   count(*) filter (where i.state='dead_letter')::bigint as dead_letter,
-  min(i.created_at) filter (where i.state='pending')::timestamptz as oldest_pending_at
+  min(i.created_at) filter (where i.state='pending' and i.due_at <= now())::timestamptz as oldest_pending_at
 from invocations i join queue_bindings b on b.app_id=i.app_id and b.account_id=i.account_id
 where b.id=sqlc.arg(binding_id)::uuid and b.app_id=sqlc.arg(app_id)::uuid
   and (sqlc.narg(deployment_scope)::text is null or i.deployment_scope=sqlc.narg(deployment_scope)::text)
@@ -12556,7 +12580,7 @@ where b.id=sqlc.arg(binding_id)::uuid and b.app_id=sqlc.arg(app_id)::uuid
 select count(*)::bigint as depth from (
   select 1 from invocations
   where app_id=sqlc.arg(app_id)::uuid and deployment_scope=sqlc.arg(deployment_scope)::text
-    and source='queue' and state in ('pending','dispatching')
+    and source='queue' and state in ('pending','dispatching') and (state='dispatching' or due_at <= now())
   limit sqlc.arg(row_limit)::integer
 ) bounded;
 
@@ -12572,7 +12596,7 @@ select
   (select count(*) from (
      select 1 from invocations i, b
      where i.app_id=sqlc.arg(app_id)::uuid and i.queue_binding_id=b.id and i.account_id=b.account_id
-       and i.source='queue' and i.state in ('pending','dispatching')
+       and i.source='queue' and i.state in ('pending','dispatching') and (i.state='dispatching' or i.due_at <= now())
        and (sqlc.narg(deployment_scope)::text is null or i.deployment_scope=sqlc.narg(deployment_scope)::text)
        and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
      limit sqlc.arg(row_limit)::integer) own)::bigint
@@ -12580,7 +12604,7 @@ select
      select 1 from invocations i, b
      where b.deployment_scope='' and i.app_id=sqlc.arg(app_id)::uuid and i.queue_binding_id is null
        and i.queue_name=b.queue_name and i.account_id=b.account_id
-       and i.source='queue' and i.state in ('pending','dispatching')
+       and i.source='queue' and i.state in ('pending','dispatching') and (i.state='dispatching' or i.due_at <= now())
        and (sqlc.narg(deployment_scope)::text is null or i.deployment_scope=sqlc.narg(deployment_scope)::text)
      limit sqlc.arg(row_limit)::integer) legacy)::bigint as depth;
 
@@ -12614,14 +12638,14 @@ select
   ((select count(*) from (
      select 1 from invocations i, b
      where i.app_id=sqlc.arg(app_id)::uuid and i.queue_binding_id=b.id and i.account_id=b.account_id
-       and i.source='queue' and i.state in ('pending','dispatching')
+       and i.source='queue' and i.state in ('pending','dispatching') and (i.state='dispatching' or i.due_at <= now())
        and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
      limit sqlc.arg(row_limit)::integer) own)
   + (select count(*) from (
      select 1 from invocations i, b
      where b.deployment_scope='' and i.app_id=sqlc.arg(app_id)::uuid and i.queue_binding_id is null
        and i.queue_name=b.queue_name and i.account_id=b.account_id
-       and i.source='queue' and i.state in ('pending','dispatching')
+       and i.source='queue' and i.state in ('pending','dispatching') and (i.state='dispatching' or i.due_at <= now())
      limit sqlc.arg(row_limit)::integer) legacy))::bigint as depth,
   (select count(*) from (
      select 1 from owned where state='dispatching' and lease_expires_at > now()
@@ -12632,13 +12656,13 @@ select
   (select min(first.created_at) from (
      (select i.created_at from invocations i, b
       where i.app_id=sqlc.arg(app_id)::uuid and i.queue_binding_id=b.id and i.account_id=b.account_id
-        and i.source='queue' and i.state='pending'
+        and i.source='queue' and i.state='pending' and i.due_at <= now()
         and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
       order by i.due_at, i.created_at, i.id limit 1)
      union all
      (select i.created_at from invocations i, b
       where b.deployment_scope='' and i.app_id=sqlc.arg(app_id)::uuid and i.queue_binding_id is null
-        and i.queue_name=b.queue_name and i.account_id=b.account_id and i.source='queue' and i.state='pending'
+        and i.queue_name=b.queue_name and i.account_id=b.account_id and i.source='queue' and i.state='pending' and i.due_at <= now()
       order by i.due_at, i.created_at, i.id limit 1)
   ) first)::timestamptz as oldest_pending_at;
 
@@ -13803,7 +13827,7 @@ WHERE app_id = sqlc.arg(app_id)::text::uuid AND listener_name = sqlc.arg(listene
 -- name: UDPListenerByPublicPort :one
 SELECT * FROM app_udp_listeners l
 WHERE public_port = sqlc.arg(public_port) AND enabled
-AND EXISTS (SELECT 1 FROM apps a WHERE a.id = l.app_id AND a.account_id = l.account_id AND a.status <> 'deleted');
+AND EXISTS (SELECT 1 FROM apps a WHERE a.id = l.app_id AND a.account_id = l.account_id AND a.status <> 'deleted' AND a.visibility <> 'internal');
 
 -- name: ListUDPListenersForApp :many
 SELECT * FROM app_udp_listeners
@@ -13811,7 +13835,7 @@ WHERE app_id = sqlc.arg(app_id)::text::uuid ORDER BY created_at DESC, id DESC;
 
 -- name: ListEnabledUDPListeners :many
 SELECT * FROM app_udp_listeners l
-WHERE enabled AND EXISTS (SELECT 1 FROM apps a WHERE a.id = l.app_id AND a.account_id = l.account_id AND a.status <> 'deleted')
+WHERE enabled AND EXISTS (SELECT 1 FROM apps a WHERE a.id = l.app_id AND a.account_id = l.account_id AND a.status <> 'deleted' AND a.visibility <> 'internal')
 ORDER BY public_port ASC;
 
 -- name: SetUDPListenerEnabled :one
@@ -13827,11 +13851,11 @@ SELECT count(*) FROM app_udp_listeners WHERE app_id = sqlc.arg(app_id)::text::uu
 -- name: ActiveTCPListenerByPublicPort :one
 SELECT l.* FROM app_tcp_listeners l JOIN apps a ON a.id = l.app_id
 WHERE l.public_port = sqlc.arg(public_port) AND l.enabled
-  AND a.status <> 'deleted' AND a.account_id = l.account_id;
+  AND a.status <> 'deleted' AND a.visibility <> 'internal' AND a.account_id = l.account_id;
 
 -- name: ListActiveTCPListeners :many
 SELECT l.* FROM app_tcp_listeners l JOIN apps a ON a.id = l.app_id
-WHERE l.enabled AND a.status <> 'deleted' AND a.account_id = l.account_id
+WHERE l.enabled AND a.status <> 'deleted' AND a.visibility <> 'internal' AND a.account_id = l.account_id
 ORDER BY l.public_port;
 -- name: LockExclusiveWorkAccount :one
 SELECT id::text,plan FROM accounts WHERE id=sqlc.arg(account_id)::text::uuid

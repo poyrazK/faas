@@ -76,7 +76,7 @@ func TestGuestGuarantees(t *testing.T) {
 		var firstByte []time.Duration
 		var maxSkew time.Duration
 		for i := range wakes {
-			tg.ok(t, 2*time.Minute, "park", slug)
+			tg.ok(t, 2*time.Minute, "app", "park", slug)
 			waitParked(t, tg, slug)
 			sent := time.Now()
 			r := get(base + "/entropy")
@@ -117,7 +117,7 @@ func TestGuestGuarantees(t *testing.T) {
 	})
 
 	s.check("burst_wake", func(t *testing.T) {
-		tg.ok(t, 2*time.Minute, "park", slug)
+		tg.ok(t, 2*time.Minute, "app", "park", slug)
 		waitParked(t, tg, slug)
 		const burst = 20
 		var mu sync.Mutex
@@ -142,7 +142,7 @@ func TestGuestGuarantees(t *testing.T) {
 		if codes["200"] != burst {
 			t.Errorf("%d of %d requests to a parked app were not served: %v", burst-codes["200"], burst, codes)
 		}
-		rows := objects(t, tg.ok(t, time.Minute, "ps", slug).stdout)
+		rows := objects(t, tg.ok(t, time.Minute, "app", "instances", slug).stdout)
 		hosts := make([]string, 0, len(rows))
 		for _, row := range rows {
 			hosts = append(hosts, str(row, "host_ip"))

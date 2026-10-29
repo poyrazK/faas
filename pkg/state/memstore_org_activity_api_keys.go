@@ -103,7 +103,7 @@ func (m *MemStore) RotateOrgAPIKeyWithActivity(_ context.Context, orgID, oldKeyI
 	newKey := APIKey{
 		ID: newID(), AccountID: old.AccountID, OrgID: old.OrgID,
 		RunsPrincipalID: old.RunsPrincipalID,
-		Hash:            append([]byte(nil), newHash...), Label: newLabel, Scopes: append([]string(nil), old.Scopes...),
+		Hash:            append([]byte(nil), newHash...), Label: newLabel, Scopes: append([]string(nil), old.Scopes...), ExpiresAt: cloneTimePtr(old.ExpiresAt),
 		CreatedAt: time.Now(), Status: string(APIKeyStatusActive), RotatedFromID: &rotatedFrom,
 		CreatedIP: createdIP, CreatedUA: createdUA, ParentKeyID: parent,
 	}

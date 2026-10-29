@@ -26,6 +26,22 @@ type ledgerStore struct {
 	paused      map[time.Time]map[string]state.QuietPausedSeconds
 	pausedErr   error
 	pausedReads int
+	// appReads and windowReads count the fleet reads a tick issues (O2).
+	appReads, windowReads int
+}
+
+func (s *ledgerStore) ListAllApps(ctx context.Context) ([]state.App, error) {
+	s.mu.Lock()
+	s.appReads++
+	s.mu.Unlock()
+	return s.MemStore.ListAllApps(ctx)
+}
+
+func (s *ledgerStore) ListBillingWindowInstances(ctx context.Context, since, end time.Time) ([]state.Instance, error) {
+	s.mu.Lock()
+	s.windowReads++
+	s.mu.Unlock()
+	return s.MemStore.ListBillingWindowInstances(ctx, since, end)
 }
 
 func newLedgerStore() *ledgerStore {
@@ -292,6 +308,11 @@ func TestSampler_CatchUpIsBoundedPerTick(t *testing.T) {
 	caught := append([]time.Time(nil), sampler.caughtUp...)
 	if len(caught) != api.MeterCatchUpMinutesPerTick || !caught[0].Equal(start) {
 		t.Fatalf("first tick caught up %d minutes from %v, want %d from %v", len(caught), caught, api.MeterCatchUpMinutesPerTick, start)
+	}
+	// The caught-up minutes share one read of the apps and of the instance
+	// window; the newest minute reads its own (bug hunt 2026-10-28 O2).
+	if store.appReads != 2 || store.windowReads != 2 {
+		t.Fatalf("one catch-up tick read apps %d and the instance window %d times, want 2 each", store.appReads, store.windowReads)
 	}
 	if _, calls := store.appended(start.Add(-time.Minute)); calls != 0 {
 		t.Fatal("caught up a minute outside the window")

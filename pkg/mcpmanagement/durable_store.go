@@ -1,6 +1,7 @@
 package mcpmanagement
 
 import (
+	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
@@ -32,6 +33,10 @@ type StateStore struct {
 	records map[string]json.RawMessage
 	failure error
 	closed  bool
+	// seqs is the snapshot sequence of each record set through
+	// updateSnapshot, so an older snapshot committed late never replaces a
+	// newer one.
+	seqs map[string]uint64
 }
 
 // statePersistence makes the store's records durable.
@@ -151,6 +156,15 @@ func (s *StateStore) read(namespace string, value any) error {
 }
 
 func (s *StateStore) update(namespace string, value any) error {
+	return s.updateSnapshot(namespace, value, 0)
+}
+
+// updateSnapshot sets namespace to value and commits what changed. A record
+// whose bytes did not change is not written again: discovery GETs and reads
+// used to rewrite the whole state. seq orders snapshots taken under the
+// caller's lock but committed outside it; a value older than the record's
+// last seq is already covered by it. Zero is unordered.
+func (s *StateStore) updateSnapshot(namespace string, value any, seq uint64) error {
 	if s == nil {
 		return nil
 	}
@@ -163,13 +177,26 @@ func (s *StateStore) update(namespace string, value any) error {
 	if err != nil {
 		return err
 	}
-	changed := []string{namespace}
-	if value == nil {
-		delete(s.records, namespace)
-	} else {
-		s.records[namespace] = data
+	if s.seqs == nil {
+		s.seqs = map[string]uint64{}
 	}
-	if snapshot, ok := value.(oauthSnapshot); ok && namespace == "oauth" {
+	var changed []string
+	stale := seq != 0 && seq < s.seqs[namespace]
+	switch {
+	case stale:
+	case value == nil:
+		if _, ok := s.records[namespace]; ok {
+			delete(s.records, namespace)
+			changed = append(changed, namespace)
+		}
+	case !bytes.Equal(s.records[namespace], data):
+		s.records[namespace] = data
+		changed = append(changed, namespace)
+	}
+	if !stale && seq != 0 {
+		s.seqs[namespace] = seq
+	}
+	if snapshot, ok := value.(oauthSnapshot); ok && namespace == "oauth" && !stale {
 		for key := range s.records {
 			if strings.HasPrefix(key, "plans/") || strings.HasPrefix(key, "environment-plans/") {
 				grantID := strings.TrimPrefix(strings.TrimPrefix(key, "environment-plans/"), "plans/")
@@ -180,6 +207,11 @@ func (s *StateStore) update(namespace string, value any) error {
 			}
 		}
 	}
+	if len(changed) == 0 {
+		return nil
+	}
+	// Memory is now ahead of storage, so a failed commit disables the store
+	// and the bridge exits to reload (ADR-20261026195952 amendment 2).
 	if err := s.persist.commit(s.records, changed); err != nil {
 		s.failure = err
 		return errors.New("MCP state could not be committed; further access disabled")

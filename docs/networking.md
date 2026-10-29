@@ -1518,7 +1518,7 @@ live 100% fallback in the environment and an enforced binding policy. Missing
 fallbacks and traffic splits block preparation.
 
 ```bash
-gregale environment release-sets prepare-deactivation shop production \
+gregale environment release-sets deactivation prepare shop production \
   --json > deactivation-manifest.json
 gregale environment release-sets verify shop production \
   --file deactivation-manifest.json --dry-run --json
@@ -1559,7 +1559,7 @@ service rollouts, mirror recipients and deactivation manifests are excluded.
 gregale environment release-sets stage shop production \
   --file manifest.json --ttl-seconds 600 --json > stage.json
 stage_id=$(jq -r .id stage.json)
-gregale environment release-sets stage-status shop production \
+gregale environment release-sets stage status shop production \
   --stage "$stage_id" --json
 # Once status is ready, qualify exact targets and explicitly publish the graph.
 gregale environment release-sets verify shop production --file manifest.json
@@ -1582,7 +1582,7 @@ and expiry. Another manifest conflicts while that scope has an unexpired,
 uncancelled stage. Cancel before staging a different selection:
 
 ```bash
-gregale environment release-sets cancel-stage shop production \
+gregale environment release-sets stage cancel shop production \
   --stage "$stage_id" --json
 ```
 
