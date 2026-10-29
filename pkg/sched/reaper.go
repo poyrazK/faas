@@ -849,8 +849,14 @@ func evictionCandidates(now time.Time, instances []InstanceInfo) []InstanceInfo 
 	var cands []InstanceInfo
 	for _, in := range instances {
 		// ADR-1151: a frozen VM is idle by definition, so it is always a
-		// candidate and goes before any running one.
+		// candidate and goes before any running one — except a service
+		// replica, which is exempt from RAM-pressure parking the same as
+		// its running form below (parking one flaps the service and can
+		// drop it below its availability floor).
 		if in.State == state.StateFrozen {
+			if state.InstanceMode(in.Mode) == state.InstanceModeService {
+				continue
+			}
 			cands = append(cands, in)
 			continue
 		}

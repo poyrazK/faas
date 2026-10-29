@@ -121,15 +121,21 @@ type FloorCandidateStore interface {
 }
 
 // Ledger is the read-only slice of NodeLedger the trigger needs.
-// Concurrency counts toward max_concurrency; ResidentRAM and
-// HeadroomMB back the §6.2-2 ceiling pre-check.
+// Concurrency counts toward max_concurrency; ResidentRAM is telemetry and
+// AdmissionHeadroomMB backs the §6.2-2 ceiling pre-check.
 // ConcurrencyForDeployment backs the per-deployment floor arithmetic
 // (issue #557 closure / ADR-072).
 type Ledger interface {
 	Concurrency(appID string) int
 	ConcurrencyForDeployment(appID, deploymentID string) int
 	ResidentRAM() int
-	HeadroomMB() int
+	// AdmissionHeadroomMB is the headroom Admit actually applies: the largest
+	// ceiling - admissionUsed over the nodes, which under measured admission
+	// (ADR-909) accounts for a node's reservations passing its bare ceiling.
+	// HeadroomMB's per-node (ceiling - resident) sum goes negative on an
+	// overcommitted node and made the floor report ram_ceiling fleet-wide
+	// even when Admit would have placed the instance.
+	AdmissionHeadroomMB() int
 }
 
 // Engine is the slice of sched.Engine the trigger needs. AdmitInstance
@@ -537,7 +543,7 @@ func (t *Trigger) tickPerDeployment(ctx context.Context) error {
 	var residentRAM, headroom int
 	if t.ledger != nil {
 		residentRAM = t.ledger.ResidentRAM()
-		headroom = t.ledger.HeadroomMB()
+		headroom = t.ledger.AdmissionHeadroomMB()
 	}
 	serving := servingScopes(deps)
 	for _, d := range deps {
@@ -686,7 +692,7 @@ func (t *Trigger) tickPerApp(ctx context.Context) error {
 	var residentRAM, headroom int
 	if t.ledger != nil {
 		residentRAM = t.ledger.ResidentRAM()
-		headroom = t.ledger.HeadroomMB()
+		headroom = t.ledger.AdmissionHeadroomMB()
 	}
 	for _, app := range apps {
 		if !t.manages(app) || !floorRunsFor(app) {

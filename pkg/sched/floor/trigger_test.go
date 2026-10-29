@@ -65,7 +65,7 @@ func (l *fakeLedger) ResidentRAM() int {
 	return l.residentRAM
 }
 
-func (l *fakeLedger) HeadroomMB() int {
+func (l *fakeLedger) AdmissionHeadroomMB() int {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.headroom
@@ -302,6 +302,31 @@ func TestTick_BillableExceedsHeadroom(t *testing.T) {
 	}
 	if len(engine.calls) != 0 {
 		t.Errorf("engine.calls = %v, want [] (RAM ceiling)", engine.calls)
+	}
+}
+
+// Under measured admission (ADR-909) a node's reservations legitimately pass
+// its bare ceiling, so residentRAM is high while admission headroom (the figure
+// Admit applies) is still positive. The floor must warm — it gates on
+// AdmissionHeadroomMB, not the fleet-sum HeadroomMB that would read 0 here.
+func TestTick_WarmsFloorWhenOvercommittedButAdmissionHeadroomPositive(t *testing.T) {
+	app := floorApp("app1", api.PlanPro, 1)
+	app.RAMMB = 1024 // 1032 MB billable.
+	store := &fakeStore{apps: []state.App{app}}
+	// residentRAM far past the ceiling, but AdmissionHeadroomMB (the fake's
+	// headroom field) still has room for the 1032 MB floor.
+	ledger := &fakeLedger{conc: map[string]int{"app1": 0}, residentRAM: 70_000, headroom: 2048}
+	engine := &fakeEngine{}
+	resolver := &fakePlanResolver{plans: map[string]api.Plan{"acct1": api.PlanPro}}
+	tr := New(store, nil, ledger, engine, Options{
+		Metrics:      wire.NewOpsMetrics("schedd"),
+		PlanResolver: resolver,
+	})
+	if err := tr.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if len(engine.calls) != 1 || engine.calls[0] != "app1" {
+		t.Errorf("engine.calls = %v, want [app1] (admission headroom allows the floor)", engine.calls)
 	}
 }
 

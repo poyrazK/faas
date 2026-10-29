@@ -13,6 +13,32 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// A frozen service replica is still a service replica: RAM-pressure eviction
+// must not park it (parking flaps the service below its availability floor),
+// even though frozen instances are otherwise evicted first.
+func TestSelectMemoryEvictionsExemptsFrozenServiceReplica(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	old := now.Add(-time.Hour)
+	frozenSvc := sched.InstanceInfo{Instance: "svc-frozen", AppID: "svc", Plan: api.PlanPro,
+		State: state.StateFrozen, Mode: string(state.InstanceModeService), RAMMB: 1024, NodeID: "a", Started: old}
+	idle := sched.InstanceInfo{Instance: "a-idle", AppID: "app-a", Plan: api.PlanPro,
+		State: state.StateRunning, RAMMB: 1024, NodeID: "a", Started: old, LastRequest: now.Add(-time.Hour)}
+	instances := []sched.InstanceInfo{frozenSvc, idle}
+	used := map[string]int{"a": 9000}
+	ceiling := map[string]int{"a": 8593}
+	resident := map[string]int{"svc-frozen": 900, "a-idle": 900}
+
+	got := sched.SelectMemoryEvictions(now, instances, used, ceiling, resident)
+	for _, id := range got {
+		if id == "svc-frozen" {
+			t.Fatalf("frozen service replica evicted: %v", got)
+		}
+	}
+	if len(got) != 1 || got[0] != "a-idle" {
+		t.Fatalf("evict %v, want [a-idle] (the non-service instance absorbs the pressure)", got)
+	}
+}
+
 func TestSelectMemoryEvictions(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
 	old := now.Add(-time.Hour)
