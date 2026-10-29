@@ -240,13 +240,22 @@ verify_app_policy_controls() {
 
 	# Consumer auth is an independent gateway gate. Verify anonymous traffic is
 	# rejected in required mode, then restore the original optional mode.
-	set_app_policy "$slug" "$receipt" --consumer-auth-mode required
-	jq -e '.consumer_auth_mode == "required"' "$receipt" >/dev/null
-	wait_for_http_status "${app_url%/}/" 401 "$headers" "$body"
-	jq -e '.code == "consumer_key_required"' "$body" >/dev/null
-	set_app_policy "$slug" "$receipt" --consumer-auth-mode optional
-	jq -e '.consumer_auth_mode == "optional"' "$receipt" >/dev/null
-	wait_for_http_status "${app_url%/}/" 200 "$headers" "$body"
+	# Required mode belongs to the internal API consumers capability, released
+	# per account (ADR-20261023115741): while it is hidden from the acceptance
+	# account, apid refuses the setting with 403 capability_not_released (rc.302).
+	local capabilities="$workdir/capabilities.json"
+	FAAS_JSON=1 "$GREGALE_BIN" capabilities >"$capabilities"
+	if jq -e '(.hidden_capabilities // []) | index("api-consumers") == null' "$capabilities" >/dev/null; then
+		set_app_policy "$slug" "$receipt" --consumer-auth-mode required
+		jq -e '.consumer_auth_mode == "required"' "$receipt" >/dev/null
+		wait_for_http_status "${app_url%/}/" 401 "$headers" "$body"
+		jq -e '.code == "consumer_key_required"' "$body" >/dev/null
+		set_app_policy "$slug" "$receipt" --consumer-auth-mode optional
+		jq -e '.consumer_auth_mode == "optional"' "$receipt" >/dev/null
+		wait_for_http_status "${app_url%/}/" 200 "$headers" "$body"
+	else
+		echo "consumer auth check skipped: api-consumers is not released to the acceptance account" >&2
+	fi
 
 	# Toggle the three plan-enabled transport/telemetry settings together and
 	# read back each value. A disabled WebSocket upgrade has a deterministic
