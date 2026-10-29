@@ -154,7 +154,9 @@ func TestSampler_AppliesMinInstancesFloor(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			store := state.NewMemStore()
-			appID, depID := seedFloorApp(t, store, api.PlanHobby, tc.ramMB)
+			// Scale holds floors up to 10; a Hobby floor above 1 is not held,
+			// so it is not billed either.
+			appID, depID := seedFloorApp(t, store, api.PlanScale, tc.ramMB)
 			ctx := context.Background()
 
 			// Seed live instances. Use RUNNING state (CountsForRAM true).
@@ -343,7 +345,7 @@ func TestSampler_MinInstancesFloorBillsDuringDeploymentStartup(t *testing.T) {
 // floor branch.
 func TestSampler_FloorAppliedAcrossMinuteBoundary(t *testing.T) {
 	store := state.NewMemStore()
-	appID, _ := seedFloorApp(t, store, api.PlanHobby, 256)
+	appID, _ := seedFloorApp(t, store, api.PlanScale, 256)
 	setPolicy(t, store, appID, state.ScalingPolicy{MinInstances: 2})
 	ctx := context.Background()
 

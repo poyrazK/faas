@@ -10,6 +10,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -99,5 +101,41 @@ func TestBuildReadinessProbe_EndToDrainOnShutdown(t *testing.T) {
 	}
 	if !strings.Contains(rr.Body.String(), "draining") {
 		t.Errorf("/readyz body = %q, want contains \"draining\"", rr.Body.String())
+	}
+}
+
+type fakeDatabasePinger struct{ err error }
+
+func (f fakeDatabasePinger) Ping(context.Context) error { return f.err }
+
+// TestRegisterDatabaseReadiness is issue #571: an unreachable database flips
+// meterd's /readyz with a pg reason; a reachable one leaves the signal ready.
+func TestRegisterDatabaseReadiness(t *testing.T) {
+	for name, tc := range map[string]struct {
+		err   error
+		ready bool
+	}{
+		"reachable":   {ready: true},
+		"unreachable": {err: errors.New("connection refused")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p := &wire.ReadyzProbe{}
+			registerDatabaseReadiness(t.Context(), p, fakeDatabasePinger{err: tc.err})
+			defer p.Drain("", nil)
+			deadline := time.Now().Add(time.Second)
+			for time.Now().Before(deadline) {
+				if r, reason := p.All(); r == tc.ready && (r || strings.Contains(reason, "pg ping failed")) {
+					break
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
+			r, reason := p.All()
+			if r != tc.ready {
+				t.Fatalf("ready = %v (reason %q), want %v", r, reason, tc.ready)
+			}
+			if !tc.ready && !strings.Contains(reason, "pg ping failed") {
+				t.Fatalf("reason = %q, want a pg ping failure", reason)
+			}
+		})
 	}
 }

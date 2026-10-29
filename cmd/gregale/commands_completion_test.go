@@ -37,7 +37,7 @@ func TestCompletion_Bash_RegistersAllCommands(t *testing.T) {
 	if !strings.Contains(out, "complete -F __gregale gregale") {
 		t.Fatalf("bash registration missing")
 	}
-	for _, c := range customerCliCommands() {
+	for _, c := range completionCliCommands() {
 		if !strings.Contains(out, `"$cmd" = "`+c.Name+`"`) {
 			t.Errorf("bash missing dispatch for %q", c.Name)
 		}
@@ -51,7 +51,7 @@ func TestCompletion_Zsh_HasCompdef(t *testing.T) {
 	if !strings.HasPrefix(out, "#compdef gregale\n") {
 		t.Fatalf("zsh #compdef header missing or not first line; got prefix %q", firstLine(out))
 	}
-	for _, c := range customerCliCommands() {
+	for _, c := range completionCliCommands() {
 		if !strings.Contains(out, "_gregale_"+c.Name+"()") {
 			t.Errorf("zsh missing per-command function for %q", c.Name)
 		}
@@ -78,7 +78,7 @@ func TestCompletion_Fish_HasComplete(t *testing.T) {
 	if !strings.Contains(out, "complete -c gregale") {
 		t.Fatalf("fish complete -c missing")
 	}
-	for _, c := range customerCliCommands() {
+	for _, c := range completionCliCommands() {
 		if !strings.Contains(out, " -a '"+c.Name+"'") && !strings.Contains(out, " -a \""+c.Name+"\"") {
 			t.Errorf("fish missing complete entry for %q", c.Name)
 		}
@@ -92,7 +92,7 @@ func TestCompletion_Powershell_HasRegisterArgumentCompleter(t *testing.T) {
 	if !strings.Contains(out, "Register-ArgumentCompleter") {
 		t.Fatalf("powershell registration missing")
 	}
-	for _, c := range customerCliCommands() {
+	for _, c := range completionCliCommands() {
 		if !strings.Contains(out, " -eq '"+c.Name+"'") {
 			t.Errorf("powershell missing dispatch for %q", c.Name)
 		}
@@ -295,7 +295,7 @@ func TestNestedDeploymentAliasHelpIsLocal(t *testing.T) {
 	if code := run([]string{"deployments", "alias", "set", "--help"}); code != 0 {
 		t.Fatalf("nested help = %d", code)
 	}
-	if got := stdout.String(); !strings.Contains(got, "gregale deployments alias set") || !strings.Contains(got, "--deployment") {
+	if got := stdout.String(); !strings.Contains(got, "gregale release alias set") || !strings.Contains(got, "--deployment") {
 		t.Fatalf("nested help = %q", got)
 	}
 }
@@ -610,19 +610,19 @@ func TestBash_DynamicSlugsRespectCommandPositions(t *testing.T) {
 	}
 	src := `. ` + scriptPath + `
 __gregale_cache_path() { printf '%s' "$FAAS_COMPLETION_CACHE_PATH"; }
-COMP_WORDS=(gregale app a)
-COMP_CWORD=2
+COMP_WORDS=(gregale app scale a)
+COMP_CWORD=3
 __gregale
 printf 'app=%s\n' "${COMPREPLY[*]}"
-COMP_WORDS=(gregale app alpha s)
-COMP_CWORD=3
+COMP_WORDS=(gregale app s)
+COMP_CWORD=2
 __gregale
 printf 'app-sub=%s\n' "${COMPREPLY[*]}"
-COMP_WORDS=(gregale canary simulate b)
-COMP_CWORD=3
+COMP_WORDS=(gregale release canary simulate b)
+COMP_CWORD=4
 __gregale
 printf 'canary=%s\n' "${COMPREPLY[*]}"
-COMP_WORDS=(gregale orgs info --org a)
+COMP_WORDS=(gregale org get --org a)
 COMP_CWORD=4
 __gregale
 printf 'org=%s\n' "${COMPREPLY[*]}"
@@ -633,7 +633,7 @@ printf 'org=%s\n' "${COMPREPLY[*]}"
 	if err != nil {
 		t.Fatalf("bash completion failed: %v\noutput: %s", err, string(out))
 	}
-	want := "app=alpha\napp-sub=scale security static-egress-ip\ncanary=beta\norg=acme\n"
+	want := "app=alpha\napp-sub=streaming-cap scale security static-egress-ip\ncanary=beta\norg=acme\n"
 	if got := string(out); got != want {
 		t.Fatalf("completion output = %q, want %q", got, want)
 	}

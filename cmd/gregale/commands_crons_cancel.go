@@ -17,12 +17,12 @@ func cmdCronsCancel(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 2 {
-		printCommandValidation(os.Stderr, "usage: gregale crons cancel <cron-id> <run-id>\n")
+		printCommandValidation(os.Stderr, "usage: gregale cron cancel <cron-id> <run-id>\n")
 		return 1
 	}
 	cronID, runID := fs.Arg(0), fs.Arg(1)
 	if !cronIDPattern.MatchString(cronID) || !fireNowRequestIDPattern.MatchString(runID) {
-		printCommandValidation(os.Stderr, "usage: gregale crons cancel <cron-id> <run-id>\n")
+		printCommandValidation(os.Stderr, "usage: gregale cron cancel <cron-id> <run-id>\n")
 		return 1
 	}
 	client, err := authedClient()

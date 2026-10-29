@@ -1,6 +1,6 @@
 -- Compile-time projection of the tables the agent queries read. Runtime
--- schema is owned by migrations 20261027220903390, 20261027220910563,
--- 20261027220917736 and 20261027220924909 (and, for accounts,
+-- schema is owned by migrations 20261029093503390, 20261029093510563,
+-- 20261029093517736 and 20261029093524909 (and, for accounts,
 -- platform_tenants, outbound_integrations, github_installations and the
 -- ADR-076 webhook ledger, earlier migrations). This file never executes against a database.
 CREATE TABLE accounts (

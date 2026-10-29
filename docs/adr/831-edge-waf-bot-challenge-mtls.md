@@ -1253,3 +1253,67 @@ Decision:
    the protected app itself still spends that app's budget and then skips as
    `budget`; throttle rules, the pre-auth limit and the penalty box remain the
    defence there.
+
+## Amendment 17 (2026-10-27): a challenge holds across gateways, routing gates and apps
+
+An end-to-end review before releasing `edge_challenge` found three ways a
+visitor could never pass the challenge:
+
+1. **Gateways signed with different keys.** The signing key derived from
+   each gateway's session key, and `gregalectl secrets init` writes a random
+   `session.key` on every host, so the production compute nodes held
+   different keys. gatewayd-public sends each request to the next compute
+   gateway in turn, so a solution reached a gateway other than the page's
+   about half the time and was refused, and a pass held only on the gateway
+   that issued it.
+2. **Routing gates took the solution.** The solution post met the redirect,
+   rewrite and declared-route gates before the gateway checked it. On an app
+   that allows only declared routes it was answered `404 undeclared_route`;
+   under a rewrite of every path it no longer reached `ChallengeSolvePath`.
+   Attack mode on such an app would have locked every browser out.
+3. **Tokens and passes were bound to one app.** On a host whose paths route
+   to several of the account's apps (`kind=route`), the page for a routed
+   app was solved where the host's own app serves `ChallengeSolvePath`. The
+   solve refused a token of another app, and the host's app does not load
+   the routed app's `@app` rules, so it did not even own the post.
+
+Decision:
+
+1. **One fleet key.** `FAAS_EDGE_CHALLENGE_KEY_FILE` names a 32-byte hex key
+   that Ansible installs on every gateway from the fleet vault
+   (`gatewayd_edge_challenge_key`, through `LoadCredential`). The role fails
+   when gateways in a play hold different keys, or, with
+   `gatewayd_edge_challenge_key_required`, when one holds none. Without the
+   variable a gateway still signs with its session key, which serves a single
+   gateway. Each gateway exports `gateway_edge_challenge_key_info{key_id,
+   source}`, a 12-hex-digit HMAC of the key, and `FaasEdgeChallengeKeyMismatch`
+   warns while gateways report more than one `key_id`. It fires before any
+   challenge is served, so the fleet is put right before the flag is
+   released.
+2. **The solution is the gateway's own request.** The page posts to
+   `ChallengeSolvePath?token=<token>`. A post there that carries a current
+   token in its query, or that reaches a host with an enforced challenge rule
+   of the app's account, skips the redirect, rewrite and declared-route
+   gates. It still meets the penalty box, maintenance, ingress, IP and geo
+   gates before it is checked, so a blocked client cannot earn a pass.
+3. **Tokens and passes bind the host and its account.** A token carries the
+   host and account it was issued for, and the app whose rule challenged, for
+   events and metrics. The solve accepts it on that host while the same
+   account owns the host's app. The pass names the host and account, and
+   every challenge rule of the account on that host honours it: a visitor
+   solves once per site, whichever of the account's apps serves a path. A
+   pass is never valid on another host or for another account.
+4. **Version 2.** Tokens and passes are now `c2.` and `p2.`. A gateway of
+   either version refuses the other's, which sends a visitor back to the
+   challenge once. `edge_challenge` is off for every account, so no pass is
+   in use while the release rolls out.
+
+Releasing `edge_challenge` or `edge_attack_mode` on a fleet of more than one
+gateway now requires the fleet key first, with `FaasEdgeChallengeKeyMismatch`
+quiet (ADR-20261024082000 amendment 5). The tests walk a browser through
+`ServeHTTP` with declared routes and a rewrite of every path
+(`TestChallengeSolvePassesRouteGates`, which fails on the previous gate
+order), solve a routed app's page where the host's app serves the solve
+path (`TestChallengePassCoversTheHostForTheAccount`), refuse another host's
+or account's token (`TestChallengeSolveRefusesForeignTokens`), and load the
+key (`TestEdgeChallengeSecret`).

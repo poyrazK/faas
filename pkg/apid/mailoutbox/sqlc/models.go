@@ -237,6 +237,19 @@ type MailSuppression struct {
 	ExpiresAt pgtype.Timestamptz
 }
 
+// Compute cap thresholds a managed PostgreSQL usage subject reached in a UTC month; written only by apid (ADR-20261025094915).
+type ManagedPostgresCapEvent struct {
+	SubjectID            pgtype.UUID
+	PeriodStart          pgtype.Timestamptz
+	Threshold            string
+	ReachedAt            pgtype.Timestamptz
+	UsedUnitSeconds      int64
+	AllowanceUnitSeconds int64
+	CeilingUnitSeconds   int64
+	OverageEnabled       bool
+	MailIntentID         pgtype.UUID
+}
+
 type MfaDisableRequest struct {
 	TokenHash   []byte
 	AccountID   pgtype.UUID
@@ -392,6 +405,10 @@ type PlatformMailProducerOutbox struct {
 	DeploymentFailureSuccessRevision pgtype.Int8
 	DeploymentFailureAt              pgtype.Timestamptz
 	AgentDeliveryID                  pgtype.UUID
+}
+
+type ResourceNamespace struct {
+	ID pgtype.UUID
 }
 
 type ScenarioTestActionPolicy struct {

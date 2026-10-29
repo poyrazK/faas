@@ -15,7 +15,12 @@ Dashboard: **faas frozen tier and quiet pause (ADR-1151)**
 `frozen_tier_early_freeze_after_s` (`FAAS_FROZEN_TIER_EARLY_FREEZE_AFTER_S`,
 ADR-20261021215353: freeze `between_requests` instances that many seconds
 after their last request; `schedd_frozen_total{outcome="frozen_early"}`),
-vmmd `quiet_pause` (`FAAS_QUIET_PAUSE`); all off by default. Frozen workers
+vmmd `quiet_pause` (`FAAS_QUIET_PAUSE`). `frozen_tier_apps` and
+`quiet_pause` are on by default (ADR-1151 amendment, 2026-10-27); the rest
+are off by default, and the manifest sets early freeze per fleet with
+`daemons.schedd.frozen_tier_early_freeze_after_s`. Release rollouts re-render
+`/etc/faas/*.toml` from the manifest, so turn a switch off on one node with a
+systemd drop-in (`Environment=FAAS_...=false`), not a TOML edit. Frozen workers
 (ADR-20261019103000) stop rather than park, so their frozen parks
 (`reason`, including `slot_needed`) end in a cold boot on the next demand. To
 back out early freeze, set it to 0 on the node's schedd; instances already
@@ -70,7 +75,8 @@ can thaw them, so they hold memory without saving restores.
 
 - Compare **Frozen memory by node** with the node's measured memory. Large
   apps (`frozen_tier_apps`) hold the most.
-- Mitigate by turning `frozen_tier_apps` off on that node's schedd, or add
+- Mitigate by turning `frozen_tier_apps` off on that node's schedd
+  (`FAAS_FROZEN_TIER_APPS=false` in a drop-in, restart schedd), or add
   capacity. With zswap on compute hosts, frozen memory compresses under
   pressure instead (ADR-906).
 
@@ -122,6 +128,6 @@ vmmd failed to resume at least three quiet-paused instances on one node in
 
 - `journalctl -u faas-vmmd | grep -i 'quiet'` gives the instance and the
   Firecracker resume error.
-- Turn vmmd's `quiet_pause` off on the node (`FAAS_QUIET_PAUSE=0`, restart
-  vmmd) to stop new pauses while investigating; paused instances resume on
-  their next request or when vmmd stops them.
+- Turn vmmd's `quiet_pause` off on the node (`FAAS_QUIET_PAUSE=0` in a
+  drop-in, restart vmmd) to stop new pauses while investigating; paused
+  instances resume on their next request or when vmmd stops them.

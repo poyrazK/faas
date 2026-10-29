@@ -175,6 +175,28 @@ func TestDecodePullRequest_HappyPath(t *testing.T) {
 	}
 }
 
+// GitHub's real pull_request payload has no flat head_sha/head_ref: the head
+// commit and branch are only in pull_request.head. Production refused every
+// real PR event with "head_sha must be a 40-char SHA" until the decoder read
+// them from there.
+func TestDecodePullRequest_GitHubPayloadShape(t *testing.T) {
+	t.Parallel()
+	sha := strings.Repeat("ab", 20)
+	body := `{"action":"opened","number":4,
+		"pull_request":{"number":4,"state":"open","draft":false,
+			"head":{"label":"octo:feat-x","ref":"feat-x","sha":"` + sha + `","repo":{"full_name":"octo/api"}},
+			"base":{"label":"octo:main","ref":"main","sha":"` + strings.Repeat("cd", 20) + `","repo":{"full_name":"octo/api"}}},
+		"repository":{"full_name":"octo/api","name":"api"},"installation":{"id":42},"sender":{"login":"octocat"}}`
+	ev, err := DecodePullRequest([]byte(body))
+	if err != nil {
+		t.Fatalf("decode GitHub-shaped pull_request: %v", err)
+	}
+	if ev.PullRequest.HeadSHA != sha || ev.PullRequest.HeadRef != "feat-x" || ev.IsFork() {
+		t.Fatalf("decoded head = (%q, %q, fork %t), want the head commit and branch, not a fork",
+			ev.PullRequest.HeadSHA, ev.PullRequest.HeadRef, ev.IsFork())
+	}
+}
+
 func TestDecodePullRequest_ActionsAccepted(t *testing.T) {
 	t.Parallel()
 	cases := []PullRequestAction{

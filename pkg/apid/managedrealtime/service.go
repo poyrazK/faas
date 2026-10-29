@@ -36,9 +36,12 @@ type Host interface {
 	EmitAudit(ctx context.Context, kind string, accountID *string, data map[string]any)
 	// Ops is nil when apid runs without operational metrics.
 	Ops() *wire.OpsMetrics
-	// SecretRecipient seals push targets and provider configs; nil when the
-	// host secrets are not installed.
-	SecretRecipient() *age.X25519Recipient
+	// SecretRecipients seal endpoint credentials, push targets and provider
+	// configs, account seal-domain values (ADR 20261022111812): the domain
+	// and the fleet recipient while the domain rolls out; an error when no
+	// recipient is installed. HostIdentitiesForUnseal opens them, the domain
+	// first.
+	SecretRecipients() ([]*age.X25519Recipient, error)
 	HostIdentitiesForUnseal(ctx context.Context) []*age.X25519Identity
 	// ResolveAndCheckEgress applies the tenant egress policy to a callback URL.
 	ResolveAndCheckEgress(ctx context.Context, rawURL string) *api.Problem

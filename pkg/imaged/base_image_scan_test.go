@@ -337,6 +337,58 @@ func TestProducedBaseScanReuseNeverPublishesRefusal(t *testing.T) {
 
 // adr: 435 — a shared base is scanned under the base timeout, not an
 // artifact's: the agent base's scan overran five minutes on a native host.
+// busyBaseScanStore refuses the first busy publications the way a concurrent
+// owner of the review inputs does.
+type busyBaseScanStore struct {
+	MemStore *state.MemStore
+	busy     int
+	calls    int
+}
+
+func (s *busyBaseScanStore) PublishBaseImageScan(ctx context.Context, in state.BaseImageScanInput) (state.BaseImageScan, error) {
+	s.calls++
+	if s.calls <= s.busy {
+		return state.BaseImageScan{}, state.ErrApplicationStandardReviewBusy
+	}
+	return s.MemStore.PublishBaseImageScan(ctx, in)
+}
+
+// #5709: two deploys staging the same base at once aborted one with "publish
+// produced shared-base scan: review inputs are being modified". The stage now
+// waits for the other owner, within a bound.
+func TestProducedBaseScanWaitsForABusyReview(t *testing.T) {
+	first, total, step := producedBaseScanBusyFirstWait, producedBaseScanBusyWait, producedBaseScanBusyMaxStep
+	producedBaseScanBusyFirstWait, producedBaseScanBusyWait, producedBaseScanBusyMaxStep = time.Millisecond, 200*time.Millisecond, 5*time.Millisecond
+	t.Cleanup(func() {
+		producedBaseScanBusyFirstWait, producedBaseScanBusyWait, producedBaseScanBusyMaxStep = first, total, step
+	})
+	for _, tc := range []struct {
+		name    string
+		busy    int
+		wantErr bool
+	}{
+		{name: "busy twice, then published", busy: 2},
+		{name: "busy past the bound", busy: 1 << 20, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, store, _, _, ref := verifiedBaseFixture(t, "complete")
+			busy := &busyBaseScanStore{MemStore: store, busy: tc.busy}
+			h.store = statetest.NewMem(busy)
+			h.WithGrypeRun(func(context.Context, string) (*ScanResult, error) { return producedScanResult(t, false), nil })
+			_, err := h.EnsureBaseExt4(t.Context(), ref, "base/verified.ext4", "base/verified.digest", "", "", "")
+			if tc.wantErr {
+				if !errors.Is(err, state.ErrApplicationStandardReviewBusy) {
+					t.Fatalf("err = %v, want review busy after the bound", err)
+				}
+				return
+			}
+			if err != nil || busy.calls != tc.busy+1 {
+				t.Fatalf("err = %v after %d publications, want success on attempt %d", err, busy.calls, tc.busy+1)
+			}
+		})
+	}
+}
+
 func TestProducedBaseScanGetsTheBaseTimeout(t *testing.T) {
 	h, _, _, _, ref := verifiedBaseFixture(t, "complete")
 	var left time.Duration

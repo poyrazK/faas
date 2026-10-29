@@ -27,28 +27,44 @@ func (b *atCapacityBackend) Admit(context.Context, string, string, string, strin
 
 func TestPublicRoutingWakeServesReplicaFoundAtCapacity(t *testing.T) {
 	for _, tc := range []struct {
-		name    string
-		replica bool
+		name     string
+		replica  bool
+		liveSlot bool
+		want     string
 	}{
-		{"rehydrate finds the replica", true},
-		{"no replica", false},
+		{name: "rehydrate finds the replica", replica: true},
+		// #5709: nothing this gateway can see holds the slot, so it is not
+		// the customer's limit (ADR-20261027173012).
+		{name: "no replica and no visible instance", want: "settling"},
+		{name: "another deployment's live instance holds the slot", liveSlot: true, want: api.CodeAppConcurReached},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h, backend, _ := newTestHandler(t)
+			backend.app.MaxConcurrency = 1
 			deployment := uuid.NewString()
 			wrapped := &atCapacityBackend{fakeBackend: backend}
 			if tc.replica {
 				wrapped.replica = &Target{InstanceID: "smoke", NodeID: "node", DeploymentID: deployment}
 			}
+			if tc.liveSlot {
+				backend.AddTarget(Target{InstanceID: "live", NodeID: "node", DeploymentID: uuid.NewString()})
+			}
 			h.backend = wrapped
 			_, _, _, err := h.wakeDeployment(t.Context(), backend.app, deployment, "production", "gateway", 1)
 			var problem *api.Problem
-			atCapacity := errors.As(err, &problem) && problem.Code == api.CodeAppConcurReached
-			if tc.replica && err != nil {
-				t.Fatalf("replica found at capacity was refused: %v", err)
-			}
-			if !tc.replica && !atCapacity {
-				t.Fatalf("at capacity with no replica: got %v, want %s", err, api.CodeAppConcurReached)
+			switch tc.want {
+			case "":
+				if err != nil {
+					t.Fatalf("replica found at capacity was refused: %v", err)
+				}
+			case "settling":
+				if !errors.Is(err, ErrInstanceSlotsSettling) {
+					t.Fatalf("at capacity with nothing visible: got %v, want %v", err, ErrInstanceSlotsSettling)
+				}
+			default:
+				if !errors.As(err, &problem) || problem.Code != tc.want || problem.Observed == nil || *problem.Observed != 1 {
+					t.Fatalf("at capacity with a live slot: got %v, want %s observing 1", err, tc.want)
+				}
 			}
 		})
 	}

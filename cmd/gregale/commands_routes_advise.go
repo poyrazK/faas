@@ -11,7 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const routesAdviseUsage = "usage: gregale routes advise APP [--since 7d] [--until RFC3339] [--cache-max-age SECONDS] [--apply ID [--enable]]"
+const routesAdviseUsage = "usage: gregale api route advise APP [--since 7d] [--until RFC3339] [--cache-max-age SECONDS] [--apply ID [--enable]]"
 
 // cmdRoutesAdvise lists route advisor suggestions (ADR-976) or applies one by
 // creating its edge rules, disabled unless --enable is given.
@@ -65,7 +65,7 @@ func applyRouteAdvice(ctx context.Context, client *api.Client, advice api.RouteA
 		}
 	}
 	if suggestion == nil {
-		return printErr("Unknown route advice", fmt.Errorf("no current suggestion %q for %s; run `gregale routes advise %s` with the same window", id, advice.Slug, advice.Slug))
+		return printErr("Unknown route advice", fmt.Errorf("no current suggestion %q for %s; run `gregale api route advise %s` with the same window", id, advice.Slug, advice.Slug))
 	}
 	if suggestion.Setting != nil {
 		return applyRouteAdviceSetting(ctx, client, advice.Slug, *suggestion.Setting)
@@ -85,7 +85,7 @@ func applyRouteAdvice(ctx context.Context, client *api.Client, advice api.RouteA
 	if jsonOutput {
 		return jsonOut(writeJSON(created))
 	}
-	state := "disabled; enable each with `gregale edge-rules update ID --enable` after review"
+	state := "disabled; enable each with `gregale edge rule update ID --enable` after review"
 	if enable {
 		state = "enabled"
 	}
@@ -172,7 +172,7 @@ func renderRouteAdvice(w io.Writer, a api.RouteAdviceResponse) {
 		}
 		_, _ = fmt.Fprintf(w, "  Rules:   %d (%s)\n", len(s.Rules), strings.Join(hosts, ", "))
 	}
-	_, _ = fmt.Fprintf(w, "\nApply one with `gregale routes advise %s --apply ID` (same --since and --cache-max-age); rules are created disabled unless you add --enable, and settings take effect at once.\n", a.Slug)
+	_, _ = fmt.Fprintf(w, "\nApply one with `gregale api route advise %s --apply ID` (same --since and --cache-max-age); rules are created disabled unless you add --enable, and settings take effect at once.\n", a.Slug)
 }
 
 // routeAdviceContentLine summarizes learned cacheability evidence (ADR-1188).

@@ -135,7 +135,7 @@ func triggerUsageError(usage string, format string, args ...any) int {
 
 func cmdTriggersList(args []string) int {
 	flags, pos := splitArgsForFlags(args)
-	usage := "usage: gregale triggers list [--app <slug>] [--kind " + triggerKindsUsage + "]"
+	usage := "usage: gregale trigger list [--app <slug>] [--kind " + triggerKindsUsage + "]"
 	fs := triggerFlagSet("triggers-list", usage)
 	appSlug := fs.String("app", "", "filter to an app slug")
 	kind := fs.String("kind", "", "filter by trigger kind")
@@ -186,7 +186,7 @@ func cmdTriggersList(args []string) int {
 
 func cmdTriggersGet(args []string) int {
 	flags, pos := splitArgsForFlags(args)
-	usage := "usage: gregale triggers get <id>"
+	usage := "usage: gregale trigger get <id>"
 	fs := triggerFlagSet("triggers-get", usage)
 	if err := fs.Parse(flags); err != nil {
 		return 1
@@ -215,7 +215,7 @@ func cmdTriggersCreate(args []string) int {
 		return printErr("Invalid lock", lockErr)
 	}
 	flags, pos := splitArgsForFlags(args, "disabled", "enabled")
-	usage := "usage: gregale triggers create --app <slug> --kind <" + triggerBrokerKindsUsage + "> [flags]"
+	usage := "usage: gregale trigger create --app <slug> --kind <" + triggerBrokerKindsUsage + "> [flags]"
 	fs := triggerFlagSet("triggers-create", usage)
 	appSlug := fs.String("app", "", "app slug (required)")
 	kind := fs.String("kind", "", "trigger kind (required)")
@@ -245,7 +245,7 @@ func cmdTriggersCreate(args []string) int {
 		return triggerUsageError(usage, "invalid --kind %q (expected one of %s)", *kind, triggerBrokerKindsUsage)
 	}
 	if *kind == string(api.TriggerKindCron) {
-		return triggerUsageError(usage, "kind=cron is managed by `gregale crons add`; POST /v1/triggers rejects cron rows")
+		return triggerUsageError(usage, "kind=cron is managed by `gregale cron create`; POST /v1/triggers rejects cron rows")
 	}
 	if !triggerBrokerKindValid(*kind) {
 		return triggerUsageError(usage, "invalid --kind %q (expected one of %s)", *kind, triggerBrokerKindsUsage)
@@ -322,7 +322,7 @@ func cmdTriggersCreate(args []string) int {
 
 func cmdTriggersUpdate(args []string) int {
 	flags, pos := splitArgsForFlags(args, "disabled", "enabled")
-	usage := "usage: gregale triggers update <id> [flags]"
+	usage := "usage: gregale trigger update <id> [flags]"
 	fs := triggerFlagSet("triggers-update", usage)
 	enabled := fs.Bool("enabled", false, "enable the trigger")
 	disabled := fs.Bool("disabled", false, "disable the trigger")
@@ -407,7 +407,7 @@ func cmdTriggersUpdate(args []string) int {
 }
 
 func cmdTriggersDelete(args []string) int {
-	usage := "usage: gregale triggers delete <id> [--quiet]"
+	usage := "usage: gregale trigger delete <id> [--quiet]"
 	fs := triggerFlagSet("triggers-delete", usage)
 	quiet := fs.Bool("quiet", false, "skip the typed confirmation (for scripts)")
 	fs.BoolVar(quiet, "yes", false, "confirm deletion without prompting")
@@ -477,7 +477,7 @@ func cmdTriggersToggle(args []string, resume bool) int {
 
 func cmdTriggersRecords(args []string) int {
 	flags, pos := splitArgsForFlags(args)
-	usage := "usage: gregale triggers records <id> [--state " + strings.Join(triggerRecordStateNames, "|") + "]"
+	usage := "usage: gregale trigger records <id> [--state " + strings.Join(triggerRecordStateNames, "|") + "]"
 	fs := triggerFlagSet("triggers-records", usage)
 	state := fs.String("state", "", "filter by record state")
 	if err := fs.Parse(flags); err != nil {
@@ -554,7 +554,7 @@ func cmdTriggersRecordAction(args []string, retry bool) int {
 
 func cmdTriggersDLQ(args []string) int {
 	flags, pos := splitArgsForFlags(args)
-	usage := "usage: gregale triggers dlq <id> [--reason REASON]"
+	usage := "usage: gregale trigger dlq <id> [--reason REASON]"
 	fs := triggerFlagSet("triggers-dlq", usage)
 	reason := fs.String("reason", "", "filter by dead-letter reason")
 	if err := fs.Parse(flags); err != nil {
@@ -586,7 +586,7 @@ func cmdTriggersDLQ(args []string) int {
 
 func cmdTriggersMetrics(args []string) int {
 	flags, pos := splitArgsForFlags(args)
-	usage := "usage: gregale triggers metrics <id>"
+	usage := "usage: gregale trigger metrics <id>"
 	fs := triggerFlagSet("triggers-metrics", usage)
 	if err := fs.Parse(flags); err != nil {
 		return 1

@@ -22,9 +22,14 @@ type MonitorDrain struct {
 	// AfterEvaluate runs after each completed evaluation, outside its
 	// transaction; it applies the monitor's automatic rollback (ADR-845).
 	AfterEvaluate func(context.Context, state.RouteMonitorTarget)
-	Metrics       *Metrics
-	Log           *slog.Logger
-	Now           func() time.Time
+	// Released decides the monitoring capability for the target's account
+	// (ADR-20261028110044). An unreleased monitor is deferred without
+	// evaluating, so it opens no incident, sends no webhook and rolls nothing
+	// back. Nil releases every monitor.
+	Released func(context.Context, state.RouteMonitorTarget) bool
+	Metrics  *Metrics
+	Log      *slog.Logger
+	Now      func() time.Time
 }
 
 // Run drains due monitors and returns how many evaluations completed.
@@ -95,6 +100,13 @@ func (d MonitorDrain) evaluate(ctx context.Context, targets []state.RouteMonitor
 }
 
 func (d MonitorDrain) evaluateOne(ctx context.Context, target state.RouteMonitorTarget) bool {
+	if d.Released != nil && !d.Released(ctx, target) {
+		d.Metrics.observeMonitor(MonitorUnreleased)
+		deferCtx, deferCancel := context.WithTimeout(ctx, api.RouteCheckTimeout)
+		_ = d.Queue.DeferRouteMonitor(deferCtx, target)
+		deferCancel()
+		return false
+	}
 	checkCtx, cancel := context.WithTimeout(ctx, api.RouteCheckTimeout)
 	done, err := d.Queue.EvaluateRouteMonitor(checkCtx, target.AccountID, target.AppID)
 	cancel()

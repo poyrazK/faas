@@ -409,7 +409,7 @@ func requireTemplateSecretsBeforeFirstStart(ctx context.Context, apps interface 
 	if _, err := apps.GetApp(ctx, slug); !errors.As(err, &ae) || ae.Problem.Status != http.StatusNotFound {
 		return nil
 	}
-	return fmt.Errorf("%w; template %s cannot start without them. Pass --secrets-file <file> on the first deploy, or reserve the app with --create-only, set them with `gregale secrets set --app %s ...`, then deploy", missing, tpl, slug)
+	return fmt.Errorf("%w; template %s cannot start without them. Pass --secrets-file <file> on the first deploy, or reserve the app with --create-only, set them with `gregale env set --app %s ...`, then deploy", missing, tpl, slug)
 }
 
 // validateTemplateSecrets catches an incomplete first-deploy bundle before
@@ -475,8 +475,8 @@ func nextStepsFor(tpl string) []string {
 		return []string{
 			"Read <dest>/README.md and place the local SDK package at <dest>/packages/gregale-sdk.tgz.",
 			"cd <dest> && npm install --ignore-scripts && npm test",
-			"gregale customer-operations validate --dir . --app <slug> --plan hobby",
-			"gregale customer-operations types --dir . --app <slug> --plan hobby",
+			"gregale operation validate --dir . --app <slug> --plan hobby",
+			"gregale operation types --dir . --app <slug> --plan hobby",
 			"Add `types --check` and `cd <dest> && npm run typecheck` to CI.",
 			"Configure public selectors and the customer login as described in README.md.",
 			"Read RECOVERY.md before approving a workflow resume; confirmed prefixes and files are retained.",
@@ -487,8 +487,8 @@ func nextStepsFor(tpl string) []string {
 			"Read <dest>/README.md and place the local SDK package at <dest>/packages/gregale-sdk.tgz.",
 			"cd <dest> && npm install --ignore-scripts && npm test",
 			"Build and register Dockerfile.job as customer-export-job; wait for its image to become ready.",
-			"gregale customer-operations validate --dir . --app <slug> --plan pro",
-			"gregale customer-operations types --dir . --app <slug> --plan pro",
+			"gregale operation validate --dir . --app <slug> --plan pro",
+			"gregale operation types --dir . --app <slug> --plan pro",
 			"Add `types --check` and `cd <dest> && npm run typecheck` to CI.",
 			"Configure the public API and app selectors as described in README.md.",
 			"Customer admission remains closed pending native qualification; the starter does not enable it.",
@@ -497,18 +497,18 @@ func nextStepsFor(tpl string) []string {
 		return []string{
 			"Read <dest>/README.md and place the local SDK package at <dest>/packages/gregale-sdk.tgz.",
 			"cd <dest> && npm install --ignore-scripts && npm test",
-			"gregale customer-operations validate --dir . --app <slug> --plan hobby",
-			"gregale customer-operations types --dir . --app <slug> --plan hobby",
+			"gregale operation validate --dir . --app <slug> --plan hobby",
+			"gregale operation types --dir . --app <slug> --plan hobby",
 			"Add `types --check` and `cd <dest> && npm run typecheck` to CI.",
 			"Configure a qualified preview deployment and customer credentials as described in README.md.",
 			"Customer admission remains closed by default; the starter does not enable it.",
 		}
 	case "mcp-node":
-		return []string{"cd <dest> && npm ci && npm test", "Review gregale-mcp.json: the sample catalog is public; configure external OAuth before adding sensitive entries.", "gregale mcp deploy --path <dest> --name <slug>", "gregale mcp doctor --app <slug> --legacy --stream-tool stream_demo"}
+		return []string{"cd <dest> && npm ci && npm test", "Review gregale-mcp.json: the sample catalog is public; configure external OAuth before adding sensitive entries.", "gregale mcp server deploy --path <dest> --name <slug>", "gregale mcp server doctor --app <slug> --legacy --stream-tool stream_demo"}
 	case "mcp-go":
-		return []string{"cd <dest> && go test ./...", "Review gregale-mcp.json: the sample catalog is public; configure external OAuth before adding sensitive entries.", "gregale mcp deploy --path <dest> --name <slug>"}
+		return []string{"cd <dest> && go test ./...", "Review gregale-mcp.json: the sample catalog is public; configure external OAuth before adding sensitive entries.", "gregale mcp server deploy --path <dest> --name <slug>"}
 	case "mcp-python":
-		return []string{"cd <dest> && python -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt", "python -m unittest", "Review gregale-mcp.json: the sample catalog is public; configure external OAuth before adding sensitive entries.", "gregale mcp deploy --path <dest> --name <slug>"}
+		return []string{"cd <dest> && python -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt", "python -m unittest", "Review gregale-mcp.json: the sample catalog is public; configure external OAuth before adding sensitive entries.", "gregale mcp server deploy --path <dest> --name <slug>"}
 	case "customer-platform":
 		return []string{
 			"Reserve the app, then attach managed runtime and migration bindings:",
@@ -553,10 +553,10 @@ func nextStepsFor(tpl string) []string {
 			"  (optionally S3_ENDPOINT=https://<account>.r2.cloudflarestorage.com for R2/B2)",
 			"First deploy with secrets sealed before startup:",
 			"  cd <dest> && gregale deploy --secrets-file <secrets-file>",
-			"After the app exists, rotate/add with `gregale secrets set --app <slug> ...`.",
+			"After the app exists, rotate/add with `gregale env set --app <slug> ...`.",
 			"Or reserve the app before setting secrets separately:",
 			"  gregale deploy --create-only --template s3-uploader --name <slug>",
-			"  gregale secrets set --app <slug> S3_BUCKET=... S3_REGION=... S3_ACCESS_KEY_ID=... S3_SECRET_ACCESS_KEY=...",
+			"  gregale env set --app <slug> S3_BUCKET=... S3_REGION=... S3_ACCESS_KEY_ID=... S3_SECRET_ACCESS_KEY=...",
 			"  cd <dest> && gregale deploy",
 		}
 	case "slack-bot":
@@ -566,10 +566,10 @@ func nextStepsFor(tpl string) []string {
 			"  (optional SLACK_BOT_TOKEN=xoxb-...)",
 			"First deploy with secrets sealed before startup:",
 			"  cd <dest> && gregale deploy --secrets-file <secrets-file>",
-			"After the app exists, rotate/add with `gregale secrets set --app <slug> ...`.",
+			"After the app exists, rotate/add with `gregale env set --app <slug> ...`.",
 			"Or reserve the app before setting secrets separately:",
 			"  gregale deploy --create-only --template slack-bot --name <slug>",
-			"  gregale secrets set --app <slug> SLACK_SIGNING_SECRET=... SLACK_BOT_TOKEN=xoxb-...",
+			"  gregale env set --app <slug> SLACK_SIGNING_SECRET=... SLACK_BOT_TOKEN=xoxb-...",
 			"  cd <dest> && gregale deploy",
 		}
 	case "auth":
@@ -606,7 +606,7 @@ func nextStepsFor(tpl string) []string {
 			"For PostgreSQL on TCP 5432 (Pro/Scale): `gregale app <slug> egress-ports add 5432`.",
 			"  cd <dest> && gregale deploy --name <slug>",
 			"The Procfile release command creates the schema before activation.",
-			"For external PostgreSQL, run migrations locally; see README.md for gregale secrets set and --secrets-file setup.",
+			"For external PostgreSQL, run migrations locally; see README.md for gregale env set and --secrets-file setup.",
 		}
 	case "secret-reload-node":
 		return []string{
@@ -614,7 +614,7 @@ func nextStepsFor(tpl string) []string {
 			"  DATABASE_URL=postgres://user:pass@host/db?sslmode=require",
 			"First deploy with secrets sealed before startup:",
 			"  cd <dest> && gregale deploy --secrets-file <secrets-file>",
-			"After the app exists, rotate the credential with `gregale secrets rotate --app <slug> ... --wait-for-ack`.",
+			"After the app exists, rotate the credential with `gregale env rotate --app <slug> ... --wait-for-ack`.",
 		}
 	case "cron-worker":
 		return []string{
@@ -626,10 +626,10 @@ func nextStepsFor(tpl string) []string {
 			"First deploy with secrets sealed before startup:",
 			"  cd <dest> && gregale deploy --secrets-file <secrets-file>",
 			"Then wire QStash to invoke the function (curl or the QStash dashboard).",
-			"After the app exists, rotate/add with `gregale secrets set --app <slug> ...`.",
+			"After the app exists, rotate/add with `gregale env set --app <slug> ...`.",
 			"Or reserve the app before setting secrets separately:",
 			"  gregale deploy --create-only --template cron-worker --name <slug>",
-			"  gregale secrets set --app <slug> QSTASH_CURRENT_SIGNING_KEY=... QSTASH_NEXT_SIGNING_KEY=... UPSTASH_REDIS_REST_URL=... UPSTASH_REDIS_REST_TOKEN=...",
+			"  gregale env set --app <slug> QSTASH_CURRENT_SIGNING_KEY=... QSTASH_NEXT_SIGNING_KEY=... UPSTASH_REDIS_REST_URL=... UPSTASH_REDIS_REST_TOKEN=...",
 			"  cd <dest> && gregale deploy",
 		}
 	case "webhook-receiver":
@@ -640,7 +640,7 @@ func nextStepsFor(tpl string) []string {
 			"First deploy with secrets sealed before startup:",
 			"  cd <dest> && gregale deploy --secrets-file <secrets-file>",
 			"Wire the provider's webhook URL to https://<slug>.gregale.dev/<your-path>.",
-			"After the app exists, rotate/add with `gregale secrets set --app <slug> ...`.",
+			"After the app exists, rotate/add with `gregale env set --app <slug> ...`.",
 		}
 	case "ai-chat":
 		return []string{
@@ -651,10 +651,10 @@ func nextStepsFor(tpl string) []string {
 			"  (optional OPENAI_MODEL=... and SYSTEM_PROMPT=...)",
 			"First deploy with secrets sealed before startup:",
 			"  cd <dest> && gregale deploy --secrets-file <secrets-file>",
-			"After the app exists, rotate/add with `gregale secrets set --app <slug> ...`.",
+			"After the app exists, rotate/add with `gregale env set --app <slug> ...`.",
 			"Or reserve the app before setting secrets separately:",
 			"  gregale deploy --create-only --template ai-chat --name <slug>",
-			"  gregale secrets set --app <slug> OPENAI_API_KEY=sk-... (or ANTHROPIC_API_KEY=sk-ant-...)",
+			"  gregale env set --app <slug> OPENAI_API_KEY=sk-... (or ANTHROPIC_API_KEY=sk-ant-...)",
 			"  cd <dest> && gregale deploy",
 		}
 	default:

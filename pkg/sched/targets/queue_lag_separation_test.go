@@ -139,7 +139,7 @@ func TestBrokerLag_PreservesBindingBreakdown(t *testing.T) {
 			BrokerLagReader:         &fakeBrokerLag{byApp: map[string]int64{"app1": 999}},
 		})
 
-	sig, ok, err := tr.readQueueState(context.Background(), app, time.Now())
+	sig, ok, err := tr.readQueueState(context.Background(), app, time.Now(), queueTelemetryLimit, true)
 	if err != nil || !ok {
 		t.Fatalf("readQueueState = (%v, %v)", ok, err)
 	}

@@ -445,6 +445,59 @@ func TestCmdWorkersScale_UpdatesParameters(t *testing.T) {
 	}
 }
 
+// ADR-20261018101500 amendment 2026-10-27: an app without worker scaling
+// starts from its policy's queue metric, else Gregale queue depth. queue_lag
+// gives the scheduler no signal for Gregale queues.
+func TestCmdWorkersScale_DefaultsToQueueDepth(t *testing.T) {
+	for name, tc := range map[string]struct {
+		policy *api.ScalingPolicy
+		want   string
+	}{
+		"no policy":         {nil, api.ScalingMetricQueueDepth},
+		"queue_depth kept":  {&api.ScalingPolicy{Target: &api.ScalingTarget{Metric: api.ScalingMetricQueueDepth, Value: 20}}, api.ScalingMetricQueueDepth},
+		"broker lag kept":   {&api.ScalingPolicy{Target: &api.ScalingTarget{Metric: api.ScalingMetricQueueLag, Value: 500}}, api.ScalingMetricQueueLag},
+		"cpu policy, queue": {&api.ScalingPolicy{Target: &api.ScalingTarget{Metric: "cpu", Value: 70}}, api.ScalingMetricQueueDepth},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var gotReq api.UpdateAppRequest
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				app := api.AppResponse{ID: "app-w", Slug: "my-worker", ScalingPolicy: tc.policy,
+					Manifest: api.AppManifest{ExecutionMode: api.ExecutionModeWorker}}
+				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/v1/apps/my-worker":
+				case r.Method == http.MethodPatch && r.URL.Path == "/v1/apps/my-worker":
+					_ = json.NewDecoder(r.Body).Decode(&gotReq)
+					app.Manifest.WorkerReplicas = gotReq.WorkerReplicas
+				default:
+					http.NotFound(w, r)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(app)
+			}))
+			t.Cleanup(srv.Close)
+			t.Setenv("FAAS_API", srv.URL)
+			t.Setenv("FAAS_TOKEN", "test-token")
+			main.ResetJSONOutput()
+			t.Cleanup(main.ResetJSONOutput)
+
+			_, restore := main.CaptureStdout(t)
+			code := main.CmdWorkersScale([]string{"my-worker", "--min", "0", "--max", "3", "--target", "50"})
+			restore()
+			if code != 0 {
+				t.Fatalf("cmdWorkersScale = %d, want 0", code)
+			}
+			if gotReq.WorkerReplicas == nil || gotReq.WorkerReplicas.Metric != tc.want {
+				t.Fatalf("worker replicas = %+v, want metric %s", gotReq.WorkerReplicas, tc.want)
+			}
+			if gotReq.ScalingPolicy == nil || gotReq.ScalingPolicy.Target == nil || gotReq.ScalingPolicy.Target.Metric != tc.want ||
+				gotReq.ScalingPolicy.Target.Value != 50 {
+				t.Fatalf("scaling policy = %+v, want target %s=50", gotReq.ScalingPolicy, tc.want)
+			}
+		})
+	}
+}
+
 func TestCmdWorkersScale_CustomMetricUpdatesScalingPolicy(t *testing.T) {
 	var gotReq api.UpdateAppRequest
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

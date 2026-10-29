@@ -27,7 +27,7 @@ func cmdEventsBackfill(args []string) int {
 	subID, subErr := uuid.Parse(*subscription)
 	req := api.EventReplayBackfillRequest{AllowExpired: *allowExpired, From: start, Until: end}
 	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) || !*yes || startErr != nil || endErr != nil || subErr != nil || req.Validate() != nil {
-		PrintUsage(os.Stderr, "usage: gregale events backfill <app> --subscription-id UUID --from RFC3339 --until RFC3339 --yes", "events")
+		PrintUsage(os.Stderr, "usage: gregale event backfill create <app> --subscription-id UUID --since RFC3339 --until RFC3339 --yes", "events")
 		return 1
 	}
 	client, err := authedClient()
@@ -52,11 +52,11 @@ func cmdEventsBackfillStatus(args []string) int {
 		return 1
 	}
 	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) {
-		PrintUsage(os.Stderr, "usage: gregale events backfill-status <job-id>", "events")
+		PrintUsage(os.Stderr, "usage: gregale event backfill get <job-id>", "events")
 		return 1
 	}
 	if _, err := uuid.Parse(positional[0]); err != nil {
-		PrintUsage(os.Stderr, "usage: gregale events backfill-status <job-id>", "events")
+		PrintUsage(os.Stderr, "usage: gregale event backfill get <job-id>", "events")
 		return 1
 	}
 	client, err := authedClient()
@@ -84,11 +84,11 @@ func cmdEventsBackfillItems(args []string) int {
 		return 1
 	}
 	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) || validateCLILimit("limit", *limit, api.EventReplayBackfillItemsPageMax) != nil {
-		PrintUsage(os.Stderr, "usage: gregale events backfill-items <job-id> [--state STATE] [--limit N] [--after CURSOR]", "events")
+		PrintUsage(os.Stderr, "usage: gregale event backfill items <job-id> [--state STATE] [--limit N] [--cursor CURSOR]", "events")
 		return 1
 	}
 	if _, err := uuid.Parse(positional[0]); err != nil {
-		PrintUsage(os.Stderr, "usage: gregale events backfill-items <job-id> [--state STATE] [--limit N] [--after CURSOR]", "events")
+		PrintUsage(os.Stderr, "usage: gregale event backfill items <job-id> [--state STATE] [--limit N] [--cursor CURSOR]", "events")
 		return 1
 	}
 	client, err := authedClient()
@@ -132,7 +132,7 @@ func cmdEventsBackfillItems(args []string) int {
 		}
 	}
 	if page.NextAfter != "" {
-		_, _ = fmt.Fprintf(osStdout, "Next page: gregale events backfill-items %s --limit %d", page.JobID, *limit)
+		_, _ = fmt.Fprintf(osStdout, "Next page: gregale event backfill items %s --limit %d", page.JobID, *limit)
 		if *stateFilter != "" {
 			_, _ = fmt.Fprintf(osStdout, " --state %s", *stateFilter)
 		}
@@ -150,11 +150,11 @@ func cmdEventsBackfillRetry(args []string) int {
 		return 1
 	}
 	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) || !*yes || validateCLILimit("limit", *limit, api.EventReplayBackfillRetryMax) != nil {
-		PrintUsage(os.Stderr, "usage: gregale events backfill-retry <job-id> [--limit N] --yes", "events")
+		PrintUsage(os.Stderr, "usage: gregale event backfill retry <job-id> [--limit N] --yes", "events")
 		return 1
 	}
 	if _, err := uuid.Parse(positional[0]); err != nil {
-		PrintUsage(os.Stderr, "usage: gregale events backfill-retry <job-id> [--limit N] --yes", "events")
+		PrintUsage(os.Stderr, "usage: gregale event backfill retry <job-id> [--limit N] --yes", "events")
 		return 1
 	}
 	client, err := authedClient()
@@ -173,12 +173,47 @@ func cmdEventsBackfillRetry(args []string) int {
 	return 0
 }
 
+// cmdEventsBackfillCancel ends a running backfill (ADR-20261028095548).
+func cmdEventsBackfillCancel(args []string) int {
+	const usage = "usage: gregale event backfill cancel <job-id> --yes"
+	flags, positional := splitArgsForFlags(args, "yes")
+	fs := newFlagSet("events backfill-cancel", flag.ContinueOnError)
+	yes := fs.Bool("yes", false, "confirm dropping the job's undelivered events")
+	if err := fs.Parse(flags); err != nil {
+		return 1
+	}
+	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) || !*yes {
+		PrintUsage(os.Stderr, usage, "events")
+		return 1
+	}
+	if _, err := uuid.Parse(positional[0]); err != nil {
+		PrintUsage(os.Stderr, usage, "events")
+		return 1
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	job, err := client.CancelEventReplayBackfill(context.Background(), positional[0])
+	if err != nil {
+		return printErr("Event backfill cancel failed", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(job))
+	}
+	writeEventBackfillJob(job)
+	return 0
+}
+
 func writeEventBackfillJob(job api.EventReplayBackfillJobResponse) {
 	target := job.SubscriptionID
 	if job.ConsumerKind == "workflow" {
 		target = "workflow/" + job.WorkflowName
 	}
 	_, _ = fmt.Fprintf(osStdout, "Backfill %s for %s / %s: %s\n", job.ID, oneLine(job.AppSlug), oneLine(target), job.State)
+	if job.LastFailure != "" {
+		_, _ = fmt.Fprintf(osStdout, "Last processing failure: %s\n", job.LastFailure)
+	}
 	if job.WorkflowRevision != "" {
 		_, _ = fmt.Fprintf(osStdout, "Captured workflow revision: %s\n", job.WorkflowRevision)
 	}
@@ -186,5 +221,8 @@ func writeEventBackfillJob(job api.EventReplayBackfillJobResponse) {
 	_, _ = fmt.Fprintf(osStdout, "Scanned %d | matched %d | filtered %d | pending %d | processing %d | enqueued %d | failed %d\n", job.Progress.Scanned, job.Progress.Matched, job.Progress.Filtered, job.Progress.Pending, job.Progress.Processing, job.Progress.Enqueued, job.Progress.Failed)
 	_, _ = fmt.Fprintf(osStdout, "Retryable failed: %d\n", job.Progress.RetryableFailed)
 	_, _ = fmt.Fprintf(osStdout, "Skipped: captured %d | unknown membership %d | existing target %d | unsettled receipt %d\n", job.Progress.SkippedCaptured, job.Progress.SkippedUnknown, job.Progress.SkippedExisting, job.Progress.SkippedUnsettled)
+	if job.Progress.Cancelled > 0 {
+		_, _ = fmt.Fprintf(osStdout, "Cancelled undelivered: %d\n", job.Progress.Cancelled)
+	}
 	_, _ = fmt.Fprintln(osStdout, "Routing enqueued handler invocations; it does not mean the handler completed. Retained history is not a complete archive.")
 }
