@@ -212,7 +212,7 @@ func TestSharedRuntimeRollbackMetal(t *testing.T) {
 		park(t)
 	})
 	t.Run("shared-runtime", func(t *testing.T) {
-		shared = deploy(t, layerKindFixture(t, "24", sharedBody, false), "aaaaaaaa-0000-4000-8000-000000000003", e2etest.DefaultBuildStallWindow, e2etest.DefaultBuildCeiling)
+		shared = deploy(t, layerKindFixture(t, "24", sharedBody, false), "aaaaaaaa-0000-4000-8000-000000000003", sharedBaseStallWindow, sharedBaseCeiling)
 		if shared.RuntimeBase != "node24" {
 			t.Fatalf("shared deployment runtime_base = %q, want node24", shared.RuntimeBase)
 		}
