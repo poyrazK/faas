@@ -47,7 +47,7 @@ import (
 // inspectUsage is the single source of truth for the verb's
 // usage line. The dispatcher prints it on bad-args paths, and the
 // test file pins this exact wording.
-const inspectUsage = "usage: gregale inspect [<slug>] [--upstreams] [--scope <scope>] [--errors] [--watch [--interval 5s] [--timeout DURATION]] [--json]"
+const inspectUsage = "usage: gregale inspect [<slug>] [--upstreams] [--env <scope>] [--errors] [--follow [--interval 5s] [--timeout DURATION]] [--json]"
 
 func cmdInspect(args []string) int {
 	flags, positional := splitArgsForFlags(args, "upstreams", "errors", "watch")

@@ -168,7 +168,7 @@ func run(args []string) (status int) {
 	previousHelpPrinted, previousHelpPath := flagHelpPrinted, helpRequestPath
 	flagHelpPrinted, helpRequestPath = false, ""
 	if jsonUsageHelp {
-		helpRequestPath = leadingWords(args)
+		helpRequestPath = cliTreeSpellPath(leadingWords(typed))
 	}
 	defer func() {
 		// A parser that printed --help reports the request as a parse error;
