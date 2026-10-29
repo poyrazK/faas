@@ -282,7 +282,7 @@ func (m *Manager) RestoreEnvironmentQualification(ctx context.Context, frame sta
 		return nil, fmt.Errorf("native qualification restore: prepare config receipt: %w", err)
 	}
 	defer m.clearQualificationConfigReceipt(frame.InstanceID, waiter)
-	req.preparedSecretsEnvJSON, req.preparedAPIEnvJSON, err = m.prepareWakeFiles(req)
+	req.preparedSecretsEnvJSON, req.preparedAPIEnvJSON, err = m.prepareWakeFiles(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("native qualification restore: prepare frozen runtime files: %w", err)
 	}
@@ -375,7 +375,7 @@ func (m *Manager) WakeEnvironmentQualification(ctx context.Context, frame state.
 	// Prepare all sidecar projections before the private VM starts so the
 	// receipt waiter can bind every workload's actual boot environment. Wake's
 	// own preparation step is idempotent for these already-prepared entries.
-	if err := m.prepareSidecarEnvFiles(&req); err != nil {
+	if err := m.prepareSidecarEnvFiles(ctx, &req); err != nil {
 		return nil, fmt.Errorf("native qualification: prepare sidecar configuration: %w", err)
 	}
 	req, receiptWaiter, err := m.prepareQualificationConfigReceipt(req)

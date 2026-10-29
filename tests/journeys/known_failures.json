@@ -53,5 +53,10 @@
     "step": "TestGitHubDeploys/preview_removed_on_pr_close",
     "bug": "closing the pull request did not remove its preview (a preview from a closed PR was still live the next day); with push-to-deploy, auto-preview and Checks also failing, GitHub App webhooks for this installation look unprocessed",
     "since": "2026-10-28"
+  },
+  {
+    "step": "TestMultiServiceProject/deploy_project",
+    "bug": "a Compose service without ports deploys as a worker and its first boot fails with execution_mode_conflict (worker vs characterized http) once it listens, so an internal API cannot deploy; fixed by #5840 (ADR-20261029120000), known until it is released",
+    "since": "2026-10-29"
   }
 ]
