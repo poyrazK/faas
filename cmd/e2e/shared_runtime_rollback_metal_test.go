@@ -76,136 +76,11 @@ func layerKindFixture(t *testing.T, node, body string, prestart bool) []byte {
 }
 
 func TestSharedRuntimeRollbackMetal(t *testing.T) {
-	if os.Getenv("FAAS_TEST_KERNEL") == "" {
-		t.Skip("FAAS_TEST_KERNEL unset; skipping metal shared-runtime rollback test")
-	}
-	if _, err := os.Stat("/dev/kvm"); err != nil {
-		t.Skipf("/dev/kvm not available: %v", err)
-	}
-	if os.Getenv("FAAS_BUILDER_BASE_PATH") == "" {
-		t.Skip("FAAS_BUILDER_BASE_PATH unset; skipping metal shared-runtime rollback test")
-	}
-	pool := pgtest.OpenMigrated(t)
-	if pool == nil {
+	app := newSharedRuntimeApp(t, "layerkinds", sharedBody)
+	if app == nil {
 		return
 	}
-	if err := dbMigrateUp(t, pool); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-	registry := e2etest.NewFakeRegistry()
-	t.Cleanup(func() { registry.Close() })
-	builderImg, _ := e2etest.HelloImage("onebox-faas/builder-base", "")
-	e2etest.OverrideBuilderBase(t, registry.AddImage("onebox-faas/builder-base", builderImg))
-	deployBaseImg, _ := e2etest.BaseLayerImage("onebox-faas/deploy-base", sharedBody)
-	_ = registry.AddImage("onebox-faas/deploy-base", deployBaseImg)
-	e2etest.OverrideDeployBase(t, registry.Host()+"/onebox-faas/deploy-base:latest")
-
-	h := e2etest.Start(t, pool, e2etest.All)
-	defer h.DumpLogs(t)
-	key := h.SeedAccount(context.Background(), api.PlanHobby)
-	const slug = "layerkinds"
-	falsy := false
-	if got := postOK(t, h, key, "/v1/apps", api.CreateAppRequest{Slug: slug, Type: "app", RequireAuthn: &falsy}); got != http.StatusCreated {
-		t.Fatalf("create app: status=%d", got)
-	}
-	appID := mustGetAppID(t, h, key, slug)
-	setAppIdleTimeout(t, h, key, slug, api.IdleTimeoutFloorSeconds)
-	store := state.NewPgStore(pool)
-
-	deploy := func(t *testing.T, source []byte, idempotencyKey string, stall, ceiling time.Duration) state.Deployment {
-		t.Helper()
-		raw, status := postMultipartDeployment(t, h, key, slug, source, false, idempotencyKey)
-		if status != http.StatusAccepted {
-			t.Fatalf("deploy: status=%d body=%s", status, raw)
-		}
-		depID, _ := parseQueuedDeployment(t, raw)
-		ctx, cancel := context.WithTimeout(context.Background(), ceiling+5*time.Minute)
-		defer cancel()
-		dep, _, err := e2etest.WaitForSourceDeployment(ctx, t, pool, depID, stall, ceiling)
-		if err != nil {
-			t.Fatalf("deployment %s did not go live: %v", depID, err)
-		}
-		return dep
-	}
-	park := func(t *testing.T) {
-		t.Helper()
-		// A capture that outlasts apid's 5 s drain wait (6 s for 512 MB on
-		// n2) answers a retryable 503, as in TestSourceDeployWakeMetal.
-		raw, status := doReq(t, h, key, http.MethodPost, "/v1/apps/"+slug+"/park", nil)
-		for attempt := 0; attempt < 3 && status == http.StatusServiceUnavailable; attempt++ {
-			t.Logf("park: status=%d body=%s; retrying", status, raw)
-			time.Sleep(5 * time.Second)
-			raw, status = doReq(t, h, key, http.MethodPost, "/v1/apps/"+slug+"/park", nil)
-		}
-		if status != http.StatusNoContent {
-			t.Fatalf("park: status=%d body=%s", status, raw)
-		}
-		if _, err := waitForSourceAppParked(context.Background(), h, appID, 30*time.Second); err != nil {
-			t.Fatal(err)
-		}
-	}
-	wake := func(t *testing.T, want, method string) {
-		t.Helper()
-		// A 503 asks the client to retry (a routing read that overran its
-		// budget on a loaded host); clients do, so the test does too.
-		var body []byte
-		var wakeID string
-		var status int
-		for attempt := 0; attempt < 4; attempt++ {
-			body, wakeID, status = doGetWithHostCapturingWakeID(t, h.HTTPClient(), gatewayAppURL(h, slug), slug+".apps.test.example", 90*time.Second)
-			if status != http.StatusServiceUnavailable {
-				break
-			}
-			t.Logf("wake attempt %d: 503 %s", attempt+1, body)
-			time.Sleep(5 * time.Second)
-		}
-		if status != http.StatusOK || strings.TrimSpace(string(body)) != want {
-			t.Fatalf("wake: status=%d body=%q, want 200 %q", status, body, want)
-		}
-		if wakeID == "" {
-			t.Fatal("gateway response missing x-faas-wake-id header")
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		if _, err := e2etest.WaitForWakeMethod(ctx, t, pool, wakeID, method, 10*time.Second); err != nil {
-			t.Fatalf("wake %s did not complete via %s: %v", wakeID, method, err)
-		}
-	}
-	// coldThenRestore boots dep without a usable snapshot, then from the
-	// snapshot parking that instance takes.
-	coldThenRestore := func(t *testing.T, dep state.Deployment, want string) {
-		t.Helper()
-		ctx := context.Background()
-		if _, err := pool.Exec(ctx, `update snapshots set fc_version = 'test-incompatible-' || fc_version where deployment_id = $1 and stale = false`, dep.ID); err != nil {
-			t.Fatal(err)
-		}
-		wake(t, want, "cold_boot")
-		if _, err := pool.Exec(ctx, `update snapshots set stale = true where deployment_id = $1 and fc_version like 'test-incompatible-%'`, dep.ID); err != nil {
-			t.Fatal(err)
-		}
-		park(t)
-		wake(t, want, "restore")
-		park(t)
-	}
-	rollback := func(t *testing.T, target state.Deployment) {
-		t.Helper()
-		raw, status := doReq(t, h, key, http.MethodPost, "/v1/apps/"+slug+"/rollback", api.RollbackRequest{TargetDeploymentID: &target.ID})
-		var accepted api.DeploymentResponse
-		if status != http.StatusAccepted || json.Unmarshal(raw, &accepted) != nil {
-			t.Fatalf("rollback: status=%d body=%s", status, raw)
-		}
-		deadline := time.Now().Add(5 * time.Minute)
-		for {
-			dep, err := store.DeploymentByID(context.Background(), target.ID)
-			if err == nil && dep.Status == state.DeployLive && dep.TrafficPercent == 100 {
-				return
-			}
-			if time.Now().After(deadline) {
-				t.Fatalf("rollback to %s: status=%s traffic=%d err=%v", target.ID, dep.Status, dep.TrafficPercent, err)
-			}
-			time.Sleep(2 * time.Second)
-		}
-	}
+	deploy, park, wake, coldThenRestore, rollback := app.deploy, app.park, app.wake, app.coldThenRestore, app.rollback
 
 	var legacy, shared state.Deployment
 	t.Run("legacy-own-base", func(t *testing.T) {
@@ -265,6 +140,158 @@ func TestSharedRuntimeRollbackMetal(t *testing.T) {
 		park(t)
 		coldThenRestore(t, shared, sharedBody)
 	})
+}
+
+// sharedRuntimeApp is one metal harness app for the shared-runtime rollback
+// tests: deploy a source tarball, park, wake through the gateway, boot from
+// cold then restore, and roll back.
+type sharedRuntimeApp struct {
+	h     *e2etest.Harness
+	pool  *pgxpool.Pool
+	store *state.PgStore
+	key   string
+	slug  string
+	appID string
+}
+
+// newSharedRuntimeApp starts a metal harness with one Hobby app, or returns
+// nil when the host has no migrated Postgres. deployBody is what the stub
+// deploy base answers on a host without real bases.
+func newSharedRuntimeApp(t *testing.T, slug, deployBody string) *sharedRuntimeApp {
+	t.Helper()
+	if os.Getenv("FAAS_TEST_KERNEL") == "" {
+		t.Skip("FAAS_TEST_KERNEL unset; skipping metal shared-runtime test")
+	}
+	if _, err := os.Stat("/dev/kvm"); err != nil {
+		t.Skipf("/dev/kvm not available: %v", err)
+	}
+	if os.Getenv("FAAS_BUILDER_BASE_PATH") == "" {
+		t.Skip("FAAS_BUILDER_BASE_PATH unset; skipping metal shared-runtime test")
+	}
+	pool := pgtest.OpenMigrated(t)
+	if pool == nil {
+		return nil
+	}
+	if err := dbMigrateUp(t, pool); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	registry := e2etest.NewFakeRegistry()
+	t.Cleanup(func() { registry.Close() })
+	builderImg, _ := e2etest.HelloImage("onebox-faas/builder-base", "")
+	e2etest.OverrideBuilderBase(t, registry.AddImage("onebox-faas/builder-base", builderImg))
+	deployBaseImg, _ := e2etest.BaseLayerImage("onebox-faas/deploy-base", deployBody)
+	_ = registry.AddImage("onebox-faas/deploy-base", deployBaseImg)
+	e2etest.OverrideDeployBase(t, registry.Host()+"/onebox-faas/deploy-base:latest")
+
+	h := e2etest.Start(t, pool, e2etest.All)
+	t.Cleanup(func() { h.DumpLogs(t) })
+	key := h.SeedAccount(context.Background(), api.PlanHobby)
+	falsy := false
+	if got := postOK(t, h, key, "/v1/apps", api.CreateAppRequest{Slug: slug, Type: "app", RequireAuthn: &falsy}); got != http.StatusCreated {
+		t.Fatalf("create app: status=%d", got)
+	}
+	app := &sharedRuntimeApp{h: h, pool: pool, store: state.NewPgStore(pool), key: key, slug: slug, appID: mustGetAppID(t, h, key, slug)}
+	setAppIdleTimeout(t, h, key, slug, api.IdleTimeoutFloorSeconds)
+	return app
+}
+
+func (a *sharedRuntimeApp) deploy(t *testing.T, source []byte, idempotencyKey string, stall, ceiling time.Duration) state.Deployment {
+	t.Helper()
+	raw, status := postMultipartDeployment(t, a.h, a.key, a.slug, source, false, idempotencyKey)
+	if status != http.StatusAccepted {
+		t.Fatalf("deploy: status=%d body=%s", status, raw)
+	}
+	depID, _ := parseQueuedDeployment(t, raw)
+	ctx, cancel := context.WithTimeout(context.Background(), ceiling+5*time.Minute)
+	defer cancel()
+	dep, _, err := e2etest.WaitForSourceDeployment(ctx, t, a.pool, depID, stall, ceiling)
+	if err != nil {
+		t.Fatalf("deployment %s did not go live: %v", depID, err)
+	}
+	return dep
+}
+
+func (a *sharedRuntimeApp) park(t *testing.T) {
+	t.Helper()
+	// A capture that outlasts apid's 5 s drain wait (6 s for 512 MB on
+	// n2) answers a retryable 503, as in TestSourceDeployWakeMetal.
+	raw, status := doReq(t, a.h, a.key, http.MethodPost, "/v1/apps/"+a.slug+"/park", nil)
+	for attempt := 0; attempt < 3 && status == http.StatusServiceUnavailable; attempt++ {
+		t.Logf("park: status=%d body=%s; retrying", status, raw)
+		time.Sleep(5 * time.Second)
+		raw, status = doReq(t, a.h, a.key, http.MethodPost, "/v1/apps/"+a.slug+"/park", nil)
+	}
+	if status != http.StatusNoContent {
+		t.Fatalf("park: status=%d body=%s", status, raw)
+	}
+	if _, err := waitForSourceAppParked(context.Background(), a.h, a.appID, 30*time.Second); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (a *sharedRuntimeApp) wake(t *testing.T, want, method string) {
+	t.Helper()
+	// A 503 asks the client to retry (a routing read that overran its
+	// budget on a loaded host); clients do, so the test does too.
+	var body []byte
+	var wakeID string
+	var status int
+	for attempt := 0; attempt < 4; attempt++ {
+		body, wakeID, status = doGetWithHostCapturingWakeID(t, a.h.HTTPClient(), gatewayAppURL(a.h, a.slug), a.slug+".apps.test.example", 90*time.Second)
+		if status != http.StatusServiceUnavailable {
+			break
+		}
+		t.Logf("wake attempt %d: 503 %s", attempt+1, body)
+		time.Sleep(5 * time.Second)
+	}
+	if status != http.StatusOK || strings.TrimSpace(string(body)) != want {
+		t.Fatalf("wake: status=%d body=%q, want 200 %q", status, body, want)
+	}
+	if wakeID == "" {
+		t.Fatal("gateway response missing x-faas-wake-id header")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if _, err := e2etest.WaitForWakeMethod(ctx, t, a.pool, wakeID, method, 10*time.Second); err != nil {
+		t.Fatalf("wake %s did not complete via %s: %v", wakeID, method, err)
+	}
+}
+
+// coldThenRestore boots dep without a usable snapshot, then from the
+// snapshot parking that instance takes.
+func (a *sharedRuntimeApp) coldThenRestore(t *testing.T, dep state.Deployment, want string) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := a.pool.Exec(ctx, `update snapshots set fc_version = 'test-incompatible-' || fc_version where deployment_id = $1 and stale = false`, dep.ID); err != nil {
+		t.Fatal(err)
+	}
+	a.wake(t, want, "cold_boot")
+	if _, err := a.pool.Exec(ctx, `update snapshots set stale = true where deployment_id = $1 and fc_version like 'test-incompatible-%'`, dep.ID); err != nil {
+		t.Fatal(err)
+	}
+	a.park(t)
+	a.wake(t, want, "restore")
+	a.park(t)
+}
+
+func (a *sharedRuntimeApp) rollback(t *testing.T, target state.Deployment) {
+	t.Helper()
+	raw, status := doReq(t, a.h, a.key, http.MethodPost, "/v1/apps/"+a.slug+"/rollback", api.RollbackRequest{TargetDeploymentID: &target.ID})
+	var accepted api.DeploymentResponse
+	if status != http.StatusAccepted || json.Unmarshal(raw, &accepted) != nil {
+		t.Fatalf("rollback: status=%d body=%s", status, raw)
+	}
+	deadline := time.Now().Add(5 * time.Minute)
+	for {
+		dep, err := a.store.DeploymentByID(context.Background(), target.ID)
+		if err == nil && dep.Status == state.DeployLive && dep.TrafficPercent == 100 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("rollback to %s: status=%s traffic=%d err=%v", target.ID, dep.Status, dep.TrafficPercent, err)
+		}
+		time.Sleep(2 * time.Second)
+	}
 }
 
 const (

@@ -4476,8 +4476,8 @@ func (h *Handler) markDeployFailed(ctx context.Context, depID string, err error,
 		explained := whycopy.Decorate(&api.Problem{Code: p.Code, Hint: p.Hint, Why: p.Why, Fix: p.Fix}, p.Code, nil)
 		hint, why, fix = explained.Hint, explained.Why, explained.Fix
 		if code == api.CodeAppLayerTooBig {
-			if nodeFix := h.layerTooLargeNodeFix(ctx, depID); nodeFix != "" {
-				fix = strings.TrimSpace(nodeFix + "\n" + fix)
+			if versionFix := h.layerTooLargeVersionFix(ctx, depID); versionFix != "" {
+				fix = strings.TrimSpace(versionFix + "\n" + fix)
 			}
 		}
 	}
