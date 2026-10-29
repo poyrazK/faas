@@ -176,8 +176,14 @@ subscriptions.
 The filter is a JSON object encoded as a string. `app` is optional for a
 single-app deploy and is bound to the target application during source-ref
 reconciliation. Event-only projects may use the equivalent TOML form,
-`[[triggers.event]]`. Both forms use the same source/type/filter validation;
-matching deliveries inherit the router's retry and dead-letter behavior.
+`[[triggers.event]]`. Both forms use the same source/type/filter validation.
+
+A delivery whose handler fails is retried with backoff: by the app's
+`retry_policy` in `gregale.yaml` when it sets one, otherwise 5 seconds
+doubling to 5 minutes, with ±20 % jitter. The plan limits the attempts (3 on
+Hobby, 10 on Pro, 25 on Scale), so a delivery that keeps failing is
+dead-lettered after about 15 seconds on Hobby, 20 minutes on Pro and 95
+minutes on Scale ([ADR 20261029190000](adr/20261029190000-event-delivery-retry-backoff.md)).
 When a delivery reaches a terminal failure, inspect and replay it through the
 app's unified dead-letter queue (`gregale dlq list <app>`); its origin is shown as
 `event_subscription`.
