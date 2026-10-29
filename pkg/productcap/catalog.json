@@ -2964,6 +2964,25 @@
       ]
     },
     {
+      "id": "kubernetes-manifests",
+      "name": "Kubernetes manifests",
+      "category": "delivery",
+      "description": "Deploy a repository's Kubernetes Deployments and CronJobs with their sizes, healthchecks and process settings, and see what does not apply.",
+      "maturity": "preview",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/multi-service-apps",
+      "acceptance_test": "pkg/reposcan/k8s_pod_test.go::TestScanWith_KubernetesManifestsReachesWorkloads",
+      "parent": "projects",
+      "consumers": [
+        "githubd"
+      ]
+    },
+    {
       "id": "live-queries",
       "name": "Live queries",
       "category": "data",

@@ -336,6 +336,27 @@ type Result struct {
 // merge rule can prefer an explicit source on a (RootDir, Name)
 // collision.
 func Scan(fsys fs.FS) (Result, error) {
+	return ScanWith(fsys, ScanOptions{})
+}
+
+// KubernetesManifestsCapability is the product capability that releases
+// ScanOptions.KubernetesManifests (pkg/productcap/catalog.json).
+const KubernetesManifestsCapability = "kubernetes-manifests"
+
+// ScanOptions turns on scan behaviour a product capability releases per
+// account. The zero value is the behaviour every account gets.
+type ScanOptions struct {
+	// KubernetesManifests maps a Kubernetes container's resources,
+	// readiness/startup exec probe and process fields onto the workload,
+	// and reports the pod-spec fields it does not apply
+	// (ADR-20261029093621 §3, the kubernetes-manifests capability).
+	KubernetesManifests bool
+}
+
+// ScanWith is Scan with capability-gated behaviour. Every caller that
+// scans a project for an account must pass the same options for it, so a
+// push deploy and a reviewed deploy produce the same workloads.
+func ScanWith(fsys fs.FS, opts ScanOptions) (Result, error) {
 	var (
 		seeds             []workloadSeed
 		managed           []Managed
@@ -357,7 +378,7 @@ func Scan(fsys fs.FS) (Result, error) {
 	}{
 		{detCompose, detectCompose},
 		{detProcfile, detectProcfile},
-		{detK8s, detectK8s},
+		{detK8s, func(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) { return detectK8sWith(fsys, opts) }},
 		{detRender, detectRender},
 		{detFly, detectFly},
 		{detServerless, detectServerless},

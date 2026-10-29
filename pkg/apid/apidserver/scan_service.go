@@ -57,6 +57,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/githubd"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/reconcile"
 	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/secretscan"
@@ -1484,7 +1485,7 @@ func (s *server) scanService(
 		}
 	}
 
-	result, scanErr := reposcan.Scan(os.DirFS(req.ScanDir))
+	result, scanErr := reposcan.ScanWith(os.DirFS(req.ScanDir), s.projectScanOptions(acct))
 	if scanErr != nil {
 		return nil, state.Project{}, nil, nil, nil, nil, api.NewProblem(
 			http.StatusBadRequest, api.CodeSourceInvalid,
@@ -3069,3 +3070,14 @@ func projectCronsWithPreserved(
 // field is informational — the hash is the load-bearing field —
 // but exposing a function variable lets tests freeze the clock.
 var nowUnix = func() int64 { return time.Now().Unix() }
+
+// projectScanOptions are the capability-gated scan options for an account.
+// They are decided by account rules alone, as githubd decides them, so a
+// push deploy rescans with the options the account reviewed
+// (ADR-20261029093621 §7). Without a gate (unit tests) every option is on.
+func (s *server) projectScanOptions(acct state.Account) reposcan.ScanOptions {
+	subject := platformflags.Subject{AccountID: acct.ID}
+	return reposcan.ScanOptions{
+		KubernetesManifests: s.capGate == nil || s.capGate.Enabled(reposcan.KubernetesManifestsCapability, subject),
+	}
+}
