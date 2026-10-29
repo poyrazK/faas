@@ -54,7 +54,10 @@ func discardLog() *slog.Logger {
 // polarCatalogServer is the hermetic catalog endpoint used by the Polar
 // loader tests. EnsurePlanProducts deliberately performs a live preflight so
 // a typo cannot survive daemon startup; tests must therefore provide the same
-// local contract instead of relying on an external Polar account.
+// local contract instead of relying on an external Polar account. The
+// preflight reads the token's organization first and requires one
+// subscription per customer.
+// adr: 20261029180000
 func polarCatalogServer(t *testing.T, includeMeter bool) string {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

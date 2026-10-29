@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 // adr: 566 — snapshots follow activations, including returning to an old plan.
@@ -59,8 +60,8 @@ func TestFinancialPricingHistory(t *testing.T) {
 
 // countingPriceStore counts price snapshot reads.
 type countingPriceStore struct {
-	*state.MemStore
-	reads int
+	MemStore *state.MemStore
+	reads    int
 }
 
 func (s *countingPriceStore) ListFinancialPriceSnapshots(ctx context.Context, account string, period time.Time) ([]state.FinancialPriceSnapshot, error) {
@@ -72,7 +73,8 @@ func (s *countingPriceStore) ListFinancialPriceSnapshots(ctx context.Context, ac
 // change or a new month reads and captures again.
 // adr: 20261029180000
 func TestFinancialPricingSkipsUnchangedTerms(t *testing.T) {
-	store := &countingPriceStore{MemStore: state.NewMemStore()}
+	counting := &countingPriceStore{MemStore: state.NewMemStore()}
+	store := statetest.NewMem(counting)
 	a, err := store.CreateAccount(t.Context(), "financial-pricing-cache@example.com", api.PlanHobby)
 	if err != nil {
 		t.Fatal(err)
@@ -84,8 +86,8 @@ func TestFinancialPricingSkipsUnchangedTerms(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if store.reads != 1 {
-		t.Fatalf("snapshot reads over 5 unchanged ticks = %d, want 1", store.reads)
+	if counting.reads != 1 {
+		t.Fatalf("snapshot reads over 5 unchanged ticks = %d, want 1", counting.reads)
 	}
 	if err := store.UpdateAccountPlan(t.Context(), a.ID, api.PlanPro); err != nil {
 		t.Fatal(err)
@@ -96,8 +98,8 @@ func TestFinancialPricingSkipsUnchangedTerms(t *testing.T) {
 	if err := l.recordFinancialPricing(t.Context(), start.AddDate(0, 1, 0)); err != nil {
 		t.Fatal(err)
 	}
-	if store.reads != 3 {
-		t.Fatalf("snapshot reads after a plan change and a new month = %d, want 3", store.reads)
+	if counting.reads != 3 {
+		t.Fatalf("snapshot reads after a plan change and a new month = %d, want 3", counting.reads)
 	}
 	for _, period := range []time.Time{start, start.AddDate(0, 1, 0)} {
 		prices, err := store.ListFinancialPriceSnapshots(t.Context(), a.ID, period)
