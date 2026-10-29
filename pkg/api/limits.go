@@ -151,6 +151,16 @@ const (
 	RequestBodyBudgetRetryAfter       = 5 * time.Second
 )
 
+// The project scan reads Kubernetes manifests under k8s/, kubernetes/,
+// deploy/ and manifests/ (ADR-20261029093621 §7). These bound one scan, not a
+// customer entitlement: a repository past one fails its plan with the limit
+// and the value it reached.
+const (
+	KubernetesScanMaxFiles     = 500      // YAML files read
+	KubernetesScanMaxDocuments = 1000     // YAML documents in one file
+	KubernetesScanMaxBytes     = 16 << 20 // bytes read across every file
+)
+
 // Migration verification shares normal task and wake admission. These bounds
 // limit orchestration receipts, not customer compute entitlements.
 const (

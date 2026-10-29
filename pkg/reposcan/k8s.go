@@ -92,9 +92,11 @@ func detectK8s(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 // pod-spec mapping when opts.KubernetesManifests is on.
 func detectK8sWith(fsys fs.FS, opts ScanOptions) ([]workloadSeed, []Managed, []string, error) {
 	var (
-		seeds    []workloadSeed
-		managed  []Managed
-		warnings []string
+		seeds       []workloadSeed
+		managed     []Managed
+		warnings    []string
+		autoscalers []k8sAutoscaler
+		budget      k8sScanBudget
 	)
 	for _, d := range k8sRootDirs {
 		// Stat the directory; if present, walk it.
@@ -117,11 +119,14 @@ func detectK8sWith(fsys fs.FS, opts ScanOptions) ([]workloadSeed, []Managed, []s
 			if !containsExt(k8sManifestExts, ext) {
 				return nil
 			}
-			body, err := readValidFile(fsys, p)
+			body, err := budget.readFile(fsys, p, entry)
 			if err != nil {
 				return err
 			}
 			docs := splitYAMLDocs(body)
+			if err := budget.checkDocuments(p, len(docs)); err != nil {
+				return err
+			}
 			notObjects := 0
 			for docIndex, doc := range docs {
 				if len(strings.TrimSpace(doc)) == 0 {
@@ -171,6 +176,11 @@ func detectK8sWith(fsys fs.FS, opts ScanOptions) ([]workloadSeed, []Managed, []s
 						if err != nil {
 							return fmt.Errorf("reposcan: %s Deployment %q: %w", p, m.Metadata.Name, err)
 						}
+						replicaWarnings, err := k8sDeploymentReplicas(&seed, &node)
+						if err != nil {
+							return fmt.Errorf("reposcan: %s Deployment %q: %w", p, m.Metadata.Name, err)
+						}
+						podWarnings = append(podWarnings, replicaWarnings...)
 						warnings = append(warnings, k8sSeedWarnings(p, seed.name, podWarnings)...)
 					}
 					seeds = append(seeds, seed)
@@ -188,6 +198,18 @@ func detectK8sWith(fsys fs.FS, opts ScanOptions) ([]workloadSeed, []Managed, []s
 						warnings = append(warnings, k8sSeedWarnings(p, seed.name, podWarnings)...)
 					}
 					seeds = append(seeds, seed)
+				case "HorizontalPodAutoscaler":
+					if !opts.KubernetesManifests {
+						if warning := k8sKindWarning(p, &node, header); warning != "" {
+							warnings = append(warnings, warning)
+						}
+						continue
+					}
+					autoscaler, err := k8sReadAutoscaler(p, &node, header)
+					if err != nil {
+						return fmt.Errorf("reposcan: %s HorizontalPodAutoscaler %q: %w", p, header.Metadata.Name, err)
+					}
+					autoscalers = append(autoscalers, autoscaler)
 				case "StatefulSet":
 					warnings = append(warnings, "reposcan: "+p+
 						": refusing StatefulSet "+header.Metadata.Name+
@@ -208,6 +230,7 @@ func detectK8sWith(fsys fs.FS, opts ScanOptions) ([]workloadSeed, []Managed, []s
 			return nil, nil, nil, err
 		}
 	}
+	warnings = append(warnings, applyK8sAutoscalers(seeds, autoscalers)...)
 	// Deterministic order to keep the merge input stable.
 	sort.SliceStable(seeds, func(i, j int) bool { return seeds[i].name < seeds[j].name })
 	return seeds, managed, warnings, nil
