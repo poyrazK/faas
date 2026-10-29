@@ -714,6 +714,26 @@ the values every other domain still shares with the fleet key.
 Removing the fleet credential from the base unit, and its baseline line,
 waits for a release after every environment has contracted.
 
+## Implemented: the storage contract step
+
+`storage` contracts the same way, through
+`faas_seal_domain_storage_contracted`. `--check` takes `--domain storage`.
+
+- **s3-gatewayd drops two identities.** Its base unit loads both the fleet
+  and the host identity, and the contracted drop-in resets both and unsets
+  `FAAS_HOST_AGE_IDENTITY_PATH`. The role's proof checks that neither is
+  left in its credentials directory.
+- **s3-gatewayd starts on the domain alone.** It used to require
+  `FAAS_HOST_AGE_IDENTITY_PATH`. Now, with the storage domain staged, an
+  unset path loads no legacy identity. Its startup rekey (the ADR-057
+  rotation from the previous fleet identity to the current one) is then
+  skipped: it has nothing to rekey from. An older s3-gatewayd refuses to
+  start without the path, so an environment contracts only once its
+  previous release also carries this one, and un-contracts before a
+  rollback past it.
+- Revoked credentials and expired signed URLs are neither re-sealed nor
+  counted, as in the migration: they no longer authenticate.
+
 ## CD and node join stage the domain keys
 
 Each domain's key pair is a pair of GitHub environment secrets:

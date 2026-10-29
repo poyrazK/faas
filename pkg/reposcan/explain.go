@@ -88,11 +88,18 @@ func warningWorkload(rest string) string {
 			return name[:end]
 		}
 	}
-	if i := strings.Index(rest, "refusing StatefulSet "); i >= 0 {
-		fields := strings.Fields(rest[i+len("refusing StatefulSet "):])
-		if len(fields) > 0 {
-			return strings.Trim(fields[0], "\"'")
+	for _, refused := range []string{"refusing StatefulSet ", "refusing DaemonSet "} {
+		if i := strings.Index(rest, refused); i >= 0 {
+			fields := strings.Fields(rest[i+len(refused):])
+			if len(fields) > 0 {
+				return strings.Trim(fields[0], "\"'")
+			}
 		}
+	}
+	// Kubernetes objects that are not workloads ("kind Secret …") and
+	// skipped files or directories name no workload.
+	if strings.HasPrefix(rest, "kind ") || strings.HasPrefix(rest, "skipped ") {
+		return ""
 	}
 	if i := strings.Index(rest, " for "); i >= 0 {
 		name := strings.Fields(rest[i+len(" for "):])

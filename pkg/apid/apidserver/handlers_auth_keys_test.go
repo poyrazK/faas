@@ -494,3 +494,43 @@ func mustAuditEventKeys(t *testing.T, ev *state.Event, msg string) *state.Event 
 	}
 	return ev
 }
+
+// TestHandlers_AgentKeyLasts90DaysAndKnowsItsScopes pins ADR-20261029085359:
+// an agent key always carries apps:read, expires after 90 days, is never an
+// admin key, and GET /v1/account reports its scopes, which the hosted MCP
+// server lists its tools from.
+func TestHandlers_AgentKeyLasts90DaysAndKnowsItsScopes(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanHobby)
+	rec := e.Do(t, http.MethodPost, "/v1/keys", api.CreateKeyRequest{Label: "ci-agent", Scopes: []string{api.ScopeAgent, api.ScopeDeployWrite}}, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("POST /v1/keys: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var key api.APIKeyResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &key); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(key.Scopes, ",") != "agent,deploy:write,apps:read" {
+		t.Fatalf("agent key scopes = %v", key.Scopes)
+	}
+	expires, err := time.Parse(time.RFC3339, key.ExpiresAt)
+	if delta := time.Until(expires); err != nil || delta < api.AgentKeyLifetime-time.Hour || delta > api.AgentKeyLifetime+time.Hour {
+		t.Fatalf("agent key expires in %v, want %v", delta, api.AgentKeyLifetime)
+	}
+
+	whoami := e.Do(t, http.MethodGet, "/v1/account", nil, map[string]string{"Authorization": "Bearer " + key.Plaintext})
+	if whoami.Code != http.StatusOK {
+		t.Fatalf("GET /v1/account as the agent key: code=%d body=%s", whoami.Code, whoami.Body.String())
+	}
+	var account api.AccountResponse
+	if err := json.Unmarshal(whoami.Body.Bytes(), &account); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(account.KeyScopes, ",") != strings.Join(key.Scopes, ",") {
+		t.Fatalf("key_scopes = %v, want %v", account.KeyScopes, key.Scopes)
+	}
+
+	admin := e.Do(t, http.MethodPost, "/v1/keys", api.CreateKeyRequest{Label: "agent-admin", Scopes: []string{api.ScopeAgent, api.ScopeAdmin}}, nil)
+	if admin.Code != http.StatusBadRequest {
+		t.Fatalf("agent+admin key: code=%d, want 400", admin.Code)
+	}
+}
