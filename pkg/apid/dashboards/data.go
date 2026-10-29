@@ -24,6 +24,11 @@ type Sources interface {
 	LogEvents() state.LogEventStore
 	CustomMetricSeries(ctx context.Context, app state.App, name, rng string) api.CustomMetricSeriesResponse
 	SLOStatus(ctx context.Context, acct state.Account, app state.App, sloID string) (*api.SLOStatus, error)
+	// Released refuses a widget whose source is not released to the
+	// account: its operator switch or capability flag is off
+	// (ADR-20261028101615), so a dashboard never shows what the source's
+	// own routes hide. The error is the widget's reason.
+	Released(acct state.Account, app state.App, kind string) error
 }
 
 const (
@@ -91,6 +96,10 @@ func (s *Service) resolve(ctx context.Context, acct state.Account, w api.Dashboa
 		return v
 	}
 	src := s.Host.Sources()
+	if err := src.Released(acct, app, w.Kind); err != nil {
+		v.Error = err.Error()
+		return v
+	}
 	var err error
 	switch w.Kind {
 	case api.DashboardWidgetAppMetric:

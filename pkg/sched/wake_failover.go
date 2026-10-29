@@ -82,8 +82,13 @@ func noteWakeBootError(ctx context.Context, nodeID string, err error) {
 // gives before any guest code runs, and that depend on the node, qualify. A
 // fixable CRITICAL finding is decided from the canonical sidecar and refuses
 // on every node; customer startup failures ran customer code; internal and
-// transport errors may have left a VM behind.
+// transport errors may have left a VM behind, except a request that never
+// reached vmmd (ADR-20261029085904).
 func nodeRefusalReason(err error) (string, bool) {
+	// ADR-20261029085904: a request that never reached vmmd left no VM.
+	if vmmdNotReached(err) {
+		return wire.WakeFailoverReasonVMMDUnreachable, true
+	}
 	var problem *api.Problem
 	if !errors.As(err, &problem) || problem.Code != api.CodeScanCritical {
 		return "", false

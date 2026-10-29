@@ -114,7 +114,13 @@ func pgRouteHealthReport(ctx context.Context, db sqlc.DBTX, snapshot RoutePolicy
 				return report, err
 			}
 			report.StableDeploymentID, report.StableCommitSHA = stable.ID, stable.CommitSHA
-			if err := pgRouteHealthObservations(ctx, db, snapshot.Account.ID, g, &report); err != nil {
+			lost, err := pgRouteTelemetryLost(ctx, db, now)
+			if err != nil {
+				return report, err
+			}
+			if lost {
+				unavailable = routehealth.TelemetryIncomplete
+			} else if err := pgRouteHealthObservations(ctx, db, snapshot.Account.ID, g, &report); err != nil {
 				return report, err
 			}
 		}

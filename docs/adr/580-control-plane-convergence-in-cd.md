@@ -39,7 +39,8 @@
     costs under a minute.
   - Rollouts of releases that predate the playbook skip convergence. A
     GitHub-hosted runner cannot resolve the fleet's private names, so it skips
-    convergence with a warning.
+    convergence with a warning (superseded by Amendment 1: it refuses unless
+    the operator asks for the skip).
   - A missing `CP_ANSIBLE_VARS_B64` fails the rollout rather than activating a
     release whose role changes were not applied.
 - **Rejected alternatives:**
@@ -66,6 +67,24 @@
    `/var/lib/faas/bootstrap/control-plane-bootstrap-contract.sha256`.
 3. Later rollouts converge only when an input changes. To force a convergence,
    delete that file on the control plane.
+
+## Amendment 1 (2026-10-29): a hosted runner refuses rather than skips
+
+A `hosted_runner` (`hosted_runners` in `cd-platform`) deploy used to skip
+convergence with only a warning and then activate. A release whose role
+changes the control plane needed (a drop-in, a package, a PostgreSQL setting)
+went live without them, and nothing but that warning said so.
+
+The hosted deploy now fails before it changes the host, unless the dispatch
+sets `skip_role_convergence`. `cd-platform` passes the input to its
+control-plane stage. With the input set, the old warning still marks the run.
+The fleet runner path is unchanged, and the input does nothing there.
+
+Rejected: computing the contract on the hosted runner and failing only when it
+differs. The contract hashes the manifest-rendered inventory, which needs the
+fleet's private DNS, the same thing a hosted runner cannot reach. Comparing
+`deploy/ansible/` between the active release and the tag misses operator
+variable and inventory-rendering changes.
 
 Related: [ADR-143](143-deploy-configuration-contract.md) defined the deploy
 configuration contract and its convergence checks; this ADR makes CD apply the

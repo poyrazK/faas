@@ -1270,6 +1270,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if cfg.RequireSecretBinding {
 		log.Info("vmmd: runtime secrets must be bound to their account (ADR-20261023173624)")
 	}
+	var signatureStore any
+	if store != nil {
+		signatureStore = store
+	}
+	signatures, err := runtimeSecretSignatureChecker(cfg, signatureStore, ops.Registry(), log)
+	if err != nil {
+		return err
+	}
+	mgr.WithRuntimeSecretSignatures(signatures)
 	// ADR-1151 quiet pause: pause eligible instances between requests. schedd
 	// marks which instances are eligible; this flag lets an operator keep
 	// the whole node out of it. Observe mode measures the pauses instead of
