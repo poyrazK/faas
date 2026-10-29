@@ -84,7 +84,7 @@ func registerLocalProvisioning(s *mcp.Server, m *management) {
 	// A hosted grant provisions through the bridge's runner as itself, only
 	// with write consent and each scope its consent added
 	// (ADR-20261026195952). Local app consent stays out.
-	remote := m.opts.Environments != nil
+	remote := m.remote()
 	if m.opts.LocalCLI == nil || !remote && m.opts.AllowedApps != nil || remote && !m.opts.AllowWrites {
 		return
 	}

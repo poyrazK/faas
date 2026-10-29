@@ -17,7 +17,7 @@ type connectionStats struct {
 }
 
 var (
-	oauthEntriesDesc = prometheus.NewDesc("gregale_management_mcp_oauth_entries", "Authorization entries held, by fixed kind (clients, requests, codes, grants).", []string{"kind"}, nil)
+	oauthEntriesDesc = prometheus.NewDesc("gregale_management_mcp_oauth_entries", "Authorization entries held, by fixed kind (clients, requests, codes, grants, agent_keys).", []string{"kind"}, nil)
 	oauthLimitDesc   = prometheus.NewDesc("gregale_management_mcp_oauth_entry_limit", "Bound on each kind of authorization entry; at the bound new registrations and sign-ins are refused.", nil, nil)
 	connectionsDesc  = prometheus.NewDesc("gregale_management_mcp_connections", "Approved, unexpired agent connections.", nil, nil)
 	serversDesc      = prometheus.NewDesc("gregale_management_mcp_connection_servers", "Connections whose MCP server is built; a server idle for ten minutes is dropped and rebuilt on use.", nil, nil)
@@ -39,7 +39,7 @@ func (c connectionCollector) Collect(ch chan<- prometheus.Metric) {
 		return
 	}
 	s := (*read)()
-	for _, kind := range []string{"clients", "requests", "codes", "grants"} {
+	for _, kind := range []string{"clients", "requests", "codes", "grants", "agent_keys"} {
 		ch <- prometheus.MustNewConstMetric(oauthEntriesDesc, prometheus.GaugeValue, float64(s.entries[kind]), kind)
 	}
 	available := 0.0
@@ -66,7 +66,7 @@ func (r *remoteServer) connectionStats() connectionStats {
 	defer r.mu.Unlock()
 	now := time.Now()
 	s := connectionStats{
-		entries: map[string]int{"clients": len(r.clients), "requests": len(r.requests), "codes": len(r.codes), "grants": len(r.grants)},
+		entries: map[string]int{"clients": len(r.clients), "requests": len(r.requests), "codes": len(r.codes), "grants": len(r.grants), "agent_keys": len(r.keyConns)},
 		limit:   r.capacity(), stateAvailable: r.opts.StateStore.available(),
 	}
 	for _, g := range r.grants {
