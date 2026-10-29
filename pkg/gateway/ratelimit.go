@@ -255,7 +255,7 @@ func (l *Limiter) AllowWithCentralConsumerKey(
 	centralSubjectID := dimensionalCentralSubjectID(ruleID, dimensionKind, consumerID, cap)
 	remaining, admitted, err := l.consumeCentral(ctx, scope, centralSubjectID, plan, rps, burst)
 	if err != nil {
-		l.observeCentralError(ctx, scope, err)
+		l.refuseUnverifiedCentral(ctx, scope, err, bucketKey, localAllowed)
 		return false
 	}
 	// Keep headers aligned with the authoritative
@@ -760,7 +760,7 @@ func (l *Limiter) allowTokenWithCentralKey(ctx context.Context, id string, rps, 
 			l.observeCentralFallback(ctx, scope, err)
 			return localAllowed
 		}
-		l.observeCentralError(ctx, scope, err)
+		l.refuseUnverifiedCentral(ctx, scope, err, id, localAllowed)
 		return false
 	}
 	l.centralVerifiedAt.Store(l.now().UnixNano())
@@ -816,15 +816,30 @@ func (l *Limiter) consumeCentral(ctx context.Context, scope, subjectID, plan str
 	return remaining, admitted, nil
 }
 
-func (l *Limiter) observeCentralError(ctx context.Context, scope string, err error) {
+// refuseUnverifiedCentral refuses a request the shared counter could not
+// decide outside the outage grace (ADR-20261027173012 amendment 1). The
+// request's local token is returned, so this gateway's bucket counts only
+// requests the counter admitted and can never hold fewer tokens than the
+// counter. A request that bucket already refuses is therefore over the limit
+// whatever the counter holds, and gets the ordinary 429; only one the bucket
+// would admit is marked unverified (503 rate_limit_unavailable).
+func (l *Limiter) refuseUnverifiedCentral(ctx context.Context, scope string, err error, bucketKey string, localAllowed bool) {
 	if err == nil {
 		return
 	}
-	markRateAdmissionUnavailable(ctx)
-	if l == nil || l.centralErrorObserver == nil {
-		return
+	if localAllowed {
+		l.mu.Lock()
+		if b := l.buckets[bucketKey]; b != nil {
+			if b.tokens++; b.tokens > b.burst {
+				b.tokens = b.burst
+			}
+		}
+		l.mu.Unlock()
+		markRateAdmissionUnavailable(ctx)
 	}
-	l.centralErrorObserver(ctx, scope, err)
+	if l.centralErrorObserver != nil {
+		l.centralErrorObserver(ctx, scope, err)
+	}
 }
 
 // centralWithinOutageGrace reports whether the shared counter last decided

@@ -53,6 +53,9 @@ type HTTPOptions struct {
 	// OAuth endpoints live under /mcp and the metadata at the RFC 8414 path
 	// insertion URLs; the host's root metadata belongs to the API.
 	Hosted bool
+	// AgentKeys lets a headless agent authenticate with an API key carrying
+	// the agent scope instead of OAuth (ADR-20261029085359).
+	AgentKeys bool
 }
 
 type remoteServer struct {
@@ -66,14 +69,21 @@ type remoteServer struct {
 	// registrations counts client registrations per address on the hosted
 	// bridge, in fixed windows.
 	registrations map[string]registrationWindow
-	mu            sync.Mutex
-	clients       map[string]*oauthClient
-	requests      map[string]*authorizationRequest
-	codes         map[string]*authorizationCode
-	grants        map[string]*oauthGrant
-	access        map[string]*oauthGrant
-	refresh       map[string]*oauthGrant
-	usedRefresh   map[string]*oauthGrant
+	// authorizations rate-limits GET /oauth/authorize per client address on
+	// the hosted bridge (hostedAuthorizeLimit).
+	authorizations map[string]registrationWindow
+	// snapshotSeq orders OAuth state snapshots committed outside mu.
+	snapshotSeq uint64
+	mu          sync.Mutex
+	clients     map[string]*oauthClient
+	requests    map[string]*authorizationRequest
+	codes       map[string]*authorizationCode
+	grants      map[string]*oauthGrant
+	access      map[string]*oauthGrant
+	refresh     map[string]*oauthGrant
+	usedRefresh map[string]*oauthGrant
+	// keyConns are agent-key connections by key hash; nothing durable.
+	keyConns map[string]*keyConnection
 }
 
 type grantContextKey struct{}
@@ -143,7 +153,7 @@ func NewHTTPService(opts HTTPOptions) (*RemoteService, error) {
 	if opts.Hosted {
 		issuer = opts.ResourceURL
 	}
-	r := &remoteServer{opts: opts, origin: origin, issuer: issuer, host: u.Host, clients: map[string]*oauthClient{}, requests: map[string]*authorizationRequest{}, codes: map[string]*authorizationCode{}, grants: map[string]*oauthGrant{}, access: map[string]*oauthGrant{}, refresh: map[string]*oauthGrant{}, usedRefresh: map[string]*oauthGrant{}}
+	r := &remoteServer{opts: opts, origin: origin, issuer: issuer, host: u.Host, clients: map[string]*oauthClient{}, requests: map[string]*authorizationRequest{}, codes: map[string]*authorizationCode{}, grants: map[string]*oauthGrant{}, access: map[string]*oauthGrant{}, refresh: map[string]*oauthGrant{}, usedRefresh: map[string]*oauthGrant{}, keyConns: map[string]*keyConnection{}}
 	if opts.Hosted && opts.UploadDir != "" {
 		if r.uploads, err = newUploadStore(opts.UploadDir, opts.ResourceURL); err != nil {
 			return nil, err
@@ -302,6 +312,10 @@ func (r *remoteServer) authenticate(next http.Handler) http.Handler {
 		r.mu.Lock()
 		g, leaseExpires, valid := r.accessLeaseLocked(key)
 		r.mu.Unlock()
+		if !valid && r.opts.AgentKeys && agentKeyBearer(parts[1]) {
+			r.serveAgentKey(w, req, next, parts[1])
+			return
+		}
 		if !valid {
 			r.challenge(w)
 			return

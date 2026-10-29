@@ -58,6 +58,12 @@ useless.
 Adding a permission makes GitHub ask every installation's owner to approve it;
 until they do, those installations keep the old permission set.
 
+Without Deployments access, GitHub answers 403 to every deployment write.
+githubd skips the GitHub deployment and still writes the Check Run and the PR
+comment, so the only loss is the PR's environment link. Each skip counts as
+`githubd_ops_total{op="github_deployment",code="forbidden"}` and logs
+`githubd: GitHub refused a deployment write` at most every 10 minutes.
+
 ## Credentials on the control plane
 
 | Value | Where |

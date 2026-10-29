@@ -31,6 +31,19 @@ permissions so an agent can follow its work. Existing `apps:read` keys retain
 Runs read access, and existing `deploy:write` keys retain submit/cancel access.
 Both scopes remain account-wide; they do not bind a key to an individual run.
 
+For an agent that uses Gregale's hosted MCP server without a browser, such as
+one in CI, mint an agent key (ADR-20261029085359):
+
+```sh
+gregale key create ci-agent --scopes agent,deploy:write
+```
+
+Only keys with the `agent` scope open the hosted MCP server; other keys are
+refused there. An agent key always includes `apps:read`, can never include
+`admin`, and expires after 90 days unless you choose otherwise. Its other
+scopes pick the agent's tools; see
+[headless agents](mcp.md#headless-agents-with-an-agent-key).
+
 Interactive users can enable MFA from the account settings page. Each authenticator code works once: a code that already verified a session is refused if it is sent again, so wait for the next code. A `401` means the session or token is missing/expired; a `403` means the identity is valid but lacks the required project or organization scope. Rotate a compromised token immediately and review the audit log.
 
 For shared applications, the current organization role and the credential's
@@ -89,6 +102,15 @@ For GitHub Actions, first-use account lookup accepts both the legacy
 `repo:OWNER@OWNER_ID/REPO@REPO_ID:...` form. Gregale uses the owner/repository
 names only to locate an existing GitHub App binding. It verifies and pins the
 complete signed subject, including immutable IDs, in the trust policy.
+
+A trust policy Gregale creates on first use, and every exchange under one,
+accepts only the `gregale` audience (plus any audience the operator lists in
+`FAAS_OIDC_EXCHANGE_AUDIENCES`, comma-separated), so a GitHub token minted for
+another relying party cannot deploy. The token's `repository_owner_id` and
+`repository_id` claims must equal the IDs the repository binding recorded; a
+repository recreated under the same name has to be bound again. Other branches
+and workflows of a bound repository are admitted only under a policy Gregale
+created: a trust policy the account wrote is authoritative.
 ## Organization queue permissions
 
 Organization-owned queue operations apply current membership roles alongside

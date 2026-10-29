@@ -58,6 +58,7 @@ plain billing_subscription_ends.subscription_hash
 plain build_export_publications.payload
 plain build_export_publications.signature
 plain ci_job_runtime.capability_hash
+plain cli_auth_codes.device_hash
 plain cli_auth_codes.token_hash
 plain consumer_keys.hashed_secret
 plain customer_operation_webhook_receipts.body_sha256

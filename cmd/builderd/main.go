@@ -254,6 +254,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return fmt.Errorf("builderd: %w", err)
 	}
+	// ADR-20261029171525: export the dependency cache after the image
+	// handoff, off by default.
+	deferCacheExport, err := builderdpkg.ParseDeferCacheExport(os.Getenv(builderdpkg.DeferCacheExportEnv))
+	if err != nil {
+		return fmt.Errorf("builderd: %w", err)
+	}
 	if c, ok := driver.(*builderdpkg.VMMDriver); ok {
 		defer func() { _ = c.Close() }()
 	}
@@ -308,6 +314,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		DisableWarmBuilders: !cfg.WarmBuilders,
 		LayerCompression:    layerCompression,
 		BuildKitSnapshotter: buildkitSnapshotter,
+		DeferCacheExport:    deferCacheExport,
 		// ADR-038: BuilderNodeID is stamped onto every
 		// build_provenance row builderd writes. Defaulted to
 		// "default-local" in LoadConfig; multi-node deployments

@@ -16,12 +16,20 @@ import (
 // project, and its services call each other by name as the multi-service
 // guide (docs/multi-service-apps.md) says.
 
-// shopCompose is the project's Compose file. web publishes a port and
-// declares that it calls api; api publishes none, so it is internal, and
-// declares its listener with expose:. Service names carry the run's slug so
-// each is its app's slug and the sweeper finds a leftover one; the build
-// contexts never change, so later runs are build-cache hits.
-func shopCompose(web, apiService string) string {
+// shop names the project's services. Service names carry the run's slug so
+// each is its app's slug and the sweeper finds a leftover one.
+type shop struct{ web, api, ops, batch string }
+
+// shopCompose is the project's Compose file:
+//   - web publishes a port and declares that it calls api;
+//   - api publishes none, so it is internal; it declares its listener with
+//     expose: and allows only web to call it;
+//   - ops runs web's code under the declared policy and declares only web;
+//   - batch runs web's code under the project policy and declares api, which
+//     does not allow it.
+//
+// The build contexts never change, so later runs are build-cache hits.
+func shopCompose(s shop) string {
 	return fmt.Sprintf(`services:
   %[1]s:
     build: ./web
@@ -30,12 +38,22 @@ func shopCompose(web, apiService string) string {
   %[2]s:
     build: ./api
     expose: ["8080"]
-`, web, apiService)
+    x-gregale-allow-callers: [%[1]s]
+  %[3]s:
+    build: ./web
+    ports: ["8080:8080"]
+    depends_on: [%[1]s]
+    x-gregale-service-policy: declared
+  %[4]s:
+    build: ./web
+    ports: ["8080:8080"]
+    depends_on: [%[2]s]
+`, s.web, s.api, s.ops, s.batch)
 }
 
 // shopSource copies testdata/project-shop into a fresh directory with its
 // Compose file.
-func shopSource(t *testing.T, web, apiService string) string {
+func shopSource(t *testing.T, s shop) string {
 	t.Helper()
 	dir := t.TempDir()
 	for _, service := range []string{"web", "api"} {
@@ -57,21 +75,28 @@ func shopSource(t *testing.T, web, apiService string) string {
 			}
 		}
 	}
-	if err := os.WriteFile(filepath.Join(dir, "compose.yaml"), []byte(shopCompose(web, apiService)), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "compose.yaml"), []byte(shopCompose(s)), 0o644); err != nil {
 		t.Fatalf("write compose.yaml: %v", err)
 	}
 	return dir
 }
 
-// TestMultiServiceProject deploys a web service and an internal api service
-// as one project, then checks the project lists both and what web calls; web
-// is public and api is not; web reaches api by its injected URL and by its
-// .internal name; wake-ahead is on for web; and a call wakes a parked api
-// (rows 19, 44, 65, 66).
+// TestMultiServiceProject deploys a web service, an internal api service and
+// two more callers as one project, then checks:
+//   - the project lists them and what each calls;
+//   - web is public and api is not;
+//   - web reaches api by its injected URL, its .internal name and the private
+//     HTTPS alias;
+//   - service authorization: the declared policy and api's caller allowlist,
+//     both through `gregale app binding service explain` and on live calls;
+//   - wake-ahead is on for web, and a call wakes a parked api.
+//
+// Rows 19, 44, 65 and 66.
 func TestMultiServiceProject(t *testing.T) {
 	tg := needs(t, tierFull, true)
 	t.Parallel()
-	web, apiService := tg.app(t, "web"), tg.app(t, "api")
+	svc := shop{web: tg.app(t, "web"), api: tg.app(t, "api"), ops: tg.app(t, "ops"), batch: tg.app(t, "batch")}
+	web, apiService := svc.web, svc.api
 	project := tg.slug("shop")
 	t.Cleanup(func() {
 		if tg.keep && t.Failed() {
@@ -90,15 +115,18 @@ func TestMultiServiceProject(t *testing.T) {
 		tg.deploySlots <- struct{}{}
 		defer func() { <-tg.deploySlots }()
 		res := tg.exec(t, tg.token, t.TempDir(), deployLimit+5*time.Minute, "deploy", "--project",
-			"--project-slug", project, "--path", shopSource(t, web, apiService),
+			"--project-slug", project, "--path", shopSource(t, svc),
 			"--wait", "--timeout", deployLimit.String(), "--yes")
 		if res.exit != 0 {
 			t.Fatalf("project deploy failed (exit %d): %s\noutput: %s", res.exit, tg.redact(res.problem()),
 				tg.redact(tail(string(res.stdout), 2000)))
 		}
 		t.Logf("metric project_deploy_s=%d", int(res.elapsed.Seconds()))
-		// Project apps take the plan's auth default; the journey calls web anonymously.
-		tg.ok(t, time.Minute, "app", web, "--no-require-authn")
+		// Project apps take the plan's auth default; the journey calls the
+		// public services anonymously.
+		for _, public := range []string{svc.web, svc.ops, svc.batch} {
+			tg.ok(t, time.Minute, "app", public, "--no-require-authn")
+		}
 	})
 	s.check("project_lists_services", func(t *testing.T) {
 		doc := object(t, tg.ok(t, time.Minute, "project", "get", project).stdout)
@@ -111,8 +139,10 @@ func TestMultiServiceProject(t *testing.T) {
 			}
 			calls[str(raw, "workload_name")] = deps
 		}
-		if _, ok := calls[apiService]; !ok || !slices.Equal(calls[web], []string{apiService}) {
-			t.Fatalf("project %s services = %v; want %s calling %s", project, calls, web, apiService)
+		_, listsAPI := calls[apiService]
+		if !listsAPI || !slices.Equal(calls[web], []string{apiService}) || !slices.Equal(calls[svc.ops], []string{web}) ||
+			!slices.Equal(calls[svc.batch], []string{apiService}) {
+			t.Fatalf("project %s services = %v; want web and batch calling api, ops calling web", project, calls)
 		}
 	})
 	s.step("web_is_public", func(t *testing.T) {
@@ -133,14 +163,43 @@ func TestMultiServiceProject(t *testing.T) {
 	s.check("call_by_internal_name", func(t *testing.T) {
 		expectServiceCall(t, base, "dns")
 	})
+	s.check("call_over_private_https", func(t *testing.T) {
+		// The private HTTPS listener is an installation option
+		// (docs/networking.md); guest-init sets up its trust only where it
+		// is enabled.
+		if dep := jsonBody(t, get(base+"/dependency")); field(dep, "ca_bundle") != true {
+			t.Skip("private service HTTPS is not enabled on this installation (no GREGALE_SERVICE_CA_BUNDLE in the guest)")
+		}
+		expectServiceCall(t, base, "https")
+	})
+	s.check("explain_authorization", func(t *testing.T) {
+		for _, tc := range []struct {
+			caller, target string
+			exit           int
+		}{{web, apiService, 0}, {svc.ops, web, 0}, {svc.ops, apiService, 1}, {svc.batch, apiService, 1}} {
+			res := tg.run(t, time.Minute, "app", "binding", "service", "explain", tc.caller, tc.target)
+			if res.exit != tc.exit {
+				t.Errorf("explain %s -> %s exit %d, want %d: %s", tc.caller, tc.target, res.exit, tc.exit, tail(string(res.stdout), 500))
+			}
+		}
+	})
+	s.check("declared_policy_allows_the_declared_call", func(t *testing.T) {
+		expectCall(t, tg.appURL(svc.ops)+"/call", http.StatusOK, "web")
+	})
+	s.check("declared_policy_refuses_an_undeclared_call", func(t *testing.T) {
+		expectCall(t, tg.appURL(svc.ops)+"/call?service=api", http.StatusForbidden, "caller has not declared this service binding")
+	})
+	s.check("allowlist_refuses_other_callers", func(t *testing.T) {
+		expectCall(t, tg.appURL(svc.batch)+"/call", http.StatusForbidden, "target does not allow this service caller")
+	})
 	s.check("wake_ahead_on_by_default", func(t *testing.T) {
-		doc := object(t, tg.ok(t, time.Minute, "wake-ahead", web).stdout)
+		doc := object(t, tg.ok(t, time.Minute, "app", "wake-ahead", web).stdout)
 		if enabled, _ := field(doc, "enabled").(bool); !enabled {
 			t.Fatalf("wake-ahead for %s = %s; want on by default for a project service", web, compact(doc))
 		}
 	})
 	s.check("parked_service_wakes_on_call", func(t *testing.T) {
-		tg.ok(t, 2*time.Minute, "park", apiService)
+		tg.ok(t, 2*time.Minute, "app", "park", apiService)
 		waitParked(t, tg, apiService)
 		r := get(base + "/call?via=env")
 		doc := jsonBody(t, r)
@@ -151,8 +210,30 @@ func TestMultiServiceProject(t *testing.T) {
 	})
 }
 
-// expectServiceCall asks web to call api by the injected URL (via=env) or by
-// its .internal name (via=dns) until api answers.
+// expectCall asks a service of the project to make a call (url is its
+// /call endpoint) until the callee answers with status, and with want as
+// its service name (200) or in its refusal (403).
+func expectCall(t *testing.T, url string, status int, want string) {
+	t.Helper()
+	eventually(t, fmt.Sprintf("%s answers %d", url, status), 2*time.Minute, 3*time.Second, func() (bool, string) {
+		r := get(url)
+		if r.status != http.StatusOK {
+			return false, r.String()
+		}
+		doc := jsonBody(t, r)
+		if int(num(doc, "status")) != status {
+			return false, compact(doc)
+		}
+		if status == http.StatusOK {
+			return str(doc, "body.service") == want, compact(doc)
+		}
+		return strings.Contains(str(doc, "body.raw"), want), compact(doc)
+	})
+}
+
+// expectServiceCall asks web to call api by the injected URL (via=env), its
+// .internal name (via=dns) or the private HTTPS alias (via=https) until api
+// answers.
 func expectServiceCall(t *testing.T, base, via string) {
 	t.Helper()
 	eventually(t, "web calls api ("+via+")", 2*time.Minute, 3*time.Second, func() (bool, string) {

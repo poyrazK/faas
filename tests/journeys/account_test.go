@@ -25,44 +25,44 @@ func TestAccountAndKeys(t *testing.T) {
 		}
 	})
 	s.check("capabilities", func(t *testing.T) {
-		if docs := objects(t, tg.ok(t, time.Minute, "capabilities").stdout); len(docs) == 0 {
-			t.Fatal("gregale capabilities printed nothing")
+		if docs := objects(t, tg.ok(t, time.Minute, "feature", "list").stdout); len(docs) == 0 {
+			t.Fatal("gregale feature list printed nothing")
 		}
 	})
 	s.check("usage_and_invoices", func(t *testing.T) {
-		objects(t, tg.ok(t, time.Minute, "usage").stdout)
-		objects(t, tg.ok(t, time.Minute, "invoices").stdout)
+		objects(t, tg.ok(t, time.Minute, "billing", "usage").stdout)
+		objects(t, tg.ok(t, time.Minute, "billing", "invoices").stdout)
 	})
 
 	var keyID, key string
 	label := tg.slug("key")
 	s.step("mint_scoped_key", func(t *testing.T) {
-		res := tg.ok(t, time.Minute, "keys", "add", label, "--scopes", "apps:read")
+		res := tg.ok(t, time.Minute, "key", "create", label, "--scopes", "apps:read")
 		doc := object(t, res.stdout)
 		keyID = str(doc, "id")
 		key = apiKeyRe.FindString(string(res.stdout))
 		if keyID == "" || key == "" {
-			t.Fatalf("keys add printed no id or key: %s", tg.redact(compact(doc)))
+			t.Fatalf("key create printed no id or key: %s", tg.redact(compact(doc)))
 		}
 	})
 	// Registered on the journey, not the step: a step's cleanup runs when
 	// the step ends, which would revoke the key before it is used.
 	t.Cleanup(func() {
 		if keyID != "" {
-			tg.run(t, time.Minute, "keys", "rm", keyID)
+			tg.run(t, time.Minute, "key", "delete", keyID)
 		}
 	})
 	s.step("scoped_key_reads", func(t *testing.T) {
-		if res := tg.runAs(t, key, time.Minute, "apps"); res.exit != 0 {
+		if res := tg.runAs(t, key, time.Minute, "app", "list"); res.exit != 0 {
 			t.Fatalf("apps:read key cannot list apps: %s", res.problem())
 		}
 	})
 	s.check("scoped_key_cannot_admin", func(t *testing.T) {
-		res := tg.runAs(t, key, time.Minute, "keys", "add", tg.slug("escalate"), "--scopes", "admin")
+		res := tg.runAs(t, key, time.Minute, "key", "create", tg.slug("escalate"), "--scopes", "admin")
 		if res.exit == 0 {
 			if leaked := apiKeyRe.FindString(string(res.stdout)); leaked != "" {
 				id := str(object(t, res.stdout), "id")
-				tg.run(t, time.Minute, "keys", "rm", id)
+				tg.run(t, time.Minute, "key", "delete", id)
 			}
 			t.Fatal("an apps:read key minted an admin key")
 		}
@@ -72,7 +72,7 @@ func TestAccountAndKeys(t *testing.T) {
 	})
 	s.check("audit_log_records_key", func(t *testing.T) {
 		eventually(t, "key creation in the audit log", 2*time.Minute, 5*time.Second, func() (bool, string) {
-			res := tg.run(t, time.Minute, "audit-events", "list", "--limit", "100")
+			res := tg.run(t, time.Minute, "audit", "list", "--limit", "100")
 			if res.exit != 0 {
 				return false, res.problem()
 			}
@@ -80,11 +80,11 @@ func TestAccountAndKeys(t *testing.T) {
 		})
 	})
 	s.step("revoke_key", func(t *testing.T) {
-		tg.ok(t, time.Minute, "keys", "rm", keyID)
+		tg.ok(t, time.Minute, "key", "delete", keyID)
 		revoked := keyID
 		keyID = ""
 		eventually(t, "revoked key rejected", time.Minute, 3*time.Second, func() (bool, string) {
-			res := tg.runAs(t, key, time.Minute, "apps")
+			res := tg.runAs(t, key, time.Minute, "app", "list")
 			p := res.problem()
 			return res.exit != 0 && (strings.Contains(p, "api_key_revoked") || strings.Contains(p, "unauthorized")),
 				"key " + revoked + " not rejected as revoked: exit " + strconv.Itoa(res.exit) + " " + p

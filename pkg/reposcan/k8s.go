@@ -85,6 +85,12 @@ var k8sManifestExts = []string{".yaml", ".yml"}
 // surface them as Managed (compose already does this; the customer
 // should see both rows in one confirm table).
 func detectK8s(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
+	return detectK8sWith(fsys, ScanOptions{})
+}
+
+// detectK8sWith is detectK8s with the kubernetes-manifests capability's
+// pod-spec mapping when opts.KubernetesManifests is on.
+func detectK8sWith(fsys fs.FS, opts ScanOptions) ([]workloadSeed, []Managed, []string, error) {
 	var (
 		seeds    []workloadSeed
 		managed  []Managed
@@ -160,13 +166,28 @@ func detectK8s(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 						})
 						continue
 					}
+					if opts.KubernetesManifests {
+						podWarnings, err := applyK8sPodTemplate(&seed, &node, header.Kind, m.Spec.Template.Spec.Containers)
+						if err != nil {
+							return fmt.Errorf("reposcan: %s Deployment %q: %w", p, m.Metadata.Name, err)
+						}
+						warnings = append(warnings, k8sSeedWarnings(p, seed.name, podWarnings)...)
+					}
 					seeds = append(seeds, seed)
 				case "CronJob":
 					containers := m.Spec.JobTemplate.Spec.Template.Spec.Containers
 					if len(containers) == 0 || strings.TrimSpace(containers[0].Image) == "" {
 						return fmt.Errorf("reposcan: %s CronJob %q requires a first container image", p, m.Metadata.Name)
 					}
-					seeds = append(seeds, k8sCronJobSeed(p, m))
+					seed := k8sCronJobSeed(p, m)
+					if opts.KubernetesManifests {
+						podWarnings, err := applyK8sPodTemplate(&seed, &node, header.Kind, containers)
+						if err != nil {
+							return fmt.Errorf("reposcan: %s CronJob %q: %w", p, m.Metadata.Name, err)
+						}
+						warnings = append(warnings, k8sSeedWarnings(p, seed.name, podWarnings)...)
+					}
+					seeds = append(seeds, seed)
 				case "StatefulSet":
 					warnings = append(warnings, "reposcan: "+p+
 						": refusing StatefulSet "+header.Metadata.Name+
@@ -190,6 +211,16 @@ func detectK8s(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 	// Deterministic order to keep the merge input stable.
 	sort.SliceStable(seeds, func(i, j int) bool { return seeds[i].name < seeds[j].name })
 	return seeds, managed, warnings, nil
+}
+
+// k8sSeedWarnings prefixes a workload's pod-spec warnings the way Compose
+// prefixes its service-key warnings.
+func k8sSeedWarnings(src, name string, warnings []string) []string {
+	out := make([]string, 0, len(warnings))
+	for _, warning := range warnings {
+		out = append(out, "reposcan: "+src+": "+name+": "+warning)
+	}
+	return out
 }
 
 func containsExt(list []string, ext string) bool {

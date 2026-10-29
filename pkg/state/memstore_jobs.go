@@ -353,10 +353,16 @@ func (m *MemStore) jobUpdateLocked(id string, command []string, imageRef *string
 	if len(envOverrides) > 0 {
 		j.EnvOverrides = envOverrides
 	}
+	now := time.Now().UTC()
 	if status != nil {
+		// Resuming a paused job starts its schedule now: catching up a
+		// week of every-minute occurrences wrote ~10,000 single-row
+		// transactions in one tick (bug hunt 2026-10-28 H65).
+		if j.Status == "paused" && *status == "active" && j.CronSchedule != "" {
+			j.LastScheduledAt = &now
+		}
 		j.Status = *status
 	}
-	now := time.Now().UTC()
 	if schedule != nil {
 		j.CronSchedule = *schedule
 		if *schedule == "" {
