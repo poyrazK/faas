@@ -16,7 +16,6 @@ import (
 	"io"
 	"net/http"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -272,21 +271,6 @@ func TestNewCtxReader_ClosesUnderlyingReaderOnCancel(t *testing.T) {
 }
 
 // --- leaseCloser.Close / NodeClientCache.Evict -----------------
-
-type fakeConn struct {
-	closeCount atomic.Int32
-	closed     chan struct{}
-}
-
-func newFakeConn() *fakeConn { return &fakeConn{closed: make(chan struct{}, 1)} }
-func (f *fakeConn) Close() error {
-	f.closeCount.Add(1)
-	select {
-	case f.closed <- struct{}{}:
-	default:
-	}
-	return nil
-}
 
 func TestLeaseCloser_DecrementsItsOwnConnection(t *testing.T) {
 	entry := &nodeConn{refs: 2}

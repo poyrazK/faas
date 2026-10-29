@@ -127,9 +127,9 @@ func (h *cliAuthHandlers) issueCliAuthCode(r *http.Request, hash []byte, device 
 // valid is false for a malformed body.
 func (h *cliAuthHandlers) consumeCliAuthExchange(r *http.Request, req api.CliAuthExchangeRequest) (status api.CliAuthStatus, accountID string, valid bool, err error) {
 	if req.DeviceCode != "" {
-		raw, decodeErr := hex.DecodeString(strings.TrimSpace(req.DeviceCode))
 		devices, ok := h.srv.store.(state.CliAuthDeviceCodeStore)
-		if decodeErr != nil || len(raw) != 32 || !ok {
+		raw := decodeCliDeviceCode(req.DeviceCode)
+		if raw == nil || !ok {
 			return "", "", false, nil
 		}
 		status, accountID, err = devices.ConsumeCliAuthDeviceCode(r.Context(), api.HashToken(raw))
@@ -141,6 +141,16 @@ func (h *cliAuthHandlers) consumeCliAuthExchange(r *http.Request, req api.CliAut
 	}
 	status, accountID, err = h.srv.store.ConsumeCliAuthCode(r.Context(), hash)
 	return status, accountID, true, err
+}
+
+// decodeCliDeviceCode decodes a hex device code, or returns nil for a
+// malformed one.
+func decodeCliDeviceCode(deviceCode string) []byte {
+	raw, err := hex.DecodeString(strings.TrimSpace(deviceCode))
+	if err != nil || len(raw) != 32 {
+		return nil
+	}
+	return raw
 }
 
 // exchangeCliAuthCode handles POST /v1/cli-auth/exchange. The CLI

@@ -585,7 +585,9 @@ func (s *server) receiveQueueInvocationListening(waitCtx context.Context, r *htt
 		return state.Invocation{}, err
 	}
 	id := extractInvocationID(payload)
-	inv, err := s.store.ProductionQueueInvocationByID(r.Context(), id)
+	// The request's context, not waitCtx: a completion that arrived at the
+	// end of the wait budget must still be read.
+	inv, err := s.store.ProductionQueueInvocationByID(r.Context(), id) //nolint:contextcheck // waitCtx derives from r.Context()
 	if err != nil || inv.AccountID != acct.ID || inv.AppID != app.ID {
 		return state.Invocation{ID: id}, state.ErrNotFound
 	}
