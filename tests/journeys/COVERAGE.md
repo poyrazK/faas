@@ -55,3 +55,12 @@ covered. Update this table when a journey or a GA row changes.
 
 44 of the 46 GA rows have at least one journey; 143 and 157 need a test
 inbox and a browser. The "Not covered" column lists the remaining gaps.
+
+## Rows going GA
+
+Journeys written ahead of a promotion. Each skips, quoting the server's
+reason, while its capability is not enabled for the account.
+
+| # | Capability | Journeys and steps | Not covered |
+|---|---|---|---|
+| 98 | Events (event GA gate, ADR-20261029093000) | `TestEventDelivery` (full tier): `deploy_subscriber` (`testdata/event-worker`, a function subscribed to `e2ej.journeys`/`journey.ping`), `subscription_listed`, `publish_and_deliver` (receipt shows the handler completed), `handler_saw_envelope`, `republish_is_idempotent`, `identity_conflict_refused`, `filter_skips_event`, `dead_letter_and_replay` (retries exhausted, origin `event_subscription`, `dlq replay`) | schemas, ordered delivery, work policies, batch publish, event replays and recovery jobs, delivery controls; that a replayed dead letter succeeds. On 2026-10-29 production reported events `runtime_unavailable` for the suite's account, so the journey skips |

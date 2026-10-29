@@ -23,6 +23,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -341,6 +342,12 @@ func idempotentCommand(args []string) bool {
 		return sub == "rm" || sub == "runs" || sub == "list"
 	case "keys":
 		return sub == "rm" || sub == "list"
+	case "event":
+		// A publish with an explicit --id names one identity: repeating it
+		// answers the original receipt.
+		return sub == "get" || sub == "subscription" || (sub == "publish" && slices.Contains(args, "--id"))
+	case "dlq":
+		return sub == "list"
 	}
 	return false
 }
