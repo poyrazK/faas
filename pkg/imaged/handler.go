@@ -232,7 +232,7 @@ type Handler struct {
 	// scannerIdentityProbe reads the installed scanner and vulnerability
 	// database without scanning (ADR-20261028102540). Nil disables scan
 	// reuse, so every renewal scans.
-	scannerIdentityProbe func(context.Context) (scannerIdentity, error)
+	scannerIdentityProbe func(context.Context) (installedScanner, error)
 	scannerIdentityCache scannerIdentityCache
 	// scannerDBUpdater refreshes the vulnerability database outside any scan.
 	scannerDBUpdater func(context.Context) error
