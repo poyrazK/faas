@@ -111,7 +111,8 @@ func warningWorkload(rest string) string {
 		return ""
 	}
 	if fields := strings.Fields(rest); len(fields) > 0 {
-		candidate := strings.Trim(fields[0], "\"'")
+		// "<service>: <warning>" names the service before the colon.
+		candidate := strings.Trim(strings.TrimSuffix(fields[0], ":"), "\"'")
 		if candidate != "unsupported" && candidate != "refusing" {
 			return candidate
 		}

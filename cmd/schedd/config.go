@@ -194,6 +194,15 @@ type Config struct {
 	// the same nodes. A node without a fresh sample counts every booking.
 	QuietPauseAdmission bool `toml:"quiet_pause_admission"`
 
+	// MeasuredCPUAdmission (ADR 20261029151111) makes the vCPU and CPU gates
+	// charge an instance the latest instance stats sample measured its
+	// measured host CPU instead of its booking, never less than
+	// api.MeasuredCPUMinChargePercent of the booking, and stops counting its
+	// guest vCPUs; all bookings stay capped at
+	// api.MeasuredCPUMaxOvercommitPercent of the budget. Off by default.
+	// A node without a fresh sample counts every booking.
+	MeasuredCPUAdmission bool `toml:"measured_cpu_admission"`
+
 	// QuietPauseLedger (ADR-20261023171905) records the quiet pauses this
 	// schedd's node reports in the pause ledger, for meterd to subtract from
 	// billed seconds once its quiet_pause_unbilled switch is on. Off by

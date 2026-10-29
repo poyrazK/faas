@@ -62659,6 +62659,55 @@ func (q *Queries) ObjectBucketObjectLockUpdate(ctx context.Context, db DBTX, arg
 	return result.RowsAffected(), nil
 }
 
+const objectBucketPlacementCounts = `-- name: ObjectBucketPlacementCounts :many
+SELECT backend_id, count(*)::bigint AS buckets,
+  count(*) FILTER (WHERE account_id = $1::uuid)::bigint AS account_buckets
+FROM object_buckets
+WHERE backend_id = ANY($2::text[]) AND state <> 'deleted'
+GROUP BY backend_id
+`
+
+type ObjectBucketPlacementCountsParams struct {
+	AccountID  pgtype.UUID
+	BackendIds []string
+}
+
+type ObjectBucketPlacementCountsRow struct {
+	BackendID      string
+	Buckets        int64
+	AccountBuckets int64
+}
+
+func (q *Queries) ObjectBucketPlacementCounts(ctx context.Context, db DBTX, arg ObjectBucketPlacementCountsParams) ([]ObjectBucketPlacementCountsRow, error) {
+	rows, err := db.Query(ctx, objectBucketPlacementCounts, arg.AccountID, arg.BackendIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectBucketPlacementCountsRow{}
+	for rows.Next() {
+		var i ObjectBucketPlacementCountsRow
+		if err := rows.Scan(&i.BackendID, &i.Buckets, &i.AccountBuckets); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const objectBucketPlacementLock = `-- name: ObjectBucketPlacementLock :exec
+SELECT pg_advisory_xact_lock(hashtextextended('object-bucket-placement:' || $1::text, 0))
+`
+
+// Serializes bucket placement in one region (ADR-20261029174627).
+func (q *Queries) ObjectBucketPlacementLock(ctx context.Context, db DBTX, region string) error {
+	_, err := db.Exec(ctx, objectBucketPlacementLock, region)
+	return err
+}
+
 const objectBucketPruneTombstones = `-- name: ObjectBucketPruneTombstones :exec
 DELETE FROM object_buckets WHERE account_id = $1 AND org_id IN (SELECT id FROM orgs WHERE personal_org) AND state = 'deleted'
 `
@@ -99856,11 +99905,32 @@ func (q *Queries) TouchEnvironmentGitOpsIntent(ctx context.Context, db DBTX, sou
 }
 
 const touchKeyLastUsed = `-- name: TouchKeyLastUsed :exec
-update api_keys set last_used_at = now() where id = $1
+update api_keys set last_used_at = now(),
+    expires_at = case
+        when label = $1::text and status = 'active' and expires_at is not null and not ('admin' = any(scopes))
+        then greatest(expires_at, least(now() + make_interval(secs => $2::double precision), created_at + make_interval(secs => $3::double precision)))
+        else expires_at
+    end
+where id = $4
 `
 
-func (q *Queries) TouchKeyLastUsed(ctx context.Context, db DBTX, id pgtype.UUID) error {
-	_, err := db.Exec(ctx, touchKeyLastUsed, id)
+type TouchKeyLastUsedParams struct {
+	McpLoginLabel string
+	IdleSeconds   float64
+	MaxAgeSeconds float64
+	ID            pgtype.UUID
+}
+
+// An active, non-admin mcp-login key also slides (ADR-20261028205920): use
+// extends it to idle_seconds from now, never past max_age_seconds after it was
+// created, and never shortens it.
+func (q *Queries) TouchKeyLastUsed(ctx context.Context, db DBTX, arg TouchKeyLastUsedParams) error {
+	_, err := db.Exec(ctx, touchKeyLastUsed,
+		arg.McpLoginLabel,
+		arg.IdleSeconds,
+		arg.MaxAgeSeconds,
+		arg.ID,
+	)
 	return err
 }
 

@@ -1691,8 +1691,17 @@ func (s *PgStore) GetAPIKey(ctx context.Context, accountID, keyID string) (APIKe
 		accountID, keyID))
 }
 
+// TouchKeyLastUsed stamps last_used_at. An active, non-admin mcp-login key
+// also slides (ADR-20261028205920): use extends it to api.MCPLoginKeyIdle from
+// now, never past api.MCPLoginKeyMaxAge after creation, and never shortens it.
 func (s *PgStore) TouchKeyLastUsed(ctx context.Context, keyID string) error {
-	_, err := s.pool.Exec(ctx, `update api_keys set last_used_at = now() where id = $1`, keyID)
+	_, err := s.pool.Exec(ctx, `update api_keys set last_used_at = now(),
+		expires_at = case
+			when label = $2 and status = 'active' and expires_at is not null and not ('admin' = any(scopes))
+			then greatest(expires_at, least(now() + make_interval(secs => $3), created_at + make_interval(secs => $4)))
+			else expires_at
+		end
+		where id = $1`, keyID, api.MCPLoginKeyLabel, api.MCPLoginKeyIdle.Seconds(), api.MCPLoginKeyMaxAge.Seconds())
 	return err
 }
 
@@ -4661,6 +4670,18 @@ func (s *PgStore) RenameApp(ctx context.Context, accountID, oldSlug, newSlug str
 	if err != nil {
 		return App{}, err
 	}
+	// PR previews name their production app by slug. Left on the old slug
+	// they read as orphaned, and the preview janitor tore every open one
+	// down within minutes of the rename. They keep their pr-<N>-<old> hosts
+	// until the PR's next head replaces them.
+	if updated.PreviewOfSlug == "" {
+		if _, err := tx.Exec(ctx, `update apps set preview_of_slug = $3
+			 where account_id = $1 and preview_of_slug = $2
+			   and coalesce(preview_pr_number, 0) > 0 and status <> 'deleted'`,
+			accountID, oldSlug, newSlug); err != nil {
+			return App{}, fmt.Errorf("state: relink PR previews of renamed app: %w", err)
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return App{}, err
 	}
@@ -6844,13 +6865,39 @@ func (s *PgStore) RenameGitHubRepository(ctx context.Context, installationID int
 	if installationID <= 0 || oldRepoFullName == "" || newRepoFullName == "" {
 		return ErrNotFound
 	}
-	_, err := s.pool.Exec(ctx, `
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("state: begin GitHub repository rename: %w", err)
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }() //nolint:errcheck // no-op after Commit
+	if _, err := tx.Exec(ctx, `
 		update apps
 		   set github_repo_full_name = $3
 		 where github_install_id = $1
-		   and github_repo_full_name = $2`, installationID, oldRepoFullName, newRepoFullName)
-	if err != nil {
+		   and github_repo_full_name = $2`, installationID, oldRepoFullName, newRepoFullName); err != nil {
 		return fmt.Errorf("state: rename GitHub repository binding: %w", err)
+	}
+	// PR preview environments are keyed by repository name. Left on the old
+	// name they never close, and they keep their members from being retired
+	// when the PR's next head (delivered under the new name) replaces them.
+	// A PR already recorded under the new name keeps that row; its old-name
+	// row is dropped, since any set naming a member keeps it from retiring.
+	if _, err := tx.Exec(ctx, `
+		update pr_preview_sets old_set
+		   set repo_full_name = $3, updated_at = now()
+		 where old_set.installation_id = $1 and old_set.repo_full_name = $2
+		   and not exists (select 1 from pr_preview_sets renamed
+		     where renamed.installation_id = $1 and renamed.repo_full_name = $3
+		       and renamed.pr_number = old_set.pr_number)`, installationID, oldRepoFullName, newRepoFullName); err != nil {
+		return fmt.Errorf("state: rename PR preview environments: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		delete from pr_preview_sets where installation_id = $1 and repo_full_name = $2`,
+		installationID, oldRepoFullName); err != nil {
+		return fmt.Errorf("state: drop superseded PR preview environments: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("state: commit GitHub repository rename: %w", err)
 	}
 	return nil
 }

@@ -233,6 +233,42 @@ type BuildDone struct {
 	// (docs/adr/1500-shared-runtime-source-apps.md). It is informational
 	// until imaged consumes it; older guests omit it.
 	SharedRuntime *SharedRuntimeVerdict `json:"shared_runtime,omitempty"`
+	// Timings is where the build spent its time inside the builder VM, for
+	// builderd's build log. Older guests omit it.
+	Timings *BuildTimings `json:"timings,omitempty"`
+}
+
+// BuildTimings is where one build spent its time inside the builder VM.
+type BuildTimings struct {
+	// GuestStartMS is the time from kernel boot to the start of the build in
+	// guest-init; zero when unknown.
+	GuestStartMS int64 `json:"guest_start_ms,omitempty"`
+	// Stages are guest-init's milestones in order, in milliseconds since the
+	// build started in guest-init.
+	Stages []BuildStageTiming `json:"stages,omitempty"`
+	// BuildMS is the build command's wall time: the Railpack plan, when
+	// there is one, and the BuildKit solve with its exports.
+	BuildMS int64 `json:"build_ms,omitempty"`
+	// ImageExportMS and CacheExportMS are BuildKit's export steps: the image
+	// (with any other output) and the dependency cache.
+	ImageExportMS int64 `json:"image_export_ms,omitempty"`
+	CacheExportMS int64 `json:"cache_export_ms,omitempty"`
+	// SlowestSteps are the longest BuildKit steps, longest first, at most
+	// BuildTimingMaxSteps of them.
+	SlowestSteps []BuildStepTiming `json:"slowest_steps,omitempty"`
+}
+
+// BuildStageTiming is one guest-init milestone.
+type BuildStageTiming struct {
+	Stage string `json:"stage"`
+	AtMS  int64  `json:"at_ms"`
+}
+
+// BuildStepTiming is one BuildKit step, named as BuildKit printed it and cut
+// to BuildTimingStepNameMaxBytes.
+type BuildStepTiming struct {
+	Name string `json:"name"`
+	MS   int64  `json:"ms"`
 }
 
 // SharedRuntimeVerdict is the builder VM's classification of one Railpack

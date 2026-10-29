@@ -73,8 +73,10 @@ func (l *signupNetworkLimiter) record(ip string) {
 }
 
 // createSignupAccount creates a self-service account unless the caller's
-// address or network has created its daily share (errSignupNetworkCap).
-func (s *server) createSignupAccount(r *http.Request, params state.CreateAccountWithPersonalOrgParams) (state.CreateAccountWithPersonalOrgResult, error) {
+// address or network has created its daily share (errSignupNetworkCap). Every
+// sign-up method passes here, Google and GitHub included (ADR-20261028205920),
+// and each new account is counted by method and source.
+func (s *server) createSignupAccount(r *http.Request, method, source string, params state.CreateAccountWithPersonalOrgParams) (state.CreateAccountWithPersonalOrgResult, error) {
 	ip := clientIPFromRequest(r)
 	if !s.signups.allow(ip) {
 		s.audit.Emit(r.Context(), "auth.signup_network_cap", nil, map[string]any{"ip": ip})
@@ -83,6 +85,7 @@ func (s *server) createSignupAccount(r *http.Request, params state.CreateAccount
 	res, err := s.store.CreateAccountWithPersonalOrg(r.Context(), params)
 	if err == nil {
 		s.signups.record(ip)
+		s.recordSignup(r.Context(), res.Account.ID, method, source)
 	}
 	return res, err
 }
