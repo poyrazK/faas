@@ -990,7 +990,7 @@ var cliCommands = []cliCommand{
 			},
 			{
 				Name:  subReleaseHistory,
-				Short: "List release activations (deploys and rollbacks) on control-plane hosts, newest first (issue #574)",
+				Short: "List release activations (control-plane deploys and rollbacks, compute release installs), newest first (issue #574)",
 				Flags: []cliFlag{
 					{Name: "host", Short: "only this host (default: every host)"},
 					{Name: "limit", Short: "most rows to show, 1-1000 (default 20)"},
