@@ -902,6 +902,12 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 			"FAAS_SPOOL_ROOT="+spoolRoot,
 			"FAAS_SCAN_SPOOL_ROOT="+scanRoot,
 		)
+		// As in Start: apid's rollback precheck verifies the signatures
+		// schedd does, so it gets the same key when schedd runs. Without it
+		// every checked rollback was refused with capacity_unavailable.
+		if which&Schedd != 0 {
+			env = append(env, "FAAS_SIGN_PUB="+h.ensureSignPub(t))
+		}
 		env = append(env, extraEnv...)
 		// Keep the named-control-plane acceptance knob scoped to apid. The
 		// surrounding harness shares extraEnv across daemons, while setting

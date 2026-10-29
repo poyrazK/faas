@@ -111,7 +111,7 @@ func TestValidateSingleAppManifestTargetsRejectsEveryUnifiedKindExplicitly(t *te
 			if err == nil {
 				t.Fatal("non-cron manifest trigger was accepted")
 			}
-			for _, want := range []string{test.kind, "--no-triggers", "gregale triggers add"} {
+			for _, want := range []string{test.kind, "--no-triggers", "gregale trigger add"} {
 				if !strings.Contains(err.Error(), want) {
 					t.Fatalf("error %q does not contain %q", err, want)
 				}

@@ -52,6 +52,7 @@ type EventReplayBackfillProgress struct {
 	SkippedUnknown   int64 `json:"skipped_unknown"`
 	SkippedExisting  int64 `json:"skipped_existing"`
 	SkippedUnsettled int64 `json:"skipped_unsettled"`
+	Cancelled        int64 `json:"cancelled,omitempty"`
 }
 
 type EventReplayBackfillJobResponse struct {
@@ -69,6 +70,7 @@ type EventReplayBackfillJobResponse struct {
 	HistoryComplete      bool                        `json:"history_complete"`
 	DuplicatePolicy      string                      `json:"duplicate_policy"`
 	State                string                      `json:"state"`
+	LastFailure          string                      `json:"last_failure,omitempty"`
 	ScanComplete         bool                        `json:"scan_complete"`
 	Progress             EventReplayBackfillProgress `json:"progress"`
 	CreatedAt            time.Time                   `json:"created_at"`
@@ -137,6 +139,14 @@ func (c *Client) CreateWorkflowEventReplayBackfill(ctx context.Context, appSlug 
 func (c *Client) GetEventReplayBackfill(ctx context.Context, jobID string) (EventReplayBackfillJobResponse, error) {
 	var out EventReplayBackfillJobResponse
 	err := c.do(ctx, http.MethodGet, "/v1/event-replays/"+url.PathEscape(jobID), nil, &out)
+	return out, err
+}
+
+// CancelEventReplayBackfill ends a running backfill as cancelled
+// (ADR-20261028095548); an ended job is returned unchanged.
+func (c *Client) CancelEventReplayBackfill(ctx context.Context, jobID string) (EventReplayBackfillJobResponse, error) {
+	var out EventReplayBackfillJobResponse
+	err := c.do(ctx, http.MethodPost, "/v1/event-replays/"+url.PathEscape(jobID)+"/cancel", nil, &out)
 	return out, err
 }
 

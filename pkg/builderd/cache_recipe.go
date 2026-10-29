@@ -46,6 +46,11 @@ type BuildCacheRecipe struct {
 	BuilderBaseIdentity string    `json:"builder_base_identity"`
 	TargetPlatform      string    `json:"target_platform"`
 
+	// LayerCompression keeps zstd artifacts apart from gzip ones, so turning
+	// LayerZstdEnv off never serves a zstd image to an imaged that
+	// cannot read it. Omitted when empty, so every gzip key is unchanged.
+	LayerCompression string `json:"layer_compression,omitempty"`
+
 	// DevWatchCommand separates watch-mode developer images (ADR-1170) from
 	// production-shaped builds of the same source. Omitted when empty, so
 	// every existing recipe key is unchanged.

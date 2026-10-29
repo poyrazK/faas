@@ -67,8 +67,8 @@ func open(t *testing.T) *pgxpool.Pool {
 }
 
 // agentMigrations are the agent migrations, in order.
-var agentMigrations = []string{"20261027220903390_agent_runs.sql", "20261027220910563_agent_run_execution.sql",
-	"20261027220917736_agent_run_model_access.sql", "20261027220924909_agent_run_checkout.sql", "20261027220938256_agent_deliveries.sql", "20261027220945429_agent_delivery_destinations.sql", "20261027221006948_agent_run_workflow_steps.sql"}
+var agentMigrations = []string{"20261029093503390_agent_runs.sql", "20261029093510563_agent_run_execution.sql",
+	"20261029093517736_agent_run_model_access.sql", "20261029093524909_agent_run_checkout.sql", "20261029093538256_agent_deliveries.sql", "20261029093545429_agent_delivery_destinations.sql", "20261029093606948_agent_run_workflow_steps.sql"}
 
 func spec() agents.VersionSpec {
 	return agents.VersionSpec{Harness: agents.Harness{Preset: "codex"}, PromptTemplate: "Triage {{event.title}}", TimeoutSec: 300}

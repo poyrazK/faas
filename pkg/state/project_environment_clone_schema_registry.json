@@ -5223,6 +5223,7 @@
       "match_expr",
       "match_headers",
       "match_host",
+      "match_host_scope",
       "match_methods",
       "match_path",
       "mode",
@@ -6225,7 +6226,9 @@
       "execution_notification_captured",
       "execution_notification_next_at",
       "expires_at",
+      "failure_count",
       "id",
+      "last_failure",
       "last_progress_at",
       "next_attempt_at",
       "notification_receipts",
@@ -6289,10 +6292,13 @@
       "cutoff_at",
       "duplicate_policy",
       "earliest_retained_at",
+      "failure_count",
       "filtered_count",
       "from_at",
       "id",
+      "last_failure",
       "matched_count",
+      "next_attempt_at",
       "recipient",
       "scan_complete",
       "scanned_count",
@@ -9391,7 +9397,8 @@
       "kid",
       "recipient",
       "retires_at",
-      "sealed_secret"
+      "sealed_secret",
+      "sealed_secret_sig"
     ],
     "kind": "operational"
   },
@@ -9405,6 +9412,7 @@
       "provider_identity_id",
       "recipient",
       "sealed_login",
+      "sealed_login_sig",
       "slot"
     ],
     "kind": "operational"
@@ -12696,6 +12704,24 @@
       "template"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "platform_release_activations",
+    "columns": [
+      "actor",
+      "commit_sha",
+      "detail",
+      "finished_at",
+      "host",
+      "id",
+      "kind",
+      "previous_release_id",
+      "release_id",
+      "services",
+      "started_at",
+      "status"
+    ],
+    "kind": "platform_configuration"
   },
   {
     "table": "platform_mail_producer_outbox",
@@ -16692,6 +16718,7 @@
       "mem_bytes",
       "recovery_generation",
       "stale",
+      "stale_at",
       "storage_key",
       "stored_bytes",
       "tier"

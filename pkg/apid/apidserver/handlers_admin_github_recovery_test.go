@@ -45,7 +45,7 @@ func TestGithubRecoveryStatusUsesGithubdProjection(t *testing.T) {
 	}}
 	e.s.githubd = fake
 	e.h = e.s.handler()
-	rec := e.do(t, http.MethodGet, "/v1/admin/ops/github/recovery?status=dead&limit=25", nil, nil)
+	rec := e.doOperator(t, http.MethodGet, "/v1/admin/ops/github/recovery?status=dead&limit=25", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}

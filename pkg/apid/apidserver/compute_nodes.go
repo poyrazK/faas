@@ -81,7 +81,10 @@ func (s *server) adminAllows(acct state.Account) (bool, *api.Problem) {
 			"Admin access required",
 			"FAAS_ADMIN_EMAILS is empty on this deployment; no admin endpoints are reachable")
 	}
-	if _, ok := s.adminAllowlist.emails[strings.ToLower(acct.Email)]; !ok {
+	// An unverified address proves nothing: anyone could sign up with an
+	// allowlisted address nobody has claimed (an ops@ alias, an operator
+	// added before signing up or erased since) and hold operator access.
+	if _, ok := s.adminAllowlist.emails[strings.ToLower(acct.Email)]; !ok || !acct.EmailVerified() {
 		return false, api.NewProblem(http.StatusForbidden, "admin_required",
 			"Admin access required",
 			"this account is not in the operator allowlist for /v1/compute-nodes")

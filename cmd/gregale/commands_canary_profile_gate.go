@@ -18,12 +18,12 @@ func appSlugForDeploymentID(command, arg string) (int, bool) {
 		return 0, false
 	}
 	return printErr("Deployment ID required", fmt.Errorf(
-		"gregale %s takes a deployment ID, not an app; list %s's deployments with `gregale deployments %s`", command, arg, arg)), true
+		"gregale %s takes a deployment ID, not an app; list %s's deployments with `gregale release list %s`", command, arg, arg)), true
 }
 
 func cmdCanaryProfileGate(args []string) int {
 	if len(args) != 1 || strings.HasPrefix(args[0], "-") {
-		return printErr("Usage", fmt.Errorf("gregale canary gate DEPLOYMENT_ID [--json]"))
+		return printErr("Usage", fmt.Errorf("gregale release canary gate DEPLOYMENT_ID [--json]"))
 	}
 	if code, ok := appSlugForDeploymentID("canary gate", args[0]); ok {
 		return code
@@ -59,7 +59,7 @@ func cmdCanaryProfileGate(args []string) int {
 
 func cmdCanaryAdvance(args []string) int {
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
-		return printErr("Usage", fmt.Errorf("gregale canary advance DEPLOYMENT_ID --expected-step N [--profile-policy-revision REV --profile-override-reason TEXT]"))
+		return printErr("Usage", fmt.Errorf("gregale release canary advance DEPLOYMENT_ID --expected-step N [--profile-policy-revision REV --profile-override-reason TEXT]"))
 	}
 	fs := newFlagSet("canary advance", flag.ContinueOnError)
 	step := fs.Int("expected-step", -1, "observed stage to advance")

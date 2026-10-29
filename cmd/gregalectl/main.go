@@ -170,6 +170,8 @@ func run(args []string) int {
 		return cmdObjectStorage(args[1:])
 	case dispatchSealDomain:
 		return cmdSealDomain(args[1:])
+	case dispatchLiveQuery:
+		return cmdLiveQuery(args[1:])
 	case dispatchPKI:
 		// Operator-side local-dev PKI bootstrap (ADR-052). Issues
 		// /etc/faas/tls/{ca,<daemon>/} material for multi-box mTLS.

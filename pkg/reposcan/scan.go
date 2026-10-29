@@ -166,6 +166,10 @@ type Workload struct {
 	// PlatformTenantRequired is an explicit ingress policy declaration.
 	// Nil preserves an existing app's policy during reconciliation.
 	PlatformTenantRequired *bool
+	// RenamedFrom is the service's previous name (Compose
+	// x-gregale-renamed-from). A deploy updates that name's app in place
+	// instead of removing it and creating a new one (ADR-20261029090000).
+	RenamedFrom string
 	// Unpublished marks a Compose service without `ports:`, which Docker does
 	// not publish, or a service .gregale/project.yaml declares internal. A new
 	// app for it is internal (ADR-20261022131852, ADR-20261025093331).
@@ -175,8 +179,12 @@ type Workload struct {
 	// app's existing internal listeners; non-nil replaces them.
 	InternalPorts []api.WorkloadPort
 
-	Class    Class  // http|graphql|grpc|job|worker|server|unknown
-	Schedule string // primary cron expression retained for the existing plan wire
+	Class Class // http|graphql|grpc|job|worker|server|unknown
+	// composeDefaultWorker marks a Compose service that is a worker only
+	// because it publishes no ports. Scan makes it an HTTP service when
+	// another service calls it, then clears the mark (ADR-20261029120000).
+	composeDefaultWorker bool
+	Schedule             string // primary cron expression retained for the existing plan wire
 	// Schedules is the complete desired cron set. Schedule remains the first
 	// expression for compatibility with clients that predate multi-schedule
 	// workloads; callers that reconcile crons must use CronSchedules.
@@ -425,6 +433,7 @@ func Scan(fsys fs.FS) (Result, error) {
 	if err := applyProjectConfig(fsys, workloads); err != nil {
 		return Result{}, err
 	}
+	warnings = append(warnings, classifyCalledComposeServices(fsys, workloads)...)
 	detectionWarnings = append(detectionWarnings, mergedDetectionWarnings(workloads)...)
 	sortDetectionWarnings(detectionWarnings)
 	for i := range workloads {

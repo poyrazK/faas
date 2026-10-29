@@ -189,3 +189,9 @@ func (r *server) TemplateNames(acct state.Account) []string {
 func (r *server) EventsPausedProblem(acct state.Account, app state.App) *api.Problem {
 	return r.eventsPausedProblem(acct, app)
 }
+
+// ManagedPostgresReleased decides production managed PostgreSQL provisioning
+// for one account (ADR-20261028103115).
+func (r *server) ManagedPostgresReleased(ctx context.Context, accountID string) bool {
+	return r.managedPostgresReleased(ctx, accountID)
+}

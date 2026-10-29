@@ -65,6 +65,10 @@ type Service struct {
 	// Recipient is livequeryd's age recipient. Without it live queries are
 	// unavailable.
 	Recipient *age.X25519Recipient
+	// Signer signs each key and login apid seals (ADR 20261028161502), so
+	// livequeryd can tell them from values a database writer stored. Nil
+	// writes unsigned rows.
+	Signer *livekeys.Signer
 	// DatabaseProblem writes a managed Postgres error.
 	DatabaseProblem func(http.ResponseWriter, error)
 	Audit           func(ctx context.Context, action string, accountID string, fields map[string]any)
@@ -208,7 +212,9 @@ func (s *Service) newKey(w http.ResponseWriter, r *http.Request, databaseID stri
 		if parsed, err = seal.ParseSecret(secret); err == nil {
 			var sealed []byte
 			if sealed, err = secretbox.SealBytes(s.Recipient, livekeys.KeySealNamespaceFor(databaseID), []byte(secret), livekeys.KeyMaxBytes); err == nil {
-				return secret, livekeys.NewKey{KID: parsed.KID, Sealed: sealed, Recipient: s.Recipient.String()}, true
+				recipient := s.Recipient.String()
+				return secret, livekeys.NewKey{KID: parsed.KID, Sealed: sealed, Recipient: recipient,
+					Signature: s.Signer.Sign(livekeys.SignatureKindKey, databaseID, parsed.KID, recipient, sealed)}, true
 			}
 		}
 	}
@@ -237,7 +243,9 @@ func (s *Service) issueLogin(ctx context.Context, db managedpostgres.Database) (
 	if err != nil {
 		return nil, err
 	}
-	return &livekeys.Login{Sealed: sealed, Recipient: s.Recipient.String(), Identity: live.ProviderIdentityID, Slot: slot, Awake: live.Awake}, nil
+	recipient := s.Recipient.String()
+	return &livekeys.Login{Sealed: sealed, Recipient: recipient, Identity: live.ProviderIdentityID, Slot: slot, Awake: live.Awake,
+		Signature: s.Signer.Sign(livekeys.SignatureKindLogin, db.ID, "", recipient, sealed)}, nil
 }
 
 func (s *Service) stored(w http.ResponseWriter, r *http.Request, err error) bool {

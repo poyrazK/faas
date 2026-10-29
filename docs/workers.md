@@ -9,35 +9,51 @@ Workers are in preview on the Hobby, Pro and Scale plans.
 
 ## Declare a worker
 
-Set the execution mode in your app's manifest, or pass
-`gregale deploy --execution-mode worker` once:
+Describe the worker and the queue it consumes in `gregale.yaml`, then
+`gregale deploy`. Deploys from a repository or GitHub apply the same file.
 
 ```yaml
 schema_version: 1
-lifecycle:
-  execution_mode: worker
-  restart_policy: always
-  startup_deadline_s: 30
-  stop_grace_period_s: 30
+worker:
+  drain_timeout: 30s
+  scale:
+    min: 0
+    max: 3
+    metric: queue_depth
+    target: 100
+queue_bindings:
+  - name: jobs
+    queue_name: jobs
+    max_concurrency: 4
 ```
 
-A worker is not reaped when idle. If it exits, the restart policy decides
-whether it starts again. See [declarative worker lifecycle](cli/deploy.md#declarative-worker-lifecycle)
-for every lifecycle field.
+The `worker` block makes the app a worker and sets how its pool scales (see
+[Scale on the backlog](#scale-on-the-backlog)). A binding in `queue_bindings`
+is a **pull** binding by default: the worker leases messages when it has
+capacity and acks or nacks each one. A worker is not reaped when idle; if its
+process exits, guest-init restarts it under the restart policy (see
+[declarative worker lifecycle](cli/deploy.md#declarative-worker-lifecycle)).
+
+## Send messages
+
+Any app, script or CI job sends to the worker's queue by name:
+
+```bash
+gregale queue send --app my-worker --queue-name jobs --payload '{"image":"cat.png"}'
+```
+
+```bash
+curl -X POST "$GREGALE_API/v1/apps/my-worker/queues/send" \
+  -H "Authorization: Bearer $KEY" \
+  -d '{"queue_name":"jobs","payload":{"image":"cat.png"}}'
+```
+
+A send that would pass a plan limit is refused; see [Limits](#limits).
 
 ## Consume a queue
 
-Bind the worker to a queue. A **pull** binding fits a worker with no listener:
-the worker leases messages when it has capacity and acks or nacks each one.
-
-```bash
-curl -X POST "$GREGALE_API/v1/apps/my-worker/queue-bindings" \
-  -H "Authorization: Bearer $KEY" \
-  -d '{"name":"jobs","queue_name":"jobs","mode":"pull","workload_class":"worker","max_concurrency":4}'
-```
-
-Then consume it with the SDK, which leases, runs your handler, acks on success,
-nacks on an error and keeps long-running leases alive:
+Consume the queue with the SDK, which leases, runs your handler, acks on
+success, nacks on an error and keeps long-running leases alive:
 
 ```js
 import { consumeQueue } from '@gregale/sdk-node/preview/queues/runtime';
@@ -66,28 +82,20 @@ Messages are delivered at least once: make handlers idempotent.
 
 ## Scale on the backlog
 
-Add a `queue_depth` target to say how many waiting messages one worker should
-take:
-
-```yaml
-scaling:
-  min_instances: 0
-  max_instances: 3
-  targets:
-    - metric: queue_depth
-      value: 100
-```
-
-The pool runs `ceil(depth / value)` workers, between `min_instances` and
-`max_instances`, and never more than the binding's `max_concurrency` allows.
-With `min_instances: 0` the pool stops when the queue is empty and starts a
-worker when the next message arrives. It scales out on the tick that sees the
+`worker.scale` says how many waiting messages one worker should take:
+`metric: queue_depth` with `target: 100` runs `ceil(depth / 100)` workers,
+between `min` and `max`, and never more than the binding's `max_concurrency`
+allows. The target is at most 10,000 messages per worker. With `min: 0` the pool stops when the queue is empty and starts a
+worker when the next message arrives. A worker that reads an external broker
+(Kafka, NATS, SQS and others) through `worker.source` scales on
+`metric: queue_lag` instead. A `scaling` block with a `queue_depth` target
+works the same way, with `min_instances` as the floor. It scales out on the tick that sees the
 backlog and scales in only after demand has stayed low for 60 seconds, so a
 queue that drains and refills does not restart workers. A worker that holds
 unexpired leases is kept when the pool shrinks.
 
 On the stop signal, stop leasing and finish or nack in-flight messages within
-`stop_grace_period_s`. The SDK consumers do this for you; an unacked lease is
+`drain_timeout`. The SDK consumers do this for you; an unacked lease is
 redelivered after its visibility timeout.
 
 ## Inspect and operate
@@ -98,6 +106,9 @@ gregale worker status my-worker    # replicas, scaling metric, backlog, dead let
 gregale worker logs my-worker --follow
 gregale worker scale my-worker --min 0 --max 3 --target 100
 ```
+
+To hear when a worker falls behind, alert on `queue_backlog` or
+`queue_oldest_age_seconds` (see [queue backlog alerts](alerts.md#queue-backlog-alerts)).
 
 ## Limits
 

@@ -85,6 +85,10 @@ daemons:
       key_path: /etc/faas/tls/schedd/server.key
       ca_path: /etc/faas/tls/ca/ca.crt
       mode: "0400"
+    # ADR-20261021215353: freeze a quiet between_requests instance this many
+    # seconds after its last request (0 or 2-300; needs schedd's frozen
+    # tier). Omitted keeps schedd's default, off; 10 is the ADR's value.
+    # frozen_tier_early_freeze_after_s: 10
     # This is the static compatibility fallback. Per-node routing comes
     # from compute_nodes.schedd_target_url, which vmmd self-registration
     # receives from each host's generated node-local target. The control

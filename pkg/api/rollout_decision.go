@@ -53,6 +53,10 @@ const (
 	RolloutRuleHoldAwaitingApproval = "hold_awaiting_approval"
 	RolloutRuleAbortApprovalReject  = "abort_approval_rejected"
 	RolloutRuleAbortApprovalTimeout = "abort_approval_timeout"
+
+	// The route health guard held the canary past RouteHealthHoldDeadline
+	// (ADR-20261028110044).
+	RolloutRuleAbortRouteHealthTimeout = "abort_route_health_timeout"
 )
 
 var rolloutDecisionRules = map[string]string{
@@ -81,6 +85,8 @@ var rolloutDecisionRules = map[string]string{
 	RolloutRuleHoldAwaitingApproval:  RolloutDecisionHold,
 	RolloutRuleAbortApprovalReject:   RolloutDecisionAbort,
 	RolloutRuleAbortApprovalTimeout:  RolloutDecisionAbort,
+
+	RolloutRuleAbortRouteHealthTimeout: RolloutDecisionAbort,
 }
 
 // RolloutDecision is the evidence behind one decision about a rollout

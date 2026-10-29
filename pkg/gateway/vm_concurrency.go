@@ -179,6 +179,14 @@ func (m *vmConcurrencyManager) enterQueueWithPriority(ctx context.Context, appID
 	}
 	m.queueMu.Lock()
 	admission := m.admission
+	// A request this gateway's queue cannot take costs no fleet lease. At
+	// saturation every arriving request otherwise wrote a lease row to
+	// control-plane Postgres only to release it again.
+	if q := m.queues[appID]; q != nil && len(q.tickets) >= limit && q.displaceableBelow(class) < 0 {
+		depth := len(q.tickets)
+		m.queueMu.Unlock()
+		return nil, depth, false, nil
+	}
 	m.queueMu.Unlock()
 	leaseID := ""
 	globalDepth := 0

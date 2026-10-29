@@ -201,7 +201,7 @@ func (c *memCacheOverageChecker) Check(ctx context.Context, accountID string) (O
 			exp:           now.Add(c.ttl),
 		}
 		c.mu.Unlock()
-		return OverageOK, capCents, 0, err
+		return OverageOK, 0, capCents, err
 	}
 	status := OverageOK
 	if obsCents >= capCents {

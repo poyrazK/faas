@@ -152,7 +152,7 @@
   notify: restart faas-gatewayd-public
 
 # ADR-20261026195952: the hosted management MCP server runs beside this edge
-# on the control plane when control_plane_service enables it.
+# on the control plane; both roles default faas_mcp_bridge_enabled to true.
 - name: gatewayd_public_service — install hosted management MCP route drop-in
   ansible.builtin.template:
     src: 99-faas-mcp-bridge.conf.j2
@@ -160,14 +160,14 @@
     owner: root
     group: root
     mode: "0644"
-  when: faas_mcp_bridge_enabled | default(false) | bool
+  when: faas_mcp_bridge_enabled | bool
   notify: restart faas-gatewayd-public
 
 - name: gatewayd_public_service — remove hosted management MCP route drop-in
   ansible.builtin.file:
     path: /etc/systemd/system/faas-gatewayd-public.service.d/99-faas-mcp-bridge.conf
     state: absent
-  when: not (faas_mcp_bridge_enabled | default(false) | bool)
+  when: not (faas_mcp_bridge_enabled | bool)
   notify: restart faas-gatewayd-public
 
 # ADR-520: rendered unconditionally so turning the feature off removes the

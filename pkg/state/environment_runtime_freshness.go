@@ -82,8 +82,7 @@ func (m *MemStore) markEnvironmentRuntimeChangedAndSnapshotsLocked(appID, scope 
 		inputs, exists := m.snapshotRuntimeConfigReceipts[snapshot.ID]
 		proofStale := m.runtimeConfigReceiptRequiredLocked(appID, scope) && (!exists || inputs.Scope != scope || inputs.Boundary.Before(at) || !m.runtimeConfigInputsFreshLocked(appID, inputs))
 		if !snapshot.CreatedAt.After(at) || proofStale {
-			snapshot.Stale = true
-			m.snapshots[id] = snapshot
+			m.markSnapshotStaleLocked(id)
 			invalidated++
 		}
 	}
