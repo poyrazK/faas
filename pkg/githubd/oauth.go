@@ -233,7 +233,66 @@ type UserInstallation struct {
 	ID      int64 `json:"id"`
 	Account struct {
 		Login string `json:"login"`
+		// Type is "User" or "Organization".
+		Type string `json:"type"`
 	} `json:"account"`
+}
+
+// AuthorizeInstallationBinder checks that the GitHub user behind userToken
+// may connect installation to a Gregale account. GitHub lists an
+// installation in /user/installations for anyone with access to one of its
+// repositories, so any member of a company could bind the company's
+// installation and reach every repository it covers (bug hunt 2026-10-28
+// H49). An organization installation now needs an active organization
+// admin; a personal installation needs its owner.
+func (a *AppAuth) AuthorizeInstallationBinder(ctx context.Context, userToken string, installation UserInstallation) error {
+	var user struct {
+		Login string `json:"login"`
+	}
+	if status, err := a.getUserJSON(ctx, userToken, "/user", &user); err != nil || status != http.StatusOK {
+		return fmt.Errorf("githubd: read GitHub user: status=%d: %w", status, err)
+	}
+	owner := installation.Account.Login
+	if !strings.EqualFold(installation.Account.Type, "Organization") {
+		if owner == "" || !strings.EqualFold(user.Login, owner) {
+			return fmt.Errorf("githubd: only %s can connect their personal GitHub App installation", owner)
+		}
+		return nil
+	}
+	var membership struct {
+		State string `json:"state"`
+		Role  string `json:"role"`
+	}
+	status, err := a.getUserJSON(ctx, userToken, "/user/memberships/orgs/"+url.PathEscape(owner), &membership)
+	if err != nil {
+		return fmt.Errorf("githubd: read %s membership: %w", owner, err)
+	}
+	if status != http.StatusOK || membership.State != "active" || membership.Role != "admin" {
+		return fmt.Errorf("githubd: connecting the %s installation requires an organization admin", owner)
+	}
+	return nil
+}
+
+// getUserJSON GETs a GitHub API path with a user token and decodes a 200.
+func (a *AppAuth) getUserJSON(ctx context.Context, userToken, path string, out any) (int, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, GitHubAPI+path, nil)
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Authorization", "Bearer "+userToken)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	req.Header.Set("User-Agent", "faas-githubd/1.0")
+	resp, err := a.HTTPClient.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<16))
+		return resp.StatusCode, nil
+	}
+	return resp.StatusCode, decodeGitHubJSON(resp.Body, out)
 }
 
 // ListInstallationsForUser enumerates the GitHub App installs visible
