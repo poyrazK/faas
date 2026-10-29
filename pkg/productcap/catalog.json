@@ -3139,6 +3139,7 @@
         "=/v1/postgres/databases",
         "=/v1/postgres/databases/{}",
         "/v1/postgres/databases/{}/connection-budget",
+        "/v1/postgres/databases/{}/undelete",
         "/v1/postgres/usage"
       ],
       "cli": [
