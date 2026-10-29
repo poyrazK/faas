@@ -4120,6 +4120,7 @@ type Querier interface {
 	// count; the spend breaker sums the month through the usage primary key, one
 	// index range per database, so the ledger's growth never forces a full scan.
 	ManagedPostgresFleetTotals(ctx context.Context, db DBTX, arg ManagedPostgresFleetTotalsParams) (ManagedPostgresFleetTotalsRow, error)
+	ManagedPostgresMostSevereCapEvent(ctx context.Context, db DBTX, arg ManagedPostgresMostSevereCapEventParams) (ManagedPostgresMostSevereCapEventRow, error)
 	// ADR-20261025094915: managed PostgreSQL compute overage and cap subjects.
 	ManagedPostgresOverageEnabled(ctx context.Context, db DBTX, subjectID pgtype.UUID) (bool, error)
 	ManagedPostgresPersonalBindingReference(ctx context.Context, db DBTX, arg ManagedPostgresPersonalBindingReferenceParams) (bool, error)
