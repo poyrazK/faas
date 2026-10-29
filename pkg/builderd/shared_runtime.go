@@ -20,9 +20,9 @@ func sharedRuntimeBuildLog(v *api.SharedRuntimeVerdict) string {
 	}
 }
 
-// SharedRuntimeEnv enables building source container apps on the shared
-// runner base (docs/adr/1500-shared-runtime-source-apps.md). Off by
-// default until the native-metal acceptance run passes.
+// SharedRuntimeEnv controls building source container apps on the shared
+// runner base (docs/adr/1500-shared-runtime-source-apps.md). On by default
+// since the metal acceptance run (ADR-20261029103512); "0" turns it off.
 const SharedRuntimeEnv = "FAAS_SOURCE_APP_SHARED_RUNTIME"
 
 // sharedSourceAppRuntime picks the runner base a source build of app runs
@@ -30,12 +30,18 @@ const SharedRuntimeEnv = "FAAS_SOURCE_APP_SHARED_RUNTIME"
 // runtime or a Dockerfile qualify; job-mode boots still assume the minimal
 // base. nodeSpec is the source's Node declaration as written (.nvmrc or
 // engines.node): the parsed source version drops bare majors such as "22".
+// A musl runner base (node22) is never chosen: the build's glibc toolchain
+// would not run on it if the app turned out ineligible.
 func sharedSourceAppRuntime(app state.App, fw Framework, nodeSpec, dockerfilePath string, env func(string) string) string {
-	if env(SharedRuntimeEnv) != "1" || app.Type == state.AppTypeFunction || app.Runtime != "" ||
+	if env(SharedRuntimeEnv) == "0" || app.Type == state.AppTypeFunction || app.Runtime != "" ||
 		fw != FrameworkNode || dockerfilePath != "" || app.Manifest.ExecutionMode == api.ExecutionModeJob {
 		return ""
 	}
-	return sharedruntime.NodeRuntimeForSpec(nodeSpec)
+	runtime := sharedruntime.NodeRuntimeForSpec(nodeSpec)
+	if sharedruntime.MuslRunner(runtime) {
+		return ""
+	}
+	return runtime
 }
 
 // claimedBuildRuntime is the runtime a build's export claim signs: the

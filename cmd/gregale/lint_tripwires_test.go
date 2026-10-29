@@ -884,6 +884,8 @@ func TestEveryCodeHasWhycopyEntry(t *testing.T) {
 		api.CodeStageDependencyRestoreFailed,
 		api.CodeStageImageBuildOOM,
 		api.CodeStageImageBuildTimeout,
+		api.CodeBuildFailed,
+		api.CodeBuildInfrastructure,
 		api.CodeStageSecurityScanFindings,
 		api.CodeStageSnapshotPrepareTimeout,
 		api.CodeBeforeCheckpointFailed,
