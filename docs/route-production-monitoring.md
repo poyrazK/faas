@@ -102,10 +102,16 @@ customer UUID unless `customer_details=true` is requested.
 ## Sustained observations
 
 APID polls due monitors every 30 seconds, evaluates every due monitor (several
-at a time) and schedules each successful evaluation one minute later. It selects the sole default-scope live deployment receiving
-100% traffic whose canary steps have completed. Deployments without canary steps
-also qualify. Preview traffic and retired deployments are excluded. A split,
-missing/ambiguous deployment, lost entitlement or missing observations is unknown.
+at a time) and schedules each successful evaluation one minute later. It selects the sole live deployment receiving
+100% traffic in the app's production lane whose canary steps have completed: a
+project's named `production` environment once it serves traffic (or while the
+default lane is dark), otherwise the default scope. Deployments without canary
+steps also qualify. Preview and staging traffic and retired deployments are
+excluded. A split, missing/ambiguous deployment, lost entitlement or missing
+observations is unknown. When a gateway may have lost request telemetry in the
+windows (it restarted, missed a heartbeat, or has telemetry off or sampled), the
+report is unknown with reason `telemetry_unavailable`: no incident opens or
+recovers on partial counts, and no healthy baseline is recorded.
 
 Two consecutive closed UTC minute windows sit behind a 30-second ingestion
 allowance. Both must begin after the latest intent update, deployment creation,
@@ -257,7 +263,9 @@ incident, using its saved opening evidence:
   (`outside_rollback_window`), no healthy baseline was saved
   (`no_healthy_baseline`), or the checked rollback could not be requested
   (`rollback_target_ineligible`, with the checked rollback's problem code in
-  `refusal_code`, for example `rollback_in_progress`).
+  `refusal_code`, for example `rollback_in_progress`), or a project release
+  serves the app (`project_release`): a project rolls back as a whole, so roll
+  back the project's release instead of one of its apps.
 - **Not decided** while a rollout, another rollback or a traffic split owns the
   deployment.
 

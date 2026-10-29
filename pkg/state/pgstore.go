@@ -4003,23 +4003,32 @@ func (s *PgStore) CountDeveloperApps(ctx context.Context, accountID string) (int
 	return s.countPersonalAppQuota(ctx, accountID, QuotaErrorKindDeveloperApps)
 }
 
-// CountAppsWithEvictionPriority returns the per-account count of
-// apps whose eviction_priority equals the given tier (issue #475).
-// Counts APPS (not instances) — a single reserved app with 5
-// concurrent instances counts as 1 against the per-account cap
+// CountBillingSubjectAppsWithEvictionPriority returns how many apps of
+// appID's billing subject (quotaSubjectSQL, ADR-202610171904) have
+// eviction_priority equal to the given tier (issue #475). Counts APPS
+// (not instances) — a single reserved app with 5 concurrent instances
+// counts as 1 against the per-account cap
 // (Plan.ReservedConcurrencyPerAccount). Excludes soft-deleted apps
-// (status='deleted') so a recently-deleted reserved app doesn't
-// leak into the cap and reject a subsequent recreate. The
-// `apps_account_idx (account_id, status)` partial composite index
-// keeps this O(N_per_account) — bounded by the acked per-account
-// cap (Hobby 1, Pro 2, Scale 4) so the lock-pending apid path
-// (CreateCronIfUnderQuota pattern) is constant-time in practice.
-func (s *PgStore) CountAppsWithEvictionPriority(ctx context.Context, accountID, priority string) (int, error) {
+// (status='deleted') so a recently-deleted reserved app doesn't leak
+// into the cap and reject a subsequent recreate. The account_id/org_id
+// prefilter keeps the scan on apps_account_idx and apps_org_quota_idx.
+func (s *PgStore) CountBillingSubjectAppsWithEvictionPriority(ctx context.Context, appID, priority string) (int, error) {
 	var n int
-	err := s.pool.QueryRow(ctx,
-		`select count(*) from apps where account_id = $1 and status <> 'deleted' and eviction_priority = $2`,
-		accountID, priority).Scan(&n)
-	return n, err
+	err := s.pool.QueryRow(ctx, `
+		with subject as (
+			select `+quotaSubjectSQL+` as id
+			from apps a left join orgs o on o.id = a.org_id
+			where a.id = $1
+		)
+		select count(*) from subject s
+		join apps a on a.account_id = s.id or a.org_id = s.id
+		left join orgs o on o.id = a.org_id
+		where a.status <> 'deleted' and a.eviction_priority = $2 and `+quotaSubjectSQL+` = s.id`,
+		appID, priority).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("state: count %s apps of app %s's billing subject: %w", priority, appID, err)
+	}
+	return n, nil
 }
 
 // CountAuthDefaultFlippedApps (issue #695 / ADR-080) returns the
@@ -14656,7 +14665,7 @@ func scanEdgeRuleCols(scan func(...any) error) (EdgeRule, error) {
 // CreateEdgeRule is the un-capped insert path used by tests. The
 // customer-facing handler always calls CreateEdgeRuleIfUnderQuota.
 func (s *PgStore) CreateEdgeRule(ctx context.Context, in CreateEdgeRuleParams) (EdgeRule, error) {
-	tx, err := s.beginRuleTrafficPolicyMutation(ctx, uuidToPgtype(in.AccountID), in.Kind)
+	tx, err := s.beginRuleTrafficPolicyMutation(ctx, uuidToPgtype(in.AccountID), in.Kind, in.MatchHost)
 	if err != nil {
 		return EdgeRule{}, err
 	}
@@ -14731,7 +14740,7 @@ func (s *PgStore) CreateEdgeRule(ctx context.Context, in CreateEdgeRuleParams) (
 // count, so a burst of N parallel inserts can't race past the cap
 // by N-1.
 func (s *PgStore) CreateEdgeRuleIfUnderQuota(ctx context.Context, in CreateEdgeRuleParams, limits api.Limits) (EdgeRule, error) {
-	tx, err := s.beginRuleTrafficPolicyMutation(ctx, uuidToPgtype(in.AccountID), in.Kind)
+	tx, err := s.beginRuleTrafficPolicyMutation(ctx, uuidToPgtype(in.AccountID), in.Kind, in.MatchHost)
 	if err != nil {
 		return EdgeRule{}, fmt.Errorf("state: begin tx: %w", err)
 	}
@@ -15650,7 +15659,7 @@ func (s *PgStore) ListCertExpiryStateForWalker(ctx context.Context, staleCutoff 
 // the action union (a 'cors' action has no fields a 'route' rule
 // expects); the customer deletes + recreates instead.
 func (s *PgStore) UpdateEdgeRule(ctx context.Context, id string, p UpdateEdgeRuleParams) (EdgeRule, error) {
-	tx, txErr := s.beginEdgeRuleTrafficMutation(ctx, id)
+	tx, txErr := s.beginEdgeRuleTrafficMutation(ctx, id, p.MatchHost)
 	if txErr != nil {
 		return EdgeRule{}, txErr
 	}

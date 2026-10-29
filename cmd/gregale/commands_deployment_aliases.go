@@ -63,7 +63,7 @@ func cmdDeploymentAliasesList(args []string) int {
 	}
 	if len(page.Items) == 0 {
 		_, _ = fmt.Fprintf(osStdout, "No deployment aliases for app %q.\n", slug)
-		_, _ = fmt.Fprintf(osStdout, "Set one: `gregale release alias set --app %s --name canary --deployment vN`.\n", slug)
+		_, _ = fmt.Fprintf(osStdout, "Set one: `gregale release alias set --app %s --name canary --release vN`.\n", slug)
 		return 0
 	}
 	_, _ = fmt.Fprintf(osStdout, deploymentAliasRowFormat, "NAME", "REVISION", "DEPLOYMENT", "URL")
@@ -89,7 +89,7 @@ func cmdDeploymentAliasSet(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 0 || *name == "" || *deploymentRef == "" {
-		PrintUsage(os.Stderr, "usage: gregale release alias set --name NAME --deployment <ID|vN> [--app SLUG]", "deployments")
+		PrintUsage(os.Stderr, "usage: gregale release alias set --name NAME --release <ID|vN> [--app SLUG]", "deployments")
 		return 1
 	}
 	if !api.ValidDeploymentAliasName(*name) {
