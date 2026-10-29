@@ -318,7 +318,7 @@ Start in `observe`, look for false positives, then switch to `block`:
 
 ```sh
 gregale edge rule create --app my-api --kind waf --match-host my-api.example.com --match-path '/*'
-gregale edge rule waf-review --app my-api            # detections grouped by CRS rule and path, each assessed
+gregale edge rule waf review --app my-api            # detections grouped by CRS rule and path, each assessed
 gregale edge rule waf-exclude <rule-id> --add 942100  # silence a false positive, keeping the rest of the rule
 gregale edge rule update <rule-id> --kind waf --waf-mode block --waf-exclude-rules 942100
 ```

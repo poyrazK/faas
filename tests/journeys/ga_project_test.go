@@ -193,13 +193,13 @@ func TestMultiServiceProject(t *testing.T) {
 		expectCall(t, tg.appURL(svc.batch)+"/call", http.StatusForbidden, "target does not allow this service caller")
 	})
 	s.check("wake_ahead_on_by_default", func(t *testing.T) {
-		doc := object(t, tg.ok(t, time.Minute, "wake-ahead", web).stdout)
+		doc := object(t, tg.ok(t, time.Minute, "app", "wake-ahead", web).stdout)
 		if enabled, _ := field(doc, "enabled").(bool); !enabled {
 			t.Fatalf("wake-ahead for %s = %s; want on by default for a project service", web, compact(doc))
 		}
 	})
 	s.check("parked_service_wakes_on_call", func(t *testing.T) {
-		tg.ok(t, 2*time.Minute, "park", apiService)
+		tg.ok(t, 2*time.Minute, "app", "park", apiService)
 		waitParked(t, tg, apiService)
 		r := get(base + "/call?via=env")
 		doc := jsonBody(t, r)

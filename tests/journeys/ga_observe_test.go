@@ -18,7 +18,7 @@ import (
 // Gregale Observe: alerts and notification channels, custom metrics and
 // OTLP ingest, SLOs and synthetic checks.
 
-// TestTailAnalyticsAndMetrics streams `gregale tail` while traffic flows to
+// TestTailAnalyticsAndMetrics streams `gregale invocation watch` while traffic flows to
 // the shared probe, then reads request analytics and account metrics
 // (rows 118, 121).
 func TestTailAnalyticsAndMetrics(t *testing.T) {
@@ -34,7 +34,7 @@ func TestTailAnalyticsAndMetrics(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			// tail streams until interrupted; the timeout ends it.
-			res = tg.run(t, 45*time.Second, "tail", slug)
+			res = tg.run(t, 45*time.Second, "invocation", "watch", slug)
 		}()
 		time.Sleep(5 * time.Second)
 		for range 10 {
@@ -43,21 +43,21 @@ func TestTailAnalyticsAndMetrics(t *testing.T) {
 		}
 		wg.Wait()
 		if len(strings.TrimSpace(string(res.stdout))) == 0 {
-			t.Fatalf("gregale tail printed nothing during 10 requests: %s", res.problem())
+			t.Fatalf("gregale invocation watch printed nothing during 10 requests: %s", res.problem())
 		}
 		t.Logf("tail: %s", tail(string(res.stdout), 400))
 	})
 	s.check("request_analytics", func(t *testing.T) {
-		res := tg.ok(t, time.Minute, "analytics", slug, "--since", "1h", "--by", "status")
+		res := tg.ok(t, time.Minute, "metric", "requests", slug, "--since", "1h", "--by", "status")
 		if len(objects(t, res.stdout)) == 0 {
-			t.Fatal("gregale analytics printed nothing")
+			t.Fatal("gregale metric requests printed nothing")
 		}
 		t.Logf("analytics: %s", tail(string(res.stdout), 400))
 	})
 	s.check("account_metrics", func(t *testing.T) {
-		res := tg.ok(t, time.Minute, "metrics", "--account", "--range", "1h")
+		res := tg.ok(t, time.Minute, "metric", "--account", "--range", "1h")
 		if len(objects(t, res.stdout)) == 0 {
-			t.Fatal("gregale metrics --account printed nothing")
+			t.Fatal("gregale metric --account printed nothing")
 		}
 	})
 }
@@ -73,7 +73,7 @@ func TestLogArchive(t *testing.T) {
 	if r := get(base + "/log?marker=" + marker); r.status != http.StatusOK {
 		t.Fatalf("GET /log: %s", r)
 	}
-	tg.ok(t, 2*time.Minute, "park", slug)
+	tg.ok(t, 2*time.Minute, "app", "park", slug)
 	waitParked(t, tg, slug)
 	s := newStory(t)
 
@@ -87,7 +87,7 @@ func TestLogArchive(t *testing.T) {
 		})
 	})
 	s.check("archive", func(t *testing.T) {
-		rows := objects(t, tg.ok(t, time.Minute, "ps", slug, "--all").stdout)
+		rows := objects(t, tg.ok(t, time.Minute, "app", "instances", slug, "--all").stdout)
 		if len(rows) == 0 {
 			t.Fatal("ps --all lists no retained instance")
 		}
@@ -117,7 +117,7 @@ func TestWakeTimelineAndCosts(t *testing.T) {
 
 	var wakeID string
 	s.step("wake", func(t *testing.T) {
-		tg.ok(t, 2*time.Minute, "park", slug)
+		tg.ok(t, 2*time.Minute, "app", "park", slug)
 		waitParked(t, tg, slug)
 		r := get(base + "/")
 		if r.status != http.StatusOK {
@@ -128,7 +128,7 @@ func TestWakeTimelineAndCosts(t *testing.T) {
 			if wakeID != "" {
 				return true, ""
 			}
-			for _, row := range objects(t, tg.ok(t, time.Minute, "ps", slug).stdout) {
+			for _, row := range objects(t, tg.ok(t, time.Minute, "app", "instances", slug).stdout) {
 				wakeID = str(row, "wake_id")
 			}
 			return wakeID != "", "no wake_id yet"
@@ -136,7 +136,7 @@ func TestWakeTimelineAndCosts(t *testing.T) {
 	})
 	s.check("wake_timeline", func(t *testing.T) {
 		eventually(t, "wake timeline has events", 2*time.Minute, 5*time.Second, func() (bool, string) {
-			res := tg.run(t, time.Minute, "wake-timeline", slug, wakeID, "--all")
+			res := tg.run(t, time.Minute, "app", "wake-timeline", slug, wakeID, "--all")
 			if res.exit != 0 {
 				return false, res.problem()
 			}
@@ -165,7 +165,7 @@ const fakeSlackWebhook = "https://hooks.slack.com/services/T00000000/B00000000/e
 // skips its steps instead of failing them.
 func hiddenCapabilities(t *testing.T, tg *target) map[string]bool {
 	t.Helper()
-	doc := object(t, tg.ok(t, time.Minute, "capabilities").stdout)
+	doc := object(t, tg.ok(t, time.Minute, "feature", "list").stdout)
 	ids, _ := field(doc, "hidden_capabilities").([]any)
 	hidden := make(map[string]bool, len(ids))
 	for _, id := range ids {
@@ -232,7 +232,7 @@ func TestAlertsAndChannels(t *testing.T) {
 	s := newStory(t)
 
 	s.step("hook_secret", func(t *testing.T) {
-		tg.ok(t, 5*time.Minute, "secrets", "set", "--app", slug, "E2E_HOOK_SECRET="+secret, "--restart")
+		tg.ok(t, 5*time.Minute, "env", "set", "--app", slug, "E2E_HOOK_SECRET="+secret, "--restart")
 		eventually(t, "the probe reads the hook secret", 2*time.Minute, 3*time.Second, func() (bool, string) {
 			r := get(base + "/secret?key=E2E_HOOK_SECRET")
 			return r.status == http.StatusOK && strings.Contains(string(r.body), `"present":true`), r.String()
@@ -243,7 +243,7 @@ func TestAlertsAndChannels(t *testing.T) {
 	// channel before the rule notifies it.
 	t.Cleanup(func() {
 		if channelID != "" {
-			tg.run(t, time.Minute, "channels", "rm", channelID)
+			tg.run(t, time.Minute, "alert", "channel", "delete", channelID)
 		}
 	})
 	s.step("add_channel", func(t *testing.T) {
@@ -288,7 +288,7 @@ func TestAlertsAndChannels(t *testing.T) {
 			}
 		}
 		eventually(t, "the rule fires", 8*time.Minute, 15*time.Second, func() (bool, string) {
-			res := tg.run(t, time.Minute, "alerts", "info", "--app", slug, ruleID)
+			res := tg.run(t, time.Minute, "alert", "get", "--app", slug, ruleID)
 			if res.exit != 0 {
 				return false, res.problem()
 			}
@@ -303,7 +303,7 @@ func TestAlertsAndChannels(t *testing.T) {
 		// The probe answers 200 only when the signature verifies against
 		// the rule's secret, 401 when it does not.
 		eventually(t, "a delivery the probe verified", 5*time.Minute, 10*time.Second, func() (bool, string) {
-			res := tg.run(t, time.Minute, "alerts", "deliveries", "--app", slug, "--limit", "10", ruleID)
+			res := tg.run(t, time.Minute, "alert", "deliveries", "--app", slug, "--limit", "10", ruleID)
 			if res.exit != 0 {
 				return false, res.problem()
 			}
@@ -335,7 +335,7 @@ func TestAlertsAndChannels(t *testing.T) {
 		if channelID == "" {
 			t.Skip("no channel: notification channels are not released to this account")
 		}
-		doc := object(t, tg.ok(t, time.Minute, "channels", "test", channelID).stdout)
+		doc := object(t, tg.ok(t, time.Minute, "alert", "channel", "test", channelID).stdout)
 		if field(doc, "delivered") != false || str(doc, "error") == "" {
 			t.Fatalf("a test to a destination Slack refuses must report it undelivered, with Slack's reason: %s", compact(doc))
 		}
@@ -346,7 +346,7 @@ func TestAlertsAndChannels(t *testing.T) {
 // findChannel reads one notification channel from `gregale channels list`.
 func findChannel(t *testing.T, tg *target, id string) (map[string]any, string) {
 	t.Helper()
-	res := tg.run(t, time.Minute, "channels", "list")
+	res := tg.run(t, time.Minute, "alert", "channel", "list")
 	if res.exit != 0 {
 		return nil, res.problem()
 	}
@@ -418,7 +418,7 @@ func TestCustomMetricsSLOsAndSynthetics(t *testing.T) {
 	})
 	s.check("slo", func(t *testing.T) {
 		skipHidden(t, hidden, "custom-slos")
-		res := tg.run(t, time.Minute, "slos", "create", "--app", slug, "--name", "availability",
+		res := tg.run(t, time.Minute, "alert", "slo", "create", "--app", slug, "--name", "availability",
 			"--objective", "99", "--sli", "availability", "--window-days", "7")
 		skipUnreleased(t, res.problemCode(), res.problem())
 		if res.exit != 0 {
@@ -428,7 +428,7 @@ func TestCustomMetricsSLOsAndSynthetics(t *testing.T) {
 		if id == "" {
 			t.Fatalf("slos create printed no id: %s", tail(string(res.stdout), 400))
 		}
-		doc := object(t, tg.ok(t, time.Minute, "slos", "status", "--app", slug, id).stdout)
+		doc := object(t, tg.ok(t, time.Minute, "alert", "slo", "status", "--app", slug, id).stdout)
 		if str(doc, "id") != id || num(doc, "objective_pct") != 99 || str(doc, "sli") != "availability" {
 			t.Fatalf("slos status: %s", compact(doc))
 		}
@@ -436,7 +436,7 @@ func TestCustomMetricsSLOsAndSynthetics(t *testing.T) {
 	})
 	s.check("synthetic_check", func(t *testing.T) {
 		skipHidden(t, hidden, "synthetic-checks")
-		res := tg.run(t, time.Minute, "synthetics", "create", "--app", slug, "--name", "home",
+		res := tg.run(t, time.Minute, "alert", "check", "create", "--app", slug, "--name", "home",
 			"--path", "/", "--expect-status", "200", "--every-minutes", "5")
 		skipUnreleased(t, res.problemCode(), res.problem())
 		if res.exit != 0 {
@@ -447,9 +447,9 @@ func TestCustomMetricsSLOsAndSynthetics(t *testing.T) {
 			t.Fatalf("synthetics create printed no id: %s", tail(string(res.stdout), 400))
 		}
 		// An always-on check on a test app must not outlive this step.
-		t.Cleanup(func() { tg.run(t, time.Minute, "synthetics", "rm", "--app", slug, "--yes", id) })
+		t.Cleanup(func() { tg.run(t, time.Minute, "alert", "check", "delete", "--app", slug, "--yes", id) })
 		eventually(t, "the check's first run", 6*time.Minute, 15*time.Second, func() (bool, string) {
-			res := tg.run(t, time.Minute, "synthetics", "status", "--app", slug, id)
+			res := tg.run(t, time.Minute, "alert", "check", "status", "--app", slug, id)
 			if res.exit != 0 {
 				return false, res.problem()
 			}
