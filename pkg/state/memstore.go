@@ -5849,12 +5849,24 @@ func (m *MemStore) AdvanceCanary(ctx context.Context, id string, params CanaryAd
 	if params.ProfileGateRollback {
 		return m.abortProfileGatedCanaryLocked(ctx, d, params)
 	}
-	if err := m.checkCanaryRouteGateLocked(d, params); err != nil {
+	// A guard whose capability is not released for the account neither holds
+	// the rollout nor records evidence (ADR-20261028110044).
+	guards := routeGuardRelease(ctx)
+	if !guards.Requirements {
+		params.RouteGateDecision = nil
+	} else if err := m.checkCanaryRouteGateLocked(d, params); err != nil {
 		return Deployment{}, 0, err
 	}
-	healthRecord, healthNotification, err := m.checkRouteHealthLocked(d, params)
-	if err != nil {
-		return Deployment{}, 0, err
+	var healthRecord routeHealthStoredDecision
+	var healthNotification memRouteHealthNotification
+	if !guards.Health {
+		params.RouteHealthDecision = nil
+	} else {
+		var err error
+		healthRecord, healthNotification, err = m.checkRouteHealthLocked(d, params)
+		if err != nil {
+			return Deployment{}, 0, err
+		}
 	}
 	if err := stampRouteHealthAudit(&params); err != nil {
 		return Deployment{}, 0, err
@@ -6398,6 +6410,14 @@ func (m *MemStore) ReassignAppOwner(_ context.Context, appID, fromNodeID, toNode
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.reassignableAppLocked(appID, fromNodeID); err != nil {
+		return err
+	}
+	m.reassignAppOwnerLocked(appID, fromNodeID, toNodeID)
+	return nil
+}
+
+func (m *MemStore) reassignableAppLocked(appID, fromNodeID string) error {
 	a, ok := m.apps[appID]
 	if !ok {
 		return ErrNotFound
@@ -6408,6 +6428,11 @@ func (m *MemStore) ReassignAppOwner(_ context.Context, appID, fromNodeID, toNode
 	if a.Status != AppActive && a.Status != AppEvictedCold {
 		return ErrConflict
 	}
+	return nil
+}
+
+func (m *MemStore) reassignAppOwnerLocked(appID, fromNodeID, toNodeID string) {
+	a := m.apps[appID]
 	now := time.Now()
 	a.NodeID = toNodeID
 	if fromNodeID != toNodeID {
@@ -6415,7 +6440,6 @@ func (m *MemStore) ReassignAppOwner(_ context.Context, appID, fromNodeID, toNode
 	}
 	a.ReassignedAt = &now
 	m.apps[appID] = a
-	return nil
 }
 
 // ListLiveInstancesOnNode mirrors
@@ -8935,19 +8959,24 @@ func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID
 		if err := legacyProfileCanaryGate(m.profileDeploymentPolicies[appID], *target); err != nil {
 			return *target, 0, err
 		}
-		gate, err := m.canaryRouteGateLocked(m.apps[appID].AccountID, appID)
-		if err != nil {
-			return *target, 0, err
+		guards := routeGuardRelease(ctx)
+		if guards.Requirements {
+			gate, err := m.canaryRouteGateLocked(m.apps[appID].AccountID, appID)
+			if err != nil {
+				return *target, 0, err
+			}
+			if err := legacyCanaryRouteGate(gate, *target, action); err != nil {
+				return *target, 0, err
+			}
 		}
-		if err := legacyCanaryRouteGate(gate, *target, action); err != nil {
-			return *target, 0, err
-		}
-		healthGate, err := m.routeHealthGateLocked(m.apps[appID].AccountID, appID)
-		if err != nil {
-			return *target, 0, err
-		}
-		if err := legacyRouteHealth(healthGate, *target, action); err != nil {
-			return *target, 0, err
+		if guards.Health {
+			healthGate, err := m.routeHealthGateLocked(m.apps[appID].AccountID, appID)
+			if err != nil {
+				return *target, 0, err
+			}
+			if err := legacyRouteHealth(healthGate, *target, action); err != nil {
+				return *target, 0, err
+			}
 		}
 	}
 	if expectedPredecessorID != "" {
@@ -15777,6 +15806,9 @@ func (m *MemStore) CreateInstanceWithMode(ctx context.Context, appID, deployment
 		if err := m.checkNodeAdmissionLocked(ctx, nodeID); err != nil {
 			return Instance{}, err
 		}
+	}
+	if err := m.checkAppOwnerFenceLocked(ctx, appID, strings.ToLower(state)); err != nil {
+		return Instance{}, err
 	}
 	if err := m.requireInstanceLayerArtifactsLocked(deploymentID, state); err != nil {
 		return Instance{}, err
@@ -24242,20 +24274,14 @@ func (m *MemStore) CreateAlertRuleIfUnderQuota(_ context.Context, in AlertRule, 
 		}
 	}
 
-	// Per-account count excludes rules whose pinned app is soft-
-	// deleted (matches the PgStore's EXISTS predicate).
-	accountCount := 0
+	// The per-account count covers the billing subject's account-wide rules
+	// and the rules of its apps, excluding soft-deleted apps (matches the
+	// PgStore's predicate).
+	subject, accountCount := m.appBillingSubjectLocked(in.AccountID, in.AppID), 0
 	for _, r := range m.alertRules {
-		if r.AccountID != in.AccountID {
-			continue
+		if m.countsTowardQuotaSubjectLocked(r.AccountID, r.AppID, subject) {
+			accountCount++
 		}
-		if r.AppID != "" {
-			app, ok := m.apps[r.AppID]
-			if !ok || app.Status == AppDeleted {
-				continue
-			}
-		}
-		accountCount++
 	}
 	if accountCount >= limits.AlertRuleLimitPerAccount {
 		return AlertRule{}, &AlertRuleQuotaError{
@@ -24658,6 +24684,9 @@ func (m *MemStore) CreateEdgeRuleIfUnderQuota(ctx context.Context, in CreateEdge
 			return EdgeRule{}, exceeded
 		}
 	}
+	if err := m.memEdgeRuleListMissing(in.AccountID, in.Match); err != nil {
+		return EdgeRule{}, err
+	}
 	if in.MatchMethods == nil {
 		in.MatchMethods = []string{}
 	}
@@ -24858,17 +24887,11 @@ func (m *MemStore) CreateCorsPresetIfUnderQuota(ctx context.Context, p CorsPrese
 			}
 		}
 	}
-	// Per-account count excludes soft-deleted apps' preset rows.
-	var accountCount int
+	// The per-account count covers the billing subject's account-wide presets
+	// and the presets of its apps, excluding soft-deleted apps.
+	subject, accountCount := m.appBillingSubjectLocked(p.AccountID, p.AppID), 0
 	for _, q := range m.corsPresets {
-		if q.AccountID != p.AccountID {
-			continue
-		}
-		if q.AppID == "" {
-			accountCount++
-			continue
-		}
-		if app, ok := m.apps[q.AppID]; ok && app.Status != "deleted" {
+		if m.countsTowardQuotaSubjectLocked(q.AccountID, q.AppID, subject) {
 			accountCount++
 		}
 	}
@@ -25242,6 +25265,11 @@ func (m *MemStore) UpdateEdgeRule(ctx context.Context, id string, p UpdateEdgeRu
 	if !ok {
 		return EdgeRule{}, ErrNotFound
 	}
+	if p.Match != nil {
+		if err := m.memEdgeRuleListMissing(r.AccountID, p.Match); err != nil {
+			return EdgeRule{}, err
+		}
+	}
 	before := r
 	if p.MatchHost != nil {
 		r.MatchHost = *p.MatchHost
@@ -25368,7 +25396,7 @@ func (m *MemStore) MatchEdgeRulesForHost(_ context.Context, host string) ([]Edge
 	defer m.mu.Unlock()
 	var out []EdgeRule
 	for _, r := range m.edgeRules {
-		if !r.Enabled || r.EdgeRuleExpired(time.Now()) {
+		if !r.Enabled || r.EdgeRuleExpired(time.Now()) || m.edgeRuleAppDeletedLocked(r) {
 			continue
 		}
 		if matchHostPattern(r.MatchHost, host) {

@@ -67,7 +67,7 @@ func cmdAutomationsLive(args []string) int {
 func parseAutomationLiveOptions(args []string) (automationLiveOptions, error) {
 	var o automationLiveOptions
 	if len(args) == 0 {
-		return o, errors.New("usage: gregale automations live <start|list|show|check|wait|suite|gate|baseline> --app SLUG --name NAME")
+		return o, errors.New("usage: gregale automation live <start|list|show|check|wait|suite|gate|baseline> --app SLUG --name NAME")
 	}
 	o.verb = args[0]
 	if o.verb != "start" && o.verb != "list" && o.verb != "show" && o.verb != "check" && o.verb != "wait" {
@@ -142,7 +142,7 @@ func renderAutomationLive(o automationLiveOptions, view *api.AutomationLiveVerif
 		result.RunID = view.RunID
 	}
 	if result.RunID != "" {
-		result.Reconnect = recoveryCLI() + " automations live wait --app " + recoveryArgument(o.app) + " --name " + recoveryArgument(o.name) + " --run " + recoveryArgument(result.RunID)
+		result.Reconnect = recoveryCLI() + " automation live wait --app " + recoveryArgument(o.app) + " --name " + recoveryArgument(o.name) + " --run " + recoveryArgument(result.RunID)
 	}
 	var err error
 	if jsonOutput {

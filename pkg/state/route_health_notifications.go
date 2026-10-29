@@ -15,6 +15,9 @@ type routeHealthNotificationState struct {
 	ContextKey        string
 	Status            string
 	BlockedDecisionID string
+	// Since is when the status began; a hold keeps the time of its first
+	// blocking decision while its context lasts (ADR-20261028110044).
+	Since time.Time
 }
 
 type routeHealthNotification struct {
@@ -27,6 +30,27 @@ type routeHealthNotification struct {
 // moving telemetry windows do not reopen a hold. A configuration/stage/stable
 // change resets the comparison; unknown never clears a confirmed regression.
 func routeHealthTransition(previous routeHealthNotificationState, entry api.RouteHealthHistoryEntry, slug string) (routeHealthNotification, error) {
+	next, err := routeHealthStatusTransition(previous, entry, slug)
+	if err != nil {
+		return next, err
+	}
+	next.State.Since = routeHealthStatusSince(previous, next.State, entry.CheckedAt)
+	return next, nil
+}
+
+// routeHealthStatusSince is when next's status began. A held canary stays
+// held from its first blocking decision even when the hold turns from
+// unknown to regressed, so the hold deadline counts the whole hold.
+func routeHealthStatusSince(previous, next routeHealthNotificationState, at time.Time) time.Time {
+	held := func(status string) bool { return status == "blocked_unknown" || status == "blocked_regressed" }
+	if previous.ContextKey == next.ContextKey && !previous.Since.IsZero() &&
+		(previous.Status == next.Status || held(previous.Status) && held(next.Status)) {
+		return previous.Since
+	}
+	return at.UTC()
+}
+
+func routeHealthStatusTransition(previous routeHealthNotificationState, entry api.RouteHealthHistoryEntry, slug string) (routeHealthNotification, error) {
 	key, err := routeHealthNotificationContext(entry)
 	if err != nil {
 		return routeHealthNotification{}, err

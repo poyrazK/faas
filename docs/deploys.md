@@ -1413,7 +1413,7 @@ SQL. Read the current health generation with `projects environments status`.
 If the expected expansion is present and compatible with both releases:
 
 ```sh
-gregale environment recover-migration shop PROMOTION_ID --to production \
+gregale environment migration recover shop PROMOTION_ID --to production \
   --action resume --task-id TASK_ID --generation GENERATION \
   --database-state-checked --schema-compatible --evidence-sha256 EVIDENCE_SHA256 --wait
 ```
@@ -1429,7 +1429,7 @@ release without another migration, then complete a normal verified promotion int
 the same destination. Close the old incident against that repair promotion:
 
 ```sh
-gregale environment recover-migration shop PROMOTION_ID --to production \
+gregale environment migration recover shop PROMOTION_ID --to production \
   --action resolve --replacement-promotion REPAIR_PROMOTION_ID \
   --task-id TASK_ID --generation GENERATION --database-state-checked \
   --evidence-sha256 EVIDENCE_SHA256 --wait

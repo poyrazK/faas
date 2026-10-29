@@ -60,7 +60,7 @@ func (r *remoteServer) adminConnections(w http.ResponseWriter, req *http.Request
 	}
 	ids := []string{}
 	for id, g := range r.grants {
-		if g.server != nil && !g.revoked && time.Now().Before(g.expires) {
+		if g.approved && !g.revoked && time.Now().Before(g.expires) {
 			ids = append(ids, id)
 		}
 	}
@@ -166,7 +166,7 @@ func (r *remoteServer) adminRevoke(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	g := r.grants[id]
-	if g == nil || g.server == nil || g.revoked {
+	if g == nil || !g.approved || g.revoked {
 		http.Error(w, "Active grant not found", http.StatusNotFound)
 		return
 	}

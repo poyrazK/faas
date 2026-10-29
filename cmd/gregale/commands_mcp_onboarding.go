@@ -119,7 +119,7 @@ func runMCPInit(options mcpInitOptions) int {
 	if options.Tasks {
 		next = append(next, "Follow the root README.md to bind credentials, deploy the three roles and verify the observer before enabling scale-to-zero.")
 	} else if options.AuthMode == "external-oauth" {
-		next = append(next, "Obtain an access token from the configured provider with the resource audience and required scopes.", "Deploy with gregale mcp deploy --token-env MCP_ACCESS_TOKEN; the provider owns login, consent and refresh.")
+		next = append(next, "Obtain an access token from the configured provider with the resource audience and required scopes.", "Deploy with gregale mcp server deploy --token-env MCP_ACCESS_TOKEN; the provider owns login, consent and refresh.")
 	} else {
 		next = append(next, "This starter uses public access. Configure external-oauth before exposing private tools or data.")
 	}
@@ -194,7 +194,7 @@ func mcpStackReadme(options mcpInitOptions) string {
 		guide.WriteString("The web endpoint is public. Configure external OAuth before exposing private business data.\n\n")
 	}
 	guide.WriteString("Verify the observer and queue before requesting scale-to-zero:\n\n```sh\n")
-	fmt.Fprintf(&guide, "gregale mcp tasks observer setup --app %s-observer --worker-app %s-worker --config ./observer/gregale-mcp.json\ngregale mcp tasks setup --app %s-worker --observer-app %s-observer --min 0\n# Apply only after the preview reports a ready observer and fresh heartbeat:\ngregale mcp tasks setup --app %s-worker --observer-app %s-observer --min 0 --apply\n", options.Name, options.Name, options.Name, options.Name, options.Name, options.Name)
-	guide.WriteString("```\n\nThe observer and database remain running when workers reach zero. For later worker replacements, use `gregale mcp tasks release` with a separate candidate worker application and the previous worker apps in the release plan. Keep its journal outside the source directories. Handlers with external side effects must be idempotent by Task ID.\n\nMCP hosting remains preview until native lifecycle and real provider/client qualification evidence is recorded.\n")
+	fmt.Fprintf(&guide, "gregale mcp server tasks observer setup --app %s-observer --worker-app %s-worker --config ./observer/gregale-mcp.json\ngregale mcp tasks setup --app %s-worker --observer-app %s-observer --min 0\n# Apply only after the preview reports a ready observer and fresh heartbeat:\ngregale mcp tasks setup --app %s-worker --observer-app %s-observer --min 0 --apply\n", options.Name, options.Name, options.Name, options.Name, options.Name, options.Name)
+	guide.WriteString("```\n\nThe observer and database remain running when workers reach zero. For later worker replacements, use `gregale mcp server tasks release` with a separate candidate worker application and the previous worker apps in the release plan. Keep its journal outside the source directories. Handlers with external side effects must be idempotent by Task ID.\n\nMCP hosting remains preview until native lifecycle and real provider/client qualification evidence is recorded.\n")
 	return guide.String()
 }

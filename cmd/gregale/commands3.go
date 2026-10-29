@@ -1003,7 +1003,7 @@ func secretsUnset(args []string) int {
 	appSource := targetValueSource(*app, resolvedApp)
 	*app = resolvedApp
 	if (!*interactive && len(positionals) < 1) || (*interactive && len(positionals) != 0) {
-		PrintUsage(os.Stderr, "usage: gregale secrets unset [--app <slug>] (KEY...|--interactive) [--scope <name>] [--restart] [--dry-run] [--wait-for-ack [--timeout 2m]]", "secrets")
+		PrintUsage(os.Stderr, "usage: gregale env unset [--app <slug>] (KEY...|--interactive) [--scope <name>] [--restart] [--dry-run] [--wait-for-ack [--timeout 2m]]", "secrets")
 		return 1
 	}
 	if *interactive {

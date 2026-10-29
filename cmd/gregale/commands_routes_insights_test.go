@@ -115,7 +115,7 @@ func TestRoutesInsightsFixCLI(t *testing.T) {
 
 	code, out := runRouteInsightsCLI(t, server, "routes", "insights", "demo")
 	if code != 0 || !strings.Contains(out, "Fix:  Change the max-age of cache rule r1") || !strings.Contains(out, "ID:   ins-1") ||
-		!strings.Contains(out, "gregale routes insights demo --fix ID") || strings.Contains(out, "ID:   ins-2") {
+		!strings.Contains(out, "gregale api route insights demo --fix ID") || strings.Contains(out, "ID:   ins-2") {
 		t.Fatalf("listing: exit %d\n%s", code, out)
 	}
 	code, out = runRouteInsightsCLI(t, server, "routes", "insights", "demo", "--fix", "ins-1")

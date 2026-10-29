@@ -85,6 +85,15 @@ for want in \
   grep -Fq -- "$want" "$test_root/activate.sh" || fail "activation script lacks: $want"
 done
 
+# 1. (cont.) In a workflow run the script names the run as the actor in the
+#    release history deployctl writes (issue #574); outside one it names none.
+GITHUB_RUN_ID=4242 GITHUB_WORKFLOW="cd control plane" bash "$helper" script "$plan" "$stage" "$test_root/actor.sh"
+bash -n "$test_root/actor.sh" || fail "activation script with an actor does not parse"
+grep -Fxq 'export FAAS_DEPLOY_ACTOR=cd\ control\ plane\ run\ 4242' "$test_root/actor.sh" || fail "activation script does not name its run: $(cat "$test_root/actor.sh")"
+if env -u GITHUB_RUN_ID bash "$helper" script "$plan" "$stage" "$test_root/no-actor.sh" && grep -q FAAS_DEPLOY_ACTOR "$test_root/no-actor.sh"; then
+  fail "activation script names an actor outside a workflow run"
+fi
+
 # 1a. A plan with a data step overlays bin/migrate, which deployctl deploy
 #     runs before it activates anything.
 jq '.replace["bin/migrate"] = "bin/migrate" | .gate += [["--unit", "migrations"]]' "$plan" > "$test_root/data.json"

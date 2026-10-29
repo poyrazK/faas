@@ -41,6 +41,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_APID_INTERNAL_BASE_URL` | meterd | `default` |  | http://127.0.0.1:9101 | `` | Safe Deploy meterd-to-apid operator listener; must remain a loopback HTTP origin |
 | `FAAS_APID_LISTEN` | apid | `default` |  |  | `` |  |
 | `FAAS_APID_LIVE_KEY_RECIPIENT_FILE` | apid | `dropin` |  |  | `` | operator-only live-query preview (ADR-20261016151947): livequeryd's age recipient file, delivered by livequeryd_service's 99-faas-live-queries.conf; apid seals each database's live secret to it and cannot read one back; unset leaves live queries unavailable |
+| `FAAS_APID_LIVE_SIGNING_KEY_FILE` | apid | `dropin` |  |  | `` | live-query writer signing key (ADR 20261028161502): an Ed25519 PKCS#8 key apid signs live keys and logins with, delivered as a credential by livequeryd_service's 99-faas-live-queries.conf drop-in; unset writes unsigned rows |
 | `FAAS_APID_LOOPBACK` | gatewayd-internal | `default` |  |  | `` |  |
 | `FAAS_APID_METRICS_ADDR` | apid | `default` |  |  | `` |  |
 | `FAAS_APID_OTEL_SPANS_WRITER_SOCKET` | apid, gatewayd-internal, gatewayd-public, outboundd, vmmd | `default` |  |  | `` |  |
@@ -425,6 +426,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_INTERNAL_MAIL_KEYRING_PATH` | shared | `secrets-env` |  |  | `` | optional absolute path in /etc/faas/secrets/internal-mail/maild.env to a bounded read-only JSON keyring; referenced age identities use systemd LoadCredential paths; retain required read keys with rotation management off; never supplied to callers or mailctl |
 | `FAAS_INTERNAL_MAIL_MAGIC_LINK_ORIGIN` | shared | `secrets-env` |  |  | `` | trusted canonical HTTPS dashboard origin in apid /etc/faas/sealed.env; required only for enabled durable magic-link sign-in; request authority never selects credential links |
 | `FAAS_INTERNAL_MAIL_MAGIC_LINK_OUTBOX_ENABLED` | apid, mailctl, maild, shared | `unit` |  | 0 | `` | exact internal opt-in for purpose-specific, address-, verification-, password- and recovery-bound magic-link tokens and encrypted handoff, with independent maild admission and reconciliation; requires producer outbox and apid dedicated credential readers; default-off preserves inline issuance |
+| `FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_CAP_OUTBOX_ENABLED` | apid, mailctl, maild, shared | `unit` |  | 0 | `` | exact internal opt-in for encrypted managed PostgreSQL compute cap notices (ADR-20261025094915): one email for the most severe threshold a usage subject reached in a UTC month, queued by the cap sweep only while FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT=on; requires producer outbox and dedicated apid readers; default-off sends no cap email |
 | `FAAS_INTERNAL_MAIL_MFA_DISABLED_ALERT_OUTBOX_ENABLED` | apid, mailctl, maild, shared | `unit` |  | 0 | `` | exact internal opt-in for atomic MFA removal and encrypted security alerts across password, recovery-code and both email-confirmation formats; independent worker/admission/reconciliation gates; requires producer outbox and dedicated apid readers; default-off preserves existing disable behavior |
 | `FAAS_INTERNAL_MAIL_MFA_DISABLE_ORIGIN` | shared | `secrets-env` |  |  | `` | trusted canonical HTTPS origin in apid /etc/faas/sealed.env; required only for durable MFA disable email; request authority never selects credential links |
 | `FAAS_INTERNAL_MAIL_MFA_DISABLE_OUTBOX_ENABLED` | apid, mailctl, maild, shared | `unit` |  | 0 | `` | exact internal opt-in for atomic MFA disable request and encrypted mail handoff; account/address/password/MFA/recovery bindings, fixed 24h cooldown and 24h confirmation window, independent worker/admission/reconciliation gates; requires producer outbox and apid credential readers; default-off preserves inline issuance |
@@ -676,10 +678,10 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_REALTIME_FAIR_USE_ENABLED` | apid, realtimed | `unit` |  |  | `` | the apid and realtimed units set 1: plan connection limits per account and the fleet-wide count, synced through apid, and the 6000 node connection default that keeps realtimed inside its 512 MB MemoryMax (ADR-1323); unset, apid sends no allowance and the node default is 10000 |
 | `FAAS_REALTIME_HEALTH_LISTEN` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REALTIME_HEARTBEAT` | realtimed | `default` |  |  | `` |  |
-| `FAAS_REALTIME_HISTORY_TARGET` | realtimed | `default` |  | /run/faas/request_telemetry.sock | `` | private apid gRPC target for the optional resume preview; split-box TCP targets require mTLS |
-| `FAAS_REALTIME_HISTORY_TLS_CA_PATH` | realtimed | `default` |  |  | `` |  |
-| `FAAS_REALTIME_HISTORY_TLS_CERT_PATH` | realtimed | `default` |  |  | `` |  |
-| `FAAS_REALTIME_HISTORY_TLS_KEY_PATH` | realtimed | `default` |  |  | `` |  |
+| `FAAS_REALTIME_HISTORY_TARGET` | realtimed | `dropin` |  | /run/faas/request_telemetry.sock | `` | private apid gRPC target for fair-use connection sync and the realtime previews; compute-only hosts get apid's private mTLS target from the gatewayd_internal_service role (Hunt 14 H14-110), single-box keeps the Unix default |
+| `FAAS_REALTIME_HISTORY_TLS_CA_PATH` | realtimed | `dropin` |  |  | `` | compute-only: the fleet CA, with FAAS_REALTIME_HISTORY_TARGET |
+| `FAAS_REALTIME_HISTORY_TLS_CERT_PATH` | realtimed | `dropin` |  |  | `` | compute-only: gatewayd-internal's apid client leaf (group faas) |
+| `FAAS_REALTIME_HISTORY_TLS_KEY_PATH` | realtimed | `dropin` |  |  | `` | compute-only: gatewayd-internal's apid client key (root:faas 0440) |
 | `FAAS_REALTIME_LIVE_TLS_CA_FILE` | realtimed | `dropin` |  |  | `` | live-query preview (ADR-20261016151947): CA that verifies livequeryd hubs dialed over wss://; unset uses the system roots |
 | `FAAS_REALTIME_LIVE_TLS_CERT_FILE` | realtimed | `dropin` |  |  | `` | live-query preview (ADR-20261016151947): realtimed's client certificate for livequeryd hubs that require one (-client-ca); set with FAAS_REALTIME_LIVE_TLS_KEY_FILE |
 | `FAAS_REALTIME_LIVE_TLS_KEY_FILE` | realtimed | `dropin` |  |  | `` | live-query preview (ADR-20261016151947): private key for FAAS_REALTIME_LIVE_TLS_CERT_FILE |
@@ -814,7 +816,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_SKIP_SOCKET_GROUP` | shared | `dev-only` |  |  | `` | must never be set on a production host |
 | `FAAS_SNAPSHOT_FANOUT_INTERVAL` | vmmd | `default` |  |  | `` | defaults to 100ms to keep snapshot prepositioning inside the M9 200ms queue-wait budget; increase only for intentionally relaxed environments |
 | `FAAS_SNAPSHOT_MEMORY_SHARING` | vmmd | `default` |  |  | `` | ADR-956 snapshot memory page sharing with cached image blocks; on by default, `off` disables it |
-| `FAAS_SOURCE_APP_SHARED_RUNTIME` | builderd, shared | `default` |  |  | `` | opt-in; 1 builds Node source container apps on the shared runner base so drive1 holds only /app (docs/adr/20261017-shared-runtime-source-apps.md); off until the native-metal acceptance run passes |
+| `FAAS_SOURCE_APP_SHARED_RUNTIME` | builderd, shared | `default` |  |  | `` | on by default (ADR-20261029103512): Node source container apps build on the shared runner base so drive1 holds only /app (docs/adr/1500-shared-runtime-source-apps.md); 0 turns it off |
 | `FAAS_SPOOL_ROOT` | apid, builderd | `default` |  |  | `` |  |
 | `FAAS_STANDBY_WARMUP_ENABLED` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_STANDBY_WARMUP_INTERVAL_MS` | gatewayd-public | `default` |  |  | `` |  |
@@ -872,6 +874,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_TRACE_RING_CAP` | shared | `default` |  |  | `` |  |
 | `FAAS_TRACING_ENABLED` | guest, shared | `guest` |  |  | `` | stamped by guest-init when the local OTLP bridge is the trace exporter; gates the runtime bootstraps (ADR-958) |
 | `FAAS_TRAFFIC_AUTHORITATIVE_HOST_POLICY` | gatewayd-internal | `default` |  |  | `` | ADR-570; off by default; true reads host ownership and the compiled edge policy in a Postgres snapshot on every public request instead of the route and edge-rule caches |
+| `FAAS_TRAFFIC_SCOPED_BINDING_GUARD` | apid | `default` |  | false | `` | ADR-20261027163626; off by default; true makes apid binding writes lock and analyse only the hostnames they declare instead of the whole fleet; keep off until traffic_binding_scope_misses_total reads zero |
 | `FAAS_TRIGGER_BATCH_DELIVERY_PREVIEW_ENABLED` | apid, shared | `default` |  | 0 | `` | admit `delivery: batch` on triggers (ADR-1321); off, apid refuses it with 422; boot fallback for the trigger_batch_delivery platform flag (ADR-1700), ignored once an operator writes platform_flag.trigger_batch_delivery |
 | `FAAS_TRIGGER_LEDGER_RETENTION_ENABLED` | schedd | `default` |  | 0 | `` | exact opt-in (`1`) for the trigger_records reaper: terminal rows past their explicit retention or the default ages (7 days, 30 for dead letters) |
 | `FAAS_TRUSTED_INGRESS_CIDRS` | gatewayd-public | `unit` |  |  | `` | upstream TLS edge CIDRs allowed to provide canonical forwarding context |

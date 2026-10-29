@@ -1,6 +1,7 @@
 package livekeys_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"strings"
@@ -34,7 +35,7 @@ func open(t *testing.T) *pgxpool.Pool {
 			access text NOT NULL DEFAULT 'read_write', provider_identity_id text, state text NOT NULL, created_at timestamptz NOT NULL DEFAULT clock_timestamp(), deleted_at timestamptz)`); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"20261017121336518_managed_postgres_live_keys.sql", "20261021100642318_managed_postgres_live_logins.sql"} {
+	for _, name := range []string{"20261017121336518_managed_postgres_live_keys.sql", "20261021100642318_managed_postgres_live_logins.sql", "20261028161544217_managed_postgres_live_signatures.sql", "20261028161546331_managed_postgres_live_signatures_validate.sql"} {
 		raw, err := migrations.FS.ReadFile(name)
 		if err != nil {
 			t.Fatal(err)
@@ -416,5 +417,67 @@ func TestStoreResealSwapsOnlyTheSealItRead(t *testing.T) {
 	dbs, err := store.LiveDatabases(ctx, []string{"native-a"})
 	if err != nil || len(dbs) != 1 || string(dbs[0].Sealed) != "bound-login" {
 		t.Fatalf("discovered after the new login = %+v, %v", dbs, err)
+	}
+}
+
+// A key or login stores its writer signature beside the ciphertext, and the
+// readers get it back (ADR 20261028161502). A re-seal changes the
+// ciphertext, so it clears the key's signature; the backfill signs an
+// unsigned row only while the row still holds what it read.
+func TestStoreKeepsWriterSignatures(t *testing.T) {
+	pool := open(t)
+	store := livekeys.New(pool)
+	ctx := context.Background()
+	sig := func(b byte) []byte { return bytes.Repeat([]byte{b}, 64) }
+	signed := key("aaaaaaaaaaaaaaaa")
+	signed.Signature = sig(1)
+	login := &livekeys.Login{Sealed: []byte("sealed-login"), Recipient: recipient, Identity: "gregale_live_ab12", Slot: "gregale_live_db", Signature: sig(2)}
+	if err := store.Enable(ctx, account, dbID, signed, func(context.Context) (*livekeys.Login, error) { return login, nil }); err != nil {
+		t.Fatal(err)
+	}
+	ring, err := store.Ring(ctx, dbID)
+	if err != nil || len(ring) != 1 || !bytes.Equal(ring[0].Signature, sig(1)) {
+		t.Fatalf("ring = %+v, %v; want the key's signature", ring, err)
+	}
+	dbs, err := store.LiveDatabases(ctx, []string{"native-a"})
+	if err != nil || len(dbs) != 1 || !bytes.Equal(dbs[0].Signature, sig(2)) {
+		t.Fatalf("discovered = %+v, %v; want the login's signature", dbs, err)
+	}
+
+	keys, err := store.SealedKeysAfter(ctx, "", 10)
+	if err != nil || len(keys) != 1 || !bytes.Equal(keys[0].Signature, sig(1)) {
+		t.Fatalf("key page = %+v, %v", keys, err)
+	}
+	if swapped, err := store.ResealKey(ctx, keys[0], []byte("bound-a")); err != nil || !swapped {
+		t.Fatalf("re-seal = %v, %v", swapped, err)
+	}
+	keys, err = store.SealedKeysAfter(ctx, "", 10)
+	if err != nil || len(keys) != 1 || len(keys[0].Signature) != 0 {
+		t.Fatalf("key after re-seal = %+v, %v; want its signature cleared", keys, err)
+	}
+	stale := keys[0]
+	stale.Blob = []byte("other")
+	if ok, err := store.SignKey(ctx, stale, sig(3)); err != nil || ok {
+		t.Fatalf("sign from a stale read = %v, %v; want it refused", ok, err)
+	}
+	if ok, err := store.SignKey(ctx, keys[0], sig(3)); err != nil || !ok {
+		t.Fatalf("sign the unsigned key = %v, %v", ok, err)
+	}
+	if ok, err := store.SignKey(ctx, keys[0], sig(4)); err != nil || ok {
+		t.Fatalf("sign a signed key = %v, %v; want it refused", ok, err)
+	}
+	logins, err := store.SealedLoginsAfter(ctx, "", 10)
+	if err != nil || len(logins) != 1 || !bytes.Equal(logins[0].Signature, sig(2)) {
+		t.Fatalf("login page = %+v, %v", logins, err)
+	}
+	if ok, err := store.SignLogin(ctx, logins[0], sig(5)); err != nil || ok {
+		t.Fatalf("sign a signed login = %v, %v; want it refused", ok, err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE managed_postgres_live_logins SET sealed_login_sig=NULL`); err != nil {
+		t.Fatal(err)
+	}
+	logins[0].Signature = nil
+	if ok, err := store.SignLogin(ctx, logins[0], sig(5)); err != nil || !ok {
+		t.Fatalf("sign the unsigned login = %v, %v", ok, err)
 	}
 }

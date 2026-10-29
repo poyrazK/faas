@@ -168,15 +168,23 @@ type CapEvent struct {
 	Allowance   int64
 	Ceiling     int64
 	Overage     bool
+	// Mailed is read only: an email is linked to the event.
+	Mailed bool
 }
 
 // CapEventStore is an optional UsageStore capability. RecordCapEvent reports
 // whether the event is new; a repeat for the same subject, month and
-// threshold is a no-op.
+// threshold is a no-op. MostSevereCapEvent returns the subject's most severe
+// threshold of the month, or nil.
 type CapEventStore interface {
 	RecordCapEvent(ctx context.Context, event CapEvent) (bool, error)
 	CapSuspendedAt(ctx context.Context, subjectID string, periodStart time.Time) (*time.Time, error)
+	MostSevereCapEvent(ctx context.Context, subjectID string, periodStart time.Time) (*CapEvent, error)
 }
+
+// capMailWindow is how long after a threshold is reached its email may still
+// be queued; it matches api.InternalMailManagedPostgresCapTTL.
+const capMailWindow = 24 * time.Hour
 
 // capThresholds lists the thresholds used reaches: 80% of the allowance, the
 // allowance, 80% of the ceiling when overage raises it, and the ceiling.
@@ -207,6 +215,11 @@ type CapEnforcerOptions struct {
 	BatchSize int
 	// Qualification is the staging evidence `on` requires (decision 10).
 	Qualification *ComputeCapQualification
+	// Notify queues the email for a subject's most severe threshold of the
+	// month (decision 8). The sweep calls it only in mode on, after the
+	// subject's quotas are written, and again on later sweeps until the
+	// threshold is mailed or a day has passed. Nil sends no email.
+	Notify func(ctx context.Context, event CapEvent) error
 }
 
 // CapSweepSummary counts one enforcement sweep. Scopes are provider quota
@@ -223,6 +236,7 @@ type CapSweepSummary struct {
 	ScopesApplied     int
 	ScopesShadowed    int
 	EventsRecorded    int
+	NotifyFailed      int
 	CompletedAt       time.Time
 }
 
@@ -235,6 +249,7 @@ type CapEnforcer struct {
 	now       func() time.Time
 	logger    *slog.Logger
 	observe   func(CapSweepSummary)
+	notify    func(context.Context, CapEvent) error
 	batchSize int
 }
 
@@ -272,7 +287,8 @@ func NewCapEnforcer(registry *Registry, store UsageStore, options CapEnforcerOpt
 	}
 	return &CapEnforcer{
 		registry: registry, store: store, mode: options.Mode, ceiling: options.Ceiling,
-		now: options.Now, logger: options.Logger, observe: options.Observe, batchSize: options.BatchSize,
+		now: options.Now, logger: options.Logger, observe: options.Observe, notify: options.Notify,
+		batchSize: options.BatchSize,
 	}, nil
 }
 
@@ -428,7 +444,31 @@ func (e *CapEnforcer) enforceAccount(ctx context.Context, accountID string, data
 		summary.ScopesApplied++
 		e.logger.Info("managed postgres compute cap applied", attrs...)
 	}
+	if e.mode == CapEnforcementOn && len(failures) == 0 {
+		e.notifyCapEvent(ctx, accountID, now, summary)
+	}
 	return errors.Join(failures...)
+}
+
+// notifyCapEvent mails the subject's most severe threshold of the month once:
+// a sweep that jumps past several thresholds sends one email. A failed email
+// does not fail the sweep; the next sweep retries it.
+func (e *CapEnforcer) notifyCapEvent(ctx context.Context, subjectID string, now time.Time, summary *CapSweepSummary) {
+	store, ok := e.store.(CapEventStore)
+	if !ok || e.notify == nil {
+		return
+	}
+	event, err := store.MostSevereCapEvent(ctx, subjectID, now)
+	if err == nil && (event == nil || event.Mailed || now.Sub(event.ReachedAt) >= capMailWindow) {
+		return
+	}
+	if err == nil {
+		err = e.notify(ctx, *event)
+	}
+	if err != nil {
+		summary.NotifyFailed++
+		e.logger.Warn("managed postgres compute cap email not queued", "subject_id", subjectID, "error", err)
+	}
 }
 
 // recordCapEvents records each threshold the subject reached this month the

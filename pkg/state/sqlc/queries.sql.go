@@ -83571,7 +83571,7 @@ func (q *Queries) ReadRouteHealthHistoryEntry(ctx context.Context, db DBTX, arg 
 }
 
 const readRouteHealthNotificationState = `-- name: ReadRouteHealthNotificationState :one
-SELECT context_key, status, COALESCE(blocked_decision_id::text, '')::text AS blocked_decision_id
+SELECT context_key, status, COALESCE(blocked_decision_id::text, '')::text AS blocked_decision_id, updated_at
 FROM route_health_notification_state WHERE deployment_id = $1::text::uuid
  AND app_id = $2::text::uuid AND account_id = $3::text::uuid
 `
@@ -83586,12 +83586,20 @@ type ReadRouteHealthNotificationStateRow struct {
 	ContextKey        string
 	Status            string
 	BlockedDecisionID string
+	UpdatedAt         pgtype.Timestamptz
 }
 
+// updated_at is when the status began; a hold keeps its first blocking
+// decision's time while its context lasts (ADR-20261028110044).
 func (q *Queries) ReadRouteHealthNotificationState(ctx context.Context, db DBTX, arg ReadRouteHealthNotificationStateParams) (ReadRouteHealthNotificationStateRow, error) {
 	row := db.QueryRow(ctx, readRouteHealthNotificationState, arg.DeploymentID, arg.AppID, arg.AccountID)
 	var i ReadRouteHealthNotificationStateRow
-	err := row.Scan(&i.ContextKey, &i.Status, &i.BlockedDecisionID)
+	err := row.Scan(
+		&i.ContextKey,
+		&i.Status,
+		&i.BlockedDecisionID,
+		&i.UpdatedAt,
+	)
 	return i, err
 }
 
@@ -85357,6 +85365,53 @@ func (q *Queries) ReadTrafficAliasHostnameConflict(ctx context.Context, db DBTX,
 	var conflict bool
 	err := row.Scan(&conflict)
 	return conflict, err
+}
+
+const readTrafficAppBindingHosts = `-- name: ReadTrafficAppBindingHosts :many
+SELECT host::text FROM (
+    SELECT lower(a.slug)||$1::text AS host FROM apps a
+    WHERE a.id=$2::uuid OR ($2::uuid IS NULL AND a.account_id=$3::uuid)
+    UNION
+    SELECT lower('tag-'||z.name||'-'||replace(a.id::text,'-',''))||$1::text
+    FROM deployment_aliases z JOIN apps a ON a.id=z.app_id
+    WHERE a.id=$2::uuid OR ($2::uuid IS NULL AND a.account_id=$3::uuid)
+) hosts WHERE $1::text<>''
+ORDER BY host LIMIT ($4::integer+1)
+`
+
+type ReadTrafficAppBindingHostsParams struct {
+	AppsSuffix string
+	AppID      pgtype.UUID
+	AccountID  pgtype.UUID
+	MaxInputs  int32
+}
+
+// The synthetic hostnames a binding write on one app, or on every app of an
+// account, may publish or release: each primary and alias URL, whatever the
+// app's status (ADR-20261027163626).
+func (q *Queries) ReadTrafficAppBindingHosts(ctx context.Context, db DBTX, arg ReadTrafficAppBindingHostsParams) ([]string, error) {
+	rows, err := db.Query(ctx, readTrafficAppBindingHosts,
+		arg.AppsSuffix,
+		arg.AppID,
+		arg.AccountID,
+		arg.MaxInputs,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var host string
+		if err := rows.Scan(&host); err != nil {
+			return nil, err
+		}
+		items = append(items, host)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const readTrafficBindingClaims = `-- name: ReadTrafficBindingClaims :one

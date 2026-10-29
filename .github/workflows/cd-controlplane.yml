@@ -992,6 +992,8 @@ jobs:
           activation_script="$RUNNER_TEMP/controlplane-activate.sh"
           cat > "$activation_script" <<ACTIVATE
           set -euo pipefail
+          # deployctl names this run in the release history (issue #574).
+          export FAAS_DEPLOY_ACTOR='cd-controlplane run ${GITHUB_RUN_ID}'
           ${release_dir}/bin/deployctl bundle-check-installed ${release_dir}
           if test ! -s /opt/faas/releases/sbom-baseline.json; then
             current_release=\$(readlink -f /opt/faas/current 2>/dev/null || true)

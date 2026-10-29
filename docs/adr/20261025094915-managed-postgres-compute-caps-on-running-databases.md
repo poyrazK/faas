@@ -135,6 +135,21 @@ The owner decided the policy on 2026-10-25.
    were suspended or are now in overage), and 80% of the ceiling when overage
    is on.
 
+   *Amended in delivery:* the sweep records each threshold once per usage
+   subject and UTC month in `managed_postgres_cap_events`, only while
+   enforcement is `on`. Each sweep then mails the subject's most severe
+   threshold of the month if it is unmailed and under a day old, so a sweep
+   that jumps past several thresholds sends one email. The allowance without
+   overage has no email of its own: the suspension email, sent in the same
+   sweep, says it. Mail is behind
+   `FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_CAP_OUTBOX_ENABLED`, encrypted like
+   the other producer-outbox notices, and linked to its event in one
+   transaction, so a threshold is mailed at most once. An organization subject
+   gets no email yet: its recipients (owners or billing contact) are a
+   follow-up. A subject suspended twice in one month (overage turned on after
+   a suspension, then the 2× ceiling reached) gets one suspension record and
+   one suspension email; `suspended_at` reports the first.
+
 9. **The storage pool blocks writes instead of suspending.** ADR-1430 pools
    storage per account, but today each database may grow to the whole pool, so
    an account with `n` databases can store `n ×` the pool. The enforcer uses

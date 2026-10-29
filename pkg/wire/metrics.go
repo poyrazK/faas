@@ -346,6 +346,10 @@ type OpsMetrics struct {
 	// trafficPolicyPhase times each phase of a guarded traffic policy write
 	// (ADR 20261027163626); writer and phase are closed pkg/state labels.
 	trafficPolicyPhase *prometheus.HistogramVec
+	// trafficBindingScope audits a binding write's declared hostnames against
+	// what it changed (ADR 20261027163626); labels are closed pkg/state kinds.
+	trafficBindingScopeAudits *prometheus.CounterVec
+	trafficBindingScopeMisses *prometheus.CounterVec
 	// wakeFailure (issue #1059 / ADR-127) — operator-facing wake
 	// failure-mode counter. Labelled by (box, reason). The closed
 	// reason vocabulary is
@@ -2197,13 +2201,22 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		}
 	}
 	var trafficPolicyPhase *prometheus.HistogramVec
+	var trafficBindingScopeAudits, trafficBindingScopeMisses *prometheus.CounterVec
 	if prefix == "apid" {
 		trafficPolicyPhase = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "traffic_policy_analysis_seconds",
 			Help:    "Time per phase of a guarded traffic policy write (discover, lock_wait, before, validate), by writer. Each analysis phase is bounded at 2 s (ADR-570).",
 			Buckets: []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 1.5, 2, 2.5, 5},
 		}, []string{"writer", "phase"})
-		reg.MustRegister(trafficPolicyPhase)
+		trafficBindingScopeAudits = prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "traffic_binding_scope_audits_total",
+			Help: "Binding writes whose changed hostnames were checked against the scope they declared, by writer and outcome (covered, missed).",
+		}, []string{"writer", "outcome"})
+		trafficBindingScopeMisses = prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "traffic_binding_scope_misses_total",
+			Help: "Changed hostnames outside a binding write's declared scope, by writer and kind. Must stay zero before the scoped guard is enabled.",
+		}, []string{"writer", "kind"})
+		reg.MustRegister(trafficPolicyPhase, trafficBindingScopeAudits, trafficBindingScopeMisses)
 	}
 	watchdogKills := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_watchdog_kills_total",
@@ -5579,6 +5592,8 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		exclusiveOperationRenewals:                 exclusiveOperationRenewals,
 		exclusiveOperationDueRows:                  exclusiveOperationDueRows,
 		trafficPolicyPhase:                         trafficPolicyPhase,
+		trafficBindingScopeAudits:                  trafficBindingScopeAudits,
+		trafficBindingScopeMisses:                  trafficBindingScopeMisses,
 		wakeFailure:                                wakeFailure,
 		wakeLatency:                                wakeLatency,
 		boxLabels:                                  newBoxLabelSet(maxBoxLabelValues),
@@ -8272,6 +8287,23 @@ func (m *OpsMetrics) ObserveTrafficPolicyPhase(writer, phase string, elapsed tim
 		return
 	}
 	m.trafficPolicyPhase.WithLabelValues(writer, phase).Observe(elapsed.Seconds())
+}
+
+// ObserveTrafficBindingScope records one audited binding write and the kind
+// of each changed hostname its declared scope missed. It matches
+// state.TrafficBindingScopeObserver.
+func (m *OpsMetrics) ObserveTrafficBindingScope(writer string, missed []string) {
+	if m == nil || m.trafficBindingScopeAudits == nil {
+		return
+	}
+	outcome := "covered"
+	if len(missed) > 0 {
+		outcome = "missed"
+	}
+	m.trafficBindingScopeAudits.WithLabelValues(writer, outcome).Inc()
+	for _, kind := range missed {
+		m.trafficBindingScopeMisses.WithLabelValues(writer, kind).Inc()
+	}
 }
 
 // SetExclusiveOperationDueCandidates publishes the bounded scan result size.

@@ -20,7 +20,7 @@ func cmdEventsNotificationRetryBacklog(args []string) int {
 		return 1
 	}
 	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) {
-		PrintUsage(os.Stderr, "usage: gregale events notification-retry-backlog <app> [--status STATUS,...] [--page-size N] [--cursor CURSOR]", "events")
+		PrintUsage(os.Stderr, "usage: gregale event notification-retry-backlog <app> [--status STATUS,...] [--page-size N] [--cursor CURSOR]", "events")
 		return 1
 	}
 	if *status == "" || *size < 1 {

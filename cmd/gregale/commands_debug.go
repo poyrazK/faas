@@ -576,7 +576,7 @@ func renderDebugReplayQueued(w io.Writer, resp api.DebugReplayResponse) {
 	if resp.MirrorDeploymentID != "" {
 		_, _ = fmt.Fprintf(w, "Target:        %s\n", resp.MirrorDeploymentID)
 	}
-	_, _ = fmt.Fprintf(w, "Poll with:     gregale invocations get %s\n", resp.MirrorInvocationID)
+	_, _ = fmt.Fprintf(w, "Poll with:     gregale invocation get %s\n", resp.MirrorInvocationID)
 }
 
 func decodeDebugReplayComparison(raw []byte) (api.DebugReplayComparison, bool) {

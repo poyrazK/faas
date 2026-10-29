@@ -620,7 +620,7 @@ func submitsDeployments(path string) bool {
 // server returned a Problem when the request never reached it.
 func transportProblem(err error) api.Problem {
 	detail := "The Gregale API could not be reached."
-	hint := "Check your network connection and FAAS_API endpoint; run gregale profile check."
+	hint := "Check your network connection and FAAS_API endpoint; run gregale config profile check."
 	canceledHint := "Canceling the CLI request does not guarantee the server stopped it; check the result before retrying a change."
 	if submitsDeployments(invokedCommandPath) {
 		hint += " Inspect deployment status before retrying a deploy."
@@ -642,10 +642,10 @@ func transportProblem(err error) api.Problem {
 		detail = "The request timed out before the Gregale API responded."
 	case errors.As(err, &dns):
 		detail = "The Gregale API hostname could not be resolved."
-		hint = "Check the selected profile's endpoint, FAAS_API override, and DNS connectivity with gregale profile check."
+		hint = "Check the selected profile's endpoint, FAAS_API override, and DNS connectivity with gregale config profile check."
 	case errors.As(err, &unknownCA) || errors.As(err, &invalidCertificate) || errors.As(err, &hostname) || errors.As(err, &tlsHeader):
 		detail = "The Gregale API TLS connection could not be verified or established."
-		hint = "Check the HTTPS endpoint and trusted certificates with gregale profile check."
+		hint = "Check the HTTPS endpoint and trusted certificates with gregale config profile check."
 	default:
 		cause := err
 		var urlErr *url.Error

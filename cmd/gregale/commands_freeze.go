@@ -15,7 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const freezeUsage = "usage: gregale freeze <create|list|lift|status>"
+const freezeUsage = "usage: gregale release freeze <create|list|lift|status>"
 
 func cmdFreeze(args []string) int {
 	if len(args) == 0 {
@@ -32,7 +32,7 @@ func cmdFreeze(args []string) int {
 	case "status":
 		return freezeStatus(args[1:])
 	}
-	printCommandValidation(os.Stderr, "gregale freeze: unknown subcommand %q\n", args[0])
+	printCommandValidation(os.Stderr, "gregale release freeze: unknown subcommand %q\n", args[0])
 	return unknownSubcommandChoices(os.Stderr, "freeze", nestedCliCommand("freeze"), args[0])
 }
 
@@ -129,7 +129,7 @@ func freezeCreate(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	usage := "usage: gregale freeze create [--app <slug> | --all-apps] --reason TEXT (--for DUR | --until TIME | --weekly DAYS --at HH:MM --for DUR [--tz ZONE] | --after-rollback DUR)"
+	usage := "usage: gregale release freeze create [--app <slug> | --all-apps] --reason TEXT (--for DUR | --until TIME | --weekly DAYS --at HH:MM --for DUR [--tz ZONE] | --after-rollback DUR)"
 	if rejectUnexpectedFlagArgs(fs) || strings.TrimSpace(*reason) == "" {
 		PrintUsage(os.Stderr, usage, "freeze")
 		return 1
@@ -240,7 +240,7 @@ func freezeLift(args []string) int {
 	}
 	positional = append(positional, fs.Args()...)
 	if len(positional) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale freeze lift <id>", "freeze")
+		PrintUsage(os.Stderr, "usage: gregale release freeze lift <id>", "freeze")
 		return 1
 	}
 	client, err := authedClient()
@@ -292,7 +292,7 @@ func freezeStatus(args []string) int {
 	} else {
 		_, _ = fmt.Fprintf(osStdout, "Production releases of %s are frozen:\n", out.App)
 		printFreezeTable(out.Active)
-		_, _ = fmt.Fprintln(osStdout, "Release anyway with `gregale deploy --override-freeze REASON` (audited), or lift a freeze with `gregale freeze lift <id>`.")
+		_, _ = fmt.Fprintln(osStdout, "Release anyway with `gregale deploy --override-freeze REASON` (audited), or lift a freeze with `gregale release freeze lift <id>`.")
 	}
 	if out.Next != nil {
 		_, _ = fmt.Fprintf(osStdout, "Next freeze starts %s: %s.\n", out.Next.NextStartsAt, out.Next.Reason)

@@ -46,6 +46,12 @@ $ gregale project get shop
     worker  shop-worker  failed      -
 ```
 
+The project's page in the dashboard shows the same, plus which services call
+each one. Where the [service map](service-map.md) is available to your
+account, it also shows the measured calls between the project's services over
+the last hour: volume, errors, p95 latency, and how often a call woke a parked
+service.
+
 ## What becomes a service
 
 Gregale reads, in this order:
@@ -103,6 +109,21 @@ no public URL. Other services are public unless
 The plan lists every public service under **Public on the internet** and marks
 the rest `visibility=internal`. Visibility is set when the app is created; see
 [networking](networking.md) for changing it later.
+
+A service without `ports:` serves requests (`class=http` in the plan) when
+another service calls it:
+
+- another service's `environment:` addresses it by URL, such as
+  `API_URL: http://api:8000`, or
+- a service that serves requests lists it in `depends_on`, and it declares the
+  port it listens on with `expose:`.
+
+Like any service, it then parks when idle and wakes when called. Any other
+service without `ports:` is a background worker (`class=worker`): it runs all
+the time and a request never wakes it. When a web service lists a worker in
+`depends_on`, the plan warns, because Compose also uses `depends_on` for start
+order; if the web service does call it, add `expose:` or the URL
+([ADR-20261029120000](adr/20261029120000-called-compose-services-serve-requests.md)).
 
 ## Call another service
 
@@ -219,9 +240,22 @@ change before anything is applied:
 
 - **Removing** a service from Compose removes its app when the plan is applied.
   A service that still lists it in `depends_on` fails the plan.
-- **Renaming** a service is a removal and a new service. The new app starts
-  without the old one's environment values, secrets and domains, so set them
-  again (or rename the service back) before you apply.
+- **Renaming** a service keeps its app when you say what it was called before:
+
+  ```yaml
+  services:
+    accounts:
+      build: ./accounts
+      x-gregale-renamed-from: ledger
+  ```
+
+  The plan shows one update, and the app keeps its environment values,
+  secrets, domains and URL
+  ([ADR-20261029090000](adr/20261029090000-compose-service-rename.md)). The
+  service is then called by its new name, so services that call it list
+  `accounts` in `depends_on` and read `GREGALE_SERVICE_ACCOUNTS_URL`. Without
+  the hint, a rename is a removal and a new service, and the new app starts
+  without the old one's values, secrets and domains.
 - **`gregale project delete`** deletes the project but not its services: each one
   keeps running as a standalone app, with its domains, environment values and
   crons. Detached apps are no longer one project, so they cannot call each

@@ -82,7 +82,7 @@ func runEnvironmentGitOpsWait(ctx context.Context, client *api.Client, project, 
 			return printErr("Could not write rollout receipt", err)
 		}
 		if out.ExitCode() != 0 {
-			_, _ = fmt.Fprintf(osStderr, "Inspect current recorded evidence: gregale projects environments gitops explain %s %s\n", project, environment)
+			_, _ = fmt.Fprintf(osStderr, "Inspect current recorded evidence: gregale environment gitops explain %s %s\n", project, environment)
 		}
 	}
 	return out.ExitCode()

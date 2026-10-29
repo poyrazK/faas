@@ -1032,7 +1032,7 @@ func cmdAppsRm(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale apps rm <slug> [--dry-run|-q|--quiet|--yes]", "apps")
+		PrintUsage(os.Stderr, "usage: gregale app delete <slug> [--dry-run|-q|--quiet|--yes]", "apps")
 		return 1
 	}
 	if code := requireAutomationConfirmation(*quiet || *dryRun, "--yes (or --quiet)"); code != 0 {
@@ -1079,7 +1079,7 @@ func cmdAppsRm(args []string) int {
 // cmdAppsRestore implements `gregale apps restore <slug>`.
 func cmdAppsRestore(args []string) int {
 	if len(args) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale apps restore <slug>", "apps")
+		PrintUsage(os.Stderr, "usage: gregale app restore <slug>", "apps")
 		return 1
 	}
 	client, err := authedClient()
@@ -1418,7 +1418,7 @@ func slugInUseError(ctx context.Context, client *Client, slug string) error {
 				continue
 			}
 			if app.RestoreEligible {
-				return fmt.Errorf("slug %q belongs to an app you deleted%s; restore it with `gregale apps restore %s`, or pick a different --name", slug, deletedAppUntil(app.DeleteGraceUntil, " that can be restored until "), slug)
+				return fmt.Errorf("slug %q belongs to an app you deleted%s; restore it with `gregale app restore %s`, or pick a different --name", slug, deletedAppUntil(app.DeleteGraceUntil, " that can be restored until "), slug)
 			}
 			return fmt.Errorf("slug %q is held by an app you deleted until it is purged%s; pick a different --name", slug, deletedAppUntil(app.DeleteGraceUntil, " after "))
 		}
@@ -1746,7 +1746,7 @@ func validateSingleAppManifestTargets(cwd, slug string) error {
 			return fmt.Errorf("trigger %d targets app %q, but this single-app deploy targets %q; fix the app name or use --project", i+1, trigger.App, slug)
 		}
 		if trigger.Kind != gregalemanifest.TriggerKindCron && trigger.Kind != gregalemanifest.TriggerKindRealtime {
-			return fmt.Errorf("trigger %d uses kind %q; deploy reconciles cron and realtime manifest triggers only; pass --no-triggers and create it with `gregale triggers add` after deployment", i+1, trigger.Kind)
+			return fmt.Errorf("trigger %d uses kind %q; deploy reconciles cron and realtime manifest triggers only; pass --no-triggers and create it with `gregale trigger add` after deployment", i+1, trigger.Kind)
 		}
 	}
 	for i, route := range m.AsyncRoutes {
@@ -4640,7 +4640,7 @@ func validateRollbackFlags(checked bool, to, current, reason string, wait bool, 
 
 func cmdPark(args []string) int {
 	if len(args) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale park <slug>", "park-wake")
+		PrintUsage(os.Stderr, "usage: gregale app park <slug>", "park-wake")
 		return 1
 	}
 	client, err := authedClient()
@@ -4681,7 +4681,7 @@ func cmdWake(args []string) int {
 		}
 	}
 	if slug == "" || *waitTimeout <= 0 || *pollInterval < 100*time.Millisecond {
-		PrintUsage(os.Stderr, "usage: gregale wake [--wait] [--timeout D] [--poll-interval D] <slug>", "park-wake")
+		PrintUsage(os.Stderr, "usage: gregale app wake [--wait] [--timeout D] [--poll-interval D] <slug>", "park-wake")
 		return 1
 	}
 	client, err := authedClient()
@@ -4757,7 +4757,7 @@ func idleScaleToZeroWorker(ctx context.Context, client *Client, slug string) str
 	if lo, _ := workerReplicaBounds(app); lo != 0 {
 		return ""
 	}
-	return fmt.Sprintf("%s is a worker pool with min 0: it starts replicas when it has work, not on wake. To keep one running, run `gregale workers scale %s --min 1`.", slug, slug)
+	return fmt.Sprintf("%s is a worker pool with min 0: it starts replicas when it has work, not on wake. To keep one running, run `gregale worker scale %s --min 1`.", slug, slug)
 }
 
 func waitForAppWake(ctx context.Context, client *Client, slug, wakeID string, timeout, pollInterval time.Duration) (api.InstanceResponse, error) {
@@ -4834,7 +4834,7 @@ func cmdTrafficSet(args []string) int {
 		return printErr("Invalid arguments", err)
 	}
 	if *deployment == "" || *percent < 0 {
-		PrintUsage(os.Stderr, "usage: gregale traffic set [<slug>|--app <slug>] --deployment <id|vN> --percent N", "traffic")
+		PrintUsage(os.Stderr, "usage: gregale release traffic set [<slug>|--app <slug>] --deployment <id|vN> --percent N", "traffic")
 		return 1
 	}
 	client, err := authedClient()
@@ -4903,7 +4903,7 @@ func cmdTrafficPromote(args []string) int {
 		return printErr("Invalid arguments", err)
 	}
 	if strings.TrimSpace(*deployment) == "" {
-		PrintUsage(os.Stderr, "usage: gregale traffic promote [<slug>|--app <slug>] --deployment <id|vN> [--if-serving <id|vN>]", "traffic")
+		PrintUsage(os.Stderr, "usage: gregale release traffic promote [<slug>|--app <slug>] --deployment <id|vN> [--if-serving <id|vN>]", "traffic")
 		return 1
 	}
 	var ifServingSet, policySet bool
@@ -5051,7 +5051,7 @@ func cmdTrafficStatus(args []string) int {
 		return printErr("Invalid arguments", err)
 	}
 	if len(positional) != 1 || strings.TrimSpace(positional[0]) == "" {
-		PrintUsage(os.Stderr, "usage: gregale traffic status <slug>", "traffic")
+		PrintUsage(os.Stderr, "usage: gregale release traffic status <slug>", "traffic")
 		return 1
 	}
 	slug := strings.TrimSpace(positional[0])
@@ -5174,7 +5174,7 @@ func explicitAppFlag(fs *flag.FlagSet) bool {
 // cmdTraffic dispatches the implemented traffic leaves.
 func cmdTraffic(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale traffic <set|promote|status> [args]", "traffic")
+		PrintUsage(os.Stderr, "usage: gregale release traffic <set|promote|status> [args]", "traffic")
 		return 1
 	}
 	switch args[0] {
@@ -5185,7 +5185,7 @@ func cmdTraffic(args []string) int {
 	case "status":
 		return cmdTrafficStatus(args[1:])
 	default:
-		PrintUsage(os.Stderr, "usage: gregale traffic <set|promote|status> [args]", "traffic")
+		PrintUsage(os.Stderr, "usage: gregale release traffic <set|promote|status> [args]", "traffic")
 		return 1
 	}
 }
@@ -5216,16 +5216,16 @@ func cmdDomains(args []string) int {
 		}
 		if fs.NArg() == 1 {
 			if *domain != "" && *domain != fs.Arg(0) {
-				PrintUsage(os.Stderr, "usage: gregale domains add <domain> --app <slug> [--environment <environment>]", "domains")
+				PrintUsage(os.Stderr, "usage: gregale domain create <domain> --app <slug> [--environment <environment>]", "domains")
 				return 1
 			}
 			*domain = fs.Arg(0)
 		} else if fs.NArg() != 0 {
-			PrintUsage(os.Stderr, "usage: gregale domains add <domain> --app <slug> [--environment <environment>]", "domains")
+			PrintUsage(os.Stderr, "usage: gregale domain create <domain> --app <slug> [--environment <environment>]", "domains")
 			return 1
 		}
 		if *domain == "" || *slug == "" {
-			PrintUsage(os.Stderr, "usage: gregale domains add <domain> --app <slug> [--environment <environment>]", "domains")
+			PrintUsage(os.Stderr, "usage: gregale domain create <domain> --app <slug> [--environment <environment>]", "domains")
 			return 1
 		}
 		client, err := authedClient()
@@ -5242,11 +5242,11 @@ func cmdDomains(args []string) int {
 		fmt.Printf("Add these records to your DNS:\n\n")
 		printDomainDNSRecords(osStdout, d)
 		fmt.Printf("\nKeep them in place: the certificate is issued and renewed automatically.\n")
-		fmt.Printf("Then run 'gregale domains list' to see when verification completes.\n")
+		fmt.Printf("Then run 'gregale domain list' to see when verification completes.\n")
 		return 0
 	case subRm:
 		if len(args) != 2 {
-			PrintUsage(os.Stderr, "usage: gregale domains rm <domain>", "domains")
+			PrintUsage(os.Stderr, "usage: gregale domain delete <domain>", "domains")
 			return 1
 		}
 		client, err := authedClient()
@@ -5262,7 +5262,7 @@ func cmdDomains(args []string) int {
 		return cmdDomainsVerify(args[1:])
 	case subDomainsSetDefault:
 		if len(args) != 2 {
-			PrintUsage(os.Stderr, "usage: gregale domains set-default <domain>", "domains")
+			PrintUsage(os.Stderr, "usage: gregale domain default set <domain>", "domains")
 			return 1
 		}
 		client, err := authedClient()
@@ -5315,7 +5315,7 @@ func cmdCrons(args []string) int {
 			return 1
 		}
 		if *slug == "" {
-			PrintUsage(os.Stderr, "usage: gregale crons list --app <slug>", "crons")
+			PrintUsage(os.Stderr, "usage: gregale cron list --app <slug>", "crons")
 			return 1
 		}
 		client, err := authedClient()
@@ -5402,7 +5402,7 @@ func cmdCrons(args []string) int {
 			return cmdCronsAddInteractive(selected)
 		}
 		if *slug == "" || *schedule == "" {
-			PrintUsage(os.Stderr, "usage: gregale crons add --app <slug> --schedule '*/5 * * * *' (--path / | --command EXEC [--arg ARG...]) [--timezone UTC] [--skip-if-running] [--retry-max N --retry-backoff-seconds N]", "crons")
+			PrintUsage(os.Stderr, "usage: gregale cron create --app <slug> --schedule '*/5 * * * *' (--path / | --command EXEC [--arg ARG...]) [--timezone UTC] [--skip-if-running] [--retry-max N --retry-backoff-seconds N]", "crons")
 			return 1
 		}
 		pathSet := false
@@ -5543,7 +5543,7 @@ func createCronAndRender(ctx context.Context, client *Client, slug string, req a
 		target = "command " + formatCronCommand(c)
 	}
 	PrintOK(osStdout, "Cron scheduled: %s %s", c.Schedule, target)
-	_, _ = fmt.Fprintf(osStdout, "  id: %s\nThe schedule is saved; this does not confirm a completed execution.\n\nTrigger now (POSIX shells):\n  %s crons run %s\n", c.ID, recoveryCLI(), recoveryArgument(c.ID))
+	_, _ = fmt.Fprintf(osStdout, "  id: %s\nThe schedule is saved; this does not confirm a completed execution.\n\nTrigger now (POSIX shells):\n  %s cron run %s\n", c.ID, recoveryCLI(), recoveryArgument(c.ID))
 	return 0
 }
 
@@ -5636,20 +5636,20 @@ func cmdCronsUpdate(args []string) int {
 		return printErr("Invalid app flag", errors.New("--app is only accepted with --interactive; use a task ID for explicit updates"))
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale crons update <id> [--schedule EXPR] [--path PATH] [--timezone TZ] [--skip-if-running|--allow-overlap] [--retry-max N] [--retry-backoff-seconds N] [--enable|--disable]", "crons")
+		PrintUsage(os.Stderr, "usage: gregale cron update <id> [--schedule EXPR] [--path PATH] [--timezone TZ] [--skip-if-running|--allow-overlap] [--retry-max N] [--retry-backoff-seconds N] [--enable|--disable]", "crons")
 		return 1
 	}
 	id := fs.Arg(0)
 	if !cronIDPattern.MatchString(id) {
-		PrintUsage(os.Stderr, "usage: gregale crons update <id>   (id is 32 hex chars)", "crons")
+		PrintUsage(os.Stderr, "usage: gregale cron update <id>   (id is 32 hex chars)", "crons")
 		return 1
 	}
 	if *enable && *disable {
-		PrintUsage(os.Stderr, "usage: gregale crons update --enable | --disable (mutually exclusive)", "crons")
+		PrintUsage(os.Stderr, "usage: gregale cron update --enable | --disable (mutually exclusive)", "crons")
 		return 1
 	}
 	if *skipIfRunning && *allowOverlap {
-		PrintUsage(os.Stderr, "usage: gregale crons update --skip-if-running | --allow-overlap (mutually exclusive)", "crons")
+		PrintUsage(os.Stderr, "usage: gregale cron update --skip-if-running | --allow-overlap (mutually exclusive)", "crons")
 		return 1
 	}
 	// Reject no-fields-set early; the server otherwise no-ops and
@@ -5658,7 +5658,7 @@ func cmdCronsUpdate(args []string) int {
 	explicit := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
 	if !explicit["schedule"] && !explicit["path"] && !explicit["timezone"] && !explicit["enable"] && !explicit["disable"] && !explicit["skip-if-running"] && !explicit["allow-overlap"] && !explicit["retry-max"] && !explicit["retry-backoff-seconds"] && !explicit["schedule-policy"] && !explicit["failure-rules"] {
-		PrintUsage(os.Stderr, "usage: gregale crons update <id> [--schedule EXPR] [--path PATH] [--timezone TZ] [--skip-if-running|--allow-overlap] [--retry-max N] [--retry-backoff-seconds N] [--enable|--disable]", "crons")
+		PrintUsage(os.Stderr, "usage: gregale cron update <id> [--schedule EXPR] [--path PATH] [--timezone TZ] [--skip-if-running|--allow-overlap] [--retry-max N] [--retry-backoff-seconds N] [--enable|--disable]", "crons")
 		return 1
 	}
 	// Local schedule shape check (5 whitespace tokens) mirrors the
@@ -5757,7 +5757,7 @@ func cmdKeys(args []string) int {
 	switch args[0] {
 	case subList:
 		if hasHelpFlag(args[1:]) {
-			PrintUsage(osStdout, "usage: gregale keys list", "keys")
+			PrintUsage(osStdout, "usage: gregale key list", "keys")
 			return 0
 		}
 		client, err := authedClient()
@@ -5784,7 +5784,7 @@ func cmdKeys(args []string) int {
 		return 0
 	case subAdd:
 		if hasHelpFlag(args[1:]) {
-			PrintUsage(osStdout, "usage: gregale keys add <label> [--scopes scope,...]", "keys")
+			PrintUsage(osStdout, "usage: gregale key create <label> [--scopes scope,...]", "keys")
 			return 0
 		}
 		flags, positional := splitArgsForFlags(args[1:])
@@ -5794,7 +5794,7 @@ func cmdKeys(args []string) int {
 			return 1
 		}
 		if rejectUnexpectedFlagArgs(fs) || len(positional) != 1 {
-			PrintUsage(os.Stderr, "usage: gregale keys add <label> [--scopes scope,...]", "keys")
+			PrintUsage(os.Stderr, "usage: gregale key create <label> [--scopes scope,...]", "keys")
 			return 1
 		}
 		var scopes []string
@@ -5830,7 +5830,7 @@ func cmdKeys(args []string) int {
 		return 0
 	case subRm:
 		if len(args) != 2 {
-			PrintUsage(os.Stderr, "usage: gregale keys rm <id>", "keys")
+			PrintUsage(os.Stderr, "usage: gregale key delete <id>", "keys")
 			return 1
 		}
 		client, err := authedClient()
@@ -5865,7 +5865,7 @@ func cmdKeysRotate(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale keys rotate <key-id>", "keys")
+		PrintUsage(os.Stderr, "usage: gregale key rotate <key-id>", "keys")
 		return 1
 	}
 	id := fs.Arg(0)
@@ -5899,7 +5899,7 @@ func cmdKeysGraceWindow(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale keys grace-window [--reset | --days N]", "keys")
+		PrintUsage(os.Stderr, "usage: gregale key grace-window [--reset | --days N]", "keys")
 		return 1
 	}
 	if *reset && *days >= 0 {
@@ -5986,7 +5986,7 @@ func cmdUsage(args []string) int {
 	case "object-storage":
 		return cmdUsageObjectStorage(args[1:])
 	}
-	PrintUsage(os.Stderr, "usage: gregale usage [--month YYYY-MM] | gregale usage summary [--month YYYY-MM] | gregale usage daily [--day YYYY-MM-DD] | gregale usage storage [--day YYYY-MM-DD]", "usage")
+	PrintUsage(os.Stderr, "usage: gregale billing usage [--month YYYY-MM] | gregale billing usage summary [--month YYYY-MM] | gregale billing usage daily [--day YYYY-MM-DD] | gregale billing usage storage [--day YYYY-MM-DD]", "usage")
 	printCommandValidation(os.Stderr, "unknown usage subcommand %q\n", args[0])
 	return unknownSubcommandChoices(os.Stderr, "usage", parent, args[0])
 }
@@ -6125,7 +6125,7 @@ func cmdInvoices(args []string) int {
 	before := fs.String("before", "", "pagination cursor (RFC3339Nano)")
 	limit := fs.Int("limit", 25, "page size (1..100)")
 	if err := fs.Parse(args); err != nil {
-		PrintUsage(os.Stderr, "usage: gregale invoices [--month YYYY-MM] [--before C] [--limit N]", "invoices")
+		PrintUsage(os.Stderr, "usage: gregale billing invoices [--month YYYY-MM] [--before C] [--limit N]", "invoices")
 		return 1
 	}
 	if rejectUnexpectedFlagArgs(fs) {
@@ -6173,7 +6173,7 @@ func renderInvoices(w io.Writer, page api.InvoiceListResponse) {
 			inv.Status, api.BillingCurrencySymbol+total, inv.Currency, pdf)
 	}
 	if page.NextBefore != "" {
-		_, _ = fmt.Fprintf(w, "\n  next page: gregale invoices --before %s\n", page.NextBefore)
+		_, _ = fmt.Fprintf(w, "\n  next page: gregale billing invoices --before %s\n", page.NextBefore)
 	}
 }
 
@@ -6257,7 +6257,7 @@ func cmdConnect(args []string) int {
 	case svcGithub:
 		// `connect github` takes no positional args.
 		if len(args) != 1 {
-			PrintUsage(os.Stderr, "usage: gregale connect github", "connect")
+			PrintUsage(os.Stderr, "usage: gregale github connect", "connect")
 			return 1
 		}
 		if _, err := authedClient(); err != nil {
@@ -8133,7 +8133,7 @@ func printDeployNoHTTPSentence(executionMode, appSlug string) {
 // pre-cluster rows that only have the raw failure_class string.
 func renderDeployFailure(d api.DeploymentResponse) int {
 	if strings.TrimSpace(d.Error) == "" {
-		PrintFail(os.Stderr, "Deployment %s failed without a server reason. Inspect details with: gregale deploys status %s", d.ID, d.ID)
+		PrintFail(os.Stderr, "Deployment %s failed without a server reason. Inspect details with: gregale release get %s", d.ID, d.ID)
 		return 1
 	}
 	if d.ErrorCode != "" {
@@ -8475,7 +8475,7 @@ func renderSecretScanWarnings(findings []secretscan.Finding, w io.Writer) {
 		// discarded (same convention as writeStatus — see output.go).
 		_, _ = fmt.Fprintf(w, "  ↳ %s\n", f.Snippet)
 	}
-	PrintWarn(w, "%d secret line(s) skipped from the upload. Move to: gregale secrets set",
+	PrintWarn(w, "%d secret line(s) skipped from the upload. Move to: gregale env set",
 		len(findings))
 }
 
@@ -8501,7 +8501,7 @@ func cmdDomainsList(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale domains list [--app <slug>]", "domains")
+		PrintUsage(os.Stderr, "usage: gregale domain list [--app <slug>]", "domains")
 		return 1
 	}
 	client, err := authedClient()
@@ -8536,7 +8536,7 @@ func cmdDomainsList(args []string) int {
 		if appID != "" {
 			scope = "app " + strings.TrimSpace(*appSlug)
 		}
-		_, _ = fmt.Fprintf(osStdout, "No custom domains for %s. Add one with `gregale domains setup <domain> --app <slug>`.\n", scope)
+		_, _ = fmt.Fprintf(osStdout, "No custom domains for %s. Add one with `gregale domain setup <domain> --app <slug>`.\n", scope)
 		return 0
 	}
 	for _, d := range out {

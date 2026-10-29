@@ -62,7 +62,7 @@ var consumerVerbPositionals = map[string][]string{
 	"signups":               {"slug"},
 }
 
-const consumersUsage = "usage: gregale consumers <list|create|info|revoke|keys|key-create|key-revoke|usage|quote|completeness|rate-cards|rate-card-create|statements|statement-draft|statement-show|statement-finalize|statement-handoff|statement-export|plans|plan-create|plan-update|set-plan|plan-history|usage-alerts|credits|credit-grant|credit-void|spend-cap|spend-cap-set|spend-cap-delete|trial|trial-set|trial-end|billing-policy|billing-policy-set|billing-policy-delete|overdue-holds|signup|signup-set|signup-delete|signups> <slug> [consumer-id] [id] [flags]"
+const consumersUsage = "usage: gregale api consumer <list|create|info|revoke|keys|key-create|key-revoke|usage|quote|completeness|rate-cards|rate-card-create|statements|statement-draft|statement-show|statement-finalize|statement-handoff|statement-export|plans|plan-create|plan-update|set-plan|plan-history|usage-alerts|credits|credit-grant|credit-void|spend-cap|spend-cap-set|spend-cap-delete|trial|trial-set|trial-end|billing-policy|billing-policy-set|billing-policy-delete|overdue-holds|signup|signup-set|signup-delete|signups> <slug> [consumer-id] [id] [flags]"
 
 // consumerFlags holds every leaf flag; consumerVerbFlags decides which
 // verb may set which, so a misplaced flag is a usage error, not ignored.
@@ -194,7 +194,7 @@ func registerConsumerMonetizationFlags(fs *flag.FlagSet, f *consumerFlags) {
 }
 
 func consumerVerbUsage(verb string, positionals []string) string {
-	usage := "usage: gregale consumers " + verb
+	usage := "usage: gregale api consumer " + verb
 	for _, p := range positionals {
 		usage += " <" + p + ">"
 	}
@@ -544,7 +544,7 @@ func warnUsageGaps(ctx context.Context, client *Client, verb string, args []stri
 		return
 	}
 	_, _ = fmt.Fprintf(osStderr, "Warning: request telemetry saw at least %d successful requests this statement does not bill (%s – %s).\n"+
-		"Run `gregale consumers completeness %s %s --period-start %s --period-end %s` before invoicing.\n",
+		"Run `gregale api consumer completeness %s %s --period-start %s --period-end %s` before invoicing.\n",
 		check.MissingRequests, check.CheckedFrom.Format(time.RFC3339), check.CheckedUntil.Format(time.RFC3339),
 		args[0], args[1], statement.PeriodStart.Format(time.RFC3339), statement.PeriodEnd.Format(time.RFC3339))
 }

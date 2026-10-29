@@ -2,6 +2,7 @@ package vmmdgrpc
 
 import (
 	"context"
+	"strings"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -19,7 +20,8 @@ import (
 // in this node's tenant VMs (bug hunt 2026-10-27 H17). A certificate caller
 // must now be schedd. Unix-socket callers keep the filesystem boundary:
 // every daemon runs as one uid, so peer credentials cannot tell them apart
-// until daemons get distinct uids.
+// until daemons get distinct uids. builderd keeps Destroy for its own builder
+// VMs; see builderMayCall.
 var schedulerOnlyMethods = map[string]string{
 	vmmdpb.Vmmd_ExecuteAppTask_FullMethodName:   "app task execution",
 	vmmdpb.Vmmd_ExecForkCommand_FullMethodName:  "fork command execution",
@@ -30,7 +32,7 @@ var schedulerOnlyMethods = map[string]string{
 // CallerPolicyUnaryInterceptor enforces schedulerOnlyMethods on unary RPCs.
 func CallerPolicyUnaryInterceptor() grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
-		if err := authorizeCaller(ctx, info.FullMethod); err != nil {
+		if err := authorizeCaller(ctx, info.FullMethod, req); err != nil {
 			return nil, err
 		}
 		return handler(ctx, req)
@@ -40,14 +42,14 @@ func CallerPolicyUnaryInterceptor() grpc.UnaryServerInterceptor {
 // CallerPolicyStreamInterceptor enforces schedulerOnlyMethods on streams.
 func CallerPolicyStreamInterceptor() grpc.StreamServerInterceptor {
 	return func(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
-		if err := authorizeCaller(ss.Context(), info.FullMethod); err != nil {
+		if err := authorizeCaller(ss.Context(), info.FullMethod, nil); err != nil {
 			return err
 		}
 		return handler(srv, ss)
 	}
 }
 
-func authorizeCaller(ctx context.Context, method string) error {
+func authorizeCaller(ctx context.Context, method string, req any) error {
 	what, restricted := schedulerOnlyMethods[method]
 	if !restricted {
 		return nil
@@ -59,8 +61,28 @@ func authorizeCaller(ctx context.Context, method string) error {
 	if err != nil {
 		return status.Error(codes.Unauthenticated, what+" requires verified daemon credentials")
 	}
-	if cn != "schedd.faas" {
-		return status.Error(codes.PermissionDenied, "only schedd may call "+what)
+	if cn == "schedd.faas" || (cn == "builderd.faas" && builderMayCall(method, req)) {
+		return nil
 	}
-	return nil
+	return status.Error(codes.PermissionDenied, "only schedd may call "+what)
+}
+
+// builderInstancePrefix names the builder VMs builderd boots over TCP and must
+// tear down itself (pkg/builderd/vm_metal.go). Rejecting those destroys failed
+// every build on rc.301 and leaked the builder's cgroup, netns and jail.
+const builderInstancePrefix = "build-"
+
+// builderMayCall lets builderd's certificate destroy only builder instances.
+// Tenant instance IDs are UUIDs minted by schedd, so they never carry the
+// prefix, and builderd never retires rehearsal workers.
+func builderMayCall(method string, req any) bool {
+	if method != vmmdpb.Vmmd_Destroy_FullMethodName {
+		return false
+	}
+	d, ok := req.(*vmmdpb.DestroyRequest)
+	if !ok || d.GetRehearsalColdPreparationId() != "" || d.GetRehearsalWorkerFaultId() != "" {
+		return false
+	}
+	id, found := strings.CutPrefix(d.GetInstance(), builderInstancePrefix)
+	return found && id != ""
 }

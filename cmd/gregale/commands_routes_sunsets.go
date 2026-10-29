@@ -82,7 +82,7 @@ func cmdRoutesSunsets(args []string) int {
 	}
 	_, idErr := uuid.Parse(*deployment)
 	if len(positional) != 1 || !validCLISlug(positional[0]) || idErr != nil || (*source != "deployment" && *source != "manual_import") || *horizon <= 0 || (*mappingPath == "") != (len(targets) == 0) || rejectUnexpectedFlagArgs(fs) {
-		PrintUsage(osStderr, "usage: gregale routes sunsets <slug> --deployment UUID [--source deployment|manual_import] [--since 14d] [--within 720h] [--mapping PATH --to-deployment APP=UUID...] [--out PATH] [--fail-on-overdue] [--fail-on-incomplete] [--json]", "cli")
+		PrintUsage(osStderr, "usage: gregale api route sunsets <slug> --deployment UUID [--source deployment|manual_import] [--since 14d] [--within 720h] [--mapping PATH --to-deployment APP=UUID...] [--out PATH] [--fail-on-overdue] [--fail-on-incomplete] [--json]", "cli")
 		return 1
 	}
 	if *output != "" {

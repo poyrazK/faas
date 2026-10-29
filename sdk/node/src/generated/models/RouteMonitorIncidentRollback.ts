@@ -18,5 +18,9 @@ export type RouteMonitorIncidentRollback = {
    */
   operation_id?: string;
   decided_at: string;
+  /**
+   * The checked rollback's problem code when it refused a rollback_target_ineligible request, for example rollback_in_progress.
+   */
+  refusal_code?: string;
 };
 
