@@ -78196,7 +78196,7 @@ components:
       required: [status, decided_at]
       properties:
         status: {"type": "string", "enum": ["claimed", "requested", "skipped"]}
-        reason: {"type": "string", "enum": ["latency_only_violation", "outside_rollback_window", "no_healthy_baseline", "rollback_target_ineligible"]}
+        reason: {"type": "string", "enum": ["latency_only_violation", "outside_rollback_window", "no_healthy_baseline", "rollback_target_ineligible", "project_release"]}
         route: {"type": "string", "maxLength": 256, "description": "First error-budget route that triggered the decision, as METHOD /path."}
         target_deployment_id: {"type": "string", "format": "uuid"}
         operation_id: {"type": "string", "format": "uuid", "description": "Checked rollback operation readable at /v1/apps/{slug}/rollbacks/{operation}."}

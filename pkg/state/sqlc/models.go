@@ -13793,6 +13793,12 @@ type RuntimeReleaseQualification struct {
 	RevocationSha256  pgtype.Text
 }
 
+type RuntimeSecretSignature struct {
+	CiphertextSha256 []byte
+	Signature        []byte
+	CreatedAt        pgtype.Timestamptz
+}
+
 type RuntimeSnapshot struct {
 	ID                  pgtype.UUID
 	CatalogKey          string

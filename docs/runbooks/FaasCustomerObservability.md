@@ -21,6 +21,8 @@ with a different environment.
 | `apid_log_search_ingest_enabled` | 1 while `FAAS_LOG_SEARCH_ENABLED` lets apid project events and accept runtime lines. |
 | `vmmd_runtime_log_events_total{outcome}` | vmmd's side: `over_budget`, `queue_full`, `paused`, `forward_failed`, and apid's answers. `forward_failed` and `paused` are expected while `apid_log_search_ingest_enabled` is 0. |
 | `meterd_alert_channel_deliveries_total{kind,outcome}` | Slack, PagerDuty and email deliveries: `delivered`, `failed`, `unseal_failed`. |
+| `meterd_op_duration_seconds{op="alerts"}` | Duration of each alert evaluation tick (accounts are evaluated in parallel, ADR-20261028101615). |
+| `meterd_alert_rules_skipped_total{reason}` | Rules a tick did not evaluate: `deferred` (the account spent its 45 s tick budget; they run first next tick), `not_released` (the account's plan or capability flags no longer cover them). |
 
 No label carries an account, app, check or channel ID.
 
@@ -98,3 +100,27 @@ every delivery of one kind failed for 30 minutes.
 One customer's misconfigured destination does not fire this alert while other
 deliveries of the same kind succeed; the customer sees the failure on the
 channel's status in the dashboard.
+
+## FaasAlertEvaluationSlow
+
+Alert ticks have averaged over 50 seconds for 15 minutes, so alerts fire late.
+Since ADR-20261028101615 a tick evaluates 8 accounts at once, bounds each
+rule's read at 15 s and each webhook delivery at 30 s, and gives each account
+45 s; a slow tick therefore means many accounts are slow together, which
+points at a shared dependency:
+
+1. Prometheus: the evaluator's reads time out or crawl. Check its load and
+   `FaasObservabilityLoop*` alerts for the same window.
+2. The database: rule state writes and log-search counts. Check lock waits
+   and the host PostgreSQL alerts.
+3. Egress: many webhook deliveries hitting their 30 s budget.
+
+## FaasAlertRulesDeferred
+
+For an hour some account has spent its 45 s tick budget, so part of its rules
+run a tick late (the next tick starts with them, so none starve). meterd logs
+`alerts: account spent its tick budget` with the account and how many rules
+it deferred. Usual causes, in that account's rules: log-search rules over long
+windows, a webhook that never answers (each delivery takes its full 30 s), or
+many rules on a slow Prometheus. The customer's alerts still fire, a minute
+late; contact them if their webhook is the cause.

@@ -153,6 +153,16 @@ type Config struct {
 	// the seal_domains role turns it on once every stored envelope is
 	// bound. FAAS_RUNTIME_SECRET_BINDING_REQUIRED overrides TOML.
 	RequireSecretBinding bool `toml:"require_secret_binding"`
+	// RuntimeSecretSignatureKeysFile holds the public keys apid's runtime
+	// secret signatures verify against (ADR 20261028161502, amendment 1).
+	// Set, vmmd refuses a runtime secret whose signature does not verify.
+	// It needs the compute-node database the signatures live in.
+	// FAAS_RUNTIME_SECRET_SIGNATURE_KEYS_FILE overrides TOML.
+	RuntimeSecretSignatureKeysFile string `toml:"runtime_secret_signature_keys_file"`
+	// RequireRuntimeSecretSignatures also refuses unsigned runtime secrets
+	// (the contract step). It needs RuntimeSecretSignatureKeysFile.
+	// FAAS_RUNTIME_SECRET_SIGNATURE_REQUIRED overrides TOML.
+	RequireRuntimeSecretSignatures bool `toml:"require_runtime_secret_signatures"`
 	// PmemBaseDir enables per-account pmem bases (ADR-908): app VMs map a
 	// reflinked per-account copy of their base with DAX instead of reading
 	// it over virtio-blk. "auto" (the default) keeps each copy on the mount
@@ -894,6 +904,19 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("vmmd: FAAS_RUNTIME_SECRET_BINDING_REQUIRED must be a boolean (got %q)", v)
 		}
 		c.RequireSecretBinding = required
+	}
+	if v, ok := os.LookupEnv("FAAS_RUNTIME_SECRET_SIGNATURE_KEYS_FILE"); ok {
+		c.RuntimeSecretSignatureKeysFile = strings.TrimSpace(v)
+	}
+	if v := os.Getenv("FAAS_RUNTIME_SECRET_SIGNATURE_REQUIRED"); v != "" {
+		required, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_RUNTIME_SECRET_SIGNATURE_REQUIRED must be a boolean (got %q)", v)
+		}
+		c.RequireRuntimeSecretSignatures = required
+	}
+	if c.RequireRuntimeSecretSignatures && c.RuntimeSecretSignatureKeysFile == "" {
+		return nil, errors.New("vmmd: requiring runtime secret signatures needs runtime_secret_signature_keys_file (FAAS_RUNTIME_SECRET_SIGNATURE_KEYS_FILE)")
 	}
 	if v := os.Getenv("FAAS_BRIDGE_STREAM_HEADROOM"); v != "" {
 		enabled, perr := strconv.ParseBool(v)
