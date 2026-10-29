@@ -17,26 +17,28 @@ import (
 func TestProducedBaseScanRenewsWithoutScanningOnlyForTheSameIdentity(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
-		identity func(scanned scannerIdentity) (scannerIdentity, error)
+		identity func(scanned installedScanner) (installedScanner, error)
 		failPrev bool
 		want     bool
 	}{
-		{name: "same bytes, scanner and database", identity: func(s scannerIdentity) (scannerIdentity, error) { return s, nil }, want: true},
-		{name: "newer database", identity: func(s scannerIdentity) (scannerIdentity, error) {
+		{name: "same bytes, scanner and database", identity: func(s installedScanner) (installedScanner, error) { return s, nil }, want: true},
+		{name: "newer database", identity: func(s installedScanner) (installedScanner, error) {
 			s.DBBuiltAt = "2099-01-01T00:00:00Z"
 			return s, nil
 		}},
-		{name: "other scanner version", identity: func(s scannerIdentity) (scannerIdentity, error) {
+		{name: "other scanner version", identity: func(s installedScanner) (installedScanner, error) {
 			s.Version = "0.200.0"
 			return s, nil
 		}},
-		{name: "identity unknown", identity: func(scannerIdentity) (scannerIdentity, error) { return scannerIdentity{}, errors.New("grype missing") }},
-		{name: "previous scan failed", identity: func(s scannerIdentity) (scannerIdentity, error) { return s, nil }, failPrev: true},
+		{name: "identity unknown", identity: func(installedScanner) (installedScanner, error) {
+			return installedScanner{}, errors.New("grype missing")
+		}},
+		{name: "previous scan failed", identity: func(s installedScanner) (installedScanner, error) { return s, nil }, failPrev: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h, store, _, _, ref := verifiedBaseFixture(t, "complete")
 			calls := 0
-			var scanned scannerIdentity
+			var scanned installedScanner
 			h.WithGrypeRun(func(context.Context, string) (*ScanResult, error) {
 				calls++
 				result := producedScanResult(t, false)
@@ -58,8 +60,8 @@ func TestProducedBaseScanRenewsWithoutScanningOnlyForTheSameIdentity(t *testing.
 					t.Fatal(err)
 				}
 			}
-			h.WithScannerIdentity(func(context.Context) (scannerIdentity, error) { return tc.identity(scanned) })
-			h.scannerIdentityCache.set(scannerIdentity{}, prior.ScannedAt) // the fixture's real scan filled it
+			h.WithScannerIdentity(func(context.Context) (installedScanner, error) { return tc.identity(scanned) })
+			h.scannerIdentityCache.set(installedScanner{}, prior.ScannedAt) // the fixture's real scan filled it
 			be, err := h.storageFor()
 			if err != nil {
 				t.Fatal(err)
