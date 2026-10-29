@@ -107,13 +107,13 @@ func applyK8sPodTemplate(s *workloadSeed, doc *yaml.Node, kind string, container
 	annotations := k8sMap(template, "metadata", "annotations")
 	rawContainers, _ := pod["containers"].([]any)
 
-	index := 0
-	if want, _ := annotations[k8sDefaultContainerAnnotation].(string); strings.TrimSpace(want) != "" {
-		want = strings.TrimSpace(want)
-		index = slices.IndexFunc(containers, func(c k8sContainer) bool { return c.Name == want })
-		if index < 0 {
-			return nil, fmt.Errorf("%s names container %q, which the pod does not have", k8sDefaultContainerAnnotation, want)
-		}
+	names := make([]string, len(containers))
+	for i, c := range containers {
+		names[i] = c.Name
+	}
+	index, err := k8sAppContainerIndex(annotations, names)
+	if err != nil {
+		return nil, err
 	}
 	app := containers[index]
 	if strings.TrimSpace(app.Image) == "" {
@@ -144,6 +144,8 @@ func applyK8sPodTemplate(s *workloadSeed, doc *yaml.Node, kind string, container
 	}
 	s.healthcheck = healthcheck
 	warnings = append(warnings, probeWarnings...)
+
+	warnings = append(warnings, k8sEnvRefs(s, container)...)
 
 	process, processWarnings, err := k8sProcess(pod, container, app)
 	if err != nil {
@@ -503,4 +505,18 @@ func k8sStrings(raw any) ([]string, bool) {
 		out = append(out, text)
 	}
 	return out, true
+}
+
+// k8sAppContainerIndex is the container that runs as the app: the one the
+// pod's default-container annotation names, else the first.
+func k8sAppContainerIndex(annotations map[string]any, names []string) (int, error) {
+	want, _ := annotations[k8sDefaultContainerAnnotation].(string)
+	if want = strings.TrimSpace(want); want == "" {
+		return 0, nil
+	}
+	index := slices.Index(names, want)
+	if index < 0 {
+		return 0, fmt.Errorf("%s names container %q, which the pod does not have", k8sDefaultContainerAnnotation, want)
+	}
+	return index, nil
 }

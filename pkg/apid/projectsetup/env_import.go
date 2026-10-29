@@ -15,7 +15,13 @@ import (
 // Reasons a Compose environment value is not imported
 // (ADR-20261023085230). They are names for clients, never values.
 const (
-	EnvSkipNotOptedIn     = "not_opted_in"
+	EnvSkipNotOptedIn = "not_opted_in"
+	// EnvSkipNotAnnotated is EnvSkipNotOptedIn for a Kubernetes workload,
+	// which opts in with its gregale.dev/env-import annotation
+	// (ADR-20261029093621 §5).
+	EnvSkipNotAnnotated = "not_annotated"
+	// EnvSkipSecretRef is a key a Kubernetes manifest takes from a Secret.
+	EnvSkipSecretRef      = "secret_ref"
 	EnvSkipSecret         = "secret"
 	EnvSkipServiceAddress = "service_address"
 	EnvSkipLocalAddress   = "local_address"
@@ -65,8 +71,11 @@ func PlanEnvImport(env reposcan.ComposeEnv, service string, callable []string, l
 			}
 		}
 		reason := envSkipReason(key, value, services, limits)
-		if reason == "" && !env.Import {
+		if reason == "" && !env.OptedIn(service) {
 			reason = EnvSkipNotOptedIn
+			if env.Kubernetes[service] {
+				reason = EnvSkipNotAnnotated
+			}
 		}
 		if reason != "" {
 			out.Skipped[key] = reason
@@ -74,6 +83,11 @@ func PlanEnvImport(env reposcan.ComposeEnv, service string, callable []string, l
 			continue
 		}
 		out.Values[key] = *value
+	}
+	for _, key := range env.SecretRefs[service] {
+		if !PlatformProvidedEnvKey(key) {
+			out.Skipped[key] = EnvSkipSecretRef
+		}
 	}
 	return out
 }
@@ -166,10 +180,17 @@ func envSkipReason(key string, value *string, services []string, limits api.Limi
 	switch {
 	case slices.Contains(localHosts, host):
 		return EnvSkipLocalAddress
-	case slices.Contains(services, host):
+	case slices.Contains(services, host), clusterLocalHost(host):
 		return EnvSkipServiceAddress
 	}
 	return ""
+}
+
+// clusterLocalHost is a Kubernetes cluster DNS name, which does not resolve
+// on Gregale: `billing.<ns>.svc` or `billing.<ns>.svc.cluster.local`.
+func clusterLocalHost(host string) bool {
+	host = strings.TrimSuffix(host, ".")
+	return strings.HasSuffix(host, ".svc") || strings.HasSuffix(host, ".svc.cluster.local")
 }
 
 func secretKey(key string) bool {

@@ -1719,7 +1719,7 @@ func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, tar
 			workloads[key] = workload
 			available[key] = struct{}{}
 		}
-		headValues = prHeadComposeValues(tree.FS(), scan, previewLimits)
+		headValues = prHeadComposeValues(tree.FS(), scan, s.scanOptions(binding.AccountID), previewLimits)
 	}
 	// Source fetching and scanning can take longer than a PR head update.
 	// Recheck before the first preview mutation or build reservation.
