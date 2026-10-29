@@ -13,13 +13,16 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/e2etest"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/financial"
+	"github.com/onebox-faas/faas/pkg/grpcerr"
 	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/vmmdgrpc"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -205,25 +208,45 @@ func financialRemoteExhaustion(t *testing.T, h *e2etest.Harness, record financia
 	if err != nil {
 		t.Fatal(err)
 	}
+	// vmmd admits at most the plan's per-VM bound of concurrent exchanges
+	// (ADR-570) and refuses the rest at once; the fixture account is Hobby.
+	// Send rounds inside that bound until one in which every exchange was
+	// admitted delivers nothing: only then has the kernel quota spent the grant.
+	workers := api.MustLimitsFor(api.PlanHobby).ConcurrencyPerVMBound
 	var delivered atomicRemoteBytes
-	var wg sync.WaitGroup
-	for range 16 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for range 8 {
+	for round := 1; ; round++ {
+		var sent atomicRemoteBytes
+		var refused atomic.Bool
+		var wg sync.WaitGroup
+		for range workers {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
 				ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 				response := financialRemoteRequest(ctx, client, record.Lease.Instance)
 				cancel()
+				if problem, ok := grpcerr.FromStatus(response.err); ok && problem != nil && problem.Code == api.CodeConcurrencyThrottled {
+					refused.Store(true)
+				}
 				if len(response.body) > len(body) {
 					delivered.invalid()
 					return
 				}
-				delivered.add(uint64(len(response.body)))
-			}
-		}()
+				sent.add(uint64(len(response.body)))
+			}()
+		}
+		wg.Wait()
+		n, _ := sent.value()
+		delivered.add(n)
+		if n == 0 && !refused.Load() {
+			break
+		}
+		if time.Until(lease.RunUntil) < 5*time.Second {
+			payload, _ := delivered.value()
+			financialNetnsEvidence(t, record)
+			t.Fatalf("the quota never stopped remote responses: %d rounds, %d bytes, last round refused=%t", round, payload, refused.Load())
+		}
 	}
-	wg.Wait()
 	after, err := netns.ReadVethRXBytes(record.Lease.VethHost)
 	payload, invalid := delivered.value()
 	if err != nil || invalid || payload == 0 || after < before+payload || after > uint64(lease.EgressGranted) {
