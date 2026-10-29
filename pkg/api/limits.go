@@ -9400,6 +9400,22 @@ func (p Plan) PlanIncludedGBHours() int {
 	return l.IncludedGBHours
 }
 
+// DefaultOverageCapAllowances is the overage a paid plan's spend cap allows
+// by default, counted in the plan's included GB-RAM-hours at the overage
+// rate: the "2 × allowance" ceiling managed PostgreSQL uses with overage on
+// (ADR-20261025094915), so a runaway month costs at most one more allowance
+// unless the customer raises or clears the cap (ADR-20261029180000).
+const DefaultOverageCapAllowances = ManagedPostgresOverageCeilingMultiplier - 1
+
+// DefaultOverageCapCents returns the spend cap a paid plan starts with:
+// Hobby $2, Pro $10, Scale $30. Free stops at its allowance and has none.
+func (p Plan) DefaultOverageCapCents() (int64, bool) {
+	if !p.IsPaid() {
+		return 0, false
+	}
+	return int64(p.PlanIncludedGBHours()) * DefaultOverageCapAllowances * OverageMillicentsPerGBHour / MillicentsPerCent, true
+}
+
 // Valid reports whether p is a known plan.
 func (p Plan) Valid() bool {
 	_, ok := planLimits[p]
