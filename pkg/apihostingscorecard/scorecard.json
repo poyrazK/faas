@@ -186,7 +186,7 @@
       "name": "Capability acceptance: delivery",
       "category": "delivery",
       "description": "Each released delivery capability passes its catalogued acceptance test before it is offered to an account (ADR-20261023115741).",
-      "capabilities": ["alert-rollbacks", "apps", "builds", "deploy-diff", "deploy-freezes", "deploy-overrides", "deploy-queue-controls", "deploy-scans", "deploy-tokens", "deployment-aliases", "environment-clones", "environment-gitops", "environment-promotions", "environment-release-sets", "environments", "gitlab-deploys", "projects", "registry-credentials", "release-approvals", "release-commands", "release-gates", "rollback", "scheduled-releases", "service-migration", "source-ref-deploys", "starter-templates", "stateless-contract", "traffic-mirroring"],
+      "capabilities": ["alert-rollbacks", "apps", "builds", "deploy-diff", "deploy-freezes", "deploy-overrides", "deploy-queue-controls", "deploy-scans", "deploy-tokens", "deployment-aliases", "environment-clones", "environment-gitops", "environment-promotions", "environment-release-sets", "environments", "gitlab-deploys", "kubernetes-manifests", "projects", "registry-credentials", "release-approvals", "release-commands", "release-gates", "rollback", "scheduled-releases", "service-migration", "source-ref-deploys", "starter-templates", "stateless-contract", "traffic-mirroring"],
       "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
       "evidence": [
         {"kind": "test", "locator": "cmd/gregale/commands_scheduled_releases_test.go::TestScheduledReleaseLines"},
@@ -215,6 +215,7 @@
         {"kind": "test", "locator": "pkg/gitlabsource/oauth_test.go::TestGitLabOAuthAuthorizationExchangeAndRefresh"},
         {"kind": "test", "locator": "pkg/gregalemanifest/manifest_test.go::TestLoad_DevProfile"},
         {"kind": "test", "locator": "pkg/imaged/secretscan_pure_test.go::TestWithSecretScanFindings_ScannedAtUTC"},
+        {"kind": "test", "locator": "pkg/reposcan/k8s_pod_test.go::TestScanWith_KubernetesManifestsReachesWorkloads"},
         {"kind": "test", "locator": "pkg/state/alert_rollback_selection_test.go::TestAlertRollbackSelectionFailsClosed"},
         {"kind": "test", "locator": "pkg/state/deployment_queue_controls_pg_test.go::TestPg_CancelDeploymentTx_Pending_Happy"}
       ]
@@ -245,6 +246,7 @@
       "evidence": [
         {"kind": "test", "locator": "cmd/gatewayd-internal/async_routes_test.go::TestAsyncRouteEnqueuerCapturesProjectRelease"},
         {"kind": "test", "locator": "cmd/gatewayd-internal/edge_rules_app_wide_test.go::TestAppWideEdgeRules"},
+        {"kind": "test", "locator": "cmd/e2e/edge_rules_api_e2e_test.go::TestE2E_EdgeRules_KindsActOnPublicTraffic"},
         {"kind": "test", "locator": "cmd/gatewayd-internal/tenant_surfaces_routing_test.go::TestPgRouter_TenantSurfaceRouted"},
         {"kind": "test", "locator": "pkg/api/limits_test.go::TestWildcardDomainsAllowedIsProPlus"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_apps_static_egress_ip_test.go::TestStaticEgressIP_DeleteClears"},

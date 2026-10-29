@@ -14759,8 +14759,14 @@ func (s *PgStore) CreateEdgeRule(ctx context.Context, in CreateEdgeRuleParams) (
 // The FOR UPDATE row lock on the apps row is the TOCTOU defence:
 // concurrent inserts serialise on the apps row before reading the
 // count, so a burst of N parallel inserts can't race past the cap
-// by N-1.
+// by N-1. That lock sits in a repeatable-read snapshot, so a concurrent app
+// write (schedd stamps a new app's owner node right after it is created)
+// fails it with a serialization failure; the create retries with a fresh one.
 func (s *PgStore) CreateEdgeRuleIfUnderQuota(ctx context.Context, in CreateEdgeRuleParams, limits api.Limits) (EdgeRule, error) {
+	return retryTrafficSerialization(ctx, func() (EdgeRule, error) { return s.createEdgeRuleIfUnderQuotaOnce(ctx, in, limits) })
+}
+
+func (s *PgStore) createEdgeRuleIfUnderQuotaOnce(ctx context.Context, in CreateEdgeRuleParams, limits api.Limits) (EdgeRule, error) {
 	tx, err := s.beginRuleTrafficPolicyMutation(ctx, uuidToPgtype(in.AccountID), in.Kind, in.MatchHost)
 	if err != nil {
 		return EdgeRule{}, fmt.Errorf("state: begin tx: %w", err)
@@ -31368,6 +31374,7 @@ func triggerRowToTrigger(r sqlc.TriggerByIDRow) sqlc.Trigger {
 		PayloadMaxBytes:           r.PayloadMaxBytes,
 		BrokerPoisonStrategy:      r.BrokerPoisonStrategy,
 		FilterCriteria:            r.FilterCriteria,
+		Agent:                     r.Agent,
 	}
 }
 
@@ -31398,6 +31405,7 @@ func triggerListRowToTrigger(r sqlc.ListTriggersForAppRow) sqlc.Trigger {
 		PayloadMaxBytes:           r.PayloadMaxBytes,
 		BrokerPoisonStrategy:      r.BrokerPoisonStrategy,
 		FilterCriteria:            r.FilterCriteria,
+		Agent:                     r.Agent,
 	}
 }
 
@@ -31426,6 +31434,7 @@ func triggerEnabledRowToTrigger(r sqlc.ListEnabledTriggersRow) sqlc.Trigger {
 		PayloadMaxBytes:           r.PayloadMaxBytes,
 		BrokerPoisonStrategy:      r.BrokerPoisonStrategy,
 		FilterCriteria:            r.FilterCriteria,
+		Agent:                     r.Agent,
 	}
 }
 

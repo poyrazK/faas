@@ -57,7 +57,7 @@ func newRecording(t *testing.T) *Service {
 	mem := state.NewMemStore()
 	aud := audit.New(mem, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, "githubd_test")
 	rec := reconcile.NewService(mem, aud, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	rec.Scan = func(_ fs.FS) (reposcan.Result, error) {
+	rec.Scan = func(_ fs.FS, _ reposcan.ScanOptions) (reposcan.Result, error) {
 		return reposcan.Result{}, nil
 	}
 	acct, err := mem.CreateAccount(context.Background(), "octo@example.com", "hobby")
