@@ -222,6 +222,9 @@ type Handler struct {
 	// sidecar write at base_stage.go::writeScanSidecar reads the
 	// counts off the struct to build the legacy sidecar JSON.
 	grypeRun func(ctx context.Context, dir string) (*ScanResult, error)
+	// baseProvenance checks a platform base digest's SLSA provenance before
+	// ensureVerifiedBaseExt4 builds it (ADR-20261029155852); nil checks none.
+	baseProvenance *BaseProvenanceVerifier
 	// lastDeployScanner is the scanner and database the last per-deploy
 	// Grype run used; a redeploy of an unchanged artifact reuses a result
 	// only from that same scanner (scan_reuse.go).
@@ -770,6 +773,13 @@ func (h *Handler) WithAudit(a *audit.Auditor) *Handler {
 // Handler-Builder seam, same With* fluent setter shape.
 func (h *Handler) WithGrypeRun(fn func(ctx context.Context, dir string) (*ScanResult, error)) *Handler {
 	h.grypeRun = fn
+	return h
+}
+
+// WithBaseProvenance wires the platform base provenance check
+// (ADR-20261029155852).
+func (h *Handler) WithBaseProvenance(v *BaseProvenanceVerifier) *Handler {
+	h.baseProvenance = v
 	return h
 }
 
