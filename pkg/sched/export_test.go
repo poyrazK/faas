@@ -919,10 +919,8 @@ var LogVMMBootFailure = logVMMBootFailure
 var WorkerRecoveryRetryDelay = workerRecoveryRetryDelay
 
 // NewCronPlanGate exposes the cron plan gate's admit decision.
-func NewCronPlanGate(accounts interface {
-	AccountByID(context.Context, string) (state.Account, error)
-}) func(context.Context, state.App, int) bool {
-	return newCronPlanGate(accounts).admit
+func NewCronPlanGate(owners state.AppOwnerReader) func(context.Context, state.App, int) bool {
+	return newCronPlanGate(owners).admit
 }
 
 var OldestCronsFirst = oldestCronsFirst

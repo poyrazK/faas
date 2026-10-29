@@ -21,6 +21,23 @@ func (a cronPlanAccounts) AccountByID(_ context.Context, id string) (state.Accou
 	return state.Account{ID: id, Plan: plan}, nil
 }
 
+func (a cronPlanAccounts) OrgByID(context.Context, string) (state.Org, error) {
+	return state.Org{}, state.ErrNotFound
+}
+
+type cronPlanOwners struct {
+	cronPlanAccounts
+	orgs map[string]state.Org
+}
+
+func (o cronPlanOwners) OrgByID(_ context.Context, id string) (state.Org, error) {
+	org, ok := o.orgs[id]
+	if !ok {
+		return state.Org{}, state.ErrNotFound
+	}
+	return org, nil
+}
+
 // A downgrade left every cron firing against the new plan's quota. The gate
 // keeps the oldest crons within the plan's per-app and per-account limits.
 func TestCronPlanGateKeepsCronsWithinThePlan(t *testing.T) {
@@ -49,6 +66,50 @@ func TestCronPlanGateKeepsCronsWithinThePlan(t *testing.T) {
 
 	if !admit(ctx, state.App{ID: "u1", AccountID: "unreadable"}, 0) {
 		t.Fatal("a cron whose account could not be read was held; it passed its limits when written")
+	}
+}
+
+// A company app keeps its creator's account_id, but once the company adopted
+// billing its crons fire under the company's plan and share the company's
+// per-account allowance, whoever created the app (ADR-202610171904), as the
+// cron was admitted when written. The gate read the creator's personal plan:
+// a Free member's crons on a Pro company app never fired.
+//
+// adr: 202610171904
+func TestCronPlanGateUsesTheAppsBillingSubject(t *testing.T) {
+	ctx := context.Background()
+	admit := sched.NewCronPlanGate(cronPlanOwners{
+		cronPlanAccounts: cronPlanAccounts{"free-member": api.PlanFree, "hobby-member": api.PlanHobby, "pro-member": api.PlanPro},
+		orgs: map[string]state.Org{
+			"adopted":   {ID: "adopted", Plan: api.PlanHobby, ResourceOwnershipEnabled: true},
+			"unadopted": {ID: "unadopted", Plan: api.PlanScale},
+		},
+	})
+	hobby := api.MustLimitsFor(api.PlanHobby)
+	app := func(id, accountID, orgID string) state.App { return state.App{ID: id, AccountID: accountID, OrgID: orgID} }
+
+	if !admit(ctx, app("co-1", "free-member", "adopted"), 0) {
+		t.Fatal("a Free member's cron on a Hobby company app was held; the company's plan allows it")
+	}
+	// The company's crons share one allowance across its members.
+	for i := 1; i < hobby.CronLimitPerAccount; i++ {
+		if !admit(ctx, app("co-"+string(rune('a'+i)), "hobby-member", "adopted"), 0) {
+			t.Fatalf("company cron %d of %d was held", i+1, hobby.CronLimitPerAccount)
+		}
+	}
+	for _, member := range []string{"pro-member", "hobby-member"} {
+		if admit(ctx, app("co-over-"+member, member, "adopted"), 0) {
+			t.Fatalf("%s's company cron fired past the Hobby company's allowance", member)
+		}
+	}
+	// The company's crons never spend a member's personal allowance.
+	if !admit(ctx, app("own", "hobby-member", ""), 0) {
+		t.Fatal("a member's personal cron was held by the company's crons")
+	}
+	// Until adoption a company app runs under its creator's plan and shares
+	// the creator's allowance.
+	if admit(ctx, app("legacy", "free-member", "unadopted"), 0) {
+		t.Fatal("a Free creator's unadopted company cron fired under the company's plan")
 	}
 }
 

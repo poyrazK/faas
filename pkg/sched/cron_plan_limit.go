@@ -15,41 +15,45 @@ import (
 // downgrade or an ended subscription left every cron firing, and waking its
 // app, against the new plan's quota (Free allows none). The oldest crons keep
 // firing; the rest wait until the plan allows them again.
+//
+// The owning account is the app's billing subject (ADR-202610171904), whose
+// plan admitted the cron when it was written: a company once it adopted
+// billing, with the company's plan and one allowance across its members, and
+// otherwise the app's creator. A company app keeps its creator's account_id,
+// so the creator's personal plan must not gate it.
 type cronPlanGate struct {
-	accounts interface {
-		AccountByID(context.Context, string) (state.Account, error)
-	}
-	plans   map[string]api.Plan
+	store   state.AppOwnerReader
+	owners  map[string]state.Account
 	perAcct map[string]int
 }
 
-func newCronPlanGate(accounts interface {
-	AccountByID(context.Context, string) (state.Account, error)
-}) *cronPlanGate {
-	return &cronPlanGate{accounts: accounts, plans: map[string]api.Plan{}, perAcct: map[string]int{}}
+func newCronPlanGate(store state.AppOwnerReader) *cronPlanGate {
+	return &cronPlanGate{store: store, owners: map[string]state.Account{}, perAcct: map[string]int{}}
 }
 
 // admit reports whether a due cron of app, the appRank-th oldest of the app's
-// enabled crons, may fire this tick, and counts it against the account when
-// it may. The per-app rank is exact; the per-account count covers the crons
-// that fire this tick. A failed account read admits: the cron passed its
-// plan's limits when it was written.
+// enabled crons, may fire this tick, and counts it against the app's billing
+// subject when it may. The per-app rank is exact; the per-account count covers
+// the crons that fire this tick. A failed owner read admits: the cron passed
+// its plan's limits when it was written.
 func (g *cronPlanGate) admit(ctx context.Context, app state.App, appRank int) bool {
-	plan, seen := g.plans[app.AccountID]
+	key := app.OrgID + "/" + app.AccountID
+	owner, seen := g.owners[key]
 	if !seen {
-		if acct, err := g.accounts.AccountByID(ctx, app.AccountID); err == nil {
-			plan = acct.Plan
+		if acct, err := state.AppResourceAccount(ctx, g.store, app); err == nil {
+			owner = acct
 		}
-		g.plans[app.AccountID] = plan
+		g.owners[key] = owner
 	}
-	limits, ok := api.LimitsFor(plan)
+	limits, ok := api.LimitsFor(owner.Plan)
 	if !ok {
 		return true
 	}
-	if appRank >= limits.CronLimitPerApp || g.perAcct[app.AccountID] >= limits.CronLimitPerAccount {
+	subject := owner.ResourceOwnerID()
+	if appRank >= limits.CronLimitPerApp || g.perAcct[subject] >= limits.CronLimitPerAccount {
 		return false
 	}
-	g.perAcct[app.AccountID]++
+	g.perAcct[subject]++
 	return true
 }
 
