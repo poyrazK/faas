@@ -1,6 +1,7 @@
 package meter
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -53,6 +54,60 @@ func TestFinancialPricingHistory(t *testing.T) {
 	prices, err = store.ListFinancialPriceSnapshots(t.Context(), a.ID, start.AddDate(0, 1, 0))
 	if err != nil || len(prices) != 2 {
 		t.Fatalf("UTC period reset: %+v, %v", prices, err)
+	}
+}
+
+// countingPriceStore counts price snapshot reads.
+type countingPriceStore struct {
+	*state.MemStore
+	reads int
+}
+
+func (s *countingPriceStore) ListFinancialPriceSnapshots(ctx context.Context, account string, period time.Time) ([]state.FinancialPriceSnapshot, error) {
+	s.reads++
+	return s.MemStore.ListFinancialPriceSnapshots(ctx, account, period)
+}
+
+// Unchanged terms cost no snapshot read per account per minute; a plan
+// change or a new month reads and captures again.
+// adr: 20261029180000
+func TestFinancialPricingSkipsUnchangedTerms(t *testing.T) {
+	store := &countingPriceStore{MemStore: state.NewMemStore()}
+	a, err := store.CreateAccount(t.Context(), "financial-pricing-cache@example.com", api.PlanHobby)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := &Loop{store: store}
+	start := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	for i := range 5 {
+		if err := l.recordFinancialPricing(t.Context(), start.Add(time.Duration(i)*time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if store.reads != 1 {
+		t.Fatalf("snapshot reads over 5 unchanged ticks = %d, want 1", store.reads)
+	}
+	if err := store.UpdateAccountPlan(t.Context(), a.ID, api.PlanPro); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.recordFinancialPricing(t.Context(), start.Add(5*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.recordFinancialPricing(t.Context(), start.AddDate(0, 1, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if store.reads != 3 {
+		t.Fatalf("snapshot reads after a plan change and a new month = %d, want 3", store.reads)
+	}
+	for _, period := range []time.Time{start, start.AddDate(0, 1, 0)} {
+		prices, err := store.ListFinancialPriceSnapshots(t.Context(), a.ID, period)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := map[time.Time]int{start: 4, start.AddDate(0, 1, 0): 2}[period]
+		if len(prices) != want {
+			t.Fatalf("%s snapshots = %d, want %d", period.Format("2006-01"), len(prices), want)
+		}
 	}
 }
 

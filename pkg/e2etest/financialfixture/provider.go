@@ -99,6 +99,10 @@ func (p *Provider) serveHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "fixture credential required", http.StatusUnauthorized)
 		return
 	}
+	if r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/" {
+		_, _ = w.Write([]byte(`{"items":[{"id":"fixture-org","subscription_settings":{"allow_multiple_subscriptions":false}}]}`))
+		return
+	}
 	if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/products/") {
 		id := strings.TrimPrefix(r.URL.Path, "/v1/products/")
 		plan := api.Plan(id)
