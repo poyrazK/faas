@@ -106,4 +106,31 @@ func TestPgEdgeRulesScopeByResourceOwner(t *testing.T) {
 	if personalGot[orgARule] || personalGot[foreignOrgRule] {
 		t.Error("personal host read an org rule of the same creator")
 	}
+
+	// The production serving path (gatewayd's pinPublicRouteGraph) reads a
+	// host's rules through this projection, keyed by the host app's resource
+	// owner. It must scope the same way as OwnedEdgeRulesForHost above.
+	snap, ok := interface{}(s).(state.PublicHostPolicySnapshotStore)
+	if !ok {
+		t.Fatal("PgStore is not a PublicHostPolicySnapshotStore")
+	}
+	if err := snap.WithPublicHostPolicySnapshot(ctx, func(reader state.PublicHostPolicyReader) error {
+		projGot := map[string]bool{}
+		rules, err := reader.PublicHostAppEdgeRules(ctx, host, orgA.ID, orgAApp.ID, false)
+		if err != nil {
+			return err
+		}
+		for _, r := range rules {
+			projGot[r.ID] = true
+		}
+		if !projGot[orgARule] {
+			t.Error("projection: org A host lost its own rule")
+		}
+		if projGot[foreignOrgRule] || projGot[foreignPersonalRule] {
+			t.Error("projection: org A host read another tenant's rule of the same creator")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 }

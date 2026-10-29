@@ -222,7 +222,7 @@ func (h *Handler) pinAppTrafficPolicy(w http.ResponseWriter, r *http.Request, ap
 	if h.pinResolvedOwnerPolicies(w, r, *app) {
 		return true
 	}
-	*r = *r.WithContext(WithEdgeRuleResourceOwner(WithEdgeRuleApp(WithEdgeRuleOwner(r.Context(), app.AccountID), app.ID), app.edgeRuleOwnerID()))
+	*r = *r.WithContext(WithEdgeRuleResourceOwner(WithEdgeRuleApp(WithEdgeRuleOwner(r.Context(), app.AccountID), app.ID), app.EdgeRuleOwnerID()))
 	if h.pinAppEdgePolicies(w, r, app.ID) {
 		return true
 	}

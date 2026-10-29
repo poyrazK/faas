@@ -22,7 +22,20 @@ type PublicAppPolicySource struct {
 type PublicRouteSourcePolicy struct {
 	Source           *PublicAppPolicySource
 	AppID, AccountID string
-	Found            bool
+	// OrgID is the host app's organization (its personal org for a personal
+	// app). EdgeRuleOwnerID is the tenant key the host's rule set is scoped
+	// by (Hunt 24 H24-1): the org, or the account when there is none.
+	OrgID string
+	Found bool
+}
+
+// EdgeRuleOwnerID is the resource owner the host's edge-rule set is read for:
+// the app's org when it has one, else its account.
+func (p PublicRouteSourcePolicy) EdgeRuleOwnerID() string {
+	if p.OrgID != "" {
+		return p.OrgID
+	}
+	return p.AccountID
 }
 
 type publicRouteSourcePolicyKey struct{}

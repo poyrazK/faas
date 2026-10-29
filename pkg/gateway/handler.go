@@ -98,7 +98,7 @@ type App struct {
 	AccountID       string // joined in pgRouter.toApp; empty only in fakeBackend unit tests (ADR-040)
 	// OrgID is the app's organization (its personal org for a personal app),
 	// the tenant boundary edge-rule scoping uses (Hunt 24 H24-1). Empty in
-	// older adapters and unit fakes, where edgeRuleOwnerID falls back to
+	// older adapters and unit fakes, where EdgeRuleOwnerID falls back to
 	// AccountID.
 	OrgID string
 	// Private verifier inputs; only the effective fingerprint leaves the gateway.
@@ -2546,7 +2546,7 @@ func (h *Handler) routeRuleForHost(r *http.Request, appHost string) *EdgeRuleRes
 		return nil
 	}
 	rememberPublicRouteSourcePolicy(r, hostApp, found)
-	ctx := WithEdgeRuleResourceOwner(WithEdgeRuleApp(WithEdgeRuleOwner(r.Context(), hostApp.AccountID), hostApp.ID), hostApp.edgeRuleOwnerID())
+	ctx := WithEdgeRuleResourceOwner(WithEdgeRuleApp(WithEdgeRuleOwner(r.Context(), hostApp.AccountID), hostApp.ID), hostApp.EdgeRuleOwnerID())
 	rule := h.edgeRules.MatchRoute(ctx, hostname(r.Host), r.URL.Path, r.Method)
 	if rule == nil || rule.AccountID != hostApp.AccountID {
 		return nil
@@ -6260,7 +6260,7 @@ haveApp:
 	// wrote (OwnedEdgeRules): match_host is free-form, so a foreign rule
 	// could otherwise shadow this app's own gates.
 	//nolint:contextcheck // same request context, extended with the owner.
-	r = r.WithContext(WithEdgeRuleResourceOwner(WithEdgeRuleApp(WithEdgeRuleOwner(r.Context(), app.AccountID), app.ID), app.edgeRuleOwnerID()))
+	r = r.WithContext(WithEdgeRuleResourceOwner(WithEdgeRuleApp(WithEdgeRuleOwner(r.Context(), app.AccountID), app.ID), app.EdgeRuleOwnerID()))
 	r = r.WithContext(withRateAdmissionEvidence(r.Context()))
 	if h.applyTotalDeadline(w, r, app) {
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})

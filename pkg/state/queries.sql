@@ -8940,7 +8940,8 @@ WITH matching AS (
             'ExpiresAt', to_jsonb(edge_rules)->'expires_at', 'Match', to_jsonb(edge_rules)->'match_expr',
             'Mode', coalesce(to_jsonb(edge_rules)->>'mode', 'enforce'))::jsonb AS data
     FROM edge_rules
-    WHERE enabled AND (sqlc.narg(account_id)::uuid IS NULL OR account_id = sqlc.narg(account_id)::uuid)
+    WHERE enabled AND (sqlc.narg(account_id)::uuid IS NULL
+           OR app_id IN (SELECT id FROM apps WHERE coalesce(org_id, account_id) = sqlc.narg(account_id)::uuid AND status <> 'deleted'))
       AND (NOT sqlc.arg(route_only)::boolean OR kind = 'route')
       AND (match_host = sqlc.arg(host)::text OR match_host = '*'
            OR sqlc.arg(host)::text LIKE replace(replace(match_host, '*', '%'), '?', '_')

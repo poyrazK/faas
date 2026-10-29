@@ -59,13 +59,13 @@ func (g *gatewaydEdgeRules) pinPublicRouteGraph(ctx context.Context, host string
 		if err != nil {
 			return err
 		}
-		claim = gateway.PublicRouteSourcePolicy{Source: app.PublicPolicySource, AppID: app.ID, AccountID: app.AccountID, Found: found}
+		claim = gateway.PublicRouteSourcePolicy{Source: app.PublicPolicySource, AppID: app.ID, AccountID: app.AccountID, OrgID: app.OrgID, Found: found}
 		if err := validatePublicRouteClaim(host, claim); err != nil {
 			return err
 		}
 		var rules []state.EdgeRule
 		if claim.Source.CanSubstitute {
-			rules, err = publicHostAppEdgeRules(bounded, reader, host, claim.AccountID, claim.AppID, true)
+			rules, err = publicHostAppEdgeRules(bounded, reader, host, claim.EdgeRuleOwnerID(), claim.AppID, true)
 			if err != nil {
 				return err
 			}
@@ -125,7 +125,7 @@ func resolvePublicCompiledPolicy(ctx context.Context, reader state.PublicHostPol
 			if !claim.Source.CanSubstitute {
 				continue
 			}
-			rules, err := publicHostAppEdgeRules(ctx, reader, host, claim.AccountID, claim.AppID, true)
+			rules, err := publicHostAppEdgeRules(ctx, reader, host, claim.EdgeRuleOwnerID(), claim.AppID, true)
 			if err != nil {
 				return err
 			}
@@ -144,7 +144,7 @@ func resolvePublicCompiledPolicy(ctx context.Context, reader state.PublicHostPol
 	}
 	app.PublicCompiledPolicies = make(map[string]*gateway.HostEntry, len(hosts))
 	for _, host := range hosts {
-		entry, err := graphs.owner.compilePublicOwnerPolicy(ctx, reader, host, app.AccountID, app.ID, graphs.claims[host].Source)
+		entry, err := graphs.owner.compilePublicOwnerPolicy(ctx, reader, host, app.EdgeRuleOwnerID(), app.ID, graphs.claims[host].Source)
 		if err != nil {
 			return err
 		}
