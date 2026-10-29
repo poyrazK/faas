@@ -1157,10 +1157,15 @@ apid both seals and opens account values, so it holds `account.age` itself;
 there is no recipient file. It covers TOTP secrets, inbound webhook
 secrets, billing provider keys, managed workflow plans, PagerDuty
 acknowledgement secrets, GitLab, Slack and Linear credentials, product
-email values and managed realtime credentials. The project clone columns
-stay on the fleet key until a later release (ADR 20261022111812, tenth to
-thirteenth slices). Data pipeline values are not part of this stage: they
-have always been sealed to the pipeline workers' own `pipeline.age`.
+email values, managed realtime credentials and project environment clone
+values (ADR 20261022111812, tenth to fourteenth slices). Data pipeline
+values are not part of this stage: they have always been sealed to the
+pipeline workers' own `pipeline.age`.
+
+Project environment clones are forward-only. apid and the clone worker seal
+new clone values to the domain only once writes are `domain`; earlier clone
+rows stay on the fleet key until their clones finish, and 12d's migration
+reports them as left on the fleet key instead of re-sealing them.
 
 ### 12a. Create the identity (operator machine)
 
@@ -1184,7 +1189,7 @@ faas_seal_domain_account_identity_src: /Users/<you>/gregale-seal/<environment>/a
 ```
 
 and converge the role on the control plane. The role installs `account.age`,
-restarts apid with it and proves the probe. With
+restarts apid and the clone worker with it and proves the probe. With
 `faas_seal_domain_account_writes` left empty, apid then seals new account
 values to the domain and the fleet key.
 
@@ -1194,7 +1199,9 @@ Check:
   `faas_seal_domain_ready{domain="account"} 1`;
 - `faas_seal_domain_loaded{domain="account"}` is 1 on every apid, and
   FaasSealDomainIdentityMissing does not fire;
-- apid logs `"account seal domain"` with `"domain_identity":true`;
+- apid and the clone worker (`journalctl -u faas-apid-clone-worker`) log
+  `"account seal domain"` with `"domain_identity":true`; the clone worker
+  exports no metrics, so this log line is its check;
 - on a test account, enroll MFA and sign in with it; send a test delivery
   to an inbound webhook; send a test issue to a connected Slack workspace.
 
@@ -1203,8 +1210,9 @@ saved in the meantime also carry the fleet key.
 
 ### 12c. Wait out the rollback window
 
-Go on only when every apid reports `faas_seal_domain_loaded{domain="account"} 1`
-and apid's previous release (N-1) also carries the account reader.
+Go on only when every apid reports `faas_seal_domain_loaded{domain="account"} 1`,
+every clone worker logs the identity loaded, and apid's previous release
+(N-1) also carries the account reader.
 
 ### 12d. Seal to the domain only; re-seal stored values
 
@@ -1224,7 +1232,10 @@ sudo gregalectl seal-domain migrate --domain account --readers-verified --db-env
 - Expect `0 failed`.
 - `changed concurrently` counts values a customer changed during the run.
   Run the migration again later.
-- A second run reports every row `current`.
+- A second run reports every other row `current`.
+- `left on the fleet key` counts project environment clone rows sealed
+  before the switch. Wait for it to reach 0, as running clones finish,
+  before any step removes `fleet.age` from apid or the clone worker.
 - If `failed` is not 0, apid cannot open those values today either: the
   owners must set them again (MFA: enroll again).
 
