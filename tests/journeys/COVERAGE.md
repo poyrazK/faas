@@ -36,7 +36,7 @@ covered. Update this table when a journey or a GA row changes.
 | 65 | Internal services (call apps by name) | `TestMultiServiceProject`: `api_has_no_public_url`, `call_by_internal_name` (`<service>.internal`), `parked_service_wakes_on_call` | the HTTPS alias, raw TCP services |
 | 66 | Service bindings, verification and probes | `TestMultiServiceProject/call_by_injected_url` (`GREGALE_SERVICE_<NAME>_URL` from `depends_on`) | the `declared` policy, caller allowlists, call scopes, `gregale bindings verify` |
 | 77 | App access control | `TestMaintenanceAndAccess` (require-authn, basic auth, IP allowlist) | public bearer auth |
-| 92 | Crons, fire-now | `TestCronDelivery` | scheduled (non-manual) fires |
+| 92 | Crons, fire-now | `TestCronDelivery`: `manual_run` (followed to `succeeded`), `scheduled_fire`, `trigger_inventory` (refuses `--kind cron`) | command crons (preview) |
 | 118 | Logs, tail, archive | `TestServeAndObserve` (runtime and HTTP logs), `TestTailAnalyticsAndMetrics/tail`, `TestLogArchive` | HTTP request logs while the production debugger (ADR-127) is not released for the account: the step skips on the CLI's explanation |
 | 121 | Metrics, request analytics | `TestServeAndObserve/metrics`, `TestTailAnalyticsAndMetrics` | service metrics |
 | 136 | Wake timeline | `TestWakeTimelineAndCosts/wake_timeline` | — |
