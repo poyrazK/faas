@@ -5,46 +5,63 @@ import (
 	"log/slog"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
 )
 
+// deployScanIdentity is the installed scanner the identity probe reports.
+type deployScanIdentity struct {
+	id  scannerIdentity
+	err error
+}
+
+func (p *deployScanIdentity) probe(context.Context) (scannerIdentity, error) { return p.id, p.err }
+
 // A redeploy of an unchanged artifact reuses the previous scan instead of
-// running Grype again (#5709), and only when the scanner and database match.
+// running Grype again (#5709), and only when that scan came from the scanner
+// and database installed now (ADR-20261028102540).
 func TestDeployScanReusesAnUnchangedArtifactsResult(t *testing.T) {
 	cases := []struct {
 		name      string
 		policy    api.AppSecurityPolicy
 		secondArt string
-		// before runs between the two deploys.
-		before    func(h *Handler)
+		// dbStatus is what Grype reports for its database; empty means valid.
+		dbStatus string
+		noProbe  bool
+		// before runs between the two deploys. It can change what the probe
+		// reports, as a database refresh does.
+		before    func(h *Handler, installed *deployScanIdentity)
 		wantGrype int
 		wantReuse bool
 	}{
 		{name: "unchanged artifact", secondArt: "layer", wantGrype: 1, wantReuse: true},
 		{name: "changed artifact", secondArt: "layer v2", wantGrype: 2},
 		{name: "enforce scans every deployment", policy: api.AppSecurityPolicyEnforce, secondArt: "layer", wantGrype: 2},
-		{name: "scanner changed", secondArt: "layer", wantGrype: 2, before: func(h *Handler) {
-			h.lastDeployScanner.id.dbBuiltAt = "2026-10-29T00:00:00Z"
+		{name: "database refreshed", secondArt: "layer", wantGrype: 2, before: func(h *Handler, installed *deployScanIdentity) {
+			installed.id.DBBuiltAt = "2026-10-29T00:00:00Z"
+			h.refreshScannerDB(context.Background())
 		}},
-		{name: "last scan too old", secondArt: "layer", wantGrype: 2, before: func(h *Handler) {
-			h.lastDeployScanner.at = time.Now().Add(-2 * scanReuseScannerWindow)
+		{name: "scanner identity unknown", secondArt: "layer", wantGrype: 2, before: func(h *Handler, installed *deployScanIdentity) {
+			installed.err = context.DeadlineExceeded
+			h.refreshScannerDB(context.Background())
 		}},
-		{name: "last scan failed", secondArt: "layer", wantGrype: 2, before: func(h *Handler) {
-			h.lastDeployScanner.record(nil, context.DeadlineExceeded, time.Now())
-		}},
+		{name: "no identity probe", noProbe: true, secondArt: "layer", wantGrype: 2},
+		{name: "database not reported valid", dbStatus: "stale", secondArt: "layer", wantGrype: 2},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			appsRoot := t.TempDir()
 			grypeRuns := 0
+			dbStatus := tc.dbStatus
+			if dbStatus == "" {
+				dbStatus = "valid"
+			}
 			stubGrype := func(context.Context, string) (*ScanResult, error) {
 				grypeRuns++
 				return &ScanResult{
-					ScannerVersion: "0.116.0", ScannerDBStatus: "valid",
+					ScannerVersion: "0.116.0", ScannerDBStatus: dbStatus,
 					ScannerDBVersion: "v6.1.2", ScannerDBBuiltAt: "2026-10-28T00:00:00Z",
 					SeverityCounts:  SeverityCounts{Medium: 1},
 					Vulnerabilities: []Vulnerability{{ID: "CVE-2026-0001", Severity: SeverityMedium}},
@@ -58,6 +75,10 @@ func TestDeployScanReusesAnUnchangedArtifactsResult(t *testing.T) {
 				"./init", appsRoot, slog.New(slog.DiscardHandler)).
 				WithStorage(backend).
 				WithGrypeRun(stubGrype)
+			installed := &deployScanIdentity{id: scannerIdentity{Version: "0.116.0", DBVersion: "v6.1.2", DBBuiltAt: "2026-10-28T00:00:00Z"}}
+			if !tc.noProbe {
+				h.WithScannerIdentity(installed.probe).WithScannerDBUpdater(func(context.Context) error { return nil })
+			}
 			ctx := context.Background()
 			acct, err := h.store.CreateAccount(ctx, "reuse@example.com", api.PlanPro)
 			if err != nil {
@@ -88,7 +109,7 @@ func TestDeployScanReusesAnUnchangedArtifactsResult(t *testing.T) {
 			}
 			first := deploy("layer")
 			if tc.before != nil {
-				tc.before(h)
+				tc.before(h, installed)
 			}
 			second := deploy(tc.secondArt)
 
