@@ -1,6 +1,6 @@
 # ADR-20261020085706 · Release approvals
 
-- **Status:** accepted (shipped in PR 5126, 2026-10-22); n2 metal drill passed 2026-10-26 (hold, self-approval refusal, approve, reject, notices); amendment 1 (2026-10-26)
+- **Status:** accepted (shipped in PR 5126, 2026-10-22); n2 metal drill passed 2026-10-26 (hold, self-approval refusal, approve, reject, notices); amendments 1-2 (2026-10-26, 2026-10-27), 3 (2026-10-28)
 - **Date:** 2026-10-20
 - **Amends:** [ADR-1446](1446-safe-releases-by-default.md) (the default canary), [ADR-1447](1447-explained-rollout-decisions.md) (rollout decision rules)
 - **Uses:** organization roles ([ADR-061](061-organizations-and-memberships.md)), deploy attribution (`deployments.deployed_by_user_id`), release freezes ([ADR-20261019071733](20261019071733-deploy-freezes-and-release-windows.md))
@@ -188,3 +188,17 @@ A security audit found two ways around an app's policy.
 
 - **A protected environment's promotion approval is one decision.** Amendment 1 let it stand in for every promoted app's policy, but anyone who may promote could approve their own promotion, which an app with `allow_self_approval: false` (the default) forbids, and one approval cannot meet `approvals: 2`. The approval now records who gave it (`project_environment_approvals.approved_by_account_id`). A promotion into a protected production environment is refused for an app whose policy asks for more than one approval (`409 release_approval_canary_required`: release it with a canary), and, when the policy forbids self-approval, for an approval its own promoter gave or that predates the column (`403 release_approval_self`).
 - **A rollback to a release that never took traffic is a forward release.** A rollback may target a release that is live at 0%. That covers a release demoted by `traffic promote`, but also one deployed with `--no-traffic` or parked for its schedule. Rolling back to such a release now meets the checks a traffic increase meets (`releaseApprovalTrafficProblem`): a scheduled release waits for its start, a release that waits for approval or was rejected is refused, and a parked release that needs a canary is refused. Plain and checked rollbacks, and automated route-monitor rollbacks, share the check. A superseded target served before and needs none.
+
+## Amendment 3 (2026-10-28): decided releases, and releases without a known deployer
+
+- **An approved release is decided.** apid accepted decisions after a
+  release reached its approvals: a later reject aborted the approved release
+  mid-rollout, and each later approval sent "approved" again. Decisions on an
+  approved release are now refused (`409 release_approval_decided`); stopping
+  it is an abort of its rollout.
+- **No known deployer, one more approval.** A GitHub push records a GitHub
+  login, not a Gregale account, so the self-approval rule could not recognise
+  its author, who could approve their own push. When the policy forbids
+  self-approval and the release has no recorded deployer, it needs one more
+  approval than the policy asks, so at least one approver is someone else.
+  The status shows the higher `required_approvals`.

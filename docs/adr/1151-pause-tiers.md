@@ -6,7 +6,8 @@
   default: vmmd `quiet_pause`, schedd `quiet_pause_admission` and schedd
   `frozen_tier` (2026-10-13). Step 3 is built for request-mode apps behind
   schedd `frozen_tier_apps`, also off by default (2026-10-15). The canaries
-  are pending.
+  are pending. Amended 2026-10-27: vmmd `quiet_pause` and schedd
+  `frozen_tier_apps` are on by default (see "Amendment 2026-10-27").
 - Date: 2026-10-12
 - Builds on: ADR-906 (frozen instances: prototype, measurements,
   economics), ADR-909 (measured admission), ADR-074 (warm pool), ADR-159
@@ -317,3 +318,38 @@ amendment under "Decision".)
 2. Is a soft CPU guarantee for quiet resumes acceptable, or should resumes
    wait for a vCPU token? The step 1 canary measures how far active vCPU
    exceeds the budget in practice.
+
+## Amendment 2026-10-27: quiet pause and frozen apps on by default
+
+Production measurements on rc.297, 2026-10-27, with the switches on in
+compute-1's (fsn-2) `vmmd.toml` and `schedd.toml` (frozen tier itself on
+since 2026-10-22 through a schedd drop-in on both compute nodes):
+
+- `quiet_pause`: `h10-fn-go` (a function, so `between_requests`) at one
+  request per 5 s paused 27 times in 120 s, resume mean 1.1 ms and p90
+  2.4 ms, no resume errors; client p50 196 ms against a 250 ms baseline.
+  Apps default to `pause: when_idle` and were not paused. Quiet pause was
+  then turned on on compute-2 (fsn-3) as well.
+- `frozen_tier_apps`: request-mode apps thawed in 6-12 ms on the vmmd side;
+  platform wake mean 108 ms for thaws against 539 ms for snapshot restores
+  (vmmd restore 225-241 ms). Across a vmmd restart a freeze fails and the
+  instance parks instead, as designed.
+
+vmmd `quiet_pause` and schedd `frozen_tier_apps` now default to on
+(`cmd/vmmd/config.go`, `cmd/schedd/config.go`). `frozen_tier_apps` still does
+nothing unless `frozen_tier` is on, and `frozen_tier` stays off by default.
+`quiet_pause_admission`, `frozen_tier_workers` and early freeze
+(ADR-20261021215353) stay off. Because quiet pause wins over
+`quiet_pause_observe`, observing a node now needs `quiet_pause = false`.
+
+Billing is unchanged: a quiet-paused instance stays RUNNING and billed.
+schedd `quiet_pause_ledger` and meterd `quiet_pause_unbilled`
+(ADR-20261023171905) stay off by default; turning them on changes what a
+billed second is and remains a separate decision after the financial-model
+re-check that ADR names.
+
+Why the binary and not the node: release rollouts run `gregalectl manifest
+render` on every compute node (`deploy/ansible/node_join.yml`), which rewrites
+`/etc/faas/vmmd.toml` and `/etc/faas/schedd.toml` from the manifest. A
+switch set by hand in those files is lost at the next rollout and is never
+present on a new node; a default in the binary reaches both the same way.

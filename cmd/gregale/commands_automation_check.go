@@ -85,7 +85,7 @@ func cmdAutomationsCheck(args []string) int {
 		return 1
 	}
 	if strings.TrimSpace(*app) == "" || strings.TrimSpace(*path) == "" {
-		return printErr("Missing scenario options", errors.New("usage: gregale automations check --app <slug> --scenarios <path>"))
+		return printErr("Missing scenario options", errors.New("usage: gregale automation check --app <slug> --scenarios <path>"))
 	}
 	scenarios, err := loadAutomationScenarios(*path)
 	if err != nil {

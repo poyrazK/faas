@@ -14,6 +14,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -245,6 +246,15 @@ func open(ctx context.Context, dsnOverride, appName string, readOnly ...bool) (*
 }
 
 // poolConfig builds the ordinary pool's configuration for appName.
+// MigratorAppName is the application name cmd/migrate opens its pool with.
+const MigratorAppName = "faas-migrate"
+
+// Migration timeouts for the migrator's sessions (issue #579).
+const (
+	MigrationStatementTimeout = 30 * time.Second
+	MigrationLockTimeout      = 10 * time.Second
+)
+
 func poolConfig(dsn, appName string, readOnly bool) (*pgxpool.Config, error) {
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
@@ -269,6 +279,13 @@ func poolConfig(dsn, appName string, readOnly bool) (*pgxpool.Config, error) {
 	}
 	if readOnly {
 		cfg.ConnConfig.RuntimeParams["default_transaction_read_only"] = "on"
+	}
+	if appName == MigratorAppName {
+		// Issue #579: a hung or lock-starved migration fails the deploy
+		// instead of stalling it. A migration that needs longer sets its own
+		// bound with SET LOCAL (docs/runbooks/migration-rollback.md).
+		cfg.ConnConfig.RuntimeParams["statement_timeout"] = strconv.FormatInt(MigrationStatementTimeout.Milliseconds(), 10)
+		cfg.ConnConfig.RuntimeParams["lock_timeout"] = strconv.FormatInt(MigrationLockTimeout.Milliseconds(), 10)
 	}
 	// Safe under a transaction-mode pooler; a no-op without one.
 	applyPooledExecMode(cfg, dsn)

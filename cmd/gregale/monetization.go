@@ -85,8 +85,10 @@ func releasedUsage(command, usage string) string {
 func withoutMonetization(command cliCommand) cliCommand {
 	hidden := monetizationVerbs[command.Name]
 	command.Examples = slices.DeleteFunc(slices.Clone(command.Examples), func(example string) bool {
+		// The verb follows today's command (`gregale consumers <verb>`) or
+		// its tree path (`gregale api consumer <verb>`).
 		fields := strings.Fields(example)
-		return len(fields) > 2 && slices.Contains(hidden, fields[2])
+		return len(fields) > 2 && slices.ContainsFunc(fields[2:min(len(fields), 4)], func(word string) bool { return slices.Contains(hidden, word) })
 	})
 	if command.Subcommands == nil {
 		return command

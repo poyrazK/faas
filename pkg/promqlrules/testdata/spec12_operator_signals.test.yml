@@ -708,3 +708,77 @@ tests:
               summary: "fsn-2.gregale.dev:9092 cannot read edge rules (failed)"
               description: "gateway_edge_rule_load_total{outcome=\"failed\"} kept rising on fsn-2.gregale.dev:9092 for 5m. last_known: hosts get their last compiled rules and rule edits do not apply. failed: hosts with nothing compiled are refused with 503 Edge security unavailable."
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeRuleLoadFailing.md"
+
+  # ADR-091 amendment (2026-10-27, GA hardening): a heartbeat that stopped
+  # advancing fires; an advancing one and an unnamed gateway's zero stay quiet.
+  - interval: 1m
+    name: "stale edge listener heartbeat fires; live and unnamed gateways stay quiet"
+    input_series:
+      - series: 'gateway_edge_rule_listener_heartbeat_timestamp_seconds{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092"}'
+        values: '60x30'
+      - series: 'gateway_edge_rule_listener_heartbeat_timestamp_seconds{job="gatewayd-internal",instance="fsn-3.gregale.dev:9092"}'
+        values: '0+60x30'
+      - series: 'gateway_edge_rule_listener_heartbeat_timestamp_seconds{job="gatewayd-internal",instance="dev.local:9092"}'
+        values: '0x30'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: FaasEdgeRuleListenerStale
+        exp_alerts:
+          - exp_labels:
+              job: "gatewayd-internal"
+              instance: "fsn-2.gregale.dev:9092"
+              severity: "warn"
+              component: "gatewayd-internal"
+              family: "edge_rules"
+              public_status: "internal"
+            exp_annotations:
+              summary: "fsn-2.gregale.dev:9092 stopped stamping its edge-rule listener heartbeat"
+              description: "gateway_edge_rule_listener_heartbeat_timestamp_seconds on fsn-2.gregale.dev:9092 has not advanced for over 90s. apid now applies edge-rule changes without this gateway, which picks them up only as each host's 30s rule cache entry expires and does not hold hosts while a change converges."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeRuleConvergence.md"
+
+  # Repeated prepare failures fire; a quiet apply phase does not.
+  - interval: 1m
+    name: "edge-rule convergence failures fire per phase"
+    input_series:
+      - series: 'apid_edge_rule_convergence_failures_total{job="apid",instance="cp-1.gregale.dev:9090",phase="prepare"}'
+        values: '0+1x30'
+      - series: 'apid_edge_rule_convergence_failures_total{job="apid",instance="cp-1.gregale.dev:9090",phase="apply"}'
+        values: '0x30'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: FaasEdgeRuleConvergenceFailing
+        exp_alerts:
+          - exp_labels:
+              phase: "prepare"
+              severity: "warn"
+              component: "apid"
+              family: "edge_rules"
+              public_status: "internal"
+            exp_annotations:
+              summary: "Edge-rule changes are not converging (prepare)"
+              description: "apid_edge_rule_convergence_failures_total{phase=\"prepare\"} rose more than twice in 10m. prepare: customers' edge-rule edits are refused with 503 and nothing changes. apply: edits committed but a gateway did not acknowledge them, so its hosts stay held with 503 until the 10s fence expires."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeRuleConvergence.md"
+
+  # Fences that never clear fire; fences that come and go stay quiet.
+  - interval: 1m
+    name: "edge-rule fences held for 10m fire; brief fences stay quiet"
+    input_series:
+      - series: 'gateway_edge_rule_converging_hosts{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092"}'
+        values: '3x30'
+      - series: 'gateway_edge_rule_converging_hosts{job="gatewayd-internal",instance="fsn-3.gregale.dev:9092"}'
+        values: '1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1 0 1'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: FaasEdgeRuleConvergenceStuck
+        exp_alerts:
+          - exp_labels:
+              job: "gatewayd-internal"
+              instance: "fsn-2.gregale.dev:9092"
+              severity: "warn"
+              component: "gatewayd-internal"
+              family: "edge_rules"
+              public_status: "internal"
+            exp_annotations:
+              summary: "fsn-2.gregale.dev:9092 has held hosts behind edge-rule fences for 10 minutes"
+              description: "gateway_edge_rule_converging_hosts on fsn-2.gregale.dev:9092 has not dropped to zero for 10m. Requests to fenced hosts get 503 Edge policy update in progress. A fence expires 10s after its change is prepared, so one that never clears means changes keep being prepared without being applied."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeRuleConvergence.md"

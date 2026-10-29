@@ -12,6 +12,14 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// adr: 20261026151103
+func TestPgBillingRunsBillCompanyCustomersOnlyForMembers(t *testing.T) {
+	for _, member := range []bool{true, false} {
+		store, _, _ := pgStoreWithPool(t)
+		billingRunCompanyCustomersContract(t, store, member)
+	}
+}
+
 // adr: 1503 — runs discover customers from the month's billable usage,
 // lease their items to one worker, and schedules start one run per month.
 func TestPgBillingRunLifecycle(t *testing.T) {

@@ -19,6 +19,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -194,6 +195,19 @@ func checkFileWritable(path string) error {
 		return err
 	}
 	return f.Close()
+}
+
+// databasePinger is the part of *pgxpool.Pool the database signal needs.
+type databasePinger interface {
+	Ping(ctx context.Context) error
+}
+
+// registerDatabaseReadiness adds a Postgres ping to the probe (issue #571):
+// imaged reads and writes deployments, snapshots and builds in Postgres, so
+// an unreachable database flips /readyz within 5 s, as builderd's does.
+func registerDatabaseReadiness(ctx context.Context, p *wire.ReadyzProbe, pool databasePinger) {
+	sig, stop := wire.NewPGPingSignal(ctx, pool, 5*time.Second)
+	p.RegisterSignal(sig, stop)
 }
 
 func buildImageReadinessProbe(kind, storageRoot, cacheRoot string) *wire.ReadyzProbe {

@@ -24,6 +24,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -59,6 +60,10 @@ func (f *fakeS3Bucket) handler() http.Handler {
 		// path = /bucket/key
 		key := strings.TrimPrefix(r.URL.Path, "/"+bucketFromPath(r.URL.Path))
 		key = strings.TrimPrefix(key, "/")
+		if r.Method == http.MethodGet && r.URL.Query().Has("prefix") {
+			f.writeList(w, r.URL.Query().Get("prefix"))
+			return
+		}
 		if r.Method == http.MethodGet {
 			object, ok := f.objects[key]
 			if !ok {
@@ -72,6 +77,25 @@ func (f *fakeS3Bucket) handler() http.Handler {
 		f.objects[key] = body
 		w.WriteHeader(200)
 	})
+}
+
+// writeList answers a ListObjects request with every key under prefix, in
+// key order, on one page.
+func (f *fakeS3Bucket) writeList(w http.ResponseWriter, prefix string) {
+	var keys []string
+	for key := range f.objects {
+		if strings.HasPrefix(key, prefix) {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	b.WriteString("<ListBucketResult><IsTruncated>false</IsTruncated>")
+	for _, key := range keys {
+		b.WriteString("<Contents><Key>" + key + "</Key></Contents>")
+	}
+	b.WriteString("</ListBucketResult>")
+	_, _ = io.WriteString(w, b.String())
 }
 
 // bucketFromPath peels the bucket prefix off /bucket/key.

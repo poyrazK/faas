@@ -27,7 +27,7 @@ func cmdProjectsEnvironmentReleaseSets(args []string) int {
 	all := fs.Bool("all", false, "walk every page using --limit and --cursor")
 	limit := fs.Int("limit", api.ProjectReleaseSetPageDefault, "page size")
 	if err := fs.Parse(flags); err != nil || len(positional) != 2 || rejectUnexpectedFlagArgs(fs) || !api.ValidProjectSlug(positional[0]) || !api.ValidProjectEnvironmentSlug(positional[1]) {
-		PrintUsage(os.Stderr, "usage: gregale projects environments release-sets <project> <environment> [--cursor CURSOR] [--all] [--limit N]", "projects environments")
+		PrintUsage(os.Stderr, "usage: gregale environment release-sets <project> <environment> [--cursor CURSOR] [--all] [--limit N]", "projects environments")
 		return 1
 	}
 	if *limit < 1 || *limit > api.ProjectReleaseSetPageMax {
@@ -61,7 +61,7 @@ func cmdProjectsEnvironmentReleaseSets(args []string) int {
 		_, _ = fmt.Fprintf(osStdout, "%-36s %-6t %-8d %-30s %s\n", release.ID, release.Active, len(release.Members), release.CreatedAt.Format("2006-01-02T15:04:05Z07:00"), expiry)
 	}
 	if page.NextBefore != "" {
-		_, _ = fmt.Fprintf(osStdout, "next page: gregale projects environments release-sets %s %s --cursor '%s' --limit %d", positional[0], positional[1], strings.ReplaceAll(page.NextBefore, "'", "'\"'\"'"), *limit)
+		_, _ = fmt.Fprintf(osStdout, "next page: gregale environment release-sets %s %s --cursor '%s' --limit %d", positional[0], positional[1], strings.ReplaceAll(page.NextBefore, "'", "'\"'\"'"), *limit)
 		_, _ = fmt.Fprintln(osStdout)
 	}
 	return 0

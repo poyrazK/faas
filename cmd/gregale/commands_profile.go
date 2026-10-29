@@ -95,7 +95,7 @@ func validateSelectedProfile() error {
 	}
 	if name != "default" {
 		if _, ok := cfg.Profiles[name]; !ok {
-			return fmt.Errorf("unknown profile %q; run gregale profile list", name)
+			return fmt.Errorf("unknown profile %q; run gregale config profile list", name)
 		}
 	}
 	return nil
@@ -120,7 +120,7 @@ func cmdProfile(args []string) int {
 		return cmdProfileCheck(args[1:])
 	case "list":
 		if len(args) != 1 {
-			return printErr("Invalid profile usage", errors.New("usage: gregale profile list"))
+			return printErr("Invalid profile usage", errors.New("usage: gregale config profile list"))
 		}
 		names := []string{"default"}
 		for name := range cfg.Profiles {

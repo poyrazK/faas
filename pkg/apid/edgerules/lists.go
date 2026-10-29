@@ -6,9 +6,7 @@ package edgerules
 import (
 	"context"
 	"errors"
-	"maps"
 	"net/http"
-	"slices"
 	"sort"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -229,7 +227,10 @@ func (s *Service) UpdateEdgeRuleList(w http.ResponseWriter, r *http.Request, acc
 		api.WriteProblem(w, prob)
 		return
 	}
-	convergences, release, prob := s.prepareEdgeRuleListUpdate(r.Context(), store, acct.ID, name)
+	edit := ReferencedEdit{Operation: "list_updated", Subject: "edge rule list", Hosts: func(ctx context.Context) (map[string][]string, error) {
+		return s.edgeRuleListHosts(ctx, store, acct.ID, name)
+	}}
+	convergences, release, prob := s.PrepareReferencedEdit(r.Context(), edit)
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -237,7 +238,7 @@ func (s *Service) UpdateEdgeRuleList(w http.ResponseWriter, r *http.Request, acc
 	defer release(context.WithoutCancel(r.Context()))
 	l, refs, err := store.UpdateEdgeRuleList(r.Context(), acct.ID, name, params)
 	if err != nil {
-		abortEdgeRuleConvergences(r.Context(), convergences)
+		AbortEdgeRuleConvergences(r.Context(), convergences)
 	}
 	switch {
 	case errors.Is(err, state.ErrNotFound):
@@ -250,49 +251,11 @@ func (s *Service) UpdateEdgeRuleList(w http.ResponseWriter, r *http.Request, acc
 	s.Host.EmitAudit(r.Context(), "edge_rule_list.updated", &acct.ID, map[string]any{
 		"list_id": l.ID, "name": l.Name, "item_count": len(l.Items), "rules_touched": len(refs),
 	})
-	if prob := s.applyEdgeRuleListUpdate(r.Context(), w, l.ID, convergences); prob != nil {
+	if prob := s.ApplyReferencedEdit(r.Context(), w, edit, l.ID, convergences); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
 	httpkit.WriteJSON(w, http.StatusOK, EdgeRuleListResponse(l, refs, true))
-}
-
-// prepareEdgeRuleListUpdate puts a list edit through the generation barrier a
-// rule edit uses (issue #2683): before the write, every serving gateway fences
-// the hosts of the rules that reference the list, one convergence per app.
-// An unreferenced list changes no served policy and needs no barrier. The
-// returned release drops the account's edge-rule lock.
-func (s *Service) prepareEdgeRuleListUpdate(ctx context.Context, store state.EdgeRuleListStore, accountID, name string) ([]*EdgeRuleConvergence, func(context.Context), *api.Problem) {
-	noop := func(context.Context) {}
-	unavailable := api.ErrCapacity("edge-rule fleet convergence is unavailable; the edge rule list was not changed")
-	hosts, err := s.edgeRuleListHosts(ctx, store, accountID, name)
-	if err != nil {
-		return nil, noop, unavailable
-	}
-	if len(hosts) == 0 {
-		return nil, noop, nil
-	}
-	unlock, err := s.LockEdgeRuleMutations(ctx, slices.Sorted(maps.Keys(hosts)))
-	if err != nil {
-		return nil, noop, unavailable
-	}
-	// Read again under the account's lock, so a rule that started using the
-	// list in between is fenced too.
-	if hosts, err = s.edgeRuleListHosts(ctx, store, accountID, name); err != nil {
-		unlock(ctx)
-		return nil, noop, unavailable
-	}
-	convergences := make([]*EdgeRuleConvergence, 0, len(hosts))
-	for _, appID := range slices.Sorted(maps.Keys(hosts)) {
-		conv, err := s.PrepareEdgeRuleMutationLocked(ctx, appID, "", "list_updated", noop, hosts[appID]...)
-		if err != nil {
-			abortEdgeRuleConvergences(ctx, convergences)
-			unlock(ctx)
-			return nil, noop, unavailable
-		}
-		convergences = append(convergences, conv)
-	}
-	return convergences, unlock, nil
 }
 
 // edgeRuleListHosts maps each app with a rule referencing the list to those
@@ -314,32 +277,6 @@ func (s *Service) edgeRuleListHosts(ctx context.Context, store state.EdgeRuleLis
 		hosts[ref.AppID] = append(hosts[ref.AppID], rule.MatchHost)
 	}
 	return hosts, nil
-}
-
-// applyEdgeRuleListUpdate releases the fences after the write, oldest
-// generation first, and labels the response with the newest generation.
-func (s *Service) applyEdgeRuleListUpdate(ctx context.Context, w http.ResponseWriter, listID string, convergences []*EdgeRuleConvergence) *api.Problem {
-	if len(convergences) == 0 {
-		return nil
-	}
-	var applyErr error
-	for _, conv := range convergences {
-		applyErr = errors.Join(applyErr, conv.Apply(ctx, ""))
-	}
-	newest := convergences[len(convergences)-1]
-	if applyErr != nil {
-		newest.SetResponseState(w, "converging")
-		s.Host.Logger().Error("edge rule list saved but fleet convergence is incomplete", "list", listID, "generation", newest.Generation, "err", applyErr)
-		return api.ErrCapacity("edge rule list was saved but the serving fleet has not acknowledged it; read the list before retrying this change")
-	}
-	newest.SetResponseState(w, "active")
-	return nil
-}
-
-func abortEdgeRuleConvergences(ctx context.Context, convergences []*EdgeRuleConvergence) {
-	for _, conv := range convergences {
-		conv.Abort(ctx)
-	}
 }
 
 // edgeRuleListUpdateParams validates a PATCH body against the stored list.

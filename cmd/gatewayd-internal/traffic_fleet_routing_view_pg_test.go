@@ -90,18 +90,31 @@ func (p *cuttablePostgresProxy) setCut(cut bool) {
 
 // ADR-20261027085556: an app that served in the last ten minutes keeps
 // serving from the gateway's routing view while the control-plane Postgres is
-// unreachable, until the outage grace, and is refused after it. Two other
-// per-request Postgres reads are outside that decision and off here: central
-// rate and retry counters (process-local counters instead), and the financial
-// budget admission, which re-reads each app every second and fails closed.
+// unreachable, until the outage grace, and is refused after it. Central rate
+// and retry counters are outside that decision and off here (process-local
+// counters instead); the financial budget admission is off too and has its
+// own test below.
 func TestTrafficFleetDaemonServesFromRoutingViewDuringPostgresOutage(t *testing.T) {
+	assertFleetServesThroughPostgresOutage(t, fleetDaemonOptions{BudgetAdmissionOff: true}, "traffic_policy_unavailable")
+}
+
+// ADR-20261028083324: with production budget admission on, an app keeps
+// serving through the same outage: its last budget decision answers until
+// the budget grace, refreshed in the background, so neither check refuses
+// warm traffic inside the grace.
+func TestTrafficFleetDaemonBudgetAdmissionServesDuringPostgresOutage(t *testing.T) {
+	assertFleetServesThroughPostgresOutage(t, fleetDaemonOptions{BudgetGraceMS: 4000}, "traffic_policy_unavailable", "Budget admission unavailable")
+}
+
+func assertFleetServesThroughPostgresOutage(t *testing.T, options fleetDaemonOptions, refusals ...string) {
+	t.Helper()
 	f := newFleetDaemonFixture(t)
 	config := f.pool.Config().ConnConfig
 	proxy := startCuttablePostgresProxy(t, net.JoinHostPort(config.Host, strconv.Itoa(int(config.Port))))
 	const grace = 4 * time.Second
-	daemon := startFleetDaemonConfigured(t, f.pool, f.apps, f.nodes[0].ID, f.nodes[0].Name, f.usage, fleetDaemonOptions{
-		LocalCounters: true, DatabaseAddr: proxy.listener.Addr().String(), RoutingGraceMS: int(grace / time.Millisecond),
-		LogWarnings: true, CachedHostPolicy: true, BudgetAdmissionOff: true})
+	options.LocalCounters, options.DatabaseAddr, options.RoutingGraceMS = true, proxy.listener.Addr().String(), int(grace/time.Millisecond)
+	options.LogWarnings, options.CachedHostPolicy = true, true
+	daemon := startFleetDaemonConfigured(t, f.pool, f.apps, f.nodes[0].ID, f.nodes[0].Name, f.usage, options)
 	t.Cleanup(func() {
 		if t.Failed() {
 			daemon.stop(t)
@@ -110,9 +123,12 @@ func TestTrafficFleetDaemonServesFromRoutingViewDuringPostgresOutage(t *testing.
 	})
 	app := f.apps[2]
 	fleetDaemonCall(t, daemon, app, "/view", http.StatusOK)
-	// Let one refresh land, so the outage starts from a refreshed view.
+	// Let one refresh land, so the outage starts from a refreshed view. The
+	// second call also starts the budget decision's background refresh; give
+	// it time to land before the cut, or the grace counts from the read before.
 	time.Sleep(1500 * time.Millisecond)
 	fleetDaemonCall(t, daemon, app, "/view", http.StatusOK)
+	time.Sleep(500 * time.Millisecond)
 	proxy.setCut(true)
 	cut := time.Now()
 	served := 0
@@ -134,15 +150,19 @@ func TestTrafficFleetDaemonServesFromRoutingViewDuringPostgresOutage(t *testing.
 		time.Sleep(200 * time.Millisecond)
 	}
 	if refusedAt.IsZero() {
-		t.Fatalf("the routing view admitted %d requests past its grace", served)
+		t.Fatalf("admitted %d requests past the grace", served)
 	}
 	// The last successful refresh is at most one interval before the cut.
 	if elapsed := refusedAt.Sub(cut); elapsed < grace-1500*time.Millisecond || served < 5 {
 		t.Fatalf("refused %s after the cut with %d served (status=%d body=%q); want service until the %s grace",
 			elapsed, served, refused.status, refused.body, grace)
 	}
-	if refused.status != http.StatusServiceUnavailable || !strings.Contains(refused.body, "traffic_policy_unavailable") {
-		t.Fatalf("past the grace: status=%d body=%q; want 503 traffic_policy_unavailable", refused.status, refused.body)
+	known := false
+	for _, refusal := range refusals {
+		known = known || strings.Contains(refused.body, refusal)
+	}
+	if refused.status != http.StatusServiceUnavailable || !known {
+		t.Fatalf("past the grace: status=%d body=%q; want 503 naming one of %q", refused.status, refused.body, refusals)
 	}
 	t.Logf("served %d requests for %s with Postgres unreachable, refused after", served, refusedAt.Sub(cut).Round(time.Millisecond))
 	proxy.setCut(false)

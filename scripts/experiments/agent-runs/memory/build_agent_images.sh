@@ -19,7 +19,7 @@ stages=("$@")
 [[ ${#stages[@]} -gt 0 ]] || stages=(pull install fidelity images)
 
 registry=mirror.gcr.io repo=library/node
-digest=sha256:76789712cd1ae89a1225eac9077010d68987a423588042dac30446f502f1858c
+digest=sha256:025b8e975a61d94e33abeafaad1255ef44e4898cf1a1b6446860009c72e6d284
 codex=0.163.0 opencode=1.19.3 claude=2.1.302
 express_old=4.21.1 express_new=4.21.2
 

@@ -14,7 +14,7 @@ import (
 
 func cmdJobsRegistry(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale jobs registry <list|set|rm> <job> [flags]", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale job registry <list|set|rm> <job> [flags]", "jobs")
 		return 1
 	}
 	switch args[0] {
@@ -32,7 +32,7 @@ func cmdJobsRegistry(args []string) int {
 
 func cmdJobsRegistryList(args []string) int {
 	if len(args) != 1 || !jobSlugPattern.MatchString(args[0]) {
-		PrintUsage(os.Stderr, "usage: gregale jobs registry list <job>", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale job registry list <job>", "jobs")
 		return 1
 	}
 	client, err := authedClient()
@@ -66,12 +66,12 @@ func cmdJobsRegistrySet(args []string) int {
 		return cmdJobsRegistrySetInteractive()
 	}
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale jobs registry set <job> --registry <h> --user <u> (--password-stdin|--password <p>)", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale job registry set <job> --registry <h> --user <u> (--password-stdin|--password <p>)", "jobs")
 		return 1
 	}
 	job := args[0]
 	if !jobSlugPattern.MatchString(job) {
-		PrintUsage(os.Stderr, "usage: gregale jobs registry set <job> (job must be 3..40 lowercase / digits / hyphens)", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale job registry set <job> (job must be 3..40 lowercase / digits / hyphens)", "jobs")
 		return 1
 	}
 	fs := newFlagSet("jobs-registry-set", flag.ContinueOnError)
@@ -100,7 +100,7 @@ func cmdJobsRegistrySet(args []string) int {
 		*password = value
 	}
 	if *registry == "" || *username == "" || *password == "" {
-		PrintUsage(os.Stderr, "usage: gregale jobs registry set <job> --registry <h> --user <u> (--password-stdin|--password <p>)", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale job registry set <job> --registry <h> --user <u> (--password-stdin|--password <p>)", "jobs")
 		return 1
 	}
 	registryAPI, err := registryInputForAPI(*registry)
@@ -136,7 +136,7 @@ func cmdJobsRegistryRm(args []string) int {
 		return cmdJobsRegistryRmInteractive()
 	}
 	if len(args) != 3 || args[1] != "--registry" || !jobSlugPattern.MatchString(args[0]) || args[2] == "" {
-		PrintUsage(os.Stderr, "usage: gregale jobs registry rm <job> --registry <h>", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale job registry rm <job> --registry <h>", "jobs")
 		return 1
 	}
 	registryAPI, err := registryInputForAPI(args[2])

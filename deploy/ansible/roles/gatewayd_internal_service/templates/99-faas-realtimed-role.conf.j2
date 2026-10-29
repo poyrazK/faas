@@ -7,6 +7,16 @@ Environment=FAAS_REALTIME_ROLE={{ faas_box_role }}
 # compute-node registry. The nftables role restricts port 9107 to the
 # configured control-plane CIDRs; do not expose it through the public rule.
 Environment=FAAS_REALTIME_HEALTH_LISTEN=0.0.0.0:9107
+{% if gatewayd_app_errors_target | default('') | length > 0 %}
+# Fair use syncs connection counts through apid's private mTLS listener, which
+# serves RealtimeHistory to compute-only nodes. The default target is the
+# single-box Unix socket, absent here (Hunt 14 H14-110). gatewayd-internal's
+# apid client leaf is already readable by the faas group realtimed runs as.
+Environment=FAAS_REALTIME_HISTORY_TARGET={{ gatewayd_app_errors_target }}
+Environment=FAAS_REALTIME_HISTORY_TLS_CERT_PATH={{ gatewayd_app_errors_tls_cert_path }}
+Environment=FAAS_REALTIME_HISTORY_TLS_KEY_PATH={{ gatewayd_app_errors_tls_key_path }}
+Environment=FAAS_REALTIME_HISTORY_TLS_CA_PATH={{ gatewayd_app_errors_tls_ca_path }}
+{% endif %}
 {% endif %}
 {% if (faas_realtime_live_tls_managed | default(false) | string | lower) in ['true', 'yes', 'on', '1'] %}
 # Live queries (ADR-20261016151947): realtimed dials livequeryd hubs over

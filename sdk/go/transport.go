@@ -1,10 +1,13 @@
 package faas
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -92,9 +95,11 @@ func (l *loggingRoundTripper) RoundTrip(req *http.Request) (*http.Response, erro
 }
 
 // retryRoundTripper retries on 5xx and 429 with bounded
-// exponential backoff. It does NOT retry on other 4xx (the
-// server is telling us the request is wrong; retrying won't
-// help) or on network errors (those bubble up immediately so
+// exponential backoff. It also retries a traffic policy check that
+// ran out of time (422 traffic_policy_too_complex with Retry-After):
+// the refusal saved nothing and asks to be resent. It does NOT retry
+// on other 4xx (the server is telling us the request is wrong;
+// retrying won't help) or on network errors (those bubble up immediately so
 // the caller's context cancellation / deadline takes effect).
 //
 // Body rewind: net/http populates req.GetBody for all
@@ -146,9 +151,10 @@ func (r *retryRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 		return r.next.RoundTrip(req)
 	}
 	var lastResp *http.Response
+	var retryAfter time.Duration
 	for attempt := 0; attempt <= r.max; attempt++ {
 		if attempt > 0 {
-			delay := r.backoff << (attempt - 1)
+			delay := max(r.backoff<<(attempt-1), retryAfter)
 			timer := time.NewTimer(delay)
 			select {
 			case <-timer.C:
@@ -175,10 +181,19 @@ func (r *retryRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 			return resp, err
 		}
 		lastResp = resp
-		// Retry on 5xx and 429 only. 4xx other than 429 is
-		// a client-side problem; the server is not going to
-		// change its mind on a retry.
+		// Retry on 5xx and 429, and on a timed-out policy check. Other
+		// 4xx are a client-side problem; the server is not going to
+		// change its mind on a retry. The last answer keeps its body
+		// so the caller can decode the problem.
+		retryAfter = 0
 		if resp.StatusCode < 500 && resp.StatusCode != http.StatusTooManyRequests {
+			wait, timedOut := policyCheckTimedOut(resp)
+			if !timedOut {
+				return resp, nil
+			}
+			retryAfter = wait
+		}
+		if attempt == r.max {
 			return resp, nil
 		}
 		// Drain + close before retrying so the connection can
@@ -189,6 +204,28 @@ func (r *retryRoundTripper) RoundTrip(req *http.Request) (*http.Response, error)
 		_ = resp.Body.Close()
 	}
 	return lastResp, nil
+}
+
+// policyCheckTimedOut reports a 422 traffic_policy_too_complex that carries
+// Retry-After (the policy check ran out of time on a busy control plane) and
+// the wait it asks for. It reads at most 64 KiB of the body and puts it back.
+func policyCheckTimedOut(resp *http.Response) (time.Duration, bool) {
+	seconds, err := strconv.Atoi(strings.TrimSpace(resp.Header.Get("Retry-After")))
+	if resp.StatusCode != http.StatusUnprocessableEntity || err != nil || seconds < 0 || resp.Body == nil {
+		return 0, false
+	}
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	resp.Body = struct {
+		io.Reader
+		io.Closer
+	}{io.MultiReader(bytes.NewReader(data), resp.Body), resp.Body}
+	var problem struct {
+		Code string `json:"code"`
+	}
+	if json.Unmarshal(data, &problem) != nil || problem.Code != "traffic_policy_too_complex" {
+		return 0, false
+	}
+	return min(time.Duration(seconds)*time.Second, 10*time.Second), true
 }
 
 // transportRetryContextKey marks a request whose caller owns retry

@@ -1,6 +1,4 @@
-# Public control-plane nodes must retain customer logs off host.
+# Public control-plane nodes must retain customer logs off host. The bucket
+# comes from the manifest's log_archive section (rendered into inventory
+# host_vars); without one, each host keeps the envelope already provisioned.
 faas_log_archive_required: true
-faas_log_archive_bucket: gregale-log-archive-5ae37259
-faas_log_archive_endpoint: https://storage.googleapis.com
-faas_log_archive_region: auto
-faas_log_archive_auth_mode: gcp_metadata

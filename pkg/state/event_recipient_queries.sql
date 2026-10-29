@@ -82,7 +82,7 @@ WITH candidate AS (
 ), claimed AS (
     UPDATE event_fanout_recipients r
     SET state = 'processing', claim_token = gen_random_uuid(),
-        lease_until = sqlc.arg(now_at)::timestamptz + interval '5 minutes',
+        lease_until = sqlc.arg(now_at)::timestamptz + interval '1 minute',
         attempts = r.attempts + 1, total_attempts = r.total_attempts + 1
     FROM candidate c
     WHERE r.outbox_id = c.outbox_id AND r.subscription_id = c.subscription_id
@@ -178,7 +178,7 @@ WITH eligible AS MATERIALIZED (
 ), claimed AS (
     UPDATE event_fanout_recipients r
     SET state = 'processing', claim_token = gen_random_uuid(),
-        lease_until = sqlc.arg(now_at)::timestamptz + interval '5 minutes',
+        lease_until = sqlc.arg(now_at)::timestamptz + interval '1 minute',
         attempts = r.attempts + 1, total_attempts = r.total_attempts + 1
     FROM candidate c
     WHERE r.outbox_id = c.outbox_id AND r.subscription_id = c.subscription_id
@@ -372,7 +372,7 @@ WITH candidate AS (
  FOR UPDATE OF o SKIP LOCKED LIMIT 1
 ), claimed AS (
  UPDATE event_fanout_outbox o SET state='processing',claim_token=gen_random_uuid(),
- lease_until=sqlc.arg(now_at)::timestamptz+interval '5 minutes',attempts=o.attempts+1
+ lease_until=sqlc.arg(now_at)::timestamptz+interval '1 minute',attempts=o.attempts+1
  FROM candidate c WHERE o.id=c.id RETURNING o.*
 ), fairness AS (
  INSERT INTO event_routing_fairness
@@ -432,7 +432,7 @@ WITH eligible AS MATERIALIZED (
  FOR UPDATE OF o SKIP LOCKED LIMIT sqlc.arg(batch_limit)::integer
 ), claimed AS (
  UPDATE event_fanout_outbox o SET state='processing',claim_token=gen_random_uuid(),
- lease_until=sqlc.arg(now_at)::timestamptz+interval '5 minutes',attempts=o.attempts+1
+ lease_until=sqlc.arg(now_at)::timestamptz+interval '1 minute',attempts=o.attempts+1
  FROM candidate c WHERE o.id=c.id RETURNING o.*, c.position
 ), stamp AS MATERIALIZED (
  SELECT clock_timestamp() AS at
@@ -608,3 +608,17 @@ WHERE o.account_id=sqlc.arg(account_id)::uuid AND o.source=sqlc.arg(event_source
  AND r.recipient->>'app_id'=a.id::text AND r.recipient->>'id'=sqlc.arg(subscription_id)::text
  AND r.recipient->'workflow'->>'name'=sqlc.arg(workflow_name)::text
  AND p.progress->>'state'='failed';
+
+-- name: EventRoutingRenewReceiptClaims :execrows
+-- ADR-20261028131500: a sweep renews the receipt claims it still holds; a
+-- claim another worker took since has a new token and stays. The arrays
+-- are parallel: the select list unnests them in step.
+UPDATE event_fanout_outbox o SET lease_until=sqlc.arg(now_at)::timestamptz+interval '1 minute'
+WHERE o.state='processing' AND (o.id,o.claim_token) IN (
+    SELECT unnest(sqlc.arg(ids)::bigint[]), unnest(sqlc.arg(claim_tokens)::uuid[]));
+
+-- name: EventRecipientRenewClaims :execrows
+-- ADR-20261028131500: a sweep renews the recipient claims it still holds.
+UPDATE event_fanout_recipients r SET lease_until=sqlc.arg(now_at)::timestamptz+interval '1 minute'
+WHERE r.state='processing' AND (r.outbox_id,r.subscription_id,r.claim_token) IN (
+    SELECT unnest(sqlc.arg(outbox_ids)::bigint[]), unnest(sqlc.arg(subscription_ids)::text[]), unnest(sqlc.arg(claim_tokens)::uuid[]));

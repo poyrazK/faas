@@ -114,9 +114,9 @@ func (v *bindingProgressView) observe(p bindingrun.Progress) error {
 	return nil
 }
 func (v *bindingProgressView) recovery() *bindingRecoverySummary {
-	prefix := fmt.Sprintf("gregale bindings verification-runs %%s %s %s", v.app, v.id)
+	prefix := fmt.Sprintf("gregale app binding verification-runs %%s %s %s", v.app, v.id)
 	if v.project != "" {
-		prefix = fmt.Sprintf("gregale projects environments release-sets verification-runs %%s %s %s %s", v.project, v.environment, v.id)
+		prefix = fmt.Sprintf("gregale environment release-sets verification-runs %%s %s %s %s", v.project, v.environment, v.id)
 	}
 	return &bindingRecoverySummary{RunID: v.id, LastStatus: v.lastStatus, LastOperation: v.lastOperation, LastQualification: copyBindingQualification(v.lastQualification), StatusCommand: fmt.Sprintf(prefix, "status"), DiagnosticsCommand: fmt.Sprintf(prefix, "diagnostics")}
 }
