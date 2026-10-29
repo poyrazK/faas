@@ -294,7 +294,7 @@ func runSealDomainMigrate(args []string) error {
 	dbEnv := fs.String("db-env", "", "systemd env file containing DATABASE_URL")
 	bindAccounts := fs.Bool("bind-accounts", false, "runtime only: re-seal every stored runtime secret bound to the account that owns it (ADR-20261023173624)")
 	runtimeSigningKey := fs.String("runtime-signing-key", "", "runtime only: apid's runtime secret signing key; signs what this re-seals (ADR 20261028161502)")
-	check := fs.Bool("check", false, "outbound only: write nothing, and fail while a value still opens with the fleet or host identity (run before its readers drop them)")
+	check := fs.Bool("check", false, "outbound and storage only: write nothing, and fail while a value still opens with the fleet or host identity (run before its readers drop them)")
 	jsonOut := fs.Bool("json", false, "emit JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -304,8 +304,8 @@ func runSealDomainMigrate(args []string) error {
 		return err
 	}
 	if *check {
-		if d != sealdomain.Outbound {
-			return errors.New("--check applies to --domain outbound only in this release")
+		if d != sealdomain.Outbound && d != sealdomain.Storage {
+			return errors.New("--check applies to --domain outbound and storage only in this release")
 		}
 		return runSealDomainCheck(*dsn, *dbEnv, d, *dir, *fleetKey, *hostKey, *jsonOut || jsonOutput)
 	}
@@ -442,7 +442,12 @@ func runSealDomainCheck(dsn, dbEnv string, d sealdomain.Domain, dir, fleetKey, h
 	if err != nil && !errors.Is(err, sealdomain.ErrNoIdentity) {
 		return err
 	}
-	report, err := sealmigrate.CheckOutbound(ctx, store, domain, legacy)
+	var report sealmigrate.MigrationReport
+	if d == sealdomain.Storage {
+		report, err = sealmigrate.CheckStorage(ctx, store, domain, legacy)
+	} else {
+		report, err = sealmigrate.CheckOutbound(ctx, store, domain, legacy)
+	}
 	if err != nil {
 		return err
 	}
