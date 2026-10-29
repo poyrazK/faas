@@ -194,6 +194,7 @@ func TestInternalReverseProxy_WakeFailover(t *testing.T) {
 		name         string
 		modes        []string // one node each, dialed in order
 		disabled     bool
+		chunked      bool // the client sent the body without a length
 		method, body string
 		budget       *failoverBudget
 		remaining    time.Duration // request budget left; 0 = none attached
@@ -220,6 +221,10 @@ func TestInternalReverseProxy_WakeFailover(t *testing.T) {
 		{name: "a guest's forged marker is never retried", modes: []string{"forge", "serve"},
 			wantStatus: 503, wantRequests: []int{1, 0}},
 		{name: "a body the edge did not buffer", modes: []string{"refuse", "serve"}, method: http.MethodPost, body: big,
+			wantStatus: 503, wantRequests: []int{1, 0},
+			wantObserved: []failoverObservation{{NotDispatchedWakeRefused, FailoverOutcomeBodyNotReplay}}},
+		// A chunked body streams to the first node; the edge has no copy.
+		{name: "a chunked body is not retried", modes: []string{"refuse", "serve"}, method: http.MethodPost, body: "chunk", chunked: true,
 			wantStatus: 503, wantRequests: []int{1, 0},
 			wantObserved: []failoverObservation{{NotDispatchedWakeRefused, FailoverOutcomeBodyNotReplay}}},
 		{name: "the retry budget is spent", modes: []string{"refuse", "serve"}, budget: newFailoverBudget(10, 0),
@@ -262,7 +267,11 @@ func TestInternalReverseProxy_WakeFailover(t *testing.T) {
 			if method == "" {
 				method = http.MethodGet
 			}
-			req := httptest.NewRequest(method, "/orders", strings.NewReader(tc.body))
+			var body io.Reader = strings.NewReader(tc.body)
+			if tc.chunked {
+				body = io.MultiReader(body)
+			}
+			req := httptest.NewRequest(method, "/orders", body)
 			req.Host = "shop.apps.gregale.dev"
 			// A client cannot pick the nonce.
 			req.Header.Set(DispatchNonceHeader, "client-chosen")
