@@ -21,12 +21,21 @@ import (
 
 // newEdgeRulesFixture boots the normal-path stack with one live Hobby app.
 // Hobby includes every kind used here (jwt and ip are paid-only) and leaves
-// the app's public routes open.
+// the app's public routes open. The gateway is a named serving node, so each
+// rule change waits for its acknowledgement before the API answers; without
+// one, apid has no gateway to wait for and a check would race the reload.
 func newEdgeRulesFixture(t *testing.T, slug string) *normalPathFixture {
 	t.Helper()
-	f := newNormalPathFixture(t, slug)
+	f := newNormalPathFixtureWithRequest(t, slug, api.PlanHobby, 0,
+		api.CreateAppRequest{Slug: slug, Type: string(state.AppTypeApp), RequireAuthn: boolPtr(false)},
+		"FAAS_E2E_GATEWAY_NODE_NAME="+state.DefaultLocalNodeName)
 	if f == nil {
 		return nil
+	}
+	var serving int
+	if err := f.h.Pool.QueryRow(f.ctx, `select count(*) from compute_nodes
+		where active and role in ('compute-node', 'compute-only') and coalesce(gateway_target_url, '') <> ''`).Scan(&serving); err != nil || serving != 1 {
+		t.Fatalf("serving gateways = %d (err %v), want the fixture's one", serving, err)
 	}
 	_, instance := createNormalPathLiveDeployment(t, f, f.app.ID, "v1")
 	f.vmmd.SetVersion(instance.ID, "v1")
@@ -93,7 +102,9 @@ func TestE2E_EdgeRules_KindsActOnPublicTraffic(t *testing.T) {
 	slug := f.app.Slug
 	get := func(method, path string, body any, headers map[string]string) (http.Header, []byte, int) {
 		t.Helper()
-		return doReqHeaders(t, f.h, f.host, method, path, body, headers)
+		return edgeRetry(t, method+" "+path, func() (http.Header, []byte, int) {
+			return doReqHeaders(t, f.h, f.host, method, path, body, headers)
+		})
 	}
 
 	redirect := createEdgeRuleViaAPI(t, f, slug, edgeRuleRequest("redirect", "/old", map[string]any{"status_code": 302, "to": "/new"}))
@@ -221,7 +232,9 @@ func TestE2E_EdgeRules_ListsAndRollback(t *testing.T) {
 	slug := f.app.Slug
 	get := func(path string) (http.Header, []byte, int) {
 		t.Helper()
-		return doReqHeaders(t, f.h, f.host, http.MethodGet, path, nil)
+		return edgeRetry(t, "GET "+path, func() (http.Header, []byte, int) {
+			return doReqHeaders(t, f.h, f.host, http.MethodGet, path, nil)
+		})
 	}
 
 	if body, code := doReq(t, f.h, f.key, http.MethodPost, "/v1/edge-rule-lists", api.CreateEdgeRuleListRequest{
@@ -290,7 +303,9 @@ func TestE2E_EdgeRules_DeletedAppRulesStopApplying(t *testing.T) {
 		"kind": "headers", "match_host": "*", "match_path": "/**",
 		"action": map[string]any{"response_headers": []map[string]any{{"name": "X-From-Other-App", "value": "yes", "action": "set"}}},
 	})
-	if hdr, body, _ := doReqHeaders(t, f.h, f.host, http.MethodGet, "/", nil); hdr.Get("X-From-Other-App") != "yes" {
+	if hdr, body, _ := edgeRetry(t, "GET /", func() (http.Header, []byte, int) {
+		return doReqHeaders(t, f.h, f.host, http.MethodGet, "/", nil)
+	}); hdr.Get("X-From-Other-App") != "yes" {
 		t.Fatalf("the other app's * rule does not cover this app's host: %v %s", hdr, body)
 	}
 
