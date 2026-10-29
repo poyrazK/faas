@@ -983,6 +983,9 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	// stream ends here once the declared body is relayed, not when the request
 	// budget expires (issue #2681).
 	refusalRemaining := int64(-1)
+	// refusalChunked decodes a chunked refusal the same way: the payload is
+	// relayed and the stream ends at the terminating chunk.
+	var refusalChunked *chunkedRefusal
 	var stopResponseWrites func()
 	defer func() {
 		if stopResponseWrites != nil {
@@ -1077,6 +1080,9 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 				upgradeReader <- nil
 				if isUpgradeRequest(r) && init.Error == "" {
 					refusalRemaining = rawResponseContentLength(init.GetHeaders())
+					if refusalRemaining < 0 && rawResponseChunked(init.GetHeaders()) {
+						refusalChunked = &chunkedRefusal{}
+					}
 				}
 			}
 			wroteHeader = true
@@ -1160,6 +1166,15 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			continue
 		}
 		if chunk := frame.GetBodyChunk(); len(chunk) > 0 {
+			if refusalChunked != nil {
+				decoded, derr := refusalChunked.feed(chunk)
+				if derr != nil {
+					log.Debug("gateway: malformed chunked upgrade refusal from the guest; ending the response",
+						"node", t.NodeID, "err", derr.Error())
+					break
+				}
+				chunk = decoded
+			}
 			if refusalRemaining >= 0 && int64(len(chunk)) > refusalRemaining {
 				chunk = chunk[:refusalRemaining]
 			}
@@ -1216,6 +1231,9 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 				if refusalRemaining == 0 {
 					break
 				}
+			}
+			if refusalChunked != nil && refusalChunked.done {
+				break
 			}
 		}
 	}

@@ -11,7 +11,7 @@ import (
 // Explicit version selection is the confirmation: this command permanently
 // removes exactly that immutable data version or marker.
 func cmdBucketVersionDelete(args []string) int {
-	usage := "usage: gregale bucket version-delete <app> <bucket-id> <key> <version-id>"
+	usage := "usage: gregale bucket version delete <app> <bucket-id> <key> <version-id>"
 	// Scripts pass --yes to every destructive command; here it was counted
 	// as a fifth argument and answered with a bare usage line (H10-130).
 	args = withoutConfirmationFlags(args)

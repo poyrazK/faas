@@ -1,4 +1,4 @@
-# Container qualification on main (2026-10-26/27)
+# Container qualification on main (2026-10-26/28)
 
 Source: main at `aae58d373b` plus the real-image smoke test and a test race fix from this change (run revision `9d04ebc0ef` and follow-ups). Main includes the container gap fixes #5453, #5454, #5455, #5457 and #5516, and the guestdisk fixes #5502 and #5503.
 
@@ -13,6 +13,7 @@ Host: `gregale-internal-test-1`. It has 2 vCPUs, nested KVM and Firecracker 1.7.
 | `TestGuestTmpKeepsImageFiles` (metal): image `/tmp` files stay visible under the tmpfs overlay | PASS |
 | `guest/init` package tests | PASS, after this change's ordering fix to `TestWorkloadSecretReloadPublishesAndReportsItsOwnIdentity` (ten runs). The fake host recorded a request only after answering it, and the loaded host reordered the requests. |
 | `TestFunctionExecutionProxy…`, `TestResumeAcceptSurvivesTransientErrors` | PASS with a short `TMPDIR`. They fail under a long `TMPDIR`, because the Unix socket path exceeds 108 bytes. |
+| `make test-container-guest-contract`'s script (2026-10-28, main `c2d9c248c6`), under a temporary delegated cgroup v2 parent with memory and cpu, removed afterwards with no leftover children | PASS: 30 passed, 0 skipped. It covers UID/GID transitions with distinct groups, atomic cgroup launch that fails closed, CPU and memory leaf limits, healthcheck timing and placement, and companion `/tmp` scratch capacity, ENOSPC, isolation and cleanup. This is the first execution of the scratch contract on Linux. |
 
 ## Real images (`TestRealImageSmokeMetal`, new)
 
@@ -26,12 +27,13 @@ Each image is pulled from Docker Hub through `mirror.gcr.io` (ADR-20261025114554
 | `zenika/alpine-chrome:124` | 13m47s | 50 ms | Headless Chromium renders a page (it needs `/dev/shm`), before and after restore |
 | `traefik/whoami:v1.10.1` (2026-10-28) | 5m59s | 35 ms | A static Go binary `FROM scratch`, with no shell and no `/etc/passwd`, starts as the image declares it and reports the guest's `10.0.0.2` |
 | `prom/prometheus:v2.53.0` (2026-10-28) | 9m25s | 38 ms | `USER nobody`, resolved by name from the image's `/etc/passwd`, starts and serves while writing its TSDB to the image's `/prometheus` |
+| `httpd:2.4.62-bookworm` (2026-10-28) | 9m3s | 27 ms | Apache httpd on Debian (glibc) serves "It works!" with the image's default command |
+| `node:22-bookworm-slim` (probe, 2026-10-28) | 7m52s | 43 ms | A cmd-only override (`-e <script>`) runs through the image's `docker-entrypoint.sh`, which prepends `node`. Node 22.23.4 matches the image's `NODE_VERSION`. The process loaded glibc 2.36. HOME is `/root`; PATH is the image's. Identical after restore. |
 
-The times to live include image pulls and full-rootfs assembly on the shared nested host. The two 2026-10-28 rows ran at revision `2f143fd581` (main plus those cases) in `/mnt/e2e-scratch/cq-rerun-20261027`, attempt 4, with leakcheck clean.
+The times to live include image pulls and full-rootfs assembly on the shared nested host. The `whoami` and `prometheus` rows ran at revision `2f143fd581` (main plus those cases) in `/mnt/e2e-scratch/cq-rerun-20261027`, attempt 4. The `httpd` and `node` rows ran at `45d97998c6` (main plus those cases) in `/mnt/e2e-scratch/cq-debnode-20261028`, attempt 1. Leakcheck was clean on both.
 
 Image qualification matrix (`docs/container-qualification.md`) cells these runs touch:
-- **Covered here:** static binary in a minimal root (`whoami`), named non-root user (`prometheus`), Alpine/musl servers, Python and JVM servers, nginx, and multi-platform index resolution (the official images are indexes; the amd64 manifest is selected).
-- **Not yet covered by a real image:** Debian/glibc servers and a Node server.
+- **Covered here:** static binary in a minimal root (`whoami`), named non-root user (`prometheus`), Alpine/musl and Debian/glibc servers, Node, Python and JVM servers, nginx, and multi-platform index resolution (the official images are indexes; the amd64 manifest is selected).
 - **Covered by other metal tests:** multiple TCP and UDP declarations (`TestTCPIngressMetal`, `TestUDPIngressMetal`) and a main application with a companion (`TestDirectOCIMainHealthcheckWithCompanionMetal`).
 - **Not covered by a public smoke test:** private-registry pulls, which need credentials.
 
@@ -59,11 +61,11 @@ The cause was that the gateway's deployment-routed wake and the raw TCP/UDP edge
 |---|---|---|---|
 | Wake after an explicit park torn down | Request admission left the app `evicted_cold` | #5672 | `TestBeforeCheckpointMetal` and `TestAfterRestoreMetal` PASS |
 | `TestTCPIngressMetal` refused | Source builds default to HTTP `GET /healthz` readiness, which a raw TCP service cannot answer. Only the probes before the bind were refused; later non-HTTP replies went uncounted. | #5672, ADR-20261027090000: a routed port declared as a public TCP listener uses TCP readiness | PASS |
-| `traffic_revocation_unavailable` on job logs and attach | Platform responses lacked the traffic-security snapshot through the public hop | #5611 (merged after this run's build) | not re-run |
+| `traffic_revocation_unavailable` on job logs and attach | Platform responses lacked the traffic-security snapshot through the public hop | #5611 (merged after this run's build) | `TestJobTaskLiveOutputMetal` and `TestInteractiveImageRunMetal` (pipes, tty, disconnect) PASS, 2026-10-28 |
 | PlanMatrix 401 on Pro/Scale | Test bug: `require_authn: false` leaves `public_auth_mode=bearer` | #5703 | Hobby, Pro, Scale PASS |
 | PlanMatrix Free 509 MB layer | **Product gap**: without ADR-1500's shared runtime (`FAAS_SOURCE_APP_SHARED_RUNTIME`, off everywhere), a Node source app's layer is the whole Railpack image | open; the default is off until ADR-1500's native acceptance | still FAIL |
 | QuotaNonCounting drop 0 | Test bug: Hobby's bucket refills 20 tokens/s, so it was full again after every stream | #5703 | PASS |
 | `TestAfterRestoreMetal` park 503 | Test bug: a 512 MB capture takes 6.5–7.3 s here, apid waits 5 s and answers a retryable 503 that `api.Client.park` retries. The test did not. | #5753 | PASS |
 | `TestAfterRestoreMetal` first wake 503 "wake failed" (one of three runs) | Unknown: the gateway refused it in 17 ms and logged no cause | #5748 now logs the cause of such a wake | did not recur |
 
-Re-runs used revisions `1380fa85c0`, `92961f1c5a` and `92514a2b61` (main plus the open fix) in `/mnt/e2e-scratch/cq-rerun-20261027`. Leakcheck was clean on all three.
+Re-runs used revisions `1380fa85c0`, `92961f1c5a` and `92514a2b61` (main plus the open fix) in `/mnt/e2e-scratch/cq-rerun-20261027`. Leakcheck was clean on all three. The #5611 re-run used main `c2d9c248c6` in `/mnt/e2e-scratch/cq-rerun-20261028`, attempt 1, with leakcheck clean.

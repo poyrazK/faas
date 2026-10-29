@@ -74,10 +74,6 @@ var ErrNotMetal = errors.New("builderd: VM spawn is metal-only; use a fake VM in
 // implementation.
 var ErrNoSlot = errors.New("builderd: no builder slot available")
 
-// ErrBuildDriveCapacity reports that the builder filesystem is short of the
-// space a build drive needs. It is temporary: the build is requeued.
-var ErrBuildDriveCapacity = errors.New("builderd: insufficient host free space for build drive")
-
 // ErrDraining is returned when a new build arrives after builderd has begun
 // shutting down. The durable queue remains the source of truth, so rejecting
 // new work here lets the next builderd instance claim it cleanly.
@@ -649,6 +645,28 @@ func (b *Builderd) stopIfBuildCancelled(ctx context.Context, claim state.Build) 
 	return true
 }
 
+// stopIfBuildOutpaced cancels a claimed build whose deployment a newer
+// revision has already outpaced: promotion would supersede it, so building it
+// only delays the newer deployment queued behind it (ADR-20261029103512).
+func (b *Builderd) stopIfBuildOutpaced(ctx context.Context, claim state.Build) bool {
+	store, ok := b.store.(state.OutpacedBuildStore)
+	if !ok {
+		return false
+	}
+	outpaced, err := store.SupersedeOutpacedBuild(ctx, claim)
+	if err != nil {
+		// Building is the safe default: promotion still fences the result.
+		b.log.Warn("builderd: check outpaced build", "build", claim.ID, "deployment", claim.DeploymentID, "err", err)
+		return false
+	}
+	if !outpaced {
+		return false
+	}
+	b.log.Info("builderd: skipped outpaced build", "build", claim.ID, "deployment", claim.DeploymentID)
+	b.emitBuildLog(ctx, claim.ID, "a newer deployment of this app was submitted; this build was skipped and the deployment superseded\n")
+	return true
+}
+
 // requeueClaim returns a worker-owned claim to the durable queue. Production
 // stores implement the claim-fenced capability; the legacy fallback preserves
 // compatibility with older state.Store implementations.
@@ -681,6 +699,9 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	if err != nil {
 		b.recoverClaimAfterLookupFailure(ctx, build, "load deployment", err)
 		return BuildResult{}, fmt.Errorf("builderd: load deployment: %w", err)
+	}
+	if b.stopIfBuildOutpaced(ctx, build) {
+		return BuildResult{}, nil
 	}
 	buildGate, stop, gateErr := b.admitBuildDependencies(ctx, build, dep)
 	if stop || gateErr != nil {
@@ -1211,17 +1232,6 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		handle, err = b.vm.Spawn(vmCtx, vmReq)
 	}
 	if err != nil {
-		// A full builder disk clears once another build's scratch drive or
-		// the node cache shrinks: requeue like a missing slot instead of
-		// failing the deploy (bug hunt 2026-10-28 B13).
-		if errors.Is(err, ErrBuildDriveCapacity) {
-			if rerr := b.requeueClaim(ctx, build, requeueCapacity); rerr != nil {
-				b.log.Warn("builderd: requeue on low disk", "build", build.ID, "err", rerr)
-			}
-			b.emitBuildLog(ctx, build.ID, "builder disk is short of space — requeued\n")
-			cancel()
-			return BuildResult{}, ErrNoSlot
-		}
 		var oomErr *builderSliceOOMError
 		if errors.As(err, &oomErr) {
 			b.ops.ObserveBuilderSliceOOMKills(oomErr.Delta)
@@ -1233,6 +1243,16 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 				"oom_kills", oomErr.Delta)
 			b.markFailedEx(ctx, build, state.FailureOOM, api.CodeBuildOOM, "", err.Error(), buildStart)
 			cancel()
+			return BuildResult{}, err
+		}
+		// A node without build disk is capacity, not a failed build: the
+		// deployment waits in the queue (ADR-20261029103512).
+		if errors.Is(err, ErrBuildDiskFull) {
+			cancel()
+			if b.requeueForBuildCapacity(ctx, build, err) {
+				return BuildResult{}, nil
+			}
+			b.markFailed(ctx, build, state.FailureInfra, "vm spawn: "+err.Error(), buildStart)
 			return BuildResult{}, err
 		}
 		// Translate a context-deadline to timeout-class; everything else is infra.
@@ -1623,7 +1643,36 @@ func (b *Builderd) emitBuildSucceeded(ctx context.Context, buildID string, durat
 // reality (instead of leaving it stuck in DeployBuilding forever).
 // The empty-string fc guard in pkg/state means a non-empty fc must be passed.
 // Also observes build_duration_seconds with outcome="failed".
+//
+// The deployment row also gets the failure class's code and guidance. Before,
+// only markFailedEx's classified failures carried one; every other failed
+// source deployment showed a bare message such as "build exited 1" or a
+// daemon error with no hint (ADR-20261029103512).
 func (b *Builderd) markFailed(ctx context.Context, claim state.Build, fc state.FailureClass, msg string, buildStart time.Time) bool {
+	if !b.failBuild(ctx, claim, fc, msg, buildStart) {
+		return false
+	}
+	b.explainBuildFailure(ctx, claim, buildFailureCode(fc), "", msg)
+	return true
+}
+
+// buildFailureCode is the deployment error code for a failure class.
+func buildFailureCode(fc state.FailureClass) string {
+	switch fc {
+	case state.FailureOOM:
+		return api.CodeStageImageBuildOOM
+	case state.FailureTimeout:
+		return api.CodeStageImageBuildTimeout
+	case state.FailureUserError:
+		return api.CodeBuildFailed
+	default:
+		return api.CodeBuildInfrastructure
+	}
+}
+
+// failBuild is the build-row, metrics, metering and event path shared by
+// markFailed and markFailedEx.
+func (b *Builderd) failBuild(ctx context.Context, claim state.Build, fc state.FailureClass, msg string, buildStart time.Time) bool {
 	if ctx.Err() != nil {
 		return false
 	}
@@ -1694,13 +1743,19 @@ func (b *Builderd) markFailed(ctx context.Context, claim state.Build, fc state.F
 // It flows through as the whycopy.Observed argument so the catalog
 // can render "npm install failed" vs "pip install failed" copy.
 func (b *Builderd) markFailedEx(ctx context.Context, claim state.Build, fc state.FailureClass, code, pkg, msg string, buildStart time.Time) {
-	depID, buildID := claim.DeploymentID, claim.ID
 	// 1. Run the legacy build-row / counters / metering path unchanged
 	// so all downstream observers (metrics, dashboard, build row
 	// table) see the same shape as a non-typed-code failure.
-	if !b.markFailed(ctx, claim, fc, msg, buildStart) {
+	if !b.failBuild(ctx, claim, fc, msg, buildStart) {
 		return
 	}
+	b.explainBuildFailure(ctx, claim, code, pkg, msg)
+}
+
+// explainBuildFailure stamps code and its whycopy prose on the failed
+// deployment row.
+func (b *Builderd) explainBuildFailure(ctx context.Context, claim state.Build, code, pkg, msg string) {
+	depID, buildID := claim.DeploymentID, claim.ID
 	// 2. Lift the customer-facing prose from the whycopy catalog.
 	// Decorate is a no-op when the catalog has no row for the code —
 	// the legacy deployment row stays with the bare error text flip.

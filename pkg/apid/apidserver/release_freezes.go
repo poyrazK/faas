@@ -210,34 +210,65 @@ func (s *server) releaseFreezeStatus(ctx context.Context, store state.ReleaseFre
 // store that cannot read freezes lets the release through: a freeze is a
 // guard rail, not an availability dependency.
 func (s *server) releaseFreezeProblem(r *http.Request, acct state.Account, app state.App, scope, override string) *api.Problem {
+	p, overridden := s.checkReleaseFreeze(r, acct, app, scope, override)
+	if overridden != nil {
+		s.audit.Emit(r.Context(), "release.freeze_overridden", &acct.ID, overridden)
+	}
+	return p
+}
+
+// checkReleaseFreeze is releaseFreezeProblem without the audit: it returns
+// the release.freeze_overridden payload of an accepted override.
+func (s *server) checkReleaseFreeze(r *http.Request, acct state.Account, app state.App, scope, override string) (*api.Problem, map[string]any) {
 	if p := s.platformReleasePauseProblem(); p != nil {
-		return p
+		return p, nil
 	}
 	now := time.Now().UTC()
 	active, err := freeze.ActiveFor(r.Context(), s.store, acct.ID, app.ID, scope, now)
 	if err != nil {
 		s.log.Warn("deploy freeze: could not read freezes; releasing", "app", app.ID, "err", err)
-		return nil
+		return nil, nil
 	}
 	if len(active) == 0 {
-		return nil
+		return nil, nil
 	}
 	if strings.TrimSpace(override) == "" {
 		s.releaseMetrics.Decision(releasemetrics.GuardFreeze, "refused")
-		return api.ErrReleaseFrozen(app.Slug, s.freezeViews(r.Context(), active, now))
+		return api.ErrReleaseFrozen(app.Slug, s.freezeViews(r.Context(), active, now)), nil
 	}
 	if prob := freeze.ValidateReason("override_freeze", override); prob != nil {
-		return prob
+		return prob, nil
 	}
 	s.releaseMetrics.Decision(releasemetrics.GuardFreeze, "overridden")
 	ids := make([]string, 0, len(active))
 	for _, f := range active {
 		ids = append(ids, f.ID)
 	}
-	s.audit.Emit(r.Context(), "release.freeze_overridden", &acct.ID, map[string]any{
-		"app": app.ID, "freezes": ids, "reason": strings.TrimSpace(override), "actor": configActor(r, acct),
-	})
-	return nil
+	return nil, map[string]any{"app": app.ID, "freezes": ids, "reason": strings.TrimSpace(override), "actor": configActor(r, acct)}
+}
+
+// pendingFreezeOverrideKey carries an accepted deploy override until the
+// deployment exists.
+type pendingFreezeOverrideKey struct{}
+
+// deferFreezeOverrideAudit holds an accepted override's audit until the
+// deployment is created (auditFreezeOverride). Emitted at the check, a deploy
+// that then failed validation left a release.freeze_overridden for a release
+// that never existed (release review 2026-10-28).
+func deferFreezeOverrideAudit(r *http.Request, overridden map[string]any) {
+	if overridden != nil {
+		*r = *r.WithContext(context.WithValue(r.Context(), pendingFreezeOverrideKey{}, overridden))
+	}
+}
+
+// auditFreezeOverride emits the deferred override of the deploy that created d.
+func (s *server) auditFreezeOverride(r *http.Request, acct state.Account, d state.Deployment) {
+	overridden, ok := r.Context().Value(pendingFreezeOverrideKey{}).(map[string]any)
+	if !ok || s.audit == nil {
+		return
+	}
+	overridden["deployment"] = d.ID
+	s.audit.Emit(r.Context(), "release.freeze_overridden", &acct.ID, overridden)
 }
 
 // retryReleaseProblem holds a retry to the guards a new production release
@@ -268,6 +299,38 @@ func (s *server) retryReleaseProblem(ctx context.Context, app state.App, dep sta
 		return api.ErrReleaseApprovalCanaryRequired(app.Slug)
 	}
 	return nil
+}
+
+// darkReleaseFreezeProblem refuses traffic for a release deployed without
+// traffic before the active freeze began (ADR-20261019071733 amendment 3). A
+// freeze refuses creating production releases, but a release parked dark the
+// day before could ship during it through `traffic`, promote or a rollback to
+// it, with no override and no audit (release review 2026-10-28). A release
+// deployed during the freeze passed the freeze check, or its audited
+// override, when it was created; one that completed a rollout served before
+// and is a rollback target, which freezes never refuse.
+func (s *server) darkReleaseFreezeProblem(ctx context.Context, app state.App, d state.Deployment) *api.Problem {
+	if d.Status != state.DeployLive || d.TrafficPercent != 0 || !d.TrafficPercentExplicit || d.RolloutCompletedAt != nil {
+		return nil
+	}
+	now := time.Now().UTC()
+	active, err := freeze.ActiveFor(ctx, s.store, app.AccountID, app.ID, d.Scope, now)
+	if err != nil {
+		s.log.Warn("deploy freeze: could not read freezes; releasing", "app", app.ID, "err", err)
+		return nil
+	}
+	var predate []state.ReleaseFreeze
+	for _, f := range active {
+		if start, ok := freeze.CurrentStart(f, now); ok && d.CreatedAt.Before(start) {
+			predate = append(predate, f)
+		}
+	}
+	if len(predate) == 0 {
+		return nil
+	}
+	s.releaseMetrics.Decision(releasemetrics.GuardFreeze, "refused")
+	return api.ErrReleaseFrozen(app.Slug, s.freezeViews(ctx, predate, now)).
+		WithHint("This release was deployed without traffic before the freeze began and has not served. Wait for the freeze to end, lift it with `gregale freeze lift`, or deploy it again with --override-freeze REASON; the override is audited.")
 }
 
 // promotionFreezeProblem applies releaseFreezeProblem to every app a new

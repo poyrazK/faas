@@ -23,7 +23,7 @@ func cmdWorkflowsWait(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 || (fs.Arg(0) != "latest" && !workflowUUIDPattern.MatchString(fs.Arg(0))) || *timeout <= 0 || *interval < time.Second || *interval > time.Hour {
-		return printErr("Invalid workflow wait options", errors.New("usage: gregale workflows wait RUN_ID|latest [--workflow-name NAME] [--app SLUG] [--timeout 5m] [--poll-interval 2s]; provide a UUID, a positive timeout, and a poll interval between 1s and 1h"))
+		return printErr("Invalid workflow wait options", errors.New("usage: gregale workflow wait RUN_ID|latest [--workflow-name NAME] [--app SLUG] [--timeout 5m] [--poll-interval 2s]; provide a UUID, a positive timeout, and a poll interval between 1s and 1h"))
 	}
 	target, code := validateWorkflowReadTarget(fs.Arg(0), *app, *name)
 	if code != 0 {
@@ -50,7 +50,7 @@ func waitWorkflowRun(client *api.Client, runID string, timeout, interval time.Du
 	ctx, cancel := context.WithTimeout(signalCtx, timeout)
 	defer cancel()
 	last := initial
-	resume := recoveryCLI() + " workflows wait " + recoveryArgument(runID) + " --timeout " + recoveryArgument(timeout.String())
+	resume := recoveryCLI() + " workflow wait " + recoveryArgument(runID) + " --timeout " + recoveryArgument(timeout.String())
 	stopWait := func(title string, err error) int {
 		if initial == nil {
 			return printErr(title, err)

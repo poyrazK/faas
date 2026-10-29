@@ -1215,6 +1215,8 @@ type Querier interface {
 	EventRecipientLockReceipt(ctx context.Context, db DBTX, id int64) (int64, error)
 	// Returns an unprocessed batch claim as if it had not been made.
 	EventRecipientReleaseClaim(ctx context.Context, db DBTX, arg EventRecipientReleaseClaimParams) (int64, error)
+	// ADR-20261028131500: a sweep renews the recipient claims it still holds.
+	EventRecipientRenewClaims(ctx context.Context, db DBTX, arg EventRecipientRenewClaimsParams) (int64, error)
 	EventRecipientReplay(ctx context.Context, db DBTX, arg EventRecipientReplayParams) (int64, error)
 	EventRecipientReplayCandidates(ctx context.Context, db DBTX, arg EventRecipientReplayCandidatesParams) ([]EventRecipientReplayCandidatesRow, error)
 	EventRecipientReplayGenerationGuard(ctx context.Context, db DBTX, arg EventRecipientReplayGenerationGuardParams) (EventRecipientReplayGenerationGuardRow, error)
@@ -1231,6 +1233,7 @@ type Querier interface {
 	EventRecoveryCandidates(ctx context.Context, db DBTX, arg EventRecoveryCandidatesParams) ([]EventRecoveryCandidatesRow, error)
 	EventRecoveryCaptureExecutionNotification(ctx context.Context, db DBTX, arg EventRecoveryCaptureExecutionNotificationParams) error
 	EventRecoveryClaimExecutionNotification(ctx context.Context, db DBTX, nowAt pgtype.Timestamptz) (EventRecoveryClaimExecutionNotificationRow, error)
+	EventRecoveryClearFailures(ctx context.Context, db DBTX, id pgtype.UUID) error
 	EventRecoveryCreate(ctx context.Context, db DBTX, arg EventRecoveryCreateParams) (pgtype.UUID, error)
 	EventRecoveryDeferExecutionNotification(ctx context.Context, db DBTX, arg EventRecoveryDeferExecutionNotificationParams) error
 	EventRecoveryEnqueueNotification(ctx context.Context, db DBTX, arg EventRecoveryEnqueueNotificationParams) error
@@ -1275,6 +1278,9 @@ type Querier interface {
 	EventRecoveryPrune(ctx context.Context, db DBTX, arg EventRecoveryPruneParams) (int64, error)
 	EventRecoveryPublishedVersion(ctx context.Context, db DBTX, arg EventRecoveryPublishedVersionParams) (int64, error)
 	EventRecoveryReadApp(ctx context.Context, db DBTX, arg EventRecoveryReadAppParams) (pgtype.UUID, error)
+	// ADR-20261028095548: a failed pass backs the job off, doubling from the
+	// minimum to the maximum delay, so the next job in line goes ahead.
+	EventRecoveryRecordFailure(ctx context.Context, db DBTX, arg EventRecoveryRecordFailureParams) (EventRecoveryRecordFailureRow, error)
 	EventRecoveryRecordReplay(ctx context.Context, db DBTX, arg EventRecoveryRecordReplayParams) error
 	EventRecoveryReplayCount(ctx context.Context, db DBTX, arg EventRecoveryReplayCountParams) (int64, error)
 	EventRecoveryResume(ctx context.Context, db DBTX, arg EventRecoveryResumeParams) error
@@ -1291,15 +1297,24 @@ type Querier interface {
 	EventReplayBackfillActiveJobCount(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	EventReplayBackfillAdoptReceipt(ctx context.Context, db DBTX, id int64) (int64, error)
 	EventReplayBackfillAdvance(ctx context.Context, db DBTX, arg EventReplayBackfillAdvanceParams) error
+	EventReplayBackfillCancelEndedItems(ctx context.Context, db DBTX, jobID pgtype.UUID) (int64, error)
 	EventReplayBackfillCandidates(ctx context.Context, db DBTX, arg EventReplayBackfillCandidatesParams) ([]EventReplayBackfillCandidatesRow, error)
 	EventReplayBackfillClaimTarget(ctx context.Context, db DBTX, arg EventReplayBackfillClaimTargetParams) ([]byte, error)
 	EventReplayBackfillClaimValid(ctx context.Context, db DBTX, arg EventReplayBackfillClaimValidParams) (bool, error)
+	EventReplayBackfillClearFailures(ctx context.Context, db DBTX, id pgtype.UUID) error
 	EventReplayBackfillCountRetryableFailed(ctx context.Context, db DBTX, jobID pgtype.UUID) (int64, error)
 	EventReplayBackfillCreate(ctx context.Context, db DBTX, arg EventReplayBackfillCreateParams) (pgtype.UUID, error)
+	EventReplayBackfillDropEndedRecipients(ctx context.Context, db DBTX, arg EventReplayBackfillDropEndedRecipientsParams) (int64, error)
+	// Ends a running job as cancelled, expired or failed. An expiry passes the
+	// idle cutoff, so a job that moved since it was read keeps running.
+	EventReplayBackfillEnd(ctx context.Context, db DBTX, arg EventReplayBackfillEndParams) (int64, error)
+	// Ended jobs whose undelivered items are not yet cancelled.
+	EventReplayBackfillEndedJobs(ctx context.Context, db DBTX, pageLimit int32) ([]pgtype.UUID, error)
 	EventReplayBackfillExists(ctx context.Context, db DBTX, arg EventReplayBackfillExistsParams) (bool, error)
 	EventReplayBackfillFinalize(ctx context.Context, db DBTX, id pgtype.UUID) error
 	EventReplayBackfillFinishItem(ctx context.Context, db DBTX, arg EventReplayBackfillFinishItemParams) (int64, error)
 	EventReplayBackfillGet(ctx context.Context, db DBTX, arg EventReplayBackfillGetParams) (EventReplayBackfillGetRow, error)
+	EventReplayBackfillIdleJobs(ctx context.Context, db DBTX, arg EventReplayBackfillIdleJobsParams) ([]pgtype.UUID, error)
 	EventReplayBackfillInFlightCount(ctx context.Context, db DBTX, jobID pgtype.UUID) (int64, error)
 	EventReplayBackfillInsertItem(ctx context.Context, db DBTX, arg EventReplayBackfillInsertItemParams) (int64, error)
 	EventReplayBackfillInsertRecipient(ctx context.Context, db DBTX, arg EventReplayBackfillInsertRecipientParams) (int64, error)
@@ -1307,11 +1322,16 @@ type Querier interface {
 	EventReplayBackfillItems(ctx context.Context, db DBTX, arg EventReplayBackfillItemsParams) ([]EventReplayBackfillItemsRow, error)
 	EventReplayBackfillLockAccountRange(ctx context.Context, db DBTX, accountID pgtype.UUID) error
 	EventReplayBackfillLockAnyJob(ctx context.Context, db DBTX, arg EventReplayBackfillLockAnyJobParams) (pgtype.UUID, error)
+	// The receipts of an ended job's undelivered recipients, locked in id order
+	// before their recipients, as routing locks them.
+	EventReplayBackfillLockEndedReceipts(ctx context.Context, db DBTX, arg EventReplayBackfillLockEndedReceiptsParams) ([]int64, error)
 	EventReplayBackfillLockJob(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error)
 	EventReplayBackfillLockParent(ctx context.Context, db DBTX, id int64) (EventFanoutOutbox, error)
 	EventReplayBackfillMarkScanned(ctx context.Context, db DBTX, id pgtype.UUID) error
 	EventReplayBackfillMaterializeSnapshot(ctx context.Context, db DBTX, id int64) error
-	EventReplayBackfillNextJob(ctx context.Context, db DBTX, inFlightMax int64) (EventReplayJob, error)
+	// A job backed off after a failed pass waits for its next_attempt_at
+	// (ADR-20261028095548), so the next job in line goes ahead.
+	EventReplayBackfillNextJob(ctx context.Context, db DBTX, arg EventReplayBackfillNextJobParams) (EventReplayJob, error)
 	// ADR-20261023215834: owners with an unheld settled receipt past their
 	// plan's window, oldest first, each with its cutoff. Every owner with a
 	// receipt has a usage row, and its retention index bounds each probe. An
@@ -1323,9 +1343,13 @@ type Querier interface {
 	EventReplayBackfillPruneJobs(ctx context.Context, db DBTX, arg EventReplayBackfillPruneJobsParams) (int64, error)
 	// Read provenance before taking the job lock, preserving job -> parent order.
 	EventReplayBackfillRecipientJob(ctx context.Context, db DBTX, arg EventReplayBackfillRecipientJobParams) (pgtype.UUID, error)
+	// ADR-20261028095548: a failed pass backs the job off, doubling from the
+	// minimum to the maximum delay. updated_at stays, so a failing job is idle.
+	EventReplayBackfillRecordFailure(ctx context.Context, db DBTX, arg EventReplayBackfillRecordFailureParams) (int32, error)
 	EventReplayBackfillResetItem(ctx context.Context, db DBTX, arg EventReplayBackfillResetItemParams) (int64, error)
 	EventReplayBackfillRetryCandidates(ctx context.Context, db DBTX, arg EventReplayBackfillRetryCandidatesParams) ([]EventReplayBackfillRetryCandidatesRow, error)
 	EventReplayBackfillSetRunning(ctx context.Context, db DBTX, id pgtype.UUID) error
+	EventReplayBackfillSettleReceipts(ctx context.Context, db DBTX, ids []int64) error
 	EventReplayBackfillTargetSnapshot(ctx context.Context, db DBTX, arg EventReplayBackfillTargetSnapshotParams) (EventReplayBackfillTargetSnapshotRow, error)
 	EventReplayBackfillTryLockAccountRange(ctx context.Context, db DBTX, accountID pgtype.UUID) (bool, error)
 	EventReplayBackfillWorkflowExpireRetry(ctx context.Context, db DBTX, arg EventReplayBackfillWorkflowExpireRetryParams) (int64, error)
@@ -1356,6 +1380,10 @@ type Querier interface {
 	EventRoutingRecordProgress(ctx context.Context, db DBTX, arg EventRoutingRecordProgressParams) (string, error)
 	// Returns an unprocessed adoption claim as if it had not been made.
 	EventRoutingReleaseAdoptionClaim(ctx context.Context, db DBTX, arg EventRoutingReleaseAdoptionClaimParams) (int64, error)
+	// ADR-20261028131500: a sweep renews the receipt claims it still holds; a
+	// claim another worker took since has a new token and stays. The arrays
+	// are parallel: the select list unnests them in step.
+	EventRoutingRenewReceiptClaims(ctx context.Context, db DBTX, arg EventRoutingRenewReceiptClaimsParams) (int64, error)
 	EventRoutingRetryLockTarget(ctx context.Context, db DBTX, arg EventRoutingRetryLockTargetParams) (EventSubscription, error)
 	EventRoutingRetrySet(ctx context.Context, db DBTX, arg EventRoutingRetrySetParams) error
 	EventRoutingRetryTarget(ctx context.Context, db DBTX, arg EventRoutingRetryTargetParams) (EventSubscription, error)
@@ -3439,6 +3467,13 @@ type Querier interface {
 	// newest excludes rollback targets, which are older than what they replaced.
 	// An immediate release may not stamp rollout_started_at; its baseline then
 	// ends when it completed.
+	// The predecessor is the release a plain rollback returns to
+	// (LatestRetainedRollbackDeployment): the one that served most recently, never
+	// a canary candidate aborted before it completed. Ordered by created_at, a
+	// canary aborted between v1 and v3 (retired as superseded when v3 completed)
+	// or a build superseded before it went live was chosen, so the watch compared
+	// v3 with a release that never served and rolled back to it (release review
+	// 2026-10-28).
 	ListPostReleaseWatchCandidates(ctx context.Context, db DBTX, arg ListPostReleaseWatchCandidatesParams) ([]ListPostReleaseWatchCandidatesRow, error)
 	ListProductionDeadLetterEvents(ctx context.Context, db DBTX, arg ListProductionDeadLetterEventsParams) ([]DeadLetterEvent, error)
 	ListProductionLifecycleHistory(ctx context.Context, db DBTX, arg ListProductionLifecycleHistoryParams) ([][]byte, error)
@@ -4091,6 +4126,7 @@ type Querier interface {
 	// count; the spend breaker sums the month through the usage primary key, one
 	// index range per database, so the ledger's growth never forces a full scan.
 	ManagedPostgresFleetTotals(ctx context.Context, db DBTX, arg ManagedPostgresFleetTotalsParams) (ManagedPostgresFleetTotalsRow, error)
+	ManagedPostgresMostSevereCapEvent(ctx context.Context, db DBTX, arg ManagedPostgresMostSevereCapEventParams) (ManagedPostgresMostSevereCapEventRow, error)
 	// ADR-20261025094915: managed PostgreSQL compute overage and cap subjects.
 	ManagedPostgresOverageEnabled(ctx context.Context, db DBTX, subjectID pgtype.UUID) (bool, error)
 	ManagedPostgresPersonalBindingReference(ctx context.Context, db DBTX, arg ManagedPostgresPersonalBindingReferenceParams) (bool, error)
@@ -4551,6 +4587,10 @@ type Querier interface {
 	ObserveEnvironmentGitOpsIntent(ctx context.Context, db DBTX, arg ObserveEnvironmentGitOpsIntentParams) ([]byte, error)
 	ObserveEnvironmentGitOpsRuntime(ctx context.Context, db DBTX, arg ObserveEnvironmentGitOpsRuntimeParams) ([]ObserveEnvironmentGitOpsRuntimeRow, error)
 	ObserveTrafficRetryOriginal(ctx context.Context, db DBTX, arg ObserveTrafficRetryOriginalParams) error
+	// ADR-20261028110044: which of the given route labels ("METHOD /path") the
+	// app served at or after since, so saving a route guard or monitor can warn
+	// about selectors no request matched.
+	ObservedRouteLabels(ctx context.Context, db DBTX, arg ObservedRouteLabelsParams) ([]string, error)
 	OpenAppConfigGuardWindow(ctx context.Context, db DBTX, arg OpenAppConfigGuardWindowParams) (int64, error)
 	// A node's open pauses, which schedd reconciles against the node's next report
 	// after it restarts.
@@ -5537,6 +5577,8 @@ type Querier interface {
 	ReadRouteHealthDeployment(ctx context.Context, db DBTX, arg ReadRouteHealthDeploymentParams) (ReadRouteHealthDeploymentRow, error)
 	ReadRouteHealthGate(ctx context.Context, db DBTX, arg ReadRouteHealthGateParams) ([]byte, error)
 	ReadRouteHealthHistoryEntry(ctx context.Context, db DBTX, arg ReadRouteHealthHistoryEntryParams) ([]byte, error)
+	// updated_at is when the status began; a hold keeps its first blocking
+	// decision's time while its context lasts (ADR-20261028110044).
 	ReadRouteHealthNotificationState(ctx context.Context, db DBTX, arg ReadRouteHealthNotificationStateParams) (ReadRouteHealthNotificationStateRow, error)
 	ReadRouteLifecycleApproval(ctx context.Context, db DBTX, arg ReadRouteLifecycleApprovalParams) ([]byte, error)
 	ReadRouteMonitorConfig(ctx context.Context, db DBTX, arg ReadRouteMonitorConfigParams) (string, error)
@@ -5615,6 +5657,10 @@ type Querier interface {
 	ReadTenantSurfaceTrafficAccount(ctx context.Context, db DBTX, surfaceID pgtype.UUID) (pgtype.UUID, error)
 	// Existing slug reservations, including tombstones/internal apps, keep their key.
 	ReadTrafficAliasHostnameConflict(ctx context.Context, db DBTX, hostLabel string) (bool, error)
+	// The synthetic hostnames a binding write on one app, or on every app of an
+	// account, may publish or release: each primary and alias URL, whatever the
+	// app's status (ADR-20261027163626).
+	ReadTrafficAppBindingHosts(ctx context.Context, db DBTX, arg ReadTrafficAppBindingHostsParams) ([]string, error)
 	// All hostname reservations, including inactive/deleted surfaces. Discovery
 	// transfers only identities and routing eligibility; no challenge or cert data.
 	ReadTrafficBindingClaims(ctx context.Context, db DBTX, arg ReadTrafficBindingClaimsParams) (ReadTrafficBindingClaimsRow, error)
@@ -6194,6 +6240,11 @@ type Querier interface {
 	// entire deployment/route/window request count as denominator. No request expansion.
 	RouteHealthClientErrorObservation(ctx context.Context, db DBTX, arg RouteHealthClientErrorObservationParams) ([]byte, error)
 	RouteHealthClock(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
+	// ADR-20261028110044: an app's in-flight canaries the enforce-mode route
+	// health guard holds now, and its canaries the guard aborted at or after
+	// since, newest first, for the route_health_holds alert metric. reason is the
+	// newest holding decision's. total counts every match.
+	RouteHealthHoldsSince(ctx context.Context, db DBTX, arg RouteHealthHoldsSinceParams) ([]RouteHealthHoldsSinceRow, error)
 	RouteHealthInvestigationCustomerExists(ctx context.Context, db DBTX, arg RouteHealthInvestigationCustomerExistsParams) (bool, error)
 	// Metadata only. Count all matching rows/weights before independently bounding
 	// each deployment/window. Error rows prefer trace links; latency rows prefer
@@ -6223,6 +6274,11 @@ type Querier interface {
 	// Only five cohorts and one hundred recovery identities per route are returned;
 	// full verdict and distinct counts are computed before either output cap.
 	RouteMonitorCustomerObservations(ctx context.Context, db DBTX, arg RouteMonitorCustomerObservationsParams) ([]byte, error)
+	// ADR-20261028110044: an app's production route monitor incidents open at any
+	// time at or after since (still open, or closed at or after since), newest
+	// first, for the route_monitor_incidents alert metric. total counts every
+	// match, not only the rows returned.
+	RouteMonitorIncidentsSince(ctx context.Context, db DBTX, arg RouteMonitorIncidentsSinceParams) ([]RouteMonitorIncidentsSinceRow, error)
 	RouteMonitorServingDeployments(ctx context.Context, db DBTX, appID string) ([]RouteMonitorServingDeploymentsRow, error)
 	RouteProbeObservations(ctx context.Context, db DBTX, arg RouteProbeObservationsParams) ([]RouteProbeObservationsRow, error)
 	// ADR-1446: probe totals per deployment over a canary stage, for meterd's

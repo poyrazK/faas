@@ -228,7 +228,7 @@ func DecodePush(body []byte) (PushEvent, error) {
 //   - body must be non-empty
 //   - action must be one of the four preview actions (D1)
 //   - number must be > 0
-//   - pull_request.head_sha must be a 40-char hex SHA
+//   - pull_request.head.sha (or head_sha) must be a 40-char hex SHA
 //   - pull_request.state must be "open" or "closed"
 //   - repository.full_name must be non-empty (the base repo)
 //
@@ -242,6 +242,15 @@ func DecodePullRequest(body []byte) (PullRequestEvent, error) {
 	}
 	if err := json.Unmarshal(body, &ev); err != nil {
 		return ev, err
+	}
+	// GitHub sends the head commit and branch only inside
+	// pull_request.head; the flat head_sha/head_ref fields are this
+	// package's own shape. Without this every real PR event was refused.
+	if ev.PullRequest.HeadSHA == "" {
+		ev.PullRequest.HeadSHA = ev.PullRequest.Head.SHA
+	}
+	if ev.PullRequest.HeadRef == "" {
+		ev.PullRequest.HeadRef = ev.PullRequest.Head.Ref
 	}
 	if !ev.Action.IsPreviewAction() {
 		// GitHub sends every pull_request action (edited, labeled,

@@ -20,7 +20,7 @@ func TestUnknownSubcommandListsTheVerbsAndTheVerbFirstForm(t *testing.T) {
 		arg  string
 		want []string
 	}{
-		{"projects environments", main.CmdProjectsEnvironments, "h14p", []string{"Subcommands: list, create,", "gregale projects environments list h14p"}},
+		{"projects environments", main.CmdProjectsEnvironments, "h14p", []string{"Subcommands: list, create,", "gregale environment list h14p"}},
 		{"debug requests", main.CmdDebugRequests, "h14-py", []string{"Subcommands: list, export,", "gregale debug requests list h14-py"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -32,6 +32,10 @@ var bridgeName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 // ErrStateLeaseLost reports that another process holds the bridge's lease.
 var ErrStateLeaseLost = errors.New("MCP state lease lost to another process")
 
+// ErrStateCommitFailed reports a write that could not be committed. Memory
+// then differs from what committed, so the store refuses further access.
+var ErrStateCommitFailed = errors.New("MCP state could not be committed")
+
 // PostgresStateOptions configure the hosted bridge's state.
 type PostgresStateOptions struct {
 	Pool *pgxpool.Pool
@@ -45,9 +49,11 @@ type PostgresStateOptions struct {
 	// AcquireTimeout bounds the wait for a predecessor's lease to expire. It
 	// defaults to twice the TTL plus five seconds.
 	AcquireTimeout time.Duration
-	// OnLeaseLost runs once after the store has disabled access because the
-	// lease was lost or could not be renewed in time. The process should exit.
-	OnLeaseLost func(error)
+	// OnFailure runs once after the store has disabled access: the lease was
+	// lost or could not be renewed in time (ErrStateLeaseLost), or a write
+	// could not be committed (ErrStateCommitFailed). The process should exit;
+	// a restart reloads what was committed.
+	OnFailure func(error)
 	// DiscardUnreadable starts empty, deleting the stored rows, when they do
 	// not open with KeyPath, instead of refusing to start. Every connection
 	// then signs in again. The hosted bridge sets it because its key is
@@ -81,7 +87,7 @@ func OpenPostgresStateStore(ctx context.Context, opts PostgresStateOptions) (*St
 	if _, err := rand.Read(holder); err != nil {
 		return nil, err
 	}
-	p := &pgState{pool: opts.Pool, q: sqlc.New(), bridge: opts.Bridge, holder: hex.EncodeToString(holder), aead: aead, ttl: opts.LeaseTTL, onLost: opts.OnLeaseLost, discardUnreadable: opts.DiscardUnreadable, onDiscard: opts.OnDiscard, stop: make(chan struct{}), done: make(chan struct{})}
+	p := &pgState{pool: opts.Pool, q: sqlc.New(), bridge: opts.Bridge, holder: hex.EncodeToString(holder), aead: aead, ttl: opts.LeaseTTL, onFailure: opts.OnFailure, discardUnreadable: opts.DiscardUnreadable, onDiscard: opts.OnDiscard, stop: make(chan struct{}), done: make(chan struct{})}
 	if err := p.acquire(ctx, opts.AcquireTimeout); err != nil {
 		return nil, err
 	}
@@ -104,7 +110,9 @@ type pgState struct {
 	holder string
 	aead   cipher.AEAD
 	ttl    time.Duration
-	onLost func(error)
+
+	onFailure  func(error)
+	failedOnce sync.Once
 
 	discardUnreadable bool
 	onDiscard         func(error)
@@ -207,7 +215,26 @@ func (p *pgState) discardAll(ctx context.Context) error {
 	return tx.Commit(ctx)
 }
 
+// commit writes the changed namespaces under the lease. A failure disables
+// the store (StateStore.update) and is reported once through OnFailure.
 func (p *pgState) commit(records map[string]json.RawMessage, changed []string) error {
+	if err := p.commitTx(records, changed); err != nil {
+		err = fmt.Errorf("%w: %w", ErrStateCommitFailed, err)
+		p.failed(err)
+		return err
+	}
+	return nil
+}
+
+func (p *pgState) failed(err error) {
+	p.failedOnce.Do(func() {
+		if p.onFailure != nil {
+			p.onFailure(err)
+		}
+	})
+}
+
+func (p *pgState) commitTx(records map[string]json.RawMessage, changed []string) error {
 	p.mu.Lock()
 	epoch := p.epoch
 	p.mu.Unlock()
@@ -282,9 +309,7 @@ func (p *pgState) renew(ctx context.Context, store *StateStore) {
 				err = ErrStateLeaseLost
 			}
 			store.fail(err)
-			if p.onLost != nil {
-				p.onLost(err)
-			}
+			p.failed(err)
 			return
 		}
 	}

@@ -10,7 +10,6 @@ import (
 
 const (
 	requeueNoSlot       = "no_slot"
-	requeueCapacity     = "disk_capacity"
 	requeueSource       = "source_unavailable"
 	requeueCancellation = "context_canceled"
 	requeueLookup       = "lookup_failure"
@@ -43,7 +42,7 @@ func (b *Builderd) WithPipelineMetrics(reg prometheus.Registerer) *Builderd {
 	for _, outcome := range []string{"granted", "limit", "policy"} {
 		m.admission.WithLabelValues(outcome)
 	}
-	for _, reason := range []string{requeueNoSlot, requeueCapacity, requeueSource, requeueCancellation, requeueLookup} {
+	for _, reason := range []string{requeueNoSlot, requeueSource, requeueCancellation, requeueLookup} {
 		for _, outcome := range []string{"accepted", "not_requeued", "error", "canceled"} {
 			m.requeues.WithLabelValues(reason, outcome)
 		}

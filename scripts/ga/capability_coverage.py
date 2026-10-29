@@ -65,7 +65,7 @@ RULES = [
     (r"^dns-provider$|hetzner-dns|dns01|^dns-provider-", "Custom domains"),
     (r"^allowlist$|hostname-label|surface-parser", "Custom domains"),
     (r"content-observer", "Route advisor"),
-    (r"edge-answers|informational-response|response-trailers|forwardproxy|proxy-raw|proxy-stub|portnorm|origdst", "Streaming, SSE"),
+    (r"edge-answers|informational-response|response-trailers|forwardproxy|proxy-raw|raw-chunked-refusal|proxy-stub|portnorm|origdst", "Streaming, SSE"),
     (r"preauth-limit", "Edge protection"),
     (r"authenticated|internal-svc-auth", "App access control"),
     (r"service-discovery|service-proxy|internal-proxy", "Internal services"),

@@ -161,3 +161,24 @@ follow under decision 5):
 A company that wants to keep selling a departed member's app moves it to a
 new app created by a current member, with that member's billing
 connection; organization billing connections are future work.
+
+## Amendment 3 (2026-10-28): operating a company app's releases
+
+A release review found the release routes missing from the organization route
+map, so on a company app only its creator could reach them; an admin rolling
+back during an incident got `403 org_role_forbidden`. They are now mapped:
+
+- **Deploy permission** (owners, admins, developers): rollback, rollout
+  recovery (advance, promote, abort), canary advance, traffic changes and
+  promote, the same members who deploy.
+- **Read permission** (every member): rollback receipts, rollout observations
+  and debug views, release review, freeze status, release gates, the
+  route-health guard and its reports, history and investigations, and alert
+  rollbacks.
+- **Manage app security** (owners and admins): creating and removing release
+  gates and setting the route-health guard. They stop releases, so, like the
+  approval policy, a developer cannot switch them off.
+- **Configure** (owners, admins, developers): config rollback.
+
+Account-wide freezes (`/v1/freezes`) stay with the account that owns the app's
+resources; they name no app in their URL.

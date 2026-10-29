@@ -213,6 +213,47 @@ func TestInvalidateEdgeRuleScopeWildcardResponseCacheByAccount(t *testing.T) {
 	}
 }
 
+// presetResetRecorder is accountCacheInvalidator plus the wholesale CORS
+// preset reset.
+type presetResetRecorder struct {
+	accountCacheInvalidator
+}
+
+func (f *presetResetRecorder) ResetCorsPresets(account string) {
+	f.calls = append(f.calls, "preset-reset:"+account)
+}
+
+// adr: 091 — amendment 2026-10-28 (review round 3): a CORS preset change
+// drops only its account's compiled rule sets and cached responses. Every
+// change used to flush every account's on every gateway, so one tenant
+// editing a preset in a loop cache-busted the fleet.
+func TestInvalidateCorsPresetChangeIsAccountScoped(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		account string
+		want    []string
+	}{
+		{name: "the changed account only", account: "acct-a",
+			want: []string{"account:acct-a/:*", "response-account:acct-a"}},
+		{name: "no account keeps the wholesale reset",
+			want: []string{"preset-reset:"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &presetResetRecorder{accountCacheInvalidator{listed: true}}
+			invalidateCorsPresetChange(context.Background(), f, tc.account)
+			if !slices.Equal(f.calls, tc.want) {
+				t.Fatalf("calls = %v, want %v", f.calls, tc.want)
+			}
+		})
+	}
+	// An invalidator without the scoped surface keeps the old reset.
+	legacy := &fakeInvalidator{}
+	invalidateCorsPresetChange(context.Background(), legacy, "acct-a")
+	if !slices.Equal(legacy.resetCorsPresetsAccounts, []string{"acct-a"}) {
+		t.Fatalf("legacy resets = %v, want [acct-a]", legacy.resetCorsPresetsAccounts)
+	}
+}
+
 // adr: 091 — amendment 2026-10-27 (GA hardening): the backend drops the
 // listed apps' entries and keeps every other account's.
 func TestPGBackendInvalidateResponseCacheByAccount(t *testing.T) {

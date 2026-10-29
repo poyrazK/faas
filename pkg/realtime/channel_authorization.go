@@ -24,8 +24,11 @@ const (
 
 // One record belongs to one bounded subscription, never to a caller-selected
 // unbounded cache key. Its lock coalesces the history pump and outbound writer.
+// A presence record asks for the presence permission: setting presence state
+// and sending signals on the channel, beyond reading it.
 type channelAuthorization struct {
 	mu        sync.Mutex
+	presence  bool
 	checkedAt time.Time
 	endpoint  *Endpoint
 	denied    bool
@@ -40,7 +43,7 @@ func (a *channelAuthorization) check(ctx context.Context, c *connection, channel
 		return channelAuthorizationUnavailable
 	}
 	if c.ticketToken != "" {
-		if c.accessAllows(ctx, channel) {
+		if !a.presence && c.accessAllows(ctx, channel) {
 			return channelAuthorizationAllowed
 		}
 		return channelAuthorizationDenied
@@ -63,7 +66,7 @@ func (a *channelAuthorization) check(ctx context.Context, c *connection, channel
 	if current == a.endpoint && !a.checkedAt.IsZero() && now.Sub(a.checkedAt) < channelReauthorizeInterval {
 		return channelAuthorizationAllowed
 	}
-	allowed, err := c.m.checkResumeChannel(ctx, c, channel, current)
+	allowed, err := c.m.checkResumeChannel(ctx, c, channel, current, a.presence)
 	if err != nil || ctx.Err() != nil || c.state.revoked.Load() || c.state.config.Load() != current || time.Since(now) >= channelReauthorizeInterval {
 		return channelAuthorizationUnavailable
 	}

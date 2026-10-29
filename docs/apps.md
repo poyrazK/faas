@@ -95,7 +95,7 @@ Review an app configuration change before applying it:
 gregale app scale my-api --plan --ram 512 --min 1
 gregale app scale my-api --plan --ram 512 --out scale-change.json
 gregale app scale my-api --apply scale-change.json --confirm
-gregale app scale my-api --plan --environment staging --size medium
+gregale app scale my-api --plan --env staging --size medium
 ```
 
 The preview reads current app settings and the account plan, then shows the
@@ -123,9 +123,9 @@ and clearly omits plan and usage estimates.
 Keep one read-only inspection open after deploying or requesting recovery:
 
 ```bash
-gregale inspect my-api --watch
-gregale inspect my-api --watch --interval 5s --timeout 10m
-gregale inspect my-api --watch --timeout 10m --json
+gregale inspect my-api --follow
+gregale inspect my-api --follow --interval 5s --timeout 10m
+gregale inspect my-api --follow --timeout 10m --json
 ```
 
 The watch prints the full summary first, then only changed sections with an
@@ -200,9 +200,9 @@ Refreshing the page only reads the accepted request.
 Read and edit the desired workload configuration of a registered environment:
 
 ```bash
-gregale app my-api --environment staging
-gregale app my-api --environment staging --ram 512
-gregale app scale my-api --environment staging --request-timeout 17
+gregale app my-api --env staging
+gregale app my-api --env staging --ram 512
+gregale app scale my-api --env staging --request-timeout 17
 ```
 
 Deploy to that environment to test the saved configuration. A deployment pins
@@ -222,9 +222,9 @@ cutover activates the graph and desired settings atomically, and rollback restor
 both. Target physical placement and managed data bindings remain in the target.
 Concurrent target settings edits stop publication or rollback.
 
-The full clone workflow is still being implemented: these settings operations
-do not yet copy and publish active deployments with a coordinated database and
-object-storage capture, or isolate every related resource and runtime control.
+These settings operations do not copy active deployments together with a
+coordinated database and object-storage capture, and they do not isolate every
+related resource and runtime control.
 
 ## Retained deleted apps
 
@@ -272,8 +272,9 @@ The session ends when the process exits, after `--timeout-seconds` (default
 Gregale stores who started the session, the command and the exit code, never
 the terminal output.
 
-Interactive sessions are an operator-gated preview (ADR-1037). A deployment
-whose guest predates interactive sessions reports `interactive_unsupported`;
+Interactive sessions are in preview and may not be enabled for your account.
+A deployment whose guest predates interactive sessions reports
+`interactive_unsupported`;
 redeploy it and retry. Attaching to an already-running serving instance is not
 supported yet.
 

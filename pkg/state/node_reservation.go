@@ -176,7 +176,7 @@ func (s *PgStore) insertInstanceWithReservationsOnce(
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	// ADR-1741: one statement when the database has the admission functions.
-	reserveNode := reserveNodeStatementsDB
+	reserveNode := reserveNodeAndOwnerStatementsDB
 	if useAdmissionFunctions {
 		reserveNode = reserveNodeDB
 	}
@@ -211,6 +211,15 @@ func (s *PgStore) insertInstanceWithReservationsOnce(
 		recovery.bound = true
 	}
 	return inst, nil
+}
+
+// reserveNodeAndOwnerStatementsDB is reserveNodeDB as separate statements:
+// the node reservation, then ctx's app owner fence (ADR-20261028200212).
+func reserveNodeAndOwnerStatementsDB(ctx context.Context, tx pgx.Tx, nodeID, newState string, ramMB int) error {
+	if err := reserveNodeStatementsDB(ctx, tx, nodeID, newState, ramMB); err != nil {
+		return err
+	}
+	return checkAppOwnerStatementsDB(ctx, tx)
 }
 
 // reserveNodeStatementsDB is reserveNodeDB as separate statements, for a

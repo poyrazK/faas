@@ -479,6 +479,25 @@ const (
 	ApplicationStandardRuntimeScanDirectoryReadBatch       = 512
 )
 
+// A scan is reused only while the scanner and vulnerability database that
+// made it are still the installed ones (ADR-20261028102540). imaged reads that
+// identity with `grype version` and `grype db status` and keeps it this long;
+// every real scan also refreshes it.
+const (
+	ScannerIdentityCacheTTL       = time.Minute
+	ScannerIdentityProbeTimeout   = 30 * time.Second
+	ScannerIdentityMaxOutputBytes = 64 << 10
+)
+
+// Reused scans no longer run Grype often enough for its own update check to
+// keep the vulnerability database current, so imaged runs `grype db update`
+// on this cadence (ADR-20261028102540). A download and import of the ~3 GB
+// database took about seven minutes on a production node.
+const (
+	ScannerDBRefreshEvery  = 6 * time.Hour
+	ScannerDBUpdateTimeout = 20 * time.Minute
+)
+
 // Source-build OCI verification bounds the intermediate image, including its
 // builder base. Final app layers still obey the creating account's plan limit.
 const (
@@ -1007,6 +1026,18 @@ const (
 	EventReplayBackfillItemsPageMax        = 100
 	EventReplayBackfillItemsCursorMaxBytes = 4096
 	EventReplayBackfillRequestTimeout      = 5 * time.Second
+)
+
+// Event job lifecycle (ADR-20261028095548). A running backfill that makes no
+// progress for EventReplayBackfillIdleExpiry ends as expired. A recovery or
+// backfill job whose processing fails backs off from EventJobFailureBackoffMin
+// doubling to EventJobFailureBackoffMax, and ends after EventJobFailureLimit
+// failures in a row (about 85 minutes).
+const (
+	EventReplayBackfillIdleExpiry = 24 * time.Hour
+	EventJobFailureLimit          = 10
+	EventJobFailureBackoffMin     = 5 * time.Second
+	EventJobFailureBackoffMax     = time.Hour
 )
 
 // Workflow reliability bounds (ADR-725, ADR-726, ADR-649).
@@ -6759,6 +6790,12 @@ const (
 	BuildVMVCPU            = 2
 	BuildTimeoutSeconds    = 900 // 15 min build; cold rootless Railpack export needs headroom
 	BuildE2ETimeoutSeconds = 900 // 15 min end-to-end
+	// BuildDiskCapacityRetryDelay is how long a builder without room for a
+	// build drive waits before returning the build to the queue
+	// (ADR-20261029103512). The deployment watchdog's queued-build bound
+	// (DeploymentQueuedBuildTimeoutSeconds, anchored on enqueued_at) still
+	// fails a build that never finds capacity.
+	BuildDiskCapacityRetryDelay = 30 * time.Second
 
 	// Deployment watchdog (ADR-20261024140100). apid fails an in-flight
 	// deployment that can no longer finish on its own, so every deployment
@@ -11727,6 +11764,13 @@ const (
 	TrafficServicePolicyReadTimeout = 250 * time.Millisecond
 	TrafficPublicRoutingReadTimeout = 250 * time.Millisecond
 	TrafficPublicHostReadTimeout    = 250 * time.Millisecond
+	// TrafficPublicRoutingColdReadTimeout bounds the routing read of an app
+	// the gateway holds no admissible view for, usually an idle app's first
+	// request. Its first attempt keeps TrafficPublicRoutingReadTimeout; a
+	// failed attempt is retried once within this bound, so a control-plane
+	// stall shorter than it delays the request instead of refusing it with
+	// 503 traffic_policy_unavailable (ADR-20261027085556 amendment 1).
+	TrafficPublicRoutingColdReadTimeout = 2 * time.Second
 	// Bound public policy host input and hostname expansion in environment
 	// overlays to the DNS name size accepted for custom domains (ADR-570).
 	TrafficPolicyMaxHostnameBytes = 253
@@ -12866,6 +12910,18 @@ const MaxObjectEncryptionLeaseTokenBytes = 128
 
 // RouteGroupPlanMaxChanges bounds repeated full inventory rechecks per plan.
 const RouteGroupPlanMaxChanges = 32
+
+// RouteHealthHoldDeadline is how long the enforce-mode route health guard may
+// hold a canary before the rollout worker aborts it and restores the stable
+// deployment (ADR-20261028110044). It matches ReleaseApprovalTimeoutDefault:
+// a day of traffic is enough to settle unknown evidence, and the
+// route_health_holds alert reports the hold well before it.
+const RouteHealthHoldDeadline = 24 * time.Hour
+
+// RouteSelectorObservationTimeout bounds the read behind a route guard or
+// monitor save's unobserved-selector warnings; a slower read warns nothing
+// (ADR-20261028110044).
+const RouteSelectorObservationTimeout = 2 * time.Second
 
 // RouteHealthSeed bounds the report-mode selectors apid saves for an app that
 // never configured route health when its first canary advances (ADR-844).

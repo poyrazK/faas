@@ -145,6 +145,29 @@ GA follow-ups closed on 2026-10-28:
 - **Route-health report.** After a guard abort, the report shows the saved abort
   evidence instead of `unknown` (ADR-458 amendment).
 
+A release review on 2026-10-28 found and fixed:
+
+- **Teams on company apps.** Rollback, rollout recovery, canary advance,
+  traffic, promote, release gates, the route-health guard, freeze status and
+  alert rollbacks were missing from the organization route map, so only an
+  app's creator could reach them; an admin got 403 rolling back. Members who
+  deploy now operate releases; gates and the guard stay with owners and admins
+  (ADR-20261026151103 amendment 3).
+- **Automatic rollback targets.** The post-release watch and the first-wake
+  5xx guard could pick an aborted canary, or a build that never served, as the
+  release to return to. They now use the plain rollback's target (ADR-1445
+  amendment 1, ADR-625 amendment).
+- **Freezes.** A release parked dark before a freeze can no longer ship during
+  it by `traffic`, promote or a rollback to it; the override audit is written
+  once the release exists (ADR-20261019071733 amendment 3).
+- **Approvals.** An approved release is decided (no late reject that aborts
+  it, no repeated "approved" notices), and a release without a known deployer
+  (a GitHub push) needs one more approval when self-approval is off
+  (ADR-20261020085706 amendment 3).
+- **Gates.** Rollout decisions list gates that were not judged
+  (`not_judged`), and an SLO that gates judge cannot be deleted
+  (ADR-20261019071734 amendment 2).
+
 Still open:
 
 - real Slack/Resend delivery has not been drilled;

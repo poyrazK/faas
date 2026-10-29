@@ -109,6 +109,7 @@ func TruncateRunes(s string, maxRunes int) string {
 var AllowedAlertRuleMetrics = []string{
 	MetricMCPProtocolErrorRate, MetricMCPProtocolP95,
 	AlertMetricRouteInsightsDetected,
+	AlertMetricRouteMonitorIncidents, AlertMetricRouteHealthHolds,
 	"event_recovery_notification_admission_overdue_jobs",
 	"event_recovery_notification_admission_dead_jobs",
 	"event_recovery_notification_admission_unknown_jobs",
@@ -342,7 +343,7 @@ func AlertRuleActionAllowedForMetric(metric, action string) bool {
 	if IsEventRetentionAlertMetric(metric) || IsEventRecoveryAlertMetric(metric) || IsEventConsumerAlertMetric(metric) || IsEdgeSecurityAlertMetric(metric) ||
 		metric == "workflow_failures" || metric == "workflow_schedule_quota_skips" ||
 		metric == "workflow_pending_age_seconds" || metric == "workflow_waiting_age_seconds" || metric == "workflow_due_age_seconds" ||
-		metric == AlertRuleMetricCustomMetric || metric == AlertRuleMetricLogSearchMatches || metric == "queue_backlog" || metric == "queue_oldest_age_seconds" || IsEdgeRuleAlertMetric(metric) || metric == AlertMetricRouteInsightsDetected {
+		metric == AlertRuleMetricCustomMetric || metric == AlertRuleMetricLogSearchMatches || metric == "queue_backlog" || metric == "queue_oldest_age_seconds" || IsEdgeRuleAlertMetric(metric) || metric == AlertMetricRouteInsightsDetected || IsRouteAlertMetric(metric) {
 		return action == "" || action == "webhook"
 	}
 	if metric == MetricMCPReadinessUnhealthy || IsMCPProtocolMetric(metric) || IsMCPConnectionHealthMetric(metric) || IsMCPCatalogMonitorMetric(metric) || IsMCPPolicyConvergenceMetric(metric) || metric == "mcp_tasks_oldest_age_seconds" || metric == "mcp_tasks_metrics_stale" || metric == "mcp_task_promotion_hold_age_seconds" {
@@ -642,6 +643,45 @@ func ValidateRouteInsightAlert(metric, windowSpec, appID string) *Problem {
 	}
 	if !containsString(RouteInsightAlertWindowSpecs, windowSpec) {
 		return ErrAlertRuleInvalid("route insight alerts use window_spec " + strings.Join(RouteInsightAlertWindowSpecs, ", ") + " (insights are evaluated every 6h)")
+	}
+	return nil
+}
+
+// Route alert metrics (ADR-20261028110044): production route monitor
+// incidents and canaries held by the route health guard reach alert rules and
+// notification channels, not only app webhooks.
+const (
+	// AlertMetricRouteMonitorIncidents counts the app's route monitor
+	// incidents open at any time within the window.
+	AlertMetricRouteMonitorIncidents = "route_monitor_incidents"
+	// AlertMetricRouteHealthHolds counts the app's canaries the enforce-mode
+	// route health guard holds now, plus those it aborted within the window.
+	AlertMetricRouteHealthHolds = "route_health_holds"
+)
+
+// RouteAlertWindowSpecs are the windows route alerts accept: monitors are
+// evaluated every minute and canaries checked on every step.
+var RouteAlertWindowSpecs = []string{"5m", "15m", "1h", "6h", "24h"}
+
+// RouteAlertNotes caps how many incidents or holds one notification lists.
+const RouteAlertNotes = 5
+
+// IsRouteAlertMetric reports whether metric is a route alert metric.
+func IsRouteAlertMetric(metric string) bool {
+	return metric == AlertMetricRouteMonitorIncidents || metric == AlertMetricRouteHealthHolds
+}
+
+// ValidateRouteAlert checks a route alert rule: an app scope and a route alert
+// window. Mirrors the alert_rules_route_alerts_chk constraint.
+func ValidateRouteAlert(metric, windowSpec, appID string) *Problem {
+	if !IsRouteAlertMetric(metric) {
+		return nil
+	}
+	if appID == "" {
+		return ErrAlertRuleInvalid(metric + " alerts require an app")
+	}
+	if !containsString(RouteAlertWindowSpecs, windowSpec) {
+		return ErrAlertRuleInvalid(metric + " alerts use window_spec " + strings.Join(RouteAlertWindowSpecs, ", "))
 	}
 	return nil
 }

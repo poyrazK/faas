@@ -25,7 +25,7 @@ on:
           faas-fleet, production-us (gregale-prod, us-east1) uses
           faas-fleet-us, so one fleet's runner never deploys the other.
         required: false
-        default: production
+        default: production-us
         type: string
       release_tag:
         description: "Existing signed pre-1.0 release tag"
@@ -122,7 +122,7 @@ on:
           faas-fleet, production-us (gregale-prod, us-east1) uses
           faas-fleet-us, so one fleet's runner never deploys the other.
         required: false
-        default: production
+        default: production-us
         type: choice
         options:
           - production
@@ -711,6 +711,9 @@ jobs:
       SEAL_DOMAIN_CONTROL_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_CONTROL_AGE_RECIPIENT }}
       SEAL_DOMAIN_DELIVERY_AGE_KEY: ${{ secrets.SEAL_DOMAIN_DELIVERY_AGE_KEY }}
       SEAL_DOMAIN_DELIVERY_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_DELIVERY_AGE_RECIPIENT }}
+      # ADR-831 amendment 17: one browser-challenge signing key for every
+      # gateway of the environment (openssl rand -hex 32).
+      GATEWAYD_EDGE_CHALLENGE_KEY: ${{ secrets.GATEWAYD_EDGE_CHALLENGE_KEY }}
 
     steps:
       - name: Check out the release source and Ansible roles
@@ -1045,6 +1048,16 @@ jobs:
           # seal-domain identities (runtime, build, edge, control) held as SEAL_DOMAIN_*
           # secrets and proves them before the node is activated.
           scripts/ci/seal_domain_vars.sh compute "$ARTIFACT_DIR/seal-domains" "$ARTIFACT_DIR/ansible-vars.yml"
+          # ADR-831 amendment 17: every gateway signs browser challenges with
+          # the GATEWAYD_EDGE_CHALLENGE_KEY secret. A release cut before the
+          # staging script cannot take it; deploying one (a rollback) leaves
+          # each gateway on its own session key, which FaasEdgeChallengeKeyMismatch
+          # reports.
+          if [[ -f scripts/ci/edge_challenge_key_vars.sh ]]; then
+            bash scripts/ci/edge_challenge_key_vars.sh "$ARTIFACT_DIR/ansible-vars.yml"
+          elif [[ -n "${GATEWAYD_EDGE_CHALLENGE_KEY:-}" ]]; then
+            echo "::warning::this release predates scripts/ci/edge_challenge_key_vars.sh; the deploy leaves the gateway on its own challenge key"
+          fi
           if [[ -n "${COMPUTE_BOX_AGE_KEY:-}" ]]; then
             printf '%s\n' "$COMPUTE_BOX_AGE_KEY" > "$ARTIFACT_DIR/box-age-key"
           fi

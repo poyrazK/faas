@@ -13,7 +13,7 @@ import (
 )
 
 func cmdIssueSourceMaps(args []string) int {
-	usage := "usage: gregale issues source-maps <publish|status|retire> --app SLUG --deployment UUID [--directory /app/dist --manifest-file FILE]"
+	usage := "usage: gregale debug issue source-maps <publish|status|retire> --app SLUG --deployment UUID [--directory /app/dist --manifest-file FILE]"
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
 		fmt.Fprintln(os.Stderr, usage)
 		if len(args) > 0 {

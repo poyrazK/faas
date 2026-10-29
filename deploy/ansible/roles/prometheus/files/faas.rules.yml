@@ -23,8 +23,11 @@ groups:
   # ADR 20261021080640: preview platform flags carry a retire-by date. Past it,
   # a ticket reminds operators to fold the preview into general availability
   # or remove the flag, so flags do not accumulate as permanent gates.
+  # The query is one small gauge. Every alerting group must evaluate within
+  # the operator alert collector's freshness window (2 min), or each snapshot
+  # is rejected and platform alert history records nothing (Hunt 14 H14-111).
   - name: faas_platform_flags
-    interval: 1h
+    interval: 30s
     rules:
       - alert: FaasPlatformFlagPastRetireBy
         expr: |
@@ -2322,12 +2325,19 @@ groups:
           sum_over_time(faas_slo_builds_ok:rate5m[30d])
             / (sum_over_time(faas_slo_builds_eligible:rate5m[30d]) > 0)
 
-      # The rolling 30 d ratio is below a public SLO (spec §12). Warn, not
-      # page: the burn-rate alerts in faas_slo already page on the fast
-      # burns; this is the daily-review signal that the month is lost or close.
-
+  # The rolling 30 d ratio is below a public SLO (spec §12). Warn, not
+  # page: the burn-rate alerts in faas_slo already page on the fast
+  # burns; this is the daily-review signal that the month is lost or close.
+  # The alerts evaluate every 30s, inside the operator alert collector's
+  # 2 min freshness window; at 5m their evaluations were stale most of the
+  # time, which made the collector reject every snapshot (Hunt 14 H14-111).
+  # last_over_time spans two 5m recording intervals, so one late recording
+  # never empties the series and resets the 1h for:.
+  - name: faas_slo_monthly_alerts
+    interval: 30s
+    rules:
       - alert: FaasMonthlyApiAvailabilityBelowSLO
-        expr: faas_slo_api_availability:ratio_30d < 0.995
+        expr: last_over_time(faas_slo_api_availability:ratio_30d[10m]) < 0.995
         for: 1h
         labels:
           severity: warn
@@ -2340,7 +2350,7 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasMonthlySLO.md"
 
       - alert: FaasMonthlyWakeLatencyBelowSLO
-        expr: faas_slo_wakes_within_1s:ratio_30d < 0.95
+        expr: last_over_time(faas_slo_wakes_within_1s:ratio_30d[10m]) < 0.95
         for: 1h
         labels:
           severity: warn
@@ -2353,7 +2363,7 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasMonthlySLO.md"
 
       - alert: FaasMonthlyPlatformWakeGateMissed
-        expr: faas_slo_platform_wakes_within_350ms:ratio_30d < 0.95
+        expr: last_over_time(faas_slo_platform_wakes_within_350ms:ratio_30d[10m]) < 0.95
         for: 1h
         labels:
           severity: warn
@@ -2366,7 +2376,7 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasMonthlySLO.md"
 
       - alert: FaasMonthlyBuildSuccessBelowSLO
-        expr: faas_slo_build_success:ratio_30d < 0.99
+        expr: last_over_time(faas_slo_build_success:ratio_30d[10m]) < 0.99
         for: 1h
         labels:
           severity: warn
@@ -8542,6 +8552,52 @@ groups:
           summary: "MCP starter telemetry heartbeats stopped"
           description: "An opted-in executing instance has stopped reporting heartbeats after its startup grace period. This indicates missing process telemetry, independently of MCP readiness and tool success. Paused and retired host log lifecycles are excluded."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasMCPProtocolPerformance.md"
+
+  # The hosted management MCP server, mcp-bridged at api.<platform>/mcp
+  # (ADR-20261026195952). A preview, so every alert warns rather than pages.
+  # Connections near the bound are demand, not release health: that family is
+  # one of slo_gate.py's TENANT_SIGNAL_FAMILIES.
+  - name: faas_hosted_mcp
+    interval: 30s
+    rules:
+      - alert: FaasHostedMCPDown
+        expr: up{job="mcp-bridged"} == 0
+        for: 5m
+        labels:
+          severity: warn
+          component: mcp-bridged
+          family: hosted_mcp
+        annotations:
+          summary: "The hosted MCP server is down on {{ $labels.instance }}"
+          description: "Prometheus has not scraped mcp-bridged for 5m, so agents cannot sign in to or use the hosted MCP server. Check systemctl status faas-mcp-bridge and its journal. It exits when it loses its state lease or cannot commit its state, and systemd stops restarting it after five failures in a minute."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostedMCP.md"
+
+      - alert: FaasHostedMCPRestarting
+        expr: changes(process_start_time_seconds{job="mcp-bridged"}[30m]) >= 3
+        for: 5m
+        labels:
+          severity: warn
+          component: mcp-bridged
+          family: hosted_mcp
+        annotations:
+          summary: "The hosted MCP server keeps restarting on {{ $labels.instance }}"
+          description: "mcp-bridged started at least three times in 30m. Each start after a crash waits up to a minute for the old state lease to lapse, and agents' requests fail meanwhile. The journal names the cause: a lost lease, a state commit Postgres refused, or a crash."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostedMCP.md"
+
+      - alert: FaasHostedMCPConnectionsNearCapacity
+        expr: |
+          gregale_management_mcp_oauth_entries
+            / ignoring (kind) group_left gregale_management_mcp_oauth_entry_limit
+          >= 0.9
+        for: 30m
+        labels:
+          severity: warn
+          component: mcp-bridged
+          family: hosted_mcp_demand
+        annotations:
+          summary: "Hosted MCP {{ $labels.kind }} are at {{ $value | humanizePercentage }} of their bound"
+          description: "The hosted MCP server holds at least 90% of the {{ $labels.kind }} it allows. At the bound it refuses new client registrations or sign-ins until entries expire. List connections over the admin socket and revoke abandoned ones; raising the bound is a code change (ADR-20261026195952)."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHostedMCP.md"
 
   - name: faas-internal-mail
     rules:

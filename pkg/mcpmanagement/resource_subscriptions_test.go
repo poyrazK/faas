@@ -484,7 +484,7 @@ func TestResourceSubscriptionRemoteGrantRevocationAndLeaseExpiry(t *testing.T) {
 			if test.why == "access_expiry" {
 				expiry = time.Now().Add(500 * time.Millisecond)
 			}
-			g := &oauthGrant{id: "subscription-fixture", accountID: "alice", server: s, management: m, client: native, accessExpires: expiry, expires: time.Now().Add(time.Hour), accessHash: tokenHash(token)}
+			g := &oauthGrant{id: "subscription-fixture", accountID: "alice", approved: true, lastUsed: time.Now(), server: s, management: m, client: native, accessExpires: expiry, expires: time.Now().Add(time.Hour), accessHash: tokenHash(token)}
 			remoteOptions := f.opts
 			remoteOptions.Timeout = api.DefaultClientTimeout
 			r := &remoteServer{opts: remoteOptions, host: origin.Host, origin: f.server.URL, access: map[string]*oauthGrant{tokenHash(token): g}, grants: map[string]*oauthGrant{g.id: g}}

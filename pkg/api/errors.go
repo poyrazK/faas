@@ -515,6 +515,12 @@ const (
 	CodeBuildUndetected          = "build_undetected"
 	CodeBuildOOM                 = "build_oom"
 	CodeBuildTimeout             = "build_timeout"
+	// CodeBuildFailed marks a source build whose own install or build step
+	// exited non-zero; CodeBuildInfrastructure marks one the platform could
+	// not run (builder VM, disk, or control-plane failure). Both are stamped
+	// on the deployment row with whycopy guidance (ADR-20261029103512).
+	CodeBuildFailed         = "build_failed"
+	CodeBuildInfrastructure = "build_infrastructure_failed"
 	// CodeDeploymentQueueTimeout and CodeDeploymentStalled are the
 	// deployment watchdog's failures (ADR-20261024140100): a build waited
 	// past DeploymentQueuedBuildTimeoutSeconds, or an in-flight deployment
@@ -3050,7 +3056,7 @@ func ErrEventPublishRateLimited(perSecond, events int, retryAfter time.Duration)
 		fmt.Sprintf("This account publishes at most %d events per second; retry the same events after the indicated back-off.", perSecond)).
 		WithLimit(int64(perSecond), int64(events)).
 		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
-		WithDocs("https://gregale.dev/docs/event-driven#publish-rate")
+		WithDocs("https://gregale.dev/docs/events#publish-rate")
 }
 
 // ErrAuthRateLimited reports that the caller's source IP exhausted the

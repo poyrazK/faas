@@ -36,6 +36,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 	"github.com/onebox-faas/faas/pkg/publicstatus"
+	quotasql "github.com/onebox-faas/faas/pkg/state/appquota/sqlc"
 	ownersql "github.com/onebox-faas/faas/pkg/state/resourceownership/sqlc"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
@@ -63,14 +64,16 @@ func newPgCore(pool *pgxpool.Pool) pgCore {
 // is safe for concurrent use.
 type PgStore struct {
 	pgCore
-	trafficAppsSuffix string
+	trafficAppsSuffix    string
+	trafficScopedBinding bool
 }
 
 // NewPgStore wraps a pool. The pool is owned by the caller; PgStore does not
 // close it on shutdown so daemons can share a single pool across a Store and
 // their LISTEN goroutine.
 func NewPgStore(pool *pgxpool.Pool, options ...StoreOption) *PgStore {
-	return &PgStore{pgCore: newPgCore(pool), trafficAppsSuffix: configuredTrafficAppsSuffix(options)}
+	return &PgStore{pgCore: newPgCore(pool), trafficAppsSuffix: configuredTrafficAppsSuffix(options),
+		trafficScopedBinding: configuredTrafficScopedBinding(options)}
 }
 
 // Ping tests database connectivity through the underlying connection pool.
@@ -8545,7 +8548,12 @@ func (s *PgStore) AdvanceCanary(ctx context.Context, id string, params CanaryAdv
 		}
 		return pgAbortProfileGatedCanary(ctx, tx, snapshot.Account.ID, dep, params, safeReleaseLeaseExpiresAt)
 	}
-	if err := pgCheckCanaryRouteGate(ctx, tx, snapshot, dep, params, now); err != nil {
+	// A guard whose capability is not released for the account neither holds
+	// the rollout nor records evidence (ADR-20261028110044).
+	guards := routeGuardRelease(ctx)
+	if !guards.Requirements {
+		params.RouteGateDecision = nil
+	} else if err := pgCheckCanaryRouteGate(ctx, tx, snapshot, dep, params, now); err != nil {
 		var blocked *RouteGateBlockedError
 		if errors.As(err, &blocked) {
 			if commitErr := tx.Commit(ctx); commitErr != nil {
@@ -8558,7 +8566,9 @@ func (s *PgStore) AdvanceCanary(ctx context.Context, id string, params CanaryAdv
 	if err := s.authorizeProductionLifecycle(ctx, tx, id, false); err != nil {
 		return Deployment{}, 0, err
 	}
-	if err := pgCheckRouteHealth(ctx, tx, snapshot, dep, now, params); err != nil {
+	if !guards.Health {
+		params.RouteHealthDecision = nil
+	} else if err := pgCheckRouteHealth(ctx, tx, snapshot, dep, now, params); err != nil {
 		var blocked *RouteHealthBlockedError
 		if errors.As(err, &blocked) {
 			if commitErr := tx.Commit(ctx); commitErr != nil {
@@ -9469,19 +9479,24 @@ func (s *PgStore) recoverRolloutTx(ctx context.Context, tx pgx.Tx, appID, deploy
 		if err := legacyProfileCanaryGate(p, dep); err != nil {
 			return dep, 0, err
 		}
-		gate, err := pgCanaryRouteGate(ctx, tx, owner.AccountID, dep.AppID)
-		if err != nil {
-			return dep, 0, err
+		guards := routeGuardRelease(ctx)
+		if guards.Requirements {
+			gate, err := pgCanaryRouteGate(ctx, tx, owner.AccountID, dep.AppID)
+			if err != nil {
+				return dep, 0, err
+			}
+			if err := legacyCanaryRouteGate(gate, dep, action); err != nil {
+				return dep, 0, err
+			}
 		}
-		if err := legacyCanaryRouteGate(gate, dep, action); err != nil {
-			return dep, 0, err
-		}
-		healthGate, err := pgRouteHealthGate(ctx, tx, owner.AccountID, dep.AppID)
-		if err != nil {
-			return dep, 0, err
-		}
-		if err := legacyRouteHealth(healthGate, dep, action); err != nil {
-			return dep, 0, err
+		if guards.Health {
+			healthGate, err := pgRouteHealthGate(ctx, tx, owner.AccountID, dep.AppID)
+			if err != nil {
+				return dep, 0, err
+			}
+			if err := legacyRouteHealth(healthGate, dep, action); err != nil {
+				return dep, 0, err
+			}
 		}
 	}
 	if emergencyGrace != nil {
@@ -14369,16 +14384,10 @@ func (s *PgStore) CreateAlertRuleIfUnderQuota(ctx context.Context, in AlertRule,
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
 
+	subject := in.AccountID
 	if in.AppID != "" {
-		var locked int
-		err = tx.QueryRow(ctx,
-			`select 1 from apps where id = $1 and status <> 'deleted' for update`, in.AppID,
-		).Scan(&locked)
-		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return AlertRule{}, ErrNotFound
-			}
-			return AlertRule{}, fmt.Errorf("state: lock app %s: %w", in.AppID, err)
+		if subject, _, err = lockQuotaSubjectTx(ctx, tx, in.AppID); err != nil {
+			return AlertRule{}, err
 		}
 
 		var appCount int
@@ -14394,19 +14403,22 @@ func (s *PgStore) CreateAlertRuleIfUnderQuota(ctx context.Context, in AlertRule,
 				Observed: appCount,
 			}
 		}
+	} else if err := lockAccountQuotaSubjectTx(ctx, tx, in.AccountID); err != nil {
+		return AlertRule{}, err
 	}
 
-	// Per-account count excludes soft-deleted apps' alert rows.
+	// The per-account count covers the subject's account-wide rules and the
+	// rules of its apps, excluding soft-deleted apps.
 	var accountCount int
 	if err := tx.QueryRow(ctx, `
 		select count(*) from alert_rules r
-		 where r.account_id = $1
-		   and (r.app_id is null
-		        or exists(select 1 from apps a
-		                   where a.id = r.app_id and a.status <> 'deleted'))`,
-		in.AccountID,
+		  left join apps a on a.id = r.app_id
+		  left join orgs o on o.id = a.org_id
+		 where (r.app_id is null and r.account_id = $1::uuid)
+		    or (a.status <> 'deleted' and `+quotaSubjectSQL+` = $1::uuid)`,
+		subject,
 	).Scan(&accountCount); err != nil {
-		return AlertRule{}, fmt.Errorf("state: count alert_rules for account %s: %w", in.AccountID, err)
+		return AlertRule{}, fmt.Errorf("state: count alert_rules for %s: %w", subject, err)
 	}
 	if accountCount >= limits.AlertRuleLimitPerAccount {
 		return AlertRule{}, &AlertRuleQuotaError{
@@ -14817,6 +14829,9 @@ func (s *PgStore) CreateEdgeRuleIfUnderQuota(ctx context.Context, in CreateEdgeR
 			return EdgeRule{}, exceeded
 		}
 	}
+	if err := lockEdgeRuleListRefs(ctx, tx, in.AccountID, in.Match); err != nil {
+		return EdgeRule{}, err
+	}
 
 	actionBytes, err := json.Marshal(in.Action)
 	if err != nil {
@@ -15053,16 +15068,23 @@ func (s *PgStore) GetCorsPresetByID(ctx context.Context, accountID, id string) (
 //   - (CorsPreset{}, ErrConflict) on UNIQUE collision
 //     ((account_id, COALESCE(app_id, ...), name))
 //
-// The FOR UPDATE row lock on the apps row is the TOCTOU defence
-// for app-scoped presets: concurrent inserts serialise on the
-// apps row before reading the count, so a burst of N parallel
-// inserts cannot race past the cap by N-1. Account-wide presets
-// skip the apps-row lock and rely on the per-account count alone.
+// Locking the app's billing owner is the TOCTOU defence for app-scoped
+// presets: concurrent inserts serialise on it before reading the count, so a
+// burst of N parallel inserts cannot race past the cap by N-1. Account-wide
+// presets rely on the account's traffic-policy session. An organization's
+// presets are counted across creators whose sessions differ, so the
+// organization's quota fence is written as well: a repeatable-read count
+// whose snapshot predates another creator's commit fails with 40001 and is
+// retried (ADR-570).
 // The cors_presets_changed_notify trigger transactionally records the
 // account-scoped durable replay event and emits pg_notify as the low-latency
 // signal. The notification is delivered after commit; gatewayd also polls the
 // ledger so a missed notification cannot leave compiled CORS policy stale.
 func (s *PgStore) CreateCorsPresetIfUnderQuota(ctx context.Context, p CorsPreset, limits api.Limits) (CorsPreset, error) {
+	return retryTrafficSerialization(ctx, func() (CorsPreset, error) { return s.createCorsPresetIfUnderQuotaOnce(ctx, p, limits) })
+}
+
+func (s *PgStore) createCorsPresetIfUnderQuotaOnce(ctx context.Context, p CorsPreset, limits api.Limits) (CorsPreset, error) {
 	proposed := p
 	proposed.ID = "" // the insert generates its UUID rather than accepting p.ID
 	if err := s.validateTrafficProjection(ctx, "cors_preset", corsPresetTrafficProjection(proposed)); err != nil {
@@ -15074,16 +15096,15 @@ func (s *PgStore) CreateCorsPresetIfUnderQuota(ctx context.Context, p CorsPreset
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
 
+	subject := p.AccountID
 	if p.AppID != "" {
-		var locked int
-		err = tx.QueryRow(ctx,
-			`select 1 from apps where id = $1 and status <> 'deleted' for update`, p.AppID,
-		).Scan(&locked)
-		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return CorsPreset{}, ErrNotFound
+		if subject, _, err = lockQuotaSubjectTx(ctx, tx, p.AppID); err != nil {
+			return CorsPreset{}, err
+		}
+		if subject != p.AccountID {
+			if err := quotasql.New().LockOwner(ctx, tx, mustPgUUID(subject)); err != nil {
+				return CorsPreset{}, fmt.Errorf("state: lock organization cors quota: %w", err)
 			}
-			return CorsPreset{}, fmt.Errorf("state: lock app %s: %w", p.AppID, err)
 		}
 
 		var appCount int
@@ -15101,19 +15122,19 @@ func (s *PgStore) CreateCorsPresetIfUnderQuota(ctx context.Context, p CorsPreset
 		}
 	}
 
-	// Per-account count excludes soft-deleted apps' preset rows.
-	// Mirrors the alert_rules per-account query at pgstore.go:7213
-	// so the soft-delete semantics are consistent.
+	// The per-account count covers the billing subject's account-wide presets
+	// and the presets of its apps, excluding soft-deleted apps; it mirrors the
+	// alert_rules per-account query.
 	var accountCount int
 	if err := tx.QueryRow(ctx, `
 		select count(*) from cors_presets p
-		 where p.account_id = $1
-		   and (p.app_id is null
-		        or exists(select 1 from apps a
-		                   where a.id = p.app_id and a.status <> 'deleted'))`,
-		p.AccountID,
+		  left join apps a on a.id = p.app_id
+		  left join orgs o on o.id = a.org_id
+		 where (p.app_id is null and p.account_id = $1::uuid)
+		    or (a.status <> 'deleted' and `+quotaSubjectSQL+` = $1::uuid)`,
+		subject,
 	).Scan(&accountCount); err != nil {
-		return CorsPreset{}, fmt.Errorf("state: count cors_presets for account %s: %w", p.AccountID, err)
+		return CorsPreset{}, fmt.Errorf("state: count cors_presets for %s: %w", subject, err)
 	}
 	if accountCount >= limits.CorsPresetsPerAccount {
 		return CorsPreset{}, &CorsPresetQuotaError{
@@ -15695,6 +15716,15 @@ func (s *PgStore) UpdateEdgeRule(ctx context.Context, id string, p UpdateEdgeRul
 	if p.ValidateMode != nil {
 		validateModeArg = *p.ValidateMode
 	}
+	if p.Match != nil {
+		var accountID string
+		if err := tx.QueryRow(ctx, `select account_id::text from edge_rules where id = $1`, id).Scan(&accountID); err != nil {
+			return EdgeRule{}, mapErr(err)
+		}
+		if err := lockEdgeRuleListRefs(ctx, tx, accountID, p.Match); err != nil {
+			return EdgeRule{}, err
+		}
+	}
 
 	row := tx.QueryRow(ctx, `
 		update edge_rules set
@@ -15801,6 +15831,7 @@ func (s *PgStore) MatchEdgeRulesForHost(ctx context.Context, host string) ([]Edg
 		select `+edgeRuleSelectCols+` from edge_rules
 		 where enabled = true
 		   and (expires_at is null or expires_at > now())
+		   and not exists (select 1 from apps a where a.id = edge_rules.app_id and a.status = 'deleted')
 		   and (
 		   	match_host = $1
 		   	or match_host = '*'
@@ -17665,6 +17696,7 @@ func scanCreatedInstance(row pgx.Row, wakeID, appID string) (Instance, error) {
 // non-empty string from state.InstanceMode{normal,mirror};
 // the engine validates before calling (Engine.AdmitMirrorInstance).
 func (s *PgStore) CreateInstanceWithMode(ctx context.Context, appID, deploymentID, state string, ramMB int, nodeID, wakeID, mode string) (Instance, error) {
+	ctx = fenceApp(ctx, appID)
 	var reserve func(pgx.Tx) error
 	if mode == string(InstanceModeWorker) && State(state).CountsForRAM() {
 		reserve = func(tx pgx.Tx) error {

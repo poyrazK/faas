@@ -22,6 +22,15 @@ if [[ "$SHARED_RETRY_BUDGET_REQUIRED" == true ]]; then
 		echo "EXPECTED_GATEWAY_COUNT must be a positive integer" >&2
 		exit 2
 	}
+	# cd-platform pipes this script to the control plane over `bash -s`,
+	# where a path relative to the checkout does not exist. Resolve the gate
+	# next to this file, or take it from the caller, and check it before any
+	# deployment rather than after twenty minutes of them.
+	SHARED_RETRY_BUDGET_SCRIPT="${SHARED_RETRY_BUDGET_SCRIPT:-$(dirname "${BASH_SOURCE[0]:-.}")/verify-shared-retry-budget.sh}"
+	[[ -x "$SHARED_RETRY_BUDGET_SCRIPT" ]] || {
+		echo "shared retry-budget gate is missing: ${SHARED_RETRY_BUDGET_SCRIPT}; set SHARED_RETRY_BUDGET_SCRIPT" >&2
+		exit 2
+	}
 fi
 
 GREGALE_BIN="${GREGALE_BIN:-/opt/faas/current/bin/gregale}"
@@ -182,6 +191,14 @@ set_app_policy() {
 	FAAS_JSON=1 "$GREGALE_BIN" app "$slug" "$@" --json >"$output"
 }
 
+# capability_released reports whether a catalog capability is released to the
+# acceptance account, from the `gregale capabilities` response verify_app_policy_controls
+# saves. Internal capabilities are released per account (ADR-20261023115741);
+# while one is hidden apid refuses its settings with 403 capability_not_released.
+capability_released() {
+	jq -e --arg id "$1" '(.hidden_capabilities // []) | index($id) == null' "$workdir/capabilities.json" >/dev/null
+}
+
 wait_for_http_status() {
 	local url="$1" expected="$2" headers="$3" body="$4" status=""
 	for _ in $(seq 1 15); do
@@ -212,6 +229,7 @@ verify_app_policy_controls() {
 	local body="$workdir/${slug}-policy-body"
 
 	read_app_policy "$slug" "$original"
+	FAAS_JSON=1 "$GREGALE_BIN" capabilities >"$workdir/capabilities.json"
 	# Release acceptance deploys a fresh Scale-plan app. Pin its documented
 	# defaults so this contract always exercises a real transition and a later
 	# default change gets reviewed alongside the CLI behavior.
@@ -240,21 +258,38 @@ verify_app_policy_controls() {
 
 	# Consumer auth is an independent gateway gate. Verify anonymous traffic is
 	# rejected in required mode, then restore the original optional mode.
-	set_app_policy "$slug" "$receipt" --consumer-auth-mode required
-	jq -e '.consumer_auth_mode == "required"' "$receipt" >/dev/null
-	wait_for_http_status "${app_url%/}/" 401 "$headers" "$body"
-	jq -e '.code == "consumer_key_required"' "$body" >/dev/null
-	set_app_policy "$slug" "$receipt" --consumer-auth-mode optional
-	jq -e '.consumer_auth_mode == "optional"' "$receipt" >/dev/null
-	wait_for_http_status "${app_url%/}/" 200 "$headers" "$body"
+	# Required mode belongs to the internal API consumers capability (rc.302).
+	if capability_released api-consumers; then
+		set_app_policy "$slug" "$receipt" --consumer-auth-mode required
+		jq -e '.consumer_auth_mode == "required"' "$receipt" >/dev/null
+		wait_for_http_status "${app_url%/}/" 401 "$headers" "$body"
+		jq -e '.code == "consumer_key_required"' "$body" >/dev/null
+		set_app_policy "$slug" "$receipt" --consumer-auth-mode optional
+		jq -e '.consumer_auth_mode == "optional"' "$receipt" >/dev/null
+		wait_for_http_status "${app_url%/}/" 200 "$headers" "$body"
+	else
+		echo "consumer auth check skipped: api-consumers is not released to the acceptance account" >&2
+	fi
 
-	# Toggle the three plan-enabled transport/telemetry settings together and
-	# read back each value. A disabled WebSocket upgrade has a deterministic
-	# 501 response, which proves the gateway consumed the new app policy.
-	set_app_policy "$slug" "$receipt" --no-streaming-enabled --no-websocket --no-route-metrics
+	# Toggle the plan-enabled transport/telemetry settings together and read
+	# back each value. A disabled WebSocket upgrade has a deterministic 501
+	# response, which proves the gateway consumed the new app policy. Route
+	# metrics belong to the internal route insights capability (rc.303).
+	local disable=(--no-streaming-enabled --no-websocket) enable=(--streaming-enabled --websocket-enabled)
+	local route_metrics=false
+	if capability_released route-insights; then
+		disable+=(--no-route-metrics)
+		enable+=(--route-metrics)
+		route_metrics=true
+	else
+		echo "route metrics check skipped: route-insights is not released to the acceptance account" >&2
+	fi
+	set_app_policy "$slug" "$receipt" "${disable[@]}"
 	assert_policy_bool "$receipt" streaming_enabled false
 	assert_policy_bool "$receipt" websocket_enabled false
-	assert_policy_bool "$receipt" route_metrics_enabled false
+	if [[ "$route_metrics" == true ]]; then
+		assert_policy_bool "$receipt" route_metrics_enabled false
+	fi
 	local ws_status
 	ws_status="$(curl --http1.1 --silent --show-error --connect-timeout 3 --max-time 10 \
 		--dump-header "$headers" --output "$body" --write-out '%{http_code}' \
@@ -266,7 +301,7 @@ verify_app_policy_controls() {
 
 	# Restore every changed value and verify the CLI readback matches the saved
 	# response before the acceptance app is removed by cleanup.
-	set_app_policy "$slug" "$receipt" --streaming-enabled --websocket-enabled --route-metrics
+	set_app_policy "$slug" "$receipt" "${enable[@]}"
 	assert_policy_bool "$receipt" maintenance_mode false
 	assert_policy_bool "$receipt" streaming_enabled true
 	assert_policy_bool "$receipt" websocket_enabled true
@@ -408,7 +443,7 @@ verify_receipt "$redeploy_final" "$(jq -er '.app_url' "${outputs[0]}")"
 if [[ "$SHARED_RETRY_BUDGET_REQUIRED" == true ]]; then
 	PROMETHEUS_URL="$PROMETHEUS_URL" \
 		EXPECTED_GATEWAY_COUNT="$EXPECTED_GATEWAY_COUNT" \
-		deploy/scripts/verify-shared-retry-budget.sh
+		"$SHARED_RETRY_BUDGET_SCRIPT"
 fi
 
 printf 'production acceptance passed: release=%s nodes=%s deployments=%s\n' \

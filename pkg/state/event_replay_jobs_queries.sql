@@ -44,7 +44,9 @@ SELECT j.id, j.account_id, j.app_id, a.slug AS app_slug, j.subscription_id,
        count(i.outbox_id) FILTER (WHERE i.state='skipped_captured')::bigint AS skipped_captured_count,
        count(i.outbox_id) FILTER (WHERE i.state='skipped_unknown')::bigint AS skipped_unknown_count,
        count(i.outbox_id) FILTER (WHERE i.state='skipped_existing')::bigint AS skipped_existing_count,
-       count(i.outbox_id) FILTER (WHERE i.state='skipped_unsettled')::bigint AS skipped_unsettled_count
+       count(i.outbox_id) FILTER (WHERE i.state='skipped_unsettled')::bigint AS skipped_unsettled_count,
+       count(i.outbox_id) FILTER (WHERE i.state='cancelled')::bigint AS cancelled_count,
+       j.last_failure
 FROM event_replay_jobs j
 JOIN apps a ON a.id=j.app_id AND a.account_id=j.account_id
 LEFT JOIN event_replay_job_items i ON i.job_id=j.id
@@ -87,10 +89,78 @@ WHERE account_id=sqlc.arg(account_id)::uuid AND state='running';
 SELECT pg_advisory_xact_lock(hashtextextended(sqlc.arg(account_id)::uuid::text,625));
 
 -- name: EventReplayBackfillNextJob :one
+-- A job backed off after a failed pass waits for its next_attempt_at
+-- (ADR-20261028095548), so the next job in line goes ahead.
 SELECT * FROM event_replay_jobs WHERE state='running' AND NOT scan_complete
+  AND (next_attempt_at IS NULL OR next_attempt_at<=sqlc.arg(now_at)::timestamptz)
   AND (SELECT count(*) FROM event_replay_job_items i
        WHERE i.job_id=event_replay_jobs.id AND i.state IN ('pending','processing')) < sqlc.arg(in_flight_max)::bigint
 ORDER BY created_at,id FOR UPDATE SKIP LOCKED LIMIT 1;
+
+-- name: EventReplayBackfillRecordFailure :one
+-- ADR-20261028095548: a failed pass backs the job off, doubling from the
+-- minimum to the maximum delay. updated_at stays, so a failing job is idle.
+UPDATE event_replay_jobs SET failure_count=least(failure_count+1,sqlc.arg(failure_limit)::integer),
+       next_attempt_at=sqlc.arg(now_at)::timestamptz+least(
+           make_interval(secs=>sqlc.arg(backoff_min_seconds)::double precision*power(2::double precision,failure_count)),
+           make_interval(secs=>sqlc.arg(backoff_max_seconds)::double precision)),
+       last_failure=sqlc.arg(last_failure)::text
+WHERE id=sqlc.arg(id)::uuid AND state='running'
+RETURNING failure_count;
+
+-- name: EventReplayBackfillClearFailures :exec
+UPDATE event_replay_jobs SET failure_count=0,next_attempt_at=NULL,last_failure=''
+WHERE id=sqlc.arg(id)::uuid AND failure_count>0;
+
+-- name: EventReplayBackfillEnd :execrows
+-- Ends a running job as cancelled, expired or failed. An expiry passes the
+-- idle cutoff, so a job that moved since it was read keeps running.
+UPDATE event_replay_jobs SET state=sqlc.arg(state)::text,completed_at=clock_timestamp(),
+       updated_at=clock_timestamp(),next_attempt_at=NULL
+WHERE id=sqlc.arg(id)::uuid AND state='running'
+  AND (sqlc.narg(idle_before)::timestamptz IS NULL OR updated_at<=sqlc.narg(idle_before)::timestamptz);
+
+-- name: EventReplayBackfillIdleJobs :many
+SELECT id FROM event_replay_jobs
+WHERE state='running' AND updated_at<=sqlc.arg(idle_before)::timestamptz
+ORDER BY updated_at,id LIMIT sqlc.arg(page_limit)::integer;
+
+-- name: EventReplayBackfillEndedJobs :many
+-- Ended jobs whose undelivered items are not yet cancelled.
+SELECT j.id FROM event_replay_jobs j
+WHERE j.state IN ('cancelled','expired','failed')
+  AND EXISTS (SELECT 1 FROM event_replay_job_items i WHERE i.job_id=j.id AND i.state IN ('pending','processing'))
+ORDER BY j.completed_at,j.id LIMIT sqlc.arg(page_limit)::integer;
+
+-- name: EventReplayBackfillLockEndedReceipts :many
+-- The receipts of an ended job's undelivered recipients, locked in id order
+-- before their recipients, as routing locks them.
+SELECT o.id FROM event_fanout_outbox o
+WHERE o.id IN (SELECT r.outbox_id FROM event_fanout_recipients r
+               JOIN event_replay_jobs j ON j.id=r.backfill_job_id
+               WHERE j.id=sqlc.arg(job_id)::uuid AND j.state IN ('cancelled','expired','failed')
+                 AND r.state IN ('pending','processing'))
+ORDER BY o.id LIMIT sqlc.arg(page_limit)::integer
+FOR UPDATE OF o;
+
+-- name: EventReplayBackfillDropEndedRecipients :execrows
+DELETE FROM event_fanout_recipients r USING event_replay_jobs j
+WHERE r.backfill_job_id=j.id AND j.id=sqlc.arg(job_id)::uuid AND j.state IN ('cancelled','expired','failed')
+  AND r.outbox_id=ANY(sqlc.arg(outbox_ids)::bigint[]) AND r.state IN ('pending','processing');
+
+-- name: EventReplayBackfillSettleReceipts :exec
+UPDATE event_fanout_outbox o
+SET state = CASE WHEN EXISTS (SELECT 1 FROM event_fanout_recipients r
+        WHERE r.outbox_id = o.id AND r.state IN ('pending', 'processing')) THEN 'processing' ELSE 'delivered' END,
+    delivered_at = CASE WHEN EXISTS (SELECT 1 FROM event_fanout_recipients r
+        WHERE r.outbox_id = o.id AND r.state IN ('pending', 'processing')) THEN NULL ELSE now() END
+WHERE o.id = ANY(sqlc.arg(ids)::bigint[]) AND o.recipient_claims;
+
+-- name: EventReplayBackfillCancelEndedItems :execrows
+UPDATE event_replay_job_items i SET state='cancelled',updated_at=clock_timestamp()
+FROM event_replay_jobs j
+WHERE i.job_id=j.id AND j.id=sqlc.arg(job_id)::uuid AND j.state IN ('cancelled','expired','failed')
+  AND i.state IN ('pending','processing');
 
 -- name: EventReplayBackfillLockJob :one
 SELECT id FROM event_replay_jobs

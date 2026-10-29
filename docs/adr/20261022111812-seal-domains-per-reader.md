@@ -110,10 +110,14 @@ sealing customer secrets but can no longer open them.
 | `storage` | `domains/storage.age` | s3-gatewayd | where s3-gatewayd runs | `object_storage_s3_credentials` |
 | `delivery` | `domains/delivery.age` | schedd | both | `execution_payloads`, `app_webhooks`, trigger config envelopes, `commit_sources` |
 | `control` | `domains/control.age` | schedd; `gregalectl` at node join | both | `cluster_signing_keys`, internal service keys (`internal_svc`, `cluster_svc`) |
-| `account` | `domains/account.age` | apid, apid clone worker, apid data-pipeline worker | control plane | `accounts.mfa_secret_encrypted`, `agent_execution_workflows.sealed_plan`, `inbound_webhook_endpoints`, GitLab, Slack, Linear and MCP OAuth rows, `managed_realtime_*`, `project_environment_clone_*`, `data_pipeline_*`, `product_control_email_*`, `account_billing_connections`, `mcp_readiness_pagerduty_acknowledgements` |
+| `account` | `domains/account.age` | apid, apid clone worker | control plane | `accounts.mfa_secret_encrypted`, `agent_execution_workflows.sealed_plan`, `inbound_webhook_endpoints`, GitLab, Slack, Linear and MCP OAuth rows, `managed_realtime_*`, `project_environment_clone_*`, `product_control_email_*`, `account_billing_connections`, `mcp_readiness_pagerduty_acknowledgements` |
 
-Internal mail and livequeryd keep their existing dedicated identities and
-join the registry as the `mail`, `mail-verification` and `livequery` domains.
+Internal mail, livequeryd and data pipelines keep their existing dedicated
+identities and join the registry as the `mail`, `mail-verification`,
+`livequery` and `pipeline` domains. Data pipelines were first listed under
+`account`; ADR-1591 had already sealed them to `pipeline.age`, which only the
+data-pipeline and pipeline-alert workers hold, with apid holding the
+recipient alone, so they never needed a move.
 
 Identities live under `/etc/faas/secrets/domains/` (mode 0400 root:root) and
 are delivered to units with `LoadCredential=`, as ADR-127 requires. Each
@@ -628,8 +632,31 @@ previous auth token kept through a rotation), `managed_realtime_push_devices`
   device, or endpoint and provider), so the re-seal rebuilds it from the
   row and refuses a value copied to another row. The namespaces and the
   push size bounds moved to `pkg/api`.
-- **Last slice:** data pipelines and project environment clones, read by
-  the data-pipeline and clone workers.
+- **Last slice:** project environment clones, read by apid and the clone
+  worker. Data pipeline values turned out to have their own identity
+  already (ADR-1591) and joined the registry as the dedicated `pipeline`
+  domain.
+
+## Implemented in the fourteenth slice: project environment clones
+
+The last account slice covers the twelve `project_environment_clone_*`
+columns and the clone archives. They are forward-only:
+
+- **One recipient, by mode.** Each clone value is sealed to one recipient,
+  which its row records as `key_id`, and opens only with the identity that
+  key id names. Clone records also bind each other by ciphertext hash.
+  So apid and the clone worker seal new clone values to the fleet
+  recipient until the account domain is domain-only, and to the account
+  domain after (`cloneSealRecipient`), and open with the account identity
+  first. Dual sealing would not help: the key id picks one identity.
+- **No re-seal in place.** Rewriting a clone ciphertext would break the
+  hashes other clone rows hold. `seal-domain migrate --domain account`
+  counts clone rows (archives included) still under another key id and
+  reports them as left on the fleet key. They clear as their clones finish,
+  and the contract step waits for that count to reach zero.
+- **The clone worker holds the account identity:** it loads the domain as
+  apid does, and the role installs the same drop-in into
+  `faas-apid-clone-worker`.
 
 ## Implemented: the alerting test-send relay
 

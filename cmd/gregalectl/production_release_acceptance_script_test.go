@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/productcap"
 )
 
 // The production script must add verified deployments when a valid first
@@ -71,9 +73,18 @@ case "$1" in
     fi
     exit 0 ;;
   app)
+    printf '%s\n' "$*" >>"${TEST_APP_LOG:-/dev/null}"
     slug="$2"; shift 2
     maintenance=false; streaming=true; websocket=true; route_metrics=true; consumer_auth=optional
+    refuse() {
+      if [[ ",${TEST_HIDDEN_CAPS:-}," == *",$1,"* ]]; then
+        printf '{"status":403,"code":"capability_not_released","capability":"%s"}\n' "$1"; exit 1
+      fi
+    }
     while (($#)); do
+      case "$1" in
+        --route-metrics|--no-route-metrics) refuse route-insights ;;
+      esac
       case "$1" in
         --maintenance) maintenance=true ;;
         --no-maintenance) maintenance=false ;;
@@ -83,12 +94,21 @@ case "$1" in
         --no-websocket) websocket=false ;;
         --route-metrics) route_metrics=true ;;
         --no-route-metrics) route_metrics=false ;;
-        --consumer-auth-mode) consumer_auth="$2"; shift ;;
+        --consumer-auth-mode)
+          if [[ "$2" == required ]]; then refuse api-consumers; fi
+          consumer_auth="$2"; shift ;;
       esac
       shift
     done
     printf '{"slug":"%s","maintenance_mode":%s,"streaming_enabled":%s,"websocket_enabled":%s,"route_metrics_enabled":%s,"consumer_auth_mode":"%s"}\n' \
       "$slug" "$maintenance" "$streaming" "$websocket" "$route_metrics" "$consumer_auth"
+    exit 0 ;;
+  capabilities)
+    if [[ -n "${TEST_HIDDEN_CAPS:-}" ]]; then
+      printf '{"plan":"scale","capabilities":[],"hidden_capabilities":["%s"]}\n' "${TEST_HIDDEN_CAPS//,/\",\"}"
+    else
+      printf '{"plan":"scale","capabilities":[]}\n'
+    fi
     exit 0 ;;
 esac
 exit 2
@@ -140,6 +160,8 @@ if [[ "$*" == *"--write-out"* ]]; then
   if [[ -f "$count_file" ]]; then read -r count <"$count_file"; fi
   count=$((count + 1))
   printf '%s\n' "$count" >"$count_file"
+  # Without the consumer auth leg the WebSocket probe is the third request.
+  if [[ ",${TEST_HIDDEN_CAPS:-}," == *",api-consumers,"* && "$count" -ge 3 ]]; then count=$((count + 2)); fi
   case "$count" in
     1) status=503; response='{"code":"app_maintenance_mode"}'; extra='Retry-After: 60' ;;
     2|4) status=200; response='{}'; extra='' ;;
@@ -156,6 +178,7 @@ fi
 	deployLog := filepath.Join(dir, "deploys")
 	curlLog := filepath.Join(dir, "curls")
 	revokeLog := filepath.Join(dir, "revokes")
+	appLog := filepath.Join(dir, "app-policy")
 	script := filepath.Join("..", "..", "deploy", "scripts", "production-release-acceptance.sh")
 	cmd := exec.Command("bash", script)
 	cmd.Env = append(os.Environ(),
@@ -163,6 +186,7 @@ fi
 		"RELEASE_SHA="+strings.Repeat("a", 40), "RUN_ID=12345678", "ACTIVE_NODE_COUNT=2",
 		"GREGALE_BIN="+gregale, "GREGALECTL_BIN="+gregalectl,
 		"TEST_DEPLOY_LOG="+deployLog, "TEST_CURL_LOG="+curlLog, "TEST_REVOKE_LOG="+revokeLog,
+		"TEST_APP_LOG="+appLog,
 	)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -171,6 +195,11 @@ fi
 	if !strings.Contains(string(out), "production acceptance passed") {
 		t.Fatalf("success report missing: %s", out)
 	}
+	appCalls, err := os.ReadFile(appLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertAcceptancePolicyGuards(t, readRepoFile(t, "deploy", "scripts", "production-release-acceptance.sh"), string(appCalls))
 	deployed, err := os.ReadFile(deployLog)
 	if err != nil {
 		t.Fatal(err)
@@ -191,6 +220,31 @@ fi
 	}
 	if _, err := os.Stat(revokeLog); err != nil {
 		t.Fatalf("acceptance token was not revoked: %v", err)
+	}
+
+	// rc.302/rc.303: consumer auth and route metrics belong to internal
+	// capabilities. While one is hidden from the acceptance account apid
+	// answers its setting with 403, so that check is skipped and every other
+	// policy check still runs.
+	for _, tt := range []struct{ hidden, skipped string }{
+		{"api-consumers", "consumer auth check skipped"},
+		{"route-insights", "route metrics check skipped"},
+		{"api-consumers,route-insights", "route metrics check skipped"},
+	} {
+		hiddenCmd := exec.Command("bash", script)
+		hiddenCmd.Env = append(os.Environ(),
+			"PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"),
+			"RELEASE_SHA="+strings.Repeat("a", 40), "RUN_ID=12345678", "ACTIVE_NODE_COUNT=2",
+			"GREGALE_BIN="+gregale, "GREGALECTL_BIN="+gregalectl,
+			"TEST_DEPLOY_LOG="+filepath.Join(t.TempDir(), "deploys"),
+			"TEST_CURL_LOG="+filepath.Join(t.TempDir(), "curls"),
+			"TEST_REVOKE_LOG="+filepath.Join(t.TempDir(), "revokes"), "TEST_HIDDEN_CAPS="+tt.hidden,
+		)
+		hiddenOutput, err := hiddenCmd.CombinedOutput()
+		if err != nil || !strings.Contains(string(hiddenOutput), tt.skipped) ||
+			!strings.Contains(string(hiddenOutput), "production acceptance passed") {
+			t.Fatalf("hidden %s failed acceptance: err=%v output=%s", tt.hidden, err, hiddenOutput)
+		}
 	}
 
 	// A continuity failure stays a hard gate but leaves the exact response
@@ -307,4 +361,116 @@ fi
 			t.Fatalf("infra-failed deploy attempts = %d, want 2: %s", got, deployed)
 		}
 	})
+}
+
+// acceptancePolicySettings maps each `gregale app` flag the acceptance script
+// passes to the app setting it turns on (capgate.AppSettings form), or "" for
+// a flag that only turns a setting off. A new flag in the script must be added
+// here, so its capability is checked below.
+var acceptancePolicySettings = map[string]string{
+	"--maintenance":                 "app.maintenance_mode",
+	"--no-maintenance":              "",
+	"--streaming-enabled":           "app.streaming_enabled",
+	"--no-streaming-enabled":        "",
+	"--websocket-enabled":           "app.websocket_enabled",
+	"--no-websocket":                "",
+	"--route-metrics":               "app.route_metrics_enabled",
+	"--no-route-metrics":            "",
+	"--consumer-auth-mode=required": "app.consumer_auth_mode=required",
+	"--consumer-auth-mode=optional": "app.consumer_auth_mode=optional",
+}
+
+// assertAcceptancePolicyGuards: rc.297, rc.302 and rc.303 failed production
+// acceptance on 403 capability_not_released, because the script toggled an
+// app setting a preview or internal capability had just come to own, and that
+// capability is off for the acceptance account by default
+// (ADR-20261023115741). Every setting the script turns on whose catalog owner
+// is off by default must sit behind `capability_released <owner>`, so a
+// catalog change that gates one fails here instead of in a release.
+func assertAcceptancePolicyGuards(t *testing.T, script, appCalls string) {
+	t.Helper()
+	catalog, err := productcap.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]productcap.Capability{}
+	owners := map[string]string{}
+	for _, capability := range catalog.Capabilities {
+		byID[capability.ID] = capability
+		for _, setting := range capability.Settings {
+			owners[setting] = capability.ID
+		}
+	}
+	offByDefault := func(id string) bool {
+		for seen := map[string]bool{}; id != "" && !seen[id]; id = byID[id].Parent {
+			seen[id] = true
+			if m := byID[id].Maturity; m == productcap.MaturityPreview || m == productcap.MaturityInternal {
+				return true
+			}
+		}
+		return false
+	}
+	checked := 0
+	for _, call := range strings.Split(strings.TrimSpace(appCalls), "\n") {
+		fields := strings.Fields(call)
+		for i := 0; i < len(fields); i++ {
+			flag := fields[i]
+			if !strings.HasPrefix(flag, "--") || flag == "--json" {
+				continue
+			}
+			if flag == "--consumer-auth-mode" && i+1 < len(fields) {
+				i++
+				flag += "=" + fields[i]
+			}
+			setting, known := acceptancePolicySettings[flag]
+			if !known {
+				t.Errorf("acceptance script passes `gregale app %s`; add it to acceptancePolicySettings", flag)
+				continue
+			}
+			if setting == "" {
+				continue
+			}
+			checked++
+			owner, owned := owners[setting]
+			if !owned {
+				field, _, _ := strings.Cut(setting, "=")
+				owner, owned = owners[field]
+			}
+			if owned && offByDefault(owner) && !strings.Contains(script, "capability_released "+owner) {
+				t.Errorf("acceptance script turns on %s, which %s owns and releases to no account by default; guard it with `if capability_released %s`", setting, owner, owner)
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("acceptance script turned on no app policy setting; the app call log is empty")
+	}
+}
+
+// TestProductionReleaseAcceptanceResolvesRetryBudgetGate: cd-platform pipes
+// the script to the control plane over `bash -s`, where the old relative
+// deploy/scripts path did not exist, so the shared retry-budget mode could
+// only fail after every deployment ran. It now fails before minting a token.
+func TestProductionReleaseAcceptanceResolvesRetryBudgetGate(t *testing.T) {
+	body := readRepoFile(t, "deploy", "scripts", "production-release-acceptance.sh")
+	dir := t.TempDir()
+	minted := filepath.Join(dir, "minted")
+	gregalectl := filepath.Join(dir, "gregalectl")
+	if err := os.WriteFile(gregalectl, []byte("#!/usr/bin/env bash\ntouch \""+minted+"\"\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("bash", "-s")
+	cmd.Dir = dir
+	cmd.Stdin = strings.NewReader(body)
+	cmd.Env = append(os.Environ(),
+		"RELEASE_SHA="+strings.Repeat("a", 40), "RUN_ID=12345678", "ACTIVE_NODE_COUNT=2",
+		"SHARED_RETRY_BUDGET_REQUIRED=true", "PROMETHEUS_URL=http://127.0.0.1:9095",
+		"GREGALE_BIN="+gregalectl, "GREGALECTL_BIN="+gregalectl,
+	)
+	out, err := cmd.CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "shared retry-budget gate is missing") {
+		t.Fatalf("piped script did not refuse the missing retry-budget gate: err=%v output=%s", err, out)
+	}
+	if _, err := os.Stat(minted); err == nil {
+		t.Fatal("the retry-budget gate was checked only after minting an acceptance token")
+	}
 }
