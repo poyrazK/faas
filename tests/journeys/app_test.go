@@ -136,6 +136,9 @@ func TestCronDelivery(t *testing.T) {
 		t.Logf("crons runs: %s", tail(string(runs.stdout), 600))
 	})
 	s.check("trigger_inventory", func(t *testing.T) {
+		// With event triggers hidden the CLI has no trigger command at all,
+		// so there is no inventory to send cron users away from.
+		skipHidden(t, hiddenCapabilities(t, tg), "event-triggers")
 		res := tg.run(t, time.Minute, "trigger", "list", "--app", slug, "--kind", "cron")
 		out := string(res.stdout) + string(res.stderr)
 		if res.exit == 0 || !strings.Contains(out, "cron list") && !strings.Contains(out, "/v1/crons") {
