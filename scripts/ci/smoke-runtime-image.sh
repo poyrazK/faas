@@ -12,7 +12,7 @@ if [[ "${expected_os}" == "${expected_platform}" || -z "${expected_os}" || -z "$
 fi
 
 case "${runtime_image}" in
-  runner-node22|runner-node24)
+  runner-node22|runner-node24|agent-base)
     fixture_name=handler.mjs
     fixture_body='console.log("runtime-smoke-ok");'
     runtime_command=(/usr/local/bin/node "/tmp/gregale-runtime-smoke/${fixture_name}")

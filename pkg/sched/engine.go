@@ -794,6 +794,9 @@ type Engine struct {
 	// restartNotices are the nodes whose vmmd is restarting under a planned
 	// notice (vmmd restart adoption ADR §3); placement tries others first.
 	restartNotices *RestartNotices
+	// breaker counts platform-attributable wake failures per node and opens
+	// the node's durable wake breaker (ADR-20261022184531 step 3).
+	breaker *nodeWakeBreaker
 	// nodeBoots is this scheduler's per-node boot breaker and streams its
 	// view of the capacity streams it receives (ADR-20261029085904).
 	nodeBoots *nodeBootBreaker
@@ -1005,6 +1008,7 @@ func NewEngine(ctx context.Context, store state.Store, ledger *NodeLedger, vmm R
 		serviceAppMu:             map[string]*sync.Mutex{},
 		serviceMu:                map[string]*sync.Mutex{},
 		wakeCoord:                newWakeCoord(),
+		breaker:                  newNodeWakeBreaker(),
 		warmBroadcaster:          newWarmHintBroadcaster(),
 		capacityTable:            newNodeCapacityTable(),
 		nodeBoots:                newNodeBootBreaker(),
@@ -5125,6 +5129,10 @@ func (e *Engine) loadPlacementSnapshotFresh(ctx context.Context, r Request) (pla
 		if err != nil {
 			return placementSnapshot{}, fmt.Errorf("sched: placement: list active compute_nodes: %w", err)
 		}
+	}
+	if r.Kind == KindAgentRun {
+		// ADR-20261027090014 §2: agent runs are admitted only on the agent pool.
+		nodes = agentPoolNodes(nodes, r.agentPool)
 	}
 	// ADR-20261029085904: a node this scheduler's boots keep failing on is
 	// placed like a degraded one.

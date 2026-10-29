@@ -200,6 +200,55 @@ Each schedd keeps its own breaker in memory and writes the verdict to
 canary wake per node per minute, which proves readiness without customer
 traffic, is optional and stays behind a flag until its cost is measured.
 
+As built (step 3):
+
+- **Durable breaker.** The breaker lives in two new nullable columns,
+  `wake_breaker_open_until` and `wake_breaker_reason`. It is not written
+  into `readiness`, which stays the heartbeat's Ping-derived verdict. If the
+  breaker were folded into `readiness`, the heartbeat and every schedd's
+  breaker would overwrite one another.
+  - A node is degraded while `now < wake_breaker_open_until`. Every schedd
+    sees this through `compute_node_changed`, so one schedd's breaker
+    degrades the node fleet-wide.
+  - Once that time passes, the breaker is half-open, and the node takes
+    wakes again. The first platform failure there reopens it at once (no
+    count needed). The first successful wake closes it (`NULL`).
+- **Counting.** Each schedd counts in memory the consecutive
+  platform-attributable failures on each node within
+  `NodeWakeBreakerWindowSeconds`. A successful wake on the node resets the
+  count.
+  - Customer failures neither count nor reset it.
+  - Ambiguous errors (`internal`, deadline) are ignored.
+- **The vmmd marker** covers only the failures that are certainly node-local
+  and certainly before guest code: jail lease acquisition and network setup.
+  They wrap `fcvm.ErrWakeNotStarted`. The wake RPCs send ErrorInfo metadata
+  `wake_stage=pre_start`, and schedd lifts it into `ErrVMMWakeNotStarted`.
+  Jailer start, cgroup and disk-full failures happen inside the VMM's boot,
+  where "did the VM start" is not yet provable. They stay out until the VMM
+  reports its own boundary.
+  - The same marker makes those failures re-placeable by step 1, under
+    `reason="node_setup"`.
+  - schedd never forwards the marker: the gateway sees the same Problem as
+    before.
+- **Limits** (`pkg/api/limits.go`): `NodeWakeBreakerFailures` 3,
+  `NodeWakeBreakerWindowSeconds` 60, `NodeWakeBreakerCooldownSeconds` 30.
+- **Observability.**
+  - `schedd_node_wake_breaker_total{transition}`, with transition `opened`,
+    `reopened` or `closed`.
+  - The readiness gauge reads degraded while the breaker is open.
+  - `FaasComputeNodeDegraded` (warn, 5 m) and `FaasNoComputeNodeReady`
+    (page, 2 m), with a promtool fixture and a runbook.
+- **Beside ADR-20261029085904's boot breaker.** That breaker is
+  process-local: each schedd counts its own node-caused boot failures (three
+  from three apps) and treats the node as degraded for itself. It covers the
+  ambiguous failures this breaker ignores, because three different apps make
+  an app fault unlikely. This breaker is durable and counts only refusals
+  vmmd proves are node-local. Placement avoids a node either one marks.
+  - A `vmmd_unreachable` refusal is re-placed (step 1), but it does not count
+    here. One schedd failing to reach a vmmd says nothing about the others,
+    so only that schedd's boot breaker counts it.
+- **Not built:** the canary wake.
+
 ### 4. The previous base generation stays adoptable
 
 This was the root cause of the incident. A node rolled back in the middle of
@@ -214,6 +263,24 @@ sidecar naming that generation, and the fixable-CRITICAL refusal applies to
 it unchanged. ADR-510's backing identity (digest sidecar) is checked the same
 way. The step 4 PR records the storage layout here after reading imaged's
 publication path.
+
+As built (step 4): delivered by
+[ADR-20261026181418](20261026181418-generation-addressed-runtime-base-keys.md)
+(#5587), which this ADR's step 4 does not duplicate.
+
+- Each gated runtime base generation has its own shared keys. A release
+  reads and writes only the keys of the generation it configures, so a node
+  rolled back in the middle of a release, or on N-1 beside N, still adopts
+  its configured generation.
+- vmmd adopts that generation's scan sidecar first, as the commit marker,
+  then its base and digest sidecar under the base's logical cache names. It
+  falls back to the legacy logical keys only when the generation's own scan
+  does not exist, and only while the legacy scan names the generation.
+- Nodes keep the logical names for the cache entry, drive0 and snapshots, so
+  the scan gate and ADR-510's backing identity judge the adopted group as
+  before.
+- A narrower implementation of this step (retained copies beside the single
+  logical key) was built and metal-tested, then dropped as superseded.
 
 ### 5. gatewayd-public retries responses that were never dispatched
 

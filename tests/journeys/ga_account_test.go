@@ -91,8 +91,17 @@ func TestCLITools(t *testing.T) {
 	})
 	t.Run("help_all", func(t *testing.T) {
 		res := tg.ok(t, time.Minute, "help", "--all")
-		for _, cmd := range []string{"deploy", "logs", "rollback", "secrets", "domains"} {
-			if !strings.Contains(string(res.stdout), cmd) {
+		// The command tree (ADR-20261026145832) lists nouns: secrets live
+		// under env and domains under domain. Match whole entries, so a
+		// command's name in another entry's description does not count.
+		listed := map[string]bool{}
+		for _, line := range strings.Split(string(res.stdout), "\n") {
+			if fields := strings.Fields(line); len(fields) > 0 && strings.HasPrefix(line, "  ") {
+				listed[fields[0]] = true
+			}
+		}
+		for _, cmd := range []string{"deploy", "logs", "rollback", "env", "domain"} {
+			if !listed[cmd] {
 				t.Errorf("help --all does not list %s", cmd)
 			}
 		}

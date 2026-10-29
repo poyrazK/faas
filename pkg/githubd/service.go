@@ -226,6 +226,9 @@ type Service struct {
 	// behaviour; tests that don't care about source staging
 	// keep working unchanged).
 	WorkDir string
+	// AutomationEvents forwards pull_request deliveries to apid as
+	// gregale.github events (ADR-20261027090010 §9); nil forwards none.
+	AutomationEvents AutomationEventPublisher
 	// CapabilityAllowed decides a product capability's platform flag for an
 	// account (ADR-20261023115741). nil releases every capability.
 	CapabilityAllowed func(capability, accountID string) bool
@@ -285,6 +288,11 @@ func (s *Service) HandleWebhookEvent(ctx context.Context, eventType string, body
 		_, err = s.HandlePushRequest(ctx, body)
 		return err
 	case "pull_request":
+		// Automations come first and decode on their own: the preview
+		// path refuses actions it does not handle.
+		if err := s.forwardPullRequest(ctx, body); err != nil {
+			return err
+		}
 		event, err := DecodePullRequest(body)
 		if errors.Is(err, ErrPullRequestActionIgnored) {
 			return ErrIgnored
@@ -535,7 +543,7 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 	// the Service.Scan field. The production-branch guard
 	// returns ErrIgnored when the pushed branch differs from
 	// project.ProductionBranch — the caller renders 200-ignored.
-	scan, err := s.Reconcile.Scan(tree.FS())
+	scan, err := s.Reconcile.Scan(tree.FS(), s.scanOptions(project.AccountID))
 	if err != nil {
 		return reconcile.Result{}, fmt.Errorf("githubd: scan: %w", err)
 	}
@@ -1657,7 +1665,7 @@ func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, tar
 			return reconcile.Result{}, fmt.Errorf("githubd: fetch preview source: %w", err)
 		}
 		defer func() { _ = tree.Close() }()
-		scan, err = s.Reconcile.Scan(tree.FS())
+		scan, err = s.Reconcile.Scan(tree.FS(), s.scanOptions(binding.AccountID))
 		if err != nil {
 			return reconcile.Result{}, previewSetupFailure("Gregale could not read the project at this commit: %s", strings.TrimPrefix(err.Error(), "reposcan: "))
 		}

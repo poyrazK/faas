@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "b6d9eeadc68b956377ac57cbedd092789d42f8d3a40794e9b364be38f3946b35",
+      "revision": "7410dc925b3c31b89dea8b38636048a9d423ffd2780cd1fcc4d7aa99e4c48067",
       "files": [
         "faas.rules.yml"
       ],
@@ -3533,6 +3533,19 @@
           }
         },
         {
+          "id": "92019e61291c2563e534b70cea36f25f5a039a9c05aa03482282a711472eab2b",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo",
+          "rule_name": "FaasNoComputeNodeReady",
+          "definition": {
+            "expression_hash": "24eebef12b81f196c880b308fd46ce569279642d09ea6381ee99a2d49763e40f",
+            "labels_hash": "87088d53e44d216b28d556eab6e352530ab764275fd099851c0a5623d49200e8",
+            "for_seconds": 120,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "94d53218eed30f4f89960748b6eed518bf91e450dba59e52a4ca5d253a7bd4c6"
+          }
+        },
+        {
           "id": "930534794f4cd55535337689ef8037ecd879daf961c432ac3374d52e3ee8b2ef",
           "file_name": "faas.rules.yml",
           "group_name": "faas_slo",
@@ -4232,6 +4245,19 @@
             "for_seconds": 60,
             "keep_firing_for_seconds": 0,
             "fingerprint": "181a567448f7a40ed868df8d3dc6dd788190f539b2b6546f41efc25994f3a554"
+          }
+        },
+        {
+          "id": "adc455d64ac2580caeebeff5b7f31319f0a8e136b8c8eb054a5fbca86d52c2f5",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo",
+          "rule_name": "FaasComputeNodeDegraded",
+          "definition": {
+            "expression_hash": "84f7bd7d9c04ae423ff3670b80560a4f84cc8daa4472860e1448a490ac946ccf",
+            "labels_hash": "39e3527b0d9237b91e1973b5610095c73026dce5cb66a44786a22a842f160363",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "2ffdb6e08350d28cf8e6f721d42831513cb382cd3de16d1d45ff7f4a795f4c8e"
           }
         },
         {
@@ -6240,7 +6266,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "8ae916601e884017efb59496e1a7ca3fb714c3c04381722089545cfe2cf61da0",
+      "revision": "b4cd16aa404719ceaff8aa6ff09e8219762417c9c0ea1e9c63dc1fc630a20012",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -9955,6 +9981,19 @@
           }
         },
         {
+          "id": "92019e61291c2563e534b70cea36f25f5a039a9c05aa03482282a711472eab2b",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo",
+          "rule_name": "FaasNoComputeNodeReady",
+          "definition": {
+            "expression_hash": "24eebef12b81f196c880b308fd46ce569279642d09ea6381ee99a2d49763e40f",
+            "labels_hash": "87088d53e44d216b28d556eab6e352530ab764275fd099851c0a5623d49200e8",
+            "for_seconds": 120,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "94d53218eed30f4f89960748b6eed518bf91e450dba59e52a4ca5d253a7bd4c6"
+          }
+        },
+        {
           "id": "930534794f4cd55535337689ef8037ecd879daf961c432ac3374d52e3ee8b2ef",
           "file_name": "faas.rules.yml",
           "group_name": "faas_slo",
@@ -10680,6 +10719,19 @@
             "for_seconds": 60,
             "keep_firing_for_seconds": 0,
             "fingerprint": "181a567448f7a40ed868df8d3dc6dd788190f539b2b6546f41efc25994f3a554"
+          }
+        },
+        {
+          "id": "adc455d64ac2580caeebeff5b7f31319f0a8e136b8c8eb054a5fbca86d52c2f5",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo",
+          "rule_name": "FaasComputeNodeDegraded",
+          "definition": {
+            "expression_hash": "84f7bd7d9c04ae423ff3670b80560a4f84cc8daa4472860e1448a490ac946ccf",
+            "labels_hash": "39e3527b0d9237b91e1973b5610095c73026dce5cb66a44786a22a842f160363",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "2ffdb6e08350d28cf8e6f721d42831513cb382cd3de16d1d45ff7f4a795f4c8e"
           }
         },
         {

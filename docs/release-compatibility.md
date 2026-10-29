@@ -505,6 +505,22 @@ the change says, so the installer's runtime role still cannot write the
 history itself. A failed insert only raises a warning; it never fails the
 install.
 
+Per-unit deploys and rollbacks on a compute host (`deployctl deploy --only`
+and `deployctl rollback --only` from the edge lane) do not change
+`compute_nodes.release_id`. deployctl appends each finished one to a spool on
+the host instead (`/var/lib/faas/deploy/activations.jsonl`, the newest 256),
+with the same detail a control-plane row has. After each node, the edge lane
+runs `unit_deploy.sh record`. It copies the spool to the control plane, where
+`deployctl record` imports it as the schema owner.
+
+- **Host name.** Rows are filed under the node's `compute_nodes` name
+  (`<node>.faas`), which CD supplies; a spool never names its own host, so a
+  node cannot write rows for another.
+- **Idempotent.** Each line keeps the id it got on the node, so importing it
+  again adds nothing.
+- **Late imports.** A run outside the edge lane, such as a watch rollback or
+  a manual run, is imported with the node's next edge deploy.
+
 To see what ran when:
 
 ```
@@ -528,9 +544,8 @@ root), as the other `gregalectl release` commands do.
 - **Not recorded:**
   - a rerun that finds its release already active;
   - a refused deploy (`--expect-current` mismatch);
-  - per-unit deploys and rollbacks on compute hosts (`deployctl deploy
-    --only` from the edge lane), which do not change
-    `compute_nodes.release_id`.
+  - a compute host's activation whose deployctl died before it finished:
+    only finished activations are spooled.
 
 ## Not covered yet
 
