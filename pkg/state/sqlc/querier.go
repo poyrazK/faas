@@ -5672,6 +5672,9 @@ type Querier interface {
 	ReadTrafficGlobalRouteAccounts(ctx context.Context, db DBTX, arg ReadTrafficGlobalRouteAccountsParams) ([]pgtype.UUID, error)
 	// Only selectors, counts, sizes and referenced IDs leave the database.
 	ReadTrafficHostAnalysis(ctx context.Context, db DBTX, arg ReadTrafficHostAnalysisParams) (ReadTrafficHostAnalysisRow, error)
+	// Each route pattern's match_host_scope, as the edge_rules trigger computes it
+	// (ADR-20261027163626). An exact pattern is its own scope; '@app' has none.
+	ReadTrafficRouteWriteScopes(ctx context.Context, db DBTX, patterns []string) ([]ReadTrafficRouteWriteScopesRow, error)
 	ReadTrafficSecurityEpochs(ctx context.Context, db DBTX, arg ReadTrafficSecurityEpochsParams) ([]ReadTrafficSecurityEpochsRow, error)
 	ReadValidRouteLifecycleApprovals(ctx context.Context, db DBTX, arg ReadValidRouteLifecycleApprovalsParams) ([][]byte, error)
 	// Same literal suffix language as ReadPublicHostDomain and WildcardMatchesHost.

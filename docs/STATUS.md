@@ -212,8 +212,8 @@ its own end-to-end test (2026-10-26, n2, `cmd/e2e/routes_canary_e2e_test.go`):
 two apps at a 50% canary, an enforce-mode gate on two routes; the canary whose
 `/checkout` answers 500 is held with `route_health_blocked` and a blocked
 history entry, the healthy one advances to 100% and the gateway follows. The
-three routes tests and the general-path tests now run on pull requests that
-change Go code (`e2e-general` workflow, docs/ci-general-path.md). Open: route
+three routes tests and the general-path tests run nightly, and on pull
+requests labelled `e2e-general` (docs/ci-general-path.md, ADR-20261029121500). Open: route
 requirements and OpenAPI contract preview have no end-to-end test; six routes
 capabilities are `internal` and three `preview` (ADR-20261023115741).
 

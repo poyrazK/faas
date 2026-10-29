@@ -39,6 +39,13 @@ FAAS_API="${FAAS_API:-https://api.gregale.dev}"
 FAAS_APPS_DOMAIN="${FAAS_APPS_DOMAIN:-gregale.dev}"
 DEPLOY_TIMEOUT_SECONDS="${DEPLOY_TIMEOUT_SECONDS:-1200}"
 INFRA_RETRY_DELAY_SECONDS="${INFRA_RETRY_DELAY_SECONDS:-30}"
+# ACCEPTANCE_NODE selects the per-node canary below instead of the fleet gate.
+ACCEPTANCE_NODE="${ACCEPTANCE_NODE:-}"
+NODE_CANARY_MAX_DEPLOYMENTS="${NODE_CANARY_MAX_DEPLOYMENTS:-6}"
+if [[ -n "$ACCEPTANCE_NODE" ]]; then
+	[[ "$ACCEPTANCE_NODE" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]] || { echo "invalid ACCEPTANCE_NODE" >&2; exit 2; }
+	[[ "$NODE_CANARY_MAX_DEPLOYMENTS" =~ ^[1-9][0-9]*$ ]] || { echo "invalid NODE_CANARY_MAX_DEPLOYMENTS" >&2; exit 2; }
+fi
 
 [[ -x "$GREGALE_BIN" ]] || { echo "candidate gregale binary is missing: $GREGALE_BIN" >&2; exit 1; }
 [[ -x "$GREGALECTL_BIN" ]] || { echo "candidate gregalectl binary is missing: $GREGALECTL_BIN" >&2; exit 1; }
@@ -308,6 +315,52 @@ verify_app_policy_controls() {
 	assert_policy_bool "$receipt" route_metrics_enabled true
 	jq -e '.consumer_auth_mode == "optional"' "$receipt" >/dev/null
 }
+
+# Per-node canary: cd-platform runs it after each compute node activates and
+# before the next one starts. Placement and build claims are fleet-wide, so it
+# deploys fresh apps, alternating both shapes, until the just-activated node
+# serves one and has built one. rc.301's fsn-2 served traffic while its
+# builderd failed every build, and only an operator's manual hold kept fsn-3
+# on the old release. Any failed deployment ends the canary.
+if [[ -n "$ACCEPTANCE_NODE" ]]; then
+	# Slugs stay reserved after cleanup, so each node's apps carry its name
+	# (a valid slug is at most 40 characters).
+	node_tag="$(printf '%s' "${ACCEPTANCE_NODE%%.*}" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9-' '-' | cut -c1-10)"
+	node_report="$workdir/node.json"
+	canary_deadline=$((SECONDS + 20 * 60))
+	for ((i=1; i<=NODE_CANARY_MAX_DEPLOYMENTS; i++)); do
+		if ((SECONDS >= canary_deadline)); then
+			break
+		fi
+		template=hello-node
+		if ((i % 2 == 0)); then
+			template=function-node
+		fi
+		canary_slug="ra-${short_sha}-${run_suffix}-${node_tag}-${i}"
+		canary_output="$workdir/${canary_slug}.json"
+		slugs+=("$canary_slug")
+		rc=0
+		deploy_one "$template" "$canary_slug" "$canary_output" || rc=$?
+		if (( rc != 0 )); then
+			report_failed_deploy "$canary_slug" "$canary_output" "$rc"
+			echo "node canary deployment for ${ACCEPTANCE_NODE} failed" >&2
+			exit 1
+		fi
+		verify_receipt "$canary_output"
+		node_exit=0
+		"$GREGALECTL_BIN" release-acceptance verify-node --node "$ACCEPTANCE_NODE" \
+			--slugs "$(IFS=,; echo "${slugs[*]}")" >"$node_report" || node_exit=$?
+		if (( node_exit == 0 )); then
+			printf 'node canary passed: release=%s node=%s deployments=%s\n' \
+				"$RELEASE_SHA" "$ACCEPTANCE_NODE" "${#slugs[@]}"
+			exit 0
+		fi
+		(( node_exit == 3 )) || exit "$node_exit"
+	done
+	echo "node canary did not see ${ACCEPTANCE_NODE} serve and build an acceptance app within ${NODE_CANARY_MAX_DEPLOYMENTS} deployments and 20 minutes" >&2
+	jq -c . "$node_report" >&2 || true
+	exit 1
+fi
 
 # Submit both execution shapes. Placement is capacity-ranked, not round-robin,
 # so this first wave proves both shapes but cannot guarantee node coverage.

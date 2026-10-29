@@ -1,54 +1,51 @@
 name: function backend concurrency
 
+# Pull requests run this only when function-backend code changes: the
+# function_* files of the shared packages, not the packages as a whole.
+# pkg/state, pkg/sched, migrations and go.mod matched nearly every pull
+# request (docs/adr/20261029121500-light-pull-request-ci.md); ci.yml runs the
+# suite nightly and on dispatch.
 on:
   pull_request:
     paths:
       - 'guest/runners/**'
-      - 'guest/init/**'
       - 'pkg/functionlifetime/**'
       - 'pkg/runtimeadmission/**'
-      - 'pkg/vmmdgrpc/**'
-      - 'api/proto/onebox/faas/vmmd/v1/**'
-      - 'pkg/fcvm/**'
-      - 'pkg/sched/**'
-      - 'pkg/state/**'
-      - 'migrations/**'
-      - 'schema.sql'
-      - 'sqlc.yaml'
-      - 'pkg/imaged/**'
+      - 'pkg/fcvm/activity/**'
+      - 'pkg/state/*function*'
+      - 'pkg/sched/*function*'
+      - 'pkg/fcvm/*function*'
+      - 'pkg/vmmdgrpc/*function*'
+      - 'pkg/imaged/*function*'
+      - 'migrations/*function*'
       - 'pkg/e2etest/functionsql/**'
       - 'pkg/e2etest/functionmigration/**'
       - 'cmd/e2e/function_resources_postgres_metal_test.go'
       - 'cmd/e2e/function_migration_admission_postgres_metal_test.go'
       - 'cmd/e2e/function_migration_destination_*_metal_test.go'
-      - 'cmd/e2e/sec11_sweep_test.go'
       - 'scripts/ci/function-migration-native*.py'
       - 'scripts/ci/test_function_migration_native.py'
-      - 'pkg/api/limits.go'
-      - 'cmd/vmmd/**'
-      - 'cmd/schedd/**'
-      - 'pkg/rootfs/**'
       - 'sdk/node/src/postgres-pool-runtime.ts'
       - 'sdk/node/src/binding-client-runtime.ts'
       - 'sdk/node/src/secret-reload-runtime.ts'
       - 'sdk/node/test/postgres-pool*'
       - 'sdk/node/test/restore-aware-postgres-pool.test.ts'
       - 'sdk/node/scripts/sync-binding-starters.mjs'
-      - 'sdk/node/package*.json'
       - 'cmd/gregale/templates/rest-api-postgres/**'
       - 'cmd/gregale/templates/secret-reload-node/**'
-      - 'go.mod'
-      - 'go.sum'
-      - 'Makefile'
       - '.github/workflows/function-backends.yml'
+  # Nightly and on dispatch: ci.yml calls this workflow.
+  workflow_call:
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
+  # A literal name: when ci.yml calls this workflow, github.workflow is the
+  # caller's name, which the other called suites would share.
   group: function-backends-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   portable:

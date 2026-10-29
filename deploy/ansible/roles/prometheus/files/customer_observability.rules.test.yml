@@ -209,3 +209,61 @@ tests:
               family: customer_observability
               public_status: internal
             exp_annotations: *channel_annotations
+
+  # ADR-20261028101615: alert evaluation latency and deferral.
+  - name: slow alert ticks fire, ticks well inside the minute do not
+    interval: 1m
+    input_series:
+      - series: meterd_op_duration_seconds_sum{job="meterd",instance="slow",op="alerts"}
+        values: 0+55x60
+      - series: meterd_op_duration_seconds_count{job="meterd",instance="slow",op="alerts"}
+        values: 0+1x60
+      - series: meterd_op_duration_seconds_sum{job="meterd",instance="fast",op="alerts"}
+        values: 0+20x60
+      - series: meterd_op_duration_seconds_count{job="meterd",instance="fast",op="alerts"}
+        values: 0+1x60
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: FaasAlertEvaluationSlow
+        exp_alerts:
+          - exp_labels:
+              job: meterd
+              instance: slow
+              severity: warn
+              component: meterd
+              family: customer_observability
+              public_status: internal
+            exp_annotations:
+              summary: Alert evaluation ticks take most of their minute
+              description: "meterd's alert ticks have averaged over 50 seconds for 15 minutes, so customers'
+                alerts fire late. Accounts are evaluated in parallel, so many accounts are slow at once:
+                check Prometheus and the database before any one account."
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomerObservability.md
+
+  - name: persistent deferral fires, a quiet counter does not
+    interval: 1m
+    input_series:
+      - series: meterd_alert_rules_skipped_total{job="meterd",instance="busy",reason="deferred"}
+        values: 0+2x80
+      - series: meterd_alert_rules_skipped_total{job="meterd",instance="calm",reason="deferred"}
+        values: 0+0x80
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasAlertRulesDeferred
+        exp_alerts: []
+      - eval_time: 70m
+        alertname: FaasAlertRulesDeferred
+        exp_alerts:
+          - exp_labels:
+              job: meterd
+              instance: busy
+              severity: warn
+              component: meterd
+              family: customer_observability
+              public_status: internal
+            exp_annotations:
+              summary: Some alert rules keep missing their tick
+              description: "For an hour some account has spent its alert tick budget, so part of its rules
+                run a tick late. meterd logs the account (\"account spent its tick budget\"); look at its
+                slow rules: log-search queries, an unresponsive webhook, or Prometheus."
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomerObservability.md

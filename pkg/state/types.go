@@ -5762,7 +5762,9 @@ func (n ComputeNode) EffectiveReadiness() NodeReadiness {
 }
 
 // ComputeNodeReadinessStore records a node's proven readiness. schedd's
-// heartbeat is the only writer (ADR-20261022184531).
+// heartbeat writes it (ADR-20261022184531), and so does the scheduler that
+// receives a node's capacity stream when that stream goes silent and vmmd
+// does not answer a ping (ADR-20261029085904).
 type ComputeNodeReadinessStore interface {
 	// SetComputeNodeReadiness writes readiness and reason (empty clears it)
 	// and reports whether either changed. Only a change fires

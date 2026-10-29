@@ -547,6 +547,18 @@ func TestBuildArgv_LayerCompressionShellWords(t *testing.T) {
 	}
 }
 
+func TestBuildkitSnapshotter(t *testing.T) {
+	if got := buildkitSnapshotter(api.BuildManifest{}); got != "fuse-overlayfs" {
+		t.Fatalf("default snapshotter = %q, want fuse-overlayfs", got)
+	}
+	if got := buildkitSnapshotter(api.BuildManifest{BuildKitSnapshotter: api.BuildKitSnapshotterAuto}); got != "auto" {
+		t.Fatalf("auto snapshotter = %q, want auto", got)
+	}
+	if got := buildkitSnapshotter(api.BuildManifest{BuildKitSnapshotter: "overlayfs"}); got != "fuse-overlayfs" {
+		t.Fatalf("unknown value chose %q, want the fuse-overlayfs default", got)
+	}
+}
+
 func TestRemoveOversizedDependencyCache(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "cache")
 	if err := os.MkdirAll(filepath.Join(root, "blobs"), 0o700); err != nil {

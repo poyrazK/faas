@@ -125,6 +125,11 @@ case "$1 $2" in
       printf '{"ready":true,"nodes":[{"name":"fsn-2"},{"name":"fsn-3"}]}\n'; exit 0
     fi
     printf '{"ready":false,"nodes":[{"name":"fsn-2"},{"name":"fsn-3"}]}\n'; exit 3 ;;
+  'release-acceptance verify-node')
+    if [[ "${TEST_NODE_NEVER_READY:-}" != 1 && "$*" == *-fsn-2-2* ]]; then
+      printf '{"node":"fsn-2.faas","instance":true,"build":true,"ready":true}\n'; exit 0
+    fi
+    printf '{"node":"fsn-2.faas","instance":true,"build":false,"ready":false}\n'; exit 3 ;;
 esac
 exit 2
 `)
@@ -361,6 +366,46 @@ fi
 			t.Fatalf("infra-failed deploy attempts = %d, want 2: %s", got, deployed)
 		}
 	})
+
+	// The per-node canary (ACCEPTANCE_NODE) deploys until verify-node proves
+	// the node, skips the fleet gate, stays bounded, and fails on any failed
+	// deployment, revoking its token every time.
+	for _, tt := range []struct {
+		name, extraEnv, wantOutput, wantDeployed, notDeployed string
+		wantErr                                               bool
+	}{
+		{name: "node proven", wantOutput: "node canary passed: release=" + strings.Repeat("a", 40) + " node=fsn-2 deployments=2",
+			wantDeployed: "-fsn-2-2\n", notDeployed: "-a1\n"},
+		{name: "node never proven", extraEnv: "TEST_NODE_NEVER_READY=1", wantErr: true,
+			wantOutput: "node canary did not see fsn-2 serve and build", wantDeployed: "-fsn-2-3\n", notDeployed: "-fsn-2-4\n"},
+		{name: "deployment failed", extraEnv: "TEST_FAIL_SLUG_SUFFIX=-fsn-2-1", wantErr: true,
+			wantOutput: "node canary deployment for fsn-2 failed", wantDeployed: "-fsn-2-1\n", notDeployed: "-fsn-2-2\n"},
+	} {
+		t.Run("node canary "+tt.name, func(t *testing.T) {
+			log := filepath.Join(t.TempDir(), "deploys")
+			revokes := filepath.Join(t.TempDir(), "revokes")
+			cmd := exec.Command("bash", script)
+			cmd.Env = append(os.Environ(),
+				"PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"),
+				"RELEASE_SHA="+strings.Repeat("a", 40), "RUN_ID=12345678", "ACTIVE_NODE_COUNT=1",
+				"GREGALE_BIN="+gregale, "GREGALECTL_BIN="+gregalectl,
+				"TEST_DEPLOY_LOG="+log, "TEST_CURL_LOG="+filepath.Join(t.TempDir(), "curls"),
+				"TEST_REVOKE_LOG="+revokes, "ACCEPTANCE_NODE=fsn-2", "NODE_CANARY_MAX_DEPLOYMENTS=3",
+				tt.extraEnv,
+			)
+			out, err := cmd.CombinedOutput()
+			if (err != nil) != tt.wantErr || !strings.Contains(string(out), tt.wantOutput) {
+				t.Fatalf("err=%v wantErr=%v, want output %q:\n%s", err, tt.wantErr, tt.wantOutput, out)
+			}
+			deployed, _ := os.ReadFile(log)
+			if !strings.Contains(string(deployed), tt.wantDeployed) || strings.Contains(string(deployed), tt.notDeployed) {
+				t.Fatalf("deployments = %q, want %q and not %q", deployed, tt.wantDeployed, tt.notDeployed)
+			}
+			if _, err := os.Stat(revokes); err != nil {
+				t.Fatalf("node canary did not revoke its token: %v", err)
+			}
+		})
+	}
 }
 
 // acceptancePolicySettings maps each `gregale app` flag the acceptance script
