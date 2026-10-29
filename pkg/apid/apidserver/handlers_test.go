@@ -212,6 +212,34 @@ func TestCreateApp_AppliesDefaults(t *testing.T) {
 	}
 }
 
+// ADR-20261029234500: a Scale app created without a size starts at 1024 MB,
+// not the plan's 2048 MB; an explicit vCPU keeps the plan's joint shape.
+func TestCreateAppDefaultRAMIsCappedForScale(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanScale)
+	for _, tc := range []struct {
+		name string
+		req  api.CreateAppRequest
+		want int
+	}{
+		{"no size", api.CreateAppRequest{Slug: "scale-default"}, api.StandaloneAppDefaultMaxRAMMB},
+		{"explicit vcpu", api.CreateAppRequest{Slug: "scale-shape", VCPU: 4}, api.MustLimitsFor(api.PlanScale).RAMMB},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := e.Do(t, "POST", "/v1/apps", tc.req, nil)
+			if rec.Code != http.StatusCreated {
+				t.Fatalf("create: %d %s", rec.Code, rec.Body)
+			}
+			var out api.AppResponse
+			if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+				t.Fatal(err)
+			}
+			if out.RAMMB != tc.want {
+				t.Fatalf("RAM = %d, want %d", out.RAMMB, tc.want)
+			}
+		})
+	}
+}
+
 func TestCreateApp_ExplicitRamAndConcur(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanScale) // highest limits
 	rec := e.Do(t, "POST", "/v1/apps",
