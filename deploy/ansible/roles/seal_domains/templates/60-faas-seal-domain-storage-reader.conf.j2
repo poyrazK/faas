@@ -3,6 +3,14 @@
 # its startup rekey leaves the credentials that identity opens alone. The
 # fleet identity stays in the base unit until the domain re-seal completes.
 [Service]
+{% if faas_seal_domain_storage_contracted | bool %}
+# Contracted: an empty LoadCredential= drops every credential loaded before
+# this drop-in, the base unit's fleet and host identities included, so
+# s3-gatewayd holds only the domain identity below and skips its startup
+# rekey. No other drop-in loads one for s3-gatewayd.
+LoadCredential=
+UnsetEnvironment=FAAS_HOST_AGE_IDENTITY_PATH
+{% endif %}
 LoadCredential=faas_seal_domain_storage:/etc/faas/secrets/domains/storage.age
 {% if faas_seal_domain_storage_previous_identity_src | length > 0 %}
 LoadCredential=faas_seal_domain_storage_previous:/etc/faas/secrets/domains/storage.age.previous

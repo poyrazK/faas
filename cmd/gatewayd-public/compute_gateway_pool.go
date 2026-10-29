@@ -102,12 +102,19 @@ func (p *computeGatewayPool) DialContext(ctx context.Context, _ string) (net.Con
 	}
 
 	start := p.nextIndex(len(endpoints))
+	// A retry of a not-dispatched response avoids the nodes that refused it
+	// and learns which node it reached (ADR-20261022184531 step 5).
+	rec := gateway.DialRecordFrom(ctx)
 	var lastErr error
 	for _, endpoint := range p.readiness.order(endpoints, start) {
+		if rec.Excluded(endpoint.name) {
+			continue
+		}
 		dialCtx, cancel := context.WithTimeout(ctx, computeGatewayDialTimeout)
 		conn, dialErr := (&net.Dialer{}).DialContext(dialCtx, "tcp", endpoint.address)
 		cancel()
 		if dialErr == nil {
+			rec.RecordDialed(endpoint.name)
 			return conn, nil
 		}
 		lastErr = dialErr
@@ -118,6 +125,21 @@ func (p *computeGatewayPool) DialContext(ctx context.Context, _ string) (net.Con
 		lastErr = errors.New("all compute gateway dials failed")
 	}
 	return nil, fmt.Errorf("%w: %w", gateway.ErrNoComputeCapacity, lastErr)
+}
+
+// HasAlternate reports whether the inventory holds a compute node a retry
+// has not tried yet (gateway.AlternateDialer).
+func (p *computeGatewayPool) HasAlternate(ctx context.Context, rec *gateway.DialRecord) bool {
+	endpoints, err := p.snapshot(ctx)
+	if err != nil {
+		return false
+	}
+	for _, endpoint := range endpoints {
+		if !rec.Excluded(endpoint.name) {
+			return true
+		}
+	}
+	return false
 }
 
 // nodeStatus reports whether name is in the active compute inventory and

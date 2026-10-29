@@ -756,6 +756,14 @@ its own.
       `faas-ibridge-*` unit it finds before serving (only when systemd holds
       one, so a node that never ran them makes no D-Bus call), where it
       used to leave a predecessor's handed-off units running.
+    - Production canary (2026-10-29): `group_vars/compute_nodes/vmmd_bridge.yml`
+      turns the three switches on together for `vmmd_bridge_canary_nodes`
+      (`fsn-2.faas`, also the restart adoption canary, so its no-drain
+      restarts hand the units over). Checked on fsn-2 first: no account or
+      group in the bridge uid range, `faas-tenant-ibridge.slice` loaded,
+      systemd 255. Metal on main c1063c5f19 passed every combination:
+      units off, units on (the successor adopted the unit), and on then off
+      (the successor stopped it).
   - 1d: gate and counters move to the bridge, with ADR-1151 property tests.
 
   After P1, bridges survive vmmd, but streams are still cut, because the

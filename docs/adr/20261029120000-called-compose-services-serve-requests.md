@@ -44,3 +44,16 @@ The production journey showed that a worker-mode service that listens does not m
 
   The scan's evidence is visible in the plan (`class=http`) before anything deploys.
 
+## Amendment 2 (2026-10-29): a prebuilt image's config is evidence that it listens
+
+Amendment 1 left prebuilt `image:` services out, because the offline scan cannot see an image's metadata. Self-hosted stacks are built that way: a gateway with published ports in front of several image-only services.
+
+- **Decision:** for a `depends_on` target of a request-serving service that runs a prebuilt image's own command (no Compose `command:` or `entrypoint:`), apid and githubd ask the registry for the image's config. If its `ExposedPorts` names a TCP port, the service serves requests.
+  - **One lookup, two daemons.** `pkg/imagelisten` makes an anonymous pull through the egress-guarded registry client, so loopback, private and metadata addresses are refused. Each lookup is bounded at 5 s, and a definite answer is cached for 10 minutes. apid's plan and apply and githubd's push deploys use the same lookup, so they classify a service alike. `reposcan.ScanWithOptions` takes it, and `reposcan.Scan` stays offline.
+  - **Private or unreachable images are "unknown".** Registry credentials stay with imaged, which unseals them at deploy time. An unknown image marks the workload `ListenerUnknown`:
+    - the plan warning says the image could not be read;
+    - reconcile keeps an existing app's serving class, so a registry outage or a private image never turns a live internal API into a worker (`keepServingClass`);
+    - a new service starts as a worker, and if it listens its deploy fails with the Compose fix (#5887).
+- **Why here and not at deploy.** imaged reads the same config at deploy time, but the class is customer intent that apid writes before anything deploys. Deciding it in the plan keeps it visible as `class=http` and reviewable.
+- **Consequences:** apid and githubd now make outbound HTTPS requests to registries during a project plan or push, but only for these candidates and at most once per image per scan. Where the control plane has no route to a registry, every lookup is unknown, and behaviour is as before this amendment.
+
