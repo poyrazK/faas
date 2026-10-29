@@ -416,8 +416,9 @@ func TestSourceRuntimeClaimAllowed(t *testing.T) {
 	}{
 		{"own runtime", App{Type: AppTypeFunction, Runtime: "node22"}, "node22", true},
 		{"container claims runner", App{Type: AppTypeApp}, "node24", true},
+		{"container claims python runner", App{Type: AppTypeApp}, "python312", true},
 		{"container claims nothing", App{Type: AppTypeApp}, "", true},
-		{"container claims unknown", App{Type: AppTypeApp}, "python312", false},
+		{"container claims unknown", App{Type: AppTypeApp}, "go124", false},
 		{"function claims another", App{Type: AppTypeFunction, Runtime: "node22"}, "node24", false},
 		{"legacy container runtime claims runner", App{Type: AppTypeApp, Runtime: "go124"}, "node24", false},
 	} {
@@ -432,8 +433,11 @@ func TestSourceRuntimeClaimAllowed(t *testing.T) {
 func TestMemSetDeploymentRuntimeBase(t *testing.T) {
 	s := NewMemStore()
 	_, app, dep, _, _ := buildExportFixtureClaim(t, s, AppTypeApp, "", "")
-	if err := s.SetDeploymentRuntimeBase(t.Context(), dep.ID, "python312"); !errors.Is(err, ErrInvalidArgument) {
+	if err := s.SetDeploymentRuntimeBase(t.Context(), dep.ID, "go124"); !errors.Is(err, ErrInvalidArgument) {
 		t.Fatalf("non-shared runtime accepted: %v", err)
+	}
+	if err := s.SetDeploymentRuntimeBase(t.Context(), dep.ID, "python312"); err != nil {
+		t.Fatal(err)
 	}
 	if err := s.SetDeploymentRuntimeBase(t.Context(), dep.ID, "node24"); err != nil {
 		t.Fatal(err)
