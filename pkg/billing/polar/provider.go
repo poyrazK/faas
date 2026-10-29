@@ -1174,6 +1174,52 @@ func (p *Provider) SubscriptionState(ctx context.Context, subscriptionID string)
 	}, nil
 }
 
+// customerSubscriptionsMax bounds one customer's listing. A customer holds one
+// subscription at a time, plus the ended ones it replaced.
+const customerSubscriptionsMax = 100
+
+// CustomerSubscriptions lists the customer's subscriptions, newest first.
+// Polar's active filter leaves out past_due subscriptions, so the listing is
+// unfiltered and the caller classifies the statuses.
+func (p *Provider) CustomerSubscriptions(ctx context.Context, customerID string) ([]billing.Subscription, error) {
+	if strings.TrimSpace(customerID) == "" {
+		return nil, errors.New("polar: customer subscriptions: empty customer id")
+	}
+	query := url.Values{}
+	query.Set("customer_id", customerID)
+	query.Set("limit", strconv.Itoa(customerSubscriptionsMax))
+	query.Set("sorting", "-started_at")
+	var list struct {
+		Items []struct {
+			ID        string `json:"id"`
+			Status    string `json:"status"`
+			ProductID string `json:"product_id"`
+		} `json:"items"`
+		Pagination struct {
+			MaxPage int `json:"max_page"`
+		} `json:"pagination"`
+	}
+	if err := p.doJSON(ctx, http.MethodGet, "/v1/subscriptions/?"+query.Encode(), nil, &list, ""); err != nil {
+		return nil, fmt.Errorf("polar: customer subscriptions %s: %w", customerID, err)
+	}
+	if list.Pagination.MaxPage > 1 {
+		// A partial listing could miss the live subscription and read as
+		// "none": never report one.
+		return nil, fmt.Errorf("polar: customer subscriptions %s: more than %d", customerID, customerSubscriptionsMax)
+	}
+	subs := make([]billing.Subscription, 0, len(list.Items))
+	for _, item := range list.Items {
+		if item.ID == "" || item.Status == "" {
+			return nil, fmt.Errorf("polar: customer subscriptions %s: subscription without id or status", customerID)
+		}
+		subs = append(subs, billing.Subscription{ID: item.ID, SubscriptionState: billing.SubscriptionState{
+			Status: billing.SubscriptionStatus(strings.ToLower(item.Status)),
+			PlanID: p.planForProduct(item.ProductID),
+		}})
+	}
+	return subs, nil
+}
+
 // PaymentMethodSummary intentionally returns the zero value. Polar keeps
 // payment-method management in the customer portal and its merchant customer
 // response exposes an opaque default_payment_method_id rather than a stable

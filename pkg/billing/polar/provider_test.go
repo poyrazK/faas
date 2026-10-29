@@ -11,6 +11,8 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -954,6 +956,78 @@ func TestVerifyWebhookNormalizesSubscriptionAndScheduledCancel(t *testing.T) {
 	}
 	if cancelEvent.Type != billing.EventSubscriptionUpdated {
 		t.Fatalf("scheduled cancellation mapped to %v, want subscription_updated", cancelEvent.Type)
+	}
+}
+
+func TestCustomerSubscriptionsListsEveryStatus(t *testing.T) {
+	var query url.Values
+	maxPage := 1
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/subscriptions/" {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		query = r.URL.Query()
+		_, _ = io.WriteString(w, `{"items":[`+
+			`{"id":"sub-2","status":"past_due","product_id":"scale-product"},`+
+			`{"id":"sub-1","status":"canceled","product_id":"unknown-product"}],`+
+			`"pagination":{"total_count":2,"max_page":`+strconv.Itoa(maxPage)+`}}`)
+	}))
+	defer srv.Close()
+	p, err := NewProvider(testConfig(srv.URL), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	subs, err := p.CustomerSubscriptions(t.Context(), "customer-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Polar's active filter leaves out past_due subscriptions.
+	if query.Get("customer_id") != "customer-1" || query.Has("active") || query.Get("sorting") != "-started_at" {
+		t.Fatalf("query = %v, want the customer's unfiltered listing, newest first", query)
+	}
+	want := []billing.Subscription{
+		{ID: "sub-2", SubscriptionState: billing.SubscriptionState{Status: billing.SubscriptionStatusPastDue, PlanID: string(api.PlanScale)}},
+		{ID: "sub-1", SubscriptionState: billing.SubscriptionState{Status: "canceled"}},
+	}
+	if !reflect.DeepEqual(subs, want) {
+		t.Fatalf("subscriptions = %+v, want %+v", subs, want)
+	}
+	maxPage = 2
+	if _, err := p.CustomerSubscriptions(t.Context(), "customer-1"); err == nil {
+		t.Fatal("a partial listing was reported as complete")
+	}
+}
+
+// subscription.cycled opens a period whose renewal order may still fail, so
+// it must never end dunning the way a payment does.
+func TestVerifyWebhookCycledIsNotAPayment(t *testing.T) {
+	p, err := NewProvider(testConfig("http://example.test"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		status string
+		want   billing.EventType
+	}{
+		{status: "active", want: billing.EventSubscriptionUpdated},
+		{status: "past_due", want: billing.EventUnknown},
+	} {
+		t.Run(tc.status, func(t *testing.T) {
+			when := time.Now().UTC()
+			body := []byte(`{"type":"subscription.cycled","data":{"id":"sub-1","customer_id":"customer-1","product_id":"pro-product","status":"` + tc.status + `"}}`)
+			id := "cycled-" + tc.status
+			ev, err := p.VerifyWebhook(body, map[string]string{
+				"webhook-id":        id,
+				"webhook-timestamp": strconv.FormatInt(when.Unix(), 10),
+				"webhook-signature": SignForTest(body, "webhook-secret", id, when),
+			}, 5*time.Minute)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ev.Type != tc.want {
+				t.Fatalf("subscription.cycled (%s) mapped to %v, want %v", tc.status, ev.Type, tc.want)
+			}
+		})
 	}
 }
 

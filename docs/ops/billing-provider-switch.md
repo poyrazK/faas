@@ -194,7 +194,16 @@ Monitor these metrics and logs:
   expected while delivery catches up, a cap applies, or ledger evidence is
   missing.
 - `polar_webhook.verify_failed` and `polar_webhook.unknown_customer` identify
-  signature or customer-binding failures.
+  signature or customer-binding failures. A delivery for a customer no account
+  is bound to is acknowledged (logged as `polar_webhook.unknown_customer`);
+  only a failed lookup (`polar_webhook.customer_lookup_failed`) is retried.
+- `apid_billing_reconcile_corrections_total{correction}` counts accounts that
+  subscription reconciliation moved to their Polar subscription's state
+  (ADR-20261029094512). Any increase means a webhook delivery was missed:
+  check the Polar endpoint's delivery log, and whether Polar disabled the
+  endpoint. Each correction also writes a `billing.subscription_reconciled`
+  audit event. `apid_billing_reconcile_passes_total{result="failed"}` means
+  the pass itself could not run.
 - `meter` logs with `replay=true` show durable usage recovery after an outage.
 
 ## Switching providers
@@ -252,11 +261,24 @@ events:
 `order.created` and `order.updated` project an unpaid renewal as an `open`
 invoice, so a past-due customer sees what they owe; a late one never reopens a
 `paid` invoice (ADR-20261028101500). Compute and egress usage events are
-stamped when meterd sends them, so a Polar invoice's usage line covers usage
-delivered during the previous cycle. Polar Standard Webhooks headers are verified before parsing;
+stamped when meterd sends them, so they land in the cycle that is open when
+they arrive. Polar processes an event a few minutes after it arrives: one
+processed after a renewal is billed on the next order, and one processed after
+the subscription ended is not billed (ADR-20261029094512). Polar Standard Webhooks headers are verified before parsing;
 database persistence and replay-claim failures return non-2xx so the provider
 can retry. A valid duplicate delivery is acknowledged without repeating the
 state transition.
+
+Polar disables an endpoint after 10 consecutive failed deliveries and does not
+re-enable it. Re-enable it in the Polar dashboard once apid is healthy.
+Deliveries Polar dropped in the meantime are not replayed, but every 30
+minutes one apid replica compares each Polar-billed account with its
+customer's subscriptions and applies the missed transition when two passes in
+a row agree: a paid-up subscription ends dunning, a past-due one starts it
+(with its email), an ended one downgrades to Free, and a changed product
+re-binds the plan (ADR-20261029094512). `subscription.cycled` is a period
+change, not a payment: a payment success delivered while Polar still reports
+the subscription `past_due` keeps the plan but does not end dunning.
 
 The hourly pusher is intentionally at-least-once. If Polar is unavailable,
 the failed window remains durable and is retried on the next pass. Investigate
