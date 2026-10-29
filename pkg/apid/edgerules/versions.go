@@ -15,6 +15,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
+	"github.com/onebox-faas/faas/pkg/apid/trafficproblem"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -256,7 +257,7 @@ func (s *Service) writeEdgeRuleRestoreError(w http.ResponseWriter, err error) {
 	case errors.Is(err, state.ErrNotFound):
 		httpkit.NotFound(w, "no such edge-rule version")
 	default:
-		api.WriteProblem(w, api.ErrCapacity("could not roll back edge rules"))
+		api.WriteProblem(w, trafficproblem.Policy(err, api.ErrCapacity("could not roll back edge rules")))
 	}
 }
 

@@ -94,7 +94,13 @@ func (m *MemStore) prepareGitOpsQueuesLocked(source EnvironmentGitSource, defini
 }
 
 func (m *MemStore) gitOpsQueueRecoveryQuotaLocked(accountID, appID string) error {
-	limits := api.MustLimitsFor(m.accounts[accountID].Plan)
+	// A recovered push consumer counts against its app's billing subject and
+	// plan, as mutateQueueBindingConsumer does.
+	owner, ok := m.queuePolicyAccountLocked(accountID, appID)
+	if !ok {
+		return ErrNotFound
+	}
+	limits := api.MustLimitsFor(owner.Plan)
 	appCount, accountCount := 0, 0
 	for _, trigger := range m.triggers {
 		if !m.triggerConsumesQuotaLocked(trigger) {
@@ -103,7 +109,7 @@ func (m *MemStore) gitOpsQueueRecoveryQuotaLocked(accountID, appID string) error
 		if trigger.AppID.String() == canonicalMemUUID(appID) {
 			appCount++
 		}
-		if app, ok := m.triggerAppLocked(trigger); ok && app.AccountID == accountID && app.Status != AppDeleted {
+		if app, ok := m.triggerAppLocked(trigger); ok && m.sameQueueQuotaSubjectLocked(app, owner.ResourceOwnerID()) && app.Status != AppDeleted {
 			accountCount++
 		}
 	}
