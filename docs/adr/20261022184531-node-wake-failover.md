@@ -255,6 +255,24 @@ it unchanged. ADR-510's backing identity (digest sidecar) is checked the same
 way. The step 4 PR records the storage layout here after reading imaged's
 publication path.
 
+As built (step 4): delivered by
+[ADR-20261026181418](20261026181418-generation-addressed-runtime-base-keys.md)
+(#5587), which this ADR's step 4 does not duplicate.
+
+- Each gated runtime base generation has its own shared keys. A release
+  reads and writes only the keys of the generation it configures, so a node
+  rolled back in the middle of a release, or on N-1 beside N, still adopts
+  its configured generation.
+- vmmd adopts that generation's scan sidecar first, as the commit marker,
+  then its base and digest sidecar under the base's logical cache names. It
+  falls back to the legacy logical keys only when the generation's own scan
+  does not exist, and only while the legacy scan names the generation.
+- Nodes keep the logical names for the cache entry, drive0 and snapshots, so
+  the scan gate and ADR-510's backing identity judge the adopted group as
+  before.
+- A narrower implementation of this step (retained copies beside the single
+  logical key) was built and metal-tested, then dropped as superseded.
+
 ### 5. gatewayd-public retries responses that were never dispatched
 
 gatewayd-internal marks a response as *not dispatched* when it failed before
