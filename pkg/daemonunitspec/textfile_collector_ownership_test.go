@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -22,23 +23,74 @@ type textfileDirDeclaration struct {
 }
 
 // collectTextfileDirDeclarations walks a parsed YAML tree and returns every
-// ansible.builtin.file (or file) task whose path is the textfile directory.
-func collectTextfileDirDeclarations(where string, node any, out *[]textfileDirDeclaration) {
+// ansible.builtin.file (or file) task whose path, after resolve, is the
+// textfile directory.
+func collectTextfileDirDeclarations(where string, node any, resolve func(string) string, out *[]textfileDirDeclaration) {
 	switch v := node.(type) {
 	case map[string]any:
 		for _, key := range []string{"ansible.builtin.file", "file"} {
-			if args, ok := v[key].(map[string]any); ok && args["path"] == textfileCollectorDir {
+			if args, ok := v[key].(map[string]any); ok && resolvePath(args["path"], resolve) == textfileCollectorDir {
 				name, _ := v["name"].(string)
 				*out = append(*out, textfileDirDeclaration{where: fmt.Sprintf("%s (%s)", where, name), args: args})
 			}
 		}
 		for _, child := range v {
-			collectTextfileDirDeclarations(where, child, out)
+			collectTextfileDirDeclarations(where, child, resolve, out)
 		}
 	case []any:
 		for _, child := range v {
-			collectTextfileDirDeclarations(where, child, out)
+			collectTextfileDirDeclarations(where, child, resolve, out)
 		}
+	}
+}
+
+func resolvePath(path any, resolve func(string) string) string {
+	s, _ := path.(string)
+	return resolve(s)
+}
+
+var roleDefaultPathTemplate = regexp.MustCompile(`^\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*(\|\s*dirname\s*)?\}\}$`)
+
+// roleDefaultPathResolver resolves a task path written as a role default
+// variable, optionally through dirname, to that default's value. The
+// internal_pki_renewal role names the directory as
+// "{{ faas_internal_pki_textfile | dirname }}"; a literal-only match missed
+// its 0755 (Hunt 14 H14-114).
+func roleDefaultPathResolver(t *testing.T, ansibleDir string) func(string) string {
+	t.Helper()
+	files, err := filepath.Glob(filepath.Join(ansibleDir, "roles", "*", "defaults", "*.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaults := map[string]string{}
+	for _, f := range files {
+		body, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var vars map[string]any
+		if err := yaml.Unmarshal(body, &vars); err != nil {
+			t.Fatalf("%s: %v", f, err)
+		}
+		for name, value := range vars {
+			if s, ok := value.(string); ok {
+				defaults[name] = s
+			}
+		}
+	}
+	return func(path string) string {
+		m := roleDefaultPathTemplate.FindStringSubmatch(path)
+		if m == nil {
+			return path
+		}
+		value, ok := defaults[m[1]]
+		if !ok {
+			return path
+		}
+		if m[2] != "" {
+			return filepath.Dir(value)
+		}
+		return value
 	}
 }
 
@@ -62,13 +114,16 @@ func TestTextfileCollectorDirectoryHasOneOwnerAndMode(t *testing.T) {
 	}
 	files = append(files, playbooks...)
 
+	resolve := roleDefaultPathResolver(t, ansibleDir)
 	var decls []textfileDirDeclaration
 	for _, f := range files {
 		body, err := os.ReadFile(f)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !bytes.Contains(body, []byte(textfileCollectorDir)) {
+		// A role may name the directory through a default variable, so keep
+		// any file that mentions a textfile path.
+		if !bytes.Contains(body, []byte("textfile")) {
 			continue
 		}
 		var tree any
@@ -76,13 +131,13 @@ func TestTextfileCollectorDirectoryHasOneOwnerAndMode(t *testing.T) {
 			t.Fatalf("%s: %v", f, err)
 		}
 		rel, _ := filepath.Rel(root, f)
-		collectTextfileDirDeclarations(rel, tree, &decls)
+		collectTextfileDirDeclarations(rel, tree, resolve, &decls)
 	}
 
-	// node_exporter, postgres, canary_artifact_retention and node_join.yml
-	// all manage the directory today.
-	if len(decls) < 4 {
-		t.Fatalf("found %d tasks managing %s, want at least 4; did the walker stop matching?", len(decls), textfileCollectorDir)
+	// node_exporter, postgres, canary_artifact_retention, internal_mail_service,
+	// internal_pki_renewal and node_join.yml all manage the directory today.
+	if len(decls) < 6 {
+		t.Fatalf("found %d tasks managing %s, want at least 6; did the walker stop matching?", len(decls), textfileCollectorDir)
 	}
 	for _, d := range decls {
 		if mode, _ := d.args["mode"].(string); mode != "0775" {
