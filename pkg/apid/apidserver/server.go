@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/onebox-faas/faas/pkg/apid/issueslack"
+	"io/fs"
 
 	"github.com/onebox-faas/faas/pkg/apid/devloop"
 	"log/slog"
@@ -22,6 +23,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/apid/automationconsole"
 	"github.com/onebox-faas/faas/pkg/apid/billingruns"
+	"github.com/onebox-faas/faas/pkg/apid/billingsync"
 	"github.com/onebox-faas/faas/pkg/apid/capgate"
 	"github.com/onebox-faas/faas/pkg/apid/ciapi"
 	"github.com/onebox-faas/faas/pkg/apid/consumerbilling"
@@ -93,6 +95,7 @@ import (
 	objruntime "github.com/onebox-faas/faas/pkg/rehearsalobj/runtime"
 	pgruntime "github.com/onebox-faas/faas/pkg/rehearsalpg/runtime"
 	"github.com/onebox-faas/faas/pkg/releasemetrics"
+	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
 	usagestore "github.com/onebox-faas/faas/pkg/state/dataapiusage"
@@ -179,6 +182,7 @@ type server struct {
 	flagsWorkloadVerifier *workloadidentity.Verifier
 	statementInvoices     statementinvoices.Service // ADR-1502; Host wired in newServer
 	billingRuns           billingruns.Service       // ADR-1503; Host wired in newServer
+	billingSync           billingsync.Service       // ADR-20261029094512; Host wired in newServer
 	consumerBilling       consumerbilling.Service   // ADR-1506; Host wired in newServer
 	consumerCredits       consumercredits.Service   // ADR-1306; Host wired in newServer
 	consumerControls      consumercontrols.Service  // ADR-1314, ADR-1315; Host wired in newServer
@@ -699,6 +703,9 @@ type server struct {
 	// Service.Reconcile) route through this seam — there is no
 	// other workload-mutation path post PR-G.
 	reconcileSvc *reconcile.Service
+	// imageListening answers whether a prebuilt Compose image listens
+	// (ADR-20261029120000 amendment 2); nil scans the repository alone.
+	imageListening reposcan.ImageListening
 }
 
 // anonymousAccountLabel is the literal value of the `account_id`
@@ -762,6 +769,11 @@ func (s *server) WithOpsMetrics(ctx context.Context, ops *wire.OpsMetrics) *serv
 		s.routeJobMetrics = nil
 	} else if s.routeJobMetrics.Registry() != ops.Registry() {
 		s.routeJobMetrics = routejobs.NewMetrics(ops.Registry(), ops.MetricPrefix())
+	}
+	if ops == nil {
+		s.billingSync.Metrics = nil
+	} else if s.billingSync.Metrics.Registry() != ops.Registry() {
+		s.billingSync.Metrics = billingsync.NewMetrics(ops.Registry(), ops.MetricPrefix())
 	}
 	if ops == nil {
 		s.edgeRules.Metrics = nil
@@ -973,6 +985,20 @@ func (s *server) MarkRekeyRunnerOptedIn() *server {
 // zero value (both providers Disabled → consent routes 503).
 func (s *server) WithOAuthConfig(cfg auth.SignInConfig) *server {
 	s.oauthConfig = cfg
+	return s
+}
+
+// WithImageListening lets project scans ask a registry whether a prebuilt
+// Compose image listens (ADR-20261029120000 amendment 2), and gives the
+// reconcile service's own scan the same answer. Tests leave it unset and scan
+// the repository alone.
+func (s *server) WithImageListening(lookup reposcan.ImageListening) *server {
+	s.imageListening = lookup
+	if s.reconcileSvc != nil {
+		s.reconcileSvc.Scan = func(fsys fs.FS) (reposcan.Result, error) {
+			return reposcan.ScanWithOptions(fsys, reposcan.ScanOptions{ImageListening: lookup})
+		}
+	}
 	return s
 }
 
@@ -1590,6 +1616,7 @@ func newServerWithDeps(
 	s.outboundAI.Host = outboundAIHost{s}
 	s.statementInvoices.Host = statementInvoicesHost{s}
 	s.billingRuns.Host = billingRunsHost{s}
+	s.billingSync.Host = billingSyncHost{s}
 	s.consumerBilling.Host = consumerBillingHost{s}
 	s.consumerCredits.Host = consumerCreditsHost{s}
 	s.consumerControls.Host = consumerControlsHost{s}

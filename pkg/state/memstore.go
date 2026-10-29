@@ -4965,7 +4965,7 @@ func (m *MemStore) CreateApp(ctx context.Context, app App) (App, error) {
 	// so the column reads as a real value right out of CreateApp. The
 	// pgstore snap lives on the SQL path; the memstore snap mirrors it
 	// here so the per-account reserved-tier cap read
-	// (CountAppsWithEvictionPriority) sees the same value the wire
+	// (CountOtherBillingSubjectAppsWithEvictionPriority) sees the same value the wire
 	// would. Pre-#475 tests that built App{} structs continue to read
 	// 'best_effort' on the round-trip.
 	app.EvictionPriority = EvictionPriorityOrBestEffort(app.EvictionPriority)
@@ -6848,25 +6848,30 @@ func (m *MemStore) CountDeveloperApps(_ context.Context, accountID string) (int,
 	return m.countAppQuotaLocked(app, true, QuotaErrorKindDeveloperApps), nil
 }
 
-// CountAppsWithEvictionPriority mirrors the pgstore read for the
-// per-account reserved-tier cap (issue #475). Same shape as
-// CountDeployedApps — counts APPS (not instances), excludes soft-deleted
-// apps so the cap tracks the live customer surface.
-func (m *MemStore) CountAppsWithEvictionPriority(_ context.Context, accountID, priority string) (int, error) {
+// CountOtherBillingSubjectAppsWithEvictionPriority mirrors the pgstore
+// read for the per-account reserved-tier cap (issue #475): it counts APPS
+// (not instances) of appID's billing subject, other than appID, whose row
+// or current environment workload settings use the tier, and excludes
+// soft-deleted apps (countsTowardQuotaSubjectLocked).
+func (m *MemStore) CountOtherBillingSubjectAppsWithEvictionPriority(_ context.Context, appID, priority string) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	app, ok := m.apps[appID]
+	if !ok {
+		return 0, nil
+	}
+	subject := m.appBillingSubjectLocked(app.AccountID, app.ID)
+	inEnvironment := make(map[string]bool)
+	for _, specID := range m.projectEnvironmentWorkloadHeads {
+		if spec := m.projectEnvironmentWorkloadSpecs[specID]; EvictionPriorityOrBestEffort(spec.Settings.EvictionPriority) == priority {
+			inEnvironment[spec.AppID] = true
+		}
+	}
 	n := 0
 	for _, a := range m.apps {
-		if a.AccountID != accountID {
-			continue
+		if a.ID != appID && (a.EvictionPriority == priority || inEnvironment[a.ID]) && m.countsTowardQuotaSubjectLocked(a.AccountID, a.ID, subject) {
+			n++
 		}
-		if a.Status == AppDeleted {
-			continue
-		}
-		if a.EvictionPriority != priority {
-			continue
-		}
-		n++
 	}
 	return n, nil
 }
@@ -17679,6 +17684,35 @@ func (m *MemStore) SetComputeNodeReadiness(_ context.Context, nodeID string, rea
 	if reason != "" {
 		n.ReadinessReason = &reason
 	}
+	m.computeNodes[nodeID] = n
+	return true, nil
+}
+
+// OpenComputeNodeWakeBreaker mirrors PgStore.OpenComputeNodeWakeBreaker.
+func (m *MemStore) OpenComputeNodeWakeBreaker(_ context.Context, nodeID string, until time.Time, reason string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n, ok := m.computeNodes[nodeID]
+	if !ok {
+		return nil
+	}
+	n.WakeBreakerOpenUntil, n.WakeBreakerReason = &until, nil
+	if reason != "" {
+		n.WakeBreakerReason = &reason
+	}
+	m.computeNodes[nodeID] = n
+	return nil
+}
+
+// CloseComputeNodeWakeBreaker mirrors PgStore.CloseComputeNodeWakeBreaker.
+func (m *MemStore) CloseComputeNodeWakeBreaker(_ context.Context, nodeID string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n, ok := m.computeNodes[nodeID]
+	if !ok || n.WakeBreakerOpenUntil == nil {
+		return false, nil
+	}
+	n.WakeBreakerOpenUntil, n.WakeBreakerReason = nil, nil
 	m.computeNodes[nodeID] = n
 	return true, nil
 }

@@ -40,6 +40,56 @@ func (q *Queries) FinishActivation(ctx context.Context, db DBTX, arg FinishActiv
 	return result.RowsAffected(), nil
 }
 
+const importActivation = `-- name: ImportActivation :execrows
+INSERT INTO platform_release_activations (
+    id, host, kind, release_id, commit_sha, previous_release_id, services, actor, status, detail, started_at, finished_at
+) VALUES (
+    $1, $2, $3, $4, $5, $6,
+    $7::text[], $8, $9, $10, $11,
+    GREATEST($12::timestamptz, $11)
+)
+ON CONFLICT (id) DO NOTHING
+`
+
+type ImportActivationParams struct {
+	ID                pgtype.UUID
+	Host              string
+	Kind              string
+	ReleaseID         string
+	CommitSha         pgtype.Text
+	PreviousReleaseID pgtype.Text
+	Services          []string
+	Actor             string
+	Status            string
+	Detail            string
+	StartedAt         pgtype.Timestamptz
+	FinishedAt        pgtype.Timestamptz
+}
+
+// A finished activation recorded on a host without owner access to the
+// history (a compute host's spool), under the id it got there: importing it
+// again is a no-op.
+func (q *Queries) ImportActivation(ctx context.Context, db DBTX, arg ImportActivationParams) (int64, error) {
+	result, err := db.Exec(ctx, importActivation,
+		arg.ID,
+		arg.Host,
+		arg.Kind,
+		arg.ReleaseID,
+		arg.CommitSha,
+		arg.PreviousReleaseID,
+		arg.Services,
+		arg.Actor,
+		arg.Status,
+		arg.Detail,
+		arg.StartedAt,
+		arg.FinishedAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const insertFinishedActivation = `-- name: InsertFinishedActivation :one
 INSERT INTO platform_release_activations (
     host, kind, release_id, commit_sha, previous_release_id, services, actor, status, detail, started_at, finished_at

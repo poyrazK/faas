@@ -627,6 +627,13 @@ func (h *heartbeatFakeDialer) SetPingResult(target string, bases []BaseGeneratio
 
 var EvaluateNodeReadiness = evaluateNodeReadiness
 
+// LiftErr is vmmclient's gRPC error lift (ADR-20261022184531 step 3 adds the
+// wake_stage marker).
+var LiftErr = liftErr
+
+// NewVMMWakeNotStarted is the error liftErr returns for a pre-start failure.
+func NewVMMWakeNotStarted(p *api.Problem) error { return vmmWakeNotStartedError{p} }
+
 func (r *fakeVMM) ColdBootHook() *func()            { return &r.coldBootHook }
 func (r *fakeVMM) ColdBoots() *int                  { return &r.coldBoots }
 func (r *fakeVMM) DestroyErr() *error               { return &r.destroyErr }
@@ -912,13 +919,10 @@ var LogVMMBootFailure = logVMMBootFailure
 var WorkerRecoveryRetryDelay = workerRecoveryRetryDelay
 
 // NewCronPlanGate exposes the cron plan gate's admit decision.
-func NewCronPlanGate(accounts interface {
-	AccountByID(context.Context, string) (state.Account, error)
-}) func(context.Context, state.App, int) bool {
-	return newCronPlanGate(accounts).admit
+func NewCronPlanGate(store cronPlanGateStore) func(context.Context, state.App, state.Cron) bool {
+	return newCronPlanGate(store).admit
 }
 
-var OldestCronsFirst = oldestCronsFirst
 var CronDue = cronDue
 
 // XRunCronHistoryRetention runs the hourly cron history sweep once.
@@ -935,3 +939,12 @@ func (l *Loop) XKeepEventClaims(ctx context.Context, every time.Duration, renew 
 	l.eventClaimRenewalEvery = every
 	return l.keepEventClaims(ctx, renew)
 }
+
+// XDispatchEventFanoutSweep submits a fanout sweep as the loop's wakes and
+// safety tick do.
+// adr: 20261029012000 — a pass that used its whole budget runs the next.
+func (l *Loop) XDispatchEventFanoutSweep(ctx context.Context) { l.dispatchEventFanoutSweep(ctx) }
+
+// XRepeatFullBatches is invocation retention's batch repeater.
+// adr: 20261029012000 — a step repeats while its batches come back full.
+var XRepeatFullBatches = repeatFullBatches

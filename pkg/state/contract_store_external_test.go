@@ -23,6 +23,7 @@ type contractTestStore interface {
 	state.AuditEventOutboxStore
 	state.ComputeNodeCPUUsageBatcher
 	state.ComputeNodeReadinessStore
+	state.ComputeNodeWakeBreakerStore
 	state.ComputeNodeUsageBatcher
 	state.DeploymentAliasStore
 	state.DeploymentHostingFailureStore

@@ -311,7 +311,7 @@ var cliCommands = []cliCommand{
 		Short:   "Sign live-query keys and logins (ADR 20261028161502)",
 		Subcommands: []cliSub{
 			{Name: "signing-keygen", Short: "Create apid's live signing key and its verify key", Flags: []cliFlag{{Name: "sign-key", Short: "new private key path", Req: true}, {Name: "verify-key", Short: "new public key path", Req: true}}},
-			{Name: "sign-existing", Short: "Sign every unsigned live key and login as it stands", Flags: []cliFlag{{Name: "sign-key", Short: "apid's live signing key"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "json", Short: "emit structured JSON"}}},
+			{Name: "sign-existing", Short: "Sign every unsigned live key and login as it stands", Flags: []cliFlag{{Name: "sign-key", Short: "apid's live signing key"}, {Name: "trusted-keys", Short: "previous signing keys whose rows are signed again"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "json", Short: "emit structured JSON"}}},
 		},
 	},
 	{
@@ -320,7 +320,7 @@ var cliCommands = []cliCommand{
 		Short:   "Sign runtime secrets (ADR 20261028161502)",
 		Subcommands: []cliSub{
 			{Name: "signing-keygen", Short: "Create apid's runtime secret signing key and its verify key", Flags: []cliFlag{{Name: "sign-key", Short: "new private key path", Req: true}, {Name: "verify-key", Short: "new public key path", Req: true}}},
-			{Name: "sign-existing", Short: "Sign every unsigned stored runtime secret as it stands", Flags: []cliFlag{{Name: "sign-key", Short: "apid's runtime secret signing key"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "json", Short: "emit structured JSON"}}},
+			{Name: "sign-existing", Short: "Sign every unsigned stored runtime secret as it stands", Flags: []cliFlag{{Name: "sign-key", Short: "apid's runtime secret signing key"}, {Name: "trusted-keys", Short: "previous signing keys whose envelopes are signed again"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "json", Short: "emit structured JSON"}}},
 		},
 	},
 	{

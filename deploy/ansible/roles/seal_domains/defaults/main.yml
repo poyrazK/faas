@@ -24,6 +24,12 @@ faas_seal_domain_outbound_writes: ""
 # the rollback window. Required for writes=domain.
 faas_seal_domain_outbound_readers_verified: false
 
+# The contract step: outboundd drops the fleet identity and opens customer
+# credentials with the domain identity alone. Needs writes=domain, and the
+# role refuses it while `gregalectl seal-domain migrate --domain outbound
+# --check` finds a credential the fleet or host identity still opens.
+faas_seal_domain_outbound_contracted: false
+
 # Operator-local files from `gregalectl seal-domain init --domain runtime`.
 # Compute hosts stage the identity (vmmd reads it at start), control-plane
 # hosts the recipient (apid seals to it).
@@ -188,6 +194,12 @@ faas_seal_domain_storage_writes: ""
 # faas_seal_domain_loaded{domain="storage"} 1 and the previous release left
 # the rollback window. Required for writes=domain.
 faas_seal_domain_storage_readers_verified: false
+
+# The contract step: s3-gatewayd drops the fleet and host identities and
+# opens S3 credentials with the domain identity alone. Needs writes=domain,
+# and the role refuses it while `gregalectl seal-domain migrate --domain
+# storage --check` finds a credential the fleet or host identity still opens.
+faas_seal_domain_storage_contracted: false
 
 # Operator-local file from `gregalectl seal-domain init --domain control`.
 # Every host stages it: schedd runs on both node roles and opens the cluster

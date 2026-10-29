@@ -130,6 +130,7 @@ type Loop struct {
 	work                        *workPool
 	workOnce                    sync.Once
 	eventFanoutLastPrune        time.Time
+	eventFanoutBacklog          bool
 	eventBackfillLifecycleAt    time.Time
 	eventClaimRenewalEvery      time.Duration
 	eventFanoutHistoryLastPrune time.Time
@@ -1324,7 +1325,7 @@ func (l *Loop) Run(ctx context.Context) error {
 			l.runDeadLetterRetention(ctx)
 			l.runCronHistoryRetention(ctx)
 		case <-invocationsRetentionTick(invocationsRetentionT):
-			l.runInvocationsRetention(ctx)
+			l.submitWork(workInvocationsRetention, "tick", func() { l.runInvocationsRetention(ctx) })
 		case <-triggersRetentionTick(triggersRetentionT):
 			l.runTriggersRetention(ctx)
 		case <-fireNowT.C:
@@ -4341,7 +4342,15 @@ func (l *Loop) dispatchTriggerTick(ctx context.Context) {
 }
 
 func (l *Loop) dispatchEventFanoutSweep(ctx context.Context) {
-	l.submitWork(workEventFanout, "tick", func() { l.runEventFanoutSweep(ctx) })
+	l.submitWork(workEventFanout, "tick", func() {
+		l.runEventFanoutSweep(ctx)
+		// ADR-20261029012000: a pass that used a whole budget asks for the
+		// next one now, instead of waiting for a wake or the safety tick.
+		// The pass is still in flight, so this coalesces into one rerun.
+		if l.eventFanoutBacklog && ctx.Err() == nil {
+			l.dispatchEventFanoutSweep(ctx)
+		}
+	})
 }
 
 func (l *Loop) runWorkflowRetention(ctx context.Context) {
@@ -4376,7 +4385,6 @@ func (l *Loop) runCronTick(ctx context.Context) {
 		return
 	}
 	now := l.now()
-	appRank := oldestCronsFirst(crons)
 	plans := newCronPlanGate(store)
 	apps := map[string]state.App{}
 	for _, c := range crons {
@@ -4407,7 +4415,7 @@ func (l *Loop) runCronTick(ctx context.Context) {
 			}
 			continue
 		}
-		if !plans.admit(ctx, app, appRank[c.ID]) {
+		if !plans.admit(ctx, app, c) {
 			if len(c.Command) > 0 {
 				l.cronMetrics.decision("plan_limit")
 			}
@@ -4580,6 +4588,32 @@ func (l *Loop) dispatchOneCron(ctx context.Context, c state.Cron, now time.Time)
 	firedBoundary := now
 	if c.SchedulePolicy != nil {
 		firedBoundary = scheduledFor
+	}
+	// Claim the occurrence before dispatching so two schedds that briefly both
+	// own this app (a placement handoff) cannot each fire it. Unlike the modern
+	// schedule_policy path, this legacy policy-less path has no per-occurrence
+	// row; the compare-and-swap on last_fired_at is the dedup. A store without
+	// the claim method keeps the prior dispatch-then-mark behaviour.
+	if claimer, ok := l.engine.Store().(state.CronFireClaimStore); ok {
+		claimed, err := claimer.ClaimCronFire(ctx, c.ID, c.LastFiredAt, firedBoundary)
+		if err != nil {
+			l.log.Warn("cron: claim fire", "cron_id", c.ID, "err", err)
+			return
+		}
+		if !claimed {
+			// Another schedd advanced the cursor first; it owns this occurrence.
+			return
+		}
+		res, ok := l.dispatchCronLocked(ctx, c, now, TriggerSchedule, firedBoundary)
+		_ = res
+		if !ok {
+			// Dispatch failed after the claim; roll the cursor back so a later
+			// tick retries this occurrence instead of silently skipping it.
+			if _, rbErr := claimer.ClaimCronFire(ctx, c.ID, firedBoundary, c.LastFiredAt); rbErr != nil {
+				l.log.Warn("cron: roll back fire claim", "cron_id", c.ID, "err", rbErr)
+			}
+		}
+		return
 	}
 	res, ok := l.dispatchCronLocked(ctx, c, now, TriggerSchedule, firedBoundary)
 	_ = res

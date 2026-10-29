@@ -11,60 +11,53 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type cronPlanAccounts map[string]api.Plan
+// cronPlanStore is a gate store whose eligible set is precomputed per account,
+// so the gate's admit decision is tested independently of the ranking query
+// (which pkg/state tests over MemStore and PgStore).
+type cronPlanStore struct {
+	plans    map[string]api.Plan
+	eligible map[string][]string
+}
 
-func (a cronPlanAccounts) AccountByID(_ context.Context, id string) (state.Account, error) {
-	plan, ok := a[id]
+func (s cronPlanStore) AccountByID(_ context.Context, id string) (state.Account, error) {
+	plan, ok := s.plans[id]
 	if !ok {
 		return state.Account{}, errors.New("account unavailable")
 	}
 	return state.Account{ID: id, Plan: plan}, nil
 }
 
-// A downgrade left every cron firing against the new plan's quota. The gate
-// keeps the oldest crons within the plan's per-app and per-account limits.
-func TestCronPlanGateKeepsCronsWithinThePlan(t *testing.T) {
-	ctx := context.Background()
-	admit := sched.NewCronPlanGate(cronPlanAccounts{"free": api.PlanFree, "hobby": api.PlanHobby})
-	if admit(ctx, state.App{ID: "f1", AccountID: "free"}, 0) {
-		t.Fatal("a Free account's cron fired; Free allows none")
-	}
-
-	hobby := api.MustLimitsFor(api.PlanHobby)
-	admitted := 0
-	for rank := range hobby.CronLimitPerApp + 3 {
-		if admit(ctx, state.App{ID: "h1", AccountID: "hobby"}, rank) {
-			admitted++
-		}
-	}
-	if admitted != hobby.CronLimitPerApp {
-		t.Fatalf("Hobby app fired %d crons, want %d", admitted, hobby.CronLimitPerApp)
-	}
-	for i := range hobby.CronLimitPerAccount {
-		admit(ctx, state.App{ID: "h-other-" + string(rune('a'+i)), AccountID: "hobby"}, 0)
-	}
-	if admit(ctx, state.App{ID: "h-last", AccountID: "hobby"}, 0) {
-		t.Fatal("a cron past the account limit fired")
-	}
-
-	if !admit(ctx, state.App{ID: "u1", AccountID: "unreadable"}, 0) {
-		t.Fatal("a cron whose account could not be read was held; it passed its limits when written")
-	}
+func (s cronPlanStore) AccountEligibleCronIDs(_ context.Context, accountID string, _, _ int) ([]string, error) {
+	return s.eligible[accountID], nil
 }
 
-func TestOldestCronsFirst(t *testing.T) {
-	now := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
-	crons := []state.Cron{
-		{ID: "c", AppID: "app-1", CreatedAt: now},
-		{ID: "a", AppID: "app-1", CreatedAt: now.Add(-time.Hour)},
-		{ID: "b", AppID: "app-2", CreatedAt: now},
+// A downgrade left every cron firing against the new plan's quota. The gate
+// fires only the crons the store ranks as eligible, denies the rest, denies a
+// Free account's crons entirely, and admits a cron whose account cannot be read
+// (it passed its limits when written).
+func TestCronPlanGateAdmitsOnlyEligibleCrons(t *testing.T) {
+	ctx := context.Background()
+	store := cronPlanStore{
+		plans:    map[string]api.Plan{"free": api.PlanFree, "hobby": api.PlanHobby},
+		eligible: map[string][]string{"hobby": {"c1", "c2"}},
 	}
-	rank := sched.OldestCronsFirst(crons)
-	if crons[0].ID != "a" || crons[1].ID != "b" || crons[2].ID != "c" {
-		t.Fatalf("order = %s,%s,%s; want a,b,c", crons[0].ID, crons[1].ID, crons[2].ID)
+	admit := sched.NewCronPlanGate(store)
+	app := state.App{ID: "a1", AccountID: "hobby"}
+
+	if !admit(ctx, app, state.Cron{ID: "c1", AppID: "a1"}) {
+		t.Fatal("eligible cron c1 denied")
 	}
-	if rank["a"] != 0 || rank["c"] != 1 || rank["b"] != 0 {
-		t.Fatalf("per-app ranks = %v", rank)
+	if !admit(ctx, app, state.Cron{ID: "c2", AppID: "a1"}) {
+		t.Fatal("eligible cron c2 denied")
+	}
+	if admit(ctx, app, state.Cron{ID: "c9", AppID: "a1"}) {
+		t.Fatal("a cron past the account limit fired")
+	}
+	if admit(ctx, state.App{ID: "f1", AccountID: "free"}, state.Cron{ID: "x", AppID: "f1"}) {
+		t.Fatal("a Free account's cron fired; Free allows none")
+	}
+	if !admit(ctx, state.App{ID: "u1", AccountID: "unreadable"}, state.Cron{ID: "z", AppID: "u1"}) {
+		t.Fatal("a cron whose account could not be read was held; it passed its limits when written")
 	}
 }
 
