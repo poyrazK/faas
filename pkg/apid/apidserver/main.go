@@ -73,6 +73,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/grace"
 	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/httpsec"
+	"github.com/onebox-faas/faas/pkg/imagelisten"
 	"github.com/onebox-faas/faas/pkg/internalmail"
 
 	"github.com/onebox-faas/faas/pkg/issuetracker"
@@ -1744,6 +1745,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	ops.Registry().MustRegister(capGate.Collectors()...)
 	log.Info("apid: capability gate enabled")
 	srv.WithOAuthConfig(oauthCfg)
+	srv.WithImageListening(imagelisten.NewRegistry().Listening)
 
 	// Workload force-actions and provider compute-node lifecycle actions
 	// route through operator_intents + pg_notify (migrations/00431,
