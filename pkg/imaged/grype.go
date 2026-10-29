@@ -462,7 +462,11 @@ type ScanResult struct {
 	ScannerDBBuiltAt string `json:"scanner_db_built_at,omitempty"`
 	// ReusedFrom names the deployment whose scan of the same artifact, by the
 	// same scanner and database, this result repeats (scan_reuse.go).
-	ReusedFrom     string         `json:"reused_from,omitempty"`
+	ReusedFrom string `json:"reused_from,omitempty"`
+	// VerifiedAt is when a live rescan last confirmed this result under the
+	// same scanner and database without running Grype again; ScannedAt stays
+	// the time Grype ran (ADR-20261028102540 amendment 1).
+	VerifiedAt     string         `json:"verified_at,omitempty"`
 	SeverityCounts SeverityCounts `json:"severity_counts"`
 	// Vulnerabilities is the full typed CVE list, ALWAYS
 	// present (no omitempty). For a zero-finding scan

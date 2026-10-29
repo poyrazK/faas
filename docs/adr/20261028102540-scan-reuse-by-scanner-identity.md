@@ -81,3 +81,27 @@ report.
   component scans for registry images, whose renewal worker could take the
   same rule later; and moving real base scans out from under the runtime-base
   lock.
+
+## Amendment 1 (2026-10-29): skipped rescans renew the enforce lease
+
+Decision 4 left a skipped deployment's evidence exactly as it was. The
+enforce-mode evidence lease (`securityScanLeaseFailure`) only knows when the
+evidence was last checked, so it parked every enforce app six hours after its
+last real scan whenever the database had not changed (bug hunt 2026-10-28 B33).
+Separately, the six-hourly sweep found a deployment due only once
+`scanned_at + 6 h` had passed, and `scanned_at` is stamped when a scan
+finishes, so the next tick usually landed just short of the mark and the lease
+(6 h plus one minute) expired first (B34, live since September).
+
+- A skip stamps `verified_at` on the stored result with a conditional write
+  that applies only while the row still holds the evidence that was checked,
+  so it never replaces a newer scan another imaged wrote. `scanned_at` in the
+  result stays the time Grype ran; the row's `scanned_at` column, which only
+  schedules rescans, moves to the renewal.
+- The lease counts from `verified_at` when it is set and later than
+  `scanned_at`. Nothing else about the lease changes: digest, metadata,
+  database age and findings are checked as before.
+- A deployment is due a sixth of the interval early (an hour of six), the
+  sweep runs every sixth of that (ten minutes) and picks only due
+  deployments, oldest evidence first, and a sweep still running skips the
+  next tick. The six-hour interval and the lease are unchanged.
