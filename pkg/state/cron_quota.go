@@ -7,8 +7,11 @@ import (
 	"time"
 )
 
-// CronAccountQuotaStore reports which of an account's crons may fire under its
-// plan's per-app and per-account caps. The eligible set is ranked globally by
+// CronAccountQuotaStore reports which of a billing subject's crons may fire
+// under its plan's per-app and per-account caps. The subject is the account's
+// ResourceOwnerID: an organization with resource ownership owns every cron of
+// its apps, whoever created them; otherwise the creating account does (bug
+// hunt 2026-10-28 B37). The eligible set is ranked globally by
 // age (created_at, then id), so every schedd node computes the SAME set: the
 // per-account cap must hold across the fleet, not once per node. A node-local
 // per-tick counter (the schedd cron sweep's previous behaviour) let an account
@@ -50,7 +53,9 @@ func (s *PgStore) AccountEligibleCronIDs(ctx context.Context, accountID string, 
 		         row_number() over (partition by c.app_id order by c.created_at, c.id) as app_rank
 		    from crons c
 		    join apps a on a.id = c.app_id
-		   where a.account_id = $1
+		    left join orgs o on o.id = a.org_id
+		   where ((a.org_id = $1 and not o.personal_org and o.resource_ownership_enabled)
+		       or (a.account_id = $1 and (o.id is null or o.personal_org or not o.resource_ownership_enabled)))
 		     and a.status <> 'deleted'
 		     and c.enabled
 		     and c.suspended_reason = ''
@@ -109,7 +114,14 @@ func (m *MemStore) AccountEligibleCronIDs(_ context.Context, accountID string, p
 	var cand []Cron
 	for _, c := range m.crons {
 		app, ok := m.apps[c.AppID]
-		if !ok || app.AccountID != accountID || app.Status == AppDeleted {
+		if !ok || app.Status == AppDeleted {
+			continue
+		}
+		subject := app.AccountID
+		if org, ok := m.orgs[app.OrgID]; ok && !org.Personal && org.ResourceOwnershipEnabled {
+			subject = org.ID
+		}
+		if subject != accountID {
 			continue
 		}
 		if !c.Enabled || c.SuspendedReason != "" {

@@ -16,7 +16,16 @@ import (
 // (which pkg/state tests over MemStore and PgStore).
 type cronPlanStore struct {
 	plans    map[string]api.Plan
+	orgs     map[string]state.Org
 	eligible map[string][]string
+}
+
+func (s cronPlanStore) OrgByID(_ context.Context, id string) (state.Org, error) {
+	org, ok := s.orgs[id]
+	if !ok {
+		return state.Org{}, state.ErrNotFound
+	}
+	return org, nil
 }
 
 func (s cronPlanStore) AccountByID(_ context.Context, id string) (state.Account, error) {
@@ -58,6 +67,31 @@ func TestCronPlanGateAdmitsOnlyEligibleCrons(t *testing.T) {
 	}
 	if !admit(ctx, state.App{ID: "u1", AccountID: "unreadable"}, state.Cron{ID: "z", AppID: "u1"}) {
 		t.Fatal("a cron whose account could not be read was held; it passed its limits when written")
+	}
+}
+
+// A company app's crons follow the organization's plan and cap, not the
+// personal plan of the member who created the app: a paid organization's
+// cron created by a member on Free was skipped on every tick (bug hunt
+// 2026-10-28 B37).
+func TestCronPlanGateUsesTheOrganizationsPlan(t *testing.T) {
+	ctx := context.Background()
+	store := cronPlanStore{
+		plans:    map[string]api.Plan{"member-free": api.PlanFree},
+		orgs:     map[string]state.Org{"acme": {ID: "acme", Plan: api.PlanPro, ResourceOwnershipEnabled: true, Status: "active"}},
+		eligible: map[string][]string{"acme": {"c1"}},
+	}
+	admit := sched.NewCronPlanGate(store)
+	app := state.App{ID: "a1", AccountID: "member-free", OrgID: "acme"}
+	if !admit(ctx, app, state.Cron{ID: "c1", AppID: "a1"}) {
+		t.Fatal("a Pro organization's cron was judged by its creator's Free plan")
+	}
+	if admit(ctx, app, state.Cron{ID: "c2", AppID: "a1"}) {
+		t.Fatal("a cron past the organization's cap fired")
+	}
+	gone := state.App{ID: "a2", AccountID: "erased-member", OrgID: "acme"}
+	if !admit(ctx, gone, state.Cron{ID: "c1", AppID: "a2"}) {
+		t.Fatal("a company cron stopped when its creator's account was erased")
 	}
 }
 
