@@ -206,9 +206,11 @@ with `gregale app <slug> --websocket-enabled`". The numbers come from
   apply to everyone: they turn silent drops and spurious failures into warnings.
 - **Bounds.** The number of manifest files, documents per file and bytes read
   are bounded by constants in `pkg/api/limits.go`
-  (`KubernetesScanMaxFiles`, `KubernetesScanMaxDocuments`,
-  `KubernetesScanMaxBytes`), with the existing safe-path reader. Exceeding one
-  fails the scan with the limit and the observed value.
+  (`KubernetesScanMaxFiles` 500 YAML files, `KubernetesScanMaxDocuments` 1,000
+  documents in one file, `KubernetesScanMaxBytes` 16 MiB across every file),
+  with the existing safe-path reader. They bound every scan, with or without
+  the capability. Exceeding one fails the scan with the limit and the observed
+  value.
 - **Version skew.** New plan and receipt fields are additive and `omitempty`. An
   older apid plans a repository with today's mapping, and a newer CLI shows only
   the fields it receives. No migration and no proto change.

@@ -1472,10 +1472,8 @@ type pullRequestTarget struct {
 func (s *Service) resolvePullRequestTarget(ctx context.Context, ev PullRequestEvent) (pullRequestTarget, error) {
 	// 1. Resolve the (repo) binding. PR previews don't branch-
 	//    filter: any PR opened against a bound repo triggers
-	//    preview provisioning for the parent app. The empty-
-	//    branch argument is the canonical "match any branch"
-	//    shape for AppBindingStore.GetAppBinding.
-	binding, err := appBindingForEvent(ctx, s.Bindings, ev.Repository.FullName, "", ev.Installation.ID)
+	//    preview provisioning for the parent app.
+	binding, err := s.pullRequestBinding(ctx, ev)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) || IsNoBinding(err) {
 			return pullRequestTarget{}, ErrNoBinding
@@ -1547,6 +1545,42 @@ func (s *Service) resolvePullRequestTarget(ctx context.Context, ev PullRequestEv
 	return pullRequestTarget{binding: binding, install: install, parent: parentApp, policy: policy}, nil
 }
 
+// pullRequestBinding finds the binding a PR previews. Bindings are keyed by
+// (repository, production branch), and the stores read an empty branch as
+// "main", so a branch-less lookup missed every repository whose production
+// branch is master, trunk or anything else. The PR's base branch comes first
+// (a PR into a branch with its own binding previews that app), then the
+// project's production branch, the repository's default branch and finally
+// the legacy empty-branch lookup.
+func (s *Service) pullRequestBinding(ctx context.Context, ev PullRequestEvent) (state.GitHubBinding, error) {
+	branches := []string{ev.PullRequest.Base.Ref}
+	if s.Reconcile != nil && s.Reconcile.Store != nil && ev.Installation.ID > 0 {
+		project, err := s.Reconcile.Store.ProjectByRepo(ctx, "", ev.Installation.ID, ev.Repository.FullName)
+		switch {
+		case err == nil:
+			branches = append(branches, project.ProductionBranch)
+		case !errors.Is(err, state.ErrNotFound):
+			return state.GitHubBinding{}, fmt.Errorf("githubd: resolve project for PR: %w", err)
+		}
+	}
+	branches = append(branches, ev.Repository.DefaultBranch, "")
+	tried := make(map[string]bool, len(branches))
+	for _, branch := range branches {
+		if tried[branch] {
+			continue
+		}
+		tried[branch] = true
+		binding, err := appBindingForEvent(ctx, s.Bindings, ev.Repository.FullName, branch, ev.Installation.ID)
+		if err == nil && binding.BindingID != "" {
+			return binding, nil
+		}
+		if err != nil && !errors.Is(err, state.ErrNotFound) && !IsNoBinding(err) {
+			return state.GitHubBinding{}, err
+		}
+	}
+	return state.GitHubBinding{}, ErrNoBinding
+}
+
 // previewableProductionApp reports whether a production app can be
 // previewed. A parked app (evicted_cold) is still the customer's app: its
 // PR previews are separate apps that wake on their own.
@@ -1580,14 +1614,19 @@ func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, tar
 				return reconcile.Result{}, fmt.Errorf("githubd: close PR preview set: %w", closeErr)
 			}
 		}
-		if _, lookupErr := s.Reconcile.Store.AppBySlug(ctx, previewSlugVal); lookupErr != nil {
-			if errors.Is(lookupErr, state.ErrNotFound) {
-				// GitHub can deliver a close after retention already removed the
-				// preview (or without a prior open). Teardown is an idempotent no-op;
-				// never create a quota-consuming closed app just to delete it later.
-				return reconcile.Result{}, nil
-			}
+		existing, lookupErr := s.Reconcile.Store.AppBySlug(ctx, previewSlugVal)
+		if lookupErr != nil && !errors.Is(lookupErr, state.ErrNotFound) {
 			return reconcile.Result{}, fmt.Errorf("githubd: resolve closing preview: %w", lookupErr)
+		}
+		// GitHub can deliver a close after retention already removed the
+		// preview (or without a prior open). Teardown is an idempotent no-op;
+		// never create a quota-consuming closed app just to delete it later. A
+		// preview torn down before the close (lease expired, destroyed) leaves
+		// a tombstone under its slug: its PR comment already says it is gone,
+		// and must not be rewritten to say it keeps serving for 24 hours.
+		if lookupErr != nil || existing.Status == state.AppDeleted ||
+			existing.PreviewPrState == state.PreviewPrStateTearingDown || existing.PreviewPrState == state.PreviewPrStateTornDown {
+			return reconcile.Result{}, nil
 		}
 	}
 

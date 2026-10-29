@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "0205c10176000f3130a56316441447f72e207ebdab23c4b427474afda68bef4f",
+      "revision": "2915e71e3b92d0d4f22abe4e9891c5b1f5d6ae99eadcae34190743d14491fa16",
       "files": [
         "faas.rules.yml"
       ],
@@ -358,6 +358,19 @@
             "for_seconds": 900,
             "keep_firing_for_seconds": 0,
             "fingerprint": "35b641e4ae6f082ef8745c6ec9857a5f80ddccc5a44e44c9ce33e334dcf2ca28"
+          }
+        },
+        {
+          "id": "0b33d7d3e26685b1a5f0081dbb9fe6e5956c2e681d67e31601f2abf964046504",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_profile_captures",
+          "rule_name": "FaasProfileCaptureQueueBacklog",
+          "definition": {
+            "expression_hash": "f94bdbe331cfb2df3986b5fa52cdeb868126c37ad4da817b9655505766ad8182",
+            "labels_hash": "c60714d8934be1e168fbb4c7cf514e4574c7ecfd1608cfd9673733fa058fcd73",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "6602fd1f8dc5b063ad9a457dfe7645cb1d7086cc77feeff1de949a38132d5320"
           }
         },
         {
@@ -2087,6 +2100,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "4f33ee8e56204e723584048071f4ab6e54d9316c1006731770eea5079505908e"
+          }
+        },
+        {
+          "id": "4bf9ee570c69cd49527c86741344df7ba6b2bcdbbe0e6cea258f4ffdcbea096a",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_object_storage",
+          "rule_name": "FaasObjectStorageRegionFull",
+          "definition": {
+            "expression_hash": "40a6fe52480c9c1106d36631dc328e5029f4307146c0d4932436c2f8160af6c0",
+            "labels_hash": "0ace63790655153ccbb75cf6c11ec87887258af6b419183d05826e2494241f58",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "4267a21454c78fa468a482734d9b088e91de97bb9bf756d1411e722bf3c38a47"
           }
         },
         {
@@ -4573,6 +4599,19 @@
           }
         },
         {
+          "id": "b77d8ae8d8e830d47df3a22f073472d6966513df826dab3d22ef278993f91457",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_object_storage",
+          "rule_name": "FaasObjectStorageRegionNearlyFull",
+          "definition": {
+            "expression_hash": "91411d8d00dabd723e05f5b990b55a989d3d8123f37261a7a82231bbecfd7086",
+            "labels_hash": "0ace63790655153ccbb75cf6c11ec87887258af6b419183d05826e2494241f58",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "70da2050abb1dc7bdc3aa771c4de26672f84ef0ff2f0d2c0d9875f1cc546535c"
+          }
+        },
+        {
           "id": "b90f216b55bdf1dedd690d472e05f51c137a1f7ada0df8c2e5ed387d91bbd9bb",
           "file_name": "faas.rules.yml",
           "group_name": "faas_realtime_callbacks",
@@ -4713,6 +4752,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "ea55011beca2f6e7d5289374eba211952124b4ed11c4b6132bc8d2aae94d556c"
+          }
+        },
+        {
+          "id": "be83c088f4591d459552ac1e16913d526ca20a30bb0b8ac40d27dd92624ccfd2",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_profile_captures",
+          "rule_name": "FaasProfileCapturesFailing",
+          "definition": {
+            "expression_hash": "aadfb8d15e3f4bf8595885d8b1a299a5d4d8d117058fb2fc2b9f407aabe6ff5a",
+            "labels_hash": "c60714d8934be1e168fbb4c7cf514e4574c7ecfd1608cfd9673733fa058fcd73",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "600c7287a88aa8d8ba82ce3579579251112093e352084545a353aac55653a6ac"
           }
         },
         {
@@ -6396,7 +6448,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "f06a80eb36770143608be12c39ebb866db79965bd18039988fcd989f848ee571",
+      "revision": "0e162f13160ab09f8f67070b92df052113332f52310cc60e724455019d8d533c",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -6767,6 +6819,19 @@
             "for_seconds": 900,
             "keep_firing_for_seconds": 0,
             "fingerprint": "35b641e4ae6f082ef8745c6ec9857a5f80ddccc5a44e44c9ce33e334dcf2ca28"
+          }
+        },
+        {
+          "id": "0b33d7d3e26685b1a5f0081dbb9fe6e5956c2e681d67e31601f2abf964046504",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_profile_captures",
+          "rule_name": "FaasProfileCaptureQueueBacklog",
+          "definition": {
+            "expression_hash": "f94bdbe331cfb2df3986b5fa52cdeb868126c37ad4da817b9655505766ad8182",
+            "labels_hash": "c60714d8934be1e168fbb4c7cf514e4574c7ecfd1608cfd9673733fa058fcd73",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "6602fd1f8dc5b063ad9a457dfe7645cb1d7086cc77feeff1de949a38132d5320"
           }
         },
         {
@@ -8561,6 +8626,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "4f33ee8e56204e723584048071f4ab6e54d9316c1006731770eea5079505908e"
+          }
+        },
+        {
+          "id": "4bf9ee570c69cd49527c86741344df7ba6b2bcdbbe0e6cea258f4ffdcbea096a",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_object_storage",
+          "rule_name": "FaasObjectStorageRegionFull",
+          "definition": {
+            "expression_hash": "40a6fe52480c9c1106d36631dc328e5029f4307146c0d4932436c2f8160af6c0",
+            "labels_hash": "0ace63790655153ccbb75cf6c11ec87887258af6b419183d05826e2494241f58",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "4267a21454c78fa468a482734d9b088e91de97bb9bf756d1411e722bf3c38a47"
           }
         },
         {
@@ -11190,6 +11268,19 @@
           }
         },
         {
+          "id": "b77d8ae8d8e830d47df3a22f073472d6966513df826dab3d22ef278993f91457",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_object_storage",
+          "rule_name": "FaasObjectStorageRegionNearlyFull",
+          "definition": {
+            "expression_hash": "91411d8d00dabd723e05f5b990b55a989d3d8123f37261a7a82231bbecfd7086",
+            "labels_hash": "0ace63790655153ccbb75cf6c11ec87887258af6b419183d05826e2494241f58",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "70da2050abb1dc7bdc3aa771c4de26672f84ef0ff2f0d2c0d9875f1cc546535c"
+          }
+        },
+        {
           "id": "b783914b9e0c35f54049751d131bc919297fc61782f42819953dec737a9b9be7",
           "file_name": "data_placement.yaml",
           "group_name": "faas_data_placement",
@@ -11343,6 +11434,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "ea55011beca2f6e7d5289374eba211952124b4ed11c4b6132bc8d2aae94d556c"
+          }
+        },
+        {
+          "id": "be83c088f4591d459552ac1e16913d526ca20a30bb0b8ac40d27dd92624ccfd2",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_profile_captures",
+          "rule_name": "FaasProfileCapturesFailing",
+          "definition": {
+            "expression_hash": "aadfb8d15e3f4bf8595885d8b1a299a5d4d8d117058fb2fc2b9f407aabe6ff5a",
+            "labels_hash": "c60714d8934be1e168fbb4c7cf514e4574c7ecfd1608cfd9673733fa058fcd73",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "600c7287a88aa8d8ba82ce3579579251112093e352084545a353aac55653a6ac"
           }
         },
         {
