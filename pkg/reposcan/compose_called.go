@@ -4,8 +4,12 @@ import (
 	"fmt"
 	"io/fs"
 	"net/url"
+	"path"
+	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 )
 
 // classifyCalledComposeServices makes a Compose service without `ports:` an
@@ -17,7 +21,9 @@ import (
 //   - another service addresses it by its Docker name in an http, https, ws
 //     or wss URL in its Compose `environment:`, or
 //   - a service that serves requests lists it in `depends_on` (Compose or
-//     .gregale/project.yaml) and it declares `expose:`, so it listens.
+//     .gregale/project.yaml) and the repository shows that it listens: it
+//     declares `expose:`, or it runs its own image's command and that image
+//     listens (listensByItsOwnCommand).
 //
 // `depends_on` alone is often only start order (a gateway listing its queue
 // worker), so a worker it names stays a worker, and the returned warnings
@@ -48,7 +54,7 @@ func classifyCalledComposeServices(fsys fs.FS, workloads []Workload) []string {
 			}
 			for _, dependency := range caller.DependsOn {
 				i, ok := candidates[strings.ToLower(dependency)]
-				if ok && workloads[i].Class == ClassWorker && len(workloads[i].InternalPorts) > 0 {
+				if ok && workloads[i].Class == ClassWorker && (len(workloads[i].InternalPorts) > 0 || listensByItsOwnCommand(fsys, workloads[i])) {
 					workloads[i].Class = ClassHTTP
 					changed = true
 				}
@@ -71,6 +77,45 @@ func classifyCalledComposeServices(fsys fs.FS, workloads []Workload) []string {
 	}
 	sort.Strings(warnings)
 	return warnings
+}
+
+// httpFrameworks are the frameworkprofile frameworks whose default start
+// command serves HTTP.
+var httpFrameworks = map[string]bool{
+	"express": true, "fastify": true, "nestjs": true, "hono": true,
+	"fastapi": true, "flask": true, "django": true, "gin": true,
+}
+
+var dockerfileExpose = regexp.MustCompile(`(?im)^\s*EXPOSE\s+\S`)
+
+// listensByItsOwnCommand reports that a built Compose service runs its own
+// image's command and the repository shows that command listens: its
+// Dockerfile EXPOSEs a port, or, built without a Dockerfile, its source is an
+// HTTP framework (ADR-20261029120000 amendment 1). A service that overrides
+// the command, such as a Celery worker built from the web service's
+// Dockerfile, runs something else, so that image says nothing about it. A
+// prebuilt image's own metadata is not read at scan time.
+func listensByItsOwnCommand(fsys fs.FS, w Workload) bool {
+	if w.Image != "" || len(w.Command) > 0 {
+		return false
+	}
+	root := w.RootDir
+	if root == "" {
+		root = "."
+	}
+	dockerfile := w.Dockerfile
+	if dockerfile == "" {
+		dockerfile = "Dockerfile"
+	}
+	if body, err := fs.ReadFile(fsys, path.Join(root, dockerfile)); err == nil {
+		return dockerfileExpose.Match(body)
+	}
+	source, err := fs.Sub(fsys, root)
+	if err != nil {
+		return false
+	}
+	profile, err := frameworkprofile.Analyze(source)
+	return err == nil && httpFrameworks[profile.Framework]
 }
 
 func servesRequests(w Workload) bool {

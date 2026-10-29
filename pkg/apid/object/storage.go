@@ -232,7 +232,7 @@ func BucketProblem(w http.ResponseWriter, err error) {
 	if errors.As(err, &limit) {
 		problem.Limit, problem.Observed = &limit.Limit, &limit.Observed
 		problem.Detail = detail + " Limit: " + limit.Kind + "."
-		problem.DocsURL = "https://github.com/poyrazK/faas/blob/main/docs/object-storage.md#accounting-and-safety-budgets"
+		problem.DocsURL = "https://github.com/poyrazK/faas/blob/main/docs/object-storage.md#limits"
 	}
 	api.WriteProblem(w, problem)
 }

@@ -325,15 +325,32 @@ VALUES (sqlc.arg(account_id)::uuid,sqlc.arg(consumer_limit)::integer,sqlc.arg(ap
 ON CONFLICT (account_id) DO UPDATE SET consumer_limit=excluded.consumer_limit,app_limit=excluded.app_limit,account_limit=excluded.account_limit;
 
 -- name: EventDeliveryCounts :one
--- Reads the account's live slots (event_delivery_slots_live), not its whole
--- delivery history; the invocation's state still decides.
-SELECT count(*)::bigint AS account_count,
- count(*) FILTER (WHERE s.app_id=sqlc.arg(app_id)::uuid)::bigint AS app_count,
- count(*) FILTER (WHERE s.app_id=sqlc.arg(app_id)::uuid AND s.subscription_id=sqlc.arg(subscription_id)::text)::bigint AS consumer_count
-FROM event_delivery_slots s JOIN invocations i ON i.id=s.invocation_id
-WHERE s.account_id=sqlc.arg(account_id)::uuid AND s.live AND i.state IN ('pending','dispatching')
- AND NOT (sqlc.arg(replace_pending)::boolean AND i.state='pending' AND i.app_id=sqlc.arg(app_id)::uuid
-   AND coalesce(i.work_policy_name,'')=sqlc.arg(policy_name)::text AND i.work_key_digest=sqlc.arg(key_digest)::bytea);
+-- ADR-614 amendment (2026-10-29): counts the account's live slots from the
+-- event_delivery_slots_live index alone. A slot's live flag is exact: it is
+-- stamped when the slot is written, with or after its invocation, and every
+-- state change re-syncs it. Joining each slot to its invocation planned a
+-- scan of every pending invocation on the platform, so each routed delivery
+-- paid for everyone's backlog. A keyed replace subtracts the pending
+-- deliveries it would replace, found through the work-lane index.
+WITH live AS (
+ SELECT count(*)::bigint AS account_count,
+  count(*) FILTER (WHERE s.app_id=sqlc.arg(app_id)::uuid)::bigint AS app_count,
+  count(*) FILTER (WHERE s.app_id=sqlc.arg(app_id)::uuid AND s.subscription_id=sqlc.arg(subscription_id)::text)::bigint AS consumer_count
+ FROM event_delivery_slots s
+ WHERE s.account_id=sqlc.arg(account_id)::uuid AND s.live
+), replaced AS (
+ SELECT count(*)::bigint AS account_count,
+  count(*) FILTER (WHERE s.app_id=sqlc.arg(app_id)::uuid)::bigint AS app_count,
+  count(*) FILTER (WHERE s.app_id=sqlc.arg(app_id)::uuid AND s.subscription_id=sqlc.arg(subscription_id)::text)::bigint AS consumer_count
+ FROM invocations i JOIN event_delivery_slots s ON s.invocation_id=i.id
+ WHERE sqlc.arg(replace_pending)::boolean AND i.app_id=sqlc.arg(app_id)::uuid
+  AND i.work_policy_name=nullif(sqlc.arg(policy_name)::text,'') AND i.work_key_digest=sqlc.arg(key_digest)::bytea
+  AND i.state='pending' AND s.account_id=sqlc.arg(account_id)::uuid AND s.live
+)
+SELECT (live.account_count-replaced.account_count)::bigint AS account_count,
+ (live.app_count-replaced.app_count)::bigint AS app_count,
+ (live.consumer_count-replaced.consumer_count)::bigint AS consumer_count
+FROM live, replaced;
 
 -- name: EventDeliveryInsertSlot :exec
 INSERT INTO event_delivery_slots (invocation_id,account_id,app_id,subscription_id)
