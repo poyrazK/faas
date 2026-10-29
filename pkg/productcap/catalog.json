@@ -2395,7 +2395,7 @@
       "id": "event-triggers",
       "name": "Event triggers",
       "category": "async",
-      "description": "Consume Kafka, NATS, Redis Streams, AMQP, SQS-compatible and bucket events.",
+      "description": "Consume Kafka, NATS JetStream and Redis Streams records and Gregale queues.",
       "maturity": "preview",
       "plans": [
         "hobby",

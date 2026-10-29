@@ -17,6 +17,11 @@ Free accounts have a zero monthly charge and are subject to the published limits
 A spend cap is a hard ceiling on the overage an account is billed in a UTC
 calendar month. The included GB-RAM-hours are not counted against it.
 
+A paid plan starts with a cap of one more allowance of overage: Hobby $2,
+Pro $10, Scale $30. The cap is set when the account moves from Free to a paid
+plan, and a cap still at its plan's default follows plan changes; on Free it
+is removed. A cap you set or clear yourself is kept across plan changes.
+
 ```bash
 gregale billing spend-cap 500      # cap overage at $5.00 this month
 gregale billing spend-cap --clear  # remove the cap

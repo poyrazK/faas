@@ -851,20 +851,22 @@ func (s *PgStore) UpdateAccountPlan(ctx context.Context, id string, plan api.Pla
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	// Lock the account so its default spend cap moves with the plan
+	// (ADR-20261029180000) and, on a downgrade to Free, so a concurrent
+	// streaming opt-in cannot race the flags cleared below.
+	var from string
+	var capCents *int64
+	if err := tx.QueryRow(ctx,
+		`select plan, overage_cap_cents from accounts where id = $1 for update`, id,
+	).Scan(&from, &capCents); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
 	if plan == api.PlanFree {
 		// The streaming plan invariant rejects a paid -> Free account
-		// transition while any app still opts in. Lock the account before
-		// clearing those flags so a concurrent opt-in cannot race the
-		// downgrade and leave an invalid pair of rows behind.
-		var accountID string
-		if err := tx.QueryRow(ctx,
-			`select id::text from accounts where id = $1 for update`, id,
-		).Scan(&accountID); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return ErrNotFound
-			}
-			return err
-		}
+		// transition while any app still opts in.
 		if _, err := tx.Exec(ctx,
 			`update apps
 			    set streaming_enabled = false
@@ -874,7 +876,8 @@ func (s *PgStore) UpdateAccountPlan(ctx context.Context, id string, plan api.Pla
 			return err
 		}
 	}
-	tag, err := tx.Exec(ctx, `update accounts set plan = $2 where id = $1`, id, string(plan))
+	capCents = planChangeOverageCap(api.Plan(from), plan, capCents)
+	tag, err := tx.Exec(ctx, `update accounts set plan = $2, overage_cap_cents = $3 where id = $1`, id, string(plan), capCents)
 	if err != nil {
 		return err
 	}
@@ -5859,9 +5862,9 @@ func (s *PgStore) ApplyProjectPlan(
 		    (account_id, slug, type, runtime, ram_mb, idle_timeout_s, max_concurrency,
 		     status, manifest, min_instances, egress_allowlist, public_auth_ip_allowlist,
 		     project_id, root_dir, workload_name, workload_class, start_command,
-		     preview_of_slug, preview_pr_number, preview_pr_state, preview_expires_at, cpu_millicores, org_id, platform_tenant_required)
+		     preview_of_slug, preview_pr_number, preview_pr_state, preview_expires_at, cpu_millicores, org_id, platform_tenant_required, visibility)
 		values ($1, $2, $3, $4, $5, $6, $7, 'active', $8::jsonb, $9, $10::cidr[], $11::cidr[],
-		        $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, coalesce(nullif($22, '')::uuid, (select id from orgs where personal_org = true and personal_owner_account_id = $1)), $23)
+		        $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, coalesce(nullif($22, '')::uuid, (select id from orgs where personal_org = true and personal_owner_account_id = $1)), $23, $24)
 		returning ` + appsSelectColumns
 		row := tx.QueryRow(ctx, insertAppSQL,
 			project.AccountID, a.Slug, string(appType), runtime, ramMB, idle, maxConcurrency,
@@ -5875,6 +5878,7 @@ func (s *PgStore) ApplyProjectPlan(
 			// CreateApp / CreateAppIfUnderQuota directly.
 			nullString(a.PreviewOfSlug), a.PreviewPrNumber,
 			nullString(a.PreviewPrState), nullableTimestamptzPtr(a.PreviewExpiresAt), cpuMillicores, nullString(a.OrgID), a.PlatformTenantRequired,
+			string(api.NormalizeAppVisibility(a.Visibility)),
 		)
 		app, err := scanApp(row)
 		if err != nil {
@@ -6249,15 +6253,18 @@ func insertProjectAppInTx(ctx context.Context, tx pgx.Tx, app App) (App, error) 
 			 project_id, root_dir, workload_name, start_command, min_instances,
 			 streaming_enabled, eviction_priority, require_authn, public_auth_mode,
 			 websocket_enabled, route_metrics_enabled, maintenance_mode, app_protocol,
-		 consumer_auth_mode, cpu_millicores, workload_class, org_id, platform_tenant_required)
-		values ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,coalesce(nullif($25, '')::uuid, (select id from orgs where personal_org = true and personal_owner_account_id = $1)), $26)
+		 consumer_auth_mode, cpu_millicores, workload_class, org_id, platform_tenant_required, visibility)
+		values ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,coalesce(nullif($25, '')::uuid, (select id from orgs where personal_org = true and personal_owner_account_id = $1)), $26, $27)
 		returning `+appsSelectColumns,
 		app.AccountID, app.Slug, string(appType), nullString(app.Runtime), ramMB,
 		maxConcurrency, string(status), manifestBytes, nullString(app.ProjectID),
 		app.RootDir, app.WorkloadName, nullString(app.StartCommand), app.MinInstances,
 		app.StreamingEnabled, EvictionPriorityOrBestEffort(app.EvictionPriority), app.RequireAuthn,
 		publicAuth, app.WebSocketEnabled, app.RouteMetricsEnabled, app.MaintenanceMode,
-		protocol, string(consumerAuth), cpu, string(workloadClass), nullString(app.OrgID), app.PlatformTenantRequired)
+		protocol, string(consumerAuth), cpu, string(workloadClass), nullString(app.OrgID), app.PlatformTenantRequired,
+		// A Compose service without ports is created internal
+		// (ADR-20261022131852); the column default would publish it.
+		string(api.NormalizeAppVisibility(app.Visibility)))
 	return scanApp(row)
 }
 
@@ -15115,7 +15122,7 @@ func (s *PgStore) createCorsPresetIfUnderQuotaOnce(ctx context.Context, p CorsPr
 	if err := s.validateTrafficProjection(ctx, "cors_preset", corsPresetTrafficProjection(proposed)); err != nil {
 		return CorsPreset{}, err
 	}
-	tx, err := s.beginTrafficPolicyMutation(ctx, uuidToPgtype(p.AccountID))
+	tx, err := s.beginRuleOnlyTrafficPolicyMutation(ctx, uuidToPgtype(p.AccountID))
 	if err != nil {
 		return CorsPreset{}, fmt.Errorf("state: begin tx: %w", err)
 	}
@@ -15221,7 +15228,7 @@ func (s *PgStore) UpdateCorsPreset(ctx context.Context, accountID, id string, p 
 	if err := s.validateTrafficProjection(ctx, "cors_preset", corsPresetTrafficProjection(p)); err != nil {
 		return CorsPreset{}, err
 	}
-	tx, err := s.beginTrafficPolicyMutation(ctx, uuidToPgtype(accountID))
+	tx, err := s.beginRuleOnlyTrafficPolicyMutation(ctx, uuidToPgtype(accountID))
 	if err != nil {
 		return CorsPreset{}, err
 	}
