@@ -253,7 +253,7 @@ func (l *Limiter) AllowWithCentralConsumerKey(
 		return false
 	}
 	centralSubjectID := dimensionalCentralSubjectID(ruleID, dimensionKind, consumerID, cap)
-	remaining, admitted, err := l.consumeCentral(ctx, scope, centralSubjectID, plan, rps, burst)
+	remaining, admitted, _, err := l.consumeCentral(ctx, scope, centralSubjectID, plan, rps, burst)
 	if err != nil {
 		l.observeCentralError(ctx, scope, err)
 		return false
@@ -751,7 +751,7 @@ func (l *Limiter) allowTokenWithCentralKey(ctx context.Context, id string, rps, 
 	if !ok {
 		return false
 	}
-	remaining, admitted, err := l.consumeCentral(ctx, scope, subjectID, plan, rps, burst)
+	remaining, admitted, verified, err := l.consumeCentral(ctx, scope, subjectID, plan, rps, burst)
 	if err != nil {
 		// A counter that answered within the outage grace keeps its limit on
 		// this gateway's own bucket (ADR-20261027173012); past the grace,
@@ -763,7 +763,13 @@ func (l *Limiter) allowTokenWithCentralKey(ctx context.Context, id string, rps, 
 		l.observeCentralError(ctx, scope, err)
 		return false
 	}
-	l.centralVerifiedAt.Store(l.now().UnixNano())
+	// Only a real shared-counter decision arms the grace. A lease allowance
+	// admit on a never-fetched counter admits without consulting Postgres, so
+	// it must not let a never-verified gateway later fall back to its full
+	// local bucket during a central outage.
+	if verified {
+		l.centralVerifiedAt.Store(l.now().UnixNano())
+	}
 	// Keep response headers aligned with the latest
 	// authoritative balance. Remaining==0 is a valid final-token admit.
 	l.mu.Lock()
@@ -783,7 +789,12 @@ func (l *Limiter) allowTokenWithCentralKey(ctx context.Context, id string, rps, 
 // breaker; a caller that gave up (client disconnect) does not open it.
 // Concurrent consults for one counter use centralCoalescer when supported.
 
-func (l *Limiter) consumeCentral(ctx context.Context, scope, subjectID, plan string, rps, burst float64) (int, bool, error) {
+// consumeCentral returns verified=true when the decision reflects a real
+// shared-counter result, so only such a decision arms the outage grace. The
+// non-lease path always consults the counter, so every success is verified; the
+// lease path reports it per leaseConsume (an allowance admit on a never-fetched
+// counter is NOT verified).
+func (l *Limiter) consumeCentral(ctx context.Context, scope, subjectID, plan string, rps, burst float64) (int, bool, bool, error) {
 	if l.lease != nil {
 		if batch, ok := l.central.(CentralBatchBackend); ok {
 			return l.leaseConsume(ctx, batch, scope, subjectID, plan, rps, burst)
@@ -791,7 +802,7 @@ func (l *Limiter) consumeCentral(ctx context.Context, scope, subjectID, plan str
 	}
 	now := l.now()
 	if l.centralBreakerOpen(now) {
-		return 0, false, errCentralBreakerOpen
+		return 0, false, false, errCentralBreakerOpen
 	}
 	var (
 		remaining int
@@ -810,10 +821,10 @@ func (l *Limiter) consumeCentral(ctx context.Context, scope, subjectID, plan str
 		if ctx.Err() == nil && (!errors.As(err, &backoff) || backoff.CanBackoffCentralConsult()) {
 			l.centralOpenUntil.Store(now.Add(centralBreakerWindow).UnixNano())
 		}
-		return remaining, admitted, err
+		return remaining, admitted, false, err
 	}
 	l.centralOpenUntil.Store(0)
-	return remaining, admitted, nil
+	return remaining, admitted, true, nil
 }
 
 func (l *Limiter) observeCentralError(ctx context.Context, scope string, err error) {
