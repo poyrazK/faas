@@ -445,6 +445,11 @@ type Instance struct {
 	// one-shot guest by guessing its instance id.
 	ExecutionOnly  bool
 	DataRepairOnly bool
+	// AgentRunOnly marks a VM WakeAgentRun booted for one agent run. It is
+	// also ExecutionOnly; ExecuteExecution refuses it and RunAgent requires it.
+	AgentRunOnly bool
+	// AgentRunRelay is the run principal of the VM's relay; host-only.
+	AgentRunRelay *AgentRunRelay `json:"-"`
 	// ExecutionID is the Runs execution principal (the one-shot instance ID).
 	// The lease and grant list are host-only broker inputs and must never be
 	// serialized into guest-visible state.
@@ -3755,8 +3760,14 @@ type WakeRequest struct {
 	// NodeID is supplied by the serving vmmd, never by a guest frame.
 	NodeID         string
 	dataRepairOnly bool
-	RehearsalRunID string // exact durable containment run; ordinary legacy callers may omit it
-	Instance       string
+	// agentRunOnly is set only by WakeAgentRun (ADR-20261027090010 §6), on top of
+	// ExecutionOnly; RunAgent accepts no other instance. agentRunRelay is
+	// the run's relay principal, accepted only with agentRunOnly.
+	agentRunOnly     bool
+	agentRunRelay    *AgentRunRelay
+	agentRunInputKey string
+	RehearsalRunID   string // exact durable containment run; ordinary legacy callers may omit it
+	Instance         string
 	// Set only by WakeAdmitted after validating and consuming its grant.
 	admission *runtimeadmission.Binding
 	// Complete approved source identities; only WakeAdmitted accepts them.
@@ -4751,7 +4762,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 
 	lease, preparedNetwork, err := m.acquireWakeNetwork(req, computeLease.egressFunded()) //nolint:contextcheck // Failed cache claims use bounded daemon-owned cleanup, independent of a canceled Wake RPC.
 	if err != nil {
-		return nil, fmt.Errorf("wake %s: acquire lease: %w", req.Instance, err)
+		return nil, wakeNotStarted(fmt.Errorf("wake %s: acquire lease: %w", req.Instance, err))
 	}
 	phases.mark("lease_acquire")
 	// Stamp the Plan onto the Lease (issue #301, ADR-044) so the
@@ -5103,7 +5114,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 			if m.wakeFailureMetrics != nil {
 				m.wakeFailureMetrics.WakeFailure("", req.AppID, WakeReasonNetnsFail).Inc()
 			}
-			return nil, fmt.Errorf("wake %s: network setup: %w", req.Instance, netErr)
+			return nil, wakeNotStarted(fmt.Errorf("wake %s: network setup: %w", req.Instance, netErr))
 		}
 		timings.netnsTapMs = network.duration.Milliseconds()
 		if m.preparedNetworks != nil {
@@ -5143,7 +5154,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 			if m.wakeFailureMetrics != nil {
 				m.wakeFailureMetrics.WakeFailure("", req.AppID, WakeReasonNetnsFail).Inc()
 			}
-			return nil, fmt.Errorf("wake %s: network setup: %w", req.Instance, err)
+			return nil, wakeNotStarted(fmt.Errorf("wake %s: network setup: %w", req.Instance, err))
 		}
 		timings.netnsTapMs = time.Since(netnsStart).Milliseconds()
 		if !req.ExecutionOnly {
@@ -5284,7 +5295,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		if lease.IsBuilder {
 			err = writeBuildCgroup(req.Instance, req.MemSizeMiB)
 		} else {
-			err = writeAppCgroup(req.Instance, req.Plan, wakeGuestMemoryMiB(req), req.CPUMillicores)
+			err = writeLeaseCgroup(lease, wakeGuestMemoryMiB(req))
 		}
 		if err != nil {
 			// Cgroup setup is a mandatory isolation boundary. The VM is already
@@ -5394,7 +5405,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		publicForwardTarget: publicTarget,
 		Lease:               lease, Net: nc, Method: method, wakeID: wakeID,
 		adoptionVCPUs: req.VcpuCount, adoptionMemSizeMiB: req.MemSizeMiB,
-		ExecutionOnly: req.ExecutionOnly, DataRepairOnly: req.dataRepairOnly, AppTaskOnly: req.AppTaskOnly, QualificationOnly: qualificationOnly, Paused: req.KeepPaused, warmSpare: req.KeepPaused,
+		ExecutionOnly: req.ExecutionOnly, DataRepairOnly: req.dataRepairOnly, AgentRunOnly: req.agentRunOnly, AgentRunRelay: req.agentRunRelay, AppTaskOnly: req.AppTaskOnly, QualificationOnly: qualificationOnly, Paused: req.KeepPaused, warmSpare: req.KeepPaused,
 		ExecutionID:                     executionID,
 		ExecutionLeaseToken:             req.ExecutionLeaseToken,
 		ExecutionOutboundIntegrationIDs: append([]string(nil), req.ExecutionOutboundIntegrationIDs...),
@@ -5726,6 +5737,8 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 			ServiceDiscoveryIP: serviceDiscoveryIP,
 			Networkless:        req.ExecutionOnly,
 			KeepPaused:         req.KeepPaused,
+			AgentInput:         req.agentRunOnly,
+			InputKey:           req.agentRunInputKey,
 		}
 		if timings != nil {
 			// ADR-192: hand the pre-restore Manager phases to the VMM so

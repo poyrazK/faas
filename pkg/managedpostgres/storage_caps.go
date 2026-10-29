@@ -2,6 +2,7 @@ package managedpostgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"slices"
@@ -15,9 +16,9 @@ import (
 // inside its pool; at the pool, writes that would grow a database fail while
 // reads, deletes and VACUUM keep working. Nothing is suspended or deleted.
 
-// StorageCapEnforcementEnv selects off or shadow (the default). Shadow
-// computes and logs each limit without sending it. `on` arrives with the
-// staging qualification of the provider's write blocking (delivery step 6c).
+// StorageCapEnforcementEnv selects off, shadow (the default) or on. Shadow
+// computes and logs each limit without sending it; on sends it, and needs the
+// staging qualification at StorageCapQualificationPathEnv.
 const StorageCapEnforcementEnv = "FAAS_MANAGED_POSTGRES_STORAGE_CAP_ENFORCEMENT"
 
 // ParseStorageCapEnforcementMode reads StorageCapEnforcementEnv; empty means
@@ -26,12 +27,10 @@ func ParseStorageCapEnforcementMode(value string) (CapEnforcementMode, error) {
 	switch mode := CapEnforcementMode(strings.ToLower(strings.TrimSpace(value))); mode {
 	case "":
 		return CapEnforcementShadow, nil
-	case CapEnforcementOff, CapEnforcementShadow:
+	case CapEnforcementOff, CapEnforcementShadow, CapEnforcementOn:
 		return mode, nil
-	case CapEnforcementOn:
-		return "", fmt.Errorf("%s=on needs the storage cap qualification, which is not available yet: %w", StorageCapEnforcementEnv, ErrInvalid)
 	default:
-		return "", fmt.Errorf("%s=%q: want off or shadow: %w", StorageCapEnforcementEnv, value, ErrInvalid)
+		return "", fmt.Errorf("%s=%q: want off, shadow or on: %w", StorageCapEnforcementEnv, value, ErrInvalid)
 	}
 }
 
@@ -178,14 +177,14 @@ func absDiff(a, b int64) int64 {
 }
 
 // enforceStoragePool runs the storage pass for one subject. Shadow mode logs
-// each limit it would send. A failure here never affects compute caps or
-// their emails: the summary counts it apart.
+// each limit it would send; on sends it. A failure here never affects compute
+// caps or their emails: the summary counts it apart.
 func (e *CapEnforcer) enforceStoragePool(ctx context.Context, subjectID string, databases []Database, limits CapLimits, summary *CapSweepSummary) error {
 	if limits.StoragePool <= 0 {
 		summary.StorageUncapped++
 		return nil
 	}
-	scopes, err := e.observeStorageScopes(ctx, databases, summary)
+	scopes, providers, err := e.observeStorageScopes(ctx, databases, summary)
 	if err != nil || len(scopes) == 0 {
 		return err
 	}
@@ -196,46 +195,59 @@ func (e *CapEnforcer) enforceStoragePool(ctx context.Context, subjectID string, 
 	if plan.blocked() {
 		summary.StorageBlockedAccounts++
 	}
+	var failures []error
 	for _, decision := range plan.decisions {
 		if !decision.apply {
 			summary.StorageScopesUnchanged++
 			continue
 		}
-		summary.StorageScopesShadowed++
-		e.logger.Info("managed postgres storage cap (shadow)", "subject_id", subjectID, "database_ids", decision.databaseIDs,
+		attrs := []any{"subject_id", subjectID, "database_ids", decision.databaseIDs,
 			"pool_bytes", plan.pool, "subject_used_bytes", plan.used, "limit_bytes", decision.current,
-			"target_bytes", decision.target, "blocked_branches", decision.blocked)
+			"target_bytes", decision.target, "blocked_branches", decision.blocked}
+		if e.storageMode != CapEnforcementOn {
+			summary.StorageScopesShadowed++
+			e.logger.Info("managed postgres storage cap (shadow)", attrs...)
+			continue
+		}
+		if err := providers[decision.resourceID].SetStorageCap(ctx, decision.resourceID, decision.target); err != nil {
+			failures = append(failures, err)
+			continue
+		}
+		summary.StorageScopesApplied++
+		e.logger.Info("managed postgres storage cap applied", attrs...)
 	}
-	return nil
+	return errors.Join(failures...)
 }
 
 // observeStorageScopes reads each database's size and its provider object's
 // limit, grouping databases that share one. A subject is skipped, not failed,
 // when its provider cannot hold a storage limit.
-func (e *CapEnforcer) observeStorageScopes(ctx context.Context, databases []Database, summary *CapSweepSummary) ([]storageCapScope, error) {
+func (e *CapEnforcer) observeStorageScopes(ctx context.Context, databases []Database, summary *CapSweepSummary) ([]storageCapScope, map[string]StorageCapProvider, error) {
 	byScope := make(map[string]*storageCapScope)
+	providers := make(map[string]StorageCapProvider)
 	var order []string
 	for _, database := range databases {
 		backend, err := e.registry.Resolve(database.BackendID, database.BackendFingerprint)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		provider, ok := backend.Provider.(StorageCapProvider)
 		if !ok {
 			summary.StorageUnsupported++
-			return nil, nil
+			return nil, nil, nil
 		}
 		observed, err := provider.ObserveStorageCap(ctx, database.ProviderResourceID)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if observed.Scope == "" || observed.SizeBytes < 0 || observed.LimitBytes < 0 {
-			return nil, fmt.Errorf("database %s: invalid storage observation: %w", database.ID, ErrUnavailable)
+			return nil, nil, fmt.Errorf("database %s: invalid storage observation: %w", database.ID, ErrUnavailable)
 		}
 		scope, ok := byScope[observed.Scope]
 		if !ok {
 			scope = &storageCapScope{resourceID: database.ProviderResourceID, current: observed.LimitBytes}
 			byScope[observed.Scope] = scope
+			providers[database.ProviderResourceID] = provider
 			order = append(order, observed.Scope)
 		}
 		scope.databaseIDs = append(scope.databaseIDs, database.ID)
@@ -248,5 +260,5 @@ func (e *CapEnforcer) observeStorageScopes(ctx context.Context, databases []Data
 	for _, key := range order {
 		scopes = append(scopes, *byScope[key])
 	}
-	return scopes, nil
+	return scopes, providers, nil
 }

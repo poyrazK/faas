@@ -4003,16 +4003,20 @@ func (s *PgStore) CountDeveloperApps(ctx context.Context, accountID string) (int
 	return s.countPersonalAppQuota(ctx, accountID, QuotaErrorKindDeveloperApps)
 }
 
-// CountBillingSubjectAppsWithEvictionPriority returns how many apps of
-// appID's billing subject (quotaSubjectSQL, ADR-202610171904) have
-// eviction_priority equal to the given tier (issue #475). Counts APPS
-// (not instances) — a single reserved app with 5 concurrent instances
-// counts as 1 against the per-account cap
-// (Plan.ReservedConcurrencyPerAccount). Excludes soft-deleted apps
-// (status='deleted') so a recently-deleted reserved app doesn't leak
-// into the cap and reject a subsequent recreate. The account_id/org_id
-// prefilter keeps the scan on apps_account_idx and apps_org_quota_idx.
-func (s *PgStore) CountBillingSubjectAppsWithEvictionPriority(ctx context.Context, appID, priority string) (int, error) {
+// CountOtherBillingSubjectAppsWithEvictionPriority returns how many apps
+// other than appID, of appID's billing subject (quotaSubjectSQL,
+// ADR-202610171904), use the given eviction tier (issue #475) on the app
+// row or in a project environment's current workload settings (its head
+// spec), which is what the reaper applies to that environment's
+// deployments. Counts APPS (not instances) — a single reserved app with 5
+// concurrent instances or 3 reserved environments counts as 1 against the
+// per-account cap (Plan.ReservedConcurrencyPerAccount). Excludes
+// soft-deleted apps (status='deleted') so a recently-deleted reserved app
+// doesn't leak into the cap and reject a subsequent recreate. The
+// account_id/org_id prefilter keeps the scan on apps_account_idx and
+// apps_org_quota_idx; the environment probe goes through the project's
+// environments to the heads' primary key.
+func (s *PgStore) CountOtherBillingSubjectAppsWithEvictionPriority(ctx context.Context, appID, priority string) (int, error) {
 	var n int
 	err := s.pool.QueryRow(ctx, `
 		with subject as (
@@ -4023,10 +4027,16 @@ func (s *PgStore) CountBillingSubjectAppsWithEvictionPriority(ctx context.Contex
 		select count(*) from subject s
 		join apps a on a.account_id = s.id or a.org_id = s.id
 		left join orgs o on o.id = a.org_id
-		where a.status <> 'deleted' and a.eviction_priority = $2 and `+quotaSubjectSQL+` = s.id`,
+		where a.id <> $1 and a.status <> 'deleted' and `+quotaSubjectSQL+` = s.id
+		  and (a.eviction_priority = $2 or exists (
+			select 1 from project_environments e
+			join project_environment_workload_heads h on h.environment_id = e.id and h.app_id = a.id
+			join project_environment_workload_specs w on w.id = h.spec_id
+			where e.project_id = a.project_id
+			  and coalesce(nullif(w.settings->>'eviction_priority', ''), 'best_effort') = $2))`,
 		appID, priority).Scan(&n)
 	if err != nil {
-		return 0, fmt.Errorf("state: count %s apps of app %s's billing subject: %w", priority, appID, err)
+		return 0, fmt.Errorf("state: count other %s apps of app %s's billing subject: %w", priority, appID, err)
 	}
 	return n, nil
 }
@@ -14738,8 +14748,14 @@ func (s *PgStore) CreateEdgeRule(ctx context.Context, in CreateEdgeRuleParams) (
 // The FOR UPDATE row lock on the apps row is the TOCTOU defence:
 // concurrent inserts serialise on the apps row before reading the
 // count, so a burst of N parallel inserts can't race past the cap
-// by N-1.
+// by N-1. That lock sits in a repeatable-read snapshot, so a concurrent app
+// write (schedd stamps a new app's owner node right after it is created)
+// fails it with a serialization failure; the create retries with a fresh one.
 func (s *PgStore) CreateEdgeRuleIfUnderQuota(ctx context.Context, in CreateEdgeRuleParams, limits api.Limits) (EdgeRule, error) {
+	return retryTrafficSerialization(ctx, func() (EdgeRule, error) { return s.createEdgeRuleIfUnderQuotaOnce(ctx, in, limits) })
+}
+
+func (s *PgStore) createEdgeRuleIfUnderQuotaOnce(ctx context.Context, in CreateEdgeRuleParams, limits api.Limits) (EdgeRule, error) {
 	tx, err := s.beginRuleTrafficPolicyMutation(ctx, uuidToPgtype(in.AccountID), in.Kind, in.MatchHost)
 	if err != nil {
 		return EdgeRule{}, fmt.Errorf("state: begin tx: %w", err)
@@ -19044,7 +19060,7 @@ func scanComputeNode(row pgx.Row) (ComputeNode, error) {
 		&n.ReleaseID, &n.ManifestHash, &n.HostCertificate, &n.CertFingerprint,
 		&n.Role, &n.Generation, &n.Lifecycle, &n.LifecycleGeneration,
 		&n.Readiness, &n.ReadinessReason,
-		&n.CPUTemplate, &n.CPUModel); err != nil {
+		&n.CPUTemplate, &n.CPUModel, &n.WakeBreakerOpenUntil, &n.WakeBreakerReason); err != nil {
 		return ComputeNode{}, mapErr(err)
 	}
 	return n, nil
@@ -19057,7 +19073,8 @@ func (s *pgCore) ActiveComputeNodes(ctx context.Context) ([]ComputeNode, error) 
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
 		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		       lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model
+		       lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model,
+		       wake_breaker_open_until, wake_breaker_reason
 		  from compute_nodes
 		 where active = true
 		 order by name
@@ -19089,7 +19106,8 @@ func (s *PgStore) ListAllComputeNodes(ctx context.Context) ([]ComputeNode, error
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
 		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		       lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model
+		       lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model,
+		       wake_breaker_open_until, wake_breaker_reason
 		  from compute_nodes
 		 order by name
 	`)
@@ -19115,7 +19133,8 @@ func (s *pgCore) ComputeNodeByID(ctx context.Context, id string) (ComputeNode, e
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
 		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		       lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model
+		       lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model,
+		       wake_breaker_open_until, wake_breaker_reason
 		  from compute_nodes
 		 where id = $1
 	`, id)
@@ -19133,7 +19152,8 @@ func (s *PgStore) ComputeNodeByName(ctx context.Context, name string) (ComputeNo
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
 		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		       lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model
+		       lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model,
+		       wake_breaker_open_until, wake_breaker_reason
 		  from compute_nodes
 		 where name = $1
 	`, name)
@@ -19348,6 +19368,33 @@ func (s *PgStore) SetComputeNodeReadiness(ctx context.Context, nodeID string, re
 	`, nodeID, string(readiness), reason)
 	if err != nil {
 		return false, fmt.Errorf("state: set compute_node %s readiness: %w", nodeID, err)
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
+// OpenComputeNodeWakeBreaker implements ComputeNodeWakeBreakerStore.
+func (s *PgStore) OpenComputeNodeWakeBreaker(ctx context.Context, nodeID string, until time.Time, reason string) error {
+	if _, err := s.pool.Exec(ctx, `
+		update compute_nodes
+		   set wake_breaker_open_until = $2, wake_breaker_reason = nullif($3, '')
+		 where id = $1
+	`, nodeID, until, reason); err != nil {
+		return fmt.Errorf("state: open compute_node %s wake breaker: %w", nodeID, err)
+	}
+	return nil
+}
+
+// CloseComputeNodeWakeBreaker implements ComputeNodeWakeBreakerStore. It
+// matches only a set breaker, so closing a closed one fires no
+// compute_node_changed.
+func (s *PgStore) CloseComputeNodeWakeBreaker(ctx context.Context, nodeID string) (bool, error) {
+	tag, err := s.pool.Exec(ctx, `
+		update compute_nodes
+		   set wake_breaker_open_until = null, wake_breaker_reason = null
+		 where id = $1 and wake_breaker_open_until is not null
+	`, nodeID)
+	if err != nil {
+		return false, fmt.Errorf("state: close compute_node %s wake breaker: %w", nodeID, err)
 	}
 	return tag.RowsAffected() > 0, nil
 }
@@ -19819,7 +19866,8 @@ func (s *PgStore) CreateComputeNode(ctx context.Context, node ComputeNode) (Comp
 		          region, zone, schedd_target_url, gateway_target_url,
 		          public_ip, public_ip_set_at,
 		          release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		          lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model
+		          lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model,
+		          wake_breaker_open_until, wake_breaker_reason
 	`, node.Name, node.TargetURL, node.OverlayIP, node.VPCPUs, node.MemMB, node.MaxConcurrency,
 		node.AdmissionCeilingMB, node.VCPUBudget, string(lifecycle),
 		node.Region, node.Zone, node.GatewayTargetURL,
@@ -19903,7 +19951,8 @@ func (s *PgStore) UpsertComputeNode(ctx context.Context, node ComputeNode) (Comp
 		          region, zone, schedd_target_url, gateway_target_url,
 		          public_ip, public_ip_set_at,
 		          release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		          lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model
+		          lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model,
+		          wake_breaker_open_until, wake_breaker_reason
 	`, node.Name, node.TargetURL, node.OverlayIP, node.VPCPUs, node.MemMB, node.MaxConcurrency,
 		node.AdmissionCeilingMB, node.VCPUBudget,
 		node.Region, node.Zone, node.GatewayTargetURL,
@@ -19982,7 +20031,8 @@ func (s *PgStore) UpsertComputeNodeFromOperator(ctx context.Context, node Comput
 		          region, zone, schedd_target_url, gateway_target_url,
 		          public_ip, public_ip_set_at,
 		          release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		          lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model
+		          lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model,
+		          wake_breaker_open_until, wake_breaker_reason
 	`, node.Name, node.TargetURL, node.VPCPUs, node.MemMB, node.MaxConcurrency,
 		node.AdmissionCeilingMB, vcpuBudget, lifecycle,
 		node.Region, node.Zone, node.ScheddTargetURL, node.GatewayTargetURL,
@@ -20105,7 +20155,8 @@ func (s *PgStore) UpsertComputeNodeFromVmmd(ctx context.Context, node ComputeNod
 		          region, zone, schedd_target_url, gateway_target_url,
 		          public_ip, public_ip_set_at,
 		          release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		          lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model
+		          lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model,
+		          wake_breaker_open_until, wake_breaker_reason
 	`, node.Name, node.TargetURL, node.OverlayIP, node.VPCPUs, node.MemMB, node.MaxConcurrency,
 		node.AdmissionCeilingMB, node.VCPUBudget,
 		node.Region, node.Zone, node.ScheddTargetURL, node.GatewayTargetURL,
@@ -20366,7 +20417,8 @@ func (s *PgStore) ListComputeNodes(ctx context.Context, includeInactive bool) ([
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
 		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		       lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model
+		       lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model,
+		       wake_breaker_open_until, wake_breaker_reason
 		  from compute_nodes
 	`
 	if !includeInactive {
@@ -20402,7 +20454,8 @@ func (s *PgStore) ListComputeNodesPage(ctx context.Context, includeInactive bool
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
 		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		       lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model
+		       lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model,
+		       wake_breaker_open_until, wake_breaker_reason
 		  from compute_nodes
 	`
 	if !includeInactive {
@@ -31310,6 +31363,7 @@ func triggerRowToTrigger(r sqlc.TriggerByIDRow) sqlc.Trigger {
 		PayloadMaxBytes:           r.PayloadMaxBytes,
 		BrokerPoisonStrategy:      r.BrokerPoisonStrategy,
 		FilterCriteria:            r.FilterCriteria,
+		Agent:                     r.Agent,
 	}
 }
 
@@ -31340,6 +31394,7 @@ func triggerListRowToTrigger(r sqlc.ListTriggersForAppRow) sqlc.Trigger {
 		PayloadMaxBytes:           r.PayloadMaxBytes,
 		BrokerPoisonStrategy:      r.BrokerPoisonStrategy,
 		FilterCriteria:            r.FilterCriteria,
+		Agent:                     r.Agent,
 	}
 }
 
@@ -31368,6 +31423,7 @@ func triggerEnabledRowToTrigger(r sqlc.ListEnabledTriggersRow) sqlc.Trigger {
 		PayloadMaxBytes:           r.PayloadMaxBytes,
 		BrokerPoisonStrategy:      r.BrokerPoisonStrategy,
 		FilterCriteria:            r.FilterCriteria,
+		Agent:                     r.Agent,
 	}
 }
 

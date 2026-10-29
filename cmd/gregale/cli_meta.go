@@ -2184,10 +2184,11 @@ var cliCommands = []cliCommand{
 				{Name: "failure-rules", Short: "replace versioned failure and outcome-code rules JSON", Value: "JSON"},
 			}},
 			{Name: "rm", Short: "Delete one cron rule", Positionals: []string{"<id>"}, Flags: []cliFlag{{Name: "yes", Short: "accepted for scripts; crons rm does not prompt", Bool: true}}},
-			{Name: "run", Short: "Fire one cron immediately or choose and follow a manual request", Positionals: []string{"[<cron-id>]"}, Examples: []string{"gregale cron run --app my-api --interactive", "gregale cron run <cron-id>"}, Flags: []cliFlag{
+			{Name: "run", Short: "Fire one cron immediately or choose and follow a manual request", Positionals: []string{"[<cron-id>]"}, Examples: []string{"gregale cron run --app my-api --interactive", "gregale cron run <cron-id>", "gregale cron run <cron-id> --wait"}, Flags: []cliFlag{
 				{Name: "interactive", Short: "choose a task, review and confirm one manual run, then follow its request", Bool: true},
+				{Name: "wait", Short: "follow the run; exit 0 only if it succeeds (1 failed or cancelled, 3 timeout)", Bool: true},
 				{Name: "app", Short: "app slug for interactive selection (linked app or picker by default)", Value: "SLUG"},
-				{Name: "timeout", Short: "maximum interactive follow duration (default 2m)", Value: "DURATION"},
+				{Name: "timeout", Short: "maximum follow duration with --wait or --interactive (default 2m)", Value: "DURATION"},
 			}},
 			{Name: "fire-now", Short: "Read or follow an existing manual fire request", Positionals: []string{"<request-id>"}, Examples: []string{"gregale cron fire-now REQUEST_ID --wait --timeout 5m"}, Flags: []cliFlag{
 				{Name: "wait", Short: "follow the existing request until terminal status", Bool: true},
@@ -2214,11 +2215,11 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "triggers",
 		DocSlug: "triggers",
-		Short:   "Manage event triggers from message brokers and crons",
+		Short:   "Manage event triggers from message brokers and queues (crons: gregale cron)",
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List triggers", Flags: []cliFlag{
 				{Name: "app", Short: "filter to an app slug", Value: "slug"},
-				{Name: "kind", Short: "filter by trigger kind", ClosedSet: triggerKindNames},
+				{Name: "kind", Short: "filter by trigger kind", ClosedSet: triggerBrokerKindNames},
 			}},
 			{Name: "get", Short: "Show one trigger", Positionals: []string{"<id>"}},
 			{Name: "create", Short: "Create a broker trigger", Flags: []cliFlag{
@@ -2226,7 +2227,7 @@ var cliCommands = []cliCommand{
 				{Name: "lock-key", Short: "JSON value that must run one at a time (requires --lock)", Value: "JSON", Capability: "operations"},
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
 				{Name: "kind", Short: "trigger kind", Req: true, Value: "kind", ClosedSet: triggerBrokerKindNames},
-				{Name: "slug", Short: "trigger slug (required for non-cron kinds)", Value: "slug"},
+				{Name: "slug", Short: "trigger slug", Value: "slug"},
 				{Name: "config", Short: "JSON config (inline | @file | -)", Value: "JSON"},
 				{Name: "enabled", Short: "enable the trigger"},
 				{Name: "disabled", Short: "disable the trigger"},
@@ -2241,8 +2242,6 @@ var cliCommands = []cliCommand{
 				{Name: "enabled", Short: "enable the trigger"},
 				{Name: "disabled", Short: "disable the trigger"},
 				{Name: "config", Short: "replace JSON config (inline | @file | -)", Value: "JSON"},
-				{Name: "schedule", Short: "replace cron expression", Value: "EXPR"},
-				{Name: "path", Short: "replace cron request path", Value: "PATH"},
 				{Name: "batch-size", Short: "maximum records per dispatch batch", Value: "N"},
 				{Name: "batch-window-ms", Short: "maximum batch dwell time in milliseconds", Value: "N"},
 				{Name: "max-attempts", Short: "maximum delivery attempts", Value: "N"},

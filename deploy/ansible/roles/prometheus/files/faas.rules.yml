@@ -3116,6 +3116,35 @@ groups:
           description: "Live instance rows were absent from the owning vmmd's telemetry on two consecutive sweeps, outside the startup grace window, on a node that was otherwise reporting. They are being billed and are holding admission slots. Check whether vmmd restarted or the host OOM-killed Firecracker."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInstanceDivergence.md"
 
+      # ADR-20261022184531: schedd marks a node degraded when it answers its
+      # heartbeat but has proven it cannot serve a wake (its vmmd cannot
+      # adopt a configured base generation, or its wake breaker opened after
+      # consecutive platform failures). Placement already avoids it while a
+      # ready node fits; someone still has to fix the node.
+      - alert: FaasComputeNodeDegraded
+        expr: max by (node) (schedd_compute_node_readiness{state="degraded"}) == 1
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: node_readiness
+        annotations:
+          summary: "compute node {{ $labels.node }} is degraded"
+          description: "Node {{ $labels.node }} answers its heartbeat but cannot serve wakes. compute_nodes.readiness_reason and wake_breaker_reason say why. Placement sends it wakes only when no ready node has capacity."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeNodeDegraded.md"
+
+      - alert: FaasNoComputeNodeReady
+        expr: sum(max by (node) (schedd_compute_node_readiness{state="ready"})) == 0
+        for: 2m
+        labels:
+          severity: page
+          component: schedd
+          family: node_readiness
+        annotations:
+          summary: "no compute node is ready"
+          description: "Every heartbeated compute node is degraded, draining or unavailable. Wakes are refused or placed on nodes that refuse them."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeNodeDegraded.md"
+
       - alert: FaasVMMDGuestReceiverDown
         expr: vmmd_guest_vsock_receiver_up{receiver=~"events|workload_identity"} == 0
         for: 1m
