@@ -42,7 +42,7 @@ func TestRouteEvidenceUnavailableWhileGatewayLostTelemetry(t *testing.T) {
 		t.Fatalf("healthy gateway: status %s (%s), lost %v", r.Status, r.Reason, routehealth.EvidenceLost(r))
 	}
 	for _, tc := range []struct{ name, sql string }{
-		{"restart inside the windows", "UPDATE request_telemetry_coverage SET healthy_since=clock_timestamp()"},
+		{"restart inside the windows", "UPDATE request_telemetry_coverage SET healthy_since=statement_timestamp(),received_at=statement_timestamp()"},
 		{"no report since the windows ended", "UPDATE request_telemetry_coverage SET healthy_since=clock_timestamp()-interval '2 hours',source_at=clock_timestamp()-interval '10 minutes'"},
 		{"sampled", "UPDATE request_telemetry_coverage SET source_at=clock_timestamp(),sampling_basis_points=5000,healthy_since=NULL"},
 		{"disabled", "UPDATE request_telemetry_coverage SET sampling_basis_points=10000,enabled=false,healthy_since=NULL"},
@@ -62,7 +62,7 @@ func TestRouteEvidenceUnavailableWhileGatewayLostTelemetry(t *testing.T) {
 	if _, total, err := s.RouteHealthHoldsSince(ctx, app.ID, time.Now().Add(-time.Hour), 5); err != nil || total != 0 {
 		t.Fatalf("lost evidence started a customer-visible hold: total %d err %v", total, err)
 	}
-	exec(`UPDATE compute_nodes SET active=false WHERE name='coverage-gw'`)
+	exec(`UPDATE compute_nodes SET lifecycle='unavailable' WHERE name='coverage-gw'`)
 	if r := report(); r.Status != "healthy" || routehealth.EvidenceLost(r) {
 		t.Fatalf("inactive node counted: status %s (%s)", r.Status, r.Reason)
 	}
