@@ -110,9 +110,9 @@ func TestObjectStorage(t *testing.T) {
 
 // enabled checks that the account may use object storage: the preview
 // capability needs the installation's s3_enabled and a release to the
-// account, and `gregale capabilities` reports both.
+// account, and `gregale feature list` reports both.
 func (j *objectJourney) enabled(t *testing.T) {
-	doc := object(t, j.tg.ok(t, time.Minute, "capabilities").stdout)
+	doc := object(t, j.tg.ok(t, time.Minute, "feature", "list").stdout)
 	list, _ := field(doc, "capabilities").([]any)
 	for _, c := range list {
 		if str(c, "key") != "object-storage" {
@@ -124,7 +124,7 @@ func (j *objectJourney) enabled(t *testing.T) {
 		}
 		return
 	}
-	t.Fatal("gregale capabilities does not list object-storage")
+	t.Fatal("gregale feature list does not list object-storage")
 }
 
 func (j *objectJourney) listBucket(t *testing.T) {

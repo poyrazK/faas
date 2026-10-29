@@ -51,7 +51,7 @@
   },
   {
     "step": "TestObjectStorage/object_storage_enabled",
-    "bug": "object storage is still preview (GA row 108): gregale capabilities reports object-storage disabled until s3_enabled is on and the capability is released to the e2e account, and the journey's other steps report blocked; remove once the owner turns it on",
+    "bug": "object storage is still preview (GA row 108): gregale feature list reports object-storage disabled until s3_enabled is on and the capability is released to the e2e account, and the journey's other steps report blocked; remove once the owner turns it on",
     "since": "2026-10-29"
   }
 ]

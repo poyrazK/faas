@@ -113,20 +113,56 @@ func (s *server) statusJSONHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.store != nil {
-		events, listErr := s.store.ListPublicStatusEvents(r.Context(), state.StatusEventListOptions{ActiveOnly: true, Limit: 200})
+		degraded, listErr := s.statusEventsDegraded(r.Context())
 		if listErr != nil {
 			snap.Source = appmetrics.SourceDegradedPrefix + "status event source unavailable"
-		} else {
-			states := publicstatus.ApplyOverlays(publicstatus.Evaluate(nil, nil), statusEventOverlays(events))
-			if publicstatus.Overall(states, true) != publicstatus.StateOperational {
-				snap.Degraded = true
-				snap.Source = appmetrics.SourceDegradedPrefix + "operator status event"
-			}
+		} else if degraded {
+			snap.Degraded = true
+			snap.Source = appmetrics.SourceDegradedPrefix + "operator status event"
 		}
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	// Monitors poll this feed hardest during an incident, when the CP
+	// database is usually the thing in trouble: let the CDN absorb bursts
+	// (bug hunt 2026-10-28 O25). Same policy as /v1/status.
+	w.Header().Set("Cache-Control", "public, max-age=15, stale-while-revalidate=45")
 	_ = json.NewEncoder(w).Encode(snap)
+}
+
+// statusOverlayTTL is how long slo.json reuses its operator-event read.
+const statusOverlayTTL = 15 * time.Second
+
+// statusOverlayCache holds slo.json's last operator-event read. The feed
+// is unauthenticated and read CP Postgres (up to 200 rows) on every
+// request (O25).
+type statusOverlayCache struct {
+	mu       sync.Mutex
+	at       time.Time
+	degraded bool
+	err      error
+}
+
+// statusEventsDegraded reports whether active operator status events
+// degrade the platform, read at most once per statusOverlayTTL. Concurrent
+// callers wait for one read.
+func (s *server) statusEventsDegraded(ctx context.Context) (bool, error) {
+	c := &s.statusOverlay
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.at.IsZero() && time.Since(c.at) < statusOverlayTTL {
+		return c.degraded, c.err
+	}
+	events, err := s.store.ListPublicStatusEvents(ctx, state.StatusEventListOptions{ActiveOnly: true, Limit: 200})
+	degraded := false
+	if err == nil {
+		states := publicstatus.ApplyOverlays(publicstatus.Evaluate(nil, nil), statusEventOverlays(events))
+		degraded = publicstatus.Overall(states, true) != publicstatus.StateOperational
+	}
+	// A caller that went away says nothing about the event source.
+	if err == nil || ctx.Err() == nil {
+		c.at, c.degraded, c.err = time.Now(), degraded, err
+	}
+	return degraded, err
 }
 
 // statusCache is a 30s in-process cache around the Prometheus query.

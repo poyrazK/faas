@@ -6,6 +6,8 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"slices"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
@@ -36,19 +38,42 @@ type mailBounceHandler interface {
 type resendEvent struct {
 	Type string `json:"type"`
 	Data struct {
-		Email     string `json:"email"`
-		CreatedAt string `json:"created_at"`
+		// To lists the recipients. Resend's bounce and complaint payloads
+		// carry no email field; reading one made every event fail with an
+		// empty address, so nothing was ever suppressed (bug hunt
+		// 2026-10-28 B26). Email is kept for older test fixtures.
+		To        []string `json:"to"`
+		Email     string   `json:"email"`
+		CreatedAt string   `json:"created_at"`
+		Bounce    struct {
+			Type string `json:"type"`
+		} `json:"bounce"`
 	} `json:"data"`
+}
+
+// recipients returns the event's distinct recipient addresses.
+func (ev resendEvent) recipients() []string {
+	var out []string
+	for _, addr := range append(append([]string(nil), ev.Data.To...), ev.Data.Email) {
+		if addr = strings.TrimSpace(addr); addr != "" && !slices.Contains(out, addr) {
+			out = append(out, addr)
+		}
+	}
+	return out
 }
 
 // resendReason maps Resend's `type` field onto the closed
 // MailBounce.Reason set the bounce handler accepts. Anything we
 // can't classify falls through as "" and the bounce handler
 // returns ErrMailBounceIgnored → apid returns 200 so Resend
-// stops retrying.
-func resendReason(t string) string {
-	switch t {
+// stops retrying. Only a Permanent bounce is a hard bounce; a Temporary
+// or unclassified one is soft and suppresses nothing.
+func resendReason(ev resendEvent) string {
+	switch ev.Type {
 	case "email.bounced":
+		if !strings.EqualFold(ev.Data.Bounce.Type, "Permanent") {
+			return "soft_bounce"
+		}
 		return "hard_bounce"
 	case "email.complained":
 		return "complaint"
@@ -137,8 +162,8 @@ func (s *server) resendWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	reason := resendReason(ev.Type)
-	if reason == "" {
+	reason := resendReason(ev)
+	if reason == "" || reason == "soft_bounce" {
 		// Unhandled event type — observability events (delivered,
 		// opened, clicked) — ack 200 so Resend stops retrying.
 		// The bounce handler would have returned
@@ -160,29 +185,27 @@ func (s *server) resendWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	bounce := meter.MailBounce{
-		Source:          "resend",
-		ProviderEventID: r.Header.Get(mail.ResendIDHeader),
-		Email:           ev.Data.Email,
-		Reason:          reason,
-	}
-	if err := s.mailBounce.HandleMailBounce(r.Context(), bounce); err != nil {
+	for _, recipient := range ev.recipients() {
+		bounce := meter.MailBounce{
+			Source:          "resend",
+			ProviderEventID: r.Header.Get(mail.ResendIDHeader),
+			Email:           recipient,
+			Reason:          reason,
+		}
 		// The bounce handler returns ErrMailBounceIgnored for
-		// soft_bounces / unknown reasons — treat as 200 so
-		// Resend stops retrying. Any other error is a real
-		// failure (DB outage, missing Auditor, …) and bubbles
-		// to a 500 + journal.
-		if errors.Is(err, meter.ErrMailBounceIgnored) {
-			w.WriteHeader(http.StatusOK)
+		// soft_bounces / unknown reasons. Any other error is a real
+		// failure (DB outage, missing Auditor, …) and bubbles to a
+		// 500 + journal; suppression is idempotent, so the retry
+		// repeats the recipients already handled harmlessly.
+		if err := s.mailBounce.HandleMailBounce(r.Context(), bounce); err != nil && !errors.Is(err, meter.ErrMailBounceIgnored) {
+			s.log.Error("resend_webhook.bounce_handler_failed",
+				"err", err, "delivery_id", logsanitize.Field(bounce.ProviderEventID))
+			s.releaseWebhookDelivery(r.Context(), webhookdedupe.ProviderResend, deliveryID)
+			logCustomerFailure(s.log, "Bounce handler failed", err)
+			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
+				"Bounce handler failed", api.DetailServerFailure))
 			return
 		}
-		s.log.Error("resend_webhook.bounce_handler_failed",
-			"err", err, "delivery_id", logsanitize.Field(bounce.ProviderEventID))
-		s.releaseWebhookDelivery(r.Context(), webhookdedupe.ProviderResend, deliveryID)
-		logCustomerFailure(s.log, "Bounce handler failed", err)
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
-			"Bounce handler failed", api.DetailServerFailure))
-		return
 	}
 	w.WriteHeader(http.StatusOK)
 }

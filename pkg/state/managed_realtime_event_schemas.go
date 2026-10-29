@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"github.com/jackc/pgx/v5"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/edgevalidate"
 	"github.com/onebox-faas/faas/pkg/jsonschemautil"
 	jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
 	"strconv"
@@ -58,7 +59,7 @@ func compileRealtimeEventSchema(raw json.RawMessage) (*jsonschema.Schema, error)
 		return nil, ErrManagedRealtimeHistoryInvalid
 	}
 	doc, decodeErr := jsonschema.UnmarshalJSON(bytes.NewReader(raw))
-	if decodeErr != nil || len(canonicalEventSchema(raw)) > ManagedRealtimeEventSchemaMaxBytes {
+	if decodeErr != nil || len(canonicalEventSchema(raw)) > ManagedRealtimeEventSchemaMaxBytes || edgevalidate.CheckSchemaComplexity(doc) != nil {
 		return nil, ErrManagedRealtimeHistoryInvalid
 	}
 	if obj, ok := doc.(map[string]any); ok {

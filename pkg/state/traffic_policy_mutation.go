@@ -38,16 +38,38 @@ func retryTrafficSerialization[T any](ctx context.Context, attempt func() (T, er
 	}
 }
 
+// trafficPolicyWrite is what a policy write locks and reads.
+type trafficPolicyWrite struct {
+	// ruleOnly writes fire no fleet capacity trigger, so they skip the
+	// capacity guard and prove it at commit (ADR-20261029150627).
+	ruleOnly bool
+	// globalRoutes writes check the fleet's route view; a scope limits it to
+	// where their patterns can match.
+	globalRoutes bool
+	scope        *trafficBindingScope
+}
+
+// errTrafficRuleCapacityTrigger refuses a rule-only write that fired a
+// capacity trigger: it ran without the guard that trigger needs.
+var errTrafficRuleCapacityTrigger = errors.New("state: a traffic rule write fired a fleet capacity trigger")
+
 // Session locks precede the repeatable-read snapshot, then the account row
 // lock precedes app/FK/policy rows. Shared presets can affect several apps.
 func (s *PgStore) beginTrafficPolicyMutation(ctx context.Context, account pgtype.UUID) (pgx.Tx, error) {
-	return s.beginTrafficPolicyMutationWithRoutes(ctx, account, false)
+	return s.beginTrafficPolicyWrite(ctx, account, trafficPolicyWrite{})
+}
+
+// beginRuleOnlyTrafficPolicyMutation is beginTrafficPolicyMutation for a
+// write that changes only edge rules, presets, route policy receipts or
+// environment edge policies.
+func (s *PgStore) beginRuleOnlyTrafficPolicyMutation(ctx context.Context, account pgtype.UUID) (pgx.Tx, error) {
+	return s.beginTrafficPolicyWrite(ctx, account, trafficPolicyWrite{ruleOnly: true})
 }
 
 // patterns are the match hosts a route rule write leaves or takes.
 func (s *PgStore) beginRuleTrafficPolicyMutation(ctx context.Context, account pgtype.UUID, kind EdgeRuleKind, patterns ...string) (pgx.Tx, error) {
 	if kind != EdgeRuleKindRoute {
-		return s.beginTrafficPolicyMutationWithRoutes(ctx, account, false)
+		return s.beginRuleOnlyTrafficPolicyMutation(ctx, account)
 	}
 	return s.beginRouteTrafficPolicyMutation(ctx, account, patterns)
 }
@@ -56,14 +78,15 @@ func (s *PgStore) beginRuleTrafficPolicyMutation(ctx context.Context, account pg
 // scoped guard it locks and reads their scope instead of every route in the
 // fleet (ADR-20261027163626 decision 4).
 func (s *PgStore) beginRouteTrafficPolicyMutation(ctx context.Context, account pgtype.UUID, patterns []string) (pgx.Tx, error) {
-	if !s.trafficScopedBinding {
-		return s.beginTrafficPolicyMutationWithRoutes(ctx, account, true)
+	write := trafficPolicyWrite{ruleOnly: true, globalRoutes: true}
+	if s.trafficScopedBinding {
+		scope, err := readTrafficRouteWriteScope(ctx, s.pool, patterns)
+		if err != nil {
+			return nil, err
+		}
+		write.scope = scope
 	}
-	scope, err := readTrafficRouteWriteScope(ctx, s.pool, patterns)
-	if err != nil {
-		return nil, err
-	}
-	return s.beginTrafficPolicyMutationScoped(ctx, account, true, scope)
+	return s.beginTrafficPolicyWrite(ctx, account, write)
 }
 
 // readTrafficRouteWriteScope is where route patterns can match: an exact
@@ -92,15 +115,11 @@ func readTrafficRouteWriteScope(ctx context.Context, reader sqlc.DBTX, patterns 
 	return &scope, nil
 }
 
-func (s *PgStore) beginTrafficPolicyMutationWithRoutes(ctx context.Context, account pgtype.UUID, globalRoutes bool) (pgx.Tx, error) {
-	return s.beginTrafficPolicyMutationScoped(ctx, account, globalRoutes, nil)
-}
-
 // With global routes, a nil scope locks and reads every route in the fleet;
 // a scope takes its name locks, the root shared, and reads its candidates.
-func (s *PgStore) beginTrafficPolicyMutationScoped(ctx context.Context, account pgtype.UUID, globalRoutes bool, scope *trafficBindingScope) (pgx.Tx, error) {
-	writer, start := trafficPolicyMutationWriter(globalRoutes), time.Now()
-	locks, routes := trafficPolicyMutationLocks(account, globalRoutes, scope)
+func (s *PgStore) beginTrafficPolicyWrite(ctx context.Context, account pgtype.UUID, write trafficPolicyWrite) (pgx.Tx, error) {
+	writer, start := trafficPolicyMutationWriter(write.globalRoutes), time.Now()
+	locks, routes := trafficPolicyMutationLocks(account, write.globalRoutes, write.scope)
 	for {
 		attempt := time.Now()
 		conn, release, busy, err := s.tryAcquireTrafficPolicySessionLocks(ctx, locks)
@@ -118,7 +137,10 @@ func (s *PgStore) beginTrafficPolicyMutationScoped(ctx context.Context, account 
 			// repeatable-read snapshot could miss the previous holder's reservation.
 			// NOWAIT keeps the account/session lock order free of fleet deadlocks;
 			// retry below releases everything and starts with a fresh snapshot.
-			err = sqlc.New().LockTrafficCapacitySnapshot(ctx, tx)
+			// A rule-only write fires no capacity trigger and skips the guard.
+			if !write.ruleOnly {
+				err = sqlc.New().LockTrafficCapacitySnapshot(ctx, tx)
+			}
 			if err == nil {
 				_, err = sqlc.New().LockTrafficPolicyAccount(ctx, tx, account)
 			}
@@ -127,7 +149,7 @@ func (s *PgStore) beginTrafficPolicyMutationScoped(ctx context.Context, account 
 			}
 			if err == nil {
 				observeTrafficPolicyPhase(writer, TrafficPolicyPhaseLockWait, attempt.Sub(start))
-				guarded := &trafficPolicyMutationTx{Tx: tx, account: account, globalRoutes: globalRoutes, routes: routes, release: release, appsSuffix: s.trafficAppsSuffix}
+				guarded := &trafficPolicyMutationTx{Tx: tx, account: account, ruleOnly: write.ruleOnly, globalRoutes: write.globalRoutes, routes: routes, release: release, appsSuffix: s.trafficAppsSuffix}
 				if err := guarded.readBefore(ctx); err != nil {
 					_ = guarded.Rollback(context.WithoutCancel(ctx))
 					return nil, err
@@ -172,6 +194,7 @@ type trafficPolicyMutationTx struct {
 	pgx.Tx
 	account      pgtype.UUID
 	before       trafficHostAnalysis
+	ruleOnly     bool
 	globalRoutes bool
 	// routes limits the global view to a scoped route write's candidates;
 	// nil reads every route.
@@ -214,6 +237,16 @@ func (tx *trafficPolicyMutationTx) validate(ctx context.Context) error {
 	defer func(start time.Time) {
 		observeTrafficPolicyPhase(trafficPolicyMutationWriter(tx.globalRoutes), TrafficPolicyPhaseValidate, time.Since(start))
 	}(time.Now())
+	if tx.ruleOnly {
+		// Any capacity trigger this write fired would hold a capacity lock.
+		held, err := sqlc.New().ReadTrafficCapacityLockHeld(ctx, tx.Tx)
+		if err != nil {
+			return fmt.Errorf("state: check traffic capacity lock: %w", err)
+		}
+		if held {
+			return errTrafficRuleCapacityTrigger
+		}
+	}
 	if err := boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
 		after, err := readTrafficHostAnalysis(bounded, tx.Tx, tx.account, tx.appsSuffix)
 		if err != nil {

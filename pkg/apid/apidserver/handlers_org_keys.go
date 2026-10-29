@@ -369,7 +369,14 @@ func (s *server) rotateOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 	activity := newOrgAPIKeyActivity(r, acct, mem.OrgID, "api_key.rotated", map[string]any{
 		"old_key_id": id, "grace_window_days": graceWindowDays,
 	})
-	newKey, oldKey, err := s.rotateOrgAPIKeyWithActivity(r.Context(), mem.OrgID, id, hash, req.Label, graceWindow, bindIP, bindUA, nil, activity)
+	// A sign-in key keeps its label through rotation: the label is how the
+	// sign-in key cap and the password-change revocation find it, so a new
+	// label would let it escape both (bug hunt 2026-10-28 B25).
+	label := req.Label
+	if existing, err := s.store.GetAPIKey(r.Context(), acct.ID, id); err == nil && existing.Label == signInKeyLabel {
+		label = ""
+	}
+	newKey, oldKey, err := s.rotateOrgAPIKeyWithActivity(r.Context(), mem.OrgID, id, hash, label, graceWindow, bindIP, bindUA, nil, activity)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			s.notFound(w, "no such key")

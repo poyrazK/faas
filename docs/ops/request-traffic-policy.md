@@ -146,6 +146,18 @@ only throttle and budget rules, so it uses the account lock. A rollback takes
 the global route lock when the current rules or the restored version contain
 a route.
 
+Policy writes that create or change apps also take the fleet capacity guard,
+`LOCK TABLE service_capacity_policy IN EXCLUSIVE MODE`. These are app create
+and admission, project environment create, project plan apply and
+environment clones. While such a write is open, capacity statements wait,
+including instance state changes and deployment writes. Rule-only writes
+skip it (ADR 20261029150627): edge rules, rollback, route policy apply, CORS
+presets and environment edge policies. A rule-only write that holds any lock
+on `service_capacity_policy` at commit fired a capacity trigger without that
+guard, so it is refused and commits nothing. If rule writes start failing
+with "a traffic rule write fired a fleet capacity trigger", a trigger or
+writer changed; move that writer back to the guarded path.
+
 Before commit, Postgres returns selector groups, counts, measured sizes and
 referenced preset IDs for the account. Action bodies remain in the database.
 A bounded automaton checks the same exact-or-LIKE host language used by the
@@ -201,10 +213,8 @@ create, update and rollback are scoped too.
 - **Route-rule writes:** a write locks where its patterns can match. An exact
   pattern locks its host. Any other pattern locks the subtree of its
   `match_host_scope`. `*`, `api.*` and `@app` lock the whole fleet. The write
-  analyses only the routes that can match there. Rule writes still take
-  ADR-570's `service_capacity_policy` EXCLUSIVE guard, so they stay
-  serialized with each other and with binding writes; what the scope saves
-  is analysis time.
+  analyses only the routes that can match there. Route writes whose scopes
+  do not overlap run concurrently.
 - **Mixing:** the two guards exclude each other through the root lock, so
   they can run side by side.
 - **Refusals:** a scoped write that changes a hostname it did not declare is
