@@ -12575,7 +12575,7 @@ Read retained capacity-command evidence without changing anything
 
 ### event backfill
 
-create · get · items · retry
+create · get · items · retry · cancel
 
 #### event backfill create
 
@@ -12619,6 +12619,16 @@ Retry a bounded batch of failed backfill deliveries
 |---|---|---|
 | `--limit <N>` | failed routing recipients to requeue (1..100; default 100) |  |
 | `--yes` | confirm requeueing failed event deliveries | required |
+
+#### event backfill cancel
+
+Cancel a running backfill; admitted deliveries finish
+
+`gregale event backfill cancel --yes <job-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--yes` | confirm dropping the job&#39;s undelivered events | required |
 
 ### event recovery
 

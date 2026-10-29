@@ -119,6 +119,13 @@ copy() { # copy PREFIX SRC... TARGET:DEST
 
 plan_field() { jq -er "$2" "$1"; }
 
+# actor_line prints the export that names this workflow run as the actor in
+# the release history deployctl writes (issue #574), when there is a run.
+actor_line() {
+  [[ "${GITHUB_RUN_ID:-}" =~ ^[0-9]+$ ]] || return 0
+  printf 'export FAAS_DEPLOY_ACTOR=%q\n' "${GITHUB_WORKFLOW:-cd} run ${GITHUB_RUN_ID}"
+}
+
 cmd_state() {
   local target
   target="$(deploy_target)"
@@ -190,6 +197,7 @@ cmd_script() {
   done < <(jq -r '.verify[]' "$plan")
   {
     echo 'set -euo pipefail'
+    actor_line
     if [[ -n "$files" ]]; then
       commit="$(plan_field "$plan" .commit)"
       echo "${stage}/bin/deployctl unit-overlay --release-id ${release_id} --expect-current ${expect} --commit ${commit}${files}"
@@ -308,6 +316,7 @@ cmd_rollback() {
   script="$(mktemp "${RUNNER_TEMP:-/tmp}/unit-rollback.XXXXXX")"
   {
     echo 'set -euo pipefail'
+    actor_line
     # The staged deployctl: a full release on a compute host ships none.
     echo "${stage}/bin/deployctl rollback --only '${only}' ${flags}"
     [[ -z "$specs" ]] || echo "bash ${stage}/unit-release-verify.sh \"\$(readlink -f /opt/faas/current)\"${specs}"
@@ -529,6 +538,7 @@ cmd_watch_rollback() {
   script="$(mktemp "${RUNNER_TEMP:-/tmp}/unit-watch-rollback.XXXXXX")"
   {
     echo 'set -euo pipefail'
+    actor_line
     # Evaluated on the host.
     # shellcheck disable=SC2016
     echo 'live="$(basename "$(readlink -f /opt/faas/current)")"'

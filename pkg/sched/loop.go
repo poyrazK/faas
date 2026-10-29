@@ -130,6 +130,7 @@ type Loop struct {
 	work                        *workPool
 	workOnce                    sync.Once
 	eventFanoutLastPrune        time.Time
+	eventBackfillLifecycleAt    time.Time
 	eventClaimRenewalEvery      time.Duration
 	eventFanoutHistoryLastPrune time.Time
 	eventRecipientClaims        bool

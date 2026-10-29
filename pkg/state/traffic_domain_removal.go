@@ -245,10 +245,18 @@ func (tx *trafficDomainBindingTx) validate(ctx context.Context) error {
 	})
 }
 
-func (s *PgStore) acquireTrafficDomainBindingSession(ctx context.Context, keys []string) (conn *pgxpool.Conn, release func(context.Context), busy bool, err error) {
+func (s *PgStore) acquireTrafficDomainBindingSession(ctx context.Context, keys []string) (*pgxpool.Conn, func(context.Context), bool, error) {
+	locks := make([]trafficSessionLock, len(keys))
+	for i, key := range keys {
+		locks[i] = trafficSessionLock{Key: key}
+	}
+	return s.acquireTrafficBindingSessionLocks(ctx, locks)
+}
+
+func (s *PgStore) acquireTrafficBindingSessionLocks(ctx context.Context, locks []trafficSessionLock) (conn *pgxpool.Conn, release func(context.Context), busy bool, err error) {
 	err = boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
 		var acquireErr error
-		conn, release, busy, acquireErr = s.tryAcquireTrafficPolicySessionKeys(bounded, keys)
+		conn, release, busy, acquireErr = s.tryAcquireTrafficPolicySessionLocks(bounded, locks)
 		return acquireErr
 	})
 	if err != nil && release != nil {

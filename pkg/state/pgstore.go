@@ -63,14 +63,16 @@ func newPgCore(pool *pgxpool.Pool) pgCore {
 // is safe for concurrent use.
 type PgStore struct {
 	pgCore
-	trafficAppsSuffix string
+	trafficAppsSuffix    string
+	trafficScopedBinding bool
 }
 
 // NewPgStore wraps a pool. The pool is owned by the caller; PgStore does not
 // close it on shutdown so daemons can share a single pool across a Store and
 // their LISTEN goroutine.
 func NewPgStore(pool *pgxpool.Pool, options ...StoreOption) *PgStore {
-	return &PgStore{pgCore: newPgCore(pool), trafficAppsSuffix: configuredTrafficAppsSuffix(options)}
+	return &PgStore{pgCore: newPgCore(pool), trafficAppsSuffix: configuredTrafficAppsSuffix(options),
+		trafficScopedBinding: configuredTrafficScopedBinding(options)}
 }
 
 // Ping tests database connectivity through the underlying connection pool.

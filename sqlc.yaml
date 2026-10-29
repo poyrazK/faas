@@ -39,6 +39,17 @@ sql:
         sql_package: "pgx/v5"
         emit_methods_with_db_argument: true
         emit_empty_slices: true
+  # Platform release activations per control-plane host (issue #574).
+  - engine: "postgresql"
+    queries: "pkg/releasehistory/queries.sql"
+    schema: "pkg/releasehistory/schema.sql"
+    gen:
+      go:
+        package: "sqlc"
+        out: "pkg/releasehistory/sqlc"
+        sql_package: "pgx/v5"
+        emit_methods_with_db_argument: true
+        emit_empty_slices: true
   - engine: "postgresql"
     queries: "pkg/state/scenariopgfault/queries.sql"
     schema: "pkg/state/scenariopgfault/schema.sql"

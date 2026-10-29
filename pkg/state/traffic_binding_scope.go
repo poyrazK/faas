@@ -188,13 +188,18 @@ func trafficBindingChanges(before, after trafficBindingClaims, beforeReservation
 	return changes
 }
 
-// auditTrafficBindingScope reports the kinds of changes the scope missed.
+func (s trafficBindingScope) equal(other trafficBindingScope) bool {
+	return slices.Equal(s.Hosts, other.Hosts) && slices.Equal(s.Subtrees, other.Subtrees)
+}
+
+// auditTrafficBindingScope reports and returns the kinds of changes the scope
+// missed.
 // A hostname newly claimed or reserved need not be declared: it only takes
 // that exact hostname away from global routes and other owners, and the
 // writer's own account check covers what it now serves there. A new subtree
 // reaches other hostnames, so it must be declared like every removal and
 // change.
-func auditTrafficBindingScope(writer string, scope trafficBindingScope, changes []trafficBindingChange) {
+func auditTrafficBindingScope(writer string, scope trafficBindingScope, changes []trafficBindingChange) []string {
 	var missed []string
 	for _, change := range changes {
 		if change.added && !change.subtree {
@@ -205,4 +210,5 @@ func auditTrafficBindingScope(writer string, scope trafficBindingScope, changes 
 		}
 	}
 	observeTrafficBindingScope(writer, missed)
+	return missed
 }

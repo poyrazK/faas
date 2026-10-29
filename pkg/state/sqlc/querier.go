@@ -1233,6 +1233,7 @@ type Querier interface {
 	EventRecoveryCandidates(ctx context.Context, db DBTX, arg EventRecoveryCandidatesParams) ([]EventRecoveryCandidatesRow, error)
 	EventRecoveryCaptureExecutionNotification(ctx context.Context, db DBTX, arg EventRecoveryCaptureExecutionNotificationParams) error
 	EventRecoveryClaimExecutionNotification(ctx context.Context, db DBTX, nowAt pgtype.Timestamptz) (EventRecoveryClaimExecutionNotificationRow, error)
+	EventRecoveryClearFailures(ctx context.Context, db DBTX, id pgtype.UUID) error
 	EventRecoveryCreate(ctx context.Context, db DBTX, arg EventRecoveryCreateParams) (pgtype.UUID, error)
 	EventRecoveryDeferExecutionNotification(ctx context.Context, db DBTX, arg EventRecoveryDeferExecutionNotificationParams) error
 	EventRecoveryEnqueueNotification(ctx context.Context, db DBTX, arg EventRecoveryEnqueueNotificationParams) error
@@ -1277,6 +1278,9 @@ type Querier interface {
 	EventRecoveryPrune(ctx context.Context, db DBTX, arg EventRecoveryPruneParams) (int64, error)
 	EventRecoveryPublishedVersion(ctx context.Context, db DBTX, arg EventRecoveryPublishedVersionParams) (int64, error)
 	EventRecoveryReadApp(ctx context.Context, db DBTX, arg EventRecoveryReadAppParams) (pgtype.UUID, error)
+	// ADR-20261028095548: a failed pass backs the job off, doubling from the
+	// minimum to the maximum delay, so the next job in line goes ahead.
+	EventRecoveryRecordFailure(ctx context.Context, db DBTX, arg EventRecoveryRecordFailureParams) (EventRecoveryRecordFailureRow, error)
 	EventRecoveryRecordReplay(ctx context.Context, db DBTX, arg EventRecoveryRecordReplayParams) error
 	EventRecoveryReplayCount(ctx context.Context, db DBTX, arg EventRecoveryReplayCountParams) (int64, error)
 	EventRecoveryResume(ctx context.Context, db DBTX, arg EventRecoveryResumeParams) error
@@ -1293,15 +1297,24 @@ type Querier interface {
 	EventReplayBackfillActiveJobCount(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	EventReplayBackfillAdoptReceipt(ctx context.Context, db DBTX, id int64) (int64, error)
 	EventReplayBackfillAdvance(ctx context.Context, db DBTX, arg EventReplayBackfillAdvanceParams) error
+	EventReplayBackfillCancelEndedItems(ctx context.Context, db DBTX, jobID pgtype.UUID) (int64, error)
 	EventReplayBackfillCandidates(ctx context.Context, db DBTX, arg EventReplayBackfillCandidatesParams) ([]EventReplayBackfillCandidatesRow, error)
 	EventReplayBackfillClaimTarget(ctx context.Context, db DBTX, arg EventReplayBackfillClaimTargetParams) ([]byte, error)
 	EventReplayBackfillClaimValid(ctx context.Context, db DBTX, arg EventReplayBackfillClaimValidParams) (bool, error)
+	EventReplayBackfillClearFailures(ctx context.Context, db DBTX, id pgtype.UUID) error
 	EventReplayBackfillCountRetryableFailed(ctx context.Context, db DBTX, jobID pgtype.UUID) (int64, error)
 	EventReplayBackfillCreate(ctx context.Context, db DBTX, arg EventReplayBackfillCreateParams) (pgtype.UUID, error)
+	EventReplayBackfillDropEndedRecipients(ctx context.Context, db DBTX, arg EventReplayBackfillDropEndedRecipientsParams) (int64, error)
+	// Ends a running job as cancelled, expired or failed. An expiry passes the
+	// idle cutoff, so a job that moved since it was read keeps running.
+	EventReplayBackfillEnd(ctx context.Context, db DBTX, arg EventReplayBackfillEndParams) (int64, error)
+	// Ended jobs whose undelivered items are not yet cancelled.
+	EventReplayBackfillEndedJobs(ctx context.Context, db DBTX, pageLimit int32) ([]pgtype.UUID, error)
 	EventReplayBackfillExists(ctx context.Context, db DBTX, arg EventReplayBackfillExistsParams) (bool, error)
 	EventReplayBackfillFinalize(ctx context.Context, db DBTX, id pgtype.UUID) error
 	EventReplayBackfillFinishItem(ctx context.Context, db DBTX, arg EventReplayBackfillFinishItemParams) (int64, error)
 	EventReplayBackfillGet(ctx context.Context, db DBTX, arg EventReplayBackfillGetParams) (EventReplayBackfillGetRow, error)
+	EventReplayBackfillIdleJobs(ctx context.Context, db DBTX, arg EventReplayBackfillIdleJobsParams) ([]pgtype.UUID, error)
 	EventReplayBackfillInFlightCount(ctx context.Context, db DBTX, jobID pgtype.UUID) (int64, error)
 	EventReplayBackfillInsertItem(ctx context.Context, db DBTX, arg EventReplayBackfillInsertItemParams) (int64, error)
 	EventReplayBackfillInsertRecipient(ctx context.Context, db DBTX, arg EventReplayBackfillInsertRecipientParams) (int64, error)
@@ -1309,11 +1322,16 @@ type Querier interface {
 	EventReplayBackfillItems(ctx context.Context, db DBTX, arg EventReplayBackfillItemsParams) ([]EventReplayBackfillItemsRow, error)
 	EventReplayBackfillLockAccountRange(ctx context.Context, db DBTX, accountID pgtype.UUID) error
 	EventReplayBackfillLockAnyJob(ctx context.Context, db DBTX, arg EventReplayBackfillLockAnyJobParams) (pgtype.UUID, error)
+	// The receipts of an ended job's undelivered recipients, locked in id order
+	// before their recipients, as routing locks them.
+	EventReplayBackfillLockEndedReceipts(ctx context.Context, db DBTX, arg EventReplayBackfillLockEndedReceiptsParams) ([]int64, error)
 	EventReplayBackfillLockJob(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error)
 	EventReplayBackfillLockParent(ctx context.Context, db DBTX, id int64) (EventFanoutOutbox, error)
 	EventReplayBackfillMarkScanned(ctx context.Context, db DBTX, id pgtype.UUID) error
 	EventReplayBackfillMaterializeSnapshot(ctx context.Context, db DBTX, id int64) error
-	EventReplayBackfillNextJob(ctx context.Context, db DBTX, inFlightMax int64) (EventReplayJob, error)
+	// A job backed off after a failed pass waits for its next_attempt_at
+	// (ADR-20261028095548), so the next job in line goes ahead.
+	EventReplayBackfillNextJob(ctx context.Context, db DBTX, arg EventReplayBackfillNextJobParams) (EventReplayJob, error)
 	// ADR-20261023215834: owners with an unheld settled receipt past their
 	// plan's window, oldest first, each with its cutoff. Every owner with a
 	// receipt has a usage row, and its retention index bounds each probe. An
@@ -1325,9 +1343,13 @@ type Querier interface {
 	EventReplayBackfillPruneJobs(ctx context.Context, db DBTX, arg EventReplayBackfillPruneJobsParams) (int64, error)
 	// Read provenance before taking the job lock, preserving job -> parent order.
 	EventReplayBackfillRecipientJob(ctx context.Context, db DBTX, arg EventReplayBackfillRecipientJobParams) (pgtype.UUID, error)
+	// ADR-20261028095548: a failed pass backs the job off, doubling from the
+	// minimum to the maximum delay. updated_at stays, so a failing job is idle.
+	EventReplayBackfillRecordFailure(ctx context.Context, db DBTX, arg EventReplayBackfillRecordFailureParams) (int32, error)
 	EventReplayBackfillResetItem(ctx context.Context, db DBTX, arg EventReplayBackfillResetItemParams) (int64, error)
 	EventReplayBackfillRetryCandidates(ctx context.Context, db DBTX, arg EventReplayBackfillRetryCandidatesParams) ([]EventReplayBackfillRetryCandidatesRow, error)
 	EventReplayBackfillSetRunning(ctx context.Context, db DBTX, id pgtype.UUID) error
+	EventReplayBackfillSettleReceipts(ctx context.Context, db DBTX, ids []int64) error
 	EventReplayBackfillTargetSnapshot(ctx context.Context, db DBTX, arg EventReplayBackfillTargetSnapshotParams) (EventReplayBackfillTargetSnapshotRow, error)
 	EventReplayBackfillTryLockAccountRange(ctx context.Context, db DBTX, accountID pgtype.UUID) (bool, error)
 	EventReplayBackfillWorkflowExpireRetry(ctx context.Context, db DBTX, arg EventReplayBackfillWorkflowExpireRetryParams) (int64, error)

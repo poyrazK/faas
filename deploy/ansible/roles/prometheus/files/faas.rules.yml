@@ -23,8 +23,11 @@ groups:
   # ADR 20261021080640: preview platform flags carry a retire-by date. Past it,
   # a ticket reminds operators to fold the preview into general availability
   # or remove the flag, so flags do not accumulate as permanent gates.
+  # The query is one small gauge. Every alerting group must evaluate within
+  # the operator alert collector's freshness window (2 min), or each snapshot
+  # is rejected and platform alert history records nothing (Hunt 14 H14-111).
   - name: faas_platform_flags
-    interval: 1h
+    interval: 30s
     rules:
       - alert: FaasPlatformFlagPastRetireBy
         expr: |
@@ -2310,12 +2313,19 @@ groups:
           sum_over_time(faas_slo_builds_ok:rate5m[30d])
             / (sum_over_time(faas_slo_builds_eligible:rate5m[30d]) > 0)
 
-      # The rolling 30 d ratio is below a public SLO (spec §12). Warn, not
-      # page: the burn-rate alerts in faas_slo already page on the fast
-      # burns; this is the daily-review signal that the month is lost or close.
-
+  # The rolling 30 d ratio is below a public SLO (spec §12). Warn, not
+  # page: the burn-rate alerts in faas_slo already page on the fast
+  # burns; this is the daily-review signal that the month is lost or close.
+  # The alerts evaluate every 30s, inside the operator alert collector's
+  # 2 min freshness window; at 5m their evaluations were stale most of the
+  # time, which made the collector reject every snapshot (Hunt 14 H14-111).
+  # last_over_time spans two 5m recording intervals, so one late recording
+  # never empties the series and resets the 1h for:.
+  - name: faas_slo_monthly_alerts
+    interval: 30s
+    rules:
       - alert: FaasMonthlyApiAvailabilityBelowSLO
-        expr: faas_slo_api_availability:ratio_30d < 0.995
+        expr: last_over_time(faas_slo_api_availability:ratio_30d[10m]) < 0.995
         for: 1h
         labels:
           severity: warn
@@ -2328,7 +2338,7 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasMonthlySLO.md"
 
       - alert: FaasMonthlyWakeLatencyBelowSLO
-        expr: faas_slo_wakes_within_1s:ratio_30d < 0.95
+        expr: last_over_time(faas_slo_wakes_within_1s:ratio_30d[10m]) < 0.95
         for: 1h
         labels:
           severity: warn
@@ -2341,7 +2351,7 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasMonthlySLO.md"
 
       - alert: FaasMonthlyPlatformWakeGateMissed
-        expr: faas_slo_platform_wakes_within_350ms:ratio_30d < 0.95
+        expr: last_over_time(faas_slo_platform_wakes_within_350ms:ratio_30d[10m]) < 0.95
         for: 1h
         labels:
           severity: warn
@@ -2354,7 +2364,7 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasMonthlySLO.md"
 
       - alert: FaasMonthlyBuildSuccessBelowSLO
-        expr: faas_slo_build_success:ratio_30d < 0.99
+        expr: last_over_time(faas_slo_build_success:ratio_30d[10m]) < 0.99
         for: 1h
         labels:
           severity: warn
