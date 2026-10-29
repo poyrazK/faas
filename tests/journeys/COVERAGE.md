@@ -60,4 +60,4 @@ Beta rows with a journey ahead of their GA promotion:
 
 | # | Capability | Journeys and steps | Not covered |
 |---|---|---|---|
-| 74 | Edge rules, rule lists | `TestEdgeRules` (redirect, response header and its update, IP refusal covering HEAD, a list-keyed rule and the list's edit, history and rollback, delete; each change checked on 12 requests across the edge gateways as soon as the CLI returns, #2683) | the other kinds (covered by `TestE2E_EdgeRules_*` in `cmd/e2e`), `gregale.yaml` routing, trace, WAF and challenge |
+| 74 | Edge rules, rule lists | `TestEdgeRules` (redirect, response header and its update, IP refusal covering HEAD, a list-keyed rule and the list's edit, history and rollback, delete; each change checked on 12 requests across the edge gateways as soon as the CLI returns, #2683) | the other kinds, `gregale.yaml` routing and trace (covered by `TestE2E_EdgeRules_*` in `cmd/e2e`), WAF and challenge |
