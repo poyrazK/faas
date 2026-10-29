@@ -3159,6 +3159,14 @@ func (s *server) renameApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if !ok {
 		return
 	}
+	// A preview's slug is its identity (pr-<N>-<app>): renamed, the next
+	// PR head no longer finds it and reserves a second preview while this
+	// one holds its slot until the lease ends.
+	if app.PreviewOfSlug != "" {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+			"Preview cannot be renamed", "a preview app's name is derived from its production app; rename the production app instead"))
+		return
+	}
 	var req api.RenameAppRequest
 	if err := decodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,

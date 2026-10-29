@@ -7150,6 +7150,16 @@ func (m *MemStore) RenameApp(ctx context.Context, accountID, oldSlug, newSlug st
 		return App{}, err
 	}
 	m.apps[found.ID] = *found
+	// Mirrors PgStore: PR previews follow their production app's new slug.
+	if found.PreviewOfSlug == "" {
+		for id, preview := range m.apps {
+			if preview.AccountID == accountID && preview.PreviewOfSlug == oldSlug &&
+				preview.PreviewPrNumber > 0 && preview.Status != AppDeleted {
+				preview.PreviewOfSlug = newSlug
+				m.apps[id] = preview
+			}
+		}
+	}
 	return *found, nil
 }
 
