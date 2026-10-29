@@ -512,6 +512,59 @@ func (s *PgStore) ResealAlertingCredential(ctx context.Context, c AlertingSealed
 	return tag.RowsAffected() == 1, nil
 }
 
+// Kinds of the MCP readiness destination secret copies open incidents carry.
+const (
+	AlertingRoutingCopyPrimary  = "mcp_incident_primary"
+	AlertingRoutingCopyFallback = "mcp_incident_fallback"
+)
+
+// ListOpenMCPReadinessRoutingSecrets pages, in (kind, id) order after the
+// cursor, through the sealed destination secrets that MCP readiness
+// incidents copy into delivery_routing when they open. ID is the incident
+// id. Only incidents delivery may still read are listed: those not yet
+// resolved and those with an event still to deliver. Delivery opens a copy
+// when the route names a receiver the current policy no longer does.
+func (s *PgStore) ListOpenMCPReadinessRoutingSecrets(ctx context.Context, afterKind, afterID string, limit int) ([]AlertingSealedCredential, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 1000
+	}
+	rows, err := s.pool.Query(ctx, `
+		WITH open_incident AS (
+			SELECT i.id, i.delivery_routing FROM mcp_readiness_incidents i
+			 WHERE i.resolved_at IS NULL
+			    OR EXISTS (SELECT 1 FROM mcp_readiness_incident_events e
+			                WHERE e.incident_id = i.id
+			                  AND e.delivery_status NOT IN ('delivered', 'suppressed', 'abandoned'))
+		)
+		SELECT kind, id, sealed FROM (
+			SELECT 'mcp_incident_primary' AS kind, id::text AS id, decode(delivery_routing->'primary'->>'secret', 'base64') AS sealed
+			  FROM open_incident WHERE coalesce(delivery_routing->'primary'->>'secret', '') <> ''
+			UNION ALL
+			SELECT 'mcp_incident_fallback', id::text, decode(delivery_routing->'fallback'->>'secret', 'base64')
+			  FROM open_incident WHERE coalesce(delivery_routing->'fallback'->>'secret', '') <> ''
+		) copy
+		 WHERE (kind, id) > ($1, $2)
+		 ORDER BY kind, id
+		 LIMIT $3
+	`, afterKind, afterID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("state: list open MCP readiness routing secrets: %w", err)
+	}
+	defer rows.Close()
+	var out []AlertingSealedCredential
+	for rows.Next() {
+		var c AlertingSealedCredential
+		if err := rows.Scan(&c.Kind, &c.ID, &c.Sealed); err != nil {
+			return nil, fmt.Errorf("state: scan MCP readiness routing secret: %w", err)
+		}
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("state: list open MCP readiness routing secrets: %w", err)
+	}
+	return out, nil
+}
+
 // ResealStorageCredential replaces an active S3 credential's sealed secret
 // and key id for the storage seal-domain re-seal (ADR 20261022111812), only
 // while it still holds old: a binding rotation can replace a credential's

@@ -935,6 +935,52 @@ Values re-sealed in this step stay domain-only, so:
 - never roll meterd back past the first release that carried the alerting
   reader.
 
+### 8e. Contract: meterd drops the fleet and host keys
+
+As for outbound in 2e. Go on only when all of these hold:
+
+- a 8d migration run shows only `current`;
+- no open MCP readiness incident still carries a key copy that only the
+  fleet or host key opens. The check below reports them as `left on the
+  fleet key`; they clear as the incidents resolve;
+- meterd's previous release (N-1) also runs its alert evaluator without the
+  fleet and host keys, so rolling back one release keeps alerts flowing. To
+  roll back past that release, set the variable below back to false first.
+
+Add to the local variables file, and converge the control plane:
+
+```yaml
+faas_seal_domain_alerting_contracted: true
+```
+
+The role runs `seal-domain migrate --domain alerting --check` first. It
+stops while a value still opens with the fleet or host key (`pending`: run
+the 8d migration again), or while an incident copy is left on the fleet
+key (`skipped`: wait for those incidents to resolve). It then drops the
+fleet key, the host key and the `host.age.previous` that the
+`optional_credentials` role projects, restarts meterd, and checks
+`/run/credentials/faas-meterd.service`.
+
+Check, on each host:
+
+```bash
+sudo ls /run/credentials/faas-meterd.service
+journalctl -u faas-meterd -b | grep '"alerting seal domain"'
+```
+
+- The directory lists `faas_seal_domain_alerting`, plus
+  `faas_seal_domain_alerting_previous` during a rotation, and no
+  `faas_fleet_age_identity`, `faas_host_age_identity` or
+  `faas_host_age_identity_previous`.
+- meterd logs `"domain_identity":true` and `"fleet_identity":false`.
+- `meterd_alert_evaluator_enabled` stays 1.
+
+Run the test sends from 8b again.
+
+Rollback: set `faas_seal_domain_alerting_contracted: false` and converge.
+meterd loads the fleet and host keys again. Nothing stored changes in this
+step.
+
 ## 9. Storage seal domain
 
 s3-gatewayd on the control plane is the only reader of Gregale S3 secret
@@ -1045,7 +1091,8 @@ faas_seal_domain_storage_contracted: true
 The role runs `seal-domain migrate --domain storage --check` first, and
 stops while a credential still opens with the fleet or host key. If it
 stops, run the 9d migration again, then converge again. It then drops both
-keys from s3-gatewayd's credentials and restarts it. Without them
+keys, and the `host.age.previous` that the `optional_credentials` role
+projects, from s3-gatewayd's credentials and restarts it. Without them
 s3-gatewayd skips its startup rekey. Last, the role checks
 `/run/credentials/faas-s3-gatewayd.service`.
 

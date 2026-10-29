@@ -294,7 +294,7 @@ func runSealDomainMigrate(args []string) error {
 	dbEnv := fs.String("db-env", "", "systemd env file containing DATABASE_URL")
 	bindAccounts := fs.Bool("bind-accounts", false, "runtime only: re-seal every stored runtime secret bound to the account that owns it (ADR-20261023173624)")
 	runtimeSigningKey := fs.String("runtime-signing-key", "", "runtime only: apid's runtime secret signing key; signs what this re-seals (ADR 20261028161502)")
-	check := fs.Bool("check", false, "outbound and storage only: write nothing, and fail while a value still opens with the fleet or host identity (run before its readers drop them)")
+	check := fs.Bool("check", false, "outbound, storage and alerting only: write nothing, and fail while a value still opens with the fleet or host identity (run before its readers drop them)")
 	jsonOut := fs.Bool("json", false, "emit JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -304,8 +304,10 @@ func runSealDomainMigrate(args []string) error {
 		return err
 	}
 	if *check {
-		if d != sealdomain.Outbound && d != sealdomain.Storage {
-			return errors.New("--check applies to --domain outbound and storage only in this release")
+		switch d {
+		case sealdomain.Outbound, sealdomain.Storage, sealdomain.Alerting:
+		default:
+			return errors.New("--check applies to --domain outbound, storage and alerting only in this release")
 		}
 		return runSealDomainCheck(*dsn, *dbEnv, d, *dir, *fleetKey, *hostKey, *jsonOut || jsonOutput)
 	}
@@ -411,7 +413,7 @@ func runSealDomainMigrate(args []string) error {
 	PrintOK(osStdout, "Seal domain %s migrated: %d scanned, %d re-sealed, %d current, %d changed concurrently, %d failed\n",
 		report.Domain, report.Scanned, report.Resealed, report.Current, report.Changed, report.Failed)
 	if report.Skipped > 0 {
-		PrintOK(osStdout, "%d left on the fleet key: application-standard log destinations and the drains they manage cannot be re-sealed in place yet\n", report.Skipped)
+		PrintOK(osStdout, "%d left on the fleet key: %s\n", report.Skipped, skippedReason(report.Domain))
 	}
 	if report.Failed > 0 {
 		return fmt.Errorf("%d envelopes opened with no supplied identity", report.Failed)
@@ -443,9 +445,12 @@ func runSealDomainCheck(dsn, dbEnv string, d sealdomain.Domain, dir, fleetKey, h
 		return err
 	}
 	var report sealmigrate.MigrationReport
-	if d == sealdomain.Storage {
+	switch d {
+	case sealdomain.Storage:
 		report, err = sealmigrate.CheckStorage(ctx, store, domain, legacy)
-	} else {
+	case sealdomain.Alerting:
+		report, err = sealmigrate.CheckAlerting(ctx, store, domain, legacy)
+	default:
 		report, err = sealmigrate.CheckOutbound(ctx, store, domain, legacy)
 	}
 	if err != nil {
@@ -458,11 +463,28 @@ func runSealDomainCheck(dsn, dbEnv string, d sealdomain.Domain, dir, fleetKey, h
 	} else {
 		PrintOK(osStdout, "Seal domain %s checked: %d scanned, %d still open with the fleet or host identity, %d current, %d failed\n",
 			report.Domain, report.Scanned, report.Pending, report.Current, report.Failed)
+		if report.Skipped > 0 {
+			PrintOK(osStdout, "%d left on the fleet key: %s\n", report.Skipped, skippedReason(d))
+		}
 	}
 	if report.Pending > 0 {
 		return fmt.Errorf("%d %s values still open with the fleet or host identity; run seal-domain migrate --domain %s --readers-verified until none remain before its readers drop those identities", report.Pending, d, d)
 	}
+	if report.Skipped > 0 {
+		return fmt.Errorf("%d %s values are left on the fleet key (%s); wait for them before its readers drop the fleet and host identities", report.Skipped, d, skippedReason(d))
+	}
 	return nil
+}
+
+// skippedReason says why a domain's skipped values stay on the fleet key.
+func skippedReason(d sealdomain.Domain) string {
+	switch d {
+	case sealdomain.Account:
+		return "project environment clone values cannot be re-sealed in place; they clear as their clones finish"
+	case sealdomain.Alerting:
+		return "open MCP readiness incidents carry copies of their route's key; they clear as the incidents resolve"
+	}
+	return "application-standard log destinations and the drains they manage cannot be re-sealed in place yet"
 }
 
 // runRuntimeBindingPass binds every stored runtime secret to its account
