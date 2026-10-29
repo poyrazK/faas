@@ -1446,6 +1446,9 @@ type MemStore struct {
 	realtimeChannelWebhookFilters   map[string]RealtimeChannelWebhookFilter
 	managedRealtimeAccess           map[string]map[string]ManagedRealtimeAccess
 	workerRecovery                  map[string]WorkerRecovery
+	// runtimeSecretSignatures maps an envelope's SHA-256 to its writer
+	// signature (ADR 20261028161502), created on first use.
+	runtimeSecretSignatures map[string][]byte
 }
 
 // installRepoKey mirrors the projects_install_repo_uniq partial index

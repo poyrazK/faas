@@ -21,7 +21,9 @@ const routeHealthHoldScan = 20
 // It runs on the rollout worker's blocked advance, so the hold is current.
 func (s *server) abortRouteHealthHoldPastDeadline(ctx context.Context, err error, app state.App, d state.Deployment) {
 	var blocked *state.RouteHealthBlockedError
-	if !errors.As(err, &blocked) {
+	// A gateway that lost evidence holds the advance but never ends the
+	// release (ADR-20261028110044 amendment 1).
+	if !errors.As(err, &blocked) || blocked.EvidenceLost {
 		return
 	}
 	holds, ok := s.store.(state.RouteAlertStore)

@@ -54,6 +54,16 @@ func managedPostgresComputeCeiling(limits api.ManagedPostgresPlanLimits, overage
 	return limits.MonthlyComputeUnitSeconds
 }
 
+// managedPostgresStoragePool is the subject's pooled storage the storage pass
+// keeps it inside: the plan's, or twice it with overage on
+// (ADR-20261025094915 decision 9).
+func managedPostgresStoragePool(limits api.ManagedPostgresPlanLimits, overage bool) int64 {
+	if overage {
+		return limits.StorageLimitBytes * api.ManagedPostgresOverageCeilingMultiplier
+	}
+	return limits.StorageLimitBytes
+}
+
 func (s *server) getManagedPostgresOverage(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	w.Header().Set("Cache-Control", "no-store")
 	limits, ok := s.managedPostgresOverageLimits(w, acct)

@@ -39,3 +39,24 @@ func newAlertChannelCounter(reg prometheus.Registerer) func(kind, outcome string
 	}
 	return func(kind, outcome string) { c.WithLabelValues(kind, outcome).Inc() }
 }
+
+// newAlertRuleSkipCounter registers meterd_alert_rules_skipped_total and
+// returns the evaluator's callback for rules a tick did not evaluate
+// (ADR-20261028101615).
+func newAlertRuleSkipCounter(reg prometheus.Registerer) func(reason string, n int) {
+	c := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "meterd_alert_rules_skipped_total",
+		Help: "Enabled alert rules a tick did not evaluate, by reason: deferred (the account spent its tick budget; they run first next tick) or not_released (the account's plan or capability flags no longer cover them). ADR-20261028101615.",
+	}, []string{"reason"})
+	for _, reason := range []string{"deferred", "not_released"} {
+		c.WithLabelValues(reason).Add(0)
+	}
+	if reg != nil {
+		reg.MustRegister(c)
+	}
+	return func(reason string, n int) {
+		if n > 0 {
+			c.WithLabelValues(reason).Add(float64(n))
+		}
+	}
+}
