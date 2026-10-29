@@ -5093,6 +5093,17 @@ SELECT * FROM object_buckets WHERE app_id = $1 AND account_id = $2 AND name = $3
 -- name: ObjectBucketCount :one
 SELECT count(*) FROM object_buckets WHERE app_id = $1 AND state <> 'deleted';
 
+-- name: ObjectBucketPlacementLock :exec
+-- Serializes bucket placement in one region (ADR-20261029174627).
+SELECT pg_advisory_xact_lock(hashtextextended('object-bucket-placement:' || sqlc.arg(region)::text, 0));
+
+-- name: ObjectBucketPlacementCounts :many
+SELECT backend_id, count(*)::bigint AS buckets,
+  count(*) FILTER (WHERE account_id = sqlc.narg(account_id)::uuid)::bigint AS account_buckets
+FROM object_buckets
+WHERE backend_id = ANY(sqlc.arg(backend_ids)::text[]) AND state <> 'deleted'
+GROUP BY backend_id;
+
 -- name: ObjectBucketCountForAccount :one
 SELECT count(*) FROM object_buckets WHERE account_id = $1 AND org_id IN (SELECT id FROM orgs WHERE personal_org) AND state <> 'deleted';
 

@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "b6d9eeadc68b956377ac57cbedd092789d42f8d3a40794e9b364be38f3946b35",
+      "revision": "bb5fa3946fd12eee0bfcff823552802963186ce741bcad0d74675c4b205c9275",
       "files": [
         "faas.rules.yml"
       ],
@@ -2051,6 +2051,19 @@
           }
         },
         {
+          "id": "4bf9ee570c69cd49527c86741344df7ba6b2bcdbbe0e6cea258f4ffdcbea096a",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_object_storage",
+          "rule_name": "FaasObjectStorageRegionFull",
+          "definition": {
+            "expression_hash": "40a6fe52480c9c1106d36631dc328e5029f4307146c0d4932436c2f8160af6c0",
+            "labels_hash": "0ace63790655153ccbb75cf6c11ec87887258af6b419183d05826e2494241f58",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "4267a21454c78fa468a482734d9b088e91de97bb9bf756d1411e722bf3c38a47"
+          }
+        },
+        {
           "id": "4c9822168b9aba2225b9501c6e0bcfc8f21e67b53a5b22bb5de764b919728e34",
           "file_name": "faas.rules.yml",
           "group_name": "faas_canary_artifacts",
@@ -3533,6 +3546,19 @@
           }
         },
         {
+          "id": "92019e61291c2563e534b70cea36f25f5a039a9c05aa03482282a711472eab2b",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo",
+          "rule_name": "FaasNoComputeNodeReady",
+          "definition": {
+            "expression_hash": "24eebef12b81f196c880b308fd46ce569279642d09ea6381ee99a2d49763e40f",
+            "labels_hash": "87088d53e44d216b28d556eab6e352530ab764275fd099851c0a5623d49200e8",
+            "for_seconds": 120,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "94d53218eed30f4f89960748b6eed518bf91e450dba59e52a4ca5d253a7bd4c6"
+          }
+        },
+        {
           "id": "930534794f4cd55535337689ef8037ecd879daf961c432ac3374d52e3ee8b2ef",
           "file_name": "faas.rules.yml",
           "group_name": "faas_slo",
@@ -4235,6 +4261,19 @@
           }
         },
         {
+          "id": "adc455d64ac2580caeebeff5b7f31319f0a8e136b8c8eb054a5fbca86d52c2f5",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo",
+          "rule_name": "FaasComputeNodeDegraded",
+          "definition": {
+            "expression_hash": "84f7bd7d9c04ae423ff3670b80560a4f84cc8daa4472860e1448a490ac946ccf",
+            "labels_hash": "39e3527b0d9237b91e1973b5610095c73026dce5cb66a44786a22a842f160363",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "2ffdb6e08350d28cf8e6f721d42831513cb382cd3de16d1d45ff7f4a795f4c8e"
+          }
+        },
+        {
           "id": "af2a792029c0e160cd7e34cfb2fb8749d1316bad5f789854bd18c3e5c41dab12",
           "file_name": "faas.rules.yml",
           "group_name": "faas_mcp_protocol",
@@ -4440,6 +4479,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "822167d3ed300502c0a97013195194a5cf0d175626f741b90f69a52fa30a61b9"
+          }
+        },
+        {
+          "id": "b77d8ae8d8e830d47df3a22f073472d6966513df826dab3d22ef278993f91457",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_object_storage",
+          "rule_name": "FaasObjectStorageRegionNearlyFull",
+          "definition": {
+            "expression_hash": "91411d8d00dabd723e05f5b990b55a989d3d8123f37261a7a82231bbecfd7086",
+            "labels_hash": "0ace63790655153ccbb75cf6c11ec87887258af6b419183d05826e2494241f58",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "70da2050abb1dc7bdc3aa771c4de26672f84ef0ff2f0d2c0d9875f1cc546535c"
           }
         },
         {
@@ -6240,7 +6292,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "8ae916601e884017efb59496e1a7ca3fb714c3c04381722089545cfe2cf61da0",
+      "revision": "44bc634a843644e9d203681b4886a305eb5dbd28a689d1e998644685fcb2b614",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -8369,6 +8421,19 @@
           }
         },
         {
+          "id": "4bf9ee570c69cd49527c86741344df7ba6b2bcdbbe0e6cea258f4ffdcbea096a",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_object_storage",
+          "rule_name": "FaasObjectStorageRegionFull",
+          "definition": {
+            "expression_hash": "40a6fe52480c9c1106d36631dc328e5029f4307146c0d4932436c2f8160af6c0",
+            "labels_hash": "0ace63790655153ccbb75cf6c11ec87887258af6b419183d05826e2494241f58",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "4267a21454c78fa468a482734d9b088e91de97bb9bf756d1411e722bf3c38a47"
+          }
+        },
+        {
           "id": "4c9822168b9aba2225b9501c6e0bcfc8f21e67b53a5b22bb5de764b919728e34",
           "file_name": "faas.rules.yml",
           "group_name": "faas_canary_artifacts",
@@ -9955,6 +10020,19 @@
           }
         },
         {
+          "id": "92019e61291c2563e534b70cea36f25f5a039a9c05aa03482282a711472eab2b",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo",
+          "rule_name": "FaasNoComputeNodeReady",
+          "definition": {
+            "expression_hash": "24eebef12b81f196c880b308fd46ce569279642d09ea6381ee99a2d49763e40f",
+            "labels_hash": "87088d53e44d216b28d556eab6e352530ab764275fd099851c0a5623d49200e8",
+            "for_seconds": 120,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "94d53218eed30f4f89960748b6eed518bf91e450dba59e52a4ca5d253a7bd4c6"
+          }
+        },
+        {
           "id": "930534794f4cd55535337689ef8037ecd879daf961c432ac3374d52e3ee8b2ef",
           "file_name": "faas.rules.yml",
           "group_name": "faas_slo",
@@ -10683,6 +10761,19 @@
           }
         },
         {
+          "id": "adc455d64ac2580caeebeff5b7f31319f0a8e136b8c8eb054a5fbca86d52c2f5",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo",
+          "rule_name": "FaasComputeNodeDegraded",
+          "definition": {
+            "expression_hash": "84f7bd7d9c04ae423ff3670b80560a4f84cc8daa4472860e1448a490ac946ccf",
+            "labels_hash": "39e3527b0d9237b91e1973b5610095c73026dce5cb66a44786a22a842f160363",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "2ffdb6e08350d28cf8e6f721d42831513cb382cd3de16d1d45ff7f4a795f4c8e"
+          }
+        },
+        {
           "id": "af2a792029c0e160cd7e34cfb2fb8749d1316bad5f789854bd18c3e5c41dab12",
           "file_name": "faas.rules.yml",
           "group_name": "faas_mcp_protocol",
@@ -10901,6 +10992,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "822167d3ed300502c0a97013195194a5cf0d175626f741b90f69a52fa30a61b9"
+          }
+        },
+        {
+          "id": "b77d8ae8d8e830d47df3a22f073472d6966513df826dab3d22ef278993f91457",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_object_storage",
+          "rule_name": "FaasObjectStorageRegionNearlyFull",
+          "definition": {
+            "expression_hash": "91411d8d00dabd723e05f5b990b55a989d3d8123f37261a7a82231bbecfd7086",
+            "labels_hash": "0ace63790655153ccbb75cf6c11ec87887258af6b419183d05826e2494241f58",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "70da2050abb1dc7bdc3aa771c4de26672f84ef0ff2f0d2c0d9875f1cc546535c"
           }
         },
         {

@@ -7138,6 +7138,35 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
           summary: "s3-gatewayd is answering more than 5% of requests with 5xx"
           description: "Provider failures, stale accounting or sustained SlowDown contention. Check s3-gatewayd logs by request status and the provider's status page."
+      # ADR-20261029174627: a region places new buckets across a pool of
+      # backends, each capped by max_buckets below its provider's quota.
+      - alert: FaasObjectStorageRegionNearlyFull
+        expr: |
+          sum by (region) (
+            max by (region, backend) (faas_object_storage_backend_buckets)
+              and on (region, backend) max by (region, backend) (faas_object_storage_backend_bucket_limit)
+          )
+            / sum by (region) (max by (region, backend) (faas_object_storage_backend_bucket_limit)) > 0.8
+        for: 30m
+        labels:
+          severity: warn
+          component: apid
+          family: object_storage
+        annotations:
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
+          summary: "Object storage region {{ $labels.region }} is over 80% of its bucket capacity"
+          description: "The backends that receive new buckets in {{ $labels.region }} hold more than 80% of their max_buckets. Add a provider project to the region's pool before bucket creation is refused."
+      - alert: FaasObjectStorageRegionFull
+        expr: max by (region) (faas_object_storage_region_full) == 1
+        for: 5m
+        labels:
+          severity: warn
+          component: apid
+          family: object_storage
+        annotations:
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
+          summary: "Object storage region {{ $labels.region }} refuses new buckets"
+          description: "No backend in {{ $labels.region }}'s pool has room under max_buckets, so customers get 503 object_storage_region_full when they create a bucket. Existing buckets work. Add a provider project to the pool."
       - alert: FaasObjectStorageUsageExportStale
         expr: time() - s3_gateway_usage_export_last_success_timestamp_seconds > 3600
         for: 15m
