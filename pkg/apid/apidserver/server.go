@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/onebox-faas/faas/pkg/apid/issueslack"
+	"io/fs"
 
 	"github.com/onebox-faas/faas/pkg/apid/devloop"
 	"log/slog"
@@ -94,6 +95,7 @@ import (
 	objruntime "github.com/onebox-faas/faas/pkg/rehearsalobj/runtime"
 	pgruntime "github.com/onebox-faas/faas/pkg/rehearsalpg/runtime"
 	"github.com/onebox-faas/faas/pkg/releasemetrics"
+	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
 	usagestore "github.com/onebox-faas/faas/pkg/state/dataapiusage"
@@ -698,6 +700,9 @@ type server struct {
 	// Service.Reconcile) route through this seam — there is no
 	// other workload-mutation path post PR-G.
 	reconcileSvc *reconcile.Service
+	// imageListening answers whether a prebuilt Compose image listens
+	// (ADR-20261029120000 amendment 2); nil scans the repository alone.
+	imageListening reposcan.ImageListening
 }
 
 // anonymousAccountLabel is the literal value of the `account_id`
@@ -977,6 +982,20 @@ func (s *server) MarkRekeyRunnerOptedIn() *server {
 // zero value (both providers Disabled → consent routes 503).
 func (s *server) WithOAuthConfig(cfg auth.SignInConfig) *server {
 	s.oauthConfig = cfg
+	return s
+}
+
+// WithImageListening lets project scans ask a registry whether a prebuilt
+// Compose image listens (ADR-20261029120000 amendment 2), and gives the
+// reconcile service's own scan the same answer. Tests leave it unset and scan
+// the repository alone.
+func (s *server) WithImageListening(lookup reposcan.ImageListening) *server {
+	s.imageListening = lookup
+	if s.reconcileSvc != nil {
+		s.reconcileSvc.Scan = func(fsys fs.FS) (reposcan.Result, error) {
+			return reposcan.ScanWithOptions(fsys, reposcan.ScanOptions{ImageListening: lookup})
+		}
+	}
 	return s
 }
 
