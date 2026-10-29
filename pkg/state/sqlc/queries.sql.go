@@ -72761,6 +72761,26 @@ func (q *Queries) PutGitLabOAuthConnection(ctx context.Context, db DBTX, arg Put
 	return i, err
 }
 
+const putRuntimeSecretSignature = `-- name: PutRuntimeSecretSignature :exec
+INSERT INTO runtime_secret_signatures (ciphertext_sha256, signature)
+VALUES ($1::bytea, $2::bytea)
+ON CONFLICT (ciphertext_sha256) DO UPDATE SET signature = EXCLUDED.signature, created_at = now()
+WHERE runtime_secret_signatures.signature IS DISTINCT FROM EXCLUDED.signature
+`
+
+type PutRuntimeSecretSignatureParams struct {
+	CiphertextSha256 []byte
+	Signature        []byte
+}
+
+// ADR 20261028161502 amendment 1: a runtime secret envelope's writer
+// signature, by its SHA-256. A signature is deterministic for one envelope and
+// key, so writing it again replaces only a row that held something else.
+func (q *Queries) PutRuntimeSecretSignature(ctx context.Context, db DBTX, arg PutRuntimeSecretSignatureParams) error {
+	_, err := db.Exec(ctx, putRuntimeSecretSignature, arg.CiphertextSha256, arg.Signature)
+	return err
+}
+
 const putTCPListenerTLSObservation = `-- name: PutTCPListenerTLSObservation :execrows
 INSERT INTO app_tcp_listener_tls_observations
     (listener_id, edge_id, hostname, intent_updated_at, observed_at, ready, not_after)
@@ -84166,6 +84186,36 @@ func (q *Queries) ReadRuntimeSecretDeliveryVersions(ctx context.Context, db DBTX
 	return items, nil
 }
 
+const readRuntimeSecretSignatures = `-- name: ReadRuntimeSecretSignatures :many
+SELECT ciphertext_sha256, signature FROM runtime_secret_signatures
+WHERE ciphertext_sha256 = ANY($1::bytea[])
+`
+
+type ReadRuntimeSecretSignaturesRow struct {
+	CiphertextSha256 []byte
+	Signature        []byte
+}
+
+func (q *Queries) ReadRuntimeSecretSignatures(ctx context.Context, db DBTX, digests [][]byte) ([]ReadRuntimeSecretSignaturesRow, error) {
+	rows, err := db.Query(ctx, readRuntimeSecretSignatures, digests)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadRuntimeSecretSignaturesRow{}
+	for rows.Next() {
+		var i ReadRuntimeSecretSignaturesRow
+		if err := rows.Scan(&i.CiphertextSha256, &i.Signature); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const readRuntimeUpgradeBaselineDeployments = `-- name: ReadRuntimeUpgradeBaselineDeployments :many
 SELECT d.id::text AS id, d.app_id::text AS app_id, COALESCE(NULLIF(d.scope,''),'default')::text AS scope,
  d.status,d.source_bytes,COALESCE(d.source_root,'')::text AS source_root,d.traffic_percent,d.traffic_percent_explicit,
@@ -95306,9 +95356,18 @@ func (q *Queries) RouteMonitorCustomerObservations(ctx context.Context, db DBTX,
 }
 
 const routeMonitorServingDeployments = `-- name: RouteMonitorServingDeployments :many
-SELECT id::text AS id,commit_sha,source_url,source_root,created_at,canary_step_started_at,rollout_completed_at,traffic_percent,canary_step,canary_total_steps
-FROM deployments WHERE app_id=$1::text::uuid AND status='live' AND deleted_at IS NULL AND traffic_percent>0
- AND coalesce(nullif(scope,''),'default')='default' ORDER BY id LIMIT 2
+WITH lanes AS (
+ SELECT id,commit_sha,source_url,source_root,created_at,canary_step_started_at,rollout_completed_at,traffic_percent,canary_step,canary_total_steps,
+  CASE WHEN scope='production' THEN 'production' ELSE 'default' END AS lane
+ FROM deployments WHERE app_id=$1::text::uuid AND status='live' AND deleted_at IS NULL
+  AND coalesce(nullif(scope,''),'default') IN ('default','production')
+), chosen AS (
+ SELECT CASE WHEN EXISTS (SELECT 1 FROM lanes WHERE lane='production' AND traffic_percent>0)
+  OR (NOT EXISTS (SELECT 1 FROM lanes WHERE lane='default' AND traffic_percent>0) AND EXISTS (SELECT 1 FROM lanes WHERE lane='production'))
+  THEN 'production' ELSE 'default' END AS lane
+)
+SELECT l.id::text AS id,l.commit_sha,l.source_url,l.source_root,l.created_at,l.canary_step_started_at,l.rollout_completed_at,l.traffic_percent,l.canary_step,l.canary_total_steps
+FROM lanes l JOIN chosen c ON c.lane=l.lane WHERE l.traffic_percent>0 ORDER BY l.id LIMIT 2
 `
 
 type RouteMonitorServingDeploymentsRow struct {
@@ -95324,6 +95383,10 @@ type RouteMonitorServingDeploymentsRow struct {
 	CanaryTotalSteps    int32
 }
 
+// The app's production routing lane (state.ProductionRoutingDeployments): a
+// project's named production scope once it carries traffic, or while the
+// legacy default lane is dark; otherwise the default scope
+// (ADR-20261028110044 amendment 1).
 func (q *Queries) RouteMonitorServingDeployments(ctx context.Context, db DBTX, appID string) ([]RouteMonitorServingDeploymentsRow, error) {
 	rows, err := db.Query(ctx, routeMonitorServingDeployments, appID)
 	if err != nil {

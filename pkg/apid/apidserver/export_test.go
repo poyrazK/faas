@@ -293,6 +293,7 @@ var RuntimeSecretRecipient = runtimeSecretRecipient
 var RuntimeSealDomainBlocksRekey = runtimeSealDomainBlocksRekey
 var RuntimeSecretsBound = &runtimeSecretsBound
 var LoadRuntimeSecretBinding = loadRuntimeSecretBinding
+var InstallRuntimeSigner = installRuntimeSigner
 var PgBackupStateRoot = &pgBackupStateRoot
 var PlanCache = &planCache
 var PlanCacheRoot = &planCacheRoot

@@ -124,3 +124,53 @@ worker runs the recovery.
   `route_health_holds` stops counting the canary once it is no longer in
   flight; the abort itself is reported by the rollout decision and the
   deployment events.
+
+## Amendment 1 (2026-10-29): production lane and lost telemetry
+
+A second review found two more gaps.
+
+1. **The production monitor watched only the default scope.** Project
+   releases (multi-service projects, GA since ADR-20261027120000) serve from
+   the named `production` scope, so a project app's monitor never found its
+   serving deployment: no incident, alert or automatic rollback.
+2. **Lost telemetry looked like quiet traffic.** Route evidence counted only
+   the rows that reached `request_telemetry`. A gateway restart, a heartbeat
+   gap or rows a gateway could not attribute leave a window short of rows,
+   which compared as sparse or, worse, as a skewed rate. With the 24 h hold
+   deadline, a hold the platform caused could end the release.
+
+**Decision.**
+
+- The stored monitor (and so incidents, `route_monitor_incidents` and
+  automatic rollback) selects the app's production routing lane, the rule of
+  `state.ProductionRoutingDeployments`: the named `production` scope once it
+  carries traffic or while the default lane is dark, otherwise the default
+  scope. Other environments keep their read-only scoped report.
+- A project release rolls back as a set, so an eligible incident on a
+  `production`-scope deployment is skipped with reason `project_release`
+  instead of rolling one member back. The app canary guard and its probes stay
+  default-scope: project releases verify themselves (ADR-20261019120004).
+- Route evidence reads gateway coverage (`request_telemetry_coverage`, the
+  heartbeats route removal already uses). An active node counts as having lost
+  telemetry for windows `[from, until)` when its telemetry is off or sampled,
+  when it has not been continuously healthy since `from` (a restart, a
+  heartbeat gap, or rows it could not attribute to an app), or when its last
+  report predates `until`. Rows a gateway attributes to an app and drops are
+  excluded: they include an account over its plan's telemetry rate, whose
+  remaining rows stay comparable, and holding such apps would never end.
+- Lost evidence makes the canary guard's windows unknown with the new window
+  reason `telemetry_incomplete`. The advance waits, but the hold is the
+  platform's: no `routes.health.blocked` webhook, no notification state, not
+  counted by `route_health_holds`, and the hold deadline never aborts on it
+  (`RouteHealthBlockedError.EvidenceLost`). The monitor reports
+  `telemetry_unavailable`, a report reason every client already accepts; no
+  incident opens or recovers and no healthy baseline is recorded.
+- No operator alert is added: the gateway's dropped-rows counter also counts
+  plan-rate drops, which are expected, and the windows recover within minutes
+  of a restart.
+
+**Consequences.** After each gateway restart, canary advances and monitor
+evaluations wait about two minutes for complete windows. Pooled evidence over
+the last 30 minutes can still include a gap older than the current windows;
+it is read as before. Distinguishing an apid outage from plan-rate drops
+needs the gateway to report loss causes, which this amendment does not add.

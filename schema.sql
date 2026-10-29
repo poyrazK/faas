@@ -53318,6 +53318,20 @@ CREATE TABLE public.runtime_releases (
 
 
 --
+-- Name: runtime_secret_signatures; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_secret_signatures (
+    ciphertext_sha256 bytea NOT NULL,
+    signature bytea NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT runtime_secret_signatures_ciphertext_sha256_check CHECK ((octet_length(ciphertext_sha256) = 32)),
+    CONSTRAINT runtime_secret_signatures_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT runtime_secret_signatures_signature_check CHECK ((octet_length(signature) = 64))
+);
+
+
+--
 -- Name: runtime_snapshots; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -67098,6 +67112,14 @@ ALTER TABLE ONLY public.runtime_releases
 
 ALTER TABLE ONLY public.runtime_releases
     ADD CONSTRAINT runtime_releases_runtime_architecture_source_ref_guest_init_key UNIQUE (runtime, architecture, source_ref, guest_init_sha256, layout_version);
+
+
+--
+-- Name: runtime_secret_signatures runtime_secret_signatures_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_secret_signatures
+    ADD CONSTRAINT runtime_secret_signatures_pkey PRIMARY KEY (ciphertext_sha256);
 
 
 --

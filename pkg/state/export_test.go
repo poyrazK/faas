@@ -229,6 +229,7 @@ var CronAppTaskRetryAt = cronAppTaskRetryAt
 var CrossedUsageAlertThresholds = crossedUsageAlertThresholds
 var DecidePlanAdmission = decidePlanAdmission
 var DecideProfileCanaryGate = decideProfileCanaryGate
+var DecideRouteMonitorRollback = decideRouteMonitorRollback
 var DecodeInitialReview = decodeInitialReview
 var DecodeProfileCanaryHistoryCursor = decodeProfileCanaryHistoryCursor
 var DecodeRouteMonitorDeploymentBaseline = decodeRouteMonitorDeploymentBaseline

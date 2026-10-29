@@ -41,7 +41,14 @@ export type EventReplayBackfillJobResponse = {
    */
   history_complete: boolean;
   duplicate_policy: 'skip_existing';
-  state: 'running' | 'completed' | 'completed_with_failures';
+  /**
+   * cancelled: ended by a cancel request. expired: no progress for 24 hours. failed: processing failed ten times in a row; see last_failure.
+   */
+  state: 'running' | 'completed' | 'completed_with_failures' | 'cancelled' | 'expired' | 'failed';
+  /**
+   * Class of the most recent processing failure while the job backs off or after it failed.
+   */
+  last_failure?: 'conflict' | 'invalid_job' | 'timeout' | 'internal';
   /**
    * Whether the retained range has been fully examined.
    */
