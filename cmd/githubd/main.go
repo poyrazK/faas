@@ -195,8 +195,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Push deploys classify a prebuilt Compose image the way apid's plan does
 	// (ADR-20261029120000 amendment 2).
 	imageListening := imagelisten.NewRegistry().Listening
-	ghReconcile.Scan = func(fsys fs.FS) (reposcan.Result, error) {
-		return reposcan.ScanWithOptions(fsys, reposcan.ScanOptions{ImageListening: imageListening})
+	ghReconcile.Scan = func(fsys fs.FS, opts reposcan.ScanOptions) (reposcan.Result, error) {
+		opts.ImageListening = imageListening
+		return reposcan.ScanWithOptions(fsys, opts)
 	}
 
 	// PR-H: source fetcher for the push-dispatch path. The

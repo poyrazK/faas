@@ -992,8 +992,9 @@ func (s *server) WithOAuthConfig(cfg auth.SignInConfig) *server {
 func (s *server) WithImageListening(lookup reposcan.ImageListening) *server {
 	s.imageListening = lookup
 	if s.reconcileSvc != nil {
-		s.reconcileSvc.Scan = func(fsys fs.FS) (reposcan.Result, error) {
-			return reposcan.ScanWithOptions(fsys, reposcan.ScanOptions{ImageListening: lookup})
+		s.reconcileSvc.Scan = func(fsys fs.FS, opts reposcan.ScanOptions) (reposcan.Result, error) {
+			opts.ImageListening = lookup
+			return reposcan.ScanWithOptions(fsys, opts)
 		}
 	}
 	return s
