@@ -5727,7 +5727,7 @@ var cliCommands = []cliCommand{
 				{Name: "restore-window-seconds", Short: "point-in-time restore window", Value: "N"},
 			}, Examples: []string{"gregale postgres create orders --region us-east-2 --class development --scale-to-zero"}},
 			{Name: "get", Short: "Show one managed PostgreSQL database", Positionals: []string{"<database>"}},
-			{Name: "delete", Short: "Delete a managed PostgreSQL database", Positionals: []string{"<database>"}},
+			{Name: "delete", Short: "Delete a managed PostgreSQL database and its restore history", Positionals: []string{"<database>"}, Flags: []cliFlag{{Name: "yes", Short: "skip the typed confirmation (alias: --quiet)"}}},
 			{Name: "compute-policy", Short: "Durably switch between idle suspension and always-on compute", Positionals: []string{"<database>"}, Flags: []cliFlag{
 				{Name: "scale-to-zero", Short: "true for idle suspension, false for always-on", Req: true, Value: "BOOL", ClosedSet: []string{"true", "false"}},
 				{Name: "request-id", Short: "stable request UUID; reuse after uncertain responses", Req: true, Value: "UUID"},

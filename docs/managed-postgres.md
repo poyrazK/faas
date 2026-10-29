@@ -1213,6 +1213,11 @@ gregale postgres attach orders api --scope production --env DATABASE_URL
 gregale postgres delete DATABASE_ID
 ```
 
+`postgres delete` asks you to type the database's name: deletion removes the
+database and its point-in-time restore history at the provider and cannot be
+undone. Scripts pass `--yes` (or `--quiet`); JSON and `--non-interactive` mode
+require it.
+
 Binding rotation returns as soon as the new credential is active. Add
 `--wait` to poll until `rotation_pending` clears; the wait defaults to five
 minutes with one-second polling. Set `--wait-timeout` or `--poll-interval` to
