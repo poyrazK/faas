@@ -16,7 +16,7 @@ on:
       deploy_environment:
         description: "GitHub environment holding the target fleet's secrets"
         required: false
-        default: production
+        default: production-us
         type: string
       units_run_id:
         description: "release-units.yml run whose signed unit release to deploy"

@@ -5249,7 +5249,7 @@ export class EventsService {
     /**
      * Filter items to one durable routing outcome.
      */
-    state?: 'pending' | 'processing' | 'enqueued' | 'filtered' | 'failed' | 'skipped_captured' | 'skipped_unknown' | 'skipped_existing' | 'skipped_unsettled',
+    state?: 'pending' | 'processing' | 'enqueued' | 'filtered' | 'failed' | 'skipped_captured' | 'skipped_unknown' | 'skipped_existing' | 'skipped_unsettled' | 'cancelled',
     /**
      * Opaque continuation cursor. Keep the job and state filter unchanged.
      */
@@ -5315,6 +5315,40 @@ export class EventsService {
         \`profile_investigation_limit\`.
         `,
         503: `Retry request timed out.`,
+      },
+    });
+  }
+  /**
+   * Cancel a running backfill.
+   * Ends a running backfill as cancelled. Deliveries already admitted finish; undelivered ones are dropped and their receipts released. Cancelling an ended job returns it unchanged.
+   * @returns EventReplayBackfillJobResponse The job after cancellation.
+   * @throws ApiError
+   */
+  public static cancelEventReplayBackfill({
+    jobId,
+  }: {
+    /**
+     * Backfill job to cancel.
+     */
+    jobId: string,
+  }): CancelablePromise<EventReplayBackfillJobResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/event-replays/{jobID}/cancel',
+      path: {
+        'jobID': jobId,
+      },
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Cancel request timed out.`,
       },
     });
   }

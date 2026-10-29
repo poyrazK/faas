@@ -1179,7 +1179,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		appsDomain = "gregale.dev" // apid's default for unset deployments
 	}
 	loops := newObservabilityLoops(ops.Registry()) // ADR-20261024222102
-	go runSyntheticChecks(ctx, store, appsDomain, loops, log)
+	// Capability flags (ADR-20261023115741), kept current by the
+	// runtime-config watcher below; until its first reconcile, tier defaults
+	// decide. observeRelease stops alert and synthetic work an account's plan
+	// or flags no longer cover (ADR-20261028101615).
+	capabilityFlags := platformflags.NewSet(capflags.Bootstrap(deps.getenv))
+	release, err := newObserveRelease(capabilityFlags, store)
+	if err != nil {
+		return err
+	}
 	// ADR 20261022111812: once the seal_domains role stages the alerting
 	// domain, its identity opens alert secrets, channel destinations and MCP
 	// readiness provider keys ahead of the fleet and host identities.
@@ -1195,11 +1203,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR 20261022111812: apid relays the test sends it cannot open here;
 	// meterd holds the alerting key.
 	go runAlertTestSends(ctx, evaluator, log)
+	evaluator.SetRuleRelease(release.ForAccount)
+	evaluator.SetRuleOutcome(newAlertRuleSkipCounter(ops.Registry()))
 	// ADR-20261022172052: firing app alerts carry what the log ledger shows,
 	// for the accounts the log-search capability flag releases it to
-	// (ADR-20261024222102). The runtime-config watcher below keeps the
-	// capability flags current; until its first reconcile, tier defaults decide.
-	capabilityFlags := platformflags.NewSet(capflags.Bootstrap(deps.getenv))
+	// (ADR-20261024222102).
 	logSearch, err := newLogSearchRelease(deps.getenv, capabilityFlags, store)
 	if err != nil {
 		return err
@@ -1249,6 +1257,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			log.Error("meterd: runtime config watcher exited", "err", err)
 		}
 	}()
+	// ADR-748: probe customer synthetic checks against their public
+	// hostnames, after the first reconcile so capability flags an operator
+	// wrote decide from the first pass.
+	go runSyntheticChecks(ctx, store, appsDomain, release.Synthetic, loops, log)
 	canaryProg, canaryAPID := buildCanaryProgression(deps, store, ops, log, promClient)
 	safeDeployOrch := buildSafeDeployOrchestrator(deps, store, ops, log, canaryAPID, evaluator)
 	// ADR-099 / issue #1184 Workstream A: 7 job-task Prometheus
