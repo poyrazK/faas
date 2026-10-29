@@ -480,6 +480,12 @@ const (
 	ScannerDBUpdateTimeout = 20 * time.Minute
 )
 
+// ImagedImagePrepWorkers is how many deployments one imaged prepares at once
+// with FAAS_IMAGED_PARALLEL_PREP on (ADR-20261029174438); off, it prepares one
+// at a time. Each preparation can run a Grype scan, and the imaged unit's
+// MemoryMax (4 GiB) covers all of them, so the count stays small.
+const ImagedImagePrepWorkers = 2
+
 // Source-build OCI verification bounds the intermediate image, including its
 // builder base. Final app layers still obey the creating account's plan limit.
 const (

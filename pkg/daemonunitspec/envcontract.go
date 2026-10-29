@@ -476,6 +476,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_HTTP_ADMISSION", Owners: []string{"vmmd"}, Source: EnvSourceDefault, Note: "ADR-570 kill switch; empty or on enforces the per-VM HTTP admission cap, off lifts it on that node (permits stay tracked); vmmd restart applies"},
 	{Name: "FAAS_IMAGED_METRICS_ADDR", Owners: []string{"imaged"}, Source: EnvSourceDefault},
 	{Name: "FAAS_IMAGED_NODE_NAME", Owners: []string{"shared"}, Source: EnvSourceDefault},
+	{Name: "FAAS_IMAGED_PARALLEL_PREP", Owners: []string{"imaged"}, Source: EnvSourceDefault, Note: "optional boolean switch (ADR-20261029174438): imaged prepares up to ImagedImagePrepWorkers deployments at once instead of one at a time, never the same deployment twice; production default is off"},
 	{Name: "FAAS_IMAGED_PRESTAGE_ONLY", Owners: []string{"imaged"}, Source: EnvSourceDropin, Note: "release rollout one-shot exits after staging every assigned runtime base before node drain"},
 	{Name: "FAAS_IMAGED_ROLE", Owners: []string{"imaged", "shared"}, Source: EnvSourceDropin},
 	{Name: "FAAS_IMAGE_DIGEST", Owners: []string{"shared"}, Source: EnvSourceGuest, Note: "platform-authored workload identity; immutable image/artifact digest when available, never customer-controlled"},
