@@ -63,6 +63,20 @@ customer from being billed twice after two checkouts, and nothing checked it.
    month and terms it last found stored, and skips the snapshot read while
    they are unchanged. A restart, a plan change, a provider policy change or
    a new month reads again. ADR-566's snapshots are unchanged.
+6. **Paid plans start with a spend cap.** `api.DefaultOverageCapAllowances`
+   is one allowance: the managed PostgreSQL overage ceiling of twice the
+   allowance (`ManagedPostgresOverageCeilingMultiplier`, ADR-20261025094915),
+   applied to compute at the overage rate. That is Hobby $2, Pro $10 and
+   Scale $30 (`Plan.DefaultOverageCapCents`). `UpdateAccountPlan`, which every
+   plan change takes, moves the cap with the plan in the same transaction:
+   - Free to paid with no cap sets the new plan's default.
+   - A cap equal to the old plan's default becomes the new plan's default,
+     or is removed on Free.
+   - Any other cap, and a cap cleared on a paid plan, is the customer's and
+     is kept.
+
+   Accounts already on a paid plan keep their cap (none) until their next
+   move from Free; prod has no billed accounts yet.
 
 ## Consequences
 
@@ -78,6 +92,11 @@ customer from being billed twice after two checkouts, and nothing checked it.
   sandbox already has it off.
 - Steady-state price capture drops from one query per account per minute to
   none.
+- A paid customer whose overage passes one allowance has workloads parked
+  (the existing cap behavior: 402 on wake, queued jobs wait) until they raise
+  or clear the cap or the month ends. A runaway loop or a stolen card costs
+  at most one allowance by default. A cap that only matches a default by
+  coincidence also follows the plan.
 
 ## Rejected alternatives
 
@@ -87,3 +106,9 @@ customer from being billed twice after two checkouts, and nothing checked it.
   every complete minute; keeping the gate and retrying is as fast.
 - **Deliver past incomplete minutes.** ADR-1162 finality exists so a late
   catch-up row never lands in an hour already delivered.
+- **Default cap equal to the plan price ($10/$30/$99).** No existing limit
+  supports it; the managed PostgreSQL ceiling is the repo's only overage
+  default, and one shape for both products is easier to explain.
+- **Treat a missing cap as the default.** A customer could no longer remove
+  the cap without a new API value, and every existing account would change
+  at deploy.

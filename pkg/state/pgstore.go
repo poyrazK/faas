@@ -851,20 +851,22 @@ func (s *PgStore) UpdateAccountPlan(ctx context.Context, id string, plan api.Pla
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	// Lock the account so its default spend cap moves with the plan
+	// (ADR-20261029180000) and, on a downgrade to Free, so a concurrent
+	// streaming opt-in cannot race the flags cleared below.
+	var from string
+	var capCents *int64
+	if err := tx.QueryRow(ctx,
+		`select plan, overage_cap_cents from accounts where id = $1 for update`, id,
+	).Scan(&from, &capCents); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
 	if plan == api.PlanFree {
 		// The streaming plan invariant rejects a paid -> Free account
-		// transition while any app still opts in. Lock the account before
-		// clearing those flags so a concurrent opt-in cannot race the
-		// downgrade and leave an invalid pair of rows behind.
-		var accountID string
-		if err := tx.QueryRow(ctx,
-			`select id::text from accounts where id = $1 for update`, id,
-		).Scan(&accountID); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return ErrNotFound
-			}
-			return err
-		}
+		// transition while any app still opts in.
 		if _, err := tx.Exec(ctx,
 			`update apps
 			    set streaming_enabled = false
@@ -874,7 +876,8 @@ func (s *PgStore) UpdateAccountPlan(ctx context.Context, id string, plan api.Pla
 			return err
 		}
 	}
-	tag, err := tx.Exec(ctx, `update accounts set plan = $2 where id = $1`, id, string(plan))
+	capCents = planChangeOverageCap(api.Plan(from), plan, capCents)
+	tag, err := tx.Exec(ctx, `update accounts set plan = $2, overage_cap_cents = $3 where id = $1`, id, string(plan), capCents)
 	if err != nil {
 		return err
 	}

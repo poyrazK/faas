@@ -2520,6 +2520,15 @@ func (m *MemStore) UpdateAccountPlan(_ context.Context, id string, plan api.Plan
 			}
 		}
 	}
+	var current *int64
+	if cents, ok := m.overageCapCents[id]; ok {
+		current = &cents
+	}
+	if next := planChangeOverageCap(a.Plan, plan, current); next == nil {
+		delete(m.overageCapCents, id)
+	} else {
+		m.overageCapCents[id] = *next
+	}
 	a.Plan = plan
 	m.storeRouteCheckAccountLocked(id, a)
 	now := time.Now().UTC()
