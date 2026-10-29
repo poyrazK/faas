@@ -672,7 +672,7 @@ func (q *Queries) ActiveSafeProjectReleaseID(ctx context.Context, db DBTX, proje
 const activeTCPListenerByPublicPort = `-- name: ActiveTCPListenerByPublicPort :one
 SELECT l.id, l.account_id, l.app_id, l.listener_name, l.guest_port, l.public_port, l.protocol, l.enabled, l.created_at, l.updated_at, l.tls_mode, l.tls_hostname FROM app_tcp_listeners l JOIN apps a ON a.id = l.app_id
 WHERE l.public_port = $1 AND l.enabled
-  AND a.status <> 'deleted' AND a.account_id = l.account_id
+  AND a.status <> 'deleted' AND a.visibility <> 'internal' AND a.account_id = l.account_id
 `
 
 func (q *Queries) ActiveTCPListenerByPublicPort(ctx context.Context, db DBTX, publicPort int32) (AppTcpListener, error) {
@@ -27891,6 +27891,37 @@ func (q *Queries) GetWorkflowScheduleOccurrenceForReplay(ctx context.Context, db
 	return i, err
 }
 
+const gitHubRepositoryIDsBoundToAccount = `-- name: GitHubRepositoryIDsBoundToAccount :one
+select coalesce(max(a.github_owner_id), 0)::bigint as owner_id,
+       coalesce(max(a.github_repo_id), 0)::bigint as repo_id
+from apps a
+where a.account_id = $1::uuid
+  and lower(a.github_repo_full_name) = lower($2::text)
+  and a.deleted_at is null
+`
+
+type GitHubRepositoryIDsBoundToAccountParams struct {
+	AccountID    pgtype.UUID
+	RepoFullName string
+}
+
+type GitHubRepositoryIDsBoundToAccountRow struct {
+	OwnerID int64
+	RepoID  int64
+}
+
+// The immutable owner and repository IDs an account's app binding recorded
+// for a repository name (bug hunt 2026-10-28 H68): the OIDC exchange
+// requires a token's repository_owner_id and repository_id claims to match
+// them, so a recreated repository under a freed owner name does not pass.
+// Zero when no binding of the name records them.
+func (q *Queries) GitHubRepositoryIDsBoundToAccount(ctx context.Context, db DBTX, arg GitHubRepositoryIDsBoundToAccountParams) (GitHubRepositoryIDsBoundToAccountRow, error) {
+	row := db.QueryRow(ctx, gitHubRepositoryIDsBoundToAccount, arg.AccountID, arg.RepoFullName)
+	var i GitHubRepositoryIDsBoundToAccountRow
+	err := row.Scan(&i.OwnerID, &i.RepoID)
+	return i, err
+}
+
 const guardWorkflowAdmissionSnapshot = `-- name: GuardWorkflowAdmissionSnapshot :exec
 SELECT guard_workflow_admission_snapshot($1::text::uuid)
 `
@@ -40614,7 +40645,7 @@ func (q *Queries) ListActiveRegressionsByApp(ctx context.Context, db DBTX, arg L
 
 const listActiveTCPListeners = `-- name: ListActiveTCPListeners :many
 SELECT l.id, l.account_id, l.app_id, l.listener_name, l.guest_port, l.public_port, l.protocol, l.enabled, l.created_at, l.updated_at, l.tls_mode, l.tls_hostname FROM app_tcp_listeners l JOIN apps a ON a.id = l.app_id
-WHERE l.enabled AND a.status <> 'deleted' AND a.account_id = l.account_id
+WHERE l.enabled AND a.status <> 'deleted' AND a.visibility <> 'internal' AND a.account_id = l.account_id
 ORDER BY l.public_port
 `
 
@@ -46221,7 +46252,7 @@ func (q *Queries) ListEnabledTriggers(ctx context.Context, db DBTX) ([]ListEnabl
 
 const listEnabledUDPListeners = `-- name: ListEnabledUDPListeners :many
 SELECT id, account_id, app_id, listener_name, guest_port, public_port, protocol, enabled, created_at, updated_at FROM app_udp_listeners l
-WHERE enabled AND EXISTS (SELECT 1 FROM apps a WHERE a.id = l.app_id AND a.account_id = l.account_id AND a.status <> 'deleted')
+WHERE enabled AND EXISTS (SELECT 1 FROM apps a WHERE a.id = l.app_id AND a.account_id = l.account_id AND a.status <> 'deleted' AND a.visibility <> 'internal')
 ORDER BY public_port ASC
 `
 
@@ -72945,14 +72976,14 @@ select
   ((select count(*) from (
      select 1 from invocations i, b
      where i.app_id=$1::uuid and i.queue_binding_id=b.id and i.account_id=b.account_id
-       and i.source='queue' and i.state in ('pending','dispatching')
+       and i.source='queue' and i.state in ('pending','dispatching') and (i.state='dispatching' or i.due_at <= now())
        and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
      limit $2::integer) own)
   + (select count(*) from (
      select 1 from invocations i, b
      where b.deployment_scope='' and i.app_id=$1::uuid and i.queue_binding_id is null
        and i.queue_name=b.queue_name and i.account_id=b.account_id
-       and i.source='queue' and i.state in ('pending','dispatching')
+       and i.source='queue' and i.state in ('pending','dispatching') and (i.state='dispatching' or i.due_at <= now())
      limit $2::integer) legacy))::bigint as depth,
   (select count(*) from (
      select 1 from owned where state='dispatching' and lease_expires_at > now()
@@ -72963,13 +72994,13 @@ select
   (select min(first.created_at) from (
      (select i.created_at from invocations i, b
       where i.app_id=$1::uuid and i.queue_binding_id=b.id and i.account_id=b.account_id
-        and i.source='queue' and i.state='pending'
+        and i.source='queue' and i.state='pending' and i.due_at <= now()
         and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
       order by i.due_at, i.created_at, i.id limit 1)
      union all
      (select i.created_at from invocations i, b
       where b.deployment_scope='' and i.app_id=$1::uuid and i.queue_binding_id is null
-        and i.queue_name=b.queue_name and i.account_id=b.account_id and i.source='queue' and i.state='pending'
+        and i.queue_name=b.queue_name and i.account_id=b.account_id and i.source='queue' and i.state='pending' and i.due_at <= now()
       order by i.due_at, i.created_at, i.id limit 1)
   ) first)::timestamptz as oldest_pending_at
 `
@@ -73660,7 +73691,7 @@ select
   (select count(*) from (
      select 1 from invocations i, b
      where i.app_id=$1::uuid and i.queue_binding_id=b.id and i.account_id=b.account_id
-       and i.source='queue' and i.state in ('pending','dispatching')
+       and i.source='queue' and i.state in ('pending','dispatching') and (i.state='dispatching' or i.due_at <= now())
        and ($2::text is null or i.deployment_scope=$2::text)
        and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
      limit $3::integer) own)::bigint
@@ -73668,7 +73699,7 @@ select
      select 1 from invocations i, b
      where b.deployment_scope='' and i.app_id=$1::uuid and i.queue_binding_id is null
        and i.queue_name=b.queue_name and i.account_id=b.account_id
-       and i.source='queue' and i.state in ('pending','dispatching')
+       and i.source='queue' and i.state in ('pending','dispatching') and (i.state='dispatching' or i.due_at <= now())
        and ($2::text is null or i.deployment_scope=$2::text)
      limit $3::integer) legacy)::bigint as depth
 `
@@ -73699,7 +73730,7 @@ const queueDepthInScope = `-- name: QueueDepthInScope :one
 select count(*)::bigint as depth from (
   select 1 from invocations
   where app_id=$1::uuid and deployment_scope=$2::text
-    and source='queue' and state in ('pending','dispatching')
+    and source='queue' and state in ('pending','dispatching') and (state='dispatching' or due_at <= now())
   limit $3::integer
 ) bounded
 `
@@ -74185,10 +74216,10 @@ func (q *Queries) QueueRuntimeUpgradeOperationBuild(ctx context.Context, db DBTX
 
 const queueStateForBinding = `-- name: QueueStateForBinding :one
 select
-  count(*) filter (where i.state in ('pending','dispatching'))::bigint as depth,
+  count(*) filter (where i.state='dispatching' or (i.state='pending' and i.due_at <= now()))::bigint as depth,
   count(*) filter (where i.state='dispatching' and i.lease_expires_at > now())::bigint as in_flight,
   count(*) filter (where i.state='dead_letter')::bigint as dead_letter,
-  min(i.created_at) filter (where i.state='pending')::timestamptz as oldest_pending_at
+  min(i.created_at) filter (where i.state='pending' and i.due_at <= now())::timestamptz as oldest_pending_at
 from invocations i join queue_bindings b on b.app_id=i.app_id and b.account_id=i.account_id
 where b.id=$1::uuid and b.app_id=$2::uuid
   and ($3::text is null or i.deployment_scope=$3::text)
@@ -74226,10 +74257,10 @@ func (q *Queries) QueueStateForBinding(ctx context.Context, db DBTX, arg QueueSt
 
 const queueStateInScope = `-- name: QueueStateInScope :one
 select
-  count(*) filter (where state in ('pending','dispatching'))::bigint as depth,
+  count(*) filter (where state='dispatching' or (state='pending' and due_at <= now()))::bigint as depth,
   count(*) filter (where state='dispatching' and lease_expires_at > now())::bigint as in_flight,
   count(*) filter (where state='dead_letter')::bigint as dead_letter,
-  min(created_at) filter (where state='pending')::timestamptz as oldest_pending_at
+  min(created_at) filter (where state='pending' and due_at <= now())::timestamptz as oldest_pending_at
 from invocations
 where app_id=$1 and deployment_scope=$2
   and source='queue' and state in ('pending','dispatching','dead_letter')
@@ -85205,17 +85236,20 @@ WITH metadata AS (
         AND legacy.created_at<=d.created_at
 )
 SELECT id, deployment_id, app_id, account_id, app_slug, app_status, deployment_status, fc_version, mem_bytes, disk_bytes, storage_key, stale, delete_pending, created_at, tier, stale_since, scope, environment_id, deployment_rootfs_key, warm_snapshot_enabled, runtime_owner_invalid FROM metadata
-WHERE ($1::text='active' AND (NOT stale OR runtime_owner_invalid))
-    OR ($1::text='stale' AND stale AND stale_since<now()-$2::bigint*interval '1 second')
+WHERE ($1::text='active' AND (NOT stale OR runtime_owner_invalid) AND app_id>$2::text)
+    OR ($1::text='stale' AND stale AND stale_since<now()-$3::bigint*interval '1 second')
     OR ($1::text='pending' AND delete_pending)
-ORDER BY CASE WHEN $1::text='active' THEN created_at END DESC,
+ORDER BY CASE WHEN $1::text='active' THEN app_id END ASC,
+    CASE WHEN $1::text='active' THEN created_at END DESC,
     CASE WHEN $1::text<>'active' THEN created_at END ASC, id ASC
-LIMIT 10000
+LIMIT $4::integer
 `
 
 type ReadSnapshotGarbageCollectionParams struct {
 	Mode             string
+	AfterAppID       string
 	RetentionSeconds int64
+	RowLimit         int32
 }
 
 type ReadSnapshotGarbageCollectionRow struct {
@@ -85242,8 +85276,17 @@ type ReadSnapshotGarbageCollectionRow struct {
 	RuntimeOwnerInvalid bool
 }
 
+// 'active' pages by app (after_app_id, ordered by app): the rollback window
+// needs every row of an app, and a newest-first cut over the whole fleet
+// dropped exactly the oldest generations GC exists to reclaim once the live
+// set passed the limit (bug hunt 2026-10-28 H66).
 func (q *Queries) ReadSnapshotGarbageCollection(ctx context.Context, db DBTX, arg ReadSnapshotGarbageCollectionParams) ([]ReadSnapshotGarbageCollectionRow, error) {
-	rows, err := db.Query(ctx, readSnapshotGarbageCollection, arg.Mode, arg.RetentionSeconds)
+	rows, err := db.Query(ctx, readSnapshotGarbageCollection,
+		arg.Mode,
+		arg.AfterAppID,
+		arg.RetentionSeconds,
+		arg.RowLimit,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -100265,7 +100308,7 @@ func (q *Queries) UDPListenerByID(ctx context.Context, db DBTX, id string) (AppU
 const uDPListenerByPublicPort = `-- name: UDPListenerByPublicPort :one
 SELECT id, account_id, app_id, listener_name, guest_port, public_port, protocol, enabled, created_at, updated_at FROM app_udp_listeners l
 WHERE public_port = $1 AND enabled
-AND EXISTS (SELECT 1 FROM apps a WHERE a.id = l.app_id AND a.account_id = l.account_id AND a.status <> 'deleted')
+AND EXISTS (SELECT 1 FROM apps a WHERE a.id = l.app_id AND a.account_id = l.account_id AND a.status <> 'deleted' AND a.visibility <> 'internal')
 `
 
 func (q *Queries) UDPListenerByPublicPort(ctx context.Context, db DBTX, publicPort int32) (AppUdpListener, error) {

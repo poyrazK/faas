@@ -78,6 +78,28 @@ const (
 	SecurityMailTrackedAccountsMax = 100_000
 )
 
+// Queue receive long-polls one account, and one apid in all, may hold at a
+// time; past them a receive answers 429. A receive waits on apid's shared
+// completion listener, not on a database connection, so the caps bound
+// goroutines and the ownership read each matching completion costs (bug hunt
+// 2026-10-28 B21).
+const (
+	QueueReceiveWaitersPerAccount = 32
+	QueueReceiveWaitersPerAPID    = 4096
+)
+
+// Failed password sign-ins one email address may collect from any client
+// address within LoginFailureEmailWindow. The per-IP auth limit does not stop
+// a botnet guessing one account's password; past this budget every password
+// sign-in for the address answers 429 until failures age out or a password
+// reset succeeds, and a bound account's owner is emailed once. One apid
+// tracks at most LoginFailureEmailsTrackedMax addresses at a time.
+const (
+	LoginFailuresPerEmail        = 20
+	LoginFailureEmailWindow      = time.Hour
+	LoginFailureEmailsTrackedMax = 100_000
+)
+
 // Self-service accounts (password and magic-link sign-up) one client
 // address, and one network (IPv4 /24, IPv6 /48), may create per day.
 const (
@@ -3103,6 +3125,13 @@ const (
 	// ExportReplayWindow is how long after an export a retry with the same
 	// request ID still counts as that export instead of a new one.
 	ExportReplayWindow = 15 * time.Minute
+	// ExportReplaysMax is how many such retries one export admits. Each
+	// retry rebuilds the bundle, so an unbounded count let one replayed ID
+	// run full exports back to back (bug hunt 2026-10-28 H61).
+	ExportReplaysMax = 2
+	// AccountExportSpoolMaxBytes caps the temporary file one export bundle
+	// is assembled in on the control-plane disk.
+	AccountExportSpoolMaxBytes = 1 << 30
 	// ExportInFlightRetryAfterSeconds is the Retry-After for an export
 	// refused because the account already has one being built.
 	ExportInFlightRetryAfterSeconds = 30
@@ -4667,6 +4696,12 @@ type Limits struct {
 	// rather than dropping silently. Hobby=1000, Pro=10000,
 	// Scale=50000.
 	DebugTelemetryRequestsPerMinute int
+	// APIRequestsPerMinute caps the authenticated API requests one account
+	// makes a minute, as a token bucket of this capacity refilled over a
+	// minute. Only failed authentications per client IP were limited, so
+	// one valid key could drive any endpoint at any rate (bug hunt
+	// 2026-10-28 H42). Free=600, Hobby=1200, Pro=3000, Scale=6000.
+	APIRequestsPerMinute int
 	// DebugGuestLogExportsPerMinute (ADR-213 runtime adapter, ADR-958) is
 	// the per-account cap on OTLP log exports a tracing-enabled app's guest
 	// bridge forwards to apid. Each export carries at most
@@ -5250,6 +5285,7 @@ var planLimits = map[Plan]Limits{
 		Profiling:                       ProfilingLimits{},
 		DebugTelemetryRetentionDays:     0,
 		DebugTelemetryRequestsPerMinute: 0,
+		APIRequestsPerMinute:            600,
 		DebugGuestLogExportsPerMinute:   0,
 		DebugTelemetryDeploymentsPerApp: 0,
 		DebugTelemetrySpansPerTrace:     0,
@@ -5686,6 +5722,7 @@ var planLimits = map[Plan]Limits{
 		DebugTelemetryRetentionDays:     3,
 		Profiling:                       ProfilingLimits{Enabled: true, RetentionDays: 3, UploadsPerMinute: 60, CaptureStorageBytes: 256 << 20},
 		DebugTelemetryRequestsPerMinute: 1000,
+		APIRequestsPerMinute:            1200,
 		DebugGuestLogExportsPerMinute:   60,
 		DebugTelemetryDeploymentsPerApp: 10,
 		DebugTelemetrySpansPerTrace:     50,
@@ -6088,6 +6125,7 @@ var planLimits = map[Plan]Limits{
 		DebugTelemetryRetentionDays:     7,
 		Profiling:                       ProfilingLimits{Enabled: true, RetentionDays: 7, UploadsPerMinute: 180, CaptureStorageBytes: 1 << 30},
 		DebugTelemetryRequestsPerMinute: 10000,
+		APIRequestsPerMinute:            3000,
 		DebugGuestLogExportsPerMinute:   600,
 		DebugTelemetryDeploymentsPerApp: 50,
 		DebugTelemetrySpansPerTrace:     200,
@@ -6521,6 +6559,7 @@ var planLimits = map[Plan]Limits{
 		DebugTelemetryRetentionDays:     14,
 		Profiling:                       ProfilingLimits{Enabled: true, RetentionDays: 14, UploadsPerMinute: 600, CaptureStorageBytes: 4 << 30},
 		DebugTelemetryRequestsPerMinute: 50000,
+		APIRequestsPerMinute:            6000,
 		DebugGuestLogExportsPerMinute:   3000,
 		DebugTelemetryDeploymentsPerApp: 200,
 		DebugTelemetrySpansPerTrace:     1000,
@@ -8599,6 +8638,10 @@ const (
 	// trigger payload budget with this multiplier.
 	TriggerBrokerEnvelopeOverheadBytes int64 = 64 << 10
 	TriggerBrokerJSONExpansion         int64 = 6
+	// TriggerBrokerStatsMaxBytes bounds an SQS-compatible broker's /stats
+	// reply, a single small JSON object. A customer endpoint streaming an
+	// unbounded body exhausted schedd's memory (bug hunt 2026-10-28 H56).
+	TriggerBrokerStatsMaxBytes int64 = 4 << 10
 
 	// Free-tier disk reaper (spec §4.3): zero requests this long => EVICTED_COLD.
 	FreeTierColdEvictDays = 14
@@ -14309,6 +14352,12 @@ const (
 	// outbound queue, so delivering it cannot close the connection as a slow
 	// consumer on its own.
 	LiveQueryResultBytesMax = 2 << 20
+	// LiveQueryReplicationMessageMaxBytes bounds one logical replication
+	// message livequeryd reads. pgx's default allows about 1 GiB, so one
+	// customer's large value (a 200 MB bytea) was read whole into the
+	// 512 MB process serving every database; past the bound only that
+	// database's capture fails (bug hunt 2026-10-28 H57).
+	LiveQueryReplicationMessageMaxBytes = 16 << 20
 	// Starting values for the operator preview, to be set per database class
 	// from measurements before general availability.
 	LiveQuerySubscriptionsPerDatabase   = 10000

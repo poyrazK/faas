@@ -1818,13 +1818,13 @@ func (s *PgStore) RotateAPIKey(ctx context.Context, accountID, oldKeyID string, 
 		newLabel = old.Label
 	}
 	newKey, err := scanAPIKeyRow(ctx, tx,
-		`insert into api_keys (account_id, key_sha256, label, scopes, status, rotated_from_id, org_id)
-		 values ($1, $2, $3, $4, 'active', $5, $6)
+		`insert into api_keys (account_id, key_sha256, label, scopes, status, rotated_from_id, org_id, expires_at)
+		 values ($1, $2, $3, $4, 'active', $5, $6, $7)
 		 returning id, account_id, org_id, key_sha256, coalesce(label,''), scopes, created_at,
 		           last_used_at,
 		           expires_at, status, revoked_at, rotated_from_id,
 		           coalesce(host(created_ip),'') as created_ip, coalesce(created_ua,'') as created_ua, parent_key_id`,
-		accountID, newHash, newLabel, old.Scopes, oldKeyID, old.OrgID)
+		accountID, newHash, newLabel, old.Scopes, oldKeyID, old.OrgID, old.ExpiresAt)
 	if err != nil {
 		return APIKey{}, APIKey{}, err
 	}
@@ -2117,13 +2117,13 @@ func (s *PgStore) RotateOrgAPIKey(ctx context.Context, orgID, oldKeyID string, n
 		newLabel = old.Label
 	}
 	newKey, err := scanAPIKeyRow(ctx, tx,
-		`insert into api_keys (account_id, key_sha256, label, scopes, status, rotated_from_id, org_id)
-		 values ($1, $2, $3, $4, 'active', $5, $6)
+		`insert into api_keys (account_id, key_sha256, label, scopes, status, rotated_from_id, org_id, expires_at)
+		 values ($1, $2, $3, $4, 'active', $5, $6, $7)
 		 returning id, account_id, org_id, key_sha256, coalesce(label,''), scopes, created_at,
 		           last_used_at,
 		           expires_at, status, revoked_at, rotated_from_id,
 		           coalesce(host(created_ip),'') as created_ip, coalesce(created_ua,'') as created_ua, parent_key_id`,
-		old.AccountID, newHash, newLabel, old.Scopes, oldKeyID, old.OrgID)
+		old.AccountID, newHash, newLabel, old.Scopes, oldKeyID, old.OrgID, old.ExpiresAt)
 	if err != nil {
 		return APIKey{}, APIKey{}, err
 	}
@@ -2221,14 +2221,14 @@ func (s *PgStore) RotateOrgAPIKeyWithProvenance(ctx context.Context, orgID, oldK
 		newLabel = old.Label
 	}
 	newKey, err := scanAPIKeyRow(ctx, tx,
-		`insert into api_keys (account_id, key_sha256, label, scopes, status, rotated_from_id, org_id, created_ip, created_ua, parent_key_id)
-		 values ($1, $2, $3, $4, 'active', $5, $6, $7, $8, $9)
+		`insert into api_keys (account_id, key_sha256, label, scopes, status, rotated_from_id, org_id, created_ip, created_ua, parent_key_id, expires_at)
+		 values ($1, $2, $3, $4, 'active', $5, $6, $7, $8, $9, $10)
 		 returning id, account_id, org_id, key_sha256, coalesce(label,''), scopes, created_at,
 		           last_used_at,
 		           expires_at, status, revoked_at, rotated_from_id,
 		           coalesce(host(created_ip),'') as created_ip, coalesce(created_ua,'') as created_ua, parent_key_id`,
 		old.AccountID, newHash, newLabel, old.Scopes, oldKeyID, old.OrgID,
-		nullString(createdIP), nullString(createdUA), parent)
+		nullString(createdIP), nullString(createdUA), parent, old.ExpiresAt)
 	if err != nil {
 		return APIKey{}, APIKey{}, err
 	}
@@ -27290,6 +27290,7 @@ func (s *PgStore) ConsumeCliAuthCode(ctx context.Context, tokenHash []byte) (api
 		`update cli_auth_codes
 		 set consumed_at = now()
 		 where token_hash = $1
+		   and device_hash is null
 		   and status = 'consumed'
 		   and account_id is not null
 		   and consumed_at is null
@@ -27304,9 +27305,11 @@ func (s *PgStore) ConsumeCliAuthCode(ctx context.Context, tokenHash []byte) (api
 			// polling CLI: if the row exists and is still pending
 			// we tell it to keep waiting; otherwise we stop.
 			var status string
+			// A device-bound row answers the short code as if it did
+			// not exist (H67).
 			err2 := s.pool.QueryRow(ctx,
 				`select status from cli_auth_codes
-				 where token_hash = $1 and expires_at > now()`,
+				 where token_hash = $1 and device_hash is null and expires_at > now()`,
 				tokenHash,
 			).Scan(&status)
 			if err2 == nil && status == string(api.CliAuthStatusPending) {
@@ -27317,6 +27320,55 @@ func (s *PgStore) ConsumeCliAuthCode(ctx context.Context, tokenHash []byte) (api
 		return "", "", err
 	}
 	return api.CliAuthStatusConsumed, accountID, nil
+}
+
+// IssueCliAuthDeviceCode implements CliAuthDeviceCodeStore. A colliding
+// short code is refused rather than ignored: it would bind the device code
+// to someone else's pending row.
+func (s *PgStore) IssueCliAuthDeviceCode(ctx context.Context, tokenHash, deviceHash []byte, expiresAt time.Time) error {
+	tag, err := s.pool.Exec(ctx,
+		`insert into cli_auth_codes (token_hash, device_hash, expires_at) values ($1, $2, $3)
+		 on conflict do nothing`,
+		tokenHash, deviceHash, expiresAt)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrConflict
+	}
+	return nil
+}
+
+// ConsumeCliAuthDeviceCode implements CliAuthDeviceCodeStore with
+// ConsumeCliAuthCode's contract, keyed by the device code's hash.
+func (s *PgStore) ConsumeCliAuthDeviceCode(ctx context.Context, deviceHash []byte) (api.CliAuthStatus, string, error) {
+	var accountID string
+	err := s.pool.QueryRow(ctx,
+		`update cli_auth_codes
+		 set consumed_at = now()
+		 where device_hash = $1
+		   and status = 'consumed'
+		   and account_id is not null
+		   and consumed_at is null
+		   and expires_at > now()
+		 returning account_id`,
+		deviceHash,
+	).Scan(&accountID)
+	if err == nil {
+		return api.CliAuthStatusConsumed, accountID, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return "", "", err
+	}
+	var status string
+	err = s.pool.QueryRow(ctx,
+		`select status from cli_auth_codes where device_hash = $1 and expires_at > now()`,
+		deviceHash,
+	).Scan(&status)
+	if err == nil && status == string(api.CliAuthStatusPending) {
+		return api.CliAuthStatusPending, "", nil
+	}
+	return api.CliAuthStatusExpired, "", ErrNotFound
 }
 
 // AppendDeploymentLog inserts one row and returns the seq Postgres
@@ -27468,6 +27520,17 @@ func (s *PgStore) DeleteAccount(ctx context.Context, id string) error {
 
 	if err := sqlc.New().DeleteTrafficAccountInvocations(ctx, tx, uuidToPgtype(id)); err != nil {
 		return fmt.Errorf("state: delete account invocations: %w", err)
+	}
+	// Per-request telemetry and logs of the personal apps, as the app purge
+	// removes them: the apps' rows go below, and request_telemetry has no FK
+	// to them, so it outlived the account (bug hunt 2026-10-28 B11).
+	for _, step := range []struct{ name, sql string }{
+		{"request_telemetry", `delete from request_telemetry where app_id in (select id from apps where account_id = $1)`},
+		{"log_events", `delete from log_events where app_id in (select id from apps where account_id = $1)`},
+	} {
+		if _, err := tx.Exec(ctx, step.sql, mustPgUUID(id)); err != nil {
+			return fmt.Errorf("state: purge account %s: %w", step.name, err)
+		}
 	}
 
 	for _, purge := range []func(context.Context, sqlc.DBTX, pgtype.UUID) error{sqlc.New().ObjectStoragePurgeIdentityEventOutbox, sqlc.New().ObjectStoragePurgeIdentityEventLog} {
