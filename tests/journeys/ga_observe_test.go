@@ -13,7 +13,7 @@ import (
 // lifecycle: live tail, request analytics, account metrics, the log
 // archive of a parked instance, the wake timeline and per-app costs.
 
-// TestTailAnalyticsAndMetrics streams `gregale tail` while traffic flows to
+// TestTailAnalyticsAndMetrics streams `gregale invocation watch` while traffic flows to
 // the shared probe, then reads request analytics and account metrics
 // (rows 118, 121).
 func TestTailAnalyticsAndMetrics(t *testing.T) {
@@ -29,7 +29,7 @@ func TestTailAnalyticsAndMetrics(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			// tail streams until interrupted; the timeout ends it.
-			res = tg.run(t, 45*time.Second, "tail", slug)
+			res = tg.run(t, 45*time.Second, "invocation", "watch", slug)
 		}()
 		time.Sleep(5 * time.Second)
 		for range 10 {
@@ -38,21 +38,21 @@ func TestTailAnalyticsAndMetrics(t *testing.T) {
 		}
 		wg.Wait()
 		if len(strings.TrimSpace(string(res.stdout))) == 0 {
-			t.Fatalf("gregale tail printed nothing during 10 requests: %s", res.problem())
+			t.Fatalf("gregale invocation watch printed nothing during 10 requests: %s", res.problem())
 		}
 		t.Logf("tail: %s", tail(string(res.stdout), 400))
 	})
 	s.check("request_analytics", func(t *testing.T) {
-		res := tg.ok(t, time.Minute, "analytics", slug, "--since", "1h", "--by", "status")
+		res := tg.ok(t, time.Minute, "metric", "requests", slug, "--since", "1h", "--by", "status")
 		if len(objects(t, res.stdout)) == 0 {
-			t.Fatal("gregale analytics printed nothing")
+			t.Fatal("gregale metric requests printed nothing")
 		}
 		t.Logf("analytics: %s", tail(string(res.stdout), 400))
 	})
 	s.check("account_metrics", func(t *testing.T) {
-		res := tg.ok(t, time.Minute, "metrics", "--account", "--range", "1h")
+		res := tg.ok(t, time.Minute, "metric", "--account", "--range", "1h")
 		if len(objects(t, res.stdout)) == 0 {
-			t.Fatal("gregale metrics --account printed nothing")
+			t.Fatal("gregale metric --account printed nothing")
 		}
 	})
 }
@@ -68,7 +68,7 @@ func TestLogArchive(t *testing.T) {
 	if r := get(base + "/log?marker=" + marker); r.status != http.StatusOK {
 		t.Fatalf("GET /log: %s", r)
 	}
-	tg.ok(t, 2*time.Minute, "park", slug)
+	tg.ok(t, 2*time.Minute, "app", "park", slug)
 	waitParked(t, tg, slug)
 	s := newStory(t)
 
@@ -82,7 +82,7 @@ func TestLogArchive(t *testing.T) {
 		})
 	})
 	s.check("archive", func(t *testing.T) {
-		rows := objects(t, tg.ok(t, time.Minute, "ps", slug, "--all").stdout)
+		rows := objects(t, tg.ok(t, time.Minute, "app", "instances", slug, "--all").stdout)
 		if len(rows) == 0 {
 			t.Fatal("ps --all lists no retained instance")
 		}
@@ -112,7 +112,7 @@ func TestWakeTimelineAndCosts(t *testing.T) {
 
 	var wakeID string
 	s.step("wake", func(t *testing.T) {
-		tg.ok(t, 2*time.Minute, "park", slug)
+		tg.ok(t, 2*time.Minute, "app", "park", slug)
 		waitParked(t, tg, slug)
 		r := get(base + "/")
 		if r.status != http.StatusOK {
@@ -123,7 +123,7 @@ func TestWakeTimelineAndCosts(t *testing.T) {
 			if wakeID != "" {
 				return true, ""
 			}
-			for _, row := range objects(t, tg.ok(t, time.Minute, "ps", slug).stdout) {
+			for _, row := range objects(t, tg.ok(t, time.Minute, "app", "instances", slug).stdout) {
 				wakeID = str(row, "wake_id")
 			}
 			return wakeID != "", "no wake_id yet"
@@ -131,7 +131,7 @@ func TestWakeTimelineAndCosts(t *testing.T) {
 	})
 	s.check("wake_timeline", func(t *testing.T) {
 		eventually(t, "wake timeline has events", 2*time.Minute, 5*time.Second, func() (bool, string) {
-			res := tg.run(t, time.Minute, "wake-timeline", slug, wakeID, "--all")
+			res := tg.run(t, time.Minute, "app", "wake-timeline", slug, wakeID, "--all")
 			if res.exit != 0 {
 				return false, res.problem()
 			}

@@ -67,9 +67,9 @@ func TestServeAndObserve(t *testing.T) {
 	})
 	if tg.tier == tierFull {
 		s.check("metrics", func(t *testing.T) {
-			res := tg.ok(t, time.Minute, "metrics", slug, "--range", "15m")
+			res := tg.ok(t, time.Minute, "metric", slug, "--range", "15m")
 			if len(objects(t, res.stdout)) == 0 {
-				t.Fatal("gregale metrics printed nothing")
+				t.Fatal("gregale metric printed nothing")
 			}
 		})
 	}
@@ -81,14 +81,14 @@ func TestCronDelivery(t *testing.T) {
 	tg := needs(t, tierFull, true)
 	t.Parallel()
 	slug, base := tg.sharedProbe(t)
-	created := object(t, tg.ok(t, 2*time.Minute, "crons", "add", "--app", slug,
+	created := object(t, tg.ok(t, 2*time.Minute, "cron", "create", "--app", slug,
 		"--schedule", "0 0 1 1 *", "--path", "/cron").stdout)
 	id := str(created, "id")
 	if id == "" {
-		t.Fatalf("crons add printed no id: %s", compact(created))
+		t.Fatalf("cron create printed no id: %s", compact(created))
 	}
-	t.Cleanup(func() { tg.run(t, time.Minute, "crons", "rm", id) })
-	tg.ok(t, 2*time.Minute, "crons", "run", id)
+	t.Cleanup(func() { tg.run(t, time.Minute, "cron", "delete", id) })
+	tg.ok(t, 2*time.Minute, "cron", "run", id)
 	eventually(t, "manual cron fire reaches the app", 2*time.Minute, 3*time.Second, func() (bool, string) {
 		r := get(base + "/cron-hits")
 		if r.status != http.StatusOK {
@@ -97,7 +97,7 @@ func TestCronDelivery(t *testing.T) {
 		doc := jsonBody(t, r)
 		return num(doc, "hits") >= 1, "app counted " + compact(doc)
 	})
-	runs := tg.run(t, time.Minute, "crons", "runs", id)
+	runs := tg.run(t, time.Minute, "cron", "runs", id)
 	t.Logf("crons runs: %s", tail(string(runs.stdout), 600))
 }
 
@@ -113,7 +113,7 @@ func TestSecrets(t *testing.T) {
 	s := newStory(t)
 
 	s.step("set_and_deliver", func(t *testing.T) {
-		tg.ok(t, 5*time.Minute, "secrets", "set", "--app", slug, "E2E_SECRET="+value, "--restart")
+		tg.ok(t, 5*time.Minute, "env", "set", "--app", slug, "E2E_SECRET="+value, "--restart")
 		eventually(t, "secret delivered to the app", 3*time.Minute, 3*time.Second, func() (bool, string) {
 			r := get(base + "/env?key=E2E_SECRET")
 			if r.status != http.StatusOK {
@@ -124,7 +124,7 @@ func TestSecrets(t *testing.T) {
 		})
 	})
 	s.check("list_hides_value", func(t *testing.T) {
-		listed := tg.ok(t, time.Minute, "secrets", "list", "--app", slug)
+		listed := tg.ok(t, time.Minute, "env", "list", "--app", slug)
 		if !strings.Contains(string(listed.stdout), "E2E_SECRET") {
 			t.Errorf("secrets list does not show E2E_SECRET: %s", tail(string(listed.stdout), 300))
 		}
@@ -146,7 +146,7 @@ func TestSecrets(t *testing.T) {
 }
 
 // TestScaleToZero parks an app and wakes it by request and by command,
-// checks `gregale ps` agrees, and exercises min instances and a fresh
+// checks `gregale app instances` agrees, and exercises min instances and a fresh
 // restart (rows 38, 42, 43, 46).
 func TestScaleToZero(t *testing.T) {
 	tg := needs(t, tierSmoke, true)
@@ -155,7 +155,7 @@ func TestScaleToZero(t *testing.T) {
 	s := newStory(t)
 
 	s.step("park_and_wake_on_request", func(t *testing.T) {
-		tg.ok(t, 2*time.Minute, "park", slug)
+		tg.ok(t, 2*time.Minute, "app", "park", slug)
 		waitParked(t, tg, slug)
 		r := get(base + "/")
 		if r.status != http.StatusOK || str(jsonBody(t, r), "version") != "v1" {
@@ -164,7 +164,7 @@ func TestScaleToZero(t *testing.T) {
 		t.Logf("metric wake_first_request_ms=%d", r.elapsed.Milliseconds())
 	})
 	s.check("ps_shows_woken_instance", func(t *testing.T) {
-		eventually(t, "`gregale ps` lists the woken instance", 30*time.Second, 2*time.Second, func() (bool, string) {
+		eventually(t, "`gregale app instances` lists the woken instance", 30*time.Second, 2*time.Second, func() (bool, string) {
 			if get(base+"/").status != http.StatusOK {
 				return false, "app stopped answering"
 			}
@@ -176,10 +176,10 @@ func TestScaleToZero(t *testing.T) {
 		return
 	}
 	s.check("manual_wake", func(t *testing.T) {
-		tg.ok(t, 2*time.Minute, "park", slug)
+		tg.ok(t, 2*time.Minute, "app", "park", slug)
 		waitParked(t, tg, slug)
-		tg.ok(t, 3*time.Minute, "wake", slug, "--wait", "--timeout", "2m")
-		eventually(t, "`gregale ps` lists the woken instance", 30*time.Second, 2*time.Second, func() (bool, string) {
+		tg.ok(t, 3*time.Minute, "app", "wake", slug, "--wait", "--timeout", "2m")
+		eventually(t, "`gregale app instances` lists the woken instance", 30*time.Second, 2*time.Second, func() (bool, string) {
 			n := liveInstances(t, tg, slug)
 			return n > 0, fmt.Sprintf("`wake --wait` returned but ps lists %d live instance(s)", n)
 		})
@@ -309,12 +309,13 @@ func expectVersion(t *testing.T, base, version string, timeout time.Duration) {
 	})
 }
 
-// liveInstances counts `gregale ps` rows in a live state. ps lists only
-// live instances, so a row without a recognised state still counts.
+// liveInstances counts `gregale app instances` rows in a live state. It
+// lists only live instances, so a row without a recognised state still
+// counts.
 func liveInstances(t *testing.T, tg *target, slug string) int {
 	t.Helper()
 	live := 0
-	for _, row := range objects(t, tg.ok(t, time.Minute, "ps", slug).stdout) {
+	for _, row := range objects(t, tg.ok(t, time.Minute, "app", "instances", slug).stdout) {
 		state := strings.ToLower(str(row, "state") + str(row, "status"))
 		switch {
 		case state == "", strings.Contains(state, "running"), strings.Contains(state, "waking"),
