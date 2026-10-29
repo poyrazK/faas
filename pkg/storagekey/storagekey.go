@@ -33,6 +33,18 @@ const (
 // spelling. Keep in sync with pkg/imaged's BaseRefDebianParent constant.
 const ParentBaseRuntime = "base-debian-parent"
 
+// AgentRunBaseRuntime is the agent base's name in the runtime base key
+// space: imaged stages images/agent-base at BaseForArch(AgentRunBaseRuntime,
+// arch), with the scan sidecar vmmd's admission gate reads (issue #299).
+const AgentRunBaseRuntime = "agent"
+
+// AgentRunLayerForArch is where imaged publishes the platform agent layer,
+// drive1 holding only the agent marker (ADR-20261027090010 §2). The version
+// names the layer's content; a new layout takes a new key.
+func AgentRunLayerForArch(arch string) string {
+	return "base/agent-layer-v1-" + arch + ".ext4"
+}
+
 // AppLayer is the key of a per-app drive1 ext4 layer:
 // apps/<slug>/<deploymentID>.ext4.
 func AppLayer(slug, deploymentID string) string {

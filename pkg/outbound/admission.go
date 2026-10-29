@@ -391,8 +391,13 @@ type AdmissionSpec struct {
 	AITraceNamed bool
 	// BindingAppID scopes an explicit app binding budget. It is set from
 	// verified workload identity, never from a guest-controlled header.
-	BindingAppID                   string
-	BindingDailyRequestLimit       *int64
+	BindingAppID             string
+	BindingDailyRequestLimit *int64
+	// AgentRun admits an agent run's relayed call (ADR-20261027090010 §7). Its run
+	// grant authorizes it instead of an app binding, so a customer
+	// integration admits it without a BindingAppID; the integration's own
+	// limits still apply, and the run's spend cap holds its cost.
+	AgentRun                       bool
 	CircuitBreakerFailureThreshold int
 	CircuitBreakerOpenSeconds      int
 	RetryBudgetPerMinute           int
