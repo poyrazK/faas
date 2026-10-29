@@ -23,9 +23,9 @@ Facts measured on 2026-10-29 that shape the decision:
 
 - The pinned cosign (v2.4.1, `release.yml` `COSIGN_VERSION`, staged by node join at `/usr/local/bin/cosign`) cannot verify GitHub's bundles through `cosign verify-attestation <image>`. That command has no `--new-bundle-format` and no `--trusted-root` in 2.4.1. `cosign verify-blob-attestation --new-bundle-format --trusted-root … --offline <file>` works. On the rc.304 CLI archive and its GitHub attestation bundle, it printed `Verified OK`. With the wrong identity it failed with `expected SAN value …`, and with the wrong file with `unable to confirm artifact digest is present in subject digests`. It also ran with network access denied and an unwritable `HOME`, and wrote nothing.
 - Attestations of a public repository are signed by public-good Sigstore (Fulcio `sigstore.dev`, Rekor). `gh attestation trusted-root` prints that root and GitHub's own; the bundle verified against the public-good one.
-- The pinned runtime base refs are single-platform OCI manifests, so the pinned digest is the attested subject.
-- No pinned base is attested yet. rc.304's `runner-node22` digest returns 404 from the attestations API. Every images.yml run on `main` since #5835 (11e170e1b0) is still queued.
-- GHCR returns `404 MANIFEST_UNKNOWN` from `/v2/<name>/referrers/<digest>`. A registry with the OCI 1.1 referrers API returns an empty index there instead, so GHCR probably stores bundles under the referrers tag schema. This is not yet confirmed on an attested digest.
+- Since #5835 a `sha-<commit>` tag is an index: the linux/amd64 manifest plus a buildx `attestation-manifest` entry. release.yml pins `crane digest --platform linux/amd64`, which is the attested child, and imaged's `resolved.Digest` is the same child. Digests pinned before #5835 (rc.304 and earlier) are single manifests with no attestation; rc.304's `runner-node22` digest returns 404 from the attestations API.
+- GHCR has no referrers API: `/v2/<name>/referrers/<digest>` returns `404 MANIFEST_UNKNOWN`. It keeps the bundle under the referrers tag schema. `sha256-<hex>` is an index with one entry of artifact type `application/vnd.dev.sigstore.bundle.v0.3+json` (annotation `dev.sigstore.bundle.predicateType: https://slsa.dev/provenance/v1`), and that manifest's single layer is the bundle.
+- The run for #5835 itself (images run 40897780922) attested every runtime base. On `runner-node22` linux/amd64 `sha256:df455b473706287c80fe92a1a5f3514c4b79c554898c6792b13ce47a7af892e7`, the whole chain in decisions 2–4 was checked with network access denied: fetch the bundle through the tag, check its blob digest, then hash the manifest bytes to the subject. cosign printed `Verified OK` for images.yml on `refs/heads/main`. It refused another workflow's identity and another manifest's bytes. The runner extension reads `github-hosted`.
 - A base is rebuilt on every release even when its OCI digest is unchanged, because the guest-init digest is part of the reuse key.
 
 ## Decision
@@ -38,7 +38,7 @@ Facts measured on 2026-10-29 that shape the decision:
    - issuer `https://token.actions.githubusercontent.com`;
    - the certificate's runner environment extension (OID `1.3.6.1.4.1.57264.1.11`) is `github-hosted`. imaged reads this itself after cosign passes, because cosign 2.4.1 has no flag for it. This matches the release gate's `--deny-self-hosted-runners`.
 
-3. **Where the bundle comes from.** imaged fetches the bundle from the registry it pulls the base from, with the same credentials. It first tries the OCI 1.1 referrers API for `resolved.Digest`, filtered by artifact type `application/vnd.dev.sigstore.bundle.v0.3+json`. When the registry answers 404, it tries the referrers tag schema: the `sha256-<hex>` index that `push-to-registry` writes on registries without the API. imaged reads at most `BaseProvenanceMaxBundles` (8) bundles of at most `BaseProvenanceMaxBundleBytes` (1 MiB) each, both in `pkg/api/limits.go`, and stops at the first that verifies. The new reader lives in `pkg/oci` beside `PullImageSignatureAttachments`. It uses `PullBlobWithAuth`, which checks each blob's digest. imaged gets no new egress host and no GitHub API dependency.
+3. **Where the bundle comes from.** imaged fetches the bundle from the registry it pulls the base from, with the same credentials. It first tries the OCI 1.1 referrers API for `resolved.Digest`, filtered by artifact type `application/vnd.dev.sigstore.bundle.v0.3+json`. When the registry answers 404, it tries the referrers tag schema: the `sha256-<hex>` index that `push-to-registry` writes on registries without the API. This is where GHCR keeps it. imaged reads at most `BaseProvenanceMaxBundles` (8) bundles of at most `BaseProvenanceMaxBundleBytes` (1 MiB) each, both in `pkg/api/limits.go`, and stops at the first that verifies. The new reader lives in `pkg/oci` beside `PullImageSignatureAttachments`. It uses `PullBlobWithAuth`, which checks each blob's digest. imaged gets no new egress host and no GitHub API dependency.
 
 4. **How.** imaged runs:
 
@@ -78,7 +78,7 @@ Facts measured on 2026-10-29 that shape the decision:
    - One `slog` line per check with ref, digest, result and mode.
    - The alert `FaasBaseProvenanceUnverified` (severity `warn`, family `base_provenance`): `sum by (node, base, result) (increase(imaged_base_provenance_verifications_total{result!~"verified|cached|legacy"}[1h])) > 0`, with the runbook `docs/runbooks/FaasBaseProvenanceUnverified.md`.
 
-10. **Operator and release check.** `imaged verify-base-provenance --ref <ref>` runs the same check without staging and prints the result. release.yml runs it, using the release's own imaged binary, cosign and shipped root, against every digest it pins, after #5895's gate. A release therefore cannot ship a root, a bundle location or a policy that its own imaged would reject. The first such run also confirms where GHCR keeps the bundle (decision 3) before any host depends on it.
+10. **Operator and release check.** `imaged verify-base-provenance --ref <ref>` runs the same check without staging and prints the result. release.yml runs it, using the release's own imaged binary, cosign and shipped root, against every digest it pins, after #5895's gate. A release therefore cannot ship a root, a bundle location or a policy that its own imaged would reject.
 
 ## Rollout
 
@@ -103,5 +103,5 @@ Facts measured on 2026-10-29 that shape the decision:
 - **sigstore-go inside imaged.** The owner chose the host's cosign: no new dependency tree in a daemon, and one tool for all of the fleet's Sigstore checks.
 - **Online TUF (cosign's default).** imaged would need egress to the Sigstore CDN and would fail when the CDN is unreachable. The owner chose the root shipped in the release.
 - **GitHub attestations API as the bundle source.** It would add `api.github.com` egress and the anonymous rate limit (60 requests per hour per address). The registry already serves the pull.
-- **Enforce from the first release.** No base is attested yet, and the bundle location on GHCR is unconfirmed. The owner chose observe first.
+- **Enforce from the first release.** No release pins an attested base yet, and the fleet has never reported a result. The owner chose observe first.
 - **Hook inside `oci.ResolveImage`.** Customer images also go through it.
