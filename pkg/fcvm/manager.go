@@ -36,6 +36,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/privatenetwork"
 	"github.com/onebox-faas/faas/pkg/rehearsalrecorder"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
+	"github.com/onebox-faas/faas/pkg/sealsig"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/storagekey"
@@ -1127,6 +1128,10 @@ type Manager struct {
 	// binding (ADR-20261023173624, contract step). Off until every stored
 	// envelope is bound.
 	requireSecretBinding bool
+	// runtimeSignatures verifies apid's writer signature on runtime
+	// envelopes before any is opened (ADR 20261028161502, amendment 1).
+	// nil checks nothing.
+	runtimeSignatures *sealsig.RuntimeChecker
 	// conntrackCap is the effective per-instance conntrack cap. Probed once
 	// at construction from api.ConntrackCapProbe(): DefaultConntrackCap when
 	// the kernel supports ct expressions in netns (CONFIG_NF_CONNTRACK_NET_NS),
@@ -1646,6 +1651,37 @@ func (m *Manager) SetHostIdentities(ids []*age.X25519Identity) {
 // production wires it before serving traffic.
 func (m *Manager) RequireSecretBinding(required bool) {
 	m.requireSecretBinding = required
+}
+
+// WithRuntimeSecretSignatures makes every path that opens runtime secrets
+// verify their writer signatures first (ADR 20261028161502, amendment 1).
+// NOT safe to call concurrently with Wake; production wires it before
+// serving traffic.
+func (m *Manager) WithRuntimeSecretSignatures(checker *sealsig.RuntimeChecker) *Manager {
+	m.runtimeSignatures = checker
+	return m
+}
+
+// checkRuntimeSignatures refuses the entries if any envelope's signature
+// does not verify, naming the entry.
+func (m *Manager) checkRuntimeSignatures(entries []SealedEnvEntry) error {
+	if m.runtimeSignatures == nil {
+		return nil
+	}
+	blobs := make([][]byte, len(entries))
+	for i, entry := range entries {
+		blobs[i] = entry.Ciphertext
+	}
+	ctx := m.lifecycleCtx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	err := m.runtimeSignatures.Check(ctx, blobs)
+	var refused *sealsig.BlobError
+	if errors.As(err, &refused) {
+		return fmt.Errorf("sealed env[%s]: %w", logsanitize.Field(entries[refused.Index].Key), refused.Err)
+	}
+	return err
 }
 
 // WithStorage wires the artifact backend the Manager uses to read
@@ -3537,6 +3573,9 @@ func (m *Manager) openSealedEnvEntries(entries []SealedEnvEntry, accountID strin
 	if len(m.hostIdentities) == 0 {
 		return nil, ErrNoHostKey
 	}
+	if err := m.checkRuntimeSignatures(entries); err != nil {
+		return nil, err
+	}
 	merged := secretbox.Envelope{}
 	for _, entry := range entries {
 		inner, err := m.openBoundEntry(entry, accountID)
@@ -3570,6 +3609,9 @@ func (m *Manager) UnsealRuntimeSecrets(entries []SealedEnvEntry, accountID strin
 	}
 	if len(m.hostIdentities) == 0 {
 		return nil, ErrNoHostKey
+	}
+	if err := m.checkRuntimeSignatures(entries); err != nil {
+		return nil, err
 	}
 	secrets := make(map[string]string, len(entries))
 	for _, entry := range entries {

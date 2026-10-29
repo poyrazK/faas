@@ -97,6 +97,7 @@ func runFleetSealMigrate(args []string) error {
 	controlKey := fs.String("control-key", "", "control seal-domain identity (default: "+controlKeyDefault+" when it exists)")
 	dsn := fs.String("pg-dsn", "", "PostgreSQL DSN (default: FAAS_PG_DSN, DATABASE_URL, or deploy env)")
 	dbEnv := fs.String("db-env", "", "systemd env file containing DATABASE_URL")
+	runtimeSigningKey := fs.String("runtime-signing-key", "", "apid's runtime secret signing key; signs the runtime secrets this re-seals (ADR 20261028161502)")
 	jsonOut := fs.Bool("json", false, "emit JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -126,7 +127,13 @@ func runFleetSealMigrate(args []string) error {
 	if err != nil {
 		return err
 	}
-	report, err := fleetseal.Migrate(ctx, state.NewPgStore(pool), fleet, legacy, control)
+	store := state.NewPgStore(pool)
+	uninstall, err := installResealSigner(*runtimeSigningKey, store)
+	if err != nil {
+		return err
+	}
+	defer uninstall()
+	report, err := fleetseal.Migrate(ctx, store, fleet, legacy, control)
 	if err != nil {
 		return err
 	}

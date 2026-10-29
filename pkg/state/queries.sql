@@ -26441,3 +26441,16 @@ ON CONFLICT (singleton) DO NOTHING;
 -- version protection job in its bucket (ADR-20261025115958).
 SELECT (EXISTS(SELECT 1 FROM object_deletions d WHERE d.bucket_id=sqlc.arg(bucket_id)::uuid AND d.lifecycle_scan_id=sqlc.arg(scan_id)::uuid AND d.state IN ('prepared','dispatched'))
  OR EXISTS(SELECT 1 FROM object_version_protection p WHERE p.bucket_id=sqlc.arg(bucket_id)::uuid AND p.state IN ('waiting','applying')))::boolean AS active;
+
+-- name: PutRuntimeSecretSignature :exec
+-- ADR 20261028161502 amendment 1: a runtime secret envelope's writer
+-- signature, by its SHA-256. A signature is deterministic for one envelope and
+-- key, so writing it again replaces only a row that held something else.
+INSERT INTO runtime_secret_signatures (ciphertext_sha256, signature)
+VALUES (sqlc.arg(ciphertext_sha256)::bytea, sqlc.arg(signature)::bytea)
+ON CONFLICT (ciphertext_sha256) DO UPDATE SET signature = EXCLUDED.signature, created_at = now()
+WHERE runtime_secret_signatures.signature IS DISTINCT FROM EXCLUDED.signature;
+
+-- name: ReadRuntimeSecretSignatures :many
+SELECT ciphertext_sha256, signature FROM runtime_secret_signatures
+WHERE ciphertext_sha256 = ANY(sqlc.arg(digests)::bytea[]);

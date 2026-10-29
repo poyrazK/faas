@@ -1266,3 +1266,56 @@ dead-letters. Use the domain's own reader hosts and writer (sections 2–12).
 
 Never clear the previous identity before step 4 finishes: a value still
 sealed to it no longer opens.
+
+## 14. Runtime secret writer signatures
+
+ADR 20261028161502 amendment 1. apid signs every runtime secret it seals and
+stores the signature in `runtime_secret_signatures`. vmmd looks each
+signature up and refuses a runtime secret whose signature does not verify.
+After the contract step it also refuses unsigned ones. Run this after
+section 4: the signature covers the envelope as stored, so sign after the
+runtime re-seal and the binding pass, or pass `--runtime-signing-key` to
+them.
+
+1. Make the key pair on the operator workstation:
+   `gregalectl runtime-secret signing-keygen --sign-key runtime-signing.key --verify-key runtime-signing.pub`.
+2. Set `faas_seal_domain_runtime_signing_pub_src` and converge the compute
+   hosts. vmmd reads the key at its next start (the next release restart).
+   Each vmmd that has it reports
+   `faas_runtime_secret_signature_enforcement 1`. It refuses only a
+   signature that does not verify, and logs each unsigned secret once.
+3. Set `faas_seal_domain_runtime_signing_key_src` and converge the control
+   plane. apid and its clone worker restart and sign every runtime secret
+   they seal from then on. Their logs say `runtime secret signing enabled`.
+4. Sign what is stored, once, on a control-plane host:
+   `sudo gregalectl runtime-secret sign-existing --db-env /etc/faas/compute-db.env`.
+   It signs every stored runtime envelope that has no signature, as it
+   stands. Check the count against the secrets you expect: the backfill
+   trusts what is stored. It fails if an envelope carries a signature this
+   key did not make, or a document cannot be read. Look at those before you
+   go on. Run it again until it reports 0 signed.
+5. Once every vmmd reports `faas_runtime_secret_signature_enforcement 1`
+   and a rerun of step 4 signs nothing, set
+   `faas_seal_domain_runtime_signatures_required: true` and converge the
+   compute hosts. vmmd refuses unsigned runtime secrets from its next start
+   and reports `faas_runtime_secret_signature_enforcement 2`.
+
+After step 5, operator re-seals must sign what they write. Pass
+`--runtime-signing-key /etc/faas/secrets/domains/runtime-signing.key` to
+`gregalectl seal-domain migrate --domain runtime` (with or without
+`--bind-accounts`) and to `gregalectl fleet-seal migrate`, or run step 4
+straight after them. A wake that meets an unsigned secret fails with
+`the value carries no writer signature`.
+
+Rollback: set `faas_seal_domain_runtime_signatures_required: false` and
+converge the compute hosts. vmmd serves unsigned secrets again from its
+next start. To stop checking altogether, clear
+`faas_seal_domain_runtime_signing_pub_src`.
+
+Key rotation: generate a new pair and list both public keys in
+the file `faas_seal_domain_runtime_signing_pub_src` names. Converge the
+compute hosts, then switch `faas_seal_domain_runtime_signing_key_src` to the
+new private key. Envelopes signed with the old key keep the old signature,
+so keep the old public key listed. Do not run step 4 with the new key: it
+reports those envelopes as signed by another key. Re-signing them under the
+new key is follow-up work, as for live queries (ADR 20261028161502, item 5).

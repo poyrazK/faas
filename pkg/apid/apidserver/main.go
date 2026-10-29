@@ -2048,6 +2048,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := loadSealDomains(deps.getenv, log); err != nil {
 		return err
 	}
+	uninstallRuntimeSigner, err := installRuntimeSigner(deps.getenv, store, log)
+	if err != nil {
+		return err
+	}
+	defer uninstallRuntimeSigner()
 	// ADR 20261022111812: apid reads the account domain.
 	sealdomain.RegisterLoaded(ops.Registry(), sealdomain.Account, len(accountDomainIdentities) > 0)
 
