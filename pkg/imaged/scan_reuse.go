@@ -29,15 +29,15 @@ const (
 	scanReuseLookback = 20
 )
 
-// scannerIdentity names the scanner and vulnerability database behind a
+// deployScanner names the scanner and vulnerability database behind a
 // result.
-type scannerIdentity struct {
+type deployScanner struct {
 	version, dbVersion, dbBuiltAt string
 }
 
 // scannerOf returns the identity of a result whose database was valid.
-func scannerOf(r *ScanResult) (scannerIdentity, bool) {
-	id := scannerIdentity{
+func scannerOf(r *ScanResult) (deployScanner, bool) {
+	id := deployScanner{
 		version:   strings.TrimSpace(r.ScannerVersion),
 		dbVersion: strings.TrimSpace(r.ScannerDBVersion),
 		dbBuiltAt: strings.TrimSpace(r.ScannerDBBuiltAt),
@@ -49,13 +49,13 @@ func scannerOf(r *ScanResult) (scannerIdentity, bool) {
 // scannerMemo remembers the scanner of the last real per-deploy scan.
 type scannerMemo struct {
 	mu sync.Mutex
-	id scannerIdentity
+	id deployScanner
 	at time.Time
 }
 
 // record notes the scanner of a real scan; a failed scan forgets it.
 func (m *scannerMemo) record(r *ScanResult, err error, now time.Time) {
-	var id scannerIdentity
+	var id deployScanner
 	ok := false
 	if err == nil && r != nil {
 		id, ok = scannerOf(r)
@@ -63,17 +63,17 @@ func (m *scannerMemo) record(r *ScanResult, err error, now time.Time) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if !ok {
-		m.id, m.at = scannerIdentity{}, time.Time{}
+		m.id, m.at = deployScanner{}, time.Time{}
 		return
 	}
 	m.id, m.at = id, now
 }
 
-func (m *scannerMemo) current(now time.Time) (scannerIdentity, bool) {
+func (m *scannerMemo) current(now time.Time) (deployScanner, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.at.IsZero() || now.Sub(m.at) > scanReuseScannerWindow {
-		return scannerIdentity{}, false
+		return deployScanner{}, false
 	}
 	return m.id, true
 }

@@ -50,7 +50,7 @@ on:
           faas-fleet, production-us (gregale-prod, us-east1) uses
           faas-fleet-us, so one fleet's runner never deploys the other.
         required: false
-        default: production
+        default: production-us
         type: string
       release_tag:
         description: "Existing pre-1.0 release tag published by release.yml (empty with units_run_id)"
@@ -84,6 +84,14 @@ on:
           fleet runner host is unavailable; hosted jobs queue behind CI.
         type: boolean
         default: false
+      skip_role_convergence:
+        description: >-
+          With hosted_runner only: activate without converging the
+          control-plane roles (ADR-580). A hosted runner cannot reach the
+          fleet's private names, so without this a hosted deploy refuses to
+          start rather than ship a release whose role changes never land.
+        type: boolean
+        default: false
   workflow_dispatch:  # manual trigger for deliberate deployment
     inputs:
       deploy_environment:
@@ -93,7 +101,7 @@ on:
           faas-fleet, production-us (gregale-prod, us-east1) uses
           faas-fleet-us, so one fleet's runner never deploys the other.
         required: false
-        default: production
+        default: production-us
         type: choice
         options:
           - production
@@ -128,6 +136,14 @@ on:
           Run this workflow's coordination job on a GitHub-hosted runner
           instead of the dedicated fleet runner. Escape hatch for when the
           fleet runner host is unavailable; hosted jobs queue behind CI.
+        type: boolean
+        default: false
+      skip_role_convergence:
+        description: >-
+          With hosted_runner only: activate without converging the
+          control-plane roles (ADR-580). A hosted runner cannot reach the
+          fleet's private names, so without this a hosted deploy refuses to
+          start rather than ship a release whose role changes never land.
         type: boolean
         default: false
 
@@ -177,6 +193,12 @@ jobs:
             echo "::error::set release_tag (a full release) or units_run_id (a unit release)" >&2
             exit 1
           }
+
+      - name: Require role convergence or an explicit skip
+        if: ${{ inputs.hosted_runner && !inputs.skip_role_convergence }}
+        run: |
+          echo "::error::a GitHub-hosted runner cannot converge the control-plane roles (ADR-580); rerun on the fleet runner, or set skip_role_convergence to activate without them" >&2
+          exit 1
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -415,8 +437,36 @@ jobs:
           BUNDLE_ROOT="${RUNNER_TEMP}/faas-release/${RELEASE_ID}"
           mkdir -p "${BUNDLE_ROOT}/bin" "${BUNDLE_ROOT}/systemd" "${BUNDLE_ROOT}/optional-systemd" "${BUNDLE_ROOT}/tmpfiles.d" "${BUNDLE_ROOT}/prometheus" "${BUNDLE_ROOT}/statuspage"
           PROM_BOX_LABEL="$(ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "root@${CP_HOST}" hostname)"
+          # The scrape jobs follow the production manifest as the prometheus
+          # role does under converge: the app edge's jobs exist only while
+          # public_edge.compute_nodes is on (ADR-1343 §5), Promtail's only with
+          # platform logs. Role defaults alone dropped the edge jobs from every
+          # release's config. The control plane's generated vars load after
+          # the defaults, as host_vars outrank role defaults; connection vars
+          # (ansible_host, the interpreter) stay out of this local render.
+          MANIFEST_VARS="${RUNNER_TEMP}/manifest-ansible"
+          rm -rf "$MANIFEST_VARS"
+          "$CANONICAL_ROOT/unpacked/gregalectl" manifest ansible \
+            --manifest-file "$CANONICAL_ROOT/production-manifest.yaml" \
+            --output-dir "$MANIFEST_VARS"
+          CP_INVENTORY_NAME="$(awk '/^\[control_plane\]/ { cp = 1; next } /^\[/ { cp = 0 } cp && NF && $1 !~ /^#/ { print $1; exit }' "$MANIFEST_VARS/inventory/hosts.ini")"
+          [[ -n "$CP_INVENTORY_NAME" ]] || { echo "production manifest has no control-plane host" >&2; exit 1; }
+          prom_vars=()
+          for vars_file in "$MANIFEST_VARS/inventory/group_vars/all.yml" "$MANIFEST_VARS/inventory/host_vars/${CP_INVENTORY_NAME}.yml"; do
+            [[ -f "$vars_file" ]] || continue
+            python3 - "$vars_file" "${vars_file%.yml}.prometheus.yml" <<'PY'
+          import sys
+          import yaml
+          with open(sys.argv[1], encoding="utf-8") as src:
+              values = yaml.safe_load(src) or {}
+          with open(sys.argv[2], "w", encoding="utf-8") as dst:
+              yaml.safe_dump({k: v for k, v in values.items() if not k.startswith("ansible_")}, dst)
+          PY
+            prom_vars+=(-e "@${vars_file%.yml}.prometheus.yml")
+          done
           ansible localhost -i localhost, -c local \
             -e @deploy/ansible/roles/prometheus/defaults/main.yml \
+            "${prom_vars[@]}" \
             -e "ansible_hostname=${PROM_BOX_LABEL}" \
             -e faas_box_role=control-plane \
             -m ansible.builtin.template \
@@ -827,7 +877,7 @@ jobs:
       - name: Report skipped control-plane convergence
         if: ${{ inputs.hosted_runner }}
         run: |
-          echo "::warning::GitHub-hosted runners cannot resolve the fleet's private names; control-plane roles were not converged this run (ADR-580)"
+          echo "::warning::skip_role_convergence: GitHub-hosted runners cannot resolve the fleet's private names; control-plane roles were not converged this run (ADR-580)"
 
       - name: Upload and activate immutable release
         id: activate

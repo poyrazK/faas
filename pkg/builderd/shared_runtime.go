@@ -21,9 +21,8 @@ func sharedRuntimeBuildLog(v *api.SharedRuntimeVerdict) string {
 }
 
 // SharedRuntimeEnv controls building source container apps on the shared
-// runner base (docs/adr/1500-shared-runtime-source-apps.md). On by default
-// since the metal acceptance run (ADR-20261029103512); "0" turns it off.
-const SharedRuntimeEnv = "FAAS_SOURCE_APP_SHARED_RUNTIME"
+// runner base; see sharedruntime.Env.
+const SharedRuntimeEnv = sharedruntime.Env
 
 // sharedSourceAppRuntime picks the runner base a source build of app runs
 // on, or "" for the app's own base. Only Node container apps without a
@@ -33,7 +32,7 @@ const SharedRuntimeEnv = "FAAS_SOURCE_APP_SHARED_RUNTIME"
 // A musl runner base (node22) is never chosen: the build's glibc toolchain
 // would not run on it if the app turned out ineligible.
 func sharedSourceAppRuntime(app state.App, fw Framework, nodeSpec, dockerfilePath string, env func(string) string) string {
-	if env(SharedRuntimeEnv) == "0" || app.Type == state.AppTypeFunction || app.Runtime != "" ||
+	if !sharedruntime.Enabled(env(SharedRuntimeEnv)) || app.Type == state.AppTypeFunction || app.Runtime != "" ||
 		fw != FrameworkNode || dockerfilePath != "" || app.Manifest.ExecutionMode == api.ExecutionModeJob {
 		return ""
 	}

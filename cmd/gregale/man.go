@@ -170,6 +170,7 @@ func renderManTop(w io.Writer) {
 
 // renderManCommand writes the gregale-<command>(1) per-command page.
 func renderManCommand(w io.Writer, c cliCommand) {
+	c = cliTreeDisplayCommand(c)
 	// The .TH source field is the brand ("gregale"), not the page
 	// slug — whatis/man -k index on the source label, and operators
 	// expect to grep `gregale` (lowercase) across every page.

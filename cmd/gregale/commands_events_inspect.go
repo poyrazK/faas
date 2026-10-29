@@ -23,7 +23,7 @@ func cmdEventsInspect(args []string) int {
 		return 1
 	}
 	if len(positional) != 0 || rejectUnexpectedFlagArgs(fs) || strings.TrimSpace(*source) == "" || strings.TrimSpace(*id) == "" || validateCLILimit("limit", *limit, api.EventReceiptPageMax) != nil {
-		PrintUsage(os.Stderr, "usage: gregale event get --source SOURCE --id ID [--subscription SUB] [--after CURSOR] [--limit N]", "events")
+		PrintUsage(os.Stderr, "usage: gregale event get --source SOURCE --id ID [--subscription SUB] [--cursor CURSOR] [--limit N]", "events")
 		return 1
 	}
 	client, err := authedClient()
