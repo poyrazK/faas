@@ -17,16 +17,22 @@ const sloRollupInterval = 5 * time.Minute
 
 // runSLORollup records SLO budget hours until ctx ends. It is a no-op when
 // Prometheus is unconfigured or the store predates ADR-747; budgets then
-// read as "no data" instead of failing.
-func runSLORollup(ctx context.Context, store state.Store, prom appmetrics.PromQL, log *slog.Logger) {
+// read as "no data" instead of failing, and loops reports the rollup
+// disabled so an operator hears of it (ADR-20261024222102).
+func runSLORollup(ctx context.Context, store state.Store, prom appmetrics.PromQL, loops *observabilityLoops, log *slog.Logger) {
 	budgets, ok := store.(state.SLOBudgetStore)
 	if !ok || prom == nil {
 		log.Info("meterd: SLO budget rollup disabled", "store_supported", ok, "prometheus_configured", prom != nil)
 		return
 	}
+	loops.setEnabled(loopSLORollup, true)
+	defer loops.setEnabled(loopSLORollup, false)
 	r := &slo.Rollup{Store: budgets, Prom: prom, Log: log}
 	tick := func() {
 		stats, err := r.RunOnce(ctx, time.Now())
+		loops.pass(loopSLORollup, err, time.Now())
+		loops.add(loopSLORollup, "recorded", stats.Recorded)
+		loops.add(loopSLORollup, "failed", stats.Failed)
 		if err != nil {
 			log.Warn("meterd: SLO budget rollup", "err", err)
 			return

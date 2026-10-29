@@ -502,9 +502,18 @@ func decisionWindow(t *testing.T, d api.RolloutDecision) time.Duration {
 
 // deployLive submits a deployment and waits until it is live. A canary
 // candidate is live while it still serves only its first stage.
+//
+// A busy control plane can refuse the submission when the traffic policy
+// check runs out of time (422 traffic_policy_too_complex in milliseconds); the
+// problem tells clients to retry, so the drill does, and logs each retry.
 func (d *safeReleaseDrill) deployLive(t *testing.T, slug string, req api.CreateDeploymentRequest) state.Deployment {
 	t.Helper()
 	raw, status := doReq(t, d.h, d.key, http.MethodPost, "/v1/apps/"+slug+"/deployments", req)
+	for attempt := 1; attempt <= 3 && status == http.StatusUnprocessableEntity && policyCheckTimedOut(raw); attempt++ {
+		t.Logf("DRILL deploy_retry app=%s attempt=%d: traffic policy check ran out of time", slug, attempt)
+		time.Sleep(5 * time.Second)
+		raw, status = doReq(t, d.h, d.key, http.MethodPost, "/v1/apps/"+slug+"/deployments", req)
+	}
 	if status != http.StatusAccepted {
 		t.Fatalf("deploy %s: status=%d body=%s", slug, status, raw)
 	}
@@ -513,6 +522,14 @@ func (d *safeReleaseDrill) deployLive(t *testing.T, slug string, req api.CreateD
 		t.Fatalf("decode deployment: %v body=%s", err, raw)
 	}
 	return d.waitDeployment(t, resp.ID, 3*time.Minute, func(dep state.Deployment) bool { return dep.Status == state.DeployLive })
+}
+
+// policyCheckTimedOut reports a traffic policy check that ran out of time,
+// as opposed to one refused for its size.
+func policyCheckTimedOut(raw []byte) bool {
+	var p api.Problem
+	return json.Unmarshal(raw, &p) == nil && p.Code == api.CodeTrafficPolicyTooComplex &&
+		p.Limit != nil && *p.Limit == api.TrafficPolicyAnalysisTimeout.Milliseconds()
 }
 
 func (d *safeReleaseDrill) waitDeployment(t *testing.T, id string, timeout time.Duration, done func(state.Deployment) bool) state.Deployment {

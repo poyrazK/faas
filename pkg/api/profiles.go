@@ -47,6 +47,17 @@ type ProfilingConfig struct {
 	WindowSeconds int      `json:"window_seconds,omitempty" yaml:"window_seconds,omitempty" toml:"window_seconds"`
 	Kinds         []string `json:"kinds,omitempty" yaml:"kinds,omitempty" toml:"kinds"`
 	PprofPort     int      `json:"pprof_port,omitempty" yaml:"pprof_port,omitempty" toml:"pprof_port"`
+	// AutomaticCaptures turns the platform's automatic on-demand captures
+	// (memory pressure, slow requests, CPU saturation; ADR-1155) on or off
+	// for the app. Unset means on. The control plane reads it; guests never
+	// see it.
+	AutomaticCaptures *bool `json:"automatic_captures,omitempty" yaml:"automatic_captures,omitempty" toml:"automatic_captures"`
+}
+
+// AutomaticCapturesEnabled reports whether the platform may start automatic
+// captures of the app; a nil configuration allows them.
+func (c *ProfilingConfig) AutomaticCapturesEnabled() bool {
+	return c == nil || c.AutomaticCaptures == nil || *c.AutomaticCaptures
 }
 
 // Equal compares two configurations by their effective settings.
@@ -55,7 +66,7 @@ func (c *ProfilingConfig) Equal(o *ProfilingConfig) bool {
 		return c == o
 	}
 	return c.Enabled == o.Enabled && c.WindowSeconds == o.WindowSeconds && slices.Equal(c.EffectiveKinds(), o.EffectiveKinds()) &&
-		c.PprofPort == o.PprofPort
+		c.PprofPort == o.PprofPort && c.AutomaticCapturesEnabled() == o.AutomaticCapturesEnabled()
 }
 
 // ProfilePprofReservedPorts are guest-init's own loopback listeners. A pprof

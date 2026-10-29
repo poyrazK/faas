@@ -49,6 +49,10 @@ type Supervisor struct {
 	// swapped atomically on every restart. nil until the first fork.
 	// Read by characterize_linux.go's AppPID() callback.
 	lastCmd atomic.Pointer[exec.Cmd]
+	// workloadLeaf is the cgroup v2 leaf the workload last started in (empty
+	// for the root cgroup). The healthcheck poll joins it so probes share the
+	// workload's resource scope.
+	workloadLeaf atomic.Pointer[string] //nolint:unused // set by Linux workload launch.
 	// lastExitCode is the terminal exit code observed when Run stops.
 	// exitObserved distinguishes its zero value from a clean exit.
 	lastExitCode atomic.Int64

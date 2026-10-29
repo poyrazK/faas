@@ -19,6 +19,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -69,7 +70,7 @@ func touchExt4(t *testing.T, be storage.StorageBackend, slug, depID string) stri
 
 func TestSupersede_DeletesOldAppLayer_KeepsSnapshotBlob(t *testing.T) {
 	store := state.NewMemStore()
-	appsRoot, slug, _, depID, be := newAppDir(t, store)
+	appsRoot, slug, appID, depID, be := newAppDir(t, store)
 	ext4Key := touchExt4(t, be, slug, depID)
 
 	h := &Handler{
@@ -79,11 +80,13 @@ func TestSupersede_DeletesOldAppLayer_KeepsSnapshotBlob(t *testing.T) {
 		notif:    &fakeNotifier{},
 		storage:  be,
 	}
-	// Explicit cleanup applies after retirement and after the last snapshot
-	// reference is gone. Active deployments must retain their cold-boot layer.
+	// Explicit cleanup applies after retirement, after the last snapshot
+	// reference is gone, and outside the rollback window. Active deployments
+	// and rollback targets must retain their cold-boot layer.
 	if err := store.MarkDeploymentSuperseded(context.Background(), depID); err != nil {
 		t.Fatal(err)
 	}
+	releaseNewerDeployments(t, store, appID, "", api.SnapshotRollbackRetentionDeployments)
 	if err := h.cleanupDeploymentFiles(context.Background(), depID, true); err != nil {
 		t.Fatalf("cleanupDeploymentFiles: %v", err)
 	}

@@ -46,7 +46,7 @@ func envHistory(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	if rejectUnexpectedFlagArgs(fs) || !configTarget(app, scope, "usage: gregale env history [--app <slug>] [--scope <name>] [--limit N]") {
+	if rejectUnexpectedFlagArgs(fs) || !configTarget(app, scope, "usage: gregale env history [--app <slug>] [--env <name>] [--limit N]") {
 		return 1
 	}
 	if *limit < 1 || *limit > api.ConfigRevisionsListMax {
@@ -130,7 +130,7 @@ func envRollback(args []string) int {
 		return 1
 	}
 	positional = append(positional, fs.Args()...)
-	usage := "usage: gregale env rollback <revision> [--app <slug>] [--scope <name>] [--yes] [--no-guard]"
+	usage := "usage: gregale env rollback <revision> [--app <slug>] [--env <name>] [--yes] [--no-guard]"
 	if len(positional) != 1 {
 		PrintUsage(os.Stderr, usage, "env")
 		return 1
@@ -197,13 +197,13 @@ func printConfigRollback(out api.ConfigRollbackResponse, app, scope string) {
 		// the revision is removed, not set, to match it (Hunt 12 H12-57).
 		switch {
 		case s.TargetVersion == 0:
-			_, _ = fmt.Fprintf(osStdout, "  secret %s not removed (revision %d did not have it, now version %d); remove it with `%s secrets unset --app %s%s %s`.\n",
+			_, _ = fmt.Fprintf(osStdout, "  secret %s not removed (revision %d did not have it, now version %d); remove it with `%s env unset --app %s%s %s`.\n",
 				s.Key, out.RestoredRevision, s.CurrentVersion, recoveryCLI(), quoteCLIArg(app), scopeArg, quoteCLIArg(s.Key))
 		case s.CurrentVersion == 0:
-			_, _ = fmt.Fprintf(osStdout, "  secret %s not restored (revision %d had version %d, now removed); set it with `%s secrets set`.\n",
+			_, _ = fmt.Fprintf(osStdout, "  secret %s not restored (revision %d had version %d, now removed); set it with `%s env set`.\n",
 				s.Key, out.RestoredRevision, s.TargetVersion, recoveryCLI())
 		default:
-			_, _ = fmt.Fprintf(osStdout, "  secret %s not restored (revision %d had version %d, now %d); set it with `%s secrets set`.\n",
+			_, _ = fmt.Fprintf(osStdout, "  secret %s not restored (revision %d had version %d, now %d); set it with `%s env set`.\n",
 				s.Key, out.RestoredRevision, s.TargetVersion, s.CurrentVersion, recoveryCLI())
 		}
 	}

@@ -22,11 +22,14 @@ const accountBatch = 32
 type AccountStore interface {
 	ListAccountSealedValues(ctx context.Context, kind, afterID string, limit int) ([]state.AccountSealedValue, error)
 	ResealAccountValue(ctx context.Context, v state.AccountSealedValue, sealed []byte, kid string) (bool, error)
+	CountAccountCloneValuesOffDomain(ctx context.Context, kid string) (int, error)
 }
 
-// accountKinds are the account values this release seals to the domain.
-// The realtime, data pipeline and project clone values follow in later
-// slices and stay on the fleet key until then.
+// accountKinds are the account values the re-seal moves to the domain.
+// Project environment clone values are not among them: clone records bind
+// each other by ciphertext hash, so apid seals new ones to the domain once
+// it is domain-only and the old ones stay on the fleet key until their
+// clones finish. The re-seal counts them as Skipped.
 var accountKinds = []string{
 	state.AccountSealedMFASecret,
 	state.AccountSealedInboundWebhook,
@@ -44,13 +47,18 @@ var accountKinds = []string{
 	state.AccountSealedProductEmailPause,
 	state.AccountSealedProductEmailRecipient,
 	state.AccountSealedProductEmailUnsubscribe,
+	state.AccountSealedRealtimeCallback,
+	state.AccountSealedRealtimeAuth,
+	state.AccountSealedRealtimeAuthPrevious,
+	state.AccountSealedRealtimePushDevice,
+	state.AccountSealedRealtimePushProvider,
 }
 
 // MigrateAccount re-seals every account TOTP secret, inbound webhook
 // signing secret, billing provider key, pending workflow plan, PagerDuty
 // acknowledgement signing secret, integration credential (GitLab, Slack,
-// Linear, and their pending consent flows) and product email value to the
-// account domain recipient alone
+// Linear, and their pending consent flows), product email value and managed
+// realtime credential to the account domain recipient alone
 // (ADR 20261022111812, step 3), and files each plan under the domain's key
 // id. legacy are the fleet and host identities that open values sealed
 // before the domain. Run it only after every apid holds the domain
@@ -88,6 +96,11 @@ func MigrateAccount(ctx context.Context, store AccountStore, domain *age.X25519I
 			}
 		}
 	}
+	clones, err := store.CountAccountCloneValuesOffDomain(ctx, kid)
+	if err != nil {
+		return report, err
+	}
+	report.Skipped += clones
 	return report, nil
 }
 
@@ -129,6 +142,14 @@ func resealAccountValue(v state.AccountSealedValue, domain *age.X25519Identity, 
 		return resealEnvelope(v.Sealed, domain, legacy, func(env secretbox.Envelope) bool {
 			return len(env) == 2 && env["PRODUCT_EMAIL_SUBSCRIPTION"] != "" && env["PRODUCT_EMAIL_RECIPIENT"] != ""
 		})
+	case state.AccountSealedRealtimeCallback:
+		return resealBlob(v.Sealed, api.RealtimeCallbackAuthNamespace, api.RealtimeCallbackAuthTokenMaxBytes, domain, legacy)
+	case state.AccountSealedRealtimeAuth, state.AccountSealedRealtimeAuthPrevious:
+		return resealBlob(v.Sealed, api.RealtimeAuthTokenNamespace, api.RealtimeCallbackAuthTokenMaxBytes, domain, legacy)
+	case state.AccountSealedRealtimePushDevice:
+		return resealBlob(v.Sealed, api.RealtimePushDeviceNamespacePrefix+v.ID, api.RealtimePushTargetSealMaxBytes, domain, legacy)
+	case state.AccountSealedRealtimePushProvider:
+		return resealBlob(v.Sealed, api.RealtimePushProviderNamespacePrefix+v.ID, api.RealtimePushConfigSealMaxBytes, domain, legacy)
 	}
 	return nil, resealFailed, fmt.Errorf("unknown account value kind %q", v.Kind)
 }

@@ -158,7 +158,7 @@ func TestDeployIssueSourceMapsSourceSelection(t *testing.T) {
 	if err := main.GitArchiveHEAD(repo, headArchive); err != nil {
 		t.Fatal(err)
 	}
-	packed, _, _, err := main.PackGitArchive(headArchive, main.DefaultZeroConfigSourceCapMB, main.ModeSourceTree, nil)
+	packed, _, _, err := main.PackGitArchive(headArchive, main.DefaultZeroConfigSourceCapMB, main.ModeSourceTree, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -447,7 +447,7 @@ func TestDeployIssueSourceMapsCLI(t *testing.T) {
 				var problem struct {
 					Recovery *main.DeployRecovery `json:"recovery"`
 				}
-				if err := json.Unmarshal([]byte(stderr.String()), &problem); err != nil || problem.Recovery == nil || problem.Recovery.DeploymentID != sourceMapsDeploymentID || problem.Recovery.Stage != "source_maps" || !strings.Contains(problem.Recovery.ResumeCommand, "issues source-maps publish") {
+				if err := json.Unmarshal([]byte(stderr.String()), &problem); err != nil || problem.Recovery == nil || problem.Recovery.DeploymentID != sourceMapsDeploymentID || problem.Recovery.Stage != "source_maps" || !strings.Contains(problem.Recovery.ResumeCommand, "debug issue source-maps publish") {
 					t.Fatalf("missing bound publication recovery: %s (%v)", stderr.String(), err)
 				}
 				snapshots, err := filepath.Glob(filepath.Join(os.TempDir(), "gregale-source-maps-recovery-*", "manifest.json"))

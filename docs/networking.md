@@ -9,155 +9,36 @@ gregale app APP_ID network attach NETWORK_ID --region REGION --cidrs CIDR[,CIDR.
 gregale app APP_ID network detach
 ```
 
-Gregale-owned private networks are account-scoped API resources. They are not
-DigitalOcean VPCs and do not require cloud credentials. Use `GET/POST
-/v1/networks` and `GET/DELETE /v1/networks/{id}` with the API or SDK.
+`network attach` and `network detach` belong to private networks, a preview;
+see [private networks](private-networks.md).
 
-Gregale-owned networks can be connected without a provider-specific VPC
-operation. `POST /v1/networks/{id}/peerings` with
-`{"peer_network_id":"net-..."}` creates account-scoped peering intent and
-returns `202` with `status: "pending"`; inspect it with the sibling `GET` or
-list endpoint, and remove it with `DELETE`. Both networks must be in the same
-region and use non-overlapping IPv4 CIDRs. Pending and error peerings are
-fail-closed, so they never imply reachability; the provider-neutral peering
-reconciler is the only component allowed to mark one `ready`, and it does so
-only after the configured route applier accepts the complete bidirectional
-route set. In Gregale-owned fabric mode, schedd applies that set through the
-existing vmmd app-netns attachment update, once per ready attachment and live
-compute node; each replay replaces the complete effective CIDR set, so stale
-peering destinations are withdrawn. A network referenced by a peering cannot
-be deleted until that peering is removed.
+## Outbound connections
 
-`GET /v1/networks/{id}/members` provides the account-scoped member inventory:
-each stable address reservation includes its owner type, opaque owner ID, and
-address. The response also reports allocatable capacity, used addresses, and
-remaining addresses; network, gateway, and broadcast addresses are excluded
-from capacity. This is an inventory read only and does not probe workloads or
-call DigitalOcean.
+An app can open TCP connections to public hosts on ports 80 and 443. Pro and
+Scale apps can add up to 8 and 32 more ports with
+`gregale app egress-ports add <port>`.
 
-The fabric slice persists the network definition and reserves stable member
-addresses (network+1 is reserved as the gateway; allocation starts at
-network+2). When the fabric flag is enabled, schedd first asks every vmmd
-hosting the app to reconcile a dedicated, account-scoped host bridge for that
-network, then activates app routes. A bridge failure leaves the attachment in
-`error` and traffic blocked. Ready Gregale-owned attachments now get a
-node-local private veth side-link into the `gpn-*` bridge, with the stable
-network member address allocated at attach time. Private ingress is DNATed to
-the guest's fixed `10.0.0.2:8080` contract and guest-originated private traffic
-is SNATed back to that member address; the existing `br-tenants` veth remains
-the public-egress path. Cross-node transport is converged separately by the
-regional `gpx-*` VXLAN link described below.
-Set
-`FAAS_PRIVATE_NETWORK_FABRIC_ENABLED=1` to dark-launch the resource API; app
-attachment remains separately gated by
-`FAAS_PRIVATE_NETWORK_ENABLED=1` and stays fail-closed until reconciliation.
+Connect by hostname. Gregale's resolver allows the addresses each lookup
+returns, for between 10 minutes and an hour, so an HTTP client that looks up
+`api.example.com` connects normally. A connection to an IP address the app
+never looked up is refused.
 
-`network show` combines the app's outbound CIDR allowlist, static egress
-address (when available), same-account service discovery, and captured
-upstream observations. Upstream hostnames stay redacted; only the safe hash
-fragment, port, and probe metadata are shown.
+An egress allowlist (Hobby and up; 8, 16 or 64 entries by plan) changes both
+rules: the listed ranges are reachable without a lookup, on any TCP port but
+25, and every other destination is refused, hostnames included. Use it to pin
+an app to the services it calls, or to reach fixed addresses, and list every
+destination the app needs:
 
-`network doctor` is non-invasive. It reads configuration and existing probe
-telemetry but never sends traffic or credentials to an upstream. A fresh probe
-means Gregale has observed a successful RTT within the last 15 minutes; it is
-not a new connectivity test.
-
-Same-account apps can call one another as
-`http://APP_SLUG.svc.gregale:10081`. For external VPC resources, Pro and Scale
-customers can record a provider-neutral attachment intent with `network attach`.
-The API accepts non-overlapping RFC1918 IPv4 ranges (up to 16 on Pro and 64 on
-Scale), returns `pending`, and keeps traffic blocked until a provider connector
-reports `ready`. `network doctor` surfaces pending and failed reconciliation;
-it never probes the private network itself. `network detach` is idempotent.
-
-The attachment resource is intentionally provider-neutral: `NETWORK_ID` and
-`REGION` are stable lowercase identifiers. A node's connector verifies that
-the provider attachment is usable; the runtime reconciler then installs the
-requested routes and nftables exceptions before changing the row to `ready`.
-Route activation is idempotent, and any connector or host-route failure leaves
-the row in `error` with traffic blocked. Until a connector is configured, the
-API remains an intent surface and every attachment stays `pending`.
-
-Private-network security policy is opt-in per attachment. Include
-`allowed_cidrs` in the PUT body to restrict both private egress destinations
-and private ingress sources; every range must be contained by the attached
-network CIDR. Omitting it (or sending an empty list) preserves the existing
-allow-all behavior, while a pending/error attachment remains fail-closed:
-
-```json
-{
-  "network_id": "prod-vpc",
-  "allowed_cidrs": ["10.42.8.0/24"]
-}
+```bash
+gregale app egress-allowlist add 203.0.113.10/32
 ```
 
-The policy is persisted with the attachment and sent to each vmmd as part of
-the same live update as the stable member address. vmmd installs the nft
-accept/drop rules before publishing the new cached state; a failed update is
-reported as reconciliation error and never widens access.
-
-Networks can also carry a reusable, account-scoped firewall baseline. Set
-`allowed_cidrs` and optional `firewall_rules` when creating a network or
-replace them with `PUT /v1/networks/{id}/policy`; every rule is contained by
-the network CIDR and is applied to every attached workload. A rule's
-`direction` is `ingress` or `egress`, `protocol` is `tcp`, `udp`, or `icmp`,
-and TCP/UDP rules carry ports such as `443` or `8000-8080`. Rule CIDRs are
-sources for ingress and destinations for egress; an omitted list means the
-whole network CIDR. An attachment policy may only narrow the CIDR baseline,
-never broaden it. Updating the network policy is asynchronous: schedd
-replays the effective policy to every live node immediately after the durable
-mutation wakeup, with the periodic sweep as a recovery backstop, and nftables
-keeps traffic blocked until each update succeeds. Empty rule lists preserve the legacy
-CIDR-only behavior; the PUT body replaces both lists, so include a list when
-you intend to retain an existing restriction.
-
-Schedd applies a ready attachment once per live compute node and records a
-per-node convergence observation in its reconciliation logs. A partial node
-failure keeps the attachment in `error` and is retried by the next sweep;
-successful nodes are still reported so operators can identify the unhealthy
-box without guessing from aggregate status.
-
-The attachment read endpoint also exposes the last durable per-node result in
-`attachment.nodes`. Each row separates `fabric_status` from `route_status`,
-includes bounded failure detail, and carries `observed_at`. A node can have a
-ready bridge while route policy is still failing; this projection is the
-operator view of that partial convergence and is replaced on the next replay.
-
-For multi-node Gregale networks, vmmd can add a provider-neutral VXLAN link
-over an operator-managed encrypted overlay (Tailscale, WireGuard, or another
-routable underlay). This is disabled by default and does not call DigitalOcean:
-
-```toml
-[compute_node]
-private_network_transport_enabled = true
-private_network_transport_interface = "tailscale0"
-private_network_transport_peers = ["100.64.0.11", "100.64.0.12"]
-overlay_ip = "100.64.0.10"
-```
-
-`FAAS_PRIVATE_NETWORK_TRANSPORT_*` environment variables provide the same
-overrides. vmmd derives a stable `gpx-*` link and VNI per account/network,
-installs static peer FDB entries, and removes the link before deleting the
-bridge. Once every active node has registered an overlay address, schedd
-authoritatively refreshes each node's regional peer set and vmmd flushes stale
-FDB entries before replacing the current set. During a rolling upgrade, an
-incomplete roster falls back to the startup-configured peer list; a node join
-or drain converges on the next fabric reconciliation. Every node in a region
-must use the same encrypted overlay; leave the flag off until the control-plane
-mTLS and underlay policy are validated. When the capture-capable host runner is
-available, vmmd also verifies the bridge, VXLAN link, bridge membership, and
-exact FDB peer set after each reconcile. Any missing or stale peer is reported
-as transport drift and schedd keeps the attachment fail-closed until the next
-reconcile repairs it; older vmmds without the probe remain compatible during
-the rolling upgrade.
-
-Legacy external-network attachments still use the operator-managed connector
-and are enabled in schedd with
-`FAAS_PRIVATE_NETWORK_ENABLED=1` plus a `FAAS_PRIVATE_NETWORKS` JSON registry,
-for example `[{"id":"corp-vpc","region":"fra1","ready":true}]`. This
-keeps cloud credentials out of the control plane while the provider adapter is
-rolled out; a future connector can replace the registry without changing the
-customer-facing attachment contract.
+Always refused: private ranges (`10.0.0.0/8`, `100.64.0.0/10`,
+`172.16.0.0/12`, `192.168.0.0/16`), link-local and cloud metadata addresses
+(`169.254.0.0/16`), port 25, and anything but TCP apart from DNS. Ports 465
+and 587 reach allowlisted destinations only. DNS always goes to Gregale's
+resolver, so DNS over HTTPS or TLS does not work. New connections are
+rate-limited per plan.
 
 ## Public WebSockets
 
@@ -271,7 +152,7 @@ same choice as `service_binding_transport` for standalone apps. `gregale
 bindings <app>` reports the effective transport.
 
 The same declared edges are exposed as service bindings by the app API and by
-`gregale bindings public-api`, alongside database, object-storage, queue,
+`gregale app binding public-api`, alongside database, object-storage, queue,
 and outbound integration bindings. New project workloads use the `project`
 caller policy
 ([ADR-20261022111119](adr/20261022111119-project-service-binding-policy.md)):
@@ -308,7 +189,7 @@ hatch, set `x-gregale-service-policy: account` on the caller. Under the
 `GET /v1/apps/{slug}/bindings` provides the shared binding inventory used by
 the CLI and SDKs. It batches app-scoped catalog reads for services, PostgreSQL,
 object storage, queues, and outbound integrations. Omit `scope` to inspect all
-resource scopes, or use `?scope=staging` / `gregale bindings public-api --scope
+resource scopes, or use `?scope=staging` / `gregale app binding public-api --env
 staging` to filter database, bucket, and environment queue bindings. Shared
 legacy queues and app-wide service and outbound bindings remain included; the filter does not create or isolate
 resources for that environment.
@@ -369,7 +250,7 @@ the available results, `complete: false`, sanitized `warnings`, and structured
 results and warnings in the same document; failed queue status reads remain
 `unknown`. Error issues, including denied resource permissions, return CLI exit status 1 after printing the partial
 inventory. A gated, unavailable PostgreSQL preview remains a warning by
-default; use `gregale bindings public-api --require-complete` to return status 1 for
+default; use `gregale app binding public-api --require-complete` to return status 1 for
 any incomplete inventory, including that preview. `complete: true` means all
 inventory and status reads succeeded, not that every dependency is healthy.
 The response is a best-effort projection, not an atomic snapshot, and uses
@@ -381,8 +262,8 @@ providers. Use `bindings verify` for service, PostgreSQL or object-storage conne
 Use `bindings check` to evaluate those recorded observations in CI:
 
 ```sh
-gregale bindings verify public-api --all
-gregale bindings check public-api --scope production --max-verification-age 10m --json
+gregale app binding verify public-api --all
+gregale app binding check public-api --scope production --max-verification-age 10m --json
 ```
 
 The default check makes one inventory GET and returns exit status 0 when its policy
@@ -411,9 +292,9 @@ returns 130. Failed reads stop the wait with a nonzero result.
 For a staged rollout, verify and check the same deployment before promotion:
 
 ```sh
-gregale bindings verify public-api --deployment v12 --all
-gregale bindings check public-api --deployment v12 --max-verification-age 10m --json
-gregale traffic promote --app public-api --deployment v12 --if-serving v11 --require-bindings --max-verification-age 10m
+gregale app binding verify public-api --release v12 --all
+gregale app binding check public-api --release v12 --max-verification-age 10m --json
+gregale release traffic promote --app public-api --release v12 --if-serving v11 --require-bindings --max-verification-age 10m
 ```
 
 `--require-bindings` makes the server repeat the exact deployment check and
@@ -482,8 +363,8 @@ A stored release policy can explicitly require scheduler readiness for individua
 push queue bindings while retaining strict verification for other dependencies:
 
 ```sh
-gregale bindings release-policy set public-api --scope production --mode enforce --expected-revision 0 --queue-require orders=consumer_readiness
-gregale bindings check public-api --deployment v12 --release-policy --json
+gregale app binding release-policy set public-api --scope production --mode enforce --expected-revision 0 --queue-require orders=consumer_readiness
+gregale app binding check public-api --release v12 --release-policy --json
 ```
 
 `orders` is the binding name. The requirement needs exactly one shared or
@@ -518,8 +399,8 @@ To prepare all dependencies for an enforced release policy with one command,
 preview the plan and then run it for the same candidate:
 
 ```sh
-gregale bindings verify public-api --deployment v12 --release-policy --dry-run --json
-gregale bindings verify public-api --deployment v12 --release-policy --wait-timeout 5m --json
+gregale app binding verify public-api --release v12 --release-policy --dry-run --json
+gregale app binding verify public-api --release v12 --release-policy --wait-timeout 5m --json
 ```
 
 The policy need not contain storage requirements. The plan covers services,
@@ -570,28 +451,27 @@ Customer-sealed outbound integrations can opt into verification by declaring a
 provider endpoint safe to call:
 
 ```sh
-gregale bindings probe-policy INTEGRATION_ID --path /health --method GET --expect-status 200
-gregale bindings verify public-api --deployment v12 --outbound INTEGRATION_ID
-gregale bindings check public-api --deployment v12
-gregale traffic promote --app public-api --deployment v12 --require-bindings
+gregale app binding probe-policy INTEGRATION_ID --path /health --method GET --expect-status 200
+gregale app binding verify public-api --release v12 --outbound INTEGRATION_ID
+gregale app binding check public-api --release v12
+gregale release traffic promote --app public-api --release v12 --require-bindings
 ```
 
 The method must be GET or HEAD, the canonical path must fit the integration's
 route policy, and the expected status must be 2xx. This declaration sends no
 provider requests. `bindings verify --all` includes configured outbound probes;
 use `bindings probe-policy INTEGRATION_ID --delete` to remove a policy. Calls
-use the candidate task's workload identity through outboundd, with normal
+use the candidate task's workload identity through Gregale's outbound gateway, with normal
 credential injection, route restrictions and admission budgets. Probes bypass
 response caching and never include provider bodies, headers or credentials in
 reports. Evidence becomes stale when credentials, probe policy, binding policy
 or integration configuration change. A failed configured probe remains a
 blocker even with `--allow-unsupported`.
 
-Operators configure `outbound_probe_gateway_url = "https://outbound.example.com"`
-in apid.toml and route that trusted, guest-reachable origin to outboundd. Normal
-TLS verification applies. Operator-environment credentials, missing probe
-policies and installations without this gateway configuration retain unsupported
-coverage. A successful probe establishes only the configured endpoint. See
+Probes use normal TLS verification. Operator-environment credentials, missing
+probe policies and installations without an outbound probe gateway keep
+unsupported coverage. A successful probe establishes only the configured
+endpoint. See
 [ADR-522](adr/522-outbound-binding-verification.md).
 
 Each declared outbound dependency can carry a request deadline and retry
@@ -718,10 +598,8 @@ Unbound `.internal` names are passed to the configured upstream DNS resolver;
 Gregale does not claim the customer's entire private namespace. The existing
 `*.svc.gregale` endpoint and default generated URLs remain unchanged for
 rolling-upgrade compatibility; callers may opt into HTTPS-first URLs after the
-listener and trust are ready. Operators may enable the private HTTPS listener
-after distributing a dedicated service CA to all compute nodes.
-The CA must have a critical permitted DNS name constraint for `.internal`.
-When configured, guest-init builds a per-workload bundle in `/tmp`, exports
+listener and trust are ready. The private HTTPS listener is not enabled on
+every installation. Where it is, guest-init builds a per-workload bundle in `/tmp`, exports
 `GREGALE_SERVICE_CA_BUNDLE`, and configures common TLS clients (`SSL_CERT_FILE`,
 Python Requests, and curl) to trust the private endpoint when the image includes
 a standard system CA bundle. Node receives the CA through its additive
@@ -737,9 +615,9 @@ for listener rollout, and [ADR-273](adr/273-workload-scoped-service-ca-trust.md)
 for guest trust and CA requirements. See [ADR-275](adr/275-https-service-binding-canary.md)
 for caller-side verification.
 
-`gregale bindings verify <app> <service>` runs a platform-owned HTTPS canary
+`gregale app binding verify <app> <service>` runs a platform-owned HTTPS canary
 inside a disposable task guest attached to the caller's deployment. Use
-`gregale bindings verify <app> --all` to check every declared service before
+`gregale app binding verify <app> --all` to check every declared service before
 switching the caller to HTTPS-first transport. The all-bindings form also
 checks managed PostgreSQL and object-storage bindings in the scope selected for manual app tasks,
 reported as `verification_scope` in the inventory. Other resource scopes and
@@ -758,7 +636,7 @@ for listener rollout, [ADR-273](adr/273-workload-scoped-service-ca-trust.md) for
 hostname.
 
 To test an app's managed PostgreSQL binding, run
-`gregale bindings verify <app> --postgres DATABASE_URL` with the binding's
+`gregale app binding verify <app> --postgres DATABASE_URL` with the binding's
 environment key. The CLI confirms that the key belongs to a managed database
 binding, then starts a bounded platform task in the app's live deployment. The
 task reads the injected URL inside the guest, checks URL configuration and
@@ -777,7 +655,7 @@ deployment change, binding replacement, credential generation change, or app
 runtime-configuration change marks prior evidence `stale`. Unsupported or
 unrecorded results remain `unknown`.
 
-`gregale bindings verify <app> --object-storage GREGALE_S3_ASSETS` checks the
+`gregale app binding verify <app> --object-storage GREGALE_S3_ASSETS` checks the
 six injected S3 environment variables and makes one signed, path-style
 `ListObjectsV2` request with `MaxKeys=1`. It has a five-second deadline, does
 not retry or follow redirects, and caps provider response XML at 64 KiB.
@@ -918,15 +796,15 @@ deployment can belong to multiple live release sets.
 ### Inspect a project's release graph
 
 ```sh
-gregale projects environments inspect shop production
-gregale projects environments inspect shop production --json
-gregale projects environments release-sets shop production --limit 20
+gregale environment get shop production
+gregale environment get shop production --json
+gregale environment release-sets shop production --limit 20
 ```
 
 `inspect` compares active release-set membership with each workload's ordinary
 live deployment, which is what its stable environment URL currently selects.
 It reports different selections and project membership gaps explicitly. A bare
-`gregale projects environments inspect` uses the linked project and selected
+`gregale environment get` uses the linked project and selected
 environment; supplying both positional arguments overrides that context.
 
 The overview includes the configuration version, last promotion, and managed
@@ -974,9 +852,9 @@ workloads:
 Then run:
 
 ```sh
-gregale projects environments qualify shop staging --profile gregale-qualification.yaml
-gregale projects environments preview shop --from staging --to production
-gregale projects environments preflight shop --from staging --to production \
+gregale environment qualify shop staging --profile gregale-qualification.yaml
+gregale environment preview shop --from staging --to production
+gregale environment preflight shop --from staging --to production \
   --profile gregale-qualification.yaml --json
 ```
 
@@ -1015,19 +893,19 @@ All release inventory reads require the owning account's read access.
 
 ### Smoke-test a downstream deployment
 
-`gregale bindings verify` checks the private transport and current route
+`gregale app binding verify` checks the private transport and current route
 availability without invoking customer code. To exercise a handler on one
 exact deployment, use an explicit smoke request from the caller:
 
 ```bash
-gregale bindings smoke public-api billing \
+gregale app binding smoke public-api billing \
   --caller-deployment v12 \
   --target-deployment TARGET_DEPLOYMENT_ID \
   --path /health \
   --expect-status 200
 ```
 
-Find the target ID with `gregale traffic status billing`. `--caller-deployment`
+Find the target ID with `gregale release traffic status billing`. `--caller-deployment`
 selects an exact app-owned live caller deployment, including a candidate at 0%
 traffic; `v12` resolves within `public-api`. Omit it to retain automatic caller
 selection. `--deployment` remains an alias for `--target-deployment`; conflicting
@@ -1125,16 +1003,13 @@ stripped before the hop, so the marker cannot be forged. Production callers
 carry neither header, so a service that ignores them is unaffected.
 
 Use them to skip irreversible work, tag writes as test data, or refuse the call
-outright. Operators can compare isolated traffic in
-`gateway_service_preview_to_preview_total` with allowed production fallbacks
-in `gateway_service_preview_to_production_total`; policy rejections use
-`gateway_service_call_total{outcome="preview_denied"}`.
+outright.
 
 ### Verifying the caller (preview)
 
-By default a service learns who called it from platform-set headers. Operators
-who need the target to verify that claim itself can enable signed caller
-assertions with `FAAS_SERVICE_CALLER_ASSERTIONS=1` on each node.
+By default a service learns who called it from platform-set headers. Signed
+caller assertions let the target verify that claim itself. They are a preview
+and are not enabled on every installation.
 
 Every internal call then carries `X-Faas-Caller-Assertion`: a short-lived
 (30 s) EdDSA JWT stating `sub` = calling app id, `aud` = receiving app id,
@@ -1236,11 +1111,8 @@ authorize that app; handlers must still apply their caller/business policy.
 Non-`net/http` integrations can use the lower-level
 `FetchTrustedKeys` and `Verify` functions.
 
-The signer remains opt-in and is not made a fleet-wide default by this
-endpoint. Enable `FAAS_SERVICE_CALLER_ASSERTIONS=1` on every node that may
-originate calls before making verified identity mandatory in a workload; while
-rollout is mixed, an absent assertion is still possible and must not be treated
-as verified identity.
+Until signed assertions are enabled everywhere a call can come from, an absent
+assertion is still possible; never treat it as verified identity.
 
 ## Internal-only ingress
 
@@ -1307,8 +1179,8 @@ It contains no credential values, hashes or private binding owner IDs.
 To require application acknowledgements during a rollout:
 
 ```sh
-gregale bindings check public-api --deployment v12 --require-application-ack --json
-gregale traffic promote --app public-api --deployment v12 --if-serving v11 --require-bindings --require-application-ack
+gregale app binding check public-api --release v12 --require-application-ack --json
+gregale release traffic promote --app public-api --release v12 --if-serving v11 --require-bindings --require-application-ack
 ```
 
 Strict mode requires current version-bound acknowledgements from every
@@ -1350,8 +1222,8 @@ Enable verification enforcement for an app's deployment scope after establishing
 its stable serving deployment:
 
 ```sh
-gregale bindings release-policy get public-api --scope production
-gregale bindings release-policy set public-api --scope production \
+gregale app binding release-policy get public-api --scope production
+gregale app binding release-policy set public-api --scope production \
   --require-verification --max-age 10m --expected-revision 0
 ```
 
@@ -1378,7 +1250,7 @@ To abort an active canary while enforcement stays enabled, first verify the
 exact retained predecessor, then pin both deployments:
 
 ```sh
-gregale bindings verify public-api --deployment v41 --all
+gregale app binding verify public-api --release v41 --all
 gregale rollouts recover public-api --action abort --deployment v42 \
   --expected-predecessor v41 --reason 'Restore verified predecessor'
 ```
@@ -1402,7 +1274,7 @@ activation is not yet supported. During an incident, explicitly disable the
 policy with a reason before using an unguarded recovery path:
 
 ```sh
-gregale bindings release-policy set public-api --scope production \
+gregale app binding release-policy set public-api --scope production \
   --mode off --expected-revision 1 --reason 'Restore stable deployment during incident'
 ```
 
@@ -1415,7 +1287,7 @@ traffic increase.
 
 ### Binding-checked service handoffs
 
-A service rollout under enforcement keeps its predecessor serving while APID
+A service rollout under enforcement keeps its predecessor serving while Gregale
 checks the exact ready candidate. Missing evidence appears as bounded blockers
 in `service_rollout_handoff.bindings_check`; supplying current verification lets
 the worker retry without changing the policy. The routing transaction rechecks
@@ -1427,10 +1299,10 @@ live predecessor at zero weight after service cutover. Verify that predecessor,
 then request the abort and wait for the selected rollout:
 
 ```sh
-gregale bindings verify public-api --deployment v41 --all
+gregale app binding verify public-api --release v41 --all
 gregale rollouts recover public-api --action abort --deployment v42 \
   --expected-predecessor v41 --reason 'Restore verified predecessor'
-gregale rollouts status public-api --deployment v42 --wait --timeout 10m
+gregale rollouts status public-api --release v42 --wait --timeout 10m
 ```
 
 Service recovery returns 202 and `service_recovery` with the request UUID and
@@ -1439,8 +1311,8 @@ routing, missing gateway acknowledgements and drain progress. With `--wait`, a
 service abort succeeds only at `rollout_state=aborted` and handoff phase
 `complete`; promotion waits for its corresponding complete handoff. Status and
 wait use GETs only, never run verification, and preserve the last status on a
-timeout. Add `--json` for the exact deployment response. APID restarts resume
-the durable request; a missing pinned predecessor cannot be replaced silently.
+timeout. Add `--json` for the exact deployment response. A restart of the
+Gregale API resumes the durable request; a missing pinned predecessor cannot be replaced silently.
 See [ADR-600](adr/600-binding-checked-service-handoffs.md).
 
 Completed deployments can be restored through an exact binding-checked rollback:
@@ -1452,7 +1324,7 @@ gregale rollback api --to v41 --expected-current v42 --reason "restore previous 
 The accepted operation retains both deployments through readiness and binding
 checks. The current release keeps serving while the target prepares at zero
 traffic. If bindings are blocked, verify the exact target with the existing
-`gregale bindings verify-all api --deployment v41` command, then inspect or resume
+`gregale app binding verify-all api --release v41` command, then inspect or resume
 waiting for the accepted operation:
 
 ```sh
@@ -1566,13 +1438,13 @@ UUIDs for each workload:
 ```
 
 ```bash
-gregale projects environments release-sets prepare shop production \
+gregale environment release-sets prepare shop production \
   --file release-selection.json > release-manifest.json
-gregale projects environments release-sets verify shop production \
+gregale environment release-sets verify shop production \
   --file release-manifest.json --dry-run --json
-gregale projects environments release-sets verify shop production \
+gregale environment release-sets verify shop production \
   --file release-manifest.json --json
-gregale projects environments release-sets activate shop production \
+gregale environment release-sets activate shop production \
   --file release-manifest.json --json
 ```
 
@@ -1599,7 +1471,7 @@ Exact service evidence can be inspected through the binding inventory's
 `service_targets` JSON query parameter together with `deployment_id`.
 Ordinary inventory remains separate from evidence for proposed targets.
 Generic graph publication and deactivation stay blocked under enforcement;
-Checked fallback deactivation is described below; GitOps candidate staging remains a follow-up.
+Checked fallback deactivation is described below.
 
 
 ### Recover a retained project release graph
@@ -1612,13 +1484,13 @@ UUID and the desired release retention as `rollback-selection.json`:
 ```
 
 ```bash
-gregale projects environments release-sets prepare-rollback shop production \
+gregale environment release-sets prepare-rollback shop production \
   --file rollback-selection.json > rollback-manifest.json
-gregale projects environments release-sets verify shop production \
+gregale environment release-sets verify shop production \
   --file rollback-manifest.json --dry-run --json
-gregale projects environments release-sets verify shop production \
+gregale environment release-sets verify shop production \
   --file rollback-manifest.json --json
-gregale projects environments release-sets rollback shop production \
+gregale environment release-sets rollback shop production \
   --file rollback-manifest.json --json
 ```
 
@@ -1646,13 +1518,13 @@ live 100% fallback in the environment and an enforced binding policy. Missing
 fallbacks and traffic splits block preparation.
 
 ```bash
-gregale projects environments release-sets prepare-deactivation shop production \
+gregale environment release-sets prepare-deactivation shop production \
   --json > deactivation-manifest.json
-gregale projects environments release-sets verify shop production \
+gregale environment release-sets verify shop production \
   --file deactivation-manifest.json --dry-run --json
-gregale projects environments release-sets verify shop production \
+gregale environment release-sets verify shop production \
   --file deactivation-manifest.json --json
-gregale projects environments release-sets deactivate shop production \
+gregale environment release-sets deactivate shop production \
   --file deactivation-manifest.json --json
 ```
 
@@ -1677,21 +1549,21 @@ unchecked deactivation and GitOps-managed workloads remain blocked under enforce
 
 A prepared forward or rollback graph may select a dark service deployment with
 no ready replicas. Service probes do not wake targets. Use a temporary staging
-lease to bring those exact service deployments up through schedd's normal
+lease to bring those exact service deployments up through the normal
 admission and readiness gates, while keeping current weighted and graph routes.
 Selected deployments must already be live and materialized; use the existing
 dark-deployment preparation workflow first. GitOps-managed workloads, active
 service rollouts, mirror recipients and deactivation manifests are excluded.
 
 ```bash
-gregale projects environments release-sets stage shop production \
+gregale environment release-sets stage shop production \
   --file manifest.json --ttl-seconds 600 --json > stage.json
 stage_id=$(jq -r .id stage.json)
-gregale projects environments release-sets stage-status shop production \
+gregale environment release-sets stage-status shop production \
   --stage "$stage_id" --json
 # Once status is ready, qualify exact targets and explicitly publish the graph.
-gregale projects environments release-sets verify shop production --file manifest.json
-gregale projects environments release-sets activate shop production --file manifest.json
+gregale environment release-sets verify shop production --file manifest.json
+gregale environment release-sets activate shop production --file manifest.json
 # Use rollback instead of activate for a prepared rollback manifest.
 ```
 
@@ -1710,7 +1582,7 @@ and expiry. Another manifest conflicts while that scope has an unexpired,
 uncancelled stage. Cancel before staging a different selection:
 
 ```bash
-gregale projects environments release-sets cancel-stage shop production \
+gregale environment release-sets cancel-stage shop production \
   --stage "$stage_id" --json
 ```
 
@@ -1741,10 +1613,10 @@ The deployment declares supported logical binding names in its `override_env`:
 The consumer must recognize `{"gregale_queue_canary":"v1","canary_id":"<unique UUID>","binding":"orders"}` and handle it safely. Return success only after the safe test handler finishes. Successful HTTP handling does not certify application-specific business effects. Pull consumers are unsupported. Shared legacy bindings support canaries in production/default only; other environments require an explicitly scoped queue binding.
 
 ```sh
-gregale bindings release-policy set my-api --scope production --require-verification --queue-require orders=handler_completion --expected-revision 0
-gregale bindings verify my-api --deployment v12 --release-policy --dry-run --json
-gregale bindings verify my-api --deployment v12 --release-policy --queue-publish --json
-gregale bindings verify my-api --deployment v12 --queue orders --queue-publish --json
+gregale app binding release-policy set my-api --scope production --require-verification --queue-require orders=handler_completion --expected-revision 0
+gregale app binding verify my-api --release v12 --release-policy --dry-run --json
+gregale app binding verify my-api --release v12 --release-policy --queue-publish --json
+gregale app binding verify my-api --release v12 --queue orders --queue-publish --json
 ```
 
 Checked graph verification also accepts `--queue-publish`. It reviews every member and publication consent requirement before admitting messages. Dry runs never publish; compatible pending canaries are observed and fresh successful evidence is reused.
@@ -1770,13 +1642,13 @@ remain registered until ordinary retention removes them. See
 
 ### Parallel binding qualification
 
-`gregale bindings verify APP --deployment ID --release-policy --concurrency 2`
+`gregale app binding verify APP --release ID --release-policy --concurrency 2`
 runs independent required probes concurrently. The default is 2; `--concurrency`
 accepts 1–8 and applies only to release-policy verification. Use 1 for serial
 execution when provider or application capacity requires it. Server admission
 limits still apply.
 
-`gregale projects environments release-sets verify PROJECT ENV --file release.json
+`gregale environment release-sets verify PROJECT ENV --file release.json
 --concurrency 2` shares the same limit across all graph members. Review with
 `--dry-run`; planned object writes still require `--object-storage-write`, and
 planned queue publication still requires `--queue-publish`. No probe starts until
@@ -1795,7 +1667,7 @@ expiry and the atomic checks at activation remain unchanged. See
 Use a durable receipt when a CI job or CLI session may disconnect:
 
 ```sh
-gregale bindings verify my-api --deployment v12 --release-policy --durable \
+gregale app binding verify my-api --release v12 --release-policy --durable \
   --object-storage-write --queue-publish --concurrency 2 --json
 ```
 
@@ -1808,9 +1680,9 @@ The CLI prints the run ID before requesting creation and includes `run_id` in
 its verification report.
 
 ```sh
-gregale bindings verification-runs status my-api RUN_ID --json
-gregale bindings verification-runs resume my-api RUN_ID --concurrency 2 --json
-gregale bindings verification-runs cancel my-api RUN_ID --json
+gregale app binding verification-runs status my-api RUN_ID --json
+gregale app binding verification-runs resume my-api RUN_ID --concurrency 2 --json
+gregale app binding verification-runs cancel my-api RUN_ID --json
 ```
 
 Status shows the original plan, resource IDs, ownership and current progress.
@@ -1842,7 +1714,7 @@ one app; graph verification retains its existing prepared-manifest workflow. See
 Persist the prepared graph and every member's review before admitting probes:
 
 ```sh
-gregale projects environments release-sets verify my-project production \
+gregale environment release-sets verify my-project production \
   --file prepared.json --durable --run-id RUN_UUID \
   --queue-publish --object-storage-write --concurrency 2 --json
 ```
@@ -1855,9 +1727,9 @@ receipt commit together and share that fixed deadline. The CLI prints the parent
 ID before creation, so a lost creation response is recoverable with the same UUID.
 
 ```sh
-gregale projects environments release-sets verification-runs status my-project production RUN_UUID --json
-gregale projects environments release-sets verification-runs resume my-project production RUN_UUID --concurrency 2 --json
-gregale projects environments release-sets verification-runs cancel my-project production RUN_UUID --json
+gregale environment release-sets verification-runs status my-project production RUN_UUID --json
+gregale environment release-sets verification-runs resume my-project production RUN_UUID --concurrency 2 --json
+gregale environment release-sets verification-runs cancel my-project production RUN_UUID --json
 ```
 
 Resume retains membership, routing expectations, policy revisions, exact service
@@ -1899,7 +1771,7 @@ SDK transport failures, caller stops and progress callback failures preserve ser
 
 ### Explain blocked verification receipts
 
-Use `gregale bindings verification-runs diagnostics APP RUN_ID --json` or `gregale projects environments release-sets verification-runs diagnostics PROJECT ENVIRONMENT RUN_ID --json` to inspect blockers and recovery suggestions. The corresponding GET endpoints end in `/verification-runs/{run}/diagnostics` on the app binding or project environment release-set surface.
+Use `gregale app binding verification-runs diagnostics APP RUN_ID --json` or `gregale environment release-sets verification-runs diagnostics PROJECT ENVIRONMENT RUN_ID --json` to inspect blockers and recovery suggestions. The corresponding GET endpoints end in `/verification-runs/{run}/diagnostics` on the app binding or project environment release-set surface.
 
 Responses preserve the original run ID and expiry and include `complete`, optional `check_passed`, `blockers`, `changes` and `recovery`. `complete` means applicable diagnostic reads succeeded; `check_passed` describes current public policy/evidence. Neither grants admission, confirms receipt completion or authorizes traffic changes. A previously passed or expired receipt can have current blockers.
 
@@ -1937,7 +1809,7 @@ Set `--status-read-retries 0` on durable CLI verify or receipt resume to disable
 
 ### Discover retained verification receipts
 
-Use `gregale bindings verification-runs list APP --json` or `gregale projects environments release-sets verification-runs list PROJECT ENVIRONMENT --json` when you need to recover a receipt ID. Lists are read-only summaries; they do not refresh evidence, admit work, resume or cancel receipts. A listed passed state does not establish current qualification.
+Use `gregale app binding verification-runs list APP --json` or `gregale environment release-sets verification-runs list PROJECT ENVIRONMENT --json` when you need to recover a receipt ID. Lists are read-only summaries; they do not refresh evidence, admit work, resume or cancel receipts. A listed passed state does not establish current qualification.
 
 Pages default to 20 entries (maximum 100), newest first by creation time and UUID. Use `--limit`, `--cursor`, `--deployment UUID` and `--status pending|passed|cancelled|expired`. App lists additionally accept `--scope` and `--include-members`; by default they omit graph members. Project lists show root receipts and match deployment filters against reviewed members. Included app members expose their original `graph_run_id`.
 
@@ -1962,8 +1834,8 @@ Durable app/graph verify and receipt resume accept `--progress auto|plain|ndjson
 For CI, keep stdout as one final JSON report and stream typed events on stderr:
 
 ```sh
-gregale bindings verify api --release-policy --durable --json --progress ndjson
-gregale projects environments release-sets verification-runs resume project production RUN_ID --json --progress ndjson
+gregale app binding verify api --release-policy --durable --json --progress ndjson
+gregale environment release-sets verification-runs resume project production RUN_ID --json --progress ndjson
 ```
 
 `binding_verification_progress` events include root/member IDs, step/resource status, `waiting_for_qualification` conditions, read retries and `reconciling` operations. Graph events also identify project and environment. During execution, cleanup failures use `binding_verification_notice` with code `cleanup_failed`. Pre-execution argument/authentication failures retain the normal CLI error contract.

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"regexp"
 	"time"
 
 	"github.com/google/uuid"
@@ -164,6 +165,9 @@ func decideRouteMonitorRollback(c api.RouteMonitorConfig, i *api.RouteMonitorInc
 		return RouteMonitorRollbackClaim{}, false, false
 	}
 	decision := routemonitor.DecideRollback(c, *i, routemonitor.ReleasedAt(d.CreatedAt, d.CanaryStepStartedAt, d.RolloutCompletedAt))
+	if decision.Eligible && d.Scope == "production" {
+		decision = routemonitor.RollbackDecision{Skip: routemonitor.RollbackSkipProjectRelease, Route: decision.Route}
+	}
 	switch {
 	case decision.Eligible:
 		i.Rollback = &api.RouteMonitorIncidentRollback{Status: "claimed", Route: decision.Route, TargetDeploymentID: decision.Target, DecidedAt: now}
@@ -175,10 +179,16 @@ func decideRouteMonitorRollback(c api.RouteMonitorConfig, i *api.RouteMonitorInc
 	return RouteMonitorRollbackClaim{}, false, false
 }
 
+// routeMonitorRefusalCode is the shape of an API problem code.
+var routeMonitorRefusalCode = regexp.MustCompile(`^[a-z0-9_]{1,64}$`)
+
 // recordRouteMonitorRollback replaces a claim with its final outcome.
 func recordRouteMonitorRollback(i *api.RouteMonitorIncident, outcome api.RouteMonitorIncidentRollback) error {
 	if i.Rollback == nil || i.Rollback.Status != "claimed" || outcome.Status != "requested" && outcome.Status != "skipped" {
 		return ErrConflict
+	}
+	if outcome.RefusalCode != "" && (outcome.Status != "skipped" || !routeMonitorRefusalCode.MatchString(outcome.RefusalCode)) {
+		return ErrInvalidArgument
 	}
 	outcome.Route, outcome.TargetDeploymentID = i.Rollback.Route, i.Rollback.TargetDeploymentID
 	i.Rollback = &outcome

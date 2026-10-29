@@ -60,6 +60,17 @@ pool as creation. Company apps do not consume their creator's personal app slots
 An organization plan downgrade blocks further admission when the pool is full;
 it does not delete existing applications.
 
+Other per-account plan allowances follow the app's billing subject
+(ADR-202610171904): API consumer keys, log drains, realtime endpoints, inbound
+and outbound webhooks, alert rules, CORS presets, triggers and reserved
+(`eviction_priority: reserved`) apps. Once an
+organization has adopted billing, a company app's resources count toward the
+organization's allowance, whoever created the app, and never toward the
+creator's personal one. Until then a company keeps its existing policy: its
+creator's company resources share the creator's allowance, with the
+creator's personal apps and account-wide resources. Public consumer sign-up
+on a company app issues keys under the plan the app runs on.
+
 Core app resources keep stable storage UUIDs and sealed bytes. After organization
 billing adoption, the organization supplies runtime entitlements, abuse controls,
 request budgets and future usage billing. Human verification, audit attribution
@@ -93,6 +104,17 @@ The Go client exposes `GetOrgBillingStatus`, `GetOrgUsage`, `ListOrgInvoices`,
 `GetOrgBillingPortal` and `ChangeOrgPlan`. The OpenAPI contract and generated Node
 and Python clients include these operations. Paid plan changes remain pending
 until the provider confirms them.
+
+## Billing status
+
+An organization follows the account dunning ladder (spec §4.7). While it is
+past due its apps keep serving and members keep their roles: they read,
+configure, rotate secrets, and revoke or remove credentials and integrations
+as usual, across apps, projects and managed PostgreSQL. As for a past-due
+personal account, deploys are refused with 402 `billing_past_due` and dev
+bridges do not relay. Once
+suspended, its apps park and the organization's resources answer 402 until
+billing is resolved.
 
 ## Organization projects and environments
 
@@ -213,7 +235,10 @@ company apps' rules. An integration that predates authorship counts as the app
 creator's. Drains an application standard manages are left alone. The removal's
 activity entry says how many were paused, and an owner or admin re-points and
 re-enables them. Their account-scope release webhooks stop receiving the
-company's deployment, rollout and GitOps events.
+company's deployment, rollout and GitOps events. Company apps they created stop
+billing customers through their account: their billing runs skip those
+customers, sign-up closes and the customer portal is unavailable (see
+[API monetization](api-monetization.md#company-apps)).
 
 An in-flight shared-app or organization mutation must still hold its original
 membership revision when its database transaction begins. A change that already

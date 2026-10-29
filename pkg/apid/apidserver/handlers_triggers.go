@@ -118,6 +118,7 @@ func triggerResponse(t sqlc.Trigger) api.Trigger {
 		RetryPolicy:          retryPolicyFromTriggerConfig(t.Config),
 		PayloadMaxBytes:      int(t.PayloadMaxBytes),
 		BrokerPoisonStrategy: t.BrokerPoisonStrategy,
+		Agent:                t.Agent.String,
 		CreatedAt:            t.CreatedAt.Time,
 		UpdatedAt:            t.UpdatedAt.Time,
 	}
@@ -181,6 +182,10 @@ func (s *server) createTrigger(w http.ResponseWriter, r *http.Request, acct stat
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
 		return
 	}
+	if p := s.hiddenTriggerAgent(acct, req.Agent); p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
 	if req.AppID == "" {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", "app_id is required"))
 		return
@@ -238,6 +243,11 @@ func (s *server) createTrigger(w http.ResponseWriter, r *http.Request, acct stat
 		api.WriteProblem(w, p)
 		return
 	}
+	agent, p := s.requestedTriggerAgent(r.Context(), acct, req.Kind, delivery, req.Agent)
+	if p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
 	if realtimeCfg != nil {
 		// The bound group owns attempts (ADR-1322); batch delivery may claim
 		// several messages per invocation (ADR-1321).
@@ -252,12 +262,15 @@ func (s *server) createTrigger(w http.ResponseWriter, r *http.Request, acct stat
 	source := triggerSourceForConfig(req.Kind, req.Config)
 	// A realtime trigger is created disabled and enabled only once it is
 	// bound, so no dispatcher polls a group it cannot consume.
-	// Batch delivery is switched on before the trigger is enabled, so no record
-	// is ever delivered in the wrong shape.
-	t, problem := s.persistCreatedTrigger(w, r.Context(), &req, acct, app.ID, enabled && realtimeCfg == nil && delivery == api.TriggerDeliveryRecord,
+	// Batch delivery and an agent target are set before the trigger is
+	// enabled, so no record is ever delivered in the wrong shape or place.
+	t, problem := s.persistCreatedTrigger(w, r.Context(), &req, acct, app.ID, enabled && realtimeCfg == nil && delivery == api.TriggerDeliveryRecord && agent == "",
 		source, batchSizeMax, batchWindowMs, maxAttempts, payloadMaxBytes, brokerPoisonStrategy, limits)
 	if problem == nil && delivery != api.TriggerDeliveryRecord {
 		t, problem = s.applyTriggerDelivery(r.Context(), t, delivery, enabled && realtimeCfg == nil)
+	}
+	if problem == nil && agent != "" {
+		t, problem = s.applyTriggerAgent(r.Context(), t, agent, enabled)
 	}
 	if problem == nil && realtimeCfg != nil {
 		t, problem = s.bindRealtimeTrigger(r.Context(), acct, t, *realtimeCfg, enabled)
@@ -614,12 +627,12 @@ func setRetryPolicyInConfig(config *json.RawMessage, policy *api.RetryPolicyDTO)
 	}
 	b, err := json.Marshal(policy)
 	if err != nil {
-		return api.NewProblem(http.StatusInternalServerError, api.CodeCapacity, "Could not persist retry policy", err.Error())
+		return api.NewProblem(http.StatusInternalServerError, api.CodeCapacity, "Could not persist retry policy", "The retry policy could not be encoded.")
 	}
 	top["retry_policy"] = b
 	merged, err := json.Marshal(top)
 	if err != nil {
-		return api.NewProblem(http.StatusInternalServerError, api.CodeCapacity, "Could not persist retry policy", err.Error())
+		return api.NewProblem(http.StatusInternalServerError, api.CodeCapacity, "Could not persist retry policy", "The trigger config could not be encoded.")
 	}
 	*config = merged
 	return nil
@@ -758,7 +771,13 @@ func (s *server) updateTrigger(w http.ResponseWriter, r *http.Request, acct stat
 		}
 	}
 	if req.Delivery != nil {
-		if _, p := s.requestedTriggerDelivery(appFlagSubject(acct, app), api.TriggerKind(t.Kind), req.Delivery); p != nil {
+		delivery, p := s.requestedTriggerDelivery(appFlagSubject(acct, app), api.TriggerKind(t.Kind), req.Delivery)
+		if p == nil && t.Agent.Valid {
+			if err := api.ValidateTriggerAgent(api.TriggerKind(t.Kind), delivery, t.Agent.String); err != nil {
+				p = api.NewProblem(http.StatusUnprocessableEntity, "trigger_invalid_config", "Invalid trigger delivery", err.Error())
+			}
+		}
+		if p != nil {
 			api.WriteProblem(w, p)
 			return
 		}
@@ -775,6 +794,12 @@ func (s *server) updateTrigger(w http.ResponseWriter, r *http.Request, acct stat
 	}
 	if req.Schedule != nil {
 		if problem := cronScheduleProblem(*req.Schedule); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
+	}
+	if req.Path != nil {
+		if problem := api.ValidateCronPath(*req.Path); problem != nil {
 			api.WriteProblem(w, problem)
 			return
 		}
@@ -1195,7 +1220,7 @@ func (s *server) batchCreateTrigger(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", "app_id is required"))
 		return
 	}
-	m, prob := validateManifestBytes([]byte(req.ManifestYAML), acct.Plan)
+	m, prob := validateManifestBytes([]byte(req.ManifestYAML), acct.Plan, s.agentStepsAllowed(acct))
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return

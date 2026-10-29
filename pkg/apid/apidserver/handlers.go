@@ -51,7 +51,13 @@ func retryPolicyDTOFromJSON(raw json.RawMessage) *api.RetryPolicyDTO {
 }
 
 func (s *server) whoami(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	writeJSON(w, http.StatusOK, s.accountResponse(r.Context(), acct, r))
+	resp := s.accountResponse(r.Context(), acct, r)
+	// A key learns its own scopes; the hosted MCP server lists an agent
+	// key's tools from them (ADR-20261029085359). Sessions have none.
+	if p, ok := principalFrom(r); ok && p.Key != nil {
+		resp.KeyScopes = p.Key.Scopes
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // nilStringPtr returns a *string pointing at the given value, or
@@ -98,8 +104,9 @@ func (s *server) resolveOverflowNode(ctx context.Context, wire *string, strictEm
 		if errors.Is(err, state.ErrNotFound) {
 			return "", api.ErrInvalidOverflowNode(*wire)
 		}
+		logCustomerFailure(s.log, "lookup overflow_node", err)
 		return "", api.NewProblem(http.StatusInternalServerError, api.CodeCapacity,
-			"Capacity", fmt.Sprintf("lookup overflow_node %q: %v", *wire, err))
+			"Capacity", api.DetailServerFailure)
 	}
 	if !row.Active {
 		return "", api.NewProblem(http.StatusUnprocessableEntity, api.CodeInvalidOverflowNode,
@@ -654,6 +661,10 @@ func (s *server) createDeployment(w http.ResponseWriter, r *http.Request, acct s
 	// JSON branch is the rest of this handler. Extracted to
 	// loadAppAndPreflight so createDeployment stays under the
 	// CLAUDE.md 50-line handler cap.
+	if !s.deploymentBodyCapabilityAllowed(r, acct) {
+		writeMissingRoute(w, r)
+		return
+	}
 	app, ok, limits := s.loadAppAndPreflight(w, r, acct)
 	if !ok {
 		return
@@ -719,7 +730,7 @@ func (s *server) createImageDeployment(w http.ResponseWriter, r *http.Request, a
 		}
 	}
 	if len(req.Workflows) > 0 {
-		if p := validateWorkflowDefinitionsAgainstPlan(req.Workflows, acct.Plan); p != nil {
+		if p := validateWorkflowDefinitionsAgainstPlan(req.Workflows, acct.Plan, s.agentStepsAllowed(acct)); p != nil {
 			api.WriteProblem(w, p)
 			return
 		}
@@ -1437,7 +1448,9 @@ func (s *server) accountResponse(ctx context.Context, acct state.Account, r *htt
 	return resp
 }
 
-func validSlug(s string) bool { return api.ValidAppSlug(s) }
+// validSlug accepts app slugs and the longer PR preview slugs githubd
+// allocates; every creation path rejects the preview shape as reserved first.
+func validSlug(s string) bool { return api.ValidAppSlug(s) || api.ValidPreviewAppSlug(s) }
 
 // digestPinnedRE matches a digest-pinned OCI reference end-to-end:
 //

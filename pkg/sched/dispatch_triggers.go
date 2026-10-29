@@ -113,6 +113,7 @@ const (
 	triggerReasonRateLimited                = "rate_limited"
 	triggerReasonPayloadTooLarge            = "payload_too_large"
 	triggerReasonExclusiveOperationRejected = "exclusive_operation_rejected"
+	triggerReasonCustomerDisabled           = "customer_disabled"
 )
 
 // triggerDispatchRecord is one broker-delivered record the
@@ -356,21 +357,38 @@ func (l *Loop) runTriggerTick(ctx context.Context) {
 		l.log.Warn("sched trigger tick: list", "err", err)
 		return
 	}
-	l.evictTriggerPollers(triggers)
 	if len(triggers) == 0 {
+		l.evictTriggerPollers(nil)
 		return
 	}
 	resolvePlan := l.triggerPlanResolver(ctx)
+	// polled are the triggers this schedd keeps pollers for: an external
+	// broker trigger is polled only by the schedd that owns its app
+	// (ADR-20261027162741), so a poller left behind by an ownership move is
+	// closed and a Kafka reader leaves its consumer group.
+	polled := make([]sqlc.Trigger, 0, len(triggers))
+	defer func() { l.evictTriggerPollers(polled) }()
 	for i := range triggers {
 		t := triggers[i]
 		if queuePushLaneEligible(t) {
+			polled = append(polled, t)
 			l.scheduleQueuePushLanes(ctx, t, store)
 			continue
 		}
 		if t.Kind == string(api.TriggerKindRealtime) {
+			polled = append(polled, t)
 			l.scheduleRealtimeLanes(ctx, t, store)
 			continue
 		}
+		if brokerTriggerLaneEligible(t) {
+			if !l.triggerAppOwned(ctx, t) {
+				continue
+			}
+			polled = append(polled, t)
+			l.scheduleBrokerTriggerLane(ctx, t, store)
+			continue
+		}
+		polled = append(polled, t)
 		if err := l.dispatchOneTrigger(ctx, t, store, resolvePlan); err != nil {
 			if errors.Is(err, errTriggerGatewayDispatch) {
 				continue
@@ -422,6 +440,13 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 	if !l.engine.appIDCapabilityAllowed(ctx, t.AppID.String(), triggerCapability(t.Kind)) {
 		return nil
 	}
+	// An agent-target trigger is not polled on a scheduler that cannot
+	// admit agent runs, or while the agents capability is off for the
+	// account, so its records stay with the broker (ADR-20261027090010 §9).
+	agentTarget := t.Agent.Valid
+	if agentTarget && (l.triggerAgents == nil || !l.agentsCapabilityAllowed(ctx, t.AppID.String())) {
+		return nil
+	}
 	var exclusiveBinding *state.ExclusiveTriggerBinding
 	if bindings, ok := store.(state.ExclusiveTriggerBindingStore); ok {
 		binding, bindingErr := bindings.ExclusiveTriggerBinding(ctx, t.AccountID.String(), "broker", t.ID.String())
@@ -447,7 +472,7 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 	if poller == nil {
 		return nil
 	}
-	if exclusiveBinding == nil && l.gatewayHTTPClient == nil {
+	if exclusiveBinding == nil && !agentTarget && l.gatewayHTTPClient == nil {
 		return nil
 	}
 	t = l.longTimeoutTriggerBatch(ctx, t)
@@ -769,7 +794,8 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 	if planFor != nil {
 		appPlan = planFor(t.AppID.String())
 	}
-	if exclusiveBinding == nil && l.rateLimiter != nil && !l.rateLimiter.AllowWakeApp(t.AppID.String(), appPlan) {
+	// Agent runs wake no app; their plan limits bound them instead.
+	if exclusiveBinding == nil && !agentTarget && l.rateLimiter != nil && !l.rateLimiter.AllowWakeApp(t.AppID.String(), appPlan) {
 		l.handleRateLimitedBatch(ctx, poller, t, batch, store)
 		return nil
 	}
@@ -781,7 +807,7 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 	// account_id; an extra round-trip per trigger (one per tick)
 	// is acceptable because the deny path is the hot path we
 	// want to keep fast.
-	if exclusiveBinding == nil && l.rateLimiter != nil {
+	if exclusiveBinding == nil && !agentTarget && l.rateLimiter != nil {
 		app, appErr := l.engine.Store().AppByID(ctx, t.AppID.String())
 		if appErr == nil {
 			if !l.rateLimiter.AllowWakeAccount(app.AccountID, appPlan) {
@@ -852,7 +878,9 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 	defer dispatchSpan.End()
 	var respBody []byte
 	var postErr error
-	if exclusiveBinding != nil {
+	if agentTarget {
+		respBody, postErr = json.Marshal(l.admitAgentTriggerBatch(dispatchCtx, store, t, claimedBatch, claimed))
+	} else if exclusiveBinding != nil {
 		response := l.admitExclusiveBrokerBatch(dispatchCtx, store, t, *exclusiveBinding, claimedBatch, claimed)
 		respBody, postErr = json.Marshal(response)
 	} else {
@@ -2334,6 +2362,10 @@ func classifyDLQReason(code, gatewayErr string) string {
 		switch code {
 		case triggerReasonExclusiveOperationRejected:
 			return triggerReasonExclusiveOperationRejected
+		case triggerCodeAgentRefused:
+			return triggerReasonCustomerDisabled
+		case triggerCodePayloadTooLarge:
+			return triggerReasonPayloadTooLarge
 		case "function_failed":
 			return triggerReasonMaxAttempts
 		case "function_state_timeout",
@@ -2543,6 +2575,29 @@ func (l *Loop) pollerForTrigger(t sqlc.Trigger) (triggerSource, bool, error) {
 		// when the reader is built, so the old reader must leave.
 		l.closeTriggerPollerLocked(id)
 	}
+	// Build without the shared lock (ADR-20261027162741): a broker connect
+	// can take seconds while other lanes look up their pollers.
+	l.triggerPollersMu.Unlock()
+	src, registered, err := l.buildTriggerPoller(t)
+	l.triggerPollersMu.Lock()
+	if err != nil || !registered {
+		return nil, registered, err
+	}
+	if existing, ok := l.triggerPollers[id]; ok {
+		// Another caller built this trigger's poller meanwhile; keep it.
+		_ = src.Close()
+		return existing, true, nil
+	}
+	l.triggerPollers[id] = src
+	if l.triggerPollerConfigs == nil {
+		l.triggerPollerConfigs = map[string]string{}
+	}
+	l.triggerPollerConfigs[id] = fingerprint
+	return src, true, nil
+}
+
+// buildTriggerPoller opens a trigger's credentials and builds its poller.
+func (l *Loop) buildTriggerPoller(t sqlc.Trigger) (triggerSource, bool, error) {
 	pollerTrigger := t
 	openedConfig, err := triggerconfig.Open(api.TriggerKind(t.Kind), t.Config, l.triggerSecretIdentities)
 	if err != nil {
@@ -2561,11 +2616,6 @@ func (l *Loop) pollerForTrigger(t sqlc.Trigger) (triggerSource, bool, error) {
 	if err != nil {
 		return nil, true, fmt.Errorf("construct %s trigger poller: %w", t.Kind, err)
 	}
-	l.triggerPollers[id] = src
-	if l.triggerPollerConfigs == nil {
-		l.triggerPollerConfigs = map[string]string{}
-	}
-	l.triggerPollerConfigs[id] = fingerprint
 	return src, true, nil
 }
 
@@ -2603,7 +2653,8 @@ func (l *Loop) evictTriggerPollers(enabled []sqlc.Trigger) {
 		live[enabled[i].ID.String()] = true
 	}
 	for id := range l.triggerPollerConfigs {
-		if !live[id] {
+		// A lane still delivering keeps its poller until a later tick.
+		if !live[id] && !l.brokerLaneActive(id) {
 			l.closeTriggerPollerLocked(id)
 		}
 	}

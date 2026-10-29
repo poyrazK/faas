@@ -12,7 +12,7 @@ func RegisterLoaded(reg prometheus.Registerer, d Domain, loaded bool) {
 }
 
 // RegisterLoadedDomains is RegisterLoaded for a daemon that reads several
-// domains, as vmmd reads runtime and build (ADR-20261026090000). The gauge
+// domains, as vmmd reads runtime and build (ADR-20261026091500). The gauge
 // is registered once, with one series per domain.
 func RegisterLoadedDomains(reg prometheus.Registerer, loaded map[Domain]bool) {
 	g := prometheus.NewGaugeVec(prometheus.GaugeOpts{
@@ -39,6 +39,25 @@ func RegisterBindingRequired(reg prometheus.Registerer, required bool) {
 		Help: "1 when this vmmd refuses runtime secrets with no account binding (ADR-20261023173624).",
 	})
 	if required {
+		g.Set(1)
+	}
+	reg.MustRegister(g)
+}
+
+// RegisterSignatureEnforcement exports
+// faas_runtime_secret_signature_enforcement (ADR 20261028161502, amendment
+// 1): 0 when this vmmd does not check runtime secret signatures, 1 when it
+// refuses a signature that does not verify, 2 when it also refuses unsigned
+// runtime secrets. Read at start, like the binding switch.
+func RegisterSignatureEnforcement(reg prometheus.Registerer, verifying, required bool) {
+	g := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "faas_runtime_secret_signature_enforcement",
+		Help: "0 off, 1 refuses runtime secrets whose signature does not verify, 2 also refuses unsigned ones (ADR 20261028161502).",
+	})
+	switch {
+	case required:
+		g.Set(2)
+	case verifying:
 		g.Set(1)
 	}
 	reg.MustRegister(g)

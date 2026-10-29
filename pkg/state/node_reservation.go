@@ -26,8 +26,13 @@
 //
 //   - It does not replace sched.NodeLedger. The ledger stays the fast local
 //     path and remains the ONLY enforcement for per-app concurrency
-//     (§6.2-1), vCPU budget, and CPU millicores. This is a durable floor
-//     under the RAM ceiling alone.
+//     (§6.2-1). This is a durable floor under the RAM ceiling and, for an
+//     admission whose placement binding carries its vCPU and CPU
+//     (ADR-20261027220445), under the node's vCPU and CPU budgets: the live
+//     instances' bookings, less the quiet-pause discount the scheduler
+//     applied (ADR-1151), plus the admission. Those sums are the ones
+//     placement reads, so the guard never refuses a node placement found
+//     room on; migration reservations stay with the migration admission.
 //   - It does not cover ownership transfer. A live migration moves an
 //     instance by UPDATEing node_id (MigrateInstanceOwner), not by inserting
 //     a row, so it can still push a destination node past its ceiling. That
@@ -46,6 +51,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -77,22 +83,20 @@ var ErrNodeCapacity = errors.New("state: compute node at admission ceiling")
 // pg_locks can tell what took it.
 const nodeReservationLockClass = 0x6E6F6465
 
-// nodeUsageCounts reports whether a row in this state contributes to the
-// per-node RAM sum.
+// nodeUsageCounts reports whether a new row in this state takes the per-node
+// RAM reservation. nodeRAMCounts is the set the reservation sums.
 //
-// This deliberately does NOT call State.CountsForRAM(). That predicate also
-// returns true for 'snapshotting' and 'migrating', while the SQL in
-// ComputeNodeUsedMB / ComputeNodeUsedMBByNode sums only
-// ('waking','cold_booting','running','draining','warm'). The two have disagreed since
-// the states were added, and the SQL set is the one the placement chooser
-// actually reads.
+// Neither calls State.CountsForRAM(), which also returns true for
+// 'migrating'. Migration rows are booked through the migration admission
+// (reserveNodeForMigration), not this sum.
 //
-// The guard MUST agree with the chooser: if it counted a state the chooser
-// ignores, a node the chooser believes has headroom would start refusing
-// admissions, and every wake routed there would fail with no way for the
-// chooser to learn why. Reconciling CountsForRAM with the SQL is a real
-// question, but it changes placement behaviour and belongs in its own ADR —
-// not smuggled in under a correctness fix.
+// The guard MUST agree with the chooser (ComputeNodeUsedMB /
+// ComputeNodeUsedMBByNode): if it counted a state the chooser ignores, a node
+// the chooser believes has headroom would start refusing admissions, and
+// every wake routed there would fail with no way for the chooser to learn
+// why. ADR-20261027172037 added SNAPSHOTTING to both sums: its VM holds its
+// RAM until the capture finishes. No row is inserted SNAPSHOTTING, so it
+// never takes the guard itself.
 func nodeUsageCounts(s State) bool {
 	switch s {
 	case StateWaking, StateColdBooting, StateRunning, StateDraining, StateWarm:
@@ -100,6 +104,13 @@ func nodeUsageCounts(s State) bool {
 	default:
 		return false
 	}
+}
+
+// nodeRAMCounts reports whether an instance in s holds RAM on its node for
+// placement and the durable reservation: the live states plus SNAPSHOTTING,
+// whose VM stays resident until its capture finishes (ADR-20261027172037).
+func nodeRAMCounts(s State) bool {
+	return nodeUsageCounts(s) || s == StateSnapshotting
 }
 
 // instanceInserter is the narrow slice of pgxpool.Pool / pgx.Tx that the
@@ -165,7 +176,7 @@ func (s *PgStore) insertInstanceWithReservationsOnce(
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	// ADR-1741: one statement when the database has the admission functions.
-	reserveNode := reserveNodeStatementsDB
+	reserveNode := reserveNodeAndOwnerStatementsDB
 	if useAdmissionFunctions {
 		reserveNode = reserveNodeDB
 	}
@@ -202,6 +213,15 @@ func (s *PgStore) insertInstanceWithReservationsOnce(
 	return inst, nil
 }
 
+// reserveNodeAndOwnerStatementsDB is reserveNodeDB as separate statements:
+// the node reservation, then ctx's app owner fence (ADR-20261028200212).
+func reserveNodeAndOwnerStatementsDB(ctx context.Context, tx pgx.Tx, nodeID, newState string, ramMB int) error {
+	if err := reserveNodeStatementsDB(ctx, tx, nodeID, newState, ramMB); err != nil {
+		return err
+	}
+	return checkAppOwnerStatementsDB(ctx, tx)
+}
+
 // reserveNodeStatementsDB is reserveNodeDB as separate statements, for a
 // database without the admission functions (ADR-1741).
 func reserveNodeStatementsDB(ctx context.Context, tx pgx.Tx, nodeID, newState string, ramMB int) error {
@@ -221,20 +241,34 @@ func reserveNodeStatementsDB(ctx context.Context, tx pgx.Tx, nodeID, newState st
 			return fmt.Errorf("state: node reservation: lock node %s: %w", nodeID, err)
 		}
 
-		// One round trip for both halves: the ceiling is on compute_nodes and the
-		// sum is an instances aggregate over instances_live_node_id_idx, whose
-		// partial predicate is the same four states listed here.
-		var ceilingMB, usedMB int64
+		// One round trip for the budgets and the sums: the budgets are on
+		// compute_nodes and the sums are instances aggregates over the live
+		// node index. The vCPU and CPU sums are placement's (ADR-20261027220445).
+		var ceilingMB, usedMB, vcpuBudget, vpcpus, usedVCPU, usedCPU int64
 		err := tx.QueryRow(ctx, `
 		select n.admission_ceiling_mb::bigint,
 		       coalesce((select sum(i.ram_mb + $2)
 		                   from instances i
 		                  where i.node_id = n.id
+		                    and i.state in ('waking','cold_booting','running','draining','warm','snapshotting')), 0)::bigint,
+		       n.vcpu_budget::bigint, n.vpcpus::bigint,
+		       coalesce((select sum(i.capacity_vcpu)
+		                   from instances i
+		                  where i.node_id = n.id
+		                    and i.state in ('waking','cold_booting','running','draining','warm')), 0)::bigint,
+		       coalesce((select sum(case
+		                          when i.startup_cpu_boost_until > now() then
+		                            greatest(case when a.cpu_millicores > 0 then a.cpu_millicores else $3 end, $3)
+		                          else case when a.cpu_millicores > 0 then a.cpu_millicores else $3 end
+		                        end)
+		                   from instances i
+		                   join apps a on a.id = i.app_id
+		                  where i.node_id = n.id
 		                    and i.state in ('waking','cold_booting','running','draining','warm')), 0)::bigint
 		  from compute_nodes n
 		 where n.id = $1`,
-			nodeID, api.PerVMOverheadMB,
-		).Scan(&ceilingMB, &usedMB)
+			nodeID, api.PerVMOverheadMB, api.DefaultAppCPUMillicores,
+		).Scan(&ceilingMB, &usedMB, &vcpuBudget, &vpcpus, &usedVCPU, &usedCPU)
 		switch {
 		case errors.Is(err, pgx.ErrNoRows):
 			// No such node. Fall through to the insert and let the FK speak.
@@ -254,6 +288,8 @@ func reserveNodeStatementsDB(ctx context.Context, tx pgx.Tx, nodeID, newState st
 					ErrNodeCapacity, nodeID, usedMB, admitMB, ceilingMB, capMB,
 				)
 			}
+			return nodeComputeRefusal(nodeID, nodeComputeAdmission(ctx, nodeID),
+				vcpuBudget, usedVCPU, nodeCPUBudgetMillicores(vpcpus), usedCPU)
 		}
 	}
 	return nil
@@ -274,9 +310,47 @@ func (m *MemStore) checkNodeReservationLocked(nodeID, newState string, ramMB int
 }
 
 // checkNodeAdmissionReservationLocked is checkNodeReservationLocked with the
-// reservation allowance ctx's placement binding grants (ADR-909 amendment 1).
+// reservation allowance ctx's placement binding grants (ADR-909 amendment 1)
+// and the vCPU and CPU it books (ADR-20261027220445).
 func (m *MemStore) checkNodeAdmissionReservationLocked(ctx context.Context, nodeID, newState string, ramMB int) error {
-	return m.checkNodeReservationWithinLocked(nodeID, newState, ramMB, nodeReservationPercent(ctx, nodeID))
+	if err := m.checkNodeReservationWithinLocked(nodeID, newState, ramMB, nodeReservationPercent(ctx, nodeID)); err != nil {
+		return err
+	}
+	compute := nodeComputeAdmission(ctx, nodeID)
+	if compute.VCPU == 0 && compute.CPUMillicores == 0 || !nodeUsageCounts(State(newState)) {
+		return nil
+	}
+	node, ok := m.computeNodes[nodeID]
+	if !ok {
+		return nil
+	}
+	usedVCPU, usedCPU := m.nodeLiveComputeLocked(nodeID, time.Now())
+	return nodeComputeRefusal(nodeID, compute, int64(node.VCPUBudget), usedVCPU,
+		nodeCPUBudgetMillicores(int64(node.VPCPUs)), usedCPU)
+}
+
+// nodeLiveComputeLocked mirrors the guard's vCPU and CPU sums over the live
+// instances on nodeID: placement's sums without migration reservations.
+func (m *MemStore) nodeLiveComputeLocked(nodeID string, now time.Time) (vcpu, cpuMillicores int64) {
+	for _, ins := range m.instances {
+		if ins.NodeID != nodeID || !nodeUsageCounts(State(ins.State)) {
+			continue
+		}
+		vcpu += m.capacityInstanceResources[ins.ID].VCPU
+		app, ok := m.apps[ins.AppID]
+		if !ok {
+			continue
+		}
+		cpu := app.CPUMillicores
+		if cpu <= 0 {
+			cpu = api.DefaultAppCPUMillicores
+		}
+		if ins.StartupCPUBoostUntil != nil && ins.StartupCPUBoostUntil.After(now) && cpu < api.DefaultAppCPUMillicores {
+			cpu = api.DefaultAppCPUMillicores
+		}
+		cpuMillicores += int64(cpu)
+	}
+	return vcpu, cpuMillicores
 }
 
 func (m *MemStore) checkNodeReservationWithinLocked(nodeID, newState string, ramMB, percent int) error {
@@ -292,7 +366,7 @@ func (m *MemStore) checkNodeReservationWithinLocked(nodeID, newState string, ram
 		if ins.NodeID != nodeID {
 			continue
 		}
-		if nodeUsageCounts(State(ins.State)) {
+		if nodeRAMCounts(State(ins.State)) {
 			usedMB += m.migrationResidentRAMLocked(ins)
 		}
 	}

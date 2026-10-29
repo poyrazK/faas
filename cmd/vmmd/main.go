@@ -715,7 +715,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return fmt.Errorf("vmmd: load runtime seal domain: %w", err)
 	}
-	// ADR-20261026090000: builder VMs pull private base images with the
+	// ADR-20261026091500: builder VMs pull private base images with the
 	// built app's registry credentials, which the build domain opens.
 	buildIdentities, err := loadBuildSealDomain(filepath.Dir(keyPath))
 	if err != nil {
@@ -1270,6 +1270,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if cfg.RequireSecretBinding {
 		log.Info("vmmd: runtime secrets must be bound to their account (ADR-20261023173624)")
 	}
+	var signatureStore any
+	if store != nil {
+		signatureStore = store
+	}
+	signatures, err := runtimeSecretSignatureChecker(cfg, signatureStore, ops.Registry(), log)
+	if err != nil {
+		return err
+	}
+	mgr.WithRuntimeSecretSignatures(signatures)
 	// ADR-1151 quiet pause: pause eligible instances between requests. schedd
 	// marks which instances are eligible; this flag lets an operator keep
 	// the whole node out of it. Observe mode measures the pauses instead of
@@ -1834,9 +1843,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// nil to vmmdgrpc.NewWithCPUAndNet and skip the sample
 	// loop entirely.
 	netCache := netstats.NewWithDefaults()
-	gsrv := grpc.NewServer(append(
+	gsrv := grpc.NewServer(append(append(
 		wire.ServerCredsOrEmpty(serverTLS),
-		wire.TraceServerOptions()...,
+		wire.TraceServerOptions()...),
+		// Exec and destroy RPCs take schedd's certificate (bug hunt H17).
+		grpc.ChainUnaryInterceptor(vmmdgrpc.CallerPolicyUnaryInterceptor()),
+		grpc.ChainStreamInterceptor(vmmdgrpc.CallerPolicyStreamInterceptor()),
 	)...)
 	impl := vmmdgrpc.NewWithCPUAndNetAndActivity(signalAdapter{mgr}, ops, fcVersion, log, cpuCache, netCache, activityTracker).
 		WithFlowCounter(flowcount.NewReader(wire.ExecRunner{})).
@@ -1848,7 +1860,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithExecutionIdentitySigner(identitySigner).
 		WithDivergedInstances(divergedInstances).
 		WithInvokeHookBackoff(cfg.InvokeHookBackoff).
-		WithBridgeStreamHeadroom(cfg.BridgeStreamHeadroom)
+		WithBridgeStreamHeadroom(cfg.BridgeStreamHeadroom).
+		// ADR-20261027090010 §1: agent runs stay off unless this node opts in.
+		WithAgentRuns(strings.TrimSpace(os.Getenv("FAAS_VMMD_AGENT_RUNS")) == "1")
 	// ADR-20261022184531: Ping tells schedd whether this vmmd can adopt each
 	// configured base generation, so a node that cannot is marked degraded.
 	impl.WithBaseGenerationReadiness(vmmdgrpc.NewCachedBaseGenerationReadiness(

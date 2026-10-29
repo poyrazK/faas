@@ -42,6 +42,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/storagekey"
+	"github.com/onebox-faas/faas/pkg/whycopy"
 	"github.com/onebox-faas/faas/pkg/wire"
 
 	"filippo.io/age"
@@ -221,10 +222,24 @@ type Handler struct {
 	// sidecar write at base_stage.go::writeScanSidecar reads the
 	// counts off the struct to build the legacy sidecar JSON.
 	grypeRun func(ctx context.Context, dir string) (*ScanResult, error)
+	// lastDeployScanner is the scanner and database the last per-deploy
+	// Grype run used; a redeploy of an unchanged artifact reuses a result
+	// only from that same scanner (scan_reuse.go).
+	lastDeployScanner scannerMemo
+	// lchown sets ownership in platform layer staging trees; nil is
+	// os.Lchown. Tests inject one because they run without CAP_CHOWN.
+	lchown func(path string, uid, gid int) error
 
 	// runtimeGrypeRun scans the native composed directory without treating a
 	// customer file named rootfs.ext4 as a nested image.
 	runtimeGrypeRun func(context.Context, string) (*ScanResult, error)
+	// scannerIdentityProbe reads the installed scanner and vulnerability
+	// database without scanning (ADR-20261028102540). Nil disables scan
+	// reuse, so every renewal scans.
+	scannerIdentityProbe func(context.Context) (installedScanner, error)
+	scannerIdentityCache scannerIdentityCache
+	// scannerDBUpdater refreshes the vulnerability database outside any scan.
+	scannerDBUpdater func(context.Context) error
 	// Active entries live only for a job; restart reconstructs work from durable
 	// producer selections and scan leases. Storage/native fences remain authoritative.
 	runtimeScanMu     sync.Mutex
@@ -539,9 +554,12 @@ func (h *Handler) WithContinuousProfiling(enabled bool) *Handler {
 func (h *Handler) stampProfiling(manifest api.AppManifest, acct state.Account) api.AppManifest {
 	limits, ok := api.LimitsFor(acct.Plan)
 	manifest.ProfilingOnDemand = h.profilingOnDemand && ok && limits.Profiling.Enabled
-	if manifest.Profiling != nil && manifest.Profiling.Enabled && !h.continuousProfiling {
+	if manifest.Profiling != nil && (manifest.Profiling.Enabled && !h.continuousProfiling || manifest.Profiling.AutomaticCaptures != nil) {
 		cfg := *manifest.Profiling
-		cfg.Enabled = false
+		cfg.Enabled = cfg.Enabled && h.continuousProfiling
+		// Automatic captures are the control plane's decision; the guest
+		// manifest stays what guests of every release understand.
+		cfg.AutomaticCaptures = nil
 		manifest.Profiling = &cfg
 	}
 	return manifest
@@ -906,10 +924,21 @@ func (h *Handler) CloseVMMClient() error {
 // placeholder). Production wires the default; tests wire a stub
 // via WithGrypeRun.
 func (h *Handler) runGrype(ctx context.Context, dir string) (*ScanResult, error) {
+	var (
+		result *ScanResult
+		err    error
+	)
 	if h.grypeRun != nil {
-		return h.grypeRun(ctx, dir)
+		result, err = h.grypeRun(ctx, dir)
+	} else {
+		result, err = defaultGrypeRun(ctx, dir)
 	}
-	return defaultGrypeRun(ctx, dir)
+	if err == nil && result != nil {
+		// A real scan may have updated the database; reuse decisions must not
+		// compare against an identity read before it.
+		h.scannerIdentityCache.observe(result.ScannerVersion, result.ScannerDBVersion, result.ScannerDBBuiltAt, time.Now())
+	}
+	return result, err
 }
 
 // runDeployScan runs the per-deploy grype scan and stamps the
@@ -1119,7 +1148,16 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 			return verifiedScanFailure(app.SecurityPolicy, "hash scan artifact failed: "+artifactErr.Error())
 		}
 	}
-	result, err := h.runGrype(ctx, scanDir)
+	var result *ScanResult
+	if artifactErr == nil {
+		result = h.reusableDeployScan(ctx, app, dep, artifactDigest)
+	}
+	if result != nil {
+		markScanPhase(ctx, "reuse")
+	} else {
+		result, err = h.runGrype(ctx, scanDir)
+		h.lastDeployScanner.record(result, err, time.Now())
+	}
 	if err != nil {
 		// Fail the scan, not the deploy. Log the grype error
 		// so the operator sees the underlying cause.
@@ -1162,7 +1200,10 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 	// stale or cross-deployment results instead of trusting severity counts.
 	result.ImageDigest = dep.ImageDigest
 	result.ArtifactDigest = artifactDigest
-	result.ScannedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	if result.ReusedFrom == "" {
+		// A reused result keeps the time its scan ran.
+		result.ScannedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	}
 	b, mErr := json.Marshal(result)
 	if mErr != nil {
 		h.log.Warn("imaged: marshal scan result",
@@ -1193,6 +1234,7 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 		"deployment", dep.ID, "app", app.Slug,
 		"critical", result.SeverityCounts.Critical, "high", result.SeverityCounts.High,
 		"medium", result.SeverityCounts.Medium, "low", result.SeverityCounts.Low, "unknown", result.SeverityCounts.Unknown,
+		"reused_from", result.ReusedFrom,
 	}, timing.attrs()...)...)
 	return checkVerifiedScanGate(app.SecurityPolicy, dep, "complete", result)
 }
@@ -2711,6 +2753,14 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 	upsertDeploymentSecretFindings(ctx, h.store, dep.ID,
 		allFindings, layerSecretScanStatusCompleteWithRedactions,
 		dep.ImageDigest, scannedAt, h.log)
+	// Every finding is recorded for `gregale deployment ID
+	// --show-secret-scan`; only credential formats fail the deploy
+	// (ADR-20261026152731). Heuristic findings stay advisory.
+	if len(secretscan.Blocking(allFindings)) == 0 {
+		h.log.Info("imaged: layer secret scan advisory findings",
+			"deployment", dep.ID, "app", app.Slug, "findings", len(allFindings))
+		return nil
+	}
 	if markErr := h.markDeployFailed(ctx, dep.ID, errImageSecretDetected, "image-layer secret detected"); markErr != nil {
 		h.log.Warn("imaged: mark deploy failed on layer secret",
 			"deployment", dep.ID, "app", app.Slug, "err", markErr)
@@ -4416,14 +4466,33 @@ func (h *Handler) markDeployFailed(ctx context.Context, depID string, err error,
 	if errors.Is(err, errImageAbuseDetected) {
 		code = api.CodeImageAbuseDetected
 	}
-	if code == "" {
-		code = api.CodeDeployFailed
-	}
 	detail := err.Error()
 	if prefix != "" {
 		detail = prefix + ": " + detail
 	}
-	row, err := h.store.SetDeploymentFailed(ctx, depID, code, detail)
+	// A typed problem (an app layer over the plan cap) keeps its stable code
+	// and customer-safe detail; before, it reached the customer as
+	// deploy_failed with imaged's wrapping (ADR-20261029103512 amendment 1).
+	var hint, why, fix string
+	if p := api.AsProblem(err); code == "" && p != nil && p.Code != "" {
+		code, detail = p.Code, p.Detail
+		explained := whycopy.Decorate(&api.Problem{Code: p.Code, Hint: p.Hint, Why: p.Why, Fix: p.Fix}, p.Code, nil)
+		hint, why, fix = explained.Hint, explained.Why, explained.Fix
+		if code == api.CodeAppLayerTooBig {
+			if nodeFix := h.layerTooLargeNodeFix(ctx, depID); nodeFix != "" {
+				fix = strings.TrimSpace(nodeFix + "\n" + fix)
+			}
+		}
+	}
+	if code == "" {
+		code = api.CodeDeployFailed
+	}
+	var row state.Deployment
+	if hint != "" || why != "" || fix != "" {
+		row, err = h.store.SetDeploymentFailedEx(ctx, depID, code, detail, hint, why, fix, nil)
+	} else {
+		row, err = h.store.SetDeploymentFailed(ctx, depID, code, detail)
+	}
 	if err != nil {
 		return fmt.Errorf("imaged: mark failed: %w", err)
 	}
@@ -4752,8 +4821,10 @@ func pullBlobWithAuth(ctx context.Context, mp oci.ManifestPuller, repo, digest s
 //
 // App soft-delete cleanup drops the ext4 AND the snap blobs for every
 // deployment of the app. Superseded deployments are intentionally left
-// intact here; the imaged GC owns the bounded rollback window and removes
-// both artifacts together once no restoreable snapshot remains.
+// intact here; the imaged GC owns the bounded rollback window. A rollback
+// target inside it keeps its cold-boot layers whatever state its snapshots
+// are in (Hunt 21 H21-1); outside it, a deployment's layers go once no
+// restoreable snapshot remains.
 
 // cleanupDeploymentFiles removes the on-disk artifacts for a single deployment.
 // It remains available for explicit destructive cleanup paths and tests;

@@ -30,6 +30,10 @@ func TestLimiter_CoalescedFailurePreservesRecovery(t *testing.T) {
 			backend := &recoveryBatchCentral{batchingCentral: &batchingCentral{tokens: 10, batchErr: fmt.Errorf("batch statement: %w", &classifiedCentralTestError{backoff: backoff})}, releaseBatch: make(chan struct{})}
 			frozen := time.Unix(1_700_000_000, 0)
 			limiter := NewLimiterWithCentralAndClock(backend, func() time.Time { return frozen })
+			// The leader's success would otherwise start the outage grace and
+			// decide the failed batch locally (ADR-20261027173012); this test
+			// is about the refusal and breaker classification past it.
+			limiter.centralOutageGrace = -1
 			const subject = "00000000-0000-0000-0000-000000000002"
 			allow := func() bool {
 				return limiter.AllowWithCentralParams(t.Context(), "appid", 100, 100, "app:"+subject+":scale")

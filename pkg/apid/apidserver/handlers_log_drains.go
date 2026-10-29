@@ -182,6 +182,10 @@ func (s *server) createAppLogDrain(w http.ResponseWriter, r *http.Request, acct 
 		api.WriteProblem(w, prob)
 		return
 	}
+	if prob := s.datadogIntegrationProblem(appFlagSubject(acct, app), req.Kind == api.AppLogDrainKindDatadog); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	if prob := validateDatadogAppLogDrain(req.Kind, req.TargetURL, &req.AuthHeader, true); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -331,6 +335,11 @@ func (s *server) updateAppLogDrain(w http.ResponseWriter, r *http.Request, acct 
 			return
 		}
 		params.AuthHeaderSealed = &sealed
+	}
+	switching := params.Kind != nil && string(*params.Kind) == api.AppLogDrainKindDatadog && string(existing.Kind) != api.AppLogDrainKindDatadog
+	if prob := s.datadogIntegrationProblem(appFlagSubject(acct, app), switching); prob != nil {
+		api.WriteProblem(w, prob)
+		return
 	}
 	if prob := validateUpdatedDatadogAppLogDrain(existing, params, req.AuthHeader); prob != nil {
 		api.WriteProblem(w, prob)

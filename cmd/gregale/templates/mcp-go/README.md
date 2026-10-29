@@ -48,19 +48,19 @@ verified subject before serving real customer data.
 
 ## Run locally
 
-`gregale mcp init --language go` materializes `go.mod`. Then run:
+`gregale mcp server init --language go` materializes `go.mod`. Then run:
 
 ```sh
 go test ./...
 go run .
-gregale mcp doctor --url http://127.0.0.1:8080/mcp --legacy
-gregale mcp doctor --url http://127.0.0.1:8080/mcp --stream-tool stream_demo
-gregale mcp call --url http://127.0.0.1:8080/mcp --tool add --arguments '{"a":7,"b":5}'
-gregale mcp complete --url http://127.0.0.1:8080/mcp --prompt summarize --argument style --value exec
-gregale mcp deploy --path . --name my-mcp
+gregale mcp server doctor --url http://127.0.0.1:8080/mcp --legacy
+gregale mcp server doctor --url http://127.0.0.1:8080/mcp --stream-tool stream_demo
+gregale mcp client call --url http://127.0.0.1:8080/mcp --tool add --arguments '{"a":7,"b":5}'
+gregale mcp client complete --url http://127.0.0.1:8080/mcp --prompt summarize --argument style --value exec
+gregale mcp server deploy --path . --name my-mcp
 ```
 
-`gregale mcp init --runtime go --path ./my-mcp` writes the module file used for
+`gregale mcp server init --runtime go --path ./my-mcp` writes the module file used for
 local development. Read `gregale-mcp.json`, `main.go`, `auth.go`, and `tasks.go`
 before deploying. Configure `auth.mode: "external-oauth"`, the issuer, JWKS URL,
 resource URL, endpoint scopes, and each catalog entry's scopes before exposing
@@ -108,7 +108,7 @@ read-only PostgreSQL credential with `SELECT` on the task and worker-handler
 tables and does not need the owner key; use it when
 the worker pool must scale to zero. Every non-combined role requires the same
 explicit namespace. The observer also publishes bounded tool/version queue
-counts; `gregale mcp tasks status --details` reads its latest report from the
+counts; `gregale mcp server tasks status --details` reads its latest report from the
 API without requiring local task database credentials. The Go and Python starters support `subscriptions/listen`
 for task IDs and registered resource URIs, plus tool, resource, and prompt
 list-change notifications. Call `NotifyResourceUpdated(uri)` after changing an
@@ -120,7 +120,7 @@ seconds by default (or the configured task poll interval if longer) to recover
 missed task events. Reconnecting starts with fresh snapshots;
 `tasks/get` remains available as a fallback. The starter caps active task
 subscriptions and watched IDs per process. Clients can also use
-`gregale mcp task-wait` and submit input replies through `tasks/update`.
+`gregale mcp client wait` and submit input replies through `tasks/update`.
 
 The HTTP handler supports JSON-RPC requests and notifications without creating
 sessions. It accepts only bounded JSON request bodies, returns JSON responses,
@@ -204,14 +204,14 @@ those methods return `ErrMCPTaskInputRequired`; let it propagate so the task
 pauses and restarts after the client responds. Keep old executors in
 `PreviousVersions` until their queued tasks have drained.
 
-`gregale mcp deploy` reads this digest from its zero-traffic candidate and pins
+`gregale mcp server deploy` reads this digest from its zero-traffic candidate and pins
 the promoted deployment revision with `MCP_CATALOG_EXPECTED_SHA256`. For other
 deploy paths, set that variable to the `/healthz` digest on every serving
 replica. Remove any existing app-wide env or secret with this key before using
-`gregale mcp deploy`; those runtime layers take precedence over deployment
+`gregale mcp server deploy`; those runtime layers take precedence over deployment
 overrides. A mismatch makes `/healthz` return 503 and blocks MCP requests.
 The health response includes Gregale's `FAAS_INSTANCE_ID`. In addition,
-`gregale mcp status` receives the selected replica identity from Gregale's
+`gregale mcp server status` receives the selected replica identity from Gregale's
 authenticated exact-instance probes. It initializes MCP and lists the
 caller-visible catalogs on every running replica without invoking tools,
 reading resources, or relying on load-balancer sampling. Use `--token-env` or

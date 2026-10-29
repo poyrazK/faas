@@ -88,6 +88,11 @@ type (
 	WorkDecision                    = api.WorkDecision
 	ScheduleOccurrenceResponse      = api.ScheduleOccurrenceResponse
 	ListScheduleOccurrencesResponse = api.ListScheduleOccurrencesResponse
+	CronRun                         = api.CronRun
+	CronRunOutcome                  = api.CronRunOutcome
+	ListCronRunsResponse            = api.ListCronRunsResponse
+	FireCronResponse                = api.FireCronResponse
+	FireCronRequestResponse         = api.FireCronRequestResponse
 
 	// Jobs (issue #1184 Workstream A).
 	CreateJobRequest            = api.CreateJobRequest
@@ -223,6 +228,16 @@ const (
 	ServiceBindingPolicyProject  = api.ServiceBindingPolicyProject
 	PreviewServiceCallsAllow     = api.PreviewServiceCallsAllow
 	PreviewServiceCallsDeny      = api.PreviewServiceCallsDeny
+)
+
+const (
+	CronRunSuccess    = api.CronRunSuccess
+	CronRunFailed     = api.CronRunFailed
+	CronRunTimeout    = api.CronRunTimeout
+	CronRunDeadLetter = api.CronRunDeadLetter
+	CronRunCancelled  = api.CronRunCancelled
+	CronRunUncertain  = api.CronRunUncertain
+	CronRunRunning    = api.CronRunRunning
 )
 
 const (

@@ -103,7 +103,23 @@ test('proxy rejects unauthenticated requests and normalizes untrusted SQL roles'
   assert.equal((await fetch(base+'/rest/v1/rpc/unsafe',{headers:{Authorization:'Bearer valid'}})).status,404)
 })
 
-test('proxy closes canceled upstream requests and sanitizes unavailable and timeout errors', { timeout: 25000 }, async t => {
+test('a created row location names the public REST path', async t => {
+  const config = runtimeConfig({ DATABASE_URL: 'postgres://restricted:p@localhost/db', DATA_API_ISSUER: 'https://issuer.example', DATA_API_JWKS_URL: 'https://issuer.example/jwks', DATA_API_AUDIENCE: 'notes' })
+  const upstream = http.createServer((req, res) => {
+    assert.equal(req.url, '/notes')
+    res.writeHead(201, { Location: '/notes?id=eq.7' })
+    res.end()
+  })
+  await new Promise(resolve => upstream.listen(0, '127.0.0.1', resolve))
+  const gateway = createServer(config, async () => ({ sub: 'alice', exp: 9999999999 }), upstream.address().port)
+  await new Promise(resolve => gateway.listen(0, '127.0.0.1', resolve))
+  t.after(() => { gateway.closeAllConnections(); gateway.close(); upstream.closeAllConnections(); upstream.close() })
+  const response = await fetch(`http://127.0.0.1:${gateway.address().port}/rest/v1/notes`, { method: 'POST', headers: { Authorization: 'Bearer valid', 'Content-Type': 'application/json', Prefer: 'return=headers-only' }, body: '{"body":"x"}' })
+  assert.equal(response.status, 201)
+  assert.equal(response.headers.get('location'), '/rest/v1/notes?id=eq.7')
+})
+
+test('proxy closes canceled upstream requests and sanitizes unavailable and timeout errors',{ timeout: 25000 }, async t => {
   const config = runtimeConfig({ DATABASE_URL: 'postgres://test:credential-sentinel@127.0.0.1/test?sslmode=disable', DATA_API_ISSUER: 'https://issuer.example', DATA_API_JWKS_URL: 'https://issuer.example/jwks', DATA_API_AUDIENCE: 'notes' })
   let opened, closed
   const opening = new Promise(resolve => { opened = resolve })

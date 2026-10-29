@@ -381,6 +381,81 @@
   when: gatewayd_retry_budget_redis_url | length == 0
   no_log: true
 
+# ADR-831 amendment 17: every gateway signs browser challenges with one fleet
+# key, or a pass one gateway issues is refused by the next gateway
+# gatewayd-public sends the visitor to. gateway_edge_challenge_key_info and
+# FaasEdgeChallengeKeyMismatch check the running fleet.
+- name: gatewayd_internal_service — require the fleet challenge key when asked (ADR-831 amendment 17)
+  ansible.builtin.assert:
+    that:
+      - not (gatewayd_edge_challenge_key_required | bool) or (gatewayd_edge_challenge_key | length > 0)
+      - (gatewayd_edge_challenge_key | length == 0) or (gatewayd_edge_challenge_key is regex('^[0-9a-fA-F]{64}$'))
+    fail_msg: >-
+      Browser challenges need one gatewayd_edge_challenge_key of 64 hex digits
+      from the fleet vault on every gateway host.
+  no_log: true
+
+- name: gatewayd_internal_service — give every gateway in the play the same challenge key
+  ansible.builtin.assert:
+    that:
+      - >-
+        ansible_play_hosts
+        | map('extract', hostvars, 'gatewayd_edge_challenge_key')
+        | map('default', '') | map('lower') | unique | length <= 1
+    fail_msg: >-
+      Gateways in this play have different gatewayd_edge_challenge_key values;
+      each would refuse the challenge passes the others issue. Set the key once
+      in the fleet vault, not per host.
+  run_once: true
+  no_log: true
+
+- name: gatewayd_internal_service — create challenge key credential directory
+  ansible.builtin.file:
+    path: /etc/faas/secrets/gatewayd-internal
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  when: gatewayd_edge_challenge_key | length > 0
+
+- name: gatewayd_internal_service — install fleet challenge key credential
+  ansible.builtin.copy:
+    dest: /etc/faas/secrets/gatewayd-internal/edge-challenge.key
+    content: "{{ gatewayd_edge_challenge_key | lower }}\n"
+    owner: root
+    group: root
+    mode: "0400"
+  when: gatewayd_edge_challenge_key | length > 0
+  no_log: true
+  notify: restart faas-gatewayd-internal
+
+- name: gatewayd_internal_service — install fleet challenge key drop-in
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/faas-gatewayd-internal.service.d/99-faas-edge-challenge-key.conf
+    content: |
+      [Service]
+      LoadCredential=edge_challenge_key:/etc/faas/secrets/gatewayd-internal/edge-challenge.key
+      Environment=FAAS_EDGE_CHALLENGE_KEY_FILE=%d/edge_challenge_key
+    owner: root
+    group: root
+    mode: "0644"
+  when: gatewayd_edge_challenge_key | length > 0
+  notify: restart faas-gatewayd-internal
+
+- name: gatewayd_internal_service — remove fleet challenge key drop-in when unset
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-gatewayd-internal.service.d/99-faas-edge-challenge-key.conf
+    state: absent
+  when: gatewayd_edge_challenge_key | length == 0
+  notify: restart faas-gatewayd-internal
+
+- name: gatewayd_internal_service — remove fleet challenge key credential when unset
+  ansible.builtin.file:
+    path: /etc/faas/secrets/gatewayd-internal/edge-challenge.key
+    state: absent
+  when: gatewayd_edge_challenge_key | length == 0
+  no_log: true
+
 # Mega-PR-A (issue #911 / ADR-110 PR-1): drop the FAAS_NODE_NAME
 # env line into the gatewayd-internal unit. Drop-in mirrors
 # deploy/ansible/roles/control_plane_service/templates/

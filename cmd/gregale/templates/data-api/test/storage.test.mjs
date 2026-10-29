@@ -4,7 +4,7 @@ import http from 'node:http'
 import { createHash } from 'node:crypto'
 import { createServer } from '../server.mjs'
 import { runtimeConfig, storageConfig, storageBindings, limits } from '../config.mjs'
-import { storageRoute, storageContentType, presign, signHeaders, objectURL, unsafeStorageTable } from '../storage.mjs'
+import { storageRoute, storageContentType, presign, signHeaders, objectURL, unsafeStorageTable, newObjectKey, storedKey } from '../storage.mjs'
 
 // File storage (ADR-20261021101510).
 
@@ -69,12 +69,22 @@ test('SigV4 signing matches the AWS S3 examples', () => {
   assert.equal(objectURL({ ...path, virtualHosted: true }, 'a.png').href, 'https://real-uploads.s3.example/a.png')
 })
 
-test('startup refuses a storage table without RLS or its guard trigger', () => {
+test('startup refuses a storage table without RLS, its guard trigger or object keys', () => {
   assert.match(unsafeStorageTable(undefined), /missing/)
-  assert.match(unsafeStorageTable({ kind: 'v', rls: true, guarded: true }), /not a table/)
-  assert.match(unsafeStorageTable({ kind: 'r', rls: false, guarded: true }), /row-level security/)
-  assert.match(unsafeStorageTable({ kind: 'r', rls: true, guarded: false }), /guard trigger/)
-  assert.equal(unsafeStorageTable({ kind: 'r', rls: true, guarded: true }), null)
+  assert.match(unsafeStorageTable({ kind: 'v', rls: true, guarded: true, versioned: true }), /not a table/)
+  assert.match(unsafeStorageTable({ kind: 'r', rls: false, guarded: true, versioned: true }), /row-level security/)
+  assert.match(unsafeStorageTable({ kind: 'r', rls: true, guarded: false, versioned: true }), /guard trigger/)
+  assert.match(unsafeStorageTable({ kind: 'r', rls: true, guarded: true, versioned: false }), /storage sql --upgrade/)
+  assert.equal(unsafeStorageTable({ kind: 'r', rls: true, guarded: true, versioned: true }), null)
+})
+
+test('object keys are fresh kernel randomness; rows without one name their bytes', () => {
+  const keys = new Set(Array.from({ length: 64 }, () => newObjectKey()))
+  assert.equal(keys.size, 64)
+  for (const key of keys) assert.match(key, /^_gregale\/objects\/[0-9a-f]{32}$/)
+  assert.equal(newObjectKey(size => Buffer.alloc(size, 0xab)), `_gregale/objects/${'ab'.repeat(16)}`)
+  assert.equal(storedKey({ name: 'alice/a.png', object_key: `_gregale/objects/${'0'.repeat(32)}` }), `_gregale/objects/${'0'.repeat(32)}`)
+  for (const objectKey of [null, undefined, '../alice/b.png', 'alice/b.png']) assert.equal(storedKey({ name: 'alice/a.png', object_key: objectKey }), 'alice/a.png')
 })
 
 // fakeS3 keeps objects in memory and checks that PUTs sign their length.
@@ -198,8 +208,10 @@ test('an upload is authorized as the caller, streamed with its signed length, th
   const uploaded = await send('/storage/v1/object/uploads/alice/notes.txt', { method: 'PUT', headers: { ...as('alice'), 'content-type': 'text/plain' }, body: 'hello world' })
   assert.equal(uploaded.status, 200, uploaded.body)
   assert.deepEqual(JSON.parse(uploaded.body), { bucket: 'uploads', name: 'alice/notes.txt', size: 11, content_type: 'text/plain', owner: 'alice', created_at: 'now', updated_at: 'now' })
-  const [dry, commit] = state.calls
+  const [dry, current, commit] = state.calls
   assert.match(dry.prefer, /tx=rollback/)
+  assert.equal(current.method, 'GET')
+  assert.equal(current.claims.gregale_storage, undefined, 'the replaced version is read without the write claim')
   assert.doesNotMatch(commit.prefer, /tx=rollback/)
   for (const call of [dry, commit]) {
     assert.equal(call.method, 'POST')
@@ -208,9 +220,47 @@ test('an upload is authorized as the caller, streamed with its signed length, th
     assert.equal(call.claims.sub, 'alice')
     assert.equal(call.claims.gregale_access, 'user')
   }
-  assert.equal(s3.objects.get('/real-uploads/alice/notes.txt').body.toString(), 'hello world')
-  assert.equal(s3.objects.get('/real-uploads/alice/notes.txt').type, 'text/plain')
-  assert.ok(state.rows.has('uploads/alice/notes.txt'))
+  const key = state.rows.get('uploads/alice/notes.txt').object_key
+  assert.match(key, /^_gregale\/objects\/[0-9a-f]{32}$/)
+  assert.equal(s3.objects.get(`/real-uploads/${key}`).body.toString(), 'hello world')
+  assert.equal(s3.objects.get(`/real-uploads/${key}`).type, 'text/plain')
+  assert.deepEqual([...s3.objects.keys()], [`/real-uploads/${key}`], 'nothing is written under the name')
+})
+
+test('an overwrite writes a new version and deletes the one it replaced after commit', async t => {
+  const { state, s3, send } = await fixture(t)
+  await send('/storage/v1/object/uploads/alice/notes.txt', { method: 'PUT', headers: as('alice'), body: 'first' })
+  const first = state.rows.get('uploads/alice/notes.txt').object_key
+  await send('/storage/v1/object/uploads/alice/notes.txt', { method: 'PUT', headers: as('alice'), body: 'second' })
+  const second = state.rows.get('uploads/alice/notes.txt').object_key
+  assert.notEqual(first, second)
+  assert.deepEqual([...s3.objects.keys()], [`/real-uploads/${second}`])
+  assert.equal((await send('/storage/v1/object/uploads/alice/notes.txt', { headers: as('alice') })).body, 'second')
+  // A row without a key, such as one the owner inserted, is served and replaced by name.
+  state.rows.set('uploads/alice/seeded.txt', { bucket: 'uploads', name: 'alice/seeded.txt', owner: 'alice', size: 6, content_type: 'text/plain' })
+  s3.objects.set('/real-uploads/alice/seeded.txt', { body: Buffer.from('seeded'), type: 'text/plain' })
+  assert.equal((await send('/storage/v1/object/uploads/alice/seeded.txt', { headers: as('alice') })).body, 'seeded')
+  await send('/storage/v1/object/uploads/alice/seeded.txt', { method: 'PUT', headers: as('alice'), body: 'mine' })
+  assert.ok(!s3.objects.has('/real-uploads/alice/seeded.txt'))
+  assert.equal((await send('/storage/v1/object/uploads/alice/seeded.txt', { headers: as('alice') })).body, 'mine')
+})
+
+test('a racing upload the policies refuse at commit never touches the committed bytes', async t => {
+  const { state, s3, send } = await fixture(t)
+  // Mallory is allowed to create the name, but Alice commits it while
+  // Mallory's bytes are in flight, so Mallory's commit becomes a refused update.
+  const alice = `_gregale/objects/${'a'.repeat(32)}`
+  s3.onPut = () => {
+    s3.onPut = null
+    state.rows.set('uploads/shared.txt', { bucket: 'uploads', name: 'shared.txt', owner: 'alice', size: 5, content_type: 'text/plain', object_key: alice })
+    s3.objects.set(`/real-uploads/${alice}`, { body: Buffer.from('alice'), type: 'text/plain' })
+  }
+  const raced = await send('/storage/v1/object/uploads/shared.txt', { method: 'PUT', headers: as('mallory'), body: 'mallory' })
+  assert.equal(raced.status, 403, raced.body)
+  assert.equal(JSON.parse(raced.body).code, 'storage_forbidden')
+  assert.equal(state.rows.get('uploads/shared.txt').owner, 'alice')
+  assert.deepEqual([...s3.objects.keys()], [`/real-uploads/${alice}`], "the refused upload's own bytes are gone")
+  assert.equal(s3.objects.get(`/real-uploads/${alice}`).body.toString(), 'alice')
 })
 
 test('refused uploads never reach the bucket', async t => {
@@ -264,7 +314,8 @@ test('signed links and anonymous reads follow the public-read allowlist and RLS'
   const signed = await send('/storage/v1/sign/uploads/alice/a.png', { method: 'POST', headers: as('alice') })
   assert.equal(signed.status, 200)
   const { url, expires_at: expiresAt } = JSON.parse(signed.body)
-  assert.match(url, /^http:\/\/127\.0\.0\.1:\d+\/real-uploads\/alice\/a\.png\?X-Amz-Algorithm=AWS4-HMAC-SHA256&.*X-Amz-Expires=60&.*X-Amz-Signature=[a-f0-9]{64}$/)
+  assert.match(url, /^http:\/\/127\.0\.0\.1:\d+\/real-uploads\/_gregale\/objects\/[0-9a-f]{32}\?X-Amz-Algorithm=AWS4-HMAC-SHA256&.*X-Amz-Expires=60&.*X-Amz-Signature=[a-f0-9]{64}$/)
+  assert.ok(url.includes(state.rows.get('uploads/alice/a.png').object_key), 'the link names the stored version')
   assert.ok(Math.abs(Date.parse(expiresAt) - Date.now() - 60000) < 5000)
   assert.equal((await send('/storage/v1/sign/uploads/alice/a.png', { method: 'POST', headers: as('mallory') })).status, 404)
   const unlisted = await send('/storage/v1/object/avatars/alice.png')
@@ -282,11 +333,12 @@ test('signed links and anonymous reads follow the public-read allowlist and RLS'
 test('removal checks the caller, deletes the object, then the row', async t => {
   const { state, s3, send } = await fixture(t)
   await send('/storage/v1/object/uploads/alice/old.txt', { method: 'PUT', headers: as('alice'), body: 'old' })
+  const stored = `/real-uploads/${state.rows.get('uploads/alice/old.txt').object_key}`
   assert.equal((await send('/storage/v1/object/uploads/alice/old.txt', { method: 'DELETE', headers: as('mallory') })).status, 404)
-  assert.ok(s3.objects.has('/real-uploads/alice/old.txt'))
+  assert.ok(s3.objects.has(stored))
   const removed = await send('/storage/v1/object/uploads/alice/old.txt', { method: 'DELETE', headers: as('alice') })
   assert.equal(removed.status, 204)
-  assert.ok(!s3.objects.has('/real-uploads/alice/old.txt'))
+  assert.ok(!s3.objects.has(stored))
   assert.ok(!state.rows.has('uploads/alice/old.txt'))
   const deletes = state.calls.filter(call => call.method === 'DELETE')
   assert.deepEqual(deletes.map(call => /tx=rollback/.test(call.prefer)), [true, true, false], 'mallory and alice dry-run; only alice commits')

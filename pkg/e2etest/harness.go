@@ -161,8 +161,10 @@ type Harness struct {
 	// populated in Start / StartWithEnv; tests that build their
 	// own harness struct must set it themselves.
 	HostHMACKeyPath string
-	ImagedTmp       string // FAAS_APPS_ROOT
-	BuilderdCfg     string // FAAS_BUILDERD_CONFIG path (issue #57 M6 e2e)
+	// Agent run daemons (agents.go); empty unless booted.
+	AgentDaemons AgentDaemons
+	ImagedTmp    string // FAAS_APPS_ROOT
+	BuilderdCfg  string // FAAS_BUILDERD_CONFIG path (issue #57 M6 e2e)
 
 	// Per-daemon state. nil for a daemon not started (e.g. quota test skips
 	// the metal-only daemons).
@@ -187,6 +189,9 @@ type Harness struct {
 	apidEnv              []string
 	apidListen           string
 	requestTelemetrySock string
+	// meterdBin/meterdEnv retain meterd's launch recipe for RestartMeterd.
+	meterdBin string
+	meterdEnv []string
 	// killed holds daemons stopped on purpose by KillAPID or KillSchedd.
 	killed map[*exec.Cmd]bool
 }
@@ -272,6 +277,10 @@ func StartWithAPIDEnv(t *testing.T, pool *pgxpool.Pool, which Which, apidOnlyEnv
 	if which&GatewaySynthStub != 0 {
 		startGatewaySynthStub(t, h)
 	}
+	// The agent daemons' keys and sockets are fixed before apid and vmmd
+	// boot: apid seals with the fleet recipient and serves githubd's bridge,
+	// and vmmd mints relay identities and dials outboundd's relay.
+	extraEnv = append(prepareAgentDaemons(t, h, which), extraEnv...)
 	h.startedAt = time.Now()
 
 	// DB URL — pgtest opened the test pool with search_path=<schema>,public.
@@ -497,6 +506,8 @@ failure_report_dir = %q
 		}
 	}
 
+	startAgentDaemons(t, h, bin, dbURL, which, extraEnv)
+
 	h.requireDaemonsAlive(t)
 	booted = true
 	t.Cleanup(h.stop)
@@ -527,6 +538,13 @@ const (
 	// It starts no daemon of its own. vmmd binds a fixed reserved port here,
 	// so only tests that read its counters opt in.
 	VMMDMetrics
+	// Agentd, Outboundd and Githubd boot the agent run daemons (ADR-20261027090010,
+	// ADR-20261027090014; agents.go): agentd drives runs through schedd, outboundd
+	// relays their model calls from vmmd, and githubd forwards pull request
+	// deliveries to apid's bridge.
+	Agentd
+	Outboundd
+	Githubd
 )
 
 // DeployWake is the daemon set the image deploy → snapshot → park → wake
@@ -899,6 +917,12 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 			"FAAS_SPOOL_ROOT="+spoolRoot,
 			"FAAS_SCAN_SPOOL_ROOT="+scanRoot,
 		)
+		// As in Start: apid's rollback precheck verifies the signatures
+		// schedd does, so it gets the same key when schedd runs. Without it
+		// every checked rollback was refused with capacity_unavailable.
+		if which&Schedd != 0 {
+			env = append(env, "FAAS_SIGN_PUB="+h.ensureSignPub(t))
+		}
 		env = append(env, extraEnv...)
 		// Keep the named-control-plane acceptance knob scoped to apid. The
 		// surrounding harness shares extraEnv across daemons, while setting
@@ -1809,7 +1833,34 @@ func startMeterd(t *testing.T, h *Harness, bin, dbURL string, extraEnv ...[]stri
 	for _, e := range extraEnv {
 		env = append(env, e...)
 	}
+	h.meterdBin, h.meterdEnv = bin, append([]string(nil), env...)
 	h.procs = append(h.procs, startProc(t, bin, "meterd", env))
+}
+
+// RestartMeterd launches a fresh meterd with the retained environment, so a
+// test can prove that work meterd owns (canary progression, release notices)
+// resumes from durable state after a meterd restart.
+func (h *Harness) RestartMeterd() error {
+	if h == nil || h.T == nil {
+		return fmt.Errorf("e2etest: nil harness")
+	}
+	if h.meterdBin == "" || len(h.meterdEnv) == 0 {
+		return fmt.Errorf("e2etest: meterd launch recipe unavailable")
+	}
+	if err := h.KillMeterd(); err != nil {
+		return err
+	}
+	procs := h.procs[:0]
+	for _, candidate := range h.procs {
+		if candidate != nil && filepath.Base(candidate.Path) == "meterd" && candidate.ProcessState != nil {
+			continue
+		}
+		procs = append(procs, candidate)
+	}
+	h.procs = procs
+	h.procs = append(h.procs, startProc(h.T, h.meterdBin, "meterd", append([]string(nil), h.meterdEnv...)))
+	h.requireDaemonsAlive(h.T)
+	return nil
 }
 
 // stop SIGTERMs every daemon, waits up to 5s, then SIGKILL stragglers. Owns
@@ -1956,12 +2007,39 @@ func (h *Harness) KillMeterd() error {
 	return h.killChild("meterd")
 }
 
+// DumpStacks asks the named daemon for its goroutine stacks with SIGQUIT,
+// which the Go runtime prints to the captured output before exiting, so a
+// failing test's DumpLogs shows where a stuck daemon waits.
+func (h *Harness) DumpStacks(name string) error {
+	if h == nil {
+		return fmt.Errorf("e2etest: nil harness")
+	}
+	for _, proc := range h.procs {
+		if proc == nil || proc.Process == nil || filepath.Base(proc.Path) != name || proc.ProcessState != nil {
+			continue
+		}
+		if err := proc.Process.Signal(syscall.SIGQUIT); err != nil && !errors.Is(err, os.ErrProcessDone) {
+			return fmt.Errorf("e2etest: SIGQUIT %s: %w", name, err)
+		}
+		// The runtime exits after printing; reap it so the buffer is complete.
+		_ = proc.Wait()
+		return nil
+	}
+	return fmt.Errorf("e2etest: %s process not found", name)
+}
+
+// KillImaged terminates and reaps imaged, for a test that needs only what
+// imaged staged at startup and no builds of the deployments it then writes.
+func (h *Harness) KillImaged() error {
+	return h.killChild("imaged")
+}
+
 func (h *Harness) killChild(name string) error {
 	if h == nil {
 		return fmt.Errorf("e2etest: nil harness")
 	}
 	for _, proc := range h.procs {
-		if proc == nil || proc.Process == nil || filepath.Base(proc.Path) != name {
+		if proc == nil || proc.Process == nil || childName(proc) != name {
 			continue
 		}
 		if proc.ProcessState == nil {
@@ -1981,6 +2059,26 @@ func (h *Harness) killChild(name string) error {
 		return nil
 	}
 	return fmt.Errorf("e2etest: %s process not found", name)
+}
+
+// childName is the daemon a harness child runs: its binary, or, for a daemon
+// started under setpriv (imaged, see imagedCommandPrefix), the binary after "--".
+func childName(cmd *exec.Cmd) string {
+	name := filepath.Base(cmd.Path)
+	if name != "setpriv" && name != "sudo" {
+		return name
+	}
+	for i, arg := range cmd.Args {
+		if arg != "--" {
+			continue
+		}
+		for _, next := range cmd.Args[i+1:] {
+			if next != "env" && !strings.Contains(next, "=") {
+				return filepath.Base(next)
+			}
+		}
+	}
+	return name
 }
 
 // RestartSchedd launches a fresh schedd with the retained config and env.
@@ -2466,12 +2564,14 @@ func startProc(t *testing.T, bin, name string, env []string) *exec.Cmd {
 // daemonConfigArgs is a harness-only launch selector. It supplies the real
 // operator TOML flag on initial startup and restart; it grants no admission.
 func daemonConfigArgs(name string, env []string) []string {
-	if name != "apid" {
+	key, ok := map[string]string{"apid": "FAAS_E2E_APID_CONFIG=", "githubd": "FAAS_E2E_GITHUBD_CONFIG=",
+		"outboundd": "FAAS_E2E_OUTBOUNDD_CONFIG="}[name]
+	if !ok {
 		return nil
 	}
 	var path string
 	for _, entry := range env {
-		if value, ok := strings.CutPrefix(entry, "FAAS_E2E_APID_CONFIG="); ok {
+		if value, ok := strings.CutPrefix(entry, key); ok {
 			path = value
 		}
 	}
@@ -3407,7 +3507,13 @@ func startImaged(t *testing.T, h *Harness, bin, dbURL, tmp, appsRoot string, ext
 	// changed takes close to three minutes on a two-vCPU shared host, so the
 	// wait leaves headroom beyond that.
 	imagedStart := time.Now()
-	if err := h.waitImagedListens(10 * time.Minute); err != nil {
+	// A test that stages a large base at startup (the agent base is about
+	// 1 GB, scanned by Grype) can allow imaged longer.
+	ready := 10 * time.Minute
+	if v, err := time.ParseDuration(os.Getenv("FAAS_E2E_IMAGED_READY_TIMEOUT")); err == nil && v > ready {
+		ready = v
+	}
+	if err := h.waitImagedListens(ready); err != nil {
 		// Say why: an imaged that exited (metrics port taken, base
 		// staging failed) is otherwise reported only as "never
 		// subscribed", with its last words lost — smoke run

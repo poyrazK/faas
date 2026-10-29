@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/mcpmanagement"
@@ -28,11 +29,16 @@ func mcpLocalCLI(profile, apiBase, token string) mcpmanagement.LocalCLI {
 		if profile != "" {
 			global = append(global, "--profile", profile)
 		}
+		dir, err := mcpLocalCLIDir()
+		if err != nil {
+			return mcpmanagement.LocalCLIResult{}, err
+		}
+		defer func() { _ = os.RemoveAll(dir) }()
 		command := exec.CommandContext(ctx, executable, append(global, args...)...)
 		// A neutral directory: a linked project context where the server
 		// started must not redirect a command's target. Tools pass paths and
 		// apps explicitly.
-		command.Dir = os.TempDir()
+		command.Dir = dir
 		command.Env = append(environWithout(os.Environ(), "FAAS_TOKEN", "FAAS_API", "FAAS_JSON"), "FAAS_TOKEN="+token, "FAAS_API="+apiBase)
 		command.Stdin = bytes.NewReader(stdin)
 		stdout, stderr := &cappedBuffer{limit: mcpLocalCLIOutputLimit}, &cappedBuffer{limit: mcpLocalCLIOutputLimit}
@@ -46,6 +52,23 @@ func mcpLocalCLI(profile, apiBase, token string) mcpmanagement.LocalCLI {
 		}
 		return result, err
 	}
+}
+
+// mcpLocalCLIDir makes a fresh working directory for one command under the
+// user's cache directory. The CLI reads the nearest .gregale/project.json
+// above its working directory, so no ancestor may be writable by another
+// user: in a shared /tmp anyone could plant one and break or redirect the
+// tools.
+func mcpLocalCLIDir() (string, error) {
+	base, err := os.UserCacheDir()
+	if err != nil {
+		return "", err
+	}
+	parent := filepath.Join(base, "gregale", "mcp-cli")
+	if err := os.MkdirAll(parent, 0o700); err != nil {
+		return "", err
+	}
+	return os.MkdirTemp(parent, "run-")
 }
 
 func environWithout(environ []string, names ...string) []string {

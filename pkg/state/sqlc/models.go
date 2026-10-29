@@ -187,6 +187,50 @@ type ActiveEnvironmentGitSource struct {
 	Detached               bool
 }
 
+// ADR-20261027090010 agent definitions; apid is the only writer. Deleted agents keep their versions and runs.
+type Agent struct {
+	ID            pgtype.UUID
+	AccountID     pgtype.UUID
+	Name          string
+	Description   string
+	State         string
+	LatestVersion int32
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+	DeletedAt     pgtype.Timestamptz
+}
+
+// ADR-20261027090010 §8 deliveries of succeeded agent runs; agentd's delivery worker (ADR-20261027090014) is the only writer.
+type AgentDelivery struct {
+	ID             pgtype.UUID
+	AccountID      pgtype.UUID
+	RunID          pgtype.UUID
+	Ordinal        int16
+	Destination    string
+	IdempotencyKey string
+	InstallationID pgtype.Int8
+	Repository     pgtype.Text
+	Number         pgtype.Int8
+	Body           string
+	BodyTruncated  bool
+	State          string
+	Attempts       int32
+	NextAttemptAt  pgtype.Timestamptz
+	DeadlineAt     pgtype.Timestamptz
+	LeaseToken     pgtype.Text
+	LeaseExpiresAt pgtype.Timestamptz
+	OutcomeCode    pgtype.Text
+	OutcomeMessage pgtype.Text
+	ExternalID     pgtype.Text
+	ExternalUrl    pgtype.Text
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+	FinishedAt     pgtype.Timestamptz
+	BucketID       pgtype.UUID
+	BucketAppID    pgtype.UUID
+	ObjectPrefix   pgtype.Text
+}
+
 type AgentExecutionWorkflow struct {
 	ID              pgtype.UUID
 	AccountID       pgtype.UUID
@@ -206,6 +250,96 @@ type AgentExecutionWorkflow struct {
 	CreatedAt       pgtype.Timestamptz
 	UpdatedAt       pgtype.Timestamptz
 	FinishedAt      pgtype.Timestamptz
+}
+
+// ADR-20261027090010 agent runs; apid inserts queued runs and cancels queued ones, agentd (ADR-20261027090014) owns every other transition.
+type AgentRun struct {
+	ID                pgtype.UUID
+	AccountID         pgtype.UUID
+	AgentID           pgtype.UUID
+	AgentVersion      int32
+	TenantID          pgtype.UUID
+	Trigger           string
+	DedupeKey         pgtype.Text
+	Prompt            pgtype.Text
+	Inputs            []byte
+	State             string
+	RamMb             pgtype.Int4
+	TimeoutSec        int32
+	Attempt           int32
+	LeaseToken        pgtype.Text
+	LeaseExpiresAt    pgtype.Timestamptz
+	CancelRequestedAt pgtype.Timestamptz
+	OutcomeCode       pgtype.Text
+	OutcomeMessage    pgtype.Text
+	QueuedAt          pgtype.Timestamptz
+	StartedAt         pgtype.Timestamptz
+	RunningAt         pgtype.Timestamptz
+	FinishedAt        pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
+	// ADR-20261027090014 agentd replica holding the lease; diagnostics only.
+	LeaseOwner             pgtype.Text
+	NodeID                 pgtype.Text
+	InstanceID             pgtype.Text
+	ExitCode               pgtype.Int4
+	Signal                 pgtype.Int4
+	BootMs                 pgtype.Int4
+	AiBudgetMillicents     pgtype.Int8
+	CheckoutRepository     pgtype.Text
+	CheckoutCommit         pgtype.Text
+	CheckoutInstallationID pgtype.Int8
+	GithubRepository       pgtype.Text
+	GithubNumber           pgtype.Int8
+	GithubInstallationID   pgtype.Int8
+	WorkflowRunID          pgtype.UUID
+	WorkflowStep           pgtype.Text
+	WorkflowEvent          pgtype.Text
+}
+
+type AgentRunAiReservation struct {
+	LeaseID            string
+	RunID              pgtype.UUID
+	ReservedMillicents int64
+	ExpiresAt          pgtype.Timestamptz
+	CreatedAt          pgtype.Timestamptz
+}
+
+// ADR-20261027090010 §7 per-run model spend written by outboundd; the cap is agent_runs.ai_budget_millicents.
+type AgentRunAiSpend struct {
+	RunID           pgtype.UUID
+	AccountID       pgtype.UUID
+	SpentMillicents int64
+	Calls           int64
+	UpdatedAt       pgtype.Timestamptz
+}
+
+// ADR-20261027090010 agent run outputs written by agentd: inline result.json, the output file manifest and the log tail.
+type AgentRunOutput struct {
+	RunID        pgtype.UUID
+	AccountID    pgtype.UUID
+	Result       []byte
+	Files        []byte
+	LogTail      string
+	LogTruncated bool
+	CreatedAt    pgtype.Timestamptz
+}
+
+// ADR-20261027090010 immutable agent versions: harness descriptor, prompt template, size and timeout.
+type AgentVersion struct {
+	AgentID            pgtype.UUID
+	Version            int32
+	AccountID          pgtype.UUID
+	HarnessPreset      pgtype.Text
+	HarnessImage       pgtype.Text
+	HarnessRun         []string
+	HarnessModels      []byte
+	PromptTemplate     string
+	RamMb              pgtype.Int4
+	TimeoutSec         int32
+	CreatedAt          pgtype.Timestamptz
+	ModelIntegrations  []byte
+	AiBudgetMillicents pgtype.Int8
+	Deliveries         []byte
 }
 
 type AlertDelivery struct {
@@ -2704,6 +2838,8 @@ type ComputeNode struct {
 	ReadinessReason pgtype.Text
 	// Last time this node's gatewayd-internal edge-rule listener reported alive (database clock); NULL before its first report (ADR-091).
 	EdgeListenerHeartbeatAt pgtype.Timestamptz
+	WakeBreakerOpenUntil    pgtype.Timestamptz
+	WakeBreakerReason       pgtype.Text
 }
 
 type ComputeNodeHeartbeat struct {
@@ -4178,27 +4314,28 @@ type EdgePenaltyBox struct {
 }
 
 type EdgeRule struct {
-	ID           pgtype.UUID
-	AccountID    pgtype.UUID
-	AppID        pgtype.UUID
-	MatchHost    string
-	MatchPath    string
-	MatchMethods []string
-	Priority     int16
-	Enabled      bool
-	Kind         string
-	Action       []byte
-	CreatedAt    pgtype.Timestamptz
-	UpdatedAt    pgtype.Timestamptz
-	ValidateMode string
-	CorsPresetID pgtype.UUID
-	MatchHeaders []byte
-	ManifestKey  pgtype.Text
-	Name         pgtype.Text
-	Description  pgtype.Text
-	ExpiresAt    pgtype.Timestamptz
-	MatchExpr    []byte
-	Mode         string
+	ID             pgtype.UUID
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	MatchHost      string
+	MatchPath      string
+	MatchMethods   []string
+	Priority       int16
+	Enabled        bool
+	Kind           string
+	Action         []byte
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+	ValidateMode   string
+	CorsPresetID   pgtype.UUID
+	MatchHeaders   []byte
+	ManifestKey    pgtype.Text
+	Name           pgtype.Text
+	Description    pgtype.Text
+	ExpiresAt      pgtype.Timestamptz
+	MatchExpr      []byte
+	Mode           string
+	MatchHostScope pgtype.Text
 }
 
 type EdgeRuleChangeLog struct {
@@ -5149,6 +5286,8 @@ type EventRecoveryJob struct {
 	NotificationReceipts          []byte
 	NotificationRetryReceipts     []byte
 	ExecutionAttentionNextAt      pgtype.Timestamptz
+	FailureCount                  int32
+	LastFailure                   string
 }
 
 type EventRecoveryWorkflowResult struct {
@@ -5190,6 +5329,9 @@ type EventReplayJob struct {
 	CompletedAt           pgtype.Timestamptz
 	ConsumerKind          string
 	WorkflowName          string
+	FailureCount          int32
+	NextAttemptAt         pgtype.Timestamptz
+	LastFailure           string
 }
 
 type EventReplayJobItem struct {
@@ -7769,6 +7911,19 @@ type ManagedPostgresBinding struct {
 	DatabaseAccountID          pgtype.UUID
 }
 
+// Compute cap thresholds a managed PostgreSQL usage subject reached in a UTC month; written only by apid (ADR-20261025094915).
+type ManagedPostgresCapEvent struct {
+	SubjectID            pgtype.UUID
+	PeriodStart          pgtype.Timestamptz
+	Threshold            string
+	ReachedAt            pgtype.Timestamptz
+	UsedUnitSeconds      int64
+	AllowanceUnitSeconds int64
+	CeilingUnitSeconds   int64
+	OverageEnabled       bool
+	MailIntentID         pgtype.UUID
+}
+
 type ManagedPostgresCheckpointMaintenance struct {
 	ID                       pgtype.UUID
 	SourceDatabaseID         pgtype.UUID
@@ -8026,13 +8181,14 @@ type ManagedPostgresHealth struct {
 
 // ADR-20261016151947 live-query secrets per managed database, sealed to livequeryd; at most one active and one retiring key.
 type ManagedPostgresLiveKey struct {
-	Kid          string
-	AccountID    pgtype.UUID
-	DatabaseID   pgtype.UUID
-	SealedSecret []byte
-	Recipient    string
-	CreatedAt    pgtype.Timestamptz
-	RetiresAt    pgtype.Timestamptz
+	Kid             string
+	AccountID       pgtype.UUID
+	DatabaseID      pgtype.UUID
+	SealedSecret    []byte
+	Recipient       string
+	CreatedAt       pgtype.Timestamptz
+	RetiresAt       pgtype.Timestamptz
+	SealedSecretSig []byte
 }
 
 // ADR-20261016151947 replication login per live managed database, sealed to livequeryd; livequeryd discovers its databases here.
@@ -8045,6 +8201,7 @@ type ManagedPostgresLiveLogin struct {
 	Slot               string
 	Awake              string
 	CreatedAt          pgtype.Timestamptz
+	SealedLoginSig     []byte
 }
 
 type ManagedPostgresResize struct {
@@ -8808,6 +8965,21 @@ type ManagedRealtimeWorkerHeartbeat struct {
 	StatusCode   string
 	LastSeenAt   pgtype.Timestamptz
 	Lost         bool
+}
+
+type McpBridgeLease struct {
+	Bridge    string
+	Holder    string
+	Epoch     int64
+	ExpiresAt pgtype.Timestamptz
+}
+
+type McpBridgeState struct {
+	Bridge    string
+	Namespace string
+	Sealed    []byte
+	Epoch     int64
+	UpdatedAt pgtype.Timestamptz
 }
 
 type McpCatalogMonitor struct {
@@ -10693,6 +10865,21 @@ type PgRatelimitCounter struct {
 	LastRefill pgtype.Timestamptz
 }
 
+type PlatformMailAgentRunCapture struct {
+	Namespace  string
+	ProducerID string
+	StartedAt  pgtype.Timestamptz
+	RecoveryID pgtype.UUID
+}
+
+type PlatformMailAgentRunObservation struct {
+	DeliveryID  pgtype.UUID
+	AccountID   pgtype.UUID
+	Disposition string
+	IntentID    pgtype.UUID
+	ObservedAt  pgtype.Timestamptz
+}
+
 type PlatformMailDeploymentCapture struct {
 	Namespace  string
 	ProducerID string
@@ -10780,6 +10967,23 @@ type PlatformMailProducerOutbox struct {
 	DeploymentFailureAppRevision     pgtype.Int8
 	DeploymentFailureSuccessRevision pgtype.Int8
 	DeploymentFailureAt              pgtype.Timestamptz
+	AgentDeliveryID                  pgtype.UUID
+}
+
+// Release activations: control-plane deploys and rollbacks written by deployctl as the schema owner, and compute release installs recorded from compute_nodes.release_id. Read with gregalectl release history (issue #574).
+type PlatformReleaseActivation struct {
+	ID                pgtype.UUID
+	Host              string
+	Kind              string
+	ReleaseID         string
+	CommitSha         pgtype.Text
+	PreviousReleaseID pgtype.Text
+	Services          []string
+	Actor             string
+	Status            string
+	Detail            string
+	StartedAt         pgtype.Timestamptz
+	FinishedAt        pgtype.Timestamptz
 }
 
 type PlatformTenant struct {
@@ -13739,6 +13943,12 @@ type RuntimeReleaseQualification struct {
 	RevocationSha256  pgtype.Text
 }
 
+type RuntimeSecretSignature struct {
+	CiphertextSha256 []byte
+	Signature        []byte
+	CreatedAt        pgtype.Timestamptz
+}
+
 type RuntimeSnapshot struct {
 	ID                  pgtype.UUID
 	CatalogKey          string
@@ -14304,6 +14514,7 @@ type Snapshot struct {
 	CpuTemplate string
 	// Host CPU signature of the capturing node; a template-less snapshot restores only on the identical signature.
 	CpuModel string
+	StaleAt  pgtype.Timestamptz
 }
 
 type SnapshotFanoutEvent struct {
@@ -14523,6 +14734,7 @@ type Trigger struct {
 	QueueBindingScope         string
 	QueueBindingEnvironmentID pgtype.UUID
 	Delivery                  string
+	Agent                     pgtype.Text
 }
 
 type TriggerConsumerHealth struct {

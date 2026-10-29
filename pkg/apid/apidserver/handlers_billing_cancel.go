@@ -63,8 +63,9 @@ func (s *server) postBillingCancel(w http.ResponseWriter, r *http.Request, acct 
 				"billing_cancel_no_api_key", "billing provider mis-configured",
 				"the operator has not configured a billing API key; contact support"))
 		default:
+			logCustomerFailure(s.log, "billing cancel failed", err)
 			api.WriteProblem(w, api.NewProblem(http.StatusBadGateway,
-				"billing_cancel_failed", "billing cancel failed", err.Error()))
+				"billing_cancel_failed", "billing cancel failed", api.DetailServerFailure))
 		}
 		return
 	}

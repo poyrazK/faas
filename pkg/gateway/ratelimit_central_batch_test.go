@@ -210,8 +210,8 @@ func TestCentralCoalescer_FollowerWaitIsBounded(t *testing.T) {
 	if !errors.Is(got.err, errCentralBatchWait) {
 		t.Fatalf("follower err = %v, want errCentralBatchWait", got.err)
 	}
-	if waited := time.Since(start); waited > 2*centralConsultTimeout {
-		t.Fatalf("follower waited %s, want about %s", waited, centralConsultTimeout)
+	if waited := time.Since(start); waited > 2*centralConsumeTimeout {
+		t.Fatalf("follower waited %s, want about %s", waited, centralConsumeTimeout)
 	}
 	close(backend.hold)
 }

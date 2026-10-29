@@ -405,18 +405,44 @@ func cmdPostgresGet(args []string) int {
 	return 0
 }
 
+// cmdPostgresDelete deletes the database and its restore history at the
+// provider, with no grace period, so the interactive path asks for the
+// database's name the way `app delete` asks for the slug.
 func cmdPostgresDelete(args []string) int {
-	id, ok := onePostgresID("postgres delete", args)
-	if !ok {
+	flags, positional := splitArgsForFlags(args, "quiet", "yes")
+	fs := newFlagSet("postgres delete", flag.ContinueOnError)
+	quiet := fs.Bool("quiet", false, "skip the typed confirmation (for scripts)")
+	fs.BoolVar(quiet, "yes", false, "confirm deletion without prompting")
+	if err := fs.Parse(append(flags, positional...)); err != nil {
 		return 1
+	}
+	if fs.NArg() != 1 || strings.TrimSpace(fs.Arg(0)) == "" {
+		PrintUsage(os.Stderr, "usage: gregale postgres delete <database> [--yes|--quiet]", "postgres")
+		return 1
+	}
+	if code := requireAutomationConfirmation(*quiet, "--yes (or --quiet)"); code != 0 {
+		return code
+	}
+	if !*quiet && jsonOutput {
+		return printErr("Confirmation required", errors.New("postgres delete requires --yes or --quiet in JSON mode"))
 	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	id, err = postgresDatabaseID(context.Background(), client, id)
+	id, err := postgresDatabaseID(context.Background(), client, fs.Arg(0))
 	if err != nil {
 		return printErr("Could not find managed PostgreSQL database", err)
+	}
+	if !*quiet {
+		database, err := client.GetManagedPostgresDatabase(context.Background(), id)
+		if err != nil {
+			return printErr("Could not load managed PostgreSQL database", err)
+		}
+		_, _ = fmt.Fprintf(osStderr, "Delete managed PostgreSQL database %q (%s)? Its data and point-in-time restore history are deleted at the provider and cannot be recovered.\n", database.Name, database.ID)
+		if !requireTyped(database.Name) {
+			return 130
+		}
 	}
 	result, err := client.DeleteManagedPostgresDatabase(context.Background(), id)
 	if err != nil {
@@ -526,7 +552,7 @@ func cmdPostgresBindingsCreate(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 || *app == "" || *scope == "" || *environmentKey == "" || !postgresAccessOK(*access) {
-		PrintUsage(os.Stderr, "usage: gregale postgres bindings create DATABASE_ID --app APP_ID --scope SCOPE --environment-key KEY [--access read_write|read_only|migration|data_api|auth]", "postgres")
+		PrintUsage(os.Stderr, "usage: gregale postgres bindings create DATABASE_ID --app APP_ID --env SCOPE --environment-key KEY [--access read_write|read_only|migration|data_api|auth]", "postgres")
 		return 1
 	}
 	client, err := authedClient()

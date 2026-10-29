@@ -997,6 +997,60 @@ type ListScheduleOccurrencesResponse struct {
 	NextBefore  string                       `json:"next_before,omitempty"`
 }
 
+// CronRunOutcome classifies one cron run. Mirrors pkg/api.CronRunOutcome.
+type CronRunOutcome string
+
+const (
+	CronRunSuccess    CronRunOutcome = "success"
+	CronRunFailed     CronRunOutcome = "failed"
+	CronRunTimeout    CronRunOutcome = "timeout"
+	CronRunDeadLetter CronRunOutcome = "dead_letter"
+	CronRunCancelled  CronRunOutcome = "cancelled"
+	CronRunUncertain  CronRunOutcome = "uncertain"
+	CronRunRunning    CronRunOutcome = "running"
+)
+
+// CronRun is one row of GET /v1/crons/{id}/runs. Branch on Outcome, never
+// on Error.
+type CronRun struct {
+	ID          string         `json:"id"`
+	StartedAt   time.Time      `json:"started_at"`
+	CompletedAt *time.Time     `json:"completed_at,omitempty"`
+	DurationMs  *int64         `json:"duration_ms,omitempty"`
+	Outcome     CronRunOutcome `json:"outcome"`
+	Attempts    int            `json:"attempts"`
+	InstanceID  string         `json:"instance_id,omitempty"`
+	TaskID      string         `json:"task_id,omitempty"`
+	Error       string         `json:"error,omitempty"`
+}
+
+// ListCronRunsResponse is a newest-first page of cron runs.
+type ListCronRunsResponse struct {
+	Runs []CronRun `json:"runs"`
+}
+
+// FireCronResponse is the 202 body of POST /v1/crons/{id}/run.
+type FireCronResponse struct {
+	RequestID string `json:"request_id"`
+	CronID    string `json:"cron_id"`
+	Status    string `json:"status"`
+}
+
+// FireCronRequestResponse is a manual run's status. Timestamps are
+// RFC3339Nano UTC strings; the optional fields are nil until set.
+type FireCronRequestResponse struct {
+	RequestID    string  `json:"request_id"`
+	CronID       string  `json:"cron_id"`
+	Status       string  `json:"status"`
+	RequestedAt  string  `json:"requested_at"`
+	FinishedAt   *string `json:"finished_at,omitempty"`
+	InvocationID *string `json:"invocation_id,omitempty"`
+	OperationID  *string `json:"operation_id,omitempty"`
+	TaskID       *string `json:"task_id,omitempty"`
+	Error        *string `json:"error,omitempty"`
+	AccountID    string  `json:"account_id"`
+}
+
 // InstanceResponse is the read-only instance view (spec §4.2 / §6).
 type InstanceResponse struct {
 	ID            string `json:"id"`
@@ -1272,6 +1326,8 @@ type ManagedPostgresUsageResponse struct {
 	ComputeAllowanceUnitSeconds int64      `json:"compute_allowance_unit_seconds,omitempty"`
 	ComputeCeilingUnitSeconds   int64      `json:"compute_ceiling_unit_seconds,omitempty"`
 	ComputeCapState             string     `json:"compute_cap_state,omitempty"`
+	OverageEnabled              bool       `json:"overage_enabled,omitempty"`
+	ComputeSuspendedAt          *time.Time `json:"compute_suspended_at,omitempty"`
 }
 
 // ValidateAppConfig checks a requested app config against its plan caps (spec

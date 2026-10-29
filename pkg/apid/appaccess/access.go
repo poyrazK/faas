@@ -178,6 +178,16 @@ func Authorize(r *http.Request, store Store, audit authz.AuditEmitter, actor sta
 	return authorize(r, store, audit, actor, app)
 }
 
+// AuthorizeRoute is Authorize for a request that finishes another route's
+// work on a different surface: the browser secret-entry page completes a
+// secret request, so it gets the decision that request's route pattern gets.
+func AuthorizeRoute(r *http.Request, store Store, audit authz.AuditEmitter, actor state.Account, app state.App, pattern string) (state.Account, *api.Problem) {
+	served := r.Pattern
+	r.Pattern = pattern
+	defer func() { r.Pattern = served }()
+	return authorize(r, store, audit, actor, app)
+}
+
 func authorize(r *http.Request, store Store, audit authz.AuditEmitter, actor state.Account, app state.App) (state.Account, *api.Problem) {
 	_, key, _, ok := authmw.PrincipalFrom(r)
 	if !ok {
@@ -258,7 +268,10 @@ func authorizeShared(r *http.Request, store Store, audit authz.AuditEmitter, act
 		}
 		action = authz.OrgActionManageAppSecurity
 	}
-	if (org.Status == state.OrgStatusSuspended || org.Status == state.OrgStatusPastDue) && action != authz.OrgActionReadApp && action != authz.OrgActionReadAppLogs && action != authz.ReadObjectStorage && action != authz.OrgActionReadQueues {
+	// A past-due company keeps running and loses only deploys (spec §4.7), as
+	// a past-due account does: the owner account below carries past_due, so
+	// deploy admission refuses while members still revoke and reconfigure.
+	if org.Status == state.OrgStatusSuspended && action != authz.OrgActionReadApp && action != authz.OrgActionReadAppLogs && action != authz.ReadObjectStorage && action != authz.OrgActionReadQueues {
 		return state.Account{}, api.ErrOrgRoleForbidden("change applications in an inactive organization")
 	}
 	if p := authz.AuthorizeOrgAction(r.Context(), action, audit); p != nil {

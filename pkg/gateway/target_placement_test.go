@@ -338,3 +338,29 @@ func TestTargetPlacementPreservesNewerReadinessAndRefusesFailedRead(t *testing.T
 		t.Fatalf("readiness recovery: %v", err)
 	}
 }
+
+// A deployment smoke admits an instance while its deployment is still
+// snapshotting. Placement reads report that instance as not live; a read in
+// that window must keep the target, or its quarantine refuses the first public
+// request after go-live with app_concurrency_reached.
+func TestTargetPlacementKeepsSmokeTargetUntilLive(t *testing.T) {
+	smoke := placementFixture("app", "smoke")
+	live := false
+	b := NewPGBackend(nil, nil, nil).WithTargetPlacementLoader(func(context.Context, []string) (map[string]TargetPlacementSnapshot, error) {
+		return map[string]TargetPlacementSnapshot{"app": {AppID: "app", Complete: true,
+			Targets: []TargetPlacement{{Target: smoke, DeploymentLive: live}}}}, nil
+	})
+	if _, _, _, err := b.recordAdmission(t.Context(), "app", smoke.DeploymentID, smoke.InstanceID, smoke.NodeID, smoke.DeploymentID, smoke.WakeID, 0, false, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.RefreshLiveTargets(t.Context(), "app"); err != nil {
+		t.Fatal(err)
+	}
+	live = true
+	if err := b.ReconcileLiveTargets(t.Context(), "app"); err != nil {
+		t.Fatal(err)
+	}
+	if !pickPublicDeployment(b, "app", smoke.DeploymentID, "").OK {
+		t.Fatal("smoke target was dropped before its deployment went live")
+	}
+}

@@ -515,6 +515,12 @@ const (
 	CodeBuildUndetected          = "build_undetected"
 	CodeBuildOOM                 = "build_oom"
 	CodeBuildTimeout             = "build_timeout"
+	// CodeBuildFailed marks a source build whose own install or build step
+	// exited non-zero; CodeBuildInfrastructure marks one the platform could
+	// not run (builder VM, disk, or control-plane failure). Both are stamped
+	// on the deployment row with whycopy guidance (ADR-20261029103512).
+	CodeBuildFailed         = "build_failed"
+	CodeBuildInfrastructure = "build_infrastructure_failed"
 	// CodeDeploymentQueueTimeout and CodeDeploymentStalled are the
 	// deployment watchdog's failures (ADR-20261024140100): a build waited
 	// past DeploymentQueuedBuildTimeoutSeconds, or an in-flight deployment
@@ -650,6 +656,10 @@ const (
 	// CodeDeployRateLimited marks an account that exhausted its plan's
 	// deployment admissions in the current one-hour window.
 	CodeDeployRateLimited = "deploy_rate_limited"
+	// CodeNotificationChannelTestRateLimited marks an account that sent its
+	// notification channels more test messages than a minute allows
+	// (ADR-20261028101615).
+	CodeNotificationChannelTestRateLimited = "notification_channel_test_rate_limited"
 	// CodeEventPublishRateLimited marks a publication beyond the account's
 	// event publish rate (EventPublishLimits); retry after Retry-After.
 	CodeEventPublishRateLimited = "event_publish_rate_limited"
@@ -1737,7 +1747,7 @@ const (
 	// fires in three cases:
 	//   - apid at deploy-accept time when a Dockerfile contains a
 	//     VOLUME instruction, a mkfs/mount -t ext4|xfs call inside a
-	//     RUN, or a top-level data/ or db/ directory (cmd/apid/deploy_inputs.go).
+	//     RUN, or a database file under a top-level data/ or db/ directory (pkg/statelessshape).
 	//   - imaged at build time when the resolved OCI base image matches
 	//     StatefulBaseImageDenylist (pkg/imaged/base.go).
 	//   - guest-init at runtime (advisory only, never blocking — see
@@ -2803,6 +2813,13 @@ func ErrCapacity(detail string) *Problem {
 		WithDocs("https://gregale.dev/status")
 }
 
+// ErrRequestBodyBudget reports that the gateway is already holding as many
+// request-body bytes as it may (RequestBodySpoolNodeBytes and friends).
+func ErrRequestBodyBudget() *Problem {
+	return ErrCapacity("this node is receiving too many large request bodies at once; retry shortly").
+		WithHeader("Retry-After", strconv.Itoa(int(RequestBodyBudgetRetryAfter.Seconds())))
+}
+
 // ErrIdempotencyKeyReused reports an Idempotency-Key sent with a request
 // other than the one it was first used for (ADR-20261022204036).
 func ErrIdempotencyKeyReused() *Problem {
@@ -3010,6 +3027,21 @@ func ErrDeployRateLimited(limit, retryAfterS int) *Problem {
 		WithDocs("https://gregale.dev/docs/deployments#rate-limit")
 }
 
+// ErrNotificationChannelTestRateLimited refuses a channel test send beyond
+// NotificationChannelTestsPerAccountMinute (ADR-20261028101615): each test is
+// a real Slack post, PagerDuty event or email.
+func ErrNotificationChannelTestRateLimited(limit, retryAfterS int) *Problem {
+	if retryAfterS <= 0 {
+		retryAfterS = 1
+	}
+	return NewProblem(http.StatusTooManyRequests, CodeNotificationChannelTestRateLimited,
+		"Notification channel test rate limited",
+		fmt.Sprintf("This account has sent its notification channels %d test messages in the last minute.", limit)).
+		WithLimit(int64(limit), int64(limit)).
+		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
+		WithDocs("https://gregale.dev/docs/alerts#notification-channels")
+}
+
 // ErrEventPublishRateLimited reports a publication of events beyond the
 // account's per-second event publish rate. Nothing was accepted.
 // EventsPausedRetryAfter is the Retry-After a refused publication carries
@@ -3040,7 +3072,7 @@ func ErrEventPublishRateLimited(perSecond, events int, retryAfter time.Duration)
 		fmt.Sprintf("This account publishes at most %d events per second; retry the same events after the indicated back-off.", perSecond)).
 		WithLimit(int64(perSecond), int64(events)).
 		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
-		WithDocs("https://gregale.dev/docs/event-driven#publish-rate")
+		WithDocs("https://gregale.dev/docs/events#publish-rate")
 }
 
 // ErrAuthRateLimited reports that the caller's source IP exhausted the
@@ -3058,12 +3090,18 @@ func ErrAuthRateLimited(retryAfterS int) *Problem {
 		WithDocs(docsBase + "/auth")
 }
 
+// DetailServerFailure is the detail of a 5xx problem whose cause is an
+// error the caller cannot act on. The error goes to the log, never into
+// the detail: text from a store, a provider or a decoder carries SQL,
+// constraint names, hostnames, socket and file paths
+// (scripts/ci/problemdetailcheck).
+const DetailServerFailure = "Gregale could not complete this request. Retry in a moment; if it keeps failing, contact support."
+
 // ErrInternal is the catch-all 500 envelope for handler-side failures
 // that aren't a deliberate refusal (use ErrCapacity for those) — DB
 // commit errors, partial state, unexpected plumbing. Pairs with
-// CodeInternal; the detail rides through verbatim because it surfaces
-// in the operator's browser console as the only breadcrumb for the
-// on-call engineer (the audit row carries the same text).
+// CodeInternal. The detail is fixed text, never an error's: log the
+// error and pass DetailServerFailure or a sentence of your own.
 func ErrInternal(detail string) *Problem {
 	return NewProblem(http.StatusInternalServerError, CodeInternal,
 		"Internal Error", detail)
@@ -3149,10 +3187,25 @@ func ErrTrafficPolicyTooComplex(scope, unit string, limit, observed int64) *Prob
 		WithLimit(limit, observed).
 		WithDocs(docsBase + "/plans#edge-rules").
 		WithHint(trafficPolicyTooComplexHint(unit))
-	if unit == "bytes" {
+	switch unit {
+	case "bytes":
 		problem = problem.WithByteLimit(limit, observed)
+	case "milliseconds":
+		// A time ceiling is not a verdict on the policy. Retry-After marks the
+		// refusal as temporary: apid does not replay it for the request's
+		// Idempotency-Key, and clients resend after the wait.
+		seconds := int64(TrafficPolicyAnalysisRetryAfter / time.Second)
+		problem.RetryAfterSeconds = &seconds
+		problem = problem.WithHeader("Retry-After", strconv.FormatInt(seconds, 10))
 	}
 	return problem
+}
+
+// TrafficPolicyCheckTimedOut reports a refusal whose policy check ran out of
+// time and that asks to be resent. Nothing was saved, so resending the same
+// request, with the same Idempotency-Key, is safe.
+func TrafficPolicyCheckTimedOut(p Problem) bool {
+	return p.Status == http.StatusUnprocessableEntity && p.Code == CodeTrafficPolicyTooComplex && p.RetryAfterSeconds != nil
 }
 
 // trafficPolicyTooComplexHint tells a time ceiling apart from a size one. The
@@ -3273,7 +3326,7 @@ func ErrDevSourceBaseMissing() *Problem {
 
 // ErrStatelessOnlyViolation is returned when a deploy shape (or resolved
 // base image) requires persistent state — VOLUME in Dockerfile, mkfs/mount
-// of a block device, a top-level data/ or db/ directory in the tarball, or
+// of a block device, a database file under a top-level data/ or db/ directory, or
 // a base image like postgres:16 / redis:7 / mysql:8 — and the platform is
 // stateless-only in year one.
 //

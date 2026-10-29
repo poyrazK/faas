@@ -253,6 +253,8 @@ type Metrics struct {
 	aiCrawlerRequests     *prometheus.CounterVec
 	edgePenalty           *prometheus.CounterVec
 	edgeChallengeRaised   *prometheus.CounterVec
+	// ADR-831 amendment 17: which key this gateway signs challenges with.
+	edgeChallengeKeyInfo *prometheus.GaugeVec
 	// ADR-20261024082000 amendment 1: penalty box sharing and attack mode.
 	edgePenaltyShare        *prometheus.CounterVec
 	edgePenaltyShareDropped prometheus.Counter
@@ -264,7 +266,10 @@ type Metrics struct {
 	// refusal of unverified admission. The closed scope label keeps cardinality fixed;
 	// warning logs and audit events are separately cooled down by Handler.
 	rateLimitDegraded *prometheus.CounterVec
-	rateLimitShared   prometheus.Gauge
+	// rateLimitLocalFallback counts central-mode requests decided by the
+	// gateway's own bucket inside the outage grace (ADR-20261027173012).
+	rateLimitLocalFallback *prometheus.CounterVec
+	rateLimitShared        prometheus.Gauge
 	// ADR-1520 token leasing: lease statements, token outcomes, and requests
 	// that waited for Postgres. Scope is the closed app|account|rule|other set.
 	rateLimitLeaseRequests *prometheus.CounterVec
@@ -295,6 +300,10 @@ type Metrics struct {
 	// edgeRuleGenerationLag is the distance from the newest prepared policy
 	// generation to the last applied generation on this gateway.
 	edgeRuleGenerationLag prometheus.Gauge
+	// edgeRuleListenerHeartbeat is the Unix time this gateway last stamped
+	// its edge listener heartbeat (ADR-091 amendment 2026-10-27); zero on a
+	// gateway without a node name, which stamps none.
+	edgeRuleListenerHeartbeat prometheus.Gauge
 	// edgeRuleApply (ADR-091 hardening PR-A): counter of apply-path
 	// outcomes, distinct from edgeRuleMatch (which counts the
 	// matcher's pick). A rule can MATCH the matcher but FAIL at apply
@@ -1072,6 +1081,10 @@ func NewMetrics() *Metrics {
 			Name: "gateway_edge_rule_generation_lag",
 			Help: "Difference between the newest prepared edge-rule generation and the last applied generation on this gateway.",
 		}),
+		edgeRuleListenerHeartbeat: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "gateway_edge_rule_listener_heartbeat_timestamp_seconds",
+			Help: "Unix time this gateway last stamped its edge-rule listener heartbeat; apid leaves a gateway out of rule changes once the stamp is 30 s old. Zero on a gateway without a node name.",
+		}),
 		// ADR-091 hardening PR-A — apply-path counter (distinct from
 		// match). A rule can match the matcher but fail at apply time
 		// (e.g. JWKS lookup returns ErrJWKSNotRegistered, or an IP
@@ -1453,6 +1466,10 @@ func NewMetrics() *Metrics {
 			Name: "gateway_edge_challenge_raised_total",
 			Help: "kind=challenge pages served at a difficulty raised under attack (ADR-831 amendment 8), by app; a subset of gateway_edge_challenge_total{outcome=\"issued\"}.",
 		}, []string{"app"}),
+		edgeChallengeKeyInfo: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "gateway_edge_challenge_key_info",
+			Help: "The key this gateway signs kind=challenge tokens and passes with (ADR-831 amendment 17): key_id names it without revealing it, source is fleet (FAAS_EDGE_CHALLENGE_KEY_FILE) or session (this host's session key). Gateways with different key_id refuse one another's passes.",
+		}, []string{"key_id", "source"}),
 		edgePenaltyShare: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_edge_penalty_share_total",
 			Help: "Penalty box sharing through Postgres (ADR-20261022105846 amendment 1), by op (flush: write this gateway's boxes; sync: read every gateway's; prune) and outcome (ok|error). A failed flush leaves its boxes on this gateway only.",
@@ -1487,6 +1504,10 @@ func NewMetrics() *Metrics {
 		rateLimitDegraded: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_ratelimit_degraded_total",
 			Help: "Requests refused unverified shared admission because a central consume failed or recently failed (breaker open), labelled by closed scope (app|account|rule|preauth|other).",
+		}, []string{"scope"}),
+		rateLimitLocalFallback: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_ratelimit_local_fallback_total",
+			Help: "Central-mode requests decided by this gateway's own bucket because the shared counter failed within the outage grace (ADR-20261027173012), labelled by closed scope (app|account|rule|other).",
 		}, []string{"scope"}),
 		rateLimitLeaseRequests: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_ratelimit_lease_requests_total",
@@ -1981,6 +2002,9 @@ func NewMetrics() *Metrics {
 		m.rateLimitDegraded.WithLabelValues(scope)
 	}
 	for _, scope := range []string{"app", "account", "rule", "other"} {
+		m.rateLimitLocalFallback.WithLabelValues(scope)
+	}
+	for _, scope := range []string{"app", "account", "rule", "other"} {
 		for _, result := range []string{LeaseResultGranted, LeaseResultPartial, LeaseResultEmpty, LeaseResultFailed} {
 			m.rateLimitLeaseRequests.WithLabelValues(scope, result)
 		}
@@ -2164,11 +2188,11 @@ func NewMetrics() *Metrics {
 	for _, result := range []string{"recorded", "failed"} {
 		m.requestIDJournalWrites.WithLabelValues(result)
 	}
-	reg.MustRegister(m.requests, m.platformErrors, m.appInflight, m.smokeChallenge, m.smokeValidation, m.versionAffinityKeys, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeQueueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.wakeAdmissionPreemptTotal, m.concurrencyThrottled, m.trafficFenceOff, m.trafficRefusals, m.concurrencyQueueDepth, m.concurrencyQueueWait, m.rateLimited, m.rateLimitDegraded, m.rateLimitLeaseRequests, m.rateLimitLeaseTokens, m.rateLimitSyncConsults, m.rateLimitShared, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleApply, m.publicAuthConfigErrors, m.edgeRuleValidateFailures, m.validateFailures, m.retryAttempts, m.retryExhausted, m.retryBudgetShared, m.retryBudgetBackend, m.circuitTransitions, m.circuitOpenTargets, m.edgeRuleCompileError, m.edgeRuleLoad, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff, m.serviceCallTotal, m.serviceChaosInjected, m.serviceDependencyCalls, m.serviceWakeLatency)
+	reg.MustRegister(m.requests, m.platformErrors, m.appInflight, m.smokeChallenge, m.smokeValidation, m.versionAffinityKeys, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeQueueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.wakeAdmissionPreemptTotal, m.concurrencyThrottled, m.trafficFenceOff, m.trafficRefusals, m.concurrencyQueueDepth, m.concurrencyQueueWait, m.rateLimited, m.rateLimitDegraded, m.rateLimitLocalFallback, m.rateLimitLeaseRequests, m.rateLimitLeaseTokens, m.rateLimitSyncConsults, m.rateLimitShared, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleListenerHeartbeat, m.edgeRuleApply, m.publicAuthConfigErrors, m.edgeRuleValidateFailures, m.validateFailures, m.retryAttempts, m.retryExhausted, m.retryBudgetShared, m.retryBudgetBackend, m.circuitTransitions, m.circuitOpenTargets, m.edgeRuleCompileError, m.edgeRuleLoad, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff, m.serviceCallTotal, m.serviceChaosInjected, m.serviceDependencyCalls, m.serviceWakeLatency)
 	reg.MustRegister(m.retryBudgetBackendInfo)
 	reg.MustRegister(m.requestIDJournalWrites, m.requestIDJournalWriteTime)
 	reg.MustRegister(m.preAuthRateLimited, m.preAuthPolicyShadow, m.edgeRejections)
-	reg.MustRegister(m.wafInspections, m.wafDetections, m.wafRuleMatches, m.wafInspectionSeconds, m.wafInline, m.wafInlineSkips, m.wafInlineSeconds, m.edgeChallenge, m.edgeChallengeRaised, m.edgePenalty, m.aiCrawlerRequests,
+	reg.MustRegister(m.wafInspections, m.wafDetections, m.wafRuleMatches, m.wafInspectionSeconds, m.wafInline, m.wafInlineSkips, m.wafInlineSeconds, m.edgeChallenge, m.edgeChallengeRaised, m.edgeChallengeKeyInfo, m.edgePenalty, m.aiCrawlerRequests,
 		m.edgePenaltyShare, m.edgePenaltyShareDropped, m.edgePenaltyShareSeconds, m.edgeAttackMode)
 	reg.MustRegister(m.servicePreviewToProduction, m.servicePreviewToPreview)
 	reg.MustRegister(m.serviceDependencyEdges, m.serviceDependencyDuration, m.serviceDependencyEdgeWakes)
@@ -2939,6 +2963,15 @@ func (m *Metrics) ObserveEdgeChallenge(appID, outcome string) {
 	m.edgeChallenge.WithLabelValues(appID, outcome).Inc()
 }
 
+// SetEdgeChallengeKey records the key this gateway signs challenges with,
+// so a fleet check can find gateways that refuse one another's passes.
+func (m *Metrics) SetEdgeChallengeKey(keyID, source string) {
+	if m == nil || m.edgeChallengeKeyInfo == nil || keyID == "" {
+		return
+	}
+	m.edgeChallengeKeyInfo.WithLabelValues(keyID, source).Set(1)
+}
+
 // ObserveEdgeChallengeRaised counts one challenge page served at a raised
 // difficulty.
 func (m *Metrics) ObserveEdgeChallengeRaised(appID string) {
@@ -2983,6 +3016,21 @@ func (m *Metrics) ObserveRateLimitDegraded(scope string) {
 		scope = "other"
 	}
 	m.rateLimitDegraded.WithLabelValues(scope).Inc()
+}
+
+// ObserveRateLimitLocalFallback records a central-mode request decided by the
+// gateway's own bucket because the shared counter failed inside the outage
+// grace (ADR-20261027173012).
+func (m *Metrics) ObserveRateLimitLocalFallback(scope string) {
+	if m == nil || m.rateLimitLocalFallback == nil {
+		return
+	}
+	switch scope {
+	case "app", "account", "rule":
+	default:
+		scope = "other"
+	}
+	m.rateLimitLocalFallback.WithLabelValues(scope).Inc()
 }
 
 // leaseScope closes the scope label of the leasing metrics.
@@ -3383,6 +3431,14 @@ func (m *Metrics) SetEdgeRuleGenerationLag(lag int64) {
 		lag = 0
 	}
 	m.edgeRuleGenerationLag.Set(float64(lag))
+}
+
+// SetEdgeRuleListenerHeartbeat records a successful edge listener heartbeat.
+func (m *Metrics) SetEdgeRuleListenerHeartbeat(at time.Time) {
+	if m == nil || m.edgeRuleListenerHeartbeat == nil {
+		return
+	}
+	m.edgeRuleListenerHeartbeat.Set(float64(at.Unix()))
 }
 
 // ObserveEdgeRuleApply (ADR-091 hardening PR-A) increments the

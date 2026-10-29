@@ -385,13 +385,9 @@ func runWorkloadsWithQualificationReceipt(mainManifest api.AppManifest, roster w
 
 	coordCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	mainLeaf := ""
-	if roster.Main.RamMB > 0 || roster.Main.CPUMillicores > 0 {
-		mainLeaf = leafDir("main", "app")
-	}
 	if err := runHealthcheckPoll(coordCtx, mainManifest, log, healthcheckPollOptions{
-		Started:    runtimes["main"].state.started,
-		CgroupLeaf: mainLeaf,
+		Started:      runtimes["main"].state.started,
+		WorkloadLeaf: mainSup.WorkloadLeaf,
 		Environment: func() []string {
 			return stampWorkloadEndpointEnv(BuildEnvWithSecrets(os.Environ(), mainManifest, mainRuntime.spec.currentSecrets(secrets), apiEnv), workloadEnv)
 		},

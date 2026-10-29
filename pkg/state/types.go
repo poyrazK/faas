@@ -3638,8 +3638,13 @@ const (
 	AlertMetricCertExpirySeconds                            AlertMetric = "cert_expiry_seconds"
 	AlertMetricCertIssuanceFailed                           AlertMetric = "cert_issuance_failed"
 	AlertMetricQueueDepth                                   AlertMetric = "queue_depth"
-	AlertMetricPreAuthTargetThreshold                       AlertMetric = "pre_auth_target_threshold"
-	AlertMetricPreAuthTargetSignalGapPct                    AlertMetric = "pre_auth_target_signal_gap_pct"
+	// AlertMetricQueueBacklog and AlertMetricQueueOldestAge watch the app's
+	// durable queue: messages waiting for its workers and the age of the
+	// oldest (ADR-20261018101500 amendment 2026-10-27). Webhook-only.
+	AlertMetricQueueBacklog              AlertMetric = "queue_backlog"
+	AlertMetricQueueOldestAge            AlertMetric = "queue_oldest_age_seconds"
+	AlertMetricPreAuthTargetThreshold    AlertMetric = "pre_auth_target_threshold"
+	AlertMetricPreAuthTargetSignalGapPct AlertMetric = "pre_auth_target_signal_gap_pct"
 	// AlertMetricPreAuthPressure counts pre-auth source-limit blocks and
 	// observe-mode would-blocks; AlertMetricEdgeValidationFailures counts
 	// kind=validate mismatches in any mode; AlertMetricEdgeRejections counts
@@ -3667,6 +3672,10 @@ const (
 	// AlertMetricRouteInsightsDetected counts the app's route insights that
 	// became active in the window (ADR-20261020161310).
 	AlertMetricRouteInsightsDetected AlertMetric = "route_insights_detected"
+	// Route monitor incidents open within the window and canaries the route
+	// health guard holds or aborted (ADR-20261028110044).
+	AlertMetricRouteMonitorIncidents AlertMetric = "route_monitor_incidents"
+	AlertMetricRouteHealthHolds      AlertMetric = "route_health_holds"
 	// AlertMetricSLOBurnRate is the customer-facing ADR-082 API
 	// availability burn-rate signal. The evaluator combines the 1h
 	// 14.4x and 6h 6x Google SRE windows into one effective value.
@@ -5706,6 +5715,17 @@ type ComputeNode struct {
 	Readiness NodeReadiness
 	// ReadinessReason says why a node is not ready; nil when it is.
 	ReadinessReason *string
+	// WakeBreakerOpenUntil is the node's wake breaker (ADR-20261022184531
+	// step 3): degraded until then, half-open once it passes, closed when
+	// nil. WakeBreakerReason says what opened it.
+	WakeBreakerOpenUntil *time.Time
+	WakeBreakerReason    *string
+}
+
+// WakeBreakerOpen reports whether the node's wake breaker holds it degraded
+// at now.
+func (n ComputeNode) WakeBreakerOpen(now time.Time) bool {
+	return n.WakeBreakerOpenUntil != nil && now.Before(*n.WakeBreakerOpenUntil)
 }
 
 // NodeReadiness is whether a compute node has proven it can take a wake
@@ -5733,10 +5753,16 @@ func (r NodeReadiness) Valid() bool {
 	return false
 }
 
-// EffectiveReadiness is the node's readiness with lifecycle applied: a node
-// that lifecycle keeps out of placement reads unavailable or draining even
-// before the heartbeat writes it, and a row with no readiness reads ready.
+// EffectiveReadiness is EffectiveReadinessAt the current time.
 func (n ComputeNode) EffectiveReadiness() NodeReadiness {
+	return n.EffectiveReadinessAt(time.Now())
+}
+
+// EffectiveReadinessAt is the node's readiness with lifecycle and its wake
+// breaker applied: a node that lifecycle keeps out of placement reads
+// unavailable or draining even before the heartbeat writes it, an open wake
+// breaker reads degraded, and a row with no readiness reads ready.
+func (n ComputeNode) EffectiveReadinessAt(now time.Time) NodeReadiness {
 	switch n.Lifecycle {
 	case NodeLifecycleDraining, NodeLifecycleForceDraining, NodeLifecycleMaintenance:
 		return NodeReadinessDraining
@@ -5746,14 +5772,30 @@ func (n ComputeNode) EffectiveReadiness() NodeReadiness {
 	if n.Lifecycle == "" && !n.Active {
 		return NodeReadinessUnavailable
 	}
+	if n.WakeBreakerOpen(now) {
+		return NodeReadinessDegraded
+	}
 	if n.Readiness == "" {
 		return NodeReadinessReady
 	}
 	return n.Readiness
 }
 
+// ComputeNodeWakeBreakerStore records a node's wake breaker
+// (ADR-20261022184531 step 3). Any schedd may write it; every schedd places
+// by it.
+type ComputeNodeWakeBreakerStore interface {
+	// OpenComputeNodeWakeBreaker holds the node degraded until until.
+	OpenComputeNodeWakeBreaker(ctx context.Context, nodeID string, until time.Time, reason string) error
+	// CloseComputeNodeWakeBreaker clears the breaker and reports whether one
+	// was set.
+	CloseComputeNodeWakeBreaker(ctx context.Context, nodeID string) (bool, error)
+}
+
 // ComputeNodeReadinessStore records a node's proven readiness. schedd's
-// heartbeat is the only writer (ADR-20261022184531).
+// heartbeat writes it (ADR-20261022184531), and so does the scheduler that
+// receives a node's capacity stream when that stream goes silent and vmmd
+// does not answer a ping (ADR-20261029085904).
 type ComputeNodeReadinessStore interface {
 	// SetComputeNodeReadiness writes readiness and reason (empty clears it)
 	// and reports whether either changed. Only a change fires

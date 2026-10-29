@@ -156,4 +156,28 @@ func TestAccountWideMCPViewsHideCompanyAppsAfterOffboarding(t *testing.T) {
 	if rec := serve(RetirementHandler(store), http.MethodPost, "/v1/mcp-oauth-retirements/x", retirements[own.ID], acknowledge); rec.Code != http.StatusOK {
 		t.Errorf("acknowledging the creator's own retirement = %d %s", rec.Code, rec.Body.String())
 	}
+
+	// The ledger outlives its apps. Deleting both leaves the company's records
+	// hidden from the creator who left and keeps the creator's own.
+	for _, app := range []state.App{company, own} {
+		if err := store.DeleteApp(ctx, app.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var deleted api.MCPOAuthRetirementsResponse
+	rec := serve(RetirementHandler(store), http.MethodGet, "/v1/mcp-oauth-retirements", "", "")
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &deleted) != nil {
+		t.Fatalf("retirement ledger after deletion = %d %s", rec.Code, rec.Body.String())
+	}
+	ledgerApps = map[string]bool{}
+	for _, record := range deleted.Items {
+		ledgerApps[record.AppID] = true
+	}
+	if ledgerApps[company.ID] || !ledgerApps[own.ID] {
+		t.Errorf("after deletion the offboarded creator's ledger shows %v, want only their own app", ledgerApps)
+	}
+	retry := `{"action":"retry"}`
+	if rec := serve(RetirementHandler(store), http.MethodPost, "/v1/mcp-oauth-retirements/x", retirements[company.ID], retry); rec.Code != http.StatusNotFound {
+		t.Errorf("offboarded creator retrying a deleted company app's retirement = %d, want 404", rec.Code)
+	}
 }

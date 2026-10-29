@@ -24,6 +24,7 @@ import (
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/capflags"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/fcvm"
@@ -86,6 +87,8 @@ const TriggerReasonPoisonRecord = triggerReasonPoisonRecord
 const WakeTierColdBootFallback = wakeTierColdBootFallback
 const WakeTierInit = wakeTierInit
 const MaxDuePagesPerTick = maxDuePagesPerTick
+const WorkAppReconcile = workAppReconcile
+const WorkEventFanout = workEventFanout
 const WorkReaper = workReaper
 
 // Package-level vars
@@ -127,6 +130,7 @@ var ExerciseServiceRecoveryRestart = exerciseServiceRecoveryRestart
 var ExerciseStandardEnvironmentRefresh = exerciseStandardEnvironmentRefresh
 var ExerciseStandardServingRestore = exerciseStandardServingRestore
 var ExerciseWorkerRecoveryRestart = exerciseWorkerRecoveryRestart
+var FinishProfileCapture = finishProfileCapture
 var ExpectTaskCohort = expectTaskCohort
 var GetMetricsBody = getMetricsBody
 var GuardOrchestrationStores = guardOrchestrationStores
@@ -197,6 +201,7 @@ var NewWakeCoord = newWakeCoord
 var NewWarmHintBroadcaster = newWarmHintBroadcaster
 var Node = node
 var ObservationTask = observationTask
+var OOMFailsDeployment = oomFailsDeployment
 var OutcomeFromProtocolResult = outcomeFromProtocolResult
 var ParentBaseKeyAliases = storagekey.ParentBaseAliases
 var ParseJSONHeaders = parseJSONHeaders
@@ -208,8 +213,10 @@ var PrimeObservationCandidate = primeObservationCandidate
 var PrimeObservationInstance = primeObservationInstance
 var PrimeRunPlusFrameworkReady = primeRunPlusFrameworkReady
 var PrimeStartupExtension = primeStartupExtension
+var ProfileCaptureOutcomeOf = profileCaptureOutcome
 var QuietEffective = quietEffective
 var QuietLog = quietLog
+var NewWorkPool = newWorkPool
 var QuietPauseAfterMS = quietPauseAfterMS
 var ReadCounterValue = readCounterValue
 var ReadGatewayDispatchResponse = readGatewayDispatchResponse
@@ -266,6 +273,7 @@ var WaitFor = waitFor
 var WakeEngineWithEvents = wakeEngineWithEvents
 var WakeN = wakeN
 var WireRenderMetrics = wireRenderMetrics
+var WorkerQueueDepthLimit = workerQueueDepthLimit
 var WithAppTaskStage = withAppTaskStage
 var WithRequestedWakeID = withRequestedWakeID
 var WithServiceReplicaPlacementSpread = withServiceReplicaPlacementSpread
@@ -288,6 +296,19 @@ func (e *Engine) XWakeLeaderBudget() time.Duration { return e.wakeLeaderBudget()
 const XEventFanoutSafetyTick = eventFanoutSafetyTick
 
 func (l *Loop) XRunEventFanoutSweep(ctx context.Context) { l.runEventFanoutSweep(ctx) }
+
+// XRunTriggerTick runs one trigger tick as the loop's trigger work does.
+// adr: 20261027162741 — broker triggers run on lanes of their own.
+func (l *Loop) XRunTriggerTick(ctx context.Context) { l.runTriggerTick(ctx) }
+
+// XWaitDispatches waits for every dispatch the drain started, including those
+// that outlived their tick.
+// adr: 20261027160930 — a slow dispatch finishes after its tick returns.
+func (d *Drain) XWaitDispatches() { d.inline.Wait() }
+
+// XEventRoutingHealthDue is the sweep's routing-health throttle.
+// adr: 614 — a node reads routing health at most every 15 s.
+func (l *Loop) XEventRoutingHealthDue(now time.Time) bool { return l.eventRoutingHealthDue(now) }
 
 // XRunEventFanoutSweepAt runs the sweep with the loop's clock at now.
 // adr: 20261027125625 — held recipients route once their wait has passed.
@@ -328,6 +349,13 @@ func (r *EgressCircuitBreaker) Resolve() *EgressResolver { return &r.resolve }
 // Members of Drain
 func (r *Drain) Engine() **Engine       { return &r.engine }
 func (r *Drain) Now() *func() time.Time { return &r.now }
+
+// XObserveWith attaches a metrics registry and rebuilds the account cache
+// on the drain's current clock, as the delayed-task metric test does.
+func (r *Drain) XObserveWith(ops *wire.OpsMetrics) {
+	r.ops = ops
+	r.accts = newAcctCache(r.now)
+}
 
 // Members of EgressCircuitLoop
 func (r *EgressCircuitLoop) Seen() *map[string]time.Time { return &r.seen }
@@ -599,6 +627,13 @@ func (h *heartbeatFakeDialer) SetPingResult(target string, bases []BaseGeneratio
 }
 
 var EvaluateNodeReadiness = evaluateNodeReadiness
+
+// LiftErr is vmmclient's gRPC error lift (ADR-20261022184531 step 3 adds the
+// wake_stage marker).
+var LiftErr = liftErr
+
+// NewVMMWakeNotStarted is the error liftErr returns for a pre-start failure.
+func NewVMMWakeNotStarted(p *api.Problem) error { return vmmWakeNotStartedError{p} }
 
 func (r *fakeVMM) ColdBootHook() *func()            { return &r.coldBootHook }
 func (r *fakeVMM) ColdBoots() *int                  { return &r.coldBoots }
@@ -881,4 +916,50 @@ func MarkPreWakeForTest(ctx context.Context) {
 	markPreWake(ctx, preWakeLeader)
 }
 
+// WithAgentsAllowedForTest sets the agents capability decision a standalone
+// orchestrator holds runs with an agent step by.
+func (o *WorkflowOrchestrator) WithAgentsAllowedForTest(allowed func(ctx context.Context, appID string) bool) *WorkflowOrchestrator {
+	o.agentsAllowed = allowed
+	return o
+}
+
+// WithCapabilitiesForTest gives a test loop an engine over store that
+// decides capability flags with d.
+func (l *Loop) WithCapabilitiesForTest(store state.Store, d *capflags.Decider) *Loop {
+	l.engine = &Engine{store: store, capabilities: d}
+	return l
+}
+
 var LogVMMBootFailure = logVMMBootFailure
+var WorkerRecoveryRetryDelay = workerRecoveryRetryDelay
+
+// NewCronPlanGate exposes the cron plan gate's admit decision.
+func NewCronPlanGate(store cronPlanGateStore) func(context.Context, state.App, state.Cron) bool {
+	return newCronPlanGate(store).admit
+}
+
+var CronDue = cronDue
+
+// XRunCronHistoryRetention runs the hourly cron history sweep once.
+func (l *Loop) XRunCronHistoryRetention(ctx context.Context) { l.runCronHistoryRetention(ctx) }
+
+// XEventJobContinue is the recovery and backfill sweeps' failure decision.
+// adr: 20261028095548 — a job whose own work failed was backed off, so the
+// sweep goes on to the next one.
+func (l *Loop) XEventJobContinue(work string, err error) bool { return l.eventJobContinue(work, err) }
+
+// XKeepEventClaims runs the sweep's claim keeper with a test interval.
+// adr: 20261028131500 — a sweep renews the claims it still holds.
+func (l *Loop) XKeepEventClaims(ctx context.Context, every time.Duration, renew func(context.Context, time.Time) error) func() {
+	l.eventClaimRenewalEvery = every
+	return l.keepEventClaims(ctx, renew)
+}
+
+// XDispatchEventFanoutSweep submits a fanout sweep as the loop's wakes and
+// safety tick do.
+// adr: 20261029012000 — a pass that used its whole budget runs the next.
+func (l *Loop) XDispatchEventFanoutSweep(ctx context.Context) { l.dispatchEventFanoutSweep(ctx) }
+
+// XRepeatFullBatches is invocation retention's batch repeater.
+// adr: 20261029012000 — a step repeats while its batches come back full.
+var XRepeatFullBatches = repeatFullBatches

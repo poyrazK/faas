@@ -27,9 +27,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
 
+	githubdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/githubd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/agents"
 	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/apid/billingruns"
+	"github.com/onebox-faas/faas/pkg/apid/billingsync"
 	"github.com/onebox-faas/faas/pkg/apid/consumerbilling"
 	"github.com/onebox-faas/faas/pkg/apid/consumercontrols"
 	"github.com/onebox-faas/faas/pkg/apid/consumercredits"
@@ -69,6 +72,7 @@ import (
 var ResolveAlertmanagerURL = resolveAlertmanagerURL
 
 var BuildDebugRequestCorrelation = buildDebugRequestCorrelation
+var DashboardDebugStatusView = dashboardDebugStatusView
 
 // Package-level types
 type AffectedPartition = affectedPartition
@@ -292,6 +296,9 @@ var RuntimeSecretRecipient = runtimeSecretRecipient
 var RuntimeSealDomainBlocksRekey = runtimeSealDomainBlocksRekey
 var RuntimeSecretsBound = &runtimeSecretsBound
 var LoadRuntimeSecretBinding = loadRuntimeSecretBinding
+var LoadCloneWorkerSealing = loadCloneWorkerSealing
+var RuntimeSecretBinding = runtimeSecretBinding
+var InstallRuntimeSigner = installRuntimeSigner
 var PgBackupStateRoot = &pgBackupStateRoot
 var PlanCache = &planCache
 var PlanCacheRoot = &planCacheRoot
@@ -321,11 +328,19 @@ var AccountWriteMode = &accountWriteMode
 var AccountRecipients = accountRecipients
 var AccountIdentities = accountIdentities
 var WorkflowPlanRecipients = workflowPlanRecipients
+var CloneSealRecipient = cloneSealRecipient
 var HoldsIdentityFor = holdsIdentityFor
 var SealInboundWebhookSigningSecret = sealInboundWebhookSigningSecret
 var SealGitLabTokens = sealGitLabTokens
 var OpenGitLabTokens = openGitLabTokens
 var OpenIssueSlackToken = openIssueSlackToken
+
+// RealtimeHostKeys exposes the keys apid gives managed realtime.
+func RealtimeHostKeys() (func() ([]*age.X25519Recipient, error), func(context.Context) []*age.X25519Identity) {
+	h := realtimeHost{}
+	return h.SecretRecipients, h.HostIdentitiesForUnseal
+}
+
 var VerifyInboundWebhook = verifyInboundWebhook
 var SealMCPPagerDutyWebhookSecret = sealMCPPagerDutyWebhookSecret
 
@@ -663,7 +678,11 @@ var SafeReleasesAlertMetric = safeReleasesAlertMetric
 var SafeReleasesAuditKind = safeReleasesAuditKind
 var SanContains = sanContains
 var ScanExtractedTreeSecrets = scanExtractedTreeSecrets
-var ScanSourceTarballSecrets = scanSourceTarballSecrets
+
+func ScanSourceTarballSecrets(sourcePath string, limits api.Limits) *api.Problem {
+	return (&server{log: slog.New(slog.DiscardHandler)}).scanSourceTarballSecrets(sourcePath, limits)
+}
+
 var ScopeGenericRootWorkload = scopeGenericRootWorkload
 var ScrapeOpsMetrics = scrapeOpsMetrics
 var SeedActivityPersonalOrg = seedActivityPersonalOrg
@@ -988,6 +1007,7 @@ func (r *server) RuntimeConfig() **runtimeConfigManager         { return &r.runt
 func (r *server) Sessions() **session.Manager                   { return &r.sessions }
 func (r *server) StatementInvoices() *statementinvoices.Service { return &r.statementInvoices }
 func (r *server) BillingRuns() *billingruns.Service             { return &r.billingRuns }
+func (r *server) BillingSync() *billingsync.Service             { return &r.billingSync }
 func (r *server) ConsumerBilling() *consumerbilling.Service     { return &r.consumerBilling }
 func (r *server) ConsumerCredits() *consumercredits.Service     { return &r.consumerCredits }
 func (r *server) ConsumerControls() *consumercontrols.Service   { return &r.consumerControls }
@@ -1059,7 +1079,7 @@ func (r *server) ConfigureOperations(p0 Config, p1 func(string) string) error {
 func (r *server) ConfigureQueueWorkload(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.configureQueueWorkload(p0, p1, p2)
 }
-func (r *server) CountAccountConsumerKeys(p0 context.Context, p1 string) (int, error) {
+func (r *server) CountAccountConsumerKeys(p0 context.Context, p1 state.App) (int, error) {
 	return r.countAccountConsumerKeys(p0, p1)
 }
 func (r *server) CountConsumerKeys(p0 context.Context, p1 string, p2 string) (int, error) {
@@ -1143,6 +1163,12 @@ func (r *server) GetManagedPostgresDatabase(p0 http.ResponseWriter, p1 *http.Req
 }
 func (r *server) GetProject(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.getProject(p0, p1, p2)
+}
+
+var ProjectServiceCalls = projectServiceCalls
+
+func (r *server) RenderProjectDetail(w http.ResponseWriter, req *http.Request, acct state.Account, slug string) {
+	r.renderProjectDetail(w, req, r.log, acct, slug)
 }
 func (r *server) GetProjectEnvironmentApprovalStatus(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.getProjectEnvironmentApprovalStatus(p0, p1, p2)
@@ -1652,11 +1678,26 @@ func (s *server) ConfigureLiveQueriesForTest(getenv func(string) string) error {
 	return s.configureLiveQueries(nil, getenv)
 }
 
+// ConfigureAgentsForTest wires the agent API without Postgres: the agents
+// capability decides who sees it, and released accounts meet
+// capacity_unavailable.
+func (s *server) ConfigureAgentsForTest() { s.configureAgents(nil) }
+
 // LiveRoutesForTest lists an app's live routes; accounts outside the rollout
 // get none before the store is read.
 func (s *server) LiveRoutesForTest(ctx context.Context, accountID, appID string) ([]realtime.LiveRoute, error) {
 	return s.liveRoutes(ctx, nil, accountID, appID)
 }
+
+// NewGithubdBridgeForTest builds apid's githubd bridge on store; agentSteps
+// decides the agents capability for an account.
+func NewGithubdBridgeForTest(store githubdBridgeStore, notif githubdBridgeNotifier, agentSteps func(state.Account) bool) githubdpb.GithubdServer {
+	return &githubdBridge{store: store, notif: notif, log: slog.New(slog.DiscardHandler), agentSteps: agentSteps}
+}
+
+// SetAgentStoreForTest gives the configured agent API a store; call it
+// after ConfigureAgentsForTest.
+func (s *server) SetAgentStoreForTest(store agents.Store) { s.agentAPI.Store = store }
 
 // RealtimePreviewEveryone shows realtime preview features to every account
 // (ADR-20261019102657).
@@ -1809,3 +1850,10 @@ func (r *server) RequestBillingMailOutboxesForTest() {
 }
 
 var AppRestartRefusal = appRestartRefusal
+
+// SecurityMailAllow is a fresh per-account sign-in mail limiter on clock now.
+func SecurityMailAllow(now func() time.Time) func(accountID, kind string) bool {
+	l := newSecurityMailLimiter()
+	l.now = now
+	return l.allow
+}

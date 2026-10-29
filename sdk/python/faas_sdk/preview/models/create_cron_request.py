@@ -27,7 +27,8 @@ class CreateCronRequest:
     """App id or slug."""
     schedule: str
     path: str | Unset = UNSET
-    """HTTP target path; defaults to / and is mutually exclusive with command."""
+    """HTTP target path on the cron's own app; defaults to /, starts with a single /, may carry a query string, and
+    is mutually exclusive with command."""
     command: list[str] | Unset = UNSET
     """Direct command argv; mutually exclusive with path."""
     command_shell: bool | Unset = False

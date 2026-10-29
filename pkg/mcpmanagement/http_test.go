@@ -30,14 +30,17 @@ const testRedirect = "https://client.example/oauth/callback"
 const testVerifier = "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNO"
 
 type remoteFixture struct {
-	t          *testing.T
-	server     *httptest.Server
-	client     *http.Client
-	resource   string
-	clientID   string
-	mu         sync.Mutex
-	accounts   map[string]string
+	t        *testing.T
+	server   *httptest.Server
+	client   *http.Client
+	resource string
+	clientID string
+	mu       sync.Mutex
+	accounts map[string]string
+	// keyScopes are the scopes /v1/account reports for a key (agent keys).
+	keyScopes  map[string][]string
 	apiHook    func(http.ResponseWriter, *http.Request, string) bool
+	mints      []api.CliAuthCodeRequest
 	opts       HTTPOptions
 	setHandler func(http.Handler)
 }
@@ -52,9 +55,12 @@ func newRemoteFixtureWithOptions(t *testing.T, writes bool, options HTTPOptions)
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if req.URL.Path == "/v1/cli-auth/code" {
 			var input api.CliAuthCodeRequest
-			if json.NewDecoder(req.Body).Decode(&input) != nil || input.Purpose != api.CliAuthPurposeMCPRead {
+			if json.NewDecoder(req.Body).Decode(&input) != nil || (input.Purpose != api.CliAuthPurposeMCPRead && input.Purpose != api.CliAuthPurposeMCP) {
 				t.Error("unexpected native purpose")
 			}
+			f.mu.Lock()
+			f.mints = append(f.mints, input)
+			f.mu.Unlock()
 			_ = json.NewEncoder(w).Encode(api.CliAuthCodeResponse{Code: "MCPR-fixture", URL: "https://console.example/cli-auth?code=MCPR-fixture", ExpiresAt: time.Now().Add(time.Minute).Format(time.RFC3339)})
 			return
 		}
@@ -118,7 +124,10 @@ func newRemoteFixtureWithOptions(t *testing.T, writes bool, options HTTPOptions)
 			}
 			_ = json.NewEncoder(w).Encode(api.ProjectEnvironmentResponse{ID: account + "-" + slug, ProjectID: account + "-project", Slug: slug, Protected: slug == "production"})
 		case "/v1/account":
-			_ = json.NewEncoder(w).Encode(api.AccountResponse{ID: account, Plan: "free", Status: "active"})
+			f.mu.Lock()
+			scopes := f.keyScopes[strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer ")]
+			f.mu.Unlock()
+			_ = json.NewEncoder(w).Encode(api.AccountResponse{ID: account, Plan: "free", Status: "active", KeyScopes: scopes})
 		case "/v1/capabilities":
 			_ = json.NewEncoder(w).Encode(api.CapabilitiesResponse{Plan: "free"})
 		case "/v1/apps":
@@ -350,8 +359,9 @@ func TestRemoteManagementOAuthAccountIsolation(t *testing.T) {
 			aliceSession, ctx := f.connect(alice, version)
 			bobSession, _ := f.connect(bob, version)
 			aliceCatalog, err := aliceSession.ListTools(ctx, nil)
-			// Writes add the secret request pair (ADR-20261026174727).
-			if err != nil || len(aliceCatalog.Tools) != 60 {
+			// A remote grant lists the secret request pair only with consented
+			// secrets:request (ADR-20261026195952).
+			if err != nil || len(aliceCatalog.Tools) != 58 {
 				t.Fatalf("alice tools=%+v error=%v", aliceCatalog, err)
 			}
 			bobCatalog, err := bobSession.ListTools(ctx, nil)

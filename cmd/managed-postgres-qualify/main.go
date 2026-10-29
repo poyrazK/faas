@@ -64,11 +64,25 @@ func main() {
 		}
 		os.Exit(runComputeCap(os.Getenv, os.Stdout, os.Stderr))
 	}
+	if len(os.Args) > 1 && os.Args[1] == "--storage-cap" {
+		if len(os.Args) != 2 {
+			_, _ = fmt.Fprintln(os.Stderr, "usage: managed-postgres-qualify --storage-cap")
+			os.Exit(2)
+		}
+		os.Exit(runStorageCap(os.Getenv, os.Stdout, os.Stderr))
+	}
+	if len(os.Args) > 1 && os.Args[1] == "--check-production" {
+		if len(os.Args) != 2 {
+			_, _ = fmt.Fprintln(os.Stderr, "usage: managed-postgres-qualify --check-production")
+			os.Exit(2)
+		}
+		os.Exit(runProductionCheck(os.Getenv, time.Now(), os.Stdout, os.Stderr))
+	}
 	if len(os.Args) > 1 && os.Args[1] == "--verify" {
 		os.Exit(runVerificationArguments(os.Args[2:], os.Getenv, os.Stdout, os.Stderr))
 	}
 	if len(os.Args) > 1 {
-		_, _ = fmt.Fprintln(os.Stderr, "usage: managed-postgres-qualify [--check-config | --compute-cap | --verify [--approval PATH] [--rollout --guest-report PATH --runtime-manifest PATH]]")
+		_, _ = fmt.Fprintln(os.Stderr, "usage: managed-postgres-qualify [--check-config | --check-production | --compute-cap | --storage-cap | --verify [--approval PATH] [--rollout --guest-report PATH --runtime-manifest PATH]]")
 		os.Exit(2)
 	}
 	os.Exit(run(os.Getenv, os.Stdout, os.Stderr))
@@ -289,6 +303,41 @@ func runComputeCap(getenv func(string) string, output, errorOutput io.Writer) in
 	}
 	if qualificationErr != nil || live.registry.VerifyComputeCapQualification(artifact) != nil {
 		_, _ = fmt.Fprintln(errorOutput, "compute cap qualification failed; see the checks and evidence")
+		return 1
+	}
+	return 0
+}
+
+// runStorageCap qualifies the storage pool (ADR-20261025094915 decisions 9
+// and 10) on a disposable resource and writes the artifact that
+// FAAS_MANAGED_POSTGRES_STORAGE_CAP_ENFORCEMENT=on requires.
+func runStorageCap(getenv func(string) string, output, errorOutput io.Writer) int {
+	live, ok := loadLiveQualification(getenv, errorOutput)
+	if !ok {
+		return 2
+	}
+	report, qualificationErr := managedpostgres.QualifyProvider(context.Background(), live.backend.Provider, managedpostgres.QualificationOptions{
+		ProviderName: live.backend.Driver,
+		ResourceID:   live.resourceID,
+		Spec:         live.spec,
+		Timeout:      live.timeout,
+		Mutating:     true,
+		StorageCap:   true,
+	})
+	artifact := managedpostgres.StorageCapQualification{
+		Version: managedpostgres.StorageCapQualificationVersion, BackendID: live.backend.ID,
+		BackendFingerprint: live.backend.Fingerprint, CompletedAt: report.CompletedAt, Checks: report.Checks,
+	}
+	if report.StorageCap != nil {
+		artifact.Evidence = *report.StorageCap
+	}
+	encoder := json.NewEncoder(output)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(artifact); err != nil {
+		return 1
+	}
+	if qualificationErr != nil || live.registry.VerifyStorageCapQualification(artifact) != nil {
+		_, _ = fmt.Fprintln(errorOutput, "storage cap qualification failed; see the checks and evidence")
 		return 1
 	}
 	return 0

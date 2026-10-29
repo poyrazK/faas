@@ -1,3 +1,4 @@
+// adr: 1155 — the capture API's gates, lifecycle, deletion and problem shapes.
 package profilecapture_test
 
 import (
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/profilecapture"
 	"github.com/onebox-faas/faas/pkg/db"
@@ -23,6 +25,11 @@ type fakeHost struct {
 	mem      *state.MemStore
 	app      state.App
 	notified []string
+	audited  []string
+}
+
+func (h *fakeHost) Audit(_ context.Context, action, _ string, details map[string]any) {
+	h.audited = append(h.audited, fmt.Sprintf("%s %v", action, details["capture_id"]))
 }
 
 func (h *fakeHost) LoadApp(w http.ResponseWriter, _ *http.Request, acct state.Account, slug string) (state.App, bool) {
@@ -68,6 +75,7 @@ func serve(svc *profilecapture.Service, acct state.Account, method, target, body
 	mux.HandleFunc("POST /v1/apps/{slug}/profiles/captures", wrap(svc.Create))
 	mux.HandleFunc("GET /v1/apps/{slug}/profiles/captures", wrap(svc.List))
 	mux.HandleFunc("GET /v1/apps/{slug}/profiles/captures/{id}", wrap(svc.Get))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/profiles/captures/{id}", wrap(svc.Delete))
 	mux.HandleFunc("GET /v1/apps/{slug}/profiles/captures/{id}/view", wrap(svc.View))
 	mux.HandleFunc("GET /v1/apps/{slug}/profiles/captures/{id}/pprof", wrap(svc.Download))
 	mux.HandleFunc("GET /v1/apps/{slug}/profiles/captures/{id}/diff", wrap(svc.Diff))
@@ -103,6 +111,39 @@ func TestCaptureGates(t *testing.T) {
 				t.Fatalf("notifications = %v, want notify %v", host.notified, wantNotify)
 			}
 		})
+	}
+}
+
+// TestCaptureDelete pins that a customer can delete a capture of their app
+// once, that other or malformed ids are a 404, and that the deletion is audited.
+func TestCaptureDelete(t *testing.T) {
+	svc, host, acct := newService(t, api.PlanPro, true)
+	rec := serve(svc, acct, http.MethodPost, "/v1/apps/capture/profiles/captures", `{"kinds":["heap"],"duration_seconds":5}`)
+	var created api.ProfileCapture
+	if rec.Code != http.StatusAccepted || json.Unmarshal(rec.Body.Bytes(), &created) != nil {
+		t.Fatalf("create = %d: %s", rec.Code, rec.Body)
+	}
+	target := "/v1/apps/capture/profiles/captures/" + created.ID
+	for _, tc := range []struct {
+		name, method, target string
+		want                 int
+	}{
+		{"malformed id", http.MethodDelete, "/v1/apps/capture/profiles/captures/not-a-uuid", http.StatusNotFound},
+		{"unknown id", http.MethodDelete, "/v1/apps/capture/profiles/captures/" + uuid.NewString(), http.StatusNotFound},
+		{"delete", http.MethodDelete, target, http.StatusNoContent},
+		{"gone", http.MethodGet, target, http.StatusNotFound},
+		{"delete again", http.MethodDelete, target, http.StatusNotFound},
+	} {
+		if rec := serve(svc, acct, tc.method, tc.target, ""); rec.Code != tc.want {
+			t.Fatalf("%s = %d, want %d: %s", tc.name, rec.Code, tc.want, rec.Body)
+		}
+	}
+	if want := "profile_capture.deleted " + created.ID; len(host.audited) != 1 || host.audited[0] != want {
+		t.Fatalf("audited = %v, want [%s]", host.audited, want)
+	}
+	free, _, freeAcct := newService(t, api.PlanFree, true)
+	if rec := serve(free, freeAcct, http.MethodDelete, target, ""); rec.Code != http.StatusPaymentRequired {
+		t.Fatalf("plan without profiling = %d", rec.Code)
 	}
 }
 

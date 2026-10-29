@@ -332,16 +332,27 @@ func ConstantTimeEqualHash(a, b []byte) bool {
 //
 // The closed vocabulary is mirrored at the DB layer by migration
 // 00046's api_keys_scopes_vocab_chk CHECK constraint (and widened by
-// migration 00063 to admit env:read/env:write for issue #395). The Go
-// side is the first line; the constraint is the floor a typo cannot
-// cross.
+// migration 00063 to admit env:read/env:write for issue #395), named
+// api_keys_scopes_vocab_v2_chk since secrets:request
+// (ADR-20261026195952) and api_keys_scopes_vocab_v3_chk since agent
+// (ADR-20261029085359). The Go side is the first line; the constraint is
+// the floor a typo cannot cross.
 const (
 	ScopeAdmin        = "admin"
 	ScopeAppsRead     = "apps:read"
 	ScopeDeployWrite  = "deploy:write"
 	ScopeSecretsRead  = "secrets:read"
 	ScopeSecretsWrite = "secrets:write"
-	ScopeUsageRead    = "usage:read"
+	// ScopeSecretsRequest only opens one-time secret-entry pages for the
+	// account's signed-in user (ADR-20261026174727, ADR-20261026195952). It
+	// never writes or reads a secret value.
+	ScopeSecretsRequest = "secrets:request"
+	// ScopeAgent marks a key made for a headless agent (ADR-20261029085359).
+	// Only such keys open the hosted management MCP server; the key's other
+	// scopes decide its tools. It grants no API route by itself, never
+	// combines with admin, and always carries apps:read.
+	ScopeAgent     = "agent"
+	ScopeUsageRead = "usage:read"
 	// Runs credentials let unattended agents use disposable executions
 	// without granting deployment or secret-management permissions.
 	ScopeRunsRead  = "runs:read"
@@ -433,6 +444,8 @@ var validScopes = map[string]struct{}{
 	ScopeDeployWrite:               {},
 	ScopeSecretsRead:               {},
 	ScopeSecretsWrite:              {},
+	ScopeSecretsRequest:            {},
+	ScopeAgent:                     {},
 	ScopeUsageRead:                 {},
 	ScopeRunsRead:                  {},
 	ScopeRunsWrite:                 {},
@@ -492,6 +505,16 @@ func NormalizeCreateKeyScopes(requested []string) ([]string, error) {
 		seen[s] = struct{}{}
 		out = append(out, s)
 	}
+	if _, agent := seen[ScopeAgent]; agent {
+		// An agent key is never an admin key, and it can always inspect:
+		// the MCP server's tools all start there (ADR-20261029085359).
+		if _, admin := seen[ScopeAdmin]; admin {
+			return nil, fmt.Errorf("scope %q cannot be combined with %q", ScopeAgent, ScopeAdmin)
+		}
+		if _, read := seen[ScopeAppsRead]; !read {
+			out = append(out, ScopeAppsRead)
+		}
+	}
 	return out, nil
 }
 
@@ -536,6 +559,9 @@ var (
 	// /v1/apps/{slug}/secrets/{key}. Granted by admin or
 	// secrets:write.
 	ScopesSecretsWriteSurface = []string{ScopeAdmin, ScopeSecretsWrite}
+	// ScopesSecretRequestSurface opens secret-entry pages and reads their
+	// status; secrets:write still allows both.
+	ScopesSecretRequestSurface = []string{ScopeAdmin, ScopeSecretsWrite, ScopeSecretsRequest}
 
 	// ScopesAppForkSecretsSurface: POST /v1/apps/{slug}/forks (ADR-732).
 	// A fork copies production memory, secrets included, so the route

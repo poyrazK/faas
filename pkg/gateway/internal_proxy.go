@@ -148,6 +148,10 @@ type InternalReverseProxy struct {
 	// a request that's already handed off to the proxy but is
 	// still piping bytes upstream would be invisible to the drain.
 	Drain *drain.Tracker
+	// WakeFailover retries a response gatewayd-internal marked not
+	// dispatched on another compute node (ADR-20261022184531 step 5). nil
+	// forwards each request once.
+	WakeFailover *WakeFailover
 }
 
 const (
@@ -599,7 +603,7 @@ func (p *InternalReverseProxy) serveHTTP(w http.ResponseWriter, r *http.Request)
 	// arm). The bodyclose lint rule can't see across function
 	// boundaries, so annotate explicitly.
 	//nolint:bodyclose
-	resp, err := p.Transport.RoundTrip(outReq)
+	resp, err := p.roundTrip(outReq, bridgeDuplex || grpcDuplex)
 	if err != nil {
 		// Distinguish "upstream unreachable" (502) from "client
 		// cancelled" (the latter is a normal close, don't log

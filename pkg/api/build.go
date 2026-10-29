@@ -79,6 +79,12 @@ func ValidGoCommand(name string) bool { return goCommandNameRE.MatchString(name)
 // from builderd (host) to guest-init (inside the builder VM). Its fields
 // cover everything guest-init needs to run one build to completion without
 // further host contact.
+// BuildLayerCompressionZstd is the only BuildManifest.LayerCompression value.
+const BuildLayerCompressionZstd = "zstd"
+
+// BuildKitSnapshotterAuto is the only BuildManifest.BuildKitSnapshotter value.
+const BuildKitSnapshotterAuto = "auto"
+
 type BuildManifest struct {
 	BuildDependencyDigest string            `json:"build_dependency_digest,omitempty"`
 	PublicBuildURLs       map[string]string `json:"public_build_urls,omitempty"`
@@ -127,6 +133,28 @@ type BuildManifest struct {
 	// otherwise-ephemeral builder VM.
 	DependencyCache       bool `json:"dependency_cache,omitempty"`
 	DependencyCacheImport bool `json:"dependency_cache_import,omitempty"`
+	// LayerCompression is "" (BuildKit's gzip) or BuildLayerCompressionZstd,
+	// which compresses the exported OCI image and the dependency cache with
+	// zstd (builderd's FAAS_BUILD_LAYER_ZSTD, ADR-20261028084018). An older
+	// guest ignores it and keeps gzip.
+	LayerCompression string `json:"layer_compression,omitempty"`
+	// BuildKitSnapshotter is "" (fuse-overlayfs, the default) or
+	// BuildKitSnapshotterAuto, which lets rootless BuildKit pick kernel
+	// overlayfs when the guest kernel allows it (builderd's
+	// FAAS_BUILD_KERNEL_OVERLAY, ADR-20261029105325). An older guest ignores
+	// it.
+	BuildKitSnapshotter string `json:"buildkit_snapshotter,omitempty"`
+	// DeferCacheExport moves the dependency-cache export off the deploy's
+	// critical path (builderd's FAAS_BUILD_DEFER_CACHE_EXPORT,
+	// ADR-20261029171525). The guest exports only the image and reports the
+	// owed export in BuildDone.DependencyCacheDeferred. After handing the image
+	// to imaged, builderd boots a CacheExportOnly VM on the same drive. An
+	// older guest ignores the field and exports the cache inline.
+	DeferCacheExport bool `json:"defer_cache_export,omitempty"`
+	// CacheExportOnly re-runs a deferred build on its retained drive to export
+	// only the dependency cache. It skips the source unpack and the image
+	// output, and it reuses the deferred run's plan and BuildKit state.
+	CacheExportOnly bool `json:"cache_export_only,omitempty"`
 	// KeepWarm leaves a successful builder guest alive in a host-controlled
 	// wait state so vmmd can capture a paused snapshot. Failed builds still
 	// power off immediately; the warm path is only a successful-build handoff.
@@ -196,6 +224,10 @@ type BuildDone struct {
 	// dependency cache instead of exporting it: its plan and install inputs
 	// matched the ones that produced it. builderd keeps the stored cache.
 	DependencyCacheUnchanged bool `json:"dependency_cache_unchanged,omitempty"`
+	// DependencyCacheDeferred reports that a DeferCacheExport build exported
+	// only its image and still owes its dependency cache. builderd keeps the
+	// drive for the CacheExportOnly run. Older guests omit it.
+	DependencyCacheDeferred bool `json:"dependency_cache_deferred,omitempty"`
 	// SharedRuntime records, for a successful Node source build of an app,
 	// whether its runtime artifact could run on the shared runner base
 	// (docs/adr/1500-shared-runtime-source-apps.md). It is informational

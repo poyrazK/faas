@@ -106,7 +106,7 @@ func previewEnvironmentNextAction(environment api.PreviewEnvironmentStatusRespon
 			return fmt.Sprintf("gregale logs %s --deployment %s --follow", member.Slug, member.DeploymentID)
 		}
 	}
-	return fmt.Sprintf("gregale preview show %s", environment.RootSlug)
+	return fmt.Sprintf("gregale preview get %s", environment.RootSlug)
 }
 
 // previewEnvironmentRootDeployment avoids displaying an old-head app deployment

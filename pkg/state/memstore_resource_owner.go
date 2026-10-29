@@ -30,11 +30,7 @@ func (m *MemStore) appResourceAccountLocked(app App) (Account, bool) {
 	}
 	owner, ok := m.accounts[app.AccountID]
 	if ok && exists && !org.Personal {
-		if org.DeletedPending {
-			owner.Status = AccountDeletedPending
-		} else if org.Status != OrgStatusActive && org.Status != OrgStatusPastDue {
-			owner.Status = AccountStatus(org.Status)
-		}
+		owner.Status = orgLegacyOwnerStatus(org, owner.Status)
 		if org.AbuseHoldAt != nil {
 			owner.AbuseHoldAt, owner.AbuseHoldReason = org.AbuseHoldAt, org.AbuseHoldReason
 		}
@@ -94,6 +90,17 @@ func (m *MemStore) appBillingSubjectLocked(accountID, appID string) string {
 		return org.ID
 	}
 	return accountID
+}
+
+// countsTowardQuotaSubjectLocked reports whether a row of accountID, on appID
+// or on the account itself when appID is empty, spends subject's per-account
+// allowance (see quotaSubjectSQL); a row of a deleted app spends none.
+func (m *MemStore) countsTowardQuotaSubjectLocked(accountID, appID, subject string) bool {
+	if appID == "" {
+		return accountID == subject
+	}
+	app, ok := m.apps[appID]
+	return ok && app.Status != AppDeleted && m.appBillingSubjectLocked(app.AccountID, app.ID) == subject
 }
 
 func (m *MemStore) personalAppLocked(app App) bool {

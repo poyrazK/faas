@@ -27,8 +27,10 @@
 //	          LEFT IN PLACE for builderd to consume (removing
 //	          it races the read). The reaper
 //	          (cmd/apid/upload_session_reaper.go) sweeps status='open'
-//	          expired rows and terminal rows whose 1h builderd grace
-//	          period has elapsed.
+//	          expired rows and terminal rows whose grace (24h for a
+//	          committed source, never while its deployment is in
+//	          flight; 1h otherwise, ADR-20261026152731)
+//	          has elapsed.
 //	cancel  → os.Remove(.part) AFTER the row's status flips to
 //	          cancelled.
 //
@@ -720,7 +722,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, prob)
 		return
 	}
-	if prob := validateWorkflowDefinitionsAgainstPlan(opts.Workflows, acct.Plan); prob != nil {
+	if prob := validateWorkflowDefinitionsAgainstPlan(opts.Workflows, acct.Plan, s.agentStepsAllowed(acct)); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -745,7 +747,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 			return
 		}
 	}
-	if prob := scanSourceTarballSecrets(row.PartPath, api.MustLimitsFor(acct.Plan)); prob != nil {
+	if prob := s.scanSourceTarballSecrets(row.PartPath, api.MustLimitsFor(acct.Plan)); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -757,9 +759,14 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 	if opts.SourceRoot != "" {
 		manifestApp.RootDir = opts.SourceRoot
 	}
-	manifest, manifestProblem := loadSourceRefManifest(row.PartPath, manifestApp, acct.Plan)
+	manifest, manifestProblem := loadSourceRefManifest(row.PartPath, manifestApp, acct.Plan, s.agentStepsAllowed(acct))
 	if manifestProblem != nil {
 		api.WriteProblem(w, manifestProblem)
+		return
+	}
+	sourceBuild, hasSourceBuild, buildProblem := resolveSourceDockerfileBuild(row.PartPath, manifestApp.RootDir, app, manifest)
+	if buildProblem != nil {
+		api.WriteProblem(w, buildProblem)
 		return
 	}
 	manifestOverrides, workloadsApplied, workloadProblem := s.applyManifestWorkloads(rolloutReq, manifest, acct, limits)
@@ -793,10 +800,10 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 
 	// apidsource.Enqueue never deletes the staged SourcePath —
 	// builderd reads it. We leave the .part in place; the reaper
-	// sweeps committed/cancelled/expired .part files older than 1h
-	// to bound the spool leak while giving builderd time to consume.
+	// sweeps it 24h after the upload once the deployment is no longer in
+	// flight, so builderd and `deploys retry` can still read it.
 	kind := state.DeploymentKindTarball
-	if opts.Dockerfile {
+	if opts.Dockerfile || hasSourceBuild {
 		kind = state.DeploymentKindDockerfile
 	}
 	if !s.admitAccountDeploy(w, r, acct) {
@@ -815,6 +822,8 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		SourcePath:                row.PartPath,
 		SourceBytes:               row.ReceivedBytes,
 		SourceRoot:                opts.SourceRoot,
+		DockerfilePath:            sourceBuild.path,
+		DockerfileBuild:           sourceBuild.options,
 		Handler:                   opts.Handler,
 		FunctionRuntime:           functionRuntimeForApp(app),
 		SourceURL:                 sourceURL,

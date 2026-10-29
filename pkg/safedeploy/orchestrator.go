@@ -405,6 +405,9 @@ func (o *Orchestrator) closeDeletedAppRollout(ctx context.Context, d state.Deplo
 	}
 	const reason = "app deleted during rollout"
 	if _, err := o.Store.SafedeployStampRollout(ctx, d.ID, "aborted", startedAt, nil, &abortedAt, reason); err != nil {
+		if o.stampSuperseded(d, err) {
+			return
+		}
 		stats.AutoAbortFailed++
 		o.Log.Warn("safedeploy: close rollout of deleted app",
 			"deployment_id", d.ID, "app_id", d.AppID, "err", err)
@@ -427,8 +430,10 @@ func (o *Orchestrator) closeDeletedAppRollout(ctx context.Context, d state.Deplo
 func (o *Orchestrator) start(ctx context.Context, d state.Deployment, now time.Time, stats *Stats) {
 	startedAt := now
 	if _, err := o.Store.SafedeployStampRollout(ctx, d.ID, "rolling_out", &startedAt, nil, nil, ""); err != nil {
-		o.Log.Warn("safedeploy: stamp rolling_out",
-			"deployment_id", d.ID, "err", err)
+		if !o.stampSuperseded(d, err) {
+			o.Log.Warn("safedeploy: stamp rolling_out",
+				"deployment_id", d.ID, "err", err)
+		}
 		return
 	}
 	o.emitAudit(ctx, d, AuditKindRolloutStarted, map[string]any{
@@ -457,8 +462,10 @@ func (o *Orchestrator) complete(ctx context.Context, d state.Deployment, now tim
 		startedAt = &s
 	}
 	if _, err := o.Store.SafedeployStampRollout(ctx, d.ID, "complete", startedAt, &completedAt, nil, ""); err != nil {
-		o.Log.Warn("safedeploy: stamp complete",
-			"deployment_id", d.ID, "err", err)
+		if !o.stampSuperseded(d, err) {
+			o.Log.Warn("safedeploy: stamp complete",
+				"deployment_id", d.ID, "err", err)
+		}
 		return
 	}
 	o.emitAudit(ctx, d, AuditKindRolloutCompleted, map[string]any{
@@ -534,6 +541,18 @@ func (o *Orchestrator) emitAudit(ctx context.Context, d state.Deployment, kind s
 			c.Inc()
 		}
 	}
+}
+
+// stampSuperseded reports a stamp the store refused because the rollout
+// changed after this tick listed it, for example APID aborted it. The row
+// keeps its new state; nothing is stamped or audited (Hunt 20 H20-2).
+func (o *Orchestrator) stampSuperseded(d state.Deployment, err error) bool {
+	if !errors.Is(err, state.ErrRolloutStateInvalid) {
+		return false
+	}
+	o.Log.Info("safedeploy: rollout changed since it was listed; left as is",
+		"deployment_id", d.ID, "app_id", d.AppID, "err", err)
+	return true
 }
 
 func (o *Orchestrator) now() time.Time {

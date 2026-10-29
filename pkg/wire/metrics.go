@@ -118,6 +118,9 @@ type OpsMetrics struct {
 	// computeNodeReadiness is one-hot per node: 1 for the node's current
 	// readiness, 0 for the others (ADR-20261022184531).
 	computeNodeReadiness *prometheus.GaugeVec
+	// nodeWakeBreaker counts node wake breaker transitions
+	// (ADR-20261022184531 step 3).
+	nodeWakeBreaker *prometheus.CounterVec
 	// warmPoolSize (issue #1056 / ADR-074) exposes the desired paused
 	// warm-pool size by plan. Runtime reconciliation will update the
 	// gauge in a follow-up; registering it here makes the contract
@@ -343,6 +346,13 @@ type OpsMetrics struct {
 	exclusiveOperationDispatches *prometheus.CounterVec
 	exclusiveOperationRenewals   *prometheus.CounterVec
 	exclusiveOperationDueRows    prometheus.Gauge
+	// trafficPolicyPhase times each phase of a guarded traffic policy write
+	// (ADR 20261027163626); writer and phase are closed pkg/state labels.
+	trafficPolicyPhase *prometheus.HistogramVec
+	// trafficBindingScope audits a binding write's declared hostnames against
+	// what it changed (ADR 20261027163626); labels are closed pkg/state kinds.
+	trafficBindingScopeAudits *prometheus.CounterVec
+	trafficBindingScopeMisses *prometheus.CounterVec
 	// wakeFailure (issue #1059 / ADR-127) — operator-facing wake
 	// failure-mode counter. Labelled by (box, reason). The closed
 	// reason vocabulary is
@@ -1983,6 +1993,7 @@ type OpsMetrics struct {
 	workerRecovery          *workerRecoveryMetrics
 	queue                   *queueMetrics
 	delayedTasks            *delayedTaskMetrics
+	cronDelivery            *cronDeliveryMetrics
 	// auditLogWriteTotal (PR-#TBD / C5): per-(endpoint, kind)
 	// counter incremented on every successful events-table
 	// append at pkg/audit.Auditor.Emit. Splits the legacy
@@ -2143,6 +2154,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	workerRecovery := newWorkerRecoveryMetrics(prefix)
 	queue := newQueueMetrics(prefix)
 	delayedTasks := newDelayedTaskMetrics(prefix)
+	cronDelivery := newCronDeliveryMetrics(prefix)
 	ops := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_ops_total",
 		Help: "Count of operations, labelled by op name and terminal status code.",
@@ -2191,6 +2203,24 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 			exclusiveOperationRenewals.WithLabelValues(outcome)
 		}
 	}
+	var trafficPolicyPhase *prometheus.HistogramVec
+	var trafficBindingScopeAudits, trafficBindingScopeMisses *prometheus.CounterVec
+	if prefix == "apid" {
+		trafficPolicyPhase = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "traffic_policy_analysis_seconds",
+			Help:    "Time per phase of a guarded traffic policy write (discover, lock_wait, before, validate), by writer. Each analysis phase is bounded at 2 s (ADR-570).",
+			Buckets: []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 1.5, 2, 2.5, 5},
+		}, []string{"writer", "phase"})
+		trafficBindingScopeAudits = prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "traffic_binding_scope_audits_total",
+			Help: "Binding writes whose changed hostnames were checked against the scope they declared, by writer and outcome (covered, missed).",
+		}, []string{"writer", "outcome"})
+		trafficBindingScopeMisses = prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "traffic_binding_scope_misses_total",
+			Help: "Changed hostnames outside a binding write's declared scope, by writer and kind. Must stay zero before the scoped guard is enabled.",
+		}, []string{"writer", "kind"})
+		reg.MustRegister(trafficPolicyPhase, trafficBindingScopeAudits, trafficBindingScopeMisses)
+	}
 	watchdogKills := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_watchdog_kills_total",
 		Help: "Count of instances the §6.1 watchdog transitioned out of a stuck state, labelled by from→to state.",
@@ -2220,6 +2250,15 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 			for _, outcome := range WakeFailoverOutcomes {
 				wakeFailover.WithLabelValues(reason, outcome)
 			}
+		}
+	}
+	nodeWakeBreaker := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_node_wake_breaker_total",
+		Help: "Node wake breaker transitions this schedd wrote (ADR-20261022184531): opened after consecutive platform-attributable wake failures on a node, reopened when the first wake after the cooldown failed too, closed when a wake there succeeded.",
+	}, []string{"transition"})
+	if prefix == "schedd" {
+		for _, transition := range NodeWakeBreakerTransitions {
+			nodeWakeBreaker.WithLabelValues(transition)
 		}
 	}
 	computeNodeReadiness := prometheus.NewGaugeVec(prometheus.GaugeOpts{
@@ -3986,6 +4025,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		queue.depth, queue.inFlight, queue.oldestAge, queue.deadLetter,
 		queue.bindingDepth, queue.bindingInFlight, queue.bindingLagSeconds, queue.bindingDeadLetter, queue.bindingWorkerDemand, queue.bindingThrottled,
 		delayedTasks.dispatchTotal, delayedTasks.scheduleLagSeconds,
+		cronDelivery.deliveryTotal, cronDelivery.scheduleLagSeconds,
 		ops, dur, watchdogKills, warmSnapshotErrors, warmPoolSize, warmPoolResumeTotal, frozenFreezeTotal, frozenThawTotal, frozenFastPathSkipped, frozenThawTickets, ownerCacheTotal, frozenParksTotal, frozenCompressTotal, frozenInstances, warmupErrors, livenessRestarts, workloadOOMKills, serviceReplicaStatus, serviceRolloutHandoffPhaseDuration, daemonRestartCount, daemonBuildInfo, daemonUptimeSeconds, daemonReady, daemonReadyReason, faasDeployVersion, bridgeFramingTotal, guestInitDuration, wakeSnapshotTier, wakeColdReason, executionActive, executionTotal, executionPhaseDuration, executionFailures, executionOutputBytes, executionSweeps, executionQueueDepth, executionQueueOldestWait, executionWorkers, wakeFailure, wakeLatency, guestTailSeconds, guestTailFailedTotal, tailCapReached, evictedPriority, evictionFiredTotal, eventsWriteFail, auditWriteFail, cveCheckTotal, cvesOpenTotal,
 		writeRedirectTotal, writeRedirectLatency,
 		auditWriteDur, cronFireNowDispatchDur, accountOrgMismatch, requestFailures, requestTotal, stripePushDur, paddlePushDur, polarPushDur,
@@ -4072,7 +4112,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		planGateRescuedByExclude,
 	}
 	if prefix == "schedd" {
-		commonCollectors = append(commonCollectors, initSnapshotAttempts, initSnapshotCaptureDuration, wakeFailover, computeNodeReadiness)
+		commonCollectors = append(commonCollectors, initSnapshotAttempts, initSnapshotCaptureDuration, wakeFailover, computeNodeReadiness, nodeWakeBreaker)
 	}
 	if prefix == "imaged" {
 		commonCollectors = append(commonCollectors, snapshotPublication)
@@ -4923,11 +4963,11 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	}, []string{"identity", "result"})
 	loopWork := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_loop_work_total",
-		Help: "Tasks schedd's notification loop handed to its bounded off-loop work pool (ADR-191), labelled by kind and outcome ∈ {queued, inline, dropped, coalesced, panicked}. `dropped` is benign in isolation (the durable table plus a safety ticker retries) but a sustained rate means the kind's slot budget is too small; any `panicked` is a bug.",
+		Help: "Tasks schedd's notification loop handed to its bounded off-loop work pool (ADR-191), labelled by kind and outcome ∈ {queued, inline, dropped, coalesced, rerun, panicked}. `dropped` is benign in isolation (the durable table plus a safety ticker retries) but a sustained rate means the kind's slot budget is too small; `rerun` counts the extra passes a kind such as event_fanout runs because a submit coalesced into a running one; any `panicked` is a bug.",
 	}, []string{"kind", "outcome"})
 	loopWorkDuration := prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name: prefix + "_loop_work_duration_seconds",
-		Help: "How long one off-loop task ran (ADR-191), labelled by kind. The prime bucket carries cold boot plus snapshot capture, so its tail is tens of seconds by design.",
+		Help: "How long one pass of an off-loop task ran (ADR-191), labelled by kind; each rerun of a rerunCoalesced kind such as event_fanout is its own pass (ADR-20261029012000). The prime bucket carries cold boot plus snapshot capture, so its tail is tens of seconds by design.",
 		// Reconciles are millisecond-scale database work; prime is
 		// tens of seconds. One set of buckets has to span both.
 		Buckets: []float64{0.005, 0.025, 0.1, 0.5, 1, 5, 15, 30, 60, 120},
@@ -5038,6 +5078,8 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		cronFireNowDispatchDur:             schedd,
 		delayedTasks.dispatchTotal:         schedd,
 		delayedTasks.scheduleLagSeconds:    schedd,
+		cronDelivery.deliveryTotal:         schedd,
+		cronDelivery.scheduleLagSeconds:    schedd,
 		evictionFiredTotal:                 schedd,
 		scaleUpAdmitRPS:                    schedd,
 		eventsWriteFail:                    schedd,
@@ -5513,6 +5555,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		initSnapshotCaptureDuration:                initSnapshotCaptureDuration,
 		wakeFailover:                               wakeFailover,
 		computeNodeReadiness:                       computeNodeReadiness,
+		nodeWakeBreaker:                            nodeWakeBreaker,
 		snapshotPublication:                        snapshotPublication,
 		warmPoolSize:                               warmPoolSize,
 		warmPoolResumeTotal:                        warmPoolResumeTotal,
@@ -5561,6 +5604,9 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		exclusiveOperationDispatches:               exclusiveOperationDispatches,
 		exclusiveOperationRenewals:                 exclusiveOperationRenewals,
 		exclusiveOperationDueRows:                  exclusiveOperationDueRows,
+		trafficPolicyPhase:                         trafficPolicyPhase,
+		trafficBindingScopeAudits:                  trafficBindingScopeAudits,
+		trafficBindingScopeMisses:                  trafficBindingScopeMisses,
 		wakeFailure:                                wakeFailure,
 		wakeLatency:                                wakeLatency,
 		boxLabels:                                  newBoxLabelSet(maxBoxLabelValues),
@@ -5777,6 +5823,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		workerRecovery:                       workerRecovery,
 		queue:                                queue,
 		delayedTasks:                         delayedTasks,
+		cronDelivery:                         cronDelivery,
 		auditLogWriteTotal:                   auditLogWriteTotal,
 		auditLogWriteFailuresTotal:           auditLogWriteFailuresTotal,
 		operatorActionTraceCompletenessRatio: operatorActionTraceCompletenessRatio,
@@ -6246,6 +6293,12 @@ func (m *OpsMetrics) RecordInitSnapshotAttempt(site, outcome string, duration ti
 const (
 	WakeFailoverReasonBaseGeneration     = "base_generation"
 	WakeFailoverReasonScanSidecarMissing = "scan_sidecar_missing"
+	// WakeFailoverReasonNodeSetup: vmmd failed to acquire a jail lease or
+	// set up the network before the VM started (wake_stage=pre_start).
+	WakeFailoverReasonNodeSetup = "node_setup"
+	// WakeFailoverReasonVMMDUnreachable: the boot request never reached the
+	// node's vmmd (ADR-20261029085904).
+	WakeFailoverReasonVMMDUnreachable = "vmmd_unreachable"
 
 	WakeFailoverOutcomeSucceeded    = "succeeded"
 	WakeFailoverOutcomeRefusedAgain = "refused_again"
@@ -6257,9 +6310,22 @@ const (
 // WakeFailoverReasons and WakeFailoverOutcomes are pre-instantiated so the
 // counter reads zero, not absent, on a fleet that has never failed over.
 var (
-	WakeFailoverReasons  = []string{WakeFailoverReasonBaseGeneration, WakeFailoverReasonScanSidecarMissing}
+	WakeFailoverReasons  = []string{WakeFailoverReasonBaseGeneration, WakeFailoverReasonScanSidecarMissing, WakeFailoverReasonNodeSetup, WakeFailoverReasonVMMDUnreachable}
 	WakeFailoverOutcomes = []string{WakeFailoverOutcomeSucceeded, WakeFailoverOutcomeRefusedAgain, WakeFailoverOutcomeNoAlternate, WakeFailoverOutcomeOutOfTime, WakeFailoverOutcomeFailed}
 )
+
+// NodeWakeBreakerTransitions are the closed transition label values of
+// schedd_node_wake_breaker_total.
+var NodeWakeBreakerTransitions = []string{"opened", "reopened", "closed"}
+
+// RecordNodeWakeBreaker counts one breaker transition. Only schedd exports
+// the counter; an unknown transition is dropped.
+func (m *OpsMetrics) RecordNodeWakeBreaker(transition string) {
+	if m == nil || m.nodeWakeBreaker == nil || m.metricPrefix != "schedd" || !slices.Contains(NodeWakeBreakerTransitions, transition) {
+		return
+	}
+	m.nodeWakeBreaker.WithLabelValues(transition).Inc()
+}
 
 // ComputeNodeReadinessStates are the closed state label values of
 // schedd_compute_node_readiness; they mirror compute_nodes_readiness_chk.
@@ -8246,6 +8312,32 @@ func (m *OpsMetrics) ObserveExclusiveOperationLeaseRenewal(outcome string) {
 	m.exclusiveOperationRenewals.WithLabelValues(outcome).Inc()
 }
 
+// ObserveTrafficPolicyPhase records one phase of a guarded traffic policy
+// write. It matches state.TrafficPolicyPhaseObserver.
+func (m *OpsMetrics) ObserveTrafficPolicyPhase(writer, phase string, elapsed time.Duration) {
+	if m == nil || m.trafficPolicyPhase == nil {
+		return
+	}
+	m.trafficPolicyPhase.WithLabelValues(writer, phase).Observe(elapsed.Seconds())
+}
+
+// ObserveTrafficBindingScope records one audited binding write and the kind
+// of each changed hostname its declared scope missed. It matches
+// state.TrafficBindingScopeObserver.
+func (m *OpsMetrics) ObserveTrafficBindingScope(writer string, missed []string) {
+	if m == nil || m.trafficBindingScopeAudits == nil {
+		return
+	}
+	outcome := "covered"
+	if len(missed) > 0 {
+		outcome = "missed"
+	}
+	m.trafficBindingScopeAudits.WithLabelValues(writer, outcome).Inc()
+	for _, kind := range missed {
+		m.trafficBindingScopeMisses.WithLabelValues(writer, kind).Inc()
+	}
+}
+
 // SetExclusiveOperationDueCandidates publishes the bounded scan result size.
 func (m *OpsMetrics) SetExclusiveOperationDueCandidates(n int) {
 	if m == nil || m.exclusiveOperationDueRows == nil {
@@ -8596,8 +8688,14 @@ func (m *OpsMetrics) ObserveImageScanVuln(image, severity string, count int) {
 }
 
 // BaseScanRefusalReasons is the closed reason set of
-// <daemon>_base_scan_refusals_total.
-var BaseScanRefusalReasons = []string{"critical", "sidecar_missing", "generation_mismatch", "generation_unavailable", "incomplete"}
+// <daemon>_base_scan_refusals_total. scan_failed is imaged's fail-closed
+// placeholder (BaseScanFailedCount) rather than real findings.
+var BaseScanRefusalReasons = []string{"critical", "sidecar_missing", "generation_mismatch", "generation_unavailable", "incomplete", "scan_failed"}
+
+// BaseScanFailedCount is the per-severity count imaged writes into a base's
+// scan sidecar when its Grype scan failed, so vmmd refuses to boot an
+// unscanned base. It is a placeholder, not a number of vulnerabilities.
+const BaseScanFailedCount = 9999
 
 // ObserveBaseScanRefusal counts one boot refused by vmmd's base scan gate.
 // Safe on a nil receiver.

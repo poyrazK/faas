@@ -37,6 +37,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/runtimeconfig"
+	"github.com/onebox-faas/faas/pkg/sourcespool"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/storagekey"
@@ -230,6 +231,34 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if d, ok := driver.(*builderdpkg.VMMDriver); ok {
 		d.WithBuilderBaseDigest(builderBaseDigestPath)
 		d.WithDockerHubMirrors(mirrors)
+		// The node artifact cache shares the build drive filesystem and keeps
+		// less free than one build needs (#5709, ADR-20261027173012).
+		if sourceStorage != nil {
+			d.WithDriveSpaceReclaimer(func(_ context.Context, need int64) error {
+				if err := storage.ReclaimFreeBytes(sourceStorage, need); err != nil {
+					log.Warn("builderd: could not reclaim artifact cache space for a build drive", "need_bytes", need, "err", err)
+					return err
+				}
+				return nil
+			})
+		}
+	}
+	// ADR-20261028084018: zstd build layers, off until this node's imaged
+	// reads them.
+	layerCompression, err := builderdpkg.ParseLayerZstd(os.Getenv(builderdpkg.LayerZstdEnv))
+	if err != nil {
+		return fmt.Errorf("builderd: %w", err)
+	}
+	// ADR-20261029105325: kernel overlayfs for builder BuildKit, off by default.
+	buildkitSnapshotter, err := builderdpkg.ParseKernelOverlay(os.Getenv(builderdpkg.KernelOverlayEnv))
+	if err != nil {
+		return fmt.Errorf("builderd: %w", err)
+	}
+	// ADR-20261029171525: export the dependency cache after the image
+	// handoff, off by default.
+	deferCacheExport, err := builderdpkg.ParseDeferCacheExport(os.Getenv(builderdpkg.DeferCacheExportEnv))
+	if err != nil {
+		return fmt.Errorf("builderd: %w", err)
 	}
 	if c, ok := driver.(*builderdpkg.VMMDriver); ok {
 		defer func() { _ = c.Close() }()
@@ -283,6 +312,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		CacheAffinityGrace:  cfg.CacheAffinityGrace,
 		WarmIdle:            cfg.WarmIdle,
 		DisableWarmBuilders: !cfg.WarmBuilders,
+		LayerCompression:    layerCompression,
+		BuildKitSnapshotter: buildkitSnapshotter,
+		DeferCacheExport:    deferCacheExport,
 		// ADR-038: BuilderNodeID is stamped onto every
 		// build_provenance row builderd writes. Defaulted to
 		// "default-local" in LoadConfig; multi-node deployments
@@ -437,6 +469,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			sourceMaxAge = 24 * time.Hour
 		}
 		go builderdpkg.SourceGCSweepLoop(runCtx, sourceStorage, store, sourceGCInterval, sourceMaxAge, log)
+	}
+	// ADR-20261026152731: materialized source archives and build logs in the
+	// local spool. On a single box this is also apid's spool; both sweepers
+	// keep whatever an in-flight deployment names, so running both is safe.
+	if cfg.SourceSpoolDir != "" {
+		go sourcespool.Sweeper{Root: cfg.SourceSpoolDir, Layout: sourcespool.BuildSpool, Store: store,
+			MaxAge: api.SourceSpoolRetention, Log: log}.Run(runCtx, api.SourceSpoolSweepInterval)
 	}
 
 	var shutdownOnce sync.Once

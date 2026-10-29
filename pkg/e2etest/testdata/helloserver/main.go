@@ -181,6 +181,7 @@ func main() {
 	mux := http.NewServeMux()
 	registerTCPFixture(mux)
 	registerStreamFixtures(mux)
+	registerOOMFixture(mux)
 	if *identityProbe {
 		serveIdentityProbe(mux)
 	}

@@ -30,7 +30,7 @@ var cliTreeVerbs = []string{
 	"unprotect", "qualify", "reconcile", "reconnect", "refresh", "rehearse", "reopen", "require",
 	"resize", "resync", "retire", "revoke", "review", "scan", "split", "start", "stop", "subscribe",
 	"unsubscribe", "suggest", "suspend", "test", "track", "use", "validate", "override", "advise",
-	"reset",
+	"reset", "pull", "push", "signal", "generate", "void", "draft", "handoff", "end",
 }
 
 // A path may end with a noun it lists or shows (`app instances`).
@@ -45,7 +45,7 @@ var cliTreeReadNouns = []string{
 	"occurrences", "outcomes", "overview", "parts", "pending", "policies", "prices", "priority",
 	"profiles", "progress", "provenance", "readiness", "receipt", "records", "releases", "report",
 	"results", "retention", "routes", "runs", "running", "sbom", "stats", "steps", "storage",
-	"summary", "tables", "tags", "tasks", "teams", "tickets", "tokens", "traces", "types", "usage",
+	"summary", "tables", "tags", "tasks", "executions", "milestones", "timeline", "teams", "tickets", "tokens", "traces", "types", "usage",
 	"users", "views", "signups", "statements", "switches", "recipes", "repos", "resumes", "state",
 	"stages",
 }
@@ -55,7 +55,8 @@ var cliTreeCompoundWords = []string{
 	"data-api", "rule-list", "egress-allowlist", "egress-ports", "static-egress-ip",
 	"port-forward", "wake-ahead", "wake-timeline", "streaming-cap", "spend-cap", "upload-cache",
 	"object-lock", "subscription-version", "subscription-retry", "subscription-circuit",
-	"subscription-capacity", "lock-policy",
+	"subscription-capacity", "lock-policy", "deploy-token",
+	"billing-run", "billing-policy", "rate-card", "overdue-hold", "event-recovery", "failure-recovery", "recovery-policy", "recovery-response", "deadline-alert", "notification-retry", "recovery-notification", "release-sets", "compute-policy",
 }
 
 // Rule 5: top-level verbs that may start a tree path.
@@ -91,8 +92,8 @@ func TestCliTreePathsFollowNamingRules(t *testing.T) {
 		if path[0] == "admin" {
 			continue // operator tools keep their names (rule 7)
 		}
-		if len(path) > 3 {
-			t.Errorf("%q: at most three words come before the target", alias.New)
+		if len(path) > 4 {
+			t.Errorf("%q: at most four words come before the target", alias.New)
 		}
 		shortcut := slices.Contains(cliTreeShortcuts, path[0])
 		if !nouns[path[0]] && !shortcut {
@@ -265,6 +266,169 @@ func TestCliTreeNounHelp(t *testing.T) {
 	}
 }
 
+// Step 5 (the flip): a noun that is also today's command lists the tree's
+// verbs once the tree reshapes it, a subnoun only the tree has gets help of
+// its own, and a noun the tree passes through keeps today's fuller help.
+func TestCliTreeHelpForTodaysCommands(t *testing.T) {
+	enableEveryCLIFeature(t)
+	for _, tc := range []struct {
+		args       []string
+		want, lack []string
+	}{
+		{[]string{"env", "--help"}, []string{"set", "unset", "pull", "rollback"}, []string{"create", "clone-status"}},
+		{[]string{"help", "env"}, []string{"set", "push"}, nil},
+		{[]string{"mcp", "--help"}, []string{"serve", "connection", "server", "client"}, []string{"call", "task-get"}},
+		{[]string{"mcp", "client"}, []string{"tools", "call", "status"}, []string{"task-get"}},
+		{[]string{"release", "attempt", "--help"}, []string{"get", "cancel", "retry"}, nil},
+		{[]string{"app", "--help"}, []string{"list", "get", "update", "scale", "health", "listener"}, []string{"tcp", "udp"}},
+		{[]string{"bucket", "--help"}, []string{"multipart", "version", "inventory"}, []string{"uploads", "versions", "reconcile"}},
+	} {
+		code, stdout, stderr := runCLI(t, tc.args...)
+		if code != 0 {
+			t.Errorf("gregale %s = %d %q", strings.Join(tc.args, " "), code, stderr)
+			continue
+		}
+		for _, verb := range tc.want {
+			if !listsCommand(stdout, verb) {
+				t.Errorf("gregale %s does not list %q:\n%s", strings.Join(tc.args, " "), verb, stdout)
+			}
+		}
+		for _, verb := range tc.lack {
+			if listsCommand(stdout, verb) {
+				t.Errorf("gregale %s lists %q, which the tree renames or moves:\n%s", strings.Join(tc.args, " "), verb, stdout)
+			}
+		}
+	}
+	if _, stdout, _ := runCLI(t, "preview", "--help"); !strings.Contains(stdout, "gregale preview <create|") {
+		t.Errorf("preview --help must keep today's help:\n%s", stdout)
+	}
+	if _, stdout, _ := runCLI(t, "app", "--help", "--all"); !strings.Contains(stdout, "Access and security:") {
+		t.Errorf("app --help --all must list every option of today's app command:\n%s", stdout)
+	}
+}
+
+// Today's commands have a tree spelling that runs exactly them.
+func TestCliTreeSpelling(t *testing.T) {
+	enableEveryCLIFeature(t)
+	t.Chdir(t.TempDir())
+	for _, tc := range []struct{ in, want string }{
+		{"crons info c1", "cron get c1"},
+		{"crons add --path /sync", "cron create --path /sync"},
+		{"apps", "app list"},
+		{"apps rm api --yes", "app delete api --yes"},
+		{"app api", "app get api"},
+		{"app api scale --ram 512", "app scale api --ram 512"},
+		{"app api egress-allowlist add 10.0.0.0/8", "app egress-allowlist add api 10.0.0.0/8"},
+		{"app api tcp list", "app listener list api"},
+		{"app api udp add --port 7000", "app listener create api --port 7000 --protocol udp"},
+		{"deploys status 42", "release get 42"},
+		{"secrets set K=V", "env set K=V"},
+		{"bucket uploads list", "bucket multipart list"},
+		{"ps api", "app instances api"},
+		// Already the tree's names, or nothing in the tree runs exactly this.
+		{"cron list", ""},
+		{"deploy --prod", ""},
+		{"crons", ""},
+		{"env push", ""},
+		{"preview show 12", "preview get 12"},
+		{"mcp serve --transport stdio", ""},
+		{"mcp doctor", "mcp server doctor"},
+		{"mcp server readiness", ""}, // already the tree's names
+		{"dashboard list", ""},
+		{"run --image alpine", ""}, // a shortcut keeps its name
+		{"rollback api", ""},
+		{"app api --ram", ""}, // `app <slug> --flag` updates the app
+	} {
+		got, ok := main.CliTreeSpelling(strings.Fields(tc.in))
+		if gotText := strings.Join(got, " "); (tc.want == "") == ok || gotText != tc.want {
+			t.Errorf("%q spelled %q (%v), want %q", tc.in, gotText, ok, tc.want)
+		}
+	}
+}
+
+// An earlier name still runs; with stderr in a terminal it names the tree
+// path there, and help, --json or --non-interactive print nothing extra.
+func TestCliTreeHintsEarlierNamesInATerminal(t *testing.T) {
+	enableEveryCLIFeature(t)
+	t.Chdir(t.TempDir())
+	t.Setenv("FAAS_TOKEN", "")
+	tty := true
+	prev := *main.CliTreeHintTerminal
+	*main.CliTreeHintTerminal = func() bool { return tty }
+	t.Cleanup(func() { *main.CliTreeHintTerminal = prev })
+	const hint = "Tip: 'gregale crons list api' is now 'gregale cron list api'"
+	if _, _, stderr := runCLI(t, "crons", "list", "api"); !strings.Contains(stderr, hint) {
+		t.Errorf("crons list in a terminal = %q, want the tree name", stderr)
+	}
+	for _, args := range [][]string{
+		{"--json", "crons", "list", "api"},
+		{"--non-interactive", "crons", "list", "api"},
+		{"cron", "list", "api"},
+		{"crons", "list", "--help"},
+		{"help", "crons", "list"},
+	} {
+		if _, _, stderr := runCLI(t, args...); strings.Contains(stderr, "Tip: ") {
+			t.Errorf("gregale %s printed a hint: %q", strings.Join(args, " "), stderr)
+		}
+	}
+	tty = false
+	if _, _, stderr := runCLI(t, "crons", "list", "api"); strings.Contains(stderr, "Tip: ") {
+		t.Errorf("crons list without a terminal printed a hint: %q", stderr)
+	}
+}
+
+// Shell completion offers the tree's names, and dynamic values (deployment
+// IDs, project slugs) complete on the tree paths that take them.
+func TestCliTreeCompletionOffersTheTree(t *testing.T) {
+	enableEveryCLIFeature(t)
+	_, script, _ := runCLI(t, "completion", "bash")
+	root := regexp.MustCompile(`compgen -W "(--non-interactive [^"]*)"`).FindStringSubmatch(script)
+	if root == nil {
+		t.Fatalf("bash completion has no top-level word list:\n%.400s", script)
+	}
+	words := strings.Fields(root[1])
+	for _, want := range []string{"cron", "release", "env", "app", "deploy", "logs"} {
+		if !slices.Contains(words, want) {
+			t.Errorf("top-level completion omits %q: %v", want, words)
+		}
+	}
+	for _, earlier := range []string{"crons", "deploys", "deployments", "secrets", "apps"} {
+		if slices.Contains(words, earlier) {
+			t.Errorf("top-level completion offers the earlier name %q", earlier)
+		}
+	}
+	for _, want := range []string{
+		`[ "${words[1]}" = "release" ] && [ "${words[2]}" = "get" ]`,
+		`[ "${words[1]}" = "environment" ]`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("bash completion lacks the position condition %s", want)
+		}
+	}
+}
+
+// Help reached through a tree path is spelled in that path.
+func TestCliTreeLeafHelpUsesTheTypedPath(t *testing.T) {
+	enableEveryCLIFeature(t)
+	for _, tc := range []struct {
+		args       []string
+		want, lack string
+	}{
+		{[]string{"env", "set", "--help"}, "gregale env set", "gregale secrets"},
+		{[]string{"cron", "get", "--help"}, "gregale cron get", "gregale crons"},
+		{[]string{"help", "release", "list"}, "gregale release list", "See also:"},
+		{[]string{"release", "canary", "--help"}, "gregale release canary", "gregale canary"},
+	} {
+		code, stdout, stderr := runCLI(t, tc.args...)
+		if code != 0 || !strings.Contains(stdout, tc.want) || strings.Contains(stdout, tc.lack) {
+			t.Errorf("gregale %s = %d %q, want %q and not %q:\n%s", strings.Join(tc.args, " "), code, stderr, tc.want, tc.lack, stdout)
+		}
+	}
+	if _, stdout, _ := runCLI(t, "crons", "info", "--help"); !strings.Contains(stdout, "gregale cron get") || strings.Contains(stdout, "gregale crons info") {
+		t.Errorf("help reached by an earlier name speaks the tree:\n%s", stdout)
+	}
+}
+
 const cliTreeVerbBaselinePath = "testdata/cli_tree_verb_baseline.txt"
 
 // cliTreeVerbViolations walks the verbs a tree noun passes through from
@@ -279,8 +443,8 @@ func cliTreeVerbViolations() []string {
 	found := map[string]bool{}
 	check := func(path []string, leaf bool) {
 		var reasons []string
-		if len(path) > 3 {
-			reasons = append(reasons, "more than three words")
+		if len(path) > 4 {
+			reasons = append(reasons, "more than four words")
 		}
 		for _, word := range path {
 			if strings.Contains(word, "-") && !slices.Contains(cliTreeCompoundWords, word) {
@@ -383,11 +547,31 @@ func TestCliTreeFlagSpellings(t *testing.T) {
 	}
 }
 
+// A verb that answers --help from its own parser names its tree path and
+// canonical flags too, also when an earlier name asked for it.
+func TestCliTreeParserHelpSpellsCanonicalFlags(t *testing.T) {
+	enableEveryCLIFeature(t)
+	for _, args := range [][]string{{"app", "binding", "list", "--help"}, {"bindings", "list", "--help"}} {
+		code, help, _ := runCLI(t, args...)
+		if code != 0 || !strings.Contains(help, "Flags for gregale app binding list:") {
+			t.Errorf("%v help = %d, want the tree path:\n%s", args, code, help)
+		}
+		for _, want := range []string{"\n  --env <VALUE>", "\n  --release <VALUE>"} {
+			if !strings.Contains(help, want) {
+				t.Errorf("%v help lacks %q:\n%s", args, want, help)
+			}
+		}
+		if strings.Contains(help, "\n  --scope ") || strings.Contains(help, "\n  --deployment ") {
+			t.Errorf("%v help lists an earlier flag spelling as the flag:\n%s", args, help)
+		}
+	}
+}
+
 // Tree help and gating follow the account's capabilities like today's
 // commands: a hidden capability's verbs are not listed, its paths answer
 // with the name the user typed, and a flag that reaches it is dropped.
 func TestCliTreeFollowsCapabilityVisibility(t *testing.T) {
-	t.Setenv("FAAS_CAPABILITY_FLAGS_RELEASE_ALL", "")
+	clearCapabilityReleaseAll(t)
 	t.Setenv("FAAS_TOKEN", "")
 	t.Setenv("FAAS_COMPLETION_CACHE_PATH", filepath.Join(t.TempDir(), "cache.json"))
 

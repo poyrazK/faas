@@ -126,9 +126,15 @@ func testDirectOCIFullRootfs(t *testing.T, options directOCIContractOptions) {
 	}
 	depID := parseImageDeployment(t, body)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	// A companion adds a second image import, secret scan and layer build;
+	// on nested KVM that alone took past the 75 s single-image budget.
+	liveBudget := 75 * time.Second
+	if options.Companion {
+		liveBudget = 4 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), liveBudget+15*time.Second)
 	defer cancel()
-	dep, err := e2etest.WaitForDeploymentLive(ctx, t, pool, depID, 75*time.Second)
+	dep, err := e2etest.WaitForDeploymentLive(ctx, t, pool, depID, liveBudget)
 	if err != nil {
 		h.DumpLogs(t)
 		t.Fatalf("direct OCI deployment did not reach live: %v", err)

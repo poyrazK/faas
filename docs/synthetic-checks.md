@@ -13,13 +13,13 @@ available on Hobby and above.
 ## Create a check
 
 ```sh
-gregale synthetics create --app shop --name health --path /healthz
-gregale synthetics create --app shop --name home --path / --method HEAD \
+gregale alert check create --app shop --name health --path /healthz
+gregale alert check create --app shop --name home --path / --method HEAD \
   --expect-status 200 --every-minutes 15
-gregale synthetics list --app shop
-gregale synthetics pause --app shop CHECK_ID
-gregale synthetics resume --app shop CHECK_ID
-gregale synthetics rm --app shop CHECK_ID
+gregale alert check list --app shop
+gregale alert check pause --app shop CHECK_ID
+gregale alert check resume --app shop CHECK_ID
+gregale alert check delete --app shop CHECK_ID
 ```
 
 The API equivalent is `POST /v1/apps/{slug}/synthetics`, with `GET`,
@@ -38,7 +38,7 @@ An app can have up to 5 checks.
 ## See results
 
 ```sh
-gregale synthetics status --app shop CHECK_ID
+gregale alert check status --app shop CHECK_ID
 ```
 
 ```
@@ -59,6 +59,10 @@ wake. The p95 covers successful runs; a check with none in 24 hours shows `—`.
 Checks run from Gregale's control plane. Requests carry the user agent
 `Gregale-Synthetics/1`, so you can recognise them in your logs.
 
+Checks run only while your plan includes them (Hobby and above). After a
+move to the Free plan your checks are kept but no longer run, so they stop
+waking your app; they resume when you upgrade.
+
 ## Alert on a check
 
 Two alert metrics watch one check, named with `synthetic_check_id`
@@ -66,13 +70,13 @@ Two alert metrics watch one check, named with `synthetic_check_id`
 
 ```sh
 # Two failed runs in a row, ignoring a single blip.
-printf '%s\n' "$ALERT_SECRET" | gregale alerts add --app shop --name "health failing" \
+printf '%s\n' "$ALERT_SECRET" | gregale alert create --app shop --name "health failing" \
   --metric synthetic_check_consecutive_failures --synthetic-check CHECK_ID \
   --comparison gte --threshold 2 --window-spec 1h \
   --webhook-url https://example.com/hooks/gregale --webhook-secret-stdin
 
 # p95 latency of successful runs above 2 s over an hour.
-printf '%s\n' "$ALERT_SECRET" | gregale alerts add --app shop --name "health slow" \
+printf '%s\n' "$ALERT_SECRET" | gregale alert create --app shop --name "health slow" \
   --metric synthetic_check_latency_p95_ms --synthetic-check CHECK_ID \
   --comparison gt --threshold 2000 --window-spec 1h \
   --webhook-url https://example.com/hooks/gregale --webhook-secret-stdin

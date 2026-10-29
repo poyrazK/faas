@@ -37,8 +37,8 @@ their execution contract has no trusted tenant-specific context.
 Then save it to the account:
 
 ```sh
-gregale operations policy upsert --file crm-sync-policy.json crm-sync
-gregale operations policy list
+gregale job lock-policy set --file crm-sync-policy.json crm-sync
+gregale job lock-policy list
 ```
 
 For repository-managed configuration, declare the same policy under
@@ -95,7 +95,7 @@ gregale operations start-job --policy customer-sync \
 A deployment-attached command can use that lane too:
 
 ```sh
-gregale app crm-api exec --operation-policy customer-sync \
+gregale app exec crm-api --operation-policy customer-sync \
   --operation-key '"customer:acme:crm-sync"' -- bin/sync --incremental
 ```
 
@@ -194,7 +194,7 @@ and the [implementation checklist](implementation/managed-exclusive-operations.m
 
 Finish or cancel pending and running operations, then remove each producer with
 `gregale operations unbind-trigger`. Retire the idle policy with
-`gregale operations policy retire crm-sync --json`. A 409
+`gregale job lock-policy delete crm-sync --json`. A 409
 `operation_policy_in_use` means work or a trigger binding still uses it.
 
 Retirement is permanent and idempotent. It releases an active-policy quota slot

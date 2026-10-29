@@ -227,7 +227,19 @@ func (s *Service) UpdateEdgeRuleList(w http.ResponseWriter, r *http.Request, acc
 		api.WriteProblem(w, prob)
 		return
 	}
+	edit := ReferencedEdit{Operation: "list_updated", Subject: "edge rule list", Hosts: func(ctx context.Context) (map[string][]string, error) {
+		return s.edgeRuleListHosts(ctx, store, acct.ID, name)
+	}}
+	convergences, release, prob := s.PrepareReferencedEdit(r.Context(), edit)
+	if prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	defer release(context.WithoutCancel(r.Context()))
 	l, refs, err := store.UpdateEdgeRuleList(r.Context(), acct.ID, name, params)
+	if err != nil {
+		AbortEdgeRuleConvergences(r.Context(), convergences)
+	}
 	switch {
 	case errors.Is(err, state.ErrNotFound):
 		api.WriteProblem(w, api.ErrEdgeRuleListNotFound(name))
@@ -239,7 +251,32 @@ func (s *Service) UpdateEdgeRuleList(w http.ResponseWriter, r *http.Request, acc
 	s.Host.EmitAudit(r.Context(), "edge_rule_list.updated", &acct.ID, map[string]any{
 		"list_id": l.ID, "name": l.Name, "item_count": len(l.Items), "rules_touched": len(refs),
 	})
+	if prob := s.ApplyReferencedEdit(r.Context(), w, edit, l.ID, convergences); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	httpkit.WriteJSON(w, http.StatusOK, EdgeRuleListResponse(l, refs, true))
+}
+
+// edgeRuleListHosts maps each app with a rule referencing the list to those
+// rules' match hosts.
+func (s *Service) edgeRuleListHosts(ctx context.Context, store state.EdgeRuleListStore, accountID, name string) (map[string][]string, error) {
+	refs, err := store.EdgeRuleListReferences(ctx, accountID)
+	if err != nil {
+		return nil, err
+	}
+	hosts := map[string][]string{}
+	for _, ref := range refs[name] {
+		rule, err := s.Host.Store().GetEdgeRuleByID(ctx, ref.RuleID)
+		if errors.Is(err, state.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		hosts[ref.AppID] = append(hosts[ref.AppID], rule.MatchHost)
+	}
+	return hosts, nil
 }
 
 // edgeRuleListUpdateParams validates a PATCH body against the stored list.

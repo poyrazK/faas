@@ -120,8 +120,9 @@ configured ceiling, independent writable mounts, space reclamation and cleanup.
 It also requires `nosuid`, `nodev` and sticky world-writable `/tmp` permissions.
 This supplements native microVM acceptance; it does
 not replace it. Cross-compilation is not execution evidence.
-The scratch contract cross-compiles for Linux/amd64 and passes changed-code lint;
-its mount/exhaustion behavior has not yet executed on a Linux acceptance host.
+All 30 contracts, including the scratch mount/exhaustion contract, passed with
+none skipped as root on a Linux host on 2026-10-28
+([evidence](ops/evidence/20261027-container-qualification/README.md)).
 
 ## Native container CI lane
 
@@ -213,8 +214,8 @@ loaded wake/performance and failure recovery, companion resource contention,
 and customer-facing diagnostics across runtime stages. OCI user/group identity now shares one image-local resolver across main launch,
 probes, companions, and app tasks. Portable tests cover named/numeric primary
 groups and root confinement; native process acceptance now uses distinct
-UID/GID. Linux guest test execution and native qualification are still required;
-compilation alone does not establish those outcomes. Configured main and
+UID/GID. The Linux guest process contracts pass on a Linux host; native
+qualification is still required. Configured main and
 companion processes now enter their cgroup atomically at creation, and placement
 errors fail startup. Linux syscall acceptance and native companion/OOM/restore
 runs remain required before claiming resource-isolation qualification.

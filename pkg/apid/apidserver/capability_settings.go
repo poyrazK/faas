@@ -7,9 +7,13 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/capgate"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
+	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+// dataAPICapability is the product capability a data_api binding serves.
+const dataAPICapability = "data-api"
 
 // capabilitySettingsProblem refuses the first setting whose capability is not
 // released to the subject (ADR-20261023115741). Settings no capability owns
@@ -61,4 +65,14 @@ func (s *server) domainSettingsProblem(r *http.Request, acct state.Account, doma
 // calls it before creating a rule.
 func (s *server) edgeRuleSettingsProblem(acct state.Account, kind string) *api.Problem {
 	return s.capabilitySettingsProblem(platformflags.Subject{AccountID: acct.ID, Plan: string(acct.Plan)}, []string{capgate.EdgeRuleSetting(kind)})
+}
+
+// dataAPIAccessProblem refuses a data_api binding while the Data API
+// capability is not released to the subject: the credential exists only to
+// serve a Data API, so the binding would turn the capability on.
+func (s *server) dataAPIAccessProblem(subject platformflags.Subject, access managedpostgres.CredentialAccess, setting string) *api.Problem {
+	if access != managedpostgres.CredentialDataAPI || s.capGate == nil || s.capGate.Enabled(dataAPICapability, subject) {
+		return nil
+	}
+	return api.ErrCapabilityNotReleased(setting, s.capGate.Name(dataAPICapability))
 }

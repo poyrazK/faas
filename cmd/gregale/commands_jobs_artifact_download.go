@@ -110,7 +110,7 @@ func cmdJobsArtifactDownload(args []string) int {
 		pos = append(target, taskFlag, artifactName)
 	}
 	if len(pos) != 4 || !jobSlugPattern.MatchString(pos[0]) || (pos[1] != "latest" && !jobRunIDPattern.MatchString(pos[1])) || pos[3] == "" || *out == "" || *out == "-" {
-		return printErr("Invalid artifact download", fmt.Errorf("usage: gregale jobs artifact-download JOB RUN_ID|latest TASK_INDEX ARTIFACT_NAME --out NEW_FILE"))
+		return printErr("Invalid artifact download", fmt.Errorf("usage: gregale job artifact download JOB RUN_ID|latest TASK_INDEX ARTIFACT_NAME --out NEW_FILE"))
 	}
 	index, err := strconv.Atoi(pos[2])
 	if err != nil || index < 0 {

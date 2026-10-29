@@ -108,6 +108,8 @@ func TestSnapshotGCSharedPhysicalLayerSurvivesUntilLastStageReference(t *testing
 		if err := store.MarkDeploymentSuperseded(ctx, dep.ID); err != nil {
 			t.Fatal(err)
 		}
+		// Each leaves its scope's rollback window (Hunt 21 H21-1).
+		releaseNewerDeployments(t, store, app.ID, scope, api.SnapshotRollbackRetentionDeployments)
 		deployments = append(deployments, dep)
 	}
 	backend := mustLocalStorage(t, t.TempDir())

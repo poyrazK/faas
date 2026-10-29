@@ -30,6 +30,7 @@ Deployment-failure notices also require FAAS_INTERNAL_MAIL_DEPLOYMENT_FAILED_OUT
 Subscription-ended confirmations also require FAAS_INTERNAL_MAIL_SUBSCRIPTION_ENDED_OUTBOX_ENABLED=1.
 Account suspension notices also require FAAS_INTERNAL_MAIL_ACCOUNT_SUSPENDED_OUTBOX_ENABLED=1.
 Account restoration confirmations also require FAAS_INTERNAL_MAIL_ACCOUNT_RESTORED_OUTBOX_ENABLED=1.
+Managed PostgreSQL compute cap notices also require FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_CAP_OUTBOX_ENABLED=1.
 Payment failure warnings also require FAAS_INTERNAL_MAIL_PAYMENT_FAILED_OUTBOX_ENABLED=1.
 MFA enabled alerts also require FAAS_INTERNAL_MAIL_MFA_ENABLED_ALERT_OUTBOX_ENABLED=1.
 Password changed alerts also require FAAS_INTERNAL_MAIL_PASSWORD_CHANGED_ALERT_OUTBOX_ENABLED=1.
@@ -122,10 +123,12 @@ func RunOperator(ctx context.Context, args []string, getenv func(string) string,
 	reconciler = reconciler.WithMagicLink(func() bool { return internalmail.MagicLinkOutboxEnabled(getenv) })
 	reconciler = reconciler.WithMFADisable(func() bool { return internalmail.MFADisableOutboxEnabled(getenv) })
 	reconciler = reconciler.WithDeploymentFailed(func() bool { return internalmail.DeploymentFailedOutboxEnabled(getenv) })
+	reconciler = reconciler.WithAgentRunDelivered(func() bool { return internalmail.AgentRunDeliveredOutboxEnabled(getenv) })
 	reconciler = reconciler.WithSubscriptionEnded(func() bool { return internalmail.SubscriptionEndedOutboxEnabled(getenv) })
 	reconciler = reconciler.WithQuotaWarning(func() bool { return internalmail.QuotaWarningOutboxEnabled(getenv) })
 	reconciler = reconciler.WithNonpaymentDeletion(func() bool { return internalmail.NonpaymentDeletionOutboxEnabled(getenv) })
 	reconciler = reconciler.WithAccountSuspended(func() bool { return internalmail.AccountSuspendedOutboxEnabled(getenv) })
+	reconciler = reconciler.WithManagedPostgresCap(func() bool { return internalmail.ManagedPostgresCapOutboxEnabled(getenv) })
 	reconciler = reconciler.WithAccountRestored(func() bool { return internalmail.AccountRestoredOutboxEnabled(getenv) })
 	reconciler = reconciler.WithPaymentFailed(func() bool { return internalmail.PaymentFailedOutboxEnabled(getenv) })
 	reconciler = reconciler.WithMFAEnabledAlert(func() bool { return internalmail.MFAEnabledAlertOutboxEnabled(getenv) })

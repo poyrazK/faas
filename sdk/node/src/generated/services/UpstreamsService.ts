@@ -313,6 +313,12 @@ export class UpstreamsService {
         402: `402 — the plan does not allow egress circuit breakers, or the per-app cap is reached.`,
         404: `404 — upstream_not_found: no upstream with this id belongs to the app.`,
         422: `422 — validation failed on the circuit-breaker body.`,
+        503: `503 — \`egress_circuit_disabled\`: the request sets \`enabled: true\`
+        but this platform does not enforce egress circuit breakers yet,
+        so the breaker would never reject a connection. Turning a breaker
+        off is still accepted. \`data_upstreams_disabled\`: data placement
+        is not enabled on this cluster.
+        `,
       },
     });
   }

@@ -26,11 +26,14 @@ package state_test
 import (
 	"context"
 	"errors"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
@@ -301,7 +304,8 @@ func TestMemStoreUploadSession_Reaper(t *testing.T) {
 		expiresIn: 24 * time.Hour, lastPatched: 0,
 	})
 
-	// Row 3: committed + last_patched 2h ago → stale sweep picks up.
+	// Row 3: committed + last_patched past the 24h source retention →
+	// stale sweep picks up (ADR-20261026152731).
 	seedUploadSession(t, m, struct {
 		id          string
 		account     string
@@ -314,10 +318,11 @@ func TestMemStoreUploadSession_Reaper(t *testing.T) {
 	}{
 		id: "stale-committed", account: "11111111-1111-1111-1111-111111111111",
 		slug: "a", totalSize: 100, received: 100, status: "committed",
-		expiresIn: -1 * time.Hour, lastPatched: -2 * time.Hour,
+		expiresIn: -1 * time.Hour, lastPatched: -25 * time.Hour,
 	})
 
-	// Row 4: committed + last_patched 30m ago → stale sweep skips.
+	// Row 4: committed + last_patched 2h ago → still inside the source
+	// retention window, so the stale sweep skips it.
 	seedUploadSession(t, m, struct {
 		id          string
 		account     string
@@ -330,7 +335,7 @@ func TestMemStoreUploadSession_Reaper(t *testing.T) {
 	}{
 		id: "recent-committed", account: "11111111-1111-1111-1111-111111111111",
 		slug: "a", totalSize: 100, received: 100, status: "committed",
-		expiresIn: -1 * time.Hour, lastPatched: -30 * time.Minute,
+		expiresIn: -1 * time.Hour, lastPatched: -2 * time.Hour,
 	})
 
 	// ReapExpiredUploadSessions → only expired-open.
@@ -380,6 +385,79 @@ func TestMemStoreUploadSession_Reaper(t *testing.T) {
 		t.Errorf("ExpireUploadSession(missing) err = %v; want ErrNotFound", err)
 	}
 	_ = acct
+}
+
+// TestMemStoreUploadSession_ReaperKeepsInFlightSource pins
+// ADR-20261026152731: on a single box the committed .part is the build
+// source, so it survives while its deployment can still build, however
+// old; a cancelled part keeps the 1h grace. ListInFlightDeploymentSpoolPaths
+// names the same in-flight deployment's files for the spool sweeper.
+func TestMemStoreUploadSession_ReaperKeepsInFlightSource(t *testing.T) {
+	m := state.NewMemStore()
+	ctx := context.Background()
+	owner, err := m.CreateAccount(ctx, "spool@example.test", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := m.CreateApp(ctx, state.App{AccountID: owner.ID, Slug: "spool-app", Type: state.AppTypeApp, RAMMB: 256, MaxConcurrency: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	building, err := m.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindTarball, Status: state.DeployBuilding,
+		SourcePath: "/spool/inflight.part", LogPath: "/spool/dep/build.log"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done, err := m.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindTarball, SourcePath: "/spool/done.part"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.UpdateDeploymentStatus(ctx, done.ID, state.DeployFailed, "boom"); err != nil {
+		t.Fatal(err)
+	}
+	type seed = struct {
+		id          string
+		account     string
+		slug        string
+		totalSize   int64
+		received    int64
+		status      string
+		expiresIn   time.Duration
+		lastPatched time.Duration
+	}
+	const acct = "11111111-1111-1111-1111-111111111111"
+	for _, s := range []seed{
+		{id: "inflight", account: acct, slug: "a", totalSize: 1, received: 1, status: "committed", expiresIn: -1 * time.Hour, lastPatched: -48 * time.Hour},
+		{id: "done", account: acct, slug: "a", totalSize: 1, received: 1, status: "committed", expiresIn: -1 * time.Hour, lastPatched: -48 * time.Hour},
+		{id: "cancelled", account: acct, slug: "a", totalSize: 1, received: 0, status: "cancelled", expiresIn: -1 * time.Hour, lastPatched: -2 * time.Hour},
+	} {
+		seedUploadSession(t, m, s)
+	}
+	(*m.Mu()).Lock()
+	for id, dep := range map[string]string{"inflight": building.ID, "done": done.ID} {
+		row := (*m.UploadSessions())[id]
+		row.DeploymentID = pgtype.Text{String: dep, Valid: true}
+		(*m.UploadSessions())[id] = row
+	}
+	(*m.Mu()).Unlock()
+
+	stale, err := m.ReapStaleUploadPartFiles(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := uploadIDsStale(stale)
+	sort.Strings(got)
+	if strings.Join(got, ",") != "cancelled,done" {
+		t.Fatalf("ReapStaleUploadPartFiles = %v, want [cancelled done]", got)
+	}
+	paths, err := m.ListInFlightDeploymentSpoolPaths(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(paths)
+	if strings.Join(paths, ",") != "/spool/dep/build.log,/spool/inflight.part" {
+		t.Fatalf("ListInFlightDeploymentSpoolPaths = %v", paths)
+	}
 }
 
 // TestMemStoreUploadSession_CommitDedupe exercises

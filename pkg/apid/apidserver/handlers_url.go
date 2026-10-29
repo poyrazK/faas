@@ -56,8 +56,9 @@ func (s *server) getDeploymentURL(w http.ResponseWriter, r *http.Request, acct s
 			s.notFound(w, "no such deployment")
 			return
 		}
+		logCustomerFailure(s.log, "load deployment", err)
 		api.WriteProblem(w, api.ErrInternal(
-			fmt.Sprintf("load deployment: %v", err)))
+			api.DetailServerFailure))
 		return
 	}
 	app, err := s.store.AppByID(r.Context(), d.AppID)
@@ -94,8 +95,9 @@ func (s *server) getDeploymentURL(w http.ResponseWriter, r *http.Request, acct s
 	}
 	ord, err := s.store.DeploymentOrdinal(r.Context(), app.ID, d.ID)
 	if err != nil {
+		logCustomerFailure(s.log, "resolve deployment ordinal", err)
 		api.WriteProblem(w, api.ErrInternal(
-			fmt.Sprintf("resolve deployment ordinal: %v", err)))
+			api.DetailServerFailure))
 		return
 	}
 	host := gateway.BuildDeploymentPreviewURL(suffix, ord, app.Slug)

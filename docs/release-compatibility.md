@@ -483,6 +483,80 @@ The unit lanes enforce the rules above in their workflows:
   expand-only schema, and their startup migration ignores ledger versions
   they do not embed.
 
+## Release history
+
+Every `deployctl deploy` and `deployctl rollback` on a control-plane host
+records one row in `platform_release_activations` (issue #574). The row
+holds the host, the kind, the release and the release it replaced, the
+commit, the `--only` services, the actor and the start and finish times.
+deployctl inserts it as `in_progress` under the host's deploy lock and
+finishes it with one of these statuses:
+
+- `succeeded`;
+- `failed`;
+- `rolled_back`: the deploy changed the host, failed, and was unwound to the
+  previous release.
+
+A deployctl that dies mid-activation leaves its row `in_progress`. The
+host's next activation marks it `interrupted`.
+
+Compute hosts have no local Postgres, so deployctl does not record them.
+Instead, a compute host changes release through `gregalectl release
+install`, which stamps `compute_nodes.release_id` once the release's
+binaries are live (the node may still be drained for readiness). A trigger
+on that column records each change as a finished `deploy` row for the node:
+
+- the host is the node's name;
+- the row carries the release it replaced;
+- the actor is `release install as <database role>`.
+
+The trigger runs as the schema owner (SECURITY DEFINER) and writes only what
+the change says, so the installer's runtime role still cannot write the
+history itself. A failed insert only raises a warning; it never fails the
+install.
+
+Per-unit deploys and rollbacks on a compute host (`deployctl deploy --only`
+and `deployctl rollback --only` from the edge lane) do not change
+`compute_nodes.release_id`. deployctl appends each finished one to a spool on
+the host instead (`/var/lib/faas/deploy/activations.jsonl`, the newest 256),
+with the same detail a control-plane row has. After each node, the edge lane
+runs `unit_deploy.sh record`. It copies the spool to the control plane, where
+`deployctl record` imports it as the schema owner.
+
+- **Host name.** Rows are filed under the node's `compute_nodes` name
+  (`<node>.faas`), which CD supplies; a spool never names its own host, so a
+  node cannot write rows for another.
+- **Idempotent.** Each line keeps the id it got on the node, so importing it
+  again adds nothing.
+- **Late imports.** A run outside the edge lane, such as a watch rollback or
+  a manual run, is imported with the node's next edge deploy.
+
+To see what ran when:
+
+```
+gregalectl release history [--host NAME] [--limit 20] [--json]
+```
+
+It reads `FAAS_PG_DSN` (or `DATABASE_URL`, or `/etc/faas/sealed.env` as
+root), as the other `gregalectl release` commands do.
+
+- **Actor.** CD sets it to its workflow run (`FAAS_DEPLOY_ACTOR`). A deploy
+  run by hand records the operator's sudo or login name.
+- **Writes.** deployctl writes as the schema owner over the local socket.
+  Daemons can read the table but not change it: the migration and the
+  postgres role's `runtime-roles.sql` revoke their writes, as for the audit
+  log.
+- **Failures.** Recording is best effort. An unreachable Postgres costs a
+  deploy at most a few seconds and a warning on stderr; it never fails or
+  blocks the deploy.
+- **First rollout.** The table only exists once the release's migrations
+  have run, so the first deploy is recorded when it finishes.
+- **Not recorded:**
+  - a rerun that finds its release already active;
+  - a refused deploy (`--expect-current` mismatch);
+  - a compute host's activation whose deployctl died before it finished:
+    only finished activations are spooled.
+
 ## Not covered yet
 
 - guest-init decodes `job.json`, `app-task.json` and `execution.json` with

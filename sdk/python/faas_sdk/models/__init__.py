@@ -188,6 +188,10 @@ from .app_webhook_response_event_filter_item import AppWebhookResponseEventFilte
 from .app_webhook_response_retry_policy import AppWebhookResponseRetryPolicy
 from .app_webhook_response_webhook_secret_sealed_masked import AppWebhookResponseWebhookSecretSealedMasked
 from .app_webhook_retry_delivery_response import AppWebhookRetryDeliveryResponse
+from .applied_build import AppliedBuild
+from .apply_cached_project_plan_request import ApplyCachedProjectPlanRequest
+from .apply_response import ApplyResponse
+from .apply_response_apps_item import ApplyResponseAppsItem
 from .apps_metrics_response import AppsMetricsResponse
 from .apps_metrics_response_apps_type_0 import AppsMetricsResponseAppsType0
 from .apps_metrics_response_range import AppsMetricsResponseRange
@@ -324,6 +328,7 @@ from .config_revision_source import ConfigRevisionSource
 from .config_rollback_request import ConfigRollbackRequest
 from .config_rollback_response import ConfigRollbackResponse
 from .config_secret_difference import ConfigSecretDifference
+from .control_project_release_action import ControlProjectReleaseAction
 from .control_workflow_recovery_policy_request import ControlWorkflowRecoveryPolicyRequest
 from .control_workflow_recovery_policy_request_operation import ControlWorkflowRecoveryPolicyRequestOperation
 from .cors_preset_list_response import CorsPresetListResponse
@@ -469,6 +474,7 @@ from .delayed_task_at_request_payload import DelayedTaskAtRequestPayload
 from .delayed_task_response import DelayedTaskResponse
 from .delayed_task_response_state import DelayedTaskResponseState
 from .delete_account_session_body import DeleteAccountSessionBody
+from .delete_deployment_scope_exclusion_response_200 import DeleteDeploymentScopeExclusionResponse200
 from .delete_financial_budget_request import DeleteFinancialBudgetRequest
 from .delete_secret_prefer import DeleteSecretPrefer
 from .deleted_app_list_response import DeletedAppListResponse
@@ -1596,6 +1602,9 @@ from .org_membership_export_response import OrgMembershipExportResponse
 from .org_membership_export_response_role import OrgMembershipExportResponseRole
 from .org_plan_response import OrgPlanResponse
 from .org_plan_response_plan import OrgPlanResponsePlan
+from .org_project_delete_deployment_scope_exclusion_response_200 import (
+    OrgProjectDeleteDeploymentScopeExclusionResponse200,
+)
 from .org_response import OrgResponse
 from .org_response_plan import OrgResponsePlan
 from .org_response_status import OrgResponseStatus
@@ -1758,11 +1767,24 @@ from .programmatic_auth_response import ProgrammaticAuthResponse
 from .programmatic_auth_response_plan import ProgrammaticAuthResponsePlan
 from .programmatic_signup_magic_link_response_200 import ProgrammaticSignupMagicLinkResponse200
 from .programmatic_signup_magic_link_response_200_status import ProgrammaticSignupMagicLinkResponse200Status
+from .project_apply_request import ProjectApplyRequest
+from .project_apply_request_app_slugs import ProjectApplyRequestAppSlugs
+from .project_delete_preview_response import ProjectDeletePreviewResponse
+from .project_deployment_check import ProjectDeploymentCheck
+from .project_deployment_check_request import ProjectDeploymentCheckRequest
+from .project_deployment_check_status import ProjectDeploymentCheckStatus
+from .project_deployment_check_workload import ProjectDeploymentCheckWorkload
+from .project_deployment_readiness import ProjectDeploymentReadiness
+from .project_deployment_readiness_schema_version import ProjectDeploymentReadinessSchemaVersion
+from .project_deployment_readiness_status import ProjectDeploymentReadinessStatus
+from .project_initial_secrets import ProjectInitialSecrets
+from .project_initial_secrets_additional_property import ProjectInitialSecretsAdditionalProperty
 from .project_migration_baseline_verification import ProjectMigrationBaselineVerification
 from .project_migration_baseline_verification_status import ProjectMigrationBaselineVerificationStatus
 from .project_migration_contract import ProjectMigrationContract
 from .project_migration_contract_status import ProjectMigrationContractStatus
 from .project_migration_recovery import ProjectMigrationRecovery
+from .project_migration_recovery_request import ProjectMigrationRecoveryRequest
 from .project_migration_recovery_status import ProjectMigrationRecoveryStatus
 from .project_release_addition import ProjectReleaseAddition
 from .project_release_command import ProjectReleaseCommand
@@ -1771,10 +1793,17 @@ from .project_release_command_status import ProjectReleaseCommandStatus
 from .project_release_configuration import ProjectReleaseConfiguration
 from .project_release_control import ProjectReleaseControl
 from .project_release_control_action import ProjectReleaseControlAction
+from .project_release_control_request import ProjectReleaseControlRequest
 from .project_release_control_status import ProjectReleaseControlStatus
 from .project_release_probe import ProjectReleaseProbe
 from .project_release_probe_evidence import ProjectReleaseProbeEvidence
 from .project_release_secret_configuration import ProjectReleaseSecretConfiguration
+from .project_release_secret_stage_request import ProjectReleaseSecretStageRequest
+from .project_release_secret_stage_request_workloads import ProjectReleaseSecretStageRequestWorkloads
+from .project_release_secret_stage_request_workloads_additional_property import (
+    ProjectReleaseSecretStageRequestWorkloadsAdditionalProperty,
+)
+from .project_release_secret_stage_response import ProjectReleaseSecretStageResponse
 from .project_release_secret_version_map import ProjectReleaseSecretVersionMap
 from .project_release_secret_version_map_additional_property import ProjectReleaseSecretVersionMapAdditionalProperty
 from .project_release_stabilization import ProjectReleaseStabilization
@@ -1785,13 +1814,20 @@ from .project_release_verification_actions_item import ProjectReleaseVerificatio
 from .project_release_verification_percent import ProjectReleaseVerificationPercent
 from .project_release_worker import ProjectReleaseWorker
 from .project_release_worker_status import ProjectReleaseWorkerStatus
+from .project_response import ProjectResponse
 from .project_safe_release import ProjectSafeRelease
 from .project_safe_release_status import ProjectSafeReleaseStatus
+from .project_scan_request import ProjectScanRequest
+from .project_scan_request_app_slugs import ProjectScanRequestAppSlugs
 from .project_source_ref_scan_request import ProjectSourceRefScanRequest
 from .project_source_ref_scan_request_app_slugs import ProjectSourceRefScanRequestAppSlugs
+from .project_submission_receipt import ProjectSubmissionReceipt
+from .project_submission_receipt_status import ProjectSubmissionReceiptStatus
+from .project_summary_response import ProjectSummaryResponse
 from .project_worker_health import ProjectWorkerHealth
 from .project_worker_health_status import ProjectWorkerHealthStatus
 from .project_worker_job_sample import ProjectWorkerJobSample
+from .project_workload_response import ProjectWorkloadResponse
 from .public_auth_block import PublicAuthBlock
 from .public_auth_block_mode import PublicAuthBlockMode
 from .public_auth_status import PublicAuthStatus
@@ -1972,11 +2008,21 @@ from .runtime_release_response_runtime import RuntimeReleaseResponseRuntime
 from .runtime_upgrade_preview_response import RuntimeUpgradePreviewResponse
 from .runtime_upgrade_preview_response_changes_item import RuntimeUpgradePreviewResponseChangesItem
 from .runtime_upgrade_preview_response_disposition import RuntimeUpgradePreviewResponseDisposition
+from .safe_apply_project_project_add_services import SafeApplyProjectProjectAddServices
+from .safe_apply_project_project_progressive import SafeApplyProjectProjectProgressive
+from .safe_apply_project_project_release_mode import SafeApplyProjectProjectReleaseMode
+from .safe_apply_project_project_stabilization import SafeApplyProjectProjectStabilization
+from .safe_apply_project_project_worker_health import SafeApplyProjectProjectWorkerHealth
 from .scaling_policy import ScalingPolicy
 from .scaling_policy_concurrency_overflow import ScalingPolicyConcurrencyOverflow
 from .scaling_schedule import ScalingSchedule
 from .scaling_target import ScalingTarget
 from .scaling_target_metric import ScalingTargetMetric
+from .scan_project_project_add_services import ScanProjectProjectAddServices
+from .scan_project_project_progressive import ScanProjectProjectProgressive
+from .scan_project_project_release_mode import ScanProjectProjectReleaseMode
+from .scan_project_project_stabilization import ScanProjectProjectStabilization
+from .scan_project_project_worker_health import ScanProjectProjectWorkerHealth
 from .scan_result import ScanResult
 from .scan_result_status import ScanResultStatus
 from .schedule_occurrence_response import ScheduleOccurrenceResponse
@@ -2191,6 +2237,7 @@ from .update_inbound_webhook_endpoint_request import UpdateInboundWebhookEndpoin
 from .update_job_request import UpdateJobRequest
 from .update_job_request_env_overrides import UpdateJobRequestEnvOverrides
 from .update_job_request_status import UpdateJobRequestStatus
+from .update_project_request import UpdateProjectRequest
 from .upload_deploy_options import UploadDeployOptions
 from .upload_session_response import UploadSessionResponse
 from .upload_session_response_status import UploadSessionResponseStatus
@@ -2541,6 +2588,7 @@ __all__ = (
     "AppHealthResponse",
     "AppHealthResponsePhase",
     "AppHealthResponseStatus",
+    "AppliedBuild",
     "AppLogDrainAnalyticsBucket",
     "AppLogDrainAnalyticsResponse",
     "AppLogDrainAnalyticsResponseBucketInterval",
@@ -2551,6 +2599,9 @@ __all__ = (
     "AppLogDrainResponse",
     "AppLogDrainResponseAuthHeaderMasked",
     "AppLogDrainResponseKind",
+    "ApplyCachedProjectPlanRequest",
+    "ApplyResponse",
+    "ApplyResponseAppsItem",
     "AppManifest",
     "AppManifestCrawlerPolicy",
     "AppManifestEnv",
@@ -2770,6 +2821,7 @@ __all__ = (
     "ConfigRollbackRequest",
     "ConfigRollbackResponse",
     "ConfigSecretDifference",
+    "ControlProjectReleaseAction",
     "ControlWorkflowRecoveryPolicyRequest",
     "ControlWorkflowRecoveryPolicyRequestOperation",
     "CorsPresetListResponse",
@@ -2916,6 +2968,7 @@ __all__ = (
     "DeletedAppListResponse",
     "DeletedAppSummary",
     "DeletedAppSummaryRestoreBlocker",
+    "DeleteDeploymentScopeExclusionResponse200",
     "DeleteFinancialBudgetRequest",
     "DeleteSecretPrefer",
     "DeployDevSourceBody",
@@ -3914,6 +3967,7 @@ __all__ = (
     "OrgMeResponse",
     "OrgPlanResponse",
     "OrgPlanResponsePlan",
+    "OrgProjectDeleteDeploymentScopeExclusionResponse200",
     "OrgResponse",
     "OrgResponsePlan",
     "OrgResponseStatus",
@@ -4062,11 +4116,24 @@ __all__ = (
     "ProgrammaticAuthResponsePlan",
     "ProgrammaticSignupMagicLinkResponse200",
     "ProgrammaticSignupMagicLinkResponse200Status",
+    "ProjectApplyRequest",
+    "ProjectApplyRequestAppSlugs",
+    "ProjectDeletePreviewResponse",
+    "ProjectDeploymentCheck",
+    "ProjectDeploymentCheckRequest",
+    "ProjectDeploymentCheckStatus",
+    "ProjectDeploymentCheckWorkload",
+    "ProjectDeploymentReadiness",
+    "ProjectDeploymentReadinessSchemaVersion",
+    "ProjectDeploymentReadinessStatus",
+    "ProjectInitialSecrets",
+    "ProjectInitialSecretsAdditionalProperty",
     "ProjectMigrationBaselineVerification",
     "ProjectMigrationBaselineVerificationStatus",
     "ProjectMigrationContract",
     "ProjectMigrationContractStatus",
     "ProjectMigrationRecovery",
+    "ProjectMigrationRecoveryRequest",
     "ProjectMigrationRecoveryStatus",
     "ProjectReleaseAddition",
     "ProjectReleaseCommand",
@@ -4075,10 +4142,15 @@ __all__ = (
     "ProjectReleaseConfiguration",
     "ProjectReleaseControl",
     "ProjectReleaseControlAction",
+    "ProjectReleaseControlRequest",
     "ProjectReleaseControlStatus",
     "ProjectReleaseProbe",
     "ProjectReleaseProbeEvidence",
     "ProjectReleaseSecretConfiguration",
+    "ProjectReleaseSecretStageRequest",
+    "ProjectReleaseSecretStageRequestWorkloads",
+    "ProjectReleaseSecretStageRequestWorkloadsAdditionalProperty",
+    "ProjectReleaseSecretStageResponse",
     "ProjectReleaseSecretVersionMap",
     "ProjectReleaseSecretVersionMapAdditionalProperty",
     "ProjectReleaseStabilization",
@@ -4089,13 +4161,20 @@ __all__ = (
     "ProjectReleaseVerificationPercent",
     "ProjectReleaseWorker",
     "ProjectReleaseWorkerStatus",
+    "ProjectResponse",
     "ProjectSafeRelease",
     "ProjectSafeReleaseStatus",
+    "ProjectScanRequest",
+    "ProjectScanRequestAppSlugs",
     "ProjectSourceRefScanRequest",
     "ProjectSourceRefScanRequestAppSlugs",
+    "ProjectSubmissionReceipt",
+    "ProjectSubmissionReceiptStatus",
+    "ProjectSummaryResponse",
     "ProjectWorkerHealth",
     "ProjectWorkerHealthStatus",
     "ProjectWorkerJobSample",
+    "ProjectWorkloadResponse",
     "PublicAuthBlock",
     "PublicAuthBlockMode",
     "PublicAuthStatus",
@@ -4274,11 +4353,21 @@ __all__ = (
     "RuntimeUpgradePreviewResponse",
     "RuntimeUpgradePreviewResponseChangesItem",
     "RuntimeUpgradePreviewResponseDisposition",
+    "SafeApplyProjectProjectAddServices",
+    "SafeApplyProjectProjectProgressive",
+    "SafeApplyProjectProjectReleaseMode",
+    "SafeApplyProjectProjectStabilization",
+    "SafeApplyProjectProjectWorkerHealth",
     "ScalingPolicy",
     "ScalingPolicyConcurrencyOverflow",
     "ScalingSchedule",
     "ScalingTarget",
     "ScalingTargetMetric",
+    "ScanProjectProjectAddServices",
+    "ScanProjectProjectProgressive",
+    "ScanProjectProjectReleaseMode",
+    "ScanProjectProjectStabilization",
+    "ScanProjectProjectWorkerHealth",
     "ScanResult",
     "ScanResultStatus",
     "ScheduledRelease",
@@ -4483,6 +4572,7 @@ __all__ = (
     "UpdateJobRequest",
     "UpdateJobRequestEnvOverrides",
     "UpdateJobRequestStatus",
+    "UpdateProjectRequest",
     "UploadDeployOptions",
     "UploadSessionResponse",
     "UploadSessionResponseStatus",

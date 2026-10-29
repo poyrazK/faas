@@ -212,6 +212,9 @@ func (s *Service) create(ctx context.Context, request CreateRequest, reservedID 
 			return Database{}, err
 		}
 	}
+	if err := s.admitFleet(ctx, true); err != nil {
+		return Database{}, err
+	}
 	now := s.now()
 	reservationLimit, err := s.reservationLimit(ctx, request.AccountID)
 	if err != nil {
@@ -377,6 +380,9 @@ func (s *Service) AdmitRestoreReservation(ctx context.Context, accountID string,
 			return 0, err
 		}
 	}
+	if err := s.admitFleet(ctx, true); err != nil {
+		return 0, err
+	}
 	backend, err := s.registry.Resolve(definition.BackendID, definition.BackendFingerprint)
 	if err != nil {
 		return 0, err
@@ -498,6 +504,7 @@ func (s *Service) Reconcile(ctx context.Context, accountID, databaseID string) (
 	if err != nil {
 		return Database{}, s.releaseProviderError(ctx, database, StateProvisioning, err)
 	}
+	observed.Spec = SpecForObservation(database.Spec, observed.Spec)
 	if err := validateCloneRestoreObservation(database, observed); err != nil {
 		code := "restore_lineage_unavailable"
 		if errors.Is(err, ErrConflict) {

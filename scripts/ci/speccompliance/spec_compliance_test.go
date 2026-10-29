@@ -388,6 +388,23 @@ var routeExclude = map[string]bool{
 	"DELETE /v1/postgres/databases/{id}/live":      true,
 	"POST /v1/postgres/databases/{id}/live/rotate": true,
 
+	// ADR-20261027090010 agents: the internal agents capability, answering like
+	// unregistered routes to every account it is not released to, so it stays
+	// out of the public OpenAPI spec and generated SDKs until launch. Mirror
+	// across this list AND cmd/sdk-coverage/main.go::routeExclude.
+	"POST /v1/agents":                                 true,
+	"GET /v1/agents":                                  true,
+	"GET /v1/agents/{agent}":                          true,
+	"DELETE /v1/agents/{agent}":                       true,
+	"POST /v1/agents/{agent}/versions":                true,
+	"GET /v1/agents/{agent}/versions/{version}":       true,
+	"POST /v1/agents/{agent}/runs":                    true,
+	"GET /v1/agent-runs":                              true,
+	"GET /v1/agent-runs/{id}":                         true,
+	"DELETE /v1/agent-runs/{id}":                      true,
+	"GET /v1/agent-runs/{id}/outputs":                 true,
+	"GET /v1/agent-runs/{id}/outputs/files/{name...}": true,
+
 	"POST /v1/apps/{slug}/operation-schedules/{id}/cancel":                   true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
 	"POST /v1/platform-tenant-self/customer-operation-schedules":             true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
 	"POST /v1/platform-tenant-self/customer-operation-schedules/{id}/cancel": true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
@@ -1511,6 +1528,16 @@ func strconvUnescape(s string) (string, error) {
 
 // --- Schemas parity --------------------------------------------------------
 
+// previewFieldExclude lists preview fields of public DTOs that stay out of
+// the spec until launch, by schema and JSON name.
+var previewFieldExclude = map[string]map[string]bool{
+	// ADR-20261027090010 §9: the automation agent step and agent trigger targets,
+	// behind the agents capability.
+	"WorkflowStepSpec":     {"agent": true},
+	"CreateTriggerRequest": {"agent": true},
+	"Trigger":              {"agent": true},
+}
+
 func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 	t.Helper()
 
@@ -1519,6 +1546,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "data_api_connection_budget.go"),   // ADR-650 read-only shared database planning DTOs.
 		filepath.Join(root, "pkg", "api", "data_api_usage.go"),               // ADR-20261019102108 runtime usage reports and owner views.
 		filepath.Join(root, "pkg", "api", "data_api_access.go"),              // ADR-20261016151947 access settings for live reads without a token.
+		filepath.Join(root, "pkg", "api", "data_api_contract_tasks.go"),      // ADR-20261027123814 Data API contract tasks.
 		filepath.Join(root, "pkg", "api", "compose_healthcheck.go"),
 		filepath.Join(root, "pkg", "api", "compose_process.go"),   // ADR-1337 Compose process overrides for prebuilt images.
 		filepath.Join(root, "pkg", "api", "compose_resources.go"), // ADR-20261023120000 Compose deploy resources and replicas.
@@ -1937,6 +1965,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "route_priority.go"),
 		filepath.Join(root, "pkg", "api", "route_awake.go"),
 		filepath.Join(root, "pkg", "api", "route_insights.go"),
+		filepath.Join(root, "pkg", "api", "debug_rollout.go"), // ADR-1447 amendment: rollout explanation + debug status
 	}
 	dtos, err := scanDTOs(files)
 	if err != nil {
@@ -2104,7 +2133,8 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 	}
 
 	// Per-schema: every JSON-named field must appear in the spec properties.
-	// Catches: field added to DTO but not to spec, renamed, etc.
+	// Catches: field added to DTO but not to spec, renamed, etc. Preview
+	// fields of public DTOs stay out of the spec until launch.
 	for name, fields := range dtos {
 		specBody, ok := spec.Schemas[name]
 		if !ok {
@@ -2116,7 +2146,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		}
 		var missing []string
 		for f := range fields {
-			if !propSet[f] {
+			if !propSet[f] && !previewFieldExclude[name][f] {
 				missing = append(missing, f)
 			}
 		}

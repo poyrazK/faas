@@ -581,6 +581,20 @@ func (c *EdgeRuleCache) GetHost(host string) (*HostEntry, bool) {
 	return cloneHostEntry(entry), true
 }
 
+// HostRules returns a copy of one kind's compiled rules for a current host,
+// without copying the rest of the host's set as GetHost does. A request asks
+// for each kind separately, so copying the whole set per kind cost about
+// 1.4 MB per request at 500 rules (ADR-091 amendment 2026-10-27, GA
+// hardening). Cached entries are never modified after Put, so reading one
+// after getEntry releases the lock is safe, as it is for GetHost.
+func HostRules[T any](c *EdgeRuleCache, host string, selectRules func(*HostEntry) []T) ([]T, bool) {
+	entry, ok := c.getEntry(host)
+	if !ok {
+		return nil, false
+	}
+	return slices.Clone(selectRules(entry)), true
+}
+
 // GetLastKnownHost returns the host's most recent compiled rule set even when
 // its lifetime has lapsed. Loaders fall back to it when the database read
 // fails, so a deny rule (ip, geo, maintenance) keeps applying through a
@@ -1652,7 +1666,7 @@ func PickFirstJWTMatch(rules []EdgeRuleJWTResolved, path, method string, request
 		if len(requestHeaders) > 0 && !RequestHeaderConditionsMatch(r.MatchHeaders, requestHeaders[0]) {
 			continue
 		}
-		if r.Methods != nil && !r.Methods[method] {
+		if !protectiveMethodMatch(r.Methods, method) {
 			continue
 		}
 		if r.PathGlob != "" {
@@ -1672,7 +1686,7 @@ func PickFirstIPMatch(rules []EdgeRuleIPResolved, path, method string, requestHe
 		if len(requestHeaders) > 0 && !RequestHeaderConditionsMatch(r.MatchHeaders, requestHeaders[0]) {
 			continue
 		}
-		if r.Methods != nil && !r.Methods[method] {
+		if !protectiveMethodMatch(r.Methods, method) {
 			continue
 		}
 		if r.PathGlob != "" {
@@ -1696,7 +1710,7 @@ func PickFirstValidateMatch(rules []EdgeRuleValidateResolved, path, method strin
 		if len(requestHeaders) > 0 && !RequestHeaderConditionsMatch(r.MatchHeaders, requestHeaders[0]) {
 			continue
 		}
-		if r.Methods != nil && !r.Methods[method] {
+		if !protectiveMethodMatch(r.Methods, method) {
 			continue
 		}
 		if r.PathGlob != "" {
@@ -1723,7 +1737,7 @@ func PickFirstGeoMatch(rules []EdgeRuleGeoResolved, path, method string, request
 		if len(requestHeaders) > 0 && !RequestHeaderConditionsMatch(r.MatchHeaders, requestHeaders[0]) {
 			continue
 		}
-		if r.Methods != nil && !r.Methods[method] {
+		if !protectiveMethodMatch(r.Methods, method) {
 			continue
 		}
 		if r.PathGlob != "" {
@@ -1779,6 +1793,16 @@ func pickFirstMatch(rules []EdgeRuleResolved, path, method string, requestHeader
 // The implementation lives in pkg/api so the trace simulator shares it.
 func protectivePathMatch(glob, p string) (bool, error) {
 	return api.MatchProtectiveEdgeRulePath(glob, p)
+}
+
+// protectiveMethodMatch is the method selector for the same gates: a rule
+// that lists GET also covers HEAD, because servers answer HEAD with the GET
+// handler (Go's net/http, Express, Rails and most others), so a HEAD request
+// reached the app past a GET-only jwt or ip rule (ADR-091 amendment
+// 2026-10-28). nil methods match every method. The trace simulator mirrors it
+// (edgeruletrace.ruleMethodMatches).
+func protectiveMethodMatch(methods map[string]bool, method string) bool {
+	return methods == nil || methods[method] || method == http.MethodHead && methods[http.MethodGet]
 }
 
 // pathGlobMatch is a tiny adapter over stdlib path.Match that

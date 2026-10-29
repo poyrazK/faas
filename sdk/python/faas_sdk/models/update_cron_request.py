@@ -25,6 +25,7 @@ class UpdateCronRequest:
 
     schedule: None | str | Unset = UNSET
     path: None | str | Unset = UNSET
+    """HTTP target path on the cron's own app; starts with a single /."""
     enabled: bool | None | Unset = UNSET
     timezone: None | str | Unset = UNSET
     """IANA timezone; an empty value resets to UTC."""

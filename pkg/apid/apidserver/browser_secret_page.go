@@ -11,16 +11,17 @@ import (
 )
 
 // renderSecretEntryPage shows the one-time secret form (ADR-20261026174727).
-// Only the signed-in owner of the ticket's account sees it.
+// Only the signed-in member who requested it sees it, while they may still
+// manage the app's secrets.
 func (h *cliAuthHandlers) renderSecretEntryPage(w http.ResponseWriter, r *http.Request) {
 	h.promotionReviewHeaders(w)
 	ticket, err := h.srv.openSecretEntryTicket(r.URL.Query().Get("secret"))
 	acct, authenticated := AccountFrom(r.Context())
-	if err != nil || !authenticated || ticket.AccountID != acct.ID {
+	if err != nil || !authenticated || ticket.actorID() != acct.ID {
 		h.renderSecretEntry(w, r, map[string]any{"Error": "This request is unavailable for the signed-in account or has expired."})
 		return
 	}
-	if _, ok := h.srv.secretEntryApp(r.Context(), acct, ticket); !ok {
+	if _, _, _, ok := h.srv.secretEntryApp(r, acct, ticket); !ok {
 		h.renderSecretEntry(w, r, map[string]any{"Error": "The app changed. Ask the agent for a new request."})
 		return
 	}
@@ -44,12 +45,12 @@ func (h *cliAuthHandlers) postSecretEntryPage(w http.ResponseWriter, r *http.Req
 	h.promotionReviewHeaders(w)
 	ticket, err := h.srv.openSecretEntryTicket(r.PostForm.Get("secret"))
 	acct, authenticated := AccountFrom(r.Context())
-	if err != nil || !authenticated || ticket.AccountID != acct.ID || middleware.VerifyAuthenticated(h.srv.sessions, r, secretEntryPurpose, acct.ID+":"+ticket.ExchangeHash) != nil {
+	if err != nil || !authenticated || ticket.actorID() != acct.ID || middleware.VerifyAuthenticated(h.srv.sessions, r, secretEntryPurpose, acct.ID+":"+ticket.ExchangeHash) != nil {
 		w.WriteHeader(http.StatusForbidden)
 		h.renderSecretEntry(w, r, map[string]any{"Error": "The form is invalid or expired. Reload the request link."})
 		return
 	}
-	app, ok := h.srv.secretEntryApp(r.Context(), acct, ticket)
+	app, owner, granted, ok := h.srv.secretEntryApp(r, acct, ticket)
 	hash, _ := hex.DecodeString(ticket.ExchangeHash)
 	if _, claimed, err := h.srv.store.PeekCliAuthCode(r.Context(), hash); !ok || err != nil || claimed != "" {
 		w.WriteHeader(http.StatusConflict)
@@ -62,7 +63,7 @@ func (h *cliAuthHandlers) postSecretEntryPage(w http.ResponseWriter, r *http.Req
 		h.renderSecretEntry(w, r, map[string]any{"Error": "Enter a value. Reload the request link to try again."})
 		return
 	}
-	if _, prob := h.srv.setAppSecret(r, acct, app, ticket.Scope, ticket.Key, api.PutAppSecretRequest{Value: value}); prob != nil {
+	if _, prob := h.srv.setAppSecret(granted, owner, app, ticket.Scope, ticket.Key, api.PutAppSecretRequest{Value: value}); prob != nil {
 		status := prob.Status
 		if status < http.StatusBadRequest {
 			status = http.StatusBadRequest

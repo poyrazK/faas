@@ -28,7 +28,8 @@ CREATE TABLE managed_postgres_live_keys (
  sealed_secret bytea NOT NULL,
  recipient text NOT NULL,
  created_at timestamptz NOT NULL DEFAULT now(),
- retires_at timestamptz
+ retires_at timestamptz,
+ sealed_secret_sig bytea
 );
 CREATE TABLE managed_postgres_live_logins (
  database_id uuid PRIMARY KEY,
@@ -38,5 +39,6 @@ CREATE TABLE managed_postgres_live_logins (
  provider_identity_id text NOT NULL,
  slot text NOT NULL,
  awake text NOT NULL DEFAULT '',
- created_at timestamptz NOT NULL DEFAULT now()
+ created_at timestamptz NOT NULL DEFAULT now(),
+ sealed_login_sig bytea
 );

@@ -6,31 +6,24 @@ name: e2e-general
 # production gRPC boundary.
 #
 # The mega tier (ci.yml) runs these tests nightly with every other cmd/e2e
-# test. This workflow runs them on pull requests that change Go code, so a
-# gateway that refuses every public request (#4153) or a routes regression
-# is visible before merge. It is a separate workflow, not a ci-light job:
-# the routes tests wait on wall-clock telemetry windows, and a failed
-# post-merge ci-light run fails automatic deploys (deploy_preflight.py).
+# test. This workflow runs them before merge only when asked: on a pull
+# request labelled `e2e-general`, or by dispatch on a branch. It ran on every
+# pull request that changed Go code, about 27 runner-minutes a push, and
+# kept the hosted pool at its 40-job cap
+# (docs/adr/20261029121500-light-pull-request-ci.md). Label a pull request
+# that touches the gateway, routing or daemon wiring, where a gateway that
+# refuses every public request (#4153) would otherwise first show nightly.
+# It is a separate workflow, not a ci-light job: the routes tests wait on
+# wall-clock telemetry windows, and a failed post-merge ci-light run fails
+# automatic deploys (deploy_preflight.py). It never runs on merges to main.
 
 on:
   pull_request:
-    paths:
-      - 'cmd/**'
-      - 'pkg/**'
-      - 'api/**'
-      - 'migrations/**'
-      - 'go.mod'
-      - 'go.sum'
-      - 'Makefile'
-      - '.github/workflows/e2e-general.yml'
+    types: [opened, synchronize, reopened, labeled]
   workflow_dispatch:
 
 permissions:
   contents: read
-
-concurrency:
-  group: e2e-general-${{ github.ref }}
-  cancel-in-progress: true
 
 env:
   # Keep in lock-step with ci.yml and go.mod's toolchain directive.
@@ -39,6 +32,15 @@ env:
 jobs:
   e2e-general:
     name: "e2e-general (${{ matrix.suite }})"
+    # Adding any other label must not rerun it.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (contains(github.event.pull_request.labels.*.name, 'e2e-general') &&
+       (github.event.action != 'labeled' || github.event.label.name == 'e2e-general'))
+    # Job-level, so a skipped run never cancels a running suite.
+    concurrency:
+      group: e2e-general-${{ github.ref }}-${{ matrix.suite }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
@@ -52,9 +54,15 @@ jobs:
           - suite: routes
             run: '^TestE2E_Routes_'
           # A Compose project's services call each other by name, wake,
-          # stay inside their declared calls and keep a preview on its PR.
+          # stay inside their declared calls, wake their declared
+          # dependencies ahead and keep a preview on its PR.
           - suite: multi-service
             run: '^TestE2E_MultiServiceProject_'
+          # Edge rules created, changed, rolled back and deleted through the
+          # API and checked on public traffic once the gateways apply them
+          # (ADR-091 amendment 2026-10-28).
+          - suite: edge-rules
+            run: '^TestE2E_EdgeRules_'
     services:
       postgres:
         image: mirror.gcr.io/library/postgres:16

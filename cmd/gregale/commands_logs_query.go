@@ -16,7 +16,18 @@ const (
 	logsSourceRuntime    = "runtime"
 	logsSourceHTTP       = "http"
 	traceLogsLookupLimit = 200
+	// httpLogsCapability owns the request telemetry routes HTTP logs read
+	// (GET /v1/apps/{slug}/debug/requests).
+	httpLogsCapability = "production-debugger"
 )
+
+// printHTTPLogsUnavailable explains an HTTP log query on an account whose
+// production debugger is not released: apid answers its routes as absent, and
+// the CLI printed only "Not found: no such API route" (#5709).
+func printHTTPLogsUnavailable() int {
+	PrintUsage(osStderr, "HTTP request logs (--source http, or --status, --route, --request, --trace, --limit, --all) are part of the production debugger, which is not enabled for this account; run 'gregale logs <app>' for runtime logs", "logs")
+	return 2
+}
 
 // logsHTTPOnlyFlagsSet lists the HTTP-request-only flags the caller passed;
 // any of them selects HTTP logs when --source is not given.
@@ -144,6 +155,9 @@ func runHTTPLogsQuery(ctx context.Context, slug, deploymentID, requestID, traceI
 	if requestID != "" {
 		row, getErr := client.GetAppDebugRequest(ctx, slug, requestID)
 		if getErr != nil {
+			if routeNotOffered(getErr) {
+				return printHTTPLogsUnavailable()
+			}
 			return printErr("Could not get HTTP request log", getErr)
 		}
 		if httpLogRowMatches(row, deploymentID, route, since, status, now) {
@@ -166,6 +180,9 @@ func runHTTPLogsQuery(ctx context.Context, slug, deploymentID, requestID, traceI
 			Limit:        limit,
 		})
 		if listErr != nil {
+			if routeNotOffered(listErr) {
+				return printHTTPLogsUnavailable()
+			}
 			return printErr("Could not query HTTP logs", listErr)
 		}
 		rows = resp.Requests
@@ -188,6 +205,9 @@ func streamAllHTTPLogsQuery(ctx context.Context, client *api.Client, slug string
 	for {
 		page, err := client.ListAppDebugRequestsWithOptions(ctx, slug, opts)
 		if err != nil {
+			if routeNotOffered(err) {
+				return printHTTPLogsUnavailable()
+			}
 			return printErr("Could not query all HTTP logs", err)
 		}
 		if code := emitHTTPLogQueryRows(page.Requests); code != 0 {

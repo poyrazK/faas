@@ -55,7 +55,7 @@ the rest. Tarballs with `VOLUME` directives or top-level
 
 The platform doesn't ship a managed-storage product; it integrates
 with the providers customers already use. Pick the category that
-matches the workload, plug in the URL, and `gregale secrets set` the
+matches the workload, plug in the URL, and `gregale env set` the
 env vars the runtime injects at wake.
 
 | Category        | Provider                              | Env vars |
@@ -77,7 +77,7 @@ env vars the runtime injects at wake.
 
 ## Wiring it up
 
-`gregale secrets set` writes the value to sealed secrets at rest; at
+`gregale env set` writes the value to sealed secrets at rest; at
 wake time the runner injects every secret as a plain environment
 variable inside the guest. No SDK lock-in, no special API surface,
 no extra headers — `process.env.DATABASE_URL` is what your code
@@ -86,16 +86,16 @@ reads.
 For a new app, use `gregale deploy --secrets-file <path>` (or
 `gregale init --deploy --secrets-file <path>` for a template). Gregale
 creates the app, seals the bundle, and starts the first deployment in
-that order; run `gregale secrets set` only after the app exists.
+that order; run `gregale env set` only after the app exists.
 
 For a monorepo project, the same bundle can be applied in one command with
 `gregale deploy --project --secrets-file <path>`. Gregale seals the values
 through the existing per-app secret path for every workload selected by the
-project plan; use `gregale secrets set` afterward when one workload needs an
+project plan; use `gregale env set` afterward when one workload needs an
 override.
 
 ```sh
-gregale secrets set --app <slug> DATABASE_URL='postgres://user:pass@host/db?sslmode=require'
+gregale env set --app <slug> DATABASE_URL='postgres://user:pass@host/db?sslmode=require'
 ```
 
 ## Don't
@@ -120,7 +120,7 @@ state will continue to run — the audit row is the operator's only
 signal that the data will not survive the next park.
 
 - **Querying the audit log:**
-  `gregale audit-events --kind-prefix=stateless.advisory` lists
+  `gregale audit --kind-prefix=stateless.advisory` lists
   recent batches. The dashboard's app-detail page links to the
   same view at `/dashboard/audit-events?kind_prefix=
   stateless.advisory&app_id={uuid}`. The HTTP API is
@@ -130,7 +130,7 @@ signal that the data will not survive the next park.
   (`{app_id, instance, n, sample_path}`) on
   `GET /v1/events`. Operators see a frame within ~2s of the
   guest write. Toggle on the CLI with
-  `gregale tail --include-stateless`.
+  `gregale invocation watch --include-stateless`.
 - **Anonymous rows:** if the app row was deleted between wake and
   advisory, the row lands with `subject=NULL`. Pass
   `?include_anonymous=true` on the HTTP query, or

@@ -62,6 +62,6 @@ func cmdAutomationsEventRecoveryStart(args []string) int {
 		return jsonOut(writeJSON(job))
 	}
 	writeEventRecoveryJob(job)
-	_, _ = fmt.Fprintf(osStdout, "Inspect: gregale events recovery-status %s\nItems: gregale events recovery-items %s\n", oneLine(job.ID), oneLine(job.ID))
+	_, _ = fmt.Fprintf(osStdout, "Inspect: gregale event recovery get %s\nItems: gregale event recovery items %s\n", oneLine(job.ID), oneLine(job.ID))
 	return 0
 }

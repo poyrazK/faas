@@ -66,6 +66,23 @@
       ]
     },
     {
+      "id": "agents",
+      "name": "Agents",
+      "category": "runtime",
+      "description": "Run a coding-agent harness in a one-shot microVM from the API, an automation step or a broker trigger.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/adr/20261027090010-agent-runs-and-agent-step",
+      "acceptance_test": "pkg/e2etest/agentchain/agentchain_metal_test.go::TestMetalAgentPRTriage",
+      "routes": [
+        "/v1/agent-runs",
+        "/v1/agents"
+      ],
+      "consumers": [
+        "schedd"
+      ]
+    },
+    {
       "id": "ai-access-tokens",
       "name": "AI access tokens",
       "category": "data",
@@ -257,6 +274,9 @@
       ],
       "docs_url": "/docs/alerts",
       "acceptance_test": "pkg/apid/apidserver/handlers_alerts_channels_test.go::TestAlertRuleChannels",
+      "consumers": [
+        "meterd"
+      ],
       "routes": [
         "/dashboard/alerts",
         "/dashboard/apps/{}/alerts",
@@ -527,7 +547,24 @@
         "=/v1/apps/{}",
         "/v1/apps/{}/rename",
         "/v1/apps/{}/restore",
-        "/v1/deleted-apps"
+        "/v1/deleted-apps",
+        "/dashboard/apps/{}/deployment-submissions",
+        "/dashboard/apps/{}/deployments",
+        "/v1/apps/{}/deployment-submissions",
+        "=/v1/apps/{}/deployments",
+        "/v1/apps/{}/deployments/clear-obsolete",
+        "/v1/apps/{}/deployments/latest",
+        "/v1/apps/{}/deployments/{}/cancel",
+        "/v1/apps/{}/deployments/{}/response-check",
+        "/v1/apps/{}/deployments/{}/summary",
+        "=/v1/deployments",
+        "/v1/deployments/latest-by-app",
+        "/v1/deployments/response-check",
+        "=/v1/deployments/{}",
+        "/v1/deployments/{}/diff",
+        "/v1/deployments/{}/retry",
+        "/v1/deployments/{}/stages",
+        "/v1/deployments/{}/url"
       ],
       "cli": [
         "apps",
@@ -1117,6 +1154,9 @@
       "docs_url": "/docs/adr/745-custom-metric-history",
       "operator_flag": "FAAS_CUSTOM_METRIC_HISTORY_ENABLED",
       "acceptance_test": "pkg/apid/apidserver/custom_metric_exporter_test.go::TestCustomMetricExporterExportsOnlyFreshValues",
+      "consumers": [
+        "meterd"
+      ],
       "parent": "custom-metrics",
       "routes": [
         "/v1/apps/{}/custom-metrics/{}/series",
@@ -1154,6 +1194,9 @@
       ],
       "docs_url": "/docs/slos",
       "acceptance_test": "pkg/apid/apidserver/handlers_slo_status_test.go::TestGetSLOReportsBudgetFromHourlyRows",
+      "consumers": [
+        "meterd"
+      ],
       "routes": [
         "/dashboard/apps/{}/slo",
         "/dashboard/apps/{}/slos",
@@ -1209,6 +1252,7 @@
       ],
       "docs_url": "/docs/data-api",
       "acceptance_test": "cmd/gregale/commands_data_api_sync_test.go::TestDataAPISyncJourney",
+      "parent": "managed-postgres",
       "routes": [
         "/dashboard/apps/{}/data-api",
         "/v1/apps/{}/data-api",
@@ -1532,6 +1576,9 @@
       "routes": [
         "/dashboard/apps/{}/deploy-tokens",
         "/v1/apps/{}/deploy-tokens"
+      ],
+      "cli": [
+        "deploy-tokens"
       ]
     },
     {
@@ -1912,7 +1959,7 @@
         "scale"
       ],
       "docs_url": "/docs/edge-rules",
-      "acceptance_test": "cmd/gatewayd-internal/edge_rules_app_wide_test.go::TestAppWideEdgeRules",
+      "acceptance_test": "cmd/e2e/edge_rules_api_e2e_test.go::TestE2E_EdgeRules_KindsActOnPublicTraffic",
       "settings": [
         "app.maintenance_mode",
         "app.request_rate_limit_burst",
@@ -2141,6 +2188,7 @@
       "acceptance_test": "pkg/apid/apidserver/handlers_environment_gitops_test.go::TestEnvironmentGitOpsHTTPScopedConfigWorkflow",
       "parent": "environments",
       "routes": [
+        "/dashboard/projects/{}/environments/{}/gitops",
         "/v1/environment-field-ownership",
         "/v1/projects/{}/environments/{}/gitops"
       ]
@@ -2161,6 +2209,10 @@
       "acceptance_test": "pkg/apid/apidserver/handlers_project_environment_promotion_test.go::TestProjectEnvironmentPromotionBlockedWhilePastDue",
       "parent": "environments",
       "routes": [
+        "/v1/orgs/{}/projects/{}/environments/{}/approvals",
+        "/v1/orgs/{}/projects/{}/environments/{}/promote",
+        "/v1/orgs/{}/projects/{}/environments/{}/promotion-preview",
+        "/v1/orgs/{}/projects/{}/environments/{}/promotions",
         "/v1/projects/{}/environments/{}/approval-requests",
         "/v1/projects/{}/environments/{}/approvals",
         "/v1/projects/{}/environments/{}/promote",
@@ -2184,6 +2236,8 @@
       "acceptance_test": "pkg/apid/apidserver/handlers_project_release_sets_test.go::TestPublishProjectReleaseSetRequiresCompleteLiveGraph",
       "parent": "environments",
       "routes": [
+        "/v1/orgs/{}/projects/{}/environments/{}/release-sets",
+        "/v1/orgs/{}/projects/{}/environments/{}/releases",
         "/v1/projects/{}/environments/{}/release-sets",
         "/v1/projects/{}/environments/{}/releases"
       ]
@@ -2203,10 +2257,12 @@
       "docs_url": "/docs/env",
       "acceptance_test": "pkg/environmentsync/pgintegration/store_test.go::TestEnvironmentGitOpsApprovalAndScope",
       "routes": [
+        "/v1/orgs/{}/projects/{}/environments",
         "/v1/projects/{}/environments"
       ],
       "cli": [
-        "diff"
+        "diff",
+        "projects environments"
       ]
     },
     {
@@ -2723,7 +2779,7 @@
       "name": "Internal services",
       "category": "runtime",
       "description": "Call another app in the same account by a stable internal name, with no VPC, service registry, or DNS configuration. A parked target is woken by the call, and callers may opt into a declared-binding allowlist.",
-      "maturity": "beta",
+      "maturity": "ga",
       "plans": [
         "free",
         "hobby",
@@ -2934,6 +2990,25 @@
       ]
     },
     {
+      "id": "kubernetes-manifests",
+      "name": "Kubernetes manifests",
+      "category": "delivery",
+      "description": "Deploy a repository's Kubernetes Deployments and CronJobs with their sizes, healthchecks and process settings, and see what does not apply.",
+      "maturity": "preview",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/multi-service-apps",
+      "acceptance_test": "pkg/reposcan/k8s_pod_test.go::TestScanWith_KubernetesManifestsReachesWorkloads",
+      "parent": "projects",
+      "consumers": [
+        "githubd"
+      ]
+    },
+    {
       "id": "live-queries",
       "name": "Live queries",
       "category": "data",
@@ -2963,6 +3038,9 @@
       ],
       "docs_url": "/docs/logs#log-drains",
       "acceptance_test": "cmd/gregale/commands_log_drains_test.go::TestCmdLogDrainsListJSON",
+      "consumers": [
+        "gatewayd-internal"
+      ],
       "routes": [
         "/dashboard/apps/{}/log-drains",
         "/v1/apps/{}/log-drains"
@@ -2981,6 +3059,9 @@
       "docs_url": "/docs/adr/20261018083536-customer-log-search",
       "operator_flag": "FAAS_LOG_SEARCH_ENABLED",
       "acceptance_test": "pkg/apid/logsearch/service_test.go::TestSearchPagesNewestFirst",
+      "consumers": [
+        "meterd"
+      ],
       "routes": [
         "/dashboard/apps/{}/log-search",
         "/v1/apps/{}/log-events",
@@ -3006,6 +3087,9 @@
       ],
       "docs_url": "/docs/logs",
       "acceptance_test": "cmd/e2e/logs_archive_metal_test.go::TestLogsLiveAndArchivedMetal",
+      "consumers": [
+        "gatewayd-internal"
+      ],
       "routes": [
         "/dashboard/apps/{}/logs",
         "/v1/apps/{}/logs",
@@ -3259,6 +3343,9 @@
       ],
       "docs_url": "/docs/alerts",
       "acceptance_test": "pkg/apid/apidserver/handlers_notification_channels_test.go::TestNotificationChannelLifecycle",
+      "consumers": [
+        "meterd"
+      ],
       "parent": "alerts",
       "routes": [
         "/v1/notification-channels"
@@ -4070,12 +4157,16 @@
         "/dashboard/apps/{}/debug/requests",
         "/v1/apps/{}/debug/compare",
         "/v1/apps/{}/debug/critical-paths",
-        "/v1/apps/{}/debug/requests"
+        "/v1/apps/{}/debug/requests",
+        "/v1/apps/{}/debug/rollout",
+        "/v1/apps/{}/debug/status"
       ],
       "cli": [
         "debug bundle",
         "debug compare",
-        "debug requests"
+        "debug requests",
+        "debug rollout",
+        "debug status"
       ]
     },
     {
@@ -4158,16 +4249,16 @@
       "id": "projects",
       "name": "Projects",
       "category": "delivery",
-      "description": "Deploy several apps together as one project with shared releases.",
-      "maturity": "preview",
+      "description": "Deploy a Compose file or a repository of several services as one project: each service is an app, and they call each other by name.",
+      "maturity": "ga",
       "plans": [
         "free",
         "hobby",
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/apps",
-      "acceptance_test": "pkg/apid/apidserver/project_image_test.go::TestProjectComposeImageScanAndApply",
+      "docs_url": "/docs/multi-service",
+      "acceptance_test": "cmd/e2e/multi_service_project_e2e_test.go::TestE2E_MultiServiceProject_ComposeServicesCallEachOtherByName",
       "routes": [
         "/dashboard/projects",
         "/v1/orgs/{}/projects",
@@ -5009,7 +5100,7 @@
       "name": "Service bindings",
       "category": "runtime",
       "description": "Declare and verify which internal services an app may call.",
-      "maturity": "beta",
+      "maturity": "ga",
       "plans": [
         "free",
         "hobby",
@@ -5017,7 +5108,7 @@
         "scale"
       ],
       "docs_url": "/docs/networking",
-      "acceptance_test": "pkg/apid/apidserver/service_binding_plan_test.go::TestServiceBindingPlanAPI",
+      "acceptance_test": "cmd/e2e/multi_service_project_e2e_test.go::TestE2E_MultiServiceProject_ComposeServicesCallEachOtherByName",
       "settings": [
         "app.allowed_service_call_scopes",
         "app.allowed_service_callers",
@@ -5077,7 +5168,7 @@
       "name": "Service wake-ahead",
       "category": "runtime",
       "description": "Wake a parked dependency as soon as its caller wakes.",
-      "maturity": "beta",
+      "maturity": "ga",
       "plans": [
         "free",
         "hobby",
@@ -5085,7 +5176,7 @@
         "scale"
       ],
       "docs_url": "/docs/networking",
-      "acceptance_test": "pkg/state/service_wake_ahead_pg_test.go::TestServiceWakeAheadStore",
+      "acceptance_test": "cmd/e2e/multi_service_project_e2e_test.go::TestE2E_MultiServiceProject_ComposeServicesCallEachOtherByName",
       "routes": [
         "/dashboard/apps/{}/service-wake-ahead",
         "/v1/apps/{}/service-wake-ahead"
@@ -5195,30 +5286,16 @@
         "scale"
       ],
       "docs_url": "https://gregale.dev/docs/deploy-from-source",
-      "acceptance_test": "cmd/e2e/apply_project_e2e_test.go::TestApplyProject_DeploymentKindTarball",
+      "acceptance_test": "cmd/e2e/source_deploy_wake_metal_test.go::TestSourceDeployWakeMetal",
       "routes": [
-        "/dashboard/apps/{}/deployment-submissions",
-        "/dashboard/apps/{}/deployments",
-        "/v1/apps/{}/deployment-submissions",
-        "=/v1/apps/{}/deployments",
-        "/v1/apps/{}/deployments/clear-obsolete",
         "/v1/apps/{}/deployments/dev-source",
-        "/v1/apps/{}/deployments/latest",
         "/v1/apps/{}/deployments/source-tarball",
-        "/v1/apps/{}/deployments/{}/cancel",
-        "/v1/apps/{}/deployments/{}/response-check",
-        "/v1/apps/{}/deployments/{}/summary",
-        "=/v1/deployments",
-        "/v1/deployments/latest-by-app",
-        "/v1/deployments/response-check",
-        "=/v1/deployments/{}",
-        "/v1/deployments/{}/diff",
-        "/v1/deployments/{}/retry",
-        "/v1/deployments/{}/stages",
-        "/v1/deployments/{}/url",
         "=/v1/uploads",
         "=/v1/uploads/{}",
         "=/v1/uploads/{}/commit"
+      ],
+      "settings": [
+        "manifest.build"
       ]
     },
     {
@@ -5356,6 +5433,9 @@
       ],
       "docs_url": "/docs/synthetic-checks",
       "acceptance_test": "pkg/synthetics/runner_test.go::TestRunOnceRecordsOutcomes",
+      "consumers": [
+        "meterd"
+      ],
       "routes": [
         "/dashboard/apps/{}/synthetics",
         "/v1/apps/{}/synthetics"
@@ -5419,15 +5499,14 @@
         "scale"
       ],
       "docs_url": "/docs/tracing",
-      "acceptance_test": "pkg/apid/apidserver/handlers_selected_trace_test.go::TestSelectedAppTraceRoute",
+      "acceptance_test": "cmd/e2e/guest_tracing_metal_test.go::TestGuestTracingMetal",
       "settings": [
         "app.tracing",
         "manifest.tracing"
       ],
       "routes": [
         "/v1/account/traces",
-        "/v1/otel",
-        "/v1/traces"
+        "/v1/otel"
       ],
       "cli": [
         "trace"

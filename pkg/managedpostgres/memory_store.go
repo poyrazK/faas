@@ -31,6 +31,8 @@ type MemoryStore struct {
 	usageImports              map[string]usageImportReceipt
 	accountingReconciliations map[string]accountingReconciliationReceipt
 	overage                   map[string]bool
+	capEvents                 map[memoryCapEventKey]CapEvent
+	capEventsMailed           map[memoryCapEventKey]bool
 }
 
 func NewMemoryStore() *MemoryStore {
@@ -53,6 +55,8 @@ func NewMemoryStore() *MemoryStore {
 		usageImports:              map[string]usageImportReceipt{},
 		accountingReconciliations: map[string]accountingReconciliationReceipt{},
 		overage:                   map[string]bool{},
+		capEvents:                 map[memoryCapEventKey]CapEvent{},
+		capEventsMailed:           map[memoryCapEventKey]bool{},
 	}
 }
 

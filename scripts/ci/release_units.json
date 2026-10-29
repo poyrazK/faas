@@ -28,6 +28,10 @@
       "lane": "control-plane",
       "services": [{"name": "livequeryd", "optional": true, "readyz": "http://127.0.0.1:9471/readyz"}]
     },
+    "agentd": {
+      "lane": "control-plane",
+      "services": [{"name": "agentd", "optional": true}]
+    },
     "bridged": {
       "lane": "control-plane",
       "services": [{"name": "bridged", "optional": true}]
@@ -65,6 +69,7 @@
     "mail-metrics": {"lane": "tool"},
     "mail-feedback": {"lane": "tool"},
     "gregale": {"lane": "tool"},
+    "mcp-bridged": {"lane": "control-plane", "services": [{"name": "mcp-bridge", "optional": true}]},
     "gregalectl": {"lane": "tool"}
   },
   "gates": {
@@ -102,6 +107,7 @@
       "deploy/ansible/roles/control_plane_service/files/faas-apid.service",
       "deploy/ansible/roles/control_plane_service/files/faas-apid.socket",
       "deploy/ansible/roles/control_plane_service/files/faas-cp.slice",
+      "deploy/ansible/roles/control_plane_service/files/faas-mcp-bridge.service",
       "deploy/ansible/roles/control_plane_service/files/faas-meterd.service",
       "deploy/ansible/roles/control_plane_service/files/faas-outboundd.service",
       "deploy/ansible/roles/control_plane_service/files/faas-schedd.service",
@@ -111,7 +117,8 @@
       "deploy/ansible/roles/gatewayd_public_service/files/faas-gatewayd-public.socket",
       "deploy/ansible/roles/githubd_service/files/faas-githubd.service",
       "deploy/ansible/roles/s3_gateway_service/files/faas-s3-gatewayd.service",
-      "deploy/ansible/roles/livequeryd_service/files/faas-livequeryd.service"
+      "deploy/ansible/roles/livequeryd_service/files/faas-livequeryd.service",
+      "deploy/ansible/roles/agentd_service/files/faas-agentd.service"
     ]
   },
   "_deploy_classes_comment": "Every deploy/ path has exactly one class (docs/adr/20261027151755-unit-lane-deploy-path-classes.md; scripts/ci/affected_units.py deploy_class), first match wins: a release unit (host_config.release_units, blocking); a path a host role reads (host_config on the control plane, compute_deploy on compute); then the first class below with a pattern that names it. A pattern is a directory (trailing /), an exact path, or a glob (* inside one segment, **/ across segments). inert: nothing a host runs reads it at activation, so it maps to no flag: documentation, tests, samples (*.example, which roles install only as /etc/faas/*.example for operators to copy), the legacy unit tree deployctl generate writes for dev VMs (deploy/systemd/), the grafana role's dashboard mirror (deploy/grafana/, make grafana-mirror-check) and Cloudflare workers, which deploy through their own workflows. compute_only: playbooks only compute hosts run; pending for the control-plane lane, they hold the edge lane while it restarts a gateway on a compute host (compute_deploy). blocking: read by a full release or an operator path the lanes cannot vouch for, so a change waits for the next full tag (deploy). A path none of these names blocks, and scripts/ci/affected_units_test.py fails until it is classified. Whatever its class, a path no host role reads whose change since base only touches blank and # comment lines maps to no flag.",

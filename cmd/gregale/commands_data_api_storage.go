@@ -24,6 +24,17 @@ const (
 
 var dataAPIStorageSchema = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}$`)
 
+// dataAPIStorageUpgradeSQL adds the object_key column (ADR-20261021101510
+// amendment 1) to a storage_objects table created before it; runtimes refuse
+// storage without it.
+const dataAPIStorageUpgradeSQL = `-- Data API file storage upgrade (ADR-20261021101510 amendment 1). Apply as the
+-- schema owner in a migration. Uploads write each version under a new object
+-- key; existing rows keep naming their bytes by name.
+SET LOCAL lock_timeout = '5s';
+ALTER TABLE {{schema}}.storage_objects ADD COLUMN IF NOT EXISTS object_key text
+  CHECK (object_key ~ '^_gregale/objects/[0-9a-f]{32}$');
+`
+
 // dataAPIStorageReceipt is what enable, status and disable report.
 type dataAPIStorageReceipt struct {
 	App            string                 `json:"app"`
@@ -63,14 +74,18 @@ func cmdDataAPIStorage(args []string) int {
 	}
 }
 
-// dataAPIStorageSQL renders the storage_objects migration for a schema.
-func dataAPIStorageSQL(schema string) (string, error) {
+// dataAPIStorageSQL renders the storage_objects migration for a schema, or
+// the upgrade of a table created before object keys.
+func dataAPIStorageSQL(schema string, upgrade bool) (string, error) {
 	if !dataAPIStorageSchema.MatchString(schema) {
 		return "", fmt.Errorf("schema %q must match %s", schema, dataAPIStorageSchema)
 	}
-	content, err := templates.FS.ReadFile("data-api/storage.sql")
-	if err != nil {
-		return "", err
+	content := []byte(dataAPIStorageUpgradeSQL)
+	if !upgrade {
+		var err error
+		if content, err = templates.FS.ReadFile("data-api/storage.sql"); err != nil {
+			return "", err
+		}
 	}
 	return strings.ReplaceAll(string(content), "{{schema}}", schema), nil
 }
@@ -78,11 +93,12 @@ func dataAPIStorageSQL(schema string) (string, error) {
 func cmdDataAPIStorageSQL(args []string) int {
 	fs := newFlagSet("data-api storage sql", flag.ContinueOnError)
 	schema := fs.String("schema", "api", "the Data API's first exposed schema")
+	upgrade := fs.Bool("upgrade", false, "print the upgrade for a storage_objects table without object_key")
 	if err := parseInterspersed(fs, args); err != nil || fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale data-api storage sql [--schema api]", "data-api")
+		PrintUsage(os.Stderr, "usage: gregale data-api storage sql [--schema api] [--upgrade]", "data-api")
 		return 1
 	}
-	sql, err := dataAPIStorageSQL(*schema)
+	sql, err := dataAPIStorageSQL(*schema, *upgrade)
 	if err != nil {
 		return printErr("Invalid schema", err)
 	}
@@ -104,7 +120,7 @@ func cmdDataAPIStorageEnable(args []string) int {
 	region := fs.String("region", "", "object-storage region for a new bucket (account default when omitted)")
 	maxObject := fs.Int64("max-object-bytes", 0, "largest upload in bytes (default 25 MiB, at most 100 MiB)")
 	noRestart := fs.Bool("no-restart", false, "store settings without requesting a fresh restart")
-	usage := "usage: gregale data-api storage enable NAME --bucket BUCKET [--scope SCOPE] [--region REGION] [--max-object-bytes N] [--no-restart]"
+	usage := "usage: gregale data-api storage enable NAME --bucket BUCKET [--env SCOPE] [--region REGION] [--max-object-bytes N] [--no-restart]"
 	if err := parseInterspersed(fs, args); err != nil || fs.NArg() != 1 || !api.ValidAppSlug(fs.Arg(0)) || api.ValidateScope(*scope) != nil || !addBucketNameRE.MatchString(*bucket) {
 		PrintUsage(os.Stderr, usage, "data-api")
 		return 1
@@ -203,7 +219,7 @@ func cmdDataAPIStorageStatus(args []string) int {
 	fs := newFlagSet("data-api storage status", flag.ContinueOnError)
 	scope := fs.String("scope", api.DefaultEnvScope, "environment scope")
 	if err := parseInterspersed(fs, args); err != nil || fs.NArg() != 1 || !api.ValidAppSlug(fs.Arg(0)) || api.ValidateScope(*scope) != nil {
-		PrintUsage(os.Stderr, "usage: gregale data-api storage status NAME [--scope SCOPE]", "data-api")
+		PrintUsage(os.Stderr, "usage: gregale data-api storage status NAME [--env SCOPE]", "data-api")
 		return 1
 	}
 	client, err := authedClient()
@@ -258,7 +274,7 @@ func cmdDataAPIStorageDisable(args []string) int {
 	scope := fs.String("scope", api.DefaultEnvScope, "environment scope")
 	noRestart := fs.Bool("no-restart", false, "store settings without requesting a fresh restart")
 	if err := parseInterspersed(fs, args); err != nil || fs.NArg() != 1 || !api.ValidAppSlug(fs.Arg(0)) || api.ValidateScope(*scope) != nil {
-		PrintUsage(os.Stderr, "usage: gregale data-api storage disable NAME [--scope SCOPE] [--no-restart]", "data-api")
+		PrintUsage(os.Stderr, "usage: gregale data-api storage disable NAME [--env SCOPE] [--no-restart]", "data-api")
 		return 1
 	}
 	client, err := authedClient()

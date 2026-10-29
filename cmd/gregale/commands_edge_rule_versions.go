@@ -18,7 +18,7 @@ func cmdEdgeRulesHistory(args []string) int {
 		return 1
 	}
 	if *slug == "" || fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale edge-rules history --app <slug> [--version N]", "edge-rules")
+		PrintUsage(os.Stderr, "usage: gregale edge rule history --app <slug> [--version N]", "edge-rules")
 		return 1
 	}
 	client, err := authedClient()
@@ -84,7 +84,7 @@ func cmdEdgeRulesRollback(args []string) int {
 		return 1
 	}
 	if *slug == "" || *to < 1 || fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale edge-rules rollback --app <slug> --to <version> [--quiet]", "edge-rules")
+		PrintUsage(os.Stderr, "usage: gregale edge rule rollback --app <slug> --to <version> [--quiet]", "edge-rules")
 		return 1
 	}
 	if !*quiet {

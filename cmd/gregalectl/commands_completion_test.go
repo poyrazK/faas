@@ -30,6 +30,8 @@ func TestCompletion_ManifestDrift(t *testing.T) {
 		"dispatchFleetSeal":        "fleet-seal",
 		"dispatchBreakGlass":       "break-glass",    // ADR 20261022140000 incident containment
 		"dispatchSealDomain":       "seal-domain",    // ADR 20261022111812 seal domains
+		"dispatchLiveQuery":        "live-query",     // ADR 20261028161502 live writer signatures
+		"dispatchRuntimeSecret":    "runtime-secret", // ADR 20261028161502 runtime writer signatures
 		"dispatchHoneytoken":       "honeytoken",     // ADR 20261024014500 honeytokens
 		"dispatchObjectStorage":    "object-storage", // ADR 20261025111015 restore reconcile
 		"dispatchPKI":              "pki",

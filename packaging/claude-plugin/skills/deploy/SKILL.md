@@ -40,7 +40,7 @@ never ask the user to paste it into the conversation:
 - If the `gregale_request_secret` tool is available, call it with the app, the
   key and why the app needs it. The user types the value on a Gregale page.
   Then call `gregale_get_secret_request` until it reports `set`.
-- Otherwise ask the user to run `gregale secrets set <app> <KEY>` in their own
+- Otherwise ask the user to run `gregale env set <app> <KEY>` in their own
   terminal.
 
 ## 3. Deploy

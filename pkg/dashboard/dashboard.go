@@ -128,6 +128,17 @@ type ProjectsData struct {
 	Environments  []string
 	CSRFToken     string
 	Flash         string
+	// CalledBy lists, by service name, the Project services that declare
+	// they call that service.
+	CalledBy map[string][]string
+	// ServiceCalls are the measured calls between Project's services over
+	// ServiceCallsRange, from the service map (ADR-1131). ServiceCallsRange
+	// is empty while the map is not released to the account or its plan has
+	// no per-app metrics; ServiceCallsNote explains degraded telemetry.
+	ServiceCalls      []api.ServiceMapEdge
+	ServiceCallsRange string
+	ServiceCallsNote  string
+	HighErrorRatePct  float64
 }
 
 type EnvironmentGitOpsData struct {
@@ -2588,6 +2599,39 @@ type DebugPageData struct {
 	CriticalPathHistory *DebugCriticalPathHistoryView
 	Running             *DebugRunningView
 	RunningError        string
+	DebugStatus         *DebugStatusView
+}
+
+// DebugStatusView is the dashboard projection of GET
+// /v1/apps/{slug}/debug/status (ADR-1447 amendment): one verdict for the
+// window, the release explanation, and links to the requests behind them.
+type DebugStatusView struct {
+	Verdict        string
+	VerdictLabel   string
+	Headline       string
+	Since          string
+	Requests       int64
+	ServerErrors   int64
+	P95MS          int
+	Regressions    int
+	TracingEnabled bool
+	Release        string
+	Examples       []DebugStatusRequestView
+	Failures       []DebugStatusRequestView
+	// OOMKills lists the window's out-of-memory kills (ADR-121), newest
+	// first; OOMKillsTotal counts all of them and OOMFix is the remedy.
+	OOMKills      []string
+	OOMKillsTotal int
+	OOMFix        []string
+	CLICommand    string
+}
+
+// DebugStatusRequestView links one request from the status card to its
+// evidence on the same page.
+type DebugStatusRequestView struct {
+	ReceivedAt string
+	Label      string
+	URL        string
 }
 
 // DebugRunningView is the dashboard projection of the bounded scheduler

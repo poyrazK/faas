@@ -307,6 +307,10 @@ func (s *server) createAppWebhook(w http.ResponseWriter, r *http.Request, acct s
 			return
 		}
 	}
+	if prob := s.datadogIntegrationProblem(flagSubject(r, acct), req.DeliveryFormat == api.AppWebhookDeliveryFormatDatadog); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	if prob := validateDatadogAppWebhook(req.DeliveryFormat, req.TargetURL, req.EventFilter, &req.WebhookSecret, true); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -557,6 +561,12 @@ func (s *server) updateAppWebhook(w http.ResponseWriter, r *http.Request, acct s
 	}
 	if req.Enabled != nil {
 		params.Enabled = req.Enabled
+	}
+	switching := params.DeliveryFormat != nil && string(*params.DeliveryFormat) == api.AppWebhookDeliveryFormatDatadog &&
+		string(existing.DeliveryFormat) != api.AppWebhookDeliveryFormatDatadog
+	if prob := s.datadogIntegrationProblem(flagSubject(r, acct), switching); prob != nil {
+		api.WriteProblem(w, prob)
+		return
 	}
 	if prob := validateUpdatedDatadogAppWebhook(existing, params, req.WebhookSecret); prob != nil {
 		api.WriteProblem(w, prob)

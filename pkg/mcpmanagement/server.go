@@ -48,14 +48,27 @@ type Options struct {
 	// Environments is nil for local account access. Remote grants always set it.
 	Environments *EnvironmentConsent
 	// LocalCLI enables the local deploy and env tools on local connections.
+	// On a hosted grant it runs only provisioning, as the grant.
 	LocalCLI LocalCLI
+	// Capabilities are the scopes a remote grant's consent added beyond
+	// inspection and writes: secrets:request, storage:manage and
+	// postgres:manage. A remote grant lists only their tools
+	// (ADR-20261026195952).
+	Capabilities []string
 	// Toolsets limits the listed tools (see ParseToolsets); nil lists all.
-	Toolsets      []string
-	planStore     *StateStore
+	Toolsets  []string
+	planStore *StateStore
+	// uploads is the hosted bridge's upload store (ADR-20261026195952).
+	uploads       *uploadStore
 	planNamespace string
 	auditLogger   *slog.Logger
 	accountID     string
 	grantID       string
+	// agentKey marks a hosted connection authenticated by an agent key
+	// (ADR-20261029085359): account-wide like a local connection, but its
+	// tools follow its scopes like a remote grant's and it gets no
+	// local-directory tools.
+	agentKey bool
 }
 
 type management struct {
@@ -81,6 +94,10 @@ func NewServer(client *api.Client, opts Options) (*mcp.Server, error) {
 	s, _, err := newManagementServer(client, opts)
 	return s, err
 }
+
+// remote reports whether tools are listed as for a remote grant: an OAuth
+// grant (environment consent) or an agent key.
+func (m *management) remote() bool { return m.opts.Environments != nil || m.opts.agentKey }
 
 func newManagementServer(client *api.Client, opts Options) (*mcp.Server, *management, error) {
 	if client == nil {
@@ -176,6 +193,7 @@ func newManagementServer(client *api.Client, opts Options) (*mcp.Server, *manage
 	registerLocalReleases(s, m)
 	registerSecretEntry(s, m)
 	registerLocalProvisioning(s, m)
+	registerUploadDeploys(s, m)
 	registerEnvironments(s, m)
 	registerContextCatalog(s, m)
 	registerLifecycle(s, m)
@@ -199,8 +217,8 @@ func registerTool[In any](s *mcp.Server, m *management, name, description string
 		func(ctx context.Context, req *mcp.CallToolRequest, args In) (*mcp.CallToolResult, any, error) {
 			timeout := m.opts.Timeout
 			switch name {
-			case "gregale_apply_local_deploy":
-				timeout = localDeployTimeout // the source upload
+			case "gregale_apply_local_deploy", "gregale_plan_upload_deploy", "gregale_apply_upload_deploy":
+				timeout = localDeployTimeout // the source upload, or unpacking one
 			case "gregale_apply_provision":
 				timeout = provisionTimeout // a database can take minutes
 			}

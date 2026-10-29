@@ -25,7 +25,7 @@ func cmdEventsSchemaRollout(args []string) int {
 		return 1
 	}
 	if len(positional) != 2 || rejectUnexpectedFlagArgs(fs) {
-		PrintUsage(os.Stderr, "usage: gregale events schema-rollout-preview SOURCE TYPE --version v2 [--schema @schema.json] [--samples @samples.json] [--from RFC3339 --until RFC3339]", "events")
+		PrintUsage(os.Stderr, "usage: gregale event schema-rollout-preview SOURCE TYPE --version v2 [--schema @schema.json] [--samples @samples.json] [--from RFC3339 --until RFC3339]", "events")
 		return 1
 	}
 	if *schema == "-" && *samples == "-" {

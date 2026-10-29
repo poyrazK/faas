@@ -183,14 +183,14 @@ func TestDataAPITypesUsesBoundedPrivateTaskAndRejectsTruncation(t *testing.T) {
 			if (code != 0) != truncated {
 				t.Fatalf("exit=%d truncated=%v", code, truncated)
 			}
-			if f.sawMethod != "POST" || f.sawPath != "/v1/apps/notes/tasks" {
+			if f.sawMethod != "POST" || f.sawPath != "/v1/apps/notes/data-api/contract-tasks" {
 				t.Fatalf("wrong task endpoint %s %s", f.sawMethod, f.sawPath)
 			}
-			var request api.CreateAppTaskRequest
-			if err := json.Unmarshal(f.sawBody, &request); err != nil {
-				t.Fatal(err)
+			var contract api.CreateDataAPIContractTaskRequest
+			if err := json.Unmarshal(f.sawBody, &contract); err != nil || contract.Kind != api.DataAPIContractTypes {
+				t.Fatalf("contract task %s: %v", f.sawBody, err)
 			}
-			if strings.Join(request.Command, " ") != "node /app/types.mjs" || request.MaxOutputBytes != api.DataAPIMaxOutputBytes || request.TimeoutSeconds != 60 {
+			if request := contract.Kind.Request(); strings.Join(request.Command, " ") != "node /app/types.mjs" || request.MaxOutputBytes != api.DataAPIMaxOutputBytes || request.TimeoutSeconds != 60 {
 				t.Fatalf("unbounded task: %+v", request)
 			}
 			got, _ := os.ReadFile(path)
@@ -299,7 +299,7 @@ func TestDataAPIRuntimeBounds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for name, bound := range map[string]int{"userConcurrencyMaxSubjects": api.DataAPIUserConcurrencyMaxSubjects, "userConcurrencyCooldownMs": api.DataAPIUserConcurrencyCooldownMS, "connectionReportMs": int(api.DataAPIRuntimeConnectionReportTimeout.Milliseconds()), "connectionReportIntervalMs": int(api.DataAPIRuntimeConnectionReportInterval.Milliseconds()), "connectionReportBytes": api.DataAPIRuntimeConnectionReportMaxBytes, "pool": api.DataAPIDefaultPoolConnections, "poolMax": api.DataAPIMaxPoolConnections, "rows": api.DataAPIMaxRows, "bodyBytes": api.DataAPIMaxRequestBytes, "responseBytes": api.DataAPIMaxResponseBytes, "outputBytes": api.DataAPIMaxOutputBytes, "queryMs": api.DataAPIQueryTimeoutMS, "lockMs": api.DataAPILockTimeoutMS, "relations": api.DataAPIMaxRelations, "columns": api.DataAPIMaxColumns, "types": api.DataAPIMaxTypes, "queuedRequests": api.DataAPIMaxQueuedRequests, "admissionWaitMs": api.DataAPIAdmissionWaitMS, "overloadRetrySeconds": api.DataAPIOverloadRetrySeconds, "healthProbeMs": api.DataAPIHealthProbeMS, "healthBytes": api.DataAPIHealthMaxBytes, "rateLimitDefaultPerSecond": api.DataAPIRateLimitDefaultPerSecond, "rateLimitDefaultBurst": api.DataAPIRateLimitDefaultBurst, "rateLimitMaxPerSecond": api.DataAPIRateLimitMaxPerSecond, "rateLimitMaxBurst": api.DataAPIRateLimitMaxBurst, "rateLimitMaxSubjects": api.DataAPIRateLimitMaxSubjects, "rateLimitSweepMs": api.DataAPIRateLimitSweepMS, "publicReadMaxRelations": api.DataAPIPublicReadMaxRelations, "publicRpcMaxFunctions": api.DataAPIPublicRPCMaxFunctions, "usageReportMs": int(api.DataAPIUsageReportTimeout.Milliseconds()), "usageReportIntervalMs": int(api.DataAPIUsageReportInterval.Milliseconds()), "usageReportMaxHours": api.DataAPIUsageReportMaxHours, "usageMonthlyCapMax": api.DataAPIUsageMonthlyCapMax, "usageRestoreJumpMs": int(api.DataAPIUsageRestoreJump.Milliseconds()), "serverKeySubjectMaxBytes": api.DataAPIServerKeySubjectMaxBytes, "publicReadMaxAgeSeconds": api.DataAPIPublicReadMaxAgeSeconds, "cacheTagMaxBytes": api.CacheTagMaxBytes, "cacheTagsMax": api.CacheTagMaxCount, "serverKeyPermissionsBytes": api.DataAPIServerKeyPermissionsMaxBytes, "serverKeyPermissionsEntries": api.DataAPIServerKeyPermissionsMaxEntries, "storageObjectDefaultBytes": api.DataAPIStorageObjectDefaultBytes, "storageObjectMaxBytes": api.DataAPIStorageObjectMaxBytes, "storageTransfers": api.DataAPIStorageTransfers, "storageTransferMs": int(api.DataAPIStorageTransferTimeout.Milliseconds()), "storageSignSeconds": int(api.DataAPIStorageSignedURLTTL.Seconds())} {
+	for name, bound := range map[string]int{"userConcurrencyMaxSubjects": api.DataAPIUserConcurrencyMaxSubjects, "userConcurrencyCooldownMs": api.DataAPIUserConcurrencyCooldownMS, "connectionReportMs": int(api.DataAPIRuntimeConnectionReportTimeout.Milliseconds()), "connectionReportIntervalMs": int(api.DataAPIRuntimeConnectionReportInterval.Milliseconds()), "connectionReportBytes": api.DataAPIRuntimeConnectionReportMaxBytes, "pool": api.DataAPIDefaultPoolConnections, "poolMax": api.DataAPIMaxPoolConnections, "rows": api.DataAPIMaxRows, "bodyBytes": api.DataAPIMaxRequestBytes, "responseBytes": api.DataAPIMaxResponseBytes, "outputBytes": api.DataAPIMaxOutputBytes, "queryMs": api.DataAPIQueryTimeoutMS, "lockMs": api.DataAPILockTimeoutMS, "relations": api.DataAPIMaxRelations, "columns": api.DataAPIMaxColumns, "types": api.DataAPIMaxTypes, "queuedRequests": api.DataAPIMaxQueuedRequests, "admissionWaitMs": api.DataAPIAdmissionWaitMS, "overloadRetrySeconds": api.DataAPIOverloadRetrySeconds, "healthProbeMs": api.DataAPIHealthProbeMS, "healthBytes": api.DataAPIHealthMaxBytes, "rateLimitDefaultPerSecond": api.DataAPIRateLimitDefaultPerSecond, "rateLimitDefaultBurst": api.DataAPIRateLimitDefaultBurst, "rateLimitMaxPerSecond": api.DataAPIRateLimitMaxPerSecond, "rateLimitMaxBurst": api.DataAPIRateLimitMaxBurst, "rateLimitMaxSubjects": api.DataAPIRateLimitMaxSubjects, "rateLimitSweepMs": api.DataAPIRateLimitSweepMS, "anonymousCoarseSubjects": api.DataAPIAnonymousCoarseSubjects, "publicReadMaxRelations": api.DataAPIPublicReadMaxRelations, "publicRpcMaxFunctions": api.DataAPIPublicRPCMaxFunctions, "usageReportMs": int(api.DataAPIUsageReportTimeout.Milliseconds()), "usageReportIntervalMs": int(api.DataAPIUsageReportInterval.Milliseconds()), "usageReportMaxHours": api.DataAPIUsageReportMaxHours, "usageMonthlyCapMax": api.DataAPIUsageMonthlyCapMax, "usageRestoreJumpMs": int(api.DataAPIUsageRestoreJump.Milliseconds()), "serverKeySubjectMaxBytes": api.DataAPIServerKeySubjectMaxBytes, "publicReadMaxAgeSeconds": api.DataAPIPublicReadMaxAgeSeconds, "cacheTagMaxBytes": api.CacheTagMaxBytes, "cacheTagsMax": api.CacheTagMaxCount, "serverKeyPermissionsBytes": api.DataAPIServerKeyPermissionsMaxBytes, "serverKeyPermissionsEntries": api.DataAPIServerKeyPermissionsMaxEntries, "storageObjectDefaultBytes": api.DataAPIStorageObjectDefaultBytes, "storageObjectMaxBytes": api.DataAPIStorageObjectMaxBytes, "storageTransfers": api.DataAPIStorageTransfers, "storageTransferMs": int(api.DataAPIStorageTransferTimeout.Milliseconds()), "storageSignSeconds": int(api.DataAPIStorageSignedURLTTL.Seconds())} {
 		if !strings.Contains(string(config), fmt.Sprintf("%s: %d", name, bound)) {
 			t.Fatalf("runtime %s differs from canonical limit", name)
 		}
@@ -341,12 +341,12 @@ func TestDataAPITypesInputValidators(t *testing.T) {
 			if (code == 0) != supported {
 				t.Fatalf("code=%d supported=%v", code, supported)
 			}
-			var request api.CreateAppTaskRequest
-			if err := json.Unmarshal(f.sawBody, &request); err != nil {
+			var contract api.CreateDataAPIContractTaskRequest
+			if err := json.Unmarshal(f.sawBody, &contract); err != nil {
 				t.Fatal(err)
 			}
-			if strings.Join(request.Command, " ") != "node /app/types.mjs --validators" || request.TimeoutSeconds != 60 || request.MaxOutputBytes != api.AppTaskDefaultMaxOutputBytes {
-				t.Fatalf("unexpected task: %+v", request)
+			if request := contract.Kind.Request(); f.sawPath != "/v1/apps/notes/data-api/contract-tasks" || strings.Join(request.Command, " ") != "node /app/types.mjs --validators" || request.TimeoutSeconds != 60 || request.MaxOutputBytes != api.AppTaskDefaultMaxOutputBytes {
+				t.Fatalf("unexpected task: %s %+v", f.sawPath, request)
 			}
 			got, _ := os.ReadFile(output)
 			want := "original"

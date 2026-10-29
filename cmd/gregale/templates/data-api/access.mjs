@@ -158,8 +158,10 @@ function expandIPv6(value) {
 }
 
 // The edge stamps one trusted client address (x-faas-client-ip). IPv6 clients
-// are grouped by /64 so address rotation inside one allocation shares a bucket.
-export function clientKey(req) {
+// are grouped by /64 so address rotation inside one allocation shares a
+// bucket, and by /48 when coarse: once the anonymous table is nearly full, so
+// rotating through a /48 cannot fill it and lock other visitors out.
+export function clientKey(req, coarse = false) {
   const value = req.headers['x-faas-client-ip']
   if (typeof value !== 'string') return 'unknown'
   const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(value)
@@ -167,7 +169,15 @@ export function clientKey(req) {
   const version = isIP(value)
   if (version === 4) return value
   if (version !== 6 || value.includes('.')) return 'unknown'
-  return expandIPv6(value.toLowerCase()).slice(0, 4).map(group => group.toString(16)).join(':') + '::/64'
+  const prefix = coarse ? 3 : 4
+  return expandIPv6(value.toLowerCase()).slice(0, prefix).map(group => group.toString(16)).join(':') + `::/${prefix * 16}`
+}
+
+// anonymousClient is a visitor's budget key in the rate and concurrency
+// tables: coarse once either table tracks anonymousCoarseSubjects subjects.
+export function anonymousClient(req, ...tables) {
+  const coarse = tables.some(table => (table?.tracked ?? 0) >= limits.anonymousCoarseSubjects)
+  return ['anonymous', clientKey(req, coarse)]
 }
 
 const publicRelationsQuery = `SELECT t.schema, t.relation, c.relkind AS kind, c.relrowsecurity AS rls,

@@ -289,6 +289,18 @@ func (q *Queries) AccountDeletedAppByID(ctx context.Context, db DBTX, arg Accoun
 	return i, err
 }
 
+const accountIDByGitHubInstallation = `-- name: AccountIDByGitHubInstallation :one
+select account_id from github_installations where installation_id = $1::bigint
+`
+
+// An installation ID is globally unique (github_installations_installation_id_uidx).
+func (q *Queries) AccountIDByGitHubInstallation(ctx context.Context, db DBTX, installationID int64) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, accountIDByGitHubInstallation, installationID)
+	var account_id pgtype.UUID
+	err := row.Scan(&account_id)
+	return account_id, err
+}
+
 const accountIDByGitHubOIDCRepositoryIdentity = `-- name: AccountIDByGitHubOIDCRepositoryIdentity :one
 select min(a.github_install_account_id::text)::uuid as account_id
 from apps a
@@ -12211,7 +12223,7 @@ VALUES($1::uuid,$2::text,$3::text,
  $4::bigint,$5::bigint,$6::bigint,
  $7::text,$8::boolean,$9::text,$10::uuid,$11::bigint,
  $12::text,$13::text)
-RETURNING id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token, recovery_generation, cpu_template, cpu_model
+RETURNING id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token, recovery_generation, cpu_template, cpu_model, stale_at
 `
 
 type CreateSnapshotParams struct {
@@ -12264,6 +12276,7 @@ func (q *Queries) CreateSnapshot(ctx context.Context, db DBTX, arg CreateSnapsho
 		&i.RecoveryGeneration,
 		&i.CpuTemplate,
 		&i.CpuModel,
+		&i.StaleAt,
 	)
 	return i, err
 }
@@ -39559,7 +39572,7 @@ func (q *Queries) LatestRetainedRollbackDeployment(ctx context.Context, db DBTX,
 }
 
 const latestSnapshot = `-- name: LatestSnapshot :one
-SELECT id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token, recovery_generation, cpu_template, cpu_model FROM snapshots WHERE deployment_id=$1::uuid AND stale=false
+SELECT id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token, recovery_generation, cpu_template, cpu_model, stale_at FROM snapshots WHERE deployment_id=$1::uuid AND stale=false
 AND recovery_generation=(SELECT snapshot_recovery_generation FROM deployments WHERE id=$1::uuid)
 ORDER BY (tier='warm') DESC,created_at DESC LIMIT 1
 `
@@ -39584,12 +39597,13 @@ func (q *Queries) LatestSnapshot(ctx context.Context, db DBTX, deploymentID pgty
 		&i.RecoveryGeneration,
 		&i.CpuTemplate,
 		&i.CpuModel,
+		&i.StaleAt,
 	)
 	return i, err
 }
 
 const latestSnapshotForTier = `-- name: LatestSnapshotForTier :one
-SELECT id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token, recovery_generation, cpu_template, cpu_model FROM snapshots WHERE deployment_id=$1::uuid AND tier=$2::text AND stale=false
+SELECT id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token, recovery_generation, cpu_template, cpu_model, stale_at FROM snapshots WHERE deployment_id=$1::uuid AND tier=$2::text AND stale=false
 AND recovery_generation=(SELECT snapshot_recovery_generation FROM deployments WHERE id=$1::uuid)
 ORDER BY created_at DESC LIMIT 1
 `
@@ -39619,6 +39633,7 @@ func (q *Queries) LatestSnapshotForTier(ctx context.Context, db DBTX, arg Latest
 		&i.RecoveryGeneration,
 		&i.CpuTemplate,
 		&i.CpuModel,
+		&i.StaleAt,
 	)
 	return i, err
 }
@@ -39675,6 +39690,13 @@ SELECT EXISTS (
     SELECT 1 FROM deployments d JOIN apps a ON a.id = d.app_id
     WHERE a.status <> 'deleted'
       AND ((d.deleted_at IS NULL AND d.status IN ('pending', 'building', 'imaging', 'snapshotting', 'live'))
+           OR (d.deleted_at IS NULL AND d.status = 'superseded' AND (
+                SELECT count(*) FROM deployments n
+                 WHERE n.app_id = d.app_id
+                   AND COALESCE(NULLIF(n.scope, ''), 'default') = COALESCE(NULLIF(d.scope, ''), 'default')
+                   AND n.deleted_at IS NULL AND n.status IN ('live', 'superseded')
+                   AND (n.created_at > d.created_at OR (n.created_at = d.created_at AND n.id > d.id))
+               ) < $1::int)
            OR EXISTS (SELECT 1 FROM snapshots sn WHERE sn.deployment_id = d.id AND NOT sn.stale)
            OR EXISTS (SELECT 1 FROM instances i WHERE i.deployment_id = d.id AND i.state IN ('pending', 'waking', 'cold_booting', 'running', 'snapshotting', 'migrating', 'warm', 'frozen', 'draining'))
            OR EXISTS (SELECT 1 FROM deployment_aliases al WHERE al.deployment_id = d.id)
@@ -39682,30 +39704,39 @@ SELECT EXISTS (
            OR EXISTS (SELECT 1 FROM environment_workload_retirements r WHERE d.id=ANY(r.deployment_ids) AND r.phase IN ('planned','retiring','retired','recovering'))
            OR EXISTS (SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id = rm.release_id
                       WHERE rm.deployment_id = d.id AND (rs.active OR rs.expires_at > clock_timestamp())))
-      AND (d.rootfs_key = $1::text
-           OR $1::text = 'apps/' || a.slug || '/' || d.id::text || '.ext4'
-           OR left($1::text, length('apps/' || a.slug || '/' || d.id::text || '/')) = 'apps/' || a.slug || '/' || d.id::text || '/'
-           OR EXISTS (SELECT 1 FROM deployment_sidecar_layers l WHERE l.deployment_id = d.id AND l.storage_key = $1::text))
+      AND (d.rootfs_key = $2::text
+           OR $2::text = 'apps/' || a.slug || '/' || d.id::text || '.ext4'
+           OR left($2::text, length('apps/' || a.slug || '/' || d.id::text || '/')) = 'apps/' || a.slug || '/' || d.id::text || '/'
+           OR EXISTS (SELECT 1 FROM deployment_sidecar_layers l WHERE l.deployment_id = d.id AND l.storage_key = $2::text))
 ) OR EXISTS (
     SELECT 1 FROM project_environment_clone_layer_pins p
     JOIN project_environment_clone_operations op ON op.id = p.operation_id
     JOIN apps a ON a.id = p.app_id
-    WHERE p.storage_key = $1::text AND a.status <> 'deleted'
+    WHERE p.storage_key = $2::text AND a.status <> 'deleted'
       AND op.status NOT IN ('ready', 'compensated')
 ) OR EXISTS (
     SELECT 1 FROM jobs j WHERE j.status<>'deleted' AND j.image_ref LIKE 'gregale-source://%'
-        AND j.image_materialization_status='ready' AND j.image_storage_key=$1::text
+        AND j.image_materialization_status='ready' AND j.image_storage_key=$2::text
 ) OR EXISTS (
     SELECT 1 FROM job_runs r WHERE r.image_ref_snapshot LIKE 'gregale-source://%'
-        AND r.aggregate_status IN ('queued','running') AND r.image_storage_key_snapshot=$1::text
+        AND r.aggregate_status IN ('queued','running') AND r.image_storage_key_snapshot=$2::text
  ) OR EXISTS (
  SELECT 1 FROM environment_build_artifact_pins p JOIN source_build_rootfs f ON f.id=p.artifact_id
- WHERE f.input_snapshot->>'storage_key'=$1::text
- ) OR EXISTS (SELECT 1 FROM environment_recovery_retained_keys p WHERE p.storage_key=$1::text) AS referenced
+ WHERE f.input_snapshot->>'storage_key'=$2::text
+ ) OR EXISTS (SELECT 1 FROM environment_recovery_retained_keys p WHERE p.storage_key=$2::text) AS referenced
 `
 
-func (q *Queries) LayerArtifactHasReferences(ctx context.Context, db DBTX, storageKey string) (pgtype.Bool, error) {
-	row := db.QueryRow(ctx, layerArtifactHasReferences, storageKey)
+type LayerArtifactHasReferencesParams struct {
+	RollbackGenerations int32
+	StorageKey          string
+}
+
+// A superseded deployment among the newest rollback_generations live or
+// superseded deployments of its app and scope is a rollback target, whose
+// cold boot needs its layers whatever state its snapshots are in (Hunt 21
+// H21-1).
+func (q *Queries) LayerArtifactHasReferences(ctx context.Context, db DBTX, arg LayerArtifactHasReferencesParams) (pgtype.Bool, error) {
+	row := db.QueryRow(ctx, layerArtifactHasReferences, arg.RollbackGenerations, arg.StorageKey)
 	var referenced pgtype.Bool
 	err := row.Scan(&referenced)
 	return referenced, err
@@ -46102,7 +46133,7 @@ const listEnabledTriggers = `-- name: ListEnabledTriggers :many
 select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id, queue_binding_scope, queue_binding_environment_id,
        batch_size_max, batch_window_ms, max_attempts,
        cron_id, source, payload_max_bytes, broker_poison_strategy,
-       filter_criteria, delivery,
+       filter_criteria, delivery, agent,
        created_at, updated_at
 from triggers where enabled = true AND NOT environment_workload_admission_retired(app_id,queue_binding_scope)
 AND NOT (kind IN ('kafka','nats','redis_streams','sqs_compat')
@@ -46129,6 +46160,7 @@ type ListEnabledTriggersRow struct {
 	BrokerPoisonStrategy      string
 	FilterCriteria            []byte
 	Delivery                  string
+	Agent                     pgtype.Text
 	CreatedAt                 pgtype.Timestamptz
 	UpdatedAt                 pgtype.Timestamptz
 }
@@ -46173,6 +46205,7 @@ func (q *Queries) ListEnabledTriggers(ctx context.Context, db DBTX) ([]ListEnabl
 			&i.BrokerPoisonStrategy,
 			&i.FilterCriteria,
 			&i.Delivery,
+			&i.Agent,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -52012,7 +52045,7 @@ const listTriggersForApp = `-- name: ListTriggersForApp :many
 select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id, queue_binding_scope, queue_binding_environment_id,
        batch_size_max, batch_window_ms, max_attempts,
        cron_id, source, payload_max_bytes, broker_poison_strategy,
-       filter_criteria, delivery,
+       filter_criteria, delivery, agent,
        created_at, updated_at
 from triggers where app_id = $1 order by created_at desc
 `
@@ -52037,6 +52070,7 @@ type ListTriggersForAppRow struct {
 	BrokerPoisonStrategy      string
 	FilterCriteria            []byte
 	Delivery                  string
+	Agent                     pgtype.Text
 	CreatedAt                 pgtype.Timestamptz
 	UpdatedAt                 pgtype.Timestamptz
 }
@@ -52073,6 +52107,7 @@ func (q *Queries) ListTriggersForApp(ctx context.Context, db DBTX, appID pgtype.
 			&i.BrokerPoisonStrategy,
 			&i.FilterCriteria,
 			&i.Delivery,
+			&i.Agent,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -52964,7 +52999,7 @@ func (q *Queries) LiveServiceProxyInstanceRowsByHostIP(ctx context.Context, db D
 }
 
 const liveSnapshotsForTier = `-- name: LiveSnapshotsForTier :many
-SELECT id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token, recovery_generation, cpu_template, cpu_model FROM snapshots WHERE deployment_id=$1::uuid AND tier=$2::text AND stale=false
+SELECT id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token, recovery_generation, cpu_template, cpu_model, stale_at FROM snapshots WHERE deployment_id=$1::uuid AND tier=$2::text AND stale=false
 AND recovery_generation=(SELECT snapshot_recovery_generation FROM deployments WHERE id=$1::uuid)
 ORDER BY created_at DESC
 `
@@ -53000,6 +53035,7 @@ func (q *Queries) LiveSnapshotsForTier(ctx context.Context, db DBTX, arg LiveSna
 			&i.RecoveryGeneration,
 			&i.CpuTemplate,
 			&i.CpuModel,
+			&i.StaleAt,
 		); err != nil {
 			return nil, err
 		}
@@ -59172,6 +59208,35 @@ func (q *Queries) ManagedPostgresDueBindings(ctx context.Context, db DBTX, arg M
 		return nil, err
 	}
 	return items, nil
+}
+
+const managedPostgresFleetTotals = `-- name: ManagedPostgresFleetTotals :one
+SELECT
+ ((SELECT count(*) FROM managed_postgres_databases d WHERE d.state<>'deleted')
+  + (SELECT count(*) FROM project_environment_clone_postgres_snapshot_restores r WHERE r.state<>'deleted' AND r.adopted_database_id IS NULL))::bigint AS databases,
+ (SELECT COALESCE(sum(c.cost),0) FROM managed_postgres_databases d CROSS JOIN LATERAL (
+   SELECT COALESCE(sum(u.cost_millicents),0) AS cost FROM managed_postgres_usage u
+   WHERE u.database_id=d.id AND u.window_from>=$1::timestamptz AND u.window_from<$2::timestamptz) c)::bigint AS cost_millicents
+`
+
+type ManagedPostgresFleetTotalsParams struct {
+	PeriodStart pgtype.Timestamptz
+	PeriodEnd   pgtype.Timestamptz
+}
+
+type ManagedPostgresFleetTotalsRow struct {
+	Databases      int64
+	CostMillicents int64
+}
+
+// ADR-20261028103115: the fleet database cap counts what reservation limits
+// count; the spend breaker sums the month through the usage primary key, one
+// index range per database, so the ledger's growth never forces a full scan.
+func (q *Queries) ManagedPostgresFleetTotals(ctx context.Context, db DBTX, arg ManagedPostgresFleetTotalsParams) (ManagedPostgresFleetTotalsRow, error) {
+	row := db.QueryRow(ctx, managedPostgresFleetTotals, arg.PeriodStart, arg.PeriodEnd)
+	var i ManagedPostgresFleetTotalsRow
+	err := row.Scan(&i.Databases, &i.CostMillicents)
+	return i, err
 }
 
 const managedPostgresPersonalBindingReference = `-- name: ManagedPostgresPersonalBindingReference :one
@@ -71743,7 +71808,7 @@ payload_max_bytes=coalesce($6::integer,payload_max_bytes),
 broker_poison_strategy=coalesce($7::text,broker_poison_strategy),
 filter_criteria=coalesce($8::jsonb,filter_criteria),
 source=coalesce($9::text,source)
-where id=$10 and queue_binding_id is null returning id, account_id, app_id, kind, slug, enabled, config, batch_size_max, batch_window_ms, max_attempts, cron_id, source, created_at, updated_at, payload_max_bytes, broker_poison_strategy, filter_criteria, queue_binding_id, queue_binding_scope, queue_binding_environment_id, delivery
+where id=$10 and queue_binding_id is null returning id, account_id, app_id, kind, slug, enabled, config, batch_size_max, batch_window_ms, max_attempts, cron_id, source, created_at, updated_at, payload_max_bytes, broker_poison_strategy, filter_criteria, queue_binding_id, queue_binding_scope, queue_binding_environment_id, delivery, agent
 `
 
 type PublicPatchTriggerParams struct {
@@ -71795,6 +71860,7 @@ func (q *Queries) PublicPatchTrigger(ctx context.Context, db DBTX, arg PublicPat
 		&i.QueueBindingScope,
 		&i.QueueBindingEnvironmentID,
 		&i.Delivery,
+		&i.Agent,
 	)
 	return i, err
 }
@@ -72681,6 +72747,26 @@ func (q *Queries) PutGitLabOAuthConnection(ctx context.Context, db DBTX, arg Put
 	return i, err
 }
 
+const putRuntimeSecretSignature = `-- name: PutRuntimeSecretSignature :exec
+INSERT INTO runtime_secret_signatures (ciphertext_sha256, signature)
+VALUES ($1::bytea, $2::bytea)
+ON CONFLICT (ciphertext_sha256) DO UPDATE SET signature = EXCLUDED.signature, created_at = now()
+WHERE runtime_secret_signatures.signature IS DISTINCT FROM EXCLUDED.signature
+`
+
+type PutRuntimeSecretSignatureParams struct {
+	CiphertextSha256 []byte
+	Signature        []byte
+}
+
+// ADR 20261028161502 amendment 1: a runtime secret envelope's writer
+// signature, by its SHA-256. A signature is deterministic for one envelope and
+// key, so writing it again replaces only a row that held something else.
+func (q *Queries) PutRuntimeSecretSignature(ctx context.Context, db DBTX, arg PutRuntimeSecretSignatureParams) error {
+	_, err := db.Exec(ctx, putRuntimeSecretSignature, arg.CiphertextSha256, arg.Signature)
+	return err
+}
+
 const putTCPListenerTLSObservation = `-- name: PutTCPListenerTLSObservation :execrows
 INSERT INTO app_tcp_listener_tls_observations
     (listener_id, edge_id, hostname, intent_updated_at, observed_at, ready, not_after)
@@ -72841,6 +72927,78 @@ func (q *Queries) QueueBindingHistoryByID(ctx context.Context, db DBTX, arg Queu
 		&i.DeploymentScope,
 		&i.EnvironmentID,
 		&i.OrgID,
+	)
+	return i, err
+}
+
+const queueBindingTelemetry = `-- name: QueueBindingTelemetry :one
+with b as (
+  select id, account_id, queue_name, deployment_scope from queue_bindings
+  where id=$3::uuid and app_id=$1::uuid
+), owned as (
+  select i.state, i.lease_expires_at from invocations i, b
+  where i.app_id=$1::uuid and i.account_id=b.account_id and i.source='queue'
+    and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
+    and (i.queue_binding_id=b.id or (b.deployment_scope='' and i.queue_binding_id is null and i.queue_name=b.queue_name))
+)
+select
+  ((select count(*) from (
+     select 1 from invocations i, b
+     where i.app_id=$1::uuid and i.queue_binding_id=b.id and i.account_id=b.account_id
+       and i.source='queue' and i.state in ('pending','dispatching')
+       and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
+     limit $2::integer) own)
+  + (select count(*) from (
+     select 1 from invocations i, b
+     where b.deployment_scope='' and i.app_id=$1::uuid and i.queue_binding_id is null
+       and i.queue_name=b.queue_name and i.account_id=b.account_id
+       and i.source='queue' and i.state in ('pending','dispatching')
+     limit $2::integer) legacy))::bigint as depth,
+  (select count(*) from (
+     select 1 from owned where state='dispatching' and lease_expires_at > now()
+     limit $2::integer) leased)::bigint as in_flight,
+  (select count(*) from (
+     select 1 from owned where state='dead_letter'
+     limit $2::integer) dead)::bigint as dead_letter,
+  (select min(first.created_at) from (
+     (select i.created_at from invocations i, b
+      where i.app_id=$1::uuid and i.queue_binding_id=b.id and i.account_id=b.account_id
+        and i.source='queue' and i.state='pending'
+        and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
+      order by i.due_at, i.created_at, i.id limit 1)
+     union all
+     (select i.created_at from invocations i, b
+      where b.deployment_scope='' and i.app_id=$1::uuid and i.queue_binding_id is null
+        and i.queue_name=b.queue_name and i.account_id=b.account_id and i.source='queue' and i.state='pending'
+      order by i.due_at, i.created_at, i.id limit 1)
+  ) first)::timestamptz as oldest_pending_at
+`
+
+type QueueBindingTelemetryParams struct {
+	AppID     pgtype.UUID
+	RowLimit  int32
+	BindingID pgtype.UUID
+}
+
+type QueueBindingTelemetryRow struct {
+	Depth           int64
+	InFlight        int64
+	DeadLetter      int64
+	OldestPendingAt pgtype.Timestamptz
+}
+
+// QueueStateForBinding's figures for gauges and alerts without a
+// backlog-sized read: each count stops at row_limit, and the oldest pending
+// message is the first one due in the lease indexes
+// (ADR-20261018101500 amendment 2026-10-27).
+func (q *Queries) QueueBindingTelemetry(ctx context.Context, db DBTX, arg QueueBindingTelemetryParams) (QueueBindingTelemetryRow, error) {
+	row := db.QueryRow(ctx, queueBindingTelemetry, arg.AppID, arg.RowLimit, arg.BindingID)
+	var i QueueBindingTelemetryRow
+	err := row.Scan(
+		&i.Depth,
+		&i.InFlight,
+		&i.DeadLetter,
+		&i.OldestPendingAt,
 	)
 	return i, err
 }
@@ -73138,7 +73296,7 @@ insert into triggers (account_id,app_id,queue_binding_id,kind,source,slug,enable
 batch_size_max,batch_window_ms,max_attempts,payload_max_bytes,broker_poison_strategy)
 values ($1,$2,$3::uuid,'queue','queue',$4,
 $5,$6::jsonb,$7,$8,
-$9,$10,'commit') returning id, account_id, app_id, kind, slug, enabled, config, batch_size_max, batch_window_ms, max_attempts, cron_id, source, created_at, updated_at, payload_max_bytes, broker_poison_strategy, filter_criteria, queue_binding_id, queue_binding_scope, queue_binding_environment_id, delivery
+$9,$10,'commit') returning id, account_id, app_id, kind, slug, enabled, config, batch_size_max, batch_window_ms, max_attempts, cron_id, source, created_at, updated_at, payload_max_bytes, broker_poison_strategy, filter_criteria, queue_binding_id, queue_binding_scope, queue_binding_environment_id, delivery, agent
 `
 
 type QueueConsumerCreateTriggerParams struct {
@@ -73190,6 +73348,7 @@ func (q *Queries) QueueConsumerCreateTrigger(ctx context.Context, db DBTX, arg Q
 		&i.QueueBindingScope,
 		&i.QueueBindingEnvironmentID,
 		&i.Delivery,
+		&i.Agent,
 	)
 	return i, err
 }
@@ -77297,18 +77456,19 @@ func (q *Queries) ReadDomainTrafficVerificationOwner(ctx context.Context, db DBT
 }
 
 const readEdgeRuleTrafficAccount = `-- name: ReadEdgeRuleTrafficAccount :one
-SELECT account_id,kind FROM edge_rules WHERE id = $1::uuid
+SELECT account_id,kind,match_host FROM edge_rules WHERE id = $1::uuid
 `
 
 type ReadEdgeRuleTrafficAccountRow struct {
 	AccountID pgtype.UUID
 	Kind      string
+	MatchHost string
 }
 
 func (q *Queries) ReadEdgeRuleTrafficAccount(ctx context.Context, db DBTX, ruleID pgtype.UUID) (ReadEdgeRuleTrafficAccountRow, error) {
 	row := db.QueryRow(ctx, readEdgeRuleTrafficAccount, ruleID)
 	var i ReadEdgeRuleTrafficAccountRow
-	err := row.Scan(&i.AccountID, &i.Kind)
+	err := row.Scan(&i.AccountID, &i.Kind, &i.MatchHost)
 	return i, err
 }
 
@@ -83045,20 +83205,81 @@ func (q *Queries) ReadPublicRoutingViewCanaries(ctx context.Context, db DBTX, ap
 	return items, nil
 }
 
+const readPublicRoutingViewLive = `-- name: ReadPublicRoutingViewLive :many
+SELECT app_id, id, scope, traffic_percent, pin_expires_at FROM (
+    SELECT d.app_id, d.id, d.scope, d.traffic_percent, p.expires_at AS pin_expires_at,
+           row_number() OVER (PARTITION BY d.app_id ORDER BY d.id) AS position
+    FROM deployments d LEFT JOIN deployment_revision_pins p ON p.deployment_id = d.id
+    WHERE d.app_id = ANY($1::uuid[]) AND d.status = 'live' AND d.deleted_at IS NULL
+) ranked WHERE position <= $2::integer
+ORDER BY app_id, id
+`
+
+type ReadPublicRoutingViewLiveParams struct {
+	AppIds   []pgtype.UUID
+	RowLimit int32
+}
+
+type ReadPublicRoutingViewLiveRow struct {
+	AppID          pgtype.UUID
+	ID             pgtype.UUID
+	Scope          string
+	TrafficPercent int32
+	PinExpiresAt   pgtype.Timestamptz
+}
+
+// Live deployments in every scope, for host and revision pins
+// (ReadPublicRoutingHostPin, ReadPublicRoutingRevision). row_limit + 1 rows per
+// app tell the reader the list was cut.
+func (q *Queries) ReadPublicRoutingViewLive(ctx context.Context, db DBTX, arg ReadPublicRoutingViewLiveParams) ([]ReadPublicRoutingViewLiveRow, error) {
+	rows, err := db.Query(ctx, readPublicRoutingViewLive, arg.AppIds, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadPublicRoutingViewLiveRow{}
+	for rows.Next() {
+		var i ReadPublicRoutingViewLiveRow
+		if err := rows.Scan(
+			&i.AppID,
+			&i.ID,
+			&i.Scope,
+			&i.TrafficPercent,
+			&i.PinExpiresAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const readPublicRoutingViewOwners = `-- name: ReadPublicRoutingViewOwners :many
-SELECT id, account_id, project_id FROM apps
+SELECT id, account_id, project_id,
+       (coalesce(manifest->>'revision_pin_ttl_seconds', '0') ~ '^-?[0-9]{1,9}$')::boolean AS revision_pin_ttl_valid,
+       (CASE WHEN coalesce(manifest->>'revision_pin_ttl_seconds', '0') ~ '^-?[0-9]{1,9}$'
+             THEN coalesce(manifest->>'revision_pin_ttl_seconds', '0')::integer > 0 ELSE false END)::boolean AS revision_pins
+FROM apps
 WHERE id = ANY($1::uuid[]) AND status <> 'deleted' AND deleted_at IS NULL
 `
 
 type ReadPublicRoutingViewOwnersRow struct {
-	ID        pgtype.UUID
-	AccountID pgtype.UUID
-	ProjectID pgtype.UUID
+	ID                  pgtype.UUID
+	AccountID           pgtype.UUID
+	ProjectID           pgtype.UUID
+	RevisionPinTtlValid bool
+	RevisionPins        bool
 }
 
 // ADR-20261027085556: a gateway's public routing view reads every app it
 // tracks in one repeatable-read snapshot. Each query below returns, for many
 // apps at once, the rows its per-request counterpart above reads for one.
+// revision_pins is ReadPublicRoutingRevision's manifest condition.
+// revision_pin_ttl_valid is false when the stored value is not an integer, which
+// the per-request read fails on; such an app's revision pins keep that read.
 func (q *Queries) ReadPublicRoutingViewOwners(ctx context.Context, db DBTX, appIds []pgtype.UUID) ([]ReadPublicRoutingViewOwnersRow, error) {
 	rows, err := db.Query(ctx, readPublicRoutingViewOwners, appIds)
 	if err != nil {
@@ -83068,7 +83289,13 @@ func (q *Queries) ReadPublicRoutingViewOwners(ctx context.Context, db DBTX, appI
 	items := []ReadPublicRoutingViewOwnersRow{}
 	for rows.Next() {
 		var i ReadPublicRoutingViewOwnersRow
-		if err := rows.Scan(&i.ID, &i.AccountID, &i.ProjectID); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.ProjectID,
+			&i.RevisionPinTtlValid,
+			&i.RevisionPins,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -83080,24 +83307,28 @@ func (q *Queries) ReadPublicRoutingViewOwners(ctx context.Context, db DBTX, appI
 }
 
 const readPublicRoutingViewReleases = `-- name: ReadPublicRoutingViewReleases :many
-SELECT a.id AS app_id, rs.id, rs.environment_slug, rs.active, member.deployment_id,
-       EXISTS (
-           SELECT 1 FROM deployments d WHERE d.id = member.deployment_id AND d.app_id = member.app_id
-             AND d.scope = rs.environment_slug AND d.status = 'live' AND d.deleted_at IS NULL
-             AND (d.traffic_percent > 0 OR EXISTS (SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id = d.id AND p.expires_at > now())
-                  OR EXISTS (SELECT 1 FROM project_release_members retained JOIN project_release_sets retained_set ON retained_set.id = retained.release_id
-                             WHERE retained.deployment_id = d.id AND retained.app_id = d.app_id AND (retained_set.active OR retained_set.expires_at > now())))
-       )::boolean AS target_live
-FROM apps a JOIN project_release_sets rs ON rs.project_id = a.project_id AND rs.account_id = a.account_id
-LEFT JOIN project_release_members member ON member.release_id = rs.id AND member.app_id = a.id
-WHERE a.id = ANY($1::uuid[]) AND a.status <> 'deleted' AND a.deleted_at IS NULL
-  AND (rs.active OR (rs.id = ANY($2::uuid[]) AND rs.expires_at > now()))
-ORDER BY a.id, rs.environment_slug, rs.created_at DESC, rs.id
+SELECT app_id, id, environment_slug, active, expires_at, deployment_id, target_live FROM (
+    SELECT a.id AS app_id, rs.id, rs.environment_slug, rs.active, rs.expires_at, rs.created_at, member.deployment_id,
+           EXISTS (
+               SELECT 1 FROM deployments d WHERE d.id = member.deployment_id AND d.app_id = member.app_id
+                 AND d.scope = rs.environment_slug AND d.status = 'live' AND d.deleted_at IS NULL
+                 AND (d.traffic_percent > 0 OR EXISTS (SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id = d.id AND p.expires_at > now())
+                      OR EXISTS (SELECT 1 FROM project_release_members retained JOIN project_release_sets retained_set ON retained_set.id = retained.release_id
+                                 WHERE retained.deployment_id = d.id AND retained.app_id = d.app_id AND (retained_set.active OR retained_set.expires_at > now())))
+           )::boolean AS target_live,
+           row_number() OVER (PARTITION BY a.id ORDER BY rs.active DESC, (rs.id = ANY($1::uuid[])) DESC, rs.created_at DESC, rs.id) AS position
+    FROM apps a JOIN project_release_sets rs ON rs.project_id = a.project_id AND rs.account_id = a.account_id
+    LEFT JOIN project_release_members member ON member.release_id = rs.id AND member.app_id = a.id
+    WHERE a.id = ANY($2::uuid[]) AND a.status <> 'deleted' AND a.deleted_at IS NULL
+      AND (rs.active OR rs.expires_at > now())
+) ranked WHERE position <= $3::integer
+ORDER BY app_id, environment_slug, created_at DESC, id
 `
 
 type ReadPublicRoutingViewReleasesParams struct {
-	AppIds     []pgtype.UUID
 	ReleaseIds []pgtype.UUID
+	AppIds     []pgtype.UUID
+	RowLimit   int32
 }
 
 type ReadPublicRoutingViewReleasesRow struct {
@@ -83105,15 +83336,17 @@ type ReadPublicRoutingViewReleasesRow struct {
 	ID              pgtype.UUID
 	EnvironmentSlug string
 	Active          bool
+	ExpiresAt       pgtype.Timestamptz
 	DeploymentID    pgtype.UUID
 	TargetLive      bool
 }
 
-// Rows of ReadPublicRoutingRelease for each app: every active graph, and the
-// named graphs (a running canary's) while they are still usable. A graph's
-// target scope is its environment, the scope the per-request read filters on.
+// Rows of ReadPublicRoutingRelease for each app: every active graph and every
+// graph still usable by a release pin, the named graphs (a running canary's)
+// first. A graph's target scope is its environment, the scope the per-request
+// read filters on. row_limit + 1 rows per app tell the reader the list was cut.
 func (q *Queries) ReadPublicRoutingViewReleases(ctx context.Context, db DBTX, arg ReadPublicRoutingViewReleasesParams) ([]ReadPublicRoutingViewReleasesRow, error) {
-	rows, err := db.Query(ctx, readPublicRoutingViewReleases, arg.AppIds, arg.ReleaseIds)
+	rows, err := db.Query(ctx, readPublicRoutingViewReleases, arg.ReleaseIds, arg.AppIds, arg.RowLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -83126,6 +83359,7 @@ func (q *Queries) ReadPublicRoutingViewReleases(ctx context.Context, db DBTX, ar
 			&i.ID,
 			&i.EnvironmentSlug,
 			&i.Active,
+			&i.ExpiresAt,
 			&i.DeploymentID,
 			&i.TargetLive,
 		); err != nil {
@@ -83376,7 +83610,7 @@ func (q *Queries) ReadRouteHealthHistoryEntry(ctx context.Context, db DBTX, arg 
 }
 
 const readRouteHealthNotificationState = `-- name: ReadRouteHealthNotificationState :one
-SELECT context_key, status, COALESCE(blocked_decision_id::text, '')::text AS blocked_decision_id
+SELECT context_key, status, COALESCE(blocked_decision_id::text, '')::text AS blocked_decision_id, updated_at
 FROM route_health_notification_state WHERE deployment_id = $1::text::uuid
  AND app_id = $2::text::uuid AND account_id = $3::text::uuid
 `
@@ -83391,12 +83625,20 @@ type ReadRouteHealthNotificationStateRow struct {
 	ContextKey        string
 	Status            string
 	BlockedDecisionID string
+	UpdatedAt         pgtype.Timestamptz
 }
 
+// updated_at is when the status began; a hold keeps its first blocking
+// decision's time while its context lasts (ADR-20261028110044).
 func (q *Queries) ReadRouteHealthNotificationState(ctx context.Context, db DBTX, arg ReadRouteHealthNotificationStateParams) (ReadRouteHealthNotificationStateRow, error) {
 	row := db.QueryRow(ctx, readRouteHealthNotificationState, arg.DeploymentID, arg.AppID, arg.AccountID)
 	var i ReadRouteHealthNotificationStateRow
-	err := row.Scan(&i.ContextKey, &i.Status, &i.BlockedDecisionID)
+	err := row.Scan(
+		&i.ContextKey,
+		&i.Status,
+		&i.BlockedDecisionID,
+		&i.UpdatedAt,
+	)
 	return i, err
 }
 
@@ -83921,6 +84163,36 @@ func (q *Queries) ReadRuntimeSecretDeliveryVersions(ctx context.Context, db DBTX
 	for rows.Next() {
 		var i ReadRuntimeSecretDeliveryVersionsRow
 		if err := rows.Scan(&i.Key, &i.DeliveryVersion); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const readRuntimeSecretSignatures = `-- name: ReadRuntimeSecretSignatures :many
+SELECT ciphertext_sha256, signature FROM runtime_secret_signatures
+WHERE ciphertext_sha256 = ANY($1::bytea[])
+`
+
+type ReadRuntimeSecretSignaturesRow struct {
+	CiphertextSha256 []byte
+	Signature        []byte
+}
+
+func (q *Queries) ReadRuntimeSecretSignatures(ctx context.Context, db DBTX, digests [][]byte) ([]ReadRuntimeSecretSignaturesRow, error) {
+	rows, err := db.Query(ctx, readRuntimeSecretSignatures, digests)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadRuntimeSecretSignaturesRow{}
+	for rows.Next() {
+		var i ReadRuntimeSecretSignaturesRow
+		if err := rows.Scan(&i.CiphertextSha256, &i.Signature); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -84575,7 +84847,7 @@ func (q *Queries) ReadServicePolicyActiveRelease(ctx context.Context, db DBTX, a
 }
 
 const readServicePolicyAppByID = `-- name: ReadServicePolicyAppByID :one
-SELECT id, account_id, slug, workload_name, status, project_id, preview_of_slug,
+SELECT id, account_id, org_id, slug, workload_name, status, project_id, preview_of_slug,
        preview_pr_number, preview_pr_state, preview_expires_at, app_protocol, websocket_enabled,
        jsonb_strip_nulls(jsonb_build_object(
            'service_bindings', manifest->'service_bindings',
@@ -84591,6 +84863,7 @@ FROM apps WHERE id = $1::uuid
 type ReadServicePolicyAppByIDRow struct {
 	ID               pgtype.UUID
 	AccountID        pgtype.UUID
+	OrgID            pgtype.UUID
 	Slug             string
 	WorkloadName     string
 	Status           string
@@ -84605,12 +84878,14 @@ type ReadServicePolicyAppByIDRow struct {
 }
 
 // ADR-570: minimal credential-free projection for one read-only service-policy snapshot.
+// org_id is the tenant boundary SameAppResourceOwner checks (Hunt 23 H23-1).
 func (q *Queries) ReadServicePolicyAppByID(ctx context.Context, db DBTX, id pgtype.UUID) (ReadServicePolicyAppByIDRow, error) {
 	row := db.QueryRow(ctx, readServicePolicyAppByID, id)
 	var i ReadServicePolicyAppByIDRow
 	err := row.Scan(
 		&i.ID,
 		&i.AccountID,
+		&i.OrgID,
 		&i.Slug,
 		&i.WorkloadName,
 		&i.Status,
@@ -84627,7 +84902,7 @@ func (q *Queries) ReadServicePolicyAppByID(ctx context.Context, db DBTX, id pgty
 }
 
 const readServicePolicyAppBySlug = `-- name: ReadServicePolicyAppBySlug :one
-SELECT id, account_id, slug, workload_name, status, project_id, preview_of_slug,
+SELECT id, account_id, org_id, slug, workload_name, status, project_id, preview_of_slug,
        preview_pr_number, preview_pr_state, preview_expires_at, app_protocol, websocket_enabled,
        jsonb_strip_nulls(jsonb_build_object(
            'service_bindings', manifest->'service_bindings',
@@ -84643,6 +84918,7 @@ FROM apps WHERE slug = $1::text AND status <> 'deleted'
 type ReadServicePolicyAppBySlugRow struct {
 	ID               pgtype.UUID
 	AccountID        pgtype.UUID
+	OrgID            pgtype.UUID
 	Slug             string
 	WorkloadName     string
 	Status           string
@@ -84662,6 +84938,7 @@ func (q *Queries) ReadServicePolicyAppBySlug(ctx context.Context, db DBTX, slug 
 	err := row.Scan(
 		&i.ID,
 		&i.AccountID,
+		&i.OrgID,
 		&i.Slug,
 		&i.WorkloadName,
 		&i.Status,
@@ -84733,72 +85010,6 @@ func (q *Queries) ReadServicePolicyDeploymentWeights(ctx context.Context, db DBT
 		return nil, err
 	}
 	return items, nil
-}
-
-const readServicePolicyPreviewApp = `-- name: ReadServicePolicyPreviewApp :one
-SELECT id, account_id, slug, workload_name, status, project_id, preview_of_slug,
-       preview_pr_number, preview_pr_state, preview_expires_at, app_protocol, websocket_enabled,
-       jsonb_strip_nulls(jsonb_build_object(
-           'service_bindings', manifest->'service_bindings',
-           'service_reliability', manifest->'service_reliability',
-           'service_binding_policy', manifest->'service_binding_policy',
-           'service_binding_transport', manifest->'service_binding_transport',
-           'preview_service_calls_policy', manifest->'preview_service_calls_policy',
-           'allowed_service_callers', manifest->'allowed_service_callers',
-           'allowed_service_call_scopes', manifest->'allowed_service_call_scopes'))::jsonb AS manifest
-FROM apps WHERE account_id = $1::uuid AND project_id = $2::uuid
-  AND preview_pr_number = $3::integer
-  AND translate(lower(workload_name), '_.', '--') = translate(lower($4::text), '_.', '--')
-  AND preview_of_slug IS NOT NULL AND status <> 'deleted'
-`
-
-type ReadServicePolicyPreviewAppParams struct {
-	AccountID       pgtype.UUID
-	ProjectID       pgtype.UUID
-	PreviewPrNumber int32
-	WorkloadName    string
-}
-
-type ReadServicePolicyPreviewAppRow struct {
-	ID               pgtype.UUID
-	AccountID        pgtype.UUID
-	Slug             string
-	WorkloadName     string
-	Status           string
-	ProjectID        pgtype.UUID
-	PreviewOfSlug    pgtype.Text
-	PreviewPrNumber  pgtype.Int4
-	PreviewPrState   pgtype.Text
-	PreviewExpiresAt pgtype.Timestamptz
-	AppProtocol      string
-	WebsocketEnabled bool
-	Manifest         []byte
-}
-
-func (q *Queries) ReadServicePolicyPreviewApp(ctx context.Context, db DBTX, arg ReadServicePolicyPreviewAppParams) (ReadServicePolicyPreviewAppRow, error) {
-	row := db.QueryRow(ctx, readServicePolicyPreviewApp,
-		arg.AccountID,
-		arg.ProjectID,
-		arg.PreviewPrNumber,
-		arg.WorkloadName,
-	)
-	var i ReadServicePolicyPreviewAppRow
-	err := row.Scan(
-		&i.ID,
-		&i.AccountID,
-		&i.Slug,
-		&i.WorkloadName,
-		&i.Status,
-		&i.ProjectID,
-		&i.PreviewOfSlug,
-		&i.PreviewPrNumber,
-		&i.PreviewPrState,
-		&i.PreviewExpiresAt,
-		&i.AppProtocol,
-		&i.WebsocketEnabled,
-		&i.Manifest,
-	)
-	return i, err
 }
 
 const readServicePolicyProject = `-- name: ReadServicePolicyProject :one
@@ -84874,7 +85085,7 @@ func (q *Queries) ReadServicePolicyReleaseCandidates(ctx context.Context, db DBT
 }
 
 const readServicePolicyTestApp = `-- name: ReadServicePolicyTestApp :one
-SELECT id, account_id, slug, workload_name, status, project_id, preview_of_slug,
+SELECT id, account_id, org_id, slug, workload_name, status, project_id, preview_of_slug,
        preview_pr_number, preview_pr_state, preview_expires_at, app_protocol, websocket_enabled,
        jsonb_strip_nulls(jsonb_build_object(
            'service_bindings', manifest->'service_bindings',
@@ -84898,6 +85109,7 @@ type ReadServicePolicyTestAppParams struct {
 type ReadServicePolicyTestAppRow struct {
 	ID               pgtype.UUID
 	AccountID        pgtype.UUID
+	OrgID            pgtype.UUID
 	Slug             string
 	WorkloadName     string
 	Status           string
@@ -84917,6 +85129,7 @@ func (q *Queries) ReadServicePolicyTestApp(ctx context.Context, db DBTX, arg Rea
 	err := row.Scan(
 		&i.ID,
 		&i.AccountID,
+		&i.OrgID,
 		&i.Slug,
 		&i.WorkloadName,
 		&i.Status,
@@ -84961,6 +85174,10 @@ WITH metadata AS (
         a.account_id::text AS account_id, a.slug AS app_slug, a.status AS app_status,
         d.status AS deployment_status, s.fc_version, s.mem_bytes, s.disk_bytes,
         s.storage_key, s.stale, s.delete_pending, s.created_at, s.tier,
+        -- Stale retention counts from the stale mark, never from before the
+        -- row's creation; rows marked before stale_at existed count from
+        -- their creation (Hunt 21 H21-2).
+        GREATEST(s.stale_at, s.created_at)::timestamptz AS stale_since,
         COALESCE(NULLIF(d.scope,''),'default')::text AS scope,
         COALESCE(runtime_owner.environment_id::text,legacy.id::text,'')::text AS environment_id,
         COALESCE(d.rootfs_key,'')::text AS deployment_rootfs_key,
@@ -84987,9 +85204,9 @@ WITH metadata AS (
         AND legacy.account_id=a.account_id AND legacy.project_id=a.project_id AND legacy.slug=d.scope
         AND legacy.created_at<=d.created_at
 )
-SELECT id, deployment_id, app_id, account_id, app_slug, app_status, deployment_status, fc_version, mem_bytes, disk_bytes, storage_key, stale, delete_pending, created_at, tier, scope, environment_id, deployment_rootfs_key, warm_snapshot_enabled, runtime_owner_invalid FROM metadata
+SELECT id, deployment_id, app_id, account_id, app_slug, app_status, deployment_status, fc_version, mem_bytes, disk_bytes, storage_key, stale, delete_pending, created_at, tier, stale_since, scope, environment_id, deployment_rootfs_key, warm_snapshot_enabled, runtime_owner_invalid FROM metadata
 WHERE ($1::text='active' AND (NOT stale OR runtime_owner_invalid))
-    OR ($1::text='stale' AND stale AND created_at<now()-$2::bigint*interval '1 second')
+    OR ($1::text='stale' AND stale AND stale_since<now()-$2::bigint*interval '1 second')
     OR ($1::text='pending' AND delete_pending)
 ORDER BY CASE WHEN $1::text='active' THEN created_at END DESC,
     CASE WHEN $1::text<>'active' THEN created_at END ASC, id ASC
@@ -85017,6 +85234,7 @@ type ReadSnapshotGarbageCollectionRow struct {
 	DeletePending       bool
 	CreatedAt           pgtype.Timestamptz
 	Tier                string
+	StaleSince          pgtype.Timestamptz
 	Scope               string
 	EnvironmentID       string
 	DeploymentRootfsKey string
@@ -85049,6 +85267,7 @@ func (q *Queries) ReadSnapshotGarbageCollection(ctx context.Context, db DBTX, ar
 			&i.DeletePending,
 			&i.CreatedAt,
 			&i.Tier,
+			&i.StaleSince,
 			&i.Scope,
 			&i.EnvironmentID,
 			&i.DeploymentRootfsKey,
@@ -85217,6 +85436,53 @@ func (q *Queries) ReadTrafficAliasHostnameConflict(ctx context.Context, db DBTX,
 	return conflict, err
 }
 
+const readTrafficAppBindingHosts = `-- name: ReadTrafficAppBindingHosts :many
+SELECT host::text FROM (
+    SELECT lower(a.slug)||$1::text AS host FROM apps a
+    WHERE a.id=$2::uuid OR ($2::uuid IS NULL AND a.account_id=$3::uuid)
+    UNION
+    SELECT lower('tag-'||z.name||'-'||replace(a.id::text,'-',''))||$1::text
+    FROM deployment_aliases z JOIN apps a ON a.id=z.app_id
+    WHERE a.id=$2::uuid OR ($2::uuid IS NULL AND a.account_id=$3::uuid)
+) hosts WHERE $1::text<>''
+ORDER BY host LIMIT ($4::integer+1)
+`
+
+type ReadTrafficAppBindingHostsParams struct {
+	AppsSuffix string
+	AppID      pgtype.UUID
+	AccountID  pgtype.UUID
+	MaxInputs  int32
+}
+
+// The synthetic hostnames a binding write on one app, or on every app of an
+// account, may publish or release: each primary and alias URL, whatever the
+// app's status (ADR-20261027163626).
+func (q *Queries) ReadTrafficAppBindingHosts(ctx context.Context, db DBTX, arg ReadTrafficAppBindingHostsParams) ([]string, error) {
+	rows, err := db.Query(ctx, readTrafficAppBindingHosts,
+		arg.AppsSuffix,
+		arg.AppID,
+		arg.AccountID,
+		arg.MaxInputs,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var host string
+		if err := rows.Scan(&host); err != nil {
+			return nil, err
+		}
+		items = append(items, host)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const readTrafficBindingClaims = `-- name: ReadTrafficBindingClaims :one
 WITH domains AS (
     SELECT jsonb_build_object('Domain',d.domain,'App',d.app_id,
@@ -85351,11 +85617,21 @@ func (q *Queries) ReadTrafficDomainClaims(ctx context.Context, db DBTX, arg Read
 
 const readTrafficGlobalRouteAccounts = `-- name: ReadTrafficGlobalRouteAccounts :many
 SELECT DISTINCT account_id FROM edge_rules WHERE enabled AND kind='route'
-ORDER BY account_id LIMIT ($1::integer+1)
+    AND ($1::text[] IS NULL OR match_host_scope = ''
+        OR match_host_scope = ANY($1::text[])
+        OR EXISTS (SELECT 1 FROM unnest($2::text[]) AS tree(name)
+            WHERE match_host_scope LIKE '%.' || replace(replace(replace(tree.name,'\','\\'),'%','\%'),'_','\_')))
+ORDER BY account_id LIMIT ($3::integer+1)
 `
 
-func (q *Queries) ReadTrafficGlobalRouteAccounts(ctx context.Context, db DBTX, maxInputs int32) ([]pgtype.UUID, error) {
-	rows, err := db.Query(ctx, readTrafficGlobalRouteAccounts, maxInputs)
+type ReadTrafficGlobalRouteAccountsParams struct {
+	RouteScopeNames []string
+	RouteScopeTrees []string
+	MaxInputs       int32
+}
+
+func (q *Queries) ReadTrafficGlobalRouteAccounts(ctx context.Context, db DBTX, arg ReadTrafficGlobalRouteAccountsParams) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, readTrafficGlobalRouteAccounts, arg.RouteScopeNames, arg.RouteScopeTrees, arg.MaxInputs)
 	if err != nil {
 		return nil, err
 	}
@@ -85403,12 +85679,18 @@ WITH environment_policies AS MATERIALIZED (
             'ExpiresAt', to_jsonb(edge_rules)->'expires_at', 'Match', to_jsonb(edge_rules)->'match_expr',
             'Mode', coalesce(to_jsonb(edge_rules)->>'mode', 'enforce'))::jsonb AS data
     FROM edge_rules WHERE enabled AND (account_id = $3::uuid
-        OR ($3::uuid IS NULL AND kind='route'))
+        OR ($3::uuid IS NULL AND kind='route'
+            -- A scoped binding write reads only the routes that can match the
+            -- names it may change (ADR-20261027163626); NULL reads every route.
+            AND ($4::text[] IS NULL OR match_host_scope = ''
+                OR match_host_scope = ANY($4::text[])
+                OR EXISTS (SELECT 1 FROM unnest($5::text[]) AS tree(name)
+                    WHERE match_host_scope LIKE '%.' || replace(replace(replace(tree.name,'\','\\'),'%','\%'),'_','\_')))))
     UNION ALL
     SELECT p.app_id, ''::text, coalesce(rule.value->>'kind',''), NULL::uuid,
         coalesce(rule.value->'action','{}'::jsonb), p.environment_id,
         jsonb_build_object('ID','00000000-0000-0000-0000-000000000000','AccountID',$3::uuid,
-            'AppID',p.app_id,'MatchHost',repeat('x',$4::integer),
+            'AppID',p.app_id,'MatchHost',repeat('x',$6::integer),
             'ManifestKey','','MatchPath',coalesce(rule.value->>'match_path',''),
             'MatchMethods',coalesce(rule.value->'match_methods','null'::jsonb),
             'MatchHeaders',coalesce(rule.value->'match_headers','null'::jsonb),
@@ -85422,7 +85704,7 @@ WITH environment_policies AS MATERIALIZED (
     SELECT app_id, match_host, kind, cors_preset_id, action,
         (SELECT count(*) FROM jsonb_object_keys(action) AS field(key)
             WHERE key <> replace(replace(lower(key),chr(383),'s'),chr(8490),'k')
-              AND ($5::jsonb->'Action') ? replace(replace(lower(key),chr(383),'s'),chr(8490),'k')) +
+              AND ($7::jsonb->'Action') ? replace(replace(lower(key),chr(383),'s'),chr(8490),'k')) +
         (SELECT count(*) FROM jsonb_object_keys(CASE WHEN jsonb_typeof(action->'cors')='object' THEN action->'cors' ELSE '{}'::jsonb END) AS field(key)
             WHERE key <> 'cors_preset_id' AND replace(replace(lower(key),chr(383),'s'),chr(8490),'k')='cors_preset_id') +
         (SELECT count(*) FROM jsonb_object_keys(CASE WHEN jsonb_typeof(action->'headers')='object' THEN action->'headers' ELSE '{}'::jsonb END) AS field(key)
@@ -85436,12 +85718,12 @@ WITH environment_policies AS MATERIALIZED (
     SELECT source.app_id, source.match_host, source.kind, source.cors_preset_id, source.action, source.unsupported, source.preset, source.data, source.environment_id,
         jsonb_build_object('kind','') || coalesce((SELECT jsonb_object_agg(member.key,
             CASE WHEN jsonb_typeof(member.value) = 'object'
-                THEN coalesce($5::jsonb->'Action'->member.key,'{}'::jsonb) ||
+                THEN coalesce($7::jsonb->'Action'->member.key,'{}'::jsonb) ||
                     CASE WHEN member.key = 'headers' THEN coalesce((SELECT jsonb_object_agg(header.key,
                         CASE WHEN header.key IN ('request_headers','response_headers') AND jsonb_typeof(header.value) = 'array'
                             THEN (SELECT coalesce(jsonb_agg(CASE WHEN jsonb_typeof(operation.value) = 'object'
-                                THEN $5::jsonb->'HeaderOp' || operation.value
-                                WHEN operation.value = 'null'::jsonb THEN $5::jsonb->'HeaderOp'
+                                THEN $7::jsonb->'HeaderOp' || operation.value
+                                WHEN operation.value = 'null'::jsonb THEN $7::jsonb->'HeaderOp'
                                 ELSE operation.value END), '[]'::jsonb)
                                 FROM jsonb_array_elements(header.value) AS operation(value))
                             ELSE header.value END) FROM jsonb_each(member.value) AS header(key,value)), '{}'::jsonb)
@@ -85461,7 +85743,7 @@ WITH environment_policies AS MATERIALIZED (
             THEN octet_length(replace(replace(replace(replace(replace(compiled_data,
                 '<','______'),'&','______'),'>','______'),chr(8232),'______'),chr(8233),'______'))
             ELSE octet_length(compiled_data) END +16+2+
-            (SELECT count(*) FROM jsonb_path_query($5::jsonb,'$.Action.** ? (@ == false)')) AS compiled
+            (SELECT count(*) FROM jsonb_path_query($7::jsonb,'$.Action.** ? (@ == false)')) AS compiled
     FROM decoded CROSS JOIN LATERAL (
         -- OFFSET is an evaluation barrier: format each row only once, then
         -- materialize scalar measurements rather than large formatted bodies.
@@ -85492,26 +85774,26 @@ WITH environment_policies AS MATERIALIZED (
         'ContractBytes',contract_bytes,'Unsupported',unsupported) AS data
     FROM environment_policies ORDER BY environment_id,app_id LIMIT ($1::integer+1)
 ), primary_hosts AS (
-    SELECT to_jsonb(slug || $6::text) AS data FROM apps
+    SELECT to_jsonb(slug || $8::text) AS data FROM apps
     WHERE account_id=$3::uuid AND status<>'deleted' AND visibility<>'internal'
-      AND $6::text<>''
+      AND $8::text<>''
     ORDER BY slug LIMIT ($1::integer+1)
 ), alias_hosts AS (
-    SELECT to_jsonb('tag-' || z.name || '-' || replace(a.id::text,'-','') || $6::text) AS data
+    SELECT to_jsonb('tag-' || z.name || '-' || replace(a.id::text,'-','') || $8::text) AS data
     FROM deployment_aliases z JOIN apps a ON a.id=z.app_id
     JOIN deployments d ON d.id=z.deployment_id AND d.app_id=a.id
     WHERE a.account_id=$3::uuid AND a.status<>'deleted' AND a.deleted_at IS NULL
       AND a.visibility<>'internal' AND d.deleted_at IS NULL
       AND d.status IN ('pending','building','imaging','snapshotting','live','superseded')
-      AND $6::text<>''
+      AND $8::text<>''
     ORDER BY a.id,z.name LIMIT ($1::integer+1)
 ), revision_hosts AS (
-    SELECT to_jsonb('deploy-' || d.revision::text || '-' || a.slug || $7::text) AS data
+    SELECT to_jsonb('deploy-' || d.revision::text || '-' || a.slug || $9::text) AS data
     FROM deployments d JOIN apps a ON a.id=d.app_id
     WHERE a.account_id=$3::uuid AND a.status<>'deleted' AND a.deleted_at IS NULL
       AND a.visibility<>'internal' AND d.deleted_at IS NULL AND d.revision>0
       AND d.status IN ('pending','building','imaging','snapshotting','live')
-      AND $7::text<>''
+      AND $9::text<>''
     ORDER BY a.id,d.revision LIMIT ($1::integer+1)
 ), tenant_hosts AS (
     SELECT jsonb_build_object('Host',lower(h.hostname::text),'App',a.id,'Surface',s.id,'ID',h.id,
@@ -85532,8 +85814,8 @@ WITH environment_policies AS MATERIALIZED (
     ORDER BY d.domain LIMIT ($1::integer+1)
 ), reservations AS (
     SELECT data FROM (
-        SELECT jsonb_build_object('Kind','primary','Host',slug||$6::text) AS data FROM apps
-        WHERE $3::uuid IS NULL AND $6::text<>''
+        SELECT jsonb_build_object('Kind','primary','Host',slug||$8::text) AS data FROM apps
+        WHERE $3::uuid IS NULL AND $8::text<>''
         UNION ALL
         SELECT jsonb_build_object('Kind','domain','Host',domain) FROM custom_domains
         WHERE $3::uuid IS NULL
@@ -85574,6 +85856,8 @@ type ReadTrafficHostAnalysisParams struct {
 	MaxInputs            int32
 	MaxBytes             int64
 	AccountID            pgtype.UUID
+	RouteScopeNames      []string
+	RouteScopeTrees      []string
 	EnvironmentHostBytes int32
 	Defaults             []byte
 	AppsSuffix           string
@@ -85592,6 +85876,8 @@ func (q *Queries) ReadTrafficHostAnalysis(ctx context.Context, db DBTX, arg Read
 		arg.MaxInputs,
 		arg.MaxBytes,
 		arg.AccountID,
+		arg.RouteScopeNames,
+		arg.RouteScopeTrees,
 		arg.EnvironmentHostBytes,
 		arg.Defaults,
 		arg.AppsSuffix,
@@ -85600,6 +85886,41 @@ func (q *Queries) ReadTrafficHostAnalysis(ctx context.Context, db DBTX, arg Read
 	var i ReadTrafficHostAnalysisRow
 	err := row.Scan(&i.Data, &i.Inputs, &i.Bytes)
 	return i, err
+}
+
+const readTrafficRouteWriteScopes = `-- name: ReadTrafficRouteWriteScopes :many
+SELECT coalesce(edge_rule_match_host_scope(pattern), '')::text AS scope,
+       (edge_rule_match_host_scope(pattern) IS NULL)::boolean AS app_only,
+       coalesce(edge_rule_match_host_scope(pattern) = lower(btrim(pattern)), false)::boolean AS exact
+FROM unnest($1::text[]) AS pattern
+`
+
+type ReadTrafficRouteWriteScopesRow struct {
+	Scope   string
+	AppOnly bool
+	Exact   bool
+}
+
+// Each route pattern's match_host_scope, as the edge_rules trigger computes it
+// (ADR-20261027163626). An exact pattern is its own scope; '@app' has none.
+func (q *Queries) ReadTrafficRouteWriteScopes(ctx context.Context, db DBTX, patterns []string) ([]ReadTrafficRouteWriteScopesRow, error) {
+	rows, err := db.Query(ctx, readTrafficRouteWriteScopes, patterns)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadTrafficRouteWriteScopesRow{}
+	for rows.Next() {
+		var i ReadTrafficRouteWriteScopesRow
+		if err := rows.Scan(&i.Scope, &i.AppOnly, &i.Exact); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const readTrafficSecurityEpochs = `-- name: ReadTrafficSecurityEpochs :many
@@ -85786,12 +86107,16 @@ func (q *Queries) ReapExpiredUploadSessions(ctx context.Context, db DBTX) ([]Rea
 }
 
 const reapStaleUploadPartFiles = `-- name: ReapStaleUploadPartFiles :many
-SELECT id, part_path
-FROM upload_sessions
-WHERE status IN ('committed', 'cancelled', 'expired')
-  AND part_path <> ''
-  AND last_patched_at < now() - INTERVAL '1 hour'
-ORDER BY last_patched_at ASC
+SELECT s.id, s.part_path
+FROM upload_sessions s
+WHERE s.status IN ('committed', 'cancelled', 'expired')
+  AND s.part_path <> ''
+  AND s.last_patched_at < now() - CASE WHEN s.status = 'committed' THEN INTERVAL '24 hours' ELSE INTERVAL '1 hour' END
+  AND NOT EXISTS (
+      SELECT 1 FROM deployments d
+      WHERE d.id::text = s.deployment_id
+        AND d.status IN ('pending', 'building', 'imaging', 'snapshotting'))
+ORDER BY s.last_patched_at ASC
 LIMIT 100
 `
 
@@ -85826,6 +86151,11 @@ type ReapStaleUploadPartFilesRow struct {
 // status IN ('committed', 'cancelled', 'expired') — leaving
 // as a follow-up ADR rather than conflated into PR-1's
 // migration slot 533.
+//
+// ADR-20261026152731: on a single-box install the committed .part IS the
+// build source, so it is kept while its deployment is in flight (a build
+// may queue for hours) and for the 24h source-retention window that
+// `deploys retry` relies on. Cancelled and expired parts keep the 1h grace.
 func (q *Queries) ReapStaleUploadPartFiles(ctx context.Context, db DBTX) ([]ReapStaleUploadPartFilesRow, error) {
 	rows, err := db.Query(ctx, reapStaleUploadPartFiles)
 	if err != nil {
@@ -95001,9 +95331,18 @@ func (q *Queries) RouteMonitorCustomerObservations(ctx context.Context, db DBTX,
 }
 
 const routeMonitorServingDeployments = `-- name: RouteMonitorServingDeployments :many
-SELECT id::text AS id,commit_sha,source_url,source_root,created_at,canary_step_started_at,rollout_completed_at,traffic_percent,canary_step,canary_total_steps
-FROM deployments WHERE app_id=$1::text::uuid AND status='live' AND deleted_at IS NULL AND traffic_percent>0
- AND coalesce(nullif(scope,''),'default')='default' ORDER BY id LIMIT 2
+WITH lanes AS (
+ SELECT id,commit_sha,source_url,source_root,created_at,canary_step_started_at,rollout_completed_at,traffic_percent,canary_step,canary_total_steps,
+  CASE WHEN scope='production' THEN 'production' ELSE 'default' END AS lane
+ FROM deployments WHERE app_id=$1::text::uuid AND status='live' AND deleted_at IS NULL
+  AND coalesce(nullif(scope,''),'default') IN ('default','production')
+), chosen AS (
+ SELECT CASE WHEN EXISTS (SELECT 1 FROM lanes WHERE lane='production' AND traffic_percent>0)
+  OR (NOT EXISTS (SELECT 1 FROM lanes WHERE lane='default' AND traffic_percent>0) AND EXISTS (SELECT 1 FROM lanes WHERE lane='production'))
+  THEN 'production' ELSE 'default' END AS lane
+)
+SELECT l.id::text AS id,l.commit_sha,l.source_url,l.source_root,l.created_at,l.canary_step_started_at,l.rollout_completed_at,l.traffic_percent,l.canary_step,l.canary_total_steps
+FROM lanes l JOIN chosen c ON c.lane=l.lane WHERE l.traffic_percent>0 ORDER BY l.id LIMIT 2
 `
 
 type RouteMonitorServingDeploymentsRow struct {
@@ -95019,6 +95358,10 @@ type RouteMonitorServingDeploymentsRow struct {
 	CanaryTotalSteps    int32
 }
 
+// The app's production routing lane (state.ProductionRoutingDeployments): a
+// project's named production scope once it carries traffic, or while the
+// legacy default lane is dark; otherwise the default scope
+// (ADR-20261028110044 amendment 1).
 func (q *Queries) RouteMonitorServingDeployments(ctx context.Context, db DBTX, appID string) ([]RouteMonitorServingDeploymentsRow, error) {
 	rows, err := db.Query(ctx, routeMonitorServingDeployments, appID)
 	if err != nil {
@@ -95274,8 +95617,11 @@ LEFT JOIN LATERAL (
            d.created_at AS deployment_created_at, d.image_digest
     FROM instances i
     JOIN apps a ON a.id = i.app_id AND a.status <> 'deleted'
+    -- A snapshotting candidate's smoke instance is reported as not live: the
+    -- gateway keeps the target its smoke admission recorded instead of
+    -- quarantining it, and still never discovers one it did not admit.
     JOIN deployments d ON d.id = i.deployment_id AND d.app_id = i.app_id
-                       AND d.deleted_at IS NULL AND d.status IN ('live', 'superseded')
+                       AND d.deleted_at IS NULL AND d.status IN ('live', 'superseded', 'snapshotting')
     LEFT JOIN compute_nodes cn ON cn.id = i.node_id
     -- ADR-732: a production fork shares the live deployment but never serves.
     WHERE i.app_id = requested.app_id AND i.state = 'running' AND i.mode <> 'fork'
@@ -96578,6 +96924,48 @@ func (q *Queries) ServiceCapacityProtection(ctx context.Context, db DBTX) ([]byt
 	return snapshot, err
 }
 
+const servicePolicyPreviewAppIDs = `-- name: ServicePolicyPreviewAppIDs :many
+SELECT id FROM apps WHERE account_id = $1::uuid AND project_id = $2::uuid
+  AND preview_pr_number = $3::integer
+  AND translate(lower(workload_name), '_.', '--') = translate(lower($4::text), '_.', '--')
+  AND preview_of_slug IS NOT NULL AND status <> 'deleted'
+ORDER BY id
+LIMIT 2
+`
+
+type ServicePolicyPreviewAppIDsParams struct {
+	AccountID       pgtype.UUID
+	ProjectID       pgtype.UUID
+	PreviewPrNumber int32
+	WorkloadName    string
+}
+
+// Two IDs suffice to refuse an ambiguous service name, as production does.
+func (q *Queries) ServicePolicyPreviewAppIDs(ctx context.Context, db DBTX, arg ServicePolicyPreviewAppIDsParams) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, servicePolicyPreviewAppIDs,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.PreviewPrNumber,
+		arg.WorkloadName,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const serviceRecoveryByApp = `-- name: ServiceRecoveryByApp :one
 SELECT app_id, revision, claim_token, lease_until, status, failures, next_attempt_at, updated_at FROM service_recovery WHERE app_id = $1
 `
@@ -97341,6 +97729,27 @@ type SetTrafficTenantSurfaceStatusParams struct {
 
 func (q *Queries) SetTrafficTenantSurfaceStatus(ctx context.Context, db DBTX, arg SetTrafficTenantSurfaceStatusParams) (int64, error) {
 	result, err := db.Exec(ctx, setTrafficTenantSurfaceStatus, arg.Status, arg.SurfaceID, arg.AccountID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const setTriggerAgent = `-- name: SetTriggerAgent :execrows
+update triggers set agent = $2, updated_at = now()
+where id = $1 and queue_binding_id is null
+`
+
+type SetTriggerAgentParams struct {
+	ID    pgtype.UUID
+	Agent pgtype.Text
+}
+
+// ADR-20261027090010 §9: point a just-created public broker trigger at an agent. The
+// CHECK constraint refuses other kinds, batch delivery and binding-owned
+// projections.
+func (q *Queries) SetTriggerAgent(ctx context.Context, db DBTX, arg SetTriggerAgentParams) (int64, error) {
+	result, err := db.Exec(ctx, setTriggerAgent, arg.ID, arg.Agent)
 	if err != nil {
 		return 0, err
 	}
@@ -99542,7 +99951,7 @@ const triggerByID = `-- name: TriggerByID :one
 select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id, queue_binding_scope, queue_binding_environment_id,
        batch_size_max, batch_window_ms, max_attempts,
        cron_id, source, payload_max_bytes, broker_poison_strategy,
-       filter_criteria, delivery,
+       filter_criteria, delivery, agent,
        created_at, updated_at
 from triggers where id = $1
 `
@@ -99567,6 +99976,7 @@ type TriggerByIDRow struct {
 	BrokerPoisonStrategy      string
 	FilterCriteria            []byte
 	Delivery                  string
+	Agent                     pgtype.Text
 	CreatedAt                 pgtype.Timestamptz
 	UpdatedAt                 pgtype.Timestamptz
 }
@@ -99600,6 +100010,7 @@ func (q *Queries) TriggerByID(ctx context.Context, db DBTX, id pgtype.UUID) (Tri
 		&i.BrokerPoisonStrategy,
 		&i.FilterCriteria,
 		&i.Delivery,
+		&i.Agent,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -99789,6 +100200,18 @@ func (q *Queries) TryLockTrafficPolicySession(ctx context.Context, db DBTX, lock
 	return column_1, err
 }
 
+const tryLockTrafficPolicySessionShared = `-- name: TryLockTrafficPolicySessionShared :one
+SELECT pg_try_advisory_lock_shared(hashtextextended($1::text,0))::boolean
+`
+
+// A scoped binding writer's ancestor and root keys (ADR-20261027163626).
+func (q *Queries) TryLockTrafficPolicySessionShared(ctx context.Context, db DBTX, lockKey string) (bool, error) {
+	row := db.QueryRow(ctx, tryLockTrafficPolicySessionShared, lockKey)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const uDPListenerByAppAndName = `-- name: UDPListenerByAppAndName :one
 SELECT id, account_id, app_id, listener_name, guest_port, public_port, protocol, enabled, created_at, updated_at FROM app_udp_listeners
 WHERE app_id = $1::text::uuid AND listener_name = $2
@@ -99879,6 +100302,17 @@ SELECT pg_advisory_unlock(hashtextextended($1::text,0))::boolean
 
 func (q *Queries) UnlockTrafficPolicySession(ctx context.Context, db DBTX, lockKey string) (bool, error) {
 	row := db.QueryRow(ctx, unlockTrafficPolicySession, lockKey)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const unlockTrafficPolicySessionShared = `-- name: UnlockTrafficPolicySessionShared :one
+SELECT pg_advisory_unlock_shared(hashtextextended($1::text,0))::boolean
+`
+
+func (q *Queries) UnlockTrafficPolicySessionShared(ctx context.Context, db DBTX, lockKey string) (bool, error) {
+	row := db.QueryRow(ctx, unlockTrafficPolicySessionShared, lockKey)
 	var column_1 bool
 	err := row.Scan(&column_1)
 	return column_1, err
@@ -101152,10 +101586,16 @@ INSERT INTO invoices (
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, clock_timestamp())
 ON CONFLICT (account_id, provider, provider_invoice_id) DO UPDATE SET
   provider_charge_id = coalesce(nullif(excluded.provider_charge_id, ''), invoices.provider_charge_id),
-  number = excluded.number, status = excluded.status,
+  -- A late "created"/"pending" delivery never reopens a paid invoice
+  -- (ADR-20261028101500): providers may deliver order events out of order.
+  number = excluded.number,
+  status = CASE WHEN invoices.status = 'paid' AND excluded.status IN ('open', 'draft')
+    THEN invoices.status ELSE excluded.status END,
   period_start = excluded.period_start, period_end = excluded.period_end,
   subtotal_cents = excluded.subtotal_cents, tax_cents = excluded.tax_cents,
-  total_cents = excluded.total_cents, amount_paid_cents = excluded.amount_paid_cents,
+  total_cents = excluded.total_cents,
+  amount_paid_cents = CASE WHEN invoices.status = 'paid' AND excluded.status IN ('open', 'draft')
+    THEN invoices.amount_paid_cents ELSE excluded.amount_paid_cents END,
   currency = excluded.currency, pdf_available = excluded.pdf_available,
   details = invoices.details || CASE WHEN excluded.details ? 'lines' THEN
     jsonb_set(excluded.details, '{lines,items}', coalesce((

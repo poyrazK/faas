@@ -1306,15 +1306,23 @@ type runDeps struct {
 	// session cookie. cmd/apid shares the same construct; the two
 	// daemons are independent processes so the AEAD keys are loaded
 	// separately per daemon. nil in tests.
-	sessions           *session.Manager
-	trafficDeadlines   *trafficdeadline.Signer
-	trafficRevocations *trafficrevocation.Registry
+	sessions *session.Manager
+	// edgeChallengeSecret signs kind=challenge tokens and passes, and
+	// edgeChallengeKeySource says where it came from (ADR-831 amendment 17).
+	// runWithDeps signs with the session key when it is nil.
+	edgeChallengeSecret    []byte
+	edgeChallengeKeySource string
+	trafficDeadlines       *trafficdeadline.Signer
+	trafficRevocations     *trafficrevocation.Registry
 	// publicRoutingView admits ordinary public requests (ADR-20261027085556);
 	// runWithDeps builds it when nil.
 	publicRoutingView *publicrouting.Registry
 	// financialBudgetAdmission defaults to the pgStore-backed check; outage
 	// tests replace it to isolate the routing view.
 	financialBudgetAdmission func(context.Context, gateway.App) error
+	// rateLimitOutageGrace replaces api.TrafficRateLimitOutageGrace when
+	// non-zero (negative: none); outage tests use it to cross the grace.
+	rateLimitOutageGrace time.Duration
 	// hostKeyDir (issue #477 / ADR-079) is the directory
 	// secretbox.LoadHostKeys reads from to build the
 	// multi-identity rotation-overlap slice for the basic-auth
@@ -1338,6 +1346,9 @@ type runDeps struct {
 	// constructed; the AppLogsHandler-style carve-out (only
 	// when deps.authMw is non-nil) makes the wiring safe.
 	requireAuthnAdapter *requireAuthnAdapter
+	// keyAuthCache wraps requireAuthnAdapter so key-protected apps do not
+	// read Postgres on every request; key_changed invalidates it.
+	keyAuthCache *gateway.KeyAuthCache
 	// requireAuthnAudit is the cmd/gatewayd-scope audit emitter
 	// the per-deployment authz branch uses for the
 	// instances.authn_* rows. nil = audit-disabled (tests).
@@ -1746,6 +1757,7 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 		return err
 	}
 	backend := gateway.NewPGBackend(router, sched, log).
+		WithAccountAppLister(accountAppIDLister(pgStore)).
 		WithTargetReadinessLoader(newTargetReadinessLoader(pgStore)).
 		WithTargetPlacementLoader(newTargetPlacementLoader(pgStore)).
 		WithProjectReleaseResolver(func(ctx context.Context, appID, scope, requestedID string) (string, string, error) {
@@ -2301,6 +2313,10 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 		return fmt.Errorf("gatewayd: session manager init failed")
 	}
 	deps.sessions = sessions
+	deps.edgeChallengeSecret, deps.edgeChallengeKeySource, err = edgeChallengeSecret(osGetenv, sessions.BindingKey())
+	if err != nil {
+		return fmt.Errorf("gatewayd: %w", err)
+	}
 	deps.trafficDeadlines, err = loadTrafficDeadlineSigner(osGetenv)
 	if err != nil {
 		return fmt.Errorf("gatewayd: traffic deadline signer init: %w", err)
@@ -2332,6 +2348,10 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	// them when deps.authMw is non-nil (which it always is
 	// outside unit tests).
 	deps.requireAuthnAdapter = newRequireAuthnAdapter(deps.authMw)
+	if deps.requireAuthnAdapter != nil {
+		deps.keyAuthCache = gateway.NewKeyAuthCache(deps.requireAuthnAdapter)
+		go watchKeyChanges(ctx, pool, deps.keyAuthCache, log)
+	}
 	// Request-path audit rows (authn gates, edge-rule denials and matches)
 	// go through one bounded async writer so attack traffic cannot turn into
 	// synchronous Postgres inserts on the request path.
@@ -2890,6 +2910,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			return errors.New("gatewayd-internal: ratelimit.mode central requires a Postgres pool")
 		}
 		handler.WithCentralBackend(backend)
+		if deps.rateLimitOutageGrace != 0 {
+			handler.WithRateLimitOutageGrace(deps.rateLimitOutageGrace)
+		}
 		// ADR-1520: spend central tokens from local leases.
 		if leaseEnabled {
 			handler.WithRateLimitLeasing(leaseCfg)
@@ -2946,7 +2969,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// leave deps.requireAuthnAdapter / deps.requireAuthnAudit
 	// nil. Production wires both unconditionally after
 	// deps.authMw is built in run().
-	handler.WithRequireAuthn(deps.requireAuthnAdapter, deps.requireAuthnAudit)
+	if deps.keyAuthCache != nil {
+		handler.WithRequireAuthn(deps.keyAuthCache, deps.requireAuthnAudit)
+	} else {
+		handler.WithRequireAuthn(deps.requireAuthnAdapter, deps.requireAuthnAudit)
+	}
 	// ADR-120: arm end-customer consumer-key authentication against the same
 	// PgStore used by apid. The gateway keeps the hot-path policy and the
 	// adapter translates only the narrow lookup/touch contract.
@@ -3045,10 +3072,19 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log.Warn("edge waf in-path checks disabled by FAAS_EDGE_WAF_INLINE_DISABLED; warn and block rules only observe")
 	}
 	// ADR-831 amendment 7 — kind=challenge. Tokens and passes are signed
-	// with a key derived from the session key every gateway shares, so a
-	// pass issued by one gateway is honoured by all.
+	// with a key every gateway must share, so a pass issued by one gateway
+	// is honoured by all: the fleet key, else this host's session key
+	// (amendment 17). gateway_edge_challenge_key_info lets the fleet check
+	// that they agree.
 	if deps.sessions != nil {
-		handler.WithEdgeChallengeKey(gateway.DeriveEdgeChallengeKey(deps.sessions.BindingKey()))
+		secret, source := deps.edgeChallengeSecret, deps.edgeChallengeKeySource
+		if secret == nil {
+			secret, source = deps.sessions.BindingKey(), edgeChallengeKeySession
+		}
+		key := gateway.DeriveEdgeChallengeKey(secret)
+		handler.WithEdgeChallengeKey(key)
+		deps.metrics.SetEdgeChallengeKey(gateway.EdgeChallengeKeyID(key), source)
+		log.Info("edge challenge signing key", "source", source, "key_id", gateway.EdgeChallengeKeyID(key))
 	}
 	// Issue #561 / ADR-091 PR 5 — arm the per-rule JWT verifier.
 	// nil-safe: deps.edgeJWKSAdapter nil falls through
@@ -3600,21 +3636,23 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				// retained for the warm-hint stream (single-stream
 				// fallback); the log stream is the second fan-in
 				// consumer and resolves per-app.
-				ScheddFor: appLogsScheddResolver{store: deps.pgStore, router: deps.scheddRouter},
-				Store:     deps.pgStore,
-				Log:       log,
-				Ops:       nil,
-				Traffic:   deps.trafficRevocations,
+				ScheddFor:         appLogsScheddResolver{store: deps.pgStore, router: deps.scheddRouter},
+				Store:             deps.pgStore,
+				Log:               log,
+				Ops:               nil,
+				Traffic:           deps.trafficRevocations,
+				CapabilityAllowed: deps.capabilityAllowed,
 			},
 			archive: &ArchiveLogsHandler{
-				Auth:    deps.authMw,
-				S3:      deps.archiveS3,
-				Bucket:  deps.archiveBucket,
-				Store:   deps.pgStore,
-				Scope:   deps.pgStore,
-				Log:     log,
-				Ops:     nil,
-				Traffic: deps.trafficRevocations,
+				Auth:              deps.authMw,
+				S3:                deps.archiveS3,
+				Bucket:            deps.archiveBucket,
+				Store:             deps.pgStore,
+				Scope:             deps.pgStore,
+				Log:               log,
+				Ops:               nil,
+				Traffic:           deps.trafficRevocations,
+				CapabilityAllowed: deps.capabilityAllowed,
 			},
 		})
 		logsHandler = logsMux
@@ -3635,6 +3673,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			log,
 		)
 		manager.standardNode = newLocalNodeID(deps.pgStore, cfg.NodeName)
+		manager.capabilityAllowed = deps.capabilityAllowed
 		if cfg.NodeName != "" {
 			manager.owns = newAppLogDrainOwnership(deps.pgStore, cfg.NodeName)
 		}

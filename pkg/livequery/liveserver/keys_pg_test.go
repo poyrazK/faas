@@ -69,7 +69,7 @@ func TestHubWatchesItsKeys(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		WatchKeys(ctx, f.hub, table.ring, []*age.X25519Identity{identity}, 10*time.Millisecond, slog.New(slog.NewTextHandler(testLog{t}, nil)))
+		WatchKeys(ctx, f.hub, table.ring, []*age.X25519Identity{identity}, nil, 10*time.Millisecond, slog.New(slog.NewTextHandler(testLog{t}, nil)))
 	}()
 	t.Cleanup(func() { cancel(); <-done })
 	f.waitKeys("the first key", func() bool { return f.opens(first.KID) })

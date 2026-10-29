@@ -177,6 +177,12 @@ func (s *server) renderAppDebug(w http.ResponseWriter, r *http.Request, log *slo
 		running.RetentionClamped = data.WindowClamped
 		data.Running = dashboardDebugRunningView(running, app.Slug)
 	}
+	if status, statusErr := s.rolloutEvidence().Status(ctx, app, since, retention); statusErr != nil {
+		log.Warn("dashboard renderAppDebug: debug status", "account_id", acct.ID, "app_id", app.ID, "err", statusErr)
+	} else {
+		status.Since = data.Since
+		data.DebugStatus = dashboardDebugStatusView(status, app.Slug)
+	}
 
 	coverage, coverageErr := s.store.RequestTelemetryCoverage(ctx, sqlc.RequestTelemetryCoverageParams{
 		AppID:        stringToPgUUID(app.ID),

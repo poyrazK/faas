@@ -31,8 +31,16 @@ full `cmd/gregale`/`pkg/state`/`pkg/apid/apidserver` suites and their `-race` ru
 migration history, container/UDP contracts, flags, load, SDK acceptance) is
 caught by the nightly run or, at the latest, the release gate.
 
-`blast-radius.yml` runs on every pull request and is report-only (never
-required): `scripts/ci/blast_radius.py` lists the release binaries whose
+Pull requests run nothing else on every push (ADR-20261029121500). Suites
+no rule requires run only when the pull request changes their own files
+(`function-backends.yml`, `service-binding-contract.yml`,
+`storage-node-starter.yml`, `data-api.yml`, and similar path-filtered
+workflows), or when it carries a label: `e2e-general` for the general-path
+and routes acceptance, `blast-radius` for the report below. `ci.yml` runs
+them all nightly; merges to `main` run none of them.
+
+`blast-radius.yml` runs on pull requests labelled `blast-radius` and is
+report-only (never required): `scripts/ci/blast_radius.py` lists the release binaries whose
 import closure the change touches (what a per-unit release ships,
 ADR-1650) and, of those, the ones whose code changes, built at the merge
 base and the head with the release flags and an empty Go build ID; a

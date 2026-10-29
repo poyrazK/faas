@@ -1394,7 +1394,7 @@ func TestCmdDeployTarball_DoctorStrict_FailsFast(t *testing.T) {
 	if code := main.CmdDeployTarball([]string{
 		"--doctor-strict",
 		"--tarball", main.WriteDeploySourceArchive(t, map[string]string{
-			"fixture/data/marker.txt": "archive-only",
+			"fixture/data/marker.sqlite": "archive-only",
 		}),
 		"--project-slug", "fixture",
 		"--only", "api,worker,nightly",
@@ -1559,7 +1559,7 @@ func TestCmdDeployTarball_DoctorStrict_JSON(t *testing.T) {
 	if code := main.CmdDeployTarball([]string{
 		"--doctor-strict",
 		"--tarball", main.WriteDeploySourceArchive(t, map[string]string{
-			"fixture/data/marker.txt": "archive-only",
+			"fixture/data/marker.sqlite": "archive-only",
 		}),
 		"--project-slug", "fixture",
 		"--only", "api,worker,nightly",

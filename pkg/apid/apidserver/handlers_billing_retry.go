@@ -67,8 +67,9 @@ func (s *server) postBillingRetry(w http.ResponseWriter, r *http.Request, acct s
 			prob.BillingPortalURL = s.billingPortalURLForProvider(r.Context(), acct)
 			api.WriteProblem(w, prob)
 		default:
+			logCustomerFailure(s.log, "billing retry failed", err)
 			api.WriteProblem(w, api.NewProblem(http.StatusBadGateway,
-				"billing_retry_failed", "billing retry failed", err.Error()))
+				"billing_retry_failed", "billing retry failed", api.DetailServerFailure))
 		}
 		return
 	}

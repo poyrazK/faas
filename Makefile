@@ -8,7 +8,7 @@ export GOOS GOARCH
 TLS_CUTOVER_MODE ?= dry-run
 PKGS    := ./...
 COVERAGE_DIR := coverage
-DAEMONS := apid profiled bridged gatewayd-public gatewayd-internal realtimed s3-gatewayd livequeryd maild mail-report mail-metrics mail-feedback mailctl schedd vmmd vmmd-jail-helper vmmd-guestdisk vmmd-raw-bridge vmmd-tcp-bridge vmmd-udp-bridge vmmd-stream-bridge builderd imaged meterd githubd outboundd hostage-gen
+DAEMONS := apid profiled bridged gatewayd-public gatewayd-internal realtimed s3-gatewayd livequeryd mcp-bridged maild mail-report mail-metrics mail-feedback mailctl schedd vmmd vmmd-jail-helper vmmd-guestdisk vmmd-raw-bridge vmmd-tcp-bridge vmmd-udp-bridge vmmd-stream-bridge builderd imaged meterd githubd outboundd agentd hostage-gen
 GOVULNCHECK_VERSION ?= 1.7.0
 # gregale is the customer-facing CLI; gregalectl is the
 # operator-only companion CLI (issue #911 / ADR-110 PR-6.5).
@@ -130,6 +130,10 @@ bench-platform-tenant-coverage: ## Measure 90-day, two-app statement coverage re
 bench-event-substrate: ## Measure event publish, fanout, drain and webhook delivery on disposable PostgreSQL (V12); FAAS_EVENT_SUBSTRATE_BENCH_DIR writes JSON
 	@test -n "$$DATABASE_URL" || (echo "DATABASE_URL not set — set it to a disposable PostgreSQL database"; exit 1)
 	@GO="$(GO)" sh scripts/bench-event-substrate.sh
+
+.PHONY: drill-event-failover
+drill-event-failover: ## Event failover drill on a disposable primary + streaming standby (ADR-20261029093000); PG_BIN, FAAS_EVENT_DRILL_DIR writes JSON
+	@GO="$(GO)" sh scripts/drill-event-failover.sh
 
 .PHONY: help
 help: ## List targets
@@ -697,6 +701,10 @@ e2e-start: ## Gregale start acceptance: real CLI/daemons/Postgres, simulated bui
 	@psql "$$DATABASE_URL" -v ON_ERROR_STOP=1 -Atqc 'select 1' >/dev/null || (echo "PostgreSQL is unreachable; e2e-start refuses a green no-op run" >&2; exit 1)
 	$(GO) test -race -count=1 -timeout=20m -run '^TestE2E_Start_' ./cmd/e2e/...
 
+.PHONY: e2e-journeys
+e2e-journeys: ## Customer journey suite against a deployed Gregale through the released CLI (TIER=smoke|full, RUN=<re>; tests/journeys/README.md)
+	@bash scripts/e2e-journeys.sh --tier "$(or $(TIER),smoke)" $(if $(RUN),--run '$(RUN)')
+
 .PHONY: e2e-sandbox
 e2e-sandbox: ## Live Paddle sandbox walk (operator-only; PR-P3). Reads secrets from secrets/.env.sandbox — NEVER committed.
 	@test -f secrets/.env.sandbox || (echo "secrets/.env.sandbox missing; create it with FAAS_PADDLE_SANDBOX_API_KEY + FAAS_PADDLE_SANDBOX_WEBHOOK_SECRET from api.sandbox.paddle.com" ; exit 1)
@@ -748,6 +756,7 @@ lint-drill: ## Static lint of restore, backup-retention, and TLS drill scripts
 	bash deploy/scripts/faas-pg-basebackup-push_test.sh
 	bash deploy/scripts/faas-pg-wal-prune_test.sh
 	bash deploy/scripts/faas-pg-backup-contract-preflight_test.sh
+	bash deploy/scripts/frontend-security-headers-smoke_test.sh
 	bash deploy/scripts/faas-check-compute-edges_test.sh
 	bash deploy/scripts/faas-app-edge-pilot-check_test.sh
 	bash deploy/scripts/cloudflare-app-edge-tunnel_test.sh
@@ -951,11 +960,11 @@ ha-write-redirect-drill: ## Tier A9 / ADR-089: standby write-redirect drill on t
 	  exit 0'
 
 .PHONY: lint-changed
-lint-changed: ## golangci-lint only what your change touches (ci-light's selection vs origin/main) + teststorecheck + sealdomaincheck; BASE=<ref>, DRY_RUN=1
+lint-changed: ## golangci-lint only what your change touches (ci-light's selection vs origin/main) + teststorecheck + sealdomaincheck + problemdetailcheck; BASE=<ref>, DRY_RUN=1
 	@$(GO_DEV_ENV) GO=$(GO) bash scripts/lint-changed.sh
 
 .PHONY: lint
-lint: egress-check lint-incompatible-mods image-validate sealed-env-scope-check seal-domain-scope-check runbook-sql-check text-encoding-check shell-quoting-check adr-number-uniqueness-check trimpath-check check-durable-entity-sdk-contract check-binding-runner-sync ## golangci-lint via go tool (matches CI version v2.14.0) + repository policy gates
+lint: egress-check lint-incompatible-mods image-validate sealed-env-scope-check seal-domain-scope-check problem-detail-check runbook-sql-check text-encoding-check shell-quoting-check adr-number-uniqueness-check trimpath-check check-durable-entity-sdk-contract check-binding-runner-sync ## golangci-lint via go tool (matches CI version v2.14.0) + repository policy gates
 	@python3 scripts/ci/check_gosec_baseline.py
 	@$(GO_DEV_ENV) GO="$(GO)" python3 scripts/ci/lint_go_shard.py --shard 1 --shards 1 -- $(GO) tool golangci-lint
 
@@ -1078,6 +1087,10 @@ sealed-env-scope-check: ## Static gate: /etc/faas/sealed.env is loaded only by f
 .PHONY: seal-domain-scope-check
 seal-domain-scope-check: ## Static gate: private age identities, direct identity loaders and unsealed bytea columns only shrink (ADR 20261022111812)
 	@$(GO) run ./scripts/ci/sealdomaincheck -root $(CURDIR)
+
+.PHONY: problem-detail-check
+problem-detail-check: ## Static gate: a 5xx problem detail never carries error text (log it; api.DetailServerFailure)
+	@$(GO) run ./scripts/ci/problemdetailcheck -root $(CURDIR)
 
 .PHONY: text-encoding-check
 text-encoding-check: ## Static gate: no JSON built with fmt %q, no free text truncated with a byte slice
@@ -1368,9 +1381,11 @@ sqlc-check: sqlc ## CI gate: verify checked-in sqlc output matches what would be
 	  mkdir -p "$$tmp/pkg/internalmail"; \
 	  cp pkg/internalmail/queries.sql pkg/internalmail/retention_queries.sql pkg/internalmail/operations_queries.sql pkg/internalmail/domain_queries.sql pkg/internalmail/control_queries.sql pkg/internalmail/producer_queries.sql pkg/internalmail/timing_queries.sql pkg/internalmail/pacing_queries.sql pkg/internalmail/relay_health_queries.sql pkg/internalmail/reputation_queries.sql pkg/internalmail/event_feed_queries.sql pkg/internalmail/producer_scheduler_queries.sql pkg/internalmail/producer_lifecycle_queries.sql pkg/internalmail/encryption_queries.sql pkg/internalmail/suppression_queries.sql pkg/internalmail/recovery_queries.sql pkg/internalmail/schema.sql "$$tmp/pkg/internalmail/"; \
 	  cp pkg/productemail/queries.sql pkg/productemail/schema.sql "$$tmp/pkg/productemail/"; \
+	  mkdir -p "$$tmp/pkg/mcpmanagement/statepg"; \
+	  cp pkg/mcpmanagement/statepg/queries.sql pkg/mcpmanagement/statepg/schema.sql "$$tmp/pkg/mcpmanagement/statepg/"; \
 	  mkdir -p "$$tmp/pkg/ci/db"; \
 	  cp pkg/ci/db/*.sql "$$tmp/pkg/ci/db/"; \
-	  for source_package in pkg/state/realtimettl pkg/state/realtimebulk pkg/state/livekeys pkg/state/dataapiusage pkg/state/orgaccess pkg/state/resourceownership pkg/state/appquota pkg/state/scenariopg pkg/state/scenariopgfault pkg/state/scenarioobj pkg/rehearsalpg/runtime pkg/managedpostgres/credentialprobe; do \
+	  for source_package in pkg/releasehistory pkg/state/realtimettl pkg/state/realtimebulk pkg/state/livekeys pkg/state/agents pkg/state/dataapiusage pkg/state/orgaccess pkg/state/resourceownership pkg/state/appquota pkg/state/scenariopg pkg/state/scenariopgfault pkg/state/scenarioobj pkg/rehearsalpg/runtime pkg/managedpostgres/credentialprobe; do \
 	    mkdir -p "$$tmp/$$source_package"; \
 	    cp "$$source_package/queries.sql" "$$source_package/schema.sql" "$$tmp/$$source_package/"; \
 	  done; \
@@ -1389,7 +1404,7 @@ sqlc-check: sqlc ## CI gate: verify checked-in sqlc output matches what would be
 	  mkdir -p "$$tmp/pkg/managedpostgres/connectioncapacity"; \
 	  cp pkg/managedpostgres/connectioncapacity/queries.sql pkg/managedpostgres/connectioncapacity/schema.sql "$$tmp/pkg/managedpostgres/connectioncapacity/"; \
 	  (cd "$$tmp" && $(SQLC) generate); \
-	  for package in pkg/apid/mailoutbox/sqlc pkg/internalmail/sqlc pkg/productemail/sqlc pkg/ci/db/sqlc pkg/state/realtimettl/sqlc pkg/state/realtimebulk/sqlc pkg/state/livekeys/sqlc pkg/state/orgaccess/sqlc pkg/state/resourceownership/sqlc pkg/state/appquota/sqlc pkg/state/scenariopg/sqlc pkg/state/scenariopgfault/sqlc pkg/state/scenarioobj/sqlc pkg/rehearsalpg/runtime/sqlc pkg/state/sqlc pkg/db/migrationsqlc pkg/managedpostgres/connectionfence/sqlc pkg/managedpostgres/copyinventory/sqlc pkg/managedpostgres/copyroles/sqlc pkg/managedpostgres/copydatabases/sqlc pkg/managedpostgres/copycontents/sqlc pkg/managedpostgres/credentialdelivery/sqlc pkg/managedpostgres/credentialprobe/sqlc pkg/managedpostgres/connectioncapacity/sqlc pkg/connectioncapacity/sqlc pkg/datapipeline/sqlc pkg/e2etest/migrationprobe/sqlc; do \
+	  for package in pkg/apid/mailoutbox/sqlc pkg/releasehistory/sqlc pkg/internalmail/sqlc pkg/productemail/sqlc pkg/mcpmanagement/statepg/sqlc pkg/ci/db/sqlc pkg/state/realtimettl/sqlc pkg/state/realtimebulk/sqlc pkg/state/livekeys/sqlc pkg/state/agents/sqlc pkg/state/orgaccess/sqlc pkg/state/resourceownership/sqlc pkg/state/appquota/sqlc pkg/state/scenariopg/sqlc pkg/state/scenariopgfault/sqlc pkg/state/scenarioobj/sqlc pkg/rehearsalpg/runtime/sqlc pkg/state/sqlc pkg/db/migrationsqlc pkg/managedpostgres/connectionfence/sqlc pkg/managedpostgres/copyinventory/sqlc pkg/managedpostgres/copyroles/sqlc pkg/managedpostgres/copydatabases/sqlc pkg/managedpostgres/copycontents/sqlc pkg/managedpostgres/credentialdelivery/sqlc pkg/managedpostgres/credentialprobe/sqlc pkg/managedpostgres/connectioncapacity/sqlc pkg/connectioncapacity/sqlc pkg/datapipeline/sqlc pkg/e2etest/migrationprobe/sqlc; do \
 	    diff -r "$$package" "$$tmp/$$package" || \
 	      { echo "sqlc-check: generated $$package is out of sync; run 'make sqlc-generate' and commit the diff"; exit 1; }; \
 	  done

@@ -74,12 +74,26 @@ var (
 	_ OwnedEdgeRuleStore = (*MemStore)(nil)
 )
 
+// The gateway's rule reads skip rules whose app is deleted (ADR-091 amendment
+// 2026-10-28). A soft-deleted app keeps its rules so a restore brings them
+// back, but a rule on "*", a wildcard or another app's host used to keep
+// refusing or rewriting the account's other apps' traffic after its app was
+// gone.
+
+// edgeRuleAppDeletedLocked reports whether r's app is soft-deleted. Callers
+// hold m.mu.
+func (m *MemStore) edgeRuleAppDeletedLocked(r EdgeRule) bool {
+	app, ok := m.apps[r.AppID]
+	return ok && app.Status == AppDeleted
+}
+
 func (s *PgStore) OwnedEdgeRulesForHost(ctx context.Context, host, accountID, appID string) ([]EdgeRule, error) {
 	rows, err := s.pool.Query(ctx, `
 		select `+edgeRuleSelectCols+` from edge_rules
 		 where account_id = $2
 		   and enabled = true
 		   and (expires_at is null or expires_at > now())
+		   and not exists (select 1 from apps a where a.id = edge_rules.app_id and a.status = 'deleted')
 		   and (
 		   	match_host = $1
 		   	or match_host = '*'
@@ -100,7 +114,7 @@ func (m *MemStore) OwnedEdgeRulesForHost(_ context.Context, host, accountID, app
 	defer m.mu.Unlock()
 	var out []EdgeRule
 	for _, r := range m.edgeRules {
-		if r.AccountID != accountID || !r.Enabled || r.EdgeRuleExpired(time.Now()) {
+		if r.AccountID != accountID || !r.Enabled || r.EdgeRuleExpired(time.Now()) || m.edgeRuleAppDeletedLocked(r) {
 			continue
 		}
 		appWide := appID != "" && r.AppID == appID && api.IsEdgeRuleAppHosts(r.MatchHost)
@@ -138,6 +152,7 @@ func (s *PgStore) OwnerEdgeRules(ctx context.Context, accountID string, limit in
 		 where account_id = $1
 		   and enabled = true
 		   and (expires_at is null or expires_at > now())
+		   and not exists (select 1 from apps a where a.id = edge_rules.app_id and a.status = 'deleted')
 		 order by priority asc, created_at asc, id asc
 		 limit $2
 	`, accountID, limit+1)
@@ -157,7 +172,7 @@ func (m *MemStore) OwnerEdgeRules(_ context.Context, accountID string, limit int
 	defer m.mu.Unlock()
 	var out []EdgeRule
 	for _, r := range m.edgeRules {
-		if r.AccountID != accountID || !r.Enabled || r.EdgeRuleExpired(time.Now()) {
+		if r.AccountID != accountID || !r.Enabled || r.EdgeRuleExpired(time.Now()) || m.edgeRuleAppDeletedLocked(r) {
 			continue
 		}
 		r.MatchHeaders = cloneEdgeRuleMatchHeaders(r.MatchHeaders)

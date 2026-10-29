@@ -20,7 +20,7 @@ import { createPoolObservation } from './pool.mjs'
 import { createUsage, addResponseBytes, accessReport } from './usage.mjs'
 import { storageRoute, handleStorage, storageAnonymousTarget, storageServerKeyAllows, checkStorageTable } from './storage.mjs'
 import { createEngine, lifecyclePaths } from './engine.mjs'
-import { publicReadTarget, publicRpcTarget, publicRpcListed, publicReadCache, clientKey, matchServerKey, serverKeyAllows, serverSubject, checkPublicRelations, checkPublicFunctions, loadRowSecurity, rowSecurityDenial } from './access.mjs'
+import { publicReadTarget, publicRpcTarget, publicRpcListed, publicReadCache, anonymousClient, matchServerKey, serverKeyAllows, serverSubject, checkPublicRelations, checkPublicFunctions, loadRowSecurity, rowSecurityDenial } from './access.mjs'
 
 export function createServer(config, verify, upstreamPort = 3000, readyPort = 3001, log) {
   const servingFingerprint = config.fingerprint
@@ -172,7 +172,7 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
           if (denial) return problem(res, denial.status, denial.code)
           concurrencyKey = payload.sub
         } else if (access === 'anonymous') {
-          const client = ['anonymous', clientKey(req)]
+          const client = anonymousClient(req, anonymousLimiter, userConcurrency)
           if (!admitRateLimit(anonymousLimiter, client, res, problem)) return
           concurrencyKey = client
         }
@@ -318,6 +318,8 @@ function proxy(req, res, token, port, config, restBasePath, deadline, userLease,
     response.on('data', () => deadline.check())
     if (req.method === 'GET' && path.split('?')[0] === '/' && response.statusCode === 200) return openAPISpec(response, res, config, restBasePath, deadline)
     if (response.statusCode >= 400) markRequest(res, 'upstream_error')
+    // The engine names a created row from its own root; clients reach it below restBasePath.
+    if (typeof response.headers.location === 'string' && response.headers.location.startsWith('/')) response.headers.location = restBasePath + response.headers.location
     streamResponse(response, res, req.method, deadline, problem, publicCache)
   })
   let bytes = 0

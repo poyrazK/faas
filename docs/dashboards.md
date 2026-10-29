@@ -20,12 +20,12 @@ Describe the widgets in a JSON file:
 ```
 
 ```sh
-gregale dashboards create checkout --file checkout.json
-gregale dashboards list
-gregale dashboards show DASHBOARD_ID
-gregale dashboards get DASHBOARD_ID
-gregale dashboards replace DASHBOARD_ID --name checkout --file checkout.json
-gregale dashboards rm DASHBOARD_ID
+gregale dashboard create checkout --file checkout.json
+gregale dashboard list
+gregale dashboard show DASHBOARD_ID
+gregale dashboard get DASHBOARD_ID
+gregale dashboard update DASHBOARD_ID --name checkout --file checkout.json
+gregale dashboard delete DASHBOARD_ID
 ```
 
 `show` reads every widget now:
@@ -39,7 +39,9 @@ checkout as of 2026-10-22 12:00:00 UTC
 ```
 
 A widget that cannot be read says why (`unavailable: no values pushed in the
-window`), and the rest of the dashboard still shows. The API is
+window`), and the rest of the dashboard still shows. A widget reads only what
+your account can open on its own: a log count needs log search, a custom
+metric needs custom metric history, and an SLO needs SLOs. The API is
 `GET /v1/dashboards/{id}/data`.
 
 In the web dashboard, **Dashboards** (`/dashboard/dashboards`) lists them,

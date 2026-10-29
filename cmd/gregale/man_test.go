@@ -89,21 +89,17 @@ func TestSuggestCommand_TableDriven(t *testing.T) {
 		wantOK bool
 	}{
 		// Single-winner suggestions (the happy path).
-		{"typo_webhook_transposition_suggests_webhooks", "webhoks", "webhooks", true},
+		{"typo_webhook_transposition_suggests_webhook", "webhoks", "webhook", true},
 		{"typo_app_returns_itself_at_distance_0", "app", "app", true},
 		{"typo_deploy_returns_itself", "deploy", "deploy", true},
-		{"exact_match_returns_self", "apps", "apps", true},
+		{"earlier_name_suggests_its_tree_noun", "apps", "app", true},
 		{"hyphenated_typo_within_threshold", "invok", "invoke", true},
 		// Tie-suppression (the load-bearing branch).
 		{"typo_aps_is_three_way_tie_no_suggestion", "aps", "", false},
 		// Far-miss (above maxDist=2).
 		{"far_miss_no_suggestion", "zzzzzzzzzz", "", false},
-		// Empty query is academic (cmdMan 0-args branch renders
-		// the top-level page) but we pin the deterministic pick
-		// so a future refactor doesn't shift it silently.
-		// "ai" and "ps" now tie as the shortest names, so an empty query is
-		// ambiguous and the suggestion is suppressed.
-		{"empty_query_two_way_shortest_tie", "", "", false},
+		// An empty query suggests nothing.
+		{"empty_query_no_suggestion", "", "", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -121,15 +117,15 @@ func TestSuggestCommand_TableDriven(t *testing.T) {
 // TestCmdMan_UnknownCommandSuggests pins the integration:
 // `gregale man webhoks` (unknown command) prints both
 // "unknown command \"webhoks\"" and the suggestion
-// "Did you mean \"webhooks\"?". Both lines must appear on
+// "Did you mean \"webhook\"?". Both lines must appear on
 // stderr so a shell pipeline can still capture the roff output
 // on stdout when the command is valid.
 //
 // `webhoks` was chosen over the more obvious `aps` because aps is
-// a three-way tie (app / apps / ps) at distance 1 — the
-// tie-suppression branch would fire and the suggestion wouldn't
-// print. webhoks has only webhooks at distance ≤2, so the
-// single-winner branch fires and the suggestion surfaces.
+// a tie (app / api) at distance 1 — the tie-suppression branch
+// would fire and the suggestion wouldn't print. webhoks has only
+// webhook at distance ≤2, so the single-winner branch fires and the
+// suggestion surfaces. Suggestions name the command tree's nouns.
 func TestCmdMan_UnknownCommandSuggests(t *testing.T) {
 	stdout, restoreOut := main.CaptureStdout(t)
 	defer restoreOut()
@@ -143,7 +139,7 @@ func TestCmdMan_UnknownCommandSuggests(t *testing.T) {
 	if !strings.Contains(stderr.String(), `unknown command "webhoks"`) {
 		t.Errorf("stderr missing unknown-command line, got:\n%s", stderr.String())
 	}
-	if !strings.Contains(stderr.String(), `Did you mean "webhooks"`) {
+	if !strings.Contains(stderr.String(), `Did you mean "webhook"`) {
 		t.Errorf("stderr missing suggestion line, got:\n%s", stderr.String())
 	}
 	// Suggestion must NOT contaminate stdout — stdout is roff

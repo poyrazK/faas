@@ -18,7 +18,8 @@ tracing:
 enabled = true
 ```
 
-The setting applies from the next deployment. Then open a request with
+The setting applies from the next deployment. Start an investigation with
+[`gregale debug status <app>`](debug-status.md), then open a request with
 `gregale debug requests get <app> <request-id>` or in the dashboard debugger;
 spans from your app appear under the request, and the evidence summary uses
 them to point at the slow dependency.
@@ -85,7 +86,7 @@ To keep your logs out of Gregale, set `OTEL_LOGS_EXPORTER=none`, or point
 
 ## Following a request across services
 
-`gregale trace <trace-id>` shows every retained request of one trace across
+`gregale debug trace <trace-id>` shows every retained request of one trace across
 your apps, with the logs, queued invocations and spans linked to it. The trace
 id is on each request in `gregale debug requests get`.
 

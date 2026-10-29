@@ -57,9 +57,10 @@ func (m *MemStore) insertProfileCapture(accountID, appID string, c api.ProfileCa
 	if !m.profileInvestigationOwnedLocked(accountID, appID) {
 		return ErrNotFound
 	}
-	recent := 0
+	automatic := c.Automatic()
+	var recent int64
 	for _, row := range m.profileCaptures {
-		if row.accountID == accountID && !row.capture.CreatedAt.Before(c.CreatedAt.Add(-time.Hour)) {
+		if row.accountID == accountID && row.capture.Automatic() == automatic && !row.capture.CreatedAt.Before(c.CreatedAt.Add(-time.Hour)) {
 			recent++
 		}
 		if row.capture.AppID == appID && !row.capture.Done() {
@@ -73,25 +74,55 @@ func (m *MemStore) insertProfileCapture(accountID, appID string, c api.ProfileCa
 			}
 		}
 	}
-	if recent >= api.ProfileCaptureMaxPerAccountHour {
+	if recent >= profileCaptureHourlyLimit(automatic) {
 		return ErrProfileCaptureQuota
 	}
-	var storedBytes, active int64
+	var usage profileCaptureUsage
+	var candidates []*memProfileCapture
 	for _, row := range m.profileCaptures {
 		if row.accountID != accountID {
 			continue
 		}
-		if !row.capture.Done() {
-			active++
-		}
+		bytes := int64(0)
 		if !row.capture.ExpiresAt.Before(c.CreatedAt) {
 			for _, blob := range row.blobs {
-				storedBytes += int64(len(blob.Profile))
+				bytes += int64(len(blob.Profile))
+			}
+		}
+		usage.StoredBytes += bytes
+		if !row.capture.Done() {
+			usage.Active++
+		}
+		if row.capture.Automatic() {
+			usage.AutomaticStoredBytes += bytes
+			if !row.capture.Done() {
+				usage.AutomaticActive++
+			} else if row.capture.OOMKilledAt == nil && !row.capture.ExpiresAt.Before(c.CreatedAt) {
+				candidates = append(candidates, row)
 			}
 		}
 	}
-	if err := checkProfileCaptureStorage(storedBytes, active, storageLimit); err != nil {
+	sort.Slice(candidates, func(i, j int) bool {
+		a, b := candidates[i].capture, candidates[j].capture
+		if !a.CreatedAt.Equal(b.CreatedAt) {
+			return a.CreatedAt.Before(b.CreatedAt)
+		}
+		return a.ID < b.ID
+	})
+	rotatable := make([]rotatableProfileCapture, 0, min(len(candidates), api.ProfileCaptureMaxRotated))
+	for _, row := range candidates[:min(len(candidates), api.ProfileCaptureMaxRotated)] {
+		bytes := int64(0)
+		for _, blob := range row.blobs {
+			bytes += int64(len(blob.Profile))
+		}
+		rotatable = append(rotatable, rotatableProfileCapture{ID: row.capture.ID, Bytes: bytes})
+	}
+	rotate, err := planProfileCaptureStorage(usage, automatic, storageLimit, rotatable)
+	if err != nil {
 		return err
+	}
+	for _, id := range rotate {
+		delete(m.profileCaptures, id)
 	}
 	if m.profileCaptures == nil {
 		m.profileCaptures = map[string]*memProfileCapture{}
@@ -114,6 +145,28 @@ func (m *MemStore) GetProfileCapture(_ context.Context, accountID, appID, id str
 		return api.ProfileCapture{}, ErrNotFound
 	}
 	return copyProfileCapture(row.capture), nil
+}
+
+func (m *MemStore) DeleteProfileCapture(_ context.Context, accountID, appID, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.profileCaptureLocked(accountID, appID, id); !ok {
+		return ErrNotFound
+	}
+	delete(m.profileCaptures, id)
+	return nil
+}
+
+// profileCaptureClaimsBefore orders queued captures for claiming: manual
+// before automatic (someone is waiting), then oldest first.
+func profileCaptureClaimsBefore(a, b api.ProfileCapture) bool {
+	if a.Automatic() != b.Automatic() {
+		return !a.Automatic()
+	}
+	if !a.CreatedAt.Equal(b.CreatedAt) {
+		return a.CreatedAt.Before(b.CreatedAt)
+	}
+	return a.ID < b.ID
 }
 
 func (m *MemStore) ListProfileCaptures(_ context.Context, accountID, appID string) ([]api.ProfileCapture, error) {
@@ -162,7 +215,7 @@ func (m *MemStore) ClaimProfileCapture(_ context.Context, now time.Time) (Claime
 		if row.capture.Status != api.ProfileCaptureQueued {
 			continue
 		}
-		if next == nil || row.capture.CreatedAt.Before(next.capture.CreatedAt) || row.capture.CreatedAt.Equal(next.capture.CreatedAt) && row.capture.ID < next.capture.ID {
+		if next == nil || profileCaptureClaimsBefore(row.capture, next.capture) {
 			next = row
 		}
 	}

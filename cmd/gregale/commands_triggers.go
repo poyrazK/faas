@@ -1,8 +1,9 @@
 // commands_triggers.go — CLI lifecycle for the unified trigger resource.
 //
-// The API already exposes one trigger primitive for broker mappings and
-// cron-linked rows. Keeping the CLI on that same shape avoids making users
-// learn a separate command for every source kind:
+// The API exposes one trigger primitive for broker and queue mappings.
+// Keeping the CLI on that same shape avoids making users learn a separate
+// command for every source kind. Cron schedules are not triggers: they are
+// listed and edited with `gregale cron` (issue #2757).
 //
 //	gregale triggers list|get|create|update|delete|pause|resume|records|retry|drop|dlq|metrics
 //
@@ -46,8 +47,10 @@ var triggerRecordStateNames = []string{
 	"pending", "claimed", "succeeded", "retry", "dead_letter", "superseded",
 }
 
-const triggerKindsUsage = "cron|kafka|nats|redis_streams|sqs_compat|queue|realtime"
 const triggerBrokerKindsUsage = "kafka|nats|redis_streams|sqs_compat|queue|realtime"
+
+// triggerCronHint answers a cron filter or cron flag on a triggers command.
+const triggerCronHint = "cron schedules are not triggers; use `gregale cron list --app <slug>` and `gregale cron update <id>`"
 
 func triggerFlagSet(name, usage string) *flag.FlagSet {
 	fs := newFlagSet(name, flag.ContinueOnError)
@@ -105,6 +108,21 @@ func cmdTriggers(args []string) int {
 	}
 }
 
+// triggerArgsNameCronFlag reports a --schedule or --path flag, which belonged
+// to cron-linked trigger rows and now lives on `gregale cron update`.
+func triggerArgsNameCronFlag(args []string) bool {
+	for _, arg := range args {
+		if arg == "--" {
+			return false
+		}
+		name, _, _ := strings.Cut(strings.TrimLeft(arg, "-"), "=")
+		if strings.HasPrefix(arg, "-") && (name == "schedule" || name == "path") {
+			return true
+		}
+	}
+	return false
+}
+
 func triggerKindValid(kind string) bool {
 	for _, name := range triggerKindNames {
 		if kind == name {
@@ -135,7 +153,7 @@ func triggerUsageError(usage string, format string, args ...any) int {
 
 func cmdTriggersList(args []string) int {
 	flags, pos := splitArgsForFlags(args)
-	usage := "usage: gregale triggers list [--app <slug>] [--kind " + triggerKindsUsage + "]"
+	usage := "usage: gregale trigger list [--app <slug>] [--kind " + triggerBrokerKindsUsage + "]"
 	fs := triggerFlagSet("triggers-list", usage)
 	appSlug := fs.String("app", "", "filter to an app slug")
 	kind := fs.String("kind", "", "filter by trigger kind")
@@ -145,8 +163,11 @@ func cmdTriggersList(args []string) int {
 	if len(pos) != 0 {
 		return triggerUsageError(usage, "unexpected positional argument %q", pos[0])
 	}
-	if *kind != "" && !triggerKindValid(*kind) {
-		return triggerUsageError(usage, "invalid --kind %q (expected one of %s)", *kind, triggerKindsUsage)
+	if *kind == string(api.TriggerKindCron) {
+		return triggerUsageError(usage, "%s", triggerCronHint)
+	}
+	if *kind != "" && !triggerBrokerKindValid(*kind) {
+		return triggerUsageError(usage, "invalid --kind %q (expected one of %s)", *kind, triggerBrokerKindsUsage)
 	}
 	client, err := authedClient()
 	if err != nil {
@@ -186,7 +207,7 @@ func cmdTriggersList(args []string) int {
 
 func cmdTriggersGet(args []string) int {
 	flags, pos := splitArgsForFlags(args)
-	usage := "usage: gregale triggers get <id>"
+	usage := "usage: gregale trigger get <id>"
 	fs := triggerFlagSet("triggers-get", usage)
 	if err := fs.Parse(flags); err != nil {
 		return 1
@@ -210,8 +231,12 @@ func cmdTriggersGet(args []string) int {
 }
 
 func cmdTriggersCreate(args []string) int {
+	lock, args, lockErr := takeLockFlags(args)
+	if lockErr != nil {
+		return printErr("Invalid lock", lockErr)
+	}
 	flags, pos := splitArgsForFlags(args, "disabled", "enabled")
-	usage := "usage: gregale triggers create --app <slug> --kind <" + triggerBrokerKindsUsage + "> [flags]"
+	usage := "usage: gregale trigger create --app <slug> --kind <" + triggerBrokerKindsUsage + "> [flags]"
 	fs := triggerFlagSet("triggers-create", usage)
 	appSlug := fs.String("app", "", "app slug (required)")
 	kind := fs.String("kind", "", "trigger kind (required)")
@@ -241,7 +266,7 @@ func cmdTriggersCreate(args []string) int {
 		return triggerUsageError(usage, "invalid --kind %q (expected one of %s)", *kind, triggerBrokerKindsUsage)
 	}
 	if *kind == string(api.TriggerKindCron) {
-		return triggerUsageError(usage, "kind=cron is managed by `gregale crons add`; POST /v1/triggers rejects cron rows")
+		return triggerUsageError(usage, "kind=cron is managed by `gregale cron create`; POST /v1/triggers rejects cron rows")
 	}
 	if !triggerBrokerKindValid(*kind) {
 		return triggerUsageError(usage, "invalid --kind %q (expected one of %s)", *kind, triggerBrokerKindsUsage)
@@ -294,22 +319,38 @@ func cmdTriggersCreate(args []string) int {
 	if err != nil {
 		return printErr("Could not create trigger", err)
 	}
+	var binding *api.ExclusiveTriggerBindingRecord
+	if lock != nil {
+		if binding, err = bindExclusiveLock(ctx, client, "broker", trigger.ID, lock); err != nil {
+			return printErr("Could not lock trigger", err)
+		}
+	}
 	if jsonOutput {
+		if binding != nil {
+			return jsonOut(writeJSON(struct {
+				api.Trigger
+				Lock *api.ExclusiveTriggerBindingRecord `json:"lock"`
+			}{trigger, binding}))
+		}
 		return jsonOut(writeJSON(trigger))
 	}
 	PrintOK(osStdout, "Created trigger %s", trigger.ID)
+	if binding != nil {
+		_, _ = fmt.Fprintf(osStdout, "Runs one at a time per key under lock %s.\n", binding.Policy)
+	}
 	return 0
 }
 
 func cmdTriggersUpdate(args []string) int {
+	usage := "usage: gregale trigger update <id> [flags]"
+	if triggerArgsNameCronFlag(args) {
+		return triggerUsageError(usage, "%s", triggerCronHint)
+	}
 	flags, pos := splitArgsForFlags(args, "disabled", "enabled")
-	usage := "usage: gregale triggers update <id> [flags]"
 	fs := triggerFlagSet("triggers-update", usage)
 	enabled := fs.Bool("enabled", false, "enable the trigger")
 	disabled := fs.Bool("disabled", false, "disable the trigger")
 	config := fs.String("config", "", "replace JSON config (inline | @file | - for stdin)")
-	schedule := fs.String("schedule", "", "replace cron expression")
-	path := fs.String("path", "", "replace cron request path")
 	batchSize := fs.Int("batch-size", 0, "maximum records per dispatch batch")
 	batchWindow := fs.Int("batch-window-ms", 0, "maximum batch dwell time in milliseconds")
 	maxAttempts := fs.Int("max-attempts", 0, "maximum delivery attempts")
@@ -334,9 +375,6 @@ func cmdTriggersUpdate(args []string) int {
 			return printErr("Invalid --config", err)
 		}
 	}
-	if explicit["schedule"] && len(strings.Fields(*schedule)) != 5 {
-		return printErr("Invalid --schedule", fmt.Errorf("expected 5 fields, got %q", *schedule))
-	}
 	if err := validateTriggerOptionalFlags(explicit, *enabled, *disabled, *batchSize, *batchWindow, *maxAttempts, *payloadMaxBytes, *poisonStrategy); err != nil {
 		return printErr("Invalid trigger flags", err)
 	}
@@ -351,12 +389,6 @@ func cmdTriggersUpdate(args []string) int {
 		if err != nil {
 			return printErr("Invalid --config", err)
 		}
-	}
-	if explicit["schedule"] {
-		req.Schedule = triggerStringPtr(*schedule)
-	}
-	if explicit["path"] {
-		req.Path = triggerStringPtr(*path)
 	}
 	if explicit["batch-size"] {
 		req.BatchSizeMax = triggerIntPtr(*batchSize)
@@ -388,7 +420,7 @@ func cmdTriggersUpdate(args []string) int {
 }
 
 func cmdTriggersDelete(args []string) int {
-	usage := "usage: gregale triggers delete <id> [--quiet]"
+	usage := "usage: gregale trigger delete <id> [--quiet]"
 	fs := triggerFlagSet("triggers-delete", usage)
 	quiet := fs.Bool("quiet", false, "skip the typed confirmation (for scripts)")
 	fs.BoolVar(quiet, "yes", false, "confirm deletion without prompting")
@@ -458,7 +490,7 @@ func cmdTriggersToggle(args []string, resume bool) int {
 
 func cmdTriggersRecords(args []string) int {
 	flags, pos := splitArgsForFlags(args)
-	usage := "usage: gregale triggers records <id> [--state " + strings.Join(triggerRecordStateNames, "|") + "]"
+	usage := "usage: gregale trigger records <id> [--state " + strings.Join(triggerRecordStateNames, "|") + "]"
 	fs := triggerFlagSet("triggers-records", usage)
 	state := fs.String("state", "", "filter by record state")
 	if err := fs.Parse(flags); err != nil {
@@ -535,7 +567,7 @@ func cmdTriggersRecordAction(args []string, retry bool) int {
 
 func cmdTriggersDLQ(args []string) int {
 	flags, pos := splitArgsForFlags(args)
-	usage := "usage: gregale triggers dlq <id> [--reason REASON]"
+	usage := "usage: gregale trigger dlq <id> [--reason REASON]"
 	fs := triggerFlagSet("triggers-dlq", usage)
 	reason := fs.String("reason", "", "filter by dead-letter reason")
 	if err := fs.Parse(flags); err != nil {
@@ -567,7 +599,7 @@ func cmdTriggersDLQ(args []string) int {
 
 func cmdTriggersMetrics(args []string) int {
 	flags, pos := splitArgsForFlags(args)
-	usage := "usage: gregale triggers metrics <id>"
+	usage := "usage: gregale trigger metrics <id>"
 	fs := triggerFlagSet("triggers-metrics", usage)
 	if err := fs.Parse(flags); err != nil {
 		return 1

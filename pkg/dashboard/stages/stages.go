@@ -211,6 +211,24 @@ func assertClosedSet() {
 	}
 }
 
+// openStageDurationMs is how long the open stage has run. A finished
+// deployment's open stage stops at terminalAt, or adds nothing without it, so
+// a stage a terminal write left open cannot grow forever (issue #2696).
+func openStageDurationMs(startedAt *time.Time, status string, terminalAt time.Time) int64 {
+	if startedAt == nil {
+		return 0
+	}
+	end := time.Now()
+	switch state.DeploymentStatus(status) {
+	case state.DeployLive, state.DeployFailed, state.DeploySuperseded, state.DeployCancelled:
+		if terminalAt.IsZero() {
+			return 0
+		}
+		end = terminalAt
+	}
+	return max(0, end.Sub(*startedAt).Milliseconds())
+}
+
 // RenderSummaryText writes the closed 6-stage summary block for a
 // terminal-status deployment (live / failed / superseded) to w. It
 // is the read-side counterpart to the live ticker: the same row
@@ -298,12 +316,7 @@ func RenderSummaryText(w io.Writer, ss state.StageState, status string, terminal
 			// The active stage hasn't been pushed to history yet;
 			// render it as in_progress with the started-at delta.
 			rowStatus = stageStatusInProgress
-			if ss.CurrentStartedAt != nil {
-				durMs = time.Since(*ss.CurrentStartedAt).Milliseconds()
-				if durMs < 0 {
-					durMs = 0
-				}
-			}
+			durMs = openStageDurationMs(ss.CurrentStartedAt, status, terminalAt)
 		case ok:
 			rowStatus = item.Status
 			durMs = item.DurationMs
@@ -437,12 +450,7 @@ func RenderSummaryHTML(ss state.StageState, status string, terminalAt time.Time)
 		switch {
 		case !ok && ss.Current == name:
 			rowStatus = stageStatusInProgress
-			if ss.CurrentStartedAt != nil {
-				durMs = time.Since(*ss.CurrentStartedAt).Milliseconds()
-				if durMs < 0 {
-					durMs = 0
-				}
-			}
+			durMs = openStageDurationMs(ss.CurrentStartedAt, status, terminalAt)
 		case ok:
 			rowStatus = item.Status
 			durMs = item.DurationMs

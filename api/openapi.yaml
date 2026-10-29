@@ -8335,6 +8335,64 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/apps/{slug}/data-api/contract-tasks:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      operationId: createDataAPIContractTask
+      summary: Inspect a Data API app's database contract
+      description: |
+        Runs one fixed schema inspection inside a fresh task VM from the app's
+        live deployment: `types` renders the TypeScript contract, `validators`
+        the table and RPC input validators, and `schema` the JSON contract
+        snapshot. The receipt is an ordinary app task receipt and the output
+        arrives in `stdout_tail`. Belongs to the Data API, so it works without
+        the general app-task API.
+      tags: [managed_postgres]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateDataAPIContractTaskRequest' }
+      responses:
+        '202':
+          description: Contract inspection admitted and queued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppTaskResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/apps/{slug}/data-api/contract-tasks/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/AppTaskID'
+    get:
+      operationId: getDataAPIContractTask
+      summary: Get one Data API contract inspection
+      description: Current or terminal receipt of a contract inspection. Any other app task is not found here.
+      tags: [managed_postgres]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Current or terminal contract inspection receipt.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppTaskResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
   /v1/apps/{slug}/data-api/usage:
     parameters:
       - name: slug
@@ -13423,6 +13481,7 @@ paths:
     get:
       tags: [auth]
       operationId: getAuthCapabilities
+      security: [{ cookieAuth: [] }]
       summary: Sign-in OAuth capability signal for the dashboard.
       description: |
         Returns the boot-resolved OAuth provider state for this API
@@ -13737,6 +13796,7 @@ paths:
     post:
       tags: [auth]
       operationId: setPassword
+      security: [{ cookieAuth: [] }]
       summary: Set or replace the password on the authenticated account.
       description: |
         Authenticated. Lets OAuth-only customers opt into password
@@ -24752,6 +24812,21 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    delete:
+      tags: [apps]
+      operationId: deleteProfileCapture
+      summary: Delete an on-demand profile capture.
+      description: Deletes the capture and its profiles with deploy-write access, freeing its share of the account's capture storage at once. A capture still queued or running is cancelled and its profiles are discarded.
+      responses:
+        '204':
+          description: Capture deleted.
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
   /v1/apps/{slug}/profiles/captures/{id}/view:
     parameters:
@@ -24974,6 +25049,77 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DebugRunningResponse'
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/debug/status:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getAppDebugStatus
+      summary: Summarize an app's health, release, regressions, and recent failures.
+      description: |
+        One answer to "is this app healthy, and if not where do I look?": the
+        serving deployments' requests, server errors, and p95 over the window,
+        the canary rollout in flight or rolled back inside the window (with
+        its request evidence), open debugger regressions, the newest
+        server-error requests, and a verdict (`failing`, `rolled_back`,
+        `degraded`, `releasing`, `healthy`, or `idle`) with a one-line
+        headline. Plan-gated by `DebugTelemetryEnabled`; the window is clamped
+        to `DebugTelemetryRetentionDays`.
+      parameters:
+        - name: since
+          in: query
+          required: false
+          schema: { type: [string, 'null'] }
+          description: "Optional lookback window (e.g. 30m, 1h, 24h); defaults to 1h and is clamped by plan retention."
+      responses:
+        '200':
+          description: The app's debug status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DebugStatusResponse'
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/debug/rollout:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getAppDebugRollout
+      summary: Explain why a release was rolled back or is held.
+      description: |
+        Explains the app's newest canary rollout, or `deployment_id`, with
+        request evidence: the safe-release decision that rolled it back, holds
+        it, or advanced it; the candidate's routes compared with the stable
+        deployment over the decision window, worst first; example requests
+        that show the problem; and the candidate's open regressions. The
+        evidence is read from request telemetry at request time and is not
+        stored with the decision. `state` is `none` when no recent deployment
+        had a canary rollout. Plan-gated by `DebugTelemetryEnabled`; the
+        window is clamped to `DebugTelemetryRetentionDays`.
+      parameters:
+        - name: deployment_id
+          in: query
+          required: false
+          schema: { type: [string, 'null'], format: uuid }
+          description: "Deployment to explain; defaults to the newest of the app's recent deployments with a canary rollout."
+      responses:
+        '200':
+          description: The rollout explanation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DebugRolloutExplanation'
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/PaymentRequired' }
@@ -28653,6 +28799,7 @@ paths:
     post:
       tags: [github]
       operationId: listInstallableRepos
+      security: [{ cookieAuth: [] }]
       summary: List repos the user's GitHub App installation can see.
       description: |
         Cookie-session-authenticated (NOT API-key). Hydrates the
@@ -28948,6 +29095,7 @@ paths:
     get:
       tags: [github]
       operationId: getGitHubInstallBinding
+      security: [{ cookieAuth: [] }]
       summary: Inspect the app's GitHub repository binding.
       description: |
         Cookie-session-authenticated (NOT API-key). Returns the durable
@@ -28970,6 +29118,7 @@ paths:
     post:
       tags: [github]
       operationId: bindAppInstall
+      security: [{ cookieAuth: [] }]
       summary: Persist the (account, app, installation, repo, branch) bind row.
       description: |
         Cookie-session-authenticated (NOT API-key). Persists the
@@ -29019,6 +29168,7 @@ paths:
     delete:
       tags: [github]
       operationId: disconnectGitHubApp
+      security: [{ cookieAuth: [] }]
       summary: Disconnect an app from its GitHub repository.
       description: |
         Cookie-session-authenticated and CSRF-protected. Idempotently removes
@@ -29054,6 +29204,7 @@ paths:
     get:
       tags: [github]
       operationId: getGitHubInstallStatus
+      security: [{ cookieAuth: [] }]
       summary: Read the GitHub installation and binding health for an app.
       description: |
         Cookie-session-authenticated (NOT API-key). This is the canonical
@@ -29081,6 +29232,7 @@ paths:
     post:
       tags: [github]
       operationId: syncGitHubInstall
+      security: [{ cookieAuth: [] }]
       summary: Reconcile an app's GitHub repository access immediately.
       description: |
         Cookie-session-authenticated and CSRF-protected. Queries GitHub's
@@ -29125,6 +29277,7 @@ paths:
     post:
       tags: [github]
       operationId: retryGitHubInstallActivity
+      security: [{ cookieAuth: [] }]
       summary: Retry failed GitHub activity from the signed-in dashboard session.
       description: |
         This cookie-session action is CSRF-protected and requeues up to 10
@@ -31369,6 +31522,16 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: |
+            503 — `egress_circuit_disabled`: the request sets `enabled: true`
+            but this platform does not enforce egress circuit breakers yet,
+            so the breaker would never reject a connection. Turning a breaker
+            off is still accepted. `data_upstreams_disabled`: data placement
+            is not enabled on this cluster.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   # ─── Deployments ──────────────────────────────────────────────────────────
 
@@ -32924,9 +33087,14 @@ paths:
       tags: [crons]
       operationId: listCrons
       summary: List cron triggers.
+      parameters:
+        - name: slug
+          in: query
+          description: App slug or id. Lists only that app's crons; without it, every cron on the account's apps.
+          schema: { type: string }
       responses:
         '200':
-          description: Cron triggers on the account.
+          description: Cron triggers on the account, or on the app named by slug.
           content:
             application/json:
               schema:
@@ -32935,6 +33103,7 @@ paths:
               example:
                 - {"id":"0123456789abcdef0123456789abcdef","app_id":"0123456789abcdef0123456789abcdef","schedule":"*/5 * * * *","path":"/cron","enabled":true,"created_at":"2026-07-23T11:25:00Z","last_fired_at":"2026-07-23T11:20:00Z"}
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
     post:
       tags: [crons]
@@ -36040,7 +36209,8 @@ paths:
         Returns every trigger owned by the calling account, optional
         ?app_id filter to scope to one app, ?kind to scope to one
         kind. Newest-first by created_at; result is unbounded but
-        the typical account has well under 200.
+        the typical account has well under 200. Cron schedules are
+        not triggers: list them with GET /v1/crons.
       parameters:
         - name: app_id
           in: query
@@ -36054,8 +36224,9 @@ paths:
           required: false
           description: |
             Optional trigger kind filter (kafka / nats / redis_streams
-            / sqs_compat / queue). Invalid values produce an empty list,
-            not 400.
+            / sqs_compat / queue / realtime). kind=cron answers 400
+            validation_failed pointing at GET /v1/crons; any other
+            unknown value produces an empty list.
           schema: { $ref: '#/components/schemas/TriggerKind' }
       responses:
         '200':
@@ -36065,6 +36236,7 @@ paths:
               schema:
                 type: array
                 items: { $ref: '#/components/schemas/Trigger' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
     post:
@@ -39475,6 +39647,7 @@ paths:
     post:
       tags: [alert_rules]
       operationId: dashboardEnableAlertPreset
+      security: [{ cookieAuth: [] }]
       summary: Form-POST sibling of enableAlertPreset for the dashboard.
       description: |
         Receives application/x-www-form-urlencoded payload from the
@@ -39515,6 +39688,7 @@ paths:
     post:
       tags: [debugger]
       operationId: dashboardReplayAppDebugRequest
+      security: [{ cookieAuth: [] }]
       summary: Queue a debugger replay from the dashboard.
       description: |
         Accepts the server-rendered dashboard form payload and queues the
@@ -39566,6 +39740,7 @@ paths:
     post:
       tags: [queues]
       operationId: dashboardReplayFailedEvent
+      security: [{ cookieAuth: [] }]
       summary: Replay a failed event from the dashboard.
       description: Resets the source event to pending and redirects to the Failed Events inbox.
       requestBody:
@@ -39600,6 +39775,7 @@ paths:
     post:
       tags: [queues]
       operationId: dashboardDiscardFailedEvent
+      security: [{ cookieAuth: [] }]
       summary: Discard a failed event from the dashboard.
       description: Removes the ledger projection and redirects to the Failed Events inbox.
       requestBody:
@@ -39633,6 +39809,7 @@ paths:
     post:
       tags: [queues]
       operationId: dashboardReplayAccountFailedEvent
+      security: [{ cookieAuth: [] }]
       summary: Replay an account-owned failed event from the dashboard.
       description: Resets an account-scoped source event to pending and redirects to the Failed Events inbox.
       requestBody:
@@ -39666,6 +39843,7 @@ paths:
     post:
       tags: [queues]
       operationId: dashboardDiscardAccountFailedEvent
+      security: [{ cookieAuth: [] }]
       summary: Discard an account-owned failed event from the dashboard.
       description: Removes the account-wide ledger projection and redirects to the Failed Events inbox.
       requestBody:
@@ -39787,6 +39965,7 @@ paths:
     post:
       tags: [alert_rules]
       operationId: dashboardTestAlertPreset
+      security: [{ cookieAuth: [] }]
       summary: Form-POST sibling of testAlertPreset for the dashboard.
       description: |
         Receives the per-card "Send test alert" form submission
@@ -40208,13 +40387,15 @@ paths:
       parameters:
         - $ref: '#/components/parameters/EdgeRuleSetIfMatch'
       description: |
-        Kind is one of {route, rewrite, redirect, headers, cors, jwt, ip,
-        validate, geo, async}. `action` is a kind-tagged jsonb body — the per-kind
-        shape is documented under components/schemas. Plan-kind gate:
-        jwt/ip return 402 plan_edge_rule_kind_not_allowed on Free; geo
-        is allowed on Free with a tighter per-app quota. Per-app
-        quota returns 402 plan_limit_edge_rules once EdgeRulesPerApp
-        is reached.
+        Kind is one of route, rewrite, redirect, headers, cors, jwt, ip,
+        validate, limit, maintenance, geo, throttle, budget, cache, respond,
+        retry, circuit_breaker, async, waf and challenge. `action` is the
+        kind's action object (the EdgeRule*Action schemas). jwt, ip and async
+        return 402 plan_edge_rule_kind_not_allowed on Free; a kind past its
+        per-app quota returns 403 plan_edge_rule_kind_quota_reached, the per-app
+        total 403 plan_limit_edge_rules, and a kind not enabled for the account
+        403 capability_not_released. Reference:
+        https://gregale.dev/docs/edge-rules
       requestBody:
         required: true
         content:
@@ -50911,7 +51092,7 @@ paths:
           in: query
           schema:
             type: string
-            enum: [pending, processing, enqueued, filtered, failed, skipped_captured, skipped_unknown, skipped_existing, skipped_unsettled]
+            enum: [pending, processing, enqueued, filtered, failed, skipped_captured, skipped_unknown, skipped_existing, skipped_unsettled, cancelled]
           description: Filter items to one durable routing outcome.
         - name: after
           in: query
@@ -50973,6 +51154,36 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503':
           description: Retry request timed out.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/event-replays/{jobID}/cancel:
+    post:
+      tags: [events]
+      operationId: cancelEventReplayBackfill
+      summary: Cancel a running backfill.
+      description: Ends a running backfill as cancelled. Deliveries already admitted finish; undelivered ones are dropped and their receipts released. Cancelling an ended job returns it unchanged.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: jobID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+          description: Backfill job to cancel.
+      responses:
+        '200':
+          description: The job after cancellation.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventReplayBackfillJobResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Cancel request timed out.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -52575,6 +52786,7 @@ paths:
     get:
       tags: [templates]
       operationId: listTemplates
+      security: [{ cookieAuth: [] }]
       summary: Catalog of starter templates the dashboard wizard renders.
       description: |
         Cookie-session-authenticated (NOT API-key). The dashboard and
@@ -77496,6 +77708,7 @@ components:
         revision: {"type": "integer", "format": "int64", "minimum": 0, "maximum": 9007199254740991}
         routes: {"type": "array", "items": {"$ref": "#/components/schemas/RouteMonitorRoute"}, "maxItems": 20}
         updated_at: {"type": "string", "format": "date-time"}
+        warnings: {"type": "array", "items": {"type": "string"}, "maxItems": 20, "description": "Returned by a save of an enabled monitor: selectors no request matched within the plan's telemetry lookback (at most 7 days). Selectors match the route label exactly."}
     SetRouteMonitorRequest:
       type: object
       description: "Replacement production monitor intent, with a mandatory revision check."
@@ -77986,11 +78199,12 @@ components:
       required: [status, decided_at]
       properties:
         status: {"type": "string", "enum": ["claimed", "requested", "skipped"]}
-        reason: {"type": "string", "enum": ["latency_only_violation", "outside_rollback_window", "no_healthy_baseline", "rollback_target_ineligible"]}
+        reason: {"type": "string", "enum": ["latency_only_violation", "outside_rollback_window", "no_healthy_baseline", "rollback_target_ineligible", "project_release"]}
         route: {"type": "string", "maxLength": 256, "description": "First error-budget route that triggered the decision, as METHOD /path."}
         target_deployment_id: {"type": "string", "format": "uuid"}
         operation_id: {"type": "string", "format": "uuid", "description": "Checked rollback operation readable at /v1/apps/{slug}/rollbacks/{operation}."}
         decided_at: {"type": "string", "format": "date-time"}
+        refusal_code: {"type": "string", "pattern": "^[a-z0-9_]{1,64}$", "description": "The checked rollback's problem code when it refused a rollback_target_ineligible request, for example rollback_in_progress."}
     RouteMonitorIncidentTimelineEntry:
       type: object
       description: "One confirmed production monitor evaluation. It contains no customer identifiers or request details."
@@ -78104,6 +78318,7 @@ components:
         revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
         routes: { type: array, maxItems: 20, items: { $ref: '#/components/schemas/RouteHealthRoute' } }
         updated_at: { type: string, format: date-time }
+        warnings: { type: array, maxItems: 21, items: { type: string }, description: "Returned by a save: an on_regression abort no Safe Deploy worker can run now, and selectors no request matched within the plan's telemetry lookback (at most 7 days). An enforced guard holds a canary on such a route until the 24-hour route health hold deadline aborts it." }
     SetRouteHealthGateRequest:
       type: object
       description: Replacement critical-route health configuration and the revision the caller expects to update.
@@ -78479,6 +78694,13 @@ components:
         reason: { type: string }
         customers_limit: { type: integer, minimum: 20, maximum: 20 }
         routes: { type: array, maxItems: 20, items: { $ref: '#/components/schemas/RouteCustomerHealthRoute' } }
+    RouteHealthHold:
+      type: object
+      description: "Present on a route health report read while the enforced guard holds the canary: when the hold began (its first blocking decision) and when the hold deadline aborts the canary if the rollout worker still finds it held."
+      required: [since, aborts_at]
+      properties:
+        since: { type: string, format: date-time }
+        aborts_at: { type: string, format: date-time }
     RouteHealthReport:
       type: object
       description: Current observed-only critical-route health comparison with candidate, predecessor, policy, and telemetry provenance. When the app's automatic profile policy is enabled, profile_signal adds an ephemeral report-only comparison for an active canary; it never affects canary advancement or rollback and is not persisted.
@@ -78505,6 +78727,7 @@ components:
         minimum_latency_requests: { type: integer, format: int64, minimum: 100, maximum: 100, description: Present when any route has a latency check selected. Applies to each deployment per route per window. }
         routes: { type: array, maxItems: 20, items: { $ref: '#/components/schemas/RouteHealthFinding' } }
         profile_signal: { $ref: '#/components/schemas/CanaryProfileSignal' }
+        hold: { $ref: '#/components/schemas/RouteHealthHold' }
     CanaryProfileSignal:
       type: object
       description: Latest retained sampled CPU comparison for a deployment's canary stages, produced by a background worker using the app's enabled automatic profile policy and equal fixed windows. The stage and policy revision identify the assessment. Route-health reads return the saved result and never query profile storage. Checks are advisory unless canary_gate is explicitly configured. Gate evidence requires consecutive distinct qualified route windows; timeout behavior is configured explicitly. Completed assessments are retained for 30 days.
@@ -79723,6 +79946,10 @@ components:
         as_of: { type: string, format: date-time }
         currency: { type: string, enum: [USD] }
         meters: { type: array, items: { $ref: '#/components/schemas/FinancialMeterCosts' } }
+        projected_subtotal_millicents:
+          type: integer
+          format: int64
+          description: Plan fee plus every meter's projected usage charge for the month, in millicents. Present only when every meter has an available forecast; it excludes the components listed in missing_bill_components.
         bill_estimate_available: { type: boolean }
         missing_bill_components: { type: array, items: { type: string } }
     CreateDevBridgeRequest:
@@ -82057,6 +82284,10 @@ components:
         overage_enabled:
           description: True while the account runs its databases past the allowance, up to the ceiling.
           type: boolean
+        compute_suspended_at:
+          description: When the compute cap suspended the account's databases this month; present while compute_cap_state is suspended.
+          type: string
+          format: date-time
     ManagedPostgresOverage:
       description: An account's managed PostgreSQL compute overage setting.
       type: object
@@ -82443,6 +82674,16 @@ components:
           required: [start]
           properties:
             start: { type: string, format: date-time, description: Start of the bucket. }
+    CreateDataAPIContractTaskRequest:
+      description: The contract inspection to run.
+      type: object
+      additionalProperties: false
+      required: [kind]
+      properties:
+        kind:
+          type: string
+          enum: [types, validators, schema]
+          description: '`types` (TypeScript contract), `validators` (input validators) or `schema` (JSON contract snapshot).'
     DataAPIUsage:
       description: An app's reported Data API usage over a window, zero-filled per bucket.
       type: object
@@ -84200,6 +84441,7 @@ components:
         business_name: { type: string, maxLength: 256, description: "Legal business name used on future invoices." }
         billing_address: { type: string, maxLength: 1000, description: "Free-form billing address used on future invoices." }
         tax_id: { type: string, maxLength: 128, description: "Customer tax/VAT identifier used on future invoices." }
+        key_scopes: { type: array, items: { type: string }, description: "Scopes of the API key that authenticated this request; absent for a dashboard session. An agent key (scope agent) lists the tools the hosted MCP server offers it." }
         abuse_hold: { $ref: '#/components/schemas/AccountAbuseHold' }
 
     AccountAbuseHold:
@@ -93136,7 +93378,7 @@ components:
         kind: { type: string, enum: [advance, hold, abort] }
         rule:
           type: string
-          enum: [advance_healthy, advance_probe_evidence, advance_low_traffic, advance_no_predecessor, advance_manual, hold_insufficient_samples, hold_signal_unavailable, hold_observation_unavailable, hold_health_alert, abort_5xx, abort_p95_latency, abort_cold_boot_p95, abort_cpu_per_request, abort_dependency_errors, abort_oom, abort_crash_loop, abort_manual, abort_worker_lease_expired, abort_post_release_5xx, abort_post_release_p95_latency, abort_release_gate, abort_post_release_gate, hold_awaiting_approval, abort_approval_rejected, abort_approval_timeout]
+          enum: [advance_healthy, advance_probe_evidence, advance_low_traffic, advance_no_predecessor, advance_manual, hold_insufficient_samples, hold_signal_unavailable, hold_observation_unavailable, hold_health_alert, abort_5xx, abort_p95_latency, abort_cold_boot_p95, abort_cpu_per_request, abort_dependency_errors, abort_oom, abort_crash_loop, abort_manual, abort_worker_lease_expired, abort_post_release_5xx, abort_post_release_p95_latency, abort_release_gate, abort_post_release_gate, hold_awaiting_approval, abort_approval_rejected, abort_approval_timeout, abort_route_health_timeout]
           description: "Closed set; the breaker rules reuse the canary_progression_circuit_breaker_total event names."
         summary: { type: string, maxLength: 256, description: "The circuit breaker's aggregate-only reason." }
         step: { type: integer, minimum: 0, description: "Zero-based canary step that was evaluated." }
@@ -100526,6 +100768,7 @@ components:
             - skipped_unknown
             - skipped_existing
             - skipped_unsettled
+            - cancelled
         attempts:
           type: integer
           minimum: 0
@@ -100587,6 +100830,7 @@ components:
         skipped_unknown: { type: integer, format: int64, minimum: 0 }
         skipped_existing: { type: integer, format: int64, minimum: 0 }
         skipped_unsettled: { type: integer, format: int64, minimum: 0 }
+        cancelled: { type: integer, format: int64, minimum: 0, description: Deliveries the job dropped undelivered when it ended early. }
     EventReplayBackfillJobResponse:
       description: Progress and immutable selection details for one durable event backfill.
       type: object
@@ -100606,7 +100850,14 @@ components:
         earliest_retained_at: { type: string, format: date-time, description: Account-wide earliest event surviving when the job was created; does not establish complete coverage. }
         history_complete: { type: boolean, enum: [false], description: Always false; retained receipts are not an archive. }
         duplicate_policy: { type: string, enum: [skip_existing] }
-        state: { type: string, enum: [running, completed, completed_with_failures] }
+        state:
+          type: string
+          enum: [running, completed, completed_with_failures, cancelled, expired, failed]
+          description: "cancelled: ended by a cancel request. expired: no progress for 24 hours. failed: processing failed ten times in a row; see last_failure."
+        last_failure:
+          type: string
+          enum: [conflict, invalid_job, timeout, internal]
+          description: Class of the most recent processing failure while the job backs off or after it failed.
         scan_complete: { type: boolean, description: Whether the retained range has been fully examined. }
         progress: { $ref: '#/components/schemas/EventReplayBackfillProgress' }
         created_at: { type: string, format: date-time }
@@ -102609,7 +102860,7 @@ components:
       properties:
         app_id: { type: string, description: "App id or slug.", example: "0123456789abcdef0123456789abcdef" }
         schedule: { type: string , example: "*/5 * * * *"}
-        path: { type: string, description: "HTTP target path; defaults to / and is mutually exclusive with command." }
+        path: { type: string, maxLength: 2048, description: "HTTP target path on the cron's own app; defaults to /, starts with a single /, may carry a query string, and is mutually exclusive with command." }
         command: { type: array, minItems: 1, maxItems: 64, items: { type: string, maxLength: 4096 }, description: "Direct command argv; mutually exclusive with path." }
         command_shell: { type: boolean, default: false, description: "Interpret one command string through the app shell when true." }
         timeout_seconds: { type: integer, minimum: 0, maximum: 3600, description: "Per-fire command deadline; zero uses the 600-second default." }
@@ -102627,7 +102878,7 @@ components:
       type: object
       properties:
         schedule: { type: [string, "null"] , example: "*/5 * * * *"}
-        path: { type: [string, "null"] }
+        path: { type: [string, "null"], maxLength: 2048, description: "HTTP target path on the cron's own app; starts with a single /." }
         enabled: { type: [boolean, "null"] }
         timezone: { type: [string, "null"], description: "IANA timezone; an empty value resets to UTC." }
         skip_if_running: { type: [boolean, "null"], description: "Enable or disable overlap skipping for scheduled fires." }
@@ -106935,6 +107186,8 @@ components:
             - workflow_due_age_seconds
             - custom_metric
             - log_search_matches
+            - queue_backlog
+            - queue_oldest_age_seconds
             - log_error_lines
             - log_warn_lines
             - slo_budget_burn
@@ -106945,6 +107198,8 @@ components:
             - edge_rule_log_hits
             - edge_rule_activity
             - route_insights_detected
+            - route_monitor_incidents
+            - route_health_holds
         comparison:
           type: string
           enum: [gt, gte, lt, lte, above_baseline, below_baseline]
@@ -107043,7 +107298,7 @@ components:
         metric:
           type: string
           description: 'Selected metric for the existing alert rule. MCP task age reads a fresh app gauge in seconds and degrades when unavailable; mcp_tasks_metrics_stale is 1 when either task gauge is missing, stale, or invalid. Min=0 worker apps also require a fresh observer heartbeat with value 1. mcp_task_promotion_hold_age_seconds reads the oldest active hold directly from state (seconds, zero with no holds); its alerts support webhook action only.'
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_readiness_unhealthy, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, mcp_protocol_error_rate_pct, mcp_protocol_execution_p95_ms, edge_rule_hits, edge_rule_log_hits, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct, synthetic_check_consecutive_failures, synthetic_check_latency_p95_ms, edge_rule_activity, route_insights_detected, log_search_matches]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_readiness_unhealthy, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, mcp_protocol_error_rate_pct, mcp_protocol_execution_p95_ms, edge_rule_hits, edge_rule_log_hits, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct, synthetic_check_consecutive_failures, synthetic_check_latency_p95_ms, edge_rule_activity, route_insights_detected, log_search_matches, queue_backlog, queue_oldest_age_seconds, route_monitor_incidents, route_health_holds]
         comparison:
           type: string
           enum: [gt, gte, lt, lte, above_baseline, below_baseline]
@@ -107128,7 +107383,7 @@ components:
         metric:
           type: string
           description: 'Cannot cross metric families (e.g. error_rate_pct → failed_invocations) — returns 400. MCP task metrics are notification-only.'
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_readiness_unhealthy, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, mcp_protocol_error_rate_pct, mcp_protocol_execution_p95_ms, edge_rule_hits, edge_rule_log_hits, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct, synthetic_check_consecutive_failures, synthetic_check_latency_p95_ms, edge_rule_activity, route_insights_detected, log_search_matches]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_readiness_unhealthy, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, mcp_protocol_error_rate_pct, mcp_protocol_execution_p95_ms, edge_rule_hits, edge_rule_log_hits, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct, synthetic_check_consecutive_failures, synthetic_check_latency_p95_ms, edge_rule_activity, route_insights_detected, log_search_matches, queue_backlog, queue_oldest_age_seconds, route_monitor_incidents, route_health_holds]
         comparison: { type: string, enum: [gt, gte, lt, lte, above_baseline, below_baseline] }
         threshold: { type: number, format: double }
         window_spec: { type: string, enum: ['5m', '15m', '1h', '6h', '24h', '7d', '15d'] }
@@ -110554,6 +110809,7 @@ components:
         baseline_bad_fraction: { type: number, description: "slo gates: the predecessor's bad fraction." }
         error_classes: { type: array, maxItems: 5, items: { type: string }, description: "new_errors gates: the new groups' error classes." }
         summary: { type: string, description: "What the gate measured, in one line." }
+        not_judged: { type: boolean, description: "True when the gate had too few samples or unreadable evidence. It did not hold the rollout; summary says what it was waiting for." }
     ConfigRollbackRequest:
       description: "The config revision whose variables a rollback restores."
       type: object
@@ -119521,6 +119777,7 @@ components:
       properties:
         pattern: { type: string, minLength: 1, maxLength: 256, example: "org:{org_id}:room:*" }
         read: { type: boolean, description: "Must be true: a rule grants read access." }
+        presence: { type: boolean, description: "Also grants setting presence state and sending signals on the channel. Without it those go to the authorize callback with permission presence." }
 
     CreateManagedRealtimeEndpointRequest:
       type: object
@@ -120721,6 +120978,9 @@ components:
           type: integer
           minimum: 1
           maximum: 65535
+        automatic_captures:
+          description: Whether the platform may start automatic on-demand captures of the app when memory runs low, a request is in flight for too long, or an instance uses its whole CPU limit. Unset means on. Automatic captures count against their own hourly limit and at most half of the account's capture storage.
+          type: boolean
     CreateProfileCaptureRequest:
       description: On-demand capture request. Kinds defaults to [cpu]; duration_seconds to 10. Stacks is an instant snapshot of where every goroutine or thread is waiting, taken when the capture starts. Block and mutex are Go contention profiles (time goroutines spent blocked on channels or locks, or waiting for a mutex, during the window).
       type: object
@@ -121186,6 +121446,120 @@ components:
           type: array
           items: { $ref: '#/components/schemas/DebugRunningObservation' }
         history_truncated: { type: boolean }
+
+    DebugRolloutExplanation:
+      type: object
+      description: |
+        Why a release was rolled back or is held, with the request evidence
+        behind the safe-release decision.
+      required: [state, traffic_percent, headline, routes, examples, regressions, generated_at]
+      properties:
+        deployment_id: { type: string, format: uuid }
+        stable_deployment_id: { type: string, format: uuid }
+        state:
+          type: string
+          enum: [aborted, held, rolling_out, complete, none]
+        traffic_percent: { type: integer, minimum: 0, maximum: 100 }
+        decision: { $ref: '#/components/schemas/RolloutDecision' }
+        aborted_reason: { type: string, description: "Reason recorded by an abort that has no safe-release decision (route monitor, alert rollback, profile gate)." }
+        headline: { type: string, description: "Deterministic one-line explanation." }
+        window_start: { type: string, format: date-time }
+        window_end: { type: string, format: date-time }
+        retention_clamped: { type: boolean }
+        routes:
+          type: array
+          maxItems: 5
+          items: { $ref: '#/components/schemas/DebugRolloutRoute' }
+        examples:
+          type: array
+          maxItems: 3
+          items: { $ref: '#/components/schemas/DebugTelemetryRequestItem' }
+        regressions:
+          type: array
+          items: { $ref: '#/components/schemas/DebugRegressionItem' }
+        generated_at: { type: string, format: date-time }
+
+    DebugRolloutRoute:
+      type: object
+      description: "One route's candidate-vs-stable comparison over the rollout window; counts are represented requests."
+      required: [route, candidate_requests, candidate_server_errors, candidate_p95_ms, stable_requests, stable_server_errors, stable_p95_ms]
+      properties:
+        route: { type: string }
+        candidate_requests: { type: integer, format: int64, minimum: 0 }
+        candidate_server_errors: { type: integer, format: int64, minimum: 0 }
+        candidate_p95_ms: { type: integer, minimum: 0 }
+        stable_requests: { type: integer, format: int64, minimum: 0 }
+        stable_server_errors: { type: integer, format: int64, minimum: 0 }
+        stable_p95_ms: { type: integer, minimum: 0 }
+
+    DebugStatusResponse:
+      type: object
+      description: "One summary of an app's health, release, regressions, and recent failures over `since`."
+      required: [verdict, headline, since, window_start, window_end, health, deployments, regressions, regressions_total, recent_failures, tracing_enabled, generated_at]
+      properties:
+        verdict:
+          type: string
+          enum: [failing, rolled_back, degraded, releasing, healthy, idle]
+        headline: { type: string }
+        since: { type: string }
+        window_start: { type: string, format: date-time }
+        window_end: { type: string, format: date-time }
+        health: { $ref: '#/components/schemas/DebugStatusHealth' }
+        deployments:
+          type: array
+          items: { $ref: '#/components/schemas/DebugStatusDeployment' }
+        rollout: { $ref: '#/components/schemas/DebugRolloutExplanation' }
+        regressions:
+          type: array
+          maxItems: 5
+          items: { $ref: '#/components/schemas/DebugRegressionItem' }
+        regressions_total: { type: integer, minimum: 0 }
+        recent_failures:
+          type: array
+          maxItems: 5
+          items: { $ref: '#/components/schemas/DebugTelemetryRequestItem' }
+        oom_kills:
+          type: array
+          maxItems: 5
+          description: "Out-of-memory kills of the app's instances in the window, newest first."
+          items: { $ref: '#/components/schemas/DebugStatusOOMKill' }
+        oom_kills_total: { type: integer, minimum: 0 }
+        oom_fix:
+          type: string
+          description: "The remedy for the newest out-of-memory kill, one suggestion per line."
+        tracing_enabled: { type: boolean }
+        generated_at: { type: string, format: date-time }
+
+    DebugStatusOOMKill:
+      type: object
+      description: "One out-of-memory kill of an app instance. A deployment that was not yet live fails; a live release keeps serving on a new instance."
+      required: [at, deployment_id, peak_mb, plan_mb, deployment_failed]
+      properties:
+        at: { type: string, format: date-time }
+        deployment_id: { type: string, format: uuid }
+        peak_mb: { type: integer, minimum: 0 }
+        plan_mb: { type: integer, minimum: 0 }
+        deployment_failed: { type: boolean }
+
+    DebugStatusHealth:
+      type: object
+      description: "The serving deployments' traffic over the window."
+      required: [requests, server_errors, p95_ms]
+      properties:
+        requests: { type: integer, format: int64, minimum: 0 }
+        server_errors: { type: integer, format: int64, minimum: 0 }
+        p95_ms: { type: integer, minimum: 0 }
+
+    DebugStatusDeployment:
+      type: object
+      description: "One deployment currently serving traffic."
+      required: [id, traffic_percent, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        traffic_percent: { type: integer, minimum: 0, maximum: 100 }
+        rollout_state: { type: string }
+        commit_sha: { type: string }
+        created_at: { type: string, format: date-time }
 
     DebugTelemetryListResponse:
       type: object

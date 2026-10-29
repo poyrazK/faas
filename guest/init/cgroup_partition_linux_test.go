@@ -82,6 +82,51 @@ func TestPrepareWorkloadCgroupUsesRequestedMemory(t *testing.T) {
 	}
 }
 
+func TestPrepareMainWorkloadCgroupCreatesUnlimitedLeaf(t *testing.T) {
+	oldRoot := cgroupRoot
+	cgroupRoot = t.TempDir()
+	t.Cleanup(func() { cgroupRoot = oldRoot })
+
+	leaf, err := prepareMainWorkloadCgroup(0, slog.Default())
+	if err != nil {
+		t.Fatalf("prepareMainWorkloadCgroup: %v", err)
+	}
+	if leaf != leafDir("main", "app") {
+		t.Fatalf("leaf = %q, want the main-app leaf", leaf)
+	}
+	for _, name := range []string{"memory.max", "cpu.max", "io.weight"} {
+		if _, err := os.Stat(filepath.Join(leaf, name)); !os.IsNotExist(err) {
+			t.Fatalf("%s written for a workload without limits (stat err %v)", name, err)
+		}
+	}
+
+	limited, err := prepareMainWorkloadCgroup(128, slog.Default())
+	if err != nil {
+		t.Fatalf("prepareMainWorkloadCgroup(128): %v", err)
+	}
+	body, err := os.ReadFile(filepath.Join(limited, "memory.max"))
+	if err != nil || string(body) != strconv.FormatInt(128<<20, 10)+"\n" {
+		t.Fatalf("limited memory.max = %q (err %v)", body, err)
+	}
+}
+
+func TestPrepareMainWorkloadCgroupUnlimitedLeafFailureKeepsRootCgroup(t *testing.T) {
+	oldRoot := cgroupRoot
+	notADir := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(notADir, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cgroupRoot = notADir
+	t.Cleanup(func() { cgroupRoot = oldRoot })
+
+	if leaf, err := prepareMainWorkloadCgroup(0, slog.Default()); err != nil || leaf != "" {
+		t.Fatalf("prepareMainWorkloadCgroup = %q, %v; want the root cgroup and no error", leaf, err)
+	}
+	if _, err := prepareMainWorkloadCgroup(128, slog.Default()); err == nil {
+		t.Fatal("a configured memory limit must still fail closed")
+	}
+}
+
 func TestUpdateMainWorkloadCPULimitWritesLiveLeaf(t *testing.T) {
 	oldRoot := cgroupRoot
 	cgroupRoot = t.TempDir()

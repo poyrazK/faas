@@ -25,7 +25,7 @@ on:
           faas-fleet, production-us (gregale-prod, us-east1) uses
           faas-fleet-us, so one fleet's runner never deploys the other.
         required: false
-        default: production
+        default: production-us
         type: string
       release_tag:
         description: "Existing signed pre-1.0 release tag"
@@ -113,6 +113,14 @@ on:
         required: false
         default: secret
         type: string
+      node_canary:
+        description: >-
+          After activation, deploy acceptance apps through production ingress
+          until this node serves one and has built one (cd-platform sets it,
+          so a node that cannot build stops the rollout before the next node)
+        required: false
+        default: false
+        type: boolean
   workflow_dispatch:
     inputs:
       deploy_environment:
@@ -122,7 +130,7 @@ on:
           faas-fleet, production-us (gregale-prod, us-east1) uses
           faas-fleet-us, so one fleet's runner never deploys the other.
         required: false
-        default: production
+        default: production-us
         type: choice
         options:
           - production
@@ -662,9 +670,10 @@ jobs:
     if: needs.preflight.result == 'success'
     environment: ${{ inputs.deploy_environment }}
     runs-on: ${{ fromJSON(inputs.deploy_environment == 'production-us' && '["self-hosted","linux","faas-fleet-us"]' || '["self-hosted","linux","faas-fleet"]') }}
-    # Above the 70-minute join budget below, so gregalectl's own timeout
-    # fires (and records the node state) before GitHub kills the job.
-    timeout-minutes: 80
+    # Above the 70-minute join budget plus the 25-minute node canary, so
+    # gregalectl's own timeout fires (and records the node state) before
+    # GitHub kills the job.
+    timeout-minutes: 105
     env:
       RELEASE_TAG: ${{ inputs.release_tag }}
       NODE: ${{ needs.preflight.outputs.node }}
@@ -711,6 +720,9 @@ jobs:
       SEAL_DOMAIN_CONTROL_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_CONTROL_AGE_RECIPIENT }}
       SEAL_DOMAIN_DELIVERY_AGE_KEY: ${{ secrets.SEAL_DOMAIN_DELIVERY_AGE_KEY }}
       SEAL_DOMAIN_DELIVERY_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_DELIVERY_AGE_RECIPIENT }}
+      # ADR-831 amendment 17: one browser-challenge signing key for every
+      # gateway of the environment (openssl rand -hex 32).
+      GATEWAYD_EDGE_CHALLENGE_KEY: ${{ secrets.GATEWAYD_EDGE_CHALLENGE_KEY }}
 
     steps:
       - name: Check out the release source and Ansible roles
@@ -1045,6 +1057,16 @@ jobs:
           # seal-domain identities (runtime, build, edge, control) held as SEAL_DOMAIN_*
           # secrets and proves them before the node is activated.
           scripts/ci/seal_domain_vars.sh compute "$ARTIFACT_DIR/seal-domains" "$ARTIFACT_DIR/ansible-vars.yml"
+          # ADR-831 amendment 17: every gateway signs browser challenges with
+          # the GATEWAYD_EDGE_CHALLENGE_KEY secret. A release cut before the
+          # staging script cannot take it; deploying one (a rollback) leaves
+          # each gateway on its own session key, which FaasEdgeChallengeKeyMismatch
+          # reports.
+          if [[ -f scripts/ci/edge_challenge_key_vars.sh ]]; then
+            bash scripts/ci/edge_challenge_key_vars.sh "$ARTIFACT_DIR/ansible-vars.yml"
+          elif [[ -n "${GATEWAYD_EDGE_CHALLENGE_KEY:-}" ]]; then
+            echo "::warning::this release predates scripts/ci/edge_challenge_key_vars.sh; the deploy leaves the gateway on its own challenge key"
+          fi
           if [[ -n "${COMPUTE_BOX_AGE_KEY:-}" ]]; then
             printf '%s\n' "$COMPUTE_BOX_AGE_KEY" > "$ARTIFACT_DIR/box-age-key"
           fi
@@ -1446,6 +1468,53 @@ jobs:
             echo "::error::compute schedd metrics endpoint returned no instance-stats collector family" >&2
             exit 1
           }
+
+      # The checks above prove configuration and reachability. This one proves
+      # the node works: rc.301's fsn-2 passed all of them while its builderd
+      # failed every build, and only an operator's hold kept fsn-3 on the old
+      # release. cd-platform activates one node at a time with fail-fast, so a
+      # failure here leaves every later node on its current release.
+      - name: Prove the activated node serves and builds through production ingress
+        if: inputs.rollout_phase != 'prepare' && inputs.node_canary
+        timeout-minutes: 25
+        env:
+          CP_HOST: ${{ secrets.CP_HOST || secrets.DO_HOST }}
+          CP_SSH_KEY: ${{ secrets.CP_SSH_KEY || secrets.DO_SSH_KEY }}
+          GITHUB_RUN_ID_VALUE: ${{ github.run_id }}
+          GITHUB_RUN_ATTEMPT_VALUE: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          script=deploy/scripts/production-release-acceptance.sh
+          if ! grep -q 'ACCEPTANCE_NODE' "$script"; then
+            echo "::notice::${RELEASE_TAG} predates the per-node canary; the fleet acceptance gate still runs after the last node"
+            exit 0
+          fi
+          [[ -n "$CP_HOST" && -n "$CP_SSH_KEY" ]] || {
+            echo "::error::CP_HOST and CP_SSH_KEY are required for the node canary" >&2
+            exit 1
+          }
+          key="$RUNNER_TEMP/node-canary-cp-key"
+          known_hosts="$RUNNER_TEMP/node-canary-cp-known-hosts"
+          trap 'rm -f "$key" "$known_hosts"' EXIT
+          printf '%s\n' "$CP_SSH_KEY" >"$key"
+          chmod 0600 "$key"
+          # Trust CP_HOST only with a key the operator pinned in
+          # COMPUTE_KNOWN_HOSTS, as cd-platform's verify job does.
+          : >"$known_hosts"
+          while read -r _ key_type host_key; do
+            [[ -n "${host_key:-}" ]] || continue
+            if awk -v t="$key_type" -v k="$host_key" '!/^#/ { for (i = 1; i < NF; i++) if ($i == t && $(i + 1) == k) found = 1 } END { exit !found }' <<<"$COMPUTE_KNOWN_HOSTS"; then
+              printf '%s %s %s\n' "$CP_HOST" "$key_type" "$host_key" >>"$known_hosts"
+            fi
+          done < <(ssh-keyscan -T 10 -t ed25519,ecdsa,rsa "$CP_HOST" 2>/dev/null || true)
+          [[ -s "$known_hosts" ]] || {
+            echo "::error::$CP_HOST presented no host key listed in COMPUTE_KNOWN_HOSTS" >&2
+            exit 1
+          }
+          ssh -i "$key" -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -o "UserKnownHostsFile=$known_hosts" "root@${CP_HOST}" \
+            "env RELEASE_SHA='${RELEASE_ID}' RUN_ID='${GITHUB_RUN_ID_VALUE}' RUN_ATTEMPT='${GITHUB_RUN_ATTEMPT_VALUE}' ACTIVE_NODE_COUNT=1 ACCEPTANCE_NODE='${NODE}' bash -s" \
+            <"$script"
 
       - name: Show post-join identity without exposing secrets
         if: always()

@@ -130,8 +130,8 @@ var deliveryWriteMode sealdomain.WriteMode
 // previous twin once the seal_domains role stages them; nil until then.
 // apid is the account domain's reader: it opens MFA secrets, inbound
 // webhook signing secrets, billing connection keys, managed workflow plans,
-// PagerDuty acknowledgement secrets, GitLab, Slack and Linear credentials
-// and product email values with them.
+// PagerDuty acknowledgement secrets, GitLab, Slack and Linear credentials,
+// product email values and managed realtime credentials with them.
 var accountDomainIdentities []*age.X25519Identity
 
 // accountWriteMode picks the recipients of account values.
@@ -218,7 +218,15 @@ func loadSealDomains(getenv func(string) string, log *slog.Logger) error {
 	if err := loadAccountDomain(getenv, log); err != nil {
 		return err
 	}
+	return loadRuntimeSealDomain(getenv, log)
+}
 
+// loadRuntimeSealDomain reads who runtime secrets are sealed to and whether
+// they are bound to their account. Every apid process that seals runtime
+// secrets loads it, the clone worker included: one that skipped it would
+// seal to the fleet key, unbound, after the rollout moved on.
+func loadRuntimeSealDomain(getenv func(string) string, log *slog.Logger) error {
+	var err error
 	if runtimeDomainRecipient, runtimeWriteMode, err = loadDomainWriter(getenv, envSealDomainRuntimeRecipient, envSealDomainRuntimeWrites); err != nil {
 		return err
 	}
@@ -427,6 +435,20 @@ func holdsIdentityFor(ids []*age.X25519Identity, kid string) bool {
 		}
 	}
 	return false
+}
+
+// cloneSealRecipient is who project environment clone values are sealed to
+// (ADR 20261022111812). They take one recipient, recorded as each row's
+// key_id: clone records bind each other by ciphertext hash and open only
+// with the identity their key id names, so they are never re-sealed in
+// place. The fleet recipient until the account domain is domain-only, the
+// domain's after; rows sealed before stay on the fleet key until their
+// clone finishes.
+func cloneSealRecipient() *age.X25519Recipient {
+	if accountWriteMode == sealdomain.WriteDomain {
+		return accountDomainRecipient()
+	}
+	return hostSecretRecipient()
 }
 
 // accountIdentitiesFor is accountIdentities for a handler that takes the

@@ -11,6 +11,10 @@ CREATE TABLE {{schema}}.storage_objects (
   content_type text NOT NULL CHECK (octet_length(content_type) BETWEEN 1 AND 255),
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
+  -- Where the upload's bytes live in the bucket. Every upload writes a new
+  -- key; a row without one (for example a row you insert) names its bytes by
+  -- name.
+  object_key text CHECK (object_key ~ '^_gregale/objects/[0-9a-f]{32}$'),
   PRIMARY KEY (bucket, name)
 );
 ALTER TABLE {{schema}}.storage_objects ENABLE ROW LEVEL SECURITY;
