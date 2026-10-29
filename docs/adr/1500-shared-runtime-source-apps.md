@@ -114,7 +114,10 @@ passing, `FAAS_SOURCE_APP_SHARED_RUNTIME` is on by default and `0` turns it
 off (ADR-20261029103512). The first run showed that runner-node22 is Alpine
 (musl). A build's glibc toolchain fallback and native addons cannot run
 there, so Node 22 apps keep their own base and only the Debian runner-node24
-is shared. Python remains a later slice.
+is shared. `TestSharedRuntimeRollbackAcrossLayerKindsMetal` (#5747) rolls a
+Dockerfile build and a shared source build back and forth. Its Node fixture
+now declares Node 24; that variant has not yet run on metal. Python remains a
+later slice.
 
 ## Consequences
 
