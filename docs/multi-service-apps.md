@@ -121,7 +121,10 @@ services:
 
 A service with neither `ports:` nor `expose:` deploys as a background worker.
 A worker must not listen on a port, so a server deployed that way fails its
-first boot with `execution_mode_conflict`; add `expose:` and deploy again.
+first boot with `execution_mode_conflict`. The app keeps the execution mode it
+was created with, so adding `expose:` afterwards does not fix that app: add
+`expose:`, give the service a new name (without `x-gregale-renamed-from`) so
+the next deploy creates a new app, and delete the failed one.
 
 ## Call another service
 

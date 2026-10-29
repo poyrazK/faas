@@ -34,6 +34,13 @@ build).
 - A service with neither `ports:` nor `expose:` is still a worker. The docs
   and the `execution_mode_conflict` explanation tell the owner to add
   `expose:` (internal) or `ports:` (public) to a service that serves HTTP.
+- An existing app keeps the execution mode it was created with. Adding
+  `expose:` or `ports:` later reclassifies it `http` but leaves the `worker`
+  mode, so it keeps failing (production, 2026-10-29), and deleting it holds
+  its slug for the grace window. Until a sync corrects a stale scan-derived
+  worker mode, the owner deploys the service under a new name. That
+  correction must not override a push-bound worker, whose listener is its
+  delivery contract.
 - Rejected: dropping the explicit worker mode for scan-inferred workers so
   the first boot decides. A worker-class app without the worker mode is
   refused request wakes and skipped by the worker reconciler, so a real
