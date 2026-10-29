@@ -241,6 +241,14 @@ ADR-568 requires.
       activated GitOps workload could never fail, park or be removed.
     - 09b75d2ce7 limits the fallback to held candidates, in a new migration
       with a Postgres test.
+  - The rerun with those fixes routed the delivery. The worker's serving
+    cold boot then succeeded, but recording its runtime receipt was refused:
+    the runtime-receipt guard also treated every instance of such a
+    deployment as a qualification attempt.
+    - 680403868b lets a frameless instance of an unheld live deployment
+      through, as the instance reservation guard already did.
+    - It is in the same unreleased migration and is covered by the same
+      Postgres test.
 - Pending: the n2 native GitOps journey through serving and the resilience
   phases.
 
