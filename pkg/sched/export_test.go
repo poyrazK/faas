@@ -934,7 +934,7 @@ var LogVMMBootFailure = logVMMBootFailure
 var WorkerRecoveryRetryDelay = workerRecoveryRetryDelay
 
 // NewCronPlanGate exposes the cron plan gate's admit decision.
-func NewCronPlanGate(store cronPlanGateStore) func(context.Context, state.App, state.Cron) bool {
+func NewCronPlanGate(store state.AppOwnerReader) func(context.Context, state.App, state.Cron) bool {
 	return newCronPlanGate(store).admit
 }
 
