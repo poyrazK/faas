@@ -331,13 +331,19 @@ func (j *nativeGitOpsJourney) waitQueue(t *testing.T, accepted api.QueueSendResp
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Minute)
 	defer cancel()
+	// A bound queue's environment is its binding's: the invocation keeps no
+	// environment of its own (validateBoundQueueEnvironment).
+	binding, err := j.store.QueueBindingHistoryByID(ctx, j.worker.AccountID, j.worker.ID, accepted.QueueBindingID)
+	if err != nil || binding.EnvironmentID != j.source.EnvironmentID || binding.DeploymentScope != "production" {
+		t.Fatalf("accepted queue binding is not the environment's: %+v %v", binding, err)
+	}
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
 	for {
 		j.checkTraffic(t)
 		invocation, err := j.store.InvocationByID(ctx, accepted.ID)
 		if err != nil || invocation.AppID != j.worker.ID || invocation.Source != state.InvocationQueue ||
-			invocation.EnvironmentID != j.source.EnvironmentID || invocation.DeploymentScope != "production" ||
+			invocation.EnvironmentID != "" && invocation.EnvironmentID != j.source.EnvironmentID || invocation.DeploymentScope != "production" ||
 			invocation.QueueName != "orders" || invocation.QueueBindingID != accepted.QueueBindingID {
 			t.Fatalf("accepted queue identity changed: %+v %v", invocation, err)
 		}
