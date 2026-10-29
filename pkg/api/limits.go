@@ -1006,6 +1006,15 @@ const (
 	EventReplayBackfillRequestTimeout      = 5 * time.Second
 )
 
+// Invocation retention (ADR-20261029012000). Each minute's pass reaps,
+// stamps and prunes in InvocationRetentionBatch rows, repeating a step while
+// its batches come back full, at most InvocationRetentionBatchesPerPass
+// times: up to 10,000 rows a minute per step on each schedd, from 500.
+const (
+	InvocationRetentionBatch          = 500
+	InvocationRetentionBatchesPerPass = 20
+)
+
 // Event job lifecycle (ADR-20261028095548). A running backfill that makes no
 // progress for EventReplayBackfillIdleExpiry ends as expired. A recovery or
 // backfill job whose processing fails backs off from EventJobFailureBackoffMin

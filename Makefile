@@ -131,6 +131,10 @@ bench-event-substrate: ## Measure event publish, fanout, drain and webhook deliv
 	@test -n "$$DATABASE_URL" || (echo "DATABASE_URL not set — set it to a disposable PostgreSQL database"; exit 1)
 	@GO="$(GO)" sh scripts/bench-event-substrate.sh
 
+.PHONY: drill-event-failover
+drill-event-failover: ## Event failover drill on a disposable primary + streaming standby (ADR-20261029093000); PG_BIN, FAAS_EVENT_DRILL_DIR writes JSON
+	@GO="$(GO)" sh scripts/drill-event-failover.sh
+
 .PHONY: help
 help: ## List targets
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \

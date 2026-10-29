@@ -130,6 +130,7 @@ type Loop struct {
 	work                        *workPool
 	workOnce                    sync.Once
 	eventFanoutLastPrune        time.Time
+	eventFanoutBacklog          bool
 	eventBackfillLifecycleAt    time.Time
 	eventClaimRenewalEvery      time.Duration
 	eventFanoutHistoryLastPrune time.Time
@@ -1334,7 +1335,7 @@ func (l *Loop) Run(ctx context.Context) error {
 			l.runDeadLetterRetention(ctx)
 			l.runCronHistoryRetention(ctx)
 		case <-invocationsRetentionTick(invocationsRetentionT):
-			l.runInvocationsRetention(ctx)
+			l.submitWork(workInvocationsRetention, "tick", func() { l.runInvocationsRetention(ctx) })
 		case <-triggersRetentionTick(triggersRetentionT):
 			l.runTriggersRetention(ctx)
 		case <-fireNowT.C:
@@ -4359,7 +4360,15 @@ func (l *Loop) dispatchTriggerTick(ctx context.Context) {
 }
 
 func (l *Loop) dispatchEventFanoutSweep(ctx context.Context) {
-	l.submitWork(workEventFanout, "tick", func() { l.runEventFanoutSweep(ctx) })
+	l.submitWork(workEventFanout, "tick", func() {
+		l.runEventFanoutSweep(ctx)
+		// ADR-20261029012000: a pass that used a whole budget asks for the
+		// next one now, instead of waiting for a wake or the safety tick.
+		// The pass is still in flight, so this coalesces into one rerun.
+		if l.eventFanoutBacklog && ctx.Err() == nil {
+			l.dispatchEventFanoutSweep(ctx)
+		}
+	})
 }
 
 func (l *Loop) runWorkflowRetention(ctx context.Context) {
