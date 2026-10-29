@@ -11000,11 +11000,12 @@ func (p Plan) TriggersAllowed() bool {
 	return l.TriggersAllowed
 }
 
+// externalTriggerKinds leaves out sqs_compat (delisted 2026-10-29): its
+// poller speaks no real SQS wire protocol, so no plan may create one.
 var externalTriggerKinds = []TriggerKind{
 	TriggerKindKafka,
 	TriggerKindNATS,
 	TriggerKindRedisStreams,
-	TriggerKindSQSCompat,
 	TriggerKindQueue,
 	TriggerKindRealtime,
 }
@@ -11015,7 +11016,7 @@ func (p Plan) AllowedTriggerKinds() []TriggerKind {
 	var kinds []TriggerKind
 	switch p {
 	case PlanHobby:
-		kinds = []TriggerKind{TriggerKindSQSCompat, TriggerKindQueue, TriggerKindRealtime}
+		kinds = []TriggerKind{TriggerKindQueue, TriggerKindRealtime}
 	case PlanPro, PlanScale:
 		kinds = externalTriggerKinds
 	}

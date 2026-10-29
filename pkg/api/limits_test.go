@@ -12,9 +12,9 @@ import (
 func TestAllowedTriggerKindsByPlan(t *testing.T) {
 	want := map[Plan][]TriggerKind{
 		PlanFree:  {},
-		PlanHobby: {TriggerKindSQSCompat, TriggerKindQueue, TriggerKindRealtime},
-		PlanPro:   {TriggerKindKafka, TriggerKindNATS, TriggerKindRedisStreams, TriggerKindSQSCompat, TriggerKindQueue, TriggerKindRealtime},
-		PlanScale: {TriggerKindKafka, TriggerKindNATS, TriggerKindRedisStreams, TriggerKindSQSCompat, TriggerKindQueue, TriggerKindRealtime},
+		PlanHobby: {TriggerKindQueue, TriggerKindRealtime},
+		PlanPro:   {TriggerKindKafka, TriggerKindNATS, TriggerKindRedisStreams, TriggerKindQueue, TriggerKindRealtime},
+		PlanScale: {TriggerKindKafka, TriggerKindNATS, TriggerKindRedisStreams, TriggerKindQueue, TriggerKindRealtime},
 	}
 	for plan, kinds := range want {
 		t.Run(string(plan), func(t *testing.T) {
@@ -479,8 +479,8 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// ADR-076 (#476): Hobby gets 3 per-app and 10 per-account
 			// — mirrors the alert-rule ratio.
 			WebhookPerApp: 3, WebhookPerAccount: 10, InboundWebhookPerApp: 3, InboundWebhookPerAccount: 10, LogDrainPerApp: 3, LogDrainPerAccount: 10,
-			// ADR-0NN (#757): Hobby unlocks the in-platform queue +
-			// sqs_compat kinds. Tight caps (50/30s/3) so a Hobby
+			// ADR-0NN (#757): Hobby unlocks the in-platform queue and
+			// realtime kinds (sqs_compat was delisted 2026-10-29). Tight caps (50/30s/3) so a Hobby
 			// customer's fan-out can't saturate schedd's per-app
 			// WakeRateLimiter bucket.
 			TriggersAllowed: true, TriggerLimitPerApp: 2, TriggerLimitPerAccount: 10, TriggerBatchSizeMax: 50, TriggerBatchWindowMaxSec: 30, TriggerMaxAttemptsMax: 3, TriggerRecordsPerSecondPerApp: 100, TriggerPayloadMaxBytes: 1048576, MaxESMSourcesPerApp: 2, MaxESMRecordsPerSecond: 100, BrokerEgressMbit: 10, TLSSkipVerifyAllowed: false,
@@ -1648,7 +1648,7 @@ func TestPlanCronLimits(t *testing.T) {
 // TestPlanTriggerLimits pins the per-plan Trigger primitive caps
 // (issue #757 / ADR-0NN). Free 0/0 (handler returns 402
 // CodePlanTriggersNotAllowed before the store is touched);
-// Hobby 2/10 — the entry paid tier gets queue + sqs_compat;
+// Hobby 2/10 — the entry paid tier gets queue + realtime;
 // Pro 10/50 — external broker kinds unlock (Kafka/NATS/Redis);
 // Scale 50/200 — SaaS-scale fan-out. Mirrors the TestPlanCronLimits
 // shape so the cron ↔ trigger comparison stays visible. Unknown

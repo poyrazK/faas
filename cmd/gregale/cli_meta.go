@@ -2226,7 +2226,7 @@ var cliCommands = []cliCommand{
 				{Name: "lock", Short: "run one at a time per --lock-key under this managed operation policy", Value: "POLICY", Capability: "operations"},
 				{Name: "lock-key", Short: "JSON value that must run one at a time (requires --lock)", Value: "JSON", Capability: "operations"},
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
-				{Name: "kind", Short: "trigger kind", Req: true, Value: "kind", ClosedSet: triggerBrokerKindNames},
+				{Name: "kind", Short: "trigger kind", Req: true, Value: "kind", ClosedSet: triggerCreateKindNames},
 				{Name: "slug", Short: "trigger slug", Value: "slug"},
 				{Name: "config", Short: "JSON config (inline | @file | -)", Value: "JSON"},
 				{Name: "enabled", Short: "enable the trigger"},
