@@ -104,6 +104,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_BUILDER_BASE_REF` | imaged | `dropin` |  |  | `` |  |
 | `FAAS_BUILDER_WARM_BUILDERS` | builderd | `default` |  |  | `` | opt-in warm-builder snapshot restores; off unless set to true because restores resume a guest whose mounted drive was edited offline |
 | `FAAS_BUILDER_WARM_IDLE_MS` | builderd | `default` |  |  | `` | optional builderd warm-slot idle window override in milliseconds; code default is 5 minutes |
+| `FAAS_BUILD_DEFER_CACHE_EXPORT` | builderd, shared | `default` |  |  | `` | optional boolean switch (ADR-20261029171525): a build with a dependency cache exports only its image, builderd hands that to imaged, then a second builder VM on the same drive exports the cache while the builder slot stays held; production default is off |
 | `FAAS_BUILD_KERNEL_OVERLAY` | builderd, shared | `default` |  |  | `` | optional boolean switch (ADR-20261029105325): builder VMs run BuildKit with snapshotter auto, preferring kernel overlayfs over fuse-overlayfs and falling back when the guest kernel refuses an unprivileged overlay mount; production default is off |
 | `FAAS_BUILD_LAYER_ZSTD` | builderd, shared | `default` |  |  | `` | optional boolean switch (ADR-20261028084018): builder VMs export the OCI image and the dependency cache with zstd instead of gzip; turn on only where the node's imaged reads zstd layers; production default is off |
 | `FAAS_BUILD_PUBLISHER_KEY` | builderd | `default` |  |  | `` | explicit optional owner-only PKCS#8 P256 publisher key path; must be paired with FAAS_BUILD_PUBLISHER_NAME; no default platform key or trust enrollment (ADR-435) |
@@ -396,6 +397,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_HTTP_ADMISSION` | vmmd | `default` |  |  | `` | ADR-570 kill switch; empty or on enforces the per-VM HTTP admission cap, off lifts it on that node (permits stay tracked); vmmd restart applies |
 | `FAAS_IMAGED_METRICS_ADDR` | imaged | `default` |  |  | `` |  |
 | `FAAS_IMAGED_NODE_NAME` | shared | `default` |  |  | `` |  |
+| `FAAS_IMAGED_PARALLEL_PREP` | imaged | `default` |  |  | `` | optional boolean switch (ADR-20261029174438): imaged prepares up to ImagedImagePrepWorkers deployments at once instead of one at a time, never the same deployment twice; production default is off |
 | `FAAS_IMAGED_PRESTAGE_ONLY` | imaged | `dropin` |  |  | `` | release rollout one-shot exits after staging every assigned runtime base before node drain |
 | `FAAS_IMAGED_ROLE` | imaged, shared | `dropin` |  |  | `` |  |
 | `FAAS_IMAGE_DIGEST` | shared | `guest` |  |  | `` | platform-authored workload identity; immutable image/artifact digest when available, never customer-controlled |

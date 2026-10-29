@@ -919,11 +919,10 @@ var LogVMMBootFailure = logVMMBootFailure
 var WorkerRecoveryRetryDelay = workerRecoveryRetryDelay
 
 // NewCronPlanGate exposes the cron plan gate's admit decision.
-func NewCronPlanGate(owners state.AppOwnerReader) func(context.Context, state.App, int) bool {
-	return newCronPlanGate(owners).admit
+func NewCronPlanGate(store state.AppOwnerReader) func(context.Context, state.App, state.Cron) bool {
+	return newCronPlanGate(store).admit
 }
 
-var OldestCronsFirst = oldestCronsFirst
 var CronDue = cronDue
 
 // XRunCronHistoryRetention runs the hourly cron history sweep once.

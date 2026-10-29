@@ -11,7 +11,8 @@ are wired, each opened by one daemon:
   and MCP readiness provider keys (meterd, on the control plane like
   `outbound`);
 - `storage`: Gregale S3 secret access keys (s3-gatewayd, on the control
-  plane);
+  plane; `faas_seal_domain_storage_contracted` contracts it as step 4 below
+  does for `outbound`);
 - `control`: the cluster signing key (schedd, on every host; no writer
   drop-in, the key moves only through `seal-domain migrate`);
 - `delivery`: app webhook signing secrets, commit-source connections and

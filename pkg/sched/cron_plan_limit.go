@@ -1,78 +1,88 @@
 package sched
 
 import (
-	"cmp"
 	"context"
-	"slices"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// cronPlanGate admits, within one tick, only the crons the owning account's
-// current plan allows. Cron counts are capped when crons are written, but a
-// downgrade or an ended subscription left every cron firing, and waking its
-// app, against the new plan's quota (Free allows none). The oldest crons keep
-// firing; the rest wait until the plan allows them again.
+// cronPlanGate admits only the crons the owning account's current plan allows.
+// Cron counts are capped when crons are written, but a downgrade or an ended
+// subscription left every cron firing, and waking its app, against the new
+// plan's quota (Free allows none). The oldest crons keep firing; the rest wait
+// until the plan allows them again.
 //
 // The owning account is the app's billing subject (ADR-202610171904), whose
 // plan admitted the cron when it was written: a company once it adopted
 // billing, with the company's plan and one allowance across its members, and
 // otherwise the app's creator. A company app keeps its creator's account_id,
-// so the creator's personal plan must not gate it.
+// so the creator's personal plan and crons must not gate it.
+//
+// The eligible set is resolved once per subject per tick from the store, which
+// ranks the subject's crons globally by age. Every schedd node therefore agrees
+// on the same set, so the per-account cap holds across the fleet rather than
+// once per node (a node-local per-tick counter let an account whose apps span N
+// nodes keep up to N x CronLimitPerAccount crons firing after a downgrade).
 type cronPlanGate struct {
-	store   state.AppOwnerReader
-	owners  map[string]state.Account
-	perAcct map[string]int
+	store    state.AppOwnerReader
+	owners   map[string]*state.Account      // org_id/account_id -> resource owner; nil = unreadable
+	eligible map[string]map[string]struct{} // subject -> eligible cron ids; nil value = admit all
 }
 
 func newCronPlanGate(store state.AppOwnerReader) *cronPlanGate {
-	return &cronPlanGate{store: store, owners: map[string]state.Account{}, perAcct: map[string]int{}}
+	return &cronPlanGate{store: store, owners: map[string]*state.Account{}, eligible: map[string]map[string]struct{}{}}
 }
 
-// admit reports whether a due cron of app, the appRank-th oldest of the app's
-// enabled crons, may fire this tick, and counts it against the app's billing
-// subject when it may. The per-app rank is exact; the per-account count covers
-// the crons that fire this tick. A failed owner read admits: the cron passed
-// its plan's limits when it was written.
-func (g *cronPlanGate) admit(ctx context.Context, app state.App, appRank int) bool {
+// admit reports whether the given due cron of app may fire. A nil eligible set
+// (the app's owner or its plan could not be read, or the store cannot rank
+// crons) admits: the cron passed its plan's limits when it was written.
+func (g *cronPlanGate) admit(ctx context.Context, app state.App, cron state.Cron) bool {
 	key := app.OrgID + "/" + app.AccountID
 	owner, seen := g.owners[key]
 	if !seen {
 		if acct, err := state.AppResourceAccount(ctx, g.store, app); err == nil {
-			owner = acct
+			owner = &acct
 		}
 		g.owners[key] = owner
 	}
-	limits, ok := api.LimitsFor(owner.Plan)
-	if !ok {
+	if owner == nil {
 		return true
 	}
 	subject := owner.ResourceOwnerID()
-	if appRank >= limits.CronLimitPerApp || g.perAcct[subject] >= limits.CronLimitPerAccount {
-		return false
+	set, seen := g.eligible[subject]
+	if !seen {
+		set = g.loadEligible(ctx, subject, owner.Plan)
+		g.eligible[subject] = set
 	}
-	g.perAcct[subject]++
-	return true
+	if set == nil {
+		return true
+	}
+	_, ok := set[cron.ID]
+	return ok
 }
 
-// oldestCronsFirst orders crons so the plan gate keeps the ones created
-// first, and returns each cron's rank among its app's crons.
-func oldestCronsFirst(crons []state.Cron) map[string]int {
-	slices.SortStableFunc(crons, func(a, b state.Cron) int {
-		if c := a.CreatedAt.Compare(b.CreatedAt); c != 0 {
-			return c
-		}
-		return cmp.Compare(a.ID, b.ID)
-	})
-	seen := map[string]int{}
-	rank := make(map[string]int, len(crons))
-	for _, c := range crons {
-		rank[c.ID] = seen[c.AppID]
-		seen[c.AppID]++
+// loadEligible resolves the subject's eligible cron ids, or nil to admit all.
+// An empty (non-nil) set correctly denies every cron — a Free account's 0 cap.
+func (g *cronPlanGate) loadEligible(ctx context.Context, subject string, plan api.Plan) map[string]struct{} {
+	quota, ok := g.store.(state.CronAccountQuotaStore)
+	if !ok {
+		return nil
 	}
-	return rank
+	limits, ok := api.LimitsFor(plan)
+	if !ok {
+		return nil
+	}
+	ids, err := quota.BillingSubjectEligibleCronIDs(ctx, subject, limits.CronLimitPerApp, limits.CronLimitPerAccount)
+	if err != nil {
+		return nil
+	}
+	set := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		set[id] = struct{}{}
+	}
+	return set
 }
 
 // cronDue reports whether c has an occurrence at or before now, with no

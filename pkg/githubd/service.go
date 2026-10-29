@@ -535,7 +535,7 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 	// the Service.Scan field. The production-branch guard
 	// returns ErrIgnored when the pushed branch differs from
 	// project.ProductionBranch — the caller renders 200-ignored.
-	scan, err := s.Reconcile.Scan(tree.FS())
+	scan, err := s.Reconcile.Scan(tree.FS(), s.scanOptions(project.AccountID))
 	if err != nil {
 		return reconcile.Result{}, fmt.Errorf("githubd: scan: %w", err)
 	}
@@ -1657,7 +1657,7 @@ func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, tar
 			return reconcile.Result{}, fmt.Errorf("githubd: fetch preview source: %w", err)
 		}
 		defer func() { _ = tree.Close() }()
-		scan, err = s.Reconcile.Scan(tree.FS())
+		scan, err = s.Reconcile.Scan(tree.FS(), s.scanOptions(binding.AccountID))
 		if err != nil {
 			return reconcile.Result{}, previewSetupFailure("Gregale could not read the project at this commit: %s", strings.TrimPrefix(err.Error(), "reposcan: "))
 		}
