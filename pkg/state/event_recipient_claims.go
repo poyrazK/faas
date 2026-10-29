@@ -387,7 +387,8 @@ func (m *MemStore) dueEventRecipientLocked(now time.Time, includeWorkflows bool,
 			if skip != nil && skip(work) {
 				continue
 			}
-			if (work.State != PublishedEventRecipientPending || work.AvailableAt.After(now) && !EventSchemaVersionMismatch(work.Recipient, receipt.Payload) && !EventDeliveryExpired(work.Recipient, receipt.CreatedAt, receipt.RecipientProgress[work.Recipient.ID], now)) &&
+			// Due by time alone, as the claim SQL (ADR-614 amendment 2026-10-27).
+			if (work.State != PublishedEventRecipientPending || work.AvailableAt.After(now) && !EventDeliveryExpired(work.Recipient, receipt.CreatedAt, receipt.RecipientProgress[work.Recipient.ID], now)) &&
 				(work.State != "processing" || work.LeaseUntil.After(now)) {
 				continue
 			}

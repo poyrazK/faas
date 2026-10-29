@@ -1,4 +1,4 @@
-// adr: 373 — DNS-gated egress hook.
+// adr: 373 — DNS-gated egress hook; 20261026150000 — bound database port.
 package vmmdgrpc_test
 
 import (
@@ -18,14 +18,15 @@ import (
 
 type recordingAllower struct {
 	*fakeVMM
-	source netip.Addr
-	addrs  []netip.Addr
-	ttl    time.Duration
-	err    error
+	source       netip.Addr
+	addrs        []netip.Addr
+	ttl          time.Duration
+	databasePort uint16
+	err          error
 }
 
-func (r *recordingAllower) AllowResolvedEgress(_ context.Context, source netip.Addr, addrs []netip.Addr, ttl time.Duration) error {
-	r.source, r.addrs, r.ttl = source, addrs, ttl
+func (r *recordingAllower) AllowResolvedEgress(_ context.Context, source netip.Addr, addrs []netip.Addr, ttl time.Duration, databasePort uint16) error {
+	r.source, r.addrs, r.ttl, r.databasePort = source, addrs, ttl, databasePort
 	return r.err
 }
 
@@ -38,8 +39,14 @@ func TestAllowResolvedEgressRPC(t *testing.T) {
 	if err != nil || !ack.GetMatched() {
 		t.Fatalf("ack = %v, %v", ack, err)
 	}
-	if a.source.String() != "10.100.0.7" || len(a.addrs) != 2 || a.ttl != 300*time.Second {
-		t.Fatalf("forwarded = %v %v %v", a.source, a.addrs, a.ttl)
+	if a.source.String() != "10.100.0.7" || len(a.addrs) != 2 || a.ttl != 300*time.Second || a.databasePort != 0 {
+		t.Fatalf("forwarded = %v %v %v %d", a.source, a.addrs, a.ttl, a.databasePort)
+	}
+	// ADR 20261026150000: a bound database's port rides the same call.
+	if _, err := s.AllowResolvedEgress(context.Background(), &vmmdpb.AllowResolvedEgressRequest{
+		SourceIp: "10.100.0.7", Addresses: []string{"198.51.100.10"}, TtlSeconds: 300, DatabasePort: 5432,
+	}); err != nil || a.databasePort != 5432 {
+		t.Fatalf("database port = %d, %v", a.databasePort, err)
 	}
 	a.err = fcvm.ErrResolvedEgressNoInstance
 	if ack, err := s.AllowResolvedEgress(context.Background(), &vmmdpb.AllowResolvedEgressRequest{SourceIp: "10.100.0.8"}); err != nil || ack.GetMatched() {
@@ -48,6 +55,8 @@ func TestAllowResolvedEgressRPC(t *testing.T) {
 	for _, bad := range []*vmmdpb.AllowResolvedEgressRequest{
 		{SourceIp: "nope"},
 		{SourceIp: "10.100.0.7", Addresses: []string{"999.1.1.1"}},
+		{SourceIp: "10.100.0.7", DatabasePort: 70000},
+		{SourceIp: "10.100.0.7", DatabasePort: 25}, // ADR-361 never opens SMTP
 	} {
 		if _, err := s.AllowResolvedEgress(context.Background(), bad); status.Code(err) != codes.InvalidArgument {
 			t.Fatalf("%v: code = %v, want InvalidArgument", bad, status.Code(err))

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 
-import { AppsService, FaaSClient } from '../src/index.js';
+import { AppsService, FaaSClient } from '../src/preview.js';
 
 test('generated container listener methods preserve HTTP wire contracts', async (t) => {
   const requests: Array<{ method: string | undefined; path: string | undefined; body: unknown; auth: string | undefined }> = [];

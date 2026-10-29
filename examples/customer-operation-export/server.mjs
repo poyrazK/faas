@@ -1,11 +1,11 @@
 import http from 'node:http';
 import {readFile} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
-import {GregaleOperationClient} from '@gregale/sdk-node/operations';
+import {GregaleOperationClient} from '@gregale/sdk-node/preview/operations';
 import {generateExport} from './export.mjs';
 
 const publicRoot = new URL('./public/', import.meta.url);
-const sdkRoot = new URL('./', import.meta.resolve('@gregale/sdk-node/operations'));
+const sdkRoot = new URL('./', import.meta.resolve('@gregale/sdk-node/preview/operations'));
 const files = new Map([
   ['/', [new URL('index.html', publicRoot), 'text/html']],
   ['/app.mjs', [new URL('app.mjs', publicRoot), 'text/javascript']],
@@ -64,7 +64,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   validateExportConfig(config);
   let runtime;
   if (process.env.FAAS_WORKLOAD_IDENTITY_ENDPOINT) {
-    const {GregaleOperations} = await import('@gregale/sdk-node/operations/runtime');
+    const {GregaleOperations} = await import('@gregale/sdk-node/preview/operations/runtime');
     runtime = new GregaleOperations({apiURL: config.apiURL});
   }
   createExportServer({config, runtime}).listen(Number(process.env.PORT ?? 8080), process.env.HOST ?? '127.0.0.1');

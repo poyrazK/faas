@@ -24,14 +24,20 @@ func privateControlAddr(boxRole role.Role, getenv func(string) string) string {
 
 // newPrivateControlMux serves only the control routes apid calls across
 // hosts: the per-app dispatcher under /v1/internal/apps/ (routes, streaming
-// cap, MCP replica health and protocol probes, response checks) and the
-// response-check capabilities path. The loopback listener's /metrics,
-// pprof, quota, services and edge-rule reset stay loopback-only. A nil
-// handler leaves its path unrouted (404).
-func newPrivateControlMux(apps, responseCheckCapabilities http.Handler) *http.ServeMux {
+// cap, MCP replica health and protocol probes, response checks), the
+// response-check capabilities path, and the realtimed control proxy under
+// /v1/internal/realtime/. apid prefers it here: the data listener serves it
+// too, for apid releases that predate the private route, and only the
+// edge's refusal of that path on app hosts keeps it from customers. The loopback
+// listener's /metrics, pprof, quota, services and edge-rule reset stay
+// loopback-only. A nil handler leaves its path unrouted (404).
+func newPrivateControlMux(apps, responseCheckCapabilities, realtimeControl http.Handler) *http.ServeMux {
 	mux := http.NewServeMux()
 	if apps != nil {
 		mux.Handle("/v1/internal/apps/", apps)
+	}
+	if realtimeControl != nil {
+		mux.Handle("/v1/internal/realtime/", realtimeControl)
 	}
 	if responseCheckCapabilities != nil {
 		mux.Handle(api.DeploymentResponseCheckCapabilitiesControlPath, responseCheckCapabilities)

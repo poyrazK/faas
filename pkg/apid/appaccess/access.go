@@ -12,6 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/authz"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 // Store is only the resource and membership lookup surface. There is no
@@ -27,6 +28,8 @@ type Store interface {
 	CronByID(context.Context, string) (state.Cron, error)
 	GetEdgeRuleByID(context.Context, string) (state.EdgeRule, error)
 	InvocationByID(context.Context, string) (state.Invocation, error)
+	TriggerByID(context.Context, string) (sqlc.Trigger, error)
+	GetWorkflowRun(context.Context, string) (*state.WorkflowRun, error)
 	OrgByID(context.Context, string) (state.Org, error)
 	OrgMemberByAccount(context.Context, string, string) (state.OrgMembership, error)
 	AccountByID(context.Context, string) (state.Account, error)
@@ -92,7 +95,7 @@ func Wrap(store Store, audit authz.AuditEmitter, next authmw.AccountHandler) aut
 		if principal, _, ok := authmw.AccountFromContext(r); ok {
 			actor = principal
 		}
-		app, addressed, err := addressedApp(r, store)
+		app, addressed, err := addressedApp(r, store, actor.ID)
 		if !addressed {
 			next(w, r, actor)
 			return
@@ -110,7 +113,7 @@ func Wrap(store Store, audit authz.AuditEmitter, next authmw.AccountHandler) aut
 	}
 }
 
-func addressedApp(r *http.Request, store Store) (state.App, bool, error) {
+func addressedApp(r *http.Request, store Store, actorID string) (state.App, bool, error) {
 	// No app lookup is needed on account, authentication or organization
 	// management endpoints, including degraded-server health tests.
 	if r.PathValue("organization") != "" && strings.Contains(r.Pattern, "/apps/{slug}") {
@@ -125,7 +128,7 @@ func addressedApp(r *http.Request, store Store) (state.App, bool, error) {
 		return app, true, nil
 	}
 	if !strings.HasPrefix(r.URL.Path, "/v1/apps/") && !strings.HasPrefix(r.URL.Path, "/v1/builds/") && !strings.HasPrefix(r.URL.Path, "/v1/deployments/") {
-		return indirectlyAddressedApp(r, store)
+		return indirectlyAddressedApp(r, store, actorID)
 	}
 	if store == nil {
 		return state.App{}, true, errors.New("application store unavailable")
@@ -172,6 +175,16 @@ func addressedApp(r *http.Request, store Store) (state.App, bool, error) {
 // resumable upload routes). The route's action comes from routeActions; it
 // returns the account that owns the app's resources.
 func Authorize(r *http.Request, store Store, audit authz.AuditEmitter, actor state.Account, app state.App) (state.Account, *api.Problem) {
+	return authorize(r, store, audit, actor, app)
+}
+
+// AuthorizeRoute is Authorize for a request that finishes another route's
+// work on a different surface: the browser secret-entry page completes a
+// secret request, so it gets the decision that request's route pattern gets.
+func AuthorizeRoute(r *http.Request, store Store, audit authz.AuditEmitter, actor state.Account, app state.App, pattern string) (state.Account, *api.Problem) {
+	served := r.Pattern
+	r.Pattern = pattern
+	defer func() { r.Pattern = served }()
 	return authorize(r, store, audit, actor, app)
 }
 
@@ -255,7 +268,10 @@ func authorizeShared(r *http.Request, store Store, audit authz.AuditEmitter, act
 		}
 		action = authz.OrgActionManageAppSecurity
 	}
-	if (org.Status == state.OrgStatusSuspended || org.Status == state.OrgStatusPastDue) && action != authz.OrgActionReadApp && action != authz.OrgActionReadAppLogs && action != authz.ReadObjectStorage && action != authz.OrgActionReadQueues {
+	// A past-due company keeps running and loses only deploys (spec §4.7), as
+	// a past-due account does: the owner account below carries past_due, so
+	// deploy admission refuses while members still revoke and reconfigure.
+	if org.Status == state.OrgStatusSuspended && action != authz.OrgActionReadApp && action != authz.OrgActionReadAppLogs && action != authz.ReadObjectStorage && action != authz.OrgActionReadQueues {
 		return state.Account{}, api.ErrOrgRoleForbidden("change applications in an inactive organization")
 	}
 	if p := authz.AuthorizeOrgAction(r.Context(), action, audit); p != nil {
@@ -300,12 +316,23 @@ func notFound(r *http.Request) *api.Problem {
 		what = "no such deployment"
 	case strings.HasPrefix(path, "/v1/domains/"):
 		what = "no such domain"
+	case strings.HasPrefix(path, "/v1/workflows/runs/"):
+		return api.ErrWorkflowRunNotFound()
+	case strings.HasPrefix(path, "/v1/delayed-tasks/"), strings.HasPrefix(path, "/v1/invocations/"):
+		return api.ErrInvocationNotFound(r.PathValue("id"))
+	case strings.HasPrefix(path, "/v1/edge-rules/"):
+		return api.ErrEdgeRuleNotFound(r.PathValue("id"))
+	case strings.HasPrefix(path, "/v1/triggers/"):
+		what = "no such trigger"
+	case strings.HasPrefix(path, "/v1/deleted-apps/"):
+		what = "no such deleted app"
 	}
 	return api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", what)
 }
 
 func lookupProblem(r *http.Request, err error) *api.Problem {
-	if errors.Is(err, state.ErrNotFound) {
+	// A path ID that is no UUID names no resource either (Hunt 14 H14-65).
+	if errors.Is(err, state.ErrNotFound) || state.IsMalformedID(err) {
 		return notFound(r)
 	}
 	return api.ErrCapacity("could not authorize application access")

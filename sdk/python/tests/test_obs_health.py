@@ -1,6 +1,6 @@
 import unittest
 
-from faas_sdk.models import ObsHealthResponse
+from faas_sdk.preview.models import ObsHealthResponse
 
 
 class ObsHealthContractTest(unittest.TestCase):

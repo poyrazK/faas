@@ -829,5 +829,5 @@ func ErrOutboundAIReplayLimit(observed int64) *Problem {
 	return NewProblem(http.StatusTooManyRequests, "outbound_ai_replay_limit", "AI replay limit reached",
 		"An integration can replay at most 100 captured calls per UTC day.").
 		WithLimit(OutboundAIReplaysPerDay, observed).
-		WithDocs(docsBase + "/outbound-integrations#replay")
+		WithDocs(docsBase + "/cli#outbound")
 }

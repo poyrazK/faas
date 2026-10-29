@@ -1,6 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
+import { mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { rootCertificates } from 'node:tls'
 import { jwtVerify } from 'jose'
 import { runtimeConfig, databaseURL, schemaNames } from '../config.mjs'
 import { createServer } from '../server.mjs'
@@ -12,6 +16,25 @@ test('configuration requires an explicit schema and verified remote TLS', () => 
   assert.throws(() => databaseURL('postgres://u:p@db.example/db?sslmode=disable'))
   assert.equal(new URL(databaseURL('postgres://u:p@db.example/db?sslmode=require')).searchParams.get('sslmode'), 'verify-full')
   assert.throws(() => runtimeConfig({ DATABASE_URL: 'postgres://u:p@localhost/db' }))
+})
+
+test('the engine verifies a remote database with the roots Node trusts', () => {
+  const auth = { DATA_API_ISSUER: 'https://issuer.example', DATA_API_JWKS_URL: 'https://issuer.example/jwks', DATA_API_AUDIENCE: 'notes' }
+  const dir = mkdtempSync(join(tmpdir(), 'data-api-roots-test-'))
+  const extra = join(dir, 'extra.pem')
+  writeFileSync(extra, rootCertificates[0])
+  const config = runtimeConfig({ ...auth, DATABASE_URL: 'postgres://u:p@db.example/db?sslmode=require', NODE_EXTRA_CA_CERTS: extra })
+  const engine = new URL(config.postgrestEnv.PGRST_DB_URI)
+  assert.equal(engine.searchParams.get('sslmode'), 'verify-full')
+  const roots = readFileSync(engine.searchParams.get('sslrootcert'), 'utf8')
+  assert.equal(roots.match(/-----BEGIN CERTIFICATE-----/g).length, rootCertificates.length + 1, 'the bundled store plus NODE_EXTRA_CA_CERTS')
+  assert.equal(statSync(engine.searchParams.get('sslrootcert')).mode & 0o777, 0o600)
+  // Node's own clients keep the default store: a file CA would replace it.
+  assert.equal(new URL(config.connection).searchParams.has('sslrootcert'), false)
+  assert.equal(runtimeConfig({ ...auth, DATABASE_URL: 'postgres://u:p@db.example/db', NODE_EXTRA_CA_CERTS: extra }).postgrestEnv.PGRST_DB_URI, config.postgrestEnv.PGRST_DB_URI, 'one file per trust bundle')
+  assert.equal(runtimeConfig({ ...auth, DATABASE_URL: 'postgres://u:p@db.example/db?sslrootcert=%2Fowner%2Fca.pem' }).postgrestEnv.PGRST_DB_URI, 'postgres://u:p@db.example/db?sslrootcert=%2Fowner%2Fca.pem&sslmode=verify-full', 'an owner CA is kept')
+  const local = runtimeConfig({ ...auth, DATABASE_URL: 'postgres://u:p@127.0.0.1/db' })
+  assert.equal(local.postgrestEnv.PGRST_DB_URI, local.connection)
 })
 
 test('generated types distinguish nullable, defaulted and generated columns', () => {
@@ -80,7 +103,23 @@ test('proxy rejects unauthenticated requests and normalizes untrusted SQL roles'
   assert.equal((await fetch(base+'/rest/v1/rpc/unsafe',{headers:{Authorization:'Bearer valid'}})).status,404)
 })
 
-test('proxy closes canceled upstream requests and sanitizes unavailable and timeout errors', { timeout: 25000 }, async t => {
+test('a created row location names the public REST path', async t => {
+  const config = runtimeConfig({ DATABASE_URL: 'postgres://restricted:p@localhost/db', DATA_API_ISSUER: 'https://issuer.example', DATA_API_JWKS_URL: 'https://issuer.example/jwks', DATA_API_AUDIENCE: 'notes' })
+  const upstream = http.createServer((req, res) => {
+    assert.equal(req.url, '/notes')
+    res.writeHead(201, { Location: '/notes?id=eq.7' })
+    res.end()
+  })
+  await new Promise(resolve => upstream.listen(0, '127.0.0.1', resolve))
+  const gateway = createServer(config, async () => ({ sub: 'alice', exp: 9999999999 }), upstream.address().port)
+  await new Promise(resolve => gateway.listen(0, '127.0.0.1', resolve))
+  t.after(() => { gateway.closeAllConnections(); gateway.close(); upstream.closeAllConnections(); upstream.close() })
+  const response = await fetch(`http://127.0.0.1:${gateway.address().port}/rest/v1/notes`, { method: 'POST', headers: { Authorization: 'Bearer valid', 'Content-Type': 'application/json', Prefer: 'return=headers-only' }, body: '{"body":"x"}' })
+  assert.equal(response.status, 201)
+  assert.equal(response.headers.get('location'), '/rest/v1/notes?id=eq.7')
+})
+
+test('proxy closes canceled upstream requests and sanitizes unavailable and timeout errors',{ timeout: 25000 }, async t => {
   const config = runtimeConfig({ DATABASE_URL: 'postgres://test:credential-sentinel@127.0.0.1/test?sslmode=disable', DATA_API_ISSUER: 'https://issuer.example', DATA_API_JWKS_URL: 'https://issuer.example/jwks', DATA_API_AUDIENCE: 'notes' })
   let opened, closed
   const opening = new Promise(resolve => { opened = resolve })

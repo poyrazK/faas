@@ -1,6 +1,6 @@
 """Profile absence and recursive CPU stack wire compatibility."""
 
-from faas_sdk.models import ProfileCompareRequest, ProfileFunctionDelta, ProfileResponse, ProfileStackDelta
+from faas_sdk.preview.models import ProfileCompareRequest, ProfileFunctionDelta, ProfileResponse, ProfileStackDelta
 from faas_sdk.types import UNSET
 
 

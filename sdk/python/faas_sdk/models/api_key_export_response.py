@@ -19,7 +19,7 @@ T = TypeVar("T", bound="APIKeyExportResponse")
 @_attrs_define
 class APIKeyExportResponse:
     """One API key in export form: id, prefix (first 8 chars), label, scopes, created/last-used timestamps, and request
-    count. Scopes is the permission set attached to the key at the moment of export (audit trail; IAM-1, ADR-034 rev2).
+    count. Scopes is the permission set attached to the key at the moment of export (audit trail, rev2).
 
         Example:
             {'id': '0123456789abcdef0123456789abcdef', 'prefix': 'fp_live_ab12cd34', 'label': 'ci-deploy', 'scopes':

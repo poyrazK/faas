@@ -139,7 +139,7 @@ func ParseLimit(raw string, defaultN, maxN int, label string) (*Problem, int) {
 		return NewProblem(http.StatusBadRequest, CodeValidation,
 			"Bad limit", "expected 1.."+strconv.Itoa(maxN)).
 			WithLimit(int64(maxN), observed).
-			WithDocs(docsBase + "/api#pagination"), 0
+			WithDocs(docsBase + "/faas_openapi_spec#pagination"), 0
 	}
 	return nil, n
 }

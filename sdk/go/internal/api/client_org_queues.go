@@ -84,7 +84,7 @@ func (c *Client) ReplayOrgQueueDeadLetter(ctx context.Context, organization, slu
 	err := c.do(ctx, http.MethodPost, orgQueueAppPath(organization, slug)+"/queues/dead_letter/"+url.PathEscape(id)+"/replay", nil, &out)
 	return out, err
 }
-func (c *Client) GetOrgQueueUsage(ctx context.Context, organization string) (OrgQueueUsageResponse, error) {
+func (c *PreviewClient) GetOrgQueueUsage(ctx context.Context, organization string) (OrgQueueUsageResponse, error) {
 	var out OrgQueueUsageResponse
 	err := c.do(ctx, http.MethodGet, "/v1/orgs/"+url.PathEscape(organization)+"/queue-usage", nil, &out)
 	return out, err
@@ -109,12 +109,12 @@ func (c *Client) ExtendOrgQueueLeases(ctx context.Context, organization, slug, q
 	err := c.do(ctx, http.MethodPost, orgQueueAppPath(organization, slug)+"/queues/"+url.PathEscape(queue)+"/leases:extend", req, &out)
 	return out, err
 }
-func (c *Client) GetOrgProjectEnvironmentQueueBindings(ctx context.Context, organization, project, environment, workload string) (ProjectEnvironmentQueueBindingsResponse, error) {
+func (c *PreviewClient) GetOrgProjectEnvironmentQueueBindings(ctx context.Context, organization, project, environment, workload string) (ProjectEnvironmentQueueBindingsResponse, error) {
 	var out ProjectEnvironmentQueueBindingsResponse
 	err := c.do(ctx, http.MethodGet, "/v1/orgs/"+url.PathEscape(organization)+"/projects/"+url.PathEscape(project)+"/environments/"+url.PathEscape(environment)+"/workloads/"+url.PathEscape(workload)+"/queue-bindings", nil, &out)
 	return out, err
 }
-func (c *Client) ReplaceOrgProjectEnvironmentQueueBindings(ctx context.Context, organization, project, environment, workload string, req ReplaceProjectEnvironmentQueueBindingsRequest) (ProjectEnvironmentQueueBindingsResponse, error) {
+func (c *PreviewClient) ReplaceOrgProjectEnvironmentQueueBindings(ctx context.Context, organization, project, environment, workload string, req ReplaceProjectEnvironmentQueueBindingsRequest) (ProjectEnvironmentQueueBindingsResponse, error) {
 	var out ProjectEnvironmentQueueBindingsResponse
 	err := c.do(ctx, http.MethodPut, "/v1/orgs/"+url.PathEscape(organization)+"/projects/"+url.PathEscape(project)+"/environments/"+url.PathEscape(environment)+"/workloads/"+url.PathEscape(workload)+"/queue-bindings", req, &out)
 	return out, err

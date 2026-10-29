@@ -1,0 +1,12 @@
+[Unit]
+Description=Probe Gregale's public serving path every {{ faas_serving_probe_interval }}
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec={{ faas_serving_probe_interval }}
+RandomizedDelaySec=30s
+AccuracySec=10s
+Unit=faas-serving-probe.service
+
+[Install]
+WantedBy=timers.target

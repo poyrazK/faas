@@ -135,7 +135,9 @@ func TestSec11_MemoryMaxFenceEnforced_CrossProcess(t *testing.T) {
 	// Create + deploy. The deployment lifecycle (imaged pull → app-layer
 	// ext4 → prime cold boot → snapshot → PARKED) is what causes the
 	// jailer to create the per-VM cgroup scope under faas-tenant.slice/.
-	if got := postOK(t, h, key, "/v1/apps", api.CreateAppRequest{Slug: "m8-memfence", Type: "app"}); got != http.StatusCreated {
+	// The probe wakes the app with an anonymous gateway request.
+	falsy := false
+	if got := postOK(t, h, key, "/v1/apps", api.CreateAppRequest{Slug: "m8-memfence", Type: "app", RequireAuthn: &falsy}); got != http.StatusCreated {
 		t.Fatalf("create app: status=%d", got)
 	}
 	appID := mustGetAppID(t, h, key, "m8-memfence")
@@ -179,13 +181,21 @@ func TestSec11_MemoryMaxFenceEnforced_CrossProcess(t *testing.T) {
 	// idle reaper park the instance (the post-park wait is no longer
 	// load-bearing for the assertion, but kept so a regression that
 	// keeps the instance RUNNING indefinitely still surfaces).
-	if _, err := e2etest.WaitForInstanceState(ctx, t, pool, appID, state.StateRunning, 60*time.Second); err != nil {
+	instances, err := e2etest.WaitForInstanceState(ctx, t, pool, appID, state.StateRunning, 60*time.Second)
+	if err != nil {
 		t.Fatalf("no running instance: %v", err)
 	}
-	scopeBase := filepath.Join("/sys/fs/cgroup", fcvm.ParentCgroupRoot)
+	ramMB := 0
+	for _, instance := range instances {
+		if state.State(instance.State) == state.StateRunning {
+			ramMB = instance.RAMMB
+		}
+	}
+	// The jailer puts each VM under its plan's slice (ParentCgroupFor).
+	scopeBase := filepath.Join("/sys/fs/cgroup", fcvm.ParentCgroupFor(api.PlanHobby))
 	entries, err := os.ReadDir(scopeBase)
 	if err != nil {
-		t.Fatalf("read %s: %v (parent cgroup constant drift? pkg/fcvm/config.go:ParentCgroup)", scopeBase, err)
+		t.Fatalf("read %s: %v (parent cgroup drift? pkg/fcvm/config.go:ParentCgroupFor)", scopeBase, err)
 	}
 	var scopes []string
 	for _, e := range entries {
@@ -232,14 +242,17 @@ func TestSec11_MemoryMaxFenceEnforced_CrossProcess(t *testing.T) {
 		t.Fatalf("parse %q: %v", body, err)
 	}
 
-	// Hobby plan: RAMMB=256 → BillableRAMMB(256)=264 MiB → 264<<20 bytes.
-	// Computed from the constants, not hard-coded, so the test survives
-	// a future PerVMOverheadMB bump without an edit here.
-	want := expectedMemoryMaxBytes(256)
+	// The fence is the instance's RAM plus PerVMOverheadMB (BillableRAMMB),
+	// computed from the running instance so a plan's RAM can change without
+	// an edit here.
+	if ramMB <= 0 {
+		t.Fatalf("running instance reports ram_mb=%d", ramMB)
+	}
+	want := expectedMemoryMaxBytes(ramMB)
 	if got != want {
 		t.Errorf("memory.max = %d (=%d MiB), want %d (=%d MiB); vmmd.Manger.Wake likely swallowed a writeMemoryMax error (pkg/fcvm/manager.go:420-426)",
 			got, got>>20, want, want>>20)
 	}
-	t.Logf("memory.max OK: instance=%s scope=%s value=%d bytes (=%d MiB); plan=Hobby 256 MiB + PerVMOverheadMB=%d",
-		scope, scopeDir, got, got>>20, api.PerVMOverheadMB)
+	t.Logf("memory.max OK: instance=%s scope=%s value=%d bytes (=%d MiB); ram_mb=%d + PerVMOverheadMB=%d",
+		scope, scopeDir, got, got>>20, ramMB, api.PerVMOverheadMB)
 }

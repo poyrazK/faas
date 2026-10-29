@@ -42,6 +42,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/oauthpkce"
+	"github.com/onebox-faas/faas/pkg/sessioncookie"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -107,24 +108,8 @@ func (s *server) renderGitHubAuthRedirect(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	http.SetCookie(w, &http.Cookie{
-		Name:     githubAuthStateCookie,
-		Value:    stateToken,
-		Path:     githubCallbackPath,
-		HttpOnly: true,
-		Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == schemeHTTPS,
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   300, // 5 minutes
-	})
-	http.SetCookie(w, &http.Cookie{
-		Name:     githubAuthPKCECookie,
-		Value:    codeVerifier,
-		Path:     githubCallbackPath,
-		HttpOnly: true,
-		Secure:   r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == schemeHTTPS,
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   300, // 5 minutes
-	})
+	setOAuthFlowCookie(w, r, githubAuthStateCookie, stateToken, githubCallbackPath)
+	setOAuthFlowCookie(w, r, githubAuthPKCECookie, codeVerifier, githubCallbackPath)
 
 	redirectURI := s.oauthConfig.GitHub.RedirectURI
 	if redirectURI == "" {
@@ -152,7 +137,7 @@ func (s *server) renderGitHubAuthRedirect(w http.ResponseWriter, r *http.Request
 // Verifies state, exchanges the code, fetches the profile + verified
 // email, and signs the user in.
 func (s *server) handleGitHubOAuthCallback(w http.ResponseWriter, r *http.Request) {
-	stateCookie, err := r.Cookie(githubAuthStateCookie)
+	stateCookie, err := oauthFlowCookie(r, githubAuthStateCookie)
 	if err != nil || stateCookie.Value == "" {
 		// Issue #286: OAuth callback failure path that lands
 		// before any customer-supplied identity is known — the
@@ -198,7 +183,7 @@ func (s *server) handleGitHubOAuthCallback(w http.ResponseWriter, r *http.Reques
 			"GitHub sign-in is not available for this Gregale installation. Use email sign-in or contact support.")
 		return
 	}
-	pkceCookie, err := r.Cookie(githubAuthPKCECookie)
+	pkceCookie, err := oauthFlowCookie(r, githubAuthPKCECookie)
 	if err != nil || !oauthpkce.ValidVerifier(pkceCookie.Value) {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, "invalid_pkce", "Invalid OAuth Request", "missing or invalid OAuth PKCE verifier cookie"))
 		return
@@ -324,8 +309,7 @@ func (s *server) handleGitHubOAuthCallback(w http.ResponseWriter, r *http.Reques
 			"Return to sign in and try connecting GitHub again.", err)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     sessionCookie,
+	sessioncookie.Set(w, http.Cookie{
 		Value:    cookie,
 		Path:     "/",
 		HttpOnly: true,

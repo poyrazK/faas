@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { FaaSClient, DeploymentsService, type RollbackOperation } from '../src/index.js';
+import { FaaSClient, DeploymentsService, type RollbackOperation } from '../src/preview.js';
 
 test('historical rollback accepts exact pair and reads its operation', async (t) => {
  const operation: RollbackOperation = { id: '3e9f323a-ade6-442b-8444-c91da107fe44', app_id: '142b7504-f03a-4ee2-aeb3-14d922a845d4', scope: 'default', target_deployment_id: 'a2b9cc53-907f-4b5c-88a4-fd0c21214556', current_deployment_id: '5b87c415-7c93-4932-acab-a3c90e98be86', status: 'preparing', service: false, created_at: new Date().toISOString(), updated_at: new Date().toISOString() };

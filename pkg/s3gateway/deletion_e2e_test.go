@@ -366,7 +366,9 @@ func TestMutableDeletionSDKE2E(t *testing.T) {
 			if e = fences.ReleaseObjectBucketWriteFence(t.Context(), f.bucket, fence.Token); e != nil {
 				t.Fatal(e)
 			}
-			_, e = f.client.PutObject(t.Context(), &awss3.PutObjectInput{Bucket: aws.String("assets"), Key: aws.String("blocked"), Body: strings.NewReader("x")})
+			// The uncertain deletion fences writes of its own key
+			// (ADR-20261025115958).
+			_, e = f.client.PutObject(t.Context(), &awss3.PutObjectInput{Bucket: aws.String("assets"), Key: aws.String(mutableDeleteKey), Body: strings.NewReader("x")})
 			assertSDKErrorCode(t, e, "OperationAborted")
 			if pg {
 				st = state.NewPgStore(pool)

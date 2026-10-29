@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { OutboundAIUserUsageItem } from './OutboundAIUserUsageItem.js';
 /**
- * One NDJSON line of a per-end-user usage export (ADR-995); CSV rows carry the same fields in this order.
+ * One NDJSON line of a per-end-user usage export; CSV rows carry the same fields in this order.
  */
 export type OutboundAIUserUsageExportRow = ({
   usage_date: string;

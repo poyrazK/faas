@@ -1,0 +1,67 @@
+from typing import Literal
+
+APIKeyExportResponseScopesItem = Literal[
+    "admin",
+    "apps:read",
+    "delayed_tasks:read",
+    "delayed_tasks:write",
+    "deploy:write",
+    "env:read",
+    "env:write",
+    "events:publish",
+    "github:manage",
+    "metrics:write",
+    "postgres:manage",
+    "postgres:read",
+    "project_environments:qualify",
+    "project_environments:read",
+    "queues:consume",
+    "queues:send",
+    "registry_credentials:read",
+    "registry_credentials:write",
+    "runs:read",
+    "runs:write",
+    "secrets:read",
+    "secrets:write",
+    "storage:manage",
+    "storage:read",
+    "storage:write",
+    "upstreams:write",
+    "usage:read",
+]
+
+API_KEY_EXPORT_RESPONSE_SCOPES_ITEM_VALUES: set[APIKeyExportResponseScopesItem] = {
+    "admin",
+    "apps:read",
+    "delayed_tasks:read",
+    "delayed_tasks:write",
+    "deploy:write",
+    "env:read",
+    "env:write",
+    "events:publish",
+    "github:manage",
+    "metrics:write",
+    "postgres:manage",
+    "postgres:read",
+    "project_environments:qualify",
+    "project_environments:read",
+    "queues:consume",
+    "queues:send",
+    "registry_credentials:read",
+    "registry_credentials:write",
+    "runs:read",
+    "runs:write",
+    "secrets:read",
+    "secrets:write",
+    "storage:manage",
+    "storage:read",
+    "storage:write",
+    "upstreams:write",
+    "usage:read",
+}
+
+
+def check_api_key_export_response_scopes_item(value: str) -> APIKeyExportResponseScopesItem:
+    if value in API_KEY_EXPORT_RESPONSE_SCOPES_ITEM_VALUES:
+        return value
+    raise TypeError(f"Unexpected value {value!r}. Expected one of {API_KEY_EXPORT_RESPONSE_SCOPES_ITEM_VALUES!r}")

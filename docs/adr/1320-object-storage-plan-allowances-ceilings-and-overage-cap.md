@@ -5,6 +5,10 @@ until pricing is decided, so shipping it changes no bill and no limit).
 
 Amends ADR-156 (object-storage accounting) and ADR-1162 (the hard spend cap).
 
+Amended by [ADR-20261027093220](20261027093220-object-storage-billed-daily.md):
+object storage is billed in daily steps inside its month and takes cap
+headroom as it is billed; meterd reserves it before compute and egress.
+
 ## Context
 
 Object storage is billed once per UTC month at month close

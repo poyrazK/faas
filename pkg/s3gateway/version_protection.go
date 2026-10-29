@@ -41,7 +41,7 @@ func (h *Handler) objectVersionProtection(w http.ResponseWriter, r *http.Request
 	}
 	permission := state.ObjectBucketPermissionRead
 	if r.Method == http.MethodPut {
-		permission = state.ObjectBucketPermissionWrite
+		permission = bucketSettingsPermission
 	}
 	if !h.require(w, req, permission, r.URL.Path) {
 		return

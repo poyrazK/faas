@@ -113,14 +113,7 @@ func TestPgEventBacklogBackfillUnattributedAndForeignTarget(t *testing.T) {
 	store, pool, _ := pgStoreWithPool(t)
 	ctx, account, app, work := seedRecipientClaims(t, store)
 	// Unwind the newer projection before restoring the legacy schema under test.
-	projection, err := migrations.FS.ReadFile("20261008075254103_event_backlog_consumer_origins.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	projectionParts := strings.SplitN(string(projection), "-- +goose Down", 2)
-	if _, err := pool.Exec(ctx, projectionParts[1]); err != nil {
-		t.Fatal(err)
-	}
+	restoreProjection := unwindEventBacklogProjection(t, ctx, pool)
 	source, err := migrations.FS.ReadFile("20261005190741382_event_routing_backlog.sql")
 	if err != nil {
 		t.Fatal(err)
@@ -139,9 +132,7 @@ func TestPgEventBacklogBackfillUnattributedAndForeignTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Restore the current projection before querying through the current store.
-	if _, err := pool.Exec(ctx, projectionParts[0]); err != nil {
-		t.Fatal(err)
-	}
+	restoreProjection()
 	r, err := store.EventBacklog(ctx, account, state.EventBacklogQuery{Filters: api.EventBacklogFilters{CapacityScope: "app"}})
 	if err != nil || len(r.Recipients) != 1 || r.Recipients[0].CapacityDeferrals != 4 || r.Recipients[0].SubscriptionID != first {
 		t.Fatalf("backfill=%+v %v", r, err)

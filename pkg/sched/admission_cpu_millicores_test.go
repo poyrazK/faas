@@ -55,7 +55,7 @@ func TestAdmit_CPUOvercommitRecoveryAccountsExistingWithoutAllowingGrowth(t *tes
 	ledger := sched.NewNodeLedger()
 	for i := 0; i < 5; i++ {
 		req := cpuAdmissionRequest(fmt.Sprintf("existing-%d", i))
-		req.AllowCPUOvercommitRecovery = true
+		req.AllowResidentRecovery = true
 		if err := ledger.Admit(req); err != nil {
 			t.Fatalf("recover existing %d: %v", i, err)
 		}

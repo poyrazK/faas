@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -211,6 +213,47 @@ func TestPauseLedgerWaitsForOpenPauses(t *testing.T) {
 	want := ledgerWrite{node: "n1", covered: ts(20), pauses: []state.QuietPause{open("a", 8)}}
 	if len(store.writes) != 1 || !reflect.DeepEqual(store.writes[0], want) {
 		t.Fatalf("writes = %+v, want %+v", store.writes, want)
+	}
+}
+
+// withTotal sets vmmd's completed paused total, in seconds, on row.
+func withTotal(row InstanceStat, sec int) InstanceStat {
+	total := time.Duration(sec) * time.Second
+	row.QuietPause.PausedTotal = &total
+	return row
+}
+
+// The ledger counts the paused time vmmd measured between reports, the
+// reference meterd's subtracted seconds must stay under: completed pauses
+// plus open pause time, from each instance's first report on, with a new
+// incarnation's time counted whole.
+func TestPauseLedgerMeasuresVMMDPausedTime(t *testing.T) {
+	metrics := NewPauseLedgerMetrics(nil)
+	ledger := NewPauseLedger(&fakePauseStore{}, 0, nil, metrics)
+	steps := []struct {
+		rows []InstanceStat
+		want float64 // measured seconds so far
+	}{
+		// First sighting: the baseline, nothing counted.
+		{[]InstanceStat{pausedRow("a", 10, 8)}, 0},
+		// Still paused: 10 more open seconds.
+		{[]InstanceStat{pausedRow("a", 20, 8)}, 10},
+		// Resumed at :25: the total holds the whole pause, 5 s are new.
+		{[]InstanceStat{withTotal(withLast(runningRow("a", 30), 8, 25), 17)}, 15},
+		// Paused again since :35.
+		{[]InstanceStat{withTotal(withLast(pausedRow("a", 40, 35), 8, 25), 17)}, 20},
+		// A new incarnation (smaller total): its 2 paused seconds are new.
+		{[]InstanceStat{pausedRow("a", 50, 48)}, 22},
+		// Gone from the report, then seen again: a new baseline.
+		{[]InstanceStat{runningRow("b", 60)}, 22},
+		{[]InstanceStat{pausedRow("a", 70, 65)}, 22},
+		{[]InstanceStat{pausedRow("a", 80, 65)}, 32},
+	}
+	for i, step := range steps {
+		ledger.Observe(t.Context(), step.rows, step.rows[0].SampledAt)
+		if got := testutil.ToFloat64(metrics.measuredS.WithLabelValues("n1")); got != step.want {
+			t.Fatalf("step %d: measured = %v s, want %v", i, got, step.want)
+		}
 	}
 }
 

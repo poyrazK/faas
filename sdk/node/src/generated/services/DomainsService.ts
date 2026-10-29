@@ -69,7 +69,7 @@ export class DomainsService {
     });
   }
   /**
-   * Show a custom domain's cert details (issue
+   * Show a custom domain's cert details.
    * Returns the durable domain row + the live cert chain
    * (NotAfter, SANs) by dialing port-443 and reading the leaf
    * cert. Used by `gregale domains show <domain>`.
@@ -133,7 +133,7 @@ export class DomainsService {
     });
   }
   /**
-   * Re-verify a domain's DNS + cert (issue
+   * Re-verify a domain's DNS + cert.
    * Re-runs the DNS verifier + cert dial; returns the canonical
    * CustomDomainResponse. Used by `gregale domains verify
    * <domain>`. Idempotent: POSTing twice does not change the
@@ -269,7 +269,7 @@ export class DomainsService {
     });
   }
   /**
-   * Run the 5-check domain doctor (ADR-120).
+   * Run the 5-check domain doctor.
    * Returns the per-domain doctor report. The five checks map
    * 1:1 to the Render-style custom-domain check: dns_record,
    * points_to_gregale, tls_certificate, caa_permits,

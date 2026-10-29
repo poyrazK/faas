@@ -116,7 +116,25 @@ func rejectUnexpectedFlagArgs(fs *flag.FlagSet) bool {
 		topic = fields[0]
 	}
 	printUsage(osStderr, "usage: gregale "+name+" [flags]; unexpected positional argument(s): "+strings.Join(fs.Args(), " "), topic)
+	// A command with verbs (`dev`, `test`) parses its own flags when the
+	// first word is none of them; that word is a mistyped verb, so name them
+	// (Hunt 14 H14-64).
+	if fields := strings.Fields(name); len(fields) > 0 {
+		if command := nestedCliCommand(fields[0], fields[1:]...); len(command.Subcommands) > 0 {
+			_ = unknownSubcommandChoices(osStderr, name, command, fs.Arg(0))
+		}
+	}
 	return true
+}
+
+// sourceDirPositional reports the lone positional that names an existing
+// directory: `deploy ./my-app` and `dev ./my-app` mean --path.
+func sourceDirPositional(fs *flag.FlagSet) (string, bool) {
+	if fs.NArg() != 1 {
+		return "", false
+	}
+	info, err := os.Stat(fs.Arg(0))
+	return fs.Arg(0), err == nil && info.IsDir()
 }
 
 // flagSetCommandName turns a hyphenated flag-set name such as
@@ -277,7 +295,7 @@ func (w *humanFlagErrorWriter) Write(p []byte) (int, error) {
 			diagnostic += "\n  " + hint
 		}
 		_, err := fmt.Fprintf(w.dst, "Invalid command flags\n  %s\n  run 'gregale %s --help' for usage\n",
-			diagnostic, path)
+			diagnostic, cliTreeSpellPath(path))
 		return len(p), err
 	}
 	if strings.HasPrefix(text, "Usage of ") || strings.HasPrefix(text, "  -") {

@@ -95,10 +95,10 @@ def sync_detailed(
 
     Args:
         body (SetAccountEgressAllowlistExtraRequest): Body of PATCH
-            /v1/account/egress_allowlist_extra (issue #679 / PR-B / ADR-082). `extra` is the per-
-            account additive budget on top of the plan's `apps.egress_allowlist` cap. `extra=0` clears
-            the override (the plan cap is authoritative again); negative values or values above
-            `max_extra` (1024) are rejected with `account_egress_allowlist_extra_out_of_range`.
+            /v1/account/egress_allowlist_extra. `extra` is the per-account additive budget on top of
+            the plan's `apps.egress_allowlist` cap. `extra=0` clears the override (the plan cap is
+            authoritative again); negative values or values above `max_extra` (1024) are rejected with
+            `account_egress_allowlist_extra_out_of_range`.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -139,10 +139,10 @@ def sync(
 
     Args:
         body (SetAccountEgressAllowlistExtraRequest): Body of PATCH
-            /v1/account/egress_allowlist_extra (issue #679 / PR-B / ADR-082). `extra` is the per-
-            account additive budget on top of the plan's `apps.egress_allowlist` cap. `extra=0` clears
-            the override (the plan cap is authoritative again); negative values or values above
-            `max_extra` (1024) are rejected with `account_egress_allowlist_extra_out_of_range`.
+            /v1/account/egress_allowlist_extra. `extra` is the per-account additive budget on top of
+            the plan's `apps.egress_allowlist` cap. `extra=0` clears the override (the plan cap is
+            authoritative again); negative values or values above `max_extra` (1024) are rejected with
+            `account_egress_allowlist_extra_out_of_range`.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -178,10 +178,10 @@ async def asyncio_detailed(
 
     Args:
         body (SetAccountEgressAllowlistExtraRequest): Body of PATCH
-            /v1/account/egress_allowlist_extra (issue #679 / PR-B / ADR-082). `extra` is the per-
-            account additive budget on top of the plan's `apps.egress_allowlist` cap. `extra=0` clears
-            the override (the plan cap is authoritative again); negative values or values above
-            `max_extra` (1024) are rejected with `account_egress_allowlist_extra_out_of_range`.
+            /v1/account/egress_allowlist_extra. `extra` is the per-account additive budget on top of
+            the plan's `apps.egress_allowlist` cap. `extra=0` clears the override (the plan cap is
+            authoritative again); negative values or values above `max_extra` (1024) are rejected with
+            `account_egress_allowlist_extra_out_of_range`.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -220,10 +220,10 @@ async def asyncio(
 
     Args:
         body (SetAccountEgressAllowlistExtraRequest): Body of PATCH
-            /v1/account/egress_allowlist_extra (issue #679 / PR-B / ADR-082). `extra` is the per-
-            account additive budget on top of the plan's `apps.egress_allowlist` cap. `extra=0` clears
-            the override (the plan cap is authoritative again); negative values or values above
-            `max_extra` (1024) are rejected with `account_egress_allowlist_extra_out_of_range`.
+            /v1/account/egress_allowlist_extra. `extra` is the per-account additive budget on top of
+            the plan's `apps.egress_allowlist` cap. `extra=0` clears the override (the plan cap is
+            authoritative again); negative values or values above `max_extra` (1024) are rejected with
+            `account_egress_allowlist_extra_out_of_range`.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

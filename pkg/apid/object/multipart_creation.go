@@ -35,7 +35,7 @@ func (s *Service) createControlMultipart(ctx context.Context, b state.ObjectBuck
 }
 
 func (s *Service) reserveControlMultipart(ctx context.Context, b state.ObjectBucket, store state.ObjectMultipartUploadStore, req api.CreateObjectMultipartUploadRequest) (state.ObjectMultipartUpload, error) {
-	if !objectstorage.ValidKey(req.Key) || req.SizeBytes > s.Host.ObjectStorage().MaxUploadBytes || objectstorage.ValidateContentType(req.ContentType) != nil || req.Encryption != nil && (!req.Encryption.Valid() || req.Encryption.Empty()) {
+	if !objectstorage.ValidRequestKey(req.Key) || req.SizeBytes > s.Host.ObjectStorage().MaxUploadBytes || objectstorage.ValidateContentType(req.ContentType) != nil || req.Encryption != nil && (!req.Encryption.Valid() || req.Encryption.Empty()) {
 		return state.ObjectMultipartUpload{}, objectstorage.ErrInvalid
 	}
 	partSize, partCount, err := MultipartLayoutWithLimit(req.SizeBytes, s.Host.ObjectStorage().MaxPartBytes)

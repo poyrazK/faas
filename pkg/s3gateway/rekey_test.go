@@ -66,7 +66,7 @@ func TestRekeyCredentialsMovesPreviousIdentityRows(t *testing.T) {
 		},
 	}}
 
-	rekeyed, err := RekeyCredentials(context.Background(), store, []*age.X25519Identity{current, previous})
+	rekeyed, err := RekeyCredentials(context.Background(), store, []*age.X25519Identity{current, previous}, nil)
 	if err != nil || rekeyed != 1 || store.resealed != 1 {
 		t.Fatalf("RekeyCredentials = %d, resealed=%d, err=%v", rekeyed, store.resealed, err)
 	}
@@ -93,7 +93,55 @@ func TestRekeyCredentialsFailsClosedOnUnreadableActiveRow(t *testing.T) {
 			ID: "00000000-0000-0000-0000-000000000001", KID: "age1previous", SecretSealed: []byte("not-an-envelope"), Status: state.ObjectS3CredentialStatusActive,
 		},
 	}}
-	if _, err := RekeyCredentials(context.Background(), store, []*age.X25519Identity{current}); err == nil {
+	if _, err := RekeyCredentials(context.Background(), store, []*age.X25519Identity{current}, nil); err == nil {
 		t.Fatalf("RekeyCredentials error = %v, want failure", err)
+	}
+}
+
+// TestRekeyCredentialsLeavesDomainRows pins ADR 20261022111812: with the
+// storage seal-domain identity staged, a credential the domain opens is not
+// re-sealed back to the fleet key, whatever its key id, and a fleet row still
+// moves to the current key.
+func TestRekeyCredentialsLeavesDomainRows(t *testing.T) {
+	newID := func() *age.X25519Identity {
+		id, err := age.GenerateX25519Identity()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	current, previous, storage := newID(), newID(), newID()
+	seal := func(secret string, to ...*age.X25519Identity) []byte {
+		t.Helper()
+		var rs []*age.X25519Recipient
+		for _, id := range to {
+			rs = append(rs, id.Recipient())
+		}
+		sealed, err := secretbox.SealBytesTo(rs, CredentialSecretNamespace, []byte(secret), 64)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sealed
+	}
+	domainOnly := seal(testSecret, storage)
+	store := &rekeyTestStore{rows: map[string]state.ObjectS3Credential{
+		"00000000-0000-0000-0000-000000000001": {
+			ID: "00000000-0000-0000-0000-000000000001", KID: storage.Recipient().String(), SecretSealed: domainOnly, Status: state.ObjectS3CredentialStatusActive,
+		},
+		"00000000-0000-0000-0000-000000000002": {
+			ID: "00000000-0000-0000-0000-000000000002", KID: previous.Recipient().String(), SecretSealed: seal(testSecret, previous), Status: state.ObjectS3CredentialStatusActive,
+		},
+	}}
+	rekeyed, err := RekeyCredentials(context.Background(), store, []*age.X25519Identity{current, previous}, []*age.X25519Identity{storage})
+	if err != nil || rekeyed != 1 {
+		t.Fatalf("RekeyCredentials = %d, %v; want only the fleet row moved", rekeyed, err)
+	}
+	if row := store.rows["00000000-0000-0000-0000-000000000001"]; row.KID != storage.Recipient().String() || string(row.SecretSealed) != string(domainOnly) {
+		t.Fatal("a domain-sealed credential was re-sealed")
+	}
+	// Without the domain identity the same row cannot be opened, which fails
+	// closed as before: a gateway that lacks the domain must not serve it.
+	if _, err := RekeyCredentials(context.Background(), store, []*age.X25519Identity{current}, nil); err == nil {
+		t.Fatal("a gateway without the storage identity started over a domain-only credential")
 	}
 }

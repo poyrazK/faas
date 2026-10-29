@@ -187,34 +187,45 @@ func serveTCP(guest net.Conn, in io.Reader, out io.Writer) error {
 	return nil
 }
 
+// maxResponseHead bounds a guest's response head. The bridge never holds
+// more: it runs beside vmmd, so a guest that sends a header line without
+// an end must not make it buffer that line.
+const maxResponseHead = 64 * 1024
+
 // ReadResponseHead reads up to the guest's "\n\n" head terminator, with
 // each line's CR stripped, returning the head without the terminator and
-// any body bytes read with it (vmmd-raw-bridge's contract).
+// any body bytes read with it (vmmd-raw-bridge's contract). It reads at
+// most maxResponseHead bytes of head, however the guest splits its lines.
 func ReadResponseHead(r *bufio.Reader) (head, body []byte, err error) {
 	var acc []byte
 	for {
-		frag, ferr := r.ReadBytes('\n')
-		if len(frag) > 0 {
-			if frag[len(frag)-1] == '\n' {
-				if len(frag) >= 2 && frag[len(frag)-2] == '\r' {
-					frag = append(frag[:len(frag)-2:len(frag)-2], '\n')
-				}
-				acc = append(acc, frag...)
-				if idx := bytes.Index(acc, []byte("\n\n")); idx >= 0 {
-					return acc[:idx], acc[idx+2:], nil
-				}
-			} else {
+		frag, ferr := r.ReadSlice('\n')
+		if len(acc)+len(frag) > maxResponseHead {
+			return acc, nil, errors.New("response head exceeds 64 KiB")
+		}
+		if n := len(frag); n > 0 && frag[n-1] == '\n' {
+			switch {
+			case n >= 2 && frag[n-2] == '\r':
+				acc = append(append(acc, frag[:n-2]...), '\n')
+			case n == 1 && len(acc) > 0 && acc[len(acc)-1] == '\r':
+				// The CR ended the previous fragment: bufio's buffer
+				// filled between the CR and the LF.
+				acc[len(acc)-1] = '\n'
+			default:
 				acc = append(acc, frag...)
 			}
+			if idx := bytes.Index(acc, []byte("\n\n")); idx >= 0 {
+				return acc[:idx], acc[idx+2:], nil
+			}
+		} else {
+			acc = append(acc, frag...)
 		}
-		if errors.Is(ferr, io.EOF) {
+		switch {
+		case errors.Is(ferr, bufio.ErrBufferFull):
+		case errors.Is(ferr, io.EOF):
 			return acc, nil, fmt.Errorf("unexpected EOF before head terminator (got %d bytes)", len(acc))
-		}
-		if ferr != nil {
+		case ferr != nil:
 			return acc, nil, ferr
-		}
-		if len(acc) > 64*1024 {
-			return acc, nil, errors.New("response head exceeds 64 KiB")
 		}
 	}
 }

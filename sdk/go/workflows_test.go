@@ -162,6 +162,42 @@ func TestWorkflowRepeatedNamesAndChangedCode(t *testing.T) {
 	}
 }
 
+func TestWorkflowScheduledRetryStaysSuspended(t *testing.T) {
+	runs := 0
+	both := faas.DefineWorkflow("both", func(_ context.Context, wf *faas.Workflow, _ json.RawMessage) (any, error) {
+		results := faas.WorkflowParallel(wf,
+			faas.WorkflowParallelStep{Name: "call", Run: func(context.Context, faas.WorkflowStepContext) (any, error) { runs++; return 1, nil }},
+			faas.WorkflowParallelStep{Name: "other", Run: func(context.Context, faas.WorkflowStepContext) (any, error) { return 2, nil }},
+		)
+		return results, nil
+	})
+	journal := []faas.WorkflowJournalEntry{
+		{Seq: 0, Name: "call", Kind: "step", Status: "scheduled", Attempt: 1, Error: "boom 1"},
+		{Seq: 1, Name: "other", Kind: "step", Status: "succeeded", Attempt: 1, Output: json.RawMessage("2")},
+	}
+	response := invoke(t, both, journal, nil)
+	if runs != 0 || len(response.Ops) != 0 || response.Result.Status != "running" {
+		t.Fatalf("a scheduled retry must stay suspended: runs=%d response=%+v", runs, response)
+	}
+	single := faas.DefineWorkflow("single", func(_ context.Context, wf *faas.Workflow, _ json.RawMessage) (any, error) {
+		return faas.WorkflowStep(wf, "call", func(context.Context, faas.WorkflowStepContext) (int, error) { runs++; return 1, nil })
+	})
+	response = invoke(t, single, journal[:1], nil)
+	if runs != 0 || len(response.Ops) != 0 || response.Result.Status != "running" {
+		t.Fatalf("a scheduled retry must stay suspended: runs=%d response=%+v", runs, response)
+	}
+}
+
+func TestWorkflowNamesMayNotUseTheReservedSuffix(t *testing.T) {
+	clash := faas.DefineWorkflow("clash", func(_ context.Context, wf *faas.Workflow, _ json.RawMessage) (any, error) {
+		return faas.WorkflowStep(wf, "poll#2", func(context.Context, faas.WorkflowStepContext) (int, error) { return 2, nil })
+	})
+	response := invoke(t, clash, nil, nil)
+	if response.Result.Status != "failed" || !strings.Contains(response.Result.Error, "reserved for repeated names") {
+		t.Fatalf("response %+v", response)
+	}
+}
+
 func TestWorkflowFailuresRetryThenReturnStepError(t *testing.T) {
 	flaky := faas.DefineWorkflow("flaky", func(_ context.Context, wf *faas.Workflow, _ json.RawMessage) (any, error) {
 		_, err := faas.WorkflowStep(wf, "call", func(_ context.Context, sc faas.WorkflowStepContext) (int, error) {

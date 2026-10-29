@@ -24,9 +24,9 @@ T = TypeVar("T", bound="DiffRequest")
 
 @_attrs_define
 class DiffRequest:
-    """JSON body for POST /v1/apps/{slug}/diff (PR-1). Slim
+    """JSON body for POST /v1/apps/{slug}/diff. Slim
     purpose-built DTO — every field maps 1:1 to a
-    [deploydiff.Pending] entry via the apid handler's adapter.
+    [deploydiff.Pending] entry via the API handler's adapter.
     Empty / absent fields mean "no change proposed" (matches
     the engine's pointer semantics: every nested field is
     optional; null = "don't touch").
@@ -48,28 +48,27 @@ class DiffRequest:
     """
     manifest: AppManifest | Unset = UNSET
     """App manifest: environment variables, build commands, working directory, healthcheck, user, and Dockerfile-
-    as-source flag (§ux 6.3). The optional `env_secrets` field carries sealed-secret refs ("secret:NAME" strings)
-    resolved by the host at wake time against the app_secrets table (issue #460 / ADR-053 §Decision 1). Values are
-    NEVER sealed ciphertext — only refs. M-1 (ADR-136) widens the contract additively with `healthcheck`,
-    `stop_signal`, `stop_grace_period` from the OCI image-config spec; old guest-init ignores unknown fields per
-    JSON semantics, so the widen is wire-compatible. M-2 (ADR-137 + ADR-138) widens additively with
+    as-source flag. The optional `env_secrets` field carries sealed-secret refs ("secret:NAME" strings) resolved by
+    the host at wake time against the app_secrets table. Values are NEVER sealed ciphertext — only refs. widens the
+    contract additively with `healthcheck`, `stop_signal`, `stop_grace_period` from the OCI image-config spec; old
+    guest-init ignores unknown fields per JSON semantics, so the widen is wire-compatible. widens additively with
     `execution_mode`, `restart_policy`, `startup_deadline_s`, `max_retries`, and `service_replicas` — these govern
     the lifecycle contract (request vs service vs worker vs job) and the per-mode replica scaffold. Defaults
     preserve today's behaviour (execution_mode=request, restart_policy=on-failure)."""
     env_by_scope: DiffRequestEnvByScope | Unset = UNSET
     """Per-scope env write. Full-replacement semantics per
-    scope (ADR-090 D3). Keys are scope names ("default",
+    scope. Keys are scope names ("default",
     "staging", ...); values are DiffEnvRow arrays.
     """
     crons: list[CreateCronRequest] | Unset = UNSET
     edge_rules: list[CreateEdgeRuleRequest] | Unset = UNSET
     scope: None | str | Unset = UNSET
-    """Pending per-deployment env scope (ADR-091 / SAFE-RELEASES production-leveling Stream E). Compared against
-    Baseline.LatestScope; mismatch emits a scope_mismatch break. Empty = default."""
+    """Pending per-deployment env scope (production-leveling Stream E). Compared against Baseline.LatestScope;
+    mismatch emits a scope_mismatch break. Empty = default."""
     build_plan: BuildPlan | Unset = UNSET
-    """Effective build plan surfaced on DeploymentResponse (issue #961 / zero-config profile PR). Captured from the
-    exact source archive at enqueue time and retained after spool cleanup; legacy rows fall back to marker detection
-    when the spool is still available. Embedded on DeploymentResponse; never returned by a dedicated route."""
+    """Effective build plan surfaced on DeploymentResponse. Captured from the exact source archive at enqueue time
+    and retained after spool cleanup; legacy rows fall back to marker detection when the spool is still available.
+    Embedded on DeploymentResponse; never returned by a dedicated route."""
     traffic_percent: int | None | Unset = UNSET
     """Proposed initial deployment traffic weight. Mutually exclusive with canary."""
     canary: CanaryPresetSpec | None | Unset = UNSET

@@ -40,7 +40,8 @@ const (
 )
 
 // runAdoptionCommand runs an adoption subcommand, or the rollout's
-// base-generation-check (base_generation_cli.go); ok is false for any other
+// base-generation-check (base_generation_cli.go) or base-adoption-check
+// (base_adoption_cli.go); ok is false for any other
 // invocation, which then starts the daemon as before.
 func runAdoptionCommand(args []string, stdout, stderr io.Writer) (code int, ok bool) {
 	if len(args) == 0 {
@@ -53,6 +54,8 @@ func runAdoptionCommand(args []string, stdout, stderr io.Writer) (code int, ok b
 		return adoptionReportCommand(args[1:], stdout, stderr), true
 	case "base-generation-check":
 		return baseGenerationCheckCommand(args[1:], stdout, stderr), true
+	case "base-adoption-check":
+		return baseAdoptionCheckCommand(args[1:], stdout, stderr), true
 	}
 	return 0, false
 }

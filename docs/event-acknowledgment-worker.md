@@ -7,7 +7,7 @@ platform acknowledgments. It renews the platform lease while the transaction run
 completes only after a confirmed receipt commit, and retries callbacks with unchanged
 inputs. It neither installs tables nor creates a durable queue or background service.
 
-Install `faas.EventConsumerReceiptSchema` in the application database first. Use an
+Install `preview.EventConsumerReceiptSchema` in the application database first. Use an
 owned durable worker that can reach apid, with appropriately scoped API credentials.
 A goroutine started by an HTTP handler does not become durable when it returns 202,
 and the application VM can park after the request ends.
@@ -21,8 +21,8 @@ It is not an authentication mechanism. The API app slug and owner account/app UU
 come from trusted application configuration.
 
 ```go
-worker, err := faas.EventAcknowledgmentWorkerFromHTTP(client, appSlug, r,
-    originalBody, accountID, appID, faas.EventAcknowledgmentWorkerOptions{})
+worker, err := preview.EventAcknowledgmentWorkerFromHTTP(client, appSlug, r,
+    originalBody, accountID, appID, preview.EventAcknowledgmentWorkerOptions{})
 if err != nil {
     return err
 }
@@ -43,7 +43,7 @@ they can observe outbound request bodies. Business errors remain application-own
 
 ```go
 result, err := worker.Run(ctx, db,
-    func(workCtx context.Context, tx faas.EventConsumerSQLTransaction) (json.RawMessage, error) {
+    func(workCtx context.Context, tx preview.EventConsumerSQLTransaction) (json.RawMessage, error) {
         // Validate/authorize business input, then use workCtx for every query.
         _, err := tx.ExecContext(workCtx,
             "UPDATE invoices SET paid = true WHERE id = $1", invoiceID)

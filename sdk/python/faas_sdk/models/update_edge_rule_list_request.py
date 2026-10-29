@@ -13,7 +13,7 @@ T = TypeVar("T", bound="UpdateEdgeRuleListRequest")
 
 @_attrs_define
 class UpdateEdgeRuleListRequest:
-    """Edit an edge-rule list: replace items, or add and remove some (ADR-963)."""
+    """Edit an edge-rule list: replace items, or add and remove some."""
 
     description: str | Unset = UNSET
     items: list[str] | Unset = UNSET

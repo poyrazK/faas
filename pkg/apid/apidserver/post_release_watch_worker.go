@@ -10,9 +10,11 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/release"
+	"github.com/onebox-faas/faas/pkg/appmetrics"
 	"github.com/onebox-faas/faas/pkg/canary"
 	"github.com/onebox-faas/faas/pkg/releasegate"
 	"github.com/onebox-faas/faas/pkg/releasegate/gather"
+	"github.com/onebox-faas/faas/pkg/releasemetrics"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -29,14 +31,19 @@ func (s *server) postReleaseWatchSweep(ctx context.Context, now time.Time) error
 	}
 	rows, err := store.ListPostReleaseWatchCandidates(ctx, api.PostReleaseWatchWindow+api.RollbackOn5xxTelemetryGrace, api.PostReleaseWatchBatchSize)
 	if err != nil {
+		if ctx.Err() == nil {
+			s.releaseMetrics.Error(releasemetrics.WorkerPostReleaseWatch)
+		}
 		return err
 	}
+	s.releaseMetrics.Pass(releasemetrics.WorkerPostReleaseWatch, now)
 	for _, c := range rows {
 		if err := s.evaluatePostRelease(ctx, store, telemetry, c, now); err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
 			s.log.Warn("post-release watch: evaluate release", "app", c.AppID, "deployment", c.DeploymentID, "err", err)
+			s.releaseMetrics.Error(releasemetrics.WorkerPostReleaseWatch)
 		}
 	}
 	return nil
@@ -75,10 +82,14 @@ func (s *server) evaluatePostRelease(ctx context.Context, store state.PostReleas
 		// ADR-20261019071734: the app's own signals, judged against the
 		// predecessor's traffic before the rollout.
 		var gateErr error
-		gates, gateErr = gather.Verdict(ctx, s.store, gather.Request{AppID: c.AppID, ReleaseID: c.DeploymentID, BaselineID: c.PredecessorID,
+		req := gather.Request{AppID: c.AppID, ReleaseID: c.DeploymentID, BaselineID: c.PredecessorID,
 			ReleaseWindow:  gather.Window{Since: since, Until: until},
 			BaselineWindow: gather.Window{Since: baselineEnd.Add(-api.PostReleaseWatchBaseline), Until: baselineEnd},
-			Evidence:       s.releaseGateEvidence})
+			Evidence:       s.releaseGateEvidence}
+		if history := appmetrics.NewCustomMetricHistory(s.promqlClient); history != nil {
+			req.CustomMetrics = history
+		}
+		gates, gateErr = gather.Verdict(ctx, s.store, req)
 		if gateErr != nil {
 			s.log.Warn("post-release watch: some release gates could not be read; judging the rest", "app", c.AppID, "deployment", c.DeploymentID, "err", gateErr)
 		}
@@ -115,10 +126,12 @@ func (s *server) postReleaseRollback(ctx context.Context, store state.PostReleas
 			// served with. The release keeps serving; a person decides.
 			s.log.Warn("post-release watch: rollback skipped; it would cross release commands",
 				"app", app.ID, "deployment", c.DeploymentID, "target", target, "detail", problem.Detail)
+			s.releaseMetrics.Decision(releasemetrics.GuardPostRelease, "kept")
 			return nil
 		}
 		return fmt.Errorf("roll back to %s: %s: %s", target, problem.Code, problem.Detail)
 	}
+	s.releaseMetrics.Decision(releasemetrics.GuardPostRelease, "rolled_back")
 	if _, err := s.store.MarkAutoRollback(ctx, c.DeploymentID, string(state.AutoRollbackReasonPostReleaseRegression), time.Now().UTC()); err != nil {
 		return fmt.Errorf("record post-release rollback: %w", err)
 	}

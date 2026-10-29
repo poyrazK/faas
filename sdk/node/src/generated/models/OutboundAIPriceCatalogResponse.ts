@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { OutboundAIPriceEntry } from './OutboundAIPriceEntry.js';
 /**
- * One provider's built-in AI price catalog (ADR-994), generated from LiteLLM's MIT-licensed price data. model_prefix holds the catalog model name.
+ * One provider's built-in AI price catalog, generated from LiteLLM's MIT-licensed price data. model_prefix holds the catalog model name.
  */
 export type OutboundAIPriceCatalogResponse = {
   ai_provider: string;
@@ -14,7 +14,7 @@ export type OutboundAIPriceCatalogResponse = {
   source: string;
   generated: string;
   /**
-   * ISO 4217 currency of every catalog price: the billing currency, USD. Absent from responses of releases before ADR 20261019123822.
+   * ISO 4217 currency of every catalog price: the billing currency, USD. Absent from responses of older releases.
    */
   currency?: string;
   /**

@@ -386,6 +386,9 @@ type AdmissionSpec struct {
 	// trace; the Postgres backend reads the stored limits.
 	AITraceID     string
 	AITraceLimits aiTraceLimits
+	// AITraceNamed reports a trace the app named with X-Gregale-AI-Trace
+	// rather than one read from a traceparent its own clients may set.
+	AITraceNamed bool
 	// BindingAppID scopes an explicit app binding budget. It is set from
 	// verified workload identity, never from a guest-controlled header.
 	BindingAppID                   string

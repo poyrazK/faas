@@ -179,6 +179,14 @@ func (m *vmConcurrencyManager) enterQueueWithPriority(ctx context.Context, appID
 	}
 	m.queueMu.Lock()
 	admission := m.admission
+	// A request this gateway's queue cannot take costs no fleet lease. At
+	// saturation every arriving request otherwise wrote a lease row to
+	// control-plane Postgres only to release it again.
+	if q := m.queues[appID]; q != nil && len(q.tickets) >= limit && q.displaceableBelow(class) < 0 {
+		depth := len(q.tickets)
+		m.queueMu.Unlock()
+		return nil, depth, false, nil
+	}
 	m.queueMu.Unlock()
 	leaseID := ""
 	globalDepth := 0
@@ -508,6 +516,7 @@ func (m *vmConcurrencyManager) acquire(ctx context.Context, instanceID, plan str
 // picks again so a request queued behind the first restored VM can move to a
 // sibling as soon as that sibling becomes ready.
 func (h *Handler) acquireVMTarget(ctx context.Context, app App, pick PickResult, perVM int, deploymentID, versionKey string) (PickResult, func(), bool, error) {
+	defer measureTrafficPhase(ctx, trafficCapacity)()
 	if h == nil || h.backend == nil || h.vmConcurrency == nil || perVM <= 0 || !pick.OK || pick.Target.InstanceID == "" {
 		return pick, func() {}, false, nil
 	}

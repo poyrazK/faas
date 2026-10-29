@@ -12,10 +12,10 @@
 #   RACE=1        add -race to the tests
 #   VET=importers vet the changed packages and their direct importers, as ci-light
 #   VET=0         skip the vet step
-#   LDFLAGS, GOMEMLIMIT  set by `make test-changed` (as `make test`)
+#   GOFLAGS, LDFLAGS, GOMEMLIMIT  set by `make test-changed` (as `make test`)
 #   DRY_RUN=1     print the selection without running anything
-# Arguments are build flags for both vet and test; `make test-changed` passes
-# its TEST_GCFLAGS (as `make test`).
+# Arguments are build flags for both vet and test. `make test-changed` passes
+# none: it sets GOFLAGS to the Makefile's GO_DEV_GOFLAGS (as `make test`).
 set -euo pipefail
 
 repo_root="$(git rev-parse --show-toplevel)"

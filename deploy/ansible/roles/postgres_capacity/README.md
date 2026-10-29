@@ -36,21 +36,21 @@ terminate at pgbouncer and share its server pool, which is a constant rather
 than a per-node cost. What still scales per node is the session-scoped residue
 that cannot be pooled: `LISTEN` and session advisory locks on the direct DSN
 (`faas_postgres_per_compute_direct_budget`, 5 database daemons ×
-`db.directHubOnMaxConns`).
+`db.directHubOnMaxConns`, plus imaged's ADR-570 nested traffic guard: 11).
 
 | Nodes | Unpooled | Pooled |
 |---|---|---|
 | 2 | 160 conns / 3.4 GB | 200 conns / 4.4 GB |
-| 12 | 610 conns / 14.0 GB | 330 conns / 7.4 GB |
-| 50 | 2,330 conns / 54.3 GB | 840 conns / 19.4 GB |
-| 100 | 4,600 conns / 107.5 GB | 1,500 conns / 34.8 GB |
+| 12 | 610 conns / 14.0 GB | 350 conns / 7.9 GB |
+| 50 | 2,330 conns / 54.3 GB | 900 conns / 20.8 GB |
+| 100 | 4,600 conns / 107.5 GB | 1,640 conns / 38.1 GB |
 
 **Do not enable the pooler below four compute nodes.** pgbouncer's server pool
 is a fixed 80 backends, so on a two-node fleet it costs more than the 68 it
-saves. The crossover is at 3⅓ nodes: `34n = 80 + 10n`.
+saves. The crossover is at about 3½ nodes: `34n = 80 + 11n`.
 
 Note what pooling does and does not fix. It takes a 100-node fleet from
-impossible to a 48 GB database host, but the remaining 1,500 is dominated by
+impossible to a 48 GB database host, but the remaining 1,640 is dominated by
 the per-node `LISTEN` term, which is irreducible while every compute daemon
 subscribes to notifications. Cutting it further means fewer subscribing
 daemons per node, not a better pooler.
@@ -61,6 +61,16 @@ every subscriber parks its own `LISTEN` connection on the direct pool, so
 running any daemon with the hub disabled needs materially more direct
 connections than the table above; re-derive before enabling that mode on more
 than one node.
+
+ADR-570 reserves three direct connections for hub-enabled apid when a separate
+`FAAS_DATABASE_URL_DIRECT` is configured: the notification hub, outer edge
+mutation convergence lock and guarded policy transaction. imaged gets the same
+three on every compute node: the hub, its deployment activation lock and
+MarkDeploymentLive's guarded policy transaction. The deployed pooler
+role targets compute nodes, so the control plane keeps the ordinary direct
+pool budget above. If the control plane is explicitly given a separate session
+pool, include that sibling pool in `faas_postgres_control_plane_pool_budget`;
+the default 40 assumes the existing control-plane pool topology.
 
 The per-daemon maxima come from `pkg/db.DaemonMaxConnections`, which applies
 while the ADR-190 notify hub is active — the supported configuration. Setting

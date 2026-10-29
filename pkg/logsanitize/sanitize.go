@@ -46,7 +46,8 @@ func Field(s string) string {
 			b.WriteRune('·')
 		}
 	}
-	return b.String()
+	// Explicit CR/LF replacement also exposes the log boundary to static analysis.
+	return strings.ReplaceAll(strings.ReplaceAll(b.String(), "\r", "·"), "\n", "·")
 }
 
 // RedactValue returns a fixed-shape placeholder for a secret VALUE that

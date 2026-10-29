@@ -1,10 +1,10 @@
 from uuid import uuid4
 
-from faas_sdk.api.apps import bulk_act_on_issues, list_issues, put_issue_team
-from faas_sdk.models.bulk_issue_action_request import BulkIssueActionRequest
-from faas_sdk.models.issue_ownership_rule import IssueOwnershipRule
-from faas_sdk.models.issue_saved_view_filters import IssueSavedViewFilters
-from faas_sdk.models.put_issue_team_request import PutIssueTeamRequest
+from faas_sdk.preview.api.apps import bulk_act_on_issues, list_issues, put_issue_team
+from faas_sdk.preview.models.bulk_issue_action_request import BulkIssueActionRequest
+from faas_sdk.preview.models.issue_ownership_rule import IssueOwnershipRule
+from faas_sdk.preview.models.issue_saved_view_filters import IssueSavedViewFilters
+from faas_sdk.preview.models.put_issue_team_request import PutIssueTeamRequest
 
 
 def test_team_roster_inbox_and_assignment_contracts():

@@ -18,8 +18,8 @@ T = TypeVar("T", bound="AdvanceCanaryRequest")
 
 @_attrs_define
 class AdvanceCanaryRequest:
-    """Body for POST /v1/deployments/{id}/canary/advance (issue #976 / ADR-122). expected_step is the persisted canary step
-    observed by the progression worker; APID derives the next traffic percentage and rejects stale observations.
+    """Body for POST /v1/deployments/{id}/canary/advance. expected_step is the persisted canary step observed by the
+    progression worker; APID derives the next traffic percentage and rejects stale observations.
 
     """
 
@@ -31,8 +31,8 @@ class AdvanceCanaryRequest:
     profile_gate_override: ProfileGateOverride | Unset = UNSET
     """Audited customer exception bound to the current profiling policy revision."""
     decision: RolloutDecision | Unset = UNSET
-    """Evidence behind one decision about a rollout (ADR-1447): why a canary stage advanced, is held, or was
-    aborted. Aggregates only; no request payloads, routes, URLs or customer text."""
+    """Evidence behind one decision about a rollout: why a canary stage advanced, is held, or was aborted.
+    Aggregates only; no request payloads, routes, URLs or customer text."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

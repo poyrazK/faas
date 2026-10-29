@@ -1,5 +1,5 @@
-from faas_sdk.models.create_mcp_readiness_maintenance_request import CreateMCPReadinessMaintenanceRequest
-from faas_sdk.models.mcp_readiness_maintenance_page import MCPReadinessMaintenancePage
+from faas_sdk.preview.models.create_mcp_readiness_maintenance_request import CreateMCPReadinessMaintenanceRequest
+from faas_sdk.preview.models.mcp_readiness_maintenance_page import MCPReadinessMaintenancePage
 
 
 def test_maintenance_window_round_trip():

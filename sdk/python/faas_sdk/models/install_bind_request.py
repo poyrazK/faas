@@ -21,7 +21,7 @@ class InstallBindRequest:
     `POST /v1/apps/{slug}/install/bind`. Carries the
     (installation_id, repo_full_name, production_branch) tuple
     the dashboard's bind picker commits. `production_branch` is
-    optional — when omitted, githubd uses the install's
+    optional — when omitted, the GitHub integration uses the install's
     `default_branch` from `/installations/{id}`.
     Binding requires a `csrf_token` issued for `bind_app_to_repo`
     by `GET /v1/auth/csrf` and its matching HttpOnly cookie.

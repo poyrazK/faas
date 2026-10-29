@@ -10,7 +10,7 @@ import (
 )
 
 // ReuseOperationUpload looks up a verified private receipt without bytes.
-func (c *Client) ReuseOperationUpload(ctx context.Context, id string, proof OperationRuntimeProof, req OperationArtifactUploadRequest) (OperationArtifactUploadResponse, error) {
+func (c *PreviewClient) ReuseOperationUpload(ctx context.Context, id string, proof OperationRuntimeProof, req OperationArtifactUploadRequest) (OperationArtifactUploadResponse, error) {
 	var out OperationArtifactUploadResponse
 	err := c.doOperationWithHeaders(ctx, http.MethodPost, "/v1/runtime/operations/"+url.PathEscape(id)+"/artifact-upload-receipts", req, &out, proof.headers())
 	return out, err

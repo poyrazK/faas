@@ -34,7 +34,7 @@ func TestPgPRPreviewSetBatchQuotaNeutralSwap(t *testing.T) {
 			WorkloadName: "pg-swap-" + name, PreviewOfSlug: "pg-swap-" + name, PreviewPrNumber: 42,
 			PreviewPrState: state.PreviewPrStateOpen, PreviewExpiresAt: &expiry, RAMMB: 128, Status: state.AppActive}
 	}
-	limits := api.Limits{DeployedApps: 5, PreviewApps: 2}
+	limits := api.Limits{DeployedApps: 2, PreviewApps: 2} // one environment holds at most two workloads
 	head := state.PRPreviewHead{InstallationID: 7, RepoFullName: "octo/api", PRNumber: 42, CommitSHA: strings.Repeat("a", 40)}
 	first, err := store.ReservePRPreviewSet(ctx, head, []state.App{preview("api"), preview("worker")}, limits)
 	if err != nil || len(first) != 2 {

@@ -3,7 +3,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from faas_sdk import FaaSClient, awatch_execution
+from faas_sdk.preview import FaaSClient, awatch_execution
 
 _EXECUTION_ID = "01234567-89ab-cdef-0123-456789abcdef"
 _LIMITS = {
@@ -186,8 +186,8 @@ def test_decode_execution_artifact_validates_binary_content() -> None:
     import base64
     import hashlib
 
-    from faas_sdk import decode_execution_artifact
-    from faas_sdk.models.execution_artifact import ExecutionArtifact
+    from faas_sdk.preview import decode_execution_artifact
+    from faas_sdk.preview.models.execution_artifact import ExecutionArtifact
 
     content = bytes([0, 1, 255])
     artifact = ExecutionArtifact(

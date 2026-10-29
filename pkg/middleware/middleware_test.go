@@ -115,6 +115,133 @@ func TestRecovery_Returns500OnPanic(t *testing.T) {
 	}
 }
 
+// TestRecovery_RepanicsAbortHandler confirms http.ErrAbortHandler keeps its
+// net/http meaning. httputil.ReverseProxy (the apid dev-bridge proxy) panics
+// with it to abort a broken stream; converting it into a 500 would write a
+// problem body onto a response the proxy already started.
+func TestRecovery_RepanicsAbortHandler(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	rec := httptest.NewRecorder()
+	h := middleware.Recovery(log)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		panic(http.ErrAbortHandler)
+	}))
+
+	got := recoverServe(h, rec, httptest.NewRequest(http.MethodGet, "/v1/dev/bridges/x", nil))
+	if got != http.ErrAbortHandler { //nolint:errorlint // net/http compares the sentinel by identity.
+		t.Fatalf("panic = %v, want http.ErrAbortHandler", got)
+	}
+	if rec.Body.Len() != 0 {
+		t.Fatalf("body = %q, want nothing written for an aborted handler", rec.Body.String())
+	}
+}
+
+// TestRecovery_AbortsStartedResponse confirms a panic after the handler has
+// started its response aborts the connection instead of appending a
+// problem+json body to a partial stream (SSE, log tail, export download). A
+// clean end of stream would let the client treat the truncated body as
+// complete.
+func TestRecovery_AbortsStartedResponse(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	rec := httptest.NewRecorder()
+	h := middleware.Recovery(log)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("data: one\n\n"))
+		w.(http.Flusher).Flush()
+		panic("boom mid-stream")
+	}))
+
+	got := recoverServe(h, rec, httptest.NewRequest(http.MethodGet, "/v1/events", nil))
+	if got != http.ErrAbortHandler { //nolint:errorlint // net/http compares the sentinel by identity.
+		t.Fatalf("panic = %v, want http.ErrAbortHandler", got)
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want the 200 the handler already sent", rec.Code)
+	}
+	if body := rec.Body.String(); body != "data: one\n\n" {
+		t.Fatalf("body = %q, want only the bytes the handler wrote", body)
+	}
+}
+
+// TestRecovery_InformationalHeaderDoesNotStartResponse confirms a 1xx
+// (103 Early Hints) before a panic still yields the problem+json 500: the
+// final response had not started.
+func TestRecovery_InformationalHeaderDoesNotStartResponse(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	rec := httptest.NewRecorder()
+	h := middleware.Recovery(log)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusEarlyHints)
+		panic("boom after early hints")
+	}))
+
+	if got := recoverServe(h, rec, httptest.NewRequest(http.MethodGet, "/v1/account", nil)); got != nil {
+		t.Fatalf("panic escaped Recovery: %v", got)
+	}
+	if !strings.Contains(rec.Body.String(), `"status":500`) {
+		t.Fatalf("body = %q, want the problem+json 500", rec.Body.String())
+	}
+}
+
+// TestRecovery_PreservesFlusher confirms the writer Recovery hands to the
+// handler still satisfies http.Flusher, which apid's SSE handlers assert
+// directly.
+func TestRecovery_PreservesFlusher(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	rec := httptest.NewRecorder()
+	h := middleware.Recovery(log)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if _, ok := w.(http.Flusher); !ok {
+			t.Error("Recovery hid http.Flusher from the handler")
+		}
+		if err := http.NewResponseController(w).Flush(); err != nil {
+			t.Errorf("ResponseController.Flush: %v", err)
+		}
+	}))
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/events", nil))
+	if !rec.Flushed {
+		t.Fatal("flush did not reach the underlying writer")
+	}
+}
+
+// TestRecovery_PreservesHijacker confirms WebSocket upgrades still work
+// behind Recovery: gorilla/websocket v1.5.3 asserts http.Hijacker on the
+// writer it receives.
+func TestRecovery_PreservesHijacker(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := httptest.NewServer(middleware.Recovery(log)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hj, ok := w.(http.Hijacker)
+		if !ok {
+			http.Error(w, "Recovery hid http.Hijacker", http.StatusInternalServerError)
+			return
+		}
+		conn, brw, err := hj.Hijack()
+		if err != nil {
+			t.Errorf("Hijack: %v", err)
+			return
+		}
+		defer func() { _ = conn.Close() }()
+		_, _ = brw.WriteString("HTTP/1.1 200 OK\r\nContent-Length: 8\r\nConnection: close\r\n\r\nhijacked")
+		_ = brw.Flush()
+	})))
+	t.Cleanup(srv.Close)
+
+	resp, err := http.Get(srv.URL)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK || string(body) != "hijacked" {
+		t.Fatalf("status %d body %q, want the hijacked 200", resp.StatusCode, body)
+	}
+}
+
+// recoverServe runs h and returns whatever panic escaped it.
+func recoverServe(h http.Handler, w http.ResponseWriter, r *http.Request) (escaped any) {
+	defer func() { escaped = recover() }()
+	h.ServeHTTP(w, r)
+	return nil
+}
+
 // TestRecovery_PassesHappyPath confirms non-panicking responses are
 // unchanged (status, body, headers intact).
 func TestRecovery_PassesHappyPath(t *testing.T) {

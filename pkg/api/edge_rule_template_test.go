@@ -3,6 +3,7 @@ package api
 import (
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -78,6 +79,30 @@ func TestEdgeRuleRedirectTemplate(t *testing.T) {
 	in.EscapedPath = "//evil.example/x"
 	if got := c.Expand(in); strings.HasPrefix(got, "//") {
 		t.Fatalf("open redirect: %q", got)
+	}
+	// A raw query of `\evil.example` must not become "\evil.example" or
+	// "/\evil.example": http.Redirect sends the first as "/\evil.example",
+	// and browsers follow both to evil.example.
+	c, _ = CompileEdgeRuleTemplate("/${query}", EdgeRuleTemplateRedirect)
+	for query, want := range map[string]string{
+		`\evil.example`:   "/%5Cevil.example",
+		`/\evil.example`:  "/%5Cevil.example",
+		`//evil.example`:  "/evil.example",
+		`\\evil.example`:  "/%5C%5Cevil.example",
+		"lang=tr&q=x%26y": "/lang=tr&q=x%26y",
+	} {
+		in = templateInput()
+		in.RawQuery = query
+		got := c.Expand(in)
+		if got != want {
+			t.Errorf("query %q expands to %q, want %q", query, got, want)
+		}
+		req := httptest.NewRequest(http.MethodGet, "http://app.example/x", nil)
+		rec := httptest.NewRecorder()
+		http.Redirect(rec, req, got, http.StatusFound)
+		if loc := rec.Header().Get("Location"); strings.HasPrefix(loc, "//") || strings.HasPrefix(loc, `/\`) || strings.HasPrefix(loc, `\`) {
+			t.Errorf("query %q redirects to protocol-relative %q", query, loc)
+		}
 	}
 }
 

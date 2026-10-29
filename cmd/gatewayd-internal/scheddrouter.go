@@ -42,6 +42,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/sync/singleflight"
@@ -269,19 +270,35 @@ func (r *scheddRouter) clientForNode(ctx context.Context, nodeID string) (schedd
 	return v.(scheddgrpc.ScheddClient), nil
 }
 
+// scheddRouterCloseGrace is how long an evicted client stays open for the
+// RPCs already in flight on it. It exceeds the gateway's admission
+// lifecycle (40 s) so a wake that is booting or restoring finishes.
+var scheddRouterCloseGrace = 60 * time.Second
+
 // Evict drops the cached client for nodeID. Called by the
 // compute_node_changed pg_notify subscriber; safe to call for an
 // id that's not in the cache. The next ScheddFor{App,Instance}
 // call re-reads the row and dials fresh.
+//
+// Evict now, close later. compute_node_changed fires on every
+// heartbeat re-registration (about six times a minute per gateway on
+// production-us), and closing a grpc.ClientConn cancels every RPC in
+// flight on it. An Admit or EnsureWake that was seconds into a cold boot
+// or restore died with "context canceled" in schedd and vmmd and the
+// request got a 503 wake_response (Hunt 14 H14-82; schedd's VMMRouter
+// fixed the same race on 2026-09-04). New calls get a fresh client from
+// the empty slot at once; the old connection closes after the grace.
 func (r *scheddRouter) Evict(nodeID string) {
 	r.mu.Lock()
 	c, ok := r.cache[nodeID]
 	delete(r.cache, nodeID)
 	r.mu.Unlock()
 	if ok {
-		if err := c.Close(); err != nil {
-			r.log.Warn("scheddrouter: evict close failed", "node", nodeID, "err", err)
-		}
+		time.AfterFunc(scheddRouterCloseGrace, func() {
+			if err := c.Close(); err != nil {
+				r.log.Warn("scheddrouter: evict close failed", "node", nodeID, "err", err)
+			}
+		})
 	}
 }
 

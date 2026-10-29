@@ -217,7 +217,7 @@ func TestProtectedSnapshotLoadUsesPinnedBytesAndActualCommandHash(t *testing.T) 
 			if main.Producer.Digest != f.request.Sources[1].Digest || main.Injected.Digest == main.Producer.Digest || main.Injected.Digest == f.request.Capture.PrivateDrive.Digest {
 				t.Fatal("producer, capture and freshly injected private bytes were collapsed")
 			}
-			if f.config.Drives[2].PathOnHost != snapshotRestoreSidecarName(f.spec, 1, "cache/random-name") {
+			if f.config.Drives[2].PathOnHost != restoreSidecarDriveName(1) {
 				t.Fatal("restore drive names differ from real cold provisioning")
 			}
 			if _, err := f.vmm.ObservedRuntimeDrives(f.ctx, f.lease); err == nil {

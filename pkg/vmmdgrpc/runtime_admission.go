@@ -249,7 +249,7 @@ func (s *Server) wakeAdmittedWithBridge(ctx context.Context, vmm admittedRuntime
 	var hook fcvm.WakeNetworkReadyHook
 	if currentStreamBridgeVersion() == "v2" && persistentStreamBridgeEnabled() {
 		if s.streamBridges == nil {
-			s.streamBridges = newStreamBridgeManager(s.log)
+			s.streamBridges = s.newBridgeManager()
 		}
 		hook = func(ready fcvm.WakeNetworkReady) {
 			s.prewarmStreamBridge(withPublicTarget(ctx, ready.PublicTarget), &vmmdpb.ForwardHTTPRequestInit{Instance: ready.Instance, Port: uint32(req.Request.Port), AppProtocol: protocol}, ready)

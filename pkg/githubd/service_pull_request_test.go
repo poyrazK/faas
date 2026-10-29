@@ -594,8 +594,8 @@ func TestHandlePullRequest_Closed_PostsDestroyComment(t *testing.T) {
 	if !strings.Contains(d.body, "demo-app") {
 		t.Errorf("destroy body = %q, want it to reference the parent slug", d.body)
 	}
-	if !strings.Contains(d.body, "/dashboard/apps/demo-app/preview/") {
-		t.Errorf("destroy body = %q, want it to embed the dashboard destroy URL", d.body)
+	if !strings.Contains(d.body, "https://gregale.dev/dashboard/apps/pr-42-demo-app)") {
+		t.Errorf("destroy body = %q, want it to link the preview's dashboard page, which carries the teardown action", d.body)
 	}
 
 	// Open → close → reopen → close: the second close must NOT
@@ -723,8 +723,8 @@ func TestHandlePullRequest_QuotaExhausted(t *testing.T) {
 	if c.phase != githubdgrpc.CheckPhaseFailed {
 		t.Errorf("phase = %v, want Failed", c.phase)
 	}
-	if !strings.Contains(c.summary, "PR preview limit") {
-		t.Errorf("summary = %q, want it to mention the PR preview limit", c.summary)
+	if !strings.Contains(c.summary, "open PR preview environment(s) and all are in use") {
+		t.Errorf("summary = %q, want it to name the PR preview environment limit", c.summary)
 	}
 
 	// No fork-refused Check Run.

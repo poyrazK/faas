@@ -26,23 +26,23 @@ export type CreateAPIConsumerRateCardRequest = {
    */
   plan_id?: string;
   /**
-   * What the card prices (ADR-1308, ADR-1318): requests; compute_second or response_megabyte, rounded per consumer minute; or app:<meter>, the units the app reports in its Gregale-Usage header. Cards of different units price side by side (ADR-1317); non-request cards take no route weights and cannot be backdated.
+   * What the card prices: requests; compute_second or response_megabyte, rounded per consumer minute; or app:<meter>, the units the app reports in its Gregale-Usage header. Cards of different units price side by side; non-request cards take no route weights and cannot be backdated.
    */
   unit?: string;
   /**
-   * Fixed charge per consumer per UTC month while this card is in force when the consumer's month starts (ADR-1316).
+   * Fixed charge per consumer per UTC month while this card is in force when the consumer's month starts.
    */
   base_fee_millicents_per_month?: number;
   /**
-   * Minimum usage charge per consumer per UTC month; statements top up the difference (ADR-1316).
+   * Minimum usage charge per consumer per UTC month; statements top up the difference.
    */
   minimum_millicents_per_month?: number;
   /**
-   * Scale the base fee and minimum in a consumer's first month to the share of it left after the consumer was created (ADR-1325).
+   * Scale the base fee and minimum in a consumer's first month to the share of it left after the consumer was created.
    */
   prorate_monthly_fees?: boolean;
   /**
-   * How tiers price a consumer's month (ADR-1309): graduated prices each unit at the step its position falls in; volume prices every unit of the month at the step the month's total reaches. volume needs tiers.
+   * How tiers price a consumer's month: graduated prices each unit at the step its position falls in; volume prices every unit of the month at the step the month's total reaches. volume needs tiers.
    */
   tier_mode?: 'graduated' | 'volume';
   /**

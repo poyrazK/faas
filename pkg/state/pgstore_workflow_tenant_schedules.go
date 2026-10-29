@@ -124,7 +124,7 @@ func (s *PgStore) AdmitTenantScheduledWorkflow(ctx context.Context, appID, tenan
 		}
 	}
 	active, err := queries.CountActiveWorkflowRunsForAdmission(ctx, tx, sqlc.CountActiveWorkflowRunsForAdmissionParams{
-		AppID: mustPgUUID(appID), WorkflowName: "",
+		AppID: mustPgUUID(appID), WorkflowName: "", ParkedMax: int64(plan.WorkflowMaxParkedRuns()),
 	})
 	if err != nil {
 		return WorkflowScheduleCursor{}, false, err

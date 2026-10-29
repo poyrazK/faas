@@ -10,6 +10,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/events"
+	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/workflowcode"
 )
@@ -105,7 +106,7 @@ func (o *WorkflowOrchestrator) resolveCodeWaits(ctx context.Context, store state
 				})
 			}
 		case workflowcode.KindEvent:
-			event, timedOut, _, err := store.ParkWorkflowCodeEvent(ctx, run.ID, entry.Name, item.Descriptor.Event, item.Descriptor.Occurrence, item.Descriptor.Timeout())
+			event, timedOut, _, err := store.ParkWorkflowCodeEvent(ctx, run.ID, entry.Name, item.Descriptor.Event, item.Descriptor.Timeout())
 			if err != nil {
 				return false, err
 			}
@@ -219,7 +220,7 @@ func (o *WorkflowOrchestrator) invokeCodeWorkflow(ctx context.Context, store sta
 	}
 	body, err := json.Marshal(workflowcode.Request{
 		Protocol: api.WorkflowCodeProtocol, RunID: run.ID, Workflow: run.WorkflowName,
-		Input: input, Invocation: attempt, Journal: journal.Entries,
+		Input: input, Invocation: attempt, Journal: journal.Sent(time.Now().UTC()),
 	})
 	if err != nil {
 		return false, err
@@ -229,11 +230,14 @@ func (o *WorkflowOrchestrator) invokeCodeWorkflow(ctx context.Context, store sta
 		return false, o.finishCodeRunDead(ctx, store, run, attempt, nil, failures, seen, message)
 	}
 	headers := map[string]string{
-		"X-Faas-Internal-Wake":     "workflow",
-		"X-Faas-Workflow-Run-Id":   run.ID,
-		"X-Faas-Workflow-Step":     api.WorkflowCodeDriverStep,
-		"X-Faas-Workflow-Attempt":  strconv.Itoa(attempt),
-		"Idempotency-Key":          workflowStepIdempotencyKey(run.ID, api.WorkflowCodeDriverStep),
+		"X-Faas-Internal-Wake":    "workflow",
+		"X-Faas-Workflow-Run-Id":  run.ID,
+		"X-Faas-Workflow-Step":    api.WorkflowCodeDriverStep,
+		"X-Faas-Workflow-Attempt": strconv.Itoa(attempt),
+		// Every call sends a different journal, so it is its own request: a
+		// run-wide key let the app's idempotency middleware replay the first
+		// answer, which the engine then refused as nondeterministic.
+		"Idempotency-Key":          fmt.Sprintf("%s/%d", workflowStepIdempotencyKey(run.ID, api.WorkflowCodeDriverStep), attempt),
 		"Content-Type":             "application/json",
 		api.WorkflowCodeModeHeader: "code",
 	}
@@ -280,11 +284,11 @@ func (o *WorkflowOrchestrator) invokeCodeWorkflow(ctx context.Context, store sta
 	return false, o.store.SetWorkflowRunWake(ctx, run.ID, state.WorkflowRunStatusPending, retryAt)
 }
 
+// truncateCodeError bounds stored error text. PostgreSQL text refuses
+// invalid UTF-8 and NUL, and a refused write would leave the call unrecorded
+// and retried at once, so the text is cleaned and cut on a rune boundary.
 func truncateCodeError(message string) string {
-	if len(message) <= api.WorkflowCodeErrorMaxBytes {
-		return message
-	}
-	return message[:api.WorkflowCodeErrorMaxBytes]
+	return safetext.Truncate(message, api.WorkflowCodeErrorMaxBytes)
 }
 
 // applyCodeResponse records a validated answer in one transaction, then

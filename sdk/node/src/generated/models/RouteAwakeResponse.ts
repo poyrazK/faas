@@ -5,7 +5,7 @@
 import type { RouteAwakeRoute } from './RouteAwakeRoute.js';
 import type { RouteAwakeSource } from './RouteAwakeSource.js';
 /**
- * How long the app was awake in the window and which routes kept it awake (ADR-1187). Seconds are instance-seconds of billed running time.
+ * How long the app was awake in the window and which routes kept it awake. Seconds are instance-seconds of billed running time.
  */
 export type RouteAwakeResponse = {
   slug: string;
@@ -17,7 +17,7 @@ export type RouteAwakeResponse = {
    */
   idle_timeout_seconds: number;
   /**
-   * The plan's waitUntil task timeout when the plan enables waitUntil. An instance parks no earlier than the later of the idle timeout and its last waitUntil task, so a request keeps the app awake for the longer of the two (ADR-20261022184757).
+   * The plan's waitUntil task timeout when the plan enables waitUntil. An instance parks no earlier than the later of the idle timeout and its last waitUntil task, so a request keeps the app awake for the longer of the two.
    */
   wait_until_timeout_seconds?: number;
   window_seconds: number;
@@ -40,7 +40,7 @@ export type RouteAwakeResponse = {
    */
   unattributed_seconds: number;
   /**
-   * Awake time credited to causes other than customer requests, for minutes no request explains: route probes and prewarms (ADR-1199), and cron, queue and other deliveries schedd made to the app, per cron job and per queue (ADR-20261022184757).
+   * Awake time credited to causes other than customer requests, for minutes no request explains: route probes and prewarms, and cron, queue and other deliveries the scheduler made to the app, per cron job and per queue.
    */
   sources: Array<RouteAwakeSource>;
   /**

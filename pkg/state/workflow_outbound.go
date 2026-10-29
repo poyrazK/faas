@@ -25,10 +25,14 @@ type WorkflowOutboundStore interface {
 }
 
 func (s *PgStore) GetWorkflowOutboundAttempt(ctx context.Context, runID, step string, attempt int) (WorkflowOutboundAttempt, error) {
+	return readWorkflowOutboundAttempt(ctx, s.pool, runID, step, attempt)
+}
+
+func readWorkflowOutboundAttempt(ctx context.Context, db sqlc.DBTX, runID, step string, attempt int) (WorkflowOutboundAttempt, error) {
 	if attempt < 1 || attempt > math.MaxInt32 {
 		return WorkflowOutboundAttempt{}, ErrInvalidArgument
 	}
-	row, err := sqlc.New().WorkflowOutboundAttempt(ctx, s.pool, sqlc.WorkflowOutboundAttemptParams{RunID: mustPgUUID(runID), StepName: step, Attempt: int32(attempt)})
+	row, err := sqlc.New().WorkflowOutboundAttempt(ctx, db, sqlc.WorkflowOutboundAttemptParams{RunID: mustPgUUID(runID), StepName: step, Attempt: int32(attempt)})
 	if err != nil {
 		return WorkflowOutboundAttempt{}, err
 	}
@@ -37,6 +41,10 @@ func (s *PgStore) GetWorkflowOutboundAttempt(ctx context.Context, runID, step st
 func (m *MemStore) GetWorkflowOutboundAttempt(_ context.Context, runID, stepName string, attempt int) (WorkflowOutboundAttempt, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.workflowOutboundAttemptLocked(runID, stepName, attempt)
+}
+
+func (m *MemStore) workflowOutboundAttemptLocked(runID, stepName string, attempt int) (WorkflowOutboundAttempt, error) {
 	run, ok := m.workflowRuns[runID]
 	if !ok {
 		return WorkflowOutboundAttempt{}, ErrNotFound

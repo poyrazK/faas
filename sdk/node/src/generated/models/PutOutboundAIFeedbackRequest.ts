@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * A rating of one logged call (ADR 20261021171712). A later rating replaces the earlier one.
+ * A rating of one logged call. A later rating replaces the earlier one.
  */
 export type PutOutboundAIFeedbackRequest = {
   rating: 'good' | 'bad';

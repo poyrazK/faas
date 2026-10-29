@@ -272,6 +272,11 @@ type sessionVMM struct{ stubVMM }
 func (sessionVMM) NetnsFor(instance string) (string, bool) { return "fc-" + instance, true }
 func (sessionVMM) InstancePID(string) (int, bool)          { return os.Getpid(), true }
 
+// HTTP and upgrade forwards need a node-owned admission permit (ADR-570).
+func (sessionVMM) AcquireHTTPForward(ctx context.Context, _ string) (context.Context, func(), error) {
+	return ctx, func() {}, nil
+}
+
 // sessionServer is a vmmd server whose instance bridges are served in this
 // process on a temporary socket, with sessions on; the per-connection
 // bridge binaries do not exist, so a process spawn would fail the RPC.

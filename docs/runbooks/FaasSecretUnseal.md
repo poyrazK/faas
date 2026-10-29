@@ -10,6 +10,15 @@ label names the daemon.
 
 Two alerts read it. Both warn rather than page: each has an ordinary cause.
 
+## Symptom
+
+- **FaasSecretUnsealSurge:** a daemon opened sealed values at over ten times
+  its 24-hour average for 10 minutes.
+- **FaasSecretUnsealFailures:** a daemon failed to open more than 20 sealed
+  values in 15 minutes.
+
+Each section below gives the ordinary cause, what to rule out, and the checks.
+
 ## FaasSecretUnsealSurge
 
 For 10 minutes a daemon has opened sealed values at over ten times its

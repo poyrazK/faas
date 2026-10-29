@@ -47,6 +47,11 @@ category Security), pauses every release on the platform:
 - **builderd** claims no queued build: the notification path leaves it
   queued, and the polling path answers as if the queue were empty. The
   polling worker picks the builds up after the pause is lifted.
+- **Retries and GitOps environment syncs** are paused too (fixed on
+  2026-10-24): a retried image deployment and an environment candidate built
+  from an image or an existing artifact need no builder, so builderd's pause
+  did not hold them. A paused GitOps sync reports itself unconverged and
+  continues after the pause is lifted.
 - **Not paused:** rollbacks (they do not pass the freeze check), rollouts
   already in progress (as with freezes, a half-finished canary must not be
   left in place), running apps, config and secret writes. Customers must be
@@ -64,8 +69,16 @@ credential of the chosen kinds:
 
 - sessions (dashboard and CLI);
 - API keys, including keys in their rotation grace period;
+- app deploy tokens, including tokens in their rotation grace period;
+- hosting automation credentials, whose rows are deleted, as their own
+  revoke does;
 - AI gateway access tokens (ADR-1431), which spend customers' provider keys;
 - platform tenant access tokens.
+
+Deploy tokens and hosting automation credentials were added on 2026-10-24.
+They live up to a year and 30 days, and the first version missed them.
+Short-lived credentials stay out: OIDC-exchanged bearers (5 minutes),
+dev-bridge sessions (1 hour) and fork access tokens (4 hours at most).
 
 All kinds are revoked in one transaction, which also writes one
 `break_glass.credentials_revoked` audit event with the counts and the reason.

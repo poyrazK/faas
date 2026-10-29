@@ -97,6 +97,33 @@ class PythonBootstrapTests(unittest.TestCase):
             run_python(f'import sys; assert {lib!r} not in sys.path, sys.path',
                        FAAS_TRACING_ENABLED="1", PYTHONPATH=os.pathsep.join([str(boot), str(app)]))
 
+    def test_log_export_keeps_console_logging(self):
+        # ADR-213 runtime adapter: exporting records must not take the SDK's
+        # root handler's side effects with it. An app that never configures
+        # logging still prints warnings (last resort) and logging.warning()
+        # still configures the root logger, and both records are exported.
+        with tempfile.TemporaryDirectory() as directory:
+            boot = self._boot_copy(directory)
+            logs = Path(boot, "lib", "opentelemetry", "sdk", "_logs")
+            logs.mkdir(parents=True)
+            Path(boot, "lib", "opentelemetry", "sdk", "__init__.py").write_text("")
+            Path(logs, "__init__.py").write_text(
+                "import logging\nrecords = []\n"
+                "class LoggingHandler(logging.Handler):\n"
+                "    def emit(self, record):\n        records.append(record.getMessage())\n")
+            auto = Path(boot, "lib", "opentelemetry", "instrumentation", "auto_instrumentation")
+            auto.mkdir(parents=True)
+            Path(auto, "__init__.py").write_text(
+                "import logging\nfrom opentelemetry.sdk._logs import LoggingHandler\n"
+                "def initialize():\n    logging.getLogger().addHandler(LoggingHandler())\n")
+            out = run_python('import logging; from opentelemetry.sdk._logs import records; '
+                             'logging.getLogger("checkout").warning("card declined"); logging.warning("at module level"); '
+                             'print(records, logging.getLogger().handlers)',
+                             FAAS_TRACING_ENABLED="1", PYTHONPATH=str(boot))
+            self.assertIn("card declined\n", out.stderr)
+            self.assertIn("WARNING:root:at module level", out.stderr)
+            self.assertIn("['card declined', 'at module level'] [<StreamHandler <stderr> (NOTSET)>]", out.stdout)
+
     def test_disabled_does_not_touch_sys_path(self):
         with tempfile.TemporaryDirectory() as directory:
             boot = self._boot_copy(directory)
@@ -139,6 +166,30 @@ class NodeBootstrapTests(unittest.TestCase):
                 if app.poll() is None:
                     app.kill()
                 app.stdout.close()
+
+    @unittest.skipIf(shutil.which("node") is None, "node not installed")
+    def test_logs_left_to_sdk_env_config(self):
+        # ADR-213 runtime adapter: NodeSDK builds its OTLP log processor from
+        # the OTEL_LOGS_* env guest-init stamps. A processor passed here would
+        # replace it, and a hand-built one broke when sdk-logs changed its
+        # constructor, so the bootstrap must not pass any.
+        with tempfile.TemporaryDirectory() as directory:
+            shutil.copy(ROOT / "guest/tracing/node.cjs", Path(directory, "node.cjs"))
+            stubs = {
+                "@opentelemetry/sdk-node": "exports.NodeSDK = class { constructor(c) { process.stdout.write(Object.keys(c).filter(k => k.startsWith('log')).join(',') + '|\\n'); } start() {} shutdown() { return Promise.resolve(); } };",
+                "@opentelemetry/auto-instrumentations-node": "exports.getNodeAutoInstrumentations = () => [];",
+                "@opentelemetry/exporter-trace-otlp-proto": "exports.OTLPTraceExporter = class {};",
+                "@opentelemetry/sdk-logs": "exports.BatchLogRecordProcessor = class {};",
+                "@opentelemetry/exporter-logs-otlp-proto": "exports.OTLPLogExporter = class {};",
+            }
+            for name, source in stubs.items():
+                pkg = Path(directory, "node_modules", name)
+                pkg.mkdir(parents=True)
+                Path(pkg, "index.js").write_text(source)
+            out = subprocess.run(["node", "--require", str(Path(directory, "node.cjs")), "-e", ""],
+                                 env=dict(os.environ, FAAS_TRACING_ENABLED="1", OTEL_LOGS_EXPORTER="otlp"),
+                                 check=True, timeout=10, capture_output=True, text=True)
+            self.assertEqual(out.stdout.strip(), "|")
 
     @unittest.skipIf(shutil.which("node") is None, "node not installed")
     def test_disabled_is_inert(self):

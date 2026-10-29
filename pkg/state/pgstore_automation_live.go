@@ -146,7 +146,7 @@ func startLiveVerificationTx(ctx context.Context, tx pgx.Tx, appID, name, key st
 	if err := validateWorkflowOutboundTx(ctx, tx, appID, pgUUIDString(target.AccountID), def); err != nil {
 		return sqlc.WorkflowAutomationLiveVerification{}, err
 	}
-	active, err := q.CountActiveWorkflowRunsForAdmission(ctx, tx, sqlc.CountActiveWorkflowRunsForAdmissionParams{AppID: mustPgUUID(appID), WorkflowName: ""})
+	active, err := q.CountActiveWorkflowRunsForAdmission(ctx, tx, sqlc.CountActiveWorkflowRunsForAdmissionParams{AppID: mustPgUUID(appID), WorkflowName: "", ParkedMax: int64(plan.WorkflowMaxParkedRuns())})
 	if err != nil {
 		return sqlc.WorkflowAutomationLiveVerification{}, err
 	}

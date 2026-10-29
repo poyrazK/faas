@@ -36,11 +36,7 @@ type dataAPIChange struct {
 func parseDataAPIContract(content []byte) (dataAPIContract, error) { return dataapi.Parse(content) }
 
 func generateDataAPIContract(ctx context.Context, client *api.Client, slug string) (api.AppTaskResponse, error) {
-	task, err := client.CreateAppTask(ctx, slug, api.CreateAppTaskRequest{Command: []string{"node", "/app/types.mjs", "--snapshot"}, TimeoutSeconds: 60, MaxOutputBytes: api.AppTaskDefaultMaxOutputBytes})
-	if err != nil {
-		return task, fmt.Errorf("start schema inspection: %w", err)
-	}
-	return waitDataAPIContractTask(ctx, client, slug, task, true)
+	return runDataAPIContractTask(ctx, client, slug, api.DataAPIContractSchema, "start schema inspection")
 }
 
 func cmdDataAPIDiff(args []string) int {

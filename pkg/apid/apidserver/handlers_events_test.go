@@ -98,14 +98,14 @@ func TestEvents_NormalizesLegacyAppChangedForOwningAccount(t *testing.T) {
 	const appID = "51f496b9-1c33-4756-8f7d-4153149cbba5"
 	n := db.Notification{Channel: db.NotifyAppChanged, Payload: appID}
 
-	got, ok := apidserver.NormalizedEventsFrameForAccount(n, "acct-1", map[string]struct{}{appID: {}})
+	got, ok := apidserver.NormalizedEventsFrameForAccount(n, "acct-1", map[string]struct{}{appID: {}}, nil)
 	if !ok {
 		t.Fatal("owned legacy app_changed frame was dropped")
 	}
 	if got.Payload != `{"kind":"updated","app_id":"`+appID+`"}` {
 		t.Fatalf("normalized payload = %q", got.Payload)
 	}
-	if _, ok := apidserver.NormalizedEventsFrameForAccount(n, "acct-2", map[string]struct{}{}); ok {
+	if _, ok := apidserver.NormalizedEventsFrameForAccount(n, "acct-2", map[string]struct{}{}, nil); ok {
 		t.Fatal("legacy app_changed frame leaked to a non-owner")
 	}
 }

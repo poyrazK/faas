@@ -38,6 +38,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/durable"
 	"github.com/onebox-faas/faas/pkg/apid/edgerules"
 	"github.com/onebox-faas/faas/pkg/apid/issuetrackers"
+	"github.com/onebox-faas/faas/pkg/apid/logerasure"
 	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
 	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/apid/operation"
@@ -46,6 +47,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/tenantplans"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/environmentsync"
 	"github.com/onebox-faas/faas/pkg/gitlabsource"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/issuetracker"
@@ -57,14 +59,17 @@ import (
 	objruntime "github.com/onebox-faas/faas/pkg/rehearsalobj/runtime"
 	pgruntime "github.com/onebox-faas/faas/pkg/rehearsalpg/runtime"
 	"github.com/onebox-faas/faas/pkg/session"
+	"github.com/onebox-faas/faas/pkg/sessioncookie"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"github.com/onebox-faas/faas/pkg/workloadidentity"
+	"net/url"
 )
 
 var ResolveAlertmanagerURL = resolveAlertmanagerURL
 
 var BuildDebugRequestCorrelation = buildDebugRequestCorrelation
+var DashboardDebugStatusView = dashboardDebugStatusView
 
 // Package-level types
 type AffectedPartition = affectedPartition
@@ -150,6 +155,7 @@ const CsrfActionSessionsRevokeAll = csrfActionSessionsRevokeAll
 const DashboardAsyncInvocationPath = dashboardAsyncInvocationPath
 const DashboardDataAPICookie = dashboardDataAPICookie
 const DashboardAuthSettingsCookie = dashboardAuthSettingsCookie
+const DashboardPreviewDestroyCSRFCookie = dashboardPreviewDestroyCSRFCookie
 const DashboardDebugReplayCSRFCookie = dashboardDebugReplayCSRFCookie
 const DashboardDevBridgeAction = dashboardDevBridgeAction
 const DashboardDevBridgeCSRFCookie = dashboardDevBridgeCSRFCookie
@@ -237,6 +243,11 @@ const ScheddMetricsDiscoveryPath = scheddMetricsDiscoveryPath
 const GatewaydPublicEdgeMetricsDiscoveryPath = gatewaydPublicEdgeMetricsDiscoveryPath
 const CloudflaredMetricsDiscoveryPath = cloudflaredMetricsDiscoveryPath
 const ServiceCallerKeysCacheControl = serviceCallerKeysCacheControl
+
+// sessionCookie is the legacy session cookie name test fixtures send; the
+// handlers read both names through pkg/sessioncookie (ADR-20261026112500).
+const sessionCookie = sessioncookie.LegacyName
+
 const SessionCookie = sessionCookie
 const SessionCookieLifetime = sessionCookieLifetime
 const SourceSpoolRootEnv = sourceSpoolRootEnv
@@ -252,6 +263,8 @@ var CapsDecl = &capsDecl
 var CertDialContextFunc = &certDialContextFunc
 var CertLookupIPFunc = &certLookupIPFunc
 var ChannelSender = &channelSender
+var TestRelayPoll = &testRelayPoll
+var ChannelTestRelayWait = &channelTestRelayWait
 var CnameLookupFunc = &cnameLookupFunc
 var DialCertFunc = &dialCertFunc
 var ErrCertAddressBlocked = &errCertAddressBlocked
@@ -292,6 +305,48 @@ var SourceDomainRecipient = &sourceDomainRecipient
 var HostHMACKeyBytes = hostHMACKeyBytes
 var BuildDomainRecipient = &buildDomainRecipient
 var BuildWriteMode = &buildWriteMode
+var EdgeDomainRecipient = &edgeDomainRecipient
+var EdgeWriteMode = &edgeWriteMode
+var AlertingDomainRecipient = &alertingDomainRecipient
+var AlertingWriteMode = &alertingWriteMode
+var StorageDomainRecipient = &storageDomainRecipient
+var StorageWriteMode = &storageWriteMode
+var StorageCredentialRecipients = storageCredentialRecipients
+var DeliveryDomainRecipient = &deliveryDomainRecipient
+var DeliveryWriteMode = &deliveryWriteMode
+var CommitConnectionRecipients = commitConnectionRecipients
+var ExecutionPayloadRecipients = executionPayloadRecipients
+var SealAppWebhookSecret = sealAppWebhookSecret
+var AccountDomainIdentities = &accountDomainIdentities
+var AccountWriteMode = &accountWriteMode
+var AccountRecipients = accountRecipients
+var AccountIdentities = accountIdentities
+var WorkflowPlanRecipients = workflowPlanRecipients
+var HoldsIdentityFor = holdsIdentityFor
+var SealInboundWebhookSigningSecret = sealInboundWebhookSigningSecret
+var SealGitLabTokens = sealGitLabTokens
+var OpenGitLabTokens = openGitLabTokens
+var OpenIssueSlackToken = openIssueSlackToken
+
+// RealtimeHostKeys exposes the keys apid gives managed realtime.
+func RealtimeHostKeys() (func() ([]*age.X25519Recipient, error), func(context.Context) []*age.X25519Identity) {
+	h := realtimeHost{}
+	return h.SecretRecipients, h.HostIdentitiesForUnseal
+}
+
+var VerifyInboundWebhook = verifyInboundWebhook
+var SealMCPPagerDutyWebhookSecret = sealMCPPagerDutyWebhookSecret
+
+// StatementInvoicesHostSecrets exposes the billing-key seal and open apid
+// gives statement invoices.
+func StatementInvoicesHostSecrets() (func(string, []byte, int) ([]byte, error), func([]byte) (string, []byte, error)) {
+	return statementInvoicesHost{}.SealSecret, statementInvoicesHost{}.OpenSecret
+}
+
+var SealPresetWebhookSecret = sealPresetWebhookSecret
+var SealMCPFallbackSecret = sealMCPFallbackSecret
+var SealMCPPagerDutyKey = sealMCPPagerDutyKey
+var SealAppLogDrainAuthHeader = sealAppLogDrainAuthHeader
 var SourceWriteMode = &sourceWriteMode
 var SseChannels = &sseChannels
 var TimeNow = &timeNow
@@ -507,6 +562,13 @@ func (s *server) ConfigureHostingForTest(getenv func(string) string) error {
 	return s.configureHosting(getenv)
 }
 
+func (s *server) InboundWebhookURLForTest(token string) string { return s.inboundWebhookURL(token) }
+func (s *server) IsWebDashboardOriginForTest(origin *url.URL) bool {
+	return s.isWebDashboardOrigin(origin)
+}
+
+var PlatformDomainFromConfig = platformDomainFromConfig
+
 var NewSafeReleaseLeaseMetrics = newSafeReleaseLeaseMetrics
 var NewServer = newServer
 var NewServerWithDeps = newServerWithDeps
@@ -609,7 +671,11 @@ var SafeReleasesAlertMetric = safeReleasesAlertMetric
 var SafeReleasesAuditKind = safeReleasesAuditKind
 var SanContains = sanContains
 var ScanExtractedTreeSecrets = scanExtractedTreeSecrets
-var ScanSourceTarballSecrets = scanSourceTarballSecrets
+
+func ScanSourceTarballSecrets(sourcePath string, limits api.Limits) *api.Problem {
+	return (&server{log: slog.New(slog.DiscardHandler)}).scanSourceTarballSecrets(sourcePath, limits)
+}
+
 var ScopeGenericRootWorkload = scopeGenericRootWorkload
 var ScrapeOpsMetrics = scrapeOpsMetrics
 var SeedActivityPersonalOrg = seedActivityPersonalOrg
@@ -650,8 +716,10 @@ var StoreAsSessionLookup = storeAsSessionLookup
 var StorePlanCache = storePlanCache
 var StripeWebhookHarness = stripeWebhookHarness
 var SummarizeDevSyncHistory = summarizeDevSyncHistory
+var SummarizeRuntimePolicyComponent = summarizeRuntimePolicyComponent
 var SummarizeRuntimePolicySchedulerStatus = summarizeRuntimePolicySchedulerStatus
 var SummarizeRuntimePolicyStatus = summarizeRuntimePolicyStatus
+var SummarizeTrafficRuntime = summarizeTrafficRuntime
 var SuspectedDependency = suspectedDependency
 var SuspectedDependencyFor = suspectedDependencyFor
 var SweepExpiredCacheEntries = sweepExpiredCacheEntries
@@ -904,6 +972,10 @@ func (r *server) Log() **slog.Logger                                 { return &r
 func (r *server) MailBounce() *mailBounceHandler                     { return &r.mailBounce }
 func (r *server) Mailer() *Mailer                                    { return &r.mailer }
 func (r *server) ManagedPostgres() **managedpostgres.Service         { return &r.managedPostgres }
+func (r *server) LogArchive() *logerasure.Objects                    { return &r.logArchive }
+func (r *server) BeforeAccountDelete(ctx context.Context, acct state.Account) error {
+	return r.beforeAccountDelete(ctx, acct)
+}
 func (r *server) ManagedPostgresBindings() **managedpostgres.BindingService {
 	return &r.managedPostgresBindings
 }
@@ -999,7 +1071,7 @@ func (r *server) ConfigureOperations(p0 Config, p1 func(string) string) error {
 func (r *server) ConfigureQueueWorkload(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.configureQueueWorkload(p0, p1, p2)
 }
-func (r *server) CountAccountConsumerKeys(p0 context.Context, p1 string) (int, error) {
+func (r *server) CountAccountConsumerKeys(p0 context.Context, p1 state.App) (int, error) {
 	return r.countAccountConsumerKeys(p0, p1)
 }
 func (r *server) CountConsumerKeys(p0 context.Context, p1 string, p2 string) (int, error) {
@@ -1080,6 +1152,15 @@ func (r *server) GetDevBridgeActivity(p0 http.ResponseWriter, p1 *http.Request, 
 }
 func (r *server) GetManagedPostgresDatabase(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.getManagedPostgresDatabase(p0, p1, p2)
+}
+func (r *server) GetProject(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
+	r.getProject(p0, p1, p2)
+}
+
+var ProjectServiceCalls = projectServiceCalls
+
+func (r *server) RenderProjectDetail(w http.ResponseWriter, req *http.Request, acct state.Account, slug string) {
+	r.renderProjectDetail(w, req, r.log, acct, slug)
 }
 func (r *server) GetProjectEnvironmentApprovalStatus(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.getProjectEnvironmentApprovalStatus(p0, p1, p2)
@@ -1595,6 +1676,36 @@ func (s *server) LiveRoutesForTest(ctx context.Context, accountID, appID string)
 	return s.liveRoutes(ctx, nil, accountID, appID)
 }
 
+// RealtimePreviewEveryone shows realtime preview features to every account
+// (ADR-20261019102657).
+func RealtimePreviewEveryone() managedrealtime.PreviewRollout {
+	r, err := managedrealtime.ParsePreviewRollout("*")
+	if err != nil {
+		panic(err)
+	}
+	return r
+}
+
+// AppWebhookEventsForTest is the app webhook vocabulary accountID may choose.
+func (s *server) AppWebhookEventsForTest(accountID string) []string {
+	return s.appWebhookEvents(accountID)
+}
+
+// ConfigureRealtimePreviewForTest reads FAAS_REALTIME_PREVIEW_ACCOUNTS from
+// getenv, seeding the realtime_preview platform flag.
+func (s *server) ConfigureRealtimePreviewForTest(getenv func(string) string) error {
+	return s.configureRealtimePreview(getenv)
+}
+
+// RealtimePreviewGateForTest is the gate the realtime handlers consult.
+func (s *server) RealtimePreviewGateForTest() managedrealtime.PreviewGate {
+	return s.realtime.Preview
+}
+
+// RealtimePreviewPublishedForTest reports whether the served spec lists the
+// realtime preview.
+func (s *server) RealtimePreviewPublishedForTest() bool { return s.realtimePreviewPublished() }
+
 // GatewayControlURL exposes gatewayControlURL (ADR-20261022004500).
 func (s *server) GatewayControlURL(ctx context.Context) string { return s.gatewayControlURL(ctx) }
 
@@ -1640,4 +1751,86 @@ func VerifyCandidateObjectStorageCredentialsForTest(ctx context.Context, intent 
 func VerifyCandidateObjectStorageCredentialForTest(ctx context.Context, c state.EnvironmentQualificationObjectStorageCheck, identities []*age.X25519Identity,
 	hmacKey []byte, canary func(context.Context, string, string, func(string) string) api.ObjectStorageBindingProbeReport) error {
 	return verifyCandidateObjectStorageCredentialWith(ctx, identities, hmacKey, canary, c)
+}
+
+// SetDatabaseSwitchDrain gives a test server's database switch worker drain
+// evidence the in-memory store lacks (ADR-20261023181931).
+func (e sourceRefTestEnv) SetDatabaseSwitchDrain(drain state.DatabaseSwitchDrainStore) {
+	e.srv.databaseSwitchDrainOverride = drain
+	e.srv.rollbackArtifactVerifier = stubRollbackArtifactVerifier{}
+}
+
+// DatabaseSwitchWorkerConfigured reports whether the server can run database
+// switches.
+func (e sourceRefTestEnv) DatabaseSwitchWorkerConfigured() bool {
+	return e.srv.databaseSwitchWorker() != nil
+}
+
+// PrepareGitOpsWorkloadCandidatesForTest runs the GitOps backend's candidate
+// preparation against s's runtime configuration (ADR 20261022140000).
+func (s *server) PrepareGitOpsWorkloadCandidatesForTest(ctx context.Context, intent state.EnvironmentGitOpsIntentStore,
+	lease state.EnvironmentGitOpsLease, plan environmentsync.Plan) (bool, error) {
+	b := &environmentGitOpsBackend{server: s, intent: intent}
+	return b.prepareWorkloadCandidates(ctx, lease, plan)
+}
+
+// DashboardWidgetAppForTest resolves a dashboard widget's app as the
+// dashboards host does (ADR-20261022173833).
+func (s *server) DashboardWidgetAppForTest(ctx context.Context, acct state.Account, slug string) (state.App, bool) {
+	return dashboardsHost{s}.AppForAccount(ctx, acct, slug)
+}
+
+// IncidentAppVisibleForTest reports whether the incidents host serves an
+// app's incidents (ADR-20261022193512).
+func (s *server) IncidentAppVisibleForTest(ctx context.Context, acct state.Account, app state.App) bool {
+	return incidentsHost{s}.AppVisible(ctx, acct, app)
+}
+
+// ServiceMapAppsForTest lists the apps the service map draws (ADR-1131).
+func (s *server) ServiceMapAppsForTest(ctx context.Context, accountID string) ([]state.App, error) {
+	return serviceMapHost{s}.Apps(ctx, accountID)
+}
+
+// EventsAppScopeForTest returns the /v1/events stream's owned and hidden
+// app sets for a caller.
+func (s *server) EventsAppScopeForTest(ctx context.Context, acct state.Account, key *state.APIKey) (owned, hidden map[string]struct{}) {
+	return s.buildOwnedAppCache(ctx, acct, key)
+}
+
+var ValidateAndPlanSidecars = validateAndPlanSidecars
+
+// StatusPageFromStore evaluates the public status page against a Prometheus
+// URL and a store with the durable deployment-outcome aggregate.
+func StatusPageFromStore(ctx context.Context, promURL string, store state.Store) (StatusPage, error) {
+	return newStatusCacheWithStore(promURL, store, slog.Default()).Get(ctx)
+}
+
+// WriteExclusiveError maps a managed operation store error to its problem.
+var WriteExclusiveError = writeExclusiveError
+
+// ResolveAndCheckEgress is the create-time egress check every outbound URL
+// (alert, log drain, webhook, channel) passes.
+var ResolveAndCheckEgress = resolveAndCheckEgress
+
+// PlanDowngradeProblemForTest runs the pre-downgrade quota check (Hunt 17
+// H17-4) for a subject the HTTP route would resolve, such as an organization.
+func (r *server) PlanDowngradeProblemForTest(ctx context.Context, subject state.Account, target api.Plan) *api.Problem {
+	return r.planDowngradeProblem(ctx, subject, target)
+}
+
+// RequestBillingMailOutboxesForTest selects the three webhook billing-mail
+// outboxes without configuring one, so a delivery that reaches an outbox
+// fails closed with 503 (Hunt 17 H17-3).
+func (r *server) RequestBillingMailOutboxesForTest() {
+	on := func() bool { return true }
+	r.paymentFailedOutboxRequested, r.accountRestoredOutboxRequested, r.subscriptionEndedOutboxRequested = on, on, on
+}
+
+var AppRestartRefusal = appRestartRefusal
+
+// SecurityMailAllow is a fresh per-account sign-in mail limiter on clock now.
+func SecurityMailAllow(now func() time.Time) func(accountID, kind string) bool {
+	l := newSecurityMailLimiter()
+	l.now = now
+	return l.allow
 }

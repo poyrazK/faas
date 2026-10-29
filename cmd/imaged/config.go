@@ -14,6 +14,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/role"
 )
 
@@ -22,6 +23,8 @@ import (
 // FAAS_IMAGED_METRICS_ADDR env var becomes an overlay (see
 // GetMetricsAddr below).
 type Config struct {
+	// AppsDomain matches public routing for deployment alias activation checks.
+	AppsDomain string `toml:"apps_domain"`
 	// MetricsAddr is the bind address for /metrics. Empty disables
 	// the listener. Defaults to 127.0.0.1:9102 — the same loopback
 	// address that the pre-ADR-122 env-only path used. Loopback by
@@ -52,6 +55,13 @@ func (c *Config) GetMetricsAddr(env func(string) string) string {
 		return v
 	}
 	return c.MetricsAddr
+}
+
+func (c *Config) GetAppsDomain(env func(string) string) string {
+	if value := env("FAAS_APPS_DOMAIN"); value != "" {
+		return value
+	}
+	return c.AppsDomain
 }
 
 // MetricsListener returns the *http.Server timeouts + MaxHeaderBytes
@@ -85,6 +95,7 @@ func (c *Config) MetricsListener() (read, write, idle time.Duration, maxHeaderBy
 // GetMetricsAddr overlay and the per-knob envOr calls in main.go.
 func LoadConfig(path string) (*Config, error) {
 	c := &Config{
+		AppsDomain:  hostidentity.DefaultAppsDomain,
 		MetricsAddr: "127.0.0.1:9102", // matches the legacy env-only default
 		Role:        role.RoleSingleBox,
 		// Seed the canonical shape in the default literal so any

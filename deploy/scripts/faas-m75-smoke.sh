@@ -65,7 +65,7 @@ done
 heading "1/5 CLI login"
 echo "If you don't already have a session token, mint one in the dashboard:"
 echo "    https://$BOX/login"
-echo "    (magic-link → /auth/verify → Set-Cookie: faas_sid=…)"
+echo "    (magic-link → /auth/verify → Set-Cookie: __Host-faas_sid=…)"
 echo "Then export FAAS_TOKEN (the API key from /dashboard/account) or paste it:"
 echo "    faas login --token \$FAAS_TOKEN"
 echo "    faas whoami"

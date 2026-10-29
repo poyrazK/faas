@@ -89,8 +89,10 @@ WHERE (l.app_id,l.policy_name,l.key_digest) IN (
 ) ORDER BY l.app_id,l.policy_name,l.key_digest FOR UPDATE OF l;
 
 -- name: DeadLetterReplayCandidateIDs :many
+-- event_route entries cannot be replayed (DeadLetterReplayable), so they never
+-- take a page from replay-all.
 SELECT id::text FROM production_dead_letter_events
-WHERE account_id=sqlc.arg(account_id)::uuid AND replayed_at IS NULL
+WHERE account_id=sqlc.arg(account_id)::uuid AND replayed_at IS NULL AND source<>'event_route'
   AND (sqlc.narg(expected_app_id)::uuid IS NULL OR app_id=sqlc.narg(expected_app_id)::uuid)
   AND (sqlc.narg(expected_event_id)::uuid IS NULL OR id=sqlc.narg(expected_event_id)::uuid)
 ORDER BY last_failed_at DESC,id DESC LIMIT sqlc.arg(candidate_limit)::integer;

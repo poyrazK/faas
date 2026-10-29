@@ -41,6 +41,27 @@ Every process receives loopback discovery variables such as
 available to the helper as `FAAS_WORKLOAD_MAIN_ADDR`. A helper without a port
 is valid for background processing.
 
+The application and its helpers share one network namespace, so each port
+must be unique. The application's port is the one it actually listens on:
+the deploy's explicit port, otherwise the image's single exposed port,
+`hosting.port` in `gregale.yaml`, or the detected framework's port (for
+example 8000 for gunicorn). Without an explicit port, Gregale compares the
+application's port with the helpers' once the build has decided it. A
+collision then fails the deployment with
+`workloads "main" and "<name>" both claim port <port>`.
+
+## Writable paths
+
+A companion's image filesystem is read-only. Its only writable path is
+`/tmp`, a private in-memory filesystem sized by `scratch_mb` (derived from
+`ram_mb` when omitted), plus the shared directory described below. An image
+that writes anywhere else at startup exits with a read-only filesystem
+error. The stock `nginx` image, for example, fails with
+`mkdir() "/var/cache/nginx/client_temp" failed (30: Read-only file system)`.
+Use an image built for a read-only root, or point the program's cache, PID
+and temporary paths at `/tmp` with `cmd` or `env`. Anything written to
+`/tmp` is lost when the instance stops.
+
 ## Public hostname for a companion port
 
 A companion that declares a `port` is also reachable from the internet. The
@@ -63,6 +84,8 @@ companion above is therefore public at that hostname, not only on loopback.
   it.
 - During a traffic-split rollout the hostname is routed only when every
   deployment carrying traffic declares that companion with the same port.
+- `gregale deploy --dry-run` lists companion changes against the live
+  deployment, and the hostname each companion port opens.
 
 Public listeners declared under `ports` follow the same pattern at
 `<app>--port-<name>.<apps domain>`; a listener marked `internal` gets no

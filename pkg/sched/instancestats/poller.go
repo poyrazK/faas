@@ -316,9 +316,9 @@ func (p *Poller) Tick(ctx context.Context) error {
 	}
 	sidecarByDeploy := p.deploymentSidecarMBs(ctx, instances)
 	if p.FleetStats != nil {
-		rows, rolled := p.tickFleet(ctx, nodes, byNode, sidecarByDeploy)
+		rows, rolled, bridgeMB := p.tickFleet(ctx, nodes, byNode, sidecarByDeploy)
 		p.Reader.Replace(rows)
-		p.publishMemoryShadow(instances, rows, started)
+		p.publishMemoryShadowWithBridges(instances, rows, bridgeMB, started)
 		p.publishQuietPaused(rows, started)
 		p.PauseLedger.Observe(ctx, rows, p.now())
 		if p.Metrics != nil {
@@ -341,7 +341,7 @@ func (p *Poller) Tick(ctx context.Context) error {
 			}
 		}
 		p.Reader.Replace(rows)
-		p.publishMemoryShadow(instances, rows, started)
+		p.publishMemoryShadowWithBridges(instances, rows, p.Telemetry.InstanceBridgeMB(p.now()), started)
 		p.publishQuietPaused(rows, started)
 		p.PauseLedger.Observe(ctx, rows, p.now())
 		p.enforceDiskPressure(ctx, rows)
@@ -354,15 +354,19 @@ func (p *Poller) Tick(ctx context.Context) error {
 	}
 	rows := make([]InstanceStat, 0, len(instances))
 	rolled := make([]wire.InstanceStatRow, 0, len(instances))
+	bridgeMB := make(map[string]int)
 	for _, node := range nodes {
-		nodeRows, nodeRolled := p.tickNode(ctx, node, byNode[node.ID], sidecarByDeploy)
+		nodeRows, nodeRolled, nodeBridge := p.tickNode(ctx, node, byNode[node.ID], sidecarByDeploy)
 		rows = append(rows, nodeRows...)
 		rolled = append(rolled, nodeRolled...)
+		if nodeBridge > 0 {
+			bridgeMB[node.ID] = nodeBridge
+		}
 	}
 	// Replace is atomic; readers see either the previous snapshot
 	// or the next, never a torn mix.
 	p.Reader.Replace(rows)
-	p.publishMemoryShadow(instances, rows, started)
+	p.publishMemoryShadowWithBridges(instances, rows, bridgeMB, started)
 	p.publishQuietPaused(rows, started)
 	p.PauseLedger.Observe(ctx, rows, p.now())
 	p.enforceDiskPressure(ctx, rows)
@@ -606,9 +610,9 @@ func (p *Poller) decodeTelemetrySnapshot(
 // result into InstanceStat rows + wire rollup rows. On failure it logs,
 // increments the per-node error counter, and returns empty slices — the
 // caller continues to the next node.
-func (p *Poller) tickNode(ctx context.Context, node state.ComputeNode, siblings []state.Instance, sidecarByDeploy map[string][]int) ([]InstanceStat, []wire.InstanceStatRow) {
+func (p *Poller) tickNode(ctx context.Context, node state.ComputeNode, siblings []state.Instance, sidecarByDeploy map[string][]int) ([]InstanceStat, []wire.InstanceStatRow, int) {
 	if p.Router == nil && p.Dialer == nil {
-		return nil, nil
+		return nil, nil, 0
 	}
 	callCtx, cancel := context.WithTimeout(ctx, statsCallTimeout)
 	defer cancel()
@@ -624,7 +628,7 @@ func (p *Poller) tickNode(ctx context.Context, node state.ComputeNode, siblings 
 			if p.Metrics != nil {
 				p.Metrics.InstanceStatsPartialError(node.ID)
 			}
-			return nil, nil
+			return nil, nil, 0
 		}
 		defer func() { _ = vmm.Close() }()
 		snap, err = vmm.Stats(callCtx)
@@ -634,9 +638,19 @@ func (p *Poller) tickNode(ctx context.Context, node state.ComputeNode, siblings 
 		if p.Metrics != nil {
 			p.Metrics.InstanceStatsPartialError(node.ID)
 		}
-		return nil, nil
+		return nil, nil, 0
 	}
-	return p.decodeStatsSnapshot(node, siblings, snap, sidecarByDeploy)
+	rows, rolled := p.decodeStatsSnapshot(node, siblings, snap, sidecarByDeploy)
+	return rows, rolled, snapshotBridgeMB(snap)
+}
+
+// snapshotBridgeMB is the node's instance bridge memory a Stats snapshot
+// reports, in MiB.
+func snapshotBridgeMB(snap *sched.StatsSnapshot) int {
+	if snap == nil || snap.InstanceBridgeResidentBytes == nil {
+		return 0
+	}
+	return sched.BytesToMiBCeil(*snap.InstanceBridgeResidentBytes)
 }
 
 // telemetryMissingNodes names the nodes whose stream left out a live instance.
@@ -703,10 +717,12 @@ func (p *Poller) tickFleet(
 	nodes []state.ComputeNode,
 	byNode map[string][]state.Instance,
 	sidecarByDeploy map[string][]int,
-) ([]InstanceStat, []wire.InstanceStatRow) {
+) ([]InstanceStat, []wire.InstanceStatRow, map[string]int) {
 	type result struct {
-		rows   []InstanceStat
-		rolled []wire.InstanceStatRow
+		node     string
+		rows     []InstanceStat
+		rolled   []wire.InstanceStatRow
+		bridgeMB int
 	}
 	wanted := 0
 	for _, node := range nodes {
@@ -715,7 +731,7 @@ func (p *Poller) tickFleet(
 		}
 	}
 	if wanted == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	results := make(chan result, wanted)
@@ -741,7 +757,7 @@ func (p *Poller) tickFleet(
 				return
 			}
 			rows, rolled := p.decodeStatsSnapshot(node, siblings, snap, sidecarByDeploy)
-			results <- result{rows: rows, rolled: rolled}
+			results <- result{node: node.ID, rows: rows, rolled: rolled, bridgeMB: snapshotBridgeMB(snap)}
 		}()
 	}
 	wg.Wait()
@@ -749,11 +765,15 @@ func (p *Poller) tickFleet(
 
 	var rows []InstanceStat
 	var rolled []wire.InstanceStatRow
+	bridgeMB := make(map[string]int)
 	for got := range results {
 		rows = append(rows, got.rows...)
 		rolled = append(rolled, got.rolled...)
+		if got.bridgeMB > 0 {
+			bridgeMB[got.node] = got.bridgeMB
+		}
 	}
-	return rows, rolled
+	return rows, rolled, bridgeMB
 }
 
 func (p *Poller) decodeStatsSnapshot(

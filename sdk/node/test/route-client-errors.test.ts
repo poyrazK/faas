@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import {once} from 'node:events';
-import {AppsService, FaaSClient, type RouteHealthClientErrorReport, type RouteHealthReport} from '../src/index.js';
+import {AppsService, FaaSClient, type RouteHealthClientErrorReport, type RouteHealthReport} from '../src/preview.js';
 
 test('watched response selectors and advisory evidence preserve wire types', async (t) => {
   const window = {start: '2026-10-03T00:00:00Z', end: '2026-10-03T00:01:00Z', candidate: {requests: 100, responses: 20, rate: 0.2}, stable: {requests: 100, responses: 0, rate: 0}, status: 'regressed' as const, reason: 'watched_status_rate_increased'};

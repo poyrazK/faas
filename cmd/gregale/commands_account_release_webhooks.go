@@ -20,7 +20,7 @@ import (
 
 func cmdAccountReleaseWebhooks(args []string) int {
 	if len(args) == 0 {
-		printCommandValidation(os.Stderr, "usage: gregale webhooks account <list|add|info|update|rm|deliveries|retry|rotate-secret> [flags] [id]\n")
+		printCommandValidation(os.Stderr, "usage: gregale webhook account <list|add|info|update|rm|deliveries|retry|rotate-secret> [flags] [id]\n")
 		return 1
 	}
 	command := args[0]
@@ -90,7 +90,7 @@ func cmdAccountReleaseWebhooks(args []string) int {
 	}
 	ids := fs.Args()
 	if !validAccountWebhookCommandArgs(command, ids, *target, events, *pageSize) {
-		printCommandValidation(os.Stderr, "usage: gregale webhooks account <list|add|info|update|rm|deliveries|retry|rotate-secret> [--target-url URL] [--event EVENT] [--secret SECRET|--from-stdin] [id] [delivery-id]\n")
+		printCommandValidation(os.Stderr, "usage: gregale webhook account <list|add|info|update|rm|deliveries|retry|rotate-secret> [--target-url URL] [--event EVENT] [--secret SECRET|--from-stdin] [id] [delivery-id]\n")
 		return 1
 	}
 	client, err := authedClient()

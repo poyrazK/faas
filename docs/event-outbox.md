@@ -8,7 +8,7 @@ the platform's internal routing outbox.
 
 ## Install and stage
 
-Install `faas.EventOutboxSchema` explicitly in the application's business database.
+Install `preview.EventOutboxSchema` explicitly in the application's business database.
 The SDK accepts `database/sql` transactions and does not import a PostgreSQL driver.
 No helper installs, migrates, or prunes tables. Restrict table access and protect
 backups: unfinished and blocked rows contain original business event data.
@@ -22,8 +22,8 @@ func recordOrder(ctx context.Context, db *sql.DB, accountID, appID, slug, orderI
     // Perform the application's business writes through tx here.
     data, err := json.Marshal(map[string]string{"order_id": orderID})
     if err != nil { return err }
-    _, err = faas.SaveEventOutbox(ctx, tx, accountID, appID, slug,
-        faas.AppPublishEventRequest{
+    _, err = preview.SaveEventOutbox(ctx, tx, accountID, appID, slug,
+        preview.AppPublishEventRequest{
             Key: "order-created-" + orderID,
             Type: "order.created",
             Data: data,
@@ -60,8 +60,8 @@ Run recovery in an application-owned worker, using credentials for the saved
 account and the existing publication authorization requirements:
 
 ```go
-status, err := faas.RecoverNextEventOutbox(ctx, db, client, accountID, appID,
-    faas.EventOutboxRecoveryOptions{
+status, err := preview.RecoverNextEventOutbox(ctx, db, client, accountID, appID,
+    preview.EventOutboxRecoveryOptions{
         ClaimDuration: 30 * time.Second,
         RequestTimeout: 10 * time.Second,
         Backoff: 5 * time.Second,
@@ -106,7 +106,7 @@ Gregale acknowledged durable acceptance, not that every consumer completed.
 
 ## Retention, identity and ordering
 
-A retry window defaults to seven days and accepts one second–seven days, measured
+A retry window defaults to one day and accepts one second–seven days, measured
 from the database time when the row was first staged, not commit or first send.
 It never extends on saves, claims or retries. Expired work becomes `blocked` with
 `retry_window_expired` when recovery next visits it, without publishing again.
@@ -115,8 +115,12 @@ within the original deadline; there is no deadline extension or replacement-key 
 
 Gregale's producer-key deduplication lasts only while the original acceptance
 receipt remains retained. Normal settled receipts become eligible for pruning
-after 30 days. The shorter fixed outbox window bounds retries for fresh keys
-under that policy; it is not an indefinite exactly-once guarantee. Never extend
+after the plan's settled-receipt window: Free 1 day, Hobby 3 days, Pro 7 days,
+Scale 14 days ([ADR-20261023215834](adr/20261023215834-event-plan-caps.md)).
+The default one-day outbox window fits every plan's window; a longer window
+must not exceed your plan's, or a retry after the original receipt is pruned
+publishes a second event. The window bounds retries for fresh keys under that
+policy; it is not an indefinite exactly-once guarantee. Never extend
 the deadline, manually prune acceptance evidence early, recycle a historical key,
 or replace an uncertain key simply to bypass a conflict. After the window expires,
 use retained publication verification/status and business evidence to decide what
@@ -152,8 +156,8 @@ retry deadline. It can settle an unresolved row after its retry deadline if a
 matching retained acceptance is still available.
 
 ```go
-review, err := faas.ReconcileEventOutbox(ctx, db, client, accountID, appID, key,
-    faas.EventOutboxReconciliationOptions{
+review, err := preview.ReconcileEventOutbox(ctx, db, client, accountID, appID, key,
+    preview.EventOutboxReconciliationOptions{
         // Optional after an app rename; the saved UUID guard still applies.
         AppSlug: currentSlug,
         RequestTimeout: 10 * time.Second,
@@ -202,10 +206,10 @@ After investigating a rejection and fixing credentials or a renamed slug, an
 operator can explicitly re-enable a blocked row:
 
 ```go
-status, err := faas.GetEventOutboxStatus(ctx, db, accountID, appID, key)
+status, err := preview.GetEventOutboxStatus(ctx, db, accountID, appID, key)
 if err != nil { return err }
-resumed, err := faas.ResumeEventOutbox(ctx, db, accountID, appID, key,
-    faas.EventOutboxResumeOptions{
+resumed, err := preview.ResumeEventOutbox(ctx, db, accountID, appID, key,
+    preview.EventOutboxResumeOptions{
         ExpectedUpdatedAt: status.UpdatedAt,
         ExpectedAttempts: status.Attempts,
         AppSlug: currentSlug, // Omit to retain the saved slug.
@@ -241,8 +245,8 @@ retained row.
 or `unconfirmed`; empty includes both. Pending and published rows are excluded.
 
 ```go
-page, err := faas.ListEventOutbox(ctx, db, accountID, appID,
-    faas.EventOutboxListOptions{State: "blocked", Limit: 50, After: cursor})
+page, err := preview.ListEventOutbox(ctx, db, accountID, appID,
+    preview.EventOutboxListOptions{State: "blocked", Limit: 50, After: cursor})
 if err != nil { return err }
 // Process page.Items; pass page.NextAfter unchanged to fetch the next page.
 ```

@@ -193,14 +193,17 @@ func TestRuntimeRoleTasksSkipTheStandby(t *testing.T) {
 	}
 }
 
-// The audit log is append-only for daemons: runtime-roles.sql revokes row
-// changes, so no query a daemon runs may update or delete it. A new one
-// would fail with permission denied once units move to their runtime roles.
+// The audit log and its anchors (ADR-20261026163015) are append-only for
+// daemons: runtime-roles.sql revokes row changes, so no query a daemon runs
+// may update or delete them. A new one would fail with permission denied
+// once units move to their runtime roles.
 func TestAuditLogStaysAppendOnly(t *testing.T) {
-	if !strings.Contains(runtimeRolesSQL(t), "REVOKE UPDATE, DELETE ON public.audit_log FROM faas_runtime;") {
-		t.Error("runtime-roles.sql no longer makes audit_log append-only for faas_runtime")
+	for _, table := range []string{"audit_log", "audit_log_anchors"} {
+		if !strings.Contains(runtimeRolesSQL(t), "REVOKE UPDATE, DELETE ON public."+table+" FROM faas_runtime;") {
+			t.Errorf("runtime-roles.sql no longer makes %s append-only for faas_runtime", table)
+		}
 	}
-	mutation := regexp.MustCompile(`(?i)\b(UPDATE\s+(public\.)?audit_log\b|DELETE\s+FROM\s+(public\.)?audit_log\b|TRUNCATE\s+(TABLE\s+)?(public\.)?audit_log\b)`)
+	mutation := regexp.MustCompile(`(?i)\b(UPDATE\s+(public\.)?audit_log(_anchors)?\b|DELETE\s+FROM\s+(public\.)?audit_log(_anchors)?\b|TRUNCATE\s+(TABLE\s+)?(public\.)?audit_log(_anchors)?\b)`)
 	root := repoRoot(t)
 	for _, dir := range []string{"pkg", "cmd"} {
 		err := filepath.WalkDir(filepath.Join(root, dir), func(path string, d os.DirEntry, err error) error {
@@ -216,7 +219,7 @@ func TestAuditLogStaysAppendOnly(t *testing.T) {
 			}
 			if m := mutation.Find(body); m != nil {
 				rel, _ := filepath.Rel(root, path)
-				t.Errorf("%s: %q changes audit_log rows, which daemons may not", rel, m)
+				t.Errorf("%s: %q changes audit log rows, which daemons may not", rel, m)
 			}
 			return nil
 		})

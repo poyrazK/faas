@@ -1,0 +1,83 @@
+name: Observability stack smoke
+
+# Converges the control plane's observability roles on a fresh runner in
+# production mode (mTLS from the fleet CA, Loki on S3 over TLS, Alertmanager
+# and Grafana with their secrets) and checks the pipeline end to end:
+# scripts/ci/obs_stack_smoke.sh. The first real converge of these roles
+# (ADR-20261023124955 §7 smoke) found four bugs no unit test could catch.
+
+on:
+  pull_request:
+    # The roles the stack is built from, the gregalectl code the converge and
+    # checks call, and this smoke.
+    paths:
+      - 'deploy/ansible/roles/systemd_slices/**'
+      - 'deploy/ansible/roles/node_exporter/**'
+      - 'deploy/ansible/roles/platform_logs_pki/**'
+      - 'deploy/ansible/roles/prometheus/**'
+      - 'deploy/ansible/roles/alertmanager/**'
+      - 'deploy/ansible/roles/grafana/**'
+      - 'deploy/ansible/roles/loki/**'
+      - 'deploy/ansible/roles/alloy/**'
+      - 'deploy/ansible/roles/cgroup_metrics/**'
+      - 'deploy/ansible/requirements.yml'
+      - 'deploy/ansible/tests/obs_stack_smoke.yml'
+      - 'pkg/pki/**'
+      - 'pkg/promqlrules/data_placement.yaml'
+      - 'cmd/gregalectl/commands_obs_logs*.go'
+      - 'cmd/gregalectl/commands_pki*.go'
+      - 'scripts/ci/obs_stack_smoke*'
+      - 'scripts/ci/ensure-ansible-toolchain.sh'
+      - '.github/workflows/obs-stack-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: obs-stack-smoke-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  smoke:
+    name: Converge and check the observability stack
+    # A disposable VM with systemd and cgroup v2: the smoke installs services,
+    # users and /etc/faas, which is why it never runs on a shared host.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      # Restore only: building gregalectl reuses ci-light's warmed caches and
+      # this job never writes its own.
+      - name: restore Go build cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-light-checks-${{ runner.os }}-go1.26.10-${{ hashFiles('go.sum') }}
+          restore-keys: |
+            go-light-checks-${{ runner.os }}-go1.26.10-
+            go-light-checks-${{ runner.os }}-
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: '1.26.10'
+          cache: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: '3.12'
+      - name: Build gregalectl
+        run: go build -trimpath -o "$RUNNER_TEMP/gregalectl" ./cmd/gregalectl
+      - name: Install the pinned Ansible toolchain
+        run: |
+          set -euo pipefail
+          toolchain="$(scripts/ci/ensure-ansible-toolchain.sh 'ansible-core==2.21.2' deploy/ansible/requirements.yml)"
+          venv_bin="$(sed -n 's/^ANSIBLE_VENV_BIN=//p' <<<"$toolchain")"
+          collections="$(sed -n 's/^ANSIBLE_COLLECTIONS_PATH=//p' <<<"$toolchain")"
+          [[ -x "$venv_bin/ansible-playbook" && -d "$collections" ]]
+          echo "ANSIBLE_PLAYBOOK=$venv_bin/ansible-playbook" >> "$GITHUB_ENV"
+          echo "ANSIBLE_COLLECTIONS_PATH=$collections" >> "$GITHUB_ENV"
+      - name: Converge and check
+        env:
+          GREGALECTL: ${{ runner.temp }}/gregalectl
+        run: scripts/ci/obs_stack_smoke.sh

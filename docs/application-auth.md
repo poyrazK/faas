@@ -79,11 +79,12 @@ mux.Handle("/api/docs/", client.Require(http.HandlerFunc(func(w http.ResponseWri
 })))
 ```
 
-Python (`pip install 'faas_sdk[auth]'`), here as a FastAPI dependency:
+Python (install `gregale-sdk[auth]` as [Install the SDKs](sdks.md#python)
+shows; `faas_sdk` on PyPI is not Gregale's), here as a FastAPI dependency:
 
 ```python
 from fastapi import Header, HTTPException
-from faas_sdk.auth import AuthClient, AuthUnavailableError, InvalidTokenError, NoTokenError, bearer_token, resource
+from faas_sdk.preview.auth import AuthClient, AuthUnavailableError, InvalidTokenError, NoTokenError, bearer_token, resource
 
 auth = AuthClient("https://shop-auth.gregale.app")
 
@@ -868,7 +869,7 @@ const machine = createClientCredentials({ url: 'https://shop-auth.gregale.app', 
 await fetch(api, { headers: { Authorization: `Bearer ${await machine.token()}` } })
 ```
 
-Go has `auth.NewClientCredentials` and Python `faas_sdk.auth.ClientCredentials`.
+Go has `auth.NewClientCredentials` and Python `faas_sdk.preview.auth.ClientCredentials`.
 
 The token verifies like a person's (same issuer, audience `authenticated`,
 600 seconds) and carries `service_account: true`, the account's ID as `sub`,
@@ -1173,7 +1174,8 @@ This mints a key that can only publish events and seals it in the Auth app.
 checks `workflow:start` on `org/<org id>/workflow/<name>` and publishes an
 `auth.workflow.start` event with `data.workflow`, `data.org_id`, `data.user_id`
 and `data.input`. Subscribe your workflow to that event type from the Auth
-app's source (`app.<auth app id>`). Repeating a start with the same
+app's source (`app.<auth app id>`). Only the Auth app can publish from that
+source, so a subscriber can trust the permission check behind it. Repeating a start with the same
 `idempotency_key` returns the original receipt.
 
 ## Lifecycle events

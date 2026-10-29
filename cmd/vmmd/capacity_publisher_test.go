@@ -317,3 +317,22 @@ func TestRunCapacityPublish_CtxCancelExitsPromptly(t *testing.T) {
 
 // noResident is a residentBytesFn that reports empty/non-Linux.
 func noResident() (map[string]int64, bool) { return nil, false }
+
+// The node's instance bridge memory rides the capacity stream beside the
+// instance rows (connection-survival ADR §2).
+func TestBuildCapacityReport_CarriesInstanceBridgeMemory(t *testing.T) {
+	resident := func() (map[string]int64, bool) { return nil, false }
+	stats := telemetryReader(func(context.Context) (*vmmdpb.StatsResponse, error) {
+		return &vmmdpb.StatsResponse{TotalResidentBytes: wrapperspb.Int64(0), InstanceBridgeResidentBytes: wrapperspb.Int64(48 << 20)}, nil
+	})
+	got := buildCapacityReport(context.Background(), nil, nil, "node-a", ComputeNodeConfig{MemMB: 1024}, resident, silentLogger(), stats)
+	if v := got.GetInstanceBridgeResidentBytes(); v == nil || v.GetValue() != 48<<20 {
+		t.Fatalf("instance bridge bytes = %v, want 48 MiB", v)
+	}
+	none := telemetryReader(func(context.Context) (*vmmdpb.StatsResponse, error) {
+		return &vmmdpb.StatsResponse{TotalResidentBytes: wrapperspb.Int64(0)}, nil
+	})
+	if got := buildCapacityReport(context.Background(), nil, nil, "node-a", ComputeNodeConfig{MemMB: 1024}, resident, silentLogger(), none); got.GetInstanceBridgeResidentBytes() != nil {
+		t.Fatal("bridge memory reported with bridge units off")
+	}
+}

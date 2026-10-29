@@ -99,7 +99,11 @@ func (s *PgStore) GetEventRecoveryPreflight(ctx context.Context, account, id str
 		}
 		return out, tx.Commit(ctx)
 	}
-	items, err := q.EventRecoveryPreflight(ctx, tx, sqlc.EventRecoveryPreflightParams{RetentionSeconds: int64(PublishedEventIdentityRetention / time.Second), JobCutoffAt: pgtypeFromTime(now.Add(-api.EventReplayBackfillJobRetention)), AccountID: mustPgUUID(account), JobID: mustPgUUID(id), NowAt: pgtypeFromTime(now), PageLimit: api.EventRecoveryRecipientsMax + 1})
+	retention, err := eventSettledRetention(ctx, q, tx, account)
+	if err != nil {
+		return out, err
+	}
+	items, err := q.EventRecoveryPreflight(ctx, tx, sqlc.EventRecoveryPreflightParams{RetentionSeconds: int64(retention / time.Second), JobCutoffAt: pgtypeFromTime(now.Add(-api.EventReplayBackfillJobRetention)), AccountID: mustPgUUID(account), JobID: mustPgUUID(id), NowAt: pgtypeFromTime(now), PageLimit: api.EventRecoveryRecipientsMax + 1})
 	if err != nil {
 		return out, err
 	}
@@ -282,6 +286,7 @@ func (m *MemStore) GetEventRecoveryPreflight(ctx context.Context, account, id st
 		receipts[work.ID] = work
 	}
 	holds := m.eventRecoveryReceiptHoldsLocked(account, now)
+	retention := m.eventSettledRetentionLocked(canonicalMemUUID(account))
 	capacity := m.preflightCapacityLocked(job)
 	if job.Job.Selection.WorkflowRuns != nil {
 		out.AppID, out.WorkflowName = job.Job.AppID, job.Job.Selection.WorkflowRuns.Name
@@ -305,7 +310,7 @@ func (m *MemStore) GetEventRecoveryPreflight(ctx context.Context, account, id st
 		addRecoveryPreflight(&out, item.Position, reason, scope)
 		var until *time.Time
 		if work := receipts[item.OutboxID]; work != nil && work.Delivered && !work.DeliveredAt.IsZero() {
-			at := work.DeliveredAt.Add(PublishedEventIdentityRetention)
+			at := work.DeliveredAt.Add(retention)
 			until = &at
 		}
 		_, held := holds[item.OutboxID]

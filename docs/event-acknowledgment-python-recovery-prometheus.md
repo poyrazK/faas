@@ -10,7 +10,7 @@ query, timer, task, listener or callback starts on import or cache construction.
 ## Record or poll explicitly
 
 ```python
-from faas_sdk import (
+from faas_sdk.preview import (
     EventAcknowledgmentIntentHealthMetrics,
     EventAcknowledgmentIntentHealthMetricsOptions,
     awatch_event_acknowledgment_intent_health_metrics,

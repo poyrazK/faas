@@ -73,11 +73,11 @@ func (s *PgStore) CreatePlatformTenantDelegatedHostname(ctx context.Context, acc
 		!validUUID(surfaceID) || challengeToken == "" || limits.TenantHostnamesPerSurface < 1 {
 		return PlatformTenantDelegatedHostnameResult{}, ErrInvalidArgument
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginTrafficTenantBinding(ctx, accountID, []string{hostname})
 	if err != nil {
 		return PlatformTenantDelegatedHostnameResult{}, fmt.Errorf("begin delegated platform tenant hostname: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 
 	var tenantActive bool
 	if err := tx.QueryRow(ctx, `select status = 'active' from platform_tenants

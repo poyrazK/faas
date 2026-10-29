@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/eventcontract"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -22,6 +23,7 @@ type objectEventEnvelope struct {
 	DataContentType string                 `json:"datacontenttype"`
 	AccountID       string                 `json:"accountid"`
 	Data            api.ObjectStorageEvent `json:"data"`
+	Producer        string                 `json:"producer,omitempty"`
 }
 
 func trackedUploadEvent(c ObjectUploadCompletion) api.ObjectStorageEvent {
@@ -52,9 +54,14 @@ func deletionEvent(j ObjectDeletion) (string, api.ObjectStorageEvent) {
 }
 
 func objectEventPayload(account, identity, typ string, data api.ObjectStorageEvent, now time.Time) ([]byte, error) {
-	return json.Marshal(objectEventEnvelope{SpecVersion: "1.0", ID: identity,
+	envelope := objectEventEnvelope{SpecVersion: "1.0", ID: identity,
 		Source: api.ObjectEventSource, Type: typ, Time: now.UTC(),
-		DataContentType: "application/json", AccountID: account, Data: data})
+		DataContentType: "application/json", AccountID: account, Data: data}
+	if data.AppID != "" {
+		// A bucket's events stay inside its app's company (ADR-20261025211616).
+		envelope.Producer = eventcontract.AppProducer(data.AppID)
+	}
+	return json.Marshal(envelope)
 }
 
 func publishObjectEventTx(ctx context.Context, db sqlc.DBTX, account, identity, typ string, data api.ObjectStorageEvent, now time.Time) error {

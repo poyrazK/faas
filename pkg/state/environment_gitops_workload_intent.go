@@ -43,6 +43,10 @@ func observedWorkloadSource(app gitOpsIntentApp, binding EnvironmentGitSourceSpe
 			if !app.Manifest.DockerfileBuild.IsZero() {
 				return nil, "", "live Dockerfile build arguments or target require a reviewed scoped import"
 			}
+			// Nor does it carry a Go command selection (ADR-20261025134512).
+			if app.Manifest.BuildGoCommand != "" {
+				return nil, "", "live Go command selection requires a reviewed scoped import"
+			}
 			if gitCommit != "" && gitCommit != baseline.CommitSHA {
 				return nil, "", "live GitHub deployments disagree on source revision"
 			}

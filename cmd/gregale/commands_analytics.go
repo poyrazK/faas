@@ -13,7 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const analyticsCmdUsage = "usage: gregale analytics [<slug>] [--since 24h] [--until RFC3339] [--by route|country|referrer_host|ua_family|status]"
+const analyticsCmdUsage = "usage: gregale metric requests [<slug>] [--since 24h] [--until RFC3339] [--by route|country|referrer_host|ua_family|status]"
 const analyticsCmdDocsTopic = "analytics"
 
 var analyticsGroupBys = map[string]struct{}{
@@ -42,7 +42,7 @@ func cmdAnalytics(args []string) int {
 		slug, resolveErr = resolveRequiredAppSlug("")
 		if resolveErr != nil {
 			if errors.Is(resolveErr, errProjectContextNotFound) {
-				PrintUsage(os.Stderr, analyticsCmdUsage+" (or run `gregale link <project-slug>`)", analyticsCmdDocsTopic)
+				PrintUsage(os.Stderr, analyticsCmdUsage+"\nOr run `gregale link <project-slug>` in this checkout.", analyticsCmdDocsTopic)
 				return 1
 			}
 			return printErr("Could not read local project context", resolveErr)

@@ -89,25 +89,25 @@ type CommitRecoveryStatusItem struct {
 
 // GetCommitRecoveryStatus keeps unknown attempt outcomes unknown, even if delivery advanced.
 // It reads only guarded receipt evidence and never follows saved action URLs.
-func (c *Client) GetCommitRecoveryStatus(ctx context.Context, reviewed CommitRecoveryPlan, applied CommitRecoveryApplyResult, limit, pages int) (CommitRecoveryStatusResult, error) {
+func (c *PreviewClient) GetCommitRecoveryStatus(ctx context.Context, reviewed CommitRecoveryPlan, applied CommitRecoveryApplyResult, limit, pages int) (CommitRecoveryStatusResult, error) {
 	return c.getCommitRecoveryStatus(ctx, reviewed, applied, nil, false, limit, pages)
 }
 
 // ResumeCommitRecoveryStatus preserves successful observations and retries unread items before failed reads.
-func (c *Client) ResumeCommitRecoveryStatus(ctx context.Context, reviewed CommitRecoveryPlan, applied CommitRecoveryApplyResult, previous CommitRecoveryStatusResult, limit, pages int) (CommitRecoveryStatusResult, error) {
+func (c *PreviewClient) ResumeCommitRecoveryStatus(ctx context.Context, reviewed CommitRecoveryPlan, applied CommitRecoveryApplyResult, previous CommitRecoveryStatusResult, limit, pages int) (CommitRecoveryStatusResult, error) {
 	return c.getCommitRecoveryStatus(ctx, reviewed, applied, &previous, false, limit, pages)
 }
 
 // RefreshCommitRecoveryStatus starts a new observation pass with a fixed comparison baseline.
-func (c *Client) RefreshCommitRecoveryStatus(ctx context.Context, reviewed CommitRecoveryPlan, applied CommitRecoveryApplyResult, previous CommitRecoveryStatusResult, limit, pages int) (CommitRecoveryStatusResult, error) {
+func (c *PreviewClient) RefreshCommitRecoveryStatus(ctx context.Context, reviewed CommitRecoveryPlan, applied CommitRecoveryApplyResult, previous CommitRecoveryStatusResult, limit, pages int) (CommitRecoveryStatusResult, error) {
 	return c.getCommitRecoveryStatus(ctx, reviewed, applied, &previous, true, limit, pages)
 }
 
-func (c *Client) getCommitRecoveryStatus(ctx context.Context, reviewed CommitRecoveryPlan, applied CommitRecoveryApplyResult, previous *CommitRecoveryStatusResult, refresh bool, limit, pages int) (CommitRecoveryStatusResult, error) {
+func (c *PreviewClient) getCommitRecoveryStatus(ctx context.Context, reviewed CommitRecoveryPlan, applied CommitRecoveryApplyResult, previous *CommitRecoveryStatusResult, refresh bool, limit, pages int) (CommitRecoveryStatusResult, error) {
 	return c.getCommitRecoveryStatusWithAge(ctx, reviewed, applied, previous, refresh, limit, pages, 0)
 }
 
-func (c *Client) getCommitRecoveryStatusWithAge(ctx context.Context, reviewed CommitRecoveryPlan, applied CommitRecoveryApplyResult, previous *CommitRecoveryStatusResult, refresh bool, limit, pages int, maxAge time.Duration) (CommitRecoveryStatusResult, error) {
+func (c *PreviewClient) getCommitRecoveryStatusWithAge(ctx context.Context, reviewed CommitRecoveryPlan, applied CommitRecoveryApplyResult, previous *CommitRecoveryStatusResult, refresh bool, limit, pages int, maxAge time.Duration) (CommitRecoveryStatusResult, error) {
 	out := CommitRecoveryStatusResult{SourceID: reviewed.Report.SourceID, Items: []CommitRecoveryStatusItem{}, Counts: map[string]int{}}
 	raw, err := json.Marshal(struct {
 		Plan     CommitRecoveryPlan

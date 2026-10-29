@@ -10,7 +10,7 @@ from dataclasses import replace
 from pathlib import Path
 from uuid import uuid4
 
-from faas_sdk import (
+from faas_sdk.preview import (
     OperationConflictError,
     OperationRequest,
     awith_customer_operation_transaction,

@@ -3,9 +3,9 @@ from uuid import UUID
 
 import httpx
 
-from faas_sdk.api.apps import get_app_debug_regression_review, apply_app_debug_regression_action
+from faas_sdk.preview.api.apps import get_app_debug_regression_review, apply_app_debug_regression_action
 from faas_sdk.client import Client
-from faas_sdk.models import GuardedDebugRegressionActionRequest, DebugRegressionReview
+from faas_sdk.preview.models import GuardedDebugRegressionActionRequest, DebugRegressionReview
 
 
 def test_guarded_triage_wire_and_stale_error():

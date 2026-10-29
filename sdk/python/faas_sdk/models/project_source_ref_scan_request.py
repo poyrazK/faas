@@ -40,7 +40,7 @@ class ProjectSourceRefScanRequest:
     migration: bool | Unset = False
     """Prepare a manual migration: preserve repository service names, suggest project-prefixed app names, leave the
     project unbound from GitHub push deployments and suppress schedules and async routes. Credentials remain inside
-    githubd."""
+    the GitHub integration."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

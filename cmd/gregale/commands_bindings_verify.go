@@ -196,7 +196,7 @@ func cmdBindingsVerify(args []string) int {
 }
 
 func printBindingsVerifyUsage() {
-	PrintUsage(osStderr, "usage: gregale bindings verify <app> <service> [--deployment ID|vN] [flags] | gregale bindings verify <app> --all [--dry-run] [--require-complete] [--deployment ID|vN] [--queue-publish] [--object-storage-write] [flags] | gregale bindings verify <app> --release-policy [--dry-run] [--object-storage-write] [flags] | gregale bindings verify <app> --postgres <ENVIRONMENT_KEY> [flags] | gregale bindings verify <app> --object-storage <PREFIX> [flags] | gregale bindings verify <app> --outbound <INTEGRATION_ID> [flags]", "bindings")
+	PrintUsage(osStderr, "usage: gregale app binding verify <app> <service> [--deployment ID|vN] [flags] | gregale app binding verify <app> --all [--dry-run] [--require-complete] [--deployment ID|vN] [--queue-publish] [--object-storage-write] [flags] | gregale app binding verify <app> --release-policy [--dry-run] [--object-storage-write] [flags] | gregale app binding verify <app> --postgres <ENVIRONMENT_KEY> [flags] | gregale app binding verify <app> --object-storage <PREFIX> [flags] | gregale app binding verify <app> --outbound <INTEGRATION_ID> [flags]", "bindings")
 }
 
 func runPostgresBindingProbe(ctx context.Context, client bindingInventoryProbeClient, slug, environmentKey string, pollInterval, waitTimeout time.Duration) int {

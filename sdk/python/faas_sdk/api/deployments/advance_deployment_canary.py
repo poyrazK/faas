@@ -117,9 +117,9 @@ def sync_detailed(
 
     Args:
         id (str):
-        body (AdvanceCanaryRequest): Body for POST /v1/deployments/{id}/canary/advance (issue #976
-            / ADR-122). expected_step is the persisted canary step observed by the progression worker;
-            APID derives the next traffic percentage and rejects stale observations.
+        body (AdvanceCanaryRequest): Body for POST /v1/deployments/{id}/canary/advance.
+            expected_step is the persisted canary step observed by the progression worker; APID
+            derives the next traffic percentage and rejects stale observations.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -169,9 +169,9 @@ def sync(
 
     Args:
         id (str):
-        body (AdvanceCanaryRequest): Body for POST /v1/deployments/{id}/canary/advance (issue #976
-            / ADR-122). expected_step is the persisted canary step observed by the progression worker;
-            APID derives the next traffic percentage and rejects stale observations.
+        body (AdvanceCanaryRequest): Body for POST /v1/deployments/{id}/canary/advance.
+            expected_step is the persisted canary step observed by the progression worker; APID
+            derives the next traffic percentage and rejects stale observations.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -216,9 +216,9 @@ async def asyncio_detailed(
 
     Args:
         id (str):
-        body (AdvanceCanaryRequest): Body for POST /v1/deployments/{id}/canary/advance (issue #976
-            / ADR-122). expected_step is the persisted canary step observed by the progression worker;
-            APID derives the next traffic percentage and rejects stale observations.
+        body (AdvanceCanaryRequest): Body for POST /v1/deployments/{id}/canary/advance.
+            expected_step is the persisted canary step observed by the progression worker; APID
+            derives the next traffic percentage and rejects stale observations.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -266,9 +266,9 @@ async def asyncio(
 
     Args:
         id (str):
-        body (AdvanceCanaryRequest): Body for POST /v1/deployments/{id}/canary/advance (issue #976
-            / ADR-122). expected_step is the persisted canary step observed by the progression worker;
-            APID derives the next traffic percentage and rejects stale observations.
+        body (AdvanceCanaryRequest): Body for POST /v1/deployments/{id}/canary/advance.
+            expected_step is the persisted canary step observed by the progression worker; APID
+            derives the next traffic percentage and rejects stale observations.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

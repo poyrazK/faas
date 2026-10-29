@@ -48,7 +48,9 @@ func (fakeHost) EnqueuePreparedInvocation(context.Context, state.Invocation, str
 
 func (fakeHost) ResultRetention(state.Account) *time.Time { return nil }
 
-func (fakeHost) SecretRecipient() *age.X25519Recipient { return nil }
+func (fakeHost) ExecutionPayloadRecipients() ([]*age.X25519Recipient, string, error) {
+	return nil, "", errors.New("no execution payload recipient")
+}
 
 func (h fakeHost) ExecutionAPIEnabled() bool { return h.execution }
 

@@ -85,6 +85,10 @@ daemons:
       key_path: /etc/faas/tls/schedd/server.key
       ca_path: /etc/faas/tls/ca/ca.crt
       mode: "0400"
+    # ADR-20261021215353: freeze a quiet between_requests instance this many
+    # seconds after its last request (0 or 2-300; needs schedd's frozen
+    # tier). Omitted keeps schedd's default, off; 10 is the ADR's value.
+    # frozen_tier_early_freeze_after_s: 10
     # This is the static compatibility fallback. Per-node routing comes
     # from compute_nodes.schedd_target_url, which vmmd self-registration
     # receives from each host's generated node-local target. The control
@@ -209,6 +213,16 @@ egress:
 dns:
   apps_domain: gregale.dev
   mode: cloudflare
+  # ADR-20261026100000: put tenant apps on their own registrable domain while
+  # the site, dashboard and API stay on the platform domain, and keep old app
+  # URLs working through an alias (serve, then redirect once customers moved).
+  # Each extra zone needs its Cloudflare zone, Origin CA certificate at
+  # /etc/caddy/tls/cloudflare-origin-<domain>.{pem,key}, Worker route and
+  # tunnel ingress. Unset, every host stays under apps_domain.
+  # platform_domain: gregale.dev
+  # deploy_domain: gregale.app
+  # apps_domain_aliases: [gregale.dev]
+  # apps_domain_alias_mode: serve
 
 # Customer custom domains served by the control plane's own edge (ADR-520).
 # Caddy obtains and renews a Let's Encrypt certificate per customer hostname

@@ -46,7 +46,7 @@ export type Trigger = {
    */
   max_attempts: number;
   /**
-   * record invokes the function once per record; batch invokes it once per dispatch batch with every record (ADR-1321).
+   * record invokes the function once per record; batch invokes it once per dispatch batch with every record.
    */
   delivery?: 'record' | 'batch';
   /**
@@ -54,7 +54,7 @@ export type Trigger = {
    */
   retry_policy?: RetryPolicyDTO;
   /**
-   * Per-record broker payload byte cap (migration 00274).
+   * Per-record broker payload byte cap.
    * Records above this size are DLQ'd at insert time with
    * reason='payload_too_large' rather than silently truncated.
    * Plan-level ceiling in /v1/limits TriggerPayloadMaxBytes.
@@ -63,8 +63,7 @@ export type Trigger = {
    */
   payload_max_bytes: number;
   /**
-   * Kafka-only poison-record handling strategy (migration 00275,
-   * audit #10). "commit" (default) advances the broker offset
+   * Kafka-only poison-record handling strategy (audit #10). "commit" (default) advances the broker offset
    * via CommitMessages when the dispatcher dead-letters a
    * record — the broker offset and the DB dead-letter state
    * are permanently out of sync for that offset; operator
@@ -79,8 +78,7 @@ export type Trigger = {
    */
   broker_poison_strategy: 'commit' | 'seek-to-offset';
   /**
-   * Optional record-level filter (issue #757 §criterion 4,
-   * ADR-118 §6, migration 00300). Records that fail the
+   * Optional record-level filter. Records that fail the
    * filter are marked state='skipped' on insert and
    * contribute no audit row. Jsonpath evaluator:
    * github.com/PaesslerAG/jsonpath (no eval semantics, no

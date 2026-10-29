@@ -107,8 +107,8 @@ def sync_detailed(
 
     The pgstore trigger fires pg_notify
     ('cors_preset_changed', account_id) AFTER the UPDATE
-    commits so the gatewayd-internal listener reloads
-    the affected account's preset overlay (ADR-129 D4).
+    commits so the gateway listener reloads
+    the affected account's preset overlay.
 
     Args:
         id (UUID):
@@ -118,7 +118,7 @@ def sync_detailed(
             cors_preset_update_requires_field). The same partial
             grammar check that fires on CreateCorsPresetRequest
             (CorsOriginPattern, *+credentials footgun) fires here
-            on the partial payload; the apid handler additionally
+            on the partial payload; the API handler additionally
             re-validates against the merged post-update shape so a
             PATCH that flips AllowCredentials to true while leaving
             AllowOrigins=["*"] is rejected.
@@ -169,8 +169,8 @@ def sync(
 
     The pgstore trigger fires pg_notify
     ('cors_preset_changed', account_id) AFTER the UPDATE
-    commits so the gatewayd-internal listener reloads
-    the affected account's preset overlay (ADR-129 D4).
+    commits so the gateway listener reloads
+    the affected account's preset overlay.
 
     Args:
         id (UUID):
@@ -180,7 +180,7 @@ def sync(
             cors_preset_update_requires_field). The same partial
             grammar check that fires on CreateCorsPresetRequest
             (CorsOriginPattern, *+credentials footgun) fires here
-            on the partial payload; the apid handler additionally
+            on the partial payload; the API handler additionally
             re-validates against the merged post-update shape so a
             PATCH that flips AllowCredentials to true while leaving
             AllowOrigins=["*"] is rejected.
@@ -226,8 +226,8 @@ async def asyncio_detailed(
 
     The pgstore trigger fires pg_notify
     ('cors_preset_changed', account_id) AFTER the UPDATE
-    commits so the gatewayd-internal listener reloads
-    the affected account's preset overlay (ADR-129 D4).
+    commits so the gateway listener reloads
+    the affected account's preset overlay.
 
     Args:
         id (UUID):
@@ -237,7 +237,7 @@ async def asyncio_detailed(
             cors_preset_update_requires_field). The same partial
             grammar check that fires on CreateCorsPresetRequest
             (CorsOriginPattern, *+credentials footgun) fires here
-            on the partial payload; the apid handler additionally
+            on the partial payload; the API handler additionally
             re-validates against the merged post-update shape so a
             PATCH that flips AllowCredentials to true while leaving
             AllowOrigins=["*"] is rejected.
@@ -286,8 +286,8 @@ async def asyncio(
 
     The pgstore trigger fires pg_notify
     ('cors_preset_changed', account_id) AFTER the UPDATE
-    commits so the gatewayd-internal listener reloads
-    the affected account's preset overlay (ADR-129 D4).
+    commits so the gateway listener reloads
+    the affected account's preset overlay.
 
     Args:
         id (UUID):
@@ -297,7 +297,7 @@ async def asyncio(
             cors_preset_update_requires_field). The same partial
             grammar check that fires on CreateCorsPresetRequest
             (CorsOriginPattern, *+credentials footgun) fires here
-            on the partial payload; the apid handler additionally
+            on the partial payload; the API handler additionally
             re-validates against the merged post-update shape so a
             PATCH that flips AllowCredentials to true while leaving
             AllowOrigins=["*"] is rejected.

@@ -462,6 +462,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		AITagDailyCostLimits:           tagDailyCostLimits(integration, aiTags),
 		AITraceID:                      aiTrace,
 		AITraceLimits:                  integration.traceLimits(),
+		AITraceNamed:                   aiTrace != "" && r.Header.Get(api.OutboundAITraceHeader) != "",
 		BindingAppID:                   bindingAppID,
 		BindingDailyRequestLimit:       copyInt64Pointer(bindingDailyRequestLimit),
 		CircuitBreakerFailureThreshold: integration.CircuitBreakerFailureThreshold,

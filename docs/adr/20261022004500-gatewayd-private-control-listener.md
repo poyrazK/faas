@@ -56,3 +56,26 @@ Capability discovery still advertised mcp-hosting and route-advisor.
 - Relay through the control plane's gatewayd-public over the existing edge
   hop: mixes control routes into the public listener's forwarding rules.
 - Mark the features unavailable on split installs: leaves MCP hosting broken.
+
+## Amendment 1 (2026-10-26): the realtimed control proxy moves here
+
+apid's realtime owner reached each node's realtimed management API through
+gatewayd-internal's data listener (`/v1/internal/realtime/`, an
+unauthenticated proxy to realtimed's `/internal` routes). The data listener
+is what the edge forwards app traffic to, so only #5306's edge refusal of
+that path on app hosts kept it from customers.
+
+Decision:
+
+1. gatewayd-internal also mounts the realtime control proxy on the private
+   control listener, and apid's realtime owner calls it there
+   (`http://<node>:9097/v1/internal/realtime`).
+2. Release N-1 beside N: when a node's private listener refuses the
+   connection, or answers the path with the mux's plain 404 (a
+   gatewayd-internal that predates this amendment), apid repeats the request
+   on the data listener. Neither case reached realtimed, so the repeat is
+   safe for writes. A single box runs no private listener and keeps the
+   loopback data listener this way.
+3. The data listener keeps serving the proxy until a release after every
+   node runs this one; removing it then is the contract step, and the edge
+   refusal stays as defence in depth.

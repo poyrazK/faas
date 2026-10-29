@@ -39,11 +39,10 @@ T = TypeVar("T", bound="CreateDeploymentRequest")
 @_attrs_define
 class CreateDeploymentRequest:
     """Two content-types accepted (see operation description): prebuilt OCI image reference, or multipart source upload.
-    The optional `overrides` object (issue #460 / ADR-053) lets a customer redeploy the same digest-pinned image with a
-    different entrypoint / cmd / env / env_secrets / port / startup healthcheck / readiness_probe / liveness_probe
-    without rebuilding the image. The optional `companions` array attaches bounded helper workloads such as an
-    OpenTelemetry collector, database proxy, or reverse proxy. The deprecated `sidecars` spelling remains accepted for
-    existing clients.
+    The optional `overrides` object lets a customer redeploy the same digest-pinned image with a different entrypoint /
+    cmd / env / env_secrets / port / startup healthcheck / readiness_probe / liveness_probe without rebuilding the
+    image. The optional `companions` array attaches bounded helper workloads such as an OpenTelemetry collector,
+    database proxy, or reverse proxy. The deprecated `sidecars` spelling remains accepted for existing clients.
 
     """
 
@@ -59,9 +58,9 @@ class CreateDeploymentRequest:
     """Deploy-time overrides (entrypoint, cmd, env, env_secrets, port, healthcheck, readiness_probe,
     liveness_probe). nil/omitted = deploy the image as-is."""
     require_signed: bool | None | Unset = UNSET
-    """Per-deploy signature-enforcement opt-in (issue #472 / ADR-054). nil = inherit the app's effective signature
-    policy; *true is a no-op when enforcement is already on; *false is rejected with 403 deploy_signature_invalid
-    when apps.require_signed is on or security_policy=enforce (operator policy wins)."""
+    """Per-deploy signature-enforcement opt-in. nil = inherit the app's effective signature policy; *true is a no-
+    op when enforcement is already on; *false is rejected with 403 deploy_signature_invalid when apps.require_signed
+    is on or security_policy=enforce (operator policy wins)."""
     companions: list[Sidecar] | Unset = UNSET
     """Preferred field. Up to 5 stateless helpers total (one init helper and up to four long-running companions);
     managed presets may omit image. Do not set together with sidecars."""
@@ -71,16 +70,16 @@ class CreateDeploymentRequest:
     """Workflow DAG definitions for this deployment. Paid-plan only; persisted with the deployment and snapshotted
     at run start."""
     traffic_percent: int | None | Unset = UNSET
-    """Per-deployment traffic-split weight (issue #556 PR-A). nil = server default 100; explicit 0..100 = opt into
-    canary (Pro/Scale only)."""
+    """Per-deployment traffic-split weight. nil = server default 100; explicit 0..100 = opt into canary (Pro/Scale
+    only)."""
     scope: None | str | Unset = UNSET
-    """Top-level per-deployment env scope (ADR-091 / PR-D). Lowercase alnum + dash, 1..40 chars, no
-    leading/trailing dash. nil/omitted = `default`."""
+    """Top-level per-deployment env scope. Lowercase alnum + dash, 1..40 chars, no leading/trailing dash.
+    nil/omitted = `default`."""
     environment: str | Unset = UNSET
     """Registered project environment to resolve to the deployment scope. Requires the app to belong to the
     project; omitted preserves legacy scope behavior."""
     reason: None | str | Unset = UNSET
-    """Free-form operator note (issue #977 / ADR-116). DB CHECK enforces length(reason) <= 280."""
+    """Free-form operator note. DB CHECK enforces length(reason) <= 280."""
     tag: (
         CreateDeploymentRequestTagType1
         | CreateDeploymentRequestTagType2Type1
@@ -90,13 +89,13 @@ class CreateDeploymentRequest:
     ) = UNSET
     """Closed-set annotation tag. DB CHECK (deployments_tag_set_chk) enforces the same vocabulary."""
     deployed_by: None | str | Unset = UNSET
-    """Operator label. CLI auto-captures from `git config user.name`; githubd stamps pusher.name; Action defaults
-    to ${{ github.actor }}."""
+    """Operator label. CLI auto-captures from `git config user.name`; the GitHub integration stamps pusher.name;
+    Action defaults to ${{ github.actor }}."""
     pr_number: int | None | Unset = UNSET
     """PR number (when known). 0 / NULL collapses to NULL on the row (DB CHECK rejects 0)."""
     canary: CanaryPresetSpec | None | Unset = UNSET
-    """Per-deployment canary ladder (issue #976 / ADR-122 / SAFE-RELEASES-A). nil/omitted = server default 'none'.
-    For preset='custom', stages carries the customer ladder."""
+    """Per-deployment canary ladder. nil/omitted = server default 'none'. For preset='custom', stages carries the
+    customer ladder."""
     rollback_on_5xx: bool | None | Unset = UNSET
     """Create-time opt-in for first-wake 5xx auto-rollback; Pro/Scale only, with omitted or null defaulting to
     false."""
@@ -105,10 +104,10 @@ class CreateDeploymentRequest:
     handler versions it does not provide."""
     override_freeze: str | Unset = UNSET
     """Release this deployment to production while a deploy freeze is active; the reason is audited with the
-    freezes it overrode (ADR-20261019071733)."""
+    freezes it overrode."""
     release_at: datetime.datetime | Unset = UNSET
     """Build this deployment now, keep it live without traffic, and start its production rollout at this time;
-    deploy freezes are checked at that time (ADR-20261021152201)."""
+    deploy freezes are checked at that time."""
     release_notify: list[str] | Unset = UNSET
     """Slack or email notification channels told when this deployment, scheduled with release_at, starts or cannot
     start."""

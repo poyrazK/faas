@@ -52,9 +52,9 @@ func TestProfileCaptureNotifications(t *testing.T) {
 				t.Helper()
 				c := api.ProfileCapture{ID: uuid.NewString(), Kinds: kinds, DurationSeconds: 10, Trigger: trigger, CreatedAt: at, ExpiresAt: at.Add(api.ProfileCaptureRetention)}
 				if trigger == api.ProfileCaptureTriggerManual {
-					err = store.CreateProfileCapture(ctx, acct.ID, app.ID, c)
+					err = store.CreateProfileCapture(ctx, acct.ID, app.ID, c, profileCaptureStorage)
 				} else {
-					err = store.QueueAutomaticProfileCapture(ctx, acct.ID, app.ID, c, time.Minute)
+					err = store.QueueAutomaticProfileCapture(ctx, acct.ID, app.ID, c, time.Minute, profileCaptureStorage)
 				}
 				if err != nil {
 					t.Fatal(err)

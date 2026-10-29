@@ -1,7 +1,10 @@
+// adr: 1155 — on-demand captures hold instance activity, resume a quiet-paused
+// guest (ADR-1151) first, and map guest refusals to gRPC codes.
 package vmmdgrpc_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -22,6 +25,50 @@ type captureVMM struct {
 
 func (v *captureVMM) CaptureProfile(ctx context.Context, instance string, req profileproto.CaptureRequest) (profileproto.CaptureResult, error) {
 	return v.fn(ctx, instance, req)
+}
+
+type quietCaptureVMM struct {
+	captureVMM
+	resumeErr error
+	resumed   []string
+}
+
+func (v *quietCaptureVMM) QuietResume(_ context.Context, instance string) error {
+	v.resumed = append(v.resumed, instance)
+	return v.resumeErr
+}
+
+// TestCaptureProfileResumesQuietPausedGuest pins ADR-1155 with ADR-1151: a
+// quiet-paused guest is resumed before the capture reaches it, and a failed
+// resume fails the capture without contacting the guest.
+func TestCaptureProfileResumesQuietPausedGuest(t *testing.T) {
+	req := &vmmdpb.CaptureProfileRequest{Instance: "i-1", CaptureId: strings.Repeat("ab", 16), Kinds: []string{"cpu"}, DurationMs: 2000}
+	for _, tc := range []struct {
+		name        string
+		resumeErr   error
+		wantCode    codes.Code
+		wantCapture bool
+	}{
+		{"resumed", nil, codes.OK, true},
+		{"resume failed", errors.New("firecracker resume failed"), codes.Unavailable, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			vmm := &quietCaptureVMM{resumeErr: tc.resumeErr}
+			captured := false
+			vmm.fn = func(_ context.Context, instance string, _ profileproto.CaptureRequest) (profileproto.CaptureResult, error) {
+				if len(vmm.resumed) != 1 || vmm.resumed[0] != instance {
+					t.Errorf("guest contacted before resume: resumed %v", vmm.resumed)
+				}
+				captured = true
+				return profileproto.CaptureResult{Profiles: []profileproto.CapturedProfile{}}, nil
+			}
+			srv := vmmdgrpc.NewWithCPUAndNetAndActivity(vmm, wire.NewOpsMetrics("vmmd_test"), "1.0.0", nil, nil, nil, activity.New(nil))
+			_, err := srv.CaptureProfile(t.Context(), req)
+			if status.Code(err) != tc.wantCode || captured != tc.wantCapture {
+				t.Fatalf("err = %v, captured = %v; want %v, %v", err, captured, tc.wantCode, tc.wantCapture)
+			}
+		})
+	}
 }
 
 func TestCaptureProfileHoldsActivityAndMapsResult(t *testing.T) {

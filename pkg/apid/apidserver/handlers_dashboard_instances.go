@@ -242,8 +242,7 @@ func (s *server) dashboardInstanceAction(w http.ResponseWriter, r *http.Request)
 		returnDashboardInstanceAction(w, r, slug, dashboardInstanceActionWoken, wakeID)
 	case "restart":
 		if app.Status != state.AppActive {
-			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
-				"App is not active", "only an active app can be restarted"))
+			api.WriteProblem(w, appRestartRefusal(app))
 			return
 		}
 		claimed, err := claimAppRestart(r.Context(), s.store, app.ID)

@@ -8,14 +8,16 @@ import (
 	"encoding/json"
 	"errors"
 	"filippo.io/age"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/issuetracker"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
+	"slices"
 	"time"
 )
 
-const linearOAuthNamespace = "issue_tracker_linear_oauth_v1"
-const linearOAuthFlowNamespace = "issue_tracker_linear_oauth_flow_v1"
+const linearOAuthNamespace = api.IssueTrackerLinearOAuthNamespace
+const linearOAuthFlowNamespace = api.IssueTrackerLinearOAuthFlowNamespace
 
 type LinearOAuthCredential struct {
 	Scope         LinearCredentialScope
@@ -25,14 +27,20 @@ type LinearOAuthCredential struct {
 }
 
 func SealLinearOAuthCredential(recipient *age.X25519Recipient, credential LinearOAuthCredential) ([]byte, error) {
-	if recipient == nil || !validLinearScope(credential.Scope) || !validLinearToken(credential.ClientID) || !validLinearToken(credential.Tokens.AccessToken) || !validLinearToken(credential.Tokens.RefreshToken) || credential.Tokens.ExpiresAt.IsZero() || (credential.WebhookSecret != "" && !issuetracker.ValidLinearWebhookSecret(credential.WebhookSecret)) {
+	return SealLinearOAuthCredentialTo([]*age.X25519Recipient{recipient}, credential)
+}
+
+// SealLinearOAuthCredentialTo is SealLinearOAuthCredential for several
+// recipients (ADR 20261022111812).
+func SealLinearOAuthCredentialTo(recipients []*age.X25519Recipient, credential LinearOAuthCredential) ([]byte, error) {
+	if len(recipients) == 0 || slices.Contains(recipients, nil) || !validLinearScope(credential.Scope) || !validLinearToken(credential.ClientID) || !validLinearToken(credential.Tokens.AccessToken) || !validLinearToken(credential.Tokens.RefreshToken) || credential.Tokens.ExpiresAt.IsZero() || (credential.WebhookSecret != "" && !issuetracker.ValidLinearWebhookSecret(credential.WebhookSecret)) {
 		return nil, errors.New("invalid scoped Linear OAuth credential")
 	}
 	raw, err := json.Marshal(credential)
 	if err != nil {
 		return nil, err
 	}
-	return secretbox.SealBytes(recipient, linearOAuthNamespace, raw, 0)
+	return secretbox.SealBytesTo(recipients, linearOAuthNamespace, raw, 0)
 }
 func OpenLinearOAuthCredential(ids []*age.X25519Identity, expected LinearCredentialScope, sealed []byte) (LinearOAuthCredential, error) {
 	namespace, raw, err := secretbox.OpenBytesMulti(ids, sealed)
@@ -70,14 +78,20 @@ func LinearOAuthStateHash(nonce string) string {
 	return hex.EncodeToString(sum[:])
 }
 func SealLinearOAuthFlow(recipient *age.X25519Recipient, c LinearOAuthFlowSecret) ([]byte, error) {
-	if recipient == nil {
+	return SealLinearOAuthFlowTo([]*age.X25519Recipient{recipient}, c)
+}
+
+// SealLinearOAuthFlowTo is SealLinearOAuthFlow for several recipients (ADR
+// 20261022111812).
+func SealLinearOAuthFlowTo(recipients []*age.X25519Recipient, c LinearOAuthFlowSecret) ([]byte, error) {
+	if len(recipients) == 0 || slices.Contains(recipients, nil) {
 		return nil, errors.New("OAuth sealing unavailable")
 	}
 	raw, err := json.Marshal(c)
 	if err != nil {
 		return nil, err
 	}
-	return secretbox.SealBytes(recipient, linearOAuthFlowNamespace, raw, 0)
+	return secretbox.SealBytesTo(recipients, linearOAuthFlowNamespace, raw, 0)
 }
 func OpenLinearOAuthFlow(ids []*age.X25519Identity, row state.LinearOAuthFlow) (LinearOAuthFlowSecret, error) {
 	ns, raw, err := secretbox.OpenBytesMulti(ids, row.Sealed)

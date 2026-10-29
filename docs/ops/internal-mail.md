@@ -3105,6 +3105,32 @@ before switching. Admission does not establish SMTP custody or destination
 delivery. No activation, deployment or real email is part of this change; live
 qualification remains separate.
 
+## Managed PostgreSQL compute cap notices
+
+`FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_CAP_OUTBOX_ENABLED=0` independently gates
+the compute cap emails of
+[ADR-20261025094915](../adr/20261025094915-managed-postgres-compute-caps-on-running-databases.md)
+in apid, maild and private reconciliation. Units and examples keep it off. Apply
+[`20261027181456913_managed_postgres_cap_events.sql`](../../migrations/20261027181456913_managed_postgres_cap_events.sql)
+before opting in.
+
+It requires the existing master, producer, scheduling and producer-outbox gates,
+scoped `internal-producer` transport and the dedicated apid readers under
+`FAAS_INTERNAL_MAIL_VERIFICATION_IDENTITY_PATH` and
+`FAAS_INTERNAL_MAIL_VERIFICATION_PREVIOUS_IDENTITY_PATH`. Maild and mailctl
+receive neither reader.
+
+Apid queues mail only while `FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT=on`. Each
+sweep, for every usage subject with a live database, it takes the most severe
+threshold the subject reached this UTC month (80% of the allowance, the
+allowance with overage on, 80% of the ceiling, suspended). If that threshold is
+unmailed and under 24 hours old, apid encrypts a frozen snapshot of the usage
+and links the intent to the threshold in one transaction, so each threshold is
+mailed at most once and a jump past several thresholds sends one email. A
+failed save is retried on the next sweep. An organization subject has no account
+row and gets no email yet. Maild re-checks the account at submission and
+cancels the email if the account is no longer active or is being deleted.
+
 ## Durable overdue-account suspension notices
 
 `FAAS_INTERNAL_MAIL_ACCOUNT_SUSPENDED_OUTBOX_ENABLED=0` independently gates
@@ -3217,6 +3243,25 @@ revision, cancellation of pending failure/suspension mail, encrypted notice and
 per-period receipt commit together. Failed persistence, capacity exhaustion,
 recovery hold or gate withdrawal leaves the transition retryable. Duplicate
 ticks cannot create another notice. No historical deletion is backfilled.
+
+A non-payment deletion includes the account's managed PostgreSQL databases,
+which apid deletes when the 30-day grace ends
+([ADR-20261024150500](../adr/20261024150500-account-deletion-includes-managed-postgres.md)).
+The operator kill switch `FAAS_NONPAYMENT_DELETION_MANAGED_POSTGRES=off`, set on
+apid and meterd, stops that and restores the guard below.
+
+A deletion guard is not an outage. When the account still owns live managed
+PostgreSQL databases and the kill switch is off (or shared app ownership is
+unresolved), apid answers
+`409` with `{"reason":"managed_postgres_databases","managed_postgres_databases":N}`
+(or `shared_app_ownership`) and commits nothing. Meterd logs
+`meter: non-payment deletion blocked` with the account and reason, keeps the
+account suspended and retries on the next hourly sweep. The legacy direct
+store transition reports the same guard. The gauge
+`meterd_dunning_deletion_blocked_accounts{reason}` counts the accounts the last
+sweep could not advance; a non-zero `managed_postgres_databases` value means
+suspended accounts keep provider databases running. Meterd never deletes
+customer databases; only apid's grace sweep does.
 
 The frozen V1 body retains the original overdue timestamp and the actual
 hard-deletion deadline: saved `deletion_requested_at` plus the canonical account

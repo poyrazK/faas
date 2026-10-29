@@ -55,6 +55,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/reqbudget"
+	"github.com/onebox-faas/faas/pkg/sessioncookie"
 )
 
 // cookieOnlyPathRE matches routes that are gated server-side to the
@@ -305,20 +306,59 @@ func (c *Client) doWithClientAndHeadersAndIdempotencyKeyPolicy(ctx context.Conte
 			http.StatusForbidden,
 			CodeUnsupportedByCLI,
 			"endpoint requires the dashboard session cookie",
-			"the gregale CLI cannot reach this route — use the dashboard at "+docsBase+"/dashboard/sessions",
-		).WithDocs(docsBase + "/cli/cookie-only-routes")
+			"the gregale CLI cannot reach this route — use the dashboard at "+docsBase+"/dashboards#sessions",
+		).WithDocs(docsBase + "/cli#cookie-only-routes")
 	}
-	var r io.Reader
+	var payload []byte
 	if body != nil {
 		b, err := json.Marshal(body)
 		if err != nil {
 			return fmt.Errorf("marshal request: %w", err)
 		}
-		r = bytes.NewReader(b)
+		payload = b
+	}
+	// UX §3.2 / impl §4.2: every mutating call carries Idempotency-Key
+	// so a retried deploy/park/wake/rollback/etc. never double-charges
+	// or double-creates. We never override an explicit key the caller
+	// already set. The key is chosen once, so every attempt below shares it.
+	if method != http.MethodGet && method != http.MethodHead && (idempotencyKey != "" || addDefaultIdempotencyKey) {
+		if idempotencyKey == "" && addDefaultIdempotencyKey {
+			idempotencyKey = IdempotencyKeyFromContext(ctx)
+		}
+		if idempotencyKey == "" && addDefaultIdempotencyKey {
+			idempotencyKey = newUUIDv4()
+		}
+	} else {
+		idempotencyKey = ""
+	}
+	for attempt := 1; ; attempt++ {
+		req, err := c.newJSONRequest(ctx, method, path, payload, body != nil, idempotencyKey, headers)
+		if err != nil {
+			return err
+		}
+		err = c.doReq(cli, req, out)
+		pause, retry := trafficPolicyRetryPause(err, attempt)
+		if !retry {
+			return err
+		}
+		timer := time.NewTimer(pause)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return errors.Join(err, ctx.Err())
+		case <-timer.C:
+		}
+	}
+}
+
+func (c *Client) newJSONRequest(ctx context.Context, method, path string, payload []byte, hasBody bool, idempotencyKey string, headers http.Header) (*http.Request, error) {
+	var r io.Reader
+	if hasBody {
+		r = bytes.NewReader(payload)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, r)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
@@ -328,23 +368,31 @@ func (c *Client) doWithClientAndHeadersAndIdempotencyKeyPolicy(ctx context.Conte
 			req.Header.Add(key, value)
 		}
 	}
-	// UX §3.2 / impl §4.2: every mutating call carries Idempotency-Key
-	// so a retried deploy/park/wake/rollback/etc. never double-charges
-	// or double-creates. We never override an explicit key the caller
-	// already set.
-	if method != http.MethodGet && method != http.MethodHead && (idempotencyKey != "" || addDefaultIdempotencyKey) {
-		if idempotencyKey == "" && addDefaultIdempotencyKey {
-			idempotencyKey = IdempotencyKeyFromContext(ctx)
-		}
-		if idempotencyKey == "" && addDefaultIdempotencyKey {
-			idempotencyKey = newUUIDv4()
-		}
+	if idempotencyKey != "" {
 		req.Header.Set("Idempotency-Key", idempotencyKey)
 	}
-	if body != nil {
+	if hasBody {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	return c.doReq(cli, req, out)
+	return req, nil
+}
+
+// trafficPolicyCheckAttempts bounds how often a request is sent while its
+// traffic policy check keeps running out of time.
+const trafficPolicyCheckAttempts = 4
+
+// trafficPolicyRetryPause reports whether err is a policy check that ran out
+// of time (TrafficPolicyCheckTimedOut) and how long to wait before resending.
+// apid saved nothing and does not replay the refusal, so the resend reuses
+// the Idempotency-Key and any Deployment-Attempt-ID. On n2 a deploy sent
+// while the app served about 30 requests a second needed four attempts.
+func trafficPolicyRetryPause(err error, attempt int) (time.Duration, bool) {
+	var apiErr *APIError
+	if err == nil || attempt >= trafficPolicyCheckAttempts || !errors.As(err, &apiErr) || !TrafficPolicyCheckTimedOut(apiErr.Problem) {
+		return 0, false
+	}
+	pause := time.Duration(*apiErr.Problem.RetryAfterSeconds) * time.Second
+	return min(max(pause, 50*time.Millisecond), 10*time.Second), true
 }
 
 func (c *Client) rollbackHTTP() *http.Client {
@@ -640,10 +688,22 @@ func (c *Client) StreamAccountExport(ctx context.Context, includeSecrets bool, r
 // idempotent under Idempotency-Key; callers may pass an explicit
 // stable key (CI retries) or "" to auto-mint a UUIDv4 per call.
 func (c *Client) DeleteAccount(ctx context.Context, idempotencyKey string) (AccountDeletionResponse, error) {
+	return c.deleteAccount(ctx, idempotencyKey, "/v1/account")
+}
+
+// DeleteAccountIncludingManagedPostgres schedules the deletion and asks it to
+// include the account's managed PostgreSQL databases, which are deleted when
+// the 30-day grace ends (ADR-20261024150500). Dark until launch: apid ignores
+// the request for accounts outside FAAS_ACCOUNT_DELETION_MANAGED_POSTGRES_ACCOUNTS.
+func (c *Client) DeleteAccountIncludingManagedPostgres(ctx context.Context, idempotencyKey string) (AccountDeletionResponse, error) {
+	return c.deleteAccount(ctx, idempotencyKey, "/v1/account?include_managed_postgres_databases=true")
+}
+
+func (c *Client) deleteAccount(ctx context.Context, idempotencyKey, path string) (AccountDeletionResponse, error) {
 	if idempotencyKey == "" {
 		idempotencyKey = newUUIDv4()
 	}
-	req, err := http.NewRequestWithContext(ctx, "DELETE", c.baseURL+"/v1/account", nil)
+	req, err := http.NewRequestWithContext(ctx, "DELETE", c.baseURL+path, nil)
 	if err != nil {
 		return AccountDeletionResponse{}, err
 	}
@@ -1626,7 +1686,8 @@ func (c *Client) GetApp(ctx context.Context, slug string) (AppResponse, error) {
 // traffic weights, and edge-rule changes. Edge rules have their own revision
 // sequence in the response. wait may be zero for a snapshot or up to 10
 // seconds for a bounded server-side wait; a pending result remains possible
-// on timeout.
+// on timeout. TrafficRuntime reports fresh compute gateway wiring separately
+// from convergence; it does not attest request enforcement or backend health.
 func (c *Client) GetAppsSlugPolicyStatus(ctx context.Context, slug string, wait time.Duration) (RuntimePolicyStatusResponse, error) {
 	var out RuntimePolicyStatusResponse
 	if wait < 0 || wait > 10*time.Second {
@@ -2977,11 +3038,9 @@ func (c *Client) GetCron(ctx context.Context, id string) (CronResponse, error) {
 	return out, c.do(ctx, "GET", "/v1/crons/"+id, nil, &out)
 }
 
-// ListCrons returns every cron on the account when slug is empty,
-// or every cron for the given app when slug is non-empty. The slug
-// filter is added to the wire only when non-empty so the request
-// matches the spec (zero documented parameters) and the server-side
-// listCrons handler returns 200 with the full account-scoped list.
+// ListCrons returns every cron on the account when slug is empty, or
+// every cron of the app named by slug (a slug or id). The ?slug= filter
+// is sent only when slug is non-empty.
 func (c *Client) ListCrons(ctx context.Context, slug string) ([]CronResponse, error) {
 	path := "/v1/crons"
 	if slug != "" {
@@ -3743,6 +3802,32 @@ func (c *Client) ListEdgeRuleEvents(ctx context.Context, slug string, q EdgeRule
 	}
 	var out EdgeRuleEventsResponse
 	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// GetEdgeWAFReview returns an app's WAF detections grouped for a
+// false-positive review (ADR-831 amendment 13). ruleID and since are
+// optional; since defaults to 7d.
+func (c *Client) GetEdgeWAFReview(ctx context.Context, slug, ruleID, since string) (EdgeWAFReviewResponse, error) {
+	v := url.Values{}
+	if ruleID != "" {
+		v.Set("rule", ruleID)
+	}
+	if since != "" {
+		v.Set("since", since)
+	}
+	path := "/v1/apps/" + slug + "/edge-rules/waf-review"
+	if len(v) > 0 {
+		path += "?" + v.Encode()
+	}
+	var out EdgeWAFReviewResponse
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// UpdateEdgeWAFExclusions adds and removes CRS rule IDs on a kind=waf rule's
+// exclusions, keeping the rest of its action (ADR-831 amendment 13).
+func (c *Client) UpdateEdgeWAFExclusions(ctx context.Context, id string, req EdgeWAFExclusionsRequest) (EdgeRuleResponse, error) {
+	var out EdgeRuleResponse
+	return out, c.do(ctx, "POST", "/v1/edge-rules/"+url.PathEscape(id)+"/waf-exclusions", req, &out)
 }
 
 // ListEdgeRuleLists returns the account's reusable edge-rule lists, without
@@ -4807,7 +4892,7 @@ func (c *Client) SetPasswordWithSession(ctx context.Context, sessionCookie strin
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Idempotency-Key", newUUIDv4())
-	req.AddCookie(&http.Cookie{Name: "faas_sid", Value: sessionCookie})
+	sessioncookie.AddToRequest(req, sessionCookie)
 	req.AddCookie(&http.Cookie{Name: "faas_csrf", Value: input.CSRFToken})
 
 	noRedirect := *c.http
@@ -7394,6 +7479,29 @@ func (c *Client) GetAppDebugRunning(ctx context.Context, slug, since string) (De
 	}
 	if len(q) > 0 {
 		path += "?" + q.Encode()
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// GetAppDebugRollout explains why the app's newest canary rollout was
+// rolled back or is held, with the routes and requests behind the decision.
+// deploymentID selects a specific deployment; empty picks the newest rollout.
+func (c *Client) GetAppDebugRollout(ctx context.Context, slug, deploymentID string) (DebugRolloutExplanation, error) {
+	var out DebugRolloutExplanation
+	path := "/v1/apps/" + slug + "/debug/rollout"
+	if deploymentID != "" {
+		path += "?deployment_id=" + url.QueryEscape(deploymentID)
+	}
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// GetAppDebugStatus summarizes the app's health, release, open regressions,
+// and recent failures over since (default 1h).
+func (c *Client) GetAppDebugStatus(ctx context.Context, slug, since string) (DebugStatusResponse, error) {
+	var out DebugStatusResponse
+	path := "/v1/apps/" + slug + "/debug/status"
+	if since != "" {
+		path += "?since=" + url.QueryEscape(since)
 	}
 	return out, c.do(ctx, "GET", path, nil, &out)
 }

@@ -164,14 +164,24 @@ func runDevWatchLoop(ctx context.Context, sourceDir string, previous [sha256.Siz
 	}
 
 	startPending := func() {
+		if ctx.Err() != nil {
+			return
+		}
 		config, err := ops.resolve(sourceDir)
+		if ctx.Err() != nil {
+			return
+		}
 		if err != nil {
 			if ops.onResolveFailed != nil {
 				ops.onResolveFailed(err)
 			}
 			return
 		}
-		if err := ops.refresh(config); err != nil {
+		err = ops.refresh(config)
+		if ctx.Err() != nil {
+			return
+		}
+		if err != nil {
 			if ops.onRefreshFailed != nil {
 				ops.onRefreshFailed(err)
 			}
@@ -179,6 +189,9 @@ func runDevWatchLoop(ctx context.Context, sourceDir string, previous [sha256.Siz
 		}
 		if ops.onChange != nil {
 			ops.onChange()
+		}
+		if ctx.Err() != nil {
+			return
 		}
 		current = startDevDeploy(ctx, config, ops.deploy)
 		queued = current.queued
@@ -191,10 +204,10 @@ func runDevWatchLoop(ctx context.Context, sourceDir string, previous [sha256.Siz
 			return 0
 
 		case change := <-changes:
+			if ctx.Err() != nil {
+				return 0
+			}
 			if change.err != nil {
-				if ctx.Err() != nil {
-					return 0
-				}
 				if ops.onWatchFailed != nil {
 					return ops.onWatchFailed(change.err)
 				}
@@ -256,10 +269,10 @@ func runDevWatchLoop(ctx context.Context, sourceDir string, previous [sha256.Siz
 			for {
 				select {
 				case change := <-changes:
+					if ctx.Err() != nil {
+						return 0
+					}
 					if change.err != nil {
-						if ctx.Err() != nil {
-							return 0
-						}
 						if ops.onWatchFailed != nil {
 							return ops.onWatchFailed(change.err)
 						}
@@ -274,7 +287,7 @@ func runDevWatchLoop(ctx context.Context, sourceDir string, previous [sha256.Siz
 	}
 }
 
-const devUsage = "usage: gregale dev [--path DIR] [--all] [--name PROJECT] [--env-file PATH] [--service-override-file PATH] [--bucket NAME] [--once|--stop] [--no-logs] [--open] [--postgres [--postgres-region REGION] [--postgres-seed CMD [--reseed]]] [--ttl DURATION] [--debug [--debug-port N]] [--watch [--watch-command CMD]]"
+const devUsage = "usage: gregale dev [--path DIR] [--all] [--name PROJECT] [--env-file PATH] [--service-override-file PATH] [--bucket NAME] [--once|--stop] [--no-logs] [--open] [--postgres [--postgres-region REGION] [--postgres-seed CMD [--reseed]]] [--ttl DURATION] [--debug [--debug-port N]] [--watch [--watch-command CMD]] [--go-command NAME]"
 
 // cmdDev provides the preview-like inner loop for local source: reserve one
 // stable remote environment, upload the dirty working tree, then redeploy when
@@ -324,12 +337,16 @@ func cmdDev(args []string) int {
 	all := fs.Bool("all", false, "run one developer loop per deployable workspace app below --path")
 	watch := fs.Bool("watch", false, "run the app's development server with hot reload instead of the production build (ADR-1170)")
 	watchCommand := fs.String("watch-command", "", "development server command for --watch (default: the dev script or the detected framework's server)")
+	goCommand := fs.String("go-command", "", "build cmd/NAME of the Go module at --path, for a module with several commands")
 	if err := fs.Parse(args); err != nil {
 		PrintUsage(osStderr, devUsage, "dev")
 		return 1
 	}
-	if fs.NArg() != 0 {
-		PrintUsage(osStderr, devUsage, "dev")
+	if dir, ok := sourceDirPositional(fs); ok {
+		return printErr("Invalid arguments", fmt.Errorf(
+			"gregale dev takes the source directory with --path. Did you mean `gregale dev --path %s`?", dir))
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	explicitFlags := flagSetWasSet(fs)
@@ -362,6 +379,9 @@ func cmdDev(args []string) int {
 	}
 	if *all && *watchCommand != "" {
 		return printErr("Invalid flags", fmt.Errorf("--watch-command cannot be combined with --all; set dev.watch.command in each app's gregale.yaml"))
+	}
+	if *goCommand != "" && (*stop || *all || !api.ValidGoCommand(*goCommand)) {
+		return printErr("Invalid --go-command", fmt.Errorf("name one cmd/ directory, without --stop or --all (dev --all selects each command itself)"))
 	}
 	if *debugPort < 1 || *debugPort > 65535 {
 		return printErr("Invalid --debug-port", fmt.Errorf("use a port between 1 and 65535"))
@@ -483,6 +503,12 @@ func cmdDev(args []string) int {
 	if err != nil {
 		return printErr("Could not identify developer workspace", err)
 	}
+	// A `dev --all` child lives in its group's workspace and joins the group's
+	// namespace once its environment exists (ADR-20261025121530).
+	group := devGroupWorkspace()
+	if group != "" {
+		workspaceID = group
+	}
 
 	client, err := authedClient()
 	if err != nil {
@@ -508,6 +534,9 @@ func cmdDev(args []string) int {
 	if code := checkDevSource(sourceDir, config); code != 0 {
 		return code
 	}
+	if err := checkDevGoCommand(sourceDir, config, *goCommand); err != nil {
+		return printErr("Invalid --go-command", err)
+	}
 	if !jsonOutput {
 		PrintProgress(osStdout, "Source: %s; connection: %s; isolated developer session: %s", sourceDir, currentProfile(), project)
 	}
@@ -524,9 +553,23 @@ func cmdDev(args []string) int {
 		// Before the first sync, so a config edit ships with it.
 		devWatchNotes = prepareDevWatchSource(sourceDir, !jsonOutput && !nonInteractive && stdinIsTTY() && stdoutIsTTY(), osStdin, osStdout)
 	}
-	session, err := upsertDevSession(client, project, config.sessionRequest(workspaceID, *withPostgres, *postgresRegion, lease, devWatch, buckets...))
+	session, err := upsertDevSession(client, project, withDevGoCommand(config.sessionRequest(workspaceID, *withPostgres, *postgresRegion, lease, devWatch, buckets...), *goCommand))
 	if err != nil {
 		return printErr("Could not create developer environment", err)
+	}
+	if session.GoCommand != *goCommand {
+		return printErr("Could not select the Go command", errDevGoCommandUnsupported(*goCommand))
+	}
+	if group != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		err := joinDevGroup(ctx, client, group, devGroupService(project), project, session.App.Slug, osStderr)
+		if err == nil {
+			setDevGroupServiceConfig(ctx, client, session.App.Slug, devGroupDepends(), osStderr)
+		}
+		cancel()
+		if err != nil {
+			return printErr("Could not connect to the other developer environments", err)
+		}
 	}
 	defer renderDevSessionExit(sourceDir, project, session.App.Slug, lease)
 	if code := applyDevDebugSetting(client, session.App.Slug, *debug); code != 0 {
@@ -751,7 +794,7 @@ func cmdDev(args []string) int {
 			if err != nil {
 				return err
 			}
-			refreshed, refreshErr := upsertDevSession(client, project, config.sessionRequest(workspaceID, *withPostgres, *postgresRegion, lease, devWatch, requests...))
+			refreshed, refreshErr := upsertDevSession(client, project, withDevGoCommand(config.sessionRequest(workspaceID, *withPostgres, *postgresRegion, lease, devWatch, requests...), *goCommand))
 			if refreshErr == nil {
 				session = refreshed
 			}

@@ -22,10 +22,7 @@ func TestMigrationInvocationAttemptHistoryUpgradeAndReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "attempt-history-migration", Type: state.AppTypeApp})
-	if err != nil {
-		t.Fatal(err)
-	}
+	app := seedHistoricalInvocationApp(t, ctx, pool, state.App{AccountID: account.ID, Slug: "attempt-history-migration", Type: state.AppTypeApp})
 	// Enqueue with the staged schema's own columns: today's EnqueueInvocation
 	// also reads later tables (scenario_test_action_policies, #4892).
 	var inv state.Invocation

@@ -100,9 +100,8 @@ def sync_detailed(
     Args:
         slug (str):
         body (CreateOrgAPIKeyRequest): POST /v1/orgs/{slug}/keys body. Mirrors `CreateKeyRequest`
-            (PR 6 keeps them in lockstep) — label + optional scopes. Empty `scopes` defaults to
-            `["admin"]` so existing callers preserve the legacy full-access behavior. See IAM-1,
-            ADR-034 rev2.
+            (keeps them in lockstep) — label + optional scopes. Empty `scopes` defaults to `["admin"]`
+            so existing callers preserve the legacy full-access behavior. rev2.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -140,9 +139,8 @@ def sync(
     Args:
         slug (str):
         body (CreateOrgAPIKeyRequest): POST /v1/orgs/{slug}/keys body. Mirrors `CreateKeyRequest`
-            (PR 6 keeps them in lockstep) — label + optional scopes. Empty `scopes` defaults to
-            `["admin"]` so existing callers preserve the legacy full-access behavior. See IAM-1,
-            ADR-034 rev2.
+            (keeps them in lockstep) — label + optional scopes. Empty `scopes` defaults to `["admin"]`
+            so existing callers preserve the legacy full-access behavior. rev2.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -175,9 +173,8 @@ async def asyncio_detailed(
     Args:
         slug (str):
         body (CreateOrgAPIKeyRequest): POST /v1/orgs/{slug}/keys body. Mirrors `CreateKeyRequest`
-            (PR 6 keeps them in lockstep) — label + optional scopes. Empty `scopes` defaults to
-            `["admin"]` so existing callers preserve the legacy full-access behavior. See IAM-1,
-            ADR-034 rev2.
+            (keeps them in lockstep) — label + optional scopes. Empty `scopes` defaults to `["admin"]`
+            so existing callers preserve the legacy full-access behavior. rev2.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -213,9 +210,8 @@ async def asyncio(
     Args:
         slug (str):
         body (CreateOrgAPIKeyRequest): POST /v1/orgs/{slug}/keys body. Mirrors `CreateKeyRequest`
-            (PR 6 keeps them in lockstep) — label + optional scopes. Empty `scopes` defaults to
-            `["admin"]` so existing callers preserve the legacy full-access behavior. See IAM-1,
-            ADR-034 rev2.
+            (keeps them in lockstep) — label + optional scopes. Empty `scopes` defaults to `["admin"]`
+            so existing callers preserve the legacy full-access behavior. rev2.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

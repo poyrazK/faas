@@ -13,7 +13,7 @@ import pg from 'pg'
 import { generateKeyPair, exportJWK, createLocalJWKSet, SignJWT } from 'jose'
 import { runtimeConfig, acceptedContracts, servingContracts, limits } from './config.mjs'
 import { createServer, tokenVerifier } from './server.mjs'
-import { checkPublicRelations, checkPublicFunctions } from './access.mjs'
+import { checkPublicRelations, checkPublicFunctions, loadRowSecurity } from './access.mjs'
 import { inspect, inspectBundle, generate, fingerprint } from './types.mjs'
 import { generateValidators, inputModel } from './type-render.mjs'
 
@@ -372,13 +372,15 @@ export async function run(options) {
     const config = runtimeConfig({ DATABASE_URL: connection.toString(), DATA_API_ISSUER: 'https://gregale-dev.invalid',
       DATA_API_JWKS_URL: 'https://gregale-dev.invalid/jwks', DATA_API_AUDIENCE: 'gregale-local-dev',
       DATA_API_ALLOWED_ORIGINS: 'http://localhost:5173,http://127.0.0.1:5173,http://localhost:3030,http://127.0.0.1:3030',
-      ...(project.publicRead ? { DATA_API_PUBLIC_READ: project.publicRead } : {}), ...(project.publicRpc ? { DATA_API_PUBLIC_RPC: project.publicRpc } : {}) })
+      ...(project.publicRead ? { DATA_API_PUBLIC_READ: project.publicRead } : {}), ...(project.publicRpc ? { DATA_API_PUBLIC_RPC: project.publicRpc } : {}),
+      ...(project.allowWithoutRls ? { DATA_API_ALLOW_WITHOUT_RLS: project.allowWithoutRls } : {}) })
     if (config.publicRead) {
       try { await checkPublicRelations(connection.toString(), config.publicRead) } catch (error) { throw new DevFailure(error.message) }
     }
     const bundle = await inspectBundle(connection.toString(), ['api'], { validators: true })
     config.snapshot = bundle.snapshot
     config.functions = config.snapshot.functions
+    config.rowSecurity = await loadRowSecurity(connection.toString(), ['api'])
     if (config.publicRpc) {
       try { await checkPublicFunctions(connection.toString(), config.publicRpc, config.functions) } catch (error) { throw new DevFailure(error.message) }
     }
@@ -413,7 +415,7 @@ export async function run(options) {
       res.writeHead(503, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
       res.end(JSON.stringify({ ready: false, code: 'local_schema_refresh_pending' }))
     })
-    await new Promise((resolve, reject) => { server.once('error', reject); server.listen(options.port, '127.0.0.1', resolve) })
+    await new Promise((resolve, reject) => { server.once('error', reject); server.listen(options.port, '127.0.0.1', resolve) }) // gregale:local-only — the local development server never takes gateway traffic
     const url = `http://127.0.0.1:${server.address().port}`
     for (;;) {
       controller.signal.throwIfAborted()
@@ -549,7 +551,7 @@ export async function run(options) {
       phase = 'schema introspection'
       const { snapshot, metadata } = await inspectBundle(connection.toString(), ['api'], { validators: true })
       controller.signal.throwIfAborted()
-      const nextConfig = { ...config, snapshot, functions: snapshot.functions, fingerprint: fingerprint(snapshot), acceptedContracts: await readPolicy() }
+      const nextConfig = { ...config, snapshot, functions: snapshot.functions, rowSecurity: await loadRowSecurity(connection.toString(), ['api']), fingerprint: fingerprint(snapshot), acceptedContracts: await readPolicy() }
       phase = 'accepted contracts'
       try { servingContracts(nextConfig) } catch { throw new DevFailure('Accepted contracts are stale; save a reviewed policy for the migrated schema. Types and the saved contract were preserved.') }
       phase = 'schema compatibility'
@@ -567,7 +569,7 @@ export async function run(options) {
       // handler on the public dev URL. The existing session's JWTs stay valid.
       const candidate = createServer(nextConfig, verify, upstreamPort, readyPort, () => {})
       try {
-        await new Promise((resolve, reject) => { candidate.once('error', reject); candidate.listen(0, '127.0.0.1', resolve) })
+        await new Promise((resolve, reject) => { candidate.once('error', reject); candidate.listen(0, '127.0.0.1', resolve) }) // gregale:local-only — probes a free local port for the development server
         await verifyProject(`http://127.0.0.1:${candidate.address().port}`, identities, project, AbortSignal.any([controller.signal, AbortSignal.timeout(30000)]))
       } finally { candidate.closeAllConnections(); await new Promise(resolve => candidate.close(resolve)) }
       controller.signal.throwIfAborted()

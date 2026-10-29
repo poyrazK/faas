@@ -207,6 +207,14 @@ The table predates ADR-1430's USD plans. **Before acceptance:**
    then everyone after the financial-model sign-off. Turning it back to `off`
    restores today's billing from the next rolled minute; already-rolled
    minutes stay as rolled.
+   (Amended 2026-10-28: "internal accounts first" needs a per-account switch,
+   and meterd's mode is fleet-wide. In `on` mode meterd subtracts paused
+   seconds only for the accounts the `quiet_pause_unbilled` platform flag
+   (ADR-1700) releases, off by default; it counts every other account's
+   paused seconds as in shadow mode and bills them in full, so
+   `FaasQuietPauseUnbilledExceedsMeasured` still sees the whole fleet. The
+   rollout is: mode `on`, then the flag to internal accounts or an org, then
+   to everyone.)
 3. **Customer surface.** Pricing page, usage views with paused seconds,
    `gregale usage`, the changelog: "billed while running requests, plus 2 s".
 
@@ -226,6 +234,14 @@ meterd's retention loop.
   `load_error`. Alert `FaasQuietPauseLedgerWriteErrors`.
 - `schedd_quiet_pause_ledger_watermark_seconds{node}`: Unix time of the newest
   recorded report. It stops moving while a node reports no VM.
+- `schedd_quiet_pause_measured_seconds_total{node}` (amended 2026-10-26):
+  the quiet-paused time vmmd measured, from the reports the ledger is built
+  from: each incarnation's completed pauses (`quiet_paused_ns_total`) plus
+  its open pause time. The alerts above only catch customers paying for
+  pause time. `FaasQuietPauseUnbilledExceedsMeasured` catches the other
+  direction: over 6 h, meterd's unbilled seconds (subtracted or shadow)
+  exceed the measured seconds by more than 5% plus 10 minutes, meaning the
+  ledger proves pauses that did not happen.
 
 Runbook: docs/runbooks/FaasQuietPauseBilling.md.
 

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { FaaSClient, QueuesService, ProjectsService } from '../src/index.js';
+import { FaaSClient, QueuesService, ProjectsService } from '../src/preview.js';
 
 test('organization queue clients preserve queue and project ownership paths', async (t) => {
   const requests: string[] = [];

@@ -97,8 +97,9 @@ docs/adr/
   never with host docker/buildkit. The VM boundary IS the resource cap and the sandbox.
 - **Cold boot must always work** (ADR-005): snapshots are cache, not truth. Snapshots are
   pinned to the Firecracker version that made them (`snapshots.fc_version`); on FC
-  upgrade they go stale and apps lazily re-snapshot via cold boot. Never make wake
-  depend on a snapshot existing.
+  upgrade they go stale and apps lazily re-snapshot via cold boot. They restore
+  only on a node whose CPU can carry them (`snapshots.cpu_template`/`cpu_model`,
+  ADR-20261024225612). Never make wake depend on a snapshot existing.
 - **Billing uses plan RAM + 8 MB per running second** (§4.7), not sampled RSS. Sampled
   RSS is telemetry only. Customers get predictable bills; the model's math depends on it.
 - **Builder slots**: 1 guaranteed (inside the 6 GB control-plane slice), 2nd opportunistic
@@ -150,6 +151,9 @@ Cron limits: Free 0 · Hobby 5/app 10/acct · Pro 20/app 50/acct · Scale 100/ap
   capability, operational, and recovery evidence is green.
 - Small PRs (reviewable in ~10 min). PR description names the milestone; architecture
   changes name an ADR. New quota/limit → add to `pkg/api/limits.go` + docs, never inline.
+- A GA customer feature also gets a journey in `tests/journeys` (black-box, CLI and
+  public URLs against a deployed Gregale; `scripts/e2e-journeys.sh`). To check the
+  deployed product end to end, run the suite instead of hand-testing on prod.
 - **Never push directly to `main`.** All changes land via a PR (squash-merge from a
   feature branch). Dependabot and humans alike; the
   `.github/workflows/no-direct-push.yml` guard fires on `push` events without an
@@ -186,6 +190,14 @@ Cron limits: Free 0 · Hobby 5/app 10/acct · Pro 20/app 50/acct · Scale 100/ap
   dirs that killed builds left in $TMPDIR) and ask before clearing the cache. `cmd/gregale`'s
   tests are split the same way: new CLI tests go in `package main_test` (they call `main.Run`
   and reach internals through `cmd/gregale/export_test.go`).
+- The shared GOCACHE stores a full copy of the dependency graph per toolchain, GOOS/GOARCH,
+  flag set and (without `-trimpath`) checkout directory. Every local compile uses the
+  Makefile's `GO_DEV_GOFLAGS` (`-trimpath`, no DWARF): make targets pass it, and `make go-env`
+  (once per machine, owner's call) makes it the default for bare `go`, gopls and
+  golangci-lint. Don't export `GOTOOLCHAIN` or `GOFLAGS` in a session; type-check Linux-only
+  code with `GOOS=linux GOARCH=amd64`, never the host arch. Find source files relative to
+  the package directory (go test's working directory) or with `e2etest.CallerDir`, not
+  `runtime.Caller(0)` (`make trimpath-check`).
 - Test fakes must not embed `state.Store`, `*state.MemStore` or `*state.PgStore`: Go generates
   a wrapper per promoted method for every such type (~3,000 for the concrete stores, ~80 MB of
   compiler memory each; this was most of apidserver's test-compile memory). Keep the store in a

@@ -1,6 +1,6 @@
 # ADR-1321 · Evidence-paced default rollouts
 
-- **Status:** proposed; n2 drill passed 2026-10-15 (see Rollout)
+- **Status:** accepted (shipped in PR 4872, 2026-10-18); n2 drill passed 2026-10-15 (see Rollout)
 - **Date:** 2026-10-14
 - **Amends:** [ADR-1446](1446-safe-releases-by-default.md) (default ladder and probe cadence), [ADR-122](122-safe-releases.md) (preset catalog)
 - **Follows:** [ADR-1447](1447-explained-rollout-decisions.md) decision records, [ADR-847](847-synthetic-route-probes.md) route probes

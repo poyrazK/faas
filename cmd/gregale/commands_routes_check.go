@@ -32,7 +32,7 @@ func cmdRoutesCheck(args []string) int {
 	})
 	id, idErr := uuid.Parse(*deployment)
 	if len(positional) != 1 || !validCLISlug(positional[0]) || idErr != nil || id.String() != *deployment || request.ExpectedRevision != nil && (*revision < 1 || *revision > api.RouteRequirementsMaxRevision) || (*format != "human" && *format != "markdown") || jsonOutput && *format != "human" {
-		return printErr("Invalid route check", errors.New("usage: gregale routes check <slug> --deployment ID [--expected-revision N] [--format human|markdown] [--out PATH] [--fail-on-requirements] [--json]"))
+		return printErr("Invalid route check", errors.New("usage: gregale api route check <slug> --deployment ID [--expected-revision N] [--format human|markdown] [--out PATH] [--fail-on-requirements] [--json]"))
 	}
 	client, err := authedClient()
 	if err != nil {

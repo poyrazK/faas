@@ -52,6 +52,8 @@ if installed != expected or len(expected) != 40:
     'source_sha': expected, 'installed_platform_sha': installed,
     'platform_evidence_source': 'root-owned release stamp'}, indent=2))
 PYPROVENANCE
+# Capability flags (ADR-20261023115741) must release what this run exercises.
+python3 scripts/ci/require-capabilities.py --api "${GREGALE_ACCEPTANCE_API_URL}" --token-env GREGALE_ACCEPTANCE_TOKEN continuous-profiling traffic-profiles route-requirements route-insights
 go build -o "${evidence}/profilefixtures" ./scripts/ci/profilefixtures
 timeout --signal=TERM --kill-after=10s 27m "${evidence}/profilefixtures" \
   -action provision -root "${repo_root}" -out "${evidence}"

@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "bc2e2f9db5f8983ad5094302bdcb8d0f85e15b7b32fda5aed585c058fc9fe5ed",
+      "revision": "465905067842384ca27b39c1238b8b89952ffef239c85156256b8f9936c486a6",
       "files": [
         "faas.rules.yml"
       ],
@@ -231,6 +231,19 @@
           }
         },
         {
+          "id": "080d9b9e3635f80c4fda67d51d42ed302dfc38c551c8b0fd978ed6ab41adaaf2",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_managed_postgres",
+          "rule_name": "FaasManagedPostgresFleetNearCeiling",
+          "definition": {
+            "expression_hash": "13e26168f16731e2354987f7773e086bea88db5fecd78e99eba7690d6da6a494",
+            "labels_hash": "aebc875004971cd9671458a8413ef6bb54bb80cfb52783c1087048a49eba3924",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "7520738bc8e6c9450f127cd6561ff88e92c13c51a9f80f91b4d126af656d70d9"
+          }
+        },
+        {
           "id": "086e7c67ac3a14748c6f9a30a32fddf8e627d5a7e4a7e485c58df751e354193d",
           "file_name": "faas.rules.yml",
           "group_name": "faas_live_queries",
@@ -322,6 +335,32 @@
           }
         },
         {
+          "id": "0a1b1b823808ff313ea00af247e1f291511066763e8434d38e9e4f90287ed014",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo_monthly_alerts",
+          "rule_name": "FaasMonthlyBuildSuccessBelowSLO",
+          "definition": {
+            "expression_hash": "47e73301a3b75a2ea8115ecbda73365dda201d24df5c8cfbcc52c7898da997d5",
+            "labels_hash": "461eb7cde2997c42abaad7d500aaaf2d1d11cca2d1b4eb53a19916fe92499406",
+            "for_seconds": 3600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "b128a10fcf84043ddebfc0d053c10b89430db827adb28097224766a689522331"
+          }
+        },
+        {
+          "id": "0af7f426ec89c59eb0ffc837ed024312e01f4bf8eb610abe5c9a8632dbc84f12",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_customer_observability",
+          "rule_name": "FaasObservabilityLoopItemsFailing",
+          "definition": {
+            "expression_hash": "1a659f1f931d289bab81a5d7579e727e7538569a01273f3843695da2c210f6f5",
+            "labels_hash": "baf3254f31226170fd41d129ca13fbeb71df85ea84878f43959023d5ed3bb091",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "35b641e4ae6f082ef8745c6ec9857a5f80ddccc5a44e44c9ce33e334dcf2ca28"
+          }
+        },
+        {
           "id": "0b9e7648617f58981a825324e9c5aa8ba2774494f76b6ebe1f9e63f98f303b0d",
           "file_name": "faas.rules.yml",
           "group_name": "faas_custom_domain_tls",
@@ -332,6 +371,32 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "1e7cd7b74155ae1213d6269eb4343d43adfbe498920163e93264a4ca5e65b382"
+          }
+        },
+        {
+          "id": "0ba8c7ec77e1ed966b1d94520f34214dab2ea758c7331a2999a0b3a9744c560f",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_postgres_activity",
+          "rule_name": "FaasPostgresDeadlocks",
+          "definition": {
+            "expression_hash": "fe157eb4a031af3c475fd15c6ec3445d4e584094e3fec9b1262ffc333b141131",
+            "labels_hash": "ad1d7b87d4da0bdbbbb264ee6ee088583e51ec1182d5ebce33b252e792dee280",
+            "for_seconds": 0,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "3450bacdbffe7630d706ac8ce3090fd4ead4c137520f167e1eabb975bb22f95a"
+          }
+        },
+        {
+          "id": "0baad221ea29185ddba869e8789b6e6672fd691b9e6bea998d39299fc40cb18d",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_release_guards",
+          "rule_name": "FaasDatabaseSwitchAborting",
+          "definition": {
+            "expression_hash": "e718ba9e275e54d808e639d0a816a4e0f29e7ca4d910ea7152b77a928d629902",
+            "labels_hash": "86866e174a130e6392cdda18722be4d225a38ec7274a4eb26b3b72af54b09e94",
+            "for_seconds": 0,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "a86fc1ce6750bcf5cb85a1df24a657e2e128585bc3b60c4e39a98152d1cca511"
           }
         },
         {
@@ -371,6 +436,19 @@
             "for_seconds": 0,
             "keep_firing_for_seconds": 0,
             "fingerprint": "e0e9c04ecc404de224fff813b2f48a621b9744a6bee90de8168aafbc6cd8fd04"
+          }
+        },
+        {
+          "id": "0e3a328ac1fdaaffda2280e40abd1379d839fb180e74ea71251c11eb9699c4d2",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo_monthly_alerts",
+          "rule_name": "FaasPrometheusRetentionBelowSLOWindow",
+          "definition": {
+            "expression_hash": "38b89752714f43de5c7da7d45da798b131695b53ae5f23883ddaf8ab808bdfd8",
+            "labels_hash": "1dc034792fbc040298ceb927d89cdc0a2f7f4200b53170f7201dd9119c13b1a0",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "63b54837b49b8f18b91d41173ad5d6edfc6b5594aab971e726c2c4cc070eb9b3"
           }
         },
         {
@@ -426,6 +504,19 @@
           }
         },
         {
+          "id": "113c4f4b12bb6ac8a435a2c9fa218d7cd21eb7958c7ad1ce9f3642947f5be2aa",
+          "file_name": "faas.rules.yml",
+          "group_name": "traffic_control",
+          "rule_name": "FaasTrafficControlRefusing",
+          "definition": {
+            "expression_hash": "7069ad84d272d7ea7bb52175bd9921dfab52291bcb93d31edce482c29a5504d6",
+            "labels_hash": "60373e62812920b85bb60b169077319dc9edb0fc44ca94614f134df62b7dcd76",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "c5596f37941efd8f65372684287fe02b7735c0f0605627eab55d813babff5207"
+          }
+        },
+        {
           "id": "115aa9bfa1ebbf2c6bf1173e11ec9b9a5a07f52fceac35b8a6ffd23198f29d73",
           "file_name": "faas.rules.yml",
           "group_name": "faas_slo",
@@ -462,6 +553,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "11ae0b6636df25dfc384e3b9f0e17ea5b35fb2dd5a1e772512670b62fd902948"
+          }
+        },
+        {
+          "id": "12548f1bb29d9c9fe6988a6fa13edc35f04a33120a17b8de9f80a7eb52b8edf6",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_edge_security",
+          "rule_name": "FaasEdgeChallengeKeyMismatch",
+          "definition": {
+            "expression_hash": "8c57ad3b4bef68ea0006c161bb7eedcf531aad3d947d539b031e668aa9d0692c",
+            "labels_hash": "81f6d62c24d6d1fc4f2c923f54346a53cfd0f3aa3324ba3a56455ec692bbea8f",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "fe273c8b255144f172eb696ff6dddcf1870fb68858a1c39d352c70a71cdefcf6"
           }
         },
         {
@@ -673,6 +777,19 @@
           }
         },
         {
+          "id": "1c20f5e28a1d67e35758c6d0930642ae864fb0f4675c7400b2321bd0c9a4af26",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_postgres_activity",
+          "rule_name": "FaasPostgresLockWaits",
+          "definition": {
+            "expression_hash": "2f0759249838a626e8596fbd060e4936b78ac24669ff54662abb410b66ace4ec",
+            "labels_hash": "ad1d7b87d4da0bdbbbb264ee6ee088583e51ec1182d5ebce33b252e792dee280",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "c378a9ca53e3ed9ea3d289ccb957a9bd09f9ae61957d4b28c35275e228e8df3d"
+          }
+        },
+        {
           "id": "1c35d83edeb2d241b2d221fca0a8570af86ba27443277c5ee10b6ed97b034e6c",
           "file_name": "faas.rules.yml",
           "group_name": "faas_tcp_ingress",
@@ -722,6 +839,32 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "50971d1feeaacfbe87c41f038f3e04704b3a066a48a1534994e54b8ce4dc75a1"
+          }
+        },
+        {
+          "id": "1d4094e692068733911167c4d8202cd123eed6a7fd5cf871849c7ada8fc0fce2",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_release_guards",
+          "rule_name": "FaasDatabaseSwitchFailed",
+          "definition": {
+            "expression_hash": "43f23059743854fc2a893692baebadc0c0f9fb26e9cab10e9433ce1626f87ecb",
+            "labels_hash": "86866e174a130e6392cdda18722be4d225a38ec7274a4eb26b3b72af54b09e94",
+            "for_seconds": 0,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "fd87e4e2ff2c5528acf1d096f1135659fe36e870254c07f711dfff85ba013f2e"
+          }
+        },
+        {
+          "id": "1d875f86556227e9770efa0dfeb747fd781280df3ed0837748d1c5e4e9bb312a",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_postgres_activity",
+          "rule_name": "FaasPostgresIdleInTransaction",
+          "definition": {
+            "expression_hash": "568f6c4dbdadaf4cef80271d6dfc94473371257424a659cae73131c37450ae09",
+            "labels_hash": "ad1d7b87d4da0bdbbbb264ee6ee088583e51ec1182d5ebce33b252e792dee280",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "14a0b727b1837c5bc5a4f9265c93b860bd757d6f14b9379a42582d93c025a7a3"
           }
         },
         {
@@ -829,6 +972,19 @@
           }
         },
         {
+          "id": "22de9b48f8bdc9ffe6436aebed64b8977c1b9387a6b6f8c4e96a5ff2845945c3",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_edge_security",
+          "rule_name": "FaasEdgeChallengeSolveRateLow",
+          "definition": {
+            "expression_hash": "7d5b9dc383729efd7f71252c2378cd8d1aca8b76846dc5801ffccdd9770ea6bd",
+            "labels_hash": "81f6d62c24d6d1fc4f2c923f54346a53cfd0f3aa3324ba3a56455ec692bbea8f",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "51d9454f8c2b806d23b3673beb2914d95ffc4368ccc7e130137100ff7d91b7d5"
+          }
+        },
+        {
           "id": "237e2fd2bc6b3e6e7044a170e0f99387a9a348d3dacc9115537eba15a67ac179",
           "file_name": "faas.rules.yml",
           "group_name": "faas_billing",
@@ -839,6 +995,19 @@
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "b7dc7607e15376f2f9d1b964ae54aa3f5e96ad0d2e3ec7a67100ff33f88cf7cf"
+          }
+        },
+        {
+          "id": "23855fe37023bde00615fd4c48e60bcb07b5c6d93e2e0b5ecccfc0e2b23bf3fa",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_cgroup_resources",
+          "rule_name": "FaasCgroupOOMKill",
+          "definition": {
+            "expression_hash": "5e207371a9bbbf8aa4b7f07bcf1bc47631966d60a5e56a1e85e777583f446e5b",
+            "labels_hash": "3a5794b022b9a8740eabbf14821cd46cfccaf6112ec1d8bba3a6dfb96e2d8c21",
+            "for_seconds": 0,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "483aef33ac2fa893d5a60d16ef149ce07b75ae53f9ae9cfac47c9b11d3e93301"
           }
         },
         {
@@ -865,6 +1034,19 @@
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "31f21d8ca2755f9142894319a26960dd63e206d59ed972cd6a5e6f31c864d89b"
+          }
+        },
+        {
+          "id": "246a1a5ccc7af3074c01d6cd56b6ca0b69196180a824c0b1e6160d804597ba51",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_cgroup_resources",
+          "rule_name": "FaasCgroupMetricsStale",
+          "definition": {
+            "expression_hash": "b5bdae44b18cf0bcabec5c8a5d545278ff0d404451d21debe6a7655c6014848a",
+            "labels_hash": "3a5794b022b9a8740eabbf14821cd46cfccaf6112ec1d8bba3a6dfb96e2d8c21",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "e3659272eb49c9f91452216a3649e4f0d3f852db79b77404d9cca6ace8ffd184"
           }
         },
         {
@@ -917,6 +1099,19 @@
             "for_seconds": 30,
             "keep_firing_for_seconds": 0,
             "fingerprint": "a2e610feac76d73c1dddd3af424defd7408817b0dbeac45646d54be96c950696"
+          }
+        },
+        {
+          "id": "266114bb70612bcfa97ad881ae97a35338d7e0311bb949ab30ea710e0816eb1f",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_event_routing",
+          "rule_name": "FaasDeadLetterSpike",
+          "definition": {
+            "expression_hash": "f029c6dfc7c7202496ed508810328c5adc1654e51dcc486728bbcd4fa0932e2c",
+            "labels_hash": "8d92fa3abf8327e6a2e6bd0951e37822c2cd542e636c1d3452dd0935be8344e7",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "f0725e87c917b90cebdf77a7e2a0dea5b3e89ffb47020af1264bd5b71de8a073"
           }
         },
         {
@@ -1206,6 +1401,19 @@
           }
         },
         {
+          "id": "357cd8dbc1e1d45640aec48313da04468ad2720b8c830a2ebd0db9a4f7f3ad89",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_release_guards",
+          "rule_name": "FaasReleaseWorkerErrors",
+          "definition": {
+            "expression_hash": "88b14f61c337125e8d08abf0e6affd4a1e3569f94690446d8c1a5fbc2aef7b4d",
+            "labels_hash": "86866e174a130e6392cdda18722be4d225a38ec7274a4eb26b3b72af54b09e94",
+            "for_seconds": 0,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "690c3fd8951a6a86304421fb7859ddced154ff533817df91173eb5786ef2f08c"
+          }
+        },
+        {
           "id": "35e8ca3883e785be1c5dd8ca480b080918a3593a40779530faa1d8cda8547b03",
           "file_name": "faas.rules.yml",
           "group_name": "faas_live_queries",
@@ -1216,6 +1424,19 @@
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "d87dea4784cf24d4b6ef67c81001f580c162451e51495877cd62cb3c99772a77"
+          }
+        },
+        {
+          "id": "3648c9342acc0b8f67120bf09ddb70bd80fd345d4c2677f1edb4d86e525176be",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_postgres_activity",
+          "rule_name": "FaasPostgresActivityMetricsStale",
+          "definition": {
+            "expression_hash": "e5d02959d8902f30b8ceabbe2835fe3f04840ac8e086bc4f32e263dadcadd4c6",
+            "labels_hash": "ad1d7b87d4da0bdbbbb264ee6ee088583e51ec1182d5ebce33b252e792dee280",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "2830f08e643c7a1a3fbea16edf1ad826f187d2a4c4dc89a704ccef4106ff847a"
           }
         },
         {
@@ -1271,6 +1492,32 @@
           }
         },
         {
+          "id": "38a765859332612e845547cad934f5862d3a6a5a551e081aac5c0b8c625702c7",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_postgres_activity",
+          "rule_name": "FaasPostgresActivityMetricsFailing",
+          "definition": {
+            "expression_hash": "11a29d54a3fb0028ac716ef16767f38832e1a20bfd66184772880dad6cea8ffc",
+            "labels_hash": "ad1d7b87d4da0bdbbbb264ee6ee088583e51ec1182d5ebce33b252e792dee280",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "8559bd718466abb054973edc0e5d4f5c93bf3fa95bec733bd82d1c65660d53ef"
+          }
+        },
+        {
+          "id": "38e5d8732c56ae02c6363f17dac4cf9df6b6ff3b960d1e1abca92eafc3eeb3a9",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_event_routing",
+          "rule_name": "FaasEventRoutingStalled",
+          "definition": {
+            "expression_hash": "fc9305c5bfaba005366d87af08ede1d041dd801235d42c04d2458af33cd3032b",
+            "labels_hash": "3d015be31b6c301db2daab827186f0210ef8cffc64c00e2e7908f062784d8bbf",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "89bfae90c6769e50f1d0d471833d6434b07e68fabb1f9a11c66ece9f5c4b7f0c"
+          }
+        },
+        {
           "id": "395c1d5f26a2c23506b955eceb182832a9c4256321532344999fb115745f564e",
           "file_name": "faas.rules.yml",
           "group_name": "faas_custom_domain_tls",
@@ -1294,6 +1541,32 @@
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "50564d05a7328c3a1ecca4817d0efeb3a17a4766352432fc4a7d9e4f858e299b"
+          }
+        },
+        {
+          "id": "39fc18b38c8a04f19cf103b019f9c86d41d25f864aed9fe8ca94d7ebf273e058",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_customer_observability",
+          "rule_name": "FaasObservabilityLoopDisabled",
+          "definition": {
+            "expression_hash": "6b5b921ae1999bfd7853d2172a9b98955beefc0833e2d6f1a1ebd46948f19203",
+            "labels_hash": "baf3254f31226170fd41d129ca13fbeb71df85ea84878f43959023d5ed3bb091",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "6fd0b5f56d97690302af220db019dd3c8c23743bb184e5caf40081a62274be23"
+          }
+        },
+        {
+          "id": "3a8777b2165c1c34f60c7ff0a3ed0da107ffd8190f9334c7667410ae96d395bc",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_spec12_operator_signals",
+          "rule_name": "FaasEdgeRuleListenerStale",
+          "definition": {
+            "expression_hash": "a0dfa2c61fa469173cd26eefa2234a3feba28a078ce1d656932c90390abb1a7a",
+            "labels_hash": "99b7144c59ed917d63f5f68b0216f33554d4f96bbf089fa84c8afec17ac96d0b",
+            "for_seconds": 120,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "4da65d2529728478f88e92a5bc5a694f441cb3d99e397cdd69d0037a11f98c71"
           }
         },
         {
@@ -1336,6 +1609,19 @@
           }
         },
         {
+          "id": "3c35553a077d6cad1c7b8f4535c1b8d98c26d748d805942176505b05d635a9d1",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo",
+          "rule_name": "FaasWorkflowDispatchSaturated",
+          "definition": {
+            "expression_hash": "1c09e9ffadb1545513145441d0001d3f9700fc6e8951f4e2b8f430148b7ea6f9",
+            "labels_hash": "bd698820875aef1f5c37af67b7c653e0d9f351d0aec34f66dedae6c62576b130",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "9575905ff61ab646ae2178f41a368184d93c152a3fd764594511c75fed04883f"
+          }
+        },
+        {
           "id": "3c4ce96154601b5909708c0aeee3edc9e10702de51ec755708d00dbb4e9cf4e9",
           "file_name": "faas.rules.yml",
           "group_name": "account_lifecycle",
@@ -1359,6 +1645,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "f86aac3e01bc9a3bee0807a3562d41dfaaaded8b316b0460d820055ba3571c57"
+          }
+        },
+        {
+          "id": "407f6baf1f2ab6ad157345e975e60e5fe40622cee27847b42c51fa65942e3845",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_customer_observability",
+          "rule_name": "FaasObservabilityLoopStalled",
+          "definition": {
+            "expression_hash": "9b4fa6451cd361e1712cd7b61a9ca09ab1d235e80f8c2530ebb475beace8d14a",
+            "labels_hash": "baf3254f31226170fd41d129ca13fbeb71df85ea84878f43959023d5ed3bb091",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "4a9b1465373a984298f31db4453c63e38a84baea31b71d2938f6dd94abea45d7"
           }
         },
         {
@@ -1424,6 +1723,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "d2917fc56191c34bdf63fc62a3f29261467a3b2920b67e12c0c0373c04c87ece"
+          }
+        },
+        {
+          "id": "419cde4ce2c8b70d36031477e1f51aedd032d65bfd95b6c0a636c7082d85395a",
+          "file_name": "faas.rules.yml",
+          "group_name": "account_lifecycle",
+          "rule_name": "FaasDunningDeletionBlocked",
+          "definition": {
+            "expression_hash": "ff147c5f7a71d293cc5308b084824a214e56888bb4be6e9e3f7b9122b61d0413",
+            "labels_hash": "23ebf5cc4d2c985efa81156f34d01ecd12bc76e8545d06b91e02d3ca2ce8d175",
+            "for_seconds": 7200,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "b092beee3328300ab3c80a7bb7ab6196af94415c6c8e9a68b1bdbfd227c33b0c"
           }
         },
         {
@@ -1674,6 +1986,19 @@
           }
         },
         {
+          "id": "4a4c5b491ddb2b7a19261814228fba7efdf4aa4eb2bef49f5835a4a72ef0053e",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_event_routing",
+          "rule_name": "FaasBrokerTriggerPollErrors",
+          "definition": {
+            "expression_hash": "6e19b49a473c00a1e4f16c917965a3778ec3122cb65dbca56e437b51ef1903eb",
+            "labels_hash": "8d92fa3abf8327e6a2e6bd0951e37822c2cd542e636c1d3452dd0935be8344e7",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "5726d0b4abbdc58dc98042994a546457f73b352bac262848bd3b021313f34986"
+          }
+        },
+        {
           "id": "4a61597ce45ec1843e212d556522f3e0a9a7d400d72e8f4cbd780b500ce2cd7f",
           "file_name": "faas.rules.yml",
           "group_name": "faas_tcp_tls",
@@ -1749,6 +2074,58 @@
             "for_seconds": 60,
             "keep_firing_for_seconds": 0,
             "fingerprint": "1c2a811fe74ae84537d87259750cad48cb4014f112b581f20d9b23af5e45c6c4"
+          }
+        },
+        {
+          "id": "4d90ef863c1fb511b18f2c4443084d89e3348f2410d7fbf463ea2982ebbef7c8",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_edge_security",
+          "rule_name": "FaasEdgeWAFChecksSkipped",
+          "definition": {
+            "expression_hash": "c6c5bde9ab07c6204d49ef583d0cc0f48bc9019510412d5e9e0061de5440e250",
+            "labels_hash": "81f6d62c24d6d1fc4f2c923f54346a53cfd0f3aa3324ba3a56455ec692bbea8f",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "f242856fc65b9ff8899c9afbdc3faf88c77938294d4dbdb18ec7711877da9cbd"
+          }
+        },
+        {
+          "id": "4df4f916d38088df6b37658fe9d32fffd8d8c58aaaf2055e920d7967181913e2",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_customer_observability",
+          "rule_name": "FaasAlertChannelDeliveriesFailing",
+          "definition": {
+            "expression_hash": "6f1e04dd3c8f0ec3cc7f1f0d9e38a83488c5b85428c35bea6b49e408bf3ddfef",
+            "labels_hash": "baf3254f31226170fd41d129ca13fbeb71df85ea84878f43959023d5ed3bb091",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "383fea51a75786c249973203e6aee5e475f08a380eba28623e0dca8af7d61c0d"
+          }
+        },
+        {
+          "id": "4e02a53ceda58cbd5e0847a74b10bb64aaaa1cc7b8df2f7775af8b21520c190d",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_managed_postgres",
+          "rule_name": "FaasManagedPostgresProductionApprovalExpired",
+          "definition": {
+            "expression_hash": "0882c78d2ee84c9b09b7802156c77a3a4a5f8b62721e9233f9c5edf57c51e058",
+            "labels_hash": "67c13b5fb00f6279ddb46a958a9810deb3a919aee6c88ba5227a582d4c4e14ec",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "82c352380d2beed8b7e89dd820612e8d504b22df0896296c0958b4bc550ab784"
+          }
+        },
+        {
+          "id": "4e6ef767d9d94021a6c4ea572eb6122c295ca5e1e85dc4fd3faee9a28f95c974",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_customer_observability",
+          "rule_name": "FaasLogLedgerWritesFailing",
+          "definition": {
+            "expression_hash": "edc10c8841d0c8d2dfd32e46178d560b804973ed4507e65ae990ce8a53426be3",
+            "labels_hash": "3f35dd22da4524e93ed2c88b1809063294c3f0ea82b542e94b30fe03c1f1053e",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "f0f77634d6e11d314c3578f851bcf5622f0de2b977067e1d34e26c87714536a0"
           }
         },
         {
@@ -2043,11 +2420,11 @@
           "group_name": "internal_mtls_lifecycle",
           "rule_name": "FaasInternalMTLSRenewalNeverCompleted",
           "definition": {
-            "expression_hash": "21d7d295a1ac7110e280553bc4a677200d34e9edee02d524bed60c2760f53da8",
+            "expression_hash": "02b55c4d9d8695ba1948e557f8a33166419cbd55fc24dcb9b9ba3882e2a92c52",
             "labels_hash": "7ecc832e031340dfa2bcf30c227a8e6eaec78d5ba1c8443f1d147ae81d92eb4c",
             "for_seconds": 900,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "d331f9c0962c73e451be158b82f83f055453dac565f6dcf4d06a7250c9946b6a"
+            "fingerprint": "5faeb9d79fb32083c4c2475049138cd526224ae9ab29169b18d4686cccd13eb0"
           }
         },
         {
@@ -2074,6 +2451,19 @@
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "79b697bb80e4f886cf0b1fef666c32d9a5d1c23ba5f5ce9c2878ecdda5fb2649"
+          }
+        },
+        {
+          "id": "5e3fe926fe2267938282e1a8126229da061a4e3946737ea763e8939b92e2ed59",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_spec12_operator_signals",
+          "rule_name": "FaasRouteWorkersFailing",
+          "definition": {
+            "expression_hash": "85344917c26ecf4589f8c625b78a37aecda998c38f84eb2c7ce7f9e050fca64a",
+            "labels_hash": "981b0c979bcdb87ca4841e0425796470df290a4a7da06fab5c6a3b84e90d58e7",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "c72cf35c46b19fc61a582e3d47f8b75f7a1f17a1441ef2fc1e6070e1de379054"
           }
         },
         {
@@ -2168,6 +2558,19 @@
           }
         },
         {
+          "id": "6413422dc51533a6a517f2cd8ede8cfe2e519b98240ef5d7be74cf4483285cdb",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_cgroup_resources",
+          "rule_name": "FaasCgroupMemoryNearLimit",
+          "definition": {
+            "expression_hash": "416aa68141a544903c03047f6b4289756ae8d0cb4011c15b3631551cdc0037bb",
+            "labels_hash": "3a5794b022b9a8740eabbf14821cd46cfccaf6112ec1d8bba3a6dfb96e2d8c21",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "a578933cc840de7bce75d6b02f92ed32f52e8e9427e7f5f073abf91d53c43f52"
+          }
+        },
+        {
           "id": "654d135dd10ccc396b19040a62c37719ee2da72d80f4331703c30ea815d8e389",
           "file_name": "faas.rules.yml",
           "group_name": "faas_billing",
@@ -2220,6 +2623,19 @@
           }
         },
         {
+          "id": "67430149137cabe8a5fc68031fa55146454ee34a6c7706e68b9bee834b3f11f3",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_edge_security",
+          "rule_name": "FaasEdgeAttackModeRefusingClients",
+          "definition": {
+            "expression_hash": "31ae2b4a08cb2aef44d6d0c9d16fc606cd5aba36a0297653ea66ce5e76ecf549",
+            "labels_hash": "81f6d62c24d6d1fc4f2c923f54346a53cfd0f3aa3324ba3a56455ec692bbea8f",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "6ce828845b8ed01715532c2abecbf3da7cbddf8bb0a23ec0a160d53511519a63"
+          }
+        },
+        {
           "id": "679f357803a69cbab3ebe4ffa1698f3d4c69c7e5de51f76d83eca91d7482ba05",
           "file_name": "faas.rules.yml",
           "group_name": "secret_unseals",
@@ -2269,6 +2685,19 @@
             "for_seconds": 0,
             "keep_firing_for_seconds": 0,
             "fingerprint": "89f2cd10a76dd9578d7962dcf47e4d79d0bb46feaf578db42c39f42a80f53bba"
+          }
+        },
+        {
+          "id": "68e58a4fe74dde8d431391de2024879285d3a38f0e605d54a296640b241e722a",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_spec12_operator_signals",
+          "rule_name": "FaasRouteInsightsStalled",
+          "definition": {
+            "expression_hash": "21b1758af54392c4816ca85ef33e27d7c64f33298a4ce335dc2f3c2694665e82",
+            "labels_hash": "981b0c979bcdb87ca4841e0425796470df290a4a7da06fab5c6a3b84e90d58e7",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "f3c914bea51d30e1e32537169a13b0979434eb1104472caf96a4645707ea3461"
           }
         },
         {
@@ -2373,6 +2802,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "c6839c306e630fa5e5d76e63f2bef8ab7966a7d7e20cdcddbab3bb574c8613be"
+          }
+        },
+        {
+          "id": "6ee6a4224989b1312cc052f32541c05887790d6178c821ea37e009afce233204",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo_monthly_alerts",
+          "rule_name": "FaasMonthlyWakeLatencyBelowSLO",
+          "definition": {
+            "expression_hash": "5f10096d1532eb32d365b21d5f91cb1f5306607bff67e26c2e80844c0ae672ac",
+            "labels_hash": "621938316a3d89aed6a08c69c5d78ea558f4911988abb2d469ec46f5fef1bcb2",
+            "for_seconds": 3600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "3a553b9f4f60e4603fcf0d1308b1b59500e7108366b2ef24db4c55dcb576bcef"
           }
         },
         {
@@ -2532,6 +2974,19 @@
           }
         },
         {
+          "id": "775d73d97db569b620e8ebf77cbb607fded1d1a7863c5c68eb02c028a8d55c87",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_spec12_operator_signals",
+          "rule_name": "FaasEdgeRuleConvergenceStuck",
+          "definition": {
+            "expression_hash": "2e775ff3da48d144463f86fc4bd28858ca7e2a7c1f1c276fcfa9f08b13af1be0",
+            "labels_hash": "99b7144c59ed917d63f5f68b0216f33554d4f96bbf089fa84c8afec17ac96d0b",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "46d37d170ecfc72209668c733ffbd15f6d5bb88776928dc2a2002c81b878490b"
+          }
+        },
+        {
           "id": "777d9904e4ed2b3933d8539cfb2e0709967c89ec6afb0c2ea32116e2a1669aa4",
           "file_name": "faas.rules.yml",
           "group_name": "faas_billing",
@@ -2555,6 +3010,32 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "4388e0018bdd2df9a98ff4c84280093a59f01ef8ee5b08f9154ab8dbe3f60563"
+          }
+        },
+        {
+          "id": "79d949d1b6de9fa6e2032b181fbf2a905efb1a60e621667adda2a74ddbe5cd52",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_customer_observability",
+          "rule_name": "FaasRuntimeLogForwardingFailing",
+          "definition": {
+            "expression_hash": "316a27d3add5f633cdb9f8536b5fe0878302c18781e7f7f3dedda69aa27762d2",
+            "labels_hash": "f70fa2db4f3083174add421ad4eaf60d1e9fd4f8e0a37294a1de1d15ea48e395",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "3004c7e1ca4d1d6ccce1137b875c6575fbd4ef068c26e4dc6aab5a2872ad2b82"
+          }
+        },
+        {
+          "id": "7a13ebc934110b57d4ce93c1e70bf4262595b7a2132e838d8ff9cbb4df6f4a2e",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_edge_security",
+          "rule_name": "FaasEdgeChallengeSolutionsRefused",
+          "definition": {
+            "expression_hash": "745b819c582bb1eb363e08932bccff52c6d170074bc73bc4816579fdd27cd7ae",
+            "labels_hash": "81f6d62c24d6d1fc4f2c923f54346a53cfd0f3aa3324ba3a56455ec692bbea8f",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "8ee13aa446ba8450c4c46e820814d72f7567a3b9be2f93d3663ef15fffc4b8f5"
           }
         },
         {
@@ -2610,6 +3091,19 @@
           }
         },
         {
+          "id": "7e121af3aae80ad2c7c53561ce32ee7a65a675ff0c1c7c908d54a529f67ebcb8",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_crons",
+          "rule_name": "FaasCronDeliveryLag",
+          "definition": {
+            "expression_hash": "e759a76dbe4e16a7d44981dfe082300df4bccde3cbcde99dcee638caf5701541",
+            "labels_hash": "c6f6d722b369e1acd2c5f2a3a80d2a32fd8f76a3cf9c7d4cb7d100b0ba163dc9",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "48ac53224915203806a2d20e5b6f167b73c10bb29d154872676a41aaeb03b4f0"
+          }
+        },
+        {
           "id": "7e646692586fafd8b7cae604b4e9df837bdd6383936bd8c1baca1d9491fbc7cc",
           "file_name": "faas.rules.yml",
           "group_name": "faas_frozen_tier",
@@ -2662,6 +3156,19 @@
           }
         },
         {
+          "id": "82a39c93b44fa41bc8589c6ca624b482983dc40c69acf5843f619f6cb598d6f5",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_serving_probe",
+          "rule_name": "FaasServingProbeStale",
+          "definition": {
+            "expression_hash": "660c047ad6da343c5f8fe7fdc1bdc37c23b702514e2581b85344f8ab3838bcc6",
+            "labels_hash": "fa056b255b4798a400d6f0378864aebc770dc0213287d254fbabace8a061ac2d",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "e267bbbd4cee94b8983d88bda97e1814007ad6a11e70b58cafe48156bad19634"
+          }
+        },
+        {
           "id": "82ad433c2fa9969ecea4471a17156d379c35914cfe5a8825d410db0fe1d3e714",
           "file_name": "faas.rules.yml",
           "group_name": "faas_spec12_operator_signals",
@@ -2685,6 +3192,32 @@
             "for_seconds": 0,
             "keep_firing_for_seconds": 0,
             "fingerprint": "6ada0bed2f044ce9a609cf74d929c1b178b94c90975e3de50b043d253b5d7ab4"
+          }
+        },
+        {
+          "id": "83929ec3daa4ec24b766394403c904722a027cd91e7d2abf7acb513340239fcb",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_edge_security",
+          "rule_name": "FaasEdgeWAFCheckErrors",
+          "definition": {
+            "expression_hash": "c46b36bb8334517d1a94c0cb246ef6a06395ff609d471b29ce7d2df17181f4d2",
+            "labels_hash": "81f6d62c24d6d1fc4f2c923f54346a53cfd0f3aa3324ba3a56455ec692bbea8f",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "c11a07ea549cc6c0d67858f811479874473c4156f7a946c313fecd3d58de40b8"
+          }
+        },
+        {
+          "id": "83a589bf403727525d49f03847dfbe87ea746d66da1032ff2d7d444176364167",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_release_guards",
+          "rule_name": "FaasReleaseApprovalNoticeDropped",
+          "definition": {
+            "expression_hash": "d725a2153b1b301ddf913ae9b0e6f039ac8b6bdd906bfac51436a7760474cc89",
+            "labels_hash": "e246cd75dfc4ee88c3bda00508aceda4b185f166de2cce1bbf6a68b0a7f6f48c",
+            "for_seconds": 0,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "aaa647512112b60d0cdc67b023e1e55b91b5eb3c30486714e36613bda43a4570"
           }
         },
         {
@@ -2771,11 +3304,11 @@
           "group_name": "faas_loki_pipeline",
           "rule_name": "FaasLokiShippingStalled",
           "definition": {
-            "expression_hash": "073d4bde9115e60ec0d9654622117f797d68a57d729f68289f5e6816ac731177",
+            "expression_hash": "09b549bb1d7f764c9bf012daef812ce5e65eefa66ba32aef3d384470717cad9f",
             "labels_hash": "5dc703aab6eca7efc60d593bba0a18ae10a7575d0a3b3de804ba4ce62ae00a55",
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "7671f8c2128ae15a676504b1f7a139837d26671a4430def8c868f952e61e77f3"
+            "fingerprint": "378b24927c85de567046a55870aa03a97f2c2e6fc94d4eebde7595091e075511"
           }
         },
         {
@@ -2815,6 +3348,32 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "36bb5cb6fe4c2a3ed74d5272199810d1c9cb35e67d4fab3f1ef799465b5ab125"
+          }
+        },
+        {
+          "id": "8bfe26b125b1a49edb2c484ff574d2a18658d4a1298578403f467771f6cfa6ef",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_crons",
+          "rule_name": "FaasCronDeliveryFailing",
+          "definition": {
+            "expression_hash": "9f1319a0088b203d62232954b1f15cc28576e25db6ca0ed62471d4d2bf4fc216",
+            "labels_hash": "c6f6d722b369e1acd2c5f2a3a80d2a32fd8f76a3cf9c7d4cb7d100b0ba163dc9",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "fea249b6589559f220c0ff2489545af686f104dd3c04f951c684bd263ba352a0"
+          }
+        },
+        {
+          "id": "8d724430bd68e186e372a4cab28086f17cdaf391d3b8ea128b764c2bd4abad1c",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_spec12_operator_signals",
+          "rule_name": "FaasEdgeRuleConvergenceFailing",
+          "definition": {
+            "expression_hash": "ef47128f6fc422a76b87f70b6b3145a4c176dea19179e5a5a2523543e2239334",
+            "labels_hash": "23fb7b45542e50c066943bb85c4da42622a4fdda95144dd5aad7ee04a07c3ca7",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "3746ebd01b5c6581effbc0fbe04f553535cc7eef952df4e0e9ca4a6667f05f22"
           }
         },
         {
@@ -2922,6 +3481,32 @@
           }
         },
         {
+          "id": "91b39944efd6e432f6ed22ef7a0987534f68f279e337a023b2f9d29762e84c90",
+          "file_name": "faas.rules.yml",
+          "group_name": "traffic_control",
+          "rule_name": "FaasPublicTrafficSecurityUnverified",
+          "definition": {
+            "expression_hash": "a1afa62654a1430b208152fa995382af0f0e79e075f41b7c80f8496761316107",
+            "labels_hash": "2be5390fadf61deaa3648684ba71595f86613bb38ce05166d9b68aae7e315970",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "78d53786410a3c6b120cdd581720081c23086f1cfd188c39ac8578541bf2cd02"
+          }
+        },
+        {
+          "id": "930534794f4cd55535337689ef8037ecd879daf961c432ac3374d52e3ee8b2ef",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo",
+          "rule_name": "FaasWorkflowDispatchLagHigh",
+          "definition": {
+            "expression_hash": "5a1a4c991ae2a1e2279b5daaf8fac0e3d025a029da7f2c957c6cbb90a29c926d",
+            "labels_hash": "bd698820875aef1f5c37af67b7c653e0d9f351d0aec34f66dedae6c62576b130",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "1482a12e5ab534366e2bda10611828a21c9f1ad86744b84362409a5aa5c01f83"
+          }
+        },
+        {
           "id": "93b09f55c5efa6fc047ccfea9897659453ce200dd84745cb8a81dd76810ef0b2",
           "file_name": "faas.rules.yml",
           "group_name": "faas_compute_metrics_discovery",
@@ -2971,6 +3556,19 @@
             "for_seconds": 120,
             "keep_firing_for_seconds": 0,
             "fingerprint": "9f1d77a3720fcf7ff5ca36466db4500043d1212b4bd0e54949c6577d1527703d"
+          }
+        },
+        {
+          "id": "94c416f56402ed09141c715001f4df3d694f4d1fa308567dbd8116079fc15014",
+          "file_name": "faas.rules.yml",
+          "group_name": "account_lifecycle",
+          "rule_name": "FaasAccountErasureDeferred",
+          "definition": {
+            "expression_hash": "8b3b6fc5ab4cc22639d47dca0f9404641f797bcd9996a7ff4c43992ecb53fd5e",
+            "labels_hash": "f3392919df92cd1c3432cfe126b0a72f5d3737ed445984697481afe2089fa583",
+            "for_seconds": 86400,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "3439558c5e9d89ade54ed8b84aa455aa911d0afb9174c41d2738a788f14be40a"
           }
         },
         {
@@ -3104,6 +3702,19 @@
           }
         },
         {
+          "id": "98f109bdc7365e1ff01cdbc14a1eff2c5e6c58ed3ac59183d74deddb7c19b1e3",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_event_routing",
+          "rule_name": "FaasEventsPublishingPaused",
+          "definition": {
+            "expression_hash": "bf45c93c48302b86e225110a9f9e99cdd21c67adf85f12c18095eeecb85efcb8",
+            "labels_hash": "f690b6bcc9958566832cedff57dee2c7d80561eb3ce511f218ee1ff578b3dd64",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "402c1801948aaccd30a5d88c5c0499605b62d559690ae75cd584cd9663389e7b"
+          }
+        },
+        {
           "id": "99f38bfe62ffd1cd644ad52646952c29a536e5299af678c8d6bd2d108b32ece5",
           "file_name": "faas.rules.yml",
           "group_name": "faas_slo",
@@ -3234,6 +3845,19 @@
           }
         },
         {
+          "id": "9e66490b352e5a3c67a0fc859ae8fa3e204c02c9e7db8814ab5f56d8781b270b",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo",
+          "rule_name": "FaasJobsQueueBacklog",
+          "definition": {
+            "expression_hash": "c2a2c4ca90187b6268ed32f962a1dd2c7ccd300e3c239f882c4bd0340b6f68e7",
+            "labels_hash": "afca7751813f48171410f68cb71a0e24679508dc9fc058bf10c50ac8e94fc6c8",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "a0c3f43af6d4db8829aa2bd6622ebfb68af8da74c97db1718a70bab2c95ac273"
+          }
+        },
+        {
           "id": "9e85ca3689c3afdfb562991d7efac4a57d27a56eaf5ab3a087edf7def195ff01",
           "file_name": "faas.rules.yml",
           "group_name": "faas_live_queries",
@@ -3338,6 +3962,19 @@
           }
         },
         {
+          "id": "a3d8ce29689a6d141c601006f0f22a9a1195cbee1de03f2ca1f47d8127054057",
+          "file_name": "faas.rules.yml",
+          "group_name": "traffic_control",
+          "rule_name": "FaasRateLimitCounterFallback",
+          "definition": {
+            "expression_hash": "386f2fbfd425e54e3a7982f2d0b2529d7a83b8c4ba375f9d9fb1d8607a7726f1",
+            "labels_hash": "a6477aeecbec5c8c74d8c9fc2f511927e138f72d8a7d44d5986821473d5fdcd2",
+            "for_seconds": 120,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "e4af46b3b283de8e9b3a43e322109826c7087f643100176dde4bf03d8c13e13f"
+          }
+        },
+        {
           "id": "a41f8026573f44aeb992ada204569354ba8358308060fa760a72a2cd367ed2ea",
           "file_name": "faas.rules.yml",
           "group_name": "faas_environment_git_sources",
@@ -3374,6 +4011,32 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "53b0e7aebdbc003bc25160b98e548b51f17b47cc31adb0e80eec5b3763c2351f"
+          }
+        },
+        {
+          "id": "a65863c263f85c62723d58ebea4874351b2744a898ff11a6428e6b9c7601f601",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_event_routing",
+          "rule_name": "FaasEventDeliveryCapacityBacklog",
+          "definition": {
+            "expression_hash": "0ec581ddfc98255298615b1fb0a16f42152a1d1852f19767b2b39b823fb26702",
+            "labels_hash": "8d92fa3abf8327e6a2e6bd0951e37822c2cd542e636c1d3452dd0935be8344e7",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "53e44c4206190771e4660bdec7705fbe094d1145ab063be57624efba839e57c7"
+          }
+        },
+        {
+          "id": "a8c21c40adc10c2b476ece5d3a3e6ee94da00171536cf5241c97601d52d0146b",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_serving_probe",
+          "rule_name": "FaasServingProbeFailing",
+          "definition": {
+            "expression_hash": "8c00cbe3211acc6680ab3eae976722a3bb5608a01fca0bfa81f78a15540ecfc7",
+            "labels_hash": "02d90d164a057294faf503ec80d720c5745d568f72415d22fa36e0d6e02c7bbb",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "d31773a9eca19bbbf68dc5819336b181564f0ec5169d17aa7e447ed77335281b"
           }
         },
         {
@@ -3481,16 +4144,42 @@
           }
         },
         {
+          "id": "acf23ef2f576326ff9091b640b8642de8676ba3baa3dbb13963a81234f651331",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_managed_postgres",
+          "rule_name": "FaasManagedPostgresFleetPaused",
+          "definition": {
+            "expression_hash": "89ac1eb910073716d151cd9e25b47ec64c28f75e0d272e75721511a7e7d298e6",
+            "labels_hash": "67c13b5fb00f6279ddb46a958a9810deb3a919aee6c88ba5227a582d4c4e14ec",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "d78c313c24d813f41e00286a968c3d8ea327245d11c3813b6fa561dc5e27c025"
+          }
+        },
+        {
+          "id": "ad3bbdef0e3ecb3698f623c30e1ecbd268d731c20f7886bd9e98f19ae519f22f",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_quiet_pause_billing",
+          "rule_name": "FaasQuietPauseUnbilledExceedsMeasured",
+          "definition": {
+            "expression_hash": "06bcd4086dc0446a1afa2c2e6124c3515fc6538a416a3bca991c33c26fd75f7e",
+            "labels_hash": "01d9c7fcd05a6fc8297b249442f23e318554c5ab472fe2ea652addd6347215b9",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "53189ab54b8a17257a8c5c2ec9cef7aa5f58c24642c5f4273ad123df2f4bef12"
+          }
+        },
+        {
           "id": "ad47bca5bed34cef63fe1f39d7430f45ea9b64bb4359be61f31785d9962a8066",
           "file_name": "faas.rules.yml",
           "group_name": "faas_spec12_operator_signals",
           "rule_name": "FaasEdgeRuleAuthCompileError",
           "definition": {
-            "expression_hash": "290329736dfce924d70c4859eb2fc01a64fe65cbfb8769dbdb09c76d022a9a32",
+            "expression_hash": "0b55a876379458bd32bb1ded507b47044007ee021968dc851a9d65b303739994",
             "labels_hash": "fa5c57ce80d514fd458acd000b9d3365197ce94cb6151282a11c45c9ef16de7d",
             "for_seconds": 60,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "91a144a1bb594c3c6d879e4b26bad47fe31d4609ab7b0091e4f3ada5f951f010"
+            "fingerprint": "181a567448f7a40ed868df8d3dc6dd788190f539b2b6546f41efc25994f3a554"
           }
         },
         {
@@ -3624,6 +4313,19 @@
           }
         },
         {
+          "id": "b3512cd3f3f9c73d504034a67e0de92eb915ec3a1a3b51c61dea3b6127c10b2c",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_spec12_operator_signals",
+          "rule_name": "FaasRouteInsightsFailing",
+          "definition": {
+            "expression_hash": "0862f843d6e63a5d1c748c26f6f0943f782b58cb504b978dd638d43d1d55a7da",
+            "labels_hash": "981b0c979bcdb87ca4841e0425796470df290a4a7da06fab5c6a3b84e90d58e7",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "cc838d2e28a4316ad1e392e93c2301c26a02e10f65563f18f46736c41c573974"
+          }
+        },
+        {
           "id": "b3801bf5a26c39c9da283065b77bdfa981a056db0c4e8d43e813ca43be319f59",
           "file_name": "faas.rules.yml",
           "group_name": "faas_host_resources",
@@ -3634,6 +4336,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "91e97809316377fadf7400f5404cc9933c4394255fc267138e5f9668a3072838"
+          }
+        },
+        {
+          "id": "b3dc61873e3d10d6b7adeb17ff5ddcda72ab82658a17845dedca39a71177e47b",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_hosted_mcp",
+          "rule_name": "FaasHostedMCPRestarting",
+          "definition": {
+            "expression_hash": "47a9fef33a94044a1fd5bcbe5cc1b5a92519593ab72edc261c62b42ec8332544",
+            "labels_hash": "784d73869cf62e54cb8ca9304e622e65d889cbd31445e4f1d0fac59e3ff8db0b",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "295d204c4e957a2ab49629fb3cb7a89453e4564fdf30ca32d8522331dcdeac19"
           }
         },
         {
@@ -3715,16 +4430,29 @@
           }
         },
         {
+          "id": "b9ad9b5ab94803bb62f4f55f05b82abd29b8bf05dc00a6f853d7ae4c76b5e1b1",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_edge_security",
+          "rule_name": "FaasEdgePenaltyShareFailing",
+          "definition": {
+            "expression_hash": "b0dd481a92e72fed7ff0ad0502a600dae18823278c46501276964dc022b403ee",
+            "labels_hash": "81f6d62c24d6d1fc4f2c923f54346a53cfd0f3aa3324ba3a56455ec692bbea8f",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "c6d17c94c5f42c1f3641f9b1ad396330442e571bf759e327ba845e6b65f54003"
+          }
+        },
+        {
           "id": "b9e10545c2a816ef8a5be14929da02ec58b14efe6410170a23f6e89af986991c",
           "file_name": "faas.rules.yml",
           "group_name": "faas_spec12_operator_signals",
           "rule_name": "FaasEdgeRuleCompileError",
           "definition": {
-            "expression_hash": "0e7c9d20b986467b54f87d029832be345cfc1016ef485c4bbf708cbb2908e57f",
+            "expression_hash": "a1f25a83b9a26a989ca0523d738ac978e71a7481ab96439c594137b5402f4b49",
             "labels_hash": "99b7144c59ed917d63f5f68b0216f33554d4f96bbf089fa84c8afec17ac96d0b",
             "for_seconds": 60,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "2f095cfcf08b9271ae6c5a9a7e878229841eac8dfe1f875238efdbacd5eff559"
+            "fingerprint": "251ac7638d8dfa28e52ce3c243bbea8d58cbd954df9127ea35908b6226581f0e"
           }
         },
         {
@@ -3793,6 +4521,32 @@
           }
         },
         {
+          "id": "be6229781963048f6d613c1585c8e78c061be9b5afa6ec30e5b5368d8b8e90b4",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_postgres_activity",
+          "rule_name": "FaasPostgresLongTransaction",
+          "definition": {
+            "expression_hash": "8d92f959b4a8d24fb8bb991c2a3d6000bb0a8198a9a9d3dcb8431ca764c1097f",
+            "labels_hash": "ad1d7b87d4da0bdbbbb264ee6ee088583e51ec1182d5ebce33b252e792dee280",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "ea55011beca2f6e7d5289374eba211952124b4ed11c4b6132bc8d2aae94d556c"
+          }
+        },
+        {
+          "id": "be9e7bdc5cae090df62d998d8c0b10f9c953f85e42545f49fec7ca8be266658d",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_edge_security",
+          "rule_name": "FaasEdgeWAFCheckSlow",
+          "definition": {
+            "expression_hash": "23f0fa3d0ccdd5c4347a48cfbbe3262794f977243832fb27c68618218e1753ea",
+            "labels_hash": "81f6d62c24d6d1fc4f2c923f54346a53cfd0f3aa3324ba3a56455ec692bbea8f",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "411ee19c21aab03a4ddb72909e919ed34a848c93ecd66cb8a895be18e3532e8b"
+          }
+        },
+        {
           "id": "bedec9b64868b70da0d737f16d3ceb29f7e7964ec801d95a71aadd5833daf11f",
           "file_name": "faas.rules.yml",
           "group_name": "faas_realtime_callbacks",
@@ -3855,6 +4609,19 @@
             "for_seconds": 120,
             "keep_firing_for_seconds": 0,
             "fingerprint": "7acd1ea2f3af65c9e3fd59ebfd75fe0e50697b3b8c8c17ac9db8c06926e853c1"
+          }
+        },
+        {
+          "id": "c0ab13a1249ba1ce732179550c474f5842a1ee8b876f75bcd22694646a43099a",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_spec12_operator_signals",
+          "rule_name": "GatewayRouteMetricsBudgetExhausted",
+          "definition": {
+            "expression_hash": "990de86d70974152b1cef4a3eb9c55df7ecaa2eb3833faf521e22484106144cd",
+            "labels_hash": "c7776338329c6d2afd364bbd6775f674bb4f181c18f37418d5622022af6ce069",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "8de2bb5d535db6acee89be0b6284d56b4ccaa250b87340a41e04e8513e86826f"
           }
         },
         {
@@ -3949,6 +4716,19 @@
           }
         },
         {
+          "id": "c798b8f79a536976e3c5698914721335ebaeced3a66cb278edfc6beefd7134a0",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_release_guards",
+          "rule_name": "FaasReleaseWorkerStalled",
+          "definition": {
+            "expression_hash": "9af0b398e6e70ec25d781cf251a4f35781f7cac5d737749f2a92397653a39131",
+            "labels_hash": "86866e174a130e6392cdda18722be4d225a38ec7274a4eb26b3b72af54b09e94",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "2ca214a6da2bc7b9247f17c77f2a3633d3643a11e2b4f54b22fa905b0748b072"
+          }
+        },
+        {
           "id": "c936f81b02df5cf17af53748281b3521df127279300262f3518ae9bdb76b83d7",
           "file_name": "faas.rules.yml",
           "group_name": "faas_slo",
@@ -3972,6 +4752,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "c506088edacce4653c90e7be11a30f003d5d77721241ff337a3632f1d505c7cc"
+          }
+        },
+        {
+          "id": "ca295c13ad0b4377cbf2748d05317832cfe52f5c3282f5c4122a0bbc7710bfb9",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_edge_security",
+          "rule_name": "FaasEdgeAttackModeActive",
+          "definition": {
+            "expression_hash": "357f5c464132522e097958254a1e8516a1b61086368c3085fa9d246edb03fc1a",
+            "labels_hash": "1b97d4cb4b91dd89e1352337671bffb4801f0c4a6603c855b18a2bb5501fe6cc",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "9435b25c116488ed036c81d42286a9dac2a53b3fbb4df2723217f5d268175beb"
           }
         },
         {
@@ -4105,6 +4898,19 @@
           }
         },
         {
+          "id": "d1145b4534b84afc782df3897af877a6d7cba6e60bf51f57b2bb0c098413cba1",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_spec12_operator_signals",
+          "rule_name": "FaasRouteMonitorLagging",
+          "definition": {
+            "expression_hash": "209f912245fb93db20edf3dde8ba9f977a9fe52aeaa00086d43b8fe283aa560d",
+            "labels_hash": "981b0c979bcdb87ca4841e0425796470df290a4a7da06fab5c6a3b84e90d58e7",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "8ed7e5b9fd1dc209fb31c22becde62a41c0217fb68f3ca050947e35891a0d7c5"
+          }
+        },
+        {
           "id": "d1b3c0e89a609b5ee536a8c1dd8cb08da3bda8fd67352a7ff66050a01cef578a",
           "file_name": "faas.rules.yml",
           "group_name": "faas_spec12_operator_signals",
@@ -4167,6 +4973,19 @@
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "bfaa19cc0e793444a0ebefb803bb265141b532687367d2345f865188a54d9302"
+          }
+        },
+        {
+          "id": "d2ae1a46b5acd47d7526bf575af58aa7d5b640ae8935c8b4a970f58817894552",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_managed_postgres",
+          "rule_name": "FaasManagedPostgresProductionApprovalExpiring",
+          "definition": {
+            "expression_hash": "60004d6d9e04a55d25d71a127e0561440912b89a73fe2c2a7f0ee0f24d91f440",
+            "labels_hash": "aebc875004971cd9671458a8413ef6bb54bb80cfb52783c1087048a49eba3924",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "4808dc02b2a798ccc15762b0e297fee208541ccc86c7dd4e4eb9c62b8c1477f2"
           }
         },
         {
@@ -4271,6 +5090,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "acbe5000ecce13b62bc82a15c3ad9e0bf9f9d05d047d8108736feed734eeecd5"
+          }
+        },
+        {
+          "id": "d94252d3af0d7f3604ed1eb6444bfdd8bb33066b18be496c57d0dc653c78cadd",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_edge_security",
+          "rule_name": "FaasEdgeCrawlerRangesStale",
+          "definition": {
+            "expression_hash": "399e4ef5a5917f32f24c7ed5ecd1f12c142a982e1764406adb32586727bd3dc9",
+            "labels_hash": "d4ea443cc2feb0adbebbc77b9a97c9caef0d7f92cf89481ec32bc68f276d7089",
+            "for_seconds": 3600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "ba1b0d035fc4535c18bf8791cbedc1366bf27e2c57208dc1bdd2611183c550ef"
           }
         },
         {
@@ -4456,6 +5288,19 @@
           }
         },
         {
+          "id": "e1b5c6adf94e113398c9f9788b00019a76d88f6e1d24efed477dac793e5f8208",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo",
+          "rule_name": "FaasPreviewJanitorFailing",
+          "definition": {
+            "expression_hash": "41f09844e5e9e84b2ba7bb99ae5c7d6db5d5ce6a3be20d2ff0b1ce8966003b58",
+            "labels_hash": "3e8f1abf189ddefe7476a7fb57ca855b26ea621af5929b196bc849c9138dfbf7",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "e8394590919ef0a4878f226ec14a7fb275f1c2fd8bc17aae3a5d8243931eccda"
+          }
+        },
+        {
           "id": "e1b7cf3814214e0fb4d9c3e2126bc211af128e0d203c00574635c090d37ac107",
           "file_name": "faas.rules.yml",
           "group_name": "faas_billing",
@@ -4492,6 +5337,32 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "dd67575797451e15745feaceabc6689f3ee8be32252ec5dcd178ef103b2f0470"
+          }
+        },
+        {
+          "id": "e2a571cd2e546b535170e899fa703b61c3c0b69364521b9bc46f10d0900fdbd0",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_edge_security",
+          "rule_name": "FaasEdgePenaltyShareSlow",
+          "definition": {
+            "expression_hash": "92ff4711b0c3f6d02273dd0bc7f4efbeef097ea25bffefacc44ce9d15bf41ba6",
+            "labels_hash": "81f6d62c24d6d1fc4f2c923f54346a53cfd0f3aa3324ba3a56455ec692bbea8f",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "9a9378791c58054f6a443b951c094f8ba253ae5bff0ac803aa0697f1746851e6"
+          }
+        },
+        {
+          "id": "e3244a5a4de9fd7724f2d964f569881b7999894666722e5fb7820e257ce0b97f",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_release_guards",
+          "rule_name": "FaasReleaseApprovalNoticesStalled",
+          "definition": {
+            "expression_hash": "ceab1fea0e745b125a3428d19cf10170417ddfa0ec5175435d518930d97de2ce",
+            "labels_hash": "e246cd75dfc4ee88c3bda00508aceda4b185f166de2cce1bbf6a68b0a7f6f48c",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "744073c67383564b71e50b1e5dca7b73ea152750d44824e0e95c2ac79d84c5bd"
           }
         },
         {
@@ -4583,6 +5454,19 @@
             "for_seconds": 900,
             "keep_firing_for_seconds": 0,
             "fingerprint": "68f201dc90e497e49d782370be16354da046223319203760b3c83c9056540ad4"
+          }
+        },
+        {
+          "id": "e4caf648dd2ea31e02a7da2edfecaa9a3660cef69b2f2bf25a23712bb28f5ebd",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_event_routing",
+          "rule_name": "FaasEventRoutingSweepSlow",
+          "definition": {
+            "expression_hash": "100d4af71259a3f376ab5e39d925572f15d3ff172b94b799d5164701df3fa611",
+            "labels_hash": "8d92fa3abf8327e6a2e6bd0951e37822c2cd542e636c1d3452dd0935be8344e7",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "430ddd622d058fe2d012eb436c620def65304e55863af2b068b3bea08bc7fa31"
           }
         },
         {
@@ -4687,6 +5571,19 @@
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "be0b3b0acb8e9bac0e6fc24048707034eb54eaf5ffb0e10bdd48d334aec124a8"
+          }
+        },
+        {
+          "id": "e8ed153f15f247670c3b0bc092a5638c390dc61312d8c25b8eef70d7074b0a75",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_hosted_mcp",
+          "rule_name": "FaasHostedMCPDown",
+          "definition": {
+            "expression_hash": "cf3a025a33d3a52f2ef3db7333257bcb8d684d30d1a84879c69340686d4c8c32",
+            "labels_hash": "784d73869cf62e54cb8ca9304e622e65d889cbd31445e4f1d0fac59e3ff8db0b",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "60f8c857195d84e8201cc1451d8dea66cb61dd2ce5eb0f77a0e889130bca6c6a"
           }
         },
         {
@@ -4885,6 +5782,32 @@
           }
         },
         {
+          "id": "f1a53d86d72453c2f063501c5cf287722183544cfe01662a43bfbc8bb76cc6b0",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_hosted_mcp",
+          "rule_name": "FaasHostedMCPConnectionsNearCapacity",
+          "definition": {
+            "expression_hash": "b89941f4bd2f817ba1a9ee719b90f304f79f7db0477f165a3efb9271ee98b47e",
+            "labels_hash": "7e98bbc44375db33a16bbbf4530a264744b84d41fec981ba33801de88580949a",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "121e8e71943f70cd5e27329f2241b770907aed43cb23e7a052e5bd6c297050dd"
+          }
+        },
+        {
+          "id": "f2a8899b4b6bad28266336874f117e1a5a29c7556338b40eff2f8b06b7fe9444",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_cgroup_resources",
+          "rule_name": "FaasPostgresCPUStalled",
+          "definition": {
+            "expression_hash": "ff28fff4a6cf8d9889eb10e447fe07ae2831de213a4d4ec2088ae1cfe63bcce0",
+            "labels_hash": "43b8eef5f3aa0b5d929816c1ffb9b5a7487c83c8e4390c7dd2081c129c08705f",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "a95047daf63127d23f329aedad9157f58b4664c1e6b7e624ebed529334e3447a"
+          }
+        },
+        {
           "id": "f2d944249d374dee58ac6164b3d09f1d10be94c451065d1384cb1246382a653e",
           "file_name": "faas.rules.yml",
           "group_name": "durable_background_workers",
@@ -4895,6 +5818,19 @@
             "for_seconds": 120,
             "keep_firing_for_seconds": 0,
             "fingerprint": "63e1f2d8228a33bafda729a938b27245196cf9d4e6f807e6c2be16da684b1c10"
+          }
+        },
+        {
+          "id": "f344f5fb3be9b07ab45cba2ed177593cc5c1e508581648ffbf6697a921fea4bd",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_managed_postgres",
+          "rule_name": "FaasManagedPostgresCapEnforcementStale",
+          "definition": {
+            "expression_hash": "d01baad675bd392ca10b54717a2773b878bb88ea92bb8b58806f3b46c768dd81",
+            "labels_hash": "aebc875004971cd9671458a8413ef6bb54bb80cfb52783c1087048a49eba3924",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "f9716386e56a30a139288a38d97c43349d1393f235013734d1feb5cb69115483"
           }
         },
         {
@@ -4921,6 +5857,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "71fcc2600aae612ae12291db354a0147f013b535c96f2e706e45546cc2d71d06"
+          }
+        },
+        {
+          "id": "f42e43140b73d53005f225bcee63fcd7992b6a34982dd4e4d8c40d170f75ba01",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_edge_security",
+          "rule_name": "FaasEdgePenaltyShareDropped",
+          "definition": {
+            "expression_hash": "0a0fdb6fc5b511c3d30f809b4bf410cc24d7af371ba90601aeb5dccb530b56d4",
+            "labels_hash": "81f6d62c24d6d1fc4f2c923f54346a53cfd0f3aa3324ba3a56455ec692bbea8f",
+            "for_seconds": 0,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "692482b1ccf494770fef72205bf0f341213b7f2d029d935b2e13b940905a188d"
           }
         },
         {
@@ -4981,11 +5930,11 @@
           "group_name": "faas_loki_pipeline",
           "rule_name": "FaasLokiShippingDropped",
           "definition": {
-            "expression_hash": "42c02556aad69a71c6050cf1861e9916d96660221c7952e316d3767dc1eb5e44",
+            "expression_hash": "c5d809f14c92e4e1d4984e0636bfa3a54ded8254511b6d507bcccd551411b6c4",
             "labels_hash": "5dc703aab6eca7efc60d593bba0a18ae10a7575d0a3b3de804ba4ce62ae00a55",
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "4b4d10d0b867c7206815f71e845b1b1d8ba2fc1572eb445b4f3c478f23cdb5a8"
+            "fingerprint": "54ac9a138926a4c1d83f65c602f65eb528559a1b4996d0884ac049cc5aa1950c"
           }
         },
         {
@@ -5028,6 +5977,32 @@
           }
         },
         {
+          "id": "fa7efc0e55d0af9d83d03a88e5525e355e8a95e6cdb290bb4e3adedd62a993ec",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo_monthly_alerts",
+          "rule_name": "FaasMonthlyApiAvailabilityBelowSLO",
+          "definition": {
+            "expression_hash": "6facb282c65149f1d721befe9a8f3a438fef646b6ea6cb5105732520a0a553b2",
+            "labels_hash": "621938316a3d89aed6a08c69c5d78ea558f4911988abb2d469ec46f5fef1bcb2",
+            "for_seconds": 3600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "fc146a17750a216d0f0927b2409ff73c2b042bc2957cea9ec4ff227258415b57"
+          }
+        },
+        {
+          "id": "fb1208b80da14e423b29de4fa123f15176256a01d1e701ee0fd2bbd90ed9e48b",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_postgres_activity",
+          "rule_name": "FaasPostgresCacheHitRatioLow",
+          "definition": {
+            "expression_hash": "7dae6d0bbe578f7184dfe396cb5d413e29e27b62d6c9e7aaf694c5a6199449c1",
+            "labels_hash": "ad1d7b87d4da0bdbbbb264ee6ee088583e51ec1182d5ebce33b252e792dee280",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "633e05349d99a695868787566c189d4648616e9de0dbd44f9b24d8ea7409ba24"
+          }
+        },
+        {
           "id": "fb4127f98d8cdf4cdf9e25fda31acfce08965cae428599cd1ab192302b9804dd",
           "file_name": "faas.rules.yml",
           "group_name": "faas_slo",
@@ -5038,6 +6013,19 @@
             "for_seconds": 120,
             "keep_firing_for_seconds": 0,
             "fingerprint": "b2e57576bc1640eab95550db2c78a9389a546b5945799d8c85b109ed6c7f1c0d"
+          }
+        },
+        {
+          "id": "fb536cf018f4effd892acecaab15d64957fadb3cf434bdfa3f02980ae5d8c509",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo_monthly_alerts",
+          "rule_name": "FaasMonthlyPlatformWakeGateMissed",
+          "definition": {
+            "expression_hash": "034814afda3158f992ced024913b54a509f20c5bebe3a8da897f8fae2bd5e914",
+            "labels_hash": "0d0630a2172e067754b38993a2a53c4516293d6514c12d1398ea28d97058328e",
+            "for_seconds": 3600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "05333d755e28e3052ff85e86b4c2c7173fb169773e244126166a0a5e4e8fae7b"
           }
         },
         {
@@ -5090,6 +6078,19 @@
             "for_seconds": 60,
             "keep_firing_for_seconds": 0,
             "fingerprint": "354fc8f56793bb7a3e9a6f04eb53cfe8f7e9863a6207b34bcc9874bcbdfedc6f"
+          }
+        },
+        {
+          "id": "fdbd5c1c9bd5bd4f13d4fc857f7dfd78321c26169758f15758276f4f91f88e55",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_spec12_operator_signals",
+          "rule_name": "FaasEdgeRuleLoadFailing",
+          "definition": {
+            "expression_hash": "b374d378f70a1c3076b44f5f25a75af3d8387716e7968161b8ece89d37ce6f36",
+            "labels_hash": "99b7144c59ed917d63f5f68b0216f33554d4f96bbf089fa84c8afec17ac96d0b",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "ba8f90200b61f91779f4904c633e0bf094b0e5b7e0e0618ee36a4d038c8f3fb9"
           }
         },
         {
@@ -5174,7 +6175,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "f0df019727c110d833615848fa0a3b478566f095ec1672abb840dd5163cedd74",
+      "revision": "3aefbb0e8fa2f3302aaa6a45b5468230bd721722256e0a3485657c752bdc5a61",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -5418,6 +6419,19 @@
           }
         },
         {
+          "id": "080d9b9e3635f80c4fda67d51d42ed302dfc38c551c8b0fd978ed6ab41adaaf2",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_managed_postgres",
+          "rule_name": "FaasManagedPostgresFleetNearCeiling",
+          "definition": {
+            "expression_hash": "13e26168f16731e2354987f7773e086bea88db5fecd78e99eba7690d6da6a494",
+            "labels_hash": "aebc875004971cd9671458a8413ef6bb54bb80cfb52783c1087048a49eba3924",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "7520738bc8e6c9450f127cd6561ff88e92c13c51a9f80f91b4d126af656d70d9"
+          }
+        },
+        {
           "id": "086e7c67ac3a14748c6f9a30a32fddf8e627d5a7e4a7e485c58df751e354193d",
           "file_name": "faas.rules.yml",
           "group_name": "faas_live_queries",
@@ -5509,6 +6523,32 @@
           }
         },
         {
+          "id": "0a1b1b823808ff313ea00af247e1f291511066763e8434d38e9e4f90287ed014",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo_monthly_alerts",
+          "rule_name": "FaasMonthlyBuildSuccessBelowSLO",
+          "definition": {
+            "expression_hash": "47e73301a3b75a2ea8115ecbda73365dda201d24df5c8cfbcc52c7898da997d5",
+            "labels_hash": "461eb7cde2997c42abaad7d500aaaf2d1d11cca2d1b4eb53a19916fe92499406",
+            "for_seconds": 3600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "b128a10fcf84043ddebfc0d053c10b89430db827adb28097224766a689522331"
+          }
+        },
+        {
+          "id": "0af7f426ec89c59eb0ffc837ed024312e01f4bf8eb610abe5c9a8632dbc84f12",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_customer_observability",
+          "rule_name": "FaasObservabilityLoopItemsFailing",
+          "definition": {
+            "expression_hash": "1a659f1f931d289bab81a5d7579e727e7538569a01273f3843695da2c210f6f5",
+            "labels_hash": "baf3254f31226170fd41d129ca13fbeb71df85ea84878f43959023d5ed3bb091",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "35b641e4ae6f082ef8745c6ec9857a5f80ddccc5a44e44c9ce33e334dcf2ca28"
+          }
+        },
+        {
           "id": "0b9e7648617f58981a825324e9c5aa8ba2774494f76b6ebe1f9e63f98f303b0d",
           "file_name": "faas.rules.yml",
           "group_name": "faas_custom_domain_tls",
@@ -5519,6 +6559,32 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "1e7cd7b74155ae1213d6269eb4343d43adfbe498920163e93264a4ca5e65b382"
+          }
+        },
+        {
+          "id": "0ba8c7ec77e1ed966b1d94520f34214dab2ea758c7331a2999a0b3a9744c560f",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_postgres_activity",
+          "rule_name": "FaasPostgresDeadlocks",
+          "definition": {
+            "expression_hash": "fe157eb4a031af3c475fd15c6ec3445d4e584094e3fec9b1262ffc333b141131",
+            "labels_hash": "ad1d7b87d4da0bdbbbb264ee6ee088583e51ec1182d5ebce33b252e792dee280",
+            "for_seconds": 0,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "3450bacdbffe7630d706ac8ce3090fd4ead4c137520f167e1eabb975bb22f95a"
+          }
+        },
+        {
+          "id": "0baad221ea29185ddba869e8789b6e6672fd691b9e6bea998d39299fc40cb18d",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_release_guards",
+          "rule_name": "FaasDatabaseSwitchAborting",
+          "definition": {
+            "expression_hash": "e718ba9e275e54d808e639d0a816a4e0f29e7ca4d910ea7152b77a928d629902",
+            "labels_hash": "86866e174a130e6392cdda18722be4d225a38ec7274a4eb26b3b72af54b09e94",
+            "for_seconds": 0,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "a86fc1ce6750bcf5cb85a1df24a657e2e128585bc3b60c4e39a98152d1cca511"
           }
         },
         {
@@ -5558,6 +6624,19 @@
             "for_seconds": 0,
             "keep_firing_for_seconds": 0,
             "fingerprint": "e0e9c04ecc404de224fff813b2f48a621b9744a6bee90de8168aafbc6cd8fd04"
+          }
+        },
+        {
+          "id": "0e3a328ac1fdaaffda2280e40abd1379d839fb180e74ea71251c11eb9699c4d2",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo_monthly_alerts",
+          "rule_name": "FaasPrometheusRetentionBelowSLOWindow",
+          "definition": {
+            "expression_hash": "38b89752714f43de5c7da7d45da798b131695b53ae5f23883ddaf8ab808bdfd8",
+            "labels_hash": "1dc034792fbc040298ceb927d89cdc0a2f7f4200b53170f7201dd9119c13b1a0",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "63b54837b49b8f18b91d41173ad5d6edfc6b5594aab971e726c2c4cc070eb9b3"
           }
         },
         {
@@ -5613,6 +6692,19 @@
           }
         },
         {
+          "id": "113c4f4b12bb6ac8a435a2c9fa218d7cd21eb7958c7ad1ce9f3642947f5be2aa",
+          "file_name": "faas.rules.yml",
+          "group_name": "traffic_control",
+          "rule_name": "FaasTrafficControlRefusing",
+          "definition": {
+            "expression_hash": "7069ad84d272d7ea7bb52175bd9921dfab52291bcb93d31edce482c29a5504d6",
+            "labels_hash": "60373e62812920b85bb60b169077319dc9edb0fc44ca94614f134df62b7dcd76",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "c5596f37941efd8f65372684287fe02b7735c0f0605627eab55d813babff5207"
+          }
+        },
+        {
           "id": "115aa9bfa1ebbf2c6bf1173e11ec9b9a5a07f52fceac35b8a6ffd23198f29d73",
           "file_name": "faas.rules.yml",
           "group_name": "faas_slo",
@@ -5649,6 +6741,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "11ae0b6636df25dfc384e3b9f0e17ea5b35fb2dd5a1e772512670b62fd902948"
+          }
+        },
+        {
+          "id": "12548f1bb29d9c9fe6988a6fa13edc35f04a33120a17b8de9f80a7eb52b8edf6",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_edge_security",
+          "rule_name": "FaasEdgeChallengeKeyMismatch",
+          "definition": {
+            "expression_hash": "8c57ad3b4bef68ea0006c161bb7eedcf531aad3d947d539b031e668aa9d0692c",
+            "labels_hash": "81f6d62c24d6d1fc4f2c923f54346a53cfd0f3aa3324ba3a56455ec692bbea8f",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "fe273c8b255144f172eb696ff6dddcf1870fb68858a1c39d352c70a71cdefcf6"
           }
         },
         {
@@ -5912,6 +7017,19 @@
           }
         },
         {
+          "id": "1c20f5e28a1d67e35758c6d0930642ae864fb0f4675c7400b2321bd0c9a4af26",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_postgres_activity",
+          "rule_name": "FaasPostgresLockWaits",
+          "definition": {
+            "expression_hash": "2f0759249838a626e8596fbd060e4936b78ac24669ff54662abb410b66ace4ec",
+            "labels_hash": "ad1d7b87d4da0bdbbbb264ee6ee088583e51ec1182d5ebce33b252e792dee280",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "c378a9ca53e3ed9ea3d289ccb957a9bd09f9ae61957d4b28c35275e228e8df3d"
+          }
+        },
+        {
           "id": "1c35d83edeb2d241b2d221fca0a8570af86ba27443277c5ee10b6ed97b034e6c",
           "file_name": "faas.rules.yml",
           "group_name": "faas_tcp_ingress",
@@ -5961,6 +7079,32 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "50971d1feeaacfbe87c41f038f3e04704b3a066a48a1534994e54b8ce4dc75a1"
+          }
+        },
+        {
+          "id": "1d4094e692068733911167c4d8202cd123eed6a7fd5cf871849c7ada8fc0fce2",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_release_guards",
+          "rule_name": "FaasDatabaseSwitchFailed",
+          "definition": {
+            "expression_hash": "43f23059743854fc2a893692baebadc0c0f9fb26e9cab10e9433ce1626f87ecb",
+            "labels_hash": "86866e174a130e6392cdda18722be4d225a38ec7274a4eb26b3b72af54b09e94",
+            "for_seconds": 0,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "fd87e4e2ff2c5528acf1d096f1135659fe36e870254c07f711dfff85ba013f2e"
+          }
+        },
+        {
+          "id": "1d875f86556227e9770efa0dfeb747fd781280df3ed0837748d1c5e4e9bb312a",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_postgres_activity",
+          "rule_name": "FaasPostgresIdleInTransaction",
+          "definition": {
+            "expression_hash": "568f6c4dbdadaf4cef80271d6dfc94473371257424a659cae73131c37450ae09",
+            "labels_hash": "ad1d7b87d4da0bdbbbb264ee6ee088583e51ec1182d5ebce33b252e792dee280",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "14a0b727b1837c5bc5a4f9265c93b860bd757d6f14b9379a42582d93c025a7a3"
           }
         },
         {
@@ -6081,6 +7225,19 @@
           }
         },
         {
+          "id": "22de9b48f8bdc9ffe6436aebed64b8977c1b9387a6b6f8c4e96a5ff2845945c3",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_edge_security",
+          "rule_name": "FaasEdgeChallengeSolveRateLow",
+          "definition": {
+            "expression_hash": "7d5b9dc383729efd7f71252c2378cd8d1aca8b76846dc5801ffccdd9770ea6bd",
+            "labels_hash": "81f6d62c24d6d1fc4f2c923f54346a53cfd0f3aa3324ba3a56455ec692bbea8f",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "51d9454f8c2b806d23b3673beb2914d95ffc4368ccc7e130137100ff7d91b7d5"
+          }
+        },
+        {
           "id": "237e2fd2bc6b3e6e7044a170e0f99387a9a348d3dacc9115537eba15a67ac179",
           "file_name": "faas.rules.yml",
           "group_name": "faas_billing",
@@ -6091,6 +7248,19 @@
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "b7dc7607e15376f2f9d1b964ae54aa3f5e96ad0d2e3ec7a67100ff33f88cf7cf"
+          }
+        },
+        {
+          "id": "23855fe37023bde00615fd4c48e60bcb07b5c6d93e2e0b5ecccfc0e2b23bf3fa",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_cgroup_resources",
+          "rule_name": "FaasCgroupOOMKill",
+          "definition": {
+            "expression_hash": "5e207371a9bbbf8aa4b7f07bcf1bc47631966d60a5e56a1e85e777583f446e5b",
+            "labels_hash": "3a5794b022b9a8740eabbf14821cd46cfccaf6112ec1d8bba3a6dfb96e2d8c21",
+            "for_seconds": 0,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "483aef33ac2fa893d5a60d16ef149ce07b75ae53f9ae9cfac47c9b11d3e93301"
           }
         },
         {
@@ -6117,6 +7287,19 @@
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "31f21d8ca2755f9142894319a26960dd63e206d59ed972cd6a5e6f31c864d89b"
+          }
+        },
+        {
+          "id": "246a1a5ccc7af3074c01d6cd56b6ca0b69196180a824c0b1e6160d804597ba51",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_cgroup_resources",
+          "rule_name": "FaasCgroupMetricsStale",
+          "definition": {
+            "expression_hash": "b5bdae44b18cf0bcabec5c8a5d545278ff0d404451d21debe6a7655c6014848a",
+            "labels_hash": "3a5794b022b9a8740eabbf14821cd46cfccaf6112ec1d8bba3a6dfb96e2d8c21",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "e3659272eb49c9f91452216a3649e4f0d3f852db79b77404d9cca6ace8ffd184"
           }
         },
         {
@@ -6169,6 +7352,19 @@
             "for_seconds": 30,
             "keep_firing_for_seconds": 0,
             "fingerprint": "a2e610feac76d73c1dddd3af424defd7408817b0dbeac45646d54be96c950696"
+          }
+        },
+        {
+          "id": "266114bb70612bcfa97ad881ae97a35338d7e0311bb949ab30ea710e0816eb1f",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_event_routing",
+          "rule_name": "FaasDeadLetterSpike",
+          "definition": {
+            "expression_hash": "f029c6dfc7c7202496ed508810328c5adc1654e51dcc486728bbcd4fa0932e2c",
+            "labels_hash": "8d92fa3abf8327e6a2e6bd0951e37822c2cd542e636c1d3452dd0935be8344e7",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "f0725e87c917b90cebdf77a7e2a0dea5b3e89ffb47020af1264bd5b71de8a073"
           }
         },
         {
@@ -6458,6 +7654,19 @@
           }
         },
         {
+          "id": "357cd8dbc1e1d45640aec48313da04468ad2720b8c830a2ebd0db9a4f7f3ad89",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_release_guards",
+          "rule_name": "FaasReleaseWorkerErrors",
+          "definition": {
+            "expression_hash": "88b14f61c337125e8d08abf0e6affd4a1e3569f94690446d8c1a5fbc2aef7b4d",
+            "labels_hash": "86866e174a130e6392cdda18722be4d225a38ec7274a4eb26b3b72af54b09e94",
+            "for_seconds": 0,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "690c3fd8951a6a86304421fb7859ddced154ff533817df91173eb5786ef2f08c"
+          }
+        },
+        {
           "id": "35e8ca3883e785be1c5dd8ca480b080918a3593a40779530faa1d8cda8547b03",
           "file_name": "faas.rules.yml",
           "group_name": "faas_live_queries",
@@ -6468,6 +7677,19 @@
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "d87dea4784cf24d4b6ef67c81001f580c162451e51495877cd62cb3c99772a77"
+          }
+        },
+        {
+          "id": "3648c9342acc0b8f67120bf09ddb70bd80fd345d4c2677f1edb4d86e525176be",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_postgres_activity",
+          "rule_name": "FaasPostgresActivityMetricsStale",
+          "definition": {
+            "expression_hash": "e5d02959d8902f30b8ceabbe2835fe3f04840ac8e086bc4f32e263dadcadd4c6",
+            "labels_hash": "ad1d7b87d4da0bdbbbb264ee6ee088583e51ec1182d5ebce33b252e792dee280",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "2830f08e643c7a1a3fbea16edf1ad826f187d2a4c4dc89a704ccef4106ff847a"
           }
         },
         {
@@ -6523,6 +7745,32 @@
           }
         },
         {
+          "id": "38a765859332612e845547cad934f5862d3a6a5a551e081aac5c0b8c625702c7",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_postgres_activity",
+          "rule_name": "FaasPostgresActivityMetricsFailing",
+          "definition": {
+            "expression_hash": "11a29d54a3fb0028ac716ef16767f38832e1a20bfd66184772880dad6cea8ffc",
+            "labels_hash": "ad1d7b87d4da0bdbbbb264ee6ee088583e51ec1182d5ebce33b252e792dee280",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "8559bd718466abb054973edc0e5d4f5c93bf3fa95bec733bd82d1c65660d53ef"
+          }
+        },
+        {
+          "id": "38e5d8732c56ae02c6363f17dac4cf9df6b6ff3b960d1e1abca92eafc3eeb3a9",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_event_routing",
+          "rule_name": "FaasEventRoutingStalled",
+          "definition": {
+            "expression_hash": "fc9305c5bfaba005366d87af08ede1d041dd801235d42c04d2458af33cd3032b",
+            "labels_hash": "3d015be31b6c301db2daab827186f0210ef8cffc64c00e2e7908f062784d8bbf",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "89bfae90c6769e50f1d0d471833d6434b07e68fabb1f9a11c66ece9f5c4b7f0c"
+          }
+        },
+        {
           "id": "395c1d5f26a2c23506b955eceb182832a9c4256321532344999fb115745f564e",
           "file_name": "faas.rules.yml",
           "group_name": "faas_custom_domain_tls",
@@ -6546,6 +7794,32 @@
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "50564d05a7328c3a1ecca4817d0efeb3a17a4766352432fc4a7d9e4f858e299b"
+          }
+        },
+        {
+          "id": "39fc18b38c8a04f19cf103b019f9c86d41d25f864aed9fe8ca94d7ebf273e058",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_customer_observability",
+          "rule_name": "FaasObservabilityLoopDisabled",
+          "definition": {
+            "expression_hash": "6b5b921ae1999bfd7853d2172a9b98955beefc0833e2d6f1a1ebd46948f19203",
+            "labels_hash": "baf3254f31226170fd41d129ca13fbeb71df85ea84878f43959023d5ed3bb091",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "6fd0b5f56d97690302af220db019dd3c8c23743bb184e5caf40081a62274be23"
+          }
+        },
+        {
+          "id": "3a8777b2165c1c34f60c7ff0a3ed0da107ffd8190f9334c7667410ae96d395bc",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_spec12_operator_signals",
+          "rule_name": "FaasEdgeRuleListenerStale",
+          "definition": {
+            "expression_hash": "a0dfa2c61fa469173cd26eefa2234a3feba28a078ce1d656932c90390abb1a7a",
+            "labels_hash": "99b7144c59ed917d63f5f68b0216f33554d4f96bbf089fa84c8afec17ac96d0b",
+            "for_seconds": 120,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "4da65d2529728478f88e92a5bc5a694f441cb3d99e397cdd69d0037a11f98c71"
           }
         },
         {
@@ -6588,6 +7862,19 @@
           }
         },
         {
+          "id": "3c35553a077d6cad1c7b8f4535c1b8d98c26d748d805942176505b05d635a9d1",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo",
+          "rule_name": "FaasWorkflowDispatchSaturated",
+          "definition": {
+            "expression_hash": "1c09e9ffadb1545513145441d0001d3f9700fc6e8951f4e2b8f430148b7ea6f9",
+            "labels_hash": "bd698820875aef1f5c37af67b7c653e0d9f351d0aec34f66dedae6c62576b130",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "9575905ff61ab646ae2178f41a368184d93c152a3fd764594511c75fed04883f"
+          }
+        },
+        {
           "id": "3c4ce96154601b5909708c0aeee3edc9e10702de51ec755708d00dbb4e9cf4e9",
           "file_name": "faas.rules.yml",
           "group_name": "account_lifecycle",
@@ -6611,6 +7898,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "f86aac3e01bc9a3bee0807a3562d41dfaaaded8b316b0460d820055ba3571c57"
+          }
+        },
+        {
+          "id": "407f6baf1f2ab6ad157345e975e60e5fe40622cee27847b42c51fa65942e3845",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_customer_observability",
+          "rule_name": "FaasObservabilityLoopStalled",
+          "definition": {
+            "expression_hash": "9b4fa6451cd361e1712cd7b61a9ca09ab1d235e80f8c2530ebb475beace8d14a",
+            "labels_hash": "baf3254f31226170fd41d129ca13fbeb71df85ea84878f43959023d5ed3bb091",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "4a9b1465373a984298f31db4453c63e38a84baea31b71d2938f6dd94abea45d7"
           }
         },
         {
@@ -6676,6 +7976,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "d2917fc56191c34bdf63fc62a3f29261467a3b2920b67e12c0c0373c04c87ece"
+          }
+        },
+        {
+          "id": "419cde4ce2c8b70d36031477e1f51aedd032d65bfd95b6c0a636c7082d85395a",
+          "file_name": "faas.rules.yml",
+          "group_name": "account_lifecycle",
+          "rule_name": "FaasDunningDeletionBlocked",
+          "definition": {
+            "expression_hash": "ff147c5f7a71d293cc5308b084824a214e56888bb4be6e9e3f7b9122b61d0413",
+            "labels_hash": "23ebf5cc4d2c985efa81156f34d01ecd12bc76e8545d06b91e02d3ca2ce8d175",
+            "for_seconds": 7200,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "b092beee3328300ab3c80a7bb7ab6196af94415c6c8e9a68b1bdbfd227c33b0c"
           }
         },
         {
@@ -6926,6 +8239,19 @@
           }
         },
         {
+          "id": "4a4c5b491ddb2b7a19261814228fba7efdf4aa4eb2bef49f5835a4a72ef0053e",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_event_routing",
+          "rule_name": "FaasBrokerTriggerPollErrors",
+          "definition": {
+            "expression_hash": "6e19b49a473c00a1e4f16c917965a3778ec3122cb65dbca56e437b51ef1903eb",
+            "labels_hash": "8d92fa3abf8327e6a2e6bd0951e37822c2cd542e636c1d3452dd0935be8344e7",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "5726d0b4abbdc58dc98042994a546457f73b352bac262848bd3b021313f34986"
+          }
+        },
+        {
           "id": "4a61597ce45ec1843e212d556522f3e0a9a7d400d72e8f4cbd780b500ce2cd7f",
           "file_name": "faas.rules.yml",
           "group_name": "faas_tcp_tls",
@@ -7001,6 +8327,58 @@
             "for_seconds": 60,
             "keep_firing_for_seconds": 0,
             "fingerprint": "1c2a811fe74ae84537d87259750cad48cb4014f112b581f20d9b23af5e45c6c4"
+          }
+        },
+        {
+          "id": "4d90ef863c1fb511b18f2c4443084d89e3348f2410d7fbf463ea2982ebbef7c8",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_edge_security",
+          "rule_name": "FaasEdgeWAFChecksSkipped",
+          "definition": {
+            "expression_hash": "c6c5bde9ab07c6204d49ef583d0cc0f48bc9019510412d5e9e0061de5440e250",
+            "labels_hash": "81f6d62c24d6d1fc4f2c923f54346a53cfd0f3aa3324ba3a56455ec692bbea8f",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "f242856fc65b9ff8899c9afbdc3faf88c77938294d4dbdb18ec7711877da9cbd"
+          }
+        },
+        {
+          "id": "4df4f916d38088df6b37658fe9d32fffd8d8c58aaaf2055e920d7967181913e2",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_customer_observability",
+          "rule_name": "FaasAlertChannelDeliveriesFailing",
+          "definition": {
+            "expression_hash": "6f1e04dd3c8f0ec3cc7f1f0d9e38a83488c5b85428c35bea6b49e408bf3ddfef",
+            "labels_hash": "baf3254f31226170fd41d129ca13fbeb71df85ea84878f43959023d5ed3bb091",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "383fea51a75786c249973203e6aee5e475f08a380eba28623e0dca8af7d61c0d"
+          }
+        },
+        {
+          "id": "4e02a53ceda58cbd5e0847a74b10bb64aaaa1cc7b8df2f7775af8b21520c190d",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_managed_postgres",
+          "rule_name": "FaasManagedPostgresProductionApprovalExpired",
+          "definition": {
+            "expression_hash": "0882c78d2ee84c9b09b7802156c77a3a4a5f8b62721e9233f9c5edf57c51e058",
+            "labels_hash": "67c13b5fb00f6279ddb46a958a9810deb3a919aee6c88ba5227a582d4c4e14ec",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "82c352380d2beed8b7e89dd820612e8d504b22df0896296c0958b4bc550ab784"
+          }
+        },
+        {
+          "id": "4e6ef767d9d94021a6c4ea572eb6122c295ca5e1e85dc4fd3faee9a28f95c974",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_customer_observability",
+          "rule_name": "FaasLogLedgerWritesFailing",
+          "definition": {
+            "expression_hash": "edc10c8841d0c8d2dfd32e46178d560b804973ed4507e65ae990ce8a53426be3",
+            "labels_hash": "3f35dd22da4524e93ed2c88b1809063294c3f0ea82b542e94b30fe03c1f1053e",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "f0f77634d6e11d314c3578f851bcf5622f0de2b977067e1d34e26c87714536a0"
           }
         },
         {
@@ -7321,11 +8699,11 @@
           "group_name": "internal_mtls_lifecycle",
           "rule_name": "FaasInternalMTLSRenewalNeverCompleted",
           "definition": {
-            "expression_hash": "21d7d295a1ac7110e280553bc4a677200d34e9edee02d524bed60c2760f53da8",
+            "expression_hash": "02b55c4d9d8695ba1948e557f8a33166419cbd55fc24dcb9b9ba3882e2a92c52",
             "labels_hash": "7ecc832e031340dfa2bcf30c227a8e6eaec78d5ba1c8443f1d147ae81d92eb4c",
             "for_seconds": 900,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "d331f9c0962c73e451be158b82f83f055453dac565f6dcf4d06a7250c9946b6a"
+            "fingerprint": "5faeb9d79fb32083c4c2475049138cd526224ae9ab29169b18d4686cccd13eb0"
           }
         },
         {
@@ -7352,6 +8730,19 @@
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "79b697bb80e4f886cf0b1fef666c32d9a5d1c23ba5f5ce9c2878ecdda5fb2649"
+          }
+        },
+        {
+          "id": "5e3fe926fe2267938282e1a8126229da061a4e3946737ea763e8939b92e2ed59",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_spec12_operator_signals",
+          "rule_name": "FaasRouteWorkersFailing",
+          "definition": {
+            "expression_hash": "85344917c26ecf4589f8c625b78a37aecda998c38f84eb2c7ce7f9e050fca64a",
+            "labels_hash": "981b0c979bcdb87ca4841e0425796470df290a4a7da06fab5c6a3b84e90d58e7",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "c72cf35c46b19fc61a582e3d47f8b75f7a1f17a1441ef2fc1e6070e1de379054"
           }
         },
         {
@@ -7446,6 +8837,19 @@
           }
         },
         {
+          "id": "6413422dc51533a6a517f2cd8ede8cfe2e519b98240ef5d7be74cf4483285cdb",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_cgroup_resources",
+          "rule_name": "FaasCgroupMemoryNearLimit",
+          "definition": {
+            "expression_hash": "416aa68141a544903c03047f6b4289756ae8d0cb4011c15b3631551cdc0037bb",
+            "labels_hash": "3a5794b022b9a8740eabbf14821cd46cfccaf6112ec1d8bba3a6dfb96e2d8c21",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "a578933cc840de7bce75d6b02f92ed32f52e8e9427e7f5f073abf91d53c43f52"
+          }
+        },
+        {
           "id": "654d135dd10ccc396b19040a62c37719ee2da72d80f4331703c30ea815d8e389",
           "file_name": "faas.rules.yml",
           "group_name": "faas_billing",
@@ -7498,6 +8902,19 @@
           }
         },
         {
+          "id": "67430149137cabe8a5fc68031fa55146454ee34a6c7706e68b9bee834b3f11f3",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_edge_security",
+          "rule_name": "FaasEdgeAttackModeRefusingClients",
+          "definition": {
+            "expression_hash": "31ae2b4a08cb2aef44d6d0c9d16fc606cd5aba36a0297653ea66ce5e76ecf549",
+            "labels_hash": "81f6d62c24d6d1fc4f2c923f54346a53cfd0f3aa3324ba3a56455ec692bbea8f",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "6ce828845b8ed01715532c2abecbf3da7cbddf8bb0a23ec0a160d53511519a63"
+          }
+        },
+        {
           "id": "679f357803a69cbab3ebe4ffa1698f3d4c69c7e5de51f76d83eca91d7482ba05",
           "file_name": "faas.rules.yml",
           "group_name": "secret_unseals",
@@ -7547,6 +8964,19 @@
             "for_seconds": 0,
             "keep_firing_for_seconds": 0,
             "fingerprint": "89f2cd10a76dd9578d7962dcf47e4d79d0bb46feaf578db42c39f42a80f53bba"
+          }
+        },
+        {
+          "id": "68e58a4fe74dde8d431391de2024879285d3a38f0e605d54a296640b241e722a",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_spec12_operator_signals",
+          "rule_name": "FaasRouteInsightsStalled",
+          "definition": {
+            "expression_hash": "21b1758af54392c4816ca85ef33e27d7c64f33298a4ce335dc2f3c2694665e82",
+            "labels_hash": "981b0c979bcdb87ca4841e0425796470df290a4a7da06fab5c6a3b84e90d58e7",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "f3c914bea51d30e1e32537169a13b0979434eb1104472caf96a4645707ea3461"
           }
         },
         {
@@ -7651,6 +9081,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "c6839c306e630fa5e5d76e63f2bef8ab7966a7d7e20cdcddbab3bb574c8613be"
+          }
+        },
+        {
+          "id": "6ee6a4224989b1312cc052f32541c05887790d6178c821ea37e009afce233204",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo_monthly_alerts",
+          "rule_name": "FaasMonthlyWakeLatencyBelowSLO",
+          "definition": {
+            "expression_hash": "5f10096d1532eb32d365b21d5f91cb1f5306607bff67e26c2e80844c0ae672ac",
+            "labels_hash": "621938316a3d89aed6a08c69c5d78ea558f4911988abb2d469ec46f5fef1bcb2",
+            "for_seconds": 3600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "3a553b9f4f60e4603fcf0d1308b1b59500e7108366b2ef24db4c55dcb576bcef"
           }
         },
         {
@@ -7823,6 +9266,19 @@
           }
         },
         {
+          "id": "775d73d97db569b620e8ebf77cbb607fded1d1a7863c5c68eb02c028a8d55c87",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_spec12_operator_signals",
+          "rule_name": "FaasEdgeRuleConvergenceStuck",
+          "definition": {
+            "expression_hash": "2e775ff3da48d144463f86fc4bd28858ca7e2a7c1f1c276fcfa9f08b13af1be0",
+            "labels_hash": "99b7144c59ed917d63f5f68b0216f33554d4f96bbf089fa84c8afec17ac96d0b",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "46d37d170ecfc72209668c733ffbd15f6d5bb88776928dc2a2002c81b878490b"
+          }
+        },
+        {
           "id": "777d9904e4ed2b3933d8539cfb2e0709967c89ec6afb0c2ea32116e2a1669aa4",
           "file_name": "faas.rules.yml",
           "group_name": "faas_billing",
@@ -7846,6 +9302,32 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "4388e0018bdd2df9a98ff4c84280093a59f01ef8ee5b08f9154ab8dbe3f60563"
+          }
+        },
+        {
+          "id": "79d949d1b6de9fa6e2032b181fbf2a905efb1a60e621667adda2a74ddbe5cd52",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_customer_observability",
+          "rule_name": "FaasRuntimeLogForwardingFailing",
+          "definition": {
+            "expression_hash": "316a27d3add5f633cdb9f8536b5fe0878302c18781e7f7f3dedda69aa27762d2",
+            "labels_hash": "f70fa2db4f3083174add421ad4eaf60d1e9fd4f8e0a37294a1de1d15ea48e395",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "3004c7e1ca4d1d6ccce1137b875c6575fbd4ef068c26e4dc6aab5a2872ad2b82"
+          }
+        },
+        {
+          "id": "7a13ebc934110b57d4ce93c1e70bf4262595b7a2132e838d8ff9cbb4df6f4a2e",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_edge_security",
+          "rule_name": "FaasEdgeChallengeSolutionsRefused",
+          "definition": {
+            "expression_hash": "745b819c582bb1eb363e08932bccff52c6d170074bc73bc4816579fdd27cd7ae",
+            "labels_hash": "81f6d62c24d6d1fc4f2c923f54346a53cfd0f3aa3324ba3a56455ec692bbea8f",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "8ee13aa446ba8450c4c46e820814d72f7567a3b9be2f93d3663ef15fffc4b8f5"
           }
         },
         {
@@ -7940,6 +9422,19 @@
           }
         },
         {
+          "id": "7e121af3aae80ad2c7c53561ce32ee7a65a675ff0c1c7c908d54a529f67ebcb8",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_crons",
+          "rule_name": "FaasCronDeliveryLag",
+          "definition": {
+            "expression_hash": "e759a76dbe4e16a7d44981dfe082300df4bccde3cbcde99dcee638caf5701541",
+            "labels_hash": "c6f6d722b369e1acd2c5f2a3a80d2a32fd8f76a3cf9c7d4cb7d100b0ba163dc9",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "48ac53224915203806a2d20e5b6f167b73c10bb29d154872676a41aaeb03b4f0"
+          }
+        },
+        {
           "id": "7e646692586fafd8b7cae604b4e9df837bdd6383936bd8c1baca1d9491fbc7cc",
           "file_name": "faas.rules.yml",
           "group_name": "faas_frozen_tier",
@@ -8005,6 +9500,19 @@
           }
         },
         {
+          "id": "82a39c93b44fa41bc8589c6ca624b482983dc40c69acf5843f619f6cb598d6f5",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_serving_probe",
+          "rule_name": "FaasServingProbeStale",
+          "definition": {
+            "expression_hash": "660c047ad6da343c5f8fe7fdc1bdc37c23b702514e2581b85344f8ab3838bcc6",
+            "labels_hash": "fa056b255b4798a400d6f0378864aebc770dc0213287d254fbabace8a061ac2d",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "e267bbbd4cee94b8983d88bda97e1814007ad6a11e70b58cafe48156bad19634"
+          }
+        },
+        {
           "id": "82ad433c2fa9969ecea4471a17156d379c35914cfe5a8825d410db0fe1d3e714",
           "file_name": "faas.rules.yml",
           "group_name": "faas_spec12_operator_signals",
@@ -8028,6 +9536,32 @@
             "for_seconds": 0,
             "keep_firing_for_seconds": 0,
             "fingerprint": "6ada0bed2f044ce9a609cf74d929c1b178b94c90975e3de50b043d253b5d7ab4"
+          }
+        },
+        {
+          "id": "83929ec3daa4ec24b766394403c904722a027cd91e7d2abf7acb513340239fcb",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_edge_security",
+          "rule_name": "FaasEdgeWAFCheckErrors",
+          "definition": {
+            "expression_hash": "c46b36bb8334517d1a94c0cb246ef6a06395ff609d471b29ce7d2df17181f4d2",
+            "labels_hash": "81f6d62c24d6d1fc4f2c923f54346a53cfd0f3aa3324ba3a56455ec692bbea8f",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "c11a07ea549cc6c0d67858f811479874473c4156f7a946c313fecd3d58de40b8"
+          }
+        },
+        {
+          "id": "83a589bf403727525d49f03847dfbe87ea746d66da1032ff2d7d444176364167",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_release_guards",
+          "rule_name": "FaasReleaseApprovalNoticeDropped",
+          "definition": {
+            "expression_hash": "d725a2153b1b301ddf913ae9b0e6f039ac8b6bdd906bfac51436a7760474cc89",
+            "labels_hash": "e246cd75dfc4ee88c3bda00508aceda4b185f166de2cce1bbf6a68b0a7f6f48c",
+            "for_seconds": 0,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "aaa647512112b60d0cdc67b023e1e55b91b5eb3c30486714e36613bda43a4570"
           }
         },
         {
@@ -8096,6 +9630,19 @@
           }
         },
         {
+          "id": "86710a05d7b9c2233f11d3660a1a516fc407d6c981e78b65c18ede14d7c8f1b6",
+          "file_name": "pg_backup.rules.yml",
+          "group_name": "faas.pg_backup",
+          "rule_name": "FaasAuditAnchorErased",
+          "definition": {
+            "expression_hash": "cf549bd932d3ceaf4a1af606cd554edf7c4c5f1d23967500441d40cd0ddd9945",
+            "labels_hash": "1c639ef5f8989fffb0e665ab839be0a4964efa3da01d1635ff9675fca5002ddd",
+            "for_seconds": 0,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "79cf123e6ea3f7c02a8582a57953d5e7aae31972a7799ef82e83d48b04be53c1"
+          }
+        },
+        {
           "id": "86f08e6f1a68395874addb6c22b1377ec78fa78b893a33ad0187c3d0a6036fb5",
           "file_name": "faas.rules.yml",
           "group_name": "faas_slo",
@@ -8114,11 +9661,11 @@
           "group_name": "faas_loki_pipeline",
           "rule_name": "FaasLokiShippingStalled",
           "definition": {
-            "expression_hash": "073d4bde9115e60ec0d9654622117f797d68a57d729f68289f5e6816ac731177",
+            "expression_hash": "09b549bb1d7f764c9bf012daef812ce5e65eefa66ba32aef3d384470717cad9f",
             "labels_hash": "5dc703aab6eca7efc60d593bba0a18ae10a7575d0a3b3de804ba4ce62ae00a55",
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "7671f8c2128ae15a676504b1f7a139837d26671a4430def8c868f952e61e77f3"
+            "fingerprint": "378b24927c85de567046a55870aa03a97f2c2e6fc94d4eebde7595091e075511"
           }
         },
         {
@@ -8158,6 +9705,32 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "36bb5cb6fe4c2a3ed74d5272199810d1c9cb35e67d4fab3f1ef799465b5ab125"
+          }
+        },
+        {
+          "id": "8bfe26b125b1a49edb2c484ff574d2a18658d4a1298578403f467771f6cfa6ef",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_crons",
+          "rule_name": "FaasCronDeliveryFailing",
+          "definition": {
+            "expression_hash": "9f1319a0088b203d62232954b1f15cc28576e25db6ca0ed62471d4d2bf4fc216",
+            "labels_hash": "c6f6d722b369e1acd2c5f2a3a80d2a32fd8f76a3cf9c7d4cb7d100b0ba163dc9",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "fea249b6589559f220c0ff2489545af686f104dd3c04f951c684bd263ba352a0"
+          }
+        },
+        {
+          "id": "8d724430bd68e186e372a4cab28086f17cdaf391d3b8ea128b764c2bd4abad1c",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_spec12_operator_signals",
+          "rule_name": "FaasEdgeRuleConvergenceFailing",
+          "definition": {
+            "expression_hash": "ef47128f6fc422a76b87f70b6b3145a4c176dea19179e5a5a2523543e2239334",
+            "labels_hash": "23fb7b45542e50c066943bb85c4da42622a4fdda95144dd5aad7ee04a07c3ca7",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "3746ebd01b5c6581effbc0fbe04f553535cc7eef952df4e0e9ca4a6667f05f22"
           }
         },
         {
@@ -8265,6 +9838,32 @@
           }
         },
         {
+          "id": "91b39944efd6e432f6ed22ef7a0987534f68f279e337a023b2f9d29762e84c90",
+          "file_name": "faas.rules.yml",
+          "group_name": "traffic_control",
+          "rule_name": "FaasPublicTrafficSecurityUnverified",
+          "definition": {
+            "expression_hash": "a1afa62654a1430b208152fa995382af0f0e79e075f41b7c80f8496761316107",
+            "labels_hash": "2be5390fadf61deaa3648684ba71595f86613bb38ce05166d9b68aae7e315970",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "78d53786410a3c6b120cdd581720081c23086f1cfd188c39ac8578541bf2cd02"
+          }
+        },
+        {
+          "id": "930534794f4cd55535337689ef8037ecd879daf961c432ac3374d52e3ee8b2ef",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo",
+          "rule_name": "FaasWorkflowDispatchLagHigh",
+          "definition": {
+            "expression_hash": "5a1a4c991ae2a1e2279b5daaf8fac0e3d025a029da7f2c957c6cbb90a29c926d",
+            "labels_hash": "bd698820875aef1f5c37af67b7c653e0d9f351d0aec34f66dedae6c62576b130",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "1482a12e5ab534366e2bda10611828a21c9f1ad86744b84362409a5aa5c01f83"
+          }
+        },
+        {
           "id": "93b09f55c5efa6fc047ccfea9897659453ce200dd84745cb8a81dd76810ef0b2",
           "file_name": "faas.rules.yml",
           "group_name": "faas_compute_metrics_discovery",
@@ -8314,6 +9913,19 @@
             "for_seconds": 120,
             "keep_firing_for_seconds": 0,
             "fingerprint": "9f1d77a3720fcf7ff5ca36466db4500043d1212b4bd0e54949c6577d1527703d"
+          }
+        },
+        {
+          "id": "94c416f56402ed09141c715001f4df3d694f4d1fa308567dbd8116079fc15014",
+          "file_name": "faas.rules.yml",
+          "group_name": "account_lifecycle",
+          "rule_name": "FaasAccountErasureDeferred",
+          "definition": {
+            "expression_hash": "8b3b6fc5ab4cc22639d47dca0f9404641f797bcd9996a7ff4c43992ecb53fd5e",
+            "labels_hash": "f3392919df92cd1c3432cfe126b0a72f5d3737ed445984697481afe2089fa583",
+            "for_seconds": 86400,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "3439558c5e9d89ade54ed8b84aa455aa911d0afb9174c41d2738a788f14be40a"
           }
         },
         {
@@ -8447,6 +10059,19 @@
           }
         },
         {
+          "id": "98f109bdc7365e1ff01cdbc14a1eff2c5e6c58ed3ac59183d74deddb7c19b1e3",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_event_routing",
+          "rule_name": "FaasEventsPublishingPaused",
+          "definition": {
+            "expression_hash": "bf45c93c48302b86e225110a9f9e99cdd21c67adf85f12c18095eeecb85efcb8",
+            "labels_hash": "f690b6bcc9958566832cedff57dee2c7d80561eb3ce511f218ee1ff578b3dd64",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "402c1801948aaccd30a5d88c5c0499605b62d559690ae75cd584cd9663389e7b"
+          }
+        },
+        {
           "id": "99f38bfe62ffd1cd644ad52646952c29a536e5299af678c8d6bd2d108b32ece5",
           "file_name": "faas.rules.yml",
           "group_name": "faas_slo",
@@ -8577,6 +10202,32 @@
           }
         },
         {
+          "id": "9e5296da7d2ce7c41aee9b7d25b7fa4aea34d532016014a7aee2939cb72f5916",
+          "file_name": "pg_backup.rules.yml",
+          "group_name": "faas.pg_backup",
+          "rule_name": "FaasAuditLogTampered",
+          "definition": {
+            "expression_hash": "3de52a7685f4285a3ce5b6cc8ea842766654741aba9a1e7d5c0d4438d0e12813",
+            "labels_hash": "1c639ef5f8989fffb0e665ab839be0a4964efa3da01d1635ff9675fca5002ddd",
+            "for_seconds": 0,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "b07e8102c6f9a2a77e832b4a954dc85944cb5de8c23801289c9280dc92bad464"
+          }
+        },
+        {
+          "id": "9e66490b352e5a3c67a0fc859ae8fa3e204c02c9e7db8814ab5f56d8781b270b",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo",
+          "rule_name": "FaasJobsQueueBacklog",
+          "definition": {
+            "expression_hash": "c2a2c4ca90187b6268ed32f962a1dd2c7ccd300e3c239f882c4bd0340b6f68e7",
+            "labels_hash": "afca7751813f48171410f68cb71a0e24679508dc9fc058bf10c50ac8e94fc6c8",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "a0c3f43af6d4db8829aa2bd6622ebfb68af8da74c97db1718a70bab2c95ac273"
+          }
+        },
+        {
           "id": "9e85ca3689c3afdfb562991d7efac4a57d27a56eaf5ab3a087edf7def195ff01",
           "file_name": "faas.rules.yml",
           "group_name": "faas_live_queries",
@@ -8681,6 +10332,19 @@
           }
         },
         {
+          "id": "a3d8ce29689a6d141c601006f0f22a9a1195cbee1de03f2ca1f47d8127054057",
+          "file_name": "faas.rules.yml",
+          "group_name": "traffic_control",
+          "rule_name": "FaasRateLimitCounterFallback",
+          "definition": {
+            "expression_hash": "386f2fbfd425e54e3a7982f2d0b2529d7a83b8c4ba375f9d9fb1d8607a7726f1",
+            "labels_hash": "a6477aeecbec5c8c74d8c9fc2f511927e138f72d8a7d44d5986821473d5fdcd2",
+            "for_seconds": 120,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "e4af46b3b283de8e9b3a43e322109826c7087f643100176dde4bf03d8c13e13f"
+          }
+        },
+        {
           "id": "a41f8026573f44aeb992ada204569354ba8358308060fa760a72a2cd367ed2ea",
           "file_name": "faas.rules.yml",
           "group_name": "faas_environment_git_sources",
@@ -8717,6 +10381,32 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "53b0e7aebdbc003bc25160b98e548b51f17b47cc31adb0e80eec5b3763c2351f"
+          }
+        },
+        {
+          "id": "a65863c263f85c62723d58ebea4874351b2744a898ff11a6428e6b9c7601f601",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_event_routing",
+          "rule_name": "FaasEventDeliveryCapacityBacklog",
+          "definition": {
+            "expression_hash": "0ec581ddfc98255298615b1fb0a16f42152a1d1852f19767b2b39b823fb26702",
+            "labels_hash": "8d92fa3abf8327e6a2e6bd0951e37822c2cd542e636c1d3452dd0935be8344e7",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "53e44c4206190771e4660bdec7705fbe094d1145ab063be57624efba839e57c7"
+          }
+        },
+        {
+          "id": "a8c21c40adc10c2b476ece5d3a3e6ee94da00171536cf5241c97601d52d0146b",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_serving_probe",
+          "rule_name": "FaasServingProbeFailing",
+          "definition": {
+            "expression_hash": "8c00cbe3211acc6680ab3eae976722a3bb5608a01fca0bfa81f78a15540ecfc7",
+            "labels_hash": "02d90d164a057294faf503ec80d720c5745d568f72415d22fa36e0d6e02c7bbb",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "d31773a9eca19bbbf68dc5819336b181564f0ec5169d17aa7e447ed77335281b"
           }
         },
         {
@@ -8837,16 +10527,42 @@
           }
         },
         {
+          "id": "acf23ef2f576326ff9091b640b8642de8676ba3baa3dbb13963a81234f651331",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_managed_postgres",
+          "rule_name": "FaasManagedPostgresFleetPaused",
+          "definition": {
+            "expression_hash": "89ac1eb910073716d151cd9e25b47ec64c28f75e0d272e75721511a7e7d298e6",
+            "labels_hash": "67c13b5fb00f6279ddb46a958a9810deb3a919aee6c88ba5227a582d4c4e14ec",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "d78c313c24d813f41e00286a968c3d8ea327245d11c3813b6fa561dc5e27c025"
+          }
+        },
+        {
+          "id": "ad3bbdef0e3ecb3698f623c30e1ecbd268d731c20f7886bd9e98f19ae519f22f",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_quiet_pause_billing",
+          "rule_name": "FaasQuietPauseUnbilledExceedsMeasured",
+          "definition": {
+            "expression_hash": "06bcd4086dc0446a1afa2c2e6124c3515fc6538a416a3bca991c33c26fd75f7e",
+            "labels_hash": "01d9c7fcd05a6fc8297b249442f23e318554c5ab472fe2ea652addd6347215b9",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "53189ab54b8a17257a8c5c2ec9cef7aa5f58c24642c5f4273ad123df2f4bef12"
+          }
+        },
+        {
           "id": "ad47bca5bed34cef63fe1f39d7430f45ea9b64bb4359be61f31785d9962a8066",
           "file_name": "faas.rules.yml",
           "group_name": "faas_spec12_operator_signals",
           "rule_name": "FaasEdgeRuleAuthCompileError",
           "definition": {
-            "expression_hash": "290329736dfce924d70c4859eb2fc01a64fe65cbfb8769dbdb09c76d022a9a32",
+            "expression_hash": "0b55a876379458bd32bb1ded507b47044007ee021968dc851a9d65b303739994",
             "labels_hash": "fa5c57ce80d514fd458acd000b9d3365197ce94cb6151282a11c45c9ef16de7d",
             "for_seconds": 60,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "91a144a1bb594c3c6d879e4b26bad47fe31d4609ab7b0091e4f3ada5f951f010"
+            "fingerprint": "181a567448f7a40ed868df8d3dc6dd788190f539b2b6546f41efc25994f3a554"
           }
         },
         {
@@ -8993,6 +10709,19 @@
           }
         },
         {
+          "id": "b3512cd3f3f9c73d504034a67e0de92eb915ec3a1a3b51c61dea3b6127c10b2c",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_spec12_operator_signals",
+          "rule_name": "FaasRouteInsightsFailing",
+          "definition": {
+            "expression_hash": "0862f843d6e63a5d1c748c26f6f0943f782b58cb504b978dd638d43d1d55a7da",
+            "labels_hash": "981b0c979bcdb87ca4841e0425796470df290a4a7da06fab5c6a3b84e90d58e7",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "cc838d2e28a4316ad1e392e93c2301c26a02e10f65563f18f46736c41c573974"
+          }
+        },
+        {
           "id": "b3801bf5a26c39c9da283065b77bdfa981a056db0c4e8d43e813ca43be319f59",
           "file_name": "faas.rules.yml",
           "group_name": "faas_host_resources",
@@ -9003,6 +10732,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "91e97809316377fadf7400f5404cc9933c4394255fc267138e5f9668a3072838"
+          }
+        },
+        {
+          "id": "b3dc61873e3d10d6b7adeb17ff5ddcda72ab82658a17845dedca39a71177e47b",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_hosted_mcp",
+          "rule_name": "FaasHostedMCPRestarting",
+          "definition": {
+            "expression_hash": "47a9fef33a94044a1fd5bcbe5cc1b5a92519593ab72edc261c62b42ec8332544",
+            "labels_hash": "784d73869cf62e54cb8ca9304e622e65d889cbd31445e4f1d0fac59e3ff8db0b",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "295d204c4e957a2ab49629fb3cb7a89453e4564fdf30ca32d8522331dcdeac19"
           }
         },
         {
@@ -9097,16 +10839,29 @@
           }
         },
         {
+          "id": "b9ad9b5ab94803bb62f4f55f05b82abd29b8bf05dc00a6f853d7ae4c76b5e1b1",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_edge_security",
+          "rule_name": "FaasEdgePenaltyShareFailing",
+          "definition": {
+            "expression_hash": "b0dd481a92e72fed7ff0ad0502a600dae18823278c46501276964dc022b403ee",
+            "labels_hash": "81f6d62c24d6d1fc4f2c923f54346a53cfd0f3aa3324ba3a56455ec692bbea8f",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "c6d17c94c5f42c1f3641f9b1ad396330442e571bf759e327ba845e6b65f54003"
+          }
+        },
+        {
           "id": "b9e10545c2a816ef8a5be14929da02ec58b14efe6410170a23f6e89af986991c",
           "file_name": "faas.rules.yml",
           "group_name": "faas_spec12_operator_signals",
           "rule_name": "FaasEdgeRuleCompileError",
           "definition": {
-            "expression_hash": "0e7c9d20b986467b54f87d029832be345cfc1016ef485c4bbf708cbb2908e57f",
+            "expression_hash": "a1f25a83b9a26a989ca0523d738ac978e71a7481ab96439c594137b5402f4b49",
             "labels_hash": "99b7144c59ed917d63f5f68b0216f33554d4f96bbf089fa84c8afec17ac96d0b",
             "for_seconds": 60,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "2f095cfcf08b9271ae6c5a9a7e878229841eac8dfe1f875238efdbacd5eff559"
+            "fingerprint": "251ac7638d8dfa28e52ce3c243bbea8d58cbd954df9127ea35908b6226581f0e"
           }
         },
         {
@@ -9172,6 +10927,32 @@
             "for_seconds": 21600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "15cbe176073f2b55782316c0ae7643bea7efef78d3463793a92ed0aa657f0848"
+          }
+        },
+        {
+          "id": "be6229781963048f6d613c1585c8e78c061be9b5afa6ec30e5b5368d8b8e90b4",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_postgres_activity",
+          "rule_name": "FaasPostgresLongTransaction",
+          "definition": {
+            "expression_hash": "8d92f959b4a8d24fb8bb991c2a3d6000bb0a8198a9a9d3dcb8431ca764c1097f",
+            "labels_hash": "ad1d7b87d4da0bdbbbb264ee6ee088583e51ec1182d5ebce33b252e792dee280",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "ea55011beca2f6e7d5289374eba211952124b4ed11c4b6132bc8d2aae94d556c"
+          }
+        },
+        {
+          "id": "be9e7bdc5cae090df62d998d8c0b10f9c953f85e42545f49fec7ca8be266658d",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_edge_security",
+          "rule_name": "FaasEdgeWAFCheckSlow",
+          "definition": {
+            "expression_hash": "23f0fa3d0ccdd5c4347a48cfbbe3262794f977243832fb27c68618218e1753ea",
+            "labels_hash": "81f6d62c24d6d1fc4f2c923f54346a53cfd0f3aa3324ba3a56455ec692bbea8f",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "411ee19c21aab03a4ddb72909e919ed34a848c93ecd66cb8a895be18e3532e8b"
           }
         },
         {
@@ -9250,6 +11031,19 @@
             "for_seconds": 120,
             "keep_firing_for_seconds": 0,
             "fingerprint": "7acd1ea2f3af65c9e3fd59ebfd75fe0e50697b3b8c8c17ac9db8c06926e853c1"
+          }
+        },
+        {
+          "id": "c0ab13a1249ba1ce732179550c474f5842a1ee8b876f75bcd22694646a43099a",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_spec12_operator_signals",
+          "rule_name": "GatewayRouteMetricsBudgetExhausted",
+          "definition": {
+            "expression_hash": "990de86d70974152b1cef4a3eb9c55df7ecaa2eb3833faf521e22484106144cd",
+            "labels_hash": "c7776338329c6d2afd364bbd6775f674bb4f181c18f37418d5622022af6ce069",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "8de2bb5d535db6acee89be0b6284d56b4ccaa250b87340a41e04e8513e86826f"
           }
         },
         {
@@ -9344,6 +11138,19 @@
           }
         },
         {
+          "id": "c798b8f79a536976e3c5698914721335ebaeced3a66cb278edfc6beefd7134a0",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_release_guards",
+          "rule_name": "FaasReleaseWorkerStalled",
+          "definition": {
+            "expression_hash": "9af0b398e6e70ec25d781cf251a4f35781f7cac5d737749f2a92397653a39131",
+            "labels_hash": "86866e174a130e6392cdda18722be4d225a38ec7274a4eb26b3b72af54b09e94",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "2ca214a6da2bc7b9247f17c77f2a3633d3643a11e2b4f54b22fa905b0748b072"
+          }
+        },
+        {
           "id": "c936f81b02df5cf17af53748281b3521df127279300262f3518ae9bdb76b83d7",
           "file_name": "faas.rules.yml",
           "group_name": "faas_slo",
@@ -9367,6 +11174,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "c506088edacce4653c90e7be11a30f003d5d77721241ff337a3632f1d505c7cc"
+          }
+        },
+        {
+          "id": "ca295c13ad0b4377cbf2748d05317832cfe52f5c3282f5c4122a0bbc7710bfb9",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_edge_security",
+          "rule_name": "FaasEdgeAttackModeActive",
+          "definition": {
+            "expression_hash": "357f5c464132522e097958254a1e8516a1b61086368c3085fa9d246edb03fc1a",
+            "labels_hash": "1b97d4cb4b91dd89e1352337671bffb4801f0c4a6603c855b18a2bb5501fe6cc",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "9435b25c116488ed036c81d42286a9dac2a53b3fbb4df2723217f5d268175beb"
           }
         },
         {
@@ -9500,6 +11320,19 @@
           }
         },
         {
+          "id": "d1145b4534b84afc782df3897af877a6d7cba6e60bf51f57b2bb0c098413cba1",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_spec12_operator_signals",
+          "rule_name": "FaasRouteMonitorLagging",
+          "definition": {
+            "expression_hash": "209f912245fb93db20edf3dde8ba9f977a9fe52aeaa00086d43b8fe283aa560d",
+            "labels_hash": "981b0c979bcdb87ca4841e0425796470df290a4a7da06fab5c6a3b84e90d58e7",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "8ed7e5b9fd1dc209fb31c22becde62a41c0217fb68f3ca050947e35891a0d7c5"
+          }
+        },
+        {
           "id": "d1b3c0e89a609b5ee536a8c1dd8cb08da3bda8fd67352a7ff66050a01cef578a",
           "file_name": "faas.rules.yml",
           "group_name": "faas_spec12_operator_signals",
@@ -9562,6 +11395,19 @@
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "bfaa19cc0e793444a0ebefb803bb265141b532687367d2345f865188a54d9302"
+          }
+        },
+        {
+          "id": "d2ae1a46b5acd47d7526bf575af58aa7d5b640ae8935c8b4a970f58817894552",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_managed_postgres",
+          "rule_name": "FaasManagedPostgresProductionApprovalExpiring",
+          "definition": {
+            "expression_hash": "60004d6d9e04a55d25d71a127e0561440912b89a73fe2c2a7f0ee0f24d91f440",
+            "labels_hash": "aebc875004971cd9671458a8413ef6bb54bb80cfb52783c1087048a49eba3924",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "4808dc02b2a798ccc15762b0e297fee208541ccc86c7dd4e4eb9c62b8c1477f2"
           }
         },
         {
@@ -9679,6 +11525,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "acbe5000ecce13b62bc82a15c3ad9e0bf9f9d05d047d8108736feed734eeecd5"
+          }
+        },
+        {
+          "id": "d94252d3af0d7f3604ed1eb6444bfdd8bb33066b18be496c57d0dc653c78cadd",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_edge_security",
+          "rule_name": "FaasEdgeCrawlerRangesStale",
+          "definition": {
+            "expression_hash": "399e4ef5a5917f32f24c7ed5ecd1f12c142a982e1764406adb32586727bd3dc9",
+            "labels_hash": "d4ea443cc2feb0adbebbc77b9a97c9caef0d7f92cf89481ec32bc68f276d7089",
+            "for_seconds": 3600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "ba1b0d035fc4535c18bf8791cbedc1366bf27e2c57208dc1bdd2611183c550ef"
           }
         },
         {
@@ -9864,6 +11723,19 @@
           }
         },
         {
+          "id": "e1b5c6adf94e113398c9f9788b00019a76d88f6e1d24efed477dac793e5f8208",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo",
+          "rule_name": "FaasPreviewJanitorFailing",
+          "definition": {
+            "expression_hash": "41f09844e5e9e84b2ba7bb99ae5c7d6db5d5ce6a3be20d2ff0b1ce8966003b58",
+            "labels_hash": "3e8f1abf189ddefe7476a7fb57ca855b26ea621af5929b196bc849c9138dfbf7",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "e8394590919ef0a4878f226ec14a7fb275f1c2fd8bc17aae3a5d8243931eccda"
+          }
+        },
+        {
           "id": "e1b7cf3814214e0fb4d9c3e2126bc211af128e0d203c00574635c090d37ac107",
           "file_name": "faas.rules.yml",
           "group_name": "faas_billing",
@@ -9900,6 +11772,32 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "dd67575797451e15745feaceabc6689f3ee8be32252ec5dcd178ef103b2f0470"
+          }
+        },
+        {
+          "id": "e2a571cd2e546b535170e899fa703b61c3c0b69364521b9bc46f10d0900fdbd0",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_edge_security",
+          "rule_name": "FaasEdgePenaltyShareSlow",
+          "definition": {
+            "expression_hash": "92ff4711b0c3f6d02273dd0bc7f4efbeef097ea25bffefacc44ce9d15bf41ba6",
+            "labels_hash": "81f6d62c24d6d1fc4f2c923f54346a53cfd0f3aa3324ba3a56455ec692bbea8f",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "9a9378791c58054f6a443b951c094f8ba253ae5bff0ac803aa0697f1746851e6"
+          }
+        },
+        {
+          "id": "e3244a5a4de9fd7724f2d964f569881b7999894666722e5fb7820e257ce0b97f",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_release_guards",
+          "rule_name": "FaasReleaseApprovalNoticesStalled",
+          "definition": {
+            "expression_hash": "ceab1fea0e745b125a3428d19cf10170417ddfa0ec5175435d518930d97de2ce",
+            "labels_hash": "e246cd75dfc4ee88c3bda00508aceda4b185f166de2cce1bbf6a68b0a7f6f48c",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "744073c67383564b71e50b1e5dca7b73ea152750d44824e0e95c2ac79d84c5bd"
           }
         },
         {
@@ -9991,6 +11889,19 @@
             "for_seconds": 900,
             "keep_firing_for_seconds": 0,
             "fingerprint": "68f201dc90e497e49d782370be16354da046223319203760b3c83c9056540ad4"
+          }
+        },
+        {
+          "id": "e4caf648dd2ea31e02a7da2edfecaa9a3660cef69b2f2bf25a23712bb28f5ebd",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_event_routing",
+          "rule_name": "FaasEventRoutingSweepSlow",
+          "definition": {
+            "expression_hash": "100d4af71259a3f376ab5e39d925572f15d3ff172b94b799d5164701df3fa611",
+            "labels_hash": "8d92fa3abf8327e6a2e6bd0951e37822c2cd542e636c1d3452dd0935be8344e7",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "430ddd622d058fe2d012eb436c620def65304e55863af2b068b3bea08bc7fa31"
           }
         },
         {
@@ -10095,6 +12006,19 @@
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "be0b3b0acb8e9bac0e6fc24048707034eb54eaf5ffb0e10bdd48d334aec124a8"
+          }
+        },
+        {
+          "id": "e8ed153f15f247670c3b0bc092a5638c390dc61312d8c25b8eef70d7074b0a75",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_hosted_mcp",
+          "rule_name": "FaasHostedMCPDown",
+          "definition": {
+            "expression_hash": "cf3a025a33d3a52f2ef3db7333257bcb8d684d30d1a84879c69340686d4c8c32",
+            "labels_hash": "784d73869cf62e54cb8ca9304e622e65d889cbd31445e4f1d0fac59e3ff8db0b",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "60f8c857195d84e8201cc1451d8dea66cb61dd2ce5eb0f77a0e889130bca6c6a"
           }
         },
         {
@@ -10306,6 +12230,45 @@
           }
         },
         {
+          "id": "f1a53d86d72453c2f063501c5cf287722183544cfe01662a43bfbc8bb76cc6b0",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_hosted_mcp",
+          "rule_name": "FaasHostedMCPConnectionsNearCapacity",
+          "definition": {
+            "expression_hash": "b89941f4bd2f817ba1a9ee719b90f304f79f7db0477f165a3efb9271ee98b47e",
+            "labels_hash": "7e98bbc44375db33a16bbbf4530a264744b84d41fec981ba33801de88580949a",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "121e8e71943f70cd5e27329f2241b770907aed43cb23e7a052e5bd6c297050dd"
+          }
+        },
+        {
+          "id": "f2606a25aaa231b811c0fa0b1233d9ffad25ea98b21b6c48b3b1cb275e0b21a0",
+          "file_name": "pg_backup.rules.yml",
+          "group_name": "faas.pg_backup",
+          "rule_name": "FaasAuditAnchorStale",
+          "definition": {
+            "expression_hash": "6e1903d2067e14c9c4ec7995d648fad68897aeb5c541a374874f1056b3905662",
+            "labels_hash": "de4d8008c49607d66212980df06f7093ed7b3e591cbb5e6b241ca6ace9a07deb",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "c516e60c5d42b7065beef02ad6fc057fe1dd10f06535c9011ab7ed1640ceb798"
+          }
+        },
+        {
+          "id": "f2a8899b4b6bad28266336874f117e1a5a29c7556338b40eff2f8b06b7fe9444",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_cgroup_resources",
+          "rule_name": "FaasPostgresCPUStalled",
+          "definition": {
+            "expression_hash": "ff28fff4a6cf8d9889eb10e447fe07ae2831de213a4d4ec2088ae1cfe63bcce0",
+            "labels_hash": "43b8eef5f3aa0b5d929816c1ffb9b5a7487c83c8e4390c7dd2081c129c08705f",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "a95047daf63127d23f329aedad9157f58b4664c1e6b7e624ebed529334e3447a"
+          }
+        },
+        {
           "id": "f2d944249d374dee58ac6164b3d09f1d10be94c451065d1384cb1246382a653e",
           "file_name": "faas.rules.yml",
           "group_name": "durable_background_workers",
@@ -10316,6 +12279,19 @@
             "for_seconds": 120,
             "keep_firing_for_seconds": 0,
             "fingerprint": "63e1f2d8228a33bafda729a938b27245196cf9d4e6f807e6c2be16da684b1c10"
+          }
+        },
+        {
+          "id": "f344f5fb3be9b07ab45cba2ed177593cc5c1e508581648ffbf6697a921fea4bd",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_managed_postgres",
+          "rule_name": "FaasManagedPostgresCapEnforcementStale",
+          "definition": {
+            "expression_hash": "d01baad675bd392ca10b54717a2773b878bb88ea92bb8b58806f3b46c768dd81",
+            "labels_hash": "aebc875004971cd9671458a8413ef6bb54bb80cfb52783c1087048a49eba3924",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "f9716386e56a30a139288a38d97c43349d1393f235013734d1feb5cb69115483"
           }
         },
         {
@@ -10342,6 +12318,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "71fcc2600aae612ae12291db354a0147f013b535c96f2e706e45546cc2d71d06"
+          }
+        },
+        {
+          "id": "f42e43140b73d53005f225bcee63fcd7992b6a34982dd4e4d8c40d170f75ba01",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_edge_security",
+          "rule_name": "FaasEdgePenaltyShareDropped",
+          "definition": {
+            "expression_hash": "0a0fdb6fc5b511c3d30f809b4bf410cc24d7af371ba90601aeb5dccb530b56d4",
+            "labels_hash": "81f6d62c24d6d1fc4f2c923f54346a53cfd0f3aa3324ba3a56455ec692bbea8f",
+            "for_seconds": 0,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "692482b1ccf494770fef72205bf0f341213b7f2d029d935b2e13b940905a188d"
           }
         },
         {
@@ -10402,11 +12391,11 @@
           "group_name": "faas_loki_pipeline",
           "rule_name": "FaasLokiShippingDropped",
           "definition": {
-            "expression_hash": "42c02556aad69a71c6050cf1861e9916d96660221c7952e316d3767dc1eb5e44",
+            "expression_hash": "c5d809f14c92e4e1d4984e0636bfa3a54ded8254511b6d507bcccd551411b6c4",
             "labels_hash": "5dc703aab6eca7efc60d593bba0a18ae10a7575d0a3b3de804ba4ce62ae00a55",
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "4b4d10d0b867c7206815f71e845b1b1d8ba2fc1572eb445b4f3c478f23cdb5a8"
+            "fingerprint": "54ac9a138926a4c1d83f65c602f65eb528559a1b4996d0884ac049cc5aa1950c"
           }
         },
         {
@@ -10462,6 +12451,32 @@
           }
         },
         {
+          "id": "fa7efc0e55d0af9d83d03a88e5525e355e8a95e6cdb290bb4e3adedd62a993ec",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo_monthly_alerts",
+          "rule_name": "FaasMonthlyApiAvailabilityBelowSLO",
+          "definition": {
+            "expression_hash": "6facb282c65149f1d721befe9a8f3a438fef646b6ea6cb5105732520a0a553b2",
+            "labels_hash": "621938316a3d89aed6a08c69c5d78ea558f4911988abb2d469ec46f5fef1bcb2",
+            "for_seconds": 3600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "fc146a17750a216d0f0927b2409ff73c2b042bc2957cea9ec4ff227258415b57"
+          }
+        },
+        {
+          "id": "fb1208b80da14e423b29de4fa123f15176256a01d1e701ee0fd2bbd90ed9e48b",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_postgres_activity",
+          "rule_name": "FaasPostgresCacheHitRatioLow",
+          "definition": {
+            "expression_hash": "7dae6d0bbe578f7184dfe396cb5d413e29e27b62d6c9e7aaf694c5a6199449c1",
+            "labels_hash": "ad1d7b87d4da0bdbbbb264ee6ee088583e51ec1182d5ebce33b252e792dee280",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "633e05349d99a695868787566c189d4648616e9de0dbd44f9b24d8ea7409ba24"
+          }
+        },
+        {
           "id": "fb4127f98d8cdf4cdf9e25fda31acfce08965cae428599cd1ab192302b9804dd",
           "file_name": "faas.rules.yml",
           "group_name": "faas_slo",
@@ -10472,6 +12487,19 @@
             "for_seconds": 120,
             "keep_firing_for_seconds": 0,
             "fingerprint": "b2e57576bc1640eab95550db2c78a9389a546b5945799d8c85b109ed6c7f1c0d"
+          }
+        },
+        {
+          "id": "fb536cf018f4effd892acecaab15d64957fadb3cf434bdfa3f02980ae5d8c509",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo_monthly_alerts",
+          "rule_name": "FaasMonthlyPlatformWakeGateMissed",
+          "definition": {
+            "expression_hash": "034814afda3158f992ced024913b54a509f20c5bebe3a8da897f8fae2bd5e914",
+            "labels_hash": "0d0630a2172e067754b38993a2a53c4516293d6514c12d1398ea28d97058328e",
+            "for_seconds": 3600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "05333d755e28e3052ff85e86b4c2c7173fb169773e244126166a0a5e4e8fae7b"
           }
         },
         {
@@ -10524,6 +12552,19 @@
             "for_seconds": 60,
             "keep_firing_for_seconds": 0,
             "fingerprint": "354fc8f56793bb7a3e9a6f04eb53cfe8f7e9863a6207b34bcc9874bcbdfedc6f"
+          }
+        },
+        {
+          "id": "fdbd5c1c9bd5bd4f13d4fc857f7dfd78321c26169758f15758276f4f91f88e55",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_spec12_operator_signals",
+          "rule_name": "FaasEdgeRuleLoadFailing",
+          "definition": {
+            "expression_hash": "b374d378f70a1c3076b44f5f25a75af3d8387716e7968161b8ece89d37ce6f36",
+            "labels_hash": "99b7144c59ed917d63f5f68b0216f33554d4f96bbf089fa84c8afec17ac96d0b",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "ba8f90200b61f91779f4904c633e0bf094b0e5b7e0e0618ee36a4d038c8f3fb9"
           }
         },
         {

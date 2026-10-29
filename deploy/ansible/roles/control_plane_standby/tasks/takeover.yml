@@ -35,6 +35,45 @@
       while the primary is up (make bootstrap-postgres-standby).
     quiet: true
 
+- name: control_plane_standby — load the control-plane state list
+  ansible.builtin.include_vars:
+    file: "{{ playbook_dir }}/vars/cp_state_files.yml"
+
+# A bundle restored from the off-host backup (cp_state_restore.yml) is
+# encrypted to the operator but not signed, so anyone who can write the
+# backup store can forge its index. The tasks below create users and install
+# files as root with the index's paths, owners and modes; only clean absolute
+# paths that the state list selects may reach them.
+- name: control_plane_standby — refuse staged paths outside the control-plane state list
+  ansible.builtin.assert:
+    that:
+      - control_plane_standby_unlisted | length == 0
+    fail_msg: >-
+      The staging index lists paths that are not control-plane state
+      (deploy/ansible/vars/cp_state_files.yml): {{ control_plane_standby_unlisted }}.
+      Refusing to install them as root.
+    quiet: true
+  vars:
+    control_plane_standby_unlisted: >-
+      {%- set files = faas_standby_sync_files + faas_standby_sync_extra_files -%}
+      {%- set trees = faas_standby_sync_trees -%}
+      {%- set parents = (trees + files) | map('dirname') | list -%}
+      {%- set ns = namespace(bad=[]) -%}
+      {%- for kind, entries in [('file', control_plane_standby_index.files), ('directory', control_plane_standby_index.directories)] -%}
+      {%- for e in entries -%}
+      {%- set p = e.path | string -%}
+      {%- set ok = namespace(v=false) -%}
+      {%- if p is match('^/') and p is not search('(^|/)\.\.?(/|$)|//|/$') -%}
+      {%- if kind == 'file' and p in files -%}{%- set ok.v = true -%}{%- endif -%}
+      {%- if kind == 'directory' and (p in trees or p in parents) -%}{%- set ok.v = true -%}{%- endif -%}
+      {%- for t in trees if p.startswith(t ~ '/') -%}{%- set ok.v = true -%}{%- endfor -%}
+      {%- for x in faas_standby_sync_exclude if p == x or p.startswith(x ~ '/') -%}{%- set ok.v = false -%}{%- endfor -%}
+      {%- endif -%}
+      {%- if not ok.v -%}{%- set ns.bad = ns.bad + [p] -%}{%- endif -%}
+      {%- endfor -%}
+      {%- endfor -%}
+      {{- ns.bad | join(', ') -}}
+
 - name: control_plane_standby — read local groups
   ansible.builtin.getent:
     database: group

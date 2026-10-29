@@ -60,6 +60,9 @@ func routeRemovalActor(w http.ResponseWriter, r *http.Request, acct state.Accoun
 	return "account:" + acct.ID + "/session", true
 }
 func (s *server) putRouteRemovalPolicy(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if !requireRouteControlsPlan(w, acct) {
+		return
+	}
 	actor, ok := routeRemovalActor(w, r, acct)
 	if !ok {
 		return
@@ -82,6 +85,9 @@ func (s *server) putRouteRemovalPolicy(w http.ResponseWriter, r *http.Request, a
 	writeJSON(w, http.StatusOK, p)
 }
 func (s *server) postRouteRemovalApproval(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if !requireRouteControlsPlan(w, acct) {
+		return
+	}
 	actor, ok := routeRemovalActor(w, r, acct)
 	if !ok {
 		return

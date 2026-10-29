@@ -99,7 +99,7 @@ def sync_detailed(
      Mints a 32-byte plaintext token, hashes it via SHA-256 for
     storage, and returns the plaintext ONCE in the response.
     The token expires after 14 days; admins can revoke earlier by
-    row ID via `DELETE /v1/orgs/{slug}/invitations/{invitation_id}` (PR 7 owns
+    row ID via `DELETE /v1/orgs/{slug}/invitations/{invitation_id}` (owns
     the accept surface too — see
     `POST /v1/invitations/{token}/accept`). Role cannot be
     `owner`; transfer-ownership is the only path to owner.
@@ -145,7 +145,7 @@ def sync(
      Mints a 32-byte plaintext token, hashes it via SHA-256 for
     storage, and returns the plaintext ONCE in the response.
     The token expires after 14 days; admins can revoke earlier by
-    row ID via `DELETE /v1/orgs/{slug}/invitations/{invitation_id}` (PR 7 owns
+    row ID via `DELETE /v1/orgs/{slug}/invitations/{invitation_id}` (owns
     the accept surface too — see
     `POST /v1/invitations/{token}/accept`). Role cannot be
     `owner`; transfer-ownership is the only path to owner.
@@ -186,7 +186,7 @@ async def asyncio_detailed(
      Mints a 32-byte plaintext token, hashes it via SHA-256 for
     storage, and returns the plaintext ONCE in the response.
     The token expires after 14 days; admins can revoke earlier by
-    row ID via `DELETE /v1/orgs/{slug}/invitations/{invitation_id}` (PR 7 owns
+    row ID via `DELETE /v1/orgs/{slug}/invitations/{invitation_id}` (owns
     the accept surface too — see
     `POST /v1/invitations/{token}/accept`). Role cannot be
     `owner`; transfer-ownership is the only path to owner.
@@ -230,7 +230,7 @@ async def asyncio(
      Mints a 32-byte plaintext token, hashes it via SHA-256 for
     storage, and returns the plaintext ONCE in the response.
     The token expires after 14 days; admins can revoke earlier by
-    row ID via `DELETE /v1/orgs/{slug}/invitations/{invitation_id}` (PR 7 owns
+    row ID via `DELETE /v1/orgs/{slug}/invitations/{invitation_id}` (owns
     the accept surface too — see
     `POST /v1/invitations/{token}/accept`). Role cannot be
     `owner`; transfer-ownership is the only path to owner.

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	scheddpb "github.com/onebox-faas/faas/api/proto/onebox/faas/schedd/v1"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/vmmd/failureoutbox"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -75,14 +76,61 @@ func wireFailureReports(sourceNodeID string, mgr *fcvm.Manager, cfg *Config, dep
 	return outbox, nil
 }
 
+// memoryPressureLimiter bounds the relays a guest's memory-pressure frames
+// start. guest-init reports once per episode, but the guest writes the frame:
+// without a bound, a tenant looping on it made vmmd open a goroutine and a
+// TLS connection to schedd per frame.
+type memoryPressureLimiter struct {
+	mu       sync.Mutex
+	last     map[string]time.Time
+	interval time.Duration
+	slots    chan struct{}
+}
+
+func newMemoryPressureLimiter(interval time.Duration, inFlight int) *memoryPressureLimiter {
+	return &memoryPressureLimiter{last: map[string]time.Time{}, interval: interval, slots: make(chan struct{}, inFlight)}
+}
+
+// admit reserves a relay slot for instanceID's report at now, or reports
+// false when the instance reported within the interval or every slot is
+// busy. An admitted caller calls done when its relay finishes.
+func (l *memoryPressureLimiter) admit(instanceID string, now time.Time) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if prev, ok := l.last[instanceID]; ok && now.Sub(prev) < l.interval {
+		return false
+	}
+	select {
+	case l.slots <- struct{}{}:
+	default:
+		return false
+	}
+	l.last[instanceID] = now
+	if len(l.last) > 4096 {
+		for id, at := range l.last {
+			if now.Sub(at) >= l.interval {
+				delete(l.last, id)
+			}
+		}
+	}
+	return true
+}
+
+func (l *memoryPressureLimiter) done() { <-l.slots }
+
 // memoryPressureRelay forwards guest memory-pressure reports to schedd
-// (ADR-1155). They are advisory: the guest reports once per episode, so a
-// lost report only means no automatic heap capture, and nothing is spooled.
+// (ADR-1155). They are advisory: a lost or rate-limited report only means no
+// automatic heap capture, and nothing is spooled.
 func memoryPressureRelay(sourceNodeID, target string, tlsConfig func() *tls.Config, log *slog.Logger) fcvm.MemoryPressureSink {
+	limiter := newMemoryPressureLimiter(api.ProfileMemoryPressureRelayMinInterval, api.ProfileMemoryPressureRelayInFlight)
 	return func(ctx context.Context, instanceID string, availableMB, totalMB, anonMB int) {
+		if !limiter.admit(instanceID, time.Now()) {
+			return
+		}
 		// The relay outlives the report's caller.
 		ctx = context.WithoutCancel(ctx)
 		go func() {
+			defer limiter.done()
 			ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 			defer cancel()
 			var cfg *tls.Config

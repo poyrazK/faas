@@ -31,13 +31,13 @@ func TestOutboundProbePolicyClientWire(t *testing.T) {
 	}))
 	defer server.Close()
 	client := NewClient(server.URL, "test")
-	if got, err := client.SetOutboundBindingProbePolicy(context.Background(), "integration", policy); err != nil || got != policy {
+	if got, err := NewPreviewClient(client).SetOutboundBindingProbePolicy(context.Background(), "integration", policy); err != nil || got != policy {
 		t.Fatalf("put=%+v %v", got, err)
 	}
-	if got, err := client.GetOutboundBindingProbePolicy(context.Background(), "integration"); err != nil || got != policy {
+	if got, err := NewPreviewClient(client).GetOutboundBindingProbePolicy(context.Background(), "integration"); err != nil || got != policy {
 		t.Fatalf("get=%+v %v", got, err)
 	}
-	if err := client.DeleteOutboundBindingProbePolicy(context.Background(), "integration"); err != nil {
+	if err := NewPreviewClient(client).DeleteOutboundBindingProbePolicy(context.Background(), "integration"); err != nil {
 		t.Fatal(err)
 	}
 }

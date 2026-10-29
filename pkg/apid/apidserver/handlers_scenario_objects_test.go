@@ -45,7 +45,7 @@ func TestRehearsalObjectAPIGatesEnrollmentAndKeepsCleanupAvailable(t *testing.T)
 	request := rehearsalobj.CreateRequest{AppSlug: session.App.Slug, Spec: rehearsalobj.Spec{Version: 1, Bucket: "imports", FixtureSHA256: rehearsalobj.Hash(initial)}, Objects: objects}
 	path := "/v1/dev/test-runs/" + run + "/objects"
 	r = e.Do(t, "POST", path, request, nil)
-	if r.Code != http.StatusServiceUnavailable {
+	if r.Code != http.StatusNotImplemented {
 		t.Fatalf("disabled adapter allocated: %d", r.Code)
 	}
 	server.SetRehearsalObjectsForTest(service, true)

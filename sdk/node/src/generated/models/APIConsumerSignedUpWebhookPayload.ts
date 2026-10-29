@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Data delivered with consumer.signed_up once a customer's sign-up created their consumer (ADR-20261021183000). signup_id is stable across retries.
+ * Data delivered with consumer.signed_up once a customer's sign-up created their consumer. signup_id is stable across retries.
  */
 export type APIConsumerSignedUpWebhookPayload = {
   signup_id: string;

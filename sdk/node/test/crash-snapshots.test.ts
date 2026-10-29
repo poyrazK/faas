@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { captureCrashSnapshot, CRASH_SNAPSHOT_ENDPOINT } from '../src/index.js';
+import { captureCrashSnapshot, CRASH_SNAPSHOT_ENDPOINT } from '../src/preview.js';
 
 function fakeFetch(status: number, body: unknown, calls: Array<{ url: string; init?: RequestInit }>): typeof fetch {
   return (async (url: string | URL | Request, init?: RequestInit) => {

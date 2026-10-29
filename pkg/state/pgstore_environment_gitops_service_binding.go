@@ -87,7 +87,6 @@ func (s *PgStore) ResolveEnvironmentGitOpsServiceBinding(ctx context.Context, ca
 		}
 		return zero, true, false, err
 	}
-	release.Active = true
 	if release.AccountID != callerApp.AccountID || release.ProjectID != callerApp.ProjectID ||
 		normalizedDeploymentScope(release.EnvironmentSlug) != normalizedDeploymentScope(callerDeployment.Scope) ||
 		callerDeployment.Status != DeployLive || callerDeployment.EnvironmentWorkloadHeld() {

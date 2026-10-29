@@ -18,6 +18,7 @@ import (
 	"time"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
+	"github.com/onebox-faas/faas/pkg/bridgecompletion"
 	"golang.org/x/net/http2"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -29,6 +30,10 @@ import (
 // gRPC → manager → transport lifecycle without constructing a Firecracker VMM.
 type forwardV2IntegrationVMM struct {
 	VmmdAPI
+}
+
+func (forwardV2IntegrationVMM) AcquireHTTPForward(ctx context.Context, _ string) (context.Context, func(), error) {
+	return ctx, func() {}, nil
 }
 
 func (forwardV2IntegrationVMM) NetnsFor(instance string) (string, bool) {
@@ -114,7 +119,7 @@ func testForwardV2BridgeLifecycle(t *testing.T, cancelConcurrent bool, public ..
 		serverConnsMu.Unlock()
 		go func() {
 			h2Server.ServeConn(serverConn, &http2.ServeConnOpts{
-				Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				Handler: bridgecompletion.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					if r.Header.Get("X-Faas-Bridge-Persistent") != "1" ||
 						r.Header.Get("X-Faas-Bridge-Port") != "8080" {
 						persistentHeadersOK.Store(false)
@@ -145,7 +150,7 @@ func testForwardV2BridgeLifecycle(t *testing.T, cancelConcurrent bool, public ..
 					w.Header().Set("Content-Type", "text/plain")
 					w.WriteHeader(http.StatusOK)
 					_, _ = fmt.Fprintf(w, "bridge-request-%d:%s", n, body)
-				}),
+				})),
 			})
 			_ = serverConn.Close()
 		}()

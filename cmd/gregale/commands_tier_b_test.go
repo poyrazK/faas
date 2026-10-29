@@ -374,10 +374,19 @@ func TestTierB_AdminConsumeCredits_HappyPath(t *testing.T) {
 
 // --- overage-cap ---
 
-func TestTierB_OverageCap_NoArgExitsOne(t *testing.T) {
+// Without <cents> the command reads the saved cap; it used to print only its
+// usage, although the usage shows <cents> as optional (Hunt 14 H14-23).
+func TestTierB_OverageCap_NoArgShowsTheSavedCap(t *testing.T) {
 	resetJSONOut(t)
-	if code := cmdOverageCap(nil); code != 1 {
-		t.Fatalf("exit = %d, want 1", code)
+	f := authedFakeAPI(t, `{"overage_cap_cents":500}`, http.StatusOK)
+	stdout, restore := captureStdout(t)
+	code := cmdOverageCap(nil)
+	restore()
+	if code != 0 || f.sawMethod != "GET" || f.sawPath != "/v1/account/overage-cap" {
+		t.Fatalf("exit = %d, route = %s %s; want 0, GET /v1/account/overage-cap", code, f.sawMethod, f.sawPath)
+	}
+	if out := stdout.String(); !strings.Contains(out, "Overage cap: 500 cents") {
+		t.Fatalf("stdout = %q, want the saved cap", out)
 	}
 }
 

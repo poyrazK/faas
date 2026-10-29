@@ -4,11 +4,11 @@
 /* eslint-disable */
 import type { ReleaseDatabaseRef } from './ReleaseDatabaseRef.js';
 /**
- * A deployment's release command run (ADR-1448).
+ * A deployment's release command run.
  */
 export type DeploymentRelease = {
   /**
-   * The release task's status; pending before imaged has admitted the task.
+   * The release task's status; pending before the image service has admitted the task.
    */
   status: 'pending' | 'queued' | 'restoring' | 'running' | 'succeeded' | 'failed' | 'timed_out' | 'cancelled';
   started_at?: string;

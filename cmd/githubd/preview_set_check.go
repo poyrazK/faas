@@ -45,7 +45,7 @@ func loadPRPreviewSetCheck(ctx context.Context, pool *pgxpool.Pool, installation
 	// name, not PR number. Two PRs can point at the same commit, so that check
 	// must represent every open preview set for the commit. The PR comment
 	// still reports only its own environment.
-	setRows, err := pool.Query(ctx, `select pr_number, root_app_id::text, member_app_ids
+	setRows, err := pool.Query(ctx, `select pr_number, root_app_id::text, member_app_ids, coalesce(setup_error, '')
 		from pr_preview_sets where installation_id = $1 and repo_full_name = $2
 		  and commit_sha = $3 and closed_at is null order by pr_number`, installationID, repo, commitSHA)
 	if err != nil {
@@ -54,7 +54,7 @@ func loadPRPreviewSetCheck(ctx context.Context, pool *pgxpool.Pool, installation
 	var sets []state.PRPreviewSet
 	for setRows.Next() {
 		var candidate state.PRPreviewSet
-		if err := setRows.Scan(&candidate.PRNumber, &candidate.RootAppID, &candidate.MemberAppIDs); err != nil {
+		if err := setRows.Scan(&candidate.PRNumber, &candidate.RootAppID, &candidate.MemberAppIDs, &candidate.SetupError); err != nil {
 			setRows.Close()
 			return previewSetCheck{}, fmt.Errorf("githubd: scan preview set for commit: %w", err)
 		}
@@ -72,7 +72,7 @@ func loadPRPreviewSetCheck(ctx context.Context, pool *pgxpool.Pool, installation
 			return previewSetCheck{}, err
 		}
 		results = append(results, previewPRResult{PRNumber: candidate.PRNumber,
-			Check: aggregatePRPreviewMembers(candidate.PRNumber, candidate.RootAppID, members)})
+			Check: aggregatePRPreviewMembers(candidate.PRNumber, candidate.RootAppID, members, candidate.SetupError)})
 	}
 	return combinePreviewSetChecks(prNumber, results), nil
 }
@@ -172,8 +172,8 @@ func loadPRPreviewMembers(ctx context.Context, pool *pgxpool.Pool, rootAppID str
 // aggregatePRPreviewMembers is fail-closed. A missing or failed sibling takes
 // precedence over a live root; no event delivery order can make a partial
 // environment green. Only deployments for the recorded head reach this input.
-func aggregatePRPreviewMembers(prNumber int, rootAppID string, members []previewMemberStatus) previewSetCheck {
-	result := previewset.Evaluate(prNumber, rootAppID, members)
+func aggregatePRPreviewMembers(prNumber int, rootAppID string, members []previewMemberStatus, setupError string) previewSetCheck {
+	result := previewset.EvaluateSet(prNumber, rootAppID, members, setupError)
 	check := previewSetCheck{Summary: result.Summary, RootSlug: result.RootSlug, RootParentSlug: result.RootParentSlug}
 	switch result.Phase {
 	case previewset.PhaseLive:

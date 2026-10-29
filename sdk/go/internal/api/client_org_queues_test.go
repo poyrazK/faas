@@ -43,10 +43,10 @@ func TestOrgQueueClientOwnershipPaths(t *testing.T) {
 			return err
 		}},
 		{"GET /v1/orgs/my%20company/projects/project%2Fid/environments/stage/workloads/worker%2Fid/queue-bindings", func() error {
-			_, err := c.GetOrgProjectEnvironmentQueueBindings(ctx, "my company", "project/id", "stage", "worker/id")
+			_, err := NewPreviewClient(c).GetOrgProjectEnvironmentQueueBindings(ctx, "my company", "project/id", "stage", "worker/id")
 			return err
 		}},
-		{"GET /v1/orgs/my%20company/queue-usage", func() error { _, err := c.GetOrgQueueUsage(ctx, "my company"); return err }},
+		{"GET /v1/orgs/my%20company/queue-usage", func() error { _, err := NewPreviewClient(c).GetOrgQueueUsage(ctx, "my company"); return err }},
 	} {
 		if err := tc.call(); err != nil {
 			t.Fatal(err)

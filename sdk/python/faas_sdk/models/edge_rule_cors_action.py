@@ -19,8 +19,7 @@ class EdgeRuleCORSAction:
     allow_origins: list[str]
     allow_methods: list[str]
     cors_preset_id: None | Unset | UUID = UNSET
-    """Optional CORS preset reference (issue #975 #4 PR-B /
-    ADR-129). When set, the rule's resolved CORS action is
+    """Optional CORS preset reference. When set, the rule's resolved CORS action is
     the merged union of the preset's fields and the rule's
     inline fields — with the rule taking precedence for any
     non-empty inline field. Mutually exclusive with inline

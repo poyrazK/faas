@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/trafficproblem"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -49,7 +50,7 @@ func (s *server) applyPlatformTenantOffboarding(w http.ResponseWriter, r *http.R
 			s.notFound(w, "no such platform tenant")
 			return
 		}
-		api.WriteProblem(w, api.ErrInternal("could not apply platform tenant offboarding"))
+		api.WriteProblem(w, trafficproblem.TenantBinding(err, api.ErrInternal("could not apply platform tenant offboarding")))
 		return
 	}
 	s.audit.Emit(r.Context(), "platform_tenant.offboarded", &acct.ID, map[string]any{

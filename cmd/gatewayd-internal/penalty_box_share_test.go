@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"net"
 	"net/netip"
 	"testing"
@@ -20,7 +22,7 @@ func TestPenaltyBoxSharedAcrossGateways(t *testing.T) {
 	store := state.NewMemStore()
 	newGateway := func() (*gateway.PenaltyBox, *penaltyBoxSharer) {
 		box := gateway.NewPenaltyBox()
-		s := newPenaltyBoxSharer(box, store, nil)
+		s := newPenaltyBoxSharer(box, store, nil, nil)
 		box.OnBox(s.queue)
 		s.sync(ctx)
 		return box, s
@@ -55,7 +57,7 @@ func TestPenaltyBoxSharedAcrossGateways(t *testing.T) {
 		t.Fatal(err)
 	}
 	boxC := gateway.NewPenaltyBox()
-	shareC := newPenaltyBoxSharer(boxC, store, nil)
+	shareC := newPenaltyBoxSharer(boxC, store, nil, nil)
 	shareC.page = 1
 	shareC.sync(ctx)
 	for _, held := range []struct {
@@ -75,7 +77,7 @@ func TestPenaltyBoxSharedAcrossGateways(t *testing.T) {
 // on this gateway but are not shared, and a flush empties the queue.
 func TestPenaltyBoxShareQueueBound(t *testing.T) {
 	store := state.NewMemStore()
-	s := newPenaltyBoxSharer(gateway.NewPenaltyBox(), store, nil)
+	s := newPenaltyBoxSharer(gateway.NewPenaltyBox(), store, nil, nil)
 	rec := gateway.PenaltyBoxRecord{AppID: "app-1", RuleID: "rule-1", Client: netip.MustParsePrefix("203.0.113.7/32"), Until: time.Now().Add(time.Hour)}
 	for range penaltyBoxMaxQueued + 5 {
 		s.queue(rec)
@@ -90,5 +92,114 @@ func TestPenaltyBoxShareQueueBound(t *testing.T) {
 	boxes, _, err := store.ListEdgePenaltyBoxes(t.Context(), state.EdgePenaltyBoxCursor{}, 2*penaltyBoxMaxQueued)
 	if err != nil || len(boxes) != penaltyBoxMaxQueued {
 		t.Fatalf("stored %d boxes, %v; want %d", len(boxes), err, penaltyBoxMaxQueued)
+	}
+}
+
+// flakyPenaltyBoxStore fails every call while fail is set.
+type flakyPenaltyBoxStore struct {
+	mem  *state.MemStore
+	fail error
+}
+
+func (f *flakyPenaltyBoxStore) RecordEdgePenaltyBoxes(ctx context.Context, boxes []state.EdgePenaltyBox, channel string) error {
+	if f.fail != nil {
+		return f.fail
+	}
+	return f.mem.RecordEdgePenaltyBoxes(ctx, boxes, channel)
+}
+
+func (f *flakyPenaltyBoxStore) ListEdgePenaltyBoxes(ctx context.Context, after state.EdgePenaltyBoxCursor, limit int) ([]state.EdgePenaltyBox, time.Time, error) {
+	if f.fail != nil {
+		return nil, time.Time{}, f.fail
+	}
+	return f.mem.ListEdgePenaltyBoxes(ctx, after, limit)
+}
+
+func (f *flakyPenaltyBoxStore) PruneEdgePenaltyBoxes(ctx context.Context, before time.Time) (int64, error) {
+	if f.fail != nil {
+		return 0, f.fail
+	}
+	return f.mem.PruneEdgePenaltyBoxes(ctx, before)
+}
+
+// shareMetric sums a counter, or a histogram's sample count, over the
+// series whose label key has value (every series when key is empty).
+func shareMetric(t *testing.T, m *gateway.Metrics, name, key, value string) float64 {
+	t.Helper()
+	fams, err := m.Registry().Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sum float64
+	for _, fam := range fams {
+		if fam.GetName() != name {
+			continue
+		}
+		for _, mt := range fam.GetMetric() {
+			match := key == ""
+			for _, l := range mt.GetLabel() {
+				match = match || (l.GetName() == key && l.GetValue() == value)
+			}
+			if !match {
+				continue
+			}
+			sum += mt.GetCounter().GetValue() + float64(mt.GetHistogram().GetSampleCount())
+		}
+	}
+	return sum
+}
+
+// adr: 20261024082000 amendment 1 — sharing counts its operations by
+// outcome, the boxes it drops at the queue bound, how long boxes wait to be
+// written and how long they take to arrive. Boxes the first read loads and
+// lookback re-reads are not arrivals.
+func TestPenaltyBoxShareMetrics(t *testing.T) {
+	ctx := t.Context()
+	store := &flakyPenaltyBoxStore{mem: state.NewMemStore()}
+	old := state.EdgePenaltyBox{AppID: "app-1", RuleID: "rule-1", Client: netip.MustParsePrefix("198.51.100.1/32"), Until: time.Now().Add(time.Hour)}
+	if err := store.mem.RecordEdgePenaltyBoxes(ctx, []state.EdgePenaltyBox{old}, db.NotifyEdgePenaltyBox); err != nil {
+		t.Fatal(err)
+	}
+	m := gateway.NewMetrics()
+	s := newPenaltyBoxSharer(gateway.NewPenaltyBox(), store, m, nil)
+	s.sync(ctx)
+	if got := shareMetric(t, m, "gateway_edge_penalty_share_seconds", "stage", "propagated"); got != 0 {
+		t.Fatalf("the first read counted %v arrivals, want none", got)
+	}
+
+	rec := gateway.PenaltyBoxRecord{AppID: "app-1", RuleID: "rule-1", Client: netip.MustParsePrefix("203.0.113.7/32"), Until: time.Now().Add(time.Hour)}
+	s.queue(rec)
+	s.queue(rec)
+	s.flush(ctx)
+	s.sync(ctx)
+	s.sync(ctx)
+	for _, c := range []struct {
+		name, key, value string
+		want             float64
+	}{
+		{"gateway_edge_penalty_share_seconds", "stage", "queued", 2},
+		{"gateway_edge_penalty_share_seconds", "stage", "propagated", 2},
+		{"gateway_edge_penalty_share_total", "outcome", "ok", 4},
+	} {
+		if got := shareMetric(t, m, c.name, c.key, c.value); got != c.want {
+			t.Errorf("%s{%s=%q} = %v, want %v", c.name, c.key, c.value, got, c.want)
+		}
+	}
+
+	store.fail = errors.New("database down")
+	s.queue(rec)
+	s.flush(ctx)
+	s.sync(ctx)
+	s.prune(ctx)
+	if got := shareMetric(t, m, "gateway_edge_penalty_share_total", "outcome", "error"); got != 3 {
+		t.Errorf("errors = %v, want one each for flush, sync and prune", got)
+	}
+	store.fail = nil
+	for range penaltyBoxMaxQueued + 3 {
+		s.queue(rec)
+	}
+	s.flush(ctx)
+	if got := shareMetric(t, m, "gateway_edge_penalty_share_dropped_total", "", ""); got != 3 {
+		t.Errorf("dropped = %v, want 3", got)
 	}
 }

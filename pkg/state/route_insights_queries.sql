@@ -3,15 +3,35 @@
 -- the customer webhooks for each detected/resolved transition.
 
 -- name: RouteInsightCandidateApps :many
--- Apps that ran in the window, with their account; an app that stayed parked
--- has nothing to report.
-SELECT DISTINCT um.app_id::uuid AS app_id, um.account_id
-FROM usage_minutes um
-WHERE um.meter_kind = 'app'
-  AND um.minute >= sqlc.arg(since_at)
-  AND um.mb_seconds > 0
-ORDER BY 1
+-- Apps on the given plans that ran in the window and that no evaluation has
+-- taken since due_before, least recently evaluated first, with their
+-- account (ADR-20261024154324). An app that stayed parked has nothing to
+-- report.
+SELECT a.id AS app_id, a.account_id
+FROM apps a
+JOIN accounts acc ON acc.id = a.account_id
+LEFT JOIN route_insight_evaluations e ON e.app_id = a.id
+WHERE a.id IN (
+        SELECT um.app_id
+        FROM usage_minutes um
+        WHERE um.meter_kind = 'app'
+          AND um.minute >= sqlc.arg(since_at)
+          AND um.mb_seconds > 0
+    )
+  AND a.status <> 'deleted'
+  AND acc.plan = ANY(sqlc.arg(plans)::text[])
+  AND (e.evaluated_at IS NULL OR e.evaluated_at < sqlc.arg(due_before))
+ORDER BY e.evaluated_at NULLS FIRST, a.id
 LIMIT sqlc.arg(max_apps)::int;
+
+-- name: ClaimRouteInsightEvaluation :execrows
+-- Take an app for this evaluation unless another evaluation took it since
+-- due_before; one affected row means this caller evaluates it
+-- (ADR-20261024154324).
+INSERT INTO route_insight_evaluations (app_id, account_id, evaluated_at)
+VALUES (sqlc.arg(app_id), sqlc.arg(account_id), sqlc.arg(evaluated_at))
+ON CONFLICT (app_id) DO UPDATE SET account_id = EXCLUDED.account_id, evaluated_at = EXCLUDED.evaluated_at
+WHERE route_insight_evaluations.evaluated_at < sqlc.arg(due_before);
 
 -- name: UpsertRouteInsight :exec
 -- Record an observed insight. A new or resolved insight (re)opens with this
@@ -41,6 +61,22 @@ SET state = 'resolved', resolved_at = sqlc.arg(resolved_at)
 WHERE app_id = sqlc.arg(app_id)
   AND state = 'active'
   AND last_detected_at < sqlc.arg(stale_before);
+
+-- name: ResolveStaleRouteInsightsBatch :execrows
+-- Resolve up to row_limit active insights of any app that no evaluation has
+-- observed since stale_before: an app that stopped running or left a plan
+-- with request telemetry is no longer evaluated (ADR-20261024154324).
+UPDATE route_insights
+SET state = 'resolved', resolved_at = sqlc.arg(resolved_at)
+WHERE id IN (
+    SELECT stale.id
+    FROM route_insights stale
+    WHERE stale.state = 'active'
+      AND stale.last_detected_at < sqlc.arg(stale_before)
+    ORDER BY stale.last_detected_at
+    LIMIT sqlc.arg(row_limit)::int
+    FOR UPDATE SKIP LOCKED
+);
 
 -- name: ListRouteInsights :many
 -- An app's active insights, then the ones resolved since resolved_since.

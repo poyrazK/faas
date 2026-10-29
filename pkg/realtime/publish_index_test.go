@@ -24,8 +24,8 @@ func addSyntheticConnection(tb testing.TB, m *Manager, endpointID string) *conne
 func TestManagerPublishSelectsEndpointAndChannel(t *testing.T) {
 	m := NewManager(Config{}, nil)
 	defer m.cancel()
-	first := Endpoint{ID: "first", MaxMessageBytes: 1024}
-	second := Endpoint{ID: "second", MaxMessageBytes: 1024}
+	first := Endpoint{Preview: true, ID: "first", MaxMessageBytes: 1024}
+	second := Endpoint{Preview: true, ID: "second", MaxMessageBytes: 1024}
 	for _, endpoint := range []Endpoint{first, second} {
 		if err := m.RegisterEndpoint(endpoint); err != nil {
 			t.Fatal(err)
@@ -73,7 +73,7 @@ func TestManagerChannelRouteSnapshotReturnsUniqueEndpointChannelPairs(t *testing
 	m := NewManager(Config{}, nil)
 	defer m.cancel()
 	for _, endpointID := range []string{"first", "second"} {
-		if err := m.RegisterEndpoint(Endpoint{ID: endpointID, MaxMessageBytes: 1024}); err != nil {
+		if err := m.RegisterEndpoint(Endpoint{Preview: true, ID: endpointID, MaxMessageBytes: 1024}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -114,7 +114,7 @@ func TestManagerChannelRouteSnapshotReturnsUniqueEndpointChannelPairs(t *testing
 func TestManagerChannelRouteRevisionChangesAfterLastSubscriberDisconnects(t *testing.T) {
 	m := NewManager(Config{}, &testHooks{accept: true})
 	defer m.Close()
-	endpoint := Endpoint{ID: "disconnect", MaxMessageBytes: 1024}
+	endpoint := Endpoint{Preview: true, ID: "disconnect", MaxMessageBytes: 1024}
 	if err := m.RegisterEndpoint(endpoint); err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +176,7 @@ func TestManagerChannelRouteRevisionChangesAfterLastSubscriberDisconnects(t *tes
 func TestManagerPublishConcurrentSubscriptionChanges(t *testing.T) {
 	m := NewManager(Config{OutboundQueue: 512}, nil)
 	defer m.cancel()
-	endpoint := Endpoint{ID: "concurrent", MaxMessageBytes: 1024}
+	endpoint := Endpoint{Preview: true, ID: "concurrent", MaxMessageBytes: 1024}
 	if err := m.RegisterEndpoint(endpoint); err != nil {
 		t.Fatal(err)
 	}
@@ -225,7 +225,7 @@ func TestManagerPublishConcurrentSubscriptionChanges(t *testing.T) {
 func TestManagerPublishRemovesClosedConnectionFromChannelIndex(t *testing.T) {
 	m := NewManager(Config{}, nil)
 	defer m.Close()
-	endpoint := Endpoint{ID: "disconnect", MaxMessageBytes: 1024}
+	endpoint := Endpoint{Preview: true, ID: "disconnect", MaxMessageBytes: 1024}
 	if err := m.RegisterEndpoint(endpoint); err != nil {
 		t.Fatal(err)
 	}

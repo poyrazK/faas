@@ -22,7 +22,7 @@ export class EnvService {
    * cell carries {present, value_hash} for secret rows and
    * {present, value} for env rows. Two cells with the same
    * `value_hash` therefore share byte-identical plaintext
-   * (collision probability 2^-64). Pre-PR-C rows have
+   * (collision probability 2^-64). Older rows have
    * `value_hash = ''` and emit no `value_hash` key.
    *
    * @returns EnvDiffResponse Env-diff matrix.
@@ -59,9 +59,9 @@ export class EnvService {
    * value NEVER appears in the response — guest-init reads the value
    * at process start from `/etc/faas/env.json` inside the guest.
    *
-   * **ADR-090 PR-B scope filter.** The optional `?scope=`
+   * **scope filter.** The optional `?scope=`
    * query param selects which scope to read. Omitted = the
-   * default scope (pre-PR-B behavior, byte-identical wire).
+   * default scope (legacy behaviour, byte-identical wire).
    * `?scope=__all__` returns the nested `env_by_scope` response
    * shape with every scope on the app; the flat `env` array
    * is empty in that arm (discriminated union). Any other
@@ -80,12 +80,12 @@ export class EnvService {
      */
     slug: string,
     /**
-     * Env-var scope (ADR-090). A domain-valid slug (1..40 chars,
+     * Env-var scope. A domain-valid slug (1..40 chars,
      * lowercase alnum + dash, no leading/trailing dash) — e.g.
      * `default`, `staging`, `prod-eu`. Or the reserved sentinel
      * `__all__` on GET only, which returns the nested
      * `env_by_scope` response shape (every scope on the app).
-     * Omitted = `scope=default` (pre-PR-B behavior).
+     * Omitted = `scope=default` (legacy behaviour).
      *
      */
     scope?: string,
@@ -100,7 +100,7 @@ export class EnvService {
         'scope': scope,
       },
       errors: {
-        400: `code: env_scope_invalid — ?scope= failed the EnvScopePattern check (empty, too long, or out-of-shape slug). Applies to both env and secrets surfaces (ADR-090 PR-B, ADR-092 PR-B).`,
+        400: `code: env_scope_invalid — ?scope= failed the EnvScopePattern check (empty, too long, or out-of-shape slug). Applies to both env and secrets surfaces.`,
         401: `code: unauthorized`,
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
@@ -112,7 +112,7 @@ export class EnvService {
     });
   }
   /**
-   * List a scope's config revisions (ADR-1451).
+   * List a scope's config revisions.
    * Newest first. Each customer env or secret write records a revision of the scope's complete config; the newest 100 are kept. Values are not listed; read one revision for its variables.
    * @returns ListConfigRevisionsResponse Config revisions and the scope's newest config guard.
    * @throws ApiError
@@ -127,12 +127,12 @@ export class EnvService {
      */
     slug: string,
     /**
-     * Env-var scope (ADR-090). A domain-valid slug (1..40 chars,
+     * Env-var scope. A domain-valid slug (1..40 chars,
      * lowercase alnum + dash, no leading/trailing dash) — e.g.
      * `default`, `staging`, `prod-eu`. Or the reserved sentinel
      * `__all__` on GET only, which returns the nested
      * `env_by_scope` response shape (every scope on the app).
-     * Omitted = `scope=default` (pre-PR-B behavior).
+     * Omitted = `scope=default` (legacy behaviour).
      *
      */
     scope?: string,
@@ -164,7 +164,7 @@ export class EnvService {
     });
   }
   /**
-   * Read one config revision (ADR-1451).
+   * Read one config revision.
    * The scope's variables and secret versions after the change. Secret values and fingerprints are never returned.
    * @returns ConfigRevisionDetail The config revision.
    * @throws ApiError
@@ -183,12 +183,12 @@ export class EnvService {
      */
     revision: number,
     /**
-     * Env-var scope (ADR-090). A domain-valid slug (1..40 chars,
+     * Env-var scope. A domain-valid slug (1..40 chars,
      * lowercase alnum + dash, no leading/trailing dash) — e.g.
      * `default`, `staging`, `prod-eu`. Or the reserved sentinel
      * `__all__` on GET only, which returns the nested
      * `env_by_scope` response shape (every scope on the app).
-     * Omitted = `scope=default` (pre-PR-B behavior).
+     * Omitted = `scope=default` (legacy behaviour).
      *
      */
     scope?: string,
@@ -216,7 +216,7 @@ export class EnvService {
     });
   }
   /**
-   * Read a scope's newest config guard (ADR-1451).
+   * Read a scope's newest config guard.
    * A guard judges the first traffic served with a changed config against the config before it, and restores the previous config when the new one fails. 404 `config_guard_not_found` when no change in the scope was guarded.
    * @returns ConfigGuard The config guard and, once closed, its decision.
    * @throws ApiError
@@ -230,12 +230,12 @@ export class EnvService {
      */
     slug: string,
     /**
-     * Env-var scope (ADR-090). A domain-valid slug (1..40 chars,
+     * Env-var scope. A domain-valid slug (1..40 chars,
      * lowercase alnum + dash, no leading/trailing dash) — e.g.
      * `default`, `staging`, `prod-eu`. Or the reserved sentinel
      * `__all__` on GET only, which returns the nested
      * `env_by_scope` response shape (every scope on the app).
-     * Omitted = `scope=default` (pre-PR-B behavior).
+     * Omitted = `scope=default` (legacy behaviour).
      *
      */
     scope?: string,
@@ -261,7 +261,7 @@ export class EnvService {
     });
   }
   /**
-   * Restore a scope's variables to a config revision (ADR-1451).
+   * Restore a scope's variables to a config revision.
    * Sets and deletes variables until the scope matches the revision, as one guarded change. Secrets cannot be restored from a revision; those that differ are listed in `secrets_not_restored`.
    * @returns ConfigRollbackResponse What the rollback changed.
    * @throws ApiError
@@ -277,12 +277,12 @@ export class EnvService {
     slug: string,
     requestBody: ConfigRollbackRequest,
     /**
-     * Env-var scope (ADR-090). A domain-valid slug (1..40 chars,
+     * Env-var scope. A domain-valid slug (1..40 chars,
      * lowercase alnum + dash, no leading/trailing dash) — e.g.
      * `default`, `staging`, `prod-eu`. Or the reserved sentinel
      * `__all__` on GET only, which returns the nested
      * `env_by_scope` response shape (every scope on the app).
-     * Omitted = `scope=default` (pre-PR-B behavior).
+     * Omitted = `scope=default` (legacy behaviour).
      *
      */
     scope?: string,
@@ -318,9 +318,9 @@ export class EnvService {
    * next cold wake; cached snapshots are invalidated and the running
    * instance is unaffected. Use `POST /restart?fresh=true` to apply now.
    *
-   * **ADR-090 PR-B scope filter.** The optional `?scope=`
+   * **scope filter.** The optional `?scope=`
    * query param selects which scope to write. Omitted = the
-   * default scope (pre-PR-B behavior). The reserved sentinel
+   * default scope (legacy behaviour). The reserved sentinel
    * `__all__` is rejected with 400 `env_scope_reserved` on
    * writes (it has no meaning on a single-row write). Invalid
    * scope shapes return 400 `env_scope_invalid`.
@@ -348,20 +348,19 @@ export class EnvService {
      */
     requestBody: PutAppEnvRequest,
     /**
-     * `false` opts this env or secret write out of the config guard
-     * (ADR-1451): no guard opens, and a guard already watching the scope
+     * `false` opts this env or secret write out of the config guard: no guard opens, and a guard already watching the scope
      * closes as superseded. Omitted or `true` guards the change when the
      * scope has a live deployment.
      *
      */
     guard?: boolean,
     /**
-     * Env-var scope (ADR-090). A domain-valid slug (1..40 chars,
+     * Env-var scope. A domain-valid slug (1..40 chars,
      * lowercase alnum + dash, no leading/trailing dash) — e.g.
      * `default`, `staging`, `prod-eu`. Or the reserved sentinel
      * `__all__` on GET only, which returns the nested
      * `env_by_scope` response shape (every scope on the app).
-     * Omitted = `scope=default` (pre-PR-B behavior).
+     * Omitted = `scope=default` (legacy behaviour).
      *
      */
     scope?: string,
@@ -420,20 +419,19 @@ export class EnvService {
      */
     key: string,
     /**
-     * `false` opts this env or secret write out of the config guard
-     * (ADR-1451): no guard opens, and a guard already watching the scope
+     * `false` opts this env or secret write out of the config guard: no guard opens, and a guard already watching the scope
      * closes as superseded. Omitted or `true` guards the change when the
      * scope has a live deployment.
      *
      */
     guard?: boolean,
     /**
-     * Env-var scope (ADR-090). A domain-valid slug (1..40 chars,
+     * Env-var scope. A domain-valid slug (1..40 chars,
      * lowercase alnum + dash, no leading/trailing dash) — e.g.
      * `default`, `staging`, `prod-eu`. Or the reserved sentinel
      * `__all__` on GET only, which returns the nested
      * `env_by_scope` response shape (every scope on the app).
-     * Omitted = `scope=default` (pre-PR-B behavior).
+     * Omitted = `scope=default` (legacy behaviour).
      *
      */
     scope?: string,

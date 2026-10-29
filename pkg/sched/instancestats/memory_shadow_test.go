@@ -24,7 +24,7 @@ func TestMemoryShadow(t *testing.T) {
 		{InstanceID: "b", RSSMB: math.NaN()},
 		{InstanceID: "c", RSSMB: 100},
 	}
-	got := memoryShadow(instances, rows)
+	got := memoryShadow(instances, rows, nil)
 	want := map[string]NodeMemoryShadow{
 		// a: 1032 reserved, 250 measured; b: no sample, 520 both; c parked.
 		"n1": {ReservedMB: 1032 + 520, MeasuredMB: 250 + 520},
@@ -68,5 +68,25 @@ func TestReaderMeasuredMB(t *testing.T) {
 		if mb != tc.wantMB || ok != tc.wantOK || (ok && !asOf.Equal(now)) {
 			t.Errorf("%s: MeasuredMB = %d, %v, %v; want %d, %v, %v", tc.name, mb, asOf, ok, tc.wantMB, now, tc.wantOK)
 		}
+	}
+}
+
+// adr: 20261017 connection survival, §2 memory (the ADR-909 amendment):
+// a node's instance bridges add to its measured charge and reserve nothing.
+func TestMemoryShadowChargesInstanceBridges(t *testing.T) {
+	instances := []state.Instance{{ID: "a", NodeID: "n1", State: string(state.StateRunning), RAMMB: 1024}}
+	rows := []InstanceStat{{InstanceID: "a", RSSMB: 200}}
+	got := memoryShadow(instances, rows, map[string]int{"n1": 40, "n2": 12, "": 9, "n3": -5})
+	if got["n1"] != (NodeMemoryShadow{ReservedMB: 1032, MeasuredMB: 250 + 40}) {
+		t.Fatalf("n1 = %+v", got["n1"])
+	}
+	if got["n2"] != (NodeMemoryShadow{MeasuredMB: 12}) {
+		t.Fatalf("n2 (bridges only) = %+v", got["n2"])
+	}
+	if _, ok := got[""]; ok {
+		t.Fatal("charged bridges to no node")
+	}
+	if _, ok := got["n3"]; ok {
+		t.Fatal("charged a negative bridge sample")
 	}
 }

@@ -127,3 +127,74 @@ func testQueueMessageExpiry(t *testing.T, store state.Store) {
 		t.Fatalf("Scale message waiting 15 days is %s; want dead_letter", got.State)
 	}
 }
+
+func TestMemQueueDepthReadsStopAtLimit(t *testing.T) {
+	testQueueDepthReadsStopAtLimit(t, state.NewMemStore())
+}
+
+// The scheduler's depth reads count what QueueState counts, a binding's own
+// messages plus legacy work under its name, but stop at the limit; the
+// in-flight check sees only unexpired leases (amendment 2026-10-24).
+func testQueueDepthReadsStopAtLimit(t *testing.T, store state.Store) {
+	ctx := t.Context()
+	app := seedQueueBacklogApp(t, store, seedQueueBacklogAccount(t, store, api.PlanPro))
+	binding, err := store.CreateQueueBinding(ctx, state.QueueBinding{AccountID: app.AccountID, AppID: app.ID, Name: "jobs",
+		QueueName: "jobs", Mode: "push", WorkloadClass: state.WorkloadClassWorker, Enabled: false, MaxConcurrency: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	enqueue := func(bindingID string) state.Invocation {
+		t.Helper()
+		inv, err := store.EnqueueInvocation(ctx, state.Invocation{AppID: app.ID, AccountID: app.AccountID, Source: state.InvocationQueue,
+			QueueName: "jobs", QueueBindingID: bindingID, DeploymentScope: state.DefaultEnvScope, DueAt: time.Now().UTC()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return inv
+	}
+	first := enqueue(binding.ID)
+	for range 5 {
+		enqueue(binding.ID)
+	}
+	for range 3 {
+		enqueue("")
+	}
+	if err := store.CancelInvocation(ctx, enqueue(binding.ID).ID); err != nil {
+		t.Fatal(err)
+	}
+	depth := func(scope string, limit int) (int, int) {
+		t.Helper()
+		inScope, err := store.QueueDepthInScope(ctx, app.ID, state.DefaultEnvScope, limit)
+		if err != nil {
+			t.Fatal(err)
+		}
+		forBinding, err := store.QueueDepthForBindingInScope(ctx, app.ID, binding.ID, scope, limit)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return inScope, forBinding
+	}
+	for _, scope := range []string{state.DefaultEnvScope, ""} {
+		if inScope, forBinding := depth(scope, 100); inScope != 9 || forBinding != 9 {
+			t.Fatalf("scope %q: depth = %d / %d, want 9 / 9 (6 bound + 3 legacy, cancelled excluded)", scope, inScope, forBinding)
+		}
+		if inScope, forBinding := depth(scope, 4); inScope != 4 || forBinding != 4 {
+			t.Fatalf("scope %q: depth limited to 4 = %d / %d", scope, inScope, forBinding)
+		}
+	}
+	if inFlight, err := store.QueueBindingHasInFlight(ctx, app.ID, binding.ID, state.DefaultEnvScope); err != nil || inFlight {
+		t.Fatalf("in flight before any lease = %v, %v", inFlight, err)
+	}
+	if _, err := store.ClaimInvocationWithCap(ctx, first.ID, "", 600, 10); err != nil {
+		t.Fatal(err)
+	}
+	if inFlight, err := store.QueueBindingHasInFlight(ctx, app.ID, binding.ID, ""); err != nil || !inFlight {
+		t.Fatalf("in flight under a lease = %v, %v", inFlight, err)
+	}
+	if inScope, forBinding := depth(state.DefaultEnvScope, 100); inScope != 9 || forBinding != 9 {
+		t.Fatalf("a leased message still counts: depth = %d / %d, want 9 / 9", inScope, forBinding)
+	}
+	if _, err := store.QueueDepthInScope(ctx, app.ID, state.DefaultEnvScope, 0); !errors.Is(err, state.ErrInvalidArgument) {
+		t.Fatalf("limit 0 err = %v, want ErrInvalidArgument", err)
+	}
+}

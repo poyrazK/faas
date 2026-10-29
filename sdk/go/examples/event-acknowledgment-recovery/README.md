@@ -52,7 +52,7 @@ function returns. Process progress before deciding when another pass should run:
 progress, err := recovery.RecoverCallbacks(ctx, db, client, accountID, appID)
 // Export only progress's fixed scalar fields, never saved intent/job contents.
 switch {
-case errors.Is(err, faas.ErrEventConsumerCommitUnknown):
+case errors.Is(err, preview.ErrEventConsumerCommitUnknown):
     // Preserve retained evidence; reconcile before explicitly scheduling again.
 case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
     // All admitted workers have joined. The host can now close its resources.
@@ -92,7 +92,7 @@ after a crash; deduplicate by account/app, incident ID and sequence. Deliver the
 ordered `Checkpoint.Pending` list, including startup replay, rather than only the
 latest `Alerts` slice.
 
-Load bounded trusted JSON into `faas.EventAcknowledgmentIntentCheckpoint`, then
+Load bounded trusted JSON into `preview.EventAcknowledgmentIntentCheckpoint`, then
 validate it with `ValidateEventAcknowledgmentIntentCheckpoint`. Pass the same
 effective watch policy on resume. No platform client is needed for monitoring.
 The example's thresholds are 100 due intents, one stalled intent and one parked
@@ -108,7 +108,7 @@ cannot resolve an incident. See the
 [parked alert contract](../../../../docs/event-acknowledgment-go-checkpoints.md#parked-intent-alerts).
 
 Inspect both returned result and error. `errors.As` can read the fixed
-`*faas.EventAcknowledgmentIntentCheckpointWatchCallbackError.Phase`; no raw host
+`*preview.EventAcknowledgmentIntentCheckpointWatchCallbackError.Phase`; no raw host
 cause is retained. A failed checkpoint save may already have committed: compare
 current fenced storage with the returned checkpoint before notification retry.
 Do not blindly overwrite it or reset the session/sequence.

@@ -44,7 +44,21 @@ existing S3 driver and does not change the preview's provider qualification gate
 ### Deploy the branded gateway
 
 The production Ansible path keeps this optional until a backend is qualified.
-Set the following inventory values on the control-plane host:
+Declare the gateway in the deploy manifest (ADR 20261025111015), and
+`gregalectl manifest ansible` renders the inventory values for the
+control-plane host:
+
+```yaml
+object_storage:
+  gateway: managed
+  config_src: /operator/config/object-storage.json
+  # S3/R2/OVH only; GCS with attached ADC does not need this file.
+  provider_env_src: /operator/secrets/object-storage.env
+```
+
+Strict `make verify-fleet` fails when `faas-s3-gatewayd` runs on a
+control-plane node that the manifest does not manage; lenient verification
+warns. Inventories written by hand set the same values directly:
 
 ```yaml
 faas_object_storage_gateway_managed: true
@@ -254,9 +268,9 @@ written to stdout, JSON output, or logs. Manage an existing compute binding
 from the CLI with:
 
 ```sh
-gregale bindings object-storage list my-api assets
-gregale bindings object-storage rotate my-api assets BINDING_ID --wait
-gregale bindings object-storage revoke my-api assets BINDING_ID
+gregale app binding object-storage list my-api assets
+gregale app binding object-storage rotate my-api assets BINDING_ID --wait
+gregale app binding object-storage revoke my-api assets BINDING_ID
 ```
 
 The bucket argument accepts its name or ID. The list command prints the
@@ -481,6 +495,30 @@ metadata, tagging, checksum, and conditional headers. Subsequent requests requir
 normal SigV4 authentication. Existing provider buckets still need CORS updates
 when provider CORS configuration changes.
 
+### Bucket CORS for your own sites
+
+A bucket can allow your own sites' browsers to use its presigned URLs and
+upload grants ([ADR-20261025202805](adr/20261025202805-object-storage-bucket-cors.md);
+preview, released per account). Set S3-shaped rules with
+`PUT /v1/apps/{app}/buckets/{bucket}/cors`:
+
+```json
+{"rules": [{"allowed_origins": ["https://app.example.com"],
+            "allowed_methods": ["PUT", "GET"],
+            "allowed_headers": ["content-type", "x-amz-*"],
+            "expose_headers": ["ETag"],
+            "max_age_seconds": 3600}]}
+```
+
+A bucket holds up to 100 rules; the first rule matching a request's origin,
+method and requested headers applies. An origin is `*` or an `http(s)` origin
+with at most one `*` (`https://*.example.com`). `GET` returns the rules and
+their revision; `DELETE` removes them. The branded endpoint finds the bucket of
+a preflight from the URL's upload grant or presigned access key, so requests
+signed with an `Authorization` header can only be preflighted from the
+console's origins. CORS is not authorization: every request still needs a valid
+signature or grant.
+
 Every streamed part reserves capacity and a transfer token durably before its
 provider request. Retries preserve the largest admitted size for each part;
 concurrent writes to the same part return 409. Different parts remain concurrent.
@@ -612,7 +650,7 @@ continuation markers. Resume using both returned markers. Listing requires a
 bucket read grant and request-budget admission.
 
 ```sh
-gregale bucket versions list <app> <bucket-id> --prefix 'reports/' --limit 100 --json
+gregale bucket version list <app> <bucket-id> --prefix 'reports/' --limit 100 --json
 gregale bucket download <app> <bucket-id> 'reports/report.txt' ./old-report.txt --version-id <public-version-id>
 ```
 
@@ -815,6 +853,22 @@ without changing the safety policy:
 }
 ```
 
+The published rate card is ADR-1430's: storage at $0.03 per GiB-month
+(`storage_millicents_per_gib_month: 3000`, `api.ObjectStorageMillicentsPerGiBMonth`)
+beyond each plan's included storage, with request and egress prices at zero.
+[`docs/plans.md`](plans.md) lists the included storage per plan.
+
+`gateway_safety_v1` has no provider usage reports, so Gregale meters stored
+bytes itself: every minute apid accrues each bucket's last inventoried bytes
+into stored byte-hours per UTC month
+([ADR 20261024132844](adr/20261024132844-gateway-metered-object-storage-billing.md)).
+This mode accepts only a storage-only rate card (request and egress prices
+zero), because it does not meter provider-side requests or egress. Month close
+bills a metered month once every metered bucket is accrued to the end of the
+month or to its deletion. Storage is never billed for time Gregale did not
+meter: a bucket starts accruing at its first accrual, and a month cannot mix
+metered rows with provider reports.
+
 `GET /v1/account/object-storage-usage` then includes `charges` with the
 storage, request, egress and total estimate for the current UTC month, plus
 `billing_mode` (`off`, `shadow`, or `live`) and the optional UTC-month
@@ -823,20 +877,38 @@ units are rounded up independently to one millicent. Omit `pricing` while
 qualifying providers to keep charges disabled. The rate card is intentionally
 separate from upstream `cost_millicents`.
 
-Polar billing is independently default-off. In `shadow`, Gregale finalizes the
-completed UTC month and records the would-be charge without sending an event.
-In `live`, it sends one idempotent event per immutable billing record. The
-event quantity is the customer charge in millicents, held under the account's
-overage cap (see below). The uncapped total (`uncapped_millicents`) and the
-detailed storage, request, egress, and upstream-cost values remain in metadata
-and the local ledger. A durable provider receipt records pre-activation, shadow, or
-live handling; accounts that are not on a paid plan receive a permanent
-zero-quantity ineligible receipt. Changing modes, plans, or restarting cannot
-retroactively charge an older period. Configure the Polar meter to sum `charge_millicents` at USD
-`0.001` cents per unit, and follow the billing provider switch runbook for the
-required environment variables and catalog checks. Polar bills the month-close
-event in the provider cycle in which it is received; its metadata preserves the
-UTC usage month rather than implying a retroactive invoice adjustment.
+Polar billing is independently default-off. In `live`, Gregale bills object
+storage in steps inside its UTC month
+([ADR 20261027093220](adr/20261027093220-object-storage-billed-daily.md)):
+
+- **Daily steps.** At most once a day, each paid account's month-to-date
+  charge is priced and the part not yet billed is sent as one idempotent
+  event.
+- **Month close.** Once the month has ended, a last step brings the month up
+  to its finalized total.
+
+Steps are timestamped when they are sent, so Polar bills them in the
+subscription cycle in which the storage accrued. A customer whose subscription
+ends mid-month is billed up to their last daily step.
+
+- **Event quantity.** Each event's quantity is the step's charge in
+  millicents, held under the account's overage cap (see below). Metadata
+  carries the month and the cumulative charge.
+- **Month-close detail.** The month-close event also carries the uncapped
+  total (`uncapped_millicents`) and the detailed storage, request, egress, and
+  upstream-cost values, which the local ledger keeps too.
+- **Shadow.** In `shadow`, Gregale records the same steps and month-close
+  charges without sending events.
+- **Receipts.** A durable provider receipt records each month's pre-activation,
+  shadow, or live handling, with the cumulative charge.
+- **Plan changes.** An account that is not on a paid plan at month close gets
+  no new charge. Its receipt keeps what was billed while it was paid, or a
+  permanent zero-quantity ineligible receipt when nothing was. Changing modes,
+  plans, or restarting cannot retroactively charge an older period.
+
+Configure the Polar meter to sum `charge_millicents` at USD `0.001` cents per
+unit. Follow the billing provider switch runbook for the required environment
+variables and catalog checks.
 
 Before issuing PUT, an account-serialized transaction reserves the maximum
 authorized size for its bucket/key and one key slot. Reissuing the same size
@@ -980,13 +1052,17 @@ bytes) is removed from each meter before pricing. The month uses the largest
 allowance among the plans active in it, and the finalized record copies the
 allowance it used. Plans include 1 / 10 / 50 / 200 GiB of stored bytes
 (Free / Hobby / Pro / Scale); request and egress allowances are zero until
-exporters report reads and writes separately (ADR-1430). A finalized
-month is billed only up to what the account's overage cap still allows after
+exporters report reads and writes separately (ADR-1430). Each step bills
+object storage only up to what the account's overage cap still allows after
 the month's billable compute and live egress, and capped usage is never billed
 later ([ADR-1320](adr/1320-object-storage-plan-allowances-ceilings-and-overage-cap.md)).
+Object storage already billed in the month keeps its place under the cap:
+meterd reserves it before billing compute and egress, and counts it toward
+the spend-cap hold that parks the account's workloads
+([ADR 20261027093220](adr/20261027093220-object-storage-billed-daily.md)).
 `apid` closes the prior UTC month once per deployment period and stores an
-immutable per-account billing snapshot. Polar can publish that
-snapshot idempotently when its independent rollout gate is live; other billing
+immutable per-account billing snapshot. Polar can bill the month's steps
+idempotently when its independent rollout gate is live; other billing
 providers retain the internal ledger only. A qualified provider usage exporter
 and live month-close verification remain required for paid launch; see
 [ADR-156](adr/156-object-storage-accounting.md). The future provider-neutral
@@ -1265,11 +1341,30 @@ separate tenant IAM adapter; never hand out the operator-wide credential.
   bytes or costs; configure and qualify the accounting controls above. Presign
   counts cannot meter actual usage. The optional rate card is only an estimate;
   plan allowances and invoice lines do not ship here.
-- Before paid/general availability, qualify the real provider usage exporter,
-  pricing/margin policy and budget cutoffs, tenant native storage keys if needed,
-  and a coordinated account-deletion workflow. Active buckets block account
-  hard-deletion; confirmed-deleted bucket metadata is purged with the account.
-  Do not bypass these guards and orphan customer data.
+- Paid and general availability (audited 2026-10-26):
+  - **Metering.** Gateway safety meters stored byte-hours from inventory
+    ([ADR-20261024132844](adr/20261024132844-gateway-metered-object-storage-billing.md)),
+    so storage billing does not need a provider usage exporter.
+  - **Pricing and budget cutoffs.** ADR-1430 prices storage. At the spend cap,
+    storage keeps serving within plan limits and is billed only up to the cap
+    ([ADR 20261020160000](adr/20261020160000-object-storage-in-budgets.md));
+    budgets count the uncapped estimate. Free stops at 1 GiB. Paid plans have
+    no stored-bytes ceiling of their own, so the operator's
+    `max_account_bytes` bounds the storage above a customer's cap that nobody
+    pays for. Set it with that cost in mind.
+  - **Account deletion.** Deleting an account, or 21 days of non-payment,
+    starts the 30-day grace. Suspension, pending deletion and an abuse hold
+    stop every data path at once: S3 credentials, signed URLs, upload grants
+    and public reads all check the owner's status at admission. After the
+    grace, the purge sweep empties and deletes every bucket the account owns,
+    retained versions included, and keeps the account row until each is
+    confirmed deleted. Object Lock retention keeps a bucket, and the account,
+    until it expires; `FaasAccountErasureDeferred` reports a purge held longer
+    than a day. An app with buckets cannot be deleted. A company bucket
+    belongs to its organization, so purging the creator's account leaves it;
+    its owner follows UTC billing months whatever the database's time zone.
+    Do not bypass these guards and orphan customer data.
+  - **Open:** tenant native storage keys, if a customer needs them.
 
 Deferred: the S3 compatibility gaps listed above, production edge/service
 activation, unsupported lifecycle/version behavior, untracked object-capacity rebasing,
@@ -1373,10 +1468,10 @@ gregale bucket upload <app> <bucket-id> <key> <file> --content-type text/plain
 gregale bucket upload <app> <bucket-id> <key> <file> --resume <upload-id>
 gregale bucket download <app> <bucket-id> <key> <file>
 gregale bucket download <app> <bucket-id> <key> <file> --force
-gregale bucket uploads list <app> <bucket-id>
-gregale bucket uploads status <app> <bucket-id> <upload-id>
-gregale bucket uploads parts <app> <bucket-id> <upload-id>
-gregale usage object-storage
+gregale bucket multipart list <app> <bucket-id>
+gregale bucket multipart get <app> <bucket-id> <upload-id>
+gregale bucket multipart parts <app> <bucket-id> <upload-id>
+gregale billing usage object-storage
 ```
 
 Transfers stream regular files with a default thirty-minute deadline. Uploads
@@ -1522,9 +1617,9 @@ For buckets using tracked branded S3 PUTs/copies, S3 application upload routes o
 multipart completion, request an inventory and capacity reconciliation after deleting or shrinking objects:
 
 ```sh
-gregale bucket reconcile start <app> <bucket-id>
-gregale bucket reconcile status <app> <bucket-id> <job-id>
-gregale bucket reconcile cancel <app> <bucket-id> <job-id>
+gregale bucket inventory start <app> <bucket-id>
+gregale bucket inventory get <app> <bucket-id> <job-id>
+gregale bucket inventory cancel <app> <bucket-id> <job-id>
 ```
 
 The API equivalents are `POST /v1/apps/{slug}/buckets/{bucket}/capacity-reconciliations`
@@ -1678,7 +1773,7 @@ Use an owned public version UUID from ListObjectVersions or a write response:
 ```sh
 aws --endpoint-url "$GREGALE_S3_ENDPOINT" s3api delete-object \
   --bucket assets --key hello.txt --version-id <public-version-id>
-gregale bucket version-delete <app> <bucket-id> hello.txt <public-version-id>
+gregale bucket version delete <app> <bucket-id> hello.txt <public-version-id>
 ```
 
 The control endpoint is
@@ -1702,7 +1797,7 @@ DELETE, MFA and retention-bypass directives fail explicitly. Mutable `null`
 deletion and ordinary DELETE creating a marker use the durable
 admission/recovery implementation, including coordination with versioning changes.
 
-Acknowledged deletion leaves capacity reserved. Run `gregale bucket reconcile
+Acknowledged deletion leaves capacity reserved. Run `gregale bucket inventory
 start <app> <bucket-id>` to reclaim it through a verified all-version inventory.
 See [ADR-546](adr/546-immutable-s3-version-deletion.md) and
 [ADR-548](adr/548-immutable-deletion-inventory-coordination.md).
@@ -1711,8 +1806,8 @@ Durable ordinary, null and immutable deletion uses `POST
 /v1/apps/{slug}/buckets/{bucket}/objects/deletions` with an `id` UUID, `key`, and
 optional `version_id` set to `"null"` or an owned public version UUID. Reuse the same ID and payload for retries; read
 progress with `GET .../objects/deletions/{id}`. The CLI exposes
-`gregale bucket deletions start <app> <bucket-id> <key> <request-id> [version-id|null]`
-and `gregale bucket deletions status <app> <bucket-id> <request-id>`.
+`gregale bucket deletion create <app> <bucket-id> <key> <request-id> [version-id|null]`
+and `gregale bucket deletion get <app> <bucket-id> <request-id>`.
 S3 provider credentials must allow versioning discovery and deletion, plus
 version listing for Enabled marker preparation and recovery. See the
 [versioning API](https://docs.aws.amazon.com/AmazonS3/latest/API/API_GetBucketVersioning.html)
@@ -1722,8 +1817,14 @@ S3 clients can sign `X-Gregale-Delete-Id` for retry identity. Signed AWS SDK
 invocation IDs are also used; botocore (boto3, the AWS CLI) adds its invocation
 ID after signing, so an unsigned one is ignored and that delete receives a
 generated ID. Responses return `X-Gregale-Delete-Id`; ordinary
-Enabled deletion returns an owned marker version ID. A dispatched uncertain
-intent fences bucket writes, versioning, bucket deletion and inventories. Permanent
+Enabled deletion returns an owned marker version ID. A bucket runs one deletion
+per key at a time, and deletes of different keys overlap; S3 `DeleteObjects`
+runs up to eight entries at once and answers in request order
+([ADR-20261025115958](adr/20261025115958-object-storage-per-key-deletion.md)).
+A dispatched uncertain intent fences writes of its key, cross-bucket copies
+from its key, and versioning, bucket deletion and inventories of its bucket.
+A lifecycle scan waits only for its own deletions. While an inventory scan of
+the bucket runs, new deletions wait for it. Permanent
 immutable deletes use the same journal. Recovery can safely resend their exact
 owned private selector and settle only a valid acknowledgment; a rejection of a
 recovery attempt cannot prove that the earlier request finished. An initial
@@ -1758,7 +1859,7 @@ before delivery. Its `version_id`, when present, is an owned public selector.
 Native provider identities and placement never appear in the event.
 
 Declare an `event_triggers` subscription in the target application's deployment
-manifest, as described in [internal event subscriptions](event-driven.md#internal-event-subscriptions):
+manifest, as described in [internal event subscriptions](events.md#internal-event-subscriptions):
 
 ```yaml
 event_triggers:
@@ -1971,12 +2072,12 @@ and [ADR-557](adr/557-branded-object-url-capabilities.md).
 
 ### Bucket default encryption
 
-Use `gregale bucket encryption status <app> <bucket-id>` to read the desired
+Use `gregale bucket encryption set status <app> <bucket-id>` to read the desired
 and verified default. Configure AES256 with
-`gregale bucket encryption AES256 <app> <bucket-id>`, or KMS with
-`gregale bucket encryption aws:kms <app> <bucket-id> <owned-key-ref> [true|false]`.
+`gregale bucket encryption set AES256 <app> <bucket-id>`, or KMS with
+`gregale bucket encryption set aws:kms <app> <bucket-id> <owned-key-ref> [true|false]`.
 `aws:kms:dsse` accepts an owned key reference without a bucket-key option.
-`gregale bucket encryption clear <app> <bucket-id>` removes the owned override.
+`gregale bucket encryption set clear <app> <bucket-id>` removes the owned override.
 The control API exposes GET, PUT and DELETE at
 `/v1/apps/{slug}/buckets/{bucket}/encryption`, with typed Go, Node and Python
 clients. Management requires `storage:manage` and matching bucket write
@@ -2087,11 +2188,11 @@ Go, Node and Python clients expose the capability, status and configuration
 methods. CLI examples:
 
 ```sh
-gregale bucket object-lock capabilities <app> <bucket-id>
-gregale bucket object-lock enable <app> <bucket-id>
-gregale bucket object-lock COMPLIANCE <app> <bucket-id> --days 7 --event-years 1
-gregale bucket object-lock status <app> <bucket-id>
-gregale bucket object-lock clear-default <app> <bucket-id>
+gregale bucket object-lock set capabilities <app> <bucket-id>
+gregale bucket object-lock set enable <app> <bucket-id>
+gregale bucket object-lock set COMPLIANCE <app> <bucket-id> --days 7 --event-years 1
+gregale bucket object-lock set status <app> <bucket-id>
+gregale bucket object-lock set clear-default <app> <bucket-id>
 ```
 
 [ADR-584](adr/584-durable-object-version-protection.md) adds the per-version

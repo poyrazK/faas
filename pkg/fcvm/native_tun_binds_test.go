@@ -474,11 +474,11 @@ func TestNativeTunIncompleteFrameFencesOtherHostProducers(t *testing.T) {
 	j.owner.loopMounts = loopBackend
 	loops := &nativeLoopMountJournal{owner: j.owner, backend: loopBackend}
 	called := false
-	if err := loops.session(t.Context(), owner, "/drive.img", func(string) error { called = true; return nil }); err == nil || !strings.Contains(err.Error(), "TUN bind") {
-		t.Fatalf("unfinished TUN binding did not fence writer: %v", err)
+	if err := loops.editSession(t.Context(), owner, func() error { called = true; return nil }); err == nil || !strings.Contains(err.Error(), "TUN bind") {
+		t.Fatalf("unfinished TUN binding did not fence the drive editor: %v", err)
 	}
-	if called || loopBackend.prepares != 0 {
-		t.Fatal("writer reached native effects")
+	if called {
+		t.Fatal("drive editor reached native effects")
 	}
 	imageBackend := newNativeImageBackendFixture()
 	j.owner.imageSources = imageBackend

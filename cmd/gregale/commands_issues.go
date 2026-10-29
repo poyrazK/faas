@@ -15,7 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const issuesCmdUsage = "usage: gregale issues <list|get|assign|resolve|reopen|ignore|merge|split|impact-alert|lifecycle-alerts|compound-alerts|ownership-rules|source-maps|compare-releases|bulk|tickets|links|teams|views|codeowners|tokens|create-token|revoke-token> --app <slug> [<issue-id>] [--sort recent|impact] [--min-customers N] [flags]"
+const issuesCmdUsage = "usage: gregale debug issue <list|get|assign|resolve|reopen|ignore|merge|split|impact-alert|lifecycle-alerts|compound-alerts|ownership-rules|source-maps|compare-releases|bulk|tickets|links|teams|views|codeowners|tokens|create-token|revoke-token> --app <slug> [<issue-id>] [--sort recent|impact] [--min-customers N] [flags]"
 
 func cmdIssues(args []string) int {
 	if len(args) > 0 && args[0] == "compound-alerts" {
@@ -72,6 +72,10 @@ func cmdIssues(args []string) int {
 		}
 	}
 	action := args[0]
+	if !issueActions[action] && !strings.HasPrefix(action, "-") {
+		printCommandValidation(os.Stderr, "unknown issues subcommand %q\n", action)
+		return unknownSubcommandChoices(os.Stderr, "issues", nestedCliCommand("issues"), action)
+	}
 	fs := newFlagSet("issues "+action, flag.ContinueOnError)
 	app := fs.String("app", "", "application slug")
 	stateFilter := fs.String("state", "", "open, resolved, or ignored")
@@ -321,6 +325,14 @@ func cmdIssues(args []string) int {
 	}
 }
 func issueCLIUsage() int { PrintUsage(os.Stderr, issuesCmdUsage, "issues"); return 1 }
+
+// issueActions are the verbs cmdIssues's flag-parsing switch handles; the
+// others are routed before it.
+var issueActions = map[string]bool{
+	"list": true, "get": true, "impact-alert": true, "ownership-rules": true,
+	"assign": true, "resolve": true, "reopen": true, "ignore": true, "merge": true, "split": true,
+	"create-token": true, "tokens": true, "revoke-token": true,
+}
 
 func issueRuleTargetLabel(rule api.IssueOwnershipRule) string {
 	if rule.AssigneeTeamID != "" {

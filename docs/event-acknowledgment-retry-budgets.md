@@ -40,8 +40,8 @@ continues across SDKs.
 ## Bind the initial budget
 
 ```go
-budget := faas.EventAcknowledgmentIntentRetryBudget{
-    Policy: faas.EventAcknowledgmentIntentRetryPolicy{
+budget := preview.EventAcknowledgmentIntentRetryBudget{
+    Policy: preview.EventAcknowledgmentIntentRetryPolicy{
         InitialBackoff: time.Second,
         MaxBackoff: 5 * time.Minute,
     },
@@ -120,10 +120,10 @@ Inspect parked metadata, authorize the owner scope and durably retain a new comm
 UUID and all original inputs before calling:
 
 ```go
-receipt, err := faas.ResumeEventAcknowledgmentIntentRetryBudget(ctx, db,
+receipt, err := preview.ResumeEventAcknowledgmentIntentRetryBudget(ctx, db,
     accountID, appID, selected.InvocationID,
     selected.ReplayGeneration, selected.Attempt,
-    faas.EventAcknowledgmentIntentResumeRetryBudgetOptions{
+    preview.EventAcknowledgmentIntentResumeRetryBudgetOptions{
         CommandID: commandID,
         ExpectedUpdatedAt: selected.UpdatedAt,
         ExpectedDeliveryAttempts: selected.DeliveryAttempts,

@@ -70,7 +70,7 @@ func (c *Client) DecideOperationApproval(ctx context.Context, slug, id, step str
 	return out, err
 }
 
-func (c *Client) DecidePlatformTenantSelfOperationApproval(ctx context.Context, id, step string, req OperationApprovalRequest) (OperationResponse, error) {
+func (c *PreviewClient) DecidePlatformTenantSelfOperationApproval(ctx context.Context, id, step string, req OperationApprovalRequest) (OperationResponse, error) {
 	var out OperationResponse
 	err := c.do(ctx, http.MethodPost, "/v1/platform-tenant-self/customer-operations/"+url.PathEscape(id)+"/approvals/"+url.PathEscape(step), req, &out)
 	return out, err

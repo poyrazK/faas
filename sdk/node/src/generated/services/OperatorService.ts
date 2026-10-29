@@ -415,7 +415,7 @@ export class OperatorService {
   }
   /**
    * List platform flags
-   * Returns every catalogued platform flag (ADR-1700) with apid's live
+   * Returns every catalogued platform flag with the API's live
    * definition, the per-daemon apply receipts and convergence, and the
    * shared account groups. Change a flag with
    * PATCH /v1/admin/config/{config_key}. Operator-only.
@@ -462,7 +462,7 @@ export class OperatorService {
   }
   /**
    * Explain a platform flag for an account
-   * Evaluates the flag for one account against apid's live definition
+   * Evaluates the flag for one account against the API's live definition
    * and reports the matching rule, the reason, and whether the account's
    * plan is entitled to the capability the flag releases. Records
    * nothing. Operator-only.
@@ -485,7 +485,7 @@ export class OperatorService {
      */
     accountId: string,
     /**
-     * Organization the request would act under (ADR 20261021080640); omit to evaluate outside any organization.
+     * Organization the request would act under; omit to evaluate outside any organization.
      */
     orgId?: string,
     /**

@@ -44,7 +44,7 @@ export type OperatorIntentResponse = {
   metadata: Record<string, any>;
   requested_at: string;
   /**
-   * Set when schedd claims the intent (pending → running).
+   * Set when the scheduler claims the intent (pending → running).
    */
   started_at?: string;
   /**
@@ -62,11 +62,11 @@ export type OperatorIntentResponse = {
   /**
    * Obs-Meta + Trace-IDs Mega-PR / C4. OTel W3C 32-char
    * hex identifier shared with the inbound HTTP request
-   * and the schedd dispatch context. NULL when the row
+   * and the scheduler dispatch context. NULL when the row
    * predates C4 or when the inbound request carried no
    * trace_id (e.g. cron-fired reaper paths). Joins
    * "this alert" ↔ "this operator action" ↔ "this
-   * schedd dispatch" on one column.
+   * scheduler dispatch" on one column.
    *
    */
   trace_id?: string | null;

@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime
 
-from faas_sdk.models import (
+from faas_sdk.preview.models import (
     CreateObjectMultipartUploadRequest,
     ObjectRetentionPeriod,
     ObjectSignRequest,

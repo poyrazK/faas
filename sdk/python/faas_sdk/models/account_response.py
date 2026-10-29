@@ -51,8 +51,8 @@ class AccountResponse:
     tax_id: str | Unset = UNSET
     """Customer tax/VAT identifier used on future invoices."""
     abuse_hold: AccountAbuseHold | Unset = UNSET
-    """Present while the account is on an abuse hold (ADR-361): outbound traffic from its workloads matched a
-    scanning or abuse pattern, so nothing runs or deploys until an operator releases it."""
+    """Present while the account is on an abuse hold: outbound traffic from its workloads matched a scanning or
+    abuse pattern, so nothing runs or deploys until an operator releases it."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

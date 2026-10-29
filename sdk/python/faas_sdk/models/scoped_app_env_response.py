@@ -12,7 +12,7 @@ T = TypeVar("T", bound="ScopedAppEnvResponse")
 
 @_attrs_define
 class ScopedAppEnvResponse:
-    """An env var envelope scoped to one named environment (ADR-090). The plaintext value never appears here."""
+    """An env var envelope scoped to one named environment. The plaintext value never appears here."""
 
     scope: str
     key: str

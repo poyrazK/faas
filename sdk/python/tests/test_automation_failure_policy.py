@@ -2,14 +2,14 @@ import json
 
 import httpx
 
-from faas_sdk.api.workflows import (
+from faas_sdk.preview.api.workflows import (
     get_automation_failure_policy,
     resume_automation_failure_pause,
     set_automation_failure_policy,
 )
 from faas_sdk.client import AuthenticatedClient
-from faas_sdk.models.resume_automation_failure_pause_request import ResumeAutomationFailurePauseRequest
-from faas_sdk.models.set_automation_failure_policy_request import SetAutomationFailurePolicyRequest
+from faas_sdk.preview.models.resume_automation_failure_pause_request import ResumeAutomationFailurePauseRequest
+from faas_sdk.preview.models.set_automation_failure_policy_request import SetAutomationFailurePolicyRequest
 
 
 def test_failure_policy_wire_preserves_false_and_generation():

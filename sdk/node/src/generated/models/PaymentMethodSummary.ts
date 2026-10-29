@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Card-on-file summary (issue #242). Provider-agnostic shape —
+ * Card-on-file summary. Provider-agnostic shape —
  * the same wire shape is returned whether the operator runs
  * Stripe or Paddle. brand is the lowercase network label
  * ("visa", "mastercard", "amex"); last4 is the last-4 of the

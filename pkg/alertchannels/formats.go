@@ -7,21 +7,24 @@ import (
 )
 
 // SlackPayload renders a message for a Slack incoming webhook: a fallback
-// text plus a small block layout.
+// text plus a small block layout. Rule names, summaries and notes carry
+// text others choose (a log note names the request route a visitor sent),
+// so they are escaped and cannot form Slack mentions or links.
 func SlackPayload(msg Message) map[string]any {
 	if msg.Release != nil {
 		return releaseSlackPayload(*msg.Release)
 	}
 	icon := map[string]string{EventFire: ":rotating_light:", EventResolve: ":white_check_mark:", EventTest: ":wave:"}[msg.Event]
-	text := fmt.Sprintf("%s *%s*\n%s", icon, Headline(msg), Detail(msg))
+	headline, detail := slackEscape(Headline(msg)), slackEscape(Detail(msg))
+	text := fmt.Sprintf("%s *%s*\n%s", icon, headline, detail)
 	for _, note := range msg.Notes {
-		text += "\n• " + note
+		text += "\n• " + slackEscape(note)
 	}
 	blocks := []map[string]any{{"type": "section", "text": map[string]any{"type": "mrkdwn", "text": text}}}
 	if msg.DashboardURL != "" {
 		blocks = append(blocks, map[string]any{"type": "context", "elements": []map[string]any{{"type": "mrkdwn", "text": fmt.Sprintf("<%s|Open in Gregale>", msg.DashboardURL)}}})
 	}
-	return map[string]any{"text": Headline(msg) + " — " + Detail(msg), "blocks": blocks}
+	return map[string]any{"text": headline + " — " + detail, "blocks": blocks}
 }
 
 // PagerDutyPayload renders an Events API v2 event. A fire triggers, a

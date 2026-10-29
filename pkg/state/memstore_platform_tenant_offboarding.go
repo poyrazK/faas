@@ -9,7 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-func (m *MemStore) PlanPlatformTenantOffboarding(_ context.Context, accountID, tenantID string) (api.PlatformTenantOffboardingPlanResponse, error) {
+func (m *MemStore) PlanPlatformTenantOffboarding(ctx context.Context, accountID, tenantID string) (api.PlatformTenantOffboardingPlanResponse, error) {
 	if _, err := uuid.Parse(accountID); err != nil {
 		return api.PlatformTenantOffboardingPlanResponse{}, ErrNotFound
 	}
@@ -18,13 +18,23 @@ func (m *MemStore) PlanPlatformTenantOffboarding(_ context.Context, accountID, t
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.planPlatformTenantOffboardingLocked(accountID, tenantID, m.clock().UTC())
+	snapshot, err := m.platformTenantOffboardingSnapshotLocked(ctx, accountID, tenantID, m.clock().UTC())
+	if err != nil {
+		return api.PlatformTenantOffboardingPlanResponse{}, err
+	}
+	if err := m.checkMemTrafficTenantBindingLocked(ctx, accountID, nil, trafficTenantOffboardingProposal(snapshot)); err != nil {
+		return api.PlatformTenantOffboardingPlanResponse{}, err
+	}
+	return buildPlatformTenantOffboardingPlan(snapshot)
 }
 
-func (m *MemStore) planPlatformTenantOffboardingLocked(accountID, tenantID string, now time.Time) (api.PlatformTenantOffboardingPlanResponse, error) {
+func (m *MemStore) platformTenantOffboardingSnapshotLocked(ctx context.Context, accountID, tenantID string, now time.Time) (platformTenantOffboardingSnapshot, error) {
+	if err := ctx.Err(); err != nil {
+		return platformTenantOffboardingSnapshot{}, err
+	}
 	tenant, ok := m.platformTenants[tenantID]
 	if !ok || tenant.AccountID != accountID {
-		return api.PlatformTenantOffboardingPlanResponse{}, ErrNotFound
+		return platformTenantOffboardingSnapshot{}, ErrNotFound
 	}
 	snapshot := platformTenantOffboardingSnapshot{AccountID: accountID, TenantID: tenantID, Status: tenant.Status}
 	for consumerID, linkedTenantID := range m.platformTenantByConsumer {
@@ -48,11 +58,14 @@ func (m *MemStore) planPlatformTenantOffboardingLocked(accountID, tenantID strin
 		}
 		snapshot.Surfaces = append(snapshot.Surfaces, platformTenantOffboardingSurface{ID: surface.ID,
 			Status: surface.Status, Managed: surface.PlatformTenantManaged})
-		for _, hostname := range m.tenantHostnames {
+		if err := visitMemTrafficTenantHostnames(ctx, m.tenantHostnames, nil, func(hostname TenantHostname) error {
 			if hostname.SurfaceID == surfaceID {
 				snapshot.Hostnames = append(snapshot.Hostnames, platformTenantOffboardingHostname{ID: hostname.ID,
 					SurfaceID: surfaceID, Hostname: hostname.Hostname, Managed: hostname.PlatformTenantManaged})
 			}
+			return nil
+		}); err != nil {
+			return platformTenantOffboardingSnapshot{}, err
 		}
 	}
 	for _, key := range m.consumerKeys {
@@ -87,10 +100,10 @@ func (m *MemStore) planPlatformTenantOffboardingLocked(accountID, tenantID strin
 		snapshot.AllowedHostnameSuffixes = append([]string{}, policy.AllowedSuffixes...)
 		snapshot.MaxHostnames = policy.MaxHostnames
 	}
-	return buildPlatformTenantOffboardingPlan(snapshot)
+	return snapshot, nil
 }
 
-func (m *MemStore) ApplyPlatformTenantOffboarding(_ context.Context, accountID, tenantID, expectedPlanHash string) (api.PlatformTenantOffboardingApplyResponse, error) {
+func (m *MemStore) ApplyPlatformTenantOffboarding(ctx context.Context, accountID, tenantID, expectedPlanHash string) (api.PlatformTenantOffboardingApplyResponse, error) {
 	if _, err := uuid.Parse(accountID); err != nil {
 		return api.PlatformTenantOffboardingApplyResponse{}, ErrNotFound
 	}
@@ -103,12 +116,19 @@ func (m *MemStore) ApplyPlatformTenantOffboarding(_ context.Context, accountID, 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	now := m.clock().UTC()
-	plan, err := m.planPlatformTenantOffboardingLocked(accountID, tenantID, now)
+	snapshot, err := m.platformTenantOffboardingSnapshotLocked(ctx, accountID, tenantID, now)
+	if err != nil {
+		return api.PlatformTenantOffboardingApplyResponse{}, err
+	}
+	plan, err := buildPlatformTenantOffboardingPlan(snapshot)
 	if err != nil {
 		return api.PlatformTenantOffboardingApplyResponse{}, err
 	}
 	if !platformTenantPlanHashMatches(expectedPlanHash, plan.PlanHash) {
 		return api.PlatformTenantOffboardingApplyResponse{}, ErrPlatformTenantPlanStale
+	}
+	if err := m.checkMemTrafficTenantBindingLocked(ctx, accountID, nil, trafficTenantOffboardingProposal(snapshot)); err != nil {
+		return api.PlatformTenantOffboardingApplyResponse{}, err
 	}
 	tenant := m.platformTenants[tenantID]
 	tenant.Status = PlatformTenantSuspended
@@ -159,17 +179,14 @@ func (m *MemStore) ApplyPlatformTenantOffboarding(_ context.Context, accountID, 
 		m.apiConsumers[id] = consumer
 		delete(m.platformTenantByConsumer, id)
 	}
+	proposal := trafficTenantOffboardingProposal(snapshot)
 	for key, hostname := range m.tenantHostnames {
-		if m.platformTenantBySurface[hostname.SurfaceID] == tenantID && hostname.PlatformTenantManaged {
+		if _, remove := proposal.TenantHostnames[hostname.ID]; remove {
 			delete(m.tenantHostnames, key)
 		}
 	}
-	for surfaceID, linkedTenantID := range m.platformTenantBySurface {
-		if linkedTenantID == tenantID {
-			if surface, ok := m.tenantSurfaces[surfaceID]; ok && surface.PlatformTenantManaged {
-				delete(m.platformTenantBySurface, surfaceID)
-			}
-		}
+	for surfaceID := range proposal.TenantSurfaceLinks {
+		delete(m.platformTenantBySurface, surfaceID)
 	}
 	response := api.PlatformTenantOffboardingApplyResponse{TenantID: tenantID, ReceiptID: uuid.NewString(),
 		PlanHash: plan.PlanHash, AppliedAt: now, Applied: true, Actions: plan.Actions}

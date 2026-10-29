@@ -35,7 +35,7 @@ export type EdgeRuleResponse = {
   account_id: string;
   app_id: string;
   /**
-   * Host glob. `*` matches any; `*.example.com` matches any subdomain; `@app` (ADR-1191) covers every hostname the rule's app serves, including custom domains added later.
+   * Host glob. `*` matches any; `*.example.com` matches any subdomain; `@app` covers every hostname the rule's app serves, including custom domains added later.
    */
   match_host: string;
   /**
@@ -54,7 +54,7 @@ export type EdgeRuleResponse = {
   enabled: boolean;
   kind: 'route' | 'rewrite' | 'redirect' | 'headers' | 'cors' | 'jwt' | 'ip' | 'validate' | 'limit' | 'maintenance' | 'geo' | 'throttle' | 'budget' | 'cache' | 'respond' | 'retry' | 'circuit_breaker' | 'async' | 'waf' | 'challenge';
   /**
-   * Top-level source of truth for kind=validate (ADR-128).
+   * Top-level source of truth for kind=validate.
    * Resolved mode; always present on read. Empty on read
    * would be a database invariant violation.
    *
@@ -88,13 +88,13 @@ export type EdgeRuleResponse = {
    */
   mode?: 'enforce' | 'log';
   /**
-   * Set on the app's attack-mode rule (ADR-20261021220456), which changes only through /v1/apps/{slug}/edge-protection/attack-mode; PATCH refuses it. Absent on every other rule.
+   * Set on the app's attack-mode rule, which changes only through /v1/apps/{slug}/edge-protection/attack-mode; PATCH refuses it. Absent on every other rule.
    */
   managed_by?: 'attack_mode';
   penalty?: EdgeRulePenalty;
   /**
    * Gated features this rule uses that are not yet released to the
-   * account (ADR-20261023113721). The gateway does not enforce them:
+   * account. The gateway does not enforce them:
    * a challenge rule is inert, a warn or block WAF rule only
    * observes, a penalty boxes nobody, an AI crawler condition never
    * matches, and attack mode challenges nobody. Absent when every

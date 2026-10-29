@@ -1,4 +1,4 @@
-from faas_sdk.models.project_promotion_health import ProjectPromotionHealth
+from faas_sdk.preview.models.project_promotion_health import ProjectPromotionHealth
 
 
 def test_queue_receipt_round_trip():

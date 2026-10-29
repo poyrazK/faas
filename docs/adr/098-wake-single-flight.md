@@ -352,3 +352,21 @@ Regression coverage:
 - Memory: `pgtest-pool-exec-vs-queryrow-for-selects`,
   `schedd-engine-lock-narrowing`, `wire-opsmetrics-single-registry`,
   `whitebox-test-file-pattern`, `cmd-e2e-paddle-sandbox-api-flake`.
+
+## Amendment 4 — The leader outlives the boot it starts (2026-10-26)
+
+The detached leader was bounded by `WakeQueueTTLSeconds` (30 s), the
+gateway's request hold. That hold includes admission, and the boot that
+follows may legitimately take longer: a snapshot wake is allowed the 35 s
+cold-boot budget after a refused restore (the engine's `budgetForWake`;
+the watchdog's WAKING reprieve of ADR-640), and wake failover may place
+another attempt (ADR-20261022184531). The leader cancelled those boots at
+30 s, before the engine deadline or the watchdog would, and the next
+request started over.
+
+The leader now runs under `max(TTL, cold-boot budget + 10 s)`, 45 s in
+production. Followers still wait on their own contexts, so a gateway gives
+up at its 30 s hold while the boot completes for the next request.
+Explicit app wakes run on the scheduler's work pool (ADR-191 amendment
+2026-10-26), so a longer leader holds no main-loop goroutine.
+`TestWakeLeaderBudgetCoversTheColdBoot` pins the bound.

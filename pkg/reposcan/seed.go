@@ -112,6 +112,7 @@ type workloadSeed struct {
 	rootDir             string
 	dockerfile          string
 	dockerfileBuild     *api.DockerfileBuildOptions
+	goCommand           string
 	image               string
 	healthcheck         *api.ComposeHealthcheck
 	imageProcess        *api.ComposeProcess
@@ -130,6 +131,7 @@ type workloadSeed struct {
 	allowedServiceCallers     *[]string
 	allowedServiceCallScopes  *api.ServiceCallerScopes
 	platformTenantRequired    *bool
+	renamedFrom               string
 
 	class     Class
 	schedule  string

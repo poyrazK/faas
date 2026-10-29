@@ -37,3 +37,14 @@ The existing DNS challenge and certificate lifecycle remain unchanged. A
 verified environment domain follows that environment's active deployment on
 each request; it is deliberately uncached so promotion and environment
 deletion take effect even if a notification is delayed.
+
+## Follow-up: scoped edge policy (ADR-570)
+
+An explicitly environment-scoped domain also uses that environment's workload
+headers/CORS replacement and app-filtered edge policy. A missing policy keeps
+that app's fallback; a present empty policy suppresses its headers/CORS.
+Ordinary application-wide domains retain their existing edge-policy ownership.
+The public compiler resolves the actual hostname binding before reading the
+overlay in the same authoritative snapshot, so a shadowed domain cannot change
+the policy of a higher-priority route. Publication and later policy mutations
+validate bounded raw and compiled aggregates for these scoped domains.

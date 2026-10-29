@@ -1,5 +1,5 @@
-from faas_sdk.models.create_alert_rule_request import CreateAlertRuleRequest
-from faas_sdk.models.update_alert_rule_request import UpdateAlertRuleRequest
+from faas_sdk.preview.models.create_alert_rule_request import CreateAlertRuleRequest
+from faas_sdk.preview.models.update_alert_rule_request import UpdateAlertRuleRequest
 
 
 def test_readiness_alert_scope_round_trip():

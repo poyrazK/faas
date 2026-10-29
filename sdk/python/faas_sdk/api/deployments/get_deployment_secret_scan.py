@@ -72,11 +72,11 @@ def sync_detailed(
 ) -> Response[Problem | SecretScanResult]:
     """Get per-deploy image-layer secret scan.
 
-     Returns the per-deploy secret-scan audit row (PR-A /
-    ADR-101). The scan runs on the per-app ext4 in imaged's
+     Returns the per-deploy secret-scan audit row. The scan runs on the per-app ext4 in the image
+    service's
     deploy-complete path (after `SetDeploymentRootfs`, before
     the pending→snapshotting transition) using the same
-    `pkg/secretscan` engine the apid source-tree rejection
+    secret-scan engine the API source-tree rejection
     path uses — same patterns, same providers, same Severity
     table, same snippet policy.
 
@@ -95,11 +95,11 @@ def sync_detailed(
       - the deployment belongs to a different account
         (IDOR-safe; no account-existence leak),
       - no scan has run yet (the deploy is still
-        mid-pipeline or the row predates PR-A entirely).
+        mid-pipeline or the row predates entirely).
 
     Each finding carries a `layer` label that attributes the
     finding to the per-walk source (`app` for the main image,
-    `sidecar-<slug>` for each sidecar). Pre-PR-A rows
+    `sidecar-<slug>` for each sidecar). Older rows
     (rejected source-tree bytes via the v2 422 path) carry
     `layer` empty or absent.
 
@@ -132,11 +132,11 @@ def sync(
 ) -> Problem | SecretScanResult | None:
     """Get per-deploy image-layer secret scan.
 
-     Returns the per-deploy secret-scan audit row (PR-A /
-    ADR-101). The scan runs on the per-app ext4 in imaged's
+     Returns the per-deploy secret-scan audit row. The scan runs on the per-app ext4 in the image
+    service's
     deploy-complete path (after `SetDeploymentRootfs`, before
     the pending→snapshotting transition) using the same
-    `pkg/secretscan` engine the apid source-tree rejection
+    secret-scan engine the API source-tree rejection
     path uses — same patterns, same providers, same Severity
     table, same snippet policy.
 
@@ -155,11 +155,11 @@ def sync(
       - the deployment belongs to a different account
         (IDOR-safe; no account-existence leak),
       - no scan has run yet (the deploy is still
-        mid-pipeline or the row predates PR-A entirely).
+        mid-pipeline or the row predates entirely).
 
     Each finding carries a `layer` label that attributes the
     finding to the per-walk source (`app` for the main image,
-    `sidecar-<slug>` for each sidecar). Pre-PR-A rows
+    `sidecar-<slug>` for each sidecar). Older rows
     (rejected source-tree bytes via the v2 422 path) carry
     `layer` empty or absent.
 
@@ -187,11 +187,11 @@ async def asyncio_detailed(
 ) -> Response[Problem | SecretScanResult]:
     """Get per-deploy image-layer secret scan.
 
-     Returns the per-deploy secret-scan audit row (PR-A /
-    ADR-101). The scan runs on the per-app ext4 in imaged's
+     Returns the per-deploy secret-scan audit row. The scan runs on the per-app ext4 in the image
+    service's
     deploy-complete path (after `SetDeploymentRootfs`, before
     the pending→snapshotting transition) using the same
-    `pkg/secretscan` engine the apid source-tree rejection
+    secret-scan engine the API source-tree rejection
     path uses — same patterns, same providers, same Severity
     table, same snippet policy.
 
@@ -210,11 +210,11 @@ async def asyncio_detailed(
       - the deployment belongs to a different account
         (IDOR-safe; no account-existence leak),
       - no scan has run yet (the deploy is still
-        mid-pipeline or the row predates PR-A entirely).
+        mid-pipeline or the row predates entirely).
 
     Each finding carries a `layer` label that attributes the
     finding to the per-walk source (`app` for the main image,
-    `sidecar-<slug>` for each sidecar). Pre-PR-A rows
+    `sidecar-<slug>` for each sidecar). Older rows
     (rejected source-tree bytes via the v2 422 path) carry
     `layer` empty or absent.
 
@@ -245,11 +245,11 @@ async def asyncio(
 ) -> Problem | SecretScanResult | None:
     """Get per-deploy image-layer secret scan.
 
-     Returns the per-deploy secret-scan audit row (PR-A /
-    ADR-101). The scan runs on the per-app ext4 in imaged's
+     Returns the per-deploy secret-scan audit row. The scan runs on the per-app ext4 in the image
+    service's
     deploy-complete path (after `SetDeploymentRootfs`, before
     the pending→snapshotting transition) using the same
-    `pkg/secretscan` engine the apid source-tree rejection
+    secret-scan engine the API source-tree rejection
     path uses — same patterns, same providers, same Severity
     table, same snippet policy.
 
@@ -268,11 +268,11 @@ async def asyncio(
       - the deployment belongs to a different account
         (IDOR-safe; no account-existence leak),
       - no scan has run yet (the deploy is still
-        mid-pipeline or the row predates PR-A entirely).
+        mid-pipeline or the row predates entirely).
 
     Each finding carries a `layer` label that attributes the
     finding to the per-walk source (`app` for the main image,
-    `sidecar-<slug>` for each sidecar). Pre-PR-A rows
+    `sidecar-<slug>` for each sidecar). Older rows
     (rejected source-tree bytes via the v2 422 path) carry
     `layer` empty or absent.
 

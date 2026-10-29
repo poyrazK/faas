@@ -90,8 +90,9 @@ func (s *server) postSweepStuckBuilds(w http.ResponseWriter, r *http.Request, ac
 	threshold := time.Now().Add(-olderThan)
 	swept, err := s.store.SweepStuckRunningBuilds(r.Context(), threshold)
 	if err != nil {
+		logCustomerFailure(s.log, "sweep failed", err)
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError,
-			api.CodeInternal, "sweep failed", err.Error()))
+			api.CodeInternal, "sweep failed", api.DetailServerFailure))
 		return
 	}
 	emitOperatorActionReclaimBuild(r, s, acct, int(olderThan.Seconds()), swept, threshold.UTC().Format(time.RFC3339), reason)

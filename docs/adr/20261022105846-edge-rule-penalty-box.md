@@ -137,3 +137,34 @@ events (ADR-960, ADR-964).
 
 Not in this amendment: sharing pending counts, and listing or releasing
 boxed clients without editing the rule.
+
+## Amendment 2 (2026-10-26): a box is an event
+
+ADR-20261024082000 criterion P4 asks for a review of design-partner traffic:
+no client boxed in error, and none unexplained, over 14 days. Nothing
+recorded which client was boxed. `gateway_edge_penalty_total` counts boxes
+per app, and a box's row in `edge_penalty_boxes` is pruned an hour after
+the box ends.
+
+Decision:
+
+1. **A box is an ADR-964 event, outcome `boxed`.** The gateway that boxes a
+   client records it, from the request whose refusal tipped the client in:
+   its address, method, host, path, User-Agent, request ID and, when the
+   gateway knows it, country, beside the app and rule. The gateways the box is shared to record
+   nothing, and neither do the client's refusals while boxed, which stay
+   metric-only.
+2. **Boxes have a sampling budget of their own:** 10 per rule per minute on
+   each gateway, apart from the budgets of matches, WAF detections and
+   challenge outcomes. Outside a flood a rule boxes far fewer, so every box
+   is kept. In a flood the budget bounds the events, and a WAF rule's
+   detections cannot crowd its boxes out.
+3. **Stored like the other outcomes.** `edge_rule_events_outcome_check` is
+   widened online to accept `boxed` (migration 20261025214605728). The
+   events API, `gregale edge-rules events --outcome boxed`, the dashboard's
+   events filter and the SDKs accept it. Events are kept 7 days
+   (`EdgeRuleEventRetention`), so the P4 review reads them weekly
+   (`docs/runbooks/edge-penalty-box-review.md`).
+4. **Release order.** A batch of events that the old CHECK refuses is
+   dropped whole, so the migration must apply before gateways that record
+   `boxed`, which the data, control plane, edge deploy order guarantees.

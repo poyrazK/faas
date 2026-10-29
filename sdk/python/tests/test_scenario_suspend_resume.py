@@ -1,5 +1,5 @@
-from faas_sdk.models.register_scenario_test_request import RegisterScenarioTestRequest
-from faas_sdk.models.scenario_suspend_resume_evidence import ScenarioSuspendResumeEvidence
+from faas_sdk.preview.models.register_scenario_test_request import RegisterScenarioTestRequest
+from faas_sdk.preview.models.scenario_suspend_resume_evidence import ScenarioSuspendResumeEvidence
 import pytest
 
 

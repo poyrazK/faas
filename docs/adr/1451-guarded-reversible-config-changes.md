@@ -1,6 +1,6 @@
 # ADR-1451 · Guarded, reversible config changes
 
-- **Status:** proposed; verified on n2 2026-10-17 (safe-release drill config-guard case)
+- **Status:** accepted (shipped in PR 4872, 2026-10-18); verified on n2 2026-10-17 (safe-release drill config-guard case)
 - **Date:** 2026-10-17
 - **Amends:** [ADR-211](211-effective-environment-state.md) (customer-secret versions), [ADR-625](625-first-wake-5xx-rollback-from-request-telemetry.md) (first-wake rollback, now also for config)
 - **Follows:** [ADR-1446](1446-safe-releases-by-default.md) and [ADR-1447](1447-explained-rollout-decisions.md): releases are health-gated and explained; config changes were neither

@@ -12,7 +12,10 @@
 package storagekey
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	goruntime "runtime"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -102,6 +105,23 @@ func BaseForArch(runtime, arch string) string {
 		return "base/base-" + arch + ".ext4"
 	}
 	return "base/runner-" + api.FunctionBaseRuntime(runtime) + "-" + arch + ".ext4"
+}
+
+// BaseGenerationsPrefix holds every generation-addressed runtime base in
+// shared storage (ADR-20261026181418).
+const BaseGenerationsPrefix = "base/generations/"
+
+// BaseGeneration is the shared-storage key of one generation of the runtime
+// base a node boots as baseKey (ADR-20261026181418):
+// base/generations/<sha256(generation)>/<baseKey without "base/">. The
+// generation is the exact image ref a release configures, so two releases
+// that configure different refs publish to different keys, and neither can
+// overwrite the bytes, digest or scan the other boots. Its sidecars follow
+// the logical key's naming: <key>.digest, <key>.content and
+// wire.ScanKeyForBaseKey(<key>).
+func BaseGeneration(baseKey, generation string) string {
+	sum := sha256.Sum256([]byte(generation))
+	return BaseGenerationsPrefix + hex.EncodeToString(sum[:]) + "/" + strings.TrimPrefix(baseKey, "base/")
 }
 
 // Base is BaseForArch for this host's arch, for single-box callers.

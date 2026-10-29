@@ -22,7 +22,7 @@ T = TypeVar("T", bound="ReleaseDiff")
 
 @_attrs_define
 class ReleaseDiff:
-    """What changed between two releases of one app (ADR-20261021101117)."""
+    """What changed between two releases of one app."""
 
     app: str
     to: ReleaseDiffSide
@@ -37,7 +37,7 @@ class ReleaseDiff:
     """How the builds' SBOM packages differ. Each list holds at most 100 entries."""
     runtime: list[ReleaseDiffField]
     database: ReleaseDiffDatabase
-    """How the releases' release commands, which run database migrations, differ (ADR-1448)."""
+    """How the releases' release commands, which run database migrations, differ."""
     from_: ReleaseDiffSide | Unset = UNSET
     """One of the two compared releases."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

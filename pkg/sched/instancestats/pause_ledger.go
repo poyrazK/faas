@@ -49,6 +49,15 @@ type ledgerNode struct {
 	// whose pauses are all pending or recorded.
 	reported, covered time.Time
 	lastFlush         time.Time
+	// tallies is the paused time vmmd had measured for each instance's live
+	// incarnation at the node's previous report (measure).
+	tallies map[string]pausedTally
+}
+
+// pausedTally is the quiet-paused time vmmd had measured for one
+// incarnation: its completed pauses, and how long its open pause had lasted.
+type pausedTally struct {
+	total, open time.Duration
 }
 
 // pauseLedgerCallTimeout bounds one ledger read or write. The ledger runs on
@@ -106,6 +115,7 @@ func (l *PauseLedger) Observe(ctx context.Context, rows []InstanceStat, now time
 		}
 		node.reported = sampled
 		node.apply(report, sampled)
+		l.metrics.measured(nodeID, node.measure(report, sampled))
 		node.covered = sampled
 		l.flushLocked(ctx, nodeID, node, now)
 	}
@@ -116,7 +126,7 @@ func (l *PauseLedger) Observe(ctx context.Context, rows []InstanceStat, now time
 func (l *PauseLedger) nodeLocked(ctx context.Context, nodeID string) *ledgerNode {
 	node := l.nodes[nodeID]
 	if node == nil {
-		node = &ledgerNode{open: make(map[string]openPause), closed: make(map[string]time.Time), pending: make(map[pauseKey]time.Time)}
+		node = &ledgerNode{open: make(map[string]openPause), closed: make(map[string]time.Time), pending: make(map[pauseKey]time.Time), tallies: make(map[string]pausedTally)}
 		l.nodes[nodeID] = node
 	}
 	if node.loaded {
@@ -188,6 +198,48 @@ func (n *ledgerNode) apply(report []InstanceStat, sampled time.Time) {
 	}
 }
 
+// measure returns the quiet-paused time vmmd measured on the node between
+// its previous report and this one: the growth of each incarnation's
+// completed pauses plus how long its open pause has lasted. meterd's
+// subtracted seconds come from the ledger built from the same reports, so
+// they must stay under this (FaasQuietPauseUnbilledExceedsMeasured). An
+// instance seen for the first time sets its baseline. A smaller completed
+// total is a new incarnation, which started after the previous report, so
+// all of its paused time is new.
+func (n *ledgerNode) measure(report []InstanceStat, sampled time.Time) time.Duration {
+	var grown time.Duration
+	seen := make(map[string]struct{}, len(report))
+	for _, row := range report {
+		seen[row.InstanceID] = struct{}{}
+		rec := row.QuietPause
+		var cur pausedTally
+		if rec.PausedTotal != nil {
+			// vmmd reports the total once a pause has completed.
+			cur.total = *rec.PausedTotal
+		}
+		if row.QuietPaused && !rec.Since.IsZero() && sampled.After(rec.Since) {
+			cur.open = sampled.Sub(rec.Since)
+		}
+		prev, tracked := n.tallies[row.InstanceID]
+		n.tallies[row.InstanceID] = cur
+		switch {
+		case !tracked:
+		case cur.total < prev.total:
+			grown += cur.total + cur.open
+		default:
+			// A completed pause moves its time from open to total; the
+			// wall-clock open and the monotonic total can differ by a hair.
+			grown += max(0, cur.total+cur.open-prev.total-prev.open)
+		}
+	}
+	for instance := range n.tallies {
+		if _, ok := seen[instance]; !ok {
+			delete(n.tallies, instance)
+		}
+	}
+	return grown
+}
+
 // ledgerTime is t at the ledger's precision. vmmd reports nanoseconds, but
 // a pause is keyed by (instance, started_at) and timestamptz keeps
 // microseconds (pgx truncates). Comparing a start read back from the ledger
@@ -247,10 +299,12 @@ func (l *PauseLedger) flushLocked(ctx context.Context, nodeID string, node *ledg
 type PauseLedgerMetrics struct {
 	writes     *prometheus.CounterVec
 	watermarks *prometheus.GaugeVec
+	measuredS  *prometheus.CounterVec
 }
 
-// NewPauseLedgerMetrics registers schedd_quiet_pause_ledger_writes_total and
-// schedd_quiet_pause_ledger_watermark_seconds on reg.
+// NewPauseLedgerMetrics registers schedd_quiet_pause_ledger_writes_total,
+// schedd_quiet_pause_ledger_watermark_seconds and
+// schedd_quiet_pause_measured_seconds_total on reg.
 func NewPauseLedgerMetrics(reg prometheus.Registerer) *PauseLedgerMetrics {
 	m := &PauseLedgerMetrics{
 		writes: prometheus.NewCounterVec(prometheus.CounterOpts{
@@ -261,14 +315,24 @@ func NewPauseLedgerMetrics(reg prometheus.Registerer) *PauseLedgerMetrics {
 			Name: "schedd_quiet_pause_ledger_watermark_seconds",
 			Help: "Unix time of the newest node report the quiet pause ledger has recorded. meterd counts an open pause only up to it; it stops moving while a node reports no VM.",
 		}, []string{"node"}),
+		measuredS: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "schedd_quiet_pause_measured_seconds_total",
+			Help: "Quiet-paused seconds vmmd measured on the node (completed pauses plus open pause time), from the reports the pause ledger is built from. meterd_quiet_pause_unbilled_seconds_total must stay under it (ADR-20261023171905).",
+		}, []string{"node"}),
 	}
 	for _, outcome := range []string{"ok", "error", "load_error"} {
 		m.writes.WithLabelValues(outcome)
 	}
 	if reg != nil {
-		reg.MustRegister(m.writes, m.watermarks)
+		reg.MustRegister(m.writes, m.watermarks, m.measuredS)
 	}
 	return m
+}
+
+func (m *PauseLedgerMetrics) measured(nodeID string, d time.Duration) {
+	if m != nil {
+		m.measuredS.WithLabelValues(nodeID).Add(d.Seconds())
+	}
 }
 
 func (m *PauseLedgerMetrics) write(outcome string) {

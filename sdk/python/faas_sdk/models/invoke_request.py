@@ -29,13 +29,12 @@ class InvokeRequest:
     method: str | Unset = "POST"
     path: str | Unset = "/"
     deadline_at: datetime.datetime | None | Unset = UNSET
-    """ADR-134 PR-B. Hard-stop timestamp. Must be within now+Limits.MaxAsyncInvocationDeadlineSeconds."""
+    """Hard-stop timestamp. Must be within now+Limits.MaxAsyncInvocationDeadlineSeconds."""
     retry_policy: InvokeRequestRetryPolicyType0 | None | Unset = UNSET
-    """ADR-134 PR-B. Per-row retry curve override. max_attempts counts the original, is capped by the account plan,
-    and 0 inherits that finite cap."""
+    """Per-row retry curve override. max_attempts counts the original, is capped by the account plan, and 0
+    inherits that finite cap."""
     retention_seconds: int | None | Unset = UNSET
-    """ADR-134 PR-B. Retention horizon in seconds. NULL/0 means 'use plan default'
-    (Limits.MaxAsyncResultRetentionSeconds)."""
+    """Retention horizon in seconds. NULL/0 means 'use plan default' (Limits.MaxAsyncResultRetentionSeconds)."""
     destinations: InvocationDestinations | None | Unset = UNSET
     """EPIC #1278. Optional terminal callbacks."""
     work: InvokeWork | Unset = UNSET

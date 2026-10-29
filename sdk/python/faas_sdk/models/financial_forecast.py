@@ -30,7 +30,7 @@ class FinancialForecast:
     projected_quantity: int | Unset = UNSET
     projected_net_millicents: int | Unset = UNSET
     projected_gross_millicents: int | Unset = UNSET
-    """Set only for account-level meters priced by more than one rate, such as object_storage (ADR-20261020160000)."""
+    """Set only for account-level meters priced by more than one rate, such as object_storage."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

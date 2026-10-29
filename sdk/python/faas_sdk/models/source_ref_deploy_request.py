@@ -29,8 +29,7 @@ T = TypeVar("T", bound="SourceRefDeployRequest")
 
 @_attrs_define
 class SourceRefDeployRequest:
-    """JSON body for POST /v1/apps/{slug}/deployments/source-ref
-    (DEPLOY-PROV-4 / ADR-092, issue #739). The headless CI deploy
+    """JSON body for POST /v1/apps/{slug}/deployments/source-ref. The headless CI deploy
     path: `repo` resolves to an install-token-bound fetch, `ref` is
     the customer's chosen input (branch / tag / SHA — server
     resolves to a 40-char SHA before stamping the deployment row).
@@ -53,12 +52,12 @@ class SourceRefDeployRequest:
     expected_source: SourceReviewResponse | Unset = UNSET
     """Resolved repository identity and immutable commit bound to a release review."""
     healthcheck: DeploymentHealthcheck | Unset = UNSET
-    """Startup healthcheck shape on the deploy-time override object (issue #460 /
-    ADR-053). Exactly one of `path` (HTTP) or `grpc` (standard gRPC health
+    """Startup healthcheck shape on the deploy-time override object. Exactly one of `path` (HTTP) or `grpc`
+    (standard gRPC health
     Check) selects the startup admission action. The gRPC probe uses the
     app's published port; an empty service checks overall server health.
 
-    Validation rules (enforced in `pkg/api/dto.go::CreateDeploymentOverrides.Validate`):
+    Validation rules (enforced):
     - Exactly one of `path` and `grpc` must be set.
     - `path`, when set, must start with `/`.
     - `grpc.service` is optional and limited to 256 characters.
@@ -78,7 +77,7 @@ class SourceRefDeployRequest:
     explicit pinned deployment or a tag.
     """
     format_: SourceRefDeployRequestFormat | Unset = "tarball"
-    """Forward-compat field. PR-A only supports `tarball`."""
+    """Forward-compat field. only supports `tarball`."""
     environment: str | Unset = UNSET
     """Registered project environment to target for this source-ref deployment."""
     no_triggers: bool | Unset = False
@@ -88,10 +87,10 @@ class SourceRefDeployRequest:
     tag: SourceRefDeployRequestTag | Unset = UNSET
     """Closed-set annotation tag for grouping/filtering."""
     deployed_by: str | Unset = UNSET
-    """Human-readable actor label. CLI auto-captures from `git config user.name`; githubd stamps pusher.name; the
-    GitHub Action defaults to ${{ github.actor }}."""
+    """Human-readable actor label. CLI auto-captures from `git config user.name`; the GitHub integration stamps
+    pusher.name; the GitHub Action defaults to ${{ github.actor }}."""
     pr_number: int | Unset = UNSET
-    """Pull-request number when the wire offers it (githubd pull_request.number; Action ${{
+    """Pull-request number when the wire offers it (the GitHub integration pull_request.number; Action ${{
     github.event.pull_request.number }}). NULL for push-to-main with no inferred PR."""
     traffic_percent: int | None | Unset = UNSET
     """Explicit initial traffic weight for this source-ref deployment. Omitted uses the normal stable rollout; zero
@@ -105,11 +104,10 @@ class SourceRefDeployRequest:
     """Source-ref deployment grant consumed once to permit cutover despite outstanding tasks requiring omitted
     handler versions."""
     override_freeze: str | Unset = UNSET
-    """Release this source ref to production while a deploy freeze is active; the reason is audited
-    (ADR-20261019071733)."""
+    """Release this source ref to production while a deploy freeze is active; the reason is audited."""
     release_at: datetime.datetime | Unset = UNSET
     """Build this source ref now, keep it live without traffic, and start its production rollout at this time;
-    deploy freezes are checked at that time (ADR-20261021152201)."""
+    deploy freezes are checked at that time."""
     release_notify: list[str] | Unset = UNSET
     """Slack or email notification channels told when this source ref, scheduled with release_at, starts or cannot
     start."""

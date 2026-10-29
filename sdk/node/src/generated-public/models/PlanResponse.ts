@@ -1,0 +1,65 @@
+/* generated using openapi-typescript-codegen -- do not edit */
+/* istanbul ignore file */
+/* tslint:disable */
+/* eslint-disable */
+import type { PlanAffectedApp } from './PlanAffectedApp.js';
+import type { PlanAsyncRoute } from './PlanAsyncRoute.js';
+import type { PlanCron } from './PlanCron.js';
+import type { PlanDetectionWarning } from './PlanDetectionWarning.js';
+import type { PlanManaged } from './PlanManaged.js';
+import type { PlanWorkload } from './PlanWorkload.js';
+import type { ProjectSafeRelease } from './ProjectSafeRelease.js';
+/**
+ * Dry-run scan response.
+ */
+export type PlanResponse = {
+  safe_release?: ProjectSafeRelease;
+  project_slug: string;
+  repo_full_name?: string;
+  /**
+   * Registered project environment targeted by this plan
+   */
+  environment?: string;
+  /**
+   * Whether applying this plan requires protected-environment approval
+   */
+  environment_protected?: boolean;
+  /**
+   * Hash of the non-secret environment configuration bound into this plan
+   */
+  environment_config_hash?: string;
+  scan_source: 'compose' | 'procfile' | 'k8s' | 'render' | 'fly' | 'serverless' | 'workspace' | 'convention' | 'single' | 'unknown';
+  tier: string;
+  workloads: Array<PlanWorkload>;
+  managed: Array<PlanManaged>;
+  crons: Array<PlanCron>;
+  /**
+   * Structured diff for manifest-owned async routes; omitted when the manifest does not declare async_routes or no route actions need to be shown.
+   */
+  async_routes?: Array<PlanAsyncRoute>;
+  warnings?: Array<string>;
+  /**
+   * Structured skipped/merged detector decisions available to explain-mode clients.
+   */
+  detection_warnings?: Array<PlanDetectionWarning>;
+  observed_apps: number;
+  observed_crons: number;
+  limit_apps: number;
+  limit_crons: number;
+  can_apply: boolean;
+  crons_not_allowed?: boolean;
+  /**
+   * base64-JSON plan token; pass back as ?plan_token= on /v1/projects to skip the second extract.
+   */
+  plan_token: string;
+  can_apply_pre_exclude?: boolean;
+  gate_rescued_by_exclude?: boolean;
+  can_apply_reasons?: Array<string>;
+  will_deploy?: Array<PlanAffectedApp>;
+  unaffected?: Array<PlanAffectedApp>;
+  skipped?: Array<PlanAffectedApp>;
+  removed?: Array<string>;
+  persisted_exclusions?: Array<string>;
+  stale_persisted_exclusions?: Array<string>;
+};
+

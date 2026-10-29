@@ -5,13 +5,12 @@
 import type { ThrottlePreviewRow } from './ThrottlePreviewRow.js';
 import type { ThrottleSuggestionRow } from './ThrottleSuggestionRow.js';
 /**
- * Per-route throttle recommendation payload (ADR-091 D20.5
- * amendment, issue #881). Source is `prometheus` on success
+ * Per-route throttle recommendation payload. Source is `prometheus` on success
  * or `degraded: <reason>` on Prometheus failure (response is
  * still 200 with empty Suggestions — the dashboard's
  * empty-state branch handles it).
  *
- * Phase 4 D1/D2 (ADR-104 amendment 5): when the request
+ * When the request
  * supplies `dry_run=true` + `candidate_rps` + (optional)
  * `candidate_burst`, the response ALSO carries a per-route
  * `would_have_rejected` array + the static
@@ -45,7 +44,7 @@ export type ThrottleSuggestionsResponse = {
   /**
    * Count of routes that collapsed into the reserved
    * `__route_other__` overflow bucket during the window
-   * (ADR-093 cap = 50). A non-zero value indicates the
+   * (cap = 50). A non-zero value indicates the
    * throttle is partial-coverage regardless of the
    * configured limit.
    *
@@ -54,7 +53,7 @@ export type ThrottleSuggestionsResponse = {
   /**
    * `plan.RateLimitRPS` — the sub-plan ceiling the
    * suggestion is clamped to. 0 on unknown plans (fail
-   * OPEN — the apid sub-plan validator is the
+   * OPEN — the API sub-plan validator is the
    * authoritative gate).
    *
    */

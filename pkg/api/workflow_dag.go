@@ -210,6 +210,10 @@ type WorkflowStepSpec struct {
 	OnTimeout        string                 `json:"on_timeout,omitempty" yaml:"on_timeout,omitempty" toml:"on_timeout,omitempty"`
 	OnFailure        string                 `json:"on_failure,omitempty" yaml:"on_failure,omitempty" toml:"on_failure,omitempty"`
 	Retry            *WorkflowRetrySpec     `json:"retry,omitempty" yaml:"retry,omitempty" toml:"retry,omitempty"`
+	// Agent names an agent the step runs (ADR-20261027090010 §9): the step's input,
+	// rendered like any step input, is the run request, and the step waits
+	// for the run to end. Agent steps are a preview behind the agents capability.
+	Agent string `json:"agent,omitempty" yaml:"agent,omitempty" toml:"agent,omitempty"`
 }
 
 // ManagedWorkflowStepOperationID is stable across handler retries and scoped
@@ -312,7 +316,7 @@ func (s *WorkflowStepSpec) UnmarshalJSON(data []byte) error {
 		"name": {}, "run": {}, "input": {}, "path": {}, "method": {},
 		"managed_operation": {},
 		"depends_on":        {}, "wait_for_event": {}, "wait_for_callback": {}, "wait_for_duration": {}, "wait_for_condition": {}, "timeout": {},
-		"on_timeout": {}, "on_failure": {}, "retry": {}, "outbound": {}, "when": {}, "join": {}, "for_each": {},
+		"on_timeout": {}, "on_failure": {}, "retry": {}, "outbound": {}, "when": {}, "join": {}, "for_each": {}, "agent": {},
 	}
 	for key := range fields {
 		if _, ok := allowed[key]; !ok {
@@ -340,6 +344,7 @@ func (s *WorkflowStepSpec) UnmarshalJSON(data []byte) error {
 		OnTimeout        string                 `json:"on_timeout"`
 		OnFailure        string                 `json:"on_failure"`
 		Retry            *WorkflowRetrySpec     `json:"retry"`
+		Agent            string                 `json:"agent"`
 	}
 	var w wire
 	if err := json.Unmarshal(data, &w); err != nil {
@@ -360,7 +365,7 @@ func (s *WorkflowStepSpec) UnmarshalJSON(data []byte) error {
 		WaitForDuration:  waitForDuration,
 		WaitForCondition: w.WaitForCondition,
 		Timeout:          timeout, OnTimeout: w.OnTimeout, OnFailure: w.OnFailure,
-		Retry: w.Retry,
+		Retry: w.Retry, Agent: w.Agent,
 	}
 	return nil
 }
@@ -396,12 +401,13 @@ func (s WorkflowStepSpec) MarshalJSON() ([]byte, error) {
 		OnTimeout        string                 `json:"on_timeout,omitempty"`
 		OnFailure        string                 `json:"on_failure,omitempty"`
 		Retry            *WorkflowRetrySpec     `json:"retry,omitempty"`
+		Agent            string                 `json:"agent,omitempty"`
 	}{
 		Name: s.Name, Run: s.Run, ManagedOperation: s.ManagedOperation, Input: s.Input, Path: s.Path, Method: s.Method, Outbound: s.Outbound,
 		ForEach: s.ForEach, Join: s.Join, When: s.When, DependsOn: s.DependsOn, WaitForEvent: s.WaitForEvent,
 		WaitForCallback: s.WaitForCallback,
 		WaitForDuration: waitForDuration, WaitForCondition: s.WaitForCondition, Timeout: timeout,
-		OnTimeout: s.OnTimeout, OnFailure: s.OnFailure, Retry: s.Retry,
+		OnTimeout: s.OnTimeout, OnFailure: s.OnFailure, Retry: s.Retry, Agent: s.Agent,
 	})
 }
 
@@ -419,7 +425,7 @@ func (s *WorkflowStepSpec) UnmarshalYAML(node *yaml.Node) error {
 		"name": {}, "run": {}, "input": {}, "path": {}, "method": {},
 		"managed_operation": {},
 		"depends_on":        {}, "wait_for_event": {}, "wait_for_callback": {}, "wait_for_duration": {}, "wait_for_condition": {}, "timeout": {},
-		"on_timeout": {}, "on_failure": {}, "retry": {}, "outbound": {}, "when": {}, "join": {}, "for_each": {},
+		"on_timeout": {}, "on_failure": {}, "retry": {}, "outbound": {}, "when": {}, "join": {}, "for_each": {}, "agent": {},
 	}
 	for key := range fields {
 		if _, ok := allowed[key]; !ok {
@@ -539,8 +545,14 @@ func ValidateWorkflowDAG(spec WorkflowSpec, plan Plan) ([]string, error) {
 		hasEvent := strings.TrimSpace(step.WaitForEvent) != ""
 		hasTimer := step.WaitForDuration != 0
 		hasCondition := step.WaitForCondition != nil
-		if boolCount(hasRun, hasPath, hasEvent, step.WaitForCallback, hasTimer, hasCondition, step.Outbound != nil, step.Join != nil, step.ForEach != nil) != 1 {
+		hasAgent := step.Agent != ""
+		if boolCount(hasRun, hasPath, hasEvent, step.WaitForCallback, hasTimer, hasCondition, step.Outbound != nil, step.Join != nil, step.ForEach != nil, hasAgent) != 1 {
 			return nil, fmt.Errorf("%w in step %q", ErrWorkflowInvalidStepTarget, step.Name)
+		}
+		if hasAgent {
+			if err := validateWorkflowAgentStep(step, maxWaitDuration); err != nil {
+				return nil, fmt.Errorf("%w in step %q", err, step.Name)
+			}
 		}
 		if err := ValidateWorkflowJoinStep(step); err != nil {
 			return nil, fmt.Errorf("%w in step %q", err, step.Name)
@@ -595,7 +607,7 @@ func ValidateWorkflowDAG(spec WorkflowSpec, plan Plan) ([]string, error) {
 				return nil, fmt.Errorf("%w in step %q", ErrWorkflowConditionOptionsInvalid, step.Name)
 			}
 		}
-		if hasEvent && strings.HasPrefix(step.WaitForEvent, workflowCallbackEventPrefix) {
+		if hasEvent && IsWorkflowReservedEventName(step.WaitForEvent) {
 			return nil, fmt.Errorf("%w in step %q", ErrWorkflowReservedEventName, step.Name)
 		}
 		if hasEvent || step.WaitForCallback {
@@ -606,7 +618,7 @@ func ValidateWorkflowDAG(spec WorkflowSpec, plan Plan) ([]string, error) {
 			if step.Timeout < time.Second || step.Timeout > conditionMaxWaitDuration {
 				return nil, fmt.Errorf("%w in step %q", ErrWorkflowConditionTimeoutInvalid, step.Name)
 			}
-		} else if step.Timeout > 0 && (maxTimeout <= 0 || step.Timeout > maxTimeout) {
+		} else if step.Timeout > 0 && !hasAgent && (maxTimeout <= 0 || step.Timeout > maxTimeout) {
 			return nil, fmt.Errorf("%w in step %q: %v > %v", ErrWorkflowTimeoutExceeded, step.Name, step.Timeout, maxTimeout)
 		}
 	}
@@ -790,6 +802,13 @@ func WorkflowCallbackEventName(runID, stepName string) string {
 
 func IsWorkflowCallbackEventName(eventName string) bool {
 	return strings.HasPrefix(eventName, workflowCallbackEventPrefix)
+}
+
+// IsWorkflowReservedEventName reports names only the platform delivers: a
+// callback completion or an agent step's run result. Customers cannot wait
+// for or inject them.
+func IsWorkflowReservedEventName(eventName string) bool {
+	return IsWorkflowCallbackEventName(eventName) || strings.HasPrefix(eventName, workflowAgentEventPrefix)
 }
 
 func boolCount(values ...bool) int {

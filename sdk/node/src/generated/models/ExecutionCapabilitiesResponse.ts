@@ -25,7 +25,7 @@ export type ExecutionCapabilitiesResponse = {
    */
   plan_entitled: boolean;
   /**
-   * Whether the apid Runs admission gate is enabled.
+   * Whether the API Runs admission gate is enabled.
    */
   control_plane_enabled: boolean;
   unavailable_reasons?: Array<'plan_not_entitled' | 'control_plane_disabled'>;

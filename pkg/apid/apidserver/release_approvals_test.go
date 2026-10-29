@@ -282,6 +282,10 @@ func TestReleaseApprovalsRequireACanaryAtReleaseTime(t *testing.T) {
 	half := 50
 	rec = e.Do(t, http.MethodPost, path, api.CreateDeploymentRequest{Image: imageRef('d'), TrafficPercent: &half}, nil)
 	apidserver.AssertProblem(t, rec, http.StatusConflict, api.CodeReleaseApprovalCanaryRequired)
+	// The production environment's scope is the same production lane, so
+	// naming it does not step around the policy.
+	rec = e.Do(t, http.MethodPost, path, api.CreateDeploymentRequest{Image: imageRef('f'), Scope: "production", Canary: &api.CanaryPresetSpec{Preset: "none"}}, nil)
+	apidserver.AssertProblem(t, rec, http.StatusConflict, api.CodeReleaseApprovalCanaryRequired)
 	zero := 0
 	rec = e.Do(t, http.MethodPost, path, api.CreateDeploymentRequest{Image: imageRef('e'), TrafficPercent: &zero}, nil)
 	var p api.Problem
@@ -440,5 +444,52 @@ func TestReleaseApprovalPageRendersWithoutReleaseData(t *testing.T) {
 	(*e.S()).RenderReleaseApprovalPage(rec, bad)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("bad id = %d", rec.Code)
+	}
+}
+
+// A release deployed dark (live at 0%) after the app started requiring
+// approvals is a forward release: rolling back to it must meet the approvals
+// a traffic increase meets, not ship it to every request (security audit
+// 2026-10-27). A checked rollback is held the same way.
+func TestRollbackToADarkReleaseMeetsItsApprovals(t *testing.T) {
+	ctx := context.Background()
+	e := apidserver.Setup(t, api.PlanPro)
+	store := *e.Store()
+	app, err := store.CreateApp(ctx, state.App{AccountID: (*e.Acct()).ID, Slug: "approval-dark"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prior, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:prior", Kind: state.DeploymentKindImage})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDeploymentLive(ctx, prior.ID); err != nil {
+		t.Fatal(err)
+	}
+	if rec := e.Do(t, http.MethodPut, "/v1/apps/approval-dark/release-approval-policy", api.SetReleaseApprovalPolicyRequest{RequiredApprovals: 1}, nil); rec.Code != http.StatusOK {
+		t.Fatalf("set policy = %d %s", rec.Code, rec.Body)
+	}
+	dark, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:dark", Kind: state.DeploymentKindImage,
+		Status: state.DeployPending, TrafficPercent: 0, TrafficPercentExplicit: true, CreatedAt: time.Now().UTC().Add(time.Second),
+		DeployedByUserID: (*e.Acct()).ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDeploymentLive(ctx, dark.ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, body := range []api.RollbackRequest{
+		{TargetDeploymentID: &dark.ID},
+		{TargetDeploymentID: &dark.ID, ExpectedCurrentDeploymentID: &prior.ID},
+	} {
+		rec := e.Do(t, http.MethodPost, "/v1/apps/approval-dark/rollback", body, nil)
+		if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "release_approval") {
+			t.Fatalf("rollback to the dark release (checked=%v) = %d %s, want a release approval refusal",
+				body.ExpectedCurrentDeploymentID != nil, rec.Code, rec.Body)
+		}
+	}
+	got, err := store.DeploymentByID(ctx, dark.ID)
+	if err != nil || got.Status != state.DeployLive || got.TrafficPercent != 0 {
+		t.Fatalf("dark release after the refused rollbacks = %+v, %v; want still live at 0%%", got, err)
 	}
 }

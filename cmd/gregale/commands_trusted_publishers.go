@@ -52,7 +52,7 @@ const (
 func cmdTrustedPublishers(args []string) int {
 	parent, _ := lookupCliCommand("trusted-publishers")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale trusted-publishers <add|remove|list> [flags]", "trusted-publishers")
+		PrintUsage(os.Stderr, "usage: gregale registry key <add|remove|list> [flags]", "trusted-publishers")
 		return 1
 	}
 	switch args[0] {
@@ -64,7 +64,7 @@ func cmdTrustedPublishers(args []string) int {
 		return cmdTrustedPublishersList(args[1:])
 	default:
 		sug, _ := suggestSubcommand(args[0], parent)
-		fmt.Fprintf(os.Stderr, "gregale trusted-publishers: unknown subcommand %q (known: add, remove, list)\n", args[0])
+		fmt.Fprintf(os.Stderr, "gregale registry key: unknown subcommand %q (known: add, remove, list)\n", args[0])
 		maybeSuggestSub(sug)
 		return 1
 	}
@@ -84,7 +84,7 @@ func cmdTrustedPublishersAdd(args []string) int {
 	}
 	rest := fs.Args()
 	if len(rest) != 3 {
-		PrintUsage(os.Stderr, "usage: gregale trusted-publishers add <slug> <name> <pub.pem>", "trusted-publishers")
+		PrintUsage(os.Stderr, "usage: gregale registry key create <slug> <name> <pub.pem>", "trusted-publishers")
 		return 1
 	}
 	slug, name, pemPath := rest[0], rest[1], rest[2]
@@ -124,7 +124,7 @@ func cmdTrustedPublishersRemove(args []string) int {
 	}
 	rest := fs.Args()
 	if len(rest) != 2 {
-		PrintUsage(os.Stderr, "usage: gregale trusted-publishers remove <slug> <name>", "trusted-publishers")
+		PrintUsage(os.Stderr, "usage: gregale registry key delete <slug> <name>", "trusted-publishers")
 		return 1
 	}
 	slug, name := rest[0], rest[1]
@@ -180,7 +180,7 @@ func cmdTrustedPublishersList(args []string) int {
 	}
 	rest := fs.Args()
 	if len(rest) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale trusted-publishers list <slug>", "trusted-publishers")
+		PrintUsage(os.Stderr, "usage: gregale registry key list <slug>", "trusted-publishers")
 		return 1
 	}
 	slug := rest[0]

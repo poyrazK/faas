@@ -34,6 +34,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"regexp"
 	"strings"
@@ -165,15 +166,21 @@ func cmdDeployments(args []string) int {
 	// use (e.g. `kubectl get pods -w` watch flag — semantically
 	// different but the user mental model is "show me more").
 	wide := fs.Bool("wide", false, "include the revision (vN) and annotation columns (by / pr / tag / reason)")
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
-	if fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale deployments [--app SLUG] [--limit N] [--cursor CURSOR] [--all] [--wide] [--failed-only]", "deployments")
+	// Other app commands take the slug positionally; `deployments h14-py`
+	// answered with bare usage (Hunt 14 H14-63).
+	positional, mergeErr := mergeAppFlag(fs.Args(), *app, 1)
+	if mergeErr != nil || len(positional) > 1 {
+		PrintUsage(os.Stderr, "usage: gregale release list [SLUG | --app SLUG] [--limit N] [--cursor CURSOR] [--all] [--wide] [--failed-only]", "deployments")
 		return 1
+	}
+	if len(positional) == 1 {
+		*app = positional[0]
 	}
 	if err := validateCLILimit("limit", *limit, 200); err != nil {
-		PrintUsage(os.Stderr, "usage: gregale deployments --limit N (1 <= N <= 200)", "deployments")
+		PrintUsage(os.Stderr, "usage: gregale release list --limit N (1 <= N <= 200)", "deployments")
 		return 1
 	}
 	resolvedApp, resolveErr := resolveAppFlagOrContext(*app)
@@ -225,7 +232,7 @@ func cmdDeployments(args []string) int {
 	}
 	if len(page.Items) == 0 {
 		target := "deployments in the selected account"
-		nextCommand := recoveryCLI() + " deployments"
+		nextCommand := recoveryCLI() + " release list"
 		if *app != "" {
 			target = "deployments for app " + *app
 			nextCommand += " --app " + recoveryArgument(*app)
@@ -234,7 +241,7 @@ func cmdDeployments(args []string) int {
 			if *app != "" {
 				nextCommand = recoveryCLI() + " app " + recoveryArgument(*app)
 			} else {
-				nextCommand = recoveryCLI() + " apps"
+				nextCommand = recoveryCLI() + " app list"
 			}
 		}
 		if *before == "" && next == "" {
@@ -269,14 +276,14 @@ func cmdDeployments(args []string) int {
 // lands here when the dashboard drill-down needs a CLI sibling.
 func cmdDeploymentsExclude(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale deployments exclude clear --slug=NAME [--project-slug=SLUG]", "deployments exclude")
+		PrintUsage(os.Stderr, "usage: gregale release list exclude clear --slug=NAME [--project-slug=SLUG]", "deployments exclude")
 		return 1
 	}
 	switch args[0] {
 	case "clear":
 		return cmdDeploymentsExcludeClear(args[1:])
 	default:
-		PrintUsage(os.Stderr, "usage: gregale deployments exclude clear --slug=NAME [--project-slug=SLUG]", "deployments exclude")
+		PrintUsage(os.Stderr, "usage: gregale release list exclude clear --slug=NAME [--project-slug=SLUG]", "deployments exclude")
 		return 1
 	}
 }
@@ -305,14 +312,14 @@ func cmdDeploymentsExcludeClear(args []string) int {
 		return 1
 	}
 	if *slug == "" {
-		PrintUsage(os.Stderr, "usage: gregale deployments exclude clear --slug=NAME [--project-slug=SLUG]", "deployments exclude")
+		PrintUsage(os.Stderr, "usage: gregale release list exclude clear --slug=NAME [--project-slug=SLUG]", "deployments exclude")
 		return 1
 	}
 	if *projectSlug == "" {
 		*projectSlug = os.Getenv("FAAS_PROJECT_SLUG")
 	}
 	if *projectSlug == "" {
-		PrintUsage(os.Stderr, "usage: gregale deployments exclude clear --slug=NAME --project-slug=SLUG (or set FAAS_PROJECT_SLUG)", "deployments exclude")
+		PrintUsage(os.Stderr, "usage: gregale release list exclude clear --slug=NAME --project-slug=SLUG (or set FAAS_PROJECT_SLUG)", "deployments exclude")
 		return 1
 	}
 	client, err := authedClient()
@@ -344,7 +351,7 @@ func cmdDeploymentsExcludeClear(args []string) int {
 // cmdDeployment dispatches deployment inspection and lifecycle commands.
 func cmdDeployment(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale deployment <id> [--show-scan] | gregale deployment runtime <id> [--target RELEASE_ID] | gregale deployment summary <id> --app SLUG | gregale deployment diff <id> [--against <id>] | gregale deployment wait <id> [--rollout] [--progress] [--timeout SECONDS] | gregale deployment advance <id> --expected-step N | gregale deployment set-min-instances <id> --min N", "deployment")
+		PrintUsage(os.Stderr, "usage: gregale deployment <id> [--show-scan] | gregale release runtime <id> [--target RELEASE_ID] | gregale release summary <id> --app SLUG | gregale release diff <id> [--against <id>] | gregale release wait <id> [--rollout] [--progress] [--timeout SECONDS] | gregale deployment advance <id> --expected-step N | gregale deployment set-min-instances <id> --min N", "deployment")
 		return 1
 	}
 	switch args[0] {
@@ -389,7 +396,7 @@ func cmdDeploymentWait(args []string) int {
 		return 1
 	}
 	if len(pos) != 1 || *timeoutSeconds <= 0 || !validDeploymentReadRef(pos[0]) {
-		PrintUsage(os.Stderr, "usage: gregale deployment wait <id|vN|latest> [--app SLUG] [--rollout] [--progress] [--timeout SECONDS]", "deployment")
+		PrintUsage(os.Stderr, "usage: gregale release wait <id|vN|latest> [--app SLUG] [--rollout] [--progress] [--timeout SECONDS]", "deployment")
 		return 1
 	}
 	client, err := authedClient()
@@ -411,6 +418,7 @@ func cmdDeploymentWait(args []string) int {
 	}
 	var progressState *deploymentProgressSnapshot
 	var held rolloutHeldNotice
+	transientFailures := 0
 
 	for {
 		d, getErr := client.GetDeployment(ctx, pos[0])
@@ -418,8 +426,22 @@ func cmdDeploymentWait(args []string) int {
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 				return printErr("Deployment wait timed out", fmt.Errorf("deployment %s did not become %s within %ds", pos[0], waitTarget, *timeoutSeconds))
 			}
+			// A long wait outlives one dropped connection or gateway blip:
+			// a rollout wait on prod exited after 84 s on a single
+			// "connection reset by peer" (Hunt 14 H14-99).
+			if transientDeploymentWaitError(getErr) && transientFailures < deploymentWaitTransientRetries {
+				transientFailures++
+				if transientFailures == 1 && !jsonOutput {
+					_, _ = fmt.Fprintf(osStderr, "warning: could not reach Gregale (%v); still waiting\n", getErr)
+				}
+				if !sleepOrDone(ctx, 2*time.Second) {
+					return printErr("Deployment wait timed out", fmt.Errorf("deployment %s did not become %s within %ds", pos[0], waitTarget, *timeoutSeconds))
+				}
+				continue
+			}
 			return printErr("Could not fetch deployment", getErr)
 		}
+		transientFailures = 0
 		if *progress && !jsonOutput {
 			progressState = renderDeploymentProgress(osStdout, d, progressState)
 		}
@@ -471,6 +493,36 @@ func cmdDeploymentWait(args []string) int {
 			return printErr("Deployment wait timed out", fmt.Errorf("deployment %s did not become live within %ds", d.ID, *timeoutSeconds))
 		case <-timer.C:
 		}
+	}
+}
+
+// deploymentWaitTransientRetries bounds consecutive transient read failures
+// a deployment wait rides out before it gives up (~10 s at the 2 s poll).
+const deploymentWaitTransientRetries = 5
+
+// transientDeploymentWaitError reports a read failure worth retrying: the
+// request never reached the API or the edge answered 429/502/503/504.
+func transientDeploymentWaitError(err error) bool {
+	var ae *APIError
+	if errors.As(err, &ae) {
+		switch ae.Problem.Status {
+		case http.StatusTooManyRequests, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+			return true
+		}
+		return false
+	}
+	return isTransportError(err) && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded)
+}
+
+// sleepOrDone waits d, or returns false when ctx ends first.
+func sleepOrDone(ctx context.Context, d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
 	}
 }
 

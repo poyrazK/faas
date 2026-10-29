@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { FaaSClient, McpService, type MCPReadinessAttentionAction, type MCPReadinessAttentionReceipt, type MCPReadinessIncidentAttention } from '../src/index.js';
+import { FaaSClient, McpService, type MCPReadinessAttentionAction, type MCPReadinessAttentionReceipt, type MCPReadinessIncidentAttention } from '../src/preview.js';
 
 test('incident attention preserves zero versions, filters, and immutable receipts', async (t) => {
   const incident = '00000000-0000-0000-0000-000000000001';

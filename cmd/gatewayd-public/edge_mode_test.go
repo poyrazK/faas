@@ -25,6 +25,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -109,11 +110,11 @@ func TestIsAppHost(t *testing.T) {
 		"evilgregale.dev":        false,
 		"":                       false,
 	} {
-		if got := isAppHost(host, "gregale.dev"); got != want {
+		if got := isAppHost(host, testDomains(t, "", "gregale.dev")); got != want {
 			t.Errorf("isAppHost(%q) = %v, want %v", host, got, want)
 		}
 	}
-	if isAppHost("shop.gregale.dev", "") {
+	if isAppHost("shop.gregale.dev", hostidentity.Domains{}) {
 		t.Error("an empty apps domain admitted a host")
 	}
 }
@@ -122,7 +123,7 @@ func TestIsAppHost(t *testing.T) {
 func TestAppHostsOnlyAnswersOtherHostsWith421(t *testing.T) {
 	m := newEdgeMetrics()
 	var served bool
-	h := appHostsOnly(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { served = true }), "gregale.dev", m.misdirected)
+	h := appHostsOnly(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { served = true }), testDomains(t, "", "gregale.dev"), m.misdirected)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "http://shop.gregale.dev/", nil)
@@ -338,7 +339,7 @@ func TestComputeEdgeRootForwardsUploads(t *testing.T) {
 	var hit string
 	forward := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hit = "forward" })
 	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hit = "next" })
-	root, err := computeEdgeRoot(next, forward, emptyPublicReadStore{}, "gregale.dev", quietEdgeLog())
+	root, err := computeEdgeRoot(next, forward, emptyPublicReadStore{}, testDomains(t, "", "gregale.dev"), quietEdgeLog())
 	if err != nil {
 		t.Fatal(err)
 	}

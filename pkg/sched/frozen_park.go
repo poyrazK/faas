@@ -116,7 +116,10 @@ func (e *Engine) freezeRefusal(ctx context.Context, ins state.Instance, early bo
 	}
 	// A frozen VM is disposable only while the deployment has a snapshot
 	// to wake from (ADR-005); the first idle period after a deploy parks.
-	if _, ok := e.reusableSnapshot(ctx, dep.ID, state.SnapshotTierInit); !ok {
+	// The snapshot must restore on this node's CPU platform, so the first
+	// idle period on a new platform parks and captures one
+	// (ADR-20261024225612 amendment 1).
+	if _, ok := e.reusableSnapshotOn(ctx, dep.ID, state.SnapshotTierInit, ins.NodeID); !ok {
 		return "no_snapshot", nil
 	}
 	if e.warmCapturePending(ctx, app, ins, dep) {
@@ -150,7 +153,7 @@ func (e *Engine) warmCapturePending(ctx context.Context, app state.App, ins stat
 	if err != nil || !acct.Plan.WarmSnapshotAllowed() {
 		return false
 	}
-	_, ok := e.reusableSnapshot(ctx, dep.ID, state.SnapshotTierWarm)
+	_, ok := e.reusableSnapshotOn(ctx, dep.ID, state.SnapshotTierWarm, ins.NodeID)
 	return !ok
 }
 

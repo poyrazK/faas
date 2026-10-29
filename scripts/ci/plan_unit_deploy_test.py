@@ -24,7 +24,7 @@ S3 = {"lane": CP, "version": "unit-" + "d" * 40, "services": [
 BRIDGED = {"lane": CP, "version": "unit-" + "9" * 40, "services": [{"name": "bridged", "optional": True}]}
 PUBLIC = {"lane": "edge", "version": "unit-" + "e" * 40, "services": [
     {"name": "gatewayd-public", "host": CP, "readyz": "http://127.0.0.1:9092/readyz"},
-    {"name": "gatewayd-public-edge", "host": NODE, "optional": True, "readyz": "http://127.0.0.1:9092/readyz"}]}
+    {"name": "gatewayd-public-edge", "host": NODE, "optional": True, "readyz": "http://127.0.0.1:9109/readyz"}]}
 INTERNAL = {"lane": "edge", "version": "unit-" + "f" * 40, "services": [
     {"name": "gatewayd-internal", "host": NODE, "readyz": "http://127.0.0.1:9090/readyz"}]}
 
@@ -159,7 +159,7 @@ class EdgeLaneTest(unittest.TestCase):
         self.assertEqual(got["units"], ["gatewayd-internal", "gatewayd-public"])
         self.assertEqual(got["only"], ["gatewayd-internal"])
         self.assertEqual(got["verify"], ["gatewayd-internal=http://127.0.0.1:9090/readyz",
-                                         "?gatewayd-public-edge=http://127.0.0.1:9092/readyz"])
+                                         "?gatewayd-public-edge=http://127.0.0.1:9109/readyz"])
         self.assertEqual(got["gate"], [["--unit", "gatewayd-internal"], ["--unit", "gatewayd-public"]])
         self.assertEqual(set(got["replace"]), {"bin/gatewayd-internal", "bin/gatewayd-public", "bin/deployctl",
                                                "unit-versions.json"})

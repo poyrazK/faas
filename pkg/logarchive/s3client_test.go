@@ -298,7 +298,7 @@ func TestS3_SigV4_KnownVector(t *testing.T) {
 	if !strings.Contains(f.auth, wantSuffix) {
 		t.Errorf("auth=%q, missing credential scope suffix %q", f.auth, wantSuffix)
 	}
-	// SignedHeaders is a fixed string for our wire.
+	// A PUT carries Content-Type, so it is signed with the rest.
 	wantSigned := "SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date"
 	if !strings.Contains(f.auth, wantSigned) {
 		t.Errorf("auth=%q, missing SignedHeaders %q", f.auth, wantSigned)

@@ -5,11 +5,11 @@ from uuid import UUID
 
 import httpx
 
-from faas_sdk.api.operations import prepare_workflow_operation_artifact, reuse_workflow_operation_artifact
+from faas_sdk.preview.api.operations import prepare_workflow_operation_artifact, reuse_workflow_operation_artifact
 from faas_sdk.client import AuthenticatedClient
-from faas_sdk.models.operation_artifact_request import OperationArtifactRequest
-from faas_sdk.models.operation_event_type import OperationEventType
-from faas_sdk.models.operation_workflow_artifact_response import OperationWorkflowArtifactResponse
+from faas_sdk.preview.models.operation_artifact_request import OperationArtifactRequest
+from faas_sdk.preview.models.operation_event_type import OperationEventType
+from faas_sdk.preview.models.operation_workflow_artifact_response import OperationWorkflowArtifactResponse
 
 
 def test_workflow_copy_receipt_uses_native_proof_and_string_headers():

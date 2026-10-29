@@ -13,7 +13,9 @@ func TestSLOWindowPending(t *testing.T) {
 	}{
 		{"creation hour still open", SLOStatus{WindowStart: "2026-10-22T12:00:00Z"}, "pending: first hour closes 13:00 UTC", true},
 		{"first hour closed with no requests", SLOStatus{WindowStart: "2026-10-22T12:00:00Z", HoursExpected: 1, HoursRecorded: 1}, "", false},
-		{"first hour closed, rollup lagging", SLOStatus{WindowStart: "2026-10-22T12:00:00Z", HoursExpected: 1}, "", false},
+		// Production-us rc.294: "no traffic (0 of 0 requests)" for an hour
+		// that served 192 requests, until the rollup recorded it (Hunt 14 H14-16).
+		{"first hour closed, rollup lagging", SLOStatus{WindowStart: "2026-10-22T12:00:00Z", HoursExpected: 1}, "pending: first hour closed 13:00 UTC, recording it", true},
 		{"unparseable start", SLOStatus{WindowStart: ""}, "", false},
 	}
 	for _, tt := range tests {

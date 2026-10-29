@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { ReleaseFreezeWeekly } from './ReleaseFreezeWeekly.js';
 /**
- * A deploy freeze on production releases of one app or, without `app`, of every app of the account (ADR-20261019071733).
+ * A deploy freeze on production releases of one app or, without `app`, of every app of the account.
  */
 export type ReleaseFreeze = {
   id: string;

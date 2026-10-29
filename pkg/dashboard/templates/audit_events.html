@@ -53,7 +53,7 @@
       <a href="/dashboard/billing">Billing</a>
       <a href="/dashboard/pricing">Pricing</a>
       <a href="/dashboard/invoices">Invoices</a>
-      <a href="/dashboard/stateless">Stateless</a>
+      {{if $.On "stateless-contract"}}<a href="/dashboard/stateless">Stateless</a>{{end}}
       <a href="/dashboard/account">Account</a>
     </nav>
   </header>

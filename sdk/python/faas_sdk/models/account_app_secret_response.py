@@ -19,10 +19,10 @@ T = TypeVar("T", bound="AccountAppSecretResponse")
 @_attrs_define
 class AccountAppSecretResponse:
     """One row in `GET /v1/secrets` — a sealed envelope on a specific
-    app (issue #393). Plaintext NEVER appears here: only the
+    app. Plaintext NEVER appears here: only the
     age-sealed envelope (base64). `app_id` and `app_slug` let the
     dashboard render "foo-app / DATABASE_URL" without a parallel
-    `/v1/apps` round-trip. `scope` (ADR-092 PR-B) carries the
+    `/v1/apps` round-trip. `scope` carries the
     env-scope the row belongs to; the account-wide list
     crosses scopes.
 
@@ -40,8 +40,8 @@ class AccountAppSecretResponse:
     created_at: datetime.datetime
     updated_at: datetime.datetime
     value_hash: str | Unset = UNSET
-    """16-hex HMAC-SHA256(plaintext) keyed by the per-host host.hmac.key (ADR-117 PR-C). Empty for pre-PR-C rows.
-    Mirror of the AccountAppSecretResponse / ScopedAppSecretResponse field."""
+    """16-hex HMAC-SHA256(plaintext) keyed by the per-host host.hmac.key. Empty for older rows. Mirror of the
+    AccountAppSecretResponse / ScopedAppSecretResponse field."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

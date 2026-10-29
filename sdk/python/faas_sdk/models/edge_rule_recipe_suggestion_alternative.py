@@ -17,13 +17,10 @@ T = TypeVar("T", bound="EdgeRuleRecipeSuggestionAlternative")
 
 @_attrs_define
 class EdgeRuleRecipeSuggestionAlternative:
-    """A softer recipe for the same observation, such as challenging browsers instead of rate-limiting (ADR-831 amendment
-    7).
-
-    """
+    """A softer recipe for the same observation, such as challenging browsers instead of rate-limiting."""
 
     recipe: str
-    """Recipe id of the alternative (ADR-986)."""
+    """Recipe id of the alternative."""
     title: str
     """The alternative recipe's title."""
     params: EdgeRuleRecipeSuggestionAlternativeParams | Unset = UNSET

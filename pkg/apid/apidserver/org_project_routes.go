@@ -36,6 +36,12 @@ func (s *server) registerOrganizationProjectRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/orgs/{organization}/projects/{slug}/environments/{environment}/release-sets", s.authVerifiedLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.publishProjectReleaseSet))))))
 	mux.HandleFunc("POST /v1/orgs/{organization}/projects/{slug}/environments/{environment}/promote", s.authVerifiedLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.promoteProjectEnvironment))))))
 	mux.HandleFunc("POST /v1/orgs/{organization}/projects/{slug}/environments/{environment}/promotions/{promotion}/rollback", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.rollbackProjectEnvironmentPromotion)))))
+	// A company promotion that can be started and rolled back can also be
+	// stopped or recovered, have its migration recovered, and be previewed with
+	// release secrets; these mirror the legacy routes' wrappers.
+	mux.HandleFunc("POST /v1/orgs/{organization}/projects/{slug}/environments/{environment}/promotions/{promotion}/recover-migration", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.recoverProjectPromotionMigration)))))
+	mux.HandleFunc("POST /v1/orgs/{organization}/projects/{slug}/environments/{environment}/promotions/{promotion}/{action}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.controlProjectPromotion)))))
+	mux.HandleFunc("POST /v1/orgs/{organization}/projects/{slug}/environments/{environment}/promotion-preview", s.authLimited(s.requireMFA(s.requireScope(api.ScopesProjectEnvironmentReadSurface...)(s.previewProjectEnvironmentPromotionSecrets))))
 	mux.HandleFunc("PATCH /v1/orgs/{organization}/projects/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateProject))))
 	mux.HandleFunc("PATCH /v1/orgs/{organization}/projects/{slug}/environments/{environment}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateProjectEnvironment))))
 	mux.HandleFunc("PUT /v1/orgs/{organization}/projects/{slug}/environments/{environment}/workloads/{workload}/policies", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.updateProjectEnvironmentPolicies)))))

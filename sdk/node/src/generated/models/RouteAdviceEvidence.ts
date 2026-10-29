@@ -18,7 +18,7 @@ export type RouteAdviceEvidence = {
   top_consumer_peak_per_minute?: number;
   next_consumer_peak_per_minute?: number;
   /**
-   * Anonymous GET responses the gateways compared with the previous response for their URL (ADR-1188). Cache suggestions only.
+   * Anonymous GET responses the gateways compared with the previous response for their URL. Cache suggestions only.
    */
   content_observed?: number;
   /**

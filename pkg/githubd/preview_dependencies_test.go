@@ -289,12 +289,15 @@ func TestHandlePullRequest_RemovedDependencyWaitsForJanitor(t *testing.T) {
 		t.Fatal(err)
 	}
 	dependencies = []string{"missing"}
-	if _, err := svc.handlePullRequest(ctx, pullRequestSyncBody(42, strings.Repeat("b", 40))); err == nil {
-		t.Fatal("invalid new head unexpectedly replaced the preview set")
+	if _, err := svc.handlePullRequest(ctx, pullRequestSyncBody(42, strings.Repeat("b", 40))); !IsIgnored(err) {
+		t.Fatalf("invalid new head = %v, want a reported setup failure", err)
 	}
+	// The failure moves the set to the failed head, so the previous head's
+	// deployments cannot turn the PR green; the members are unchanged.
 	set, err := rig.mem.GetPRPreviewSet(ctx, rig.install, "octo/api", 42)
-	if err != nil || set.CommitSHA != strings.Repeat("a", 40) || len(set.MemberAppIDs) != 2 {
-		t.Fatalf("failed replacement changed set = (%+v, %v)", set, err)
+	if err != nil || set.CommitSHA != strings.Repeat("b", 40) || len(set.MemberAppIDs) != 2 ||
+		!strings.Contains(set.SetupError, `depends on "missing"`) {
+		t.Fatalf("failed replacement set = (%+v, %v), want failed head b with the old members", set, err)
 	}
 	if got, _ := rig.mem.AppByID(ctx, worker.ID); got.PreviewPrState != state.PreviewPrStateOpen {
 		t.Fatalf("failed replacement retired worker: %+v", got)
@@ -376,7 +379,9 @@ func TestHandlePullRequest_SwapsDependencyAtFullQuota(t *testing.T) {
 	}
 }
 
-func TestPreviewDependencyParents_DoesNotReplaceInactiveProduction(t *testing.T) {
+// A parked production app (evicted_cold) is still the customer's app; its PR
+// preview is a separate app that wakes on its own.
+func TestPreviewDependencyParents_PreviewsParkedProduction(t *testing.T) {
 	ctx := context.Background()
 	rig := newPreviewRig(t)
 	if _, err := rig.mem.CreateApp(ctx, state.App{
@@ -391,11 +396,11 @@ func TestPreviewDependencyParents_DoesNotReplaceInactiveProduction(t *testing.T)
 		t.Fatal(err)
 	}
 	svc, _ := newPreviewService(t, rig)
-	_, err = svc.previewDependencyParents(ctx, parent, reposcan.Result{Workloads: []reposcan.Workload{
+	parents, err := svc.previewDependencyParents(ctx, parent, reposcan.Result{Workloads: []reposcan.Workload{
 		{Name: "api", DependsOn: []string{"worker"}}, {Name: "worker"},
 	}}, 42)
-	if err == nil || !strings.Contains(err.Error(), "no active production app") {
-		t.Fatalf("inactive dependency error = %v, want no active production app", err)
+	if err != nil || len(parents) != 1 || parents[0].Slug != "worker" {
+		t.Fatalf("parked dependency = (%+v, %v), want the parked worker previewed", parents, err)
 	}
 }
 
@@ -430,7 +435,22 @@ func TestHandlePullRequest_CloseSiblingsWhenBoundPreviewIsGone(t *testing.T) {
 
 func TestHandlePullRequest_DependencyQuotaStopsBuilds(t *testing.T) {
 	ctx := context.Background()
-	rig := newPreviewRig(t) // Hobby permits five total apps.
+	rig := newPreviewRig(t)
+	// Every PR preview environment the plan allows is already open.
+	account, err := rig.mem.AccountByID(ctx, rig.acct)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expires := time.Now().Add(time.Hour)
+	for pr := 100; pr < 100+api.MustLimitsFor(account.Plan).PreviewApps; pr++ {
+		if _, err := rig.mem.CreateApp(ctx, state.App{
+			AccountID: rig.acct, ProjectID: rig.parentProjectID, Slug: fmt.Sprintf("pr-%d-demo-app", pr),
+			WorkloadName: "api", Type: state.AppTypeApp, RAMMB: 256, MaxConcurrency: 1, Status: state.AppActive,
+			PreviewOfSlug: "demo-app", PreviewPrNumber: pr, PreviewPrState: state.PreviewPrStateOpen, PreviewExpiresAt: &expires,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	for _, name := range []string{"worker", "db"} {
 		if _, err := rig.mem.CreateApp(ctx, state.App{
 			AccountID: rig.acct, ProjectID: rig.parentProjectID, Slug: name,

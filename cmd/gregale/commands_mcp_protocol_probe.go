@@ -66,15 +66,21 @@ func (t *mcpPublicProtocolRoundTripper) RoundTrip(request *http.Request) (*http.
 	if err != nil {
 		return nil, err
 	}
-	if err := validateMCPProtocolResponseHeaders(response.Header, t.version); response.StatusCode >= 200 && response.StatusCode < 300 && err != nil && t.protocolErr == nil {
+	if err := validateMCPProtocolResponseHeaders(response.StatusCode, response.Header, t.version); response.StatusCode >= 200 && response.StatusCode < 300 && err != nil && t.protocolErr == nil {
 		t.protocolErr = err
 	}
 	return response, nil
 }
 
-func validateMCPProtocolResponseHeaders(header http.Header, version string) error {
+func validateMCPProtocolResponseHeaders(status int, header http.Header, version string) error {
 	if header.Get("MCP-Session-Id") != "" {
 		return fmt.Errorf("MCP response created a stateful session")
+	}
+	// A notification's 202 Accepted has no body and no version to echo;
+	// the starters answer notifications/initialized with a bare 202, which
+	// failed every mcp deploy qualification (Hunt 14 H14-2).
+	if status == http.StatusAccepted {
+		return nil
 	}
 	if actual := header.Get("MCP-Protocol-Version"); actual != version {
 		return fmt.Errorf("MCP response reported protocol version %q, want %q", actual, version)
@@ -128,7 +134,7 @@ func (t *mcpInstanceProtocolRoundTripper) RoundTrip(request *http.Request) (*htt
 	protocolHeaders := make(http.Header)
 	protocolHeaders.Set("MCP-Protocol-Version", result.ProtocolVersion)
 	protocolHeaders.Set("Mcp-Session-Id", result.SessionID)
-	if err := validateMCPProtocolResponseHeaders(protocolHeaders, t.protocolVersion); result.HTTPStatus >= 200 && result.HTTPStatus < 300 && err != nil && t.protocolErr == nil {
+	if err := validateMCPProtocolResponseHeaders(result.HTTPStatus, protocolHeaders, t.protocolVersion); result.HTTPStatus >= 200 && result.HTTPStatus < 300 && err != nil && t.protocolErr == nil {
 		t.protocolErr = fmt.Errorf("MCP %s response from instance %s: %w", method, t.instanceID, err)
 	}
 	header := make(http.Header)

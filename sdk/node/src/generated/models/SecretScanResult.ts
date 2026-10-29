@@ -7,11 +7,10 @@ import type { SecretFinding } from './SecretFinding.js';
  * Customer-facing wire shape of one deployment's secret-scan
  * audit row. Mirrors the `ScanResult` shape but for the
  * secret-scan pipeline. The `status` enum is the closed set
- * the imaged-side writer (PR-A) stamps: `complete` for a
+ * the image service-side writer stamps: `complete` for a
  * clean walk, `complete_with_redactions` for a hit (mirrors
- * the v2 widening on `deployments_scan_status_chk` from
- * migration 00264). `image_digest` is the OCI digest the
- * scan ran against (PR-A) — mirrors
+ * the v2 widening on `deployments_scan_status_chk`). `image_digest` is the OCI digest the
+ * scan ran against — mirrors
  * `ScanResult.image_digest` so a side-by-side compare
  * renders both scans against the same bytes. `findings[]`
  * may be empty (clean walk); the field is always present
@@ -27,9 +26,9 @@ export type SecretScanResult = {
    */
   scanned_at?: string;
   /**
-   * OCI digest the scan ran against (PR-A). Mirrors
+   * OCI digest the scan ran against. Mirrors
    * `ScanResult.image_digest` for cross-pipeline
-   * comparison. Empty for pre-PR-A rows.
+   * comparison. Empty for older rows.
    *
    */
   image_digest?: string;

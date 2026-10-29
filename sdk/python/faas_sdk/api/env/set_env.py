@@ -114,9 +114,9 @@ def sync_detailed(
     next cold wake; cached snapshots are invalidated and the running
     instance is unaffected. Use `POST /restart?fresh=true` to apply now.
 
-    **ADR-090 PR-B scope filter.** The optional `?scope=`
+    **scope filter.** The optional `?scope=`
     query param selects which scope to write. Omitted = the
-    default scope (pre-PR-B behavior). The reserved sentinel
+    default scope (legacy behaviour). The reserved sentinel
     `__all__` is rejected with 400 `env_scope_reserved` on
     writes (it has no meaning on a single-row write). Invalid
     scope shapes return 400 `env_scope_invalid`.
@@ -169,9 +169,9 @@ def sync(
     next cold wake; cached snapshots are invalidated and the running
     instance is unaffected. Use `POST /restart?fresh=true` to apply now.
 
-    **ADR-090 PR-B scope filter.** The optional `?scope=`
+    **scope filter.** The optional `?scope=`
     query param selects which scope to write. Omitted = the
-    default scope (pre-PR-B behavior). The reserved sentinel
+    default scope (legacy behaviour). The reserved sentinel
     `__all__` is rejected with 400 `env_scope_reserved` on
     writes (it has no meaning on a single-row write). Invalid
     scope shapes return 400 `env_scope_invalid`.
@@ -219,9 +219,9 @@ async def asyncio_detailed(
     next cold wake; cached snapshots are invalidated and the running
     instance is unaffected. Use `POST /restart?fresh=true` to apply now.
 
-    **ADR-090 PR-B scope filter.** The optional `?scope=`
+    **scope filter.** The optional `?scope=`
     query param selects which scope to write. Omitted = the
-    default scope (pre-PR-B behavior). The reserved sentinel
+    default scope (legacy behaviour). The reserved sentinel
     `__all__` is rejected with 400 `env_scope_reserved` on
     writes (it has no meaning on a single-row write). Invalid
     scope shapes return 400 `env_scope_invalid`.
@@ -272,9 +272,9 @@ async def asyncio(
     next cold wake; cached snapshots are invalidated and the running
     instance is unaffected. Use `POST /restart?fresh=true` to apply now.
 
-    **ADR-090 PR-B scope filter.** The optional `?scope=`
+    **scope filter.** The optional `?scope=`
     query param selects which scope to write. Omitted = the
-    default scope (pre-PR-B behavior). The reserved sentinel
+    default scope (legacy behaviour). The reserved sentinel
     `__all__` is rejected with 400 `env_scope_reserved` on
     writes (it has no meaning on a single-row write). Invalid
     scope shapes return 400 `env_scope_invalid`.

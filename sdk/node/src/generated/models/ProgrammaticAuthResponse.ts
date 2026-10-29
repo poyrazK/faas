@@ -4,12 +4,11 @@
 /* eslint-disable */
 import type { ProgrammaticAPIKey } from './ProgrammaticAPIKey.js';
 /**
- * Body for the JSON-only POST /v1/auth/{signup,login} pair
- * (issue #311). Distinct from PasswordLoginResponse: this
+ * Body for the JSON-only POST /v1/auth/{signup,login} pair. Distinct from PasswordLoginResponse: this
  * one carries the `api_key` payload so the bearer-key CLI
  * can use the result without a dashboard round-trip. The
  * plaintext is returned ONCE; the caller persists it via
- * `saveToken()` before this response is dropped.
+ * `saveToken` before this response is dropped.
  *
  * Email is echoed back so the CLI's finalizeLogin step can
  * render "Logged in as <email> (<plan> plan)" without an

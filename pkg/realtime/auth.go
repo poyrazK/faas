@@ -33,6 +33,9 @@ type AuthPolicy struct {
 	Audience       []string
 	Algorithms     []string
 	RequiredClaims map[string]string
+	// ExtractClaims names the verified string claims AuthorizeIdentity
+	// returns. The Manager sets it from the endpoint's channel rules.
+	ExtractClaims []string
 }
 
 // JWTAuthorizer verifies one bearer token and returns its stable principal.
@@ -48,6 +51,9 @@ type JWTIdentity struct {
 	Principal string
 	SessionID string
 	ExpiresAt time.Time
+	// Claims holds the verified string claims the policy's ExtractClaims
+	// names (ADR-20261019102657).
+	Claims map[string]string
 }
 
 // JWTIdentityAuthorizer extends JWTAuthorizer for retained transports. Its

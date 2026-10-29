@@ -159,7 +159,7 @@ func TestMemStore_RecoverRolloutActionsAndGuards(t *testing.T) {
 	old := time.Now().Add(-RecoverRolloutStuckAfter - time.Minute)
 	dep.Status = DeployLive
 	dep.CanaryPreset = "balanced"
-	dep.CanaryStep = 3
+	dep.CanaryStep = 2
 	dep.CanaryTotalSteps = 4
 	dep.CanaryStepStartedAt = &old
 	dep.RolloutState = "rolling_out"
@@ -396,30 +396,7 @@ func TestMemStoreServiceRolloutRecoveryRequestsSafeAbort(t *testing.T) {
 	}
 }
 
-func TestStepToPercentAndSiblingAdapter(t *testing.T) {
-	tests := []struct {
-		step, total, want int
-	}{
-		{0, 4, 0},
-		{1, 2, 1},
-		{2, 2, 100},
-		{1, 3, 5},
-		{2, 3, 50},
-		{3, 3, 100},
-		{1, 4, 1},
-		{2, 4, 10},
-		{3, 4, 50},
-		{4, 4, 100},
-		{5, 4, 0},
-		{1, 9, 0},
-		{1, 0, 0},
-	}
-	for _, tc := range tests {
-		if got := stepToPercent(tc.step, tc.total); got != tc.want {
-			t.Errorf("stepToPercent(%d, %d) = %d, want %d", tc.step, tc.total, got, tc.want)
-		}
-	}
-
+func TestToHelperSiblingsCopiesWeights(t *testing.T) {
 	got := toHelperSiblings([]siblingRow{{ID: "b", Prior: 20}, {ID: "a", Prior: 80}})
 	if len(got) != 2 || got[0].ID != "b" || got[0].Prior != 20 || got[1].ID != "a" || got[1].Prior != 80 {
 		t.Fatalf("toHelperSiblings = %#v, want copied IDs and weights", got)

@@ -31,8 +31,12 @@ func (m *MemStore) AdmitEventWorkflowRecipient(_ context.Context, claim Publishe
 	if !eventRoutingClaimValidLocked(receipt, r, claim) {
 		return result, ErrConflict
 	}
+	deferred := false
 	if matched {
 		result.RunID, result.RunCreated, err = m.admitEventWorkflowLocked(receipt, recipient)
+		if deferred = errors.Is(err, ErrWorkflowRunQuotaExceeded); deferred {
+			err = nil
+		}
 		if err != nil {
 			if errors.Is(err, ErrWorkflowEventDefinitionInvalid) {
 				result.Matched = false
@@ -48,11 +52,21 @@ func (m *MemStore) AdmitEventWorkflowRecipient(_ context.Context, claim Publishe
 		return EventWorkflowRoutingResult{Matched: matched}, ErrConflict
 	}
 	progress := workflowRoutingProgress(matched, r.TotalAttempts)
+	preserveEventCapacityHistory(&progress, previous)
+	if deferred {
+		progress = eventCapacityProgress(previous, r.TotalAttempts, eventWorkflowCapacityScope)
+	}
 	receipt.RecipientProgress[recipient.ID] = progress
 	m.appendEventFanoutAttemptLocked(receipt, recipient.ID, EventFanoutAttemptActionAttempt, progress)
 	r.State, r.ClaimToken, r.LeaseUntil = progress.State, "", time.Time{}
+	if deferred {
+		r.AvailableAt = eventProgressNext(progress)
+		r.CapacityDeferrals++
+		r.GenerationCapacityDeferrals++
+	}
 	settleEventRecipientsLocked(receipt, progress.UpdatedAt)
 	result.Progress, result.ReceiptSettled = progress, receipt.Delivered
+	result.CapacityDeferred = deferred
 	return result, nil
 }
 

@@ -28,13 +28,13 @@ class AppWakeTimelineResponse:
 
     `trigger_histogram` is a JSON object (map[string]int) — empty
     `{}` on a fresh app, never null. The dashboard SPA must
-    treat missing keys as 0 (JSON.parse() returns undefined for
+    treat missing keys as 0 (JSON.parse returns undefined for
     missing keys, not 0 — the render code adds the explicit
     `?? 0` fallback).
 
     `at_capacity_pct` is the share of `wake_count_with_meta`
     rows where the events.wake.boot_started join succeeded AND
-    the at_capacity flag is true. Pre-PR-A fleet rows
+    the at_capacity flag is true. Older rows
     contribute to `wake_count_24h` but not the denominator.
 
     """
@@ -42,8 +42,8 @@ class AppWakeTimelineResponse:
     app: WakeTimelineApp
     """Slim per-app identification embedded in `AppWakeTimelineResponse`.
     Carries only the fields the dashboard SPA needs for the
-    wake-timeline header (slug + app_id). The wider
-    pkg/dashboard.AppListItem type carries template-specific
+    wake-timeline header (slug + app_id). The dashboard's wider
+    app list item carries template-specific
     glyph/badge fields (SLO badge, StateBadge*, QuotaLabel) that
     don't belong on the wire.
     """

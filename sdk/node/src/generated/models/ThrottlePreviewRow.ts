@@ -3,8 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * One row of the dry-run preview (ADR-104 amendment 5,
- * issue #881 Phase 4 D1/D2). For each surviving route we
+ * One row of the dry-run preview. For each surviving route we
  * report the count of sub-windows where the observed rate
  * exceeded the candidate rps — a count of "would-have-
  * rejected" requests over the window.
@@ -19,8 +18,7 @@ export type ThrottlePreviewRow = {
   /**
    * Count of sub-windows in the recommendation window
    * where observed rps exceeded the candidate. NaN/Inf
-   * from Prometheus are coerced to 0 via
-   * `pkg/appmetrics.SafeFloat`.
+   * from Prometheus are coerced to 0.
    *
    */
   over_cap_count: number;

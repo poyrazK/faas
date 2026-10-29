@@ -22,6 +22,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/session"
+	"github.com/onebox-faas/faas/pkg/sessioncookie"
 	"github.com/pquerna/otp/totp"
 )
 
@@ -173,7 +174,8 @@ CREATE TRIGGER revoke_enabled_alert_session AFTER INSERT ON platform_mail_produc
 			cookieCount := 0
 			fresh := ""
 			for _, c := range response.Result().Cookies() {
-				if c.Name == "faas_sid" {
+				// HTTPS sign-in sets __Host-faas_sid and expires the legacy name (#5522).
+				if sessioncookie.IsName(c.Name) && c.Value != "" {
 					cookieCount++
 					fresh = c.Value
 					envelope, err := manager.Verify(c.Value)

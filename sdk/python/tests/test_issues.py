@@ -2,13 +2,13 @@ import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from faas_sdk.issues import IssueReporter
+from faas_sdk.preview.issues import IssueReporter
 
 
 def test_regrouping_models_round_trip_actions_and_original_identity():
-    from faas_sdk.models.issue_action_request import IssueActionRequest
-    from faas_sdk.models.issue_activity import IssueActivity
-    from faas_sdk.models.issue_detail import IssueDetail
+    from faas_sdk.preview.models.issue_action_request import IssueActionRequest
+    from faas_sdk.preview.models.issue_activity import IssueActivity
+    from faas_sdk.preview.models.issue_detail import IssueDetail
 
     original = "11111111-1111-4111-8111-111111111111"
     canonical = "22222222-2222-4222-8222-222222222222"
@@ -208,10 +208,10 @@ def test_split_preview_client_preserves_unavailable_history_and_original_scope()
 
     import httpx
 
-    from faas_sdk.api.apps import preview_issue_split
+    from faas_sdk.preview.api.apps import preview_issue_split
     from faas_sdk.client import AuthenticatedClient
-    from faas_sdk.models.issue_split_matcher import IssueSplitMatcher
-    from faas_sdk.models.issue_split_preview import IssueSplitPreview
+    from faas_sdk.preview.models.issue_split_matcher import IssueSplitMatcher
+    from faas_sdk.preview.models.issue_split_preview import IssueSplitPreview
 
     original = UUID("11111111-1111-4111-8111-111111111111")
     canonical = "22222222-2222-4222-8222-222222222222"
@@ -247,11 +247,11 @@ def test_split_rule_clients_preserve_routing_state_and_transfer_accounting():
 
     import httpx
 
-    from faas_sdk.api.apps import create_issue_split_rule, update_issue_split_rule
+    from faas_sdk.preview.api.apps import create_issue_split_rule, update_issue_split_rule
     from faas_sdk.client import AuthenticatedClient
-    from faas_sdk.models.issue_split_matcher import IssueSplitMatcher
-    from faas_sdk.models.issue_split_rule import IssueSplitRule
-    from faas_sdk.models.issue_split_rule_update import IssueSplitRuleUpdate
+    from faas_sdk.preview.models.issue_split_matcher import IssueSplitMatcher
+    from faas_sdk.preview.models.issue_split_rule import IssueSplitRule
+    from faas_sdk.preview.models.issue_split_rule_update import IssueSplitRuleUpdate
 
     source = UUID("11111111-1111-4111-8111-111111111111")
     rule_id = UUID("22222222-2222-4222-8222-222222222222")
@@ -343,8 +343,8 @@ def test_cause_capture_follows_python_semantics_and_bounds_cycles():
 
 
 def test_cause_models_round_trip_selected_origin():
-    from faas_sdk.models.issue_event import IssueEvent
-    from faas_sdk.models.issue_grouping_explanation import IssueGroupingExplanation
+    from faas_sdk.preview.models.issue_event import IssueEvent
+    from faas_sdk.preview.models.issue_grouping_explanation import IssueGroupingExplanation
 
     payload = {
         "event_id": "11111111-1111-4111-8111-111111111111",
@@ -385,10 +385,10 @@ def test_priority_preview_and_atomic_undo_sdk_contract():
 
     import httpx
 
-    from faas_sdk.api.apps.undo_issue_split_rule import sync
+    from faas_sdk.preview.api.apps.undo_issue_split_rule import sync
     from faas_sdk.client import AuthenticatedClient
-    from faas_sdk.models.issue_split_preview import IssueSplitPreview
-    from faas_sdk.models.issue_split_rule_undo_request import IssueSplitRuleUndoRequest
+    from faas_sdk.preview.models.issue_split_preview import IssueSplitPreview
+    from faas_sdk.preview.models.issue_split_rule_undo_request import IssueSplitRuleUndoRequest
 
     source = "11111111-1111-4111-8111-111111111111"
     rule_id = "22222222-2222-4222-8222-222222222222"

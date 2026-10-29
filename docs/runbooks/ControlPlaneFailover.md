@@ -161,6 +161,21 @@ standby is lost too, rebuild from the off-host state backup instead
    anything from the old host. If it stops on a missing file, find the file's
    source, then add its path to `control_plane_standby`'s sync list so the
    next failover has it.
+
+   The promotion started a new PostgreSQL timeline, so the S3 gateway and
+   public bucket reads stay fenced (503) until it is accepted
+   (ADR-20261025111015 amendment 1). Anything the standby had not received
+   is lost, including S3 key or grant revocations. Compare the promote
+   play's reported lag with the revocations apid logged in that window
+   (`docs/runbooks/ObjectStorageRestoreReconcile.md`, "Revocations undone by
+   the restore"), re-apply any it missed, then accept:
+
+   ```bash
+   sudo gregalectl object-storage accept --db-env /etc/faas/sealed.env
+   ```
+
+   A planned switchover loses nothing and the promote play accepts the new
+   timeline itself.
 5. **Rebuild the old host as the standby later**, with planned step 10, and
    only after you've checked it: it holds writes the new primary never
    received. If those writes matter, extract them before wiping (export the

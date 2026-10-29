@@ -1,7 +1,7 @@
 {
   "name": "@gregale/sdk-node",
   "version": "0.1.0",
-  "description": "Node SDK for the Gregale FaaS platform. Generated from api/openapi.yaml.",
+  "description": "Node SDK for the Gregale FaaS platform. The default entry covers generally available and beta capabilities (sdk/openapi.yaml); '@gregale/sdk-node/preview' adds preview ones.",
   "license": "SEE LICENSE IN LICENSE",
   "homepage": "https://gregale.dev/docs/cli",
   "repository": {
@@ -21,70 +21,78 @@
       "import": "./dist/index.js"
     },
     "./browser": {
-      "types": "./dist/browser.d.ts",
-      "import": "./dist/browser.js"
-    },
-    "./operations": {
-      "types": "./dist/operations-browser.d.ts",
-      "import": "./dist/operations-browser.js"
-    },
-    "./operations/runtime": {
-      "types": "./dist/operations-runtime.d.ts",
-      "import": "./dist/operations-runtime.js"
-    },
-    "./job-operations-runtime": {
-      "types": "./dist/job-operations-runtime.d.ts",
-      "import": "./dist/job-operations-runtime.js"
-    },
-    "./object-storage/runtime": {
-      "types": "./dist/object-storage-runtime.d.ts",
-      "import": "./dist/object-storage-runtime.js"
+      "types": "./dist/browser-public.d.ts",
+      "import": "./dist/browser-public.js"
     },
     "./secrets/runtime": {
       "types": "./dist/secret-reload-runtime.d.ts",
       "import": "./dist/secret-reload-runtime.js"
     },
-    "./queues/runtime": {
-      "types": "./dist/queue-consumer.d.ts",
-      "import": "./dist/queue-consumer.js"
-    },
-    "./triggers/runtime": {
-      "types": "./dist/trigger-batch.d.ts",
-      "import": "./dist/trigger-batch.js"
-    },
     "./workflows": {
       "types": "./dist/workflows.d.ts",
       "import": "./dist/workflows.js"
     },
-    "./react": {
+    "./preview": {
+      "types": "./dist/preview.d.ts",
+      "import": "./dist/preview.js"
+    },
+    "./preview/browser": {
+      "types": "./dist/browser.d.ts",
+      "import": "./dist/browser.js"
+    },
+    "./preview/operations": {
+      "types": "./dist/operations-browser.d.ts",
+      "import": "./dist/operations-browser.js"
+    },
+    "./preview/operations/runtime": {
+      "types": "./dist/operations-runtime.d.ts",
+      "import": "./dist/operations-runtime.js"
+    },
+    "./preview/job-operations-runtime": {
+      "types": "./dist/job-operations-runtime.d.ts",
+      "import": "./dist/job-operations-runtime.js"
+    },
+    "./preview/object-storage/runtime": {
+      "types": "./dist/object-storage-runtime.d.ts",
+      "import": "./dist/object-storage-runtime.js"
+    },
+    "./preview/queues/runtime": {
+      "types": "./dist/queue-consumer.d.ts",
+      "import": "./dist/queue-consumer.js"
+    },
+    "./preview/triggers/runtime": {
+      "types": "./dist/trigger-batch.d.ts",
+      "import": "./dist/trigger-batch.js"
+    },
+    "./preview/react": {
       "types": "./dist/react.d.ts",
       "import": "./dist/react.js"
     },
-    "./durable-entities/runtime": {
+    "./preview/durable-entities/runtime": {
       "types": "./dist/durable-entity-runtime.d.ts",
       "import": "./dist/durable-entity-runtime.js"
     },
-    "./durable-entities/testing": {
+    "./preview/durable-entities/testing": {
       "types": "./dist/durable-entity-testing.d.ts",
       "import": "./dist/durable-entity-testing.js"
     },
-    "./durable-entities/client": {
+    "./preview/durable-entities/client": {
       "types": "./dist/durable-entity-client.d.ts",
       "import": "./dist/durable-entity-client.js"
     },
-    "./durable-entities/session": {
+    "./preview/durable-entities/session": {
       "types": "./dist/durable-entity-session.d.ts",
       "import": "./dist/durable-entity-session.js"
     },
-    "./durable-entities/browser": {
+    "./preview/durable-entities/browser": {
       "types": "./dist/durable-entity-browser.d.ts",
       "import": "./dist/durable-entity-browser.js"
     },
-    "./issues/source-maps": {
+    "./preview/issues/source-maps": {
       "types": "./dist/issue-source-map-manifest.d.ts",
       "import": "./dist/issue-source-map-manifest.js"
     },
-    "./postgres/runtime": {
+    "./preview/postgres/runtime": {
       "types": "./dist/postgres-pool-runtime.d.ts",
       "import": "./dist/postgres-pool-runtime.js"
     }
@@ -105,7 +113,7 @@
   "//publishConfig": "access stays 'restricted' while LICENSE is LicenseRef-onebox-internal (proprietary, non-redistributable). Flip to 'public' only alongside a customer-redistributable license \u2014 see sdk/README-publishing.md.",
   "scripts": {
     "gen": "node scripts/gen.mjs",
-    "gen:check": "node scripts/gen.mjs && git diff --exit-code -- src/generated",
+    "gen:check": "node scripts/gen.mjs && git diff --exit-code -- src/generated src/generated-public && test -z \"$(git status --porcelain -- src/generated src/generated-public)\"",
     "build": "tsc -p tsconfig.json",
     "test:build": "tsc -p tsconfig.test.json",
     "test": "npm run test:build && node --test --test-concurrency=1 'dist-test/test/**/*.test.js' && node --test --test-concurrency=1 test/post-process.test.mjs",

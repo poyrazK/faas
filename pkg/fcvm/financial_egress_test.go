@@ -1,3 +1,4 @@
+// adr: 1748 — only a newly paid sequence resets the kernel byte quotas.
 package fcvm
 
 import (
@@ -52,7 +53,7 @@ func TestFinancialEgressOnlyPaidRefillResetsQuota(t *testing.T) {
 	if !m.syncFinancialEgress(t.Context(), local, l, true) || local.egressApplied != 2 || local.egressObserved != 100 {
 		t.Fatal("newly financed credit was not applied")
 	}
-	if !strings.Contains(run.calls[1].input, "quota 4194304 bytes") {
+	if !strings.Contains(run.calls[1].input, "egress quota 2097152 bytes") || !strings.Contains(run.calls[1].input, "gate quota 3145728 bytes") {
 		t.Fatal("kernel limit differs from financed credit")
 	}
 	calls := len(run.calls)

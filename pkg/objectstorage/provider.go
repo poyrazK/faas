@@ -471,7 +471,7 @@ func (r SignRequest) Validate(maxBytes int64) error {
 	if r.VersionID != "" && (r.Method != http.MethodGet && r.Method != http.MethodHead || r.VersionID == "null" || !state.ValidObjectVersionID(r.VersionID)) {
 		return ErrInvalid
 	}
-	if r.Protection != nil && (r.Method != http.MethodPut || !r.Protection.Valid() || r.Protection.Empty()) || !ValidKey(r.Key) || (r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodPut) || r.ExpiresIn < 0 || r.ExpiresIn > int64(api.MaxObjectSignedURLTTL/time.Second) || r.Encryption != nil && (!r.Encryption.Valid() || r.Encryption.Empty() || r.Method != http.MethodPut) {
+	if r.Protection != nil && (r.Method != http.MethodPut || !r.Protection.Valid() || r.Protection.Empty()) || !ValidRequestKey(r.Key) || (r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodPut) || r.ExpiresIn < 0 || r.ExpiresIn > int64(api.MaxObjectSignedURLTTL/time.Second) || r.Encryption != nil && (!r.Encryption.Valid() || r.Encryption.Empty() || r.Method != http.MethodPut) {
 		return ErrInvalid
 	}
 	if r.Method == http.MethodPut && (r.SizeBytes == nil || *r.SizeBytes < 0 || *r.SizeBytes > maxBytes) {
@@ -492,6 +492,24 @@ func ValidKey(key string) bool {
 	}
 	for _, c := range key {
 		if c < 32 || c == 127 {
+			return false
+		}
+	}
+	return true
+}
+
+// ValidRequestKey is ValidKey for a key a client supplies. It also refuses
+// "." and ".." path segments. S3 stores them as literal characters, but a
+// provider or proxy that normalizes paths would resolve them out of the
+// prefix a credential or upload route is confined to, or into another
+// bucket, since the platform's provider credentials reach every bucket.
+// Keys read back from providers keep ValidKey.
+func ValidRequestKey(key string) bool {
+	if !ValidKey(key) {
+		return false
+	}
+	for _, segment := range strings.Split(key, "/") {
+		if segment == "." || segment == ".." {
 			return false
 		}
 	}

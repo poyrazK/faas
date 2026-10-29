@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -16,6 +17,11 @@ import (
 )
 
 func cmdDeployCheck(args []string) int {
+	// ADR-20261026145832: deploy check is the one pre-deploy check. Without
+	// --project it checks local source or an image, as `gregale doctor` does.
+	if !slices.ContainsFunc(args, func(arg string) bool { return arg == "--project" || arg == "--project=true" }) {
+		return cmdDoctor(args)
+	}
 	fs := newFlagSet("deploy check", flag.ContinueOnError)
 	project := fs.Bool("project", false, "check the complete project without submitting a deployment")
 	slug := fs.String("project-slug", "", "project slug (defaults to linked context or selected directory)")
@@ -199,8 +205,12 @@ func renderDeploymentCheck(report api.ProjectDeploymentReadiness) {
 }
 
 func deploymentCheckCommand() cliSub {
-	return cliSub{Name: "check", Short: "Check project prerequisites without uploading or submitting", Examples: []string{"gregale deploy check --project --json", "gregale deploy check --project --atomic --verify", "gregale deploy check --project --project-slug shop --from staging --environment production --sync-config --verify"}, Flags: []cliFlag{
-		{Name: "project", Short: "check the complete project", Bool: true, Req: true},
+	return cliSub{Name: "check", Short: "Check local source, an image or project prerequisites before deploying", Notes: []string{"Without --project, checks local source or an image, as `gregale doctor` does; with --project, checks the project's release prerequisites against current state."}, Examples: []string{"gregale deploy check", "gregale deploy check --image ghcr.io/acme/api:1.2 --strict", "gregale deploy check --project --json", "gregale deploy check --project --atomic --verify", "gregale deploy check --project --project-slug shop --from staging --environment production --sync-config --verify"}, Flags: []cliFlag{
+		{Name: "project", Short: "check the complete project's release prerequisites", Bool: true},
+		{Name: "image", Short: "without --project: inspect this Linux/amd64 image without downloading layers", Value: "REF"},
+		{Name: "registry-user", Short: "without --project: registry username; requires --registry-password-stdin", Value: "USER"},
+		{Name: "registry-password-stdin", Short: "without --project: read the registry password or token from stdin", Bool: true},
+		{Name: "strict", Short: "without --project: exit 1 on warnings", Bool: true},
 		{Name: "project-slug", Short: "project slug (defaults to linked context or selected directory)", Value: "SLUG"},
 		{Name: "path", Short: "selected source directory", Value: "DIR"},
 		{Name: "source", Short: "local source policy (default auto)", Value: "MODE", ClosedSet: []string{"auto", "head", "worktree"}},

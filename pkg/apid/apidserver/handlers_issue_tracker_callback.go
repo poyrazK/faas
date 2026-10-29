@@ -94,7 +94,7 @@ func (s *server) linearIssueTrackerCallbackCredential(w http.ResponseWriter, r *
 		return state.IssueTrackerLinearRecord{}, "", false
 	}
 	store, ok := s.store.(state.IssueTrackerLinearStore)
-	if !ok || mfaIdentities == nil {
+	if !ok || len(accountIdentities()) == 0 {
 		api.WriteProblem(w, api.ErrCapacity("callback credentials unavailable"))
 		return state.IssueTrackerLinearRecord{}, "", false
 	}
@@ -107,7 +107,7 @@ func (s *server) linearIssueTrackerCallbackCredential(w http.ResponseWriter, r *
 		api.WriteProblem(w, api.NewProblem(404, api.CodeNotFound, "Callback not configured", "this app has no active Linear callback"))
 		return record, "", false
 	}
-	secret, err := issuetrackers.OpenLinearWebhookSecret(mfaIdentities(), linearBoundConnection(record).Scope, record.SealedCredential)
+	secret, err := issuetrackers.OpenLinearWebhookSecret(accountIdentities(), linearBoundConnection(record).Scope, record.SealedCredential)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("callback credentials unavailable"))
 		return record, "", false

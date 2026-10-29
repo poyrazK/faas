@@ -7,10 +7,10 @@ from pathlib import Path
 import httpx
 import pytest
 
-import faas_sdk as sdk
+import faas_sdk.preview as sdk
 from faas_sdk.client import Client
-from faas_sdk.models.binding_verification_review import BindingVerificationReview
-from faas_sdk.models.project_binding_verification_review import ProjectBindingVerificationReview
+from faas_sdk.preview.models.binding_verification_review import BindingVerificationReview
+from faas_sdk.preview.models.project_binding_verification_review import ProjectBindingVerificationReview
 
 TEMPLATE = json.loads((Path(__file__).resolve().parents[2] / "binding-runner-tests/creation.json").read_text())
 
@@ -243,7 +243,7 @@ def test_automatic_creation_reconciliation(graph, asynchronous, mode, monkeypatc
     import threading
     import time
 
-    import faas_sdk._binding_creation as creation
+    import faas_sdk.preview._binding_creation as creation
 
     f, run, options = fixture(graph)
     for receipt, review in [

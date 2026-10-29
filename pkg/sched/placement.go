@@ -121,7 +121,31 @@ func ChoosePlacement(nodes []state.ComputeNode, usedMB map[string]int64, usedVCP
 // choosePlacementWithCPU is the production chooser. The exported wrapper
 // keeps the pre-millicore pure-function seam stable for older callers and
 // tests; Engine supplies the ledger's per-node sustained CPU reservations.
+//
+// ADR-20261022184531: a node that answers its heartbeat but has proven it
+// cannot serve a wake is degraded. Placement chooses among the other nodes
+// first, and takes a degraded node only when none of them fits: a wake that
+// may be refused (and re-placed) beats a capacity refusal.
 func choosePlacementWithCPU(nodes []state.ComputeNode, usedMB map[string]int64, usedVCPU, usedCPUMillicores map[string]int64, r Request) (Placement, error) {
+	if proven := withoutDegradedNodes(nodes); len(proven) < len(nodes) {
+		if placement, err := chooseAmongNodes(proven, usedMB, usedVCPU, usedCPUMillicores, r); err == nil {
+			return placement, nil
+		}
+	}
+	return chooseAmongNodes(nodes, usedMB, usedVCPU, usedCPUMillicores, r)
+}
+
+func withoutDegradedNodes(nodes []state.ComputeNode) []state.ComputeNode {
+	proven := make([]state.ComputeNode, 0, len(nodes))
+	for _, n := range nodes {
+		if n.Readiness != state.NodeReadinessDegraded {
+			proven = append(proven, n)
+		}
+	}
+	return proven
+}
+
+func chooseAmongNodes(nodes []state.ComputeNode, usedMB map[string]int64, usedVCPU, usedCPUMillicores map[string]int64, r Request) (Placement, error) {
 	if r.RAMMB <= 0 {
 		return Placement{}, api.ErrCapacity(fmt.Sprintf("placement: request RAM must be positive (got %d)", r.RAMMB))
 	}
@@ -164,6 +188,9 @@ func choosePlacementWithCPU(nodes []state.ComputeNode, usedMB map[string]int64, 
 			continue
 		}
 		if !n.Active {
+			continue
+		}
+		if containsNodeID(r.ExcludeNodeIDs, n.ID) {
 			continue
 		}
 		if n.AdmissionCeilingMB <= 0 {
@@ -232,6 +259,9 @@ func choosePlacementWithCPU(nodes []state.ComputeNode, usedMB map[string]int64, 
 		if containsNodeID(r.PreferredNodeIDs, n.ID) {
 			snapshotF = append(snapshotF, n)
 		}
+	}
+	if r.SpreadReplicas && len(candidates) > 1 {
+		candidates, warmFit, snapshotF = spreadCandidates(nodes, candidates, warmFit, snapshotF, r.AppInstancesByNode)
 	}
 	scoreRequest := r
 	scoreRequest.restorePressureAware = restorePressureActive(candidates, r)
@@ -328,6 +358,55 @@ func choosePlacementWithCPU(nodes []state.ComputeNode, usedMB map[string]int64, 
 		}
 	}
 	return placementForNode(best, usedMB[best.ID]), nil
+}
+
+// spreadCandidates keeps the fitting nodes whose zone, and then whose own
+// node, hold the fewest of the app's live instances (ADR-20261026140000).
+// The usual ranking then chooses among them. A warm or snapshot-holding hint
+// survives only when its node is kept, so locality cannot gather every
+// replica onto one node. Zone counts include the instances on nodes that no
+// longer fit: they still share that zone's failure domain.
+func spreadCandidates(nodes, candidates []state.ComputeNode, warmFit *state.ComputeNode, snapshotF []state.ComputeNode, byNode map[string]int) ([]state.ComputeNode, *state.ComputeNode, []state.ComputeNode) {
+	byZone := make(map[string]int, len(nodes))
+	for _, n := range nodes {
+		byZone[failureZone(n)] += byNode[n.ID]
+	}
+	var kept []state.ComputeNode
+	bestZone, bestNode := 0, 0
+	for _, n := range candidates {
+		zone, own := byZone[failureZone(n)], byNode[n.ID]
+		switch {
+		case len(kept) == 0 || zone < bestZone || zone == bestZone && own < bestNode:
+			kept, bestZone, bestNode = []state.ComputeNode{n}, zone, own
+		case zone == bestZone && own == bestNode:
+			kept = append(kept, n)
+		}
+	}
+	if warmFit != nil && !nodeIn(kept, warmFit.ID) {
+		warmFit = nil
+	}
+	var snapshots []state.ComputeNode
+	for _, n := range snapshotF {
+		if nodeIn(kept, n.ID) {
+			snapshots = append(snapshots, n)
+		}
+	}
+	return kept, warmFit, snapshots
+}
+
+// failureZone is the failure domain replica spread separates: a node's
+// region and zone. Nodes without either share one domain.
+func failureZone(n state.ComputeNode) string {
+	return stringValue(n.Region) + "\x00" + stringValue(n.Zone)
+}
+
+func nodeIn(nodes []state.ComputeNode, id string) bool {
+	for _, n := range nodes {
+		if n.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 func restorePressureActive(candidates []state.ComputeNode, r Request) bool {

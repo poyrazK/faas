@@ -20,21 +20,41 @@ type RehearsalCommandPolicyStore interface {
 
 var ErrRehearsalExternalActionDenied = errors.New("rehearsal external action adapter is unavailable")
 
+// ErrQualificationExternalActionDenied refuses a held qualification
+// candidate an identity, a relay call or an event.
+var ErrQualificationExternalActionDenied = errors.New("a qualification candidate takes no external action")
+
 // InstanceExternalActionIdentity is the identity boundary for host-mediated
 // actions. IP firewall policy cannot constrain a vsock relay, event publisher
 // or federated credential. A contained instance gets none of those capabilities.
 // Read-only metadata and lifecycle telemetry retain their ordinary identity path.
+//
+// An instance still booting resolves to the identity its wake fixed: a worker
+// leases and handles messages before readiness, so its handler's relay calls
+// and events must work then too (ADR-1141 amendment 2026-10-24).
+//
+// A held GitOps qualification candidate gets none of them either, booting or
+// live: its code is not yet approved to act as the app, so it mints no
+// workload identity, calls no integration and publishes no event
+// (ADR-568, ADR-20261019152416; security audit 2026-10-27).
 func (m *Manager) InstanceExternalActionIdentity(ctx context.Context, instance string) (string, string, error) {
 	m.mu.Lock()
 	inst := m.live[instance]
+	booting, waking := m.waking[instance]
 	if inst == nil {
 		m.mu.Unlock()
+		if waking {
+			return m.bootingExternalActionIdentity(ctx, instance, booting)
+		}
 		return "", "", errors.New("external action instance is not live")
 	}
-	appID, accountID, contained := inst.AppID, inst.AccountID, inst.Net.RehearsalRunID != ""
+	appID, accountID, contained, qualification := inst.AppID, inst.AccountID, inst.Net.RehearsalRunID != "", inst.QualificationOnly
 	m.mu.Unlock()
 	if contained {
 		return "", "", ErrRehearsalExternalActionDenied
+	}
+	if qualification {
+		return "", "", ErrQualificationExternalActionDenied
 	}
 	run, err := m.rehearsalNetworkRun(ctx, appID)
 	if err != nil {
@@ -49,6 +69,34 @@ func (m *Manager) InstanceExternalActionIdentity(ctx context.Context, instance s
 		return "", "", errors.New("external action instance changed during policy read")
 	}
 	return appID, accountID, nil
+}
+
+// bootingExternalActionIdentity applies the live rule to a booting instance:
+// a qualification restore carries no identity, and a wake that joined a
+// contained run, or whose app has one, gets no capability.
+func (m *Manager) bootingExternalActionIdentity(ctx context.Context, instance string, booting wakingInstance) (string, string, error) {
+	if booting.appID == "" || booting.accountID == "" {
+		return "", "", fmt.Errorf("fcvm: external action %s: booting without an app identity", instance)
+	}
+	if booting.contained {
+		return "", "", ErrRehearsalExternalActionDenied
+	}
+	if booting.qualification {
+		return "", "", ErrQualificationExternalActionDenied
+	}
+	run, err := m.rehearsalNetworkRun(ctx, booting.appID)
+	if err != nil {
+		return "", "", err
+	}
+	if run != "" {
+		return "", "", ErrRehearsalExternalActionDenied
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if current, ok := m.waking[instance]; !ok || current != booting {
+		return "", "", fmt.Errorf("fcvm: external action %s: changed during policy read", instance)
+	}
+	return booting.appID, booting.accountID, nil
 }
 
 // InstanceRehearsalEventIdentity returns the installed identity of a contained

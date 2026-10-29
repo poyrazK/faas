@@ -1,7 +1,7 @@
 // ADR-20261017233500: repeat app IDs and preserve source failures without fallback.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { AccountService, OpenAPI } from '../src/index.js';
+import { AccountService, OpenAPI } from '../src/preview.js';
 
 test('selected trace sends exact repeated app IDs and never falls back to account lookup', async () => {
   const oldFetch = globalThis.fetch;

@@ -42,20 +42,20 @@ identity. Requests retain a private copy of the body.
 
 ## Install and consume
 
-Install `faas.EventConsumerReceiptSchema` explicitly in the application's
+Install `preview.EventConsumerReceiptSchema` explicitly in the application's
 PostgreSQL database as its owner. The wrapper does not install tables, delete
 receipts, or start a background worker. Use a `database/sql` PostgreSQL driver.
 
 After authenticating an internal delivery and reading its bounded original body:
 
 ```go
-input, err := faas.EventConsumerRequestFromHTTP(r, body, accountID, appID)
+input, err := preview.EventConsumerRequestFromHTTP(r, body, accountID, appID)
 if err != nil {
     // Reject invalid context before making any business writes.
     return err
 }
-result, err := faas.WithEventConsumerTransaction(ctx, db, input,
-    func(tx faas.EventConsumerSQLTransaction) (json.RawMessage, error) {
+result, err := preview.WithEventConsumerTransaction(ctx, db, input,
+    func(tx preview.EventConsumerSQLTransaction) (json.RawMessage, error) {
         // Authorize and validate the business input before this mutation.
         _, err := tx.ExecContext(ctx,
             "UPDATE invoices SET paid = true WHERE id = $1", invoiceID)
@@ -139,7 +139,7 @@ business authorization, with the original body captured as a `Buffer`:
 
 ```js
 import { eventConsumerRequestFromHeaders, withEventConsumerTransaction }
-  from '@gregale/sdk-node';
+  from '@gregale/sdk-node/preview';
 
 const input = eventConsumerRequestFromHeaders(req.headers, rawBody, accountId, appId);
 const result = await withEventConsumerTransaction(pool, input, async tx => {
@@ -165,7 +165,7 @@ inside the callback. After authenticating and authorizing the input:
 
 ```python
 import json
-from faas_sdk import event_consumer_request_from_headers, with_event_consumer_transaction
+from faas_sdk.preview import event_consumer_request_from_headers, with_event_consumer_transaction
 
 input = event_consumer_request_from_headers(headers, raw_body, account_id, app_id)
 
@@ -181,7 +181,7 @@ with pool.connection() as connection:  # pool configured with autocommit=True
 ## Python asynchronous handler
 
 ```python
-from faas_sdk import awith_event_consumer_transaction
+from faas_sdk.preview import awith_event_consumer_transaction
 
 async def apply(cursor):
     await cursor.execute("UPDATE invoices SET paid=true WHERE id=%s", (invoice_id,))
@@ -219,8 +219,8 @@ receipt generation and include its outbox ID in the saved response:
 
 ```go
 // Inside WithEventConsumerTransaction's callback, after the business update:
-followUpID, err := faas.InsertCommitEventInTransaction(ctx, tx,
-    faas.CommitEventRequest{
+followUpID, err := preview.InsertCommitEventInTransaction(ctx, tx,
+    preview.CommitEventRequest{
         Type: "invoice.receipt.generate",
         Data: json.RawMessage(`{"invoice_id":"123"}`),
     })
@@ -235,7 +235,7 @@ exposing transaction lifecycle methods. Existing `InsertCommitEvent(ctx, *sql.Tx
 event)` callers remain compatible. Both helpers perform the same validation.
 
 ```js
-import { insertCommitEvent } from '@gregale/sdk-node';
+import { insertCommitEvent } from '@gregale/sdk-node/preview';
 
 // Inside withEventConsumerTransaction's async callback, after the update:
 const followUpId = await insertCommitEvent(tx, {
@@ -245,7 +245,7 @@ return JSON.stringify({ follow_up_id: followUpId });
 ```
 
 ```python
-from faas_sdk import insert_commit_event, ainsert_commit_event
+from faas_sdk.preview import insert_commit_event, ainsert_commit_event
 
 # Inside the synchronous callback, after the business update:
 follow_up_id = insert_commit_event(

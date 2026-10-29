@@ -55,7 +55,12 @@ func TestConsumerBillingSelfService(t *testing.T) {
 		return &apidserverResponse{code: res.Code, body: res.Body.String()}
 	}
 
-	for name, token := range map[string]string{"operator key": *e.Key(), "malformed": "ck_nope", "wrong secret": billingKey[:len(billingKey)-1] + "0"} {
+	// Change the secret's last character; a key already ending in "0" gets "1".
+	wrong := billingKey[:len(billingKey)-1] + "0"
+	if wrong == billingKey {
+		wrong = billingKey[:len(billingKey)-1] + "1"
+	}
+	for name, token := range map[string]string{"operator key": *e.Key(), "malformed": "ck_nope", "wrong secret": wrong} {
 		if res := get("/v1/consumer-billing/metered", token); res.code != http.StatusUnauthorized {
 			t.Fatalf("%s: %d %s, want 401", name, res.code, res.body)
 		}

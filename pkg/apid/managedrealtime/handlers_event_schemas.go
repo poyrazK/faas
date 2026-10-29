@@ -11,8 +11,7 @@ import (
 )
 
 func (s *Service) ManagedRealtimeEventSchema(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	if !s.HistoryPreviewEnabled {
-		httpkit.NotFound(w, "event schemas preview unavailable")
+	if s.previewUnavailable(w, acct.ID, s.HistoryPreviewEnabled, "event schemas preview unavailable") {
 		return
 	}
 	ep, _, ok := s.loadManagedRealtimeEndpoint(w, r, acct)

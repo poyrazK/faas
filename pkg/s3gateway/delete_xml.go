@@ -64,7 +64,7 @@ func parseDeleteObjects(body []byte) (deleteObjectsRequest, error) {
 		result.Quiet = value == "true"
 	}
 	for _, v := range wire.Objects {
-		if len(v.Extra) != 0 || len(v.Attrs) != 0 || strings.TrimSpace(v.Text) != "" || v.XMLName.Space != "" && v.XMLName.Space != s3XMLNamespace || len(v.Keys) != 1 || !v.Keys[0].valid() || !objectstorage.ValidKey(v.Keys[0].Value) || len(v.IDs) > 1 {
+		if len(v.Extra) != 0 || len(v.Attrs) != 0 || strings.TrimSpace(v.Text) != "" || v.XMLName.Space != "" && v.XMLName.Space != s3XMLNamespace || len(v.Keys) != 1 || !v.Keys[0].valid() || !objectstorage.ValidRequestKey(v.Keys[0].Value) || len(v.IDs) > 1 {
 			return result, objectstorage.ErrInvalid
 		}
 		target := deleteObjectTarget{Key: v.Keys[0].Value}

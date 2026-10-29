@@ -28,6 +28,10 @@ import (
 // from secret managers, rejects megabyte uploads.
 const AppWebhookSecretMaxBytes = 256
 
+// AppWebhookSecretNamespace is the secretbox namespace an app webhook's
+// signing secret is sealed under; schedd's dispatcher accepts no other.
+const AppWebhookSecretNamespace = "APP_WEBHOOK"
+
 // AppWebhookSecretMasked is the literal returned in every response
 // shape that carries the webhook_secret field. Never echo the
 // plaintext back to the customer — same posture as
@@ -138,6 +142,15 @@ var AllowedAccountReleaseWebhookEvents = []string{
 	"deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted",
 	"environment.gitops.changed",
 }
+
+// AgentRunFinishedWebhookEvent reaches account receivers when an agent run
+// ends in any terminal state (ADR-20261027090010 §8). Only accounts in the agent_runs
+// rollout may subscribe; it stays out of the CLI and the public spec until
+// launch.
+const AgentRunFinishedWebhookEvent = "agent_run.finished"
+
+// AllowedAccountAgentWebhookEvents are the account events agent runs add.
+var AllowedAccountAgentWebhookEvents = []string{AgentRunFinishedWebhookEvent}
 
 // DeploymentLiveWebhookPayload is the payload stored for a deployment.live
 // delivery. The delivery id in the webhook envelope is stable across retries.

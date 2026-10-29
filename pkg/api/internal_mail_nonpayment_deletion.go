@@ -32,6 +32,30 @@ type InternalMailNonpaymentDeletionResponse struct {
 	Followup            bool      `json:"followup"`
 }
 
+// Reasons apid gives when a deletion guard refuses the move to
+// deleted_pending. The set is closed: meterd uses it as a metric label.
+const (
+	NonpaymentDeletionBlockedManagedPostgres    = "managed_postgres_databases"
+	NonpaymentDeletionBlockedSharedAppOwnership = "shared_app_ownership"
+)
+
+// ErrNonpaymentDeletionBlocked means a deletion guard refused the account's
+// move to deleted_pending. It is not an outage: the guard holds until the
+// blocking resources are gone, so the command succeeds on a later sweep.
+var ErrNonpaymentDeletionBlocked = errors.New("non-payment deletion blocked by a deletion guard")
+
+// InternalMailNonpaymentDeletionBlocked is apid's 409 body for a guarded
+// account, and the error Schedule returns for it.
+type InternalMailNonpaymentDeletionBlocked struct {
+	Reason                   string `json:"reason"`
+	ManagedPostgresDatabases int64  `json:"managed_postgres_databases,omitempty"`
+}
+
+func (b *InternalMailNonpaymentDeletionBlocked) Error() string {
+	return "non-payment deletion blocked: " + b.Reason
+}
+func (b *InternalMailNonpaymentDeletionBlocked) Unwrap() error { return ErrNonpaymentDeletionBlocked }
+
 type InternalMailNonpaymentDeletionCompleteRequest struct {
 	IntentID string `json:"intent_id"`
 	LeaseID  string `json:"lease_id"`
@@ -128,6 +152,15 @@ func (c *InternalMailNonpaymentDeletionClient) command(ctx context.Context, meth
 		return errors.New("non-payment deletion command unavailable")
 	}
 	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode == http.StatusConflict {
+		// Only the schedule route answers 409. An unreadable body still
+		// reports the block; the reason is then empty.
+		blocked := &InternalMailNonpaymentDeletionBlocked{}
+		if json.NewDecoder(io.LimitReader(resp.Body, InternalMailNonpaymentDeletionCommandMaxBytes)).Decode(blocked) != nil {
+			blocked = &InternalMailNonpaymentDeletionBlocked{}
+		}
+		return blocked
+	}
 	want := http.StatusNoContent
 	if output != nil {
 		want = http.StatusOK

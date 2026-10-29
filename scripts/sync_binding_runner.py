@@ -48,6 +48,6 @@ else:
 # Creation recovery mirrors the same central budget in the other SDKs.
 limit = re.search(r"\bBindingVerificationCreationReconcileTimeoutMilliseconds\s*=\s*(\d+)", (root / "pkg/api/limits.go").read_text())
 node = re.search(r"\bcreationRecoveryMilliseconds\s*=\s*(\d+)", (root / "sdk/node/src/binding-creation.ts").read_text())
-python = re.search(r"\b_CREATION_RECOVERY_SECONDS\s*=\s*(\d+)", (root / "sdk/python/faas_sdk/_binding_creation.py").read_text())
+python = re.search(r"\b_CREATION_RECOVERY_SECONDS\s*=\s*(\d+)", (root / "sdk/python/faas_sdk/preview/_binding_creation.py").read_text())
 if not limit or not node or not python or int(limit[1]) != int(node[1]) or int(limit[1]) != 1000 * int(python[1]):
     raise SystemExit("Creation recovery SDK time budgets differ from pkg/api/limits.go")

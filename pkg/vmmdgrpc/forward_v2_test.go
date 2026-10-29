@@ -30,7 +30,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -44,12 +43,8 @@ import (
 // cmd/vmmd-raw-bridge/main_test.go::buildBridgeForTest.
 func buildBridgeBinary(t *testing.T) string {
 	t.Helper()
-	_, src, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatalf("runtime.Caller: no path")
-	}
-	srcDir := filepath.Dir(src)
-	bridgeDir := filepath.Clean(filepath.Join(srcDir, "..", "..", "cmd", "vmmd-stream-bridge"))
+	// go test runs in pkg/vmmdgrpc.
+	bridgeDir := filepath.Join("..", "..", "cmd", "vmmd-stream-bridge")
 	out := filepath.Join(t.TempDir(), "vmmd-stream-bridge")
 	cmd := exec.Command("go", "build", "-o", out, bridgeDir)
 	cmd.Stderr = os.Stderr

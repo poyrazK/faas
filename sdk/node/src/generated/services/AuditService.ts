@@ -15,7 +15,7 @@ export class AuditService {
    * logins, logouts, key mints/deletes, secret sets/deletes, plan
    * changes, and account deletion scheduling/restore.
    *
-   * The events table is append-only (spec §5 / §6.1). The response
+   * The events table is append-only. The response
    * is bounded by `limit` (default 50, max 100). For a full-history
    * pull, use `GET /v1/account/export`, which unions these events
    * with the customer's GDPR-action rows.
@@ -43,7 +43,7 @@ export class AuditService {
      */
     limit?: number,
     /**
-     * Wave 0 PR-C / ADR-047: also surface rows with `subject =
+     * Also surface rows with `subject =
      * NULL`. The defensive case where the customer's app row
      * was deleted between wake and the stateless-advisory
      * audit emit. Default `false` (the customer never sees
@@ -53,7 +53,7 @@ export class AuditService {
      */
     includeAnonymous?: boolean,
     /**
-     * Wave 0 PR-C / ADR-047: filter the overscan window to
+     * Filter the overscan window to
      * events whose `data.app_id` matches the given uuid. The
      * dashboard's `app_detail.html` "Stateless advisories"
      * link uses this combo with `kind_prefix=stateless.advisory`
@@ -123,8 +123,7 @@ export class AuditService {
   }
   /**
    * List the caller's audit-log entries (post-deletion evidence).
-   * Newest-first. Reads the FK-free `audit_log` table
-   * (migrations/00163_audit_log.sql), distinct from
+   * Newest-first. Reads the FK-free `audit_log` table, distinct from
    * `/v1/audit-events` which reads the live `events` table. The
    * `audit_log` table is append-only by spec (ISO 27001 SoA
    * A.5.33 — retention forever) and a regulator / DPO can replay

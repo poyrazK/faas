@@ -46,8 +46,9 @@ class EdgeRuleJWTAction:
     app owner's account. Supports namespaced claims. When set, unknown, suspended, or unavailable tenants are
     rejected before the request reaches the guest."""
     require_exp: bool | Unset = UNSET
-    """Reject tokens that carry no `exp` claim. Off by default: `exp` is validated only when present, so a token
-    minted without one never expires unless this is set."""
+    """Reject tokens that carry no `exp` claim. Defaults to true when omitted, because a token minted without `exp`
+    never expires; set false to accept such tokens (`exp` is then validated only when present). Rules saved before
+    this default keep their saved value, and responses show the field only when it is true."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

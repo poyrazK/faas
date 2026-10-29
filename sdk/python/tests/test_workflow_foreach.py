@@ -1,6 +1,6 @@
-from faas_sdk.models.workflow_for_each_spec import WorkflowForEachSpec
-from faas_sdk.models.workflow_spec import WorkflowSpec
-from faas_sdk.models.workflow_step_response import WorkflowStepResponse
+from faas_sdk.preview.models.workflow_for_each_spec import WorkflowForEachSpec
+from faas_sdk.preview.models.workflow_spec import WorkflowSpec
+from faas_sdk.preview.models.workflow_step_response import WorkflowStepResponse
 
 
 def test_iteration_definition_preserves_nested_mapping_and_retry():

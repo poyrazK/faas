@@ -48,6 +48,23 @@ type ScenarioTestDNSChaosPolicy struct {
 
 var scenarioTestRunPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
 var scenarioTestWorkloadPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$`)
+
+// scenarioTestServiceNamePattern is a service DNS label, the name the
+// gateway resolves inside a run (ADR-20261026105459).
+var scenarioTestServiceNamePattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
+
+// validScenarioTestMemberName accepts any service name for a plain member,
+// such as a `gregale dev --all` app. A member enrolled in rehearsal capture,
+// simulation or fault plans keeps the slug rule those plans and their
+// action policies are written for.
+func validScenarioTestMemberName(member ScenarioTestMember) bool {
+	if member.WebhookMode == "" && member.NetworkMode == "" && member.SimulationJSON == "" && member.ColdStartJSON == "" &&
+		member.SuspendResumeJSON == "" && member.ManagedWorkJSON == "" {
+		return scenarioTestServiceNamePattern.MatchString(member.Workload)
+	}
+	return scenarioTestWorkloadPattern.MatchString(member.Workload)
+}
+
 var scenarioChaosRuleIDPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 func validScenarioTestMembers(accountID, runID string, members []ScenarioTestMember) error {
@@ -57,7 +74,7 @@ func validScenarioTestMembers(accountID, runID string, members []ScenarioTestMem
 	seenNames := make(map[string]bool, len(members))
 	seenApps := make(map[string]bool, len(members))
 	for _, member := range members {
-		if !scenarioTestWorkloadPattern.MatchString(member.Workload) || member.AppID == "" || seenNames[member.Workload] || seenApps[member.AppID] ||
+		if !validScenarioTestMemberName(member) || member.AppID == "" || seenNames[member.Workload] || seenApps[member.AppID] ||
 			(member.WebhookMode != "" && member.WebhookMode != ScenarioWebhookCaptureMode) || member.WebhookMode != members[0].WebhookMode ||
 			(member.NetworkMode != "" && (member.NetworkMode != ScenarioNetworkContained || member.WebhookMode != ScenarioWebhookCaptureMode)) || member.NetworkMode != members[0].NetworkMode {
 			return ErrConflict
@@ -501,22 +518,36 @@ func (s *PgStore) ScenarioTestDNSChaosByHostIP(ctx context.Context, nodeName, ho
 	return policy, nil
 }
 
+// RecordScenarioTestChaosInjections writes the whole batch in one statement, so
+// a failed call persists nothing and the gateway can retry it without counting
+// any match twice.
 func (s *PgStore) RecordScenarioTestChaosInjections(ctx context.Context, injections []chaos.InjectionBatch) error {
-	for _, injection := range injections {
+	if len(injections) == 0 {
+		return nil
+	}
+	runIDs := make([]string, len(injections))
+	callers := make([]string, len(injections))
+	generations := make([]string, len(injections))
+	ruleIDs := make([]string, len(injections))
+	counts := make([]int64, len(injections))
+	for i, injection := range injections {
 		if err := validateScenarioChaosInjection(injection); err != nil {
 			return err
 		}
-		_, err := s.pool.Exec(ctx, `insert into scenario_test_chaos_matches
-			(account_id, run_id, caller_app_id, generation, rule_id, matches)
-			select m.account_id, m.run_id, m.app_id, $3::uuid, $4, $5
-			from scenario_test_members m
-			where m.run_id = $1 and m.app_id = $2 and m.chaos_generation = $3::uuid
-			on conflict (account_id, run_id, caller_app_id, generation, rule_id)
-			do update set matches = scenario_test_chaos_matches.matches + excluded.matches, updated_at = now()`,
-			injection.RunID, injection.CallerApp, injection.Generation, injection.RuleID, injection.Count)
-		if err != nil {
-			return fmt.Errorf("record scenario chaos matches: %w", err)
-		}
+		runIDs[i], callers[i], generations[i], ruleIDs[i], counts[i] = injection.RunID, injection.CallerApp, injection.Generation, injection.RuleID, injection.Count
+	}
+	_, err := s.pool.Exec(ctx, `insert into scenario_test_chaos_matches
+		(account_id, run_id, caller_app_id, generation, rule_id, matches)
+		select m.account_id, m.run_id, m.app_id, i.generation::uuid, i.rule_id, sum(i.matches)::bigint
+		from unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::bigint[]) as i(run_id, caller_app_id, generation, rule_id, matches)
+		join scenario_test_members m
+		  on m.run_id = i.run_id and m.app_id = i.caller_app_id::uuid and m.chaos_generation = i.generation::uuid
+		group by m.account_id, m.run_id, m.app_id, i.generation, i.rule_id
+		on conflict (account_id, run_id, caller_app_id, generation, rule_id)
+		do update set matches = scenario_test_chaos_matches.matches + excluded.matches, updated_at = now()`,
+		runIDs, callers, generations, ruleIDs, counts)
+	if err != nil {
+		return fmt.Errorf("record scenario chaos matches: %w", err)
 	}
 	return nil
 }

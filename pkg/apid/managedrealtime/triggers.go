@@ -24,6 +24,11 @@ func realtimeTriggerProblem(status int, code, title, detail string) *api.Problem
 // again atomically after creation.
 func (s *Service) PrepareRealtimeTrigger(ctx context.Context, acct state.Account, req *api.CreateTriggerRequest) (api.RealtimeTriggerConfig, *api.Problem) {
 	var cfg api.RealtimeTriggerConfig
+	if !s.PreviewVisible(acct.ID) {
+		// Outside the preview rollout the kind does not exist.
+		return cfg, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request",
+			"unknown kind: must be one of cron|kafka|nats|redis_streams|sqs_compat|queue")
+	}
 	if !s.HistoryPreviewEnabled {
 		return cfg, realtimeTriggerProblem(http.StatusUnprocessableEntity, "trigger_invalid_config", "Realtime triggers unavailable",
 			"realtime triggers require the retained-realtime preview")

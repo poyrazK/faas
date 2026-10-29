@@ -760,9 +760,8 @@ func (s *server) buildJob(acct state.Account, req api.CreateJobRequest) (state.J
 	if ramMB == 0 {
 		ramMB = api.JobDefaultRAMMB
 	}
-	if ramMB < 0 {
-		return state.Job{}, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
-			"Invalid ram_mb", "ram_mb must be positive")
+	if prob := api.ValidateJobRAMMB(ramMB); prob != nil {
+		return state.Job{}, prob
 	}
 	if cap := api.JobRAMMB[idx]; ramMB > cap {
 		return state.Job{}, api.ErrJobQuota(acct.Plan, "ram_mb", cap, ramMB)
@@ -953,9 +952,8 @@ func (s *server) updateJob(w http.ResponseWriter, r *http.Request, acct state.Ac
 	// customer can raise a field above the previous value.
 	idx := acct.Plan.PlanIndex()
 	if req.RAMMB != nil {
-		if *req.RAMMB <= 0 {
-			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
-				"Invalid ram_mb", "ram_mb must be positive"))
+		if prob := api.ValidateJobRAMMB(*req.RAMMB); prob != nil {
+			api.WriteProblem(w, prob)
 			return
 		}
 		if cap := api.JobRAMMB[idx]; *req.RAMMB > cap {

@@ -17,10 +17,9 @@ T = TypeVar("T", bound="ParkedDeploymentRef")
 
 @_attrs_define
 class ParkedDeploymentRef:
-    """Reference to a deployment that was parked (issue #554 / ADR-079 follow-up). Returned in
-    AppResponse.parked_deployment when the app has at least one parked deployment. The `parked_reason` field is closed-
-    set (liveness_exhausted | lifecycle_park | admin_park | security_scan_regressed) — enforced at the schema layer via
-    the deployments_parked_reason_check constraint.
+    """Reference to a deployment that was parked. Returned in AppResponse.parked_deployment when the app has at least one
+    parked deployment. The `parked_reason` field is closed-set (liveness_exhausted | lifecycle_park | admin_park |
+    security_scan_regressed) — enforced at the schema layer via the deployments_parked_reason_check constraint.
 
     """
 
@@ -28,7 +27,7 @@ class ParkedDeploymentRef:
     parked_reason: ParkedDeploymentRefParkedReason
     """Closed-set parking reason from the schema-layer CHECK constraint."""
     parked_at: datetime.datetime
-    """Wall-clock timestamp the deployment was parked (set once, idempotent across schedd restart cycles)."""
+    """Wall-clock timestamp the deployment was parked (set once, idempotent across the scheduler restart cycles)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

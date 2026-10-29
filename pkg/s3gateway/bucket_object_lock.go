@@ -45,7 +45,7 @@ func bucketObjectLockResponse(c api.ObjectBucketObjectLockConfiguration) bucketO
 func (h *Handler) bucketObjectLock(w http.ResponseWriter, r *http.Request, req requestContext) {
 	permission := state.ObjectBucketPermissionRead
 	if r.Method == http.MethodPut {
-		permission = state.ObjectBucketPermissionWrite
+		permission = bucketSettingsPermission
 	}
 	if !h.require(w, req, permission, r.URL.Path) {
 		return

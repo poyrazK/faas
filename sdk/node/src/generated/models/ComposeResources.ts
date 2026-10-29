@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * A Compose service's deploy.replicas and deploy.resources.limits, converted to app settings (ADR-20261023120000). Omitted fields are undeclared and keep the app's own settings.
+ * A Compose service's deploy.replicas and deploy.resources.limits, converted to app settings. Omitted fields are undeclared and keep the app's own settings.
  */
 export type ComposeResources = {
   /**

@@ -35,6 +35,7 @@ func (h *Handler) applyEdgeRuleRespond(w http.ResponseWriter, r *http.Request, a
 		return false
 	}
 
+	recordTrafficEdgeResponse(r.Context())
 	w.Header().Set("Content-Type", "application/json")
 	if len(rule.Body) > 0 {
 		w.Header().Set("Content-Length", strconv.Itoa(len(rule.Body)))

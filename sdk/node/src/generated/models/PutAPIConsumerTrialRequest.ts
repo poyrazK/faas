@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * A consumer's trial length in days from its start, or its end (ADR-1314). Set exactly one.
+ * A consumer's trial length in days from its start, or its end. Set exactly one.
  */
 export type PutAPIConsumerTrialRequest = {
   days?: number;

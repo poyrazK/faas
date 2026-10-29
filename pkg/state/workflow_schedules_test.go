@@ -152,7 +152,7 @@ func testWorkflowScheduleSharesManualQuota(t *testing.T, store Store) {
 	}
 	maxActive := api.PlanHobby.WorkflowMaxConcurrentRuns()
 	for i := 0; i < maxActive-1; i++ {
-		if _, err := store.CreateWorkflowRunAdmitted(ctx, &WorkflowRun{AppID: app.ID, WorkflowName: "manual", DefinitionSnapshot: json.RawMessage(`{}`)}, maxActive); err != nil {
+		if _, err := store.CreateWorkflowRunAdmitted(ctx, &WorkflowRun{AppID: app.ID, WorkflowName: "manual", DefinitionSnapshot: json.RawMessage(`{}`)}, maxActive, 0); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -167,7 +167,7 @@ func testWorkflowScheduleSharesManualQuota(t *testing.T, store Store) {
 					t.Error(err)
 				}
 			} else {
-				_, err := store.CreateWorkflowRunAdmitted(ctx, &WorkflowRun{AppID: app.ID, WorkflowName: fmt.Sprint(i), DefinitionSnapshot: json.RawMessage(`{}`)}, maxActive)
+				_, err := store.CreateWorkflowRunAdmitted(ctx, &WorkflowRun{AppID: app.ID, WorkflowName: fmt.Sprint(i), DefinitionSnapshot: json.RawMessage(`{}`)}, maxActive, 0)
 				if err != nil && !errors.Is(err, ErrWorkflowRunQuotaExceeded) {
 					t.Error(err)
 				}

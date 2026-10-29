@@ -11,8 +11,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/fcvm"
 )
 
-func recoverRestartResources(ctx context.Context, mgr *fcvm.Manager, jailRoot, journalDir string, log *slog.Logger) (*fcvm.ResourceJournal, error) {
-	journal, err := fcvm.OpenResourceJournal(journalDir)
+func recoverRestartResources(ctx context.Context, mgr *fcvm.Manager, jailRoot string, journalCfg fcvm.ResourceJournalConfig, log *slog.Logger) (*fcvm.ResourceJournal, error) {
+	journal, err := fcvm.OpenResourceJournalConfig(journalCfg)
 	if err != nil {
 		return nil, err
 	}

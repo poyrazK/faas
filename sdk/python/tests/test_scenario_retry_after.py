@@ -1,4 +1,4 @@
-from faas_sdk.models.scenario_test_chaos_rule import ScenarioTestChaosRule
+from faas_sdk.preview.models.scenario_test_chaos_rule import ScenarioTestChaosRule
 
 
 def test_scenario_retry_header_round_trip():
@@ -26,7 +26,7 @@ def test_scenario_body_fault_round_trip():
 
 
 def test_scenario_rule_round_trips_request_correlation_scope():
-    from faas_sdk.models.scenario_test_chaos_rule import ScenarioTestChaosRule
+    from faas_sdk.preview.models.scenario_test_chaos_rule import ScenarioTestChaosRule
 
     source = {
         "from": "caller",

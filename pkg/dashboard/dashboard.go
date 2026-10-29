@@ -128,6 +128,17 @@ type ProjectsData struct {
 	Environments  []string
 	CSRFToken     string
 	Flash         string
+	// CalledBy lists, by service name, the Project services that declare
+	// they call that service.
+	CalledBy map[string][]string
+	// ServiceCalls are the measured calls between Project's services over
+	// ServiceCallsRange, from the service map (ADR-1131). ServiceCallsRange
+	// is empty while the map is not released to the account or its plan has
+	// no per-app metrics; ServiceCallsNote explains degraded telemetry.
+	ServiceCalls      []api.ServiceMapEdge
+	ServiceCallsRange string
+	ServiceCallsNote  string
+	HighErrorRatePct  float64
 }
 
 type EnvironmentGitOpsData struct {
@@ -215,6 +226,8 @@ type PreviewListItem struct {
 	CreatedAt     time.Time
 	Hostname      string
 	DestroyAction string
+	// DestroyCSRF is the token the Tear down form posts with DestroyAction.
+	DestroyCSRF string
 }
 
 // PRPreviewEnvironmentView is the current-head, whole-PR status shown on the
@@ -698,6 +711,9 @@ type FailedEventPageItem struct {
 	LastFailed  string
 	ReplayedAt  string
 	Status      string
+	// Replayable is false for an entry replay cannot redrive (event_route);
+	// it can only be discarded.
+	Replayable bool
 }
 
 // AppWebhooksData is the customer-facing projection for the per-app
@@ -988,6 +1004,8 @@ type AppEdgeRulesData struct {
 	AttackModeAvailable bool
 	// Events is the ADR-964 security-events section.
 	Events EdgeRuleEventsPageData
+	// WAFReview is the WAF false-positive review (ADR-831 amendment 13).
+	WAFReview EdgeWAFReviewPageData
 	// Recipes is the protection-recipes section (ADR-986).
 	Recipes []EdgeRuleRecipeView
 	// RecipeAlerts is set when the plan includes alert rules, so recipe
@@ -1051,6 +1069,34 @@ type EdgeRuleRecipeParamView struct {
 	Default     string
 	Placeholder string
 	Required    bool
+}
+
+// EdgeWAFReviewPageData is the WAF false-positive review (ADR-831
+// amendment 13). Show is set when the app has a kind=waf rule.
+type EdgeWAFReviewPageData struct {
+	Show         bool
+	SinceLabel   string
+	Scanned      int
+	Truncated    bool
+	Groups       []EdgeWAFReviewView
+	ErrorMessage string
+}
+
+// EdgeWAFReviewView is one rule's detections by one CRS rule on one path.
+type EdgeWAFReviewView struct {
+	RuleID           string
+	RuleLabel        string
+	RuleMode         string
+	CRSRuleID        int
+	Category         string
+	Path             string
+	Events           int
+	Clients          int
+	Assessment       string
+	AssessmentLabel  string
+	Reason           string
+	ExampleRequestID string
+	Excluded         bool
 }
 
 // EdgeRuleEventsPageData is the filterable security-events table (ADR-964).
@@ -2553,6 +2599,39 @@ type DebugPageData struct {
 	CriticalPathHistory *DebugCriticalPathHistoryView
 	Running             *DebugRunningView
 	RunningError        string
+	DebugStatus         *DebugStatusView
+}
+
+// DebugStatusView is the dashboard projection of GET
+// /v1/apps/{slug}/debug/status (ADR-1447 amendment): one verdict for the
+// window, the release explanation, and links to the requests behind them.
+type DebugStatusView struct {
+	Verdict        string
+	VerdictLabel   string
+	Headline       string
+	Since          string
+	Requests       int64
+	ServerErrors   int64
+	P95MS          int
+	Regressions    int
+	TracingEnabled bool
+	Release        string
+	Examples       []DebugStatusRequestView
+	Failures       []DebugStatusRequestView
+	// OOMKills lists the window's out-of-memory kills (ADR-121), newest
+	// first; OOMKillsTotal counts all of them and OOMFix is the remedy.
+	OOMKills      []string
+	OOMKillsTotal int
+	OOMFix        []string
+	CLICommand    string
+}
+
+// DebugStatusRequestView links one request from the status card to its
+// evidence on the same page.
+type DebugStatusRequestView struct {
+	ReceivedAt string
+	Label      string
+	URL        string
 }
 
 // DebugRunningView is the dashboard projection of the bounded scheduler
@@ -2797,6 +2876,18 @@ type DebugRequestDetailView struct {
 	// ProfileCaptureURL links the stack snapshot taken while the request was
 	// in flight (ADR-1155 slow_request capture), when one exists.
 	ProfileCaptureURL string
+	// Logs are the request's own log lines, matched by trace ID.
+	Logs          []DebugLogLineView
+	LogsTruncated bool
+}
+
+// DebugLogLineView is one bounded log line attached to request evidence.
+type DebugLogLineView struct {
+	OccurredAt string
+	Source     string
+	Level      string
+	Stream     string
+	Message    string
 }
 
 // DebugCriticalPathView is the template-safe projection of the selected
@@ -3404,6 +3495,12 @@ type AccountData struct {
 	ShowRestore         bool
 	RestoreUntil        string
 	RestoreConfirmToken string
+
+	// ShowDeleteManagedPostgres offers the checkbox that makes the deletion
+	// include the account's managed PostgreSQL databases
+	// (ADR-20261024150500); only for accounts in
+	// FAAS_ACCOUNT_DELETION_MANAGED_POSTGRES_ACCOUNTS until launch.
+	ShowDeleteManagedPostgres bool
 	// ConnectGithubConfirmToken (issue #961 / Mega-B PR-3) backs the
 	// dashboard's "Connect GitHub" button. The form posts to
 	// /dashboard/install/connect with this token + the matching named
@@ -3454,6 +3551,19 @@ type ManagedPostgresData struct {
 	Available bool
 	Error     string
 	Databases []ManagedPostgresDatabaseItem
+	// Overage is the compute overage form (ADR-20261025094915); nil hides it,
+	// as for Free plans and accounts without the postgres-overage capability.
+	Overage *ManagedPostgresOverageItem
+}
+
+// ManagedPostgresOverageItem backs the compute overage form on
+// /dashboard/postgres.
+type ManagedPostgresOverageItem struct {
+	Enabled        bool
+	AllowanceLabel string
+	CeilingLabel   string
+	ConfirmToken   string
+	Flash          string
 }
 
 // ManagedPostgresDatabaseItem is one database row on /dashboard/postgres.

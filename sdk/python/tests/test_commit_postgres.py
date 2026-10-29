@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from uuid import uuid4
 
-from faas_sdk import insert_commit_event
+from faas_sdk.preview import insert_commit_event
 
 
 @unittest.skipUnless(os.environ.get("DATABASE_URL"), "DATABASE_URL required")

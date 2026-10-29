@@ -1,0 +1,82 @@
+/* generated using openapi-typescript-codegen -- do not edit */
+/* istanbul ignore file */
+/* tslint:disable */
+/* eslint-disable */
+/**
+ * The resource, scaling, rate, and timeout envelope currently applied to an app. Values are resolved from the app configuration and current plan; they describe enforcement rather than guest hardware alone.
+ */
+export type AppEffectiveLimits = {
+  /**
+   * Memory limit configured for this app instance, in MB.
+   */
+  memory_limit_mb: number;
+  /**
+   * Largest memory limit the current plan permits for an app instance, in MB.
+   */
+  plan_memory_max_mb: number;
+  /**
+   * Total logical capacity of this app's writable ephemeral filesystem, in MB, including application content and filesystem metadata. Free scratch space is this value minus deployed content and overhead. This is the same physical drive1 cap historically named app_layer_max_mb.
+   */
+  ephemeral_disk_max_mb: number;
+  /**
+   * Number of processors visible inside the guest. This is distinct from the sustained CPU cgroup limit.
+   */
+  guest_vcpus: number;
+  /**
+   * Sustained per-instance CPU allowance derived from cpu.max, expressed in millicores.
+   */
+  cpu_limit_millicores: number;
+  /**
+   * Largest sustained CPU allowance the current plan permits, in millicores.
+   */
+  plan_cpu_max_millicores: number;
+  /**
+   * Relative cgroup CPU scheduling weight applied when the host is contended.
+   */
+  cpu_weight: number;
+  /**
+   * Effective per-app live-instance ceiling after applying the scaling policy.
+   */
+  max_instances: number;
+  /**
+   * Maximum in-flight requests accepted by one instance: the app's scaling_policy.per_instance_concurrency when set, otherwise the plan's concurrency_per_vm.
+   */
+  concurrency_per_instance: number;
+  /**
+   * Effective maximum number of requests allowed to wait for warm instance capacity.
+   */
+  concurrency_queue_depth: number;
+  /**
+   * Effective maximum warm saturation wait in milliseconds.
+   */
+  concurrency_queue_wait_ms: number;
+  /**
+   * Effective per-app edge token-bucket refill rate, in requests per second, after any app-level runtime override.
+   */
+  app_request_rate_rps: number;
+  /**
+   * Effective per-app edge token-bucket burst capacity after any app-level runtime override.
+   */
+  app_request_burst: number;
+  /**
+   * Account-wide edge token-bucket refill rate across all apps, in requests per minute.
+   */
+  account_request_rate_rpm: number;
+  /**
+   * Default execution budget after upload, wake and admission, before a route override, in milliseconds.
+   */
+  request_budget_ms: number;
+  /**
+   * Maximum end-to-end request budget allowed through route overrides, in milliseconds.
+   */
+  request_budget_max_ms: number;
+  /**
+   * Maximum response write window for the plan, in seconds.
+   */
+  response_write_timeout_s: number;
+  /**
+   * Maximum inbound request body accepted for this app's plan, in bytes.
+   */
+  request_body_max_bytes: number;
+};
+

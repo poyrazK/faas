@@ -4,11 +4,11 @@
 /* eslint-disable */
 import type { RouteAwakeSuggestion } from './RouteAwakeSuggestion.js';
 /**
- * Awake time one non-request cause explains (ADR-1199, ADR-20261022184757).
+ * Awake time one non-request cause explains.
  */
 export type RouteAwakeSource = {
   /**
-   * route_probe: synthetic canary probes the app answered (ADR-847; kept for a day). prewarm: instances a scheduled prewarm admitted. The others are deliveries schedd made to the app, by invocation source; a delivery counts from when it reached the instance until it completed, at most 60 minutes.
+   * route_probe: synthetic canary probes the app answered (kept for a day). prewarm: instances a scheduled prewarm admitted. The others are deliveries the scheduler made to the app, by invocation source; a delivery counts from when it reached the instance until it completed, at most 60 minutes.
    */
   source: 'route_probe' | 'prewarm' | 'cron' | 'queue' | 'delayed_task' | 'async_invoke' | 'inbound_webhook' | 'replay' | 'esm';
   /**

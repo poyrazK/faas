@@ -34,10 +34,11 @@ images=(
 mkdir -p "${output_dir}"
 for image in "${images[@]}"; do
   config_args=()
-  # The staging-only Debian parent carries version-pinned publication
-  # exceptions (ADR-053); every other image is reported unfiltered.
-  if [[ ${image} == base-debian-parent ]]; then
-    config_args=(-c "${repo_root}/images/base-debian-parent.grype.yaml")
+  # An image's version-pinned exceptions live in images/<image>.grype.yaml
+  # (ADR-053 for the Debian parent, ADR 20261024132405 for runtimes); an
+  # image without one is reported unfiltered.
+  if [[ -f ${repo_root}/images/${image}.grype.yaml ]]; then
+    config_args=(-c "${repo_root}/images/${image}.grype.yaml")
   fi
   echo "scanning ${registry}/${image}:latest (${platform})"
   "${grype_bin}" "registry:${registry}/${image}:latest" \

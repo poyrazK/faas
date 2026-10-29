@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { ConsumerSignupPlan } from './ConsumerSignupPlan.js';
 /**
- * The plans a consumer can switch between (ADR-20261021183000).
+ * The plans a consumer can switch between.
  */
 export type ConsumerBillingPlansResponse = {
   /**

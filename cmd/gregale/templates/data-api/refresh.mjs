@@ -107,10 +107,14 @@ export async function changeRefreshBarrier(client, action, role, token, fingerpr
 }
 
 export function refreshStatusReader(connection) {
-  const pool = new pg.Pool({ connectionString: connection, max: 1, connectionTimeoutMillis: 3000, query_timeout: 3000 })
-  // An idle client dropped by a database restart must not crash the server;
-  // driver errors can carry connection details, so report a fixed message.
-  pool.on('error', () => console.error('refresh status database connection unavailable'))
+  const open = () => {
+    const pool = new pg.Pool({ connectionString: connection, max: 1, connectionTimeoutMillis: 3000, query_timeout: 3000 })
+    // An idle client dropped by a database restart must not crash the server;
+    // driver errors can carry connection details, so report a fixed message.
+    pool.on('error', () => console.error('refresh status database connection unavailable'))
+    return pool
+  }
+  let pool = open()
   return {
     async read(token) {
       const result = await pool.query('SELECT * FROM gregale_data_api.refresh_status($1)', [refreshTokenHash(token)])
@@ -118,6 +122,12 @@ export function refreshStatusReader(connection) {
       const row = result.rows[0]
       if (typeof row.paused !== 'boolean' || !hash.test(row.fingerprint ?? '')) throw new Error('Invalid refresh barrier state')
       return { ...row, owns_pause: row.owns_pause === true }
+    },
+    // Before a snapshot: end the held session; the next read opens a new one.
+    async release() {
+      const held = pool
+      pool = open()
+      await held.end()
     },
     close: () => pool.end(),
   }

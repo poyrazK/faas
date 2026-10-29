@@ -85,7 +85,9 @@ func TestApplyProjectImportsOptedInComposeEnv(t *testing.T) {
 
 	optedIn := "x-gregale-env-import: true\n" + compose
 	app, values := envOf(t, apply(t, "import-env", optedIn), "api")
-	if want := map[string]string{"LOG_LEVEL": "info", "GREETING": "imported-greeting-sentinel"}; !maps.Equal(values, want) {
+	// BILLING_URL calls the project's billing service, so it imports as that
+	// service's Gregale address (ADR-20261026181020).
+	if want := map[string]string{"LOG_LEVEL": "info", "GREETING": "imported-greeting-sentinel", "BILLING_URL": "http://billing.svc.gregale:10081"}; !maps.Equal(values, want) {
 		t.Fatalf("imported = %v, want %v", values, want)
 	}
 	if err := (*e.Store()).UpsertAppEnvInScope(context.Background(), (*e.Acct()).ID, app.ID, api.DefaultEnvScope, "LOG_LEVEL", "debug"); err != nil {

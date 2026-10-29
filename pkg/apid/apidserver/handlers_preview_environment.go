@@ -36,7 +36,7 @@ func (s *server) getPreviewEnvironmentStatus(w http.ResponseWriter, r *http.Requ
 		api.WriteProblem(w, api.ErrCapacity("could not read preview environment status"))
 		return
 	}
-	result := previewset.Evaluate(environment.Set.PRNumber, app.ID, environment.Members)
+	result := previewset.EvaluateSet(environment.Set.PRNumber, app.ID, environment.Members, environment.Set.SetupError)
 	response := api.PreviewEnvironmentStatusResponse{
 		RootSlug: app.Slug, RepoFullName: environment.Set.RepoFullName,
 		PRNumber: environment.Set.PRNumber, CommitSHA: environment.Set.CommitSHA,

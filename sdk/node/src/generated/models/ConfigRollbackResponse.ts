@@ -5,7 +5,7 @@
 import type { ConfigChangeReceipt } from './ConfigChangeReceipt.js';
 import type { ConfigSecretDifference } from './ConfigSecretDifference.js';
 /**
- * What a config rollback changed, and the secrets it could not restore (ADR-1451).
+ * What a config rollback changed, and the secrets it could not restore.
  */
 export type ConfigRollbackResponse = {
   restored_revision: number;

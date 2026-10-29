@@ -26,10 +26,10 @@ import (
 
 // providerKeyMaxBytes bounds a stored provider key; real keys are ~110
 // bytes.
-const providerKeyMaxBytes = 512
+const providerKeyMaxBytes = api.BillingProviderKeyMaxBytes
 
 func keyNamespace(provider, accountID string) string {
-	return "gregale.billing." + provider + "." + accountID
+	return api.BillingProviderKeyNamespace(provider, accountID)
 }
 
 // Host is what statement invoice exports need from apid (ADR-982).

@@ -5,11 +5,8 @@ package fcvm
 import (
 	"context"
 	"fmt"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -60,25 +57,16 @@ func TestMetalRestoreLearnsReusedCaptureWithAppEnv(t *testing.T) {
 // files on a captured drive, never their contents.
 func describeCapturedPreBootFiles(t *testing.T, drive string) string {
 	t.Helper()
-	mnt := t.TempDir()
-	if out, err := exec.Command("mount", "-o", "loop,ro", drive, mnt).CombinedOutput(); err != nil {
-		return fmt.Sprintf("mount captured drive: %v %s", err, out)
+	img := metalDriveSession(t, drive)
+	paths := []string{apiEnvPath, serviceDiscoveryResolverPath}
+	layout, err := inspectDrive(t.Context(), img, paths, nil)
+	if err != nil {
+		return fmt.Sprintf("inspect captured drive: %v", err)
 	}
-	defer func() { _ = exec.Command("umount", mnt).Run() }()
 	var b strings.Builder
-	for _, p := range []string{apiEnvPath, serviceDiscoveryResolverPath} {
-		target, err := stagedDrivePath(mnt, p)
-		if err != nil {
-			fmt.Fprintf(&b, "%s: %v; ", p, err)
-			continue
-		}
-		info, err := os.Lstat(target)
-		if err != nil {
-			fmt.Fprintf(&b, "%s: %v; ", p, err)
-			continue
-		}
-		st := info.Sys().(*syscall.Stat_t)
-		fmt.Fprintf(&b, "%s: mode %v uid %d gid %d size %d; ", filepath.Base(p), info.Mode(), st.Uid, st.Gid, info.Size())
+	for _, p := range paths {
+		e := layout.entries[driveImagePath(layout.fullRootfs, p)]
+		fmt.Fprintf(&b, "%s: %s mode %o uid %d gid %d size %d; ", filepath.Base(p), e.Kind, e.Mode, e.UID, e.GID, e.Size)
 	}
 	return b.String()
 }

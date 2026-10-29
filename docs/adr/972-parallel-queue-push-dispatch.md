@@ -75,3 +75,10 @@
   claimers.
 - **Rollback:** Reverting the change restores serial dispatch. No migration,
   no new state, and queue rows, bindings and triggers are unchanged.
+
+## Amendment (2026-10-27): external brokers get lanes too
+
+[ADR 20261027162741](20261027162741-broker-trigger-lanes.md) moves Kafka,
+NATS, Redis Streams and SQS-compatible triggers onto lanes of their own. The
+ordering argument above holds per trigger, so each trigger keeps one batch in
+flight; only the schedd that owns the trigger's app polls it.

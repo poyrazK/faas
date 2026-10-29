@@ -245,7 +245,7 @@ func newDeliveryHealthConditions(o EventDeliveryHealthWatchOptions) []*deliveryH
 // transition. DurableAlerts exposes a bounded checkpoint outbox; callers must
 // persist progress before delivering notifications. PollAcknowledgements can
 // remove processed alerts between observations through the same progress hook.
-func (c *Client) WatchEventConsumerDeliveryHealth(ctx context.Context, app, sub string, o EventDeliveryHealthWatchOptions) (EventDeliveryHealthWatchResult, error) {
+func (c *PreviewClient) WatchEventConsumerDeliveryHealth(ctx context.Context, app, sub string, o EventDeliveryHealthWatchOptions) (EventDeliveryHealthWatchResult, error) {
 	if o.RateRisk != nil {
 		snapshot := *o.RateRisk
 		snapshot.DeadlineWindow = cloneDeadlineWindowOptions(snapshot.DeadlineWindow)

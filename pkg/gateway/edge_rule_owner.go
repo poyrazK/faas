@@ -53,6 +53,12 @@ func EdgeRuleCacheKeyHost(key string) string {
 	return host
 }
 
+// edgeRuleCacheKeyApp returns the app part of an EdgeRuleCacheKey, or "".
+func edgeRuleCacheKeyApp(key string) string {
+	_, app, _ := strings.Cut(key, "\x00")
+	return app
+}
+
 // EdgeRuleOwner returns the account recorded by WithEdgeRuleOwner, or "".
 func EdgeRuleOwner(ctx context.Context) string {
 	if ctx == nil {

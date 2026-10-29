@@ -78,7 +78,13 @@ func SummarizeRuntimePolicyComponent(
 	}
 	for _, gateway := range gateways {
 		observed := observedAt(gateway)
-		if observed.IsZero() || observed.Before(now.Add(-freshness)) || observed.After(now) {
+		// Observations carry the database clock; compare against it when the
+		// read reported one so apid clock skew cannot mark a gateway stale.
+		databaseNow := now
+		if !gateway.DatabaseNow.IsZero() {
+			databaseNow = gateway.DatabaseNow
+		}
+		if observed.IsZero() || observed.Before(databaseNow.Add(-freshness)) || observed.After(databaseNow) {
 			status.StaleGateways++
 			status.PendingGateways++
 			continue

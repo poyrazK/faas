@@ -29,7 +29,7 @@ func TestProjectPlanShowsComposeEnvImport(t *testing.T) {
 				ImportedEnvKeys:    []string{"LOG_LEVEL", "NODE_ENV"},
 				UnsetEnvKeys:       []string{"BILLING_URL", "STRIPE_KEY"},
 				UnsetEnvKeyReasons: map[string]string{"BILLING_URL": "service_address", "STRIPE_KEY": "secret"}},
-			want:    []string{"Imported from Compose", "LOG_LEVEL, NODE_ENV", "BILLING_URL (Docker service address)", "STRIPE_KEY (looks like a secret)"},
+			want:    []string{"Imported from Compose", "LOG_LEVEL, NODE_ENV", "BILLING_URL (Docker address of a datastore or non-HTTP service)", "STRIPE_KEY (looks like a secret)"},
 			wantNot: []string{"x-gregale-env-import"},
 		},
 		{

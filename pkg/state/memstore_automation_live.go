@@ -77,12 +77,7 @@ func (m *MemStore) startAutomationLiveVerificationLocked(ctx context.Context, ap
 	if err := m.validateWorkflowOutboundLocked(appID, app.AccountID, def); err != nil {
 		return api.AutomationLiveVerification{}, false, err
 	}
-	active := 0
-	for _, r := range m.workflowRuns {
-		if r.AppID == appID && !liveRunTerminal(r.Status) {
-			active++
-		}
-	}
+	active := m.workflowAdmissionLocked(appID, account.Plan.WorkflowMaxParkedRuns())
 	if active >= account.Plan.WorkflowMaxConcurrentRuns() {
 		return api.AutomationLiveVerification{}, false, api.ErrPlanWorkflowsQuota(account.Plan, account.Plan.WorkflowMaxConcurrentRuns(), active)
 	}

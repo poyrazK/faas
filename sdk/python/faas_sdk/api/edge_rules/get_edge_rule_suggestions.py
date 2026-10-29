@@ -77,9 +77,9 @@ def sync_detailed(
 ) -> Response[EdgeRuleRecipeSuggestionsResponse | Problem]:
     """Protection recipes suggested from an app's own traffic.
 
-     ADR-20261020105000. Reads the app's request telemetry over the last 7 days (or
+     Reads the app's request telemetry over the last 7 days (or
     the plan's telemetry retention when shorter) and recommends
-    protection recipes (ADR-986) with the parameters to add them with:
+    protection recipes with the parameters to add them with:
     blocking unverified bots when bots are a noticeable share of
     requests, rate-limiting busy or failing sign-in paths, and limiting
     /admin to known IPs. Recipes already added and paths an enabled rule
@@ -116,9 +116,9 @@ def sync(
 ) -> EdgeRuleRecipeSuggestionsResponse | Problem | None:
     """Protection recipes suggested from an app's own traffic.
 
-     ADR-20261020105000. Reads the app's request telemetry over the last 7 days (or
+     Reads the app's request telemetry over the last 7 days (or
     the plan's telemetry retention when shorter) and recommends
-    protection recipes (ADR-986) with the parameters to add them with:
+    protection recipes with the parameters to add them with:
     blocking unverified bots when bots are a noticeable share of
     requests, rate-limiting busy or failing sign-in paths, and limiting
     /admin to known IPs. Recipes already added and paths an enabled rule
@@ -150,9 +150,9 @@ async def asyncio_detailed(
 ) -> Response[EdgeRuleRecipeSuggestionsResponse | Problem]:
     """Protection recipes suggested from an app's own traffic.
 
-     ADR-20261020105000. Reads the app's request telemetry over the last 7 days (or
+     Reads the app's request telemetry over the last 7 days (or
     the plan's telemetry retention when shorter) and recommends
-    protection recipes (ADR-986) with the parameters to add them with:
+    protection recipes with the parameters to add them with:
     blocking unverified bots when bots are a noticeable share of
     requests, rate-limiting busy or failing sign-in paths, and limiting
     /admin to known IPs. Recipes already added and paths an enabled rule
@@ -187,9 +187,9 @@ async def asyncio(
 ) -> EdgeRuleRecipeSuggestionsResponse | Problem | None:
     """Protection recipes suggested from an app's own traffic.
 
-     ADR-20261020105000. Reads the app's request telemetry over the last 7 days (or
+     Reads the app's request telemetry over the last 7 days (or
     the plan's telemetry retention when shorter) and recommends
-    protection recipes (ADR-986) with the parameters to add them with:
+    protection recipes with the parameters to add them with:
     blocking unverified bots when bots are a noticeable share of
     requests, rate-limiting busy or failing sign-in paths, and limiting
     /admin to known IPs. Recipes already added and paths an enabled rule

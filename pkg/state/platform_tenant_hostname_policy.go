@@ -156,7 +156,7 @@ func platformTenantHostnameAllowed(hostname string, suffixes []string) bool {
 	return false
 }
 
-func (m *MemStore) CreatePlatformTenantDelegatedHostname(_ context.Context, accountID, tenantID, surfaceID, hostname, challengeToken string, limits api.Limits) (PlatformTenantDelegatedHostnameResult, error) {
+func (m *MemStore) CreatePlatformTenantDelegatedHostname(ctx context.Context, accountID, tenantID, surfaceID, hostname, challengeToken string, limits api.Limits) (PlatformTenantDelegatedHostnameResult, error) {
 	hostname = surfaceHostnameCanonical(hostname)
 	if !validPlatformTenantHostnamePolicy(accountID, tenantID, nil, 0) || !validPlatformTenantHostname(hostname) ||
 		!validUUID(surfaceID) || challengeToken == "" || limits.TenantHostnamesPerSurface < 1 {
@@ -164,6 +164,9 @@ func (m *MemStore) CreatePlatformTenantDelegatedHostname(_ context.Context, acco
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return PlatformTenantDelegatedHostnameResult{}, err
+	}
 	tenant, ok := m.platformTenants[tenantID]
 	if !ok || tenant.AccountID != accountID {
 		return PlatformTenantDelegatedHostnameResult{}, ErrNotFound
@@ -222,6 +225,9 @@ func (m *MemStore) CreatePlatformTenantDelegatedHostname(_ context.Context, acco
 	now := time.Now().UTC()
 	created := TenantHostname{ID: uuid.NewString(), SurfaceID: surfaceID, Hostname: hostname,
 		ChallengeToken: challengeToken, CreatedAt: now}
+	if err := m.checkMemTrafficTenantBindingLocked(ctx, accountID, []string{hostname}, memTrafficPolicyChange{TenantHostnames: map[string]TenantHostname{created.ID: created}}); err != nil {
+		return PlatformTenantDelegatedHostnameResult{}, err
+	}
 	m.tenantHostnames[hostname], m.tenantHostnames[strings.ToLower(hostname)] = created, created
 	return PlatformTenantDelegatedHostnameResult{Hostname: created, Action: "created"}, nil
 }

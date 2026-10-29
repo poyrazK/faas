@@ -14,7 +14,7 @@ T = TypeVar("T", bound="EdgeAttackModeStatus")
 
 @_attrs_define
 class EdgeAttackModeStatus:
-    """An app's attack mode (ADR-20261021220456). While it is on, every
+    """An app's attack mode. While it is on, every
     request without a challenge pass is challenged: browsers solve a
     short proof of work once and continue, verified search crawlers and
     requests with a verified API key, consumer key or JWT pass straight

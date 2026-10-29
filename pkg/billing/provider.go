@@ -335,6 +335,44 @@ type SubscriptionPlanChangeProvider interface {
 	ChangeSubscriptionPlan(ctx context.Context, acct state.Account, targetPlan api.Plan) (effectiveAt time.Time, err error)
 }
 
+// SubscriptionStateProvider is an optional provider surface for reading a
+// subscription's current state. Webhook deliveries are neither ordered nor
+// prompt, so a delivery describes the subscription as it was; apid asks for
+// the current state before a delivery may move the account (Hunt 17 H17-1).
+type SubscriptionStateProvider interface {
+	SubscriptionState(ctx context.Context, subscriptionID string) (SubscriptionState, error)
+}
+
+// SubscriptionState is a provider subscription's current status and plan.
+// PlanID uses the same encoding as Event.PlanID; empty means the product does
+// not map to a plan.
+type SubscriptionState struct {
+	Status SubscriptionStatus
+	PlanID string
+}
+
+// SubscriptionStatus is a provider subscription status, lowercased.
+type SubscriptionStatus string
+
+// Subscription statuses that decide whether a delivery is stale.
+const (
+	SubscriptionStatusActive   SubscriptionStatus = "active"
+	SubscriptionStatusTrialing SubscriptionStatus = "trialing"
+	SubscriptionStatusPastDue  SubscriptionStatus = "past_due"
+)
+
+// InGoodStanding reports whether the subscription is paid up: a payment
+// failure delivered for it is stale.
+func (s SubscriptionStatus) InGoodStanding() bool {
+	return s == SubscriptionStatusActive || s == SubscriptionStatusTrialing
+}
+
+// Live reports whether the subscription still grants its plan, paid up or in
+// the provider's own payment retry period.
+func (s SubscriptionStatus) Live() bool {
+	return s.InGoodStanding() || s == SubscriptionStatusPastDue
+}
+
 // InvoicePDFRequester is an optional provider surface for requesting an
 // invoice PDF after a paid order. Providers whose invoices are generated
 // automatically need not implement it.
@@ -594,6 +632,10 @@ var ErrNoOpenCharge = errors.New("billing: no open charge to retry")
 // recurring transaction; the SDK call itself distinguishes the
 // "cancelled" vs "never subscribed" cases from the response shape.
 var ErrAlreadyCancelled = errors.New("billing: subscription already cancelled or not active")
+
+// ErrSubscriptionGone is returned by SubscriptionState when the provider has
+// no such subscription, so it can never renew.
+var ErrSubscriptionGone = errors.New("billing: subscription not found at the provider")
 
 // PaymentMethod is the provider-agnostic card-on-file summary
 // (issue #242). Lives in pkg/billing (NOT pkg/api) to avoid the

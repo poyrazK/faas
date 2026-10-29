@@ -129,14 +129,14 @@ func (v *WorkloadIdentityVerifier) verifyAppAudience(rawToken, audience string) 
 		return WorkloadIdentity{}, ErrInvalidWorkloadIdentity
 	}
 	now := v.now()
-	if len(claims.Audience) != 1 || claims.Audience[0] != audience || claims.AccountID == "" || claims.AppID == "" || claims.InstanceID == "" || claims.Subject != "app:"+claims.AppID || claims.ID == "" || claims.IssuedAt == nil || claims.NotBefore == nil || claims.Expiry == nil {
+	if len(claims.Audience) != 1 || claims.Audience[0] != audience || claims.AccountID == "" || claims.AppID == "" || claims.InstanceID == "" || !claims.SubjectMatches() || claims.ID == "" || claims.IssuedAt == nil || claims.NotBefore == nil || claims.Expiry == nil {
 		return WorkloadIdentity{}, ErrInvalidWorkloadIdentity
 	}
 	if claims.Expiry.Time().Before(claims.IssuedAt.Time()) || claims.Expiry.Time().Sub(claims.IssuedAt.Time()) > maxIdentityTTL || claims.NotBefore.Time().After(claims.IssuedAt.Time()) {
 		return WorkloadIdentity{}, ErrInvalidWorkloadIdentity
 	}
 	if err := claims.ValidateWithLeeway(jwt.Expected{
-		Issuer: v.issuer, Subject: "app:" + claims.AppID,
+		Issuer: v.issuer, Subject: workloadidentity.Subject(claims.AppID, claims.Environment),
 		AnyAudience: jwt.Audience{audience}, Time: now,
 	}, identityClockSkew); err != nil {
 		return WorkloadIdentity{}, ErrInvalidWorkloadIdentity

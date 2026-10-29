@@ -53,7 +53,7 @@ func newUsageFixture(t *testing.T, cfg Config) *usageFixture {
 	hooks := &testHooks{accept: true}
 	m := NewManager(cfg, hooks)
 	endpoint := uuid.NewString()
-	if err := m.RegisterEndpoint(Endpoint{ID: endpoint, AppID: "app-1", AccountID: "acct-1",
+	if err := m.RegisterEndpoint(Endpoint{Preview: true, ID: endpoint, AppID: "app-1", AccountID: "acct-1",
 		Authorize: func(context.Context, *http.Request) (string, error) { return "", nil }}); err != nil {
 		t.Fatal(err)
 	}

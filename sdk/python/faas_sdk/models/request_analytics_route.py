@@ -35,8 +35,8 @@ class RequestAnalyticsRoute:
     """Weighted p95 gateway-observed request duration among requests that woke a cold instance. Includes handler
     time; not an isolated wake-phase duration."""
     wake_boot_p95_ms: int | None | Unset = UNSET
-    """p95 from schedd wake.boot_started to wake.boot_completed (instance RUNNING) for distinct wake IDs correlated
-    to this route; null when event pairs are unavailable."""
+    """p95 from the scheduler wake.boot_started to wake.boot_completed (instance RUNNING) for distinct wake IDs
+    correlated to this route; null when event pairs are unavailable."""
     guest_execution_p50_ms: int | None | Unset = UNSET
     """Weighted p50 wall time from platform-runner execution evidence; not CPU time. Null when runtime evidence is
     unavailable."""
@@ -66,8 +66,8 @@ class RequestAnalyticsRoute:
     other_deployment_estimated_compute_cost_millicents: int | Unset = UNSET
     """This route's estimated compute value allocated to deployments outside the top-five list by request share."""
     estimated_compute_cost_millicents: int | Unset = UNSET
-    """Estimated raw RAM-hour value allocated to this route by its share of observed request time (ADR-743), or by
-    request share when no timing exists; excludes account-level included allowance and egress."""
+    """Estimated raw RAM-hour value allocated to this route by its share of observed request time, or by request
+    share when no timing exists; excludes account-level included allowance and egress."""
     request_share_pct: float | Unset = UNSET
     request_time_ms: int | Unset = UNSET
     """Total gateway-observed request time for this route in the window, in milliseconds."""

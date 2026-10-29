@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/poyrazK/faas/sdk/go/preview"
+
 	faas "github.com/poyrazK/faas/sdk/go"
 )
 
@@ -24,7 +26,7 @@ func TestManagedPostgresResizeClient(t *testing.T) {
 			if r.URL.Path != "/v1/postgres/databases/orders/resize" {
 				t.Error("POST path")
 			}
-			var body faas.ResizeManagedPostgresDatabaseRequest
+			var body preview.ResizeManagedPostgresDatabaseRequest
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.RequestID != id || body.ServiceClass != "burstable" {
 				t.Error("stable request", body, err)
 			}
@@ -36,21 +38,21 @@ func TestManagedPostgresResizeClient(t *testing.T) {
 		default:
 			t.Error("method")
 		}
-		_ = json.NewEncoder(w).Encode(faas.ManagedPostgresResize{ID: id, DatabaseID: "orders", State: "pending", Generation: 2, ConnectionInterruptionExpected: true})
+		_ = json.NewEncoder(w).Encode(preview.ManagedPostgresResize{ID: id, DatabaseID: "orders", State: "pending", Generation: 2, ConnectionInterruptionExpected: true})
 	}))
 	defer server.Close()
 	c, err := faas.NewClient(server.URL, "token")
 	if err != nil {
 		t.Fatal(err)
 	}
-	body := faas.ResizeManagedPostgresDatabaseRequest{RequestID: id, ServiceClass: "burstable"}
+	body := preview.ResizeManagedPostgresDatabaseRequest{RequestID: id, ServiceClass: "burstable"}
 	for i := 0; i < 2; i++ {
-		view, err := c.ResizeManagedPostgresDatabase(context.Background(), "orders", body)
+		view, err := preview.Wrap(c).ResizeManagedPostgresDatabase(context.Background(), "orders", body)
 		if err != nil || view.ID != id {
 			t.Fatal(view, err)
 		}
 	}
-	view, err := c.GetManagedPostgresResize(context.Background(), "orders", id)
+	view, err := preview.Wrap(c).GetManagedPostgresResize(context.Background(), "orders", id)
 	if err != nil || view.Generation != 2 || !view.ConnectionInterruptionExpected || count != 3 {
 		t.Fatal(view, err, count)
 	}

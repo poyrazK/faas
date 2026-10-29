@@ -15,8 +15,7 @@ import (
 )
 
 func (s *Service) GetManagedRealtimeHistoryUsage(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	if !s.HistoryPreviewEnabled {
-		httpkit.NotFound(w, "managed realtime history usage unavailable")
+	if s.previewUnavailable(w, acct.ID, s.HistoryPreviewEnabled, "managed realtime history usage unavailable") {
 		return
 	}
 	reader, ok := s.Host.Store().(state.ManagedRealtimeHistoryUsageReader)
@@ -63,8 +62,7 @@ func retainedMessageResponse(message state.ManagedRealtimeChannelMessage) api.Ma
 }
 
 func (s *Service) AppendManagedRealtimeRetainedMessage(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	if !s.HistoryPreviewEnabled {
-		httpkit.NotFound(w, "retained realtime messages unavailable")
+	if s.previewUnavailable(w, acct.ID, s.HistoryPreviewEnabled, "retained realtime messages unavailable") {
 		return
 	}
 	row, _, ok := s.loadManagedRealtimeEndpoint(w, r, acct)
@@ -127,8 +125,7 @@ func (s *Service) AppendManagedRealtimeRetainedMessage(w http.ResponseWriter, r 
 }
 
 func (s *Service) ReadManagedRealtimeRetainedMessages(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	if !s.HistoryPreviewEnabled {
-		httpkit.NotFound(w, "retained realtime messages unavailable")
+	if s.previewUnavailable(w, acct.ID, s.HistoryPreviewEnabled, "retained realtime messages unavailable") {
 		return
 	}
 	row, _, ok := s.loadManagedRealtimeEndpoint(w, r, acct)

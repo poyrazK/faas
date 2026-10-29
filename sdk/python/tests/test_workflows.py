@@ -120,6 +120,41 @@ async def test_failures_retry_then_raise_into_the_workflow():
 
 
 @pytest.mark.asyncio
+async def test_scheduled_retry_stays_suspended_while_the_rest_continues():
+    runs = []
+
+    async def branch(wf):
+        await wf.sleep("pause", 1)
+        return await wf.step("after", lambda _ctx: 2)
+
+    @workflow("both")
+    async def both(_input, wf):
+        await asyncio.gather(wf.step("call", lambda _ctx: runs.append(1) or 1), branch(wf))
+        return "done"
+
+    journal = [
+        {"seq": 0, "name": "call", "kind": "step", "status": "scheduled", "attempt": 1, "error": "boom 1"},
+        {"seq": 1, "name": "pause", "kind": "sleep", "status": "succeeded"},
+    ]
+    response = await run_workflow_invocation(both, request("both", journal))
+    assert runs == []
+    assert response["ops"] == [{"seq": 2, "name": "after", "kind": "step", "status": "succeeded", "output": 2}]
+    assert response["result"] == {"status": "running"}
+
+
+@pytest.mark.asyncio
+async def test_operation_names_may_not_use_the_reserved_suffix():
+    @workflow("clash")
+    async def clash(_input, wf):
+        await wf.step("poll", lambda _ctx: 1)
+        await wf.step("poll#2", lambda _ctx: 2)
+
+    response = await run_workflow_invocation(clash, request("clash", [{"seq": 0, "name": "poll", "kind": "step", "status": "succeeded", "attempt": 1, "output": 1}]))
+    assert response["result"]["status"] == "failed"
+    assert "reserved for repeated names" in response["result"]["error"]
+
+
+@pytest.mark.asyncio
 async def test_non_retryable_and_non_json_results():
     def reject(_ctx):
         raise NonRetryableError("card declined")

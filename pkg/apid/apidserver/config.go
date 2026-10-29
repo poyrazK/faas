@@ -30,6 +30,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/datapipeline"
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -121,6 +122,11 @@ type Config struct {
 	// the wildcard UI (custom-domain-only deployments). Mirrors
 	// FAAS_APPS_DOMAIN. The public Gregale default is gregale.dev.
 	AppsDomain string `toml:"apps_domain"`
+
+	// FileConfig carries platform_domain, deploy_domain,
+	// apps_domain_aliases and apps_domain_alias_mode (ADR-20261026100000).
+	// Each FAAS_* variable wins over its key.
+	hostidentity.FileConfig
 
 	// CLIAuthURLBase is the public web origin for the browser half of the
 	// CLI device-code flow and the default GitHub App OAuth callback.
@@ -224,7 +230,7 @@ func LoadConfig(path string) (*Config, error) {
 		// / `faas-githubd` doesn't exist in the test container).
 		ListenAddr:     "127.0.0.1:8081",
 		GithubdSocket:  "/run/faas/githubd.sock",
-		AppsDomain:     "gregale.dev",
+		AppsDomain:     hostidentity.DefaultAppsDomain,
 		CLIAuthURLBase: defaultCLIAuthURLBase,
 		// Issue #995 Phase 1: seed the timeout / header defaults
 		// so a partial toml still produces the hardened listener.
@@ -404,6 +410,12 @@ func (c *Config) GetAppsDomain(env func(string) string) string {
 		return v
 	}
 	return c.AppsDomain
+}
+
+// Domains resolves the host layout (ADR-20261026100000) with the same
+// env-over-TOML precedence as GetAppsDomain.
+func (c *Config) Domains(env func(string) string) (hostidentity.Domains, error) {
+	return hostidentity.DomainsFromEnv(env, c.AppsDomain, c.FileConfig)
 }
 
 const defaultCLIAuthURLBase = "https://gregale.dev"

@@ -3,10 +3,11 @@ package faas_test
 import (
 	"context"
 	"encoding/json"
-	faas "github.com/poyrazK/faas/sdk/go"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	faas "github.com/poyrazK/faas/sdk/go"
 )
 
 func TestIssueTrackerLinkSDKContract(t *testing.T) {

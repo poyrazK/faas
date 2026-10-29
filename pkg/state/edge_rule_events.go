@@ -34,11 +34,16 @@ const (
 	EdgeRuleEventFailed     = "failed"
 )
 
+// EdgeRuleEventBoxed is a client put in a penalty box by the rule's
+// rejections (ADR-20261022105846 amendment 2), recorded from the request
+// that tipped it in.
+const EdgeRuleEventBoxed = "boxed"
+
 // IsEdgeRuleEventOutcome reports whether outcome is a stored event outcome.
 func IsEdgeRuleEventOutcome(outcome string) bool {
 	switch outcome {
 	case EdgeRuleHitMatched, EdgeRuleHitLogged, EdgeRuleEventDetected, EdgeRuleEventWarned, EdgeRuleEventBlocked,
-		EdgeRuleEventChallenged, EdgeRuleEventRejected, EdgeRuleEventSolved, EdgeRuleEventFailed:
+		EdgeRuleEventChallenged, EdgeRuleEventRejected, EdgeRuleEventSolved, EdgeRuleEventFailed, EdgeRuleEventBoxed:
 		return true
 	}
 	return false

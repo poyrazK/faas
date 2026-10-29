@@ -1,0 +1,81 @@
+/* generated using openapi-typescript-codegen -- do not edit */
+/* istanbul ignore file */
+/* tslint:disable */
+/* eslint-disable */
+import type { EdgeRuleAsyncAction } from './EdgeRuleAsyncAction.js';
+import type { EdgeRuleBudgetAction } from './EdgeRuleBudgetAction.js';
+import type { EdgeRuleCacheAction } from './EdgeRuleCacheAction.js';
+import type { EdgeRuleChallengeAction } from './EdgeRuleChallengeAction.js';
+import type { EdgeRuleCircuitBreakerAction } from './EdgeRuleCircuitBreakerAction.js';
+import type { EdgeRuleCORSAction } from './EdgeRuleCORSAction.js';
+import type { EdgeRuleGeoAction } from './EdgeRuleGeoAction.js';
+import type { EdgeRuleHeadersAction } from './EdgeRuleHeadersAction.js';
+import type { EdgeRuleIPAction } from './EdgeRuleIPAction.js';
+import type { EdgeRuleJWTAction } from './EdgeRuleJWTAction.js';
+import type { EdgeRuleLimitAction } from './EdgeRuleLimitAction.js';
+import type { EdgeRuleMaintenanceAction } from './EdgeRuleMaintenanceAction.js';
+import type { EdgeRuleMatchExpr } from './EdgeRuleMatchExpr.js';
+import type { EdgeRulePenalty } from './EdgeRulePenalty.js';
+import type { EdgeRuleRedirectAction } from './EdgeRuleRedirectAction.js';
+import type { EdgeRuleRespondAction } from './EdgeRuleRespondAction.js';
+import type { EdgeRuleRetryAction } from './EdgeRuleRetryAction.js';
+import type { EdgeRuleRewriteAction } from './EdgeRuleRewriteAction.js';
+import type { EdgeRuleRouteAction } from './EdgeRuleRouteAction.js';
+import type { EdgeRuleThrottleAction } from './EdgeRuleThrottleAction.js';
+import type { EdgeRuleValidateAction } from './EdgeRuleValidateAction.js';
+import type { EdgeRuleWAFAction } from './EdgeRuleWAFAction.js';
+/**
+ * Partial update — every field optional. Kind is not patchable.
+ */
+export type UpdateEdgeRuleRequest = {
+  match_host?: string;
+  match_path?: string;
+  match_methods?: Array<string>;
+  /**
+   * Replacing this map changes the request-header selectors. Header names compare case-insensitively and values compare exactly; use an empty object to remove all header conditions.
+   */
+  match_headers?: Record<string, string>;
+  priority?: number;
+  enabled?: boolean;
+  /**
+   * Top-level source of truth for kind=validate.
+   * Omit (do not send) to leave the column untouched.
+   *
+   */
+  validate_mode?: 'block' | 'observe' | 'warn';
+  /**
+   * Replaces the jsonb column whole.
+   */
+  action?: (EdgeRuleRouteAction | EdgeRuleRewriteAction | EdgeRuleRedirectAction | EdgeRuleHeadersAction | EdgeRuleCORSAction | EdgeRuleJWTAction | EdgeRuleIPAction | EdgeRuleValidateAction | EdgeRuleLimitAction | EdgeRuleMaintenanceAction | EdgeRuleGeoAction | EdgeRuleThrottleAction | EdgeRuleBudgetAction | EdgeRuleCacheAction | EdgeRuleRespondAction | EdgeRuleRetryAction | EdgeRuleCircuitBreakerAction | EdgeRuleAsyncAction | EdgeRuleWAFAction | EdgeRuleChallengeAction);
+  /**
+   * Replacement rule name.
+   */
+  name?: string;
+  /**
+   * Replacement rule notes.
+   */
+  description?: string;
+  /**
+   * New expiry; the gateway stops applying the rule after it.
+   */
+  expires_at?: string;
+  /**
+   * Remove the expiry so the rule applies indefinitely.
+   */
+  clear_expires_at?: boolean;
+  match?: EdgeRuleMatchExpr;
+  /**
+   * Remove the match condition.
+   */
+  clear_match?: boolean;
+  /**
+   * Switch the rule to enforce, or to log so it is matched and counted but never acts.
+   */
+  mode?: 'enforce' | 'log';
+  penalty?: EdgeRulePenalty;
+  /**
+   * Remove the rule's penalty box, releasing the clients it holds.
+   */
+  clear_penalty?: boolean;
+};
+

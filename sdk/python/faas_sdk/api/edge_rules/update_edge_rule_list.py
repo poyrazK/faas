@@ -92,15 +92,15 @@ def sync_detailed(
 ) -> Response[EdgeRuleListResponse | Problem]:
     """Edit an edge-rule list.
 
-     ADR-963. items replaces the list; add and remove edit it in place
-    (remove applies after add) and cannot be combined with items.
+     `items` replaces the list; `add` and `remove` edit it in place
+    (remove applies after add) and cannot be combined with `items`.
     Gateways pick up the change for every referencing rule within a few
     seconds; no rule-set version is recorded.
 
     Args:
         name (str):
         body (UpdateEdgeRuleListRequest): Edit an edge-rule list: replace items, or add and remove
-            some (ADR-963).
+            some.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -130,15 +130,15 @@ def sync(
 ) -> EdgeRuleListResponse | Problem | None:
     """Edit an edge-rule list.
 
-     ADR-963. items replaces the list; add and remove edit it in place
-    (remove applies after add) and cannot be combined with items.
+     `items` replaces the list; `add` and `remove` edit it in place
+    (remove applies after add) and cannot be combined with `items`.
     Gateways pick up the change for every referencing rule within a few
     seconds; no rule-set version is recorded.
 
     Args:
         name (str):
         body (UpdateEdgeRuleListRequest): Edit an edge-rule list: replace items, or add and remove
-            some (ADR-963).
+            some.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -163,15 +163,15 @@ async def asyncio_detailed(
 ) -> Response[EdgeRuleListResponse | Problem]:
     """Edit an edge-rule list.
 
-     ADR-963. items replaces the list; add and remove edit it in place
-    (remove applies after add) and cannot be combined with items.
+     `items` replaces the list; `add` and `remove` edit it in place
+    (remove applies after add) and cannot be combined with `items`.
     Gateways pick up the change for every referencing rule within a few
     seconds; no rule-set version is recorded.
 
     Args:
         name (str):
         body (UpdateEdgeRuleListRequest): Edit an edge-rule list: replace items, or add and remove
-            some (ADR-963).
+            some.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -199,15 +199,15 @@ async def asyncio(
 ) -> EdgeRuleListResponse | Problem | None:
     """Edit an edge-rule list.
 
-     ADR-963. items replaces the list; add and remove edit it in place
-    (remove applies after add) and cannot be combined with items.
+     `items` replaces the list; `add` and `remove` edit it in place
+    (remove applies after add) and cannot be combined with `items`.
     Gateways pick up the change for every referencing rule within a few
     seconds; no rule-set version is recorded.
 
     Args:
         name (str):
         body (UpdateEdgeRuleListRequest): Edit an edge-rule list: replace items, or add and remove
-            some (ADR-963).
+            some.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

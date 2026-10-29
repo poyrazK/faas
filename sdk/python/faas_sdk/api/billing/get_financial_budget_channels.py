@@ -83,7 +83,7 @@ def sync_detailed(
 ) -> Response[FinancialBudgetChannelsResponse | Problem]:
     """List the notification channels a budget's threshold alerts also go to.
 
-     Requires usage:read and session MFA (ADR-20261019193500). Each channel
+     Requires usage:read and session MFA. Each channel
     reports its latest delivery outcome. Alerts always go to the account
     email; channels are in addition to it. Deleted or foreign policies
     return 404.
@@ -117,7 +117,7 @@ def sync(
 ) -> FinancialBudgetChannelsResponse | Problem | None:
     """List the notification channels a budget's threshold alerts also go to.
 
-     Requires usage:read and session MFA (ADR-20261019193500). Each channel
+     Requires usage:read and session MFA. Each channel
     reports its latest delivery outcome. Alerts always go to the account
     email; channels are in addition to it. Deleted or foreign policies
     return 404.
@@ -146,7 +146,7 @@ async def asyncio_detailed(
 ) -> Response[FinancialBudgetChannelsResponse | Problem]:
     """List the notification channels a budget's threshold alerts also go to.
 
-     Requires usage:read and session MFA (ADR-20261019193500). Each channel
+     Requires usage:read and session MFA. Each channel
     reports its latest delivery outcome. Alerts always go to the account
     email; channels are in addition to it. Deleted or foreign policies
     return 404.
@@ -178,7 +178,7 @@ async def asyncio(
 ) -> FinancialBudgetChannelsResponse | Problem | None:
     """List the notification channels a budget's threshold alerts also go to.
 
-     Requires usage:read and session MFA (ADR-20261019193500). Each channel
+     Requires usage:read and session MFA. Each channel
     reports its latest delivery outcome. Alerts always go to the account
     email; channels are in addition to it. Deleted or foreign policies
     return 404.

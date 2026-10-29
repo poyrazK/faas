@@ -52,12 +52,14 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/projectmigration"
 	"github.com/onebox-faas/faas/pkg/apid/projectsetup"
 	"github.com/onebox-faas/faas/pkg/apid/serviceadditions"
+	"github.com/onebox-faas/faas/pkg/apid/trafficproblem"
 	"github.com/onebox-faas/faas/pkg/cronexpr"
 	"github.com/onebox-faas/faas/pkg/githubd"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/reconcile"
 	"github.com/onebox-faas/faas/pkg/reposcan"
+	"github.com/onebox-faas/faas/pkg/secretscan"
 	"github.com/onebox-faas/faas/pkg/sourcecontext"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -333,10 +335,20 @@ func computeAffectedPartition(
 	projectID string,
 ) affectedPartition {
 	idx := make(map[string]state.App, len(existingApps))
+	projectApps := make([]state.App, 0, len(existingApps))
 	for _, a := range existingApps {
 		if projectID != "" && a.ProjectID == projectID && a.PreviewOfSlug == "" {
 			idx[a.WorkloadName] = a
+			projectApps = append(projectApps, a)
 		}
+	}
+	// A renamed service updates its previous name's app (ADR-20261029090000),
+	// matching reconcile's diff, so the plan shows neither a remove nor a
+	// create for it.
+	renamed := reconcile.RenamedWorkloads(allScanWl, projectApps)
+	for previous, current := range renamed {
+		idx[current] = idx[previous]
+		delete(idx, previous)
 	}
 	// scanNames is keyed on durable workload identity. RootDir can change
 	// between applies without turning the workload into a remove/create pair.
@@ -348,6 +360,9 @@ func computeAffectedPartition(
 	scanNames := make(map[string]struct{}, len(allScanWl))
 	for _, w := range allScanWl {
 		scanNames[w.Name] = struct{}{}
+	}
+	for previous := range renamed {
+		scanNames[previous] = struct{}{}
 	}
 	// WillDeploy: filteredW (no excluded) → create or update. Order
 	// preserved so the i-alignment with respWorkloads stays intact.
@@ -912,6 +927,14 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			out = append(out, res)
 			continue
 		}
+		// A project apply releases each app without a canary, atomic or not,
+		// so an app requiring approvals is refused like an immediate deploy
+		// (ADR-20261020085706 amendment 1).
+		if prob := s.releaseApprovalCanaryProblem(ctx, app, &api.CreateDeploymentRequest{Scope: environment}); prob != nil {
+			res.Error = prob.Detail
+			out = append(out, res)
+			continue
+		}
 		// New services install their pinned company intent before staging or
 		// consuming deploy rate. The ordinary deployment fence still applies.
 		var standardError string
@@ -969,6 +992,15 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			// layout to the customer.
 			s.log.Warn("apid: apply stage tarball failed", "app_id", app.ID, "slug", app.Slug, "project_id", project.ID, "err", stageErr)
 			res.Error = "stage failed (server logs carry the detail)"
+			out = append(out, res)
+			continue
+		}
+		// Each workload gets the accept-time stateless check a single-app
+		// deploy gets (ADR-20261026152731). Presence of the Dockerfile is
+		// the builder's call here, so only its contents are checked.
+		if prob := scanForStatefulShapeWithDockerfileAtRoot(staged, false, sourceApp.RootDir, app.Manifest.BuildDockerfile); prob != nil {
+			_ = os.Remove(staged)
+			res.Error = prob.Detail
 			out = append(out, res)
 			continue
 		}
@@ -1565,18 +1597,18 @@ func (s *server) scanService(
 	// serverSecretScanMaxBytes (1 MiB per file); it intentionally walks
 	// excluded/build/VCS directories too because a direct tarball upload
 	// must not be able to hide a secret by choosing a directory name.
+	// Only credential-format findings refuse the upload; heuristic ones
+	// are advisory (ADR-20261026152731). A refusal takes precedence over a
+	// walk error; a walk error otherwise fails closed with a 500.
 	secretFindings, ssErr := scanExtractedTreeSecrets(req.ScanDir)
-	if ssErr != nil && len(secretFindings) == 0 {
-		// Walk-level failure with no partial findings: surface as a
-		// 500 so the customer can retry. If we DO have findings, the
-		// 422 takes precedence — refusing the upload is more useful
-		// than a generic "scan failed" 500.
+	if blocking := secretscan.Blocking(secretFindings); len(blocking) > 0 {
+		return nil, state.Project{}, nil, nil, nil, nil, newSecretScanRejectionProblem(blocking)
+	}
+	if ssErr != nil {
+		logCustomerFailure(s.log, "Secret scan failed", ssErr)
 		return nil, state.Project{}, nil, nil, nil, nil, api.NewProblem(
 			http.StatusInternalServerError, api.CodeInternal,
-			"Secret scan failed", ssErr.Error())
-	}
-	if len(secretFindings) > 0 {
-		return nil, state.Project{}, nil, nil, nil, nil, newSecretScanRejectionProblem(secretFindings)
+			"Secret scan failed", api.DetailServerFailure)
 	}
 
 	// Filter --only and --exclude against workload name. Deterministic
@@ -1947,6 +1979,23 @@ func (s *server) scanService(
 	if composeEnvErr != nil {
 		composeEnv = reposcan.ComposeEnv{}
 	}
+	// Compose values that call these services over HTTP import as their
+	// Gregale addresses (ADR-20261026181020).
+	callableServices := make([]string, 0, len(result.Workloads))
+	for _, w := range result.Workloads {
+		callableServices = append(callableServices, w.Name)
+	}
+	planScope := req.Environment
+	if planScope == "" {
+		planScope = api.DefaultEnvScope
+	}
+	// Compose postgres services become managed databases where the account
+	// has managed PostgreSQL (ADR-20261025111824).
+	composePostgres, composePostgresReasons, composePostgresErr := s.composePostgresPlan(r.Context(), acct, req.ProjectSlug, planScope,
+		filteredMc, filteredW, composeEnv, projectApps)
+	if composePostgresErr != nil {
+		return nil, state.Project{}, nil, nil, nil, nil, api.ErrCapacity("could not plan the project's managed databases")
+	}
 	respWorkloads := make([]api.PlanWorkload, len(filteredW))
 	for i, w := range filteredW {
 		pw := toPlanWorkload(w)
@@ -1978,15 +2027,14 @@ func (s *server) scanService(
 			return nil, state.Project{}, nil, nil, nil, nil, api.ErrValidation("invalid required-secret declaration for a selected workload")
 		}
 		pw.RequiredEnvKeys = required
-		envScope := req.Environment
-		if envScope == "" {
-			envScope = api.DefaultEnvScope
-		}
-		unset, err := projectsetup.UnsetEnvKeys(r.Context(), s.store, acct.ID, envScope, existing, w.EnvKeys, required)
+		unset, err := projectsetup.UnsetEnvKeys(r.Context(), s.store, acct.ID, planScope, existing, w.EnvKeys, required)
 		if err != nil {
 			return nil, state.Project{}, nil, nil, nil, nil, api.ErrCapacity("could not read the configuration of a selected workload")
 		}
-		pw.UnsetEnvKeys, pw.ImportedEnvKeys, pw.UnsetEnvKeyReasons = projectsetup.SplitEnvImport(unset, projectsetup.PlanEnvImport(composeEnv, w.Name, limits))
+		envImport := projectsetup.PlanEnvImport(composeEnv, w.Name, callableServices, limits)
+		pw.UnsetEnvKeys, pw.ImportedEnvKeys, pw.UnsetEnvKeyReasons = projectsetup.SplitEnvImport(
+			withoutProvidedKeys(w.Name, unset, composePostgres), envImport)
+		warnings = append(warnings, projectsetup.RewrittenEnvNotes(w.Name, pw.ImportedEnvKeys, envImport)...)
 		if w.ServiceBindingPolicy == "" && existing != nil {
 			pw.ServiceBindingPolicy = existing.Manifest.EffectiveServiceBindingPolicy()
 		}
@@ -1995,6 +2043,11 @@ func (s *server) scanService(
 	respManaged := make([]api.PlanManaged, len(filteredMc))
 	for i, m := range filteredMc {
 		respManaged[i] = toPlanManaged(m)
+		if provision, ok := composePostgres[m.Name]; ok {
+			respManaged[i].Provision = planManagedProvision(provision)
+		} else {
+			respManaged[i].NotProvisionedReason = composePostgresReasons[m.Name]
+		}
 	}
 	resp := &scanPlanResponse{
 		SafeRelease:           req.SafeRelease,
@@ -2400,7 +2453,7 @@ func (s *server) scanService(
 			if mapped.Quota != nil {
 				prob = quotaProblem(acct.Plan, limits, mapped.Quota)
 			} else {
-				prob = api.NewProblem(mapped.Status, mapped.Code, mapped.Msg, "")
+				prob = trafficproblem.Policy(recErr, api.NewProblem(mapped.Status, mapped.Code, mapped.Msg, ""))
 			}
 			capturedProb = prob
 			return resp, state.Project{}, nil, nil, nil, nil, prob
@@ -2566,6 +2619,15 @@ func (s *server) scanService(
 	}
 	if problem := s.importComposeEnv(r, acct, project.ID, importScope, composeEnv, filteredW, limits); problem != nil {
 		return resp, state.Project{}, nil, nil, nil, nil, problem
+	}
+	if len(composePostgres) > 0 {
+		apps, err := s.store.AppsForProject(r.Context(), acct.ID, project.ID)
+		if err != nil {
+			return resp, state.Project{}, nil, nil, nil, nil, api.ErrCapacity("could not load project database targets")
+		}
+		if problem := s.applyComposePostgres(r.Context(), acct, importScope, composePostgres, apps); problem != nil {
+			return resp, state.Project{}, nil, nil, nil, nil, problem
+		}
 	}
 	buildAdded := rec.Added
 	if run := projectmigration.FromContext(r.Context()); run != nil {

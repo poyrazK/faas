@@ -113,6 +113,10 @@ func (c RealtimeTriggerConfig) Concurrency() int {
 const (
 	KafkaSASLPasswordMaxBytes = 4 * 1024
 	KafkaTLSClientKeyMaxBytes = 64 * 1024
+	// RedisStreamsPasswordMaxBytes and NATSURLCredentialsMaxBytes bound the
+	// sealed Redis password and NATS URL userinfo.
+	RedisStreamsPasswordMaxBytes = 4 * 1024
+	NATSURLCredentialsMaxBytes   = 4 * 1024
 )
 
 // BrokerPoisonStrategy is the closed-vocabulary carrier for the
@@ -161,6 +165,9 @@ type Trigger struct {
 	// Delivery is "record" (one invocation per record) or "batch" (one
 	// invocation per dispatch batch; ADR-1321).
 	Delivery string `json:"delivery"`
+	// Agent is the agent each record starts a run of; empty when records
+	// invoke the app (ADR-20261027090010 §9).
+	Agent string `json:"agent,omitempty"`
 	// RetryPolicy controls the retry delay curve for failed records.
 	// MaxAttempts on the trigger remains the authoritative attempt cap;
 	// this policy carries the delay/jitter settings (and is persisted in
@@ -248,6 +255,10 @@ type CreateTriggerRequest struct {
 	RetryPolicy   *RetryPolicyDTO `json:"retry_policy,omitempty"`
 	// Delivery is "record" (default) or "batch" (ADR-1321).
 	Delivery *string `json:"delivery,omitempty"`
+	// Agent names an agent each record starts a run of, instead of
+	// invoking the app (ADR-20261027090010 §9). Immutable after create; a preview
+	// behind the agents capability.
+	Agent *string `json:"agent,omitempty"`
 	// PayloadMaxBytes is the broker-payload byte cap per record.
 	// nil → default 6291456 (6 MiB); the SQL CHECK rejects values
 	// outside [1024, 67108864].

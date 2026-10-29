@@ -3,11 +3,11 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * A starter template entry from GET /v1/templates (issue #961 / Mega-B PR-3).
+ * A starter template entry from GET /v1/templates.
  */
 export type TemplateView = {
   /**
-   * The template name — matches cmd/gregale/templates/embed.go::Names verbatim.
+   * The template name — matches the CLI's template names verbatim.
    */
   name: string;
   /**

@@ -14,8 +14,7 @@ import (
 )
 
 func (s *Service) ManagedRealtimeReadProgress(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	if !s.HistoryPreviewEnabled {
-		httpkit.NotFound(w, "read progress preview unavailable")
+	if s.previewUnavailable(w, acct.ID, s.HistoryPreviewEnabled, "read progress preview unavailable") {
 		return
 	}
 	endpoint, _, ok := s.loadManagedRealtimeEndpoint(w, r, acct)

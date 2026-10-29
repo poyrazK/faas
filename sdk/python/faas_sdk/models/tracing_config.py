@@ -13,9 +13,9 @@ T = TypeVar("T", bound="TracingConfig")
 
 @_attrs_define
 class TracingConfig:
-    """Opt-in zero-config request tracing baked into each deployment (ADR-958). Managed runtimes export database, cache and
-    HTTP client spans to the debugger without an API key or code changes; apps that configure their own OTel exporter
-    are left untouched.
+    """Opt-in zero-config request tracing baked into each deployment. Managed runtimes export database, cache and HTTP
+    client spans to the debugger without an API key or code changes; apps that configure their own OTel exporter are
+    left untouched.
 
     """
 

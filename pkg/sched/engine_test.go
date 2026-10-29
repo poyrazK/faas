@@ -3908,13 +3908,10 @@ func TestEngineWake_RejectsTransientVerifierIO(t *testing.T) {
 	if !errors.As(err, &p) {
 		t.Fatalf("err = %v, want *api.Problem so gatewayd-internal can write Retry-After", err)
 	}
-	// Verify the engine tagged the underlying storage error in
-	// the Detail so log greps still find it (the customer-facing
-	// 503 carries "verifier I/O error for layer ...",
-	// operator-facing logs/Sentry carry the verbatim
-	// "storage backend unreachable" via the Detail).
-	if !strings.Contains(err.Error(), "storage backend unreachable") {
-		t.Errorf("err = %v, want Detail to preserve underlying storage error", err)
+	// The storage error goes to the engine's log, not the 503: the
+	// problem reaches the app's visitors through the gateway.
+	if strings.Contains(err.Error(), "storage backend unreachable") {
+		t.Errorf("err = %v, want the storage error kept out of the Detail", err)
 	}
 	if vmm.coldBoots != 0 {
 		t.Errorf("vmm invoked on transient verifier I/O: coldBoots=%d, want 0", vmm.coldBoots)
@@ -5075,6 +5072,11 @@ func TestEngineEnsureWake_RefusesForeignOwnedApp(t *testing.T) {
 	// owning box's logs.
 	if !strings.Contains(err.Error(), "box-a") || !strings.Contains(err.Error(), "box-b") {
 		t.Errorf("error = %q, must mention both owner box-a and box-b", err)
+	}
+	// The loop logs this expected refusal at debug, not as a failed wake
+	// (Hunt 14 H14-30).
+	if !errors.Is(err, ErrAppOwnedByAnotherNode) {
+		t.Errorf("error = %v, want ErrAppOwnedByAnotherNode", err)
 	}
 
 	// Refusal must happen BEFORE any vmm call — the gate is at

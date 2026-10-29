@@ -59,7 +59,7 @@ def sync_detailed(
 ) -> Response[PreviewList | Problem]:
     """List the platform previews you can join.
 
-     Self-serve platform previews (ADR 20261021080640): the previews an
+     Self-serve platform previews: the previews an
     operator opened to self-serve, plus any you joined that have since
     closed, so you can still leave them. `eligible` says whether your plan
     may join; `enabled` whether the preview is on for you now, for any
@@ -88,7 +88,7 @@ def sync(
 ) -> PreviewList | Problem | None:
     """List the platform previews you can join.
 
-     Self-serve platform previews (ADR 20261021080640): the previews an
+     Self-serve platform previews: the previews an
     operator opened to self-serve, plus any you joined that have since
     closed, so you can still leave them. `eligible` says whether your plan
     may join; `enabled` whether the preview is on for you now, for any
@@ -113,7 +113,7 @@ async def asyncio_detailed(
 ) -> Response[PreviewList | Problem]:
     """List the platform previews you can join.
 
-     Self-serve platform previews (ADR 20261021080640): the previews an
+     Self-serve platform previews: the previews an
     operator opened to self-serve, plus any you joined that have since
     closed, so you can still leave them. `eligible` says whether your plan
     may join; `enabled` whether the preview is on for you now, for any
@@ -140,7 +140,7 @@ async def asyncio(
 ) -> PreviewList | Problem | None:
     """List the platform previews you can join.
 
-     Self-serve platform previews (ADR 20261021080640): the previews an
+     Self-serve platform previews: the previews an
     operator opened to self-serve, plus any you joined that have since
     closed, so you can still leave them. `eligible` says whether your plan
     may join; `enabled` whether the preview is on for you now, for any

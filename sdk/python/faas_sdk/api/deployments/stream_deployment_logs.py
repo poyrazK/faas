@@ -92,7 +92,7 @@ def sync_detailed(
      Server-Sent Events stream of build logs. `follow=1` holds the
     connection open until the build completes.
 
-    ADR-117: the stream also publishes one `event: stage` frame
+    the stream also publishes one `event: stage` frame
     per named pipeline stage the customer's deploy passes
     through. The frame shape is:
 
@@ -151,7 +151,7 @@ def sync(
      Server-Sent Events stream of build logs. `follow=1` holds the
     connection open until the build completes.
 
-    ADR-117: the stream also publishes one `event: stage` frame
+    the stream also publishes one `event: stage` frame
     per named pipeline stage the customer's deploy passes
     through. The frame shape is:
 
@@ -205,7 +205,7 @@ async def asyncio_detailed(
      Server-Sent Events stream of build logs. `follow=1` holds the
     connection open until the build completes.
 
-    ADR-117: the stream also publishes one `event: stage` frame
+    the stream also publishes one `event: stage` frame
     per named pipeline stage the customer's deploy passes
     through. The frame shape is:
 
@@ -262,7 +262,7 @@ async def asyncio(
      Server-Sent Events stream of build logs. `follow=1` holds the
     connection open until the build completes.
 
-    ADR-117: the stream also publishes one `event: stage` frame
+    the stream also publishes one `event: stage` frame
     per named pipeline stage the customer's deploy passes
     through. The frame shape is:
 

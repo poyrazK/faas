@@ -11,9 +11,9 @@ import type { DiffAppConfigPatch } from './DiffAppConfigPatch.js';
 import type { DiffEnvRow } from './DiffEnvRow.js';
 import type { WorkflowSpec } from './WorkflowSpec.js';
 /**
- * JSON body for POST /v1/apps/{slug}/diff (PR-1). Slim
+ * JSON body for POST /v1/apps/{slug}/diff. Slim
  * purpose-built DTO — every field maps 1:1 to a
- * [deploydiff.Pending] entry via the apid handler's adapter.
+ * [deploydiff.Pending] entry via the API handler's adapter.
  * Empty / absent fields mean "no change proposed" (matches
  * the engine's pointer semantics: every nested field is
  * optional; null = "don't touch").
@@ -32,7 +32,7 @@ export type DiffRequest = {
   manifest?: AppManifest;
   /**
    * Per-scope env write. Full-replacement semantics per
-   * scope (ADR-090 D3). Keys are scope names ("default",
+   * scope. Keys are scope names ("default",
    * "staging", ...); values are DiffEnvRow arrays.
    *
    */
@@ -40,7 +40,7 @@ export type DiffRequest = {
   crons?: Array<CreateCronRequest>;
   edge_rules?: Array<CreateEdgeRuleRequest>;
   /**
-   * Pending per-deployment env scope (ADR-091 / SAFE-RELEASES production-leveling Stream E). Compared against Baseline.LatestScope; mismatch emits a scope_mismatch break. Empty = default.
+   * Pending per-deployment env scope (production-leveling Stream E). Compared against Baseline.LatestScope; mismatch emits a scope_mismatch break. Empty = default.
    */
   scope?: string | null;
   /**

@@ -684,8 +684,8 @@ func (d *Dispatcher) deliverOne(ctx context.Context, row state.AppWebhookDeliver
 		d.markDead(ctx, row, fmt.Sprintf("webhook: unseal secret: %v", err))
 		return
 	}
-	if ns != "APP_WEBHOOK" {
-		d.markDead(ctx, row, fmt.Sprintf("webhook: namespace mismatch: got=%s want=APP_WEBHOOK", ns))
+	if ns != api.AppWebhookSecretNamespace {
+		d.markDead(ctx, row, fmt.Sprintf("webhook: namespace mismatch: got=%s want=%s", ns, api.AppWebhookSecretNamespace))
 		return
 	}
 	secret := plaintext

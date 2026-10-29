@@ -101,7 +101,7 @@ def sync_detailed(
     """Scan a connected GitHub repository and return a deploy plan.
 
      Resolves a durable GitHub App installation owned by the authenticated
-    account, fetches the selected ref through githubd, and runs the same
+    account, fetches the selected ref through the GitHub integration, and runs the same
     read-only scanner as the multipart upload endpoint. The installation
     token remains inside the control plane. When `install_id` is omitted,
     exactly one connected installation must be able to access `repo`.
@@ -137,7 +137,7 @@ def sync(
     """Scan a connected GitHub repository and return a deploy plan.
 
      Resolves a durable GitHub App installation owned by the authenticated
-    account, fetches the selected ref through githubd, and runs the same
+    account, fetches the selected ref through the GitHub integration, and runs the same
     read-only scanner as the multipart upload endpoint. The installation
     token remains inside the control plane. When `install_id` is omitted,
     exactly one connected installation must be able to access `repo`.
@@ -168,7 +168,7 @@ async def asyncio_detailed(
     """Scan a connected GitHub repository and return a deploy plan.
 
      Resolves a durable GitHub App installation owned by the authenticated
-    account, fetches the selected ref through githubd, and runs the same
+    account, fetches the selected ref through the GitHub integration, and runs the same
     read-only scanner as the multipart upload endpoint. The installation
     token remains inside the control plane. When `install_id` is omitted,
     exactly one connected installation must be able to access `repo`.
@@ -202,7 +202,7 @@ async def asyncio(
     """Scan a connected GitHub repository and return a deploy plan.
 
      Resolves a durable GitHub App installation owned by the authenticated
-    account, fetches the selected ref through githubd, and runs the same
+    account, fetches the selected ref through the GitHub integration, and runs the same
     read-only scanner as the multipart upload endpoint. The installation
     token remains inside the control plane. When `install_id` is omitted,
     exactly one connected installation must be able to access `repo`.

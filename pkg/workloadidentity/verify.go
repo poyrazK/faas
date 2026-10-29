@@ -76,7 +76,7 @@ func (v *Verifier) Verify(token, audience string, now time.Time) (Claims, error)
 	if err = c.ValidateWithLeeway(jwt.Expected{Issuer: v.issuer, AnyAudience: jwt.Audience{audience}, Time: now}, 5*time.Second); err != nil {
 		return c, errors.New("workload identity: invalid claims")
 	}
-	if c.AccountID == "" || c.AppID == "" || c.InstanceID == "" || c.Subject != "app:"+c.AppID || c.ID == "" || c.Expiry == nil || c.IssuedAt == nil || c.Expiry.Time().Sub(c.IssuedAt.Time()) > DefaultTokenTTL || !c.Expiry.Time().After(c.IssuedAt.Time()) {
+	if c.AccountID == "" || c.AppID == "" || c.InstanceID == "" || !c.SubjectMatches() || c.ID == "" || c.Expiry == nil || c.IssuedAt == nil || c.Expiry.Time().Sub(c.IssuedAt.Time()) > DefaultTokenTTL || !c.Expiry.Time().After(c.IssuedAt.Time()) {
 		return c, errors.New("workload identity: missing or unbounded workload claims")
 	}
 	return c, nil

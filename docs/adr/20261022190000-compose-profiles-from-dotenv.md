@@ -3,6 +3,7 @@
 Date: 2026-10-22
 Status: Accepted
 Amends: ADR-1337 (Compose key reporting)
+Amended by: ADR-20261025090000 (environment import honors COMPOSE_PROFILES too)
 
 ## Context
 

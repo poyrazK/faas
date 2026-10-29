@@ -6,7 +6,7 @@ Prometheus text 0.0.4. Read the same long-lived collector that receives prepared
 worker events, from a separate scrape path:
 
 ```python
-from faas_sdk import (
+from faas_sdk.preview import (
     EVENT_ACKNOWLEDGMENT_PREPARATION_PROMETHEUS_CONTENT_TYPE,
     EventAcknowledgmentPreparationMetrics,
     format_event_acknowledgment_preparation_metrics,

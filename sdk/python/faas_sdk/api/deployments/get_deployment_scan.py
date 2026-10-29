@@ -70,8 +70,8 @@ def sync_detailed(
 ) -> Response[Problem | ScanResult]:
     r"""Get per-deploy grype scan.
 
-     Returns the per-deploy grype CVE scan payload (issue #464 /
-    ADR-055). The scan runs on the per-app layer ext4 in imaged's
+     Returns the per-deploy grype CVE scan payload. The scan runs on the per-app layer ext4 in the image
+    service's
     deploy-complete path (after `SetDeploymentRootfs`, before the
     pending→snapshotting transition) and lands on the
     `deployments` row.
@@ -82,15 +82,15 @@ def sync_detailed(
         all-zero, Vulnerabilities is nil. Rendered as the
         \"scan failed\" chip on the dashboard.
       - `skipped` — pre-feature backfill row
-        (migrations/00135 stamps `scan_status='skipped'` on every
-        pre-#464 row). Payload carries the reason sentinel.
+        (rows created before scanning existed are stamped
+        `scan_status='skipped'`). Payload carries the reason sentinel.
 
     A 404 is returned when:
       - the deployment row does not exist,
       - the deployment belongs to a different account (IDOR-safe;
         no account-existence leak),
       - no scan has run yet (the deploy is still mid-pipeline or
-        the row predates #464 entirely).
+        the row predates entirely).
 
     Args:
         id (str):
@@ -121,8 +121,8 @@ def sync(
 ) -> Problem | ScanResult | None:
     r"""Get per-deploy grype scan.
 
-     Returns the per-deploy grype CVE scan payload (issue #464 /
-    ADR-055). The scan runs on the per-app layer ext4 in imaged's
+     Returns the per-deploy grype CVE scan payload. The scan runs on the per-app layer ext4 in the image
+    service's
     deploy-complete path (after `SetDeploymentRootfs`, before the
     pending→snapshotting transition) and lands on the
     `deployments` row.
@@ -133,15 +133,15 @@ def sync(
         all-zero, Vulnerabilities is nil. Rendered as the
         \"scan failed\" chip on the dashboard.
       - `skipped` — pre-feature backfill row
-        (migrations/00135 stamps `scan_status='skipped'` on every
-        pre-#464 row). Payload carries the reason sentinel.
+        (rows created before scanning existed are stamped
+        `scan_status='skipped'`). Payload carries the reason sentinel.
 
     A 404 is returned when:
       - the deployment row does not exist,
       - the deployment belongs to a different account (IDOR-safe;
         no account-existence leak),
       - no scan has run yet (the deploy is still mid-pipeline or
-        the row predates #464 entirely).
+        the row predates entirely).
 
     Args:
         id (str):
@@ -167,8 +167,8 @@ async def asyncio_detailed(
 ) -> Response[Problem | ScanResult]:
     r"""Get per-deploy grype scan.
 
-     Returns the per-deploy grype CVE scan payload (issue #464 /
-    ADR-055). The scan runs on the per-app layer ext4 in imaged's
+     Returns the per-deploy grype CVE scan payload. The scan runs on the per-app layer ext4 in the image
+    service's
     deploy-complete path (after `SetDeploymentRootfs`, before the
     pending→snapshotting transition) and lands on the
     `deployments` row.
@@ -179,15 +179,15 @@ async def asyncio_detailed(
         all-zero, Vulnerabilities is nil. Rendered as the
         \"scan failed\" chip on the dashboard.
       - `skipped` — pre-feature backfill row
-        (migrations/00135 stamps `scan_status='skipped'` on every
-        pre-#464 row). Payload carries the reason sentinel.
+        (rows created before scanning existed are stamped
+        `scan_status='skipped'`). Payload carries the reason sentinel.
 
     A 404 is returned when:
       - the deployment row does not exist,
       - the deployment belongs to a different account (IDOR-safe;
         no account-existence leak),
       - no scan has run yet (the deploy is still mid-pipeline or
-        the row predates #464 entirely).
+        the row predates entirely).
 
     Args:
         id (str):
@@ -216,8 +216,8 @@ async def asyncio(
 ) -> Problem | ScanResult | None:
     r"""Get per-deploy grype scan.
 
-     Returns the per-deploy grype CVE scan payload (issue #464 /
-    ADR-055). The scan runs on the per-app layer ext4 in imaged's
+     Returns the per-deploy grype CVE scan payload. The scan runs on the per-app layer ext4 in the image
+    service's
     deploy-complete path (after `SetDeploymentRootfs`, before the
     pending→snapshotting transition) and lands on the
     `deployments` row.
@@ -228,15 +228,15 @@ async def asyncio(
         all-zero, Vulnerabilities is nil. Rendered as the
         \"scan failed\" chip on the dashboard.
       - `skipped` — pre-feature backfill row
-        (migrations/00135 stamps `scan_status='skipped'` on every
-        pre-#464 row). Payload carries the reason sentinel.
+        (rows created before scanning existed are stamped
+        `scan_status='skipped'`). Payload carries the reason sentinel.
 
     A 404 is returned when:
       - the deployment row does not exist,
       - the deployment belongs to a different account (IDOR-safe;
         no account-existence leak),
       - no scan has run yet (the deploy is still mid-pipeline or
-        the row predates #464 entirely).
+        the row predates entirely).
 
     Args:
         id (str):

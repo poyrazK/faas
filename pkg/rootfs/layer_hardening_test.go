@@ -97,6 +97,29 @@ func TestLayerExtractionBudgetIsSharedAcrossLayers(t *testing.T) {
 	}
 }
 
+// ApplyLayersGzWithin is the budgeted entry point for layers a tenant's build
+// produced (imaged's Go function layer): a compressed layer of zeros cannot
+// expand past the limit, and the limit is shared across every layer.
+func TestApplyLayersGzWithinStopsACompressionBomb(t *testing.T) {
+	staging := t.TempDir()
+	zeros := strings.Repeat("\x00", 64<<10) // compresses to a few hundred bytes
+	err := ApplyLayersGzWithin(staging, []io.Reader{
+		gzLayer(t, []entry{{name: "app/server", body: "binary"}}),
+		gzLayer(t, []entry{{name: "bomb-1", body: zeros}, {name: "bomb-2", body: zeros}}),
+	}, 100<<10)
+	var budgetErr *ErrLayerExtractionExceedsBudget
+	if !errors.As(err, &budgetErr) || budgetErr.LimitBytes != 100<<10 {
+		t.Fatalf("error = %v, want an extraction budget error", err)
+	}
+	if _, err := os.Stat(filepath.Join(staging, "bomb-2")); !os.IsNotExist(err) {
+		t.Fatalf("over-budget file was written: %v", err)
+	}
+	ok := t.TempDir()
+	if err := ApplyLayersGzWithin(ok, []io.Reader{gzLayer(t, []entry{{name: "app/server", body: "binary"}})}, 100<<10); err != nil {
+		t.Fatalf("layers within the budget: %v", err)
+	}
+}
+
 func TestLayerExtractionBudgetFailsClosedWithoutALimit(t *testing.T) {
 	layer := gzLayer(t, []entry{{name: "a", body: "x"}})
 	err := applyLayerGzForApp(t.TempDir(), layer, newExtractionBudget(0))

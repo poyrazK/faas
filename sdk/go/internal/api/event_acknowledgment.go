@@ -127,7 +127,7 @@ type EventAcknowledgmentHistory struct {
 }
 
 // An empty deliveryID selects the consumer's most recent outcome groups.
-func (c *Client) ListEventAcknowledgmentHistory(ctx context.Context, app, sub, deliveryID string) (EventAcknowledgmentHistory, error) {
+func (c *PreviewClient) ListEventAcknowledgmentHistory(ctx context.Context, app, sub, deliveryID string) (EventAcknowledgmentHistory, error) {
 	var out EventAcknowledgmentHistory
 	path := "/v1/apps/" + url.PathEscape(app) + "/event-subscriptions/" + url.PathEscape(sub) + "/acknowledgment-history"
 	if deliveryID != "" {
@@ -154,7 +154,7 @@ type EventAcknowledgmentHistoryPage struct {
 	Coverage   string                       `json:"coverage"`
 }
 
-func (c *Client) ListEventAcknowledgmentHistoryPage(ctx context.Context, app, sub string, query EventAcknowledgmentHistoryQuery) (EventAcknowledgmentHistoryPage, error) {
+func (c *PreviewClient) ListEventAcknowledgmentHistoryPage(ctx context.Context, app, sub string, query EventAcknowledgmentHistoryQuery) (EventAcknowledgmentHistoryPage, error) {
 	var out EventAcknowledgmentHistoryPage
 	values := url.Values{}
 	if query.InvocationID != "" {

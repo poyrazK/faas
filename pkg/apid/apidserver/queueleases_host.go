@@ -50,6 +50,12 @@ func (s *server) queueLeaseRoute(next queueleases.Handler) http.HandlerFunc {
 				queueleases.WriteWorkloadUnauthorized(w)
 				return
 			}
+			// The API-key chain decides the capability flag for the account;
+			// a workload token gets the same decision (ADR-20261023115741).
+			if !s.capabilityAllowedFor(r, acct) {
+				writeMissingRoute(w, r)
+				return
+			}
 			next(w, r, acct, app, instanceID)
 		}))
 	return func(w http.ResponseWriter, r *http.Request) {

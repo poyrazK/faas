@@ -331,7 +331,8 @@ export class EventsService {
    * not change duplicate identity. Fanout uses normal account subscriptions
    * matching the generated source; the publishing app is not the only consumer.
    * Deduplication lasts while the normal receipt is retained: settled receipts
-   * become eligible for pruning after 30 days; holds can extend this window.
+   * become eligible for pruning after the plan's settled-receipt window (Free
+   * 1 day, Hobby 3, Pro 7, Scale 14); holds can extend this window.
    * After pruning the same key may be accepted again. App renames preserve
    * identity; replacement apps have a new UUID and a new key namespace.
    * Optional expected_app_id must match the resolved canonical app UUID;
@@ -437,7 +438,8 @@ export class EventsService {
   /**
    * Inspect receipt pruning eligibility, retention holds and account storage.
    * Read-only account snapshot under apps:read/admin scopes and MFA.
-   * Receipt retention is 30 days after routing settles; unsettled receipts
+   * Receipt retention is the plan's settled-receipt window after routing
+   * settles (Free 1 day, Hobby 3, Pro 7, Scale 14); unsettled receipts
    * have no pruning deadline. Reports current eligible, upcoming expiring
    * and held receipts using the pruning worker's shared hold predicate.
    * Running backfills pin their acceptance ranges; retained completed
@@ -1233,7 +1235,8 @@ export class EventsService {
    * replay eligibility. No deliveries, replay jobs or retention pins are created.
    * Retention can remove rows between pages. This is a live retained view, not a
    * frozen export or a complete archive; late commits can change visible rows.
-   * Settled receipts retain 30 days from routing settlement; pending receipts may
+   * Settled receipts are kept for the plan's settled-receipt window from routing
+   * settlement (Free 1 day, Hobby 3, Pro 7, Scale 14); pending receipts may
    * survive longer. Earliest retained acceptance is account-wide and does not
    * establish coverage of a requested range. Responses use Cache-Control: no-store
    * and require the existing read scopes and MFA rules.
@@ -1442,8 +1445,8 @@ export class EventsService {
    * Creates a durable job for one currently eligible event-triggered workflow
    * in the app's preferred live default deployment. The selected workflow
    * definition and trigger are snapshotted at creation. The half-open range
-   * uses platform acceptance time with a fixed exclusive cutoff and a
-   * maximum 30-day range. Only retained events with a known immutable
+   * uses platform acceptance time with a fixed exclusive cutoff and spans
+   * at most the plan's settled-receipt window. Only retained events with a known immutable
    * recipient snapshot, a settled delivered receipt, and no captured
    * membership for this app workflow are considered. Legacy events with an
    * unknown snapshot, events that already captured this workflow, unsettled

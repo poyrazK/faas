@@ -1,5 +1,5 @@
-import {defineDurableSessionEntity, defineRecoverableDurableSessionEntity} from '@gregale/sdk-node/durable-entities/session';
-import {defineDurableEntity} from '@gregale/sdk-node/durable-entities/runtime';
+import {defineDurableSessionEntity, defineRecoverableDurableSessionEntity} from '@gregale/sdk-node/preview/durable-entities/session';
+import {defineDurableEntity} from '@gregale/sdk-node/preview/durable-entities/runtime';
 import {counterState, reservationState, sessionState} from './state.mjs';
 import {counterContract, reservationContract, sessionContract} from './contracts.mjs';
 

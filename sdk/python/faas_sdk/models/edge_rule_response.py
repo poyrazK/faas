@@ -61,8 +61,8 @@ class EdgeRuleResponse:
     account_id: str
     app_id: str
     match_host: str
-    """Host glob. `*` matches any; `*.example.com` matches any subdomain; `@app` (ADR-1191) covers every hostname
-    the rule's app serves, including custom domains added later."""
+    """Host glob. `*` matches any; `*.example.com` matches any subdomain; `@app` covers every hostname the rule's
+    app serves, including custom domains added later."""
     match_path: str
     """Path glob. Trailing `*` matches anything beneath."""
     match_methods: list[str]
@@ -99,7 +99,7 @@ class EdgeRuleResponse:
     priority: int = 100
     enabled: bool = True
     validate_mode: EdgeRuleResponseValidateMode | Unset = "block"
-    """Top-level source of truth for kind=validate (ADR-128).
+    """Top-level source of truth for kind=validate.
     Resolved mode; always present on read. Empty on read
     would be a database invariant violation.
     """
@@ -112,16 +112,15 @@ class EdgeRuleResponse:
     expired: bool | Unset = UNSET
     """True once expires_at has passed and the rule no longer applies."""
     match: EdgeRuleMatchExpr | Unset = UNSET
-    """ADR-962 match condition, ANDed with the rule's fixed selectors. A node
+    """Match condition, ANDed with the rule's fixed selectors. A node
     is exactly one of all, any, not, or a field/op leaf. Fields: method,
-    path, host, client_ip, country, asn (ADR-966: the client IP's
-    autonomous system, e.g. 13335 or AS13335), ua_family (ADR-973: the
+    path, host, client_ip, country, asn (the client IP's
+    autonomous system, e.g. 13335 or AS13335), ua_family (the
     User-Agent's family, one of browser, mobile, bot, tool, other),
-    verified_bot (ADR-973: a known crawler confirmed by its operator's
+    verified_bot (a known crawler confirmed by its operator's
     published IP ranges or forward-confirmed reverse DNS of the client
     IP, one of googlebot, bingbot, applebot, yandexbot, baiduspider,
-    yahoo, petalbot; absent otherwise), ai_crawler (ADR-20261022083601:
-    the AI crawler the User-Agent claims, such as gptbot, claudebot,
+    yahoo, petalbot; absent otherwise), ai_crawler (the AI crawler the User-Agent claims, such as gptbot, claudebot,
     ccbot, perplexitybot, bytespider), ai_crawler_purpose (that
     crawler's purpose: training, search or assistant),
     verified_ai_crawler (the claimed AI crawler when the client IP is
@@ -129,18 +128,18 @@ class EdgeRuleResponse:
     ranges can verify), header:<name>, cookie:<name>, query:<name>.
     ua_family, verified_bot and the AI crawler fields take eq, ne, in,
     not_in, exists, missing. Ops: eq, ne, in, not_in, prefix, suffix, contains,
-    exists, missing, regex (RE2), cidr (client_ip only), in_list (ADR-963:
-    list names an account list whose kind fits the field). Depth at most 4,
+    exists, missing, regex (RE2), cidr (client_ip only), in_list (list names an account list whose kind fits the
+    field). Depth at most 4,
     at most 32 nodes, 64 values per leaf, values and regexes at most 256
     bytes. An untrusted client IP, or its unknown country or ASN, is absent.
     """
     mode: EdgeRuleResponseMode | Unset = UNSET
     """enforce (default) or log; a log-mode rule is matched and counted but never acts."""
     managed_by: EdgeRuleResponseManagedBy | Unset = UNSET
-    """Set on the app's attack-mode rule (ADR-20261021220456), which changes only through /v1/apps/{slug}/edge-
-    protection/attack-mode; PATCH refuses it. Absent on every other rule."""
+    """Set on the app's attack-mode rule, which changes only through /v1/apps/{slug}/edge-protection/attack-mode;
+    PATCH refuses it. Absent on every other rule."""
     penalty: EdgeRulePenalty | Unset = UNSET
-    """A rule's penalty box (ADR-20261022105846). Once the rule has refused
+    """A rule's penalty box. Once the rule has refused
     the same client `after` times within `within_seconds`, every request
     from that client to the app is refused with 403 `penalty_box` and
     Retry-After for `seconds`, whichever rule or path it targets. The
@@ -151,7 +150,7 @@ class EdgeRuleResponse:
     """
     unreleased_features: list[EdgeRuleResponseUnreleasedFeaturesItem] | Unset = UNSET
     """Gated features this rule uses that are not yet released to the
-    account (ADR-20261023113721). The gateway does not enforce them:
+    account. The gateway does not enforce them:
     a challenge rule is inert, a warn or block WAF rule only
     observes, a penalty boxes nobody, an AI crawler condition never
     matches, and attack mode challenges nobody. Absent when every

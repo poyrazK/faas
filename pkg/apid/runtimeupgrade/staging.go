@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/freeze"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
 )
@@ -23,6 +25,10 @@ type StagingStore interface {
 }
 
 var ErrSourceIntegrity = errors.New("runtime upgrade: retained source integrity violation")
+
+// ErrReleaseFrozen refuses a runtime upgrade while a deploy freeze covers the
+// app's production releases.
+var ErrReleaseFrozen = errors.New("runtime upgrade: the app's production releases are frozen")
 
 type Stager struct {
 	Store     StagingStore
@@ -137,6 +143,16 @@ func (s Stager) stagingInputs(ctx context.Context, r state.RuntimeUpgradeOperati
 		candidate.SourceRoot != serving.SourceRoot || candidate.Handler != serving.Handler ||
 		candidate.GitHubSourceRef != "" || candidate.GitHubInstallationID != 0 {
 		return state.Deployment{}, state.ErrConflict
+	}
+	// A runtime upgrade is a new production release of the app, so a deploy
+	// freeze refuses it (ADR-20261019071733 amendment 1). Unlike a customer
+	// deploy it fails closed: the upgrade can wait for a readable store.
+	active, err := freeze.ActiveFor(ctx, s.Store, r.AccountID, r.AppID, serving.Scope, time.Now().UTC())
+	if err != nil {
+		return state.Deployment{}, err
+	}
+	if len(active) > 0 {
+		return state.Deployment{}, ErrReleaseFrozen
 	}
 	return serving, nil
 }

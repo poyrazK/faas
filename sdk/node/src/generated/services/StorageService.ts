@@ -10,6 +10,8 @@ import type { CreateObjectUploadRouteRequest } from '../models/CreateObjectUploa
 import type { ObjectBucket } from '../models/ObjectBucket.js';
 import type { ObjectBucketAccessGrant } from '../models/ObjectBucketAccessGrant.js';
 import type { ObjectBucketAccessGrantList } from '../models/ObjectBucketAccessGrantList.js';
+import type { ObjectBucketCORS } from '../models/ObjectBucketCORS.js';
+import type { ObjectBucketCORSRequest } from '../models/ObjectBucketCORSRequest.js';
 import type { ObjectBucketEncryption } from '../models/ObjectBucketEncryption.js';
 import type { ObjectBucketEncryptionRequest } from '../models/ObjectBucketEncryptionRequest.js';
 import type { ObjectBucketLifecycle } from '../models/ObjectBucketLifecycle.js';
@@ -1195,6 +1197,96 @@ export class StorageService {
     return __request(OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/buckets/{bucket}/encryption',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+    });
+  }
+  /**
+   * Read a bucket's CORS rules
+   * Requires storage manage scope and the bucket write grant. Returns an empty rule list at revision 0 when none are set. The branded S3 endpoint applies the rules to browser requests that carry the bucket's presigned URLs or upload grants.
+   * @returns ObjectBucketCORS The bucket's CORS rules
+   * @returns Problem Bucket not found or access denied
+   * @throws ApiError
+   */
+  public static getObjectBucketCors({
+    slug,
+    bucket,
+  }: {
+    /**
+     * App whose bucket CORS rules are managed.
+     */
+    slug: string,
+    /**
+     * Logical bucket whose CORS rules are managed.
+     */
+    bucket: string,
+  }): CancelablePromise<ObjectBucketCORS | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/buckets/{bucket}/cors',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+    });
+  }
+  /**
+   * Replace a bucket's CORS rules
+   * Requires storage manage scope and the bucket write grant. Replaces every rule and advances the revision. Up to 100 rules, as in S3 PutBucketCors; the first rule matching a request's origin, method and requested headers applies. CORS is not authorization; requests still need a valid signature or upload grant.
+   * @returns ObjectBucketCORS The stored rules
+   * @returns Problem Invalid rules, bucket not ready or access denied
+   * @throws ApiError
+   */
+  public static putObjectBucketCors({
+    slug,
+    bucket,
+    requestBody,
+  }: {
+    /**
+     * App whose bucket CORS rules are managed.
+     */
+    slug: string,
+    /**
+     * Logical bucket whose CORS rules are managed.
+     */
+    bucket: string,
+    requestBody: ObjectBucketCORSRequest,
+  }): CancelablePromise<ObjectBucketCORS | Problem> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/buckets/{bucket}/cors',
+      path: {
+        'slug': slug,
+        'bucket': bucket,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+    });
+  }
+  /**
+   * Remove a bucket's CORS rules
+   * Requires storage manage scope and the bucket write grant. Afterwards only the console's origins are allowed. Removing absent rules succeeds.
+   * @returns Problem Bucket not found, or its CORS rules are not yours to remove
+   * @throws ApiError
+   */
+  public static deleteObjectBucketCors({
+    slug,
+    bucket,
+  }: {
+    /**
+     * App whose bucket CORS rules are managed.
+     */
+    slug: string,
+    /**
+     * Logical bucket whose CORS rules are managed.
+     */
+    bucket: string,
+  }): CancelablePromise<Problem> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/buckets/{bucket}/cors',
       path: {
         'slug': slug,
         'bucket': bucket,

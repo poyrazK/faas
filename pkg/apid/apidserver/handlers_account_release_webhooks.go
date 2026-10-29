@@ -13,7 +13,6 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -52,18 +51,7 @@ func sealAccountReleaseWebhookSecret(plaintext string) ([]byte, *api.Problem) {
 	if prob := validateWebhookSecret(plaintext); prob != nil {
 		return nil, prob
 	}
-	recipient := hostSecretRecipient()
-	if recipient == nil {
-		return nil, api.ErrCapacity("host age recipient not loaded — refusing to seal webhook secret")
-	}
-	sealed, err := secretbox.SealBytes(recipient, appWebhookSecretSealLabel, []byte(plaintext), api.AppWebhookSecretMaxBytes)
-	if err != nil {
-		if prob := api.AsProblem(err); prob != nil {
-			return nil, prob
-		}
-		return nil, api.ErrCapacity("could not seal webhook secret")
-	}
-	return sealed, nil
+	return sealAppWebhookSecret(plaintext)
 }
 
 func (s *server) accountReleaseWebhookByRequest(w http.ResponseWriter, r *http.Request, acct state.Account) (state.AppWebhook, bool) {

@@ -4,8 +4,8 @@ from uuid import UUID
 import httpx
 
 from faas_sdk import FaaSClient
-from faas_sdk.api.apps import get_route_health_report, set_route_health_gate
-from faas_sdk.models import RouteHealthReport, SetRouteHealthGateRequest
+from faas_sdk.preview.api.apps import get_route_health_report, set_route_health_gate
+from faas_sdk.preview.models import RouteHealthReport, SetRouteHealthGateRequest
 
 
 def test_watched_response_configuration_and_advisory_roundtrip():

@@ -339,3 +339,119 @@ func TestFlagsMutationsRefuseBadInputBeforeAnyRequest(t *testing.T) {
 		}
 	}
 }
+
+// adr: 20261023115741 — --force confirms turning a core capability flag off.
+func TestFlagsDisableSendsForceOnlyWhenAsked(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		want bool
+	}{
+		{nil, false},
+		{[]string{"--force"}, true},
+	} {
+		var captured operatorConfigPatchRequest
+		server := flagsServer(t, testFlagsList(api.PlatformFlagDefinition{Enabled: true, Default: true}, "operator", 3), "/v1/admin/config/platform_flag.ai_gateway", &captured)
+		args := append([]string{"disable", "--key", platformflags.AIGateway, "--reason", "incident", "--trace-id", testConfigTraceID, "--yes"}, tc.args...)
+		code, _, stderr := runFlagsCommand(t, server.URL, args...)
+		server.Close()
+		if code != 0 {
+			t.Fatalf("disable %v exit = %d, stderr=%s", tc.args, code, stderr)
+		}
+		if captured.Force != tc.want {
+			t.Fatalf("disable %v sent force=%v, want %v", tc.args, captured.Force, tc.want)
+		}
+	}
+}
+
+// adr: 20261023115741 — bulk selectors write every matching capability flag.
+func bulkFlagsList() api.OperatorPlatformFlagList {
+	item := func(key, capability, parent, maturity string) api.OperatorPlatformFlag {
+		return api.OperatorPlatformFlag{Key: key, ConfigKey: platformflags.ConfigKey(key), Capability: capability, Parent: parent, Maturity: maturity,
+			Definition: api.PlatformFlagDefinition{Enabled: true}, Source: "default_or_environment"}
+	}
+	return api.OperatorPlatformFlagList{Items: []api.OperatorPlatformFlag{
+		item("realtime", "realtime", "", "preview"),
+		item("realtime_channels", "realtime-channels", "realtime", "preview"),
+		item("realtime_push", "realtime-push", "realtime", "preview"),
+		item("crons", "crons", "", "ga"),
+		item("route_insights", "route-insights", "", "internal"),
+	}}
+}
+
+func bulkFlagsServer(t *testing.T, list api.OperatorPlatformFlagList, writes map[string]operatorConfigPatchRequest) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/admin/flags":
+			writeTestJSON(w, http.StatusOK, list)
+		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/v1/admin/config/"):
+			var req operatorConfigPatchRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode patch: %v", err)
+			}
+			key := strings.TrimPrefix(r.URL.Path, "/v1/admin/config/")
+			writes[key] = req
+			writeTestJSON(w, http.StatusOK, api.OperatorRuntimeConfig{Key: key, Version: 1, Status: "applied", EffectiveValue: req.Value})
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+}
+
+func TestFlagsBulkAllowByTierAndCapability(t *testing.T) {
+	tests := []struct {
+		name     string
+		selector []string
+		want     []string
+	}{
+		{"tier", []string{"--tier", "preview"}, []string{"realtime", "realtime_channels", "realtime_push"}},
+		{"capability subtree", []string{"--capability", "realtime"}, []string{"realtime", "realtime_channels", "realtime_push"}},
+		{"leaf capability", []string{"--capability", "realtime-push"}, []string{"realtime_push"}},
+		{"internal tier", []string{"--tier", "internal"}, []string{"route_insights"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			writes := map[string]operatorConfigPatchRequest{}
+			server := bulkFlagsServer(t, bulkFlagsList(), writes)
+			args := append([]string{"allow", "--account-id", testFlagsAccount, "--reason", "design partner", "--trace-id", testConfigTraceID, "--yes"}, tc.selector...)
+			code, stdout, stderr := runFlagsCommand(t, server.URL, args...)
+			server.Close()
+			if code != 0 {
+				t.Fatalf("exit = %d, stderr=%s", code, stderr)
+			}
+			if len(writes) != len(tc.want) {
+				t.Fatalf("wrote %d flags %v, want %v", len(writes), writes, tc.want)
+			}
+			for _, key := range tc.want {
+				req, ok := writes[platformflags.ConfigKey(key)]
+				if !ok {
+					t.Fatalf("flag %s was not written", key)
+				}
+				def := decodeFlagValue(t, req.Value)
+				if len(def.Rules) == 0 || !slicesContain(def.Rules[0].Accounts, testFlagsAccount) {
+					t.Fatalf("flag %s rules = %+v, want the account allowed", key, def.Rules)
+				}
+			}
+			if !strings.Contains(stdout, fmt.Sprintf("flags=%d written=%d failed=0", len(tc.want), len(tc.want))) {
+				t.Fatalf("summary missing: %s", stdout)
+			}
+		})
+	}
+}
+
+func TestFlagsBulkSelectorsAreExclusive(t *testing.T) {
+	code, _, stderr := runFlagsCommand(t, "http://127.0.0.1:0", "enable", "--key", "crons", "--tier", "ga", "--reason", "x y z", "--trace-id", testConfigTraceID, "--yes")
+	if code != 2 || !strings.Contains(stderr, "exactly one of --key, --tier or --capability") {
+		t.Fatalf("exit = %d stderr=%s, want a usage error", code, stderr)
+	}
+}
+
+func slicesContain(values []string, want string) bool {
+	for _, v := range values {
+		if v == want {
+			return true
+		}
+	}
+	return false
+}

@@ -13,8 +13,7 @@ import (
 // RealtimeUsage serves GET /v1/usage/realtime: the account's open connections
 // against its plan's fair-use limit, and recorded usage per hour (ADR-1323).
 func (s *Service) RealtimeUsage(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	if !s.UsageEnabled {
-		httpkit.NotFound(w, "realtime usage unavailable")
+	if s.previewUnavailable(w, acct.ID, s.UsageEnabled, "realtime usage unavailable") {
 		return
 	}
 	hours, ok := realtimeUsageHours(w, r)

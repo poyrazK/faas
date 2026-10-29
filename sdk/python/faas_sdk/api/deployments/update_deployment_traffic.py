@@ -107,8 +107,8 @@ def sync_detailed(
 ) -> Response[DeploymentResponse | Problem]:
     """Set the per-deployment traffic-split weight.
 
-     Update the deployment's traffic_percent (issue #556 PR-A).
-    PR-A uses the zero-siblings rebalance form: setting row R's
+     Update the deployment's traffic_percent.
+    uses the zero-siblings rebalance form: setting row R's
     traffic_percent to N forces every other live row in the same
     app to 0, keeping Σ = 100 by construction. Pro/Scale only —
     Free/Hobby are rejected at 403 `plan_traffic_split_not_allowed`.
@@ -164,8 +164,8 @@ def sync(
 ) -> DeploymentResponse | Problem | None:
     """Set the per-deployment traffic-split weight.
 
-     Update the deployment's traffic_percent (issue #556 PR-A).
-    PR-A uses the zero-siblings rebalance form: setting row R's
+     Update the deployment's traffic_percent.
+    uses the zero-siblings rebalance form: setting row R's
     traffic_percent to N forces every other live row in the same
     app to 0, keeping Σ = 100 by construction. Pro/Scale only —
     Free/Hobby are rejected at 403 `plan_traffic_split_not_allowed`.
@@ -216,8 +216,8 @@ async def asyncio_detailed(
 ) -> Response[DeploymentResponse | Problem]:
     """Set the per-deployment traffic-split weight.
 
-     Update the deployment's traffic_percent (issue #556 PR-A).
-    PR-A uses the zero-siblings rebalance form: setting row R's
+     Update the deployment's traffic_percent.
+    uses the zero-siblings rebalance form: setting row R's
     traffic_percent to N forces every other live row in the same
     app to 0, keeping Σ = 100 by construction. Pro/Scale only —
     Free/Hobby are rejected at 403 `plan_traffic_split_not_allowed`.
@@ -271,8 +271,8 @@ async def asyncio(
 ) -> DeploymentResponse | Problem | None:
     """Set the per-deployment traffic-split weight.
 
-     Update the deployment's traffic_percent (issue #556 PR-A).
-    PR-A uses the zero-siblings rebalance form: setting row R's
+     Update the deployment's traffic_percent.
+    uses the zero-siblings rebalance form: setting row R's
     traffic_percent to N forces every other live row in the same
     app to 0, keeping Σ = 100 by construction. Pro/Scale only —
     Free/Hobby are rejected at 403 `plan_traffic_split_not_allowed`.

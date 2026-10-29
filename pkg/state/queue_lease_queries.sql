@@ -16,13 +16,29 @@ WHERE i.app_id=sqlc.arg(app_id)::uuid AND i.source='queue' AND i.environment_id 
         OR (i.queue_binding_id IS NULL AND i.queue_name=sqlc.arg(queue_name)::text));
 
 -- name: QueueLeaseCandidates :many
-SELECT w.id FROM production_invocation_work w
-WHERE w.app_id=sqlc.arg(app_id)::uuid AND w.source='queue' AND w.state='pending'
-    AND w.due_at<=clock_timestamp() AND (w.deadline_at IS NULL OR w.deadline_at>clock_timestamp())
-    AND w.work_policy_name IS NULL AND NOT w.quota_reserved
-    AND (w.queue_binding_id=sqlc.arg(binding_id)::uuid
-        OR (w.queue_binding_id IS NULL AND w.queue_name=sqlc.arg(queue_name)::text))
-ORDER BY w.due_at, w.created_at, w.id LIMIT sqlc.arg(candidate_limit)::integer;
+-- The binding's own messages and legacy messages under its name, each read in
+-- due order from its own index (invocations_queue_lease_binding_idx and
+-- _name_idx), so a lease reads about candidate_limit rows whatever the
+-- backlog, its own or another app's (ADR-20261022105723 amendment
+-- 2026-10-24). The due bound uses statement_timestamp(): it is stable, so it
+-- bounds the index range, where volatile clock_timestamp() left only a filter
+-- and the planner walked the global due index instead.
+SELECT c.id FROM (
+    (SELECT w.id, w.due_at, w.created_at FROM production_invocation_work w
+     WHERE w.app_id=sqlc.arg(app_id)::uuid AND w.source='queue' AND w.state='pending'
+         AND w.due_at<=statement_timestamp() AND (w.deadline_at IS NULL OR w.deadline_at>clock_timestamp())
+         AND w.work_policy_name IS NULL AND NOT w.quota_reserved
+         AND w.queue_binding_id=sqlc.arg(binding_id)::uuid
+     ORDER BY w.due_at, w.created_at, w.id LIMIT sqlc.arg(candidate_limit)::integer)
+    UNION ALL
+    (SELECT w.id, w.due_at, w.created_at FROM production_invocation_work w
+     WHERE w.app_id=sqlc.arg(app_id)::uuid AND w.source='queue' AND w.state='pending'
+         AND w.due_at<=statement_timestamp() AND (w.deadline_at IS NULL OR w.deadline_at>clock_timestamp())
+         AND w.work_policy_name IS NULL AND NOT w.quota_reserved
+         AND w.queue_binding_id IS NULL AND w.queue_name=sqlc.arg(queue_name)::text
+     ORDER BY w.due_at, w.created_at, w.id LIMIT sqlc.arg(candidate_limit)::integer)
+) c
+ORDER BY c.due_at, c.created_at, c.id LIMIT sqlc.arg(candidate_limit)::integer;
 
 -- name: QueueLeaseClaimInvocation :one
 WITH lease_clock AS MATERIALIZED (SELECT clock_timestamp() AS at)

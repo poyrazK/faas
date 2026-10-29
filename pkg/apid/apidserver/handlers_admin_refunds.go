@@ -152,8 +152,9 @@ func (s *server) refundAccount(w http.ResponseWriter, r *http.Request, acct stat
 			"invoice_id", logsanitize.Field(req.InvoiceID), "provider_order_id", logsanitize.Field(invoice.ProviderInvoiceID),
 			slog.Int64("amount_cents", req.AmountCents),
 			"err", logsanitize.FieldAny(err))
+		logCustomerFailure(s.log, "Billing refund failed", err)
 		api.WriteProblem(w, api.NewProblem(http.StatusBadGateway, "billing_refund_failed",
-			"Billing refund failed", "the provider did not accept the refund: "+err.Error()))
+			"Billing refund failed", "The billing provider did not accept the refund; the provider's error is in the apid log."))
 		return
 	}
 	if result == nil || result.ProviderRefundID == "" {

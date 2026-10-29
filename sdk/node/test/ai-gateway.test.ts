@@ -10,7 +10,7 @@ import {
   isValidAIUserId,
   opaqueAIUserId,
   withAIGatewayHeaders,
-} from '../src/index.js';
+} from '../src/preview.js';
 
 test('aiGatewayURL addresses an integration or a route on the relay', () => {
   const env = { GREGALE_OUTBOUND_URL: 'http://127.0.0.1:2774/' };

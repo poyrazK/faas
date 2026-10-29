@@ -53,7 +53,9 @@ func (c *RegistryClient) PullManifestWithAuth(ctx context.Context, ref string, a
 	if err != nil {
 		return Manifest{}, err
 	}
-	resolved, err := c.resolveImageManifest(ctx, r, auth)
+	resolved, err := pullFrom(ctx, c, r, auth, func(at Reference, auth *BasicAuth) (resolvedImageManifest, error) {
+		return c.resolveImageManifest(ctx, at, auth)
+	})
 	if err != nil {
 		return Manifest{}, err
 	}
@@ -115,9 +117,8 @@ func (c *RegistryClient) PullBlobWithAuth(ctx context.Context, repo, digest stri
 	if err != nil {
 		return nil, err
 	}
-	_, body, err := c.openBlobWithAuth(ctx, r, digest, auth)
-	if err != nil {
-		return nil, err
-	}
-	return body, nil
+	return pullFrom(ctx, c, r, auth, func(at Reference, auth *BasicAuth) (io.ReadCloser, error) {
+		_, body, err := c.openBlobWithAuth(ctx, at, digest, auth)
+		return body, err
+	})
 }

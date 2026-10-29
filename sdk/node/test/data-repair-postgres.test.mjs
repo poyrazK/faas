@@ -6,7 +6,7 @@ import pg from 'pg';
 import {captureReadinessProbe} from '../dist/data-repair-readiness-probe.js';
 import { operationReceiptSchema, operationRequestFromHeaders, withOperationTransaction, withDataRepairCapture, checkDataRepairCapture,
   customerOperationReceiptSchema, customerOperationRequestFromHeaders, withCustomerOperationTransaction,
-  withRepairableOperationTransaction, withRepairableCustomerOperationTransaction, DataRepairCaptureError, OperationCommitUnknownError } from '../dist/index.js';
+  withRepairableOperationTransaction, withRepairableCustomerOperationTransaction, DataRepairCaptureError, OperationCommitUnknownError } from '../dist/preview.js';
 
 const enabled=process.env.DATABASE_URL&&process.env.GREGALE_DATA_REPAIR_SCHEMA;
 

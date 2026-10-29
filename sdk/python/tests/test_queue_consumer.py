@@ -5,7 +5,7 @@ import time
 import httpx
 import pytest
 
-from faas_sdk.queue_consumer import QueueConsumer
+from faas_sdk.preview.queue_consumer import QueueConsumer
 
 
 class FakeQueue:

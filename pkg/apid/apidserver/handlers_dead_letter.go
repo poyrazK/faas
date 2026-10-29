@@ -106,7 +106,7 @@ func (s *server) replayDeadLetterEvent(w http.ResponseWriter, r *http.Request, a
 			api.WriteProblem(w, deadLetterNotFound(r.PathValue("id")))
 			return
 		}
-		s.ops.ObserveDLQReplay(app.Slug, "error")
+		s.ops.ObserveDLQReplay(app.Slug, deadLetterReplayFailure(err))
 		api.WriteProblem(w, appevents.EventDeliveryReplayProblem(err, "dead-letter replay"))
 		return
 	}
@@ -201,4 +201,13 @@ func (s *server) purgeDeadLetterEvents(w http.ResponseWriter, r *http.Request, a
 		})
 	}
 	writeJSON(w, http.StatusOK, api.DeadLetterPurgeResponse{AppSlug: app.Slug, Purged: purged})
+}
+
+// deadLetterReplayFailure labels a failed replay for faas_dlq_replayed_total:
+// refusing an entry that cannot be replayed is the caller's 409, not an error.
+func deadLetterReplayFailure(err error) string {
+	if errors.Is(err, state.ErrDeadLetterNotReplayable) {
+		return "other"
+	}
+	return "error"
 }

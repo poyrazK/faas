@@ -66,11 +66,16 @@ func (i *Inspector) CheckInline(s gateway.WAFSample) gateway.WAFInlineResult {
 		return gateway.WAFInlineResult{Outcome: gateway.WAFInlineSkipped, SkipReason: gateway.WAFInlineSkipBudget}
 	}
 	start := time.Now()
-	if !i.acquireInlineSlot() {
+	tenant := inlineTenant(s)
+	if ok, overShare := i.inlineSlots.acquire(tenant, i.inlineWait); !ok {
 		i.settleInline(s.AppID, 0)
-		return gateway.WAFInlineResult{Outcome: gateway.WAFInlineSkipped, SkipReason: gateway.WAFInlineSkipBusy}
+		reason := gateway.WAFInlineSkipBusy
+		if overShare {
+			reason = gateway.WAFInlineSkipAccountShare
+		}
+		return gateway.WAFInlineResult{Outcome: gateway.WAFInlineSkipped, SkipReason: reason}
 	}
-	defer func() { <-i.inlineSlots }()
+	defer i.inlineSlots.release(tenant)
 	waf, err := i.inlineWAF()
 	if err != nil {
 		i.settleInline(s.AppID, 0)
@@ -93,31 +98,17 @@ func (i *Inspector) CheckInline(s gateway.WAFSample) gateway.WAFInlineResult {
 	return out
 }
 
-// acquireInlineSlot takes a check slot, waiting up to inlineWait when every
-// slot is busy (ADR-831 amendment 12). A check takes about 1 ms, so a
-// momentary pile-up clears within the wait, and sustained overload still
-// fails open after it.
-func (i *Inspector) acquireInlineSlot() bool {
-	select {
-	case i.inlineSlots <- struct{}{}:
-		return true
-	default:
+// inlineTenant is whose share of the check slots a check counts against:
+// the app's account, or the app alone when the gateway knows no account.
+func inlineTenant(s gateway.WAFSample) string {
+	if s.AccountID != "" {
+		return s.AccountID
 	}
-	if i.inlineWait <= 0 {
-		return false
-	}
-	t := time.NewTimer(i.inlineWait)
-	defer t.Stop()
-	select {
-	case i.inlineSlots <- struct{}{}:
-		return true
-	case <-t.C:
-		return false
-	}
+	return "app:" + s.AppID
 }
 
 // InlineSlots is how many in-path checks may run at once.
-func (i *Inspector) InlineSlots() int { return cap(i.inlineSlots) }
+func (i *Inspector) InlineSlots() int { return i.inlineSlots.size }
 
 func (i *Inspector) admitInline(appID string) bool {
 	i.inlineMu.Lock()

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { AppsService, OpenAPI } from '../src/index.js';
-import type { SetObjectStorageBindingReleasePolicyRequest } from '../src/index.js';
+import { AppsService, OpenAPI } from '../src/preview.js';
+import type { SetObjectStorageBindingReleasePolicyRequest } from '../src/preview.js';
 
 test('storage policy keeps explicit requirements and clearing, and never falls back', async () => {
   const oldFetch = globalThis.fetch;

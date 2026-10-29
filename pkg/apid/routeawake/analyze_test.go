@@ -272,3 +272,24 @@ func TestWaitUntilTimeoutWidensTheKeepWindow(t *testing.T) {
 		t.Fatalf("with waitUntil: unattributed = %d wait_until = %d routes = %+v", out.UnattributedSeconds, out.WaitUntilTimeoutSeconds, out.Routes)
 	}
 }
+
+// Production-us rc.294: `routes awake h14-py` read "0 wakes" above a GET /
+// row with one wake. The header counted usage_minutes cold boots, which
+// record only restore-to-cold-boot fallbacks (ADR-048), so snapshot wakes
+// were missing (Hunt 14 H14-18).
+func TestWakesCountRequestsThatWokeTheApp(t *testing.T) {
+	in := newScenario(10).awakeRange(0, 10).inputs()
+	in.Routes = append(in.Routes,
+		routeawake.RouteMinute{At: at(1), Method: "GET", Path: "/", Requests: 1, ColdBoots: 1},
+		routeawake.RouteMinute{At: at(6), Method: "POST", Path: "/hook", Requests: 2, ColdBoots: 1},
+		routeawake.RouteMinute{At: at(20), Method: "GET", Path: "/late", Requests: 1, ColdBoots: 1})
+	if out := routeawake.Analyze(in); out.Wakes != 2 {
+		t.Fatalf("wakes = %d, want the 2 in-window request wakes", out.Wakes)
+	}
+	// Metered cold boots still count when no request telemetry explains them.
+	in.Routes = nil
+	in.Awake[0].ColdBoots = 3
+	if out := routeawake.Analyze(in); out.Wakes != 3 {
+		t.Fatalf("wakes = %d, want the 3 metered cold boots", out.Wakes)
+	}
+}

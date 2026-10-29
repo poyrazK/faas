@@ -1,5 +1,6 @@
 // ratelimit_central_test.go pins the fleet-wide token bucket contract.
 // adr: 104
+// adr: 570
 package gateway
 
 import (
@@ -8,6 +9,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -113,9 +115,9 @@ func TestLimiter_RealBackend_MirrorsAuthoritativeRemainingForHeaders(t *testing.
 	}
 }
 
-func TestLimiter_RealBackend_PGErrorDegradesSoft(t *testing.T) {
+func TestLimiter_RealBackend_PGErrorFailsClosed(t *testing.T) {
 	// Postgres unreachable: ConsumeToken returns an error, so the limiter
-	// returns false (preserves local reject decision) without panicking.
+	// refuses unverified shared admission without panicking.
 	fake := newFakeCentral()
 	fake.consumeResult = func() (int, bool, error) { return 0, false, errors.New("postgres down") }
 	// Frozen clock so the burst test doesn't refill between
@@ -130,60 +132,142 @@ func TestLimiter_RealBackend_PGErrorDegradesSoft(t *testing.T) {
 		observed.Add(1)
 	}
 
-	// Scale-shaped bucket: 1500 rps, 3000 burst (per
-	// pkg/api/limits.go Scale plan). Drain under frozen clock,
-	// then a single call must reject (degraded posture
-	// preserves the local reject).
+	// Scale-shaped bucket: 1500 rps, 3000 burst (per pkg/api/limits.go).
+	// Every outage request must refuse admission, even with local tokens left.
 	const rps, burst = 1500.0, 3000.0
 	const centralKey = "app:00000000-0000-0000-0000-000000000002:scale"
 	for i := 0; i < 3000; i++ {
-		l.AllowWithCentralParams(context.Background(), "appid", rps, burst, centralKey)
+		if l.AllowWithCentralParams(context.Background(), "appid", rps, burst, centralKey) {
+			t.Fatal("shared-store outage admitted a local token")
+		}
 	}
 	if l.AllowWithCentralParams(context.Background(), "appid", rps, burst, centralKey) {
 		t.Error("scale admit accepted despite PG error (degraded posture must preserve local reject)")
 	}
 	// The frozen clock never closes the breaker: the first failure is the
-	// only consult, and every request is a locally-decided, observed fallback.
+	// only consult, and every refusal is observed, including breaker refusals.
 	if got := fake.consumeCalls.Load(); got != 1 {
 		t.Errorf("consume calls during PG-error test = %d, want 1 (breaker open after the first failure)", got)
 	}
 	if got, want := observed.Load(), int64(3001); got != want {
-		t.Errorf("degraded observations=%d, want one per locally-decided request (%d)", got, want)
+		t.Errorf("degraded observations=%d, want one per unverified admission refusal (%d)", got, want)
 	}
 }
 
 // Prod hunt #3: with gatewayd's Postgres pool saturated, every central
-// consult waited out centralConsultTimeout before falling back, adding up to
+// consult waited out centralConsultTimeout, adding up to
 // 500 ms (app + account) to each request and capping an app near 150 rps.
-// After a failure the limiter decides locally for centralBreakerWindow, then
-// consults again; a success closes the breaker.
+// After a failure the limiter refuses unverified admission without consulting
+// for centralBreakerWindow, then consults again; a success closes the breaker.
 func TestLimiter_CentralBreakerSkipsConsultsAfterFailure(t *testing.T) {
-	fake := newFakeCentral()
-	var failing atomic.Bool
-	failing.Store(true)
-	fake.consumeResult = func() (int, bool, error) {
-		if failing.Load() {
-			return 0, false, context.DeadlineExceeded
-		}
-		return 5, true, nil
+	for _, dimension := range []string{"app", "consumer"} {
+		t.Run(dimension, func(t *testing.T) {
+			fake := newFakeCentral()
+			var failing atomic.Bool
+			failing.Store(true)
+			fake.consumeResult = func() (int, bool, error) {
+				if failing.Load() {
+					return 0, false, context.DeadlineExceeded
+				}
+				return 5, true, nil
+			}
+			now := time.Unix(1_700_000_000, 0)
+			l := NewLimiterWithCentralAndClock(fake, func() time.Time { return now })
+			const centralKey = "app:00000000-0000-0000-0000-000000000002:scale"
+			allow := func() bool { return l.AllowWithCentralParams(t.Context(), "appid", 1500, 3000, centralKey) }
+			if dimension == "consumer" {
+				allow = func() bool {
+					return l.AllowWithCentralConsumerKey(t.Context(), "rule-id", "header", "consumer-id", 1500, 3000, 100,
+						"rule:00000000-0000-0000-0000-000000000002:scale")
+				}
+			}
+			for i := 0; i < 50; i++ {
+				if allow() {
+					t.Fatalf("outage request %d admitted despite unavailable shared allowance", i)
+				}
+			}
+			if got := fake.consumeCalls.Load(); got != 1 {
+				t.Fatalf("consults while the breaker is open = %d, want 1", got)
+			}
+			failing.Store(false)
+			now = now.Add(centralBreakerWindow)
+			for i := 0; i < 2; i++ {
+				if !allow() {
+					t.Fatalf("recovered request %d refused despite successful shared consume", i)
+				}
+			}
+			if got := fake.consumeCalls.Load(); got != 3 {
+				t.Fatalf("consults after the window = %d, want 3 (probe, then closed breaker)", got)
+			}
+		})
 	}
-	now := time.Unix(1_700_000_000, 0)
-	l := NewLimiterWithCentralAndClock(fake, func() time.Time { return now })
-	const centralKey = "app:00000000-0000-0000-0000-000000000002:scale"
-	for i := 0; i < 50; i++ {
-		if !l.AllowWithCentralParams(t.Context(), "appid", 1500, 3000, centralKey) {
-			t.Fatalf("request %d rejected; the local fallback has burst left", i)
-		}
-	}
-	if got := fake.consumeCalls.Load(); got != 1 {
-		t.Fatalf("consults while the breaker is open = %d, want 1", got)
-	}
-	failing.Store(false)
-	now = now.Add(centralBreakerWindow)
-	l.AllowWithCentralParams(t.Context(), "appid", 1500, 3000, centralKey)
-	l.AllowWithCentralParams(t.Context(), "appid", 1500, 3000, centralKey)
-	if got := fake.consumeCalls.Load(); got != 3 {
-		t.Fatalf("consults after the window = %d, want 3 (probe, then closed breaker)", got)
+}
+
+// #5709: one failed consult refused every request on the gateway for the
+// breaker window. A counter that answered within the outage grace keeps the
+// limit on the gateway's own bucket instead (ADR-20261027173012).
+func TestLimiter_CentralOutageGraceDecidesLocally(t *testing.T) {
+	const centralKey = "app:00000000-0000-0000-0000-000000000002:hobby"
+	for _, tc := range []struct {
+		name      string
+		grace     time.Duration
+		after     time.Duration
+		wantLocal bool
+	}{
+		{name: "inside the default grace", after: centralBreakerWindow, wantLocal: true},
+		{name: "past the default grace", after: api.TrafficRateLimitOutageGrace + time.Second},
+		{name: "grace disabled", grace: -1, after: time.Millisecond},
+		{name: "inside a shortened grace", grace: time.Minute, after: 30 * time.Second, wantLocal: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := newFakeCentral()
+			var failing atomic.Bool
+			fake.consumeResult = func() (int, bool, error) {
+				if failing.Load() {
+					return 0, false, errors.New("postgres down")
+				}
+				return 2, true, nil
+			}
+			now := time.Unix(1_700_000_000, 0)
+			l := NewLimiterWithCentralAndClock(fake, func() time.Time { return now })
+			l.centralOutageGrace = tc.grace
+			var fallbacks, refusals atomic.Int64
+			l.centralFallbackObserver = func(context.Context, string, error) { fallbacks.Add(1) }
+			l.centralErrorObserver = func(context.Context, string, error) { refusals.Add(1) }
+			allow := func() (bool, bool) {
+				ctx := withRateAdmissionEvidence(t.Context())
+				// A negligible refill rate keeps the expected admissions exact
+				// however far the clock moves.
+				allowed := l.AllowWithCentralParams(ctx, "appid", 0.001, 10, centralKey)
+				unavailable, _ := ctx.Value(rateAdmissionKey{}).(*atomic.Bool)
+				return allowed, unavailable.Load()
+			}
+			if allowed, _ := allow(); !allowed {
+				t.Fatal("verified admission refused")
+			}
+			failing.Store(true)
+			now = now.Add(tc.after)
+			// The bucket mirrors the counter's last answer (2 left), so it
+			// admits two and then refuses as over the limit.
+			var got []bool
+			for range 3 {
+				allowed, unavailable := allow()
+				if unavailable == tc.wantLocal {
+					t.Fatalf("unavailable=%v during the outage, want %v", unavailable, !tc.wantLocal)
+				}
+				got = append(got, allowed)
+			}
+			want := []bool{false, false, false}
+			if tc.wantLocal {
+				want = []bool{true, true, false}
+			}
+			if !slices.Equal(got, want) {
+				t.Fatalf("outage admissions=%v, want %v", got, want)
+			}
+			if tc.wantLocal && (fallbacks.Load() != 3 || refusals.Load() != 0) || !tc.wantLocal && (fallbacks.Load() != 0 || refusals.Load() != 3) {
+				t.Fatalf("fallbacks=%d refusals=%d", fallbacks.Load(), refusals.Load())
+			}
+		})
 	}
 }
 
@@ -195,9 +279,13 @@ func TestLimiter_CentralBreakerIgnoresCallerCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	const centralKey = "app:00000000-0000-0000-0000-000000000002:scale"
-	l.AllowWithCentralParams(ctx, "appid", 1500, 3000, centralKey)
+	if l.AllowWithCentralParams(ctx, "appid", 1500, 3000, centralKey) {
+		t.Fatal("cancelled shared consume admitted a local token")
+	}
 	fake.consumeResult = nil
-	l.AllowWithCentralParams(t.Context(), "appid", 1500, 3000, centralKey)
+	if !l.AllowWithCentralParams(t.Context(), "appid", 1500, 3000, centralKey) {
+		t.Fatal("live caller refused after successful shared consume")
+	}
 	if got := fake.consumeCalls.Load(); got != 2 {
 		t.Fatalf("consults = %d, want 2: a disconnected caller must not open the breaker", got)
 	}
@@ -214,8 +302,8 @@ func TestHandler_CentralFallbackIsObservableAndAuditCooledDown(t *testing.T) {
 		WithCentralBackend(fake)
 	const centralKey = "app:00000000-0000-0000-0000-000000000002:hobby"
 	for i := 0; i < 2; i++ {
-		if !h.limiter.AllowWithCentralParams(t.Context(), "app-1", 10, 10, centralKey) {
-			t.Fatalf("local fallback rejected request %d", i+1)
+		if h.limiter.AllowWithCentralParams(t.Context(), "app-1", 10, 10, centralKey) {
+			t.Fatalf("shared-store outage admitted request %d", i+1)
 		}
 	}
 
@@ -224,7 +312,22 @@ func TestHandler_CentralFallbackIsObservableAndAuditCooledDown(t *testing.T) {
 	if want := `gateway_ratelimit_degraded_total{scope="app"} 2`; !strings.Contains(rec.Body.String(), want) {
 		t.Fatalf("metrics missing %q:\n%s", want, rec.Body.String())
 	}
-	if got := strings.Count(logs.String(), "gateway rate limiter fell back"); got != 1 {
+	// Inside the outage grace the same failure is a local decision, counted
+	// and logged separately (ADR-20261027173012).
+	h.limiter.centralVerifiedAt.Store(time.Now().UnixNano())
+	h.limiter.centralOpenUntil.Store(0)
+	if !h.limiter.AllowWithCentralParams(t.Context(), "app-2", 10, 10, centralKey) {
+		t.Fatal("outage inside the grace refused a request within its limit")
+	}
+	rec = httptest.NewRecorder()
+	m.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
+	if want := `gateway_ratelimit_local_fallback_total{scope="app"} 1`; !strings.Contains(rec.Body.String(), want) {
+		t.Fatalf("metrics missing %q:\n%s", want, rec.Body.String())
+	}
+	if !strings.Contains(logs.String(), "enforcing limits per gateway within the outage grace") {
+		t.Errorf("missing fallback warning; logs=%s", logs.String())
+	}
+	if got := strings.Count(logs.String(), "gateway shared rate admission unavailable"); got != 1 {
 		t.Errorf("degraded warning count=%d, want 1 within cooldown; logs=%s", got, logs.String())
 	}
 	audit.mu.Lock()

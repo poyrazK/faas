@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Defines a scheduled HTTP check against the app (ADR-748).
+ * Defines a scheduled HTTP check against the app.
  */
 export type CreateSyntheticCheckRequest = {
   /**

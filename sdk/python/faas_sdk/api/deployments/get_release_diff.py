@@ -87,7 +87,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     against: UUID | Unset = UNSET,
 ) -> Response[Problem | ReleaseDiff]:
-    """Show what changed between two releases (ADR-20261021101117).
+    """Show what changed between two releases.
 
      Compares the code, configuration keys, packages, runtime settings and release command of two
     releases of one app. Never returns variable values, secret fingerprints or SBOM files. A section
@@ -123,7 +123,7 @@ def sync(
     client: AuthenticatedClient | Client,
     against: UUID | Unset = UNSET,
 ) -> Problem | ReleaseDiff | None:
-    """Show what changed between two releases (ADR-20261021101117).
+    """Show what changed between two releases.
 
      Compares the code, configuration keys, packages, runtime settings and release command of two
     releases of one app. Never returns variable values, secret fingerprints or SBOM files. A section
@@ -154,7 +154,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     against: UUID | Unset = UNSET,
 ) -> Response[Problem | ReleaseDiff]:
-    """Show what changed between two releases (ADR-20261021101117).
+    """Show what changed between two releases.
 
      Compares the code, configuration keys, packages, runtime settings and release command of two
     releases of one app. Never returns variable values, secret fingerprints or SBOM files. A section
@@ -188,7 +188,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     against: UUID | Unset = UNSET,
 ) -> Problem | ReleaseDiff | None:
-    """Show what changed between two releases (ADR-20261021101117).
+    """Show what changed between two releases.
 
      Compares the code, configuration keys, packages, runtime settings and release command of two
     releases of one app. Never returns variable values, secret fingerprints or SBOM files. A section

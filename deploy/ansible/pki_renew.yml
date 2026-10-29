@@ -584,3 +584,19 @@
         name: gatewayd_internal_service
         tasks_from: live_tls.yml
       when: faas_realtime_live_tls_managed | default(false) | bool
+
+# Platform logs (ADR-20261023124955 §2): Loki's server leaf and the Promtail,
+# Prometheus and Grafana client leaves are fleet-PKI feature leaves too. The
+# role reissues a leaf within 30 days of expiry, restores each service's read
+# access and restarts only the services whose leaf changed.
+- name: Renew platform-log feature leaves
+  hosts: control_plane:compute_nodes
+  gather_facts: false
+  become: true
+  serial: 1
+  max_fail_percentage: 0
+  tasks:
+    - name: pki renewal — platform-log leaves
+      ansible.builtin.include_role:
+        name: platform_logs_pki
+      when: faas_obs_logs_enabled | default(false) | bool

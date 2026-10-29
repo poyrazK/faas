@@ -44,7 +44,7 @@ T = TypeVar("T", bound="AppSecretResponse")
 @_attrs_define
 class AppSecretResponse:
     """A sealed secret envelope: key name, sealed ciphertext (server can't read it), version, and timestamps. Scope is the
-    env-scope the row belongs to (ADR-092 PR-B). Pre-PR-B callers see scope='default' echoed on every row.
+    env-scope the row belongs to. Older clients see scope='default' echoed on every row.
 
     """
 
@@ -60,13 +60,13 @@ class AppSecretResponse:
     """Delivery state for the current delivery_version. A concurrent rotation remains pending until that exact
     version starts successfully."""
     config_change: ConfigChangeReceipt | Unset = UNSET
-    """The config revision an env or secret write recorded and the guard watching it (ADR-1451)."""
+    """The config revision an env or secret write recorded and the guard watching it."""
     kid: str | Unset = UNSET
-    """age-1... recipient string of the host identity that sealed this row (ADR-089). Empty for rows sealed before
-    migration 00166."""
+    """age-1.. recipient string of the host identity that sealed this row. Empty for rows sealed before migration
+    00166."""
     value_hash: str | Unset = UNSET
-    """16-hex HMAC-SHA256(plaintext) keyed by the per-host host.hmac.key (ADR-117 PR-C). Empty for pre-PR-C rows.
-    Same value across scopes = byte-identical plaintext."""
+    """16-hex HMAC-SHA256(plaintext) keyed by the per-host host.hmac.key. Empty for older rows. Same value across
+    scopes = byte-identical plaintext."""
     delivered_version: int | Unset = UNSET
     """Newest version confirmed in a successfully started runtime. Omitted until the first successful delivery."""
     last_delivery_attempt_at: datetime.datetime | Unset = UNSET

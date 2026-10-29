@@ -30,6 +30,12 @@ type deployPreflightSummary struct {
 	// Healthcheck is the resolved --healthcheck-path / --healthcheck-grpc
 	// override, when one was given.
 	Healthcheck *api.DeploymentHealthcheck
+	// AppProtocol is --app-protocol, when given. A gRPC app without a probe
+	// flag gets gRPC health readiness from schedd (Hunt 14 H14-55).
+	AppProtocol string
+	// Image marks an OCI image deploy, whose port comes from the image
+	// unless --port set one.
+	Image bool
 }
 
 // deployPreflightSource describes the exact local source selection without
@@ -124,12 +130,25 @@ func deployPreflightRelease(safe bool, canaryPreset string, trafficPercent int, 
 	case trafficPercent >= 0:
 		release = fmt.Sprintf("traffic split · %d%%", trafficPercent)
 	default:
-		release = "standard · 100% after readiness"
+		// The plan renders before authentication, so it cannot see whether a
+		// release is live; apid applies the app's release policy (ADR-1446,
+		// Hunt 14 H14-9).
+		release = "app release policy (default: health-gated canary when a release is live)"
 	}
 	if rollbackOn5xx != nil && *rollbackOn5xx && !strings.Contains(release, "automatic rollback") {
 		release += " · first-wake 5xx rollback"
 	}
 	return release
+}
+
+// deployPreflightScheduled names a scheduled release's start; the plan said
+// "100% after readiness" for a deploy whose rollout waits for --at (Hunt 14
+// H14-15).
+func deployPreflightScheduled(releaseAt, release string) string {
+	if releaseAt == "" {
+		return release
+	}
+	return "scheduled · rollout starts " + localReleaseTime(releaseAt) + ", then " + release
 }
 
 func renderDeployPreflight(w io.Writer, summary deployPreflightSummary) {
@@ -159,7 +178,20 @@ func renderDeployPreflight(w io.Writer, summary deployPreflightSummary) {
 	if summary.BuildPlan != nil && summary.BuildPlan.Handler != "" {
 		_, _ = fmt.Fprintf(w, "  %-14s %s\n", "handler:", summary.BuildPlan.Handler)
 	}
-	if listener := deployPreflightListenerWith(summary.BuildPlan, summary.SimpleAppPlan, summary.Healthcheck); listener != "" && !servesNoHTTP(deployPreflightExecutionMode(summary)) {
+	hc := summary.Healthcheck
+	if hc == nil && strings.EqualFold(summary.AppProtocol, api.AppProtocolGRPC) {
+		// Mirror schedd's default so the plan does not promise GET /healthz
+		// to a gRPC server.
+		hc = &api.DeploymentHealthcheck{GRPC: &api.DeploymentGRPCHealthcheck{}}
+	}
+	listener := deployPreflightListenerWith(summary.BuildPlan, summary.SimpleAppPlan, hc)
+	if summary.Image && imagePortDefaulted(summary.SimpleAppPlan) {
+		// The plan renders before the image is read; an image deploy without
+		// --port serves its declared port, not the 8080 default the plan
+		// printed for nginx's port 80 (Hunt 14 H14-38).
+		listener = strings.Replace(listener, fmt.Sprintf(":%d", summary.SimpleAppPlan.Port), "image's declared port", 1)
+	}
+	if listener != "" && !servesNoHTTP(deployPreflightExecutionMode(summary)) {
 		_, _ = fmt.Fprintf(w, "  %-14s %s\n", "listener:", listener)
 	}
 	if resources := deployPreflightResources(summary); resources != "" {
@@ -280,4 +312,18 @@ func deployPreflightResources(summary deployPreflightSummary) string {
 		parts = append(parts, "scale-to-zero")
 	}
 	return strings.Join(parts, " · ")
+}
+
+// imagePortDefaulted reports whether the simple-app plan filled the port with
+// its default rather than an explicit --port.
+func imagePortDefaulted(plan *simpleapp.Plan) bool {
+	if plan == nil || plan.Port == 0 {
+		return false
+	}
+	for _, applied := range plan.DefaultsApplied {
+		if key, _, _ := strings.Cut(applied, "="); key == "port" {
+			return true
+		}
+	}
+	return false
 }

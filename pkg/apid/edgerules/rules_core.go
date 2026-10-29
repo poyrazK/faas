@@ -17,6 +17,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
+	"github.com/onebox-faas/faas/pkg/apid/trafficproblem"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -56,7 +57,7 @@ func (s *Service) writeRuleMutation(ctx context.Context, w http.ResponseWriter, 
 // CreateRule creates an edge rule for app through the same path as
 // POST /v1/apps/{slug}/edge-rules, without an If-Match precondition.
 func (s *Service) CreateRule(ctx context.Context, acct state.Account, app state.App, req api.CreateEdgeRuleRequest) (api.EdgeRuleResponse, *api.Problem) {
-	if prob := planKindProblem(acct, req.Kind); prob != nil {
+	if prob := s.kindProblem(acct, req.Kind); prob != nil {
 		return api.EdgeRuleResponse{}, prob
 	}
 	m, prob := s.createRule(ctx, acct, app, req, nil)
@@ -101,6 +102,17 @@ func planKindProblem(acct state.Account, kind string) *api.Problem {
 		kind == string(state.EdgeRuleKindIP) && !limits.EdgeRulesIPAllowed,
 		kind == string(state.EdgeRuleKindAsync) && !limits.AsyncInvokeAllowed:
 		return api.ErrPlanEdgeRuleKindNotAllowed(acct.Plan, kind)
+	}
+	return nil
+}
+
+// kindProblem is the plan gate, then the capability gate, for a new rule's kind.
+func (s *Service) kindProblem(acct state.Account, kind string) *api.Problem {
+	if prob := planKindProblem(acct, kind); prob != nil {
+		return prob
+	}
+	if s.SettingCheck != nil {
+		return s.SettingCheck(acct, kind)
 	}
 	return nil
 }
@@ -151,6 +163,9 @@ func (s *Service) createRule(ctx context.Context, acct state.Account, app state.
 		return m, prob
 	}
 	if prob := s.ValidateEdgeRuleAsyncDestinations(ctx, app.ID, acct.ID, req.Kind, req.Action); prob != nil {
+		return m, prob
+	}
+	if prob := s.RouteTargetProblem(ctx, acct.ID, req.Kind, req.Action); prob != nil {
 		return m, prob
 	}
 	// Default priority=100, enabled=true when unset.
@@ -211,9 +226,11 @@ func (s *Service) createRule(ctx context.Context, acct state.Account, app state.
 		convergence.Abort(ctx)
 		var qe *state.EdgeRuleQuotaError
 		switch {
+		case listMissingProblem(err) != nil:
+			return m, listMissingProblem(err)
 		case errors.As(err, &qe):
 			if qe.PerKind {
-				return m, api.ErrPlanEdgeRuleKindQuotaReached(acct.Plan, qe.Kind, qe.Limit, qe.Observed)
+				return m, api.ErrPlanEdgeRuleKindQuotaReached(acct.Plan, qe.Kind, qe.Observed, qe.Limit)
 			}
 			return m, api.ErrPlanLimitEdgeRules(acct.Plan, qe.Limit, qe.Observed)
 		case errors.Is(err, state.ErrNotFound):
@@ -221,7 +238,7 @@ func (s *Service) createRule(ctx context.Context, acct state.Account, app state.
 		case errors.Is(err, state.ErrConflict):
 			return m, api.ErrEdgeRuleConflict(err.Error())
 		default:
-			return m, api.ErrCapacity("could not create edge rule")
+			return m, trafficproblem.Policy(err, api.ErrCapacity("could not create edge rule"))
 		}
 	}
 	s.Host.Logger().Info("edge rule created",
@@ -273,6 +290,13 @@ func (s *Service) updateRule(ctx context.Context, acct state.Account, row state.
 		}
 		req.MatchHeaders = &matchHeaders
 	}
+	if req.MatchMethods != nil {
+		matchMethods, methodsProb := api.NormalizeEdgeRuleMatchMethods(*req.MatchMethods)
+		if methodsProb != nil {
+			return m, methodsProb
+		}
+		req.MatchMethods = &matchMethods
+	}
 	if req.Priority != nil {
 		if *req.Priority < 0 || *req.Priority > 10000 {
 			return m, api.ErrValidation(fmt.Sprintf("priority must be in 0..10000 (got %d)", *req.Priority))
@@ -316,31 +340,12 @@ func (s *Service) updateRule(ctx context.Context, acct state.Account, row state.
 		if prob := s.ValidateEdgeRuleAsyncDestinations(ctx, row.AppID, acct.ID, string(row.Kind), *req.Action); prob != nil {
 			return m, prob
 		}
+		if prob := s.RouteTargetProblem(ctx, acct.ID, string(row.Kind), *req.Action); prob != nil {
+			return m, prob
+		}
 	} else if req.MatchPath != nil && row.Action.Validate != nil && row.Action.Validate.Parameters != nil {
 		// A path-only update must keep the stored path parameters aligned.
 		if prob := row.Action.Validate.Parameters.Validate(matchPath); prob != nil {
-			return m, prob
-		}
-	}
-	if row.Kind == state.EdgeRuleKindJWT {
-		host, path, methods, headers := row.MatchHost, row.MatchPath, row.MatchMethods, row.MatchHeaders
-		if req.MatchHost != nil {
-			host = *req.MatchHost
-		}
-		if req.MatchPath != nil {
-			path = *req.MatchPath
-		}
-		if req.MatchMethods != nil {
-			methods = *req.MatchMethods
-		}
-		if req.MatchHeaders != nil {
-			headers = *req.MatchHeaders
-		}
-		raw, _ := json.Marshal(row.Action.JWT)
-		if req.Action != nil {
-			raw = *req.Action
-		}
-		if prob := ValidateMCPRuleSelectors(string(row.Kind), host, path, methods, headers, raw); prob != nil {
 			return m, prob
 		}
 	}
@@ -409,7 +414,10 @@ func (s *Service) updateRule(ctx context.Context, acct state.Account, row state.
 		if errors.Is(err, state.ErrNotFound) {
 			return m, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no such edge rule")
 		}
-		return m, api.ErrCapacity("could not update edge rule")
+		if prob := listMissingProblem(err); prob != nil {
+			return m, prob
+		}
+		return m, trafficproblem.Policy(err, api.ErrCapacity("could not update edge rule"))
 	}
 	s.Host.Logger().Info("edge rule updated",
 		"rule", logsanitize.Field(updated.ID),
@@ -431,6 +439,17 @@ func (s *Service) updateRule(ctx context.Context, acct state.Account, row state.
 		return m, api.ErrCapacity("edge rule was saved but the serving fleet has not acknowledged it; read the current rule state before retrying this mutation")
 	}
 	return m, nil
+}
+
+// listMissingProblem answers a rule write the store refused because its
+// condition references a list that was deleted after apid checked it
+// (ADR-091 amendment 2026-10-28), or nil for any other error.
+func listMissingProblem(err error) *api.Problem {
+	var missing *state.EdgeRuleListMissingError
+	if !errors.As(err, &missing) {
+		return nil
+	}
+	return api.ErrValidation(fmt.Sprintf("match references edge rule list %q, which does not exist", missing.Name))
 }
 
 // withPenalty sets a stored action's penalty box (ADR-20261022105846).

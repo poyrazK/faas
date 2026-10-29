@@ -309,6 +309,39 @@ func (c *Client) RollbackOrgProjectEnvironmentPromotion(ctx context.Context, org
 	return out, c.do(ctx, http.MethodPost, path, nil, &out)
 }
 
+// ControlOrgProjectEnvironmentPromotion aborts or recovers a promotion of a
+// project in the named organization (action "abort" or "recover").
+func (c *Client) ControlOrgProjectEnvironmentPromotion(ctx context.Context, orgSlug, projectSlug, environment, promotionID, action string, request ProjectPromotionControlRequest) (ProjectPromotionControl, error) {
+	var out ProjectPromotionControl
+	if !ValidProjectSlug(projectSlug) || !ValidProjectEnvironmentSlug(environment) || promotionID == "" || !request.Valid() || action != "abort" && action != "recover" {
+		return out, fmt.Errorf("invalid promotion control request")
+	}
+	path := orgProjectPath(orgSlug) + "/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(environment) + "/promotions/" + url.PathEscape(promotionID) + "/" + action
+	return out, c.do(ctx, http.MethodPost, path, request, &out)
+}
+
+// RecoverOrgProjectEnvironmentPromotionMigration recovers the interrupted
+// migration of a promotion of a project in the named organization.
+func (c *Client) RecoverOrgProjectEnvironmentPromotionMigration(ctx context.Context, orgSlug, projectSlug, environment, promotionID string, request ProjectPromotionMigrationRecoveryRequest) (ProjectPromotionMigrationRecovery, error) {
+	var out ProjectPromotionMigrationRecovery
+	if !ValidProjectSlug(projectSlug) || !ValidProjectEnvironmentSlug(environment) || !request.Valid() {
+		return out, fmt.Errorf("invalid promotion migration recovery request")
+	}
+	path := orgProjectPath(orgSlug) + "/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(environment) + "/promotions/" + url.PathEscape(promotionID) + "/recover-migration"
+	return out, c.do(ctx, http.MethodPost, path, request, &out)
+}
+
+// PreviewOrgProjectEnvironmentPromotionSecrets previews a promotion with
+// release secret version references for a project in the named organization.
+func (c *Client) PreviewOrgProjectEnvironmentPromotionSecrets(ctx context.Context, orgSlug, projectSlug, target string, req ProjectEnvironmentPromotionSecretPreviewRequest) (ProjectEnvironmentPromotionPreviewResponse, error) {
+	var out ProjectEnvironmentPromotionPreviewResponse
+	if err := ValidatePromotionSecretReferences(req.Secrets); err != nil {
+		return out, err
+	}
+	path := orgProjectPath(orgSlug) + "/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(target) + "/promotion-preview"
+	return out, c.do(ctx, http.MethodPost, path, req, &out)
+}
+
 // ScanOrgProject addresses a project in the named organization.
 func (c *Client) ScanOrgProject(
 	ctx context.Context, orgSlug string,

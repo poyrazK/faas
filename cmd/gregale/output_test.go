@@ -50,6 +50,7 @@ func TestMain(m *testing.M) {
 	// Helper subprocesses (exec of this test binary) inherit the parent's
 	// sandbox; creating their own leaked one empty dir per helper because
 	// they are killed before the deferred cleanup runs.
+	pinGoToolEnv()
 	sandbox, owned := os.Getenv("HOME"), false
 	if !strings.Contains(filepath.Base(sandbox), cliTestHomePrefix) {
 		var err error
@@ -85,9 +86,12 @@ func TestMain(m *testing.M) {
 	resetNOColorCache()
 	on := true
 	testOnlyTTY = &on
+	// ADR-20261023115741: every command stays discoverable unless a test of
+	// capability hiding clears this (capability_visibility_test.go).
+	_ = os.Setenv("FAAS_CAPABILITY_FLAGS_RELEASE_ALL", "1")
 	code := m.Run()
 	if owned {
-		_ = os.RemoveAll(sandbox)
+		removeCLITestSandbox(sandbox)
 	}
 	testOnlyTTY = nil
 	if hadNoColor {
@@ -294,13 +298,13 @@ func TestPrintWarn_DropsBangWhenDisabled(t *testing.T) {
 // dead per-command path.
 func TestPrintUsage_EmitsTwoLinesWithTopic(t *testing.T) {
 	var buf bytes.Buffer
-	PrintUsage(&buf, "usage: gregale ps <app>", "ps")
+	PrintUsage(&buf, "usage: gregale app instances <app>", "ps")
 	got := buf.String()
 	lines := strings.Split(strings.TrimRight(got, "\n"), "\n")
 	if len(lines) != 2 {
 		t.Fatalf("want 2 lines, got %d:\n%s", len(lines), got)
 	}
-	if lines[0] != "usage: gregale ps <app>" {
+	if lines[0] != "usage: gregale app instances <app>" {
 		t.Errorf("line 0 = %q, want exact usage string", lines[0])
 	}
 	want := "  Docs: " + cliDocsURL

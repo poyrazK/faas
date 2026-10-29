@@ -18,11 +18,11 @@ T = TypeVar("T", bound="ListConfigRevisionsResponse")
 
 @_attrs_define
 class ListConfigRevisionsResponse:
-    """A scope's config revisions, newest first, and its newest config guard (ADR-1451)."""
+    """A scope's config revisions, newest first, and its newest config guard."""
 
     revisions: list[ConfigRevision]
     guard: ConfigGuard | Unset = UNSET
-    """A scope's config guard (ADR-1451)."""
+    """A scope's config guard."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

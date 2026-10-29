@@ -496,7 +496,7 @@ an ordinary Commit event with its stable UUID, type and JSON data. All three SDK
 support an optional registered schema version:
 
 ```go
-id, err := faas.InsertCommitEventInTransaction(ctx, tx, faas.CommitEventRequest{
+id, err := preview.InsertCommitEventInTransaction(ctx, tx, preview.CommitEventRequest{
     Type: "invoice.paid", Data: json.RawMessage(`{"invoice_id":"123"}`),
     SchemaVersion: "v1", // omit for schema-free event types
 })

@@ -25,7 +25,7 @@ func cmdEventsSubscriptionCapacityCommands(args []string) int {
 		return 1
 	}
 	if len(positional) != 2 || rejectUnexpectedFlagArgs(fs) || *limit < 1 || *limit > api.EventSubscriptionCapacityCommandPageMax || len(*after) > api.EventSubscriptionCapacityCommandCursorMaxBytes || (*outcome != "any" && *outcome != "applied" && *outcome != "unchanged") || *timeout <= 0 || *timeout > time.Minute {
-		PrintUsage(os.Stderr, "usage: gregale events subscription-capacity-commands <app> <subscription-id> [--outcome any|applied|unchanged] [--limit N] [--after CURSOR] [--timeout DURATION]", "events")
+		PrintUsage(os.Stderr, "usage: gregale event subscription-capacity list <app> <subscription-id> [--outcome any|applied|unchanged] [--limit N] [--after CURSOR] [--timeout DURATION]", "events")
 		return 1
 	}
 	if _, err := uuid.Parse(positional[1]); err != nil {

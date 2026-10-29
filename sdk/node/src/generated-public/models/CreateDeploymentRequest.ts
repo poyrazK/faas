@@ -1,0 +1,112 @@
+/* generated using openapi-typescript-codegen -- do not edit */
+/* istanbul ignore file */
+/* tslint:disable */
+/* eslint-disable */
+import type { AppReleaseReview } from './AppReleaseReview.js';
+import type { CanaryPresetSpec } from './CanaryPresetSpec.js';
+import type { CreateDeploymentOverrides } from './CreateDeploymentOverrides.js';
+import type { Sidecar } from './Sidecar.js';
+import type { WorkflowSpec } from './WorkflowSpec.js';
+/**
+ * Two content-types accepted (see operation description): prebuilt OCI image reference, or multipart source upload. The optional `overrides` object lets a customer redeploy the same digest-pinned image with a different entrypoint / cmd / env / env_secrets / port / startup healthcheck / readiness_probe / liveness_probe without rebuilding the image. The optional `companions` array attaches bounded helper workloads such as an OpenTelemetry collector, database proxy, or reverse proxy. The deprecated `sidecars` spelling remains accepted for existing clients.
+ */
+export type CreateDeploymentRequest = {
+  /**
+   * Reviewed native activation. Requires expected_review, matching target execution mode, an unprotected environment and omitted traffic_percent. Services switch through readiness, routing acknowledgement and drain barriers. Workers activate the newest live generation; this is not zero-traffic staging.
+   */
+  native_rollout?: 'service' | 'worker';
+  /**
+   * Atomically require this review before zero-traffic image staging or native_rollout activation in the reviewed default or named environment. A changed review returns 409 release_review_changed.
+   */
+  expected_review?: AppReleaseReview;
+  /**
+   * registry.gregale.dev/...@sha256:... — digest-pinned OCI reference.
+   */
+  image?: string;
+  /**
+   * Deploy-time overrides (entrypoint, cmd, env, env_secrets, port, healthcheck, readiness_probe, liveness_probe). nil/omitted = deploy the image as-is.
+   */
+  overrides?: (CreateDeploymentOverrides | null);
+  /**
+   * Per-deploy signature-enforcement opt-in. nil = inherit the app's effective signature policy; *true is a no-op when enforcement is already on; *false is rejected with 403 deploy_signature_invalid when apps.require_signed is on or security_policy=enforce (operator policy wins).
+   */
+  require_signed?: boolean | null;
+  /**
+   * Preferred field. Up to 5 stateless helpers total (one init helper and up to four long-running companions); managed presets may omit image. Do not set together with sidecars.
+   */
+  companions?: Array<Sidecar>;
+  /**
+   * Deprecated spelling of companions. Do not set both fields.
+   * @deprecated
+   */
+  sidecars?: Array<Sidecar>;
+  /**
+   * Workflow DAG definitions for this deployment. Paid-plan only; persisted with the deployment and snapshotted at run start.
+   */
+  workflows?: Array<WorkflowSpec>;
+  /**
+   * Per-deployment traffic-split weight. nil = server default 100; explicit 0..100 = opt into canary (Pro/Scale only).
+   */
+  traffic_percent?: number | null;
+  /**
+   * Top-level per-deployment env scope. Lowercase alnum + dash, 1..40 chars, no leading/trailing dash. nil/omitted = `default`.
+   */
+  scope?: string | null;
+  /**
+   * Registered project environment to resolve to the deployment scope. Requires the app to belong to the project; omitted preserves legacy scope behavior.
+   */
+  environment?: string;
+  /**
+   * Free-form operator note. DB CHECK enforces length(reason) <= 280.
+   */
+  reason?: string | null;
+  /**
+   * Closed-set annotation tag. DB CHECK (deployments_tag_set_chk) enforces the same vocabulary.
+   */
+  tag?: 'incident_recovery' | 'hotfix' | 'scheduled_maintenance' | 'compliance_hold' | 'partner_request';
+  /**
+   * Operator label. CLI auto-captures from `git config user.name`; the GitHub integration stamps pusher.name; Action defaults to ${{ github.actor }}.
+   */
+  deployed_by?: string | null;
+  /**
+   * PR number (when known). 0 / NULL collapses to NULL on the row (DB CHECK rejects 0).
+   */
+  pr_number?: number | null;
+  /**
+   * Per-deployment canary ladder. nil/omitted = server default 'none'. For preset='custom', stages carries the customer ladder.
+   */
+  canary?: (CanaryPresetSpec | null);
+  /**
+   * Create-time opt-in for first-wake 5xx auto-rollback; Pro/Scale only, with omitted or null defaulting to false.
+   */
+  rollback_on_5xx?: boolean | null;
+  /**
+   * One-use operator override to allow this deployment to cut over while outstanding MCP tasks still need handler versions it does not provide.
+   */
+  mcp_task_migration_override?: boolean;
+  /**
+   * Release this deployment to production while a deploy freeze is active; the reason is audited with the freezes it overrode.
+   */
+  override_freeze?: string;
+  /**
+   * Build this deployment now, keep it live without traffic, and start its production rollout at this time; deploy freezes are checked at that time.
+   */
+  release_at?: string;
+  /**
+   * Slack or email notification channels told when this deployment, scheduled with release_at, starts or cannot start.
+   */
+  release_notify?: Array<string>;
+  /**
+   * Opt this deployment out of temporary startup CPU headroom. Omitted or null preserves the default boost.
+   */
+  disable_startup_cpu_boost?: boolean | null;
+  /**
+   * Whether to auto-fallback to a self-contained rootfs for images without a Gregale runtime base. Omitted uses the plan default.
+   */
+  full_rootfs_allow_auto?: boolean | null;
+  /**
+   * Tri-state full-rootfs override: null uses the plan default, true forces full-rootfs, false forces the shared-base path.
+   */
+  full_rootfs_override?: boolean | null;
+};
+

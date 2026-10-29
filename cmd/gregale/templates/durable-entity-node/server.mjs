@@ -1,7 +1,7 @@
 import {createServer} from 'node:http';
 import {fileURLToPath} from 'node:url';
 import {readFile} from 'node:fs/promises';
-import {DURABLE_ENTITY_HANDLER_PATH, DURABLE_ENTITY_RESTORE_VALIDATION_PATH, DURABLE_ENTITY_MAX_REQUEST_BYTES} from '@gregale/sdk-node/durable-entities/runtime';
+import {DURABLE_ENTITY_HANDLER_PATH, DURABLE_ENTITY_RESTORE_VALIDATION_PATH, DURABLE_ENTITY_MAX_REQUEST_BYTES} from '@gregale/sdk-node/preview/durable-entities/runtime';
 import {registry} from './registry.mjs';
 
 export function readBody(request, maximum = DURABLE_ENTITY_MAX_REQUEST_BYTES) {

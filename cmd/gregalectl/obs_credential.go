@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"github.com/onebox-faas/faas/pkg/sessioncookie"
 	"net/http"
 	"os"
 	"strings"
@@ -46,7 +47,7 @@ func resolveObsCredential(command, flagToken string) (obsCredential, bool) {
 // the session was issued to, as every other operator session call does.
 func (c obsCredential) apply(req *http.Request) {
 	if c.sessionCookie != "" {
-		req.AddCookie(&http.Cookie{Name: "faas_sid", Value: c.sessionCookie})
+		sessioncookie.AddToRequest(req, c.sessionCookie)
 		req.Header.Set("User-Agent", operatorUserAgent)
 		return
 	}

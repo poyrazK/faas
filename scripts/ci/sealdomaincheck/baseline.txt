@@ -24,7 +24,6 @@ credential unit:faas-s3-gatewayd /etc/faas/secrets/fleet.age
 credential unit:faas-s3-gatewayd /etc/faas/secrets/host.age
 credential unit:faas-schedd /etc/faas/secrets/fleet.age
 credential unit:faas-schedd /etc/faas/secrets/host.age
-loader cmd/gatewayd-internal/log_drains.go 1
 loader cmd/gatewayd-internal/rehearsal_objects.go 1
 loader cmd/gatewayd-internal/run.go 1
 loader cmd/gatewayd-public/main.go 1
@@ -98,6 +97,8 @@ plain issue_ingest_tokens.token_hash
 plain job_run_attach_sessions.attach_token_sha256
 plain login_tokens.token_hash
 plain magic_link_tokens.token_hash
+plain managed_postgres_live_keys.sealed_secret_sig
+plain managed_postgres_live_logins.sealed_login_sig
 plain managed_realtime_channel_batches.payload_hash
 plain managed_realtime_channel_messages.data
 plain managed_realtime_channel_snapshots.data
@@ -112,6 +113,7 @@ plain managed_realtime_publisher_receipts.content_hash
 plain managed_realtime_schedules.data
 plain managed_realtime_subscription_tickets.token_hash
 plain managed_realtime_worker_credentials.token_hash
+plain mcp_bridge_state.sealed
 plain mfa_disable_requests.token_hash
 plain mfa_disable_tokens.token_hash
 plain migration_admissions.adoption_receipt

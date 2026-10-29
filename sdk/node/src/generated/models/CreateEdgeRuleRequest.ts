@@ -29,7 +29,7 @@ import type { EdgeRuleWAFAction } from './EdgeRuleWAFAction.js';
  */
 export type CreateEdgeRuleRequest = {
   /**
-   * Exact host, glob (`*`, `*.example.com`), or `@app` for every hostname the app serves (ADR-1191). Other values starting with `@` are reserved.
+   * Exact host, glob (`*`, `*.example.com`), or `@app` for every hostname the app serves. Other values starting with `@` are reserved.
    */
   match_host: string;
   match_path?: string;
@@ -42,7 +42,7 @@ export type CreateEdgeRuleRequest = {
   enabled?: boolean;
   kind: 'route' | 'rewrite' | 'redirect' | 'headers' | 'cors' | 'jwt' | 'ip' | 'validate' | 'limit' | 'maintenance' | 'geo' | 'throttle' | 'budget' | 'cache' | 'respond' | 'retry' | 'circuit_breaker' | 'async' | 'waf' | 'challenge';
   /**
-   * Top-level source of truth for kind=validate (ADR-128).
+   * Top-level source of truth for kind=validate.
    * Omitted == 'block' (the SQL-side default).
    *
    */

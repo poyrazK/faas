@@ -5,13 +5,13 @@ from uuid import UUID
 
 import httpx
 
-from faas_sdk.api.storage import (
+from faas_sdk.preview.api.storage import (
     delete_object_bucket_encryption,
     get_object_bucket_encryption,
     put_object_bucket_encryption,
 )
 from faas_sdk.client import AuthenticatedClient
-from faas_sdk.models import ObjectBucketEncryption, ObjectBucketEncryptionRequest, ObjectEncryption
+from faas_sdk.preview.models import ObjectBucketEncryption, ObjectBucketEncryptionRequest, ObjectEncryption
 
 
 def test_bucket_default_encryption_configuration() -> None:

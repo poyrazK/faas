@@ -1,0 +1,53 @@
+# Weekly base-image digest refresh (ADR 20261024132405 decision 2).
+#
+# images/Dockerfile.lock pins every upstream base by digest (issue #197
+# B3.5/B3.6), so an upstream patch release behind the same tag (a new CPython
+# 3.12.x, a Debian point release) reaches Gregale only when the lock moves.
+# This job resolves every pinned tag. When a digest moved, it pushes an
+# automation/images-lock-refresh-* branch and opens or comments on one
+# "Base image digests drifted" issue with a link that opens the pull request.
+#
+# The repository's Actions token may not open pull requests, and a pull
+# request opened by that token would not start CI, so a person opens it from
+# the issue. images.yml then builds, smoke-tests and scans the new bases
+# before merge.
+
+name: images-lock-refresh
+
+on:
+  schedule:
+    # Mondays 05:23 UTC: ahead of Dependabot's 06:00 run, off the hour.
+    - cron: "23 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write  # push the automation/images-lock-refresh-* branch
+  issues: write    # open or comment on the tracking issue
+
+concurrency:
+  group: images-lock-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      # Public registries answer anonymously; the resolver fails the run when
+      # any pinned tag cannot be resolved rather than skipping it.
+      - name: Resolve current base digests
+        run: python3 scripts/ci/images_lock_update.py --repo-root .
+
+      - name: Lock gate (same checks as `make images-lock-check`)
+        run: |
+          python3 scripts/ci/images_lock_check.py
+          python3 scripts/ci/audit_dockerfile_froms.py
+
+      - name: Push the refresh branch and file the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci/images_lock_refresh.py --repo-root .

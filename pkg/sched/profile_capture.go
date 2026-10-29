@@ -139,19 +139,29 @@ func (e *Engine) queueAutomaticCapture(ctx context.Context, instanceID string, c
 	if err != nil {
 		return false, "", err
 	}
-	if limits, ok := api.LimitsFor(acct.Plan); !ok || !limits.Profiling.Enabled {
+	limits, ok := api.LimitsFor(acct.Plan)
+	if !ok || !limits.Profiling.Enabled {
 		return false, "plan does not include profiling", nil
+	}
+	if !app.Manifest.Profiling.AutomaticCapturesEnabled() {
+		return false, "the app turned automatic captures off", nil
 	}
 	now := time.Now().UTC()
 	capture.ID, capture.AppID, capture.RequestedInstanceID = uuid.NewString(), app.ID, ins.ID
 	capture.CreatedAt, capture.ExpiresAt = now, now.Add(api.ProfileCaptureRetention)
-	switch err := queue.QueueAutomaticProfileCapture(ctx, app.AccountID, app.ID, capture, minInterval); {
+	switch err := queue.QueueAutomaticProfileCapture(ctx, app.AccountID, app.ID, capture, minInterval, limits.Profiling.CaptureStorageBytes); {
 	case errors.Is(err, state.ErrProfileCaptureRecent):
 		return false, "an automatic capture ran for this app within the minimum interval", nil
 	case errors.Is(err, state.ErrProfileCaptureActive):
 		return false, "a capture is already queued or running for this app", nil
 	case errors.Is(err, state.ErrProfileCaptureQuota):
-		return false, "the account's hourly capture quota is used", nil
+		return false, "the account's hourly automatic capture quota is used", nil
+	case errors.Is(err, state.ErrProfileCaptureStorage):
+		var full *state.ProfileCaptureStorageError
+		if errors.As(err, &full) && full.Automatic {
+			return false, "automatic captures fill their share of the account's capture storage", nil
+		}
+		return false, "the account's profile capture storage is full", nil
 	case err != nil:
 		return false, "", err
 	}

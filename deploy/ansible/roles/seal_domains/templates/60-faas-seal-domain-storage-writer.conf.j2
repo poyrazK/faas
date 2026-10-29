@@ -1,0 +1,7 @@
+# Managed by the seal_domains role (ADR 20261022111812): apid seals Gregale S3
+# secret access keys to the storage seal domain. It holds the public
+# recipient only and cannot open what it seals.
+[Service]
+LoadCredential=faas_seal_domain_storage_recipient:/etc/faas/secrets/domains/storage.age.pub
+Environment=FAAS_SEAL_DOMAIN_STORAGE_RECIPIENT_PATH=%d/faas_seal_domain_storage_recipient
+Environment=FAAS_SEAL_DOMAIN_STORAGE_WRITES={{ faas_seal_domain_storage_writes }}

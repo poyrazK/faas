@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -88,12 +89,30 @@ func (s *Service) GetEventReplayBackfill(w http.ResponseWriter, r *http.Request,
 		api.WriteProblem(w, api.ErrInternal("event replay backfill store"))
 		return
 	}
-	job, err := store.GetEventReplayBackfill(ctx, acct.ID, r.PathValue("jobID"))
+	job, err := s.visibleEventReplayBackfill(ctx, store, acct, r.PathValue("jobID"))
 	if err != nil {
 		api.WriteProblem(w, eventReplayBackfillProblem(err, ctx.Err()))
 		return
 	}
 	httpkit.WriteJSON(w, http.StatusOK, job)
+}
+
+// visibleEventReplayBackfill reads a replay job and answers ErrNotFound for one
+// whose app the caller may not see (ADR-20261025211616).
+func (s *Service) visibleEventReplayBackfill(ctx context.Context, store state.EventReplayBackfillStore, acct state.Account, jobID string) (api.EventReplayBackfillJobResponse, error) {
+	job, err := store.GetEventReplayBackfill(ctx, acct.ID, jobID)
+	if err != nil || job.AppSlug == "" {
+		return job, err
+	}
+	access, err := s.eventAccess(ctx, acct)
+	if err != nil {
+		return job, err
+	}
+	visible, err := access.appSlug(job.AppSlug)
+	if err == nil && !visible {
+		err = state.ErrNotFound
+	}
+	return job, err
 }
 
 func (s *Service) ListEventReplayBackfillItems(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -110,7 +129,11 @@ func (s *Service) ListEventReplayBackfillItems(w http.ResponseWriter, r *http.Re
 		api.WriteProblem(w, api.ErrInternal("event replay backfill store"))
 		return
 	}
-	result, err := store.ListEventReplayBackfillItems(ctx, acct.ID, r.PathValue("jobID"), query)
+	_, err := s.visibleEventReplayBackfill(ctx, store, acct, r.PathValue("jobID"))
+	var result api.EventReplayBackfillItemsResponse
+	if err == nil {
+		result, err = store.ListEventReplayBackfillItems(ctx, acct.ID, r.PathValue("jobID"), query)
+	}
 	if err != nil {
 		problem := eventReplayBackfillItemsProblem(err, ctx.Err())
 		if problem.Status >= http.StatusInternalServerError {
@@ -144,12 +167,40 @@ func (s *Service) RetryFailedEventReplayBackfill(w http.ResponseWriter, r *http.
 		api.WriteProblem(w, api.ErrInternal("event replay backfill store"))
 		return
 	}
+	if _, err := s.visibleEventReplayBackfill(ctx, store, acct, r.PathValue("jobID")); err != nil {
+		api.WriteProblem(w, eventReplayBackfillProblem(err, ctx.Err()))
+		return
+	}
 	result, err := store.RetryFailedEventReplayBackfill(ctx, acct.ID, r.PathValue("jobID"), limit)
 	if err != nil {
 		api.WriteProblem(w, eventReplayBackfillProblem(err, ctx.Err()))
 		return
 	}
 	httpkit.WriteJSON(w, http.StatusOK, result)
+}
+
+// CancelEventReplayBackfill ends a running backfill as cancelled
+// (ADR-20261028095548). Cancelling an ended job returns it unchanged.
+func (s *Service) CancelEventReplayBackfill(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	w.Header().Set("Cache-Control", "no-store")
+	ctx, cancel := context.WithTimeout(r.Context(), api.EventReplayBackfillRequestTimeout)
+	defer cancel()
+	store, ok := s.Host.Store().(state.EventReplayBackfillStore)
+	lifecycle, canEnd := s.Host.Store().(state.EventReplayBackfillLifecycleStore)
+	if !ok || !canEnd {
+		api.WriteProblem(w, api.ErrInternal("event replay backfill store"))
+		return
+	}
+	if _, err := s.visibleEventReplayBackfill(ctx, store, acct, r.PathValue("jobID")); err != nil {
+		api.WriteProblem(w, eventReplayBackfillProblem(err, ctx.Err()))
+		return
+	}
+	job, err := lifecycle.CancelEventReplayBackfill(ctx, acct.ID, r.PathValue("jobID"))
+	if err != nil {
+		api.WriteProblem(w, eventReplayBackfillProblem(err, ctx.Err()))
+		return
+	}
+	httpkit.WriteJSON(w, http.StatusOK, job)
 }
 
 func decodeEventReplayBackfillRequest(r *http.Request) (api.EventReplayBackfillRequest, *api.Problem) {
@@ -177,7 +228,7 @@ func parseEventReplayBackfillItemsQuery(values url.Values) (api.EventReplayBackf
 		return query, api.ErrValidation("after must be a valid continuation cursor")
 	}
 	switch query.State {
-	case "", "pending", "processing", "enqueued", "filtered", "failed", "skipped_captured", "skipped_unknown", "skipped_existing", "skipped_unsettled":
+	case "", "pending", "processing", "enqueued", "filtered", "failed", "skipped_captured", "skipped_unknown", "skipped_existing", "skipped_unsettled", "cancelled":
 	default:
 		return query, api.ErrValidation("state must be a supported backfill item state")
 	}
@@ -196,6 +247,16 @@ func eventReplayBackfillItemsProblem(err, contextErr error) *api.Problem {
 	return eventReplayBackfillProblem(err, nil)
 }
 
+// eventReplayBackfillRangeProblem names the plan's settled-receipt window
+// and the requested range, in seconds.
+func eventReplayBackfillRangeProblem(err error) *api.Problem {
+	var rangeErr *state.EventReplayBackfillRangeError
+	if !errors.As(err, &rangeErr) {
+		return api.ErrValidation("backfill range cannot exceed the plan's settled-receipt retention window")
+	}
+	return api.ErrEventReplayBackfillRange(int64(rangeErr.Limit/time.Second), int64((rangeErr.Range+time.Second-1)/time.Second))
+}
+
 func eventReplayBackfillProblem(err, contextErr error) *api.Problem {
 	switch {
 	case errors.Is(err, state.ErrNotFound):
@@ -203,7 +264,7 @@ func eventReplayBackfillProblem(err, contextErr error) *api.Problem {
 	case errors.Is(err, state.ErrEventReplayBackfillQuery):
 		return api.ErrValidation(err.Error())
 	case errors.Is(err, state.ErrEventReplayBackfillRange):
-		return api.ErrValidation("backfill range cannot exceed the 30-day settled-receipt retention window")
+		return eventReplayBackfillRangeProblem(err)
 	case errors.Is(err, state.ErrEventReplayBackfillDisabled):
 		return api.NewProblem(http.StatusConflict, "event_replay_backfill_disabled", "Subscription disabled", err.Error())
 	case errors.Is(err, state.ErrEventReplayBackfillUnsupported):

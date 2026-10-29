@@ -65,6 +65,13 @@ done
 for d in /run/faas-ibridge/*/; do
   [[ -d "$d" ]] && note "bridge socket directory $d"
 done
+# Bridge units (slice 1c, FAAS_INSTANCE_BRIDGE_UNIT=1): systemd owns them, so
+# a bridge vmmd failed to stop survives every process check above.
+if command -v systemctl >/dev/null 2>&1; then
+  while read -r unit _; do
+    [[ -n "$unit" ]] && note "bridge unit $unit"
+  done < <(systemctl list-units --all --plain --no-legend 'faas-ibridge-*.service' 2>/dev/null || true)
+fi
 
 # 6. Per-instance jail and export mounts. The shared jail tmpfs is expected.
 while read -r _ _ _ _ mountpoint _; do

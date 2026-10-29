@@ -43,7 +43,21 @@ not interpret an operational component in a stale snapshot as fresh evidence.
    retry does not create duplicates. Check clock synchronization if bucket
    timestamps are not divisible by 300 seconds.
 
-5. List operator events and inspect their public pages:
+5. If the source says `deployment success target breached`, the 24-hour
+   deployment-success percentage is below 99% and platform-attributed
+   failures came from at least two accounts (ADR-20261025131406).
+   Customer-caused failure codes and user-code build failures never count. One
+   tenant's failing apps lower the published percentage but do not degrade the
+   page on their own. Find the failing apps:
+
+   ```sql
+   select a.account_id, a.slug, d.error_code, count(*)
+     from deployments d join apps a on a.id = d.app_id
+    where d.status = 'failed' and coalesce(d.rollout_aborted_at, d.created_at) > now() - interval '24 hours'
+    group by 1, 2, 3 order by 4 desc;
+   ```
+
+6. List operator events and inspect their public pages:
 
    ```sh
    gregalectl status incident list --active

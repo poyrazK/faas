@@ -37,6 +37,38 @@ func accessRoute() Route {
 		}}}
 }
 
+// A read with a user token reads only schemas the Data API exposes: the
+// binding login may hold grants on a private schema the Data API keeps
+// unexposed (the support template's base tables behind security-invoker views).
+func TestAdmitTokenSchemaFollowsTheDataAPIExposure(t *testing.T) {
+	reported := accessRoute() // exposes api, catalog
+	unreported := Route{Database: "db_1", DataAPIRole: "shop_api"}
+	for _, tc := range []struct {
+		name       string
+		route      Route
+		schema     string
+		wantSchema string
+		refused    bool
+	}{
+		{"default schema", reported, "", "api", false},
+		{"second exposed schema", reported, "catalog", "catalog", false},
+		{"private schema", reported, "support_private", "", true},
+		{"system schema", reported, "pg_catalog", "", true},
+		{"unreported default", unreported, "", "", false},
+		{"unreported api", unreported, "api", "api", false},
+		{"unreported private schema", unreported, "support_private", "", true},
+	} {
+		f := liveproto.ClientFrame{Type: liveproto.TypeSubscribe, Subscription: "s", Database: "db_1", Rest: "cases?select=id", Schema: tc.schema, Token: "jwt"}
+		code, msg := admitTokenSchema(tc.route, &f)
+		if (code != "") != tc.refused || code != "" && code != liveproto.CodeForbidden {
+			t.Errorf("%s: code=%q msg=%q, refused want %v", tc.name, code, msg, tc.refused)
+		}
+		if !tc.refused && f.Schema != tc.wantSchema {
+			t.Errorf("%s: compiles schema %q, want %q", tc.name, f.Schema, tc.wantSchema)
+		}
+	}
+}
+
 // adr: 20261016151947 — anonymous and server-key live reads follow the Data
 // API's reported rules and reach the hub as claims, never as the key.
 func TestAdmitKeylessFollowsTheDataAPIRules(t *testing.T) {

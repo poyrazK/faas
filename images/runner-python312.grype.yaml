@@ -1,0 +1,68 @@
+# Accepted CPython 3.12 findings for runner-python312 (ADR 20261024132405).
+#
+# scan-oci-image.sh applies this file to the publication gate pass and
+# scan-published-images.sh to the nightly CVE monitor (ADR-131); the full
+# image report stays unfiltered. Every rule pins the exact CPython binary it
+# was reviewed against, so it lapses when the base moves to the next 3.12
+# patch release and the finding comes back for review.
+#
+# Reviewed 2026-10-24 against the CPython sources of v3.12.15, v3.13.16 and
+# v3.14.8 (the fix lines themselves, not grype's fix versions or OSV's git
+# ranges, which both count release commits as fixes). No 3.12 release fixes
+# any of these, so a base refresh cannot clear them. Each one is reached only
+# when function code calls the named standard-library API.
+ignore:
+  - vulnerability: CVE-2025-12781
+    reason: >-
+      base64.b64decode() accepts '+' and '/' even when altchars is set. No
+      CPython release fixes it; 3.15 deprecates the behaviour. Reached only by
+      code that decodes untrusted input with altchars.
+    package:
+      name: python
+      version: 3.12.15
+      type: binary
+  - vulnerability: CVE-2025-15366
+    reason: >-
+      imaplib sends NUL, CR and LF in commands, so untrusted input can inject
+      IMAP commands. Fixed in 3.13.16 and 3.14.8, not in 3.12. Reached only by
+      code that builds imaplib commands from untrusted input.
+    package:
+      name: python
+      version: 3.12.15
+      type: binary
+  - vulnerability: CVE-2025-15367
+    reason: >-
+      poplib sends control characters in commands, so untrusted input can
+      inject POP3 commands. No CPython release fixes it. Reached only by code
+      that builds poplib commands from untrusted input.
+    package:
+      name: python
+      version: 3.12.15
+      type: binary
+  - vulnerability: CVE-2026-12345
+    reason: >-
+      tempfile.TemporaryDirectory cleanup races with a writer that swaps a
+      directory for a symlink. Needs an attacker already running code in the
+      same guest. No CPython release fixes it; the 3.14 branch has the fix.
+    package:
+      name: python
+      version: 3.12.15
+      type: binary
+  - vulnerability: CVE-2026-3446
+    reason: >-
+      base64 decoding stops at the first padded quad and ignores the rest.
+      Fixed in 3.13.16 and 3.14.8, not in 3.12. Reached only by code that
+      relies on base64 decoding to validate untrusted input.
+    package:
+      name: python
+      version: 3.12.15
+      type: binary
+  - vulnerability: CVE-2026-6019
+    reason: >-
+      http.cookies BaseCookie.js_output() does not neutralize a closing script
+      tag in cookie values. Fixed in 3.13.16 and 3.14.8, not in 3.12. Reached
+      only by code that renders cookies into HTML with js_output().
+    package:
+      name: python
+      version: 3.12.15
+      type: binary

@@ -272,11 +272,12 @@ print(Template(pathlib.Path(sys.argv[1]).read_text()).render(public_iface="eth0"
     faas_compute_allowed_cidrs=["10.42.0.2/32"], faas_compute_allowed_ports=[9091],
     faas_edge_peer_cidrs=["10.42.0.2/32", "10.42.0.3/32"], faas_edge_peer_gateway_port=8080,
     faas_control_plane_allowed_cidrs=["10.42.0.1/32"], faas_control_plane_allowed_ports=[9092],
-    faas_edge_connector_metrics_port=20241), end="")
+    faas_edge_connector_metrics_port=20241, faas_edge_control_port=9109), end="")
 `
 	private := `ip saddr 10.42.0.2/32 tcp dport 8090 accept comment "faas app edge forwards from compute (ADR-1343)"`
 	peer := `ip saddr 10.42.0.3/32 tcp dport 8080 accept comment "faas app edge compute-pool fallback (ADR-1343)"`
 	connector := `ip saddr 10.42.0.1/32 tcp dport 20241 accept comment "faas app edge connector metrics from control (ADR-1343)"`
+	control := `ip saddr 10.42.0.1/32 tcp dport 9109 accept comment "faas app edge control listener from control (ADR-1343)"`
 	for _, tc := range []struct {
 		enabled string
 		want    bool
@@ -286,7 +287,7 @@ print(Template(pathlib.Path(sys.argv[1]).read_text()).render(public_iface="eth0"
 			if err != nil {
 				t.Fatalf("standard Jinja render failed: %v: %s", err, output)
 			}
-			for _, rule := range []string{private, peer, connector} {
+			for _, rule := range []string{private, peer, connector, control} {
 				if got := strings.Contains(string(output), rule); got != tc.want {
 					t.Errorf("rule %q present = %v, want %v", rule, got, tc.want)
 				}
@@ -352,5 +353,40 @@ func TestComputeEdgeScrapeJobsFollowTheSwitch(t *testing.T) {
 	}
 	if !strings.Contains(read("nftables", "defaults", "main.yml"), "faas_edge_connector_metrics_port: 20241") {
 		t.Error("the firewall admits a different connector metrics port than the connector binds")
+	}
+	if !strings.Contains(read("nftables", "defaults", "main.yml"), "faas_edge_control_port: "+ComputeEdgeControlPort+"\n") {
+		t.Error("the firewall admits a different edge control port than the edge binds")
+	}
+}
+
+// The edge's control listener binds every address on a compute node, so its
+// port must be one no other compute-node listener holds. On rc.296 it was
+// 9092, gatewayd-internal's egress listener, and the edge never started.
+func TestComputeEdgeControlPortIsFreeOnComputeNodes(t *testing.T) {
+	// Listeners on a production compute node (ss -ltn, 2026-10-26) plus the
+	// edge's own public socket and its connector's metrics.
+	taken := map[string]string{
+		"22": "sshd", "53": "resolver", "5354": "service DNS", "8080": "gatewayd-internal",
+		"8090": "the edge's public socket", "9090": "gatewayd-internal control", "9091": "schedd",
+		"9092": "gatewayd-internal egress", "9097": "gatewayd-internal private control",
+		"9100": "node_exporter", "9102": "imaged", "9103": "schedd metrics", "9104": "vmmd metrics",
+		"9105": "builderd", "9107": "realtimed", "10080": "gatewayd-internal", "10081": "gatewayd-internal",
+		"20201": "vmmd stream bridge", "20202": "vmmd stream bridge", "20241": "cloudflared metrics",
+		"50051": "vmmd",
+	}
+	if owner, ok := taken[ComputeEdgeControlPort]; ok {
+		t.Fatalf("edge control port %s is held by %s on a compute node", ComputeEdgeControlPort, owner)
+	}
+	env := map[string]string{}
+	for _, kv := range UnitGatewaydPublicEdge().Environment {
+		env[kv.Key] = kv.Value
+	}
+	if want := "0.0.0.0:" + ComputeEdgeControlPort; env["FAAS_PUBLIC_CONTROL_ADDR"] != want {
+		t.Errorf("edge FAAS_PUBLIC_CONTROL_ADDR = %q, want %q", env["FAAS_PUBLIC_CONTROL_ADDR"], want)
+	}
+	for _, d := range OptionalRegistry {
+		if d.Name == "gatewayd-public-edge" && d.Lifecycle.ReadyzURL != "http://127.0.0.1:"+ComputeEdgeControlPort+"/readyz" {
+			t.Errorf("edge readiness probe %q does not use the edge control port", d.Lifecycle.ReadyzURL)
+		}
 	}
 }

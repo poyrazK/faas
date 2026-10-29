@@ -46,11 +46,11 @@ func sealCreateWebhook(ctx context.Context, req api.CreateAlertRuleRequest) ([]b
 	if prob := resolveAndCheckEgress(ctx, req.WebhookURL); prob != nil {
 		return nil, prob
 	}
-	recipient := hostSecretRecipient()
-	if recipient == nil {
-		return nil, api.ErrCapacity("host age recipient not loaded — refusing to seal webhook secret")
+	recipients, err := alertingCredentialRecipients()
+	if err != nil {
+		return nil, api.ErrCapacity("alerting recipient not loaded — refusing to seal webhook secret")
 	}
-	sealed, err := secretbox.SealBytes(recipient, alertRuleSecretSealLabel, []byte(req.WebhookSecret), api.AlertRuleWebhookSecretMaxBytes)
+	sealed, err := secretbox.SealBytesTo(recipients, alertRuleSecretSealLabel, []byte(req.WebhookSecret), api.AlertRuleWebhookSecretMaxBytes)
 	if err != nil {
 		if prob := api.AsProblem(err); prob != nil {
 			return nil, prob

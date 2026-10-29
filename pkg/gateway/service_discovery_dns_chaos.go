@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/miekg/dns"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/chaos"
 )
 
@@ -28,6 +29,9 @@ type serviceDiscoveryDNSChaos struct {
 	resolve ServiceDiscoveryDNSChaosResolver
 	observe ServiceDiscoveryDNSChaosObserver
 	ordinal atomic.Uint64
+	// unavailableUntil (unix nanoseconds) skips policy reads after a failed
+	// one, so a slow store does not delay every guest's private answers.
+	unavailableUntil atomic.Int64
 }
 
 // WithScenarioDNSChaos enables bounded faults for private *.svc.gregale
@@ -43,7 +47,7 @@ func (h *ServiceDiscoveryDNSHandler) WithScenarioDNSChaos(resolve ServiceDiscove
 
 func (h *ServiceDiscoveryDNSHandler) applyScenarioDNSChaos(ctx context.Context, w dns.ResponseWriter, req *dns.Msg, remote string) bool {
 	controller := h.scenarioChaos
-	if controller == nil || len(req.Question) == 0 {
+	if controller == nil || len(req.Question) == 0 || time.Now().UnixNano() < controller.unavailableUntil.Load() {
 		return false
 	}
 	ordinal := controller.ordinal.Add(1)
@@ -52,9 +56,12 @@ func (h *ServiceDiscoveryDNSHandler) applyScenarioDNSChaos(ctx context.Context, 
 		if target == "" {
 			continue
 		}
-		policy, err := controller.resolve(ctx, remote, target)
+		lookupCtx, cancel := context.WithTimeout(ctx, api.ServiceDNSChaosLookupTimeout)
+		policy, err := controller.resolve(lookupCtx, remote, target)
+		cancel()
 		if err != nil {
-			h.log.Warn("guest DNS scenario chaos policy unavailable", "target", target, "err", err)
+			controller.unavailableUntil.Store(time.Now().Add(api.ServiceDNSChaosBackoff).UnixNano())
+			h.log.Warn("guest DNS scenario chaos policy unavailable", "target", target, "err", err, "retry_after", api.ServiceDNSChaosBackoff)
 			return false
 		}
 		if policy.RunID == "" || policy.CallerAppID == "" || !policy.Lease.ExpiresAt.After(time.Now()) {

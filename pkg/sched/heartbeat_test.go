@@ -60,6 +60,9 @@ type heartbeatFakeDialer struct {
 	pingDelay time.Duration
 	active    int
 	maxActive int
+	// baseGenerations is the base generation report Ping returns per
+	// targetURL (ADR-20261022184531).
+	baseGenerations map[string][]BaseGenerationReadiness
 }
 
 func (h *heartbeatFakeDialer) Dial(_ context.Context, target string, _ *tls.Config) (VMM, error) {
@@ -89,6 +92,7 @@ func (h *heartbeatFakeVMM) Ping(_ context.Context) (*PingOutcome, error) {
 	}
 	err := h.dialer.pingErr[h.target]
 	delay := h.dialer.pingDelay
+	bases := h.dialer.baseGenerations[h.target]
 	h.dialer.mu.Unlock()
 	if delay > 0 {
 		time.Sleep(delay)
@@ -99,7 +103,7 @@ func (h *heartbeatFakeVMM) Ping(_ context.Context) (*PingOutcome, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &PingOutcome{FcVersion: "1.10.0", ServerTime: time.Now()}, nil
+	return &PingOutcome{FcVersion: "1.10.0", ServerTime: time.Now(), BaseGenerations: bases}, nil
 }
 
 func (h *heartbeatFakeVMM) CreateColdBoot(context.Context, string, AppSpec) (*WakeOutcome, error) {

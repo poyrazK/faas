@@ -96,7 +96,9 @@ CROSS JOIN LATERAL (
 ) latest;
 
 -- name: EventReceiptReplayTarget :one
-SELECT a.id AS app_id FROM event_fanout_outbox o
+SELECT a.id AS app_id,
+       coalesce(o.recipient_progress -> (s.recipient->>'id') ->> 'delivery_id', '')::text AS delivery_id
+FROM event_fanout_outbox o
 CROSS JOIN LATERAL (
     SELECT recipient FROM jsonb_array_elements(coalesce(o.recipient_snapshot, '[]'::jsonb)) captured(recipient)
     UNION ALL
@@ -132,19 +134,23 @@ WHERE account_id=sqlc.arg(account_id)::uuid AND source=sqlc.arg(source)::text AN
 FOR SHARE;
 
 -- name: EventStorageUsage :one
-SELECT count(*)::bigint AS retained_events, coalesce(sum(customer_storage_bytes),0)::bigint AS retained_bytes
-FROM event_fanout_outbox WHERE account_id=sqlc.arg(account_id)::uuid AND customer_storage_bytes>0;
+-- ADR-20261023215834: the trigger-kept counts, not a scan of every
+-- retained receipt under the account's admission lock.
+SELECT coalesce(max(retained_events),0)::bigint AS retained_events, coalesce(max(retained_bytes),0)::bigint AS retained_bytes
+FROM event_receipt_usage WHERE account_id=sqlc.arg(account_id)::uuid;
 
 -- name: EventStoragePublicUsage :one
-SELECT a.plan, coalesce(u.retained_events,0)::bigint AS retained_events,
-       coalesce(u.retained_bytes,0)::bigint AS retained_bytes, coalesce(u.pending_events,0)::bigint AS pending_events,
+-- Pending receipts are read through the pending and lease indexes, so the
+-- account's settled history is not scanned.
+SELECT a.plan, coalesce(r.retained_events,0)::bigint AS retained_events,
+       coalesce(r.retained_bytes,0)::bigint AS retained_bytes, coalesce(u.pending_events,0)::bigint AS pending_events,
        u.oldest_pending_at::timestamptz AS oldest_pending_at
 FROM accounts a
+LEFT JOIN event_receipt_usage r ON r.account_id=a.id
 LEFT JOIN LATERAL (
-    SELECT count(*)::bigint AS retained_events, coalesce(sum(o.customer_storage_bytes),0)::bigint AS retained_bytes,
-           count(*) FILTER (WHERE o.state <> 'delivered')::bigint AS pending_events,
-           min(o.created_at) FILTER (WHERE o.state <> 'delivered') AS oldest_pending_at
+    SELECT count(*)::bigint AS pending_events, min(o.created_at) AS oldest_pending_at
     FROM event_fanout_outbox o WHERE o.account_id=a.id AND o.customer_storage_bytes>0
+     AND (o.state='pending' OR o.state='processing')
 ) u ON true WHERE a.id=sqlc.arg(account_id)::uuid;
 
 -- name: EventStorageAppend :exec
@@ -261,3 +267,15 @@ CROSS JOIN LATERAL (SELECT event_subscription_delivery_waiting_reason(b.account_
 CROSS JOIN LATERAL (SELECT CASE WHEN b.routing_state='pending' AND NOT (b.routing_mode='event' AND coalesce(b.lease_until>sqlc.arg(observed_at)::timestamptz,false)) AND control.reason<>'' THEN control.reason ELSE event_backlog_waiting_reason(b.routing_state,b.capacity_scope,b.routing_mode,b.lease_until,b.next_attempt_at,b.consumer_kind,ordering.blocker,sqlc.arg(observed_at)::timestamptz) END AS reason) observation
 WHERE b.account_id=sqlc.arg(account_id)::uuid AND b.outbox_id=sqlc.arg(outbox_id)::bigint
  AND b.subscription_id=sqlc.arg(subscription_id)::text;
+
+-- name: EventReceiptScope :one
+-- The producer and each recipient's app, for company access on the account
+-- routes (ADR-20261025211616).
+SELECT coalesce(o.payload->>'producer', '')::text AS producer,
+       coalesce((SELECT jsonb_object_agg(s.recipient->>'id', s.recipient->>'app_id') FROM (
+           SELECT captured.recipient FROM jsonb_array_elements(coalesce(o.recipient_snapshot, '[]'::jsonb)) captured(recipient)
+           UNION ALL
+           SELECT added.recipient FROM event_fanout_recipients added WHERE added.outbox_id=o.id AND added.receipt_position IS NOT NULL
+       ) s), '{}'::jsonb)::jsonb AS recipient_apps
+FROM event_fanout_outbox o
+WHERE o.account_id=sqlc.arg(account_id)::uuid AND o.source=sqlc.arg(event_source)::text AND o.event_id=sqlc.arg(event_id)::text;

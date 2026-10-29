@@ -93,8 +93,7 @@ def sync_detailed(
 ) -> Response[ListAuditLogResponse | Problem]:
     """List the caller's audit-log entries (post-deletion evidence).
 
-     Newest-first. Reads the FK-free `audit_log` table
-    (migrations/00163_audit_log.sql), distinct from
+     Newest-first. Reads the FK-free `audit_log` table, distinct from
     `/v1/audit-events` which reads the live `events` table. The
     `audit_log` table is append-only by spec (ISO 27001 SoA
     A.5.33 — retention forever) and a regulator / DPO can replay
@@ -145,8 +144,7 @@ def sync(
 ) -> ListAuditLogResponse | Problem | None:
     """List the caller's audit-log entries (post-deletion evidence).
 
-     Newest-first. Reads the FK-free `audit_log` table
-    (migrations/00163_audit_log.sql), distinct from
+     Newest-first. Reads the FK-free `audit_log` table, distinct from
     `/v1/audit-events` which reads the live `events` table. The
     `audit_log` table is append-only by spec (ISO 27001 SoA
     A.5.33 — retention forever) and a regulator / DPO can replay
@@ -192,8 +190,7 @@ async def asyncio_detailed(
 ) -> Response[ListAuditLogResponse | Problem]:
     """List the caller's audit-log entries (post-deletion evidence).
 
-     Newest-first. Reads the FK-free `audit_log` table
-    (migrations/00163_audit_log.sql), distinct from
+     Newest-first. Reads the FK-free `audit_log` table, distinct from
     `/v1/audit-events` which reads the live `events` table. The
     `audit_log` table is append-only by spec (ISO 27001 SoA
     A.5.33 — retention forever) and a regulator / DPO can replay
@@ -242,8 +239,7 @@ async def asyncio(
 ) -> ListAuditLogResponse | Problem | None:
     """List the caller's audit-log entries (post-deletion evidence).
 
-     Newest-first. Reads the FK-free `audit_log` table
-    (migrations/00163_audit_log.sql), distinct from
+     Newest-first. Reads the FK-free `audit_log` table, distinct from
     `/v1/audit-events` which reads the live `events` table. The
     `audit_log` table is append-only by spec (ISO 27001 SoA
     A.5.33 — retention forever) and a regulator / DPO can replay

@@ -16,8 +16,12 @@ type RehearsalSimulationPolicyStore interface {
 func (m *Manager) InstanceRehearsalRelayIdentity(ctx context.Context, id string) (string, string, string, error) {
 	m.mu.Lock()
 	inst := m.live[id]
+	booting, waking := m.waking[id]
 	if inst == nil {
 		m.mu.Unlock()
+		if waking {
+			return m.bootingRehearsalRelayIdentity(ctx, booting)
+		}
 		return "", "", "", errors.New("simulation instance is not live")
 	}
 	app, account, installed := inst.AppID, inst.AccountID, inst.Net.RehearsalRunID
@@ -48,4 +52,32 @@ func (m *Manager) InstanceRehearsalRelayIdentity(ctx context.Context, id string)
 		return "", "", "", ErrRehearsalExternalActionDenied
 	}
 	return app, account, run, nil
+}
+
+// bootingRehearsalRelayIdentity grants a booting instance no simulation: its
+// containment run is installed only when it goes live. Outside simulation it
+// returns no run, and the relay falls through to the external-action rule
+// (ADR-1141 amendment 2026-10-24).
+func (m *Manager) bootingRehearsalRelayIdentity(ctx context.Context, booting wakingInstance) (string, string, string, error) {
+	if booting.contained {
+		return "", "", "", ErrRehearsalExternalActionDenied
+	}
+	if booting.qualification {
+		return "", "", "", ErrQualificationExternalActionDenied
+	}
+	if booting.appID == "" {
+		return "", "", "", nil
+	}
+	store, ok := m.rehearsalNetworkPolicies.(RehearsalSimulationPolicyStore)
+	if !ok {
+		return "", "", "", nil
+	}
+	run, err := store.ScenarioRehearsalSimulationRun(ctx, booting.appID)
+	if err != nil {
+		return "", "", "", err
+	}
+	if run != "" {
+		return "", "", "", ErrRehearsalExternalActionDenied
+	}
+	return "", "", "", nil
 }

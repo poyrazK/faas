@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createRealtimeClient, REALTIME_RESUME_SUBPROTOCOL, type RealtimeSocket } from '../src/index.js';
+import { createRealtimeClient, REALTIME_RESUME_SUBPROTOCOL, type RealtimeSocket } from '../src/preview.js';
 
 class FakeSocket extends EventTarget implements RealtimeSocket {
   protocol = REALTIME_RESUME_SUBPROTOCOL;

@@ -13,7 +13,22 @@ import (
 )
 
 func queueCanarySnapshotDB(ctx context.Context, db sqlc.DBTX, account, app, deployment, binding string) (queueCanarySnapshot, error) {
-	raw, err := sqlc.New().QueueCanarySnapshot(ctx, db, sqlc.QueueCanarySnapshotParams{AccountID: mustPgUUID(account), AppID: mustPgUUID(app), DeploymentID: mustPgUUID(deployment), Binding: binding})
+	return readQueueCanarySnapshot(ctx, db, account, app, deployment, binding, true)
+}
+
+// lock takes the row locks a canary write needs; read-only snapshot views read
+// the same rows without them.
+func readQueueCanarySnapshot(ctx context.Context, db sqlc.DBTX, account, app, deployment, binding string, lock bool) (queueCanarySnapshot, error) {
+	params := sqlc.QueueCanarySnapshotParams{AccountID: mustPgUUID(account), AppID: mustPgUUID(app), DeploymentID: mustPgUUID(deployment), Binding: binding}
+	var raw sqlc.QueueCanarySnapshotRow
+	var err error
+	if lock {
+		raw, err = sqlc.New().QueueCanarySnapshot(ctx, db, params)
+	} else {
+		var view sqlc.QueueCanarySnapshotViewRow
+		view, err = sqlc.New().QueueCanarySnapshotView(ctx, db, sqlc.QueueCanarySnapshotViewParams(params))
+		raw = sqlc.QueueCanarySnapshotRow(view)
+	}
 	var s queueCanarySnapshot
 	if err != nil {
 		return s, mapErr(err)
@@ -120,10 +135,20 @@ func createQueueBindingCanaryTx(ctx context.Context, tx pgx.Tx, account, app str
 }
 
 func (s *PgStore) GetQueueBindingCanary(ctx context.Context, account, app, id string) (api.QueueBindingCanary, error) {
+	return getQueueBindingCanary(ctx, s.pool, account, app, id, true)
+}
+
+// ADR-570: dispatch validation reads the canary in the invocation version
+// snapshot's committed view.
+func (s invocationVersionPolicyReader) GetQueueBindingCanary(ctx context.Context, account, app, id string) (api.QueueBindingCanary, error) {
+	return getQueueBindingCanary(ctx, s.tx, account, app, id, false)
+}
+
+func getQueueBindingCanary(ctx context.Context, db sqlc.DBTX, account, app, id string, lock bool) (api.QueueBindingCanary, error) {
 	if !canonicalStateUUID(id) {
 		return api.QueueBindingCanary{}, ErrInvalidArgument
 	}
-	row, err := sqlc.New().ReadQueueCanary(ctx, s.pool, sqlc.ReadQueueCanaryParams{AccountID: mustPgUUID(account), AppID: mustPgUUID(app), ID: mustPgUUID(id)})
+	row, err := sqlc.New().ReadQueueCanary(ctx, db, sqlc.ReadQueueCanaryParams{AccountID: mustPgUUID(account), AppID: mustPgUUID(app), ID: mustPgUUID(id)})
 	if err != nil {
 		return api.QueueBindingCanary{}, mapErr(err)
 	}
@@ -134,7 +159,7 @@ func (s *PgStore) GetQueueBindingCanary(ctx context.Context, account, app, id st
 	r := queueCanaryRecord{Snapshot: snap, Cancelled: row.Cancelled, CompletedDeploymentID: pgUUIDString(row.CompletedDeploymentID), CompletedAttempt: int(row.CompletedAttempt.Int32), CompletedGeneration: row.CompletedGeneration.Int64,
 		Report: api.QueueBindingCanary{ID: id, Binding: snap.Name, DeploymentID: snap.DeploymentID, Scope: snap.Scope, ReleaseID: snap.ReleaseID, PublishedAt: row.PublishedAt.Time, ExpiresAt: row.ExpiresAt.Time}}
 	inv := Invocation{State: InvocationState(row.InvocationState), Attempts: int(row.Attempts), ReplayGeneration: row.ReplayGeneration, ReceivedAt: invocationTimePointer(row.ReceivedAt), CompletedAt: invocationTimePointer(row.CompletedAt)}
-	current, err := queueCanarySnapshotDB(ctx, s.pool, account, app, snap.DeploymentID, snap.Name)
+	current, err := readQueueCanarySnapshot(ctx, db, account, app, snap.DeploymentID, snap.Name, lock)
 	if errors.Is(err, ErrNotFound) {
 		return queueCanaryStatus(r, inv, nil, time.Now()), nil
 	}
@@ -167,7 +192,9 @@ func (s *PgStore) LatestQueueBindingCanary(ctx context.Context, account, app, de
 
 // The dispatch gate reads persisted identity, never a customer marker.
 func validateQueueCanaryDispatch(ctx context.Context, store invocationAppReader, app App, inv Invocation, required bool) error {
-	canaries, ok := store.(QueueBindingCanaryStore)
+	canaries, ok := store.(interface {
+		GetQueueBindingCanary(context.Context, string, string, string) (api.QueueBindingCanary, error)
+	})
 	if !ok || !canonicalStateUUID(inv.ID) {
 		if required {
 			return ErrConflict

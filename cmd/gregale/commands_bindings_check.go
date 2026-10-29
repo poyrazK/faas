@@ -63,7 +63,7 @@ func cmdBindingsCheck(args []string) int {
 		return cmdBindingsCheckInteractive(slug, *timeout, *pollInterval)
 	}
 	if len(positionals) != 1 || !api.ValidAppSlug(strings.TrimSpace(positionals[0])) || *maxAge <= 0 || *timeout <= 0 || *pollInterval <= 0 || !validBindingDeploymentFlag(*deployment) {
-		PrintUsage(osStderr, "usage: gregale bindings check <app> [--deployment ID|vN] [--scope SCOPE] [--release-policy] [--max-verification-age DURATION] [--allow-unsupported] [--require-application-ack] [--wait --timeout DURATION --poll-interval DURATION] [--json]", "bindings")
+		PrintUsage(osStderr, "usage: gregale app binding check <app> [--deployment ID|vN] [--scope SCOPE] [--release-policy] [--max-verification-age DURATION] [--allow-unsupported] [--require-application-ack] [--wait --timeout DURATION --poll-interval DURATION] [--json]", "bindings")
 		return 1
 	}
 

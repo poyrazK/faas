@@ -76,6 +76,18 @@ func (p *orgAccessPool) BeginTx(ctx context.Context, options pgx.TxOptions) (pgx
 	return tx, nil
 }
 
+// guardOrgAccessTx applies the request's access fence to a transaction begun
+// on a session-locked connection, which bypasses orgAccessPool.BeginTx. It
+// runs after the transaction's LOCK statements so their order is unchanged; a
+// revocation committed after the snapshot surfaces as 40001 and is retried.
+func guardOrgAccessTx(ctx context.Context, tx pgx.Tx) error {
+	fence, ok := orgAccessFrom(ctx)
+	if !ok {
+		return nil
+	}
+	return lockOrgAccess(ctx, tx, fence)
+}
+
 func checkOrgAccessSnapshot(ctx context.Context, tx pgx.Tx, f OrgAccessFence) error {
 	row, err := accesssql.New().Snapshot(ctx, tx, accesssql.SnapshotParams{OrgID: mustPgUUID(f.OrgID), AccountID: mustPgUUID(f.AccountID)})
 	if errors.Is(err, pgx.ErrNoRows) || err == nil && row.AccessRevision != f.Revision {

@@ -1,0 +1,67 @@
+---
+# Promtail → Alloy cutover on one host (ADR-20261023185953 Decision 6).
+# Promtail's positions are not converted. Alloy starts once with a short
+# read-back window, which covers the gap; at most that much is sent twice,
+# and Loki drops exact duplicates in a stream. Only after Alloy has saved its
+# own position does the config return to the normal window: a later restart
+# then resumes from that position instead of re-reading 12 hours.
+
+- name: alloy cutover — stop Promtail
+  ansible.builtin.systemd:
+    name: promtail
+    state: stopped
+    enabled: false
+  failed_when: false
+
+- name: alloy cutover — start Alloy with the short read-back window
+  ansible.builtin.systemd:
+    name: alloy
+    state: restarted
+    enabled: true
+    daemon_reload: true
+
+- name: alloy cutover — wait for Alloy to report ready
+  ansible.builtin.uri:
+    url: "http://{{ alloy_effective_listen_address }}:{{ alloy_listen_port }}/-/ready"
+    status_code: 200
+  register: alloy_cutover_ready
+  until: alloy_cutover_ready.status == 200
+  retries: 30
+  delay: 2
+
+- name: alloy cutover — wait for Alloy to save its journal position
+  ansible.builtin.find:
+    paths: "{{ alloy_storage_path }}"
+    recurse: true
+    patterns: ["positions.yml", "positions.yaml"]
+  register: alloy_cutover_positions
+  until: alloy_cutover_positions.matched > 0
+  retries: 30
+  delay: 10
+
+- name: alloy cutover — record that this host has cut over
+  ansible.builtin.copy:
+    content: "Promtail positions were replaced by Alloy's on {{ ansible_date_time.iso8601 | default('cutover') }}.\n"
+    dest: "{{ alloy_storage_path }}/.cutover-from-promtail-done"
+    owner: alloy
+    group: alloy
+    mode: "0640"
+
+- name: alloy cutover — return to the normal read-back window
+  ansible.builtin.set_fact:
+    alloy_effective_max_age: "{{ alloy_journal_max_age }}"
+
+- name: alloy cutover — render config with the normal window
+  ansible.builtin.template:
+    src: config.alloy.j2
+    dest: "{{ alloy_config_path }}"
+    owner: root
+    group: alloy
+    mode: "0640"
+  notify: restart alloy
+
+- name: alloy cutover — keep Promtail's positions for reference only
+  ansible.builtin.command:
+    argv: [mv, /var/lib/promtail/positions.yaml, /var/lib/promtail/positions.yaml.replaced-by-alloy]
+  args:
+    removes: /var/lib/promtail/positions.yaml

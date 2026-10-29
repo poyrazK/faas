@@ -66,7 +66,8 @@ func TestWakeHistoryByWakeIDsStores(t *testing.T) {
 				}
 			}
 			event("wake.boot_started", app, restored, at, map[string]any{"method": "restore", "trigger": "service.mesh"})
-			event("wake.boot_completed", app, restored, at.Add(610*time.Millisecond), nil)
+			// vmmd's fallback: the planned restore ran as a cold boot (Hunt 12 H12-49).
+			event("wake.boot_completed", app, restored, at.Add(610*time.Millisecond), map[string]any{"method": "cold_boot"})
 			event("wake.boot_started", app, unfinished, at.Add(2*time.Second), map[string]any{"method": "cold_boot"})
 
 			rows, err := s.ListWakeHistoryByWakeIDs(t.Context(), []string{app}, []string{restored, unfinished, foreign, unknown})
@@ -79,7 +80,11 @@ func TestWakeHistoryByWakeIDsStores(t *testing.T) {
 			if !rows[0].HasMeta || rows[0].CompletedAt.Sub(rows[0].BootAt) != 610*time.Millisecond {
 				t.Fatalf("restored wake = %+v, want boot and completion", rows[0])
 			}
-			if !rows[1].HasMeta || !rows[1].CompletedAt.IsZero() {
+			var completed struct{ Method string }
+			if err := json.Unmarshal(rows[0].CompletedData, &completed); err != nil || completed.Method != "cold_boot" {
+				t.Fatalf("restored wake completion = %s (%v), want the method vmmd ran", rows[0].CompletedData, err)
+			}
+			if !rows[1].HasMeta || !rows[1].CompletedAt.IsZero() || rows[1].CompletedData != nil {
 				t.Fatalf("unfinished wake = %+v, want a boot and no completion", rows[1])
 			}
 			if rows, err := s.ListWakeHistoryByWakeIDs(t.Context(), nil, []string{restored}); err != nil || len(rows) != 0 {

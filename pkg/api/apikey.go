@@ -332,16 +332,21 @@ func ConstantTimeEqualHash(a, b []byte) bool {
 //
 // The closed vocabulary is mirrored at the DB layer by migration
 // 00046's api_keys_scopes_vocab_chk CHECK constraint (and widened by
-// migration 00063 to admit env:read/env:write for issue #395). The Go
-// side is the first line; the constraint is the floor a typo cannot
-// cross.
+// migration 00063 to admit env:read/env:write for issue #395), named
+// api_keys_scopes_vocab_v2_chk since secrets:request
+// (ADR-20261026195952). The Go side is the first line; the constraint is
+// the floor a typo cannot cross.
 const (
 	ScopeAdmin        = "admin"
 	ScopeAppsRead     = "apps:read"
 	ScopeDeployWrite  = "deploy:write"
 	ScopeSecretsRead  = "secrets:read"
 	ScopeSecretsWrite = "secrets:write"
-	ScopeUsageRead    = "usage:read"
+	// ScopeSecretsRequest only opens one-time secret-entry pages for the
+	// account's signed-in user (ADR-20261026174727, ADR-20261026195952). It
+	// never writes or reads a secret value.
+	ScopeSecretsRequest = "secrets:request"
+	ScopeUsageRead      = "usage:read"
 	// Runs credentials let unattended agents use disposable executions
 	// without granting deployment or secret-management permissions.
 	ScopeRunsRead  = "runs:read"
@@ -433,6 +438,7 @@ var validScopes = map[string]struct{}{
 	ScopeDeployWrite:               {},
 	ScopeSecretsRead:               {},
 	ScopeSecretsWrite:              {},
+	ScopeSecretsRequest:            {},
 	ScopeUsageRead:                 {},
 	ScopeRunsRead:                  {},
 	ScopeRunsWrite:                 {},
@@ -536,6 +542,9 @@ var (
 	// /v1/apps/{slug}/secrets/{key}. Granted by admin or
 	// secrets:write.
 	ScopesSecretsWriteSurface = []string{ScopeAdmin, ScopeSecretsWrite}
+	// ScopesSecretRequestSurface opens secret-entry pages and reads their
+	// status; secrets:write still allows both.
+	ScopesSecretRequestSurface = []string{ScopeAdmin, ScopeSecretsWrite, ScopeSecretsRequest}
 
 	// ScopesAppForkSecretsSurface: POST /v1/apps/{slug}/forks (ADR-732).
 	// A fork copies production memory, secrets included, so the route

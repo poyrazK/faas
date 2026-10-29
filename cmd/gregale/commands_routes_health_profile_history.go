@@ -54,7 +54,7 @@ func cmdRoutesHealthProfileHistory(args []string) int {
 		renderCanaryProfileSignal(&page.Entries[i], positional[0])
 	}
 	if page.NextCursor != "" {
-		_, _ = fmt.Fprintf(osStdout, "Next page: gregale routes health profile-history %s --deployment %s --limit %d --before %s\n", url.PathEscape(positional[0]), deployment, limit, page.NextCursor)
+		_, _ = fmt.Fprintf(osStdout, "Next page: gregale api route health profile-history %s --deployment %s --limit %d --before %s\n", url.PathEscape(positional[0]), deployment, limit, page.NextCursor)
 	}
 	return 0
 }

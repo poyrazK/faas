@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { RouteInsight } from './RouteInsight.js';
 /**
- * An app's active route insights, then those resolved in the last seven days (ADR-1198).
+ * An app's active route insights, then those resolved in the last seven days.
  */
 export type RouteInsightsResponse = {
   slug: string;

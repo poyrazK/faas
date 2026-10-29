@@ -168,7 +168,7 @@ this same primitive with exclusive per-iteration connection scopes and frozen
 partial progress; the host still chooses when another pass runs.
 
 ```python
-from faas_sdk import EventAcknowledgmentIntentError, arecover_next_event_acknowledgment_intent
+from faas_sdk.preview import EventAcknowledgmentIntentError, arecover_next_event_acknowledgment_intent
 
 try:
     status = await arecover_next_event_acknowledgment_intent(

@@ -114,6 +114,9 @@ type ChecksAPI struct {
 	Bindings    BindingsLookup // repo → installation_id (review finding #1+#2 closure)
 	CheckRuns   CheckRunStore
 	Deployments GitHubDeploymentStore
+	// AppID is the GitHub App's ID. With it, the preview status comment
+	// upsert adopts only comments GitHub attributes to this App.
+	AppID int64
 }
 
 func (c *ChecksAPI) WithCheckRunStore(store CheckRunStore) *ChecksAPI {
@@ -503,6 +506,10 @@ func githubDeploymentState(status string) (string, bool) {
 // release state to GitHub's deployment vocabulary. The durable deployment
 // row remains `live` while a canary is being observed, so looking only at
 // status would incorrectly publish a successful deployment too early.
+// GitHubDeploymentStatusTornDown is the update status for a deployment whose
+// preview app was torn down: GitHub shows its environment inactive.
+const GitHubDeploymentStatusTornDown = "torn_down"
+
 func githubDeploymentStateForRollout(status, rolloutState string, canaryTotalSteps int) (string, bool) {
 	if status == "live" && canaryTotalSteps > 0 {
 		switch rolloutState {
@@ -513,6 +520,8 @@ func githubDeploymentStateForRollout(status, rolloutState string, canaryTotalSte
 		}
 	}
 	switch status {
+	case GitHubDeploymentStatusTornDown:
+		return "inactive", true
 	case "pending":
 		return "queued", true
 	case "building", "imaging", "snapshotting":
@@ -905,6 +914,30 @@ func (c *ChecksAPI) WritePreviewDestroyComment(ctx context.Context, repoFullName
 type previewIssueComment struct {
 	ID   int64  `json:"id"`
 	Body string `json:"body"`
+	User struct {
+		Type string `json:"type"`
+	} `json:"user"`
+	PerformedViaGitHubApp *struct {
+		ID int64 `json:"id"`
+	} `json:"performed_via_github_app"`
+}
+
+// previewCommentPageSize and previewCommentMaxPages bound the scan for the
+// existing status comment: a thread longer than this gets a fresh comment.
+const (
+	previewCommentPageSize = 100
+	previewCommentMaxPages = 10
+)
+
+// ownPreviewComment reports whether comment is this App's status comment.
+// The marker alone is not proof: any commenter can paste it, and the
+// installation token could then rewrite their comment. Only a bot comment
+// qualifies, and with the App ID configured, one GitHub attributes to it.
+func (c *ChecksAPI) ownPreviewComment(comment previewIssueComment, marker string) bool {
+	if comment.ID == 0 || comment.User.Type != "Bot" || !strings.Contains(comment.Body, marker) {
+		return false
+	}
+	return c.AppID == 0 || comment.PerformedViaGitHubApp == nil || comment.PerformedViaGitHubApp.ID == c.AppID
 }
 
 // UpsertPreviewComment keeps one customer-facing preview status comment per
@@ -913,6 +946,17 @@ type previewIssueComment struct {
 // hidden so a retry can find and PATCH the existing comment instead of
 // spamming the thread with another bot message.
 func (c *ChecksAPI) UpsertPreviewComment(ctx context.Context, installationID int64, repoFullName string, prNumber int, marker, body string) error {
+	return c.writePreviewStatusComment(ctx, installationID, repoFullName, prNumber, marker, body, true)
+}
+
+// UpdatePreviewComment rewrites the preview status comment only when the
+// PR already has one. A teardown reports through it: a workload that never
+// had a comment of its own (a dependency preview) must not post one.
+func (c *ChecksAPI) UpdatePreviewComment(ctx context.Context, installationID int64, repoFullName string, prNumber int, marker, body string) error {
+	return c.writePreviewStatusComment(ctx, installationID, repoFullName, prNumber, marker, body, false)
+}
+
+func (c *ChecksAPI) writePreviewStatusComment(ctx context.Context, installationID int64, repoFullName string, prNumber int, marker, body string, create bool) error {
 	if installationID <= 0 || repoFullName == "" || prNumber <= 0 || marker == "" || body == "" {
 		return fmt.Errorf("githubd: installation, repo, pr_number, marker, and body are required for preview comment")
 	}
@@ -923,16 +967,24 @@ func (c *ChecksAPI) UpsertPreviewComment(ctx context.Context, installationID int
 	if err != nil {
 		return err
 	}
-	comments, err := c.listPreviewComments(ctx, token, repoFullName, prNumber)
-	if err != nil {
-		return err
-	}
-	for _, comment := range comments {
-		if comment.ID == 0 || !strings.Contains(comment.Body, marker) {
-			continue
+	for page := 1; page <= previewCommentMaxPages; page++ {
+		comments, err := c.listPreviewComments(ctx, token, repoFullName, prNumber, page)
+		if err != nil {
+			return err
 		}
-		return c.writePreviewComment(ctx, token, http.MethodPatch,
-			fmt.Sprintf("%s/repos/%s/issues/comments/%d", GitHubAPI, repoFullName, comment.ID), body, http.StatusOK)
+		for _, comment := range comments {
+			if !c.ownPreviewComment(comment, marker) {
+				continue
+			}
+			return c.writePreviewComment(ctx, token, http.MethodPatch,
+				fmt.Sprintf("%s/repos/%s/issues/comments/%d", GitHubAPI, repoFullName, comment.ID), body, http.StatusOK)
+		}
+		if len(comments) < previewCommentPageSize {
+			break
+		}
+	}
+	if !create {
+		return nil
 	}
 	return c.writePreviewComment(ctx, token, http.MethodPost,
 		fmt.Sprintf("%s/repos/%s/issues/%d/comments", GitHubAPI, repoFullName, prNumber), body, http.StatusCreated)
@@ -949,8 +1001,8 @@ func (c *ChecksAPI) installationToken(ctx context.Context, installationID int64)
 	return token, nil
 }
 
-func (c *ChecksAPI) listPreviewComments(ctx context.Context, token, repoFullName string, prNumber int) ([]previewIssueComment, error) {
-	endpoint := fmt.Sprintf("%s/repos/%s/issues/%d/comments?per_page=100", GitHubAPI, repoFullName, prNumber)
+func (c *ChecksAPI) listPreviewComments(ctx context.Context, token, repoFullName string, prNumber, page int) ([]previewIssueComment, error) {
+	endpoint := fmt.Sprintf("%s/repos/%s/issues/%d/comments?per_page=%d&page=%d", GitHubAPI, repoFullName, prNumber, previewCommentPageSize, page)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, err

@@ -35,6 +35,7 @@ func (s *InternalSender) WithVerificationOutbox(enabled func() bool) *InternalSe
 	copy.verificationEnabled = enabled
 	copy.mfaDisableEnabled = nil
 	copy.accountSuspendedEnabled = nil
+	copy.managedPostgresCapEnabled = nil
 	copy.accountRestoredEnabled = nil
 	copy.paymentFailedEnabled = nil
 	copy.mfaEnabledAlertEnabled = nil
@@ -55,6 +56,7 @@ func (s *InternalSender) WithPasswordResetOutbox(enabled func() bool) *InternalS
 	copy.passwordResetEnabled = enabled
 	copy.mfaDisableEnabled = nil
 	copy.accountSuspendedEnabled = nil
+	copy.managedPostgresCapEnabled = nil
 	copy.accountRestoredEnabled = nil
 	copy.paymentFailedEnabled = nil
 	copy.mfaEnabledAlertEnabled = nil
@@ -75,6 +77,7 @@ func (s *InternalSender) WithMagicLinkOutbox(enabled func() bool) *InternalSende
 	copy.magicLinkEnabled = enabled
 	copy.mfaDisableEnabled = nil
 	copy.accountSuspendedEnabled = nil
+	copy.managedPostgresCapEnabled = nil
 	copy.accountRestoredEnabled = nil
 	copy.paymentFailedEnabled = nil
 	copy.mfaEnabledAlertEnabled = nil
@@ -94,6 +97,7 @@ func (s *InternalSender) WithMFARecoveryAlertOutbox(enabled func() bool) *Intern
 	copy.nonpaymentDeletionEnabled = nil
 	copy.mfaDisableEnabled = nil
 	copy.accountSuspendedEnabled = nil
+	copy.managedPostgresCapEnabled = nil
 	copy.accountRestoredEnabled = nil
 	copy.paymentFailedEnabled = nil
 	copy.mfaEnabledAlertEnabled = nil
@@ -114,6 +118,7 @@ func (s *InternalSender) WithMFADisableOutbox(enabled func() bool) *InternalSend
 	copy.nonpaymentDeletionEnabled = nil
 	copy.mfaDisableEnabled = enabled
 	copy.accountSuspendedEnabled = nil
+	copy.managedPostgresCapEnabled = nil
 	copy.accountRestoredEnabled = nil
 	copy.paymentFailedEnabled = nil
 	copy.mfaEnabledAlertEnabled = nil
@@ -133,6 +138,7 @@ func (s *InternalSender) WithMFADisabledAlertOutbox(enabled func() bool) *Intern
 	copy.quotaWarningEnabled = nil
 	copy.nonpaymentDeletionEnabled = nil
 	copy.accountSuspendedEnabled = nil
+	copy.managedPostgresCapEnabled = nil
 	copy.accountRestoredEnabled = nil
 	copy.paymentFailedEnabled = nil
 	copy.mfaEnabledAlertEnabled = nil
@@ -153,6 +159,7 @@ func (s *InternalSender) WithPasswordChangedAlertOutbox(enabled func() bool) *In
 	copy.quotaWarningEnabled = nil
 	copy.nonpaymentDeletionEnabled = nil
 	copy.accountSuspendedEnabled = nil
+	copy.managedPostgresCapEnabled = nil
 	copy.accountRestoredEnabled = nil
 	copy.paymentFailedEnabled = nil
 	copy.mfaEnabledAlertEnabled = nil
@@ -173,6 +180,7 @@ func (s *InternalSender) WithMFAEnabledAlertOutbox(enabled func() bool) *Interna
 	copy.quotaWarningEnabled = nil
 	copy.nonpaymentDeletionEnabled = nil
 	copy.accountSuspendedEnabled = nil
+	copy.managedPostgresCapEnabled = nil
 	copy.accountRestoredEnabled = nil
 	copy.paymentFailedEnabled = nil
 	copy.mfaEnabledAlertEnabled = enabled
@@ -193,6 +201,7 @@ func (s *InternalSender) WithPaymentFailedOutbox(enabled func() bool) *InternalS
 	copy.quotaWarningEnabled = nil
 	copy.nonpaymentDeletionEnabled = nil
 	copy.accountSuspendedEnabled = nil
+	copy.managedPostgresCapEnabled = nil
 	copy.accountRestoredEnabled = nil
 	copy.paymentFailedEnabled = enabled
 	copy.mfaEnabledAlertEnabled = nil
@@ -234,6 +243,7 @@ func (s *InternalSender) WithAccountRestoredOutbox(enabled func() bool) *Interna
 	copy.nonpaymentDeletionEnabled = nil
 	copy.accountRestoredEnabled = enabled
 	copy.accountSuspendedEnabled = nil
+	copy.managedPostgresCapEnabled = nil
 	copy.paymentFailedEnabled = nil
 	copy.mfaEnabledAlertEnabled = nil
 	copy.passwordChangedAlertEnabled = nil
@@ -253,6 +263,7 @@ func (s *InternalSender) WithNonpaymentDeletionOutbox(enabled func() bool) *Inte
 	copy.quotaWarningEnabled = nil
 	copy.nonpaymentDeletionEnabled = enabled
 	copy.accountSuspendedEnabled = nil
+	copy.managedPostgresCapEnabled = nil
 	copy.accountRestoredEnabled = nil
 	copy.paymentFailedEnabled = nil
 	copy.mfaEnabledAlertEnabled = nil
@@ -273,6 +284,7 @@ func (s *InternalSender) WithQuotaWarningOutbox(enabled func() bool) *InternalSe
 	copy.quotaWarningEnabled = enabled
 	copy.nonpaymentDeletionEnabled = nil
 	copy.accountSuspendedEnabled = nil
+	copy.managedPostgresCapEnabled = nil
 	copy.accountRestoredEnabled = nil
 	copy.paymentFailedEnabled = nil
 	copy.mfaEnabledAlertEnabled = nil
@@ -293,6 +305,7 @@ func (s *InternalSender) WithSubscriptionEndedOutbox(enabled func() bool) *Inter
 	copy.quotaWarningEnabled = nil
 	copy.nonpaymentDeletionEnabled = nil
 	copy.accountSuspendedEnabled = nil
+	copy.managedPostgresCapEnabled = nil
 	copy.accountRestoredEnabled = nil
 	copy.paymentFailedEnabled = nil
 	copy.mfaEnabledAlertEnabled = nil
@@ -313,6 +326,7 @@ func (s *InternalSender) WithDeploymentFailedOutbox(enabled func() bool) *Intern
 	copy.quotaWarningEnabled = nil
 	copy.nonpaymentDeletionEnabled = nil
 	copy.accountSuspendedEnabled = nil
+	copy.managedPostgresCapEnabled = nil
 	copy.accountRestoredEnabled = nil
 	copy.paymentFailedEnabled = nil
 	copy.mfaEnabledAlertEnabled = nil
@@ -326,7 +340,33 @@ func (s *InternalSender) WithDeploymentFailedOutbox(enabled func() bool) *Intern
 	return &copy
 }
 
+// WithManagedPostgresCapOutbox gates the managed PostgreSQL compute cap
+// warning (ADR-20261025094915) on its own switch.
+func (s *InternalSender) WithManagedPostgresCapOutbox(enabled func() bool) *InternalSender {
+	copy := *s
+	copy.verificationEnabled = nil
+	copy.passwordResetEnabled = nil
+	copy.magicLinkEnabled = nil
+	copy.mfaRecoveryAlertEnabled = nil
+	copy.mfaDisabledAlertEnabled = nil
+	copy.deploymentFailedEnabled = nil
+	copy.subscriptionEndedEnabled = nil
+	copy.quotaWarningEnabled = nil
+	copy.nonpaymentDeletionEnabled = nil
+	copy.accountSuspendedEnabled = nil
+	copy.accountRestoredEnabled = nil
+	copy.paymentFailedEnabled = nil
+	copy.mfaEnabledAlertEnabled = nil
+	copy.passwordChangedAlertEnabled = nil
+	copy.mfaDisableEnabled = nil
+	copy.managedPostgresCapEnabled = enabled
+	return &copy
+}
+
 func (s *InternalSender) credentialOutboxGate() (string, func() bool) {
+	if s.managedPostgresCapEnabled != nil {
+		return internalmail.ProducerOutboxManagedPostgresCapTemplate, s.managedPostgresCapEnabled
+	}
 	if s.deploymentFailedEnabled != nil {
 		return internalmail.ProducerOutboxDeploymentFailedTemplate, s.deploymentFailedEnabled
 	}

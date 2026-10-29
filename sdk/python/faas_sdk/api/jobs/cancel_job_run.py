@@ -83,7 +83,7 @@ def sync_detailed(
 
      Transitions every non-terminal task of the run to
     status='cancelled'. For claimed (running) tasks,
-    schedd SIGTERMs the guest; the supervisor catches
+    the scheduler SIGTERMs the guest; the supervisor catches
     SIGTERM, writes job_exit{error_class='cancelled',
     exit_code=143}, then poweroff.
 
@@ -121,7 +121,7 @@ def sync(
 
      Transitions every non-terminal task of the run to
     status='cancelled'. For claimed (running) tasks,
-    schedd SIGTERMs the guest; the supervisor catches
+    the scheduler SIGTERMs the guest; the supervisor catches
     SIGTERM, writes job_exit{error_class='cancelled',
     exit_code=143}, then poweroff.
 
@@ -154,7 +154,7 @@ async def asyncio_detailed(
 
      Transitions every non-terminal task of the run to
     status='cancelled'. For claimed (running) tasks,
-    schedd SIGTERMs the guest; the supervisor catches
+    the scheduler SIGTERMs the guest; the supervisor catches
     SIGTERM, writes job_exit{error_class='cancelled',
     exit_code=143}, then poweroff.
 
@@ -190,7 +190,7 @@ async def asyncio(
 
      Transitions every non-terminal task of the run to
     status='cancelled'. For claimed (running) tasks,
-    schedd SIGTERMs the guest; the supervisor catches
+    the scheduler SIGTERMs the guest; the supervisor catches
     SIGTERM, writes job_exit{error_class='cancelled',
     exit_code=143}, then poweroff.
 

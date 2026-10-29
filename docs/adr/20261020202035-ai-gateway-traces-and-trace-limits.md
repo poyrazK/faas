@@ -33,7 +33,7 @@
 
     A call of a trace that reached a limit is refused at admission with `429 outbound_budget_exhausted`. `X-Gregale-Outbound-Rejection` names the reason: `trace_call_limit`, `trace_cost_limit` or `trace_tool_loop`. There is no `Retry-After`, since a trace never resets.
     - Leases record the call's trace, so calls in flight count.
-    - With trace limits set, a call of a new trace past the day's `OutboundAITracesPerDay` is refused with `trace_untracked`: it could not be limited (as ADR-996 refuses untracked end users).
+    - With trace limits set, a call of a new trace past the day's `OutboundAITracesPerDay` is refused with `trace_untracked`: it could not be limited (as ADR-996 refuses untracked end users). *Amended 2026-10-26:* only a trace the app named with `X-Gregale-AI-Trace` is refused. A trace read from a `traceparent` goes on untracked, because the app's own clients can set that header and tracing libraries propagate it: refusing those would let anyone who reaches the app fill the day with new trace IDs and stop every new trace of the integration until midnight UTC.
     - The read joins the admission batch and the write joins the settlement batch, so neither adds a round trip. Calls without a trace read and write nothing new.
   - **Visibility.**
     - `GET /v1/outbound/integrations/{id}/ai-traces` lists recent traces, newest first, optionally of one app or end user.

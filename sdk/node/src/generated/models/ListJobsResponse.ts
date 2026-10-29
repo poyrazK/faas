@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { JobResponse } from './JobResponse.js';
 /**
- * Page of jobs on the account (issue
+ * Page of jobs on the account.
  */
 export type ListJobsResponse = {
   jobs: Array<JobResponse>;

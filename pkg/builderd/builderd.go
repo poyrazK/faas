@@ -140,6 +140,9 @@ type Config struct {
 	// resumes a guest kernel whose mounted ext4 state predates builderd's
 	// offline edits of the same drive (see prepareWarmBuilder).
 	DisableWarmBuilders bool `toml:"-"`
+	// LayerCompression is "" (gzip) or api.BuildLayerCompressionZstd, from
+	// LayerZstdEnv. It reaches every build manifest and cache key.
+	LayerCompression string `toml:"-"`
 	// BuilderNodeID is the compute_node name stamped onto every
 	// provenance row this Builderd writes (ADR-038, Tier 3 / issue
 	// #197 B3.1). Defaulted to "default-local" on the one-box by
@@ -642,6 +645,28 @@ func (b *Builderd) stopIfBuildCancelled(ctx context.Context, claim state.Build) 
 	return true
 }
 
+// stopIfBuildOutpaced cancels a claimed build whose deployment a newer
+// revision has already outpaced: promotion would supersede it, so building it
+// only delays the newer deployment queued behind it (ADR-20261029103512).
+func (b *Builderd) stopIfBuildOutpaced(ctx context.Context, claim state.Build) bool {
+	store, ok := b.store.(state.OutpacedBuildStore)
+	if !ok {
+		return false
+	}
+	outpaced, err := store.SupersedeOutpacedBuild(ctx, claim)
+	if err != nil {
+		// Building is the safe default: promotion still fences the result.
+		b.log.Warn("builderd: check outpaced build", "build", claim.ID, "deployment", claim.DeploymentID, "err", err)
+		return false
+	}
+	if !outpaced {
+		return false
+	}
+	b.log.Info("builderd: skipped outpaced build", "build", claim.ID, "deployment", claim.DeploymentID)
+	b.emitBuildLog(ctx, claim.ID, "a newer deployment of this app was submitted; this build was skipped and the deployment superseded\n")
+	return true
+}
+
 // requeueClaim returns a worker-owned claim to the durable queue. Production
 // stores implement the claim-fenced capability; the legacy fallback preserves
 // compatibility with older state.Store implementations.
@@ -674,6 +699,9 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	if err != nil {
 		b.recoverClaimAfterLookupFailure(ctx, build, "load deployment", err)
 		return BuildResult{}, fmt.Errorf("builderd: load deployment: %w", err)
+	}
+	if b.stopIfBuildOutpaced(ctx, build) {
+		return BuildResult{}, nil
 	}
 	buildGate, stop, gateErr := b.admitBuildDependencies(ctx, build, dep)
 	if stop || gateErr != nil {
@@ -864,6 +892,14 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		// including clearing a Dockerfile for autodetected source builds.
 		dockerfilePath = frozen.Source.Dockerfile
 	}
+	goCommand, goCommandErr := selectGoCommand(app, dockerfilePath, fw)
+	if goCommandErr != nil {
+		b.markFailed(ctx, build, state.FailureUserError, goCommandErr.Error(), buildStart)
+		return BuildResult{}, goCommandErr
+	}
+	if goCommand != "" {
+		b.emitBuildLog(ctx, build.ID, "building Go command cmd/"+goCommand+"\n")
+	}
 
 	// Railpack must build FROM the same immutable runtime base that imaged
 	// will use when it materialises the deployment layer. Without this handoff
@@ -957,18 +993,35 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 			b.emitBuildLog(ctx, build.ID, fmt.Sprintf("mounting %d build secrets\n", len(dockerfileBuild.Secrets)))
 		}
 	}
+	// ADR-20261026091500: a Dockerfile build pulls its base images with the
+	// app's registry credentials, so it can build FROM a private image.
+	var registryCreds []SealedRegistryCredential
+	if fw == FrameworkDocker {
+		var skippedECR []string
+		var credsErr error
+		registryCreds, skippedECR, credsErr = loadBuildRegistryCredentials(ctx, b.store, app)
+		if credsErr != nil {
+			b.markFailed(ctx, build, state.FailureInfra, credsErr.Error(), buildStart)
+			return BuildResult{}, credsErr
+		}
+		b.emitRegistryCredentialLog(ctx, build.ID, registryCreds, skippedECR)
+	}
 	recipe := BuildCacheRecipe{
 		BuildDependencyDigest: buildDependencyDigest,
 		PublicBuildURLs:       publicURLs,
 		DockerfileBuild:       dockerfileBuild,
+		GoCommand:             goCommand,
 		SourceSHA256:          srcHash, SourceRoot: dep.SourceRoot,
 		DockerfilePath: dockerfilePath,
 		Framework:      fw, Plan: acct.Plan, RuntimeBaseRef: runtimeBaseRef,
 		Function:        app.Type == state.AppTypeFunction,
 		DevWatchCommand: watch.Command,
 		DevWatchHost:    watch.Host,
+		AccountID:       app.AccountID,
 	}
+	recipe.LayerCompression = b.cfg.LayerCompression
 	recipe.BuildSecretScope = buildSecretScope(app.AccountID, app.ID, dep.Scope, buildSecrets)
+	recipe.RegistryAuthScope = registryAuthScope(app.ID, registryCreds)
 	reuseScope, reuseOptedIn := gitOpsReuseScope(app, dep)
 	recipe.GitOpsReuseScope = reuseScope
 	if sourceMaps != nil {
@@ -1060,7 +1113,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		return BuildResult{}, ErrNoSlot
 	}
 	defer releaseSlot()
-	b.emitBuildLog(ctx, build.ID, fmt.Sprintf("allocated builder slot (%s)\n", slot.Label))
+	b.emitBuildLog(ctx, build.ID, builderSlotLogLine(slot.Label, time.Since(build.EnqueuedAt)))
 	if b.stopIfBuildCancelled(ctx, build) {
 		return BuildResult{}, nil
 	}
@@ -1078,7 +1131,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	// Keep this projection best-effort, matching imaged's transition helper;
 	// the durable build/deployment status remains authoritative if the stage
 	// write is temporarily unavailable.
-	if _, stageErr := b.store.AppendDeploymentStage(ctx, dep.ID, state.StageSourceDownload, state.StageImageBuild, buildStart, ""); stageErr != nil {
+	if _, stageErr := b.store.AppendDeploymentStage(ctx, dep.ID, state.StageSourceDownload, state.StageImageBuild, buildStart, builderQueueWaitReason(build)); stageErr != nil {
 		b.log.Warn("builderd: open image-build stage", "deployment", dep.ID, "err", stageErr)
 	}
 
@@ -1092,7 +1145,9 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		BuildDependencyDigest: buildDependencyDigest,
 		PublicBuildURLs:       publicURLs,
 		DockerfileBuild:       dockerfileBuild,
+		GoCommand:             goCommand,
 		BuildSecrets:          buildSecrets,
+		RegistryCredentials:   registryCreds,
 		BuildID:               build.ID,
 		TenantID:              app.AccountID,
 		DeploymentID:          dep.ID,
@@ -1109,15 +1164,17 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		DevWatchCommand:       watch.Command,
 		DevWatchHost:          watch.Host,
 		DependencyCacheKey:    dependencyCacheKey,
+		LayerCompression:      b.cfg.LayerCompression,
 		LogPath:               dep.LogPath,
 		RAMMB:                 api.BuildVMRAMMB,
 		TimeoutSec:            b.cfg.BuildTimeoutSeconds,
 		Plan:                  string(acct.Plan),
 		WarmScopeKey:          builderWarmScopeKey(app.AccountID, app.ID, fw, runtimeBaseRef),
 	}
-	if len(buildSecrets) > 0 {
-		// A build with secrets never restores or leaves a warm builder, so a
-		// value cannot outlive its build in a snapshot (ADR-20261022185329).
+	if len(buildSecrets) > 0 || len(registryCreds) > 0 {
+		// A build with secrets or registry credentials never restores or
+		// leaves a warm builder, so a value cannot outlive its build in a
+		// snapshot (ADR-20261022185329, ADR-20261026091500).
 		vmReq.WarmScopeKey = ""
 	}
 	warmVM, warmResult, warmSnapshot, warmStarted := b.prepareWarmBuilder(ctx, slot, vmReq)
@@ -1140,6 +1197,10 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	timeout := time.Duration(b.cfg.BuildTimeoutSeconds) * time.Second
 	vmCtx, cancel := context.WithTimeout(ctx, timeout)
 
+	// Phase timings: builds took minutes on production-us while the guest's
+	// own build steps took seconds, and nothing recorded where the rest went
+	// (Hunt 14 H14-11).
+	phases := buildPhaseClock{start: time.Now()}
 	var handle BuildHandle
 	if warmStarted && warmResult == WarmRestoreHit {
 		handle, err = warmVM.RestoreWarmBuilder(vmCtx, vmReq, warmSnapshot)
@@ -1184,6 +1245,16 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 			cancel()
 			return BuildResult{}, err
 		}
+		// A node without build disk is capacity, not a failed build: the
+		// deployment waits in the queue (ADR-20261029103512).
+		if errors.Is(err, ErrBuildDiskFull) {
+			cancel()
+			if b.requeueForBuildCapacity(ctx, build, err) {
+				return BuildResult{}, nil
+			}
+			b.markFailed(ctx, build, state.FailureInfra, "vm spawn: "+err.Error(), buildStart)
+			return BuildResult{}, err
+		}
 		// Translate a context-deadline to timeout-class; everything else is infra.
 		fc := state.FailureInfra
 		if errors.Is(err, context.DeadlineExceeded) {
@@ -1206,6 +1277,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		cancelVM()
 	}
 	defer b.unregisterActiveVM(build.ID)
+	phases.vmReady = time.Now()
 	if handle.DependencyCacheKey != "" {
 		if handle.DependencyCacheRestored {
 			b.emitBuildLog(ctx, build.ID, "dependency cache restored — reusing matching install layers\n")
@@ -1267,6 +1339,8 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		b.markFailed(ctx, build, fc, "vm wait: "+err.Error(), buildStart)
 		return BuildResult{}, err
 	}
+	phases.vmDone = time.Now()
+	b.emitBuildLog(ctx, build.ID, phases.vmLine())
 	if out.WarmSnapshotError != "" {
 		b.log.Warn("builderd: warm snapshot unavailable; build artifact preserved", "build", build.ID, "err", out.WarmSnapshotError)
 		b.emitBuildLog(ctx, build.ID, "warm builder cache unavailable — deployment completed from the built artifact\n")
@@ -1297,6 +1371,13 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		// An older builder guest ignores the options and builds the final
 		// stage with default arguments; refuse that artifact.
 		err := errors.New("builder guest did not acknowledge the Compose build arguments and target")
+		b.markFailed(ctx, build, state.FailureInfra, err.Error(), buildStart)
+		return BuildResult{}, err
+	}
+	if out.ExitCode == 0 && out.GoCommand != goCommand {
+		// An older builder guest ignores the selection and builds the
+		// module's default command; refuse that artifact.
+		err := fmt.Errorf("builder guest did not acknowledge the Go command cmd/%s", goCommand)
 		b.markFailed(ctx, build, state.FailureInfra, err.Error(), buildStart)
 		return BuildResult{}, err
 	}
@@ -1406,10 +1487,13 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		}
 		buildResult.IssueSourceMaps, buildResult.IssueSourceMapsImageSHA256 = &set.Request, digest
 	}
+	phases.published = time.Now()
 	result, err := b.completeBuild(ctx, build, dep, app, acct, srcHash, ver, buildResult, buildStart)
 	if err != nil || result.BuildID == "" {
 		return result, err
 	}
+	phases.completed = time.Now()
+	b.log.Info("builderd: build phases", append([]any{"build", build.ID, "deployment", build.DeploymentID}, phases.attrs()...)...)
 	// Only cache a successfully committed build produced by the same builder
 	// environment observed before VM launch. A concurrent base restage leaves
 	// the successful deployment intact but deliberately skips cache publication.
@@ -1559,7 +1643,36 @@ func (b *Builderd) emitBuildSucceeded(ctx context.Context, buildID string, durat
 // reality (instead of leaving it stuck in DeployBuilding forever).
 // The empty-string fc guard in pkg/state means a non-empty fc must be passed.
 // Also observes build_duration_seconds with outcome="failed".
+//
+// The deployment row also gets the failure class's code and guidance. Before,
+// only markFailedEx's classified failures carried one; every other failed
+// source deployment showed a bare message such as "build exited 1" or a
+// daemon error with no hint (ADR-20261029103512).
 func (b *Builderd) markFailed(ctx context.Context, claim state.Build, fc state.FailureClass, msg string, buildStart time.Time) bool {
+	if !b.failBuild(ctx, claim, fc, msg, buildStart) {
+		return false
+	}
+	b.explainBuildFailure(ctx, claim, buildFailureCode(fc), "", msg)
+	return true
+}
+
+// buildFailureCode is the deployment error code for a failure class.
+func buildFailureCode(fc state.FailureClass) string {
+	switch fc {
+	case state.FailureOOM:
+		return api.CodeStageImageBuildOOM
+	case state.FailureTimeout:
+		return api.CodeStageImageBuildTimeout
+	case state.FailureUserError:
+		return api.CodeBuildFailed
+	default:
+		return api.CodeBuildInfrastructure
+	}
+}
+
+// failBuild is the build-row, metrics, metering and event path shared by
+// markFailed and markFailedEx.
+func (b *Builderd) failBuild(ctx context.Context, claim state.Build, fc state.FailureClass, msg string, buildStart time.Time) bool {
 	if ctx.Err() != nil {
 		return false
 	}
@@ -1630,13 +1743,19 @@ func (b *Builderd) markFailed(ctx context.Context, claim state.Build, fc state.F
 // It flows through as the whycopy.Observed argument so the catalog
 // can render "npm install failed" vs "pip install failed" copy.
 func (b *Builderd) markFailedEx(ctx context.Context, claim state.Build, fc state.FailureClass, code, pkg, msg string, buildStart time.Time) {
-	depID, buildID := claim.DeploymentID, claim.ID
 	// 1. Run the legacy build-row / counters / metering path unchanged
 	// so all downstream observers (metrics, dashboard, build row
 	// table) see the same shape as a non-typed-code failure.
-	if !b.markFailed(ctx, claim, fc, msg, buildStart) {
+	if !b.failBuild(ctx, claim, fc, msg, buildStart) {
 		return
 	}
+	b.explainBuildFailure(ctx, claim, code, pkg, msg)
+}
+
+// explainBuildFailure stamps code and its whycopy prose on the failed
+// deployment row.
+func (b *Builderd) explainBuildFailure(ctx context.Context, claim state.Build, code, pkg, msg string) {
+	depID, buildID := claim.DeploymentID, claim.ID
 	// 2. Lift the customer-facing prose from the whycopy catalog.
 	// Decorate is a no-op when the catalog has no row for the code —
 	// the legacy deployment row stays with the bare error text flip.

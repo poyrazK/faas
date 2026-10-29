@@ -49,6 +49,7 @@ func TestManualCronFireWaitsForOwningScheduler(t *testing.T) {
 			}
 			(*(*h.Loop()).Engine()).WithOwnerNodeID("peer-node")
 			(*h.Loop()).DrainPendingFireNowRequests(ctx)
+			h.DeliverInvocations(ctx)
 			req, err = (*h.Store()).GetFireNowRequest(ctx, id)
 			if err != nil || req.Status != state.FireNowStatusSucceeded {
 				t.Fatalf("owner did not complete request: %+v, %v", req, err)
@@ -90,6 +91,7 @@ func TestManualCronFireRequeuesOwnershipChangeAfterClaim(t *testing.T) {
 	}
 	(*(*h.Loop()).Engine()).WithOwnerNodeID("new-owner")
 	(*h.Loop()).DrainPendingFireNowRequests(ctx)
+	h.DeliverInvocations(ctx)
 	final, err := (*h.Store()).GetFireNowRequest(ctx, id)
 	if err != nil || final.Status != state.FireNowStatusSucceeded || (*(*h.Synth()).Calls()).Load() != 1 {
 		t.Fatalf("handoff did not complete once: %+v, %v", final, err)

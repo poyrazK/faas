@@ -50,9 +50,7 @@ func TestCheckInlineFailsOpen(t *testing.T) {
 
 	t.Run("no free slot", func(t *testing.T) {
 		i := New(&recordingObserver{}, nil)
-		for range i.InlineSlots() {
-			i.inlineSlots <- struct{}{}
-		}
+		fillInlineSlots(i)
 		start := time.Now()
 		res := i.CheckInline(attack)
 		if res.Outcome != gateway.WAFInlineSkipped || res.SkipReason != gateway.WAFInlineSkipBusy {
@@ -83,6 +81,77 @@ func TestCheckInlineFailsOpen(t *testing.T) {
 	})
 }
 
+// adr: 831 amendment 16 — one account's flood across its apps holds every
+// check slot, yet another account's check is served the next freed slot
+// ahead of the flood's own waiting checks, instead of failing open as busy.
+func TestCheckInlineAccountShare(t *testing.T) {
+	flood := withUA(sample(http.MethodGet, "/", nil, ""), "sqlmap/1.7.2")
+	flood.AccountID = "acct-flood"
+	other := flood
+	other.AccountID, other.AppID = "acct-other", "app-other"
+	i := New(&recordingObserver{}, nil)
+	if _, err := i.inlineWAF(); err != nil {
+		t.Fatal(err)
+	}
+	// Alone, the account takes every slot: the pool is work-conserving.
+	for n := range i.InlineSlots() {
+		if ok, _ := i.inlineSlots.acquire(flood.AccountID, 0); !ok {
+			t.Fatalf("slot %d of %d refused to the only account using the pool", n+1, i.InlineSlots())
+		}
+	}
+	// Its next check waits behind the full pool and is skipped as over its
+	// share, not as a node capacity shortfall.
+	if res := i.CheckInline(flood); res.Outcome != gateway.WAFInlineSkipped || res.SkipReason != gateway.WAFInlineSkipAccountShare {
+		t.Fatalf("flood check on a full pool = %s (%s), want skipped (account_share)", res.Outcome, res.SkipReason)
+	}
+
+	i.inlineWait = time.Second
+	floodRes, otherRes := make(chan gateway.WAFInlineResult, 1), make(chan gateway.WAFInlineResult, 1)
+	go func() { floodRes <- i.CheckInline(flood) }()
+	waitForWaiters(t, i.inlineSlots, 0, 1)
+	go func() { otherRes <- i.CheckInline(other) }()
+	waitForWaiters(t, i.inlineSlots, 1, 1)
+
+	// The freed slot goes to the other account although the flood's check
+	// queued first; the flood's check gets the slot the other one frees.
+	i.inlineSlots.release(flood.AccountID)
+	waitForWaiters(t, i.inlineSlots, 0, 1)
+	if res := <-otherRes; res.Outcome != gateway.WAFInlineDetected {
+		t.Fatalf("the other account's check = %s (%s), want detected on the first freed slot", res.Outcome, res.SkipReason)
+	}
+	if res := <-floodRes; res.Outcome != gateway.WAFInlineDetected {
+		t.Fatalf("the flood's waiting check = %s (%s), want detected on the next freed slot", res.Outcome, res.SkipReason)
+	}
+}
+
+// fillInlineSlots takes every free check slot for a tenant no sample uses.
+func fillInlineSlots(i *Inspector) {
+	for {
+		if ok, _ := i.inlineSlots.acquire("test-filler", 0); !ok {
+			return
+		}
+	}
+}
+
+// waitForWaiters waits until the pool has the given within-share and
+// over-share waiters queued.
+func waitForWaiters(t *testing.T, p *slotPool, within, over int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		p.mu.Lock()
+		w, o := len(p.within), len(p.over)
+		p.mu.Unlock()
+		if w == within && o == over {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("waiters = %d within, %d over; want %d, %d", w, o, within, over)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 func withUA(s gateway.WAFSample, ua string) gateway.WAFSample {
 	s.Header = s.Header.Clone()
 	s.Header.Set("User-Agent", ua)
@@ -99,13 +168,11 @@ func TestCheckInlineWaitsForASlot(t *testing.T) {
 	}
 	// A generous wait keeps the test independent of scheduler latency.
 	i.inlineWait = time.Second
-	for range i.InlineSlots() {
-		i.inlineSlots <- struct{}{}
-	}
+	fillInlineSlots(i)
 	const hold = 20 * time.Millisecond
 	go func() {
 		time.Sleep(hold)
-		<-i.inlineSlots
+		i.inlineSlots.release("test-filler")
 	}()
 	res := i.CheckInline(attack)
 	if res.Outcome != gateway.WAFInlineDetected {
@@ -120,9 +187,7 @@ func TestCheckInlineWaitsForASlot(t *testing.T) {
 	}
 
 	i.inlineWait = 0
-	for len(i.inlineSlots) < i.InlineSlots() {
-		i.inlineSlots <- struct{}{}
-	}
+	fillInlineSlots(i)
 	start := time.Now()
 	if res := i.CheckInline(attack); res.SkipReason != gateway.WAFInlineSkipBusy || time.Since(start) > hold {
 		t.Errorf("no wait: %s (%s) after %v, want an immediate busy skip", res.Outcome, res.SkipReason, time.Since(start))

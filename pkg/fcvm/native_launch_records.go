@@ -217,6 +217,9 @@ func (j *nativeLaunchJournal) replace(ctx context.Context, lease Lease, expected
 	if err != nil {
 		return record, err
 	}
-	record = nativeLaunchRecord{Version: 1, Generation: generation, KernelBootID: old.KernelBootID, Lease: lease}
+	record, err = j.owned(nativeLaunchRecord{Version: 1, Generation: generation, KernelBootID: old.KernelBootID, Lease: lease})
+	if err != nil {
+		return record, err
+	}
 	return record, j.write(record)
 }

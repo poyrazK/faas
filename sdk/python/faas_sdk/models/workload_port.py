@@ -13,14 +13,13 @@ T = TypeVar("T", bound="WorkloadPort")
 
 @_attrs_define
 class WorkloadPort:
-    """One protocol-aware listener in a container workload (ADR-165)."""
+    """One protocol-aware listener in a container workload."""
 
     port: int
     protocol: WorkloadPortProtocol
     name: str | Unset = UNSET
     internal: bool | Unset = UNSET
-    """Internal-only listener: never public; same-account services reach it at the private service address
-    (ADR-576)."""
+    """Internal-only listener: never public; same-account services reach it at the private service address."""
 
     def to_dict(self) -> dict[str, Any]:
         port = self.port
