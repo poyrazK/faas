@@ -39,7 +39,7 @@ func (b *environmentGitOpsBackend) gitOpsReleaseHold(ctx context.Context, lease 
 		if err != nil {
 			return "", err
 		}
-		active, err := freeze.ActiveFor(ctx, b.server.store, app.AccountID, app.ID, scope, now)
+		active, err := freeze.ActiveFor(ctx, b.server.store, app, scope, now)
 		if err != nil {
 			b.server.log.Warn("deploy freeze: could not read freezes; activating", "app", app.ID, "err", err)
 		} else if len(active) > 0 {

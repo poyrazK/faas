@@ -1360,8 +1360,8 @@ export class DeploymentsService {
     });
   }
   /**
-   * List deploy freezes.
-   * Unlifted freezes that have not ended: active and upcoming windows, weekly windows and after-rollback policies. `app` narrows the list to the freezes covering one app.
+   * List the account's deploy freezes.
+   * The account's unlifted freezes that have not ended: active and upcoming windows, weekly windows and after-rollback policies. They cover the account's personal apps; a company organization's freezes are on `/v1/orgs/{slug}/freezes`. `app` narrows the list to the freezes covering one personal app; a company app is refused with 409.
    * @returns ListReleaseFreezesResponse The account's freezes.
    * @throws ApiError
    */
@@ -1392,7 +1392,7 @@ export class DeploymentsService {
   }
   /**
    * Freeze production releases.
-   * Creates a window, weekly or after-rollback freeze for one app or, without `app`, for every app of the account. While a freeze is active, new production deployments are refused with `release_frozen` unless the request carries `override_freeze`.
+   * Creates a window, weekly or after-rollback freeze for one personal app or, without `app`, for every personal app of the account. While a freeze is active, new production deployments are refused with `release_frozen` unless the request carries `override_freeze`. A company app's freezes belong to its organization: naming one is refused with 409.
    * @returns ReleaseFreeze The freeze.
    * @throws ApiError
    */
@@ -1472,6 +1472,114 @@ export class DeploymentsService {
       },
       errors: {
         401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * List the deploy freezes covering an app.
+   * The app owner's unlifted freezes that have not ended, on all of its apps and on this app. A company app's freezes belong to its organization; a personal app's to its account. Requires `org.read_app` on a company app.
+   * @returns ListReleaseFreezesResponse The freezes covering the app.
+   * @throws ApiError
+   */
+  public static listAppReleaseFreezes({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<ListReleaseFreezesResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/freezes',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Freeze production releases of an app.
+   * Creates a window, weekly or after-rollback freeze on the app, owned by the app's owner: the company organization of a company app. On a company app a member who deploys may create a window; weekly and after-rollback policies need an owner or admin (`org.manage_app_security`). `app` in the body must be empty or this app.
+   * @returns ReleaseFreeze The freeze.
+   * @throws ApiError
+   */
+  public static createAppReleaseFreeze({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: CreateReleaseFreezeRequest,
+  }): CancelablePromise<ReleaseFreeze> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/freezes',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Lift a deploy freeze on an app.
+   * Lifts a freeze on this app. Freezes on all of an owner's apps are lifted on `/v1/freezes/{id}` or `/v1/orgs/{slug}/freezes/{id}`. On a company app a member who deploys may lift a window they created; any other freeze needs an owner or admin. 404 `release_freeze_not_found` when no unlifted freeze on this app has this ID.
+   * @returns ReleaseFreeze The lifted freeze.
+   * @throws ApiError
+   */
+  public static liftAppReleaseFreeze({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * The freeze's ID.
+     */
+    id: string,
+  }): CancelablePromise<ReleaseFreeze> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/freezes/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable

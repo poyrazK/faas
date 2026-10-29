@@ -168,10 +168,24 @@ A release review on 2026-10-28 found and fixed:
   (`not_judged`), and an SLO that gates judge cannot be deleted
   (ADR-20261019071734 amendment 2).
 
+Company-owned freezes (ADR-20261019071733 amendment 4, 2026-10-29). A
+company organization now owns its apps' freezes, through
+`/v1/apps/{slug}/freezes` and `/v1/orgs/{slug}/freezes` and `gregale release
+freeze --org`. Before, only an app's creator could freeze a company app, no
+freeze covered all of a company's apps, and a creator's freeze on all of their
+apps also froze the company apps they had created. Members who deploy create
+and lift their own windows; owners and admins create weekly and after-rollback
+policies and lift any freeze. Every freeze check reads the app's owner. Both
+drills passed on main `2b4a480d38` on 2026-10-29 before this change; it is
+covered by store conformance on both stores and by apidserver tests.
+
 Still open:
 
 - real Slack/Resend delivery has not been drilled;
-- no database switch has been drilled with a real provider restore.
+- no database switch has been drilled with a real provider restore;
+- the dashboard has no page for a company's freezes yet: faas-web needs a
+  "Release freezes" section in the organization's settings. The app's
+  release-safety page already lists the company freezes that cover the app.
 
 ## Routes at public scale — 2026-10-24
 
