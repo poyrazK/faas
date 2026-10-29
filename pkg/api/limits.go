@@ -835,6 +835,19 @@ const (
 	BillingRunItemListMax     = 500
 )
 
+// Subscription reconciliation (ADR-20261029094512). Every
+// BillingReconcileInterval one apid replica compares each billed account with
+// the provider's subscriptions, one provider read every
+// BillingReconcileRequestSpacing. A difference is corrected only when two
+// consecutive passes see it, so an in-flight webhook delivery settles first,
+// and at most BillingReconcileMaxCorrectionsPerPass accounts change per pass.
+const (
+	BillingReconcileInterval              = 30 * time.Minute
+	BillingReconcileRequestSpacing        = 200 * time.Millisecond
+	BillingReconcileBatchSize             = 200
+	BillingReconcileMaxCorrectionsPerPass = 25
+)
+
 // Payment status of exported statement invoices (ADR-1504).
 const (
 	// A completed export is first synced after StatementInvoiceFirstSyncDelay,

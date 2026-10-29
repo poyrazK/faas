@@ -948,6 +948,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		srv.consumerControls.Enabled, srv.consumerControls.Released = monetizationOn, srv.apiMonetizationFor
 		srv.consumerSignup.Enabled = monetizationOn
 		srv.billingRuns.Start(ctx, log)                   // ADR-1503
+		srv.billingSync.Start(ctx, log)                   // ADR-20261029094512
 		srv.statementInvoices.Start(ctx, log)             // ADR-1504
 		srv.consumerCredits.Start(ctx, log)               // ADR-1306
 		srv.consumerControls.Start(ctx, log)              // ADR-1315
