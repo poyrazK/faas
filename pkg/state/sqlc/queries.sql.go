@@ -62444,6 +62444,55 @@ func (q *Queries) ObjectBucketObjectLockUpdate(ctx context.Context, db DBTX, arg
 	return result.RowsAffected(), nil
 }
 
+const objectBucketPlacementCounts = `-- name: ObjectBucketPlacementCounts :many
+SELECT backend_id, count(*)::bigint AS buckets,
+  count(*) FILTER (WHERE account_id = $1::uuid)::bigint AS account_buckets
+FROM object_buckets
+WHERE backend_id = ANY($2::text[]) AND state <> 'deleted'
+GROUP BY backend_id
+`
+
+type ObjectBucketPlacementCountsParams struct {
+	AccountID  pgtype.UUID
+	BackendIds []string
+}
+
+type ObjectBucketPlacementCountsRow struct {
+	BackendID      string
+	Buckets        int64
+	AccountBuckets int64
+}
+
+func (q *Queries) ObjectBucketPlacementCounts(ctx context.Context, db DBTX, arg ObjectBucketPlacementCountsParams) ([]ObjectBucketPlacementCountsRow, error) {
+	rows, err := db.Query(ctx, objectBucketPlacementCounts, arg.AccountID, arg.BackendIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectBucketPlacementCountsRow{}
+	for rows.Next() {
+		var i ObjectBucketPlacementCountsRow
+		if err := rows.Scan(&i.BackendID, &i.Buckets, &i.AccountBuckets); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const objectBucketPlacementLock = `-- name: ObjectBucketPlacementLock :exec
+SELECT pg_advisory_xact_lock(hashtextextended('object-bucket-placement:' || $1::text, 0))
+`
+
+// Serializes bucket placement in one region (ADR-20261029174627).
+func (q *Queries) ObjectBucketPlacementLock(ctx context.Context, db DBTX, region string) error {
+	_, err := db.Exec(ctx, objectBucketPlacementLock, region)
+	return err
+}
+
 const objectBucketPruneTombstones = `-- name: ObjectBucketPruneTombstones :exec
 DELETE FROM object_buckets WHERE account_id = $1 AND org_id IN (SELECT id FROM orgs WHERE personal_org) AND state = 'deleted'
 `
