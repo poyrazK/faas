@@ -8996,6 +8996,12 @@ FOR UPDATE OF n NOWAIT;
 -- fleet capacity triggers before the repeatable-read account view begins.
 LOCK TABLE service_capacity_policy IN EXCLUSIVE MODE NOWAIT;
 
+-- name: ReadTrafficCapacityLockHeld :one
+-- A rule-only traffic policy write holds no lock on the fleet capacity policy
+-- unless one of its statements fired a capacity trigger (ADR-20261029150627).
+SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_locks WHERE pid = pg_backend_pid() AND locktype = 'relation'
+    AND relation = 'service_capacity_policy'::regclass AND mode <> 'AccessShareLock')::boolean AS held;
+
 -- name: LockTrafficCapacityWriter :exec
 -- A binding mutation takes its capacity triggers' RowShare lock first. Taken
 -- later, it could wait on a policy mutation's EXCLUSIVE guard while holding
