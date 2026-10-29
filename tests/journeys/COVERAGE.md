@@ -51,3 +51,9 @@ covered. Update this table when a journey or a GA row changes.
 
 40 of the 42 GA rows have at least one journey; 143 and 157 need a test
 inbox and a browser. The "Not covered" column lists the remaining gaps.
+
+Beta rows with a journey ahead of their GA promotion:
+
+| # | Capability | Journeys and steps | Not covered |
+|---|---|---|---|
+| 74 | Edge rules, rule lists | `TestEdgeRules` (redirect, response header and its update, IP refusal covering HEAD, a list-keyed rule and the list's edit, history and rollback, delete; each change checked on 12 requests across the edge gateways as soon as the CLI returns, #2683) | the other kinds (covered per PR by `TestE2E_EdgeRules_*` in `cmd/e2e`), `gregale.yaml` routing, trace, WAF and challenge |
