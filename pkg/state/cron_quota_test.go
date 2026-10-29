@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 )
@@ -84,7 +85,7 @@ func TestClaimCronFireCompareAndSwap(t *testing.T) {
 	if got := m.crons["c"].LastFiredAt; !got.IsZero() {
 		t.Fatalf("after rollback LastFiredAt=%v; want zero", got)
 	}
-	if _, err := m.ClaimCronFire(ctx, "missing", time.Time{}, fired); err != ErrNotFound {
+	if _, err := m.ClaimCronFire(ctx, "missing", time.Time{}, fired); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing cron err=%v; want ErrNotFound", err)
 	}
 }
