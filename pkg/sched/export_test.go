@@ -963,3 +963,6 @@ func (l *Loop) XDispatchEventFanoutSweep(ctx context.Context) { l.dispatchEventF
 // XRepeatFullBatches is invocation retention's batch repeater.
 // adr: 20261029012000 — a step repeats while its batches come back full.
 var XRepeatFullBatches = repeatFullBatches
+
+// XTriggerAppConsumes is the broker trigger's may-take-records check.
+var XTriggerAppConsumes = triggerAppConsumes

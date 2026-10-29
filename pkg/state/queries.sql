@@ -2903,7 +2903,12 @@ from triggers where enabled = true AND NOT environment_workload_admission_retire
 -- broker; its queue, cron and realtime inputs stay inside the app
 -- (ADR-20261019180000).
 AND NOT (kind IN ('kafka','nats','redis_streams','sqs_compat')
-  AND EXISTS (SELECT 1 FROM scenario_test_action_policies p WHERE p.app_id=triggers.app_id));
+  AND EXISTS (SELECT 1 FROM scenario_test_action_policies p WHERE p.app_id=triggers.app_id))
+-- A deleted app's triggers stay enabled so a restore inside the grace window
+-- brings them back, but nothing polls them meanwhile: a broker trigger kept
+-- draining the customer's queue into the dead app's dead letters (bug hunt
+-- 2026-10-28 B32).
+AND EXISTS (SELECT 1 FROM apps a WHERE a.id = triggers.app_id AND a.status <> 'deleted');
 
 -- name: CountTriggersByApp :one
 select count(*) from triggers t where t.app_id = $1
