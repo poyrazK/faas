@@ -4,6 +4,7 @@
 package githubd
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -225,8 +226,8 @@ func TestDecodePullRequest_RejectsUnknownAction(t *testing.T) {
 			body := strings.Replace(validPRBody, `"action": "opened"`, `"action": "`+a+`"`, 1)
 			_, err := DecodePullRequest([]byte(body))
 			// Ignored, so the delivery completes without retries (B27).
-			if !IsIgnored(err) {
-				t.Fatalf("DecodePullRequest(%s) err = %v, want ErrIgnored", a, err)
+			if !errors.Is(err, ErrPullRequestActionIgnored) {
+				t.Fatalf("DecodePullRequest(%s) err = %v, want ErrPullRequestActionIgnored", a, err)
 			}
 		})
 	}

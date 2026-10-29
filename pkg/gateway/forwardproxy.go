@@ -310,6 +310,9 @@ func fwdOnceWithEvents(w http.ResponseWriter, r *http.Request, nodes NodeClientL
 	cli, closer, ok := nodes.ClientFor(r.Context(), t.NodeID)
 	if !ok {
 		markUndeliveredTarget(r.Context())
+		// This gateway cannot reach the target's vmmd; another node's
+		// gateway may (ADR-20261022184531 step 5).
+		markNotDispatched(w, r, NotDispatchedProxyRefused)
 		writeForwarderProblem(w, http.StatusServiceUnavailable)
 		return
 	}
@@ -397,6 +400,9 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		}
 		log.Error("gateway: forwarder stream open failed",
 			"node", t.NodeID, "err", err.Error())
+		// No stream, so no request byte left this gateway
+		// (ADR-20261022184531 step 5).
+		markNotDispatched(w, r, NotDispatchedProxyRefused)
 		writeForwarderProblem(w, responseStatus)
 		return
 	}
@@ -596,6 +602,7 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 				markUndeliveredTarget(r.Context())
 				log.Warn("gateway: forwarder target not found on node; surfacing 503",
 					"node", t.NodeID, "instance", t.InstanceID)
+				markNotDispatched(w, r, NotDispatchedProxyRefused)
 				writeForwarderProblem(w, http.StatusServiceUnavailable)
 				return
 			}

@@ -427,6 +427,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_GATEWAY_SYNTH_SOCKET", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault},
 	{Name: "FAAS_GATEWAY_SYNTH_TARGET", Owners: []string{"schedd"}, Source: EnvSourceDropin},
 	{Name: "FAAS_GATEWAY_WAKE_AHEAD_STATE_DIR", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault, Note: "ADR-1132 optional override for the node-local wake-ahead learner snapshot directory; defaults to /var/lib/faas/wake-ahead, which the unit allows writing"},
+	{Name: "FAAS_GATEWAY_WAKE_FAILOVER", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault, Default: "0", Note: "ADR-20261022184531 step 5; 1 retries a response gatewayd-internal marked not dispatched (no request byte reached a guest) on another compute node, within api.GatewayFailover* limits; default off; needs a node-choosing dialer (compute pool or compute edge)"},
 	{Name: "FAAS_GCS_BUCKET", Owners: []string{"builderd", "imaged", "vmmd", "shared"}, Source: EnvSourceEnvFile, Note: "private regional bucket used when `FAAS_STORAGE_BACKEND=gcs`; authenticated with ADC"},
 	{Name: "FAAS_GC_INTERVAL", Owners: []string{"imaged"}, Source: EnvSourceDefault},
 	{Name: "FAAS_GEOIP_ASN_DB_PATH", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault, Note: "the geoip role stages the DB-IP ASN database at the code default (ADR-966); asn match conditions never match without it"},

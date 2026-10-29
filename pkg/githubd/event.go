@@ -12,6 +12,12 @@ import (
 	"strings"
 )
 
+// ErrPullRequestActionIgnored marks a pull_request action previews do not
+// act on (labeled, edited, review_requested, ...). GitHub sends every action
+// to an App subscribed to pull_request, so this is an ignored delivery, not a
+// malformed one.
+var ErrPullRequestActionIgnored = errors.New("githubd: pull_request action not in {opened,synchronize,reopened,closed}")
+
 // PullRequestAction enumerates the GitHub `pull_request` webhook
 // actions githubd reacts to. Anything not in this set is logged
 // and ignored — GitHub emits ~10 actions and we only want the
@@ -253,24 +259,10 @@ func DecodePullRequest(body []byte) (PullRequestEvent, error) {
 		ev.PullRequest.HeadRef = ev.PullRequest.Head.Ref
 	}
 	if !ev.Action.IsPreviewAction() {
-		// GitHub sends every pull_request action (edited, labeled,
-		// review_requested, ...) to every installed repository; only the
-		// preview set is acted on. The rest complete without the eight
-		// retries a decode error cost (bug hunt 2026-10-28 B27).
-		return ev, fmt.Errorf("githubd: pull_request action %q is not a preview action: %w", ev.Action, ErrIgnored)
+		return ev, fmt.Errorf("%w: %s", ErrPullRequestActionIgnored, ev.Action)
 	}
 	if ev.Number <= 0 {
 		return ev, errors.New("githubd: pull_request number must be > 0")
-	}
-	// GitHub carries the head commit and branch in pull_request.head. The
-	// top-level head_sha/head_ref this decoder required are never sent, so
-	// every real delivery failed to decode and no preview ever started
-	// (B27). They remain only as a fallback for older fixtures.
-	if ev.PullRequest.Head.SHA != "" {
-		ev.PullRequest.HeadSHA = ev.PullRequest.Head.SHA
-	}
-	if ev.PullRequest.Head.Ref != "" {
-		ev.PullRequest.HeadRef = ev.PullRequest.Head.Ref
 	}
 	if len(ev.PullRequest.HeadSHA) != 40 {
 		return ev, errors.New("githubd: pull_request.head_sha must be a 40-char SHA")

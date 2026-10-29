@@ -3,6 +3,7 @@ package journeys
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -141,12 +142,37 @@ func TestGitHubDeploys(t *testing.T) {
 		if preview == "" {
 			t.Skip("blocked: no preview was created")
 		}
+		closedAt := time.Now()
 		gh(t, "pr", "close", strconv.Itoa(number), "--repo", repo)
-		eventually(t, "closing the PR removes its preview", 5*time.Minute, 15*time.Second, func() (bool, string) {
-			res := tg.run(t, time.Minute, "preview", "list", "--app", slug)
-			return res.exit == 0 && !strings.Contains(string(res.stdout), preview), "still listed: " + tail(string(res.stdout), 200)
+		// A closed PR's preview keeps serving for its 24-hour grace
+		// (docs/preview-environments.md, Lifecycle) before the janitor tears
+		// it down, so the journey checks the close was recorded with that
+		// deadline. preview_destroy below removes it.
+		eventually(t, "closing the PR starts the preview's 24-hour grace", 5*time.Minute, 15*time.Second, func() (bool, string) {
+			res := tg.run(t, time.Minute, "preview", "list", "--app", slug, "--json")
+			if res.exit != 0 {
+				return false, tail(string(res.stderr), 200)
+			}
+			var items []struct {
+				Slug      string     `json:"slug"`
+				PRState   string     `json:"pr_state"`
+				ExpiresAt *time.Time `json:"expires_at"`
+			}
+			if err := json.Unmarshal(res.stdout, &items); err != nil {
+				return false, fmt.Sprintf("decode preview list: %v: %s", err, tail(string(res.stdout), 200))
+			}
+			for _, item := range items {
+				if item.Slug != preview {
+					continue
+				}
+				if item.PRState != "closed" || item.ExpiresAt == nil {
+					return false, fmt.Sprintf("pr_state=%q expires_at=%v", item.PRState, item.ExpiresAt)
+				}
+				grace := item.ExpiresAt.Sub(closedAt)
+				return grace > 23*time.Hour && grace < 25*time.Hour, fmt.Sprintf("expires %s after the close, want about 24h", grace.Round(time.Minute))
+			}
+			return false, "preview " + preview + " is no longer listed; the grace was skipped"
 		})
-		preview = ""
 	})
 	s.check("preview_destroy", func(t *testing.T) {
 		if preview == "" {

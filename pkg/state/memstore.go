@@ -4968,7 +4968,7 @@ func (m *MemStore) CreateApp(ctx context.Context, app App) (App, error) {
 	// so the column reads as a real value right out of CreateApp. The
 	// pgstore snap lives on the SQL path; the memstore snap mirrors it
 	// here so the per-account reserved-tier cap read
-	// (CountAppsWithEvictionPriority) sees the same value the wire
+	// (CountBillingSubjectAppsWithEvictionPriority) sees the same value the wire
 	// would. Pre-#475 tests that built App{} structs continue to read
 	// 'best_effort' on the round-trip.
 	app.EvictionPriority = EvictionPriorityOrBestEffort(app.EvictionPriority)
@@ -6851,25 +6851,23 @@ func (m *MemStore) CountDeveloperApps(_ context.Context, accountID string) (int,
 	return m.countAppQuotaLocked(app, true, QuotaErrorKindDeveloperApps), nil
 }
 
-// CountAppsWithEvictionPriority mirrors the pgstore read for the
-// per-account reserved-tier cap (issue #475). Same shape as
-// CountDeployedApps — counts APPS (not instances), excludes soft-deleted
-// apps so the cap tracks the live customer surface.
-func (m *MemStore) CountAppsWithEvictionPriority(_ context.Context, accountID, priority string) (int, error) {
+// CountBillingSubjectAppsWithEvictionPriority mirrors the pgstore read
+// for the per-account reserved-tier cap (issue #475): it counts APPS (not
+// instances) of appID's billing subject and excludes soft-deleted apps
+// (countsTowardQuotaSubjectLocked).
+func (m *MemStore) CountBillingSubjectAppsWithEvictionPriority(_ context.Context, appID, priority string) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	app, ok := m.apps[appID]
+	if !ok {
+		return 0, nil
+	}
+	subject := m.appBillingSubjectLocked(app.AccountID, app.ID)
 	n := 0
 	for _, a := range m.apps {
-		if a.AccountID != accountID {
-			continue
+		if a.EvictionPriority == priority && m.countsTowardQuotaSubjectLocked(a.AccountID, a.ID, subject) {
+			n++
 		}
-		if a.Status == AppDeleted {
-			continue
-		}
-		if a.EvictionPriority != priority {
-			continue
-		}
-		n++
 	}
 	return n, nil
 }

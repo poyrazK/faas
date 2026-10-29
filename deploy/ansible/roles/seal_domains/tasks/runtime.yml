@@ -133,7 +133,9 @@
     owner: root
     group: root
     mode: "0444"
-  notify: restart faas-apid for seal domains
+  notify:
+    - restart faas-apid for seal domains
+    - restart faas-apid-clone-worker for seal domains
   when: faas_box_role | default('single-box') in ['control-plane', 'single-box']
 
 - name: seal_domains — create the apid drop-in directory
@@ -213,12 +215,23 @@
     mode: "0755"
   when: faas_box_role | default('single-box') in ['control-plane', 'single-box']
 
-- name: seal_domains — give the clone worker the runtime secret signing key
+# The clone worker seals the app secret of a clone checkpoint, so it gets
+# apid's runtime writer settings: the domain recipient and write mode, the
+# account binding and the signing key.
+- name: seal_domains — give the clone worker the runtime writer settings
   ansible.builtin.template:
-    src: 60-faas-runtime-signing.conf.j2
-    dest: /etc/systemd/system/faas-apid-clone-worker.service.d/60-faas-runtime-signing.conf
+    src: 60-faas-seal-domain-runtime-writer.conf.j2
+    dest: /etc/systemd/system/faas-apid-clone-worker.service.d/60-faas-seal-domain-runtime.conf
     owner: root
     group: root
     mode: "0644"
+  notify: restart faas-apid-clone-worker for seal domains
+  when: faas_box_role | default('single-box') in ['control-plane', 'single-box']
+
+# The signing-key-only drop-in the writer settings replace.
+- name: seal_domains — remove the clone worker's signing-key-only drop-in
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-apid-clone-worker.service.d/60-faas-runtime-signing.conf
+    state: absent
   notify: restart faas-apid-clone-worker for seal domains
   when: faas_box_role | default('single-box') in ['control-plane', 'single-box']

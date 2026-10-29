@@ -6857,7 +6857,7 @@ func characterizationBootOutcome(report api.CharacterizationReport, executionMod
 // owner got no stable code.
 func executionModeConflict(executionMode string, report api.CharacterizationReport) error {
 	return api.NewProblem(422, api.CodeExecutionModeConflict, "execution mode conflicts with the app's behavior",
-		fmt.Sprintf("execution mode %q conflicts with characterized class %q (port=%d, exit_code=%d)", executionMode, report.ObservedClass, report.ObservedPort, report.ExitCode))
+		api.ExecutionModeConflict{Mode: executionMode, Class: report.ObservedClass, Port: report.ObservedPort, ExitCode: report.ExitCode}.Detail())
 }
 
 // loopbackBindProblem names a readiness failure whose only observed listener
