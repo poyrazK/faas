@@ -22,6 +22,11 @@ import (
 const eventInvocationMethod = "POST"
 const eventInvocationPath = "/"
 const eventFanoutRecoveryBatch = 100
+
+// eventReceiptPruneLimit bounds the settled receipts one sweep prunes. A
+// sweep that prunes the whole limit prunes again on the next sweep instead
+// of waiting out the 10 s prune interval (ADR-20261029012000).
+const eventReceiptPruneLimit = 5000
 const eventFanoutSubscriptionBatch = 256
 const eventFanoutRecipientMaxAttempts = api.EventRoutingRetryDefaultAttempts
 
@@ -487,6 +492,9 @@ func (l *Loop) runEventFanoutSweep(ctx context.Context) {
 	// prune and routing health is still observed.
 	routing := l.engine.eventsReleased()
 	l.observeEventRoutingPause(routing)
+	// Set by any part of the sweep that used its whole budget; the work
+	// pool then runs the next pass at once (ADR-20261029012000).
+	l.eventFanoutBacklog = false
 	// Disabling adoption must still drain previously adopted receipts.
 	defer l.observeEventRoutingHealth(ctx)
 	if routing {
@@ -504,11 +512,12 @@ func (l *Loop) runEventFanoutSweep(ctx context.Context) {
 			}
 		}
 		if retention, ok := l.engine.store.(state.PublishedEventRetentionStore); ok {
-			if _, err := retention.PruneSettledPublishedEvents(ctx, now, 5000); err != nil {
+			if pruned, err := retention.PruneSettledPublishedEvents(ctx, now, eventReceiptPruneLimit); err != nil {
 				if l.log != nil {
 					l.log.Warn("sched: prune delivered event identities failed", "error_class", dispatchErrorClass(err))
 				}
 			} else {
+				caughtUp := pruned < eventReceiptPruneLimit
 				if backfills, ok := l.engine.store.(state.EventReplayBackfillStore); ok {
 					if _, err := backfills.PruneEventReplayBackfills(ctx, now, api.EventReplayBackfillPruneBatch); err != nil && l.log != nil {
 						l.log.Warn("sched: prune completed event replay backfills failed", "err", err)
@@ -519,7 +528,9 @@ func (l *Loop) runEventFanoutSweep(ctx context.Context) {
 						l.log.Warn("sched: prune event recovery jobs failed", "err", err)
 					}
 				}
-				l.eventFanoutLastPrune = now
+				if caughtUp {
+					l.eventFanoutLastPrune = now
+				}
 			}
 		}
 	}
@@ -527,7 +538,8 @@ func (l *Loop) runEventFanoutSweep(ctx context.Context) {
 		return
 	}
 	if recovery, ok := l.engine.store.(state.EventRecoveryStore); ok {
-		for i := 0; i < eventFanoutRecoveryBatch; i++ {
+		i := 0
+		for ; i < eventFanoutRecoveryBatch; i++ {
 			worked, err := recovery.ProcessNextEventRecovery(ctx, now)
 			if err != nil && !l.eventJobContinue("event recovery", err) {
 				break
@@ -535,6 +547,9 @@ func (l *Loop) runEventFanoutSweep(ctx context.Context) {
 			if !worked {
 				break
 			}
+		}
+		if i == eventFanoutRecoveryBatch {
+			l.eventFanoutBacklog = true
 		}
 	}
 	l.runEventRecoveryExecutionNotifications(ctx, now)
@@ -591,6 +606,7 @@ func (l *Loop) runEventFanoutSweep(ctx context.Context) {
 		stop()
 		claimed += len(works)
 	}
+	l.eventFanoutBacklog = true
 }
 
 // routeClaimedEventReceipt adopts a claimed receipt's recipients for
@@ -652,6 +668,7 @@ func (l *Loop) runEventReplayBackfillSweep(ctx context.Context, now time.Time) {
 			return
 		}
 	}
+	l.eventFanoutBacklog = true
 }
 
 // eventJobContinue logs a failed recovery or backfill pass and reports
@@ -743,6 +760,7 @@ func (l *Loop) runEventRecipientSweep(ctx context.Context) {
 		stop()
 		routed += len(works)
 	}
+	l.eventFanoutBacklog = true
 }
 
 func (l *Loop) eventFanoutNow() time.Time {
