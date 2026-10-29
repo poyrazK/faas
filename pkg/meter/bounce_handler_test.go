@@ -53,12 +53,12 @@ func newHandler(store state.Store, aud *recordingAuditor) *BounceHandler {
 	return &BounceHandler{Store: store, Auditor: aud, Log: silentLog()}
 }
 
-// TestBounceHandler_HardBounceSuppressesAndAdvancesDunning pins
-// the headline contract: a hard_bounce event (1) writes a
-// mail_suppressions row, (2) emits a mail.bounce_hard audit row,
-// (3) advances the account from active to past_due via the
-// existing MarkDunningStep CAS.
-func TestBounceHandler_HardBounceSuppressesAndAdvancesDunning(t *testing.T) {
+// TestBounceHandler_HardBounceSuppressesWithoutDunning pins the headline
+// contract: a hard_bounce event (1) writes a mail_suppressions row, (2)
+// emits a mail.bounce_hard audit row, and (3) leaves the account's billing
+// status alone. It used to mark the account past_due, which suspended a
+// paying customer a week after one bounce (bug hunt 2026-10-28 B26).
+func TestBounceHandler_HardBounceSuppressesWithoutDunning(t *testing.T) {
 	store, accountID, email := newBounceFixture(t)
 	aud := &recordingAuditor{}
 	h := newHandler(store, aud)
@@ -82,16 +82,13 @@ func TestBounceHandler_HardBounceSuppressesAndAdvancesDunning(t *testing.T) {
 		t.Fatalf("IsMailSuppressed(%q) = %v, %v; want true, nil", email, suppressed, err)
 	}
 
-	// Dunning advanced: past_due_at stamped, status flipped.
+	// Billing status untouched.
 	acct, err := store.AccountByID(context.Background(), accountID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if acct.Status != state.AccountPastDue {
-		t.Fatalf("account status = %q, want past_due", acct.Status)
-	}
-	if acct.PastDueAt == nil {
-		t.Fatal("PastDueAt not stamped on hard_bounce")
+	if acct.Status != state.AccountActive || acct.PastDueAt != nil {
+		t.Fatalf("account status = %q, past_due_at %v; want active", acct.Status, acct.PastDueAt)
 	}
 
 	// Audit row emitted.
@@ -197,11 +194,9 @@ func TestBounceHandler_ReplayIsNoOp(t *testing.T) {
 	if second.Data["inserted"].(bool) {
 		t.Fatalf("replay insert.inserted = %v, want false", second.Data["inserted"])
 	}
-	// The handler's MarkDunningStep path was gated by `inserted`,
-	// so the second call did not touch the account row.
 	acct, _ := store.AccountByID(context.Background(), accountID)
-	if acct.PastDueAt == nil {
-		t.Fatal("PastDueAt unexpectedly nil after replay")
+	if acct.Status != state.AccountActive {
+		t.Fatalf("account status after replay = %q, want active", acct.Status)
 	}
 }
 

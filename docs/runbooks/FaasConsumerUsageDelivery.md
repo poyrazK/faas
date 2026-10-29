@@ -12,7 +12,7 @@ Check `gateway_consumer_usage_outbox_pending_records`, `_pending_bytes`, `_failu
 
 ## Recover
 
-Restore the listener or database, then watch pending records drain and delivered events rise. Leave the journal intact throughout. A lost response may replay an event, but apid's event ledger deduplicates it. If one event repeatedly returns a validation or foreign-key error, preserve a copy of the spool and investigate the referenced account/app/tenant lifecycle before any manual repair. FIFO delivery intentionally stops rather than silently discarding that event.
+Restore the listener or database, then watch pending records drain and delivered events rise. Leave the journal intact throughout. A lost response may replay an event, but apid's event ledger deduplicates it. If one event repeatedly returns a foreign-key or other transient error, preserve a copy of the spool and investigate the referenced account/app/tenant lifecycle before any manual repair; FIFO delivery stops rather than silently discarding that event. An event apid rejects as invalid (`InvalidArgument`, for example a field shape an older apid does not accept) is moved with its reason to `quarantine.jsonl` in the outbox directory and counted in `gateway_consumer_usage_quarantined_total` (alert `FaasConsumerUsageQuarantined`), so it no longer blocks later events. Keep that file and replay or reconcile its events once the cause is fixed.
 
 Deploy apid before gatewayd-internal. A new production gateway checks for `RecordConsumerUsage` at startup and refuses to run against an older apid, preventing duplicate ledger increments from collapsed debugger rows. See [ADR-234](../adr/234-durable-consumer-usage-delivery.md).
 

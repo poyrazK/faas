@@ -252,6 +252,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_E2E_ENTITY_ACCESS_KEY` | shared | `dev-only` |  |  | `` | ADR-712 fake credential for the isolated conditional S3 wire fixture; delivered only to the native harness's apid child; must never be set on a production host |
 | `FAAS_E2E_ENTITY_SECRET_KEY` | shared | `dev-only` |  |  | `` | ADR-712 fake credential for the isolated conditional S3 wire fixture; delivered only to the native harness's apid child; must never be set on a production host |
 | `FAAS_E2E_GO_TRACING_HELPER_BINARY` | shared | `dev-only` |  |  | `` | test-harness only; prebuilt Go SDK tracing-package fixture (ADR-958 amendment) for hosts without a matching Go toolchain |
+| `FAAS_E2E_GRYPE_REPLAY` | shared | `dev-only` |  |  | `` | test-harness only; 0 turns off the harness's grype wrapper that replays scans of byte-identical trees for imaged (pkg/e2etest/grype_replay.go); must never be set on a production host |
 | `FAAS_E2E_HELLO_SERVER_BINARY` | shared | `dev-only` |  |  | `` | test-harness only; prebuilt hello-server fixture binary so shared metal hosts need no Go toolchain; must never be set on a production host |
 | `FAAS_E2E_IMAGED_READY_TIMEOUT` | shared | `dev-only` |  |  | `` | test-harness only; how long the e2e harness waits for imaged to report ready (Go duration, default 10m), for hosts where staging the agent base takes longer (ADR-20261027090010) |
 | `FAAS_E2E_PROMOTION_PUBLICATION_SOCKET` | apid, shared | `dev-only` |  |  | `` | private native publication barrier; compiled only with metal,promotionacceptance and guarded by native qualification host/catalog checks; production and ordinary metal builds ignore it |
@@ -391,7 +392,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_GITLAB_OAUTH_REDIRECT_URI` | apid | `secrets-env` |  |  | `` | optional HTTPS callback ending in /v1/gitlab/callback; delivered by /etc/faas/sealed.env on apid |
 | `FAAS_GRACE_INTERVAL` | apid | `default` |  |  | `` |  |
 | `FAAS_GRPC_DEFAULT_DEADLINE` | shared | `default` |  |  | `` | ADR-190; unary gRPC deadline applied when the caller set none (default 60s, 0 disables the bound but keeps the counter) |
-| `FAAS_GRYPE_BIN` | imaged | `default` |  |  | `` |  |
+| `FAAS_GRYPE_BIN` | imaged, shared | `default` |  |  | `` |  |
 | `FAAS_GUEST_INIT` | imaged, shared | `dropin` |  |  | `` |  |
 | `FAAS_GUEST_TRACING_ENABLED` | apid, shared, vmmd | `default` |  | 0 | `` | operator-only in-guest request tracing broker; set in /etc/faas/otel.env on apid and vmmd hosts; apid refuses tracing.enabled until set (ADR-958); boot fallback for the guest_tracing platform flag (ADR-1700), ignored once an operator writes platform_flag.guest_tracing |
 | `FAAS_HANDOFF_CHECK_FDS` | apid, gatewayd-internal, gatewayd-public, realtimed, shared | `internal` |  |  | `` | set for a hand-off successor that is checked before it takes traffic: a JSON list of the check connections it serves (ADR 20261020214632) |
@@ -589,6 +590,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_OCI_TIMEOUT_SECONDS` | shared | `envfile` |  |  | `` |  |
 | `FAAS_OCI_USERNAME` | shared | `envfile` |  |  | `` | read-only runtime identity in /etc/faas/storage.env; imaged and vmmd lifecycle override in /etc/faas/imaged-storage.env |
 | `FAAS_OFF_HOST_BACKUP_RCLONE_CONFIG` | postgres | `script` |  |  | `` | LoadCredential= path on the postgresql@.service drop-in; consumed by the archive_command shell in the postgres role |
+| `FAAS_OIDC_EXCHANGE_AUDIENCES` | apid, shared | `default` |  |  | `` | comma-separated OIDC audiences a token exchange accepts besides gregale; unset accepts only gregale (docs/auth.md) |
 | `FAAS_OPERATIONS_WORKLOAD_ISSUER` | apid | `default` |  |  | `url` | optional Operations workload issuer override; configures runtime trust without enabling customer admission |
 | `FAAS_OPERATIONS_WORKLOAD_JWKS_PATH` | apid | `default` |  |  | `path-exists` | optional public Operations workload JWKS override; missing trust denies runtime reports; customer admission remains closed |
 | `FAAS_OPERATION_APPROVAL_INPUTS_ACCOUNTS` | apid, shared | `default` |  |  | `` | comma-separated account UUIDs approval input forms (ADR-20261019001500) are available to; unset admits none and ignores existing forms |

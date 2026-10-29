@@ -340,6 +340,9 @@ func (p *Provider) EnsurePlanProducts(ctx context.Context) error {
 	if strings.TrimSpace(p.meterID) == "" {
 		return errors.New("polar: meter id missing; configure FAAS_POLAR_METER_ID")
 	}
+	if err := p.validateOrganization(ctx); err != nil {
+		return err
+	}
 	if err := p.validateCatalog(ctx); err != nil {
 		return err
 	}
@@ -350,6 +353,36 @@ func (p *Provider) EnsurePlanProducts(ctx context.Context) error {
 	}
 	p.lastSyncAt = stamp
 	p.catalogMu.Unlock()
+	return nil
+}
+
+// catalogOrganization is the access token's Polar organization. apid's plan
+// changes, the usage pusher and reconciliation each follow one subscription
+// per customer; Polar enforces that only while the organization disallows
+// multiple subscriptions, a dashboard setting (ADR-20261029180000).
+type catalogOrganization struct {
+	ID                   string `json:"id"`
+	SubscriptionSettings struct {
+		AllowMultipleSubscriptions *bool `json:"allow_multiple_subscriptions"`
+	} `json:"subscription_settings"`
+}
+
+// validateOrganization refuses an organization that lets one customer hold
+// several subscriptions, so a second checkout can never bill a customer twice.
+func (p *Provider) validateOrganization(ctx context.Context) error {
+	var page struct {
+		Items []catalogOrganization `json:"items"`
+	}
+	if err := p.doJSON(ctx, http.MethodGet, "/v1/organizations/", nil, &page, ""); err != nil {
+		return fmt.Errorf("polar: validate organization: %w", err)
+	}
+	if len(page.Items) != 1 {
+		return fmt.Errorf("polar: validate organization: the access token sees %d organizations, want exactly its own", len(page.Items))
+	}
+	org := page.Items[0]
+	if allow := org.SubscriptionSettings.AllowMultipleSubscriptions; allow == nil || *allow {
+		return fmt.Errorf("polar: organization %s allows multiple subscriptions per customer; turn it off in the Polar dashboard (Settings, Subscriptions) before billing starts", org.ID)
+	}
 	return nil
 }
 

@@ -3,6 +3,7 @@ package sched_test
 import (
 	"context"
 	"errors"
+	"maps"
 	"testing"
 	"time"
 
@@ -11,12 +12,16 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// cronPlanStore is a gate store whose eligible set is precomputed per account,
-// so the gate's admit decision is tested independently of the ranking query
-// (which pkg/state tests over MemStore and PgStore).
+// cronPlanStore is a gate store whose eligible set is precomputed per billing
+// subject, so the gate's admit decision is tested independently of the
+// ranking query (which pkg/state tests over MemStore and PgStore). Like the
+// query, it ranks nothing under a zero cap. asked, when set, records the
+// per-account cap each subject was ranked under.
 type cronPlanStore struct {
 	plans    map[string]api.Plan
+	orgs     map[string]state.Org
 	eligible map[string][]string
+	asked    map[string]int
 }
 
 func (s cronPlanStore) AccountByID(_ context.Context, id string) (state.Account, error) {
@@ -27,8 +32,22 @@ func (s cronPlanStore) AccountByID(_ context.Context, id string) (state.Account,
 	return state.Account{ID: id, Plan: plan}, nil
 }
 
-func (s cronPlanStore) AccountEligibleCronIDs(_ context.Context, accountID string, _, _ int) ([]string, error) {
-	return s.eligible[accountID], nil
+func (s cronPlanStore) OrgByID(_ context.Context, id string) (state.Org, error) {
+	org, ok := s.orgs[id]
+	if !ok {
+		return state.Org{}, state.ErrNotFound
+	}
+	return org, nil
+}
+
+func (s cronPlanStore) BillingSubjectEligibleCronIDs(_ context.Context, subjectID string, _, perAccount int) ([]string, error) {
+	if s.asked != nil {
+		s.asked[subjectID] = perAccount
+	}
+	if perAccount <= 0 {
+		return nil, nil
+	}
+	return s.eligible[subjectID], nil
 }
 
 // A downgrade left every cron firing against the new plan's quota. The gate
@@ -58,6 +77,52 @@ func TestCronPlanGateAdmitsOnlyEligibleCrons(t *testing.T) {
 	}
 	if !admit(ctx, state.App{ID: "u1", AccountID: "unreadable"}, state.Cron{ID: "z", AppID: "u1"}) {
 		t.Fatal("a cron whose account could not be read was held; it passed its limits when written")
+	}
+}
+
+// A company app keeps its creator's account_id, but once the company adopted
+// billing its crons fire under the company's plan and share the company's
+// per-account allowance, whoever created the app (ADR-202610171904), as the
+// cron was admitted when written. The gate read the creator's personal plan
+// and ranked the creator's crons: a Free member's crons on a paid company app
+// never fired.
+//
+// adr: 202610171904
+func TestCronPlanGateRanksTheAppsBillingSubject(t *testing.T) {
+	ctx := context.Background()
+	asked := map[string]int{}
+	admit := sched.NewCronPlanGate(cronPlanStore{
+		plans: map[string]api.Plan{"free-member": api.PlanFree, "pro-member": api.PlanPro},
+		orgs: map[string]state.Org{
+			"adopted":   {ID: "adopted", Plan: api.PlanHobby, ResourceOwnershipEnabled: true},
+			"unadopted": {ID: "unadopted", Plan: api.PlanScale},
+		},
+		eligible: map[string][]string{"adopted": {"co-1"}, "pro-member": {"own-1"}, "free-member": {"legacy-1"}},
+		asked:    asked,
+	})
+	for _, step := range []struct {
+		what string
+		app  state.App
+		cron string
+		want bool
+	}{
+		{"a Free member's cron on the Hobby company's app", state.App{ID: "a1", AccountID: "free-member", OrgID: "adopted"}, "co-1", true},
+		{"a Pro member's company cron past the company's allowance", state.App{ID: "a2", AccountID: "pro-member", OrgID: "adopted"}, "co-2", false},
+		{"the Pro member's own cron", state.App{ID: "a3", AccountID: "pro-member"}, "own-1", true},
+		// Until adoption a company app runs under its creator's plan.
+		{"a Free creator's unadopted company cron", state.App{ID: "a4", AccountID: "free-member", OrgID: "unadopted"}, "legacy-1", false},
+	} {
+		if got := admit(ctx, step.app, state.Cron{ID: step.cron, AppID: step.app.ID}); got != step.want {
+			t.Fatalf("%s: admitted = %v, want %v", step.what, got, step.want)
+		}
+	}
+	want := map[string]int{
+		"adopted":     api.MustLimitsFor(api.PlanHobby).CronLimitPerAccount,
+		"pro-member":  api.MustLimitsFor(api.PlanPro).CronLimitPerAccount,
+		"free-member": 0,
+	}
+	if !maps.Equal(asked, want) {
+		t.Fatalf("ranked subjects (per-account cap) = %v, want %v", asked, want)
 	}
 }
 

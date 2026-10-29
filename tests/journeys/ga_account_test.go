@@ -22,10 +22,10 @@ func TestBillingAndUsage(t *testing.T) {
 		"billing_status":   {"billing", "status"},
 		"billing_costs":    {"billing", "costs"},
 		"billing_forecast": {"billing", "forecast"},
-		"usage_month":      {"usage"},
-		"usage_daily":      {"usage", "daily", "--day", today},
-		"usage_summary":    {"usage", "summary"},
-		"invoices":         {"invoices"},
+		"usage_month":      {"billing", "usage"},
+		"usage_daily":      {"billing", "usage", "daily", "--day", today},
+		"usage_summary":    {"billing", "usage", "summary"},
+		"invoices":         {"billing", "invoices"},
 	}
 	for name, args := range views {
 		t.Run(name, func(t *testing.T) {
@@ -62,8 +62,8 @@ func TestAccountExportAndDPA(t *testing.T) {
 }
 
 // TestCLITools exercises the developer-facing CLI commands that need no
-// app: version, context, local source doctor, shell completion, man pages
-// and full help (row 156).
+// app: version, context, local source check, shell completion, man pages,
+// full help and earlier command names (row 156).
 func TestCLITools(t *testing.T) {
 	tg := needs(t, tierSmoke, true)
 	t.Parallel()
@@ -76,7 +76,7 @@ func TestCLITools(t *testing.T) {
 		tg.ok(t, time.Minute, "context")
 	})
 	t.Run("doctor_source", func(t *testing.T) {
-		tg.ok(t, 2*time.Minute, "doctor", "--path", probeSource(t, "v1"))
+		tg.ok(t, 2*time.Minute, "deploy", "check", "--path", probeSource(t, "v1"))
 	})
 	t.Run("completion", func(t *testing.T) {
 		res := tg.ok(t, time.Minute, "completion", "zsh")
@@ -106,6 +106,19 @@ func TestCLITools(t *testing.T) {
 			}
 		}
 	})
+	t.Run("earlier_names", func(t *testing.T) {
+		// Scripts keep running under the names commands had before the
+		// command tree (ADR-20261026145832), and a non-interactive run
+		// prints no rename tip.
+		now := objects(t, tg.ok(t, time.Minute, "feature", "list").stdout)
+		res := tg.ok(t, time.Minute, "capabilities")
+		if earlier := objects(t, res.stdout); len(earlier) != len(now) {
+			t.Fatalf("gregale capabilities lists %d features, gregale feature list %d", len(earlier), len(now))
+		}
+		if strings.Contains(string(res.stderr), "Tip:") {
+			t.Fatalf("gregale capabilities printed a rename tip: %s", tail(string(res.stderr), 200))
+		}
+	})
 }
 
 // TestCustomDomainBinding binds a custom domain the suite does not own,
@@ -117,15 +130,15 @@ func TestCustomDomainBinding(t *testing.T) {
 	t.Parallel()
 	slug, _ := tg.deployProbe(t, "domain")
 	domain := slug + ".example.com"
-	t.Cleanup(func() { tg.run(t, time.Minute, "domains", "rm", domain) })
+	t.Cleanup(func() { tg.run(t, time.Minute, "domain", "delete", domain) })
 	s := newStory(t)
 
 	s.step("add", func(t *testing.T) {
-		res := tg.ok(t, time.Minute, "domains", "add", "--app", slug, domain)
+		res := tg.ok(t, time.Minute, "domain", "create", "--app", slug, domain)
 		t.Logf("domains add: %s", tail(string(res.stdout), 500))
 	})
 	s.check("pending_with_records", func(t *testing.T) {
-		res := tg.ok(t, time.Minute, "domains", "show", domain)
+		res := tg.ok(t, time.Minute, "domain", "get", domain)
 		out := strings.ToLower(string(res.stdout))
 		if !strings.Contains(out, "pending") && !strings.Contains(out, "unverified") && !strings.Contains(out, "verif") {
 			t.Errorf("domains show does not report pending verification: %s", tail(string(res.stdout), 400))
@@ -135,17 +148,17 @@ func TestCustomDomainBinding(t *testing.T) {
 		}
 	})
 	s.check("verify_fails_without_dns", func(t *testing.T) {
-		res := tg.run(t, time.Minute, "domains", "verify", domain)
+		res := tg.run(t, time.Minute, "domain", "verify", domain)
 		if res.exit == 0 && strings.Contains(strings.ToLower(string(res.stdout)), `"verified": true`) {
 			t.Errorf("a domain with no DNS records verified")
 		}
 	})
 	s.check("listed_then_removed", func(t *testing.T) {
-		if res := tg.ok(t, time.Minute, "domains", "list"); !strings.Contains(string(res.stdout), domain) {
+		if res := tg.ok(t, time.Minute, "domain", "list"); !strings.Contains(string(res.stdout), domain) {
 			t.Errorf("domains list does not show %s", domain)
 		}
-		tg.ok(t, time.Minute, "domains", "rm", domain)
-		if res := tg.ok(t, time.Minute, "domains", "list"); strings.Contains(string(res.stdout), domain) {
+		tg.ok(t, time.Minute, "domain", "delete", domain)
+		if res := tg.ok(t, time.Minute, "domain", "list"); strings.Contains(string(res.stdout), domain) {
 			t.Errorf("%s is still listed after domains rm", domain)
 		}
 	})

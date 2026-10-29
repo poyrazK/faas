@@ -119,7 +119,7 @@ func (h *Handler) serveStaleWhileWaking(w http.ResponseWriter, r *http.Request, 
 		return false, ""
 	}
 	for k, vs := range entry.header {
-		if isHopByHopHeader(k) {
+		if isHopByHopHeader(k) || cachedHeaderSuperseded(w, k) {
 			continue
 		}
 		for _, v := range vs {
@@ -169,11 +169,16 @@ func (h *Handler) startCacheRefresh(r *http.Request, app App, rule *EdgeRuleCach
 	if h.authorizedDeploymentSmoke(r, app) {
 		return
 	}
+	refreshKey := key.String()
+	if _, inFlight := h.cacheRefreshing.LoadOrStore(refreshKey, struct{}{}); inFlight {
+		return
+	}
 	detached := withoutTrafficDecision(context.WithoutCancel(r.Context()))
 	request := r.Clone(detached)
 	request.Body = http.NoBody
 	go func(ctx context.Context) {
-		_, _, _ = h.cacheRefresh.Do(key.String(), func() (any, error) {
+		defer h.cacheRefreshing.Delete(refreshKey)
+		_, _, _ = h.cacheRefresh.Do(refreshKey, func() (any, error) {
 			ctx, cancel := context.WithTimeout(ctx, time.Duration(api.WakeQueueTTLSeconds)*time.Second)
 			defer cancel()
 			if routing, pinned := publicRoutingSnapshot(ctx); pinned {
@@ -341,7 +346,7 @@ func (h *Handler) tryServeStaleOnWakeError(w http.ResponseWriter, r *http.Reques
 	// handler_apply_edge_rule_cache.go; the only differences
 	// are the Warning header and the metrics outcome string.
 	for k, vs := range entry.header {
-		if isHopByHopHeader(k) {
+		if isHopByHopHeader(k) || cachedHeaderSuperseded(w, k) {
 			continue
 		}
 		for _, v := range vs {

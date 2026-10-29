@@ -1,6 +1,6 @@
 # ADR-847: Opt-in synthetic probes for routes without organic traffic
 
-- Status: Accepted
+- Status: Accepted (amended 2026-10-29)
 - Date: 2026-10-09
 - Related: ADR-454, ADR-459, ADR-482, ADR-843, ADR-846
 - Amends: ADR-454 (observed evidence only)
@@ -64,3 +64,22 @@ probe-detected regression is still adopted.
   protected routes stay unknown.
 - Deployments must set `FAAS_ROUTE_PROBE_URL` for apid; until then probes are
   off and nothing changes.
+
+## Amendment 1 (2026-10-29): probes are on by default, through the local gateway
+
+Production never set `FAAS_ROUTE_PROBE_URL`: `route_probe_observations` held no
+rows, so the ADR-1446 default probe never ran. Every quiet safe release waited
+`CanaryLowTrafficMaxHold` at each stage (rc.304's release acceptance redeploy
+spent 10 of its 16 rollout minutes in two such holds), customers' releases
+included.
+
+- The control-plane role now enables probes by default (`route_probes_enabled:
+  true`); setting it false turns them off. The billing consequence above is the
+  one ADR-1446 already accepted for the default probe.
+- apid sends probes to the control plane's own `gatewayd-public` listener
+  (`faas_route_probe_url`, default `http://127.0.0.1:8080`), the public
+  edge's upstream, rather than to the CDN-fronted apps domain. The metal
+  tests exercise this path; the CDN path (TLS name `gregale.dev`, `Host` an
+  app subdomain) was never tested. Exact-deployment routing, the challenge
+  tokens and the response proof are unchanged, and a gateway that has not
+  received a challenge still refuses the probe, which then does not count.
