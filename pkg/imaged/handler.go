@@ -226,6 +226,9 @@ type Handler struct {
 	// Grype run used; a redeploy of an unchanged artifact reuses a result
 	// only from that same scanner (scan_reuse.go).
 	lastDeployScanner scannerMemo
+	// lchown sets ownership in platform layer staging trees; nil is
+	// os.Lchown. Tests inject one because they run without CAP_CHOWN.
+	lchown func(path string, uid, gid int) error
 
 	// runtimeGrypeRun scans the native composed directory without treating a
 	// customer file named rootfs.ext4 as a nested image.

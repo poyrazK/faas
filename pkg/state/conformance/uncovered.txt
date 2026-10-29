@@ -83,7 +83,6 @@ CountAppEnvInScope
 CountAppRegistryCredentials
 CountAppSecrets
 CountAppTrustedSigners
-CountAppsWithEvictionPriority
 CountAuthDefaultFlippedApps
 CountDataUpstreamsByApp
 CountDeployedApps
@@ -98,6 +97,7 @@ CountNewErrorFingerprintsSince
 CountOpenAPIDocsByAccount
 CountOpenAPIImportsByAccount
 CountOpenUploadSessionsByAccountApp
+CountOtherBillingSubjectAppsWithEvictionPriority
 CountPendingInvocations
 CountPendingOrgInvitations
 CountTenantHostnamesForSurface
@@ -109,7 +109,6 @@ CrashCapturesToEncrypt
 CrashCapturesToPurge
 CrashCapturesToStage
 CrashSnapshotSettingsFor
-CreateAPIKeyWithExpiry
 CreateAccountWithPersonalOrg
 CreateAlertRuleIfUnderQuota
 CreateAppFork

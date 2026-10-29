@@ -40,7 +40,7 @@ func TestGitHubDeploys(t *testing.T) {
 	s.step("bind", func(t *testing.T) {
 		// Branch-to-scope mappings need a project-backed app; a plain app
 		// deploys its production branch.
-		tg.ok(t, 2*time.Minute, "github", "bind", slug, "--repo", repo, "--branch", "main")
+		tg.ok(t, 2*time.Minute, "github", "link", slug, "--repo", repo, "--branch", "main")
 		eventually(t, "the binding is healthy", 2*time.Minute, 5*time.Second, func() (bool, string) {
 			res := tg.run(t, time.Minute, "github", "status", slug)
 			return res.exit == 0 && strings.Contains(string(res.stdout), repo), res.problem() + tail(string(res.stdout), 300)
@@ -61,7 +61,7 @@ func TestGitHubDeploys(t *testing.T) {
 		defer func() {
 			if t.Failed() {
 				// Say whether the push created a deployment and how it ended.
-				res := tg.run(t, time.Minute, "deployments", "--app", slug, "--limit", "3")
+				res := tg.run(t, time.Minute, "release", "list", "--app", slug, "--limit", "3")
 				t.Logf("deployments after the push: %s", tail(string(res.stdout), 1500))
 				status := tg.run(t, time.Minute, "github", "status", slug)
 				t.Logf("github status: %s", tail(string(status.stdout), 800))
@@ -97,7 +97,7 @@ func TestGitHubDeploys(t *testing.T) {
 	// app with a live preview cannot be deleted (traffic_policy_too_complex).
 	t.Cleanup(func() {
 		if preview != "" {
-			tg.run(t, 2*time.Minute, "preview", "destroy", preview)
+			tg.run(t, 2*time.Minute, "preview", "delete", preview)
 		}
 	})
 	s.check("pull_request_preview", func(t *testing.T) {
@@ -178,7 +178,7 @@ func TestGitHubDeploys(t *testing.T) {
 		if preview == "" {
 			t.Skip("the preview is already gone")
 		}
-		tg.ok(t, 2*time.Minute, "preview", "destroy", preview)
+		tg.ok(t, 2*time.Minute, "preview", "delete", preview)
 		eventually(t, "a destroyed preview stops serving", 2*time.Minute, 5*time.Second, func() (bool, string) {
 			r := get(tg.appURL(preview) + "/")
 			return r.status == http.StatusNotFound, r.String()

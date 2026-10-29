@@ -58,6 +58,11 @@ jobs:
           # dependencies ahead and keep a preview on its PR.
           - suite: multi-service
             run: '^TestE2E_MultiServiceProject_'
+          # Edge rules created, changed, rolled back and deleted through the
+          # API and checked on public traffic once the gateways apply them
+          # (ADR-091 amendment 2026-10-28).
+          - suite: edge-rules
+            run: '^TestE2E_EdgeRules_'
     services:
       postgres:
         image: mirror.gcr.io/library/postgres:16

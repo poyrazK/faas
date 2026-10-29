@@ -172,5 +172,49 @@ A second review found two more gaps.
 **Consequences.** After each gateway restart, canary advances and monitor
 evaluations wait about two minutes for complete windows. Pooled evidence over
 the last 30 minutes can still include a gap older than the current windows;
-it is read as before. Distinguishing an apid outage from plan-rate drops
-needs the gateway to report loss causes, which this amendment does not add.
+it is read as before. An apid outage is detected: gateways send coverage
+heartbeats over the same apid RPC as the rows, so an outage resets every
+gateway's healthy-since time (corrected by amendment 2).
+
+## Amendment 2 (2026-10-29): stopped gateways, aborted holds, customer grouping
+
+A third review found these gaps, two of them in this ADR's own changes.
+
+1. **One stopped gateway held every app's evidence.** Amendment 1 counted an
+   active node silent since before the window's end as lost telemetry. A
+   live node whose gateway crashed, stopped publishing or was removed keeps a
+   stale coverage row while schedd still sees the node, so every app's route
+   evidence stayed unavailable: enforced canaries neither advanced nor timed
+   out.
+2. **A deadline abort read as a resolved hold.** The abort left the guard's
+   notification state blocked, so the aborted canary dropped out of
+   `route_health_holds` (no longer in flight, not `aborted`): the alert sent a
+   resolve notification as the release was aborted, and no
+   `routes.health.aborted` webhook went out.
+3. **Per-customer evaluation relied on internal identities.**
+   `customer_group_by` (monitor, monitor preview, route health customers,
+   investigations) groups by platform tenants or API consumers, both internal
+   capabilities, with no gate.
+4. **Holds had no visible deadline.** Nothing said when a held canary would be
+   aborted.
+
+**Decision.**
+
+- A gateway whose last coverage report is more than
+  `RouteTelemetrySilenceGrace` (30 s) older than the evidence windows' start is
+  ignored, whatever that report said. A gateway that fell silent within the
+  grace or inside the windows still makes them `telemetry_incomplete`. One
+  stopped gateway now costs the evidence windows it overlapped, not every app's
+  evidence until an operator acts. A gateway that keeps serving while it stops
+  publishing goes unnoticed by route evidence.
+- After a hold-deadline abort, apid records the hold as `aborted`
+  (`RouteHealthHoldAborter`), so `route_health_holds` counts it for its
+  window, and app webhooks receive `routes.health.aborted` with reason
+  `hold_deadline_exceeded`. That webhook names the hold's first blocking
+  decision, whose saved evidence explains the hold. If bounded history has
+  pruned that decision, the abort is recorded without a webhook.
+- `customer_group_by tenant` needs `platform-tenants` and `consumer` needs
+  `api-consumers` released for the account; otherwise the request is refused
+  with `capability_not_released`.
+- A route health report read while the enforced guard holds the canary adds
+  `hold.since` and `hold.aborts_at`. The CLI prints them.

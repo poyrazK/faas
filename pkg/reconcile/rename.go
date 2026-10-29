@@ -27,3 +27,20 @@ func RenamedWorkloads(workloads []reposcan.Workload, existing []state.App) map[s
 	}
 	return renamed
 }
+
+// keepServingClass keeps an existing app's serving class when the scan could
+// not read the service's prebuilt image (ADR-20261029120000 amendment 2). A
+// registry that is down or a private image must not turn a live internal API
+// into a worker: worker mode refuses the wakes its callers need. A new app
+// has nothing to keep and starts as a worker, which the plan warns about.
+func keepServingClass(w reposcan.Workload, app state.App) reposcan.Workload {
+	if !w.ListenerUnknown || w.Class != reposcan.ClassWorker {
+		return w
+	}
+	switch app.WorkloadClass {
+	case state.WorkloadClassWorker, state.WorkloadClassJob:
+		return w
+	}
+	w.Class = reposcan.ClassHTTP
+	return w
+}

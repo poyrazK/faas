@@ -80,7 +80,7 @@ type planEnvChangeArgs struct {
 func registerLocalReleases(s *mcp.Server, m *management) {
 	// Remote grants consent to existing app identities, and the bridge host's
 	// files and credentials are not the caller's: local connections only.
-	if m.opts.LocalCLI == nil || m.opts.AllowedApps != nil || m.opts.Environments != nil {
+	if m.opts.LocalCLI == nil || m.opts.AllowedApps != nil || m.remote() {
 		return
 	}
 	register(s, m, "gregale_plan_local_deploy", "Review deploying a local directory as one app through this machine's gregale CLI, without uploading; pins the files and the app's release state for 15 minutes. Apply makes a new or non-serving app live; a serving app is staged at 0% for gregale_promote_deployment. Functions, multi-service projects and linked project directories stay in the CLI.", m.planLocalDeploy)
