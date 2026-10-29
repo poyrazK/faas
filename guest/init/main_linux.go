@@ -1415,7 +1415,7 @@ func runBuildOnce(m api.BuildManifest) error {
 		if unmountErr := syscall.Unmount(builderDriveMount, 0); unmountErr != nil {
 			return finish(fmt.Errorf("unmount builder scratch: %w", unmountErr), combined.String())
 		}
-		writeBuildDoneTimed(m, nil, combined.String(), clock.timings())
+		writeBuildDone(m, nil, combined.String(), clock.timings())
 		guestStage("build-ready")
 		return nil
 	}
@@ -2285,13 +2285,8 @@ func goCommandAcknowledgement(m api.BuildManifest) string {
 // writeBuildDone writes /etc/faas/build-done.json (vmmd's Destroy loopback-
 // mounts the chroot drive1 to copy it out). Warm builders call this while the
 // guest remains alive; ordinary builders call it immediately before poweroff.
-func writeBuildDone(m api.BuildManifest, runErr error, logTail string) {
-	writeBuildDoneTimed(m, runErr, logTail, nil)
-}
-
-// writeBuildDoneTimed is writeBuildDone with the build's timings, which
-// builderd reports whether the build succeeded or not.
-func writeBuildDoneTimed(m api.BuildManifest, runErr error, logTail string, timings *api.BuildTimings) {
+// timings, when set, are reported whether the build succeeded or not.
+func writeBuildDone(m api.BuildManifest, runErr error, logTail string, timings *api.BuildTimings) {
 	exitCode, fc := buildExitStatus(runErr)
 	if logTail == "" && runErr != nil {
 		logTail = runErr.Error()
@@ -2355,7 +2350,7 @@ func writeAndPoweroff(m api.BuildManifest, runErr error, logTail string) error {
 
 // writeAndPoweroffTimed is writeAndPoweroff with the build's timings.
 func writeAndPoweroffTimed(m api.BuildManifest, runErr error, logTail string, timings *api.BuildTimings) error {
-	writeBuildDoneTimed(m, runErr, logTail, timings)
+	writeBuildDone(m, runErr, logTail, timings)
 	// Flush all overlay upper metadata/data before the forced poweroff. The
 	// host exports the ext4 immediately after Firecracker exits; without an
 	// explicit sync, the manifest and image can still be only in guest page
