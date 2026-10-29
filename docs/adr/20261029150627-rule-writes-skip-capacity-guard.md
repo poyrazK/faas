@@ -1,7 +1,7 @@
 # ADR: Traffic rule writes no longer take the fleet capacity guard
 
 Date: 2026-10-29
-Status: Proposed
+Status: Accepted (owner, 2026-10-29)
 Amends: [ADR-570](570-traffic-enforcement-guarantees.md) (the policy mutation guard's `service_capacity_policy` table lock)
 Related: [ADR-20261027163626](20261027163626-traffic-binding-guard-per-host.md) (scoped binding and route-rule guard), [ADR-422](422-bare-metal-service-recovery-capacity.md) (service capacity protection)
 
