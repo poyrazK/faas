@@ -47,20 +47,6 @@ endpoint, preventing an intercepted authorization code from being redeemed
 without the originating browser. This profile covers dashboard sign-in only;
 the separate GitHub App installation callback is not part of the PKCE contract.
 
-## GitHub App connection callback
-
-The dashboard's **Connect GitHub** flow uses `/oauth/code-callback`. Register
-`https://gregale.dev/oauth/code-callback` as the hosted GitHub App's OAuth
-callback URL. This is separate from the dashboard sign-in callback and the
-App's installation/setup callback.
-
-For a self-hosted console, configure `cli_auth_url_base` in apid's TOML or
-`FAAS_CLI_AUTH_URL_BASE` with the public console URL. GitHub App authorization
-defaults to that base plus `/oauth/code-callback`, independently of the API
-listener's request host. The console edge must forward this callback to apid.
-`FAAS_GITHUB_APP_REDIRECT_URI` takes precedence when a separate callback URL
-is required; ensure its value matches the callback registered with GitHub.
-
 ## OIDC token exchange
 
 Gregale publishes its supported OAuth token-service capabilities at the RFC
@@ -76,15 +62,16 @@ customer authorization server, authorization-code flow, refresh tokens, or
 dynamic client registration.
 
 CI runners can exchange an IdP-issued JWT for a short-lived deploy bearer using
-the RFC 8693 form profile:
+the RFC 8693 form profile. `audience` is the audience your IdP issued the
+token for; the first exchange pins it in the account's trust policy:
 
 ```bash
-curl -X POST https://api.example.com/v1/auth/oidc/exchange \
+curl -X POST https://api.gregale.dev/v1/auth/oidc/exchange \
   -H 'Content-Type: application/x-www-form-urlencoded' \
   --data-urlencode 'grant_type=urn:ietf:params:oauth:grant-type:token-exchange' \
   --data-urlencode 'subject_token_type=urn:ietf:params:oauth:token-type:jwt' \
   --data-urlencode "subject_token=$OIDC_TOKEN" \
-  --data-urlencode 'audience=faas.example.com'
+  --data-urlencode 'audience=gregale'
 ```
 
 The response uses the OAuth token shape (`access_token`, `token_type`,

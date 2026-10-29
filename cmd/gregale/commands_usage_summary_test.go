@@ -268,7 +268,7 @@ func TestCmdUsage_NoPositional_DispatchesToList(t *testing.T) {
 				AppID: "a1", Requests: 1, MBSeconds: 1, IncludedGBHours: 5,
 			}})
 		case "/v1/usage/summary":
-			t.Errorf("dispatcher reached /v1/usage/summary for bare `gregale usage`; want /v1/usage")
+			t.Errorf("dispatcher reached /v1/usage/summary for bare `gregale billing usage`; want /v1/usage")
 		default:
 			http.Error(w, "no", 404)
 		}
@@ -365,7 +365,7 @@ func TestCmdUsage_SummarySubcommand_DispatchesToSummary(t *testing.T) {
 				OverageGBHours: 0, OverageCents: 0,
 			})
 		case "/v1/usage":
-			t.Errorf("dispatcher reached /v1/usage for `gregale usage summary`; want /v1/usage/summary")
+			t.Errorf("dispatcher reached /v1/usage for `gregale billing usage summary`; want /v1/usage/summary")
 		default:
 			http.Error(w, "no", 404)
 		}

@@ -111,7 +111,7 @@ func cmdGithubBind(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 || !validCLISlug(fs.Arg(0)) || *installationID < 0 || strings.TrimSpace(*repo) == "" {
-		PrintUsage(os.Stderr, "usage: gregale github bind <slug> --repo OWNER/NAME [--installation-id ID] [--branch BRANCH] [--deploy-branches branch=scope,...]", "github")
+		PrintUsage(os.Stderr, "usage: gregale github link <slug> --repo OWNER/NAME [--installation-id ID] [--branch BRANCH] [--deploy-branches branch=scope,...]", "github")
 		return 1
 	}
 	branches, err := parseGitHubDeployBranches(*deployBranches)
@@ -128,7 +128,7 @@ func cmdGithubBind(args []string) int {
 			return printErr("GitHub status failed", err)
 		}
 		if status.InstallationID <= 0 {
-			return printErr("GitHub bind failed", fmt.Errorf("no GitHub App installation is connected; run `gregale connect github` first"))
+			return printErr("GitHub bind failed", fmt.Errorf("no GitHub App installation is connected; run `gregale github connect` first"))
 		}
 		*installationID = status.InstallationID
 	}

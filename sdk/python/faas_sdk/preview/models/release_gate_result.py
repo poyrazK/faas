@@ -31,6 +31,9 @@ class ReleaseGateResult:
     """slo gates: the predecessor's bad fraction."""
     error_classes: list[str] | Unset = UNSET
     """new_errors gates: the new groups' error classes."""
+    not_judged: bool | Unset = UNSET
+    """True when the gate had too few samples or unreadable evidence. It did not hold the rollout; summary says
+    what it was waiting for."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -54,6 +57,8 @@ class ReleaseGateResult:
         if not isinstance(self.error_classes, Unset):
             error_classes = self.error_classes
 
+        not_judged = self.not_judged
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -71,6 +76,8 @@ class ReleaseGateResult:
             field_dict["baseline_bad_fraction"] = baseline_bad_fraction
         if error_classes is not UNSET:
             field_dict["error_classes"] = error_classes
+        if not_judged is not UNSET:
+            field_dict["not_judged"] = not_judged
 
         return field_dict
 
@@ -95,6 +102,8 @@ class ReleaseGateResult:
 
         error_classes = cast(list[str], d.pop("error_classes", UNSET))
 
+        not_judged = d.pop("not_judged", UNSET)
+
         release_gate_result = cls(
             name=name,
             kind=kind,
@@ -105,6 +114,7 @@ class ReleaseGateResult:
             summary=summary,
             baseline_bad_fraction=baseline_bad_fraction,
             error_classes=error_classes,
+            not_judged=not_judged,
         )
 
         release_gate_result.additional_properties = d

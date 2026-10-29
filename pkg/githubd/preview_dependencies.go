@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/netip"
 	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/projectsetup"
 	"github.com/onebox-faas/faas/pkg/reconcile"
 	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -171,6 +173,45 @@ func previewManifest(parent state.AppManifest) state.AppManifest {
 	return parent
 }
 
+// prHeadComposeValues reads the plain values the PR head's Compose file
+// declares, for each service by lower-cased name, under the same opt-in and
+// rules as a project deploy (ADR-20261026181020). They come from the PR's own
+// source, so a preview may run with them (ADR-20261028090000). An unreadable
+// Compose environment imports nothing, as on a project deploy.
+func prHeadComposeValues(fsys fs.FS, scan reposcan.Result, limits api.Limits) map[string]map[string]string {
+	env, err := reposcan.ReadComposeEnv(fsys)
+	if err != nil || !env.Import {
+		return nil
+	}
+	callable := make([]string, 0, len(scan.Workloads))
+	for _, workload := range scan.Workloads {
+		callable = append(callable, workload.Name)
+	}
+	out := make(map[string]map[string]string, len(scan.Workloads))
+	for _, workload := range scan.Workloads {
+		if values := projectsetup.PlanEnvImport(env, workload.Name, callable, limits).Values; len(values) > 0 {
+			out[strings.ToLower(workload.Name)] = values
+		}
+	}
+	return out
+}
+
+// withPRHeadValues adds a preview's PR head values to its manifest
+// environment. Platform-owned keys, such as the service binding URLs, win.
+func withPRHeadValues(env, values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return env
+	}
+	merged := make(map[string]string, len(env)+len(values))
+	for key, value := range values {
+		merged[key] = value
+	}
+	for key, value := range env {
+		merged[key] = value
+	}
+	return merged
+}
+
 // withParentAccessGates copies the parent's access and egress gates onto a PR
 // preview. A preview answers on a guessable pr-<n>-<slug> host and runs the PR
 // head, so the preview of an IP-allowlisted, password-protected, signed-only
@@ -204,11 +245,12 @@ func makePRDependencyPreview(parent state.App, prNumber int, expiresAt time.Time
 	}, policy), parent), nil
 }
 
-func (s *Service) applyPRHeadWorkload(ctx context.Context, preview state.App, workload reposcan.Workload, available map[string]struct{}, policy state.GitHubDeployPolicy) (state.App, error) {
+func (s *Service) applyPRHeadWorkload(ctx context.Context, preview state.App, workload reposcan.Workload, available map[string]struct{}, policy state.GitHubDeployPolicy, headValues map[string]string) (state.App, error) {
 	// Also clear environment values on an existing preview. Earlier preview
 	// rows inherited parent values; a synchronize event must not retain them.
 	preview.Manifest = previewManifest(preview.Manifest)
 	desired := reconcile.ApplyScannedWorkloadToApp(preview, workload, available)
+	desired.Manifest.Env = withPRHeadValues(desired.Manifest.Env, headValues)
 	desired = applyGitHubRootPolicy(desired, policy)
 	params := state.UpdateAppParams{
 		RootDir: &desired.RootDir, WorkloadName: &desired.WorkloadName,

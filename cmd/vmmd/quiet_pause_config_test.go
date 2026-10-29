@@ -7,24 +7,24 @@ import (
 	"testing"
 )
 
-// adr: 1151 — quiet pause is off by default; vmmd.toml can turn it on and
-// FAAS_QUIET_PAUSE overrides TOML in either direction.
+// adr: 1151 — quiet pause is on by default (amendment 2026-10-27); vmmd.toml
+// can turn it off and FAAS_QUIET_PAUSE overrides TOML in either direction.
 func TestLoadConfig_QuietPauseSwitch(t *testing.T) {
 	cfg, err := LoadConfig(filepath.Join(t.TempDir(), "missing.toml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.QuietPause {
-		t.Fatal("quiet pause must default to off")
+	if !cfg.QuietPause {
+		t.Fatal("quiet pause must default to on")
 	}
 	path := filepath.Join(t.TempDir(), "vmmd.toml")
-	if err := os.WriteFile(path, []byte("quiet_pause = true\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("quiet_pause = false\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {
 		env     string
 		enabled bool
-	}{{"", true}, {"1", true}, {"true", true}, {"0", false}, {"false", false}} {
+	}{{"", false}, {"1", true}, {"true", true}, {"0", false}, {"false", false}} {
 		t.Run("env="+tc.env, func(t *testing.T) {
 			if tc.env != "" {
 				t.Setenv("FAAS_QUIET_PAUSE", tc.env)
@@ -45,7 +45,8 @@ func TestLoadConfig_QuietPauseSwitch(t *testing.T) {
 }
 
 // adr: 1151 — observe mode is off by default; vmmd.toml can turn it on and
-// FAAS_QUIET_PAUSE_OBSERVE overrides TOML in either direction.
+// FAAS_QUIET_PAUSE_OBSERVE overrides TOML in either direction. Quiet pause is
+// on by default and wins over observe mode, so observing needs it off.
 func TestLoadConfig_QuietPauseObserveSwitch(t *testing.T) {
 	cfg, err := LoadConfig(filepath.Join(t.TempDir(), "missing.toml"))
 	if err != nil {
@@ -55,7 +56,7 @@ func TestLoadConfig_QuietPauseObserveSwitch(t *testing.T) {
 		t.Fatal("quiet pause observe mode must default to off")
 	}
 	path := filepath.Join(t.TempDir(), "vmmd.toml")
-	if err := os.WriteFile(path, []byte("quiet_pause_observe = true\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("quiet_pause = false\nquiet_pause_observe = true\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {

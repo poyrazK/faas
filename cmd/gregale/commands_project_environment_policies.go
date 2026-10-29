@@ -13,7 +13,7 @@ import (
 )
 
 func cmdProjectsEnvironmentPolicies(args []string) int {
-	const usage = "usage: gregale projects environments policies set <project> <environment> <workload> (--file PATH|--stdin) [--yes]"
+	const usage = "usage: gregale environment policies set <project> <environment> <workload> (--file PATH|--stdin) [--yes]"
 	if len(args) == 0 || args[0] != "set" {
 		PrintUsage(os.Stderr, usage, "projects environments")
 		return 1

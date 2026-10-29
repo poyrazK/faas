@@ -11,5 +11,9 @@ export type RealtimeChannelRule = {
    * Must be true: a rule grants read access.
    */
   read: boolean;
+  /**
+   * Also grants setting presence state and sending signals on the channel. Without it those go to the authorize callback with permission presence.
+   */
+  presence?: boolean;
 };
 

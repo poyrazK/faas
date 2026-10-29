@@ -1247,3 +1247,155 @@ follow-up). (An earlier draft of this sentence also listed per-gateway
 counting of `kind=throttle`; that was wrong. In the default central rate-limit
 mode, throttle buckets are Postgres counters shared by every gateway. The
 customer reference is `docs/edge-rules.md`.)
+
+## Amendment (2026-10-27, later): GA hardening — rollout signals, cache scope, coverage
+
+The last code items before edge rules leave beta.
+
+1. **Rollout signals.** Three warn alerts, one runbook
+  (`docs/runbooks/FaasEdgeRuleConvergence.md`):
+  - `FaasEdgeRuleListenerStale` reads a new gauge,
+    `gateway_edge_rule_listener_heartbeat_timestamp_seconds`, set each time a
+    gateway stamps its edge listener heartbeat. A stamp older than 90 s on a
+    live process means apid is changing rules without that gateway. The
+    alert needs no rule change to fire, unlike a counter of skipped gateways.
+  - `FaasEdgeRuleConvergenceFailing` reads
+    `apid_edge_rule_convergence_failures_total{phase}`. `prepare` failures
+    are customer edits refused with 503; `apply` failures are committed edits
+    whose hosts stay held until the fence expires. apid now logs the prepare
+    failure (it only logged apply failures), naming the gateways that did not
+    answer.
+  - `FaasEdgeRuleConvergenceStuck` fires when
+    `gateway_edge_rule_converging_hosts` stays above zero for 10 minutes. A
+    fence lasts 10 s, so that means changes keep being prepared without an
+    apply.
+  - `apid_edge_rule_convergence_skipped_gateways_total{node}` counts the
+    gateways a change left out, for the runbook rather than an alert.
+2. **Dropped geo and challenge rules page.** `FaasEdgeRuleAuthCompileError`
+  covered `jwt`, `ip` and `waf`. A dropped `geo` rule lets denied countries
+  through and a dropped `challenge` rule lets bots through, so both now page
+  with them.
+3. **A wildcard change clears one account's cached responses.** A `*` or glob
+  `match_host` covered hosts the gateway cannot enumerate, so the change
+  flushed every account's response cache on every gateway. With owned reads
+  (amendment 2026-10-26) such a rule only applies to its own account's
+  hosts, so the gateway now lists the account's apps (`ListApps`, one read
+  per change per gateway, 2 s timeout) and drops their entries, local and
+  shared. A change without an account (the repair ledger) or a failed
+  listing still flushes everything.
+4. **Coverage.**
+  - End-to-end tests for `kind=limit` (413 before the app, selectors,
+    API validation of the cap) and the penalty box (boxing after `after`
+    refusals, other paths and clients, release on `clear_penalty`), on the
+    APID and gateway harness.
+  - `kind=retry` (a GET replayed from a dead instance to its sibling; a POST
+    replayed only with `Idempotency-Key`) and `kind=circuit_breaker` (with
+    `min_requests: 1` one failure keeps a recovered instance out for
+    `open_seconds`; the default needs five) on the normal-path harness with
+    real apid, schedd and gateways, with `FAAS_GATEWAY_RETRY` and
+    `FAAS_GATEWAY_CIRCUIT_BREAKER` on as production sets them. A transport
+    failure also quarantines the instance for 30 s
+    (`api.TrafficStaleTargetQuarantine`) whatever the breaker says, and the
+    gateway caches an app's breaker tuning for 30 s, so the breaker test
+    waits out both; the customer reference states both.
+  - The breaker test found a production gap: the public path consulted the
+    breaker only for requests without an exact deployment, but every public
+    request picks an exact deployment once its routing is pinned (ADR-570).
+    An open circuit therefore never kept public traffic off an instance,
+    with or without a `kind=circuit_breaker` rule. The handler now applies
+    the breaker to exact-deployment picks too, re-picking within the same
+    deployment; only deployment smokes and route probes, which verify one
+    deployment's instance, skip it. Both resilience capabilities
+    (`request-retry`, `circuit-breaking`) are `internal`, so the tests
+    release them for the account first.
+  - `BenchmarkEdgeRuleEvaluation500Rules` measures one request's matcher
+    work with the per-app maximum of 500 rules on a host, compiled set
+    cached, each kind scanning its whole slice. It found that every
+    matcher call copied the host's whole compiled set (`GetHost`) before
+    taking its own kind, 17 copies per request: 1.6 MB and 693 allocations
+    per request at 500 rules. `gateway.HostRules` now copies only the
+    requested kind: 100 KB and 517 allocations per request, about 170 µs of
+    CPU, most of it path matching (measured on a heavily loaded M3 Pro, so
+    the time is an upper bound). A host with a handful of rules costs a
+    small fraction of that.
+5. The create-rule API description listed 10 of the 20 kinds; it lists all
+  of them and links the reference. It, and `docs/edge-rules.md`, now give
+  the status codes the API returns: 403 for `plan_limit_edge_rules` and
+  `plan_edge_rule_kind_quota_reached` (they said 402), 402 for
+  `plan_edge_rule_kind_not_allowed`, and 403 `capability_not_released` for
+  a kind not enabled for the account. The reference also says that `retry`
+  and `circuit_breaker` (capability maturity `internal`) and `async`
+  (`preview`) are enabled per account. The kind-quota error passed its limit
+  and usage in the wrong order; fixed.
+
+## Amendment (2026-10-28): review round 3 — rules that silently stopped applying
+
+A code review of the edge-rule path found ways a rule could stop protecting
+an app without any signal, and one tenant action that flushed every
+tenant's caches. All are fixed; none changes the rule format.
+
+1. **A CORS preset change is scoped to its account.** A preset create,
+   update or delete made every gateway drop every account's compiled rule
+   sets and cached responses, so one tenant editing a preset in a loop
+   cache-busted the fleet. Presets are per account, so the gateway now drops
+   only that account's sets and responses, the same scoped invalidation a
+   wildcard rule edit uses (amendment 2026-10-27, GA hardening). Putting
+   preset updates and deletes through the generation barrier, which the
+   review also found missing, landed separately (#5809).
+2. **A rule whose condition does not compile fails its host closed.** A
+   `match` condition that references a list that is missing, or that no
+   longer compiles, made the rule never match. An `ip`, `geo`, `jwt`, `waf` or
+   `challenge` rule built on a list therefore stopped refusing with only a log
+   line. Such a rule is now a compile error like an unparseable `match_path`:
+   counted in `gateway_edge_rule_compile_error_total` and failing the owner's
+   host closed (amendment 2026-10-26). The counter also gained the `cache`,
+   `retry` and `circuit_breaker` kinds, whose compile errors already failed
+   the host closed but were never counted, so `FaasEdgeRuleCompileError`
+   could not fire for them.
+3. **A list cannot be deleted under a rule that references it.** apid checks
+   a rule's lists exist before the write, without a lock, and deleting a list
+   only checked committed rules, so a concurrent create and delete could both
+   succeed. Rule creates, updates and rollbacks now take a share lock on every
+   list they reference in the same transaction and fail if one is gone; the
+   delete's row lock waits for them.
+4. **Rollback runs the create-time checks.** It checked only the plan's rule
+   counts, so it could restore a kind the plan no longer allows, a feature the
+   account's release no longer has, a rule whose list was deleted (which then
+   never matched), a route to an app that turned internal, an async callback
+   to a webhook that is gone, or an unvalidated method list. Each restored
+   rule now passes the plan, capability, release, list, route-target, async
+   and method checks; as on update, a feature the same rule already enforces
+   is not refused. Plan-dependent action bounds are clamped again by the
+   gateway when it compiles the rule.
+5. **The client address is pinned before any rule runs.** `kind=headers`
+   runs before the IP, geo, throttle, WAF, challenge and pre-auth gates, and
+   it could set, add or remove `X-Forwarded-For`, the single trusted hop
+   gatewayd-public writes. Removing it refused every client of an `ip` rule as
+   `caller_ip_forged`; a templated value let the client choose its address.
+   gatewayd-internal now reads the address once when the request arrives and
+   every gate, and the client address stamped for the app, uses that value.
+   New rules may not write `X-Forwarded-For` or `Forwarded`. They stay off the
+   list the gateway checks when it compiles a stored rule, so a rule saved
+   before still compiles; it only changes what the app sees in that header.
+6. **`match_methods` is validated.** It accepted any string, and the gateway
+   compares methods exactly, so `"*"`, a typo or a trailing space matched no
+   request and a rule scoped by it never applied. It is now the RFC 9110
+   methods plus `PATCH`, upper-cased on write; `"*"` is refused with a hint to
+   omit the field. Stored rules are unchanged.
+7. **Refusing rules that list GET also cover HEAD.** Servers answer HEAD with
+   the GET handler, so `HEAD /admin/x` reached the app past a GET-only `jwt`
+   or `ip` rule. The kinds that match paths protectively (`ip`, `geo`, `jwt`,
+   `limit`, `throttle`, `validate`, `maintenance`, `waf`, `challenge`) treat a
+   rule listing GET as listing HEAD too; the trace simulator does the same.
+   Other kinds keep exact matching.
+8. **A deleted app's rules stop applying.** Soft-deleting an app kept its
+   rules enabled, and a rule on `*`, a wildcard or another app's host kept
+   refusing or rewriting the account's other apps' traffic. The gateway's rule
+   reads now skip rules whose app is deleted; the rules are kept, so restoring
+   the app brings them back. A gateway that has the deleted app cached drops
+   its account's compiled sets at once; otherwise they expire within 30 s,
+   which also bounds how soon a restored app's rules return.
+9. Smaller fixes: cache rules are looked up by the host without its port, as
+   every other kind is; a credentialed CORS rule or preset may not allow
+   `https://*.<a platform domain>`, since every other customer's app is served
+   there; a duplicated validation block on rule update is removed.

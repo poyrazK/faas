@@ -33,5 +33,9 @@ export type ReleaseGateResult = {
    * What the gate measured, in one line.
    */
   summary: string;
+  /**
+   * True when the gate had too few samples or unreadable evidence. It did not hold the rollout; summary says what it was waiting for.
+   */
+  not_judged?: boolean;
 };
 

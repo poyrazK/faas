@@ -154,11 +154,12 @@ func TestGetDomainDoctor_IDOR(t *testing.T) {
 	apidserver.AssertProblem(t, rec, http.StatusNotFound, api.CodeNotFound)
 }
 
-// TestGetDomainDoctor_StaleFlagFlipsResponse (ADR-120 Tier A3)
-// asserts that an observation row older than FAAS_DOMAIN_DOCTOR_TTL_SECONDS
-// surfaces in the response as Stale=true. Mirrors the dashboard's
-// stale-banner rendering so the JSON + HTML stay in lockstep.
-func TestGetDomainDoctor_StaleFlagFlipsResponse(t *testing.T) {
+// TestGetDomainDoctor_RefreshedObservationIsNotStale (ADR-120 Tier A3,
+// issue #2659): an observation row older than FAAS_DOMAIN_DOCTOR_TTL_SECONDS
+// is re-probed synchronously, and a successful re-probe answers with the
+// fresh observation and Stale=false. Stale (the dashboard's banner) means
+// the refresh failed and the old row is all there is.
+func TestGetDomainDoctor_RefreshedObservationIsNotStale(t *testing.T) {
 	apidserver.WithDomainDoctorEnabled(t)
 	// Force the TTL to 5s so we can build a stale row deterministically.
 	t.Setenv("FAAS_DOMAIN_DOCTOR_TTL_SECONDS", "5")
@@ -202,8 +203,11 @@ func TestGetDomainDoctor_StaleFlagFlipsResponse(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &report); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if !report.Stale {
-		t.Errorf("Stale = false; want true (TTL=5s, observation 30s old)")
+	if report.Stale {
+		t.Errorf("Stale = true after a successful re-probe; want false")
+	}
+	if observed, err := time.Parse(time.RFC3339, report.ObservedAt); err != nil || !observed.After(obs.ObservedAt.Add(15*time.Second)) {
+		t.Errorf("ObservedAt = %q, want the re-probe's time, not the seeded row's %s", report.ObservedAt, obs.ObservedAt.Format(time.RFC3339))
 	}
 }
 

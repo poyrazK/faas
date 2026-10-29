@@ -80,7 +80,7 @@ func TestCacheListPointsAtEdgeRules(t *testing.T) {
 	_, stderr, restore := main.SwapIO(t)
 	code := main.Run([]string{"cache", "list", "h14-py"})
 	restore()
-	for _, want := range []string{`unknown cache subcommand "list"`, "gregale edge-rules list <slug>", "Subcommands: GET, HEAD, purge"} {
+	for _, want := range []string{`unknown cache subcommand "list"`, "gregale edge rule list <slug>", "Subcommands: GET, HEAD, purge"} {
 		if code != 1 || !strings.Contains(stderr(), want) {
 			t.Errorf("exit=%d, stderr lacks %q:\n%s", code, want, stderr())
 		}
@@ -162,7 +162,7 @@ func TestOpenAPIGetPointsAtTheDiscoveredDocument(t *testing.T) {
 	_, stderr, restore := main.SwapIO(t)
 	code := main.Run([]string{"openapi", "get", "h14-py"})
 	restore()
-	if code == 0 || !strings.Contains(stderr(), "gregale openapi get h14-py --source auto") {
+	if code == 0 || !strings.Contains(stderr(), "gregale api spec get h14-py --source auto") {
 		t.Fatalf("exit=%d stderr=%q", code, stderr())
 	}
 }

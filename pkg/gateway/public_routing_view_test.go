@@ -57,38 +57,157 @@ func countingExactPinner(calls *atomic.Int32) PublicRoutingPinner {
 	}
 }
 
-// Only a request with no pin admits from the view; every pin keeps the
-// exact read, which can verify a deployment the view does not hold.
-func TestViewPinnerSendsOnlyPinnedRequestsToExactRead(t *testing.T) {
+// pinnedRoutingView holds what pinned requests check: one live production
+// deployment with traffic, an app that allows revision pins, and one active
+// release graph targeting the deployment.
+func pinnedRoutingView(deployment, release string) state.PublicRoutingView {
+	view := routingViewOf(deployment)
+	view.Live, view.LiveComplete = []state.PublicRoutingLiveDeployment{{ID: deployment, Scope: "production", TrafficPercent: 100}}, true
+	view.RevisionPins, view.RevisionPinsKnown = true, true
+	view.Release = &state.PublicRoutingReleaseView{GraphsComplete: true, Graphs: []state.PublicRoutingReleaseGraph{
+		{ID: release, Active: true, Target: state.PublicRoutingReleaseTarget{ID: release, DeploymentID: deployment}}}}
+	return view
+}
+
+// ADR-20261028095914: pinned requests admit from the view too. Only a hosting
+// smoke, and a pin the view cannot answer, keep the exact read.
+func TestViewPinnerAnswersPinsFromTheView(t *testing.T) {
 	app := App{ID: uuid.NewString(), AccountID: uuid.NewString(), ProjectID: uuid.NewString()}
 	deployment, release := uuid.NewString(), uuid.NewString()
+	hostPin := PublicRoutingInputs{Valid: true, Scope: "production", HostDeploymentID: deployment, HostScope: "production"}
+	releasePin := PublicRoutingInputs{Valid: true, Scope: "production", ResolveRelease: true, ReleasePresent: true, RequestedReleaseID: release}
+	revisionPin := PublicRoutingInputs{Valid: true, Scope: "production", RevisionPresent: true, RequestedRevisionID: deployment}
 	for _, tc := range []struct {
 		name   string
 		inputs PublicRoutingInputs
+		cut    func(*state.PublicRoutingView)
 		exact  bool
 	}{
-		{"unpinned project request", PublicRoutingInputs{Valid: true, Scope: "production", ResolveRelease: true}, false},
-		{"async request", PublicRoutingInputs{Valid: true, Scope: "production", Async: true}, false},
-		{"scoped request", PublicRoutingInputs{Valid: true, Scope: "staging"}, false},
-		{"version key", PublicRoutingInputs{Valid: true, Scope: "production", VersionKey: "user"}, false},
-		{"release header", PublicRoutingInputs{Valid: true, Scope: "production", ResolveRelease: true, ReleasePresent: true, RequestedReleaseID: release}, true},
-		{"revision header", PublicRoutingInputs{Valid: true, Scope: "production", RevisionPresent: true, RequestedRevisionID: deployment}, true},
-		{"host pin", PublicRoutingInputs{Valid: true, Scope: "production", HostDeploymentID: deployment, HostScope: "production"}, true},
-		{"hosting smoke", PublicRoutingInputs{Valid: true, Scope: "production", HostDeploymentID: deployment, Smoke: true}, true},
+		{name: "unpinned project request", inputs: PublicRoutingInputs{Valid: true, Scope: "production", ResolveRelease: true}},
+		{name: "async request", inputs: PublicRoutingInputs{Valid: true, Scope: "production", Async: true}},
+		{name: "scoped request", inputs: PublicRoutingInputs{Valid: true, Scope: "staging"}},
+		{name: "version key", inputs: PublicRoutingInputs{Valid: true, Scope: "production", VersionKey: "user"}},
+		{name: "release header", inputs: releasePin},
+		{name: "revision header", inputs: revisionPin},
+		{name: "host pin", inputs: hostPin},
+		{name: "hosting smoke", inputs: PublicRoutingInputs{Valid: true, Scope: "production", HostDeploymentID: deployment, Smoke: true}, exact: true},
+		{name: "host pin the cut list lacks", inputs: hostPin, exact: true,
+			cut: func(v *state.PublicRoutingView) { v.Live, v.LiveComplete = nil, false }},
+		{name: "revision pin the cut list lacks", inputs: revisionPin, exact: true,
+			cut: func(v *state.PublicRoutingView) { v.Live, v.LiveComplete = nil, false }},
+		{name: "revision pin with an unreadable pin setting", inputs: revisionPin, exact: true,
+			cut: func(v *state.PublicRoutingView) { v.RevisionPinsKnown = false }},
+		{name: "release pin the cut list lacks", inputs: releasePin, exact: true,
+			cut: func(v *state.PublicRoutingView) { v.Release.Graphs, v.Release.GraphsComplete = nil, false }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var exact atomic.Int32
-			view := &fakeRoutingView{view: routingViewOf(deployment)}
-			view.view.Release = &state.PublicRoutingReleaseView{}
+			current := pinnedRoutingView(deployment, release)
+			if tc.cut != nil {
+				tc.cut(&current)
+			}
+			view := &fakeRoutingView{view: current}
 			if _, err := NewViewPublicRoutingPinner(view, countingExactPinner(&exact))(t.Context(), app, tc.inputs); err != nil {
 				t.Fatal(err)
 			}
-			usedExact, usedView := exact.Load() == 1, view.reads.Load() == 1
-			if usedExact != tc.exact || usedView == tc.exact {
+			if usedExact := exact.Load() == 1; usedExact != tc.exact {
 				t.Fatalf("exact reads=%d view reads=%d; want exact=%v", exact.Load(), view.reads.Load(), tc.exact)
 			}
-			if !tc.exact && view.keys[0] != (state.PublicRoutingViewKey{AppID: app.ID, AccountID: app.AccountID, ProjectID: app.ProjectID, Scope: tc.inputs.Scope}) {
-				t.Fatalf("view key = %+v", view.keys[0])
+			if !tc.inputs.Smoke && (view.reads.Load() != 1 || view.keys[0] != (state.PublicRoutingViewKey{AppID: app.ID, AccountID: app.AccountID, ProjectID: app.ProjectID, Scope: tc.inputs.Scope})) {
+				t.Fatalf("view reads=%d keys=%+v", view.reads.Load(), view.keys)
+			}
+		})
+	}
+}
+
+// A pinned request's snapshot is the one the exact read builds: its host,
+// release or revision verdict, evaluated at request time.
+func TestViewPinnerAnswersPinsLikeTheExactRead(t *testing.T) {
+	app := App{ID: uuid.NewString(), AccountID: uuid.NewString(), ProjectID: uuid.NewString()}
+	deployment, release := uuid.NewString(), uuid.NewString()
+	other := uuid.NewString()
+	future, past := time.Now().Add(time.Hour), time.Now().Add(-time.Minute)
+	hostPin := func(scope, id string) PublicRoutingInputs {
+		return PublicRoutingInputs{Valid: true, Scope: "production", HostDeploymentID: id, HostScope: scope}
+	}
+	revisionPin := func(id string) PublicRoutingInputs {
+		return PublicRoutingInputs{Valid: true, Scope: "production", RevisionPresent: true, RequestedRevisionID: id}
+	}
+	releasePin := func(id string) PublicRoutingInputs {
+		return PublicRoutingInputs{Valid: true, Scope: "production", ResolveRelease: true, ReleasePresent: true, RequestedReleaseID: id}
+	}
+	withLive := func(d state.PublicRoutingLiveDeployment) func(*state.PublicRoutingView) {
+		return func(v *state.PublicRoutingView) { v.Live = []state.PublicRoutingLiveDeployment{d} }
+	}
+	withGraph := func(g state.PublicRoutingReleaseGraph) func(*state.PublicRoutingView) {
+		return func(v *state.PublicRoutingView) { v.Release.Graphs = []state.PublicRoutingReleaseGraph{g} }
+	}
+	for _, tc := range []struct {
+		name   string
+		inputs PublicRoutingInputs
+		change func(*state.PublicRoutingView)
+		want   func(*PublicRoutingSnapshot)
+	}{
+		{"host pin to a live deployment", hostPin("production", deployment), nil,
+			func(s *PublicRoutingSnapshot) { s.HostChecked, s.HostAllowed = true, true }},
+		{"host pin in another scope", hostPin("staging", deployment), nil,
+			func(s *PublicRoutingSnapshot) { s.HostChecked = true }},
+		{"host pin to a deployment not live", hostPin("production", other), nil,
+			func(s *PublicRoutingSnapshot) { s.HostChecked = true }},
+		{"host pin in the default scope", hostPin("", deployment),
+			withLive(state.PublicRoutingLiveDeployment{ID: deployment, Scope: "default"}),
+			func(s *PublicRoutingSnapshot) { s.HostChecked, s.HostAllowed = true, true }},
+		{"revision with traffic", revisionPin(deployment), nil,
+			func(s *PublicRoutingSnapshot) { s.RevisionChecked, s.RevisionAllowed = true, true }},
+		{"revision kept by an unexpired pin", revisionPin(deployment),
+			withLive(state.PublicRoutingLiveDeployment{ID: deployment, Scope: "production", PinExpiresAt: future}),
+			func(s *PublicRoutingSnapshot) { s.RevisionChecked, s.RevisionAllowed = true, true }},
+		{"revision whose pin expired", revisionPin(deployment),
+			withLive(state.PublicRoutingLiveDeployment{ID: deployment, Scope: "production", PinExpiresAt: past}),
+			func(s *PublicRoutingSnapshot) { s.RevisionChecked = true }},
+		{"revision in another scope", revisionPin(deployment),
+			withLive(state.PublicRoutingLiveDeployment{ID: deployment, Scope: "staging", TrafficPercent: 100}),
+			func(s *PublicRoutingSnapshot) { s.RevisionChecked = true }},
+		{"revision on an app without revision pins", revisionPin(deployment),
+			func(v *state.PublicRoutingView) { v.RevisionPins = false },
+			func(s *PublicRoutingSnapshot) { s.RevisionChecked = true }},
+		{"revision not live", revisionPin(other), nil,
+			func(s *PublicRoutingSnapshot) { s.RevisionChecked = true }},
+		{"active release pin", releasePin(release), nil,
+			func(s *PublicRoutingSnapshot) {
+				s.ReleaseVerdict, s.ReleaseID, s.ReleaseDeploymentID = "allowed", release, deployment
+			}},
+		{"retained release pin", releasePin(release),
+			withGraph(state.PublicRoutingReleaseGraph{ID: release, ExpiresAt: future, Target: state.PublicRoutingReleaseTarget{ID: release, DeploymentID: deployment}}),
+			func(s *PublicRoutingSnapshot) {
+				s.ReleaseVerdict, s.ReleaseID, s.ReleaseDeploymentID = "allowed", release, deployment
+			}},
+		{"expired release pin", releasePin(release),
+			withGraph(state.PublicRoutingReleaseGraph{ID: release, ExpiresAt: past, Target: state.PublicRoutingReleaseTarget{ID: release, DeploymentID: deployment}}),
+			func(s *PublicRoutingSnapshot) { s.ReleaseVerdict = "gone" }},
+		{"incomplete release pin", releasePin(release),
+			withGraph(state.PublicRoutingReleaseGraph{ID: release, Active: true, Target: state.PublicRoutingReleaseTarget{Err: state.ErrConflict}}),
+			func(s *PublicRoutingSnapshot) { s.ReleaseVerdict = "conflict" }},
+		{"unknown release pin", releasePin(other), nil,
+			func(s *PublicRoutingSnapshot) { s.ReleaseVerdict = "gone" }},
+		{"release pin outside a project", releasePin(release),
+			func(v *state.PublicRoutingView) { v.Release = nil },
+			func(s *PublicRoutingSnapshot) { s.ReleaseVerdict = "gone" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			current := pinnedRoutingView(deployment, release)
+			if tc.change != nil {
+				tc.change(&current)
+			}
+			var exact atomic.Int32
+			got, err := NewViewPublicRoutingPinner(&fakeRoutingView{view: current}, countingExactPinner(&exact))(t.Context(), app, tc.inputs)
+			want := publicSnapshotFixture(app, tc.inputs)
+			tc.want(&want)
+			if err != nil || exact.Load() != 0 || fmt.Sprintf("%+v", got) != fmt.Sprintf("%+v", want) {
+				t.Fatalf("snapshot=%+v err=%v exact=%d\nwant     %+v", got, err, exact.Load(), want)
+			}
+			if err := validatePublicRoutingSnapshot(got, app, tc.inputs); err != nil {
+				t.Fatalf("view snapshot failed validation: %v", err)
 			}
 		})
 	}

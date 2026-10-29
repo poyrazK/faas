@@ -5,10 +5,12 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -48,6 +50,13 @@ func TestDeploymentAliasToSupersededRevisionSaysNotServing(t *testing.T) {
 					atCapForCalls: 1,
 				},
 				serving: tc.serving, label: "v2", status: "superseded",
+			}
+			if tc.serving {
+				// The other three slots hold live instances of another
+				// revision, so the 429 reports a true count (#5709).
+				for i := range 3 {
+					backend.AddTarget(Target{NodeID: "node-1", InstanceID: fmt.Sprintf("live-%d", i), DeploymentID: "dep-v3", AddedAt: time.Now()})
+				}
 			}
 			handler := NewHandlerWith(backend, NewMetrics(), nil)
 			req := httptest.NewRequest(http.MethodGet, "http://tag-nocpu-app1.gregale.dev/", nil)

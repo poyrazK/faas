@@ -391,7 +391,7 @@ func TestStartAcceptanceSaveFailureStopsWaiting(t *testing.T) {
 		}
 		return 130
 	}
-	if code, _ := runner.reviewAndDeploy(); code == 0 || !strings.Contains(stderr(), "could not be saved") || !strings.Contains(stdout.String(), "deployment wait d-accepted") {
+	if code, _ := runner.reviewAndDeploy(); code == 0 || !strings.Contains(stderr(), "could not be saved") || !strings.Contains(stdout.String(), "release wait d-accepted") {
 		t.Fatalf("code=%d stderr=%s stdout=%s", code, stderr(), stdout)
 	}
 }

@@ -79,6 +79,9 @@ type SealedKey struct {
 	Sealed    []byte
 	Recipient string
 	RetiresAt time.Time
+	// Signature is apid's writer signature (ADR 20261028161502); empty on
+	// an unsigned row.
+	Signature []byte
 }
 
 // NewKey is a key to store.
@@ -86,6 +89,9 @@ type NewKey struct {
 	KID       string
 	Sealed    []byte
 	Recipient string
+	// Signature is the writer signature over the sealed key; nil stores an
+	// unsigned row.
+	Signature []byte
 }
 
 // Route is one live key an app may route: a key of a database bound to it,
@@ -110,6 +116,9 @@ type Login struct {
 	Identity  string
 	Slot      string
 	Awake     string
+	// Signature is the writer signature over the sealed login; nil stores
+	// an unsigned row.
+	Signature []byte
 }
 
 // LiveDatabase is a database livequeryd serves.
@@ -120,6 +129,8 @@ type LiveDatabase struct {
 	Recipient  string
 	Slot       string
 	Awake      string
+	// Signature is the writer signature over Sealed; empty when unsigned.
+	Signature []byte
 }
 
 // Store reads and writes managed_postgres_live_keys and
@@ -159,7 +170,8 @@ func (s *Store) Enable(ctx context.Context, accountID, databaseID string, key Ne
 			return err
 		}
 		err = s.q.UpsertLiveLogin(ctx, tx, sqlc.UpsertLiveLoginParams{DatabaseID: databaseID, AccountID: accountID,
-			SealedLogin: login.Sealed, Recipient: login.Recipient, ProviderIdentityID: login.Identity, Slot: login.Slot, Awake: login.Awake})
+			SealedLogin: login.Sealed, Recipient: login.Recipient, ProviderIdentityID: login.Identity, Slot: login.Slot, Awake: login.Awake,
+			SealedLoginSig: login.Signature})
 		if err != nil {
 			return fmt.Errorf("livekeys: store login: %w", err)
 		}
@@ -189,7 +201,8 @@ func (s *Store) LiveDatabases(ctx context.Context, backendIDs []string) ([]LiveD
 	}
 	out := make([]LiveDatabase, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, LiveDatabase{DatabaseID: r.DatabaseID, BackendID: r.BackendID, Sealed: r.SealedLogin, Recipient: r.Recipient, Slot: r.Slot, Awake: r.Awake})
+		out = append(out, LiveDatabase{DatabaseID: r.DatabaseID, BackendID: r.BackendID, Sealed: r.SealedLogin, Recipient: r.Recipient, Slot: r.Slot, Awake: r.Awake,
+			Signature: r.SealedLoginSig})
 	}
 	return out, nil
 }
@@ -274,7 +287,7 @@ func (s *Store) Ring(ctx context.Context, databaseID string) ([]SealedKey, error
 	}
 	keys := make([]SealedKey, 0, len(rows))
 	for _, r := range rows {
-		keys = append(keys, SealedKey{KID: r.Kid, Sealed: r.SealedSecret, Recipient: r.Recipient, RetiresAt: timeOrZero(r.RetiresAt)})
+		keys = append(keys, SealedKey{KID: r.Kid, Sealed: r.SealedSecret, Recipient: r.Recipient, RetiresAt: timeOrZero(r.RetiresAt), Signature: r.SealedSecretSig})
 	}
 	return keys, nil
 }
@@ -320,6 +333,7 @@ func (s *Store) locked(ctx context.Context, accountID, databaseID string, fn fun
 func (s *Store) insert(ctx context.Context, tx pgx.Tx, accountID, databaseID string, key NewKey) error {
 	err := s.q.InsertLiveKey(ctx, tx, sqlc.InsertLiveKeyParams{
 		Kid: key.KID, AccountID: accountID, DatabaseID: databaseID, SealedSecret: key.Sealed, Recipient: key.Recipient,
+		SealedSecretSig: key.Signature,
 	})
 	if err != nil {
 		return fmt.Errorf("livekeys: insert key: %w", err)

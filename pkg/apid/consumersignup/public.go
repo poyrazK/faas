@@ -53,7 +53,9 @@ func (s *Service) publicApp(w http.ResponseWriter, r *http.Request, enabled bool
 		return state.App{}, state.APIConsumerSignupSettings{}, false
 	}
 	set, err := store.GetAPIConsumerSignupSettings(r.Context(), app.AccountID, app.ID)
-	if err != nil || (enabled && !set.Enabled) {
+	// Sign-up saves the customer's card with the Stripe account of the app's
+	// creator, so a company app stops taking sign-ups once its creator left.
+	if err != nil || (enabled && !set.Enabled) || !s.Host.CreatorBills(r.Context(), app) {
 		httpkit.NotFound(w, "this API does not take sign-ups")
 		return state.App{}, state.APIConsumerSignupSettings{}, false
 	}
@@ -224,7 +226,8 @@ func (s *Service) Create(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Invalid sign-up", "plan_id must be one of the offered plans"))
 		return
 	}
-	acct, err := s.Host.Store().AccountByID(ctx, app.AccountID)
+	// A company app runs on its company's plan, not its creator's.
+	acct, err := state.AppResourceAccount(ctx, s.Host.Store(), app)
 	if err != nil || acct.Plan.ConsumerKeysPerApp() == 0 {
 		s.failed(ctx, app, "", "the account's plan does not include API consumers")
 		unavailable(w)
@@ -313,7 +316,7 @@ func (s *Service) Complete(w http.ResponseWriter, r *http.Request) {
 			"sign-ups complete within 24 hours; start again, or ask the API owner for a new key"))
 		return
 	}
-	acct, err := s.Host.Store().AccountByID(ctx, app.AccountID)
+	acct, err := state.AppResourceAccount(ctx, s.Host.Store(), app)
 	if err != nil {
 		api.WriteProblem(w, api.ErrInternal("could not complete the sign-up"))
 		return

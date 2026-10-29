@@ -22,7 +22,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/docs/security":
             body = "<html><h1>Security</h1></html>"
             self.send_response(200)
-        elif self.path == "/docs/object-storage":
+        elif self.path == "/docs/crons":
             body = "<html><h1>Wrong page</h1></html>"
             self.send_response(200)
         elif self.path == "/docs/preview-environments":
@@ -65,8 +65,14 @@ class LiveDocsTest(unittest.TestCase):
 
     def test_wrong_heading_fails_even_with_200(self) -> None:
         Handler.homepage_fallback = False
-        failures = CHECK.check(self.base, {"object-storage"})
+        failures = CHECK.check(self.base, {"crons"})
         self.assertTrue(any("first h1" in item for item in failures), failures)
+
+    def test_unpublished_route_is_not_fetched(self) -> None:
+        # object-storage documents a preview capability; the catalog marks
+        # it unpublished, so its 404 here is expected (#5709).
+        Handler.homepage_fallback = False
+        self.assertEqual(CHECK.check(self.base, {"object-storage"}), [])
 
     def test_preview_url_shape_drift_fails(self) -> None:
         Handler.homepage_fallback = False

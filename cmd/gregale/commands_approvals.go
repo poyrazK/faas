@@ -17,7 +17,7 @@ import (
 
 func cmdApprovals(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale approvals <require|policy|off|pending|status|approve|reject>", "approvals")
+		PrintUsage(os.Stderr, "usage: gregale release approval <require|policy|off|pending|status|approve|reject>", "approvals")
 		return 1
 	}
 	switch args[0] {
@@ -36,7 +36,7 @@ func cmdApprovals(args []string) int {
 	case "reject":
 		return approvalsDecide(args[1:], api.ReleaseApprovalDecisionReject)
 	}
-	printCommandValidation(os.Stderr, "gregale approvals: unknown subcommand %q\n", args[0])
+	printCommandValidation(os.Stderr, "gregale release approval: unknown subcommand %q\n", args[0])
 	return unknownSubcommandChoices(os.Stderr, "approvals", nestedCliCommand("approvals"), args[0])
 }
 
@@ -87,7 +87,7 @@ func approvalsRequire(args []string) int {
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
-	slug, ok := approvalsApp(*app, "usage: gregale approvals require [--app <slug>] --approvals N [--after-stage N] [--timeout 24h] [--approvers admin|developer] [--allow-self-approval] [--notify CHANNEL,...]")
+	slug, ok := approvalsApp(*app, "usage: gregale release approval require [--app <slug>] --approvals N [--after-stage N] [--timeout 24h] [--approvers admin|developer] [--allow-self-approval] [--notify CHANNEL,...]")
 	if !ok {
 		return 1
 	}
@@ -136,7 +136,7 @@ func approvalsPolicy(args []string) int {
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
-	slug, ok := approvalsApp(*app, "usage: gregale approvals policy [--app <slug>]")
+	slug, ok := approvalsApp(*app, "usage: gregale release approval policy [--app <slug>]")
 	if !ok {
 		return 1
 	}
@@ -164,7 +164,7 @@ func approvalsOff(args []string) int {
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
-	slug, ok := approvalsApp(*app, "usage: gregale approvals off [--app <slug>]")
+	slug, ok := approvalsApp(*app, "usage: gregale release approval off [--app <slug>]")
 	if !ok {
 		return 1
 	}
@@ -191,7 +191,7 @@ func approvalsPending(args []string) int {
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
-	slug, ok := approvalsApp(*app, "usage: gregale approvals pending [--app <slug>]")
+	slug, ok := approvalsApp(*app, "usage: gregale release approval pending [--app <slug>]")
 	if !ok {
 		return 1
 	}
@@ -226,7 +226,7 @@ func approvalsStatus(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale approvals status <deployment> [--app <slug>]", "approvals")
+		PrintUsage(os.Stderr, "usage: gregale release approval status <deployment> [--app <slug>]", "approvals")
 		return 1
 	}
 	client, err := authedClient()
@@ -257,7 +257,7 @@ func approvalsDecide(args []string, decision string) int {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale approvals "+decision+" <deployment> [--app <slug>] [--comment TEXT | --reason TEXT]", "approvals")
+		PrintUsage(os.Stderr, "usage: gregale release approval "+decision+" <deployment> [--app <slug>] [--comment TEXT | --reason TEXT]", "approvals")
 		return 1
 	}
 	note := strings.TrimSpace(*comment)

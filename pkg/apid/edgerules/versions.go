@@ -15,6 +15,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
+	"github.com/onebox-faas/faas/pkg/apid/trafficproblem"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -177,11 +178,16 @@ func (s *Service) RollbackEdgeRules(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, api.ErrCapacity("could not read edge-rule version"))
 		return
 	}
-	hosts, err := s.edgeRuleRollbackHosts(r.Context(), app.ID, target.Rules)
+	current, err := s.Host.Store().ListEdgeRulesForApp(r.Context(), app.ID)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not read current edge rules"))
 		return
 	}
+	if prob := s.restoreProblem(r.Context(), acct, app, target.Rules, current); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	hosts := edgeRuleRollbackHosts(current, target.Rules)
 	convergence, err := s.PrepareEdgeRuleMutation(r.Context(), app.ID, "", "rolled_back", hosts...)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("edge-rule fleet convergence is unavailable; nothing was rolled back"))
@@ -224,11 +230,7 @@ func (s *Service) RollbackEdgeRules(w http.ResponseWriter, r *http.Request, acct
 
 // edgeRuleRollbackHosts is the fence scope of a rollback: every host a
 // current rule or a restored rule matches, since both sets change policy.
-func (s *Service) edgeRuleRollbackHosts(ctx context.Context, appID string, restored []state.EdgeRule) ([]string, error) {
-	current, err := s.Host.Store().ListEdgeRulesForApp(ctx, appID)
-	if err != nil {
-		return nil, err
-	}
+func edgeRuleRollbackHosts(current, restored []state.EdgeRule) []string {
 	seen := map[string]struct{}{}
 	var hosts []string
 	for _, set := range [][]state.EdgeRule{current, restored} {
@@ -239,12 +241,14 @@ func (s *Service) edgeRuleRollbackHosts(ctx context.Context, appID string, resto
 			}
 		}
 	}
-	return hosts, nil
+	return hosts
 }
 
 func (s *Service) writeEdgeRuleRestoreError(w http.ResponseWriter, err error) {
 	var qe *state.EdgeRuleQuotaError
 	switch {
+	case listMissingProblem(err) != nil:
+		api.WriteProblem(w, listMissingProblem(err))
 	case errors.As(err, &qe):
 		api.WriteProblem(w, api.ErrValidation(edgeRuleRestoreQuotaDetail(qe)))
 	case errors.Is(err, state.ErrEdgeRuleSetVersionReference):
@@ -253,7 +257,7 @@ func (s *Service) writeEdgeRuleRestoreError(w http.ResponseWriter, err error) {
 	case errors.Is(err, state.ErrNotFound):
 		httpkit.NotFound(w, "no such edge-rule version")
 	default:
-		api.WriteProblem(w, api.ErrCapacity("could not roll back edge rules"))
+		api.WriteProblem(w, trafficproblem.Policy(err, api.ErrCapacity("could not roll back edge rules")))
 	}
 }
 

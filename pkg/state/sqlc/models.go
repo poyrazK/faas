@@ -4312,27 +4312,28 @@ type EdgePenaltyBox struct {
 }
 
 type EdgeRule struct {
-	ID           pgtype.UUID
-	AccountID    pgtype.UUID
-	AppID        pgtype.UUID
-	MatchHost    string
-	MatchPath    string
-	MatchMethods []string
-	Priority     int16
-	Enabled      bool
-	Kind         string
-	Action       []byte
-	CreatedAt    pgtype.Timestamptz
-	UpdatedAt    pgtype.Timestamptz
-	ValidateMode string
-	CorsPresetID pgtype.UUID
-	MatchHeaders []byte
-	ManifestKey  pgtype.Text
-	Name         pgtype.Text
-	Description  pgtype.Text
-	ExpiresAt    pgtype.Timestamptz
-	MatchExpr    []byte
-	Mode         string
+	ID             pgtype.UUID
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	MatchHost      string
+	MatchPath      string
+	MatchMethods   []string
+	Priority       int16
+	Enabled        bool
+	Kind           string
+	Action         []byte
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+	ValidateMode   string
+	CorsPresetID   pgtype.UUID
+	MatchHeaders   []byte
+	ManifestKey    pgtype.Text
+	Name           pgtype.Text
+	Description    pgtype.Text
+	ExpiresAt      pgtype.Timestamptz
+	MatchExpr      []byte
+	Mode           string
+	MatchHostScope pgtype.Text
 }
 
 type EdgeRuleChangeLog struct {
@@ -5283,6 +5284,8 @@ type EventRecoveryJob struct {
 	NotificationReceipts          []byte
 	NotificationRetryReceipts     []byte
 	ExecutionAttentionNextAt      pgtype.Timestamptz
+	FailureCount                  int32
+	LastFailure                   string
 }
 
 type EventRecoveryWorkflowResult struct {
@@ -5324,6 +5327,9 @@ type EventReplayJob struct {
 	CompletedAt           pgtype.Timestamptz
 	ConsumerKind          string
 	WorkflowName          string
+	FailureCount          int32
+	NextAttemptAt         pgtype.Timestamptz
+	LastFailure           string
 }
 
 type EventReplayJobItem struct {
@@ -8173,13 +8179,14 @@ type ManagedPostgresHealth struct {
 
 // ADR-20261016151947 live-query secrets per managed database, sealed to livequeryd; at most one active and one retiring key.
 type ManagedPostgresLiveKey struct {
-	Kid          string
-	AccountID    pgtype.UUID
-	DatabaseID   pgtype.UUID
-	SealedSecret []byte
-	Recipient    string
-	CreatedAt    pgtype.Timestamptz
-	RetiresAt    pgtype.Timestamptz
+	Kid             string
+	AccountID       pgtype.UUID
+	DatabaseID      pgtype.UUID
+	SealedSecret    []byte
+	Recipient       string
+	CreatedAt       pgtype.Timestamptz
+	RetiresAt       pgtype.Timestamptz
+	SealedSecretSig []byte
 }
 
 // ADR-20261016151947 replication login per live managed database, sealed to livequeryd; livequeryd discovers its databases here.
@@ -8192,6 +8199,7 @@ type ManagedPostgresLiveLogin struct {
 	Slot               string
 	Awake              string
 	CreatedAt          pgtype.Timestamptz
+	SealedLoginSig     []byte
 }
 
 type ManagedPostgresResize struct {
@@ -10958,6 +10966,22 @@ type PlatformMailProducerOutbox struct {
 	DeploymentFailureSuccessRevision pgtype.Int8
 	DeploymentFailureAt              pgtype.Timestamptz
 	AgentDeliveryID                  pgtype.UUID
+}
+
+// Release activations: control-plane deploys and rollbacks written by deployctl as the schema owner, and compute release installs recorded from compute_nodes.release_id. Read with gregalectl release history (issue #574).
+type PlatformReleaseActivation struct {
+	ID                pgtype.UUID
+	Host              string
+	Kind              string
+	ReleaseID         string
+	CommitSha         pgtype.Text
+	PreviousReleaseID pgtype.Text
+	Services          []string
+	Actor             string
+	Status            string
+	Detail            string
+	StartedAt         pgtype.Timestamptz
+	FinishedAt        pgtype.Timestamptz
 }
 
 type PlatformTenant struct {
@@ -14482,6 +14506,7 @@ type Snapshot struct {
 	CpuTemplate string
 	// Host CPU signature of the capturing node; a template-less snapshot restores only on the identical signature.
 	CpuModel string
+	StaleAt  pgtype.Timestamptz
 }
 
 type SnapshotFanoutEvent struct {

@@ -97,6 +97,8 @@ plain issue_ingest_tokens.token_hash
 plain job_run_attach_sessions.attach_token_sha256
 plain login_tokens.token_hash
 plain magic_link_tokens.token_hash
+plain managed_postgres_live_keys.sealed_secret_sig
+plain managed_postgres_live_logins.sealed_login_sig
 plain managed_realtime_channel_batches.payload_hash
 plain managed_realtime_channel_messages.data
 plain managed_realtime_channel_snapshots.data

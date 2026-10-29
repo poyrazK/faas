@@ -53,6 +53,15 @@ func (l *NodeLedger) quietDiscount_locked(nodeID string) (vcpu, cpuMillicores in
 	return vcpu, cpuMillicores
 }
 
+// QuietDiscount is the vCPU and CPU millicores placement discounts on a
+// node for quiet-paused instances; the durable guard applies the same
+// discount (ADR-20261027220445).
+func (l *NodeLedger) QuietDiscount(nodeID string) (vcpu, cpuMillicores int) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.quietDiscount_locked(nodeID)
+}
+
 // quietEffective is the usage a gate compares with its budget: bookings
 // less quiet-paused ones, but never less than what keeps all bookings
 // within QuietPauseMaxVCPUOvercommitPercent of the budget. Without a

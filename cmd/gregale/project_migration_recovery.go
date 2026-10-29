@@ -24,7 +24,7 @@ func cmdProjectMigrationRecovery(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 1 || !api.ValidDeploymentAttemptID(fs.Arg(0)) {
-		PrintUsage(os.Stderr, "usage: gregale deploy resolve-contract <attempt-id> --replacement-attempt ID --database-state-checked --execution-quiescent --evidence-hash SHA256", "deploy")
+		PrintUsage(os.Stderr, "usage: gregale release contract resolve <attempt-id> --replacement-attempt ID --database-state-checked --execution-quiescent --evidence-hash SHA256", "deploy")
 		return 1
 	}
 	client, err := authedClient()
