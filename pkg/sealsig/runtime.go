@@ -46,13 +46,14 @@ const runtimeSignTimeout = 10 * time.Second
 
 // RuntimeSealHook returns the hook a writer installs with
 // secretbox.SetRuntimeSealHook: every runtime envelope it seals is signed,
-// and the signature stored, before the seal returns. secretbox seals have
-// no context, so the write runs under its own timeout.
-func RuntimeSealHook(store RuntimeStore, signer *Signer) func([]byte) error {
+// and the signature stored, before the seal returns. secretbox seals carry
+// no context, so each write runs under ctx, the writer's lifetime, with its
+// own timeout.
+func RuntimeSealHook(ctx context.Context, store RuntimeStore, signer *Signer) func([]byte) error {
 	return func(blob []byte) error {
-		ctx, cancel := context.WithTimeout(context.Background(), runtimeSignTimeout)
+		write, cancel := context.WithTimeout(ctx, runtimeSignTimeout)
 		defer cancel()
-		return SignRuntime(ctx, store, signer, blob)
+		return SignRuntime(write, store, signer, blob)
 	}
 }
 
@@ -155,9 +156,6 @@ func (c *RuntimeChecker) Check(ctx context.Context, blobs [][]byte) error {
 }
 
 func (c *RuntimeChecker) fetch(ctx context.Context, digests [][]byte) (map[string][]byte, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	ctx, cancel := context.WithTimeout(ctx, runtimeLookupTimeout)
 	defer cancel()
 	found := make(map[string][]byte, len(digests))

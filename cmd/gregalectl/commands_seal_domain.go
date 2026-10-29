@@ -332,7 +332,7 @@ func runSealDomainMigrate(args []string) error {
 		return fmt.Errorf("apply schema before seal-domain migration: %w", err)
 	}
 	store := state.NewPgStore(pool)
-	uninstall, err := installResealSigner(*runtimeSigningKey, store)
+	uninstall, err := installResealSigner(ctx, *runtimeSigningKey, store)
 	if err != nil {
 		return err
 	}
@@ -426,7 +426,7 @@ func runRuntimeBindingPass(dsn, dbEnv, dir, fleetKey, hostKey, signingKey string
 		return fmt.Errorf("apply schema before the runtime binding pass: %w", err)
 	}
 	store := state.NewPgStore(pool)
-	uninstall, err := installResealSigner(signingKey, store)
+	uninstall, err := installResealSigner(ctx, signingKey, store)
 	if err != nil {
 		return err
 	}

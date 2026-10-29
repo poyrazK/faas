@@ -83,7 +83,7 @@ func runProjectEnvironmentCloneWorker(ctx context.Context, log *slog.Logger) (er
 	}
 	hostidentity.Configure(domains)
 	store := state.NewPgStore(pool)
-	uninstallRuntimeSigner, err := installRuntimeSigner(os.Getenv, store, log)
+	uninstallRuntimeSigner, err := installRuntimeSigner(ctx, os.Getenv, store, log)
 	if err != nil {
 		return err
 	}

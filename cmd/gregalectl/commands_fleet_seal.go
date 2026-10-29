@@ -128,7 +128,7 @@ func runFleetSealMigrate(args []string) error {
 		return err
 	}
 	store := state.NewPgStore(pool)
-	uninstall, err := installResealSigner(*runtimeSigningKey, store)
+	uninstall, err := installResealSigner(ctx, *runtimeSigningKey, store)
 	if err != nil {
 		return err
 	}

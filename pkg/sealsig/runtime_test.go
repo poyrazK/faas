@@ -54,7 +54,7 @@ func TestRuntimeSealHookStoresTheSignature(t *testing.T) {
 	public, signer := newKey(t)
 	store := &memSignatures{}
 	blob := []byte("age-envelope")
-	if err := sealsig.RuntimeSealHook(store, signer)(blob); err != nil {
+	if err := sealsig.RuntimeSealHook(context.Background(), store, signer)(blob); err != nil {
 		t.Fatal(err)
 	}
 	sig := store.sigs[string(sealsig.RuntimeDigest(blob))]

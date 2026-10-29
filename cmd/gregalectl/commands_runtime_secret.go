@@ -210,7 +210,7 @@ func runRuntimeSecretSignExisting(args []string) error {
 // installResealSigner makes the runtime envelopes an operator re-seal
 // writes carry apid's signature (ADR 20261028161502, amendment 1). With no
 // key the re-sealed envelopes are unsigned until sign-existing runs.
-func installResealSigner(path string, store sealsig.RuntimeStore) (func(), error) {
+func installResealSigner(ctx context.Context, path string, store sealsig.RuntimeStore) (func(), error) {
 	if path == "" {
 		return func() {}, nil
 	}
@@ -218,6 +218,6 @@ func installResealSigner(path string, store sealsig.RuntimeStore) (func(), error
 	if err != nil {
 		return nil, err
 	}
-	secretbox.SetRuntimeSealHook(sealsig.RuntimeSealHook(store, sealsig.NewSigner(key)))
+	secretbox.SetRuntimeSealHook(sealsig.RuntimeSealHook(ctx, store, sealsig.NewSigner(key)))
 	return func() { secretbox.SetRuntimeSealHook(nil) }, nil
 }

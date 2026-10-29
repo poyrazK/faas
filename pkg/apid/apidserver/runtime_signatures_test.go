@@ -30,12 +30,12 @@ func TestAppSecretsCarryApidsSignature(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := *e.Store()
-	none, err := apidserver.InstallRuntimeSigner(func(string) string { return "" }, store, slog.Default())
+	none, err := apidserver.InstallRuntimeSigner(context.Background(), func(string) string { return "" }, store, slog.Default())
 	if err != nil {
 		t.Fatalf("no key configured = %v", err)
 	}
 	none()
-	uninstall, err := apidserver.InstallRuntimeSigner(func(name string) string {
+	uninstall, err := apidserver.InstallRuntimeSigner(context.Background(), func(name string) string {
 		if name == "FAAS_APID_RUNTIME_SIGNING_KEY_FILE" {
 			return signKey
 		}
