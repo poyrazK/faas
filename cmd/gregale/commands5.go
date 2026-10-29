@@ -338,7 +338,7 @@ func envPull(args []string) int {
 		return printErr("Could not read local project context", resolveErr)
 	}
 	if *app == "" {
-		PrintUsage(os.Stderr, "usage: gregale env pull --app <slug> [--scope <name>] [-o .env] (or run `gregale link <project-slug>`)", "env")
+		PrintUsage(os.Stderr, "usage: gregale env pull --app <slug> [--env <name>] [-o .env] (or run `gregale link <project-slug>`)", "env")
 		return 1
 	}
 	resolvedScope, scopeErr := resolveEnvironmentFlagOrContext(*scope)
@@ -495,7 +495,7 @@ func envPush(args []string) int {
 		return printErr("Could not read local project context", resolveErr)
 	}
 	if *app == "" {
-		PrintUsage(os.Stderr, "usage: gregale env push --app <slug> [--scope <name>] [-f .env | --from-stdin] [--restart] [--dry-run] (or run `gregale link <project-slug>`)", "env")
+		PrintUsage(os.Stderr, "usage: gregale env push --app <slug> [--env <name>] [-f .env | --from-stdin] [--restart] [--dry-run] (or run `gregale link <project-slug>`)", "env")
 		return 1
 	}
 	resolvedScope, scopeErr := resolveEnvironmentFlagOrContext(*scope)

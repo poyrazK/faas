@@ -157,9 +157,9 @@ them.
       10,000 apps and 1,000 route-owning accounts. Target: deploy create p99
       under 250 ms. The claim lookup indexes, by name and by suffix, ship
       with the queries that read them. The first cut covers app and tenant
-      binding writers in apid. Custom-domain publication and removal, route
-      writes and other daemons keep the fleet-wide guard until they get
-      their own scoped paths.
+      binding writers in apid; custom-domain publication, verification and
+      removal followed under the same switch. Route writes and other daemons
+      keep the fleet-wide guard until they get their own scoped paths.
    4. The switch is turned on in staging, then in production after a release
       with no refusal or `lock_wait` regression. It is removed one release
       after that, together with the global path, except as the test oracle.

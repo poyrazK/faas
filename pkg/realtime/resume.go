@@ -162,13 +162,15 @@ type resumeSignalRate struct {
 
 type resumeSubscription struct {
 	authorization channelAuthorization
-	filter        map[string]string
-	cancel        context.CancelFunc
-	wake          chan struct{}
-	durableName   string
-	lastSent      int64 // guarded by connection.mu
-	lastAck       int64 // guarded by connection.mu
-	resyncing     bool  // guarded by connection.mu
+	// presence decides presence state and signals, beyond reading.
+	presence    channelAuthorization
+	filter      map[string]string
+	cancel      context.CancelFunc
+	wake        chan struct{}
+	durableName string
+	lastSent    int64 // guarded by connection.mu
+	lastAck     int64 // guarded by connection.mu
+	resyncing   bool  // guarded by connection.mu
 }
 
 func (m *Manager) runResumeConnection(ctx context.Context, c *connection) {
@@ -404,10 +406,17 @@ func (m *Manager) resumeSubscribe(ctx context.Context, c *connection, frame resu
 			m.releaseResume(c.account())
 		}
 	}()
-	subscription := &resumeSubscription{}
+	subscription := &resumeSubscription{presence: channelAuthorization{presence: true}}
 	if subscription.authorization.check(ctx, c, frame.Channel) != channelAuthorizationAllowed {
 		m.queueResumeControl(ctx, c, resumeServerFrame{Type: "error", Channel: frame.Channel, Code: "not_authorized"})
 		return
+	}
+	// Reading lets a connection join the channel's presence; setting a state
+	// needs the presence permission. Without it the connection joins with an
+	// empty state and is told why.
+	presenceDenied := !presenceStateEmpty(presenceState) && subscription.presence.check(ctx, c, frame.Channel) != channelAuthorizationAllowed
+	if presenceDenied {
+		presenceState = json.RawMessage(`{}`)
 	}
 	after := frame.After
 	if frame.Subscription != "" {
@@ -615,6 +624,9 @@ func (m *Manager) resumeSubscribe(ctx context.Context, c *connection, frame resu
 	}
 	m.syncFleetPresence(ctx, key)
 	release = false
+	if presenceDenied {
+		m.queueResumeControl(ctx, c, resumeServerFrame{Type: "error", Channel: frame.Channel, Code: "presence_not_authorized"})
+	}
 	m.watchSubscriptionOccupancy(ctx, c, frame)
 	go m.pumpResumeSubscription(subCtx, c, frame.Channel, subscription, page)
 }
@@ -639,6 +651,13 @@ func normalizeResumePresenceState(raw json.RawMessage) (json.RawMessage, bool) {
 		return nil, false
 	}
 	return append(json.RawMessage(nil), raw...), true
+}
+
+// presenceStateEmpty reports whether a normalized presence state sets no
+// field, which joining a channel needs no presence permission for.
+func presenceStateEmpty(state json.RawMessage) bool {
+	var value map[string]json.RawMessage
+	return json.Unmarshal(state, &value) == nil && len(value) == 0
 }
 
 func fleetPresenceErrorCode(err error) string {
@@ -683,7 +702,8 @@ func (m *Manager) resumePresenceUpdate(ctx context.Context, c *connection, frame
 		return
 	}
 	c.mu.RLock()
-	if c.resumeSubs[frame.Channel] == nil {
+	subscription := c.resumeSubs[frame.Channel]
+	if subscription == nil {
 		c.mu.RUnlock()
 		m.mu.RUnlock()
 		m.queueResumeControl(ctx, c, resumeServerFrame{Type: "error", Channel: frame.Channel, Code: "not_subscribed"})
@@ -701,6 +721,10 @@ func (m *Manager) resumePresenceUpdate(ctx context.Context, c *connection, frame
 	presenceScope := member.presenceScope
 	c.mu.RUnlock()
 	m.mu.RUnlock()
+	if subscription.presence.check(ctx, c, frame.Channel) != channelAuthorizationAllowed {
+		m.queueResumeControl(ctx, c, resumeServerFrame{Type: "error", Channel: frame.Channel, Code: "presence_not_authorized"})
+		return
+	}
 
 	c.mu.Lock()
 	now := time.Now()
@@ -773,13 +797,19 @@ func (m *Manager) resumeSignal(ctx context.Context, c *connection, frame resumeC
 		m.queueResumeControl(ctx, c, resumeServerFrame{Type: "error", Channel: frame.Channel, Code: "invalid_signal"})
 		return
 	}
-	now := time.Now()
-	c.mu.Lock()
-	if c.resumeSubs[frame.Channel] == nil {
-		c.mu.Unlock()
+	c.mu.RLock()
+	subscription := c.resumeSubs[frame.Channel]
+	c.mu.RUnlock()
+	if subscription == nil {
 		m.queueResumeControl(ctx, c, resumeServerFrame{Type: "error", Channel: frame.Channel, Code: "not_subscribed"})
 		return
 	}
+	if subscription.presence.check(ctx, c, frame.Channel) != channelAuthorizationAllowed {
+		m.queueResumeControl(ctx, c, resumeServerFrame{Type: "error", Channel: frame.Channel, Code: "presence_not_authorized"})
+		return
+	}
+	now := time.Now()
+	c.mu.Lock()
 	if c.signalWindow.IsZero() || now.Sub(c.signalWindow) >= time.Second {
 		c.signalWindow = now
 		c.signalCount = 0
@@ -904,14 +934,17 @@ func (m *Manager) authorizeResumeChannel(ctx context.Context, c *connection, cha
 	return authorization.check(ctx, c, channel) == channelAuthorizationAllowed
 }
 
-func (m *Manager) checkResumeChannel(ctx context.Context, c *connection, channel string, endpoint *Endpoint) (bool, error) {
+// checkResumeChannel asks whether c may read channel or, with presence, also
+// set presence state and send signals on it (ADR-369, amendment of
+// 2026-10-27): channel rules first, then the authorize callback.
+func (m *Manager) checkResumeChannel(ctx context.Context, c *connection, channel string, endpoint *Endpoint, presence bool) (bool, error) {
 	if !c.accessAllows(ctx, channel) {
 		return false, nil
 	}
 	if c.ticketToken != "" {
-		return true, nil
+		return !presence, nil
 	}
-	if c.identity != nil && channelRulesAllow(endpoint, c.identity.identity, channel) {
+	if c.identity != nil && channelRulesAllow(endpoint, c.identity.identity, channel, presence) {
 		return true, nil
 	}
 	authorizer, ok := m.hooks.(ChannelAuthorizer)
@@ -936,6 +969,9 @@ func (m *Manager) checkResumeChannel(ctx context.Context, c *connection, channel
 		event.ActivityParentChannel = parent
 		event.ActivityScope = scope
 		event.Permission = "read_activity"
+	}
+	if presence {
+		event.Permission = "presence"
 	}
 	authCtx, cancel := context.WithTimeout(ctx, m.cfg.CallbackTimeout)
 	allowed, err := authorizer.AuthorizeChannel(authCtx, event)
