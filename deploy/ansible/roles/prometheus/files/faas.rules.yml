@@ -5937,6 +5937,44 @@ groups:
           description: "At least one ready database has no recent metadata check. Check collector capacity, provider backoff, and apid catalog connectivity before relying on cached health."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasManagedPostgresDegraded.md"
 
+      # ADR-20261029172812: apid opens a new connection to each backend's
+      # canary database, writes a row and reads it back. Provider health above
+      # reads metadata only and cannot see a database that refuses SQL. The
+      # page needs every apid to have failed for five minutes; the warning
+      # holds the 99.95% GA availability bar over six hours, where sparse
+      # one-a-minute samples would make a one-hour burn window page on a blip.
+      - alert: FaasManagedPostgresSQLProbeFailing
+        expr: |
+          (time() - max by (backend) (apid_managed_postgres_sql_probe_last_success_timestamp_seconds)) > 300
+          and on() max(apid_managed_postgres_sql_probe_enabled) == 1
+        for: 2m
+        labels:
+          severity: page
+          component: apid
+          family: managed_postgres
+        annotations:
+          summary: "Managed PostgreSQL backend {{ $labels.backend }} has failed every SQL probe for 5 minutes"
+          description: "No apid could connect to the backend's canary database, write a row and read it back for at least five minutes, so customer databases on this backend are likely unreachable or read-only. apid_managed_postgres_sql_probe_total shows which step fails."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasManagedPostgresSQLProbeFailing.md"
+
+      - alert: FaasManagedPostgresSQLErrorBudgetBurn
+        expr: |
+          (
+            sum by (backend) (increase(apid_managed_postgres_sql_probe_total{outcome!="ok"}[6h]))
+            /
+            sum by (backend) (increase(apid_managed_postgres_sql_probe_total[6h]))
+          ) > 0.003
+          and sum by (backend) (increase(apid_managed_postgres_sql_probe_total[6h])) >= 180
+        for: 15m
+        labels:
+          severity: warn
+          component: apid
+          family: managed_postgres
+        annotations:
+          summary: "Managed PostgreSQL backend {{ $labels.backend }} is spending its availability budget"
+          description: "More than 0.3% of canary SQL probes failed over six hours: six times the failure rate that would spend the 99.95% monthly budget. Intermittent failures that never reach the five-minute page still count against the GA bar."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasManagedPostgresSQLProbeFailing.md"
+
       - alert: FaasManagedPostgresHealthCollectorStalled
         expr: |
           apid_managed_postgres_health_enabled == 1

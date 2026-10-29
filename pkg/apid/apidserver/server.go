@@ -236,6 +236,8 @@ type server struct {
 	// by the usage views (ADR-20261025094915).
 	managedPostgresCapMode         managedpostgres.CapEnforcementMode
 	managedPostgresHealthCollector *managedpostgres.HealthCollector
+	// managedPostgresSQLProber probes the canary databases (ADR-20261029172812); nil when unconfigured.
+	managedPostgresSQLProber *managedpostgres.SQLProber
 	store                          state.Store
 	domainVerificationMetrics      *domainVerificationMetrics
 	log                            *slog.Logger
