@@ -222,7 +222,14 @@ ADR-568 requires.
       the fence record, unlike `widenSnapshotFence` on the ordinary path. This
       affects every native capture, runtime capture included.
     - 66cf2736ae records each limit in the fence before writing it.
-- Pending: the n2 native GitOps journey through activation and serving.
+- 2026-10-29, n2, rerun with 66cf2736ae and a52d0adfb6:
+  - Both graphs, github and gitlab, were captured, restored, qualified and
+    activated natively for the first time.
+  - The first customer queue delivery then failed a test check. A bound
+    queue keeps its environment on the binding, not on the invocation.
+    3366c8253d checks the binding instead.
+- Pending: the n2 native GitOps journey through serving and the resilience
+  phases.
 
 ## Rejected alternatives
 
