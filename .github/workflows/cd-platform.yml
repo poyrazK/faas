@@ -338,6 +338,7 @@ jobs:
       format_storage: ${{ matrix.target.format_storage }}
       skip_fleet_preflight: ${{ matrix.target.skip_fleet_preflight }}
       rollout_phase: ${{ inputs.compute_rollout_mode == 'full' && 'full' || 'activate' }}
+      node_canary: true
     secrets: inherit
 
   verify:
