@@ -774,7 +774,6 @@ func TestProcessOne_VMSpawnErrorFlipsDeployment(t *testing.T) {
 	}
 }
 
-
 func TestProcessOne_VMSpawnErrorIsInfra(t *testing.T) {
 	store := state.NewMemStore()
 	src := filepath.Join(t.TempDir(), "src.tar.gz")
