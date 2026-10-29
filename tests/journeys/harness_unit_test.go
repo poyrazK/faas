@@ -104,6 +104,19 @@ func TestHarnessDecodeObjectsReadsIndentedAndNDJSON(t *testing.T) {
 	}
 }
 
+func TestHarnessListOutReadsArraysAndNDJSON(t *testing.T) {
+	array := []byte("[\n  {\"id\": \"a\", \"last_status_code\": 200},\n  {\"id\": \"b\"}\n]\n")
+	if docs := listOut(t, array); len(docs) != 2 || str(docs[0], "id") != "a" || num(docs[0], "last_status_code") != 200 {
+		t.Fatalf("array: docs=%v", docs)
+	}
+	if docs := listOut(t, []byte("[]\n")); len(docs) != 0 {
+		t.Fatalf("empty array: docs=%v", docs)
+	}
+	if docs := listOut(t, []byte("{\"id\":\"a\"}\n{\"id\":\"b\"}\n")); len(docs) != 2 || str(docs[1], "id") != "b" {
+		t.Fatalf("ndjson: docs=%v", docs)
+	}
+}
+
 func TestHarnessFieldWalksMapsAndArrays(t *testing.T) {
 	doc := map[string]any{"a": map[string]any{"b": []any{"x", map[string]any{"c": "y"}}}}
 	tests := map[string]any{"a.b.0": "x", "a.b.1.c": "y", "a.b.2": nil, "a.z": nil, "a.b.x": nil}
