@@ -37126,10 +37126,11 @@ paths:
       description: |
         This dedicated route never falls back to partial cloning. While full
         admission is closed it returns environment_full_clone_unavailable with
-        named blockers. When open (ADR-20261024123122), a source without managed
-        data whose every used resource has an isolated strategy is captured and
-        a durable clone operation is returned; any other source is refused with
-        each uncopyable resource named under resource_coverage.
+        named blockers. When open, a source whose every used resource has an
+        isolated strategy, including managed databases with point-in-time
+        restore, is captured and a durable clone operation is returned; any
+        other source is refused with each uncopyable resource named under
+        resource_coverage.
       requestBody:
         required: true
         content:

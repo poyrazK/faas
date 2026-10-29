@@ -1113,7 +1113,12 @@
       "targets",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "strategy": "shared"
+    }
   },
   {
     "table": "app_egress_policy_node_status",
@@ -4366,7 +4371,12 @@
       "updated_at",
       "widgets"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "data_api_runtime_connection_observations",
@@ -9558,7 +9568,12 @@
       "query",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "strategy": "shared"
+    }
   },
   {
     "table": "login_tokens",
@@ -11896,7 +11911,18 @@
       "rules",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "bucket_id",
+          "object_buckets",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "object_bucket_encryption",
