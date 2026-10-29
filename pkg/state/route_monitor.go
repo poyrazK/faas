@@ -165,6 +165,9 @@ func decideRouteMonitorRollback(c api.RouteMonitorConfig, i *api.RouteMonitorInc
 		return RouteMonitorRollbackClaim{}, false, false
 	}
 	decision := routemonitor.DecideRollback(c, *i, routemonitor.ReleasedAt(d.CreatedAt, d.CanaryStepStartedAt, d.RolloutCompletedAt))
+	if decision.Eligible && d.Scope == "production" {
+		decision = routemonitor.RollbackDecision{Skip: routemonitor.RollbackSkipProjectRelease, Route: decision.Route}
+	}
 	switch {
 	case decision.Eligible:
 		i.Rollback = &api.RouteMonitorIncidentRollback{Status: "claimed", Route: decision.Route, TargetDeploymentID: decision.Target, DecidedAt: now}

@@ -37,7 +37,8 @@ func TestPostgresCommandsResolveDatabaseNames(t *testing.T) {
 	(*main.OsStdout) = &bytes.Buffer{}
 	t.Cleanup(func() { (*main.OsStdout) = previous })
 
-	for name, run := range map[string]func([]string) int{"get": main.CmdPostgresGet, "delete": main.CmdPostgresDelete} {
+	deleteWithoutPrompt := func(args []string) int { return main.CmdPostgresDelete(append(args, "--yes")) }
+	for name, run := range map[string]func([]string) int{"get": main.CmdPostgresGet, "delete": deleteWithoutPrompt} {
 		paths = nil
 		if code := run([]string{"orders"}); code != 0 {
 			t.Fatalf("postgres %s orders = %d; requests %v", name, code, paths)
