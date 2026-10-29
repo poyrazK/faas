@@ -5,6 +5,7 @@ package state_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -79,6 +80,35 @@ func TestSettledReceiptsPruneAtTheirPlanWindow(t *testing.T) {
 			if err := store.AppendEvent(ctx, "apid", "event.published", &account.ID, storagePayload("settled", "orders", `{"again":true}`)); err != nil {
 				t.Fatal(err)
 			}
+		}
+	})
+}
+
+// ADR-20261029012000: one account's backlog drains in one call, round
+// after round of 100-receipt pages, up to the call's limit.
+func TestSettledReceiptPruneDrainsOneAccountBacklog(t *testing.T) {
+	forEventStorageStores(t, func(t *testing.T, store eventStorageTestStore, _ *pgxpool.Pool) {
+		ctx := context.Background()
+		account, err := store.CreateAccount(ctx, "settled-backlog-"+uuid.NewString()+"@example.com", api.PlanPro)
+		if err != nil {
+			t.Fatal(err)
+		}
+		const backlog = 250
+		for i := range backlog {
+			if err := store.AppendEvent(ctx, "apid", "event.published", &account.ID, storagePayload(fmt.Sprintf("backlog-%d", i), "orders", "{}")); err != nil {
+				t.Fatal(err)
+			}
+		}
+		settleStoragePublishes(t, store, backlog)
+		due := time.Now().Add(7*24*time.Hour + time.Minute)
+		if n, err := store.PruneSettledPublishedEvents(ctx, due, 120); err != nil || n != 120 {
+			t.Fatalf("prune with limit 120 = %d, %v; want 120", n, err)
+		}
+		if n, err := store.PruneSettledPublishedEvents(ctx, due, 5000); err != nil || n != backlog-120 {
+			t.Fatalf("prune of the rest = %d, %v; want %d in one call", n, err, backlog-120)
+		}
+		if usage, err := store.EventStorageUsage(ctx, account.ID); err != nil || usage.RetainedEvents != 0 {
+			t.Fatalf("usage after prune: %+v %v", usage, err)
 		}
 	})
 }

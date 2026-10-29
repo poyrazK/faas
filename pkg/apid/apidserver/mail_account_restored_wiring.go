@@ -54,9 +54,13 @@ func (s *server) handleSuccessfulPayment(ctx context.Context, ev billing.Event, 
 			return fmt.Errorf("store payment plan: %w", err)
 		}
 	}
-	restored, outboxed, err := s.restorePaymentWithMail(ctx, ev, acct, provider, confirmation)
-	if err != nil {
-		return fmt.Errorf("restore account: %w", err)
+	var restored, outboxed bool
+	if !ev.HoldDunning {
+		var err error
+		restored, outboxed, err = s.restorePaymentWithMail(ctx, ev, acct, provider, confirmation)
+		if err != nil {
+			return fmt.Errorf("restore account: %w", err)
+		}
 	}
 	if restored {
 		s.notifyAccountLifecycle(ctx, acct.ID, "account_reactivated")

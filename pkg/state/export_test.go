@@ -112,6 +112,7 @@ const ScanSourceRankWorkspace = scanSourceRankWorkspace
 const StageHistoryStatusCancelled = stageHistoryStatusCancelled
 
 // Package-level vars
+var SnapshotGCPageRows = &snapshotGCPageRows
 var ErrAutomaticPollingData = &errAutomaticPollingData
 var ErrMemStoreAppErrors = &errMemStoreAppErrors
 var ErrMemStoreB3AlertMetrics = &errMemStoreB3AlertMetrics
@@ -228,6 +229,7 @@ var CronAppTaskRetryAt = cronAppTaskRetryAt
 var CrossedUsageAlertThresholds = crossedUsageAlertThresholds
 var DecidePlanAdmission = decidePlanAdmission
 var DecideProfileCanaryGate = decideProfileCanaryGate
+var DecideRouteMonitorRollback = decideRouteMonitorRollback
 var DecodeInitialReview = decodeInitialReview
 var DecodeProfileCanaryHistoryCursor = decodeProfileCanaryHistoryCursor
 var DecodeRouteMonitorDeploymentBaseline = decodeRouteMonitorDeploymentBaseline

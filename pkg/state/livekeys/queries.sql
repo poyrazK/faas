@@ -107,18 +107,19 @@ SELECT database_id::text AS database_id,sealed_login,recipient,sealed_login_sig 
  WHERE database_id::text>sqlc.arg(after)::text ORDER BY database_id::text LIMIT sqlc.arg(page_size)::int;
 
 -- name: SignLiveKey :execrows
--- The operator backfill signs an unsigned key as it stands (ADR
--- 20261028161502), only while it still holds the ciphertext and recipient
--- the backfill read.
+-- The operator backfill signs a key as it stands, or signs it again after
+-- a signing-key rotation (ADR 20261028161502), only while it still holds
+-- the ciphertext, recipient and signature (NULL when unsigned) the backfill
+-- read.
 UPDATE managed_postgres_live_keys SET sealed_secret_sig=sqlc.arg(sealed_secret_sig)::bytea
  WHERE kid=sqlc.arg(kid)::text AND database_id=sqlc.arg(database_id)::text::uuid AND sealed_secret=sqlc.arg(sealed_secret)::bytea
-   AND recipient=sqlc.arg(recipient)::text AND sealed_secret_sig IS NULL;
+   AND recipient=sqlc.arg(recipient)::text AND sealed_secret_sig IS NOT DISTINCT FROM sqlc.narg(previous_sig)::bytea;
 
 -- name: SignLiveLogin :execrows
 -- As SignLiveKey, for a login.
 UPDATE managed_postgres_live_logins SET sealed_login_sig=sqlc.arg(sealed_login_sig)::bytea
  WHERE database_id=sqlc.arg(database_id)::text::uuid AND sealed_login=sqlc.arg(sealed_login)::bytea
-   AND recipient=sqlc.arg(recipient)::text AND sealed_login_sig IS NULL;
+   AND recipient=sqlc.arg(recipient)::text AND sealed_login_sig IS NOT DISTINCT FROM sqlc.narg(previous_sig)::bytea;
 
 -- name: DropLegacyLiveLogin :execrows
 -- Removes a login the re-seal found under the legacy namespace, only while it

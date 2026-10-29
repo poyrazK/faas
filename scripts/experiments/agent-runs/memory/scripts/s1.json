@@ -1,0 +1,19 @@
+{
+ "turns": [
+  {
+   "command": "echo MARK-1 && cat PR.diff",
+   "mark": "MARK-1"
+  },
+  {
+   "command": "echo MARK-2 && rg -n 'res\\.send' lib | head -40",
+   "mark": "MARK-2"
+  },
+  {
+   "command": "echo MARK-3 && ls -la lib && wc -l lib/*.js",
+   "mark": "MARK-3"
+  },
+  {
+   "text": "Triage: the PR changes response handling in lib/response.js; low risk. AGENT-MEM-DONE"
+  }
+ ]
+}

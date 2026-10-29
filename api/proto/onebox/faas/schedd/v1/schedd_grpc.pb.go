@@ -42,6 +42,7 @@ const (
 	Schedd_ReportLivenessFailed_FullMethodName  = "/onebox.faas.schedd.v1.Schedd/ReportLivenessFailed"
 	Schedd_EnsureWake_FullMethodName            = "/onebox.faas.schedd.v1.Schedd/EnsureWake"
 	Schedd_ReportWorkloadOOM_FullMethodName     = "/onebox.faas.schedd.v1.Schedd/ReportWorkloadOOM"
+	Schedd_RunAgent_FullMethodName              = "/onebox.faas.schedd.v1.Schedd/RunAgent"
 	Schedd_ReportMemoryPressure_FullMethodName  = "/onebox.faas.schedd.v1.Schedd/ReportMemoryPressure"
 	Schedd_ReportSlowRequest_FullMethodName     = "/onebox.faas.schedd.v1.Schedd/ReportSlowRequest"
 )
@@ -328,6 +329,15 @@ type ScheddClient interface {
 	// Additive per ADR-016: new RPC + new messages append at the
 	// end; existing field tags are untouched.
 	ReportWorkloadOOM(ctx context.Context, in *ReportWorkloadOOMRequest, opts ...grpc.CallOption) (*ReportWorkloadOOMAck, error)
+	// RunAgent runs one agent run for agentd (ADR-20261027090010 §6, ADR-20261027090014 §1). schedd
+	// admits it on an agent-pool node, streams it through that node's vmmd,
+	// and releases the reservation once vmmd has destroyed the VM. The first
+	// client frame is start. After the placed event (the reservation is held,
+	// nothing booted) schedd waits for proceed, which agentd sends once it has
+	// recorded the run as running: that is ADR-20261027090010's at-most-once fence.
+	// Cancel stops the harness, or ends the run before the boot. Events after
+	// proceed: booted, output chunks, then one result.
+	RunAgent(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[AgentRunRequest, AgentRunEvent], error)
 	// ReportMemoryPressure (ADR-1155) is vmmd's best-effort relay of a guest
 	// memory-pressure report: MemAvailable fell to the pressure share of
 	// MemTotal while a profile collector was registered. schedd queues one
@@ -512,6 +522,19 @@ func (c *scheddClient) ReportWorkloadOOM(ctx context.Context, in *ReportWorkload
 	}
 	return out, nil
 }
+
+func (c *scheddClient) RunAgent(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[AgentRunRequest, AgentRunEvent], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &Schedd_ServiceDesc.Streams[3], Schedd_RunAgent_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[AgentRunRequest, AgentRunEvent]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Schedd_RunAgentClient = grpc.BidiStreamingClient[AgentRunRequest, AgentRunEvent]
 
 func (c *scheddClient) ReportMemoryPressure(ctx context.Context, in *ReportMemoryPressureRequest, opts ...grpc.CallOption) (*ReportMemoryPressureAck, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
@@ -815,6 +838,15 @@ type ScheddServer interface {
 	// Additive per ADR-016: new RPC + new messages append at the
 	// end; existing field tags are untouched.
 	ReportWorkloadOOM(context.Context, *ReportWorkloadOOMRequest) (*ReportWorkloadOOMAck, error)
+	// RunAgent runs one agent run for agentd (ADR-20261027090010 §6, ADR-20261027090014 §1). schedd
+	// admits it on an agent-pool node, streams it through that node's vmmd,
+	// and releases the reservation once vmmd has destroyed the VM. The first
+	// client frame is start. After the placed event (the reservation is held,
+	// nothing booted) schedd waits for proceed, which agentd sends once it has
+	// recorded the run as running: that is ADR-20261027090010's at-most-once fence.
+	// Cancel stops the harness, or ends the run before the boot. Events after
+	// proceed: booted, output chunks, then one result.
+	RunAgent(grpc.BidiStreamingServer[AgentRunRequest, AgentRunEvent]) error
 	// ReportMemoryPressure (ADR-1155) is vmmd's best-effort relay of a guest
 	// memory-pressure report: MemAvailable fell to the pressure share of
 	// MemTotal while a profile collector was registered. schedd queues one
@@ -880,6 +912,9 @@ func (UnimplementedScheddServer) EnsureWake(context.Context, *EnsureWakeRequest)
 }
 func (UnimplementedScheddServer) ReportWorkloadOOM(context.Context, *ReportWorkloadOOMRequest) (*ReportWorkloadOOMAck, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReportWorkloadOOM not implemented")
+}
+func (UnimplementedScheddServer) RunAgent(grpc.BidiStreamingServer[AgentRunRequest, AgentRunEvent]) error {
+	return status.Error(codes.Unimplemented, "method RunAgent not implemented")
 }
 func (UnimplementedScheddServer) ReportMemoryPressure(context.Context, *ReportMemoryPressureRequest) (*ReportMemoryPressureAck, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReportMemoryPressure not implemented")
@@ -1135,6 +1170,13 @@ func _Schedd_ReportWorkloadOOM_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Schedd_RunAgent_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(ScheddServer).RunAgent(&grpc.GenericServerStream[AgentRunRequest, AgentRunEvent]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Schedd_RunAgentServer = grpc.BidiStreamingServer[AgentRunRequest, AgentRunEvent]
+
 func _Schedd_ReportMemoryPressure_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ReportMemoryPressureRequest)
 	if err := dec(in); err != nil {
@@ -1245,6 +1287,12 @@ var Schedd_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "ReportCapacity",
 			Handler:       _Schedd_ReportCapacity_Handler,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "RunAgent",
+			Handler:       _Schedd_RunAgent_Handler,
+			ServerStreams: true,
 			ClientStreams: true,
 		},
 	},

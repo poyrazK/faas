@@ -549,6 +549,15 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	if releasePhaseEnabled {
 		log.Info("imaged: deployment release phase enabled")
 	}
+	// ADR-20261029174438: prepare several deployments at once, off by default.
+	parallelPrep, err := parseBoolEnv("FAAS_IMAGED_PARALLEL_PREP", getenv("FAAS_IMAGED_PARALLEL_PREP"))
+	if err != nil {
+		return err
+	}
+	prepWorkers := 1
+	if parallelPrep {
+		prepWorkers = api.ImagedImagePrepWorkers
+	}
 	// Same gate and semantics as apid's contained recipe commands
 	// (ADR-20261020150000): a contained rehearsal's release runs only when the
 	// operator has qualified and enabled contained command execution.
@@ -773,6 +782,13 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	for _, base := range profileBases {
 		log.Info("imaged execution profile base ready", "profile", base.Runtime, "digest", base.ConfigDigest, "skipped", base.Skipped)
 	}
+	agentBases, err := h.EnsureAgentRunDrives(ctx, arch, getenv)
+	if err != nil {
+		return err
+	}
+	for _, base := range agentBases {
+		log.Info("imaged agent base ready", "digest", base.ConfigDigest, "skipped", base.Skipped)
+	}
 	if prestageOnlyFromEnv(getenv) {
 		// ADR-20261024191249: the rolled vmmd must be able to boot every
 		// runtime base the release configures, not only those of the apps
@@ -794,16 +810,17 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	}
 
 	loop := imaged.NewLoop(imaged.LoopConfig{
-		Handler:     h,
-		Store:       store,
-		Pool:        pool,
-		Log:         log,
-		Now:         d.now,
-		LvUsedPct:   d.lvUsedPct,
-		DetectFC:    d.detectFC,
-		AppsRoot:    appsRoot,
-		StorageRoot: envOr("FAAS_STORAGE_ROOT", "/srv/fc"),
-		GCEvery:     envDuration("FAAS_GC_INTERVAL", 24*time.Hour),
+		Handler:          h,
+		Store:            store,
+		Pool:             pool,
+		Log:              log,
+		Now:              d.now,
+		LvUsedPct:        d.lvUsedPct,
+		DetectFC:         d.detectFC,
+		AppsRoot:         appsRoot,
+		StorageRoot:      envOr("FAAS_STORAGE_ROOT", "/srv/fc"),
+		GCEvery:          envDuration("FAAS_GC_INTERVAL", 24*time.Hour),
+		ImagePrepWorkers: prepWorkers,
 		// PR-B: builderd owns the build-queue durability surface now;
 		// imaged no longer runs a reaper tick or subscribes to
 		// NotifyBuildQueued. FAAS_REAP_INTERVAL +

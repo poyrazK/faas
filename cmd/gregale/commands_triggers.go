@@ -1,8 +1,9 @@
 // commands_triggers.go — CLI lifecycle for the unified trigger resource.
 //
-// The API already exposes one trigger primitive for broker mappings and
-// cron-linked rows. Keeping the CLI on that same shape avoids making users
-// learn a separate command for every source kind:
+// The API exposes one trigger primitive for broker and queue mappings.
+// Keeping the CLI on that same shape avoids making users learn a separate
+// command for every source kind. Cron schedules are not triggers: they are
+// listed and edited with `gregale cron` (issue #2757).
 //
 //	gregale triggers list|get|create|update|delete|pause|resume|records|retry|drop|dlq|metrics
 //
@@ -46,8 +47,10 @@ var triggerRecordStateNames = []string{
 	"pending", "claimed", "succeeded", "retry", "dead_letter", "superseded",
 }
 
-const triggerKindsUsage = "cron|kafka|nats|redis_streams|sqs_compat|queue|realtime"
 const triggerBrokerKindsUsage = "kafka|nats|redis_streams|sqs_compat|queue|realtime"
+
+// triggerCronHint answers a cron filter or cron flag on a triggers command.
+const triggerCronHint = "cron schedules are not triggers; use `gregale cron list --app <slug>` and `gregale cron update <id>`"
 
 func triggerFlagSet(name, usage string) *flag.FlagSet {
 	fs := newFlagSet(name, flag.ContinueOnError)
@@ -105,6 +108,21 @@ func cmdTriggers(args []string) int {
 	}
 }
 
+// triggerArgsNameCronFlag reports a --schedule or --path flag, which belonged
+// to cron-linked trigger rows and now lives on `gregale cron update`.
+func triggerArgsNameCronFlag(args []string) bool {
+	for _, arg := range args {
+		if arg == "--" {
+			return false
+		}
+		name, _, _ := strings.Cut(strings.TrimLeft(arg, "-"), "=")
+		if strings.HasPrefix(arg, "-") && (name == "schedule" || name == "path") {
+			return true
+		}
+	}
+	return false
+}
+
 func triggerKindValid(kind string) bool {
 	for _, name := range triggerKindNames {
 		if kind == name {
@@ -135,7 +153,7 @@ func triggerUsageError(usage string, format string, args ...any) int {
 
 func cmdTriggersList(args []string) int {
 	flags, pos := splitArgsForFlags(args)
-	usage := "usage: gregale trigger list [--app <slug>] [--kind " + triggerKindsUsage + "]"
+	usage := "usage: gregale trigger list [--app <slug>] [--kind " + triggerBrokerKindsUsage + "]"
 	fs := triggerFlagSet("triggers-list", usage)
 	appSlug := fs.String("app", "", "filter to an app slug")
 	kind := fs.String("kind", "", "filter by trigger kind")
@@ -145,8 +163,11 @@ func cmdTriggersList(args []string) int {
 	if len(pos) != 0 {
 		return triggerUsageError(usage, "unexpected positional argument %q", pos[0])
 	}
-	if *kind != "" && !triggerKindValid(*kind) {
-		return triggerUsageError(usage, "invalid --kind %q (expected one of %s)", *kind, triggerKindsUsage)
+	if *kind == string(api.TriggerKindCron) {
+		return triggerUsageError(usage, "%s", triggerCronHint)
+	}
+	if *kind != "" && !triggerBrokerKindValid(*kind) {
+		return triggerUsageError(usage, "invalid --kind %q (expected one of %s)", *kind, triggerBrokerKindsUsage)
 	}
 	client, err := authedClient()
 	if err != nil {
@@ -321,14 +342,15 @@ func cmdTriggersCreate(args []string) int {
 }
 
 func cmdTriggersUpdate(args []string) int {
-	flags, pos := splitArgsForFlags(args, "disabled", "enabled")
 	usage := "usage: gregale trigger update <id> [flags]"
+	if triggerArgsNameCronFlag(args) {
+		return triggerUsageError(usage, "%s", triggerCronHint)
+	}
+	flags, pos := splitArgsForFlags(args, "disabled", "enabled")
 	fs := triggerFlagSet("triggers-update", usage)
 	enabled := fs.Bool("enabled", false, "enable the trigger")
 	disabled := fs.Bool("disabled", false, "disable the trigger")
 	config := fs.String("config", "", "replace JSON config (inline | @file | - for stdin)")
-	schedule := fs.String("schedule", "", "replace cron expression")
-	path := fs.String("path", "", "replace cron request path")
 	batchSize := fs.Int("batch-size", 0, "maximum records per dispatch batch")
 	batchWindow := fs.Int("batch-window-ms", 0, "maximum batch dwell time in milliseconds")
 	maxAttempts := fs.Int("max-attempts", 0, "maximum delivery attempts")
@@ -353,9 +375,6 @@ func cmdTriggersUpdate(args []string) int {
 			return printErr("Invalid --config", err)
 		}
 	}
-	if explicit["schedule"] && len(strings.Fields(*schedule)) != 5 {
-		return printErr("Invalid --schedule", fmt.Errorf("expected 5 fields, got %q", *schedule))
-	}
 	if err := validateTriggerOptionalFlags(explicit, *enabled, *disabled, *batchSize, *batchWindow, *maxAttempts, *payloadMaxBytes, *poisonStrategy); err != nil {
 		return printErr("Invalid trigger flags", err)
 	}
@@ -370,12 +389,6 @@ func cmdTriggersUpdate(args []string) int {
 		if err != nil {
 			return printErr("Invalid --config", err)
 		}
-	}
-	if explicit["schedule"] {
-		req.Schedule = triggerStringPtr(*schedule)
-	}
-	if explicit["path"] {
-		req.Path = triggerStringPtr(*path)
 	}
 	if explicit["batch-size"] {
 		req.BatchSizeMax = triggerIntPtr(*batchSize)

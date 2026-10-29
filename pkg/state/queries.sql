@@ -2849,6 +2849,13 @@ returning id, account_id, app_id, kind, slug, enabled, config,
 update triggers set delivery = $2, updated_at = now()
 where id = $1 and queue_binding_id is null;
 
+-- name: SetTriggerAgent :execrows
+-- ADR-20261027090010 §9: point a just-created public broker trigger at an agent. The
+-- CHECK constraint refuses other kinds, batch delivery and binding-owned
+-- projections.
+update triggers set agent = $2, updated_at = now()
+where id = $1 and queue_binding_id is null;
+
 -- name: DeleteTrigger :exec
 delete from triggers where id = $1 and app_id = $2 and queue_binding_id is null;
 
@@ -2862,7 +2869,7 @@ delete from triggers where id = $1 and app_id = $2 and queue_binding_id is null;
 select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id, queue_binding_scope, queue_binding_environment_id,
        batch_size_max, batch_window_ms, max_attempts,
        cron_id, source, payload_max_bytes, broker_poison_strategy,
-       filter_criteria, delivery,
+       filter_criteria, delivery, agent,
        created_at, updated_at
 from triggers where id = $1;
 
@@ -2873,7 +2880,7 @@ from triggers where id = $1;
 select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id, queue_binding_scope, queue_binding_environment_id,
        batch_size_max, batch_window_ms, max_attempts,
        cron_id, source, payload_max_bytes, broker_poison_strategy,
-       filter_criteria, delivery,
+       filter_criteria, delivery, agent,
        created_at, updated_at
 from triggers where app_id = $1 order by created_at desc;
 
@@ -2889,7 +2896,7 @@ from triggers where app_id = $1 order by created_at desc;
 select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id, queue_binding_scope, queue_binding_environment_id,
        batch_size_max, batch_window_ms, max_attempts,
        cron_id, source, payload_max_bytes, broker_poison_strategy,
-       filter_criteria, delivery,
+       filter_criteria, delivery, agent,
        created_at, updated_at
 from triggers where enabled = true AND NOT environment_workload_admission_retired(app_id,queue_binding_scope)
 -- A rehearsal-enrolled app never polls or commits offsets on a real external
@@ -3195,6 +3202,10 @@ order by length(p.subject_pattern) desc,
          a.id
 limit 1;
 
+-- name: AccountIDByGitHubInstallation :one
+-- An installation ID is globally unique (github_installations_installation_id_uidx).
+select account_id from github_installations where installation_id = sqlc.arg(installation_id)::bigint;
+
 -- name: AccountIDByGitHubOIDCRepositoryIdentity :one
 -- First-use GitHub Actions bootstrap through an OAuth-verified install
 -- binding. Immutable subjects must match both persisted numeric IDs as well
@@ -3211,6 +3222,19 @@ where lower(a.github_repo_full_name) = lower(sqlc.arg(repo_full_name)::text)
   and (sqlc.arg(owner_id)::bigint = 0 or a.github_owner_id = sqlc.arg(owner_id)::bigint)
   and (sqlc.arg(repo_id)::bigint = 0 or a.github_repo_id = sqlc.arg(repo_id)::bigint)
 having count(distinct a.github_install_account_id) = 1;
+
+-- name: GitHubRepositoryIDsBoundToAccount :one
+-- The immutable owner and repository IDs an account's app binding recorded
+-- for a repository name (bug hunt 2026-10-28 H68): the OIDC exchange
+-- requires a token's repository_owner_id and repository_id claims to match
+-- them, so a recreated repository under a freed owner name does not pass.
+-- Zero when no binding of the name records them.
+select coalesce(max(a.github_owner_id), 0)::bigint as owner_id,
+       coalesce(max(a.github_repo_id), 0)::bigint as repo_id
+from apps a
+where a.account_id = sqlc.arg(account_id)::uuid
+  and lower(a.github_repo_full_name) = lower(sqlc.arg(repo_full_name)::text)
+  and a.deleted_at is null;
 
 -- name: InsertOIDCExchangedToken :one
 -- Fresh-token insert. The id is server-minted by sqlc (gen_random_uuid).
@@ -8143,13 +8167,18 @@ WITH metadata AS (
         AND legacy.account_id=a.account_id AND legacy.project_id=a.project_id AND legacy.slug=d.scope
         AND legacy.created_at<=d.created_at
 )
+-- 'active' pages by app (after_app_id, ordered by app): the rollback window
+-- needs every row of an app, and a newest-first cut over the whole fleet
+-- dropped exactly the oldest generations GC exists to reclaim once the live
+-- set passed the limit (bug hunt 2026-10-28 H66).
 SELECT * FROM metadata
-WHERE (sqlc.arg(mode)::text='active' AND (NOT stale OR runtime_owner_invalid))
+WHERE (sqlc.arg(mode)::text='active' AND (NOT stale OR runtime_owner_invalid) AND app_id>sqlc.arg(after_app_id)::text)
     OR (sqlc.arg(mode)::text='stale' AND stale AND stale_since<now()-sqlc.arg(retention_seconds)::bigint*interval '1 second')
     OR (sqlc.arg(mode)::text='pending' AND delete_pending)
-ORDER BY CASE WHEN sqlc.arg(mode)::text='active' THEN created_at END DESC,
+ORDER BY CASE WHEN sqlc.arg(mode)::text='active' THEN app_id END ASC,
+    CASE WHEN sqlc.arg(mode)::text='active' THEN created_at END DESC,
     CASE WHEN sqlc.arg(mode)::text<>'active' THEN created_at END ASC, id ASC
-LIMIT 10000;
+LIMIT sqlc.arg(row_limit)::integer;
 
 -- name: ReadRuntimeScalingStateForDeployment :one
 WITH owner AS (
@@ -11895,10 +11924,10 @@ and queue_binding_id is not distinct from sqlc.narg(binding_id)::uuid for share;
 -- One snapshot includes active work and dead letters. A NULL queue selects
 -- every name in this scope; an empty string selects only legacy unnamed work.
 select
-  count(*) filter (where state in ('pending','dispatching'))::bigint as depth,
+  count(*) filter (where state='dispatching' or (state='pending' and due_at <= now()))::bigint as depth,
   count(*) filter (where state='dispatching' and lease_expires_at > now())::bigint as in_flight,
   count(*) filter (where state='dead_letter')::bigint as dead_letter,
-  min(created_at) filter (where state='pending')::timestamptz as oldest_pending_at
+  min(created_at) filter (where state='pending' and due_at <= now())::timestamptz as oldest_pending_at
 from invocations
 where app_id=sqlc.arg(app_id) and deployment_scope=sqlc.arg(deployment_scope)
   and source='queue' and state in ('pending','dispatching','dead_letter')
@@ -12527,10 +12556,10 @@ and i.state in ('waking','cold_booting','running','draining','snapshotting','mig
 -- Legacy unassigned work remains visible under its historical name; pinned
 -- work never follows a replacement binding that reuses that name.
 select
-  count(*) filter (where i.state in ('pending','dispatching'))::bigint as depth,
+  count(*) filter (where i.state='dispatching' or (i.state='pending' and i.due_at <= now()))::bigint as depth,
   count(*) filter (where i.state='dispatching' and i.lease_expires_at > now())::bigint as in_flight,
   count(*) filter (where i.state='dead_letter')::bigint as dead_letter,
-  min(i.created_at) filter (where i.state='pending')::timestamptz as oldest_pending_at
+  min(i.created_at) filter (where i.state='pending' and i.due_at <= now())::timestamptz as oldest_pending_at
 from invocations i join queue_bindings b on b.app_id=i.app_id and b.account_id=i.account_id
 where b.id=sqlc.arg(binding_id)::uuid and b.app_id=sqlc.arg(app_id)::uuid
   and (sqlc.narg(deployment_scope)::text is null or i.deployment_scope=sqlc.narg(deployment_scope)::text)
@@ -12545,7 +12574,7 @@ where b.id=sqlc.arg(binding_id)::uuid and b.app_id=sqlc.arg(app_id)::uuid
 select count(*)::bigint as depth from (
   select 1 from invocations
   where app_id=sqlc.arg(app_id)::uuid and deployment_scope=sqlc.arg(deployment_scope)::text
-    and source='queue' and state in ('pending','dispatching')
+    and source='queue' and state in ('pending','dispatching') and (state='dispatching' or due_at <= now())
   limit sqlc.arg(row_limit)::integer
 ) bounded;
 
@@ -12561,7 +12590,7 @@ select
   (select count(*) from (
      select 1 from invocations i, b
      where i.app_id=sqlc.arg(app_id)::uuid and i.queue_binding_id=b.id and i.account_id=b.account_id
-       and i.source='queue' and i.state in ('pending','dispatching')
+       and i.source='queue' and i.state in ('pending','dispatching') and (i.state='dispatching' or i.due_at <= now())
        and (sqlc.narg(deployment_scope)::text is null or i.deployment_scope=sqlc.narg(deployment_scope)::text)
        and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
      limit sqlc.arg(row_limit)::integer) own)::bigint
@@ -12569,7 +12598,7 @@ select
      select 1 from invocations i, b
      where b.deployment_scope='' and i.app_id=sqlc.arg(app_id)::uuid and i.queue_binding_id is null
        and i.queue_name=b.queue_name and i.account_id=b.account_id
-       and i.source='queue' and i.state in ('pending','dispatching')
+       and i.source='queue' and i.state in ('pending','dispatching') and (i.state='dispatching' or i.due_at <= now())
        and (sqlc.narg(deployment_scope)::text is null or i.deployment_scope=sqlc.narg(deployment_scope)::text)
      limit sqlc.arg(row_limit)::integer) legacy)::bigint as depth;
 
@@ -12603,14 +12632,14 @@ select
   ((select count(*) from (
      select 1 from invocations i, b
      where i.app_id=sqlc.arg(app_id)::uuid and i.queue_binding_id=b.id and i.account_id=b.account_id
-       and i.source='queue' and i.state in ('pending','dispatching')
+       and i.source='queue' and i.state in ('pending','dispatching') and (i.state='dispatching' or i.due_at <= now())
        and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
      limit sqlc.arg(row_limit)::integer) own)
   + (select count(*) from (
      select 1 from invocations i, b
      where b.deployment_scope='' and i.app_id=sqlc.arg(app_id)::uuid and i.queue_binding_id is null
        and i.queue_name=b.queue_name and i.account_id=b.account_id
-       and i.source='queue' and i.state in ('pending','dispatching')
+       and i.source='queue' and i.state in ('pending','dispatching') and (i.state='dispatching' or i.due_at <= now())
      limit sqlc.arg(row_limit)::integer) legacy))::bigint as depth,
   (select count(*) from (
      select 1 from owned where state='dispatching' and lease_expires_at > now()
@@ -12621,13 +12650,13 @@ select
   (select min(first.created_at) from (
      (select i.created_at from invocations i, b
       where i.app_id=sqlc.arg(app_id)::uuid and i.queue_binding_id=b.id and i.account_id=b.account_id
-        and i.source='queue' and i.state='pending'
+        and i.source='queue' and i.state='pending' and i.due_at <= now()
         and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
       order by i.due_at, i.created_at, i.id limit 1)
      union all
      (select i.created_at from invocations i, b
       where b.deployment_scope='' and i.app_id=sqlc.arg(app_id)::uuid and i.queue_binding_id is null
-        and i.queue_name=b.queue_name and i.account_id=b.account_id and i.source='queue' and i.state='pending'
+        and i.queue_name=b.queue_name and i.account_id=b.account_id and i.source='queue' and i.state='pending' and i.due_at <= now()
       order by i.due_at, i.created_at, i.id limit 1)
   ) first)::timestamptz as oldest_pending_at;
 
@@ -13792,7 +13821,7 @@ WHERE app_id = sqlc.arg(app_id)::text::uuid AND listener_name = sqlc.arg(listene
 -- name: UDPListenerByPublicPort :one
 SELECT * FROM app_udp_listeners l
 WHERE public_port = sqlc.arg(public_port) AND enabled
-AND EXISTS (SELECT 1 FROM apps a WHERE a.id = l.app_id AND a.account_id = l.account_id AND a.status <> 'deleted');
+AND EXISTS (SELECT 1 FROM apps a WHERE a.id = l.app_id AND a.account_id = l.account_id AND a.status <> 'deleted' AND a.visibility <> 'internal');
 
 -- name: ListUDPListenersForApp :many
 SELECT * FROM app_udp_listeners
@@ -13800,7 +13829,7 @@ WHERE app_id = sqlc.arg(app_id)::text::uuid ORDER BY created_at DESC, id DESC;
 
 -- name: ListEnabledUDPListeners :many
 SELECT * FROM app_udp_listeners l
-WHERE enabled AND EXISTS (SELECT 1 FROM apps a WHERE a.id = l.app_id AND a.account_id = l.account_id AND a.status <> 'deleted')
+WHERE enabled AND EXISTS (SELECT 1 FROM apps a WHERE a.id = l.app_id AND a.account_id = l.account_id AND a.status <> 'deleted' AND a.visibility <> 'internal')
 ORDER BY public_port ASC;
 
 -- name: SetUDPListenerEnabled :one
@@ -13816,11 +13845,11 @@ SELECT count(*) FROM app_udp_listeners WHERE app_id = sqlc.arg(app_id)::text::uu
 -- name: ActiveTCPListenerByPublicPort :one
 SELECT l.* FROM app_tcp_listeners l JOIN apps a ON a.id = l.app_id
 WHERE l.public_port = sqlc.arg(public_port) AND l.enabled
-  AND a.status <> 'deleted' AND a.account_id = l.account_id;
+  AND a.status <> 'deleted' AND a.visibility <> 'internal' AND a.account_id = l.account_id;
 
 -- name: ListActiveTCPListeners :many
 SELECT l.* FROM app_tcp_listeners l JOIN apps a ON a.id = l.app_id
-WHERE l.enabled AND a.status <> 'deleted' AND a.account_id = l.account_id
+WHERE l.enabled AND a.status <> 'deleted' AND a.visibility <> 'internal' AND a.account_id = l.account_id
 ORDER BY l.public_port;
 -- name: LockExclusiveWorkAccount :one
 SELECT id::text,plan FROM accounts WHERE id=sqlc.arg(account_id)::text::uuid
@@ -16441,9 +16470,22 @@ UPDATE route_monitors SET next_check_at=sqlc.arg(next_check_at),last_deployment_
 	last_healthy_deployment=sqlc.arg(last_healthy_deployment)::jsonb WHERE app_id=sqlc.arg(app_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid;
 
 -- name: RouteMonitorServingDeployments :many
-SELECT id::text AS id,commit_sha,source_url,source_root,created_at,canary_step_started_at,rollout_completed_at,traffic_percent,canary_step,canary_total_steps
-FROM deployments WHERE app_id=sqlc.arg(app_id)::text::uuid AND status='live' AND deleted_at IS NULL AND traffic_percent>0
- AND coalesce(nullif(scope,''),'default')='default' ORDER BY id LIMIT 2;
+-- The app's production routing lane (state.ProductionRoutingDeployments): a
+-- project's named production scope once it carries traffic, or while the
+-- legacy default lane is dark; otherwise the default scope
+-- (ADR-20261028110044 amendment 1).
+WITH lanes AS (
+ SELECT id,commit_sha,source_url,source_root,created_at,canary_step_started_at,rollout_completed_at,traffic_percent,canary_step,canary_total_steps,
+  CASE WHEN scope='production' THEN 'production' ELSE 'default' END AS lane
+ FROM deployments WHERE app_id=sqlc.arg(app_id)::text::uuid AND status='live' AND deleted_at IS NULL
+  AND coalesce(nullif(scope,''),'default') IN ('default','production')
+), chosen AS (
+ SELECT CASE WHEN EXISTS (SELECT 1 FROM lanes WHERE lane='production' AND traffic_percent>0)
+  OR (NOT EXISTS (SELECT 1 FROM lanes WHERE lane='default' AND traffic_percent>0) AND EXISTS (SELECT 1 FROM lanes WHERE lane='production'))
+  THEN 'production' ELSE 'default' END AS lane
+)
+SELECT l.id::text AS id,l.commit_sha,l.source_url,l.source_root,l.created_at,l.canary_step_started_at,l.rollout_completed_at,l.traffic_percent,l.canary_step,l.canary_total_steps
+FROM lanes l JOIN chosen c ON c.lane=l.lane WHERE l.traffic_percent>0 ORDER BY l.id LIMIT 2;
 
 -- name: ReadRouteMonitorIncident :one
 SELECT entry FROM route_monitor_incidents WHERE id=sqlc.arg(id)::text::uuid AND app_id=sqlc.arg(app_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid;
@@ -26449,3 +26491,16 @@ ON CONFLICT (singleton) DO NOTHING;
 -- version protection job in its bucket (ADR-20261025115958).
 SELECT (EXISTS(SELECT 1 FROM object_deletions d WHERE d.bucket_id=sqlc.arg(bucket_id)::uuid AND d.lifecycle_scan_id=sqlc.arg(scan_id)::uuid AND d.state IN ('prepared','dispatched'))
  OR EXISTS(SELECT 1 FROM object_version_protection p WHERE p.bucket_id=sqlc.arg(bucket_id)::uuid AND p.state IN ('waiting','applying')))::boolean AS active;
+
+-- name: PutRuntimeSecretSignature :exec
+-- ADR 20261028161502 amendment 1: a runtime secret envelope's writer
+-- signature, by its SHA-256. A signature is deterministic for one envelope and
+-- key, so writing it again replaces only a row that held something else.
+INSERT INTO runtime_secret_signatures (ciphertext_sha256, signature)
+VALUES (sqlc.arg(ciphertext_sha256)::bytea, sqlc.arg(signature)::bytea)
+ON CONFLICT (ciphertext_sha256) DO UPDATE SET signature = EXCLUDED.signature, created_at = now()
+WHERE runtime_secret_signatures.signature IS DISTINCT FROM EXCLUDED.signature;
+
+-- name: ReadRuntimeSecretSignatures :many
+SELECT ciphertext_sha256, signature FROM runtime_secret_signatures
+WHERE ciphertext_sha256 = ANY(sqlc.arg(digests)::bytea[]);

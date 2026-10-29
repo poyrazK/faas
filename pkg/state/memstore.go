@@ -1446,6 +1446,9 @@ type MemStore struct {
 	realtimeChannelWebhookFilters   map[string]RealtimeChannelWebhookFilter
 	managedRealtimeAccess           map[string]map[string]ManagedRealtimeAccess
 	workerRecovery                  map[string]WorkerRecovery
+	// runtimeSecretSignatures maps an envelope's SHA-256 to its writer
+	// signature (ADR 20261028161502), created on first use.
+	runtimeSecretSignatures map[string][]byte
 }
 
 // installRepoKey mirrors the projects_install_repo_uniq partial index
@@ -3184,6 +3187,7 @@ func (m *MemStore) RotateOrgAPIKeyWithProvenance(_ context.Context, orgID, oldKe
 		Hash:            newHash,
 		Label:           newLabel,
 		Scopes:          old.Scopes,
+		ExpiresAt:       cloneTimePtr(old.ExpiresAt),
 		CreatedAt:       time.Now(),
 		Status:          string(APIKeyStatusActive),
 		RotatedFromID:   &rotatedFrom,
@@ -3417,6 +3421,7 @@ func (m *MemStore) RotateAPIKey(_ context.Context, accountID, oldKeyID string, n
 		Hash:            newHash,
 		Label:           newLabel,
 		Scopes:          old.Scopes,
+		ExpiresAt:       cloneTimePtr(old.ExpiresAt),
 		CreatedAt:       time.Now(),
 		Status:          string(APIKeyStatusActive),
 		RotatedFromID:   &rotatedFrom,
@@ -3619,6 +3624,7 @@ func (m *MemStore) RotateOrgAPIKey(_ context.Context, orgID, oldKeyID string, ne
 		Hash:            newHash,
 		Label:           newLabel,
 		Scopes:          old.Scopes,
+		ExpiresAt:       cloneTimePtr(old.ExpiresAt),
 		CreatedAt:       time.Now(),
 		Status:          string(APIKeyStatusActive),
 		RotatedFromID:   &rotatedFrom,
@@ -4962,7 +4968,7 @@ func (m *MemStore) CreateApp(ctx context.Context, app App) (App, error) {
 	// so the column reads as a real value right out of CreateApp. The
 	// pgstore snap lives on the SQL path; the memstore snap mirrors it
 	// here so the per-account reserved-tier cap read
-	// (CountAppsWithEvictionPriority) sees the same value the wire
+	// (CountOtherBillingSubjectAppsWithEvictionPriority) sees the same value the wire
 	// would. Pre-#475 tests that built App{} structs continue to read
 	// 'best_effort' on the round-trip.
 	app.EvictionPriority = EvictionPriorityOrBestEffort(app.EvictionPriority)
@@ -6845,25 +6851,30 @@ func (m *MemStore) CountDeveloperApps(_ context.Context, accountID string) (int,
 	return m.countAppQuotaLocked(app, true, QuotaErrorKindDeveloperApps), nil
 }
 
-// CountAppsWithEvictionPriority mirrors the pgstore read for the
-// per-account reserved-tier cap (issue #475). Same shape as
-// CountDeployedApps — counts APPS (not instances), excludes soft-deleted
-// apps so the cap tracks the live customer surface.
-func (m *MemStore) CountAppsWithEvictionPriority(_ context.Context, accountID, priority string) (int, error) {
+// CountOtherBillingSubjectAppsWithEvictionPriority mirrors the pgstore
+// read for the per-account reserved-tier cap (issue #475): it counts APPS
+// (not instances) of appID's billing subject, other than appID, whose row
+// or current environment workload settings use the tier, and excludes
+// soft-deleted apps (countsTowardQuotaSubjectLocked).
+func (m *MemStore) CountOtherBillingSubjectAppsWithEvictionPriority(_ context.Context, appID, priority string) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	app, ok := m.apps[appID]
+	if !ok {
+		return 0, nil
+	}
+	subject := m.appBillingSubjectLocked(app.AccountID, app.ID)
+	inEnvironment := make(map[string]bool)
+	for _, specID := range m.projectEnvironmentWorkloadHeads {
+		if spec := m.projectEnvironmentWorkloadSpecs[specID]; EvictionPriorityOrBestEffort(spec.Settings.EvictionPriority) == priority {
+			inEnvironment[spec.AppID] = true
+		}
+	}
 	n := 0
 	for _, a := range m.apps {
-		if a.AccountID != accountID {
-			continue
+		if a.ID != appID && (a.EvictionPriority == priority || inEnvironment[a.ID]) && m.countsTowardQuotaSubjectLocked(a.AccountID, a.ID, subject) {
+			n++
 		}
-		if a.Status == AppDeleted {
-			continue
-		}
-		if a.EvictionPriority != priority {
-			continue
-		}
-		n++
 	}
 	return n, nil
 }
@@ -17680,6 +17691,35 @@ func (m *MemStore) SetComputeNodeReadiness(_ context.Context, nodeID string, rea
 	return true, nil
 }
 
+// OpenComputeNodeWakeBreaker mirrors PgStore.OpenComputeNodeWakeBreaker.
+func (m *MemStore) OpenComputeNodeWakeBreaker(_ context.Context, nodeID string, until time.Time, reason string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n, ok := m.computeNodes[nodeID]
+	if !ok {
+		return nil
+	}
+	n.WakeBreakerOpenUntil, n.WakeBreakerReason = &until, nil
+	if reason != "" {
+		n.WakeBreakerReason = &reason
+	}
+	m.computeNodes[nodeID] = n
+	return nil
+}
+
+// CloseComputeNodeWakeBreaker mirrors PgStore.CloseComputeNodeWakeBreaker.
+func (m *MemStore) CloseComputeNodeWakeBreaker(_ context.Context, nodeID string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n, ok := m.computeNodes[nodeID]
+	if !ok || n.WakeBreakerOpenUntil == nil {
+		return false, nil
+	}
+	n.WakeBreakerOpenUntil, n.WakeBreakerReason = nil, nil
+	m.computeNodes[nodeID] = n
+	return true, nil
+}
+
 func (m *MemStore) HeartbeatComputeNode(_ context.Context, nodeID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -21651,6 +21691,37 @@ func (m *MemStore) IssueCliAuthCode(_ context.Context, tokenHash []byte, expires
 	return nil
 }
 
+// IssueCliAuthDeviceCode implements CliAuthDeviceCodeStore.
+func (m *MemStore) IssueCliAuthDeviceCode(_ context.Context, tokenHash, deviceHash []byte, expiresAt time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.cliAuthCodes == nil {
+		m.cliAuthCodes = map[string]CliAuthCode{}
+	}
+	if _, exists := m.cliAuthCodes[string(tokenHash)]; exists {
+		return ErrConflict
+	}
+	m.cliAuthCodes[string(tokenHash)] = CliAuthCode{
+		TokenHash:  append([]byte(nil), tokenHash...),
+		DeviceHash: append([]byte(nil), deviceHash...),
+		ExpiresAt:  expiresAt,
+	}
+	return nil
+}
+
+// ConsumeCliAuthDeviceCode implements CliAuthDeviceCodeStore.
+func (m *MemStore) ConsumeCliAuthDeviceCode(_ context.Context, deviceHash []byte) (api.CliAuthStatus, string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for key, row := range m.cliAuthCodes {
+		if len(row.DeviceHash) == 0 || string(row.DeviceHash) != string(deviceHash) {
+			continue
+		}
+		return m.consumeCliAuthRowLocked(key, row)
+	}
+	return api.CliAuthStatusExpired, "", ErrNotFound
+}
+
 // PeekCliAuthCode returns the row's status without mutating it. Used
 // by the dashboard GET /cli-auth render to decide whether to show the
 // email-input form or the "code unavailable" error page.
@@ -21727,9 +21798,14 @@ func (m *MemStore) ConsumeCliAuthCode(_ context.Context, tokenHash []byte) (api.
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	row, ok := m.cliAuthCodes[string(tokenHash)]
-	if !ok {
+	// A device-bound row answers the short code as if it did not exist.
+	if !ok || len(row.DeviceHash) > 0 {
 		return api.CliAuthStatusExpired, "", ErrNotFound
 	}
+	return m.consumeCliAuthRowLocked(string(tokenHash), row)
+}
+
+func (m *MemStore) consumeCliAuthRowLocked(key string, row CliAuthCode) (api.CliAuthStatus, string, error) {
 	if !row.ExpiresAt.After(time.Now()) {
 		return api.CliAuthStatusExpired, "", ErrNotFound
 	}
@@ -21744,7 +21820,7 @@ func (m *MemStore) ConsumeCliAuthCode(_ context.Context, tokenHash []byte) (api.
 	}
 	now := time.Now()
 	row.ConsumedAt = &now
-	m.cliAuthCodes[string(tokenHash)] = row
+	m.cliAuthCodes[key] = row
 	return api.CliAuthStatusConsumed, row.AccountID, nil
 }
 

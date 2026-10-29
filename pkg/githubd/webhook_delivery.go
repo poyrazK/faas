@@ -374,7 +374,9 @@ func RunWebhookDeliveryWorker(ctx context.Context, store WebhookDeliveryStore, s
 				}
 				continue
 			}
-			dead := delivery.Attempts >= webhookMaxAttempts
+			// A payload that cannot be decoded or routed fails identically on
+			// every attempt; dead-letter it now so the alert fires at once.
+			dead := delivery.Attempts >= webhookMaxAttempts || errors.Is(dispatchErr, errUnprocessableWebhook)
 			delay := time.Second << min(delivery.Attempts, 8)
 			if delay > 5*time.Minute {
 				delay = 5 * time.Minute

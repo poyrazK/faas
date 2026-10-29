@@ -1818,13 +1818,13 @@ func (s *PgStore) RotateAPIKey(ctx context.Context, accountID, oldKeyID string, 
 		newLabel = old.Label
 	}
 	newKey, err := scanAPIKeyRow(ctx, tx,
-		`insert into api_keys (account_id, key_sha256, label, scopes, status, rotated_from_id, org_id)
-		 values ($1, $2, $3, $4, 'active', $5, $6)
+		`insert into api_keys (account_id, key_sha256, label, scopes, status, rotated_from_id, org_id, expires_at)
+		 values ($1, $2, $3, $4, 'active', $5, $6, $7)
 		 returning id, account_id, org_id, key_sha256, coalesce(label,''), scopes, created_at,
 		           last_used_at,
 		           expires_at, status, revoked_at, rotated_from_id,
 		           coalesce(host(created_ip),'') as created_ip, coalesce(created_ua,'') as created_ua, parent_key_id`,
-		accountID, newHash, newLabel, old.Scopes, oldKeyID, old.OrgID)
+		accountID, newHash, newLabel, old.Scopes, oldKeyID, old.OrgID, old.ExpiresAt)
 	if err != nil {
 		return APIKey{}, APIKey{}, err
 	}
@@ -2117,13 +2117,13 @@ func (s *PgStore) RotateOrgAPIKey(ctx context.Context, orgID, oldKeyID string, n
 		newLabel = old.Label
 	}
 	newKey, err := scanAPIKeyRow(ctx, tx,
-		`insert into api_keys (account_id, key_sha256, label, scopes, status, rotated_from_id, org_id)
-		 values ($1, $2, $3, $4, 'active', $5, $6)
+		`insert into api_keys (account_id, key_sha256, label, scopes, status, rotated_from_id, org_id, expires_at)
+		 values ($1, $2, $3, $4, 'active', $5, $6, $7)
 		 returning id, account_id, org_id, key_sha256, coalesce(label,''), scopes, created_at,
 		           last_used_at,
 		           expires_at, status, revoked_at, rotated_from_id,
 		           coalesce(host(created_ip),'') as created_ip, coalesce(created_ua,'') as created_ua, parent_key_id`,
-		old.AccountID, newHash, newLabel, old.Scopes, oldKeyID, old.OrgID)
+		old.AccountID, newHash, newLabel, old.Scopes, oldKeyID, old.OrgID, old.ExpiresAt)
 	if err != nil {
 		return APIKey{}, APIKey{}, err
 	}
@@ -2221,14 +2221,14 @@ func (s *PgStore) RotateOrgAPIKeyWithProvenance(ctx context.Context, orgID, oldK
 		newLabel = old.Label
 	}
 	newKey, err := scanAPIKeyRow(ctx, tx,
-		`insert into api_keys (account_id, key_sha256, label, scopes, status, rotated_from_id, org_id, created_ip, created_ua, parent_key_id)
-		 values ($1, $2, $3, $4, 'active', $5, $6, $7, $8, $9)
+		`insert into api_keys (account_id, key_sha256, label, scopes, status, rotated_from_id, org_id, created_ip, created_ua, parent_key_id, expires_at)
+		 values ($1, $2, $3, $4, 'active', $5, $6, $7, $8, $9, $10)
 		 returning id, account_id, org_id, key_sha256, coalesce(label,''), scopes, created_at,
 		           last_used_at,
 		           expires_at, status, revoked_at, rotated_from_id,
 		           coalesce(host(created_ip),'') as created_ip, coalesce(created_ua,'') as created_ua, parent_key_id`,
 		old.AccountID, newHash, newLabel, old.Scopes, oldKeyID, old.OrgID,
-		nullString(createdIP), nullString(createdUA), parent)
+		nullString(createdIP), nullString(createdUA), parent, old.ExpiresAt)
 	if err != nil {
 		return APIKey{}, APIKey{}, err
 	}
@@ -4003,23 +4003,42 @@ func (s *PgStore) CountDeveloperApps(ctx context.Context, accountID string) (int
 	return s.countPersonalAppQuota(ctx, accountID, QuotaErrorKindDeveloperApps)
 }
 
-// CountAppsWithEvictionPriority returns the per-account count of
-// apps whose eviction_priority equals the given tier (issue #475).
-// Counts APPS (not instances) — a single reserved app with 5
-// concurrent instances counts as 1 against the per-account cap
-// (Plan.ReservedConcurrencyPerAccount). Excludes soft-deleted apps
-// (status='deleted') so a recently-deleted reserved app doesn't
-// leak into the cap and reject a subsequent recreate. The
-// `apps_account_idx (account_id, status)` partial composite index
-// keeps this O(N_per_account) — bounded by the acked per-account
-// cap (Hobby 1, Pro 2, Scale 4) so the lock-pending apid path
-// (CreateCronIfUnderQuota pattern) is constant-time in practice.
-func (s *PgStore) CountAppsWithEvictionPriority(ctx context.Context, accountID, priority string) (int, error) {
+// CountOtherBillingSubjectAppsWithEvictionPriority returns how many apps
+// other than appID, of appID's billing subject (quotaSubjectSQL,
+// ADR-202610171904), use the given eviction tier (issue #475) on the app
+// row or in a project environment's current workload settings (its head
+// spec), which is what the reaper applies to that environment's
+// deployments. Counts APPS (not instances) — a single reserved app with 5
+// concurrent instances or 3 reserved environments counts as 1 against the
+// per-account cap (Plan.ReservedConcurrencyPerAccount). Excludes
+// soft-deleted apps (status='deleted') so a recently-deleted reserved app
+// doesn't leak into the cap and reject a subsequent recreate. The
+// account_id/org_id prefilter keeps the scan on apps_account_idx and
+// apps_org_quota_idx; the environment probe goes through the project's
+// environments to the heads' primary key.
+func (s *PgStore) CountOtherBillingSubjectAppsWithEvictionPriority(ctx context.Context, appID, priority string) (int, error) {
 	var n int
-	err := s.pool.QueryRow(ctx,
-		`select count(*) from apps where account_id = $1 and status <> 'deleted' and eviction_priority = $2`,
-		accountID, priority).Scan(&n)
-	return n, err
+	err := s.pool.QueryRow(ctx, `
+		with subject as (
+			select `+quotaSubjectSQL+` as id
+			from apps a left join orgs o on o.id = a.org_id
+			where a.id = $1
+		)
+		select count(*) from subject s
+		join apps a on a.account_id = s.id or a.org_id = s.id
+		left join orgs o on o.id = a.org_id
+		where a.id <> $1 and a.status <> 'deleted' and `+quotaSubjectSQL+` = s.id
+		  and (a.eviction_priority = $2 or exists (
+			select 1 from project_environments e
+			join project_environment_workload_heads h on h.environment_id = e.id and h.app_id = a.id
+			join project_environment_workload_specs w on w.id = h.spec_id
+			where e.project_id = a.project_id
+			  and coalesce(nullif(w.settings->>'eviction_priority', ''), 'best_effort') = $2))`,
+		appID, priority).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("state: count other %s apps of app %s's billing subject: %w", priority, appID, err)
+	}
+	return n, nil
 }
 
 // CountAuthDefaultFlippedApps (issue #695 / ADR-080) returns the
@@ -14729,8 +14748,14 @@ func (s *PgStore) CreateEdgeRule(ctx context.Context, in CreateEdgeRuleParams) (
 // The FOR UPDATE row lock on the apps row is the TOCTOU defence:
 // concurrent inserts serialise on the apps row before reading the
 // count, so a burst of N parallel inserts can't race past the cap
-// by N-1.
+// by N-1. That lock sits in a repeatable-read snapshot, so a concurrent app
+// write (schedd stamps a new app's owner node right after it is created)
+// fails it with a serialization failure; the create retries with a fresh one.
 func (s *PgStore) CreateEdgeRuleIfUnderQuota(ctx context.Context, in CreateEdgeRuleParams, limits api.Limits) (EdgeRule, error) {
+	return retryTrafficSerialization(ctx, func() (EdgeRule, error) { return s.createEdgeRuleIfUnderQuotaOnce(ctx, in, limits) })
+}
+
+func (s *PgStore) createEdgeRuleIfUnderQuotaOnce(ctx context.Context, in CreateEdgeRuleParams, limits api.Limits) (EdgeRule, error) {
 	tx, err := s.beginRuleTrafficPolicyMutation(ctx, uuidToPgtype(in.AccountID), in.Kind, in.MatchHost)
 	if err != nil {
 		return EdgeRule{}, fmt.Errorf("state: begin tx: %w", err)
@@ -19035,7 +19060,7 @@ func scanComputeNode(row pgx.Row) (ComputeNode, error) {
 		&n.ReleaseID, &n.ManifestHash, &n.HostCertificate, &n.CertFingerprint,
 		&n.Role, &n.Generation, &n.Lifecycle, &n.LifecycleGeneration,
 		&n.Readiness, &n.ReadinessReason,
-		&n.CPUTemplate, &n.CPUModel); err != nil {
+		&n.CPUTemplate, &n.CPUModel, &n.WakeBreakerOpenUntil, &n.WakeBreakerReason); err != nil {
 		return ComputeNode{}, mapErr(err)
 	}
 	return n, nil
@@ -19048,7 +19073,8 @@ func (s *pgCore) ActiveComputeNodes(ctx context.Context) ([]ComputeNode, error) 
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
 		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		       lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model
+		       lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model,
+		       wake_breaker_open_until, wake_breaker_reason
 		  from compute_nodes
 		 where active = true
 		 order by name
@@ -19080,7 +19106,8 @@ func (s *PgStore) ListAllComputeNodes(ctx context.Context) ([]ComputeNode, error
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
 		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		       lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model
+		       lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model,
+		       wake_breaker_open_until, wake_breaker_reason
 		  from compute_nodes
 		 order by name
 	`)
@@ -19106,7 +19133,8 @@ func (s *pgCore) ComputeNodeByID(ctx context.Context, id string) (ComputeNode, e
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
 		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		       lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model
+		       lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model,
+		       wake_breaker_open_until, wake_breaker_reason
 		  from compute_nodes
 		 where id = $1
 	`, id)
@@ -19124,7 +19152,8 @@ func (s *PgStore) ComputeNodeByName(ctx context.Context, name string) (ComputeNo
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
 		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		       lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model
+		       lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model,
+		       wake_breaker_open_until, wake_breaker_reason
 		  from compute_nodes
 		 where name = $1
 	`, name)
@@ -19339,6 +19368,33 @@ func (s *PgStore) SetComputeNodeReadiness(ctx context.Context, nodeID string, re
 	`, nodeID, string(readiness), reason)
 	if err != nil {
 		return false, fmt.Errorf("state: set compute_node %s readiness: %w", nodeID, err)
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
+// OpenComputeNodeWakeBreaker implements ComputeNodeWakeBreakerStore.
+func (s *PgStore) OpenComputeNodeWakeBreaker(ctx context.Context, nodeID string, until time.Time, reason string) error {
+	if _, err := s.pool.Exec(ctx, `
+		update compute_nodes
+		   set wake_breaker_open_until = $2, wake_breaker_reason = nullif($3, '')
+		 where id = $1
+	`, nodeID, until, reason); err != nil {
+		return fmt.Errorf("state: open compute_node %s wake breaker: %w", nodeID, err)
+	}
+	return nil
+}
+
+// CloseComputeNodeWakeBreaker implements ComputeNodeWakeBreakerStore. It
+// matches only a set breaker, so closing a closed one fires no
+// compute_node_changed.
+func (s *PgStore) CloseComputeNodeWakeBreaker(ctx context.Context, nodeID string) (bool, error) {
+	tag, err := s.pool.Exec(ctx, `
+		update compute_nodes
+		   set wake_breaker_open_until = null, wake_breaker_reason = null
+		 where id = $1 and wake_breaker_open_until is not null
+	`, nodeID)
+	if err != nil {
+		return false, fmt.Errorf("state: close compute_node %s wake breaker: %w", nodeID, err)
 	}
 	return tag.RowsAffected() > 0, nil
 }
@@ -19810,7 +19866,8 @@ func (s *PgStore) CreateComputeNode(ctx context.Context, node ComputeNode) (Comp
 		          region, zone, schedd_target_url, gateway_target_url,
 		          public_ip, public_ip_set_at,
 		          release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		          lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model
+		          lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model,
+		          wake_breaker_open_until, wake_breaker_reason
 	`, node.Name, node.TargetURL, node.OverlayIP, node.VPCPUs, node.MemMB, node.MaxConcurrency,
 		node.AdmissionCeilingMB, node.VCPUBudget, string(lifecycle),
 		node.Region, node.Zone, node.GatewayTargetURL,
@@ -19894,7 +19951,8 @@ func (s *PgStore) UpsertComputeNode(ctx context.Context, node ComputeNode) (Comp
 		          region, zone, schedd_target_url, gateway_target_url,
 		          public_ip, public_ip_set_at,
 		          release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		          lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model
+		          lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model,
+		          wake_breaker_open_until, wake_breaker_reason
 	`, node.Name, node.TargetURL, node.OverlayIP, node.VPCPUs, node.MemMB, node.MaxConcurrency,
 		node.AdmissionCeilingMB, node.VCPUBudget,
 		node.Region, node.Zone, node.GatewayTargetURL,
@@ -19973,7 +20031,8 @@ func (s *PgStore) UpsertComputeNodeFromOperator(ctx context.Context, node Comput
 		          region, zone, schedd_target_url, gateway_target_url,
 		          public_ip, public_ip_set_at,
 		          release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		          lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model
+		          lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model,
+		          wake_breaker_open_until, wake_breaker_reason
 	`, node.Name, node.TargetURL, node.VPCPUs, node.MemMB, node.MaxConcurrency,
 		node.AdmissionCeilingMB, vcpuBudget, lifecycle,
 		node.Region, node.Zone, node.ScheddTargetURL, node.GatewayTargetURL,
@@ -20096,7 +20155,8 @@ func (s *PgStore) UpsertComputeNodeFromVmmd(ctx context.Context, node ComputeNod
 		          region, zone, schedd_target_url, gateway_target_url,
 		          public_ip, public_ip_set_at,
 		          release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		          lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model
+		          lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model,
+		          wake_breaker_open_until, wake_breaker_reason
 	`, node.Name, node.TargetURL, node.OverlayIP, node.VPCPUs, node.MemMB, node.MaxConcurrency,
 		node.AdmissionCeilingMB, node.VCPUBudget,
 		node.Region, node.Zone, node.ScheddTargetURL, node.GatewayTargetURL,
@@ -20357,7 +20417,8 @@ func (s *PgStore) ListComputeNodes(ctx context.Context, includeInactive bool) ([
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
 		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		       lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model
+		       lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model,
+		       wake_breaker_open_until, wake_breaker_reason
 		  from compute_nodes
 	`
 	if !includeInactive {
@@ -20393,7 +20454,8 @@ func (s *PgStore) ListComputeNodesPage(ctx context.Context, includeInactive bool
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
 		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		       lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model
+		       lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model,
+		       wake_breaker_open_until, wake_breaker_reason
 		  from compute_nodes
 	`
 	if !includeInactive {
@@ -27228,6 +27290,7 @@ func (s *PgStore) ConsumeCliAuthCode(ctx context.Context, tokenHash []byte) (api
 		`update cli_auth_codes
 		 set consumed_at = now()
 		 where token_hash = $1
+		   and device_hash is null
 		   and status = 'consumed'
 		   and account_id is not null
 		   and consumed_at is null
@@ -27242,9 +27305,11 @@ func (s *PgStore) ConsumeCliAuthCode(ctx context.Context, tokenHash []byte) (api
 			// polling CLI: if the row exists and is still pending
 			// we tell it to keep waiting; otherwise we stop.
 			var status string
+			// A device-bound row answers the short code as if it did
+			// not exist (H67).
 			err2 := s.pool.QueryRow(ctx,
 				`select status from cli_auth_codes
-				 where token_hash = $1 and expires_at > now()`,
+				 where token_hash = $1 and device_hash is null and expires_at > now()`,
 				tokenHash,
 			).Scan(&status)
 			if err2 == nil && status == string(api.CliAuthStatusPending) {
@@ -27255,6 +27320,55 @@ func (s *PgStore) ConsumeCliAuthCode(ctx context.Context, tokenHash []byte) (api
 		return "", "", err
 	}
 	return api.CliAuthStatusConsumed, accountID, nil
+}
+
+// IssueCliAuthDeviceCode implements CliAuthDeviceCodeStore. A colliding
+// short code is refused rather than ignored: it would bind the device code
+// to someone else's pending row.
+func (s *PgStore) IssueCliAuthDeviceCode(ctx context.Context, tokenHash, deviceHash []byte, expiresAt time.Time) error {
+	tag, err := s.pool.Exec(ctx,
+		`insert into cli_auth_codes (token_hash, device_hash, expires_at) values ($1, $2, $3)
+		 on conflict do nothing`,
+		tokenHash, deviceHash, expiresAt)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrConflict
+	}
+	return nil
+}
+
+// ConsumeCliAuthDeviceCode implements CliAuthDeviceCodeStore with
+// ConsumeCliAuthCode's contract, keyed by the device code's hash.
+func (s *PgStore) ConsumeCliAuthDeviceCode(ctx context.Context, deviceHash []byte) (api.CliAuthStatus, string, error) {
+	var accountID string
+	err := s.pool.QueryRow(ctx,
+		`update cli_auth_codes
+		 set consumed_at = now()
+		 where device_hash = $1
+		   and status = 'consumed'
+		   and account_id is not null
+		   and consumed_at is null
+		   and expires_at > now()
+		 returning account_id`,
+		deviceHash,
+	).Scan(&accountID)
+	if err == nil {
+		return api.CliAuthStatusConsumed, accountID, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return "", "", err
+	}
+	var status string
+	err = s.pool.QueryRow(ctx,
+		`select status from cli_auth_codes where device_hash = $1 and expires_at > now()`,
+		deviceHash,
+	).Scan(&status)
+	if err == nil && status == string(api.CliAuthStatusPending) {
+		return api.CliAuthStatusPending, "", nil
+	}
+	return api.CliAuthStatusExpired, "", ErrNotFound
 }
 
 // AppendDeploymentLog inserts one row and returns the seq Postgres
@@ -27406,6 +27520,17 @@ func (s *PgStore) DeleteAccount(ctx context.Context, id string) error {
 
 	if err := sqlc.New().DeleteTrafficAccountInvocations(ctx, tx, uuidToPgtype(id)); err != nil {
 		return fmt.Errorf("state: delete account invocations: %w", err)
+	}
+	// Per-request telemetry and logs of the personal apps, as the app purge
+	// removes them: the apps' rows go below, and request_telemetry has no FK
+	// to them, so it outlived the account (bug hunt 2026-10-28 B11).
+	for _, step := range []struct{ name, sql string }{
+		{"request_telemetry", `delete from request_telemetry where app_id in (select id from apps where account_id = $1)`},
+		{"log_events", `delete from log_events where app_id in (select id from apps where account_id = $1)`},
+	} {
+		if _, err := tx.Exec(ctx, step.sql, mustPgUUID(id)); err != nil {
+			return fmt.Errorf("state: purge account %s: %w", step.name, err)
+		}
 	}
 
 	for _, purge := range []func(context.Context, sqlc.DBTX, pgtype.UUID) error{sqlc.New().ObjectStoragePurgeIdentityEventOutbox, sqlc.New().ObjectStoragePurgeIdentityEventLog} {
@@ -31301,6 +31426,7 @@ func triggerRowToTrigger(r sqlc.TriggerByIDRow) sqlc.Trigger {
 		PayloadMaxBytes:           r.PayloadMaxBytes,
 		BrokerPoisonStrategy:      r.BrokerPoisonStrategy,
 		FilterCriteria:            r.FilterCriteria,
+		Agent:                     r.Agent,
 	}
 }
 
@@ -31331,6 +31457,7 @@ func triggerListRowToTrigger(r sqlc.ListTriggersForAppRow) sqlc.Trigger {
 		PayloadMaxBytes:           r.PayloadMaxBytes,
 		BrokerPoisonStrategy:      r.BrokerPoisonStrategy,
 		FilterCriteria:            r.FilterCriteria,
+		Agent:                     r.Agent,
 	}
 }
 
@@ -31359,6 +31486,7 @@ func triggerEnabledRowToTrigger(r sqlc.ListEnabledTriggersRow) sqlc.Trigger {
 		PayloadMaxBytes:           r.PayloadMaxBytes,
 		BrokerPoisonStrategy:      r.BrokerPoisonStrategy,
 		FilterCriteria:            r.FilterCriteria,
+		Agent:                     r.Agent,
 	}
 }
 

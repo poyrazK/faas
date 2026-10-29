@@ -102,6 +102,20 @@ func codeToGRPC(code string) codes.Code {
 // fields — every gRPC ecosystem (incl. grpc-gateway, postman, grpcurl) knows
 // to render it. We use it instead of Struct for forward compatibility.
 func ToStatus(p *api.Problem) error {
+	return ToStatusWithMetadata(p, nil)
+}
+
+// Wake-stage metadata (ADR-20261022184531): vmmd marks a wake failure that
+// happened before the VM started, so schedd may place the wake elsewhere.
+// It travels beside the Problem, never inside it, so no customer sees it.
+const (
+	MetadataWakeStage = "wake_stage"
+	WakeStagePreStart = "pre_start"
+)
+
+// ToStatusWithMetadata is ToStatus plus extra ErrorInfo metadata. Keys the
+// Problem itself fills (title, detail, limits, docs) win over extra.
+func ToStatusWithMetadata(p *api.Problem, extra map[string]string) error {
 	if p == nil {
 		return nil
 	}
@@ -114,6 +128,9 @@ func ToStatus(p *api.Problem) error {
 		// generic error envelope; the Limit/Observed int64s lose two bits of
 		// precision in the worst case but never more than Int63).
 		Metadata: map[string]string{},
+	}
+	for key, value := range extra {
+		ei.Metadata[key] = value
 	}
 	// Title and Detail travel separately so a Problem crossing several gRPC
 	// hops (vmmd -> schedd -> gatewayd) arrives unchanged. production-us
@@ -267,4 +284,14 @@ func IsCode(err error, c codes.Code) bool {
 		return false
 	}
 	return st.Code() == c
+}
+
+// MetadataValue returns one ErrorInfo metadata value from a gRPC status
+// error, such as MetadataWakeStage.
+func MetadataValue(err error, key string) (string, bool) {
+	st, ok := status.FromError(err)
+	if !ok {
+		return "", false
+	}
+	return liftedField(st, key)
 }

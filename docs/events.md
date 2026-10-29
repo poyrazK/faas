@@ -457,7 +457,14 @@ See [ADR-647](adr/647-independent-event-routing-default.md) for qualification,
 upgrade, and fallback requirements, and
 [ADR-606](adr/606-independent-event-recipient-routing.md) for the ownership model.
 
-Publish acceptance means the event is durably stored. A recipient marked
+Publish acceptance means the event is committed on the control plane's
+primary database. Its standby replicates asynchronously, so if the primary is
+lost in an unplanned failover, events accepted within the standby's
+replication lag (normally a few seconds) can be lost. A planned switchover
+loses nothing. If you must not lose an event, republish it with the same
+identity after a failover: one that survived answers `duplicate`, and one
+that was lost is accepted again. See
+[ADR 20261029093000](adr/20261029093000-event-ga-gate.md). A recipient marked
 `enqueued` has been handled by routing; normally it has an invocation, while
 work-policy `cancel_pending` creates a cancellation receipt instead; the receipt is `delivered` when all routing
 candidates settle, including terminal failures. Handler completion is tracked

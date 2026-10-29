@@ -4218,6 +4218,9 @@ type AccountResponse struct {
 	BusinessName   string `json:"business_name,omitempty"`
 	BillingAddress string `json:"billing_address,omitempty"`
 	TaxID          string `json:"tax_id,omitempty"`
+	// KeyScopes are the scopes of the API key that authenticated GET
+	// /v1/account; absent for a dashboard session (ADR-20261029085359).
+	KeyScopes []string `json:"key_scopes,omitempty"`
 }
 
 // AccountLimits is the read-only copy of api.Limits that survives
