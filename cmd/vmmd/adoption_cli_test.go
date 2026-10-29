@@ -76,12 +76,22 @@ func TestAdoptionCheckCommand(t *testing.T) {
 		want    int
 		reason  bool
 		unadopt int
+		gone    int
 	}{
 		{name: "empty node", config: adopting, admin: &fakeAdoptionAdmin{}, want: adoptionExitOK},
 		{name: "undecodable record", config: adopting, admin: &fakeAdoptionAdmin{records: []*vmmdpb.AdoptionInventoryRecord{{Record: []byte(`{"version":99}`), ProofOk: true}}}, want: adoptionExitNotYet, unadopt: 1},
 		{name: "candidate does not adopt", config: "adoption_record = true\n", admin: &fakeAdoptionAdmin{}, want: adoptionExitNotYet, reason: true},
 		{name: "running vmmd has no inventory", config: adopting, admin: &fakeAdoptionAdmin{err: status.Error(codes.Unimplemented, "old vmmd")}, want: adoptionExitNotYet, reason: true},
 		{name: "no running vmmd", config: adopting, noSock: true, want: adoptionExitNotYet, reason: true},
+		// A record whose guest process is gone does not force a drain.
+		{name: "gone guest", config: adopting, admin: &fakeAdoptionAdmin{records: []*vmmdpb.AdoptionInventoryRecord{
+			{Record: []byte(`{"version":6,"lease":{"Instance":"dead"}}`), ProofReason: "other_boot", ProofDetail: "recorded on boot x"},
+		}}, want: adoptionExitOK, gone: 1},
+		// Only a proven-gone process is excused: an unproven live guest drains.
+		{name: "gone and unproven", config: adopting, admin: &fakeAdoptionAdmin{records: []*vmmdpb.AdoptionInventoryRecord{
+			{Record: []byte(`{"version":6,"lease":{"Instance":"dead"}}`), ProofReason: "process_absent"},
+			{Record: []byte(`{"version":6,"lease":{"Instance":"live"}}`), ProofReason: "no_adoption_record"},
+		}}, want: adoptionExitNotYet, unadopt: 1, gone: 1},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			socket := filepath.Join(t.TempDir(), "absent.sock")
@@ -94,8 +104,8 @@ func TestAdoptionCheckCommand(t *testing.T) {
 			if err := json.Unmarshal(out.Bytes(), &res); err != nil {
 				t.Fatalf("output %q: %v (stderr %s)", out.String(), err, errOut.String())
 			}
-			if code != c.want || (res.Reason != "") != c.reason || len(res.Unadoptable) != c.unadopt || res.AllAdoptable != (c.want == adoptionExitOK) {
-				t.Fatalf("code %d result %+v; want code %d reason=%v unadoptable=%d", code, res, c.want, c.reason, c.unadopt)
+			if code != c.want || (res.Reason != "") != c.reason || len(res.Unadoptable) != c.unadopt || len(res.Gone) != c.gone || res.AllAdoptable != (c.want == adoptionExitOK) {
+				t.Fatalf("code %d result %+v; want code %d reason=%v unadoptable=%d gone=%d", code, res, c.want, c.reason, c.unadopt, c.gone)
 			}
 		})
 	}
@@ -111,17 +121,23 @@ func TestAdoptionReportCommand(t *testing.T) {
 	for _, c := range []struct {
 		name  string
 		admin *fakeAdoptionAdmin
+		args  []string
 		want  int
 	}{
 		{name: "clean", admin: &fakeAdoptionAdmin{report: clean}, want: adoptionExitOK},
 		{name: "refusals", admin: &fakeAdoptionAdmin{report: refused}, want: adoptionExitNotYet},
+		// The pre-restart check found "r" gone: its refusal is no surprise.
+		{name: "gone before the restart", admin: &fakeAdoptionAdmin{report: refused}, args: []string{"--already-gone", "x, r"}, want: adoptionExitOK},
+		// A guest that was alive before the restart and is gone now is
+		// exactly what the report catches.
+		{name: "died across the restart", admin: &fakeAdoptionAdmin{report: refused}, args: []string{"--already-gone", "x"}, want: adoptionExitNotYet},
 		{name: "fenced", admin: &fakeAdoptionAdmin{report: fenced}, want: adoptionExitNotYet},
 		{name: "adoption off", admin: &fakeAdoptionAdmin{err: status.Error(codes.Unimplemented, "off")}, want: adoptionExitNotYet},
 		{name: "never ready", admin: &fakeAdoptionAdmin{err: status.Error(codes.Unavailable, "no epoch")}, want: adoptionExitError},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			var out, errOut bytes.Buffer
-			code := adoptionReportCommand([]string{"--socket", serveFakeAdoptionAdmin(t, c.admin), "--wait", "0s"}, &out, &errOut)
+			code := adoptionReportCommand(append([]string{"--socket", serveFakeAdoptionAdmin(t, c.admin), "--wait", "0s"}, c.args...), &out, &errOut)
 			var res adoptionReportResult
 			if err := json.Unmarshal(out.Bytes(), &res); err != nil {
 				t.Fatalf("output %q: %v", out.String(), err)

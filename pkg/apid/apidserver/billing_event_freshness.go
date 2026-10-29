@@ -56,6 +56,9 @@ func (s *server) freshBillingEvent(ctx context.Context, ev billing.Event) (billi
 			ev.SubscriptionID, ev.PlanID = "", ""
 			return ev, false
 		}
+		// A subscription still past due has not been paid up, whatever
+		// the delivery says: it keeps its plan but stays in dunning.
+		ev.HoldDunning = !current.Status.InGoodStanding()
 	}
 	if current.PlanID != "" {
 		ev.PlanID = current.PlanID

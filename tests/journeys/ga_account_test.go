@@ -22,10 +22,10 @@ func TestBillingAndUsage(t *testing.T) {
 		"billing_status":   {"billing", "status"},
 		"billing_costs":    {"billing", "costs"},
 		"billing_forecast": {"billing", "forecast"},
-		"usage_month":      {"usage"},
-		"usage_daily":      {"usage", "daily", "--day", today},
-		"usage_summary":    {"usage", "summary"},
-		"invoices":         {"invoices"},
+		"usage_month":      {"billing", "usage"},
+		"usage_daily":      {"billing", "usage", "daily", "--day", today},
+		"usage_summary":    {"billing", "usage", "summary"},
+		"invoices":         {"billing", "invoices"},
 	}
 	for name, args := range views {
 		t.Run(name, func(t *testing.T) {
@@ -91,8 +91,17 @@ func TestCLITools(t *testing.T) {
 	})
 	t.Run("help_all", func(t *testing.T) {
 		res := tg.ok(t, time.Minute, "help", "--all")
+		// The command tree (ADR-20261026145832) lists nouns: secrets live
+		// under env and domains under domain. Match whole entries, so a
+		// command's name in another entry's description does not count.
+		listed := map[string]bool{}
+		for _, line := range strings.Split(string(res.stdout), "\n") {
+			if fields := strings.Fields(line); len(fields) > 0 && strings.HasPrefix(line, "  ") {
+				listed[fields[0]] = true
+			}
+		}
 		for _, cmd := range []string{"deploy", "logs", "rollback", "env", "domain"} {
-			if !strings.Contains(string(res.stdout), cmd) {
+			if !listed[cmd] {
 				t.Errorf("help --all does not list %s", cmd)
 			}
 		}

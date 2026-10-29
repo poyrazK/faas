@@ -63,6 +63,8 @@ type Loop struct {
 	appsRoot                string
 	storageRoot             string
 	gcMu                    sync.Mutex
+	// prep prepares deployments' images off the loop; nil prepares inline.
+	prep *imagePrepWorkers
 
 	remoteDeleteBacklogCount     prometheus.Gauge
 	remoteDeleteBacklogOldestAge prometheus.Gauge
@@ -95,6 +97,9 @@ type LoopConfig struct {
 	GCEvery            time.Duration
 	SecurityScanEvery  time.Duration
 	SecurityLeaseEvery time.Duration
+	// ImagePrepWorkers is how many deployments the loop prepares at once
+	// (ADR-20261029174438). Zero or one prepares inline on the loop.
+	ImagePrepWorkers int
 }
 
 // NewLoop returns a Loop wired with sane defaults. The caller (cmd/imaged)
@@ -123,6 +128,7 @@ func NewLoop(cfg LoopConfig) *Loop {
 		now:                cfg.Now,
 		lvUsedPct:          cfg.LvUsedPct,
 		detectFC:           cfg.DetectFC,
+		prep:               newImagePrepWorkers(cfg.ImagePrepWorkers),
 		appsRoot:           cfg.AppsRoot,
 		storageRoot:        cfg.StorageRoot,
 		gcEvery:            cfg.GCEvery,
@@ -236,8 +242,12 @@ func (l *Loop) Run(ctx context.Context) error {
 		reader, _ := l.store.(state.BuildImageHandoffObservationStore)
 		go m.run(observeCtx, reader, l.handler.nodeName, l.log)
 	}
+	// Image preparations still running on workers return before Run does.
+	defer l.prep.wait()
 	// Serialize recovery with notification handling: replay cannot race an
 	// imaged conversion in this process, and deployment status deduplicates it.
+	// With workers on, both hand a deployment to the workers instead, which
+	// never prepare one deployment twice at once.
 	buildTicker := time.NewTicker(2 * time.Second)
 	defer buildTicker.Stop()
 	jobMaterializationTicker := time.NewTicker(30 * time.Second)
@@ -346,9 +356,7 @@ func (l *Loop) Run(ctx context.Context) error {
 			if !ok {
 				return nil
 			}
-			if err := l.dispatchNotification(ctx, n); err != nil && ctx.Err() == nil {
-				l.log.Warn("imaged: notification handling failed", "id", n.OutboxID, "channel", n.Channel, "err", err)
-			}
+			l.handleLoopNotification(ctx, n)
 		case <-buildTicker.C:
 			l.recoverBuildHandoffs(ctx)
 			l.recoverMCPTaskPromotions(ctx)
@@ -544,6 +552,41 @@ func (l *Loop) HandleNotification(ctx context.Context, n db.Notification) error 
 		l.reconcileSecuritySignatures(ctx, observedAt)
 	}
 	return nil
+}
+
+// handleLoopNotification handles one LISTEN delivery. A snapshot_boot this
+// node prepares goes to the image preparation workers when they are on.
+func (l *Loop) handleLoopNotification(ctx context.Context, n db.Notification) {
+	deploymentID, ok := l.parallelImagePrep(n)
+	if !ok {
+		l.logNotificationError(ctx, n, l.dispatchNotification(ctx, n))
+		return
+	}
+	if !l.prep.start(ctx, deploymentID, func(ctx context.Context) {
+		l.logNotificationError(ctx, n, l.dispatchNotification(ctx, n))
+	}) {
+		l.log.Debug("imaged: snapshot_boot left to recovery; deployment already preparing", "deployment", deploymentID, "id", n.OutboxID)
+	}
+}
+
+// parallelImagePrep returns the deployment a snapshot_boot asks this node to
+// prepare, when the workers are on. Everything else stays on the loop,
+// including a payload the handler will reject.
+func (l *Loop) parallelImagePrep(n db.Notification) (string, bool) {
+	if l.prep == nil || l.handler == nil || n.Channel != db.NotifySnapshotBoot {
+		return "", false
+	}
+	var p snapshotBootPayload
+	if err := json.Unmarshal([]byte(n.Payload), &p); err != nil || p.DeploymentID == "" || !handlesSnapshotBoot(l.handler.nodeName, p.NodeID) {
+		return "", false
+	}
+	return p.DeploymentID, true
+}
+
+func (l *Loop) logNotificationError(ctx context.Context, n db.Notification, err error) {
+	if err != nil && ctx.Err() == nil {
+		l.log.Warn("imaged: notification handling failed", "id", n.OutboxID, "channel", n.Channel, "err", err)
+	}
 }
 
 // dispatchNotification gives durable LISTEN deliveries the same renewable
@@ -1142,10 +1185,18 @@ func (l *Loop) recoverBuildHandoffs(ctx context.Context) {
 
 func (l *Loop) recoverImageWork(ctx context.Context, work []state.BuildImageWork, source string) {
 	for _, item := range work {
-		err := l.handler.handleSnapshotBoot(ctx, snapshotBootPayload{AppID: item.AppID, DeploymentID: item.DeploymentID, NodeID: item.NodeID})
-		l.handler.handoffMetrics.observeWork(ctx, source, err)
-		if err != nil {
-			l.log.Warn("imaged: recovered build handoff failed", "deployment", item.DeploymentID, "err", err)
+		prepare := func(ctx context.Context) {
+			err := l.handler.handleSnapshotBoot(ctx, snapshotBootPayload{AppID: item.AppID, DeploymentID: item.DeploymentID, NodeID: item.NodeID})
+			l.handler.handoffMetrics.observeWork(ctx, source, err)
+			if err != nil {
+				l.log.Warn("imaged: recovered build handoff failed", "deployment", item.DeploymentID, "err", err)
+			}
 		}
+		if l.prep == nil {
+			prepare(ctx)
+			continue
+		}
+		// A deployment already preparing is skipped; the next pass re-reads it.
+		l.prep.start(ctx, item.DeploymentID, prepare)
 	}
 }

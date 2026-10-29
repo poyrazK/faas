@@ -490,7 +490,7 @@ protection operation inspection. Use an explicit owned public version UUIDv4
 operation ID and return a durable receipt; retain the returned ID for retries
 and status. Fixed GOVERNANCE/COMPLIANCE retention and independent ON/OFF legal
 holds are supported. Event-hold changes and governance bypass are unsupported.
-See [the protection contract](../../docs/object-storage.md#per-version-retention-and-legal-holds)
+See [the protection contract](../../docs/object-storage.md#object-lock-retention-and-legal-holds)
 for enrollment, pending-operation fences and recovery behavior.
 
 ## Batch event publication

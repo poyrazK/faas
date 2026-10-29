@@ -61,6 +61,7 @@ func (r *remoteServer) holdServer(key string, g *oauthGrant) (*mcp.Server, time.
 // idleServerTTL. A server serving a request, holding work, or holding a
 // secret request (kept only in memory) stays. Caller holds r.mu.
 func (r *remoteServer) dropIdleServersLocked(now time.Time) {
+	r.dropIdleKeyConnectionsLocked(now, idleServerTTL)
 	for _, g := range r.grants {
 		if g.server != nil && g.inflight == 0 && now.Sub(g.lastUsed) > idleServerTTL && g.management.idle(now) {
 			g.server, g.management = nil, nil

@@ -69,36 +69,79 @@ func TestServeAndObserve(t *testing.T) {
 		s.check("metrics", func(t *testing.T) {
 			res := tg.ok(t, time.Minute, "metric", slug, "--range", "15m")
 			if len(objects(t, res.stdout)) == 0 {
-				t.Fatal("gregale metric printed nothing")
+				t.Fatal("gregale metrics printed nothing")
 			}
 		})
 	}
 }
 
-// TestCronDelivery fires a cron on the shared probe app and checks the app
-// received the POST (inventory row 92).
+// TestCronDelivery runs a cron on the shared probe app by hand and on its
+// schedule, and checks both reach the app; the manual run is followed to
+// its outcome, since `crons run` alone exits 0 once the run is queued. The
+// trigger inventory must send cron users to the cron commands rather than
+// answer an empty list (inventory row 92, issue #2757).
 func TestCronDelivery(t *testing.T) {
 	tg := needs(t, tierFull, true)
 	t.Parallel()
+	jt := t
 	slug, base := tg.sharedProbe(t)
-	created := object(t, tg.ok(t, 2*time.Minute, "cron", "create", "--app", slug,
-		"--schedule", "0 0 1 1 *", "--path", "/cron").stdout)
-	id := str(created, "id")
-	if id == "" {
-		t.Fatalf("cron create printed no id: %s", compact(created))
-	}
-	t.Cleanup(func() { tg.run(t, time.Minute, "cron", "delete", id) })
-	tg.ok(t, 2*time.Minute, "cron", "run", id)
-	eventually(t, "manual cron fire reaches the app", 2*time.Minute, 3*time.Second, func() (bool, string) {
+	hits := func(t *testing.T) (float64, string) {
 		r := get(base + "/cron-hits")
 		if r.status != http.StatusOK {
-			return false, r.String()
+			return -1, r.String()
 		}
 		doc := jsonBody(t, r)
-		return num(doc, "hits") >= 1, "app counted " + compact(doc)
+		return num(doc, "hits"), "app counted " + compact(doc)
+	}
+	s := newStory(t)
+	var id string
+	var seen float64
+
+	s.step("create", func(t *testing.T) {
+		created := object(t, tg.ok(t, 2*time.Minute, "cron", "create", "--app", slug,
+			"--schedule", "0 0 1 1 *", "--path", "/cron").stdout)
+		id = str(created, "id")
+		if id == "" {
+			t.Fatalf("crons add printed no id: %s", compact(created))
+		}
+		jt.Cleanup(func() { tg.run(jt, time.Minute, "cron", "delete", id) })
+		seen, _ = hits(t)
 	})
-	runs := tg.run(t, time.Minute, "cron", "runs", id)
-	t.Logf("crons runs: %s", tail(string(runs.stdout), 600))
+	s.step("manual_run", func(t *testing.T) {
+		queued := object(t, tg.ok(t, 2*time.Minute, "cron", "run", id, "--json").stdout)
+		request := str(queued, "request_id")
+		if request == "" {
+			t.Fatalf("crons run printed no request id: %s", compact(queued))
+		}
+		followed := tg.run(t, 4*time.Minute, "cron", "fire-now", request, "--wait", "--timeout", "3m", "--json")
+		receipt := object(t, followed.stdout)
+		if followed.exit != 0 || str(receipt, "wait_result") != "succeeded" {
+			t.Fatalf("manual run did not succeed (exit %d): %s", followed.exit, compact(receipt))
+		}
+		before := seen
+		eventually(t, "manual cron run reaches the app", 2*time.Minute, 3*time.Second, func() (bool, string) {
+			n, why := hits(t)
+			seen = n
+			return n >= before+1, why
+		})
+	})
+	s.check("scheduled_fire", func(t *testing.T) {
+		tg.ok(t, 2*time.Minute, "cron", "update", id, "--schedule", "* * * * *")
+		before := seen
+		eventually(t, "a scheduled cron fire reaches the app", 3*time.Minute, 5*time.Second, func() (bool, string) {
+			n, why := hits(t)
+			return n >= before+1, why
+		})
+		runs := tg.run(t, time.Minute, "cron", "runs", id)
+		t.Logf("crons runs: %s", tail(string(runs.stdout), 600))
+	})
+	s.check("trigger_inventory", func(t *testing.T) {
+		res := tg.run(t, time.Minute, "trigger", "list", "--app", slug, "--kind", "cron")
+		out := string(res.stdout) + string(res.stderr)
+		if res.exit == 0 || !strings.Contains(out, "cron list") && !strings.Contains(out, "/v1/crons") {
+			t.Fatalf("triggers list --kind cron (exit %d) did not point at the cron commands: %s", res.exit, tail(out, 400))
+		}
+	})
 }
 
 // TestSecrets seals a secret, delivers it with a restart and checks the
@@ -146,7 +189,7 @@ func TestSecrets(t *testing.T) {
 }
 
 // TestScaleToZero parks an app and wakes it by request and by command,
-// checks `gregale app instances` agrees, and exercises min instances and a fresh
+// checks `gregale ps` agrees, and exercises min instances and a fresh
 // restart (rows 38, 42, 43, 46).
 func TestScaleToZero(t *testing.T) {
 	tg := needs(t, tierSmoke, true)
@@ -164,7 +207,7 @@ func TestScaleToZero(t *testing.T) {
 		t.Logf("metric wake_first_request_ms=%d", r.elapsed.Milliseconds())
 	})
 	s.check("ps_shows_woken_instance", func(t *testing.T) {
-		eventually(t, "`gregale app instances` lists the woken instance", 30*time.Second, 2*time.Second, func() (bool, string) {
+		eventually(t, "`gregale ps` lists the woken instance", 30*time.Second, 2*time.Second, func() (bool, string) {
 			if get(base+"/").status != http.StatusOK {
 				return false, "app stopped answering"
 			}
@@ -179,7 +222,7 @@ func TestScaleToZero(t *testing.T) {
 		tg.ok(t, 2*time.Minute, "app", "park", slug)
 		waitParked(t, tg, slug)
 		tg.ok(t, 3*time.Minute, "app", "wake", slug, "--wait", "--timeout", "2m")
-		eventually(t, "`gregale app instances` lists the woken instance", 30*time.Second, 2*time.Second, func() (bool, string) {
+		eventually(t, "`gregale ps` lists the woken instance", 30*time.Second, 2*time.Second, func() (bool, string) {
 			n := liveInstances(t, tg, slug)
 			return n > 0, fmt.Sprintf("`wake --wait` returned but ps lists %d live instance(s)", n)
 		})
@@ -309,9 +352,8 @@ func expectVersion(t *testing.T, base, version string, timeout time.Duration) {
 	})
 }
 
-// liveInstances counts `gregale app instances` rows in a live state. It
-// lists only live instances, so a row without a recognised state still
-// counts.
+// liveInstances counts `gregale ps` rows in a live state. ps lists only
+// live instances, so a row without a recognised state still counts.
 func liveInstances(t *testing.T, tg *target, slug string) int {
 	t.Helper()
 	live := 0

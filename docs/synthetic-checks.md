@@ -59,6 +59,10 @@ wake. The p95 covers successful runs; a check with none in 24 hours shows `—`.
 Checks run from Gregale's control plane. Requests carry the user agent
 `Gregale-Synthetics/1`, so you can recognise them in your logs.
 
+Checks run only while your plan includes them (Hobby and above). After a
+move to the Free plan your checks are kept but no longer run, so they stop
+waking your app; they resume when you upgrade.
+
 ## Alert on a check
 
 Two alert metrics watch one check, named with `synthetic_check_id`

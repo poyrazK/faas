@@ -143,6 +143,13 @@ type Config struct {
 	// LayerCompression is "" (gzip) or api.BuildLayerCompressionZstd, from
 	// LayerZstdEnv. It reaches every build manifest and cache key.
 	LayerCompression string `toml:"-"`
+	// BuildKitSnapshotter is "" (fuse-overlayfs) or api.BuildKitSnapshotterAuto,
+	// from KernelOverlayEnv. It changes how layers are produced, not what they
+	// hold, so it stays out of the cache key.
+	BuildKitSnapshotter string `toml:"-"`
+	// DeferCacheExport, from DeferCacheExportEnv, exports a build's
+	// dependency cache after the image handoff (ADR-20261029171525).
+	DeferCacheExport bool `toml:"-"`
 	// BuilderNodeID is the compute_node name stamped onto every
 	// provenance row this Builderd writes (ADR-038, Tier 3 / issue
 	// #197 B3.1). Defaulted to "default-local" on the one-box by
@@ -1165,6 +1172,8 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		DevWatchHost:          watch.Host,
 		DependencyCacheKey:    dependencyCacheKey,
 		LayerCompression:      b.cfg.LayerCompression,
+		BuildKitSnapshotter:   b.cfg.BuildKitSnapshotter,
+		DeferCacheExport:      b.cfg.DeferCacheExport,
 		LogPath:               dep.LogPath,
 		RAMMB:                 api.BuildVMRAMMB,
 		TimeoutSec:            b.cfg.BuildTimeoutSeconds,
@@ -1174,8 +1183,11 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	if len(buildSecrets) > 0 || len(registryCreds) > 0 {
 		// A build with secrets or registry credentials never restores or
 		// leaves a warm builder, so a value cannot outlive its build in a
-		// snapshot (ADR-20261022185329, ADR-20261026091500).
+		// snapshot (ADR-20261022185329, ADR-20261026091500). The second VM
+		// of a deferred cache export gets neither, so such a build exports
+		// its cache inline.
 		vmReq.WarmScopeKey = ""
+		vmReq.DeferCacheExport = false
 	}
 	warmVM, warmResult, warmSnapshot, warmStarted := b.prepareWarmBuilder(ctx, slot, vmReq)
 	var warmCaptured WarmSnapshot
@@ -1339,6 +1351,15 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		b.markFailed(ctx, build, fc, "vm wait: "+err.Error(), buildStart)
 		return BuildResult{}, err
 	}
+	// The driver kept the drive of a deferred cache export: every return
+	// below either exports the cache or discards the drive.
+	deferredVM, cacheOwed := b.vm.(DeferredCacheVM)
+	cacheOwed = cacheOwed && out.DependencyCacheDeferred
+	defer func() {
+		if cacheOwed {
+			deferredVM.DiscardDeferredCache(handle)
+		}
+	}()
 	phases.vmDone = time.Now()
 	b.emitBuildLog(ctx, build.ID, phases.vmLine())
 	if out.WarmSnapshotError != "" {
@@ -1388,6 +1409,8 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		b.emitBuildLog(ctx, build.ID, "dependencies unchanged — kept the dependency cache for the next build\n")
 	} else if out.DependencyCacheStored {
 		b.emitBuildLog(ctx, build.ID, "dependency cache saved for the next build\n")
+	} else if cacheOwed {
+		b.emitBuildLog(ctx, build.ID, "dependency cache will be saved after the image is handed off\n")
 	}
 	if tail := boundedGuestBuildLogTail(out.LogTail); tail != "" {
 		b.emitBuildLog(ctx, build.ID, "[guest build output]\n"+tail+"\n")
@@ -1510,8 +1533,43 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 			b.log.Warn("builderd: cache store failed (continuing)", "err", err)
 		}
 	}
+	if cacheOwed {
+		cacheOwed = false
+		b.exportDeferredCache(ctx, deferredVM, build, handle)
+	}
 	return result, nil
 
+}
+
+// exportDeferredCache runs a build's deferred dependency-cache export after
+// its image was handed to imaged (ADR-20261029171525). The builder slot stays
+// held, so the export never shares the builder with the next build. A failure
+// costs only the next build's cache.
+func (b *Builderd) exportDeferredCache(ctx context.Context, vm DeferredCacheVM, build state.Build, handle BuildHandle) {
+	key := build.ID + DeferredCacheInstanceSuffix
+	if !b.registerActiveVM(key, handle) {
+		vm.DiscardDeferredCache(handle)
+		return
+	}
+	defer b.unregisterActiveVM(key)
+	start := time.Now()
+	err := vm.ExportDeferredCache(ctx, handle)
+	if err != nil && ctx.Err() != nil {
+		// As after a build's own wait: stop the VM before Drain loses sight
+		// of it.
+		cancelCtx, cancelVM := context.WithTimeout(context.WithoutCancel(ctx), activeVMCancelTimeout)
+		if cancelErr := b.vm.Cancel(cancelCtx, key); cancelErr != nil && !errors.Is(cancelErr, context.Canceled) {
+			b.log.Warn("builderd: cancel deferred cache export", "build", build.ID, "err", cancelErr)
+		}
+		cancelVM()
+	}
+	if err != nil {
+		b.log.Warn("builderd: deferred dependency cache export failed (continuing)", "build", build.ID,
+			"deployment", build.DeploymentID, "duration_ms", time.Since(start).Milliseconds(), "err", err)
+		return
+	}
+	b.log.Info("builderd: deferred dependency cache saved", "build", build.ID,
+		"deployment", build.DeploymentID, "duration_ms", time.Since(start).Milliseconds())
 }
 
 func (b *Builderd) resolveBuildEnvironment() (BuildEnvironment, bool) {

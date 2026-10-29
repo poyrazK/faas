@@ -831,6 +831,76 @@ older apid decodes that approval strictly. Re-run it after a Neon plan or API
 change. A shadow week whose logged quotas match the ledger then completes
 ADR-20261025094915 decision 10.
 
+### Storage pool
+
+A plan's storage is pooled per account (ADR-1430), but each database may grow
+to its own spec limit, so an account with several databases could store more
+than its pool. The same sweep also works out, for each Neon project, the
+`settings.quota.logical_size_bytes` that keeps the usage subject inside its
+pool (decision 9):
+
+- The pool is the plan's storage limit, or twice it with overage on.
+- What remains is the pool minus the subject's current logical size.
+- Neon applies the limit to each branch of a project, not to their total. A
+  restore is a branch in its source's project, so the limit is set so that
+  the project's branches together can grow by at most what remains. A project
+  with one database gets its size plus what remains.
+- The limit is never above the smallest spec limit among the project's
+  databases, and never zero, which is no limit to Neon.
+- At the pool, writes that would grow a database fail; reads, deletes and
+  `VACUUM` keep working. Nothing is suspended or deleted.
+
+`FAAS_MANAGED_POSTGRES_STORAGE_CAP_ENFORCEMENT` selects the mode:
+
+- `shadow` (the default) logs `managed postgres storage cap (shadow)` with the
+  limit it would set, and writes nothing.
+- `on` writes the limits that changed, and requires a storage pool
+  qualification (below). A limit the pool lowered reads as the database's
+  spec everywhere apid compares the two, so it is not `spec_mismatch`.
+- `off` does nothing.
+
+Limits written earlier stay on the projects in every mode, so switching to
+`off` or rolling back never lifts a write block. A limit is rewritten when it
+moves by at least 1/64 of the pool (at least 1 MiB), or when it starts or
+stops blocking a branch.
+
+The storage pass is counted apart from the compute sweep: a subject it cannot
+observe is logged and counted as `failed`, and never marks the compute sweep
+stale or holds back a compute cap email. Metrics:
+
+- `apid_managed_postgres_storage_cap_accounts{state}`
+- `apid_managed_postgres_storage_cap_limit_decisions_total{outcome}`
+- `apid_managed_postgres_storage_cap_enforcement_mode{mode}`
+
+### Qualifying the storage pool
+
+Neon's documentation disagrees on what happens at the limit: the API reference
+says writes fail and the compute keeps running, while the consumption-limits
+guide says the compute is suspended. Storage `on` refuses to start without a
+qualification that settles it, read from
+`FAAS_MANAGED_POSTGRES_STORAGE_CAP_QUALIFICATION_PATH`, made in staging with
+the same environment as the compute cap qualification:
+
+```bash
+managed-postgres-qualify --storage-cap > storage-cap-qualification.json
+```
+
+The run creates a disposable database, probes it, and deletes it. The probe:
+
+1. Writes about 2 MB and waits for Neon to report the branch's size growing.
+2. Sets the limit to that size, then retries a growing write until Neon
+   refuses it with its size-limit error (`53100`). A refused connection does
+   not count.
+3. Checks that reads work and, for a minute, that the compute is never
+   reported suspended.
+4. Raises the limit by 1 GiB and retries the write until it succeeds.
+5. Checks that the compute quota did not change, and puts the original limit
+   back.
+
+The command exits non-zero, and `on` refuses the file, if any observation
+fails. If the compute is suspended at the limit, the pool would stop
+databases rather than block writes, and must not be turned on as specified.
+
 ## Restore-to-new-database safety
 
 The control plane exposes restore as a new logical database intent. A restore

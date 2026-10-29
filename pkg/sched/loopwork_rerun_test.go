@@ -91,3 +91,47 @@ func TestWorkPoolEventFanoutNeverStrandsAWake(t *testing.T) {
 		t.Fatalf("last pass saw wake %d of %d", latestSeen, latestWake)
 	}
 }
+
+// A sweep with a backlog reruns itself pass after pass (ADR-20261029012000).
+// Each pass records its own duration, so a long drain still shows passes
+// completing to the routing-stalled alert.
+func TestWorkPoolRecordsEachRerunPass(t *testing.T) {
+	ops := wire.NewOpsMetrics("test")
+	p := sched.NewWorkPool(sched.QuietLog(), ops)
+	var passes atomic.Int32
+	var pass func()
+	pass = func() {
+		if passes.Add(1) < 3 {
+			if got := p.Submit(sched.WorkEventFanout, "tick", pass); got != "coalesced" {
+				t.Errorf("backlog rerun request = %q, want coalesced", got)
+			}
+		}
+	}
+	if got := p.Submit(sched.WorkEventFanout, "tick", pass); got != "queued" {
+		t.Fatalf("first sweep = %q, want queued", got)
+	}
+	p.Drain()
+	if passes.Load() != 3 {
+		t.Fatalf("passes = %d, want 3", passes.Load())
+	}
+	families, err := ops.Registry().Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var samples uint64
+	for _, family := range families {
+		if family.GetName() != "test_loop_work_duration_seconds" {
+			continue
+		}
+		for _, metric := range family.GetMetric() {
+			for _, label := range metric.GetLabel() {
+				if label.GetName() == "kind" && label.GetValue() == string(sched.WorkEventFanout) {
+					samples += metric.GetHistogram().GetSampleCount()
+				}
+			}
+		}
+	}
+	if samples != 3 {
+		t.Fatalf("duration samples = %d, want one per pass (3)", samples)
+	}
+}

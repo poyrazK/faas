@@ -229,6 +229,14 @@ jobs:
             exit 1
           fi
 
+      # Issue #574: the node spools its deploys and rollbacks (it has no owner
+      # access to the release history); import them on the control plane.
+      # Best effort: the history never stops the lane.
+      - name: Record the node's activations in the release history
+        if: always() && (steps.plan.outputs.action == 'deploy' || steps.plan.outputs.action == 'converge')
+        run: |
+          scripts/ci/unit_deploy.sh record "$NODE" || echo "::warning::release history: could not record ${NODE}'s activations"
+
       - name: Return the node to the watch record
         if: failure() && steps.watch_open.outcome == 'success'
         run: scripts/ci/unit_deploy.sh watch-revert "$NODE"

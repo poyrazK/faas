@@ -91,6 +91,18 @@ service Vmmd {
   // source and input cross the boundary later through ExecuteExecution.
   rpc RestoreExecution(RestoreExecutionRequest) returns (RestoreExecutionResponse);
 
+  // RunAgent boots one agent run VM (ADR-20261027090010 §6), sends it the run, and
+  // streams the run's output. The first client frame must be start; a later
+  // cancel frame asks the guest to stop the harness. The run payload reaches
+  // the guest only after the VM is up. vmmd destroys the VM before the
+  // result frame, and also when the stream ends early, so a run never
+  // outlives its call.
+  rpc RunAgent(stream RunAgentRequest) returns (stream RunAgentEvent);
+  // CaptureAgentSnapshot cold-boots an agent run VM that carries no run,
+  // waits for guest-init, and captures a preset snapshot for its machine
+  // shape (ADR-20261027090010 §2, rollout step 9). The VM is destroyed afterwards.
+  rpc CaptureAgentSnapshot(CaptureAgentSnapshotRequest) returns (CaptureAgentSnapshotResponse);
+
   // RestoreAppTask creates a fresh deployment-attached VM without carrying
   // command data. The command crosses the trust boundary only after schedd
   // has committed the durable running fence.
@@ -2693,6 +2705,102 @@ message ExecuteExecutionOutputChunk {
   // stream is one of "stdout" or "stderr".
   string stream = 1;
   bytes chunk = 2;
+}
+
+// RunAgentRequest is a client frame on the RunAgent stream. Start occurs
+// exactly once, first.
+message RunAgentRequest {
+  oneof frame {
+    RunAgentStart start = 1;
+    RunAgentCancel cancel = 2;
+  }
+}
+
+// RunAgentStart names the machine and carries the run. run is an
+// agentrunproto.Request in JSON; vmmd validates it and sends it to the guest
+// only after the boot.
+message RunAgentStart {
+  string instance = 1;
+  string account_id = 2;
+  string plan = 3;
+  string base_key = 4;
+  string layer_key = 5;
+  int32 vcpu_count = 6;
+  int32 mem_size_mib = 7;
+  int32 cpu_millicores = 8;
+  bytes run = 9;
+  // relay binds the run's ADR-989 relay to the agent run principal. Without
+  // it vmmd closes the run's relay connections.
+  RunAgentRelay relay = 10;
+  // input_key is the storage key of the run's read-only input drive
+  // (ADR-20261027090010 §3). Empty: no input drive.
+  string input_key = 11;
+  // snapshot is the preset snapshot to restore. Absent, stale or failing:
+  // a cold boot of the same image (ADR-005).
+  AgentRunSnapshot snapshot = 12;
+}
+
+// AgentRunSnapshot locates a preset snapshot CaptureAgentSnapshot made.
+message AgentRunSnapshot {
+  string storage_key = 1;
+  string vmstate_storage_key = 2;
+  string fc_version = 3;
+  int64 mem_bytes = 4;
+}
+
+// CaptureAgentSnapshotRequest is the machine to capture; namespace and
+// capture_id name its storage keys.
+message CaptureAgentSnapshotRequest {
+  string instance = 1;
+  string account_id = 2;
+  string plan = 3;
+  string base_key = 4;
+  string layer_key = 5;
+  int32 vcpu_count = 6;
+  int32 mem_size_mib = 7;
+  int32 cpu_millicores = 8;
+  string namespace = 9;
+  string capture_id = 10;
+}
+
+message CaptureAgentSnapshotResponse {
+  AgentRunSnapshot snapshot = 1;
+  int64 vmstate_bytes = 2;
+}
+
+// RunAgentRelay is the agent run principal vmmd mints the relay assertion
+// for (ADR-20261027090010 §7, ADR-20261027090016), from placement data only.
+message RunAgentRelay {
+  string run_id = 1;
+  string lease_token = 2;
+  string tenant_id = 3;
+  string agent_id = 4;
+  int32 agent_version = 5;
+}
+
+// RunAgentCancel asks the guest to stop the harness: SIGTERM, then SIGKILL
+// after the grace period. The result frame still follows.
+message RunAgentCancel {}
+
+// RunAgentEvent is a server frame on the RunAgent stream: booted once, then
+// output chunks, then exactly one result.
+message RunAgentEvent {
+  oneof frame {
+    RunAgentBooted booted = 1;
+    ExecuteExecutionOutputChunk output = 2;
+    RunAgentResult result = 3;
+  }
+}
+
+message RunAgentBooted {
+  WakeMethod method = 1;
+  int64 boot_ms = 2;
+}
+
+// RunAgentResult is the guest's agentrunproto.Result in JSON, without the
+// stdout and stderr the output frames already carried.
+message RunAgentResult {
+  bytes result = 1;
 }
 
 // ExecuteExecutionBrokerRequest is a client frame on the full-duplex Runs
