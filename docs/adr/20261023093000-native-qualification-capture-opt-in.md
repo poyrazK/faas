@@ -261,6 +261,14 @@ ADR-568 requires.
   - gitlab: the second member's restore ran out of time while it staged its
     snapshot inputs on the loaded host. The partial copy then failed its
     receipt check. Earlier runs restored the same graph.
+- 2026-10-29, n2, rerun with 59adf9a06d:
+  - The gitlab graph was activated natively, its release set went live, and
+    the first customer queue delivery completed.
+  - Serving convergence then failed on every apid pass
+    (`environment_runtime_verification_failed`) until the 4-minute serving
+    window closed.
+  - github's capture was cancelled while copying its private image on the
+    loaded host.
 - Pending: the n2 native GitOps journey through serving and the resilience
   phases.
 
