@@ -61,7 +61,8 @@ func (s *server) channelTestAllowed(acct state.Account) *api.Problem {
 	if err != nil {
 		// Account ids are UUIDs; one that is not cannot be counted, so
 		// the send is refused rather than let through unlimited.
-		return api.ErrInternal("account id is not a UUID: " + err.Error())
+		s.log.Error("notification channel test: account id is not a UUID", "account", acct.ID, "err", err)
+		return api.ErrInternal("could not count this account's test sends")
 	}
 	s.channelTestsOnce.Do(func() { s.channelTests = peraccount.NewLimiter() })
 	if ok, retryMS := s.channelTests.Take(account, api.NotificationChannelTestsPerAccountMinute); !ok {
