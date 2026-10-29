@@ -21,6 +21,9 @@ type RouteHealthGate struct {
 	Revision     int64              `json:"revision"`
 	Routes       []RouteHealthRoute `json:"routes"`
 	UpdatedAt    *time.Time         `json:"updated_at,omitempty"`
+	// Warnings, on a save only, name selectors no request matched within
+	// the plan's telemetry lookback (ADR-20261028110044).
+	Warnings []string `json:"warnings,omitempty"`
 }
 type SetRouteHealthGateRequest struct {
 	OnRegression     string             `json:"on_regression,omitempty"`

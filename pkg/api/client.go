@@ -309,17 +309,56 @@ func (c *Client) doWithClientAndHeadersAndIdempotencyKeyPolicy(ctx context.Conte
 			"the gregale CLI cannot reach this route — use the dashboard at "+docsBase+"/dashboards#sessions",
 		).WithDocs(docsBase + "/cli#cookie-only-routes")
 	}
-	var r io.Reader
+	var payload []byte
 	if body != nil {
 		b, err := json.Marshal(body)
 		if err != nil {
 			return fmt.Errorf("marshal request: %w", err)
 		}
-		r = bytes.NewReader(b)
+		payload = b
+	}
+	// UX §3.2 / impl §4.2: every mutating call carries Idempotency-Key
+	// so a retried deploy/park/wake/rollback/etc. never double-charges
+	// or double-creates. We never override an explicit key the caller
+	// already set. The key is chosen once, so every attempt below shares it.
+	if method != http.MethodGet && method != http.MethodHead && (idempotencyKey != "" || addDefaultIdempotencyKey) {
+		if idempotencyKey == "" && addDefaultIdempotencyKey {
+			idempotencyKey = IdempotencyKeyFromContext(ctx)
+		}
+		if idempotencyKey == "" && addDefaultIdempotencyKey {
+			idempotencyKey = newUUIDv4()
+		}
+	} else {
+		idempotencyKey = ""
+	}
+	for attempt := 1; ; attempt++ {
+		req, err := c.newJSONRequest(ctx, method, path, payload, body != nil, idempotencyKey, headers)
+		if err != nil {
+			return err
+		}
+		err = c.doReq(cli, req, out)
+		pause, retry := trafficPolicyRetryPause(err, attempt)
+		if !retry {
+			return err
+		}
+		timer := time.NewTimer(pause)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return errors.Join(err, ctx.Err())
+		case <-timer.C:
+		}
+	}
+}
+
+func (c *Client) newJSONRequest(ctx context.Context, method, path string, payload []byte, hasBody bool, idempotencyKey string, headers http.Header) (*http.Request, error) {
+	var r io.Reader
+	if hasBody {
+		r = bytes.NewReader(payload)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, r)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
@@ -329,23 +368,31 @@ func (c *Client) doWithClientAndHeadersAndIdempotencyKeyPolicy(ctx context.Conte
 			req.Header.Add(key, value)
 		}
 	}
-	// UX §3.2 / impl §4.2: every mutating call carries Idempotency-Key
-	// so a retried deploy/park/wake/rollback/etc. never double-charges
-	// or double-creates. We never override an explicit key the caller
-	// already set.
-	if method != http.MethodGet && method != http.MethodHead && (idempotencyKey != "" || addDefaultIdempotencyKey) {
-		if idempotencyKey == "" && addDefaultIdempotencyKey {
-			idempotencyKey = IdempotencyKeyFromContext(ctx)
-		}
-		if idempotencyKey == "" && addDefaultIdempotencyKey {
-			idempotencyKey = newUUIDv4()
-		}
+	if idempotencyKey != "" {
 		req.Header.Set("Idempotency-Key", idempotencyKey)
 	}
-	if body != nil {
+	if hasBody {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	return c.doReq(cli, req, out)
+	return req, nil
+}
+
+// trafficPolicyCheckAttempts bounds how often a request is sent while its
+// traffic policy check keeps running out of time.
+const trafficPolicyCheckAttempts = 4
+
+// trafficPolicyRetryPause reports whether err is a policy check that ran out
+// of time (TrafficPolicyCheckTimedOut) and how long to wait before resending.
+// apid saved nothing and does not replay the refusal, so the resend reuses
+// the Idempotency-Key and any Deployment-Attempt-ID. On n2 a deploy sent
+// while the app served about 30 requests a second needed four attempts.
+func trafficPolicyRetryPause(err error, attempt int) (time.Duration, bool) {
+	var apiErr *APIError
+	if err == nil || attempt >= trafficPolicyCheckAttempts || !errors.As(err, &apiErr) || !TrafficPolicyCheckTimedOut(apiErr.Problem) {
+		return 0, false
+	}
+	pause := time.Duration(*apiErr.Problem.RetryAfterSeconds) * time.Second
+	return min(max(pause, 50*time.Millisecond), 10*time.Second), true
 }
 
 func (c *Client) rollbackHTTP() *http.Client {

@@ -48,7 +48,7 @@ func cmdEventsLineageRetryJobExport(args []string) int {
 		return 1
 	}
 	if len(positional) != 3 || rejectUnexpectedFlagArgs(fs) || *file == "" || *expected == "" {
-		PrintUsage(os.Stderr, "usage: gregale events subscription-lineage-retry-job-export APP SUB SOURCE_UUID --expected-created-at TIMESTAMP --file PATH [--outcomes unresolved,conflict,changed,unavailable] [--timeout 2m] [--raw]", "events")
+		PrintUsage(os.Stderr, "usage: gregale event subscription-lineage-retry-job-export APP SUB SOURCE_UUID --expected-created-at TIMESTAMP --file PATH [--outcomes unresolved,conflict,changed,unavailable] [--timeout 2m] [--raw]", "events")
 		return 1
 	}
 	sub, subErr := uuid.Parse(positional[1])

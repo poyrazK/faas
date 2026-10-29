@@ -83,8 +83,8 @@ func writeAutomationRecoveryAttention(w io.Writer, app, job string, attention ap
 	for _, target := range attention.Targets {
 		_, _ = fmt.Fprintf(w, "  Item %d | run %s | generation %d | %s\n    Run: %s\n    Diagnostics: %s\n", target.Position, oneLine(target.RunID), target.ResumeCount, oneLine(target.Status), oneLine(target.RunURL), oneLine(target.DiagnosticsURL))
 		if target.Status == "stalled" || target.Status == "deadline_exceeded" {
-			_, _ = fmt.Fprintf(w, "    Cancel preview: gregale automations recovery-cancel-preview --app %s --job %s --position %d --resume-count %d --reason 'explain cancellation'\n", automationCommandArgument(app), automationCommandArgument(job), target.Position, target.ResumeCount)
+			_, _ = fmt.Fprintf(w, "    Cancel preview: gregale automation recovery-cancel-preview --app %s --job %s --position %d --resume-count %d --reason 'explain cancellation'\n", automationCommandArgument(app), automationCommandArgument(job), target.Position, target.ResumeCount)
 		}
 	}
-	_, _ = fmt.Fprintf(w, "  Review saved failures: gregale automations recovery-retry-plan --app %s --job %s\n  Audit: gregale events recovery-history %s\n", automationCommandArgument(app), automationCommandArgument(job), automationCommandArgument(job))
+	_, _ = fmt.Fprintf(w, "  Review saved failures: gregale automation recovery-retry-plan --app %s --job %s\n  Audit: gregale event recovery history %s\n", automationCommandArgument(app), automationCommandArgument(job), automationCommandArgument(job))
 }

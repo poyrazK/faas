@@ -9,10 +9,14 @@ import (
 // ErrChallengeRequired answers a non-navigation request on a challenged
 // route that carries no valid pass. It names the edge rule so the app's
 // owner can find it; it says nothing a client could use to skip the work.
+// ruleID is empty for a solution whose rule the gateway cannot tell.
 func ErrChallengeRequired(ruleID string) *Problem {
+	rule := "an edge rule of kind=challenge"
+	if ruleID != "" {
+		rule = "edge rule " + ruleID + ", kind=challenge"
+	}
 	return NewProblem(http.StatusForbidden, CodeChallengeRequired, "Challenge required",
-		"this route asks browsers to load a page first (edge rule "+ruleID+", kind=challenge); "+
-			"API clients need a verified credential")
+		"this route asks browsers to load a page first ("+rule+"); API clients need a verified credential")
 }
 
 // EdgeRuleChallengeAction is the kind=challenge payload (ADR-831 amendment

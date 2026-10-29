@@ -447,7 +447,7 @@ func TestDeployIssueSourceMapsCLI(t *testing.T) {
 				var problem struct {
 					Recovery *main.DeployRecovery `json:"recovery"`
 				}
-				if err := json.Unmarshal([]byte(stderr.String()), &problem); err != nil || problem.Recovery == nil || problem.Recovery.DeploymentID != sourceMapsDeploymentID || problem.Recovery.Stage != "source_maps" || !strings.Contains(problem.Recovery.ResumeCommand, "issues source-maps publish") {
+				if err := json.Unmarshal([]byte(stderr.String()), &problem); err != nil || problem.Recovery == nil || problem.Recovery.DeploymentID != sourceMapsDeploymentID || problem.Recovery.Stage != "source_maps" || !strings.Contains(problem.Recovery.ResumeCommand, "debug issue source-maps publish") {
 					t.Fatalf("missing bound publication recovery: %s (%v)", stderr.String(), err)
 				}
 				snapshots, err := filepath.Glob(filepath.Join(os.TempDir(), "gregale-source-maps-recovery-*", "manifest.json"))

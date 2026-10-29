@@ -4,4 +4,7 @@
 # stays in the base unit until the domain re-seal completes.
 [Service]
 LoadCredential=faas_seal_domain_alerting:/etc/faas/secrets/domains/alerting.age
+{% if faas_seal_domain_alerting_previous_identity_src | length > 0 %}
+LoadCredential=faas_seal_domain_alerting_previous:/etc/faas/secrets/domains/alerting.age.previous
+{% endif %}
 Environment=FAAS_SEAL_DOMAIN_ALERTING_IDENTITY_PATH=%d/faas_seal_domain_alerting

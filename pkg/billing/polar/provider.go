@@ -613,6 +613,12 @@ type ingestResponse struct {
 // overage selected by the UsageMode contract. Polar meters sum
 // metadata.gb_ram_hours, while mb_seconds remains in the event for exact
 // local reconciliation and operator auditability.
+//
+// The event is timestamped when it is sent, not at the window start: Polar
+// buckets events by timestamp into the meter period between two resets (the
+// subscription start and each renewal), so a backdated event can land in a
+// period whose usage line Polar has already computed. The window stays in
+// metadata and in the external ID, which is what deduplicates retries.
 func (p *Provider) PushUsageRecord(ctx context.Context, acct state.Account, hour time.Time, mbSeconds int64) error {
 	if mbSeconds < 0 {
 		return fmt.Errorf("polar: %w (account=%s)", ErrNegativeMBSeconds, acct.ID)
@@ -642,7 +648,7 @@ func (p *Provider) PushUsageRecord(ctx context.Context, acct state.Account, hour
 			"mb_seconds":           mbSeconds,
 			"gb_ram_hours":         quantity,
 		},
-		Timestamp: window.Format(time.RFC3339),
+		Timestamp: p.deliveryTimestamp(),
 	}}}
 	var result ingestResponse
 	idem := fmt.Sprintf("faas-usage-%s-%s", acct.ID, window.Format(time.RFC3339))
@@ -660,8 +666,19 @@ func (p *Provider) PushUsageRecord(ctx context.Context, acct state.Account, hour
 	return nil
 }
 
+// deliveryTimestamp stamps a usage event with the time it is sent, so Polar
+// bills it in the subscription cycle that is open when it arrives
+// (ADR-20261028101500).
+func (p *Provider) deliveryTimestamp() string {
+	now := time.Now
+	if p.now != nil {
+		now = p.now
+	}
+	return now().UTC().Truncate(time.Second).Format(time.RFC3339)
+}
+
 // PushMeterUsageRecord delivers canonical egress bytes to the separate Polar
-// meter. The method fails closed unless live mode granted CapEgressUsage; shadow
+// meter. Like compute, the event is stamped when it is sent. The method fails closed unless live mode granted CapEgressUsage; shadow
 // mode is consumed entirely by meterd and never reaches this boundary.
 func (p *Provider) PushMeterUsageRecord(ctx context.Context, acct state.Account, hour time.Time, meter state.BillingMeter, quantity int64) error {
 	if meter != state.BillingMeterEgress {
@@ -689,7 +706,7 @@ func (p *Provider) PushMeterUsageRecord(ctx context.Context, acct state.Account,
 			"egress_bytes":         quantity,
 			"egress_gib":           float64(quantity) / float64(bytesPerGiB),
 		},
-		Timestamp: window.Format(time.RFC3339),
+		Timestamp: p.deliveryTimestamp(),
 	}}}
 	var result ingestResponse
 	if err := p.doJSON(ctx, http.MethodPost, "/v1/events/ingest", body, &result, externalID); err != nil {

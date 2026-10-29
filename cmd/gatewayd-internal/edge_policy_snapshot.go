@@ -74,10 +74,7 @@ func cachedHostRules[T any](g *gatewaydEdgeRules, ctx context.Context, host stri
 		entry, ok = gateway.PinnedHostPolicy(ctx, host)
 	}
 	if !ok {
-		entry, ok = g.cache.GetHost(key)
-	}
-	if !ok {
-		return nil, false
+		return gateway.HostRules(g.cache, key, selectRules)
 	}
 	return slices.Clone(selectRules(entry)), true
 }

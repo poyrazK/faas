@@ -266,7 +266,10 @@ type EventFanoutReplayBatchStore interface {
 	ReplayRetryablePublishedEventRecipientsForApp(context.Context, string, string, string, string, int) (EventFanoutReplayBatch, error)
 }
 
-const PublishedEventLease = 5 * time.Minute
+// PublishedEventLease is how long a receipt or recipient claim lasts; a
+// sweep renews the claims it still holds every PublishedEventLeaseRenewal
+// (ADR-20261028131500). The claim queries use the same interval.
+const PublishedEventLease = time.Minute
 const EventFanoutReplayBatchMax = 100
 
 // PublishedEventRetentionStore prunes settled receipts past their owner's

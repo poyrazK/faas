@@ -113,6 +113,9 @@ func (e *Evaluator) channelMessage(ctx context.Context, rule state.AlertRule, ev
 	if rule.Metric == state.AlertMetricRouteInsightsDetected && event == alertchannels.EventFire {
 		msg.Notes = e.routeInsightNotes(ctx, rule)
 	}
+	if (rule.Metric == state.AlertMetricRouteMonitorIncidents || rule.Metric == state.AlertMetricRouteHealthHolds) && event == alertchannels.EventFire {
+		msg.Notes = e.routeAlertNotes(ctx, rule)
+	}
 	if msg.AppSlug = e.appSlug(ctx, rule.AppID); msg.AppSlug != "" && e.dashboardBaseURL != "" {
 		msg.DashboardURL = e.dashboardBaseURL + "/dashboard/apps/" + msg.AppSlug
 	}

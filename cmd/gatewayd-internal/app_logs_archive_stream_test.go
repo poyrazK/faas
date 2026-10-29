@@ -33,7 +33,7 @@ func waitForBody(t *testing.T, rec *flusherRecorder, want string) {
 // is slow, instead of the whole object being held in memory first.
 func TestArchiveStream_DeliversLinesBeforeTheObjectFinishes(t *testing.T) {
 	release := make(chan struct{})
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	srv := httptest.NewServer(archiveBucket(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		gz := gzip.NewWriter(w)
 		_, _ = gz.Write([]byte(`{"seq":1,"stream":"stdout","ts":"2026-08-07T12:00:00Z","msg":"first"}` + "\n"))

@@ -11,7 +11,7 @@
 - **Why:** In Docker Compose, a service without `ports:` is reachable only from the project's other services. That is how a developer marks an API that only the frontend calls, or a backend that should never face the internet. Gregale made every HTTP service public, so moving a Compose project here exposed services the developer had deliberately kept private.
 - **Consequences:**
   - A new Compose project exposes only what it publishes. A service that should be public but has no `ports:` (one fronted by a reverse proxy configured with labels, for example) needs `ports:` or a one-time `--visibility public`.
-  - A Compose service without `ports:` is still classified `worker` by the scan until its first boot observes a listener (ADR-051). Visibility and class are independent.
+  - A Compose service without `ports:` is still classified `worker` by the scan until its first boot observes a listener (ADR-051). Visibility and class are independent. *Amended by ADR-20261029120000:* that correction never happened for worker-mode apps, so the scan now classifies a service without `ports:` as `http` when another service calls it.
   - Adding `ports:` to an existing internal app does not publish it. The plan shows the app as internal, so the mismatch is visible before the deploy.
 - **Rejected alternatives:**
   - **Making the repository the owner of visibility** (re-deriving it on every sync). It would undo an owner's `--visibility` change on the next push, and a repository change would publish a service without anyone reviewing the plan.

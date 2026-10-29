@@ -84,7 +84,7 @@ func registerLocalReleases(s *mcp.Server, m *management) {
 		return
 	}
 	register(s, m, "gregale_plan_local_deploy", "Review deploying a local directory as one app through this machine's gregale CLI, without uploading; pins the files and the app's release state for 15 minutes. Apply makes a new or non-serving app live; a serving app is staged at 0% for gregale_promote_deployment. Functions, multi-service projects and linked project directories stay in the CLI.", m.planLocalDeploy)
-	register(s, m, "gregale_plan_env_change", "Review setting non-secret environment variables on an app's default scope through the gregale CLI; pins the config revision for 15 minutes. Credential-like values are refused: ask the user to run `gregale secrets set`, never for the value.", m.planEnvChange)
+	register(s, m, "gregale_plan_env_change", "Review setting non-secret environment variables on an app's default scope through the gregale CLI; pins the config revision for 15 minutes. Credential-like values are refused: ask the user to run `gregale env set`, never for the value.", m.planEnvChange)
 	if !m.opts.AllowWrites {
 		return
 	}
@@ -498,7 +498,7 @@ func envChangeInput(values map[string]string) ([]string, []byte, error) {
 func secretRefusal(err error, app string) error {
 	var apiErr *api.APIError
 	if err == nil || errors.As(err, &apiErr) && apiErr.Problem.Code == "secret_scan_strict" {
-		return invalid("secret_detected", "a value looks like a credential and was not set. Call gregale_request_secret so the user enters it on Gregale's page, or ask them to run `gregale secrets set "+app+" KEY` themselves; never ask for or pass a secret value in a tool call")
+		return invalid("secret_detected", "a value looks like a credential and was not set. Call gregale_request_secret so the user enters it on Gregale's page, or ask them to run `gregale env set "+app+" KEY` themselves; never ask for or pass a secret value in a tool call")
 	}
 	return err
 }

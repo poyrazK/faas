@@ -65,7 +65,7 @@ func cmdBindingsServicePolicy(args []string, export bool) int {
 		name = "export"
 	}
 	usageError := func() int {
-		return fail("Invalid service policy command", fmt.Errorf("usage: gregale bindings service %s APP %s", name, map[bool]string{true: "[--out policy.json]", false: "--file policy.json"}[export]))
+		return fail("Invalid service policy command", fmt.Errorf("usage: gregale app binding service %s APP %s", name, map[bool]string{true: "[--out policy.json]", false: "--file policy.json"}[export]))
 	}
 	flags, pos := splitArgsForFlags(args)
 	if len(pos) != 1 || !api.ValidAppSlug(pos[0]) {

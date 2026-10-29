@@ -275,7 +275,7 @@ func TestCronAddHumanOutputNamesTheID(t *testing.T) {
 	if code := main.CmdCrons([]string{"add", "--app", "demo", "--schedule", "0 * * * *", "--path", "/tick"}); code != 0 {
 		t.Fatalf("cron add = %d, want 0", code)
 	}
-	if !strings.Contains(stdout.String(), "id: "+jsonMutationCronID) || !strings.Contains(stdout.String(), "gregale crons run "+jsonMutationCronID) {
+	if !strings.Contains(stdout.String(), "id: "+jsonMutationCronID) || !strings.Contains(stdout.String(), "gregale cron run "+jsonMutationCronID) {
 		t.Fatalf("cron add output does not name the new id:\n%s", stdout.String())
 	}
 	// H10-14: HTTP crons fire POST; a GET-only route 404ed on every run.

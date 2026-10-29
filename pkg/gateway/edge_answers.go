@@ -29,6 +29,11 @@ const (
 	edgeHeadHeaderMaxBytes = 64 * 1024
 
 	defaultRobotsTxt = "User-agent: *\nAllow: /\n"
+
+	// A preview answers every crawler with these, whatever robots.txt its
+	// production app serves.
+	previewRobotsTxt = "User-agent: *\nDisallow: /\n"
+	previewRobotsTag = "noindex, nofollow"
 )
 
 const defaultHealthPath = "/healthz"
@@ -276,6 +281,9 @@ func (h *Handler) serveEdgeAnswer(w http.ResponseWriter, r *http.Request, app Ap
 		body := app.RobotsTxt
 		if body == "" {
 			body = defaultRobotsTxt
+		}
+		if app.IsPreview {
+			body = previewRobotsTxt
 		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Header().Set("Cache-Control", "public, max-age=300")

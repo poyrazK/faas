@@ -1223,23 +1223,37 @@
     - 99-faas-domain-layout.conf
   notify: restart faas-mcp-bridge
 
+# The key never leaves the host except through control-plane state staging,
+# which copies /etc/faas/secrets to the standby. A host that loses it makes a
+# new one; the bridge then drops the state it cannot open and agents sign in
+# again.
+- name: control_plane_service — create the hosted management MCP state key once
+  ansible.builtin.shell: |
+    set -eu
+    install -d -m 0700 -o root -g root /etc/faas/secrets/mcp-bridge
+    umask 077
+    head -c 32 /dev/urandom > /etc/faas/secrets/mcp-bridge/.state.key.new
+    mv -f /etc/faas/secrets/mcp-bridge/.state.key.new /etc/faas/secrets/mcp-bridge/state.key
+  args:
+    creates: /etc/faas/secrets/mcp-bridge/state.key
+  notify: restart faas-mcp-bridge
+  when: faas_mcp_bridge_enabled | bool
+
 - name: control_plane_service — check the hosted management MCP state key
   ansible.builtin.stat:
     path: /etc/faas/secrets/mcp-bridge/state.key
   register: faas_mcp_bridge_key
   when: faas_mcp_bridge_enabled | bool
 
-- name: control_plane_service — require the hosted management MCP state key
+- name: control_plane_service — require a well-formed hosted management MCP state key
   ansible.builtin.assert:
     that:
       - faas_mcp_bridge_key.stat.exists
       - faas_mcp_bridge_key.stat.size in [32, 64, 65]
     fail_msg: >-
-      faas_mcp_bridge_enabled needs /etc/faas/secrets/mcp-bridge/state.key: 32 random
-      bytes or 64 hex characters, root-owned, mode 0600. Create it once with
-      `install -d -m 0700 /etc/faas/secrets/mcp-bridge && head -c 32 /dev/urandom >
-      /etc/faas/secrets/mcp-bridge/state.key && chmod 0600 /etc/faas/secrets/mcp-bridge/state.key`
-      and keep a copy: losing it signs every connected agent out (ADR-20261026195952).
+      /etc/faas/secrets/mcp-bridge/state.key must hold 32 random bytes or 64 hex
+      characters. Remove it to have this role generate a new one; connected
+      agents then sign in again (ADR-20261026195952).
   when: faas_mcp_bridge_enabled | bool
 
 - name: control_plane_service — mark the hosted management MCP server configured
@@ -1255,11 +1269,20 @@
   notify: restart faas-mcp-bridge
   when: faas_mcp_bridge_enabled | bool
 
+# A release converges these roles before it activates, so the first release
+# that ships mcp-bridged is not on disk yet: enable the unit now and let the
+# release's own restart step start it once it is.
+- name: control_plane_service — check for the hosted management MCP binary
+  ansible.builtin.stat:
+    path: /opt/faas/current/bin/mcp-bridged
+  register: faas_mcp_bridge_binary
+  when: faas_mcp_bridge_enabled | bool
+
 - name: control_plane_service — enable the hosted management MCP server
   ansible.builtin.systemd_service:
     name: faas-mcp-bridge.service
     enabled: true
-    state: started
+    state: "{{ 'started' if faas_mcp_bridge_binary.stat.exists else omit }}"
     daemon_reload: true
   when: faas_mcp_bridge_enabled | bool
 

@@ -320,6 +320,11 @@ func (s *server) releaseApprovalDecision(r *http.Request, acct state.Account, ap
 		return state.ReleaseApproval{}, api.ErrReleaseApprovalDecided("This release was already rejected.")
 	case api.ReleaseApprovalStateExpired:
 		return state.ReleaseApproval{}, api.ErrReleaseApprovalDecided("This release waited past its approval timeout.")
+	case api.ReleaseApprovalStateApproved:
+		// An approved release is decided (ADR-20261020085706 amendment 3). A
+		// later reject aborted it mid-rollout and each later approval
+		// announced "approved" again; stopping it is an abort.
+		return state.ReleaseApproval{}, api.ErrReleaseApprovalDecided("This release is already approved; abort its rollout to stop it.")
 	}
 	if d.RolloutAbortedAt != nil {
 		return state.ReleaseApproval{}, api.ErrReleaseApprovalDecided("This release's rollout was aborted; deploy it again to start a new approval.")
@@ -466,6 +471,9 @@ func (s *server) approvalTrafficProblem(ctx context.Context, app state.App, d st
 	// ADR-20261021152201: a release waiting for its scheduled start takes
 	// no traffic by hand.
 	if p := s.scheduledTrafficProblem(ctx, d); p != nil {
+		return p
+	}
+	if p := s.darkReleaseFreezeProblem(ctx, app, d); p != nil {
 		return p
 	}
 	policy, status, err := s.releaseApprovalState(ctx, app, d)

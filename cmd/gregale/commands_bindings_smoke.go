@@ -227,7 +227,7 @@ func normalizeOneServiceBindingTarget(raw string) (string, error) {
 }
 
 func printBindingsSmokeUsage() {
-	PrintUsage(osStderr, "usage: gregale bindings smoke <app> <service> --target-deployment <id> --path </path> [--caller-deployment <id|vN>] [--expect-status <code>] [flags]", "bindings")
+	PrintUsage(osStderr, "usage: gregale app binding smoke <app> <service> --target-deployment <id> --path </path> [--caller-deployment <id|vN>] [--expect-status <code>] [flags]", "bindings")
 }
 
 func expectedServiceStatus(code int) string {

@@ -152,3 +152,40 @@ func TestMemBaseScanExpiredLease(t *testing.T) {
 		t.Fatalf("expired retry extended scan: %v", err)
 	}
 }
+
+// ADR-20261028102540: a renewal without rescanning is a new complete record
+// that names the scan it copies; the reference is validated and canonical.
+func TestMemBaseScanReusedScanReference(t *testing.T) {
+	s := state.NewMemStore()
+	in, _ := baseScanFixture(t, s)
+	prior, err := s.PublishBaseImageScan(t.Context(), in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reused := state.CloneBaseImageScan(state.BaseImageScan{Input: in}).Input
+	reused.ID, reused.ReusedScanID = uuid.NewString(), strings.ToUpper(prior.ID)
+	value, err := s.PublishBaseImageScan(t.Context(), reused)
+	if err != nil {
+		t.Fatalf("reuse record refused: %v", err)
+	}
+	if value.Input.ReusedScanID != prior.ID || value.ID == prior.ID || value.InputHash == prior.InputHash {
+		t.Fatalf("reuse record lost its reference: %+v", value.Input)
+	}
+	for name, mutate := range map[string]func(*state.BaseImageScanInput){
+		"failed status": func(in *state.BaseImageScanInput) {
+			in.Status, in.Failure, in.ScannerName, in.Report = "failed", "scanner_unavailable", "", nil
+		},
+		"self reference": func(in *state.BaseImageScanInput) { in.ReusedScanID = in.ID },
+		"not a UUID":     func(in *state.BaseImageScanInput) { in.ReusedScanID = "scan-1" },
+		"nil UUID":       func(in *state.BaseImageScanInput) { in.ReusedScanID = uuid.Nil.String() },
+	} {
+		t.Run(name, func(t *testing.T) {
+			bad := state.CloneBaseImageScan(state.BaseImageScan{Input: in}).Input
+			bad.ID, bad.ReusedScanID = uuid.NewString(), prior.ID
+			mutate(&bad)
+			if _, err := s.PublishBaseImageScan(t.Context(), bad); !errors.Is(err, state.ErrInvalidArgument) {
+				t.Fatalf("invalid reuse reference accepted: %v", err)
+			}
+		})
+	}
+}

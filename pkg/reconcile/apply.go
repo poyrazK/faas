@@ -328,6 +328,7 @@ func (s *Service) applyUpdate(
 	manifest.BuildDockerfile = a.Workload.Dockerfile
 	manifest.DockerfileBuild = a.Workload.DockerfileBuild.Clone()
 	manifest.BuildGoCommand = a.Workload.GoCommand
+	releaseScanWorkerMode(&manifest, a.App.WorkloadClass, a.Workload)
 	applyProjectImage(&manifest, a.Workload)
 	resourced := a.App
 	resourced.Manifest = manifest
@@ -443,6 +444,7 @@ func ApplyScannedWorkloadToApp(app state.App, w reposcan.Workload, available map
 	}
 	app.RootDir = w.RootDir
 	app.WorkloadName = w.Name
+	releaseScanWorkerMode(&app.Manifest, app.WorkloadClass, w)
 	app.WorkloadClass = workloadClassFromScan(w)
 	app.StartCommand = resolveStartCommand(w)
 	transport := serviceBindingTransportForExistingWorkload(w, app.Manifest.ServiceBindingTransport)
@@ -489,6 +491,19 @@ func applyProjectImage(manifest *state.AppManifest, w reposcan.Workload) {
 	}
 	if len(w.Ports) > 0 {
 		manifest.ProjectImagePort = w.Ports[0]
+	}
+}
+
+// releaseScanWorkerMode clears the worker mode the scan gave an app once the
+// scan no longer classifies its workload as a worker: a Compose service
+// without ports that another service now calls serves requests
+// (ADR-20261029120000). Worker mode alone would keep the app from parking
+// and refuse the wakes its callers need. An app that was not a worker keeps
+// any mode its owner set.
+func releaseScanWorkerMode(manifest *state.AppManifest, previous state.WorkloadClass, w reposcan.Workload) {
+	if previous == state.WorkloadClassWorker && workloadClassFromScan(w) != state.WorkloadClassWorker &&
+		manifest.ExecutionMode == api.ExecutionModeWorker {
+		manifest.ExecutionMode = ""
 	}
 }
 
