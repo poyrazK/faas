@@ -17074,7 +17074,7 @@ SELECT NOT EXISTS (
     JOIN deployments sibling ON sibling.app_id = route.app_id AND sibling.scope = target.scope
       AND sibling.status = 'live' AND sibling.id <> route.deployment_id
     WHERE route.graph_id = $1::uuid AND route.cutover_required AND sibling.traffic_percent <> 0
-) AND public.environment_workload_serving_ready($1::uuid) AS serving_weights_match
+) AND environment_workload_serving_ready($1::uuid) AS serving_weights_match
 `
 
 func (q *Queries) EnvironmentWorkloadServingWeightsMatch(ctx context.Context, db DBTX, graphID pgtype.UUID) (pgtype.Bool, error) {

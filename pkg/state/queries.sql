@@ -18364,7 +18364,7 @@ SELECT NOT EXISTS (
     JOIN deployments sibling ON sibling.app_id = route.app_id AND sibling.scope = target.scope
       AND sibling.status = 'live' AND sibling.id <> route.deployment_id
     WHERE route.graph_id = sqlc.arg(graph_id)::uuid AND route.cutover_required AND sibling.traffic_percent <> 0
-) AND public.environment_workload_serving_ready(sqlc.arg(graph_id)::uuid) AS serving_weights_match;
+) AND environment_workload_serving_ready(sqlc.arg(graph_id)::uuid) AS serving_weights_match;
 
 -- A previous gateway acknowledgement becomes stale if managed candidate
 -- traffic drifts. Retained routes are intentionally excluded because their

@@ -586,7 +586,7 @@ func loadEnvironmentWorkloadServingReceipt(ctx context.Context, tx sqlc.DBTX, gr
 func completeEnvironmentWorkloadServingReceiptIfReady(ctx context.Context, tx pgx.Tx, graphID pgtype.UUID) error {
 	_, err := tx.Exec(ctx, `UPDATE environment_workload_serving_receipts
 		SET phase='served',served_at=coalesce(served_at,clock_timestamp()),updated_at=clock_timestamp()
-		WHERE graph_id=$1::uuid AND phase='pending' AND public.environment_workload_serving_ready($1::uuid)`, graphID)
+		WHERE graph_id=$1::uuid AND phase='pending' AND environment_workload_serving_ready($1::uuid)`, graphID)
 	if err != nil {
 		return mapErr(err)
 	}
