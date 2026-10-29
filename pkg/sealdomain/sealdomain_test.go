@@ -115,6 +115,30 @@ func TestRegistry_AccountIsWiredToApidOnTheControlPlane(t *testing.T) {
 	}
 }
 
+// TestRegistry_PipelineKeepsItsDedicatedIdentity pins data pipeline values
+// to the pipeline workers' own identity (ADR-1591): apid and the account
+// domain never open them.
+func TestRegistry_PipelineKeepsItsDedicatedIdentity(t *testing.T) {
+	s, ok := sealdomain.Lookup(sealdomain.Pipeline)
+	if !ok || !s.Dedicated {
+		t.Fatalf("pipeline domain = %+v, %v; want a dedicated identity", s, ok)
+	}
+	for _, c := range s.Columns {
+		if c.Table != "data_pipeline_alerts" && c.Table != "data_pipeline_connections" {
+			t.Fatalf("pipeline owns %s", c)
+		}
+	}
+	if got := sealdomain.ReaderDomains("apid"); containsDomain(got, sealdomain.Pipeline) {
+		t.Fatalf("apid reads %v; it only seals pipeline values", got)
+	}
+	account, _ := sealdomain.Lookup(sealdomain.Account)
+	for _, c := range account.Columns {
+		if c.Table == "data_pipeline_alerts" || c.Table == "data_pipeline_connections" {
+			t.Fatalf("account still owns %s", c)
+		}
+	}
+}
+
 func TestRegistry_StorageIsWiredToS3GatewaydAlone(t *testing.T) {
 	s, ok := sealdomain.Lookup(sealdomain.Storage)
 	if !ok || !s.Wired {
