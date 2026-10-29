@@ -55,8 +55,9 @@ stages the keys on every host it joins or rebuilds.
   domain, the role checks that the staged recipient is the one readers
   published the probe with, so a recipient from another pair stops the
   converge.
-- **Settings** (`faas_seal_domain_<domain>_writes` and
-  `faas_seal_domain_<domain>_readers_verified`) go in `CP_ANSIBLE_VARS_B64`.
+- **Settings** (`faas_seal_domain_<domain>_writes`,
+  `faas_seal_domain_<domain>_readers_verified` and
+  `faas_seal_domain_outbound_contracted`) go in `CP_ANSIBLE_VARS_B64`.
   CD re-renders the drop-ins from them on every converge, so a value set
   only in a local file is reverted.
 - **Never** put `faas_seal_domains_managed` or a `*_src` variable in CD's
@@ -65,8 +66,8 @@ stages the keys on every host it joins or rebuilds.
 
 Wherever a stage says to add `*_src` lines to the local variables file, with
 CD you set the domain's secrets instead. Wherever it says to set
-`*_writes` or `*_readers_verified`, you add them to `CP_ANSIBLE_VARS_B64` and
-run the control-plane CD.
+`*_writes`, `*_readers_verified` or `*_contracted`, you add them to
+`CP_ANSIBLE_VARS_B64` and run the control-plane CD.
 
 ## 1. Seal the GitHub webhook secrets
 
@@ -234,6 +235,47 @@ in this step stay domain-only. From now on:
   `SEAL_DOMAIN_OUTBOUND_*` secrets are set. Without them, run the
   `seal_domains` role for it from the local variables file before its
   outboundd serves traffic.
+
+### 2e. Contract: outboundd drops the fleet key
+
+Until this step outboundd still loads the fleet key, so code execution in
+outboundd reads every value sealed to it. Go on once a 2d migration run
+shows only `current`. Add to the local variables file, and converge the
+role again:
+
+```yaml
+faas_seal_domain_outbound_contracted: true
+```
+
+The role does these steps in order:
+
+1. Runs `seal-domain migrate --domain outbound --check`. It writes nothing,
+   and stops the converge while a credential still opens with the fleet or
+   host key, printing how many as `pending`. If it stops, run the 2d
+   migration again, then converge again.
+2. Rewrites outboundd's drop-in to start with an empty `LoadCredential=`
+   line, which drops the fleet key the base unit loads, and restarts
+   outboundd.
+3. Checks that `/run/credentials/faas-outboundd.service` holds
+   `faas_seal_domain_outbound` and no `faas_fleet_age_identity`, then
+   verifies the probe again.
+
+Check, on each host:
+
+```bash
+sudo ls /run/credentials/faas-outboundd.service
+journalctl -u faas-outboundd -b | grep 'outbound customer credential identities loaded'
+```
+
+- The directory lists `faas_seal_domain_outbound`, plus
+  `faas_seal_domain_outbound_previous` during a rotation, and nothing else.
+- outboundd logs `"domain_identity":true`, `"fleet_identity":false` and
+  `"identities":1` (2 during a rotation).
+
+Repeat the call checks from 2b.
+
+Rollback: set `faas_seal_domain_outbound_contracted: false` and converge.
+outboundd loads the fleet key again. Nothing stored changes in this step.
 
 ## 3. Break-glass rehearsal
 

@@ -41,8 +41,15 @@ The `outbound` steps:
    `gregalectl seal-domain migrate --domain outbound --readers-verified`.
    Re-sealing a credential bumps the binding promotion revision of the apps
    bound to it, so pending promotion approvals for them must be renewed.
-4. The contract step (removing the fleet identity from outboundd) ships in a
-   later release.
+4. Contract: once the migrate run reports nothing changed and nothing
+   failed, set `faas_seal_domain_outbound_contracted: true` and converge.
+   The role first runs `gregalectl seal-domain migrate --domain outbound
+   --check`, which writes nothing and fails while a credential still opens
+   with the fleet or host identity. It then renders outboundd's drop-in
+   with an empty `LoadCredential=`, which drops the base unit's fleet
+   identity, restarts outboundd, and checks its credentials directory
+   holds the domain identity and no fleet one. Setting the variable back
+   to false and converging gives outboundd the fleet identity again.
 
 The `runtime` domain covers app, project, release and binding secrets, which
 vmmd opens at wake:
