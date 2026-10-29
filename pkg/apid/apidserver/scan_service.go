@@ -1031,6 +1031,12 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			continue
 		}
 		operationDefinitions := sourceOperationSpecs(manifest)
+		// The workload's own gregale.yaml declares its workflows (ADR-081),
+		// exactly as on a single-app deploy of the same directory.
+		var workflowDefinitions []api.WorkflowSpec
+		if manifest != nil {
+			workflowDefinitions = manifest.Workflows
+		}
 		// A single-workload project has no ownership ambiguity, so it may
 		// also use the explicit gregale.yaml release.command declaration.
 		// Multi-workload Procfiles are already assigned exactly once by
@@ -1127,6 +1133,7 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			ReleaseCommand:      releaseCommand.command,
 			ReleaseCommandShell: releaseCommand.shell,
 			ServiceRollout:      !safe && app.Manifest.ExecutionMode == api.ExecutionModeService,
+			Workflows:           marshalWorkflowDefinitions(workflowDefinitions),
 		})
 		if app.Manifest.ProjectImage != "" {
 			_ = os.Remove(staged)
