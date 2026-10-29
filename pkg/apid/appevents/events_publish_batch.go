@@ -24,14 +24,14 @@ func (s *Service) PublishEventBatch(w http.ResponseWriter, r *http.Request, acct
 	if err := httpkit.DecodeJSONSized(r, &wire, api.EventPublishBatchBodyMaxBytes); err != nil {
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
-			api.WriteProblem(w, api.NewProblem(http.StatusRequestEntityTooLarge, "event_publish_batch_too_large", "Batch too large", "batch body exceeds the byte limit").WithLimit(api.EventPublishBatchBodyMaxBytes, api.EventPublishBatchBodyMaxBytes+1).WithDocs("https://gregale.dev/docs/event-driven#batch-event-publishing"))
+			api.WriteProblem(w, api.NewProblem(http.StatusRequestEntityTooLarge, "event_publish_batch_too_large", "Batch too large", "batch body exceeds the byte limit").WithLimit(api.EventPublishBatchBodyMaxBytes, api.EventPublishBatchBodyMaxBytes+1).WithDocs("https://gregale.dev/docs/events#batch-event-publishing"))
 		} else {
 			api.WriteProblem(w, api.ErrValidation("invalid batch JSON body"))
 		}
 		return
 	}
 	if len(wire.Events) == 0 || len(wire.Events) > api.EventPublishBatchMaxEvents {
-		api.WriteProblem(w, api.ErrValidation("batch must contain 1–100 events").WithLimit(int64(api.EventPublishBatchMaxEvents), int64(len(wire.Events))).WithDocs("https://gregale.dev/docs/event-driven#batch-event-publishing"))
+		api.WriteProblem(w, api.ErrValidation("batch must contain 1–100 events").WithLimit(int64(api.EventPublishBatchMaxEvents), int64(len(wire.Events))).WithDocs("https://gregale.dev/docs/events#batch-event-publishing"))
 		return
 	}
 	store, ok := s.Host.Store().(state.PublishedEventAcceptanceStore)

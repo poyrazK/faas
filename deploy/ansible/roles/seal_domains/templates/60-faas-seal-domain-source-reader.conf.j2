@@ -4,5 +4,8 @@
 # fleet identity stays in the base unit until the domain re-seal completes.
 [Service]
 LoadCredential=faas_seal_domain_source:/etc/faas/secrets/domains/source.age
+{% if faas_seal_domain_source_previous_identity_src | length > 0 %}
+LoadCredential=faas_seal_domain_source_previous:/etc/faas/secrets/domains/source.age.previous
+{% endif %}
 Environment=FAAS_SEAL_DOMAIN_SOURCE_IDENTITY_PATH=%d/faas_seal_domain_source
 Environment=FAAS_SEAL_DOMAIN_SOURCE_WRITES={{ faas_seal_domain_source_writes }}

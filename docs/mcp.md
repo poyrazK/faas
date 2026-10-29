@@ -2002,24 +2002,22 @@ its consented workload inventory.
 
 ## Run the hosted MCP server
 
-Operators enable `https://api.<platform domain>/mcp` on the control plane
-(ADR-20261026195952). It is off by default.
+`https://api.<platform domain>/mcp` is on by default (ADR-20261026195952). A
+release that converges the control plane sets it up with no operator steps:
+- `control_plane_service` generates the state key once in
+  `/etc/faas/secrets/mcp-bridge/state.key`. Control-plane state staging copies
+  it to the standby with the rest of `/etc/faas/secrets`.
+- It installs and enables `faas-mcp-bridge`. The release's restart step starts
+  the service once `mcp-bridged` is in the active release.
+- `gatewayd_public_service` routes the bridge's paths on the `api.` host to
+  `127.0.0.1:8787`.
 
-1. Create the state key once, and keep a copy. Losing it signs every
-   connected agent out.
+If the key is lost, the role generates a new one. The server then drops the
+state it can no longer open, and connected agents sign in again.
 
-   ```sh
-   install -d -m 0700 /etc/faas/secrets/mcp-bridge
-   head -c 32 /dev/urandom > /etc/faas/secrets/mcp-bridge/state.key
-   chmod 0600 /etc/faas/secrets/mcp-bridge/state.key
-   ```
-
-2. Set `faas_mcp_bridge_enabled: true` for the control plane and converge.
-   - `control_plane_service` installs and starts `faas-mcp-bridge`.
-   - `gatewayd_public_service` routes the bridge's paths on the `api.` host
-     to `127.0.0.1:8787`.
-   - Releases update and restart the server while its role marker is in
-     place.
+To turn the server off, set `faas_mcp_bridge_enabled: false` for the control
+plane and converge. Both roles read it: the service stops and the route goes
+away.
 
 The server is the `mcp-bridged` daemon:
 - **Releases:** its tools run the active release's `gregale` CLI as a
@@ -2038,6 +2036,28 @@ The server is the `mcp-bridged` daemon:
   - 10 grants per account;
   - 20 client registrations per address per hour;
   - 2 waiting uploads per account.
+- **Memory:** a connection's MCP server is built on its first request and
+  dropped after ten idle minutes, so memory follows active connections.
+- **Failures:** the server exits when it loses its state lease or Postgres
+  refuses a state write. systemd restarts it and it reloads what committed.
+
+Operate it with:
+- **Metrics** on `127.0.0.1:9110/metrics`, scraped as the `mcp-bridged` job.
+  The `gregale_management_mcp_*` series have no account, grant or app labels.
+- **Alerts:** `FaasHostedMCPDown`, `FaasHostedMCPRestarting` and
+  `FaasHostedMCPConnectionsNearCapacity`, all warn. See the
+  [runbook](runbooks/FaasHostedMCP.md).
+- **Revocation** over the admin socket, as the service user:
+
+```sh
+sudo -u faas-mcp-bridge /opt/faas/current/bin/gregale mcp connection list \
+  --socket /run/faas-mcp-bridge/admin.sock
+sudo -u faas-mcp-bridge /opt/faas/current/bin/gregale mcp connection revoke \
+  --socket /run/faas-mcp-bridge/admin.sock --grant-id <grant_id>
+```
+
+  [Inspect and revoke agent connections locally](#inspect-and-revoke-agent-connections-locally)
+  describes the output.
 
 ## Connect a remote agent with OAuth
 
@@ -2169,8 +2189,10 @@ openssl rand -hex 32 > ./mcp-state/key
 Add `--state-file ./mcp-state/state --state-key-file ./mcp-state/key` to the HTTP
 serve command. Keep the same key across restarts and store backups separately
 from the key. The journal seals account credentials, OAuth registrations/grants,
-refresh replay history, browser flows and release plans with AES-256-GCM. Files
-must be private regular files. Atomic replacement and fsync precede successful
+refresh replay history, browser flows and release plans with AES-256-GCM. Both
+must be regular files, not symlinks: the state file 0600, the key file one of the
+platform's secret-file modes (0400, 0440, 0600, 0640; systemd `LoadCredential=`
+delivers it as 0440). Atomic replacement and fsync precede successful
 OAuth responses; mutation attempts are committed before the API request.
 
 One process holds an exclusive state lease. A second writer, modified journal,
@@ -4479,7 +4501,8 @@ including requests authenticated before revocation. Other grants remain usable.
 A success response includes `durable: true` only after the encrypted OAuth snapshot
 is committed. Without state files, it returns `durable: false`. Unknown or already
 revoked grant IDs return 404. Storage failure returns 503 and disables further
-bridge access until repaired; failed revocation is not reported as durable success.
+bridge access until repaired (the hosted server exits and restarts instead);
+failed revocation is not reported as durable success.
 
 Revocation does not revoke native account API keys or undo operations Gregale has
 already accepted. Inspect native deployment state before issuing replacement plans

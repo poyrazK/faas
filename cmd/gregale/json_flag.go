@@ -295,7 +295,7 @@ func (w *humanFlagErrorWriter) Write(p []byte) (int, error) {
 			diagnostic += "\n  " + hint
 		}
 		_, err := fmt.Fprintf(w.dst, "Invalid command flags\n  %s\n  run 'gregale %s --help' for usage\n",
-			diagnostic, path)
+			diagnostic, cliTreeSpellPath(path))
 		return len(p), err
 	}
 	if strings.HasPrefix(text, "Usage of ") || strings.HasPrefix(text, "  -") {

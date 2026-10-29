@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 from uuid import UUID
 
 from attrs import define as _attrs_define
@@ -40,6 +40,9 @@ class RouteMonitorConfig:
     all traffic requests a checked rollback to the incident's healthy baseline. Omitted for the default report-only
     action."""
     updated_at: datetime.datetime | Unset = UNSET
+    warnings: list[str] | Unset = UNSET
+    """Returned by a save of an enabled monitor: selectors no request matched within the plan's telemetry lookback
+    (at most 7 days). Selectors match the route label exactly."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -66,6 +69,10 @@ class RouteMonitorConfig:
         if not isinstance(self.updated_at, Unset):
             updated_at = self.updated_at.isoformat()
 
+        warnings: list[str] | Unset = UNSET
+        if not isinstance(self.warnings, Unset):
+            warnings = self.warnings
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -82,6 +89,8 @@ class RouteMonitorConfig:
             field_dict["on_violation"] = on_violation
         if updated_at is not UNSET:
             field_dict["updated_at"] = updated_at
+        if warnings is not UNSET:
+            field_dict["warnings"] = warnings
 
         return field_dict
 
@@ -124,6 +133,8 @@ class RouteMonitorConfig:
         else:
             updated_at = datetime.datetime.fromisoformat(_updated_at)
 
+        warnings = cast(list[str], d.pop("warnings", UNSET))
+
         route_monitor_config = cls(
             app_id=app_id,
             enabled=enabled,
@@ -132,6 +143,7 @@ class RouteMonitorConfig:
             customer_group_by=customer_group_by,
             on_violation=on_violation,
             updated_at=updated_at,
+            warnings=warnings,
         )
 
         route_monitor_config.additional_properties = d

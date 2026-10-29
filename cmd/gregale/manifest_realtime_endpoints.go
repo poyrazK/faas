@@ -257,7 +257,7 @@ func (r realtimeEndpointReconcile) create(ctx context.Context, want gregalemanif
 		return errors.Join(err, r.client.UnsetSecretWithScope(ctx, owner, secret, api.DefaultEnvScope))
 	})
 	if _, err := r.client.RestartAppFresh(ctx, owner); err != nil {
-		PrintWarn(osStderr, "realtime endpoint %s exists, but restarting %s failed (%v); run `gregale app %s restart --fresh` before clients connect", want.Slug, owner, err, owner)
+		PrintWarn(osStderr, "realtime endpoint %s exists, but restarting %s failed (%v); run `gregale app restart %s --fresh` before clients connect", want.Slug, owner, err, owner)
 	}
 	return created.ID, nil
 }

@@ -333,9 +333,31 @@ previews. It injects the PR's declared internal service bindings after source
 scan. A new PR push clears environment values left on older preview rows.
 `gregale preview create` follows the same rule: the preview gets the
 production app's service binding URLs and none of its environment values.
-Configure preview-specific credentials separately before relying on a preview
-that needs external managed services; Gregale does not provision isolated
-databases or buckets for the PR.
+Gregale does not provision isolated databases or buckets for the PR.
+
+## Configuration
+
+A preview gets configuration from two places
+([ADR-20261028090000](adr/20261028090000-preview-configuration.md)):
+
+- **The pull request's Compose values.** When the Compose file opts in with
+  `x-gregale-env-import: true`, each preview imports the plain values its
+  service declares at the PR head, with the same rules as a project deploy.
+  Secret-looking values are skipped. An address of another project service
+  becomes its Gregale address, which reaches the same PR's sibling. Every push
+  imports them again from the new head.
+- **The production app's `pr-preview` scope.** Values and secrets you set on the
+  production app in the `pr-preview` scope are given to each of its previews
+  when the preview is built or reopened:
+
+  ```sh
+  gregale env set --app shop-api --scope pr-preview STRIPE_KEY=sk_test_…
+  ```
+
+  They override the PR's Compose values. Changing a value reaches each preview
+  at its next build. Removing one from `pr-preview` does not remove it from
+  open previews. Managed database and storage credentials are never given to
+  previews. `pr-preview` cannot be the name of a project environment.
 
 Previews keep their production app's access and egress gates: password,
 IP allowlist, signed-request and consumer-auth requirements, the egress
@@ -387,3 +409,9 @@ with `X-Faas-Caller-Env: preview` and
 cannot be set by a workload. See [networking](networking.md) for how to use
 them to skip side effects or refuse the call, and for the separate
 preview-to-preview and preview-to-production counters.
+
+## Builds, lifetime and indexing
+
+- **Builds.** A pull request's preview builds use at most half of the account's hourly deploy limit, so production deploys keep the other half. Builders take every other queued build before a preview build.
+- **Lifetime.** Deleting a production app tears down its PR previews on the preview janitor's next pass, within five minutes.
+- **Indexing.** Previews answer every request with `X-Robots-Tag: noindex, nofollow` and serve a `robots.txt` that disallows everything.

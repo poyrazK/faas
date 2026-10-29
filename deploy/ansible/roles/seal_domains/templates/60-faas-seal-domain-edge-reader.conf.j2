@@ -4,4 +4,7 @@
 # until the domain re-seal completes.
 [Service]
 LoadCredential=faas_seal_domain_edge:/etc/faas/secrets/domains/edge.age
+{% if faas_seal_domain_edge_previous_identity_src | length > 0 %}
+LoadCredential=faas_seal_domain_edge_previous:/etc/faas/secrets/domains/edge.age.previous
+{% endif %}
 Environment=FAAS_SEAL_DOMAIN_EDGE_IDENTITY_PATH=%d/faas_seal_domain_edge

@@ -114,7 +114,7 @@ func (s *PgStore) runtimeUpgradeControl(ctx context.Context, accountID, id strin
 		if op.Phase != RuntimeUpgradeReserved {
 			return op, nil
 		}
-		phase, blocker, wake, err = advanceRuntimeUpgradeOperationDB(ctx, tx, op)
+		phase, blocker, wake, err = advanceRuntimeUpgradeOperationDB(ctx, tx, op, false)
 	}
 	if err != nil {
 		return RuntimeUpgradeOperation{}, fmt.Errorf("apply runtime upgrade control: %w", runtimeUpgradeBaselineError(err))

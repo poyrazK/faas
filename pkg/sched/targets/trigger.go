@@ -151,6 +151,22 @@ type QueueBindingStatsReader interface {
 	QueueStateForBinding(ctx context.Context, appID, bindingID string) (state.QueueStats, error)
 }
 
+// QueueTelemetryReader is the bounded binding read production stores serve:
+// each count stops at limit, so neither a scaling decision nor a gauge costs
+// a backlog-sized read (ADR-20261018101500 amendment 2026-10-27). A binding
+// reader without it falls back to QueueStateForBinding.
+type QueueTelemetryReader interface {
+	QueueBindingTelemetry(ctx context.Context, appID, bindingID string, limit int) (state.QueueStats, error)
+}
+
+const (
+	// queueTelemetryInterval is how often an app's queue gauges refresh.
+	queueTelemetryInterval = 30 * time.Second
+	// queueTelemetryLimit bounds each gauge count; a larger backlog reports
+	// the limit.
+	queueTelemetryLimit = 100_000
+)
+
 // BrokerLagReader supplies broker-reported consumer lag / queue depth for an app.
 type BrokerLagReader interface {
 	BrokerLag(ctx context.Context, appID string) (int64, bool, error)
@@ -513,6 +529,10 @@ type Trigger struct {
 	// (ADR-20261022203523).
 	oversubscribedMu     sync.Mutex
 	oversubscribedLogged map[string]time.Time
+
+	// queueSampledAt holds when each app's queue gauges last refreshed.
+	queueSampleMu  sync.Mutex
+	queueSampledAt map[string]time.Time
 }
 
 // Options is the functional-options bag for New(). All fields are
@@ -583,8 +603,9 @@ func (t *Trigger) WithBrokerLagReader(r BrokerLagReader) *Trigger {
 // bindings exist, only enabled binding queues contribute to the aggregate;
 // the individual samples are retained so worker pools can scale fairly across
 // bindings. An app with no bindings falls back to the legacy app-wide queue
-// projection.
-func (t *Trigger) readQueueState(ctx context.Context, app state.App, now time.Time) (queueDepthSignal, bool, error) {
+// projection. Binding counts stop at limit; publish refreshes the binding
+// gauges.
+func (t *Trigger) readQueueState(ctx context.Context, app state.App, now time.Time, limit int, publish bool) (queueDepthSignal, bool, error) {
 	// Broker lag is an ADDITIONAL reading, not a replacement for the queue
 	// state. Returning here — as this did — threw away the binding
 	// breakdown, zeroed InFlight/DeadLetter/OldestPendingAt for the
@@ -622,7 +643,7 @@ func (t *Trigger) readQueueState(ctx context.Context, app state.App, now time.Ti
 			for _, binding := range bindings {
 				var queue state.QueueStats
 				if binding.Enabled {
-					queue, err = t.queueBindings.QueueStateForBinding(ctx, app.ID, binding.ID)
+					queue, err = t.bindingQueueState(ctx, app.ID, binding.ID, limit)
 					if err != nil {
 						return queueDepthSignal{}, false, fmt.Errorf("queue binding %q: %w", binding.QueueName, err)
 					}
@@ -643,7 +664,7 @@ func (t *Trigger) readQueueState(ctx context.Context, app state.App, now time.Ti
 				}
 				byName[binding.QueueName] = aggregate
 			}
-			if t.metrics != nil {
+			if publish && t.metrics != nil {
 				for name, queue := range byName {
 					t.metrics.SetQueueBindingState(app.ID, name, queue.Depth, queue.InFlight, queue.DeadLetter, queue.OldestPendingAt, now)
 				}
@@ -656,6 +677,64 @@ func (t *Trigger) readQueueState(ctx context.Context, app state.App, now time.Ti
 	}
 	queue, err := t.queueStats.QueueState(ctx, app.ID)
 	return withBroker(queueDepthSignal{queue: queue}, true, err)
+}
+
+func (t *Trigger) bindingQueueState(ctx context.Context, appID, bindingID string, limit int) (state.QueueStats, error) {
+	if bounded, ok := t.queueBindings.(QueueTelemetryReader); ok {
+		return bounded.QueueBindingTelemetry(ctx, appID, bindingID, limit)
+	}
+	return t.queueBindings.QueueStateForBinding(ctx, appID, bindingID)
+}
+
+// queueScalingLimit is the backlog a scaling read needs to count: past
+// target × (the instance cap + the rollout grant), every formula asks for
+// the cap.
+func queueScalingLimit(target float64, maxInstances int) int {
+	if target <= 0 {
+		return 1
+	}
+	if maxInstances <= 0 {
+		return queueTelemetryLimit
+	}
+	return int(min(math.Ceil(target*float64(maxInstances+1))+1, queueTelemetryLimit))
+}
+
+// queueTelemetryDue reports whether app's queue gauges are due a refresh and,
+// when they are, records now as the refresh.
+func (t *Trigger) queueTelemetryDue(appID string, now time.Time) bool {
+	t.queueSampleMu.Lock()
+	defer t.queueSampleMu.Unlock()
+	if last, ok := t.queueSampledAt[appID]; ok && now.Sub(last) < queueTelemetryInterval {
+		return false
+	}
+	if t.queueSampledAt == nil {
+		t.queueSampledAt = map[string]time.Time{}
+	}
+	t.queueSampledAt[appID] = now
+	return true
+}
+
+// sampleQueueTelemetry refreshes app's queue gauges at most once per
+// queueTelemetryInterval with bounded counts, so every worker's backlog is
+// visible and alertable without a backlog-sized read each tick
+// (ADR-20261018101500 amendment 2026-10-27).
+func (t *Trigger) sampleQueueTelemetry(ctx context.Context, app state.App, now time.Time, queueTarget float64) {
+	if t.metrics == nil || (t.queueStats == nil && t.queueBindings == nil) || !t.queueTelemetryDue(app.ID, now) {
+		return
+	}
+	signal, have, err := t.readQueueState(ctx, app, now, queueTelemetryLimit, true)
+	if err != nil {
+		t.log.Warn("targets: worker queue telemetry failed", "app_id", app.ID, "err", err)
+		return
+	}
+	if !have {
+		return
+	}
+	queue := signal.queue
+	t.metrics.SetQueueState(app.ID, queue.Depth, queue.InFlight, queue.DeadLetter, queue.OldestPendingAt, now)
+	for binding, demand := range signal.bindingWorkerDemand(queueTarget) {
+		t.metrics.SetQueueBindingWorkerDemand(app.ID, binding, demand)
+	}
 }
 
 // Interval returns the tick rate. schedd's loop uses this when
@@ -756,6 +835,14 @@ func (t *Trigger) Tick(ctx context.Context) error {
 		// misses half the fleet.
 		declared := policy.EffectiveTargets()
 		perInstance := implicitPerInstanceTarget(app)
+		queueTarget, haveQueueTarget := policy.TargetFor(api.ScalingMetricQueueDepth)
+		queueLagTarget, haveQueueLagTarget := policy.TargetFor(api.ScalingMetricQueueLag)
+		workerWorkload := app.WorkloadClass == state.WorkloadClassWorker || app.Manifest.ExecutionMode == api.ExecutionModeWorker
+		// Every worker's queue gauges refresh here, whatever it scales on,
+		// unless the queue-scaling read below publishes them.
+		if _, scoped := t.engine.(ScopedWorkerPoolEngine); workerWorkload && (scoped || !haveQueueTarget && !haveQueueLagTarget) {
+			t.sampleQueueTelemetry(ctx, app, now, queueTarget)
+		}
 		if len(declared) == 0 && perInstance == 0 {
 			if app.ProjectID != "" && app.Manifest.ExecutionMode == api.ExecutionModeWorker {
 				if pool, ok := t.engine.(ScopedWorkerPoolEngine); ok && !t.admissionBackoffActive(app.ID, now) {
@@ -778,38 +865,21 @@ func (t *Trigger) Tick(ctx context.Context) error {
 		if !haveInflightTarget && perInstance > 0 {
 			inflightTarget, haveInflightTarget = float64(perInstance), true
 		}
-		queueTarget, haveQueueTarget := policy.TargetFor(api.ScalingMetricQueueDepth)
-		queueLagTarget, haveQueueLagTarget := policy.TargetFor(api.ScalingMetricQueueLag)
 		// ADR-202: custom targets are keyed by NAME, so they cannot be
 		// resolved with TargetFor — an app may declare several.
 		customTargets := customTargetsOf(policy)
 		if !haveInflightTarget && !haveQueueTarget && !haveQueueLagTarget && len(customTargets) == 0 {
 			continue
 		}
-		workerWorkload := app.WorkloadClass == state.WorkloadClassWorker || app.Manifest.ExecutionMode == api.ExecutionModeWorker
 		if workerWorkload && (haveQueueTarget || haveQueueLagTarget || len(customTargets) > 0) {
 			if pool, ok := t.engine.(ScopedWorkerPoolEngine); ok {
 				if haveQueueTarget || haveQueueLagTarget {
 					workerApps[app.ID] = app
 				}
-				// Keep queue gauges for visibility. These aggregate
+				// The queue gauges were sampled above. These aggregate
 				// observations never authorize a scoped mutation. Custom
 				// worker metrics are read by ReconcileWorkerPools, which
 				// owns the freshness and environment-scope checks.
-				if t.metrics != nil && (haveQueueTarget || haveQueueLagTarget) {
-					signal, have, err := t.readQueueState(ctx, app, now)
-					if err != nil {
-						t.log.Warn("targets: worker queue telemetry failed", "app_id", app.ID, "err", err)
-					} else if have {
-						queue := signal.queue
-						t.metrics.SetQueueState(app.ID, queue.Depth, queue.InFlight, queue.DeadLetter, queue.OldestPendingAt, now)
-						if haveQueueTarget {
-							for binding, demand := range signal.bindingWorkerDemand(queueTarget) {
-								t.metrics.SetQueueBindingWorkerDemand(app.ID, binding, demand)
-							}
-						}
-					}
-				}
 				if t.admissionBackoffActive(app.ID, now) {
 					continue
 				}
@@ -871,8 +941,15 @@ func (t *Trigger) Tick(ctx context.Context) error {
 			// on an unknown backlog — contribute no reading instead.
 			haveQueue := false
 			var queueSignal queueDepthSignal
+			// One read a tick: bounded to what the decision needs, and to
+			// the gauge limit on the tick that refreshes the gauges.
+			publish := t.metrics != nil && t.queueTelemetryDue(app.ID, now)
+			limit := queueScalingLimit(max(queueTarget, queueLagTarget), maxInstances)
+			if publish {
+				limit = queueTelemetryLimit
+			}
 			if t.queueStats != nil || t.queueBindings != nil || t.brokerLag != nil {
-				sig, ok, err := t.readQueueState(ctx, app, now)
+				sig, ok, err := t.readQueueState(ctx, app, now, limit, publish)
 				switch {
 				case err != nil:
 					t.log.Warn("targets: queue state failed", "app_id", app.ID, "err", err)
@@ -885,7 +962,7 @@ func (t *Trigger) Tick(ctx context.Context) error {
 				observedQueueDepth = queue.Depth
 				observedBrokerLag = queueSignal.brokerLag
 				haveBrokerLag = queueSignal.haveBrokerLag
-				if t.metrics != nil {
+				if publish {
 					// Queue gauges are sampled alongside the queue-depth decision;
 					// OpsMetrics bounds app labels before they reach Prometheus.
 					t.metrics.SetQueueState(app.ID, queue.Depth, queue.InFlight, queue.DeadLetter, queue.OldestPendingAt, now)
@@ -897,7 +974,7 @@ func (t *Trigger) Tick(ctx context.Context) error {
 					if !haveQueueTarget || (haveQueueLagTarget && queueLagTarget < queueTarget) {
 						activeTarget = queueLagTarget
 					}
-					if t.metrics != nil {
+					if publish {
 						for binding, demand := range queueSignal.bindingWorkerDemand(activeTarget) {
 							t.metrics.SetQueueBindingWorkerDemand(app.ID, binding, demand)
 						}

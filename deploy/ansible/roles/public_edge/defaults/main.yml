@@ -43,6 +43,14 @@ faas_public_edge_key: /etc/caddy/tls/cloudflare-origin.key
 # certificate at <faas_public_edge_tls_dir>/cloudflare-origin-<domain>.pem and
 # .key.
 faas_public_edge_tls_dir: /etc/caddy/tls
+# Authenticated Origin Pulls (bug hunt 2026-10-27 H28). The source-IP check
+# admits every Cloudflare customer's zone, so anyone could put this origin
+# behind their own zone or Worker and skip the platform zone's WAF, bot and
+# rate-limit rules. With this on, the platform sites require Cloudflare's
+# origin-pull client certificate. Turn on Authenticated Origin Pulls for the
+# zone in Cloudflare and install the CA first; the IP allowlist stays.
+faas_public_edge_authenticated_origin_pulls: false
+faas_public_edge_origin_pull_ca: /etc/caddy/tls/cloudflare-origin-pull-ca.pem
 faas_public_edge_extra_domains: "{{ ([gatewayd_apps_domain | default('gregale.dev'), faas_deploy_domain | default('')] + (faas_apps_domain_aliases | default([]))) | select | map('lower') | reject('equalto', faas_public_edge_domain | lower) | unique | list }}"
 faas_public_edge_extra_tls_files: "{{ faas_public_edge_extra_domains | product(['pem', 'key']) | map('join', '.') | map('regex_replace', '^', faas_public_edge_tls_dir ~ '/cloudflare-origin-') | list }}"
 

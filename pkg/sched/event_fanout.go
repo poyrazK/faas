@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -528,10 +529,7 @@ func (l *Loop) runEventFanoutSweep(ctx context.Context) {
 	if recovery, ok := l.engine.store.(state.EventRecoveryStore); ok {
 		for i := 0; i < eventFanoutRecoveryBatch; i++ {
 			worked, err := recovery.ProcessNextEventRecovery(ctx, now)
-			if err != nil {
-				if l.log != nil {
-					l.log.Warn("sched: process event recovery failed", "err", err)
-				}
+			if err != nil && !l.eventJobContinue("event recovery", err) {
 				break
 			}
 			if !worked {
@@ -546,6 +544,7 @@ func (l *Loop) runEventFanoutSweep(ctx context.Context) {
 	adoption, adopting := store.(state.PublishedEventRecipientAdoptionClaimStore)
 	adopting = adopting && l.eventRecipientClaims && recipientSupported && workflowSupported
 	batches, batched := store.(state.PublishedEventAdoptionBatchClaimStore)
+	renewer, renewing := store.(state.PublishedEventClaimRenewalStore)
 	for claimed := 0; claimed < eventFanoutRecoveryBatch; {
 		var works []*state.PublishedEventWork
 		var err error
@@ -573,13 +572,23 @@ func (l *Loop) runEventFanoutSweep(ctx context.Context) {
 		if len(works) == 0 {
 			return
 		}
+		var next atomic.Int64
+		stop := func() {}
+		if renewing {
+			stop = l.keepEventClaims(ctx, func(ctx context.Context, now time.Time) error {
+				return renewer.RenewPublishedEventClaims(ctx, works[next.Load():], now)
+			})
+		}
 		for i, work := range works {
+			next.Store(int64(i))
 			if ctx.Err() != nil {
+				stop()
 				l.releaseEventAdoptionClaims(ctx, batches, works[i:])
 				return
 			}
 			l.routeClaimedEventReceipt(ctx, store, work, l.eventFanoutNow())
 		}
+		stop()
 		claimed += len(works)
 	}
 }
@@ -633,17 +642,49 @@ func (l *Loop) runEventReplayBackfillSweep(ctx context.Context, now time.Time) {
 	if !ok {
 		return
 	}
+	l.runEventReplayBackfillLifecycle(ctx, now)
 	for i := 0; i < eventFanoutRecoveryBatch; i++ {
 		worked, err := store.ProcessNextEventReplayBackfill(ctx, now)
-		if err != nil {
-			if l.log != nil {
-				l.log.Warn("sched: process event replay backfill page failed", "err", err)
-			}
+		if err != nil && !l.eventJobContinue("event replay backfill page", err) {
 			return
 		}
 		if !worked {
 			return
 		}
+	}
+}
+
+// eventJobContinue logs a failed recovery or backfill pass and reports
+// whether the sweep may go on: a job whose own work failed was backed off
+// (ADR-20261028095548), so the next job in line goes ahead.
+func (l *Loop) eventJobContinue(work string, err error) bool {
+	var jobErr *state.EventJobError
+	if !errors.As(err, &jobErr) {
+		if l.log != nil {
+			l.log.Warn("sched: process "+work+" failed", "err", err)
+		}
+		return false
+	}
+	if l.log != nil {
+		l.log.Warn("sched: "+work+" job failed", "job_id", jobErr.JobID, "failure", jobErr.Code, "ended", jobErr.Ended, "err", jobErr.Err)
+	}
+	return true
+}
+
+// runEventReplayBackfillLifecycle expires idle backfills and finishes
+// releasing ended ones (ADR-20261028095548), at most every 10 s. It runs only
+// while routing is released, so a paused event bus expires nothing.
+func (l *Loop) runEventReplayBackfillLifecycle(ctx context.Context, now time.Time) {
+	lifecycle, ok := l.engine.store.(state.EventReplayBackfillLifecycleStore)
+	if !ok || now.Sub(l.eventBackfillLifecycleAt) < 10*time.Second {
+		return
+	}
+	l.eventBackfillLifecycleAt = now
+	if _, err := lifecycle.ExpireIdleEventReplayBackfills(ctx, now, api.EventReplayBackfillPruneBatch); err != nil && l.log != nil {
+		l.log.Warn("sched: expire idle event replay backfills failed", "err", err)
+	}
+	if _, err := lifecycle.ReleaseEndedEventReplayBackfills(ctx, api.EventReplayBackfillPruneBatch); err != nil && l.log != nil {
+		l.log.Warn("sched: release ended event replay backfills failed", "err", err)
 	}
 }
 
@@ -660,6 +701,7 @@ func (l *Loop) runEventRecipientSweep(ctx context.Context) {
 		return
 	}
 	batches, batched := l.engine.store.(state.PublishedEventRecipientBatchClaimStore)
+	renewer, renewing := l.engine.store.(state.PublishedEventClaimRenewalStore)
 	for routed := 0; routed < eventFanoutRecoveryBatch; {
 		var works []*state.PublishedEventRecipientWork
 		var err error
@@ -682,13 +724,23 @@ func (l *Loop) runEventRecipientSweep(ctx context.Context) {
 		if len(works) == 0 {
 			return
 		}
+		var next atomic.Int64
+		stop := func() {}
+		if renewing {
+			stop = l.keepEventClaims(ctx, func(ctx context.Context, now time.Time) error {
+				return renewer.RenewPublishedEventRecipientClaims(ctx, works[next.Load():], now)
+			})
+		}
 		for i, work := range works {
+			next.Store(int64(i))
 			if ctx.Err() != nil {
+				stop()
 				l.releaseEventRecipientClaims(ctx, batches, works[i:])
 				return
 			}
 			l.routeEventRecipient(ctx, store, work, l.eventFanoutNow())
 		}
+		stop()
 		routed += len(works)
 	}
 }

@@ -50,7 +50,10 @@ stage. Notifications already announce all of these except the canary stage.
    frozen roster across cold wake and retry, the release `gone` and
    `conflict` verdicts, and the refusal stages and log of #5577 are
    unchanged.
-2. **Pinned requests keep the exact read.** Host pins, hosting smokes and
+2. **Pinned requests keep the exact read.** (Amended by ADR-20261028095914:
+   host, revision and release pins now admit from the view too; hosting
+   smokes, and pins outside the view's bounded lists, keep this read.)
+   Host pins, hosting smokes and
    release or revision headers verify one deployment or graph the view does
    not hold, so they keep ADR-570's per-request transaction. So does every
    request under the opt-in authoritative host policy

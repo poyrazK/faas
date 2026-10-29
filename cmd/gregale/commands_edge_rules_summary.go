@@ -12,7 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/appmetrics"
 )
 
-const edgeRulesSummaryUsage = "usage: gregale edge-rules summary --app SLUG [--range 1h] [--json]"
+const edgeRulesSummaryUsage = "usage: gregale edge rule summary --app SLUG [--range 1h] [--json]"
 
 // cmdEdgeRulesSummary implements `gregale edge-rules summary`: what the edge
 // rejected for one app over a range, read from the same per-app counters the
@@ -97,7 +97,7 @@ func renderEdgeProtection(w io.Writer, slug string, s api.EdgeProtectionResponse
 			parts = append(parts, fmt.Sprintf("%s %d (%s, %s)", c.Name, c.Count, c.Operator, c.Purpose))
 		}
 		_, _ = fmt.Fprintf(w, "  %-28s %s\n", "ai crawlers:", strings.Join(parts, ", "))
-		_, _ = fmt.Fprintf(w, "  %-28s gregale edge-rules recipe control-ai-crawlers --app %s\n", "control them:", slug)
+		_, _ = fmt.Fprintf(w, "  %-28s gregale edge rule recipe control-ai-crawlers --app %s\n", "control them:", slug)
 	}
 }
 

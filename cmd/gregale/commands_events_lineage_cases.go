@@ -35,7 +35,7 @@ func cmdEventsLineageCases(args []string, retry bool) int {
 		n = 3
 	}
 	if len(positional) != n || rejectUnexpectedFlagArgs(fs) {
-		PrintUsage(os.Stderr, "usage: gregale events subscription-lineage-cases APP SUB [--limit N] [--after ID] | subscription-lineage-retry APP SUB OUTBOX --request-id UUID --expected-revision N [--expected-diagnostic-id UUID]", "events")
+		PrintUsage(os.Stderr, "usage: gregale event subscription-lineage-cases APP SUB [--limit N] [--after ID] | subscription-lineage-retry APP SUB OUTBOX --request-id UUID --expected-revision N [--expected-diagnostic-id UUID]", "events")
 		return 1
 	}
 	client, err := authedClient()

@@ -3,7 +3,6 @@ package imaged
 import (
 	"archive/tar"
 	"bytes"
-	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"errors"
@@ -13,6 +12,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/oci"
+	"github.com/onebox-faas/faas/pkg/rootfs"
 )
 
 // Open once for all archive passes. Reopening a path for each component could
@@ -163,7 +163,7 @@ func validateLocalOCIManifest(desc oci.Descriptor, manifest oci.Manifest) error 
 		if _, err := localOCIBlobName(layer.Digest); err != nil {
 			return fmt.Errorf("OCI layer %d digest: %w", i, err)
 		}
-		if layer.MediaType != "application/vnd.oci.image.layer.v1.tar+gzip" && layer.MediaType != "application/vnd.docker.image.rootfs.diff.tar.gzip" {
+		if localOCILayerCompression(layer.MediaType) == "" {
 			return fmt.Errorf("unsupported OCI layer %d media type", i)
 		}
 		if layer.Size < 0 || layer.Size > api.LocalOCIMaxCompressedLayerBytes-total {
@@ -172,6 +172,20 @@ func validateLocalOCIManifest(desc oci.Descriptor, manifest oci.Manifest) error 
 		total += layer.Size
 	}
 	return nil
+}
+
+// localOCILayerCompression maps a source-build layer media type to its
+// compression. Builders may emit zstd layers (BuildKit compression=zstd);
+// layers inherited from a gzip base keep their gzip type in the same image.
+func localOCILayerCompression(mediaType string) rootfs.LayerCompression {
+	switch mediaType {
+	case "application/vnd.oci.image.layer.v1.tar+gzip", "application/vnd.docker.image.rootfs.diff.tar.gzip":
+		return rootfs.LayerGzip
+	case "application/vnd.oci.image.layer.v1.tar+zstd":
+		return rootfs.LayerZstd
+	default:
+		return ""
+	}
 }
 
 func localOCIManifestMediaType(mediaType string) bool {
@@ -261,24 +275,33 @@ func extractLocalOCIBlob(tr *tar.Reader, hdr *tar.Header, target *localOCIBlobTa
 // DiffIDs authenticate the entire uncompressed stream, including the gzip
 // trailer and bytes beyond tar's end marker. Hash before rootfs conversion or
 // layer filtering, so prefix decisions cannot trust invented config DiffIDs.
-func verifyLocalOCIDiffIDs(ctx context.Context, files []*os.File, diffIDs []string, maxBytes int64) error {
+// Each layer's bytes must also be compressed the way its descriptor says.
+func verifyLocalOCIDiffIDs(ctx context.Context, layers []oci.Descriptor, files []*os.File, diffIDs []string, maxBytes int64) error {
 	var total int64
 	for i, file := range files {
 		if _, err := localOCIBlobName(diffIDs[i]); err != nil {
 			return fmt.Errorf("OCI layer %d DiffID: %w", i, err)
 		}
+		head := make([]byte, 4)
+		headLen, err := file.ReadAt(head, 0)
+		if err != nil && !errors.Is(err, io.EOF) {
+			return fmt.Errorf("read OCI layer %d header: %w", i, err)
+		}
+		if got, want := rootfs.DetectLayerCompression(head[:headLen]), localOCILayerCompression(layers[i].MediaType); got != want {
+			return fmt.Errorf("OCI layer %d is not compressed as its media type %q says", i, layers[i].MediaType)
+		}
 		if _, err := file.Seek(0, io.SeekStart); err != nil {
 			return err
 		}
-		zr, err := gzip.NewReader(file)
+		zr, err := rootfs.OpenCompressedLayer(file)
 		if err != nil {
-			return fmt.Errorf("open OCI layer %d gzip: %w", i, err)
+			return fmt.Errorf("open OCI layer %d: %w", i, err)
 		}
 		h := sha256.New()
 		n, copyErr := io.Copy(h, io.LimitReader(localOCIContextReader{ctx, zr}, maxBytes-total+1))
 		closeErr := zr.Close()
 		if err := errors.Join(copyErr, closeErr); err != nil {
-			return fmt.Errorf("verify OCI layer %d gzip: %w", i, err)
+			return fmt.Errorf("verify OCI layer %d: %w", i, err)
 		}
 		if n > maxBytes-total {
 			return errors.New("OCI layers exceed uncompressed size limit")

@@ -46,6 +46,12 @@ $ gregale project get shop
     worker  shop-worker  failed      -
 ```
 
+The project's page in the dashboard shows the same, plus which services call
+each one. Where the [service map](service-map.md) is available to your
+account, it also shows the measured calls between the project's services over
+the last hour: volume, errors, p95 latency, and how often a call woke a parked
+service.
+
 ## What becomes a service
 
 Gregale reads, in this order:
@@ -219,9 +225,22 @@ change before anything is applied:
 
 - **Removing** a service from Compose removes its app when the plan is applied.
   A service that still lists it in `depends_on` fails the plan.
-- **Renaming** a service is a removal and a new service. The new app starts
-  without the old one's environment values, secrets and domains, so set them
-  again (or rename the service back) before you apply.
+- **Renaming** a service keeps its app when you say what it was called before:
+
+  ```yaml
+  services:
+    accounts:
+      build: ./accounts
+      x-gregale-renamed-from: ledger
+  ```
+
+  The plan shows one update, and the app keeps its environment values,
+  secrets, domains and URL
+  ([ADR-20261029090000](adr/20261029090000-compose-service-rename.md)). The
+  service is then called by its new name, so services that call it list
+  `accounts` in `depends_on` and read `GREGALE_SERVICE_ACCOUNTS_URL`. Without
+  the hint, a rename is a removal and a new service, and the new app starts
+  without the old one's values, secrets and domains.
 - **`gregale project delete`** deletes the project but not its services: each one
   keeps running as a standalone app, with its domains, environment values and
   crons. Detached apps are no longer one project, so they cannot call each
@@ -243,11 +262,20 @@ is refused by default (`403 preview_production_dependency_denied`). See
 [preview environments](preview-environments.md) and [networking](networking.md)
 for letting chosen production services accept preview traffic.
 
-A preview gets the service URLs Gregale injects, but not the production
-environment values or the values imported from Compose, because those can hold
-credentials. A service whose code needs another value at startup should fall
-back to a default when it is unset; see
-[preview environments](preview-environments.md).
+A preview never receives production environment values, because they can hold
+credentials. It gets:
+
+- the service URLs Gregale injects;
+- the plain values its pull request's Compose file declares, under the same
+  `x-gregale-env-import: true` opt-in and rules as a deploy; and
+- the values and secrets you set for previews on the production app:
+
+  ```sh
+  gregale env set --app shop-web --scope pr-preview STRIPE_KEY=sk_test_…
+  ```
+
+`pr-preview` values override the PR's Compose values. See
+[preview environments](preview-environments.md#configuration).
 
 ## Cold starts and tracing
 

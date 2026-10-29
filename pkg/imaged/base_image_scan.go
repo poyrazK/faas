@@ -83,6 +83,9 @@ func (h *Handler) loadOrRunProducedBaseScan(ctx context.Context, be storage.Stor
 	if err != nil && !errors.Is(err, state.ErrNotFound) && !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 		return state.BaseImageScan{}, err
 	}
+	if reused, ok := h.renewProducedBaseScanWithoutScanning(ctx, store, be, base, expected); ok {
+		return reused, nil
+	}
 	in := state.BaseImageScanInput{ID: uuid.NewString(), BaseProducerID: base.ID, BaseInputHash: base.InputHash, Artifact: base.Input.Artifact, SourceReference: base.Input.SourceReference}
 	started := time.Now()
 	result, failure := h.readProducedArtifactScan(ctx, be, expected)
@@ -103,6 +106,46 @@ func (h *Handler) loadOrRunProducedBaseScan(ctx context.Context, be storage.Stor
 		return state.BaseImageScan{}, err
 	}
 	return value, nil
+}
+
+// renewProducedBaseScanWithoutScanning renews shared-base scan evidence
+// without running Grype (ADR-20261028102540). It applies only when the selected
+// scan is complete and covers these exact producer bytes, and Grype and its
+// vulnerability database are still the ones that made it, so a new scan
+// could only repeat that report. The new record gets its own storage-clock
+// lease and names the scan it copies. Any doubt (no identity, a mismatch,
+// changed bytes, a refused publication) returns false and the caller scans.
+func (h *Handler) renewProducedBaseScanWithoutScanning(ctx context.Context, store state.BaseImageScanStore, be storage.StorageBackend, base state.BaseImageProducer, expected scanArtifactTarget) (state.BaseImageScan, bool) {
+	prior, err := store.GetCurrentBaseImageScan(ctx, base.Input.Artifact.StorageKey)
+	if err != nil || prior.Input.Status != "complete" || prior.Input.Report == nil ||
+		prior.Input.BaseProducerID != base.ID || prior.Input.BaseInputHash != base.InputHash || prior.Input.Artifact != base.Input.Artifact {
+		return state.BaseImageScan{}, false
+	}
+	current, err := h.currentScannerIdentity(ctx)
+	report := prior.Input.Report
+	if err != nil || !current.matches(report.ScannerVersion, report.ScannerDBVersion, report.ScannerDBBuiltAt) {
+		return state.BaseImageScan{}, false
+	}
+	if checkStoredScanArtifact(ctx, be, expected) != nil {
+		return state.BaseImageScan{}, false
+	}
+	in := state.BaseImageScanInput{
+		ID: uuid.NewString(), BaseProducerID: base.ID, BaseInputHash: base.InputHash,
+		Artifact: base.Input.Artifact, SourceReference: base.Input.SourceReference,
+		Status: "complete", ScannerName: prior.Input.ScannerName, Report: report, ReusedScanID: prior.ID,
+	}
+	value, err := store.PublishBaseImageScan(ctx, in)
+	if err != nil {
+		if h.log != nil {
+			h.log.Warn("imaged: shared base scan reuse refused; scanning", "key", expected.StorageKey, "err", err)
+		}
+		return state.BaseImageScan{}, false
+	}
+	if h.log != nil {
+		h.log.Info("imaged: shared base scan renewed without rescanning", "key", expected.StorageKey,
+			"reused_scan", prior.ID, "scanner_version", current.Version, "scanner_db_built_at", current.DBBuiltAt)
+	}
+	return value, true
 }
 
 func (h *Handler) publishBaseScanFailure(ctx context.Context, store state.BaseImageScanStore, in state.BaseImageScanInput, failure string) (state.BaseImageScan, error) {
@@ -155,16 +198,44 @@ func scanResultFromAPI(report api.ScanResult) (*ScanResult, error) {
 // Compatibility output comes only from the separately retained private scan.
 // It is not a native receipt or company approval. Failed evidence retains the
 // legacy refusal sentinel; those numbers are never private scanner findings.
+//
+// A concurrent owner of the review inputs (another deploy staging the same
+// base) makes publication busy. Waiting for it lets this stage publish or
+// reuse the result instead of failing the deploy with "review inputs are
+// being modified" (#5709); the wait is bounded.
 func (h *Handler) writeProducedBaseScanSidecar(ctx context.Context, r verifiedBaseRequest, base state.BaseImageProducer) error {
-	_, err := h.ensureProducedBaseScan(ctx, r.be, base, r.out)
-	return err
+	wait := producedBaseScanBusyFirstWait
+	deadline := time.Now().Add(producedBaseScanBusyWait)
+	for {
+		_, err := h.ensureProducedBaseScan(ctx, r.be, base, r.out)
+		if err == nil || !producedEvidenceBusy(err) || !time.Now().Add(wait).Before(deadline) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(wait):
+		}
+		wait = min(2*wait, producedBaseScanBusyMaxStep)
+	}
 }
+
+// How long a base stage waits for a concurrent owner of the review inputs, and
+// its backoff between attempts. The owner can be scanning the same base, so
+// the bound is the base scan's own; each attempt reuses that owner's result as
+// soon as it is published. Giving up earlier left the fail-closed sidecar in
+// place: fsn-2 refused every cold boot for five hours (2026-10-27, #5709).
+var (
+	producedBaseScanBusyWait      = api.ApplicationStandardBaseScanTimeout
+	producedBaseScanBusyFirstWait = 250 * time.Millisecond
+	producedBaseScanBusyMaxStep   = 5 * time.Second
+)
 
 // An empty value is a preflight refusal, not a scan attempt: its clock stays
 // zero. Invalidate old compatibility output before rebuilding or refreshing;
 // only a successfully retained private result can replace that refusal.
 func writeProducedBaseScanCompatibility(ctx context.Context, be storage.StorageBackend, key, ref, out string, value state.BaseImageScan) error {
-	findings := map[string]int{SeverityCritical: 9999, SeverityHigh: 9999, SeverityMedium: 9999, SeverityLow: 9999, SeverityUnknown: 0}
+	findings := map[string]int{SeverityCritical: wire.BaseScanFailedCount, SeverityHigh: wire.BaseScanFailedCount, SeverityMedium: wire.BaseScanFailedCount, SeverityLow: wire.BaseScanFailedCount, SeverityUnknown: 0}
 	fixAvailable := findings
 	if value.Input.Status == "complete" {
 		result, err := scanResultFromAPI(value.Result)

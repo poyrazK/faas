@@ -130,6 +130,8 @@ type Loop struct {
 	work                        *workPool
 	workOnce                    sync.Once
 	eventFanoutLastPrune        time.Time
+	eventBackfillLifecycleAt    time.Time
+	eventClaimRenewalEvery      time.Duration
 	eventFanoutHistoryLastPrune time.Time
 	eventRecipientClaims        bool
 	// eventRoutingHealthAt is the last routing health read; the fanout sweep
@@ -1269,7 +1271,7 @@ func (l *Loop) Run(ctx context.Context) error {
 		case <-cronTicks:
 			l.runCronTick(ctx)
 		case <-watchdogTick(watchdogT):
-			l.runWatchdog(ctx)
+			l.dispatchWatchdog(ctx)
 		case <-heartbeatTick(heartbeatT):
 			l.runHeartbeat(ctx)
 		case <-diskDriftTick(diskDriftT):
@@ -1676,6 +1678,13 @@ func (l *Loop) runInstanceStats(ctx context.Context) {
 // goroutine.
 func (l *Loop) runWatchdog(ctx context.Context) {
 	l.watchdog.sweepRuns(ctx)
+}
+
+// dispatchWatchdog runs the sweep on the work pool: a stuck row's destroy
+// can wait 5 s, and a partitioned node's rows retry every tick
+// (ADR-20261028200212).
+func (l *Loop) dispatchWatchdog(ctx context.Context) {
+	l.submitWork(workWatchdog, "tick", func() { l.runWatchdog(ctx) })
 }
 
 // runRetention dispatches one sweep of the §17 retention sweep. Same
@@ -4361,8 +4370,23 @@ func (l *Loop) runCronTick(ctx context.Context) {
 		return
 	}
 	now := l.now()
+	appRank := oldestCronsFirst(crons)
+	plans := newCronPlanGate(store)
+	apps := map[string]state.App{}
 	for _, c := range crons {
-		app, appErr := store.AppByID(ctx, c.AppID)
+		if !cronDue(c, now) {
+			if len(c.Command) > 0 {
+				l.cronMetrics.decision("not_due")
+			}
+			continue
+		}
+		app, cached := apps[c.AppID]
+		var appErr error
+		if !cached {
+			if app, appErr = store.AppByID(ctx, c.AppID); appErr == nil {
+				apps[c.AppID] = app
+			}
+		}
 		if appErr != nil {
 			scanErr = appErr
 			if len(c.Command) > 0 {
@@ -4374,6 +4398,12 @@ func (l *Loop) runCronTick(ctx context.Context) {
 		if !l.engine.ownsApp(app) {
 			if len(c.Command) > 0 {
 				l.cronMetrics.decision("not_owned")
+			}
+			continue
+		}
+		if !plans.admit(ctx, app, appRank[c.ID]) {
+			if len(c.Command) > 0 {
+				l.cronMetrics.decision("plan_limit")
 			}
 			continue
 		}

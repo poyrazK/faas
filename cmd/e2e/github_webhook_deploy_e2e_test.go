@@ -16,7 +16,9 @@
 // The pull-request half runs a preview's whole lifecycle: open queues the
 // preview build, its GitHub status sync and the PR comment; close starts the
 // grace window; and apid's own janitor tears the environment down when the
-// grace ends, queueing the final GitHub status sync. Only the GitHub HTTP
+// grace ends, queueing the final GitHub status sync. The production app's
+// pr-preview values reach its previews, and deleting the production app tears
+// down its remaining previews. Only the GitHub HTTP
 // writes are recorded (their wire format is covered in pkg/githubd and
 // cmd/githubd).
 package e2e_test
@@ -35,6 +37,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -124,12 +127,14 @@ func TestE2E_GitHubWebhookEnqueuesDeployments(t *testing.T) {
 		ProductionBranch: "main"}); err != nil {
 		t.Fatalf("bind app: %v", err)
 	}
+	// The production app's pr-preview values reach its previews
+	// (ADR-20261028090000); production's own values never do.
+	if body, status := doReq(t, h, key, http.MethodPut, "/v1/apps/"+pushed.appSlug+"/env/PREVIEW_MODE?scope="+api.PreviewEnvScope,
+		api.PutAppEnvRequest{Value: "review"}); status != http.StatusOK {
+		t.Fatalf("set pr-preview value: status=%d body=%s", status, body)
+	}
 	prSHA := strings.Repeat("b2", 20)
-	postGitHubWebhook(t, webhookURL, "pull_request", fmt.Sprintf(`{"action":"opened","number":7,
-		"pull_request":{"state":"open","head_sha":%q,"head_ref":"feat/x","base":{"ref":"main"},
-		"head":{"ref":"feat/x","sha":%q,"repo":{"full_name":%q}}},
-		"repository":{"full_name":%q,"name":"e2e-api"},"installation":{"id":%d},"sender":{"login":"octocat"}}`,
-		prSHA, prSHA, githubE2ERepo, githubE2ERepo, githubE2EInstallation))
+	postPullRequest(t, webhookURL, "opened", 7, prSHA)
 	preview := waitForGitHubDeployment(t, pool, project.ID, prSHA, state.DeploymentKindPreview)
 	if preview.appID == pushed.appID || !strings.HasPrefix(preview.appSlug, "pr-7-") {
 		t.Fatalf("preview deployment on app %s (%s), want a pr-7- preview app separate from %s", preview.appSlug, preview.appID, pushed.appID)
@@ -139,15 +144,20 @@ func TestE2E_GitHubWebhookEnqueuesDeployments(t *testing.T) {
 	// the PR thread got the preview comment with its dashboard link.
 	queuedSync := waitForCheckUpdate(t, pool, preview.deploymentID, 0)
 	comments.waitFor(t, 7, "### Gregale preview — queued", githubd.DashboardAppURL(preview.appSlug))
+	if rows, err := store.ListAppEnvInScope(ctx, accountID, preview.appID, api.DefaultEnvScope); err != nil ||
+		!slices.ContainsFunc(rows, func(row state.AppEnv) bool { return row.Key == "PREVIEW_MODE" && row.Value == "review" }) {
+		t.Fatalf("preview values = %+v, %v; want the production app's pr-preview PREVIEW_MODE=review", rows, err)
+	}
+
+	// A second pull request's preview stays open to the end.
+	otherSHA := strings.Repeat("c3", 20)
+	postPullRequest(t, webhookURL, "opened", 8, otherSHA)
+	other := waitForGitHubDeployment(t, pool, project.ID, otherSHA, state.DeploymentKindPreview)
 
 	// -- pull request closed --------------------------------------------------
 	// The preview keeps serving through its grace window, but its set closes
 	// and it no longer holds a PR preview environment (ADR-20261026090000).
-	postGitHubWebhook(t, webhookURL, "pull_request", fmt.Sprintf(`{"action":"closed","number":7,
-		"pull_request":{"state":"closed","merged":true,"head_sha":%q,"head_ref":"feat/x","base":{"ref":"main"},
-		"head":{"ref":"feat/x","sha":%q,"repo":{"full_name":%q}}},
-		"repository":{"full_name":%q,"name":"e2e-api"},"installation":{"id":%d},"sender":{"login":"octocat"}}`,
-		prSHA, prSHA, githubE2ERepo, githubE2ERepo, githubE2EInstallation))
+	postPullRequest(t, webhookURL, "closed", 7, prSHA)
 	waitForClosedPreview(t, pool, preview.appID, githubE2EInstallation, githubE2ERepo, 7)
 	comments.waitFor(t, 7, "### Gregale preview — closed", "torn down")
 
@@ -165,6 +175,28 @@ func TestE2E_GitHubWebhookEnqueuesDeployments(t *testing.T) {
 	}
 	waitForTornDownPreview(t, pool, preview.appID)
 	waitForCheckUpdate(t, pool, preview.deploymentID, closedSync)
+
+	// -- production app deleted -------------------------------------------------
+	// Its remaining preview goes too, on the janitor's next pass
+	// (ADR-20261028100000), instead of serving PR code until its lease ends.
+	if body, status := doReq(t, h, key, http.MethodDelete, "/v1/apps/"+pushed.appSlug, nil); status < 200 || status > 299 {
+		t.Fatalf("delete production app: status=%d body=%s", status, body)
+	}
+	waitForTornDownPreview(t, pool, other.appID)
+}
+
+// postPullRequest delivers a pull_request webhook for one PR head.
+func postPullRequest(t *testing.T, webhookURL, action string, number int, sha string) {
+	t.Helper()
+	prState := "open"
+	if action == "closed" {
+		prState = "closed"
+	}
+	postGitHubWebhook(t, webhookURL, "pull_request", fmt.Sprintf(`{"action":%q,"number":%d,
+		"pull_request":{"state":%q,"merged":%t,"head_sha":%q,"head_ref":"feat/x","base":{"ref":"main"},
+		"head":{"ref":"feat/x","sha":%q,"repo":{"full_name":%q}}},
+		"repository":{"full_name":%q,"name":"e2e-api"},"installation":{"id":%d},"sender":{"login":"octocat"}}`,
+		action, number, prState, action == "closed", sha, sha, githubE2ERepo, githubE2ERepo, githubE2EInstallation))
 }
 
 // waitForCheckUpdate waits for a pending GitHub status sync of deploymentID

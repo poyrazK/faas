@@ -15,7 +15,7 @@ import (
 // cmdPlatformTenants manages one account customer across several apps.
 func cmdPlatformTenants(args []string) int {
 	if len(args) == 0 || hiddenMonetizationVerb("platform-tenants", args[0]) {
-		PrintUsage(os.Stderr, releasedUsage("platform-tenants", "usage: gregale platform-tenants <list|add|apply|credentials-list|credentials-apply|info|activation|link-consumer|link-surface|usage|activity|suspend|resume|rate-cards|rate-card-create|statements|statement-draft|statement-show|statement-finalize|statement-handoff|statement-export|plans|plan-create|plan-update|set-plan|plan-history|trial|trial-set|trial-end|billing-policy|billing-policy-set|billing-policy-delete|overdue-holds|credits|credit-grant|credit-void|spend-cap|spend-cap-set|spend-cap-delete> [flags]"), "platform-tenants")
+		PrintUsage(os.Stderr, releasedUsage("platform-tenants", "usage: gregale api tenant <list|add|apply|credentials-list|credentials-apply|info|activation|link-consumer|link-surface|usage|activity|suspend|resume|rate-cards|rate-card-create|statements|statement-draft|statement-show|statement-finalize|statement-handoff|statement-export|plans|plan-create|plan-update|set-plan|plan-history|trial|trial-set|trial-end|billing-policy|billing-policy-set|billing-policy-delete|overdue-holds|credits|credit-grant|credit-void|spend-cap|spend-cap-set|spend-cap-delete> [flags]"), "platform-tenants")
 		return 1
 	}
 	verb := args[0]
@@ -244,26 +244,26 @@ func cmdPlatformTenants(args []string) int {
 // every mistake printed the whole family's usage with generic flags, so
 // `platform-tenants apply` without --file never said --file was required.
 var platformTenantVerbUsage = map[string]string{
-	"list":              "usage: gregale platform-tenants list [--limit N] [--offset N]",
-	"add":               "usage: gregale platform-tenants add --external-ref REF --name TEXT",
-	"apply":             "usage: gregale platform-tenants apply --file bundle.json [--dry-run]",
-	"credentials-list":  "usage: gregale platform-tenants credentials-list --id UUID [--limit N] [--offset N]",
-	"credentials-apply": "usage: gregale platform-tenants credentials-apply --id UUID --file bundle.json [--dry-run]",
-	"info":              "usage: gregale platform-tenants info --id UUID",
-	"activation":        "usage: gregale platform-tenants activation --id UUID [--wait] [--timeout 10m]",
-	"link-consumer":     "usage: gregale platform-tenants link-consumer --id UUID --consumer-id UUID",
-	"link-surface":      "usage: gregale platform-tenants link-surface --id UUID --surface-id UUID",
-	"usage":             "usage: gregale platform-tenants usage --id UUID [--since RFC3339] [--until RFC3339]",
-	"activity":          "usage: gregale platform-tenants activity --id UUID [--since 24h] [--app-id UUID] [--status N] [--cursor C] [--limit N]",
-	"suspend":           "usage: gregale platform-tenants suspend --id UUID",
-	"resume":            "usage: gregale platform-tenants resume --id UUID",
+	"list":              "usage: gregale api tenant list [--limit N] [--offset N]",
+	"add":               "usage: gregale api tenant create --external-ref REF --name TEXT",
+	"apply":             "usage: gregale api tenant apply --file bundle.json [--dry-run]",
+	"credentials-list":  "usage: gregale api tenant credentials-list --id UUID [--limit N] [--offset N]",
+	"credentials-apply": "usage: gregale api tenant credentials-apply --id UUID --file bundle.json [--dry-run]",
+	"info":              "usage: gregale api tenant get --id UUID",
+	"activation":        "usage: gregale api tenant activation --id UUID [--wait] [--timeout 10m]",
+	"link-consumer":     "usage: gregale api tenant link-consumer --id UUID --consumer-id UUID",
+	"link-surface":      "usage: gregale api tenant link-surface --id UUID --surface-id UUID",
+	"usage":             "usage: gregale api tenant usage --id UUID [--since RFC3339] [--until RFC3339]",
+	"activity":          "usage: gregale api tenant activity --id UUID [--since 24h] [--app-id UUID] [--status N] [--cursor C] [--limit N]",
+	"suspend":           "usage: gregale api tenant suspend --id UUID",
+	"resume":            "usage: gregale api tenant resume --id UUID",
 }
 
 func platformTenantUsage(verb string) string {
 	if usage, ok := platformTenantVerbUsage[verb]; ok {
 		return usage
 	}
-	return "usage: gregale platform-tenants <list|add|apply|credentials-list|credentials-apply|info|activation|link-consumer|link-surface|usage|activity|suspend|resume> [flags]"
+	return "usage: gregale api tenant <list|add|apply|credentials-list|credentials-apply|info|activation|link-consumer|link-surface|usage|activity|suspend|resume> [flags]"
 }
 
 func platformTenantFlagsValid(verb, id, externalRef, name, consumerID, surfaceID string, limit, offset int) bool {

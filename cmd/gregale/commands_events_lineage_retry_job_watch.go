@@ -53,7 +53,7 @@ func cmdEventsLineageRetryJobWatch(args []string) int {
 		return 1
 	}
 	if len(positional) != 3 || rejectUnexpectedFlagArgs(fs) {
-		PrintUsage(os.Stderr, "usage: gregale events subscription-lineage-retry-job-watch APP SUB REQUEST_UUID [--timeout 10m] [--poll-interval 2s] [--expected-created-at TIMESTAMP]", "events")
+		PrintUsage(os.Stderr, "usage: gregale event subscription-lineage-retry-job-watch APP SUB REQUEST_UUID [--timeout 10m] [--poll-interval 2s] [--expected-created-at TIMESTAMP]", "events")
 		return 1
 	}
 	if *timeout <= 0 || *interval < time.Second || *interval > time.Hour {

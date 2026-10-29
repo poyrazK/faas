@@ -72,6 +72,7 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		allowedServiceCallers     *[]string
 		allowedServiceCallScopes  *api.ServiceCallerScopes
 		platformTenantRequired    *bool
+		renamedFrom               string
 
 		schedules []CronSchedule
 		ports     []int
@@ -212,6 +213,9 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			value := *s.platformTenantRequired
 			b.platformTenantRequired = &value
 		}
+		if b.renamedFrom == "" {
+			b.renamedFrom = s.renamedFrom
+		}
 		if !b.schedSet && (len(s.schedules) > 0 || s.schedule != "") {
 			if len(s.schedules) > 0 {
 				b.schedules = append([]CronSchedule(nil), s.schedules...)
@@ -279,6 +283,7 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			AllowedServiceCallers:     b.allowedServiceCallers,
 			AllowedServiceCallScopes:  b.allowedServiceCallScopes,
 			PlatformTenantRequired:    b.platformTenantRequired,
+			RenamedFrom:               b.renamedFrom,
 			Unpublished:               b.det == detCompose && len(b.ports) == 0,
 			InternalPorts:             b.internalPorts,
 

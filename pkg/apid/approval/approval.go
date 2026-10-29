@@ -78,7 +78,7 @@ func Status(policy *state.ReleaseApprovalPolicy, app state.App, d state.Deployme
 	if !Gated(policy, app, d) {
 		return out
 	}
-	out.RequiredApprovals = policy.RequiredApprovals
+	out.RequiredApprovals = RequiredApprovals(*policy, d)
 	out.AfterStage = policy.AfterStage
 	rejected := false
 	for _, a := range decisions {
@@ -100,7 +100,7 @@ func Status(policy *state.ReleaseApprovalPolicy, app state.App, d state.Deployme
 	switch {
 	case rejected:
 		out.State = api.ReleaseApprovalStateRejected
-	case out.Approvals >= policy.RequiredApprovals:
+	case out.Approvals >= out.RequiredApprovals:
 		out.State = api.ReleaseApprovalStateApproved
 	case waiting && !now.Before(since.Add(time.Duration(policy.TimeoutMinutes)*time.Minute)):
 		out.State = api.ReleaseApprovalStateExpired
@@ -110,8 +110,21 @@ func Status(policy *state.ReleaseApprovalPolicy, app state.App, d state.Deployme
 	return out
 }
 
+// RequiredApprovals is the approvals d needs. When the policy forbids
+// self-approval but Gregale cannot name the release's deployer (a GitHub
+// push carries a GitHub login, not an account), one of the approvals could be
+// the author's own, so the release needs one more: at least one approver is
+// then someone else (ADR-20261020085706 amendment 3).
+func RequiredApprovals(policy state.ReleaseApprovalPolicy, d state.Deployment) int {
+	if !policy.AllowSelfApproval && d.DeployedByUserID == "" {
+		return policy.RequiredApprovals + 1
+	}
+	return policy.RequiredApprovals
+}
+
 // SelfApproval reports whether approverAccountID deployed the release. A
-// release with no recorded deployer (a GitHub push) has no self.
+// release with no recorded deployer (a GitHub push) has no self; it needs an
+// extra approval instead (RequiredApprovals).
 func SelfApproval(d state.Deployment, approverAccountID string) bool {
 	return d.DeployedByUserID != "" && d.DeployedByUserID == approverAccountID
 }

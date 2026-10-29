@@ -6508,6 +6508,15 @@ func (v *JailerVMM) waitReady(ctx context.Context, l Lease, healthcheckPath stri
 func (v *JailerVMM) waitReadyWithProbe(ctx context.Context, l Lease, healthcheckPath string, healthcheckGRPC bool, healthcheckGRPCService string, startupDeadlineS ...int) (err error) {
 	readyTimeout := readyTimeoutFor(v.readyTimeout, startupDeadlineS...)
 	deadline := time.Now().Add(readyTimeout)
+	// The readiness window starts after the guest booted, so the caller's own
+	// deadline (the scheduler's cold-boot budget) can end first. Finish just
+	// before it, so the caller receives why the app was not ready instead of
+	// timing out itself (#5709).
+	if callerDeadline, ok := ctx.Deadline(); ok && time.Until(callerDeadline) > 2*readinessAnswerMargin {
+		if early := callerDeadline.Add(-readinessAnswerMargin); early.Before(deadline) {
+			deadline = early
+		}
+	}
 	addr := net.JoinHostPort(l.HostIP.String(), "8080")
 	ctx, readinessSpan := pkgtrace.StartSpan(ctx, "guest.readiness",
 		attribute.String("instance_id", l.Instance),
@@ -6628,11 +6637,8 @@ func (v *JailerVMM) waitReadyWithProbe(ctx context.Context, l Lease, healthcheck
 	client := v.healthcheckClient()
 	var seen readinessObservation
 	for {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			if errors.Is(ctxErr, context.DeadlineExceeded) {
-				return v.healthcheckNotReadyProblem(l, healthcheckPath, seen, readyTimeout)
-			}
-			return ctxErr
+		if ctx.Err() != nil {
+			return v.readinessCutShort(ctx, l, healthcheckPath, seen, readyTimeout, readinessStartedAt)
 		}
 		if time.Now().After(deadline) {
 			return v.healthcheckNotReadyProblem(l, healthcheckPath, seen, readyTimeout)
@@ -6654,13 +6660,30 @@ func (v *JailerVMM) waitReadyWithProbe(ctx context.Context, l Lease, healthcheck
 		}
 		select {
 		case <-ctx.Done():
-			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				return v.healthcheckNotReadyProblem(l, healthcheckPath, seen, readyTimeout)
-			}
-			return ctx.Err()
+			return v.readinessCutShort(ctx, l, healthcheckPath, seen, readyTimeout, readinessStartedAt)
 		case <-time.After(10 * time.Millisecond):
 		}
 	}
+}
+
+// readinessAnswerMargin is how long before the caller's deadline a readiness
+// wait gives up, leaving time for its answer to reach the caller.
+const readinessAnswerMargin = time.Second
+
+// readinessCutShort is the HTTP readiness result when the wait ends before its
+// own deadline: the caller stopped the guest (the watchdog's cold-boot budget)
+// or gave up. An app that already answered the healthcheck without a 2xx, or
+// without HTTP, was not ready for that reason; say so instead of "context
+// canceled". A release whose /healthz answered 503 was refused as
+// cold_boot_timeout (#5709).
+func (v *JailerVMM) readinessCutShort(ctx context.Context, l Lease, healthcheckPath string, seen readinessObservation, readyTimeout time.Duration, startedAt time.Time) error {
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return v.healthcheckNotReadyProblem(l, healthcheckPath, seen, readyTimeout)
+	}
+	if seen.responses > 0 || seen.nonHTTP > 0 {
+		return v.healthcheckNotReadyProblem(l, healthcheckPath, seen, time.Since(startedAt).Round(time.Second))
+	}
+	return ctx.Err()
 }
 
 func grpcHealthcheckProbe(ctx context.Context, conn *grpc.ClientConn, service string) (bool, error) {

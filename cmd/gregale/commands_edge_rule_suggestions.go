@@ -15,7 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const edgeRuleSuggestUsage = "usage: gregale edge-rules suggest [--app <slug>] [--rate-limits [--range <window>] [--dry-run --candidate-rps <n> [--candidate-burst <n>]]]"
+const edgeRuleSuggestUsage = "usage: gregale edge rule suggest [--app <slug>] [--rate-limits [--range <window>] [--dry-run --candidate-rps <n> [--candidate-burst <n>]]]"
 
 // cmdEdgeRulesSuggest lists suggested protection recipes for an app. With
 // --rate-limits it lists per-route rate limits instead, as
@@ -57,7 +57,7 @@ func cmdEdgeRulesSuggest(args []string) int {
 	}
 	rateLimits := fmt.Sprintf("Per-route rate limits: gregale edge rule suggest --app %s --rate-limits\n", slug)
 	if len(out.Suggestions) == 0 {
-		_, _ = fmt.Fprintf(osStdout, "No suggested protections for %s from the last %s of traffic.\n  Browse every recipe: gregale edge-rules recipes\n%s", slug, out.Window, rateLimits)
+		_, _ = fmt.Fprintf(osStdout, "No suggested protections for %s from the last %s of traffic.\n  Browse every recipe: gregale edge rule recipes\n%s", slug, out.Window, rateLimits)
 		return 0
 	}
 	_, _ = fmt.Fprintf(osStdout, "Suggested protections for %s, from the last %s of traffic:\n\n", slug, out.Window)
@@ -77,7 +77,7 @@ func cmdEdgeRulesSuggest(args []string) int {
 // parameters in name order and a placeholder for each required one the
 // suggestion cannot fill.
 func edgeRuleSuggestCommand(slug string, sg api.EdgeRuleRecipeSuggestion) string {
-	parts := []string{"gregale edge-rules recipe", sg.Recipe, "--app", slug}
+	parts := []string{"gregale edge rule recipe", sg.Recipe, "--app", slug}
 	names := make([]string, 0, len(sg.Params))
 	for name := range sg.Params {
 		names = append(names, name)

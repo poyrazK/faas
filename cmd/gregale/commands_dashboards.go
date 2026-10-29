@@ -43,7 +43,7 @@ func cmdDashboards(args []string) int {
 func cmdDashboardsList(args []string) int {
 	fs := newFlagSet("dashboards list", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil || fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale dashboards list", "dashboards")
+		PrintUsage(os.Stderr, "usage: gregale dashboard list", "dashboards")
 		return 1
 	}
 	client, err := authedClient()
@@ -58,7 +58,7 @@ func cmdDashboardsList(args []string) int {
 		return jsonOut(writeJSON(out))
 	}
 	if len(out.Dashboards) == 0 {
-		_, _ = fmt.Fprintln(osStdout, "No dashboards. Create one with `gregale dashboards create NAME --file widgets.json`.")
+		_, _ = fmt.Fprintln(osStdout, "No dashboards. Create one with `gregale dashboard create NAME --file widgets.json`.")
 		return 0
 	}
 	_, _ = fmt.Fprintf(osStdout, "%-36s  %-24s  %s\n", "ID", "NAME", "WIDGETS")
@@ -71,7 +71,7 @@ func cmdDashboardsList(args []string) int {
 func cmdDashboardsGet(args []string) int {
 	fs := newFlagSet("dashboards get", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale dashboards get <dashboard-id>", "dashboards")
+		PrintUsage(os.Stderr, "usage: gregale dashboard get <dashboard-id>", "dashboards")
 		return 1
 	}
 	client, err := authedClient()
@@ -92,7 +92,7 @@ func cmdDashboardsGet(args []string) int {
 // cmdDashboardsCreate implements `gregale dashboards create <name> --file F`;
 // F holds the widgets as a JSON array (or a {"widgets": [...]} object).
 func cmdDashboardsCreate(args []string) int {
-	const usage = "usage: gregale dashboards create <name> --file <widgets.json>"
+	const usage = "usage: gregale dashboard create <name> --file <widgets.json>"
 	fs := newFlagSet("dashboards create", flag.ContinueOnError)
 	file := fs.String("file", "", "JSON file with the widgets array (- for stdin)")
 	flags, pos := splitArgsForFlags(args)
@@ -127,7 +127,7 @@ func cmdDashboardsCreate(args []string) int {
 
 // cmdDashboardsReplace implements `gregale dashboards replace <id> --name N --file F`.
 func cmdDashboardsReplace(args []string) int {
-	const usage = "usage: gregale dashboards replace <dashboard-id> --name <name> --file <widgets.json>"
+	const usage = "usage: gregale dashboard update <dashboard-id> --name <name> --file <widgets.json>"
 	fs := newFlagSet("dashboards replace", flag.ContinueOnError)
 	name := fs.String("name", "", "dashboard name")
 	file := fs.String("file", "", "JSON file with the widgets array (- for stdin)")
@@ -164,7 +164,7 @@ func cmdDashboardsReplace(args []string) int {
 func cmdDashboardsRm(args []string) int {
 	fs := newFlagSet("dashboards rm", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale dashboards rm <dashboard-id>", "dashboards")
+		PrintUsage(os.Stderr, "usage: gregale dashboard delete <dashboard-id>", "dashboards")
 		return 1
 	}
 	client, err := authedClient()
@@ -186,7 +186,7 @@ func cmdDashboardsRm(args []string) int {
 func cmdDashboardsShow(args []string) int {
 	fs := newFlagSet("dashboards show", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale dashboards show <dashboard-id>", "dashboards")
+		PrintUsage(os.Stderr, "usage: gregale dashboard show <dashboard-id>", "dashboards")
 		return 1
 	}
 	client, err := authedClient()

@@ -221,7 +221,8 @@ func TestCILegacyInstallationSignerCannotAssertAnotherInstallation(t *testing.T)
 	secret := []byte("synthetic legacy secret")
 	body := []byte(`{"ref":"refs/heads/main","after":"` + strings.Repeat("a", 40) + `","repository":{"id":123,"full_name":"gregale/api"},"installation":{"id":99}}`)
 	called := false
-	srv := &Server{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), SecretResolver: ciLegacySecretResolver{secret}, Deliveries: &recordingDeliveryStore{}, RecordCI: func(context.Context, WebhookDelivery) error { called = true; return nil }}
+	deliveries := &recordingDeliveryStore{}
+	srv := &Server{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), SecretResolver: ciLegacySecretResolver{secret}, Deliveries: deliveries, RecordCI: func(context.Context, WebhookDelivery) error { called = true; return nil }}
 	req := httptest.NewRequest(http.MethodPost, "/webhooks/github", strings.NewReader(string(body)))
 	req.Header.Set("X-GitHub-Event", "push")
 	req.Header.Set("X-GitHub-Delivery", uuid.NewString())
@@ -229,7 +230,10 @@ func TestCILegacyInstallationSignerCannotAssertAnotherInstallation(t *testing.T)
 	req.Header.Set("X-Hub-Signature-256", SignForTest(body, secret))
 	w := httptest.NewRecorder()
 	srv.WebhookLoopbackHandler().ServeHTTP(w, req)
-	if w.Code != http.StatusAccepted || called {
-		t.Fatal("legacy signer crossed CI's App-authenticated source boundary")
+	// The body names installation 99 under installation 41's secret: refused
+	// before anything is enqueued, so the delivery worker never builds
+	// another installation's repository (bug hunt 2026-10-27).
+	if w.Code != http.StatusUnauthorized || called || len(deliveries.deliveries) != 0 {
+		t.Fatalf("legacy signer crossed its installation: %d, CI called %v, enqueued %d", w.Code, called, len(deliveries.deliveries))
 	}
 }

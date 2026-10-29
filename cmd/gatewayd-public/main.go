@@ -281,6 +281,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("gatewayd-public: open db: %w", err)
 	}
 	defer pool.Close()
+	// pool.Close waits for every acquired connection, and the LISTEN
+	// subscriptions below hold one until their context ends. The daemon
+	// context ends only on SIGTERM, so a generation that handed off returned
+	// from run and then hung in pool.Close for good, its pollers failing with
+	// "closed pool" (#5709). Deferred after pool.Close, this runs first.
+	ctx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
 	trafficRevocations, err := newPublicTrafficRevocationRegistry(ctx, pool)
 	if err != nil {
 		return fmt.Errorf("gatewayd-public: %w", err)

@@ -300,8 +300,17 @@ var cliCommands = []cliCommand{
 		Short:   "Provision, verify, and migrate per-reader seal domains (ADR 20261022111812)",
 		Subcommands: []cliSub{
 			{Name: "init", Short: "Create <domain>.age and <domain>.age.pub", Flags: []cliFlag{{Name: "domain", Short: "seal domain"}, {Name: "dir", Short: "domain identity directory"}, {Name: "force", Short: "coordinated identity replacement"}, {Name: "json", Short: "emit structured JSON"}}},
-			{Name: "verify", Short: "Prove this node's domain identity opens the domain probe", Flags: []cliFlag{{Name: "domain", Short: "seal domain"}, {Name: "dir", Short: "domain identity directory"}, {Name: "publish", Short: "write the probe when the domain has none"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "metrics-file", Short: "node_exporter textfile output"}, {Name: "recipient-only", Short: "check the staged recipient against the published probe"}, {Name: "json", Short: "emit structured JSON"}}},
+			{Name: "verify", Short: "Prove this node's domain identity opens the domain probe", Flags: []cliFlag{{Name: "domain", Short: "seal domain"}, {Name: "dir", Short: "domain identity directory"}, {Name: "publish", Short: "write the probe when the domain has none, or move it to this node's identity on rotation"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "metrics-file", Short: "node_exporter textfile output"}, {Name: "recipient-only", Short: "check the staged recipient against the published probe"}, {Name: "json", Short: "emit structured JSON"}}},
 			{Name: "migrate", Short: "Re-seal a domain's stored envelopes", Flags: []cliFlag{{Name: "domain", Short: "seal domain (outbound, runtime, source, build, edge, alerting, storage, control, delivery or account)"}, {Name: "dir", Short: "domain identity directory"}, {Name: "fleet-key", Short: "fleet.age identity"}, {Name: "host-key", Short: "legacy host.age identity"}, {Name: "readers-verified", Short: "every reader holds the domain identity"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "json", Short: "emit structured JSON"}}},
+		},
+	},
+	{
+		Name:    dispatchLiveQuery,
+		DocSlug: "live-query",
+		Short:   "Sign live-query keys and logins (ADR 20261028161502)",
+		Subcommands: []cliSub{
+			{Name: "signing-keygen", Short: "Create apid's live signing key and its verify key", Flags: []cliFlag{{Name: "sign-key", Short: "new private key path", Req: true}, {Name: "verify-key", Short: "new public key path", Req: true}}},
+			{Name: "sign-existing", Short: "Sign every unsigned live key and login as it stands", Flags: []cliFlag{{Name: "sign-key", Short: "apid's live signing key"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "json", Short: "emit structured JSON"}}},
 		},
 	},
 	{
@@ -929,7 +938,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "release",
 		DocSlug: "release",
-		Short:   "Cluster-shipped release bundle (release bundle|install|kgv|reconcile; PR-3 / ADR-110, PR-B / ADR-113)",
+		Short:   "Cluster-shipped release bundle (release bundle|install|kgv|reconcile|history; PR-3 / ADR-110, PR-B / ADR-113)",
 		Subcommands: []cliSub{
 			{
 				Name:  subReleaseBundle,
@@ -976,6 +985,15 @@ var cliCommands = []cliCommand{
 					{Name: "releases-root", Short: "releases root (default /opt/faas/releases)"},
 					{Name: "retention", Short: "minimum abandoned-row age (default 24h)"},
 					{Name: "dry-run", Short: "report eligible rows without deleting"},
+					{Name: "json", Short: "emit structured JSON to stdout"},
+				},
+			},
+			{
+				Name:  subReleaseHistory,
+				Short: "List release activations (deploys and rollbacks) on control-plane hosts, newest first (issue #574)",
+				Flags: []cliFlag{
+					{Name: "host", Short: "only this host (default: every host)"},
+					{Name: "limit", Short: "most rows to show, 1-1000 (default 20)"},
 					{Name: "json", Short: "emit structured JSON to stdout"},
 				},
 			},

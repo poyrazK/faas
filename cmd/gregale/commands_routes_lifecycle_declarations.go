@@ -26,7 +26,7 @@ func cmdRoutesLifecycleDeclarations(args []string) int {
 	_, a := uuid.Parse(*from)
 	_, b := uuid.Parse(*to)
 	if len(positional) != 1 || !validCLISlug(positional[0]) || a != nil || b != nil || *from == *to || rejectUnexpectedFlagArgs(fs) {
-		PrintUsage(osStderr, "usage: gregale routes lifecycle declarations <slug> --from-deployment UUID --to-deployment UUID [--out PATH] [--fail-on-findings] [--json]", "cli")
+		PrintUsage(osStderr, "usage: gregale api route lifecycle declarations <slug> --from-deployment UUID --to-deployment UUID [--out PATH] [--fail-on-findings] [--json]", "cli")
 		return 1
 	}
 	if *output != "" {

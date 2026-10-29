@@ -74,7 +74,7 @@ func cmdSLO(args []string) int {
 		slug, resolveErr = resolveRequiredAppSlug("")
 		if resolveErr != nil {
 			if errors.Is(resolveErr, errProjectContextNotFound) {
-				PrintUsage(os.Stderr, sloCmdUsage+" (or run `gregale link <project-slug>`)", sloCmdDocsTopic)
+				PrintUsage(os.Stderr, sloCmdUsage+"\nOr run `gregale link <project-slug>` in this checkout.", sloCmdDocsTopic)
 				return 1
 			}
 			return printErr("Could not read local project context", resolveErr)

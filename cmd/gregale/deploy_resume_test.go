@@ -498,7 +498,7 @@ func TestDeployResumeProcessHelper(t *testing.T) {
 		if err := json.Unmarshal(output.Bytes(), &receipt); err != nil {
 			t.Fatal(err)
 		}
-		if receipt.ID != "dep-1" || receipt.ConfigurationComplete == nil || !*receipt.ConfigurationComplete || !strings.Contains(receipt.ResumeCommand, "deploy resume") {
+		if receipt.ID != "dep-1" || receipt.ConfigurationComplete == nil || !*receipt.ConfigurationComplete || !strings.Contains(receipt.ResumeCommand, "release resume") {
 			t.Fatalf("receipt=%+v", receipt)
 		}
 	}
