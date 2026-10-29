@@ -21,7 +21,7 @@ func (d *Drain) prepareEventAcknowledgment(ctx context.Context, inv state.Invoca
 	if !ok {
 		return "", fmt.Errorf("event acknowledgments unavailable")
 	}
-	delay := d.invocationRetryDelay(inv)
+	delay := d.invocationRetryDelay(ctx, inv)
 	if delay <= 0 {
 		delay = api.EventSubscriptionControlRetryDelay
 	}
