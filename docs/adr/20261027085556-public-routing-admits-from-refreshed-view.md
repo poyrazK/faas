@@ -134,3 +134,29 @@ stage. Notifications already announce all of these except the canary stage.
   read keeps ADR-570's guarantees.
 - **No outage grace.** Routing would remain a fleet-wide single point of
   failure on the control-plane Postgres, which this record removes.
+
+## Amendment 1 (2026-10-29): a cold read waits out a short stall
+
+Production refused public requests with 503 `traffic_policy_unavailable` about
+ten times a day, every one at stage `routing_read_timeout`. They were cold
+reads: an app tracked by no view, usually a scale-to-zero app whose last
+request was more than `api.TrafficPublicRoutingWarmTTL` ago. Decision 4 read
+it with the 250 ms routing bound, and the 2-vCPU control plane stalls for
+seconds under load. All database reads on a gateway time out together then,
+including traffic observations and placement repairs. gatewayd-internal
+abandoned about 2,100 pool acquires per node in a week.
+
+Decision 4 changes: a cold read's first attempt keeps
+`api.TrafficPublicRoutingReadTimeout`. A failed attempt is retried once, and
+the read as a whole is bounded by `api.TrafficPublicRoutingColdReadTimeout`
+(2 s). A store answer, a refusal included, is never retried. The request's
+routing pin is bounded by the cold bound too, so the exact read used without
+a view, or for a pin the view cannot answer, may take up to 2 s. A warm view
+answers from memory, so warm requests are unchanged. A stall longer than the
+cold bound still refuses, and an outage still refuses untracked apps.
+
+The control plane's load is outside this record.
+
+Validation: `TestColdReadRetriesAFailedAttempt`,
+`TestColdReadRetriesASlowFirstAttempt`, `TestColdReadGivesUpAtTheColdBound`,
+`TestColdReadDoesNotRetryARefusal`.
