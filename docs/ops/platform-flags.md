@@ -292,8 +292,11 @@ account, or `default` for everyone at launch.
 
 Before releasing `edge_challenge` or `edge_attack_mode` to any account on a
 fleet with more than one gateway, give every gateway the fleet's challenge
-key: set `gatewayd_edge_challenge_key` (`openssl rand -hex 32`) in the fleet
-vault and run the `gatewayd_internal_service` role with
+key: on a fleet CD deploys, set the environment secret
+`GATEWAYD_EDGE_CHALLENGE_KEY` (`openssl rand -hex 32`) and roll the compute
+nodes, which stages it with `gatewayd_edge_challenge_key_required=true`;
+elsewhere set `gatewayd_edge_challenge_key` in the fleet vault and run the
+`gatewayd_internal_service` role with
 `gatewayd_edge_challenge_key_required=true`. Then check that
 `gateway_edge_challenge_key_info{job="gatewayd-internal"}` shows one `key_id`
 with `source="fleet"` and that `FaasEdgeChallengeKeyMismatch` is quiet.
