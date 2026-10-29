@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -21,6 +22,9 @@ func TestRuntimeVerificationFailureNamesStepAndClass(t *testing.T) {
 		{"named not found", &RuntimeVerificationError{Step: "graph_preparation", Err: state.ErrNotFound}, "graph_preparation", "not_found"},
 		{"wrapped twice", fmt.Errorf("outer: %w", &RuntimeVerificationError{Step: "activation", Err: state.ErrInvalidStateTransition}), "activation", "invalid_state_transition"},
 		{"deadline", &RuntimeVerificationError{Step: "candidates", Err: context.DeadlineExceeded}, "candidates", "context"},
+		{"preparation", &RuntimeVerificationError{Step: "candidates", Err: fmt.Errorf("%w: detail", state.ErrEnvironmentWorkloadPreparationUnavailable)}, "candidates", "preparation_unavailable"},
+		{"sqlstate", &RuntimeVerificationError{Step: "serving", Err: fmt.Errorf("insert: %w", &pgconn.PgError{Code: "P0001", Message: "customer text"})}, "serving", "sqlstate_P0001"},
+		{"constraint", &RuntimeVerificationError{Step: "serving", Err: &pgconn.PgError{Code: "23514", ConstraintName: "receipts_check"}}, "serving", "sqlstate_23514:receipts_check"},
 		{"unnamed internal", errors.New("customer text"), "unknown", "internal"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

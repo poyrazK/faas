@@ -230,6 +230,21 @@ func TestGitOpsSourceScheduledJobsPinQualifiedBuildAndOccurrence(t *testing.T) {
 					if state.EnvironmentGitOpsSourceJobArtifactMatches(changed, current, dep) {
 						t.Fatal("another commit borrowed qualified artifact")
 					}
+					// A Job graph proves serving on a later reconcile tick, which
+					// repeats preparation first. Activation must not turn the
+					// reviewed inputs into a conflict.
+					if again, err := preparation.EnvironmentGitOpsSourceRequests(ctx, lease, plan); err != nil || len(again) != 0 {
+						t.Fatalf("post-activation source requests: %+v %v", again, err)
+					}
+					if again, err := preparation.PrepareEnvironmentGitOpsCandidates(ctx, lease, plan, nil); err != nil || len(again) != 1 || again[0].DeploymentID != dep.ID {
+						t.Fatalf("post-activation candidates: %+v %v", again, err)
+					}
+					if again, err := basic.(state.EnvironmentGitOpsGraphPreparationStore).ReconcileEnvironmentGitOpsPreparation(ctx, lease, plan); err != nil || again.Phase != "prepared" || again.ID != graph.ID {
+						t.Fatalf("post-activation graph: %+v %v", again, err)
+					}
+					if _, err := basic.(state.EnvironmentGitOpsQualificationStore).QueueEnvironmentGitOpsQualification(ctx, lease, plan); err != nil {
+						t.Fatalf("post-activation qualification queue: %v", err)
+					}
 					serving, ready, err := basic.(state.EnvironmentGitOpsWorkloadServingStore).PrepareEnvironmentGitOpsWorkloadServing(ctx, lease, plan, nil)
 					if err != nil || ready || len(serving.ScheduledJobAcks) != 0 {
 						t.Fatalf("activation claimed occurrence proof: %+v %v %v", serving, ready, err)

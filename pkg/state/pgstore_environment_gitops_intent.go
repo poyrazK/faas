@@ -92,6 +92,13 @@ func readEnvironmentGitOpsIntent(ctx context.Context, db sqlc.DBTX, source Envir
 	if err := json.Unmarshal(raw, &snapshot); err != nil {
 		return EnvironmentGitOpsObservation{}, snapshot, err
 	}
+	// GitOps-created deployments are never baselines, as in MemStore: an
+	// activated candidate must not become its own inherited deployment input
+	// (or retained deployment) on the next reconcile tick, which conflicted
+	// every Job graph that proves serving after activation.
+	for i := range snapshot.Apps {
+		snapshot.Apps[i].Sources = slices.DeleteFunc(snapshot.Apps[i].Sources, func(s gitOpsSourceBaseline) bool { return s.Managed })
+	}
 	snapshot.Repository = source.Spec.Repository
 	snapshot.GitSource = source.Spec
 	observation, err := compileGitOpsObservation(snapshot, desired)

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/environmentsync"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -70,6 +71,16 @@ func runtimeVerificationFailure(err error) (string, string) {
 		return step, "invalid_argument"
 	case errors.Is(err, state.ErrInvalidStateTransition):
 		return step, "invalid_state_transition"
+	case errors.Is(err, state.ErrEnvironmentWorkloadPreparationUnavailable):
+		return step, "preparation_unavailable"
+	}
+	// SQLSTATE and constraint names are schema facts, never customer data.
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		if pgErr.ConstraintName != "" {
+			return step, "sqlstate_" + pgErr.Code + ":" + pgErr.ConstraintName
+		}
+		return step, "sqlstate_" + pgErr.Code
 	}
 	return step, "internal"
 }
