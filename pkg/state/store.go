@@ -2349,13 +2349,15 @@ type Store interface {
 	// deliberately separate from the deployed-app quota so local development
 	// cannot consume production or preview slots.
 	CountDeveloperApps(ctx context.Context, accountID string) (int, error)
-	// CountAppsWithEvictionPriority returns the per-account count of
-	// apps whose eviction_priority equals the given tier (issue #475).
-	// Counts APPS (not instances) — the per-account cap
-	// (Plan.ReservedConcurrencyPerAccount) is over apps. Excludes
-	// soft-deleted apps so a recently-deleted reserved app doesn't
-	// leak into the cap and reject a subsequent recreate.
-	CountAppsWithEvictionPriority(ctx context.Context, accountID, priority string) (int, error)
+	// CountBillingSubjectAppsWithEvictionPriority counts the apps whose
+	// eviction_priority equals the given tier (issue #475) and that share
+	// appID's billing subject (ADR-202610171904): its company once the
+	// company adopted billing, else its creator. Counts APPS (not
+	// instances) — the per-account cap (Plan.ReservedConcurrencyPerAccount)
+	// is over apps. Excludes soft-deleted apps so a recently-deleted
+	// reserved app doesn't leak into the cap and reject a subsequent
+	// recreate. An unknown appID counts zero.
+	CountBillingSubjectAppsWithEvictionPriority(ctx context.Context, appID, priority string) (int, error)
 	// CountAuthDefaultFlippedApps returns the per-account count of
 	// apps that were stamped by the apps-auth-default grand-father
 	// migration (issue #695 / ADR-080). The migration sets
