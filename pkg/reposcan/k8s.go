@@ -74,6 +74,13 @@ var k8sManifestExts = []string{".yaml", ".yml"}
 // (only stateless pods run on the platform). CronJob → job + the
 // declared schedule.
 //
+// Only Kubernetes objects are read (ADR-20261029093621 §1): a YAML
+// document without apiVersion and kind (an Ansible playbook under
+// deploy/) is skipped with a warning, as are Helm chart and Kustomize
+// directories, whose files are not the objects that run. Every other
+// kind is explained by k8sKindWarning. A YAML syntax error, or a
+// Kubernetes object that does not decode, still fails the scan.
+//
 // Image refs in k8s containers can be denylisted datastores — we
 // surface them as Managed (compose already does this; the customer
 // should see both rows in one confirm table).
@@ -94,6 +101,10 @@ func detectK8s(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 				return err
 			}
 			if entry.IsDir() {
+				if warning, ok := k8sRenderedSourceWarning(fsys, p); ok {
+					warnings = append(warnings, warning)
+					return fs.SkipDir
+				}
 				return nil
 			}
 			ext := strings.ToLower(path.Ext(p))
@@ -105,15 +116,34 @@ func detectK8s(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 				return err
 			}
 			docs := splitYAMLDocs(body)
+			notObjects := 0
 			for docIndex, doc := range docs {
 				if len(strings.TrimSpace(doc)) == 0 {
 					continue
 				}
-				var m k8sManifest
-				if err := yaml.Unmarshal([]byte(doc), &m); err != nil {
+				var node yaml.Node
+				if err := yaml.Unmarshal([]byte(doc), &node); err != nil {
 					return fmt.Errorf("reposcan: parse %s document %d: %w", p, docIndex+1, err)
 				}
-				switch m.Kind {
+				header, isObject, err := k8sObjectHeader(&node)
+				if err != nil {
+					return fmt.Errorf("reposcan: parse %s document %d: %w", p, docIndex+1, err)
+				}
+				if !isObject {
+					// A comment-only document decodes to an empty node.
+					if node.Kind != 0 {
+						notObjects++
+					}
+					continue
+				}
+				var m k8sManifest
+				switch header.Kind {
+				case "Deployment", "CronJob":
+					if err := node.Decode(&m); err != nil {
+						return fmt.Errorf("reposcan: parse %s document %d: %w", p, docIndex+1, err)
+					}
+				}
+				switch header.Kind {
 				case "Deployment":
 					if len(m.Spec.Template.Spec.Containers) == 0 ||
 						strings.TrimSpace(m.Spec.Template.Spec.Containers[0].Image) == "" {
@@ -139,13 +169,17 @@ func detectK8s(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 					seeds = append(seeds, k8sCronJobSeed(p, m))
 				case "StatefulSet":
 					warnings = append(warnings, "reposcan: "+p+
-						": refusing StatefulSet "+m.Metadata.Name+
+						": refusing StatefulSet "+header.Metadata.Name+
 						" (stateless contract, ADR-046)")
 				default:
-					// Service / ConfigMap / Secret / Ingress /
-					// unknown: skip silently. They're plumbing,
-					// not workloads.
+					if warning := k8sKindWarning(p, &node, header); warning != "" {
+						warnings = append(warnings, warning)
+					}
 				}
+			}
+			if notObjects > 0 {
+				warnings = append(warnings, fmt.Sprintf(
+					"reposcan: %s: skipped %d YAML document(s) that are not Kubernetes objects (no apiVersion and kind)", p, notObjects))
 			}
 			return nil
 		})

@@ -243,11 +243,16 @@ func (s *StateStore) Close() error {
 		return nil
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.closed {
+		s.mu.Unlock()
 		return nil
 	}
 	s.closed = true
+	s.mu.Unlock()
+	// Closing waits for the Postgres lease renewal to stop, and a renewal
+	// that just lost the lease records that through fail, under s.mu: hold
+	// it here and both wait forever. Marking the store closed first keeps
+	// every read and write out meanwhile.
 	return s.persist.close()
 }
 

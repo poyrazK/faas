@@ -1893,7 +1893,9 @@
     # The restarted vmmd adopted its predecessor's guests before it started
     # serving. A report with refusals, a fenced claim or none in time fails
     # the rollout loudly; schedd is already failing and recreating every
-    # guest the new vmmd does not hold.
+    # guest the new vmmd does not hold. Records the pre-restart check found
+    # gone (their guest process had already ended) are excused, and only
+    # those: a guest that died across the restart still fails it.
     - name: Wait for the restarted vmmd to report a clean adoption
       ansible.builtin.command:
         argv:
@@ -1901,6 +1903,10 @@
           - adoption-report
           - --wait
           - 90s
+          - --already-gone
+          - >-
+            {{ ((faas_join_adoption_check.stdout | default('{}') | from_json).gone | default([]))
+               | map(attribute='instance') | join(',') }}
       register: faas_join_adoption_report
       changed_when: false
       failed_when: faas_join_adoption_report.rc != 0

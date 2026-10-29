@@ -28,7 +28,8 @@ import (
 // TestSealDomainCheckOutboundPostgres pins the check the seal_domains role
 // runs before outboundd drops the fleet identity (ADR 20261022111812, step
 // 4): it fails while a credential still opens with the fleet identity,
-// writes nothing, and passes once the re-seal moved every row.
+// writes nothing, and passes once the re-seal moved every row. The storage
+// check runs the same way for s3-gatewayd.
 func TestSealDomainCheckOutboundPostgres(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
 	ctx := context.Background()
@@ -114,8 +115,30 @@ func TestSealDomainCheckOutboundPostgres(t *testing.T) {
 		t.Fatalf("check after the re-seal = %+v, %v; want it passed", report, err)
 	}
 
-	if err := runSealDomainMigrate([]string{"--check", "--domain", "build", "--pg-dsn", dsn}); err == nil || !strings.Contains(err.Error(), "outbound only") {
-		t.Fatalf("check of another domain = %v; want it refused", err)
+	// The storage check runs the storage walk: with no S3 credential stored
+	// nothing is pending.
+	storage := mustCheckIdentity(t)
+	if err := secretbox.WriteHostKeyAtPath(sealdomain.IdentityPath(dir, sealdomain.Storage), storage); err != nil {
+		t.Fatal(err)
+	}
+	storageProbe, err := sealdomain.SealProbe(sealdomain.Storage, storage.Recipient())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertSealDomainProbe(ctx, string(sealdomain.Storage), storage.Recipient().String(), storageProbe); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := runSealDomainMigrate([]string{"--check", "--domain", "storage", "--pg-dsn", dsn, "--dir", dir, "--fleet-key", fleetPath, "--host-key", filepath.Join(dir, "host.age"), "--json"}); err != nil {
+		t.Fatal(err)
+	}
+	var storageReport sealmigrate.MigrationReport
+	if err := json.Unmarshal(out.Bytes(), &storageReport); err != nil || storageReport.Domain != sealdomain.Storage || storageReport.Pending != 0 {
+		t.Fatalf("storage check = %s, %v; want the storage domain with nothing pending", out.String(), err)
+	}
+
+	if err := runSealDomainMigrate([]string{"--check", "--domain", "build", "--pg-dsn", dsn}); err == nil || !strings.Contains(err.Error(), "only in this release") {
+		t.Fatalf("check of a domain that cannot contract yet = %v; want it refused", err)
 	}
 }
 
