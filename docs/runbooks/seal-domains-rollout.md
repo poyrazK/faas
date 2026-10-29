@@ -339,7 +339,8 @@ Check:
 - In Prometheus, `faas_seal_domain_loaded{domain="runtime"}` is 1 on every
   vmmd, and FaasSealDomainIdentityMissing does not fire.
 - vmmd logs `"runtime_domain":true` in `vmmd: unseal identities loaded`.
-- apid logs `"runtime seal domain"` with `"write_mode":""` and
+- apid and the clone worker (`journalctl -u faas-apid-clone-worker`) log
+  `"runtime seal domain"` with `"write_mode":""` and
   `"domain_recipient_staged":true`.
 
 Rollback: nothing is sealed to the domain yet. vmmd holding an extra key
@@ -368,7 +369,8 @@ faas_seal_domain_runtime_readers_verified: true
 faas_seal_domain_runtime_writes: domain
 ```
 
-apid then logs `"runtime seal domain"` with `"write_mode":"domain"`, and its
+apid and the clone worker then log `"runtime seal domain"` with
+`"write_mode":"domain"`, and apid's
 rekey runner stops re-sealing runtime secrets. Set a secret on a test app
 and confirm the app wakes and reads the value.
 
@@ -426,7 +428,8 @@ faas_seal_domain_runtime_binding_readers_verified: true
 faas_seal_domain_runtime_binding: account
 ```
 
-apid logs `"runtime seal domain"` with `"account_binding":true`. Set a
+apid and the clone worker log `"runtime seal domain"` with
+`"account_binding":true`. Set a
 secret on a test app and confirm it wakes and reads the value. A wake that
 fails with `envelope is bound to another account` means a secret row was
 copied to an app of another account; do not re-seal it. Find how it got
@@ -1327,7 +1330,10 @@ next start. To stop checking altogether, clear
 Key rotation: generate a new pair and list both public keys in
 the file `faas_seal_domain_runtime_signing_pub_src` names. Converge the
 compute hosts, then switch `faas_seal_domain_runtime_signing_key_src` to the
-new private key. Envelopes signed with the old key keep the old signature,
-so keep the old public key listed. Do not run step 4 with the new key: it
-reports those envelopes as signed by another key. Re-signing them under the
-new key is follow-up work, as for live queries (ADR 20261028161502, item 5).
+new private key. Envelopes signed with the old key keep the old signature
+until you sign them again, keeping the old public key in a file of its own:
+`sudo gregalectl runtime-secret sign-existing --trusted-keys old-runtime-signing.pub --db-env /etc/faas/compute-db.env`.
+An envelope the old key signed is signed again with the new one; one whose
+signature neither key made is reported and left alone. Once a rerun reports
+nothing signed again, drop the old public key from the file and converge
+the compute hosts.
