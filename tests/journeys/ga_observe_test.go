@@ -260,7 +260,9 @@ func TestAlertsAndChannels(t *testing.T) {
 	})
 	var ruleID string
 	s.step("add_rule", func(t *testing.T) {
-		args := []string{"alerts", "add", "--app", slug, "--name", "e2e-requests",
+		// Rule names are unique per account, and a deleted app's rules
+		// keep theirs, so each run names its own.
+		args := []string{"alerts", "add", "--app", slug, "--name", tg.slug("requests"),
 			"--metric", "request_count", "--comparison", "gt", "--threshold", "5", "--window-spec", "5m",
 			"--webhook-url", base + "/hook", "--webhook-secret-stdin"}
 		if channelID != "" {
