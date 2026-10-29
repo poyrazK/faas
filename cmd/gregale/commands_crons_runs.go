@@ -124,7 +124,7 @@ func cmdCronsRuns(args []string) int {
 		renderCronRun(osStdout, r)
 	}
 	if missing := cronRunsRouteMissing(resp.Runs); missing > 0 {
-		printCronRouteMissingHint(client, id, missing, len(resp.Runs))
+		printCronRouteMissingHint(context.Background(), client, id, missing, len(resp.Runs))
 	}
 	return 0
 }

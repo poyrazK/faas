@@ -94,7 +94,7 @@ func followCronFireNowRequest(parent context.Context, client *Client, cronID, re
 					PrintProgress(osStdout, "Fire-now request completed; inspect the resulting run for execution details.")
 				}
 				if status == fireNowStatusFailed && progress.Error != nil && cronRunRouteMissing(*progress.Error) {
-					printCronRouteMissingHint(client, cronID, 1, 1)
+					printCronRouteMissingHint(ctx, client, cronID, 1, 1)
 				}
 			}
 			code := 1

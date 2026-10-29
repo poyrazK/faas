@@ -17,10 +17,10 @@ func cronRunRouteMissing(errText string) bool {
 // printCronRouteMissingHint explains runs that failed with 404 and names the
 // fix. It reads the cron for its path and falls back to a generic sentence
 // when the read fails.
-func printCronRouteMissingHint(client *Client, cronID string, failed, total int) {
+func printCronRouteMissingHint(ctx context.Context, client *Client, cronID string, failed, total int) {
 	target := "the cron's path"
 	if client != nil {
-		if cron, err := client.GetCron(context.Background(), cronID); err == nil && cron.Path != "" {
+		if cron, err := client.GetCron(ctx, cronID); err == nil && cron.Path != "" {
 			target = "POST " + cron.Path
 		}
 	}
