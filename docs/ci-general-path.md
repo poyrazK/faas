@@ -103,8 +103,10 @@ requires a real guest, jail, network namespace, image, or Firecracker lifecycle.
 
 All files under `cmd/e2e` are discovered by `scripts/ci/e2eshard`, so both
 groups run in the mega tier's E2E shards (`ci.yml`, nightly). The
-`e2e-general` workflow runs them on every pull request that changes Go code,
-migrations or the Makefile, as two jobs (`normal-path`, `routes`). It is not a
+`e2e-general` workflow runs them before merge only on a pull request labelled
+`e2e-general`, or by dispatch on a branch, as four jobs (`normal-path`,
+`routes`, `multi-service`, `edge-rules`); it never runs on merges to `main`
+(ADR-20261029121500). Label gateway, routing and daemon-wiring changes. It is not a
 `ci-light` job because a failed post-merge `ci-light` run fails automatic
 deploys, and the routes tests wait on wall-clock windows.
 

@@ -24317,6 +24317,34 @@ $$;
 
 
 --
+-- Name: record_compute_release_activation(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.record_compute_release_activation() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'pg_catalog'
+    AS $_$
+BEGIN
+    EXECUTE format(
+        'INSERT INTO %I.platform_release_activations
+             (host, kind, release_id, commit_sha, previous_release_id, actor, status, detail, started_at, finished_at)
+         VALUES ($1, ''deploy'', $2, $3, $4, $5, ''succeeded'', ''release install stamped compute_nodes.release_id'', now(), now())',
+        TG_TABLE_SCHEMA)
+    USING left(NEW.name, 253),
+          left(NEW.release_id, 128),
+          CASE WHEN NEW.release_id ~ '^[0-9a-f]{40}$' THEN NEW.release_id END,
+          CASE WHEN TG_OP = 'UPDATE' THEN left(NULLIF(OLD.release_id, ''), 128) END,
+          left('release install as ' || session_user, 200);
+    RETURN NULL;
+EXCEPTION WHEN OTHERS THEN
+    -- The history is best effort, as deployctl's is: never fail the install.
+    RAISE WARNING 'release history: record % on %: %', NEW.release_id, NEW.name, SQLERRM;
+    RETURN NULL;
+END
+$_$;
+
+
+--
 -- Name: record_event_execution_outcome(uuid, timestamp with time zone, uuid, timestamp with time zone, uuid, uuid, bigint, integer, text, timestamp with time zone, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -32821,6 +32849,8 @@ CREATE TABLE public.compute_nodes (
     readiness text DEFAULT 'ready'::text NOT NULL,
     readiness_reason text,
     edge_listener_heartbeat_at timestamp with time zone,
+    wake_breaker_open_until timestamp with time zone,
+    wake_breaker_reason text,
     CONSTRAINT compute_nodes_admission_ceiling_mb_check CHECK ((admission_ceiling_mb > 0)),
     CONSTRAINT compute_nodes_gateway_target_url_scheme_chk CHECK (((gateway_target_url IS NULL) OR (gateway_target_url ~ '^tcp://[^/:][^/]*:[0-9]+$'::text))),
     CONSTRAINT compute_nodes_last_recovery_outcome_chk CHECK (((last_recovery_outcome IS NULL) OR (last_recovery_outcome = ANY (ARRAY['succeeded'::text, 'failed'::text, 'partial'::text])))),
@@ -47841,7 +47871,7 @@ CREATE TABLE public.platform_release_activations (
 -- Name: TABLE platform_release_activations; Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON TABLE public.platform_release_activations IS 'Release activations (deploy, rollback) per control-plane host, written by deployctl as the schema owner. Read with gregalectl release history (issue #574).';
+COMMENT ON TABLE public.platform_release_activations IS 'Release activations: control-plane deploys and rollbacks written by deployctl as the schema owner, and compute release installs recorded from compute_nodes.release_id. Read with gregalectl release history (issue #574).';
 
 
 --
@@ -53285,6 +53315,20 @@ CREATE TABLE public.runtime_releases (
     CONSTRAINT runtime_releases_layout_version_check CHECK (((length(layout_version) >= 1) AND (length(layout_version) <= 64))),
     CONSTRAINT runtime_releases_runtime_check CHECK ((runtime = ANY (ARRAY['node22'::text, 'node24'::text, 'python312'::text, 'python313'::text, 'go124'::text, 'go124-alpine'::text]))),
     CONSTRAINT runtime_releases_source_ref_check CHECK ((source_ref ~ '@sha256:[a-f0-9]{64}$'::text))
+);
+
+
+--
+-- Name: runtime_secret_signatures; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_secret_signatures (
+    ciphertext_sha256 bytea NOT NULL,
+    signature bytea NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT runtime_secret_signatures_ciphertext_sha256_check CHECK ((octet_length(ciphertext_sha256) = 32)),
+    CONSTRAINT runtime_secret_signatures_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT runtime_secret_signatures_signature_check CHECK ((octet_length(signature) = 64))
 );
 
 
@@ -67072,6 +67116,14 @@ ALTER TABLE ONLY public.runtime_releases
 
 
 --
+-- Name: runtime_secret_signatures runtime_secret_signatures_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_secret_signatures
+    ADD CONSTRAINT runtime_secret_signatures_pkey PRIMARY KEY (ciphertext_sha256);
+
+
+--
 -- Name: runtime_snapshots runtime_snapshots_catalog_key_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -80641,6 +80693,20 @@ CREATE TRIGGER compute_node_keys_changed_trg AFTER INSERT OR DELETE OR UPDATE ON
 --
 
 CREATE TRIGGER compute_node_lifecycle_generation_guard BEFORE INSERT OR UPDATE OF lifecycle, lifecycle_generation, drain_initiated_at, recovery_initiated_at ON public.compute_nodes FOR EACH ROW EXECUTE FUNCTION public.compute_node_lifecycle_generation_guard();
+
+
+--
+-- Name: compute_nodes compute_nodes_release_activation_insert; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER compute_nodes_release_activation_insert AFTER INSERT ON public.compute_nodes FOR EACH ROW WHEN (((new.release_id IS NOT NULL) AND (new.release_id <> ''::text))) EXECUTE FUNCTION public.record_compute_release_activation();
+
+
+--
+-- Name: compute_nodes compute_nodes_release_activation_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER compute_nodes_release_activation_update AFTER UPDATE OF release_id ON public.compute_nodes FOR EACH ROW WHEN (((new.release_id IS NOT NULL) AND (new.release_id <> ''::text) AND (old.release_id IS DISTINCT FROM new.release_id))) EXECUTE FUNCTION public.record_compute_release_activation();
 
 
 --

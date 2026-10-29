@@ -1,6 +1,7 @@
 from typing import Literal
 
 ListEventReplayBackfillItemsState = Literal[
+    "cancelled",
     "enqueued",
     "failed",
     "filtered",
@@ -13,6 +14,7 @@ ListEventReplayBackfillItemsState = Literal[
 ]
 
 LIST_EVENT_REPLAY_BACKFILL_ITEMS_STATE_VALUES: set[ListEventReplayBackfillItemsState] = {
+    "cancelled",
     "enqueued",
     "failed",
     "filtered",

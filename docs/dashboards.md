@@ -39,7 +39,9 @@ checkout as of 2026-10-22 12:00:00 UTC
 ```
 
 A widget that cannot be read says why (`unavailable: no values pushed in the
-window`), and the rest of the dashboard still shows. The API is
+window`), and the rest of the dashboard still shows. A widget reads only what
+your account can open on its own: a log count needs log search, a custom
+metric needs custom metric history, and an SLO needs SLOs. The API is
 `GET /v1/dashboards/{id}/data`.
 
 In the web dashboard, **Dashboards** (`/dashboard/dashboards`) lists them,

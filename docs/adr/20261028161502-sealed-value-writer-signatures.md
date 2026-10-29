@@ -60,8 +60,11 @@ never written by Gregale, because nothing in the row says who wrote it.
    as a systemd credential. livequeryd reads a file of public keys and
    accepts a signature from any key in it, so a key rotation adds the new
    public key before apid switches. Rows signed with the old key must then
-   be signed again. That step, verifying each old signature before
-   re-signing, is follow-up work; until it exists, keep both public keys.
+   be signed again: `sign-existing --trusted-keys <old public key>`
+   (amended 2026-10-29) verifies each old signature against the trusted
+   key before it signs the row with the new one, compared and swapped on
+   the signature it read. A signature neither key made is reported and left
+   alone. The old public key is dropped once a rerun signs nothing again.
 6. **Other domains follow the same pattern** in later amendments: runtime
    secrets (apid → vmmd) next, then outbound, delivery and the rest. Each
    gets its own key pair, column(s), backfill and contract step.
@@ -79,3 +82,64 @@ never written by Gregale, because nothing in the row says who wrote it.
   databases.
 - Until the contract step, an unsigned row is still served. The protection
   is complete only after it.
+
+## Amendment 1 (2026-10-29): runtime secrets
+
+The second domain is runtime secrets: the envelopes apid seals for an app's
+environment (ADR-20261023173624) and vmmd opens when it boots, wakes or
+reloads a workload.
+
+- **The signature covers the ciphertext alone**
+  (`sealsig.RuntimeSecretMessage`: the context, `runtime`,
+  `runtime-secret`, the blob). A runtime envelope carries its account
+  binding and key inside it, and vmmd checks the binding once the signature
+  verifies. Several paths copy the same bytes to another row of the same
+  account: an environment clone, a promotion pin into a release snapshot, a
+  managed Postgres cutover and the config guard. The signature stays valid
+  through all of them, without apid signing again. Moving a signed value
+  between apps of one account stays possible, as it is today for anyone who
+  can write that account's rows. Forging a value, or moving one to another
+  account, does not.
+- **Signatures live in one table keyed by the envelope's SHA-256**:
+  `runtime_secret_signatures(ciphertext_sha256, signature)`. No row that
+  holds a runtime envelope changes shape, and every copy of the same bytes
+  shares one signature. A row is never deleted when its envelope is
+  replaced. A signature of bytes nobody stores is harmless, and the table
+  grows by one short row per secret write.
+- **apid signs at seal time.** With `FAAS_APID_RUNTIME_SIGNING_KEY_FILE`
+  set, apid registers a hook that runs inside `secretbox.SealBound`, so
+  every runtime envelope apid seals, rotates or re-keys gets signed. The
+  hook writes the signature before the seal returns, so the signature
+  exists before any row holds the envelope. A failed write fails the seal.
+- **vmmd looks the signature up and verifies it before it opens.** With
+  `FAAS_RUNTIME_SECRET_SIGNATURE_KEYS_FILE` set, vmmd reads the signatures
+  of a workload's envelopes from the table in one query. It refuses an
+  envelope whose signature does not verify. With
+  `FAAS_RUNTIME_SECRET_SIGNATURE_REQUIRED=true` it also refuses one with no
+  signature (the contract step). A signature is self-authenticating, so
+  vmmd reading it from the database is as safe as receiving it from schedd.
+  That keeps schedd, builderd and the `vmmd.v1` protocol unchanged.
+  - vmmd remembers the digests it has verified, so a warm wake does not
+    query again.
+  - Before the contract step, a failed lookup counts as unsigned and is
+    logged. After it, a failed lookup fails the open.
+  - Every path through `openSealedEnvEntries` and `UnsealRuntimeSecrets` is
+    covered: boots, wakes, jobs, builds, sidecar secret grants and live
+    reload.
+- **Operator re-sealers.** `gregalectl seal-domain migrate`, its
+  `--bind-accounts` pass and `gregalectl fleet-seal migrate` rewrite ciphertext
+  outside apid. Given `--runtime-signing-key`, they sign what they seal.
+  Without it, they leave the new envelopes unsigned for the backfill.
+- **Backfill and keys.**
+  - `gregalectl runtime-secret signing-keygen` writes the key pair.
+  - `gregalectl runtime-secret sign-existing` signs every stored runtime
+    envelope that has no signature, as it stands (trust on first use, as in
+    the live-query backfill).
+  - The rollout is: keygen; vmmd gets the public key; apid gets the key;
+    `sign-existing`; then the require switch
+    (`faas_seal_domain_runtime_signatures_required`, runbook seal-domains-rollout.md §14).
+- **Outside this amendment.** Sidecar direct environment values
+  (`deployments.sidecars`, unbound `SealBytes`) are opened by another path
+  and are not runtime-domain envelopes. Honeytokens that `gregalectl
+  honeytoken` plants with plain `SealOne` are signed by the backfill; plant
+  them before running it, or run it again.

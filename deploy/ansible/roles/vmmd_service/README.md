@@ -26,8 +26,9 @@ component and runs only on the EX44 hardware. The operator runs
   during vmmd self-registration. Both are required by the role, so a fresh
   bootstrap cannot regress to a unix-socket row that needs a manual DB patch.
 - `99-faas-egress.conf.j2` — gives vmmd the same provider-specific public
-  interface and tenant bridge CIDR that Ansible uses for the boot nftables
-  policy, preserving them across wake-time policy rebuilds.
+  interface, tenant bridge CIDR and control-plane ports that Ansible uses for
+  the boot nftables policy, preserving them across wake-time policy rebuilds.
+  The ports include the app edge's (ADR-1343) and Promtail's when those are on.
 
 ## Side effects
 

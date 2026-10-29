@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"net/url"
 	"os"
 	"testing"
 
@@ -26,19 +25,7 @@ func TestSealDomainVerifyRecipientPostgres(t *testing.T) {
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
-	u, err := url.Parse(pool.Config().ConnString())
-	if err != nil {
-		t.Fatal(err)
-	}
-	// pgtest isolates a test in a clone database or in a schema on the
-	// search_path; carry both into the command's DSN.
-	u.Path = "/" + pool.Config().ConnConfig.Database
-	if sp := pool.Config().ConnConfig.RuntimeParams["search_path"]; sp != "" {
-		q := u.Query()
-		q.Set("search_path", sp)
-		u.RawQuery = q.Encode()
-	}
-	dsn := u.String()
+	dsn := pgtestDSN(t, pool)
 	var out bytes.Buffer
 	previous := osStdout
 	osStdout = &out

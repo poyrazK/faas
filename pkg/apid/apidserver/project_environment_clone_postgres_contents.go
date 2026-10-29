@@ -42,7 +42,7 @@ func (s *server) projectEnvironmentClonePostgresContents(ctx context.Context, l 
 		return copycontents.Manifest{}, managedpostgres.ErrConflict
 	}
 	a, err := store.ProjectEnvironmentClonePostgresContentsForLease(ctx, l, d.Scope.SourceDatabaseID, oid)
-	identities := mfaIdentities()
+	identities := accountIdentities()
 	if err == nil && a.State == "captured" {
 		return copycontents.Open(identities, d, a.Sealed)
 	}
@@ -56,7 +56,7 @@ func (s *server) projectEnvironmentClonePostgresContents(ctx context.Context, l 
 		if setSecretRecipient == nil {
 			return copycontents.Manifest{}, managedpostgres.ErrUnavailable
 		}
-		recipient := hostSecretRecipient()
+		recipient := cloneSealRecipient()
 		if !cloneInventoryCanOpen(recipient, identities) {
 			return copycontents.Manifest{}, managedpostgres.ErrUnavailable
 		}

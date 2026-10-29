@@ -2704,6 +2704,8 @@ type ComputeNode struct {
 	ReadinessReason pgtype.Text
 	// Last time this node's gatewayd-internal edge-rule listener reported alive (database clock); NULL before its first report (ADR-091).
 	EdgeListenerHeartbeatAt pgtype.Timestamptz
+	WakeBreakerOpenUntil    pgtype.Timestamptz
+	WakeBreakerReason       pgtype.Text
 }
 
 type ComputeNodeHeartbeat struct {
@@ -10818,7 +10820,7 @@ type PlatformMailProducerOutbox struct {
 	DeploymentFailureAt              pgtype.Timestamptz
 }
 
-// Release activations (deploy, rollback) per control-plane host, written by deployctl as the schema owner. Read with gregalectl release history (issue #574).
+// Release activations: control-plane deploys and rollbacks written by deployctl as the schema owner, and compute release installs recorded from compute_nodes.release_id. Read with gregalectl release history (issue #574).
 type PlatformReleaseActivation struct {
 	ID                pgtype.UUID
 	Host              string
@@ -13789,6 +13791,12 @@ type RuntimeReleaseQualification struct {
 	RecordedAt        pgtype.Timestamptz
 	RevokedAt         pgtype.Timestamptz
 	RevocationSha256  pgtype.Text
+}
+
+type RuntimeSecretSignature struct {
+	CiphertextSha256 []byte
+	Signature        []byte
+	CreatedAt        pgtype.Timestamptz
 }
 
 type RuntimeSnapshot struct {

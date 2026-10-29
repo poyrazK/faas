@@ -632,8 +632,31 @@ previous auth token kept through a rotation), `managed_realtime_push_devices`
   device, or endpoint and provider), so the re-seal rebuilds it from the
   row and refuses a value copied to another row. The namespaces and the
   push size bounds moved to `pkg/api`.
-- **Last slice:** data pipelines and project environment clones, read by
-  the data-pipeline and clone workers.
+- **Last slice:** project environment clones, read by apid and the clone
+  worker. Data pipeline values turned out to have their own identity
+  already (ADR-1591) and joined the registry as the dedicated `pipeline`
+  domain.
+
+## Implemented in the fourteenth slice: project environment clones
+
+The last account slice covers the twelve `project_environment_clone_*`
+columns and the clone archives. They are forward-only:
+
+- **One recipient, by mode.** Each clone value is sealed to one recipient,
+  which its row records as `key_id`, and opens only with the identity that
+  key id names. Clone records also bind each other by ciphertext hash.
+  So apid and the clone worker seal new clone values to the fleet
+  recipient until the account domain is domain-only, and to the account
+  domain after (`cloneSealRecipient`), and open with the account identity
+  first. Dual sealing would not help: the key id picks one identity.
+- **No re-seal in place.** Rewriting a clone ciphertext would break the
+  hashes other clone rows hold. `seal-domain migrate --domain account`
+  counts clone rows (archives included) still under another key id and
+  reports them as left on the fleet key. They clear as their clones finish,
+  and the contract step waits for that count to reach zero.
+- **The clone worker holds the account identity:** it loads the domain as
+  apid does, and the role installs the same drop-in into
+  `faas-apid-clone-worker`.
 
 ## Implemented: the alerting test-send relay
 
@@ -657,6 +680,40 @@ Section 3 moves apid's alerting test sends behind meterd, ahead of the
   stops opening alerting values when it loses the fleet identity, in the
   contract step.
 
+## Implemented: the outbound contract step
+
+`outbound` is the first domain to contract (step 4): outboundd stops
+holding the fleet identity, so code execution in outboundd no longer reads
+the values every other domain still shares with the fleet key.
+
+- **A switch per environment.** `faas_seal_domain_outbound_contracted` in
+  the environment's Ansible variables, as for the write modes. The role
+  refuses it unless writes are `domain`, so no new credential is sealed to
+  the fleet key after the check below.
+- **A read-only check gates it.** `gregalectl seal-domain migrate --domain
+  outbound --check` walks the outbound credentials as the migration does
+  but writes nothing. It counts as `pending` the credentials the fleet or
+  host identity still opens, and fails while any remain. The role runs it
+  before it changes outboundd's drop-in. The domain's `.previous` identity
+  does not count: outboundd keeps it through a rotation. A host with no
+  fleet identity left has nothing pending.
+- **The drop-in drops the base unit's credential.** Contracted, outboundd's
+  reader drop-in starts with an empty `LoadCredential=`, which systemd reads
+  as a reset of every credential loaded before it, then loads only the
+  domain identity (and its `.previous`). It also unsets
+  `FAAS_FLEET_AGE_IDENTITY_PATH`. No other drop-in loads a credential into
+  outboundd, so nothing else is reset. The base unit is unchanged, so an
+  environment that has not contracted keeps working, and the scope gate's
+  baseline keeps the base unit's line.
+- **The role proves it.** After the restart it checks outboundd's
+  credentials directory (`/run/credentials/faas-outboundd.service`) holds
+  the domain identity and no fleet one. outboundd logs
+  `"fleet_identity":false`.
+- **Rollback** is the switch set back to false: nothing stored changes.
+
+Removing the fleet credential from the base unit, and its baseline line,
+waits for a release after every environment has contracted.
+
 ## CD and node join stage the domain keys
 
 Each domain's key pair is a pair of GitHub environment secrets:
@@ -674,8 +731,9 @@ Each domain's key pair is a pair of GitHub environment secrets:
 - A join whose `seal-domain verify` fails leaves the node drained.
 - Each domain's public recipient is written as a comment, so a rotated key
   changes the converge contract hash.
-- Write modes and `readers_verified` stay in the environment's Ansible
-  variables. CD refuses a variables file that sets the key variables itself.
+- Write modes, `readers_verified` and `contracted` stay in the
+  environment's Ansible variables. CD refuses a variables file that sets
+  the key variables itself.
 - `gregalectl seal-domain verify --recipient-only` checks that a staged
   recipient is the one readers published the probe with. The role runs it
   before apid's writer drop-in, so a recipient from another pair stops the
@@ -686,8 +744,8 @@ Later slices:
 - re-sealing the short-lived copies in `app_config_guard_secrets` and
   `managed_postgres_cutover_credentials`, which the rekey documents do not
   cover;
-- the contract steps;
-- meterd sending test alerts;
+- the contract steps of the other domains, and then dropping the fleet
+  credential from each contracted reader's base unit;
 - dropping `github_webhook_secrets.secret_value` (step 2 above), after the
   source backfill has run everywhere.
 

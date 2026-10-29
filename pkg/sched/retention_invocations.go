@@ -174,6 +174,21 @@ func (r *InvocationsRetention) SweepDeadlineBreached(ctx context.Context, limit 
 	return len(forced), nil
 }
 
+// repeatFullBatches runs batch again while it fills its size, at most
+// api.InvocationRetentionBatchesPerPass times, so a backlog drains in one
+// pass instead of one batch a minute (ADR-20261029012000).
+func repeatFullBatches(size int, batch func() (int, error)) (int, error) {
+	total := 0
+	for range api.InvocationRetentionBatchesPerPass {
+		n, err := batch()
+		total += n
+		if err != nil || n < size {
+			return total, err
+		}
+	}
+	return total, nil
+}
+
 // SweepOnce runs both sweeps back-to-back. The retention sweep is
 // cheap when there are no overdue rows; the deadline sweep is
 // always cheap (the partial index is bounded by the rows that
@@ -181,9 +196,11 @@ func (r *InvocationsRetention) SweepDeadlineBreached(ctx context.Context, limit 
 // 60s cadence (same as Retention.SweepOnce today) so the budget
 // for one tick is two cheap SELECTs.
 func (r *InvocationsRetention) SweepOnce(ctx context.Context) (int, int, error) {
-	retentionDeleted, err := r.SweepRetention(ctx, 500)
+	retentionDeleted, err := repeatFullBatches(api.InvocationRetentionBatch, func() (int, error) {
+		return r.SweepRetention(ctx, api.InvocationRetentionBatch)
+	})
 	if err != nil {
-		return 0, 0, err
+		return retentionDeleted, 0, err
 	}
 	// ADR-20261022105723: pending queue messages past their plan's
 	// retention move to the dead letter before stamping, so the stamp
@@ -195,7 +212,9 @@ func (r *InvocationsRetention) SweepOnce(ctx context.Context) (int, int, error) 
 	// pruned on the next tick, and a stamping failure cannot hold up the
 	// reaper or the deadline sweep below.
 	if stamper, ok := r.store.(state.InvocationDefaultRetentionStore); ok {
-		stamped, err := stamper.StampDefaultInvocationRetention(ctx, 500)
+		stamped, err := repeatFullBatches(api.InvocationRetentionBatch, func() (int, error) {
+			return stamper.StampDefaultInvocationRetention(ctx, api.InvocationRetentionBatch)
+		})
 		if err != nil {
 			r.log.Warn("invocations retention: default stamp failed", "err", err)
 		} else if stamped > 0 {
@@ -203,12 +222,16 @@ func (r *InvocationsRetention) SweepOnce(ctx context.Context) (int, int, error) 
 		}
 	}
 	if attempts, ok := r.store.(state.InvocationAttemptRetentionStore); ok {
-		if _, err := attempts.PruneInvocationAttemptHistory(ctx, r.now(), 500); err != nil {
+		if _, err := repeatFullBatches(api.InvocationRetentionBatch, func() (int, error) {
+			return attempts.PruneInvocationAttemptHistory(ctx, r.now(), api.InvocationRetentionBatch)
+		}); err != nil {
 			return retentionDeleted, 0, err
 		}
 	}
 	if ledger, ok := r.store.(state.EventExecutionLedgerRetentionStore); ok {
-		if _, err := ledger.PruneEventExecutionLedger(ctx, r.now(), api.EventExecutionLedgerPruneBatchDefault); err != nil {
+		if _, err := repeatFullBatches(api.EventExecutionLedgerPruneBatchDefault, func() (int, error) {
+			return ledger.PruneEventExecutionLedger(ctx, r.now(), api.EventExecutionLedgerPruneBatchDefault)
+		}); err != nil {
 			return retentionDeleted, 0, err
 		}
 	}

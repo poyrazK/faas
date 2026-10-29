@@ -1,5 +1,6 @@
-// edge_rules_api_e2e_test.go — edge rules end to end through the API, on
-// every pull request (e2e-general, suite edge-rules). The per-kind tests in
+// edge_rules_api_e2e_test.go — edge rules end to end through the API, in
+// e2e-general's edge-rules suite (pull requests labelled e2e-general, and
+// nightly through the mega tier's E2E shards). The per-kind tests in
 // this directory seed rules straight into Postgres and run nightly; these
 // create, change, roll back and delete rules through apid, so each change
 // also crosses the generation barrier to the real gateways before it is

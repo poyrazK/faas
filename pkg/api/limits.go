@@ -835,6 +835,19 @@ const (
 	BillingRunItemListMax     = 500
 )
 
+// Subscription reconciliation (ADR-20261029094512). Every
+// BillingReconcileInterval one apid replica compares each billed account with
+// the provider's subscriptions, one provider read every
+// BillingReconcileRequestSpacing. A difference is corrected only when two
+// consecutive passes see it, so an in-flight webhook delivery settles first,
+// and at most BillingReconcileMaxCorrectionsPerPass accounts change per pass.
+const (
+	BillingReconcileInterval              = 30 * time.Minute
+	BillingReconcileRequestSpacing        = 200 * time.Millisecond
+	BillingReconcileBatchSize             = 200
+	BillingReconcileMaxCorrectionsPerPass = 25
+)
+
 // Payment status of exported statement invoices (ADR-1504).
 const (
 	// A completed export is first synced after StatementInvoiceFirstSyncDelay,
@@ -1004,6 +1017,15 @@ const (
 	EventReplayBackfillItemsPageMax        = 100
 	EventReplayBackfillItemsCursorMaxBytes = 4096
 	EventReplayBackfillRequestTimeout      = 5 * time.Second
+)
+
+// Invocation retention (ADR-20261029012000). Each minute's pass reaps,
+// stamps and prunes in InvocationRetentionBatch rows, repeating a step while
+// its batches come back full, at most InvocationRetentionBatchesPerPass
+// times: up to 10,000 rows a minute per step on each schedd, from 500.
+const (
+	InvocationRetentionBatch          = 500
+	InvocationRetentionBatchesPerPass = 20
 )
 
 // Event job lifecycle (ADR-20261028095548). A running backfill that makes no
@@ -6912,6 +6934,21 @@ const (
 	// runs under schedd's leader budget (the cold-boot budget plus admission,
 	// at least the WakeQueueTTLSeconds hold), so failover never extends it.
 	WakeFailoverMinRemainingMs = 2000
+	// NodeBootBreakerFailures, NodeBootBreakerDistinctApps and
+	// NodeBootBreakerOpenSeconds are a scheduler's per-node boot breaker
+	// (ADR-20261029085904): after this many node-caused boot failures in a
+	// row, from at least this many apps, placement treats the node as
+	// degraded for the open period. vmmd's catch-all internal error can be an
+	// app's own fault, so all three must come from different apps.
+	NodeBootBreakerFailures     = 3
+	NodeBootBreakerDistinctApps = 3
+	NodeBootBreakerOpenSeconds  = 60
+	// CapacityStreamLostSeconds is how long vmmd's 1 s capacity stream may
+	// stay silent before the scheduler receiving it pings vmmd and, if it
+	// does not answer, marks the node unavailable for placement
+	// (ADR-20261029085904). The heartbeat takes three failed 30 s probes to
+	// take a node out of rotation.
+	CapacityStreamLostSeconds = 10
 
 	// BaseGenerationReadinessCheckIntervalSeconds is how old vmmd's verdict
 	// on adopting its configured base generations may get before the next
@@ -6919,6 +6956,15 @@ const (
 	// (ADR-20261022184531). Ping itself never waits for it.
 	BaseGenerationReadinessCheckIntervalSeconds = 30
 	BaseGenerationReadinessCheckTimeoutSeconds  = 10
+
+	// A node's wake breaker (ADR-20261022184531 step 3) opens after
+	// NodeWakeBreakerFailures consecutive platform-attributable wake failures
+	// within NodeWakeBreakerWindowSeconds, and holds the node degraded for
+	// NodeWakeBreakerCooldownSeconds. Then it is half-open: one more failure
+	// reopens it, a successful wake closes it.
+	NodeWakeBreakerFailures        = 3
+	NodeWakeBreakerWindowSeconds   = 60
+	NodeWakeBreakerCooldownSeconds = 30
 
 	// GatewayWakeAdmissionParallelism bounds concurrent cold-wake
 	// admissions in one gateway process. The gateway still coalesces
@@ -8655,6 +8701,25 @@ const (
 	// bodies keep streaming and can still fail in that window
 	// (docs/adr/1736-zero-downtime-daemon-restarts.md).
 	InternalHopReplayableBodyBytes = 64 << 10 // 64 KiB
+
+	// GatewayFailover* bound gatewayd-public's retry of a response that
+	// gatewayd-internal marked not dispatched: no request byte reached a
+	// guest, so the request can go to another node (ADR-20261022184531
+	// step 5).
+	//   - MaxBufferedBodyBytes: only a body the edge buffered, at most this
+	//     large, is replayed; it is the same buffer as the internal hop's.
+	//   - RetryBudgetPct: retries stay within this share of requests, with
+	//     RetryBudgetBurst retries available to a quiet edge.
+	//   - MaxExtraNodes: other nodes one request may be retried on.
+	//   - MaxRefusalBodyBytes: the largest refusal the edge holds while it
+	//     retries, so it can still answer with it if every retry fails.
+	// A retry also needs api.WakeFailoverMinRemainingMs of the request's
+	// deadline left.
+	GatewayFailoverMaxBufferedBodyBytes = InternalHopReplayableBodyBytes
+	GatewayFailoverRetryBudgetPct       = 10
+	GatewayFailoverRetryBudgetBurst     = 10
+	GatewayFailoverMaxExtraNodes        = 2
+	GatewayFailoverMaxRefusalBodyBytes  = 64 << 10 // 64 KiB
 )
 
 // EdgeWAFInlineSlots is the number of in-path WAF check slots for a
@@ -10790,8 +10855,9 @@ func (p Plan) PublicAuthBasicAllowed() bool {
 
 // ReservedConcurrencyPerAccount (issue #475) returns the per-account
 // cap on apps with eviction_priority='reserved'. Free 0; Hobby 1; Pro
-// 2; Scale 4. Counts APPS (not live instances). Unknown plans fail
-// closed (return 0) — same contract as CronLimitPerAccount above.
+// 2; Scale 4. Counts APPS (not live instances): an app reserved in its
+// own settings or in any project environment's counts once. Unknown plans
+// fail closed (return 0) — same contract as CronLimitPerAccount above.
 func (p Plan) ReservedConcurrencyPerAccount() int {
 	l, ok := LimitsFor(p)
 	if !ok {
@@ -11721,6 +11787,13 @@ const (
 	TrafficServicePolicyReadTimeout = 250 * time.Millisecond
 	TrafficPublicRoutingReadTimeout = 250 * time.Millisecond
 	TrafficPublicHostReadTimeout    = 250 * time.Millisecond
+	// TrafficPublicRoutingColdReadTimeout bounds the routing read of an app
+	// the gateway holds no admissible view for, usually an idle app's first
+	// request. Its first attempt keeps TrafficPublicRoutingReadTimeout; a
+	// failed attempt is retried once within this bound, so a control-plane
+	// stall shorter than it delays the request instead of refusing it with
+	// 503 traffic_policy_unavailable (ADR-20261027085556 amendment 1).
+	TrafficPublicRoutingColdReadTimeout = 2 * time.Second
 	// Bound public policy host input and hostname expansion in environment
 	// overlays to the DNS name size accepted for custom domains (ADR-570).
 	TrafficPolicyMaxHostnameBytes = 253
@@ -14690,6 +14763,27 @@ const (
 	AlertLogContextDeployLookback = time.Hour
 	AlertLogContextDeploysMax     = 3
 )
+
+// Alert evaluation bounds (ADR-20261028101615). meterd evaluates accounts in
+// parallel, each account's rules in order, so one account's slow rules or
+// unresponsive webhook delay only that account:
+//   - AlertEvaluationWorkers accounts are evaluated at once;
+//   - AlertObserveBudget bounds reading one rule's value;
+//   - AlertWebhookBudget bounds one webhook delivery, retries included
+//     (pkg/webhookout's own policy allows minutes);
+//   - AlertAccountTickBudget is an account's share of one tick: once spent,
+//     its remaining rules wait for the next tick, which starts with them.
+const (
+	AlertEvaluationWorkers = 8
+	AlertObserveBudget     = 15 * time.Second
+	AlertWebhookBudget     = 30 * time.Second
+	AlertAccountTickBudget = 45 * time.Second
+)
+
+// NotificationChannelTestsPerAccountMinute caps test sends to an account's
+// notification channels (ADR-20261028101615): each one is a real Slack post,
+// PagerDuty event or email.
+const NotificationChannelTestsPerAccountMinute = 10
 
 // Custom dashboards (ADR-20261022173833).
 const (

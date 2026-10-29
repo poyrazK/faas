@@ -25,7 +25,7 @@ func cmdRoutesLifecycleHistory(args []string) int {
 		validCursor = err == nil && id > 0 && strconv.FormatInt(id, 10) == *before
 	}
 	if len(positional) != 1 || !validCLISlug(positional[0]) || *limit < 1 || *limit > api.RouteLifecycleHistoryMaxPage || !validCursor || rejectUnexpectedFlagArgs(fs) {
-		PrintUsage(osStderr, "usage: gregale api route lifecycle history <slug> [--limit N] [--before REVIEW_ID] [--json]", "cli")
+		PrintUsage(osStderr, "usage: gregale api route lifecycle history <slug> [--limit N] [--cursor REVIEW_ID] [--json]", "cli")
 		return 1
 	}
 	client, err := authedClient()

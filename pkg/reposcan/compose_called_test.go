@@ -8,16 +8,59 @@ import (
 
 // ADR-20261029120000: a Compose service without ports is an HTTP service
 // when another service calls it, and a worker otherwise. depends_on alone is
-// only start order: it makes a service that listens (expose:) an HTTP
-// service, and leaves a worker with a warning.
+// only start order: it makes a service the repository shows listening
+// (expose:, or its own image's Dockerfile EXPOSE or HTTP framework,
+// amendment 1) an HTTP service, and leaves a worker with a warning.
 func TestComposeCalledServicesServeRequests(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		compose string
 		project string
+		files   map[string]string
 		want    map[string]Class
 		warning string
 	}{
+		{
+			name: "depends_on onto a service whose Dockerfile EXPOSEs a port",
+			compose: `services:
+  web: {build: ./web, ports: ["80:3000"], depends_on: [api]}
+  api: {build: ./api}
+`,
+			files: map[string]string{
+				"web/Dockerfile": "FROM node:22\nEXPOSE 3000\n",
+				"api/Dockerfile": "FROM node:22\nEXPOSE 8000\nCMD [\"node\", \"server.js\"]\n",
+			},
+			want: map[string]Class{"api": ClassHTTP},
+		},
+		{
+			name: "depends_on onto an HTTP framework built without a Dockerfile",
+			compose: `services:
+  web: {image: ghcr.io/x/web:1, ports: ["80:3000"], depends_on: [api]}
+  api: {build: ./api}
+`,
+			files: map[string]string{"api/package.json": `{"dependencies": {"express": "^4.19.0"}}`},
+			want:  map[string]Class{"api": ClassHTTP},
+		},
+		{
+			name: "a command override runs something other than the image",
+			compose: `services:
+  web: {build: ., ports: ["80:8000"], depends_on: [worker]}
+  worker: {build: ., command: celery -A app worker}
+`,
+			files:   map[string]string{"Dockerfile": "FROM python:3.12\nEXPOSE 8000\nCMD [\"gunicorn\", \"app:app\"]\n"},
+			want:    map[string]Class{"web": ClassHTTP, "worker": ClassWorker},
+			warning: `service "worker" publishes no ports and runs as a background worker, though "web" lists it in depends_on`,
+		},
+		{
+			name: "a Dockerfile that exposes nothing",
+			compose: `services:
+  web: {image: ghcr.io/x/web:1, ports: ["80:3000"], depends_on: [consumer]}
+  consumer: {build: ./consumer}
+`,
+			files:   map[string]string{"consumer/Dockerfile": "FROM golang:1.26\nCMD [\"/consumer\"]\n"},
+			want:    map[string]Class{"consumer": ClassWorker},
+			warning: `service "consumer" publishes no ports`,
+		},
 		{
 			name: "depends_on from a public service on a listener",
 			compose: `services:
@@ -100,6 +143,9 @@ func TestComposeCalledServicesServeRequests(t *testing.T) {
 			fsys := fstest.MapFS{"compose.yaml": &fstest.MapFile{Data: []byte(tc.compose)}}
 			if tc.project != "" {
 				fsys[ProjectConfigPath] = &fstest.MapFile{Data: []byte(tc.project)}
+			}
+			for name, body := range tc.files {
+				fsys[name] = &fstest.MapFile{Data: []byte(body)}
 			}
 			result, err := Scan(fsys)
 			if err != nil {

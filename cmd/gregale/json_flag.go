@@ -195,6 +195,9 @@ func printFlagSetHelp(w io.Writer, fs *flag.FlagSet) {
 	fs.VisitAll(func(f *flag.Flag) {
 		label := "--" + f.Name
 		value, usage := flag.UnquoteUsage(f)
+		if canonical, ok := cliTreeCanonicalFlag(strings.Fields(path), f.Name); ok {
+			label, usage = "--"+canonical, usage+" (also --"+f.Name+")"
+		}
 		switch value {
 		case "":
 		case "string":

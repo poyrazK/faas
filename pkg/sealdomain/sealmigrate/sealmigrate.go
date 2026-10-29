@@ -76,9 +76,11 @@ func (r *MigrationReport) count(outcome resealOutcome, replaced bool) {
 // rows were already sealed as the target asks; Changed rows were rotated
 // by a customer between read and write and are left for the next run;
 // Failed rows opened with no supplied identity. Skipped rows cannot be
-// re-sealed in place in this release (the edge domain's
-// application-standard log destinations and the drains they manage); they
-// keep opening with the fleet identity.
+// re-sealed in place (the edge domain's application-standard log
+// destinations and the drains they manage, and the account domain's
+// project environment clone values); they keep opening with the fleet
+// identity. Pending rows, counted only by a check run, still open with a
+// legacy identity: a migrate run would re-seal them.
 type MigrationReport struct {
 	Domain   sealdomain.Domain `json:"domain"`
 	Target   string            `json:"target"`
@@ -88,6 +90,7 @@ type MigrationReport struct {
 	Changed  int               `json:"changed"`
 	Failed   int               `json:"failed"`
 	Skipped  int               `json:"skipped,omitempty"`
+	Pending  int               `json:"pending,omitempty"`
 }
 
 // OutboundStore is the slice of *state.PgStore the outbound re-seal uses.
@@ -106,6 +109,28 @@ func MigrateOutbound(ctx context.Context, store OutboundStore, domain *age.X2551
 	if store == nil || domain == nil || len(legacy) == 0 {
 		return MigrationReport{}, errors.New("sealmigrate: outbound migration needs the store, the domain identity and the legacy identities")
 	}
+	return walkOutbound(ctx, store, domain, legacy, store.ResealOutboundCredential)
+}
+
+// OutboundLister is the slice of *state.PgStore the outbound check reads.
+type OutboundLister interface {
+	ListOutboundSealedCredentials(ctx context.Context, afterKind, afterID string, limit int) ([]state.OutboundSealedCredential, error)
+}
+
+// CheckOutbound counts, without writing, the outbound credentials that
+// legacy identities still open (ADR 20261022111812, the contract step's
+// precondition): outboundd may drop the fleet and host identities only once
+// Pending is zero. With no legacy identity left nothing can be pending.
+func CheckOutbound(ctx context.Context, store OutboundLister, domain *age.X25519Identity, legacy []*age.X25519Identity) (MigrationReport, error) {
+	if store == nil || domain == nil {
+		return MigrationReport{}, errors.New("sealmigrate: outbound check needs the store and the domain identity")
+	}
+	return walkOutbound(ctx, store, domain, legacy, nil)
+}
+
+// walkOutbound visits every outbound credential. With reseal nil it only
+// counts: a row the legacy identities open is pending.
+func walkOutbound(ctx context.Context, store OutboundLister, domain *age.X25519Identity, legacy []*age.X25519Identity, reseal func(context.Context, state.OutboundSealedCredential, []byte) (bool, error)) (MigrationReport, error) {
 	report := MigrationReport{Domain: sealdomain.Outbound, Target: domain.Recipient().String()}
 	afterKind, afterID := "", ""
 	for {
@@ -120,9 +145,13 @@ func MigrateOutbound(ctx context.Context, store OutboundStore, domain *age.X2551
 			if err != nil {
 				return report, fmt.Errorf("sealmigrate: reseal outbound %s %s: %w", c.Kind, c.ID, err)
 			}
+			if outcome == resealWrite && reseal == nil {
+				report.Pending++
+				continue
+			}
 			replaced := false
 			if outcome == resealWrite {
-				if replaced, err = store.ResealOutboundCredential(ctx, c, sealed); err != nil {
+				if replaced, err = reseal(ctx, c, sealed); err != nil {
 					return report, err
 				}
 			}

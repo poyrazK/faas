@@ -71,12 +71,13 @@ func (s *Store) DropLegacyLogin(ctx context.Context, login Sealed) (bool, error)
 	return n == 1, nil
 }
 
-// SignKey stores sig on an unsigned key, only while the row still holds the
-// ciphertext and recipient the caller read (the operator backfill, ADR
-// 20261028161502).
+// SignKey stores sig on a key, only while the row still holds the
+// ciphertext, recipient and signature (none for an unsigned key) the caller
+// read: the operator backfill signs an unsigned key, or signs one again
+// after a signing-key rotation (ADR 20261028161502).
 func (s *Store) SignKey(ctx context.Context, key Sealed, sig []byte) (bool, error) {
 	n, err := s.q.SignLiveKey(ctx, s.pool, sqlc.SignLiveKeyParams{SealedSecretSig: sig, Kid: key.ID, DatabaseID: key.DatabaseID,
-		SealedSecret: key.Blob, Recipient: key.Recipient})
+		SealedSecret: key.Blob, Recipient: key.Recipient, PreviousSig: key.Signature})
 	if err != nil {
 		return false, fmt.Errorf("livekeys: sign live key: %w", err)
 	}
@@ -86,7 +87,7 @@ func (s *Store) SignKey(ctx context.Context, key Sealed, sig []byte) (bool, erro
 // SignLogin is SignKey for a login.
 func (s *Store) SignLogin(ctx context.Context, login Sealed, sig []byte) (bool, error) {
 	n, err := s.q.SignLiveLogin(ctx, s.pool, sqlc.SignLiveLoginParams{SealedLoginSig: sig, DatabaseID: login.DatabaseID,
-		SealedLogin: login.Blob, Recipient: login.Recipient})
+		SealedLogin: login.Blob, Recipient: login.Recipient, PreviousSig: login.Signature})
 	if err != nil {
 		return false, fmt.Errorf("livekeys: sign live login: %w", err)
 	}

@@ -1890,6 +1890,7 @@ from .event_replay_backfill_items_response import EventReplayBackfillItemsRespon
 from .event_replay_backfill_job_response import EventReplayBackfillJobResponse
 from .event_replay_backfill_job_response_consumer_kind import EventReplayBackfillJobResponseConsumerKind
 from .event_replay_backfill_job_response_duplicate_policy import EventReplayBackfillJobResponseDuplicatePolicy
+from .event_replay_backfill_job_response_last_failure import EventReplayBackfillJobResponseLastFailure
 from .event_replay_backfill_job_response_state import EventReplayBackfillJobResponseState
 from .event_replay_backfill_progress import EventReplayBackfillProgress
 from .event_replay_backfill_request import EventReplayBackfillRequest
@@ -8046,6 +8047,7 @@ __all__ = (
     "EventReplayBackfillJobResponse",
     "EventReplayBackfillJobResponseConsumerKind",
     "EventReplayBackfillJobResponseDuplicatePolicy",
+    "EventReplayBackfillJobResponseLastFailure",
     "EventReplayBackfillJobResponseState",
     "EventReplayBackfillProgress",
     "EventReplayBackfillRequest",

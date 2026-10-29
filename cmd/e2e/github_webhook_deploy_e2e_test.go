@@ -185,7 +185,8 @@ func TestE2E_GitHubWebhookEnqueuesDeployments(t *testing.T) {
 	waitForTornDownPreview(t, pool, other.appID)
 }
 
-// postPullRequest delivers a pull_request webhook for one PR head.
+// postPullRequest delivers a pull_request webhook for one PR head, in
+// GitHub's own shape: the head commit and branch only under pull_request.head.
 func postPullRequest(t *testing.T, webhookURL, action string, number int, sha string) {
 	t.Helper()
 	prState := "open"
@@ -193,10 +194,10 @@ func postPullRequest(t *testing.T, webhookURL, action string, number int, sha st
 		prState = "closed"
 	}
 	postGitHubWebhook(t, webhookURL, "pull_request", fmt.Sprintf(`{"action":%q,"number":%d,
-		"pull_request":{"state":%q,"merged":%t,"head_sha":%q,"head_ref":"feat/x","base":{"ref":"main"},
+		"pull_request":{"number":%d,"state":%q,"merged":%t,"base":{"ref":"main"},
 		"head":{"ref":"feat/x","sha":%q,"repo":{"full_name":%q}}},
 		"repository":{"full_name":%q,"name":"e2e-api"},"installation":{"id":%d},"sender":{"login":"octocat"}}`,
-		action, number, prState, action == "closed", sha, sha, githubE2ERepo, githubE2ERepo, githubE2EInstallation))
+		action, number, number, prState, action == "closed", sha, githubE2ERepo, githubE2ERepo, githubE2EInstallation))
 }
 
 // waitForCheckUpdate waits for a pending GitHub status sync of deploymentID
