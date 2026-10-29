@@ -11,9 +11,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
+// repoFile reads rel from the repository root. go test runs in the package
+// directory; runtime.Caller paths break under -trimpath.
 func repoFile(t *testing.T, rel string) []byte {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join("..", "..", rel)) // go test runs in the package directory
+	data, err := os.ReadFile(filepath.Join("..", "..", rel))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -15,74 +15,99 @@ import (
 )
 
 // A company app's consumers and keys keep its creator's account_id, but the
-// per-account key allowance belongs to the plan the app runs on: a company's
-// keys count across all of its apps, whoever created them, and never spend
-// the creator's personal allowance.
-func TestCompanyConsumerKeysShareTheCompanysAllowanceNotTheCreators(t *testing.T) {
-	e := apidserver.Setup(t, api.PlanHobby)
-	ctx, store, creator := t.Context(), *e.Store(), *e.Acct()
-	org := apidserver.SeedSharedOrgWithOwner(t, e, "keys-co", "Keys Co", api.PlanHobby)
-	member, err := store.CreateAccount(ctx, "member@keys.example", api.PlanHobby)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.AddOrgMember(ctx, org.ID, member.ID, state.OrgRoleDeveloper, nil); err != nil {
-		t.Fatal(err)
-	}
-	plain, hash, err := api.GenerateAPIKey()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.CreateOrgAPIKey(ctx, org.ID, creator.ID, hash, "owner", api.ScopesAdminOnly, nil); err != nil {
-		t.Fatal(err)
-	}
-	asOwner := map[string]string{"Authorization": "Bearer " + plain}
-
-	newApp := func(accountID, orgID, slug string) state.App {
-		t.Helper()
-		app, err := store.CreateApp(ctx, state.App{AccountID: accountID, OrgID: orgID, Slug: slug, Type: state.AppTypeApp,
-			Status: state.AppActive, RAMMB: 256, MaxConcurrency: 1, IdleTimeoutS: 60})
-		if err != nil {
-			t.Fatal(err)
-		}
-		return app
-	}
-	// withKeys gives app a consumer holding n unrevoked keys.
-	withKeys := func(app state.App, n int) string {
-		t.Helper()
-		consumer, err := store.CreateAPIConsumer(ctx, app.AccountID, app.ID, "ref-"+app.Slug, app.Slug)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for i := range n {
-			_, prefix, hash, err := api.GenerateConsumerKey()
+// per-account key allowance belongs to the app's billing subject
+// (ADR-202610171904). Once its company adopted billing, a company's keys
+// count across all of its apps, whoever created them, and never spend the
+// creator's personal allowance. Until then the company keeps its existing
+// policy: its creator's company keys share the creator's allowance.
+func TestCompanyConsumerKeysShareTheBillingSubjectsAllowance(t *testing.T) {
+	for _, adopted := range []bool{true, false} {
+		t.Run(fmt.Sprintf("adopted=%v", adopted), func(t *testing.T) {
+			e := apidserver.Setup(t, api.PlanHobby)
+			ctx, store, creator := t.Context(), *e.Store(), *e.Acct()
+			// A Free organization starts with billing adopted, and keeps it on
+			// an upgrade; a paid one awaits adoption.
+			plan := api.PlanHobby
+			if adopted {
+				plan = api.PlanFree
+			}
+			org, err := store.CreateOrg(ctx, state.Org{Slug: "keys-co", Name: "Keys Co", Plan: plan})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := store.CreateConsumerKeyForConsumer(ctx, app.AccountID, consumer.ID, fmt.Sprintf("key-%d", i), prefix, hash,
-				[]string{"read"}, nil); err != nil {
+			if err := store.UpdateOrgPlan(ctx, org.ID, api.PlanHobby); err != nil {
 				t.Fatal(err)
 			}
-		}
-		return consumer.ID
-	}
-	personal := withKeys(newApp(creator.ID, "", "personal-api"), 0)
-	perAccount, perApp := api.PlanHobby.ConsumerKeysPerAccount(), api.PlanHobby.ConsumerKeysPerApp()
-	for i, left := 0, perAccount; left > 0; i, left = i+1, left-perApp {
-		withKeys(newApp(creator.ID, org.ID, fmt.Sprintf("company-api-%d", i)), min(left, perApp))
-	}
-	members := withKeys(newApp(member.ID, org.ID, "member-api"), 0)
+			member, err := store.CreateAccount(ctx, "member@keys.example", api.PlanHobby)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for id, role := range map[string]state.OrgRole{creator.ID: state.OrgRoleOwner, member.ID: state.OrgRoleDeveloper} {
+				if err := store.AddOrgMember(ctx, org.ID, id, role, nil); err != nil {
+					t.Fatal(err)
+				}
+			}
+			plain, hash, err := api.GenerateAPIKey()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.CreateOrgAPIKey(ctx, org.ID, creator.ID, hash, "owner", api.ScopesAdminOnly, nil); err != nil {
+				t.Fatal(err)
+			}
+			asOwner := map[string]string{"Authorization": "Bearer " + plain}
 
-	issue := func(slug, consumerID string, headers map[string]string) *httptest.ResponseRecorder {
-		return e.Do(t, http.MethodPost, "/v1/apps/"+slug+"/consumers/"+consumerID+"/keys",
-			api.CreateConsumerKeyRequest{Name: "new", Scopes: []string{"read"}}, headers)
-	}
-	if res := issue("personal-api", personal, nil); res.Code != http.StatusCreated {
-		t.Fatalf("personal key while the company holds %d keys: %d %s", perAccount, res.Code, res.Body)
-	}
-	if res := issue("member-api", members, asOwner); res.Code != http.StatusForbidden ||
-		!strings.Contains(res.Body.String(), api.CodePlanConsumerKeyQuotaReached) || !strings.Contains(res.Body.String(), "per this account") {
-		t.Fatalf("company key past the company's allowance: %d %s", res.Code, res.Body)
+			newApp := func(accountID, orgID, slug string) state.App {
+				t.Helper()
+				app, err := store.CreateApp(ctx, state.App{AccountID: accountID, OrgID: orgID, Slug: slug, Type: state.AppTypeApp,
+					Status: state.AppActive, RAMMB: 256, MaxConcurrency: 1, IdleTimeoutS: 60})
+				if err != nil {
+					t.Fatal(err)
+				}
+				return app
+			}
+			// withKeys gives app a consumer holding n unrevoked keys.
+			withKeys := func(app state.App, n int) string {
+				t.Helper()
+				consumer, err := store.CreateAPIConsumer(ctx, app.AccountID, app.ID, "ref-"+app.Slug, app.Slug)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for i := range n {
+					_, prefix, hash, err := api.GenerateConsumerKey()
+					if err != nil {
+						t.Fatal(err)
+					}
+					if _, err := store.CreateConsumerKeyForConsumer(ctx, app.AccountID, consumer.ID, fmt.Sprintf("key-%d", i), prefix, hash,
+						[]string{"read"}, nil); err != nil {
+						t.Fatal(err)
+					}
+				}
+				return consumer.ID
+			}
+			personal := withKeys(newApp(creator.ID, "", "personal-api"), 0)
+			perAccount, perApp := api.PlanHobby.ConsumerKeysPerAccount(), api.PlanHobby.ConsumerKeysPerApp()
+			for i, left := 0, perAccount; left > 0; i, left = i+1, left-perApp {
+				withKeys(newApp(creator.ID, org.ID, fmt.Sprintf("company-api-%d", i)), min(left, perApp))
+			}
+			members := withKeys(newApp(member.ID, org.ID, "member-api"), 0)
+
+			issue := func(slug, consumerID string, headers map[string]string) *httptest.ResponseRecorder {
+				return e.Do(t, http.MethodPost, "/v1/apps/"+slug+"/consumers/"+consumerID+"/keys",
+					api.CreateConsumerKeyRequest{Name: "new", Scopes: []string{"read"}}, headers)
+			}
+			refused := func(res *httptest.ResponseRecorder) bool {
+				return res.Code == http.StatusForbidden && strings.Contains(res.Body.String(), api.CodePlanConsumerKeyQuotaReached) &&
+					strings.Contains(res.Body.String(), "per this account")
+			}
+			// Adopted: the company holds its whole allowance, the creator's is
+			// untouched. Unadopted: the creator holds theirs, the member's is untouched.
+			if res := issue("personal-api", personal, nil); refused(res) != !adopted || !adopted == (res.Code == http.StatusCreated) {
+				t.Fatalf("personal key while the creator's company apps hold %d keys: %d %s", perAccount, res.Code, res.Body)
+			}
+			if res := issue("member-api", members, asOwner); refused(res) != adopted || adopted == (res.Code == http.StatusCreated) {
+				t.Fatalf("key on another member's company app: %d %s", res.Code, res.Body)
+			}
+		})
 	}
 }
 

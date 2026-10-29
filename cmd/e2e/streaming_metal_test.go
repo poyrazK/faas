@@ -286,12 +286,12 @@ func TestE2E_Streaming_Metal_PlanMatrix(t *testing.T) {
 	e2etest.OverrideDeployBase(t, registry.Host()+"/onebox-faas/deploy-base:latest")
 
 	// A Node source app fits Free's 256 MB layer cap only on the shared
-	// runner base (ADR-1500), which nodes enable with
-	// FAAS_SOURCE_APP_SHARED_RUNTIME; FAAS_E2E_SHARED_RUNTIME=1 runs it.
-	sharedRuntime := os.Getenv("FAAS_E2E_SHARED_RUNTIME") == "1"
+	// runner base (ADR-1500), on by default (ADR-20261029103512);
+	// FAAS_E2E_SHARED_RUNTIME=0 runs the full-layer path instead.
+	sharedRuntime := os.Getenv("FAAS_E2E_SHARED_RUNTIME") != "0"
 	harnessEnv := []string{"FAAS_GATEWAY_STREAMING=true"}
-	if sharedRuntime {
-		harnessEnv = append(harnessEnv, "FAAS_SOURCE_APP_SHARED_RUNTIME=1")
+	if !sharedRuntime {
+		harnessEnv = append(harnessEnv, "FAAS_SOURCE_APP_SHARED_RUNTIME=0")
 	}
 	h := e2etest.Start(t, pool, e2etest.DeployWake|e2etest.Builderd, harnessEnv...)
 	defer h.DumpLogs(t)
@@ -310,7 +310,7 @@ func TestE2E_Streaming_Metal_PlanMatrix(t *testing.T) {
 		tc := tc
 		t.Run(string(tc.plan), func(t *testing.T) {
 			if tc.plan == api.PlanFree && !sharedRuntime {
-				t.Skip("a Node source app exceeds Free's 256 MB layer cap without the shared runtime (ADR-1500); set FAAS_E2E_SHARED_RUNTIME=1")
+				t.Skip("a Node source app exceeds Free's 256 MB layer cap without the shared runtime (ADR-1500); FAAS_E2E_SHARED_RUNTIME=0 turned it off")
 			}
 			key := h.SeedAccount(context.Background(), tc.plan)
 			slug := "stream-matrix-" + string(tc.plan) + "-" + randHexSuffix()
@@ -337,9 +337,10 @@ func TestE2E_Streaming_Metal_PlanMatrix(t *testing.T) {
 			}
 			depID, _ := parseQueuedDeployment(t, raw)
 
-			ctx, cancel := context.WithTimeout(context.Background(), sourceDeployCtxTimeout())
+			// The first plan's deployment stages the shared runner base.
+			ctx, cancel := context.WithTimeout(context.Background(), sharedBaseCeiling+5*time.Minute)
 			defer cancel()
-			if _, _, err := e2etest.WaitForSourceDeployment(ctx, t, pool, depID, e2etest.DefaultBuildStallWindow, e2etest.DefaultBuildCeiling); err != nil {
+			if _, _, err := e2etest.WaitForSourceDeployment(ctx, t, pool, depID, sharedBaseStallWindow, sharedBaseCeiling); err != nil {
 				t.Fatalf("deployment did not reach live: %v", err)
 			}
 			if _, err := e2etest.WaitForInstanceState(ctx, t, pool, appID, state.StateParked, 120*time.Second); err != nil {
@@ -351,7 +352,18 @@ func TestE2E_Streaming_Metal_PlanMatrix(t *testing.T) {
 			if err := e2etest.WaitForHTTPReady(context.Background(), t, client, target, 10*time.Second); err != nil {
 				t.Fatalf("gateway not ready: %v", err)
 			}
-			body, httpStatus := doGetWithHostTruncated(t, client, target, slug+".apps.test.example", 30*time.Second, 1024)
+			// A 503 asks the client to retry (a routing read that overran
+			// its budget on a loaded host); clients do, so the matrix does.
+			var body []byte
+			var httpStatus int
+			for attempt := 0; attempt < 4; attempt++ {
+				body, httpStatus = doGetWithHostTruncated(t, client, target, slug+".apps.test.example", 30*time.Second, 1024)
+				if httpStatus != http.StatusServiceUnavailable || tc.wantStatus == http.StatusServiceUnavailable {
+					break
+				}
+				t.Logf("plan=%s attempt %d: 503 %s", tc.plan, attempt+1, body)
+				time.Sleep(5 * time.Second)
+			}
 			if httpStatus != tc.wantStatus {
 				t.Errorf("plan=%s: status=%d, want %d body=%q", tc.plan, httpStatus, tc.wantStatus, string(body))
 			}
