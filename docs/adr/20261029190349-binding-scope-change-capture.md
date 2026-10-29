@@ -1,7 +1,7 @@
 # ADR: Scoped binding writes read only their scope, and change capture proves it
 
 Date: 2026-10-29
-Status: Proposed
+Status: Accepted (owner, 2026-10-29)
 Amends: [ADR-20261027163626](20261027163626-traffic-binding-guard-per-host.md) (decisions 2 and 3: how a scoped write reads claims and reservations, and how its commit check sees an undeclared change)
 Related: [ADR-570](570-traffic-enforcement-guarantees.md)
 
