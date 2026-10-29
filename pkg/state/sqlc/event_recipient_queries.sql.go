@@ -12,13 +12,25 @@ import (
 )
 
 const eventDeliveryCounts = `-- name: EventDeliveryCounts :one
-SELECT count(*)::bigint AS account_count,
- count(*) FILTER (WHERE s.app_id=$1::uuid)::bigint AS app_count,
- count(*) FILTER (WHERE s.app_id=$1::uuid AND s.subscription_id=$2::text)::bigint AS consumer_count
-FROM event_delivery_slots s JOIN invocations i ON i.id=s.invocation_id
-WHERE s.account_id=$3::uuid AND s.live AND i.state IN ('pending','dispatching')
- AND NOT ($4::boolean AND i.state='pending' AND i.app_id=$1::uuid
-   AND coalesce(i.work_policy_name,'')=$5::text AND i.work_key_digest=$6::bytea)
+WITH live AS (
+ SELECT count(*)::bigint AS account_count,
+  count(*) FILTER (WHERE s.app_id=$1::uuid)::bigint AS app_count,
+  count(*) FILTER (WHERE s.app_id=$1::uuid AND s.subscription_id=$2::text)::bigint AS consumer_count
+ FROM event_delivery_slots s
+ WHERE s.account_id=$3::uuid AND s.live
+), replaced AS (
+ SELECT count(*)::bigint AS account_count,
+  count(*) FILTER (WHERE s.app_id=$1::uuid)::bigint AS app_count,
+  count(*) FILTER (WHERE s.app_id=$1::uuid AND s.subscription_id=$2::text)::bigint AS consumer_count
+ FROM invocations i JOIN event_delivery_slots s ON s.invocation_id=i.id
+ WHERE $4::boolean AND i.app_id=$1::uuid
+  AND i.work_policy_name=nullif($5::text,'') AND i.work_key_digest=$6::bytea
+  AND i.state='pending' AND s.account_id=$3::uuid AND s.live
+)
+SELECT (live.account_count-replaced.account_count)::bigint AS account_count,
+ (live.app_count-replaced.app_count)::bigint AS app_count,
+ (live.consumer_count-replaced.consumer_count)::bigint AS consumer_count
+FROM live, replaced
 `
 
 type EventDeliveryCountsParams struct {
@@ -36,8 +48,13 @@ type EventDeliveryCountsRow struct {
 	ConsumerCount int64
 }
 
-// Reads the account's live slots (event_delivery_slots_live), not its whole
-// delivery history; the invocation's state still decides.
+// ADR-614 amendment (2026-10-29): counts the account's live slots from the
+// event_delivery_slots_live index alone. A slot's live flag is exact: it is
+// stamped when the slot is written, with or after its invocation, and every
+// state change re-syncs it. Joining each slot to its invocation planned a
+// scan of every pending invocation on the platform, so each routed delivery
+// paid for everyone's backlog. A keyed replace subtracts the pending
+// deliveries it would replace, found through the work-lane index.
 func (q *Queries) EventDeliveryCounts(ctx context.Context, db DBTX, arg EventDeliveryCountsParams) (EventDeliveryCountsRow, error) {
 	row := db.QueryRow(ctx, eventDeliveryCounts,
 		arg.AppID,

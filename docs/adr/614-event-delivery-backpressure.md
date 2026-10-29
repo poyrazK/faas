@@ -142,3 +142,25 @@ Two reads that every fanout sweep makes on every node grew with the backlog:
   mismatch is fixed when the event is captured, and the recipient is filtered
   on its first claim (ADR-803), before any gate could defer it, so filtering
   still precedes backoff.
+
+## Amendment (2026-10-29): delivery counts read the live slots alone
+
+The provisional GA V12 run (`docs/ops/evidence/20261029-event-ga-v12`) found
+`EventDeliveryCounts` at 4.8 ms per routed delivery once a backlog had built
+up. The count joined each live slot to its invocation to re-check the state,
+and the planner served that join with a hash join over every pending
+invocation on the platform. Each admission therefore paid for every
+account's backlog.
+
+A slot's `live` flag is exact. A slot is written in the transaction that
+creates its invocation, or after the invocation's insert in the replay
+guard, so the stamp sees the invocation's state. Every later state change
+re-syncs the flag through `event_delivery_slot_live_sync`, and deleting the
+invocation deletes the slot. `TestPgEventDeliveryCountsReadLiveSlots` checks
+that no slot's flag disagrees with its invocation.
+
+The count now reads only the account's live slots, through
+`event_delivery_slots_live`. A keyed replace (`keep_latest`) subtracts the
+pending deliveries it would replace, found through the work-lane index.
+Admission costs the account's own live slots, not the platform's backlog.
+The replay guard keeps its join, since it runs only on replays.
