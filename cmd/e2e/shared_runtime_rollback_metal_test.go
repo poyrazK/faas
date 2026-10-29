@@ -80,31 +80,29 @@ func TestSharedRuntimeRollbackMetal(t *testing.T) {
 	if app == nil {
 		return
 	}
-	deploy, park, wake, coldThenRestore, rollback := app.deploy, app.park, app.wake, app.coldThenRestore, app.rollback
-
 	var legacy, shared state.Deployment
 	t.Run("legacy-own-base", func(t *testing.T) {
 		// The harness's first deployment stages and scans its own base.
-		legacy = deploy(t, layerKindFixture(t, "22", legacyBody, false), "aaaaaaaa-0000-4000-8000-000000000001", sharedBaseStallWindow, sharedBaseCeiling)
+		legacy = app.deploy(t, layerKindFixture(t, "22", legacyBody, false), "aaaaaaaa-0000-4000-8000-000000000001", sharedBaseStallWindow, sharedBaseCeiling)
 		if legacy.RuntimeBase != "" {
 			t.Fatalf("Node 22 deployment runtime_base = %q, want the app's own base", legacy.RuntimeBase)
 		}
-		park(t)
-		wake(t, legacyBody, "restore")
-		park(t)
+		app.park(t)
+		app.wake(t, legacyBody, "restore")
+		app.park(t)
 	})
 	t.Run("fallback-on-runner", func(t *testing.T) {
 		// The first Node 24 deployment stages the runner base.
-		fallback := deploy(t, layerKindFixture(t, "24", fallbackBody, true), "aaaaaaaa-0000-4000-8000-000000000002", sharedBaseStallWindow, sharedBaseCeiling)
+		fallback := app.deploy(t, layerKindFixture(t, "24", fallbackBody, true), "aaaaaaaa-0000-4000-8000-000000000002", sharedBaseStallWindow, sharedBaseCeiling)
 		if fallback.RuntimeBase != "node24" {
 			t.Fatalf("ineligible Node 24 deployment runtime_base = %q, want node24", fallback.RuntimeBase)
 		}
-		park(t)
-		wake(t, fallbackBody, "restore")
-		park(t)
+		app.park(t)
+		app.wake(t, fallbackBody, "restore")
+		app.park(t)
 	})
 	t.Run("shared-runtime", func(t *testing.T) {
-		shared = deploy(t, layerKindFixture(t, "24", sharedBody, false), "aaaaaaaa-0000-4000-8000-000000000003", sharedBaseStallWindow, sharedBaseCeiling)
+		shared = app.deploy(t, layerKindFixture(t, "24", sharedBody, false), "aaaaaaaa-0000-4000-8000-000000000003", sharedBaseStallWindow, sharedBaseCeiling)
 		if shared.RuntimeBase != "node24" {
 			t.Fatalf("shared deployment runtime_base = %q, want node24", shared.RuntimeBase)
 		}
@@ -120,25 +118,25 @@ func TestSharedRuntimeRollbackMetal(t *testing.T) {
 			t.Fatalf("app layer = %d bytes, want guest-init (%d) plus an /app-only tree, at most %d", shared.RootfsBytes, guestInit.Size(), limit)
 		}
 		t.Logf("app layer bytes: own base=%d shared=%d", legacy.RootfsBytes, shared.RootfsBytes)
-		park(t)
-		wake(t, sharedBody, "restore")
-		park(t)
+		app.park(t)
+		app.wake(t, sharedBody, "restore")
+		app.park(t)
 	})
 	t.Run("rollback-to-own-base", func(t *testing.T) {
 		if legacy.ID == "" || shared.ID == "" {
 			t.Skip("an earlier deployment did not go live")
 		}
-		rollback(t, legacy)
-		park(t)
-		coldThenRestore(t, legacy, legacyBody)
+		app.rollback(t, legacy)
+		app.park(t)
+		app.coldThenRestore(t, legacy, legacyBody)
 	})
 	t.Run("rollback-to-shared-runtime", func(t *testing.T) {
 		if legacy.ID == "" || shared.ID == "" {
 			t.Skip("an earlier deployment did not go live")
 		}
-		rollback(t, shared)
-		park(t)
-		coldThenRestore(t, shared, sharedBody)
+		app.rollback(t, shared)
+		app.park(t)
+		app.coldThenRestore(t, shared, sharedBody)
 	})
 }
 
