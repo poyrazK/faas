@@ -141,6 +141,29 @@ func TestHarnessLoadTarget(t *testing.T) {
 	}
 }
 
+func TestHarnessS3EndpointSitsBesideTheAPI(t *testing.T) {
+	for api, want := range map[string]string{
+		"https://api.gregale.dev":          "https://s3.gregale.dev",
+		"https://api.staging.example:8443": "https://s3.staging.example",
+		"http://gregale.test":              "https://s3.gregale.test",
+	} {
+		if got := (&target{api: api}).s3Endpoint(); got != want {
+			t.Errorf("s3Endpoint for %s = %q, want %q", api, got, want)
+		}
+	}
+}
+
+func TestHarnessBucketIDsCountsLiveBucketsOfTheJourneyName(t *testing.T) {
+	list := map[string]any{"items": []any{
+		map[string]any{"id": "a", "name": objectBucket, "state": "ready"},
+		map[string]any{"id": "b", "name": objectBucket, "state": "deleted"},
+		map[string]any{"id": "c", "name": "assets", "state": "ready"},
+	}}
+	if ids := bucketIDs(list); len(ids) != 1 || ids[0] != "a" {
+		t.Fatalf("bucketIDs = %v, want [a]", ids)
+	}
+}
+
 func TestHarnessRetryableAbortOnlyForCapacity(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -237,10 +260,11 @@ func TestHarnessIdempotentCommandRetriesOnlySafeCommands(t *testing.T) {
 	retry := [][]string{
 		{"app", "x", "--maintenance"}, {"park", "x"}, {"apps", "rm", "x", "--yes"},
 		{"secrets", "list", "--app", "x"}, {"secrets", "set", "K=V"}, {"crons", "rm", "id"}, {"keys", "rm", "id"},
+		{"bucket", "list", "x"}, {"bucket", "delete", "x", "id", "--yes"}, {"add", "bucket", "b", "--app", "x"},
 	}
 	once := [][]string{
 		{"deploy", "--name", "x"}, {"rollback", "x"}, {"keys", "add", "l"}, {"crons", "add"},
-		{"crons", "run", "id"}, {"apps", "restore", "x"}, {},
+		{"crons", "run", "id"}, {"apps", "restore", "x"}, {"add", "postgres", "--app", "x"}, {},
 	}
 	for _, args := range retry {
 		if !idempotentCommand(args) {

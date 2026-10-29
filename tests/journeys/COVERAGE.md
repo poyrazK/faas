@@ -37,6 +37,7 @@ covered. Update this table when a journey or a GA row changes.
 | 66 | Service bindings, verification and probes | `TestMultiServiceProject/call_by_injected_url` (`GREGALE_SERVICE_<NAME>_URL` from `depends_on`) | the `declared` policy, caller allowlists, call scopes, `gregale bindings verify` |
 | 77 | App access control | `TestMaintenanceAndAccess` (require-authn, basic auth, IP allowlist) | public bearer auth |
 | 92 | Crons, fire-now | `TestCronDelivery` | scheduled (non-manual) fires |
+| 108 | Object storage (preview, mapped ahead of GA): buckets, signed URLs, S3 gateway, multipart uploads | `TestObjectStorage`: `object_storage_enabled`, `create_bucket` (`add bucket` on an app made with `deploy --create-only`), `list_bucket`, `retried_create_keeps_one_bucket` (CLI and API), `signed_url_unicode_key`, `signed_url_empty_object`, AWS SDK for Go v2 on `s3.gregale.dev` with an API-minted credential (`s3_put_get`, `s3_multipart_upload` (5.5 MiB in two parts), `s3_copy_object`, `s3_list_objects` (paged), `s3_delete_object`), `other_tenant_credential_denied`, `forged_signature_denied`, `unsigned_request_denied` (list, read, write), `delete_non_empty_bucket_refused` (binding kept), `empty_bucket`, `revoked_credential_denied`, `delete_bucket` | versioning, Object Lock, retention and legal holds, lifecycle rules, change notifications, CORS rules, encryption defaults and keys: all still preview. Also public buckets, upload routes, API-key bucket grants, an app reading its injected `GREGALE_S3_*` settings, `gregale bucket upload/download`, cross-bucket copy, and flexible checksums (the SDK sends them only where required). The suite runs as one account, so a second app's same-named bucket stands in for another account's credential. While object storage is not enabled for the e2e account, `object_storage_enabled` is a known failure and the other steps report blocked |
 | 118 | Logs, tail, archive | `TestServeAndObserve` (runtime and HTTP logs), `TestTailAnalyticsAndMetrics/tail`, `TestLogArchive` | HTTP request logs while the production debugger (ADR-127) is not released for the account: the step skips on the CLI's explanation |
 | 121 | Metrics, request analytics | `TestServeAndObserve/metrics`, `TestTailAnalyticsAndMetrics` | service metrics |
 | 136 | Wake timeline | `TestWakeTimelineAndCosts/wake_timeline` | — |
@@ -54,4 +55,5 @@ covered. Update this table when a journey or a GA row changes.
 | 161 | Docs site and trust pages | `TestDocsPages` (every route not marked `unpublished` in `docs/customer-pages.json`), `TestPublicSurface/security_txt` | pages of preview and internal capabilities, which are deliberately unpublished |
 
 44 of the 46 GA rows have at least one journey; 143 and 157 need a test
-inbox and a browser. The "Not covered" column lists the remaining gaps.
+inbox and a browser. Row 108 is still preview and is mapped ahead of its
+GA promotion. The "Not covered" column lists the remaining gaps.
