@@ -39,10 +39,12 @@ type releaseHistoryRow struct {
 	FinishedAt        *time.Time `json:"finished_at,omitempty"`
 }
 
-// cmdReleaseHistory lists release activations on control-plane hosts, newest
-// first (issue #574): what was running on a host at a given time, and who
-// changed it. deployctl records every deploy and rollback; a rerun that found
-// its release already active is not an activation and has no row.
+// cmdReleaseHistory lists release activations, newest first (issue #574): what
+// was running on a host at a given time, and who changed it. deployctl
+// records every deploy and rollback on a control-plane host, and a trigger on
+// compute_nodes.release_id records each compute host's release install. A
+// rerun that found its release already active is not an activation and has
+// no row.
 func cmdReleaseHistory(args []string) int {
 	if len(args) > 0 && (args[0] == flagHelpLong || args[0] == flagHelpShort) {
 		PrintUsage(os.Stderr, "usage: gregalectl release history [--host NAME] [--limit 20] [--json]", "release")
