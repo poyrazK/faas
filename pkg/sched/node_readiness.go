@@ -55,7 +55,13 @@ func evaluateNodeReadiness(n state.ComputeNode, ping *PingOutcome) (state.NodeRe
 // store write fires compute_node_changed, which refreshes every schedd's
 // node registry and therefore placement.
 func (h *Heartbeat) recordReadiness(ctx context.Context, n state.ComputeNode, readiness state.NodeReadiness, reason string) {
-	h.ops.SetComputeNodeReadiness(n.Name, string(readiness))
+	// The column holds what vmmd proved; the gauge also shows an open wake
+	// breaker, which placement honours from its own column (step 3).
+	gauge := readiness
+	if gauge == state.NodeReadinessReady && n.WakeBreakerOpen(h.now()) {
+		gauge = state.NodeReadinessDegraded
+	}
+	h.ops.SetComputeNodeReadiness(n.Name, string(gauge))
 	writer, ok := h.store.(state.ComputeNodeReadinessStore)
 	if !ok {
 		return

@@ -661,7 +661,7 @@ func (b *PGBackend) ResolveDeploymentSmokeTarget(ctx context.Context, appID, dep
 // The legacy slice hook only populates a cache that remains empty.
 func (b *PGBackend) ReconcileLiveTargets(ctx context.Context, appID string) error {
 	if b != nil && appID != "" && b.placementLoader != nil {
-		return b.hydrateCurrentTargets(ctx, appID)
+		return b.reconcileCurrentTargets(ctx, appID)
 	}
 	if b == nil || appID == "" || b.liveTargetLoader == nil {
 		return nil
@@ -696,6 +696,24 @@ func (b *PGBackend) ReconcileLiveTargets(ctx context.Context, appID string) erro
 		}
 		return nil, nil
 	})
+	return err
+}
+
+// reconcileCurrentTargets is the wake leader's read before admission. A
+// placement change during that read means a newer observation reached the
+// picker first, which is no reason to refuse the wake: take one fresh read, as
+// the at-capacity path and the control-plane repair poll do, and after a
+// second collision leave the newer picker to the caller, which routes to a
+// ready target or admits through schedd. Returning the collision failed the
+// wake with 503 (prod rc.304, h14-grpc 2026-10-29 17:20:26, Hunt 14 H14-119).
+func (b *PGBackend) reconcileCurrentTargets(ctx context.Context, appID string) error {
+	err := b.hydrateCurrentTargets(ctx, appID)
+	if errors.Is(err, ErrTargetPlacementChanged) {
+		err = b.hydrateCurrentTargets(ctx, appID)
+	}
+	if errors.Is(err, ErrTargetPlacementChanged) {
+		return nil
+	}
 	return err
 }
 

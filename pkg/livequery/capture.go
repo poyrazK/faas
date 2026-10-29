@@ -12,6 +12,8 @@ import (
 	"github.com/jackc/pglogrepl"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgproto3"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // MarkerPrefix names the non-transactional logical messages that close a
@@ -94,6 +96,7 @@ func openCapture(ctx context.Context, dsn, slot, publication string, persistent 
 	if err != nil {
 		return nil, fmt.Errorf("livequery: connect capture: %w", err)
 	}
+	conn.Frontend().SetMaxBodyLen(api.LiveQueryReplicationMessageMaxBytes)
 	create := true
 	if persistent {
 		if create, err = prepareSlot(ctx, conn, slot); err != nil {

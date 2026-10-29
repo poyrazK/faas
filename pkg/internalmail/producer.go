@@ -72,6 +72,9 @@ func (s *Service) producerMessagePermitted(m Message) bool {
 	if deploymentFailedMessage(m) && !s.deploymentFailedOutboxEnabled() {
 		return false
 	}
+	if agentRunDeliveredMessage(m) && !s.agentRunDeliveredOutboxEnabled() {
+		return false
+	}
 	if subscriptionEndedMessage(m) && !s.subscriptionEndedOutboxEnabled() {
 		return false
 	}

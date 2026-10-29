@@ -1,5 +1,7 @@
 package githubd
 
+import "github.com/onebox-faas/faas/pkg/reposcan"
+
 // Capability flags (ADR-20261023115741): githubd stops the GitHub work of a
 // capability whose platform flag is off for the bound account. A push or pull
 // request event for such an account is acknowledged and ignored; it is not
@@ -16,6 +18,15 @@ const (
 // tests and embedded services) releases every capability.
 func (s *Service) capabilityAllowed(capability, accountID string) bool {
 	return s.CapabilityAllowed == nil || s.CapabilityAllowed(capability, accountID)
+}
+
+// scanOptions are the capability-gated scan options for an account. apid
+// scans a reviewed deploy with the same options, so a push deploy produces
+// the workloads the account reviewed.
+func (s *Service) scanOptions(accountID string) reposcan.ScanOptions {
+	return reposcan.ScanOptions{
+		KubernetesManifests: s.capabilityAllowed(reposcan.KubernetesManifestsCapability, accountID),
+	}
 }
 
 // previewsAllowed reports whether an account may get pull-request previews.

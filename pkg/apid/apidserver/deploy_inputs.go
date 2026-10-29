@@ -265,7 +265,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 				api.WriteProblem(w, api.ErrValidation("workflows must be a JSON array of definitions"))
 				return
 			}
-			if prob := validateWorkflowDefinitionsAgainstPlan(workflows, acct.Plan); prob != nil {
+			if prob := validateWorkflowDefinitionsAgainstPlan(workflows, acct.Plan, s.agentStepsAllowed(acct)); prob != nil {
 				api.WriteProblem(w, prob)
 				return
 			}
@@ -518,7 +518,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 	if sourceRoot != "" {
 		manifestApp.RootDir = sourceRoot
 	}
-	manifest, manifestProblem := loadSourceRefManifest(sourcePath, manifestApp, acct.Plan)
+	manifest, manifestProblem := loadSourceRefManifest(sourcePath, manifestApp, acct.Plan, s.agentStepsAllowed(acct))
 	if manifestProblem != nil {
 		api.WriteProblem(w, manifestProblem)
 		return

@@ -640,6 +640,13 @@ database writer cannot then store a key or login of their own.
 To rotate the key, add the new public key to the verify key file (it may
 hold several PEM blocks) and converge, then switch apid's private key.
 Rows signed with the old key stay valid while the old public key is listed.
+Sign them again with the new key, keeping the old public key in a file of
+its own:
+`sudo gregalectl live-query sign-existing --trusted-keys old-live-signing.pub --db-env /etc/faas/compute-db.env`.
+A row whose signature the old key made is signed again; a row whose
+signature neither key made is reported and left alone. Once a rerun reports
+nothing signed again, drop the old public key from the verify key file and
+converge.
 
 ### RLS mode
 

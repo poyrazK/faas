@@ -107,22 +107,21 @@ func TestPlanStorageCaps(t *testing.T) {
 }
 
 func TestParseStorageCapEnforcementMode(t *testing.T) {
-	for value, want := range map[string]CapEnforcementMode{"": CapEnforcementShadow, " Shadow ": CapEnforcementShadow, "off": CapEnforcementOff} {
+	for value, want := range map[string]CapEnforcementMode{"": CapEnforcementShadow, " Shadow ": CapEnforcementShadow, "off": CapEnforcementOff, "ON": CapEnforcementOn} {
 		if got, err := ParseStorageCapEnforcementMode(value); err != nil || got != want {
 			t.Errorf("%q = %q, %v; want %q", value, got, err, want)
 		}
 	}
-	for _, value := range []string{"on", "enforce"} {
-		if _, err := ParseStorageCapEnforcementMode(value); !errors.Is(err, ErrInvalid) {
-			t.Errorf("%q accepted; on needs the storage qualification", value)
-		}
+	if _, err := ParseStorageCapEnforcementMode("enforce"); !errors.Is(err, ErrInvalid) {
+		t.Error("an unknown mode was accepted")
 	}
 }
 
 type storageCapTestProvider struct {
 	*capTestProvider
-	storage    map[string]StorageCapObservation
-	storageSet map[string]int64
+	storage       map[string]StorageCapObservation
+	storageSet    map[string]int64
+	storageSetErr map[string]error
 }
 
 func (p *storageCapTestProvider) ObserveStorageCap(_ context.Context, id string) (StorageCapObservation, error) {
@@ -134,91 +133,124 @@ func (p *storageCapTestProvider) ObserveStorageCap(_ context.Context, id string)
 }
 
 func (p *storageCapTestProvider) SetStorageCap(_ context.Context, id string, limit int64) error {
+	if err := p.storageSetErr[id]; err != nil {
+		return err
+	}
 	p.storageSet[id] = limit
 	return nil
 }
 
-// The storage pass runs in shadow beside the compute sweep: it writes no
-// limit, and a subject it cannot observe never fails the compute sweep.
-func TestCapEnforcerStoragePoolShadow(t *testing.T) {
+// The storage pass runs beside the compute sweep: shadow writes no limit, on
+// writes the limits that changed, and a subject it cannot observe or write
+// never fails the compute sweep.
+func TestCapEnforcerStoragePool(t *testing.T) {
 	now := time.Date(2026, 10, 25, 12, 0, 0, 0, time.UTC)
-	month := monthStart(now)
-	provider := &storageCapTestProvider{
-		capTestProvider: &capTestProvider{fakeProvider: &fakeProvider{capabilities: testCapabilities()}, observed: map[string]ComputeCapObservation{}, set: map[string]int64{}},
-		storage: map[string]StorageCapObservation{
-			"proj-a":         {Scope: "a", SizeBytes: 300 * mib, LimitBytes: 1024 * mib},
-			"proj-a/br-rest": {Scope: "a", SizeBytes: 500 * mib, LimitBytes: 1024 * mib},
-			"proj-a2":        {Scope: "a2", SizeBytes: 100 * mib, LimitBytes: 1024 * mib},
-			"proj-b":         {Scope: "b", SizeBytes: 700 * mib, LimitBytes: 512 * mib},
-			"proj-u":         {Scope: "u", SizeBytes: 1, LimitBytes: 512 * mib},
-		},
-		storageSet: map[string]int64{},
+	run := func(t *testing.T, mode CapEnforcementMode, setErr map[string]error) (*storageCapTestProvider, *CapMetrics, CapSweepSummary) {
+		t.Helper()
+		provider := &storageCapTestProvider{
+			capTestProvider: &capTestProvider{fakeProvider: &fakeProvider{capabilities: testCapabilities()}, observed: map[string]ComputeCapObservation{}, set: map[string]int64{}},
+			storage: map[string]StorageCapObservation{
+				"proj-a":         {Scope: "a", SizeBytes: 300 * mib, LimitBytes: 1024 * mib},
+				"proj-a/br-rest": {Scope: "a", SizeBytes: 500 * mib, LimitBytes: 1024 * mib},
+				"proj-a2":        {Scope: "a2", SizeBytes: 100 * mib, LimitBytes: 1024 * mib},
+				"proj-b":         {Scope: "b", SizeBytes: 700 * mib, LimitBytes: 512 * mib},
+				"proj-u":         {Scope: "u", SizeBytes: 1, LimitBytes: 512 * mib},
+			},
+			storageSet: map[string]int64{}, storageSetErr: setErr,
+		}
+		for _, id := range []string{"proj-a", "proj-a/br-rest", "proj-a2", "proj-b", "proj-f", "proj-u"} {
+			provider.observed[id] = ComputeCapObservation{Scope: id, PeriodStart: monthStart(now), UsedUnitSeconds: 10, QuotaUnitSeconds: 100}
+		}
+		registry := testRegistry(t, provider, nil)
+		backend, err := registry.Default("us-east-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		database := func(id, account, resource string, spec int64) Database {
+			d := Database{ID: id, AccountID: account, BackendID: backend.ID, BackendFingerprint: backend.Fingerprint,
+				ProviderResourceID: resource, State: StateReady, Spec: testSpec()}
+			d.Spec.StorageLimitBytes = spec
+			return d
+		}
+		store := &capTestStore{databases: []Database{
+			database("db-a", "acct-a", "proj-a", 1024*mib),
+			database("db-a-restore", "acct-a", "proj-a/br-rest", 1024*mib),
+			database("db-a2", "acct-a", "proj-a2", 1024*mib),
+			database("db-b", "acct-b", "proj-b", 512*mib),
+			database("db-f", "acct-f", "proj-f", 512*mib),
+			database("db-u", "acct-u", "proj-u", 512*mib),
+		}}
+		pools := map[string]int64{"acct-a": 1024 * mib, "acct-b": 512 * mib, "acct-f": 512 * mib}
+		metrics, err := NewCapMetrics(prometheus.NewRegistry(), "apid", CapEnforcementShadow, mode)
+		if err != nil {
+			t.Fatal(err)
+		}
+		options := CapEnforcerOptions{
+			Mode: CapEnforcementShadow, StorageMode: mode, Now: func() time.Time { return now }, Observe: metrics.Observe,
+			Ceiling: func(_ context.Context, subject string) (CapLimits, error) {
+				// No compute ceiling: the compute sweep counts every subject uncapped.
+				return CapLimits{StoragePool: pools[subject]}, nil
+			},
+		}
+		if mode == CapEnforcementOn {
+			if _, err := NewCapEnforcer(registry, store, options); !errors.Is(err, ErrInvalid) {
+				t.Fatal("storage enforcement on was accepted without its qualification", err)
+			}
+			options.StorageQualification = testStorageCapQualification(backend)
+		}
+		enforcer, err := NewCapEnforcer(registry, store, options)
+		if err != nil {
+			t.Fatal(err)
+		}
+		summary, err := enforcer.Enforce(context.Background())
+		if err != nil {
+			t.Fatalf("Enforce = %v; a storage failure must not fail the sweep", err)
+		}
+		if summary.Accounts != 4 || summary.Uncapped != 4 || summary.Failed != 0 || len(provider.set) != 0 {
+			t.Fatalf("the storage pass changed the compute sweep: %+v", summary)
+		}
+		return provider, metrics, summary
 	}
-	for _, id := range []string{"proj-a", "proj-a/br-rest", "proj-a2", "proj-b", "proj-f", "proj-u"} {
-		provider.observed[id] = ComputeCapObservation{Scope: id, PeriodStart: month, UsedUnitSeconds: 10, QuotaUnitSeconds: 100}
-	}
-	registry := testRegistry(t, provider, nil)
-	backend, err := registry.Default("us-east-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	database := func(id, account, resource string, spec int64) Database {
-		d := Database{ID: id, AccountID: account, BackendID: backend.ID, BackendFingerprint: backend.Fingerprint,
-			ProviderResourceID: resource, State: StateReady, Spec: testSpec()}
-		d.Spec.StorageLimitBytes = spec
-		return d
-	}
-	store := &capTestStore{databases: []Database{
-		database("db-a", "acct-a", "proj-a", 1024*mib),
-		database("db-a-restore", "acct-a", "proj-a/br-rest", 1024*mib),
-		database("db-a2", "acct-a", "proj-a2", 1024*mib),
-		database("db-b", "acct-b", "proj-b", 512*mib),
-		database("db-f", "acct-f", "proj-f", 512*mib),
-		database("db-u", "acct-u", "proj-u", 512*mib),
-	}}
-	pools := map[string]int64{"acct-a": 1024 * mib, "acct-b": 512 * mib, "acct-f": 512 * mib}
-	registerer := prometheus.NewRegistry()
-	metrics, err := NewCapMetrics(registerer, "apid", CapEnforcementShadow, CapEnforcementShadow)
-	if err != nil {
-		t.Fatal(err)
-	}
-	enforcer, err := NewCapEnforcer(registry, store, CapEnforcerOptions{
-		Mode: CapEnforcementShadow, StorageMode: CapEnforcementShadow, Now: func() time.Time { return now }, Observe: metrics.Observe,
-		Ceiling: func(_ context.Context, subject string) (CapLimits, error) {
-			// No compute ceiling: the compute sweep counts every subject uncapped.
-			return CapLimits{StoragePool: pools[subject]}, nil
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	summary, err := enforcer.Enforce(context.Background())
-	if err != nil {
-		t.Fatalf("Enforce = %v; a storage failure must not fail the sweep", err)
-	}
+
 	// acct-a: 900 MiB of 1024 leaves 124. Its shared project's branches (300
 	// and 500 MiB) may grow by 124 together, so the limit is 424 MiB; the
 	// other project gets 224 MiB. acct-b is past its pool and already limited
 	// to its spec's 512 MiB, which stops it: unchanged.
-	if len(provider.storageSet) != 0 || summary.StorageAccounts != 4 || summary.StorageScopesShadowed != 2 ||
-		summary.StorageScopesUnchanged != 1 || summary.StorageBlockedAccounts != 1 || summary.StorageUncapped != 1 ||
-		summary.StorageFailed != 1 || summary.StorageUnsupported != 0 {
-		t.Fatalf("shadow wrote %v; summary %+v", provider.storageSet, summary)
-	}
-	if summary.Accounts != 4 || summary.Uncapped != 4 || summary.Failed != 0 || len(provider.set) != 0 {
-		t.Fatalf("the storage pass changed the compute sweep: %+v", summary)
-	}
-	for state, want := range map[string]float64{"enforced": 2, "blocked": 1, "uncapped": 1, "failed": 1} {
-		if got := testutil.ToFloat64(metrics.storageAccounts.WithLabelValues(state)); got != want {
-			t.Errorf("storage accounts %s = %v, want %v", state, got, want)
+	t.Run("shadow", func(t *testing.T) {
+		provider, metrics, summary := run(t, CapEnforcementShadow, nil)
+		if len(provider.storageSet) != 0 || summary.StorageAccounts != 4 || summary.StorageScopesShadowed != 2 ||
+			summary.StorageScopesApplied != 0 || summary.StorageScopesUnchanged != 1 || summary.StorageBlockedAccounts != 1 ||
+			summary.StorageUncapped != 1 || summary.StorageFailed != 1 || summary.StorageUnsupported != 0 {
+			t.Fatalf("shadow wrote %v; summary %+v", provider.storageSet, summary)
 		}
-	}
-	if got := testutil.ToFloat64(metrics.storageScopes.WithLabelValues("shadowed")); got != 2 {
-		t.Errorf("shadowed decisions = %v, want 2", got)
-	}
+		for state, want := range map[string]float64{"enforced": 2, "blocked": 1, "uncapped": 1, "failed": 1} {
+			if got := testutil.ToFloat64(metrics.storageAccounts.WithLabelValues(state)); got != want {
+				t.Errorf("storage accounts %s = %v, want %v", state, got, want)
+			}
+		}
+		if got := testutil.ToFloat64(metrics.storageScopes.WithLabelValues("shadowed")); got != 2 {
+			t.Errorf("shadowed decisions = %v, want 2", got)
+		}
+	})
 
-	if _, err := NewCapEnforcer(registry, store, CapEnforcerOptions{Mode: CapEnforcementOff, StorageMode: CapEnforcementOn,
-		Ceiling: func(context.Context, string) (CapLimits, error) { return CapLimits{}, nil }}); !errors.Is(err, ErrInvalid) {
-		t.Fatal("storage enforcement on was accepted without its qualification", err)
-	}
+	t.Run("on writes the limits that changed", func(t *testing.T) {
+		provider, metrics, summary := run(t, CapEnforcementOn, nil)
+		want := map[string]int64{"proj-a": 424 * mib, "proj-a2": 224 * mib}
+		if len(provider.storageSet) != len(want) || provider.storageSet["proj-a"] != want["proj-a"] || provider.storageSet["proj-a2"] != want["proj-a2"] {
+			t.Fatalf("limits written %v; want %v", provider.storageSet, want)
+		}
+		if summary.StorageScopesApplied != 2 || summary.StorageScopesShadowed != 0 || summary.StorageFailed != 1 {
+			t.Fatalf("summary %+v", summary)
+		}
+		if got := testutil.ToFloat64(metrics.storageScopes.WithLabelValues("applied")); got != 2 {
+			t.Errorf("applied decisions = %v, want 2", got)
+		}
+	})
+
+	t.Run("a failed write fails only its subject's storage pass", func(t *testing.T) {
+		provider, _, summary := run(t, CapEnforcementOn, map[string]error{"proj-a2": ErrUnavailable})
+		if provider.storageSet["proj-a"] != 424*mib || summary.StorageScopesApplied != 1 || summary.StorageFailed != 2 {
+			t.Fatalf("limits written %v; summary %+v", provider.storageSet, summary)
+		}
+	})
 }
