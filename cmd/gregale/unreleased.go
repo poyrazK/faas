@@ -98,5 +98,5 @@ func dataAPICreateUsage() string {
 	if applicationAuthCLI() {
 		return "usage: gregale data-api create NAME --database DATABASE (--auth AUTH_APP | --issuer HTTPS_URL --jwks-url HTTPS_URL --audience AUDIENCE) [--scope SCOPE] [--origins ORIGINS] [--public-read SCHEMA.RELATION[,...]] [--public-rpc SCHEMA.FUNCTION[,...]] [--aggregates] [--migrations DIR [--release-command COMMAND]]"
 	}
-	return "usage: gregale data-api create NAME --database DATABASE --issuer HTTPS_URL --jwks-url HTTPS_URL --audience AUDIENCE [--scope SCOPE] [--origins ORIGINS] [--public-read SCHEMA.RELATION[,...]] [--public-rpc SCHEMA.FUNCTION[,...]] [--aggregates] [--migrations DIR [--release-command COMMAND]]"
+	return "usage: gregale data-api create NAME --database DATABASE --issuer HTTPS_URL --jwks-url HTTPS_URL --audience AUDIENCE [--env SCOPE] [--origins ORIGINS] [--public-read SCHEMA.RELATION[,...]] [--public-rpc SCHEMA.FUNCTION[,...]] [--aggregates] [--migrations DIR [--release-command COMMAND]]"
 }

@@ -78,6 +78,9 @@ func (a *requireAuthnAdapter) AuthenticateKey(ctx context.Context, hash []byte) 
 			return gateway.RequireAuthnAccount{}, gateway.RequireAuthnKey{}, gateway.ErrAPIKeyExpired
 		case errors.Is(err, state.ErrAPIKeyRevoked):
 			return gateway.RequireAuthnAccount{}, gateway.RequireAuthnKey{}, gateway.ErrAPIKeyRevoked
+		case errors.Is(err, state.ErrNotFound):
+			// A definite miss the gateway's key cache may remember.
+			return gateway.RequireAuthnAccount{}, gateway.RequireAuthnKey{}, gateway.ErrAPIKeyUnknown
 		}
 		return gateway.RequireAuthnAccount{}, gateway.RequireAuthnKey{}, err
 	}

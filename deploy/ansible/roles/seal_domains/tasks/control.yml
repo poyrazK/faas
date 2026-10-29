@@ -26,6 +26,29 @@
   no_log: true
   notify: restart faas-schedd for seal domains
 
+# Key rotation (ADR 20261022111812): while the previous identity is
+# set it stays beside the new one, so values sealed to it still open until
+# the domain's re-seal to the new key completes. Unset, it is removed.
+- name: seal_domains — install the previous control domain identity
+  ansible.builtin.copy:
+    src: "{{ faas_seal_domain_control_previous_identity_src }}"
+    dest: /etc/faas/secrets/domains/control.age.previous
+    owner: root
+    group: root
+    mode: "0400"
+  no_log: true
+  notify: restart faas-schedd for seal domains
+  when:
+    - faas_seal_domain_control_previous_identity_src | length > 0
+
+- name: seal_domains — remove the previous control domain identity
+  ansible.builtin.file:
+    path: /etc/faas/secrets/domains/control.age.previous
+    state: absent
+  notify: restart faas-schedd for seal domains
+  when:
+    - faas_seal_domain_control_previous_identity_src | length == 0
+
 - name: seal_domains — create the schedd drop-in directory
   ansible.builtin.file:
     path: /etc/systemd/system/faas-schedd.service.d

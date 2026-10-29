@@ -83,7 +83,11 @@ func TestLegacyConsumerKeyResponseNotStoredByIdempotency(t *testing.T) {
 	if count, err := (*e.S()).CountConsumerKeys(context.Background(), (*e.Acct()).ID, appID); err != nil || count != 0 {
 		t.Fatalf("revoked app quota = %d, %v", count, err)
 	}
-	if count, err := (*e.S()).CountAccountConsumerKeys(context.Background(), (*e.Acct()).ID); err != nil || count != 0 {
+	app, err := (*e.Store()).AppByID(context.Background(), appID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count, err := (*e.S()).CountAccountConsumerKeys(context.Background(), app); err != nil || count != 0 {
 		t.Fatalf("revoked account quota = %d, %v", count, err)
 	}
 }

@@ -928,6 +928,21 @@ func (e *Engine) OwnsApp(app state.App) bool {
 	return e.ownsAppDecision(app)
 }
 
+// ownsInstanceApp reports whether this scheduler owns the app of an instance
+// row, as wakes decide. An instance with no app, or whose app cannot be read,
+// counts as owned, as the stuck-row watchdog swept every row before
+// ADR-20261028200212.
+func (e *Engine) ownsInstanceApp(ctx context.Context, appID string) bool {
+	if appID == "" || e.ownerNodeID == "" && e.defaultLocalNodeID == "" {
+		return true
+	}
+	app, err := e.store.AppByID(ctx, appID)
+	if err != nil {
+		return true
+	}
+	return e.ownsAppDecision(app)
+}
+
 // claimNodeID is the node whose apps ownsAppDecision accepts besides apps
 // with no node, or "" when this engine owns every app.
 func (e *Engine) claimNodeID() string {
@@ -3544,7 +3559,10 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		placementRequest.restoreSnapshot = &restoreSnap
 	}
 	createInstance := func(admitCtx context.Context, p Placement) (state.Instance, error) {
-		return e.store.CreateInstanceWithMode(state.WithSnapshotRecoveryAdmission(admitCtx, recovery), appID, dep.ID, string(initState), app.RAMMB, p.NodeID, wakeID, mode)
+		// ADR-20261028200212: the insert refuses if a pressure rebalance moved
+		// the app after the ownership check above.
+		admitCtx = state.WithAppOwnerFence(state.WithSnapshotRecoveryAdmission(admitCtx, recovery), e.ownerNodeID)
+		return e.store.CreateInstanceWithMode(admitCtx, appID, dep.ID, string(initState), app.RAMMB, p.NodeID, wakeID, mode)
 	}
 	ins, placement, releaseRestorePressure, err = e.createWithNodePlacement(withPlacementPrefetch(ctx, placementAhead), placementRequest, restore, createInstance)
 	if err != nil && restore && isCapacityProblem(err) && e.snapshotExcludesNodes(ctx, snap) {
@@ -3606,6 +3624,9 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		if capErr := e.nodeCapacityProblem(err); errors.Is(err, state.ErrNodeCapacity) {
 			return WakeResult{}, capErr
 		}
+		if errors.Is(err, state.ErrAppOwnerMoved) {
+			return WakeResult{}, fmt.Errorf("sched: wake: create instance: %w: %w", ErrAppOwnedByAnotherNode, err)
+		}
 		return WakeResult{}, fmt.Errorf("sched: wake: create instance: %w", applicationStandardRuntimeProblem(err))
 	}
 	noteWakePlacement(ctx, placement.NodeID)
@@ -3634,7 +3655,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		// replaces this conservative deadline with the observed ready window.
 		provisionalCPUBoostUntil = time.Now().Add(startupDeadline + fcvm.StartupCPUBoostTailDuration + 30*time.Second)
 		if err := e.store.SetInstanceStartupCPUBoostUntil(ctx, ins.ID, &provisionalCPUBoostUntil); err != nil {
-			_ = e.store.DeleteInstance(ctx, ins.ID)
+			_ = e.store.DeleteInstance(context.WithoutCancel(ctx), ins.ID)
 			release()
 			return WakeResult{}, fmt.Errorf("sched: wake: persist provisional startup CPU reservation: %w", err)
 		}
@@ -3645,7 +3666,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	// mapping without guessing which host port was in use.
 	hostPortRequests := hostPortRequestsForManifest(app.Manifest)
 	if err := e.acquireHostPortLeases(ctx, placement.NodeID, ins.ID, hostPortRequests); err != nil {
-		_ = e.store.DeleteInstance(ctx, ins.ID)
+		_ = e.store.DeleteInstance(context.WithoutCancel(ctx), ins.ID)
 		release()
 		if errors.Is(err, hostport.ErrExhausted) {
 			return WakeResult{}, explainAdmission(api.ErrCapacity("no host ports are available on the selected compute node"),
@@ -5569,7 +5590,19 @@ func (e *Engine) RebalancePressuredApps(ctx context.Context, appID string) error
 	// Atomic reassign of apps.node_id. RowsAffected==0 (the
 	// peer-claim race) is the only conflict path; the engine
 	// sees ErrConflict and increments the conflict metric.
-	if err := e.store.ReassignAppOwner(ctx, app.ID, app.NodeID, peer); err != nil {
+	// ADR-20261028200212: the parked-only move re-checks for resident
+	// instances under the app row lock admissions take, so a wake that
+	// passed its ownership check before the move cannot land an instance
+	// after it; the check above is only the cheap early exit.
+	reassign := e.store.ReassignAppOwner
+	if parked, ok := e.store.(state.ParkedAppOwnerReassigner); ok {
+		reassign = parked.ReassignParkedAppOwner
+	}
+	if err := reassign(ctx, app.ID, app.NodeID, peer); err != nil {
+		if errors.Is(err, state.ErrAppResident) {
+			e.observePressure("no_eligibility")
+			return nil
+		}
 		if errors.Is(err, state.ErrConflict) {
 			e.observePressure("conflict")
 			return nil
@@ -6716,7 +6749,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 		}
 		provisionalPrimeCPUBoostUntil = time.Now().Add(startupDeadline + fcvm.StartupCPUBoostTailDuration + 30*time.Second)
 		if err := e.store.SetInstanceStartupCPUBoostUntil(ctx, ins.ID, &provisionalPrimeCPUBoostUntil); err != nil {
-			_ = e.store.DeleteInstance(ctx, ins.ID)
+			_ = e.store.DeleteInstance(context.WithoutCancel(ctx), ins.ID)
 			return fmt.Errorf("sched: prime: persist provisional startup CPU reservation: %w", err)
 		}
 	}
@@ -6927,6 +6960,21 @@ func (e *Engine) cleanupInterruptedPrime(ctx context.Context, appID string, prim
 		"wake_boot_error", "prime_interrupted_by_scheduler_shutdown")
 }
 
+// watchdogColdBootFailurePrefix starts the deployment error the watchdog
+// writes when it stops a priming guest at the cold-boot budget.
+const watchdogColdBootFailurePrefix = "cold_boot_timeout: "
+
+// refinesWatchdogStartupTimeout reports a prime failure that explains a
+// deployment the watchdog already failed with its generic cold-boot timeout:
+// vmmd's typed readiness problem for the stopped guest (for example a
+// healthcheck that answered 503) says why the app was not ready.
+func refinesWatchdogStartupTimeout(dep state.Deployment, cause error) bool {
+	var problem *api.Problem
+	return dep.Status == state.DeployFailed && dep.ErrorCode == api.CodeAppStartupTimeout &&
+		strings.HasPrefix(dep.Error, watchdogColdBootFailurePrefix) &&
+		errors.As(cause, &problem) && problem != nil && problem.Code != ""
+}
+
 // markPrimeFailed closes the deployment lifecycle when the scheduler cannot
 // produce the first snapshot. Prime already transitions its instance to
 // FAILED, but historically the deployment row was left in SNAPSHOTTING, so
@@ -6952,8 +7000,10 @@ func (e *Engine) markPrimeFailed(ctx context.Context, deploymentID string, cause
 	}
 	// A duplicate notification can arrive after another worker has already
 	// completed or terminally failed the deployment. Do not let a late prime
-	// error overwrite a successful/live or independently terminal result.
-	if dep.Status == state.DeployLive || dep.Status.IsTerminal() {
+	// error overwrite a successful/live or independently terminal result,
+	// except the watchdog's generic cold-boot timeout: it stops the priming
+	// guest first, so vmmd's reason for that guest arrives after it (#5709).
+	if dep.Status == state.DeployLive || dep.Status.IsTerminal() && !refinesWatchdogStartupTimeout(dep, cause) {
 		return
 	}
 
@@ -9445,7 +9495,7 @@ func (e *Engine) KillStuck(ctx context.Context, instanceID, appID string, reason
 			_ = whycopy.Decorate(p, api.CodeAppStartupTimeout, nil)
 			if _, err := e.store.SetDeploymentFailedEx(ctx, fresh.DeploymentID,
 				api.CodeAppStartupTimeout,
-				fmt.Sprintf("cold_boot_timeout: instance=%s", instanceID),
+				fmt.Sprintf("%sinstance=%s", watchdogColdBootFailurePrefix, instanceID),
 				p.Hint, p.Why, p.Fix, nil,
 			); err != nil {
 				e.log.Warn("watchdog: stamp app_startup_timeout failed", "deployment", fresh.DeploymentID, "err", err)

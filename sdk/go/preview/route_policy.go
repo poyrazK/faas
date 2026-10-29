@@ -26,6 +26,15 @@ type RoutePolicyAppliedChange = api.RoutePolicyAppliedChange
 type RoutePolicyReceipt = api.RoutePolicyReceipt
 type RoutePolicyApplyResponse = api.RoutePolicyApplyResponse
 
+// OpenAPI route policy (ADR-20261028110044): PreviewAppOpenAPIPolicy and
+// ApplyAppOpenAPIPolicy on Client.
+type AppOpenAPIPolicyPreviewResponse = api.AppOpenAPIPolicyPreviewResponse
+type AppOpenAPIPolicyPreviewRoute = api.AppOpenAPIPolicyPreviewRoute
+type AppOpenAPIPolicyPreviewRule = api.AppOpenAPIPolicyPreviewRule
+type EdgeRuleSuggestion = api.EdgeRuleSuggestion
+type ApplyAppOpenAPIPolicyRequest = api.ApplyAppOpenAPIPolicyRequest
+type AppOpenAPIPolicyApplyResponse = api.AppOpenAPIPolicyApplyResponse
+
 type CreateEdgeRuleRequest = api.CreateEdgeRuleRequest
 type UpdateEdgeRuleRequest = api.UpdateEdgeRuleRequest
 

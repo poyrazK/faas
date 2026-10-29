@@ -343,7 +343,7 @@ func cmdDebugRequestsList(args []string) int {
 	}
 	positional, mergeErr := mergeAppFlag(positional, *app, 1)
 	if mergeErr != nil || len(positional) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale debug requests list [--all] [--since D] [--route P] [--deployment-id UUID] [--status N] [--cold-boot true|false] [--consumer-id UUID|__anonymous__] [--min-latency-ms N] [--cursor C] [--limit N] <slug>", debugCmdDocsTopic)
+		PrintUsage(os.Stderr, "usage: gregale debug requests list [--all] [--since D] [--route P] [--release UUID] [--status N] [--cold-boot true|false] [--consumer-id UUID|__anonymous__] [--min-latency-ms N] [--cursor C] [--limit N] <slug>", debugCmdDocsTopic)
 		return 1
 	}
 	if *limit < 1 || *limit > 200 {
@@ -576,7 +576,7 @@ func renderDebugReplayQueued(w io.Writer, resp api.DebugReplayResponse) {
 	if resp.MirrorDeploymentID != "" {
 		_, _ = fmt.Fprintf(w, "Target:        %s\n", resp.MirrorDeploymentID)
 	}
-	_, _ = fmt.Fprintf(w, "Poll with:     gregale invocations get %s\n", resp.MirrorInvocationID)
+	_, _ = fmt.Fprintf(w, "Poll with:     gregale invocation get %s\n", resp.MirrorInvocationID)
 }
 
 func decodeDebugReplayComparison(raw []byte) (api.DebugReplayComparison, bool) {

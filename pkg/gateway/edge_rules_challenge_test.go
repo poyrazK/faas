@@ -74,8 +74,8 @@ func TestApplyEdgeRuleChallenge(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
 	rule := &EdgeRuleChallengeResolved{ID: "rule-1", AccountID: "acct-1", AppID: "app-1", Difficulty: 8, PassTTLSeconds: 3600}
 	app := App{ID: "app-1", AccountID: "acct-1"}
-	validPassCookie := func(r *http.Request, appID string) {
-		v := sealChallenge(challengeTestKey, "pass", challengePassPrefix, challengePass{AppID: appID, Expires: now.Add(time.Hour).Unix()}, bindingFor(r))
+	validPassCookie := func(r *http.Request, accountID, host string) {
+		v := sealChallenge(challengeTestKey, "pass", challengePassPrefix, challengePass{AccountID: accountID, Host: host, Expires: now.Add(time.Hour).Unix()}, bindingFor(r))
 		r.AddCookie(&http.Cookie{Name: ChallengeCookieName, Value: v})
 	}
 	for _, tc := range []struct {
@@ -105,17 +105,22 @@ func TestApplyEdgeRuleChallenge(t *testing.T) {
 			wantHandled: true, wantCode: api.CodeChallengeRequired},
 		{name: "valid pass passes", req: func() *http.Request {
 			r := browserRequest(http.MethodGet, "/")
-			validPassCookie(r, "app-1")
+			validPassCookie(r, "acct-1", "shop.example.test")
 			return r
 		}},
-		{name: "pass for another app is challenged", req: func() *http.Request {
+		{name: "pass for another account is challenged", req: func() *http.Request {
 			r := browserRequest(http.MethodGet, "/")
-			validPassCookie(r, "app-2")
+			validPassCookie(r, "acct-2", "shop.example.test")
+			return r
+		}, wantHandled: true, wantPage: true},
+		{name: "pass for another host is challenged", req: func() *http.Request {
+			r := browserRequest(http.MethodGet, "/")
+			validPassCookie(r, "acct-1", "blog.example.test")
 			return r
 		}, wantHandled: true, wantPage: true},
 		{name: "pass from another browser is challenged", req: func() *http.Request {
 			r := browserRequest(http.MethodGet, "/")
-			validPassCookie(r, "app-1")
+			validPassCookie(r, "acct-1", "shop.example.test")
 			r.Header.Set("User-Agent", "python-requests/2.32")
 			return r
 		}, wantHandled: true, wantPage: true},
@@ -269,6 +274,8 @@ func TestChallengeSolveIgnoresOtherRequests(t *testing.T) {
 		"get on the path":       {challengeTestHandler(rule, time.Now()), http.MethodGet, ChallengeSolvePath},
 		"post elsewhere":        {challengeTestHandler(rule, time.Now()), http.MethodPost, "/login"},
 		"host without the rule": {challengeTestHandler(nil, time.Now()), http.MethodPost, ChallengeSolvePath},
+		// Only a current token in the query claims a host without the rule.
+		"another version's token": {challengeTestHandler(nil, time.Now()), http.MethodPost, ChallengeSolvePath + "?token=c1.abc.def"},
 	} {
 		if tc.h.handleChallengeSolve(httptest.NewRecorder(), browserRequest(tc.method, tc.path), app) {
 			t.Errorf("%s: handled", name)
@@ -279,9 +286,9 @@ func TestChallengeSolveIgnoresOtherRequests(t *testing.T) {
 func TestChallengeSealing(t *testing.T) {
 	r := browserRequest(http.MethodGet, "/")
 	b := bindingFor(r)
-	sealed := sealChallenge(challengeTestKey, "pass", challengePassPrefix, challengePass{AppID: "app-1", Expires: 42}, b)
+	sealed := sealChallenge(challengeTestKey, "pass", challengePassPrefix, challengePass{AccountID: "acct-1", Host: "shop.example.test", Expires: 42}, b)
 	var p challengePass
-	if !openChallenge(challengeTestKey, "pass", challengePassPrefix, sealed, b, &p) || p.AppID != "app-1" || p.Expires != 42 {
+	if !openChallenge(challengeTestKey, "pass", challengePassPrefix, sealed, b, &p) || p.AccountID != "acct-1" || p.Host != "shop.example.test" || p.Expires != 42 {
 		t.Fatalf("round trip: %+v", p)
 	}
 	if openChallenge(challengeTestKey, "token", challengePassPrefix, sealed, b, &p) {

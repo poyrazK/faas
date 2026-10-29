@@ -89,3 +89,9 @@ telemetry directly, so there is no second counter to drift.
 - The `rollback_on_5xx_candidates_track_the_opt_in` conformance case runs on
   both stores and covers `StampFirstWake` and `MarkAutoRollback`. It is what
   caught the PgStore interval encoding bug.
+
+## Amendment (2026-10-28): the rollback target
+
+The guard's target is the deployment a plain rollback returns to, never the
+newest superseded row by creation, which can be an aborted canary or a build
+that never served (ADR-1445 amendment 1).

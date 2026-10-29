@@ -67,7 +67,7 @@ func cmdMirrorList(args []string) int {
 		return 1
 	}
 	if *slug == "" {
-		PrintUsage(os.Stderr, "usage: gregale mirror list --app <slug>", "mirror")
+		PrintUsage(os.Stderr, "usage: gregale release mirror list --app <slug>", "mirror")
 		return 1
 	}
 	client, err := authedClient()
@@ -112,7 +112,7 @@ func cmdMirrorCreate(args []string) int {
 		return 1
 	}
 	if *slug == "" || *source == "" || *mirror == "" {
-		PrintUsage(os.Stderr, "usage: gregale mirror create --app <slug> --source <id> --mirror <id> [--percent N] [--include-body] [--allow-unsafe-methods] [--redact-header Name]…", "mirror")
+		PrintUsage(os.Stderr, "usage: gregale release mirror create --app <slug> --source <id> --mirror <id> [--percent N] [--include-body] [--allow-unsafe-methods] [--redact-header Name]…", "mirror")
 		return 1
 	}
 	client, err := authedClient()
@@ -165,7 +165,7 @@ func warnMirrorConcurrency(client *api.Client, slug string) {
 	if err != nil || app.MaxConcurrency >= 2 {
 		return
 	}
-	PrintWarn(osStdout, "Mirror instances count against max_concurrency (%d here), so mirrored requests are rejected while the source holds the only slot. Raise it with `gregale app %s scale --max-concurrency 2`.", app.MaxConcurrency, slug)
+	PrintWarn(osStdout, "Mirror instances count against max_concurrency (%d here), so mirrored requests are rejected while the source holds the only slot. Raise it with `gregale app scale %s --max-concurrency 2`.", app.MaxConcurrency, slug)
 }
 
 // cmdMirrorInfo implements `gregale mirror info --app <slug> --id <mirror-id>`.
@@ -183,7 +183,7 @@ func cmdMirrorInfo(args []string) int {
 		return 1
 	}
 	if *slug == "" || *id == "" {
-		PrintUsage(os.Stderr, "usage: gregale mirror info --app <slug> --id <mirror-id>", "mirror")
+		PrintUsage(os.Stderr, "usage: gregale release mirror get --app <slug> --id <mirror-id>", "mirror")
 		return 1
 	}
 	client, err := authedClient()
@@ -242,19 +242,19 @@ func cmdMirrorUpdate(args []string) int {
 		return 1
 	}
 	if *slug == "" || *id == "" {
-		PrintUsage(os.Stderr, "usage: gregale mirror update --app <slug> --id <mirror-id> [--percent N] [--enable|--disable] [--include-body|--no-include-body] [--allow-unsafe-methods|--safe-methods-only] [--redact-header Name]… [--clear-redact]", "mirror")
+		PrintUsage(os.Stderr, "usage: gregale release mirror update --app <slug> --id <mirror-id> [--percent N] [--enable|--disable] [--include-body|--no-include-body] [--allow-unsafe-methods|--safe-methods-only] [--redact-header Name]… [--clear-redact]", "mirror")
 		return 1
 	}
 	if *enable && *disable {
-		PrintUsage(os.Stderr, "usage: gregale mirror update --app <slug> --id <mirror-id> [--enable|--disable] (mutually exclusive)", "mirror")
+		PrintUsage(os.Stderr, "usage: gregale release mirror update --app <slug> --id <mirror-id> [--enable|--disable] (mutually exclusive)", "mirror")
 		return 1
 	}
 	if *includeBody && *noIncludeBody {
-		PrintUsage(os.Stderr, "usage: gregale mirror update --app <slug> --id <mirror-id> [--include-body|--no-include-body] (mutually exclusive)", "mirror")
+		PrintUsage(os.Stderr, "usage: gregale release mirror update --app <slug> --id <mirror-id> [--include-body|--no-include-body] (mutually exclusive)", "mirror")
 		return 1
 	}
 	if *allowUnsafe && *safeMethodsOnly {
-		PrintUsage(os.Stderr, "usage: gregale mirror update --app <slug> --id <mirror-id> [--allow-unsafe-methods|--safe-methods-only] (mutually exclusive)", "mirror")
+		PrintUsage(os.Stderr, "usage: gregale release mirror update --app <slug> --id <mirror-id> [--allow-unsafe-methods|--safe-methods-only] (mutually exclusive)", "mirror")
 		return 1
 	}
 	client, err := authedClient()
@@ -343,7 +343,7 @@ func cmdMirrorRm(args []string) int {
 		return 1
 	}
 	if *slug == "" || *id == "" {
-		PrintUsage(os.Stderr, "usage: gregale mirror rm --app <slug> --id <mirror-id>", "mirror")
+		PrintUsage(os.Stderr, "usage: gregale release mirror delete --app <slug> --id <mirror-id>", "mirror")
 		return 1
 	}
 	client, err := authedClient()
@@ -376,7 +376,7 @@ func cmdMirrorSummary(args []string) int {
 		return 1
 	}
 	if *slug == "" || *id == "" {
-		PrintUsage(os.Stderr, "usage: gregale mirror summary --app <slug> --id <mirror-id> [--window 1h|24h|7d]", "mirror")
+		PrintUsage(os.Stderr, "usage: gregale release mirror summary --app <slug> --id <mirror-id> [--window 1h|24h|7d]", "mirror")
 		return 1
 	}
 	client, err := authedClient()
@@ -427,7 +427,7 @@ func cmdMirrorReplay(args []string) int {
 		return 1
 	}
 	if *slug == "" || *id == "" || *path == "" {
-		PrintUsage(os.Stderr, "usage: gregale mirror replay --app <slug> --id <mirror-rule-id> --file <corpus.json|-> [--allow-unsafe-methods]", "mirror")
+		PrintUsage(os.Stderr, "usage: gregale release mirror replay --app <slug> --id <mirror-rule-id> --file <corpus.json|-> [--allow-unsafe-methods]", "mirror")
 		return 1
 	}
 	req, err := readMirrorReplayCorpus(*path)
@@ -501,7 +501,7 @@ func readMirrorReplayCorpus(path string) (api.MirrorReplayBatchRequest, error) {
 // first positional arg.
 func cmdMirror(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale mirror <list|create|info|update|rm|summary|replay> --app <slug> [flags]", "mirror")
+		PrintUsage(os.Stderr, "usage: gregale release mirror <list|create|info|update|rm|summary|replay> --app <slug> [flags]", "mirror")
 		return 1
 	}
 	switch args[0] {
@@ -520,7 +520,7 @@ func cmdMirror(args []string) int {
 	case "replay":
 		return cmdMirrorReplay(args[1:])
 	default:
-		PrintUsage(os.Stderr, "usage: gregale mirror <list|create|info|update|rm|summary|replay> --app <slug> [flags]", "mirror")
+		PrintUsage(os.Stderr, "usage: gregale release mirror <list|create|info|update|rm|summary|replay> --app <slug> [flags]", "mirror")
 		return 1
 	}
 }

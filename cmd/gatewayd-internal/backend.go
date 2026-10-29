@@ -998,16 +998,9 @@ type invalidator interface {
 	// the per-host edge-rule LRU and response cache so the next
 	// request recompiles and re-fetches the up-to-date preset via
 	// state.GetCorsPresetByID, and cannot serve cached old CORS
-	// headers. Wholesale reset is
-	// correct: the per-rule compile path re-reads the preset
-	// on every cache miss, so the post-reset compile produces
-	// resolved actions against the latest row. The account_id
-	// payload is informational — the cmd-side pg_notify channel
-	// is too narrow to do per-account surgical eviction without
-	// restructuring the LRU key to include account_id. For the
-	// multi-tenant case the worst-case is "another account's
-	// request recompiles" — same compile cost as the first
-	// request to a host, no incorrect routing.
+	// headers. It is the wholesale fallback: an invalidator with
+	// the scoped edge-rule surface drops only the changed
+	// account's sets and responses (invalidateCorsPresetChange).
 	ResetCorsPresets(accountID string)
 }
 
@@ -1079,7 +1072,7 @@ func watchInvalidations(ctx context.Context, pool *pgxpool.Pool, inv invalidator
 	// barrier.
 	var heartbeat <-chan time.Time
 	if gatewayNode != "" {
-		touchEdgeListenerHeartbeat(ctx, pool, gatewayNode, log)
+		touchEdgeListenerHeartbeat(ctx, pool, inv, gatewayNode, log)
 		ticker := time.NewTicker(state.EdgeListenerHeartbeatInterval)
 		defer ticker.Stop()
 		heartbeat = ticker.C
@@ -1090,7 +1083,7 @@ func watchInvalidations(ctx context.Context, pool *pgxpool.Pool, inv invalidator
 		case <-ctx.Done():
 			return
 		case <-heartbeat:
-			touchEdgeListenerHeartbeat(ctx, pool, gatewayNode, log)
+			touchEdgeListenerHeartbeat(ctx, pool, inv, gatewayNode, log)
 		case n, ok := <-notif:
 			if !ok {
 				// Defensive — wrapper keeps open until ctx cancels.
@@ -1150,12 +1143,19 @@ func ackDeploymentRouteInvalidation(ctx context.Context, pool *pgxpool.Pool, gen
 	}
 }
 
-func touchEdgeListenerHeartbeat(ctx context.Context, pool *pgxpool.Pool, node string, log *slog.Logger) {
+// touchEdgeListenerHeartbeat stamps node's edge listener heartbeat and, when
+// the write succeeds, records it on inv's metrics, so an alert sees a stamp
+// that stopped advancing without waiting for a rule change.
+func touchEdgeListenerHeartbeat(ctx context.Context, pool *pgxpool.Pool, inv invalidator, node string, log *slog.Logger) {
 	// Short: the write runs on the notification loop it vouches for.
 	touchCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	if err := state.NewPgStore(pool).TouchEdgeListenerHeartbeat(touchCtx, node); err != nil {
 		log.Warn("gatewayd: edge listener heartbeat", "node", node, "err", err)
+		return
+	}
+	if observer, ok := inv.(interface{ ObserveEdgeListenerHeartbeat(time.Time) }); ok {
+		observer.ObserveEdgeListenerHeartbeat(time.Now())
 	}
 }
 
@@ -1356,6 +1356,12 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 			AppID string `json:"app_id"`
 		}
 		if err := json.Unmarshal([]byte(n.Payload), &p); err == nil && p.AppID != "" {
+			// Before ResetApp, which drops the cached app the account comes
+			// from: the deleted app's rules stop applying to the account's
+			// other apps (ADR-091 amendment 2026-10-28).
+			if edge, ok := inv.(interface{ InvalidateEdgeRulesOfDeletedApp(string) }); ok {
+				edge.InvalidateEdgeRulesOfDeletedApp(p.AppID)
+			}
 			inv.ResetApp(p.AppID)
 			inv.InvalidateRoutesForApp(p.AppID)
 			inv.InvalidateResponseCacheByApp(p.AppID)
@@ -1621,15 +1627,11 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 		// allow_origins / allow_methods / etc. into the
 		// resolved EdgeRuleCORSResolved slice at compile
 		// time, so a preset edit leaves stale resolved
-		// shapes in the per-host LRU. ResetCorsPresets also
-		// purges the response cache so old CORS headers cannot
-		// survive in cached responses.
-		// The account_id payload is informational; the
-		// LRU is per-host keyed, not per-account, so a
-		// surgical per-account eviction would require a
-		// richer key. Wholesale flush is the same posture
-		// as NotifyEdgeRuleChanged and is bounded by the
-		// compile cost (one SELECT per cache miss).
+		// shapes in the per-host LRU. The account's cached
+		// responses are purged too so old CORS headers cannot
+		// survive in them. Only the account in the payload is
+		// invalidated (invalidateCorsPresetChange, ADR-091
+		// amendment 2026-10-28): presets are per account.
 		//
 		// Empty / missing payload is logged-and-dropped:
 		// the production trigger always emits
@@ -1640,7 +1642,7 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 			log.Warn("gatewayd: bad cors_preset_changed payload", "payload", n.Payload)
 			return
 		}
-		inv.ResetCorsPresets(n.Payload)
+		invalidateCorsPresetChange(ctx, inv, n.Payload)
 	}
 }
 

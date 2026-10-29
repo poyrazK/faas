@@ -263,7 +263,7 @@ func saveSessionUpload(ctx context.Context, c *Client, state resumableUploadStat
 }
 
 func (s *savedDeploySession) resumeCommand() string {
-	return recoveryCLI() + " deploy resume " + s.record.ID
+	return recoveryCLI() + " release resume " + s.record.ID
 }
 
 func (s *savedDeploySession) recovery(stage string) *deployRecovery {

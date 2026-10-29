@@ -18,8 +18,8 @@ func TestAutomationHealthRunHintsPreserveWindowAndFailureScope(t *testing.T) {
 	if err := main.WriteAutomationHealthRunHints(&output, health); err != nil {
 		t.Fatal(err)
 	}
-	base := "gregale automations runs --app billing --name approval-flow --created-after 2026-10-01T00:00:00.123456789Z --created-before 2026-10-05T00:00:00Z"
-	for _, command := range []string{base, base + " --status failed", base + " --status dead", "gregale automations diagnose --app billing --name approval-flow --run " + inspectorRunID} {
+	base := "gregale automation runs --app billing --name approval-flow --created-after 2026-10-01T00:00:00.123456789Z --created-before 2026-10-05T00:00:00Z"
+	for _, command := range []string{base, base + " --status failed", base + " --status dead", "gregale automation diagnose --app billing --name approval-flow --run " + inspectorRunID} {
 		if !strings.Contains(output.String(), command) {
 			t.Fatalf("missing %q in %s", command, output.String())
 		}

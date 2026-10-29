@@ -32,7 +32,7 @@ func cmdSend(args []string) int {
 		return 1
 	}
 	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) || strings.TrimSpace(*typ) == "" || strings.TrimSpace(*data) == "" {
-		PrintUsage(os.Stderr, "usage: gregale send <target-app> --type TYPE --data <json|@file|-> [--source SOURCE] [--id ID] [--time RFC3339] [--queue-name QUEUE] [--environment ENV] [--work-policy NAME --work-key JSON [--work-fairness-key JSON]] [--idempotency-key KEY]", "send")
+		PrintUsage(os.Stderr, "usage: gregale event send <target-app> --type TYPE --data <json|@file|-> [--source SOURCE] [--id ID] [--time RFC3339] [--queue-name QUEUE] [--environment ENV] [--work-policy NAME --work-key JSON [--work-fairness-key JSON]] [--idempotency-key KEY]", "send")
 		return 1
 	}
 	work, err := queueWorkFromFlags(*workPolicy, *workKey, *workFairnessKey)
@@ -97,7 +97,7 @@ func cmdDeliver(args []string) int {
 		return 1
 	}
 	if len(positional) != 2 || rejectUnexpectedFlagArgs(fs) || strings.TrimSpace(*typ) == "" || strings.TrimSpace(*data) == "" {
-		PrintUsage(os.Stderr, "usage: gregale deliver <source-app> <webhook-id|url> --type TYPE --data <json|@file|-> [--idempotency-key KEY]", "deliver")
+		PrintUsage(os.Stderr, "usage: gregale webhook deliver <source-app> <webhook-id|url> --type TYPE --data <json|@file|-> [--idempotency-key KEY]", "deliver")
 		return 1
 	}
 	if err := validateDeployIdempotencyKey(*idempotencyKey); err != nil {

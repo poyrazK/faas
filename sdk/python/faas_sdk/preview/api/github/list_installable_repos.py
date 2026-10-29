@@ -82,7 +82,7 @@ def _build_response(
 
 def sync_detailed(
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
     body: InstallBindRequest,
 ) -> Response[Problem | list[RepoResponse]]:
     """List repos the user's GitHub App installation can see.
@@ -128,7 +128,7 @@ def sync_detailed(
 
 def sync(
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
     body: InstallBindRequest,
 ) -> Problem | list[RepoResponse] | None:
     """List repos the user's GitHub App installation can see.
@@ -169,7 +169,7 @@ def sync(
 
 async def asyncio_detailed(
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
     body: InstallBindRequest,
 ) -> Response[Problem | list[RepoResponse]]:
     """List repos the user's GitHub App installation can see.
@@ -213,7 +213,7 @@ async def asyncio_detailed(
 
 async def asyncio(
     *,
-    client: AuthenticatedClient | Client,
+    client: AuthenticatedClient,
     body: InstallBindRequest,
 ) -> Problem | list[RepoResponse] | None:
     """List repos the user's GitHub App installation can see.

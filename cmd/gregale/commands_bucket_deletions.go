@@ -9,7 +9,7 @@ import (
 )
 
 func cmdBucketDeletions(args []string) int {
-	usage := "usage: gregale bucket deletions start <app> <bucket-id> <key> <request-id> [version-id|null] | status <app> <bucket-id> <request-id>"
+	usage := "usage: gregale bucket deletion create <app> <bucket-id> <key> <request-id> [version-id|null] | status <app> <bucket-id> <request-id>"
 	if len(args) < 4 || !api.ValidAppSlug(args[1]) {
 		PrintUsage(osStderr, usage, "bucket")
 		return 1

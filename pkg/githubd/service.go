@@ -1625,6 +1625,7 @@ func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, tar
 	var dependencies []state.App
 	var workloads map[string]reposcan.Workload
 	var available map[string]struct{}
+	var headValues map[string]map[string]string
 	if sourceReady {
 		skipped, skipErr := s.skipIgnoredPullRequestPush(ctx, ev, install.InstallationID, policy,
 			"https://"+previewHostnameForSlug(previewSlugVal), expiresAt)
@@ -1655,6 +1656,7 @@ func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, tar
 			workloads[key] = workload
 			available[key] = struct{}{}
 		}
+		headValues = prHeadComposeValues(tree.FS(), scan, previewLimits)
 	}
 	// Source fetching and scanning can take longer than a PR head update.
 	// Recheck before the first preview mutation or build reservation.
@@ -1863,7 +1865,8 @@ func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, tar
 	// real DeploymentKindPreview build.
 	if sourceReady {
 		if parentApp.ProjectID != "" {
-			created, err = s.applyPRHeadWorkload(ctx, created, workloads[strings.ToLower(parentApp.WorkloadName)], available, policy)
+			created, err = s.applyPRHeadWorkload(ctx, created, workloads[strings.ToLower(parentApp.WorkloadName)], available, policy,
+				headValues[strings.ToLower(parentApp.WorkloadName)])
 			if err != nil {
 				return result, fmt.Errorf("githubd: apply PR head workload %q: %w", parentApp.WorkloadName, err)
 			}
@@ -1875,7 +1878,8 @@ func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, tar
 			if refreshErr != nil {
 				return result, fmt.Errorf("githubd: refresh PR dependency %q: %w", dependency.WorkloadName, refreshErr)
 			}
-			preview, err = s.applyPRHeadWorkload(ctx, preview, workloads[strings.ToLower(dependency.WorkloadName)], available, policy)
+			preview, err = s.applyPRHeadWorkload(ctx, preview, workloads[strings.ToLower(dependency.WorkloadName)], available, policy,
+				headValues[strings.ToLower(dependency.WorkloadName)])
 			if err != nil {
 				return result, fmt.Errorf("githubd: apply PR head dependency %q: %w", dependency.WorkloadName, err)
 			}

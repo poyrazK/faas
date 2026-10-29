@@ -212,7 +212,7 @@ func cmdAutomationsResponsePlan(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(p))
 	}
-	_, _ = fmt.Fprintf(osStdout, "Saved %d reviewed actions: %s\nPreview: gregale automations recovery-response-preview --plan %s\n", len(p.Actions), oneLine(*path), automationCommandArgument(*path))
+	_, _ = fmt.Fprintf(osStdout, "Saved %d reviewed actions: %s\nPreview: gregale automation recovery-response-preview --plan %s\n", len(p.Actions), oneLine(*path), automationCommandArgument(*path))
 	return 0
 }
 func responseNotFound(err error) bool {

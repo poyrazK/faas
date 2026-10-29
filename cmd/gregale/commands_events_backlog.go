@@ -30,7 +30,7 @@ func cmdEventsBacklog(args []string) int {
 	}
 	options := api.EventBacklogOptions{EventBacklogFilters: api.EventBacklogFilters{App: *app, SubscriptionID: *sub, ConsumerKind: *kind, Origin: *origin, WaitingReason: *reason, State: *state, CapacityScope: *scope, MinAgeSeconds: int64(*age / time.Second)}, After: *after, ConsumersAfter: *consumersAfter, Limit: *limit, ConsumerLimit: *consumerLimit}
 	if len(positional) != 0 || rejectUnexpectedFlagArgs(fs) || *age < 0 || *age%time.Second != 0 || options.Validate() != nil || validateCLILimit("limit", *limit, api.EventBacklogPageMax) != nil || validateCLILimit("consumer-limit", *consumerLimit, api.EventBacklogPageMax) != nil {
-		PrintUsage(os.Stderr, "usage: gregale events backlog [--app APP] [--subscription-id ID] [--consumer-kind application|workflow] [--origin acceptance|backfill] [--state STATE] [--waiting-reason REASON] [--capacity-scope SCOPE] [--min-age 10m] [--after CURSOR] [--consumers-after CURSOR] [--limit N] [--consumer-limit N]", "events")
+		PrintUsage(os.Stderr, "usage: gregale event backlog [--app APP] [--subscription-id ID] [--consumer-kind application|workflow] [--origin acceptance|backfill] [--state STATE] [--waiting-reason REASON] [--capacity-scope SCOPE] [--min-age 10m] [--after CURSOR] [--consumers-after CURSOR] [--limit N] [--consumer-limit N]", "events")
 		return 1
 	}
 	client, err := authedClient()

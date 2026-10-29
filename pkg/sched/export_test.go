@@ -272,6 +272,7 @@ var WaitFor = waitFor
 var WakeEngineWithEvents = wakeEngineWithEvents
 var WakeN = wakeN
 var WireRenderMetrics = wireRenderMetrics
+var WorkerQueueDepthLimit = workerQueueDepthLimit
 var WithAppTaskStage = withAppTaskStage
 var WithRequestedWakeID = withRequestedWakeID
 var WithServiceReplicaPlacementSpread = withServiceReplicaPlacementSpread
@@ -910,5 +911,27 @@ func MarkPreWakeForTest(ctx context.Context) {
 var LogVMMBootFailure = logVMMBootFailure
 var WorkerRecoveryRetryDelay = workerRecoveryRetryDelay
 
+// NewCronPlanGate exposes the cron plan gate's admit decision.
+func NewCronPlanGate(accounts interface {
+	AccountByID(context.Context, string) (state.Account, error)
+}) func(context.Context, state.App, int) bool {
+	return newCronPlanGate(accounts).admit
+}
+
+var OldestCronsFirst = oldestCronsFirst
+var CronDue = cronDue
+
 // XRunCronHistoryRetention runs the hourly cron history sweep once.
 func (l *Loop) XRunCronHistoryRetention(ctx context.Context) { l.runCronHistoryRetention(ctx) }
+
+// XEventJobContinue is the recovery and backfill sweeps' failure decision.
+// adr: 20261028095548 — a job whose own work failed was backed off, so the
+// sweep goes on to the next one.
+func (l *Loop) XEventJobContinue(work string, err error) bool { return l.eventJobContinue(work, err) }
+
+// XKeepEventClaims runs the sweep's claim keeper with a test interval.
+// adr: 20261028131500 — a sweep renews the claims it still holds.
+func (l *Loop) XKeepEventClaims(ctx context.Context, every time.Duration, renew func(context.Context, time.Time) error) func() {
+	l.eventClaimRenewalEvery = every
+	return l.keepEventClaims(ctx, renew)
+}
