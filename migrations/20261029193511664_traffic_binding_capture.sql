@@ -1,29 +1,18 @@
 -- filename: 20261029193511664_traffic_binding_capture.sql
--- ADR-20261029190349 rollout step 1. Row triggers on every source of a
--- traffic binding claim or hostname reservation record, for the current
--- transaction, which identities a statement touched. apid's binding guards
--- expand them to hostnames at commit: today only to audit the capture against
--- the fleet-wide diff (traffic_binding_capture_gaps_total), later to check a
--- scoped write without reading the fleet.
---
--- Each touched row appends one tab-separated line to the transaction-local
--- setting gregale.traffic_binding_touched:
---   domain[+]  <domain>            custom_domains (+: inserted)
---   tenant[+]  <hostname>          tenant_hostnames
---   surface    <surface id>        tenant_surfaces
---   platform   <platform tenant>   platform_tenants
---   alias[+]   <app id> <name>     deployment_aliases
---   app[+]     <app id>            apps
---   slug       <old slug>          apps, when the slug changes or the app goes
---   environment <environment id>   project_environments
--- Updates fire only when a column the claim and reservation queries read
--- changes. Every writer fires them, the previous release's included; a
--- transaction that never reads the setting just discards it at commit.
+-- ADR-20261029190349 step 1. Row triggers on every source of a binding claim
+-- or hostname reservation record which identities a transaction touched, one
+-- tab-separated line each in the transaction-local setting
+-- gregale.traffic_binding_touched: domain[+], tenant[+] (hostname), surface,
+-- platform, alias[+] (app id, name), app[+], slug (old slug), environment;
+-- "+" marks an insert. Updates fire only when a column the claim and
+-- reservation queries read changes. apid's binding guards expand the lines to
+-- hostnames at commit; every writer fires the triggers, the previous release's
+-- included, and a transaction that never reads the setting discards it.
 -- migration-compat: expand
 -- +goose NO TRANSACTION
 
 -- +goose Up
-SET lock_timeout = '500ms';
+SET lock_timeout = '5s';
 
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION traffic_binding_capture_append(line text) RETURNS void
@@ -452,8 +441,10 @@ END
 $online$;
 -- +goose StatementEnd
 
+RESET lock_timeout;
+
 -- +goose Down
-SET lock_timeout = '500ms';
+SET lock_timeout = '5s';
 
 -- +goose StatementBegin
 DO $online$
@@ -765,3 +756,4 @@ $online$;
 
 DROP FUNCTION IF EXISTS traffic_binding_capture();
 DROP FUNCTION IF EXISTS traffic_binding_capture_append(text);
+RESET lock_timeout;
