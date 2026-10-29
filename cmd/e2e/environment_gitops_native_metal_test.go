@@ -96,16 +96,18 @@ func runEnvironmentGitOpsNative(t *testing.T, providerName string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Graph activation publishes a project release set, which requires a
+	// revision pin TTL on every project app; without one it never activates.
 	app, err := store.CreateApp(t.Context(), state.App{AccountID: account.ID, ProjectID: project.ID, Slug: "shop-api",
 		WorkloadName: "api", Type: state.AppTypeApp, Status: state.AppActive,
-		RAMMB: 256, MaxConcurrency: 1, Manifest: state.AppManifest{Port: 8080, StartupDeadlineS: 30}})
+		RAMMB: 256, MaxConcurrency: 1, Manifest: state.AppManifest{Port: 8080, StartupDeadlineS: 30, RevisionPinTTLSeconds: 3600}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	worker, err := store.CreateApp(t.Context(), state.App{AccountID: account.ID, ProjectID: project.ID, Slug: "shop-worker",
 		WorkloadName: "worker", Type: state.AppTypeApp, Status: state.AppActive,
 		WorkloadClass: state.WorkloadClassWorker, RAMMB: 256, MaxConcurrency: 1,
-		Manifest: state.AppManifest{Port: 8080, ExecutionMode: api.ExecutionModeWorker, StartupDeadlineS: 30}})
+		Manifest: state.AppManifest{Port: 8080, ExecutionMode: api.ExecutionModeWorker, StartupDeadlineS: 30, RevisionPinTTLSeconds: 3600}})
 	if err != nil {
 		t.Fatal(err)
 	}
