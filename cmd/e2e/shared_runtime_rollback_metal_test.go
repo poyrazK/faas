@@ -184,7 +184,8 @@ func TestSharedRuntimeRollbackMetal(t *testing.T) {
 
 	var legacy, shared state.Deployment
 	t.Run("legacy-own-base", func(t *testing.T) {
-		legacy = deploy(t, layerKindFixture(t, "22", legacyBody, false), "aaaaaaaa-0000-4000-8000-000000000001", e2etest.DefaultBuildStallWindow, e2etest.DefaultBuildCeiling)
+		// The harness's first deployment stages and scans its own base.
+		legacy = deploy(t, layerKindFixture(t, "22", legacyBody, false), "aaaaaaaa-0000-4000-8000-000000000001", sharedBaseStallWindow, sharedBaseCeiling)
 		if legacy.RuntimeBase != "" {
 			t.Fatalf("Node 22 deployment runtime_base = %q, want the app's own base", legacy.RuntimeBase)
 		}

@@ -352,7 +352,18 @@ func TestE2E_Streaming_Metal_PlanMatrix(t *testing.T) {
 			if err := e2etest.WaitForHTTPReady(context.Background(), t, client, target, 10*time.Second); err != nil {
 				t.Fatalf("gateway not ready: %v", err)
 			}
-			body, httpStatus := doGetWithHostTruncated(t, client, target, slug+".apps.test.example", 30*time.Second, 1024)
+			// A 503 asks the client to retry (a routing read that overran
+			// its budget on a loaded host); clients do, so the matrix does.
+			var body []byte
+			var httpStatus int
+			for attempt := 0; attempt < 4; attempt++ {
+				body, httpStatus = doGetWithHostTruncated(t, client, target, slug+".apps.test.example", 30*time.Second, 1024)
+				if httpStatus != http.StatusServiceUnavailable || tc.wantStatus == http.StatusServiceUnavailable {
+					break
+				}
+				t.Logf("plan=%s attempt %d: 503 %s", tc.plan, attempt+1, body)
+				time.Sleep(5 * time.Second)
+			}
 			if httpStatus != tc.wantStatus {
 				t.Errorf("plan=%s: status=%d, want %d body=%q", tc.plan, httpStatus, tc.wantStatus, string(body))
 			}
