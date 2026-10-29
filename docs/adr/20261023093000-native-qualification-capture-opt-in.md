@@ -249,6 +249,18 @@ ADR-568 requires.
       through, as the instance reservation guard already did.
     - It is in the same unreleased migration and is covered by the same
       Postgres test.
+- 2026-10-29, n2, rerun with 680403868b, after the user approved removing
+  two leaked builder jails another session left behind (their TUN device
+  mounts stopped every native vmmd from starting):
+  - github: the worker's serving wake succeeded and the first customer
+    delivery reached `dispatching`. Finalizing it then failed with `function
+    public.environment_workload_serving_ready(uuid) does not exist`.
+    - Two serving queries schema-qualified that function, unlike every
+      other schema function. That only breaks per-test schemas.
+    - 59adf9a06d calls it unqualified.
+  - gitlab: the second member's restore ran out of time while it staged its
+    snapshot inputs on the loaded host. The partial copy then failed its
+    receipt check. Earlier runs restored the same graph.
 - Pending: the n2 native GitOps journey through serving and the resilience
   phases.
 
