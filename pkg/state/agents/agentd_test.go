@@ -165,6 +165,32 @@ func TestRequeueAndExpiry(t *testing.T) {
 	}
 }
 
+// The queue stats count every queued run and the oldest one's wait, and a
+// claim carries when its run was queued.
+func TestQueueStats(t *testing.T) {
+	pool, s := agentdFixture(t)
+	ctx := context.Background()
+	if queued, oldest, err := s.QueueStats(ctx); err != nil || queued != 0 || oldest != 0 {
+		t.Fatalf("empty queue %d %v %v", queued, oldest, err)
+	}
+	first := admit(t, s, agents.Admission{})
+	admit(t, s, agents.Admission{})
+	if _, err := pool.Exec(ctx, `UPDATE agent_runs SET queued_at = now() - interval '90 seconds' WHERE id=$1`, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	queued, oldest, err := s.QueueStats(ctx)
+	if err != nil || queued != 2 || oldest < 90*time.Second || oldest > 2*time.Minute {
+		t.Fatalf("queue %d %v %v", queued, oldest, err)
+	}
+	claim, found, err := s.ClaimRun(ctx, "agentd", "tok-1", ttl, maxLive(5))
+	if err != nil || !found || claim.RunID != first.ID || time.Since(claim.QueuedAt) < 90*time.Second {
+		t.Fatalf("claim %+v %v %v", claim, found, err)
+	}
+	if queued, _, err := s.QueueStats(ctx); err != nil || queued != 1 {
+		t.Fatalf("after a claim %d %v", queued, err)
+	}
+}
+
 // A version names only the account's enabled customer AI integrations, one
 // per provider, and a claim carries them with the version's spend cap.
 func TestVersionModelIntegrations(t *testing.T) {

@@ -661,6 +661,8 @@ type Backend struct {
 	Provider         Provider
 	UsageReportsPath string
 	Usage            UsageConfig
+	// MaxBuckets is the backend's placement ceiling; 0 is none.
+	MaxBuckets int64
 }
 
 func fingerprint(c BackendConfig) string {

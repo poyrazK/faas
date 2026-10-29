@@ -48,5 +48,10 @@
     "step": "TestMultiServiceProject/deploy_project",
     "bug": "a Compose service without ports deploys as a worker and its first boot fails with execution_mode_conflict (worker vs characterized http) once it listens, so an internal API cannot deploy; fixed by #5840 (ADR-20261029120000), known until it is released",
     "since": "2026-10-29"
+  },
+  {
+    "step": "TestObjectStorage/object_storage_enabled",
+    "bug": "object storage is still preview (GA row 108): gregale feature list reports object-storage disabled until s3_enabled is on and the capability is released to the e2e account, and the journey's other steps report blocked; remove once the owner turns it on",
+    "since": "2026-10-29"
   }
 ]

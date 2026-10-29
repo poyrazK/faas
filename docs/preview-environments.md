@@ -57,6 +57,14 @@ https://pr-{N}-{slug}.<zone>
 The wildcard cert at `*.<zone>` covers previews for free —
 no per-PR cert provisioning, no DNS work.
 
+## Which app a pull request previews
+
+A pull request previews the production app bound to its repository. When the
+repository binds apps on several production branches, the app whose production
+branch is the PR's base branch wins; otherwise the project's production app is
+used, whatever branch the PR targets. Any production branch works (`main`,
+`master`, `trunk`, ...).
+
 ## Lifecycle
 
 | Stage | What it means |
@@ -68,6 +76,11 @@ no per-PR cert provisioning, no DNS work.
 
 A reopened PR during the grace period bumps the row back to
 **Open** and the URL starts serving again on the next push.
+
+Renaming the production app keeps its open previews serving at their
+`pr-<N>-<old-name>` URLs; the PR's next push moves each to
+`pr-<N>-<new-name>`. A preview app itself cannot be renamed: its name is
+derived from its production app.
 
 Before applying a PR webhook, Gregale verifies the current PR state and head
 with GitHub. Delayed updates for an older head and delayed close events after
@@ -133,12 +146,17 @@ reviewers inspect the whole workload set and tear the environment down. A
 hidden marker makes webhook retries and repeated synchronize events
 idempotent; Gregale only ever edits its own bot comment, never a comment
 someone else wrote with the marker. The Check Run remains the source of
-build-stage status.
+build-stage status. A commit's check never stays pending: when the PR closes
+or merges before its build finishes, the check reports the build's result; a
+commit replaced by a newer push, or whose build a teardown cancelled,
+completes as neutral.
 
 If Gregale cannot set up a preview for the PR head, the `gregale-preview`
 check fails and the comment says why: the project cannot be read at that
-commit, a workload depends on a service that is not in the project, the
-environment exceeds the plan, the hourly deploy limit is reached, the
+commit, a workload depends on a service that is not in the project, a
+service the PR adds is named like an existing Gregale app (its preview would
+take that app's `pr-<N>-<name>` URL), the environment exceeds the plan, the
+hourly deploy limit is reached, the
 manifest is invalid, or the account cannot deploy (details are on the
 dashboard, not on the PR). `GET /v1/preview/{slug}/environment` and
 `gregale preview wait` report the same failure. Push a new commit to retry.

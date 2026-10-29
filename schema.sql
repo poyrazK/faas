@@ -259,16 +259,17 @@ BEGIN
                         AND i.state IN ('waking','cold_booting','running','draining','warm')), 0)::bigint
       INTO node_vcpu_budget, node_cpu_budget, used_vcpu, used_cpu
       FROM compute_nodes n WHERE n.id = p_node_id;
-    -- A quiet-pause discount is the scheduler's measurement; it never lets
-    -- bookings pass api.QuietPauseMaxVCPUOvercommitPercent (300) of a budget.
-    quiet_vcpu := least(greatest(coalesce(p_quiet_vcpu, 0), 0), node_vcpu_budget * 2);
+    -- A discount is the scheduler's measurement: quiet-paused instances, and
+    -- since ADR 20261029151111 measured instances' unused CPU. It never lets
+    -- bookings pass api.MeasuredCPUMaxOvercommitPercent (700) of a budget.
+    quiet_vcpu := least(greatest(coalesce(p_quiet_vcpu, 0), 0), node_vcpu_budget * 6);
     IF p_vcpu > 0 AND node_vcpu_budget > 0 AND used_vcpu - quiet_vcpu + p_vcpu > node_vcpu_budget THEN
         RAISE EXCEPTION 'node vCPU headroom exhausted'
             USING ERRCODE = '23514', CONSTRAINT = 'instance_node_capacity',
                   DETAIL = format('resource=vcpu used_vcpu=%s quiet_vcpu=%s admit_vcpu=%s budget_vcpu=%s',
                                   used_vcpu, quiet_vcpu, p_vcpu, node_vcpu_budget);
     END IF;
-    quiet_cpu := least(greatest(coalesce(p_quiet_cpu_millicores, 0), 0), node_cpu_budget * 2);
+    quiet_cpu := least(greatest(coalesce(p_quiet_cpu_millicores, 0), 0), node_cpu_budget * 6);
     IF p_cpu_millicores > 0 AND node_cpu_budget > 0 AND used_cpu - quiet_cpu + p_cpu_millicores > node_cpu_budget THEN
         RAISE EXCEPTION 'node CPU headroom exhausted'
             USING ERRCODE = '23514', CONSTRAINT = 'instance_node_capacity',

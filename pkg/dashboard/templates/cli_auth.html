@@ -94,9 +94,9 @@
       <p>
         {{if index .Data "MCP"}}
         A Gregale MCP bridge requested a connection as <strong>{{index .Data "AccountEmail"}}</strong>.
-        Authorizing issues an eight-hour credential to inspect apps, logs, metrics and deployments.
+        Authorizing issues a credential to inspect apps, logs, metrics and deployments. It stays valid while the agent uses it: it ends after a week unused, and 30 days after you authorize at the latest.
         {{with index .Data "MCPCapabilities"}}It also lets the agent:</p><ul>{{range .}}<li>{{.}}</li>{{end}}</ul><p>{{end}}
-        Return to the bridge to review the agent and select its apps before connecting.
+        {{if index .Data "ReturnMCP"}}Next you review the agent and select its apps before connecting.{{else}}Return to the bridge to review the agent and select its apps before connecting.{{end}}
         You can revoke the credential from your account's API keys page.
         {{else}}
         <code>gregale login</code> opened this page. Authorizing gives that
@@ -115,6 +115,7 @@
       <form method="POST" action="/cli-auth">
         {{if index .Data "MCP"}}
         <input type="hidden" name="code" value="{{index .Data "Code"}}">
+        {{if index .Data "ReturnMCP"}}<input type="hidden" name="return" value="mcp">{{end}}
         {{else}}
         {{/* The code is typed, never pre-filled: a link alone cannot
             authorize someone else's terminal (device-code phishing). */}}

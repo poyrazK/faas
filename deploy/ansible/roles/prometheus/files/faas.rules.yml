@@ -7234,6 +7234,35 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
           summary: "s3-gatewayd is answering more than 5% of requests with 5xx"
           description: "Provider failures, stale accounting or sustained SlowDown contention. Check s3-gatewayd logs by request status and the provider's status page."
+      # ADR-20261029174627: a region places new buckets across a pool of
+      # backends, each capped by max_buckets below its provider's quota.
+      - alert: FaasObjectStorageRegionNearlyFull
+        expr: |
+          sum by (region) (
+            max by (region, backend) (faas_object_storage_backend_buckets)
+              and on (region, backend) max by (region, backend) (faas_object_storage_backend_bucket_limit)
+          )
+            / sum by (region) (max by (region, backend) (faas_object_storage_backend_bucket_limit)) > 0.8
+        for: 30m
+        labels:
+          severity: warn
+          component: apid
+          family: object_storage
+        annotations:
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
+          summary: "Object storage region {{ $labels.region }} is over 80% of its bucket capacity"
+          description: "The backends that receive new buckets in {{ $labels.region }} hold more than 80% of their max_buckets. Add a provider project to the region's pool before bucket creation is refused."
+      - alert: FaasObjectStorageRegionFull
+        expr: max by (region) (faas_object_storage_region_full) == 1
+        for: 5m
+        labels:
+          severity: warn
+          component: apid
+          family: object_storage
+        annotations:
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
+          summary: "Object storage region {{ $labels.region }} refuses new buckets"
+          description: "No backend in {{ $labels.region }}'s pool has room under max_buckets, so customers get 503 object_storage_region_full when they create a bucket. Existing buckets work. Add a provider project to the pool."
       - alert: FaasObjectStorageUsageExportStale
         expr: time() - s3_gateway_usage_export_last_success_timestamp_seconds > 3600
         for: 15m
@@ -9016,3 +9045,40 @@ groups:
           summary: "Some alert rules keep missing their tick"
           description: "For an hour some account has spent its alert tick budget, so part of its rules run a tick late. meterd logs the account (\"account spent its tick budget\"); look at its slow rules: log-search queries, an unresponsive webhook, or Prometheus."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomerObservability.md"
+
+  # ADR-1155 on-demand profile captures: apid queues them, schedd claims them
+  # and runs them on the instance's vmmd. docs/runbooks/FaasProfileCaptures.md
+  # covers both alerts.
+  - name: faas_profile_captures
+    interval: 30s
+    rules:
+      - alert: FaasProfileCapturesFailing
+        expr: |
+          (
+            sum (increase(schedd_profile_captures_total{result=~"instance_stopped|timeout|unreachable|not_stored"}[30m]))
+            / sum (increase(schedd_profile_captures_total[30m]))
+          ) > 0.5
+          and on () sum (increase(schedd_profile_captures_total[30m])) >= 5
+        for: 10m
+        labels:
+          severity: warn
+          component: schedd
+          family: profile_captures
+          public_status: internal
+        annotations:
+          summary: "Most on-demand profile captures are failing on the platform side"
+          description: "More than half of the profile captures that finished in 30 minutes (at least five) timed out, lost their instance, could not reach its host, or could not be stored. Results the customer causes (no running instance, a deployment without collectors) do not count. Check schedd's profile_capture log lines and vmmd's CaptureProfile errors."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasProfileCaptures.md"
+      - alert: FaasProfileCaptureQueueBacklog
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(schedd_profile_capture_queue_wait_seconds_bucket{trigger="manual"}[15m]))) > 120
+        for: 10m
+        labels:
+          severity: warn
+          component: schedd
+          family: profile_captures
+          public_status: internal
+        annotations:
+          summary: "Manual profile captures wait more than two minutes to start"
+          description: "The 95th percentile time a manual capture waited queued exceeded 120 s for 10 minutes. Each schedd runs four captures at a time and claims manual captures first; a capture still queued after 10 minutes fails as interrupted. Check that schedd drains captures and how long captures hold their slots."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasProfileCaptures.md"
