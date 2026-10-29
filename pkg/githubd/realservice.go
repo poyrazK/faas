@@ -105,7 +105,9 @@ type RealService struct {
 	// source-ref promotion guard.
 	BranchHeads    BranchHeadClient
 	CIPullRequests CIPullRequestClient
-	CIChanges      CIChangedFilesClient
+	// IssueComments writes agent deliveries' marker comments (ADR-20261027090010 §8).
+	IssueComments IssueCommentClient
+	CIChanges     CIChangedFilesClient
 	// ProtectedBranches observes policy evidence without approving revisions.
 	ProtectedBranches ProtectedBranchClient
 	ReviewedMerges    ReviewedMergeClient

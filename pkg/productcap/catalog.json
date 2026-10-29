@@ -66,6 +66,23 @@
       ]
     },
     {
+      "id": "agents",
+      "name": "Agents",
+      "category": "runtime",
+      "description": "Run a coding-agent harness in a one-shot microVM from the API, an automation step or a broker trigger.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/adr/20261027090010-agent-runs-and-agent-step",
+      "acceptance_test": "pkg/e2etest/agentchain/agentchain_metal_test.go::TestMetalAgentPRTriage",
+      "routes": [
+        "/v1/agent-runs",
+        "/v1/agents"
+      ],
+      "consumers": [
+        "schedd"
+      ]
+    },
+    {
       "id": "ai-access-tokens",
       "name": "AI access tokens",
       "category": "data",

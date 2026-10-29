@@ -1,0 +1,28 @@
+# Gregale Agents (ADR-20261027090010, ADR-20261027090014): agentd claims queued agent runs and
+# drives each through the local schedd's RunAgent stream. This role is
+# included only when faas_agentd_managed=true, so an unconfigured agentd
+# cannot turn an unrelated control-plane bootstrap into a crash loop.
+# faas_agentd_enabled=false stops agentd and removes its configuration.
+faas_agentd_enabled: true
+
+# Controller-local secret env file holding agentd's DATABASE_URL (and nothing
+# else agentd does not need). It is copied to /etc/faas/secrets/agentd/
+# agentd.env as 0400 root:root; systemd reads it, the faas user never does.
+faas_agentd_env_src: ""
+
+# Runs one replica drives at once (1-256).
+faas_agentd_concurrency: 8
+
+# Optional run features. Checkouts fetch commit archives through githubd into
+# the artifact store (storage.env); output files store run output contents
+# there; deliveries post webhooks and GitHub comments, write Gregale buckets
+# and hand email records to apid's mail capture.
+faas_agentd_checkouts: true
+faas_agentd_output_files: true
+faas_agentd_deliveries: true
+
+# The S3 gateway's https origin for bucket deliveries; empty fails them.
+faas_agentd_s3_endpoint: ""
+
+# Loopback /metrics (agent_deliveries_total and friends).
+faas_agentd_metrics_listen: "127.0.0.1:9109"

@@ -1295,6 +1295,14 @@ func (v *JailerVMM) BootColdBoot(ctx context.Context, l Lease, spec ColdBootSpec
 			spec.Workloads[i].StorageKey = resolved
 		}
 	}
+	if spec.AgentInput && spec.InputKey != "" {
+		inputSrc, inputTiming, iErr := v.resolveColdBootArtifact(ctx, l.Instance, "input", spec.InputKey)
+		if iErr != nil {
+			return fmt.Errorf("vmm: stage input: %w", iErr)
+		}
+		breakdown.ResolveArtifacts = append(breakdown.ResolveArtifacts, inputTiming)
+		spec.InputKey = inputSrc
+	}
 	breakdown.ResolveImagesMs = time.Since(t0).Milliseconds()
 	// Build VMConfig from the resolved paths. Drive paths become the
 	// tmp paths so provision (line ~941) stages them as basenames.
@@ -1306,7 +1314,15 @@ func (v *JailerVMM) BootColdBoot(ctx context.Context, l Lease, spec ColdBootSpec
 	// override. Empty path + disabled gRPC keeps legacy TCP readiness;
 	// otherwise waitReady uses the selected HTTP or gRPC probe on :8080.
 	if spec.SkipReady {
-		return v.bootNoWait(ctx, l, BuildColdBootConfig(spec, l.Slot), spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, spec.ServiceDiscoveryIP, spec.AppTask, nil)
+		if err = v.bootNoWait(ctx, l, BuildColdBootConfig(spec, l.Slot), spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, spec.ServiceDiscoveryIP, spec.AppTask, nil, &breakdown); err != nil {
+			return err
+		}
+		// Builder, execution and agent run boots skip readiness. They are
+		// logged, not emitted: the breakdown event and its metrics are the
+		// app cold-boot SLO's.
+		breakdown.TotalMs = time.Since(t0).Milliseconds()
+		v.logColdBootBreakdown(ctx, l, breakdown)
+		return nil
 	}
 	if err = v.boot(ctx, l, BuildColdBootConfig(spec, l.Slot), false, spec.HealthcheckPath, spec.HealthcheckGRPC, spec.HealthcheckGRPCService, spec.ImageHealthcheckRequired, spec.StartupDeadlineS, spec.ExecutionMode, spec.WorkerPushDelivery, spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, spec.ServiceDiscoveryIP, spec.AppTask, nil, &breakdown); err != nil {
 		return err
@@ -1317,8 +1333,8 @@ func (v *JailerVMM) BootColdBoot(ctx context.Context, l Lease, spec ColdBootSpec
 	return nil
 }
 
-func (v *JailerVMM) bootNoWait(ctx context.Context, l Lease, cfg VMConfig, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, appTask bool, jobManifest *JobManifest) error {
-	return v.boot(ctx, l, cfg, true, "", false, "", false, 0, "", false, workloads, secretsEnvJSON, apiEnvJSON, serviceDiscoveryIP, appTask, jobManifest, nil)
+func (v *JailerVMM) bootNoWait(ctx context.Context, l Lease, cfg VMConfig, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, appTask bool, jobManifest *JobManifest, breakdown *coldBootTimingBreakdown) error {
+	return v.boot(ctx, l, cfg, true, "", false, "", false, 0, "", false, workloads, secretsEnvJSON, apiEnvJSON, serviceDiscoveryIP, appTask, jobManifest, breakdown)
 }
 
 // Boot provisions the chroot, starts the jailed firecracker with a full config,
@@ -1436,6 +1452,10 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 	startedJailerAt := time.Now()
 	if len(cfg.NetworkInterfaces) > 0 {
 		if _, err = v.bindTunDeviceInJailerForOwner(ctx, stagingOwner, root, l.Instance, l.UID, l.GID); err != nil {
+			return err
+		}
+	} else if l.Networkless {
+		if err = v.prepareNetworklessJailDevices(ctx, root, l.Instance, l.UID, l.GID); err != nil {
 			return err
 		}
 	}
@@ -1777,7 +1797,7 @@ func (v *JailerVMM) applyPreBootCgroupFence(l Lease, workloads []WorkloadSpec) e
 		}
 		return v.trackCgroupFence(l)
 	}
-	if err := writeAppCgroup(l.Instance, l.Plan, l.MemoryMaxMiB, l.CPUMillicores); err != nil {
+	if err := writeLeaseCgroup(l, l.MemoryMaxMiB); err != nil {
 		return err
 	}
 	if err := v.trackCgroupFence(l); err != nil {
@@ -2168,6 +2188,19 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		}
 	}
 	tStageWritable := time.Now()
+	if spec.AgentInput {
+		var inputSrc string
+		if spec.InputKey != "" {
+			resolved, _, iErr := v.resolveColdBootArtifact(ctx, l.Instance, "input", spec.InputKey)
+			if iErr != nil {
+				return fmt.Errorf("vmm: stage input: %w", iErr)
+			}
+			inputSrc = resolved
+		}
+		if _, err := v.stageAgentInputForOwner(ctx, stagingOwner, root, inputSrc, filepath.Dir(layerSrc), l.Instance); err != nil {
+			return fmt.Errorf("vmm: stage input: %w", err)
+		}
+	}
 	// PR-B: stage each sidecar drive as read-only (the upper/writable
 	// overlay is shared with main; sidecars never get their own rw
 	// path, which is the load-bearing invariant — a runaway sidecar
@@ -2289,6 +2322,8 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		if tunTimings, err = v.bindTunDeviceInJailerForOwner(ctx, stagingOwner, root, l.Instance, l.UID, l.GID); err != nil {
 			return err
 		}
+	} else if err = v.prepareNetworklessJailDevices(ctx, root, l.Instance, l.UID, l.GID); err != nil {
+		return err
 	}
 	tTunReady := time.Now()
 	var restoreCPU startupCPUProfile
@@ -5746,7 +5781,9 @@ func (v *JailerVMM) provisionForOwner(ctx context.Context, owner nativeLaunchRec
 		i := j + driveOffset
 		var name string
 		var err error
-		if d.IsReadOnly {
+		if d.DriveID == DriveAgentInput {
+			name, err = v.stageAgentInputForOwner(ctx, owner, root, d.PathOnHost, agentInputStagingDir(cfg.Drives), instanceID)
+		} else if d.IsReadOnly {
 			name, err = v.stageReadOnlyAsForOwner(ctx, owner, root, d.PathOnHost, coldBootReadOnlyDriveName(i, d), instanceID)
 		} else if cfg.EphemeralWritable {
 			name, err = v.stageEphemeralWritableAsForOwner(ctx, owner, root, d.PathOnHost, layerImageName, uid, gid, instanceID)
@@ -6270,29 +6307,19 @@ func (v *JailerVMM) bindTunDeviceInJailerForOwner(ctx context.Context, owner nat
 	return v.bindTunDeviceInJailerLegacy(ctx, root, instance, uid, gid)
 }
 
-func (v *JailerVMM) bindTunDeviceInJailerLegacy(ctx context.Context, root, instance string, uid, gid int) (bindTunTimings, error) {
+// waitForJailerChroot waits until the jailer has unshared its mount
+// namespace and switched /proc/<pid>/root to this instance's chroot, then
+// returns its pid. The jailer joins its cgroup before either, so the pre-boot
+// fence may follow.
+func (v *JailerVMM) waitForJailerChroot(ctx context.Context, instance string) (int, bindTunTimings, error) {
 	var timings bindTunTimings
-	if instance == "" {
-		return timings, fmt.Errorf("vmm: bind TUN device: empty instance")
-	}
-	const source = "/dev/net/tun"
-	fi, err := os.Stat(source)
-	if err != nil {
-		return timings, fmt.Errorf("vmm: stat TUN device: %w", err)
-	}
-	if fi.Mode()&os.ModeCharDevice == 0 {
-		return timings, fmt.Errorf("vmm: TUN path %s is not a character device", source)
-	}
-	if fi.Mode().Perm()&0o006 != 0o006 {
-		return timings, fmt.Errorf("vmm: TUN device %s must be accessible to jailer users (mode %04o)", source, fi.Mode().Perm())
-	}
 	pid, ok := v.InstancePID(instance)
 	if !ok {
-		return timings, fmt.Errorf("vmm: bind TUN device: jailer process is not alive")
+		return 0, timings, fmt.Errorf("vmm: jailer process is not alive")
 	}
 	selfNS, err := os.Readlink("/proc/self/ns/mnt")
 	if err != nil {
-		return timings, fmt.Errorf("vmm: read vmmd mount namespace: %w", err)
+		return 0, timings, fmt.Errorf("vmm: read vmmd mount namespace: %w", err)
 	}
 	deadline := time.NewTimer(5 * time.Second)
 	defer deadline.Stop()
@@ -6304,9 +6331,9 @@ func (v *JailerVMM) bindTunDeviceInJailerLegacy(ctx context.Context, root, insta
 		}
 		select {
 		case <-ctx.Done():
-			return timings, ctx.Err()
+			return 0, timings, ctx.Err()
 		case <-deadline.C:
-			return timings, fmt.Errorf("vmm: jailer did not create a private mount namespace")
+			return 0, timings, fmt.Errorf("vmm: jailer did not create a private mount namespace")
 		case <-time.After(1 * time.Millisecond):
 		}
 	}
@@ -6327,13 +6354,62 @@ func (v *JailerVMM) bindTunDeviceInJailerLegacy(ctx context.Context, root, insta
 		}
 		select {
 		case <-ctx.Done():
-			return timings, ctx.Err()
+			return 0, timings, ctx.Err()
 		case <-deadline.C:
-			return timings, fmt.Errorf("vmm: jailer chroot device tree did not become ready")
+			return 0, timings, fmt.Errorf("vmm: jailer chroot device tree did not become ready")
 		case <-time.After(1 * time.Millisecond):
 		}
 	}
 	timings.WaitChrootMs = time.Since(tWaitChrootStart).Milliseconds()
+	return pid, timings, nil
+}
+
+// prepareNetworklessJailDevices gives a networkless guest's jail what a
+// networked boot gets from bindTunDeviceInJailerLegacy, minus the TUN device:
+// a fresh /dev and /dev/kvm for the jailed uid. Executions and agent runs
+// have no network, so their Firecracker must never be able to open
+// /dev/net/tun. Under native process recovery the journaled helper owns jail
+// devices, and networkless boots there are left as they were.
+func (v *JailerVMM) prepareNetworklessJailDevices(ctx context.Context, root, instance string, uid, gid int) error {
+	if v.nativeRecovery != nil {
+		return nil
+	}
+	pid, _, err := v.waitForJailerChroot(ctx, instance)
+	if err != nil {
+		return err
+	}
+	nsenter := []string{"nsenter", "-t", strconv.Itoa(pid), "-m", "-r", "--", "/faas-mount-helper"}
+	if out, err := v.runHostHelper(ctx, instance, append(nsenter, "--mount-dev", "/dev")); err != nil {
+		return fmt.Errorf("vmm: prepare networkless jail device tree: %w (%s)", err, strings.TrimSpace(string(out)))
+	}
+	if out, err := v.runHostHelper(ctx, instance, append(nsenter, "--mknod-kvm", "/dev/kvm", strconv.Itoa(uid), strconv.Itoa(gid))); err != nil {
+		return fmt.Errorf("vmm: provision networkless KVM device: %w (%s)", err, strings.TrimSpace(string(out)))
+	}
+	_ = os.Remove(filepath.Join(root, "faas-mount-helper"))
+	return nil
+}
+
+func (v *JailerVMM) bindTunDeviceInJailerLegacy(ctx context.Context, root, instance string, uid, gid int) (bindTunTimings, error) {
+	var timings bindTunTimings
+	if instance == "" {
+		return timings, fmt.Errorf("vmm: bind TUN device: empty instance")
+	}
+	const source = "/dev/net/tun"
+	fi, err := os.Stat(source)
+	if err != nil {
+		return timings, fmt.Errorf("vmm: stat TUN device: %w", err)
+	}
+	if fi.Mode()&os.ModeCharDevice == 0 {
+		return timings, fmt.Errorf("vmm: TUN path %s is not a character device", source)
+	}
+	if fi.Mode().Perm()&0o006 != 0o006 {
+		return timings, fmt.Errorf("vmm: TUN device %s must be accessible to jailer users (mode %04o)", source, fi.Mode().Perm())
+	}
+	pid, waits, err := v.waitForJailerChroot(ctx, instance)
+	if err != nil {
+		return timings, fmt.Errorf("vmm: bind TUN device: %w", err)
+	}
+	timings.WaitMntnsMs, timings.WaitChrootMs = waits.WaitMntnsMs, waits.WaitChrootMs
 	tSetupJailStart := time.Now()
 	// Single-pass setup: prepare /dev tmpfs, bind TUN, and mknod KVM in one nsenter invocation.
 	if setupOut, err := v.runHostHelper(ctx, instance, []string{"nsenter", "-t", strconv.Itoa(pid), "-m", "-r", "--", "/faas-mount-helper", "--setup-jail", "/dev", "/faas-host-tun", "/dev/net/tun", "/dev/kvm", strconv.Itoa(uid), strconv.Itoa(gid)}); err != nil {

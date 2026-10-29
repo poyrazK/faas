@@ -31363,6 +31363,7 @@ func triggerRowToTrigger(r sqlc.TriggerByIDRow) sqlc.Trigger {
 		PayloadMaxBytes:           r.PayloadMaxBytes,
 		BrokerPoisonStrategy:      r.BrokerPoisonStrategy,
 		FilterCriteria:            r.FilterCriteria,
+		Agent:                     r.Agent,
 	}
 }
 
@@ -31393,6 +31394,7 @@ func triggerListRowToTrigger(r sqlc.ListTriggersForAppRow) sqlc.Trigger {
 		PayloadMaxBytes:           r.PayloadMaxBytes,
 		BrokerPoisonStrategy:      r.BrokerPoisonStrategy,
 		FilterCriteria:            r.FilterCriteria,
+		Agent:                     r.Agent,
 	}
 }
 
@@ -31421,6 +31423,7 @@ func triggerEnabledRowToTrigger(r sqlc.ListEnabledTriggersRow) sqlc.Trigger {
 		PayloadMaxBytes:           r.PayloadMaxBytes,
 		BrokerPoisonStrategy:      r.BrokerPoisonStrategy,
 		FilterCriteria:            r.FilterCriteria,
+		Agent:                     r.Agent,
 	}
 }
 
