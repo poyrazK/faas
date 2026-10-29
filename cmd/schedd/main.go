@@ -1815,6 +1815,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			"max_overcommit_percent", api.QuietPauseMaxVCPUOvercommitPercent,
 			"peer_nodes", ownerNodeID != "")
 	}
+	// ADR 20261029151111 measured CPU admission reads instances' measured
+	// CPU the same way: own node locally, peer nodes from the fleet reader.
+	if cfg.MeasuredCPUAdmission {
+		measuredCPU := instancestats.MeasuredCPUAcross(reader, autoscaleReader, ownerNodeID)
+		engine.Ledger().EnableMeasuredCPUAdmission(func(nodeID string) (map[string]int, time.Time, bool) {
+			return measuredCPU(nodeID, time.Now())
+		})
+		log.Info("measured CPU admission enabled (ADR 20261029151111)",
+			"min_charge_percent", api.MeasuredCPUMinChargePercent,
+			"max_overcommit_percent", api.MeasuredCPUMaxOvercommitPercent,
+			"peer_nodes", ownerNodeID != "")
+	}
 	// Register the gRPC server with the Reader wired so the
 	// ListInstanceStats RPC (issue #279 / PR-B) can serve the
 	// per-instance CPU-µs snapshot to meterd. The reader is
