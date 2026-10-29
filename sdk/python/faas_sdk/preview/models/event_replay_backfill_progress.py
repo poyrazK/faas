@@ -5,6 +5,8 @@ from typing import Any, TypeVar
 
 from attrs import define as _attrs_define
 
+from ..types import UNSET, Unset
+
 T = TypeVar("T", bound="EventReplayBackfillProgress")
 
 
@@ -26,6 +28,8 @@ class EventReplayBackfillProgress:
     skipped_unknown: int
     skipped_existing: int
     skipped_unsettled: int
+    cancelled: int | Unset = UNSET
+    """Deliveries the job dropped undelivered when it ended early."""
 
     def to_dict(self) -> dict[str, Any]:
         scanned = self.scanned
@@ -52,6 +56,8 @@ class EventReplayBackfillProgress:
 
         skipped_unsettled = self.skipped_unsettled
 
+        cancelled = self.cancelled
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -70,6 +76,8 @@ class EventReplayBackfillProgress:
                 "skipped_unsettled": skipped_unsettled,
             }
         )
+        if cancelled is not UNSET:
+            field_dict["cancelled"] = cancelled
 
         return field_dict
 
@@ -100,6 +108,8 @@ class EventReplayBackfillProgress:
 
         skipped_unsettled = d.pop("skipped_unsettled")
 
+        cancelled = d.pop("cancelled", UNSET)
+
         event_replay_backfill_progress = cls(
             scanned=scanned,
             matched=matched,
@@ -113,6 +123,7 @@ class EventReplayBackfillProgress:
             skipped_unknown=skipped_unknown,
             skipped_existing=skipped_existing,
             skipped_unsettled=skipped_unsettled,
+            cancelled=cancelled,
         )
 
         return event_replay_backfill_progress
