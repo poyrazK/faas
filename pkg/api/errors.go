@@ -3085,7 +3085,7 @@ func ErrAPIRateLimited(limit, retryAfterS int) *Problem {
 		fmt.Sprintf("This account's plan allows %d API requests a minute. Retry after %d seconds.", limit, retryAfterS)).
 		WithLimit(int64(limit), int64(limit)).
 		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
-		WithDocs(docsBase + "/limits#api-requests")
+		WithDocs(docsBase + "/errors#api_rate_limited")
 }
 
 // DetailServerFailure is the detail of a 5xx problem whose cause is an
@@ -3300,7 +3300,7 @@ func ErrQueueReceiveBusy(limit, observed int) *Problem {
 		fmt.Sprintf("At most %d queue receive long-polls may wait at once; %d are waiting. Retry after one returns.", limit, observed)).
 		WithLimit(int64(limit), int64(observed)).
 		WithHeader("Retry-After", "1").
-		WithDocs(docsBase + "/queues#receive")
+		WithDocs(docsBase + "/errors#queue_receive_busy")
 }
 
 // ErrUploadSessionAlreadyCommitted is returned by POST /v1/uploads/{id}/commit

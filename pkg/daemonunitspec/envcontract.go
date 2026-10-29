@@ -645,6 +645,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_OCI_TIMEOUT_SECONDS", Owners: []string{"shared"}, Source: EnvSourceEnvFile},
 	{Name: "FAAS_OCI_USERNAME", Owners: []string{"shared"}, Source: EnvSourceEnvFile, Note: "read-only runtime identity in /etc/faas/storage.env; imaged and vmmd lifecycle override in /etc/faas/imaged-storage.env"},
 	{Name: "FAAS_OFF_HOST_BACKUP_RCLONE_CONFIG", Owners: []string{"postgres"}, Source: EnvSourceScript, Note: "LoadCredential= path on the postgresql@.service drop-in; consumed by the archive_command shell in the postgres role"},
+	{Name: "FAAS_OIDC_EXCHANGE_AUDIENCES", Owners: []string{"apid", "shared"}, Source: EnvSourceDefault, Note: "comma-separated OIDC audiences a token exchange accepts besides gregale; unset accepts only gregale (docs/auth.md)"},
 	{Name: "FAAS_OPERATIONS_WORKLOAD_ISSUER", Owners: []string{"apid"}, Source: EnvSourceDefault, Validate: EnvValidationURL, Note: "optional Operations workload issuer override; configures runtime trust without enabling customer admission"},
 	{Name: "FAAS_OPERATIONS_WORKLOAD_JWKS_PATH", Owners: []string{"apid"}, Source: EnvSourceDefault, Validate: EnvValidationPathExists, Note: "optional public Operations workload JWKS override; missing trust denies runtime reports; customer admission remains closed"},
 	{Name: "FAAS_OPERATION_APPROVAL_INPUTS_ACCOUNTS", Owners: []string{"apid", "shared"}, Source: EnvSourceDefault, Note: "comma-separated account UUIDs approval input forms (ADR-20261019001500) are available to; unset admits none and ignores existing forms"},
