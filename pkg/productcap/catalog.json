@@ -1933,7 +1933,7 @@
         "scale"
       ],
       "docs_url": "/docs/edge-rules",
-      "acceptance_test": "cmd/gatewayd-internal/edge_rules_app_wide_test.go::TestAppWideEdgeRules",
+      "acceptance_test": "cmd/e2e/edge_rules_api_e2e_test.go::TestE2E_EdgeRules_KindsActOnPublicTraffic",
       "settings": [
         "app.maintenance_mode",
         "app.request_rate_limit_burst",
