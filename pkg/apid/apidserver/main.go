@@ -1898,9 +1898,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			if reqbudget.IsDeploymentResponseCheckRequest(r) {
 				return api.DeploymentResponseCheckTimeout
 			}
-			if reqbudget.IsSyncInvokeRequest(r) || reqbudget.IsDeploySubmissionRequest(r) || managedrealtime.IsRealtimeGroupClaimRequest(r) {
+			if reqbudget.IsSyncInvokeRequest(r) || reqbudget.IsDeploySubmissionRequest(r) || reqbudget.IsAccountExportRequest(r) || managedrealtime.IsRealtimeGroupClaimRequest(r) {
 				// invokeApp applies the plan-specific 5s/30s wait, a deploy
-				// commit scans its source archive (H9-157), and realtime
+				// commit scans its source archive (H9-157), an account
+				// export assembles the whole account (H14-120), and realtime
 				// group claims may long-poll; all get the platform ceiling
 				// instead of the 5 s default.
 				return api.RequestBudgetMax
