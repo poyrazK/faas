@@ -22,6 +22,9 @@ type quotaSubjectKind struct {
 	accountCap  func(err error) bool
 }
 
+// errReservedAppCap stands in for apid's plan_eviction_priority_reserved_quota.
+var errReservedAppCap = errors.New("reserved app cap reached")
+
 // quotaSubjectLimits allows ten resources per app and one per account.
 func quotaSubjectLimits() api.Limits {
 	limits := api.MustLimitsFor(api.PlanPro)
@@ -126,6 +129,23 @@ func quotaSubjectKinds() []quotaSubjectKind {
 			var q *state.AppWebhookQuotaError
 			return errors.As(err, &q) && q.Scope == state.AppWebhookQuotaScopeAccount
 		},
+	}, {
+		// Reserving an app is apid's PATCH admission (updateApp): count the
+		// billing subject's reserved apps, then flip the app.
+		name: "reserved apps",
+		onApp: func(ctx context.Context, store state.Store, app state.App) error {
+			reserved := string(api.EvictionPriorityReserved)
+			n, err := store.CountBillingSubjectAppsWithEvictionPriority(ctx, app.ID, reserved)
+			if err != nil {
+				return err
+			}
+			if n+1 > 1 {
+				return errReservedAppCap
+			}
+			_, err = store.UpdateApp(ctx, app.ID, state.UpdateAppParams{EvictionPriority: &reserved, SetEvictionPriority: true})
+			return err
+		},
+		accountCap: func(err error) bool { return errors.Is(err, errReservedAppCap) },
 	}}
 }
 

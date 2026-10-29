@@ -281,10 +281,15 @@ func loadManagedPostgresCapEnforcer(registry *managedpostgres.Registry, store *m
 	if err != nil {
 		return nil, err
 	}
+	storageMode, err := managedpostgres.ParseStorageCapEnforcementMode(getenv(managedpostgres.StorageCapEnforcementEnv))
+	if err != nil {
+		return nil, err
+	}
 	options := managedpostgres.CapEnforcerOptions{
-		Mode:   mode,
-		Logger: log,
-		Notify: hooks.notifyCap(),
+		Mode:        mode,
+		StorageMode: storageMode,
+		Logger:      log,
+		Notify:      hooks.notifyCap(),
 		Ceiling: func(ctx context.Context, subject string) (managedpostgres.CapLimits, error) {
 			account, err := state.BillingResourceAccount(ctx, accountStore, subject)
 			if err != nil {
@@ -296,7 +301,8 @@ func loadManagedPostgresCapEnforcer(registry *managedpostgres.Registry, store *m
 				return managedpostgres.CapLimits{}, err
 			}
 			return managedpostgres.CapLimits{Allowance: limits.MonthlyComputeUnitSeconds,
-				Ceiling: managedPostgresComputeCeiling(limits, overageOn), Overage: overageOn}, nil
+				Ceiling: managedPostgresComputeCeiling(limits, overageOn), Overage: overageOn,
+				StoragePool: managedPostgresStoragePool(limits, overageOn)}, nil
 		},
 	}
 	if mode == managedpostgres.CapEnforcementOn {
@@ -307,7 +313,7 @@ func loadManagedPostgresCapEnforcer(registry *managedpostgres.Registry, store *m
 		options.Qualification = &qualification
 	}
 	if len(registerers) > 0 {
-		metrics, err := managedpostgres.NewCapMetrics(registerers[0], "apid", mode)
+		metrics, err := managedpostgres.NewCapMetrics(registerers[0], "apid", mode, storageMode)
 		if err != nil {
 			return nil, err
 		}

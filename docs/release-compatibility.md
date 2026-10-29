@@ -490,6 +490,21 @@ finishes it with one of these statuses:
 A deployctl that dies mid-activation leaves its row `in_progress`. The
 host's next activation marks it `interrupted`.
 
+Compute hosts have no local Postgres, so deployctl does not record them.
+Instead, a compute host changes release through `gregalectl release
+install`, which stamps `compute_nodes.release_id` once the release's
+binaries are live (the node may still be drained for readiness). A trigger
+on that column records each change as a finished `deploy` row for the node:
+
+- the host is the node's name;
+- the row carries the release it replaced;
+- the actor is `release install as <database role>`.
+
+The trigger runs as the schema owner (SECURITY DEFINER) and writes only what
+the change says, so the installer's runtime role still cannot write the
+history itself. A failed insert only raises a warning; it never fails the
+install.
+
 To see what ran when:
 
 ```
@@ -513,7 +528,8 @@ root), as the other `gregalectl release` commands do.
 - **Not recorded:**
   - a rerun that finds its release already active;
   - a refused deploy (`--expect-current` mismatch);
-  - compute hosts, which have no local Postgres. Their current release is
+  - per-unit deploys and rollbacks on compute hosts (`deployctl deploy
+    --only` from the edge lane), which do not change
     `compute_nodes.release_id`.
 
 ## Not covered yet

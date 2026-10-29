@@ -51,7 +51,7 @@ func cmdDebugRollout(args []string) int {
 		return 1
 	}
 	if len(positional) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale debug explain [--deployment-id UUID] <slug>", debugCmdDocsTopic)
+		PrintUsage(os.Stderr, "usage: gregale debug explain [--release UUID] <slug>", debugCmdDocsTopic)
 		return 1
 	}
 	client, err := authedClient()

@@ -130,6 +130,7 @@ type Loop struct {
 	work                        *workPool
 	workOnce                    sync.Once
 	eventFanoutLastPrune        time.Time
+	eventFanoutBacklog          bool
 	eventBackfillLifecycleAt    time.Time
 	eventClaimRenewalEvery      time.Duration
 	eventFanoutHistoryLastPrune time.Time
@@ -1324,7 +1325,7 @@ func (l *Loop) Run(ctx context.Context) error {
 			l.runDeadLetterRetention(ctx)
 			l.runCronHistoryRetention(ctx)
 		case <-invocationsRetentionTick(invocationsRetentionT):
-			l.runInvocationsRetention(ctx)
+			l.submitWork(workInvocationsRetention, "tick", func() { l.runInvocationsRetention(ctx) })
 		case <-triggersRetentionTick(triggersRetentionT):
 			l.runTriggersRetention(ctx)
 		case <-fireNowT.C:
@@ -1682,9 +1683,15 @@ func (l *Loop) runWatchdog(ctx context.Context) {
 
 // dispatchWatchdog runs the sweep on the work pool: a stuck row's destroy
 // can wait 5 s, and a partitioned node's rows retry every tick
-// (ADR-20261028200212).
+// (ADR-20261028200212). The same tick watches the capacity streams this
+// scheduler receives (ADR-20261029085904).
 func (l *Loop) dispatchWatchdog(ctx context.Context) {
-	l.submitWork(workWatchdog, "tick", func() { l.runWatchdog(ctx) })
+	l.submitWork(workWatchdog, "tick", func() {
+		l.runWatchdog(ctx)
+		if l.engine != nil {
+			l.engine.ObserveCapacityStreams(ctx, time.Now())
+		}
+	})
 }
 
 // runRetention dispatches one sweep of the §17 retention sweep. Same
@@ -4335,7 +4342,15 @@ func (l *Loop) dispatchTriggerTick(ctx context.Context) {
 }
 
 func (l *Loop) dispatchEventFanoutSweep(ctx context.Context) {
-	l.submitWork(workEventFanout, "tick", func() { l.runEventFanoutSweep(ctx) })
+	l.submitWork(workEventFanout, "tick", func() {
+		l.runEventFanoutSweep(ctx)
+		// ADR-20261029012000: a pass that used a whole budget asks for the
+		// next one now, instead of waiting for a wake or the safety tick.
+		// The pass is still in flight, so this coalesces into one rerun.
+		if l.eventFanoutBacklog && ctx.Err() == nil {
+			l.dispatchEventFanoutSweep(ctx)
+		}
+	})
 }
 
 func (l *Loop) runWorkflowRetention(ctx context.Context) {

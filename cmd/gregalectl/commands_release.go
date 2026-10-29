@@ -108,7 +108,7 @@ Subcommands:
             release_bundles.applied_at first-write-wins stamp).
   reconcile Remove retained database rows for superseded failed rollouts.
   history   List release activations (deploys and rollbacks) on
-            control-plane hosts, newest first.
+            control-plane hosts and compute release installs, newest first.
 
 Flags (bundle):
   --bin-dir PATH        Path to the directory holding the daemon binaries

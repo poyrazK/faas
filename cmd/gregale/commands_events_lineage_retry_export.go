@@ -26,7 +26,7 @@ func cmdEventsLineageRetryExport(args []string) int {
 		return 1
 	}
 	if len(positional) != 2 || rejectUnexpectedFlagArgs(fs) || *path == "" || *after < 0 || *limit < 1 || *limit > api.EventExecutionLineageRetryJobMaxCases {
-		PrintUsage(os.Stderr, "usage: gregale event subscription-lineage-retry-export APP SUB --file PATH [--reason CODE] [--limit N] [--after ID] [--raw]", "events")
+		PrintUsage(os.Stderr, "usage: gregale event subscription-lineage-retry-export APP SUB --file PATH [--reason CODE] [--limit N] [--cursor ID] [--raw]", "events")
 		return 1
 	}
 	sub, err := uuid.Parse(positional[1])

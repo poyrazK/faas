@@ -58,8 +58,9 @@ func (r hostRuntime) FinishActivation(ctx context.Context, id string, a deployco
 
 // recordsHistory reports whether this host keeps the history: a control-plane
 // host, which reaches Postgres as the schema owner over the local socket.
-// Compute hosts never migrate and have no local Postgres; their current
-// release is compute_nodes.release_id.
+// Compute hosts never migrate and have no local Postgres; their release
+// installs are recorded from compute_nodes.release_id by a trigger
+// (migration 20261029083739103).
 func (r hostRuntime) recordsHistory(a deploycontroller.Activation) bool {
 	return r.databaseURL != "" && !hostManagedUnits(a.ReleaseRoot)
 }

@@ -4955,7 +4955,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	}, []string{"kind", "outcome"})
 	loopWorkDuration := prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name: prefix + "_loop_work_duration_seconds",
-		Help: "How long one off-loop task ran (ADR-191), labelled by kind. The prime bucket carries cold boot plus snapshot capture, so its tail is tens of seconds by design.",
+		Help: "How long one pass of an off-loop task ran (ADR-191), labelled by kind; each rerun of a rerunCoalesced kind such as event_fanout is its own pass (ADR-20261029012000). The prime bucket carries cold boot plus snapshot capture, so its tail is tens of seconds by design.",
 		// Reconciles are millisecond-scale database work; prime is
 		// tens of seconds. One set of buckets has to span both.
 		Buckets: []float64{0.005, 0.025, 0.1, 0.5, 1, 5, 15, 30, 60, 120},
@@ -6280,6 +6280,9 @@ func (m *OpsMetrics) RecordInitSnapshotAttempt(site, outcome string, duration ti
 const (
 	WakeFailoverReasonBaseGeneration     = "base_generation"
 	WakeFailoverReasonScanSidecarMissing = "scan_sidecar_missing"
+	// WakeFailoverReasonVMMDUnreachable: the boot request never reached the
+	// node's vmmd (ADR-20261029085904).
+	WakeFailoverReasonVMMDUnreachable = "vmmd_unreachable"
 
 	WakeFailoverOutcomeSucceeded    = "succeeded"
 	WakeFailoverOutcomeRefusedAgain = "refused_again"
@@ -6291,7 +6294,7 @@ const (
 // WakeFailoverReasons and WakeFailoverOutcomes are pre-instantiated so the
 // counter reads zero, not absent, on a fleet that has never failed over.
 var (
-	WakeFailoverReasons  = []string{WakeFailoverReasonBaseGeneration, WakeFailoverReasonScanSidecarMissing}
+	WakeFailoverReasons  = []string{WakeFailoverReasonBaseGeneration, WakeFailoverReasonScanSidecarMissing, WakeFailoverReasonVMMDUnreachable}
 	WakeFailoverOutcomes = []string{WakeFailoverOutcomeSucceeded, WakeFailoverOutcomeRefusedAgain, WakeFailoverOutcomeNoAlternate, WakeFailoverOutcomeOutOfTime, WakeFailoverOutcomeFailed}
 )
 
