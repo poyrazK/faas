@@ -28,3 +28,19 @@
   - **Every `depends_on` target serves requests.** `depends_on` is often only start order: a gateway that lists its queue worker would turn a working worker into a service that fails readiness, breaking deploys that work today.
   - **`expose:` alone as the signal.** A listener nobody calls gains nothing from waking on calls, and few Compose files declare it without a caller.
   - **Let characterization decide again** by dropping the worker mode for scanned workers. H9-170 added that mode because a worker class without it was never restarted after a node failure; undoing it reopens that bug for real workers.
+
+## Amendment 1 (2026-10-29): a service's own image is evidence that it listens
+
+The production journey showed that a worker-mode service that listens does not merely stay awake: its first boot fails with `execution_mode_conflict`. The most common internal API is listed in its caller's `depends_on` without `expose:`, so the original rule left it a worker whose deploy fails.
+
+- **Decision:** for a `depends_on` target of a request-serving service, `expose:` is no longer the only evidence that it listens. A built service also qualifies when it runs its own image's command (no Compose `command:` or `entrypoint:` override) and that image listens:
+  - its Dockerfile declares `EXPOSE`, or
+  - it is built without a Dockerfile and its source is an Express, Fastify, NestJS, Hono, FastAPI, Flask, Django or Gin app (`frameworkprofile`).
+
+  A command override runs something other than the image, as a Celery worker built from the web service's Dockerfile does, so that image says nothing about it. A prebuilt `image:` service still needs `expose:` or a URL: the scan does not fetch registry metadata. Every case that stays a worker keeps the plan warning, and a deploy that fails because it listens names the Compose fix (#5887).
+- **Why not decide at first boot.** We considered converting a scan-assigned worker to an HTTP service when its first boot finds a listener. We rejected it:
+  - A worker that serves a health or metrics port is a listener too. Converted, it would park when idle and stop consuming its queue: a silent failure where today's is loud.
+  - The change would be schedd rewriting customer intent that only apid writes.
+
+  The scan's evidence is visible in the plan (`class=http`) before anything deploys.
+
