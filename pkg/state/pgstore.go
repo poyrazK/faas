@@ -15115,7 +15115,7 @@ func (s *PgStore) createCorsPresetIfUnderQuotaOnce(ctx context.Context, p CorsPr
 	if err := s.validateTrafficProjection(ctx, "cors_preset", corsPresetTrafficProjection(proposed)); err != nil {
 		return CorsPreset{}, err
 	}
-	tx, err := s.beginTrafficPolicyMutation(ctx, uuidToPgtype(p.AccountID))
+	tx, err := s.beginRuleOnlyTrafficPolicyMutation(ctx, uuidToPgtype(p.AccountID))
 	if err != nil {
 		return CorsPreset{}, fmt.Errorf("state: begin tx: %w", err)
 	}
@@ -15221,7 +15221,7 @@ func (s *PgStore) UpdateCorsPreset(ctx context.Context, accountID, id string, p 
 	if err := s.validateTrafficProjection(ctx, "cors_preset", corsPresetTrafficProjection(p)); err != nil {
 		return CorsPreset{}, err
 	}
-	tx, err := s.beginTrafficPolicyMutation(ctx, uuidToPgtype(accountID))
+	tx, err := s.beginRuleOnlyTrafficPolicyMutation(ctx, uuidToPgtype(accountID))
 	if err != nil {
 		return CorsPreset{}, err
 	}

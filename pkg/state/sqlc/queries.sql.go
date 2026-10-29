@@ -85598,6 +85598,20 @@ func (q *Queries) ReadTrafficBindingClaims(ctx context.Context, db DBTX, arg Rea
 	return i, err
 }
 
+const readTrafficCapacityLockHeld = `-- name: ReadTrafficCapacityLockHeld :one
+SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_locks WHERE pid = pg_backend_pid() AND locktype = 'relation'
+    AND relation = 'service_capacity_policy'::regclass AND mode <> 'AccessShareLock')::boolean AS held
+`
+
+// A rule-only traffic policy write holds no lock on the fleet capacity policy
+// unless one of its statements fired a capacity trigger (ADR-20261029150627).
+func (q *Queries) ReadTrafficCapacityLockHeld(ctx context.Context, db DBTX) (bool, error) {
+	row := db.QueryRow(ctx, readTrafficCapacityLockHeld)
+	var held bool
+	err := row.Scan(&held)
+	return held, err
+}
+
 const readTrafficDeletionAccountStatus = `-- name: ReadTrafficDeletionAccountStatus :one
 SELECT status FROM accounts WHERE id=$1::uuid
 `

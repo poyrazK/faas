@@ -337,3 +337,28 @@ func TestRoutePolicyPostgresApplyPassesTrafficGuard(t *testing.T) {
 		t.Fatalf("apply after repair: %+v replayed=%v err=%v", receipt, replayed, err)
 	}
 }
+
+// Route policy apply writes only rules and its receipt, so it commits beside
+// an in-flight capacity statement (ADR-20261029150627).
+func TestRoutePolicyPostgresApplySkipsCapacityGuard(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	ctx := t.Context()
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	store := state.NewPgStore(pool)
+	acct, app, request, planner := routePolicyFixture(t, store)
+	capacity, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = capacity.Rollback(context.WithoutCancel(ctx)) }()
+	if _, err := capacity.Exec(ctx, `SELECT 1 FROM service_capacity_policy WHERE singleton FOR SHARE`); err != nil {
+		t.Fatal(err)
+	}
+	applying, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	if receipt, _, err := store.ApplyRoutePolicy(applying, acct.ID, app.ID, "beside-capacity", request, planner); err != nil || len(receipt.Changes) != 2 {
+		t.Fatalf("apply beside a capacity statement: %+v err=%v", receipt, err)
+	}
+}
