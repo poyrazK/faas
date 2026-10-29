@@ -269,6 +269,17 @@ ADR-568 requires.
     window closed.
   - github's capture was cancelled while copying its private image on the
     loaded host.
+- 2026-10-29, n2, rerun with an uncommitted diagnostic that logs the
+  verification error:
+  - Both graphs, github and gitlab, were activated and completed their first
+    customer queue delivery.
+  - Every later apid pass then refused the activated candidate: `stored
+    candidate inputs differ from the reviewed intent`.
+    - The frozen inputs carry an inherited baseline, the app's live
+      deployments at review. On Postgres that baseline includes the
+      candidate itself once activation makes it live.
+    - c23c5fd766 carries the frozen baseline over for an activated (live,
+      unheld) candidate. Every other authority field must still match.
 - Pending: the n2 native GitOps journey through serving and the resilience
   phases.
 
