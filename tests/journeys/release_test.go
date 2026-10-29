@@ -31,7 +31,7 @@ func TestReleaseAndRollback(t *testing.T) {
 		expectVersion(t, base, "v2", 2*time.Minute)
 	})
 	s.check("deployment_history", func(t *testing.T) {
-		doc := object(t, tg.ok(t, time.Minute, "deployments", "--app", slug).stdout)
+		doc := object(t, tg.ok(t, time.Minute, "release", "list", "--app", slug).stdout)
 		items, _ := field(doc, "items").([]any)
 		if len(items) < 2 {
 			t.Fatalf("deployments lists %d revisions after two deploys", len(items))
@@ -124,14 +124,14 @@ func TestDeleteAndRestore(t *testing.T) {
 	s := newStory(t)
 
 	s.step("delete", func(t *testing.T) {
-		tg.ok(t, 2*time.Minute, "apps", "rm", slug, "--yes")
+		tg.ok(t, 2*time.Minute, "app", "delete", slug, "--yes")
 		eventually(t, "deleted app stops serving", 2*time.Minute, 3*time.Second, func() (bool, string) {
 			r := get(base + "/")
 			return r.status == http.StatusNotFound, r.String()
 		})
 	})
 	s.step("restore", func(t *testing.T) {
-		tg.ok(t, 2*time.Minute, "apps", "restore", slug)
+		tg.ok(t, 2*time.Minute, "app", "restore", slug)
 		shown := object(t, tg.ok(t, time.Minute, "app", slug).stdout)
 		if str(shown, "slug") != slug {
 			t.Fatalf("restored app reads back as %s", compact(shown))
