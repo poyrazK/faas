@@ -40,7 +40,9 @@ EXCEPTION WHEN OTHERS THEN
 END
 $$;
 -- +goose StatementEnd
-REVOKE ALL ON FUNCTION record_compute_release_activation() FROM PUBLIC;
+-- No GRANT or REVOKE on the function: PostgreSQL only runs a trigger function
+-- as a trigger, and ledger recovery (CheckMigrationRecoveryWriters) admits
+-- functions only with the default ACL.
 
 DROP TRIGGER IF EXISTS compute_nodes_release_activation_insert ON compute_nodes;
 CREATE TRIGGER compute_nodes_release_activation_insert
