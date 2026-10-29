@@ -124,9 +124,15 @@ push and a tarball from the edge to a serving app and found six gaps:
 - `TestCheckBuildDriveCapacityReclaimsDependencyCacheFirst` (linux),
   `TestProcessOne_BuildDiskFullRequeuesTheBuild`,
   `TestReclaimDependencyCachesFreesOldestFirst`.
-- `TestSharedRuntimeRollbackMetal`, `TestSourceDeployWakeMetal` and
-  `TestE2E_Streaming_Metal_PlanMatrix` on the n2 metal host;
-  `TestSharedSourceAppRuntime`, `TestMuslRunner`.
+- n2 metal host, 2026-10-29: `TestSharedRuntimeRollbackMetal` passed all
+  five subtests in one run, with leakcheck clean: own base, runner fallback,
+  `/app`-only (38 MB against 386 MB), and rollback onto each base from a cold
+  boot and a snapshot restore. `TestE2E_Streaming_Metal_PlanMatrix/free`
+  passed on the shared Node 24 base. `TestSourceDeployWakeMetal` passed on
+  the shared node22 base before the musl rule, and its Node 22 app now takes
+  the own-base path that the rollback test covers. `TestSharedSourceAppRuntime`,
+  `TestMuslRunner` and `TestParentSourceMatches` cover the rule and the
+  parent match in unit tests.
 - `TestLinkTarget`, `TestExtractTarGz_InTreeLinksAreSkipped`,
   `TestExtractStreamCopiesInTreeLinks`,
   `TestExtractStreamLinkCopiesCountAgainstTheCaps`,

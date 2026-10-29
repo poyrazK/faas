@@ -30,6 +30,16 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// sharedBaseCeiling bounds a deployment that stages a base in its harness
+// (ADR-1500): imaged pulls, builds and scans the Debian parent and the runner
+// base before the app layer, about 16 minutes on the n2 metal host. Each
+// harness has its own producer records, so every test pays it once. The
+// staging reports no deployment progress, so the stall window widens with it.
+const (
+	sharedBaseCeiling     = e2etest.DefaultBuildCeiling + 25*time.Minute
+	sharedBaseStallWindow = 25 * time.Minute
+)
+
 const (
 	legacyBody   = "hello from faas (own base)"
 	fallbackBody = "hello from faas (runner fallback)"
