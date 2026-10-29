@@ -258,7 +258,7 @@ func cmdAutomationsRecoveryPolicyReviews(args []string) int {
 		}
 	}
 	if *path != "" {
-		_, _ = fmt.Fprintf(osStdout, "Saved prepared plan: %s\nPreview: gregale automations recovery-response-preview --plan %s\n", oneLine(*path), automationCommandArgument(*path))
+		_, _ = fmt.Fprintf(osStdout, "Saved prepared plan: %s\nPreview: gregale automation recovery-response-preview --plan %s\n", oneLine(*path), automationCommandArgument(*path))
 	}
 	if out.NextAfter != "" {
 		_, _ = fmt.Fprintf(osStdout, "Next --after: %s\n", oneLine(out.NextAfter))

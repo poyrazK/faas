@@ -192,7 +192,7 @@ func cmdAddBucket(args []string) int {
 	if bindingCreated {
 		// Like a secret change, a new binding is boot environment: running
 		// instances keep the one they started with (hunt #9).
-		_, _ = fmt.Fprintf(osStdout, "Running instances keep their current environment; the %s_* settings apply when the app next starts. Run `gregale app %s restart` to apply them now.\n", bindingPrefix, appName)
+		_, _ = fmt.Fprintf(osStdout, "Running instances keep their current environment; the %s_* settings apply when the app next starts. Run `gregale app restart %s` to apply them now.\n", bindingPrefix, appName)
 	}
 	return 0
 }

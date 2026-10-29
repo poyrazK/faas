@@ -16,7 +16,7 @@ import (
 	"os"
 )
 
-const deploysClearUsage = "usage: gregale deploys clear <id> [--app <slug>] [--dry-run] [--force] [--json]"
+const deploysClearUsage = "usage: gregale release hide <id> [--app <slug>] [--dry-run] [--force] [--json]"
 
 func cmdDeploysClear(args []string) int {
 	fs := newFlagSet("deploys clear", flag.ContinueOnError)

@@ -1,7 +1,35 @@
 name: managed storage Node starter
 
+# ci-light.yml called this on every pull request push and every merge to main
+# without it being a required check
+# (docs/adr/20261029121500-light-pull-request-ci.md). Pull requests now run it
+# only when the storage starter's own inputs change; ci.yml runs it nightly.
 on:
+  pull_request:
+    paths:
+      - "cmd/gregale/templates/object-storage-node/**"
+      - "cmd/gregale/templates/object-storage-python/**"
+      - "cmd/gregale/templates/node_storage_recovery_test.go"
+      - "sdk/node/src/object-storage-runtime.ts"
+      - "sdk/node/scripts/sync-storage-starter.mjs"
+      - "sdk/node/package*.json"
+      - "pkg/s3gateway/**"
+      - "pkg/e2etest/storagestarter/**"
+      - "pkg/e2etest/storagefixture/**"
+      - "pkg/e2etest/storage_*"
+      - "scripts/test-storage-node-starter.sh"
+      - "scripts/test-object-storage-native.sh"
+      - "scripts/ci/object-storage-native-*"
+      - ".github/workflows/storage-node-starter.yml"
+  # Nightly and on dispatch: ci.yml calls this workflow.
   workflow_call:
+  workflow_dispatch:
+
+concurrency:
+  # A literal name: when ci.yml calls this workflow, github.workflow is the
+  # caller's name, which the other called suites would share.
+  group: storage-node-starter-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read

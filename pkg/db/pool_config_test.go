@@ -62,3 +62,48 @@ func TestPoolConfigWarmFloor(t *testing.T) {
 		})
 	}
 }
+
+// TestPoolConfigMigratorTimeouts is issue #579: the migrator's sessions are
+// bounded so a hung or lock-starved migration fails the deploy; daemon pools
+// get the looser daemon backstops (bug hunt 2026-10-28 H59), and none behind
+// a transaction pooler, which refuses unknown startup parameters.
+func TestPoolConfigMigratorTimeouts(t *testing.T) {
+	t.Setenv(NotifyHubEnv, "")
+	t.Setenv(DirectDSNEnv, "")
+	t.Setenv(RuntimeRoleEnv, "")
+	cfg, err := poolConfig("postgres://faas@127.0.0.1:5432/faas", MigratorAppName, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.ConnConfig.RuntimeParams["statement_timeout"]; got != "30000" {
+		t.Errorf("migrator statement_timeout = %q, want 30000", got)
+	}
+	if got := cfg.ConnConfig.RuntimeParams["lock_timeout"]; got != "10000" {
+		t.Errorf("migrator lock_timeout = %q, want 10000", got)
+	}
+	daemon, err := poolConfig("postgres://faas@127.0.0.1:5432/faas", "faas-apid", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := daemon.ConnConfig.RuntimeParams["statement_timeout"]; got != "300000" {
+		t.Errorf("daemon statement_timeout = %q, want 300000", got)
+	}
+	if got := daemon.ConnConfig.RuntimeParams["idle_in_transaction_session_timeout"]; got != "120000" {
+		t.Errorf("daemon idle_in_transaction_session_timeout = %q, want 120000", got)
+	}
+	own, err := poolConfig("postgres://faas@127.0.0.1:5432/faas?statement_timeout=900000", "faas-apid", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := own.ConnConfig.RuntimeParams["statement_timeout"]; got != "900000" {
+		t.Errorf("a DSN's own statement_timeout became %q, want 900000", got)
+	}
+	t.Setenv(DirectDSNEnv, "postgres://faas@127.0.0.1:5432/faas")
+	pooled, err := poolConfig("postgres://faas@127.0.0.1:6432/faas", "faas-apid", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, set := pooled.ConnConfig.RuntimeParams["statement_timeout"]; set {
+		t.Error("a pgbouncer pool got a startup statement_timeout")
+	}
+}

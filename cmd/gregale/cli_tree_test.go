@@ -30,7 +30,7 @@ var cliTreeVerbs = []string{
 	"unprotect", "qualify", "reconcile", "reconnect", "refresh", "rehearse", "reopen", "require",
 	"resize", "resync", "retire", "revoke", "review", "scan", "split", "start", "stop", "subscribe",
 	"unsubscribe", "suggest", "suspend", "test", "track", "use", "validate", "override", "advise",
-	"reset", "pull", "push", "signal", "generate",
+	"reset", "pull", "push", "signal", "generate", "void", "draft", "handoff", "end",
 }
 
 // A path may end with a noun it lists or shows (`app instances`).
@@ -55,7 +55,8 @@ var cliTreeCompoundWords = []string{
 	"data-api", "rule-list", "egress-allowlist", "egress-ports", "static-egress-ip",
 	"port-forward", "wake-ahead", "wake-timeline", "streaming-cap", "spend-cap", "upload-cache",
 	"object-lock", "subscription-version", "subscription-retry", "subscription-circuit",
-	"subscription-capacity", "lock-policy",
+	"subscription-capacity", "lock-policy", "deploy-token",
+	"billing-run", "billing-policy", "rate-card", "overdue-hold", "event-recovery", "failure-recovery", "recovery-policy", "recovery-response", "deadline-alert", "notification-retry", "recovery-notification", "release-sets", "compute-policy",
 }
 
 // Rule 5: top-level verbs that may start a tree path.
@@ -91,8 +92,8 @@ func TestCliTreePathsFollowNamingRules(t *testing.T) {
 		if path[0] == "admin" {
 			continue // operator tools keep their names (rule 7)
 		}
-		if len(path) > 3 {
-			t.Errorf("%q: at most three words come before the target", alias.New)
+		if len(path) > 4 {
+			t.Errorf("%q: at most four words come before the target", alias.New)
 		}
 		shortcut := slices.Contains(cliTreeShortcuts, path[0])
 		if !nouns[path[0]] && !shortcut {
@@ -376,6 +377,36 @@ func TestCliTreeHintsEarlierNamesInATerminal(t *testing.T) {
 	}
 }
 
+// Shell completion offers the tree's names, and dynamic values (deployment
+// IDs, project slugs) complete on the tree paths that take them.
+func TestCliTreeCompletionOffersTheTree(t *testing.T) {
+	enableEveryCLIFeature(t)
+	_, script, _ := runCLI(t, "completion", "bash")
+	root := regexp.MustCompile(`compgen -W "(--non-interactive [^"]*)"`).FindStringSubmatch(script)
+	if root == nil {
+		t.Fatalf("bash completion has no top-level word list:\n%.400s", script)
+	}
+	words := strings.Fields(root[1])
+	for _, want := range []string{"cron", "release", "env", "app", "deploy", "logs"} {
+		if !slices.Contains(words, want) {
+			t.Errorf("top-level completion omits %q: %v", want, words)
+		}
+	}
+	for _, earlier := range []string{"crons", "deploys", "deployments", "secrets", "apps"} {
+		if slices.Contains(words, earlier) {
+			t.Errorf("top-level completion offers the earlier name %q", earlier)
+		}
+	}
+	for _, want := range []string{
+		`[ "${words[1]}" = "release" ] && [ "${words[2]}" = "get" ]`,
+		`[ "${words[1]}" = "environment" ]`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("bash completion lacks the position condition %s", want)
+		}
+	}
+}
+
 // Help reached through a tree path is spelled in that path.
 func TestCliTreeLeafHelpUsesTheTypedPath(t *testing.T) {
 	enableEveryCLIFeature(t)
@@ -393,8 +424,8 @@ func TestCliTreeLeafHelpUsesTheTypedPath(t *testing.T) {
 			t.Errorf("gregale %s = %d %q, want %q and not %q:\n%s", strings.Join(tc.args, " "), code, stderr, tc.want, tc.lack, stdout)
 		}
 	}
-	if _, stdout, _ := runCLI(t, "crons", "info", "--help"); !strings.Contains(stdout, "gregale crons info") {
-		t.Errorf("today's path keeps today's spelling:\n%s", stdout)
+	if _, stdout, _ := runCLI(t, "crons", "info", "--help"); !strings.Contains(stdout, "gregale cron get") || strings.Contains(stdout, "gregale crons info") {
+		t.Errorf("help reached by an earlier name speaks the tree:\n%s", stdout)
 	}
 }
 
@@ -412,8 +443,8 @@ func cliTreeVerbViolations() []string {
 	found := map[string]bool{}
 	check := func(path []string, leaf bool) {
 		var reasons []string
-		if len(path) > 3 {
-			reasons = append(reasons, "more than three words")
+		if len(path) > 4 {
+			reasons = append(reasons, "more than four words")
 		}
 		for _, word := range path {
 			if strings.Contains(word, "-") && !slices.Contains(cliTreeCompoundWords, word) {
@@ -493,6 +524,25 @@ func TestCliTreeVerbBaseline(t *testing.T) {
 	}
 }
 
+// Every tree path runs the command its alias names, however many words it
+// has: four-word paths (`api consumer plan create`) once stopped at three
+// and answered "unknown command".
+func TestCliTreeEveryAliasRunsItsCommand(t *testing.T) {
+	enableEveryCLIFeature(t)
+	for _, alias := range *main.CliTreeAliases {
+		path := strings.Fields(alias.New)
+		// A tree path that is also today's command (`dashboard`) runs today's.
+		if alias.New == alias.Old || main.OldPathDepth(path) >= len(path) {
+			continue
+		}
+		got, err := main.RewriteCliTree(append(path, "--json"))
+		want := append(strings.Fields(alias.Old), "--json")
+		if err != nil || !slices.Equal(got, want) {
+			t.Errorf("%q rewrites to %q (err %v), want %q", alias.New, got, err, want)
+		}
+	}
+}
+
 // ADR-20261026145832 step 4: canonical flag spellings run today's
 // equivalent flag, only where its help names the same concept.
 func TestCliTreeFlagSpellings(t *testing.T) {
@@ -512,6 +562,26 @@ func TestCliTreeFlagSpellings(t *testing.T) {
 	for _, tc := range cases {
 		if got := strings.Join(main.NormalizeTreeFlags(strings.Fields(tc.in)), " "); got != tc.want {
 			t.Errorf("%q normalized to %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// A verb that answers --help from its own parser names its tree path and
+// canonical flags too, also when an earlier name asked for it.
+func TestCliTreeParserHelpSpellsCanonicalFlags(t *testing.T) {
+	enableEveryCLIFeature(t)
+	for _, args := range [][]string{{"app", "binding", "list", "--help"}, {"bindings", "list", "--help"}} {
+		code, help, _ := runCLI(t, args...)
+		if code != 0 || !strings.Contains(help, "Flags for gregale app binding list:") {
+			t.Errorf("%v help = %d, want the tree path:\n%s", args, code, help)
+		}
+		for _, want := range []string{"\n  --env <VALUE>", "\n  --release <VALUE>"} {
+			if !strings.Contains(help, want) {
+				t.Errorf("%v help lacks %q:\n%s", args, want, help)
+			}
+		}
+		if strings.Contains(help, "\n  --scope ") || strings.Contains(help, "\n  --deployment ") {
+			t.Errorf("%v help lists an earlier flag spelling as the flag:\n%s", args, help)
 		}
 	}
 }

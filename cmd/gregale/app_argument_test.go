@@ -101,7 +101,7 @@ func TestAppArgumentHelpSaysSo(t *testing.T) {
 	if code := main.Run([]string{"alerts", "list", "--help"}); code != 0 {
 		t.Fatalf("alerts list --help = %d", code)
 	}
-	if !strings.Contains(out.String(), "The app can also be the first argument: gregale alerts list my-api") {
+	if !strings.Contains(out.String(), "The app can also be the first argument: gregale alert list my-api") {
 		t.Fatalf("help lacks the app argument hint:\n%s", out.String())
 	}
 }

@@ -506,6 +506,7 @@ const UploadSessionAlreadyCommittedCode = uploadSessionAlreadyCommittedCode
 const UploadSessionOffsetConflictCode = uploadSessionOffsetConflictCode
 
 // Package-level vars
+var TerminalSafe = terminalSafe
 var AuthAdminHTTPClient = &authAdminHTTPClient
 var AuthAdminKeyID = &authAdminKeyID
 var AuthAdminKeyName = &authAdminKeyName
@@ -672,7 +673,17 @@ var CliConfigPath = cliConfigPath
 var CliTreePlaces = cliTreePlaces
 var CliTreeManifest = cliTreeManifest
 var CliTreeSpelling = cliTreeSpelling
+var CliTreeCanonicalFlag = cliTreeCanonicalFlag
+var CliTreeFlagsForDisplay = cliTreeFlagsForDisplay
+var CliTreeFlagSynonyms = &cliTreeFlagSynonyms
+var CliTreeFolds = &cliTreeFolds
+var CliTreeEarlierName = cliTreeEarlierName
+var CliTreeNounsHolding = cliTreeNounsHolding
 var CliTreeHintTerminal = &cliTreeHintTerminal
+
+// CustomerManifest is every customer command, earlier names included.
+func CustomerManifest() []cliCommand { return customerAudience(discoverableCliCommands()) }
+
 var CliRelatedCommands = &cliRelatedCommands
 var CliSeeAlso = cliSeeAlso
 var CliPreAuthPatch = cliPreAuthPatch
@@ -1817,6 +1828,7 @@ var RunIssueTicketSync = runIssueTicketSync
 var RunIssueTickets = runIssueTickets
 var RunLocalTest = runLocalTest
 var RunLocalTestWithLoad = runLocalTestWithLoad
+var RunLogs = runLogs
 var RunMCPBrowserConnection = runMCPBrowserConnection
 var RunMCPCatalogMonitor = runMCPCatalogMonitor
 var RunMCPNativeRelease = runMCPNativeRelease

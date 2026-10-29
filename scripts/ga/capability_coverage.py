@@ -42,7 +42,7 @@ RULES = [
     (r"synthetic", "Synthetic checks"),
     (r"app-cost|cost-trend|costs-overview", "Per-app costs"),
     (r"async-route|execution-mode", "Async routes at the edge"),
-    (r"frozen|thaw", "Frozen tier"),
+    (r"frozen|thaw|quiet-pause-unbilled", "Frozen tier"),
     (r"^/orders|^/users|^/v1\\?api|^/v1/apps\\$", "TEST"),
     (r"^apps/diff", "Affected-workload preview"),
     (r"^apps/env", "Env vars:"),
@@ -65,7 +65,7 @@ RULES = [
     (r"^dns-provider$|hetzner-dns|dns01|^dns-provider-", "Custom domains"),
     (r"^allowlist$|hostname-label|surface-parser", "Custom domains"),
     (r"content-observer", "Route advisor"),
-    (r"edge-answers|informational-response|response-trailers|forwardproxy|proxy-raw|proxy-stub|portnorm|origdst", "Streaming, SSE"),
+    (r"edge-answers|informational-response|response-trailers|forwardproxy|proxy-raw|raw-chunked-refusal|proxy-stub|portnorm|origdst", "Streaming, SSE"),
     (r"preauth-limit", "Edge protection"),
     (r"authenticated|internal-svc-auth", "App access control"),
     (r"service-discovery|service-proxy|internal-proxy", "Internal services"),
@@ -366,7 +366,7 @@ INFRA_RULES = [
     r"lock|lease-|fence|leader|ledger|journal|outbox-reconcil|receipt|idempotency-key|retention|gc$|janitor|reconcil|watchdog|spool|backpressure|ratelimit|rate-limit|quota|admission|eviction",
     r"release-artifact|releasebundle|releaseinstall|release-compat|unit-|deploy-order|version-skew|pricing-md|standards-md|capabilities-md|obs-rule|denylist-md|runtime-qualification|api-hosting-(scorecard|contract)",
     r"metric|prometheus|promauto|otel|slog|log$|telemetry-internal|healthz|livez|readyz|^/metrics|^loki-",
-    r"^target-(hydration|placement|publication)$|^(pgbackend-)?public-routing-(burst|capacity|view)$|^publicrouting$",
+    r"^target-(hydration|placement|publication)$|^(pgbackend-)?public-routing-(burst|capacity|view)$|^publicrouting$|^at-capacity-settle$",
 ]
 
 

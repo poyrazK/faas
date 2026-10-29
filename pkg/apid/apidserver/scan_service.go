@@ -57,6 +57,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/githubd"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/reconcile"
 	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/secretscan"
@@ -335,10 +336,20 @@ func computeAffectedPartition(
 	projectID string,
 ) affectedPartition {
 	idx := make(map[string]state.App, len(existingApps))
+	projectApps := make([]state.App, 0, len(existingApps))
 	for _, a := range existingApps {
 		if projectID != "" && a.ProjectID == projectID && a.PreviewOfSlug == "" {
 			idx[a.WorkloadName] = a
+			projectApps = append(projectApps, a)
 		}
+	}
+	// A renamed service updates its previous name's app (ADR-20261029090000),
+	// matching reconcile's diff, so the plan shows neither a remove nor a
+	// create for it.
+	renamed := reconcile.RenamedWorkloads(allScanWl, projectApps)
+	for previous, current := range renamed {
+		idx[current] = idx[previous]
+		delete(idx, previous)
 	}
 	// scanNames is keyed on durable workload identity. RootDir can change
 	// between applies without turning the workload into a remove/create pair.
@@ -350,6 +361,9 @@ func computeAffectedPartition(
 	scanNames := make(map[string]struct{}, len(allScanWl))
 	for _, w := range allScanWl {
 		scanNames[w.Name] = struct{}{}
+	}
+	for previous := range renamed {
+		scanNames[previous] = struct{}{}
 	}
 	// WillDeploy: filteredW (no excluded) → create or update. Order
 	// preserved so the i-alignment with respWorkloads stays intact.
@@ -1009,7 +1023,7 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			command: append([]string(nil), workload.ReleaseCommand...),
 			shell:   workload.ReleaseCommandShell,
 		}
-		manifest, manifestProblem := loadSourceRefManifest(staged, sourceApp, acct.Plan)
+		manifest, manifestProblem := loadSourceRefManifest(staged, sourceApp, acct.Plan, s.agentStepsAllowed(acct))
 		if manifestProblem != nil {
 			_ = os.Remove(staged)
 			res.Error = "operation or release declaration invalid"
@@ -1471,7 +1485,9 @@ func (s *server) scanService(
 		}
 	}
 
-	result, scanErr := reposcan.Scan(os.DirFS(req.ScanDir))
+	scanOpts := s.projectScanOptions(acct)
+	scanOpts.ImageListening = s.imageListening
+	result, scanErr := reposcan.ScanWithOptions(os.DirFS(req.ScanDir), scanOpts)
 	if scanErr != nil {
 		return nil, state.Project{}, nil, nil, nil, nil, api.NewProblem(
 			http.StatusBadRequest, api.CodeSourceInvalid,
@@ -3056,3 +3072,14 @@ func projectCronsWithPreserved(
 // field is informational — the hash is the load-bearing field —
 // but exposing a function variable lets tests freeze the clock.
 var nowUnix = func() int64 { return time.Now().Unix() }
+
+// projectScanOptions are the capability-gated scan options for an account.
+// They are decided by account rules alone, as githubd decides them, so a
+// push deploy rescans with the options the account reviewed
+// (ADR-20261029093621 §7). Without a gate (unit tests) every option is on.
+func (s *server) projectScanOptions(acct state.Account) reposcan.ScanOptions {
+	subject := platformflags.Subject{AccountID: acct.ID}
+	return reposcan.ScanOptions{
+		KubernetesManifests: s.capGate == nil || s.capGate.Enabled(reposcan.KubernetesManifestsCapability, subject),
+	}
+}

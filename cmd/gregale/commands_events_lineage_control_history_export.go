@@ -45,7 +45,7 @@ func cmdEventsLineageControlHistoryExport(args []string) int {
 		return 1
 	}
 	if len(positional) != 3 || rejectUnexpectedFlagArgs(fs) || *file == "" {
-		PrintUsage(os.Stderr, "usage: gregale events subscription-lineage-retry-job-controls-export APP SUB REQUEST_UUID --expected-created-at TIMESTAMP --file PATH [--action ACTION] [--actor-id UUID_OR_STORE] [--credential-type TYPE] [--timeout 2m]", "events")
+		PrintUsage(os.Stderr, "usage: gregale event subscription-lineage-retry-job-controls-export APP SUB REQUEST_UUID --expected-created-at TIMESTAMP --file PATH [--action ACTION] [--actor-id UUID_OR_STORE] [--credential-type TYPE] [--timeout 2m]", "events")
 		return 1
 	}
 	sub, subErr := uuid.Parse(positional[1])

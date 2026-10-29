@@ -29,24 +29,59 @@
     group: root
     mode: "0400"
   no_log: true
-  notify: restart faas-apid for seal domains
+  notify:
+    - restart faas-apid for seal domains
+    - restart faas-apid-clone-worker for seal domains
 
-- name: seal_domains — create the apid drop-in directory for the account domain
+# Key rotation (ADR 20261022111812): while the previous identity is
+# set it stays beside the new one, so values sealed to it still open until
+# the domain's re-seal to the new key completes. Unset, it is removed.
+- name: seal_domains — install the previous account domain identity
+  ansible.builtin.copy:
+    src: "{{ faas_seal_domain_account_previous_identity_src }}"
+    dest: /etc/faas/secrets/domains/account.age.previous
+    owner: root
+    group: root
+    mode: "0400"
+  no_log: true
+  notify:
+    - restart faas-apid for seal domains
+    - restart faas-apid-clone-worker for seal domains
+  when:
+    - faas_seal_domain_account_previous_identity_src | length > 0
+
+- name: seal_domains — remove the previous account domain identity
   ansible.builtin.file:
-    path: /etc/systemd/system/faas-apid.service.d
+    path: /etc/faas/secrets/domains/account.age.previous
+    state: absent
+  notify:
+    - restart faas-apid for seal domains
+    - restart faas-apid-clone-worker for seal domains
+  when:
+    - faas_seal_domain_account_previous_identity_src | length == 0
+
+# The clone worker runs apid's clone code and seals and opens project
+# environment clone values, so it gets the same drop-in.
+- name: seal_domains — create the drop-in directories for the account domain
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ item }}.service.d"
     state: directory
     owner: root
     group: root
     mode: "0755"
+  loop: [faas-apid, faas-apid-clone-worker]
 
-- name: seal_domains — give apid the account domain identity
+- name: seal_domains — give apid and the clone worker the account domain identity
   ansible.builtin.template:
     src: 60-faas-seal-domain-account-reader.conf.j2
-    dest: /etc/systemd/system/faas-apid.service.d/60-faas-seal-domain-account.conf
+    dest: "/etc/systemd/system/{{ item }}.service.d/60-faas-seal-domain-account.conf"
     owner: root
     group: root
     mode: "0644"
-  notify: restart faas-apid for seal domains
+  loop: [faas-apid, faas-apid-clone-worker]
+  notify:
+    - restart faas-apid for seal domains
+    - restart faas-apid-clone-worker for seal domains
 
 - name: seal_domains — restart apid before proving the account domain
   ansible.builtin.meta: flush_handlers

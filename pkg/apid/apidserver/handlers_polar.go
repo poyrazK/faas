@@ -2,7 +2,9 @@ package apidserver
 
 import (
 	"context"
+	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -42,16 +44,22 @@ func (s *server) polarWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	acct, err := s.lookupAccountByPolarID(r.Context(), ev.CustomerID)
 	if err != nil {
-		// Keep known billing events and invoice projections retryable rather
-		// than silently discarding an entitlement transition. Unknown no-op
-		// events are safe to acknowledge because there is no local side
-		// effect to recover.
-		if ev.Type != billing.EventUnknown || ev.Invoice != nil {
-			s.log.Warn("polar_webhook.unknown_customer", "customer_id", ev.CustomerID, "event_type", ev.Type.Name())
+		// A failed lookup stays retryable. A customer no account is bound to
+		// (or a delivery without one) is acknowledged: redelivery cannot
+		// change the answer, and Polar disables an endpoint after 10
+		// consecutive failed deliveries, which would stop every account's
+		// webhooks. Subscription reconciliation repairs an account whose
+		// binding lands later (ADR-20261029094512).
+		if ev.CustomerID != "" && !errors.Is(err, state.ErrNotFound) {
+			s.log.Warn("polar_webhook.customer_lookup_failed", "customer_id", ev.CustomerID, "event_type", ev.Type.Name(), "err", err)
 			api.WriteProblem(w, api.ErrCapacity("billing webhook customer binding unavailable"))
 			return
 		}
-		s.log.Info("polar_webhook.unknown_customer_noop", "customer_id", ev.CustomerID, "event_type", ev.Type.Name())
+		level := slog.LevelInfo
+		if ev.Type != billing.EventUnknown || ev.Invoice != nil {
+			level = slog.LevelWarn
+		}
+		s.log.Log(r.Context(), level, "polar_webhook.unknown_customer", "customer_id", ev.CustomerID, "event_type", ev.Type.Name())
 		w.WriteHeader(http.StatusOK)
 		return
 	}

@@ -146,23 +146,22 @@ func (v Verdict) Summary() string {
 	return "release gate " + v.Failed.Name + ": " + v.Failed.Summary
 }
 
-// Judge judges each gate against its evidence, in gate name order. Gates
-// without evidence, or with too few samples, are not judged.
+// Judge judges each gate against its evidence, in gate name order. A gate
+// with too few samples or unreadable evidence is not judged; its result says
+// so (NotJudged) and never fails the verdict. A gate without an evidence entry
+// (its SLO was deleted) is left out.
 func Judge(gates []Gate, evidence map[string]Evidence) Verdict {
 	sorted := append([]Gate(nil), gates...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Name < sorted[j].Name })
 	var v Verdict
 	for _, g := range sorted {
 		ev, ok := evidence[g.Name]
-		if !ok || ev.Unavailable {
+		if !ok {
 			continue
 		}
 		result, judged := judgeOne(g, ev)
-		if !judged {
-			continue
-		}
 		v.Results = append(v.Results, result)
-		if !result.Passed && v.Failed == nil {
+		if judged && !result.Passed && v.Failed == nil {
 			failed := result
 			v.Failed = &failed
 		}
@@ -170,12 +169,26 @@ func Judge(gates []Gate, evidence map[string]Evidence) Verdict {
 	return v
 }
 
+// notJudged records a gate that was not judged and why. Unjudged gates were
+// left out of decisions, so a canary on a quiet app completed with no sign
+// that its gates never ran (release review 2026-10-28).
+func notJudged(r api.ReleaseGateResult, samples int64, summary string) (api.ReleaseGateResult, bool) {
+	r.Passed, r.NotJudged, r.Samples, r.Summary = true, true, max(samples, 0), "not judged: "+summary
+	return r, false
+}
+
 func judgeOne(g Gate, ev Evidence) (api.ReleaseGateResult, bool) {
 	r := api.ReleaseGateResult{Name: g.Name, Kind: g.Kind}
+	if ev.Unavailable {
+		return notJudged(r, 0, "its evidence could not be read")
+	}
 	switch g.Kind {
 	case KindSLO:
-		if ev.Release.Requests < int64(max(g.MinSamples, 1)) || g.ObjectiveBP <= 0 || g.ObjectiveBP >= 10000 {
-			return r, false
+		if g.ObjectiveBP <= 0 || g.ObjectiveBP >= 10000 {
+			return notJudged(r, ev.Release.Requests, "its SLO objective is out of range")
+		}
+		if minimum := int64(max(g.MinSamples, 1)); ev.Release.Requests < minimum {
+			return notJudged(r, ev.Release.Requests, fmt.Sprintf("%d of %d requests so far", ev.Release.Requests, minimum))
 		}
 		budget := float64(10000-g.ObjectiveBP) / 10000
 		badFraction := float64(ev.Release.Bad(g.LatencyThresholdMS)) / float64(ev.Release.Requests)
@@ -214,8 +227,11 @@ func judgeOne(g Gate, ev Evidence) (api.ReleaseGateResult, bool) {
 			r.Summary += ": " + strings.Join(r.ErrorClasses, ", ")
 		}
 	case KindCustomMetric:
-		if ev.Metric.Samples < int64(max(g.MinSamples, 1)) || math.IsNaN(ev.Metric.Average) || math.IsInf(ev.Metric.Average, 0) {
-			return r, false
+		if minimum := int64(max(g.MinSamples, 1)); ev.Metric.Samples < minimum {
+			return notJudged(r, ev.Metric.Samples, fmt.Sprintf("%d of %d %s values so far", ev.Metric.Samples, minimum, g.MetricName))
+		}
+		if math.IsNaN(ev.Metric.Average) || math.IsInf(ev.Metric.Average, 0) {
+			return notJudged(r, ev.Metric.Samples, "its average could not be computed")
 		}
 		r.Observed, r.Bound, r.Samples = round(ev.Metric.Average), g.Threshold, ev.Metric.Samples
 		switch g.Comparison {
@@ -224,13 +240,13 @@ func judgeOne(g Gate, ev Evidence) (api.ReleaseGateResult, bool) {
 		case "above":
 			r.Passed = ev.Metric.Average <= g.Threshold
 		default:
-			return r, false
+			return notJudged(r, ev.Metric.Samples, fmt.Sprintf("unknown comparison %q", g.Comparison))
 		}
 		r.Summary = fmt.Sprintf("%s averaged %g over %d values (fails %s %g)", g.MetricName, round(ev.Metric.Average), ev.Metric.Samples, g.Comparison, g.Threshold)
 	case KindAI:
 		return judgeAI(g, ev)
 	default:
-		return r, false
+		return notJudged(r, 0, fmt.Sprintf("unknown kind %q", g.Kind))
 	}
 	return r, true
 }
@@ -243,8 +259,13 @@ func judgeAI(g Gate, ev Evidence) (api.ReleaseGateResult, bool) {
 	release, releaseCalls, ok := ev.AIRelease.value(g.MetricName)
 	baseline, baselineCalls, _ := ev.AIBaseline.value(g.MetricName)
 	minSamples := int64(max(g.MinSamples, 1))
-	if !ok || releaseCalls < minSamples || baselineCalls < minSamples || g.Threshold <= 0 || math.IsNaN(g.Threshold) || math.IsInf(g.Threshold, 0) {
-		return r, false
+	switch {
+	case !ok:
+		return notJudged(r, 0, fmt.Sprintf("unknown AI metric %q", g.MetricName))
+	case g.Threshold <= 0 || math.IsNaN(g.Threshold) || math.IsInf(g.Threshold, 0):
+		return notJudged(r, releaseCalls, "its threshold is out of range")
+	case releaseCalls < minSamples || baselineCalls < minSamples:
+		return notJudged(r, releaseCalls, fmt.Sprintf("%d release and %d baseline calls of %d each so far", releaseCalls, baselineCalls, minSamples))
 	}
 	bound := max(baseline*(1+g.Threshold/100), baseline+aiFloors[g.MetricName])
 	r.Observed, r.Bound, r.Samples = round(release), round(bound), releaseCalls

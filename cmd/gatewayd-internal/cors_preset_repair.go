@@ -31,6 +31,24 @@ type corsPresetRepairInvalidator interface {
 	ResetCorsPresets(accountID string)
 }
 
+// invalidateCorsPresetChange drops what one account's CORS preset change can
+// have changed: the compiled rule sets that hold the account's rules (they bake
+// the preset in) and the account's cached responses (they carry its CORS
+// headers). Presets are per account, so no other account's rules or responses
+// depend on it. It used to flush every account's compiled rules and cached
+// responses on every gateway, so one tenant editing a preset in a loop
+// cache-busted the fleet (ADR-091 amendment 2026-10-28). Invalidators without
+// the scoped surface, and an unknown account, keep the wholesale reset.
+func invalidateCorsPresetChange(ctx context.Context, inv corsPresetRepairInvalidator, accountID string) {
+	if _, scoped := inv.(edgeRuleScopedInvalidator); scoped && accountID != "" {
+		if repair, ok := inv.(edgeRuleRepairInvalidator); ok {
+			invalidateEdgeRuleScope(ctx, repair, accountID, "", []string{"*"})
+			return
+		}
+	}
+	inv.ResetCorsPresets(accountID)
+}
+
 var _ corsPresetRepairStore = (*state.PgStore)(nil)
 
 // repairDurableCorsPresetChanges applies one bounded page. Account IDs are
@@ -71,7 +89,7 @@ func repairDurableCorsPresetChanges(
 	}
 	sort.Strings(accountIDs)
 	for _, accountID := range accountIDs {
-		inv.ResetCorsPresets(accountID)
+		invalidateCorsPresetChange(ctx, inv, accountID)
 	}
 	previous := *lastID
 	*lastID = nextID

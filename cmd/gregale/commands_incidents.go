@@ -12,7 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const incidentsUsage = "usage: gregale incidents [list|show|ack|note]"
+const incidentsUsage = "usage: gregale alert incident [list|show|ack|note]"
 
 // cmdIncidents implements `gregale incidents` (ADR-20261022193512): one list
 // of alert firing periods, route monitor incidents and platform incidents,
@@ -42,7 +42,7 @@ func cmdIncidentsList(args []string) int {
 	open := fs.Bool("open", false, "open incidents only")
 	since := fs.String("since", "", "resolved incidents from this long ago, e.g. 24h or 3d (default 7d, at most 30d)")
 	if err := fs.Parse(args); err != nil || fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale incidents list [--app SLUG] [--open] [--since 24h]", "incidents")
+		PrintUsage(os.Stderr, "usage: gregale alert incident list [--app SLUG] [--open] [--since 24h]", "incidents")
 		return 1
 	}
 	q := api.IncidentsQuery{App: *app, OpenOnly: *open}
@@ -123,7 +123,7 @@ func truncateRunes(s string, n int) string {
 func cmdIncidentsShow(args []string) int {
 	fs := newFlagSet("incidents show", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale incidents show <incident-id>", "incidents")
+		PrintUsage(os.Stderr, "usage: gregale alert incident get <incident-id>", "incidents")
 		return 1
 	}
 	client, err := authedClient()
@@ -207,7 +207,7 @@ func renderIncident(w io.Writer, d api.IncidentDetail, now time.Time) {
 func cmdIncidentsAck(args []string) int {
 	fs := newFlagSet("incidents ack", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale incidents ack <incident-id>", "incidents")
+		PrintUsage(os.Stderr, "usage: gregale alert incident ack <incident-id>", "incidents")
 		return 1
 	}
 	client, err := authedClient()
@@ -228,7 +228,7 @@ func cmdIncidentsAck(args []string) int {
 func cmdIncidentsNote(args []string) int {
 	fs := newFlagSet("incidents note", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil || fs.NArg() < 2 {
-		PrintUsage(os.Stderr, "usage: gregale incidents note <incident-id> <text>", "incidents")
+		PrintUsage(os.Stderr, "usage: gregale alert incident note <incident-id> <text>", "incidents")
 		return 1
 	}
 	client, err := authedClient()

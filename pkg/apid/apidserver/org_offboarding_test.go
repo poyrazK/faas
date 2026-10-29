@@ -148,6 +148,18 @@ func TestOrgOffboardingCreatorLosesNamedAndIndirectAppRoutes(t *testing.T) {
 			}
 		})
 	}
+	// Account-wide lists name no app, so they leave the company's rows out
+	// themselves; the company's freeze itself stays in place.
+	list := e.DoAdmin(t, "GET", "/v1/freezes", nil, nil)
+	var listed api.ListReleaseFreezesResponse
+	if list.Code != http.StatusOK || json.Unmarshal(list.Body.Bytes(), &listed) != nil {
+		t.Fatalf("removed creator GET /v1/freezes = %d: %s", list.Code, list.Body)
+	}
+	for _, f := range listed.Freezes {
+		if f.ID == created.ID {
+			t.Fatalf("removed creator still lists the company's freeze %s", created.ID)
+		}
+	}
 	if got, err := store.GetWorkflowRun(t.Context(), run.ID); err != nil || got.CancelledAt != nil {
 		t.Fatalf("run after refused cancel: %+v %v", got, err)
 	}

@@ -9,12 +9,16 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/routehealth"
 )
 
 type routeHealthNotificationState struct {
 	ContextKey        string
 	Status            string
 	BlockedDecisionID string
+	// Since is when the status began; a hold keeps the time of its first
+	// blocking decision while its context lasts (ADR-20261028110044).
+	Since time.Time
 }
 
 type routeHealthNotification struct {
@@ -27,6 +31,27 @@ type routeHealthNotification struct {
 // moving telemetry windows do not reopen a hold. A configuration/stage/stable
 // change resets the comparison; unknown never clears a confirmed regression.
 func routeHealthTransition(previous routeHealthNotificationState, entry api.RouteHealthHistoryEntry, slug string) (routeHealthNotification, error) {
+	next, err := routeHealthStatusTransition(previous, entry, slug)
+	if err != nil {
+		return next, err
+	}
+	next.State.Since = routeHealthStatusSince(previous, next.State, entry.CheckedAt)
+	return next, nil
+}
+
+// routeHealthStatusSince is when next's status began. A held canary stays
+// held from its first blocking decision even when the hold turns from
+// unknown to regressed, so the hold deadline counts the whole hold.
+func routeHealthStatusSince(previous, next routeHealthNotificationState, at time.Time) time.Time {
+	held := func(status string) bool { return status == "blocked_unknown" || status == "blocked_regressed" }
+	if previous.ContextKey == next.ContextKey && !previous.Since.IsZero() &&
+		(previous.Status == next.Status || held(previous.Status) && held(next.Status)) {
+		return previous.Since
+	}
+	return at.UTC()
+}
+
+func routeHealthStatusTransition(previous routeHealthNotificationState, entry api.RouteHealthHistoryEntry, slug string) (routeHealthNotification, error) {
 	key, err := routeHealthNotificationContext(entry)
 	if err != nil {
 		return routeHealthNotification{}, err
@@ -48,6 +73,11 @@ func routeHealthTransition(previous routeHealthNotificationState, entry api.Rout
 		next.State.Status, next.State.BlockedDecisionID = "aborted", ""
 		next.Event = AppWebhookEventRouteHealthAborted
 	case "blocked":
+		// A gateway lost evidence (ADR-20261028110044 amendment 1): the
+		// advance waits, but the customer's release is not held on it.
+		if routehealth.EvidenceLost(entry.Report) {
+			return next, nil
+		}
 		if state.Status == "clear" || state.Status == "blocked_unknown" && entry.Report.Status == "regressed" {
 			next.State.Status = "blocked_unknown"
 			if entry.Report.Status == "regressed" {
@@ -81,7 +111,7 @@ func routeHealthTransition(previous routeHealthNotificationState, entry api.Rout
 		BlockedDecisionID: blockedID, Status: status, HealthStatus: entry.Report.Status, Reason: entry.Decision.Reason, Source: entry.Source,
 		CanaryStep: entry.Report.CanaryStep, Revision: entry.Report.Revision, ObservationAnchor: entry.Report.ObservationAnchor,
 		CheckedAt: entry.CheckedAt, PreviousTrafficPercent: entry.TrafficPercent, RequestedTrafficPercent: entry.RequestedTrafficPercent,
-		HistoryPath: "/v1/apps/" + url.PathEscape(slug) + "/route-health/deployments/" + entry.Report.DeploymentID + "/history/" + entry.ID}
+		HistoryPath: routeHealthHistoryPath(slug, entry.Report.DeploymentID, entry.ID)}
 	next.Payload, err = json.Marshal(payload)
 	if err != nil {
 		return next, fmt.Errorf("encode route health notification: %w", err)
@@ -105,4 +135,26 @@ func routeHealthNotificationContext(entry api.RouteHealthHistoryEntry) (string, 
 	}
 	digest := sha256.Sum256(body)
 	return hex.EncodeToString(digest[:]), nil
+}
+
+// routeHealthHistoryPath is the authenticated path of one saved decision.
+func routeHealthHistoryPath(slug, deploymentID, id string) string {
+	return "/v1/apps/" + url.PathEscape(slug) + "/route-health/deployments/" + deploymentID + "/history/" + id
+}
+
+// routeHealthHoldAbortedPayload is the routes.health.aborted payload for a
+// hold the hold deadline ended (ADR-20261028110044 amendment 2). It names the
+// hold's first blocking decision, whose saved evidence explains the hold.
+func routeHealthHoldAbortedPayload(entry api.RouteHealthHistoryEntry, slug string, at time.Time) ([]byte, error) {
+	payload := api.RouteHealthTransitionWebhookPayload{Version: api.RouteHealthTransitionVersion, AppID: entry.Report.AppID,
+		DeploymentID: entry.Report.DeploymentID, StableDeploymentID: entry.Report.StableDeploymentID, DecisionID: entry.ID,
+		BlockedDecisionID: entry.ID, Status: "aborted", HealthStatus: entry.Report.Status, Reason: api.RouteHealthHoldDeadlineReason,
+		Source: "worker", CanaryStep: entry.Report.CanaryStep, Revision: entry.Report.Revision, ObservationAnchor: entry.Report.ObservationAnchor,
+		CheckedAt: at.UTC(), PreviousTrafficPercent: entry.TrafficPercent, RequestedTrafficPercent: 0,
+		HistoryPath: routeHealthHistoryPath(slug, entry.Report.DeploymentID, entry.ID)}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("encode route health hold abort notification: %w", err)
+	}
+	return body, nil
 }

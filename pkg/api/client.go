@@ -50,6 +50,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -309,17 +310,56 @@ func (c *Client) doWithClientAndHeadersAndIdempotencyKeyPolicy(ctx context.Conte
 			"the gregale CLI cannot reach this route — use the dashboard at "+docsBase+"/dashboards#sessions",
 		).WithDocs(docsBase + "/cli#cookie-only-routes")
 	}
-	var r io.Reader
+	var payload []byte
 	if body != nil {
 		b, err := json.Marshal(body)
 		if err != nil {
 			return fmt.Errorf("marshal request: %w", err)
 		}
-		r = bytes.NewReader(b)
+		payload = b
+	}
+	// UX §3.2 / impl §4.2: every mutating call carries Idempotency-Key
+	// so a retried deploy/park/wake/rollback/etc. never double-charges
+	// or double-creates. We never override an explicit key the caller
+	// already set. The key is chosen once, so every attempt below shares it.
+	if method != http.MethodGet && method != http.MethodHead && (idempotencyKey != "" || addDefaultIdempotencyKey) {
+		if idempotencyKey == "" && addDefaultIdempotencyKey {
+			idempotencyKey = IdempotencyKeyFromContext(ctx)
+		}
+		if idempotencyKey == "" && addDefaultIdempotencyKey {
+			idempotencyKey = newUUIDv4()
+		}
+	} else {
+		idempotencyKey = ""
+	}
+	for attempt := 1; ; attempt++ {
+		req, err := c.newJSONRequest(ctx, method, path, payload, body != nil, idempotencyKey, headers)
+		if err != nil {
+			return err
+		}
+		err = c.doReq(cli, req, out)
+		pause, retry := trafficPolicyRetryPause(err, attempt)
+		if !retry {
+			return err
+		}
+		timer := time.NewTimer(pause)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return errors.Join(err, ctx.Err())
+		case <-timer.C:
+		}
+	}
+}
+
+func (c *Client) newJSONRequest(ctx context.Context, method, path string, payload []byte, hasBody bool, idempotencyKey string, headers http.Header) (*http.Request, error) {
+	var r io.Reader
+	if hasBody {
+		r = bytes.NewReader(payload)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, r)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
@@ -329,23 +369,31 @@ func (c *Client) doWithClientAndHeadersAndIdempotencyKeyPolicy(ctx context.Conte
 			req.Header.Add(key, value)
 		}
 	}
-	// UX §3.2 / impl §4.2: every mutating call carries Idempotency-Key
-	// so a retried deploy/park/wake/rollback/etc. never double-charges
-	// or double-creates. We never override an explicit key the caller
-	// already set.
-	if method != http.MethodGet && method != http.MethodHead && (idempotencyKey != "" || addDefaultIdempotencyKey) {
-		if idempotencyKey == "" && addDefaultIdempotencyKey {
-			idempotencyKey = IdempotencyKeyFromContext(ctx)
-		}
-		if idempotencyKey == "" && addDefaultIdempotencyKey {
-			idempotencyKey = newUUIDv4()
-		}
+	if idempotencyKey != "" {
 		req.Header.Set("Idempotency-Key", idempotencyKey)
 	}
-	if body != nil {
+	if hasBody {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	return c.doReq(cli, req, out)
+	return req, nil
+}
+
+// trafficPolicyCheckAttempts bounds how often a request is sent while its
+// traffic policy check keeps running out of time.
+const trafficPolicyCheckAttempts = 4
+
+// trafficPolicyRetryPause reports whether err is a policy check that ran out
+// of time (TrafficPolicyCheckTimedOut) and how long to wait before resending.
+// apid saved nothing and does not replay the refusal, so the resend reuses
+// the Idempotency-Key and any Deployment-Attempt-ID. On n2 a deploy sent
+// while the app served about 30 requests a second needed four attempts.
+func trafficPolicyRetryPause(err error, attempt int) (time.Duration, bool) {
+	var apiErr *APIError
+	if err == nil || attempt >= trafficPolicyCheckAttempts || !errors.As(err, &apiErr) || !TrafficPolicyCheckTimedOut(apiErr.Problem) {
+		return 0, false
+	}
+	pause := time.Duration(*apiErr.Problem.RetryAfterSeconds) * time.Second
+	return min(max(pause, 50*time.Millisecond), 10*time.Second), true
 }
 
 func (c *Client) rollbackHTTP() *http.Client {
@@ -532,12 +580,28 @@ func apiErrorFromResponse(resp *http.Response, data []byte) error {
 			p.RetryAfterSeconds = &seconds
 		}
 	}
-	for _, name := range []string{"RateLimit-Limit", "RateLimit-Remaining", "RateLimit-Reset"} {
+	for _, name := range []string{"RateLimit-Limit", "RateLimit-Remaining", "RateLimit-Reset", EdgeRulesStateHeader} {
 		if value := resp.Header.Get(name); value != "" {
 			p = *p.WithHeader(name, value)
 		}
 	}
 	return &APIError{Problem: p}
+}
+
+// EdgeRulesStateHeader reports whether the serving gateways have applied an
+// edge-rule, rule-list or CORS-preset change (ADR-091): "active" once they
+// all have, "converging" on a 503 that saved the change before every gateway
+// acknowledged it.
+const (
+	EdgeRulesStateHeader     = "X-Faas-Edge-Rules-State"
+	EdgeRulesStateConverging = "converging"
+)
+
+// EdgeRuleChangeConverging reports whether p is a 503 for an edge-rule change
+// that was saved but not yet applied by every serving gateway. Resending it
+// would repeat a change that already happened.
+func EdgeRuleChangeConverging(p Problem) bool {
+	return slices.Contains(p.HasHeader(EdgeRulesStateHeader), EdgeRulesStateConverging)
 }
 
 // ErrNoBody is returned by helpers that expected a body but got none.
@@ -4692,10 +4756,22 @@ func (c *Client) ListAuditLogAllPage(ctx context.Context, before, accountID, sin
 
 // CLI auth device-code flow (spec §2.2).
 
-// MintCliAuthCode anonymously mints a fresh device code.
+// MintCliAuthCode anonymously mints a fresh login code bound to a device
+// code; ExchangeCliAuthLogin exchanges it.
 func (c *Client) MintCliAuthCode(ctx context.Context) (CliAuthCodeResponse, error) {
 	var out CliAuthCodeResponse
-	return out, c.do(ctx, "POST", "/v1/cli-auth/code", struct{}{}, &out)
+	return out, c.do(ctx, "POST", "/v1/cli-auth/code", CliAuthCodeRequest{Device: true}, &out)
+}
+
+// ExchangeCliAuthLogin polls for a minted code's approval: with its device
+// code when the server issued one, else with the code (an older server).
+func (c *Client) ExchangeCliAuthLogin(ctx context.Context, minted CliAuthCodeResponse) (CliAuthExchangeResponse, error) {
+	if minted.DeviceCode == "" {
+		return c.ExchangeCliAuthCode(ctx, strings.ReplaceAll(minted.Code, "-", ""))
+	}
+	var out CliAuthExchangeResponse
+	return out, c.do(ctx, "POST", "/v1/cli-auth/exchange",
+		CliAuthExchangeRequest{DeviceCode: minted.DeviceCode}, &out)
 }
 
 // ExchangeCliAuthCode polls the server for the user's approval.

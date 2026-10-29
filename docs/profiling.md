@@ -540,7 +540,7 @@ profiling:
 ```
 
 Each instrumented process reports its live heap once per window.
-`gregale debug profiles my-app --type heap --deployment-id UUID --runtime node22
+`gregale debug profiles my-app --type heap --release UUID --runtime node22
 --start … --end …` shows the live heap near `--end`: the query is narrowed to
 the last collection window so snapshots are not added together. Heap profiles
 have no route attribution or deployment comparison.

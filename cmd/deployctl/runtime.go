@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -43,6 +44,9 @@ type hostRuntime struct {
 	// (docs/adr/1650-per-unit-control-plane-releases.md) replaces only
 	// their binaries, and every other daemon keeps running untouched.
 	only map[string]struct{}
+	// historySpool is where a compute host spools its activations for CD to
+	// import on the control plane (history.go); empty spools nothing.
+	historySpool string
 }
 
 const (
@@ -364,8 +368,61 @@ func (r hostRuntime) Migrate(ctx context.Context, manifest releasebundle.Manifes
 	if _, err := os.Stat(migrate); err != nil {
 		return fmt.Errorf("migration binary: %w", err)
 	}
+	pending, err := pendingMigrations(ctx, r.databaseURL, migrate)
+	if err != nil {
+		return fmt.Errorf("migration status: %w", err)
+	}
+	if pending > 0 {
+		if err := r.backupBeforeMigrating(ctx); err != nil {
+			return fmt.Errorf("pre-migration backup failed; refusing to apply %d pending migrations: %w", pending, err)
+		}
+	}
 	command := fmt.Sprintf("DATABASE_URL=%q %q", r.databaseURL, migrate)
 	return runCommand(ctx, "su", "-", "faas", "-s", "/bin/bash", "-c", command)
+}
+
+// pendingMigrations runs `migrate -status` and returns the pending_count from
+// its JSON status line (the migrator logs to stderr, folded into stdout).
+func pendingMigrations(ctx context.Context, databaseURL, migrate string) (int, error) {
+	command := fmt.Sprintf("DATABASE_URL=%q %q -status 2>&1", databaseURL, migrate)
+	out, err := commandOutput(ctx, "su", "-", "faas", "-s", "/bin/bash", "-c", command)
+	if err != nil {
+		return 0, err
+	}
+	for _, line := range strings.Split(out, "\n") {
+		var status struct {
+			Msg          string `json:"msg"`
+			PendingCount *int   `json:"pending_count"`
+		}
+		if json.Unmarshal([]byte(line), &status) == nil && status.Msg == "migration status" && status.PendingCount != nil {
+			return *status.PendingCount, nil
+		}
+	}
+	return 0, errors.New("migrate -status printed no pending_count")
+}
+
+// preMigrationBackupUnits take a fresh local base backup and ship it off the
+// host, in order (deploy/systemd). Both are oneshot, so `systemctl start`
+// returns when each has finished.
+var preMigrationBackupUnits = []string{"faas-pg-basebackup.service", "faas-pg-basebackup-push.service"}
+
+// backupBeforeMigrating gives pending migrations a recovery point from just
+// before they run (issue #579; docs/runbooks/migration-rollback.md). A host
+// with the backup units refuses to migrate when the backup fails; a host
+// without them (a development box with no off-host backups) migrates as
+// before.
+func (r hostRuntime) backupBeforeMigrating(ctx context.Context) error {
+	for _, unit := range preMigrationBackupUnits {
+		if _, err := os.Stat(filepath.Join(r.unitDir, unit)); os.IsNotExist(err) {
+			return nil
+		}
+	}
+	for _, unit := range preMigrationBackupUnits {
+		if err := runCommand(ctx, "systemctl", "start", unit); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (r hostRuntime) Activate(ctx context.Context, releaseRoot string) error {
@@ -1080,5 +1137,6 @@ func defaultHostRuntime() hostRuntime {
 		databaseURL:  "postgres:///faas?host=/run/postgresql&user=faas",
 		serviceOrder: order,
 		readyTimeout: 60 * time.Second,
+		historySpool: historySpoolPath,
 	}
 }

@@ -1,0 +1,52 @@
+[
+  {
+    "step": "TestDocsPages",
+    "bug": "40 of 77 pages in docs/customer-pages.json answer 404 on gregale.dev",
+    "since": "2026-10-26"
+  },
+  {
+    "step": "TestPublicSurface/security_txt",
+    "bug": "security.txt Canonical URL ends in 404; its Encryption URL serves an HTML page, not a PGP key",
+    "since": "2026-10-26"
+  },
+  {
+    "step": "TestPublicSurface/status_incidents",
+    "bug": "GET /v1/status/incidents answers 404 no such API route (the inventory lists it as the public incidents API)",
+    "since": "2026-10-26"
+  },
+  {
+    "step": "TestCustomDomainBinding/add",
+    "bug": "custom domains are disabled on production: domains add answers 'Custom domains are unavailable ... not available on this Gregale installation right now' though the inventory lists them as GA",
+    "since": "2026-10-27"
+  },
+  {
+    "step": "TestImageRegistryAndDeployTokens/cli_deploy_with_token",
+    "bug": "gregale deploy with an app's deploy token fails insufficient_scope (the CLI calls an endpoint needing admin or apps:read); the deploy API itself accepts the token",
+    "since": "2026-10-27"
+  },
+  {
+    "step": "TestGitHubDeploys/push_to_deploy",
+    "bug": "a push to the production branch of an app bound with gregale github bind created no deployment within 25 min (three runs); github status reports the binding healthy",
+    "since": "2026-10-27"
+  },
+  {
+    "step": "TestGitHubDeploys/checks_status",
+    "bug": "follows from push_to_deploy: no deployment, so no Gregale check on the pushed commit",
+    "since": "2026-10-27"
+  },
+  {
+    "step": "TestGitHubDeploys/preview_created_on_pr_open",
+    "bug": "opening a pull request on the bound fixture repository created no preview within 5 min; gregale preview create works and the preview serves",
+    "since": "2026-10-27"
+  },
+  {
+    "step": "TestGitHubDeploys/preview_removed_on_pr_close",
+    "bug": "closing the pull request did not record the close (the step now checks pr_state=closed with a 24h grace; teardown after the grace is by design); root cause shared with push_to_deploy: the App webhook URL and secret were wrong (fixed on GitHub 2026-10-29) and githubd rejected every real pull_request payload (#5862), known until #5862 is released",
+    "since": "2026-10-28"
+  },
+  {
+    "step": "TestMultiServiceProject/deploy_project",
+    "bug": "a Compose service without ports deploys as a worker and its first boot fails with execution_mode_conflict (worker vs characterized http) once it listens, so an internal API cannot deploy; fixed by #5840 (ADR-20261029120000), known until it is released",
+    "since": "2026-10-29"
+  }
+]

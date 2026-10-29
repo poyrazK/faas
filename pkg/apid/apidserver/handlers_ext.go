@@ -324,6 +324,13 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 			if err != nil || prefix.Bits() == 0 {
 				return api.ErrInvalidEgressAllowlist(raw, errOrZero("parse failed", err))
 			}
+			// Allowlisted destinations skip the SMTP block, the port
+			// policy and the DNS gate, so 0.0.0.0/1 plus 128.0.0.0/1
+			// lifted every abuse control for the whole internet (bug hunt
+			// 2026-10-28 H51). Entries may be at most a v4 /8 or v6 /32.
+			if prefix.Addr().Is4() && prefix.Bits() < 8 || !prefix.Addr().Is4() && !prefix.Addr().Is4In6() && prefix.Bits() < 32 {
+				return api.ErrInvalidEgressAllowlist(raw, errors.New("prefix is broader than a v4 /8 or v6 /32"))
+			}
 			// v4-mapped v6 → v4. RFC 4291 §2.5.5.2: ::ffff:0:0/96
 			// is the v4-mapped block; any prefix inside that block
 			// (bits >= 96) is a v4 prefix translated to v6 form.
@@ -826,10 +833,16 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 					return api.ErrScalingTargetIncompatibleWithWorkloadClass("concurrent_requests")
 				}
 			case "queue_depth", "queue_lag":
+				// A request that also makes the app a worker or job is judged
+				// on that mode (ADR-20261018101500 amendment 2026-10-27).
+				mode := app.Manifest.ExecutionMode
+				if req.ExecutionMode != nil {
+					mode = *req.ExecutionMode
+				}
 				if app.WorkloadClass != state.WorkloadClassWorker &&
 					app.WorkloadClass != state.WorkloadClassJob &&
-					app.Manifest.ExecutionMode != api.ExecutionModeWorker &&
-					app.Manifest.ExecutionMode != api.ExecutionModeJob {
+					mode != api.ExecutionModeWorker &&
+					mode != api.ExecutionModeJob {
 					return api.ErrScalingTargetIncompatibleWithWorkloadClass(sp.Target.Metric)
 				}
 			}
@@ -1177,7 +1190,13 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	// is either nil, 'best_effort' (always allowed), or 'reserved'
 	// (plan unlocked). The cap only triggers when the value is
 	// 'reserved' AND the current app is not already reserved — a
-	// no-op PATCH on a reserved app must not exhaust the cap.
+	// no-op PATCH on a reserved app must not exhaust the cap. acct.Plan
+	// is the app's billing subject's plan, so the count is that
+	// subject's reserved apps (ADR-202610171904): a company's once it
+	// adopted billing, whoever created them, else the creator's. With
+	// ?environment= the app here carries that environment's settings and
+	// the PATCH writes only its workload spec, so an app counts once
+	// whether its row or any environment reserves it.
 	//
 	// The cap is advisory (no FOR UPDATE lock); a racing PATCH from
 	// the same account could land one extra reserved app. The
@@ -1186,17 +1205,15 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if req.EvictionPriority != nil && *req.EvictionPriority == string(api.EvictionPriorityReserved) && app.EvictionPriority != string(api.EvictionPriorityReserved) {
 		cap := acct.Plan.ReservedConcurrencyPerAccount()
 		if cap > 0 {
-			n, err := s.store.CountAppsWithEvictionPriority(r.Context(), acct.ID, string(api.EvictionPriorityReserved))
+			n, err := s.store.CountOtherBillingSubjectAppsWithEvictionPriority(r.Context(), app.ID, string(api.EvictionPriorityReserved))
 			if err != nil {
 				writeCustomerInternalProblem(w, r, s.log, "count reserved applications",
 					"Gregale could not check this account's reserved application limit.",
 					"Retry the request in a moment; if it continues, contact support.", err)
 				return
 			}
-			// n excludes the current app already (CountAppsWithEvictionPriority
-			// counts the full set; the current app is reserved if and only
-			// if app.EvictionPriority == 'reserved'). The flip-up direction
-			// adds 1 to the post-PATCH count.
+			// n excludes the current app, which counts once after the
+			// PATCH whether or not another environment already reserves it.
 			if n+1 > cap {
 				api.WriteProblem(w, api.ErrPlanEvictionPriorityReservedQuota(acct.Plan, n+1, cap))
 				return
@@ -2509,6 +2526,13 @@ func rollbackDuringTrafficSplitProblem(appSlug, earlier string) *api.Problem {
 // two entry points cannot drift. It also opens the ADR-1446 outcome ledger
 // row; the returned receipt is nil only when that write failed, and the
 // rollback itself still proceeds.
+// rollbackTargetArtifactsReclaimed refuses a rollback whose target's layers
+// were reclaimed: it could not cold boot, and its readiness prime would only
+// fail later (Hunt 21 H21-1).
+func rollbackTargetArtifactsReclaimed() *api.Problem {
+	return api.ErrRollbackTargetIneligible("the rollback target's build artifacts were reclaimed, so it cannot start; redeploy that release instead")
+}
+
 func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.App, req api.RollbackRequest, trigger string) (state.Deployment, *api.RollbackOperation, *api.Problem) {
 	ctx := r.Context()
 	alertRuleID := uuid.Nil
@@ -2526,6 +2550,9 @@ func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.
 	priorTargetStatus := target.Status
 	target, err = s.store.PrepareDeploymentRollback(ctx, app.ID, target.ID)
 	if err != nil {
+		if errors.Is(err, state.ErrLayerArtifactRetired) {
+			return state.Deployment{}, nil, rollbackTargetArtifactsReclaimed()
+		}
 		if errors.Is(err, state.ErrNoRollbackTarget) || errors.Is(err, state.ErrRollbackTargetAlreadyLive) {
 			return state.Deployment{}, nil, api.ErrRollbackTargetIneligible("rollback target changed state while the request was being validated; refresh deployments and retry")
 		}
@@ -4649,6 +4676,10 @@ func (s *server) createKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 	var expiresAt *time.Time
 	if !slices.Contains(scopes, api.ScopeAdmin) {
 		t := time.Now().UTC().Add(time.Duration(api.DefaultAPIKeyLifetimeDays) * 24 * time.Hour)
+		// Agent keys run unattended, so they expire sooner (ADR-20261029085359).
+		if slices.Contains(scopes, api.ScopeAgent) {
+			t = time.Now().UTC().Add(api.AgentKeyLifetime)
+		}
 		expiresAt = &t
 	}
 	// PR 6 (issue #190 / IAM-6) dual-write: the legacy /v1/keys
@@ -4798,6 +4829,13 @@ func (s *server) deleteKey(w http.ResponseWriter, r *http.Request, acct state.Ac
 // both entry points produce the same authentication-cache invalidation and
 // key.revoked event.
 func (s *server) revokeAPIKey(r *http.Request, acct state.Account, id string) (state.APIKey, error) {
+	return s.revokeAPIKeyWithReason(r, acct, id, "manual")
+}
+
+// revokeAPIKeyWithReason is revokeAPIKey with the audit reason named:
+// "manual" for the customer's own revocation, "password_change" and
+// "sign_in_rotated" for keys apid retires on the customer's behalf.
+func (s *server) revokeAPIKeyWithReason(r *http.Request, acct state.Account, id, reason string) (state.APIKey, error) {
 	ctx := r.Context()
 	prior, err := s.store.GetAPIKey(ctx, acct.ID, id)
 	if err != nil {
@@ -4810,7 +4848,7 @@ func (s *server) revokeAPIKey(r *http.Request, acct state.Account, id string) (s
 	// is a "update if not revoked" and returns the row either way.
 	var updated state.APIKey
 	if prior.OrgID != "" {
-		activity := newOrgAPIKeyActivity(r, acct, prior.OrgID, "api_key.revoked", map[string]any{"reason": "manual"})
+		activity := newOrgAPIKeyActivity(r, acct, prior.OrgID, "api_key.revoked", map[string]any{"reason": reason})
 		updated, err = s.revokeOrgAPIKeyWithActivity(ctx, prior.OrgID, id, activity)
 	} else {
 		updated, err = s.store.MarkAPIKeyRevoked(ctx, acct.ID, id)
@@ -4828,7 +4866,7 @@ func (s *server) revokeAPIKey(r *http.Request, acct state.Account, id string) (s
 	s.audit.Emit(ctx, "key.revoked", &acct.ID, map[string]any{
 		"key_id": updated.ID,
 		"scopes": updated.Scopes,
-		"reason": "manual",
+		"reason": reason,
 	})
 	return updated, nil
 }
@@ -7114,7 +7152,32 @@ func (s *server) usageStorage(w http.ResponseWriter, r *http.Request, acct state
 // payload, not the status. The CLI branches on the empty string to
 // print a friendly "portal not configured" hint.
 func (s *server) getBillingPortal(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	writeJSON(w, http.StatusOK, api.BillingPortalResponse{URL: s.billingPortalURLForProvider(r.Context(), acct)})
+	writeJSON(w, http.StatusOK, api.BillingPortalResponse{
+		URL:           s.billingPortalURLForProvider(r.Context(), acct),
+		PaymentMethod: s.paymentMethodSummary(r.Context(), acct),
+	})
+}
+
+// paymentMethodSummary asks the active provider for the card on file, so
+// `gregale billing payment-method` and the dashboard can show it (issues
+// #279, #280); nothing called Provider.PaymentMethodSummary before. No card,
+// a provider that keeps card details in its own portal (Polar), or a
+// provider error leaves the field out, and the portal URL still answers.
+func (s *server) paymentMethodSummary(ctx context.Context, acct state.Account) *api.PaymentMethodSummary {
+	if s.billingProvider == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	pm, err := s.billingProvider.PaymentMethodSummary(ctx, acct)
+	if err != nil {
+		s.log.Warn("billing: payment method summary unavailable", "account", acct.ID, "err", err)
+		return nil
+	}
+	if pm.Brand == "" && pm.Last4 == "" {
+		return nil
+	}
+	return &api.PaymentMethodSummary{Brand: pm.Brand, Last4: pm.Last4, ExpMonth: pm.ExpMonth, ExpYear: pm.ExpYear}
 }
 
 // listInvoices serves GET /v1/invoices — issue #259 invoice history.

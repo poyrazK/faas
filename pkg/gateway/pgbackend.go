@@ -280,6 +280,8 @@ type PGBackend struct {
 	metrics            *Metrics
 
 	routes *RouteCache // host -> app_id (LRU)
+	// rechecks keeps the warm custom-domain registry rechecks briefly.
+	rechecks *routeRecheckMemo
 	// stale (ADR-190) is the last-known-good host -> App tier consulted
 	// only when the Router errors. See stale_routes.go.
 	stale *staleRoutes
@@ -391,6 +393,10 @@ type PGBackend struct {
 	// unwired cache short-circuits the invalidation arms so the
 	// notify subscriber doesn't need a wiring branch.
 	responseCache *ResponseCache
+	// accountAppIDs lists an account's app IDs, so a wildcard edge-rule
+	// change drops only that account's cached responses (ADR-091 amendment
+	// 2026-10-27, GA hardening). nil keeps the wholesale flush.
+	accountAppIDs func(ctx context.Context, accountID string) ([]string, error)
 	// edgeRules (ADR-089 / issue #561 PR 3) is the
 	// per-host edge-rule matcher the invalidator drives.
 	// nil = no matcher wired (default; pre-PR-3 behaviour
@@ -655,7 +661,7 @@ func (b *PGBackend) ResolveDeploymentSmokeTarget(ctx context.Context, appID, dep
 // The legacy slice hook only populates a cache that remains empty.
 func (b *PGBackend) ReconcileLiveTargets(ctx context.Context, appID string) error {
 	if b != nil && appID != "" && b.placementLoader != nil {
-		return b.hydrateCurrentTargets(ctx, appID)
+		return b.reconcileCurrentTargets(ctx, appID)
 	}
 	if b == nil || appID == "" || b.liveTargetLoader == nil {
 		return nil
@@ -690,6 +696,24 @@ func (b *PGBackend) ReconcileLiveTargets(ctx context.Context, appID string) erro
 		}
 		return nil, nil
 	})
+	return err
+}
+
+// reconcileCurrentTargets is the wake leader's read before admission. A
+// placement change during that read means a newer observation reached the
+// picker first, which is no reason to refuse the wake: take one fresh read, as
+// the at-capacity path and the control-plane repair poll do, and after a
+// second collision leave the newer picker to the caller, which routes to a
+// ready target or admits through schedd. Returning the collision failed the
+// wake with 503 (prod rc.304, h14-grpc 2026-10-29 17:20:26, Hunt 14 H14-119).
+func (b *PGBackend) reconcileCurrentTargets(ctx context.Context, appID string) error {
+	err := b.hydrateCurrentTargets(ctx, appID)
+	if errors.Is(err, ErrTargetPlacementChanged) {
+		err = b.hydrateCurrentTargets(ctx, appID)
+	}
+	if errors.Is(err, ErrTargetPlacementChanged) {
+		return nil
+	}
 	return err
 }
 
@@ -864,6 +888,14 @@ func (b *PGBackend) WithMetrics(metrics *Metrics) *PGBackend {
 	return b
 }
 
+// ObserveEdgeListenerHeartbeat records that the invalidation loop stamped
+// this gateway's edge listener heartbeat at at.
+func (b *PGBackend) ObserveEdgeListenerHeartbeat(at time.Time) {
+	if b != nil {
+		b.metrics.SetEdgeRuleListenerHeartbeat(at)
+	}
+}
+
 // PreInstantiateAppMetrics publishes the aggregate app/class histogram rows at
 // zero. app_changed calls this before invalidating routing so a newly created
 // app is visible to Prometheus before its first request completes.
@@ -894,6 +926,7 @@ func NewPGBackend(router Router, sched Scheduler, log *slog.Logger) *PGBackend {
 		sched:           sched,
 		log:             log,
 		routes:          NewRouteCache(RouteCacheCap),
+		rechecks:        newRouteRecheckMemo(),
 		stale:           newStaleRoutes(RouteCacheCap, routeStaleTTL()),
 		apps:            map[string]App{},
 		appsPicker:      map[string]*appPicker{},
@@ -1138,6 +1171,7 @@ func (b *PGBackend) Lookup(ctx context.Context, host string) (App, bool) {
 			if !active {
 				b.routes.Invalidate(host)
 				b.stale.Delete(host)
+				b.rechecks.forget(host)
 				ok = false
 			}
 		}
@@ -1261,7 +1295,14 @@ func (b *PGBackend) cachedCustomDomainRouteActive(ctx context.Context, host, app
 	if !ok {
 		return true, nil
 	}
-	return validator.CachedCustomDomainRouteActive(ctx, host, appID)
+	if active, ok := b.rechecks.domain(host, appID); ok {
+		return active, nil
+	}
+	active, err := validator.CachedCustomDomainRouteActive(ctx, host, appID)
+	if err == nil {
+		b.rechecks.rememberDomain(host, appID, active)
+	}
+	return active, err
 }
 
 func (b *PGBackend) cachedPlatformTenantRouteValid(ctx context.Context, host string, target RouteTarget, app *App) (valid, deny bool) {
@@ -1269,7 +1310,16 @@ func (b *PGBackend) cachedPlatformTenantRouteValid(ctx context.Context, host str
 	if !ok {
 		return true, false
 	}
-	binding, found, err := resolver.ResolvePlatformTenantHost(ctx, host)
+	binding, found, memoized := b.rechecks.tenant(host)
+	var err error
+	if !memoized {
+		binding, found, err = resolver.ResolvePlatformTenantHost(ctx, host)
+		if err == nil && !found {
+			// Only "no tenant surface" is kept: a bound host's suspension
+			// must take effect on its next request.
+			b.rechecks.rememberTenant(host, binding, found)
+		}
+	}
 	if err != nil || (found && binding.Suspended) {
 		// A control-plane error cannot justify serving a possibly suspended
 		// customer. Do not enter the stale route tier for this host.
@@ -2775,6 +2825,7 @@ func (b *PGBackend) WithMirrorStore(s mirrorRulesStore) *PGBackend {
 func (b *PGBackend) FlushRoutes() {
 	b.workloadAdmissions.reset()
 	b.routes.Reset()
+	b.rechecks.reset()
 	b.appsMu.Lock()
 	b.apps = map[string]App{}
 	b.appsMu.Unlock()
@@ -2791,6 +2842,7 @@ func (b *PGBackend) InvalidateRoutesForApp(appID string) {
 	if b.routes != nil {
 		b.routes.InvalidateApp(appID)
 	}
+	b.rechecks.reset()
 	if b.stale != nil {
 		b.stale.DeleteApp(appID)
 	}
@@ -2922,6 +2974,24 @@ func (b *PGBackend) InvalidateEdgeRuleAccountHosts(accountID, appID string, patt
 	b.InvalidateEdgeRuleHosts(patterns)
 }
 
+// InvalidateEdgeRulesOfDeletedApp drops the compiled rule sets that can hold
+// a just-deleted app's rules: every set of its account, since a rule on "*",
+// a wildcard or another app's host applies to the account's other apps. The
+// gateway's rule reads skip a deleted app's rules (ADR-091 amendment
+// 2026-10-28), so the reload leaves them out. The account comes from the app
+// cache; an app this gateway has not cached leaves its account's sets to
+// expire with their 30 s TTL. Call it before ResetApp drops the cached app.
+func (b *PGBackend) InvalidateEdgeRulesOfDeletedApp(appID string) {
+	if b == nil {
+		return
+	}
+	app, ok := b.getApp(appID)
+	if !ok || app.AccountID == "" {
+		return
+	}
+	b.InvalidateEdgeRuleAccountHosts(app.AccountID, appID, []string{"*"})
+}
+
 // BeginEdgeRuleConvergence forwards the prepare phase to matchers that support
 // the distributed policy barrier. Legacy matchers retain reset-only behavior.
 func (b *PGBackend) BeginEdgeRuleConvergence(accountID, appID string, hosts []string, generation int64) {
@@ -2954,12 +3024,10 @@ func (b *PGBackend) SetEdgeRuleLoadedGeneration(generation int64) {
 // resolved EdgeRuleCORSResolved slice, so a preset edit
 // leaves stale resolved shapes in the LRU. Also purge the
 // response cache: a cached response may carry CORS headers
-// produced by the prior policy. Wholesale flush matches
-// ResetEdgeRules semantics; the per-account payload is
-// informational (the LRU is per-host keyed, not per-account;
-// per-account eviction would require a richer key — see
-// backend.go's handleInvalidation case for the trade-off).
-// nil-safe.
+// produced by the prior policy. This is the wholesale fallback;
+// gatewayd-internal drops only the changed account's sets and
+// responses through the scoped edge-rule surface (ADR-091
+// amendment 2026-10-28). nil-safe.
 func (b *PGBackend) ResetCorsPresets(accountID string) {
 	if b == nil {
 		return
@@ -3079,6 +3147,41 @@ func (b *PGBackend) InvalidateResponseCacheByTag(appID, tag string) error {
 // strictly preferable to a stale serve against a deleted rule.
 //
 // nil-safe: same posture as InvalidateResponseCacheByApp.
+// WithAccountAppLister installs the lookup InvalidateResponseCacheByAccount
+// uses to find an account's apps.
+func (b *PGBackend) WithAccountAppLister(list func(ctx context.Context, accountID string) ([]string, error)) *PGBackend {
+	if b != nil {
+		b.accountAppIDs = list
+	}
+	return b
+}
+
+// InvalidateResponseCacheByAccount drops the cached responses of accountID's
+// apps, local and shared. It reports false when the apps cannot be listed
+// (no lister, no account, or the lookup failed); the caller then flushes the
+// whole cache, which is always safe.
+func (b *PGBackend) InvalidateResponseCacheByAccount(ctx context.Context, accountID string) bool {
+	if b == nil || b.responseCache == nil {
+		return true
+	}
+	if b.accountAppIDs == nil || accountID == "" {
+		return false
+	}
+	ids, err := b.accountAppIDs(ctx, accountID)
+	if err != nil {
+		if b.log != nil {
+			b.log.Warn("gatewayd: list account apps for response cache invalidation; flushing the whole cache",
+				"account", accountID, "err", err)
+		}
+		return false
+	}
+	for _, id := range ids {
+		b.responseCache.InvalidateByApp(id)
+	}
+	b.refreshResponseCacheMetrics()
+	return true
+}
+
 func (b *PGBackend) InvalidateResponseCacheAll() {
 	if b == nil || b.responseCache == nil {
 		return

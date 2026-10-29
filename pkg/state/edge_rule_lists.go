@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"time"
 
@@ -62,6 +63,70 @@ type EdgeRuleListInUseError struct {
 
 func (e *EdgeRuleListInUseError) Error() string {
 	return fmt.Sprintf("state: edge rule list %q is referenced by %d rule(s)", e.Name, len(e.Refs))
+}
+
+// EdgeRuleListMissingError is a rule write whose match condition references
+// a list the account does not have.
+type EdgeRuleListMissingError struct {
+	Name string
+}
+
+func (e *EdgeRuleListMissingError) Error() string {
+	return fmt.Sprintf("state: edge rule list %q does not exist", e.Name)
+}
+
+// lockEdgeRuleListRefs takes a share lock on every account list the
+// conditions reference and fails with EdgeRuleListMissingError when one does
+// not exist. DeleteEdgeRuleList locks the list row FOR UPDATE before it reads
+// the references, so a rule write that references a list and that list's
+// deletion cannot both commit: apid checked the list exists before the write,
+// without a lock, and a concurrent delete left a rule referencing a missing
+// list, which then never matched (ADR-091 amendment 2026-10-28).
+func lockEdgeRuleListRefs(ctx context.Context, tx pgx.Tx, accountID string, exprs ...*api.EdgeRuleMatchExpr) error {
+	var names []string
+	for _, expr := range exprs {
+		names = append(names, api.EdgeRuleMatchListRefs(expr)...)
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	sort.Strings(names)
+	rows, err := tx.Query(ctx,
+		`select name from edge_rule_lists where account_id = $1 and name = any($2) order by name for share`,
+		accountID, names)
+	if err != nil {
+		return fmt.Errorf("state: lock edge rule lists: %w", err)
+	}
+	found, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return fmt.Errorf("state: lock edge rule lists: %w", err)
+	}
+	for _, name := range names {
+		if !slices.Contains(found, name) {
+			return &EdgeRuleListMissingError{Name: name}
+		}
+	}
+	return nil
+}
+
+// memEdgeRuleListMissing is lockEdgeRuleListRefs for MemStore, whose writes
+// already hold its one mutex. Callers hold m.mu.
+func (m *MemStore) memEdgeRuleListMissing(accountID string, exprs ...*api.EdgeRuleMatchExpr) error {
+	for _, expr := range exprs {
+		for _, name := range api.EdgeRuleMatchListRefs(expr) {
+			found := false
+			for _, l := range m.edgeRuleLists {
+				if l.AccountID == accountID && l.Name == name {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return &EdgeRuleListMissingError{Name: name}
+			}
+		}
+	}
+	return nil
 }
 
 // EdgeRuleListStore is the ADR-963 capability; apid and gatewayd

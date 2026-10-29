@@ -1081,24 +1081,25 @@ func TestLoadConfig_RestoreReseedThreadSwitch(t *testing.T) {
 	}
 }
 
-// adr: 20261026120000 — the bridge stream headroom switch is off by default;
-// TOML can enable it and FAAS_BRIDGE_STREAM_HEADROOM overrides TOML.
+// adr: 20261026120000 — the bridge stream headroom switch is on by default
+// (amendment 2026-10-27); TOML can disable it and FAAS_BRIDGE_STREAM_HEADROOM
+// overrides TOML.
 func TestLoadConfig_BridgeStreamHeadroomSwitch(t *testing.T) {
 	cfg, err := LoadConfig(filepath.Join(t.TempDir(), "missing.toml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.BridgeStreamHeadroom {
-		t.Fatal("bridge stream headroom must default to off")
+	if !cfg.BridgeStreamHeadroom {
+		t.Fatal("bridge stream headroom must default to on")
 	}
 	path := filepath.Join(t.TempDir(), "vmmd.toml")
-	if err := os.WriteFile(path, []byte("bridge_stream_headroom = true\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("bridge_stream_headroom = false\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {
 		env     string
 		enabled bool
-	}{{"", true}, {"1", true}, {"0", false}, {"false", false}} {
+	}{{"", false}, {"1", true}, {"0", false}, {"false", false}} {
 		t.Run("env="+tc.env, func(t *testing.T) {
 			if tc.env != "" {
 				t.Setenv("FAAS_BRIDGE_STREAM_HEADROOM", tc.env)
@@ -1160,24 +1161,25 @@ func TestLoadConfig_ResourceJournalVolatile(t *testing.T) {
 	}
 }
 
-// adr: 20261025150000 — the invoke-hook backoff is off by default; TOML can
-// enable it and FAAS_INVOKE_HOOK_BACKOFF overrides TOML in either direction.
+// adr: 20261025150000 — the invoke-hook backoff is on by default (amendment
+// 2026-10-27); TOML can disable it and FAAS_INVOKE_HOOK_BACKOFF overrides TOML
+// in either direction.
 func TestLoadConfig_InvokeHookBackoffSwitch(t *testing.T) {
 	cfg, err := LoadConfig(filepath.Join(t.TempDir(), "missing.toml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.InvokeHookBackoff {
-		t.Fatal("the invoke-hook backoff must default to off")
+	if !cfg.InvokeHookBackoff {
+		t.Fatal("the invoke-hook backoff must default to on")
 	}
 	path := filepath.Join(t.TempDir(), "vmmd.toml")
-	if err := os.WriteFile(path, []byte("invoke_hook_backoff = true\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("invoke_hook_backoff = false\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {
 		env     string
 		enabled bool
-	}{{"", true}, {"1", true}, {"0", false}, {"false", false}} {
+	}{{"", false}, {"1", true}, {"0", false}, {"false", false}} {
 		t.Run("env="+tc.env, func(t *testing.T) {
 			if tc.env != "" {
 				t.Setenv("FAAS_INVOKE_HOOK_BACKOFF", tc.env)

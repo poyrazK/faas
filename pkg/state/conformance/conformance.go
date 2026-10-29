@@ -165,6 +165,7 @@ func Run(t *testing.T, open Open) {
 		{"app_secret_scope_and_class", testAppSecretScopeAndClass},
 		{"oidc_empty_subject_pattern_binds_nothing", testOIDCEmptySubjectPatternBindsNothing},
 		{"oidc_repository_binding_resolution", testOIDCRepositoryBindingResolution},
+		{"oidc_repository_ids_for_subject", testOIDCRepositoryIDsForSubject},
 		{"cron_quota_trips_at_the_per_app_limit", testCronQuota},
 		{"project_reconcile_preserves_multiple_crons", testProjectReconcileMultipleCrons},
 		{"project_binding_update_is_scoped", testProjectBindingUpdate},
@@ -1149,6 +1150,15 @@ func testPreviewLifecycle(t *testing.T, fx *Fixture) {
 	}
 	if _, err := fx.Store.PreviewAppByProjectWorkload(fx.Ctx, fx.Account.ID, project.ID, 0, "api"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("PreviewAppByProjectWorkload(developer) = %v, want ErrNotFound", err)
+	}
+	// A second preview of the PR that answers to the same service name makes
+	// the name ambiguous; the lookup refuses it rather than pick one.
+	collider := create("preview-pr-"+uuid.NewString()[:8], 42)
+	if _, err := fx.Store.PreviewAppByProjectWorkload(fx.Ctx, fx.Account.ID, project.ID, 42, "api"); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("PreviewAppByProjectWorkload(ambiguous) = %v, want ErrConflict", err)
+	}
+	if err := fx.Store.DeleteApp(fx.Ctx, collider.ID); err != nil {
+		t.Fatalf("DeleteApp(collider): %v", err)
 	}
 
 	if _, err := fx.Store.SetPreviewPrState(fx.Ctx, pr.ID, "invalid"); !errors.Is(err, state.ErrInvalidPreviewPrState) {

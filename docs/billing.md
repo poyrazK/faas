@@ -282,7 +282,7 @@ Object storage cannot be selected on app, job, project or environment budgets
 The amount is the live object-storage estimate: this month's stored
 GiB-months, requests and egress, priced with the same rates and plan
 allowance as `gregale billing usage object-storage` and month close. Gross is before the
-allowance and net is after. apid refreshes it every five minutes, and an
+allowance and net is after. Gregale refreshes it every five minutes, and an
 estimate more than 15 minutes old counts as stale. `GET /v1/billing/costs`
 shows it as the `object_storage` meter. Threshold and projected-overrun alerts
 count it like compute and egress. The invoice line still comes from month
@@ -318,9 +318,9 @@ scopes and the supported compute/interface-egress meters are accepted by the
 API and CLI. This does not include subscription, tax, managed-resource or other
 missing bill components.
 
-`meterd` evaluates once per sampling interval, independently of provider billing
-and email delivery. The evaluation and its threshold events commit together,
-guarded by the policy revision. Events are unique per policy revision, threshold
+Gregale evaluates budgets once per sampling interval, independently of
+provider billing and email delivery. An evaluation and its threshold events
+are recorded together for the policy revision. Events are unique per policy revision, threshold
 amount and UTC usage month. Usage replay and downward corrections followed by a
 recrossing do not resend an event. Editing or re-enabling creates a new revision
 and evaluates the existing month's spending again; it does not reset spending.
@@ -341,21 +341,10 @@ evaluation means the revision has not yet been evaluated in the current month.
 API reads mark old monitor observations stale even if the worker has stopped.
 `gregale billing budgets get ID` prints this health; `--json` returns the details.
 
-An independent delivery worker claims durable events with fenced leases. Failed
-attempts retry with capped exponential backoff; a process restart recovers expired
-claims. The existing configured mail pipeline, suppression rules and transport
-apply. `delivered` means the pipeline returned success, not confirmed inbox
-receipt. Log transport is for operator-selected development/diagnostic delivery.
-Every attempt uses the same message ID. Resend deduplicates within its provider
-window; Postmark does not support idempotency keys, so delivery is **at least
-once**, including the unavoidable send-success/commit-failure boundary.
-
-The workers are visible separately as `financial_budget_evaluation` and
-`financial_budget_delivery` in meterd health. Email failure cannot block sampling.
-Deploy the additive monitoring migration before activating policies, run matching
-`apid` and `meterd` versions, and verify a threshold and one retry with an isolated
-account before promoting the capability. This release does not add scheduler,
-gateway or VM lifecycle enforcement.
+Alert emails are retried with capped exponential backoff. Delivery is **at
+least once**: a retry can repeat an email an earlier attempt already sent.
+`delivered` means the mail provider accepted the message, not that it reached
+the inbox.
 
 ## FOCUS invoice export
 
@@ -515,7 +504,7 @@ fails closed until the plan can be independently established. Refresh imported
 documents with `gregale billing refresh-invoice INVOICE_ID` to retrieve their
 provider line facts for FOCUS exports.
 
-### Remaining gaps
+### Limitations
 
 Only locally persisted invoices are projected; the export does not fetch or
 reconcile the provider's complete invoice history. Refunds and credit notes
@@ -529,18 +518,8 @@ are retained and flagged; exports count both untracked and legacy records and
 declare this historical gap when present. Facts and lifecycle history are
 updated in one transaction so downloads cannot see mismatched snapshots.
 
-The next invoice steps are remaining price classifications and legal issuer
-coverage, correction-document lineage, and conditional FX/PO fields. A
-historical cost ledger with
-service/resource identifiers, quantities, units, and price snapshots is then
-needed for the **Cost and Usage** dataset. Current plan prices
-cannot reliably reconstruct past list, contracted, or effective costs.
-
 The mapping is based on the official
 [FOCUS 1.4 Invoice Detail specification](https://focus.finops.org/docs/specification/v1-4/datasets/invoice-detail/).
-`make focus-contract-check` checks the pinned upstream columns, exact
-reconciliation, snapshot metadata, ownership, export/refresh bounds, provider
-reads, lifecycle concurrency, and CLI operations.
 
 ## Monitored preview stopping
 
@@ -549,16 +528,15 @@ from 0 to 300 seconds, and an explicit `manual` or `next_period` resume rule.
 Only persisted preview workloads are selected; production names, environment
 names and absence of protection do not establish preview identity.
 
-At a fresh recorded threshold, meterd latches the decision with its evidence and
-notification outbox. New warm/cold requests, mesh HTTP/TCP calls, queued request
+At a fresh recorded threshold, Gregale records the decision with its evidence
+and notifies you. New warm/cold requests, mesh HTTP/TCP calls, queued request
 claims and command dispatch are blocked. Existing previews drain until the
-configured deadline; the owning scheduler then destroys their resident VMs via
-vmmd, retaining deployment snapshots/rootfs for the next allowed cold wake.
-Command VMs carry retained node/lease ownership and preparation deadlines too.
+configured deadline; their VMs are then destroyed, keeping deployment
+snapshots for the next allowed cold wake.
 
 Inspect `runtime.stops[].targets`: `draining` means resident resources remain;
 `enforced` requires confirmed teardown and durable settlement; `failed` requires
-retry/recovery. Stale scheduler observations become `unavailable`. A decision or
+retry/recovery. Stale observations become `unavailable`. A decision or
 email alone is not proof of shutdown. `gregale billing budgets get ID` and the
 console expose these states, including a manual hold from a previous month.
 
@@ -572,73 +550,10 @@ This is a monitored response: usage ingestion, scheduler sweeps, draining and
 teardown can exceed the threshold. Production and uncovered meters can continue
 spending. It does not establish a strict compute or full-invoice ceiling.
 
+## Strict compute budgets
 
-## Strict app compute candidate
-
-This implementation is local; native KVM acceptance and release review remain
-required. Strict budgets are released per account through the `strict_budgets`
-platform flag. Until it includes your account, creating or enabling one returns
-422 `financial_budget_activation_unavailable` ("Strict budgets not released").
-
-A project can be capped the same way with `scope={kind:project,id:PROJECT_ID}`:
-one limit shared by every app in the project, and when it is reached every app
-in the project is held. Jobs are not part of a project, so they need their own
-job caps. Activation needs every app in the project to be idle
-([ADR-1750, amendment 1](adr/1750-strict-app-compute-reservations.md#amendment-1-2026-10-20-strict-project-caps)).
-
-An environment can be capped with `scope={kind:environment,id:ENVIRONMENT_ID}`:
-one limit shared by every deployment that runs in the environment, across the
-project's apps. When it is reached, only that environment's deployments are
-held; the same apps keep serving other environments. A deployment without a
-recorded environment counts toward the project's environment of the same name.
-Capacity floors are app-wide, so an environment cap neither counts nor waives
-them; use an app or project cap to bound them. Activation needs every
-deployment in the environment to be idle
-([ADR-1750, amendment 2](adr/1750-strict-app-compute-reservations.md#amendment-2-2026-10-21-strict-environment-caps)).
-
-Configure `scope={kind:app,id:APP_ID}`, `mode=strict`,
-`basis=gross_usage`, `meters=[compute]`, `action=suspend_workloads`,
-`drain_seconds=0`, and `notify_millicents=[]`. A separate monitored policy can
-send spending alerts. Subscription, storage, network egress, taxes, builds and
-independent job resources are outside this app compute limit.
-
-Activation requires a quiet app, settled prior VM ownership, complete retained
-closed-minute accounting from app creation or UTC month start, and matching
-native compute owners on all active nodes. Unsupported dedicated qualification
-restore/job paths fail closed. Live migration cannot duplicate an active funded
-instance identity; drain it before moving that workload.
-
-Every VM reserves startup/execution and teardown funding before allocation.
-Renewal failure preserves a local deadline; no timeout releases the money.
-Shutdown and financial settlement must be confirmed. The API's `runtime.compute`
-and `gregale billing budgets get POLICY_ID` show committed, reserved and remaining
-millicents, unconfirmed VM attempts and durable holds. Commitments use a paid-rate
-upper bound, include startup, and round up per funded minute; they can exceed
-known billed compute. Cost evidence retains its own freshness/coverage status.
-
-Changing/deleting/replacing a policy never resets the app/month book. A new
-limit must cover existing funding. Manual holds cross UTC months until their
-policy changes; next-period holds reset at the next UTC month. Independent
-payment, security and user holds still apply.
-
-Execution funding ends before the UTC reset with thirty seconds for teardown.
-Work may pause at that boundary until earlier attempts settle and the new
-month's accounting and funding are ready.
-
-The meter charges only funded windows, even when instance rows are stale after
-local shutdown. Gregale absorbs unfunded teardown tail. Strict budgets preempt
-capacity floors; the book waives synthetic floor charges for that UTC month,
-including replay after policy deletion. This bounds supported customer compute
-charges, rather than promising a ceiling on host cost or the complete invoice.
-See the [decision](adr/1750-strict-app-compute-reservations.md) and
-[native acceptance procedure](runbooks/financial-strict-compute-acceptance.md).
-
-### Currency and retained funding
-
-New budgets and strict funding use USD, matching ADR-1430. Historical EUR
-invoices, price snapshots and budget revisions are retained without conversion.
-A period containing incompatible historical contracts cannot activate strict
-funding. The forward-only USD funding migration refuses pre-release books or
-enabled non-USD policies; those require explicit operator repair rather than
-reinterpreting retained balances. Apply the complete reviewed migration set
-before enabling the matching daemon graph.
+Strict budgets, which hold an app's compute when it reaches a funded limit,
+are not released yet. Creating or enabling one returns 422
+`financial_budget_activation_unavailable` ("Strict budgets not released").
+Budgets use USD; historical EUR invoices and budget revisions are retained
+without conversion.

@@ -128,8 +128,8 @@ type Config struct {
 	CPUTemplate string `toml:"cpu_template"`
 	// QuietPause enables ADR-1151 quiet pause: vmmd pauses an eligible
 	// instance's vCPUs between requests and resumes it on the next one.
-	// Off by default; schedd decides which instances are eligible.
-	// FAAS_QUIET_PAUSE overrides TOML.
+	// On by default (ADR-1151 amendment 2026-10-27); schedd decides which
+	// instances are eligible. FAAS_QUIET_PAUSE overrides TOML.
 	QuietPause bool `toml:"quiet_pause"`
 	// QuietPauseObserve runs quiet pause in observe mode: vmmd measures the
 	// pauses it would make (vmmd_quiet_pause_observed_*) and pauses nothing,
@@ -139,20 +139,30 @@ type Config struct {
 	QuietPauseObserve bool `toml:"quiet_pause_observe"`
 	// InvokeHookBackoff stops per-request invoke extension events to an
 	// instance for extension.InvokeUnavailableBackoff after its guest reports
-	// that no extension endpoint is listening (ADR-20261025150000). Off by
-	// default; FAAS_INVOKE_HOOK_BACKOFF overrides TOML.
+	// that no extension endpoint is listening (ADR-20261025150000). On by
+	// default (amendment 2026-10-27); FAAS_INVOKE_HOOK_BACKOFF overrides TOML.
 	InvokeHookBackoff bool `toml:"invoke_hook_backoff"`
 	// BridgeStreamHeadroom lets vmmd open another HTTP/2 connection to an
 	// instance's stream bridge when one is at its stream cap instead of
 	// queueing requests, sizes the bridge's guest pool to that cap and
-	// shortens its guest dial timeout (ADR-20261026120000). Off by default;
-	// FAAS_BRIDGE_STREAM_HEADROOM overrides TOML.
+	// shortens its guest dial timeout (ADR-20261026120000). On by default
+	// (amendment 2026-10-27); FAAS_BRIDGE_STREAM_HEADROOM overrides TOML.
 	BridgeStreamHeadroom bool `toml:"bridge_stream_headroom"`
 	// RequireSecretBinding refuses runtime secret envelopes that carry no
 	// account binding (ADR-20261023173624, contract step). Off by default;
 	// the seal_domains role turns it on once every stored envelope is
 	// bound. FAAS_RUNTIME_SECRET_BINDING_REQUIRED overrides TOML.
 	RequireSecretBinding bool `toml:"require_secret_binding"`
+	// RuntimeSecretSignatureKeysFile holds the public keys apid's runtime
+	// secret signatures verify against (ADR 20261028161502, amendment 1).
+	// Set, vmmd refuses a runtime secret whose signature does not verify.
+	// It needs the compute-node database the signatures live in.
+	// FAAS_RUNTIME_SECRET_SIGNATURE_KEYS_FILE overrides TOML.
+	RuntimeSecretSignatureKeysFile string `toml:"runtime_secret_signature_keys_file"`
+	// RequireRuntimeSecretSignatures also refuses unsigned runtime secrets
+	// (the contract step). It needs RuntimeSecretSignatureKeysFile.
+	// FAAS_RUNTIME_SECRET_SIGNATURE_REQUIRED overrides TOML.
+	RequireRuntimeSecretSignatures bool `toml:"require_runtime_secret_signatures"`
 	// PmemBaseDir enables per-account pmem bases (ADR-908): app VMs map a
 	// reflinked per-account copy of their base with DAX instead of reading
 	// it over virtio-blk. "auto" (the default) keeps each copy on the mount
@@ -601,6 +611,15 @@ func LoadConfig(path string) (*Config, error) {
 		// default. Bases without the pmem label, filesystems without
 		// reflink and native recovery all keep virtio-blk.
 		PmemBaseDir: fcvm.PmemBaseDirAuto,
+		// On by default since the 2026-10-27 production measurements
+		// (ADR-1151, ADR-20261025150000 and ADR-20261026120000
+		// amendments): release rollouts re-render vmmd.toml from the
+		// manifest, so a node-local TOML edit could not keep them on.
+		// vmmd.toml or FAAS_QUIET_PAUSE / FAAS_INVOKE_HOOK_BACKOFF /
+		// FAAS_BRIDGE_STREAM_HEADROOM = false turns one off.
+		QuietPause:           true,
+		InvokeHookBackoff:    true,
+		BridgeStreamHeadroom: true,
 		// KernelPath is the deprecated host-path default; main.go
 		// resolves KernelKey from storagekey.Kernel(fcVersion) after FC
 		// detection. The default here keeps pre-#116 vmmd.toml
@@ -885,6 +904,19 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("vmmd: FAAS_RUNTIME_SECRET_BINDING_REQUIRED must be a boolean (got %q)", v)
 		}
 		c.RequireSecretBinding = required
+	}
+	if v, ok := os.LookupEnv("FAAS_RUNTIME_SECRET_SIGNATURE_KEYS_FILE"); ok {
+		c.RuntimeSecretSignatureKeysFile = strings.TrimSpace(v)
+	}
+	if v := os.Getenv("FAAS_RUNTIME_SECRET_SIGNATURE_REQUIRED"); v != "" {
+		required, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_RUNTIME_SECRET_SIGNATURE_REQUIRED must be a boolean (got %q)", v)
+		}
+		c.RequireRuntimeSecretSignatures = required
+	}
+	if c.RequireRuntimeSecretSignatures && c.RuntimeSecretSignatureKeysFile == "" {
+		return nil, errors.New("vmmd: requiring runtime secret signatures needs runtime_secret_signature_keys_file (FAAS_RUNTIME_SECRET_SIGNATURE_KEYS_FILE)")
 	}
 	if v := os.Getenv("FAAS_BRIDGE_STREAM_HEADROOM"); v != "" {
 		enabled, perr := strconv.ParseBool(v)

@@ -6,6 +6,9 @@ faas_seal_domains_managed: false
 
 # Operator-local files from `gregalectl seal-domain init --domain outbound`.
 faas_seal_domain_outbound_identity_src: ""
+# Rotation: the identity being replaced, kept readable until the re-seal
+# to the new one completes; empty removes it.
+faas_seal_domain_outbound_previous_identity_src: ""
 faas_seal_domain_outbound_recipient_src: ""
 
 # Who apid seals new outbound credentials to:
@@ -21,10 +24,19 @@ faas_seal_domain_outbound_writes: ""
 # the rollback window. Required for writes=domain.
 faas_seal_domain_outbound_readers_verified: false
 
+# The contract step: outboundd drops the fleet identity and opens customer
+# credentials with the domain identity alone. Needs writes=domain, and the
+# role refuses it while `gregalectl seal-domain migrate --domain outbound
+# --check` finds a credential the fleet or host identity still opens.
+faas_seal_domain_outbound_contracted: false
+
 # Operator-local files from `gregalectl seal-domain init --domain runtime`.
 # Compute hosts stage the identity (vmmd reads it at start), control-plane
 # hosts the recipient (apid seals to it).
 faas_seal_domain_runtime_identity_src: ""
+# Rotation: the identity being replaced, kept readable until the re-seal
+# to the new one completes; empty removes it.
+faas_seal_domain_runtime_previous_identity_src: ""
 faas_seal_domain_runtime_recipient_src: ""
 
 # Who apid seals runtime secrets to: "" or fleet (the fleet recipient), or
@@ -55,10 +67,29 @@ faas_seal_domain_runtime_binding_readers_verified: false
 # vmmd reads it at start.
 faas_seal_domain_runtime_binding_required: false
 
+# ADR 20261028161502 amendment 1: apid's runtime secret signing key pair,
+# operator-local files from `gregalectl runtime-secret signing-keygen`.
+# Control-plane hosts stage the private key (apid and its clone worker sign
+# every runtime secret they seal), compute hosts the public key (vmmd
+# refuses a runtime secret whose signature does not verify). Empty removes
+# them. A key rotation lists the old and new public keys in one file.
+faas_seal_domain_runtime_signing_key_src: ""
+faas_seal_domain_runtime_signing_pub_src: ""
+
+# Contract step: true makes vmmd refuse unsigned runtime secrets. Needs
+# faas_seal_domain_runtime_signing_pub_src. Set it only after every vmmd
+# reports faas_runtime_secret_signature_enforcement 1, apid has signed for a
+# while, and `gregalectl runtime-secret sign-existing` reports nothing left
+# to sign and nothing invalid. vmmd reads it at start.
+faas_seal_domain_runtime_signatures_required: false
+
 # Operator-local files from `gregalectl seal-domain init --domain source`.
 # Control-plane hosts stage both: githubd reads the identity, apid seals to
 # the recipient.
 faas_seal_domain_source_identity_src: ""
+# Rotation: the identity being replaced, kept readable until the re-seal
+# to the new one completes; empty removes it.
+faas_seal_domain_source_previous_identity_src: ""
 faas_seal_domain_source_recipient_src: ""
 
 # Who apid seals GitHub webhook secret copies to, and githubd install tokens:
@@ -78,6 +109,9 @@ faas_seal_domain_source_readers_verified: false
 # Compute hosts stage the identity (imaged opens registry passwords),
 # control-plane hosts the recipient (apid seals to it).
 faas_seal_domain_build_identity_src: ""
+# Rotation: the identity being replaced, kept readable until the re-seal
+# to the new one completes; empty removes it.
+faas_seal_domain_build_previous_identity_src: ""
 faas_seal_domain_build_recipient_src: ""
 
 # Who apid seals app and job private-registry passwords to:
@@ -98,6 +132,9 @@ faas_seal_domain_build_readers_verified: false
 # credentials and log drain headers), control-plane hosts the recipient
 # (apid seals to it).
 faas_seal_domain_edge_identity_src: ""
+# Rotation: the identity being replaced, kept readable until the re-seal
+# to the new one completes; empty removes it.
+faas_seal_domain_edge_previous_identity_src: ""
 faas_seal_domain_edge_recipient_src: ""
 
 # Who apid seals app basic-auth credentials and log drain headers to:
@@ -118,6 +155,9 @@ faas_seal_domain_edge_readers_verified: false
 # notification channel destinations and MCP readiness provider keys with the
 # identity, and apid seals them to the recipient.
 faas_seal_domain_alerting_identity_src: ""
+# Rotation: the identity being replaced, kept readable until the re-seal
+# to the new one completes; empty removes it.
+faas_seal_domain_alerting_previous_identity_src: ""
 faas_seal_domain_alerting_recipient_src: ""
 
 # Who apid seals alerting values to:
@@ -137,6 +177,9 @@ faas_seal_domain_alerting_readers_verified: false
 # Control-plane hosts stage both: s3-gatewayd opens Gregale S3 secret access
 # keys with the identity, and apid seals them to the recipient.
 faas_seal_domain_storage_identity_src: ""
+# Rotation: the identity being replaced, kept readable until the re-seal
+# to the new one completes; empty removes it.
+faas_seal_domain_storage_previous_identity_src: ""
 faas_seal_domain_storage_recipient_src: ""
 
 # Who apid seals S3 secret access keys to:
@@ -152,16 +195,28 @@ faas_seal_domain_storage_writes: ""
 # the rollback window. Required for writes=domain.
 faas_seal_domain_storage_readers_verified: false
 
+# The contract step: s3-gatewayd drops the fleet and host identities and
+# opens S3 credentials with the domain identity alone. Needs writes=domain,
+# and the role refuses it while `gregalectl seal-domain migrate --domain
+# storage --check` finds a credential the fleet or host identity still opens.
+faas_seal_domain_storage_contracted: false
+
 # Operator-local file from `gregalectl seal-domain init --domain control`.
 # Every host stages it: schedd runs on both node roles and opens the cluster
 # signing key with it. The key has no writer drop-in and no write mode.
 faas_seal_domain_control_identity_src: ""
+# Rotation: the identity being replaced, kept readable until the re-seal
+# to the new one completes; empty removes it.
+faas_seal_domain_control_previous_identity_src: ""
 
 # Operator-local files from `gregalectl seal-domain init --domain delivery`.
 # Every host stages the identity (schedd runs on both node roles and opens
 # app webhook signing secrets, commit-source connections and execution
 # payloads); control-plane hosts also stage the recipient (apid seals to it).
 faas_seal_domain_delivery_identity_src: ""
+# Rotation: the identity being replaced, kept readable until the re-seal
+# to the new one completes; empty removes it.
+faas_seal_domain_delivery_previous_identity_src: ""
 faas_seal_domain_delivery_recipient_src: ""
 
 # Who apid seals delivery values to:
@@ -181,6 +236,9 @@ faas_seal_domain_delivery_readers_verified: false
 # Control-plane hosts stage it: apid seals and opens account values with it,
 # so there is no separate recipient file.
 faas_seal_domain_account_identity_src: ""
+# Rotation: the identity being replaced, kept readable until the re-seal
+# to the new one completes; empty removes it.
+faas_seal_domain_account_previous_identity_src: ""
 
 # Who apid seals account values to:
 #   ""      the domain and the fleet recipient (safe beside the previous

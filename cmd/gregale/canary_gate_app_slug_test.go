@@ -17,7 +17,7 @@ func TestCanaryGateNamesAnAppSlug(t *testing.T) {
 		_, stderr, restore := main.SwapIO(t)
 		code := main.Run(args)
 		restore()
-		if code == 0 || !strings.Contains(stderr(), "takes a deployment ID, not an app; list h14-py's deployments with `gregale deployments h14-py`") {
+		if code == 0 || !strings.Contains(stderr(), "takes a deployment ID, not an app; list h14-py's deployments with `gregale release list h14-py`") {
 			t.Fatalf("%v: exit=%d stderr=%q", args, code, stderr())
 		}
 	}

@@ -102,6 +102,10 @@ func (s *Service) ProducerOutboxAdmission(ctx context.Context, id string) (Produ
 		review.CanAcknowledge = false
 		review.BlockReason = "deployment_failed_disabled"
 	}
+	if review.Template == ProducerOutboxAgentRunDeliveredTemplate && !s.agentRunDeliveredOutboxEnabled() {
+		review.CanAcknowledge = false
+		review.BlockReason = "agent_run_delivered_disabled"
+	}
 	if review.Template == ProducerOutboxSubscriptionEndedTemplate && !s.subscriptionEndedOutboxEnabled() {
 		review.CanAcknowledge = false
 		review.BlockReason = "subscription_ended_disabled"
@@ -117,6 +121,10 @@ func (s *Service) ProducerOutboxAdmission(ctx context.Context, id string) (Produ
 	if review.Template == ProducerOutboxAccountSuspendedTemplate && !s.accountSuspendedOutboxEnabled() {
 		review.CanAcknowledge = false
 		review.BlockReason = "account_suspended_disabled"
+	}
+	if review.Template == ProducerOutboxManagedPostgresCapTemplate && !s.managedPostgresCapOutboxEnabled() {
+		review.CanAcknowledge = false
+		review.BlockReason = "managed_postgres_cap_disabled"
 	}
 	return review, err
 }
