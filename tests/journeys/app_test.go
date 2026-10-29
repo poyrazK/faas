@@ -138,6 +138,11 @@ func TestCronDelivery(t *testing.T) {
 	s.check("trigger_inventory", func(t *testing.T) {
 		res := tg.run(t, time.Minute, "triggers", "list", "--app", slug, "--kind", "cron")
 		out := string(res.stdout) + string(res.stderr)
+		// The CLI hides `triggers` from accounts the capability is not
+		// released to; crons are then outside any trigger inventory anyway.
+		if res.exit != 0 && strings.Contains(out, "unknown command") && strings.Contains(out, "triggers list") {
+			t.Skip("gregale triggers is not released to this account")
+		}
 		if res.exit == 0 || !strings.Contains(out, "cron list") && !strings.Contains(out, "/v1/crons") {
 			t.Fatalf("triggers list --kind cron (exit %d) did not point at the cron commands: %s", res.exit, tail(out, 400))
 		}

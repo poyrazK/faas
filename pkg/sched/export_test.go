@@ -602,6 +602,14 @@ func (r *composedWaveNativeVMM) Identity() *runtimeadmission.Identity { return &
 // Members of drainSynth
 func (r *drainSynth) Calls() *atomic.Int64    { return &r.calls }
 func (r *drainSynth) Transient() *atomic.Bool { return &r.transient }
+func (r *drainSynth) Refused() *atomic.Bool   { return &r.refused }
+
+// XHTTPGatewaySynth is the drain's real gateway client pointed at base.
+func XHTTPGatewaySynth(client *http.Client, base string) interface {
+	InvokeWithWake(context.Context, string, state.Invocation, WakeResult) (state.Invocation, error)
+} {
+	return &httpGatewaySynth{client: client, basePrefix: base}
+}
 
 // Members of fakeNotifier
 func (r *fakeNotifier) Events() *[]notifyEvent { return &r.events }

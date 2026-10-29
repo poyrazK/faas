@@ -30,7 +30,7 @@ The 2026-10-26 crons GA review found four blockers; #5649 fixes them
   for the cron, fire-now, drain and app-task paths pass; the five
   `TestDrainSecurity*` failures are on main already.
 
-Follow-ups from the same review (branch `fix/crons-ga-followups`):
+Follow-ups from the same review (#5711, #5906, and branch `fix/crons-prod-findings`):
 
 - Schedule decisions and manual-run requests older than 90 days
   (`api.CronHistoryRetention`, the longest plan's run history) are pruned on
@@ -43,6 +43,17 @@ Follow-ups from the same review (branch `fix/crons-ga-followups`):
   by the API, the triggers API, source-ref manifests and `gregale.yaml`.
 - The OpenAPI spec documents `GET /v1/crons?slug=`; the Go SDK gains
   `GetCron`, `FireCron`, `GetFireCronRequest` and `ListCronRuns`.
+- Crons are not triggers (#2757): `GET /v1/triggers?kind=cron` answers 400;
+  `gregale cron run --wait` exits non-zero when the run fails.
+- A plain HTTP cron run Gregale refused before delivery is retried up to three
+  attempts (ADR-20261026201726 amendment 2026-10-29); `gregale cron runs`
+  explains runs the app answered with 404.
+
+Production evidence 2026-10-29 (rc.304): `tests/journeys` `TestCronDelivery`
+passed `manual_run` (2.4 s) and `scheduled_fire` (66 s). Prometheus showed the
+cron alerts loaded and quiet, first-claim lag p50 75 ms and p99 1.25 s. Of
+1,781 cron runs in 24 h, 213 failed: 192 were apps answering 404 for the
+cron's path and about 21 were platform refusals or timeouts.
 
 ## Release guards — 2026-10-26
 
