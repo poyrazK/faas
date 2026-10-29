@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -94,12 +95,11 @@ func TestComputeActivationsAreSpooled(t *testing.T) {
 	}
 	runtime.FinishActivation(context.Background(), "", a, deploycontroller.ActivationFailed, "unit install failed")
 
-	f, err := os.Open(spool)
+	data, err := os.ReadFile(spool)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = f.Close() }()
-	lines, err := releasehistory.ReadSpool(f)
+	lines, err := releasehistory.ReadSpool(bytes.NewReader(data))
 	if err != nil {
 		t.Fatal(err)
 	}

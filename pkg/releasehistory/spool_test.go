@@ -1,6 +1,7 @@
 package releasehistory_test
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -30,12 +31,11 @@ func TestSpoolKeepsTheNewestActivations(t *testing.T) {
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("spool mode = %v, want 0600", info.Mode().Perm())
 	}
-	f, err := os.Open(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = f.Close() }()
-	lines, err := releasehistory.ReadSpool(f)
+	lines, err := releasehistory.ReadSpool(bytes.NewReader(data))
 	if err != nil {
 		t.Fatal(err)
 	}
