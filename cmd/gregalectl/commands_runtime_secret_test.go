@@ -69,7 +69,7 @@ func TestSignExistingRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, other, err := ed25519.GenerateKey(rand.Reader)
+	otherPublic, other, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestSignExistingRuntime(t *testing.T) {
 		runtimeSignDoc(t, "project", "3", foreign),
 	}
 
-	report, err := signExistingRuntime(ctx, store, private)
+	report, err := signExistingRuntime(ctx, store, private, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,8 +102,18 @@ func TestSignExistingRuntime(t *testing.T) {
 	if err := verifier.Check(sealsig.RuntimeSecretMessage(unsigned), store.sigs[string(sealsig.RuntimeDigest(unsigned))]); err != nil {
 		t.Fatalf("the backfilled signature = %v", err)
 	}
-	again, err := signExistingRuntime(ctx, store, private)
+	again, err := signExistingRuntime(ctx, store, private, nil)
 	if err != nil || again.Signed != 0 || again.AlreadySigned != 2 {
 		t.Fatalf("rerun = %+v, %v; want nothing left to sign", again, err)
+	}
+
+	// A signing-key rotation: the other key was the previous one, so its
+	// envelope is signed again with the new key once the operator trusts it.
+	rotated, err := signExistingRuntime(ctx, store, private, sealsig.NewVerifier([]ed25519.PublicKey{otherPublic}, true))
+	if err != nil || rotated.Resigned != 1 || rotated.Invalid != 0 || rotated.AlreadySigned != 2 {
+		t.Fatalf("rotation = %+v, %v; want the previous key's envelope signed again", rotated, err)
+	}
+	if err := verifier.Check(sealsig.RuntimeSecretMessage(foreign), store.sigs[string(sealsig.RuntimeDigest(foreign))]); err != nil {
+		t.Fatalf("the re-signed envelope = %v", err)
 	}
 }
