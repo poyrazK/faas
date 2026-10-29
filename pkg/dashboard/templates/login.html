@@ -102,8 +102,8 @@
 
     {{if .Auth}}{{if or .Auth.GoogleEnabled .Auth.GitHubEnabled}}
     <div class="providers">
-      {{if .Auth.GoogleEnabled}}<a class="oauth-link" href="/v1/auth/google">Continue with Google</a>{{end}}
-      {{if .Auth.GitHubEnabled}}<a class="oauth-link" href="/v1/auth/github">Continue with GitHub</a>{{end}}
+      {{if .Auth.GoogleEnabled}}<a class="oauth-link" href="/v1/auth/google{{with .Data}}{{with index . "Next"}}?next={{.}}{{end}}{{end}}">Continue with Google</a>{{end}}
+      {{if .Auth.GitHubEnabled}}<a class="oauth-link" href="/v1/auth/github{{with .Data}}{{with index . "Next"}}?next={{.}}{{end}}{{end}}">Continue with GitHub</a>{{end}}
     </div>
     {{end}}{{end}}
 

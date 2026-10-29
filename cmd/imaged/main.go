@@ -49,6 +49,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/manifest"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/rootfs"
 	"github.com/onebox-faas/faas/pkg/sealdomain"
@@ -492,10 +493,21 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	if artifactErr != nil {
 		return artifactErr
 	}
+	// ADR-1155: on-demand collectors reach only accounts profile-captures is
+	// released to, so the flag watcher runs only when captures are installed.
+	var profileCapturesReleased func(platformflags.Subject) bool
+	if getenv("FAAS_PROFILING_ON_DEMAND") == "1" {
+		released, err := startProfileCapturesRelease(ctx, getenv, store, pool, log)
+		if err != nil {
+			return err
+		}
+		profileCapturesReleased = released
+	}
 	h := imaged.New(store, notifier, puller, builder, guestInitPath, appsRoot, log).
 		WithValidatorArtifactCheck(validatorArtifacts.Check).
 		WithNodeName(getenv("FAAS_NODE_NAME")).
 		WithProfilingOnDemand(getenv("FAAS_PROFILING_ON_DEMAND") == "1").
+		WithProfileCapturesRelease(profileCapturesReleased).
 		WithContinuousProfiling(getenv("FAAS_PROFILING_ENABLED") == "1").
 		WithStorage(storageBackend).
 		WithGitHubSourceRefVerifier(githubdClient).

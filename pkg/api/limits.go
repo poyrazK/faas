@@ -100,11 +100,21 @@ const (
 	LoginFailureEmailsTrackedMax = 100_000
 )
 
-// Self-service accounts (password and magic-link sign-up) one client
-// address, and one network (IPv4 /24, IPv6 /48), may create per day.
+// Self-service accounts (password, magic-link, Google and GitHub sign-up) one
+// client address, and one network (IPv4 /24, IPv6 /48), may create per day.
 const (
 	SignupAccountsPerAddressPerDay = 10
 	SignupAccountsPerNetworkPerDay = 50
+)
+
+// An agent connection's mcp-login key slides (ADR-20261028205920): each use
+// extends it to MCPLoginKeyIdle from now, never past MCPLoginKeyMaxAge after
+// it was created. A connection unused for a week ends; every one ends within
+// 30 days of consent.
+const (
+	MCPLoginKeyLabel  = "mcp-login"
+	MCPLoginKeyIdle   = 7 * 24 * time.Hour
+	MCPLoginKeyMaxAge = 30 * 24 * time.Hour
 )
 
 // AgentKeyLifetime is an agent key's default expiry (ADR-20261029085359):
@@ -3242,6 +3252,10 @@ const (
 	// effect within minutes rather than a year (H9-S144).
 	PublicObjectReadMaxAgeSeconds = 300
 )
+
+// MaxObjectStorageBackendBuckets bounds an operator's per-backend
+// `max_buckets` placement ceiling (ADR-20261029174627).
+const MaxObjectStorageBackendBuckets = 1_000_000
 
 // ObjectStorageBillingHoursPerMonth is the conventional month used to price
 // stored byte-hours as GiB-months and to convert IncludedBytes.
@@ -6671,6 +6685,23 @@ const (
 	// QuietPauseSampleMaxAgeMillis is how old the instance stats sample of
 	// quiet-paused instances may be before admission counts every booking.
 	QuietPauseSampleMaxAgeMillis = 2000
+	// MeasuredCPUMinChargePercent is the least share of its CPU booking
+	// measured CPU admission (ADR 20261029151111) charges a measured
+	// instance, so an idle one keeps room for its next request.
+	// MeasuredCPUMinHistorySeconds is how long an instance's CPU history
+	// must span before admission charges it by measurement instead of its
+	// booking. Measured CPU uses MeasuredChargeWindowSeconds,
+	// MeasuredChargeSampleSeconds and MeasuredChargePercentile for its
+	// window and MeasuredAdmissionSampleMaxAgeMillis for freshness.
+	MeasuredCPUMinChargePercent  = 10
+	MeasuredCPUMinHistorySeconds = 10
+	// MeasuredCPUMaxOvercommitPercent caps a node's booked vCPU and CPU
+	// millicores at this share of its budget once measured CPU admission is
+	// on, in place of QuietPauseMaxVCPUOvercommitPercent. In the ADR's
+	// simulation of a 16-thread node, 300% held quiet pause and measured
+	// admission to 606 apps; at 700% measured CPU binds first, at 1,122. The
+	// durable guard bounds every discount by this cap.
+	MeasuredCPUMaxOvercommitPercent = 700
 	// QuietPauseLedgerFlushSeconds is how often schedd writes a node's quiet
 	// pauses and watermark to the pause ledger (ADR-20261023171905): one
 	// statement per node per flush, however many requests the node serves.

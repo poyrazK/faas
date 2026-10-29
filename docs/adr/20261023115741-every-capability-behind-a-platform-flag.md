@@ -208,3 +208,12 @@ under the kill switch, an account's customer events when off for that
 account), vmmd refuses in-guest publishing, and the publish routes answer
 `503 events_paused` rather than hiding, so producers keep their events. The
 exact path `/v1/events` (the live-update stream) moves to `dashboard`.
+
+## Amendment (2026-10-28): imaged decides profile-captures
+
+imaged joins the consumers (`productcap.KnownConsumers`). With
+`FAAS_PROFILING_ON_DEMAND=1` it keeps the platform flags current through the
+runtime-config watcher, as vmmd does, and decides `profile-captures` for a
+deployment's account, plan and organization before stamping on-demand
+collectors into its guest manifest (ADR-1155). An unreleased account's
+runtimes keep no collector preload.

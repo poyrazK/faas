@@ -4349,6 +4349,9 @@ type Querier interface {
 	ObjectBucketObjectLockGet(ctx context.Context, db DBTX, bucketID pgtype.UUID) (ObjectBucketObjectLock, error)
 	ObjectBucketObjectLockInsert(ctx context.Context, db DBTX, arg ObjectBucketObjectLockInsertParams) error
 	ObjectBucketObjectLockUpdate(ctx context.Context, db DBTX, arg ObjectBucketObjectLockUpdateParams) (int64, error)
+	ObjectBucketPlacementCounts(ctx context.Context, db DBTX, arg ObjectBucketPlacementCountsParams) ([]ObjectBucketPlacementCountsRow, error)
+	// Serializes bucket placement in one region (ADR-20261029174627).
+	ObjectBucketPlacementLock(ctx context.Context, db DBTX, region string) error
 	ObjectBucketPruneTombstones(ctx context.Context, db DBTX, accountID pgtype.UUID) error
 	ObjectBucketReserveLockAccount(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error)
 	ObjectBucketRetry(ctx context.Context, db DBTX, arg ObjectBucketRetryParams) (int64, error)
@@ -6699,7 +6702,10 @@ type Querier interface {
 	TouchCustomerOperationWorkflowStep(ctx context.Context, db DBTX, arg TouchCustomerOperationWorkflowStepParams) error
 	TouchEdgeListenerHeartbeat(ctx context.Context, db DBTX, name string) error
 	TouchEnvironmentGitOpsIntent(ctx context.Context, db DBTX, sourceID pgtype.UUID) error
-	TouchKeyLastUsed(ctx context.Context, db DBTX, id pgtype.UUID) error
+	// An active, non-admin mcp-login key also slides (ADR-20261028205920): use
+	// extends it to idle_seconds from now, never past max_age_seconds after it was
+	// created, and never shortens it.
+	TouchKeyLastUsed(ctx context.Context, db DBTX, arg TouchKeyLastUsedParams) error
 	TouchProjectSubmission(ctx context.Context, db DBTX, arg TouchProjectSubmissionParams) error
 	// Best-effort, fire-and-forget. Allowed on revoked rows (observability
 	// signal only; not authorization). pgx interface returns nothing.
