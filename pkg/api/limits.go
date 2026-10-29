@@ -457,6 +457,25 @@ const (
 	ApplicationStandardRuntimeScanDirectoryReadBatch       = 512
 )
 
+// A scan is reused only while the scanner and vulnerability database that
+// made it are still the installed ones (ADR-20261028102540). imaged reads that
+// identity with `grype version` and `grype db status` and keeps it this long;
+// every real scan also refreshes it.
+const (
+	ScannerIdentityCacheTTL       = time.Minute
+	ScannerIdentityProbeTimeout   = 30 * time.Second
+	ScannerIdentityMaxOutputBytes = 64 << 10
+)
+
+// Reused scans no longer run Grype often enough for its own update check to
+// keep the vulnerability database current, so imaged runs `grype db update`
+// on this cadence (ADR-20261028102540). A download and import of the ~3 GB
+// database took about seven minutes on a production node.
+const (
+	ScannerDBRefreshEvery  = 6 * time.Hour
+	ScannerDBUpdateTimeout = 20 * time.Minute
+)
+
 // Source-build OCI verification bounds the intermediate image, including its
 // builder base. Final app layers still obey the creating account's plan limit.
 const (
@@ -6732,6 +6751,12 @@ const (
 	BuildVMVCPU            = 2
 	BuildTimeoutSeconds    = 900 // 15 min build; cold rootless Railpack export needs headroom
 	BuildE2ETimeoutSeconds = 900 // 15 min end-to-end
+	// BuildDiskCapacityRetryDelay is how long a builder without room for a
+	// build drive waits before returning the build to the queue
+	// (ADR-20261029103512). The deployment watchdog's queued-build bound
+	// (DeploymentQueuedBuildTimeoutSeconds, anchored on enqueued_at) still
+	// fails a build that never finds capacity.
+	BuildDiskCapacityRetryDelay = 30 * time.Second
 
 	// Deployment watchdog (ADR-20261024140100). apid fails an in-flight
 	// deployment that can no longer finish on its own, so every deployment
