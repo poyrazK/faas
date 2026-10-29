@@ -93,4 +93,4 @@ Moving existing data still requires copying and verifying objects, stopping
 writes and waiting for old signed URLs to expire before an explicit cutover.
 Already-issued URLs continue to point at the old endpoint. No DNS trick can
 make an upstream signature portable. Retain the old backend until migration
-and recovery windows have completed. See [operator runbook](../object-storage.md).
+and recovery windows have completed. See [operator runbook](../ops/object-storage-operator-notes.md).

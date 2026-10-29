@@ -60,8 +60,11 @@ never written by Gregale, because nothing in the row says who wrote it.
    as a systemd credential. livequeryd reads a file of public keys and
    accepts a signature from any key in it, so a key rotation adds the new
    public key before apid switches. Rows signed with the old key must then
-   be signed again. That step, verifying each old signature before
-   re-signing, is follow-up work; until it exists, keep both public keys.
+   be signed again: `sign-existing --trusted-keys <old public key>`
+   (amended 2026-10-29) verifies each old signature against the trusted
+   key before it signs the row with the new one, compared and swapped on
+   the signature it read. A signature neither key made is reported and left
+   alone. The old public key is dropped once a rerun signs nothing again.
 6. **Other domains follow the same pattern** in later amendments: runtime
    secrets (apid → vmmd) next, then outbound, delivery and the rest. Each
    gets its own key pair, column(s), backfill and contract step.
