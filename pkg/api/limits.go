@@ -6893,6 +6893,20 @@ const (
 	// runs under schedd's leader budget (the cold-boot budget plus admission,
 	// at least the WakeQueueTTLSeconds hold), so failover never extends it.
 	WakeFailoverMinRemainingMs = 2000
+	// NodeBootBreakerFailures, NodeBootBreakerDistinctApps and
+	// NodeBootBreakerOpenSeconds are a scheduler's per-node boot breaker
+	// (ADR-20261029085904): after this many node-caused boot failures in a
+	// row, from at least this many apps, placement treats the node as
+	// degraded for the open period. Two apps keep one broken app from
+	// taking a healthy node out of rotation.
+	NodeBootBreakerFailures     = 3
+	NodeBootBreakerDistinctApps = 2
+	NodeBootBreakerOpenSeconds  = 60
+	// CapacityStreamLostSeconds is how long vmmd's 1 s capacity stream may
+	// stay silent before the scheduler receiving it marks the node
+	// unavailable for placement (ADR-20261029085904). The heartbeat takes
+	// three failed 30 s probes to do the same.
+	CapacityStreamLostSeconds = 10
 
 	// BaseGenerationReadinessCheckIntervalSeconds is how old vmmd's verdict
 	// on adopting its configured base generations may get before the next
