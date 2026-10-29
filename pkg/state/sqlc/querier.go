@@ -5597,6 +5597,10 @@ type Querier interface {
 	ReadServicePolicyReleaseCandidates(ctx context.Context, db DBTX, arg ReadServicePolicyReleaseCandidatesParams) ([]ReadServicePolicyReleaseCandidatesRow, error)
 	ReadServicePolicyTestApp(ctx context.Context, db DBTX, arg ReadServicePolicyTestAppParams) (ReadServicePolicyTestAppRow, error)
 	ReadServicePolicyTestMember(ctx context.Context, db DBTX, appID pgtype.UUID) (ReadServicePolicyTestMemberRow, error)
+	// 'active' pages by app (after_app_id, ordered by app): the rollback window
+	// needs every row of an app, and a newest-first cut over the whole fleet
+	// dropped exactly the oldest generations GC exists to reclaim once the live
+	// set passed the limit (bug hunt 2026-10-28 H66).
 	ReadSnapshotGarbageCollection(ctx context.Context, db DBTX, arg ReadSnapshotGarbageCollectionParams) ([]ReadSnapshotGarbageCollectionRow, error)
 	ReadSnapshotInvocationEnvironmentQueueAdmission(ctx context.Context, db DBTX, invocationID pgtype.UUID) (InvocationEnvironmentQueueAdmission, error)
 	ReadSnapshotPublicationConfigChange(ctx context.Context, db DBTX, appID pgtype.UUID) (pgtype.Timestamptz, error)
