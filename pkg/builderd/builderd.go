@@ -143,6 +143,10 @@ type Config struct {
 	// LayerCompression is "" (gzip) or api.BuildLayerCompressionZstd, from
 	// LayerZstdEnv. It reaches every build manifest and cache key.
 	LayerCompression string `toml:"-"`
+	// BuildKitSnapshotter is "" (fuse-overlayfs) or api.BuildKitSnapshotterAuto,
+	// from KernelOverlayEnv. It changes how layers are produced, not what they
+	// hold, so it stays out of the cache key.
+	BuildKitSnapshotter string `toml:"-"`
 	// BuilderNodeID is the compute_node name stamped onto every
 	// provenance row this Builderd writes (ADR-038, Tier 3 / issue
 	// #197 B3.1). Defaulted to "default-local" on the one-box by
@@ -1165,6 +1169,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		DevWatchHost:          watch.Host,
 		DependencyCacheKey:    dependencyCacheKey,
 		LayerCompression:      b.cfg.LayerCompression,
+		BuildKitSnapshotter:   b.cfg.BuildKitSnapshotter,
 		LogPath:               dep.LogPath,
 		RAMMB:                 api.BuildVMRAMMB,
 		TimeoutSec:            b.cfg.BuildTimeoutSeconds,
