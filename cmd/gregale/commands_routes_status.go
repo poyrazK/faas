@@ -25,7 +25,7 @@ func cmdRoutesStatus(args []string) int {
 		return 1
 	}
 	if len(positional) != 1 || !validCLISlug(positional[0]) {
-		return printErr("Invalid route status command", errors.New("usage: gregale api route status APP [--deployment ID] [--since 168h]"))
+		return printErr("Invalid route status command", errors.New("usage: gregale api route status APP [--release ID] [--since 168h]"))
 	}
 	if !validRouteHealthSuggestionSince(*since) {
 		return printErr("Invalid route status command", fmt.Errorf("--since must be a duration such as 168h or 7d, or an RFC3339 time; got %q", *since))

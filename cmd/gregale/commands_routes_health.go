@@ -330,7 +330,7 @@ func renderCanaryProfileSignal(signal *api.CanaryProfileSignal, appSlug string) 
 	}
 	if signal.ComparisonURL != "" && signal.Baseline != nil && signal.Candidate != nil {
 		baseline, candidate := *signal.Baseline, *signal.Candidate
-		_, _ = fmt.Fprintf(osStdout, "  Full comparison: gregale debug profiles %s --deployment-id %s --runtime %s --start %s --end %s --baseline-id %s --baseline-start %s --baseline-end %s\n",
+		_, _ = fmt.Fprintf(osStdout, "  Full comparison: gregale debug profiles %s --release %s --runtime %s --start %s --end %s --baseline-id %s --baseline-start %s --baseline-end %s\n",
 			appSlug, candidate.DeploymentID, candidate.Runtime, candidate.Start.Format(time.RFC3339Nano), candidate.End.Format(time.RFC3339Nano),
 			baseline.DeploymentID, baseline.Start.Format(time.RFC3339Nano), baseline.End.Format(time.RFC3339Nano))
 	}

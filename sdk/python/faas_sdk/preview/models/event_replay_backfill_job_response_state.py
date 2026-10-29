@@ -1,10 +1,15 @@
 from typing import Literal
 
-EventReplayBackfillJobResponseState = Literal["completed", "completed_with_failures", "running"]
+EventReplayBackfillJobResponseState = Literal[
+    "cancelled", "completed", "completed_with_failures", "expired", "failed", "running"
+]
 
 EVENT_REPLAY_BACKFILL_JOB_RESPONSE_STATE_VALUES: set[EventReplayBackfillJobResponseState] = {
+    "cancelled",
     "completed",
     "completed_with_failures",
+    "expired",
+    "failed",
     "running",
 }
 

@@ -355,6 +355,18 @@ reopen an aborted candidate or claim a healthy resume.
 means hold. Use `--on-regression hold` with the current revision to turn off
 route-specific automatic recovery while retaining the rest of the guard.
 
+## Lost telemetry
+
+The guard reads request telemetry the gateways record. When a gateway may have
+lost some of it in the evidence windows (it restarted, missed a heartbeat, or
+has telemetry off or sampled), every window is unknown with reason
+`telemetry_incomplete` and the advance waits. This is Gregale's gap, not your
+traffic: it sends no `routes.health.blocked` webhook, starts no hold, is not
+counted by `route_health_holds`, and never triggers the hold deadline. The
+canary advances once complete windows show healthy evidence, usually within a
+few minutes. Rows dropped because an account exceeds its telemetry rate are not
+lost evidence: the remaining rows stay comparable.
+
 ## Hold deadline
 
 An enforced guard holds a canary for at most 24 hours. When the canary worker's
