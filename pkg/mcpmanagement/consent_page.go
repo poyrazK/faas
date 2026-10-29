@@ -76,7 +76,7 @@ func consentPage(v consentView) string {
 		}
 		w("\n", `<form method="post" action="`, e(v.ConsentAction), `">`, hidden)
 		if v.Writes && v.LoginURL == "" {
-			w(`<fieldset><legend>With write access, also allow (optional)</legend><label><input type="checkbox" name="capability" value="secrets:request"> Asking you to enter secrets on a Gregale page; the agent never sees their values</label><br><label><input type="checkbox" name="capability" value="storage:manage"> Creating object storage buckets and binding them to apps</label><br><label><input type="checkbox" name="capability" value="postgres:manage"> Creating managed PostgreSQL databases and binding them to apps (billed)</label></fieldset>`)
+			w(`<fieldset><legend>With write access, also allow (optional)</legend><label><input type="checkbox" name="capability" value="secrets:request"> Asking you to enter secrets on a Gregale page; the agent cannot read their values through Gregale, but code it deploys can</label><br><label><input type="checkbox" name="capability" value="storage:manage"> Creating object storage buckets and binding them to apps</label><br><label><input type="checkbox" name="capability" value="postgres:manage"> Creating managed PostgreSQL databases and binding them to apps (billed)</label></fieldset>`)
 		}
 		decision, label := "start-login", "Start Gregale sign-in"
 		if v.LoginURL != "" {

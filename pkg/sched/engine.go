@@ -5130,6 +5130,10 @@ func (e *Engine) loadPlacementSnapshotFresh(ctx context.Context, r Request) (pla
 			return placementSnapshot{}, fmt.Errorf("sched: placement: list active compute_nodes: %w", err)
 		}
 	}
+	if r.Kind == KindAgentRun {
+		// ADR-20261027090014 §2: agent runs are admitted only on the agent pool.
+		nodes = agentPoolNodes(nodes, r.agentPool)
+	}
 	// ADR-20261029085904: a node this scheduler's boots keep failing on is
 	// placed like a degraded one.
 	nodes = e.markUnprovenNodes(nodes)

@@ -23,3 +23,7 @@ type RouteHealthTransitionWebhookPayload struct {
 	RequestedTrafficPercent int        `json:"requested_traffic_percent"`
 	HistoryPath             string     `json:"history_path"`
 }
+
+// RouteHealthHoldDeadlineReason is the routes.health.aborted reason when the
+// hold deadline ended a held canary (ADR-20261028110044 amendment 2).
+const RouteHealthHoldDeadlineReason = "hold_deadline_exceeded"

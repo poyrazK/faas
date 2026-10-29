@@ -205,6 +205,9 @@ type Sampler struct {
 	// first.
 	caughtUp    []time.Time
 	jobCaughtUp []time.Time
+	// catchUp holds what every caught-up minute of one SampleAndRoll shares;
+	// nil outside a catch-up.
+	catchUp *catchUpReads
 
 	// quietPause is the quiet_pause_unbilled mode (ADR-20261023171905):
 	// whether exact-residency minutes subtract the quiet-paused seconds the
@@ -409,6 +412,10 @@ func (s *Sampler) SampleAndRoll(ctx context.Context) ([]RolledRow, error) {
 		return nil, err
 	}
 	var out []RolledRow
+	if len(pending) > 0 {
+		s.catchUp = &catchUpReads{since: pending[0].Add(-api.MeterCatchUpWindow), end: pending[len(pending)-1].Add(time.Minute)}
+		defer func() { s.catchUp = nil }()
+	}
 	for _, minute := range pending {
 		rows, err := s.rollApps(ctx, minute.Add(time.Minute), minute, true, true)
 		for i := range rows {
@@ -505,7 +512,7 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 			return nil, err
 		}
 	}
-	apps, err := s.store.ListAllApps(ctx)
+	apps, err := s.listAllApps(ctx, catchUp)
 	if err != nil {
 		return nil, err
 	}
@@ -537,13 +544,13 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 	// treats empty as free) so a transient Postgres blip doesn't
 	// drop the entire tick's metric.
 	planByAccount := make(map[string]api.Plan)
-	if accounts, accErr := state.ListBillingResourceAccounts(ctx, s.store); accErr == nil {
+	if accounts, accErr := s.listBillingResourceAccounts(ctx, catchUp); accErr == nil {
 		for _, a := range accounts {
 			planByAccount[a.ID] = a.Plan
 		}
 	}
 	floorHeld := newFloorHolders(s.store)
-	instancesByApp, err := s.billingWindowInstances(ctx, minute)
+	instancesByApp, err := s.catchUpWindowInstances(ctx, minute, catchUp)
 	if err != nil {
 		return nil, err
 	}
@@ -1016,17 +1023,83 @@ func (s *Sampler) cpuDeltaForMinute(instanceID string, minute time.Time) int64 {
 	return int64(delta)
 }
 
+// catchUpReads are the fleet reads every caught-up minute of one tick shares.
+// Each caught-up minute re-read every app, every billing account and a day
+// of instances, so a lagging meterd scanned a day of instances up to
+// api.MeterCatchUpMinutesPerTick times per tick (bug hunt 2026-10-28 O2).
+// The shared instance window spans every caught-up minute's own window; an
+// instance outside one minute's window has no residency in that minute and
+// a caught-up minute carries no live usage, so the roll skips it.
+type catchUpReads struct {
+	since, end time.Time
+	apps       []state.App
+	appsRead   bool
+	accounts   []state.Account
+	accountErr error
+	accRead    bool
+	instances  map[string][]state.Instance
+	instRead   bool
+}
+
+// listAllApps returns every app, read once per tick across caught-up
+// minutes. The caller may modify the returned slice.
+func (s *Sampler) listAllApps(ctx context.Context, catchUp bool) ([]state.App, error) {
+	c := s.catchUp
+	if !catchUp || c == nil {
+		return s.store.ListAllApps(ctx)
+	}
+	if !c.appsRead {
+		apps, err := s.store.ListAllApps(ctx)
+		if err != nil {
+			return nil, err
+		}
+		c.apps, c.appsRead = apps, true
+	}
+	return append([]state.App(nil), c.apps...), nil
+}
+
+func (s *Sampler) listBillingResourceAccounts(ctx context.Context, catchUp bool) ([]state.Account, error) {
+	c := s.catchUp
+	if !catchUp || c == nil {
+		return state.ListBillingResourceAccounts(ctx, s.store)
+	}
+	if !c.accRead {
+		c.accounts, c.accountErr = state.ListBillingResourceAccounts(ctx, s.store)
+		c.accRead = true
+	}
+	return c.accounts, c.accountErr
+}
+
+func (s *Sampler) catchUpWindowInstances(ctx context.Context, minute time.Time, catchUp bool) (map[string][]state.Instance, error) {
+	c := s.catchUp
+	if !catchUp || c == nil {
+		return s.billingWindowInstances(ctx, minute)
+	}
+	if !c.instRead {
+		byApp, err := s.billingInstancesBetween(ctx, c.since, c.end)
+		if err != nil {
+			return nil, err
+		}
+		c.instances, c.instRead = byApp, true
+	}
+	return c.instances, nil
+}
+
 // billingWindowInstances groups by app the instances a roll of minute can
 // write rows for, in one store read. The window reaches back
 // api.MeterCatchUpWindow so an instance that ended recently still drains the
 // gateway and network telemetry its sources hold for it. nil means the store
 // cannot list the window and the caller reads each app's history instead.
 func (s *Sampler) billingWindowInstances(ctx context.Context, minute time.Time) (map[string][]state.Instance, error) {
+	return s.billingInstancesBetween(ctx, minute.Add(-api.MeterCatchUpWindow), minute.Add(time.Minute))
+}
+
+func (s *Sampler) billingInstancesBetween(ctx context.Context, since, end time.Time) (map[string][]state.Instance, error) {
 	windowStore, ok := s.store.(billingWindowInstanceStore)
 	if !ok {
 		return nil, nil
 	}
-	rows, err := windowStore.ListBillingWindowInstances(ctx, minute.Add(-api.MeterCatchUpWindow), minute.Add(time.Minute))
+	rows, err := windowStore.ListBillingWindowInstances(ctx, since, end)
 	if err != nil {
 		return nil, fmt.Errorf("meter: list billing window instances: %w", err)
 	}

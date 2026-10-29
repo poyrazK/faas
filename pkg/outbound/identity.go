@@ -50,6 +50,31 @@ type ExecutionIdentity struct {
 	LeaseToken  string
 }
 
+// AgentRunIdentity identifies one agent run (ADR-20261027090010 §7) and agentd's
+// lease on it. LeaseToken is internal capability material.
+type AgentRunIdentity struct {
+	AccountID    string
+	RunID        string
+	LeaseToken   string
+	TenantID     string
+	AgentID      string
+	AgentVersion int
+}
+
+// AgentRunGrant is what an agent run may do with one integration: the
+// tenant its calls are attributed to and its model spend cap.
+type AgentRunGrant struct {
+	TenantID           string
+	AIBudgetMillicents int64
+}
+
+// AgentRunAuthorizer checks, for every request, that the run is running
+// under the identity's lease and that its agent version names the
+// integration. It must fail closed on store errors.
+type AgentRunAuthorizer interface {
+	AuthorizeAgentRun(ctx context.Context, identity AgentRunIdentity, integrationID string) (AgentRunGrant, bool, error)
+}
+
 type ExecutionIdentityVerifier interface {
 	VerifyExecution(rawToken, integrationID string) (ExecutionIdentity, error)
 }
@@ -165,21 +190,9 @@ func (v *WorkloadIdentityVerifier) verifyExecutionAudience(rawToken, audience st
 	if v == nil || len(rawToken) == 0 || len(rawToken) > maxIdentityTokenBytes || audience == "" {
 		return ExecutionIdentity{}, ErrInvalidWorkloadIdentity
 	}
-	token, err := jwt.ParseSigned(rawToken, []jose.SignatureAlgorithm{jose.RS256})
-	if err != nil || len(token.Headers) != 1 {
-		return ExecutionIdentity{}, ErrInvalidWorkloadIdentity
-	}
-	header := token.Headers[0]
-	if header.Algorithm != string(jose.RS256) || header.KeyID == "" {
-		return ExecutionIdentity{}, ErrInvalidWorkloadIdentity
-	}
-	key, ok := v.keys[header.KeyID]
-	if !ok {
-		return ExecutionIdentity{}, ErrInvalidWorkloadIdentity
-	}
 	var claims workloadidentity.ExecutionClaims
-	if err := token.Claims(key, &claims); err != nil {
-		return ExecutionIdentity{}, ErrInvalidWorkloadIdentity
+	if err := v.signedClaims(rawToken, &claims); err != nil {
+		return ExecutionIdentity{}, err
 	}
 	now := v.now()
 	if len(claims.Audience) != 1 || claims.Audience[0] != audience || claims.AccountID == "" || claims.ExecutionID == "" || claims.LeaseToken == "" ||
@@ -208,3 +221,63 @@ func (v *WorkloadIdentityVerifier) verifyExecutionAudience(rawToken, audience st
 }
 
 var _ ExecutionIdentityVerifier = (*WorkloadIdentityVerifier)(nil)
+
+// signedClaims checks an RS256 signature by a provisioned key and decodes
+// the claims; callers check the claims themselves.
+func (v *WorkloadIdentityVerifier) signedClaims(rawToken string, claims any) error {
+	token, err := jwt.ParseSigned(rawToken, []jose.SignatureAlgorithm{jose.RS256})
+	if err != nil || len(token.Headers) != 1 {
+		return ErrInvalidWorkloadIdentity
+	}
+	header := token.Headers[0]
+	if header.Algorithm != string(jose.RS256) || header.KeyID == "" {
+		return ErrInvalidWorkloadIdentity
+	}
+	key, ok := v.keys[header.KeyID]
+	if !ok {
+		return ErrInvalidWorkloadIdentity
+	}
+	if err := token.Claims(key, claims); err != nil {
+		return ErrInvalidWorkloadIdentity
+	}
+	return nil
+}
+
+// VerifyAgentRunRelay accepts only the connection-scoped assertion vmmd
+// attaches to an agent run's relay connection (ADR-20261027090010 §7). App and Run
+// assertions never pass: the subject, the run ID and the lease must match.
+func (v *WorkloadIdentityVerifier) VerifyAgentRunRelay(rawToken string) (AgentRunIdentity, error) {
+	if v == nil || len(rawToken) == 0 || len(rawToken) > maxIdentityTokenBytes {
+		return AgentRunIdentity{}, ErrInvalidWorkloadIdentity
+	}
+	var claims workloadidentity.AgentRunClaims
+	if err := v.signedClaims(rawToken, &claims); err != nil {
+		return AgentRunIdentity{}, err
+	}
+	audience := workloadidentity.OutboundRelayAudience
+	if len(claims.Audience) != 1 || claims.Audience[0] != audience || claims.RunID == "" ||
+		claims.Subject != workloadidentity.AgentRunSubjectPrefix+claims.RunID || claims.ID == "" ||
+		claims.IssuedAt == nil || claims.NotBefore == nil || claims.Expiry == nil || claims.AgentVersion < 1 {
+		return AgentRunIdentity{}, ErrInvalidWorkloadIdentity
+	}
+	for _, id := range []string{claims.AccountID, claims.RunID, claims.LeaseToken, claims.AgentID} {
+		if _, err := uuid.Parse(id); err != nil {
+			return AgentRunIdentity{}, ErrInvalidWorkloadIdentity
+		}
+	}
+	if claims.TenantID != "" {
+		if _, err := uuid.Parse(claims.TenantID); err != nil {
+			return AgentRunIdentity{}, ErrInvalidWorkloadIdentity
+		}
+	}
+	if claims.Expiry.Time().Before(claims.IssuedAt.Time()) || claims.Expiry.Time().Sub(claims.IssuedAt.Time()) > maxIdentityTTL ||
+		claims.NotBefore.Time().After(claims.IssuedAt.Time()) {
+		return AgentRunIdentity{}, ErrInvalidWorkloadIdentity
+	}
+	if err := claims.ValidateWithLeeway(jwt.Expected{Issuer: v.issuer, Subject: claims.Subject,
+		AnyAudience: jwt.Audience{audience}, Time: v.now()}, identityClockSkew); err != nil {
+		return AgentRunIdentity{}, ErrInvalidWorkloadIdentity
+	}
+	return AgentRunIdentity{AccountID: claims.AccountID, RunID: claims.RunID, LeaseToken: claims.LeaseToken,
+		TenantID: claims.TenantID, AgentID: claims.AgentID, AgentVersion: claims.AgentVersion}, nil
+}

@@ -2739,6 +2739,7 @@ export type { RouteHealthFinding } from './models/RouteHealthFinding.js';
 export type { RouteHealthGate } from './models/RouteHealthGate.js';
 export type { RouteHealthHistoryEntry } from './models/RouteHealthHistoryEntry.js';
 export type { RouteHealthHistoryPage } from './models/RouteHealthHistoryPage.js';
+export type { RouteHealthHold } from './models/RouteHealthHold.js';
 export type { RouteHealthInvestigation } from './models/RouteHealthInvestigation.js';
 export type { RouteHealthInvestigationExample } from './models/RouteHealthInvestigationExample.js';
 export type { RouteHealthInvestigationSelection } from './models/RouteHealthInvestigationSelection.js';

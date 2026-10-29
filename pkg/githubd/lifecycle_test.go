@@ -66,12 +66,35 @@ func TestHandleInstallationLifecycleRevokesAndInvalidates(t *testing.T) {
 	svc.Lifecycle = recorder
 	svc.InvalidateInstallation = func(id int64) { invalidated = id }
 	svc.InvalidateInstallationSecrets = func(id int64) { secretInvalidated = id }
-	err := svc.HandleWebhookEvent(context.Background(), "installation", []byte(`{"action":"suspend","installation":{"id":77}}`))
+	err := svc.HandleWebhookEvent(context.Background(), "installation", []byte(`{"action":"deleted","installation":{"id":77}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(recorder.revoked, []int64{77}) || invalidated != 77 || secretInvalidated != 77 {
 		t.Fatalf("revoked=%v invalidated=%d secretInvalidated=%d", recorder.revoked, invalidated, secretInvalidated)
+	}
+}
+
+// Suspension is reversible; it used to detach every bound app (bug hunt
+// 2026-10-28 B29). Suspend and unsuspend drop cached tokens and keep the
+// bindings, as archiving a repository does.
+func TestHandleInstallationSuspendKeepsBindings(t *testing.T) {
+	recorder := &lifecycleRecorder{}
+	invalidated := int64(0)
+	svc := NewService(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	svc.Lifecycle = recorder
+	svc.InvalidateInstallation = func(id int64) { invalidated = id }
+	for _, event := range []struct{ kind, body string }{
+		{"installation", `{"action":"suspend","installation":{"id":77}}`},
+		{"installation", `{"action":"unsuspend","installation":{"id":77}}`},
+		{"repository", `{"action":"archived","installation":{"id":77},"repository":{"name":"api","full_name":"octo/api"}}`},
+	} {
+		if err := svc.HandleWebhookEvent(context.Background(), event.kind, []byte(event.body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(recorder.revoked) != 0 || len(recorder.removed) != 0 || invalidated != 77 {
+		t.Fatalf("revoked=%v removed=%v invalidated=%d; want bindings kept and tokens dropped", recorder.revoked, recorder.removed, invalidated)
 	}
 }
 
@@ -110,20 +133,25 @@ func TestHandleRepositoryRenameReconstructsOldFullName(t *testing.T) {
 	}
 }
 
+// GitHub nests the previous owner as changes.owner.from.user or
+// .organization; a login directly under from was never sent, so a transfer
+// never moved its binding (bug hunt 2026-10-28 B28).
 func TestHandleRepositoryTransferUsesPreviousOwner(t *testing.T) {
-	recorder := &lifecycleRecorder{}
-	svc := NewService(slog.New(slog.NewTextHandler(io.Discard, nil)))
-	svc.Lifecycle = recorder
-	err := svc.HandleWebhookEvent(context.Background(), "repository", []byte(`{"action":"transferred","installation":{"id":100},"repository":{"name":"api","full_name":"new-owner/api","owner":{"login":"new-owner"}},"changes":{"owner":{"from":{"login":"old-owner"}}}}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := []struct {
-		id               int64
-		oldName, newName string
-	}{{100, "old-owner/api", "new-owner/api"}}
-	if !reflect.DeepEqual(recorder.renamed, want) {
-		t.Fatalf("renamed=%v, want %v", recorder.renamed, want)
+	for _, from := range []string{`{"user":{"login":"old-owner","type":"User"}}`, `{"organization":{"login":"old-owner"}}`} {
+		recorder := &lifecycleRecorder{}
+		svc := NewService(slog.New(slog.NewTextHandler(io.Discard, nil)))
+		svc.Lifecycle = recorder
+		err := svc.HandleWebhookEvent(context.Background(), "repository", []byte(`{"action":"transferred","installation":{"id":100},"repository":{"name":"api","full_name":"new-owner/api","owner":{"login":"new-owner"}},"changes":{"owner":{"from":`+from+`}}}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := []struct {
+			id               int64
+			oldName, newName string
+		}{{100, "old-owner/api", "new-owner/api"}}
+		if !reflect.DeepEqual(recorder.renamed, want) {
+			t.Fatalf("from %s: renamed=%v, want %v", from, recorder.renamed, want)
+		}
 	}
 }
 

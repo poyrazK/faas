@@ -48,6 +48,11 @@ max_prepared_statements = 0
 # timeout rather than a capacity refusal.
 query_wait_timeout = 10
 
+# A client idle inside a transaction holds a server connection and its row
+# locks. Daemon sessions that bypass the pooler carry the same bound as
+# idle_in_transaction_session_timeout (pkg/db DaemonIdleInTransactionSessionTimeout).
+idle_transaction_timeout = 120
+
 # LISTEN would break under transaction pooling. Nothing should reach this
 # pooler with a LISTEN — pkg/db routes it to FAAS_DATABASE_URL_DIRECT and
 # TestSessionScopedAcquires enforces that at build time — so leave the

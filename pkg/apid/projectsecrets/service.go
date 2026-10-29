@@ -50,7 +50,7 @@ func (s Service) List(w http.ResponseWriter, r *http.Request, acct state.Account
 	}
 	out := make([]api.ProjectEnvironmentSharedSecret, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, toAPI(row))
+		out = append(out, s.toAPI(row))
 	}
 	httpkit.WriteJSON(w, http.StatusOK, api.ProjectEnvironmentSharedSecretsResponse{
 		ProjectSlug: project.Slug, Environment: environment.Slug, Secrets: out,
@@ -113,7 +113,7 @@ func (s Service) write(w http.ResponseWriter, r *http.Request, acct state.Accoun
 	}
 	s.audit(r.Context(), kind, acct, project, environment, map[string]any{"key": key, "version": stored.SecretVersion, "kid": stored.Kid})
 	httpkit.WriteJSON(w, http.StatusOK, api.ProjectEnvironmentSharedSecretResponse{
-		ProjectSlug: project.Slug, Environment: environment.Slug, Secret: toAPI(stored),
+		ProjectSlug: project.Slug, Environment: environment.Slug, Secret: s.toAPI(stored),
 	})
 }
 
@@ -202,9 +202,19 @@ func validKey(key string) *api.Problem {
 	return nil
 }
 
-func toAPI(secret state.ProjectEnvironmentSecret) api.ProjectEnvironmentSharedSecret {
+// valueHashDisplayer re-keys a stored fingerprint per owner, so responses
+// cannot be compared across tenants (bug hunt 2026-10-28 H37).
+type valueHashDisplayer interface {
+	DisplayValueHash(ownerID, stored string) string
+}
+
+func (s Service) toAPI(secret state.ProjectEnvironmentSecret) api.ProjectEnvironmentSharedSecret {
+	hash := secret.ValueHash
+	if d, ok := s.Host.(valueHashDisplayer); ok {
+		hash = d.DisplayValueHash(secret.AccountID, hash)
+	}
 	return api.ProjectEnvironmentSharedSecret{
-		Key: secret.Key, Version: secret.SecretVersion, Kid: secret.Kid, ValueHash: secret.ValueHash,
+		Key: secret.Key, Version: secret.SecretVersion, Kid: secret.Kid, ValueHash: hash,
 		CreatedAt: secret.CreatedAt.UTC().Format(time.RFC3339Nano), UpdatedAt: secret.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	}
 }

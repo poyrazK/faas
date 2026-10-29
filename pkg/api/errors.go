@@ -673,6 +673,9 @@ const (
 	// same IP are still admitted, so one broken client behind a shared NAT
 	// cannot lock out other customers.
 	CodeAuthRateLimited = "auth_rate_limited"
+	// CodeAPIRateLimited is the 429 an account gets past its plan's
+	// APIRequestsPerMinute.
+	CodeAPIRateLimited = "api_rate_limited"
 	// CodeForbidden is returned when the authenticated principal lacks
 	// the scope required by the route (IAM-1, ADR-034). Distinct from
 	// CodeUnauthorized so a customer can tell "I need to log in" from
@@ -3090,6 +3093,20 @@ func ErrAuthRateLimited(retryAfterS int) *Problem {
 		WithDocs(docsBase + "/auth")
 }
 
+// ErrAPIRateLimited refuses an authenticated API request past the account's
+// plan budget of requests a minute.
+func ErrAPIRateLimited(limit, retryAfterS int) *Problem {
+	if retryAfterS <= 0 {
+		retryAfterS = 1
+	}
+	return NewProblem(http.StatusTooManyRequests, CodeAPIRateLimited,
+		"API rate limit reached",
+		fmt.Sprintf("This account's plan allows %d API requests a minute. Retry after %d seconds.", limit, retryAfterS)).
+		WithLimit(int64(limit), int64(limit)).
+		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
+		WithDocs(docsBase + "/errors#api_rate_limited")
+}
+
 // DetailServerFailure is the detail of a 5xx problem whose cause is an
 // error the caller cannot act on. The error goes to the log, never into
 // the detail: text from a store, a provider or a decoder carries SQL,
@@ -3292,6 +3309,17 @@ func ErrUploadSessionTooMany(detail string, limitBytes, observedBytes int64) *Pr
 		detail).
 		WithLimit(limitBytes, observedBytes).
 		WithDocs(docsBase + "/deploy-from-source#uploads")
+}
+
+// ErrQueueReceiveBusy refuses a queue receive long-poll past the concurrent
+// receive cap.
+func ErrQueueReceiveBusy(limit, observed int) *Problem {
+	return NewProblem(http.StatusTooManyRequests, CodeQueueReceiveBusy,
+		"Too many queue receives in flight",
+		fmt.Sprintf("At most %d queue receive long-polls may wait at once; %d are waiting. Retry after one returns.", limit, observed)).
+		WithLimit(int64(limit), int64(observed)).
+		WithHeader("Retry-After", "1").
+		WithDocs(docsBase + "/errors#queue_receive_busy")
 }
 
 // ErrUploadSessionAlreadyCommitted is returned by POST /v1/uploads/{id}/commit
@@ -4250,6 +4278,10 @@ const (
 	// CodePlanLimitApps so the dashboard can render a "cancel
 	// an in-progress upload" CTA rather than a generic 429.
 	CodeUploadSessionTooMany = "upload_session_too_many"
+	// CodeQueueReceiveBusy is the 429 a queue receive long-poll gets while
+	// its account already holds QueueReceiveWaitersPerAccount of them, or
+	// apid holds QueueReceiveWaitersPerAPID.
+	CodeQueueReceiveBusy = "queue_receive_busy"
 	// CodeUploadSessionAlreadyCommitted is the 409 emitted by
 	// POST /v1/uploads/{id}/commit on retry-after-success.
 	// Handled via the upload_commit_outcomes companion table:
