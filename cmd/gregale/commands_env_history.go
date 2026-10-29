@@ -46,7 +46,7 @@ func envHistory(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	if rejectUnexpectedFlagArgs(fs) || !configTarget(app, scope, "usage: gregale env history [--app <slug>] [--scope <name>] [--limit N]") {
+	if rejectUnexpectedFlagArgs(fs) || !configTarget(app, scope, "usage: gregale env history [--app <slug>] [--env <name>] [--limit N]") {
 		return 1
 	}
 	if *limit < 1 || *limit > api.ConfigRevisionsListMax {
@@ -130,7 +130,7 @@ func envRollback(args []string) int {
 		return 1
 	}
 	positional = append(positional, fs.Args()...)
-	usage := "usage: gregale env rollback <revision> [--app <slug>] [--scope <name>] [--yes] [--no-guard]"
+	usage := "usage: gregale env rollback <revision> [--app <slug>] [--env <name>] [--yes] [--no-guard]"
 	if len(positional) != 1 {
 		PrintUsage(os.Stderr, usage, "env")
 		return 1

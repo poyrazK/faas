@@ -54,3 +54,37 @@ func TestCDControlPlaneShipsEveryPrometheusRuleFile(t *testing.T) {
 		}
 	}
 }
+
+// TestCDControlPlanePrometheusConfigFollowsTheManifest pins the bundle's
+// prometheus.yml to the production manifest's control-plane vars. Rendered
+// from role defaults alone it dropped the app edge's scrape jobs, which only
+// faas_edge_on_compute_nodes turns on, from every release since rc.300
+// (2026-10-29: no gatewayd-public-edge or cloudflared target in production).
+func TestCDControlPlanePrometheusConfigFollowsTheManifest(t *testing.T) {
+	workflow := readWorkflow(t, "cd-controlplane.yml")
+	start := strings.Index(workflow, "      - name: Build immutable release bundle\n")
+	if start < 0 {
+		t.Fatal("cd-controlplane lost the bundle step")
+	}
+	step := workflow[start+1:]
+	if next := strings.Index(step, "\n      - name: "); next >= 0 {
+		step = step[:next]
+	}
+	for _, want := range []string{
+		`"$CANONICAL_ROOT/unpacked/gregalectl" manifest ansible`,
+		`--manifest-file "$CANONICAL_ROOT/production-manifest.yaml"`,
+		`/inventory/host_vars/${CP_INVENTORY_NAME}.yml"`,
+	} {
+		if !strings.Contains(step, want) {
+			t.Errorf("bundle step lacks %q", want)
+		}
+	}
+	// Extra vars given later win, so the manifest's vars must follow the role
+	// defaults, as host_vars outrank them under converge.
+	defaults := strings.Index(step, "-e @deploy/ansible/roles/prometheus/defaults/main.yml")
+	manifest := strings.Index(step, `"${prom_vars[@]}"`)
+	render := strings.Index(step, "prometheus.yml.j2 dest=")
+	if defaults < 0 || manifest < defaults || render < manifest {
+		t.Errorf("prometheus.yml render must load the role defaults, then the manifest's vars (defaults at %d, manifest at %d, render at %d)", defaults, manifest, render)
+	}
+}

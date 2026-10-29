@@ -547,6 +547,26 @@ func TestCliTreeFlagSpellings(t *testing.T) {
 	}
 }
 
+// A verb that answers --help from its own parser names its tree path and
+// canonical flags too, also when an earlier name asked for it.
+func TestCliTreeParserHelpSpellsCanonicalFlags(t *testing.T) {
+	enableEveryCLIFeature(t)
+	for _, args := range [][]string{{"app", "binding", "list", "--help"}, {"bindings", "list", "--help"}} {
+		code, help, _ := runCLI(t, args...)
+		if code != 0 || !strings.Contains(help, "Flags for gregale app binding list:") {
+			t.Errorf("%v help = %d, want the tree path:\n%s", args, code, help)
+		}
+		for _, want := range []string{"\n  --env <VALUE>", "\n  --release <VALUE>"} {
+			if !strings.Contains(help, want) {
+				t.Errorf("%v help lacks %q:\n%s", args, want, help)
+			}
+		}
+		if strings.Contains(help, "\n  --scope ") || strings.Contains(help, "\n  --deployment ") {
+			t.Errorf("%v help lists an earlier flag spelling as the flag:\n%s", args, help)
+		}
+	}
+}
+
 // Tree help and gating follow the account's capabilities like today's
 // commands: a hidden capability's verbs are not listed, its paths answer
 // with the name the user typed, and a flag that reaches it is dropped.

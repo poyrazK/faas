@@ -179,8 +179,12 @@ type Workload struct {
 	// app's existing internal listeners; non-nil replaces them.
 	InternalPorts []api.WorkloadPort
 
-	Class    Class  // http|graphql|grpc|job|worker|server|unknown
-	Schedule string // primary cron expression retained for the existing plan wire
+	Class Class // http|graphql|grpc|job|worker|server|unknown
+	// composeDefaultWorker marks a Compose service that is a worker only
+	// because it publishes no ports. Scan makes it an HTTP service when
+	// another service calls it, then clears the mark (ADR-20261029120000).
+	composeDefaultWorker bool
+	Schedule             string // primary cron expression retained for the existing plan wire
 	// Schedules is the complete desired cron set. Schedule remains the first
 	// expression for compatibility with clients that predate multi-schedule
 	// workloads; callers that reconcile crons must use CronSchedules.
@@ -429,6 +433,7 @@ func Scan(fsys fs.FS) (Result, error) {
 	if err := applyProjectConfig(fsys, workloads); err != nil {
 		return Result{}, err
 	}
+	warnings = append(warnings, classifyCalledComposeServices(fsys, workloads)...)
 	detectionWarnings = append(detectionWarnings, mergedDetectionWarnings(workloads)...)
 	sortDetectionWarnings(detectionWarnings)
 	for i := range workloads {
