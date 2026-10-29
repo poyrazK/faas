@@ -15,6 +15,10 @@ from ..models.event_replay_backfill_job_response_duplicate_policy import (
     EventReplayBackfillJobResponseDuplicatePolicy,
     check_event_replay_backfill_job_response_duplicate_policy,
 )
+from ..models.event_replay_backfill_job_response_last_failure import (
+    EventReplayBackfillJobResponseLastFailure,
+    check_event_replay_backfill_job_response_last_failure,
+)
 from ..models.event_replay_backfill_job_response_state import (
     EventReplayBackfillJobResponseState,
     check_event_replay_backfill_job_response_state,
@@ -43,6 +47,8 @@ class EventReplayBackfillJobResponse:
     """Always false; retained receipts are not an archive."""
     duplicate_policy: EventReplayBackfillJobResponseDuplicatePolicy
     state: EventReplayBackfillJobResponseState
+    """cancelled: ended by a cancel request. expired: no progress for 24 hours. failed: processing failed ten times
+    in a row; see last_failure."""
     scan_complete: bool
     """Whether the retained range has been fully examined."""
     progress: EventReplayBackfillProgress
@@ -59,6 +65,8 @@ class EventReplayBackfillJobResponse:
     """Fingerprint of the subscription declaration snapshotted when an application job was created."""
     earliest_retained_at: datetime.datetime | Unset = UNSET
     """Account-wide earliest event surviving when the job was created; does not establish complete coverage."""
+    last_failure: EventReplayBackfillJobResponseLastFailure | Unset = UNSET
+    """Class of the most recent processing failure while the job backs off or after it failed."""
     completed_at: datetime.datetime | Unset = UNSET
 
     def to_dict(self) -> dict[str, Any]:
@@ -102,6 +110,10 @@ class EventReplayBackfillJobResponse:
         if not isinstance(self.earliest_retained_at, Unset):
             earliest_retained_at = self.earliest_retained_at.isoformat()
 
+        last_failure: str | Unset = UNSET
+        if not isinstance(self.last_failure, Unset):
+            last_failure = self.last_failure
+
         completed_at: str | Unset = UNSET
         if not isinstance(self.completed_at, Unset):
             completed_at = self.completed_at.isoformat()
@@ -135,6 +147,8 @@ class EventReplayBackfillJobResponse:
             field_dict["subscription_revision"] = subscription_revision
         if earliest_retained_at is not UNSET:
             field_dict["earliest_retained_at"] = earliest_retained_at
+        if last_failure is not UNSET:
+            field_dict["last_failure"] = last_failure
         if completed_at is not UNSET:
             field_dict["completed_at"] = completed_at
 
@@ -191,6 +205,13 @@ class EventReplayBackfillJobResponse:
         else:
             earliest_retained_at = datetime.datetime.fromisoformat(_earliest_retained_at)
 
+        _last_failure = d.pop("last_failure", UNSET)
+        last_failure: EventReplayBackfillJobResponseLastFailure | Unset
+        if isinstance(_last_failure, Unset):
+            last_failure = UNSET
+        else:
+            last_failure = check_event_replay_backfill_job_response_last_failure(_last_failure)
+
         _completed_at = d.pop("completed_at", UNSET)
         completed_at: datetime.datetime | Unset
         if isinstance(_completed_at, Unset):
@@ -217,6 +238,7 @@ class EventReplayBackfillJobResponse:
             subscription_id=subscription_id,
             subscription_revision=subscription_revision,
             earliest_retained_at=earliest_retained_at,
+            last_failure=last_failure,
             completed_at=completed_at,
         )
 

@@ -217,6 +217,15 @@ func pgRouteMonitorReportScope(ctx context.Context, db sqlc.DBTX, owner RoutePol
 					}
 				}
 				r.ObservationAnchor = &anchor
+				lost, err := pgRouteTelemetryLost(ctx, db, now)
+				if err != nil {
+					return r, recovery, nil, err
+				}
+				if lost {
+					unavailable = routeMonitorTelemetryUnavailable
+				}
+			}
+			if unavailable == "" {
 				health := api.RouteHealthReport{AppID: r.AppID, DeploymentID: d.ID, StableDeploymentID: d.ID, CheckedAt: now, Routes: []api.RouteHealthFinding{}}
 				gate := api.RouteHealthGate{Routes: []api.RouteHealthRoute{}}
 				for _, f := range r.Routes {

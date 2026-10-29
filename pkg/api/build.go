@@ -82,6 +82,9 @@ func ValidGoCommand(name string) bool { return goCommandNameRE.MatchString(name)
 // BuildLayerCompressionZstd is the only BuildManifest.LayerCompression value.
 const BuildLayerCompressionZstd = "zstd"
 
+// BuildKitSnapshotterAuto is the only BuildManifest.BuildKitSnapshotter value.
+const BuildKitSnapshotterAuto = "auto"
+
 type BuildManifest struct {
 	BuildDependencyDigest string            `json:"build_dependency_digest,omitempty"`
 	PublicBuildURLs       map[string]string `json:"public_build_urls,omitempty"`
@@ -135,6 +138,12 @@ type BuildManifest struct {
 	// zstd (builderd's FAAS_BUILD_LAYER_ZSTD, ADR-20261028084018). An older
 	// guest ignores it and keeps gzip.
 	LayerCompression string `json:"layer_compression,omitempty"`
+	// BuildKitSnapshotter is "" (fuse-overlayfs, the default) or
+	// BuildKitSnapshotterAuto, which lets rootless BuildKit pick kernel
+	// overlayfs when the guest kernel allows it (builderd's
+	// FAAS_BUILD_KERNEL_OVERLAY, ADR-20261029105325). An older guest ignores
+	// it.
+	BuildKitSnapshotter string `json:"buildkit_snapshotter,omitempty"`
 	// KeepWarm leaves a successful builder guest alive in a host-controlled
 	// wait state so vmmd can capture a paused snapshot. Failed builds still
 	// power off immediately; the warm path is only a successful-build handoff.

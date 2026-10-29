@@ -11,6 +11,7 @@
     - restart faas-s3-gatewayd for seal domains
     - restart faas-schedd for seal domains
     - restart faas-apid for seal domains
+    - restart faas-apid-clone-worker for seal domains
     - daemon-reload for seal domains
 
 - name: seal_domains — try-restart faas-outboundd
@@ -56,3 +57,8 @@
   ansible.builtin.command: systemctl try-restart faas-apid.service  # noqa: command-instead-of-module
   changed_when: true
   listen: restart faas-apid for seal domains
+
+- name: seal_domains — try-restart faas-apid-clone-worker
+  ansible.builtin.command: systemctl try-restart faas-apid-clone-worker.service  # noqa: command-instead-of-module
+  changed_when: true
+  listen: restart faas-apid-clone-worker for seal domains
