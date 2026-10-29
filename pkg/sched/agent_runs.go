@@ -18,6 +18,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/agentrunproto"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 )
 
 // ErrAgentRunsDisabled means this schedd does not admit agent runs: its
@@ -25,15 +26,13 @@ import (
 var ErrAgentRunsDisabled = errors.New("sched: agent runs are not enabled on this schedd")
 
 // AgentRunBaseRuntime is the agent base's name in the runtime base key
-// space: imaged stages images/agent-base at BaseKeyForArch(AgentRunBaseRuntime,
-// arch), with the scan sidecar vmmd's admission gate reads (issue #299).
-const AgentRunBaseRuntime = "agent"
+// space (storagekey.AgentRunBaseRuntime).
+const AgentRunBaseRuntime = storagekey.AgentRunBaseRuntime
 
 // AgentRunLayerKeyForArch is where imaged publishes the platform agent
-// layer, drive1 holding only the agent marker (ADR-20261027090010 §2). The version
-// names the layer's content; a new layout takes a new key.
+// layer (storagekey.AgentRunLayerForArch, ADR-20261027090010 §2).
 func AgentRunLayerKeyForArch(arch string) string {
-	return "base/agent-layer-v1-" + arch + ".ext4"
+	return storagekey.AgentRunLayerForArch(arch)
 }
 
 // AgentRunConfig is how this schedd runs agents: the release-pinned agent

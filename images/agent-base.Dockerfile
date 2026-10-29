@@ -35,7 +35,7 @@ COPY --chmod=0755 images/agent-base/finish-install.sh /tmp/finish-install.sh
 RUN --mount=type=secret,id=proxy_ca,target=/etc/ssl/certs/ca-certificates.crt \
     apk upgrade --no-cache && \
     apk add --no-cache bash git python3 ripgrep libstdc++ libgcc && \
-    chmod 0755 /opt/gregale /opt/gregale/agents && \
+    chmod 0755 /opt/gregale /opt/gregale/agents /usr/share/faas && \
     cd /opt/gregale/agents && \
     NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt npm ci --omit=dev --no-audit --no-fund && \
     /tmp/finish-install.sh && \

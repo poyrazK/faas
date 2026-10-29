@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // gitHubPullRequestDelivery has the shape GitHub sends: the head SHA lives
@@ -134,6 +135,14 @@ func (r *recordingAutomationEvents) PublishAutomationEvent(_ context.Context, e 
 	return r.err
 }
 
+// newUnboundService is a Service whose repositories are not bound, so the
+// preview path ends at ErrNoBinding after any forwarding.
+func newUnboundService() *Service {
+	svc := NewService(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	svc.Bindings = &stubBindings{byRepo: map[string]state.GitHubBinding{}}
+	return svc
+}
+
 func TestHandleWebhookDeliveryForwardsPullRequests(t *testing.T) {
 	const deliveryID = "72D3162E-CC78-11E3-81AB-4C9367DC0958"
 	cases := []struct {
@@ -153,7 +162,7 @@ func TestHandleWebhookDeliveryForwardsPullRequests(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			svc := NewService(slog.New(slog.NewTextHandler(io.Discard, nil)))
+			svc := newUnboundService()
 			svc.AutomationEvents = tc.publisher
 			err := svc.HandleWebhookDelivery(context.Background(), WebhookDelivery{DeliveryID: deliveryID,
 				EventType: "pull_request", Payload: gitHubPullRequestDelivery(t, tc.action, nil)})
@@ -182,7 +191,7 @@ func TestHandleWebhookDeliveryForwardsPullRequests(t *testing.T) {
 }
 
 func TestHandleWebhookEventWithoutDeliveryIDForwardsNothing(t *testing.T) {
-	svc := NewService(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	svc := newUnboundService()
 	publisher := &recordingAutomationEvents{}
 	svc.AutomationEvents = publisher
 	_ = svc.HandleWebhookEvent(context.Background(), "pull_request", gitHubPullRequestDelivery(t, "opened", nil))

@@ -9,8 +9,8 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/rootfs"
-	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 )
 
 // AgentBaseRefEnv names the digest-pinned linux/amd64 agent-base image
@@ -50,11 +50,11 @@ func (h *Handler) EnsureAgentRunDrives(ctx context.Context, arch string, envLook
 	if arch != "amd64" {
 		return nil, errors.New("imaged: the agent base image requires amd64")
 	}
-	bases, err := h.EnsureBases(ctx, arch, []RuntimeBaseRef{{Runtime: sched.AgentRunBaseRuntime, Ref: ref, EnvOverride: AgentBaseRefEnv}}, envLookup)
+	bases, err := h.EnsureBases(ctx, arch, []RuntimeBaseRef{{Runtime: storagekey.AgentRunBaseRuntime, Ref: ref, EnvOverride: AgentBaseRefEnv}}, envLookup)
 	if err != nil {
 		return nil, err
 	}
-	if err := h.ensureAgentLayer(ctx, sched.AgentRunLayerKeyForArch(arch)); err != nil {
+	if err := h.ensureAgentLayer(ctx, storagekey.AgentRunLayerForArch(arch)); err != nil {
 		return nil, err
 	}
 	return bases, nil
