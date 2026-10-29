@@ -18038,5 +18038,14 @@
       "observed_at"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "runtime_secret_signatures",
+    "columns": [
+      "ciphertext_sha256",
+      "created_at",
+      "signature"
+    ],
+    "kind": "platform_configuration"
   }
 ]

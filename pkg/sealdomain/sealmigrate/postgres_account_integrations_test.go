@@ -48,6 +48,10 @@ func TestPostgresMigrateAccountIntegrations(t *testing.T) {
 		}
 	}
 
+	if _, err := store.CountAccountCloneValuesOffDomain(ctx, domain.Recipient().String()); err != nil {
+		t.Fatalf("count clone values off the domain: %v", err)
+	}
+
 	suffix := strconv.FormatInt(rand.Int64N(1<<40), 36)
 	account, err := store.CreateAccount(ctx, "account-integrations-"+suffix+"@example.com", api.PlanPro)
 	if err != nil {

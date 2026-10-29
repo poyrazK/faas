@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/routehealth"
 )
 
 type routeHealthNotificationState struct {
@@ -72,6 +73,11 @@ func routeHealthStatusTransition(previous routeHealthNotificationState, entry ap
 		next.State.Status, next.State.BlockedDecisionID = "aborted", ""
 		next.Event = AppWebhookEventRouteHealthAborted
 	case "blocked":
+		// A gateway lost evidence (ADR-20261028110044 amendment 1): the
+		// advance waits, but the customer's release is not held on it.
+		if routehealth.EvidenceLost(entry.Report) {
+			return next, nil
+		}
 		if state.Status == "clear" || state.Status == "blocked_unknown" && entry.Report.Status == "regressed" {
 			next.State.Status = "blocked_unknown"
 			if entry.Report.Status == "regressed" {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/jackc/pgerrcode"
@@ -312,44 +313,53 @@ func (s *PgStore) restoreEdgeRuleSetVersionOnce(ctx context.Context, appID strin
 }
 
 // A restore replaces every rule of the app, so it passes the same traffic
-// policy guard as rule writes (ADR-570). Route rules on either side change
-// the fleet's route view, which needs the global guard. The account lock
-// fences the app's rule writers, so the check under it is final.
+// policy guard as rule writes (ADR-570). The route patterns on either side
+// change the fleet's route view, so they take the route guard. The account
+// lock fences the app's rule writers, so the patterns read under it are final.
 func (s *PgStore) beginEdgeRuleRestore(ctx context.Context, appID string, version int) (pgx.Tx, string, error) {
 	account, err := sqlc.New().ReadAppTrafficAccount(ctx, s.pool, uuidToPgtype(appID))
 	if err != nil {
 		return nil, "", fmt.Errorf("state: read edge-rule restore owner: %w", mapErr(err))
 	}
-	globalRoutes, err := edgeRuleRestoreTouchesRoutes(ctx, s.pool, appID, version)
+	patterns, err := edgeRuleRestoreRoutePatterns(ctx, s.pool, appID, version)
 	if err != nil {
 		return nil, "", err
 	}
 	for {
-		tx, err := s.beginTrafficPolicyMutationWithRoutes(ctx, account, globalRoutes)
+		var tx pgx.Tx
+		if len(patterns) == 0 {
+			tx, err = s.beginTrafficPolicyMutationWithRoutes(ctx, account, false)
+		} else {
+			tx, err = s.beginRouteTrafficPolicyMutation(ctx, account, patterns)
+		}
 		if err != nil {
 			return nil, "", err
 		}
-		routes, err := edgeRuleRestoreTouchesRoutes(ctx, tx, appID, version)
-		if err == nil && (globalRoutes || !routes) {
+		locked, err := edgeRuleRestoreRoutePatterns(ctx, tx, appID, version)
+		if err == nil && slices.Equal(locked, patterns) {
 			return tx, account.String(), nil
 		}
 		_ = tx.Rollback(context.WithoutCancel(ctx))
 		if err != nil {
 			return nil, "", err
 		}
-		globalRoutes = true
+		patterns = locked
 	}
 }
 
-func edgeRuleRestoreTouchesRoutes(ctx context.Context, q edgeRuleSetVersionQuerier, appID string, version int) (bool, error) {
-	var routes bool
+// edgeRuleRestoreRoutePatterns lists the match hosts of the app's route rules
+// and of the version's, sorted and distinct.
+func edgeRuleRestoreRoutePatterns(ctx context.Context, q edgeRuleSetVersionQuerier, appID string, version int) ([]string, error) {
+	var patterns []string
 	if err := q.QueryRow(ctx, `
-		select exists(select 1 from edge_rules where app_id = $1 and kind = 'route')
-		    or exists(select 1 from edge_rule_set_versions v, jsonb_array_elements(v.rules) r
-		              where v.app_id = $1 and v.version = $2 and r->>'kind' = 'route')`,
+		select coalesce(array_agg(distinct pattern order by pattern), '{}') from (
+		    select match_host as pattern from edge_rules where app_id = $1 and kind = 'route'
+		    union all
+		    select r->>'match_host' from edge_rule_set_versions v, jsonb_array_elements(v.rules) r
+		    where v.app_id = $1 and v.version = $2 and r->>'kind' = 'route') routes`,
 		appID, version,
-	).Scan(&routes); err != nil {
-		return false, fmt.Errorf("state: read edge-rule restore route scope: %w", err)
+	).Scan(&patterns); err != nil {
+		return nil, fmt.Errorf("state: read edge-rule restore route patterns: %w", err)
 	}
-	return routes, nil
+	return patterns, nil
 }

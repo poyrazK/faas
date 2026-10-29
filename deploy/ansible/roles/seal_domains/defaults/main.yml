@@ -61,6 +61,22 @@ faas_seal_domain_runtime_binding_readers_verified: false
 # vmmd reads it at start.
 faas_seal_domain_runtime_binding_required: false
 
+# ADR 20261028161502 amendment 1: apid's runtime secret signing key pair,
+# operator-local files from `gregalectl runtime-secret signing-keygen`.
+# Control-plane hosts stage the private key (apid and its clone worker sign
+# every runtime secret they seal), compute hosts the public key (vmmd
+# refuses a runtime secret whose signature does not verify). Empty removes
+# them. A key rotation lists the old and new public keys in one file.
+faas_seal_domain_runtime_signing_key_src: ""
+faas_seal_domain_runtime_signing_pub_src: ""
+
+# Contract step: true makes vmmd refuse unsigned runtime secrets. Needs
+# faas_seal_domain_runtime_signing_pub_src. Set it only after every vmmd
+# reports faas_runtime_secret_signature_enforcement 1, apid has signed for a
+# while, and `gregalectl runtime-secret sign-existing` reports nothing left
+# to sign and nothing invalid. vmmd reads it at start.
+faas_seal_domain_runtime_signatures_required: false
+
 # Operator-local files from `gregalectl seal-domain init --domain source`.
 # Control-plane hosts stage both: githubd reads the identity, apid seals to
 # the recipient.

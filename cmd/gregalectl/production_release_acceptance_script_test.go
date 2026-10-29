@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/productcap"
 )
 
 // The production script must add verified deployments when a valid first
@@ -71,6 +73,7 @@ case "$1" in
     fi
     exit 0 ;;
   app)
+    printf '%s\n' "$*" >>"${TEST_APP_LOG:-/dev/null}"
     slug="$2"; shift 2
     maintenance=false; streaming=true; websocket=true; route_metrics=true; consumer_auth=optional
     refuse() {
@@ -122,6 +125,11 @@ case "$1 $2" in
       printf '{"ready":true,"nodes":[{"name":"fsn-2"},{"name":"fsn-3"}]}\n'; exit 0
     fi
     printf '{"ready":false,"nodes":[{"name":"fsn-2"},{"name":"fsn-3"}]}\n'; exit 3 ;;
+  'release-acceptance verify-node')
+    if [[ "${TEST_NODE_NEVER_READY:-}" != 1 && "$*" == *-fsn-2-2* ]]; then
+      printf '{"node":"fsn-2.faas","instance":true,"build":true,"ready":true}\n'; exit 0
+    fi
+    printf '{"node":"fsn-2.faas","instance":true,"build":false,"ready":false}\n'; exit 3 ;;
 esac
 exit 2
 `)
@@ -175,6 +183,7 @@ fi
 	deployLog := filepath.Join(dir, "deploys")
 	curlLog := filepath.Join(dir, "curls")
 	revokeLog := filepath.Join(dir, "revokes")
+	appLog := filepath.Join(dir, "app-policy")
 	script := filepath.Join("..", "..", "deploy", "scripts", "production-release-acceptance.sh")
 	cmd := exec.Command("bash", script)
 	cmd.Env = append(os.Environ(),
@@ -182,6 +191,7 @@ fi
 		"RELEASE_SHA="+strings.Repeat("a", 40), "RUN_ID=12345678", "ACTIVE_NODE_COUNT=2",
 		"GREGALE_BIN="+gregale, "GREGALECTL_BIN="+gregalectl,
 		"TEST_DEPLOY_LOG="+deployLog, "TEST_CURL_LOG="+curlLog, "TEST_REVOKE_LOG="+revokeLog,
+		"TEST_APP_LOG="+appLog,
 	)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -190,6 +200,11 @@ fi
 	if !strings.Contains(string(out), "production acceptance passed") {
 		t.Fatalf("success report missing: %s", out)
 	}
+	appCalls, err := os.ReadFile(appLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertAcceptancePolicyGuards(t, readRepoFile(t, "deploy", "scripts", "production-release-acceptance.sh"), string(appCalls))
 	deployed, err := os.ReadFile(deployLog)
 	if err != nil {
 		t.Fatal(err)
@@ -351,4 +366,156 @@ fi
 			t.Fatalf("infra-failed deploy attempts = %d, want 2: %s", got, deployed)
 		}
 	})
+
+	// The per-node canary (ACCEPTANCE_NODE) deploys until verify-node proves
+	// the node, skips the fleet gate, stays bounded, and fails on any failed
+	// deployment, revoking its token every time.
+	for _, tt := range []struct {
+		name, extraEnv, wantOutput, wantDeployed, notDeployed string
+		wantErr                                               bool
+	}{
+		{name: "node proven", wantOutput: "node canary passed: release=" + strings.Repeat("a", 40) + " node=fsn-2 deployments=2",
+			wantDeployed: "-fsn-2-2\n", notDeployed: "-a1\n"},
+		{name: "node never proven", extraEnv: "TEST_NODE_NEVER_READY=1", wantErr: true,
+			wantOutput: "node canary did not see fsn-2 serve and build", wantDeployed: "-fsn-2-3\n", notDeployed: "-fsn-2-4\n"},
+		{name: "deployment failed", extraEnv: "TEST_FAIL_SLUG_SUFFIX=-fsn-2-1", wantErr: true,
+			wantOutput: "node canary deployment for fsn-2 failed", wantDeployed: "-fsn-2-1\n", notDeployed: "-fsn-2-2\n"},
+	} {
+		t.Run("node canary "+tt.name, func(t *testing.T) {
+			log := filepath.Join(t.TempDir(), "deploys")
+			revokes := filepath.Join(t.TempDir(), "revokes")
+			cmd := exec.Command("bash", script)
+			cmd.Env = append(os.Environ(),
+				"PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"),
+				"RELEASE_SHA="+strings.Repeat("a", 40), "RUN_ID=12345678", "ACTIVE_NODE_COUNT=1",
+				"GREGALE_BIN="+gregale, "GREGALECTL_BIN="+gregalectl,
+				"TEST_DEPLOY_LOG="+log, "TEST_CURL_LOG="+filepath.Join(t.TempDir(), "curls"),
+				"TEST_REVOKE_LOG="+revokes, "ACCEPTANCE_NODE=fsn-2", "NODE_CANARY_MAX_DEPLOYMENTS=3",
+				tt.extraEnv,
+			)
+			out, err := cmd.CombinedOutput()
+			if (err != nil) != tt.wantErr || !strings.Contains(string(out), tt.wantOutput) {
+				t.Fatalf("err=%v wantErr=%v, want output %q:\n%s", err, tt.wantErr, tt.wantOutput, out)
+			}
+			deployed, _ := os.ReadFile(log)
+			if !strings.Contains(string(deployed), tt.wantDeployed) || strings.Contains(string(deployed), tt.notDeployed) {
+				t.Fatalf("deployments = %q, want %q and not %q", deployed, tt.wantDeployed, tt.notDeployed)
+			}
+			if _, err := os.Stat(revokes); err != nil {
+				t.Fatalf("node canary did not revoke its token: %v", err)
+			}
+		})
+	}
+}
+
+// acceptancePolicySettings maps each `gregale app` flag the acceptance script
+// passes to the app setting it turns on (capgate.AppSettings form), or "" for
+// a flag that only turns a setting off. A new flag in the script must be added
+// here, so its capability is checked below.
+var acceptancePolicySettings = map[string]string{
+	"--maintenance":                 "app.maintenance_mode",
+	"--no-maintenance":              "",
+	"--streaming-enabled":           "app.streaming_enabled",
+	"--no-streaming-enabled":        "",
+	"--websocket-enabled":           "app.websocket_enabled",
+	"--no-websocket":                "",
+	"--route-metrics":               "app.route_metrics_enabled",
+	"--no-route-metrics":            "",
+	"--consumer-auth-mode=required": "app.consumer_auth_mode=required",
+	"--consumer-auth-mode=optional": "app.consumer_auth_mode=optional",
+}
+
+// assertAcceptancePolicyGuards: rc.297, rc.302 and rc.303 failed production
+// acceptance on 403 capability_not_released, because the script toggled an
+// app setting a preview or internal capability had just come to own, and that
+// capability is off for the acceptance account by default
+// (ADR-20261023115741). Every setting the script turns on whose catalog owner
+// is off by default must sit behind `capability_released <owner>`, so a
+// catalog change that gates one fails here instead of in a release.
+func assertAcceptancePolicyGuards(t *testing.T, script, appCalls string) {
+	t.Helper()
+	catalog, err := productcap.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]productcap.Capability{}
+	owners := map[string]string{}
+	for _, capability := range catalog.Capabilities {
+		byID[capability.ID] = capability
+		for _, setting := range capability.Settings {
+			owners[setting] = capability.ID
+		}
+	}
+	offByDefault := func(id string) bool {
+		for seen := map[string]bool{}; id != "" && !seen[id]; id = byID[id].Parent {
+			seen[id] = true
+			if m := byID[id].Maturity; m == productcap.MaturityPreview || m == productcap.MaturityInternal {
+				return true
+			}
+		}
+		return false
+	}
+	checked := 0
+	for _, call := range strings.Split(strings.TrimSpace(appCalls), "\n") {
+		fields := strings.Fields(call)
+		for i := 0; i < len(fields); i++ {
+			flag := fields[i]
+			if !strings.HasPrefix(flag, "--") || flag == "--json" {
+				continue
+			}
+			if flag == "--consumer-auth-mode" && i+1 < len(fields) {
+				i++
+				flag += "=" + fields[i]
+			}
+			setting, known := acceptancePolicySettings[flag]
+			if !known {
+				t.Errorf("acceptance script passes `gregale app %s`; add it to acceptancePolicySettings", flag)
+				continue
+			}
+			if setting == "" {
+				continue
+			}
+			checked++
+			owner, owned := owners[setting]
+			if !owned {
+				field, _, _ := strings.Cut(setting, "=")
+				owner, owned = owners[field]
+			}
+			if owned && offByDefault(owner) && !strings.Contains(script, "capability_released "+owner) {
+				t.Errorf("acceptance script turns on %s, which %s owns and releases to no account by default; guard it with `if capability_released %s`", setting, owner, owner)
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("acceptance script turned on no app policy setting; the app call log is empty")
+	}
+}
+
+// TestProductionReleaseAcceptanceResolvesRetryBudgetGate: cd-platform pipes
+// the script to the control plane over `bash -s`, where the old relative
+// deploy/scripts path did not exist, so the shared retry-budget mode could
+// only fail after every deployment ran. It now fails before minting a token.
+func TestProductionReleaseAcceptanceResolvesRetryBudgetGate(t *testing.T) {
+	body := readRepoFile(t, "deploy", "scripts", "production-release-acceptance.sh")
+	dir := t.TempDir()
+	minted := filepath.Join(dir, "minted")
+	gregalectl := filepath.Join(dir, "gregalectl")
+	if err := os.WriteFile(gregalectl, []byte("#!/usr/bin/env bash\ntouch \""+minted+"\"\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("bash", "-s")
+	cmd.Dir = dir
+	cmd.Stdin = strings.NewReader(body)
+	cmd.Env = append(os.Environ(),
+		"RELEASE_SHA="+strings.Repeat("a", 40), "RUN_ID=12345678", "ACTIVE_NODE_COUNT=2",
+		"SHARED_RETRY_BUDGET_REQUIRED=true", "PROMETHEUS_URL=http://127.0.0.1:9095",
+		"GREGALE_BIN="+gregalectl, "GREGALECTL_BIN="+gregalectl,
+	)
+	out, err := cmd.CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "shared retry-budget gate is missing") {
+		t.Fatalf("piped script did not refuse the missing retry-budget gate: err=%v output=%s", err, out)
+	}
+	if _, err := os.Stat(minted); err == nil {
+		t.Fatal("the retry-budget gate was checked only after minting an acceptance token")
+	}
 }

@@ -291,6 +291,7 @@ func runSealDomainMigrate(args []string) error {
 	dsn := fs.String("pg-dsn", "", "PostgreSQL DSN (default: FAAS_PG_DSN, DATABASE_URL, or deploy env)")
 	dbEnv := fs.String("db-env", "", "systemd env file containing DATABASE_URL")
 	bindAccounts := fs.Bool("bind-accounts", false, "runtime only: re-seal every stored runtime secret bound to the account that owns it (ADR-20261023173624)")
+	runtimeSigningKey := fs.String("runtime-signing-key", "", "runtime only: apid's runtime secret signing key; signs what this re-seals (ADR 20261028161502)")
 	jsonOut := fs.Bool("json", false, "emit JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -299,6 +300,9 @@ func runSealDomainMigrate(args []string) error {
 	if err != nil {
 		return err
 	}
+	if *runtimeSigningKey != "" && d != sealdomain.Runtime {
+		return errors.New("--runtime-signing-key applies to --domain runtime only")
+	}
 	if *bindAccounts {
 		if d != sealdomain.Runtime {
 			return errors.New("--bind-accounts applies to --domain runtime only")
@@ -306,7 +310,7 @@ func runSealDomainMigrate(args []string) error {
 		if !*readersVerified {
 			return errors.New("bound runtime secrets open only on a vmmd that checks bindings, and the pass re-seals them to the runtime domain alone; pass --readers-verified once every vmmd runs a release that checks account bindings, reports faas_seal_domain_loaded{domain=\"runtime\"} 1, and the previous release left the rollback window")
 		}
-		return runRuntimeBindingPass(*dsn, *dbEnv, *dir, *fleetKey, *hostKey, *jsonOut || jsonOutput)
+		return runRuntimeBindingPass(*dsn, *dbEnv, *dir, *fleetKey, *hostKey, *runtimeSigningKey, *jsonOut || jsonOutput)
 	}
 	switch d {
 	case sealdomain.Outbound, sealdomain.Runtime, sealdomain.Source, sealdomain.Build, sealdomain.Edge, sealdomain.Alerting, sealdomain.Storage, sealdomain.Control, sealdomain.Delivery, sealdomain.Account:
@@ -328,6 +332,11 @@ func runSealDomainMigrate(args []string) error {
 		return fmt.Errorf("apply schema before seal-domain migration: %w", err)
 	}
 	store := state.NewPgStore(pool)
+	uninstall, err := installResealSigner(ctx, *runtimeSigningKey, store)
+	if err != nil {
+		return err
+	}
+	defer uninstall()
 	var report sealmigrate.MigrationReport
 	switch d {
 	case sealdomain.Build:
@@ -342,7 +351,7 @@ func runSealDomainMigrate(args []string) error {
 		report, err = migrateDomain(ctx, store, d, *dir, *fleetKey, *hostKey)
 	case sealdomain.Account:
 		if !*readersVerified {
-			return errors.New("re-sealed TOTP secrets, inbound webhook secrets, billing keys, workflow plans, PagerDuty acknowledgement secrets, GitLab, Slack and Linear credentials, product email values and managed realtime credentials no longer open with the fleet identity: an apid without the account identity cannot sign customers in with MFA; pass --readers-verified once every apid reports faas_seal_domain_loaded{domain=\"account\"} 1 and the previous release left the rollback window")
+			return errors.New("re-sealed TOTP secrets, inbound webhook secrets, billing keys, workflow plans, PagerDuty acknowledgement secrets, GitLab, Slack and Linear credentials, product email values and managed realtime credentials no longer open with the fleet identity: an apid without the account identity cannot sign customers in with MFA; pass --readers-verified once every apid reports faas_seal_domain_loaded{domain=\"account\"} 1, every clone worker logs the identity loaded, and the previous release left the rollback window")
 		}
 		report, err = migrateDomain(ctx, store, d, *dir, *fleetKey, *hostKey)
 	case sealdomain.Delivery:
@@ -405,7 +414,7 @@ func runSealDomainMigrate(args []string) error {
 // (ADR-20261023173624). Unlike the domain migration it needs no fleet
 // identity: once the runtime migration is complete the domain opens every
 // envelope, and the legacy identities are used only when present.
-func runRuntimeBindingPass(dsn, dbEnv, dir, fleetKey, hostKey string, jsonOut bool) error {
+func runRuntimeBindingPass(dsn, dbEnv, dir, fleetKey, hostKey, signingKey string, jsonOut bool) error {
 	pool, err := openFleetSealPool(dsn, dbEnv)
 	if err != nil {
 		return err
@@ -417,6 +426,11 @@ func runRuntimeBindingPass(dsn, dbEnv, dir, fleetKey, hostKey string, jsonOut bo
 		return fmt.Errorf("apply schema before the runtime binding pass: %w", err)
 	}
 	store := state.NewPgStore(pool)
+	uninstall, err := installResealSigner(ctx, signingKey, store)
+	if err != nil {
+		return err
+	}
+	defer uninstall()
 	domain, err := loadMigrationDomainIdentity(ctx, store, sealdomain.Runtime, dir)
 	if err != nil {
 		return err

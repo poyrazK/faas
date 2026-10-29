@@ -125,7 +125,9 @@ func ChoosePlacement(nodes []state.ComputeNode, usedMB map[string]int64, usedVCP
 // ADR-20261022184531: a node that answers its heartbeat but has proven it
 // cannot serve a wake is degraded. Placement chooses among the other nodes
 // first, and takes a degraded node only when none of them fits: a wake that
-// may be refused (and re-placed) beats a capacity refusal.
+// may be refused (and re-placed) beats a capacity refusal. A node whose vmmd
+// stopped reporting capacity is unavailable and placed the same way
+// (ADR-20261029085904).
 func choosePlacementWithCPU(nodes []state.ComputeNode, usedMB map[string]int64, usedVCPU, usedCPUMillicores map[string]int64, r Request) (Placement, error) {
 	if proven := withoutDegradedNodes(nodes); len(proven) < len(nodes) {
 		if placement, err := chooseAmongNodes(proven, usedMB, usedVCPU, usedCPUMillicores, r); err == nil {
@@ -138,7 +140,7 @@ func choosePlacementWithCPU(nodes []state.ComputeNode, usedMB map[string]int64, 
 func withoutDegradedNodes(nodes []state.ComputeNode) []state.ComputeNode {
 	proven := make([]state.ComputeNode, 0, len(nodes))
 	for _, n := range nodes {
-		if n.Readiness != state.NodeReadinessDegraded {
+		if n.Readiness != state.NodeReadinessDegraded && n.Readiness != state.NodeReadinessUnavailable {
 			proven = append(proven, n)
 		}
 	}
