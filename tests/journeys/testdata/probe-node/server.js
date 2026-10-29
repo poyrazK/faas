@@ -82,6 +82,38 @@ const egressTargets = {
   smtp_587: ["smtp.gmail.com", 587],
 };
 
+// 169.254.169.254:80 is guest-init's own metadata proxy inside every Gregale
+// guest (guest/init/metadata_port.go), so a TCP connect there always succeeds
+// and proves nothing. A cloud metadata service is told apart by its API: the
+// guest proxy answers 404 to these paths, while GCP (with Metadata-Flavor)
+// and AWS (401 when IMDSv2 is enforced) answer otherwise. Only directory
+// listings are requested, never credentials.
+const metadataPaths = [
+  ["/computeMetadata/v1/", { "Metadata-Flavor": "Google" }],
+  ["/latest/meta-data/", {}],
+];
+
+function probeMetadata() {
+  const started = Date.now();
+  const ask = ([path, headers]) =>
+    new Promise((resolve) => {
+      const req = http.get({ host: "169.254.169.254", port: 80, path, headers, timeout: 3000 }, (res) => {
+        res.resume();
+        resolve({ path, status: res.statusCode });
+      });
+      req.once("timeout", () => req.destroy(new Error("timeout")));
+      req.once("error", (err) => resolve({ path, error: err.message === "timeout" ? "timeout" : err.code || String(err) }));
+    });
+  return Promise.all(metadataPaths.map(ask)).then((answers) => {
+    const cloud = answers.find((a) => a.status !== undefined && a.status !== 404);
+    return {
+      connected: Boolean(cloud),
+      error: cloud ? null : answers.map((a) => `${a.path} ${a.status ?? a.error}`).join("; "),
+      ms: Date.now() - started,
+    };
+  });
+}
+
 function tryConnect(host, port) {
   return new Promise((resolve) => {
     const started = Date.now();
@@ -153,7 +185,7 @@ const server = http.createServer((req, res) => {
       return json(res, 200, { hits: cronHits });
     case "/egress": {
       const names = Object.keys(egressTargets);
-      Promise.all(names.map((n) => tryConnect(...egressTargets[n]))).then((results) => {
+      Promise.all(names.map((n) => (n === "metadata" ? probeMetadata() : tryConnect(...egressTargets[n])))).then((results) => {
         const out = {};
         names.forEach((n, i) => {
           out[n] = { target: egressTargets[n].join(":"), ...results[i] };
