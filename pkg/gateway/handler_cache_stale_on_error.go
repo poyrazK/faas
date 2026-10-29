@@ -119,7 +119,7 @@ func (h *Handler) serveStaleWhileWaking(w http.ResponseWriter, r *http.Request, 
 		return false, ""
 	}
 	for k, vs := range entry.header {
-		if isHopByHopHeader(k) {
+		if isHopByHopHeader(k) || cachedHeaderSuperseded(w, k) {
 			continue
 		}
 		for _, v := range vs {
@@ -341,7 +341,7 @@ func (h *Handler) tryServeStaleOnWakeError(w http.ResponseWriter, r *http.Reques
 	// handler_apply_edge_rule_cache.go; the only differences
 	// are the Warning header and the metrics outcome string.
 	for k, vs := range entry.header {
-		if isHopByHopHeader(k) {
+		if isHopByHopHeader(k) || cachedHeaderSuperseded(w, k) {
 			continue
 		}
 		for _, v := range vs {
