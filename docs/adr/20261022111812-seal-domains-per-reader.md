@@ -719,9 +719,11 @@ waits for a release after every environment has contracted.
 `storage` contracts the same way, through
 `faas_seal_domain_storage_contracted`. `--check` takes `--domain storage`.
 
-- **s3-gatewayd drops two identities.** Its base unit loads both the fleet
-  and the host identity, and the contracted drop-in resets both and unsets
-  `FAAS_HOST_AGE_IDENTITY_PATH`. The role's proof checks that neither is
+- **s3-gatewayd drops three identities.** Its base unit loads both the fleet
+  and the host identity, and the `optional_credentials` role projects
+  `host.age.previous` in a `40-` drop-in that sorts before the reader's. The
+  contracted drop-in resets all three and unsets
+  `FAAS_HOST_AGE_IDENTITY_PATH`, and the role's proof checks that none is
   left in its credentials directory.
 - **s3-gatewayd starts on the domain alone.** It used to require
   `FAAS_HOST_AGE_IDENTITY_PATH`. Now, with the storage domain staged, an
@@ -733,6 +735,33 @@ waits for a release after every environment has contracted.
   rollback past it.
 - Revoked credentials and expired signed URLs are neither re-sealed nor
   counted, as in the migration: they no longer authenticate.
+
+## Implemented: the alerting contract step
+
+`alerting` contracts the same way, through
+`faas_seal_domain_alerting_contracted`, and drops the same three identities
+from meterd.
+
+- **meterd runs its alert evaluator on the domain alone.** Without
+  `FAAS_HOST_AGE_IDENTITY_PATH` it used to skip the evaluator unless
+  Prometheus was configured, and report it disabled. With the alerting
+  domain staged, the evaluator now opens with the domain identity, which
+  also keeps `meterd_alert_evaluator_enabled` at 1. An older meterd does
+  neither, so an environment contracts only once its previous release
+  carries this one.
+- **Open incidents' key copies count.** An MCP readiness incident copies its
+  route's sealed key into `delivery_routing` when it opens. Delivery uses
+  that copy when the route names a receiver the current policy no longer
+  does, and the migration cannot re-seal it in place. `--check` and the
+  migration list the copies of incidents delivery may still read: those not
+  resolved, and those with an event still to deliver. The ones that open
+  with a legacy identity and not with the domain are reported as skipped.
+  The check fails while any are left, and they clear as the incidents
+  resolve. A copy that still opens with the domain does not block, even if
+  the fleet key opens it too.
+- **The migrate summary names each domain's leftovers:** clone values for
+  `account`, incident copies for `alerting`, and application standards for
+  `edge`. Before, every domain's summary showed the `edge` reason.
 
 ## CD and node join stage the domain keys
 

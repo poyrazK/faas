@@ -5683,6 +5683,9 @@ type Querier interface {
 	// All hostname reservations, including inactive/deleted surfaces. Discovery
 	// transfers only identities and routing eligibility; no challenge or cert data.
 	ReadTrafficBindingClaims(ctx context.Context, db DBTX, arg ReadTrafficBindingClaimsParams) (ReadTrafficBindingClaimsRow, error)
+	// A rule-only traffic policy write holds no lock on the fleet capacity policy
+	// unless one of its statements fired a capacity trigger (ADR-20261029150627).
+	ReadTrafficCapacityLockHeld(ctx context.Context, db DBTX) (bool, error)
 	ReadTrafficDeletionAccountStatus(ctx context.Context, db DBTX, accountID pgtype.UUID) (string, error)
 	ReadTrafficDeploymentStatus(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (string, error)
 	// Secret-free binding metadata only, bounded before transfer. Unverified and
@@ -6699,7 +6702,10 @@ type Querier interface {
 	TouchCustomerOperationWorkflowStep(ctx context.Context, db DBTX, arg TouchCustomerOperationWorkflowStepParams) error
 	TouchEdgeListenerHeartbeat(ctx context.Context, db DBTX, name string) error
 	TouchEnvironmentGitOpsIntent(ctx context.Context, db DBTX, sourceID pgtype.UUID) error
-	TouchKeyLastUsed(ctx context.Context, db DBTX, id pgtype.UUID) error
+	// An active, non-admin mcp-login key also slides (ADR-20261028205920): use
+	// extends it to idle_seconds from now, never past max_age_seconds after it was
+	// created, and never shortens it.
+	TouchKeyLastUsed(ctx context.Context, db DBTX, arg TouchKeyLastUsedParams) error
 	TouchProjectSubmission(ctx context.Context, db DBTX, arg TouchProjectSubmissionParams) error
 	// Best-effort, fire-and-forget. Allowed on revoked rows (observability
 	// signal only; not authorization). pgx interface returns nothing.

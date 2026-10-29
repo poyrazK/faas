@@ -85647,6 +85647,20 @@ func (q *Queries) ReadTrafficBindingClaims(ctx context.Context, db DBTX, arg Rea
 	return i, err
 }
 
+const readTrafficCapacityLockHeld = `-- name: ReadTrafficCapacityLockHeld :one
+SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_locks WHERE pid = pg_backend_pid() AND locktype = 'relation'
+    AND relation = 'service_capacity_policy'::regclass AND mode <> 'AccessShareLock')::boolean AS held
+`
+
+// A rule-only traffic policy write holds no lock on the fleet capacity policy
+// unless one of its statements fired a capacity trigger (ADR-20261029150627).
+func (q *Queries) ReadTrafficCapacityLockHeld(ctx context.Context, db DBTX) (bool, error) {
+	row := db.QueryRow(ctx, readTrafficCapacityLockHeld)
+	var held bool
+	err := row.Scan(&held)
+	return held, err
+}
+
 const readTrafficDeletionAccountStatus = `-- name: ReadTrafficDeletionAccountStatus :one
 SELECT status FROM accounts WHERE id=$1::uuid
 `
@@ -99665,11 +99679,32 @@ func (q *Queries) TouchEnvironmentGitOpsIntent(ctx context.Context, db DBTX, sou
 }
 
 const touchKeyLastUsed = `-- name: TouchKeyLastUsed :exec
-update api_keys set last_used_at = now() where id = $1
+update api_keys set last_used_at = now(),
+    expires_at = case
+        when label = $1::text and status = 'active' and expires_at is not null and not ('admin' = any(scopes))
+        then greatest(expires_at, least(now() + make_interval(secs => $2::double precision), created_at + make_interval(secs => $3::double precision)))
+        else expires_at
+    end
+where id = $4
 `
 
-func (q *Queries) TouchKeyLastUsed(ctx context.Context, db DBTX, id pgtype.UUID) error {
-	_, err := db.Exec(ctx, touchKeyLastUsed, id)
+type TouchKeyLastUsedParams struct {
+	McpLoginLabel string
+	IdleSeconds   float64
+	MaxAgeSeconds float64
+	ID            pgtype.UUID
+}
+
+// An active, non-admin mcp-login key also slides (ADR-20261028205920): use
+// extends it to idle_seconds from now, never past max_age_seconds after it was
+// created, and never shortens it.
+func (q *Queries) TouchKeyLastUsed(ctx context.Context, db DBTX, arg TouchKeyLastUsedParams) error {
+	_, err := db.Exec(ctx, touchKeyLastUsed,
+		arg.McpLoginLabel,
+		arg.IdleSeconds,
+		arg.MaxAgeSeconds,
+		arg.ID,
+	)
 	return err
 }
 
