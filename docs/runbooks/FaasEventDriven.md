@@ -87,9 +87,10 @@ Sweeps finish, but the p95 takes longer than 30 seconds. Events arrive late.
 
 1. Break the sweep down by its database work: the recipient claim, adoption
    claim, recovery and backfill queries appear in `pg_stat_statements`.
-2. A large backlog of due recipients after an outage drains at the sweep
-   budget; check `schedd_event_delivery_capacity_waiting` and the oldest
-   pending age.
+2. A large backlog of due recipients after an outage drains pass after pass
+   (`schedd_loop_work_total{kind="event_fanout",outcome="rerun"}` rises);
+   each pass is still one sample here, so a slow p95 means slow passes. Check
+   `schedd_event_delivery_capacity_waiting` and the oldest pending age.
 3. Many running recovery or backfill jobs slow every sweep; list an
    account's with `gregale events recovery-list` and pause the largest
    (`gregale events recovery-pause`).
