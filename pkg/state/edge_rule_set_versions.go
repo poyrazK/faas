@@ -328,7 +328,7 @@ func (s *PgStore) beginEdgeRuleRestore(ctx context.Context, appID string, versio
 	for {
 		var tx pgx.Tx
 		if len(patterns) == 0 {
-			tx, err = s.beginTrafficPolicyMutationWithRoutes(ctx, account, false)
+			tx, err = s.beginRuleOnlyTrafficPolicyMutation(ctx, account)
 		} else {
 			tx, err = s.beginRouteTrafficPolicyMutation(ctx, account, patterns)
 		}

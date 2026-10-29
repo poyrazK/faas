@@ -5698,6 +5698,9 @@ type Querier interface {
 	// All hostname reservations, including inactive/deleted surfaces. Discovery
 	// transfers only identities and routing eligibility; no challenge or cert data.
 	ReadTrafficBindingClaims(ctx context.Context, db DBTX, arg ReadTrafficBindingClaimsParams) (ReadTrafficBindingClaimsRow, error)
+	// A rule-only traffic policy write holds no lock on the fleet capacity policy
+	// unless one of its statements fired a capacity trigger (ADR-20261029150627).
+	ReadTrafficCapacityLockHeld(ctx context.Context, db DBTX) (bool, error)
 	ReadTrafficDeletionAccountStatus(ctx context.Context, db DBTX, accountID pgtype.UUID) (string, error)
 	ReadTrafficDeploymentStatus(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (string, error)
 	// Secret-free binding metadata only, bounded before transfer. Unverified and
