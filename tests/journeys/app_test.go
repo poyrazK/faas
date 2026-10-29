@@ -294,13 +294,16 @@ func TestMaintenanceAndAccess(t *testing.T) {
 	})
 	s.check("ip_allowlist", func(t *testing.T) {
 		// TEST-NET-1 (RFC 5737) never contains this machine, so the edge
-		// must refuse it; the all-addresses range must admit it again.
+		// must refuse it; the halves of both address families must admit
+		// it again (a /0 is refused as a default route).
 		tg.ok(t, time.Minute, "app", slug, "--public-auth", "ip_allowlist", "--ip-allowlist", "192.0.2.0/24")
 		eventually(t, "request from outside the allowlist refused", time.Minute, 2*time.Second, func() (bool, string) {
 			r := get(base + "/")
 			return r.status == http.StatusForbidden || r.status == http.StatusUnauthorized, r.String()
 		})
-		tg.ok(t, time.Minute, "app", slug, "--public-auth", "ip_allowlist", "--ip-allowlist", "0.0.0.0/0")
+		tg.ok(t, time.Minute, "app", slug, "--public-auth", "ip_allowlist",
+			"--ip-allowlist", "0.0.0.0/1", "--ip-allowlist", "128.0.0.0/1",
+			"--ip-allowlist", "::/1", "--ip-allowlist", "8000::/1")
 		expectVersion(t, base, "v1", time.Minute)
 		tg.ok(t, time.Minute, "app", slug, "--public-auth", "open")
 		expectVersion(t, base, "v1", time.Minute)
