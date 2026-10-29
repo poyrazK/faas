@@ -33,10 +33,12 @@ const (
 	Account  Domain = "account"
 
 	// Dedicated identities that predate the registry (ADR-1737, ADR
-	// 20261016151947). They are listed so every sealed column has an owner.
+	// 20261016151947, ADR-1591). They are listed so every sealed column has
+	// an owner.
 	Mail             Domain = "mail"
 	MailVerification Domain = "mail-verification"
 	LiveQuery        Domain = "livequery"
+	Pipeline         Domain = "pipeline"
 )
 
 // Node roles, as pkg/daemonunitspec names them.
@@ -158,8 +160,9 @@ var registry = []Spec{
 	// apid seals and opens the TOTP secrets, inbound webhook secrets,
 	// billing keys, workflow plans, PagerDuty acknowledgement secrets,
 	// GitLab, Slack and Linear credentials, product email values and managed
-	// realtime credentials through the domain; the data pipeline and project
-	// clone columns stay on the fleet key until their slice.
+	// realtime credentials through the domain; the project clone columns
+	// stay on the fleet key until their slice. Data pipeline values were
+	// never on the fleet key: they have their own identity (Pipeline).
 	{Domain: Account, Readers: []string{"apid", "apid-clone-worker", "apid-data-pipeline-worker"}, Roles: cpOnly, Wired: true, Columns: join(
 		cols("accounts", "mfa_secret_encrypted"),
 		// apid seals a managed workflow's plan and its workflow worker
@@ -178,8 +181,6 @@ var registry = []Spec{
 		cols("managed_realtime_push_devices", "sealed"),
 		cols("managed_realtime_push_providers", "sealed"),
 		cols("mcp_readiness_pagerduty_acknowledgements", "signing_secret_sealed"),
-		cols("data_pipeline_alerts", "ciphertext"),
-		cols("data_pipeline_connections", "ciphertext"),
 		cols("product_control_email_deliveries", "recipient_sealed", "unsubscribe_sealed"),
 		cols("product_control_email_subscriptions", "grant_sealed", "pause_recipient_sealed"),
 		cols("project_environment_clone_checkpoint_pg_connection_values", "ciphertext"),
@@ -206,6 +207,14 @@ var registry = []Spec{
 	{Domain: LiveQuery, Readers: []string{"livequeryd"}, Roles: cpOnly, Dedicated: true, File: "/etc/faas/secrets/livequeryd/keys.age", Columns: join(
 		cols("managed_postgres_live_keys", "sealed_secret"),
 		cols("managed_postgres_live_logins", "sealed_login"),
+	)},
+	// ADR-1591: apid seals data pipeline credentials and alert targets to
+	// the pipeline recipient (apid.toml [data_pipelines] recipient_path) and
+	// only the pipeline workers hold the identity (identity_path; this is
+	// its documented location).
+	{Domain: Pipeline, Readers: []string{"apid-data-pipeline-worker", "apid-data-pipeline-alert-worker"}, Roles: cpOnly, Dedicated: true, File: "/etc/faas/secrets/pipeline.age", Columns: join(
+		cols("data_pipeline_alerts", "ciphertext"),
+		cols("data_pipeline_connections", "ciphertext"),
 	)},
 }
 

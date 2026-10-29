@@ -19,11 +19,11 @@ func TestParseGrypeIdentity(t *testing.T) {
 		name    string
 		version []byte
 		status  string
-		want    scannerIdentity
+		want    installedScanner
 		wantErr bool
 	}{
 		{name: "valid", version: version, status: `{"schemaVersion":"v6.1.10","built":"2026-10-28T06:23:30Z","valid":true}`,
-			want: scannerIdentity{Version: "0.116.0", DBVersion: "v6.1.10", DBBuiltAt: "2026-10-28T06:23:30Z"}},
+			want: installedScanner{Version: "0.116.0", DBVersion: "v6.1.10", DBBuiltAt: "2026-10-28T06:23:30Z"}},
 		{name: "invalid database", version: version, status: `{"schemaVersion":"v6.1.10","built":"2026-10-28T06:23:30Z","valid":false}`, wantErr: true},
 		{name: "validity missing", version: version, status: `{"schemaVersion":"v6.1.10","built":"2026-10-28T06:23:30Z"}`, wantErr: true},
 		{name: "no build time", version: version, status: `{"schemaVersion":"v6.1.10","valid":true}`, wantErr: true},
@@ -65,7 +65,7 @@ func TestScannerIdentityMatches(t *testing.T) {
 			}
 		})
 	}
-	if (scannerIdentity{}).matches("0.116.0", "v6.1.10", "2026-10-28T06:23:30Z") {
+	if (installedScanner{}).matches("0.116.0", "v6.1.10", "2026-10-28T06:23:30Z") {
 		t.Fatal("an empty identity matched")
 	}
 }
@@ -76,8 +76,8 @@ func TestCurrentScannerIdentityCachesAndFailsClosed(t *testing.T) {
 		t.Fatalf("no probe should mean no identity: %v", err)
 	}
 	calls := 0
-	want := scannerIdentity{Version: "0.116.0", DBVersion: "v6.1.10", DBBuiltAt: "2026-10-28T06:23:30Z"}
-	h.WithScannerIdentity(func(context.Context) (scannerIdentity, error) {
+	want := installedScanner{Version: "0.116.0", DBVersion: "v6.1.10", DBBuiltAt: "2026-10-28T06:23:30Z"}
+	h.WithScannerIdentity(func(context.Context) (installedScanner, error) {
 		calls++
 		return want, nil
 	})
@@ -103,8 +103,8 @@ func TestCurrentScannerIdentityCachesAndFailsClosed(t *testing.T) {
 	if _, ok := h.scannerIdentityCache.get(time.Now()); ok {
 		t.Fatal("unparsable scan metadata kept the cached identity")
 	}
-	failing := (&Handler{}).WithScannerIdentity(func(context.Context) (scannerIdentity, error) {
-		return scannerIdentity{}, errors.New("grype missing")
+	failing := (&Handler{}).WithScannerIdentity(func(context.Context) (installedScanner, error) {
+		return installedScanner{}, errors.New("grype missing")
 	})
 	if _, err := failing.currentScannerIdentity(t.Context()); err == nil {
 		t.Fatal("probe error became an identity")
@@ -113,8 +113,8 @@ func TestCurrentScannerIdentityCachesAndFailsClosed(t *testing.T) {
 
 func TestScanEvidenceCurrent(t *testing.T) {
 	built := "2026-10-28T06:23:30Z"
-	h := (&Handler{}).WithScannerIdentity(func(context.Context) (scannerIdentity, error) {
-		return scannerIdentity{Version: "0.116.0", DBVersion: "v6.1.10", DBBuiltAt: built}, nil
+	h := (&Handler{}).WithScannerIdentity(func(context.Context) (installedScanner, error) {
+		return installedScanner{Version: "0.116.0", DBVersion: "v6.1.10", DBBuiltAt: built}, nil
 	})
 	evidence := func(t *testing.T, mutate func(*ScanResult)) []byte {
 		t.Helper()
@@ -165,7 +165,7 @@ func TestRefreshScannerDBUpdatesAndForgetsTheIdentity(t *testing.T) {
 			updates++
 			return updateErr
 		})
-		h.scannerIdentityCache.set(scannerIdentity{Version: "0.116.0", DBVersion: "v6.1.10", DBBuiltAt: "2026-10-28T06:23:30Z"}, time.Now())
+		h.scannerIdentityCache.set(installedScanner{Version: "0.116.0", DBVersion: "v6.1.10", DBBuiltAt: "2026-10-28T06:23:30Z"}, time.Now())
 		h.refreshScannerDB(t.Context())
 		if updates != 1 {
 			t.Fatalf("updater ran %d times, want 1", updates)
