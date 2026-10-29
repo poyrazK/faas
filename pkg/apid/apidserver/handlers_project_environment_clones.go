@@ -63,7 +63,11 @@ func (s *server) fullEnvironmentClonesOffProblem(ctx context.Context, key string
 	if key != runtimeConfigFullEnvironmentClones {
 		return nil
 	}
-	if enabled, err := runtimeconfig.Bool(value); err != nil || enabled {
+	enabled, err := runtimeconfig.Bool(value)
+	if err != nil {
+		return api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid configuration value", err.Error())
+	}
+	if enabled {
 		return nil
 	}
 	if s.runtimeBool(runtimeConfigFullEnvironmentCloneAdmission, false) {
