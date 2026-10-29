@@ -19044,7 +19044,7 @@ func scanComputeNode(row pgx.Row) (ComputeNode, error) {
 		&n.ReleaseID, &n.ManifestHash, &n.HostCertificate, &n.CertFingerprint,
 		&n.Role, &n.Generation, &n.Lifecycle, &n.LifecycleGeneration,
 		&n.Readiness, &n.ReadinessReason,
-		&n.CPUTemplate, &n.CPUModel); err != nil {
+		&n.CPUTemplate, &n.CPUModel, &n.WakeBreakerOpenUntil, &n.WakeBreakerReason); err != nil {
 		return ComputeNode{}, mapErr(err)
 	}
 	return n, nil
@@ -19057,7 +19057,8 @@ func (s *pgCore) ActiveComputeNodes(ctx context.Context) ([]ComputeNode, error) 
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
 		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		       lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model
+		       lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model,
+		       wake_breaker_open_until, wake_breaker_reason
 		  from compute_nodes
 		 where active = true
 		 order by name
@@ -19089,7 +19090,8 @@ func (s *PgStore) ListAllComputeNodes(ctx context.Context) ([]ComputeNode, error
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
 		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		       lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model
+		       lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model,
+		       wake_breaker_open_until, wake_breaker_reason
 		  from compute_nodes
 		 order by name
 	`)
@@ -19115,7 +19117,8 @@ func (s *pgCore) ComputeNodeByID(ctx context.Context, id string) (ComputeNode, e
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
 		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		       lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model
+		       lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model,
+		       wake_breaker_open_until, wake_breaker_reason
 		  from compute_nodes
 		 where id = $1
 	`, id)
@@ -19133,7 +19136,8 @@ func (s *PgStore) ComputeNodeByName(ctx context.Context, name string) (ComputeNo
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
 		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		       lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model
+		       lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model,
+		       wake_breaker_open_until, wake_breaker_reason
 		  from compute_nodes
 		 where name = $1
 	`, name)
@@ -19348,6 +19352,33 @@ func (s *PgStore) SetComputeNodeReadiness(ctx context.Context, nodeID string, re
 	`, nodeID, string(readiness), reason)
 	if err != nil {
 		return false, fmt.Errorf("state: set compute_node %s readiness: %w", nodeID, err)
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
+// OpenComputeNodeWakeBreaker implements ComputeNodeWakeBreakerStore.
+func (s *PgStore) OpenComputeNodeWakeBreaker(ctx context.Context, nodeID string, until time.Time, reason string) error {
+	if _, err := s.pool.Exec(ctx, `
+		update compute_nodes
+		   set wake_breaker_open_until = $2, wake_breaker_reason = nullif($3, '')
+		 where id = $1
+	`, nodeID, until, reason); err != nil {
+		return fmt.Errorf("state: open compute_node %s wake breaker: %w", nodeID, err)
+	}
+	return nil
+}
+
+// CloseComputeNodeWakeBreaker implements ComputeNodeWakeBreakerStore. It
+// matches only a set breaker, so closing a closed one fires no
+// compute_node_changed.
+func (s *PgStore) CloseComputeNodeWakeBreaker(ctx context.Context, nodeID string) (bool, error) {
+	tag, err := s.pool.Exec(ctx, `
+		update compute_nodes
+		   set wake_breaker_open_until = null, wake_breaker_reason = null
+		 where id = $1 and wake_breaker_open_until is not null
+	`, nodeID)
+	if err != nil {
+		return false, fmt.Errorf("state: close compute_node %s wake breaker: %w", nodeID, err)
 	}
 	return tag.RowsAffected() > 0, nil
 }
@@ -19819,7 +19850,8 @@ func (s *PgStore) CreateComputeNode(ctx context.Context, node ComputeNode) (Comp
 		          region, zone, schedd_target_url, gateway_target_url,
 		          public_ip, public_ip_set_at,
 		          release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		          lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model
+		          lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model,
+		          wake_breaker_open_until, wake_breaker_reason
 	`, node.Name, node.TargetURL, node.OverlayIP, node.VPCPUs, node.MemMB, node.MaxConcurrency,
 		node.AdmissionCeilingMB, node.VCPUBudget, string(lifecycle),
 		node.Region, node.Zone, node.GatewayTargetURL,
@@ -19903,7 +19935,8 @@ func (s *PgStore) UpsertComputeNode(ctx context.Context, node ComputeNode) (Comp
 		          region, zone, schedd_target_url, gateway_target_url,
 		          public_ip, public_ip_set_at,
 		          release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		          lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model
+		          lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model,
+		          wake_breaker_open_until, wake_breaker_reason
 	`, node.Name, node.TargetURL, node.OverlayIP, node.VPCPUs, node.MemMB, node.MaxConcurrency,
 		node.AdmissionCeilingMB, node.VCPUBudget,
 		node.Region, node.Zone, node.GatewayTargetURL,
@@ -19982,7 +20015,8 @@ func (s *PgStore) UpsertComputeNodeFromOperator(ctx context.Context, node Comput
 		          region, zone, schedd_target_url, gateway_target_url,
 		          public_ip, public_ip_set_at,
 		          release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		          lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model
+		          lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model,
+		          wake_breaker_open_until, wake_breaker_reason
 	`, node.Name, node.TargetURL, node.VPCPUs, node.MemMB, node.MaxConcurrency,
 		node.AdmissionCeilingMB, vcpuBudget, lifecycle,
 		node.Region, node.Zone, node.ScheddTargetURL, node.GatewayTargetURL,
@@ -20105,7 +20139,8 @@ func (s *PgStore) UpsertComputeNodeFromVmmd(ctx context.Context, node ComputeNod
 		          region, zone, schedd_target_url, gateway_target_url,
 		          public_ip, public_ip_set_at,
 		          release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		          lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model
+		          lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model,
+		          wake_breaker_open_until, wake_breaker_reason
 	`, node.Name, node.TargetURL, node.OverlayIP, node.VPCPUs, node.MemMB, node.MaxConcurrency,
 		node.AdmissionCeilingMB, node.VCPUBudget,
 		node.Region, node.Zone, node.ScheddTargetURL, node.GatewayTargetURL,
@@ -20366,7 +20401,8 @@ func (s *PgStore) ListComputeNodes(ctx context.Context, includeInactive bool) ([
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
 		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		       lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model
+		       lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model,
+		       wake_breaker_open_until, wake_breaker_reason
 		  from compute_nodes
 	`
 	if !includeInactive {
@@ -20402,7 +20438,8 @@ func (s *PgStore) ListComputeNodesPage(ctx context.Context, includeInactive bool
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
 		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		       lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model
+		       lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model,
+		       wake_breaker_open_until, wake_breaker_reason
 		  from compute_nodes
 	`
 	if !includeInactive {
