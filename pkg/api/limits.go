@@ -6578,6 +6578,23 @@ const (
 	// QuietPauseSampleMaxAgeMillis is how old the instance stats sample of
 	// quiet-paused instances may be before admission counts every booking.
 	QuietPauseSampleMaxAgeMillis = 2000
+	// MeasuredCPUMinChargePercent is the least share of its CPU booking
+	// measured CPU admission (ADR 20261029151111) charges a measured
+	// instance, so an idle one keeps room for its next request.
+	// MeasuredCPUMinHistorySeconds is how long an instance's CPU history
+	// must span before admission charges it by measurement instead of its
+	// booking. Measured CPU uses MeasuredChargeWindowSeconds,
+	// MeasuredChargeSampleSeconds and MeasuredChargePercentile for its
+	// window and MeasuredAdmissionSampleMaxAgeMillis for freshness.
+	MeasuredCPUMinChargePercent  = 10
+	MeasuredCPUMinHistorySeconds = 10
+	// MeasuredCPUMaxOvercommitPercent caps a node's booked vCPU and CPU
+	// millicores at this share of its budget once measured CPU admission is
+	// on, in place of QuietPauseMaxVCPUOvercommitPercent. In the ADR's
+	// simulation of a 16-thread node, 300% held quiet pause and measured
+	// admission to 606 apps; at 700% measured CPU binds first, at 1,122. The
+	// durable guard bounds every discount by this cap.
+	MeasuredCPUMaxOvercommitPercent = 700
 	// QuietPauseLedgerFlushSeconds is how often schedd writes a node's quiet
 	// pauses and watermark to the pause ledger (ADR-20261023171905): one
 	// statement per node per flush, however many requests the node serves.
