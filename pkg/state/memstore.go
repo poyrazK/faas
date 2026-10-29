@@ -2154,10 +2154,21 @@ func (m *MemStore) AccountByEmail(_ context.Context, email string) (Account, err
 	return Account{}, ErrNotFound
 }
 
+// apiKeyByHashLocked finds a key by a token's SHA-256 or a stored digest,
+// trying the account policy's lookups in turn (ADR 20261029202403).
+func (m *MemStore) apiKeyByHashLocked(hash []byte) (APIKey, bool) {
+	for _, value := range credentialLookups(credTagAPIKey, hash) {
+		if k, ok := m.keyByHash[hex.EncodeToString(value)]; ok {
+			return k, true
+		}
+	}
+	return APIKey{}, false
+}
+
 func (m *MemStore) AccountByKeyHash(_ context.Context, hash []byte) (Account, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	k, ok := m.keyByHash[hex.EncodeToString(hash)]
+	k, ok := m.apiKeyByHashLocked(hash)
 	if !ok {
 		return Account{}, ErrNotFound
 	}
@@ -2171,7 +2182,7 @@ func (m *MemStore) AccountByKeyHash(_ context.Context, hash []byte) (Account, er
 func (m *MemStore) APIKeyByHash(_ context.Context, hash []byte) (APIKey, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	k, ok := m.keyByHash[hex.EncodeToString(hash)]
+	k, ok := m.apiKeyByHashLocked(hash)
 	if !ok {
 		return APIKey{}, ErrNotFound
 	}
@@ -2212,7 +2223,7 @@ func (m *MemStore) APIKeyByHash(_ context.Context, hash []byte) (APIKey, error) 
 func (m *MemStore) AuthenticateOIDCBearer(_ context.Context, hash []byte) (Account, APIKey, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	row, ok := m.oidcExchangedTokens[hex.EncodeToString(hash)]
+	row, rowKey, ok := credentialEntry(m.oidcExchangedTokens, credTagOIDCToken, hash)
 	if !ok {
 		return Account{}, APIKey{}, ErrNotFound
 	}
@@ -2228,7 +2239,7 @@ func (m *MemStore) AuthenticateOIDCBearer(_ context.Context, hash []byte) (Accou
 		// follow-up request doesn't go through the same code path.
 		// The pg contract is `WHERE expires_at > NOW()`; the
 		// MemStore mirrors by physically deleting on miss.
-		delete(m.oidcExchangedTokens, hex.EncodeToString(hash))
+		delete(m.oidcExchangedTokens, rowKey)
 		return Account{}, APIKey{}, ErrNotFound
 	}
 	return acct, row.ToAPIKey(), nil
@@ -2424,7 +2435,8 @@ func (m *MemStore) InsertOIDCExchangedToken(_ context.Context, t *OIDCExchangedT
 	if len(row.Scopes) == 0 {
 		row.Scopes = []string{api.ScopeDeployWrite}
 	}
-	m.oidcExchangedTokens[hex.EncodeToString(t.TokenHash)] = row
+	row.TokenHash = storedCredential(credTagOIDCToken, t.TokenHash)
+	m.oidcExchangedTokens[hex.EncodeToString(row.TokenHash)] = row
 	return t.ID, nil
 }
 
@@ -2435,12 +2447,12 @@ func (m *MemStore) InsertOIDCExchangedToken(_ context.Context, t *OIDCExchangedT
 func (m *MemStore) GetOIDCExchangedTokenByHash(_ context.Context, hash []byte) (*OIDCExchangedToken, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	row, ok := m.oidcExchangedTokens[hex.EncodeToString(hash)]
+	row, rowKey, ok := credentialEntry(m.oidcExchangedTokens, credTagOIDCToken, hash)
 	if !ok {
 		return nil, ErrNotFound
 	}
 	if !row.ExpiresAt.IsZero() && row.ExpiresAt.Before(time.Now()) {
-		delete(m.oidcExchangedTokens, hex.EncodeToString(hash))
+		delete(m.oidcExchangedTokens, rowKey)
 		return nil, ErrNotFound
 	}
 	cp := row
@@ -2465,7 +2477,7 @@ func (m *MemStore) DeleteOIDCExchangedToken(_ context.Context, id string) error 
 func (m *MemStore) AuthenticateKey(_ context.Context, hash []byte) (Account, APIKey, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	k, ok := m.keyByHash[hex.EncodeToString(hash)]
+	k, ok := m.apiKeyByHashLocked(hash)
 	if !ok {
 		return Account{}, APIKey{}, ErrNotFound
 	}
@@ -3087,6 +3099,7 @@ func (m *MemStore) ListAllAccounts(_ context.Context) ([]Account, error) {
 // --- API keys ---------------------------------------------------------------
 
 func (m *MemStore) CreateAPIKey(_ context.Context, accountID string, hash []byte, label string, scopes []string) (APIKey, error) {
+	hash = storedCredential(credTagAPIKey, hash)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	h := hex.EncodeToString(hash)
@@ -3120,6 +3133,7 @@ func (m *MemStore) CreateAPIKey(_ context.Context, accountID string, hash []byte
 // provenance columns stamp the new row; nil/"" inputs round-trip
 // as the zero value on the struct (mirrors the pgstore NULL shape).
 func (m *MemStore) CreateOrgAPIKeyWithProvenance(_ context.Context, orgID, accountID string, hash []byte, label string, scopes []string, expiresAt *time.Time, createdIP, createdUA string, parent *string) (APIKey, error) {
+	hash = storedCredential(credTagAPIKey, hash)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err := m.checkOrgCredentialMemberLocked(orgID, accountID); err != nil {
@@ -3160,6 +3174,7 @@ func (m *MemStore) CreateOrgAPIKeyWithProvenance(_ context.Context, orgID, accou
 // provenance columns stamp created_ip / created_ua / parent_key_id;
 // the existing rotated_from_id is unchanged.
 func (m *MemStore) RotateOrgAPIKeyWithProvenance(_ context.Context, orgID, oldKeyID string, newHash []byte, newLabel string, graceWindow time.Duration, createdIP, createdUA string, parent *string) (APIKey, APIKey, error) {
+	newHash = storedCredential(credTagAPIKey, newHash)
 	if graceWindow < 0 {
 		graceWindow = 0
 	}
@@ -3300,6 +3315,7 @@ func (m *MemStore) TouchKeyLastUsed(_ context.Context, keyID string) error {
 // (status='active', all nullable fields nil) for the
 // pre-migration call site.
 func (m *MemStore) CreateAPIKeyWithExpiry(_ context.Context, accountID string, hash []byte, label string, scopes []string, expiresAt *time.Time) (APIKey, error) {
+	hash = storedCredential(credTagAPIKey, hash)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	h := hex.EncodeToString(hash)
@@ -3329,6 +3345,7 @@ func (m *MemStore) CreateAPIKeyWithExpiry(_ context.Context, accountID string, h
 // provenance columns stamp CreatedIP / CreatedUA / ParentKeyID;
 // nil/"" inputs round-trip as the zero value on the struct.
 func (m *MemStore) CreateAPIKeyWithExpiryAndProvenance(_ context.Context, accountID string, hash []byte, label string, scopes []string, expiresAt *time.Time, createdIP, createdUA string, parent *string) (APIKey, error) {
+	hash = storedCredential(credTagAPIKey, hash)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	h := hex.EncodeToString(hash)
@@ -3398,6 +3415,7 @@ func (m *MemStore) MarkAPIKeyRevoked(_ context.Context, accountID, keyID string)
 // "no concurrent callers" by virtue of m.mu; the same is true
 // of every other mutating method on this struct.
 func (m *MemStore) RotateAPIKey(_ context.Context, accountID, oldKeyID string, newHash []byte, newLabel string, graceWindow time.Duration) (APIKey, APIKey, error) {
+	newHash = storedCredential(credTagAPIKey, newHash)
 	if graceWindow < 0 {
 		graceWindow = 0
 	}
@@ -3518,6 +3536,7 @@ func (m *MemStore) SetAccountEgressAllowlistExtra(_ context.Context, accountID s
 // invariant pgstore's pg_class read-models mirror).
 
 func (m *MemStore) CreateOrgAPIKey(_ context.Context, orgID, accountID string, hash []byte, label string, scopes []string, expiresAt *time.Time) (APIKey, error) {
+	hash = storedCredential(credTagAPIKey, hash)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err := m.checkOrgCredentialMemberLocked(orgID, accountID); err != nil {
@@ -3597,6 +3616,7 @@ func (m *MemStore) RevokeOrgAPIKey(_ context.Context, orgID, keyID string) (APIK
 }
 
 func (m *MemStore) RotateOrgAPIKey(_ context.Context, orgID, oldKeyID string, newHash []byte, newLabel string, graceWindow time.Duration) (APIKey, APIKey, error) {
+	newHash = storedCredential(credTagAPIKey, newHash)
 	if graceWindow < 0 {
 		graceWindow = 0
 	}

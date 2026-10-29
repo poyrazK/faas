@@ -413,6 +413,13 @@ func (s *PgStore) AccountByEmail(ctx context.Context, email string) (Account, er
 }
 
 func (s *pgCore) AccountByKeyHash(ctx context.Context, hash []byte) (Account, error) {
+	return firstCredential(ctx, credentialLookups(credTagAPIKey, hash), s.accountByStoredKeyHash)
+}
+
+// accountByStoredKeyHash finds the account of the key whose stored
+// key_sha256 is exactly stored (ADR 20261029202403: a keyed digest, or a
+// plain hash until keyed writes).
+func (s *pgCore) accountByStoredKeyHash(ctx context.Context, hash []byte) (Account, error) {
 	row := s.pool.QueryRow(ctx,
 		`select a.id, a.email, a.plan, a.status, coalesce(a.provider_customer_id,''), coalesce(a.stripe_subscription_item,''), a.created_at, a.deletion_requested_at, a.last_quota_warning_at, a.past_due_at, a.mfa_enrolled_at, a.mfa_secret_encrypted, a.mfa_recovery_codes_hash, a.mfa_required, a.egress_allowlist_extra, a.email_verified_at, coalesce(a.business_name,''), coalesce(a.billing_address,''), coalesce(a.tax_id,''), a.abuse_hold_at, coalesce(a.abuse_hold_reason,'')
 		 from accounts a join api_keys k on k.account_id = a.id where k.key_sha256 = $1`, hash)
@@ -432,6 +439,11 @@ func (s *pgCore) AccountByKeyHash(ctx context.Context, hash []byte) (Account, er
 // columns default to NULL / 'active', so existing rows round-trip
 // cleanly with Status='active' and ExpiresAt=nil.
 func (s *pgCore) APIKeyByHash(ctx context.Context, hash []byte) (APIKey, error) {
+	return firstCredential(ctx, credentialLookups(credTagAPIKey, hash), s.apiKeyByStoredHash)
+}
+
+// apiKeyByStoredHash reads the key whose stored key_sha256 is exactly hash.
+func (s *pgCore) apiKeyByStoredHash(ctx context.Context, hash []byte) (APIKey, error) {
 	row := s.pool.QueryRow(ctx,
 		`select id, account_id, org_id, key_sha256, coalesce(label,''), scopes, created_at,
 		        last_used_at,
@@ -481,12 +493,8 @@ func (s *pgCore) APIKeyByHash(ctx context.Context, hash []byte) (APIKey, error) 
 // exist yet — the integration test is the gate, not unit tests
 // against PgStore).
 func (s *PgStore) AuthenticateOIDCBearer(ctx context.Context, hash []byte) (Account, APIKey, error) {
-	q := sqlc.New()
-	row, err := q.GetOIDCExchangedTokenByHash(ctx, s.pool, hash)
+	row, err := s.oidcExchangedTokenRow(ctx, hash)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return Account{}, APIKey{}, ErrNotFound
-		}
 		return Account{}, APIKey{}, err
 	}
 	acct, err := s.AccountByID(ctx, uuidFromPgtype(row.AccountID).String())
@@ -680,7 +688,7 @@ func (s *PgStore) InsertOIDCExchangedToken(ctx context.Context, t *OIDCExchanged
 	q := sqlc.New()
 	row, err := q.InsertOIDCExchangedToken(ctx, s.pool, sqlc.InsertOIDCExchangedTokenParams{
 		AccountID: pgtypeFromUUID(accountUUID),
-		TokenHash: t.TokenHash,
+		TokenHash: storedCredential(credTagOIDCToken, t.TokenHash),
 		Scopes:    scopes,
 		ExpiresAt: pgtypeFromTime(t.ExpiresAt),
 		IssuerUrl: t.IssuerURL,
@@ -703,15 +711,23 @@ func (s *PgStore) GetOIDCExchangedTokenByHash(ctx context.Context, hash []byte) 
 	if len(hash) == 0 {
 		return nil, ErrNotFound
 	}
-	q := sqlc.New()
-	row, err := q.GetOIDCExchangedTokenByHash(ctx, s.pool, hash)
+	row, err := s.oidcExchangedTokenRow(ctx, hash)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrNotFound
-		}
 		return nil, err
 	}
 	return oidcExchangedTokenFromRow(row), nil
+}
+
+// oidcExchangedTokenRow finds an exchanged token by its SHA-256 or stored
+// digest, trying each of the account policy's lookups (ADR 20261029202403).
+func (s *PgStore) oidcExchangedTokenRow(ctx context.Context, hash []byte) (sqlc.GetOIDCExchangedTokenByHashRow, error) {
+	return firstCredential(ctx, credentialLookups(credTagOIDCToken, hash), func(ctx context.Context, value []byte) (sqlc.GetOIDCExchangedTokenByHashRow, error) {
+		row, err := sqlc.New().GetOIDCExchangedTokenByHash(ctx, s.pool, value)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return row, ErrNotFound
+		}
+		return row, err
+	})
 }
 
 // DeleteOIDCExchangedToken is the operator-driven revoke path.
@@ -731,13 +747,21 @@ func (s *PgStore) DeleteOIDCExchangedToken(ctx context.Context, id string) error
 }
 
 func (s *pgCore) AuthenticateKey(ctx context.Context, hash []byte) (Account, APIKey, error) {
-	acct, err := s.AccountByKeyHash(ctx, hash)
-	if err != nil {
-		return Account{}, APIKey{}, err
-	}
 	key, err := s.APIKeyByHash(ctx, hash)
 	if err != nil {
 		return Account{}, APIKey{}, err
+	}
+	acct, err := s.accountByStoredKeyHash(ctx, key.Hash)
+	if err != nil {
+		return Account{}, APIKey{}, err
+	}
+	// ADR 20261029202403: a key found by its plain hash or under an older
+	// key is rewritten under the current one. Best effort: the next use
+	// retries.
+	if next, stale := staleCredential(credTagAPIKey, hash, key.Hash); stale {
+		if _, err := s.pool.Exec(ctx, `update api_keys set key_sha256 = $1 where id = $2 and key_sha256 = $3`, next, key.ID, key.Hash); err == nil {
+			key.Hash = next
+		}
 	}
 	// IAM-5 gate. Run before the success return so the
 	// middleware can translate the sentinel to the right 401.
@@ -1527,6 +1551,7 @@ func scanAccountCols(scan func(...any) error) (Account, error) {
 // --- api keys ----------------------------------------------------------------
 
 func (s *PgStore) CreateAPIKey(ctx context.Context, accountID string, hash []byte, label string, scopes []string) (APIKey, error) {
+	hash = storedCredential(credTagAPIKey, hash)
 	// IAM-5: the additive migration adds expires_at + status +
 	// revoked_at + rotated_from_id. The five-arg CreateAPIKey
 	// signature is preserved (17+ callers in cmd/apid/*_test.go
@@ -1571,6 +1596,7 @@ func (s *PgStore) CreateAPIKey(ctx context.Context, accountID string, hash []byt
 // a Go caller can pass nil for "never expires" without needing
 // a separate bool.
 func (s *PgStore) CreateAPIKeyWithExpiry(ctx context.Context, accountID string, hash []byte, label string, scopes []string, expiresAt *time.Time) (APIKey, error) {
+	hash = storedCredential(credTagAPIKey, hash)
 	// PR 6 (issue #190 / IAM-6): org_id stamped from the caller's
 	// personal org (see CreateAPIKey docstring for the rationale;
 	// the SQL subquery mirrors migration 00099's partial unique).
@@ -1595,6 +1621,7 @@ func (s *PgStore) CreateAPIKeyWithExpiry(ctx context.Context, accountID string, 
 // legacy /v1/keys POST handler's fallback path (no personal org
 // yet — pre-00127 fixtures).
 func (s *PgStore) CreateAPIKeyWithExpiryAndProvenance(ctx context.Context, accountID string, hash []byte, label string, scopes []string, expiresAt *time.Time, createdIP, createdUA string, parent *string) (APIKey, error) {
+	hash = storedCredential(credTagAPIKey, hash)
 	row := s.pool.QueryRow(ctx,
 		`insert into api_keys (account_id, key_sha256, label, scopes, expires_at, org_id, created_ip, created_ua, parent_key_id)
 		 values ($1, $2, $3, $4, $5,
@@ -1762,6 +1789,7 @@ func (s *PgStore) MarkAPIKeyRevoked(ctx context.Context, accountID, keyID string
 //
 // Issue #189 / IAM-5.
 func (s *PgStore) RotateAPIKey(ctx context.Context, accountID, oldKeyID string, newHash []byte, newLabel string, graceWindow time.Duration) (APIKey, APIKey, error) {
+	newHash = storedCredential(credTagAPIKey, newHash)
 	if graceWindow < 0 {
 		graceWindow = 0
 	}
@@ -1953,6 +1981,7 @@ func (s *PgStore) SetAccountEgressAllowlistExtra(ctx context.Context, accountID 
 // methods can share scanAPIKey / scanAPIKeyRow without a
 // bespoke scanner.
 func (s *PgStore) CreateOrgAPIKey(ctx context.Context, orgID, accountID string, hash []byte, label string, scopes []string, expiresAt *time.Time) (APIKey, error) {
+	hash = storedCredential(credTagAPIKey, hash)
 	row := s.pool.QueryRow(ctx,
 		`insert into api_keys (account_id, key_sha256, label, scopes, expires_at, org_id)
 		 values ($1, $2, $3, $4, $5, $6)
@@ -1971,6 +2000,7 @@ func (s *PgStore) CreateOrgAPIKey(ctx context.Context, orgID, accountID string, 
 // is the provenance lineage (distinct from rotated_from_id which
 // is the rotation-internal stamp).
 func (s *PgStore) CreateOrgAPIKeyWithProvenance(ctx context.Context, orgID, accountID string, hash []byte, label string, scopes []string, expiresAt *time.Time, createdIP, createdUA string, parent *string) (APIKey, error) {
+	hash = storedCredential(credTagAPIKey, hash)
 	row := s.pool.QueryRow(ctx,
 		`insert into api_keys (account_id, key_sha256, label, scopes, expires_at, org_id, created_ip, created_ua, parent_key_id)
 		 values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
@@ -2069,6 +2099,7 @@ func (s *PgStore) RevokeOrgAPIKey(ctx context.Context, orgID, keyID string) (API
 // material across orgs). Two returned keys are (newKey, oldKey)
 // in that order, matching RotateAPIKey.
 func (s *PgStore) RotateOrgAPIKey(ctx context.Context, orgID, oldKeyID string, newHash []byte, newLabel string, graceWindow time.Duration) (APIKey, APIKey, error) {
+	newHash = storedCredential(credTagAPIKey, newHash)
 	if graceWindow < 0 {
 		graceWindow = 0
 	}
@@ -2175,6 +2206,7 @@ func (s *PgStore) RotateOrgAPIKey(ctx context.Context, orgID, oldKeyID string, n
 // request. The rotated_from_id column is unchanged (still set
 // to oldKeyID, the rotation-internal predecessor stamp).
 func (s *PgStore) RotateOrgAPIKeyWithProvenance(ctx context.Context, orgID, oldKeyID string, newHash []byte, newLabel string, graceWindow time.Duration, createdIP, createdUA string, parent *string) (APIKey, APIKey, error) {
+	newHash = storedCredential(credTagAPIKey, newHash)
 	if graceWindow < 0 {
 		graceWindow = 0
 	}
