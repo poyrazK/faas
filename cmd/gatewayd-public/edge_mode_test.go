@@ -364,3 +364,66 @@ func TestRequireComputeEdgeConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// fakeAlternatePool is the compute pool for the local-first dialer's
+// failover tests.
+type fakeAlternatePool struct {
+	dials int
+	name  string
+}
+
+func (p *fakeAlternatePool) DialContext(ctx context.Context, _ string) (net.Conn, error) {
+	p.dials++
+	gateway.DialRecordFrom(ctx).RecordDialed(p.name)
+	c, _ := net.Pipe()
+	return c, nil
+}
+
+func (p *fakeAlternatePool) HasAlternate(_ context.Context, rec *gateway.DialRecord) bool {
+	return !rec.Excluded(p.name)
+}
+
+// adr: 20261022184531 — a compute edge sends the retry of a response its own
+// node's gateway refused to the other nodes, without counting a fallback
+// (step 5).
+func TestLocalFirstDialerSendsARetryToTheOtherNodes(t *testing.T) {
+	local := dialerFunc(func(context.Context, string) (net.Conn, error) {
+		c, _ := net.Pipe()
+		return c, nil
+	})
+	pool := &fakeAlternatePool{name: "fsn-2"}
+	m := newEdgeMetrics()
+	d := newLocalFirstDialer(local, pool, &url.URL{Scheme: "http", Host: "gatewayd-internal"}, m, quietEdgeLog()).
+		withDrainWatch("fsn-3", nil)
+	d.healthy.Store(true)
+
+	first := gateway.NewDialRecord()
+	c, err := d.DialContext(gateway.WithDialRecord(context.Background(), first), "")
+	if err != nil || first.Dialed() != "fsn-3" || pool.dials != 0 {
+		t.Fatalf("first attempt: err=%v dialed=%q poolDials=%d, want this node", err, first.Dialed(), pool.dials)
+	}
+	_ = c.Close()
+
+	retry := gateway.NewDialRecord("fsn-3")
+	c, err = d.DialContext(gateway.WithDialRecord(context.Background(), retry), "")
+	if err != nil || retry.Dialed() != "fsn-2" || pool.dials != 1 {
+		t.Fatalf("retry: err=%v dialed=%q poolDials=%d, want the pool", err, retry.Dialed(), pool.dials)
+	}
+	_ = c.Close()
+	if got := testutil.ToFloat64(m.fallbacks); got != 0 {
+		t.Fatalf("fallbacks = %v; a retry is a planned route", got)
+	}
+	if !d.HasAlternate(context.Background(), gateway.NewDialRecord("fsn-3")) || d.HasAlternate(context.Background(), gateway.NewDialRecord("fsn-3", "fsn-2")) {
+		t.Fatal("HasAlternate does not follow the pool")
+	}
+
+	// A node without a name cannot be excluded, so the edge must not retry.
+	unnamed := newLocalFirstDialer(local, pool, &url.URL{Scheme: "http", Host: "gatewayd-internal"}, m, quietEdgeLog())
+	unnamed.healthy.Store(true)
+	rec := gateway.NewDialRecord()
+	c, err = unnamed.DialContext(gateway.WithDialRecord(context.Background(), rec), "")
+	if err != nil || rec.Dialed() != "" {
+		t.Fatalf("unnamed node: err=%v dialed=%q, want no name", err, rec.Dialed())
+	}
+	_ = c.Close()
+}
