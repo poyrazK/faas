@@ -111,7 +111,6 @@ func (p *InternalReverseProxy) roundTrip(outReq *http.Request, duplex bool) (*ht
 			} else {
 				f.observe(pending, FailoverOutcomeSucceeded)
 			}
-			pending = ""
 		}
 		if !marked {
 			return resp, nil
@@ -124,8 +123,8 @@ func (p *InternalReverseProxy) roundTrip(outReq *http.Request, duplex bool) (*ht
 			f.observe(reason, FailoverOutcomeRefusalLarge)
 			return held, nil
 		}
-		retry, cloneErr := failoverRetryRequest(outReq, rec)
-		if cloneErr != nil {
+		retry, replayable := failoverRetryRequest(outReq, rec)
+		if !replayable {
 			f.observe(reason, FailoverOutcomeBodyNotReplay)
 			return held, nil
 		}
@@ -192,18 +191,19 @@ func holdRefusal(resp *http.Response) (*http.Response, bool) {
 	return resp, true
 }
 
-// failoverRetryRequest clones the forwarded request for another node, with a fresh
-// copy of its buffered body and the same dial record.
-func failoverRetryRequest(outReq *http.Request, rec *DialRecord) (*http.Request, error) {
+// failoverRetryRequest clones the forwarded request for another node, with a
+// fresh copy of its buffered body and the same dial record. It reports false
+// when the body cannot be read again.
+func failoverRetryRequest(outReq *http.Request, rec *DialRecord) (*http.Request, bool) {
 	retry := outReq.Clone(WithDialRecord(outReq.Context(), rec))
 	if outReq.GetBody != nil {
 		body, err := outReq.GetBody()
 		if err != nil {
-			return nil, err
+			return nil, false
 		}
 		retry.Body = body
 	}
-	return retry, nil
+	return retry, true
 }
 
 // stripNotDispatched removes a marker the edge did not ask for.
