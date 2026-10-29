@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "465905067842384ca27b39c1238b8b89952ffef239c85156256b8f9936c486a6",
+      "revision": "50b9faa68f5a3886824f875bd1cf53b80c6171bff8f59b15ce0be5421b77c8f8",
       "files": [
         "faas.rules.yml"
       ],
@@ -1609,6 +1609,19 @@
           }
         },
         {
+          "id": "3b7c56651d8edb57a634e0b14595c2a4e8748b5e7d723cd0b287dc8fb960c001",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_customer_observability",
+          "rule_name": "FaasAlertRulesDeferred",
+          "definition": {
+            "expression_hash": "467ecfa94c34af68fc82b229b1ea3951d20930f1801942dbe6690a1a2fa23e2c",
+            "labels_hash": "baf3254f31226170fd41d129ca13fbeb71df85ea84878f43959023d5ed3bb091",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "5c9dee99272a76fd56f7ba72ea96b741ce47fddaf999f9eaec9b1c92fd49e38c"
+          }
+        },
+        {
           "id": "3c35553a077d6cad1c7b8f4535c1b8d98c26d748d805942176505b05d635a9d1",
           "file_name": "faas.rules.yml",
           "group_name": "faas_slo",
@@ -2971,6 +2984,19 @@
             "for_seconds": 3600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "70fd0fd36a2a7c20b3b8729b23cbc66f8f00524b5259f6b2ff4c18fe2ebd5c10"
+          }
+        },
+        {
+          "id": "76305f84e31caccbca2a55cec2ab327573ae53ffcc37d9c9d19dcce21097ec76",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_customer_observability",
+          "rule_name": "FaasAlertEvaluationSlow",
+          "definition": {
+            "expression_hash": "4d424f4e9d88f9efa28291cba6e79e89ca6c6b52ca91893a846ec07ae52622ab",
+            "labels_hash": "baf3254f31226170fd41d129ca13fbeb71df85ea84878f43959023d5ed3bb091",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "ab32c1fced0fa264d7d0990f9fed939462592cc4684ec290a242b92be5484897"
           }
         },
         {
@@ -6175,7 +6201,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "3aefbb0e8fa2f3302aaa6a45b5468230bd721722256e0a3485657c752bdc5a61",
+      "revision": "4afee5f4c1027c6cefe871b8ed86b857f41e5f7076c6046e712655c8975d27c4",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -7862,6 +7888,19 @@
           }
         },
         {
+          "id": "3b7c56651d8edb57a634e0b14595c2a4e8748b5e7d723cd0b287dc8fb960c001",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_customer_observability",
+          "rule_name": "FaasAlertRulesDeferred",
+          "definition": {
+            "expression_hash": "467ecfa94c34af68fc82b229b1ea3951d20930f1801942dbe6690a1a2fa23e2c",
+            "labels_hash": "baf3254f31226170fd41d129ca13fbeb71df85ea84878f43959023d5ed3bb091",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "5c9dee99272a76fd56f7ba72ea96b741ce47fddaf999f9eaec9b1c92fd49e38c"
+          }
+        },
+        {
           "id": "3c35553a077d6cad1c7b8f4535c1b8d98c26d748d805942176505b05d635a9d1",
           "file_name": "faas.rules.yml",
           "group_name": "faas_slo",
@@ -9263,6 +9302,19 @@
             "for_seconds": 3600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "70fd0fd36a2a7c20b3b8729b23cbc66f8f00524b5259f6b2ff4c18fe2ebd5c10"
+          }
+        },
+        {
+          "id": "76305f84e31caccbca2a55cec2ab327573ae53ffcc37d9c9d19dcce21097ec76",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_customer_observability",
+          "rule_name": "FaasAlertEvaluationSlow",
+          "definition": {
+            "expression_hash": "4d424f4e9d88f9efa28291cba6e79e89ca6c6b52ca91893a846ec07ae52622ab",
+            "labels_hash": "baf3254f31226170fd41d129ca13fbeb71df85ea84878f43959023d5ed3bb091",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "ab32c1fced0fa264d7d0990f9fed939462592cc4684ec290a242b92be5484897"
           }
         },
         {
