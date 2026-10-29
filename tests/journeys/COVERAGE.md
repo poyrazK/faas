@@ -55,3 +55,16 @@ covered. Update this table when a journey or a GA row changes.
 
 44 of the 46 GA rows have at least one journey; 143 and 157 need a test
 inbox and a browser. The "Not covered" column lists the remaining gaps.
+
+## GA candidates
+
+Rows not yet GA whose journeys exist ahead of a promotion, so the
+evidence is in place before the tier changes. A step whose capability is
+not released to the account skips with the API's explanation.
+
+| # | Capability (tier today) | Journeys and steps | Not covered |
+|---|---|---|---|
+| 122 | Custom metrics and OTLP metric ingest (beta) | `TestCustomMetricsSLOsAndSynthetics`: `custom_metric` (push and read back through the API), `otlp_metrics` (OTLP/HTTP JSON gauge, name normalised) | OTLP protobuf exports; counters; custom metric history (`gregale metrics --custom`, internal); OTLP needs the custom metric history operator switch |
+| 125 | Alerts and notification channels (beta) | `TestAlertsAndChannels`: `rule_fires` (request_count rule), `webhook_verified` (the probe's `/hook` answers 200 only for a valid signature), `channel_notified` (the fire is recorded on a Slack channel), `channel_test_send` | real Slack, PagerDuty and email deliveries (no test workspace or inbox: the channel targets a Slack webhook Slack refuses); alert presets; rollback actions; incidents |
+| 128 | SLOs and error budgets (preview) | `TestCustomMetricsSLOsAndSynthetics/slo` (create, status) | attainment, budget and burn numbers (hourly rollups; a fresh app has none); SLO alerts |
+| 129 | Synthetic checks (preview) | `TestCustomMetricsSLOsAndSynthetics/synthetic_check` (create, first run passes, delete) | 24 h and 7 d uptime; failing runs; synthetic check alerts |

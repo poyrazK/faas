@@ -18,10 +18,13 @@
 //   GET  /secret?key= presence and SHA-256 of an E2E_* secret from the live
 //                     reload snapshot (SIGHUP), else the environment
 //   GET  /ws          WebSocket: sends "hello <version>", then closes
+//   POST /hook        alert webhook receiver: 200 only when the delivery's
+//                     X-Faas-Alert-Signature verifies against E2E_HOOK_SECRET
+//                     (412 without the secret, 401 on a bad signature)
 
 import http from "node:http";
 import net from "node:net";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
 
 const version = readFileSync(new URL("./version.txt", import.meta.url), "utf8").trim();
@@ -96,6 +99,21 @@ function tryConnect(host, port) {
   });
 }
 
+// verifyAlert checks an alert delivery's signature as pkg/webhookout makes
+// it: HMAC-SHA256 over "<timestamp>.<delivery id>.<body>", sent as
+// "sha256=<hex>".
+function verifyAlert(req, body) {
+  const { value: secret } = secretValue("E2E_HOOK_SECRET");
+  if (!secret) {
+    return 412;
+  }
+  const ts = req.headers["x-faas-alert-timestamp"] || "";
+  const id = req.headers["x-faas-alert-id"] || "";
+  const got = Buffer.from(String(req.headers["x-faas-alert-signature"] || ""));
+  const want = Buffer.from("sha256=" + createHmac("sha256", secret).update(`${ts}.${id}.`).update(body).digest("hex"));
+  return got.length === want.length && timingSafeEqual(got, want) ? 200 : 401;
+}
+
 function json(res, status, body) {
   res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" });
   res.end(JSON.stringify(body));
@@ -151,6 +169,16 @@ const server = http.createServer((req, res) => {
       return json(res, 200, { hits: cronHits });
     case "/cron-hits":
       return json(res, 200, { hits: cronHits });
+    case "/hook": {
+      const chunks = [];
+      req.on("data", (c) => chunks.push(c));
+      req.on("end", () => {
+        const status = verifyAlert(req, Buffer.concat(chunks));
+        console.log(`e2e-probe-hook status=${status} id=${req.headers["x-faas-alert-id"] || ""}`);
+        json(res, status, { verified: status === 200 });
+      });
+      return;
+    }
     case "/egress": {
       const names = Object.keys(egressTargets);
       Promise.all(names.map((n) => tryConnect(...egressTargets[n]))).then((results) => {
