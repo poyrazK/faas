@@ -9,12 +9,12 @@ preview feature on Hobby, Pro, and Scale.
 Create an issue reporting token for the exact deployment that runs the code:
 
 ```sh
-gregale debug issue create-token --app exports --release DEPLOYMENT_ID --name production --expires-in 24h
+gregale debug issue token create --app exports --release DEPLOYMENT_ID --name production --expires-in 24h
 ```
 
 Store the returned `g_issue_…` token as an application secret. It is shown once;
 listing tokens returns metadata. Rotate tokens on deployment and revoke old ones
-with `gregale debug issue revoke-token TOKEN_ID --app exports`. Tokens can expire at
+with `gregale debug issue token revoke TOKEN_ID --app exports`. Tokens can expire at
 most 90 days after creation. The optional `--environment` must match a project
 release environment; `application` is the default namespace for standalone apps.
 
@@ -921,10 +921,10 @@ export GREGALE_ISSUES_SMOKE_DEPLOYMENT_A=DEPLOYMENT_UUID_A
 export GREGALE_ISSUES_SMOKE_DEPLOYMENT_B=DEPLOYMENT_UUID_B
 export FAAS_TOKEN='your-Gregale-API-key-with-issue-read-access'
 
-FAAS_API="$GREGALE_API_URL" gregale debug issue create-token --app "$GREGALE_APP" \
+FAAS_API="$GREGALE_API_URL" gregale debug issue token create --app "$GREGALE_APP" \
   --deployment "$GREGALE_ISSUES_SMOKE_DEPLOYMENT_A" \
   --environment "$GREGALE_ISSUES_SMOKE_ENVIRONMENT" --name issues-smoke-a --expires-in 24h
-FAAS_API="$GREGALE_API_URL" gregale debug issue create-token --app "$GREGALE_APP" \
+FAAS_API="$GREGALE_API_URL" gregale debug issue token create --app "$GREGALE_APP" \
   --deployment "$GREGALE_ISSUES_SMOKE_DEPLOYMENT_B" \
   --environment "$GREGALE_ISSUES_SMOKE_ENVIRONMENT" --name issues-smoke-b --expires-in 24h
 
@@ -1156,7 +1156,7 @@ OTLP exception records can report tags as string attributes named `gregale.issue
 Choose two deployments in the Issues dashboard, or run:
 
 ```sh
-gregale debug issue compare-releases --app payments --baseline BASELINE_UUID --candidate CANDIDATE_UUID --environment application
+gregale debug issue releases compare --app payments --baseline BASELINE_UUID --candidate CANDIDATE_UUID --environment application
 ```
 
 `GET /v1/apps/{slug}/issue-release-comparison?baseline=UUID&candidate=UUID&environment=application` compares the same last-24-hour window in one database snapshot. Both deployments must belong to the app. It reports weighted observed requests, HTTP 5xx responses and their observed rate, retained issue events, distinct current issue groups, groups with recorded creation/regression activity, verified distinct customers, and unattributed events. The rate delta is candidate minus baseline as a fraction; dashboard/CLI display percentage points.
