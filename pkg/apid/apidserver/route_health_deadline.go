@@ -48,5 +48,13 @@ func (s *server) abortRouteHealthHoldPastDeadline(ctx context.Context, err error
 	}
 	if _, _, abortErr := decisions.RecoverRolloutWithDecision(ctx, app.ID, "abort", "route health: "+summary, decision); abortErr != nil {
 		s.log.Warn("apid: abort route health hold failed", "deployment", d.ID, "err", abortErr)
+		return
+	}
+	// The hold reads as aborted and app webhooks hear about it
+	// (ADR-20261028110044 amendment 2).
+	if aborter, ok := s.store.(state.RouteHealthHoldAborter); ok {
+		if err := aborter.AbortRouteHealthHold(ctx, app.AccountID, app.ID, d.ID, now); err != nil {
+			s.log.Warn("apid: record route health hold abort failed", "deployment", d.ID, "err", err)
+		}
 	}
 }

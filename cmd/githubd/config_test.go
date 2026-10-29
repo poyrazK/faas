@@ -3,6 +3,7 @@
 package main
 
 import (
+	"flag"
 	"os"
 	"path/filepath"
 	"strings"
@@ -170,6 +171,27 @@ func TestHostKeyPath_Precedence(t *testing.T) {
 	os.Setenv("FAAS_HOST_AGE_IDENTITY_PATH", "/credential/identity.age")
 	if got := hostKeyPath(); got != "/credential/identity.age" {
 		t.Errorf("FAAS_HOST_AGE_IDENTITY_PATH hostKeyPath() = %q, want /credential/identity.age", got)
+	}
+}
+
+// githubd reads the TOML wire.Daemon's --config names, so a harness can move
+// its listeners off the production socket and port; without the flag it keeps
+// the production path.
+func TestGithubdConfigPathFollowsTheConfigFlag(t *testing.T) {
+	if flag.Lookup("config") == nil {
+		if got := githubdConfigPath(); got != "/etc/faas/githubd.toml" {
+			t.Fatalf("githubdConfigPath() = %q without the flag", got)
+		}
+		flag.String("config", "/etc/faas/githubd.toml", "")
+	}
+	f := flag.Lookup("config")
+	previous := f.Value.String()
+	t.Cleanup(func() { _ = f.Value.Set(previous) })
+	if err := f.Value.Set("/tmp/harness/githubd.toml"); err != nil {
+		t.Fatal(err)
+	}
+	if got := githubdConfigPath(); got != "/tmp/harness/githubd.toml" {
+		t.Fatalf("githubdConfigPath() = %q, want the flag's path", got)
 	}
 }
 

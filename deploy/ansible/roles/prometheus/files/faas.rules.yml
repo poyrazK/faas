@@ -455,6 +455,18 @@ groups:
           description: "The gateway aborted billable responses because their usage events could not be fsynced to the local outbox (ADR-1505). Clients saw failed requests. Check outbox capacity and disk health; readiness should already be draining the node."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasConsumerUsageDelivery.md"
 
+      - alert: FaasConsumerUsageQuarantined
+        expr: increase(gateway_consumer_usage_quarantined_total[15m]) > 0
+        for: 0m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: consumer_usage_delivery
+        annotations:
+          summary: "apid permanently rejected a financial usage event"
+          description: "The gateway moved a usage event apid rejected as invalid to quarantine.jsonl in its outbox directory so later events keep flowing. Reconcile it before trusting that window's usage totals."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasConsumerUsageDelivery.md"
+
       - alert: FaasConsumerUsageOutboxNearCapacity
         expr: gateway_consumer_usage_outbox_pending_bytes > 53687091
         for: 2m
@@ -4006,6 +4018,90 @@ groups:
           summary: "Billing reconciliation is unavailable for {{ $labels.provider }}"
           description: "Live billing is enabled but the active provider does not expose a usable reconciliation surface, so provider-vs-local billing drift cannot be measured. Treat drift gauges as unknown until the provider configuration is corrected."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/BillingDrift.md"
+      # ADR-20261029180000: the meterd billing pipeline and the Polar webhook
+      # each fail loudly. The provider pusher delivers only hours before the
+      # oldest minute not recorded compute-complete, so a stuck record holds
+      # back every account's usage; a webhook endpoint Polar sees failing ten
+      # times in a row is disabled.
+      - alert: FaasMeterdUsageDeliveryStalled
+        expr: meterd_usage_final_lag_seconds > 1800
+        for: 30m
+        labels:
+          severity: warn
+          component: meterd
+          family: billing_delivery
+          public_status: internal
+        annotations:
+          summary: "meterd holds back usage older than 30 minutes"
+          description: "The oldest closed minute of meterd's 24 h catch-up window that is not recorded compute-complete is {{ $value | humanizeDuration }} old. The provider pusher delivers usage only for hours before that minute, so every account's usage waits and cost reports lose coverage (ADR-1162, ADR-20261029180000). A new environment shows this until its first catch-up finishes, about 100 minutes."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/MeterdBillingPipeline.md"
+      - alert: FaasMeterdSampleFailing
+        expr: increase(meterd_ops_total{op="sample",code="err"}[15m]) >= 5
+        for: 15m
+        labels:
+          severity: warn
+          component: meterd
+          family: billing_delivery
+          public_status: internal
+        annotations:
+          summary: "meterd sample ticks keep failing"
+          description: "At least five of meterd's one-minute sample ticks failed in 15 minutes, for 15 minutes. Usage rows, price capture or the compute-complete record are not being written; catch-up re-rolls the minutes once the cause clears, within 24 h."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/MeterdBillingPipeline.md"
+      - alert: FaasMeterdBillingPushFailing
+        expr: increase(meterd_ops_total{op="stripe",code="err"}[3h]) >= 2
+        labels:
+          severity: warn
+          component: meterd
+          family: billing_delivery
+          public_status: internal
+        annotations:
+          summary: "meterd usage delivery to the billing provider is failing"
+          description: "Two hourly billing pushes in three hours ended with an error: the provider refused or timed out, or an account's billing identity could not be read. Pending hours retry every hour; the provider ignores repeated events by external ID."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/MeterdBillingPipeline.md"
+      - alert: FaasMeterdDunningFailing
+        expr: increase(meterd_ops_total{op="dunning",code="err"}[3h]) >= 2
+        labels:
+          severity: warn
+          component: meterd
+          family: billing_delivery
+          public_status: internal
+        annotations:
+          summary: "meterd dunning sweeps are failing"
+          description: "Two hourly dunning sweeps in three hours ended with an error, so past-due accounts are not moving to suspended or deleted_pending on schedule and their notices are not sent."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/MeterdBillingPipeline.md"
+      - alert: FaasPolarWebhookFailing
+        expr: sum(increase(apid_ops_total{op="polar_webhook",code=~"rejected|unavailable"}[30m])) >= 3
+        labels:
+          severity: warn
+          component: apid
+          family: billing_webhooks
+          public_status: internal
+        annotations:
+          summary: "apid answered {{ $value | humanize }} Polar webhooks with an error in 30 minutes"
+          description: "Polar disables a webhook endpoint after ten consecutive non-2xx deliveries. rejected means a bad signature or body (check the webhook secret); unavailable means apid could not apply the event. Reconciliation repairs subscription state every 30 minutes, but invoices and refunds arrive only by webhook."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/PolarBillingWebhooks.md"
+      - alert: FaasBillingReconcileFailing
+        expr: increase(apid_billing_reconcile_passes_total{result="failed"}[2h]) >= 2
+        labels:
+          severity: warn
+          component: apid
+          family: billing_webhooks
+          public_status: internal
+        annotations:
+          summary: "Billing subscription reconciliation is failing"
+          description: "Two 30-minute reconciliation passes in two hours failed, so a missed Polar webhook is no longer repaired (ADR-20261029094512)."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/PolarBillingWebhooks.md"
+      - alert: FaasBillingReconcileCorrected
+        expr: sum by (correction) (increase(apid_billing_reconcile_corrections_total[6h])) > 0
+        labels:
+          severity: warn
+          component: apid
+          family: billing_webhooks
+          public_status: internal
+        annotations:
+          summary: "Reconciliation applied a missed {{ $labels.correction }} event"
+          description: "An account's plan or payment state disagreed with its Polar subscription on two passes and reconciliation applied the event a webhook should have carried. Find out why the delivery was missed: Polar's webhook delivery log, FaasPolarWebhookFailing, apid restarts."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/PolarBillingWebhooks.md"
 
       # ─────────────────────────────────────────────────────────────────
       # ADR-120 Tier A1: domain doctor staleness alerts.

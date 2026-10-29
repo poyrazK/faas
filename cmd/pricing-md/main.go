@@ -52,7 +52,15 @@ func render() string {
 	b.WriteString("- **PR preview environments** is the separate limit for temporary pull-request previews: one per open pull request, however many workloads it runs. One environment runs at most as many workloads as the plan can deploy, and a closed pull request frees its environment at once. See [PR preview environments](preview-environments.md#quota).\n")
 	b.WriteString("- **Concurrent instances** is the per-app wake/instance ceiling; request concurrency inside one VM is separately bounded by the plan.\n")
 	b.WriteString("- **RAM / app** and **app layer** are hard build/runtime ceilings. Smaller resource profiles remain available where the plan permits them.\n")
-	b.WriteString("- **Included GB-RAM-hours** is the monthly compute allowance. Free stops at its allowance; paid plans can accrue overage at the published rate.\n")
+	b.WriteString("- **Included GB-RAM-hours** is the monthly compute allowance. Free stops at its allowance; paid plans can accrue overage at the published rate, up to a [spend cap](billing.md#spend-cap). A paid plan starts with a cap of one more allowance of overage (")
+	var caps []string
+	for _, plan := range api.Plans {
+		if cents, ok := plan.DefaultOverageCapCents(); ok {
+			caps = append(caps, titlePlan(plan)+" "+formatPrice(cents*api.MillicentsPerCent))
+		}
+	}
+	b.WriteString(strings.Join(caps, ", "))
+	b.WriteString("); `gregale billing spend-cap` raises or clears it.\n")
 	b.WriteString("- **Idle timeout** is when an inactive app is parked. A later request wakes it from its snapshot; see [scale-to-zero](cold-wake.md).")
 	fmt.Fprintf(&b, " Functions default to %s on every plan; any app or function can set its own value from %s up to twice the plan default.\n",
 		formatDuration(api.FunctionIdleTimeoutDefaultSeconds), formatDuration(api.IdleTimeoutFloorSeconds))

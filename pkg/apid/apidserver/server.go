@@ -39,6 +39,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/apid/mailoutbox"
 
+	"github.com/onebox-faas/faas/pkg/apid/agents"
 	"github.com/onebox-faas/faas/pkg/apid/dashboards"
 	"github.com/onebox-faas/faas/pkg/apid/incidents"
 	"github.com/onebox-faas/faas/pkg/apid/issuetrackers"
@@ -214,6 +215,8 @@ type server struct {
 	// liveRollout is who sees live queries (FAAS_LIVE_QUERIES_ACCOUNTS);
 	// nobody until configured.
 	liveRollout livequeries.Rollout
+	// agentAPI serves the agent routes; nil until configureAgents runs.
+	agentAPI *agents.Handler
 	// realtimeRollout is who sees the realtime preview until an operator
 	// writes the realtime_preview platform flag (ADR-20261019102657).
 	realtimeRollout               managedrealtime.PreviewGate
@@ -437,9 +440,19 @@ type server struct {
 	// signups caps self-service accounts per address and network a day
 	// (signup_network_limit.go).
 	signups *signupNetworkLimiter
+	// loginFailures caps failed password sign-ins per email address across
+	// client addresses (login_failure_limit.go).
+	loginFailures *loginFailureLimiter
+	// apiRequests is each account's budget of authenticated API requests a
+	// minute (api_request_budget.go). Nil (bare test servers) is unlimited.
+	apiRequests *apiRequestBudget
 	// exportsInFlight holds the account IDs with a REST export bundle being
 	// built: one at a time per account.
 	exportsInFlight sync.Map
+	// exportReplays bounds the retries of one export (handlers_account.go).
+	exportReplays exportReplayCounter
+	// queueReceives caps queue receive long-polls (handlers_invocations.go).
+	queueReceives queueReceiveSlots
 	// domainCreateLimiter caps pending DNS challenges per client IP. The
 	// durable store separately enforces per-account outstanding-claim quotas;
 	// this edge bucket prevents one source from cycling accounts to create an
@@ -457,6 +470,8 @@ type server struct {
 	// page). Wired in production via WithStatusCache; nil keeps the
 	// route functional but degraded (returns source=empty payload).
 	statusCache *statusCache
+	// statusOverlay caches slo.json's operator-event read (status.go).
+	statusOverlay statusOverlayCache
 
 	// preflightOnce guards lazy construction of the public migration
 	// preflight handler (GET /v1/preflight). It is built on first use so the
@@ -994,8 +1009,9 @@ func (s *server) WithOAuthConfig(cfg auth.SignInConfig) *server {
 func (s *server) WithImageListening(lookup reposcan.ImageListening) *server {
 	s.imageListening = lookup
 	if s.reconcileSvc != nil {
-		s.reconcileSvc.Scan = func(fsys fs.FS) (reposcan.Result, error) {
-			return reposcan.ScanWithOptions(fsys, reposcan.ScanOptions{ImageListening: lookup})
+		s.reconcileSvc.Scan = func(fsys fs.FS, opts reposcan.ScanOptions) (reposcan.Result, error) {
+			opts.ImageListening = lookup
+			return reposcan.ScanWithOptions(fsys, opts)
 		}
 	}
 	return s
@@ -1490,6 +1506,8 @@ func newServerWithDeps(
 		dashboardExportLimiter: dashboardExportLimiter,
 		securityMail:           newSecurityMailLimiter(),
 		signups:                newSignupNetworkLimiter(),
+		loginFailures:          newLoginFailureLimiter(),
+		apiRequests:            newAPIRequestBudget(),
 		domainCreateLimiter:    domainCreateLimiter,
 		audit:                  aud,
 		runtimeConfig:          newRuntimeConfigManager(nil),
@@ -3190,6 +3208,21 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/jobs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listJobs))))
 	mux.HandleFunc("POST /v1/jobs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createJob)))))
 	mux.HandleFunc("POST /v1/image-runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createImageRun)))))
+	// ADR-20261027090010 agents: the agents capability owns these routes, so
+	// the capability gate hides them like unregistered routes from every
+	// account it is off for.
+	mux.HandleFunc("POST /v1/agents", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createAgent)))))
+	mux.HandleFunc("GET /v1/agents", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAgents))))
+	mux.HandleFunc("GET /v1/agents/{agent}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAgent))))
+	mux.HandleFunc("DELETE /v1/agents/{agent}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteAgent))))
+	mux.HandleFunc("POST /v1/agents/{agent}/versions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createAgentVersion)))))
+	mux.HandleFunc("GET /v1/agents/{agent}/versions/{version}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAgentVersion))))
+	mux.HandleFunc("POST /v1/agents/{agent}/runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createAgentRun)))))
+	mux.HandleFunc("GET /v1/agent-runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAgentRuns))))
+	mux.HandleFunc("GET /v1/agent-runs/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAgentRun))))
+	mux.HandleFunc("GET /v1/agent-runs/{id}/outputs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAgentRunOutputs))))
+	mux.HandleFunc("GET /v1/agent-runs/{id}/outputs/files/{name...}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAgentRunOutputFile))))
+	mux.HandleFunc("DELETE /v1/agent-runs/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.cancelAgentRun))))
 	mux.HandleFunc("GET /v1/jobs/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getJob))))
 	mux.HandleFunc("PATCH /v1/jobs/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateJob))))
 	mux.HandleFunc("DELETE /v1/jobs/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteJob))))
@@ -5458,7 +5491,7 @@ func (s *server) handler() http.Handler {
 		func(*http.Request) bool { return true },
 		s.observeWrap(s.hosting.HideDisabled(s.hideDisabledMonetization(operation.OperationCustomerCORS(s.productControl.SurfaceGate(ciapi.HideDisabledRoutes(
 			func() ci.Config { return s.ciConfig }, s.capabilityKillSwitch(mux, apiContractHandler(mux, func(r *http.Request) bool {
-				return s.durable.Hidden(r) || s.liveGate().Hidden(r) || s.realtimePreviewProbe(r) || s.capabilityPathHidden(r)
+				return s.durable.Hidden(r) || s.liveGate().Hidden(r) || s.realtimePreviewProbe(r) || s.capabilityPathHidden(r) || s.agentPathHidden(r)
 			})),
 		)))))),
 	)))
@@ -5716,7 +5749,10 @@ func (s *server) cliAuthChain(h http.Handler) http.Handler {
 	h = middleware.RequestID(h)
 	h = middleware.Recovery(s.log)(h)
 	h = middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{
-		CountStatuses: []int{http.StatusTooManyRequests, http.StatusBadRequest},
+		// 410 is an exchange for a code that is unknown, used or expired:
+		// what guessing codes produces, and at most once per real login
+		// (bug hunt 2026-10-28 H67).
+		CountStatuses: []int{http.StatusTooManyRequests, http.StatusBadRequest, http.StatusGone},
 		Log:           s.log,
 	}, s.cliAuthLimiter)(h)
 	return h

@@ -66,6 +66,7 @@ const (
 	modeExecution
 	modeAppTask
 	modeDataRepair
+	modeAgent
 )
 
 // main is guest PID 1. Any fatal error here panics the VM (panic=1 in boot args
@@ -120,6 +121,12 @@ func boot() error {
 	guestStage(fmt.Sprintf("mode-%d", mode))
 	if mode == modeDataRepair {
 		return runDataRepairGuest(slog.Default())
+	}
+	// Agent runs (ADR-20261027090010 §6) are one-shot like executions: one protocol
+	// stream, one result, poweroff on every path.
+	if mode == modeAgent {
+		guestStage("before-agent-run")
+		return runAgentGuest(slog.Default())
 	}
 	var extensionHooks *extensionLifecycle
 	var afterRestore atomic.Pointer[afterRestoreRuntime]
@@ -775,6 +782,7 @@ func errorKind(err error) string {
 // decideMode picks the boot branch by looking at which manifest file exists.
 //
 // Mode priority (ADR-171):
+//  0. agent.json with kind=="agent"            → modeAgent (ADR-20261027090010), alone
 //  1. app-task.json with kind=="app_task"     → modeAppTask
 //  2. execution.json with kind=="execution"   → modeExecution
 //  3. job.json with kind=="job"               → modeJob
@@ -796,7 +804,7 @@ func decideMode(fsys fs.FS) (bootMode, api.BuildManifest, error) {
 		if err = validateDataRepairManifest(data); err != nil {
 			return modeDataRepair, api.BuildManifest{}, err
 		}
-		for _, other := range []string{appTaskManifestRelativePath, executionManifestRelativePath, "etc/faas/job.json", "etc/faas/build.json"} {
+		for _, other := range []string{appTaskManifestRelativePath, executionManifestRelativePath, agentManifestRelativePath, "etc/faas/job.json", "etc/faas/build.json"} {
 			if _, err = fs.Stat(fsys, other); !errors.Is(err, fs.ErrNotExist) {
 				return modeDataRepair, api.BuildManifest{}, errors.New("conflicting repair guest mode")
 			}
@@ -804,6 +812,19 @@ func decideMode(fsys fs.FS) (bootMode, api.BuildManifest, error) {
 		return modeDataRepair, api.BuildManifest{}, nil
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return modeDataRepair, api.BuildManifest{}, err
+	}
+	if data, err := fs.ReadFile(fsys, agentManifestRelativePath); err == nil {
+		if markerErr := validateAgentManifest(data); markerErr != nil {
+			return modeAgent, api.BuildManifest{}, fmt.Errorf("invalid agent manifest: %w", markerErr)
+		}
+		for _, other := range []string{appTaskManifestRelativePath, executionManifestRelativePath, "etc/faas/job.json", "etc/faas/build.json"} {
+			if _, err = fs.Stat(fsys, other); !errors.Is(err, fs.ErrNotExist) {
+				return modeAgent, api.BuildManifest{}, errors.New("conflicting agent guest mode")
+			}
+		}
+		return modeAgent, api.BuildManifest{}, nil
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return modeAgent, api.BuildManifest{}, fmt.Errorf("read agent manifest: %w", err)
 	}
 	if data, err := fs.ReadFile(fsys, appTaskManifestRelativePath); err == nil {
 		if markerErr := validateAppTaskManifest(data); markerErr != nil {

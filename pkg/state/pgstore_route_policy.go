@@ -128,7 +128,7 @@ func (s *PgStore) applyRoutePolicyOnce(ctx context.Context, accountID, appID, ke
 	// The applied rules pass the same traffic policy guard as rule writes
 	// (ADR-570). Route policy writes only throttle and budget rules, never
 	// routes, so the account's analysis covers every host it can change.
-	tx, err := s.beginTrafficPolicyMutation(ctx, uuidToPgtype(accountID))
+	tx, err := s.beginRuleOnlyTrafficPolicyMutation(ctx, uuidToPgtype(accountID))
 	if err != nil {
 		return api.RoutePolicyReceipt{}, false, fmt.Errorf("begin route policy apply: %w", err)
 	}

@@ -796,7 +796,7 @@ func TestUpdateAppEgressAllowlist_V6AcceptedOnPro(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	id := mustSeedApp(t, e, "pro-v6")
 	rec := e.do(t, "PATCH", "/v1/apps/pro-v6", api.UpdateAppRequest{
-		EgressAllowlist: &[]string{"fe80::/10"},
+		EgressAllowlist: &[]string{"2001:db8::/32"},
 	}, nil)
 	if rec.Code != 200 {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)
@@ -806,8 +806,8 @@ func TestUpdateAppEgressAllowlist_V6AcceptedOnPro(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AppByID: %v", err)
 	}
-	if len(app.EgressAllowlist) != 1 || app.EgressAllowlist[0].String() != "fe80::/10" {
-		t.Fatalf("allowlist = %+v, want [fe80::/10]", app.EgressAllowlist)
+	if len(app.EgressAllowlist) != 1 || app.EgressAllowlist[0].String() != "2001:db8::/32" {
+		t.Fatalf("allowlist = %+v, want [2001:db8::/32]", app.EgressAllowlist)
 	}
 }
 
@@ -824,7 +824,7 @@ func TestUpdateAppEgressAllowlist_MixedAcceptedOnPro(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	id := mustSeedApp(t, e, "pro-mixed")
 	rec := e.do(t, "PATCH", "/v1/apps/pro-mixed", api.UpdateAppRequest{
-		EgressAllowlist: &[]string{"1.2.3.0/24", "fe80::/10"},
+		EgressAllowlist: &[]string{"1.2.3.0/24", "2001:db8::/32"},
 	}, nil)
 	if rec.Code != 200 {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)
@@ -833,7 +833,7 @@ func TestUpdateAppEgressAllowlist_MixedAcceptedOnPro(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AppByID: %v", err)
 	}
-	want := []string{"1.2.3.0/24", "fe80::/10"}
+	want := []string{"1.2.3.0/24", "2001:db8::/32"}
 	if len(app.EgressAllowlist) != len(want) {
 		t.Fatalf("allowlist len = %d, want %d: %+v", len(app.EgressAllowlist), len(want), app.EgressAllowlist)
 	}
@@ -1025,7 +1025,7 @@ func TestGetApp_SurfacesEgressAllowlist(t *testing.T) {
 	e := setup(t, api.PlanPro)
 	mustSeedApp(t, e, "get-surface")
 	rec := e.do(t, "PATCH", "/v1/apps/get-surface", api.UpdateAppRequest{
-		EgressAllowlist: &[]string{"1.2.3.0/24", "8.8.8.0/24", "fe80::/10"},
+		EgressAllowlist: &[]string{"1.2.3.0/24", "8.8.8.0/24", "2001:db8::/32"},
 	}, nil)
 	if rec.Code != 200 {
 		t.Fatalf("PATCH status %d: %s", rec.Code, rec.Body)
@@ -1040,7 +1040,7 @@ func TestGetApp_SurfacesEgressAllowlist(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("unmarshal GET body: %v; body: %s", err, rec.Body.String())
 	}
-	want := []string{"1.2.3.0/24", "8.8.8.0/24", "fe80::/10"}
+	want := []string{"1.2.3.0/24", "8.8.8.0/24", "2001:db8::/32"}
 	if len(got.EgressAllowlist) != len(want) {
 		t.Fatalf("egress_allowlist len = %d, want %d (body: %s)", len(got.EgressAllowlist), len(want), rec.Body.String())
 	}

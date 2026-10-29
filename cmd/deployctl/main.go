@@ -186,6 +186,7 @@ var defaultTargets = []target{
 	{dir: "deploy/ansible/roles/internal_mail_service/files", skip: only("maild")},
 	{dir: "deploy/ansible/roles/profiled_service/files", skip: only("profiled")},
 	{dir: "deploy/ansible/roles/livequeryd_service/files", skip: only("livequeryd")},
+	{dir: "deploy/ansible/roles/agentd_service/files", skip: only("agentd")},
 }
 
 // ansibleRoleSkips: the control_plane_service role ships apid, meterd
@@ -205,6 +206,7 @@ func ansibleRoleSkips() map[string]bool {
 		"realtimed":            true,
 		"profiled":             true,
 		"livequeryd":           true,
+		"agentd":               true,
 	}
 }
 
@@ -234,6 +236,7 @@ func legacySkips() map[string]bool {
 		"gatewayd-public-edge": true,
 		"livequeryd":           true,
 		"mcp-bridge":           true,
+		"agentd":               true,
 	}
 }
 
