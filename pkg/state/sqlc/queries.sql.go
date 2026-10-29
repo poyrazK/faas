@@ -10233,12 +10233,15 @@ func (q *Queries) CountDeployedApps(ctx context.Context, db DBTX, accountID pgty
 
 const countDeploymentCrons = `-- name: CountDeploymentCrons :one
 SELECT (SELECT count(*) FROM crons WHERE app_id=$1::text::uuid)::bigint AS app_count,
- (SELECT count(*) FROM crons c JOIN apps a ON a.id=c.app_id WHERE a.account_id=$2::text::uuid AND a.status <> 'deleted')::bigint AS account_count
+ (SELECT count(*) FROM crons c JOIN apps a ON a.id=c.app_id LEFT JOIN orgs o ON o.id=a.org_id
+  WHERE (a.account_id=$2::text::uuid OR a.org_id=$2::text::uuid)
+    AND (CASE WHEN NOT o.personal_org AND o.resource_ownership_enabled THEN o.id ELSE a.account_id END)=$2::text::uuid
+    AND a.status <> 'deleted')::bigint AS account_count
 `
 
 type CountDeploymentCronsParams struct {
 	AppID     string
-	AccountID string
+	SubjectID string
 }
 
 type CountDeploymentCronsRow struct {
@@ -10246,8 +10249,10 @@ type CountDeploymentCronsRow struct {
 	AccountCount int64
 }
 
+// account_count is the per-account allowance's usage: the crons of the app's
+// billing subject (ADR-202610171904, quotaSubjectSQL in pgstore_quota_subject.go).
 func (q *Queries) CountDeploymentCrons(ctx context.Context, db DBTX, arg CountDeploymentCronsParams) (CountDeploymentCronsRow, error) {
-	row := db.QueryRow(ctx, countDeploymentCrons, arg.AppID, arg.AccountID)
+	row := db.QueryRow(ctx, countDeploymentCrons, arg.AppID, arg.SubjectID)
 	var i CountDeploymentCronsRow
 	err := row.Scan(&i.AppCount, &i.AccountCount)
 	return i, err
@@ -12571,12 +12576,17 @@ func (q *Queries) CreateWorkflowForEachItem(ctx context.Context, db DBTX, arg Cr
 	return err
 }
 
-const cronActivationPlan = `-- name: CronActivationPlan :one
-SELECT plan FROM accounts WHERE id=$1::text::uuid
+const cronActivationOwnerPlan = `-- name: CronActivationOwnerPlan :one
+SELECT coalesce(CASE WHEN NOT o.personal_org AND o.resource_ownership_enabled THEN o.plan ELSE acc.plan END, '')::text AS plan
+FROM apps a LEFT JOIN accounts acc ON acc.id=a.account_id LEFT JOIN orgs o ON o.id=a.org_id
+WHERE a.id=$1::text::uuid
 `
 
-func (q *Queries) CronActivationPlan(ctx context.Context, db DBTX, accountID string) (string, error) {
-	row := db.QueryRow(ctx, cronActivationPlan, accountID)
+// The plan of the app's billing subject (ADR-202610171904), as
+// AppResourceAccount resolves it: its organization's once the organization
+// adopted billing, else its creator's.
+func (q *Queries) CronActivationOwnerPlan(ctx context.Context, db DBTX, appID string) (string, error) {
+	row := db.QueryRow(ctx, cronActivationOwnerPlan, appID)
 	var plan string
 	err := row.Scan(&plan)
 	return plan, err

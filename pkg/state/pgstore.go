@@ -5764,14 +5764,15 @@ func (s *PgStore) ApplyProjectPlan(
 				NotAllowed: true,
 			}
 		}
-		var observedCrons int
-		if err := tx.QueryRow(ctx,
-			`select count(*) from crons c
-			 join apps a on a.id = c.app_id
-			 where (a.org_id=$2::uuid OR $2::uuid IS NULL AND a.account_id=$1) and a.status <> 'deleted'`,
-			project.AccountID, nullString(project.OrgID),
-		).Scan(&observedCrons); err != nil {
-			return Project{}, nil, nil, fmt.Errorf("state: count crons for account %s: %w", project.AccountID, err)
+		// The allowance is the project's billing subject's
+		// (ADR-202610171904), counted under its quota lock.
+		subject, err := cronQuotaSubjectTx(ctx, tx, project.AccountID, mustPgUUID(project.OrgID))
+		if err != nil {
+			return Project{}, nil, nil, err
+		}
+		observedCrons, err := countQuotaSubjectCronsTx(ctx, tx, subject)
+		if err != nil {
+			return Project{}, nil, nil, err
 		}
 		if observedCrons+len(crons) > limits.CronLimitPerAccount {
 			return Project{}, nil, nil, &QuotaError{
@@ -6016,10 +6017,17 @@ func (s *PgStore) ApplyProjectReconcile(
 		for _, app := range existing {
 			projectIDs = append(projectIDs, app.ID)
 		}
-		var observedCrons, projectCronCount int
-		if err := tx.QueryRow(ctx, `select count(*) from crons c join apps a on a.id = c.app_id where (a.org_id=$2::uuid OR $2::uuid IS NULL AND a.account_id=$1) and a.status <> 'deleted'`, project.AccountID, nullString(storedProject.OrgID)).Scan(&observedCrons); err != nil {
-			return ProjectReconcileResult{}, fmt.Errorf("state: count account crons: %w", err)
+		// The allowance is the project's billing subject's
+		// (ADR-202610171904), counted under its quota lock.
+		subject, err := cronQuotaSubjectTx(ctx, tx, storedProject.AccountID, mustPgUUID(storedProject.OrgID))
+		if err != nil {
+			return ProjectReconcileResult{}, err
 		}
+		observedCrons, err := countQuotaSubjectCronsTx(ctx, tx, subject)
+		if err != nil {
+			return ProjectReconcileResult{}, err
+		}
+		projectCronCount := 0
 		for _, appID := range projectIDs {
 			var n int
 			if err := tx.QueryRow(ctx, `select count(*) from crons where app_id = $1`, appID).Scan(&n); err != nil {
@@ -14039,8 +14047,9 @@ func (s *PgStore) CreateCronIfUnderQuotaWithOptions(ctx context.Context, appID, 
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
 
-	if _, err := sqlc.New().LockCronAccountForApp(ctx, tx, appID); err != nil {
-		return Cron{}, mapErr(err)
+	_, subject, err := lockCronQuotaSubjectTx(ctx, tx, appID)
+	if err != nil {
+		return Cron{}, err
 	}
 
 	// 1. Lock the parent apps row. SELECT 1 + FOR UPDATE keeps the lock
@@ -14094,24 +14103,13 @@ func (s *PgStore) CreateCronIfUnderQuotaWithOptions(ctx context.Context, appID, 
 		}
 	}
 
-	// 3. Per-account count under the same tx. account_id is read off
-	//    the apps row we just locked (no second round-trip to
-	//    accounts). The join through apps excludes deleted apps so
-	//    their cron rows don't poison the cap.
-	var accountID string
-	if err := tx.QueryRow(ctx,
-		`select account_id from apps where id = $1`, appID,
-	).Scan(&accountID); err != nil {
-		return Cron{}, fmt.Errorf("state: read account_id for app %s: %w", appID, err)
-	}
-	var accountCount int
-	if err := tx.QueryRow(ctx,
-		`select count(*) from crons c
-		 join apps a on a.id = c.app_id
-		 where a.account_id = $1 and a.status <> 'deleted'`,
-		accountID,
-	).Scan(&accountCount); err != nil {
-		return Cron{}, fmt.Errorf("state: count crons for account %s: %w", accountID, err)
+	// 3. Per-account count under the same tx, over the crons of the app's
+	//    billing subject (ADR-202610171904), whose quota lock
+	//    lockCronQuotaSubjectTx took. Deleted apps' crons don't poison the
+	//    cap.
+	accountCount, err := countQuotaSubjectCronsTx(ctx, tx, subject)
+	if err != nil {
+		return Cron{}, err
 	}
 	if accountCount >= limits.CronLimitPerAccount {
 		return Cron{}, &CronQuotaError{
