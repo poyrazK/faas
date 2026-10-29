@@ -228,6 +228,12 @@ var catalog = map[string]Render{
 		Why:   "the build failed in Gregale's build infrastructure (builder VM, build disk, or control plane) before your build steps could finish",
 		Fix:   "• deploy again; the build is retried from the start\n• if it keeps failing, contact support with the deployment id",
 	},
+	api.CodeAppLayerTooBig: {
+		Title: "App too large",
+		Hint:  "the built app is larger than your plan's app filesystem",
+		Why:   "your dependencies and code go into the app's own layer, apart from the shared runtime base, and each plan caps that layer; the error names the cap and the size this build needed",
+		Fix:   "• install production dependencies only, and keep build caches, test data and other large files out of the deployed source\n• or move to a plan with a larger app filesystem",
+	},
 	api.CodeStageSecurityScanFindings: {
 		Title: "Security scan flagged findings",
 		Hint:  "grype found CVEs at or above the plan's severity threshold",

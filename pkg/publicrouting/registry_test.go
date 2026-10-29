@@ -18,6 +18,7 @@ type fakeStore struct {
 	mu      sync.Mutex
 	views   map[Key]state.PublicRoutingViewResult
 	err     error
+	errOnce error // failed by the next read only
 	reads   [][]Key
 	block   chan struct{} // when set, a read waits for it
 	entered chan struct{}
@@ -44,6 +45,10 @@ func (s *fakeStore) ReadPublicRoutingViews(ctx context.Context, keys []Key) (map
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if once := s.errOnce; once != nil {
+		s.errOnce = nil
+		return nil, once
+	}
 	if s.err != nil {
 		return nil, s.err
 	}
@@ -162,8 +167,9 @@ func TestViewAdmitsThroughOutageUntilGrace(t *testing.T) {
 	if _, err := registry.View(t.Context(), key); !errors.Is(err, outage) {
 		t.Fatalf("past the grace: err=%v; want the store's failure", err)
 	}
-	if store.readCount() != reads+1 {
-		t.Fatal("past the grace the view was served without a store read")
+	// The cold read and its one retry (ADR-20261027085556 amendment 1).
+	if store.readCount() != reads+2 {
+		t.Fatalf("past the grace: %d store reads; want the cold read and its retry", store.readCount()-reads)
 	}
 	store.fail(nil)
 	store.set(key, "d2")

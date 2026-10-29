@@ -123,7 +123,10 @@ func (h *Handler) pinPublicRoutingPolicy(w http.ResponseWriter, r *http.Request,
 		return false
 	}
 	defer measureTrafficPhase(r.Context(), trafficPolicy)()
-	bounded, cancel := context.WithTimeout(r.Context(), api.TrafficPublicRoutingReadTimeout)
+	// A warm view answers from memory. A cold read keeps the routing read
+	// bound for its first attempt and may retry within the cold bound
+	// (ADR-20261027085556 amendment 1).
+	bounded, cancel := context.WithTimeout(r.Context(), api.TrafficPublicRoutingColdReadTimeout)
 	defer cancel()
 	source, err := h.publicRoutingPolicy(bounded, app, inputs)
 	if err == nil {
