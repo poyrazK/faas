@@ -46,6 +46,26 @@ func TestWakeThatNeverReachedVMMDIsReplaced(t *testing.T) {
 	}
 }
 
+// gRPC reports "transport is closing" for a call whose request may already
+// have reached vmmd: the wake must not be re-placed, or a VM could be booted
+// twice.
+func TestWakeOnAClosingTransportIsNotReplaced(t *testing.T) {
+	var owner string
+	f := newFailoverFleet(t, 2, 8192, func(nodeID string) error {
+		if nodeID == owner {
+			return status.Error(codes.Unavailable, `connection error: desc = "transport is closing"`)
+		}
+		return nil
+	})
+	owner = f.nodes[0].ID
+	if _, err := f.e.Wake(f.ctx, f.app(t, api.PlanPro, 256, 1).ID, "", "", sched.TriggerCronSched); err == nil {
+		t.Fatal("a wake whose transport closed mid-call succeeded")
+	}
+	if n := f.vmm.callsOn(f.nodes[1].ID); n != 0 {
+		t.Fatalf("the wake was re-placed on the peer (%d calls); its first VM may exist", n)
+	}
+}
+
 // A node that answers its heartbeat but fails every boot used to stay the
 // owner's first choice until an operator drained it.
 func TestNodeBootBreakerSteersPlacementAway(t *testing.T) {
@@ -67,8 +87,7 @@ func TestNodeBootBreakerSteersPlacementAway(t *testing.T) {
 				return nil
 			})
 			owner = f.nodes[0].ID
-			first, second := f.app(t, api.PlanPro, 256, 1), f.app(t, api.PlanPro, 256, 1)
-			for _, app := range []state.App{first, second, first} {
+			for _, app := range []state.App{f.app(t, api.PlanPro, 256, 1), f.app(t, api.PlanPro, 256, 1), f.app(t, api.PlanPro, 256, 1)} {
 				if _, err := f.e.Wake(f.ctx, app.ID, "", "", sched.TriggerCronSched); err == nil {
 					t.Fatal("a wake on the failing owner node succeeded")
 				}
@@ -76,7 +95,7 @@ func TestNodeBootBreakerSteersPlacementAway(t *testing.T) {
 			res, err := f.e.Wake(f.ctx, f.app(t, api.PlanPro, 256, 1).ID, "", "", sched.TriggerCronSched)
 			if tc.avoided {
 				if err != nil || res.NodeID != f.nodes[1].ID {
-					t.Fatalf("wake after three node failures from two apps = %+v, %v; want it on the peer", res, err)
+					t.Fatalf("wake after three node failures from three apps = %+v, %v; want it on the peer", res, err)
 				}
 				return
 			}
@@ -121,16 +140,32 @@ func TestWakeFastPathSkipsAnInstanceOnANodeOutOfRotation(t *testing.T) {
 	}
 }
 
+// pingableVMM answers Ping per node, as a running or stopped vmmd would.
+type pingableVMM struct {
+	*refusingVMM
+	down string
+}
+
+func (v *pingableVMM) Ping(ctx context.Context, nodeID string) (*sched.PingOutcome, error) {
+	if nodeID == v.down {
+		return nil, status.Error(codes.Unavailable, `connection error: desc = "transport: Error while dialing: dial unix /run/faas/vmmd.sock: connect: connection refused"`)
+	}
+	return v.refusingVMM.Ping(ctx, nodeID)
+}
+
 // vmmd streams capacity every second to the scheduler on its node. A silent
-// stream now takes the node out of placement in seconds, not after the
-// heartbeat's three failed probes, and resumed reports bring it back.
+// stream whose vmmd does not answer now takes the node out of placement in
+// seconds, not after the heartbeat's three failed probes; a vmmd that answers
+// is only reconnecting and stays in; resumed reports bring the node back.
 func TestSilentCapacityStreamMovesPlacementAway(t *testing.T) {
 	ctx := context.Background()
 	f := newFailoverFleet(t, 2, 8192, func(string) error { return nil })
 	owner := f.nodes[0]
+	vmm := &pingableVMM{refusingVMM: f.vmm}
+	e := sched.XNewEngine(t, f.store, vmm, &sched.FakeNotifier{}, "1.10.0").WithOwnerNodeID(owner.ID)
 	report := func() {
 		t.Helper()
-		if err := f.e.CapacitySink()(sched.CapacityReport{NodeID: owner.ID, SampledAt: time.Now(), RAMHeadroomMB: 8192}); err != nil {
+		if err := e.CapacitySink()(sched.CapacityReport{NodeID: owner.ID, SampledAt: time.Now(), RAMHeadroomMB: 8192}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -142,23 +177,31 @@ func TestSilentCapacityStreamMovesPlacementAway(t *testing.T) {
 		}
 		return n.EffectiveReadiness()
 	}
+	lost := time.Duration(api.CapacityStreamLostSeconds+1) * time.Second
 
 	report()
-	f.e.ObserveCapacityStreams(ctx, time.Now())
+	start := time.Now()
+	e.ObserveCapacityStreams(ctx, start)
 	if got := readiness(); got != state.NodeReadinessReady {
 		t.Fatalf("readiness with a live stream = %s, want ready", got)
 	}
-	f.e.ObserveCapacityStreams(ctx, time.Now().Add(time.Duration(api.CapacityStreamLostSeconds+1)*time.Second))
-	if got := readiness(); got != state.NodeReadinessUnavailable {
-		t.Fatalf("readiness after the stream went silent = %s, want unavailable", got)
+	e.ObserveCapacityStreams(ctx, start.Add(lost))
+	if got := readiness(); got != state.NodeReadinessReady {
+		t.Fatalf("readiness while vmmd answers its ping = %s, want ready: the stream is only reconnecting", got)
 	}
-	res, err := f.e.Wake(ctx, f.app(t, api.PlanPro, 256, 1).ID, "", "", sched.TriggerCronSched)
+	vmm.down = owner.ID
+	e.ObserveCapacityStreams(ctx, start.Add(2*lost))
+	if got := readiness(); got != state.NodeReadinessUnavailable {
+		t.Fatalf("readiness after the stream went silent and vmmd stopped answering = %s, want unavailable", got)
+	}
+	res, err := e.Wake(ctx, f.app(t, api.PlanPro, 256, 1).ID, "", "", sched.TriggerCronSched)
 	if err != nil || res.NodeID != f.nodes[1].ID {
 		t.Fatalf("wake with the owner's vmmd silent = %+v, %v; want it on the peer", res, err)
 	}
 
+	vmm.down = ""
 	report()
-	f.e.ObserveCapacityStreams(ctx, time.Now())
+	e.ObserveCapacityStreams(ctx, time.Now())
 	if got := readiness(); got != state.NodeReadinessReady {
 		t.Fatalf("readiness after reports resumed = %s, want ready", got)
 	}

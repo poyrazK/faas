@@ -44,9 +44,11 @@ func (e routerDialError) Error() string { return e.err.Error() }
 func (e routerDialError) Unwrap() error { return e.err }
 
 // vmmdNotReached reports whether err shows a boot request never reached
-// vmmd: the router could not dial it, or gRPC refused the call before
-// opening a stream ("connection error: …", "name resolver error: …" are
-// gRPC's own fail-fast messages). Another node may take such a wake.
+// vmmd: the router could not dial it, or gRPC failed the call before any
+// transport existed (a dial or TLS handshake failure, or name resolution).
+// Another node may take such a wake. "transport is closing" and "error
+// reading from server" are excluded: gRPC reports those for a call whose
+// request may already have reached vmmd.
 func vmmdNotReached(err error) bool {
 	if err == nil {
 		return false
@@ -60,13 +62,19 @@ func vmmdNotReached(err error) bool {
 		return false
 	}
 	msg := st.Message()
-	return strings.HasPrefix(msg, "connection error:") || strings.HasPrefix(msg, "name resolver error:")
+	return strings.HasPrefix(msg, "name resolver error:") ||
+		strings.Contains(msg, "Error while dialing") ||
+		strings.Contains(msg, "authentication handshake failed")
 }
 
-// nodeCausedBootFailure reports whether a boot error points at the node
-// rather than the app: vmmd unreachable, or an internal failure before the
-// app ran. App problems carry their own codes (startup timeout, scan
-// findings, capacity) and do not count.
+// nodeCausedBootFailure reports whether a boot error may point at the node
+// rather than the app: vmmd unreachable, or an internal failure. App
+// problems vmmd maps carry their own codes (startup timeout, scan findings,
+// capacity) and do not count. vmmd's catch-all "internal" can still be an
+// app's own fault (a bad layer, a corrupt snapshot), which is why the
+// breaker needs failures from api.NodeBootBreakerDistinctApps apps. The
+// caller's cancellation and deadline arrive as raw Canceled and
+// DeadlineExceeded statuses and do not count.
 func nodeCausedBootFailure(err error) bool {
 	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
@@ -206,23 +214,36 @@ func (e *Engine) instanceNodeServes(ctx context.Context, nodeID string) bool {
 // carries; only a mark with this reason is cleared when reports resume.
 const capacityStreamLostReason = "vmmd stopped reporting capacity"
 
-// capacityStreamWatch remembers which nodes this scheduler marked
-// unavailable for a silent capacity stream.
+// capacityStreamWatch remembers, per node, the silence this scheduler
+// marked (with the readiness it replaced, restored when reports resume) and
+// when it last pinged a silent node's vmmd.
 type capacityStreamWatch struct {
 	mu     sync.Mutex
-	marked map[string]bool
+	marked map[string]streamMark
+	pinged map[string]time.Time
+}
+
+type streamMark struct {
+	prior       state.NodeReadiness
+	priorReason string
 }
 
 func newCapacityStreamWatch() *capacityStreamWatch {
-	return &capacityStreamWatch{marked: map[string]bool{}}
+	return &capacityStreamWatch{marked: map[string]streamMark{}, pinged: map[string]time.Time{}}
 }
 
+// capacityStreamPingTimeout bounds the ping that confirms a silent stream.
+const capacityStreamPingTimeout = 2 * time.Second
+
 // ObserveCapacityStreams marks unavailable every node whose capacity stream
-// to this scheduler has been silent for api.CapacityStreamLostSeconds,
-// unless its vmmd is restarting under a notice, and clears its own mark when
-// the node reports again. Only nodes that streamed to this scheduler since it
-// started are watched. Each silence is marked once: a heartbeat that proves
-// the node ready meanwhile stands.
+// to this scheduler has been silent for api.CapacityStreamLostSeconds and
+// whose vmmd then fails a ping, unless it is restarting under a notice. A
+// vmmd that answers is only reconnecting its stream (its reconnect backoff
+// can outlast the threshold) and is pinged again after another threshold.
+// When the node reports again, the readiness the mark replaced is restored,
+// if the node still carries the mark. Only nodes that streamed to this
+// scheduler since it started are watched. Each silence is marked once: a
+// heartbeat that proves the node ready meanwhile stands.
 func (e *Engine) ObserveCapacityStreams(ctx context.Context, now time.Time) {
 	writer, ok := e.store.(state.ComputeNodeReadinessStore)
 	if !ok || e.capacityTable == nil || e.streams == nil {
@@ -232,47 +253,76 @@ func (e *Engine) ObserveCapacityStreams(ctx context.Context, now time.Time) {
 	for nodeID, lastSeen := range e.capacityTable.LastSeen() {
 		silent := now.Sub(lastSeen) > lost
 		e.streams.mu.Lock()
-		marked := e.streams.marked[nodeID]
+		mark, marked := e.streams.marked[nodeID]
+		pingedAt := e.streams.pinged[nodeID]
 		e.streams.mu.Unlock()
 		switch {
 		case silent && !marked:
-			if e.restartNotices.Active(ctx, nodeID) {
+			if now.Sub(pingedAt) < lost || e.restartNotices.Active(ctx, nodeID) {
 				continue
 			}
 			node, err := e.store.ComputeNodeByID(ctx, nodeID)
-			if err != nil || node.EffectiveReadiness() != state.NodeReadinessReady && node.EffectiveReadiness() != state.NodeReadinessDegraded {
-				// Gone, draining or already unavailable: nothing to add.
-				e.setStreamMark(nodeID, true)
+			if err != nil {
+				continue // retried next tick
+			}
+			if r := node.EffectiveReadiness(); r != state.NodeReadinessReady && r != state.NodeReadinessDegraded {
+				// Draining or already unavailable: nothing to add.
+				e.setStreamMark(nodeID, &streamMark{prior: r})
 				continue
+			}
+			pingCtx, cancel := context.WithTimeout(ctx, capacityStreamPingTimeout)
+			_, pingErr := e.vmm.Ping(pingCtx, e.nodeForRoute(nodeID))
+			cancel()
+			e.streams.mu.Lock()
+			e.streams.pinged[nodeID] = now
+			e.streams.mu.Unlock()
+			if pingErr == nil {
+				continue // vmmd answers; its stream is reconnecting
+			}
+			prior := streamMark{prior: node.Readiness}
+			if node.ReadinessReason != nil {
+				prior.priorReason = *node.ReadinessReason
 			}
 			if _, err := writer.SetComputeNodeReadiness(ctx, nodeID, state.NodeReadinessUnavailable, capacityStreamLostReason); err != nil {
 				e.log.Warn("sched: mark silent node unavailable", "node_id", nodeID, "err", err)
 				continue
 			}
-			e.setStreamMark(nodeID, true)
-			e.log.Warn("sched: vmmd stopped reporting capacity; placement avoids the node",
-				"node_id", nodeID, "node_name", node.Name, "silent_s", int(now.Sub(lastSeen).Seconds()))
+			e.setStreamMark(nodeID, &prior)
+			e.log.Warn("sched: vmmd stopped reporting capacity and does not answer; placement avoids the node",
+				"node_id", nodeID, "node_name", node.Name, "silent_s", int(now.Sub(lastSeen).Seconds()), "ping_err", pingErr)
 		case !silent && marked:
-			e.setStreamMark(nodeID, false)
 			node, err := e.store.ComputeNodeByID(ctx, nodeID)
-			if err != nil || node.Readiness != state.NodeReadinessUnavailable || node.ReadinessReason == nil || *node.ReadinessReason != capacityStreamLostReason {
-				continue
+			if err != nil {
+				continue // retried next tick
 			}
-			if _, err := writer.SetComputeNodeReadiness(ctx, nodeID, state.NodeReadinessReady, ""); err != nil {
+			e.setStreamMark(nodeID, nil)
+			if node.Readiness != state.NodeReadinessUnavailable || node.ReadinessReason == nil || *node.ReadinessReason != capacityStreamLostReason {
+				continue // another writer has spoken since
+			}
+			restore := mark.prior
+			if restore == "" || restore == state.NodeReadinessUnavailable {
+				restore = state.NodeReadinessReady
+			}
+			if _, err := writer.SetComputeNodeReadiness(ctx, nodeID, restore, mark.priorReason); err != nil {
 				e.log.Warn("sched: clear silent-node mark", "node_id", nodeID, "err", err)
-				e.setStreamMark(nodeID, true)
+				e.setStreamMark(nodeID, &mark)
 				continue
 			}
-			e.log.Info("sched: vmmd reports capacity again", "node_id", nodeID, "node_name", node.Name)
+			e.log.Info("sched: vmmd reports capacity again", "node_id", nodeID, "node_name", node.Name, "readiness", restore)
+		case !silent:
+			e.streams.mu.Lock()
+			delete(e.streams.pinged, nodeID)
+			e.streams.mu.Unlock()
 		}
 	}
 }
 
-func (e *Engine) setStreamMark(nodeID string, marked bool) {
+// setStreamMark records (or, with nil, forgets) this scheduler's mark.
+func (e *Engine) setStreamMark(nodeID string, mark *streamMark) {
 	e.streams.mu.Lock()
 	defer e.streams.mu.Unlock()
-	if marked {
-		e.streams.marked[nodeID] = true
+	if mark != nil {
+		e.streams.marked[nodeID] = *mark
 	} else {
 		delete(e.streams.marked, nodeID)
 	}

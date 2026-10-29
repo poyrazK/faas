@@ -41,32 +41,52 @@ that reason. Four gaps remained:
    - not app problems (startup timeout, scan findings, capacity), and not
      the caller's own cancellation.
 
-   After `api.NodeBootBreakerFailures` (3) in a row from at least
-   `api.NodeBootBreakerDistinctApps` (2) apps, placement treats the node as
-   degraded for `api.NodeBootBreakerOpenSeconds` (60). It uses the node only
-   when nothing else fits, and a successful boot closes the breaker. The
-   breaker is process-local, so each scheduler learns from its own wakes and
-   none overwrites another's readiness.
+   vmmd's catch-all `internal` can still be an app's own fault (a bad
+   layer, a corrupt snapshot), so the threshold is three failures in a row
+   from three different apps (`api.NodeBootBreakerFailures`,
+   `api.NodeBootBreakerDistinctApps`). Placement then treats the node as
+   degraded for `api.NodeBootBreakerOpenSeconds` (60): it uses the node only
+   when nothing else fits. A successful boot closes the breaker. The caller's
+   cancellation and deadline arrive as raw `Canceled` and `DeadlineExceeded`
+   statuses (`liftErr` passes statuses without ErrorInfo through
+   unchanged), so they do not count. The breaker is process-local, so each
+   scheduler learns from its own wakes and none overwrites another's
+   readiness.
 2. **Re-place what never reached vmmd.** A router dial failure, or a gRPC
-   `Unavailable` whose message is gRPC's own fail-fast `connection error:`
-   or `name resolver error:`, is a wake failover refusal with reason
-   `vmmd_unreachable`. The wake is re-placed within its deadline, as for the
-   base-generation refusals.
+   `Unavailable` raised before any transport existed (`Error while
+   dialing`, `authentication handshake failed`, `name resolver error:`), is
+   a wake failover refusal with reason `vmmd_unreachable`. The wake is
+   re-placed within its deadline, as for the base-generation refusals.
+   `transport is closing` and `error reading from server` share the
+   `connection error:` prefix but can follow a request that reached vmmd,
+   so they are excluded.
 3. **Fast-path backstop.** The wake fast path, including the owner-cache
    path, skips a running instance whose node is out of rotation: missing
    from the active-node registry, and unavailable, retired or inactive in
    its row. This is a registry lookup, with a row read only for a node the
-   registry lacks.
+   registry lacks. For an app already at max_concurrency, the stranded
+   instance still holds its ledger slot until recovery parks it, so that
+   wake is refused for that moment rather than routed to a VM that is
+   gone.
 4. **Capacity-stream silence.** Each tick, the scheduler that receives a
-   node's capacity stream marks the node's readiness `unavailable`
-   ("vmmd stopped reporting capacity") once the stream has been silent for
-   `api.CapacityStreamLostSeconds` (10), unless a planned restart notice is
-   active. Placement avoids an unavailable-readiness node as it does a
-   degraded one. When reports resume, the scheduler clears only a mark that
-   still carries its own reason, so a heartbeat that proves the node ready
-   meanwhile stands. The heartbeat's lifecycle decision, and with it
-   recovery, is unchanged: VMs may keep serving while vmmd restarts, so
-   their instances are not touched.
+   node's capacity stream pings the node's vmmd once the stream has been
+   silent for `api.CapacityStreamLostSeconds` (10), unless a planned
+   restart notice is active.
+   - A vmmd that answers is only reconnecting its stream (its reconnect
+     backoff can outlast the threshold). It is left alone and pinged again
+     after another threshold.
+   - A vmmd that does not answer gets its node's readiness marked
+     `unavailable` ("vmmd stopped reporting capacity").
+
+   Placement, and owner choice for new apps, avoid an unavailable-readiness
+   node as they do a degraded one. When reports resume, the scheduler
+   restores the readiness its mark replaced, only if the node still carries
+   the mark, so a heartbeat that proved the node ready meanwhile stands. A
+   failed node read is retried on the next tick, not skipped. The heartbeat's
+   lifecycle decision, and with it recovery, is unchanged: VMs may keep
+   serving while vmmd restarts, so their instances are not touched. This
+   scheduler becomes the second writer of `compute_nodes.readiness`
+   (`ComputeNodeReadinessStore` says so).
 
 Unchanged: the heartbeat threshold, the recovery arbiter, the dead-node
 reconciler, and wake failover for errors that may have left a VM.
@@ -88,8 +108,11 @@ value on `schedd_wake_failover_total`.
 `pkg/sched/node_failure_test.go`:
 
 - a wake that cannot reach vmmd is re-placed;
-- the breaker steers placement away after node-caused failures, and does not
-  trip on app failures;
+- a call whose transport closed is not re-placed;
+- the breaker steers placement away after node-caused failures from three
+  apps, and does not trip on app failures;
 - the fast path skips an instance on a node out of rotation;
-- a silent stream marks the node unavailable and placement goes elsewhere;
-- resumed reports clear the mark.
+- a silent stream whose vmmd answers is left alone;
+- a silent stream whose vmmd does not answer marks the node unavailable and
+  placement goes elsewhere;
+- resumed reports restore the previous readiness.
