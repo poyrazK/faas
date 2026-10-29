@@ -3,6 +3,7 @@ package apidserver
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 
@@ -35,7 +36,9 @@ func (s *server) idempotentInRequestedEnvironment(maxBytes func(state.Account) i
 		var selector struct {
 			Environment string `json:"environment"`
 		}
-		if err != nil || int64(len(buffered)) > limit || json.Unmarshal(buffered, &selector) != nil || selector.Environment == "" {
+		// Production, named or not, keeps the legacy receipt, so a retry that
+		// adds or drops "environment":"production" still replays.
+		if err != nil || int64(len(buffered)) > limit || json.Unmarshal(buffered, &selector) != nil || state.IsProductionScope(selector.Environment) {
 			s.idempotent(next)(w, r, acct)
 			return
 		}
@@ -44,11 +47,17 @@ func (s *server) idempotentInRequestedEnvironment(maxBytes func(state.Account) i
 			return
 		}
 		// An unregistered name is refused by the handler; it still never shares
-		// the production receipt.
+		// the production receipt. Any other lookup failure refuses the request,
+		// so a retry cannot land under a second receipt.
 		scope := "requested " + selector.Environment
 		if app.ProjectID != "" {
-			if env, err := s.store.ProjectEnvironmentBySlug(r.Context(), acct.ID, app.ProjectID, selector.Environment); err == nil {
+			env, err := s.store.ProjectEnvironmentBySlug(r.Context(), acct.ID, app.ProjectID, selector.Environment)
+			switch {
+			case err == nil:
 				scope = env.ID
+			case !errors.Is(err, state.ErrNotFound):
+				api.WriteProblem(w, api.ErrCapacity("could not resolve the requested environment"))
+				return
 			}
 		}
 		s.idempotentInEnvironment(scope, next)(w, r, acct)

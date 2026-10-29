@@ -1084,7 +1084,11 @@ func cmdAppScale(slug string, args []string) int {
 			revision := workloadRevision
 			expectedWorkloadRevision = &revision
 		}
-		return cmdAppScalePlan(client, appClient, slug, *environment, req, *planOutput, expectedWorkloadRevision)
+		// The preview's read pins its own revision, so a change since the
+		// merge reads above shows up as a different one.
+		observed := int64(-1)
+		previewClient := environmentAppClient{Client: client, environment: *environment, revision: &observed}
+		return cmdAppScalePlan(client, previewClient, slug, *environment, req, *planOutput, expectedWorkloadRevision)
 	}
 	printAppSettingsTarget(slug, *environment, "explicit --environment", req)
 	updated, err := appClient.UpdateApp(context.Background(), slug, req)

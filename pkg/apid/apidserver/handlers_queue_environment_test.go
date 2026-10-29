@@ -327,6 +327,10 @@ func TestQueueEnvironmentHTTPIdempotencyKeysStayInTheirEnvironment(t *testing.T)
 	if code, replay := send("send-1", "", "orders"); code != http.StatusCreated || replay != production {
 		t.Fatalf("production replay: %d %s want %s", code, replay, production)
 	}
+	// Naming production keeps the unnamed production receipt.
+	if code, replay := send("send-1", "production", "orders"); code != http.StatusCreated || replay != production {
+		t.Fatalf("named production replay: %d %s want %s", code, replay, production)
+	}
 
 	// A refused stage request does not poison the production send that reuses its key.
 	if code, _ := send("send-2", "staging", "missing"); code != http.StatusBadRequest {

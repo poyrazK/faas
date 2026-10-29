@@ -10687,6 +10687,18 @@ func (q *Queries) CountUDPListenersForApp(ctx context.Context, db DBTX, appID st
 	return count, err
 }
 
+const countUnfinishedProjectEnvironmentCloneOperations = `-- name: CountUnfinishedProjectEnvironmentCloneOperations :one
+SELECT count(*)::bigint FROM project_environment_clone_operations
+WHERE status IN ('pending','capturing','copying','publishing','compensating')
+`
+
+func (q *Queries) CountUnfinishedProjectEnvironmentCloneOperations(ctx context.Context, db DBTX) (int64, error) {
+	row := db.QueryRow(ctx, countUnfinishedProjectEnvironmentCloneOperations)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const countWorkflowAutomationRevisions = `-- name: CountWorkflowAutomationRevisions :one
 SELECT count(*) FROM workflow_automation_revisions WHERE app_id=$1 AND name=$2
 `

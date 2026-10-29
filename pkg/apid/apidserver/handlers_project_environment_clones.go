@@ -1,13 +1,18 @@
 package apidserver
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/projectaccess"
+	"github.com/onebox-faas/faas/pkg/runtimeconfig"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -23,6 +28,13 @@ func (s *server) createFullProjectEnvironmentClone(w http.ResponseWriter, r *htt
 	}
 	if req.FromEnvironment == "" || req.ShareResources {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid full clone", "from_environment is required and share_resources must be false"))
+		return
+	}
+	// The same organization boundary as /environments: shared project access
+	// never copies another owner's values, secrets or databases into a stage.
+	req.Full = true
+	if problem := projectaccess.ValidateEnvironmentCreation(r, req); problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
 	if !s.fullProjectEnvironmentCloneAdmitted() {
@@ -41,6 +53,36 @@ func (s *server) createFullProjectEnvironmentClone(w http.ResponseWriter, r *htt
 // (ADR-20261024123122).
 func (s *server) fullProjectEnvironmentCloneAdmitted() bool {
 	return s.runtimeBool(runtimeConfigFullEnvironmentClones, false) && s.runtimeBool(runtimeConfigFullEnvironmentCloneAdmission, false)
+}
+
+// fullEnvironmentClonesOffProblem refuses turning the clone machinery off
+// while admission is open or a clone is unfinished: with it off the gateway
+// would serve an unpublished stage and schedd would stop recording the wakes
+// and migrations a clone's retirement proofs read.
+func (s *server) fullEnvironmentClonesOffProblem(ctx context.Context, key string, value json.RawMessage) *api.Problem {
+	if key != runtimeConfigFullEnvironmentClones {
+		return nil
+	}
+	if enabled, err := runtimeconfig.Bool(value); err != nil || enabled {
+		return nil
+	}
+	if s.runtimeBool(runtimeConfigFullEnvironmentCloneAdmission, false) {
+		return api.NewProblem(http.StatusConflict, api.CodeConflict, "Full environment clone admission is open",
+			"turn off "+runtimeConfigFullEnvironmentCloneAdmission+" first, then wait for unfinished clones to end")
+	}
+	store, ok := s.store.(state.ProjectEnvironmentCloneActivityStore)
+	if !ok {
+		return nil
+	}
+	unfinished, err := store.UnfinishedProjectEnvironmentClones(ctx)
+	if err != nil {
+		return api.ErrCapacity("could not count unfinished full environment clones")
+	}
+	if unfinished > 0 {
+		return api.NewProblem(http.StatusConflict, api.CodeConflict, "Full environment clones are unfinished",
+			fmt.Sprintf("%d full environment clones are still running; turn this off once each is ready or compensated", unfinished))
+	}
+	return nil
 }
 
 // admitFullProjectEnvironmentClone captures the source and creates the
