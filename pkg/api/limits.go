@@ -85,6 +85,10 @@ const (
 	SignupAccountsPerNetworkPerDay = 50
 )
 
+// AgentKeyLifetime is an agent key's default expiry (ADR-20261029085359):
+// shorter than other non-admin keys' because agents run unattended.
+const AgentKeyLifetime = 90 * 24 * time.Hour
+
 // InboundWebhookFailuresPerIPPerMinute is how many unknown-token or
 // failed-signature deliveries one client IP may send to /v1/hooks a minute
 // before it gets 429 without a lookup.
@@ -6773,6 +6777,11 @@ const (
 	BuildVMVCPU            = 2
 	BuildTimeoutSeconds    = 900 // 15 min build; cold rootless Railpack export needs headroom
 	BuildE2ETimeoutSeconds = 900 // 15 min end-to-end
+	// BuildCacheExportTimeoutSeconds bounds the second builder VM that exports
+	// a deferred dependency cache (ADR-20261029171525). On rc.304 a cold
+	// Node cache export took about 115 s. The builder slot stays held for the
+	// run, so the bound also caps how long it delays the next build.
+	BuildCacheExportTimeoutSeconds = 600
 	// BuildDiskCapacityRetryDelay is how long a builder without room for a
 	// build drive waits before returning the build to the queue
 	// (ADR-20261029103512). The deployment watchdog's queued-build bound

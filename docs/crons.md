@@ -124,7 +124,8 @@ yourself stays disabled. Deleting an app suspends its crons with
 ## Run a cron now
 
 ```bash
-gregale cron run CRON_ID
+gregale cron run CRON_ID                         # queue the run, print its request id
+gregale cron run CRON_ID --wait                  # follow it; exit 0 only if it succeeds
 gregale cron run --app my-api --interactive      # pick a cron and follow the run
 gregale cron fire-now REQUEST_ID --wait          # follow a request you already made
 ```
@@ -134,6 +135,13 @@ schedule. The request goes `pending`, then `running` while the run is queued
 and delivered, then `succeeded` or `failed` with the run's error. A cron can
 have five manual runs waiting or running at once; another request gets
 `429 cron_fire_now_busy` until one finishes.
+
+Without `--wait`, `gregale cron run` exits 0 as soon as the run is queued. In
+scripts and CI use `--wait`: it exits 1 when the run fails or is cancelled and
+3 when `--timeout` (default 2m) passes first.
+
+Crons are not part of `gregale triggers`, which covers message-broker and
+queue triggers; list and edit crons with `gregale cron`.
 
 ## History and alerts
 

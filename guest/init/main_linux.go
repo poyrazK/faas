@@ -1038,6 +1038,16 @@ func runBuildOnce(m api.BuildManifest) error {
 	if err := os.MkdirAll(m.OutDir, 0o755); err != nil {
 		return writeAndPoweroff(m, fmt.Errorf("mkdir outdir: %w", err), "")
 	}
+	if m.CacheExportOnly {
+		// The deferred run's image was already handed off, and vmmd exports
+		// whatever the output still holds (ADR-20261029171525).
+		if !m.DependencyCache || filepath.Clean(m.OutDir) == "/build" || !strings.HasPrefix(filepath.Clean(m.OutDir), "/build/") {
+			return writeAndPoweroff(m, fmt.Errorf("cache export run with output %q and dependency cache %v", m.OutDir, m.DependencyCache), "")
+		}
+		if err := clearOutputExcept(m.OutDir, dependencyInputsFile); err != nil {
+			return writeAndPoweroff(m, fmt.Errorf("clear deferred build output: %w", err), "")
+		}
+	}
 	if err := prepareBuildIssueSourceMaps(m); err != nil {
 		return writeAndPoweroff(m, err, "")
 	}
@@ -1061,8 +1071,10 @@ func runBuildOnce(m api.BuildManifest) error {
 		}
 	}
 
-	// 1. Extract source tarball. guest-init has no login-shell PATH.
-	if m.SourceTarPath != "" {
+	// 1. Extract source tarball. guest-init has no login-shell PATH. A cache
+	// export run builds the tree the deferred run already unpacked; unpacking
+	// again would undo flattenSingleSourceDir and change the build context.
+	if m.SourceTarPath != "" && !m.CacheExportOnly {
 		if out, err := exec.Command("/bin/tar", "-xaf", m.SourceTarPath, "-C", m.BuildContext).CombinedOutput(); err != nil {
 			return writeAndPoweroff(m, fmt.Errorf("tar extract: %w (%s)", err, out), "")
 		}
@@ -1376,7 +1388,7 @@ func runBuildOnce(m api.BuildManifest) error {
 	// successful halt. Quiesce the daemon before reading its log and syncing
 	// the writable drive so export cannot observe partially written metadata.
 	stopBuildkit()
-	if m.DependencyCache {
+	if m.DependencyCache && !deferCacheExport(m) {
 		cachePath := filepath.Join(m.OutDir, "cache")
 		removed, cacheErr := removeOversizedDependencyCache(cachePath, api.MaxExportedLayerBytes)
 		switch {
@@ -1410,7 +1422,7 @@ func runBuildOnce(m api.BuildManifest) error {
 			}
 		}
 	}
-	if err == nil {
+	if err == nil && !m.CacheExportOnly {
 		err = exportBuildIssueSourceMaps(m)
 	}
 	if err == nil && m.KeepWarm {
@@ -1878,8 +1890,11 @@ func buildArgv(m api.BuildManifest) []string {
 		if m.DependencyCacheImport {
 			argv = append(argv, "--import-cache", "type=local,src=/build/cache")
 		}
-		if m.DependencyCache {
+		if m.DependencyCache && !deferCacheExport(m) {
 			argv = append(argv, "--export-cache", dependencyCacheExport(m))
+		}
+		if m.CacheExportOnly {
+			return argv
 		}
 		return append(argv, "--output", "type=oci,dest="+m.OutDir+"/image.tar"+layerCompressionAttrs(m))
 	}
@@ -1900,6 +1915,11 @@ func buildArgv(m api.BuildManifest) []string {
 	prepare += goCommand
 	if len(m.PublicBuildURLs) > 0 || m.BuildDependencyDigest != "" {
 		prepare += " && " + dependencyInputsHelperEnv + "=" + publicBuildURLsHelperValue + " /proc/1/exe " + shellQuote(planPath)
+	}
+	if m.CacheExportOnly {
+		// Solve the plan the deferred run built, not a fresh one, so every
+		// step hits the BuildKit state it left on this drive.
+		prepare = "test -f " + shellQuote(planPath)
 	}
 	build := strings.Join([]string{
 		"/usr/local/bin/buildctl", "--addr", "unix:///run/buildkit/buildkitd.sock", "build",
@@ -1926,8 +1946,14 @@ func buildArgv(m api.BuildManifest) []string {
 		// and intermediate stages cannot describe the deployed bundle bytes.
 		output += " --output " + shellQuote("type=local,dest="+buildIssueSourceMapRootfs)
 	}
+	if m.CacheExportOnly {
+		output = " --progress plain"
+	}
 	if !m.DependencyCache {
 		return []string{"/bin/sh", "-c", "set -x; " + prepare + " && exec " + build + output}
+	}
+	if m.CacheExportOnly {
+		return []string{"/bin/sh", "-c", "set -x; " + prepare + " && exec " + build + " --export-cache " + shellQuote(dependencyCacheExport(m)) + output}
 	}
 	// "$@" carries --export-cache. Once the plan exists, a re-executed
 	// guest-init (runDependencyCacheInputs) answers "keep" when the imported
@@ -1935,6 +1961,11 @@ func buildArgv(m api.BuildManifest) []string {
 	check := dependencyInputsHelperEnv + "=" + dependencyInputsHelperValue + " /proc/1/exe " + strings.Join([]string{
 		shellQuote(planPath), shellQuote(m.Workdir), shellQuote("/build/cache"), shellQuote(m.OutDir),
 	}, " ")
+	if deferCacheExport(m) {
+		// The check still runs: it leaves either the keep marker or the
+		// digest of the inputs the owed export covers.
+		return []string{"/bin/sh", "-c", "set -x; " + prepare + " && { " + check + " >/dev/null || true; } && exec " + build + output}
+	}
 	choose := `case "$(` + check + `)" in keep) set -- ;; *) set -- --export-cache ` + shellQuote(dependencyCacheExport(m)) + " ;; esac"
 	return []string{"/bin/sh", "-c", "set -x; " + prepare + " && " + choose + " && exec " + build + ` "$@"` + output}
 }
@@ -1964,6 +1995,16 @@ func layerCompressionAttrs(m api.BuildManifest) string {
 		return ""
 	}
 	return ",compression=zstd"
+}
+
+// deferCacheExport reports whether this build leaves its dependency-cache
+// export to a CacheExportOnly run (ADR-20261029171525). A warm builder keeps
+// its drive for its own snapshot. A Dockerfile build with selected
+// dependencies runs with --no-cache, so a second solve would rebuild every
+// step; both export inline.
+func deferCacheExport(m api.BuildManifest) bool {
+	return m.DependencyCache && m.DeferCacheExport && !m.CacheExportOnly && !m.KeepWarm &&
+		(m.Framework != api.FrameworkDockerfile || m.BuildDependencyDigest == "")
 }
 
 // dependencyCacheExport is the app-scoped BuildKit cache exporter. mode=max
@@ -2277,12 +2318,13 @@ func writeBuildDone(m api.BuildManifest, runErr error, logTail string) {
 		BuildkitVersion: buildkitVersion,
 		RailpackVersion: railpackVersion,
 	}
-	if runErr == nil {
+	if runErr == nil && !m.CacheExportOnly {
 		done.PublicBuildURLsSHA256 = api.PublicBuildURLsSHA256(m.PublicBuildURLs)
 		done.DockerfileBuildSHA256 = dockerfileBuildAcknowledgement(m)
 		done.GoCommand = goCommandAcknowledgement(m)
 		done.BuildDependencyDigest = m.BuildDependencyDigest
 		done.DependencyCacheUnchanged = m.DependencyCache && dependencyCacheKept(m.OutDir)
+		done.DependencyCacheDeferred = deferCacheExport(m) && !done.DependencyCacheUnchanged
 		sourceMap, watchErr := devWatchSourceMap(m, buildDevPatchSourceMap(m, readBuildPlan))
 		done.DevPatch = sourceMap
 		done.SharedRuntime = buildSharedRuntimeVerdict(m, readBuildPlan)

@@ -23,7 +23,8 @@ export class TriggersService {
    * Returns every trigger owned by the calling account, optional
    * ?app_id filter to scope to one app, ?kind to scope to one
    * kind. Newest-first by created_at; result is unbounded but
-   * the typical account has well under 200.
+   * the typical account has well under 200. Cron schedules are
+   * not triggers: list them with GET /v1/crons.
    *
    * @returns Trigger The trigger list.
    * @throws ApiError
@@ -40,8 +41,9 @@ export class TriggersService {
     appId?: string,
     /**
      * Optional trigger kind filter (kafka / nats / redis_streams
-     * / sqs_compat / queue). Invalid values produce an empty list,
-     * not 400.
+     * / sqs_compat / queue / realtime). kind=cron answers 400
+     * validation_failed pointing at GET /v1/crons; any other
+     * unknown value produces an empty list.
      *
      */
     kind?: TriggerKind,
@@ -54,6 +56,7 @@ export class TriggersService {
         'kind': kind,
       },
       errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable

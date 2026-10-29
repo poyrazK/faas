@@ -9517,19 +9517,21 @@ Delete one cron rule
 
 Fire one cron immediately or choose and follow a manual request
 
-`gregale cron run [--interactive] [--app <SLUG>] [--timeout <DURATION>] [<cron-id>]`
+`gregale cron run [--interactive] [--wait] [--app <SLUG>] [--timeout <DURATION>] [<cron-id>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--interactive` | choose a task, review and confirm one manual run, then follow its request |  |
+| `--wait` | follow the run; exit 0 only if it succeeds (1 failed or cancelled, 3 timeout) |  |
 | `--app <SLUG>` | app slug for interactive selection (linked app or picker by default) |  |
-| `--timeout <DURATION>` | maximum interactive follow duration (default 2m) |  |
+| `--timeout <DURATION>` | maximum follow duration with --wait or --interactive (default 2m) |  |
 
 Examples:
 
 ```sh
 gregale cron run --app my-api --interactive
 gregale cron run <cron-id>
+gregale cron run <cron-id> --wait
 ```
 
 ### cron fire-now
@@ -9611,7 +9613,7 @@ List triggers
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | filter to an app slug |  |
-| `--kind <value>` | filter by trigger kind | one of `cron` · `kafka` · `nats` · `redis_streams` · `sqs_compat` · `queue` · `realtime` |
+| `--kind <value>` | filter by trigger kind | one of `kafka` · `nats` · `redis_streams` · `sqs_compat` · `queue` · `realtime` |
 
 ### trigger get
 
@@ -9631,7 +9633,7 @@ Create a broker trigger
 | `--lock-key <JSON>` | JSON value that must run one at a time (requires --lock) |  |
 | `--app <slug>` | app slug | required |
 | `--kind <kind>` | trigger kind | required; one of `kafka` · `nats` · `redis_streams` · `sqs_compat` · `queue` · `realtime` |
-| `--slug <slug>` | trigger slug (required for non-cron kinds) |  |
+| `--slug <slug>` | trigger slug |  |
 | `--config <JSON>` | JSON config (inline \| @file \| -) |  |
 | `--enabled` | enable the trigger |  |
 | `--disabled` | disable the trigger |  |
@@ -9646,15 +9648,13 @@ Create a broker trigger
 
 Update one trigger
 
-`gregale trigger update [--enabled] [--disabled] [--config <JSON>] [--schedule <EXPR>] [--path <PATH>] [--batch-size <N>] [--batch-window-ms <N>] [--max-attempts <N>] [--payload-max-bytes <N>] [--broker-poison-strategy <commit|seek-to-offset>] [--delivery <record|batch>] <id>`
+`gregale trigger update [--enabled] [--disabled] [--config <JSON>] [--batch-size <N>] [--batch-window-ms <N>] [--max-attempts <N>] [--payload-max-bytes <N>] [--broker-poison-strategy <commit|seek-to-offset>] [--delivery <record|batch>] <id>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--enabled` | enable the trigger |  |
 | `--disabled` | disable the trigger |  |
 | `--config <JSON>` | replace JSON config (inline \| @file \| -) |  |
-| `--schedule <EXPR>` | replace cron expression |  |
-| `--path <PATH>` | replace cron request path |  |
 | `--batch-size <N>` | maximum records per dispatch batch |  |
 | `--batch-window-ms <N>` | maximum batch dwell time in milliseconds |  |
 | `--max-attempts <N>` | maximum delivery attempts |  |

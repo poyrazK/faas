@@ -51,7 +51,13 @@ func retryPolicyDTOFromJSON(raw json.RawMessage) *api.RetryPolicyDTO {
 }
 
 func (s *server) whoami(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	writeJSON(w, http.StatusOK, s.accountResponse(r.Context(), acct, r))
+	resp := s.accountResponse(r.Context(), acct, r)
+	// A key learns its own scopes; the hosted MCP server lists an agent
+	// key's tools from them (ADR-20261029085359). Sessions have none.
+	if p, ok := principalFrom(r); ok && p.Key != nil {
+		resp.KeyScopes = p.Key.Scopes
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // nilStringPtr returns a *string pointing at the given value, or

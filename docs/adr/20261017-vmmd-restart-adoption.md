@@ -1134,6 +1134,23 @@ Each slice is one reviewable change on a branch. Slices 2–4 are behind
      without it sets no planned-restart notice and hands no bridge unit
      over. The canary's first rollout with step 2 therefore drains, and the
      next one can skip the drain.
+   - **Gone guests do not force a drain (2026-10-29).** fsn-2 drained on
+     every rollout after step 2 (rc.302–rc.304, 0 live guests at each
+     stop): its journal held 12 records of guests that no longer ran, and
+     the check counted every refusal as unadoptable. A refusal whose guest
+     process provably no longer runs (`other_boot`, `process_absent`,
+     `process_reused`) is now `gone`: nothing is lost by restarting, so
+     `adoption-check` lists it under `gone` and still exits 0. The running
+     vmmd's inventory proves this for records without an adoption block
+     too, from their process provenance. After the restart,
+     `adoption-report --already-gone` excuses only the guests the check had
+     found gone; a guest that died across the restart still fails the
+     rollout. The restarted vmmd keeps quarantining a gone guest's
+     surviving resources. 11 of the 12 were dead guests on claimed prepared
+     networks, which ADR-971's retirement had skipped: it now retires them
+     (see ADR-971's amendment). A read-only dry run on fsn-2's journal
+     (rc.304 host) retires those 11, keeps a dead build VM whose jail and
+     namespace survive, marking it gone, and keeps the 4 live guests.
 5. **fsn-4 acceptance** (§5), then flip `adopt_running_vms` to true by default.
 
 ## Risks
