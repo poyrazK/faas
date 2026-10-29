@@ -27,7 +27,12 @@ func Copy(ctx context.Context, source, target string, expected Tree) (actual Tre
 		return Tree{}, err
 	}
 	defer func() { _ = dst.Close() }()
-	return copyRoots(ctx, src, dst, expected, nil)
+	// A Copy target is a scratch view the caller scans and deletes, so its
+	// files are not fsynced: on a production pd-ssd one fsync per file turned
+	// a 1.4 s copy of a 13,312-file Node app into 18.6 s on an idle node, and
+	// far more while builds and snapshots load the disk. A crash loses only a
+	// view nobody can use afterwards. CopyToRoot keeps fsync for handoffs.
+	return copyRoots(ctx, src, dst, expected, nil, false)
 }
 
 // CopyToRoot writes through a caller-pinned directory and makes each created
@@ -51,15 +56,15 @@ func CopyToRoot(ctx context.Context, source string, dst *os.Root, expected Tree)
 	if err != nil {
 		return Tree{}, err
 	}
-	return copyRoots(ctx, src, dst, expected, own)
+	return copyRoots(ctx, src, dst, expected, own, true)
 }
 
-func copyRoots(ctx context.Context, src, dst *os.Root, expected Tree, own func(string) error) (actual Tree, err error) {
+func copyRoots(ctx context.Context, src, dst *os.Root, expected Tree, own func(string) error, durable bool) (actual Tree, err error) {
 	c, err := newProjectionCopy(ctx, src, dst, expected)
 	if err != nil {
 		return Tree{}, err
 	}
-	c.own = own
+	c.own, c.durable = own, durable
 	defer func() {
 		if err != nil {
 			err = errors.Join(err, c.cleanup())
@@ -144,6 +149,8 @@ type projectionCopy struct {
 	info              fs.FileInfo
 	entries, manifest int
 	own               func(string) error
+	// durable fsyncs each copied file; only handoff copies need it.
+	durable bool
 }
 
 func (c *projectionCopy) node(ctx context.Context, name string, entry fs.DirEntry) error {
@@ -214,7 +221,11 @@ func (c *projectionCopy) file(ctx context.Context, name string, info fs.FileInfo
 	}
 	c.created = append(c.created, name)
 	_, readErr := readRegular(ctx, c.source, name, info, out)
-	err = errors.Join(readErr, out.Sync(), out.Close())
+	var syncErr error
+	if c.durable {
+		syncErr = out.Sync()
+	}
+	err = errors.Join(readErr, syncErr, out.Close())
 	if err == nil {
 		c.bytes += info.Size()
 	}
