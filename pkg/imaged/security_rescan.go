@@ -57,6 +57,9 @@ func (l *Loop) rescanLiveDeployment(ctx context.Context, app state.App, dep stat
 	if l.rescanProducedRuntime(ctx, app, dep) {
 		return
 	}
+	if l.handler.scanEvidenceCurrent(ctx, dep) {
+		return
+	}
 	previousStatus := dep.ScanStatus
 	previous := decodeScanEvidence(dep.ScanResult)
 	scanErr := l.handler.runDeployScan(ctx, app, dep)
@@ -361,6 +364,20 @@ func securityScanDue(dep state.Deployment, now time.Time, every time.Duration) b
 		return true
 	}
 	return !now.Before(dep.ScannedAt.UTC().Add(every))
+}
+
+// scanEvidenceCurrent reports whether a live deployment's last scan already
+// answers what a rescan would (ADR-20261028102540): it completed safely, and
+// Grype and its vulnerability database are still the ones that made it. The
+// deployment's layer is immutable, so only a new scanner or database can
+// change its findings. Anything unknown, failed or unsafe rescans as before.
+func (h *Handler) scanEvidenceCurrent(ctx context.Context, dep state.Deployment) bool {
+	prior := decodeScanEvidence(dep.ScanResult)
+	if securityScanNeedsQuarantine(dep.ScanStatus, prior) {
+		return false
+	}
+	current, err := h.currentScannerIdentity(ctx)
+	return err == nil && current.matches(prior.ScannerVersion, prior.ScannerDBVersion, prior.ScannerDBBuiltAt)
 }
 
 func decodeScanEvidence(raw []byte) *ScanResult {

@@ -60,11 +60,15 @@ pool as creation. Company apps do not consume their creator's personal app slots
 An organization plan downgrade blocks further admission when the pool is full;
 it does not delete existing applications.
 
-API consumer keys follow the same split. A company app's per-account key
-allowance is shared by every app of its organization, whoever created it, and
-its keys never count against the creator's personal apps. Public consumer
-sign-up on a company app issues keys under the plan the app runs on, not the
-creator's personal plan.
+Other per-account plan allowances follow the app's billing subject
+(ADR-202610171904): API consumer keys, log drains, realtime endpoints, inbound
+and outbound webhooks, alert rules, CORS presets and triggers. Once an
+organization has adopted billing, a company app's resources count toward the
+organization's allowance, whoever created the app, and never toward the
+creator's personal one. Until then a company keeps its existing policy: its
+creator's company resources share the creator's allowance, with the
+creator's personal apps and account-wide resources. Public consumer sign-up
+on a company app issues keys under the plan the app runs on.
 
 Core app resources keep stable storage UUIDs and sealed bytes. After organization
 billing adoption, the organization supplies runtime entitlements, abuse controls,

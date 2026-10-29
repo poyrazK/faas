@@ -84,8 +84,14 @@ amtool silence add --matchers='alertname=~"FaasEdgeChallenge.*"' --duration=2h \
    (challenge rules and attack mode stop challenging; nothing is deleted).
 3. Clock drift on one gateway: fix the clock, then restart that gateway.
    Visitors sent back to the challenge solve it again.
-4. Key mismatch: put one key in the fleet vault as
-   `gatewayd_edge_challenge_key` (`openssl rand -hex 32`) and run the
+4. Key mismatch: give the fleet one key. On a fleet CD deploys, set it as
+   the environment secret `GATEWAYD_EDGE_CHALLENGE_KEY`, for example
+   `openssl rand -hex 32 | gh secret set GATEWAYD_EDGE_CHALLENGE_KEY --env production-us`,
+   and roll the compute nodes (`cd-compute` through `cd-platform`). CD stages
+   it as `gatewayd_edge_challenge_key` with
+   `gatewayd_edge_challenge_key_required=true`
+   (`scripts/ci/edge_challenge_key_vars.sh`); a release cut before that script
+   cannot take it. Elsewhere, put the key in the fleet vault and run the
    `gatewayd_internal_service` role on every gateway host with
    `gatewayd_edge_challenge_key_required=true`. The role installs it as
    `FAAS_EDGE_CHALLENGE_KEY_FILE` and restarts gatewayd-internal; every
