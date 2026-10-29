@@ -228,6 +228,19 @@ ADR-568 requires.
   - The first customer queue delivery then failed a test check. A bound
     queue keeps its environment on the binding, not on the invocation.
     3366c8253d checks the binding instead.
+- 2026-10-29, n2, rerun with 3366c8253d:
+  - The first queue delivery dead-lettered. The test created its apps with
+    no node, and queue delivery routes through the app's node. 8072f211e5
+    places them on the harness node.
+  - The worker's first serving cold boot timed out on the loaded host. schedd
+    could not mark it failed:
+    - The legacy-qualification fallback of the ADR-435 retirement guard
+      covered every frameless instance of a deployment with an
+      `environment_workload_runtime`.
+    - Activation keeps that runtime, so the ordinary serving instances of an
+      activated GitOps workload could never fail, park or be removed.
+    - 09b75d2ce7 limits the fallback to held candidates, in a new migration
+      with a Postgres test.
 - Pending: the n2 native GitOps journey through serving and the resilience
   phases.
 
