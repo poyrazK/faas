@@ -146,3 +146,60 @@ func TestTextfileCollectorWritersCanWriteTheDirectory(t *testing.T) {
 		t.Fatalf("no unit lists %s in ReadWritePaths; did the scan stop matching?", textfileCollectorDir)
 	}
 }
+
+// TestTextfileCollectorWorkflowInstallsKeepOwnerAndMode covers release
+// workflows that converge the directory with install -d outside ansible.
+// cd-controlplane.yml reset it to postgres 0755 on every control-plane
+// release, so faas-cgroup-metrics, which writes through its node_exporter
+// group, failed every run on production (Hunt 14 H14-114).
+func TestTextfileCollectorWorkflowInstallsKeepOwnerAndMode(t *testing.T) {
+	root := repoRoot(t)
+	workflows, err := filepath.Glob(filepath.Join(root, ".github", "workflows", "*.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	installs := 0
+	for _, f := range workflows {
+		body, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rel, _ := filepath.Rel(root, f)
+		joined := strings.ReplaceAll(string(body), "\\\n", " ")
+		for _, line := range strings.Split(joined, "\n") {
+			fields := strings.Fields(line)
+			if len(fields) < 2 || fields[0] != "install" || !strings.Contains(line, textfileCollectorDir) {
+				continue
+			}
+			flags := map[string]string{}
+			directory := false
+			for i := 1; i < len(fields); i++ {
+				switch fields[i] {
+				case "-d":
+					directory = true
+				case "-o", "-g", "-m":
+					if i+1 < len(fields) {
+						flags[fields[i]] = fields[i+1]
+						i++
+					}
+				}
+			}
+			if !directory || fields[len(fields)-1] != textfileCollectorDir {
+				continue
+			}
+			installs++
+			if flags["-m"] != "0775" {
+				t.Errorf("%s: install -d %s mode = %q, want 0775", rel, textfileCollectorDir, flags["-m"])
+			}
+			for _, flag := range []string{"-o", "-g"} {
+				if v, ok := flags[flag]; ok && v != "node_exporter" {
+					t.Errorf("%s: install -d %s %s %s, want node_exporter (or unset)", rel, textfileCollectorDir, flag, v)
+				}
+			}
+		}
+	}
+	// cd-controlplane.yml converges the directory for the connection collector.
+	if installs == 0 {
+		t.Fatalf("no workflow runs install -d %s; did the scan stop matching?", textfileCollectorDir)
+	}
+}
