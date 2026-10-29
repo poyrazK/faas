@@ -9006,7 +9006,15 @@ SELECT pg_try_advisory_lock_shared(hashtextextended(sqlc.arg(lock_key)::text,0))
 SELECT pg_advisory_unlock_shared(hashtextextended(sqlc.arg(lock_key)::text,0))::boolean;
 
 -- name: ReadEdgeRuleTrafficAccount :one
-SELECT account_id,kind FROM edge_rules WHERE id = sqlc.arg(rule_id)::uuid;
+SELECT account_id,kind,match_host FROM edge_rules WHERE id = sqlc.arg(rule_id)::uuid;
+
+-- name: ReadTrafficRouteWriteScopes :many
+-- Each route pattern's match_host_scope, as the edge_rules trigger computes it
+-- (ADR-20261027163626). An exact pattern is its own scope; '@app' has none.
+SELECT coalesce(edge_rule_match_host_scope(pattern), '')::text AS scope,
+       (edge_rule_match_host_scope(pattern) IS NULL)::boolean AS app_only,
+       coalesce(edge_rule_match_host_scope(pattern) = lower(btrim(pattern)), false)::boolean AS exact
+FROM unnest(sqlc.arg(patterns)::text[]) AS pattern;
 
 -- name: MeasureEdgeRuleTrafficProjection :one
 -- Match the full ReadPublicHostEdgeRules projection, including its array.

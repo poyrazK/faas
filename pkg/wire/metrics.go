@@ -6280,6 +6280,9 @@ func (m *OpsMetrics) RecordInitSnapshotAttempt(site, outcome string, duration ti
 const (
 	WakeFailoverReasonBaseGeneration     = "base_generation"
 	WakeFailoverReasonScanSidecarMissing = "scan_sidecar_missing"
+	// WakeFailoverReasonVMMDUnreachable: the boot request never reached the
+	// node's vmmd (ADR-20261029085904).
+	WakeFailoverReasonVMMDUnreachable = "vmmd_unreachable"
 
 	WakeFailoverOutcomeSucceeded    = "succeeded"
 	WakeFailoverOutcomeRefusedAgain = "refused_again"
@@ -6291,7 +6294,7 @@ const (
 // WakeFailoverReasons and WakeFailoverOutcomes are pre-instantiated so the
 // counter reads zero, not absent, on a fleet that has never failed over.
 var (
-	WakeFailoverReasons  = []string{WakeFailoverReasonBaseGeneration, WakeFailoverReasonScanSidecarMissing}
+	WakeFailoverReasons  = []string{WakeFailoverReasonBaseGeneration, WakeFailoverReasonScanSidecarMissing, WakeFailoverReasonVMMDUnreachable}
 	WakeFailoverOutcomes = []string{WakeFailoverOutcomeSucceeded, WakeFailoverOutcomeRefusedAgain, WakeFailoverOutcomeNoAlternate, WakeFailoverOutcomeOutOfTime, WakeFailoverOutcomeFailed}
 )
 

@@ -28,7 +28,7 @@ func (s *server) projectEnvironmentClonePostgresCheckpointSelection(ctx context.
 	if err != nil {
 		return checkpointselection.Selection{}, err
 	}
-	identities := mfaIdentities()
+	identities := accountIdentities()
 	r, err := store.ProjectEnvironmentClonePostgresCheckpointSelectionForLease(ctx, l, sourceID)
 	if err == nil {
 		return openCloneCheckpointSelection(ctx, identities, scope, r.Sealed)
@@ -39,7 +39,7 @@ func (s *server) projectEnvironmentClonePostgresCheckpointSelection(ctx context.
 	if l.Operation.Status != state.CloneOperationCapturing || read == nil || setSecretRecipient == nil || s.cloneWorkerAdmission == nil {
 		return checkpointselection.Selection{}, managedpostgres.ErrUnavailable
 	}
-	recipient := hostSecretRecipient()
+	recipient := cloneSealRecipient()
 	if !cloneInventoryCanOpen(recipient, identities) {
 		return checkpointselection.Selection{}, managedpostgres.ErrUnavailable
 	}
@@ -103,7 +103,7 @@ func (s *server) closeProjectEnvironmentClonePostgresCheckpointConnections(ctx c
 	}
 	var selection checkpointselection.Selection
 	if err == nil {
-		selection, err = checkpointselection.Open(mfaIdentities(), scope, receipt.Sealed)
+		selection, err = checkpointselection.Open(accountIdentities(), scope, receipt.Sealed)
 	}
 	var request managedpostgres.CheckpointConnectionRequest
 	if err == nil {

@@ -28,7 +28,7 @@ func renderMarkdownReference(w io.Writer, cmds []cliCommand) {
 	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintln(w, "App target: a command that takes `--app` and no other arguments also accepts the app as its first argument (`gregale alert list my-api` is `gregale alert list --app my-api`), and `app` verbs take the app after the verb (`gregale app scale my-api`), from `--app`, or from the linked checkout.")
 	_, _ = fmt.Fprintln(w)
-	_, _ = fmt.Fprintln(w, "Earlier names: commands keep working under the names they had before the command tree (`gregale crons list` is `gregale cron list`); `gregale help --all --operator` lists them.")
+	_, _ = fmt.Fprintln(w, "Earlier names: commands keep working under the names they had before the command tree (`gregale crons list` is `gregale cron list`); `gregale help --all --operator` lists them, and [The CLI command tree](cli-command-tree.md) maps each one.")
 	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintln(w, "Automation: put `--non-interactive` before the command to disable prompts and browser launches; use `--json` for structured output. Required confirmations must be supplied explicitly. Connection selection: `gregale --profile <name> <command>`. Put this option before the command; command-local `--profile` options retain their documented meaning. See [CLI configuration](cli-config.md) for connection profiles and environment precedence.")
 	_, _ = fmt.Fprintln(w)
