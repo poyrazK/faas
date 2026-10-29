@@ -119,7 +119,9 @@ another service calls it:
   listens: it declares the port with `expose:`, or it runs its own image's
   command (no `command:` override) and its Dockerfile has `EXPOSE`, or, built
   without a Dockerfile, it is an Express, Fastify, NestJS, Hono, FastAPI,
-  Flask, Django or Gin app.
+  Flask, Django or Gin app, or, for a prebuilt `image:`, the image's config
+  exposes a port. Gregale reads public images' configs; a private image
+  counts only with `expose:` or a URL.
 
 Like any service, it then parks when idle and wakes when called. Any other
 service without `ports:` is a background worker (`class=worker`): it runs all

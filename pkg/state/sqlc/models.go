@@ -2705,6 +2705,8 @@ type ComputeNode struct {
 	ReadinessReason pgtype.Text
 	// Last time this node's gatewayd-internal edge-rule listener reported alive (database clock); NULL before its first report (ADR-091).
 	EdgeListenerHeartbeatAt pgtype.Timestamptz
+	WakeBreakerOpenUntil    pgtype.Timestamptz
+	WakeBreakerReason       pgtype.Text
 }
 
 type ComputeNodeHeartbeat struct {
