@@ -7311,6 +7311,15 @@ const (
 	// lookup needed to resolve a narrower plan budget is temporarily
 	// unavailable, so lookup failures can never turn into infinite retry.
 	DurableRetryMaxAttempts = 25
+	// EventDeliveryRetryBaseSeconds, EventDeliveryRetryMaxSeconds and
+	// EventDeliveryRetryJitter pace the retries of a failed event delivery
+	// whose app sets no retry_policy (ADR-20261029190000): 5 s doubling to
+	// 5 minutes, ±20 %. The plan's MaxQueueAttempts still caps the attempts,
+	// so a delivery that keeps failing is dead-lettered after about 15 s on
+	// Hobby, 20 minutes on Pro and 95 minutes on Scale.
+	EventDeliveryRetryBaseSeconds = 5
+	EventDeliveryRetryMaxSeconds  = 300
+	EventDeliveryRetryJitter      = 0.2
 	// MaxAsyncRouteAgeSeconds bounds a customer-authored async edge
 	// rule age before the serving plan applies its lower deadline cap.
 	// The Scale plan currently owns the largest invocation deadline.
