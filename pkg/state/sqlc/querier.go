@@ -1142,8 +1142,13 @@ type Querier interface {
 	EventConsumerPressureTarget(ctx context.Context, db DBTX, arg EventConsumerPressureTargetParams) (pgtype.UUID, error)
 	EventConsumerPressureWaits(ctx context.Context, db DBTX, arg EventConsumerPressureWaitsParams) (EventConsumerPressureWaitsRow, error)
 	EventConsumerProcessingHealth(ctx context.Context, db DBTX, arg EventConsumerProcessingHealthParams) (EventConsumerProcessingHealthRow, error)
-	// Reads the account's live slots (event_delivery_slots_live), not its whole
-	// delivery history; the invocation's state still decides.
+	// ADR-614 amendment (2026-10-29): counts the account's live slots from the
+	// event_delivery_slots_live index alone. A slot's live flag is exact: it is
+	// stamped when the slot is written, with or after its invocation, and every
+	// state change re-syncs it. Joining each slot to its invocation planned a
+	// scan of every pending invocation on the platform, so each routed delivery
+	// paid for everyone's backlog. A keyed replace subtracts the pending
+	// deliveries it would replace, found through the work-lane index.
 	EventDeliveryCounts(ctx context.Context, db DBTX, arg EventDeliveryCountsParams) (EventDeliveryCountsRow, error)
 	EventDeliveryInsertSlot(ctx context.Context, db DBTX, arg EventDeliveryInsertSlotParams) error
 	EventDeliveryLockCapacity(ctx context.Context, db DBTX, arg EventDeliveryLockCapacityParams) error
