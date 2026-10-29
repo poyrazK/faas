@@ -146,6 +146,15 @@ func cmdLogin(args []string) int {
 	if len(pasted) != 8 {
 		return printErr("Invalid login code", fmt.Errorf("code should be 8 characters (XXXX-NNNN), got %d; run gregale login again", len(pasted)))
 	}
+	// This terminal's own code is exchanged with the device code only it
+	// holds; the server no longer accepts the short code for it (H67).
+	if pasted == strings.ToUpper(strings.ReplaceAll(codeResp.Code, "-", "")) {
+		resp, err := c.ExchangeCliAuthLogin(ctx, codeResp)
+		if err != nil {
+			return printErr("Login failed", err)
+		}
+		return finalizeLogin(ctx, c, resp.Plaintext, resp.KeyID, resp.Account)
+	}
 	return exchangeOnce(ctx, c, pasted)
 }
 
@@ -172,11 +181,8 @@ func waitForApproval(ctx context.Context, c *Client, codeResp api.CliAuthCodeRes
 			return printErr("Login interrupted", ctx.Err())
 		case <-time.After(backoff):
 		}
-		// Strip the dash so the server's normalizeCliAuthCode
-		// doesn't have to. The server is case-insensitive so
-		// uppercase is purely cosmetic on the wire.
-		normalized := strings.ReplaceAll(codeResp.Code, "-", "")
-		resp, err := c.ExchangeCliAuthCode(ctx, normalized)
+		// The device code when the server issued one, else the code.
+		resp, err := c.ExchangeCliAuthLogin(ctx, codeResp)
 		if err == nil {
 			return finalizeLogin(ctx, c, resp.Plaintext, resp.KeyID, resp.Account)
 		}

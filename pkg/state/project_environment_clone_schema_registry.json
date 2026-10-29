@@ -3495,6 +3495,7 @@
       "account_id",
       "consumed_at",
       "created_at",
+      "device_hash",
       "expires_at",
       "status",
       "token_hash"

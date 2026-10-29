@@ -2,7 +2,9 @@ package apidserver
 
 import (
 	"encoding/hex"
+	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/dashboard"
@@ -36,7 +38,30 @@ func (h *cliAuthHandlers) renderSecretEntryPage(w http.ResponseWriter, r *http.R
 		return
 	}
 	http.SetCookie(w, &http.Cookie{Name: middleware.CookieNameAuthenticated, Value: csrf, Path: "/", HttpOnly: true, Secure: h.domain != "", SameSite: http.SameSiteLaxMode, MaxAge: int(secretEntryTTL.Seconds())})
-	h.renderSecretEntry(w, r, map[string]any{"Ticket": r.URL.Query().Get("secret"), "CSRFToken": csrf, "Account": acct.Email, "AccountID": acct.ID, "App": ticket.App, "AppID": ticket.AppID, "Key": ticket.Key, "Scope": ticket.Scope, "Reason": ticket.Reason, "ExpiresAt": ticket.ExpiresAt})
+	h.renderSecretEntry(w, r, map[string]any{"Ticket": r.URL.Query().Get("secret"), "CSRFToken": csrf, "Account": acct.Email, "AccountID": acct.ID, "App": ticket.App, "AppID": ticket.AppID, "Key": ticket.Key, "Scope": ticket.Scope, "Reason": ticket.Reason, "ExpiresAt": ticket.ExpiresAt, "RequestedBy": h.secretEntryRequester(r, ticket)})
+}
+
+// secretEntryRequester describes the credential that asked for the entry:
+// any secrets:write key can mint a request with its own reason, so the owner
+// is shown which key it was, when it was created and last used (bug hunt
+// 2026-10-28 H54).
+func (h *cliAuthHandlers) secretEntryRequester(r *http.Request, ticket secretEntryTicket) string {
+	if ticket.KeyID == "" {
+		return "A signed-in browser session"
+	}
+	key, err := h.srv.store.GetAPIKey(r.Context(), ticket.KeyAccountID, ticket.KeyID)
+	if err != nil {
+		return "An API key that no longer exists"
+	}
+	label := key.Label
+	if label == "" {
+		label = "unnamed key"
+	}
+	lastUsed := "never"
+	if key.LastUsedAt != nil {
+		lastUsed = key.LastUsedAt.UTC().Format(time.RFC3339)
+	}
+	return fmt.Sprintf("API key %q (%s), created %s, last used %s", label, key.ID, key.CreatedAt.UTC().Format(time.RFC3339), lastUsed)
 }
 
 // postSecretEntryPage stores the value, then consumes the request. A value the

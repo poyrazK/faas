@@ -13,10 +13,14 @@ switches, in order of escalation:
 - **Switch 1 — per-vmmd surgical rollback.** `FAAS_BRIDGE_PROTOCOL=h1`
   on the bridge process. Per-stream fallback to H1+chunked. Use for:
   a single bad app, a region, a vmmd, or an H2C-capable image.
-- **Switch 2 — wholesale rollback.** `FAAS_STREAM_BRIDGE_VERSION=v1`
-  on vmmd. Reverts to the v1 shell bridge (pre-PR #750). Use for: a
-  v2 binary defect, a wire-shape regression, or a Go-stdlib H2C
-  server bug.
+- **Switch 2 — wholesale rollback.** Install the previous
+  `vmmd-stream-bridge` binary. Use for: a v2 binary defect, a
+  wire-shape regression, or a Go-stdlib H2C server bug. The v1 shell
+  bridge (`FAAS_STREAM_BRIDGE_VERSION=v1`) is no longer selectable: it
+  dropped newlines and the last unterminated line of request bodies,
+  cut slow uploads, and turned a blank body line into a chunk
+  terminator that smuggled the rest past edge rules as a second request
+  (bug hunt 2026-10-28 B23).
 
 All switches are env-var only; changing one requires restarting vmmd
 so new bridge children receive the setting. The mirror-image rollout
@@ -28,7 +32,7 @@ runbook is at
 | Signal | Source | Severity | Switch |
 |--------|--------|----------|--------|
 | `FaasBridgeFramingMismatch` warn alert sustained > 1h | Prometheus `bridge.rules.yml` | warn | Switch 1 (surgical) |
-| `FaasBridgeRollbackStuck` page alert sustained > 4h | Prometheus `bridge.rules.yml` | page | Switch 1, then escalate to Switch 2 if it does not resolve |
+| `FaasBridgeRollbackStuck` page alert sustained > 4h | Prometheus `bridge.rules.yml` | page | Switch 1, then escalate to Switch 2 (previous bridge binary) if it does not resolve |
 | `bridge panic:` in `journalctl -u faas-vmmd` | slog (Layer 9 `defer recover()`) | page (always — `defer recover` is defense-in-depth, not a fix) | Switch 1 first; if panics recur after Switch 1, escalate to Switch 2 |
 | App report: `app_protocol=grpc` returning H1 trailers on the wire | customer support escalation | high | Switch 1 on the app's vmmd |
 | Region-wide H2C handshake failures | `bridge-protection` dashboard Panel 4 outlier | page | Switch 2 wholesale |
@@ -120,58 +124,34 @@ sudo systemctl restart faas-vmmd
 Verify the framing-selection slog returns to `framing=h2c
 app_protocol_env=h2c` and Panel 3 returns to 0.
 
-## Switch 2 — wholesale (`FAAS_STREAM_BRIDGE_VERSION=v1`)
+## Switch 2 — wholesale (previous `vmmd-stream-bridge` binary)
 
-Fleet-wide fallback to the pre-ADR-126 shell bridge. Affects every
-app on the vmmd regardless of `app_protocol`. Use only if Switch 1
-fails to resolve or if the failure is at the vmmd binary level
-(panic that survives Switch 1, repeated vmmd restart loop).
+Fleet-wide fallback for a defect in the current bridge binary. Affects
+every app on the vmmd regardless of `app_protocol`. Use only if Switch 1
+fails to resolve or if the failure is at the vmmd binary level (panic
+that survives Switch 1, repeated vmmd restart loop).
+
+`FAAS_STREAM_BRIDGE_VERSION=v1` used to select the shell bridge here. It
+is ignored now: the shell bridge corrupted request bodies (newlines,
+unterminated last lines, slow uploads, NUL bytes) and a blank body line
+ended the body early, so the remainder reached the app as a second
+request the gateway's edge rules never saw (bug hunt 2026-10-28 B23).
+
+Install the previous release's `vmmd-stream-bridge` at
+`/opt/faas/current/bin/vmmd-stream-bridge` (from the prior release
+bundle), then restart vmmd so new bridge children use it:
 
 ```sh
-sudo systemctl edit faas-vmmd
-# In the editor, add:
-#   [Service]
-#   Environment=FAAS_STREAM_BRIDGE_VERSION=v1
-sudo systemctl daemon-reload
+sudo install -m 0755 /opt/faas/releases/<previous-sha>/bin/vmmd-stream-bridge /opt/faas/current/bin/vmmd-stream-bridge
 sudo systemctl restart faas-vmmd
 ```
 
-Verify:
+Verify with a request round trip, not only logs: POST a body containing
+newlines, a blank line, no trailing newline and a NUL byte to an app
+that echoes its body, and check the echo matches byte for byte.
 
-```sh
-sudo systemctl show faas-vmmd --property=Environment
-# expect: ... FAAS_STREAM_BRIDGE_VERSION=v1 ...
-
-sudo journalctl -u faas-vmmd -f | grep -E 'bridge|stream'
-# expect: v1 shell bridge spawn logs, no "framing selected" line
-# (v1 doesn't emit the slog line at all — see ADR-028 amendment).
-```
-
-Grafana signal: `bridge-protection` Panel 1 falls to 0 across the
-closed cross-product (v1 doesn't emit `vmmd_bridge_framing_total`).
-Panel 3 falls to 0 (no h2c framing in flight). The dashboard
-goes "dark" by design — the absence of data IS the signal that the
-rollback succeeded.
-
-Customers running `app_protocol ∈ {http2, grpc}` will receive their
-trailers as plain `Trailer:` headers over H1+chunked during the
-fallback — same pre-ADR-126 behaviour they had before PR #1050.
 Document the incident in the `Rollout history` table in
 `docs/ops/h2c-rollout.md`.
-
-### Reverse Switch 2
-
-```sh
-sudo systemctl edit faas-vmmd
-# Remove the Environment=FAAS_STREAM_BRIDGE_VERSION=v1 line.
-sudo systemctl daemon-reload
-sudo systemctl restart faas-vmmd
-```
-
-Verify: `journalctl -u faas-vmmd` shows `vmmd-stream-bridge` spawning
-the v2 binary; `vmmd_bridge_framing_total{app_protocol=http2,bridge_protocol=h2c,framing=match}`
-returns to non-zero within 30 s of the first request.
-
 ## Snapshot invalidation on rollback
 
 The bridge wire-shape is **decoupled from the snapshot invalidation

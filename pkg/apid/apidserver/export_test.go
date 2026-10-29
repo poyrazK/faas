@@ -903,10 +903,43 @@ func (r *googleJWKSVerifier) JwksURL() *string { return &r.jwksURL }
 
 // Members of invocationCompletionWaiter
 func (r *invocationCompletionWaiter) Mu() *sync.Mutex { return &r.mu }
-func (r *invocationCompletionWaiter) Waiters() *map[string]map[chan struct{}]struct{} {
+func (r *invocationCompletionWaiter) Waiters() *map[string]map[*completionWait]struct{} {
 	return &r.waiters
 }
 func (r *invocationCompletionWaiter) CompleteFromPayload(p0 string) { r.completeFromPayload(p0) }
+func (r *invocationCompletionWaiter) WakeAll()                      { r.wakeAll() }
+func (r *invocationCompletionWaiter) RecentCount() int              { return len(r.recent) }
+func (r *invocationCompletionWaiter) AppWaiterCount(appID string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.appWaiters[appID])
+}
+
+const InvocationCompletionRecentCap = invocationCompletionRecentCap
+
+var NextExecutionEventsPoll = nextExecutionEventsPoll
+
+// StatusJSONHandler serves GET /status/slo.json from a server over store
+// whose status cache reads prometheusURL.
+func StatusJSONHandler(store state.Store, prometheusURL string) http.HandlerFunc {
+	return newServer(store, slog.Default(), "gregale.dev", nil).WithStatusCache(prometheusURL, "").statusJSONHandler
+}
+
+func NewAPIRequestBudgetAt(now func() time.Time) *apiRequestBudget {
+	b := newAPIRequestBudget()
+	b.now = now
+	return b
+}
+
+func (b *apiRequestBudget) Take(accountID string, capacity int) (time.Duration, bool) {
+	return b.take(accountID, capacity)
+}
+
+type QueueReceiveSlots = queueReceiveSlots
+
+func (q *queueReceiveSlots) Acquire(accountID string) (func(), int, int, bool) {
+	return q.acquire(accountID)
+}
 
 // Members of mfaTestEnv
 func (r *mfaTestEnv) Acct() *state.Account    { return &r.acct }
@@ -1875,3 +1908,6 @@ func SecurityMailAllow(now func() time.Time) func(accountID, kind string) bool {
 	l.now = now
 	return l.allow
 }
+
+// SealOAuthCodeState mints a Connect GitHub state for accountID (H64).
+var SealOAuthCodeState = sealOAuthCodeState

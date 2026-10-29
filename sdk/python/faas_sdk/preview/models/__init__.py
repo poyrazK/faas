@@ -5183,6 +5183,7 @@ from .route_health_history_entry_purpose import RouteHealthHistoryEntryPurpose
 from .route_health_history_entry_source import RouteHealthHistoryEntrySource
 from .route_health_history_entry_version import RouteHealthHistoryEntryVersion
 from .route_health_history_page import RouteHealthHistoryPage
+from .route_health_hold import RouteHealthHold
 from .route_health_investigation import RouteHealthInvestigation
 from .route_health_investigation_coverage import RouteHealthInvestigationCoverage
 from .route_health_investigation_evidence_status import RouteHealthInvestigationEvidenceStatus
@@ -11086,6 +11087,7 @@ __all__ = (
     "RouteHealthHistoryEntrySource",
     "RouteHealthHistoryEntryVersion",
     "RouteHealthHistoryPage",
+    "RouteHealthHold",
     "RouteHealthInvestigation",
     "RouteHealthInvestigationCoverage",
     "RouteHealthInvestigationEvidenceStatus",

@@ -18,6 +18,10 @@ type Querier interface {
 	AbandonProjectEnvironmentCloneConfiguration(ctx context.Context, db DBTX, arg AbandonProjectEnvironmentCloneConfigurationParams) (int64, error)
 	AbortLockedInstanceMigration(ctx context.Context, db DBTX, arg AbortLockedInstanceMigrationParams) (int64, error)
 	AbortProfileGatedCanary(ctx context.Context, db DBTX, arg AbortProfileGatedCanaryParams) (int64, error)
+	// ADR-20261028110044 amendment 2: the hold deadline ended a held canary, so
+	// its notification state records the abort. Returns the hold's first blocking
+	// decision; no row when the canary was not held.
+	AbortRouteHealthHold(ctx context.Context, db DBTX, arg AbortRouteHealthHoldParams) (string, error)
 	AcceptObjectStorageTimeline(ctx context.Context, db DBTX, acceptedBy string) (string, error)
 	AccountByEmail(ctx context.Context, db DBTX, email interface{}) (AccountByEmailRow, error)
 	AccountByID(ctx context.Context, db DBTX, id pgtype.UUID) (AccountByIDRow, error)
@@ -2074,6 +2078,12 @@ type Querier interface {
 	// Replay reads and locks one retained occurrence inside the app admission lock.
 	// The replay run identity is separate from the original skipped outcome.
 	GetWorkflowScheduleOccurrenceForReplay(ctx context.Context, db DBTX, arg GetWorkflowScheduleOccurrenceForReplayParams) (WorkflowScheduleOccurrence, error)
+	// The immutable owner and repository IDs an account's app binding recorded
+	// for a repository name (bug hunt 2026-10-28 H68): the OIDC exchange
+	// requires a token's repository_owner_id and repository_id claims to match
+	// them, so a recreated repository under a freed owner name does not pass.
+	// Zero when no binding of the name records them.
+	GitHubRepositoryIDsBoundToAccount(ctx context.Context, db DBTX, arg GitHubRepositoryIDsBoundToAccountParams) (GitHubRepositoryIDsBoundToAccountRow, error)
 	// Repeatable-read callers only: a workflow admission committed after the
 	// snapshot raises a serialization failure. Read-committed callers return.
 	GuardWorkflowAdmissionSnapshot(ctx context.Context, db DBTX, appID string) error
@@ -5663,6 +5673,10 @@ type Querier interface {
 	ReadServicePolicyReleaseCandidates(ctx context.Context, db DBTX, arg ReadServicePolicyReleaseCandidatesParams) ([]ReadServicePolicyReleaseCandidatesRow, error)
 	ReadServicePolicyTestApp(ctx context.Context, db DBTX, arg ReadServicePolicyTestAppParams) (ReadServicePolicyTestAppRow, error)
 	ReadServicePolicyTestMember(ctx context.Context, db DBTX, appID pgtype.UUID) (ReadServicePolicyTestMemberRow, error)
+	// 'active' pages by app (after_app_id, ordered by app): the rollback window
+	// needs every row of an app, and a newest-first cut over the whole fleet
+	// dropped exactly the oldest generations GC exists to reclaim once the live
+	// set passed the limit (bug hunt 2026-10-28 H66).
 	ReadSnapshotGarbageCollection(ctx context.Context, db DBTX, arg ReadSnapshotGarbageCollectionParams) ([]ReadSnapshotGarbageCollectionRow, error)
 	ReadSnapshotInvocationEnvironmentQueueAdmission(ctx context.Context, db DBTX, invocationID pgtype.UUID) (InvocationEnvironmentQueueAdmission, error)
 	ReadSnapshotPublicationConfigChange(ctx context.Context, db DBTX, appID pgtype.UUID) (pgtype.Timestamptz, error)
@@ -6312,14 +6326,16 @@ type Querier interface {
 	// circuit breaker.
 	RouteProbeTotalsByDeployment(ctx context.Context, db DBTX, arg RouteProbeTotalsByDeploymentParams) ([]RouteProbeTotalsByDeploymentRow, error)
 	RouteRemovalCoverageBlockers(ctx context.Context, db DBTX, arg RouteRemovalCoverageBlockersParams) ([]byte, error)
-	// ADR-20261028110044 amendment 1: whether a gateway may have lost request
-	// telemetry that route evidence over [window_from, window_until) reads. An
-	// active node that reports coverage counts when its telemetry is off or
-	// sampled, when it has not been continuously healthy since window_from (a
-	// restart, a heartbeat gap, or rows it could not attribute to an app), or
-	// when its last report predates window_until. Rows a gateway attributes to an
-	// app and drops (an account over its telemetry rate) do not count: the app's
-	// remaining rows stay comparable.
+	// ADR-20261028110044 amendments 1 and 2: whether a gateway may have lost
+	// request telemetry that route evidence over [window_from, window_until)
+	// reads. An active node whose last coverage report is at most
+	// RouteTelemetrySilenceGrace older than window_from counts when its telemetry
+	// is off or sampled, when it has not been continuously healthy since
+	// window_from (a restart, a heartbeat gap, or rows it could not attribute to
+	// an app), or when it fell silent before window_until. A gateway silent since
+	// before the windows serves none of them, so it cannot hold every app's
+	// evidence. Rows a gateway attributes to an app and drops (an account over its
+	// telemetry rate) do not count: the app's remaining rows stay comparable.
 	RouteTelemetryLost(ctx context.Context, db DBTX, arg RouteTelemetryLostParams) (bool, error)
 	// Authenticated post-readiness verification targets one current candidate.
 	// Filter history and deployment ownership before choosing its newest resident;

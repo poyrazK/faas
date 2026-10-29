@@ -33,8 +33,8 @@ covered. Update this table when a journey or a GA row changes.
 | 61 | Secrets | `TestSecrets`, `TestDockerfileTarballAndSecretReload` (hot reload without restart, ACK, revocation) | secret references (project environments) |
 | 63 | Custom domains with managed TLS | `TestCustomDomainBinding` (add, pending, records, remove) | DNS verification, TLS issuance, serving (no test DNS zone). On 2026-10-27 production refused `domains add` ("not available on this Gregale installation"), so the step is a known failure |
 | 64 | Streaming, SSE, WebSockets, gRPC | `TestServeAndObserve/server_sent_events`, `TestWebSockets` | gRPC |
-| 65 | Internal services (call apps by name) | `TestMultiServiceProject`: `api_has_no_public_url`, `call_by_internal_name` (`<service>.internal`), `parked_service_wakes_on_call` | the HTTPS alias, raw TCP services |
-| 66 | Service bindings, verification and probes | `TestMultiServiceProject/call_by_injected_url` (`GREGALE_SERVICE_<NAME>_URL` from `depends_on`) | the `declared` policy, caller allowlists, call scopes, `gregale bindings verify` |
+| 65 | Internal services (call apps by name) | `TestMultiServiceProject`: `api_has_no_public_url`, `call_by_internal_name` (`<service>.internal`), `call_over_private_https` (`https://<service>.internal`), `parked_service_wakes_on_call` | raw TCP services; the HTTPS step skips where the installation has not enabled private service HTTPS, as on production on 2026-10-29 |
+| 66 | Service bindings, verification and probes | `TestMultiServiceProject`: `call_by_injected_url` (`GREGALE_SERVICE_<NAME>_URL` from `depends_on`), `explain_authorization` (`gregale app binding service explain`), `declared_policy_allows_the_declared_call`, `declared_policy_refuses_an_undeclared_call`, `allowlist_refuses_other_callers` | call scopes, `gregale bindings verify`, project previews (need a multi-service GitHub fixture) |
 | 77 | App access control | `TestMaintenanceAndAccess` (require-authn, basic auth, IP allowlist) | public bearer auth |
 | 92 | Crons, fire-now | `TestCronDelivery`: `manual_run` (followed to `succeeded`), `scheduled_fire`, `trigger_inventory` (refuses `--kind cron`) | command crons (preview) |
 | 118 | Logs, tail, archive | `TestServeAndObserve` (runtime and HTTP logs), `TestTailAnalyticsAndMetrics/tail`, `TestLogArchive` | HTTP request logs while the production debugger (ADR-127) is not released for the account: the step skips on the CLI's explanation |
@@ -56,8 +56,18 @@ covered. Update this table when a journey or a GA row changes.
 44 of the 46 GA rows have at least one journey; 143 and 157 need a test
 inbox and a browser. The "Not covered" column lists the remaining gaps.
 
-Beta rows with a journey ahead of their GA promotion:
+## GA candidates
 
-| # | Capability | Journeys and steps | Not covered |
+Rows not yet GA whose journeys exist ahead of a promotion, so the
+evidence is in place before the tier changes. A step whose capability is
+hidden for the account (`gregale capabilities`) skips, so the evidence
+needs the capability released to the test account first; on 2026-10-29
+custom metric history, SLOs and synthetic checks were hidden for it.
+
+| # | Capability (tier today) | Journeys and steps | Not covered |
 |---|---|---|---|
-| 74 | Edge rules, rule lists | `TestEdgeRules` (redirect, response header and its update, IP refusal covering HEAD, a list-keyed rule and the list's edit, history and rollback, delete; each change checked on 12 requests across the edge gateways as soon as the CLI returns, #2683) | the other kinds (covered by `TestE2E_EdgeRules_*` in `cmd/e2e`), `gregale.yaml` routing, trace, WAF and challenge |
+| 74 | Edge rules, rule lists (beta) | `TestEdgeRules` (redirect, response header and its update, IP refusal covering HEAD, a list-keyed rule and the list's edit, history and rollback, delete; each change checked on 12 requests across the edge gateways as soon as the CLI returns, #2683) | the other kinds (covered by `TestE2E_EdgeRules_*` in `cmd/e2e`), `gregale.yaml` routing, trace, WAF and challenge |
+| 122 | Custom metrics and OTLP metric ingest (beta) | `TestCustomMetricsSLOsAndSynthetics`: `custom_metric` (push and read back through the API), `otlp_metrics` (OTLP/HTTP JSON gauge, name normalised) | OTLP protobuf exports; counters; custom metric history (`gregale metrics --custom`, internal); OTLP needs the custom metric history operator switch |
+| 125 | Alerts and notification channels (beta) | `TestAlertsAndChannels`: `rule_fires` (request_count rule), `webhook_verified` (the probe's `/hook` answers 200 only for a valid signature), `channel_notified` (the fire is recorded on a Slack channel), `channel_test_send` | real Slack, PagerDuty and email deliveries (no test workspace or inbox: the channel targets a Slack webhook Slack refuses); alert presets; rollback actions; incidents |
+| 128 | SLOs and error budgets (preview) | `TestCustomMetricsSLOsAndSynthetics/slo` (create, status) | attainment, budget and burn numbers (hourly rollups; a fresh app has none); SLO alerts |
+| 129 | Synthetic checks (preview) | `TestCustomMetricsSLOsAndSynthetics/synthetic_check` (create, first run passes, delete) | 24 h and 7 d uptime; failing runs; synthetic check alerts |

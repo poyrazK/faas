@@ -45,7 +45,7 @@ func TestBrowserWakePage(t *testing.T) {
 	s.check("navigation", func(t *testing.T) {
 		shown := 0
 		for attempt := range 3 {
-			tg.ok(t, 2*time.Minute, "park", slug)
+			tg.ok(t, 2*time.Minute, "app", "park", slug)
 			waitParked(t, tg, slug)
 			r := fetch(http.MethodGet, base+"/", browserNav)
 			if r.status != http.StatusOK {
@@ -72,7 +72,7 @@ func TestBrowserWakePage(t *testing.T) {
 		t.Logf("metric wake_page_shown=%d", shown)
 	})
 	s.check("fetch_never_gets_html", func(t *testing.T) {
-		tg.ok(t, 2*time.Minute, "park", slug)
+		tg.ok(t, 2*time.Minute, "app", "park", slug)
 		waitParked(t, tg, slug)
 		r := fetch(http.MethodGet, base+"/", map[string]string{
 			"Accept": "text/html,*/*", "Sec-Fetch-Mode": "cors", "Sec-Fetch-Dest": "empty",

@@ -61,6 +61,10 @@ func (s *server) putRouteMonitor(w http.ResponseWriter, r *http.Request, a state
 	if !ok {
 		return
 	}
+	if p := s.routeCustomerGroupingProblem(a, app, req.CustomerGroupBy); p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
 	c, err := store.SetRouteMonitor(r.Context(), a.ID, app.ID, req)
 	if err != nil {
 		s.routeMonitorError(w, err, a)
@@ -93,6 +97,10 @@ func (s *server) postRouteMonitorPreview(w http.ResponseWriter, r *http.Request,
 	}
 	app, store, ok := s.routeMonitorTarget(w, r, a)
 	if !ok {
+		return
+	}
+	if p := s.routeCustomerGroupingProblem(a, app, req.CustomerGroupBy); p != nil {
+		api.WriteProblem(w, p)
 		return
 	}
 	var preview api.RouteMonitorPreview

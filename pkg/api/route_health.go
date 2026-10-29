@@ -152,6 +152,9 @@ type RouteHealthReport struct {
 	MinimumLatencyRequests int64                      `json:"minimum_latency_requests,omitempty"`
 	Routes                 []RouteHealthFinding       `json:"routes"`
 	ProfileSignal          *CanaryProfileSignal       `json:"profile_signal,omitempty"`
+	// Hold, on a read only, is when the enforced guard's hold began and
+	// when the hold deadline aborts it (ADR-20261028110044 amendment 2).
+	Hold *RouteHealthHold `json:"hold,omitempty"`
 }
 
 // RouteHealthDecision is metadata-only for advancement responses and audits.
@@ -165,4 +168,12 @@ type RouteHealthDecision struct {
 	Reason             string    `json:"reason"`
 	CheckedAt          time.Time `json:"checked_at"`
 	HistoryID          string    `json:"history_id,omitempty"`
+}
+
+// RouteHealthHold is a canary the enforced guard holds: since its first
+// blocking decision, and aborted at AbortsAt if the rollout worker still finds
+// it held (ADR-20261028110044 amendment 2).
+type RouteHealthHold struct {
+	Since    time.Time `json:"since"`
+	AbortsAt time.Time `json:"aborts_at"`
 }
