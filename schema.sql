@@ -15149,6 +15149,10 @@ BEGIN
    restoring:=q.id IS NOT NULL;
   END IF;
  END IF;
+ -- An activated workload's own serving instances deliver like any deployment's;
+ -- the qualification attempt checks below apply to candidates only.
+ IF q.id IS NULL AND EXISTS(SELECT 1 FROM deployments WHERE id=i.deployment_id AND app_id=i.app_id
+  AND NOT environment_workload_held AND status='live') THEN RETURN NEW; END IF;
  IF q.id IS NOT NULL THEN
   PERFORM s.id FROM environment_git_sources s JOIN environment_workload_graphs g ON g.source_id=s.id WHERE g.id=q.graph_id FOR UPDATE OF s;
   PERFORM a.id FROM apps a JOIN environment_workload_graphs g ON g.id=q.graph_id
