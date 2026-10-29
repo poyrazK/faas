@@ -886,6 +886,7 @@ func TestEveryCodeHasWhycopyEntry(t *testing.T) {
 		api.CodeStageImageBuildTimeout,
 		api.CodeBuildFailed,
 		api.CodeBuildInfrastructure,
+		api.CodeAppLayerTooBig,
 		api.CodeStageSecurityScanFindings,
 		api.CodeStageSnapshotPrepareTimeout,
 		api.CodeBeforeCheckpointFailed,

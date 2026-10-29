@@ -42,6 +42,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/storagekey"
+	"github.com/onebox-faas/faas/pkg/whycopy"
 	"github.com/onebox-faas/faas/pkg/wire"
 
 	"filippo.io/age"
@@ -4444,14 +4445,33 @@ func (h *Handler) markDeployFailed(ctx context.Context, depID string, err error,
 	if errors.Is(err, errImageAbuseDetected) {
 		code = api.CodeImageAbuseDetected
 	}
-	if code == "" {
-		code = api.CodeDeployFailed
-	}
 	detail := err.Error()
 	if prefix != "" {
 		detail = prefix + ": " + detail
 	}
-	row, err := h.store.SetDeploymentFailed(ctx, depID, code, detail)
+	// A typed problem (an app layer over the plan cap) keeps its stable code
+	// and customer-safe detail; before, it reached the customer as
+	// deploy_failed with imaged's wrapping (ADR-20261029103512 amendment 1).
+	var hint, why, fix string
+	if p := api.AsProblem(err); code == "" && p != nil && p.Code != "" {
+		code, detail = p.Code, p.Detail
+		explained := whycopy.Decorate(&api.Problem{Code: p.Code, Hint: p.Hint, Why: p.Why, Fix: p.Fix}, p.Code, nil)
+		hint, why, fix = explained.Hint, explained.Why, explained.Fix
+		if code == api.CodeAppLayerTooBig {
+			if nodeFix := h.layerTooLargeNodeFix(ctx, depID); nodeFix != "" {
+				fix = strings.TrimSpace(nodeFix + "\n" + fix)
+			}
+		}
+	}
+	if code == "" {
+		code = api.CodeDeployFailed
+	}
+	var row state.Deployment
+	if hint != "" || why != "" || fix != "" {
+		row, err = h.store.SetDeploymentFailedEx(ctx, depID, code, detail, hint, why, fix, nil)
+	} else {
+		row, err = h.store.SetDeploymentFailed(ctx, depID, code, detail)
+	}
 	if err != nil {
 		return fmt.Errorf("imaged: mark failed: %w", err)
 	}
