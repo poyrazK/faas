@@ -50,7 +50,7 @@ func cmdRoutesApply(args []string) int {
 		return 1
 	}
 	if len(positional) != 1 || !validCLISlug(positional[0]) || *path == "" || !*confirm {
-		return printErr("Invalid route apply", errors.New("usage: gregale routes apply <slug> --plan PATH --confirm [--idempotency-key KEY]"))
+		return printErr("Invalid route apply", errors.New("usage: gregale api route apply <slug> --plan PATH --confirm [--idempotency-key KEY]"))
 	}
 	plan, err := readRoutePolicyPlan(*path, positional[0])
 	if err != nil {

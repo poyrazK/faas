@@ -64,6 +64,11 @@ type Options struct {
 	auditLogger   *slog.Logger
 	accountID     string
 	grantID       string
+	// agentKey marks a hosted connection authenticated by an agent key
+	// (ADR-20261029085359): account-wide like a local connection, but its
+	// tools follow its scopes like a remote grant's and it gets no
+	// local-directory tools.
+	agentKey bool
 }
 
 type management struct {
@@ -89,6 +94,10 @@ func NewServer(client *api.Client, opts Options) (*mcp.Server, error) {
 	s, _, err := newManagementServer(client, opts)
 	return s, err
 }
+
+// remote reports whether tools are listed as for a remote grant: an OAuth
+// grant (environment consent) or an agent key.
+func (m *management) remote() bool { return m.opts.Environments != nil || m.opts.agentKey }
 
 func newManagementServer(client *api.Client, opts Options) (*mcp.Server, *management, error) {
 	if client == nil {

@@ -22,7 +22,7 @@ func TestCLIRoughEdgesH14_63(t *testing.T) {
 	}{
 		{[]string{"env", "bogus"}, []string{`unknown subcommand "bogus"`, "Subcommands: create, clone-status, pull, push, diff, history, rollback"}},
 		{[]string{"flags", "list", "--project", "shop"}, []string{`gregale flags: unknown subcommand "list"`, "Subcommands: get, apply"}},
-		{[]string{"flags", "apply", "--project", "shop"}, []string{"gregale flags apply needs --file"}},
+		{[]string{"flags", "apply", "--project", "shop"}, []string{"gregale flag apply needs --file"}},
 		{[]string{"jobs", "list", "--app", "shop"}, []string{"lists every job in the account; it has no --app filter"}},
 	} {
 		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
@@ -64,7 +64,7 @@ func TestDeploymentsTakesAPositionalSlug(t *testing.T) {
 	_, stderr, restore = main.SwapIO(t)
 	code = main.Run([]string{"deployments", "shop", "--app", "other"})
 	restore()
-	if code != 1 || !strings.Contains(stderr(), "usage: gregale deployments [SLUG | --app SLUG]") {
+	if code != 1 || !strings.Contains(stderr(), "usage: gregale release list [SLUG | --app SLUG]") {
 		t.Fatalf("conflicting slug and --app: exit=%d stderr=%q", code, stderr())
 	}
 }

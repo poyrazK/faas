@@ -14,7 +14,7 @@ import (
 
 func cmdBindingsReleasePolicy(args []string) int {
 	if len(args) == 0 || args[0] != "get" && args[0] != "set" {
-		return printErr("Invalid release policy command", errors.New("usage: gregale bindings release-policy <get|set> <app> --scope SCOPE"))
+		return printErr("Invalid release policy command", errors.New("usage: gregale app binding release-policy <get|set> <app> --scope SCOPE"))
 	}
 	action := args[0]
 	fs := newFlagSet("bindings release-policy "+action, flag.ContinueOnError)

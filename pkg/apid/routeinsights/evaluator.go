@@ -49,6 +49,10 @@ type Evaluator struct {
 	Now      func() time.Time
 	// Metrics is optional; nil records nothing.
 	Metrics *Metrics
+	// Released decides the route insights capability for an app
+	// (ADR-20261028110044). An unreleased app is skipped after its claim, so
+	// the rotation still moves on; nil releases every app.
+	Released func(state.Account, state.App) bool
 }
 
 // Stats summarizes one evaluation. Taken counts candidates another
@@ -185,6 +189,9 @@ func (e *Evaluator) evaluateApp(ctx context.Context, accountID, appID string, no
 	}
 	limits, ok := api.LimitsFor(acct.Plan)
 	if !ok || !limits.DebugTelemetryEnabled {
+		return 0, true, nil
+	}
+	if e.Released != nil && !e.Released(acct, app) {
 		return 0, true, nil
 	}
 	findings, err := e.findings(ctx, acct, app, limits, now)

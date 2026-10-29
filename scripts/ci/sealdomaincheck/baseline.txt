@@ -97,6 +97,8 @@ plain issue_ingest_tokens.token_hash
 plain job_run_attach_sessions.attach_token_sha256
 plain login_tokens.token_hash
 plain magic_link_tokens.token_hash
+plain managed_postgres_live_keys.sealed_secret_sig
+plain managed_postgres_live_logins.sealed_login_sig
 plain managed_realtime_channel_batches.payload_hash
 plain managed_realtime_channel_messages.data
 plain managed_realtime_channel_snapshots.data
@@ -137,6 +139,8 @@ plain product_control_email_deliveries.unsubscribe_hash
 plain profile_capture_data.profile
 plain route_removal_approvals.baseline_sha256
 plain route_removal_approvals.candidate_sha256
+plain runtime_secret_signatures.ciphertext_sha256
+plain runtime_secret_signatures.signature
 plain runtime_upgrade_external_fence_authorities.public_key
 plain runtime_upgrade_external_fence_receipts.envelope
 plain runtime_upgrade_native_public_startups.envelope

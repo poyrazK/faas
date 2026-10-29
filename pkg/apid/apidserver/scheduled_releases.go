@@ -56,7 +56,11 @@ func (s *server) releaseFreezeOrSchedule(r *http.Request, acct state.Account, ap
 		if len(req.ReleaseNotify) > 0 {
 			return nil, api.ErrValidation("release_notify needs release_at")
 		}
-		return nil, s.releaseFreezeProblem(r, acct, app, req.Scope, req.OverrideFreeze)
+		p, overridden := s.checkReleaseFreeze(r, acct, app, req.Scope, req.OverrideFreeze)
+		if p == nil {
+			deferFreezeOverrideAudit(r, overridden)
+		}
+		return nil, p
 	}
 	at, p := api.ParseReleaseAt("release_at", req.ReleaseAt, time.Now().UTC())
 	if p != nil {
@@ -138,6 +142,9 @@ func (sched *releaseSchedule) park(req *api.CreateDeploymentRequest) {
 // recordReleaseSchedule stores the schedule of a release that was just
 // created parked.
 func (s *server) recordReleaseSchedule(r *http.Request, acct state.Account, app state.App, d state.Deployment, sched *releaseSchedule) *api.Problem {
+	// Every deploy path records its schedule once the deployment exists, so
+	// a deferred freeze override is audited here.
+	s.auditFreezeOverride(r, acct, d)
 	if sched == nil {
 		return nil
 	}

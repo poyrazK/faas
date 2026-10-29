@@ -7,7 +7,7 @@ image or enabling CI. Run repository steps only in Jobs microVMs; a container
 image build or portable fake-executor test is not native execution acceptance.
 See [internal CI](../docs/ops/internal-ci.md#guest-runner-and-scoped-transfers).
 
-`base-debian-parent`, `base-minimal`, `runner-node22`, `runner-node24`, `runner-python312`, `runner-python313`, `runner-go124`, `runner-go124-alpine`, `builder-base`. Built in CI,
+`agent-base`, `base-debian-parent`, `base-minimal`, `runner-node22`, `runner-node24`, `runner-python312`, `runner-python313`, `runner-go124`, `runner-go124-alpine`, `builder-base`. Built in CI,
 staged to /srv/fc/base/ (inside the 60 GB reserve, counted once). drive0 is one of
 these shared read-only base rootfs; per-app layers stack over it via overlayfs.
 Never flatten into one rootfs per app (breaks the 130 MB fleet target).
@@ -28,6 +28,23 @@ CI verifies versions and imports as uid 1000 without network or rootfs writes,
 and applies the all-CRITICAL scan gate used by `runner-python313`. Total ext4
 residency, native KVM startup/memory measurements, and leak acceptance remain
 production rollout gates; wheel extraction alone does not measure these.
+
+`agent-base` is the shared, read-only drive0 for Gregale Agents runs
+(ADR-20261027090010 §2), on the same Node 22 Alpine digest as `runner-node22`. It holds
+the three preset harnesses: Codex CLI, OpenCode and Claude Code, the last as
+Anthropic's unmodified published binary. A preset is a binary here plus its
+command in `pkg/agentpresets/presets.json`, not an image of its own. The
+versions are pinned in `images/agent-base/package.json`, its integrity-pinned
+lockfile and the catalog, and `pkg/agentpresets` tests that the three agree.
+`finish-install.sh` refuses a harness binary that did not come from the
+lockfile (OpenCode's installer can fall back to the registry), drops the
+OpenCode builds this CPU and libc never run, and checks every version. The
+contract check runs each preset as uid 1000 with no network and a read-only
+rootfs. An agent-pool imaged stages it when `FAAS_AGENT_BASE_REF` pins a
+digest: the shared base at `base/runner-agent-amd64.ext4` with guest-init and
+the Grype scan sidecar vmmd's boot gate reads, plus the platform agent layer
+(drive1 holding only `/etc/faas/agent.json`) at
+`base/agent-layer-v1-amd64.ext4`. Unset, it stages neither.
 
 The runtime/base images are published under `ghcr.io/poyrazk/<image>` by the
 `runtime-bases` matrix in `.github/workflows/images.yml`. `builder-base` keeps

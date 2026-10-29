@@ -515,6 +515,12 @@ const (
 	CodeBuildUndetected          = "build_undetected"
 	CodeBuildOOM                 = "build_oom"
 	CodeBuildTimeout             = "build_timeout"
+	// CodeBuildFailed marks a source build whose own install or build step
+	// exited non-zero; CodeBuildInfrastructure marks one the platform could
+	// not run (builder VM, disk, or control-plane failure). Both are stamped
+	// on the deployment row with whycopy guidance (ADR-20261029103512).
+	CodeBuildFailed         = "build_failed"
+	CodeBuildInfrastructure = "build_infrastructure_failed"
 	// CodeDeploymentQueueTimeout and CodeDeploymentStalled are the
 	// deployment watchdog's failures (ADR-20261024140100): a build waited
 	// past DeploymentQueuedBuildTimeoutSeconds, or an in-flight deployment
@@ -650,6 +656,10 @@ const (
 	// CodeDeployRateLimited marks an account that exhausted its plan's
 	// deployment admissions in the current one-hour window.
 	CodeDeployRateLimited = "deploy_rate_limited"
+	// CodeNotificationChannelTestRateLimited marks an account that sent its
+	// notification channels more test messages than a minute allows
+	// (ADR-20261028101615).
+	CodeNotificationChannelTestRateLimited = "notification_channel_test_rate_limited"
 	// CodeEventPublishRateLimited marks a publication beyond the account's
 	// event publish rate (EventPublishLimits); retry after Retry-After.
 	CodeEventPublishRateLimited = "event_publish_rate_limited"
@@ -3017,6 +3027,21 @@ func ErrDeployRateLimited(limit, retryAfterS int) *Problem {
 		WithDocs("https://gregale.dev/docs/deployments#rate-limit")
 }
 
+// ErrNotificationChannelTestRateLimited refuses a channel test send beyond
+// NotificationChannelTestsPerAccountMinute (ADR-20261028101615): each test is
+// a real Slack post, PagerDuty event or email.
+func ErrNotificationChannelTestRateLimited(limit, retryAfterS int) *Problem {
+	if retryAfterS <= 0 {
+		retryAfterS = 1
+	}
+	return NewProblem(http.StatusTooManyRequests, CodeNotificationChannelTestRateLimited,
+		"Notification channel test rate limited",
+		fmt.Sprintf("This account has sent its notification channels %d test messages in the last minute.", limit)).
+		WithLimit(int64(limit), int64(limit)).
+		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
+		WithDocs("https://gregale.dev/docs/alerts#notification-channels")
+}
+
 // ErrEventPublishRateLimited reports a publication of events beyond the
 // account's per-second event publish rate. Nothing was accepted.
 // EventsPausedRetryAfter is the Retry-After a refused publication carries
@@ -3047,7 +3072,7 @@ func ErrEventPublishRateLimited(perSecond, events int, retryAfter time.Duration)
 		fmt.Sprintf("This account publishes at most %d events per second; retry the same events after the indicated back-off.", perSecond)).
 		WithLimit(int64(perSecond), int64(events)).
 		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
-		WithDocs("https://gregale.dev/docs/event-driven#publish-rate")
+		WithDocs("https://gregale.dev/docs/events#publish-rate")
 }
 
 // ErrAuthRateLimited reports that the caller's source IP exhausted the

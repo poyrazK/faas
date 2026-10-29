@@ -120,7 +120,7 @@ func cmdDataAPIStorageEnable(args []string) int {
 	region := fs.String("region", "", "object-storage region for a new bucket (account default when omitted)")
 	maxObject := fs.Int64("max-object-bytes", 0, "largest upload in bytes (default 25 MiB, at most 100 MiB)")
 	noRestart := fs.Bool("no-restart", false, "store settings without requesting a fresh restart")
-	usage := "usage: gregale data-api storage enable NAME --bucket BUCKET [--scope SCOPE] [--region REGION] [--max-object-bytes N] [--no-restart]"
+	usage := "usage: gregale data-api storage enable NAME --bucket BUCKET [--env SCOPE] [--region REGION] [--max-object-bytes N] [--no-restart]"
 	if err := parseInterspersed(fs, args); err != nil || fs.NArg() != 1 || !api.ValidAppSlug(fs.Arg(0)) || api.ValidateScope(*scope) != nil || !addBucketNameRE.MatchString(*bucket) {
 		PrintUsage(os.Stderr, usage, "data-api")
 		return 1
@@ -219,7 +219,7 @@ func cmdDataAPIStorageStatus(args []string) int {
 	fs := newFlagSet("data-api storage status", flag.ContinueOnError)
 	scope := fs.String("scope", api.DefaultEnvScope, "environment scope")
 	if err := parseInterspersed(fs, args); err != nil || fs.NArg() != 1 || !api.ValidAppSlug(fs.Arg(0)) || api.ValidateScope(*scope) != nil {
-		PrintUsage(os.Stderr, "usage: gregale data-api storage status NAME [--scope SCOPE]", "data-api")
+		PrintUsage(os.Stderr, "usage: gregale data-api storage status NAME [--env SCOPE]", "data-api")
 		return 1
 	}
 	client, err := authedClient()
@@ -274,7 +274,7 @@ func cmdDataAPIStorageDisable(args []string) int {
 	scope := fs.String("scope", api.DefaultEnvScope, "environment scope")
 	noRestart := fs.Bool("no-restart", false, "store settings without requesting a fresh restart")
 	if err := parseInterspersed(fs, args); err != nil || fs.NArg() != 1 || !api.ValidAppSlug(fs.Arg(0)) || api.ValidateScope(*scope) != nil {
-		PrintUsage(os.Stderr, "usage: gregale data-api storage disable NAME [--scope SCOPE] [--no-restart]", "data-api")
+		PrintUsage(os.Stderr, "usage: gregale data-api storage disable NAME [--env SCOPE] [--no-restart]", "data-api")
 		return 1
 	}
 	client, err := authedClient()

@@ -16,7 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const deployTokensUsage = "usage: gregale deploy-tokens <list|add|rotate|rm> --app SLUG [args]"
+const deployTokensUsage = "usage: gregale app deploy-token <list|add|rotate|rm> --app SLUG [args]"
 
 func cmdDeployTokens(args []string) int {
 	parent, _ := lookupCliCommand("deploy-tokens")
@@ -68,7 +68,7 @@ func parseDeployTokenFlags(name, usage string, args []string, minting bool, posi
 }
 
 func cmdDeployTokensList(args []string) int {
-	slug, _, _, _, ok := parseDeployTokenFlags("deploy-tokens list", "usage: gregale deploy-tokens list --app SLUG", args, false, 0)
+	slug, _, _, _, ok := parseDeployTokenFlags("deploy-tokens list", "usage: gregale app deploy-token list --app SLUG", args, false, 0)
 	if !ok {
 		return 1
 	}
@@ -84,7 +84,7 @@ func cmdDeployTokensList(args []string) int {
 		return jsonOut(writeNDJSON(out.Tokens))
 	}
 	if len(out.Tokens) == 0 {
-		printEmptyResult("deploy tokens for app "+slug, "", "gregale deploy-tokens add --app "+slug+" --label ci")
+		printEmptyResult("deploy tokens for app "+slug, "", "gregale app deploy-token create --app "+slug+" --label ci")
 		return 0
 	}
 	for _, token := range out.Tokens {
@@ -94,7 +94,7 @@ func cmdDeployTokensList(args []string) int {
 }
 
 func cmdDeployTokensAdd(args []string) int {
-	const usage = "usage: gregale deploy-tokens add --app SLUG [--label LABEL] [--expires-at RFC3339]"
+	const usage = "usage: gregale app deploy-token create --app SLUG [--label LABEL] [--expires-at RFC3339]"
 	slug, label, expires, _, ok := parseDeployTokenFlags("deploy-tokens add", usage, args, true, 0)
 	if !ok {
 		return 1
@@ -117,7 +117,7 @@ func cmdDeployTokensAdd(args []string) int {
 }
 
 func cmdDeployTokensRotate(args []string) int {
-	const usage = "usage: gregale deploy-tokens rotate <token-id> --app SLUG [--label LABEL] [--expires-at RFC3339]"
+	const usage = "usage: gregale app deploy-token rotate <token-id> --app SLUG [--label LABEL] [--expires-at RFC3339]"
 	slug, label, expires, positional, ok := parseDeployTokenFlags("deploy-tokens rotate", usage, args, true, 1)
 	if !ok {
 		return 1
@@ -143,7 +143,7 @@ func cmdDeployTokensRotate(args []string) int {
 }
 
 func cmdDeployTokensRm(args []string) int {
-	slug, _, _, positional, ok := parseDeployTokenFlags("deploy-tokens rm", "usage: gregale deploy-tokens rm <token-id> --app SLUG", args, false, 1)
+	slug, _, _, positional, ok := parseDeployTokenFlags("deploy-tokens rm", "usage: gregale app deploy-token delete <token-id> --app SLUG", args, false, 1)
 	if !ok {
 		return 1
 	}

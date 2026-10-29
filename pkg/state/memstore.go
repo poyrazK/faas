@@ -1446,6 +1446,9 @@ type MemStore struct {
 	realtimeChannelWebhookFilters   map[string]RealtimeChannelWebhookFilter
 	managedRealtimeAccess           map[string]map[string]ManagedRealtimeAccess
 	workerRecovery                  map[string]WorkerRecovery
+	// runtimeSecretSignatures maps an envelope's SHA-256 to its writer
+	// signature (ADR 20261028161502), created on first use.
+	runtimeSecretSignatures map[string][]byte
 }
 
 // installRepoKey mirrors the projects_install_repo_uniq partial index
@@ -4962,7 +4965,7 @@ func (m *MemStore) CreateApp(ctx context.Context, app App) (App, error) {
 	// so the column reads as a real value right out of CreateApp. The
 	// pgstore snap lives on the SQL path; the memstore snap mirrors it
 	// here so the per-account reserved-tier cap read
-	// (CountAppsWithEvictionPriority) sees the same value the wire
+	// (CountOtherBillingSubjectAppsWithEvictionPriority) sees the same value the wire
 	// would. Pre-#475 tests that built App{} structs continue to read
 	// 'best_effort' on the round-trip.
 	app.EvictionPriority = EvictionPriorityOrBestEffort(app.EvictionPriority)
@@ -5849,12 +5852,24 @@ func (m *MemStore) AdvanceCanary(ctx context.Context, id string, params CanaryAd
 	if params.ProfileGateRollback {
 		return m.abortProfileGatedCanaryLocked(ctx, d, params)
 	}
-	if err := m.checkCanaryRouteGateLocked(d, params); err != nil {
+	// A guard whose capability is not released for the account neither holds
+	// the rollout nor records evidence (ADR-20261028110044).
+	guards := routeGuardRelease(ctx)
+	if !guards.Requirements {
+		params.RouteGateDecision = nil
+	} else if err := m.checkCanaryRouteGateLocked(d, params); err != nil {
 		return Deployment{}, 0, err
 	}
-	healthRecord, healthNotification, err := m.checkRouteHealthLocked(d, params)
-	if err != nil {
-		return Deployment{}, 0, err
+	var healthRecord routeHealthStoredDecision
+	var healthNotification memRouteHealthNotification
+	if !guards.Health {
+		params.RouteHealthDecision = nil
+	} else {
+		var err error
+		healthRecord, healthNotification, err = m.checkRouteHealthLocked(d, params)
+		if err != nil {
+			return Deployment{}, 0, err
+		}
 	}
 	if err := stampRouteHealthAudit(&params); err != nil {
 		return Deployment{}, 0, err
@@ -6398,6 +6413,14 @@ func (m *MemStore) ReassignAppOwner(_ context.Context, appID, fromNodeID, toNode
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.reassignableAppLocked(appID, fromNodeID); err != nil {
+		return err
+	}
+	m.reassignAppOwnerLocked(appID, fromNodeID, toNodeID)
+	return nil
+}
+
+func (m *MemStore) reassignableAppLocked(appID, fromNodeID string) error {
 	a, ok := m.apps[appID]
 	if !ok {
 		return ErrNotFound
@@ -6408,6 +6431,11 @@ func (m *MemStore) ReassignAppOwner(_ context.Context, appID, fromNodeID, toNode
 	if a.Status != AppActive && a.Status != AppEvictedCold {
 		return ErrConflict
 	}
+	return nil
+}
+
+func (m *MemStore) reassignAppOwnerLocked(appID, fromNodeID, toNodeID string) {
+	a := m.apps[appID]
 	now := time.Now()
 	a.NodeID = toNodeID
 	if fromNodeID != toNodeID {
@@ -6415,7 +6443,6 @@ func (m *MemStore) ReassignAppOwner(_ context.Context, appID, fromNodeID, toNode
 	}
 	a.ReassignedAt = &now
 	m.apps[appID] = a
-	return nil
 }
 
 // ListLiveInstancesOnNode mirrors
@@ -6821,25 +6848,30 @@ func (m *MemStore) CountDeveloperApps(_ context.Context, accountID string) (int,
 	return m.countAppQuotaLocked(app, true, QuotaErrorKindDeveloperApps), nil
 }
 
-// CountAppsWithEvictionPriority mirrors the pgstore read for the
-// per-account reserved-tier cap (issue #475). Same shape as
-// CountDeployedApps — counts APPS (not instances), excludes soft-deleted
-// apps so the cap tracks the live customer surface.
-func (m *MemStore) CountAppsWithEvictionPriority(_ context.Context, accountID, priority string) (int, error) {
+// CountOtherBillingSubjectAppsWithEvictionPriority mirrors the pgstore
+// read for the per-account reserved-tier cap (issue #475): it counts APPS
+// (not instances) of appID's billing subject, other than appID, whose row
+// or current environment workload settings use the tier, and excludes
+// soft-deleted apps (countsTowardQuotaSubjectLocked).
+func (m *MemStore) CountOtherBillingSubjectAppsWithEvictionPriority(_ context.Context, appID, priority string) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	app, ok := m.apps[appID]
+	if !ok {
+		return 0, nil
+	}
+	subject := m.appBillingSubjectLocked(app.AccountID, app.ID)
+	inEnvironment := make(map[string]bool)
+	for _, specID := range m.projectEnvironmentWorkloadHeads {
+		if spec := m.projectEnvironmentWorkloadSpecs[specID]; EvictionPriorityOrBestEffort(spec.Settings.EvictionPriority) == priority {
+			inEnvironment[spec.AppID] = true
+		}
+	}
 	n := 0
 	for _, a := range m.apps {
-		if a.AccountID != accountID {
-			continue
+		if a.ID != appID && (a.EvictionPriority == priority || inEnvironment[a.ID]) && m.countsTowardQuotaSubjectLocked(a.AccountID, a.ID, subject) {
+			n++
 		}
-		if a.Status == AppDeleted {
-			continue
-		}
-		if a.EvictionPriority != priority {
-			continue
-		}
-		n++
 	}
 	return n, nil
 }
@@ -8935,19 +8967,24 @@ func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID
 		if err := legacyProfileCanaryGate(m.profileDeploymentPolicies[appID], *target); err != nil {
 			return *target, 0, err
 		}
-		gate, err := m.canaryRouteGateLocked(m.apps[appID].AccountID, appID)
-		if err != nil {
-			return *target, 0, err
+		guards := routeGuardRelease(ctx)
+		if guards.Requirements {
+			gate, err := m.canaryRouteGateLocked(m.apps[appID].AccountID, appID)
+			if err != nil {
+				return *target, 0, err
+			}
+			if err := legacyCanaryRouteGate(gate, *target, action); err != nil {
+				return *target, 0, err
+			}
 		}
-		if err := legacyCanaryRouteGate(gate, *target, action); err != nil {
-			return *target, 0, err
-		}
-		healthGate, err := m.routeHealthGateLocked(m.apps[appID].AccountID, appID)
-		if err != nil {
-			return *target, 0, err
-		}
-		if err := legacyRouteHealth(healthGate, *target, action); err != nil {
-			return *target, 0, err
+		if guards.Health {
+			healthGate, err := m.routeHealthGateLocked(m.apps[appID].AccountID, appID)
+			if err != nil {
+				return *target, 0, err
+			}
+			if err := legacyRouteHealth(healthGate, *target, action); err != nil {
+				return *target, 0, err
+			}
 		}
 	}
 	if expectedPredecessorID != "" {
@@ -15778,6 +15815,9 @@ func (m *MemStore) CreateInstanceWithMode(ctx context.Context, appID, deployment
 			return Instance{}, err
 		}
 	}
+	if err := m.checkAppOwnerFenceLocked(ctx, appID, strings.ToLower(state)); err != nil {
+		return Instance{}, err
+	}
 	if err := m.requireInstanceLayerArtifactsLocked(deploymentID, state); err != nil {
 		return Instance{}, err
 	}
@@ -17644,6 +17684,35 @@ func (m *MemStore) SetComputeNodeReadiness(_ context.Context, nodeID string, rea
 	if reason != "" {
 		n.ReadinessReason = &reason
 	}
+	m.computeNodes[nodeID] = n
+	return true, nil
+}
+
+// OpenComputeNodeWakeBreaker mirrors PgStore.OpenComputeNodeWakeBreaker.
+func (m *MemStore) OpenComputeNodeWakeBreaker(_ context.Context, nodeID string, until time.Time, reason string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n, ok := m.computeNodes[nodeID]
+	if !ok {
+		return nil
+	}
+	n.WakeBreakerOpenUntil, n.WakeBreakerReason = &until, nil
+	if reason != "" {
+		n.WakeBreakerReason = &reason
+	}
+	m.computeNodes[nodeID] = n
+	return nil
+}
+
+// CloseComputeNodeWakeBreaker mirrors PgStore.CloseComputeNodeWakeBreaker.
+func (m *MemStore) CloseComputeNodeWakeBreaker(_ context.Context, nodeID string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n, ok := m.computeNodes[nodeID]
+	if !ok || n.WakeBreakerOpenUntil == nil {
+		return false, nil
+	}
+	n.WakeBreakerOpenUntil, n.WakeBreakerReason = nil, nil
 	m.computeNodes[nodeID] = n
 	return true, nil
 }
@@ -24242,20 +24311,14 @@ func (m *MemStore) CreateAlertRuleIfUnderQuota(_ context.Context, in AlertRule, 
 		}
 	}
 
-	// Per-account count excludes rules whose pinned app is soft-
-	// deleted (matches the PgStore's EXISTS predicate).
-	accountCount := 0
+	// The per-account count covers the billing subject's account-wide rules
+	// and the rules of its apps, excluding soft-deleted apps (matches the
+	// PgStore's predicate).
+	subject, accountCount := m.appBillingSubjectLocked(in.AccountID, in.AppID), 0
 	for _, r := range m.alertRules {
-		if r.AccountID != in.AccountID {
-			continue
+		if m.countsTowardQuotaSubjectLocked(r.AccountID, r.AppID, subject) {
+			accountCount++
 		}
-		if r.AppID != "" {
-			app, ok := m.apps[r.AppID]
-			if !ok || app.Status == AppDeleted {
-				continue
-			}
-		}
-		accountCount++
 	}
 	if accountCount >= limits.AlertRuleLimitPerAccount {
 		return AlertRule{}, &AlertRuleQuotaError{
@@ -24549,6 +24612,7 @@ func (m *MemStore) CreateEdgeRule(ctx context.Context, in CreateEdgeRuleParams) 
 		ExpiresAt:    in.ExpiresAt,
 		Match:        in.Match,
 		Mode:         edgeRuleModeOrEnforce(in.Mode),
+		CorsPresetID: in.CorsPresetID,
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
@@ -24657,6 +24721,9 @@ func (m *MemStore) CreateEdgeRuleIfUnderQuota(ctx context.Context, in CreateEdge
 			return EdgeRule{}, exceeded
 		}
 	}
+	if err := m.memEdgeRuleListMissing(in.AccountID, in.Match); err != nil {
+		return EdgeRule{}, err
+	}
 	if in.MatchMethods == nil {
 		in.MatchMethods = []string{}
 	}
@@ -24684,6 +24751,7 @@ func (m *MemStore) CreateEdgeRuleIfUnderQuota(ctx context.Context, in CreateEdge
 		ExpiresAt:    in.ExpiresAt,
 		Match:        in.Match,
 		Mode:         edgeRuleModeOrEnforce(in.Mode),
+		CorsPresetID: in.CorsPresetID,
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}
@@ -24856,17 +24924,11 @@ func (m *MemStore) CreateCorsPresetIfUnderQuota(ctx context.Context, p CorsPrese
 			}
 		}
 	}
-	// Per-account count excludes soft-deleted apps' preset rows.
-	var accountCount int
+	// The per-account count covers the billing subject's account-wide presets
+	// and the presets of its apps, excluding soft-deleted apps.
+	subject, accountCount := m.appBillingSubjectLocked(p.AccountID, p.AppID), 0
 	for _, q := range m.corsPresets {
-		if q.AccountID != p.AccountID {
-			continue
-		}
-		if q.AppID == "" {
-			accountCount++
-			continue
-		}
-		if app, ok := m.apps[q.AppID]; ok && app.Status != "deleted" {
+		if m.countsTowardQuotaSubjectLocked(q.AccountID, q.AppID, subject) {
 			accountCount++
 		}
 	}
@@ -25240,6 +25302,11 @@ func (m *MemStore) UpdateEdgeRule(ctx context.Context, id string, p UpdateEdgeRu
 	if !ok {
 		return EdgeRule{}, ErrNotFound
 	}
+	if p.Match != nil {
+		if err := m.memEdgeRuleListMissing(r.AccountID, p.Match); err != nil {
+			return EdgeRule{}, err
+		}
+	}
 	before := r
 	if p.MatchHost != nil {
 		r.MatchHost = *p.MatchHost
@@ -25366,7 +25433,7 @@ func (m *MemStore) MatchEdgeRulesForHost(_ context.Context, host string) ([]Edge
 	defer m.mu.Unlock()
 	var out []EdgeRule
 	for _, r := range m.edgeRules {
-		if !r.Enabled || r.EdgeRuleExpired(time.Now()) {
+		if !r.Enabled || r.EdgeRuleExpired(time.Now()) || m.edgeRuleAppDeletedLocked(r) {
 			continue
 		}
 		if matchHostPattern(r.MatchHost, host) {

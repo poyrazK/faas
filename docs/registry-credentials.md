@@ -15,7 +15,7 @@ Image runs (`gregale run`) take the credential per run instead:
 `GREGALE_REGISTRY_PASSWORD` or a prompt, or from a Docker config with
 `--docker-config ~/.docker` (ADR-20261025110000). It is stored sealed on the image's
 runner job, for the image's registry only, and refreshed by every run that
-passes it (ADR-1790). See [Jobs](jobs.md#image-runs).
+passes it (ADR-1790). See [image runs](image-runs.md).
 
 A Dockerfile build uses the same credentials for its `FROM` images, so an app can
 build on a private base image ([ADR-20261026091500](adr/20261026091500-builder-private-base-images.md)).

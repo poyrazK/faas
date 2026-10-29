@@ -73,6 +73,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/grace"
 	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/httpsec"
+	"github.com/onebox-faas/faas/pkg/imagelisten"
 	"github.com/onebox-faas/faas/pkg/internalmail"
 
 	"github.com/onebox-faas/faas/pkg/issuetracker"
@@ -766,8 +767,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return err
 	}
 	defer stopEventWriter()
+	scopedBinding, err := api.TrafficScopedBindingGuardEnabled(deps.getenv("FAAS_TRAFFIC_SCOPED_BINDING_GUARD"))
+	if err != nil {
+		return err
+	}
 	deps.store = func() state.Store {
-		return state.NewPgStore(pool, state.WithTrafficAppsDomain(cfg.GetAppsDomain(deps.getenv)))
+		return state.NewPgStore(pool, state.WithTrafficAppsDomain(cfg.GetAppsDomain(deps.getenv)),
+			state.WithTrafficScopedBindingGuard(scopedBinding))
 	}
 	// The first start of a release that knows the object storage timeline
 	// fence accepts the database's current timeline, so every later backup
@@ -943,6 +949,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		srv.consumerControls.Enabled, srv.consumerControls.Released = monetizationOn, srv.apiMonetizationFor
 		srv.consumerSignup.Enabled = monetizationOn
 		srv.billingRuns.Start(ctx, log)                   // ADR-1503
+		srv.billingSync.Start(ctx, log)                   // ADR-20261029094512
 		srv.statementInvoices.Start(ctx, log)             // ADR-1504
 		srv.consumerCredits.Start(ctx, log)               // ADR-1306
 		srv.consumerControls.Start(ctx, log)              // ADR-1315
@@ -1031,7 +1038,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// evaluator records which routes keep running apps awake and which are
 		// measured safe to cache; a trigger notifies subscribed app webhooks.
 		if insightStore, ok := srv.store.(routeinsights.Store); ok {
-			insights := &routeinsights.Evaluator{Store: insightStore, Log: log}
+			insights := &routeinsights.Evaluator{Store: insightStore, Log: log,
+				Released: func(acct state.Account, app state.App) bool {
+					return srv.capabilityEnabledFor(routeInsightsCapability, acct, app)
+				}}
 			if srv.ops != nil {
 				insights.Metrics = routeinsights.NewMetrics(srv.ops.Registry(), srv.ops.MetricPrefix())
 			}
@@ -1676,7 +1686,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := srv.configureDurableEntities(ctx, deps.getenv); err != nil {
 		return fmt.Errorf("apid durable entities configuration: %w", err)
 	}
-	managedPostgresService, managedPostgresReconciler, managedPostgresBindings, managedPostgresBindingReconciler, managedPostgresUsageCollector, managedPostgresHealthCollector, err := loadManagedPostgres(deps.pool, deps.getenv, log, srv.managedPostgresOverageAvailable, srv.managedPostgresReleased, ops.Registry())
+	managedPostgresService, managedPostgresReconciler, managedPostgresBindings, managedPostgresBindingReconciler, managedPostgresUsageCollector, managedPostgresHealthCollector, err := loadManagedPostgres(deps.pool, deps.getenv, log,
+		&managedPostgresHooks{Overage: srv.managedPostgresOverageAvailable, Released: srv.managedPostgresReleased, NotifyCap: srv.noticeManagedPostgresCap}, ops.Registry())
 	if err != nil {
 		return fmt.Errorf("apid managed postgres configuration: %w", err)
 	}
@@ -1688,6 +1699,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := srv.configureLiveQueries(deps.pool, deps.getenv); err != nil {
 		return fmt.Errorf("apid live queries configuration: %w", err)
 	}
+	srv.configureAgents(deps.pool)
 	srv.configureDataAPIUsage(deps.pool)
 	if err := srv.configureDataPipelines(*cfg, deps.pool); err != nil {
 		return err
@@ -1735,6 +1747,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	ops.Registry().MustRegister(capGate.Collectors()...)
 	log.Info("apid: capability gate enabled")
 	srv.WithOAuthConfig(oauthCfg)
+	srv.WithImageListening(imagelisten.NewRegistry().Listening)
 
 	// Workload force-actions and provider compute-node lifecycle actions
 	// route through operator_intents + pg_notify (migrations/00431,
@@ -1812,6 +1825,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("apid: load SBOM storage backend: %w", err)
 	}
 	srv.WithSBOMRoot(deps.getenv("FAAS_SBOM_ROOT")).WithSBOMStorage(sbomStorage)
+	srv.withAgentOutputFiles(sbomStorage)
 	srv.WithOperationArtifactStorage(sbomStorage)
 	if signPubPath := strings.TrimSpace(deps.getenv("FAAS_SIGN_PUB")); signPubPath != "" {
 		rollbackVerifier, verifyErr := cosign.NewLocalVerifier(signPubPath, sbomStorage)
@@ -1857,6 +1871,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	srv.WithOpsMetrics(ctx, ops)
 	// ADR 20261027163626: time each phase of the traffic binding guard.
 	state.SetTrafficPolicyPhaseObserver(ops.ObserveTrafficPolicyPhase)
+	state.SetTrafficBindingScopeObserver(ops.ObserveTrafficBindingScope)
 
 	// ADR-093 / PR-D: end-to-end request budgets on the apid
 	// listener. Same shape as gatewayd-public PR-B: a fresh
@@ -2039,6 +2054,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := loadSealDomains(deps.getenv, log); err != nil {
 		return err
 	}
+	uninstallRuntimeSigner, err := installRuntimeSigner(ctx, deps.getenv, store, log)
+	if err != nil {
+		return err
+	}
+	defer uninstallRuntimeSigner()
 	// ADR 20261022111812: apid reads the account domain.
 	sealdomain.RegisterLoaded(ops.Registry(), sealdomain.Account, len(accountDomainIdentities) > 0)
 
@@ -2505,7 +2525,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if deps.captureDialTLS != nil {
 			deps.captureDialTLS("bridge", bridgeTLS)
 		}
-		bridgeSrv, bridgeLis, err = runGithubdBridgeServer(ctx, sock, bridgeTLS, srv.store, srv.notif, log, srv.ops, spoolRoot(), resolveGithubdStagingRoot(deps.getenv))
+		bridgeSrv, bridgeLis, err = runGithubdBridgeServer(ctx, sock, bridgeTLS, srv.store, srv.notif, log, srv.ops, spoolRoot(), resolveGithubdStagingRoot(deps.getenv), srv.agentStepsAllowed)
 		if err != nil {
 			_ = l.Close()
 			return fmt.Errorf("apid: githubd bridge listen %q: %w", sock, err)
@@ -3183,7 +3203,7 @@ func runAdvisoryServer(ctx context.Context, target string, tlsCfg *tls.Config, s
 // here are fatal — without the bridge listener githubd has no
 // way to enqueue builds and the dispatch path is silently
 // degraded (every push hits the noopEnqueuer path).
-func runGithubdBridgeServer(ctx context.Context, target string, tlsCfg *tls.Config, store githubdBridgeStore, notif githubdBridgeNotifier, log *slog.Logger, ops *wire.OpsMetrics, spool string, stagingRoot string) (*grpc.Server, net.Listener, error) {
+func runGithubdBridgeServer(ctx context.Context, target string, tlsCfg *tls.Config, store githubdBridgeStore, notif githubdBridgeNotifier, log *slog.Logger, ops *wire.OpsMetrics, spool string, stagingRoot string, agentSteps func(state.Account) bool) (*grpc.Server, net.Listener, error) {
 	// Same multi-box guard as runAdvisoryServer — a tcp/dns
 	// target without TLS would silently build an insecure server.
 	// ADR-052.
@@ -3210,7 +3230,7 @@ func runGithubdBridgeServer(ctx context.Context, target string, tlsCfg *tls.Conf
 	// apid_githubd_bridge_enqueued_total on each landed build.
 	// The accessor is nil-receiver safe so the metric stays zero
 	// when ops is nil (test path).
-	registerGithubdBridge(srv, store, notif, log, ops, spool, stagingRoot)
+	registerGithubdBridge(srv, store, notif, log, ops, spool, stagingRoot, agentSteps)
 	return srv, lis, nil
 }
 

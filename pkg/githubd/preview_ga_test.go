@@ -33,7 +33,7 @@ func newSourcePreviewService(t *testing.T, rig *previewTestRig, workloads []repo
 	svc.Source = &stubSource{fsys: fstest.MapFS{"compose.yaml": &fstest.MapFile{Data: []byte("services: {}\n")}}}
 	svc.WorkDir = t.TempDir()
 	svc.Enqueuer = &previewDependencyEnqueuer{}
-	svc.Reconcile.Scan = func(fs.FS) (reposcan.Result, error) {
+	svc.Reconcile.Scan = func(fs.FS, reposcan.ScanOptions) (reposcan.Result, error) {
 		return reposcan.Result{Workloads: workloads}, nil
 	}
 	return svc, rec
@@ -52,7 +52,7 @@ func lastComment(t *testing.T, rec *previewRecorder) recordedPreviewComment {
 func TestHandlePullRequest_ScanFailureReportsOnPR(t *testing.T) {
 	rig := newPreviewRig(t)
 	svc, rec := newSourcePreviewService(t, rig, nil)
-	svc.Reconcile.Scan = func(fs.FS) (reposcan.Result, error) {
+	svc.Reconcile.Scan = func(fs.FS, reposcan.ScanOptions) (reposcan.Result, error) {
 		return reposcan.Result{}, errors.New(`reposcan: .gregale/project.yaml: unknown key "servics"`)
 	}
 	result, err := svc.handlePullRequest(context.Background(), pullRequestOpenedBody(42, strings.Repeat("a", 40)))

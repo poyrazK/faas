@@ -2849,6 +2849,13 @@ returning id, account_id, app_id, kind, slug, enabled, config,
 update triggers set delivery = $2, updated_at = now()
 where id = $1 and queue_binding_id is null;
 
+-- name: SetTriggerAgent :execrows
+-- ADR-20261027090010 §9: point a just-created public broker trigger at an agent. The
+-- CHECK constraint refuses other kinds, batch delivery and binding-owned
+-- projections.
+update triggers set agent = $2, updated_at = now()
+where id = $1 and queue_binding_id is null;
+
 -- name: DeleteTrigger :exec
 delete from triggers where id = $1 and app_id = $2 and queue_binding_id is null;
 
@@ -2862,7 +2869,7 @@ delete from triggers where id = $1 and app_id = $2 and queue_binding_id is null;
 select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id, queue_binding_scope, queue_binding_environment_id,
        batch_size_max, batch_window_ms, max_attempts,
        cron_id, source, payload_max_bytes, broker_poison_strategy,
-       filter_criteria, delivery,
+       filter_criteria, delivery, agent,
        created_at, updated_at
 from triggers where id = $1;
 
@@ -2873,7 +2880,7 @@ from triggers where id = $1;
 select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id, queue_binding_scope, queue_binding_environment_id,
        batch_size_max, batch_window_ms, max_attempts,
        cron_id, source, payload_max_bytes, broker_poison_strategy,
-       filter_criteria, delivery,
+       filter_criteria, delivery, agent,
        created_at, updated_at
 from triggers where app_id = $1 order by created_at desc;
 
@@ -2889,7 +2896,7 @@ from triggers where app_id = $1 order by created_at desc;
 select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id, queue_binding_scope, queue_binding_environment_id,
        batch_size_max, batch_window_ms, max_attempts,
        cron_id, source, payload_max_bytes, broker_poison_strategy,
-       filter_criteria, delivery,
+       filter_criteria, delivery, agent,
        created_at, updated_at
 from triggers where enabled = true AND NOT environment_workload_admission_retired(app_id,queue_binding_scope)
 -- A rehearsal-enrolled app never polls or commits offsets on a real external
@@ -3194,6 +3201,10 @@ where p.issuer_url = $1
 order by length(p.subject_pattern) desc,
          a.id
 limit 1;
+
+-- name: AccountIDByGitHubInstallation :one
+-- An installation ID is globally unique (github_installations_installation_id_uidx).
+select account_id from github_installations where installation_id = sqlc.arg(installation_id)::bigint;
 
 -- name: AccountIDByGitHubOIDCRepositoryIdentity :one
 -- First-use GitHub Actions bootstrap through an OAuth-verified install
@@ -9006,7 +9017,15 @@ SELECT pg_try_advisory_lock_shared(hashtextextended(sqlc.arg(lock_key)::text,0))
 SELECT pg_advisory_unlock_shared(hashtextextended(sqlc.arg(lock_key)::text,0))::boolean;
 
 -- name: ReadEdgeRuleTrafficAccount :one
-SELECT account_id,kind FROM edge_rules WHERE id = sqlc.arg(rule_id)::uuid;
+SELECT account_id,kind,match_host FROM edge_rules WHERE id = sqlc.arg(rule_id)::uuid;
+
+-- name: ReadTrafficRouteWriteScopes :many
+-- Each route pattern's match_host_scope, as the edge_rules trigger computes it
+-- (ADR-20261027163626). An exact pattern is its own scope; '@app' has none.
+SELECT coalesce(edge_rule_match_host_scope(pattern), '')::text AS scope,
+       (edge_rule_match_host_scope(pattern) IS NULL)::boolean AS app_only,
+       coalesce(edge_rule_match_host_scope(pattern) = lower(btrim(pattern)), false)::boolean AS exact
+FROM unnest(sqlc.arg(patterns)::text[]) AS pattern;
 
 -- name: MeasureEdgeRuleTrafficProjection :one
 -- Match the full ReadPublicHostEdgeRules projection, including its array.
@@ -9345,6 +9364,20 @@ SELECT CASE WHEN inputs<=sqlc.arg(max_inputs)::integer AND bytes<=sqlc.arg(max_b
         'Aliases',(SELECT coalesce(jsonb_agg(data),'[]'::jsonb) FROM aliases),
         'Primaries',(SELECT coalesce(jsonb_agg(data),'[]'::jsonb) FROM primaries)) ELSE NULL::jsonb END::jsonb AS data,
     inputs::bigint,bytes::bigint FROM bounds;
+
+-- name: ReadTrafficAppBindingHosts :many
+-- The synthetic hostnames a binding write on one app, or on every app of an
+-- account, may publish or release: each primary and alias URL, whatever the
+-- app's status (ADR-20261027163626).
+SELECT host::text FROM (
+    SELECT lower(a.slug)||sqlc.arg(apps_suffix)::text AS host FROM apps a
+    WHERE a.id=sqlc.narg(app_id)::uuid OR (sqlc.narg(app_id)::uuid IS NULL AND a.account_id=sqlc.arg(account_id)::uuid)
+    UNION
+    SELECT lower('tag-'||z.name||'-'||replace(a.id::text,'-',''))||sqlc.arg(apps_suffix)::text
+    FROM deployment_aliases z JOIN apps a ON a.id=z.app_id
+    WHERE a.id=sqlc.narg(app_id)::uuid OR (sqlc.narg(app_id)::uuid IS NULL AND a.account_id=sqlc.arg(account_id)::uuid)
+) hosts WHERE sqlc.arg(apps_suffix)::text<>''
+ORDER BY host LIMIT (sqlc.arg(max_inputs)::integer+1);
 
 -- name: DeleteTrafficCustomDomain :execrows
 DELETE FROM custom_domains WHERE domain=sqlc.arg(domain)::text::citext AND app_id=sqlc.arg(app_id)::uuid;
@@ -16022,7 +16055,9 @@ SELECT h.entry FROM route_health_history h
  ORDER BY checked_at DESC, id DESC LIMIT sqlc.arg(page_limit)::integer;
 
 -- name: ReadRouteHealthNotificationState :one
-SELECT context_key, status, COALESCE(blocked_decision_id::text, '')::text AS blocked_decision_id
+-- updated_at is when the status began; a hold keeps its first blocking
+-- decision's time while its context lasts (ADR-20261028110044).
+SELECT context_key, status, COALESCE(blocked_decision_id::text, '')::text AS blocked_decision_id, updated_at
 FROM route_health_notification_state WHERE deployment_id = sqlc.arg(deployment_id)::text::uuid
  AND app_id = sqlc.arg(app_id)::text::uuid AND account_id = sqlc.arg(account_id)::text::uuid;
 
@@ -16417,9 +16452,22 @@ UPDATE route_monitors SET next_check_at=sqlc.arg(next_check_at),last_deployment_
 	last_healthy_deployment=sqlc.arg(last_healthy_deployment)::jsonb WHERE app_id=sqlc.arg(app_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid;
 
 -- name: RouteMonitorServingDeployments :many
-SELECT id::text AS id,commit_sha,source_url,source_root,created_at,canary_step_started_at,rollout_completed_at,traffic_percent,canary_step,canary_total_steps
-FROM deployments WHERE app_id=sqlc.arg(app_id)::text::uuid AND status='live' AND deleted_at IS NULL AND traffic_percent>0
- AND coalesce(nullif(scope,''),'default')='default' ORDER BY id LIMIT 2;
+-- The app's production routing lane (state.ProductionRoutingDeployments): a
+-- project's named production scope once it carries traffic, or while the
+-- legacy default lane is dark; otherwise the default scope
+-- (ADR-20261028110044 amendment 1).
+WITH lanes AS (
+ SELECT id,commit_sha,source_url,source_root,created_at,canary_step_started_at,rollout_completed_at,traffic_percent,canary_step,canary_total_steps,
+  CASE WHEN scope='production' THEN 'production' ELSE 'default' END AS lane
+ FROM deployments WHERE app_id=sqlc.arg(app_id)::text::uuid AND status='live' AND deleted_at IS NULL
+  AND coalesce(nullif(scope,''),'default') IN ('default','production')
+), chosen AS (
+ SELECT CASE WHEN EXISTS (SELECT 1 FROM lanes WHERE lane='production' AND traffic_percent>0)
+  OR (NOT EXISTS (SELECT 1 FROM lanes WHERE lane='default' AND traffic_percent>0) AND EXISTS (SELECT 1 FROM lanes WHERE lane='production'))
+  THEN 'production' ELSE 'default' END AS lane
+)
+SELECT l.id::text AS id,l.commit_sha,l.source_url,l.source_root,l.created_at,l.canary_step_started_at,l.rollout_completed_at,l.traffic_percent,l.canary_step,l.canary_total_steps
+FROM lanes l JOIN chosen c ON c.lane=l.lane WHERE l.traffic_percent>0 ORDER BY l.id LIMIT 2;
 
 -- name: ReadRouteMonitorIncident :one
 SELECT entry FROM route_monitor_incidents WHERE id=sqlc.arg(id)::text::uuid AND app_id=sqlc.arg(app_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid;
@@ -26425,3 +26473,16 @@ ON CONFLICT (singleton) DO NOTHING;
 -- version protection job in its bucket (ADR-20261025115958).
 SELECT (EXISTS(SELECT 1 FROM object_deletions d WHERE d.bucket_id=sqlc.arg(bucket_id)::uuid AND d.lifecycle_scan_id=sqlc.arg(scan_id)::uuid AND d.state IN ('prepared','dispatched'))
  OR EXISTS(SELECT 1 FROM object_version_protection p WHERE p.bucket_id=sqlc.arg(bucket_id)::uuid AND p.state IN ('waiting','applying')))::boolean AS active;
+
+-- name: PutRuntimeSecretSignature :exec
+-- ADR 20261028161502 amendment 1: a runtime secret envelope's writer
+-- signature, by its SHA-256. A signature is deterministic for one envelope and
+-- key, so writing it again replaces only a row that held something else.
+INSERT INTO runtime_secret_signatures (ciphertext_sha256, signature)
+VALUES (sqlc.arg(ciphertext_sha256)::bytea, sqlc.arg(signature)::bytea)
+ON CONFLICT (ciphertext_sha256) DO UPDATE SET signature = EXCLUDED.signature, created_at = now()
+WHERE runtime_secret_signatures.signature IS DISTINCT FROM EXCLUDED.signature;
+
+-- name: ReadRuntimeSecretSignatures :many
+SELECT ciphertext_sha256, signature FROM runtime_secret_signatures
+WHERE ciphertext_sha256 = ANY(sqlc.arg(digests)::bytea[]);

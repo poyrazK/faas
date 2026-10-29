@@ -24,6 +24,7 @@ import (
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/capflags"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/fcvm"
@@ -627,6 +628,13 @@ func (h *heartbeatFakeDialer) SetPingResult(target string, bases []BaseGeneratio
 
 var EvaluateNodeReadiness = evaluateNodeReadiness
 
+// LiftErr is vmmclient's gRPC error lift (ADR-20261022184531 step 3 adds the
+// wake_stage marker).
+var LiftErr = liftErr
+
+// NewVMMWakeNotStarted is the error liftErr returns for a pre-start failure.
+func NewVMMWakeNotStarted(p *api.Problem) error { return vmmWakeNotStartedError{p} }
+
 func (r *fakeVMM) ColdBootHook() *func()            { return &r.coldBootHook }
 func (r *fakeVMM) ColdBoots() *int                  { return &r.coldBoots }
 func (r *fakeVMM) DestroyErr() *error               { return &r.destroyErr }
@@ -908,18 +916,50 @@ func MarkPreWakeForTest(ctx context.Context) {
 	markPreWake(ctx, preWakeLeader)
 }
 
+// WithAgentsAllowedForTest sets the agents capability decision a standalone
+// orchestrator holds runs with an agent step by.
+func (o *WorkflowOrchestrator) WithAgentsAllowedForTest(allowed func(ctx context.Context, appID string) bool) *WorkflowOrchestrator {
+	o.agentsAllowed = allowed
+	return o
+}
+
+// WithCapabilitiesForTest gives a test loop an engine over store that
+// decides capability flags with d.
+func (l *Loop) WithCapabilitiesForTest(store state.Store, d *capflags.Decider) *Loop {
+	l.engine = &Engine{store: store, capabilities: d}
+	return l
+}
+
 var LogVMMBootFailure = logVMMBootFailure
 var WorkerRecoveryRetryDelay = workerRecoveryRetryDelay
 
 // NewCronPlanGate exposes the cron plan gate's admit decision.
-func NewCronPlanGate(accounts interface {
-	AccountByID(context.Context, string) (state.Account, error)
-}) func(context.Context, state.App, int) bool {
-	return newCronPlanGate(accounts).admit
+func NewCronPlanGate(store cronPlanGateStore) func(context.Context, state.App, state.Cron) bool {
+	return newCronPlanGate(store).admit
 }
 
-var OldestCronsFirst = oldestCronsFirst
 var CronDue = cronDue
 
 // XRunCronHistoryRetention runs the hourly cron history sweep once.
 func (l *Loop) XRunCronHistoryRetention(ctx context.Context) { l.runCronHistoryRetention(ctx) }
+
+// XEventJobContinue is the recovery and backfill sweeps' failure decision.
+// adr: 20261028095548 — a job whose own work failed was backed off, so the
+// sweep goes on to the next one.
+func (l *Loop) XEventJobContinue(work string, err error) bool { return l.eventJobContinue(work, err) }
+
+// XKeepEventClaims runs the sweep's claim keeper with a test interval.
+// adr: 20261028131500 — a sweep renews the claims it still holds.
+func (l *Loop) XKeepEventClaims(ctx context.Context, every time.Duration, renew func(context.Context, time.Time) error) func() {
+	l.eventClaimRenewalEvery = every
+	return l.keepEventClaims(ctx, renew)
+}
+
+// XDispatchEventFanoutSweep submits a fanout sweep as the loop's wakes and
+// safety tick do.
+// adr: 20261029012000 — a pass that used its whole budget runs the next.
+func (l *Loop) XDispatchEventFanoutSweep(ctx context.Context) { l.dispatchEventFanoutSweep(ctx) }
+
+// XRepeatFullBatches is invocation retention's batch repeater.
+// adr: 20261029012000 — a step repeats while its batches come back full.
+var XRepeatFullBatches = repeatFullBatches

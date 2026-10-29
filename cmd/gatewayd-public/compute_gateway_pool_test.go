@@ -305,3 +305,57 @@ func TestComputeGatewayPoolInvalidationRereadsAndFallsBack(t *testing.T) {
 		t.Fatalf("registry reads while down = %d, want 1 (later dials wait for the TTL)", reads)
 	}
 }
+
+// adr: 20261022184531 — a retry of a not-dispatched response avoids the
+// nodes that refused it, and the pool names the node it reached (step 5).
+func TestComputeGatewayPoolSkipsTriedNodesAndNamesTheOneItDialed(t *testing.T) {
+	var nodes []state.ComputeNode
+	for _, name := range []string{"fsn-2", "fsn-3", "fsn-4"} {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = listener.Close() })
+		go func() {
+			for {
+				conn, err := listener.Accept()
+				if err != nil {
+					return
+				}
+				_ = conn.Close()
+			}
+		}()
+		target := "tcp://" + listener.Addr().String()
+		nodes = append(nodes, state.ComputeNode{Name: name, Active: true, GatewayTargetURL: &target})
+	}
+	pool := newComputeGatewayPool(fakeComputeGatewayStore{nodes: nodes}, slog.New(slog.NewTextHandler(io.Discard, nil))).(*computeGatewayPool)
+
+	for range 4 {
+		rec := gateway.NewDialRecord("fsn-2", "fsn-3")
+		conn, err := pool.DialContext(gateway.WithDialRecord(context.Background(), rec), "")
+		if err != nil {
+			t.Fatalf("DialContext: %v", err)
+		}
+		_ = conn.Close()
+		if rec.Dialed() != "fsn-4" {
+			t.Fatalf("dialed %q, want the only untried node fsn-4", rec.Dialed())
+		}
+	}
+	plain := gateway.NewDialRecord()
+	conn, err := pool.DialContext(gateway.WithDialRecord(context.Background(), plain), "")
+	if err != nil || plain.Dialed() == "" {
+		t.Fatalf("DialContext = %v, dialed %q; want a named node", err, plain.Dialed())
+	}
+	_ = conn.Close()
+
+	if !pool.HasAlternate(context.Background(), gateway.NewDialRecord("fsn-2", "fsn-3")) {
+		t.Fatal("fsn-4 was not offered as an alternate")
+	}
+	all := gateway.NewDialRecord("fsn-2", "fsn-3", "fsn-4")
+	if pool.HasAlternate(context.Background(), all) {
+		t.Fatal("an alternate was offered with every node tried")
+	}
+	if _, err := pool.DialContext(gateway.WithDialRecord(context.Background(), all), ""); !errors.Is(err, gateway.ErrNoComputeCapacity) {
+		t.Fatalf("DialContext with every node tried = %v, want ErrNoComputeCapacity", err)
+	}
+}

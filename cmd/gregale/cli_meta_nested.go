@@ -43,7 +43,7 @@ func accountWebhookCLISubcommand() cliSub {
 func alertPresetCLISubcommand() cliSub {
 	return cliSub{Name: "preset", Short: "Browse or enable catalog alert presets", Subcommands: []cliSub{
 		{Name: "list", Short: "List the global alert preset catalog"},
-		{Name: "enable", Short: "Create an app alert from a preset or choose one interactively", Examples: []string{"gregale alerts preset enable --app my-api --interactive"}, Positionals: []string{"[<preset-name>]"}, Flags: []cliFlag{
+		{Name: "enable", Short: "Create an app alert from a preset or choose one interactively", Examples: []string{"gregale alert preset enable --app my-api --interactive"}, Positionals: []string{"[<preset-name>]"}, Flags: []cliFlag{
 			{Name: "interactive", Short: "choose a preset, review its rule, and enter a hidden signing secret", Bool: true},
 			{Name: "app", Short: "app slug (interactive mode can use linked app or picker)", Value: "slug"},
 			{Name: "webhook-url", Short: "HTTPS webhook receiver URL (required unless interactive or --channel)", Value: "URL"},

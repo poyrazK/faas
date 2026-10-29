@@ -8,6 +8,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/mailoutbox"
 	"github.com/onebox-faas/faas/pkg/internalmail"
 	"github.com/onebox-faas/faas/pkg/mail"
+	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -51,6 +52,9 @@ func (s *server) configureMailOutbox(ctx context.Context, pool *pgxpool.Pool, ge
 	if err := outbox.ConfigureDeploymentFailed(ctx, getenv); err != nil {
 		return err
 	}
+	if err := outbox.ConfigureAgentRunDelivered(ctx, getenv); err != nil {
+		return err
+	}
 	if err := outbox.ConfigureSubscriptionEnded(ctx, getenv); err != nil {
 		return err
 	}
@@ -79,6 +83,9 @@ func (s *server) configureMailOutbox(ctx context.Context, pool *pgxpool.Pool, ge
 		return err
 	}
 	if err := outbox.ConfigureMFARecoveryAlert(ctx, getenv); err != nil {
+		return err
+	}
+	if err := outbox.ConfigureManagedPostgresCap(ctx, getenv); err != nil {
 		return err
 	}
 	if outbox != nil {
@@ -128,6 +135,24 @@ func (s *server) sendInlineDeletionNotice(ctx context.Context, account state.Acc
 	if err := s.mailer.Send(ctx, Message{To: []string{account.Email}, Subject: subject, TextBody: body}); err != nil {
 		s.log.Warn("apid: pending deletion email send failed", "account", account.ID, "err", err)
 	}
+}
+
+// noticeManagedPostgresCap queues the compute cap email for one threshold
+// (ADR-20261025094915 decision 8). A personal subject is its account; an
+// organization subject has no account row and gets no email yet. With the
+// outbox off there is nothing to queue and nothing to retry.
+func (s *server) noticeManagedPostgresCap(ctx context.Context, event managedpostgres.CapEvent) error {
+	if s.deletionMailOutbox == nil {
+		return nil
+	}
+	err := s.deletionMailOutbox.NoticeManagedPostgresCap(ctx, event.SubjectID, mailoutbox.ManagedPostgresCapEvent{
+		SubjectID: event.SubjectID, PeriodStart: event.PeriodStart, Threshold: event.Threshold, ReachedAt: event.ReachedAt,
+		Used: event.Used, Allowance: event.Allowance, Ceiling: event.Ceiling, Overage: event.Overage,
+	})
+	if errors.Is(err, internalmail.ErrDisabled) {
+		return nil
+	}
+	return err
 }
 
 func (s *server) runMailOutbox(ctx context.Context) {

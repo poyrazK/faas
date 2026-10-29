@@ -4844,6 +4844,32 @@ func TrustedClientIP(r *http.Request) (net.IP, bool) {
 }
 
 func clientIPFromTrustedXFF(r *http.Request) (net.IP, bool) {
+	if pinned, found := r.Context().Value(trustedClientIPKey{}).(trustedClientIP); found {
+		return pinned.ip, pinned.ok
+	}
+	return clientIPFromForwardedFor(r)
+}
+
+// trustedClientIPKey carries the client address ServeHTTP read from the
+// single trusted X-Forwarded-For hop when the request arrived (ADR-091
+// amendment 2026-10-28). kind=headers rules run on r.Header before the IP,
+// geo, throttle, WAF, challenge and pre-auth gates; a rule that removed,
+// added or templated X-Forwarded-For used to change the address those gates
+// judged, and the one stamped for the app.
+type trustedClientIPKey struct{}
+
+type trustedClientIP struct {
+	ip net.IP
+	ok bool
+}
+
+func withTrustedClientIP(ctx context.Context, ip net.IP, ok bool) context.Context {
+	return context.WithValue(ctx, trustedClientIPKey{}, trustedClientIP{ip: ip, ok: ok})
+}
+
+// clientIPFromForwardedFor parses the single trusted X-Forwarded-For entry
+// gatewayd-public writes; missing or ambiguous chains report false.
+func clientIPFromForwardedFor(r *http.Request) (net.IP, bool) {
 	values := r.Header.Values("X-Forwarded-For")
 	if len(values) != 1 {
 		return nil, false
@@ -5969,6 +5995,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r.Header.Del("x-faas-stream")
 	r.Header.Del("x-faas-protocol")
 	r.Header.Del(trafficdeadline.Header)
+	// The public edge's nonce for a not-dispatched marker lives in the
+	// request context from here on (ADR-20261022184531 step 5).
+	r = takeDispatchNonce(r)
 	if h.devBridgeAuthorize != nil {
 		if problem := h.devBridgeAuthorize(r); problem != nil {
 			api.WriteProblem(w, problem)
@@ -6034,7 +6063,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	requestCtx = WithEdgeRuleRequestHeaders(requestCtx, r.Header)
 	// ADR-962: the snapshot rule conditions read. The client IP is only the
 	// single trusted forwarded hop; country is looked up lazily.
-	trustedIP, _ := clientIPFromTrustedXFF(r)
+	trustedIP, trustedIPOK := clientIPFromTrustedXFF(r)
+	// ADR-091 amendment 2026-10-28: pin that address before any edge rule
+	// runs, so every IP-based gate and the headers stamped for the app read
+	// it rather than whatever a kind=headers rule left in X-Forwarded-For.
+	requestCtx = withTrustedClientIP(requestCtx, trustedIP, trustedIPOK)
 	matchCtx := NewEdgeRuleMatchContext(r, trustedIP, h.edgeRuleCountryLookup(), h.edgeRuleHits)
 	matchCtx.SetASNLookup(h.edgeRuleASNLookup())
 	matchCtx.SetBotVerifier(requestCtx, h.botVerifier)
@@ -7456,6 +7489,9 @@ haveApp:
 			h.logWakeFailure(app.ID, err)
 			if served, _ := h.tryServeStaleOnWakeError(w, r, app, rec); served {
 				return
+			}
+			if reason, ok := wakeNotDispatchedReason(err); ok {
+				markNotDispatched(w, r, reason)
 			}
 			writeWakeError(w, err)
 			h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})

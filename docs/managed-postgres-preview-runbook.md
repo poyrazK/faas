@@ -613,6 +613,41 @@ An app reaches a database's live queries only through its own realtime
 endpoints, and only while it holds a ready binding to that database. Other
 seals are refused with `forbidden` in realtimed.
 
+### Writer signatures
+
+ADR 20261028161502. apid signs each live key and login it seals, and
+livequeryd refuses a value whose signature does not verify. A control-plane
+database writer cannot then store a key or login of their own.
+
+1. Make the key pair on the operator workstation:
+   `gregalectl live-query signing-keygen --sign-key live-signing.key --verify-key live-signing.pub`.
+   Keep the private key with the other control-plane secrets.
+2. Set `faas_livequeryd_signing_key_src` (apid's private key) and
+   `faas_livequeryd_signing_pub_src` (livequeryd's verify keys), and
+   converge the control plane. apid signs what it writes from its restart.
+   livequeryd verifies every signature present, and still serves unsigned
+   rows.
+3. After the at-rest re-seal (`livequeryd -reseal`, which clears the
+   signature of each key it rewrites), sign the existing rows once:
+   `sudo gregalectl live-query sign-existing --db-env /etc/faas/compute-db.env`.
+   It signs every unsigned row as it stands and reports the counts. Run it
+   again until it reports nothing changed meanwhile. Check that the number
+   signed matches the live databases you expect: the backfill trusts what is
+   stored.
+4. Set `faas_livequeryd_require_signatures: true` and converge. livequeryd
+   then refuses unsigned keys and logins too.
+
+To rotate the key, add the new public key to the verify key file (it may
+hold several PEM blocks) and converge, then switch apid's private key.
+Rows signed with the old key stay valid while the old public key is listed.
+Sign them again with the new key, keeping the old public key in a file of
+its own:
+`sudo gregalectl live-query sign-existing --trusted-keys old-live-signing.pub --db-env /etc/faas/compute-db.env`.
+A row whose signature the old key made is signed again; a row whose
+signature neither key made is reported and left alone. Once a rerun reports
+nothing signed again, drop the old public key from the verify key file and
+converge.
+
 ### RLS mode
 
 Browsers can also subscribe to a Data API read as the signed-in user. Row-level

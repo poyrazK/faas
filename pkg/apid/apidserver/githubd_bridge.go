@@ -54,6 +54,7 @@ import (
 type githubdBridgeStore interface {
 	AppByID(ctx context.Context, id string) (state.App, error)
 	AccountByID(ctx context.Context, id string) (state.Account, error)
+	OrgByID(ctx context.Context, id string) (state.Org, error)
 	ConsumeAccountDeployRate(ctx context.Context, accountID string, limit int, now time.Time) (state.AccountDeployRateSnapshot, error)
 	LatestDeployment(ctx context.Context, appID string) (state.Deployment, error)
 	CreateDeployment(ctx context.Context, d state.Deployment) (state.Deployment, error)
@@ -88,6 +89,9 @@ type githubdBridge struct {
 	spool       string // build-spool root for the build.log path
 	stagingRoot string // allowed prefix for SourcePath (FAAS_GITHUBD_WORK_DIR/build-sources)
 	spoolRoot   string // allowed prefix for SourcePath (FAAS_SPOOL_ROOT) — kept for future expansion
+	// agentSteps reports whether an account may deploy workflow agent steps
+	// (ADR-20261027090010 §1); nil refuses them.
+	agentSteps func(state.Account) bool
 }
 
 // checkSourcePlanLimit refuses a GitHub build whose source is above the
@@ -306,16 +310,24 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "EnqueueBuild: account lookup: %v", err)
 	}
+	// Plan, billing status, holds and the deploy rate belong to the app's
+	// resource owner: the organization for an organization app, as on the API
+	// path. Checking the namespace account let a suspended organization keep
+	// deploying on push and applied the wrong plan's limits.
+	resource, err := state.AppResourceAccount(ctx, g.store, app)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "EnqueueBuild: resource account lookup: %v", err)
+	}
 	// A push must not deploy for an account the API would refuse:
 	// this path had no account-status check, so suspended and
 	// deletion-pending accounts kept building on every push.
-	if acct.AbuseHeld() {
+	if resource.AbuseHeld() {
 		return nil, status.Errorf(codes.FailedPrecondition,
-			"EnqueueBuild: account %s is on an abuse hold; deploys are blocked until an operator releases it", acct.ID)
+			"EnqueueBuild: account %s is on an abuse hold; deploys are blocked until an operator releases it", resource.ResourceOwnerID())
 	}
-	if !acct.MayDeploy() {
+	if !resource.MayDeploy() {
 		return nil, status.Errorf(codes.FailedPrecondition,
-			"EnqueueBuild: account %s is %s; deploys are blocked until billing is resolved", acct.ID, acct.Status)
+			"EnqueueBuild: account %s is %s; deploys are blocked until billing is resolved", resource.ResourceOwnerID(), resource.Status)
 	}
 	if !acct.EmailVerified() {
 		return nil, status.Errorf(codes.FailedPrecondition,
@@ -329,10 +341,10 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 		}
 		return nil, status.Error(code, "EnqueueBuild: "+standardFailure.Detail)
 	}
-	if err := bridgeSourcePolicy(g.log, req.SourcePath, app, acct.Plan); err != nil {
+	if err := bridgeSourcePolicy(g.log, req.SourcePath, app, resource.Plan); err != nil {
 		return nil, err
 	}
-	manifest, manifestProblem := loadSourceRefManifest(req.SourcePath, app, acct.Plan)
+	manifest, manifestProblem := loadSourceRefManifest(req.SourcePath, app, resource.Plan, g.agentSteps != nil && g.agentSteps(acct))
 	if manifestProblem != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "EnqueueBuild: source manifest: %s", manifestProblem.Detail)
 	}
@@ -346,11 +358,12 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 	}
 	// PR preview builds stop at their share of the window, so a busy pull
 	// request cannot spend the deploys production needs (ADR-20261028100000).
-	limit, limitName := acct.Plan.DeploysPerHour(), "account deploy rate limit"
+	// The window belongs to the app's resource owner, as on the API path.
+	limit, limitName := resource.Plan.DeploysPerHour(), "account deploy rate limit"
 	if eventKindToDeploymentKind(req.EventKind) == state.DeploymentKindPreview {
-		limit, limitName = acct.Plan.PreviewDeploysPerHour(), "PR preview share of the account deploy rate limit"
+		limit, limitName = resource.Plan.PreviewDeploysPerHour(), "PR preview share of the account deploy rate limit"
 	}
-	rate, err := g.store.ConsumeAccountDeployRate(ctx, acct.ID, limit, timeNow().UTC())
+	rate, err := g.store.ConsumeAccountDeployRate(ctx, resource.ResourceOwnerID(), limit, timeNow().UTC())
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "EnqueueBuild: deploy admission: %v", err)
 	}
@@ -447,7 +460,7 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 		ImageProcess:         app.Manifest.ProjectImageProcess,
 		DockerfilePath:       dockerfilePath,
 		DockerfileBuild:      dockerfileBuild,
-		FullRootfsAllowAuto:  api.FullRootfsAllowAutoDefault[acct.Plan],
+		FullRootfsAllowAuto:  api.FullRootfsAllowAutoDefault[resource.Plan],
 		SourcePath:           req.SourcePath,
 		SourceBytes:          req.SourceBytes,
 		SourceRoot:           app.RootDir,
@@ -498,7 +511,7 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 		} else if len(active) > 0 {
 			return nil, status.Error(codes.FailedPrecondition, freeze.Summary(app.Slug, active))
 		}
-		release.ApplyDefaultToEnqueue(ctx, g.store, g.log, app, acct.Plan, req.DeploymentScope, &params)
+		release.ApplyDefaultToEnqueue(ctx, g.store, g.log, app, resource.Plan, req.DeploymentScope, &params)
 		// ADR-20261020085706: a push to an app that requires approvals must
 		// wait in a canary; githubd reports the refusal on the commit.
 		if params.CanaryPreset == "" {
@@ -753,7 +766,7 @@ func deploymentKindToWireLabel(k state.DeploymentKind) string {
 // allowlist-checks req.SourcePath against. Empty stagingRoot
 // disables the check (test-only path; production wiring MUST set
 // it).
-func registerGithubdBridge(s *grpc.Server, store githubdBridgeStore, notif githubdBridgeNotifier, log *slog.Logger, ops *wire.OpsMetrics, spool string, stagingRoot string) {
+func registerGithubdBridge(s *grpc.Server, store githubdBridgeStore, notif githubdBridgeNotifier, log *slog.Logger, ops *wire.OpsMetrics, spool string, stagingRoot string, agentSteps func(state.Account) bool) {
 	githubdpb.RegisterGithubdServer(s, &githubdBridge{
 		store:       store,
 		notif:       notif,
@@ -762,5 +775,6 @@ func registerGithubdBridge(s *grpc.Server, store githubdBridgeStore, notif githu
 		spool:       spool,
 		stagingRoot: filepath.Join(stagingRoot, "build-sources"),
 		spoolRoot:   spool,
+		agentSteps:  agentSteps,
 	})
 }

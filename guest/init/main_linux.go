@@ -66,6 +66,7 @@ const (
 	modeExecution
 	modeAppTask
 	modeDataRepair
+	modeAgent
 )
 
 // main is guest PID 1. Any fatal error here panics the VM (panic=1 in boot args
@@ -120,6 +121,12 @@ func boot() error {
 	guestStage(fmt.Sprintf("mode-%d", mode))
 	if mode == modeDataRepair {
 		return runDataRepairGuest(slog.Default())
+	}
+	// Agent runs (ADR-20261027090010 §6) are one-shot like executions: one protocol
+	// stream, one result, poweroff on every path.
+	if mode == modeAgent {
+		guestStage("before-agent-run")
+		return runAgentGuest(slog.Default())
 	}
 	var extensionHooks *extensionLifecycle
 	var afterRestore atomic.Pointer[afterRestoreRuntime]
@@ -775,6 +782,7 @@ func errorKind(err error) string {
 // decideMode picks the boot branch by looking at which manifest file exists.
 //
 // Mode priority (ADR-171):
+//  0. agent.json with kind=="agent"            → modeAgent (ADR-20261027090010), alone
 //  1. app-task.json with kind=="app_task"     → modeAppTask
 //  2. execution.json with kind=="execution"   → modeExecution
 //  3. job.json with kind=="job"               → modeJob
@@ -796,7 +804,7 @@ func decideMode(fsys fs.FS) (bootMode, api.BuildManifest, error) {
 		if err = validateDataRepairManifest(data); err != nil {
 			return modeDataRepair, api.BuildManifest{}, err
 		}
-		for _, other := range []string{appTaskManifestRelativePath, executionManifestRelativePath, "etc/faas/job.json", "etc/faas/build.json"} {
+		for _, other := range []string{appTaskManifestRelativePath, executionManifestRelativePath, agentManifestRelativePath, "etc/faas/job.json", "etc/faas/build.json"} {
 			if _, err = fs.Stat(fsys, other); !errors.Is(err, fs.ErrNotExist) {
 				return modeDataRepair, api.BuildManifest{}, errors.New("conflicting repair guest mode")
 			}
@@ -804,6 +812,19 @@ func decideMode(fsys fs.FS) (bootMode, api.BuildManifest, error) {
 		return modeDataRepair, api.BuildManifest{}, nil
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return modeDataRepair, api.BuildManifest{}, err
+	}
+	if data, err := fs.ReadFile(fsys, agentManifestRelativePath); err == nil {
+		if markerErr := validateAgentManifest(data); markerErr != nil {
+			return modeAgent, api.BuildManifest{}, fmt.Errorf("invalid agent manifest: %w", markerErr)
+		}
+		for _, other := range []string{appTaskManifestRelativePath, executionManifestRelativePath, "etc/faas/job.json", "etc/faas/build.json"} {
+			if _, err = fs.Stat(fsys, other); !errors.Is(err, fs.ErrNotExist) {
+				return modeAgent, api.BuildManifest{}, errors.New("conflicting agent guest mode")
+			}
+		}
+		return modeAgent, api.BuildManifest{}, nil
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return modeAgent, api.BuildManifest{}, fmt.Errorf("read agent manifest: %w", err)
 	}
 	if data, err := fs.ReadFile(fsys, appTaskManifestRelativePath); err == nil {
 		if markerErr := validateAppTaskManifest(data); markerErr != nil {
@@ -1017,6 +1038,16 @@ func runBuildOnce(m api.BuildManifest) error {
 	if err := os.MkdirAll(m.OutDir, 0o755); err != nil {
 		return writeAndPoweroff(m, fmt.Errorf("mkdir outdir: %w", err), "")
 	}
+	if m.CacheExportOnly {
+		// The deferred run's image was already handed off, and vmmd exports
+		// whatever the output still holds (ADR-20261029171525).
+		if !m.DependencyCache || filepath.Clean(m.OutDir) == "/build" || !strings.HasPrefix(filepath.Clean(m.OutDir), "/build/") {
+			return writeAndPoweroff(m, fmt.Errorf("cache export run with output %q and dependency cache %v", m.OutDir, m.DependencyCache), "")
+		}
+		if err := clearOutputExcept(m.OutDir, dependencyInputsFile); err != nil {
+			return writeAndPoweroff(m, fmt.Errorf("clear deferred build output: %w", err), "")
+		}
+	}
 	if err := prepareBuildIssueSourceMaps(m); err != nil {
 		return writeAndPoweroff(m, err, "")
 	}
@@ -1040,8 +1071,10 @@ func runBuildOnce(m api.BuildManifest) error {
 		}
 	}
 
-	// 1. Extract source tarball. guest-init has no login-shell PATH.
-	if m.SourceTarPath != "" {
+	// 1. Extract source tarball. guest-init has no login-shell PATH. A cache
+	// export run builds the tree the deferred run already unpacked; unpacking
+	// again would undo flattenSingleSourceDir and change the build context.
+	if m.SourceTarPath != "" && !m.CacheExportOnly {
 		if out, err := exec.Command("/bin/tar", "-xaf", m.SourceTarPath, "-C", m.BuildContext).CombinedOutput(); err != nil {
 			return writeAndPoweroff(m, fmt.Errorf("tar extract: %w (%s)", err, out), "")
 		}
@@ -1170,7 +1203,7 @@ func runBuildOnce(m api.BuildManifest) error {
 		// fuse-overlayfs and the guest kernel has FUSE built in; use the
 		// rootless COW snapshotter so committing a layer does not scan/copy the
 		// complete native snapshot tree after every RUN instruction.
-		"--oci-worker-snapshotter", "fuse-overlayfs",
+		"--oci-worker-snapshotter", buildkitSnapshotter(m),
 		"--oci-worker-net", "host",
 	}
 	// ADR-20261025114554: BuildKit tries the operator's Docker Hub mirrors
@@ -1355,7 +1388,7 @@ func runBuildOnce(m api.BuildManifest) error {
 	// successful halt. Quiesce the daemon before reading its log and syncing
 	// the writable drive so export cannot observe partially written metadata.
 	stopBuildkit()
-	if m.DependencyCache {
+	if m.DependencyCache && !deferCacheExport(m) {
 		cachePath := filepath.Join(m.OutDir, "cache")
 		removed, cacheErr := removeOversizedDependencyCache(cachePath, api.MaxExportedLayerBytes)
 		switch {
@@ -1389,7 +1422,7 @@ func runBuildOnce(m api.BuildManifest) error {
 			}
 		}
 	}
-	if err == nil {
+	if err == nil && !m.CacheExportOnly {
 		err = exportBuildIssueSourceMaps(m)
 	}
 	if err == nil && m.KeepWarm {
@@ -1857,8 +1890,11 @@ func buildArgv(m api.BuildManifest) []string {
 		if m.DependencyCacheImport {
 			argv = append(argv, "--import-cache", "type=local,src=/build/cache")
 		}
-		if m.DependencyCache {
+		if m.DependencyCache && !deferCacheExport(m) {
 			argv = append(argv, "--export-cache", dependencyCacheExport(m))
+		}
+		if m.CacheExportOnly {
+			return argv
 		}
 		return append(argv, "--output", "type=oci,dest="+m.OutDir+"/image.tar"+layerCompressionAttrs(m))
 	}
@@ -1879,6 +1915,11 @@ func buildArgv(m api.BuildManifest) []string {
 	prepare += goCommand
 	if len(m.PublicBuildURLs) > 0 || m.BuildDependencyDigest != "" {
 		prepare += " && " + dependencyInputsHelperEnv + "=" + publicBuildURLsHelperValue + " /proc/1/exe " + shellQuote(planPath)
+	}
+	if m.CacheExportOnly {
+		// Solve the plan the deferred run built, not a fresh one, so every
+		// step hits the BuildKit state it left on this drive.
+		prepare = "test -f " + shellQuote(planPath)
 	}
 	build := strings.Join([]string{
 		"/usr/local/bin/buildctl", "--addr", "unix:///run/buildkit/buildkitd.sock", "build",
@@ -1905,8 +1946,14 @@ func buildArgv(m api.BuildManifest) []string {
 		// and intermediate stages cannot describe the deployed bundle bytes.
 		output += " --output " + shellQuote("type=local,dest="+buildIssueSourceMapRootfs)
 	}
+	if m.CacheExportOnly {
+		output = " --progress plain"
+	}
 	if !m.DependencyCache {
 		return []string{"/bin/sh", "-c", "set -x; " + prepare + " && exec " + build + output}
+	}
+	if m.CacheExportOnly {
+		return []string{"/bin/sh", "-c", "set -x; " + prepare + " && exec " + build + " --export-cache " + shellQuote(dependencyCacheExport(m)) + output}
 	}
 	// "$@" carries --export-cache. Once the plan exists, a re-executed
 	// guest-init (runDependencyCacheInputs) answers "keep" when the imported
@@ -1914,8 +1961,28 @@ func buildArgv(m api.BuildManifest) []string {
 	check := dependencyInputsHelperEnv + "=" + dependencyInputsHelperValue + " /proc/1/exe " + strings.Join([]string{
 		shellQuote(planPath), shellQuote(m.Workdir), shellQuote("/build/cache"), shellQuote(m.OutDir),
 	}, " ")
+	if deferCacheExport(m) {
+		// The check still runs: it leaves either the keep marker or the
+		// digest of the inputs the owed export covers.
+		return []string{"/bin/sh", "-c", "set -x; " + prepare + " && { " + check + " >/dev/null || true; } && exec " + build + output}
+	}
 	choose := `case "$(` + check + `)" in keep) set -- ;; *) set -- --export-cache ` + shellQuote(dependencyCacheExport(m)) + " ;; esac"
 	return []string{"/bin/sh", "-c", "set -x; " + prepare + " && " + choose + " && exec " + build + ` "$@"` + output}
+}
+
+// buildkitSnapshotter returns BuildKit's worker snapshotter. fuse-overlayfs
+// is the default. With BuildKitSnapshotterAuto (ADR-20261029105325) rootless
+// BuildKit prefers kernel overlayfs, whose layer diffs read only the overlay
+// upper directory, and falls back to fuse-overlayfs, then native, when the
+// kernel refuses an unprivileged overlay mount. A FUSE snapshotter sends every
+// file operation of a dependency install through a userspace daemon and diffs
+// each layer by walking both trees. The builder VM is the sandbox (ADR-003),
+// so a kernel overlay mount inside it adds no reach beyond the VM.
+func buildkitSnapshotter(m api.BuildManifest) string {
+	if m.BuildKitSnapshotter == api.BuildKitSnapshotterAuto {
+		return "auto"
+	}
+	return "fuse-overlayfs"
 }
 
 // layerCompressionAttrs returns the BuildKit exporter attributes that switch
@@ -1928,6 +1995,16 @@ func layerCompressionAttrs(m api.BuildManifest) string {
 		return ""
 	}
 	return ",compression=zstd"
+}
+
+// deferCacheExport reports whether this build leaves its dependency-cache
+// export to a CacheExportOnly run (ADR-20261029171525). A warm builder keeps
+// its drive for its own snapshot. A Dockerfile build with selected
+// dependencies runs with --no-cache, so a second solve would rebuild every
+// step; both export inline.
+func deferCacheExport(m api.BuildManifest) bool {
+	return m.DependencyCache && m.DeferCacheExport && !m.CacheExportOnly && !m.KeepWarm &&
+		(m.Framework != api.FrameworkDockerfile || m.BuildDependencyDigest == "")
 }
 
 // dependencyCacheExport is the app-scoped BuildKit cache exporter. mode=max
@@ -2241,12 +2318,13 @@ func writeBuildDone(m api.BuildManifest, runErr error, logTail string) {
 		BuildkitVersion: buildkitVersion,
 		RailpackVersion: railpackVersion,
 	}
-	if runErr == nil {
+	if runErr == nil && !m.CacheExportOnly {
 		done.PublicBuildURLsSHA256 = api.PublicBuildURLsSHA256(m.PublicBuildURLs)
 		done.DockerfileBuildSHA256 = dockerfileBuildAcknowledgement(m)
 		done.GoCommand = goCommandAcknowledgement(m)
 		done.BuildDependencyDigest = m.BuildDependencyDigest
 		done.DependencyCacheUnchanged = m.DependencyCache && dependencyCacheKept(m.OutDir)
+		done.DependencyCacheDeferred = deferCacheExport(m) && !done.DependencyCacheUnchanged
 		sourceMap, watchErr := devWatchSourceMap(m, buildDevPatchSourceMap(m, readBuildPlan))
 		done.DevPatch = sourceMap
 		done.SharedRuntime = buildSharedRuntimeVerdict(m, readBuildPlan)
