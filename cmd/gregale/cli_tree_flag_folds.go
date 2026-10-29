@@ -26,8 +26,13 @@ type cliTreeFlagFold struct {
 	// otherwise the flag is consumed.
 	Keep bool
 	// Value moves the flag's value to Old's first argument
-	// (`event publish --app my-app` runs `events publish-app my-app`).
-	Value bool
+	// (`event publish --app my-app` runs `events publish-app my-app`);
+	// Append moves it after the rest (`alert incident update INC --note
+	// text` runs `incidents note INC text`).
+	Value, Append bool
+	// Only marks a tree path that exists only through its folds
+	// (`edge cache set --method GET`); without the flag it runs nothing.
+	Only bool
 	// Short is the flag's help on New.
 	Short string
 }
@@ -49,6 +54,7 @@ var cliTreeFlagFolds = []cliTreeFlagFold{
 	{New: "event delivery retry", Flag: "retryable", Old: "events replay-retryable", Short: "retry a bounded batch of retryable terminal failures"},
 	{New: "event subscription health", Flag: "view=delivery", Old: "events subscription-delivery-health", Short: "show routing, executions, retry jobs and blockers"},
 	{New: "event subscription health", Flag: "view=execution", Old: "events subscription-execution-health", Short: "show executions, handler outcomes and retry-job health"},
+	{New: "automation recovery create", Flag: "dry-run", Also: "job", KeepAlso: true, Old: "automations recovery-retry-plan", Short: "with --job: review recovery failures and save an explicit retry plan"},
 	{New: "automation recovery create", Flag: "dry-run", Old: "automations recovery-preview", Short: "show the recovery and catch-up without writing"},
 	{New: "automation event-recovery start", Flag: "dry-run", Old: "automations event-recovery-plan", Short: "save the selected routing actions for review"},
 	{New: "automation recovery-response apply", Flag: "dry-run", Old: "automations recovery-response-plan", Short: "save the cancellation and retry actions for review"},
@@ -66,6 +72,18 @@ var cliTreeFlagFolds = []cliTreeFlagFold{
 	{New: "cron get", Flag: "next", Old: "crons next", Short: "show upcoming expression times across app tasks"},
 	{New: "job get", Flag: "next", Old: "jobs next", Short: "show upcoming recurring Job times and readiness"},
 	{New: "org invitation list", Flag: "all", Old: "orgs invitations list-all", Short: "list invitations in every state"},
+	// Decided 2026-10-29 (round 10).
+	{New: "edge cache set", Flag: "method=GET", Only: true, Old: "cache GET", Short: "cache GET responses for a route"},
+	{New: "edge cache set", Flag: "method=HEAD", Only: true, Old: "cache HEAD", Short: "cache HEAD responses for a route"},
+	{New: "realtime send", Flag: "principal", Keep: true, Old: "realtime send-principal", Short: "send to every connection of one principal"},
+	{New: "alert slo list", Flag: "account", Old: "account slo", Short: "show the account-wide SLO panel"},
+	{New: "alert incident update", Flag: "note", Append: true, Only: true, Old: "incidents note", Short: "add a note to the incident; notes cannot be edited"},
+	{New: "billing budgets create", Flag: "dry-run", Old: "billing budget-preview", Short: "show the budget's cost and workload consequences without writing"},
+	{New: "automation failure resume", Flag: "dry-run", Old: "automations failure-recovery-plan", Short: "preview the failure and save a reviewed first recovery plan"},
+	{New: "environment release-sets rollback", Flag: "prepare", Old: "projects environments release-sets prepare-rollback", Short: "select a retained graph and freeze current routing and policies"},
+	{New: "api route health check", Flag: "review", Only: true, Old: "routes health review-release", Short: "gate an aggregate preview review on canary route health"},
+	{New: "debug issue update", Flag: "issues", Keep: true, Only: true, Old: "issues bulk", Short: "triage up to 50 selected issue groups at once (with --action)"},
+	{New: "org standards reviews approve", Flag: "dry-run", Old: "orgs standards reviews preview", Short: "save affected applications and blockers without activating a change"},
 }
 
 // rewriteFlagFold runs the command a flag fold names, or reports false.
@@ -102,6 +120,9 @@ func rewriteFlagFold(args []string) ([]string, bool) {
 			if !slices.ContainsFunc(drop, func(span foldFlagSpan) bool { return i >= span.start && i < span.end }) {
 				out = append(out, arg)
 			}
+		}
+		if fold.Append {
+			out = append(out, value)
 		}
 		return out, true
 	}
@@ -144,7 +165,10 @@ func findFoldFlag(args []string, want string) (foldFlagSpan, string, bool) {
 }
 
 // cliTreeFoldBoolean are the fold flags that take no value.
-var cliTreeFoldBoolean = map[string]bool{"dry-run": true, "queued": true, "next": true, "all": true, "retryable": true}
+var cliTreeFoldBoolean = map[string]bool{
+	"dry-run": true, "queued": true, "next": true, "all": true, "retryable": true,
+	"account": true, "prepare": true, "review": true,
+}
 
 // cliTreeFlagFoldOf returns the fold that runs today's path old.
 func cliTreeFlagFoldOf(old string) (cliTreeFlagFold, bool) {

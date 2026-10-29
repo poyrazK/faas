@@ -529,6 +529,49 @@ var cliTreeAliases = []cliTreeAlias{
 	{"config preset create", "context save"},
 	{"config preset apply", "context use"},
 
+	// Decided 2026-10-29 (round 10, review of the remaining baseline).
+	{"api route activity", "routes awake"},
+	{"billing portal open", "billing portal"},
+	{"bucket usage", "usage object-storage"},
+	{"cron run get", "crons fire-now"},
+	{"queue dlq list", "queue dead-letter"},
+	{"event delivery fail", "events delivery-dead-letter"},
+	{"event delivery alerts", "events delivery-health-alerts"},
+	{"mcp readiness attention reopen", "mcp readiness attention release"},
+	{"alert pagerduty ack-sync", "mcp readiness pagerduty acknowledgements"},
+	// Its mode is a positional word: connect and disconnect read as verbs
+	// already, and status becomes get.
+	{"account billing-connection", "account billing-connection"},
+	{"account billing-connection get", "account billing-connection status"},
+	{"org standards adoption get", "orgs standards application"},
+	{"org standards local set", "orgs standards local-intent"},
+	// A command that shows a setting without flags and changes it with
+	// them gets both verbs; each runs today's command.
+	{"ai content-policy get", "ai content-policy"},
+	{"ai content-policy set", "ai content-policy"},
+	{"ai tag-limit get", "ai tag-limits"},
+	{"ai tag-limit set", "ai tag-limits"},
+	{"ai app-limit get", "ai app-limit"},
+	{"ai app-limit set", "ai app-limit"},
+	{"api tenant activation get", "platform-tenants activation"},
+	{"api tenant activation wait", "platform-tenants activation"},
+	{"automation recovery-policy get", "automations recovery-policy"},
+	{"automation recovery-policy set", "automations recovery-policy"},
+	{"bucket protection legal-hold get", "bucket protection legal-hold"},
+	{"bucket protection legal-hold set", "bucket protection legal-hold"},
+	{"bucket protection event-hold set", "bucket protection event-hold"},
+	{"debug issue impact-alert get", "issues impact-alert"},
+	{"debug issue impact-alert set", "issues impact-alert"},
+	{"debug issue lifecycle-alert get", "issues lifecycle-alerts"},
+	{"debug issue lifecycle-alert set", "issues lifecycle-alerts"},
+	{"debug issue ownership-rule get", "issues ownership-rules"},
+	{"debug issue ownership-rule set", "issues ownership-rules"},
+	{"debug issue compound-alert get", "issues compound-alerts"},
+	{"debug issue compound-alert set", "issues compound-alerts"},
+	{"debug issue source-map get", "issues source-maps"},
+	{"debug issue source-map publish", "issues source-maps"},
+	{"edge rule attack-mode get", "edge-rules attack-mode"},
+
 	// Operator tools live under the hidden admin command (rule 7) and keep
 	// their names; the naming rules cover the customer tree.
 	{"admin sites", "sites"},
@@ -1295,7 +1338,23 @@ func cliTreeAliasFrom(args []string) (cliTreeAlias, bool) {
 		}
 		best, bestLen = alias, len(old)
 	}
+	// A command two tree verbs run (`ai content-policy get|set`) has no
+	// single tree spelling.
+	if bestLen > 0 && cliTreeVerbsSharing(best.Old) > 1 {
+		return cliTreeAlias{}, false
+	}
 	return best, bestLen > 0
+}
+
+// cliTreeVerbsSharing counts the tree paths that run today's path old.
+func cliTreeVerbsSharing(old string) int {
+	n := 0
+	for _, alias := range cliTreeAliases {
+		if alias.Old == old {
+			n++
+		}
+	}
+	return n
 }
 
 // cliTreeAppVerb reports a word the tree's `app` takes as its verb.

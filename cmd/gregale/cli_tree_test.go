@@ -31,6 +31,7 @@ var cliTreeVerbs = []string{
 	"resize", "resync", "retire", "revoke", "review", "scan", "split", "start", "stop", "subscribe",
 	"unsubscribe", "suggest", "suspend", "test", "track", "use", "validate", "override", "advise",
 	"reset", "pull", "push", "signal", "generate", "void", "draft", "handoff", "end",
+	"open", "fail",
 }
 
 // A path may end with a noun it lists or shows (`app instances`).
@@ -59,6 +60,8 @@ var cliTreeCompoundWords = []string{
 	"billing-run", "billing-policy", "rate-card", "overdue-hold", "event-recovery", "failure-recovery", "recovery-policy", "recovery-response", "deadline-alert", "notification-retry", "recovery-notification", "release-sets", "compute-policy",
 	"quality-alert", "probe-policy", "release-policy", "object-storage", "copy-source", "attack-mode",
 	"grace-window", "payment-method", "server-key",
+	"ack-sync", "billing-connection", "content-policy", "tag-limit", "app-limit", "legal-hold",
+	"event-hold", "impact-alert", "lifecycle-alert", "ownership-rule", "compound-alert", "source-map",
 }
 
 // cliTreeValueWord matches a word that is a value, not a verb: today's
@@ -576,7 +579,7 @@ func TestCliTreeFlagFoldsRunTheirCommand(t *testing.T) {
 		switch {
 		case valued:
 			args = append(args, "--"+name, value)
-		case fold.Value || fold.Keep && name != "dry-run":
+		case fold.Value || fold.Append || fold.Keep && name != "dry-run":
 			args = append(args, "--"+name, "VALUE")
 		default:
 			args = append(args, "--"+name)
@@ -600,8 +603,14 @@ func TestCliTreeFlagFoldsRunTheirCommand(t *testing.T) {
 			want = append(want, "--"+fold.Also, "ALSO")
 		}
 		want = append(want, "--json")
+		if fold.Append {
+			want = append(want, "VALUE")
+		}
 		if err != nil || !slices.Equal(got, want) {
 			t.Errorf("%v rewrites to %q (err %v), want %q", args, got, err, want)
+		}
+		if fold.Only {
+			continue // the path runs nothing without its flag
 		}
 		plain, err := main.RewriteCliTree(strings.Fields(fold.New))
 		if err != nil || main.OldPathDepth(plain) < len(plain) {

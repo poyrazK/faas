@@ -154,11 +154,19 @@ touch them. The tables below map each earlier name.
 
 | Earlier | Now |
 |---|---|
+| `gregale account billing-connection status` | `gregale account billing-connection get` |
 | `gregale account billing-run schedule-delete` | `gregale account billing-run schedule delete` |
 | `gregale account billing-run schedule-set` | `gregale account billing-run schedule set` |
 | `gregale account billing-run schedule` | `gregale account billing-run schedule get` |
 | `gregale account dpa` | `gregale account dpa get` |
+| `gregale account slo` | `gregale alert slo list --account` |
+| `gregale ai app-limit` | `gregale ai app-limit get` |
+| `gregale ai app-limit` | `gregale ai app-limit set` |
+| `gregale ai content-policy` | `gregale ai content-policy get` |
+| `gregale ai content-policy` | `gregale ai content-policy set` |
 | `gregale ai quality-alerts` | `gregale ai quality-alert list` |
+| `gregale ai tag-limits` | `gregale ai tag-limit get` |
+| `gregale ai tag-limits` | `gregale ai tag-limit set` |
 | `gregale alerts rotate-secret` | `gregale alert secret rotate` |
 | `gregale approvals approve` | `gregale release approve` |
 | `gregale approvals off` | `gregale release approval disable` |
@@ -171,6 +179,7 @@ touch them. The tables below map each earlier name.
 | `gregale automations event-recovery-start` | `gregale automation event-recovery start` |
 | `gregale automations failure-policy` | `gregale automation failure policy` |
 | `gregale automations failure-recovery-evidence` | `gregale automation failure-recovery evidence` |
+| `gregale automations failure-recovery-plan` | `gregale automation failure resume --dry-run` |
 | `gregale automations failure-recovery-review` | `gregale automation failure-recovery review` |
 | `gregale automations failure-recovery-reviews` | `gregale automation failure-recovery list` |
 | `gregale automations failure-resume` | `gregale automation failure resume` |
@@ -184,15 +193,20 @@ touch them. The tables below map each earlier name.
 | `gregale automations recovery-plan` | `gregale automation recovery run` |
 | `gregale automations recovery-policy-evaluate` | `gregale automation recovery-policy evaluate` |
 | `gregale automations recovery-policy-reviews` | `gregale automation recovery-policy history` |
+| `gregale automations recovery-policy` | `gregale automation recovery-policy get` |
+| `gregale automations recovery-policy` | `gregale automation recovery-policy set` |
 | `gregale automations recovery-preview` | `gregale automation recovery create --dry-run` |
 | `gregale automations recovery-response-apply` | `gregale automation recovery-response apply` |
 | `gregale automations recovery-response-plan` | `gregale automation recovery-response apply --dry-run` |
 | `gregale automations recovery-response-preview` | `gregale automation recovery-response check` |
 | `gregale automations recovery-response-status` | `gregale automation recovery-response status` |
 | `gregale automations recovery-retry-evidence` | `gregale automation recovery evidence` |
+| `gregale automations recovery-retry-plan` | `gregale automation recovery create --job <JOB> --dry-run` |
 | `gregale automations recovery-start` | `gregale automation recovery create` |
 | `gregale automations recovery-suppress` | `gregale automation recovery suppress` |
+| `gregale billing budget-preview` | `gregale billing budgets create --dry-run` |
 | `gregale billing payment-method` | `gregale billing payment-method get` |
+| `gregale billing portal` | `gregale billing portal open` |
 | `gregale bindings probe-policy` | `gregale app binding probe-policy set` |
 | `gregale bindings smoke` | `gregale app binding call` |
 | `gregale bindings verification-runs` | `gregale app binding verification` |
@@ -204,12 +218,17 @@ touch them. The tables below map each earlier name.
 | `gregale bucket encryption` | `gregale bucket encryption set` |
 | `gregale bucket object-lock clear-default` | `gregale bucket object-lock clear` |
 | `gregale bucket object-lock` | `gregale bucket object-lock set` |
+| `gregale bucket protection event-hold` | `gregale bucket protection event-hold set` |
+| `gregale bucket protection legal-hold` | `gregale bucket protection legal-hold get` |
+| `gregale bucket protection legal-hold` | `gregale bucket protection legal-hold set` |
 | `gregale bucket reconcile status` | `gregale bucket inventory get` |
 | `gregale bucket reconcile` | `gregale bucket inventory` |
 | `gregale bucket uploads status` | `gregale bucket multipart get` |
 | `gregale bucket uploads` | `gregale bucket multipart` |
 | `gregale bucket version-delete` | `gregale bucket version delete` |
 | `gregale bucket versions` | `gregale bucket version` |
+| `gregale cache GET` | `gregale edge cache set --method GET` |
+| `gregale cache HEAD` | `gregale edge cache set --method HEAD` |
 | `gregale canary gate` | `gregale release canary evidence` |
 | `gregale chaos inject` | `gregale test chaos` |
 | `gregale connect github` | `gregale github connect` |
@@ -247,6 +266,7 @@ touch them. The tables below map each earlier name.
 | `gregale context save` | `gregale config preset create` |
 | `gregale context set` | `gregale config context set` |
 | `gregale context use` | `gregale config preset apply` |
+| `gregale crons fire-now` | `gregale cron run get` |
 | `gregale crons next` | `gregale cron get --next` |
 | `gregale customer-operations attention-summary` | `gregale operation attention summary` |
 | `gregale customer-operations attention` | `gregale operation attention list` |
@@ -290,6 +310,7 @@ touch them. The tables below map each earlier name.
 | `gregale deploys show` | `gregale release stages` |
 | `gregale deploys status` | `gregale release get` |
 | `gregale domains set-default` | `gregale domain default set` |
+| `gregale edge-rules attack-mode` | `gregale edge rule attack-mode get` |
 | `gregale edge-rules attack-mode` | `gregale edge rule attack-mode set` |
 | `gregale edge-rules recipe` | `gregale edge rule recipe apply` |
 | `gregale edge-rules waf-review` | `gregale edge rule waf review` |
@@ -299,6 +320,8 @@ touch them. The tables below map each earlier name.
 | `gregale events backfill-status` | `gregale event backfill get` |
 | `gregale events backfill` | `gregale event backfill create` |
 | `gregale events deadline-alert-investigate` | `gregale event deadline-alert investigate` |
+| `gregale events delivery-dead-letter` | `gregale event delivery fail` |
+| `gregale events delivery-health-alerts` | `gregale event delivery alerts` |
 | `gregale events delivery-retry` | `gregale event delivery retry` |
 | `gregale events fanout-history` | `gregale event fanout history` |
 | `gregale events notification-retry-apply` | `gregale event notification-retry apply` |
@@ -380,11 +403,23 @@ touch them. The tables below map each earlier name.
 | `gregale events workflow-backfill` | `gregale event backfill create --workflow-name <WORKFLOW-NAME>` |
 | `gregale events workflow-replay-preview` | `gregale event backfill create --workflow-name <WORKFLOW-NAME> --dry-run` |
 | `gregale github bind` | `gregale github link` |
+| `gregale incidents note` | `gregale alert incident update --note <NOTE>` |
 | `gregale invitations accept` | `gregale org invitation accept` |
 | `gregale invitations peek` | `gregale org invitation peek` |
+| `gregale issues bulk` | `gregale debug issue update --issues <ISSUES>` |
 | `gregale issues compare-releases` | `gregale debug issue releases compare` |
+| `gregale issues compound-alerts` | `gregale debug issue compound-alert get` |
+| `gregale issues compound-alerts` | `gregale debug issue compound-alert set` |
 | `gregale issues create-token` | `gregale debug issue token create` |
+| `gregale issues impact-alert` | `gregale debug issue impact-alert get` |
+| `gregale issues impact-alert` | `gregale debug issue impact-alert set` |
+| `gregale issues lifecycle-alerts` | `gregale debug issue lifecycle-alert get` |
+| `gregale issues lifecycle-alerts` | `gregale debug issue lifecycle-alert set` |
+| `gregale issues ownership-rules` | `gregale debug issue ownership-rule get` |
+| `gregale issues ownership-rules` | `gregale debug issue ownership-rule set` |
 | `gregale issues revoke-token` | `gregale debug issue token revoke` |
+| `gregale issues source-maps` | `gregale debug issue source-map get` |
+| `gregale issues source-maps` | `gregale debug issue source-map publish` |
 | `gregale jobs artifact-download` | `gregale job artifact download` |
 | `gregale jobs artifact-url` | `gregale job artifact get` |
 | `gregale jobs next` | `gregale job get --next` |
@@ -397,10 +432,12 @@ touch them. The tables below map each earlier name.
 | `gregale mcp monitor provider-check` | `gregale mcp server monitor check` |
 | `gregale mcp prompt-get` | `gregale mcp client render` |
 | `gregale mcp prompts` | `gregale mcp client prompts` |
+| `gregale mcp readiness attention release` | `gregale mcp readiness attention reopen` |
 | `gregale mcp readiness maintenance cancel` | `gregale alert maintenance cancel` |
 | `gregale mcp readiness maintenance create` | `gregale alert maintenance create` |
 | `gregale mcp readiness maintenance list` | `gregale alert maintenance list` |
 | `gregale mcp readiness notifications` | `gregale mcp readiness notification` |
+| `gregale mcp readiness pagerduty acknowledgements` | `gregale alert pagerduty ack-sync` |
 | `gregale mcp readiness pagerduty disable` | `gregale alert pagerduty disable` |
 | `gregale mcp readiness pagerduty get` | `gregale alert pagerduty get` |
 | `gregale mcp readiness pagerduty set` | `gregale alert pagerduty set` |
@@ -424,8 +461,13 @@ touch them. The tables below map each earlier name.
 | `gregale orgs invitations` | `gregale org invitation` |
 | `gregale orgs members change-role` | `gregale org members update` |
 | `gregale orgs seat-usage` | `gregale org usage` |
+| `gregale orgs standards application` | `gregale org standards adoption get` |
+| `gregale orgs standards local-intent` | `gregale org standards local set` |
 | `gregale orgs standards operation abort` | `gregale org standards operation cancel` |
+| `gregale orgs standards reviews preview` | `gregale org standards reviews approve --dry-run` |
 | `gregale orgs transfer-ownership` | `gregale org owner set` |
+| `gregale platform-tenants activation` | `gregale api tenant activation get` |
+| `gregale platform-tenants activation` | `gregale api tenant activation wait` |
 | `gregale platform-tenants billing-policy-delete` | `gregale api tenant billing-policy delete` |
 | `gregale platform-tenants billing-policy-set` | `gregale api tenant billing-policy set` |
 | `gregale platform-tenants billing-policy` | `gregale api tenant billing-policy get` |
@@ -467,15 +509,20 @@ touch them. The tables below map each earlier name.
 | `gregale projects environments recover-migration` | `gregale environment migration recover` |
 | `gregale projects environments release-sets cancel-stage` | `gregale environment release-sets stage cancel` |
 | `gregale projects environments release-sets prepare-deactivation` | `gregale environment release-sets deactivation prepare` |
+| `gregale projects environments release-sets prepare-rollback` | `gregale environment release-sets rollback --prepare` |
 | `gregale projects environments release-sets stage-status` | `gregale environment release-sets stage status` |
 | `gregale projects environments release-sets stage` | `gregale environment release-sets stage create` |
 | `gregale projects environments release-sets verification-runs` | `gregale environment release-sets verification` |
 | `gregale projects environments` | `gregale environment` |
+| `gregale queue dead-letter` | `gregale queue dlq list` |
 | `gregale queue tail` | `gregale queue watch` |
 | `gregale realtime drain-status` | `gregale realtime drain status` |
+| `gregale realtime send-principal` | `gregale realtime send --principal <PRINCIPAL>` |
 | `gregale registry published` | `gregale registry deploy` |
 | `gregale rollback switch` | `gregale release rollback status` |
+| `gregale routes awake` | `gregale api route activity` |
 | `gregale routes health profile-history` | `gregale api route health profiles` |
+| `gregale routes health review-release` | `gregale api route health check --review` |
 | `gregale routes lifecycle prepare-approval` | `gregale api route lifecycle prepare` |
 | `gregale routes migration gate` | `gregale api route migration check` |
 | `gregale routes migration server-check` | `gregale api route migration verify` |
@@ -492,6 +539,7 @@ touch them. The tables below map each earlier name.
 | `gregale test recovery-trend` | `gregale test recovery report` |
 | `gregale triggers dlq` | `gregale trigger dlq list` |
 | `gregale upload-cache cleanup` | `gregale config upload-cache prune` |
+| `gregale usage object-storage` | `gregale bucket usage` |
 | `gregale webhooks account rotate-secret` | `gregale webhook account secret rotate` |
 | `gregale webhooks rotate-secret` | `gregale webhook secret rotate` |
 | `gregale workflows cancel-queued-preview` | `gregale workflow cancel --queued <QUEUED> --dry-run` |

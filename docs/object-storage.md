@@ -356,7 +356,7 @@ is not authorization, and every request still needs a signature or grant.
 ## Usage
 
 ```sh
-gregale billing usage object-storage
+gregale bucket usage
 ```
 
 shows stored bytes, requests and egress for the current month, and marks any

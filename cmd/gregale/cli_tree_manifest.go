@@ -235,6 +235,19 @@ func (d cliTreeDiscovery) treeSubs(prefix []string) []cliSub {
 			}
 		}
 	}
+	// A tree path that exists only through its flag folds (`edge cache
+	// set --method GET`) is listed with the folds' flags.
+	for _, fold := range cliTreeFlagFolds {
+		path := strings.Fields(fold.New)
+		if !fold.Only || len(path) != len(prefix)+1 || !slices.Equal(path[:len(prefix)], prefix) || seen[path[len(prefix)]] {
+			continue
+		}
+		sub := cliSub{Name: path[len(prefix)], Short: fold.Short}
+		if target, ok := d.subAt(fold.Old); ok {
+			sub.Short, sub.Positionals = target.Short, target.Positionals
+		}
+		add(sub)
+	}
 	if name == appSlugFallback {
 		for _, sub := range d.appTreeSubs() {
 			add(sub)

@@ -6067,7 +6067,7 @@ gregale mcp readiness attention list --app demo --env production
 gregale mcp readiness attention acknowledge --app demo --incident '<incident UUID>' \
   --expected-version 0 --request-id '<stable decision UUID>' \
   --reason 'Investigating provider outage' --expires-at 2026-10-18T12:00:00+03:00
-gregale mcp readiness attention release --app demo --incident '<incident UUID>' \
+gregale mcp readiness attention reopen --app demo --incident '<incident UUID>' \
   --expected-version 1 --request-id '<new stable decision UUID>' --reason 'Handing back to on-call'
 gregale mcp readiness attention configure --app demo --incident '<incident UUID>' \
   --expected-version 2 --request-id '<new stable decision UUID>' --reason 'Remind during investigation' \
@@ -6365,14 +6365,14 @@ preserved, and already resolved incidents are never reopened.
    server captures the integration fingerprint and US/EU region automatically.
 
 ```sh
-gregale mcp readiness pagerduty acknowledgements get --app demo --rule RULE_UUID
+gregale alert pagerduty ack-sync get --app demo --rule RULE_UUID
 export PAGERDUTY_WEBHOOK_SECRET=YOUR_SUBSCRIPTION_SIGNING_SECRET
-gregale mcp readiness pagerduty acknowledgements set --app demo --rule RULE_UUID \
+gregale alert pagerduty ack-sync set --app demo --rule RULE_UUID \
   --expected-version 0 --expected-pagerduty-version 1 --service-id PSVC001 \
   --secret-env PAGERDUTY_WEBHOOK_SECRET
-gregale mcp readiness pagerduty acknowledgements events --app demo --rule RULE_UUID \
+gregale alert pagerduty ack-sync events --app demo --rule RULE_UUID \
   --limit 20
-gregale mcp readiness pagerduty acknowledgements disable --app demo --rule RULE_UUID \
+gregale alert pagerduty ack-sync disable --app demo --rule RULE_UUID \
   --expected-version 1
 ```
 
@@ -6504,9 +6504,9 @@ or disabling future fallback cannot silently discard an outstanding recovery.
 Signed acknowledgement sync can select the native fallback:
 
 ```sh
-gregale mcp readiness pagerduty acknowledgements get --app demo --rule RULE_UUID --destination fallback
+gregale alert pagerduty ack-sync get --app demo --rule RULE_UUID --destination fallback
 # Create the v3 subscription using webhook_path as described above.
-gregale mcp readiness pagerduty acknowledgements set --app demo --rule RULE_UUID \
+gregale alert pagerduty ack-sync set --app demo --rule RULE_UUID \
   --expected-version 0 --destination fallback --expected-fallback-version 1 \
   --service-id PSVC001 --secret-env PAGERDUTY_FALLBACK_WEBHOOK_SECRET
 ```
@@ -6546,10 +6546,10 @@ Configure both primary and fallback acknowledgement sync on the same readiness
 rule. Read each binding explicitly before creating its PagerDuty v3 subscription:
 
 ```sh
-gregale mcp readiness pagerduty acknowledgements get --app demo --rule RULE_UUID --destination primary
-gregale mcp readiness pagerduty acknowledgements get --app demo --rule RULE_UUID --destination fallback
+gregale alert pagerduty ack-sync get --app demo --rule RULE_UUID --destination primary
+gregale alert pagerduty ack-sync get --app demo --rule RULE_UUID --destination fallback
 # Use each response's webhook_path with your API origin and a separate signing secret.
-gregale mcp readiness pagerduty acknowledgements disable --app demo --rule RULE_UUID \
+gregale alert pagerduty ack-sync disable --app demo --rule RULE_UUID \
   --destination fallback --expected-version 1
 ```
 
@@ -6604,7 +6604,7 @@ to acknowledgement-only; other provider events, including `incident.resolved`,
 never change readiness health. Probes remain authoritative for recovery.
 
 ```sh
-gregale mcp readiness pagerduty acknowledgements set --app demo --rule RULE_UUID \
+gregale alert pagerduty ack-sync set --app demo --rule RULE_UUID \
   --destination primary --expected-version CURRENT_BINDING_VERSION \
   --expected-pagerduty-version CURRENT_PRIMARY_VERSION --service-id PSVC001 \
   --secret-env PAGERDUTY_WEBHOOK_SECRET --sync-unacknowledgements

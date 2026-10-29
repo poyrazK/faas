@@ -2190,7 +2190,7 @@ var cliCommands = []cliCommand{
 				{Name: "app", Short: "app slug for interactive selection (linked app or picker by default)", Value: "SLUG"},
 				{Name: "timeout", Short: "maximum follow duration with --wait or --interactive (default 2m)", Value: "DURATION"},
 			}},
-			{Name: "fire-now", Short: "Read or follow an existing manual fire request", Positionals: []string{"<request-id>"}, Examples: []string{"gregale cron fire-now REQUEST_ID --wait --timeout 5m"}, Flags: []cliFlag{
+			{Name: "fire-now", Short: "Read or follow an existing manual fire request", Positionals: []string{"<request-id>"}, Examples: []string{"gregale cron run get REQUEST_ID --wait --timeout 5m"}, Flags: []cliFlag{
 				{Name: "wait", Short: "follow the existing request until terminal status", Bool: true},
 				{Name: "timeout", Short: "maximum wait duration (default 2m; requires --wait)", Value: "DURATION"},
 			}},
@@ -4167,7 +4167,7 @@ var cliCommands = []cliCommand{
 			{Name: "cache-max-age", Value: "SECONDS", Short: "what-if cache lifetime for cache suggestions (default 60)"},
 			{Name: "apply", Value: "ID", Short: "create the edge rules of this suggestion (disabled for review)"},
 			{Name: "enable", Short: "with --apply, create the rules enabled"},
-		}}, {Name: "awake", Positionals: []string{"<slug>"}, Short: "Show which routes keep a scale-to-zero app awake and their cost", Notes: []string{"Explains how to let the app park."}, Examples: []string{"gregale api route awake my-api", "gregale api route awake my-api --since 24h --json"}, Flags: []cliFlag{
+		}}, {Name: "awake", Positionals: []string{"<slug>"}, Short: "Show which routes keep a scale-to-zero app awake and their cost", Notes: []string{"Explains how to let the app park."}, Examples: []string{"gregale api route activity my-api", "gregale api route activity my-api --since 24h --json"}, Flags: []cliFlag{
 			{Name: "since", Value: "DURATION", Short: "window to analyze (default 7d; clamped to telemetry retention)"},
 			{Name: "until", Value: "RFC3339", Short: "end of the window (default now)"},
 		}}, {Name: "insights", Positionals: []string{"<slug>"}, Short: "List routes that keep the app awake or are safe to cache", Notes: []string{"Each finding has a fix; findings are evaluated every six hours."}, Examples: []string{"gregale api route insights my-api", "gregale api route insights my-api --json", "gregale api route insights my-api --fix 6c1e0b9a-3f7d-4a51-9c2e-8d4b5f0a1e27"}, Flags: []cliFlag{{Name: "fix", Value: "INSIGHT_ID", Short: "apply the fix the insight lists now"}}}, {Name: "priority", Positionals: []string{"<slug>"}, Short: "Show or set which routes are served first when instances are busy", Notes: []string{"Priority routes are also turned away last."}, Examples: []string{"gregale api route priority my-api", "gregale api route priority my-api --critical \"POST /checkout\" --bulk \"/exports/*\"", "gregale api route priority my-api --reset"}, Flags: []cliFlag{

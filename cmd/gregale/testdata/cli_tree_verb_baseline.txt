@@ -1,46 +1,7 @@
 # Paths in the ADR-20261026145832 tree that still break its naming rules.
 # This list only shrinks: give a path a tree name in cli_tree.go instead of adding it.
-account billing-connection  # hyphenated billing-connection, verb billing-connection
-account slo  # verb slo
-ai app-limit  # hyphenated app-limit, verb app-limit
-ai content-policy  # hyphenated content-policy, verb content-policy
-ai tag-limits  # hyphenated tag-limits, verb tag-limits
-alert incident note  # verb note
-api route awake  # verb awake
-api route health review-release  # hyphenated review-release, verb review-release
-api tenant activation  # verb activation
-automation failure-recovery-plan  # hyphenated failure-recovery-plan, verb failure-recovery-plan
-automation recovery-policy  # verb recovery-policy
-automation recovery-retry-plan  # hyphenated recovery-retry-plan, verb recovery-retry-plan
-billing budget-preview  # hyphenated budget-preview, verb budget-preview
-billing portal  # verb portal
-billing usage object-storage  # verb object-storage
-bucket protection event-hold  # hyphenated event-hold, verb event-hold
-bucket protection legal-hold  # hyphenated legal-hold, verb legal-hold
-cron fire-now  # hyphenated fire-now, verb fire-now
-debug issue bulk  # verb bulk
-debug issue compound-alerts  # hyphenated compound-alerts, verb compound-alerts
-debug issue impact-alert  # hyphenated impact-alert, verb impact-alert
-debug issue lifecycle-alerts  # hyphenated lifecycle-alerts, verb lifecycle-alerts
-debug issue ownership-rules  # hyphenated ownership-rules, verb ownership-rules
-debug issue source-maps  # hyphenated source-maps, verb source-maps
-edge cache GET  # verb cache
-edge cache HEAD  # verb cache
 edge rule waf-exclude  # hyphenated waf-exclude, verb waf-exclude
-environment release-sets prepare-rollback  # hyphenated prepare-rollback, verb prepare-rollback
-event delivery-dead-letter  # hyphenated delivery-dead-letter, verb delivery-dead-letter
-event delivery-health-alerts  # hyphenated delivery-health-alerts, verb delivery-health-alerts
-mcp readiness attention release  # verb release
-mcp readiness pagerduty acknowledgements disable  # more than four words
-mcp readiness pagerduty acknowledgements events  # more than four words
-mcp readiness pagerduty acknowledgements get  # more than four words
-mcp readiness pagerduty acknowledgements set  # more than four words
-org standards application  # verb application
-org standards local-intent  # hyphenated local-intent, verb local-intent
-org standards reviews preview  # verb preview
 postgres compute-policy  # verb compute-policy
 postgres compute-policy-status  # hyphenated compute-policy-status, verb compute-policy-status
 postgres overage  # verb overage
 postgres resize-status  # hyphenated resize-status, verb resize-status
-queue dead-letter  # hyphenated dead-letter, verb dead-letter
-realtime send-principal  # hyphenated send-principal, verb send-principal
