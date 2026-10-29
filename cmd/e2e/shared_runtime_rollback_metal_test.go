@@ -95,7 +95,7 @@ func TestSharedRuntimeRollbackMetal(t *testing.T) {
 	setAppIdleTimeout(t, h, key, slug, api.IdleTimeoutFloorSeconds)
 	store := state.NewPgStore(pool)
 
-	deploy := func(t *testing.T, source []byte, idempotencyKey string, ceiling time.Duration) state.Deployment {
+	deploy := func(t *testing.T, source []byte, idempotencyKey string, stall, ceiling time.Duration) state.Deployment {
 		t.Helper()
 		raw, status := postMultipartDeployment(t, h, key, slug, source, false, idempotencyKey)
 		if status != http.StatusAccepted {
@@ -104,7 +104,7 @@ func TestSharedRuntimeRollbackMetal(t *testing.T) {
 		depID, _ := parseQueuedDeployment(t, raw)
 		ctx, cancel := context.WithTimeout(context.Background(), ceiling+5*time.Minute)
 		defer cancel()
-		dep, _, err := e2etest.WaitForSourceDeployment(ctx, t, pool, depID, e2etest.DefaultBuildStallWindow, ceiling)
+		dep, _, err := e2etest.WaitForSourceDeployment(ctx, t, pool, depID, stall, ceiling)
 		if err != nil {
 			t.Fatalf("deployment %s did not go live: %v", depID, err)
 		}
@@ -121,7 +121,19 @@ func TestSharedRuntimeRollbackMetal(t *testing.T) {
 	}
 	wake := func(t *testing.T, want, method string) {
 		t.Helper()
-		body, wakeID, status := doGetWithHostCapturingWakeID(t, h.HTTPClient(), gatewayAppURL(h, slug), slug+".apps.test.example", 90*time.Second)
+		// A 503 asks the client to retry (a routing read that overran its
+		// budget on a loaded host); clients do, so the test does too.
+		var body []byte
+		var wakeID string
+		var status int
+		for attempt := 0; attempt < 4; attempt++ {
+			body, wakeID, status = doGetWithHostCapturingWakeID(t, h.HTTPClient(), gatewayAppURL(h, slug), slug+".apps.test.example", 90*time.Second)
+			if status != http.StatusServiceUnavailable {
+				break
+			}
+			t.Logf("wake attempt %d: 503 %s", attempt+1, body)
+			time.Sleep(5 * time.Second)
+		}
 		if status != http.StatusOK || strings.TrimSpace(string(body)) != want {
 			t.Fatalf("wake: status=%d body=%q, want 200 %q", status, body, want)
 		}
@@ -172,7 +184,7 @@ func TestSharedRuntimeRollbackMetal(t *testing.T) {
 
 	var legacy, shared state.Deployment
 	t.Run("legacy-own-base", func(t *testing.T) {
-		legacy = deploy(t, layerKindFixture(t, "22", legacyBody, false), "aaaaaaaa-0000-4000-8000-000000000001", e2etest.DefaultBuildCeiling)
+		legacy = deploy(t, layerKindFixture(t, "22", legacyBody, false), "aaaaaaaa-0000-4000-8000-000000000001", e2etest.DefaultBuildStallWindow, e2etest.DefaultBuildCeiling)
 		if legacy.RuntimeBase != "" {
 			t.Fatalf("Node 22 deployment runtime_base = %q, want the app's own base", legacy.RuntimeBase)
 		}
@@ -182,7 +194,7 @@ func TestSharedRuntimeRollbackMetal(t *testing.T) {
 	})
 	t.Run("fallback-on-runner", func(t *testing.T) {
 		// The first Node 24 deployment stages the runner base.
-		fallback := deploy(t, layerKindFixture(t, "24", fallbackBody, true), "aaaaaaaa-0000-4000-8000-000000000002", sharedBaseCeiling)
+		fallback := deploy(t, layerKindFixture(t, "24", fallbackBody, true), "aaaaaaaa-0000-4000-8000-000000000002", sharedBaseStallWindow, sharedBaseCeiling)
 		if fallback.RuntimeBase != "node24" {
 			t.Fatalf("ineligible Node 24 deployment runtime_base = %q, want node24", fallback.RuntimeBase)
 		}
@@ -191,7 +203,7 @@ func TestSharedRuntimeRollbackMetal(t *testing.T) {
 		park(t)
 	})
 	t.Run("shared-runtime", func(t *testing.T) {
-		shared = deploy(t, layerKindFixture(t, "24", sharedBody, false), "aaaaaaaa-0000-4000-8000-000000000003", e2etest.DefaultBuildCeiling)
+		shared = deploy(t, layerKindFixture(t, "24", sharedBody, false), "aaaaaaaa-0000-4000-8000-000000000003", e2etest.DefaultBuildStallWindow, e2etest.DefaultBuildCeiling)
 		if shared.RuntimeBase != "node24" {
 			t.Fatalf("shared deployment runtime_base = %q, want node24", shared.RuntimeBase)
 		}
