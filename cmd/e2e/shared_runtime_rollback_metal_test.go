@@ -112,8 +112,16 @@ func TestSharedRuntimeRollbackMetal(t *testing.T) {
 	}
 	park := func(t *testing.T) {
 		t.Helper()
-		if _, status := doReq(t, h, key, http.MethodPost, "/v1/apps/"+slug+"/park", nil); status != http.StatusNoContent {
-			t.Fatalf("park: status=%d", status)
+		// A capture that outlasts apid's 5 s drain wait (6 s for 512 MB on
+		// n2) answers a retryable 503, as in TestSourceDeployWakeMetal.
+		raw, status := doReq(t, h, key, http.MethodPost, "/v1/apps/"+slug+"/park", nil)
+		for attempt := 0; attempt < 3 && status == http.StatusServiceUnavailable; attempt++ {
+			t.Logf("park: status=%d body=%s; retrying", status, raw)
+			time.Sleep(5 * time.Second)
+			raw, status = doReq(t, h, key, http.MethodPost, "/v1/apps/"+slug+"/park", nil)
+		}
+		if status != http.StatusNoContent {
+			t.Fatalf("park: status=%d body=%s", status, raw)
 		}
 		if _, err := waitForSourceAppParked(context.Background(), h, appID, 30*time.Second); err != nil {
 			t.Fatal(err)
