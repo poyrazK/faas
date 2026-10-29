@@ -371,6 +371,21 @@ func frozenCandidateInputsMatch(stored []byte, expected EnvironmentWorkloadRunti
 	return err == nil && bytes.Equal(priorJSON, expectedJSON)
 }
 
+// activatedCandidateInputsMatch compares an activated candidate's frozen
+// inputs with the reviewed intent. Activation makes the candidate a live
+// deployment of its own app, so the inherited baseline (the live deployments
+// observed at review, and their settings) can no longer be recomputed; the
+// deployment trigger checked it when the candidate was created. Every other
+// authority field must still match.
+func activatedCandidateInputsMatch(stored []byte, expected EnvironmentWorkloadRuntime) bool {
+	var prior EnvironmentWorkloadRuntime
+	if json.Unmarshal(stored, &prior) != nil {
+		return false
+	}
+	expected.SourceDeployments, expected.DeploymentInputs = prior.SourceDeployments, prior.DeploymentInputs
+	return frozenCandidateInputsMatch(stored, expected)
+}
+
 func workloadPreparationTypeSupported(appType AppType, runtime string) bool {
 	return appType == AppTypeApp || appType == AppTypeFunction && api.ValidFunctionRuntime(runtime)
 }

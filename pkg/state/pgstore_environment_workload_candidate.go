@@ -129,10 +129,15 @@ func (s *PgStore) prepareEnvironmentGitOpsCandidatesOnce(ctx context.Context, le
 			return nil, err
 		}
 		var storedRuntime []byte
-		if err := tx.QueryRow(ctx, `SELECT environment_workload_runtime FROM deployments WHERE id=$1`, id).Scan(&storedRuntime); err != nil {
+		var held bool
+		if err := tx.QueryRow(ctx, `SELECT environment_workload_runtime, environment_workload_held FROM deployments WHERE id=$1`, id).Scan(&storedRuntime, &held); err != nil {
 			return nil, mapErr(err)
 		}
-		if !frozenCandidateInputsMatch(storedRuntime, frozen) {
+		matches := frozenCandidateInputsMatch(storedRuntime, frozen)
+		if !matches && !held && DeploymentStatus(dep.Status) == DeployLive {
+			matches = activatedCandidateInputsMatch(storedRuntime, frozen)
+		}
+		if !matches {
 			return nil, fmt.Errorf("%w: stored candidate inputs differ from the reviewed intent", ErrConflict)
 		}
 		out = append(out, EnvironmentWorkloadCandidate{DeploymentID: pgUUIDString(dep.ID), BuildID: dep.BuildID, AppID: pgUUIDString(dep.AppID), Resource: frozen.Resource,
