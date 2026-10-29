@@ -933,6 +933,8 @@ var CmdMCPTasksReport = cmdMCPTasksReport
 var CmdMail = cmdMail
 var CmdMan = cmdMan
 var CmdMetrics = cmdMetrics
+
+var ParseJobCommand = parseJobCommand
 var CmdMfa = cmdMfa
 var CmdMfaConfirm = cmdMfaConfirm
 var CmdMfaDisable = cmdMfaDisable

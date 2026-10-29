@@ -2311,7 +2311,7 @@ var cliCommands = []cliCommand{
 			{Name: "add", Short: "Create a new job", Positionals: []string{"[<name>]"}, Examples: []string{"gregale job create --interactive"}, Flags: []cliFlag{
 				{Name: "interactive", Bool: true, Short: "choose a name, image, command, resources, and optional recurring schedule"},
 				{Name: "image", Value: "REF", Short: "OCI image (required unless interactive)"},
-				{Name: "command", Value: "ARGV", Short: "comma-separated entrypoint (e.g. /bin/sh,-c,echo hi)"},
+				{Name: "command", Value: "ARGV", Short: "comma-separated entrypoint (e.g. /bin/sh,-c,echo hi); escape a comma inside an argument with a backslash, or pass a JSON array"},
 				{Name: "ram", Value: "MB", Short: "billable memory in MB (0 = plan default)"},
 				{Name: "timeout", Value: "SECONDS", Short: "per-task wall-clock deadline (0 = plan default)"},
 				{Name: "parallelism", Value: "N", Short: "max concurrent tasks across a run (0 = plan default)"},
@@ -2330,7 +2330,7 @@ var cliCommands = []cliCommand{
 			{Name: "update", Short: "Update one job", Positionals: []string{"[<name>]"}, Examples: []string{"gregale job update --interactive"}, Flags: []cliFlag{
 				{Name: "interactive", Bool: true, Short: "choose a Job, edit resources and schedule, and confirm changes"},
 				{Name: "image", Value: "REF", Short: "new OCI image"},
-				{Name: "command", Value: "ARGV", Short: "new comma-separated entrypoint"},
+				{Name: "command", Value: "ARGV", Short: "new comma-separated entrypoint (e.g. /bin/sh,-c,echo hi); escape a comma inside an argument with a backslash, or pass a JSON array"},
 				{Name: "ram", Value: "MB", Short: "new RAM (MB)"},
 				{Name: "timeout", Value: "SECONDS", Short: "new per-task timeout"},
 				{Name: "parallelism", Value: "N", Short: "new max parallel tasks"},
