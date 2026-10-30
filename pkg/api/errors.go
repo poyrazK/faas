@@ -971,9 +971,10 @@ const (
 	// platform (ADR 20261022140000), for example while a security incident is
 	// contained. Nothing the caller sends overrides it; rollbacks still work.
 	CodePlatformReleasePaused = "platform_release_paused"
-	// CodeReleaseFreezeNotFound means the account has no such unlifted freeze.
+	// CodeReleaseFreezeNotFound means the account, organization or app has
+	// no such unlifted freeze.
 	CodeReleaseFreezeNotFound = "release_freeze_not_found"
-	// CodeReleaseFreezeLimit means the account already holds
+	// CodeReleaseFreezeLimit means the account or organization already holds
 	// ReleaseFreezesMax freezes that have not ended.
 	CodeReleaseFreezeLimit = "release_freeze_limit"
 	// CodeReleaseGateLimit means the app already has ReleaseGatesPerAppMax
@@ -5333,8 +5334,8 @@ func ErrAccountDeletionManagedPostgres(live int64) *Problem {
 	}
 	return NewProblem(http.StatusConflict, CodeAccountDeletionManagedPostgres,
 		"Managed PostgreSQL databases must be deleted first",
-		fmt.Sprintf("this account still has %s; delete them before deleting the account. Run `gregale postgres list` to see them and `gregale postgres delete <database>` to delete each one, then delete the account again.", what)).
-		WithHint("run `gregale postgres list`, then `gregale postgres delete <database>` for each database").
+		fmt.Sprintf("this account still has %s; delete them before deleting the account. Run `gregale postgres list` to see them and `gregale postgres delete <database> --purge` to delete each one, then delete the account again. A database whose delete is only scheduled still counts until it is purged.", what)).
+		WithHint("run `gregale postgres list`, then `gregale postgres delete <database> --purge` for each database").
 		WithDocs(docsBase + "/postgres")
 }
 

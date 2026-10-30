@@ -44,7 +44,7 @@ func (s *server) applyPlatformTenantCredentials(w http.ResponseWriter, r *http.R
 	}
 	result, err := store.ApplyPlatformTenantCredentials(r.Context(), in)
 	if err != nil {
-		s.platformTenantCredentialError(w, err, acct.Plan)
+		s.platformTenantCredentialError(w, err)
 		return
 	}
 	if !req.DryRun {
@@ -60,8 +60,9 @@ func (s *server) applyPlatformTenantCredentials(w http.ResponseWriter, r *http.R
 }
 
 func platformTenantCredentialInput(acct state.Account, tenantID string, req api.ApplyPlatformTenantCredentialsRequest) (state.ApplyPlatformTenantCredentialsParams, error) {
+	// The store checks each key against its app's billing subject's plan
+	// (ADR-202610171904): a company app's keys spend the company's allowance.
 	in := state.ApplyPlatformTenantCredentialsParams{AccountID: acct.ID, TenantID: tenantID, DryRun: req.DryRun,
-		AppLimit: acct.Plan.ConsumerKeysPerApp(), AccountLimit: acct.Plan.ConsumerKeysPerAccount(),
 		RevokeKeyIDs: req.RevokeKeyIDs}
 	for _, wanted := range req.Keys {
 		hash, err := hex.DecodeString(wanted.Hash)
@@ -74,11 +75,11 @@ func platformTenantCredentialInput(acct state.Account, tenantID string, req api.
 	return in, nil
 }
 
-func (s *server) platformTenantCredentialError(w http.ResponseWriter, err error, plan api.Plan) {
+func (s *server) platformTenantCredentialError(w http.ResponseWriter, err error) {
 	var quota *state.PlatformTenantCredentialQuotaError
 	switch {
 	case errors.As(err, &quota):
-		api.WriteProblem(w, api.ErrConsumerKeyQuota(plan, quota.Scope, quota.Limit, quota.Observed))
+		api.WriteProblem(w, api.ErrConsumerKeyQuota(quota.Plan, quota.Scope, quota.Limit, quota.Observed))
 	case errors.Is(err, state.ErrNotFound):
 		s.notFound(w, "no such tenant, consumer, or key")
 	case errors.Is(err, state.ErrConflict):

@@ -1490,7 +1490,9 @@
       "routes": [
         "/dashboard/apps/{}/freeze-status",
         "/v1/apps/{}/freeze-status",
-        "/v1/freezes"
+        "/v1/apps/{}/freezes",
+        "/v1/freezes",
+        "/v1/orgs/{}/freezes"
       ],
       "cli": [
         "freeze"

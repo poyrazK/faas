@@ -560,22 +560,33 @@ releases.
 
 ## Deploy freezes
 
-A freeze stops new production releases of one app, or of every app in the
-account, while it is active
+A freeze stops new production releases of one app, or of all of its owner's
+apps, while it is active
 ([ADR-20261019071733](adr/20261019071733-deploy-freezes-and-release-windows.md)):
 
 ```bash
 # Freeze one app for two hours, starting now.
 gregale release freeze create --app my-api --for 2h --reason "incident 4711"
-# No releases from Friday 16:00 to Monday 08:00 (64 hours), Istanbul time, for every app.
+# No releases from Friday 16:00 to Monday 08:00 (64 hours), Istanbul time, for every personal app.
 gregale release freeze create --all-apps --weekly fri --at 16:00 --for 64h --tz Europe/Istanbul --reason "no weekend releases"
 # After Gregale rolls a release back on its own, freeze the app for an hour.
 gregale release freeze create --app my-api --after-rollback 1h --reason "settle after automatic rollbacks"
+# Freeze every app of the company organization acme for three days.
+gregale release freeze create --org acme --for 72h --reason "holiday freeze"
 
 gregale release freeze status --app my-api
-gregale release freeze list
-gregale release freeze lift <id>
+gregale release freeze list [--app my-api | --org acme]
+gregale release freeze lift <id> [--app my-api | --org acme]
 ```
+
+A company organization owns the freezes of its apps, whoever created the app.
+A freeze on all apps with `--org` covers every app of that organization; a
+freeze with `--all-apps` covers only your personal apps. On a company app,
+every member sees its freezes, and a member who deploys can freeze it with a
+window and lift a window they created. Weekly and after-rollback freezes are
+standing policies, so only owners and admins create them, and they can lift
+any freeze. A company's freezes stay when the member who created them leaves,
+and they appear in the organization's activity.
 
 While a freeze is active, every way of releasing to production is refused
 with `release_frozen`, which names the freeze, its reason and its creator:

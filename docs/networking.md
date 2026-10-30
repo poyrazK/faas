@@ -510,7 +510,11 @@ PR preview names. In a project, a name in the list (or in
 even when that service has a project-prefixed slug
 ([ADR-20261022120205](adr/20261022120205-project-prefixed-app-slugs.md)). An
 app outside the project matches by its slug only when no service of the
-target's project has that name. This target check runs before routing or waking `billing`. Preview callers
+target's project has that name. A deleted service keeps its name until it is
+purged (7 days after the delete, while it can still be restored): its siblings'
+`depends_on` names and caller lists neither resolve to nor admit an app outside
+the project that holds the name as a slug. Calls to it fail as not found until
+it is restored or a project apply removes the dependency. This target check runs before routing or waking `billing`. Preview callers
 must also pass the existing project and target preview policies.
 
 For least-privilege access, a target can grant each caller only specific HTTP

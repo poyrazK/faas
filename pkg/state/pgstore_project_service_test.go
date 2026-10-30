@@ -60,3 +60,23 @@ func TestPgProjectServiceLookupScopesAliasesAndRejectsAmbiguity(t *testing.T) {
 		t.Fatalf("preview sibling billing-api = %+v, %v", sibling, err)
 	}
 }
+
+// adr: 20261022120205
+func TestPgDeletedProjectMemberKeepsItsServiceName(t *testing.T) {
+	store, _ := pgStore(t)
+	deletedProjectMemberContract(t, store, func(read func(deletedMemberLookup)) { read(store) })
+}
+
+// The gateway's pinned service-policy view resolves aliases with its own
+// query; it must keep a deleted member's name too.
+func TestPgServicePolicyViewKeepsADeletedProjectMembersServiceName(t *testing.T) {
+	store, ctx := pgStore(t)
+	deletedProjectMemberContract(t, store, func(read func(deletedMemberLookup)) {
+		if err := store.WithServicePolicySnapshot(ctx, func(view state.ServicePolicyReader) error {
+			read(view)
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	})
+}

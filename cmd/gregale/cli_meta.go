@@ -1971,12 +1971,14 @@ var cliCommands = []cliCommand{
 			"gregale release freeze create --app my-api --for 2h --reason \"incident 4711\"",
 			"gregale release freeze create --all-apps --weekly fri --at 16:00 --for 64h --tz Europe/Istanbul --reason \"no weekend releases\"",
 			"gregale release freeze create --app my-api --after-rollback 1h --reason \"settle after automatic rollbacks\"",
+			"gregale release freeze create --org acme --for 72h --reason \"holiday freeze\"",
 			"gregale release freeze status --app my-api",
 		},
 		Subcommands: []cliSub{
 			{Name: "create", Short: "Create a freeze", Flags: []cliFlag{
 				{Name: "app", Short: "app slug (defaults to linked project app)", Value: "slug"},
-				{Name: "all-apps", Short: "freeze every app of the account", Bool: true},
+				{Name: "all-apps", Short: "freeze every personal app of your account", Bool: true},
+				{Name: "org", Short: "freeze every app of this company organization", Value: "org"},
 				{Name: "reason", Short: "why releases are frozen (required, at most 200 characters)", Value: "TEXT", Req: true},
 				{Name: "for", Short: "window length from --from (default now), or weekly length", Value: "DURATION"},
 				{Name: "from", Short: "window start (RFC 3339)", Value: "TIME"},
@@ -1988,8 +1990,12 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: "list", Short: "List freezes that have not ended", Aliases: []string{"ls"}, Flags: []cliFlag{
 				{Name: "app", Short: "only freezes covering this app", Value: "slug"},
+				{Name: "org", Short: "a company organization's freezes", Value: "org"},
 			}},
-			{Name: "lift", Short: "Lift a freeze", Positionals: []string{"<id>"}},
+			{Name: "lift", Short: "Lift a freeze", Positionals: []string{"<id>"}, Flags: []cliFlag{
+				{Name: "app", Short: "lift a freeze on this app", Value: "slug"},
+				{Name: "org", Short: "lift a company organization's freeze", Value: "org"},
+			}},
 			{Name: "status", Short: "Show whether production releases of an app are frozen now", Flags: []cliFlag{
 				{Name: "app", Short: "app slug (defaults to linked project app)", Value: "slug"},
 			}},
@@ -5726,7 +5732,11 @@ var cliCommands = []cliCommand{
 				{Name: "restore-window-seconds", Short: "point-in-time restore window", Value: "N"},
 			}, Examples: []string{"gregale postgres create orders --region us-east-2 --class development --scale-to-zero"}},
 			{Name: "get", Short: "Show one managed PostgreSQL database", Positionals: []string{"<database>"}},
-			{Name: "delete", Short: "Delete a managed PostgreSQL database and its restore history", Positionals: []string{"<database>"}, Flags: []cliFlag{{Name: "yes", Short: "skip the typed confirmation (alias: --quiet)"}}},
+			{Name: "delete", Short: "Delete a managed PostgreSQL database; it can be undone for 7 days", Positionals: []string{"<database>"}, Flags: []cliFlag{
+				{Name: "purge", Short: "delete at once with its restore history; cannot be undone"},
+				{Name: "yes", Short: "skip the typed confirmation (alias: --quiet)"},
+			}, Notes: []string{"The database stops at once; `gregale postgres undelete` brings it back until its restorable_until.", "A deleted database still counts toward the plan's database limit until it is purged."}, Examples: []string{"gregale postgres delete orders", "gregale postgres delete orders --purge"}},
+			{Name: "undelete", Short: "Bring back a deleted managed PostgreSQL database", Positionals: []string{"<database>"}, Notes: []string{"Works until the database's restorable_until, 7 days after the delete; a purged database is gone."}, Examples: []string{"gregale postgres undelete orders"}},
 			{Name: "compute-policy", Short: "Durably switch between idle suspension and always-on compute", Positionals: []string{"<database>"}, Flags: []cliFlag{
 				{Name: "scale-to-zero", Short: "true for idle suspension, false for always-on", Req: true, Value: "BOOL", ClosedSet: []string{"true", "false"}},
 				{Name: "request-id", Short: "stable request UUID; reuse after uncertain responses", Req: true, Value: "UUID"},
