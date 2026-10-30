@@ -192,11 +192,23 @@ func (s *server) projectStagesRemainProblem(r *http.Request, acct state.Account,
 			stages = append(stages, environment.Slug)
 		}
 	}
-	if len(stages) == 0 {
-		return nil
+	if len(stages) > 0 {
+		return api.NewProblem(http.StatusConflict, api.CodeConflict, "Project has stage environments",
+			"delete its stage environments first, which removes their managed resources: "+strings.Join(stages, ", "))
 	}
-	return api.NewProblem(http.StatusConflict, api.CodeConflict, "Project has stage environments",
-		"delete its stage environments first, which removes their managed resources: "+strings.Join(stages, ", "))
+	// An unfinished full clone may hold restored databases before its target
+	// environment exists; the cascade would orphan them.
+	if clones, ok := s.store.(state.ProjectEnvironmentCloneActivityStore); ok {
+		unfinished, err := clones.UnfinishedProjectEnvironmentClonesForProject(r.Context(), project.ID)
+		if err != nil {
+			return api.ErrCapacity("could not inspect project environment clones")
+		}
+		if unfinished > 0 {
+			return api.NewProblem(http.StatusConflict, api.CodeConflict, "Project has a running environment clone",
+				"wait until its full environment clones are ready or compensated, then delete their stages")
+		}
+	}
+	return nil
 }
 
 func (s *server) deleteProject(w http.ResponseWriter, r *http.Request, acct state.Account) {

@@ -69,3 +69,22 @@ func TestDeleteProjectRefusesWhileStagesRemain(t *testing.T) {
 		t.Fatalf("project survived its delete: %v", err)
 	}
 }
+
+// A running full clone may hold restored databases before its target
+// environment exists, so the project waits for it to end.
+func TestDeleteProjectRefusesWhileACloneRuns(t *testing.T) {
+	srv, store, acct, project, _ := apidserver.NewProjectLifecycleFixture(t)
+	ctx := context.Background()
+	if _, err := store.CreateProjectEnvironmentCloneOperation(ctx, state.ProjectEnvironmentCloneOperation{AccountID: acct.ID, ProjectID: project.ID,
+		SourceEnvironment: "production", TargetEnvironment: "stage", SourceRevisionHash: strings.Repeat("a", 64), IdempotencyKey: "running"}); err != nil {
+		t.Fatal(err)
+	}
+	req, rec := apidserver.ProjectRequest(http.MethodDelete, "/v1/projects/shop", "shop", nil)
+	srv.DeleteProjectForTest(rec, req, acct)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "clone") {
+		t.Fatalf("delete with a running clone = %d %s, want 409", rec.Code, rec.Body.String())
+	}
+	if _, err := store.ProjectBySlug(ctx, acct.ID, "shop"); err != nil {
+		t.Fatalf("refused delete removed the project: %v", err)
+	}
+}

@@ -116,6 +116,14 @@ func (s *PgStore) ReleaseProjectEnvironmentCloneLease(ctx context.Context, lease
 	return mapErr(tx.Commit(ctx))
 }
 
+func (s *PgStore) UnfinishedProjectEnvironmentClonesForProject(ctx context.Context, projectID string) (int64, error) {
+	if !validCloneCredentialSourceID(projectID) {
+		return 0, ErrNotFound
+	}
+	count, err := new(sqlc.Queries).CountUnfinishedProjectEnvironmentCloneOperationsForProject(ctx, s.pool, mustPgUUID(projectID))
+	return count, mapErr(err)
+}
+
 func (s *PgStore) UnfinishedProjectEnvironmentClones(ctx context.Context) (int64, error) {
 	count, err := new(sqlc.Queries).CountUnfinishedProjectEnvironmentCloneOperations(ctx, s.pool)
 	return count, mapErr(err)

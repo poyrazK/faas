@@ -7099,6 +7099,10 @@ WHERE h.environment_id=$1 ORDER BY h.app_id FOR SHARE OF h,s;
 -- name: ReadProjectEnvironmentCloneOperationIDByKey :one
 SELECT id FROM project_environment_clone_operations WHERE account_id=$1 AND project_id=$2 AND idempotency_key=$3;
 
+-- name: CountUnfinishedProjectEnvironmentCloneOperationsForProject :one
+SELECT count(*)::bigint FROM project_environment_clone_operations
+WHERE project_id = sqlc.arg(project_id)::uuid AND status IN ('pending','capturing','copying','publishing','compensating');
+
 -- name: CountUnfinishedProjectEnvironmentCloneOperations :one
 SELECT count(*)::bigint FROM project_environment_clone_operations
 WHERE status IN ('pending','capturing','copying','publishing','compensating');
