@@ -19,17 +19,18 @@ func freshNodePlacement(ctx context.Context) bool {
 // nodePlacementContext binds the placement's node generation (ADR-1528), the
 // reservation allowance this scheduler may claim on that node (a measured
 // admission may book past the bare ceiling up to ADR-909's bound, ADR-909
-// amendment 1), and the vCPU and CPU r books there with the quiet-pause
-// discount placement applied, so the durable guard checks the node's vCPU
-// and CPU budgets as placement did (ADR-20261027220445).
+// amendment 1), and the vCPU and CPU r books there with the quiet-pause and
+// measured CPU discount placement applied, so the durable guard checks the
+// node's vCPU and CPU budgets as placement did (ADR-20261027220445,
+// ADR 20261029151111).
 func (e *Engine) nodePlacementContext(ctx context.Context, p Placement, r Request) context.Context {
 	admission := state.NodeAdmission{NodeID: p.NodeID, Generation: p.LifecycleGeneration}
 	if e.ledger != nil {
 		admission.ReservationPercent = e.ledger.ReservationPercent(p.NodeID)
 		if !r.AllowResidentRecovery {
-			quietVCPU, quietCPU := e.ledger.QuietDiscount(p.NodeID)
+			discountVCPU, discountCPU := e.ledger.CPUDiscount(p.NodeID)
 			admission.Compute = state.NodeCompute{VCPU: r.VCPU, CPUMillicores: r.CPUMillicores,
-				QuietVCPU: quietVCPU, QuietCPUMillicores: quietCPU}
+				QuietVCPU: discountVCPU, QuietCPUMillicores: discountCPU}
 		}
 	}
 	return state.WithNodeAdmission(ctx, admission)

@@ -8153,6 +8153,7 @@ type ManagedPostgresDatabase struct {
 	CloneResourceRole           string
 	AccountingRequired          bool
 	OrgID                       pgtype.UUID
+	PurgeAfter                  pgtype.Timestamptz
 }
 
 type ManagedPostgresDatabaseEndpoint struct {

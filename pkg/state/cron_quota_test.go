@@ -8,9 +8,9 @@ import (
 )
 
 // An account's apps live on different nodes, but the per-account cron cap must
-// hold across the whole fleet. AccountEligibleCronIDs ranks every app's crons
+// hold across the whole fleet. BillingSubjectEligibleCronIDs ranks every app's crons
 // together by age so each schedd computes the same eligible set.
-func TestAccountEligibleCronIDsRanksGlobally(t *testing.T) {
+func TestBillingSubjectEligibleCronIDsRanksGlobally(t *testing.T) {
 	ctx := context.Background()
 	m := NewMemStore()
 	base := time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC)
@@ -38,7 +38,7 @@ func TestAccountEligibleCronIDsRanksGlobally(t *testing.T) {
 	}
 
 	// per-account cap 3, per-app cap not binding -> oldest 3 across both apps.
-	ids, err := m.AccountEligibleCronIDs(ctx, "acct", 10, 3)
+	ids, err := m.BillingSubjectEligibleCronIDs(ctx, "acct", 10, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,13 +47,13 @@ func TestAccountEligibleCronIDsRanksGlobally(t *testing.T) {
 	}
 
 	// per-app cap 1 keeps only each app's oldest cron: a1 and b1.
-	ids, _ = m.AccountEligibleCronIDs(ctx, "acct", 1, 3)
+	ids, _ = m.BillingSubjectEligibleCronIDs(ctx, "acct", 1, 3)
 	if got := has(ids); len(ids) != 2 || !got["a1"] || !got["b1"] {
 		t.Fatalf("eligible with per-app cap 1 = %v; want {a1,b1}", ids)
 	}
 
 	// Free-tier 0 caps -> nothing is eligible.
-	if ids, _ := m.AccountEligibleCronIDs(ctx, "acct", 0, 0); len(ids) != 0 {
+	if ids, _ := m.BillingSubjectEligibleCronIDs(ctx, "acct", 0, 0); len(ids) != 0 {
 		t.Fatalf("zero caps returned %v; want none", ids)
 	}
 }

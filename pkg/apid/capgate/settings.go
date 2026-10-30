@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 
@@ -62,6 +63,14 @@ func RuntimeSetting(runtime string) string { return "runtime." + strings.TrimSpa
 // WildcardDomainSetting is the setting a wildcard custom domain turns on.
 const WildcardDomainSetting = "domain.wildcard"
 
+// subSettings lists object fields whose keys belong to different
+// capabilities. Each listed key that turns something on is a setting of its
+// own ("app.profiling.pprof_port"); the field itself counts only when one of
+// its other keys turns something on. Continuous profiling owns the profiling
+// block, while on-demand captures (ADR-1155) own the pprof port they scrape
+// and the automatic-capture switch.
+var subSettings = map[string][]string{"profiling": {"automatic_captures", "pprof_port"}}
+
 // AppSettings lists the settings an app create or update request turns on:
 // every field it sets to a non-zero value that differs from current. Strings
 // are value-qualified ("app.visibility=internal"). current is the app as the
@@ -78,9 +87,55 @@ func AppSettings(request, current any) []string {
 		if was, ok := cur[key]; ok && sameJSON(was, raw) {
 			continue
 		}
+		if keys, ok := subSettings[key]; ok {
+			out = append(out, splitSettings("app."+key, raw, cur[key], keys)...)
+			continue
+		}
 		out = append(out, qualified("app."+key, raw))
 	}
 	sort.Strings(out)
+	return out
+}
+
+// splitSettings lists the settings of an object field whose keys belong to
+// different capabilities (subSettings): each listed key that turns something
+// on and changed, then the field itself when its other keys turn something on
+// and changed.
+func splitSettings(setting string, raw, was json.RawMessage, keys []string) []string {
+	now, before := objectFields(raw), objectFields(was)
+	var out []string
+	rest, restBefore := map[string]json.RawMessage{}, map[string]json.RawMessage{}
+	for key, value := range now {
+		if !slices.Contains(keys, key) {
+			rest[key] = value
+			continue
+		}
+		if enabling(value) && !sameJSON(before[key], value) {
+			out = append(out, qualified(setting+"."+key, value))
+		}
+	}
+	for key, value := range before {
+		if !slices.Contains(keys, key) {
+			restBefore[key] = value
+		}
+	}
+	turnsOn := false
+	for _, value := range rest {
+		turnsOn = turnsOn || enabling(value)
+	}
+	restJSON, _ := json.Marshal(rest)
+	beforeJSON, _ := json.Marshal(restBefore)
+	if turnsOn && !sameJSON(restJSON, beforeJSON) {
+		out = append(out, setting)
+	}
+	return out
+}
+
+func objectFields(raw json.RawMessage) map[string]json.RawMessage {
+	var out map[string]json.RawMessage
+	if len(raw) == 0 || json.Unmarshal(raw, &out) != nil {
+		return map[string]json.RawMessage{}
+	}
 	return out
 }
 
@@ -102,6 +157,17 @@ func ManifestSettings(m *gregalemanifest.Manifest) []string {
 		switch key {
 		case "triggers", "lifecycle":
 		default:
+			if keys, ok := subSettings[key]; ok {
+				raw, err := json.Marshal(v.Field(i).Interface())
+				if err != nil {
+					set["manifest."+key] = true
+					continue
+				}
+				for _, setting := range splitSettings("manifest."+key, raw, nil, keys) {
+					set[setting] = true
+				}
+				continue
+			}
 			set["manifest."+key] = true
 		}
 	}

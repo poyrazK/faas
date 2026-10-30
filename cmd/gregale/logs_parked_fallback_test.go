@@ -72,6 +72,38 @@ func TestCmdLogsParkedAppShowsRetainedLogs(t *testing.T) {
 	}
 }
 
+// Scripts and agents read logs with --json (the journey harness sets
+// FAAS_JSON=1), so a parked app shows its retained logs there too, rather than
+// only an app_logs_unavailable problem (Hunt 14 H14-126).
+func TestCmdLogsParkedAppShowsRetainedLogsUnderJSON(t *testing.T) {
+	main.ResetJSONOut(t)
+	(*main.JsonOutput) = true
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/instances"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprint(w, `[{"id":"inst-new","state":"sleeping","started_at":"2026-10-14T17:04:34Z"}]`)
+		case r.URL.Query().Get("archive_instance") != "" || r.URL.Query().Get("instance") != "" || strings.Contains(r.URL.Path, "archive"):
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = fmt.Fprint(w, "data: marker-1234\n\nevent: end\ndata: {\"reason\":\"archive_complete\"}\n\n")
+		default:
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = fmt.Fprint(w, "event: degraded\ndata: {\"code\":\"not_found\"}\n\n")
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "test-token")
+	stdout, restoreOut := main.CaptureStdout(t)
+	stderr, restoreErr := main.CaptureStderr(t)
+	code := main.CmdLogs([]string{"myapp", "--grep", "marker"})
+	restoreErr()
+	restoreOut()
+	if code != 0 || !strings.Contains(stdout.String(), "marker-1234") {
+		t.Fatalf("exit=%d stdout=%q stderr=%q, want 0 and the retained line", code, stdout.String(), stderr.String())
+	}
+}
+
 // #2691: Ctrl-C before the log stream connects exits 130, as Ctrl-C while it
 // streams does, instead of reporting the API as unreachable.
 func TestLogsInterruptedWhileConnectingExits130(t *testing.T) {

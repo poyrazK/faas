@@ -418,6 +418,47 @@ The same review fixed four defects on the capture path:
   node. At its bound it refused every upload; it now evicts its oldest entries
   (`ProfileRetryCacheMaxEntries`), so one tenant's volume cannot block another's.
 
+## Amendment: released per account, observed (2026-10-28)
+
+Captures shipped behind the installation flag `FAAS_PROFILING_ON_DEMAND`
+alone. Their routes belonged to the `traffic-profiles` catalog entry
+(internal), so they could not be released to some accounts, and once an
+installation set the flag every account on a plan with profiling got the
+collector preload in its runtimes and automatic captures. Nothing measured
+them.
+
+- **Own capability.** `profile-captures` (preview, Hobby and up; ADR
+  20261023115741) owns `/v1/apps/{}/profiles/captures`, the dashboard capture
+  pages and `gregale debug capture`, `captures` and `capture-diff`. Its flag
+  `profile_captures` releases captures to selected accounts; apid hides the
+  API from the rest.
+- **Daemons follow the release.** schedd queues automatic captures only for
+  released accounts. imaged becomes a capability consumer: with
+  `FAAS_PROFILING_ON_DEMAND=1` it watches the platform flags and stamps the
+  dormant collectors only into deployments of released accounts, so an
+  unreleased account's runtimes keep no Node preload or Python
+  `sitecustomize`. A deployment made before its account was released needs a
+  redeploy, as for the plan.
+- **Settings.** The profiling block stays a setting of
+  `continuous-profiling`, but `profiling.pprof_port` and
+  `profiling.automatic_captures` are settings of `profile-captures`, and a
+  block that only turns things off is no setting. An account released captures
+  alone can name its Go pprof port and opt out of automatic captures.
+- **Metrics and alerts.** schedd exports `schedd_profile_captures_total{trigger,result}`,
+  `schedd_profile_capture_duration_seconds`, `schedd_profile_capture_queue_wait_seconds`
+  and `schedd_profile_capture_automatic_skipped_total{trigger,reason}`.
+  `FaasProfileCapturesFailing` fires when most captures fail on the platform
+  side (customer results such as no running instance are excluded) and
+  `FaasProfileCaptureQueueBacklog` when manual captures wait over two minutes
+  (docs/runbooks/FaasProfileCaptures.md). profiled's upload metric gets no
+  alert yet: profiled listens on loopback and no scrape job reaches it; it
+  belongs with continuous profiling's backend rollout.
+- **Review leftovers.** Capture API and dashboard errors render as pages in
+  a browser; the Node inspector cleanup closes only an inspector of the
+  process it verified; automatic deployment checks stop retrying a backend
+  outage at the attempt limit, and a failing check stage no longer skips the
+  canary and periodic checks.
+
 ## Rejected alternatives
 
 - **apid → schedd gRPC.** Violates the ownership rule (apid records intent in

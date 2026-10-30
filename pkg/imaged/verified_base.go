@@ -54,6 +54,9 @@ func (h *Handler) ensureVerifiedBaseExt4(ctx context.Context, r verifiedBaseRequ
 	if cached, ok, err := h.reuseVerifiedBase(ctx, r, store, resolved.SourceReference); err != nil || ok {
 		return cached, err
 	}
+	if err := h.checkBaseProvenance(ctx, resolved); err != nil {
+		return BaseStageResult{}, err
+	}
 	build := verifiedBaseBuild{prepared: preparedContainerWorkload{ImageResolution: resolved}}
 	if r.parentRef == "" {
 		build, err = h.buildVerifiedBase(ctx, r, build)

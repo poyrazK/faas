@@ -85,11 +85,30 @@ func (m *MemStore) appBillingSubjectLocked(accountID, appID string) string {
 	if !ok {
 		return accountID
 	}
-	org, ok := m.orgs[app.OrgID]
+	return m.billingSubjectLocked(accountID, app.OrgID)
+}
+
+// billingSubjectLocked is the billing subject of a namespace's apps in orgID
+// (see quotaSubjectSQL): the organization once it adopted billing, else the
+// namespace.
+func (m *MemStore) billingSubjectLocked(accountID, orgID string) string {
+	org, ok := m.orgs[orgID]
 	if ok && !org.Personal && org.ResourceOwnershipEnabled {
 		return org.ID
 	}
 	return accountID
+}
+
+// quotaSubjectCronsLocked counts the crons of subject's live apps, the
+// per-account cron allowance's usage (see countQuotaSubjectCronsTx).
+func (m *MemStore) quotaSubjectCronsLocked(subject string) int {
+	n := 0
+	for _, c := range m.crons {
+		if a, ok := m.apps[c.AppID]; ok && m.countsTowardQuotaSubjectLocked(a.AccountID, a.ID, subject) {
+			n++
+		}
+	}
+	return n
 }
 
 // countsTowardQuotaSubjectLocked reports whether a row of accountID, on appID

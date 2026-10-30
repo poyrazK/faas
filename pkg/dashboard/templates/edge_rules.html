@@ -429,9 +429,21 @@
             <option value="rewrite">rewrite</option><option value="route">route</option><option value="maintenance">maintenance</option>
             <option value="limit">limit</option><option value="budget">budget</option><option value="cache">cache</option>
             <option value="geo">geo</option><option value="throttle">throttle</option><option value="validate">validate</option>
+            <option value="ip">ip</option><option value="jwt">jwt</option><option value="waf">waf</option>
+            {{if .Data.ChallengeAvailable}}<option value="challenge">challenge</option>{{else}}<option value="challenge" disabled>challenge (not yet available)</option>{{end}}
             {{if .Data.App.IsPreview}}<option value="respond">respond (preview mock)</option>{{end}}
           </select>
         </label>
+        <details>
+          <summary>Action JSON for ip, jwt, waf and challenge</summary>
+          <ul>
+            <li>ip: <code>{"deny":["203.0.113.0/24"]}</code> or <code>{"allow":["198.51.100.7/32"]}</code></li>
+            <li>jwt: <code>{"issuer":"https://idp.example.com/","jwks_url":"https://idp.example.com/.well-known/jwks.json","algorithms":["RS256"],"audience":["api"]}</code></li>
+            <li>waf: <code>{"mode":"observe"}</code>; <code>warn</code> and <code>block</code> also take <code>exclude_rule_ids</code></li>
+            <li>challenge: <code>{}</code> for the defaults, or <code>{"difficulty":16,"pass_ttl_seconds":3600}</code></li>
+          </ul>
+          <p class="muted">Every kind's fields are in the <a href="/docs/edge-rules">edge rules reference</a>.</p>
+        </details>
         {{if .Data.App.IsPreview}}
           <label>Mock status <input name="respond_status" type="number" min="200" max="599" value="200"></label>
           <label>Mock JSON body<br><textarea name="respond_body" rows="5" placeholder='{"days":3,"price":4.99}'></textarea> <span class="muted">Used when kind is respond.</span></label>

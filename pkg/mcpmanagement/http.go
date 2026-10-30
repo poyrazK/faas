@@ -240,6 +240,7 @@ func (r *remoteServer) handler() http.Handler {
 	mux.HandleFunc("POST "+prefix+"/oauth/consent", r.consent)
 	mux.HandleFunc("POST "+prefix+"/oauth/token", r.token)
 	mux.HandleFunc("POST "+prefix+"/oauth/revoke", r.revoke)
+	mux.HandleFunc("GET "+prefix+"/oauth/continue", r.continueLogin)
 	getServer := func(req *http.Request) *mcp.Server {
 		server, _ := req.Context().Value(grantServerKey{}).(*mcp.Server)
 		return server
@@ -339,6 +340,7 @@ func (r *remoteServer) authenticate(next http.Handler) http.Handler {
 			return
 		}
 		defer release()
+		r.slideCredential(g)
 		// Reverification may shorten a lease, but refresh cannot extend this request.
 		if currentExpiry.Before(leaseExpires) {
 			leaseExpires = currentExpiry
