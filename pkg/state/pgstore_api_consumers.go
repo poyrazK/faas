@@ -148,6 +148,7 @@ func (s *PgStore) CreateConsumerKeyForConsumer(ctx context.Context, accountID, c
 	if len(hash) != 32 {
 		return ConsumerKey{}, fmt.Errorf("pgstore: CreateConsumerKeyForConsumer: hash must be 32 bytes, got %d", len(hash))
 	}
+	hash = storedCredential(CredentialColumnConsumerKey, hash)
 	if len(scopes) == 0 {
 		return ConsumerKey{}, errors.New("pgstore: CreateConsumerKeyForConsumer: scopes cannot be empty")
 	}

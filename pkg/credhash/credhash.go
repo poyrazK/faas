@@ -199,6 +199,22 @@ func (p *Policy) Lookups(tag Tag, sum []byte) [][]byte {
 	return out
 }
 
+// Matches reports, in constant time per candidate, whether stored is the
+// value a credential whose SHA-256 is sum may hold. A caller that loads a
+// row by another key (an ID, a prefix) and then checks the token uses it.
+func (p *Policy) Matches(tag Tag, sum, stored []byte) bool {
+	if len(sum) != PlainSize || len(stored) == 0 {
+		return false
+	}
+	matched := false
+	for _, candidate := range p.Lookups(tag, sum) {
+		if hmac.Equal(candidate, stored) {
+			matched = true
+		}
+	}
+	return matched
+}
+
 // Stale reports whether a stored value found for sum should be rewritten:
 // keyed writes are on and it is plain or under an older key.
 func (p *Policy) Stale(stored []byte) bool {

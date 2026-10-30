@@ -2059,6 +2059,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return err
 	}
 	defer uninstallRuntimeSigner()
+	if err := installCredentialPolicy(deps.getenv, log); err != nil {
+		return err
+	}
 	// ADR 20261022111812: apid reads the account domain.
 	sealdomain.RegisterLoaded(ops.Registry(), sealdomain.Account, len(accountDomainIdentities) > 0)
 

@@ -1276,6 +1276,7 @@ type Handler struct {
 	// legacy anonymous path for apps in optional mode; required mode fails
 	// closed when production wiring is missing.
 	consumerAuthStore ConsumerAuthStore
+	credentialMatcher CredentialMatcher
 	// consumerKeyTouches coalesces best-effort last_used_at writes so a hot
 	// customer key does not turn every request into a database update.
 	consumerKeyTouches *consumerKeyToucher
@@ -1993,6 +1994,21 @@ func (h *Handler) WithRouteMetricsEnabled(enabled bool) *Handler {
 func (h *Handler) WithRequireAuthn(authn RequireAuthnAuthenticator, audit RequireAuthnAuditor) *Handler {
 	h.requireAuthnAuthn = authn
 	h.requireAuthnAudit = audit
+	return h
+}
+
+// CredentialMatcher answers whether a stored credential hash is the one a
+// presented token may hold. Stored hashes are keyed by a secret only apid
+// holds (ADR 20261029202403), so the gateway asks apid
+// (apidgrpc.CredentialMatcher, which caches matches).
+type CredentialMatcher interface {
+	Match(ctx context.Context, column string, stored, sum []byte) (bool, error)
+}
+
+// WithCredentialMatcher routes consumer-key checks through apid. Without
+// one the gateway compares plain hashes itself (unit tests).
+func (h *Handler) WithCredentialMatcher(m CredentialMatcher) *Handler {
+	h.credentialMatcher = m
 	return h
 }
 

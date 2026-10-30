@@ -147,6 +147,20 @@ func (r *authReceiver) AuthenticateCredential(ctx context.Context, req *apidpb.A
 	return &apidpb.AuthenticateCredentialResponse{Outcome: apidpb.CredentialOutcome_CREDENTIAL_OUTCOME_OK, AccountJson: accountJSON, KeyJson: keyJSON}, nil
 }
 
+// MatchCredential answers whether a stored credential hash a gateway read
+// is the one the presented token may hold (ADR 20261029202403). It answers
+// only yes or no, and only for the columns gateways check.
+func (r *authReceiver) MatchCredential(_ context.Context, req *apidpb.MatchCredentialRequest) (*apidpb.MatchCredentialResponse, error) {
+	tag, ok := state.GatewayCheckedCredential(req.GetColumn())
+	if !ok {
+		return nil, status.Error(codes.InvalidArgument, "column is not a gateway-checked credential")
+	}
+	if len(req.GetSha256()) != sha256.Size {
+		return nil, status.Error(codes.InvalidArgument, "sha256 must be 32 bytes")
+	}
+	return &apidpb.MatchCredentialResponse{Match: state.CredentialMatches(tag, req.GetSha256(), req.GetStored())}, nil
+}
+
 // RegisterAuthReceiver binds the AuthServer onto a gRPC server.
 // Called from runAuthServer in main.go alongside the other gRPC
 // services.

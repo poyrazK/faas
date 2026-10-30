@@ -50,6 +50,27 @@ service Auth {
   // unknown, expired or revoked credential is an outcome, not an error;
   // errors are Internal (store failures) and InvalidArgument.
   rpc AuthenticateCredential(AuthenticateCredentialRequest) returns (AuthenticateCredentialResponse);
+
+  // MatchCredential reports whether a stored credential hash is the one a
+  // presented token may hold (ADR 20261029202403). A gateway that loads a
+  // row by another key (a consumer key's prefix, a fork's ID) sends the
+  // stored value and the token's SHA-256; apid answers yes or no, never a
+  // digest. Only columns gateways check are accepted (InvalidArgument
+  // otherwise).
+  rpc MatchCredential(MatchCredentialRequest) returns (MatchCredentialResponse);
+}
+
+message MatchCredentialRequest {
+  // column — the credential column, e.g. "consumer_keys.hashed_secret".
+  string column = 1;
+  // stored — the value read from that column.
+  bytes stored = 2;
+  // sha256 — the SHA-256 of the presented token.
+  bytes sha256 = 3;
+}
+
+message MatchCredentialResponse {
+  bool match = 1;
 }
 
 // CredentialKind names which credential family a lookup is for.

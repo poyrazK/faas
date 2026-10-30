@@ -38,6 +38,7 @@ const _ = grpc.SupportPackageIsVersion9
 const (
 	Auth_AuthenticateKey_FullMethodName        = "/onebox.faas.apid.v1.Auth/AuthenticateKey"
 	Auth_AuthenticateCredential_FullMethodName = "/onebox.faas.apid.v1.Auth/AuthenticateCredential"
+	Auth_MatchCredential_FullMethodName        = "/onebox.faas.apid.v1.Auth/MatchCredential"
 )
 
 // AuthClient is the client API for Auth service.
@@ -70,6 +71,13 @@ type AuthClient interface {
 	// unknown, expired or revoked credential is an outcome, not an error;
 	// errors are Internal (store failures) and InvalidArgument.
 	AuthenticateCredential(ctx context.Context, in *AuthenticateCredentialRequest, opts ...grpc.CallOption) (*AuthenticateCredentialResponse, error)
+	// MatchCredential reports whether a stored credential hash is the one a
+	// presented token may hold (ADR 20261029202403). A gateway that loads a
+	// row by another key (a consumer key's prefix, a fork's ID) sends the
+	// stored value and the token's SHA-256; apid answers yes or no, never a
+	// digest. Only columns gateways check are accepted (InvalidArgument
+	// otherwise).
+	MatchCredential(ctx context.Context, in *MatchCredentialRequest, opts ...grpc.CallOption) (*MatchCredentialResponse, error)
 }
 
 type authClient struct {
@@ -94,6 +102,16 @@ func (c *authClient) AuthenticateCredential(ctx context.Context, in *Authenticat
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(AuthenticateCredentialResponse)
 	err := c.cc.Invoke(ctx, Auth_AuthenticateCredential_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *authClient) MatchCredential(ctx context.Context, in *MatchCredentialRequest, opts ...grpc.CallOption) (*MatchCredentialResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(MatchCredentialResponse)
+	err := c.cc.Invoke(ctx, Auth_MatchCredential_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -130,6 +148,13 @@ type AuthServer interface {
 	// unknown, expired or revoked credential is an outcome, not an error;
 	// errors are Internal (store failures) and InvalidArgument.
 	AuthenticateCredential(context.Context, *AuthenticateCredentialRequest) (*AuthenticateCredentialResponse, error)
+	// MatchCredential reports whether a stored credential hash is the one a
+	// presented token may hold (ADR 20261029202403). A gateway that loads a
+	// row by another key (a consumer key's prefix, a fork's ID) sends the
+	// stored value and the token's SHA-256; apid answers yes or no, never a
+	// digest. Only columns gateways check are accepted (InvalidArgument
+	// otherwise).
+	MatchCredential(context.Context, *MatchCredentialRequest) (*MatchCredentialResponse, error)
 	mustEmbedUnimplementedAuthServer()
 }
 
@@ -145,6 +170,9 @@ func (UnimplementedAuthServer) AuthenticateKey(context.Context, *AuthenticateKey
 }
 func (UnimplementedAuthServer) AuthenticateCredential(context.Context, *AuthenticateCredentialRequest) (*AuthenticateCredentialResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method AuthenticateCredential not implemented")
+}
+func (UnimplementedAuthServer) MatchCredential(context.Context, *MatchCredentialRequest) (*MatchCredentialResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method MatchCredential not implemented")
 }
 func (UnimplementedAuthServer) mustEmbedUnimplementedAuthServer() {}
 func (UnimplementedAuthServer) testEmbeddedByValue()              {}
@@ -203,6 +231,24 @@ func _Auth_AuthenticateCredential_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Auth_MatchCredential_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MatchCredentialRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AuthServer).MatchCredential(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Auth_MatchCredential_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AuthServer).MatchCredential(ctx, req.(*MatchCredentialRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Auth_ServiceDesc is the grpc.ServiceDesc for Auth service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -217,6 +263,10 @@ var Auth_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "AuthenticateCredential",
 			Handler:    _Auth_AuthenticateCredential_Handler,
+		},
+		{
+			MethodName: "MatchCredential",
+			Handler:    _Auth_MatchCredential_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

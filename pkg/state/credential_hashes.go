@@ -13,7 +13,36 @@ import (
 const (
 	credTagAPIKey    credhash.Tag = "api_keys.key_sha256"
 	credTagOIDCToken credhash.Tag = "oidc_exchanged_tokens.token_hash"
+
+	// CredentialColumnConsumerKey and CredentialColumnForkToken are checked
+	// by gatewayd-internal, which loads the row itself and asks apid whether
+	// the presented token matches (MatchCredential).
+	CredentialColumnConsumerKey credhash.Tag = "consumer_keys.hashed_secret"
+	CredentialColumnForkToken   credhash.Tag = "app_forks.access_token_hash"
 )
+
+// GatewayCheckedCredential reports whether a gateway may ask apid to match
+// a value of column.
+func GatewayCheckedCredential(column string) (credhash.Tag, bool) {
+	switch tag := credhash.Tag(column); tag {
+	case CredentialColumnConsumerKey, CredentialColumnForkToken:
+		return tag, true
+	}
+	return "", false
+}
+
+// CredentialMatches reports whether stored, read from column tag, is the
+// value a credential whose token hashes to sum may hold under this
+// process's account policy.
+func CredentialMatches(tag credhash.Tag, sum, stored []byte) bool {
+	return credhash.Account().Matches(tag, sum, stored)
+}
+
+// StoredCredential is the value to write in column tag for a credential
+// whose token hashes to sum.
+func StoredCredential(tag credhash.Tag, sum []byte) []byte {
+	return storedCredential(tag, sum)
+}
 
 // credentialLookups are the stored values to try for a credential: a stored
 // digest (credhash.DigestSize bytes, as a caller re-checking a stored key

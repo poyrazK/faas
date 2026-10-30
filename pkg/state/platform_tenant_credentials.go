@@ -1,7 +1,6 @@
 package state
 
 import (
-	"bytes"
 	"context"
 	"encoding/hex"
 	"errors"
@@ -168,7 +167,7 @@ func validatePlatformTenantCredentials(in ApplyPlatformTenantCredentialsParams) 
 
 func sameCredentialIntent(current ConsumerKey, wanted PlatformTenantCredentialIntent) bool {
 	if current.ConsumerID != wanted.ConsumerID || current.Name != wanted.Name || current.Prefix != wanted.Prefix ||
-		!bytes.Equal(current.Hash, wanted.Hash) || current.RevokedAt != nil || len(current.Scopes) != len(wanted.Scopes) {
+		!CredentialMatches(CredentialColumnConsumerKey, wanted.Hash, current.Hash) || current.RevokedAt != nil || len(current.Scopes) != len(wanted.Scopes) {
 		return false
 	}
 	for i := range current.Scopes {

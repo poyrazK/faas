@@ -104,7 +104,7 @@ func (m *MemStore) planPlatformTenantCredentials(in ApplyPlatformTenantCredentia
 			return result, ErrInvalidArgument
 		}
 		key := ConsumerKey{AccountID: in.AccountID, AppID: consumer.AppID, ConsumerID: consumer.ID,
-			Name: wanted.Name, Prefix: wanted.Prefix, Hash: append([]byte(nil), wanted.Hash...),
+			Name: wanted.Name, Prefix: wanted.Prefix, Hash: storedCredential(CredentialColumnConsumerKey, append([]byte(nil), wanted.Hash...)),
 			Scopes: append([]string(nil), wanted.Scopes...), ExpiresAt: wanted.ExpiresAt}
 		accountCount++
 		appCounts[consumer.AppID]++
