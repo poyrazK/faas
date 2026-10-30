@@ -722,8 +722,10 @@ type Querier interface {
 	// ConsumeRecoveryCode, ApplyProjectPlan) renders those inline.
 	CreateOrg(ctx context.Context, db DBTX, arg CreateOrgParams) (CreateOrgRow, error)
 	CreateProjectMigration(ctx context.Context, db DBTX, arg CreateProjectMigrationParams) error
-	// ADR-20261019071733: deploy freezes and release windows.
-	// Inserts a freeze only while the account holds fewer than max_unlifted
+	// ADR-20261019071733: deploy freezes and release windows. A freeze belongs to
+	// an account or, since amendment 4, to a company organization; exactly one of
+	// account_id and org_id is set.
+	// Inserts a freeze only while its owner holds fewer than max_unlifted
 	// unlifted freezes that have not ended.
 	CreateReleaseFreezeWithinLimit(ctx context.Context, db DBTX, arg CreateReleaseFreezeWithinLimitParams) (ReleaseFreeze, error)
 	// One automatic freeze per rolled-back deployment; a retried rollback reuses it.
@@ -3038,6 +3040,7 @@ type Querier interface {
 	LayerArtifactHasReferences(ctx context.Context, db DBTX, arg LayerArtifactHasReferencesParams) (pgtype.Bool, error)
 	LifecycleApprovalClock(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
 	LifecycleHistoryCursorExists(ctx context.Context, db DBTX, arg LifecycleHistoryCursorExistsParams) (bool, error)
+	LiftOrgReleaseFreeze(ctx context.Context, db DBTX, arg LiftOrgReleaseFreezeParams) (ReleaseFreeze, error)
 	LiftReleaseFreeze(ctx context.Context, db DBTX, arg LiftReleaseFreezeParams) (ReleaseFreeze, error)
 	LinearOAuthFlowClaim(ctx context.Context, db DBTX, arg LinearOAuthFlowClaimParams) (IssueTrackerLinearOauthFlow, error)
 	LinearOAuthFlowCleanup(ctx context.Context, db DBTX, limit int32) error
@@ -3662,8 +3665,10 @@ type Querier interface {
 	// type. (commit 6 of the issue #757 mega-PR.)
 	ListTriggersForApp(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListTriggersForAppRow, error)
 	ListUDPListenersForApp(ctx context.Context, db DBTX, appID string) ([]AppUdpListener, error)
-	// Unlifted freezes that have not ended: active and upcoming windows, weekly
-	// windows and after-rollback policies.
+	// An organization's unlifted freezes that have not ended.
+	ListUnliftedOrgReleaseFreezes(ctx context.Context, db DBTX, arg ListUnliftedOrgReleaseFreezesParams) ([]ReleaseFreeze, error)
+	// An account's unlifted freezes that have not ended: active and upcoming
+	// windows, weekly windows and after-rollback policies.
 	ListUnliftedReleaseFreezes(ctx context.Context, db DBTX, arg ListUnliftedReleaseFreezesParams) ([]ReleaseFreeze, error)
 	// The account trace view's per-request wakes: one canonical instance per wake
 	// (its first), scoped to the account's apps before reading wake metadata, with
@@ -4978,6 +4983,9 @@ type Querier interface {
 	// plan on every project service call through the transaction pooler while no
 	// deployment on production-us was pinned (Hunt 14 H14-35).
 	ProjectServiceGraphCallerPinned(ctx context.Context, db DBTX, arg ProjectServiceGraphCallerPinnedParams) (bool, error)
+	// A deleted production member keeps its service name until it is purged, so
+	// the name does not fall back to an app slug elsewhere (ErrProjectServiceDeleted).
+	ProjectServiceHasDeletedApp(ctx context.Context, db DBTX, arg ProjectServiceHasDeletedAppParams) (bool, error)
 	ProjectStabilizationSuperseded(ctx context.Context, db DBTX, arg ProjectStabilizationSupersededParams) (bool, error)
 	ProjectWorkerGraphAdmission(ctx context.Context, db DBTX, arg ProjectWorkerGraphAdmissionParams) (bool, error)
 	PromotionControlBaselineUsable(ctx context.Context, db DBTX, releaseID string) (bool, error)

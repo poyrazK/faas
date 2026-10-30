@@ -985,6 +985,7 @@ var CmdPostgresDelete = cmdPostgresDelete
 var CmdPostgresDiagnostics = cmdPostgresDiagnostics
 var CmdPostgresGet = cmdPostgresGet
 var CmdPostgresList = cmdPostgresList
+var CmdPostgresUndelete = cmdPostgresUndelete
 var CmdPostgresReconcile = cmdPostgresReconcile
 var CmdPostgresResize = cmdPostgresResize
 var CmdPostgresUsage = cmdPostgresUsage

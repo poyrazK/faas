@@ -14,26 +14,30 @@ import (
 const createReleaseFreezeWithinLimit = `-- name: CreateReleaseFreezeWithinLimit :one
 
 INSERT INTO release_freezes (
-  id, account_id, app_id, kind, starts_at, ends_at, weekly_days, weekly_start_minute,
+  id, account_id, org_id, app_id, kind, starts_at, ends_at, weekly_days, weekly_start_minute,
   weekly_duration_minutes, time_zone, after_rollback_minutes, reason, source,
   source_deployment_id, created_by, created_at
 )
-SELECT $1::uuid, $2::uuid, $3::uuid, $4::text,
-  $5::timestamptz, $6::timestamptz, $7::smallint,
-  $8::smallint, $9::integer,
-  $10::text, $11::integer, $12::text,
-  'manual', NULL, $13::text, $14::timestamptz
+SELECT $1::uuid, $2::uuid, $3::uuid, $4::uuid,
+  $5::text, $6::timestamptz, $7::timestamptz,
+  $8::smallint, $9::smallint,
+  $10::integer, $11::text,
+  $12::integer, $13::text,
+  'manual', NULL, $14::text, $15::timestamptz
 WHERE (
   SELECT count(*) FROM release_freezes f
-   WHERE f.account_id = $2::uuid AND f.lifted_at IS NULL
-     AND (f.kind <> 'window' OR f.ends_at IS NULL OR f.ends_at > $14::timestamptz)
-) < $15::bigint
-RETURNING id, account_id, app_id, kind, starts_at, ends_at, weekly_days, weekly_start_minute, weekly_duration_minutes, time_zone, after_rollback_minutes, reason, source, source_deployment_id, created_by, created_at, lifted_at, lifted_by
+   WHERE f.account_id IS NOT DISTINCT FROM $2::uuid
+     AND f.org_id IS NOT DISTINCT FROM $3::uuid
+     AND f.lifted_at IS NULL
+     AND (f.kind <> 'window' OR f.ends_at IS NULL OR f.ends_at > $15::timestamptz)
+) < $16::bigint
+RETURNING id, account_id, app_id, kind, starts_at, ends_at, weekly_days, weekly_start_minute, weekly_duration_minutes, time_zone, after_rollback_minutes, reason, source, source_deployment_id, created_by, created_at, lifted_at, lifted_by, org_id
 `
 
 type CreateReleaseFreezeWithinLimitParams struct {
 	ID                    pgtype.UUID
 	AccountID             pgtype.UUID
+	OrgID                 pgtype.UUID
 	AppID                 pgtype.UUID
 	Kind                  string
 	StartsAt              pgtype.Timestamptz
@@ -49,13 +53,16 @@ type CreateReleaseFreezeWithinLimitParams struct {
 	MaxUnlifted           int64
 }
 
-// ADR-20261019071733: deploy freezes and release windows.
-// Inserts a freeze only while the account holds fewer than max_unlifted
+// ADR-20261019071733: deploy freezes and release windows. A freeze belongs to
+// an account or, since amendment 4, to a company organization; exactly one of
+// account_id and org_id is set.
+// Inserts a freeze only while its owner holds fewer than max_unlifted
 // unlifted freezes that have not ended.
 func (q *Queries) CreateReleaseFreezeWithinLimit(ctx context.Context, db DBTX, arg CreateReleaseFreezeWithinLimitParams) (ReleaseFreeze, error) {
 	row := db.QueryRow(ctx, createReleaseFreezeWithinLimit,
 		arg.ID,
 		arg.AccountID,
+		arg.OrgID,
 		arg.AppID,
 		arg.Kind,
 		arg.StartsAt,
@@ -90,17 +97,18 @@ func (q *Queries) CreateReleaseFreezeWithinLimit(ctx context.Context, db DBTX, a
 		&i.CreatedAt,
 		&i.LiftedAt,
 		&i.LiftedBy,
+		&i.OrgID,
 	)
 	return i, err
 }
 
 const createRollbackReleaseFreeze = `-- name: CreateRollbackReleaseFreeze :execrows
 INSERT INTO release_freezes (
-  id, account_id, app_id, kind, starts_at, ends_at, reason, source, source_deployment_id, created_by, created_at
+  id, account_id, org_id, app_id, kind, starts_at, ends_at, reason, source, source_deployment_id, created_by, created_at
 ) VALUES (
-  $1::uuid, $2::uuid, $3::uuid, 'window',
-  $4::timestamptz, $5::timestamptz, $6::text,
-  'automatic_rollback', $7::uuid, $8::text, $4::timestamptz
+  $1::uuid, $2::uuid, $3::uuid, $4::uuid, 'window',
+  $5::timestamptz, $6::timestamptz, $7::text,
+  'automatic_rollback', $8::uuid, $9::text, $5::timestamptz
 )
 ON CONFLICT (source_deployment_id) WHERE source = 'automatic_rollback' DO NOTHING
 `
@@ -108,6 +116,7 @@ ON CONFLICT (source_deployment_id) WHERE source = 'automatic_rollback' DO NOTHIN
 type CreateRollbackReleaseFreezeParams struct {
 	ID                 pgtype.UUID
 	AccountID          pgtype.UUID
+	OrgID              pgtype.UUID
 	AppID              pgtype.UUID
 	StartsAt           pgtype.Timestamptz
 	EndsAt             pgtype.Timestamptz
@@ -121,6 +130,7 @@ func (q *Queries) CreateRollbackReleaseFreeze(ctx context.Context, db DBTX, arg 
 	result, err := db.Exec(ctx, createRollbackReleaseFreeze,
 		arg.ID,
 		arg.AccountID,
+		arg.OrgID,
 		arg.AppID,
 		arg.StartsAt,
 		arg.EndsAt,
@@ -134,11 +144,57 @@ func (q *Queries) CreateRollbackReleaseFreeze(ctx context.Context, db DBTX, arg 
 	return result.RowsAffected(), nil
 }
 
+const liftOrgReleaseFreeze = `-- name: LiftOrgReleaseFreeze :one
+UPDATE release_freezes
+   SET lifted_at = $1::timestamptz, lifted_by = $2::text
+ WHERE org_id = $3::uuid AND id = $4::uuid AND lifted_at IS NULL
+RETURNING id, account_id, app_id, kind, starts_at, ends_at, weekly_days, weekly_start_minute, weekly_duration_minutes, time_zone, after_rollback_minutes, reason, source, source_deployment_id, created_by, created_at, lifted_at, lifted_by, org_id
+`
+
+type LiftOrgReleaseFreezeParams struct {
+	Now      pgtype.Timestamptz
+	LiftedBy string
+	OrgID    pgtype.UUID
+	ID       pgtype.UUID
+}
+
+func (q *Queries) LiftOrgReleaseFreeze(ctx context.Context, db DBTX, arg LiftOrgReleaseFreezeParams) (ReleaseFreeze, error) {
+	row := db.QueryRow(ctx, liftOrgReleaseFreeze,
+		arg.Now,
+		arg.LiftedBy,
+		arg.OrgID,
+		arg.ID,
+	)
+	var i ReleaseFreeze
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Kind,
+		&i.StartsAt,
+		&i.EndsAt,
+		&i.WeeklyDays,
+		&i.WeeklyStartMinute,
+		&i.WeeklyDurationMinutes,
+		&i.TimeZone,
+		&i.AfterRollbackMinutes,
+		&i.Reason,
+		&i.Source,
+		&i.SourceDeploymentID,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.LiftedAt,
+		&i.LiftedBy,
+		&i.OrgID,
+	)
+	return i, err
+}
+
 const liftReleaseFreeze = `-- name: LiftReleaseFreeze :one
 UPDATE release_freezes
    SET lifted_at = $1::timestamptz, lifted_by = $2::text
  WHERE account_id = $3::uuid AND id = $4::uuid AND lifted_at IS NULL
-RETURNING id, account_id, app_id, kind, starts_at, ends_at, weekly_days, weekly_start_minute, weekly_duration_minutes, time_zone, after_rollback_minutes, reason, source, source_deployment_id, created_by, created_at, lifted_at, lifted_by
+RETURNING id, account_id, app_id, kind, starts_at, ends_at, weekly_days, weekly_start_minute, weekly_duration_minutes, time_zone, after_rollback_minutes, reason, source, source_deployment_id, created_by, created_at, lifted_at, lifted_by, org_id
 `
 
 type LiftReleaseFreezeParams struct {
@@ -175,12 +231,66 @@ func (q *Queries) LiftReleaseFreeze(ctx context.Context, db DBTX, arg LiftReleas
 		&i.CreatedAt,
 		&i.LiftedAt,
 		&i.LiftedBy,
+		&i.OrgID,
 	)
 	return i, err
 }
 
+const listUnliftedOrgReleaseFreezes = `-- name: ListUnliftedOrgReleaseFreezes :many
+SELECT id, account_id, app_id, kind, starts_at, ends_at, weekly_days, weekly_start_minute, weekly_duration_minutes, time_zone, after_rollback_minutes, reason, source, source_deployment_id, created_by, created_at, lifted_at, lifted_by, org_id FROM release_freezes
+ WHERE org_id = $1::uuid AND lifted_at IS NULL
+   AND (kind <> 'window' OR ends_at IS NULL OR ends_at > $2::timestamptz)
+ ORDER BY created_at, id
+`
+
+type ListUnliftedOrgReleaseFreezesParams struct {
+	OrgID pgtype.UUID
+	Now   pgtype.Timestamptz
+}
+
+// An organization's unlifted freezes that have not ended.
+func (q *Queries) ListUnliftedOrgReleaseFreezes(ctx context.Context, db DBTX, arg ListUnliftedOrgReleaseFreezesParams) ([]ReleaseFreeze, error) {
+	rows, err := db.Query(ctx, listUnliftedOrgReleaseFreezes, arg.OrgID, arg.Now)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReleaseFreeze{}
+	for rows.Next() {
+		var i ReleaseFreeze
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Kind,
+			&i.StartsAt,
+			&i.EndsAt,
+			&i.WeeklyDays,
+			&i.WeeklyStartMinute,
+			&i.WeeklyDurationMinutes,
+			&i.TimeZone,
+			&i.AfterRollbackMinutes,
+			&i.Reason,
+			&i.Source,
+			&i.SourceDeploymentID,
+			&i.CreatedBy,
+			&i.CreatedAt,
+			&i.LiftedAt,
+			&i.LiftedBy,
+			&i.OrgID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listUnliftedReleaseFreezes = `-- name: ListUnliftedReleaseFreezes :many
-SELECT id, account_id, app_id, kind, starts_at, ends_at, weekly_days, weekly_start_minute, weekly_duration_minutes, time_zone, after_rollback_minutes, reason, source, source_deployment_id, created_by, created_at, lifted_at, lifted_by FROM release_freezes
+SELECT id, account_id, app_id, kind, starts_at, ends_at, weekly_days, weekly_start_minute, weekly_duration_minutes, time_zone, after_rollback_minutes, reason, source, source_deployment_id, created_by, created_at, lifted_at, lifted_by, org_id FROM release_freezes
  WHERE account_id = $1::uuid AND lifted_at IS NULL
    AND (kind <> 'window' OR ends_at IS NULL OR ends_at > $2::timestamptz)
  ORDER BY created_at, id
@@ -191,8 +301,8 @@ type ListUnliftedReleaseFreezesParams struct {
 	Now       pgtype.Timestamptz
 }
 
-// Unlifted freezes that have not ended: active and upcoming windows, weekly
-// windows and after-rollback policies.
+// An account's unlifted freezes that have not ended: active and upcoming
+// windows, weekly windows and after-rollback policies.
 func (q *Queries) ListUnliftedReleaseFreezes(ctx context.Context, db DBTX, arg ListUnliftedReleaseFreezesParams) ([]ReleaseFreeze, error) {
 	rows, err := db.Query(ctx, listUnliftedReleaseFreezes, arg.AccountID, arg.Now)
 	if err != nil {
@@ -221,6 +331,7 @@ func (q *Queries) ListUnliftedReleaseFreezes(ctx context.Context, db DBTX, arg L
 			&i.CreatedAt,
 			&i.LiftedAt,
 			&i.LiftedBy,
+			&i.OrgID,
 		); err != nil {
 			return nil, err
 		}

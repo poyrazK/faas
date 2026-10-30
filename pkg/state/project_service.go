@@ -8,6 +8,14 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
+// ErrProjectServiceDeleted reports that a project's service name belongs only
+// to deleted production members, whose rows remain until purge. It is an
+// ErrNotFound, yet the name must not fall back to an app slug elsewhere: a
+// sibling's binding to it was written for the deleted member, which got a
+// project-prefixed slug when another app already held the bare name
+// (ADR-20261022120205).
+var ErrProjectServiceDeleted = fmt.Errorf("project service is deleted: %w", ErrNotFound)
+
 type ProjectServiceReader interface {
 	AppsForProject(context.Context, string, string) ([]App, error)
 	AppBySlug(context.Context, string) (App, error)
@@ -24,12 +32,13 @@ type ProjectServiceLookupReader interface {
 }
 
 // AppByServiceName resolves a production project's repository aliases before
-// the established global app-slug fallback. Preview and scenario routing keep
-// their separate environment-aware owners.
+// the established global app-slug fallback. A name a deleted member still
+// holds does not fall back (ErrProjectServiceDeleted). Preview and scenario
+// routing keep their separate environment-aware owners.
 func AppByServiceName(ctx context.Context, reader ProjectServiceReader, caller App, service string) (App, error) {
 	if caller.ProjectID != "" && caller.PreviewOfSlug == "" {
 		app, err := ProjectMemberByWorkload(ctx, reader, caller.AccountID, caller.ProjectID, service)
-		if !errors.Is(err, ErrNotFound) {
+		if !errors.Is(err, ErrNotFound) || errors.Is(err, ErrProjectServiceDeleted) {
 			return app, err
 		}
 	}
@@ -41,7 +50,7 @@ func AppByServiceName(ctx context.Context, reader ProjectServiceReader, caller A
 func AppByServiceLookup(ctx context.Context, reader ProjectServiceLookupReader, caller App, service string) (App, error) {
 	if caller.ProjectID != "" && caller.PreviewOfSlug == "" {
 		app, err := reader.ProjectAppByWorkload(ctx, caller.AccountID, caller.ProjectID, service)
-		if !errors.Is(err, ErrNotFound) {
+		if !errors.Is(err, ErrNotFound) || errors.Is(err, ErrProjectServiceDeleted) {
 			return app, err
 		}
 	}
@@ -49,7 +58,8 @@ func AppByServiceLookup(ctx context.Context, reader ProjectServiceLookupReader, 
 }
 
 // ProjectMemberByWorkload returns the live production member of a project
-// named by its repository service name. ErrConflict reports an ambiguous name.
+// named by its repository service name. ErrConflict reports an ambiguous name,
+// and ErrProjectServiceDeleted a name only a deleted member holds.
 func ProjectMemberByWorkload(ctx context.Context, store any, accountID, projectID, name string) (App, error) {
 	if lookup, ok := store.(projectServiceLookup); ok {
 		return lookup.ProjectAppByWorkload(ctx, accountID, projectID, name)
@@ -65,14 +75,22 @@ func ProjectMemberByWorkload(ctx context.Context, store any, accountID, projectI
 		return App{}, fmt.Errorf("load project service aliases: %w", err)
 	}
 	var target App
+	deleted := false
 	for _, app := range apps {
-		if app.AccountID == accountID && app.ProjectID == projectID &&
-			app.Status != AppDeleted && app.PreviewOfSlug == "" && api.SameServiceName(app.WorkloadName, name) {
-			if target.ID != "" {
-				return App{}, fmt.Errorf("ambiguous project service: %w", ErrConflict)
-			}
-			target = app
+		if app.AccountID != accountID || app.ProjectID != projectID || app.PreviewOfSlug != "" || !api.SameServiceName(app.WorkloadName, name) {
+			continue
 		}
+		if app.Status == AppDeleted {
+			deleted = true
+			continue
+		}
+		if target.ID != "" {
+			return App{}, fmt.Errorf("ambiguous project service: %w", ErrConflict)
+		}
+		target = app
+	}
+	if target.ID == "" && deleted {
+		return App{}, ErrProjectServiceDeleted
 	}
 	if target.ID == "" {
 		return App{}, ErrNotFound
