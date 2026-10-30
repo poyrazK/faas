@@ -139,7 +139,13 @@ curl http://billing.internal:10081/invoices
 ```
 
 `http://billing.svc.gregale:10081` is the same service. Calls stay on
-Gregale's private network and wake a parked service when needed. During
+Gregale's private network and wake a parked service when needed.
+
+A call stays in its caller's environment: production reaches the production
+deployment of `billing`, and a `staging` workload reaches the `staging`
+deployment. When `billing` has no deployment in that environment, the call is
+refused with 403 rather than sent to production; deploy `billing` to the
+environment first. During
 development, `gregale dev --all` runs every service in its own developer
 environment, and the same names reach those environments instead of
 production ([gregale dev](gregale-dev.md#call-the-other-apps)).

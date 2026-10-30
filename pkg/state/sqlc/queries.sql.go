@@ -85755,10 +85755,28 @@ func (q *Queries) ReadServicePolicyAppBySlug(ctx context.Context, db DBTX, slug 
 	return i, err
 }
 
+const readServicePolicyCallerScope = `-- name: ReadServicePolicyCallerScope :one
+SELECT scope FROM deployments
+WHERE id = $1::uuid AND app_id = $2::uuid
+`
+
+type ReadServicePolicyCallerScopeParams struct {
+	DeploymentID pgtype.UUID
+	AppID        pgtype.UUID
+}
+
+func (q *Queries) ReadServicePolicyCallerScope(ctx context.Context, db DBTX, arg ReadServicePolicyCallerScopeParams) (string, error) {
+	row := db.QueryRow(ctx, readServicePolicyCallerScope, arg.DeploymentID, arg.AppID)
+	var scope string
+	err := row.Scan(&scope)
+	return scope, err
+}
+
 const readServicePolicyDeploymentOverride = `-- name: ReadServicePolicyDeploymentOverride :one
 SELECT EXISTS (
     SELECT 1 FROM deployments d JOIN apps a ON a.id = d.app_id
     WHERE d.id = $1::uuid AND d.app_id = $2::uuid AND d.status = 'live'
+      AND d.scope = ANY($3::text[])
       AND (d.traffic_percent > 0 OR d.traffic_percent_explicit
            OR (coalesce((a.manifest->>'revision_pin_ttl_seconds')::integer, 0) > 0
                AND EXISTS (SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id = d.id AND p.expires_at > now())))
@@ -85768,33 +85786,37 @@ SELECT EXISTS (
 type ReadServicePolicyDeploymentOverrideParams struct {
 	DeploymentID pgtype.UUID
 	AppID        pgtype.UUID
+	Scopes       []string
 }
 
 func (q *Queries) ReadServicePolicyDeploymentOverride(ctx context.Context, db DBTX, arg ReadServicePolicyDeploymentOverrideParams) (bool, error) {
-	row := db.QueryRow(ctx, readServicePolicyDeploymentOverride, arg.DeploymentID, arg.AppID)
+	row := db.QueryRow(ctx, readServicePolicyDeploymentOverride, arg.DeploymentID, arg.AppID, arg.Scopes)
 	var allowed bool
 	err := row.Scan(&allowed)
 	return allowed, err
 }
 
 const readServicePolicyDeploymentWeights = `-- name: ReadServicePolicyDeploymentWeights :many
-SELECT id, traffic_percent FROM deployments
+SELECT id, traffic_percent, scope FROM deployments
 WHERE app_id = $1::uuid AND status = 'live' AND traffic_percent > 0
-ORDER BY id LIMIT $2::integer
+  AND scope = ANY($2::text[])
+ORDER BY id LIMIT $3::integer
 `
 
 type ReadServicePolicyDeploymentWeightsParams struct {
 	AppID    pgtype.UUID
+	Scopes   []string
 	RowLimit int32
 }
 
 type ReadServicePolicyDeploymentWeightsRow struct {
 	ID             pgtype.UUID
 	TrafficPercent int32
+	Scope          string
 }
 
 func (q *Queries) ReadServicePolicyDeploymentWeights(ctx context.Context, db DBTX, arg ReadServicePolicyDeploymentWeightsParams) ([]ReadServicePolicyDeploymentWeightsRow, error) {
-	rows, err := db.Query(ctx, readServicePolicyDeploymentWeights, arg.AppID, arg.RowLimit)
+	rows, err := db.Query(ctx, readServicePolicyDeploymentWeights, arg.AppID, arg.Scopes, arg.RowLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -85802,7 +85824,7 @@ func (q *Queries) ReadServicePolicyDeploymentWeights(ctx context.Context, db DBT
 	items := []ReadServicePolicyDeploymentWeightsRow{}
 	for rows.Next() {
 		var i ReadServicePolicyDeploymentWeightsRow
-		if err := rows.Scan(&i.ID, &i.TrafficPercent); err != nil {
+		if err := rows.Scan(&i.ID, &i.TrafficPercent, &i.Scope); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

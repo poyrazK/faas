@@ -4084,6 +4084,9 @@ const (
 	ServiceCallOverrideRejected ServiceCallOutcome = "override_rejected"
 	// ServiceCallOverrideUnavailable — no validator or a failed live-set read.
 	ServiceCallOverrideUnavailable ServiceCallOutcome = "override_unavailable"
+	// ServiceCallEnvironmentDenied — a stage caller's target has no
+	// deployment in that stage; stages never reach production services.
+	ServiceCallEnvironmentDenied ServiceCallOutcome = "environment_denied"
 )
 
 // ServiceCallOutcomes is the full closed set, used to pre-instantiate every
@@ -4093,7 +4096,7 @@ var ServiceCallOutcomes = []ServiceCallOutcome{
 	ServiceCallRegistryUnavailable, ServiceCallWakeFailed, ServiceCallWakeQueueFull,
 	ServiceCallUnauthenticated, ServiceCallDenied, ServiceCallTransportDenied, ServiceCallBindingDenied, ServiceCallCallerDenied, ServiceCallScopeDenied,
 	ServiceCallNotFound, ServiceCallUpgradeRejected, ServiceCallPreviewDenied,
-	ServiceCallOverrideRejected, ServiceCallOverrideUnavailable,
+	ServiceCallOverrideRejected, ServiceCallOverrideUnavailable, ServiceCallEnvironmentDenied,
 }
 
 // IncServiceCall bumps gateway_service_call_total for one outcome.
