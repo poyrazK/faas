@@ -3656,6 +3656,35 @@ func (q *Queries) CancelManagedPostgresScheduledDelete(ctx context.Context, db D
 	return i, err
 }
 
+const cancelProjectEnvironmentCloneTargetDeployments = `-- name: CancelProjectEnvironmentCloneTargetDeployments :execrows
+WITH cancelled AS (
+    UPDATE deployments d SET status = 'cancelled'
+    FROM project_environment_clone_workloads w
+    WHERE w.operation_id = $1::uuid AND d.id = w.target_deployment_id
+      AND d.app_id = w.app_id AND d.scope = $2::text
+      AND d.status NOT IN ('failed', 'superseded', 'cancelled')
+    RETURNING d.id, d.app_id
+)
+SELECT pg_notify('deployment_changed', json_build_object('kind', 'cancelled', 'app_id', app_id, 'deployment_id', id,
+    'to', id, 'status', 'cancelled')::text)
+FROM cancelled
+`
+
+type CancelProjectEnvironmentCloneTargetDeploymentsParams struct {
+	OperationID pgtype.UUID
+	Environment string
+}
+
+// A data-less clone that will not publish cancels the deployments it created
+// for its target; schedd drains their instances on the notification.
+func (q *Queries) CancelProjectEnvironmentCloneTargetDeployments(ctx context.Context, db DBTX, arg CancelProjectEnvironmentCloneTargetDeploymentsParams) (int64, error) {
+	result, err := db.Exec(ctx, cancelProjectEnvironmentCloneTargetDeployments, arg.OperationID, arg.Environment)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const cancelQueuedCustomerOperationJobTask = `-- name: CancelQueuedCustomerOperationJobTask :exec
 UPDATE job_tasks SET status='cancelled',finished_at=clock_timestamp() WHERE run_id=$1::uuid AND task_index=0 AND status='queued'
 `
@@ -10871,6 +10900,18 @@ func (q *Queries) CountUDPListenersForApp(ctx context.Context, db DBTX, appID st
 	return count, err
 }
 
+const countUnfinishedProjectEnvironmentCloneOperations = `-- name: CountUnfinishedProjectEnvironmentCloneOperations :one
+SELECT count(*)::bigint FROM project_environment_clone_operations
+WHERE status IN ('pending','capturing','copying','publishing','compensating')
+`
+
+func (q *Queries) CountUnfinishedProjectEnvironmentCloneOperations(ctx context.Context, db DBTX) (int64, error) {
+	row := db.QueryRow(ctx, countUnfinishedProjectEnvironmentCloneOperations)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const countWorkflowAutomationRevisions = `-- name: CountWorkflowAutomationRevisions :one
 SELECT count(*) FROM workflow_automation_revisions WHERE app_id=$1 AND name=$2
 `
@@ -14664,6 +14705,25 @@ func (q *Queries) DeleteProductionDeadLetterEvents(ctx context.Context, db DBTX,
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const deleteProjectEnvironmentCloneTargetPolicies = `-- name: DeleteProjectEnvironmentCloneTargetPolicies :exec
+WITH routes AS (
+    DELETE FROM project_environment_route_policies
+    WHERE project_id = $1::uuid AND environment_slug = $2::text
+)
+DELETE FROM project_environment_edge_policies
+WHERE project_id = $1::uuid AND environment_slug = $2::text
+`
+
+type DeleteProjectEnvironmentCloneTargetPoliciesParams struct {
+	ProjectID   pgtype.UUID
+	Environment string
+}
+
+func (q *Queries) DeleteProjectEnvironmentCloneTargetPolicies(ctx context.Context, db DBTX, arg DeleteProjectEnvironmentCloneTargetPoliciesParams) error {
+	_, err := db.Exec(ctx, deleteProjectEnvironmentCloneTargetPolicies, arg.ProjectID, arg.Environment)
+	return err
 }
 
 const deleteReadinessSubscription = `-- name: DeleteReadinessSubscription :execrows
@@ -50436,6 +50496,61 @@ func (q *Queries) ListProjectReleaseSetsBefore(ctx context.Context, db DBTX, arg
 	return items, nil
 }
 
+const listPromotionFeatureFlagHolds = `-- name: ListPromotionFeatureFlagHolds :many
+SELECT p.status, p.rollback_status, f.target_version, f.rollback_version
+FROM project_environment_promotion_feature_flags f
+JOIN project_environment_promotions p ON p.id = f.promotion_id
+WHERE p.account_id = $1::uuid AND p.project_id = $2::uuid
+ AND f.previous_target_snapshot->>'source_environment_id' = $3::text
+ AND (f.target_version = $4::bigint OR f.rollback_version = $4::bigint)
+`
+
+type ListPromotionFeatureFlagHoldsParams struct {
+	AccountID     pgtype.UUID
+	ProjectID     pgtype.UUID
+	EnvironmentID string
+	Version       int64
+}
+
+type ListPromotionFeatureFlagHoldsRow struct {
+	Status          string
+	RollbackStatus  string
+	TargetVersion   int64
+	RollbackVersion int64
+}
+
+// Receipts whose activation or rollback wrote this flag version; Go decides
+// which promotion states still hold it.
+func (q *Queries) ListPromotionFeatureFlagHolds(ctx context.Context, db DBTX, arg ListPromotionFeatureFlagHoldsParams) ([]ListPromotionFeatureFlagHoldsRow, error) {
+	rows, err := db.Query(ctx, listPromotionFeatureFlagHolds,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.Version,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListPromotionFeatureFlagHoldsRow{}
+	for rows.Next() {
+		var i ListPromotionFeatureFlagHoldsRow
+		if err := rows.Scan(
+			&i.Status,
+			&i.RollbackStatus,
+			&i.TargetVersion,
+			&i.RollbackVersion,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listQueueBindingHistoryForApp = `-- name: ListQueueBindingHistoryForApp :many
 select id, account_id, app_id, name, queue_name, mode, workload_class, enabled, max_concurrency, retry_policy, created_at, updated_at, retired_at, deployment_scope, environment_id, org_id from queue_bindings where app_id=$1 and account_id=$2
 order by created_at, id
@@ -80238,6 +80353,17 @@ func (q *Queries) ReadProjectCanaryRouting(ctx context.Context, db DBTX, appID p
 	return i, err
 }
 
+const readProjectEnvironmentCloneClock = `-- name: ReadProjectEnvironmentCloneClock :one
+SELECT clock_timestamp()::timestamptz AS now
+`
+
+func (q *Queries) ReadProjectEnvironmentCloneClock(ctx context.Context, db DBTX) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, readProjectEnvironmentCloneClock)
+	var now pgtype.Timestamptz
+	err := row.Scan(&now)
+	return now, err
+}
+
 const readProjectEnvironmentCloneConfigurationCaptureIdentity = `-- name: ReadProjectEnvironmentCloneConfigurationCaptureIdentity :one
 SELECT o.configuration_capture_version,o.source_revision_hash,o.source_environment,coalesce(o.source_release_set_id::text,'')::text AS source_release_set_id,
     EXISTS(SELECT 1 FROM project_environment_clone_configuration_captures c WHERE c.operation_id=o.id)::boolean AS has_capture
@@ -80566,6 +80692,49 @@ func (q *Queries) ReadProjectEnvironmentCloneFlagScope(ctx context.Context, db D
 	return id, err
 }
 
+const readProjectEnvironmentCloneInventoryPresent = `-- name: ReadProjectEnvironmentCloneInventoryPresent :many
+SELECT present::text AS table_name
+FROM project_environment_clone_inventory_present(
+    $1::uuid, $2::uuid, $3::text[],
+    $4::uuid[], $5::uuid[], $6::jsonb) AS present
+`
+
+type ReadProjectEnvironmentCloneInventoryPresentParams struct {
+	ProjectID        pgtype.UUID
+	EnvironmentID    pgtype.UUID
+	EnvironmentSlugs []string
+	AppIds           []pgtype.UUID
+	DeploymentIds    []pgtype.UUID
+	Probes           []byte
+}
+
+func (q *Queries) ReadProjectEnvironmentCloneInventoryPresent(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneInventoryPresentParams) ([]string, error) {
+	rows, err := db.Query(ctx, readProjectEnvironmentCloneInventoryPresent,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.EnvironmentSlugs,
+		arg.AppIds,
+		arg.DeploymentIds,
+		arg.Probes,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var table_name string
+		if err := rows.Scan(&table_name); err != nil {
+			return nil, err
+		}
+		items = append(items, table_name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const readProjectEnvironmentCloneLegacySettings = `-- name: ReadProjectEnvironmentCloneLegacySettings :one
 SELECT (to_jsonb(a) || jsonb_build_object('public_auth_basic_sealed', encode(a.public_auth_basic, 'base64'),
        'only_allow_declared_routes', a.only_declared_routes, 'retry_policy_json', a.retry_policy))::jsonb AS app, coalesce(to_jsonb(r), '{}'::jsonb)::jsonb AS route
@@ -80588,6 +80757,38 @@ func (q *Queries) ReadProjectEnvironmentCloneLegacySettings(ctx context.Context,
 	var i ReadProjectEnvironmentCloneLegacySettingsRow
 	err := row.Scan(&i.App, &i.Route)
 	return i, err
+}
+
+const readProjectEnvironmentCloneLiveTargetDatabases = `-- name: ReadProjectEnvironmentCloneLiveTargetDatabases :many
+SELECT id::text AS database_id FROM managed_postgres_databases
+WHERE environment_clone_operation_id = $1::uuid AND account_id = $2::uuid
+    AND clone_resource_role = 'target' AND state <> 'deleted'
+ORDER BY id
+`
+
+type ReadProjectEnvironmentCloneLiveTargetDatabasesParams struct {
+	OperationID pgtype.UUID
+	AccountID   pgtype.UUID
+}
+
+func (q *Queries) ReadProjectEnvironmentCloneLiveTargetDatabases(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneLiveTargetDatabasesParams) ([]string, error) {
+	rows, err := db.Query(ctx, readProjectEnvironmentCloneLiveTargetDatabases, arg.OperationID, arg.AccountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var database_id string
+		if err := rows.Scan(&database_id); err != nil {
+			return nil, err
+		}
+		items = append(items, database_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const readProjectEnvironmentCloneMaterialization = `-- name: ReadProjectEnvironmentCloneMaterialization :one
@@ -81877,6 +82078,75 @@ func (q *Queries) ReadProjectEnvironmentCloneProjectConfiguration(ctx context.Co
 	return i, err
 }
 
+const readProjectEnvironmentCloneProjectSlug = `-- name: ReadProjectEnvironmentCloneProjectSlug :one
+SELECT slug FROM projects WHERE id = $1::uuid AND account_id = $2::uuid
+`
+
+type ReadProjectEnvironmentCloneProjectSlugParams struct {
+	ProjectID pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) ReadProjectEnvironmentCloneProjectSlug(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneProjectSlugParams) (string, error) {
+	row := db.QueryRow(ctx, readProjectEnvironmentCloneProjectSlug, arg.ProjectID, arg.AccountID)
+	var slug string
+	err := row.Scan(&slug)
+	return slug, err
+}
+
+const readProjectEnvironmentCloneRestoredDatabases = `-- name: ReadProjectEnvironmentCloneRestoredDatabases :many
+SELECT d.id::text AS database_id, p.source_database_id::text AS source_database_id, p.point_in_time
+FROM managed_postgres_databases d
+JOIN managed_postgres_restore_proofs p ON p.database_id = d.id
+WHERE d.environment_clone_operation_id = $1::uuid AND d.account_id = $2::uuid
+    AND d.clone_resource_role = 'target' AND d.state = 'ready' AND d.deleted_at IS NULL AND d.lease_token IS NULL
+    AND p.account_id = d.account_id AND p.operation_id = d.environment_clone_operation_id
+    AND p.backend_id = d.backend_id AND p.backend_fingerprint = d.backend_fingerprint
+    AND p.provider_resource_id = d.provider_resource_id AND p.data_resource_id = d.data_resource_id
+    AND p.source_database_id = d.restore_source_database_id AND p.source_resource_id = d.restore_source_resource_id
+    AND p.point_in_time = d.restore_point_in_time
+    AND p.generation = d.desired_generation AND p.generation = d.observed_generation
+    AND p.spec = jsonb_build_object('Region',d.region,'PostgresMajor',d.postgres_major,
+        'Class',d.service_class,'Availability',d.availability,'ScaleToZero',d.scale_to_zero,
+        'StorageLimitBytes',d.storage_limit_bytes,'RestoreWindowSeconds',d.restore_window_seconds)
+ORDER BY d.id
+FOR SHARE OF d, p
+`
+
+type ReadProjectEnvironmentCloneRestoredDatabasesParams struct {
+	OperationID pgtype.UUID
+	AccountID   pgtype.UUID
+}
+
+type ReadProjectEnvironmentCloneRestoredDatabasesRow struct {
+	DatabaseID       string
+	SourceDatabaseID string
+	PointInTime      pgtype.Timestamptz
+}
+
+// Each ready target database this clone restored, with a provider restore
+// proof that still matches the row (the same checks as
+// ReadManagedPostgresCloneRestoreProof).
+func (q *Queries) ReadProjectEnvironmentCloneRestoredDatabases(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneRestoredDatabasesParams) ([]ReadProjectEnvironmentCloneRestoredDatabasesRow, error) {
+	rows, err := db.Query(ctx, readProjectEnvironmentCloneRestoredDatabases, arg.OperationID, arg.AccountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadProjectEnvironmentCloneRestoredDatabasesRow{}
+	for rows.Next() {
+		var i ReadProjectEnvironmentCloneRestoredDatabasesRow
+		if err := rows.Scan(&i.DatabaseID, &i.SourceDatabaseID, &i.PointInTime); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const readProjectEnvironmentCloneScopedEdgePolicy = `-- name: ReadProjectEnvironmentCloneScopedEdgePolicy :one
 SELECT jsonb_build_object('edge_present', p.app_id IS NOT NULL, 'edge_rules', coalesce(p.rules, '[]'::jsonb)) AS definition
 FROM apps a LEFT JOIN project_environment_edge_policies p ON p.app_id = a.id
@@ -82078,6 +82348,23 @@ func (q *Queries) ReadProjectEnvironmentCloneSourceAppIDs(ctx context.Context, d
 	return items, nil
 }
 
+const readProjectEnvironmentCloneSourceEnvironmentID = `-- name: ReadProjectEnvironmentCloneSourceEnvironmentID :one
+SELECT id FROM project_environments
+WHERE project_id = $1::uuid AND slug = $2::text
+`
+
+type ReadProjectEnvironmentCloneSourceEnvironmentIDParams struct {
+	ProjectID pgtype.UUID
+	Slug      string
+}
+
+func (q *Queries) ReadProjectEnvironmentCloneSourceEnvironmentID(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneSourceEnvironmentIDParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, readProjectEnvironmentCloneSourceEnvironmentID, arg.ProjectID, arg.Slug)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const readProjectEnvironmentCloneSourceRelease = `-- name: ReadProjectEnvironmentCloneSourceRelease :one
 SELECT coalesce((SELECT id::text FROM project_release_sets WHERE project_id = $1::uuid
        AND environment_slug = $2::text AND active), '')::text AS release_id
@@ -82125,6 +82412,28 @@ func (q *Queries) ReadProjectEnvironmentCloneTargetOperationID(ctx context.Conte
 	var id string
 	err := row.Scan(&id)
 	return id, err
+}
+
+const readProjectEnvironmentCloneTargetRetirement = `-- name: ReadProjectEnvironmentCloneTargetRetirement :one
+SELECT count(*) FILTER (WHERE d.status NOT IN ('failed', 'superseded', 'cancelled'))::bigint AS unretired,
+       (SELECT count(*) FROM instances i
+         WHERE i.deployment_id IN (SELECT target_deployment_id FROM project_environment_clone_workloads WHERE operation_id = $1::uuid)
+           AND i.state NOT IN ('parked', 'stopped', 'failed'))::bigint AS active_instances
+FROM project_environment_clone_workloads w
+JOIN deployments d ON d.id = w.target_deployment_id
+WHERE w.operation_id = $1::uuid
+`
+
+type ReadProjectEnvironmentCloneTargetRetirementRow struct {
+	Unretired       int64
+	ActiveInstances int64
+}
+
+func (q *Queries) ReadProjectEnvironmentCloneTargetRetirement(ctx context.Context, db DBTX, operationID pgtype.UUID) (ReadProjectEnvironmentCloneTargetRetirementRow, error) {
+	row := db.QueryRow(ctx, readProjectEnvironmentCloneTargetRetirement, operationID)
+	var i ReadProjectEnvironmentCloneTargetRetirementRow
+	err := row.Scan(&i.Unretired, &i.ActiveInstances)
+	return i, err
 }
 
 const readProjectEnvironmentCloneTargetSettings = `-- name: ReadProjectEnvironmentCloneTargetSettings :one
@@ -102965,6 +103274,45 @@ func (q *Queries) WithdrawCloneCheckpointPgPublication(ctx context.Context, db D
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const withdrawProjectEnvironmentCloneTargetBindingSecrets = `-- name: WithdrawProjectEnvironmentCloneTargetBindingSecrets :exec
+DELETE FROM app_secrets s
+USING project_environment_clone_postgres_bindings c
+WHERE c.operation_id = $1::uuid AND s.managed_postgres_binding_id = c.target_binding_id
+    AND s.scope = $2::text
+`
+
+type WithdrawProjectEnvironmentCloneTargetBindingSecretsParams struct {
+	OperationID pgtype.UUID
+	Environment string
+}
+
+// Compensation withdraws the target bindings a clone prepared. Their provider
+// credentials live in the clone's own target database, which is deleted next.
+func (q *Queries) WithdrawProjectEnvironmentCloneTargetBindingSecrets(ctx context.Context, db DBTX, arg WithdrawProjectEnvironmentCloneTargetBindingSecretsParams) error {
+	_, err := db.Exec(ctx, withdrawProjectEnvironmentCloneTargetBindingSecrets, arg.OperationID, arg.Environment)
+	return err
+}
+
+const withdrawProjectEnvironmentCloneTargetBindings = `-- name: WithdrawProjectEnvironmentCloneTargetBindings :exec
+UPDATE managed_postgres_bindings b SET state = 'deleted', last_error_code = NULL, lease_token = NULL, lease_until = NULL,
+    rotation_previous_generation = NULL, rotation_wake_id = NULL, rotation_cleanup_ready = false,
+    attempt_count = 0, retry_at = clock_timestamp(), updated_at = clock_timestamp(), deleted_at = clock_timestamp()
+FROM project_environment_clone_postgres_bindings c
+WHERE c.operation_id = $1::uuid AND b.id = c.target_binding_id
+    AND b.scope = $2::text AND b.state <> 'deleted'
+    AND NOT EXISTS (SELECT 1 FROM app_secrets s WHERE s.managed_postgres_binding_id = b.id)
+`
+
+type WithdrawProjectEnvironmentCloneTargetBindingsParams struct {
+	OperationID pgtype.UUID
+	Environment string
+}
+
+func (q *Queries) WithdrawProjectEnvironmentCloneTargetBindings(ctx context.Context, db DBTX, arg WithdrawProjectEnvironmentCloneTargetBindingsParams) error {
+	_, err := db.Exec(ctx, withdrawProjectEnvironmentCloneTargetBindings, arg.OperationID, arg.Environment)
+	return err
 }
 
 const workerAdmissionCount = `-- name: WorkerAdmissionCount :one
