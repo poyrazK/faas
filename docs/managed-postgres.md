@@ -508,6 +508,11 @@ meters or a failed window do not advance coverage. After recovering missing
 windows, remaining budget refreshes previously collected windows within the
 last three completed policy windows, newest first. With the hourly policy this
 replays the last three hours, including corrections across UTC month boundaries.
+A database's tail is replayed at most once per policy window: a sweep skips it
+while the tail's oldest observation is less than one window old. Neon's
+consumption API allows about 50 requests a minute per account, so each database
+costs about four requests an hour (one new window, three corrections), and
+forward collection keeps priority when the limit is reached.
 Newly fetched windows are not fetched again in the same sweep; replay never
 precedes established coverage. Newer corrections replace values, including zero,
 and older observations cannot overwrite newer readings. Failed replay retains

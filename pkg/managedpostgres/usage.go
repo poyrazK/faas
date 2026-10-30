@@ -276,6 +276,14 @@ func (c *UsageCollector) prepareUsageCollection(ctx context.Context, database Da
 	if work.replayFrom.Before(collectedFrom) {
 		work.replayFrom = collectedFrom
 	}
+	// Providers revise recent windows over hours, and their consumption APIs
+	// are rate limited per account (Neon: about 50 requests a minute). Replay
+	// the correction tail at most once per window: replaying it every sweep
+	// cost three requests per database per sweep and capped the fleet near 80
+	// databases.
+	if progress.CorrectionObservedAt.After(c.now().Add(-c.policy.Window)) {
+		work.replayUntil = work.replayFrom
+	}
 	return work
 }
 

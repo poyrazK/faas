@@ -41,3 +41,21 @@ Window identity compares timestamps with `time.Time.Equal`. PostgreSQL decodes
 checkpoints with `time.Local`; comparing a UTC-normalized result to that raw
 struct rejects the same instant and can stop collection after its first sweep.
 PostgreSQL-backed and fixed-offset regressions cover resumed collection.
+
+## Amendment (2026-10-30): replay once per window
+
+Replaying the tail on every sweep cost three consumption requests per database
+per five-minute sweep, 36 an hour. Neon's consumption endpoints share about 50
+requests a minute per account, so collection fell behind at about 80
+databases. Admission then turned stale and refused new databases for every
+account.
+
+A database's tail is now replayed at most once per policy window: a sweep
+skips replay while the oldest observation in the tail is less than one window
+old. With the hourly policy, a database costs about four requests an hour.
+Because the gate reads the oldest observation, a failed replay is retried on
+the next sweep. The three-window horizon, forward priority and replay order
+are unchanged.
+
+Batching up to 100 projects per consumption request, which Neon supports, is
+the next step if the fleet approaches about 700 databases.
