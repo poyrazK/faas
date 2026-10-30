@@ -163,7 +163,7 @@ export class EventsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `code: conflict`,
-        503: `Policy change preview inspection timed out.`,
+        503: `Policy change preview inspection timed out. Sent as 503 by the public edge.`,
         504: `Policy change preview inspection timed out.`,
       },
     });

@@ -499,7 +499,7 @@ export class EventsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
-        503: `Snapshot exceeded its bounded read budget.`,
+        503: `Snapshot exceeded its bounded read budget. Sent as 503 by the public edge.`,
         504: `Snapshot exceeded its bounded read budget.`,
       },
     });
@@ -1121,7 +1121,7 @@ export class EventsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `Version is not registered and no proposed schema was supplied.`,
-        503: `Bounded rollout observation timed out.`,
+        503: `Bounded rollout observation timed out. Sent as 503 by the public edge.`,
         504: `Bounded rollout observation timed out.`,
       },
     });
@@ -1539,7 +1539,7 @@ export class EventsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `The combined delivery health request exceeded its bounded deadline.`,
+        503: `The combined delivery health request exceeded its bounded deadline. Sent as 503 by the public edge.`,
         504: `The combined delivery health request exceeded its bounded deadline.`,
       },
     });
@@ -1587,7 +1587,7 @@ export class EventsService {
         404: `code: not_found`,
         409: `Scan UUID or creation guard changed, or pause/resume requested for a terminal scan; stable code event_lineage_case_backfill_changed.`,
         413: `Request exceeds the 65536-byte body limit.`,
-        503: `Control timed out; read current status, then repeat the desired control with the original UUID and creation guard.`,
+        503: `Control timed out; read current status, then repeat the desired control with the original UUID and creation guard. Sent as 503 by the public edge.`,
         504: `Control timed out; read current status, then repeat the desired control with the original UUID and creation guard.`,
       },
     });
@@ -1635,7 +1635,7 @@ export class EventsService {
         404: `code: not_found`,
         409: `Scan UUID or creation guard changed, or pause/resume requested for a terminal scan; stable code event_lineage_case_backfill_changed. Context: Resume a retained lineage diagnostic scan.`,
         413: `Request exceeds the 65536-byte body limit. Context: Resume a retained lineage diagnostic scan.`,
-        503: `Control timed out; read current status, then repeat the desired control with the original UUID and creation guard. Context: Resume a retained lineage diagnostic scan.`,
+        503: `Control timed out; read current status, then repeat the desired control with the original UUID and creation guard. Context: Resume a retained lineage diagnostic scan. Sent as 503 by the public edge.`,
         504: `Control timed out; read current status, then repeat the desired control with the original UUID and creation guard. Context: Resume a retained lineage diagnostic scan.`,
       },
     });
@@ -1683,7 +1683,7 @@ export class EventsService {
         404: `code: not_found`,
         409: `Scan UUID or creation guard changed, or pause/resume requested for a terminal scan; stable code event_lineage_case_backfill_changed. Context: Cancel a retained lineage diagnostic scan.`,
         413: `Request exceeds the 65536-byte body limit. Context: Cancel a retained lineage diagnostic scan.`,
-        503: `Control timed out; read current status, then repeat the desired control with the original UUID and creation guard. Context: Cancel a retained lineage diagnostic scan.`,
+        503: `Control timed out; read current status, then repeat the desired control with the original UUID and creation guard. Context: Cancel a retained lineage diagnostic scan. Sent as 503 by the public edge.`,
         504: `Control timed out; read current status, then repeat the desired control with the original UUID and creation guard. Context: Cancel a retained lineage diagnostic scan.`,
       },
     });
@@ -1720,7 +1720,7 @@ export class EventsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `Latest scan changed or is active; stable code event_lineage_case_backfill_changed.`,
-        503: `Request timed out; repeat the same request UUID and previous-request guard.`,
+        503: `Request timed out; repeat the same request UUID and previous-request guard. Sent as 503 by the public edge.`,
         504: `Request timed out; repeat the same request UUID and previous-request guard.`,
       },
     });
@@ -1761,7 +1761,7 @@ export class EventsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `Latest scan changed or is active; stable code event_lineage_case_backfill_changed. Context: Backfill missing lineage cases from retained admission evidence.`,
-        503: `Request timed out; repeat the same request UUID and previous-request guard. Context: Backfill missing lineage cases from retained admission evidence.`,
+        503: `Request timed out; repeat the same request UUID and previous-request guard. Context: Backfill missing lineage cases from retained admission evidence. Sent as 503 by the public edge.`,
         504: `Request timed out; repeat the same request UUID and previous-request guard. Context: Backfill missing lineage cases from retained admission evidence.`,
       },
     });
@@ -1818,7 +1818,7 @@ export class EventsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `Case guard changed or retained request identity reused with another selection.`,
-        503: `Operation timed out; repeat submission with the same request identity and selection.`,
+        503: `Operation timed out; repeat submission with the same request identity and selection. Sent as 503 by the public edge.`,
         504: `Operation timed out; repeat submission with the same request identity and selection.`,
       },
     });
@@ -1880,7 +1880,7 @@ export class EventsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Listing timed out.`,
+        503: `Listing timed out. Sent as 503 by the public edge.`,
         504: `Listing timed out.`,
       },
     });
@@ -1921,7 +1921,7 @@ export class EventsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `Case guard changed or retained request identity reused with another selection. Context: Submit a fixed reviewed lineage retry selection.`,
-        503: `Operation timed out; repeat submission with the same request identity and selection. Context: Submit a fixed reviewed lineage retry selection.`,
+        503: `Operation timed out; repeat submission with the same request identity and selection. Context: Submit a fixed reviewed lineage retry selection. Sent as 503 by the public edge.`,
         504: `Operation timed out; repeat submission with the same request identity and selection. Context: Submit a fixed reviewed lineage retry selection.`,
       },
     });
@@ -2002,7 +2002,7 @@ export class EventsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `Job creation guard changed; event_lineage_retry_job_changed.`,
-        503: `History read timed out.`,
+        503: `History read timed out. Sent as 503 by the public edge.`,
         504: `History read timed out.`,
       },
     });
@@ -2051,7 +2051,7 @@ export class EventsService {
         409: `Creation guard changed or a new control targets a terminal job (event_lineage_retry_job_changed), or command UUID reused with different inputs (event_lineage_retry_control_command_changed).`,
         413: `Request exceeds the 65536-byte body limit. Context: Pause unprocessed cases in a retained bulk lineage retry job.`,
         429: `Job already has 128 retained command receipts; event_lineage_retry_control_limit. Existing command repeats remain available.`,
-        503: `Control timed out; repeat the same command UUID and inputs when supplied, otherwise read current state before repeating the desired action.`,
+        503: `Control timed out; repeat the same command UUID and inputs when supplied, otherwise read current state before repeating the desired action. Sent as 503 by the public edge.`,
         504: `Control timed out; repeat the same command UUID and inputs when supplied, otherwise read current state before repeating the desired action.`,
       },
     });
@@ -2100,7 +2100,7 @@ export class EventsService {
         409: `Creation guard changed or a new control targets a terminal job (event_lineage_retry_job_changed), or command UUID reused with different inputs (event_lineage_retry_control_command_changed). Context: Resume unprocessed cases in a paused bulk lineage retry job.`,
         413: `Request exceeds the 65536-byte body limit. Context: Resume unprocessed cases in a paused bulk lineage retry job.`,
         429: `Job already has 128 retained command receipts; event_lineage_retry_control_limit. Existing command repeats remain available. Context: Resume unprocessed cases in a paused bulk lineage retry job.`,
-        503: `Control timed out; repeat the same command UUID and inputs when supplied, otherwise read current state before repeating the desired action. Context: Resume unprocessed cases in a paused bulk lineage retry job.`,
+        503: `Control timed out; repeat the same command UUID and inputs when supplied, otherwise read current state before repeating the desired action. Context: Resume unprocessed cases in a paused bulk lineage retry job. Sent as 503 by the public edge.`,
         504: `Control timed out; repeat the same command UUID and inputs when supplied, otherwise read current state before repeating the desired action. Context: Resume unprocessed cases in a paused bulk lineage retry job.`,
       },
     });
@@ -2149,7 +2149,7 @@ export class EventsService {
         409: `Original creation timestamp does not match (event_lineage_retry_job_changed) or command UUID reused for another action (event_lineage_retry_control_command_changed).`,
         413: `Request exceeds the 65536-byte body limit. Context: Cancel unprocessed cases in a retained bulk lineage retry job.`,
         429: `New command UUID exceeds the shared 128-receipt cap; stable code event_lineage_retry_control_limit.`,
-        503: `Cancellation timed out; repeat the same job UUID, original creation timestamp and command UUID if supplied.`,
+        503: `Cancellation timed out; repeat the same job UUID, original creation timestamp and command UUID if supplied. Sent as 503 by the public edge.`,
         504: `Cancellation timed out; repeat the same job UUID, original creation timestamp and command UUID if supplied.`,
       },
     });
@@ -2192,7 +2192,7 @@ export class EventsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `Case guard changed or retained request identity reused with another selection. Context: Inspect retained bulk lineage retry progress and per-case results.`,
-        503: `Operation timed out; repeat submission with the same request identity and selection. Context: Inspect retained bulk lineage retry progress and per-case results.`,
+        503: `Operation timed out; repeat submission with the same request identity and selection. Context: Inspect retained bulk lineage retry progress and per-case results. Sent as 503 by the public edge.`,
         504: `Operation timed out; repeat submission with the same request identity and selection. Context: Inspect retained bulk lineage retry progress and per-case results.`,
       },
     });
@@ -2243,7 +2243,7 @@ export class EventsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `Case revision or request identity changed.`,
-        503: `Lineage operation timed out; repeat the same guarded request.`,
+        503: `Lineage operation timed out; repeat the same guarded request. Sent as 503 by the public edge.`,
         504: `Lineage operation timed out; repeat the same guarded request.`,
       },
     });
@@ -2290,7 +2290,7 @@ export class EventsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `Case revision or request identity changed. Context: Recheck one reviewed lineage case with an idempotent guard.`,
-        503: `Lineage operation timed out; repeat the same guarded request. Context: Recheck one reviewed lineage case with an idempotent guard.`,
+        503: `Lineage operation timed out; repeat the same guarded request. Context: Recheck one reviewed lineage case with an idempotent guard. Sent as 503 by the public edge.`,
         504: `Lineage operation timed out; repeat the same guarded request. Context: Recheck one reviewed lineage case with an idempotent guard.`,
       },
     });
@@ -2326,7 +2326,7 @@ export class EventsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Subscription reconciliation request timed out.`,
+        503: `Subscription reconciliation request timed out. Sent as 503 by the public edge.`,
         504: `Subscription reconciliation request timed out.`,
       },
     });
@@ -2362,7 +2362,7 @@ export class EventsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Subscription reconciliation request timed out. Context: Request a forward-only execution coverage boundary.`,
+        503: `Subscription reconciliation request timed out. Context: Request a forward-only execution coverage boundary. Sent as 503 by the public edge.`,
         504: `Subscription reconciliation request timed out. Context: Request a forward-only execution coverage boundary.`,
       },
     });
@@ -2406,7 +2406,7 @@ export class EventsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Subscription control request timed out.`,
+        503: `Subscription control request timed out. Sent as 503 by the public edge.`,
         504: `Subscription control request timed out.`,
       },
     });
@@ -2450,7 +2450,7 @@ export class EventsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Inspect consumer routing health over a retained history window: subscription control request timed out.`,
+        503: `Inspect consumer routing health over a retained history window: subscription control request timed out. Sent as 503 by the public edge.`,
         504: `Inspect consumer routing health over a retained history window: subscription control request timed out.`,
       },
     });
@@ -2486,7 +2486,7 @@ export class EventsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Inspect consumer circuit breaker state: subscription control request timed out.`,
+        503: `Inspect consumer circuit breaker state: subscription control request timed out. Sent as 503 by the public edge.`,
         504: `Inspect consumer circuit breaker state: subscription control request timed out.`,
       },
     });
@@ -2526,7 +2526,7 @@ export class EventsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Enable or replace a consumer circuit breaker policy: subscription control request timed out.`,
+        503: `Enable or replace a consumer circuit breaker policy: subscription control request timed out. Sent as 503 by the public edge.`,
         504: `Enable or replace a consumer circuit breaker policy: subscription control request timed out.`,
       },
     });
@@ -2562,7 +2562,7 @@ export class EventsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Disable a consumer circuit breaker: subscription control request timed out.`,
+        503: `Disable a consumer circuit breaker: subscription control request timed out. Sent as 503 by the public edge.`,
         504: `Disable a consumer circuit breaker: subscription control request timed out.`,
       },
     });
@@ -2598,7 +2598,7 @@ export class EventsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Close an enabled circuit breaker and start a fresh observation window: subscription control request timed out.`,
+        503: `Close an enabled circuit breaker and start a fresh observation window: subscription control request timed out. Sent as 503 by the public edge.`,
         504: `Close an enabled circuit breaker and start a fresh observation window: subscription control request timed out.`,
       },
     });
@@ -2634,7 +2634,7 @@ export class EventsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Inspect schema version selection for future events: subscription control request timed out.`,
+        503: `Inspect schema version selection for future events: subscription control request timed out. Sent as 503 by the public edge.`,
         504: `Inspect schema version selection for future events: subscription control request timed out.`,
       },
     });
@@ -2674,7 +2674,7 @@ export class EventsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Replace schema version selection for future events: subscription control request timed out.`,
+        503: `Replace schema version selection for future events: subscription control request timed out. Sent as 503 by the public edge.`,
         504: `Replace schema version selection for future events: subscription control request timed out.`,
       },
     });
@@ -2710,7 +2710,7 @@ export class EventsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Accept all schema versions for future events: subscription control request timed out.`,
+        503: `Accept all schema versions for future events: subscription control request timed out. Sent as 503 by the public edge.`,
         504: `Accept all schema versions for future events: subscription control request timed out.`,
       },
     });
@@ -2746,7 +2746,7 @@ export class EventsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Inspect routing retry policy for future events: subscription control request timed out.`,
+        503: `Inspect routing retry policy for future events: subscription control request timed out. Sent as 503 by the public edge.`,
         504: `Inspect routing retry policy for future events: subscription control request timed out.`,
       },
     });
@@ -2786,7 +2786,7 @@ export class EventsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Replace routing retry policy for future events: subscription control request timed out.`,
+        503: `Replace routing retry policy for future events: subscription control request timed out. Sent as 503 by the public edge.`,
         504: `Replace routing retry policy for future events: subscription control request timed out.`,
       },
     });
@@ -2822,7 +2822,7 @@ export class EventsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Restore legacy routing retry defaults for future events: subscription control request timed out.`,
+        503: `Restore legacy routing retry defaults for future events: subscription control request timed out. Sent as 503 by the public edge.`,
         504: `Restore legacy routing retry defaults for future events: subscription control request timed out.`,
       },
     });
@@ -2858,7 +2858,7 @@ export class EventsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Inspect one consumer pause, pacing and backlog: subscription control request timed out.`,
+        503: `Inspect one consumer pause, pacing and backlog: subscription control request timed out. Sent as 503 by the public edge.`,
         504: `Inspect one consumer pause, pacing and backlog: subscription control request timed out.`,
       },
     });
@@ -2894,7 +2894,7 @@ export class EventsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Pause new routing admissions for one event consumer: subscription control request timed out.`,
+        503: `Pause new routing admissions for one event consumer: subscription control request timed out. Sent as 503 by the public edge.`,
         504: `Pause new routing admissions for one event consumer: subscription control request timed out.`,
       },
     });
@@ -2934,7 +2934,7 @@ export class EventsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Resume one event consumer with controlled draining: subscription control request timed out.`,
+        503: `Resume one event consumer with controlled draining: subscription control request timed out. Sent as 503 by the public edge.`,
         504: `Resume one event consumer with controlled draining: subscription control request timed out.`,
       },
     });
@@ -3014,7 +3014,7 @@ export class EventsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Deadline listing exceeded its read budget; no partial page was returned.`,
+        503: `Deadline listing exceeded its read budget; no partial page was returned. Sent as 503 by the public edge.`,
         504: `Deadline listing exceeded its read budget; no partial page was returned.`,
       },
     });
@@ -3058,7 +3058,7 @@ export class EventsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Deadline-window read exceeded its budget; no partial counts were returned.`,
+        503: `Deadline-window read exceeded its budget; no partial counts were returned. Sent as 503 by the public edge.`,
         504: `Deadline-window read exceeded its budget; no partial counts were returned.`,
       },
     });
@@ -3094,7 +3094,7 @@ export class EventsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Full pending-summary read exceeded its budget; coverage is unknown.`,
+        503: `Full pending-summary read exceeded its budget; coverage is unknown. Sent as 503 by the public edge.`,
         504: `Full pending-summary read exceeded its budget; coverage is unknown.`,
       },
     });
@@ -3134,7 +3134,7 @@ export class EventsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Read-only pacing preview exceeded its request deadline; retry with a fresh observation.`,
+        503: `Read-only pacing preview exceeded its request deadline; retry with a fresh observation. Sent as 503 by the public edge.`,
         504: `Read-only pacing preview exceeded its request deadline; retry with a fresh observation.`,
       },
     });
@@ -3176,7 +3176,7 @@ export class EventsService {
         404: `code: not_found`,
         409: `Configure rate bucket: Command UUID inputs changed or database clock moved behind the refill anchor.`,
         429: `Configure rate bucket: 128 unexpired receipts retained; known repeats remain available.`,
-        503: `Configure rate bucket: Request deadline elapsed; after an uncertain mutation look up or replay the same command UUID.`,
+        503: `Configure rate bucket: Request deadline elapsed; after an uncertain mutation look up or replay the same command UUID. Sent as 503 by the public edge.`,
         504: `Configure rate bucket: Request deadline elapsed; after an uncertain mutation look up or replay the same command UUID.`,
       },
     });
@@ -3220,7 +3220,7 @@ export class EventsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `List rate history: Request deadline elapsed; after an uncertain mutation look up or replay the same command UUID.`,
+        503: `List rate history: Request deadline elapsed; after an uncertain mutation look up or replay the same command UUID. Sent as 503 by the public edge.`,
         504: `List rate history: Request deadline elapsed; after an uncertain mutation look up or replay the same command UUID.`,
       },
     });
@@ -3262,7 +3262,7 @@ export class EventsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Look up rate command: Request deadline elapsed; after an uncertain mutation look up or replay the same command UUID.`,
+        503: `Look up rate command: Request deadline elapsed; after an uncertain mutation look up or replay the same command UUID. Sent as 503 by the public edge.`,
         504: `Look up rate command: Request deadline elapsed; after an uncertain mutation look up or replay the same command UUID.`,
       },
     });
@@ -3304,7 +3304,7 @@ export class EventsService {
         404: `code: not_found`,
         409: `Saved capacity or plan ceiling changed from expected values, or a retained command UUID was reused with different normalized input; no change is applied. Refresh preview before retrying. Value guards do not detect changes that return to the same values and do not reserve live capacity.`,
         429: `New command exceeds 128 retained receipts for this subscription. Known repeats remain available; expiry frees receipt slots. Controls without a command UUID remain available without idempotent evidence.`,
-        503: `Set consumer delivery capacity: subscription control request timed out.`,
+        503: `Set consumer delivery capacity: subscription control request timed out. Sent as 503 by the public edge.`,
         504: `Set consumer delivery capacity: subscription control request timed out.`,
       },
     });
@@ -3360,7 +3360,7 @@ export class EventsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Read-only command history timed out.`,
+        503: `Read-only command history timed out. Sent as 503 by the public edge.`,
         504: `Read-only command history timed out.`,
       },
     });
@@ -3402,7 +3402,7 @@ export class EventsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `No owned target or unexpired command receipt is available. Receipt absence does not prove the command never ran.`,
-        503: `Read-only capacity-command lookup timed out.`,
+        503: `Read-only capacity-command lookup timed out. Sent as 503 by the public edge.`,
         504: `Read-only capacity-command lookup timed out.`,
       },
     });
@@ -3454,7 +3454,7 @@ export class EventsService {
         404: `App retry backlog not found or not owned.`,
         429: `App retry backlog request rate exceeded.`,
         500: `App retry backlog could not be read.`,
-        503: `App retry backlog evidence deadline expired.`,
+        503: `App retry backlog evidence deadline expired. Sent as 503 by the public edge.`,
         504: `App retry backlog evidence deadline expired.`,
       },
     });
@@ -3484,7 +3484,7 @@ export class EventsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Recovery health request timed out.`,
+        503: `Recovery health request timed out. Sent as 503 by the public edge.`,
         504: `Recovery health request timed out.`,
       },
     });
@@ -3518,7 +3518,7 @@ export class EventsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Recovery request timed out.`,
+        503: `Recovery request timed out. Sent as 503 by the public edge.`,
         504: `Recovery request timed out.`,
       },
     });
@@ -3592,7 +3592,7 @@ export class EventsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Recovery listing timed out.`,
+        503: `Recovery listing timed out. Sent as 503 by the public edge.`,
         504: `Recovery listing timed out.`,
       },
     });
@@ -3637,7 +3637,7 @@ export class EventsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `Account already has three active recovery jobs.`,
-        503: `Create a durable recovery job for a frozen selection of routing failures: recovery request timed out.`,
+        503: `Create a durable recovery job for a frozen selection of routing failures: recovery request timed out. Sent as 503 by the public edge.`,
         504: `Create a durable recovery job for a frozen selection of routing failures: recovery request timed out.`,
       },
     });
@@ -3667,7 +3667,7 @@ export class EventsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Read bulk recovery progress: recovery request timed out.`,
+        503: `Read bulk recovery progress: recovery request timed out. Sent as 503 by the public edge.`,
         504: `Read bulk recovery progress: recovery request timed out.`,
       },
     });
@@ -3704,7 +3704,7 @@ export class EventsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Cancel retries that have not yet been queued: recovery request timed out.`,
+        503: `Cancel retries that have not yet been queued: recovery request timed out. Sent as 503 by the public edge.`,
         504: `Cancel retries that have not yet been queued: recovery request timed out.`,
       },
     });
@@ -3742,7 +3742,7 @@ export class EventsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `Recovery job is completed, cancelled, or expired.`,
-        503: `Pause further recovery admissions: recovery request timed out.`,
+        503: `Pause further recovery admissions: recovery request timed out. Sent as 503 by the public edge.`,
         504: `Pause further recovery admissions: recovery request timed out.`,
       },
     });
@@ -3780,7 +3780,7 @@ export class EventsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `Resume the frozen recovery selection: recovery job is completed, cancelled, or expired.`,
-        503: `Resume the frozen recovery selection: recovery request timed out.`,
+        503: `Resume the frozen recovery selection: recovery request timed out. Sent as 503 by the public edge.`,
         504: `Resume the frozen recovery selection: recovery request timed out.`,
       },
     });
@@ -3815,7 +3815,7 @@ export class EventsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `Change the current recovery admission rate: recovery job is completed, cancelled, or expired.`,
-        503: `Change the current recovery admission rate: recovery request timed out.`,
+        503: `Change the current recovery admission rate: recovery request timed out. Sent as 503 by the public edge.`,
         504: `Change the current recovery admission rate: recovery request timed out.`,
       },
     });
@@ -3951,7 +3951,7 @@ export class EventsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `code: conflict`,
-        503: `Policy change preview inspection timed out.`,
+        503: `Policy change preview inspection timed out. Sent as 503 by the public edge.`,
         504: `Policy change preview inspection timed out.`,
       },
     });
@@ -4997,7 +4997,7 @@ export class EventsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `Retry view requires a terminal native workflow recovery parent.`,
-        503: `Recovery preflight timed out.`,
+        503: `Recovery preflight timed out. Sent as 503 by the public edge.`,
         504: `Recovery preflight timed out.`,
       },
     });
@@ -5059,7 +5059,7 @@ export class EventsService {
         404: `Retained job unavailable for notification retry-preview.`,
         429: `Notification retry-preview request rate limited.`,
         500: `Notification retry-preview storage failure.`,
-        503: `Notification retry-preview request exceeded its time budget.`,
+        503: `Notification retry-preview request exceeded its time budget. Sent as 503 by the public edge.`,
         504: `Notification retry-preview request exceeded its time budget.`,
       },
     });
@@ -5096,7 +5096,7 @@ export class EventsService {
         409: `Notification retry request ID conflicts or saved decision limit reached.`,
         429: `Notification retry request rate limited.`,
         500: `Notification retry storage failure.`,
-        503: `Notification retry request exceeded its time budget.`,
+        503: `Notification retry request exceeded its time budget. Sent as 503 by the public edge.`,
         504: `Notification retry request exceeded its time budget.`,
       },
     });
@@ -5214,7 +5214,7 @@ export class EventsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Recovery history request timed out.`,
+        503: `Recovery history request timed out. Sent as 503 by the public edge.`,
         504: `Recovery history request timed out.`,
       },
     });
@@ -5258,7 +5258,7 @@ export class EventsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Read a stable page of selected recipients and recovery outcomes: recovery request timed out.`,
+        503: `Read a stable page of selected recipients and recovery outcomes: recovery request timed out. Sent as 503 by the public edge.`,
         504: `Read a stable page of selected recipients and recovery outcomes: recovery request timed out.`,
       },
     });
@@ -5734,7 +5734,7 @@ export class EventsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Paginated acknowledgment read exceeded its request deadline.`,
+        503: `Paginated acknowledgment read exceeded its request deadline. Sent as 503 by the public edge.`,
         504: `Paginated acknowledgment read exceeded its request deadline.`,
       },
     });
@@ -5778,7 +5778,7 @@ export class EventsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        503: `Acknowledgment history read exceeded its time budget.`,
+        503: `Acknowledgment history read exceeded its time budget. Sent as 503 by the public edge.`,
         504: `Acknowledgment history read exceeded its time budget.`,
       },
     });
@@ -5815,7 +5815,7 @@ export class EventsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `Expired lease, replaced attempt or incompatible completion for getEventAcknowledgmentPolicy.`,
-        503: `Acknowledgment request timed out for getEventAcknowledgmentPolicy.`,
+        503: `Acknowledgment request timed out for getEventAcknowledgmentPolicy. Sent as 503 by the public edge.`,
         504: `Acknowledgment request timed out for getEventAcknowledgmentPolicy.`,
       },
     });
@@ -5856,7 +5856,7 @@ export class EventsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `Expired lease, replaced attempt or incompatible completion for setEventAcknowledgmentPolicy.`,
-        503: `Acknowledgment request timed out for setEventAcknowledgmentPolicy.`,
+        503: `Acknowledgment request timed out for setEventAcknowledgmentPolicy. Sent as 503 by the public edge.`,
         504: `Acknowledgment request timed out for setEventAcknowledgmentPolicy.`,
       },
     });
@@ -5893,7 +5893,7 @@ export class EventsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `Expired lease, replaced attempt or incompatible completion for getEventAcknowledgment.`,
-        503: `Acknowledgment request timed out for getEventAcknowledgment.`,
+        503: `Acknowledgment request timed out for getEventAcknowledgment. Sent as 503 by the public edge.`,
         504: `Acknowledgment request timed out for getEventAcknowledgment.`,
       },
     });
@@ -5934,7 +5934,7 @@ export class EventsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `Expired lease, replaced attempt or incompatible completion for renewEventAcknowledgment.`,
-        503: `Acknowledgment request timed out for renewEventAcknowledgment.`,
+        503: `Acknowledgment request timed out for renewEventAcknowledgment. Sent as 503 by the public edge.`,
         504: `Acknowledgment request timed out for renewEventAcknowledgment.`,
       },
     });
@@ -5975,7 +5975,7 @@ export class EventsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `Expired lease, replaced attempt or incompatible completion for completeEventAcknowledgment.`,
-        503: `Acknowledgment request timed out for completeEventAcknowledgment.`,
+        503: `Acknowledgment request timed out for completeEventAcknowledgment. Sent as 503 by the public edge.`,
         504: `Acknowledgment request timed out for completeEventAcknowledgment.`,
       },
     });
@@ -6016,7 +6016,7 @@ export class EventsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `Expired lease, replaced attempt or incompatible completion for retryEventAcknowledgment.`,
-        503: `Acknowledgment request timed out for retryEventAcknowledgment.`,
+        503: `Acknowledgment request timed out for retryEventAcknowledgment. Sent as 503 by the public edge.`,
         504: `Acknowledgment request timed out for retryEventAcknowledgment.`,
       },
     });
@@ -6057,7 +6057,7 @@ export class EventsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         409: `Expired lease, replaced attempt or incompatible completion for deadLetterEventAcknowledgment.`,
-        503: `Acknowledgment request timed out for deadLetterEventAcknowledgment.`,
+        503: `Acknowledgment request timed out for deadLetterEventAcknowledgment. Sent as 503 by the public edge.`,
         504: `Acknowledgment request timed out for deadLetterEventAcknowledgment.`,
       },
     });

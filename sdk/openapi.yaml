@@ -21,7 +21,7 @@ info:
     envelope with `code: auth_rate_limited` and a `Retry-After` header.
     Gregale's own problems are sent as 503 where an operation lists 502 or
     504, with the same `code` and an `X-Faas-Error-Code` header, because the
-    CDN in front of the API replaces 502 and 504 bodies (ADR-20261030115139).
+    CDN in front of the API replaces 502 and 504 bodies.
     Edges released before that change still send 502 or 504, so both are
     listed. Key on `code`, not on the status.
 
@@ -5868,7 +5868,7 @@ paths:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
         '503':
-          description: GitHub could not be reached.
+          description: GitHub could not be reached. Sent as 503 by the public edge.
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
@@ -5903,7 +5903,7 @@ paths:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
         '503':
-          description: The GitHub repository catalog was unavailable during reconciliation.
+          description: The GitHub repository catalog was unavailable during reconciliation. Sent as 503 by the public edge.
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
@@ -6013,7 +6013,7 @@ paths:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
         '503':
-          description: 'code: github_unreachable — the GitHub integration could not reach api.github.com when persisting the bind; retry in a minute.'
+          description: 'code: github_unreachable — the GitHub integration could not reach api.github.com when persisting the bind; retry in a minute. Sent as 503 by the public edge.'
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
@@ -11124,6 +11124,7 @@ paths:
             `delivery_status_code` + `delivery_attempts` for the
             investigator; the customer's receiver likely rejected
             the request, was unreachable, or returned 5xx.
+            Sent as 503 by the public edge.
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
@@ -12769,7 +12770,7 @@ paths:
         '404': {$ref: '#/components/responses/NotFound'}
         '409': {$ref: '#/components/responses/Conflict'}
         '503':
-          description: Policy change preview inspection timed out.
+          description: Policy change preview inspection timed out. Sent as 503 by the public edge.
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
@@ -15421,7 +15422,7 @@ paths:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
         '503':
-          description: Provider-side failure. The CLI surfaces this as 'retry failed'.
+          description: Provider-side failure. The CLI surfaces this as 'retry failed'. Sent as 503 by the public edge.
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
@@ -15488,7 +15489,7 @@ paths:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
         '503':
-          description: Provider-side failure.
+          description: Provider-side failure. Sent as 503 by the public edge.
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}

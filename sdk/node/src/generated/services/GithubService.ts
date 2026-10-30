@@ -274,7 +274,7 @@ export class GithubService {
         404: `code: not_found`,
         409: `code: conflict`,
         502: `GitHub could not be reached.`,
-        503: `GitHub could not be reached.`,
+        503: `GitHub could not be reached. Sent as 503 by the public edge.`,
       },
     });
   }
@@ -317,7 +317,7 @@ export class GithubService {
         404: `code: not_found`,
         409: `code: conflict`,
         502: `The GitHub repository catalog was unavailable during reconciliation.`,
-        503: `The GitHub repository catalog was unavailable during reconciliation.`,
+        503: `The GitHub repository catalog was unavailable during reconciliation. Sent as 503 by the public edge.`,
       },
     });
   }
@@ -445,7 +445,7 @@ export class GithubService {
         `,
         404: `code: not_found`,
         502: `code: github_unreachable — the GitHub integration could not reach api.github.com when persisting the bind; retry in a minute.`,
-        503: `code: github_unreachable — the GitHub integration could not reach api.github.com when persisting the bind; retry in a minute.`,
+        503: `code: github_unreachable — the GitHub integration could not reach api.github.com when persisting the bind; retry in a minute. Sent as 503 by the public edge.`,
       },
     });
   }

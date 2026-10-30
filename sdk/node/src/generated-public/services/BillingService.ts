@@ -718,7 +718,7 @@ export class BillingService {
         404: `No open charge to retry — the account is in good standing, or the operator has not configured a billing provider.`,
         501: `The provider has no direct saved-card retry API; use the billing portal URL in the response.`,
         502: `Provider-side failure. The CLI surfaces this as 'retry failed'.`,
-        503: `Provider-side failure. The CLI surfaces this as 'retry failed'.`,
+        503: `Provider-side failure. The CLI surfaces this as 'retry failed'. Sent as 503 by the public edge.`,
       },
     });
   }
@@ -744,7 +744,7 @@ export class BillingService {
         403: `code: email_verification_required — verify the account email before deploying code or changing billing settings.`,
         409: `Already cancelled. CLI renders a friendly hint.`,
         502: `Provider-side failure.`,
-        503: `Provider-side failure.`,
+        503: `Provider-side failure. Sent as 503 by the public edge.`,
       },
     });
   }

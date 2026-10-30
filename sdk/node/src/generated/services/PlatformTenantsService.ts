@@ -1849,7 +1849,7 @@ export class PlatformTenantsService {
         409: `code: conflict`,
         422: `The platform tenant statement or customer cannot be invoiced, or the provider rejected the request.`,
         502: `The provider could not be reached (\`billing_provider_unavailable\`); retry to resume the platform tenant statement export.`,
-        503: `The provider could not be reached (\`billing_provider_unavailable\`); retry to resume the platform tenant statement export.`,
+        503: `The provider could not be reached (\`billing_provider_unavailable\`); retry to resume the platform tenant statement export. Sent as 503 by the public edge.`,
       },
     });
   }

@@ -754,6 +754,7 @@ export class AlertRulesService {
         \`delivery_status_code\` + \`delivery_attempts\` for the
         investigator; the customer's receiver likely rejected
         the request, was unreachable, or returned 5xx.
+        Sent as 503 by the public edge.
         `,
       },
     });
