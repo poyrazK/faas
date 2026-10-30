@@ -135,12 +135,16 @@ func TestCompanyAppSignupFollowsTheCompanysPlan(t *testing.T) {
 		Status: state.AppActive, RAMMB: 256, MaxConcurrency: 1, IdleTimeoutS: 60}); err != nil {
 		t.Fatal(err)
 	}
-	for path, body := range map[string]any{
-		"/v1/account/billing-connections/stripe": api.PutBillingConnectionRequest{SecretKey: "rk_test_51abcdWXYZ"},
-		"/v1/apps/forecast/consumer-signup":      api.PutConsumerSignupRequest{DisplayName: "Forecast API"},
+	// Stripe is connected before consumer signup is enabled, which requires it.
+	for _, put := range []struct {
+		path string
+		body any
+	}{
+		{"/v1/account/billing-connections/stripe", api.PutBillingConnectionRequest{SecretKey: "rk_test_51abcdWXYZ"}},
+		{"/v1/apps/forecast/consumer-signup", api.PutConsumerSignupRequest{DisplayName: "Forecast API"}},
 	} {
-		if res := e.Do(t, http.MethodPut, path, body, nil); res.Code != http.StatusOK {
-			t.Fatalf("PUT %s: %d %s", path, res.Code, res.Body)
+		if res := e.Do(t, http.MethodPut, put.path, put.body, nil); res.Code != http.StatusOK {
+			t.Fatalf("PUT %s: %d %s", put.path, res.Code, res.Body)
 		}
 	}
 	public := map[string]string{"Authorization": ""}

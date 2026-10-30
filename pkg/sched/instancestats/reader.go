@@ -225,6 +225,8 @@ type Reader struct {
 	// shadow is the latest per-node ADR-909 measurement (memory_shadow.go).
 	shadow atomic.Pointer[memoryShadowSnapshot]
 	quiet  atomic.Pointer[quietPausedSnapshot]
+	// cpu is the latest per-instance measured CPU (measured_cpu.go).
+	cpu atomic.Pointer[measuredCPUSnapshot]
 
 	// rateMu protects the cumulative-counter baselines and their
 	// derived app-level rates. These are deliberately separate from

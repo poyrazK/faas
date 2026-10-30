@@ -1362,6 +1362,9 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	}()
 	phases.vmDone = time.Now()
 	b.emitBuildLog(ctx, build.ID, phases.vmLine())
+	if line := guestTimingsLog(out.Timings); line != "" {
+		b.emitBuildLog(ctx, build.ID, line)
+	}
 	if out.WarmSnapshotError != "" {
 		b.log.Warn("builderd: warm snapshot unavailable; build artifact preserved", "build", build.ID, "err", out.WarmSnapshotError)
 		b.emitBuildLog(ctx, build.ID, "warm builder cache unavailable — deployment completed from the built artifact\n")
@@ -1516,7 +1519,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		return result, err
 	}
 	phases.completed = time.Now()
-	b.log.Info("builderd: build phases", append([]any{"build", build.ID, "deployment", build.DeploymentID}, phases.attrs()...)...)
+	b.log.Info("builderd: build phases", append(append([]any{"build", build.ID, "deployment", build.DeploymentID}, phases.attrs()...), guestTimingAttrs(out.Timings)...)...)
 	// Only cache a successfully committed build produced by the same builder
 	// environment observed before VM launch. A concurrent base restage leaves
 	// the successful deployment intact but deliberately skips cache publication.

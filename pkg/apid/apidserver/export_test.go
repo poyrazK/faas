@@ -1909,5 +1909,13 @@ func SecurityMailAllow(now func() time.Time) func(accountID, kind string) bool {
 	return l.allow
 }
 
+// AdvanceSecurityMailClockForTest moves the per-account sign-in mail
+// limiter's clock d ahead, as if the next request came that much later.
+func (r *server) AdvanceSecurityMailClockForTest(d time.Duration) {
+	r.securityMail.mu.Lock()
+	defer r.securityMail.mu.Unlock()
+	r.securityMail.now = func() time.Time { return time.Now().Add(d) }
+}
+
 // SealOAuthCodeState mints a Connect GitHub state for accountID (H64).
 var SealOAuthCodeState = sealOAuthCodeState

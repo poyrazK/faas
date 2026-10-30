@@ -76,6 +76,7 @@ type contractTestStore interface {
 	state.NodeLeaseStore
 	state.NodeLifecycleCompletionStore
 	state.ObjectBucketAccessStore
+	state.ObjectBucketPlacementStore
 	state.ObjectBucketReservationResultStore
 	state.ObjectBucketStore
 	state.ObjectBucketWriteFenceStore

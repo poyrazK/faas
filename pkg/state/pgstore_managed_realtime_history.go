@@ -129,13 +129,14 @@ func (s *PgStore) appendManagedRealtimeChannel(ctx context.Context, endpointID, 
 			return previous, tx.Commit(ctx)
 		}
 	}
-	var exists bool
-	if err := tx.QueryRow(ctx, `
-		select exists(select 1 from managed_realtime_channel_heads where endpoint_id = $1 and channel = $2)
-	`, endpointID, channel).Scan(&exists); err != nil {
+	// exists: the channel has a head; held: it holds retained messages,
+	// reducer state or a snapshot, so retaining on it takes no new slot.
+	var exists, held bool
+	if err := tx.QueryRow(ctx, `select true, `+heldRealtimeChannel+` from managed_realtime_channel_heads h
+		where h.endpoint_id = $1 and h.channel = $2`, endpointID, channel).Scan(&exists, &held); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return ManagedRealtimeChannelMessage{}, fmt.Errorf("state: check realtime channel head: %w", err)
 	}
-	if !exists {
+	if !held {
 		var lockedID string
 		if err := tx.QueryRow(ctx, `select id from managed_realtime_endpoints where id = $1 for update`, endpointID).Scan(&lockedID); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -144,20 +145,14 @@ func (s *PgStore) appendManagedRealtimeChannel(ctx context.Context, endpointID, 
 			return ManagedRealtimeChannelMessage{}, fmt.Errorf("state: lock realtime endpoint: %w", err)
 		}
 		// A concurrent request may have created this same channel while we
-		// waited for the endpoint lock. Count only if it is still new.
+		// waited for the endpoint lock; checkRetainedChannelPG rechecks it.
 		if err := tx.QueryRow(ctx, `
 			select exists(select 1 from managed_realtime_channel_heads where endpoint_id = $1 and channel = $2)
 		`, endpointID, channel).Scan(&exists); err != nil {
 			return ManagedRealtimeChannelMessage{}, fmt.Errorf("state: recheck realtime channel head: %w", err)
 		}
-		if !exists {
-			var channels int
-			if err := tx.QueryRow(ctx, `select count(*) from managed_realtime_channel_heads where endpoint_id = $1`, endpointID).Scan(&channels); err != nil {
-				return ManagedRealtimeChannelMessage{}, fmt.Errorf("state: count realtime channels: %w", err)
-			}
-			if channels >= ManagedRealtimeHistoryMaxChannels {
-				return ManagedRealtimeChannelMessage{}, ErrManagedRealtimeHistoryLimit
-			}
+		if err := checkRetainedChannelPG(ctx, tx, endpointID, channel); err != nil {
+			return ManagedRealtimeChannelMessage{}, err
 		}
 	}
 	if _, err := tx.Exec(ctx, `

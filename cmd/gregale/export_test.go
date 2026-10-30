@@ -2587,3 +2587,8 @@ func TierDiscoverableFlags(names, capabilities []string) []string {
 	}
 	return kept
 }
+
+// BindExclusiveLock binds a created cron or broker trigger to its lock.
+var BindExclusiveLock = bindExclusiveLock
+
+type ExclusiveLock = exclusiveLock

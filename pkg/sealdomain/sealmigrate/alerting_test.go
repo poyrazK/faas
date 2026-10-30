@@ -21,6 +21,19 @@ import (
 type alertingValues struct {
 	rows   map[string]state.AlertingSealedCredential // keyed by kind|id
 	rotate string
+	// copies are the destination secrets open incidents carry, in
+	// (kind, id) order.
+	copies []state.AlertingSealedCredential
+}
+
+func (f *alertingValues) ListOpenMCPReadinessRoutingSecrets(_ context.Context, afterKind, afterID string, limit int) ([]state.AlertingSealedCredential, error) {
+	var out []state.AlertingSealedCredential
+	for _, c := range f.copies {
+		if (c.Kind > afterKind || (c.Kind == afterKind && c.ID > afterID)) && len(out) < limit {
+			out = append(out, c)
+		}
+	}
+	return out, nil
 }
 
 func (f *alertingValues) ListAlertingSealedCredentials(_ context.Context, afterKind, afterID string, limit int) ([]state.AlertingSealedCredential, error) {
@@ -116,5 +129,72 @@ func TestMigrateAlerting(t *testing.T) {
 	again, err := sealmigrate.MigrateAlerting(context.Background(), f, domain, []*age.X25519Identity{fleet})
 	if err != nil || again.Resealed != 1 || again.Changed != 0 || again.Failed != 2 {
 		t.Fatalf("second run = %+v, %v; want the rotated row re-sealed", again, err)
+	}
+}
+
+// TestCheckAlerting counts the values a legacy identity still opens and the
+// incident copies only a legacy identity opens, writing nothing: the
+// precondition for meterd dropping the fleet and host identities. The
+// migration reports the same copies as skipped, since it cannot re-seal
+// them in place.
+func TestCheckAlerting(t *testing.T) {
+	domain, fleet := mustIdentity(t), mustIdentity(t)
+	seal := func(ns string, to ...*age.X25519Identity) []byte {
+		var rs []*age.X25519Recipient
+		for _, id := range to {
+			rs = append(rs, id.Recipient())
+		}
+		b, err := secretbox.SealBytesTo(rs, ns, []byte("0123456789abcdef0123456789abcdef"), 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	f := &alertingValues{rows: map[string]state.AlertingSealedCredential{}}
+	for _, c := range []state.AlertingSealedCredential{
+		{Kind: state.AlertingSealedCredentialRule, ID: "r1", Sealed: seal(alerts.AlertSecretNamespace, fleet)},
+		{Kind: state.AlertingSealedCredentialRule, ID: "r2", Sealed: seal(alerts.AlertSecretNamespace, domain)},
+		{Kind: state.AlertingSealedCredentialMCPPagerDuty, ID: "p1", Sealed: seal(api.MCPReadinessPagerDutySecretNamespace, domain, fleet)},
+	} {
+		f.rows[c.Kind+"|"+c.ID] = c
+	}
+	// A dual-sealed copy still opens with the domain: meterd keeps it.
+	f.copies = []state.AlertingSealedCredential{
+		{Kind: state.AlertingRoutingCopyFallback, ID: "i1", Sealed: seal(alerts.AlertSecretNamespace, fleet)},
+		{Kind: state.AlertingRoutingCopyPrimary, ID: "i1", Sealed: seal(api.MCPReadinessPagerDutySecretNamespace, domain, fleet)},
+		{Kind: state.AlertingRoutingCopyPrimary, ID: "i2", Sealed: seal(api.MCPReadinessPagerDutySecretNamespace, domain)},
+	}
+	before := map[string][]byte{}
+	for key, c := range f.rows {
+		before[key] = c.Sealed
+	}
+	ctx := context.Background()
+	report, err := sealmigrate.CheckAlerting(ctx, f, domain, []*age.X25519Identity{fleet})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := sealmigrate.MigrationReport{Domain: sealdomain.Alerting, Target: domain.Recipient().String(), Scanned: 3, Current: 1, Pending: 2, Skipped: 1}
+	if report != want {
+		t.Fatalf("report = %+v, want %+v", report, want)
+	}
+	for key, c := range f.rows {
+		if !bytes.Equal(c.Sealed, before[key]) {
+			t.Fatalf("the check rewrote %s", key)
+		}
+	}
+
+	migrated, err := sealmigrate.MigrateAlerting(ctx, f, domain, []*age.X25519Identity{fleet})
+	if err != nil || migrated.Resealed != 2 || migrated.Skipped != 1 {
+		t.Fatalf("migration = %+v, %v; want two re-sealed and the incident copy skipped", migrated, err)
+	}
+	if report, err := sealmigrate.CheckAlerting(ctx, f, domain, []*age.X25519Identity{fleet}); err != nil || report.Pending != 0 || report.Skipped != 1 {
+		t.Fatalf("check after the re-seal = %+v, %v; want only the incident copy left", report, err)
+	}
+	f.copies = f.copies[1:] // the incident resolved
+	if report, err := sealmigrate.CheckAlerting(ctx, f, domain, []*age.X25519Identity{fleet}); err != nil || report.Pending != 0 || report.Skipped != 0 {
+		t.Fatalf("check once the incident resolved = %+v, %v; want nothing left", report, err)
+	}
+	if report, err := sealmigrate.CheckAlerting(ctx, f, domain, nil); err != nil || report.Pending != 0 || report.Skipped != 0 {
+		t.Fatalf("check without legacy identities = %+v, %v; want nothing left", report, err)
 	}
 }
