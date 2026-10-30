@@ -193,6 +193,7 @@ type MemStore struct {
 	managedRealtimeSchedules                   map[managedRealtimeScheduleKey]ManagedRealtimeSchedule
 	managedRealtimeScheduleHistory             map[managedRealtimeScheduleKey][]ManagedRealtimeScheduleHistoryEvent
 	managedRealtimeEventSchemas                map[managedRealtimeEventSchemaKey]ManagedRealtimeEventSchema
+	realtimeEventSchemas                       *realtimeEventSchemaCache
 	managedRealtimeBatches                     map[managedRealtimeBatchKey]managedRealtimeBatchRecord
 	managedRealtimeSnapshots                   map[managedRealtimeHistoryKey]ManagedRealtimeChannelSnapshot
 	realtimeNotificationTimeline               map[string][]api.ManagedRealtimeNotificationTimelineEvent
@@ -1624,6 +1625,7 @@ type builderVMCleanupRow struct {
 // Production (PgStore) gets the same row from the migration.
 func NewMemStore(options ...StoreOption) *MemStore {
 	m := &MemStore{
+		realtimeEventSchemas:            newRealtimeEventSchemaCache(),
 		trafficAppsSuffix:               configuredTrafficAppsSuffix(options),
 		workflowFailureCaptureStartedAt: time.Now().UTC(),
 		deploymentDependencyGates:       map[string]DeploymentDependencyGate{},
