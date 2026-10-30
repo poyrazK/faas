@@ -1149,9 +1149,8 @@ func (r *MemStore) OperatorIntents() map[string]OperatorIntent { return r.operat
 
 // Keyed credential families (ADR 20261029202403 amendment 1).
 var (
-	AcknowledgmentToken       = acknowledgmentToken
-	AcknowledgmentMatches     = acknowledgmentMatches
-	AcknowledgmentDigest      = acknowledgmentDigest
-	ObjectUploadGrantLookups  = objectUploadGrantLookups
-	OperationCapabilityDigest = operationCapabilityDigest
+	AcknowledgmentToken      = acknowledgmentToken
+	AcknowledgmentMatches    = acknowledgmentMatches
+	AcknowledgmentDigest     = acknowledgmentDigest
+	ObjectUploadGrantLookups = objectUploadGrantLookups
 )
