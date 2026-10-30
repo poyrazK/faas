@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -149,6 +150,10 @@ func TestVMMDRestartKeepsRunningAppMetal(t *testing.T) {
 			ok.Add(1)
 		}
 	}()
+	// A release pre-stage can publish a refreshed copy over a cache file a
+	// live guest binds (production rc.306 refused such a guest). Re-stage one
+	// of this guest's bind sources the same way: it must still be adopted.
+	restaged := restageGuestBindSource(t, h.VMMDResourceJournalDir(), before.ID)
 	time.Sleep(2 * time.Second)
 	restartStart := time.Now()
 	if err := h.PlannedRestartVMMD(30 * time.Second); err != nil {
@@ -179,7 +184,7 @@ func TestVMMDRestartKeepsRunningAppMetal(t *testing.T) {
 		t.Fatalf("instance after the restart = %+v, before %+v", after, before)
 	}
 	if got := firecrackerPID(t, before.ID); got != pid {
-		t.Fatalf("firecracker pid after the restart = %d, want the adopted %d", got, pid)
+		t.Fatalf("firecracker pid after the restart = %d, want the adopted %d (bind source %s was re-staged)", got, pid, restaged)
 	}
 	if n := countInstances(t, pool, appID, "failed"); n != 0 {
 		t.Fatalf("%d instance(s) failed across the restart", n)
@@ -330,4 +335,86 @@ func countInstances(t *testing.T, pool *pgxpool.Pool, appID, st string) int {
 		t.Fatalf("count %s instances: %v", st, err)
 	}
 	return n
+}
+
+// restageGuestBindSource publishes an identical copy over one of instance's
+// bind sources (copy, then rename over the path), as the cache does when a
+// release re-stages a file: the path then names a new inode while the guest
+// keeps the recorded one through its jail. It picks a source the run owns,
+// never a shared host base image or the kernel, and returns its path. A
+// read-only bind (the jail's Firecracker binary, a base image) is the case
+// that matters: the guest's view of it cannot change its mode, and the guest
+// must still park afterwards.
+func restageGuestBindSource(t *testing.T, journalDir, instance string) string {
+	t.Helper()
+	paths, err := filepath.Glob(filepath.Join(journalDir, "*.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sources []string
+	for _, p := range paths {
+		body, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		var rec struct {
+			Lease  struct{ Instance string } `json:"lease"`
+			Assets []struct {
+				Kind, Path, Source string
+			} `json:"assets"`
+		}
+		if json.Unmarshal(body, &rec) != nil || rec.Lease.Instance != instance {
+			continue
+		}
+		for _, a := range rec.Assets {
+			if a.Kind == "bind" && a.Source != "" {
+				sources = append(sources, a.Source)
+			}
+		}
+	}
+	for _, src := range sources {
+		if strings.HasPrefix(src, "/srv/fc/base/") || strings.Contains(filepath.Base(src), "vmlinux") || strings.HasPrefix(src, "/dev/") {
+			continue
+		}
+		info, err := os.Stat(src)
+		if err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		before, _ := statIno(src)
+		tmp := src + ".restage"
+		data, err := os.ReadFile(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(tmp, data, info.Mode().Perm()); err != nil {
+			t.Fatal(err)
+		}
+		if st, ok := info.Sys().(*syscall.Stat_t); ok {
+			if err := os.Chown(tmp, int(st.Uid), int(st.Gid)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := os.Rename(tmp, src); err != nil {
+			t.Fatal(err)
+		}
+		if after, _ := statIno(src); after == before {
+			t.Fatalf("re-staging %s kept its inode", src)
+		}
+		t.Logf("re-staged bind source %s (inode %d -> new) before the restart", src, before)
+		return src
+	}
+	t.Fatalf("no run-owned bind source to re-stage for %s among %v", instance, sources)
+	return ""
+}
+
+func statIno(path string) (uint64, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0, err
+	}
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return 0, fmt.Errorf("%s: no inode", path)
+	}
+	return st.Ino, nil
 }

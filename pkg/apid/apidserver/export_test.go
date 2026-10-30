@@ -10,6 +10,7 @@
 package apidserver
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -421,6 +422,23 @@ var Contains = contains
 var CookieDo = cookieDo
 var CountAffectedRequests = countAffectedRequests
 var CreateApp = createApp
+
+// CustomHistoryEnv is setup with custom metric history (and so OTLP ingest) on.
+var CustomHistoryEnv = customHistoryEnv
+
+// PostOTLPEncoded sends one OTLP metrics export to app shop with a
+// Content-Encoding (ADR-20261029203000).
+func PostOTLPEncoded(t *testing.T, e testEnv, contentType, encoding string, body []byte) *httptest.ResponseRecorder {
+	t.Helper()
+	r := httptest.NewRequest(http.MethodPost, "/v1/apps/shop/otlp/v1/metrics", bytes.NewReader(body))
+	r.Header.Set("Authorization", "Bearer "+e.key)
+	r.Header.Set("Content-Type", contentType)
+	r.Header.Set("Content-Encoding", encoding)
+	rec := httptest.NewRecorder()
+	e.h.ServeHTTP(rec, r)
+	return rec
+}
+
 var CreateAppTaskForTest = createAppTaskForTest
 var CreateExecutionAs = createExecutionAs
 var CreateProjectEnvironmentConfigFixture = createProjectEnvironmentConfigFixture
@@ -527,6 +545,7 @@ var MakeFeatureFlagOutcomesResponse = makeFeatureFlagOutcomesResponse
 var ManagedExecutionWorkflowStepLabel = managedExecutionWorkflowStepLabel
 var ManagedPostgresAccountingDiagnosticsView = managedPostgresAccountingDiagnosticsView
 var ManagedPostgresCapabilitiesView = managedPostgresCapabilitiesView
+var ProjectManagedPostgresDashboard = projectManagedPostgresDashboard
 var ManagedPostgresConnectionURL = managedPostgresConnectionURL
 var ManagedPostgresNotConfiguredProblem = managedPostgresNotConfiguredProblem
 var ManagedPostgresPlanAllows = managedPostgresPlanAllows
@@ -552,6 +571,13 @@ var NewAuditor = newAuditor
 var NewAuthedDashboardServer = newAuthedDashboardServer
 var NewAuthedDashboardServerFull = newAuthedDashboardServerFull
 var NewCloneCoordinatorFixture = newCloneCoordinatorFixture
+
+// NewCloneSourceFixture builds a clone source with no configuration write
+// fence; postgres binds a point-in-time-restorable managed database.
+func NewCloneSourceFixture(t *testing.T, postgres bool) cloneCoordinatorFixture {
+	return newCloneSourceFixture(t, cloneSourceData{postgres: postgres}, false)
+}
+
 var NewForceHarness = newForceHarness
 var NewGithubdClient = newGithubdClient
 var NewGoogleIDTokenVerifier = newGoogleIDTokenVerifier
@@ -852,9 +878,13 @@ func (r *cloneCheckpointClosureProvider) Roles() *int { return &r.roles }
 func (r *cloneCoordinatorFailureStore) LoseCaptureAck() *bool { return &r.loseCaptureAck }
 
 // Members of cloneCoordinatorFixture
+func (r *cloneCoordinatorFixture) Account() *state.Account                    { return &r.account }
 func (r *cloneCoordinatorFixture) Apps() *[]state.App                         { return &r.apps }
 func (r *cloneCoordinatorFixture) Lease() *state.ProjectEnvironmentCloneLease { return &r.lease }
 func (r *cloneCoordinatorFixture) Pool() **pgxpool.Pool                       { return &r.pool }
+func (r *cloneCoordinatorFixture) Postgres() **managedpostgres.Service        { return &r.postgres }
+func (r *cloneCoordinatorFixture) Database() **cloneDatabaseDeadlineProvider  { return &r.database }
+func (r *cloneCoordinatorFixture) Project() *state.Project                    { return &r.project }
 func (r *cloneCoordinatorFixture) Srv() **server                              { return &r.srv }
 func (r *cloneCoordinatorFixture) Store() **cloneCoordinatorFailureStore      { return &r.store }
 func (r cloneCoordinatorFixture) Targets(p0 *testing.T) []state.ProjectEnvironmentCloneWorkload {
@@ -1037,6 +1067,7 @@ func (r *server) PromqlClient() **promql.Client                 { return &r.prom
 func (r *server) Realtime() *managedrealtime.Service            { return &r.realtime }
 func (r *server) ResendWebhookSecret() *string                  { return &r.resendWebhookSecret }
 func (r *server) RuntimeConfig() **runtimeConfigManager         { return &r.runtimeConfig }
+func (r *server) CloneDataPointSettle() *time.Duration          { return &r.cloneDataPointSettle }
 func (r *server) Sessions() **session.Manager                   { return &r.sessions }
 func (r *server) StatementInvoices() *statementinvoices.Service { return &r.statementInvoices }
 func (r *server) BillingRuns() *billingruns.Service             { return &r.billingRuns }
@@ -1111,12 +1142,6 @@ func (r *server) ConfigureOperations(p0 Config, p1 func(string) string) error {
 }
 func (r *server) ConfigureQueueWorkload(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.configureQueueWorkload(p0, p1, p2)
-}
-func (r *server) CountAccountConsumerKeys(p0 context.Context, p1 state.App) (int, error) {
-	return r.countAccountConsumerKeys(p0, p1)
-}
-func (r *server) CountConsumerKeys(p0 context.Context, p1 string, p2 string) (int, error) {
-	return r.countConsumerKeys(p0, p1, p2)
 }
 func (r *server) CreateFinancialBudget(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.createFinancialBudget(p0, p1, p2)
@@ -1563,6 +1588,9 @@ func (r testEnv) DoOperator(p0 *testing.T, p1 string, p2 string, p3 any, p4 map[
 func (r testEnv) DoAs(p0 *testing.T, p1 string, p2 string, p3 any, p4 map[string]string, p5 string) *httptest.ResponseRecorder {
 	return r.doAs(p0, p1, p2, p3, p4, p5)
 }
+func (r testEnv) FreezeAfterAutomaticRollback(ctx context.Context, app state.App, rolledBackID, cause string) {
+	r.s.freezeAfterAutomaticRollback(ctx, app, rolledBackID, cause)
+}
 
 // Issues acceptance tests share the original PostgreSQL fixture and evidence setup.
 var IssueSeedRequestAttribution = issueSeedRequestAttribution
@@ -1808,6 +1836,12 @@ func VerifyCandidateObjectStorageCredentialForTest(ctx context.Context, c state.
 	hmacKey []byte, canary func(context.Context, string, string, func(string) string) api.ObjectStorageBindingProbeReport) error {
 	return verifyCandidateObjectStorageCredentialWith(ctx, identities, hmacKey, canary, c)
 }
+
+// Members of cloneDatabaseDeadlineProvider
+func (r *cloneDatabaseDeadlineProvider) Restores() []managedpostgres.RestoreRequest {
+	return r.restores
+}
+func (r *cloneDatabaseDeadlineProvider) OnRestore() *func() error { return &r.onRestore }
 
 // SetDatabaseSwitchDrain gives a test server's database switch worker drain
 // evidence the in-memory store lacks (ADR-20261023181931).

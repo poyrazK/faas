@@ -49,7 +49,10 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_APID_APP_ERRORS_TLS_CA_PATH` | apid, gatewayd-internal | `dropin` |  |  | `` |  |
 | `FAAS_APID_APP_ERRORS_TLS_CERT_PATH` | apid, gatewayd-internal | `dropin` |  |  | `` |  |
 | `FAAS_APID_APP_ERRORS_TLS_KEY_PATH` | apid, gatewayd-internal | `dropin` |  |  | `` |  |
-| `FAAS_APID_AUTH_SOCKET` | apid, gatewayd-public | `default` |  |  | `` |  |
+| `FAAS_APID_AUTH_SOCKET` | apid, gatewayd-internal, gatewayd-public | `default` |  |  | `` |  |
+| `FAAS_APID_CREDENTIAL_KEYS_FILE` | apid, gregalectl, shared | `dropin` |  |  | `` | ADR 20261029202403: the account credential key ring, one kid:base64key per line, the current key first; apid keys stored credential hashes with it. Delivered as a credential by the control_plane_service role (faas_apid_credential_keys_src); gregalectl release-acceptance mint-token reads it too. Unset keys nothing; read at start |
+| `FAAS_APID_CREDENTIAL_PLAIN_LOOKUP` | apid, gregalectl, shared | `dropin` |  | true | `` | ADR 20261029202403 contract step: false stops looking credentials up by their plain hash. Turn it off once gregalectl credentials status reports no plain long-lived rows and 14 days have passed since keyed writes began; read at start |
+| `FAAS_APID_CREDENTIAL_WRITES` | apid, gregalectl, shared | `dropin` |  | plain | `` | ADR 20261029202403: plain or keyed. keyed writes keyed digests, rewrites plain rows on use and backfills long-lived ones; needs FAAS_APID_CREDENTIAL_KEYS_FILE. Set keyed only once every apid and gateway runs a release that reads keyed digests; read at start |
 | `FAAS_APID_GITHUBD_BRIDGE_SOCK` | apid, githubd | `default` |  |  | `` |  |
 | `FAAS_APID_INTERNAL_BASE_URL` | meterd | `default` |  | http://127.0.0.1:9101 | `` | Safe Deploy meterd-to-apid operator listener; must remain a loopback HTTP origin |
 | `FAAS_APID_LISTEN` | apid | `default` |  |  | `` |  |
@@ -557,6 +560,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_MANAGED_POSTGRES_QUALIFY_APPROVAL_TTL` | shared | `default` |  |  | `` | optional approval lifetime for a qualification artifact; must be positive and no longer than 90 days |
 | `FAAS_MANAGED_POSTGRES_REQUIRE_GUEST_QUALIFICATION` | shared | `default` |  |  | `` | optional staging-canary requirement for combined provider/durable and native guest evidence; unset defaults false, malformed or partial policy fails closed, and production admission remains disabled (ADR-992) |
 | `FAAS_MANAGED_POSTGRES_RUNTIME_MANIFEST_PATH` | shared | `default` |  |  | `` | optional independently approved PostgreSQL qualification-bundle manifest path; supplying this path requires combined staging qualification and the native guest report; reload requires an apid restart (ADR-992) |
+| `FAAS_MANAGED_POSTGRES_SQL_PROBE_CONFIG` | apid, shared | `default` |  |  | `` | ADR-20261029172812 canary SQL probe: path to a JSON file naming one operator-owned canary database per backend by the environment variable that holds its connection string; apid connects, writes and reads each one per interval and exports apid_managed_postgres_sql_probe_*; unset disables it, and an invalid file or connection string fails apid startup |
 | `FAAS_MANAGED_POSTGRES_STORAGE_CAP_ENFORCEMENT` | apid, shared | `default` |  | shadow | `` | ADR-20261025094915 decision 9 storage pool: shadow (default) computes and logs the per-branch storage limit that keeps each usage subject inside its pooled storage without writing it, off does neither; on writes it through the provider and requires FAAS_MANAGED_POSTGRES_STORAGE_CAP_QUALIFICATION_PATH; any other value fails apid startup |
 | `FAAS_MANAGED_POSTGRES_STORAGE_CAP_QUALIFICATION_PATH` | apid, shared | `default` |  |  | `` | ADR-20261025094915 storage pool qualification artifact written by managed-postgres-qualify --storage-cap; required, and verified against the configured backend, when FAAS_MANAGED_POSTGRES_STORAGE_CAP_ENFORCEMENT=on |
 | `FAAS_MANIFEST_PATH` | imaged | `dropin` |  |  | `` |  |
@@ -603,7 +607,12 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_OTEL_FLUSH_INTERVAL` | apid, gatewayd-internal, gatewayd-public, outboundd | `default` |  |  | `` |  |
 | `FAAS_OTEL_SPANS_WRITER_ENABLED` | apid, gatewayd-internal, gatewayd-public, outboundd | `default` |  |  | `` |  |
 | `FAAS_OUTBOUNDD_CONFIG` | outboundd | `default` |  |  | `` | config path fallback when --config is absent; the unit passes --config /etc/faas/outboundd.toml |
+| `FAAS_OUTBOUNDD_RELAY_LISTEN` | outboundd | `dropin` |  |  | `` | ADR-989 app relay listener; control_plane_service 99-faas-outbound-relay.conf sets it from faas_outboundd_relay_listen and it overrides relay_listen in outboundd.toml; unset keeps the TOML value |
+| `FAAS_OUTBOUNDD_RELAY_TLS_CA_PATH` | outboundd | `dropin` |  |  | `` | fleet CA for relay clients; control_plane_service 99-faas-outbound-relay.conf sets it for a tcp:// relay (ADR-989); overrides outboundd.toml |
+| `FAAS_OUTBOUNDD_RELAY_TLS_CERT_PATH` | outboundd | `dropin` |  |  | `` | outboundd/server outbound-relay feature leaf; control_plane_service 99-faas-outbound-relay.conf sets it for a tcp:// relay (ADR-989); overrides outboundd.toml |
+| `FAAS_OUTBOUNDD_RELAY_TLS_KEY_PATH` | outboundd | `dropin` |  |  | `` | outboundd/server outbound-relay feature leaf; control_plane_service 99-faas-outbound-relay.conf sets it for a tcp:// relay (ADR-989); overrides outboundd.toml |
 | `FAAS_OUTBOUNDD_ROLE` | outboundd, shared | `dropin` |  |  | `` |  |
+| `FAAS_OUTBOUNDD_WORKLOAD_IDENTITY_JWKS_PATH` | outboundd | `dropin` |  |  | `` | workload-identity JWKS the relay verifies assertions against (ADR-989, ADR-1141); control_plane_service 99-faas-outbound-relay.conf sets it with the relay and it overrides workload_identity_jwks_path in outboundd.toml |
 | `FAAS_OVERLAY_INTERFACE` | vmmd | `default` |  |  | `` |  |
 | `FAAS_OVERLAY_IP` | vmmd | `default` |  |  | `` | optional local encrypted-overlay IPv4; vmmd can auto-detect it when private-network transport is enabled |
 | `FAAS_OWNER_CACHE` | schedd | `default` |  |  | `` | optional boolean switch for the ADR-1741 schedd owner cache (wake inputs cached per app, writes guarded by the app runtime generation); production default is off |

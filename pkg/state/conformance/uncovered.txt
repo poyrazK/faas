@@ -117,6 +117,7 @@ CreateAppWebhookIfUnderQuota
 CreateBuildProvenance
 CreateBuildWithID
 CreateConsumerKey
+CreateConsumerKeyForConsumerIfUnderQuota
 CreateCorsPresetIfUnderQuota
 CreateCreditLedgerEntry
 CreateCronIfUnderQuotaWithOptions

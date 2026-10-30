@@ -261,6 +261,7 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		Action:                          alertRuleActionFrom(req.Action),
 		WebhookURL:                      req.WebhookURL,
 		WebhookSecretSealed:             sealed,
+		NotifyResolved:                  req.NotifyResolved,
 		CooldownMinutes:                 alertRuleCooldownFrom(req.CooldownMinutes),
 		PostDeployRollbackWindowSeconds: alertRollbackWindowFrom(req.PostDeployRollbackWindowSeconds),
 	}, limits)
@@ -534,6 +535,7 @@ func (s *server) updateAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		WebhookSecretSealed:             sealedPtr,
 		CooldownMinutes:                 req.CooldownMinutes,
 		PostDeployRollbackWindowSeconds: req.PostDeployRollbackWindowSeconds,
+		NotifyResolved:                  req.NotifyResolved,
 	})
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
@@ -764,6 +766,7 @@ func alertRuleResponse(r state.AlertRule) api.AlertRuleResponse {
 		SyntheticCheckID:                r.SyntheticCheckID,
 		Action:                          string(r.Action),
 		WebhookURL:                      r.WebhookURL,
+		NotifyResolved:                  r.NotifyResolved,
 		CooldownMinutes:                 r.CooldownMinutes,
 		PostDeployRollbackWindowSeconds: r.PostDeployRollbackWindowSeconds,
 		State:                           string(r.State),
@@ -1088,6 +1091,9 @@ func alertRuleRowForValidation(existing state.AlertRule, req api.UpdateAlertRule
 	}
 	if req.CooldownMinutes != nil {
 		merged.CooldownMinutes = *req.CooldownMinutes
+	}
+	if req.NotifyResolved != nil {
+		merged.NotifyResolved = *req.NotifyResolved
 	}
 	return merged
 }

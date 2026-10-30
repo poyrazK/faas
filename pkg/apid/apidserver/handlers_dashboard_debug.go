@@ -60,7 +60,7 @@ func parseAppDebugPath(rest string) (string, bool) {
 func (s *server) renderAppDebug(w http.ResponseWriter, r *http.Request, log *slog.Logger, acct state.Account, slug string) {
 	ctx := r.Context()
 	app, err := s.store.AppBySlug(ctx, slug)
-	if err != nil || app.AccountID != acct.ID {
+	if err != nil || !dashboardAppOwner(r, &acct, app) {
 		http.NotFound(w, r)
 		return
 	}
@@ -81,9 +81,9 @@ func (s *server) renderAppDebug(w http.ResponseWriter, r *http.Request, log *slo
 	}
 	data.ActionError = r.URL.Query().Get("action") == "replay_error"
 	if s.sessions != nil {
-		token, tokenErr := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardDebugReplayAction, acct.ID, dashboardDebugReplayCSRFCookie)
+		token, tokenErr := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardDebugReplayAction, actorAccount(r, acct).ID, dashboardDebugReplayCSRFCookie)
 		if tokenErr != nil {
-			log.Warn("dashboard debug: issue replay csrf", "account_id", acct.ID, "app_id", app.ID, "err", tokenErr)
+			log.Warn("dashboard debug: issue replay csrf", "account_id", actorAccount(r, acct).ID, "app_id", app.ID, "err", tokenErr)
 		} else {
 			data.ReplayCSRF = token
 			http.SetCookie(w, &http.Cookie{Name: dashboardDebugReplayCSRFCookie, Value: token, Path: "/", HttpOnly: true,
@@ -387,7 +387,7 @@ func (s *server) dashboardDebugReplay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	app, err := s.store.AppBySlug(r.Context(), slug)
-	if err != nil || app.AccountID != acct.ID {
+	if err != nil || !dashboardAppOwner(r, &acct, app) {
 		http.NotFound(w, r)
 		return
 	}

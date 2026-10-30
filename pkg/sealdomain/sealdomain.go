@@ -110,10 +110,13 @@ var registry = []Spec{
 		cols("managed_postgres_cutover_credentials", "ciphertext"),
 		cols("deployment_release_secret_snapshots", "values_json"),
 		cols("project_release_secret_bundles", "values_json"),
-		// ADR-733: a crash capture's per-capture age key. vmmd opens it to
-		// restore a sealed capture into a fork. imaged's at-rest pass for
-		// local captures also opens it today: a cross-domain read, to move
-		// behind vmmd like the reads in the ADR's section 3.
+		// ADR-733: a crash capture's per-capture age key. vmmd seals every
+		// capture at the source (schedd always asks it to), to the runtime
+		// domain once staged, and opens the key to restore a fork. imaged's
+		// at-rest pass seals and opens a key with the fleet identity only
+		// for a capture taken in plaintext, which no schedd produces; the
+		// build domain's contract check waits for any such capture to
+		// expire.
 		cols("crash_captures", "sealed_key"),
 	)},
 	{Domain: Outbound, Readers: []string{"outboundd"}, Roles: cpOnly, Wired: true, Columns: join(
@@ -146,8 +149,9 @@ var registry = []Spec{
 		cols("object_storage_s3_credentials", "secret_sealed"),
 	)},
 	// Trigger config envelopes (jsonb leaves, not listed here) belong to
-	// delivery too, but stay on the fleet key until apid stops opening a
-	// stored config to merge an update into it.
+	// delivery too. apid merges an update without opening the stored config
+	// and seals new credentials to the domain and, for now, the fleet key:
+	// a schedd of the previous release opens them with the fleet key alone.
 	{Domain: Delivery, Readers: []string{"schedd"}, Roles: bothRoles, Wired: true, Columns: join(
 		cols("execution_payloads", "sealed_payload"),
 		cols("app_webhooks", "secret_sealed"),

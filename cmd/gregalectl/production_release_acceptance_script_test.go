@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -31,15 +32,19 @@ case "$1" in
   apps) exit 0 ;;
   logs) echo "build: builder VM exited with status 1" ; exit 0 ;;
   deployment)
-    # Keep the simulated rollout open until its continuity probe is observed.
-    # An immediate fake completion can otherwise skip the script's probe loop.
-    if [[ "${TEST_REDEPLOY_503:-}" == 1 ]]; then
-      for ((attempt=0; attempt<1000; attempt++)); do
-        if [[ -f "${TEST_CURL_LOG}.continuity" ]]; then break; fi
+    # Keep the simulated rollout open until every scripted continuity probe
+    # is observed. An immediate fake completion can otherwise skip the
+    # script's probe loop.
+    if [[ -n "${TEST_CONTINUITY:-}" ]]; then
+      IFS=, read -ra pattern <<<"$TEST_CONTINUITY"
+      seen=0
+      for ((attempt=0; attempt<2000; attempt++)); do
+        if [[ -f "${TEST_CURL_LOG}.continuity" ]]; then read -r seen <"${TEST_CURL_LOG}.continuity"; fi
+        if ((seen >= ${#pattern[@]})); then break; fi
         sleep 0.01
       done
-      if [[ ! -f "${TEST_CURL_LOG}.continuity" ]]; then
-        echo "continuity probe was never observed" >&2
+      if ((seen < ${#pattern[@]})); then
+        echo "continuity probes observed: ${seen}, want ${#pattern[@]}" >&2
         exit 1
       fi
     fi
@@ -136,8 +141,17 @@ exit 2
 	writeExecutable("curl", `#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >>"$TEST_CURL_LOG"
-if [[ "${TEST_REDEPLOY_503:-}" == 1 && "$*" == *"ra-"* && "$*" != *"--write-out"* ]]; then
-  touch "${TEST_CURL_LOG}.continuity"
+# TEST_CONTINUITY scripts the redeploy continuity probes' statuses in order;
+# the last one repeats.
+if [[ -n "${TEST_CONTINUITY:-}" && "$*" == *"ra-"* && "$*" != *"--write-out"* ]]; then
+  count=0
+  if [[ -f "${TEST_CURL_LOG}.continuity" ]]; then read -r count <"${TEST_CURL_LOG}.continuity"; fi
+  count=$((count + 1))
+  printf '%s\n' "$count" >"${TEST_CURL_LOG}.continuity"
+  IFS=, read -ra pattern <<<"$TEST_CONTINUITY"
+  index=$((count - 1))
+  if ((index >= ${#pattern[@]})); then index=$((${#pattern[@]} - 1)); fi
+  status="${pattern[$index]}"
   headers=""; body=""
   while (($#)); do
     case "$1" in
@@ -146,7 +160,12 @@ if [[ "${TEST_REDEPLOY_503:-}" == 1 && "$*" == *"ra-"* && "$*" != *"--write-out"
       *) shift ;;
     esac
   done
-  printf 'HTTP/2 503\r\nx-faas-request-id: failed-probe-1\r\n\r\n' >"$headers"
+  if [[ "$status" == 200 ]]; then
+    printf 'HTTP/2 200\r\n\r\n' >"$headers"
+    printf 'hello' >"$body"
+    exit 0
+  fi
+  printf 'HTTP/2 %s\r\nx-faas-request-id: failed-probe-%s\r\n\r\n' "$status" "$count" >"$headers"
   printf '{"code":"capacity","detail":"previous revision unavailable"}' >"$body"
   exit 22
 fi
@@ -252,23 +271,41 @@ fi
 		}
 	}
 
-	// A continuity failure stays a hard gate but leaves the exact response
-	// status, request id, and bounded problem body in the workflow log.
-	continuityCmd := exec.Command("bash", script)
-	continuityCmd.Env = append(os.Environ(),
-		"PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"),
-		"RELEASE_SHA="+strings.Repeat("a", 40), "RUN_ID=12345678", "ACTIVE_NODE_COUNT=2",
-		"GREGALE_BIN="+gregale, "GREGALECTL_BIN="+gregalectl,
-		"TEST_DEPLOY_LOG="+filepath.Join(dir, "continuity-deploys"),
-		"TEST_CURL_LOG="+filepath.Join(dir, "continuity-curls"),
-		"TEST_REVOKE_LOG="+filepath.Join(dir, "continuity-revokes"), "TEST_REDEPLOY_503=1",
-	)
-	continuityOutput, err := continuityCmd.CombinedOutput()
-	if err == nil || !strings.Contains(string(continuityOutput), "previous serving revision became unavailable") ||
-		!strings.Contains(string(continuityOutput), "HTTP/2 503") ||
-		!strings.Contains(string(continuityOutput), "failed-probe-1") ||
-		!strings.Contains(string(continuityOutput), "previous revision unavailable") {
-		t.Fatalf("continuity failure lost its diagnostics: err=%v output=%s", err, continuityOutput)
+	// The redeploy continuity probe tolerates one isolated failure that an
+	// immediate retry clears (rc.307: one 503 in a control-plane Postgres
+	// stall). A failed retry or a second failure stays a hard gate, and every
+	// failure leaves its status, request id and bounded body in the log.
+	for i, tt := range []struct {
+		name, pattern string
+		wantPass      bool
+		want          []string
+	}{
+		{name: "persistent failure", pattern: "503",
+			want: []string{"previous serving revision became unavailable during redeploy (2 failed probes", "HTTP/2 503", "failed-probe-1", "failed-probe-2", "previous revision unavailable"}},
+		{name: "isolated failure", pattern: "503,200", wantPass: true,
+			want: []string{"continuity probe failed once and recovered on an immediate retry", "failed-probe-1", "production acceptance passed"}},
+		{name: "second failure", pattern: "503,200,200,503",
+			want: []string{"previous serving revision became unavailable during redeploy (2 failed probes", "failed-probe-1", "failed-probe-4"}},
+	} {
+		continuityCmd := exec.Command("bash", script)
+		continuityCmd.Env = append(os.Environ(),
+			"PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"),
+			"RELEASE_SHA="+strings.Repeat("a", 40), "RUN_ID=12345678", "ACTIVE_NODE_COUNT=2",
+			"GREGALE_BIN="+gregale, "GREGALECTL_BIN="+gregalectl,
+			"TEST_DEPLOY_LOG="+filepath.Join(dir, fmt.Sprintf("continuity-%d-deploys", i)),
+			"TEST_CURL_LOG="+filepath.Join(dir, fmt.Sprintf("continuity-%d-curls", i)),
+			"TEST_REVOKE_LOG="+filepath.Join(dir, fmt.Sprintf("continuity-%d-revokes", i)),
+			"TEST_CONTINUITY="+tt.pattern, "CONTINUITY_PROBE_INTERVAL_SECONDS=0.1",
+		)
+		continuityOutput, err := continuityCmd.CombinedOutput()
+		if (err == nil) != tt.wantPass {
+			t.Fatalf("continuity %s: err=%v, want pass=%t\n%s", tt.name, err, tt.wantPass, continuityOutput)
+		}
+		for _, want := range tt.want {
+			if !strings.Contains(string(continuityOutput), want) {
+				t.Fatalf("continuity %s output lacks %q:\n%s", tt.name, want, continuityOutput)
+			}
+		}
 	}
 
 	// A persistently uncovered node must remain a release failure after the

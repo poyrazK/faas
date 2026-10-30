@@ -223,6 +223,26 @@ create, update and rollback are scoped too.
 - **Before turning it on:** every binding write already audits its
   declaration, so `traffic_binding_scope_misses_total` must read zero over a
   representative period.
+- **Change capture** (ADR 20261029190349): row triggers on custom domains,
+  tenant hostnames, tenant surfaces, platform tenants, deployment aliases,
+  project environments and the binding columns of `apps` record what each
+  transaction touched. Every binding write compares that record with the
+  fleet-wide diff and counts each changed hostname the record lacks in
+  `traffic_binding_capture_gaps_total{writer,kind}`. The audit never refuses
+  a write. A capture it cannot read counts as kind `capture_unreadable`. Scoped
+  writes check the record instead of diffing the fleet, so this counter must
+  also read zero first.
+- **Scoped reads** (app and tenant binding writes): a scoped write reads only
+  these claims:
+  - its account's claims and their redirects;
+  - the claims its hostnames name, with their wildcard ancestors;
+  - the claims inside its subtrees.
+
+  It reads the same set of reservations, except when an empty-scope route
+  (`*`) exists; then it reads all of them. Its `binding_scope` refusal comes
+  from the capture. When the write touched no claim or reservation, as with a
+  deployment create, it skips the global route check. Custom-domain writes
+  still read the fleet.
 - **To roll back:** unset the variable and restart apid.
 
 Legacy action aliases whose decoding cannot be verified by this projection
@@ -926,7 +946,10 @@ A stored deployment alias reserves its hostname independently from its target's
 current ability to serve. Failed or cancelled deployments, cleared targets and
 deleted or internal owners return a routing miss while the alias mapping remains.
 Terminal pipeline status changes can still be recorded. A genuinely absent alias
-retains the legacy primary-slug fallback.
+retains the legacy primary-slug fallback. An alias whose target is superseded (a
+rollback) or not yet live still resolves, but public routing refuses its host pin
+and schedd wakes only live deployments; the gateway answers that verified refusal
+with 409 `Deployment not serving`, not 503 `traffic_policy_unavailable`.
 
 Removing an alias, permanently purging its app or retiring its account can expose
 a primary hostname owned by another account. These removals use the shared binding

@@ -50,7 +50,7 @@ func (s *server) dashboardIssueTrackerHealthHandler(w http.ResponseWriter, r *ht
 }
 
 func (s *server) renderDashboardTrackerHealth(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App, row state.IssueTrackerAutoSyncRecord, health state.IssueTrackerSyncHealth) {
-	token, err := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardIssueAction, acct.ID, dashboardIssueCookie)
+	token, err := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardIssueAction, actorAccount(r, acct).ID, dashboardIssueCookie)
 	if err != nil {
 		renderProblem(w, s.log, err)
 		return

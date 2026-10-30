@@ -16,6 +16,7 @@ func (p *Postgres) PrepareUnsubscribe(ctx context.Context, d Delivery, hash, sea
 	if !validUnsubscribeMaterial(hash, sealed) {
 		return nil, ErrInvalid
 	}
+	hash = storedUnsubscribeHash(hash)
 	value, err := sqlc.New().PrepareUnsubscribe(ctx, p.pool, sqlc.PrepareUnsubscribeParams{DeliveryID: pgID(d.ID), Attempts: int32(d.Attempts), TokenHash: hash, TokenSealed: sealed, ObservedAt: pgTime(now)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrConflict
@@ -39,7 +40,10 @@ func (p *Postgres) Unsubscribe(ctx context.Context, hash []byte, now time.Time) 
 		return out, ErrInvalid
 	}
 	now = now.UTC().Truncate(time.Microsecond)
-	s, _, err := unsubscribeDelivery(ctx, p.pool, hash, now)
+	s, hash, err := findUnsubscribe(hash, func(value []byte) (Subscription, error) {
+		s, _, err := unsubscribeDelivery(ctx, p.pool, value, now)
+		return s, err
+	})
 	if err != nil {
 		return out, err
 	}

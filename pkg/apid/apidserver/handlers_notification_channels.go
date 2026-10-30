@@ -144,11 +144,19 @@ func (s *server) deleteNotificationChannel(w http.ResponseWriter, r *http.Reques
 	}
 	id := r.PathValue("id")
 	if err := store.DeleteNotificationChannel(r.Context(), acct.ID, id); err != nil {
-		if errors.Is(err, state.ErrNotFound) {
+		var inUse *state.NotificationChannelInUseError
+		switch {
+		case errors.Is(err, state.ErrNotFound):
 			s.notFound(w, "no such notification channel")
-			return
+		case errors.As(err, &inUse):
+			rules := make([]string, 0, len(inUse.Rules))
+			for _, rule := range inUse.Rules {
+				rules = append(rules, rule.Name+" ("+rule.ID+")")
+			}
+			api.WriteProblem(w, api.ErrNotificationChannelInUse(rules))
+		default:
+			api.WriteProblem(w, api.ErrCapacity("could not delete notification channel"))
 		}
-		api.WriteProblem(w, api.ErrCapacity("could not delete notification channel"))
 		return
 	}
 	s.audit.Emit(r.Context(), "notification_channel.deleted", &acct.ID, map[string]any{"channel_id": id})

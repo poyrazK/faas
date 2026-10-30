@@ -692,7 +692,15 @@ func run(ctx context.Context, log *slog.Logger) error {
 			log.Warn("gatewayd-public: initial object storage fence read failed", "err", err)
 		}
 		go fence.Run(runtimeCtx)
-		rootHandler, err = publicObjectStorageRoot(pgStore, publicStorageRegistry, func() bool { return s3Flag.Load() && fence.Open() },
+		// Upload keys are resolved by apid on its local auth socket (ADR
+		// 20261029202403); this edge runs on the control plane.
+		uploadAuth, dialErr := apidgrpc.DialAuth(ctx, envOr("FAAS_APID_AUTH_SOCKET", "/run/faas/auth.sock"), nil)
+		if dialErr != nil {
+			return fmt.Errorf("gatewayd-public: dial apid credential auth: %w", dialErr)
+		}
+		defer func() { _ = uploadAuth.Close() }()
+		credentials := apidgrpc.CredentialLookup{Apid: uploadAuth, Fallback: pgStore, Log: log}
+		rootHandler, err = publicObjectStorageRoot(pgStore, credentials, publicStorageRegistry, func() bool { return s3Flag.Load() && fence.Open() },
 			domains, controlPlaneHandler, log)
 		if err != nil {
 			return err
@@ -746,6 +754,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// limits, the request budget, gatewayd-internal) reaches gRPC callers as a
 	// gRPC status, while the layers below still record the HTTP status.
 	publicHandler = grpcproblem.Middleware(publicHandler)
+	// Outermost: a platform problem's 502/504 leaves as 503, which Cloudflare
+	// passes through with its body (ADR-20261030115139). gRPC callers already
+	// got their status above, on an HTTP 200.
+	publicHandler = gateway.PlatformErrorStatus(publicHandler)
 
 	// Control mux + listeners. Combine opsMetrics.Registry() with
 	// budgetReg into a prometheus.Gatherers so /metrics exposes

@@ -650,21 +650,24 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		legacyIdentities = identities
 		log.Info("host age identity loaded for registry credential unseal",
 			"path", identityPath)
-	} else {
-		log.Warn("FAAS_HOST_AGE_IDENTITY_PATH unset — registry credential unseal disabled (Free plan + anonymous-only deployments)")
 	}
 	// ADR 20261022111812: once the seal_domains role stages the build
 	// domain, its identity opens private-registry passwords ahead of the
-	// fleet and host identities. Crash captures keep those two.
+	// fleet and host identities. Crash captures keep those two; vmmd seals
+	// every capture at the source, so they matter only for one captured in
+	// plaintext. Once the domain is contracted the role unsets the path and
+	// imaged runs on the domain alone.
 	buildIdentities, err := loadBuildSealDomain(os.Getenv)
 	if err != nil {
 		return err
 	}
 	if len(buildIdentities) > 0 {
 		h.WithRegistryIdentities(registryReaders(buildIdentities, legacyIdentities))
+	} else if len(legacyIdentities) == 0 {
+		log.Warn("FAAS_HOST_AGE_IDENTITY_PATH unset — registry credential unseal disabled (Free plan + anonymous-only deployments)")
 	}
 	sealdomain.RegisterLoaded(ops.Registry(), sealdomain.Build, len(buildIdentities) > 0)
-	log.Info("build seal domain", "domain_identity", len(buildIdentities) > 0)
+	log.Info("build seal domain", "domain_identity", len(buildIdentities) > 0, "fleet_identity", len(legacyIdentities) > 0)
 
 	// F3: function runner wiring. cmd/imaged refuses to come up if either
 	// env var is set but the path doesn't exist on disk — silent omission

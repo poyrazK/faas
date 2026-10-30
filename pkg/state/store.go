@@ -1746,6 +1746,13 @@ type Store interface {
 	ListAPIConsumersForApp(ctx context.Context, accountID, appID string) ([]APIConsumer, error)
 	RevokeAPIConsumer(ctx context.Context, accountID, consumerID string) (APIConsumer, error)
 	CreateConsumerKeyForConsumer(ctx context.Context, accountID, consumerID, name, prefix string, hash []byte, scopes []string, expiresAt *time.Time) (ConsumerKey, error)
+	// CreateConsumerKeyForConsumerIfUnderQuota issues a key as
+	// CreateConsumerKeyForConsumer does unless the consumer's app, or the
+	// app's billing subject (ADR-202610171904), already holds quota's
+	// unrevoked keys; then it returns *ConsumerKeyQuotaError. The count and
+	// the insert are one step, so concurrent issues cannot overshoot.
+	CreateConsumerKeyForConsumerIfUnderQuota(ctx context.Context, accountID, consumerID, name, prefix string, hash []byte, scopes []string,
+		expiresAt *time.Time, quota ConsumerKeyQuota) (ConsumerKey, error)
 
 	// Login tokens (M7.5 magic-link, spec §14 + ADR-011).
 	//
@@ -3899,9 +3906,9 @@ type Store interface {
 	// pinned by the createAlertRuleIfUnderQuota path at
 	// handlers_alert_presets.go:255. We match by joining
 	// alert_presets on (name) and selecting the rule whose name LIKE
-	// (display_name || ' (%'); the existing
-	// alert_rules_account_name_uniq index covers the LIKE prefix
-	// scan as a range scan on (account_id, name) — no new index.
+	// (display_name || ' (%'); the alert_rules_app_name_uniq index
+	// covers the LIKE prefix scan as a range scan on (app_id, name)
+	// (ADR-20261029203000).
 	//
 	// Returns:
 	//   - (AlertRule{}, ErrNotFound) when no rule exists for this

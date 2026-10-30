@@ -41,6 +41,17 @@ than `@app` covers every host of your account that it matches, including
 hosts of your other apps. To keep a rule to one app, use `@app` or the app's
 own hostnames.
 
+A PR preview applies its production app's `@app` rules as well as its own, so
+a `jwt`, `ip`, `geo`, `waf` or `challenge` rule on production also gates the
+preview's hosts. `route` and `async` rules are the exception: a preview serves
+its own code. An inherited `throttle` rule shares production's buckets.
+
+Edge rules do not run for managed realtime connections
+(`/__gregale/realtime/`), which authenticate with their own tokens, for
+requests to a production fork, which carry the fork's token, or for the
+`robots.txt`, `favicon.ico` and health-check answers the gateway serves itself
+when your manifest configures them.
+
 ### Path globs
 
 | Pattern | Matches |
@@ -201,6 +212,7 @@ keep refusing in a penalty box for the whole app; see
 
 The matched request is served by `target_app_slug`, which must be an app of
 the same account. The path is unchanged; add a `rewrite` rule to change it.
+Renaming the target app updates the route rules that name it.
 
 ### rewrite
 
@@ -439,7 +451,7 @@ the app woken and capacity found. `total_deadline_ms` (optional) bounds the
 whole request from arrival, including upload, wake and queueing. Both are
 capped by your plan: 30 s on Free, 60 s on Hobby, 5 minutes on Pro and
 15 minutes on Scale. A request past its budget before the response starts
-gets 504 `request_budget_exceeded`. A client may lower or raise the execution
+gets 503 `request_budget_exceeded`. A client may lower or raise the execution
 budget within the plan ceiling with the `x-faas-budget-ms` header, or the
 header named in `allow_override_header`; it never extends
 `total_deadline_ms`.
@@ -603,6 +615,10 @@ total), a kind your plan does not include with 402
 `plan_edge_rule_kind_not_allowed`, and a kind not enabled for your account
 with 403 `capability_not_released`.
 
+After a downgrade, rules your new plan would not allow keep applying, so a
+gate you set up does not open on its own; new rules of those kinds are
+refused until the plan allows them again. Delete the ones you no longer need.
+
 ## Responses from the edge
 
 | Status and code | Sent by |
@@ -622,7 +638,7 @@ with 403 `capability_not_released`.
 | 429 `rate_limited` | `throttle` |
 | 503 `edge_rule_maintenance` | `maintenance` |
 | 503 `capacity_unavailable` | a rule change being applied, rules the gateway cannot load, an unreachable JWKS |
-| 504 `request_budget_exceeded` | `budget` |
+| 503 `request_budget_exceeded` | `budget` |
 
 Errors use the [problem format](errors); `gregale edge rule events
 --request-id <id>` finds the rule behind a refused request.

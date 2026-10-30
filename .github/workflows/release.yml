@@ -199,6 +199,34 @@ jobs:
         with:
           subject-path: /tmp/gregale-build/gregale_*.tar.gz
 
+      # Issue #295: one SPDX SBOM over the binaries of every CLI archive,
+      # attested to each archive; verify with `gh attestation verify <archive>
+      # -R poyrazK/faas --predicate-type https://spdx.dev/Document/v2.3`.
+      - name: Install pinned Syft
+        env:
+          SYFT_VERSION: "1.49.0"
+          SYFT_SHA256: "7aa2f03ee92739cf643279ba3990548b9925d4e22cae13f46831ee62821147fe"
+        run: bash scripts/ci/install-syft.sh "$RUNNER_TEMP/syft"
+
+      - name: Generate CLI SBOM
+        run: |
+          set -euo pipefail
+          # One directory per archive, so the SBOM records which archive's
+          # binary each package was found in.
+          for archive in /tmp/gregale-build/gregale_*.tar.gz; do
+            dir="$RUNNER_TEMP/cli-sbom/$(basename "$archive" .tar.gz)"
+            mkdir -p "$dir"
+            tar -xzf "$archive" -C "$dir"
+          done
+          "$RUNNER_TEMP/syft" scan "dir:$RUNNER_TEMP/cli-sbom" -q \
+            -o "spdx-json=$RUNNER_TEMP/cli.spdx.json"
+
+      - name: Attest CLI SBOM
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: /tmp/gregale-build/gregale_*.tar.gz
+          sbom-path: ${{ runner.temp }}/cli.spdx.json
+
       # Handed to publish-npm, which stages the five npm packages from
       # these exact archives rather than rebuilding the CLI. One build per
       # release, consumed by every channel.
@@ -1025,6 +1053,37 @@ jobs:
             "$OUT_DIR/release.tar.gz"
           (cd "$OUT_DIR" && sha256sum release.tar.gz release.cosign.bundle release.sbom.json production-manifest.yaml runtime-bases.env > SHA256SUMS)
 
+      # ADR-20261030140000: cd-controlplane's two controller tools ride the
+      # release, signed like release.tar.gz, as the unit lane's do (ADR-1650).
+      # The deploy job used to compile them on the fleet runner, which on
+      # production-us is the saturated 2-vCPU control plane (8.5-12 min a
+      # release). They stay out of release.tar.gz: older hosts' releaseinstall
+      # refuses a tool_hashes entry it does not know.
+      - name: Build and sign controller tools
+        env:
+          OUT_DIR: ${{ runner.temp }}/gregale-release
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          tools="$RUNNER_TEMP/controller-tools"
+          rm -rf -- "$tools"
+          mkdir -p "$tools"
+          # The flags cd-controlplane built them with, version included.
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -buildvcs=false \
+            -ldflags "-s -w -X github.com/onebox-faas/faas/pkg/wire.Version=${VERSION}" \
+            -o "$tools/" ./cmd/deployctl ./cmd/migrate
+          tar --create --gzip --sort=name --owner=0 --group=0 --numeric-owner \
+            --mtime="@$(git log -1 --format=%ct)" \
+            --file "$OUT_DIR/controller-tools.tar.gz" -C "$tools" deployctl migrate
+          cosign sign-blob --yes \
+            --bundle "$OUT_DIR/controller-tools.cosign.bundle" \
+            "$OUT_DIR/controller-tools.tar.gz"
+          cosign verify-blob \
+            --bundle "$OUT_DIR/controller-tools.cosign.bundle" \
+            --certificate-identity-regexp '^https://github\.com/poyrazK/faas/\.github/workflows/release\.yml@refs/tags/.+$' \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "$OUT_DIR/controller-tools.tar.gz"
+
       # SLSA build provenance (issue #295) for the daemon bundle, beside the
       # cosign signature hosts already verify; verify with
       # `gh attestation verify release.tar.gz -R poyrazK/faas`.
@@ -1070,6 +1129,8 @@ jobs:
             ${{ runner.temp }}/gregale-release/production-manifest.yaml
             ${{ runner.temp }}/gregale-release/runtime-bases.env
             ${{ runner.temp }}/gregale-release/SHA256SUMS
+            ${{ runner.temp }}/gregale-release/controller-tools.tar.gz
+            ${{ runner.temp }}/gregale-release/controller-tools.cosign.bundle
         run: |
           set -euo pipefail
           mapfile -t assets < <(printf '%s\n' "$CANONICAL_RELEASE_ASSETS" | sed '/^[[:space:]]*$/d')

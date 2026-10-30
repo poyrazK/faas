@@ -95,7 +95,17 @@ The GA review lists this as a data-safety blocker. The owner decided on
      routes and `?purge=true`;
    - `restorable_until` in OpenAPI and the SDKs;
    - routes under the `managed-postgres` capability.
-3. The usage waiver (decision 6).
+3. The usage waiver (decision 6):
+   - `managed_postgres_usage_waivers` keeps one row per scheduled window. A
+     trigger opens a row when `purge_after` is set and closes it when it is
+     cleared, by an undelete or a purge. Every apid that schedules a delete
+     records the window, whatever its version.
+   - Customer usage leaves out every ledger window that lies wholly inside a
+     waiver. The usage view, admission ceilings and the compute cap all read
+     that sum. A window that straddles a schedule or an undo still counts,
+     because the database ran for part of it.
+   - The storage pool already skipped `deleting` databases.
+   - The fleet spend breaker sums the raw ledger and is unchanged.
 4. The CLI (`undelete`, `--purge`, the delete message), the dashboard and the
    docs.
 

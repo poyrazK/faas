@@ -27,8 +27,8 @@ func optionalPgText(v string) pgtype.Text {
 
 func releaseFreezeFromRow(r sqlc.ReleaseFreeze) ReleaseFreeze {
 	return ReleaseFreeze{
-		ID: pgUUIDString(r.ID), AccountID: pgUUIDString(r.AccountID), AppID: pgUUIDStringNullable(r.AppID),
-		Kind: r.Kind, StartsAt: optionalTimestamptz(r.StartsAt), EndsAt: optionalTimestamptz(r.EndsAt),
+		ID: pgUUIDString(r.ID), AccountID: pgUUIDStringNullable(r.AccountID), OrgID: pgUUIDStringNullable(r.OrgID),
+		AppID: pgUUIDStringNullable(r.AppID), Kind: r.Kind, StartsAt: optionalTimestamptz(r.StartsAt), EndsAt: optionalTimestamptz(r.EndsAt),
 		WeeklyDays: int(r.WeeklyDays.Int16), WeeklyStartMinute: int(r.WeeklyStartMinute.Int16),
 		WeeklyDurationMinutes: int(r.WeeklyDurationMinutes.Int32), TimeZone: r.TimeZone.String,
 		AfterRollbackMinutes: int(r.AfterRollbackMinutes.Int32), Reason: r.Reason, Source: r.Source,
@@ -37,13 +37,24 @@ func releaseFreezeFromRow(r sqlc.ReleaseFreeze) ReleaseFreeze {
 	}
 }
 
+func releaseFreezesFromRows(rows []sqlc.ReleaseFreeze) []ReleaseFreeze {
+	out := make([]ReleaseFreeze, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, releaseFreezeFromRow(r))
+	}
+	return out
+}
+
 func (s *PgStore) CreateReleaseFreeze(ctx context.Context, f ReleaseFreeze, maxUnlifted int, now time.Time) (ReleaseFreeze, error) {
+	if !f.Owner().Valid() {
+		return ReleaseFreeze{}, ErrInvalidArgument
+	}
 	if f.ID == "" {
 		f.ID = uuid.NewString()
 	}
 	weekly := f.Kind == ReleaseFreezeWeekly
 	params := sqlc.CreateReleaseFreezeWithinLimitParams{
-		ID: mustPgUUID(f.ID), AccountID: mustPgUUID(f.AccountID), AppID: mustPgUUID(f.AppID), Kind: f.Kind,
+		ID: mustPgUUID(f.ID), AccountID: mustPgUUID(f.AccountID), OrgID: mustPgUUID(f.OrgID), AppID: mustPgUUID(f.AppID), Kind: f.Kind,
 		StartsAt: nullableTimestamptzPtr(f.StartsAt), EndsAt: nullableTimestamptzPtr(f.EndsAt),
 		WeeklyDays: optionalPgInt2(f.WeeklyDays, weekly), WeeklyStartMinute: optionalPgInt2(f.WeeklyStartMinute, weekly),
 		WeeklyDurationMinutes: optionalPgInt4(f.WeeklyDurationMinutes, weekly), TimeZone: optionalPgText(f.TimeZone),
@@ -64,11 +75,11 @@ func (s *PgStore) CreateRollbackReleaseFreeze(ctx context.Context, f ReleaseFree
 	if f.ID == "" {
 		f.ID = uuid.NewString()
 	}
-	if f.StartsAt == nil || f.EndsAt == nil {
+	if !f.Owner().Valid() || f.StartsAt == nil || f.EndsAt == nil {
 		return false, ErrInvalidArgument
 	}
 	n, err := sqlc.New().CreateRollbackReleaseFreeze(ctx, s.pool, sqlc.CreateRollbackReleaseFreezeParams{
-		ID: mustPgUUID(f.ID), AccountID: mustPgUUID(f.AccountID), AppID: mustPgUUID(f.AppID),
+		ID: mustPgUUID(f.ID), AccountID: mustPgUUID(f.AccountID), OrgID: mustPgUUID(f.OrgID), AppID: mustPgUUID(f.AppID),
 		StartsAt: pgTimestamptzUTC(*f.StartsAt), EndsAt: pgTimestamptzUTC(*f.EndsAt), Reason: f.Reason,
 		SourceDeploymentID: mustPgUUID(f.SourceDeploymentID), CreatedBy: f.CreatedBy,
 	})
@@ -78,27 +89,44 @@ func (s *PgStore) CreateRollbackReleaseFreeze(ctx context.Context, f ReleaseFree
 	return n == 1, nil
 }
 
-func (s *PgStore) ListReleaseFreezes(ctx context.Context, accountID string, now time.Time) ([]ReleaseFreeze, error) {
-	rows, err := sqlc.New().ListUnliftedReleaseFreezes(ctx, s.pool, sqlc.ListUnliftedReleaseFreezesParams{
-		AccountID: mustPgUUID(accountID), Now: pgTimestamptzUTC(now),
-	})
+func (s *PgStore) ListReleaseFreezes(ctx context.Context, owner ReleaseFreezeOwner, now time.Time) ([]ReleaseFreeze, error) {
+	if !owner.Valid() {
+		return nil, ErrInvalidArgument
+	}
+	q := sqlc.New()
+	var rows []sqlc.ReleaseFreeze
+	var err error
+	if owner.OrgID != "" {
+		rows, err = q.ListUnliftedOrgReleaseFreezes(ctx, s.pool, sqlc.ListUnliftedOrgReleaseFreezesParams{
+			OrgID: mustPgUUID(owner.OrgID), Now: pgTimestamptzUTC(now),
+		})
+	} else {
+		rows, err = q.ListUnliftedReleaseFreezes(ctx, s.pool, sqlc.ListUnliftedReleaseFreezesParams{
+			AccountID: mustPgUUID(owner.AccountID), Now: pgTimestamptzUTC(now),
+		})
+	}
 	if err != nil {
 		return nil, mapErr(err)
 	}
-	out := make([]ReleaseFreeze, 0, len(rows))
-	for _, r := range rows {
-		out = append(out, releaseFreezeFromRow(r))
-	}
-	return out, nil
+	return releaseFreezesFromRows(rows), nil
 }
 
-func (s *PgStore) LiftReleaseFreeze(ctx context.Context, accountID, id, liftedBy string, now time.Time) (ReleaseFreeze, error) {
-	if _, err := uuid.Parse(id); err != nil {
+func (s *PgStore) LiftReleaseFreeze(ctx context.Context, owner ReleaseFreezeOwner, id, liftedBy string, now time.Time) (ReleaseFreeze, error) {
+	if _, err := uuid.Parse(id); err != nil || !owner.Valid() {
 		return ReleaseFreeze{}, ErrNotFound
 	}
-	row, err := sqlc.New().LiftReleaseFreeze(ctx, s.pool, sqlc.LiftReleaseFreezeParams{
-		AccountID: mustPgUUID(accountID), ID: mustPgUUID(id), LiftedBy: liftedBy, Now: pgTimestamptzUTC(now),
-	})
+	q := sqlc.New()
+	var row sqlc.ReleaseFreeze
+	var err error
+	if owner.OrgID != "" {
+		row, err = q.LiftOrgReleaseFreeze(ctx, s.pool, sqlc.LiftOrgReleaseFreezeParams{
+			OrgID: mustPgUUID(owner.OrgID), ID: mustPgUUID(id), LiftedBy: liftedBy, Now: pgTimestamptzUTC(now),
+		})
+	} else {
+		row, err = q.LiftReleaseFreeze(ctx, s.pool, sqlc.LiftReleaseFreezeParams{
+			AccountID: mustPgUUID(owner.AccountID), ID: mustPgUUID(id), LiftedBy: liftedBy, Now: pgTimestamptzUTC(now),
+		})
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ReleaseFreeze{}, ErrNotFound
 	}

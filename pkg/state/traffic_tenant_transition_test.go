@@ -294,7 +294,7 @@ func seedTrafficTenantCredentials(t *testing.T, store Store, account Account, cr
 		t.Fatal(err)
 	}
 	if _, err := store.(PlatformTenantCredentialStore).ApplyPlatformTenantCredentials(ctx, ApplyPlatformTenantCredentialsParams{
-		AccountID: account.ID, TenantID: created.Tenant.ID, AppLimit: 100, AccountLimit: 100,
+		AccountID: account.ID, TenantID: created.Tenant.ID,
 		Keys: []PlatformTenantCredentialIntent{{ConsumerID: created.Consumers[0].Consumer.ID, Name: "retained-key", Prefix: prefix, Hash: hash, Scopes: []string{"read"}}},
 	}); err != nil {
 		t.Fatal(err)

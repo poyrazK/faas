@@ -80,7 +80,7 @@ func (s *server) prepareProjectEnvironmentCloneDeployments(ctx context.Context, 
 			continue
 		}
 		if d.Status != state.DeployPending {
-			return nil, false, state.ErrConflict
+			return nil, false, fmt.Errorf("clone workload %q deployment %s: %w", view.WorkloadSlug, d.Status, errCloneTargetDeploymentFailed)
 		}
 		ready, resources[i].Status = false, "verifying"
 		payload, err := json.Marshal(map[string]string{"app_id": d.AppID, "deployment_id": d.ID})

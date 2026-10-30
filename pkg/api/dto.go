@@ -562,7 +562,7 @@ type CreateAppRequest struct {
 	ServiceBindingTransport *ServiceBindingTransport `json:"service_binding_transport,omitempty"`
 	Type                    string                   `json:"type,omitempty"`             // "app" (default) | "function"
 	Runtime                 string                   `json:"runtime,omitempty"`          // node22|python312|go124|go124-alpine|node24|python313|binary for functions
-	RAMMB                   int                      `json:"ram_mb,omitempty"`           // 0 => plan default
+	RAMMB                   int                      `json:"ram_mb,omitempty"`           // 0 => StandaloneAppDefaultRAMMB; the plan's RAM when vcpu is set
 	VCPU                    int                      `json:"vcpu,omitempty"`             // 0 => plan default; explicit values must match the plan RAM/vCPU shape
 	CPUMillicores           int                      `json:"cpu_millicores,omitempty"`   // 0 => 1000; allowed: 250, 500, 1000
 	ResourceProfile         string                   `json:"resource_profile,omitempty"` // named RAM/CPU shape; overrides omitted resource values
@@ -5333,6 +5333,10 @@ type AccountExportResponse struct {
 	Crons          []CronResponse                `json:"crons"`
 	APIKeys        []APIKeyExportResponse        `json:"api_keys"`
 	AppSecrets     []AppSecretExportResponse     `json:"app_secrets"`
+	// EdgeRules and EdgeRuleLists are the account's edge configuration on
+	// the exported apps (ADR-091 amendment 2026-10-30).
+	EdgeRules     []EdgeRuleResponse     `json:"edge_rules,omitempty"`
+	EdgeRuleLists []EdgeRuleListResponse `json:"edge_rule_lists,omitempty"`
 	// AuditTrail is the customer's own GDPR ledger slice: every
 	// export/delete/restore the customer has hit. Surfaced in the
 	// bundle so the export is self-describing (the customer can see

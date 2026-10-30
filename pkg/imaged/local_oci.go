@@ -744,7 +744,7 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 			h.log.Info("imaged: shared runtime layer keeps the toolchain", "app", app.Slug, "runtime", runtime, "reason", shared.Reason)
 		}
 	}
-	result, err := h.builder.Build(ctx, rootfs.BuildInput{
+	result, err := h.buildAppLayer(ctx, rootfs.BuildInput{
 		Layers:         buildLayers,
 		Manifest:       manifest,
 		GuestInitPath:  h.guestInitPath,

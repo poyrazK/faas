@@ -117,6 +117,22 @@ func (c *Client) DeleteManagedPostgresDatabase(ctx context.Context, id string) (
 	return out, err
 }
 
+// PurgeManagedPostgresDatabase deletes a database at once, without the undo
+// window DeleteManagedPostgresDatabase keeps. It cannot be undone.
+func (c *Client) PurgeManagedPostgresDatabase(ctx context.Context, id string) (ManagedPostgresDatabase, error) {
+	var out ManagedPostgresDatabase
+	err := c.do(ctx, http.MethodDelete, "/v1/postgres/databases/"+url.PathEscape(id)+"?purge=true", nil, &out)
+	return out, err
+}
+
+// UndeleteManagedPostgresDatabase returns a database whose delete is
+// scheduled to ready, while its restorable_until is in the future.
+func (c *Client) UndeleteManagedPostgresDatabase(ctx context.Context, id string) (ManagedPostgresDatabase, error) {
+	var out ManagedPostgresDatabase
+	err := c.do(ctx, http.MethodPost, "/v1/postgres/databases/"+url.PathEscape(id)+"/undelete", nil, &out)
+	return out, err
+}
+
 func (c *Client) RestoreManagedPostgresDatabase(ctx context.Context, id string, req RestoreManagedPostgresDatabaseRequest) (ManagedPostgresDatabase, error) {
 	var out ManagedPostgresDatabase
 	err := c.do(ctx, http.MethodPost, "/v1/postgres/databases/"+url.PathEscape(id)+"/restore", req, &out)

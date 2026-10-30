@@ -2030,6 +2030,7 @@ Examples:
 gregale release freeze create --app my-api --for 2h --reason "incident 4711"
 gregale release freeze create --all-apps --weekly fri --at 16:00 --for 64h --tz Europe/Istanbul --reason "no weekend releases"
 gregale release freeze create --app my-api --after-rollback 1h --reason "settle after automatic rollbacks"
+gregale release freeze create --org acme --for 72h --reason "holiday freeze"
 gregale release freeze status --app my-api
 ```
 
@@ -2037,12 +2038,13 @@ gregale release freeze status --app my-api
 
 Create a freeze
 
-`gregale release freeze create [--app <slug>] [--all-apps] --reason <TEXT> [--for <DURATION>] [--since <TIME>] [--until <TIME>] [--weekly <DAYS>] [--at <HH:MM>] [--tz <ZONE>] [--after-rollback <DURATION>]`
+`gregale release freeze create [--app <slug>] [--all-apps] [--org <org>] --reason <TEXT> [--for <DURATION>] [--since <TIME>] [--until <TIME>] [--weekly <DAYS>] [--at <HH:MM>] [--tz <ZONE>] [--after-rollback <DURATION>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug (defaults to linked project app) |  |
-| `--all-apps` | freeze every app of the account |  |
+| `--all-apps` | freeze every personal app of your account |  |
+| `--org <org>` | freeze every app of this company organization |  |
 | `--reason <TEXT>` | why releases are frozen (required, at most 200 characters) | required |
 | `--for <DURATION>` | window length from --from (default now), or weekly length |  |
 | `--since <TIME>` | window start (RFC 3339) (also --from) |  |
@@ -2056,17 +2058,23 @@ Create a freeze
 
 List freezes that have not ended
 
-`gregale release freeze list [--app <slug>]`
+`gregale release freeze list [--app <slug>] [--org <org>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | only freezes covering this app |  |
+| `--org <org>` | a company organization&#39;s freezes |  |
 
 #### release freeze lift
 
 Lift a freeze
 
-`gregale release freeze lift <id>`
+`gregale release freeze lift [--app <slug>] [--org <org>] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | lift a freeze on this app |  |
+| `--org <org>` | lift a company organization&#39;s freeze |  |
 
 #### release freeze status
 
@@ -9858,7 +9866,7 @@ Create a new job
 |---|---|---|
 | `--interactive` | choose a name, image, command, resources, and optional recurring schedule |  |
 | `--image <REF>` | OCI image (required unless interactive) |  |
-| `--command <ARGV>` | comma-separated entrypoint (e.g. /bin/sh,-c,echo hi) |  |
+| `--command <ARGV>` | comma-separated entrypoint (e.g. /bin/sh,-c,echo hi); escape a comma inside an argument with a backslash, or pass a JSON array |  |
 | `--ram <MB>` | billable memory in MB (0 = plan default) |  |
 | `--timeout <SECONDS>` | per-task wall-clock deadline (0 = plan default) |  |
 | `--parallelism <N>` | max concurrent tasks across a run (0 = plan default) |  |
@@ -9906,7 +9914,7 @@ Update one job
 |---|---|---|
 | `--interactive` | choose a Job, edit resources and schedule, and confirm changes |  |
 | `--image <REF>` | new OCI image |  |
-| `--command <ARGV>` | new comma-separated entrypoint |  |
+| `--command <ARGV>` | new comma-separated entrypoint (e.g. /bin/sh,-c,echo hi); escape a comma inside an argument with a backslash, or pass a JSON array |  |
 | `--ram <MB>` | new RAM (MB) |  |
 | `--timeout <SECONDS>` | new per-task timeout |  |
 | `--parallelism <N>` | new max parallel tasks |  |
@@ -15258,7 +15266,7 @@ List alert rules
 
 Add an alert rule
 
-`gregale alert create --app <slug> --name <NAME> [--metric <METRIC>] [--comparison <OP>] [--threshold <N>] [--window-spec <WINDOW>] [--event-subscription-id <UUID>] [--edge-rule-id <ID>] [--mcp-readiness-scope <SCOPE>] [--failure-source <SOURCE>] [--channel <CHANNEL_ID>]... [--custom-metric <NAME>] [--log-query <FILTERS>] [--saved-search <NAME>] [--slo <SLO_ID>] [--synthetic-check <CHECK_ID>] [--webhook-url <URL>] [--action <ACTION>] [--post-deploy-rollback-window <duration>] [--webhook-secret-stdin] [--webhook-secret <VALUE>]`
+`gregale alert create --app <slug> --name <NAME> [--metric <METRIC>] [--comparison <OP>] [--threshold <N>] [--window-spec <WINDOW>] [--event-subscription-id <UUID>] [--edge-rule-id <ID>] [--mcp-readiness-scope <SCOPE>] [--failure-source <SOURCE>] [--channel <CHANNEL_ID>]... [--custom-metric <NAME>] [--log-query <FILTERS>] [--saved-search <NAME>] [--slo <SLO_ID>] [--synthetic-check <CHECK_ID>] [--webhook-url <URL>] [--action <ACTION>] [--post-deploy-rollback-window <duration>] [--webhook-secret-stdin] [--webhook-secret <VALUE>] [--notify-resolved]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -15283,6 +15291,7 @@ Add an alert rule
 | `--post-deploy-rollback-window <duration>` | completed-release rollback window (0 off; up to 1h) |  |
 | `--webhook-secret-stdin` | read the webhook signing secret from stdin (this or --webhook-secret is required) |  |
 | `--webhook-secret <VALUE>` | webhook signing secret (prefer --webhook-secret-stdin) |  |
+| `--notify-resolved` | also send the webhook a signed alert.resolved event when the rule recovers |  |
 
 Examples:
 
@@ -15325,7 +15334,7 @@ gregale alert deliveries --app my-api --interactive
 
 Update one alert rule
 
-`gregale alert update [--interactive] [--app <slug>] [--action <ACTION>] [--post-deploy-rollback-window <duration>] [--webhook-secret-stdin] [<alert-id>]`
+`gregale alert update [--interactive] [--app <slug>] [--action <ACTION>] [--post-deploy-rollback-window <duration>] [--webhook-secret-stdin] [--notify-resolved] [<alert-id>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -15334,6 +15343,7 @@ Update one alert rule
 | `--action <ACTION>` | alert action | one of `webhook` · `rollback` · `demote` · `promote` |
 | `--post-deploy-rollback-window <duration>` | completed-release rollback window (0 off; up to 1h) |  |
 | `--webhook-secret-stdin` | read the replacement webhook secret from stdin |  |
+| `--notify-resolved` | send the webhook alert.resolved events (=false turns them off) |  |
 
 Examples:
 

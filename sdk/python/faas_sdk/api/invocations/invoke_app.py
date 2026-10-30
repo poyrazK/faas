@@ -70,6 +70,11 @@ def _parse_response(
 
         return response_429
 
+    if response.status_code == 503:
+        response_503 = Problem.from_dict(response.json())
+
+        return response_503
+
     if response.status_code == 504:
         response_504 = Problem.from_dict(response.json())
 
@@ -104,7 +109,7 @@ def sync_detailed(
 
      Enqueues an invocation row and waits for the drain to drive it
     to a terminal state. Server-side cap is 30s on paid plans, 5s
-    on Free. Returns 504 (long_poll_timeout) when the cap elapses;
+    on Free. Returns 503 (long_poll_timeout) when the cap elapses;
     the customer can immediately re-call /v1/invocations/{id}
     to pick up the eventual result.
 
@@ -149,7 +154,7 @@ def sync(
 
      Enqueues an invocation row and waits for the drain to drive it
     to a terminal state. Server-side cap is 30s on paid plans, 5s
-    on Free. Returns 504 (long_poll_timeout) when the cap elapses;
+    on Free. Returns 503 (long_poll_timeout) when the cap elapses;
     the customer can immediately re-call /v1/invocations/{id}
     to pick up the eventual result.
 
@@ -189,7 +194,7 @@ async def asyncio_detailed(
 
      Enqueues an invocation row and waits for the drain to drive it
     to a terminal state. Server-side cap is 30s on paid plans, 5s
-    on Free. Returns 504 (long_poll_timeout) when the cap elapses;
+    on Free. Returns 503 (long_poll_timeout) when the cap elapses;
     the customer can immediately re-call /v1/invocations/{id}
     to pick up the eventual result.
 
@@ -232,7 +237,7 @@ async def asyncio(
 
      Enqueues an invocation row and waits for the drain to drive it
     to a terminal state. Server-side cap is 30s on paid plans, 5s
-    on Free. Returns 504 (long_poll_timeout) when the cap elapses;
+    on Free. Returns 503 (long_poll_timeout) when the cap elapses;
     the customer can immediately re-call /v1/invocations/{id}
     to pick up the eventual result.
 

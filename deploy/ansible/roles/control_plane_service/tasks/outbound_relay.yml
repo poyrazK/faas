@@ -1,0 +1,62 @@
+---
+# ADR-989 app relay. outboundd takes its relay settings from a drop-in, so
+# the operator-owned outboundd.toml needs no edit. A tcp:// listener uses
+# outboundd's relay server leaf, a fleet-PKI feature leaf (pkg/pki
+# outbound-relay) issued from the CA on this host. A run keeps a leaf that
+# stays valid for 30 days or more, so this is also its renewal. outboundd
+# refuses to start the relay without the workload-identity JWKS, so the play
+# stops here instead of the daemon crash-looping.
+- name: control_plane_service — inspect the workload-identity JWKS for the outbound relay (ADR-989)
+  ansible.builtin.stat:
+    path: "{{ faas_workload_jwks_path }}"
+  register: faas_outbound_relay_jwks_stat
+  when: faas_outboundd_relay_listen | length > 0
+
+- name: control_plane_service — require the workload-identity JWKS for the outbound relay (ADR-989)
+  ansible.builtin.assert:
+    that:
+      - faas_outbound_relay_jwks_stat.stat.exists
+      - faas_outboundd_relay_listen is match('(tcp|unix)://')
+    fail_msg: >-
+      faas_outboundd_relay_listen is {{ faas_outboundd_relay_listen }}: it must
+      start with tcp:// or unix://, and the relay needs the workload-identity
+      JWKS at {{ faas_workload_jwks_path }}. Create the cluster key first
+      (docs/runbooks/FaasWorkloadIdentityNotConfigured.md).
+  when: faas_outboundd_relay_listen | length > 0
+
+- name: control_plane_service — issue outboundd's relay server leaf (ADR-989)
+  ansible.builtin.command:
+    argv: [/usr/local/bin/gregalectl, pki, issue-feature, --feature, outbound-relay, --box-role, control-plane,
+           --ca-dir, /etc/faas/tls, --root-dir, /etc/faas/tls]
+  register: faas_outbound_relay_leaf
+  changed_when: (faas_outbound_relay_leaf.stdout | from_json).issued | length > 0
+  when: faas_outboundd_relay_listen is match('tcp://')
+  notify: restart faas-outboundd
+
+# The PKI writes private keys root-only; outboundd runs as faas-outboundd in
+# the faas group.
+- name: control_plane_service — let outboundd read its relay server key (ADR-989)
+  ansible.builtin.file:
+    path: /etc/faas/tls/outboundd/server.key
+    owner: root
+    group: faas
+    mode: "0440"
+    state: file
+  when: faas_outboundd_relay_listen is match('tcp://')
+
+- name: control_plane_service — install the outbound relay drop-in (ADR-989)
+  ansible.builtin.template:
+    src: 99-faas-outbound-relay.conf.j2
+    dest: /etc/systemd/system/faas-outboundd.service.d/99-faas-outbound-relay.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: faas_outboundd_relay_listen | length > 0
+  notify: restart faas-outboundd
+
+- name: control_plane_service — remove the outbound relay drop-in while the relay is off (ADR-989)
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-outboundd.service.d/99-faas-outbound-relay.conf
+    state: absent
+  when: faas_outboundd_relay_listen | length == 0
+  notify: restart faas-outboundd

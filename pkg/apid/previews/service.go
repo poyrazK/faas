@@ -188,7 +188,45 @@ func (s *Service) change(w http.ResponseWriter, r *http.Request, acct state.Acco
 		kind := map[bool]string{true: "platform_flag.opt_in", false: "platform_flag.opt_out"}[join]
 		s.Host.Audit(r.Context(), kind, acct.ID, map[string]any{"flag": key, "subject": t.kind(), "subject_id": t.id, "actor": acct.ID})
 	}
+	if join {
+		// A product's sub-features hide behind their own flags. Joining the
+		// product joins every sub-feature preview the operator also offers,
+		// so one join releases what the product's docs describe; a full or
+		// closed sub-feature is skipped and can be joined on its own.
+		for _, child := range offeredDescendants(s.Host.PlatformFlags(), spec, t) {
+			if childChanged, childProb := s.write(r.Context(), child, acct, t, true); childProb == nil && childChanged {
+				s.Host.Audit(r.Context(), "platform_flag.opt_in", acct.ID, map[string]any{"flag": child.Key, "subject": t.kind(), "subject_id": t.id, "actor": acct.ID, "with": key})
+			}
+		}
+	}
 	httpkit.WriteJSON(w, http.StatusOK, preview(s.Host.PlatformFlags(), spec, t))
+}
+
+// offeredDescendants lists the sub-capability previews under spec, at any
+// depth, that the operator offers to the target.
+func offeredDescendants(snapshot *platformflags.Snapshot, spec platformflags.Spec, t target) []platformflags.Spec {
+	if spec.Capability == "" {
+		return nil
+	}
+	var out []platformflags.Spec
+	parents := []string{spec.Capability}
+	for len(parents) > 0 {
+		parent := parents[0]
+		parents = parents[1:]
+		for _, child := range platformflags.Catalog() {
+			if child.Parent != parent || child.Capability == "" {
+				continue
+			}
+			parents = append(parents, child.Capability)
+			if t.org && !child.Supports(platformflags.AttributeOrg) {
+				continue
+			}
+			if def, _, _ := snapshot.Definition(child.Key); offered(snapshot, child.Key) && def.SelfServe.Eligible(t.subject.Plan) {
+				out = append(out, child)
+			}
+		}
+	}
+	return out
 }
 
 // admit refuses a join the preview does not offer to the target.

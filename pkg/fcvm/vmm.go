@@ -284,6 +284,12 @@ type bindSourceMode struct {
 	// handle pins the original inode so teardown can restore its mode even
 	// when a snapshot writer atomically replaces the source pathname.
 	handle *os.File
+	// viaGuest: an adopted guest's source the cache had already re-staged,
+	// so the handle came through the guest's own read-only bind mount
+	// (adoptGuestBinds). It cannot change the mode, and the source path no
+	// longer names this inode, so a failed restoration does not hold the
+	// guest's teardown.
+	viaGuest bool
 }
 
 // restoreTimingBreakdown is the vmmd-side breakdown of one successful
@@ -6096,7 +6102,7 @@ func (v *JailerVMM) releaseBindSource(src string, file resourceFileIdentity) err
 				return state.handle.Close()
 			}
 		}
-		if err := chmodResourceFile(state.handle, state.file, state.mode); err != nil {
+		if err := chmodResourceFile(state.handle, state.file, state.mode); err != nil && !state.viaGuest {
 			return fmt.Errorf("restore bind source mode: %w", err)
 		}
 	}

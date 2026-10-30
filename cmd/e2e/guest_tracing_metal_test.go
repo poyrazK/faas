@@ -55,6 +55,10 @@ type guestTracingScenario struct {
 	respPrefix string
 	// evidenceOK reports whether the request evidence shows the app's span.
 	evidenceOK func(detail string) bool
+	// splitBox sends the exports over apid's private mTLS listener with a
+	// node-identity vmmd leaf, as a split-box compute node does, and probes
+	// the node binding with real certificates.
+	splitBox bool
 }
 
 // adr: 958 — in-guest spans reach the debugger with no app tracing config.
@@ -67,6 +71,22 @@ func TestGuestTracingMetal(t *testing.T) {
 		},
 		respPrefix: "traced ",
 		evidenceOK: func(detail string) bool { return strings.Contains(detail, "SELECT orders") },
+	})
+}
+
+// adr: 958 — on a split-box layout the guest span reaches apid over its
+// private mTLS listener with vmmd's node-identity leaf, and apid refuses
+// frames that leaf sends for an instance its node does not run.
+func TestGuestTracingSplitBoxMetal(t *testing.T) {
+	runGuestTracingScenario(t, guestTracingScenario{
+		slug: "guest-tracing-split",
+		addImage: func(registry *e2etest.FakeRegistry) string {
+			image, _ := e2etest.TracingImage("library/guest-tracing-split")
+			return registry.AddImage("library/guest-tracing-split", image)
+		},
+		respPrefix: "traced ",
+		evidenceOK: func(detail string) bool { return strings.Contains(detail, "SELECT orders") },
+		splitBox:   true,
 	})
 }
 
@@ -184,12 +204,20 @@ func runGuestTracingScenario(t *testing.T, sc guestTracingScenario) {
 	env := []string{
 		"FAAS_GUEST_TRACING_ENABLED=1",
 		"FAAS_OTEL_SPANS_WRITER_ENABLED=true",
-		"FAAS_APID_OTEL_SPANS_WRITER_SOCKET=" + filepath.Join(telemetryDir, "spans.sock"),
 		"FAAS_REQUEST_TELEMETRY_ENABLED=true",
 		"FAAS_APID_REQUEST_TELEMETRY_SOCKET=" + filepath.Join(telemetryDir, "request-telemetry.sock"),
 		// Flush spans after the gateway's 5s request-row publisher; a span
 		// that still beats its row is retried (no_row) on the next flush.
 		"FAAS_OTEL_FLUSH_INTERVAL=10s",
+	}
+	var apidEnv []string
+	var split *splitBoxIngest
+	if sc.splitBox {
+		split = newSplitBoxIngest(t, telemetryDir)
+		env = append(env, split.vmmdEnv()...)
+		apidEnv = split.apidEnv()
+	} else {
+		env = append(env, "FAAS_APID_OTEL_SPANS_WRITER_SOCKET="+filepath.Join(telemetryDir, "spans.sock"))
 	}
 
 	registry := e2etest.NewFakeRegistry()
@@ -200,7 +228,7 @@ func runGuestTracingScenario(t *testing.T, sc guestTracingScenario) {
 	_ = registry.AddImage("onebox-faas/deploy-base", deployBaseImg)
 	e2etest.OverrideDeployBase(t, registry.Host()+"/onebox-faas/deploy-base:latest")
 
-	h := e2etest.Start(t, pool, e2etest.DeployWake, env...)
+	h := e2etest.StartWithAPIDEnv(t, pool, e2etest.DeployWake, apidEnv, env...)
 	t.Cleanup(func() {
 		if t.Failed() {
 			h.DumpLogs(t)
@@ -292,6 +320,9 @@ func runGuestTracingScenario(t *testing.T, sc guestTracingScenario) {
 				detail, detailStatus := doReq(t, h, key, http.MethodGet, "/v1/apps/"+sc.slug+"/debug/requests/"+item.ID+"/evidence", nil)
 				lastDetail = string(detail)
 				if detailStatus == http.StatusOK && sc.evidenceOK(lastDetail) {
+					if split != nil {
+						split.probeBinding(t, pool, appID, depID)
+					}
 					return
 				}
 			}

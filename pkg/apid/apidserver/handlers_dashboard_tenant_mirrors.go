@@ -61,7 +61,7 @@ func parseAppMirrorsPath(rest string) (string, bool) {
 func (s *server) renderAppTenantSurfaces(w http.ResponseWriter, r *http.Request, log *slog.Logger, acct state.Account, slug string) {
 	ctx := r.Context()
 	app, err := s.store.AppBySlug(ctx, slug)
-	if err != nil || app.AccountID != acct.ID {
+	if err != nil || !dashboardAppOwner(r, &acct, app) {
 		http.NotFound(w, r)
 		return
 	}
@@ -82,8 +82,8 @@ func (s *server) renderAppTenantSurfaces(w http.ResponseWriter, r *http.Request,
 		}
 	}
 	if s.sessions != nil {
-		if token, tokenErr := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardTenantSurfacesAction, acct.ID, dashboardTenantSurfacesCSRFCookie); tokenErr != nil {
-			log.Warn("dashboard tenant surfaces: issue csrf", "account_id", acct.ID, "app_id", app.ID, "err", tokenErr)
+		if token, tokenErr := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardTenantSurfacesAction, actorAccount(r, acct).ID, dashboardTenantSurfacesCSRFCookie); tokenErr != nil {
+			log.Warn("dashboard tenant surfaces: issue csrf", "account_id", actorAccount(r, acct).ID, "app_id", app.ID, "err", tokenErr)
 		} else {
 			data.ActionCSRF = token
 			http.SetCookie(w, &http.Cookie{Name: dashboardTenantSurfacesCSRFCookie, Value: token, Path: "/", HttpOnly: true, Secure: s.domain != "", SameSite: http.SameSiteLaxMode, MaxAge: int(middleware.DefaultCSRFTTL.Seconds())})
@@ -144,7 +144,7 @@ func tenantSurfacesActionFlash(r *http.Request) string {
 func (s *server) renderAppMirrors(w http.ResponseWriter, r *http.Request, log *slog.Logger, acct state.Account, slug string) {
 	ctx := r.Context()
 	app, err := s.store.AppBySlug(ctx, slug)
-	if err != nil || app.AccountID != acct.ID {
+	if err != nil || !dashboardAppOwner(r, &acct, app) {
 		http.NotFound(w, r)
 		return
 	}
@@ -184,8 +184,8 @@ func (s *server) renderAppMirrors(w http.ResponseWriter, r *http.Request, log *s
 		}
 	}
 	if s.sessions != nil {
-		if token, tokenErr := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardMirrorsAction, acct.ID, dashboardMirrorsCSRFCookie); tokenErr != nil {
-			log.Warn("dashboard mirrors: issue csrf", "account_id", acct.ID, "app_id", app.ID, "err", tokenErr)
+		if token, tokenErr := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardMirrorsAction, actorAccount(r, acct).ID, dashboardMirrorsCSRFCookie); tokenErr != nil {
+			log.Warn("dashboard mirrors: issue csrf", "account_id", actorAccount(r, acct).ID, "app_id", app.ID, "err", tokenErr)
 		} else {
 			data.ActionCSRF = token
 			http.SetCookie(w, &http.Cookie{Name: dashboardMirrorsCSRFCookie, Value: token, Path: "/", HttpOnly: true, Secure: s.domain != "", SameSite: http.SameSiteLaxMode, MaxAge: int(middleware.DefaultCSRFTTL.Seconds())})
@@ -246,7 +246,7 @@ func (s *server) dashboardCreateTenantSurface(w http.ResponseWriter, r *http.Req
 	req := api.CreateTenantSurfaceRequest{AppID: "", Name: strings.TrimSpace(r.FormValue("name")), CertKind: strings.TrimSpace(r.FormValue("cert_kind")), Hostnames: hostnames}
 	slug := r.PathValue("slug")
 	app, err := s.store.AppBySlug(r.Context(), slug)
-	if err != nil || app.AccountID != acct.ID {
+	if err != nil || !dashboardAppOwner(r, &acct, app) {
 		http.NotFound(w, r)
 		return
 	}

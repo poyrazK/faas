@@ -933,6 +933,8 @@ var CmdMCPTasksReport = cmdMCPTasksReport
 var CmdMail = cmdMail
 var CmdMan = cmdMan
 var CmdMetrics = cmdMetrics
+
+var ParseJobCommand = parseJobCommand
 var CmdMfa = cmdMfa
 var CmdMfaConfirm = cmdMfaConfirm
 var CmdMfaDisable = cmdMfaDisable
@@ -983,6 +985,7 @@ var CmdPostgresDelete = cmdPostgresDelete
 var CmdPostgresDiagnostics = cmdPostgresDiagnostics
 var CmdPostgresGet = cmdPostgresGet
 var CmdPostgresList = cmdPostgresList
+var CmdPostgresUndelete = cmdPostgresUndelete
 var CmdPostgresReconcile = cmdPostgresReconcile
 var CmdPostgresResize = cmdPostgresResize
 var CmdPostgresUsage = cmdPostgresUsage
@@ -1495,6 +1498,11 @@ var ParseCustomerOperationSignal = parseCustomerOperationSignal
 // (ADR-20261017100853), whose fields are unexported.
 func NewTenantCustomerOperationSignalClient(client *api.Client, definition string) tenantCustomerOperationSignalClient {
 	return tenantCustomerOperationSignalClient{client: client, definition: definition}
+}
+
+// NewEnvironmentAppClient builds a stage app client whose revision pin starts unset.
+func NewEnvironmentAppClient(client *api.Client, environment string, revision *int64) EnvironmentAppClient {
+	return environmentAppClient{Client: client, environment: environment, revision: revision}
 }
 
 var ParseDataAPIContract = parseDataAPIContract

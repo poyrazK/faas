@@ -141,7 +141,9 @@ domains still enter there.
   `operations.` and `s3.` keep the control-plane origin. The split list is
   derived from `apid.IsPlatformHost` plus `s3.`, and checked in CI.
 - The public-timeout Worker gets two origins: platform hosts to the control
-  plane, the app wildcard to the tunnel.
+  plane, the app wildcard to the tunnel. (Amended by ADR-20261030115139: no
+  Worker on the request path; DNS chooses the origin, as the bullet above
+  says, and platform 502/504 errors become 503 at the public edge.)
 - Tunnel credentials are sealed like other node secrets; each node holds the
   connector token, never an account API token.
 
@@ -243,6 +245,11 @@ Every step is dark until the manifest turns it on:
    reserved name can never be an app, so every platform host, including ones
    added later, stays on the control plane once it is reserved. The cutover
    steps are in `docs/runbooks/AppEdgeCutover.md`.
+
+   Amended 2026-10-30 (ADR-20261030115139): the Worker is removed, because it
+   is billed per request. A per-host move is an explicit DNS record, plus a
+   route with no Worker for that host while the wildcard route still has
+   one.
 
 The OVH launch (ADR-1344 §8) turns it on from day one. Whether the GCP beta
 moves first is decided after the pilot.

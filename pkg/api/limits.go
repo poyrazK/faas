@@ -528,6 +528,12 @@ const (
 // MemoryMax (4 GiB) covers all of them, so the count stays small.
 const ImagedImagePrepWorkers = 2
 
+// ImagedPublishedLayerDigests bounds how many just-published app layers one
+// imaged remembers the digest of, so the deploy scan can skip hashing them
+// again. An entry leaves when the scan uses it; the bound only covers layers
+// whose scan never ran.
+const ImagedPublishedLayerDigests = 256
+
 // Source-build OCI verification bounds the intermediate image, including its
 // builder base. Final app layers still obey the creating account's plan limit.
 const (
@@ -1245,8 +1251,9 @@ const ConfigGuardBaseline = time.Hour
 const ConfigGuardCheckIntervalSeconds = 15
 const ConfigGuardBatchSize = 50
 
-// Deploy freezes (ADR-20261019071733). An account holds at most
-// ReleaseFreezesMax unlifted freezes that have not ended; reasons are at most
+// Deploy freezes (ADR-20261019071733). An account, and a company organization
+// (amendment 4), each hold at most ReleaseFreezesMax unlifted freezes that
+// have not ended; reasons are at most
 // ReleaseFreezeReasonMax characters. A weekly window lasts at most a week, and
 // an after-rollback policy freezes for at most ReleaseFreezeAfterRollbackMax.
 // Plan-independent: a freeze only ever withholds releases.
@@ -2814,9 +2821,21 @@ const (
 // ProjectWorkloadDefaultRAMMB is the RAM a project service gets when its
 // Compose file declares no memory (deploy.resources.limits.memory or
 // mem_limit). It is also the store's floor for an app created without RAM.
-// Standalone apps default to the plan's RAM instead; the project plan shows
-// which services start at this default (Hunt 14 H14-36).
+// Standalone apps default to StandaloneAppDefaultRAMMB instead; the project
+// plan shows which services start at this default (Hunt 14 H14-36).
 const ProjectWorkloadDefaultRAMMB = 128
+
+// StandaloneAppDefaultMaxRAMMB caps the RAM a standalone app gets when it is
+// created without ram_mb, a resource profile or vcpu (ADR-20261029234500).
+// Below the cap the default stays the plan's RAM; a Scale app starts at
+// 1024 MB instead of 2048 MB and can still be raised to the plan's RAM.
+const StandaloneAppDefaultMaxRAMMB = 1024
+
+// StandaloneAppDefaultRAMMB is the RAM of a standalone app created without a
+// size: the plan's RAM, capped at StandaloneAppDefaultMaxRAMMB.
+func StandaloneAppDefaultRAMMB(l Limits) int {
+	return min(l.RAMMB, StandaloneAppDefaultMaxRAMMB)
+}
 
 // App CPU is expressed as sustained millicores enforced by cgroup v2 cpu.max.
 // Keep the first release deliberately small: it lets customers right-size
@@ -15001,6 +15020,18 @@ const (
 	AlertAccountTickBudget = 45 * time.Second
 )
 
+// Alert delivery retention (ADR-20261029203000): meterd deletes settled
+// deliveries fired more than AlertDeliveryRetentionDays ago, at most
+// AlertDeliveryPurgeBatch rows per statement and AlertDeliveryPurgeBatches
+// statements per AlertDeliveryPurgeInterval. A rule's newest delivery, and a
+// delivery with a rollback action, stay.
+const (
+	AlertDeliveryRetentionDays = 90
+	AlertDeliveryPurgeBatch    = 1000
+	AlertDeliveryPurgeBatches  = 20
+	AlertDeliveryPurgeInterval = time.Hour
+)
+
 // NotificationChannelTestsPerAccountMinute caps test sends to an account's
 // notification channels (ADR-20261028101615): each one is a real Slack post,
 // PagerDuty event or email.
@@ -15113,8 +15144,9 @@ var (
 )
 
 // Synthetic checks (ADR-748). The 5-minute floor keeps a check from pinning
-// an app resident on Free, Hobby and Pro (idle timeouts 30/60/300 s); the
-// timeout ceiling matches the gateway wake hold.
+// a Hobby app resident (idle timeout 60 s; Free has no checks); on Pro
+// (300 s) a 5-minute check keeps the app warm. The timeout ceiling matches
+// the gateway wake hold.
 const (
 	MaxSyntheticChecksPerApp       = 5
 	SyntheticCheckTimeoutMinMS     = 1000

@@ -149,23 +149,23 @@ func (s *server) renderJobsQueues(w http.ResponseWriter, r *http.Request, log *s
 		}
 	}
 	if s.sessions != nil {
-		token, tokenErr := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardJobsAction, acct.ID, dashboardJobsCSRFCookie)
+		token, tokenErr := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardJobsAction, actorAccount(r, acct).ID, dashboardJobsCSRFCookie)
 		if tokenErr != nil {
-			log.Warn("dashboard jobs: issue csrf", "account_id", acct.ID, "err", tokenErr)
+			log.Warn("dashboard jobs: issue csrf", "account_id", actorAccount(r, acct).ID, "err", tokenErr)
 		} else {
 			data.ActionCSRF = token
 			http.SetCookie(w, &http.Cookie{Name: dashboardJobsCSRFCookie, Value: token, Path: "/", HttpOnly: true,
 				Secure: s.domain != "", SameSite: http.SameSiteLaxMode, MaxAge: int(middleware.DefaultCSRFTTL.Seconds())})
 		}
-		if token, tokenErr := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardJobSchedulePolicyAction, acct.ID, dashboardJobSchedulePolicyCookie); tokenErr != nil {
-			log.Warn("dashboard jobs: issue schedule policy csrf", "account_id", acct.ID, "err", tokenErr)
+		if token, tokenErr := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardJobSchedulePolicyAction, actorAccount(r, acct).ID, dashboardJobSchedulePolicyCookie); tokenErr != nil {
+			log.Warn("dashboard jobs: issue schedule policy csrf", "account_id", actorAccount(r, acct).ID, "err", tokenErr)
 		} else {
 			data.SchedulePolicyCSRF = token
 			http.SetCookie(w, &http.Cookie{Name: dashboardJobSchedulePolicyCookie, Value: token, Path: "/", HttpOnly: true,
 				Secure: s.domain != "", SameSite: http.SameSiteLaxMode, MaxAge: int(middleware.DefaultCSRFTTL.Seconds())})
 		}
-		if token, tokenErr := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardReplayFailedAction, acct.ID, dashboardReplayFailedCSRFCookie); tokenErr != nil {
-			log.Warn("dashboard jobs: issue job replay csrf", "account_id", acct.ID, "err", tokenErr)
+		if token, tokenErr := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardReplayFailedAction, actorAccount(r, acct).ID, dashboardReplayFailedCSRFCookie); tokenErr != nil {
+			log.Warn("dashboard jobs: issue job replay csrf", "account_id", actorAccount(r, acct).ID, "err", tokenErr)
 		} else {
 			data.ReplayFailedCSRF = token
 			http.SetCookie(w, &http.Cookie{Name: dashboardReplayFailedCSRFCookie, Value: token, Path: "/", HttpOnly: true,
@@ -378,7 +378,7 @@ func (s *server) dashboardQueueDeadLetterReplay(w http.ResponseWriter, r *http.R
 		return
 	}
 	app, err := s.store.AppBySlug(r.Context(), slug)
-	if err != nil || app.AccountID != acct.ID {
+	if err != nil || !dashboardAppOwner(r, &acct, app) {
 		http.NotFound(w, r)
 		return
 	}

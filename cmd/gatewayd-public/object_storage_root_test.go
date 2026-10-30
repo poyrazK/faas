@@ -18,7 +18,8 @@ import (
 func TestPublicObjectStorageRootOnTheEdgeStore(t *testing.T) {
 	registry := &objectstorage.Registry{Accounting: api.ObjectStoragePolicy{AccountingMode: api.ObjectStorageGatewaySafetyV1}}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	handler, err := publicObjectStorageRoot(state.NewEdgeStore(nil), registry, func() bool { return true },
+	store := state.NewEdgeStore(nil)
+	handler, err := publicObjectStorageRoot(store, store, registry, func() bool { return true },
 		testDomains(t, "", "apps.example"), http.NotFoundHandler(), log)
 	if err != nil || handler == nil {
 		t.Fatalf("publicObjectStorageRoot on the edge store: handler=%v err=%v", handler, err)
