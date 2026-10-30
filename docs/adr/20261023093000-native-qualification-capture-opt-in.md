@@ -302,6 +302,13 @@ ADR-568 requires.
     graph.
   - gitlab's vmmd once stalled in native recovery right after github's
     teardown and never opened its socket. Every earlier run started.
+- 2026-10-30, n2, rerun with f86f27291e:
+  - The github graph made it through every apid pass without an error.
+    Serving convergence still never completed: the journey ran no serving
+    gateway, so there was no route acknowledgement to wait for.
+  - 17923ec133 registers gatewayd as the default-local serving gateway, as
+    the edge-rule and runtime-policy journeys do.
+  - gitlab's qualification cold boot timed out on the loaded host.
 - Pending: the n2 native GitOps journey through serving and the resilience
   phases.
 
