@@ -807,6 +807,11 @@ type Engine struct {
 	// view of the capacity streams it receives (ADR-20261029085904).
 	nodeBoots *nodeBootBreaker
 	streams   *capacityStreamWatch
+	// cpuPressureReadings and cpuPressureHolds, when set, make this schedd
+	// hold the nodes whose readings it receives under CPU pressure
+	// (ADR 20261030100950, node_cpu_pressure.go).
+	cpuPressureReadings CPUPressureReadings
+	cpuPressureHolds    *cpuPressureHolds
 
 	// telemetryCache is the receiver for the batched vmmd Stats rows carried
 	// on the persistent ReportCapacity stream. The instance-stats poller
@@ -1658,6 +1663,11 @@ func (e *Engine) WithNodeRegistry(reg *NodeRegistry) *Engine {
 		return e
 	}
 	e.nodeRegistry = reg
+	// ADR 20261030100950: the ledger withholds the CPU discount on a node
+	// the registry holds under CPU pressure.
+	if e.ledger != nil {
+		e.ledger.cpuPressured = func(nodeID string, now time.Time) bool { return nodeCPUPressured(reg, nodeID, now) }
+	}
 	return e
 }
 
@@ -1698,6 +1708,15 @@ func (e *Engine) InstanceBridgeSink() InstanceBridgeSink {
 		return func(string, time.Time, int64) {}
 	}
 	return e.telemetryCache.ReplaceInstanceBridge
+}
+
+// CPUPressureSink returns the callback scheddgrpc uses to record a node's
+// CPU pressure readings (ADR 20261030100950) with its telemetry.
+func (e *Engine) CPUPressureSink() CPUPressureSink {
+	if e == nil || e.telemetryCache == nil {
+		return func(string, time.Time, NodeCPUPressure) {}
+	}
+	return e.telemetryCache.ReplaceCPUPressure
 }
 
 // WithNodeKeyRegistry wires the ADR-053 signature-verification

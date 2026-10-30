@@ -17841,6 +17841,19 @@ func (m *MemStore) OpenComputeNodeWakeBreaker(_ context.Context, nodeID string, 
 	return nil
 }
 
+// HoldComputeNodeCPUPressure mirrors PgStore.HoldComputeNodeCPUPressure.
+func (m *MemStore) HoldComputeNodeCPUPressure(_ context.Context, nodeID string, until time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n, ok := m.computeNodes[nodeID]
+	if !ok {
+		return nil
+	}
+	n.CPUPressureUntil = &until
+	m.computeNodes[nodeID] = n
+	return nil
+}
+
 // CloseComputeNodeWakeBreaker mirrors PgStore.CloseComputeNodeWakeBreaker.
 func (m *MemStore) CloseComputeNodeWakeBreaker(_ context.Context, nodeID string) (bool, error) {
 	m.mu.Lock()

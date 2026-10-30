@@ -592,6 +592,9 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 	if serviceTransportProblem != nil {
 		return state.App{}, serviceTransportProblem
 	}
+	if problem := api.PrivateServiceHTTPSTransportProblem(serviceTransport, s.privateServiceHTTPS(acct)); problem != nil {
+		return state.App{}, problem
+	}
 	appManifest := stateManifestFromAPI(lifecycle)
 	appManifest.AllowedServiceCallers = allowedCallers
 	appManifest.AllowedServiceCallScopes = allowedCallScopes
