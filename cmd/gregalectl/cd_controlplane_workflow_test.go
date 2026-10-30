@@ -558,3 +558,39 @@ func TestCDControlPlaneHostedRunnerRefusesSilentRoleSkip(t *testing.T) {
 		}
 	}
 }
+
+// TestCDControlPlaneConvergesOnlyChangedRoles: a full release converges the
+// roles whose content hash differs from the host's record, through the
+// host-configuration lane's planner and --roles, and records them only
+// after the play succeeded (ADR-20261030150000). A tag without the
+// planner's full-release mode runs the whole play.
+func TestCDControlPlaneConvergesOnlyChangedRoles(t *testing.T) {
+	workflow := readWorkflow(t, "cd-controlplane.yml")
+	start := strings.Index(workflow, "- name: Converge control-plane roles")
+	end := strings.Index(workflow, "- name: Report skipped control-plane convergence")
+	if start < 0 || end < start {
+		t.Fatal("control-plane convergence step missing")
+	}
+	step := workflow[start:end]
+	order := []string{
+		`if ! grep -q -- '--full-release' scripts/ci/plan_host_config.py; then`,
+		`"${converge[@]}"` + "\n            exit 0",
+		"scripts/ci/unit_deploy.sh host-state > \"$work/host-state.json\"",
+		`python3 scripts/ci/plan_host_config.py --full-release "$RELEASE_ID"`,
+		`if [[ "$action" != contract ]]; then`,
+		`converge+=(--roles "$(jq -r '.roles | join(",")' "$work/plan.json")" --full-release)`,
+		`"${converge[@]}" --json > "$work/converge.json"`,
+		`scripts/ci/unit_deploy.sh host-record "$work/record-final.json"`,
+	}
+	last := -1
+	for _, want := range order {
+		at := strings.Index(step, want)
+		if at < 0 {
+			t.Fatalf("control-plane convergence step is missing %q", want)
+		}
+		if at < last {
+			t.Fatalf("control-plane convergence step runs %q out of order", want)
+		}
+		last = at
+	}
+}

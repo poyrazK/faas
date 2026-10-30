@@ -873,12 +873,45 @@ jobs:
           }
 
           # The signed release's own gregalectl, matching the checked-out roles.
-          "$CANONICAL_ROOT/unpacked/gregalectl" deploy converge-control-plane \
-            --manifest-file "$CANONICAL_ROOT/production-manifest.yaml" \
-            --ssh-known-hosts-file "$work/known_hosts" \
-            --ssh-key "$work/ssh-key" \
-            --ansible-vars-file "$work/vars.yml" \
+          converge=(
+            "$CANONICAL_ROOT/unpacked/gregalectl" deploy converge-control-plane
+            --manifest-file "$CANONICAL_ROOT/production-manifest.yaml"
+            --ssh-known-hosts-file "$work/known_hosts"
+            --ssh-key "$work/ssh-key"
+            --ansible-vars-file "$work/vars.yml"
             --repo-root "$GITHUB_WORKSPACE"
+          )
+          # A tag that predates ADR-20261030150000 runs the whole play.
+          if ! grep -q -- '--full-release' scripts/ci/plan_host_config.py; then
+            "${converge[@]}"
+            exit 0
+          fi
+          # ADR-20261030150000: converge only the roles whose content hash
+          # differs from the host's record, with the host-configuration
+          # lane's planner and --roles, then record them. Every role when the
+          # host has no record or the play's globals changed. No --roles when
+          # no role changed, so ADR-580's contract still catches operator
+          # variable and inventory changes.
+          export UNIT_SSH_TARGET="root@${CP_HOST}" UNIT_SSH_KEY="$HOME/.ssh/deploy_key"
+          scripts/ci/unit_deploy.sh host-state > "$work/host-state.json"
+          python3 scripts/ci/plan_host_config.py --full-release "$RELEASE_ID" \
+            --host-state "$work/host-state.json" --out "$work"
+          action="$(jq -r .action "$work/plan.json")"
+          {
+            echo "## Control-plane roles"
+            echo
+            echo "Plan: **${action}** ($(jq -r .reason "$work/plan.json")): $(jq -r '.roles | join(", ") | if . == "" then "none" else . end' "$work/plan.json")."
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$action" != contract ]]; then
+            converge+=(--roles "$(jq -r '.roles | join(",")' "$work/plan.json")" --full-release)
+          fi
+          "${converge[@]}" --json > "$work/converge.json"
+          jq . "$work/converge.json"
+          # Only after the play succeeded: the record says which content
+          # every role has, so the next release converges what differs.
+          jq --arg env "$(jq -er .environment_sha256 "$work/converge.json")" '.environment = $env' \
+            "$work/record.json" > "$work/record-final.json"
+          scripts/ci/unit_deploy.sh host-record "$work/record-final.json" "$(jq -er .contract_sha256 "$work/converge.json")"
 
       - name: Report skipped control-plane convergence
         if: ${{ inputs.hosted_runner }}
