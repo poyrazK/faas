@@ -16,7 +16,7 @@ import (
 const GrypeReplayEnv = "FAAS_E2E_GRYPE_REPLAY"
 
 // grypeReplayScript replays grype's JSON for a directory whose files match an
-// earlier scan byte for byte, against unchanged vulnerability database files.
+// earlier scan byte for byte, against unchanged vulnerability database content.
 // Any other invocation (version, db status, a non-directory source), a missing
 // database directory and any listing error run grype. A failed scan is never
 // kept.
@@ -37,12 +37,14 @@ esac
 # status" would name it too, but it checksums the whole database: minutes.
 dbroot=${GRYPE_DB_CACHE_DIR:-${XDG_CACHE_HOME:-${HOME:-/nonexistent}/.cache}/grype/db}
 [ -d "$dbroot" ] || exec "$real" "$@"
-# The key covers the database files' paths, sizes and modification times,
-# and the tree's every entry (path, type, mode, size, link target) and file
-# digest. Any error while listing them means no key.
+# The key covers the database's content files (path, size, modification
+# time) and the tree's every entry (path, type, mode, size, link target) and
+# file digest. grype rewrites last_update_check on every run, so only the
+# files an update replaces count. Any error while listing them means no key.
 work=$(mktemp -d "$cache/.work.XXXXXX") || exec "$real" "$@"
 key=
-if find "$dbroot" -type f -printf '%P\t%s\t%T@\n' 2>"$work/err" | LC_ALL=C sort >"$work/db" &&
+if find "$dbroot" -type f \( -name vulnerability.db -o -name import.json -o -name metadata.json \) \
+	-printf '%P\t%s\t%T@\n' 2>"$work/err" | LC_ALL=C sort >"$work/db" &&
 	[ -s "$work/db" ] &&
 	(cd "$src" &&
 		find . -printf '%p\t%y\t%m\t%s\t%l\n' 2>>"$work/err" | LC_ALL=C sort >"$work/tree" &&

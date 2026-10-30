@@ -874,3 +874,35 @@ func TestPrepareRailpackConfig_SharedRuntimeClearsDefaultAptPackages(t *testing.
 		t.Fatalf("node package = %v, want the runner base's major", got)
 	}
 }
+
+// ADR-1500 amendment 2: a shared Python build pins Railpack's Python to the
+// base's minor and clears the platform apt default, as its own minimal base
+// did; runner-python313 is Wolfi and has no apt.
+func TestPrepareRailpackConfig_SharedPythonPinsMinor(t *testing.T) {
+	workdir := t.TempDir()
+	restore, err := prepareRailpackConfig(api.BuildManifest{
+		Framework:      api.FrameworkRailpackPython,
+		Runtime:        "python313",
+		RuntimeBaseRef: "ghcr.io/poyrazk/runner-python313@sha256:" + strings.Repeat("c", 64),
+		SharedRuntime:  true,
+		Workdir:        workdir,
+	})
+	if err != nil {
+		t.Fatalf("prepareRailpackConfig: %v", err)
+	}
+	defer func() { _ = restore() }()
+	data, err := os.ReadFile(filepath.Join(workdir, "railpack.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config map[string]any
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatal(err)
+	}
+	if got := config["deploy"].(map[string]any)["aptPackages"].([]any); len(got) != 0 {
+		t.Fatalf("shared Python aptPackages = %v, want empty", got)
+	}
+	if got := config["packages"].(map[string]any)["python"]; got != "3.13" {
+		t.Fatalf("python package = %v, want the runner base's minor", got)
+	}
+}

@@ -2827,6 +2827,20 @@ type DeploymentGRPCHealthcheck struct {
 	Service string `json:"service,omitempty"`
 }
 
+// Clone returns a deep copy; nil stays nil.
+func (h *DeploymentHealthcheck) Clone() *DeploymentHealthcheck {
+	if h == nil {
+		return nil
+	}
+	out := *h
+	out.Test = slices.Clone(h.Test)
+	if h.GRPC != nil {
+		grpc := *h.GRPC
+		out.GRPC = &grpc
+	}
+	return &out
+}
+
 // DeploymentReadinessProbe is a reversible, steady-state traffic gate for
 // the primary app. It is distinct from Healthcheck (startup admission) and
 // LivenessProbe (which restarts a wedged VM).

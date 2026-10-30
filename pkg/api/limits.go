@@ -1397,6 +1397,18 @@ const (
 	CronFireNowActiveWindow  = 15 * time.Minute
 )
 
+// CronPlatformAttempts bounds the delivery attempts of a plain HTTP cron run
+// that Gregale refused before the app received the request: a wake failure,
+// an unavailable traffic-security check, or a refusal from the gateway's
+// dispatch endpoint. The app has not seen the request, so trying again is
+// safe; a run the app answered, or one that timed out in flight, keeps its
+// single attempt (ADR-20261026201726 amendment 2026-10-29). The n-th retry
+// waits n times CronPlatformRetryDelay.
+const (
+	CronPlatformAttempts   = 3
+	CronPlatformRetryDelay = 5 * time.Second
+)
+
 // CronHistoryRetention is how long schedd keeps a cron's settled schedule
 // decisions (schedule_occurrences) and its manual-run requests
 // (cron_fire_now_requests). It matches the longest plan's invocation result

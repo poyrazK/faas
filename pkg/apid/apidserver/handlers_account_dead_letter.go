@@ -9,6 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	"github.com/onebox-faas/faas/pkg/apid/appevents"
+	"github.com/onebox-faas/faas/pkg/authz"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -45,16 +46,32 @@ func accountDeadLetterNotFound(id string) *api.Problem {
 // account, so it applies the account inventories' rule (appaccess.VisibleApps):
 // a company app is hidden from a creator who left the company and from a key
 // bound to another one. Account-owned job events carry no app, and an app
-// whose row is gone keeps the account scope it had.
+// whose row is gone keeps the account scope it had. A write access (replay,
+// purge) also needs the role to deploy the app: a viewer, or a creator
+// demoted to one, sees a company app's dead letters but may not act on them.
 type deadLetterAccess struct {
 	s     *server
 	acct  state.Account
 	actor state.Account
 	seen  map[string]bool
+	write bool
 }
 
 func (s *server) deadLetterAccess(r *http.Request, acct state.Account) *deadLetterAccess {
 	return &deadLetterAccess{s: s, acct: acct, actor: actorAccount(r, acct), seen: map[string]bool{"": true}}
+}
+
+// deadLetterWriteAccess is deadLetterAccess for replay and purge.
+func (s *server) deadLetterWriteAccess(r *http.Request, acct state.Account) *deadLetterAccess {
+	access := s.deadLetterAccess(r, acct)
+	access.write = true
+	return access
+}
+
+// deadLetterWritable reports whether actor may replay or purge an app's dead
+// letters: the role that deploys the app, not only one that sees it.
+func (s *server) deadLetterWritable(ctx context.Context, actor state.Account, app state.App) (bool, error) {
+	return appaccess.Standing(ctx, s.store, actor.ID, app, authz.OrgActionDeployApp)
 }
 
 // visible takes the request's context, which carries the principal whose
@@ -75,8 +92,14 @@ func (a *deadLetterAccess) visible(ctx context.Context, appID string) (bool, err
 	if err != nil {
 		return false, err
 	}
-	a.seen[appID] = len(shown) == 1
-	return a.seen[appID], nil
+	visible := len(shown) == 1
+	if visible && a.write {
+		if visible, err = a.s.deadLetterWritable(ctx, a.actor, app); err != nil {
+			return false, err
+		}
+	}
+	a.seen[appID] = visible
+	return visible, nil
 }
 
 // visibleEvent reads one account event and refuses one this principal may not
@@ -199,7 +222,7 @@ func (s *server) getAccountDeadLetterEvent(w http.ResponseWriter, r *http.Reques
 
 func (s *server) replayAccountDeadLetterEvent(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	eventID := r.PathValue("id")
-	_, err := s.deadLetterAccess(r, acct).visibleEvent(r.Context(), eventID)
+	_, err := s.deadLetterWriteAccess(r, acct).visibleEvent(r.Context(), eventID)
 	var ev state.DeadLetterEvent
 	if err == nil {
 		ev, err = s.store.ReplayDeadLetterEventForAccount(r.Context(), acct.ID, eventID)
@@ -247,7 +270,7 @@ func (s *server) replayAllAccountDeadLetterEvents(w http.ResponseWriter, r *http
 
 func (s *server) deleteAccountDeadLetterEvent(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	eventID := r.PathValue("id")
-	_, err := s.deadLetterAccess(r, acct).visibleEvent(r.Context(), eventID)
+	_, err := s.deadLetterWriteAccess(r, acct).visibleEvent(r.Context(), eventID)
 	if err == nil {
 		err = s.store.DeleteDeadLetterEventForAccount(r.Context(), acct.ID, eventID)
 	}
@@ -294,7 +317,7 @@ func (s *server) purgeAccountDeadLetterEvents(w http.ResponseWriter, r *http.Req
 // principal may see, one at a time. A row another request replayed or purged
 // meanwhile is skipped.
 func (s *server) replayVisibleAccountDeadLetters(r *http.Request, acct state.Account, limit int) (int, error) {
-	events, err := s.deadLetterAccess(r, acct).visibleEvents(r.Context(), limit, true)
+	events, err := s.deadLetterWriteAccess(r, acct).visibleEvents(r.Context(), limit, true)
 	if err != nil {
 		return 0, err
 	}
@@ -314,7 +337,7 @@ func (s *server) replayVisibleAccountDeadLetters(r *http.Request, acct state.Acc
 // purgeVisibleAccountDeadLetters purges up to limit events this principal may
 // see, one at a time.
 func (s *server) purgeVisibleAccountDeadLetters(r *http.Request, acct state.Account, limit int) (int, error) {
-	events, err := s.deadLetterAccess(r, acct).visibleEvents(r.Context(), limit, false)
+	events, err := s.deadLetterWriteAccess(r, acct).visibleEvents(r.Context(), limit, false)
 	if err != nil {
 		return 0, err
 	}

@@ -1094,6 +1094,7 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			operationID = run.OperationID(app.ID)
 			buildDependencies = run.BuildDependencies(app.ID)
 		}
+		readinessCheck, livenessCheck := projectReadinessOverrides(app.Manifest, acct.Plan)
 		enqRes, enqErr := apidsource.Enqueue(deployCtx, s.store, s.notif, apidsource.EnqueueParams{
 			TrafficPercentExplicit:    safe,
 			OperationID:               operationID,
@@ -1106,6 +1107,8 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			ImagePort:                 app.Manifest.ProjectImagePort,
 			ImageCommand:              app.Manifest.ProjectImageCommand,
 			ImageHealthcheck:          app.Manifest.ProjectImageHealthcheck,
+			OverrideHealthcheck:       readinessCheck,
+			OverrideLivenessProbe:     livenessCheck,
 			ImageProcess:              app.Manifest.ProjectImageProcess,
 			FullRootfsAllowAuto:       api.FullRootfsAllowAutoDefault[acct.Plan],
 			SourcePath:                staged,
