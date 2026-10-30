@@ -118,7 +118,27 @@ func (s *server) authorizeDashboardApp(next http.Handler, w http.ResponseWriter,
 		api.WriteProblem(w, problem)
 		return
 	}
-	next.ServeHTTP(w, r)
+	// The handlers read the decision from the gated request: the principal
+	// stays the signed-in actor, and a company app carries its grant, whose
+	// owner the page acts on (dashboardAppOwner).
+	next.ServeHTTP(w, gate)
+}
+
+// dashboardAppOwner reports whether the session account may use app's
+// dashboard page and points *acct at the account the page acts on: for a
+// company app, the owner of the grant the dashboard gate made, as the /v1
+// routes act on it; otherwise the session account when it created the app.
+// The pages compared the app's creator with the session account, so a
+// company app answered "no such app" to every member but its creator, even
+// one whose role allowed the page (bug hunt 2026-10-28 B36). Session-bound
+// work after the call, such as CSRF tokens and audit actors, takes
+// actorAccount(r, *acct).
+func dashboardAppOwner(r *http.Request, acct *state.Account, app state.App) bool {
+	if grant, ok := appaccess.FromContext(r.Context()); ok && grant.App.ID == app.ID && grant.Actor.ID == acct.ID {
+		*acct = grant.Owner
+		return true
+	}
+	return app.ID != "" && app.AccountID == acct.ID
 }
 
 // dashboardAppSlug names the app a session-only app route addresses, or ""

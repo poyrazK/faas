@@ -85,7 +85,7 @@ func (s *server) dashboardTrackerNotificationsHandler(w http.ResponseWriter, r *
 	s.renderDashboardTrackerNotifications(w, r, acct, app, team, policy, reminderPolicy, page)
 }
 func (s *server) renderDashboardTrackerNotifications(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App, team string, policy state.IssueTrackerNotificationPolicy, reminderPolicy state.IssueTrackerReminderPolicy, page state.IssueTrackerNotificationPage) {
-	token, err := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardIssueAction, acct.ID, dashboardIssueCookie)
+	token, err := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardIssueAction, actorAccount(r, acct).ID, dashboardIssueCookie)
 	if err != nil {
 		renderProblem(w, s.log, err)
 		return
@@ -141,7 +141,7 @@ func (s *server) dashboardTrackerNotificationPolicyForAccount(w http.ResponseWri
 	if !ok {
 		return
 	}
-	if app.AccountID != acct.ID {
+	if !dashboardAppOwner(r, &acct, app) {
 		api.WriteProblem(w, api.NewProblem(403, api.CodeForbidden, "Owner required", "only the owner may configure sync notifications"))
 		return
 	}

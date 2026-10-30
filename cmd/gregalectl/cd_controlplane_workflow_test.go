@@ -594,3 +594,44 @@ func TestCDControlPlaneConvergesOnlyChangedRoles(t *testing.T) {
 		last = at
 	}
 }
+
+// TestCDControlPlaneUsesSignedControllerTools: deployctl and migrate ride
+// the release signed by release.yml (ADR-20261030140000). The deploy job
+// verifies them against the tag's identity before it uses them and builds
+// them on the runner only for a release that predates the asset.
+func TestCDControlPlaneUsesSignedControllerTools(t *testing.T) {
+	release := readWorkflow(t, "release.yml")
+	build := strings.Index(release, "- name: Build and sign controller tools")
+	attach := strings.Index(release, "- name: Attach canonical release artifacts sequentially")
+	if build < 0 || attach < 0 {
+		t.Fatalf("release workflow is missing the controller tools: build=%d attach=%d", build, attach)
+	}
+	for _, want := range []string{
+		"-o \"$tools/\" ./cmd/deployctl ./cmd/migrate",
+		`--bundle "$OUT_DIR/controller-tools.cosign.bundle"`,
+	} {
+		if !strings.Contains(release[build:attach], want) {
+			t.Errorf("controller tools step is missing %q", want)
+		}
+	}
+	for _, asset := range []string{"controller-tools.tar.gz\n", "controller-tools.cosign.bundle\n"} {
+		if !strings.Contains(release[attach:], "/gregale-release/"+asset) {
+			t.Errorf("release does not publish %s", strings.TrimSpace(asset))
+		}
+	}
+
+	workflow := readWorkflow(t, "cd-controlplane.yml")
+	verify := strings.Index(workflow, `--bundle "$CANONICAL_ROOT/controller-tools.cosign.bundle"`)
+	identity := strings.Index(workflow, `--certificate-identity "https://github.com/poyrazK/faas/.github/workflows/release.yml@refs/tags/${RELEASE_TAG}"`)
+	use := strings.Index(workflow, `install -m 0755 "${CONTROLLER_TOOLS}/deployctl" "${BUNDLE_ROOT}/bin/deployctl"`)
+	fallback := strings.Index(workflow, "predates signed controller tools")
+	if verify < 0 || identity < 0 || use < 0 || fallback < 0 {
+		t.Fatalf("control-plane deploy does not use verified controller tools: verify=%d identity=%d use=%d fallback=%d", verify, identity, use, fallback)
+	}
+	if !(verify < use && use < fallback) {
+		t.Fatalf("controller tools must be verified before use, with the runner build only as the fallback: verify=%d use=%d fallback=%d", verify, use, fallback)
+	}
+	if builds := strings.Count(workflow, "go build"); builds != 2 || strings.Index(workflow, "go build") < fallback {
+		t.Errorf("cd-controlplane runs go build %d times, or outside the pre-controller-tools fallback", builds)
+	}
+}

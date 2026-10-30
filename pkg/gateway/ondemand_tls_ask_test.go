@@ -106,6 +106,40 @@ func TestOnDemandTLSPolicyWildcardFollowsOwnersPlan(t *testing.T) {
 	}
 }
 
+// A company wildcard follows the organization's plan, not the personal plan
+// of the member who created its app (bug hunt 2026-10-28 B37).
+func TestOnDemandTLSPolicyCompanyWildcardFollowsTheOrganizationsPlan(t *testing.T) {
+	ctx := context.Background()
+	s := state.NewMemStore()
+	member, err := s.CreateAccount(ctx, "company-member@example.com", api.PlanFree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A Free organization owns its resources from the start; it then upgrades.
+	org, err := s.CreateOrg(ctx, state.Org{Slug: "acme-tls", Name: "Acme", Plan: api.PlanFree})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UpdateOrgPlan(ctx, org.ID, api.PlanPro); err != nil {
+		t.Fatal(err)
+	}
+	app, err := s.CreateApp(ctx, state.App{AccountID: member.ID, OrgID: org.ID, Slug: "acme-tls-app", Type: state.AppTypeApp, RAMMB: 256})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateCustomDomain(ctx, "*.acme.example.net", app.ID, "tok"); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := s.MarkDomainVerifiedIfChallenge(ctx, "*.acme.example.net", "tok"); err != nil || !ok {
+		t.Fatalf("verify wildcard = %v, %v", ok, err)
+	}
+	p := NewOnDemandTLSPolicy(s, "gregale.dev", prometheus.NewRegistry(), nil)
+	p.SetNow(func() time.Time { return time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC) })
+	if ok, decision := p.Decide(ctx, "shop.acme.example.net"); !ok {
+		t.Fatalf("a Pro organization's wildcard refused for its creator's Free plan: %s", decision)
+	}
+}
+
 func TestOnDemandTLSPolicyWildcardBudgetSparesKnownHosts(t *testing.T) {
 	_, p, _ := onDemandTLSFixture(t)
 	ctx := context.Background()

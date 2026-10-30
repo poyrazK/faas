@@ -296,6 +296,10 @@ func (s *server) deleteCorsPreset(w http.ResponseWriter, r *http.Request, acct s
 // problem was written.
 func (s *server) corsPresetMutation(w http.ResponseWriter, r *http.Request, acct state.Account, id, operation string, write func(context.Context) bool) bool {
 	edit := s.edgeRules.CorsPresetEdit(acct.ID, id, operation)
+	if prob := s.edgeRules.AuthorizeReferencedEdit(r, acct, edit); prob != nil {
+		api.WriteProblem(w, prob)
+		return false
+	}
 	convergences, release, prob := s.edgeRules.PrepareReferencedEdit(r.Context(), edit)
 	if prob != nil {
 		api.WriteProblem(w, prob)
