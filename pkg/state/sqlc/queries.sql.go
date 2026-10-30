@@ -66433,6 +66433,68 @@ func (q *Queries) ObjectNotificationsSave(ctx context.Context, db DBTX, arg Obje
 	return err
 }
 
+const objectReadUsageRecordMetrics = `-- name: ObjectReadUsageRecordMetrics :exec
+INSERT INTO object_storage_request_metrics (bucket_id, period_start, request_count, egress_bytes)
+SELECT b.id, $1::timestamptz, $2::bigint, $3::bigint
+FROM object_buckets b WHERE b.id = $4::uuid
+ON CONFLICT (bucket_id, period_start) DO UPDATE
+SET request_count = object_storage_request_metrics.request_count + EXCLUDED.request_count,
+    egress_bytes = object_storage_request_metrics.egress_bytes + EXCLUDED.egress_bytes
+`
+
+type ObjectReadUsageRecordMetricsParams struct {
+	PeriodStart pgtype.Timestamptz
+	Requests    int64
+	EgressBytes int64
+	BucketID    pgtype.UUID
+}
+
+// Batched read counts (ADR-20261030075301); a deleted bucket is skipped.
+func (q *Queries) ObjectReadUsageRecordMetrics(ctx context.Context, db DBTX, arg ObjectReadUsageRecordMetricsParams) error {
+	_, err := db.Exec(ctx, objectReadUsageRecordMetrics,
+		arg.PeriodStart,
+		arg.Requests,
+		arg.EgressBytes,
+		arg.BucketID,
+	)
+	return err
+}
+
+const objectReadUsageSubjects = `-- name: ObjectReadUsageSubjects :many
+SELECT b.id, object_storage_usage_subject(b.org_id, b.account_id, $1::timestamptz)::uuid AS subject
+FROM object_buckets b WHERE b.id = ANY($2::uuid[])
+`
+
+type ObjectReadUsageSubjectsParams struct {
+	PeriodStart pgtype.Timestamptz
+	BucketIds   []pgtype.UUID
+}
+
+type ObjectReadUsageSubjectsRow struct {
+	ID      pgtype.UUID
+	Subject pgtype.UUID
+}
+
+func (q *Queries) ObjectReadUsageSubjects(ctx context.Context, db DBTX, arg ObjectReadUsageSubjectsParams) ([]ObjectReadUsageSubjectsRow, error) {
+	rows, err := db.Query(ctx, objectReadUsageSubjects, arg.PeriodStart, arg.BucketIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectReadUsageSubjectsRow{}
+	for rows.Next() {
+		var i ObjectReadUsageSubjectsRow
+		if err := rows.Scan(&i.ID, &i.Subject); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const objectRouteWriteSettle = `-- name: ObjectRouteWriteSettle :execrows
 UPDATE object_storage_write_admissions SET state='settled',settled_at=coalesce(settled_at,now()) WHERE id=$1 AND bucket_id=$2 AND kind='proxy' AND route_receipt
 `
@@ -67609,6 +67671,28 @@ func (q *Queries) ObjectStorageProviderRequestMetrics(ctx context.Context, db DB
 		return nil, err
 	}
 	return items, nil
+}
+
+const objectStorageReadOwner = `-- name: ObjectStorageReadOwner :one
+SELECT object_storage_usage_subject(b.org_id,b.account_id)::uuid AS subject
+FROM object_buckets b JOIN orgs o ON o.id=b.org_id
+WHERE b.id=$1::uuid AND b.account_id=$2::uuid
+AND (CASE WHEN NOT o.personal_org AND o.resource_ownership_enabled THEN o.status IN ('active','past_due') AND o.abuse_hold_at IS NULL
+ELSE EXISTS(SELECT 1 FROM accounts a WHERE a.id=b.account_id AND a.status IN ('active','past_due') AND a.abuse_hold_at IS NULL) END)
+`
+
+type ObjectStorageReadOwnerParams struct {
+	BucketID  pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+// The owner check of ObjectStorageLockOwner without its row locks, for the
+// cached read decision (ADR-20261030075301).
+func (q *Queries) ObjectStorageReadOwner(ctx context.Context, db DBTX, arg ObjectStorageReadOwnerParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, objectStorageReadOwner, arg.BucketID, arg.AccountID)
+	var subject pgtype.UUID
+	err := row.Scan(&subject)
+	return subject, err
 }
 
 const objectStorageTimelines = `-- name: ObjectStorageTimelines :one
@@ -68796,6 +68880,24 @@ type ObjectUsageAuthorizeParams struct {
 
 func (q *Queries) ObjectUsageAuthorize(ctx context.Context, db DBTX, arg ObjectUsageAuthorizeParams) error {
 	_, err := db.Exec(ctx, objectUsageAuthorize, arg.AccountID, arg.PeriodStart)
+	return err
+}
+
+const objectUsageAuthorizeBy = `-- name: ObjectUsageAuthorizeBy :exec
+INSERT INTO object_storage_authorizations (account_id, period_start, count)
+VALUES ($1::uuid, $2::timestamptz, $3::bigint)
+ON CONFLICT (account_id, period_start) DO UPDATE
+SET count = object_storage_authorizations.count + EXCLUDED.count
+`
+
+type ObjectUsageAuthorizeByParams struct {
+	AccountID   pgtype.UUID
+	PeriodStart pgtype.Timestamptz
+	Count       int64
+}
+
+func (q *Queries) ObjectUsageAuthorizeBy(ctx context.Context, db DBTX, arg ObjectUsageAuthorizeByParams) error {
+	_, err := db.Exec(ctx, objectUsageAuthorizeBy, arg.AccountID, arg.PeriodStart, arg.Count)
 	return err
 }
 
