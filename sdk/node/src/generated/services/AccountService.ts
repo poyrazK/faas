@@ -704,6 +704,7 @@ export class AccountService {
         404: `code: not_found`,
         422: `Not a key of this provider, a bad api_url, or the provider rejected the key.`,
         502: `The provider could not be reached (\`billing_provider_unavailable\`).`,
+        503: `The provider could not be reached (\`billing_provider_unavailable\`).`,
       },
     });
   }

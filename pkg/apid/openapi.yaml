@@ -20,6 +20,11 @@ info:
     Errors use RFC 9457 `application/problem+json` with a stable `code`
     field — see `Problem` schema. Authentication rate limits use the same
     envelope with `code: auth_rate_limited` and a `Retry-After` header.
+    Gregale's own problems are sent as 503 where an operation lists 502 or
+    504, with the same `code` and an `X-Faas-Error-Code` header, because the
+    CDN in front of the API replaces 502 and 504 bodies (ADR-20261030115139).
+    Edges released before that change still send 502 or 504, so both are
+    listed. Key on `code`, not on the status.
 
     Dashboard pages, server-sent event streams (account events and
     deployment logs), the CLI sign-in flow and operator-only routes are not
@@ -7378,6 +7383,11 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: Stripe could not be reached for the portal (`billing_provider_unavailable`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   /v1/consumer-billing/{slug}/close:
     parameters:
@@ -10878,6 +10888,11 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Snapshot exceeded its bounded read budget.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '504':
           description: Snapshot exceeded its bounded read budget.
           content:
@@ -11459,6 +11474,11 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404':
           description: Version is not registered and no proposed schema was supplied.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: Bounded rollout observation timed out.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -15395,6 +15415,11 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: The provider could not be reached (`billing_provider_unavailable`); retry to resume the platform tenant statement export.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   /v1/account/billing-connections/{provider}:
     parameters:
@@ -15447,6 +15472,11 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
         '502':
+          description: The provider could not be reached (`billing_provider_unavailable`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503':
           description: The provider could not be reached (`billing_provider_unavailable`).
           content:
             application/problem+json:
@@ -19330,6 +19360,11 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
         '502':
+          description: The provider could not be reached (`billing_provider_unavailable`); retry to resume the app consumer statement export.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503':
           description: The provider could not be reached (`billing_provider_unavailable`); retry to resume the app consumer statement export.
           content:
             application/problem+json:
@@ -29055,6 +29090,11 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: GitHub could not be reached.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   /v1/apps/{slug}/github/sync:
     parameters:
@@ -29082,6 +29122,11 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
         '502':
+          description: The GitHub repository catalog was unavailable during reconciliation.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503':
           description: The GitHub repository catalog was unavailable during reconciliation.
           content:
             application/problem+json:
@@ -29189,6 +29234,11 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '502':
+          description: 'code: github_unreachable — the GitHub integration could not reach api.github.com when persisting the bind; retry in a minute.'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503':
           description: 'code: github_unreachable — the GitHub integration could not reach api.github.com when persisting the bind; retry in a minute.'
           content:
             application/problem+json:
@@ -39982,6 +40032,17 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: |
+            Webhook delivery failed after the dispatcher's retry
+            budget (5 attempts, 2s/8s/32s/128s backoff). The audit
+            log entry (`alert_preset.test_sent`) carries the
+            `delivery_status_code` + `delivery_attempts` for the
+            investigator; the customer's receiver likely rejected
+            the request, was unreachable, or returned 5xx.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   # Dashboard form-POST sibling of
@@ -43437,7 +43498,7 @@ paths:
       description: |
         Enqueues an invocation row and waits for the drain to drive it
         to a terminal state. Server-side cap is 30s on paid plans, 5s
-        on Free. Returns 504 (long_poll_timeout) when the cap elapses;
+        on Free. Returns 503 (long_poll_timeout) when the cap elapses;
         the customer can immediately re-call /v1/invocations/{id}
         to pick up the eventual result.
       parameters:
@@ -43460,6 +43521,7 @@ paths:
         '403': { $ref: '#/components/responses/PlanFeatureGated' }
         '413': { $ref: '#/components/responses/PlanSourceBytes' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/LongPollTimeout' }
         '504': { $ref: '#/components/responses/LongPollTimeout' }
 
   /v1/deployments/response-check/capabilities:
@@ -47325,6 +47387,11 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503':
+          description: The combined delivery health request exceeded its bounded deadline.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '504':
           description: The combined delivery health request exceeded its bounded deadline.
           content:
@@ -47377,6 +47444,11 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '413':
           description: Request exceeds the 65536-byte body limit.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: Control timed out; read current status, then repeat the desired control with the original UUID and creation guard.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -47438,6 +47510,11 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: "Control timed out; read current status, then repeat the desired control with the original UUID and creation guard. Context: Resume a retained lineage diagnostic scan."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '504':
           description: "Control timed out; read current status, then repeat the desired control with the original UUID and creation guard. Context: Resume a retained lineage diagnostic scan."
           content:
@@ -47496,6 +47573,11 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: "Control timed out; read current status, then repeat the desired control with the original UUID and creation guard. Context: Cancel a retained lineage diagnostic scan."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '504':
           description: "Control timed out; read current status, then repeat the desired control with the original UUID and creation guard. Context: Cancel a retained lineage diagnostic scan."
           content:
@@ -47536,6 +47618,11 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '409':
           description: Latest scan changed or is active; stable code event_lineage_case_backfill_changed.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: Request timed out; repeat the same request UUID and previous-request guard.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -47587,6 +47674,11 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '409':
           description: "Latest scan changed or is active; stable code event_lineage_case_backfill_changed. Context: Backfill missing lineage cases from retained admission evidence."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: "Request timed out; repeat the same request UUID and previous-request guard. Context: Backfill missing lineage cases from retained admission evidence."
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -47645,6 +47737,11 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: Operation timed out; repeat submission with the same request identity and selection.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '504':
           description: Operation timed out; repeat submission with the same request identity and selection.
           content:
@@ -47699,6 +47796,11 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: Listing timed out.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '504':
           description: Listing timed out.
           content:
@@ -47747,6 +47849,11 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '409':
           description: "Case guard changed or retained request identity reused with another selection. Context: Submit a fixed reviewed lineage retry selection."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: "Operation timed out; repeat submission with the same request identity and selection. Context: Submit a fixed reviewed lineage retry selection."
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -47823,6 +47930,11 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: History read timed out.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '504':
           description: History read timed out.
           content:
@@ -47883,6 +47995,11 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '429':
           description: Job already has 128 retained command receipts; event_lineage_retry_control_limit. Existing command repeats remain available.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: Control timed out; repeat the same command UUID and inputs when supplied, otherwise read current state before repeating the desired action.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -47949,6 +48066,11 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: "Control timed out; repeat the same command UUID and inputs when supplied, otherwise read current state before repeating the desired action. Context: Resume unprocessed cases in a paused bulk lineage retry job."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '504':
           description: "Control timed out; repeat the same command UUID and inputs when supplied, otherwise read current state before repeating the desired action. Context: Resume unprocessed cases in a paused bulk lineage retry job."
           content:
@@ -48012,6 +48134,11 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: Cancellation timed out; repeat the same job UUID, original creation timestamp and command UUID if supplied.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '504':
           description: Cancellation timed out; repeat the same job UUID, original creation timestamp and command UUID if supplied.
           content:
@@ -48057,6 +48184,11 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '409':
           description: "Case guard changed or retained request identity reused with another selection. Context: Inspect retained bulk lineage retry progress and per-case results."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: "Operation timed out; repeat submission with the same request identity and selection. Context: Inspect retained bulk lineage retry progress and per-case results."
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -48108,6 +48240,11 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '409':
           description: Case revision or request identity changed.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: Lineage operation timed out; repeat the same guarded request.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -48164,6 +48301,11 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: "Lineage operation timed out; repeat the same guarded request. Context: Recheck one reviewed lineage case with an idempotent guard."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '504':
           description: "Lineage operation timed out; repeat the same guarded request. Context: Recheck one reviewed lineage case with an idempotent guard."
           content:
@@ -48205,6 +48347,11 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503':
+          description: Subscription reconciliation request timed out.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '504':
           description: Subscription reconciliation request timed out.
           content:
@@ -48246,6 +48393,11 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503':
+          description: "Subscription reconciliation request timed out. Context: Request a forward-only execution coverage boundary."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '504':
           description: "Subscription reconciliation request timed out. Context: Request a forward-only execution coverage boundary."
           content:
@@ -48288,6 +48440,11 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503':
+          description: Subscription control request timed out.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '504':
           description: Subscription control request timed out.
           content:
@@ -48330,6 +48487,11 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503':
+          description: "Inspect consumer routing health over a retained history window: subscription control request timed out."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '504':
           description: "Inspect consumer routing health over a retained history window: subscription control request timed out."
           content:
@@ -48368,6 +48530,11 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503':
+          description: "Inspect consumer circuit breaker state: subscription control request timed out."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '504':
           description: "Inspect consumer circuit breaker state: subscription control request timed out."
           content:
@@ -48409,6 +48576,11 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503':
+          description: "Enable or replace a consumer circuit breaker policy: subscription control request timed out."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '504':
           description: "Enable or replace a consumer circuit breaker policy: subscription control request timed out."
           content:
@@ -48445,6 +48617,11 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503':
+          description: "Disable a consumer circuit breaker: subscription control request timed out."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '504':
           description: "Disable a consumer circuit breaker: subscription control request timed out."
           content:
@@ -48483,6 +48660,11 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503':
+          description: "Close an enabled circuit breaker and start a fresh observation window: subscription control request timed out."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '504':
           description: "Close an enabled circuit breaker and start a fresh observation window: subscription control request timed out."
           content:
@@ -48521,6 +48703,11 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503':
+          description: "Inspect schema version selection for future events: subscription control request timed out."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '504':
           description: "Inspect schema version selection for future events: subscription control request timed out."
           content:
@@ -48562,6 +48749,11 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503':
+          description: "Replace schema version selection for future events: subscription control request timed out."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '504':
           description: "Replace schema version selection for future events: subscription control request timed out."
           content:
@@ -48598,6 +48790,11 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503':
+          description: "Accept all schema versions for future events: subscription control request timed out."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '504':
           description: "Accept all schema versions for future events: subscription control request timed out."
           content:
@@ -48636,6 +48833,11 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503':
+          description: "Inspect routing retry policy for future events: subscription control request timed out."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '504':
           description: "Inspect routing retry policy for future events: subscription control request timed out."
           content:
@@ -48677,6 +48879,11 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503':
+          description: "Replace routing retry policy for future events: subscription control request timed out."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '504':
           description: "Replace routing retry policy for future events: subscription control request timed out."
           content:
@@ -48713,6 +48920,11 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503':
+          description: "Restore legacy routing retry defaults for future events: subscription control request timed out."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '504':
           description: "Restore legacy routing retry defaults for future events: subscription control request timed out."
           content:
@@ -48751,6 +48963,11 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503':
+          description: "Inspect one consumer pause, pacing and backlog: subscription control request timed out."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '504':
           description: "Inspect one consumer pause, pacing and backlog: subscription control request timed out."
           content:
@@ -48789,6 +49006,11 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503':
+          description: "Pause new routing admissions for one event consumer: subscription control request timed out."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '504':
           description: "Pause new routing admissions for one event consumer: subscription control request timed out."
           content:
@@ -48832,6 +49054,11 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503':
+          description: "Resume one event consumer with controlled draining: subscription control request timed out."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '504':
           description: "Resume one event consumer with controlled draining: subscription control request timed out."
           content:
@@ -48898,6 +49125,11 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503':
+          description: Deadline listing exceeded its read budget; no partial page was returned.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '504':
           description: Deadline listing exceeded its read budget; no partial page was returned.
           content:
@@ -48941,6 +49173,11 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503':
+          description: Deadline-window read exceeded its budget; no partial counts were returned.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '504':
           description: Deadline-window read exceeded its budget; no partial counts were returned.
           content:
@@ -48952,7 +49189,7 @@ paths:
       tags: [events]
       operationId: getEventSubscriptionPendingSummary
       summary: Read complete consumer pending counts and effective deadlines.
-      description: "Read-only, payload-free counts and earliest effective deadline across all retained captured pending application recipients for this subscription. One Repeatable Read snapshot includes current controls. Processing work, future arrivals and publications awaiting recipient capture are excluded. No sample cap; request and statement budgets bound scan time. Timeout returns 504 without partial counts. Incomplete or absent evidence is unknown, never zero or a successful recovery. Counts do not model future admission or guarantee deadline safety."
+      description: "Read-only, payload-free counts and earliest effective deadline across all retained captured pending application recipients for this subscription. One Repeatable Read snapshot includes current controls. Processing work, future arrivals and publications awaiting recipient capture are excluded. No sample cap; request and statement budgets bound scan time. Timeout returns 503 (504 from older edges) without partial counts. Incomplete or absent evidence is unknown, never zero or a successful recovery. Counts do not model future admission or guarantee deadline safety."
       security: [{ bearerAuth: [] }]
       parameters:
         - name: slug
@@ -48979,6 +49216,11 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503':
+          description: Full pending-summary read exceeded its budget; coverage is unknown.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '504':
           description: Full pending-summary read exceeded its budget; coverage is unknown.
           content:
@@ -49022,6 +49264,11 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503':
+          description: Read-only pacing preview exceeded its request deadline; retry with a fresh observation.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '504':
           description: Read-only pacing preview exceeded its request deadline; retry with a fresh observation.
           content:
@@ -49075,6 +49322,11 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: "Configure rate bucket: Request deadline elapsed; after an uncertain mutation look up or replay the same command UUID."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '504':
           description: "Configure rate bucket: Request deadline elapsed; after an uncertain mutation look up or replay the same command UUID."
           content:
@@ -49117,6 +49369,11 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503':
+          description: "List rate history: Request deadline elapsed; after an uncertain mutation look up or replay the same command UUID."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '504':
           description: "List rate history: Request deadline elapsed; after an uncertain mutation look up or replay the same command UUID."
           content:
@@ -49160,6 +49417,11 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503':
+          description: "Look up rate command: Request deadline elapsed; after an uncertain mutation look up or replay the same command UUID."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '504':
           description: "Look up rate command: Request deadline elapsed; after an uncertain mutation look up or replay the same command UUID."
           content:
@@ -49214,6 +49476,11 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: "Set consumer delivery capacity: subscription control request timed out."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '504':
           description: "Set consumer delivery capacity: subscription control request timed out."
           content:
@@ -49264,6 +49531,11 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503':
+          description: Read-only command history timed out.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '504':
           description: Read-only command history timed out.
           content:
@@ -49308,6 +49580,11 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404':
           description: No owned target or unexpired command receipt is available. Receipt absence does not prove the command never ran.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: Read-only capacity-command lookup timed out.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -49384,6 +49661,11 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: App retry backlog evidence deadline expired.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '504':
           description: App retry backlog evidence deadline expired.
           content:
@@ -49416,6 +49698,11 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503':
+          description: Recovery health request timed out.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '504':
           description: Recovery health request timed out.
           content:
@@ -49454,6 +49741,11 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503':
+          description: Recovery request timed out.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '504':
           description: Recovery request timed out.
           content:
@@ -49515,6 +49807,11 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503':
+          description: Recovery listing timed out.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '504':
           description: Recovery listing timed out.
           content:
@@ -49557,6 +49854,11 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: "Create a durable recovery job for a frozen selection of routing failures: recovery request timed out."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '504':
           description: "Create a durable recovery job for a frozen selection of routing failures: recovery request timed out."
           content:
@@ -49590,6 +49892,11 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503':
+          description: "Read bulk recovery progress: recovery request timed out."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '504':
           description: "Read bulk recovery progress: recovery request timed out."
           content:
@@ -49629,6 +49936,11 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503':
+          description: "Cancel retries that have not yet been queued: recovery request timed out."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '504':
           description: "Cancel retries that have not yet been queued: recovery request timed out."
           content:
@@ -49670,6 +49982,11 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
           description: Recovery job is completed, cancelled, or expired.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: "Pause further recovery admissions: recovery request timed out."
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -49717,6 +50034,11 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: "Resume the frozen recovery selection: recovery request timed out."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '504':
           description: "Resume the frozen recovery selection: recovery request timed out."
           content:
@@ -49757,6 +50079,11 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
           description: "Change the current recovery admission rate: recovery job is completed, cancelled, or expired."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: "Change the current recovery admission rate: recovery request timed out."
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -49882,6 +50209,11 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '503':
+          description: Policy change preview inspection timed out.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '504':
           description: Policy change preview inspection timed out.
           content:
@@ -50704,6 +51036,11 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: Recovery preflight timed out.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '504':
           description: Recovery preflight timed out.
           content:
@@ -50825,6 +51162,11 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: Notification retry-preview request exceeded its time budget.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '504':
           description: Notification retry-preview request exceeded its time budget.
           content:
@@ -50881,6 +51223,11 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '500':
           description: Notification retry storage failure.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: Notification retry request exceeded its time budget.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -51041,6 +51388,11 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503':
+          description: Recovery history request timed out.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '504':
           description: Recovery history request timed out.
           content:
@@ -51082,6 +51434,11 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503':
+          description: "Read a stable page of selected recipients and recovery outcomes: recovery request timed out."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '504':
           description: "Read a stable page of selected recipients and recovery outcomes: recovery request timed out."
           content:
@@ -53644,6 +54001,11 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: Provider-side failure. The CLI surfaces this as 'retry failed'.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '501':
           description: The provider has no direct saved-card retry API; use the billing portal URL in the response.
           content:
@@ -53703,6 +54065,11 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
         '502':
+          description: Provider-side failure.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503':
           description: Provider-side failure.
           content:
             application/problem+json:
@@ -53909,6 +54276,11 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: Provider rejected the refund or returned an incomplete response.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   # ─── Per-tenant GitHub webhook secret rotation (PR-D) ────────────────
   # Sets the per-tenant override of the platform-wide
@@ -54089,6 +54461,11 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: 'code: billing_sync_failed — Paddle SDK round-trip failed.'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   /v1/admin/billing-paddle-overage/preflight:
     get:
@@ -54162,6 +54539,11 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
         '502':
+          description: 'code: billing_reconcile_failed — SDK round-trip failed.'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503':
           description: 'code: billing_reconcile_failed — SDK round-trip failed.'
           content:
             application/problem+json:
@@ -62629,6 +63011,11 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: Paginated acknowledgment read exceeded its request deadline.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '504':
           description: Paginated acknowledgment read exceeded its request deadline.
           content:
@@ -62668,6 +63055,11 @@ paths:
               schema: { $ref: '#/components/schemas/EventAcknowledgmentHistory' }
         '400':
           description: Malformed acknowledgment history scope or delivery filter.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: Acknowledgment history read exceeded its time budget.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -62711,6 +63103,11 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '409':
           description: "Expired lease, replaced attempt or incompatible completion for getEventAcknowledgmentPolicy."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: "Acknowledgment request timed out for getEventAcknowledgmentPolicy."
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -62760,6 +63157,11 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: "Acknowledgment request timed out for setEventAcknowledgmentPolicy."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '504':
           description: "Acknowledgment request timed out for setEventAcknowledgmentPolicy."
           content:
@@ -62801,6 +63203,11 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '409':
           description: "Expired lease, replaced attempt or incompatible completion for getEventAcknowledgment."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: "Acknowledgment request timed out for getEventAcknowledgment."
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -62853,6 +63260,11 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: "Acknowledgment request timed out for renewEventAcknowledgment."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '504':
           description: "Acknowledgment request timed out for renewEventAcknowledgment."
           content:
@@ -62899,6 +63311,11 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '409':
           description: "Expired lease, replaced attempt or incompatible completion for completeEventAcknowledgment."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: "Acknowledgment request timed out for completeEventAcknowledgment."
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -62950,6 +63367,11 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: "Acknowledgment request timed out for retryEventAcknowledgment."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '504':
           description: "Acknowledgment request timed out for retryEventAcknowledgment."
           content:
@@ -62996,6 +63418,11 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '409':
           description: "Expired lease, replaced attempt or incompatible completion for deadLetterEventAcknowledgment."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: "Acknowledgment request timed out for deadLetterEventAcknowledgment."
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -109382,7 +109809,7 @@ components:
         override. Zero or omission leaves existing execution semantics.
         Both values are at most 15 min (`RequestBudgetPlanMax`); the plan
         ceiling (`Plan.RequestBudgetMaxMs`: Free 30 s, Hobby 60 s, Pro 5 min,
-        Scale 15 min) caps them at request time. Expiry returns a 504 problem with code
+        Scale 15 min) caps them at request time. Expiry returns a 503 problem with code
         request_budget_exceeded before response commitment; a committed
         ordinary response is terminated on expiry. Streaming and upgrades
         use their idle/session contract after successful response headers.

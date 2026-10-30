@@ -254,6 +254,7 @@ export class ConsumersService {
         422: `return_url is not an https URL.`,
         429: `Portal sessions for this key are rate limited.`,
         502: `Stripe could not be reached for the portal (\`billing_provider_unavailable\`).`,
+        503: `Stripe could not be reached for the portal (\`billing_provider_unavailable\`).`,
       },
     });
   }
@@ -1032,6 +1033,7 @@ export class ConsumersService {
         409: `code: conflict`,
         422: `The app consumer statement or customer cannot be invoiced, or the provider rejected the request.`,
         502: `The provider could not be reached (\`billing_provider_unavailable\`); retry to resume the app consumer statement export.`,
+        503: `The provider could not be reached (\`billing_provider_unavailable\`); retry to resume the app consumer statement export.`,
       },
     });
   }

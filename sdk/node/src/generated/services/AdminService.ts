@@ -532,6 +532,7 @@ export class AdminService {
         `,
         501: `The selected billing provider does not expose this refund surface.`,
         502: `Provider rejected the refund or returned an incomplete response.`,
+        503: `Provider rejected the refund or returned an incomplete response.`,
       },
     });
   }
@@ -677,6 +678,7 @@ export class AdminService {
         `,
         501: `code: billing_op_unsupported — active provider does not advertise paddle.OpProvider; the type assertion at the dispatcher fails.`,
         502: `code: billing_sync_failed — Paddle SDK round-trip failed.`,
+        503: `code: billing_sync_failed — Paddle SDK round-trip failed.`,
       },
     });
   }
@@ -752,6 +754,7 @@ export class AdminService {
         `,
         501: `code: billing_reconcile_unsupported — provider does not implement ReconcileUsage.`,
         502: `code: billing_reconcile_failed — SDK round-trip failed.`,
+        503: `code: billing_reconcile_failed — SDK round-trip failed.`,
       },
     });
   }
