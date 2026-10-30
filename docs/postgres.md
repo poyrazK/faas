@@ -97,6 +97,17 @@ Choose the credential with `--access`:
 | `migration` | Schema changes. Only the release task receives it, never the serving instances. |
 | `data_api` | The [Data API](data-api.md). |
 
+`read_write` and `data_api` URLs, and `read_only` ones unless they reach a
+replica, go through a connection pooler in transaction mode. Session state does not carry from one transaction to the
+next, so these don't work through it:
+- `SET` outside a transaction (use `SET LOCAL` inside one);
+- `LISTEN` and `NOTIFY`;
+- session-level advisory locks (use transaction-level ones);
+- SQL-level `PREPARE` (driver prepared statements work);
+- temporary tables kept across transactions.
+
+A `migration` binding connects directly and supports all of them.
+
 Run migrations as a release task, with a Procfile `release: npm run migrate` or
 `release.command` in `gregale.yaml`, and point the migration tool at a
 `migration` binding:
@@ -182,7 +193,8 @@ gregale postgres delete orders --purge
 
 `--purge` (API: `DELETE /v1/postgres/databases/{id}?purge=true`) deletes the
 database and its restore history at once, even during the 7 days. It cannot be
-undone.
+undone through Gregale. The provider keeps the deleted data for up to 7 more
+days before it erases it.
 
 Until it is purged, a deleted database:
 - still counts toward your plan's database limit;

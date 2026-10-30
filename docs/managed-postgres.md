@@ -93,6 +93,20 @@ The fleet ceilings apply across every account:
 - Once this UTC month's provider cost reaches `max_monthly_cost_millicents`,
   cost-raising resizes pause as well, until the next month.
 
+Size `max_databases` to the Neon organization behind the backend. Every
+database is its own Neon project; restores are branches inside their source's
+project. Neon allows 100 projects on its Launch plan and 1,000 (a soft limit)
+on Scale, and the SQL probe's canary database is one of them. Keep
+`max_databases` below the organization's limit with room to spare: Neon keeps
+a deleted project recoverable for 7 days, and its docs don't say whether those
+count. Past about 1,000 databases the fleet needs a second Neon organization
+(another backend) or an agreement with Neon.
+
+A purge cannot be undone through Gregale. Within 7 days Neon can still recover
+the project (`POST /projects/{id}/recover`), but Gregale's catalog already
+records the database as deleted. Rescuing it is a manual operator task: recover
+the project in Neon, copy the data out, and import it into a new database.
+
 ## Provider health
 
 `gregale postgres get <database>` and database GET/list responses include cached
