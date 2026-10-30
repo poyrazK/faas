@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"golang.org/x/sys/unix"
 )
 
 // restagedBindFixture is an adopted guest whose base drive's cache source
@@ -62,7 +64,7 @@ func TestAdoptGuestBindsTakesARestagedSourceFromTheGuest(t *testing.T) {
 		t.Fatalf("adopt with a re-staged source: %v", err)
 	}
 	st := f.v.bindSourceModes[bindSourceKey{path: f.source, file: f.recorded}]
-	if st.refs != 1 || st.handle == nil {
+	if st.refs != 1 || st.handle == nil || !st.viaGuest {
 		t.Fatalf("bind source state = %+v", st)
 	}
 	info, err := st.handle.Stat()
@@ -129,5 +131,44 @@ func TestAdoptGuestBindsRefusesWhatIsNotTheRecordedFile(t *testing.T) {
 				t.Fatalf("refusal left references: %v", f.v.bindSourceModes)
 			}
 		})
+	}
+}
+
+// In production the guest-view handle comes through the jail's read-only
+// bind, so restoring the mode through it fails (metal 2026-10-30: "chmod
+// /proc/self/fd/15: read-only file system", and the adopted guest could never
+// park). That failure must not hold the teardown; for any other handle it
+// still does.
+func TestReleaseBindSourceToleratesAGuestViewHandle(t *testing.T) {
+	for _, viaGuest := range []bool{true, false} {
+		dir := t.TempDir()
+		src := filepath.Join(dir, "base.ext4")
+		if err := os.WriteFile(src, []byte("image"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		id, err := statIdentity(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// An O_PATH handle cannot change the mode, as a handle through a
+		// read-only mount cannot.
+		fd, err := unix.Open(src, unix.O_PATH|unix.O_CLOEXEC, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		v := NewJailerVMM(dir, 0)
+		key := bindSourceKey{path: src, file: id}
+		v.bindSourceModes[key] = bindSourceMode{mode: 0o600, refs: 1, file: id, handle: os.NewFile(uintptr(fd), src), viaGuest: viaGuest}
+		err = v.releaseBindSource(src, id)
+		_, kept := v.bindSourceModes[key]
+		if viaGuest && (err != nil || kept) {
+			t.Fatalf("guest-view release = %v, kept %v; want it done", err, kept)
+		}
+		if !viaGuest && (err == nil || !kept) {
+			t.Fatalf("host release = %v, kept %v; want the failed restoration to keep the reference", err, kept)
+		}
+		if kept {
+			_ = v.bindSourceModes[key].handle.Close()
+		}
 	}
 }
