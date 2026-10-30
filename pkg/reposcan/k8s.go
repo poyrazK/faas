@@ -99,6 +99,8 @@ func detectK8sWith(fsys fs.FS, opts ScanOptions) ([]workloadSeed, []Managed, []s
 		sources     = k8sEnvSources{}
 		ingresses   []k8sIngress
 		deployments []k8sEnvWorkload
+		readers     []k8sEnvWorkload
+		configMaps  []k8sConfigMap
 	)
 	err := k8sWalk(fsys, func(warning string) { warnings = append(warnings, warning) }, func(o k8sObject) error {
 		p, node, header := o.src, o.node, o.header
@@ -142,6 +144,7 @@ func detectK8sWith(fsys fs.FS, opts ScanOptions) ([]workloadSeed, []Managed, []s
 					return fmt.Errorf("reposcan: %s Deployment %q: %w", p, m.Metadata.Name, err)
 				}
 				deployments = append(deployments, deployment)
+				readers = append(readers, deployment)
 			}
 			seeds = append(seeds, seed)
 		case "CronJob":
@@ -160,6 +163,11 @@ func detectK8sWith(fsys fs.FS, opts ScanOptions) ([]workloadSeed, []Managed, []s
 					return fmt.Errorf("reposcan: %s CronJob %q: %w", p, m.Metadata.Name, err)
 				}
 				cronWarnings = append(cronWarnings, podWarnings...)
+				reader, err := k8sReadEnvWorkload(o)
+				if err != nil {
+					return fmt.Errorf("reposcan: %s CronJob %q: %w", p, m.Metadata.Name, err)
+				}
+				readers = append(readers, reader)
 			}
 			warnings = append(warnings, k8sSeedWarnings(p, seed.name, cronWarnings)...)
 			seeds = append(seeds, seed)
@@ -194,7 +202,10 @@ func detectK8sWith(fsys fs.FS, opts ScanOptions) ([]workloadSeed, []Managed, []s
 					}
 				}
 			}
-			if warning := k8sKindWarning(p, node, header); warning != "" {
+			warning := k8sKindWarning(p, node, header)
+			if opts.KubernetesManifests && header.Kind == "ConfigMap" {
+				configMaps = append(configMaps, k8sConfigMap{src: p, name: header.Metadata.Name, warning: warning})
+			} else if warning != "" {
 				warnings = append(warnings, warning)
 			}
 		}
@@ -206,6 +217,7 @@ func detectK8sWith(fsys fs.FS, opts ScanOptions) ([]workloadSeed, []Managed, []s
 	warnings = append(warnings, applyK8sAutoscalers(seeds, autoscalers)...)
 	if opts.KubernetesManifests {
 		warnings = append(warnings, applyK8sEnvFrom(seeds, sources)...)
+		warnings = append(warnings, k8sConfigMapWarnings(configMaps, readers)...)
 		warnings = append(warnings, applyK8sIngresses(seeds, ingresses, sources.services, deployments)...)
 		warnings = append(warnings, k8sUnservedDeployments(seeds, sources.services, deployments)...)
 	}
