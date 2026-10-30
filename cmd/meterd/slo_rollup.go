@@ -19,7 +19,7 @@ const sloRollupInterval = 5 * time.Minute
 // Prometheus is unconfigured or the store predates ADR-747; budgets then
 // read as "no data" instead of failing, and loops reports the rollup
 // disabled so an operator hears of it (ADR-20261024222102).
-func runSLORollup(ctx context.Context, store state.Store, prom appmetrics.PromQL, loops *observabilityLoops, log *slog.Logger) {
+func runSLORollup(ctx context.Context, store state.Store, prom appmetrics.PromQL, released func(context.Context, state.SLO) bool, loops *observabilityLoops, log *slog.Logger) {
 	budgets, ok := store.(state.SLOBudgetStore)
 	if !ok || prom == nil {
 		log.Info("meterd: SLO budget rollup disabled", "store_supported", ok, "prometheus_configured", prom != nil)
@@ -27,12 +27,13 @@ func runSLORollup(ctx context.Context, store state.Store, prom appmetrics.PromQL
 	}
 	loops.setEnabled(loopSLORollup, true)
 	defer loops.setEnabled(loopSLORollup, false)
-	r := &slo.Rollup{Store: budgets, Prom: prom, Log: log}
+	r := &slo.Rollup{Store: budgets, Prom: prom, Log: log, Released: released}
 	tick := func() {
 		stats, err := r.RunOnce(ctx, time.Now())
 		loops.pass(loopSLORollup, err, time.Now())
 		loops.add(loopSLORollup, "recorded", stats.Recorded)
 		loops.add(loopSLORollup, "failed", stats.Failed)
+		loops.add(loopSLORollup, "not_released", stats.NotReleased)
 		if err != nil {
 			log.Warn("meterd: SLO budget rollup", "err", err)
 			return

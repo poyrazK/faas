@@ -16,6 +16,7 @@ func (m *Memory) PrepareUnsubscribe(ctx context.Context, d Delivery, hash, seale
 	if !validUnsubscribeMaterial(hash, sealed) {
 		return nil, ErrInvalid
 	}
+	hash = storedUnsubscribeHash(hash)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -50,7 +51,10 @@ func (m *Memory) Unsubscribe(ctx context.Context, hash []byte, now time.Time) (a
 	}
 	now = now.UTC().Truncate(time.Microsecond)
 	m.mu.Lock()
-	s, _, err := m.unsubscribeDelivery(hash, now)
+	s, hash, err := findUnsubscribe(hash, func(value []byte) (Subscription, error) {
+		s, _, err := m.unsubscribeDelivery(value, now)
+		return s, err
+	})
 	m.mu.Unlock()
 	if err != nil {
 		return out, err

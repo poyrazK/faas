@@ -2159,10 +2159,21 @@ func (m *MemStore) AccountByEmail(_ context.Context, email string) (Account, err
 	return Account{}, ErrNotFound
 }
 
+// apiKeyByHashLocked finds a key by a token's SHA-256 or a stored digest,
+// trying the account policy's lookups in turn (ADR 20261029202403).
+func (m *MemStore) apiKeyByHashLocked(hash []byte) (APIKey, bool) {
+	for _, value := range credentialLookups(credTagAPIKey, hash) {
+		if k, ok := m.keyByHash[hex.EncodeToString(value)]; ok {
+			return k, true
+		}
+	}
+	return APIKey{}, false
+}
+
 func (m *MemStore) AccountByKeyHash(_ context.Context, hash []byte) (Account, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	k, ok := m.keyByHash[hex.EncodeToString(hash)]
+	k, ok := m.apiKeyByHashLocked(hash)
 	if !ok {
 		return Account{}, ErrNotFound
 	}
@@ -2176,7 +2187,7 @@ func (m *MemStore) AccountByKeyHash(_ context.Context, hash []byte) (Account, er
 func (m *MemStore) APIKeyByHash(_ context.Context, hash []byte) (APIKey, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	k, ok := m.keyByHash[hex.EncodeToString(hash)]
+	k, ok := m.apiKeyByHashLocked(hash)
 	if !ok {
 		return APIKey{}, ErrNotFound
 	}
@@ -2217,7 +2228,7 @@ func (m *MemStore) APIKeyByHash(_ context.Context, hash []byte) (APIKey, error) 
 func (m *MemStore) AuthenticateOIDCBearer(_ context.Context, hash []byte) (Account, APIKey, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	row, ok := m.oidcExchangedTokens[hex.EncodeToString(hash)]
+	row, rowKey, ok := credentialEntry(m.oidcExchangedTokens, credTagOIDCToken, hash)
 	if !ok {
 		return Account{}, APIKey{}, ErrNotFound
 	}
@@ -2233,7 +2244,7 @@ func (m *MemStore) AuthenticateOIDCBearer(_ context.Context, hash []byte) (Accou
 		// follow-up request doesn't go through the same code path.
 		// The pg contract is `WHERE expires_at > NOW()`; the
 		// MemStore mirrors by physically deleting on miss.
-		delete(m.oidcExchangedTokens, hex.EncodeToString(hash))
+		delete(m.oidcExchangedTokens, rowKey)
 		return Account{}, APIKey{}, ErrNotFound
 	}
 	return acct, row.ToAPIKey(), nil
@@ -2429,7 +2440,8 @@ func (m *MemStore) InsertOIDCExchangedToken(_ context.Context, t *OIDCExchangedT
 	if len(row.Scopes) == 0 {
 		row.Scopes = []string{api.ScopeDeployWrite}
 	}
-	m.oidcExchangedTokens[hex.EncodeToString(t.TokenHash)] = row
+	row.TokenHash = storedCredential(credTagOIDCToken, t.TokenHash)
+	m.oidcExchangedTokens[hex.EncodeToString(row.TokenHash)] = row
 	return t.ID, nil
 }
 
@@ -2440,12 +2452,12 @@ func (m *MemStore) InsertOIDCExchangedToken(_ context.Context, t *OIDCExchangedT
 func (m *MemStore) GetOIDCExchangedTokenByHash(_ context.Context, hash []byte) (*OIDCExchangedToken, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	row, ok := m.oidcExchangedTokens[hex.EncodeToString(hash)]
+	row, rowKey, ok := credentialEntry(m.oidcExchangedTokens, credTagOIDCToken, hash)
 	if !ok {
 		return nil, ErrNotFound
 	}
 	if !row.ExpiresAt.IsZero() && row.ExpiresAt.Before(time.Now()) {
-		delete(m.oidcExchangedTokens, hex.EncodeToString(hash))
+		delete(m.oidcExchangedTokens, rowKey)
 		return nil, ErrNotFound
 	}
 	cp := row
@@ -2470,7 +2482,7 @@ func (m *MemStore) DeleteOIDCExchangedToken(_ context.Context, id string) error 
 func (m *MemStore) AuthenticateKey(_ context.Context, hash []byte) (Account, APIKey, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	k, ok := m.keyByHash[hex.EncodeToString(hash)]
+	k, ok := m.apiKeyByHashLocked(hash)
 	if !ok {
 		return Account{}, APIKey{}, ErrNotFound
 	}
@@ -3101,6 +3113,7 @@ func (m *MemStore) ListAllAccounts(_ context.Context) ([]Account, error) {
 // --- API keys ---------------------------------------------------------------
 
 func (m *MemStore) CreateAPIKey(_ context.Context, accountID string, hash []byte, label string, scopes []string) (APIKey, error) {
+	hash = storedCredential(credTagAPIKey, hash)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	h := hex.EncodeToString(hash)
@@ -3134,6 +3147,7 @@ func (m *MemStore) CreateAPIKey(_ context.Context, accountID string, hash []byte
 // provenance columns stamp the new row; nil/"" inputs round-trip
 // as the zero value on the struct (mirrors the pgstore NULL shape).
 func (m *MemStore) CreateOrgAPIKeyWithProvenance(_ context.Context, orgID, accountID string, hash []byte, label string, scopes []string, expiresAt *time.Time, createdIP, createdUA string, parent *string) (APIKey, error) {
+	hash = storedCredential(credTagAPIKey, hash)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err := m.checkOrgCredentialMemberLocked(orgID, accountID); err != nil {
@@ -3174,6 +3188,7 @@ func (m *MemStore) CreateOrgAPIKeyWithProvenance(_ context.Context, orgID, accou
 // provenance columns stamp created_ip / created_ua / parent_key_id;
 // the existing rotated_from_id is unchanged.
 func (m *MemStore) RotateOrgAPIKeyWithProvenance(_ context.Context, orgID, oldKeyID string, newHash []byte, newLabel string, graceWindow time.Duration, createdIP, createdUA string, parent *string) (APIKey, APIKey, error) {
+	newHash = storedCredential(credTagAPIKey, newHash)
 	if graceWindow < 0 {
 		graceWindow = 0
 	}
@@ -3325,6 +3340,7 @@ func (m *MemStore) TouchKeyLastUsed(_ context.Context, keyID string) error {
 // (status='active', all nullable fields nil) for the
 // pre-migration call site.
 func (m *MemStore) CreateAPIKeyWithExpiry(_ context.Context, accountID string, hash []byte, label string, scopes []string, expiresAt *time.Time) (APIKey, error) {
+	hash = storedCredential(credTagAPIKey, hash)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	h := hex.EncodeToString(hash)
@@ -3354,6 +3370,7 @@ func (m *MemStore) CreateAPIKeyWithExpiry(_ context.Context, accountID string, h
 // provenance columns stamp CreatedIP / CreatedUA / ParentKeyID;
 // nil/"" inputs round-trip as the zero value on the struct.
 func (m *MemStore) CreateAPIKeyWithExpiryAndProvenance(_ context.Context, accountID string, hash []byte, label string, scopes []string, expiresAt *time.Time, createdIP, createdUA string, parent *string) (APIKey, error) {
+	hash = storedCredential(credTagAPIKey, hash)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	h := hex.EncodeToString(hash)
@@ -3423,6 +3440,7 @@ func (m *MemStore) MarkAPIKeyRevoked(_ context.Context, accountID, keyID string)
 // "no concurrent callers" by virtue of m.mu; the same is true
 // of every other mutating method on this struct.
 func (m *MemStore) RotateAPIKey(_ context.Context, accountID, oldKeyID string, newHash []byte, newLabel string, graceWindow time.Duration) (APIKey, APIKey, error) {
+	newHash = storedCredential(credTagAPIKey, newHash)
 	if graceWindow < 0 {
 		graceWindow = 0
 	}
@@ -3543,6 +3561,7 @@ func (m *MemStore) SetAccountEgressAllowlistExtra(_ context.Context, accountID s
 // invariant pgstore's pg_class read-models mirror).
 
 func (m *MemStore) CreateOrgAPIKey(_ context.Context, orgID, accountID string, hash []byte, label string, scopes []string, expiresAt *time.Time) (APIKey, error) {
+	hash = storedCredential(credTagAPIKey, hash)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err := m.checkOrgCredentialMemberLocked(orgID, accountID); err != nil {
@@ -3622,6 +3641,7 @@ func (m *MemStore) RevokeOrgAPIKey(_ context.Context, orgID, keyID string) (APIK
 }
 
 func (m *MemStore) RotateOrgAPIKey(_ context.Context, orgID, oldKeyID string, newHash []byte, newLabel string, graceWindow time.Duration) (APIKey, APIKey, error) {
+	newHash = storedCredential(credTagAPIKey, newHash)
 	if graceWindow < 0 {
 		graceWindow = 0
 	}
@@ -4347,6 +4367,8 @@ func (m *MemStore) CreateProjectEnvironmentApproval(ctx context.Context, approva
 	if err := m.checkOrgAccessLocked(ctx); err != nil {
 		return ProjectEnvironmentApproval{}, err
 	}
+	approval.PlanTokenHash = storedApprovalTokenHash(credTagPromotionPlanToken, approval.PlanTokenHash)
+	approval.ApprovalTokenHash = storedApprovalTokenHash(credTagPromotionApprovalToken, approval.ApprovalTokenHash)
 	for _, existing := range m.projectEnvironmentApprovals {
 		if existing.ApprovalTokenHash == approval.ApprovalTokenHash {
 			return ProjectEnvironmentApproval{}, ErrConflict
@@ -4383,7 +4405,7 @@ func (m *MemStore) ProjectEnvironmentApprovalByToken(_ context.Context, accountI
 	defer m.mu.Unlock()
 	now := time.Now()
 	for _, approval := range m.projectEnvironmentApprovals {
-		if approval.AccountID == accountID && approval.ProjectSlug == projectSlug && approval.EnvironmentSlug == environmentSlug && approval.PlanTokenHash == planTokenHash && approval.ApprovalTokenHash == approvalTokenHash && approval.ConsumedAt == nil && approval.ExpiresAt.After(now) {
+		if approval.AccountID == accountID && approval.ProjectSlug == projectSlug && approval.EnvironmentSlug == environmentSlug && approvalTokensMatch(approval, planTokenHash, approvalTokenHash) && approval.ConsumedAt == nil && approval.ExpiresAt.After(now) {
 			return approval, nil
 		}
 	}
@@ -4401,7 +4423,7 @@ func (m *MemStore) ConsumeProjectEnvironmentApproval(ctx context.Context, accoun
 		consumedAt = now
 	}
 	for id, approval := range m.projectEnvironmentApprovals {
-		if approval.AccountID == accountID && approval.ProjectSlug == projectSlug && approval.EnvironmentSlug == environmentSlug && approval.PlanTokenHash == planTokenHash && approval.ApprovalTokenHash == approvalTokenHash && approval.ConsumedAt == nil && approval.ExpiresAt.After(now) {
+		if approval.AccountID == accountID && approval.ProjectSlug == projectSlug && approval.EnvironmentSlug == environmentSlug && approvalTokensMatch(approval, planTokenHash, approvalTokenHash) && approval.ConsumedAt == nil && approval.ExpiresAt.After(now) {
 			approval.ConsumedAt = &consumedAt
 			m.projectEnvironmentApprovals[id] = approval
 			return approval, nil
@@ -21446,6 +21468,7 @@ func derefDeclaredRoutes(p *[]DeclaredRoute) []DeclaredRoute {
 // (32-byte hex); see pkg/api.HashAPIKey for the canonical hash fn.
 // Re-issue of the same hash is a no-op (the entry is overwritten).
 func (m *MemStore) IssueLoginToken(_ context.Context, tokenHash []byte, accountID string, expiresAt time.Time) error {
+	tokenHash = storedCredential(credTagLoginToken, tokenHash)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.loginTokens == nil {
@@ -21466,21 +21489,22 @@ func (m *MemStore) IssueLoginToken(_ context.Context, tokenHash []byte, accountI
 func (m *MemStore) ConsumeLoginToken(_ context.Context, tokenHash []byte) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	tok, ok := m.loginTokens[string(tokenHash)]
+	key, _ := rawCredentialKey(m.loginTokens, credTagLoginToken, tokenHash)
+	tok, ok := m.loginTokens[key]
 	if !ok {
 		return "", ErrNotFound
 	}
 	if tok.ConsumedAt != nil {
-		delete(m.loginTokens, string(tokenHash))
+		delete(m.loginTokens, key)
 		return "", ErrNotFound
 	}
 	if !tok.ExpiresAt.After(time.Now()) {
-		delete(m.loginTokens, string(tokenHash))
+		delete(m.loginTokens, key)
 		return "", ErrNotFound
 	}
 	now := time.Now()
 	tok.ConsumedAt = &now
-	m.loginTokens[string(tokenHash)] = tok
+	m.loginTokens[key] = tok
 	return tok.AccountID, nil
 }
 
@@ -21503,6 +21527,7 @@ func (m *MemStore) DeleteOldLoginTokens(_ context.Context, before time.Time) (in
 // IssueMFADisableRequest stores a new email-recovery request and invalidates
 // any older pending request for the same account.
 func (m *MemStore) IssueMFADisableRequest(_ context.Context, tokenHash []byte, accountID string, requestedAt time.Time) error {
+	tokenHash = storedCredential(credTagMFADisableRequest, tokenHash)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, ok := m.accounts[accountID]; !ok {
@@ -21530,7 +21555,8 @@ func (m *MemStore) IssueMFADisableRequest(_ context.Context, tokenHash []byte, a
 func (m *MemStore) GetMFADisableRequest(_ context.Context, tokenHash []byte) (MFADisableRequest, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	req, ok := m.mfaDisableRequests[string(tokenHash)]
+	key, _ := rawCredentialKey(m.mfaDisableRequests, credTagMFADisableRequest, tokenHash)
+	req, ok := m.mfaDisableRequests[key]
 	if !ok || req.ConsumedAt != nil {
 		return MFADisableRequest{}, ErrNotFound
 	}
@@ -21543,18 +21569,20 @@ func (m *MemStore) GetMFADisableRequest(_ context.Context, tokenHash []byte) (MF
 func (m *MemStore) ConsumeMFADisableRequest(_ context.Context, tokenHash []byte) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	req, ok := m.mfaDisableRequests[string(tokenHash)]
+	key, _ := rawCredentialKey(m.mfaDisableRequests, credTagMFADisableRequest, tokenHash)
+	req, ok := m.mfaDisableRequests[key]
 	if !ok || req.ConsumedAt != nil {
 		return "", ErrNotFound
 	}
 	now := time.Now()
 	req.ConsumedAt = &now
-	m.mfaDisableRequests[string(tokenHash)] = req
+	m.mfaDisableRequests[key] = req
 	return req.AccountID, nil
 }
 
 // IssueEmailVerificationToken stores a one-shot verification token hash.
 func (m *MemStore) IssueEmailVerificationToken(_ context.Context, tokenHash []byte, accountID string, expiresAt time.Time) error {
+	tokenHash = storedCredential(credTagEmailVerification, tokenHash)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, ok := m.accounts[accountID]; !ok {
@@ -21577,9 +21605,10 @@ func (m *MemStore) IssueEmailVerificationToken(_ context.Context, tokenHash []by
 func (m *MemStore) ConsumeEmailVerificationToken(_ context.Context, tokenHash []byte) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	tok, ok := m.emailVerificationTokens[string(tokenHash)]
+	key, _ := rawCredentialKey(m.emailVerificationTokens, credTagEmailVerification, tokenHash)
+	tok, ok := m.emailVerificationTokens[key]
 	if !ok || tok.ConsumedAt != nil || !tok.ExpiresAt.After(time.Now()) {
-		delete(m.emailVerificationTokens, string(tokenHash))
+		delete(m.emailVerificationTokens, key)
 		return "", ErrNotFound
 	}
 	acct, ok := m.accounts[tok.AccountID]
@@ -21588,7 +21617,7 @@ func (m *MemStore) ConsumeEmailVerificationToken(_ context.Context, tokenHash []
 	}
 	now := time.Now().UTC()
 	tok.ConsumedAt = &now
-	m.emailVerificationTokens[string(tokenHash)] = tok
+	m.emailVerificationTokens[key] = tok
 	if acct.EmailVerifiedAt == nil {
 		acct.EmailVerifiedAt = &now
 		m.storeRouteCheckAccountLocked(acct.ID, acct)
@@ -21761,6 +21790,7 @@ func (m *MemStore) OAuthLinkByProviderSubject(_ context.Context, provider, provi
 // re-issue of the same hash is a no-op overwriting the entry, which
 // matches the production on-conflict-do-nothing semantics.
 func (m *MemStore) IssueCliAuthCode(_ context.Context, tokenHash []byte, expiresAt time.Time) error {
+	tokenHash = storedCredential(credTagCLIAuthCode, tokenHash)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.cliAuthCodes == nil {
@@ -21775,6 +21805,8 @@ func (m *MemStore) IssueCliAuthCode(_ context.Context, tokenHash []byte, expires
 
 // IssueCliAuthDeviceCode implements CliAuthDeviceCodeStore.
 func (m *MemStore) IssueCliAuthDeviceCode(_ context.Context, tokenHash, deviceHash []byte, expiresAt time.Time) error {
+	tokenHash = storedCredential(credTagCLIAuthCode, tokenHash)
+	deviceHash = storedCredential(credTagCLIDeviceCode, deviceHash)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.cliAuthCodes == nil {
@@ -21796,7 +21828,7 @@ func (m *MemStore) ConsumeCliAuthDeviceCode(_ context.Context, deviceHash []byte
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for key, row := range m.cliAuthCodes {
-		if len(row.DeviceHash) == 0 || string(row.DeviceHash) != string(deviceHash) {
+		if len(row.DeviceHash) == 0 || !credentialIn(credTagCLIDeviceCode, deviceHash, row.DeviceHash) {
 			continue
 		}
 		return m.consumeCliAuthRowLocked(key, row)
@@ -21810,7 +21842,8 @@ func (m *MemStore) ConsumeCliAuthDeviceCode(_ context.Context, deviceHash []byte
 func (m *MemStore) PeekCliAuthCode(_ context.Context, tokenHash []byte) (api.CliAuthStatus, string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	row, ok := m.cliAuthCodes[string(tokenHash)]
+	key, _ := rawCredentialKey(m.cliAuthCodes, credTagCLIAuthCode, tokenHash)
+	row, ok := m.cliAuthCodes[key]
 	if !ok {
 		return api.CliAuthStatusExpired, "", ErrNotFound
 	}
@@ -21840,7 +21873,8 @@ func (m *MemStore) PeekCliAuthCode(_ context.Context, tokenHash []byte) (api.Cli
 func (m *MemStore) ClaimCliAuthCode(_ context.Context, tokenHash []byte, accountID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	row, ok := m.cliAuthCodes[string(tokenHash)]
+	key, _ := rawCredentialKey(m.cliAuthCodes, credTagCLIAuthCode, tokenHash)
+	row, ok := m.cliAuthCodes[key]
 	if !ok {
 		return ErrNotFound
 	}
@@ -21856,7 +21890,7 @@ func (m *MemStore) ClaimCliAuthCode(_ context.Context, tokenHash []byte, account
 		return ErrConflict
 	}
 	row.AccountID = accountID
-	m.cliAuthCodes[string(tokenHash)] = row
+	m.cliAuthCodes[key] = row
 	return nil
 }
 
@@ -21879,12 +21913,13 @@ func (m *MemStore) ClaimCliAuthCode(_ context.Context, tokenHash []byte, account
 func (m *MemStore) ConsumeCliAuthCode(_ context.Context, tokenHash []byte) (api.CliAuthStatus, string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	row, ok := m.cliAuthCodes[string(tokenHash)]
+	key, _ := rawCredentialKey(m.cliAuthCodes, credTagCLIAuthCode, tokenHash)
+	row, ok := m.cliAuthCodes[key]
 	// A device-bound row answers the short code as if it did not exist.
 	if !ok || len(row.DeviceHash) > 0 {
 		return api.CliAuthStatusExpired, "", ErrNotFound
 	}
-	return m.consumeCliAuthRowLocked(string(tokenHash), row)
+	return m.consumeCliAuthRowLocked(key, row)
 }
 
 func (m *MemStore) consumeCliAuthRowLocked(key string, row CliAuthCode) (api.CliAuthStatus, string, error) {
@@ -24369,7 +24404,9 @@ func (m *MemStore) CreateAlertRule(_ context.Context, in AlertRule) (AlertRule, 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, existing := range m.alertRules {
-		if existing.AccountID == in.AccountID && existing.Name == in.Name {
+		// Names are unique per app, and per account among account-wide
+		// rules (ADR-20261029203000).
+		if existing.AccountID == in.AccountID && existing.AppID == in.AppID && existing.Name == in.Name {
 			return AlertRule{}, ErrConflict
 		}
 	}
@@ -24403,7 +24440,9 @@ func (m *MemStore) CreateAlertRuleIfUnderQuota(_ context.Context, in AlertRule, 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, existing := range m.alertRules {
-		if existing.AccountID == in.AccountID && existing.Name == in.Name {
+		// Names are unique per app, and per account among account-wide
+		// rules (ADR-20261029203000).
+		if existing.AccountID == in.AccountID && existing.AppID == in.AppID && existing.Name == in.Name {
 			return AlertRule{}, ErrConflict
 		}
 	}
@@ -24557,6 +24596,9 @@ func (m *MemStore) UpdateAlertRule(_ context.Context, id string, p UpdateAlertRu
 	if p.CooldownMinutes != nil {
 		r.CooldownMinutes = *p.CooldownMinutes
 	}
+	if p.NotifyResolved != nil {
+		r.NotifyResolved = *p.NotifyResolved
+	}
 	// Action (issue #976 / ADR-122 / SAFE-RELEASES-B). Pointer PATCH
 	// shape so a missing field leaves the row alone. Mirrors the
 	// pgstore's coalesce($N, action) in the UPDATE statement.
@@ -24640,9 +24682,11 @@ func (m *MemStore) ListEnabledAlertRules(_ context.Context) ([]AlertRule, error)
 	defer m.mu.Unlock()
 	var out []AlertRule
 	for _, r := range m.alertRules {
-		if r.Enabled {
-			out = append(out, r)
+		// A deleted app's rules wait out its restore grace (ADR-20261029203000).
+		if app, ok := m.apps[r.AppID]; !r.Enabled || ok && app.Status == AppDeleted {
+			continue
 		}
+		out = append(out, r)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].AccountID < out[j].AccountID })
 	return out, nil
@@ -27040,6 +27084,7 @@ func (m *MemStore) CreateOrgInvitation(ctx context.Context, inv OrgInvitation) (
 	if inv.CreatedAt.IsZero() {
 		inv.CreatedAt = time.Now().UTC()
 	}
+	inv.TokenHash = storedCredential(credTagOrgInvitation, inv.TokenHash)
 	hashKey := hex.EncodeToString(inv.TokenHash)
 	if _, exists := m.invitations[hashKey]; exists {
 		return OrgInvitation{}, ErrConflict
@@ -27052,7 +27097,7 @@ func (m *MemStore) CreateOrgInvitation(ctx context.Context, inv OrgInvitation) (
 func (m *MemStore) OrgInvitationByTokenHash(_ context.Context, hash []byte) (OrgInvitation, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	inv, ok := m.invitations[hex.EncodeToString(hash)]
+	inv, _, ok := credentialEntry(m.invitations, credTagOrgInvitation, hash)
 	if !ok {
 		return OrgInvitation{}, ErrNotFound
 	}
@@ -27066,8 +27111,7 @@ func (m *MemStore) OrgInvitationByTokenHash(_ context.Context, hash []byte) (Org
 func (m *MemStore) ConsumeOrgInvitation(_ context.Context, hash []byte, acceptingAccount Account) (OrgMembership, OrgInvitation, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	hashKey := hex.EncodeToString(hash)
-	inv, ok := m.invitations[hashKey]
+	inv, hashKey, ok := credentialEntry(m.invitations, credTagOrgInvitation, hash)
 	if !ok {
 		return OrgMembership{}, OrgInvitation{}, ErrOrgInvitationInvalid
 	}
@@ -27710,6 +27754,7 @@ func (m *MemStore) CreateConsumerKey(_ context.Context, accountID, appID, name, 
 	if len(hash) != 32 {
 		return ConsumerKey{}, fmt.Errorf("memstore: CreateConsumerKey: hash must be 32 bytes, got %d", len(hash))
 	}
+	hash = storedCredential(CredentialColumnConsumerKey, hash)
 	if len(scopes) == 0 {
 		return ConsumerKey{}, errors.New("memstore: CreateConsumerKey: scopes cannot be empty (closed-set CHECK in 00329)")
 	}

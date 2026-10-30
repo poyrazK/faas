@@ -66,6 +66,8 @@ func (m *MemStore) CreateAppFork(_ context.Context, params CreateAppForkParams) 
 	}
 	if p.AccessTokenHash == nil {
 		fork.AccessTokenHash = nil
+	} else {
+		fork.AccessTokenHash = storedCredential(CredentialColumnForkToken, fork.AccessTokenHash)
 	}
 	if p.CrashCaptureID != "" {
 		captureID := p.CrashCaptureID

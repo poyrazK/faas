@@ -132,7 +132,7 @@ func (s *PgStore) CreateHostingOIDCCredential(ctx context.Context, expected api.
 	if count >= api.HostingOIDCSessionsPerSite {
 		return c, &HostingQuotaError{Resource: "oidc_sessions", Limit: api.HostingOIDCSessionsPerSite, Observed: count + 1}
 	}
-	credential, err := q.HostingOIDCSessionCreate(ctx, tx, sqlc.HostingOIDCSessionCreateParams{ID: id, AccountID: a, SiteID: site, TokenHash: c.Hash, Label: c.Label, Operations: c.Operations, CreatedAt: hostingTimestamp(c.CreatedAt), ExpiresAt: hostingTimestamp(c.ExpiresAt), OidcTrustID: trust})
+	credential, err := q.HostingOIDCSessionCreate(ctx, tx, sqlc.HostingOIDCSessionCreateParams{ID: id, AccountID: a, SiteID: site, TokenHash: storedCredential(credTagHostingAutomation, c.Hash), Label: c.Label, Operations: c.Operations, CreatedAt: hostingTimestamp(c.CreatedAt), ExpiresAt: hostingTimestamp(c.ExpiresAt), OidcTrustID: trust})
 	if err != nil {
 		return c, hostingStoreError(err)
 	}

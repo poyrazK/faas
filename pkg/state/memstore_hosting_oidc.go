@@ -90,6 +90,7 @@ func (m *MemStore) CreateHostingOIDCCredential(_ context.Context, expected api.H
 	if !validHostingCredential(c) || c.OIDCTrustID != expected.ID || c.AccountID != expected.AccountID || c.SiteID != expected.SiteID || len(c.Operations) != 2 {
 		return c, ErrInvalidArgument
 	}
+	c.Hash = storedCredential(credTagHostingAutomation, c.Hash)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	trust, ok := m.hostingOIDCTrusts[expected.ID]

@@ -13,6 +13,10 @@ var slackApp = regexp.MustCompile(`^A[A-Z0-9]{8,31}$`)
 var slackUser = regexp.MustCompile(`^[UW][A-Z0-9]{8,31}$`)
 var slackLinkToken = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
+// slackOAuthStateHash is a stored OAuth state hash: a hex SHA-256, or a
+// keyed digest (ADR 20261029202403).
+var slackOAuthStateHash = regexp.MustCompile(`^[0-9a-f]{64}([0-9a-f]{2})?$`)
+
 func ValidIssueSlackUser(s string) bool { return slackUser.MatchString(s) }
 
 type IssueSlackInteractionPolicy struct {
