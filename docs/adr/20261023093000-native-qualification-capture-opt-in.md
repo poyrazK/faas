@@ -280,6 +280,11 @@ ADR-568 requires.
       candidate itself once activation makes it live.
     - c23c5fd766 carries the frozen baseline over for an activated (live,
       unheld) candidate. Every other authority field must still match.
+- 2026-10-30, n2, rerun with c23c5fd766:
+  - The candidate refusal is gone, and both graphs were activated again.
+  - Serving still failed on every pass, now with a bare `state: conflict`.
+    Many store calls return that.
+  - 44e992a7f0 names the failing step in the verification error.
 - Pending: the n2 native GitOps journey through serving and the resilience
   phases.
 
