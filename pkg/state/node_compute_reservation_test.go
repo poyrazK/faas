@@ -79,7 +79,7 @@ func (f *computeNodeFixture) fill(t *testing.T, c state.NodeCompute, step string
 func checkNodeComputeReservation(t *testing.T, s state.Store) {
 	t.Helper()
 	vcpus := int64(api.MustLimitsFor(api.PlanPro).VCPU)
-	maxShare := int64(api.QuietPauseMaxVCPUOvercommitPercent)
+	maxShare := int64(api.MeasuredCPUMaxOvercommitPercent)
 
 	t.Run("vcpu", func(t *testing.T) {
 		budget := 3*vcpus + 1

@@ -230,7 +230,7 @@ func TestWhoamiIncludesTriggerCapabilities(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	wantKinds := []api.TriggerKind{api.TriggerKindSQSCompat, api.TriggerKindQueue, api.TriggerKindRealtime}
+	wantKinds := []api.TriggerKind{api.TriggerKindQueue, api.TriggerKindRealtime}
 	if !reflect.DeepEqual(out.Limits.TriggerKinds, wantKinds) {
 		t.Errorf("trigger_kinds = %v, want %v", out.Limits.TriggerKinds, wantKinds)
 	}

@@ -170,11 +170,6 @@ func sampleNodeInspector(ctx context.Context, addr string, pid int, closeAfter b
 	defer cdp.close()
 	// Cleanup calls run even when the capture's context is done.
 	cleanup := context.WithoutCancel(ctx)
-	if closeAfter {
-		defer func() {
-			_, _ = cdp.call(cleanup, time.Second, "Runtime.evaluate", map[string]any{"expression": nodeCloseExpr})
-		}()
-	}
 	var owner struct {
 		Result struct {
 			Value json.Number `json:"value"`
@@ -184,7 +179,14 @@ func sampleNodeInspector(ctx context.Context, addr string, pid int, closeAfter b
 		return nil, err
 	}
 	if owner.Result.Value.String() != strconv.Itoa(pid) {
+		// Another process listens on the port: its inspector is its own
+		// (a developer's --inspect, say) and is never closed from here.
 		return nil, errNodeOtherProcess
+	}
+	if closeAfter {
+		defer func() {
+			_, _ = cdp.call(cleanup, time.Second, "Runtime.evaluate", map[string]any{"expression": nodeCloseExpr})
+		}()
 	}
 	if _, err := cdp.call(ctx, api.ProfileNodeLivenessTimeout, "Runtime.evaluate",
 		map[string]any{"expression": nodeLivenessExpr, "awaitPromise": true, "returnByValue": true}); err == nil {

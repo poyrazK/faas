@@ -241,12 +241,20 @@ type appLayerReport struct {
 	// not toolchain or cache content.
 	Unexpected  []string
 	PackageJSON []byte
+	// PythonInterpreter, when set, is the runner base's Python: the
+	// virtualenv's links into the dropped toolchain move to it (ADR-1500
+	// amendment 2), and a link that cannot move is unexpected.
+	PythonInterpreter string
 }
 
 const appLayerReportMaxUnexpected = 8
 
+// maxPyvenvConfigBytes bounds the pyvenv.cfg read for rewriting; real ones
+// are a few hundred bytes.
+const maxPyvenvConfigBytes = 64 << 10
+
 func (r *appLayerReport) dropped(hdr *tar.Header) {
-	if r == nil || hdr.Typeflag == tar.TypeDir || len(r.Unexpected) >= appLayerReportMaxUnexpected {
+	if r == nil || hdr.Typeflag == tar.TypeDir {
 		return
 	}
 	clean := pathpkg.Clean(hdr.Name)
@@ -254,8 +262,46 @@ func (r *appLayerReport) dropped(hdr *tar.Header) {
 		return // a whiteout removes a lower file; it adds nothing to the runtime.
 	}
 	if !sharedruntime.DroppableOutsideApp(clean) {
-		r.Unexpected = append(r.Unexpected, clean)
+		r.unexpected(clean)
 	}
+}
+
+func (r *appLayerReport) unexpected(name string) {
+	if len(r.Unexpected) < appLayerReportMaxUnexpected {
+		r.Unexpected = append(r.Unexpected, name)
+	}
+}
+
+// relinkVenv points a kept /app entry of the virtualenv at the runner base's
+// Python: interpreter symlinks are retargeted in hdr, and pyvenv.cfg is
+// rewritten and returned as the new content. Other entries pass through.
+func (r *appLayerReport) relinkVenv(hdr *tar.Header, content io.Reader) (io.Reader, error) {
+	switch {
+	case hdr.Typeflag == tar.TypeSymlink:
+		target, ok := sharedruntime.RelinkVenvLink(hdr.Name, hdr.Linkname, r.PythonInterpreter)
+		if !ok {
+			r.unexpected(hdr.Name + " -> " + hdr.Linkname)
+			return content, nil
+		}
+		hdr.Linkname = target
+	case hdr.Name == sharedruntime.PyvenvConfigPath && hdr.Typeflag == tar.TypeReg:
+		if hdr.Size > maxPyvenvConfigBytes {
+			r.unexpected(hdr.Name)
+			return content, nil
+		}
+		body := make([]byte, hdr.Size)
+		if _, err := io.ReadFull(content, body); err != nil {
+			return nil, err
+		}
+		rewritten, ok := sharedruntime.RewritePyvenvConfig(body, r.PythonInterpreter)
+		if !ok {
+			r.unexpected(hdr.Name)
+			rewritten = body
+		}
+		hdr.Size = int64(len(rewritten))
+		return bytes.NewReader(rewritten), nil
+	}
+	return content, nil
 }
 
 func filterAppLayers(layers []io.ReadCloser, report *appLayerReport) ([]io.Reader, func(), error) {
@@ -316,6 +362,18 @@ func filterAppLayers(layers []io.ReadCloser, report *appLayerReport) ([]io.Reade
 			}
 			copyHeader := *hdr
 			copyHeader.Name = name
+			var content io.Reader = tr
+			if report != nil && report.PythonInterpreter != "" {
+				relinked, relinkErr := report.relinkVenv(&copyHeader, tr)
+				if relinkErr != nil {
+					_ = tw.Close()
+					_ = zw.Close()
+					_ = out.Close()
+					_ = zr.Close()
+					return fail(fmt.Errorf("read function layer %d virtualenv: %w", i, relinkErr))
+				}
+				content = relinked
+			}
 			if copyHeader.Size < 0 || copyHeader.Size > maxFunctionAppUncompressedBytes-retainedBytes {
 				_ = tw.Close()
 				_ = zw.Close()
@@ -341,11 +399,10 @@ func filterAppLayers(layers []io.ReadCloser, report *appLayerReport) ([]io.Reade
 				_ = zr.Close()
 				return fail(fmt.Errorf("write function layer %d header: %w", i, err))
 			}
-			var content io.Reader = tr
 			var packageJSON bytes.Buffer
 			capture := report != nil && name == "app/package.json" && copyHeader.Typeflag == tar.TypeReg && copyHeader.Size <= 1<<20
 			if capture {
-				content = io.TeeReader(tr, &packageJSON)
+				content = io.TeeReader(content, &packageJSON)
 			}
 			if _, err := io.CopyN(tw, content, copyHeader.Size); err != nil {
 				_ = tw.Close()
@@ -578,7 +635,7 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 	if err != nil {
 		return fmt.Errorf("imaged: built OCI manifest overrides: %w", err)
 	}
-	manifest = h.stampProfiling(applyAppLifecycle(manifest, app), acct)
+	manifest = h.stampProfiling(applyAppLifecycle(manifest, app), app, acct)
 	if err := manifest.Validate(); err != nil {
 		return fmt.Errorf("imaged: built OCI manifest invalid: %w", err)
 	}

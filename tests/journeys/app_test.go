@@ -136,8 +136,16 @@ func TestCronDelivery(t *testing.T) {
 		t.Logf("crons runs: %s", tail(string(runs.stdout), 600))
 	})
 	s.check("trigger_inventory", func(t *testing.T) {
+		// With event triggers hidden the CLI has no trigger command at all,
+		// so there is no inventory to send cron users away from.
+		skipHidden(t, hiddenCapabilities(t, tg), "event-triggers")
 		res := tg.run(t, time.Minute, "trigger", "list", "--app", slug, "--kind", "cron")
 		out := string(res.stdout) + string(res.stderr)
+		// The CLI hides `triggers` from accounts the capability is not
+		// released to; crons are then outside any trigger inventory anyway.
+		if res.exit != 0 && strings.Contains(out, "unknown command") && strings.Contains(out, "triggers list") {
+			t.Skip("gregale triggers is not released to this account")
+		}
 		if res.exit == 0 || !strings.Contains(out, "cron list") && !strings.Contains(out, "/v1/crons") {
 			t.Fatalf("triggers list --kind cron (exit %d) did not point at the cron commands: %s", res.exit, tail(out, 400))
 		}
@@ -294,13 +302,16 @@ func TestMaintenanceAndAccess(t *testing.T) {
 	})
 	s.check("ip_allowlist", func(t *testing.T) {
 		// TEST-NET-1 (RFC 5737) never contains this machine, so the edge
-		// must refuse it; the all-addresses range must admit it again.
+		// must refuse it; the halves of both address families must admit
+		// it again (a /0 is refused as a default route).
 		tg.ok(t, time.Minute, "app", slug, "--public-auth", "ip_allowlist", "--ip-allowlist", "192.0.2.0/24")
 		eventually(t, "request from outside the allowlist refused", time.Minute, 2*time.Second, func() (bool, string) {
 			r := get(base + "/")
 			return r.status == http.StatusForbidden || r.status == http.StatusUnauthorized, r.String()
 		})
-		tg.ok(t, time.Minute, "app", slug, "--public-auth", "ip_allowlist", "--ip-allowlist", "0.0.0.0/0")
+		tg.ok(t, time.Minute, "app", slug, "--public-auth", "ip_allowlist",
+			"--ip-allowlist", "0.0.0.0/1", "--ip-allowlist", "128.0.0.0/1",
+			"--ip-allowlist", "::/1", "--ip-allowlist", "8000::/1")
 		expectVersion(t, base, "v1", time.Minute)
 		tg.ok(t, time.Minute, "app", slug, "--public-auth", "open")
 		expectVersion(t, base, "v1", time.Minute)

@@ -271,6 +271,8 @@ func (s *MemoryStore) ClaimDelete(ctx context.Context, accountID, databaseID, le
 		database.AttemptCount++
 	}
 	database.State = StateDeleting
+	// An immediate delete ends any scheduled window (ADR-20261029174950).
+	database.PurgeAfter = time.Time{}
 	database.LeaseToken = leaseToken
 	database.LeaseUntil = leaseUntil
 	database.UpdatedAt = now

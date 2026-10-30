@@ -1,0 +1,41 @@
+# ADR-20261029155852: a platform base whose provenance does not verify warns.
+
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+
+evaluation_interval: 30s
+
+tests:
+  - interval: 1m
+    name: "an unattested base warns"
+    input_series:
+      - series: 'imaged_base_provenance_verifications_total{job="imaged",instance="10.0.0.3:9105",base="runner-node22",result="missing"}'
+        values: '0 1x20'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: FaasBaseProvenanceUnverified
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: imaged
+              family: base_provenance
+              instance: 10.0.0.3:9105
+              base: runner-node22
+              result: missing
+            exp_annotations:
+              summary: "imaged could not verify the provenance of runner-node22 (missing) on 10.0.0.3:9105"
+              description: "imaged built or tried to build a platform base whose SLSA provenance did not verify: result missing. missing means the registry holds no attestation for the digest, rejected means cosign or the runner check refused every attestation, unavailable means the host has no cosign or no trusted root, error means the registry or cosign failed. In observe mode the base was staged anyway; in enforce mode it was refused and a rolled node stays drained."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBaseProvenanceUnverified.md"
+
+  - interval: 1m
+    name: "verified, cached and legacy bases stay quiet"
+    input_series:
+      - series: 'imaged_base_provenance_verifications_total{job="imaged",instance="10.0.0.3:9105",base="runner-node22",result="verified"}'
+        values: '0 1 2x20'
+      - series: 'imaged_base_provenance_verifications_total{job="imaged",instance="10.0.0.3:9105",base="runner-python312",result="cached"}'
+        values: '0 1x20'
+      - series: 'imaged_base_provenance_verifications_total{job="imaged",instance="10.0.0.3:9105",base="base-minimal",result="legacy"}'
+        values: '0 1x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: FaasBaseProvenanceUnverified

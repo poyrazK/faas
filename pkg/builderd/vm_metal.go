@@ -752,6 +752,7 @@ func (d *VMMDriver) waitForCompletion(ctx context.Context, h BuildHandle, retain
 		res.DevPatch = done.DevPatch
 		res.SharedRuntime = done.SharedRuntime
 		res.DependencyCacheUnchanged = done.DependencyCacheUnchanged
+		res.Timings = done.Timings
 		// Only a build whose manifest asked for it may leave the cache owed.
 		deferred = done.DependencyCacheDeferred && h.DeferredCache != nil && !retainDrive && exitCode == 0
 		res.DependencyCacheDeferred = deferred

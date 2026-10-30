@@ -83,7 +83,8 @@ func TestVMMDServiceBridgeSwitchesDefaultOff(t *testing.T) {
 }
 
 // Production turns the bridge switches on per canary node, never fleet-wide,
-// and all three together (a unit needs the unprivileged bridge).
+// and all three together (a unit needs the unprivileged bridge). The canary
+// list may be empty while the canary is paused.
 func TestComputeBridgeSwitchesAreACanary(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "group_vars", "compute_nodes", "vmmd_bridge.yml"))
 	if err != nil {
@@ -93,8 +94,8 @@ func TestComputeBridgeSwitchesAreACanary(t *testing.T) {
 	if err := yaml.Unmarshal(body, &vars); err != nil {
 		t.Fatal(err)
 	}
-	if canary, _ := vars["vmmd_bridge_canary_nodes"].([]any); len(canary) == 0 {
-		t.Fatalf("vmmd_bridge_canary_nodes = %v, want the canary nodes", vars["vmmd_bridge_canary_nodes"])
+	if _, ok := vars["vmmd_bridge_canary_nodes"].([]any); !ok {
+		t.Fatalf("vmmd_bridge_canary_nodes = %v, want a list of canary nodes", vars["vmmd_bridge_canary_nodes"])
 	}
 	var expr string
 	for _, sw := range bridgeSwitches {

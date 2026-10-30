@@ -214,6 +214,7 @@ var PrimeObservationInstance = primeObservationInstance
 var PrimeRunPlusFrameworkReady = primeRunPlusFrameworkReady
 var PrimeStartupExtension = primeStartupExtension
 var ProfileCaptureOutcomeOf = profileCaptureOutcome
+var ProfileCaptureResultLabel = profileCaptureResultLabel
 var QuietEffective = quietEffective
 var QuietLog = quietLog
 var NewWorkPool = newWorkPool
@@ -602,6 +603,14 @@ func (r *composedWaveNativeVMM) Identity() *runtimeadmission.Identity { return &
 // Members of drainSynth
 func (r *drainSynth) Calls() *atomic.Int64    { return &r.calls }
 func (r *drainSynth) Transient() *atomic.Bool { return &r.transient }
+func (r *drainSynth) Refused() *atomic.Bool   { return &r.refused }
+
+// XHTTPGatewaySynth is the drain's real gateway client pointed at base.
+func XHTTPGatewaySynth(client *http.Client, base string) interface {
+	InvokeWithWake(context.Context, string, state.Invocation, WakeResult) (state.Invocation, error)
+} {
+	return &httpGatewaySynth{client: client, basePrefix: base}
+}
 
 // Members of fakeNotifier
 func (r *fakeNotifier) Events() *[]notifyEvent { return &r.events }
@@ -963,3 +972,13 @@ func (l *Loop) XDispatchEventFanoutSweep(ctx context.Context) { l.dispatchEventF
 // XRepeatFullBatches is invocation retention's batch repeater.
 // adr: 20261029012000 — a step repeats while its batches come back full.
 var XRepeatFullBatches = repeatFullBatches
+
+// adr: 20261029190000 — event deliveries retry by their app's policy or the
+// event delivery backoff.
+func (d *Drain) XInvocationRetryDelay(ctx context.Context, inv state.Invocation) time.Duration {
+	return d.invocationRetryDelay(ctx, inv)
+}
+
+func (d *Drain) XInvocationAttemptBudget(ctx context.Context, inv state.Invocation) int {
+	return d.invocationAttemptBudget(ctx, inv)
+}

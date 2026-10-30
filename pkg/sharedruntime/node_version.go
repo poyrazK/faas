@@ -71,6 +71,24 @@ func NodeRuntimeForSpec(spec string) string {
 	return ""
 }
 
+// NodeRuntimeForSpecs is NodeRuntimeForSpec over every declaration a source
+// makes (.nvmrc or engines.node, and railpack.json's packages.node, which the
+// builder's pin would otherwise overwrite): all must pick the same base.
+func NodeRuntimeForSpecs(specs []string) string {
+	runtime := ""
+	for _, spec := range specs {
+		r := NodeRuntimeForSpec(spec)
+		if r == "" || runtime != "" && r != runtime {
+			return ""
+		}
+		runtime = r
+	}
+	if runtime == "" {
+		return RuntimeNode24
+	}
+	return runtime
+}
+
 // versionTail accepts what may follow a major: nothing, or dotted minor and
 // patch parts that are numbers or wildcards. A compound range is rejected.
 func versionTail(rest string) bool {
