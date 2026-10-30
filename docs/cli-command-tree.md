@@ -154,7 +154,6 @@ touch them. The tables below map each earlier name.
 
 | Earlier | Now |
 |---|---|
-| `gregale account billing-connection status` | `gregale account billing-connection get` |
 | `gregale account billing-run schedule-delete` | `gregale account billing-run schedule delete` |
 | `gregale account billing-run schedule-set` | `gregale account billing-run schedule set` |
 | `gregale account billing-run schedule` | `gregale account billing-run schedule get` |

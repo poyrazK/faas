@@ -539,10 +539,6 @@ var cliTreeAliases = []cliTreeAlias{
 	{"event delivery alerts", "events delivery-health-alerts"},
 	{"mcp readiness attention reopen", "mcp readiness attention release"},
 	{"alert pagerduty ack-sync", "mcp readiness pagerduty acknowledgements"},
-	// Its mode is a positional word: connect and disconnect read as verbs
-	// already, and status becomes get.
-	{"account billing-connection", "account billing-connection"},
-	{"account billing-connection get", "account billing-connection status"},
 	{"org standards adoption get", "orgs standards application"},
 	{"org standards local set", "orgs standards local-intent"},
 	// A command that shows a setting without flags and changes it with
@@ -967,13 +963,7 @@ func lookupCliTreeTopic(words []string, help bool) (cliTreeTopic, bool) {
 	if !ok {
 		return cliTreeTopic{}, false
 	}
-	// A noun whose command is hidden for the account answers like today's
-	// (ADR-20261023115741): `realtime --help` is unknown while realtime is.
-	command := noun.Name
-	if old, ok := cliTreeOldPath(noun.Name); ok {
-		command = strings.Fields(old)[0]
-	}
-	if !cliCommandAvailable(command) || capabilityHiddenForRun(cliPathCapability(command), true) {
+	if !cliCommandAvailable(cliTreeNounCommand(noun.Name)) {
 		return cliTreeTopic{}, false
 	}
 	// A bare path that runs one of today's commands (`mcp server tasks`)
@@ -1214,6 +1204,21 @@ func cliTreeSpelling(args []string) ([]string, bool) {
 		return nil, false
 	}
 	return canonical, true
+}
+
+// cliTreeNounCommand is today's command a noun runs.
+func cliTreeNounCommand(noun string) string {
+	if old, ok := cliTreeOldPath(noun); ok {
+		return strings.Fields(old)[0]
+	}
+	return noun
+}
+
+// cliTreeTopicHidden reports a topic whose noun runs a command hidden for
+// the account (ADR-20261023115741): `realtime --help` is unknown while
+// realtime is. Only run() asks, so the capability read takes no context.
+func cliTreeTopicHidden(topic cliTreeTopic) bool {
+	return capabilityHiddenForRun(cliPathCapability(cliTreeNounCommand(topic.Path[0])), true)
 }
 
 // cliTreeKeepsPath reports a path of today's under a multi-word identity
