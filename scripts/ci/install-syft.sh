@@ -3,8 +3,8 @@
 # attests (issue #295).
 #
 # The caller supplies SYFT_VERSION and SYFT_SHA256 (the same pin release.yml's
-# daemon bundle SBOM uses), so image and CLI SBOMs never drift to a different
-# or unverified generator.
+# daemon bundle SBOM uses), so the attested SBOMs never drift to a different or
+# unverified generator.
 
 set -euo pipefail
 
