@@ -502,6 +502,7 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 		PRNumber:   int(req.PullRequestNumber),
 		Tag:        req.Tag,
 	}
+	params.OverrideHealthcheck, params.OverrideLivenessProbe = projectReadinessOverrides(app.Manifest, resource.Plan)
 	if kind == state.DeploymentKindGitHub {
 		// ADR-20261019071733: a push cannot carry an override, so a freeze
 		// refuses it; githubd reports the reason on the commit.

@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,17 +21,18 @@ import (
 type deferredCacheTestVM struct {
 	fakeVM
 	exportErr    error
+	exportOut    BuildOutcome
 	exportHook   func()
 	exportCalls  int
 	discardCalls int
 }
 
-func (v *deferredCacheTestVM) ExportDeferredCache(context.Context, BuildHandle) error {
+func (v *deferredCacheTestVM) ExportDeferredCache(context.Context, BuildHandle) (BuildOutcome, error) {
 	v.exportCalls++
 	if v.exportHook != nil {
 		v.exportHook()
 	}
-	return v.exportErr
+	return v.exportOut, v.exportErr
 }
 
 func (v *deferredCacheTestVM) DiscardDeferredCache(BuildHandle) { v.discardCalls++ }
@@ -41,11 +43,16 @@ func TestProcessOne_DeferredCacheExportRunsAfterTheHandoff(t *testing.T) {
 		deferred    bool
 		cancelled   bool
 		exportErr   error
+		exportTail  string
 		wantExport  int
 		wantDiscard int
+		wantLog     []string
 	}{
-		{name: "owed export runs after the handoff", deferred: true, wantExport: 1},
-		{name: "a failed export keeps the build", deferred: true, exportErr: errors.New("cache export exited 1"), wantExport: 1},
+		{name: "owed export runs after the handoff", deferred: true, wantExport: 1,
+			wantLog: []string{"dependency cache will be saved after the image is handed off", "dependency cache saved for the next build"}},
+		{name: "a failed export keeps the build and logs its output", deferred: true, exportErr: errors.New("cache export exited 1"),
+			exportTail: "[build]\n+ test -f /build/railpack-plan.json\n", wantExport: 1,
+			wantLog: []string{"dependency cache could not be saved", "[dependency cache export output]", "+ test -f /build/railpack-plan.json"}},
 		{name: "a build that does not publish discards the drive", deferred: true, cancelled: true, wantDiscard: 1},
 		{name: "nothing owed", deferred: false},
 	} {
@@ -60,7 +67,7 @@ func TestProcessOne_DeferredCacheExportRunsAfterTheHandoff(t *testing.T) {
 				t.Fatal(err)
 			}
 			notif := &fakeNotifier{}
-			vm := &deferredCacheTestVM{exportErr: tc.exportErr}
+			vm := &deferredCacheTestVM{exportErr: tc.exportErr, exportOut: BuildOutcome{LogTail: tc.exportTail}}
 			vm.out = BuildOutcome{OCIImage: image, ExitCode: 0, DependencyCacheDeferred: tc.deferred}
 			if tc.cancelled {
 				vm.waitHook = func() {
@@ -99,6 +106,19 @@ func TestProcessOne_DeferredCacheExportRunsAfterTheHandoff(t *testing.T) {
 			}
 			if want := state.BuildSucceeded; !tc.cancelled && build.Status != want {
 				t.Fatalf("build status = %s, want %s", build.Status, want)
+			}
+			rows, _, err := store.ListDeploymentLogs(ctx, depID, 0, 100)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var log strings.Builder
+			for _, row := range rows {
+				log.WriteString(row.Line)
+			}
+			for _, want := range tc.wantLog {
+				if !strings.Contains(log.String(), want) {
+					t.Fatalf("build log missing %q:\n%s", want, log.String())
+				}
 			}
 		})
 	}

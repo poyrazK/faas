@@ -632,6 +632,58 @@ this step stay domain-only, so:
 - never roll githubd back past the first release that carried the source
   reader.
 
+### 5e. Contract: githubd drops the fleet and host keys
+
+As for outbound in 2e. Go on only when all of these hold:
+
+- a 5d migration run shows only `current`;
+- an hour has passed since writes became domain-only, so every unexpired
+  install token is sealed to the domain. githubd reopens an unexpired token
+  rather than mint a new one, so a token only the fleet key opens would
+  fail it until it expires. The check below reports such tokens as `left
+  on the fleet key`;
+- githubd's previous release (N-1) also starts without the fleet and host
+  keys, so rolling back one release keeps it starting. An older githubd
+  falls back to `/etc/faas/secrets/host.age`, which it cannot read. To roll
+  back past that release, set the variable below back to false first.
+
+Add to the local variables file, and converge the control plane:
+
+```yaml
+faas_seal_domain_source_contracted: true
+```
+
+The role runs `seal-domain migrate --domain source --check` first, and
+stops while a webhook secret copy still opens with the fleet or host key or
+has none yet (`pending`: run the 5d migration again), or while an unexpired
+token is left on the fleet key (`skipped`: wait for it to expire). It then
+rewrites githubd's drop-in:
+
+1. an empty `LoadCredential=` drops the base unit's credentials;
+2. the GitHub App key and the public fleet recipient are loaded again;
+3. both key paths are unset.
+
+Last, it restarts githubd and checks `/run/credentials/faas-githubd.service`.
+
+Check, on each host:
+
+```bash
+sudo ls /run/credentials/faas-githubd.service
+journalctl -u faas-githubd -b | grep '"source seal domain"'
+```
+
+- The directory lists `faas_seal_domain_source` (plus
+  `faas_seal_domain_source_previous` during a rotation),
+  `faas_github_app_key_unit` and `faas_fleet_age_recipient`. It lists no
+  `faas_fleet_age_identity` or `faas_host_age_identity`.
+- githubd logs `"domain_identity":true` and `"fleet_identity":false`.
+
+Push to a connected repository again to confirm.
+
+Rollback: set `faas_seal_domain_source_contracted: false` and converge.
+githubd loads the fleet and host keys again. Nothing stored changes in this
+step.
+
 ## 6. Build seal domain
 
 imaged on compute hosts is the only reader of app and job private-registry
@@ -729,6 +781,44 @@ Passwords re-sealed in this step stay domain-only, so:
 - never remove `build.age` from a compute host;
 - never roll imaged back past the first release that carried the build
   reader.
+
+### 6e. Contract: imaged drops the fleet and host keys
+
+As for outbound in 2e, on compute hosts. vmmd, the build domain's other
+reader, keeps the fleet and host keys: it still needs them for runtime
+values. Go on once a 6d migration run shows only `current`. Add to the
+local variables file, and converge the compute hosts:
+
+```yaml
+faas_seal_domain_build_contracted: true
+```
+
+The role runs `seal-domain migrate --domain build --check` first. It stops
+while a registry password still opens with the fleet or host key
+(`pending`: run the 6d migration again). It also stops while a crash capture
+is left on the fleet key (`skipped`): a capture imaged would still encrypt
+or decrypt for a fork with that key. vmmd seals every capture at the
+source, so there should be none; any left expire within seven days. It
+then drops both keys from imaged's credentials, restarts imaged, and checks
+`/run/credentials/faas-imaged.service`.
+
+Check, on each compute host:
+
+```bash
+sudo ls /run/credentials/faas-imaged.service
+journalctl -u faas-imaged -b | grep '"build seal domain"'
+```
+
+- The directory lists `faas_seal_domain_build`, plus
+  `faas_seal_domain_build_previous` during a rotation, and nothing else.
+- imaged logs `"domain_identity":true` and `"fleet_identity":false`.
+
+Deploy the test app again. An older imaged also starts without the keys, so
+this step does not hold back a rollback.
+
+Rollback: set `faas_seal_domain_build_contracted: false` and converge.
+imaged loads the fleet and host keys again. Nothing stored changes in this
+step.
 
 ## 7. Edge seal domain
 
@@ -1193,8 +1283,10 @@ connections and execution payloads; apid seals them. schedd runs on
 control-plane and compute hosts alike, so every host stages
 `delivery.age`, and the control plane also stages the recipient for apid.
 At the end of this stage only `delivery.age` opens them, except trigger
-configs, which stay on the fleet key for now (ADR 20261022111812, ninth
-slice).
+configs. apid seals a trigger config's credentials to the domain and the
+fleet key even in domain mode, and the migration leaves them, until the
+release after the one that moved them (ADR 20261022111812, "trigger configs
+join the delivery domain").
 
 ### 11a. Create the identity (operator machine)
 

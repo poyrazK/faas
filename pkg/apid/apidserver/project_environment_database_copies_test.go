@@ -183,6 +183,62 @@ func TestProjectEnvironmentClonePreservesSharedDatabaseAndCleansItOnce(t *testin
 	if err != nil || unchanged.State != managedpostgres.StateReady || unchanged.ProviderResourceID != source.ProviderResourceID {
 		t.Fatalf("source database changed: %+v, %v", unchanged, err)
 	}
+
+	// A stage that unbound its copy before deletion still owns that copy:
+	// the clone name identifies it once no scoped secret is left.
+	provider.onRestore = nil
+	reviewReq, reviewRec := projectRequest(http.MethodPost, "/v1/projects/shop/environments", "shop", []byte(`{"slug":"review","from_environment":"production"}`))
+	srv.createProjectEnvironment(reviewRec, reviewReq, acct)
+	if reviewRec.Code != http.StatusCreated {
+		t.Fatalf("review clone status=%d body=%s", reviewRec.Code, reviewRec.Body.String())
+	}
+	var reviewDatabaseID string
+	for _, workload := range []state.App{app, worker} {
+		secret, err := store.GetAppSecretInScope(ctx, acct.ID, workload.ID, "review", "DATABASE_URL")
+		if err != nil {
+			t.Fatal(err)
+		}
+		binding, err := bindings.Get(ctx, acct.ID, secret.ManagedPostgresBindingID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		reviewDatabaseID = binding.DatabaseID
+		if _, err := bindings.Delete(ctx, acct.ID, binding.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Something outside the stage still binds the copy, so it is kept.
+	kept, err := bindings.Create(ctx, managedpostgres.CreateBindingRequest{AccountID: acct.ID, DatabaseID: reviewDatabaseID, AppID: app.ID,
+		Scope: "default", EnvironmentKey: "REVIEW_DATABASE_URL", Access: managedpostgres.CredentialReadWrite})
+	if err != nil {
+		t.Fatal(err)
+	}
+	unboundPlan, err := srv.planProjectEnvironmentManagedResourceCleanup(ctx, acct, project, "review")
+	if err != nil || len(unboundPlan.postgres) != 1 || !unboundPlan.postgres[0].deleteDatabase || unboundPlan.postgres[0].database.ID != reviewDatabaseID || unboundPlan.postgres[0].binding.ID != "" {
+		t.Fatalf("unbound stage copy lost cleanup ownership: %+v, %v", unboundPlan, err)
+	}
+	unboundResources := projectEnvironmentCleanupResources(unboundPlan)
+	if err := unboundResources.ValidateForEnvironment("review"); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.cleanupProjectEnvironmentManagedResourcePayload(ctx, acct, unboundResources); err != nil {
+		t.Fatal(err)
+	}
+	if rebound, err := service.Get(ctx, acct.ID, reviewDatabaseID); err != nil || rebound.State != managedpostgres.StateReady {
+		t.Fatalf("cleanup deleted a copy that is still bound elsewhere: %+v, %v", rebound, err)
+	}
+	if _, err := bindings.Delete(ctx, acct.ID, kept.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.cleanupProjectEnvironmentManagedResourcePayload(ctx, acct, unboundResources); err != nil {
+		t.Fatal(err)
+	}
+	if deleted, err := service.Get(ctx, acct.ID, reviewDatabaseID); err != nil || deleted.State != managedpostgres.StateDeleted {
+		t.Fatalf("unbound stage copy leaked: %+v, %v", deleted, err)
+	}
+	if unchanged, err := service.Get(ctx, acct.ID, source.ID); err != nil || unchanged.State != managedpostgres.StateReady {
+		t.Fatalf("source database changed by unbound cleanup: %+v, %v", unchanged, err)
+	}
 }
 
 func TestProjectEnvironmentDatabaseCopyPointReusesCaptureAndRejectsMismatch(t *testing.T) {

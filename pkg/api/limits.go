@@ -1398,6 +1398,18 @@ const (
 	CronFireNowActiveWindow  = 15 * time.Minute
 )
 
+// CronPlatformAttempts bounds the delivery attempts of a plain HTTP cron run
+// that Gregale refused before the app received the request: a wake failure,
+// an unavailable traffic-security check, or a refusal from the gateway's
+// dispatch endpoint. The app has not seen the request, so trying again is
+// safe; a run the app answered, or one that timed out in flight, keeps its
+// single attempt (ADR-20261026201726 amendment 2026-10-29). The n-th retry
+// waits n times CronPlatformRetryDelay.
+const (
+	CronPlatformAttempts   = 3
+	CronPlatformRetryDelay = 5 * time.Second
+)
+
 // CronHistoryRetention is how long schedd keeps a cron's settled schedule
 // decisions (schedule_occurrences) and its manual-run requests
 // (cron_fire_now_requests). It matches the longest plan's invocation result
@@ -2803,9 +2815,21 @@ const (
 // ProjectWorkloadDefaultRAMMB is the RAM a project service gets when its
 // Compose file declares no memory (deploy.resources.limits.memory or
 // mem_limit). It is also the store's floor for an app created without RAM.
-// Standalone apps default to the plan's RAM instead; the project plan shows
-// which services start at this default (Hunt 14 H14-36).
+// Standalone apps default to StandaloneAppDefaultRAMMB instead; the project
+// plan shows which services start at this default (Hunt 14 H14-36).
 const ProjectWorkloadDefaultRAMMB = 128
+
+// StandaloneAppDefaultMaxRAMMB caps the RAM a standalone app gets when it is
+// created without ram_mb, a resource profile or vcpu (ADR-20261029234500).
+// Below the cap the default stays the plan's RAM; a Scale app starts at
+// 1024 MB instead of 2048 MB and can still be raised to the plan's RAM.
+const StandaloneAppDefaultMaxRAMMB = 1024
+
+// StandaloneAppDefaultRAMMB is the RAM of a standalone app created without a
+// size: the plan's RAM, capped at StandaloneAppDefaultMaxRAMMB.
+func StandaloneAppDefaultRAMMB(l Limits) int {
+	return min(l.RAMMB, StandaloneAppDefaultMaxRAMMB)
+}
 
 // App CPU is expressed as sustained millicores enforced by cgroup v2 cpu.max.
 // Keep the first release deliberately small: it lets customers right-size
@@ -3282,6 +3306,26 @@ const (
 // MaxObjectStorageBackendBuckets bounds an operator's per-backend
 // `max_buckets` placement ceiling (ADR-20261029174627).
 const MaxObjectStorageBackendBuckets = 1_000_000
+
+// Reads through the branded S3 gateway are admitted from a per-bucket
+// decision each gateway process caches for ObjectReadAdmissionTTL, serves for
+// up to ObjectReadAdmissionMaxStale while the database is unreachable, and
+// refreshes within ObjectReadAdmissionTimeout. Their counts are written every
+// ObjectReadUsageFlushInterval, and at most MaxObjectReadAdmissionEntries
+// buckets are cached. Every authenticated request takes a token from its
+// bucket owner's ObjectStorageAccountRequestsPerSecond bucket (burst
+// ObjectStorageAccountRequestBurst), tracking at most
+// MaxObjectStorageAccountLimiters owners (ADR-20261030075301).
+const (
+	ObjectReadAdmissionTTL                = 2 * time.Second
+	ObjectReadAdmissionMaxStale           = 30 * time.Second
+	ObjectReadAdmissionTimeout            = 2 * time.Second
+	ObjectReadUsageFlushInterval          = time.Second
+	MaxObjectReadAdmissionEntries         = 10_000
+	ObjectStorageAccountRequestsPerSecond = 100
+	ObjectStorageAccountRequestBurst      = 200
+	MaxObjectStorageAccountLimiters       = 10_000
+)
 
 // ObjectStorageBillingHoursPerMonth is the conventional month used to price
 // stored byte-hours as GiB-months and to convert IncludedBytes.

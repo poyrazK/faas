@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -71,6 +72,13 @@ func managedPostgresNotConfiguredProblem(w http.ResponseWriter) {
 
 func managedPostgresPlanDenied(w http.ResponseWriter, plan api.Plan, detail string) {
 	api.WriteProblem(w, api.NewProblem(http.StatusForbidden, "managed_postgres_not_in_plan", "Managed PostgreSQL is not included in this plan", fmt.Sprintf("plan %q: %s", plan, detail)))
+}
+
+// managedPostgresSpecWithinPlan is the plan check a restore or an undelete
+// makes of an existing database's spec, after a downgrade among others.
+func managedPostgresSpecWithinPlan(limits api.ManagedPostgresPlanLimits, spec managedpostgres.Spec) bool {
+	return managedPostgresPlanAllows(limits, spec) && (spec.ScaleToZero || limits.AlwaysOnAllowed) &&
+		spec.StorageLimitBytes <= limits.StorageLimitBytes && spec.RestoreWindowSeconds <= limits.RestoreWindowSeconds
 }
 
 func managedPostgresPlanAllows(limits api.ManagedPostgresPlanLimits, spec managedpostgres.Spec) bool {
@@ -147,7 +155,16 @@ func managedPostgresView(database managedpostgres.Database) api.ManagedPostgresD
 	if database.DeletedAt != nil {
 		out.DeletedAt = database.DeletedAt.UTC().Format(time.RFC3339Nano)
 	}
+	if managedPostgresDeleteScheduled(database) {
+		out.RestorableUntil = database.PurgeAfter.UTC().Format(time.RFC3339Nano)
+	}
 	return out
+}
+
+// managedPostgresDeleteScheduled reports a customer delete still in its undo
+// window (ADR-20261029174950); a purge clears PurgeAfter.
+func managedPostgresDeleteScheduled(database managedpostgres.Database) bool {
+	return database.State == managedpostgres.StateDeleting && !database.PurgeAfter.IsZero()
 }
 
 func managedPostgresBindingView(binding managedpostgres.Binding) api.ManagedPostgresBinding {
@@ -412,14 +429,75 @@ func (s *server) deleteManagedPostgresDatabase(w http.ResponseWriter, r *http.Re
 		managedPostgresNotConfiguredProblem(w)
 		return
 	}
-	database, err := s.managedPostgres.Delete(r.Context(), acct.ID, r.PathValue("id"))
+	// A customer's delete keeps the database for the grace period;
+	// purge=true deletes at once, as internal deletes do (ADR-20261029174950).
+	purge, err := managedPostgresPurgeParam(r)
 	if err != nil {
 		managedPostgresProblem(w, err)
 		return
 	}
-	s.audit.Emit(r.Context(), "managed_postgres.database.deleted", &acct.ID, map[string]any{
-		"database_id": database.ID, "state": database.State,
-	})
+	var database managedpostgres.Database
+	if purge {
+		database, err = s.managedPostgres.Delete(r.Context(), acct.ID, r.PathValue("id"))
+	} else {
+		database, err = s.managedPostgres.ScheduleDelete(r.Context(), acct.ID, r.PathValue("id"))
+	}
+	if err != nil {
+		managedPostgresProblem(w, err)
+		return
+	}
+	if managedPostgresDeleteScheduled(database) {
+		s.audit.Emit(r.Context(), "managed_postgres.database.delete_scheduled", &acct.ID, map[string]any{
+			"database_id": database.ID, "restorable_until": database.PurgeAfter.UTC().Format(time.RFC3339Nano),
+		})
+	} else {
+		s.audit.Emit(r.Context(), "managed_postgres.database.deleted", &acct.ID, map[string]any{
+			"database_id": database.ID, "state": database.State, "purge": purge,
+		})
+	}
+	writeJSON(w, http.StatusOK, managedPostgresView(database))
+}
+
+func managedPostgresPurgeParam(r *http.Request) (bool, error) {
+	raw := r.URL.Query().Get("purge")
+	if raw == "" {
+		return false, nil
+	}
+	purge, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, fmt.Errorf("%w: purge must be true or false", managedpostgres.ErrInvalid)
+	}
+	return purge, nil
+}
+
+// undeleteManagedPostgresDatabase returns a scheduled database to ready while
+// its restorable_until is in the future. The plan check a restore makes
+// applies here too: a downgrade can leave the spec outside the plan.
+func (s *server) undeleteManagedPostgresDatabase(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if s.managedPostgres == nil {
+		managedPostgresNotConfiguredProblem(w)
+		return
+	}
+	limits, ok := api.ManagedPostgresLimitsFor(acct.Plan)
+	if !ok || limits.DatabasesMax == 0 {
+		managedPostgresPlanDenied(w, acct.Plan, "upgrade to a paid plan to undelete a database")
+		return
+	}
+	scheduled, err := s.managedPostgres.Get(r.Context(), acct.ID, r.PathValue("id"))
+	if err != nil {
+		managedPostgresProblem(w, err)
+		return
+	}
+	if !managedPostgresSpecWithinPlan(limits, scheduled.Spec) {
+		managedPostgresPlanDenied(w, acct.Plan, "the database exceeds the current plan allowance")
+		return
+	}
+	database, err := s.managedPostgres.Undelete(r.Context(), acct.ID, scheduled.ID)
+	if err != nil {
+		managedPostgresProblem(w, err)
+		return
+	}
+	s.audit.Emit(r.Context(), "managed_postgres.database.undeleted", &acct.ID, map[string]any{"database_id": database.ID})
 	writeJSON(w, http.StatusOK, managedPostgresView(database))
 }
 
@@ -438,7 +516,7 @@ func (s *server) restoreManagedPostgresDatabase(w http.ResponseWriter, r *http.R
 		managedPostgresProblem(w, err)
 		return
 	}
-	if !managedPostgresPlanAllows(limits, source.Spec) || (!source.Spec.ScaleToZero && !limits.AlwaysOnAllowed) || source.Spec.StorageLimitBytes > limits.StorageLimitBytes || source.Spec.RestoreWindowSeconds > limits.RestoreWindowSeconds {
+	if !managedPostgresSpecWithinPlan(limits, source.Spec) {
 		managedPostgresPlanDenied(w, acct.Plan, "the source database exceeds the current plan allowance")
 		return
 	}

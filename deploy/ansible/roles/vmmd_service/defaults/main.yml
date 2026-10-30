@@ -17,6 +17,13 @@ faas_vmmd_outbound_relay_target: ""
 vmmd_outbound_client_tls_cert_path: /etc/faas/tls/vmmd/outboundd-client.crt
 vmmd_outbound_client_tls_key_path: /etc/faas/tls/vmmd/outboundd-client.key
 vmmd_outbound_client_tls_ca_path: /etc/faas/tls/ca/ca.crt
+# Issue vmmd's node-identity relay client leaf (pkg/pki outbound-relay
+# feature leaf) on the control plane and install it at the paths above
+# (tasks/outbound_relay_tls.yml). Off by default: until an operator turns the
+# relay on, vmmd logs "outbound relay disabled" and VM hosting is unaffected.
+# Turn it on together with control_plane_service's faas_outboundd_relay_listen.
+faas_vmmd_outbound_relay_tls_managed: false
+faas_vmmd_outbound_relay_tls_issuer_host: "{{ groups['control_plane'] | default([]) | first | default('') }}"
 
 # ADR-149 prepared networks: vmmd keeps this many unused wake namespaces
 # (netns + TAP + nft) ready so a restore claims one instead of building it.

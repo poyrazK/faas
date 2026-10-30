@@ -174,6 +174,9 @@ func (s *server) prepareProjectEnvironmentCloneDatabases(ctx context.Context, le
 	if len(plans) > 0 && s.managedPostgres == nil {
 		return lease, false, managedpostgres.ErrUnavailable
 	}
+	if len(plans) > 0 && time.Now().Before(point.Add(s.cloneDataPointSettle)) {
+		return lease, false, nil
+	}
 	ready := true
 	for _, plan := range plans {
 		renewed, err := leases.RenewProjectEnvironmentCloneLease(ctx, lease, projectEnvironmentCloneWorkerLeaseDuration)
@@ -227,6 +230,9 @@ func (s *server) restoreCapturedProjectEnvironmentDatabase(ctx context.Context, 
 	}
 	if err != nil {
 		return managedpostgres.Database{}, err
+	}
+	if reservation.State == string(managedpostgres.StateFailed) {
+		return managedpostgres.Database{}, errCloneTargetDatabaseFailed
 	}
 	// Reconcile is an internal lifecycle read; customer Get/Restore deliberately
 	// cannot read this owned target until complete publication. Provider restore

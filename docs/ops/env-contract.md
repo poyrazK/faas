@@ -557,6 +557,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_MANAGED_POSTGRES_QUALIFY_APPROVAL_TTL` | shared | `default` |  |  | `` | optional approval lifetime for a qualification artifact; must be positive and no longer than 90 days |
 | `FAAS_MANAGED_POSTGRES_REQUIRE_GUEST_QUALIFICATION` | shared | `default` |  |  | `` | optional staging-canary requirement for combined provider/durable and native guest evidence; unset defaults false, malformed or partial policy fails closed, and production admission remains disabled (ADR-992) |
 | `FAAS_MANAGED_POSTGRES_RUNTIME_MANIFEST_PATH` | shared | `default` |  |  | `` | optional independently approved PostgreSQL qualification-bundle manifest path; supplying this path requires combined staging qualification and the native guest report; reload requires an apid restart (ADR-992) |
+| `FAAS_MANAGED_POSTGRES_SQL_PROBE_CONFIG` | apid, shared | `default` |  |  | `` | ADR-20261029172812 canary SQL probe: path to a JSON file naming one operator-owned canary database per backend by the environment variable that holds its connection string; apid connects, writes and reads each one per interval and exports apid_managed_postgres_sql_probe_*; unset disables it, and an invalid file or connection string fails apid startup |
 | `FAAS_MANAGED_POSTGRES_STORAGE_CAP_ENFORCEMENT` | apid, shared | `default` |  | shadow | `` | ADR-20261025094915 decision 9 storage pool: shadow (default) computes and logs the per-branch storage limit that keeps each usage subject inside its pooled storage without writing it, off does neither; on writes it through the provider and requires FAAS_MANAGED_POSTGRES_STORAGE_CAP_QUALIFICATION_PATH; any other value fails apid startup |
 | `FAAS_MANAGED_POSTGRES_STORAGE_CAP_QUALIFICATION_PATH` | apid, shared | `default` |  |  | `` | ADR-20261025094915 storage pool qualification artifact written by managed-postgres-qualify --storage-cap; required, and verified against the configured backend, when FAAS_MANAGED_POSTGRES_STORAGE_CAP_ENFORCEMENT=on |
 | `FAAS_MANIFEST_PATH` | imaged | `dropin` |  |  | `` |  |
@@ -603,7 +604,12 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_OTEL_FLUSH_INTERVAL` | apid, gatewayd-internal, gatewayd-public, outboundd | `default` |  |  | `` |  |
 | `FAAS_OTEL_SPANS_WRITER_ENABLED` | apid, gatewayd-internal, gatewayd-public, outboundd | `default` |  |  | `` |  |
 | `FAAS_OUTBOUNDD_CONFIG` | outboundd | `default` |  |  | `` | config path fallback when --config is absent; the unit passes --config /etc/faas/outboundd.toml |
+| `FAAS_OUTBOUNDD_RELAY_LISTEN` | outboundd | `dropin` |  |  | `` | ADR-989 app relay listener; control_plane_service 99-faas-outbound-relay.conf sets it from faas_outboundd_relay_listen and it overrides relay_listen in outboundd.toml; unset keeps the TOML value |
+| `FAAS_OUTBOUNDD_RELAY_TLS_CA_PATH` | outboundd | `dropin` |  |  | `` | fleet CA for relay clients; control_plane_service 99-faas-outbound-relay.conf sets it for a tcp:// relay (ADR-989); overrides outboundd.toml |
+| `FAAS_OUTBOUNDD_RELAY_TLS_CERT_PATH` | outboundd | `dropin` |  |  | `` | outboundd/server outbound-relay feature leaf; control_plane_service 99-faas-outbound-relay.conf sets it for a tcp:// relay (ADR-989); overrides outboundd.toml |
+| `FAAS_OUTBOUNDD_RELAY_TLS_KEY_PATH` | outboundd | `dropin` |  |  | `` | outboundd/server outbound-relay feature leaf; control_plane_service 99-faas-outbound-relay.conf sets it for a tcp:// relay (ADR-989); overrides outboundd.toml |
 | `FAAS_OUTBOUNDD_ROLE` | outboundd, shared | `dropin` |  |  | `` |  |
+| `FAAS_OUTBOUNDD_WORKLOAD_IDENTITY_JWKS_PATH` | outboundd | `dropin` |  |  | `` | workload-identity JWKS the relay verifies assertions against (ADR-989, ADR-1141); control_plane_service 99-faas-outbound-relay.conf sets it with the relay and it overrides workload_identity_jwks_path in outboundd.toml |
 | `FAAS_OVERLAY_INTERFACE` | vmmd | `default` |  |  | `` |  |
 | `FAAS_OVERLAY_IP` | vmmd | `default` |  |  | `` | optional local encrypted-overlay IPv4; vmmd can auto-detect it when private-network transport is enabled |
 | `FAAS_OWNER_CACHE` | schedd | `default` |  |  | `` | optional boolean switch for the ADR-1741 schedd owner cache (wake inputs cached per app, writes guarded by the app runtime generation); production default is off |
@@ -852,7 +858,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_SKIP_SOCKET_GROUP` | shared | `dev-only` |  |  | `` | must never be set on a production host |
 | `FAAS_SNAPSHOT_FANOUT_INTERVAL` | vmmd | `default` |  |  | `` | defaults to 100ms to keep snapshot prepositioning inside the M9 200ms queue-wait budget; increase only for intentionally relaxed environments |
 | `FAAS_SNAPSHOT_MEMORY_SHARING` | vmmd | `default` |  |  | `` | ADR-956 snapshot memory page sharing with cached image blocks; on by default, `off` disables it |
-| `FAAS_SOURCE_APP_SHARED_RUNTIME` | builderd, shared | `default` |  |  | `` | on by default (ADR-20261029103512): Node source container apps build on the shared runner base so drive1 holds only /app (docs/adr/1500-shared-runtime-source-apps.md); 0 turns it off |
+| `FAAS_SOURCE_APP_SHARED_RUNTIME` | builderd, shared | `default` |  |  | `` | on by default (ADR-20261029103512): Node 24 and Python 3.12/3.13 source container apps build on the shared runner base so drive1 holds only /app (docs/adr/1500-shared-runtime-source-apps.md); 0 turns it off |
 | `FAAS_SPOOL_ROOT` | apid, builderd | `default` |  |  | `` |  |
 | `FAAS_STANDBY_WARMUP_ENABLED` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_STANDBY_WARMUP_INTERVAL_MS` | gatewayd-public | `default` |  |  | `` |  |

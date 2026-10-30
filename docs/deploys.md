@@ -787,6 +787,14 @@ replaced. The check runs every 15 seconds, and the release keeps serving until
 the previous one is ready again. If a rollout wedges,
 `gregale rollouts recover my-api` is the manual escape hatch.
 
+A new release that goes live while an earlier canary is still rolling out
+replaces it ([ADR-20261030102813](adr/20261030102813-a-newer-canary-supersedes-an-in-flight-one.md)).
+The earlier canary's traffic returns to the serving release, its rollout ends
+`aborted` with the reason `superseded by deployment <id>` (and a
+`rollout.aborted` webhook), and only the newest release rolls out. A release
+deployed with `--rollout immediate` takes all traffic and ends the earlier
+canary's rollout the same way.
+
 ### Safe by default
 
 A production release of an app that already serves traffic rolls out on the
