@@ -431,6 +431,13 @@ probing during the control plane's activation itself. Its canary app is the
 `ROLLOUT_APP_PROBE_URL` repository or environment variable, defaulting to
 `https://e2e-probe.gregale.dev/`; a canary whose baseline is unhealthy gates
 nothing, so the run carries a warning annotation and step-summary callout.
+A gated path fails on any failure other than a timeout. Up to three timed-out
+samples (at most two in a row, final sample healthy) are tolerated and
+annotated: the observer runs on the busy control plane it measures, and
+rc.304, rc.305 and rc.307 each failed activation on one or two 3 s timeouts
+while the bundle unpacked. Release acceptance's redeploy continuity probe
+likewise retries one failed probe once and fails on a failed retry or a second
+failure.
 
 ## Deploy order and skew in the unit lanes
 

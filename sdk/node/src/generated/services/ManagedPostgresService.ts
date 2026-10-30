@@ -152,11 +152,53 @@ export class ManagedPostgresService {
   }
   /**
    * Delete a managed PostgreSQL database
+   * A ready database is kept for 7 days with its compute stopped and its connections refused, and can be undeleted until restorable_until. It still counts toward the plan's database limit and keeps its name until it is purged. Any other database, or a delete with purge=true, is deleted at once. Bindings and restore dependencies must be removed first.
    * @returns ManagedPostgresDatabase Database deletion status
    * @returns Problem Authentication or database deletion error
    * @throws ApiError
    */
   public static deleteManagedPostgresDatabase({
+    id,
+    idempotencyKey,
+    purge = false,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+    /**
+     * true deletes the database at once, including one already scheduled for deletion. It cannot be undone.
+     */
+    purge?: boolean,
+  }): CancelablePromise<ManagedPostgresDatabase | Problem> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/postgres/databases/{id}',
+      path: {
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      query: {
+        'purge': purge,
+      },
+    });
+  }
+  /**
+   * Undelete a managed PostgreSQL database
+   * Returns a database whose delete is scheduled to ready, with its data, spec and restore history, while restorable_until is in the future. The plan must still allow the database's spec. After the window the database is gone and the request returns 404.
+   * @returns ManagedPostgresDatabase Database returned to ready
+   * @returns Problem Window ended, database not scheduled for deletion, plan limit, or provider error
+   * @throws ApiError
+   */
+  public static undeleteManagedPostgresDatabase({
     id,
     idempotencyKey,
   }: {
@@ -172,8 +214,8 @@ export class ManagedPostgresService {
     idempotencyKey?: string,
   }): CancelablePromise<ManagedPostgresDatabase | Problem> {
     return __request(OpenAPI, {
-      method: 'DELETE',
-      url: '/v1/postgres/databases/{id}',
+      method: 'POST',
+      url: '/v1/postgres/databases/{id}/undelete',
       path: {
         'id': id,
       },
@@ -1056,7 +1098,7 @@ export class ManagedPostgresService {
   }
   /**
    * Delete a company PostgreSQL resource.
-   * An owner or admin requests provider cleanup. Active bindings and retained restore dependencies must be removed first; accounting evidence remains available.
+   * An owner or admin requests provider cleanup. Active bindings and retained restore dependencies must be removed first; accounting evidence remains available. A ready database is kept for 7 days and can be undeleted until restorable_until; purge=true deletes at once.
    * @returns ManagedPostgresDatabase Result of the request to delete a company PostgreSQL resource.
    * @returns Problem Problem while attempting to delete a company PostgreSQL resource.
    * @throws ApiError
@@ -1065,6 +1107,7 @@ export class ManagedPostgresService {
     organization,
     id,
     idempotencyKey,
+    purge = false,
   }: {
     /**
      * Organization selected to inspect a company postgresql database.
@@ -1080,6 +1123,10 @@ export class ManagedPostgresService {
      *
      */
     idempotencyKey?: string,
+    /**
+     * true deletes the company database at once, even during its undelete window. It cannot be undone.
+     */
+    purge?: boolean,
   }): CancelablePromise<ManagedPostgresDatabase | Problem> {
     return __request(OpenAPI, {
       method: 'DELETE',
@@ -1090,6 +1137,9 @@ export class ManagedPostgresService {
       },
       headers: {
         'Idempotency-Key': idempotencyKey,
+      },
+      query: {
+        'purge': purge,
       },
       errors: {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
@@ -1330,6 +1380,50 @@ export class ManagedPostgresService {
         'organization': organization,
         'id': id,
         'change_id': changeId,
+      },
+      errors: {
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Undelete a company PostgreSQL database.
+   * An owner or admin returns a company database whose delete is scheduled to ready while restorable_until is in the future. The company plan must still allow the database's spec.
+   * @returns ManagedPostgresDatabase Result of the request to undelete a company PostgreSQL database.
+   * @returns Problem Problem while attempting to undelete a company PostgreSQL database.
+   * @throws ApiError
+   */
+  public static undeleteOrgManagedPostgresDatabase({
+    organization,
+    id,
+    idempotencyKey,
+  }: {
+    /**
+     * Organization that owns the company database to undelete.
+     */
+    organization: string,
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<ManagedPostgresDatabase | Problem> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{organization}/postgres/databases/{id}/undelete',
+      path: {
+        'organization': organization,
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
       },
       errors: {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,

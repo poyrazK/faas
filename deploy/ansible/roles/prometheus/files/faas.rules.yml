@@ -6303,6 +6303,19 @@ groups:
           description: "Known artifact bytes remain after their app deletion grace expired. Apid retains the database references and retries cleanup rather than orphaning the objects."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAppDeletionGraceDegraded.md"
 
+      - alert: FaasAppDeletionPurgeBlocked
+        expr: max by (reason) (apid_app_grace_blocked_apps{reason=~"foreign_key|managed_postgres_binding"}) > 0
+        for: 30m
+        labels:
+          severity: warn
+          component: apid
+          family: app_deletion_grace
+          public_status: internal
+        annotations:
+          summary: "Expired app purges are blocked ({{ $labels.reason }})"
+          description: "Apid cannot permanently delete at least one expired app. foreign_key: a row the purge does not remove still references the app, and the sweep backs off up to 6 h between attempts; the apid log names the constraint. managed_postgres_binding: a live binding holds a deleted app and only the binding service may revoke it."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAppDeletionGraceDegraded.md"
+
   - name: compute_node_key_lifecycle
     interval: 1m
     rules:
@@ -7280,6 +7293,19 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
           summary: "Object storage region {{ $labels.region }} refuses new buckets"
           description: "No backend in {{ $labels.region }}'s pool has room under max_buckets, so customers get 503 object_storage_region_full when they create a bucket. Existing buckets work. Add a provider project to the pool."
+      # ADR-20261030075301: s3-gatewayd batches read counts every second.
+      # While its flushes fail, the monthly ceilings stop seeing new reads.
+      - alert: FaasS3GatewayReadUsageFlushFailing
+        expr: sum by (instance) (rate(s3_gateway_read_usage_flushes_total{outcome="failed"}[5m])) > 0
+        for: 10m
+        labels:
+          severity: warn
+          component: s3-gatewayd
+          family: object_storage
+        annotations:
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
+          summary: "s3-gatewayd cannot write its batched read counts"
+          description: "Read count flushes on {{ $labels.instance }} have failed for 10 minutes. Reads keep being served from cached decisions for up to 30 s and then fail closed; counts stay in memory until a flush succeeds."
       - alert: FaasObjectStorageUsageExportStale
         expr: time() - s3_gateway_usage_export_last_success_timestamp_seconds > 3600
         for: 15m

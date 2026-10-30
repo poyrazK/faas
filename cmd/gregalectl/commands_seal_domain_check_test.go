@@ -28,8 +28,9 @@ import (
 // TestSealDomainCheckOutboundPostgres pins the check the seal_domains role
 // runs before outboundd drops the fleet identity (ADR 20261022111812, step
 // 4): it fails while a credential still opens with the fleet identity,
-// writes nothing, and passes once the re-seal moved every row. The storage
-// and alerting checks run the same way for s3-gatewayd and meterd.
+// writes nothing, and passes once the re-seal moved every row. The storage,
+// alerting and source checks run the same way for s3-gatewayd, meterd and
+// githubd.
 func TestSealDomainCheckOutboundPostgres(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
 	ctx := context.Background()
@@ -115,9 +116,9 @@ func TestSealDomainCheckOutboundPostgres(t *testing.T) {
 		t.Fatalf("check after the re-seal = %+v, %v; want it passed", report, err)
 	}
 
-	// The storage and alerting checks run their own walks: with nothing
+	// The storage, alerting and source checks run their own walks: with nothing
 	// stored nothing is pending.
-	for _, d := range []sealdomain.Domain{sealdomain.Storage, sealdomain.Alerting} {
+	for _, d := range []sealdomain.Domain{sealdomain.Storage, sealdomain.Alerting, sealdomain.Source} {
 		id := mustCheckIdentity(t)
 		if err := secretbox.WriteHostKeyAtPath(sealdomain.IdentityPath(dir, d), id); err != nil {
 			t.Fatal(err)
@@ -151,6 +152,7 @@ func TestSkippedReasonNamesTheDomainsLeftovers(t *testing.T) {
 	for d, want := range map[sealdomain.Domain]string{
 		sealdomain.Account:  "clone",
 		sealdomain.Alerting: "MCP readiness incidents",
+		sealdomain.Source:   "install tokens",
 		sealdomain.Edge:     "application-standard log destinations",
 	} {
 		if got := skippedReason(d); !strings.Contains(got, want) {

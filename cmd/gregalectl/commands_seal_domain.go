@@ -294,7 +294,7 @@ func runSealDomainMigrate(args []string) error {
 	dbEnv := fs.String("db-env", "", "systemd env file containing DATABASE_URL")
 	bindAccounts := fs.Bool("bind-accounts", false, "runtime only: re-seal every stored runtime secret bound to the account that owns it (ADR-20261023173624)")
 	runtimeSigningKey := fs.String("runtime-signing-key", "", "runtime only: apid's runtime secret signing key; signs what this re-seals (ADR 20261028161502)")
-	check := fs.Bool("check", false, "outbound, storage and alerting only: write nothing, and fail while a value still opens with the fleet or host identity (run before its readers drop them)")
+	check := fs.Bool("check", false, "outbound, storage, alerting and source only: write nothing, and fail while a value still opens with the fleet or host identity (run before its readers drop them)")
 	jsonOut := fs.Bool("json", false, "emit JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -305,9 +305,9 @@ func runSealDomainMigrate(args []string) error {
 	}
 	if *check {
 		switch d {
-		case sealdomain.Outbound, sealdomain.Storage, sealdomain.Alerting:
+		case sealdomain.Outbound, sealdomain.Storage, sealdomain.Alerting, sealdomain.Source:
 		default:
-			return errors.New("--check applies to --domain outbound, storage and alerting only in this release")
+			return errors.New("--check applies to --domain outbound, storage, alerting and source only in this release")
 		}
 		return runSealDomainCheck(*dsn, *dbEnv, d, *dir, *fleetKey, *hostKey, *jsonOut || jsonOutput)
 	}
@@ -450,6 +450,8 @@ func runSealDomainCheck(dsn, dbEnv string, d sealdomain.Domain, dir, fleetKey, h
 		report, err = sealmigrate.CheckStorage(ctx, store, domain, legacy)
 	case sealdomain.Alerting:
 		report, err = sealmigrate.CheckAlerting(ctx, store, domain, legacy)
+	case sealdomain.Source:
+		report, err = sealmigrate.CheckSource(ctx, store, domain, legacy)
 	default:
 		report, err = sealmigrate.CheckOutbound(ctx, store, domain, legacy)
 	}
@@ -483,6 +485,8 @@ func skippedReason(d sealdomain.Domain) string {
 		return "project environment clone values cannot be re-sealed in place; they clear as their clones finish"
 	case sealdomain.Alerting:
 		return "open MCP readiness incidents carry copies of their route's key; they clear as the incidents resolve"
+	case sealdomain.Source:
+		return "unexpired GitHub install tokens sealed before the domain; they expire within the hour and githubd seals their successors to the domain"
 	}
 	return "application-standard log destinations and the drains they manage cannot be re-sealed in place yet"
 }

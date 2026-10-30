@@ -668,3 +668,42 @@ func TestPostgresAlertingIncidentCopies(t *testing.T) {
 		t.Fatalf("check once the incident resolved = %+v, %v; want nothing left", report, err)
 	}
 }
+
+// TestPostgresSourceUnexpiredTokens runs the install token listing against
+// the real schema: an unexpired token only the fleet identity opens is left
+// on the fleet key, and stops counting once it expires.
+func TestPostgresSourceUnexpiredTokens(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	ctx := context.Background()
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	store := state.NewPgStore(pool)
+	fleet, domain := mustIdentity(t), mustIdentity(t)
+	suffix := strconv.FormatInt(rand.Int64N(1<<40), 36)
+	account, err := store.CreateAccount(ctx, "source-tokens-"+suffix+"@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := secretbox.SealTo([]*age.X25519Recipient{fleet.Recipient()}, secretbox.Envelope{"GITHUB_INSTALL_TOKEN": "ghs_" + suffix})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO github_installations(account_id,installation_id,default_branch,sealed_install_token,token_expires_at,audit_github_login) VALUES($1,42,'main',$2,now()+interval '1 hour','octocat')`, account.ID, token); err != nil {
+		t.Fatal(err)
+	}
+
+	tokens, err := store.ListUnexpiredGithubInstallTokens(ctx, "", 0, 10)
+	if err != nil || len(tokens) != 1 || tokens[0].AccountID != account.ID || tokens[0].InstallationID != 42 || !bytes.Equal(tokens[0].Sealed, token) {
+		t.Fatalf("unexpired tokens = %+v, %v; want the installation's token", tokens, err)
+	}
+	if report, err := sealmigrate.CheckSource(ctx, store, domain, []*age.X25519Identity{fleet}); err != nil || report.Skipped != 1 {
+		t.Fatalf("check = %+v, %v; want the token left on the fleet key", report, err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE github_installations SET token_expires_at=now()-interval '1 minute' WHERE account_id=$1`, account.ID); err != nil {
+		t.Fatal(err)
+	}
+	if report, err := sealmigrate.CheckSource(ctx, store, domain, []*age.X25519Identity{fleet}); err != nil || report.Skipped != 0 {
+		t.Fatalf("check once the token expired = %+v, %v; want nothing left", report, err)
+	}
+}

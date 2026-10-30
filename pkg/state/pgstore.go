@@ -4938,13 +4938,13 @@ func (s *PgStore) DeleteAppPermanently(ctx context.Context, id string) error {
 		return fmt.Errorf("state: begin app purge: %w", err)
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
-	var activeBuckets int
+	var activeBuckets int64
 	if err := tx.QueryRow(ctx,
 		`select count(*) from object_buckets where app_id = $1 and state <> 'deleted'`, id).Scan(&activeBuckets); err != nil {
 		return fmt.Errorf("state: count app buckets: %w", err)
 	}
 	if activeBuckets != 0 {
-		return ErrConflict
+		return &AppPurgeBlockedError{Reason: AppPurgeBlockedObjectBucket, Count: activeBuckets}
 	}
 	// A live managed PostgreSQL binding still owns provider credentials, and
 	// a dispatched, unsettled multipart part writer is an uncertain backend
@@ -4952,15 +4952,18 @@ func (s *PgStore) DeleteAppPermanently(ctx context.Context, id string) error {
 	// rows (deleted bindings, settled writers) are removed below. Without
 	// that, the RESTRICT keys failed every purge and the grace sweep retried
 	// the same apps every minute forever (Hunt 11 H11-21).
-	var retained int
+	var liveBindings, uncertainWrites int64
 	if err := tx.QueryRow(ctx,
-		`select (select count(*) from managed_postgres_bindings where app_id = $1 and state <> 'deleted')
-		      + (select count(*) from object_multipart_part_writers w join object_buckets b on b.id = w.bucket_id
-		          where b.app_id = $1 and w.dispatched and not w.settled)`, id).Scan(&retained); err != nil {
+		`select (select count(*) from managed_postgres_bindings where app_id = $1 and state <> 'deleted'),
+		        (select count(*) from object_multipart_part_writers w join object_buckets b on b.id = w.bucket_id
+		          where b.app_id = $1 and w.dispatched and not w.settled)`, id).Scan(&liveBindings, &uncertainWrites); err != nil {
 		return fmt.Errorf("state: count app retained resources: %w", err)
 	}
-	if retained != 0 {
-		return ErrConflict
+	if liveBindings != 0 {
+		return &AppPurgeBlockedError{Reason: AppPurgeBlockedManagedPostgresBinding, Count: liveBindings}
+	}
+	if uncertainWrites != 0 {
+		return &AppPurgeBlockedError{Reason: AppPurgeBlockedMultipartWrite, Count: uncertainWrites}
 	}
 	var exists int
 	if err := tx.QueryRow(ctx,
@@ -5022,7 +5025,7 @@ func (s *PgStore) DeleteAppPermanently(ctx context.Context, id string) error {
 	}
 	for _, step := range steps {
 		if _, err := tx.Exec(ctx, step.sql, id); err != nil {
-			return fmt.Errorf("state: purge %s for app %s: %w", step.name, id, err)
+			return fmt.Errorf("state: purge %s for app %s: %w", step.name, id, appPurgeForeignKeyError(err))
 		}
 	}
 	// Most app-owned tables use ON DELETE CASCADE (alerts, mirrors,
@@ -5035,13 +5038,19 @@ func (s *PgStore) DeleteAppPermanently(ctx context.Context, id string) error {
 	tag, err := tx.Exec(ctx,
 		`delete from apps where id = $1 and status = 'deleted' and delete_grace_until <= now() and purge_claimed_at is not null`, id)
 	if err != nil {
-		return fmt.Errorf("state: purge app %s: %w", id, err)
+		// A key the steps above do not clear (Hunt 11 H11-21's binding
+		// tombstones were one) fails here after the steps and the cascades
+		// have locked their rows. The typed error makes the grace sweep back
+		// off instead of retaking those locks every minute: on 2026-10-24 that
+		// retry deadlocked a migration adding a foreign key to apps.
+		return fmt.Errorf("state: purge app %s: %w", id, appPurgeForeignKeyError(err))
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("state: commit app purge %s: %w", id, err)
+		// A deferred key is checked here.
+		return fmt.Errorf("state: commit app purge %s: %w", id, appPurgeForeignKeyError(err))
 	}
 	return nil
 }
@@ -5673,11 +5682,25 @@ func (s *PgStore) deleteProjectEnvironmentOnce(
 			return ProjectEnvironmentCleanupJob{}, mapErr(err)
 		}
 	}
+	if err := deleteProjectEnvironmentRowsTx(ctx, tx, accountID, projectID, projectSlug, slug); err != nil {
+		return ProjectEnvironmentCleanupJob{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return ProjectEnvironmentCleanupJob{}, fmt.Errorf("state: commit project environment delete: %w", err)
+	}
+	return job, nil
+}
+
+// deleteProjectEnvironmentRowsTx removes an environment's scoped values,
+// configuration and approvals, then the environment row, whose foreign keys
+// cascade to its workload specifications and flags. Deployments stay as
+// history; callers first make sure none is live.
+func deleteProjectEnvironmentRowsTx(ctx context.Context, tx pgx.Tx, accountID, projectID, projectSlug, slug string) error {
 	if _, err := tx.Exec(ctx, `
 		delete from app_envs e using apps a
 		 where e.app_id = a.id and a.account_id = $1 and a.project_id = $2 and e.scope = $3
 	`, accountID, projectID, slug); err != nil {
-		return ProjectEnvironmentCleanupJob{}, mapErr(err)
+		return mapErr(err)
 	}
 	if _, err := tx.Exec(ctx, `
 		delete from app_secrets s using apps a
@@ -5685,35 +5708,32 @@ func (s *PgStore) deleteProjectEnvironmentOnce(
 		   and s.managed_postgres_binding_id is null
 		   and s.managed_object_storage_credential_id is null
 	`, accountID, projectID, slug); err != nil {
-		return ProjectEnvironmentCleanupJob{}, mapErr(err)
+		return mapErr(err)
 	}
 
 	if _, err := tx.Exec(ctx, `
 		delete from project_environment_config_versions
 		 where project_id = $1 and environment_slug = $2
 	`, projectID, slug); err != nil {
-		return ProjectEnvironmentCleanupJob{}, mapErr(err)
+		return mapErr(err)
 	}
 	if _, err := tx.Exec(ctx, `
 		delete from project_environment_approvals
 		 where account_id = $1 and project_slug = $2 and environment_slug = $3
 	`, accountID, projectSlug, slug); err != nil {
-		return ProjectEnvironmentCleanupJob{}, mapErr(err)
+		return mapErr(err)
 	}
 	tag, err := tx.Exec(ctx, `
 		delete from project_environments
 		 where project_id = $1 and slug = $2
 	`, projectID, slug)
 	if err != nil {
-		return ProjectEnvironmentCleanupJob{}, mapErr(hostingParentDeleteError(err))
+		return mapErr(hostingParentDeleteError(err))
 	}
 	if tag.RowsAffected() == 0 {
-		return ProjectEnvironmentCleanupJob{}, ErrNotFound
+		return ErrNotFound
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return ProjectEnvironmentCleanupJob{}, fmt.Errorf("state: commit project environment delete: %w", err)
-	}
-	return job, nil
+	return nil
 }
 
 // ApplyProjectPlan persists a project + its member apps + crons in
@@ -10408,14 +10428,15 @@ func (s *PgStore) markDeploymentLiveOnce(ctx context.Context, id string, fenceLa
 	}
 
 	rows, err := tx.Query(ctx,
-		`select id, traffic_percent
+		`select id, traffic_percent,
+		        canary_total_steps > 0 and coalesce(nullif(rollout_state, ''), 'pending') in ('pending','rolling_out')
 		   from deployments
 		  where app_id = $1 and scope = $2 and status = 'live'
 		  for update`, dep.AppID, normalizedDeploymentScope(dep.Scope))
 	if err != nil {
 		return fmt.Errorf("state: mark canary live lock siblings: %w", err)
 	}
-	var siblings []struct {
+	var siblings, inFlightCanaries []struct {
 		ID    string
 		Prior int
 	}
@@ -10424,11 +10445,16 @@ func (s *PgStore) markDeploymentLiveOnce(ctx context.Context, id string, fenceLa
 			ID    string
 			Prior int
 		}
-		if err := rows.Scan(&sibling.ID, &sibling.Prior); err != nil {
+		var inFlight bool
+		if err := rows.Scan(&sibling.ID, &sibling.Prior, &inFlight); err != nil {
 			rows.Close()
 			return fmt.Errorf("state: mark canary live scan sibling: %w", err)
 		}
-		if sibling.ID != id {
+		switch {
+		case sibling.ID == id:
+		case inFlight:
+			inFlightCanaries = append(inFlightCanaries, sibling)
+		default:
 			siblings = append(siblings, sibling)
 		}
 	}
@@ -10440,6 +10466,25 @@ func (s *PgStore) markDeploymentLiveOnce(ctx context.Context, id string, fenceLa
 	var now time.Time
 	if err := tx.QueryRow(ctx, `select clock_timestamp()`).Scan(&now); err != nil {
 		return fmt.Errorf("state: mark canary live read database clock: %w", err)
+	}
+	if len(inFlightCanaries) > 0 {
+		if supersedesInFlightCanaries(siblings) {
+			// A newer canary replaces the one still rolling out, whose traffic
+			// returns to the serving deployment (ADR-20261030102813, Hunt 14
+			// H14-112). Two canaries beside one stable never promote: meterd
+			// judges a candidate against exactly one serving predecessor.
+			if _, err := sqlc.New().SupersedeInFlightCanarySiblings(ctx, tx, sqlc.SupersedeInFlightCanarySiblingsParams{
+				AbortedAt: pgtype.Timestamptz{Time: now, Valid: true}, DeploymentID: mustPgUUID(id),
+				AppID: mustPgUUID(dep.AppID), Scope: normalizedDeploymentScope(dep.Scope),
+			}); err != nil {
+				return fmt.Errorf("state: mark canary live supersede in-flight canary: %w", err)
+			}
+			if err := notifyRetiredCanarySiblingsTx(ctx, tx, dep.AppID, inFlightCanaries); err != nil {
+				return err
+			}
+		} else {
+			siblings = append(siblings, inFlightCanaries...)
+		}
 	}
 	if len(siblings) == 0 && dep.TrafficPercent != 100 {
 		// A first deployment has no residual bucket. Complete it at

@@ -5393,6 +5393,34 @@ SELECT count FROM object_storage_authorizations WHERE account_id=$1 AND period_s
 INSERT INTO object_storage_authorizations (account_id, period_start, count) VALUES ($1,$2,1)
 ON CONFLICT (account_id,period_start) DO UPDATE SET count = object_storage_authorizations.count + 1;
 
+-- name: ObjectStorageReadOwner :one
+-- The owner check of ObjectStorageLockOwner without its row locks, for the
+-- cached read decision (ADR-20261030075301).
+SELECT object_storage_usage_subject(b.org_id,b.account_id)::uuid AS subject
+FROM object_buckets b JOIN orgs o ON o.id=b.org_id
+WHERE b.id=sqlc.arg(bucket_id)::uuid AND b.account_id=sqlc.arg(account_id)::uuid
+AND (CASE WHEN NOT o.personal_org AND o.resource_ownership_enabled THEN o.status IN ('active','past_due') AND o.abuse_hold_at IS NULL
+ELSE EXISTS(SELECT 1 FROM accounts a WHERE a.id=b.account_id AND a.status IN ('active','past_due') AND a.abuse_hold_at IS NULL) END);
+
+-- name: ObjectReadUsageRecordMetrics :exec
+-- Batched read counts (ADR-20261030075301); a deleted bucket is skipped.
+INSERT INTO object_storage_request_metrics (bucket_id, period_start, request_count, egress_bytes)
+SELECT b.id, sqlc.arg(period_start)::timestamptz, sqlc.arg(requests)::bigint, sqlc.arg(egress_bytes)::bigint
+FROM object_buckets b WHERE b.id = sqlc.arg(bucket_id)::uuid
+ON CONFLICT (bucket_id, period_start) DO UPDATE
+SET request_count = object_storage_request_metrics.request_count + EXCLUDED.request_count,
+    egress_bytes = object_storage_request_metrics.egress_bytes + EXCLUDED.egress_bytes;
+
+-- name: ObjectReadUsageSubjects :many
+SELECT b.id, object_storage_usage_subject(b.org_id, b.account_id, sqlc.arg(period_start)::timestamptz)::uuid AS subject
+FROM object_buckets b WHERE b.id = ANY(sqlc.arg(bucket_ids)::uuid[]);
+
+-- name: ObjectUsageAuthorizeBy :exec
+INSERT INTO object_storage_authorizations (account_id, period_start, count)
+VALUES (sqlc.arg(account_id)::uuid, sqlc.arg(period_start)::timestamptz, sqlc.arg(count)::bigint)
+ON CONFLICT (account_id, period_start) DO UPDATE
+SET count = object_storage_authorizations.count + EXCLUDED.count;
+
 -- name: ObjectStorageProviderRequestIncrement :exec
 INSERT INTO object_storage_request_metrics (bucket_id, period_start, request_count)
 VALUES ($1, $2, 1)
@@ -6609,6 +6637,98 @@ SELECT EXISTS(SELECT 1 FROM project_environments
               WHERE project_id = sqlc.arg(project_id)::uuid
                 AND slug = sqlc.arg(target_environment)::text)::boolean AS target_exists;
 
+-- name: ReadProjectEnvironmentCloneInventoryPresent :many
+SELECT present::text AS table_name
+FROM project_environment_clone_inventory_present(
+    sqlc.arg(project_id)::uuid, sqlc.arg(environment_id)::uuid, sqlc.arg(environment_slugs)::text[],
+    sqlc.arg(app_ids)::uuid[], sqlc.arg(deployment_ids)::uuid[], sqlc.arg(probes)::jsonb) AS present;
+
+-- name: CancelProjectEnvironmentCloneTargetDeployments :execrows
+-- A data-less clone that will not publish cancels the deployments it created
+-- for its target; schedd drains their instances on the notification.
+WITH cancelled AS (
+    UPDATE deployments d SET status = 'cancelled'
+    FROM project_environment_clone_workloads w
+    WHERE w.operation_id = sqlc.arg(operation_id)::uuid AND d.id = w.target_deployment_id
+      AND d.app_id = w.app_id AND d.scope = sqlc.arg(environment)::text
+      AND d.status NOT IN ('failed', 'superseded', 'cancelled')
+    RETURNING d.id, d.app_id
+)
+SELECT pg_notify('deployment_changed', json_build_object('kind', 'cancelled', 'app_id', app_id, 'deployment_id', id,
+    'to', id, 'status', 'cancelled')::text)
+FROM cancelled;
+
+-- name: ReadProjectEnvironmentCloneTargetRetirement :one
+SELECT count(*) FILTER (WHERE d.status NOT IN ('failed', 'superseded', 'cancelled'))::bigint AS unretired,
+       (SELECT count(*) FROM instances i
+         WHERE i.deployment_id IN (SELECT target_deployment_id FROM project_environment_clone_workloads WHERE operation_id = sqlc.arg(operation_id)::uuid)
+           AND i.state NOT IN ('parked', 'stopped', 'failed'))::bigint AS active_instances
+FROM project_environment_clone_workloads w
+JOIN deployments d ON d.id = w.target_deployment_id
+WHERE w.operation_id = sqlc.arg(operation_id)::uuid;
+
+-- name: DeleteProjectEnvironmentCloneTargetPolicies :exec
+WITH routes AS (
+    DELETE FROM project_environment_route_policies
+    WHERE project_id = sqlc.arg(project_id)::uuid AND environment_slug = sqlc.arg(environment)::text
+)
+DELETE FROM project_environment_edge_policies
+WHERE project_id = sqlc.arg(project_id)::uuid AND environment_slug = sqlc.arg(environment)::text;
+
+-- name: ReadProjectEnvironmentCloneClock :one
+SELECT clock_timestamp()::timestamptz AS now;
+
+-- name: ReadProjectEnvironmentCloneRestoredDatabases :many
+-- Each ready target database this clone restored, with a provider restore
+-- proof that still matches the row (the same checks as
+-- ReadManagedPostgresCloneRestoreProof).
+SELECT d.id::text AS database_id, p.source_database_id::text AS source_database_id, p.point_in_time
+FROM managed_postgres_databases d
+JOIN managed_postgres_restore_proofs p ON p.database_id = d.id
+WHERE d.environment_clone_operation_id = sqlc.arg(operation_id)::uuid AND d.account_id = sqlc.arg(account_id)::uuid
+    AND d.clone_resource_role = 'target' AND d.state = 'ready' AND d.deleted_at IS NULL AND d.lease_token IS NULL
+    AND p.account_id = d.account_id AND p.operation_id = d.environment_clone_operation_id
+    AND p.backend_id = d.backend_id AND p.backend_fingerprint = d.backend_fingerprint
+    AND p.provider_resource_id = d.provider_resource_id AND p.data_resource_id = d.data_resource_id
+    AND p.source_database_id = d.restore_source_database_id AND p.source_resource_id = d.restore_source_resource_id
+    AND p.point_in_time = d.restore_point_in_time
+    AND p.generation = d.desired_generation AND p.generation = d.observed_generation
+    AND p.spec = jsonb_build_object('Region',d.region,'PostgresMajor',d.postgres_major,
+        'Class',d.service_class,'Availability',d.availability,'ScaleToZero',d.scale_to_zero,
+        'StorageLimitBytes',d.storage_limit_bytes,'RestoreWindowSeconds',d.restore_window_seconds)
+ORDER BY d.id
+FOR SHARE OF d, p;
+
+-- name: ReadProjectEnvironmentCloneLiveTargetDatabases :many
+SELECT id::text AS database_id FROM managed_postgres_databases
+WHERE environment_clone_operation_id = sqlc.arg(operation_id)::uuid AND account_id = sqlc.arg(account_id)::uuid
+    AND clone_resource_role = 'target' AND state <> 'deleted'
+ORDER BY id;
+
+-- name: WithdrawProjectEnvironmentCloneTargetBindingSecrets :exec
+-- Compensation withdraws the target bindings a clone prepared. Their provider
+-- credentials live in the clone's own target database, which is deleted next.
+DELETE FROM app_secrets s
+USING project_environment_clone_postgres_bindings c
+WHERE c.operation_id = sqlc.arg(operation_id)::uuid AND s.managed_postgres_binding_id = c.target_binding_id
+    AND s.scope = sqlc.arg(environment)::text;
+
+-- name: WithdrawProjectEnvironmentCloneTargetBindings :exec
+UPDATE managed_postgres_bindings b SET state = 'deleted', last_error_code = NULL, lease_token = NULL, lease_until = NULL,
+    rotation_previous_generation = NULL, rotation_wake_id = NULL, rotation_cleanup_ready = false,
+    attempt_count = 0, retry_at = clock_timestamp(), updated_at = clock_timestamp(), deleted_at = clock_timestamp()
+FROM project_environment_clone_postgres_bindings c
+WHERE c.operation_id = sqlc.arg(operation_id)::uuid AND b.id = c.target_binding_id
+    AND b.scope = sqlc.arg(environment)::text AND b.state <> 'deleted'
+    AND NOT EXISTS (SELECT 1 FROM app_secrets s WHERE s.managed_postgres_binding_id = b.id);
+
+-- name: ReadProjectEnvironmentCloneProjectSlug :one
+SELECT slug FROM projects WHERE id = sqlc.arg(project_id)::uuid AND account_id = sqlc.arg(account_id)::uuid;
+
+-- name: ReadProjectEnvironmentCloneSourceEnvironmentID :one
+SELECT id FROM project_environments
+WHERE project_id = sqlc.arg(project_id)::uuid AND slug = sqlc.arg(slug)::text;
+
 -- name: LockProjectEnvironmentCloneTargetReservation :one
 SELECT id::text, revision, status, source_environment,
        (lease_token IS NULL OR lease_until > clock_timestamp())::boolean AS lease_live
@@ -6978,6 +7098,10 @@ WHERE h.environment_id=$1 ORDER BY h.app_id FOR SHARE OF h,s;
 
 -- name: ReadProjectEnvironmentCloneOperationIDByKey :one
 SELECT id FROM project_environment_clone_operations WHERE account_id=$1 AND project_id=$2 AND idempotency_key=$3;
+
+-- name: CountUnfinishedProjectEnvironmentCloneOperations :one
+SELECT count(*)::bigint FROM project_environment_clone_operations
+WHERE status IN ('pending','capturing','copying','publishing','compensating');
 
 -- name: CreateCapturedProjectEnvironmentCloneOperation :exec
 INSERT INTO project_environment_clone_operations(id,account_id,project_id,source_environment,target_environment,idempotency_key,source_revision_hash,source_release_set_id,configuration_capture_version)
@@ -10265,6 +10389,16 @@ SELECT f.* FROM project_environment_promotion_feature_flags f
 JOIN project_environment_promotions p ON p.id = f.promotion_id
 WHERE p.id = sqlc.arg(promotion_id)::uuid AND p.account_id = sqlc.arg(account_id)::uuid;
 
+-- name: ListPromotionFeatureFlagHolds :many
+-- Receipts whose activation or rollback wrote this flag version; Go decides
+-- which promotion states still hold it.
+SELECT p.status, p.rollback_status, f.target_version, f.rollback_version
+FROM project_environment_promotion_feature_flags f
+JOIN project_environment_promotions p ON p.id = f.promotion_id
+WHERE p.account_id = sqlc.arg(account_id)::uuid AND p.project_id = sqlc.arg(project_id)::uuid
+ AND f.previous_target_snapshot->>'source_environment_id' = sqlc.arg(environment_id)::text
+ AND (f.target_version = sqlc.arg(version)::bigint OR f.rollback_version = sqlc.arg(version)::bigint);
+
 -- name: UpdatePromotionFeatureFlagReceipt :one
 UPDATE project_environment_promotion_feature_flags
 SET target_version = sqlc.arg(target_version)::bigint, rollback_version = sqlc.arg(rollback_version)::bigint
@@ -12305,7 +12439,7 @@ WHERE a.account_id=sqlc.arg(account_id)::uuid AND a.id=sqlc.arg(app_id)::uuid AN
  AND (coalesce(d.source_sha256,'')='' OR p.input_snapshot->'claims'->>'source_sha256'=d.source_sha256)
  AND (p.input_snapshot->'claims'->>'runtime'=coalesce(a.runtime,'')
   OR (a.type<>'function' AND coalesce(a.runtime,'')='' AND f.input_snapshot->>'kind'='source-app-layer'
-   AND p.input_snapshot->'claims'->>'runtime' IN ('node22','node24')
+   AND p.input_snapshot->'claims'->>'runtime' IN ('node22','node24','python312','python313')
    AND f.input_snapshot->>'runtime'=p.input_snapshot->'claims'->>'runtime'))
  AND f.input_snapshot->>'storage_key'=d.rootfs_key AND f.input_snapshot->>'rootfs_path'=d.rootfs_path
  AND (f.input_snapshot->>'content_bytes')::bigint=d.rootfs_bytes
@@ -17425,15 +17559,42 @@ AND (sqlc.narg(release_id)::uuid IS NULL OR id=sqlc.narg(release_id)::uuid);
 
 -- name: RetireLiveDeploymentSiblings :execrows
 -- A retired sibling is a retained stable revision, not a manual dark
--- deployment, so it loses traffic_percent_explicit (Hunt 14 H14-71).
+-- deployment, so it loses traffic_percent_explicit (Hunt 14 H14-71). A
+-- retired canary that was still rolling out ends its rollout as aborted, so
+-- it never reads as in flight again (ADR-20261030102813, Hunt 14 H14-112).
 UPDATE deployments d SET status = CASE WHEN
     EXISTS(SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id=d.id AND p.expires_at>now())
     OR EXISTS(SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id=rm.release_id
         WHERE rm.deployment_id=d.id AND (rs.active OR rs.expires_at>now()))
     OR EXISTS(SELECT 1 FROM durable_work_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
-    THEN 'live' ELSE 'superseded' END, traffic_percent=0, traffic_percent_explicit=false
+    THEN 'live' ELSE 'superseded' END, traffic_percent=0, traffic_percent_explicit=false,
+    rollout_state = CASE WHEN d.canary_total_steps>0 AND COALESCE(NULLIF(d.rollout_state,''),'pending') IN ('pending','rolling_out')
+        THEN 'aborted' ELSE d.rollout_state END,
+    rollout_aborted_at = CASE WHEN d.canary_total_steps>0 AND COALESCE(NULLIF(d.rollout_state,''),'pending') IN ('pending','rolling_out')
+        THEN now() ELSE d.rollout_aborted_at END,
+    rollout_aborted_reason = CASE WHEN d.canary_total_steps>0 AND COALESCE(NULLIF(d.rollout_state,''),'pending') IN ('pending','rolling_out')
+        THEN 'superseded by deployment ' || (sqlc.arg(deployment_id)::uuid)::text ELSE d.rollout_aborted_reason END
 WHERE d.app_id=sqlc.arg(app_id)::uuid AND d.scope=sqlc.arg(scope)::text
 AND d.status='live' AND d.id<>sqlc.arg(deployment_id)::uuid;
+
+-- name: SupersedeInFlightCanarySiblings :many
+-- A newer canary replaces one still rolling out in its scope
+-- (ADR-20261030102813, Hunt 14 H14-112). The older canary leaves traffic
+-- and ends its rollout as aborted, so the newer canary has one serving
+-- predecessor to be judged against. A retained revision stays live at 0%,
+-- as in RetireLiveDeploymentSiblings.
+UPDATE deployments d SET status = CASE WHEN
+    EXISTS(SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id=d.id AND p.expires_at>now())
+    OR EXISTS(SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id=rm.release_id
+        WHERE rm.deployment_id=d.id AND (rs.active OR rs.expires_at>now()))
+    OR EXISTS(SELECT 1 FROM durable_work_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
+    THEN 'live' ELSE 'superseded' END, traffic_percent=0, traffic_percent_explicit=false,
+    rollout_state='aborted', rollout_aborted_at=sqlc.arg(aborted_at)::timestamptz,
+    rollout_aborted_reason='superseded by deployment ' || (sqlc.arg(deployment_id)::uuid)::text
+WHERE d.app_id=sqlc.arg(app_id)::uuid AND d.scope=sqlc.arg(scope)::text
+AND d.status='live' AND d.id<>sqlc.arg(deployment_id)::uuid
+AND d.canary_total_steps>0 AND COALESCE(NULLIF(d.rollout_state,''),'pending') IN ('pending','rolling_out')
+RETURNING d.id;
 
 
 -- name: SetRetainedServiceRolloutSiblingTraffic :execrows
