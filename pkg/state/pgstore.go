@@ -66,6 +66,7 @@ type PgStore struct {
 	pgCore
 	trafficAppsSuffix    string
 	trafficScopedBinding bool
+	realtimeEventSchemas *realtimeEventSchemaCache
 }
 
 // NewPgStore wraps a pool. The pool is owned by the caller; PgStore does not
@@ -73,7 +74,7 @@ type PgStore struct {
 // their LISTEN goroutine.
 func NewPgStore(pool *pgxpool.Pool, options ...StoreOption) *PgStore {
 	return &PgStore{pgCore: newPgCore(pool), trafficAppsSuffix: configuredTrafficAppsSuffix(options),
-		trafficScopedBinding: configuredTrafficScopedBinding(options)}
+		trafficScopedBinding: configuredTrafficScopedBinding(options), realtimeEventSchemas: newRealtimeEventSchemaCache()}
 }
 
 // Ping tests database connectivity through the underlying connection pool.
