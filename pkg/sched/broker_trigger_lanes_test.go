@@ -85,8 +85,11 @@ func TestDeletedOrSuspendedAppsDoNotConsumeBrokerRecords(t *testing.T) {
 		}
 		return false
 	}
-	if !listed() || !sched.XTriggerAppConsumes(ctx, store, app) {
-		t.Fatal("a live app's broker trigger is not polled")
+	if !listed() {
+		t.Fatal("a live app's broker trigger is not listed")
+	}
+	if !sched.XTriggerAppConsumes(ctx, store, app) {
+		t.Fatal("a live app's broker trigger may not consume")
 	}
 	deleted, err := store.ScheduleAppDeletion(ctx, app.ID, time.Now().Add(time.Hour))
 	if err != nil {

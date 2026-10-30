@@ -14239,7 +14239,7 @@ func (m *MemStore) ListEnabledTriggers(_ context.Context) ([]sqlc.Trigger, error
 	defer m.mu.Unlock()
 	var out []sqlc.Trigger
 	for _, t := range m.triggers {
-		app, live := m.apps[t.AppID.String()]
+		app, live := m.triggerAppLocked(t)
 		live = live && app.Status != AppDeleted
 		if t.Enabled && live && !m.workloadAdmissionRetiredLocked(t.AppID.String(), t.QueueBindingScope) && !m.rehearsalBrokerTriggerLocked(t) {
 			out = append(out, t)
