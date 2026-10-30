@@ -31,7 +31,7 @@ var cliTreeVerbs = []string{
 	"resize", "resync", "retire", "revoke", "review", "scan", "split", "start", "stop", "subscribe",
 	"unsubscribe", "suggest", "suspend", "test", "track", "use", "validate", "override", "advise",
 	"reset", "pull", "push", "signal", "generate", "void", "draft", "handoff", "end",
-	"open", "fail",
+	"open", "fail", "undelete",
 }
 
 // A path may end with a noun it lists or shows (`app instances`).
