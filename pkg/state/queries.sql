@@ -17559,15 +17559,42 @@ AND (sqlc.narg(release_id)::uuid IS NULL OR id=sqlc.narg(release_id)::uuid);
 
 -- name: RetireLiveDeploymentSiblings :execrows
 -- A retired sibling is a retained stable revision, not a manual dark
--- deployment, so it loses traffic_percent_explicit (Hunt 14 H14-71).
+-- deployment, so it loses traffic_percent_explicit (Hunt 14 H14-71). A
+-- retired canary that was still rolling out ends its rollout as aborted, so
+-- it never reads as in flight again (ADR-20261030102813, Hunt 14 H14-112).
 UPDATE deployments d SET status = CASE WHEN
     EXISTS(SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id=d.id AND p.expires_at>now())
     OR EXISTS(SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id=rm.release_id
         WHERE rm.deployment_id=d.id AND (rs.active OR rs.expires_at>now()))
     OR EXISTS(SELECT 1 FROM durable_work_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
-    THEN 'live' ELSE 'superseded' END, traffic_percent=0, traffic_percent_explicit=false
+    THEN 'live' ELSE 'superseded' END, traffic_percent=0, traffic_percent_explicit=false,
+    rollout_state = CASE WHEN d.canary_total_steps>0 AND COALESCE(NULLIF(d.rollout_state,''),'pending') IN ('pending','rolling_out')
+        THEN 'aborted' ELSE d.rollout_state END,
+    rollout_aborted_at = CASE WHEN d.canary_total_steps>0 AND COALESCE(NULLIF(d.rollout_state,''),'pending') IN ('pending','rolling_out')
+        THEN now() ELSE d.rollout_aborted_at END,
+    rollout_aborted_reason = CASE WHEN d.canary_total_steps>0 AND COALESCE(NULLIF(d.rollout_state,''),'pending') IN ('pending','rolling_out')
+        THEN 'superseded by deployment ' || (sqlc.arg(deployment_id)::uuid)::text ELSE d.rollout_aborted_reason END
 WHERE d.app_id=sqlc.arg(app_id)::uuid AND d.scope=sqlc.arg(scope)::text
 AND d.status='live' AND d.id<>sqlc.arg(deployment_id)::uuid;
+
+-- name: SupersedeInFlightCanarySiblings :many
+-- A newer canary replaces one still rolling out in its scope
+-- (ADR-20261030102813, Hunt 14 H14-112). The older canary leaves traffic
+-- and ends its rollout as aborted, so the newer canary has one serving
+-- predecessor to be judged against. A retained revision stays live at 0%,
+-- as in RetireLiveDeploymentSiblings.
+UPDATE deployments d SET status = CASE WHEN
+    EXISTS(SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id=d.id AND p.expires_at>now())
+    OR EXISTS(SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id=rm.release_id
+        WHERE rm.deployment_id=d.id AND (rs.active OR rs.expires_at>now()))
+    OR EXISTS(SELECT 1 FROM durable_work_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
+    THEN 'live' ELSE 'superseded' END, traffic_percent=0, traffic_percent_explicit=false,
+    rollout_state='aborted', rollout_aborted_at=sqlc.arg(aborted_at)::timestamptz,
+    rollout_aborted_reason='superseded by deployment ' || (sqlc.arg(deployment_id)::uuid)::text
+WHERE d.app_id=sqlc.arg(app_id)::uuid AND d.scope=sqlc.arg(scope)::text
+AND d.status='live' AND d.id<>sqlc.arg(deployment_id)::uuid
+AND d.canary_total_steps>0 AND COALESCE(NULLIF(d.rollout_state,''),'pending') IN ('pending','rolling_out')
+RETURNING d.id;
 
 
 -- name: SetRetainedServiceRolloutSiblingTraffic :execrows
