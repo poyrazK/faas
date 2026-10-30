@@ -59,6 +59,11 @@ page shows that site: "Published by claude.ai".
 Approval and denial redirects carry `iss`, the server's issuer, and the
 metadata advertises `authorization_response_iss_parameter_supported`.
 
+Codex then registers a bare loopback `/callback` instead of adding a random
+final path component, which was its defense against issuer mix-up. The
+operator's `http://127.0.0.1/callback/*` loopback rule therefore accepts the
+bare path as well as one plain component.
+
 ### 4. A client lasts as long as its grants
 
 Approving or sliding a grant extends its client's registration to the grant's

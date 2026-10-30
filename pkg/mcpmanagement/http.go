@@ -194,7 +194,13 @@ func validConfiguredRedirectURI(value string) bool {
 	return err == nil && len(value) <= 2048 && u.Scheme == "http" && loopbackHost(u.Hostname()) && u.User == nil && u.Fragment == "" && u.RawQuery == "" && u.Path == "/callback/*" && strings.HasSuffix(value, "/callback/*") && strings.Count(value, "*") == 1
 }
 
+// callbackSuffixAllowed matches /callback with at most one plain final path
+// component. Codex adds the component only for servers that do not name their
+// issuer (RFC 9207); this one does (ADR-20261030065746).
 func callbackSuffixAllowed(path string) bool {
+	if path == "/callback" {
+		return true
+	}
 	if !strings.HasPrefix(path, "/callback/") {
 		return false
 	}
