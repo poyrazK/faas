@@ -35,7 +35,7 @@ func (s *server) profileCapturesView(w http.ResponseWriter, r *http.Request, acc
 		view.Error = "Recent captures could not be listed."
 	}
 	view.Captures = captures
-	token, err := middleware.IssueForAuthenticatedNamed(s.sessions, profileCaptureAction, acct.ID, profileCaptureCookie)
+	token, err := middleware.IssueForAuthenticatedNamed(s.sessions, profileCaptureAction, actorAccount(r, acct).ID, profileCaptureCookie)
 	if err != nil {
 		view.Error = "Captures are temporarily unavailable."
 		return view

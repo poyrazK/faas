@@ -90,7 +90,7 @@ func (s *server) renderFailedEvents(w http.ResponseWriter, r *http.Request, log 
 		data.Events = data.Events[:dashboardFailedEventsMax]
 	}
 	if s.sessions != nil {
-		token, tokenErr := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardFailedEventsAction, acct.ID, dashboardFailedEventsCSRFCookie)
+		token, tokenErr := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardFailedEventsAction, actorAccount(r, acct).ID, dashboardFailedEventsCSRFCookie)
 		if tokenErr != nil {
 			log.Warn("dashboard failed events: issue csrf", "account_id", acct.ID, "err", tokenErr)
 		} else {
@@ -172,7 +172,7 @@ func (s *server) dashboardFailedEventAction(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	app, err := s.store.AppBySlug(r.Context(), slug)
-	if err != nil || app.AccountID != acct.ID {
+	if err != nil || !dashboardAppOwner(r, &acct, app) {
 		http.NotFound(w, r)
 		return
 	}
@@ -199,15 +199,16 @@ func (s *server) dashboardFailedEventAction(w http.ResponseWriter, r *http.Reque
 		s.log.Warn("dashboard failed event action", "action", action, "account_id", acct.ID, "app_id", app.ID, "event_id", eventID, "err", err)
 	}
 	flash := action + "ed"
+	actorID := actorAccount(r, acct).ID
 	if err != nil {
 		flash = "error"
 	} else if action == "replay" {
-		s.audit.Emit(r.Context(), "app.dlq.event_replayed", &acct.ID, map[string]any{
+		s.audit.Emit(r.Context(), "app.dlq.event_replayed", &actorID, map[string]any{
 			"app_id": app.ID, "event_id": event.ID, "source": event.Source,
 			"source_id": event.SourceID, "surface": "dashboard",
 		})
 	} else {
-		s.audit.Emit(r.Context(), "app.dlq.purged", &acct.ID, map[string]any{
+		s.audit.Emit(r.Context(), "app.dlq.purged", &actorID, map[string]any{
 			"app_id": app.ID, "event_id": event.ID, "count": 1,
 			"surface": "dashboard",
 		})
@@ -488,7 +489,7 @@ func failedEventsRedirect(slug, action string, count ...int) string {
 // created and the session may still see (appaccess.VisibleApps).
 func (s *server) dashboardFailedEventsApp(r *http.Request, acct state.Account, slug string) (state.App, bool) {
 	app, err := s.store.AppBySlug(r.Context(), slug)
-	if err != nil || app.AccountID != acct.ID {
+	if err != nil || !dashboardAppOwner(r, &acct, app) {
 		return state.App{}, false
 	}
 	visible, err := appaccess.VisibleApps(r, s.store, actorAccount(r, acct), []state.App{app})
