@@ -173,6 +173,9 @@ jobs:
       # compute hosts. Keep the shared storage.env credential read-only.
       APID_STORAGE_LIFECYCLE_ENV: ${{ secrets.COMPUTE_IMAGED_STORAGE_ENV }}
       RELEASE_TAG: ${{ inputs.release_tag }}
+      # The canary app the activation observer gates on. Unset, it defaults
+      # to an always-deployed app in scripts/ci/observe_remote_rollout.sh.
+      ROLLOUT_APP_PROBE_URL: ${{ vars.ROLLOUT_APP_PROBE_URL }}
       # The critical / best-effort service split is owned by
       # pkg/daemonunitspec (Entry.Critical) and shipped as
       # deploy/etc/daemons.json; the env lists that used to live here were
@@ -1427,6 +1430,9 @@ jobs:
       CP_HOST: ${{ secrets.CP_HOST || secrets.DO_HOST }}
       CP_SSH_KEY: ${{ secrets.CP_SSH_KEY || secrets.DO_SSH_KEY }}
       SLO_GATE: ${{ inputs.slo_gate }}
+      # The canary app the activation observer gates on. Unset, it defaults
+      # to an always-deployed app in scripts/ci/observe_remote_rollout.sh.
+      ROLLOUT_APP_PROBE_URL: ${{ vars.ROLLOUT_APP_PROBE_URL }}
     steps:
       - name: Install pinned cosign verifier
         env:
@@ -1762,6 +1768,9 @@ jobs:
       EXPECT_UNITS: ${{ inputs.units }}
       UNITS_LANE: ${{ inputs.units_lane }}
       SLO_GATE: ${{ inputs.slo_gate }}
+      # The canary app the activation observer gates on. Unset, it defaults
+      # to an always-deployed app in scripts/ci/observe_remote_rollout.sh.
+      ROLLOUT_APP_PROBE_URL: ${{ vars.ROLLOUT_APP_PROBE_URL }}
     steps:
       - name: Require a unit release, not a tag
         env:
