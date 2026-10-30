@@ -813,6 +813,35 @@ vmmd, the domain's other reader, keeps the fleet and host identities for
 - The contracted drop-in resets imaged's credentials and unsets the path,
   as for the other domains. imaged's other drop-ins all sort after it.
 
+## Implemented: trigger configs join the delivery domain
+
+Section 3's last crossing read goes: apid no longer opens a stored trigger
+config to update it.
+
+- **The merge keeps ciphertext.** `triggerconfig.MergeForUpdate` takes no
+  identity. For a credential the update omits, it carries over the stored
+  ciphertext, or a credential stored in plaintext before sealing. It drops
+  any ciphertext the client supplied. `SealMerged` then seals the update's
+  new credentials and keeps the carried ciphertext; `Seal`, for a new
+  trigger, still drops supplied ciphertext.
+  - The validator checks that a Kafka SASL password or TLS client key is
+    set. It sees the merge through `ValidationView`, where a kept
+    credential reads as a placeholder.
+  - An update that changes only the retry policy no longer fails that check
+    on a stored sealed password, and no longer drops it.
+  - A stored credential apid cannot open is kept as it is. schedd, which
+    opens it, reports it.
+- **apid seals to the delivery domain.** New credentials go to
+  `triggerConfigRecipients`: the delivery write mode's recipients, except
+  that domain mode still adds the fleet recipient. schedd opens trigger
+  configs with the delivery identity first, then the fleet and host
+  identities.
+- **Domain-only comes a release later.** A schedd of the previous release
+  opens trigger configs with the fleet key alone. So in this release apid
+  keeps sealing them to the fleet key too, and the migration does not
+  re-seal them. The release after makes them follow the write mode and
+  re-seals the stored ones; the delivery contract waits for that.
+
 ## CD and node join stage the domain keys
 
 Each domain's key pair is a pair of GitHub environment secrets:

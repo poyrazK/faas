@@ -149,8 +149,9 @@ var registry = []Spec{
 		cols("object_storage_s3_credentials", "secret_sealed"),
 	)},
 	// Trigger config envelopes (jsonb leaves, not listed here) belong to
-	// delivery too, but stay on the fleet key until apid stops opening a
-	// stored config to merge an update into it.
+	// delivery too. apid merges an update without opening the stored config
+	// and seals new credentials to the domain and, for now, the fleet key:
+	// a schedd of the previous release opens them with the fleet key alone.
 	{Domain: Delivery, Readers: []string{"schedd"}, Roles: bothRoles, Wired: true, Columns: join(
 		cols("execution_payloads", "sealed_payload"),
 		cols("app_webhooks", "secret_sealed"),
