@@ -53,7 +53,8 @@ not a rule problem.
 
 ## Symptom
 
-The customer reports 504 responses with `code: request_budget_exceeded`.
+The customer reports 503 responses with `code: request_budget_exceeded` (504
+before ADR-20261030115139; gateway logs and metrics still record 504).
 The dashboard panel shows a non-zero rate on
 `gateway_request_budget_exceeded_total{route="forward"}` (gatewayd-public)
 or `apid_request_budget_exceeded_total{route="admin"}` (apid).
