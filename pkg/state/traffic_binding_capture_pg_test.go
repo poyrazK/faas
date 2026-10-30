@@ -65,7 +65,7 @@ func TestPgTrafficBindingCaptureRecordsEverySource(t *testing.T) {
 		{"surface status", `UPDATE tenant_surfaces SET status='deleted' WHERE id=$1::uuid`, []any{surface.ID}, []string{"tenant.example.org"}},
 		{"alias insert", `INSERT INTO deployment_aliases(app_id,name,deployment_id) VALUES ($1,'blue',$2)`, []any{app.ID, deployment.ID}, []string{"+" + alias("blue")}},
 		{"alias delete", `DELETE FROM deployment_aliases WHERE app_id=$1 AND name='green'`, []any{app.ID}, []string{alias("green")}},
-		{"app rename", `UPDATE apps SET slug='capture-renamed' WHERE id=$1`, []any{app.ID}, append([]string{"capture-renamed" + suffix}, appHosts...)},
+		{"app rename", `UPDATE apps SET slug='capture-renamed' WHERE id=$1`, []any{app.ID}, append([]string{"+capture-renamed" + suffix}, appHosts...)},
 		{"app visibility", `UPDATE apps SET visibility='internal' WHERE id=$1`, []any{app.ID}, appHosts},
 		{"app no-op update", `UPDATE apps SET slug=slug WHERE id=$1`, []any{app.ID}, nil},
 		{"environment delete", `DELETE FROM project_environments WHERE id=$1::uuid`, []any{environment}, []string{"env.example.org"}},
@@ -136,12 +136,16 @@ func TestPgTrafficBindingCaptureCoversEveryClaimSource(t *testing.T) {
 	sources := map[string]bool{}
 	ctes := regexp.MustCompile(`(?i)\b(\w+)\s+AS\s+\(`)
 	tables := regexp.MustCompile(`(?i)\b(?:FROM|JOIN)\s+([a-z_]+)\b\s*([^(\s]|$)`)
-	for _, sql := range []string{block("ReadTrafficBindingClaims"), analysis[start:end]} {
+	for _, sql := range []struct{ query, region string }{
+		{block("ReadTrafficBindingClaims"), block("ReadTrafficBindingClaims")},
+		{analysis, analysis[start:end]},
+	} {
+		// A name the query defines as a CTE anywhere is not a table.
 		local := map[string]bool{}
-		for _, match := range ctes.FindAllStringSubmatch(sql, -1) {
+		for _, match := range ctes.FindAllStringSubmatch(sql.query, -1) {
 			local[strings.ToLower(match[1])] = true
 		}
-		for _, match := range tables.FindAllStringSubmatch(sql, -1) {
+		for _, match := range tables.FindAllStringSubmatch(sql.region, -1) {
 			if name := strings.ToLower(match[1]); !local[name] {
 				sources[name] = true
 			}
@@ -172,9 +176,10 @@ func TestPgTrafficBindingCaptureCoversEveryClaimSource(t *testing.T) {
 	}
 }
 
-// The binding-writer suites run under the fleet-wide guard, whose commit
-// check diffs the fleet; the capture must record every hostname that diff
-// finds changed.
+// Representative binding-writer suites run under the fleet-wide guard, whose
+// commit check diffs the fleet; the capture must record every hostname that
+// diff finds changed. Together the modes change every claim and reservation
+// source. The full suites run in the scoped equivalence tests.
 func TestPgTrafficBindingCaptureCoversWriterSuites(t *testing.T) {
 	var mu sync.Mutex
 	gaps := map[string][]string{}
@@ -187,7 +192,7 @@ func TestPgTrafficBindingCaptureCoversWriterSuites(t *testing.T) {
 	})
 	t.Cleanup(func() { SetTrafficBindingCaptureObserver(nil) })
 	t.Run("app withdrawals", func(t *testing.T) {
-		for _, mode := range trafficAppWithdrawalModes {
+		for _, mode := range []string{"visibility", "status", "delete"} {
 			t.Run(mode, func(t *testing.T) {
 				store, pool, account, app := trafficHostPGFixture(t)
 				testTrafficAppWithdrawal(t, store, account, app, mode, func(rule EdgeRule) { seedPgDomainRemovalLegacy(t, pool, rule) }, func() string { return pgTrafficAppBindingIntent(t, pool) })
@@ -195,7 +200,7 @@ func TestPgTrafficBindingCaptureCoversWriterSuites(t *testing.T) {
 		}
 	})
 	t.Run("tenant transitions", func(t *testing.T) {
-		for _, mode := range trafficTenantRemovalModes {
+		for _, mode := range []string{"surface-suspend", "surface-delete", "offboarding", "global-pending"} {
 			t.Run(mode, func(t *testing.T) {
 				store, pool, account, app := trafficHostPGFixture(t)
 				testTrafficTenantRemoval(t, store, account, app, mode, func(rule EdgeRule) { seedPgDomainRemovalLegacy(t, pool, rule) }, func() string { return pgTrafficTenantIntent(t, pool) })
@@ -203,7 +208,7 @@ func TestPgTrafficBindingCaptureCoversWriterSuites(t *testing.T) {
 		}
 	})
 	t.Run("account retirement", func(t *testing.T) {
-		for _, mode := range []string{"tenant", "domain", "global", "redirect"} {
+		for _, mode := range []string{"tenant", "domain", "redirect"} {
 			t.Run(mode, func(t *testing.T) {
 				store, pool, account, app := trafficHostPGFixture(t)
 				testTrafficAccountRetirement(t, store, account, app, mode, func(host, id string) {
@@ -215,7 +220,7 @@ func TestPgTrafficBindingCaptureCoversWriterSuites(t *testing.T) {
 		}
 	})
 	t.Run("alias withdrawal", func(t *testing.T) {
-		for _, mode := range []string{"alias", "account", "purge-app"} {
+		for _, mode := range []string{"alias", "purge-app"} {
 			t.Run(mode, func(t *testing.T) {
 				_, pool, account, app := trafficHostPGFixture(t)
 				store := NewPgStore(pool, WithTrafficAppsDomain("apps.example.test"))
@@ -224,8 +229,8 @@ func TestPgTrafficBindingCaptureCoversWriterSuites(t *testing.T) {
 		}
 	})
 	t.Run("domain removal", func(t *testing.T) {
-		for _, mode := range trafficDomainRemovalModes {
-			for _, form := range trafficDomainRemovalForms {
+		for _, mode := range []string{"exact", "wildcard", "scoped"} {
+			for _, form := range []string{"plain"} {
 				t.Run(mode+"/"+form, func(t *testing.T) {
 					store, pool, _, app := trafficHostPGFixture(t)
 					peerAccount, peer := globalTrafficPeer(t, store, "removal-peer")
@@ -236,7 +241,7 @@ func TestPgTrafficBindingCaptureCoversWriterSuites(t *testing.T) {
 		}
 	})
 	t.Run("domain publication", func(t *testing.T) {
-		for _, form := range trafficDomainPublicationForms {
+		for _, form := range []string{"plain", "environment"} {
 			t.Run(form, func(t *testing.T) {
 				store, pool, account, _, app, environment := trafficEnvironmentPGFixture(t)
 				peerAccount, peer := globalTrafficPeer(t, store, "publication-peer")

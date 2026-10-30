@@ -64,11 +64,12 @@ BEGIN
             PERFORM traffic_binding_capture_append('app+' || E'\t' || NEW.id::text);
         ELSIF TG_OP = 'DELETE' THEN
             PERFORM traffic_binding_capture_append('slug' || E'\t' || OLD.slug);
+        ELSIF NEW.slug IS DISTINCT FROM OLD.slug THEN
+            -- The new slug's primary URL is a newly reserved name.
+            PERFORM traffic_binding_capture_append('app+' || E'\t' || NEW.id::text);
+            PERFORM traffic_binding_capture_append('slug' || E'\t' || OLD.slug);
         ELSE
             PERFORM traffic_binding_capture_append('app' || E'\t' || NEW.id::text);
-            IF NEW.slug IS DISTINCT FROM OLD.slug THEN
-                PERFORM traffic_binding_capture_append('slug' || E'\t' || OLD.slug);
-            END IF;
         END IF;
     WHEN 'project_environments' THEN
         PERFORM traffic_binding_capture_append('environment' || E'\t' ||
