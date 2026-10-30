@@ -1172,14 +1172,13 @@ func cmdAppDispatch(args []string) int {
 		return 1
 	}
 	slug := args[0]
+	if code, ok := cmdAppConditions(slug, args[1:]); ok {
+		return code
+	}
 	if len(args) >= 2 {
 		switch args[1] {
 		case subHealth:
 			return cmdAppHealth(slug, args[2:])
-		case subStatus:
-			return cmdAppStatus(slug, args[2:])
-		case subWait:
-			return cmdAppWait(slug, args[2:])
 		case subChanges:
 			return cmdAppChanges(slug, args[2:])
 		case subScale:

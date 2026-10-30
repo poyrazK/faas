@@ -27,6 +27,21 @@ const (
 	exitWaitTimeout = 3
 )
 
+// cmdAppConditions runs `app <slug> status` and `app <slug> wait`, and
+// reports false for any other subcommand.
+func cmdAppConditions(slug string, args []string) (int, bool) {
+	if len(args) == 0 {
+		return 0, false
+	}
+	switch args[0] {
+	case subStatus:
+		return cmdAppStatus(slug, args[1:]), true
+	case subWait:
+		return cmdAppWait(slug, args[1:]), true
+	}
+	return 0, false
+}
+
 // cmdAppStatus prints an app's conditions (ADR-20261030151810).
 func cmdAppStatus(slug string, args []string) int {
 	fs := newFlagSet("app status", flag.ContinueOnError)
