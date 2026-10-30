@@ -438,9 +438,19 @@ type server struct {
 	// signups caps self-service accounts per address and network a day
 	// (signup_network_limit.go).
 	signups *signupNetworkLimiter
+	// loginFailures caps failed password sign-ins per email address across
+	// client addresses (login_failure_limit.go).
+	loginFailures *loginFailureLimiter
+	// apiRequests is each account's budget of authenticated API requests a
+	// minute (api_request_budget.go). Nil (bare test servers) is unlimited.
+	apiRequests *apiRequestBudget
 	// exportsInFlight holds the account IDs with a REST export bundle being
 	// built: one at a time per account.
 	exportsInFlight sync.Map
+	// exportReplays bounds the retries of one export (handlers_account.go).
+	exportReplays exportReplayCounter
+	// queueReceives caps queue receive long-polls (handlers_invocations.go).
+	queueReceives queueReceiveSlots
 	// domainCreateLimiter caps pending DNS challenges per client IP. The
 	// durable store separately enforces per-account outstanding-claim quotas;
 	// this edge bucket prevents one source from cycling accounts to create an
@@ -458,6 +468,8 @@ type server struct {
 	// page). Wired in production via WithStatusCache; nil keeps the
 	// route functional but degraded (returns source=empty payload).
 	statusCache *statusCache
+	// statusOverlay caches slo.json's operator-event read (status.go).
+	statusOverlay statusOverlayCache
 
 	// preflightOnce guards lazy construction of the public migration
 	// preflight handler (GET /v1/preflight). It is built on first use so the
@@ -467,6 +479,7 @@ type server struct {
 	preflightHandler   *preflight.Handler
 	statusMetrics      *statusMetrics
 	idempotencyMetrics *idempotencyMetrics
+	signupMetrics      *signupMetrics
 	devLoopMetrics     *devloop.Metrics
 	// releaseMetrics instruments the release guards; nil records nothing.
 	releaseMetrics *releasemetrics.Metrics
@@ -792,6 +805,11 @@ func (s *server) WithOpsMetrics(ctx context.Context, ops *wire.OpsMetrics) *serv
 		s.idempotencyMetrics = nil
 	} else if s.idempotencyMetrics == nil || s.idempotencyMetrics.registry != ops.Registry() {
 		s.idempotencyMetrics = newIdempotencyMetrics(ops.Registry(), ops.MetricPrefix())
+	}
+	if ops == nil {
+		s.signupMetrics = nil
+	} else if s.signupMetrics == nil || s.signupMetrics.registry != ops.Registry() {
+		s.signupMetrics = newSignupMetrics(ops.Registry(), ops.MetricPrefix())
 	}
 	if ops == nil {
 		s.releaseMetrics = nil
@@ -1492,6 +1510,8 @@ func newServerWithDeps(
 		dashboardExportLimiter: dashboardExportLimiter,
 		securityMail:           newSecurityMailLimiter(),
 		signups:                newSignupNetworkLimiter(),
+		loginFailures:          newLoginFailureLimiter(),
+		apiRequests:            newAPIRequestBudget(),
 		domainCreateLimiter:    domainCreateLimiter,
 		audit:                  aud,
 		runtimeConfig:          newRuntimeConfigManager(nil),
@@ -5733,7 +5753,10 @@ func (s *server) cliAuthChain(h http.Handler) http.Handler {
 	h = middleware.RequestID(h)
 	h = middleware.Recovery(s.log)(h)
 	h = middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{
-		CountStatuses: []int{http.StatusTooManyRequests, http.StatusBadRequest},
+		// 410 is an exchange for a code that is unknown, used or expired:
+		// what guessing codes produces, and at most once per real login
+		// (bug hunt 2026-10-28 H67).
+		CountStatuses: []int{http.StatusTooManyRequests, http.StatusBadRequest, http.StatusGone},
 		Log:           s.log,
 	}, s.cliAuthLimiter)(h)
 	return h

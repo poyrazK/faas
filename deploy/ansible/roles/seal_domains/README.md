@@ -9,7 +9,8 @@ are wired, each opened by one daemon:
 - `edge`: app basic-auth credentials and log drain headers (gatewayd-internal);
 - `alerting`: alert rule webhook secrets, notification channel destinations
   and MCP readiness provider keys (meterd, on the control plane like
-  `outbound`);
+  `outbound`; `faas_seal_domain_alerting_contracted` contracts it as step 4
+  below does for `outbound`);
 - `storage`: Gregale S3 secret access keys (s3-gatewayd, on the control
   plane; `faas_seal_domain_storage_contracted` contracts it as step 4 below
   does for `outbound`);

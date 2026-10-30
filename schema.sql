@@ -259,16 +259,17 @@ BEGIN
                         AND i.state IN ('waking','cold_booting','running','draining','warm')), 0)::bigint
       INTO node_vcpu_budget, node_cpu_budget, used_vcpu, used_cpu
       FROM compute_nodes n WHERE n.id = p_node_id;
-    -- A quiet-pause discount is the scheduler's measurement; it never lets
-    -- bookings pass api.QuietPauseMaxVCPUOvercommitPercent (300) of a budget.
-    quiet_vcpu := least(greatest(coalesce(p_quiet_vcpu, 0), 0), node_vcpu_budget * 2);
+    -- A discount is the scheduler's measurement: quiet-paused instances, and
+    -- since ADR 20261029151111 measured instances' unused CPU. It never lets
+    -- bookings pass api.MeasuredCPUMaxOvercommitPercent (700) of a budget.
+    quiet_vcpu := least(greatest(coalesce(p_quiet_vcpu, 0), 0), node_vcpu_budget * 6);
     IF p_vcpu > 0 AND node_vcpu_budget > 0 AND used_vcpu - quiet_vcpu + p_vcpu > node_vcpu_budget THEN
         RAISE EXCEPTION 'node vCPU headroom exhausted'
             USING ERRCODE = '23514', CONSTRAINT = 'instance_node_capacity',
                   DETAIL = format('resource=vcpu used_vcpu=%s quiet_vcpu=%s admit_vcpu=%s budget_vcpu=%s',
                                   used_vcpu, quiet_vcpu, p_vcpu, node_vcpu_budget);
     END IF;
-    quiet_cpu := least(greatest(coalesce(p_quiet_cpu_millicores, 0), 0), node_cpu_budget * 2);
+    quiet_cpu := least(greatest(coalesce(p_quiet_cpu_millicores, 0), 0), node_cpu_budget * 6);
     IF p_cpu_millicores > 0 AND node_cpu_budget > 0 AND used_cpu - quiet_cpu + p_cpu_millicores > node_cpu_budget THEN
         RAISE EXCEPTION 'node CPU headroom exhausted'
             USING ERRCODE = '23514', CONSTRAINT = 'instance_node_capacity',
@@ -32890,6 +32891,7 @@ CREATE TABLE public.cli_auth_codes (
     expires_at timestamp with time zone NOT NULL,
     consumed_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    device_hash bytea,
     CONSTRAINT cli_auth_codes_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'consumed'::text, 'expired'::text])))
 );
 
@@ -70629,6 +70631,13 @@ CREATE INDEX ci_runs_account_created_idx ON public.ci_runs USING btree (account_
 
 
 --
+-- Name: cli_auth_codes_device_hash; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX cli_auth_codes_device_hash ON public.cli_auth_codes USING btree (device_hash) WHERE (device_hash IS NOT NULL);
+
+
+--
 -- Name: cli_auth_codes_pending_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -74686,6 +74695,13 @@ CREATE INDEX managed_postgres_usage_account_period_idx ON public.managed_postgre
 --
 
 CREATE INDEX managed_realtime_channel_batches_cleanup_idx ON public.managed_realtime_channel_batches USING btree (endpoint_id, created_at);
+
+
+--
+-- Name: managed_realtime_channel_heads_held_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_channel_heads_held_idx ON public.managed_realtime_channel_heads USING btree (endpoint_id) WHERE (oldest_sequence < next_sequence);
 
 
 --

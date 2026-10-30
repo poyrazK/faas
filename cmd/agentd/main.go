@@ -60,7 +60,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		defer stopMetrics()
 	}
 	store := agentstore.New(pool)
-	replica := agentd.New(store, scheddpb.NewScheddClient(conn), cfg, log)
+	replica := agentd.New(store, scheddpb.NewScheddClient(conn), cfg, log).WithMetrics(metrics)
 	closeDeps, err := withOptionalFeatures(ctx, os.Getenv, replica, features{store: store, grants: state.NewPgStore(pool), metrics: metrics}, log)
 	if err != nil {
 		return err

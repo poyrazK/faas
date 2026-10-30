@@ -48,6 +48,7 @@ func TestObjectS3MigrationReplayPreservesSessions(t *testing.T) {
 	// are append-only, so replaying the S3 set restores its own versions; put
 	// the current ones back before comparing everything else exactly.
 	laterFunctions := []string{
+		"assert_object_copy_source_authority(uuid,uuid,text,uuid,text,uuid)", // per-key copy deletion (20261026174634100)
 		"fence_object_deletion()", // per-key deletion fences (20261025120158599)
 		"fence_object_lifecycle_deletion()",
 		"fence_object_lifecycle_multipart()",

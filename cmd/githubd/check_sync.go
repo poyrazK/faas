@@ -68,10 +68,20 @@ func syncDeploymentCheck(ctx context.Context, pool *pgxpool.Pool, checks *github
 		return nil
 	}
 	if appStatus == string(state.AppDeleted) && (kind == string(state.DeploymentKindPreview) || previewOf != "") {
-		return syncTornDownPreview(ctx, checks, tornDownPreview{
+		preview := tornDownPreview{
 			deploymentID: deploymentID, installationID: installationID, repo: repo, commitSHA: commitSHA,
 			environment: githubDeploymentEnvironment(kind, scope, appSlug, previewOf), appSlug: appSlug, prNumber: previewPRNumber,
-		})
+		}
+		// A build the teardown cancelled (or never started) left this
+		// commit's preview check queued or building.
+		if previewPRNumber > 0 && !previewDeploymentFinished(status) {
+			shared, err := commitHeadsOtherOpenPR(ctx, pool, installationID, repo, commitSHA, previewPRNumber)
+			if err != nil {
+				return err
+			}
+			preview.unfinished = !shared
+		}
+		return syncTornDownPreview(ctx, checks, preview)
 	}
 	phase, ok := checkPhaseForDeploymentStatusForRollout(status, rolloutState, canaryTotalSteps)
 	if !ok {
@@ -148,8 +158,10 @@ func syncDeploymentCheck(ctx context.Context, pool *pgxpool.Pool, checks *github
 			}
 			if !setCheck.CurrentHead {
 				// A stale deployment (or a preview from before revision sets were
-				// recorded) must not overwrite the current PR-level check.
-				return nil
+				// recorded) must not overwrite the current PR-level check, but
+				// the check of a commit no open PR previews any more is
+				// completed rather than left pending.
+				return writeInactivePreviewCheck(ctx, checks, installationID, repo, commitSHA, status, domain, setCheck)
 			}
 			phase, summary = setCheck.Phase, setCheck.Summary
 			if setCheck.RootSlug != "" {
@@ -231,10 +243,58 @@ func githubDeploymentEnvironment(kind, scope, appSlug, previewOf string) string 
 	return prefix + "/" + appSlug
 }
 
+// writeInactivePreviewCheck completes the gregale-preview check of a commit
+// that stopped being an open PR's head before its build finished. A closed
+// PR's head reports its environment's final result; a superseded commit
+// reports neutral once its deployment ends. A deployment that went live as
+// the head already completed its check, so its later supersession is not
+// reported over that result.
+func writeInactivePreviewCheck(ctx context.Context, checks *githubd.ChecksAPI, installationID int64, repo, commitSHA, status, domain string, check previewSetCheck) error {
+	switch {
+	case check.ClosedHead:
+		if check.Phase != githubdgrpc.CheckPhaseLive && check.Phase != githubdgrpc.CheckPhaseFailed {
+			return nil
+		}
+		previewURL := ""
+		if check.RootSlug != "" {
+			previewURL = fmt.Sprintf("https://%s.%s", check.RootSlug, domain)
+		}
+		return checks.WritePreviewCheckForInstallation(ctx, installationID, repo, commitSHA, check.Phase,
+			previewURL, "The pull request is closed. "+check.Summary)
+	case check.SupersededBy != "":
+		switch state.DeploymentStatus(status) {
+		case state.DeployLive, state.DeployFailed, state.DeployCancelled:
+			return checks.WritePreviewCheckNeutralForInstallation(ctx, installationID, repo, commitSHA, "Preview superseded",
+				fmt.Sprintf("A newer commit (%s) replaced this one in the pull request's preview.", shortCommit(check.SupersededBy)))
+		}
+	}
+	return nil
+}
+
+// previewDeploymentFinished reports whether a preview deployment reached a
+// result its check reported: live (later superseded) or failed.
+func previewDeploymentFinished(status string) bool {
+	switch state.DeploymentStatus(status) {
+	case state.DeployLive, state.DeploySuperseded, state.DeployFailed:
+		return true
+	}
+	return false
+}
+
+func shortCommit(sha string) string {
+	if len(sha) > 12 {
+		return sha[:12]
+	}
+	return sha
+}
+
 type tornDownPreview struct {
 	deploymentID, repo, commitSHA, environment, appSlug string
 	installationID                                      int64
 	prNumber                                            int
+	// unfinished: the preview's build never finished, so its commit's
+	// preview check is still queued or building.
+	unfinished bool
 }
 
 // syncTornDownPreview reports a torn-down preview to GitHub. Its deployment
@@ -260,6 +320,12 @@ func syncTornDownPreview(ctx context.Context, checks *githubd.ChecksAPI, preview
 	}
 	if preview.prNumber <= 0 {
 		return nil
+	}
+	if preview.unfinished {
+		if err := checks.WritePreviewCheckNeutralForInstallation(ctx, preview.installationID, preview.repo, preview.commitSHA,
+			"Preview torn down", "The preview was torn down before this commit finished building."); err != nil {
+			return err
+		}
 	}
 	marker := "<!-- gregale-preview:" + preview.appSlug + " -->"
 	body := fmt.Sprintf("%s\n### Gregale preview — torn down\n\nThe preview was torn down: its pull request closed, its lease expired, or it was destroyed. Push a commit to an open pull request to create it again.\n\nCommit: `%s`",

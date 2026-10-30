@@ -325,22 +325,30 @@ func idempotentCommand(args []string) bool {
 		sub = args[1]
 	}
 	switch args[0] {
-	case "app", "park", "wake", "ps", "logs", "metrics", "deployments", "deploys",
-		"whoami", "capabilities", "usage", "invoices", "audit-events", "status":
+	case "logs", "metric", "whoami", "audit", "status":
 		return true
-	case "apps":
+	case "app":
 		return sub != "restore"
+	case "release":
+		return sub == "list" || sub == "get" || sub == "logs" || sub == "stages"
+	case "feature":
+		return sub == "list"
+	case "billing":
+		return sub == "usage" || sub == "invoices"
 	case "env":
-		// push sets absolute values, so repeating it changes nothing.
-		return sub == "history" || sub == "diff" || sub == "pull" || sub == "push"
-	case "secrets":
-		// set and unset write absolute values; a repeat at most restarts
-		// the app again.
-		return sub == "list" || sub == "set" || sub == "unset"
-	case "crons":
-		return sub == "rm" || sub == "runs" || sub == "list"
-	case "keys":
-		return sub == "rm" || sub == "list"
+		// set, unset and push write absolute values; a repeat at most
+		// restarts the app again.
+		return sub == "list" || sub == "set" || sub == "unset" ||
+			sub == "history" || sub == "diff" || sub == "pull" || sub == "push"
+	case "cron":
+		return sub == "delete" || sub == "runs" || sub == "list"
+	case "key":
+		return sub == "delete" || sub == "list"
+	case "bucket":
+		return sub == "list" || sub == "delete"
+	case "add":
+		// add bucket reuses the bucket and binding an attempt left behind.
+		return sub == "bucket"
 	}
 	return false
 }
@@ -525,7 +533,7 @@ func (tg *target) app(t *testing.T, name string) string {
 			t.Logf("keeping %s for debugging (GREGALE_E2E_KEEP=1)", slug)
 			return
 		}
-		res := tg.run(t, 2*time.Minute, "apps", "rm", slug, "--yes")
+		res := tg.run(t, 2*time.Minute, "app", "delete", slug, "--yes")
 		if res.exit != 0 && !strings.Contains(res.problem(), "not_found") {
 			t.Logf("warning: cleanup could not delete %s (%s); the next run's sweeper removes it", slug, res.problem())
 		}
@@ -608,7 +616,7 @@ func (tg *target) deployVersion(t *testing.T, slug, version string, extra ...str
 // metrics, so a slow stage shows in the report and in run-to-run history.
 func (tg *target) logDeployStages(t *testing.T, id string) {
 	t.Helper()
-	res := tg.run(t, time.Minute, "deploys", "show", id)
+	res := tg.run(t, time.Minute, "release", "stages", id)
 	if res.exit != 0 {
 		t.Logf("deploy stages unavailable: %s", res.problem())
 		return
@@ -633,7 +641,7 @@ func (tg *target) deleteShared() {
 	if tg.sharedSlug == "" {
 		return
 	}
-	cmd := exec.Command(tg.cli, "--non-interactive", "apps", "rm", tg.sharedSlug, "--yes")
+	cmd := exec.Command(tg.cli, "--non-interactive", "app", "delete", tg.sharedSlug, "--yes")
 	cmd.Env = tg.cliEnv(tg.token)
 	cmd.Dir = tg.home
 	if out, err := cmd.CombinedOutput(); err != nil && !strings.Contains(string(out), "not_found") {
@@ -683,7 +691,7 @@ func (tg *target) deployWith(t *testing.T, slug string, smoke bool, args ...stri
 	// (adaptive: 1/10/50%, up to 2 min each) may hold each stage another
 	// 5 min on a low-traffic app (ADR-1446), so allow ~21 min plus margin.
 	if str(receipt, "status") == "live" && str(receipt, "rollout_state") == "rolling_out" {
-		waited := tg.ok(t, 27*time.Minute, "deployment", "wait", str(receipt, "id"),
+		waited := tg.ok(t, 27*time.Minute, "release", "wait", str(receipt, "id"),
 			"--rollout", "--timeout", "25m")
 		final := object(t, waited.stdout)
 		receipt["rollout_state"] = field(final, "rollout_state")
@@ -706,7 +714,7 @@ func (tg *target) deployWith(t *testing.T, slug string, smoke bool, args ...stri
 func (tg *target) followSubmitted(t *testing.T, slug string, since time.Time, lost cliResult) cliResult {
 	t.Helper()
 	t.Logf("warning: deploy %s lost the API (%s); looking for the submitted deployment", slug, lost.problem())
-	list := tg.run(t, time.Minute, "deployments", "--app", slug, "--limit", "1")
+	list := tg.run(t, time.Minute, "release", "list", "--app", slug, "--limit", "1")
 	if list.exit != 0 {
 		return lost
 	}
@@ -721,7 +729,7 @@ func (tg *target) followSubmitted(t *testing.T, slug string, since time.Time, lo
 	}
 	id := str(latest, "id")
 	t.Logf("following deployment %s submitted at %s", id, created.Format(time.RFC3339))
-	return tg.run(t, deployLimit+5*time.Minute, "deployment", "wait", id, "--rollout", "--timeout", deployLimit.String())
+	return tg.run(t, deployLimit+5*time.Minute, "release", "wait", id, "--rollout", "--timeout", deployLimit.String())
 }
 
 // retryableAbort names a failed deploy's platform-capacity cause: an
@@ -754,7 +762,7 @@ func (tg *target) deployLogTail(t *testing.T, slug string, receipt []byte) strin
 		return "(no deployment id in the receipt)"
 	}
 	// Build and deploy log; `logs --deployment` reads runtime logs only.
-	res := tg.run(t, time.Minute, "deploys", "logs", str(docs[0], "id"), "--limit", "60")
+	res := tg.run(t, time.Minute, "release", "logs", str(docs[0], "id"), "--limit", "60")
 	return tail(string(res.stdout)+string(res.stderr), 4000)
 }
 
@@ -801,9 +809,9 @@ func (tg *target) scopedKey(t *testing.T, name string, scopes ...string) string 
 	key := apiKeyRe.FindString(string(res.stdout))
 	id := str(object(t, res.stdout), "id")
 	if key == "" || id == "" {
-		t.Fatalf("keys add printed no key or id")
+		t.Fatalf("key create printed no key or id")
 	}
-	t.Cleanup(func() { tg.run(t, time.Minute, "keys", "rm", id) })
+	t.Cleanup(func() { tg.run(t, time.Minute, "key", "delete", id) })
 	return key
 }
 
@@ -930,7 +938,16 @@ var httpClient = &http.Client{
 }
 
 func fetch(method, rawURL string, header map[string]string) httpResult {
-	req, err := http.NewRequest(method, rawURL, nil)
+	return send(method, rawURL, header, nil)
+}
+
+// send is fetch with a request body; a nil body sends none.
+func send(method, rawURL string, header map[string]string, body []byte) httpResult {
+	var reader io.Reader
+	if body != nil {
+		reader = bytes.NewReader(body)
+	}
+	req, err := http.NewRequest(method, rawURL, reader)
 	if err != nil {
 		return httpResult{err: err}
 	}
@@ -944,8 +961,8 @@ func fetch(method, rawURL string, header map[string]string) httpResult {
 		return httpResult{err: err, elapsed: time.Since(start)}
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
-	return httpResult{status: resp.StatusCode, header: resp.Header, body: body, elapsed: time.Since(start), err: err}
+	got, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	return httpResult{status: resp.StatusCode, header: resp.Header, body: got, elapsed: time.Since(start), err: err}
 }
 
 func get(rawURL string) httpResult { return fetch(http.MethodGet, rawURL, nil) }
@@ -1034,7 +1051,7 @@ func (tg *target) preflight() error {
 	if len(who) != 1 {
 		return fmt.Errorf("whoami printed %d JSON documents", len(who))
 	}
-	apps, err := tg.cliJSON("apps")
+	apps, err := tg.cliJSON("app", "list")
 	if err != nil {
 		return fmt.Errorf("list apps: %w", err)
 	}
@@ -1090,14 +1107,14 @@ func (tg *target) sweep(hours string) error {
 	if err != nil || h <= 0 {
 		return fmt.Errorf("GREGALE_E2E_SWEEP_HOURS %q: want a positive number", hours)
 	}
-	docs, err := tg.cliJSON("apps")
+	docs, err := tg.cliJSON("app", "list")
 	if err != nil {
 		return fmt.Errorf("list apps: %w", err)
 	}
 	cutoff := time.Now().Add(-time.Duration(h * float64(time.Hour)))
 	// Previews first: an app with a live preview cannot be deleted.
 	for _, preview := range stalePreviews(docs, cutoff, tg.runID) {
-		destroy := exec.Command(tg.cli, "--non-interactive", "preview", "destroy", preview)
+		destroy := exec.Command(tg.cli, "--non-interactive", "preview", "delete", preview)
 		destroy.Env = tg.cliEnv(tg.token)
 		destroy.Dir = tg.home
 		if out, err := destroy.CombinedOutput(); err != nil {
@@ -1108,7 +1125,7 @@ func (tg *target) sweep(hours string) error {
 	}
 	stale := staleSlugs(docs, cutoff, tg.runID)
 	for _, slug := range stale {
-		rm := exec.Command(tg.cli, "--non-interactive", "apps", "rm", slug, "--yes")
+		rm := exec.Command(tg.cli, "--non-interactive", "app", "delete", slug, "--yes")
 		rm.Env = tg.cliEnv(tg.token)
 		rm.Dir = tg.home
 		if out, err := rm.CombinedOutput(); err != nil {

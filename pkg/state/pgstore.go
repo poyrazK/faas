@@ -851,20 +851,22 @@ func (s *PgStore) UpdateAccountPlan(ctx context.Context, id string, plan api.Pla
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	// Lock the account so its default spend cap moves with the plan
+	// (ADR-20261029180000) and, on a downgrade to Free, so a concurrent
+	// streaming opt-in cannot race the flags cleared below.
+	var from string
+	var capCents *int64
+	if err := tx.QueryRow(ctx,
+		`select plan, overage_cap_cents from accounts where id = $1 for update`, id,
+	).Scan(&from, &capCents); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
 	if plan == api.PlanFree {
 		// The streaming plan invariant rejects a paid -> Free account
-		// transition while any app still opts in. Lock the account before
-		// clearing those flags so a concurrent opt-in cannot race the
-		// downgrade and leave an invalid pair of rows behind.
-		var accountID string
-		if err := tx.QueryRow(ctx,
-			`select id::text from accounts where id = $1 for update`, id,
-		).Scan(&accountID); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return ErrNotFound
-			}
-			return err
-		}
+		// transition while any app still opts in.
 		if _, err := tx.Exec(ctx,
 			`update apps
 			    set streaming_enabled = false
@@ -874,7 +876,8 @@ func (s *PgStore) UpdateAccountPlan(ctx context.Context, id string, plan api.Pla
 			return err
 		}
 	}
-	tag, err := tx.Exec(ctx, `update accounts set plan = $2 where id = $1`, id, string(plan))
+	capCents = planChangeOverageCap(api.Plan(from), plan, capCents)
+	tag, err := tx.Exec(ctx, `update accounts set plan = $2, overage_cap_cents = $3 where id = $1`, id, string(plan), capCents)
 	if err != nil {
 		return err
 	}
@@ -1688,8 +1691,17 @@ func (s *PgStore) GetAPIKey(ctx context.Context, accountID, keyID string) (APIKe
 		accountID, keyID))
 }
 
+// TouchKeyLastUsed stamps last_used_at. An active, non-admin mcp-login key
+// also slides (ADR-20261028205920): use extends it to api.MCPLoginKeyIdle from
+// now, never past api.MCPLoginKeyMaxAge after creation, and never shortens it.
 func (s *PgStore) TouchKeyLastUsed(ctx context.Context, keyID string) error {
-	_, err := s.pool.Exec(ctx, `update api_keys set last_used_at = now() where id = $1`, keyID)
+	_, err := s.pool.Exec(ctx, `update api_keys set last_used_at = now(),
+		expires_at = case
+			when label = $2 and status = 'active' and expires_at is not null and not ('admin' = any(scopes))
+			then greatest(expires_at, least(now() + make_interval(secs => $3), created_at + make_interval(secs => $4)))
+			else expires_at
+		end
+		where id = $1`, keyID, api.MCPLoginKeyLabel, api.MCPLoginKeyIdle.Seconds(), api.MCPLoginKeyMaxAge.Seconds())
 	return err
 }
 
@@ -1818,13 +1830,13 @@ func (s *PgStore) RotateAPIKey(ctx context.Context, accountID, oldKeyID string, 
 		newLabel = old.Label
 	}
 	newKey, err := scanAPIKeyRow(ctx, tx,
-		`insert into api_keys (account_id, key_sha256, label, scopes, status, rotated_from_id, org_id)
-		 values ($1, $2, $3, $4, 'active', $5, $6)
+		`insert into api_keys (account_id, key_sha256, label, scopes, status, rotated_from_id, org_id, expires_at)
+		 values ($1, $2, $3, $4, 'active', $5, $6, $7)
 		 returning id, account_id, org_id, key_sha256, coalesce(label,''), scopes, created_at,
 		           last_used_at,
 		           expires_at, status, revoked_at, rotated_from_id,
 		           coalesce(host(created_ip),'') as created_ip, coalesce(created_ua,'') as created_ua, parent_key_id`,
-		accountID, newHash, newLabel, old.Scopes, oldKeyID, old.OrgID)
+		accountID, newHash, newLabel, old.Scopes, oldKeyID, old.OrgID, old.ExpiresAt)
 	if err != nil {
 		return APIKey{}, APIKey{}, err
 	}
@@ -2117,13 +2129,13 @@ func (s *PgStore) RotateOrgAPIKey(ctx context.Context, orgID, oldKeyID string, n
 		newLabel = old.Label
 	}
 	newKey, err := scanAPIKeyRow(ctx, tx,
-		`insert into api_keys (account_id, key_sha256, label, scopes, status, rotated_from_id, org_id)
-		 values ($1, $2, $3, $4, 'active', $5, $6)
+		`insert into api_keys (account_id, key_sha256, label, scopes, status, rotated_from_id, org_id, expires_at)
+		 values ($1, $2, $3, $4, 'active', $5, $6, $7)
 		 returning id, account_id, org_id, key_sha256, coalesce(label,''), scopes, created_at,
 		           last_used_at,
 		           expires_at, status, revoked_at, rotated_from_id,
 		           coalesce(host(created_ip),'') as created_ip, coalesce(created_ua,'') as created_ua, parent_key_id`,
-		old.AccountID, newHash, newLabel, old.Scopes, oldKeyID, old.OrgID)
+		old.AccountID, newHash, newLabel, old.Scopes, oldKeyID, old.OrgID, old.ExpiresAt)
 	if err != nil {
 		return APIKey{}, APIKey{}, err
 	}
@@ -2221,14 +2233,14 @@ func (s *PgStore) RotateOrgAPIKeyWithProvenance(ctx context.Context, orgID, oldK
 		newLabel = old.Label
 	}
 	newKey, err := scanAPIKeyRow(ctx, tx,
-		`insert into api_keys (account_id, key_sha256, label, scopes, status, rotated_from_id, org_id, created_ip, created_ua, parent_key_id)
-		 values ($1, $2, $3, $4, 'active', $5, $6, $7, $8, $9)
+		`insert into api_keys (account_id, key_sha256, label, scopes, status, rotated_from_id, org_id, created_ip, created_ua, parent_key_id, expires_at)
+		 values ($1, $2, $3, $4, 'active', $5, $6, $7, $8, $9, $10)
 		 returning id, account_id, org_id, key_sha256, coalesce(label,''), scopes, created_at,
 		           last_used_at,
 		           expires_at, status, revoked_at, rotated_from_id,
 		           coalesce(host(created_ip),'') as created_ip, coalesce(created_ua,'') as created_ua, parent_key_id`,
 		old.AccountID, newHash, newLabel, old.Scopes, oldKeyID, old.OrgID,
-		nullString(createdIP), nullString(createdUA), parent)
+		nullString(createdIP), nullString(createdUA), parent, old.ExpiresAt)
 	if err != nil {
 		return APIKey{}, APIKey{}, err
 	}
@@ -4658,6 +4670,18 @@ func (s *PgStore) RenameApp(ctx context.Context, accountID, oldSlug, newSlug str
 	if err != nil {
 		return App{}, err
 	}
+	// PR previews name their production app by slug. Left on the old slug
+	// they read as orphaned, and the preview janitor tore every open one
+	// down within minutes of the rename. They keep their pr-<N>-<old> hosts
+	// until the PR's next head replaces them.
+	if updated.PreviewOfSlug == "" {
+		if _, err := tx.Exec(ctx, `update apps set preview_of_slug = $3
+			 where account_id = $1 and preview_of_slug = $2
+			   and coalesce(preview_pr_number, 0) > 0 and status <> 'deleted'`,
+			accountID, oldSlug, newSlug); err != nil {
+			return App{}, fmt.Errorf("state: relink PR previews of renamed app: %w", err)
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return App{}, err
 	}
@@ -5859,9 +5883,9 @@ func (s *PgStore) ApplyProjectPlan(
 		    (account_id, slug, type, runtime, ram_mb, idle_timeout_s, max_concurrency,
 		     status, manifest, min_instances, egress_allowlist, public_auth_ip_allowlist,
 		     project_id, root_dir, workload_name, workload_class, start_command,
-		     preview_of_slug, preview_pr_number, preview_pr_state, preview_expires_at, cpu_millicores, org_id, platform_tenant_required)
+		     preview_of_slug, preview_pr_number, preview_pr_state, preview_expires_at, cpu_millicores, org_id, platform_tenant_required, visibility)
 		values ($1, $2, $3, $4, $5, $6, $7, 'active', $8::jsonb, $9, $10::cidr[], $11::cidr[],
-		        $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, coalesce(nullif($22, '')::uuid, (select id from orgs where personal_org = true and personal_owner_account_id = $1)), $23)
+		        $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, coalesce(nullif($22, '')::uuid, (select id from orgs where personal_org = true and personal_owner_account_id = $1)), $23, $24)
 		returning ` + appsSelectColumns
 		row := tx.QueryRow(ctx, insertAppSQL,
 			project.AccountID, a.Slug, string(appType), runtime, ramMB, idle, maxConcurrency,
@@ -5875,6 +5899,7 @@ func (s *PgStore) ApplyProjectPlan(
 			// CreateApp / CreateAppIfUnderQuota directly.
 			nullString(a.PreviewOfSlug), a.PreviewPrNumber,
 			nullString(a.PreviewPrState), nullableTimestamptzPtr(a.PreviewExpiresAt), cpuMillicores, nullString(a.OrgID), a.PlatformTenantRequired,
+			string(api.NormalizeAppVisibility(a.Visibility)),
 		)
 		app, err := scanApp(row)
 		if err != nil {
@@ -6249,15 +6274,18 @@ func insertProjectAppInTx(ctx context.Context, tx pgx.Tx, app App) (App, error) 
 			 project_id, root_dir, workload_name, start_command, min_instances,
 			 streaming_enabled, eviction_priority, require_authn, public_auth_mode,
 			 websocket_enabled, route_metrics_enabled, maintenance_mode, app_protocol,
-		 consumer_auth_mode, cpu_millicores, workload_class, org_id, platform_tenant_required)
-		values ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,coalesce(nullif($25, '')::uuid, (select id from orgs where personal_org = true and personal_owner_account_id = $1)), $26)
+		 consumer_auth_mode, cpu_millicores, workload_class, org_id, platform_tenant_required, visibility)
+		values ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,coalesce(nullif($25, '')::uuid, (select id from orgs where personal_org = true and personal_owner_account_id = $1)), $26, $27)
 		returning `+appsSelectColumns,
 		app.AccountID, app.Slug, string(appType), nullString(app.Runtime), ramMB,
 		maxConcurrency, string(status), manifestBytes, nullString(app.ProjectID),
 		app.RootDir, app.WorkloadName, nullString(app.StartCommand), app.MinInstances,
 		app.StreamingEnabled, EvictionPriorityOrBestEffort(app.EvictionPriority), app.RequireAuthn,
 		publicAuth, app.WebSocketEnabled, app.RouteMetricsEnabled, app.MaintenanceMode,
-		protocol, string(consumerAuth), cpu, string(workloadClass), nullString(app.OrgID), app.PlatformTenantRequired)
+		protocol, string(consumerAuth), cpu, string(workloadClass), nullString(app.OrgID), app.PlatformTenantRequired,
+		// A Compose service without ports is created internal
+		// (ADR-20261022131852); the column default would publish it.
+		string(api.NormalizeAppVisibility(app.Visibility)))
 	return scanApp(row)
 }
 
@@ -6837,13 +6865,39 @@ func (s *PgStore) RenameGitHubRepository(ctx context.Context, installationID int
 	if installationID <= 0 || oldRepoFullName == "" || newRepoFullName == "" {
 		return ErrNotFound
 	}
-	_, err := s.pool.Exec(ctx, `
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("state: begin GitHub repository rename: %w", err)
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }() //nolint:errcheck // no-op after Commit
+	if _, err := tx.Exec(ctx, `
 		update apps
 		   set github_repo_full_name = $3
 		 where github_install_id = $1
-		   and github_repo_full_name = $2`, installationID, oldRepoFullName, newRepoFullName)
-	if err != nil {
+		   and github_repo_full_name = $2`, installationID, oldRepoFullName, newRepoFullName); err != nil {
 		return fmt.Errorf("state: rename GitHub repository binding: %w", err)
+	}
+	// PR preview environments are keyed by repository name. Left on the old
+	// name they never close, and they keep their members from being retired
+	// when the PR's next head (delivered under the new name) replaces them.
+	// A PR already recorded under the new name keeps that row; its old-name
+	// row is dropped, since any set naming a member keeps it from retiring.
+	if _, err := tx.Exec(ctx, `
+		update pr_preview_sets old_set
+		   set repo_full_name = $3, updated_at = now()
+		 where old_set.installation_id = $1 and old_set.repo_full_name = $2
+		   and not exists (select 1 from pr_preview_sets renamed
+		     where renamed.installation_id = $1 and renamed.repo_full_name = $3
+		       and renamed.pr_number = old_set.pr_number)`, installationID, oldRepoFullName, newRepoFullName); err != nil {
+		return fmt.Errorf("state: rename PR preview environments: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		delete from pr_preview_sets where installation_id = $1 and repo_full_name = $2`,
+		installationID, oldRepoFullName); err != nil {
+		return fmt.Errorf("state: drop superseded PR preview environments: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("state: commit GitHub repository rename: %w", err)
 	}
 	return nil
 }
@@ -15115,7 +15169,7 @@ func (s *PgStore) createCorsPresetIfUnderQuotaOnce(ctx context.Context, p CorsPr
 	if err := s.validateTrafficProjection(ctx, "cors_preset", corsPresetTrafficProjection(proposed)); err != nil {
 		return CorsPreset{}, err
 	}
-	tx, err := s.beginTrafficPolicyMutation(ctx, uuidToPgtype(p.AccountID))
+	tx, err := s.beginRuleOnlyTrafficPolicyMutation(ctx, uuidToPgtype(p.AccountID))
 	if err != nil {
 		return CorsPreset{}, fmt.Errorf("state: begin tx: %w", err)
 	}
@@ -15221,7 +15275,7 @@ func (s *PgStore) UpdateCorsPreset(ctx context.Context, accountID, id string, p 
 	if err := s.validateTrafficProjection(ctx, "cors_preset", corsPresetTrafficProjection(p)); err != nil {
 		return CorsPreset{}, err
 	}
-	tx, err := s.beginTrafficPolicyMutation(ctx, uuidToPgtype(accountID))
+	tx, err := s.beginRuleOnlyTrafficPolicyMutation(ctx, uuidToPgtype(accountID))
 	if err != nil {
 		return CorsPreset{}, err
 	}
@@ -27290,6 +27344,7 @@ func (s *PgStore) ConsumeCliAuthCode(ctx context.Context, tokenHash []byte) (api
 		`update cli_auth_codes
 		 set consumed_at = now()
 		 where token_hash = $1
+		   and device_hash is null
 		   and status = 'consumed'
 		   and account_id is not null
 		   and consumed_at is null
@@ -27304,9 +27359,11 @@ func (s *PgStore) ConsumeCliAuthCode(ctx context.Context, tokenHash []byte) (api
 			// polling CLI: if the row exists and is still pending
 			// we tell it to keep waiting; otherwise we stop.
 			var status string
+			// A device-bound row answers the short code as if it did
+			// not exist (H67).
 			err2 := s.pool.QueryRow(ctx,
 				`select status from cli_auth_codes
-				 where token_hash = $1 and expires_at > now()`,
+				 where token_hash = $1 and device_hash is null and expires_at > now()`,
 				tokenHash,
 			).Scan(&status)
 			if err2 == nil && status == string(api.CliAuthStatusPending) {
@@ -27317,6 +27374,55 @@ func (s *PgStore) ConsumeCliAuthCode(ctx context.Context, tokenHash []byte) (api
 		return "", "", err
 	}
 	return api.CliAuthStatusConsumed, accountID, nil
+}
+
+// IssueCliAuthDeviceCode implements CliAuthDeviceCodeStore. A colliding
+// short code is refused rather than ignored: it would bind the device code
+// to someone else's pending row.
+func (s *PgStore) IssueCliAuthDeviceCode(ctx context.Context, tokenHash, deviceHash []byte, expiresAt time.Time) error {
+	tag, err := s.pool.Exec(ctx,
+		`insert into cli_auth_codes (token_hash, device_hash, expires_at) values ($1, $2, $3)
+		 on conflict do nothing`,
+		tokenHash, deviceHash, expiresAt)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrConflict
+	}
+	return nil
+}
+
+// ConsumeCliAuthDeviceCode implements CliAuthDeviceCodeStore with
+// ConsumeCliAuthCode's contract, keyed by the device code's hash.
+func (s *PgStore) ConsumeCliAuthDeviceCode(ctx context.Context, deviceHash []byte) (api.CliAuthStatus, string, error) {
+	var accountID string
+	err := s.pool.QueryRow(ctx,
+		`update cli_auth_codes
+		 set consumed_at = now()
+		 where device_hash = $1
+		   and status = 'consumed'
+		   and account_id is not null
+		   and consumed_at is null
+		   and expires_at > now()
+		 returning account_id`,
+		deviceHash,
+	).Scan(&accountID)
+	if err == nil {
+		return api.CliAuthStatusConsumed, accountID, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return "", "", err
+	}
+	var status string
+	err = s.pool.QueryRow(ctx,
+		`select status from cli_auth_codes where device_hash = $1 and expires_at > now()`,
+		deviceHash,
+	).Scan(&status)
+	if err == nil && status == string(api.CliAuthStatusPending) {
+		return api.CliAuthStatusPending, "", nil
+	}
+	return api.CliAuthStatusExpired, "", ErrNotFound
 }
 
 // AppendDeploymentLog inserts one row and returns the seq Postgres
@@ -27468,6 +27574,17 @@ func (s *PgStore) DeleteAccount(ctx context.Context, id string) error {
 
 	if err := sqlc.New().DeleteTrafficAccountInvocations(ctx, tx, uuidToPgtype(id)); err != nil {
 		return fmt.Errorf("state: delete account invocations: %w", err)
+	}
+	// Per-request telemetry and logs of the personal apps, as the app purge
+	// removes them: the apps' rows go below, and request_telemetry has no FK
+	// to them, so it outlived the account (bug hunt 2026-10-28 B11).
+	for _, step := range []struct{ name, sql string }{
+		{"request_telemetry", `delete from request_telemetry where app_id in (select id from apps where account_id = $1)`},
+		{"log_events", `delete from log_events where app_id in (select id from apps where account_id = $1)`},
+	} {
+		if _, err := tx.Exec(ctx, step.sql, mustPgUUID(id)); err != nil {
+			return fmt.Errorf("state: purge account %s: %w", step.name, err)
+		}
 	}
 
 	for _, purge := range []func(context.Context, sqlc.DBTX, pgtype.UUID) error{sqlc.New().ObjectStoragePurgeIdentityEventOutbox, sqlc.New().ObjectStoragePurgeIdentityEventLog} {

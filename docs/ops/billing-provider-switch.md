@@ -103,9 +103,15 @@ enabled metered USD prices backed by their configured meters. The compute meter 
 included calendar-month allowance locally before sending overage events, so
 do not add a Polar meter-credit benefit to these products.
 
+In the organization's settings (Settings, Subscriptions), turn off multiple
+subscriptions per customer. Gregale follows one subscription per account;
+with the setting on, a customer who completes two checkouts pays twice.
+
 `apid` validates the catalog at boot. `meterd` validates it before starting
-the usage loop. A missing product, archived resource, wrong recurring period,
-wrong fixed price, wrong meter, or meter-credit benefit prevents startup.
+the usage loop. An organization that allows multiple subscriptions, a token
+that does not see exactly one organization, a missing product, archived
+resource, wrong recurring period, wrong fixed price, wrong meter, or
+meter-credit benefit prevents startup (ADR-20261029180000).
 
 ## Runtime behavior
 
@@ -270,7 +276,11 @@ can retry. A valid duplicate delivery is acknowledged without repeating the
 state transition.
 
 Polar disables an endpoint after 10 consecutive failed deliveries and does not
-re-enable it. Re-enable it in the Polar dashboard once apid is healthy.
+re-enable it. apid counts every answer in
+`apid_ops_total{op="polar_webhook",code}`, and `FaasPolarWebhookFailing` fires
+after three failed answers in 30 minutes (runbook
+[PolarBillingWebhooks](../runbooks/PolarBillingWebhooks.md)). Re-enable the
+endpoint in the Polar dashboard once apid is healthy.
 Deliveries Polar dropped in the meantime are not replayed, but every 30
 minutes one apid replica compares each Polar-billed account with its
 customer's subscriptions and applies the missed transition when two passes in

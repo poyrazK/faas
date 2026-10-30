@@ -96,7 +96,8 @@ func (f secretEntryFixture) page(t *testing.T, req api.SecretEntryResponse) (str
 	w := httptest.NewRecorder()
 	f.server.ServeHTTP(w, r)
 	body := w.Body.String()
-	if w.Code != 200 || !strings.Contains(body, "STRIPE_KEY") || !strings.Contains(body, "billing-api") || strings.Contains(body, "<script>alert") || strings.Contains(body, req.ExchangeCode) || !strings.Contains(body, `type="password"`) || w.Header().Get("Cache-Control") != "no-store" {
+	// The page names the key that asked (bug hunt 2026-10-28 H54).
+	if w.Code != 200 || !strings.Contains(body, "STRIPE_KEY") || !strings.Contains(body, "billing-api") || !strings.Contains(body, "API key &#34;bridge&#34;") || strings.Contains(body, "<script>alert") || strings.Contains(body, req.ExchangeCode) || !strings.Contains(body, `type="password"`) || w.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("unsafe or missing entry page=%d %s", w.Code, body)
 	}
 	csrf := regexp.MustCompile(`name="csrf_token" value="([^"]+)"`).FindStringSubmatch(body)

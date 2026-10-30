@@ -35,7 +35,8 @@ import (
 // grypeMatch is the slim subset of the Grype JSON output we
 // consume. The full schema is documented at
 // https://github.com/anchore/grype/blob/main/schema/json/schema-9.0.json
-// (issue #464 / extension): we now decode vulnerability.{id,fix.versions[0]}
+// (issue #464 / extension): we now decode vulnerability.{id,fix.versions},
+// matchDetails[].fix.suggestedVersion
 // and artifact.{name,version,locations[].path} in addition to severity,
 // so the typed Vulnerability in the jsonb payload (PR-3 sink) carries
 // the data the dashboard's per-row "Path" column renders. The
@@ -61,6 +62,13 @@ type grypeMatch struct {
 		Version   string          `json:"version"`
 		Locations []grypeLocation `json:"locations"`
 	} `json:"artifact"`
+	// MatchDetails carries Grype's suggested fix for the matched package's
+	// own version line (matchDetails[].fix.suggestedVersion).
+	MatchDetails []struct {
+		Fix *struct {
+			SuggestedVersion string `json:"suggestedVersion"`
+		} `json:"fix"`
+	} `json:"matchDetails"`
 }
 
 // grypeLocation is one element of artifact.locations — the per-file
@@ -341,7 +349,7 @@ func parseGrypeOutput(raw []byte, dir string) (*ScanResult, error) {
 			Severity: normalizeGrypeSeverity(m.Vulnerability.Severity),
 			Package:  m.Artifact.Name,
 			Version:  m.Artifact.Version,
-			FixedIn:  vulnFixedIn(m.Vulnerability.Fix.Versions),
+			FixedIn:  vulnFixedIn(m),
 			Paths:    vulnPaths(m.Artifact.Locations),
 		})
 	}
@@ -379,15 +387,22 @@ func validDebugFSScanDiagnostics(stdout, stderr []byte) bool {
 	return true
 }
 
-// vulnFixedIn picks the first fix version Grype reports. Future
-// extension: persist all of fix.versions[] in a follow-up if a CVE
-// carries multiple fixed versions (rare in practice — Grype usually
-// emits one fixed-version string per CVE).
-func vulnFixedIn(versions []string) string {
-	if len(versions) == 0 {
+// vulnFixedIn picks the fix for the matched package. An advisory for a
+// product with several release lines lists one fix per line (Node.js:
+// 11.0.0, 20.x, 22.x, …), and the first one is usually an old line's:
+// node 22.23.3 was reported as fixed in 11.0.0. Grype's suggested version
+// compares the fixes with the package's own version format; without one,
+// the first listed fix is kept.
+func vulnFixedIn(m grypeMatch) string {
+	for _, detail := range m.MatchDetails {
+		if detail.Fix != nil && detail.Fix.SuggestedVersion != "" {
+			return detail.Fix.SuggestedVersion
+		}
+	}
+	if len(m.Vulnerability.Fix.Versions) == 0 {
 		return ""
 	}
-	return versions[0]
+	return m.Vulnerability.Fix.Versions[0]
 }
 
 // vulnPaths flattens artifact.locations[].path into a single slice.

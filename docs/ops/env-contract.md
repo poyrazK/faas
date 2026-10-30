@@ -157,6 +157,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_COMPUTE_VCPUS` | vmmd | `dropin` |  |  | `` | host vCPU count reported by node_join |
 | `FAAS_CONSUMER_USAGE_OUTBOX_ROOT` | gatewayd-internal | `default` |  |  | `` | optional durable financial usage spool override; defaults to /var/lib/faas/consumer-usage |
 | `FAAS_CONTROL_PLANE_API_TARGET` | gatewayd-public, shared | `unit` |  |  | `` |  |
+| `FAAS_COSIGN_BIN` | imaged, shared | `default` |  | /usr/local/bin/cosign | `` | the release-pinned cosign node join stages; imaged runs it offline to verify platform base provenance (ADR-20261029155852) |
 | `FAAS_CPU_TEMPLATE` | vmmd | `default` |  |  | `` | optional Firecracker CPU template every guest boots with (ADR-20261024225612), e.g. T2CL for a Cascade Lake + Ice Lake cell; empty default boots with the host CPUID; vmmd refuses a template its host CPU is not documented as safe on |
 | `FAAS_CRASH_SNAPSHOTS` | apid, gatewayd-internal, schedd, vmmd | `default` |  |  | `` | exact opt-in for ADR-733 crash snapshots; apid serves the routes, gatewayd-internal requests 5xx captures, schedd captures and vmmd serves the guest SDK capture receiver only when 1; default off |
 | `FAAS_CUSTOM_DASHBOARDS_ENABLED` | apid | `default` |  | 0 | `` | ADR-20261022173833 operator gate for /v1/dashboards (saved custom dashboards); explicit 1 enables the internal preview |
@@ -411,6 +412,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_HOST_KEY_PATH` | gatewayd-internal, gatewayd-public, vmmd | `default` |  |  | `` |  |
 | `FAAS_HSTS_ENABLED` | apid, shared | `runtime-config` |  |  | `` |  |
 | `FAAS_HTTP_ADMISSION` | vmmd | `default` |  |  | `` | ADR-570 kill switch; empty or on enforces the per-VM HTTP admission cap, off lifts it on that node (permits stay tracked); vmmd restart applies |
+| `FAAS_IMAGED_BASE_PROVENANCE` | imaged, shared | `dropin` |  | observe | `` | off, observe or enforce: what imaged does with a platform base whose SLSA provenance does not verify (ADR-20261029155852); 99-faas-base-provenance.conf drop-in from compute_only_service (faas_imaged_base_provenance_mode, empty = observe); enforce refuses the base; any other value stops imaged |
 | `FAAS_IMAGED_METRICS_ADDR` | imaged | `default` |  |  | `` |  |
 | `FAAS_IMAGED_NODE_NAME` | shared | `default` |  |  | `` |  |
 | `FAAS_IMAGED_PARALLEL_PREP` | imaged | `default` |  |  | `` | optional boolean switch (ADR-20261029174438): imaged prepares up to ImagedImagePrepWorkers deployments at once instead of one at a time, never the same deployment twice; production default is off |
@@ -590,6 +592,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_OCI_TIMEOUT_SECONDS` | shared | `envfile` |  |  | `` |  |
 | `FAAS_OCI_USERNAME` | shared | `envfile` |  |  | `` | read-only runtime identity in /etc/faas/storage.env; imaged and vmmd lifecycle override in /etc/faas/imaged-storage.env |
 | `FAAS_OFF_HOST_BACKUP_RCLONE_CONFIG` | postgres | `script` |  |  | `` | LoadCredential= path on the postgresql@.service drop-in; consumed by the archive_command shell in the postgres role |
+| `FAAS_OIDC_EXCHANGE_AUDIENCES` | apid, shared | `default` |  |  | `` | comma-separated OIDC audiences a token exchange accepts besides gregale; unset accepts only gregale (docs/auth.md) |
 | `FAAS_OPERATIONS_WORKLOAD_ISSUER` | apid | `default` |  |  | `url` | optional Operations workload issuer override; configures runtime trust without enabling customer admission |
 | `FAAS_OPERATIONS_WORKLOAD_JWKS_PATH` | apid | `default` |  |  | `path-exists` | optional public Operations workload JWKS override; missing trust denies runtime reports; customer admission remains closed |
 | `FAAS_OPERATION_APPROVAL_INPUTS_ACCOUNTS` | apid, shared | `default` |  |  | `` | comma-separated account UUIDs approval input forms (ADR-20261019001500) are available to; unset admits none and ignores existing forms |

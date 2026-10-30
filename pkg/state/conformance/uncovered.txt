@@ -9,7 +9,6 @@
 # contract is unpinned there, which is how both stores came to return zero
 # from every live-instance reader while the suite sat green (#1666, #1669,
 # #1672). Sorted; keep it that way.
-APIKeyByHash
 AbortMigratingInstance
 AbortServiceRollout
 AccountByEmail
@@ -83,7 +82,6 @@ CountAppEnvInScope
 CountAppRegistryCredentials
 CountAppSecrets
 CountAppTrustedSigners
-CountAppsWithEvictionPriority
 CountAuthDefaultFlippedApps
 CountDataUpstreamsByApp
 CountDeployedApps
@@ -98,6 +96,7 @@ CountNewErrorFingerprintsSince
 CountOpenAPIDocsByAccount
 CountOpenAPIImportsByAccount
 CountOpenUploadSessionsByAccountApp
+CountOtherBillingSubjectAppsWithEvictionPriority
 CountPendingInvocations
 CountPendingOrgInvitations
 CountTenantHostnamesForSurface
@@ -109,7 +108,6 @@ CrashCapturesToEncrypt
 CrashCapturesToPurge
 CrashCapturesToStage
 CrashSnapshotSettingsFor
-CreateAPIKeyWithExpiry
 CreateAccountWithPersonalOrg
 CreateAlertRuleIfUnderQuota
 CreateAppFork
@@ -557,7 +555,6 @@ TakeOverAbandonedAppFork
 TenantSurfaceByHostname
 TouchConsumerKeyLastUsed
 TouchInstancesWithRequestDelta
-TouchKeyLastUsed
 TouchSessionLastSeen
 TouchTenantSurfaceForRenewal
 TrafficAnomalyAggregate

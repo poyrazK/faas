@@ -10,16 +10,6 @@
     "since": "2026-10-26"
   },
   {
-    "step": "TestServeAndObserve/http_request_logs",
-    "bug": "gregale logs --source http answers 404 no such API route",
-    "since": "2026-10-26"
-  },
-  {
-    "step": "TestServeAndObserve/runtime_logs",
-    "bug": "gregale logs fails with 'Traffic security verification unavailable'; the first request after a deploy can get a false 429 app_concurrency_reached (observed 0 < limit 1)",
-    "since": "2026-10-27"
-  },
-  {
     "step": "TestPublicSurface/status_incidents",
     "bug": "GET /v1/status/incidents answers 404 no such API route (the inventory lists it as the public incidents API)",
     "since": "2026-10-26"
@@ -56,7 +46,12 @@
   },
   {
     "step": "TestMultiServiceProject/deploy_project",
-    "bug": "a Compose service without ports deploys as a worker and its first boot fails with execution_mode_conflict (worker vs characterized http) once it listens, so an internal API cannot deploy; fixed by #5840 (ADR-20261029120000), known until it is released",
+    "bug": "the internal api service (Compose, no ports) fails deployment_verification_unavailable: imaged smokes it through its public host, which the gateway never routes for an internal app, so it gets 404 until the recovery window ends (Hunt 14 H14-124 on rc.307; #5840 made it an http service, #5934 made it really internal); fixed by the internal-app smoke skip, known until it is released",
+    "since": "2026-10-29"
+  },
+  {
+    "step": "TestObjectStorage/object_storage_enabled",
+    "bug": "object storage is still preview (GA row 108): gregale feature list reports object-storage disabled until s3_enabled is on and the capability is released to the e2e account, and the journey's other steps report blocked; remove once the owner turns it on",
     "since": "2026-10-29"
   }
 ]

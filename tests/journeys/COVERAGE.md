@@ -56,8 +56,19 @@ covered. Update this table when a journey or a GA row changes.
 44 of the 46 GA rows have at least one journey; 143 and 157 need a test
 inbox and a browser. The "Not covered" column lists the remaining gaps.
 
-Beta rows with a journey ahead of their GA promotion:
+## GA candidates
 
-| # | Capability | Journeys and steps | Not covered |
+Rows not yet GA whose journeys exist ahead of a promotion, so the
+evidence is in place before the tier changes. A step whose capability is
+hidden for the account (`gregale capabilities`) skips, so the evidence
+needs the capability released to the test account first; on 2026-10-29
+custom metric history, SLOs and synthetic checks were hidden for it.
+
+| # | Capability (tier today) | Journeys and steps | Not covered |
 |---|---|---|---|
-| 74 | Edge rules, rule lists | `TestEdgeRules` (redirect, response header and its update, IP refusal covering HEAD, a list-keyed rule and the list's edit, history and rollback, delete; each change checked on 12 requests across the edge gateways as soon as the CLI returns, #2683) | the other kinds (covered by `TestE2E_EdgeRules_*` in `cmd/e2e`), `gregale.yaml` routing, trace, WAF and challenge |
+| 74 | Edge rules, rule lists (beta) | `TestEdgeRules` (redirect, response header and its update, IP refusal covering HEAD, a list-keyed rule and the list's edit, history and rollback, delete; each change checked on 12 requests across the edge gateways as soon as the CLI returns, #2683) | the other kinds, `gregale.yaml` routing and trace (covered by `TestE2E_EdgeRules_*` in `cmd/e2e`), WAF and challenge |
+| 108 | Object storage: buckets, signed URLs, S3 gateway, multipart uploads (preview) | `TestObjectStorage`: `object_storage_enabled`, `create_bucket` (`add bucket` on an app made with `deploy --create-only`), `list_bucket`, `retried_create_keeps_one_bucket` (CLI and API), `signed_url_unicode_key`, `signed_url_empty_object`, AWS SDK for Go v2 on `s3.gregale.dev` with an API-minted credential (`s3_put_get`, `s3_multipart_upload` (5.5 MiB in two parts), `s3_copy_object`, `s3_list_objects` (paged), `s3_delete_object`), `other_tenant_credential_denied`, `forged_signature_denied`, `unsigned_request_denied` (list, read, write), `delete_non_empty_bucket_refused` (binding kept), `empty_bucket`, `revoked_credential_denied`, `delete_bucket` | versioning, Object Lock, retention and legal holds, lifecycle rules, change notifications, CORS rules, encryption defaults and keys: all still preview. Also public buckets, upload routes, API-key bucket grants, an app reading its injected `GREGALE_S3_*` settings, `gregale bucket upload/download`, cross-bucket copy, and flexible checksums (the SDK sends them only where required). The suite runs as one account, so a second app's same-named bucket stands in for another account's credential. Unlike the other journeys here, it does not skip while the capability is unavailable: `object_storage_enabled` is a known failure (`known_failures.json`) and the other steps report blocked |
+| 122 | Custom metrics and OTLP metric ingest (beta) | `TestCustomMetricsSLOsAndSynthetics`: `custom_metric` (push and read back through the API), `otlp_metrics` (OTLP/HTTP JSON gauge, name normalised) | OTLP protobuf exports; counters; custom metric history (`gregale metrics --custom`, internal); OTLP needs the custom metric history operator switch |
+| 125 | Alerts and notification channels (beta) | `TestAlertsAndChannels`: `rule_fires` (request_count rule), `webhook_verified` (the probe's `/hook` answers 200 only for a valid signature), `channel_notified` (the fire is recorded on a Slack channel), `channel_test_send` | real Slack, PagerDuty and email deliveries (no test workspace or inbox: the channel targets a Slack webhook Slack refuses); alert presets; rollback actions; incidents |
+| 128 | SLOs and error budgets (preview) | `TestCustomMetricsSLOsAndSynthetics/slo` (create, status) | attainment, budget and burn numbers (hourly rollups; a fresh app has none); SLO alerts |
+| 129 | Synthetic checks (preview) | `TestCustomMetricsSLOsAndSynthetics/synthetic_check` (create, first run passes, delete) | 24 h and 7 d uptime; failing runs; synthetic check alerts |

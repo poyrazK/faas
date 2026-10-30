@@ -88,7 +88,7 @@ jobs:
     runs-on: ubuntu-latest
     # Browser acceptance precedes the full credential and CLI integration run;
     # cold Go builds need enough time to finish both stages on hosted runners.
-    timeout-minutes: 45
+    timeout-minutes: 60
     services:
       postgres:
         image: mirror.gcr.io/library/postgres:16
@@ -167,4 +167,6 @@ jobs:
           GOGC: 30
           GOMEMLIMIT: 2GiB
           GOMAXPROCS: 2
-        run: go test -p 1 ./pkg/managedpostgres/... ./cmd/gregale ./pkg/gregalemanifest -count=1
+        # cmd/gregale outgrew go test's default 10-minute package timeout on
+        # two CPUs (panic at 600 s in run 41003329673; 501 s on a laptop).
+        run: go test -p 1 -timeout=25m ./pkg/managedpostgres/... ./cmd/gregale ./pkg/gregalemanifest -count=1

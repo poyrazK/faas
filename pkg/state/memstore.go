@@ -2520,6 +2520,15 @@ func (m *MemStore) UpdateAccountPlan(_ context.Context, id string, plan api.Plan
 			}
 		}
 	}
+	var current *int64
+	if cents, ok := m.overageCapCents[id]; ok {
+		current = &cents
+	}
+	if next := planChangeOverageCap(a.Plan, plan, current); next == nil {
+		delete(m.overageCapCents, id)
+	} else {
+		m.overageCapCents[id] = *next
+	}
 	a.Plan = plan
 	m.storeRouteCheckAccountLocked(id, a)
 	now := time.Now().UTC()
@@ -3187,6 +3196,7 @@ func (m *MemStore) RotateOrgAPIKeyWithProvenance(_ context.Context, orgID, oldKe
 		Hash:            newHash,
 		Label:           newLabel,
 		Scopes:          old.Scopes,
+		ExpiresAt:       cloneTimePtr(old.ExpiresAt),
 		CreatedAt:       time.Now(),
 		Status:          string(APIKeyStatusActive),
 		RotatedFromID:   &rotatedFrom,
@@ -3286,6 +3296,17 @@ func (m *MemStore) TouchKeyLastUsed(_ context.Context, keyID string) error {
 	}
 	now := time.Now()
 	k.LastUsedAt = &now
+	// Mirrors PgStore: an mcp-login key slides (ADR-20261028205920).
+	if k.Label == api.MCPLoginKeyLabel && k.Status == "active" && k.ExpiresAt != nil && !slices.Contains(k.Scopes, api.ScopeAdmin) {
+		slid := now.Add(api.MCPLoginKeyIdle)
+		if limit := k.CreatedAt.Add(api.MCPLoginKeyMaxAge); limit.Before(slid) {
+			slid = limit
+		}
+		if slid.After(*k.ExpiresAt) {
+			k.ExpiresAt = &slid
+		}
+		m.keyByHash[hex.EncodeToString(k.Hash)] = k
+	}
 	m.keys[keyID] = k
 	return nil
 }
@@ -3420,6 +3441,7 @@ func (m *MemStore) RotateAPIKey(_ context.Context, accountID, oldKeyID string, n
 		Hash:            newHash,
 		Label:           newLabel,
 		Scopes:          old.Scopes,
+		ExpiresAt:       cloneTimePtr(old.ExpiresAt),
 		CreatedAt:       time.Now(),
 		Status:          string(APIKeyStatusActive),
 		RotatedFromID:   &rotatedFrom,
@@ -3622,6 +3644,7 @@ func (m *MemStore) RotateOrgAPIKey(_ context.Context, orgID, oldKeyID string, ne
 		Hash:            newHash,
 		Label:           newLabel,
 		Scopes:          old.Scopes,
+		ExpiresAt:       cloneTimePtr(old.ExpiresAt),
 		CreatedAt:       time.Now(),
 		Status:          string(APIKeyStatusActive),
 		RotatedFromID:   &rotatedFrom,
@@ -7150,6 +7173,16 @@ func (m *MemStore) RenameApp(ctx context.Context, accountID, oldSlug, newSlug st
 		return App{}, err
 	}
 	m.apps[found.ID] = *found
+	// Mirrors PgStore: PR previews follow their production app's new slug.
+	if found.PreviewOfSlug == "" {
+		for id, preview := range m.apps {
+			if preview.AccountID == accountID && preview.PreviewOfSlug == oldSlug &&
+				preview.PreviewPrNumber > 0 && preview.Status != AppDeleted {
+				preview.PreviewOfSlug = newSlug
+				m.apps[id] = preview
+			}
+		}
+	}
 	return *found, nil
 }
 
@@ -21688,6 +21721,37 @@ func (m *MemStore) IssueCliAuthCode(_ context.Context, tokenHash []byte, expires
 	return nil
 }
 
+// IssueCliAuthDeviceCode implements CliAuthDeviceCodeStore.
+func (m *MemStore) IssueCliAuthDeviceCode(_ context.Context, tokenHash, deviceHash []byte, expiresAt time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.cliAuthCodes == nil {
+		m.cliAuthCodes = map[string]CliAuthCode{}
+	}
+	if _, exists := m.cliAuthCodes[string(tokenHash)]; exists {
+		return ErrConflict
+	}
+	m.cliAuthCodes[string(tokenHash)] = CliAuthCode{
+		TokenHash:  append([]byte(nil), tokenHash...),
+		DeviceHash: append([]byte(nil), deviceHash...),
+		ExpiresAt:  expiresAt,
+	}
+	return nil
+}
+
+// ConsumeCliAuthDeviceCode implements CliAuthDeviceCodeStore.
+func (m *MemStore) ConsumeCliAuthDeviceCode(_ context.Context, deviceHash []byte) (api.CliAuthStatus, string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for key, row := range m.cliAuthCodes {
+		if len(row.DeviceHash) == 0 || string(row.DeviceHash) != string(deviceHash) {
+			continue
+		}
+		return m.consumeCliAuthRowLocked(key, row)
+	}
+	return api.CliAuthStatusExpired, "", ErrNotFound
+}
+
 // PeekCliAuthCode returns the row's status without mutating it. Used
 // by the dashboard GET /cli-auth render to decide whether to show the
 // email-input form or the "code unavailable" error page.
@@ -21764,9 +21828,14 @@ func (m *MemStore) ConsumeCliAuthCode(_ context.Context, tokenHash []byte) (api.
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	row, ok := m.cliAuthCodes[string(tokenHash)]
-	if !ok {
+	// A device-bound row answers the short code as if it did not exist.
+	if !ok || len(row.DeviceHash) > 0 {
 		return api.CliAuthStatusExpired, "", ErrNotFound
 	}
+	return m.consumeCliAuthRowLocked(string(tokenHash), row)
+}
+
+func (m *MemStore) consumeCliAuthRowLocked(key string, row CliAuthCode) (api.CliAuthStatus, string, error) {
 	if !row.ExpiresAt.After(time.Now()) {
 		return api.CliAuthStatusExpired, "", ErrNotFound
 	}
@@ -21781,7 +21850,7 @@ func (m *MemStore) ConsumeCliAuthCode(_ context.Context, tokenHash []byte) (api.
 	}
 	now := time.Now()
 	row.ConsumedAt = &now
-	m.cliAuthCodes[string(tokenHash)] = row
+	m.cliAuthCodes[key] = row
 	return api.CliAuthStatusConsumed, row.AccountID, nil
 }
 

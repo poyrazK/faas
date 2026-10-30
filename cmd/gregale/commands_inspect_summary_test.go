@@ -263,6 +263,21 @@ func TestInspectRecommendations_DistinguishSmokeVerifierFromHealthEndpoint(t *te
 	}
 }
 
+// An internal app has no public route, so its receipt records why no public
+// smoke ran; inspect must not ask for a health endpoint (Hunt 14 H14-124).
+func TestInspectRecommendations_InternalAppSkipsHealthWarning(t *testing.T) {
+	recs := main.InspectRecommendations(main.InspectSummary{
+		App:     main.InspectAppSummary{Slug: "demo"},
+		Release: main.InspectReleaseSummary{Available: true, Status: "live", TrafficPercent: 100},
+		Runtime: main.InspectRuntimeSummary{Health: &main.InspectHealthSummary{Status: apihostingreceipt.SmokeSkipped, ErrorCode: apihostingreceipt.SmokeErrorInternalApp}},
+	})
+	for _, rec := range recs {
+		if strings.HasPrefix(rec.Code, "health_") {
+			t.Fatalf("recommendations = %+v, want no health warning for an internal app", recs)
+		}
+	}
+}
+
 func configureInspectSummaryTest(t *testing.T, apiURL string) {
 	t.Helper()
 	t.Setenv("FAAS_API", apiURL)

@@ -2073,6 +2073,12 @@ type Querier interface {
 	// Replay reads and locks one retained occurrence inside the app admission lock.
 	// The replay run identity is separate from the original skipped outcome.
 	GetWorkflowScheduleOccurrenceForReplay(ctx context.Context, db DBTX, arg GetWorkflowScheduleOccurrenceForReplayParams) (WorkflowScheduleOccurrence, error)
+	// The immutable owner and repository IDs an account's app binding recorded
+	// for a repository name (bug hunt 2026-10-28 H68): the OIDC exchange
+	// requires a token's repository_owner_id and repository_id claims to match
+	// them, so a recreated repository under a freed owner name does not pass.
+	// Zero when no binding of the name records them.
+	GitHubRepositoryIDsBoundToAccount(ctx context.Context, db DBTX, arg GitHubRepositoryIDsBoundToAccountParams) (GitHubRepositoryIDsBoundToAccountRow, error)
 	// Repeatable-read callers only: a workflow admission committed after the
 	// snapshot raises a serialization failure. Read-committed callers return.
 	GuardWorkflowAdmissionSnapshot(ctx context.Context, db DBTX, appID string) error
@@ -4343,6 +4349,9 @@ type Querier interface {
 	ObjectBucketObjectLockGet(ctx context.Context, db DBTX, bucketID pgtype.UUID) (ObjectBucketObjectLock, error)
 	ObjectBucketObjectLockInsert(ctx context.Context, db DBTX, arg ObjectBucketObjectLockInsertParams) error
 	ObjectBucketObjectLockUpdate(ctx context.Context, db DBTX, arg ObjectBucketObjectLockUpdateParams) (int64, error)
+	ObjectBucketPlacementCounts(ctx context.Context, db DBTX, arg ObjectBucketPlacementCountsParams) ([]ObjectBucketPlacementCountsRow, error)
+	// Serializes bucket placement in one region (ADR-20261029174627).
+	ObjectBucketPlacementLock(ctx context.Context, db DBTX, region string) error
 	ObjectBucketPruneTombstones(ctx context.Context, db DBTX, accountID pgtype.UUID) error
 	ObjectBucketReserveLockAccount(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error)
 	ObjectBucketRetry(ctx context.Context, db DBTX, arg ObjectBucketRetryParams) (int64, error)
@@ -5649,6 +5658,10 @@ type Querier interface {
 	ReadServicePolicyReleaseCandidates(ctx context.Context, db DBTX, arg ReadServicePolicyReleaseCandidatesParams) ([]ReadServicePolicyReleaseCandidatesRow, error)
 	ReadServicePolicyTestApp(ctx context.Context, db DBTX, arg ReadServicePolicyTestAppParams) (ReadServicePolicyTestAppRow, error)
 	ReadServicePolicyTestMember(ctx context.Context, db DBTX, appID pgtype.UUID) (ReadServicePolicyTestMemberRow, error)
+	// 'active' pages by app (after_app_id, ordered by app): the rollback window
+	// needs every row of an app, and a newest-first cut over the whole fleet
+	// dropped exactly the oldest generations GC exists to reclaim once the live
+	// set passed the limit (bug hunt 2026-10-28 H66).
 	ReadSnapshotGarbageCollection(ctx context.Context, db DBTX, arg ReadSnapshotGarbageCollectionParams) ([]ReadSnapshotGarbageCollectionRow, error)
 	ReadSnapshotInvocationEnvironmentQueueAdmission(ctx context.Context, db DBTX, invocationID pgtype.UUID) (InvocationEnvironmentQueueAdmission, error)
 	ReadSnapshotPublicationConfigChange(ctx context.Context, db DBTX, appID pgtype.UUID) (pgtype.Timestamptz, error)
@@ -5670,6 +5683,9 @@ type Querier interface {
 	// All hostname reservations, including inactive/deleted surfaces. Discovery
 	// transfers only identities and routing eligibility; no challenge or cert data.
 	ReadTrafficBindingClaims(ctx context.Context, db DBTX, arg ReadTrafficBindingClaimsParams) (ReadTrafficBindingClaimsRow, error)
+	// A rule-only traffic policy write holds no lock on the fleet capacity policy
+	// unless one of its statements fired a capacity trigger (ADR-20261029150627).
+	ReadTrafficCapacityLockHeld(ctx context.Context, db DBTX) (bool, error)
 	ReadTrafficDeletionAccountStatus(ctx context.Context, db DBTX, accountID pgtype.UUID) (string, error)
 	ReadTrafficDeploymentStatus(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (string, error)
 	// Secret-free binding metadata only, bounded before transfer. Unverified and
@@ -6686,7 +6702,10 @@ type Querier interface {
 	TouchCustomerOperationWorkflowStep(ctx context.Context, db DBTX, arg TouchCustomerOperationWorkflowStepParams) error
 	TouchEdgeListenerHeartbeat(ctx context.Context, db DBTX, name string) error
 	TouchEnvironmentGitOpsIntent(ctx context.Context, db DBTX, sourceID pgtype.UUID) error
-	TouchKeyLastUsed(ctx context.Context, db DBTX, id pgtype.UUID) error
+	// An active, non-admin mcp-login key also slides (ADR-20261028205920): use
+	// extends it to idle_seconds from now, never past max_age_seconds after it was
+	// created, and never shortens it.
+	TouchKeyLastUsed(ctx context.Context, db DBTX, arg TouchKeyLastUsedParams) error
 	TouchProjectSubmission(ctx context.Context, db DBTX, arg TouchProjectSubmissionParams) error
 	// Best-effort, fire-and-forget. Allowed on revoked rows (observability
 	// signal only; not authorization). pgx interface returns nothing.

@@ -844,6 +844,12 @@ func (in InstanceInfo) evictionFreedMB() int {
 
 // evictionCandidates returns the instances RAM-pressure eviction may park, in
 // eviction order.
+// evictionBusy reports whether an instance is doing work an eviction would
+// cut: requests in flight, open connections or waitUntil tails.
+func evictionBusy(in InstanceInfo) bool {
+	return in.InflightRequests > 0 || in.OpenConns > 0 || in.TailCount > 0
+}
+
 func evictionCandidates(now time.Time, instances []InstanceInfo) []InstanceInfo {
 	// Candidates: running instances old enough to evict.
 	var cands []InstanceInfo
@@ -884,6 +890,14 @@ func evictionCandidates(now time.Time, instances []InstanceInfo) []InstanceInfo 
 		af, bf := cands[a].State == state.StateFrozen, cands[b].State == state.StateFrozen
 		if af != bf {
 			return af // frozen first
+		}
+		// An instance serving requests, holding connections or running
+		// waitUntil tails is a last resort: a node over its ceiling must
+		// still shed memory, but evicting it first cut those requests
+		// while idle instances stayed (bug hunt 2026-10-28 B10).
+		abusy, bbusy := evictionBusy(cands[a]), evictionBusy(cands[b])
+		if abusy != bbusy {
+			return !abusy // idle first
 		}
 		ar, br := cands[a].EvictionPriority == string(api.EvictionPriorityReserved),
 			cands[b].EvictionPriority == string(api.EvictionPriorityReserved)
