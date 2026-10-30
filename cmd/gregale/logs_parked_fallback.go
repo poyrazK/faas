@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -61,13 +62,11 @@ func runParkedAppLogs(ctx context.Context, client *Client, slug, deployment stri
 	}
 	instances, err := client.ListInstancesWithHistory(ctx, slug, true)
 	if err != nil {
-		_, _ = fmt.Fprintln(osStderr, appLogsDegradedMessage(`{"code":"not_found"}`))
-		return 3
+		return parkedLogsUnavailable(appLogsDegradedMessage(`{"code":"not_found"}`))
 	}
 	instance, selector, ok := parkedLogsSelection(instances, since)
 	if !ok {
-		_, _ = fmt.Fprintf(osStderr, "%s has no running instance and no instance with activity in the requested window; wake it with `gregale app wake %s`.\n", slug, slug)
-		return 3
+		return parkedLogsUnavailable(fmt.Sprintf("%s has no running instance and no instance with activity in the requested window; wake it with `gregale app wake %s`.", slug, slug))
 	}
 	header := fmt.Sprintf("%s is parked; showing the retained logs of its most recent instance %s (started %s, UTC day %s).", slug, instance.ID, instance.StartedAt, selector.Date)
 	header += parkedArchivePendingNote(instance, time.Now())
@@ -77,6 +76,18 @@ func runParkedAppLogs(ctx context.Context, client *Client, slug, deployment stri
 	_, _ = fmt.Fprintln(osStderr, header)
 	return runLogsExplainingMissingArchive(ctx, slug, deployment, api.LogFilter{Grep: filter.Grep}, &selector, false, explain,
 		parkedNoOutputMessage(instance))
+}
+
+// parkedLogsUnavailable reports why no retained logs can be shown: under
+// --json as the RFC 7807 problem the live stream's degraded frame becomes,
+// otherwise as text.
+func parkedLogsUnavailable(message string) int {
+	if jsonOutput {
+		_ = writeJSONProblem(*api.NewProblem(http.StatusServiceUnavailable, "app_logs_unavailable", "App logs unavailable", message).WithDocs(cliDocsURL))
+		return 3
+	}
+	_, _ = fmt.Fprintln(osStderr, message)
+	return 3
 }
 
 // parkedNoOutputMessage explains a parked instance with no retained logs. It
