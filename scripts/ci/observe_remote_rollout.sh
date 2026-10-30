@@ -9,6 +9,14 @@ target="$1" key="$2" activation_script="$3"
 run_id="${GITHUB_RUN_ID:-local}" attempt="${GITHUB_RUN_ATTEMPT:-1}"
 baseline="${ROLLOUT_BASELINE_SAMPLE_COUNT:-3}"
 [[ "$run_id" =~ ^[A-Za-z0-9_-]+$ && "$attempt" =~ ^[0-9]+$ && "$baseline" =~ ^[0-9]+$ ]] || exit 2
+# The canary app gate needs an app that is always deployed. rc.305's baseline
+# got 404 from the deleted gregale-api-demo, so the gate gave no signal. The
+# ROLLOUT_APP_PROBE_URL repository or environment variable retargets it.
+app_probe_url="${ROLLOUT_APP_PROBE_URL:-https://e2e-probe.gregale.dev/}"
+if ! [[ "$app_probe_url" =~ ^https://[A-Za-z0-9.-]+(/[A-Za-z0-9._/-]*)?$ ]]; then
+  echo "ROLLOUT_APP_PROBE_URL must be an https URL without a query, got '$app_probe_url'" >&2
+  exit 2
+fi
 ssh_args=(-i "$key" -o StrictHostKeyChecking=yes)
 remote_dir="$(ssh "${ssh_args[@]}" "$target" 'mktemp -d /tmp/gregale-rollout.XXXXXXXX')"
 [[ "$remote_dir" =~ ^/tmp/gregale-rollout\.[A-Za-z0-9]+$ ]] || exit 2
@@ -27,7 +35,7 @@ printf -v remote_command '%q ' env \
   "ROLLOUT_ACTIVATION_MARKER=$remote_dir/activated" \
   "ROLLOUT_BASELINE_SAMPLE_COUNT=$baseline" \
   'ROLLOUT_REQUIRE_API_BASELINE=true' \
-  'ROLLOUT_APP_PROBE_URL=https://gregale-api-demo.gregale.dev/' \
+  "ROLLOUT_APP_PROBE_URL=$app_probe_url" \
   'ROLLOUT_STATUS_PROBE_URL=https://api.gregale.dev/v1/status' \
   bash "$remote_dir/observe_rollout_availability.sh" 'https://api.gregale.dev/readyz' -- \
   bash "$remote_dir/$(basename "$activation_script")"
