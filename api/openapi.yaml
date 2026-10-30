@@ -111969,7 +111969,7 @@ components:
         assessment: { $ref: '#/components/schemas/AppHealthResponse' }
     ResourceStatus:
       type: object
-      description: A resource's status subresource: conditions derived when read, never stored.
+      description: "A resource's status subresource: conditions derived when read, never stored."
       required: [kind, name, observed_at, conditions]
       properties:
         kind: { type: string, enum: [app, deployment] }
