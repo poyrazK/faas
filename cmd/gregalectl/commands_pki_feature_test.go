@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"os"
 	"path/filepath"
 	"strings"
@@ -35,6 +37,39 @@ func TestPKIIssueFeature(t *testing.T) {
 		"unknown feature": {"--feature", "nope", "--box-role", "control-plane", "--ca-dir", ca, "--root-dir", out},
 		"no CA":           {"--feature", "live-queries", "--box-role", "compute-only", "--ca-dir", t.TempDir(), "--root-dir", out},
 		"no box role":     {"--feature", "live-queries", "--ca-dir", ca, "--root-dir", out},
+	} {
+		if _, err := captureStdout(t, func() int { return cmdPKIIssueFeature(bad) }); err == nil {
+			t.Errorf("%s: issue-feature succeeded", name)
+		}
+	}
+}
+
+// adr: 989 — the control plane issues a compute node's relay client leaf
+// with --cn, the node's name (.faas appended when missing); --cn is refused
+// for a leaf that is not a compute node's.
+func TestPKIIssueFeatureNodeIdentity(t *testing.T) {
+	ca := t.TempDir()
+	if _, _, err := pki.EnsureCA(ca, false); err != nil {
+		t.Fatal(err)
+	}
+	out := t.TempDir()
+	args := []string{"--feature", "outbound-relay", "--box-role", "compute-only", "--cn", "fsn-2", "--ca-dir", ca, "--root-dir", out}
+	got, err := captureStdout(t, func() int { return cmdPKIIssueFeature(args) })
+	if err != nil || strings.TrimSpace(got) != `{"issued":["vmmd/outboundd-client"]}` {
+		t.Fatalf("issue = %q, %v", got, err)
+	}
+	certPath, keyPath := pki.LeafPaths(out, pki.FeatureRoles(pki.FeatureOutboundRelay, "compute-only")[0])
+	pair, err := tls.LoadX509KeyPair(certPath, keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaf, err := x509.ParseCertificate(pair.Certificate[0])
+	if err != nil || leaf.Subject.CommonName != "fsn-2.faas" {
+		t.Fatalf("client leaf CN = %q, %v; want fsn-2.faas", leaf.Subject.CommonName, err)
+	}
+	for name, bad := range map[string][]string{
+		"no node name":            {"--feature", "outbound-relay", "--box-role", "compute-only", "--ca-dir", ca, "--root-dir", t.TempDir()},
+		"--cn on a control plane": {"--feature", "outbound-relay", "--box-role", "control-plane", "--cn", "fsn-2", "--ca-dir", ca, "--root-dir", t.TempDir()},
 	} {
 		if _, err := captureStdout(t, func() int { return cmdPKIIssueFeature(bad) }); err == nil {
 			t.Errorf("%s: issue-feature succeeded", name)
