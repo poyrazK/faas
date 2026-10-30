@@ -22,6 +22,24 @@ type runtimeDocs struct {
 	docs map[string]state.SecretRekeyDocument
 	// rotate makes the next compare-and-swap of this cursor lose once.
 	rotate string
+	// copies is how many short-lived copies are under another key id.
+	copies int
+	// captures are the sealed crash capture keys, in id order.
+	captures []state.CrashCaptureKey
+}
+
+func (f *runtimeDocs) CountRuntimeCopiesOffDomain(context.Context, string) (int, error) {
+	return f.copies, nil
+}
+
+func (f *runtimeDocs) ListSealedCrashCaptureKeys(_ context.Context, afterID string, limit int) ([]state.CrashCaptureKey, error) {
+	var out []state.CrashCaptureKey
+	for _, k := range f.captures {
+		if k.ID > afterID && len(out) < limit {
+			out = append(out, k)
+		}
+	}
+	return out, nil
 }
 
 type runtimeEnvelope struct {
@@ -181,5 +199,60 @@ func TestMigrateRuntimeNeedsIdentities(t *testing.T) {
 	}
 	if _, err := sealmigrate.MigrateRuntime(context.Background(), &runtimeDocs{}, nil, []*age.X25519Identity{domain}); err == nil {
 		t.Fatal("migrating without the domain identity succeeded")
+	}
+}
+
+// TestCheckRuntime counts what a runtime migration would still rewrite and
+// what vmmd could open only with a legacy identity, writing nothing: the
+// precondition for vmmd dropping the fleet and host identities.
+func TestCheckRuntime(t *testing.T) {
+	domain, fleet, stranger := mustIdentity(t), mustIdentity(t), mustIdentity(t)
+	dk, fk := domain.Recipient().String(), fleet.Recipient().String()
+	captureKey := func(id string, to ...*age.X25519Identity) state.CrashCaptureKey {
+		var rs []*age.X25519Recipient
+		for _, i := range to {
+			rs = append(rs, i.Recipient())
+		}
+		key, err := secretbox.SealBytesTo(rs, "crash_capture:"+id, []byte("AGE-SECRET-KEY-1CAPTURE"), 256)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return state.CrashCaptureKey{ID: id, SealedKey: key}
+	}
+	store := &runtimeDocs{copies: 2, captures: []state.CrashCaptureKey{
+		captureKey("c1", fleet),
+		captureKey("c2", domain),
+		captureKey("c3", domain, fleet),
+	}}
+	store.add(t, "app", "a/app/default/A_FLEET", sealedTo(t, fleet, fk, "A_FLEET"))
+	store.add(t, "app", "a/app/default/B_DONE", sealedTo(t, domain, dk, "B_DONE"))
+	store.add(t, "project", "a/p/production/MISLABELLED", sealedTo(t, domain, fk, "MISLABELLED"))
+	store.add(t, "app", "a/app/default/D_STRANGER", sealedTo(t, stranger, "", "D_STRANGER"))
+	before := map[string][]byte{}
+	for cursor, d := range store.docs {
+		before[cursor] = d.Payload
+	}
+	ctx := context.Background()
+	report, err := sealmigrate.CheckRuntime(ctx, store, domain, []*age.X25519Identity{fleet})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Skipped: two copies and the capture only the fleet key opens.
+	want := sealmigrate.MigrationReport{Domain: sealdomain.Runtime, Target: dk, Scanned: 3, Failed: 1, Pending: 2, Skipped: 3}
+	if report != want {
+		t.Fatalf("report = %+v\nwant     %+v", report, want)
+	}
+	for cursor, d := range store.docs {
+		if !bytes.Equal(d.Payload, before[cursor]) {
+			t.Fatalf("the check rewrote %s", cursor)
+		}
+	}
+
+	if _, err := sealmigrate.MigrateRuntime(ctx, store, domain, []*age.X25519Identity{fleet}); err != nil {
+		t.Fatal(err)
+	}
+	store.copies, store.captures = 0, store.captures[1:] // the guards closed and the capture expired
+	if report, err := sealmigrate.CheckRuntime(ctx, store, domain, []*age.X25519Identity{fleet}); err != nil || report.Pending != 0 || report.Skipped != 0 || report.Failed != 1 {
+		t.Fatalf("check after the re-seal = %+v, %v; want only the stranger left, failed", report, err)
 	}
 }
