@@ -4450,15 +4450,8 @@ func (m *MemStore) ApplyProjectPlan(
 				NotAllowed: true,
 			}
 		}
-		observedCrons := 0
-		for _, c := range m.crons {
-			for _, a := range m.apps {
-				if c.AppID == a.ID && SameAppResourceOwner(a, App{AccountID: project.AccountID, OrgID: project.OrgID}) && a.Status != AppDeleted {
-					observedCrons++
-					break
-				}
-			}
-		}
+		// The allowance is the project's billing subject's (ADR-202610171904).
+		observedCrons := m.quotaSubjectCronsLocked(m.billingSubjectLocked(project.AccountID, project.OrgID))
 		if observedCrons+len(crons) > limits.CronLimitPerAccount {
 			return Project{}, nil, nil, &QuotaError{
 				Kind:     QuotaErrorKindCrons,
@@ -4720,11 +4713,13 @@ func (m *MemStore) ApplyProjectReconcile(
 		for id := range liveProjectApps {
 			projectAppIDs[id] = true
 		}
+		// The allowance is the project's billing subject's (ADR-202610171904).
+		subject := m.billingSubjectLocked(storedProject.AccountID, storedProject.OrgID)
 		observedCrons := 0
 		projectCronCount := 0
 		for _, cron := range stagedCrons {
 			app, exists := stagedApps[cron.AppID]
-			if !exists || app.Status == AppDeleted || !SameAppResourceOwner(app, App{AccountID: storedProject.AccountID, OrgID: storedProject.OrgID}) {
+			if !exists || app.Status == AppDeleted || m.billingSubjectLocked(app.AccountID, app.OrgID) != subject {
 				continue
 			}
 			observedCrons++
@@ -13315,18 +13310,10 @@ func (m *MemStore) CreateCronIfUnderQuotaWithOptions(_ context.Context, appID, s
 			Observed: appCount,
 		}
 	}
-	// 2. Per-account count. Excludes deleted apps so their crons don't
+	// 2. Per-account count, over the crons of the app's billing subject
+	//    (ADR-202610171904). Excludes deleted apps so their crons don't
 	//    poison the cap.
-	accountCount := 0
-	for _, c := range m.crons {
-		a, exists := m.apps[c.AppID]
-		if !exists || a.Status == AppDeleted {
-			continue
-		}
-		if a.AccountID == app.AccountID {
-			accountCount++
-		}
-	}
+	accountCount := m.quotaSubjectCronsLocked(m.appBillingSubjectLocked(app.AccountID, app.ID))
 	if accountCount >= limits.CronLimitPerAccount {
 		return Cron{}, &CronQuotaError{
 			Scope:    CronQuotaScopeAccount,

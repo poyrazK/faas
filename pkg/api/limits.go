@@ -599,6 +599,11 @@ const ManagedPostgresOverageCeilingMultiplier = 2
 // operator approval pins one backend for at most the approval window; the
 // expiry alert fires the warning lead before it closes provisioning.
 const ManagedPostgresProductionApprovalMaxWindow = 90 * 24 * time.Hour
+
+// ManagedPostgresDeleteGracePeriod is how long a customer's managed
+// PostgreSQL delete can be undone before the provider resource is deleted
+// (ADR-20261029174950). Usage in the window is not billed.
+const ManagedPostgresDeleteGracePeriod = 7 * 24 * time.Hour
 const ManagedPostgresProductionApprovalWarning = 14 * 24 * time.Hour
 
 // Fleet safety ceilings bound what operators may configure as the platform's
