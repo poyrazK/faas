@@ -63,6 +63,10 @@ func cmdGithubSetup(args []string) int {
 	preview := fs.Bool("preview", false, "enable pull-request previews")
 	noPreview := fs.Bool("no-preview", false, "disable pull-request previews")
 	previewTTLHours := fs.Int("preview-ttl-hours", 0, "preview lease in hours (1-720)")
+	previewBots := fs.Bool("preview-bots", false, "preview pull requests opened by bots such as Dependabot")
+	noPreviewBots := fs.Bool("no-preview-bots", false, "skip previews for pull requests opened by bots (the default)")
+	previewDrafts := fs.Bool("preview-drafts", false, "preview draft pull requests (the default)")
+	noPreviewDrafts := fs.Bool("no-preview-drafts", false, "preview a draft pull request only once it is ready for review")
 	previewServicePolicy := fs.String("preview-service-policy", "", "preview-to-production service calls: deny|allow_marked")
 	rootDir := fs.String("root-dir", "", "repository-relative source root for the root workload")
 	ignore := fs.String("ignore", "", "comma-separated ignored change paths")
@@ -70,7 +74,8 @@ func cmdGithubSetup(args []string) int {
 	dryRun := fs.Bool("dry-run", false, "show generated files without writing or changing remote state")
 	force := fs.Bool("force", false, "overwrite an existing workflow file")
 
-	flags, positional := splitArgsForFlags(args, "preview", "no-preview", "dry-run", "force", "pin-action", "enable-action-updates")
+	flags, positional := splitArgsForFlags(args, "preview", "no-preview", "preview-bots", "no-preview-bots",
+		"preview-drafts", "no-preview-drafts", "dry-run", "force", "pin-action", "enable-action-updates")
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
@@ -80,6 +85,12 @@ func cmdGithubSetup(args []string) int {
 	}
 	if *preview && *noPreview {
 		return printErr("Invalid preview flags", errors.New("--preview and --no-preview cannot be used together"))
+	}
+	if *previewBots && *noPreviewBots {
+		return printErr("Invalid preview flags", errors.New("--preview-bots and --no-preview-bots cannot be used together"))
+	}
+	if *previewDrafts && *noPreviewDrafts {
+		return printErr("Invalid preview flags", errors.New("--preview-drafts and --no-preview-drafts cannot be used together"))
 	}
 	if *previewTTLHours != 0 && (*previewTTLHours < 1 || *previewTTLHours > 720) {
 		return printErr("Invalid --preview-ttl-hours", errors.New("must be between 1 and 720 hours"))
@@ -147,6 +158,12 @@ func cmdGithubSetup(args []string) int {
 		}
 	}
 	policyPatch := githubSetupPolicyPatch(*preview, *noPreview, *previewTTLHours, *rootDir, ignoredPaths, *previewServicePolicy)
+	if *previewBots || *noPreviewBots {
+		policyPatch.PreviewBotPRs = previewBots
+	}
+	if *previewDrafts || *noPreviewDrafts {
+		policyPatch.PreviewDraftPRs = previewDrafts
+	}
 	if *dryRun {
 		if repoName == "" {
 			return printErr("Dry run needs --repo", errors.New("pass --repo OWNER/NAME so the workflow can be rendered without reading remote state"))
@@ -678,6 +695,7 @@ func renderGithubSetupReceipt(receipt githubSetupReceipt, existing []byte, exist
 		_, _ = fmt.Fprintf(osStdout, "  production_trigger: %s\n", receipt.Policy.ProductionTrigger)
 		_, _ = fmt.Fprintf(osStdout, "  previews:          %t (%dh TTL)\n", receipt.Policy.PreviewEnabled, receipt.Policy.PreviewTTLHours)
 		_, _ = fmt.Fprintf(osStdout, "  preview_services:  %s\n", receipt.Policy.PreviewServicePolicy)
+		_, _ = fmt.Fprintf(osStdout, "  preview_bots:      %t\n  preview_drafts:    %t\n", receipt.Policy.PreviewBotPRs, receipt.Policy.PreviewDraftPRs)
 	}
 	switch {
 	case receipt.WorkflowWritten && receipt.ActionUpdatesWritten:

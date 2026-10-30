@@ -1084,7 +1084,10 @@ type MemStore struct {
 	// names are validated to a portable charset and
 	// deploymentIDs are UUIDs).
 	deploymentSidecarLayers map[string]DeploymentSidecarLayer
-	snapshots               []Snapshot
+	// sidecarEnvReseals mirrors deployment_sidecar_env_reseals, keyed by
+	// sidecarEnvResealKey; nil until the first upsert.
+	sidecarEnvReseals map[string]SidecarEnvReseal
+	snapshots         []Snapshot
 	// snapshotStaleAt mirrors snapshots.stale_at: when a snapshot was marked
 	// stale, which stale retention counts from (Hunt 21 H21-2). A stale row
 	// without an entry falls back to its creation time.
@@ -7287,7 +7290,8 @@ func (m *MemStore) restoreAppLocked(ctx context.Context, id string, limits api.L
 	if !ok {
 		return App{}, ErrNotFound
 	}
-	if _, claimed := m.appDeletionClaims[id]; claimed || a.Status != AppDeleted || a.DeleteGraceUntil == nil || !a.DeleteGraceUntil.After(time.Now()) {
+	if _, claimed := m.appDeletionClaims[id]; claimed || a.Status != AppDeleted || a.DeleteGraceUntil == nil || !a.DeleteGraceUntil.After(time.Now()) ||
+		previewTornDown(a) {
 		return App{}, ErrConflict
 	}
 	if err := m.checkAppQuotaLocked(a, limits); err != nil {
@@ -7850,8 +7854,34 @@ func (m *MemStore) DeleteGithubInstallBinding(_ context.Context, appID string) e
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, ok := m.apps[appID]; !ok {
+	parent, ok := m.apps[appID]
+	if !ok {
 		return ErrNotFound
+	}
+	// Mirrors PgStore: the app's PR preview environments go stale.
+	anchors := make(map[string]string)
+	for _, set := range m.previewSets {
+		if root, ok := m.apps[set.RootAppID]; ok {
+			for _, id := range set.MemberAppIDs {
+				anchors[id] = root.PreviewOfSlug
+			}
+		}
+	}
+	now := time.Now()
+	for id, preview := range m.apps {
+		if preview.AccountID != parent.AccountID || preview.PreviewOfSlug == "" || preview.PreviewPrNumber <= 0 ||
+			preview.Status == AppDeleted || preview.PreviewPrState == PreviewPrStateTearingDown || preview.PreviewPrState == PreviewPrStateTornDown {
+			continue
+		}
+		anchor, inSet := anchors[id]
+		if !inSet {
+			anchor = preview.PreviewOfSlug
+		}
+		if anchor == parent.Slug {
+			preview.PreviewPrState = PreviewPrStateStale
+			preview.PreviewExpiresAt = &now
+			m.apps[id] = preview
+		}
 	}
 	delete(m.githubBindings, appID)
 	return nil
@@ -11584,6 +11614,10 @@ func (m *MemStore) GetDeploymentOpenAPIDoc(_ context.Context, deploymentID, acco
 func (m *MemStore) UpsertDeploymentOpenAPIDoc(_ context.Context, deploymentID, accountID, appID string, doc []byte, source string, truncated bool) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.upsertDeploymentOpenAPIDocLocked(deploymentID, accountID, appID, doc, source, truncated)
+}
+
+func (m *MemStore) upsertDeploymentOpenAPIDocLocked(deploymentID, accountID, appID string, doc []byte, source string, truncated bool) error {
 	if _, ok := m.deployments[deploymentID]; !ok {
 		return ErrNotFound
 	}
@@ -11649,9 +11683,8 @@ func (m *MemStore) DeleteDeploymentOpenAPIDoc(_ context.Context, deploymentID, a
 }
 
 // CountOpenAPIDocsByAccount returns the number of doc rows the
-// account owns. Drives the per-account quota gate. The count is
-// a single pass over the map — the in-memory store holds the
-// entire dataset under m.mu so an O(N) scan is fine.
+// account owns. The per-account quota counts the app's billing
+// subject instead, in UpsertDeploymentOpenAPIDocIfUnderQuota.
 func (m *MemStore) CountOpenAPIDocsByAccount(_ context.Context, accountID string) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -1161,10 +1161,18 @@ Each slice is one reviewable change on a branch. Slices 2–4 are behind
      Firecracker's root (`/proc/<pid>/root`, openat2 `RESOLVE_BENEATH |
      RESOLVE_NO_SYMLINKS`, `O_PATH` until the device and inode match the
      record) and pins that inode under its (path, inode) key, as a live
-     vmmd already does for a source the cache renamed (rc.236). Teardown
-     restores the recorded inode's mode through that handle, and a new bind
-     of the refreshed file counts apart. `TestVMMDRestartKeepsRunningAppMetal`
-     re-stages one of the guest's run-owned bind sources before the restart.
+     vmmd already does for a source the cache renamed (rc.236). A new bind
+     of the refreshed file counts apart. That handle comes through the
+     jail's read-only bind, so teardown cannot restore the mode through it
+     and does not wait on it (#6032; before, the guest's lease was kept for
+     good). `TestVMMDRestartKeepsRunningAppMetal` re-stages one of the
+     guest's run-owned bind sources before the restart and requires the
+     adopted guest to park.
+   - **Second canary (2026-10-31).** `fsn-3.faas` joins the list before
+     fsn-2's first clean no-drain restart: its first rollout with the switch
+     drains anyway, so the release that proves the rc.309 fixes on fsn-2 also
+     arms fsn-3. A release that changes a runtime base generation still
+     drains every node (ADR-20261024085817).
 5. **fsn-4 acceptance** (§5), then flip `adopt_running_vms` to true by default.
 
 ## Risks

@@ -1,6 +1,6 @@
 # Import preview and review
 
-Run `gregale data-api dev --port 0` in this directory to generate the database
+Run `gregale data-api serve --port 0` in this directory to generate the database
 contract and verify read-only preview, validation and tenant isolation. Install
 `@gregale/data` in your application and use the typed `previewImport` and
 `commitImport` functions from `client.ts`.

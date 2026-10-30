@@ -37,7 +37,9 @@ func TestVMMDSandboxPropertiesFollowTheProductionUnit(t *testing.T) {
 		}
 	}
 	paths := strings.Fields(rw)
-	for _, p := range []string{"/run/netns", "/srv/fc", "-/mnt/e2e/run"} {
+	// Production paths are optional: a test host has no /var/lib/faas/cache,
+	// and a missing ReadWritePaths entry fails the start (226/NAMESPACE).
+	for _, p := range []string{"-/run/netns", "-/srv/fc", "-/var/lib/faas/cache", "-/mnt/e2e/run"} {
 		if !slices.Contains(paths, p) {
 			t.Errorf("ReadWritePaths %q lack %s", rw, p)
 		}

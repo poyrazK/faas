@@ -80,3 +80,35 @@ func TestHostedAuthorizeIsLimitedPerAddressAndEvictsTheOldestFlow(t *testing.T) 
 		t.Fatalf("eviction left %v, want only the newest flow", r.requests)
 	}
 }
+
+// durableHandler marshals the snapshot after releasing r.mu, so the snapshot
+// must not share records a handler changes under the lock (nightly
+// 41129970887: holdClientLocked raced json.Marshal on a client's Expires).
+func TestOAuthSnapshotDoesNotShareLiveRecords(t *testing.T) {
+	expires := time.Now().Add(time.Hour)
+	r := &remoteServer{
+		clients:  map[string]*oauthClient{"c": {ID: "c", Expires: expires}},
+		requests: map[string]*authorizationRequest{"q": {ID: "q", Expires: expires}},
+		codes:    map[string]*authorizationCode{"k": {ClientID: "c", Expires: expires}},
+	}
+	r.mu.Lock()
+	snapshot := r.snapshotLocked()
+	r.mu.Unlock()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		r.clients["c"].Expires = expires.Add(time.Hour)
+		r.requests["q"].Expires = expires.Add(time.Hour)
+		r.codes["k"].Expires = expires.Add(time.Hour)
+		r.clients["d"] = &oauthClient{ID: "d"}
+	}()
+	if _, err := json.Marshal(snapshot); err != nil {
+		t.Fatal(err)
+	}
+	<-done
+	if !snapshot.Clients["c"].Expires.Equal(expires) || !snapshot.Requests["q"].Expires.Equal(expires) || !snapshot.Codes["k"].Expires.Equal(expires) || len(snapshot.Clients) != 1 {
+		t.Fatalf("snapshot changed with the live records: %+v", snapshot)
+	}
+}

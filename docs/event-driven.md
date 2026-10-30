@@ -419,7 +419,7 @@ configuration at fire time.
 Handlers receive an event id and delivery attempt. Persist that id before applying side effects so retries are idempotent. Set explicit payload limits, timeouts, retry counts, and retention; route poison messages to a dead-letter destination for inspection and replay.
 
 Trigger delivery records (`gregale trigger records`) are kept at least 7 days
-after their last dispatch, and trigger dead letters (`gregale trigger dlq`) at
+after their last dispatch, and trigger dead letters (`gregale trigger dlq list`) at
 least 30 days, unless a record carries its own retention; after that they may
 be deleted. Retry or export dead letters you still need before then.
 
@@ -508,7 +508,7 @@ idempotency keys, lasts as long as that invocation is kept.
 
 A failed queue or delayed-task message is one entry in `gregale dlq list <app>`: its
 invocation. When a push binding delivered it, the binding's receipt failure
-stays in `gregale trigger dlq`, and replaying the entry re-arms that receipt.
+stays in `gregale trigger dlq list`, and replaying the entry re-arms that receipt.
 See [ADR-20261022203653](adr/20261022203653-one-dead-letter-entry-per-queue-message.md).
 
 ## Queue limits

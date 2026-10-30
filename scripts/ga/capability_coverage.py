@@ -272,6 +272,7 @@ RULES = [
     (r"udp", "UDP listeners"),
     (r"network|peering|overlay|vxlan", "Private networks"),
     (r"private-app|private-forward", "Private apps"),
+    (r"private-service-https", "Service bindings"),
     (r"binding", "Service bindings"),
     (r"service-mesh|internal-service|\.svc|caller", "Internal services"),
     (r"stream|grpc|websocket|sse|protocol", "Streaming, SSE"),
