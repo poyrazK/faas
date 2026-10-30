@@ -160,6 +160,41 @@ func TestReleaseGuardsDrillMetal(t *testing.T) {
 		t.Logf("DRILL freeze_lifted deployment=%s", lifted.ID)
 	})
 
+	// ADR-20261019071733 amendment 4: a company organization owns its apps'
+	// freezes, so a developer who did not create the app freezes the whole
+	// company and the creator's release waits until the freeze is lifted.
+	t.Run("a member's company freeze refuses the creator's release until lifted", func(t *testing.T) {
+		const app = "rg-co-freeze"
+		_, _, orgSlug := g.account()
+		orgSlug += "-frz"
+		creatorKey, memberKey := g.orgWithMember(t, ctx, app, orgSlug, "developer", state.OrgRoleDeveloper)
+		od := *d
+		od.key = creatorKey
+		first := od.deployLive(t, app, api.CreateDeploymentRequest{Image: v1})
+		od.waitServing(t, app, time.Minute)
+
+		var freeze api.ReleaseFreeze
+		g.mustStatus(t, memberKey, http.MethodPost, "/v1/orgs/"+orgSlug+"/freezes",
+			api.CreateReleaseFreezeRequest{Kind: api.ReleaseFreezeKindWindow, Reason: "company drill freeze"}, http.StatusCreated, &freeze)
+		if !freeze.Active || freeze.Org != orgSlug || freeze.App != "" {
+			t.Fatalf("company freeze = %+v, want an active freeze on all of %s's apps", freeze, orgSlug)
+		}
+		g.waitAudit(t, "release.freeze_created", "company drill freeze")
+
+		before := g.deploymentCount(t, first.AppID)
+		raw, code := doReq(t, h, creatorKey, http.MethodPost, "/v1/apps/"+app+"/deployments", api.CreateDeploymentRequest{Image: v2})
+		if code != http.StatusConflict || !strings.Contains(string(raw), api.CodeReleaseFrozen) || !strings.Contains(string(raw), "company drill freeze") {
+			t.Fatalf("creator's release under a company freeze: status=%d body=%s, want 409 %s", code, raw, api.CodeReleaseFrozen)
+		}
+		if after := g.deploymentCount(t, first.AppID); after != before {
+			t.Fatalf("a refused release created a deployment: %d -> %d", before, after)
+		}
+
+		g.mustStatus(t, memberKey, http.MethodDelete, "/v1/orgs/"+orgSlug+"/freezes/"+freeze.ID, nil, http.StatusOK, nil)
+		lifted := od.deployLive(t, app, api.CreateDeploymentRequest{Image: v2, Canary: &api.CanaryPresetSpec{Preset: "none"}})
+		t.Logf("DRILL company_freeze org=%s lifted_by=developer deployment=%s", orgSlug, lifted.ID)
+	})
+
 	t.Run("release that introduces a new error group fails its gate and the canary aborts", func(t *testing.T) {
 		const app = "rg-gate"
 		d.createApp(t, app)
@@ -458,18 +493,26 @@ func (g *guardsDrill) waitAudit(t *testing.T, kind, text string) {
 // account's own keys cannot reach an app it shares through an org.
 func (g *guardsDrill) orgWithApprover(t *testing.T, ctx context.Context, app string) (deployerKey, approverKey string) {
 	t.Helper()
+	_, _, orgSlug := g.account()
+	return g.orgWithMember(t, ctx, app, orgSlug, "approver", state.OrgRoleAdmin)
+}
+
+// orgWithMember is orgWithApprover for an org orgSlug whose second person,
+// seeded as label, holds role.
+func (g *guardsDrill) orgWithMember(t *testing.T, ctx context.Context, app, orgSlug, label string, role state.OrgRole) (deployerKey, memberKey string) {
+	t.Helper()
 	h, store := g.d.h, g.pool
-	plan, name, orgSlug := g.account()
-	h.SeedAccount(ctx, plan, name+"-approver")
+	plan, name, _ := g.account()
+	h.SeedAccount(ctx, plan, name+"-"+label)
 	deployer, err := store.AccountByEmail(ctx, g.email())
 	if err != nil {
 		t.Fatal(err)
 	}
-	approver, err := store.AccountByEmail(ctx, "e2e+"+string(plan)+"+"+name+"-approver@test.example")
+	member, err := store.AccountByEmail(ctx, "e2e+"+string(plan)+"+"+name+"-"+label+"@test.example")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, id := range []string{deployer.ID, approver.ID} {
+	for _, id := range []string{deployer.ID, member.ID} {
 		if err := store.MarkAccountEmailVerified(ctx, id); err != nil {
 			t.Fatalf("verify %s: %v", id, err)
 		}
@@ -478,10 +521,10 @@ func (g *guardsDrill) orgWithApprover(t *testing.T, ctx context.Context, app str
 	if err := store.UpdateOrgPlan(ctx, org.ID, plan); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.AddOrgMember(ctx, org.ID, approver.ID, state.OrgRoleAdmin, &deployer.ID); err != nil {
+	if err := store.AddOrgMember(ctx, org.ID, member.ID, role, &deployer.ID); err != nil {
 		t.Fatal(err)
 	}
-	deployerKey, approverKey = g.orgKey(t, ctx, org.ID, deployer.ID), g.orgKey(t, ctx, org.ID, approver.ID)
+	deployerKey, memberKey = g.orgKey(t, ctx, org.ID, deployer.ID), g.orgKey(t, ctx, org.ID, member.ID)
 	falsy := false
 	g.mustStatus(t, deployerKey, http.MethodPost, "/v1/orgs/"+orgSlug+"/apps",
 		api.CreateAppRequest{Slug: app, Type: "app", RequireAuthn: &falsy}, http.StatusCreated, nil)
@@ -491,7 +534,7 @@ func (g *guardsDrill) orgWithApprover(t *testing.T, ctx context.Context, app str
 			g.d.t.Errorf("cleanup park %s: status=%d body=%s", app, status, raw)
 		}
 	})
-	return deployerKey, approverKey
+	return deployerKey, memberKey
 }
 
 // orgKey mints an admin key bound to org for account, as `gregale keys

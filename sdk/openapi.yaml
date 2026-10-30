@@ -35146,12 +35146,13 @@ components:
         duration_minutes: {type: integer, minimum: 1, maximum: 10080, description: How long each window lasts.}
         time_zone: {type: string, maxLength: 64, description: "IANA time zone, such as Europe/Istanbul or UTC."}
     ReleaseFreeze:
-      description: "A deploy freeze on production releases of one app or, without `app`, of every app of the account."
+      description: "A deploy freeze on production releases of one app or, without `app`, of every app of its owner. An account's freezes cover its personal apps; a company organization's freezes (`org`) cover the organization's apps."
       type: object
       required: [id, kind, reason, source, created_by, created_at, active]
       properties:
         id: {type: string, format: uuid}
-        app: {type: string, description: "The covered app's slug; omitted for an account-wide freeze."}
+        app: {type: string, description: "The covered app's slug; omitted for a freeze on all of the owner's apps."}
+        org: {type: string, description: "Slug of the company organization that owns the freeze; omitted for an account's freeze."}
         kind: {type: string, enum: [window, weekly, after_rollback]}
         starts_at: {type: string, format: date-time, description: "Window start."}
         ends_at: {type: string, format: date-time, description: "Window end; omitted for a window that lasts until lifted."}

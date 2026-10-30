@@ -13365,6 +13365,7 @@ type ReleaseFreeze struct {
 	CreatedAt             pgtype.Timestamptz
 	LiftedAt              pgtype.Timestamptz
 	LiftedBy              pgtype.Text
+	OrgID                 pgtype.UUID
 }
 
 type ReleaseSecretKeyRetirement struct {
