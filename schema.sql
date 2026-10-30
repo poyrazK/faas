@@ -52706,7 +52706,7 @@ CREATE TABLE public.release_database_switches (
 
 CREATE TABLE public.release_freezes (
     id uuid NOT NULL,
-    account_id uuid NOT NULL,
+    account_id uuid,
     app_id uuid,
     kind text NOT NULL,
     starts_at timestamp with time zone,
@@ -52723,6 +52723,7 @@ CREATE TABLE public.release_freezes (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     lifted_at timestamp with time zone,
     lifted_by text,
+    org_id uuid,
     CONSTRAINT release_freezes_after_rollback_minutes_check CHECK (((after_rollback_minutes IS NULL) OR ((after_rollback_minutes >= 1) AND (after_rollback_minutes <= 1440)))),
     CONSTRAINT release_freezes_check CHECK (((kind <> 'window'::text) OR ((starts_at IS NOT NULL) AND ((ends_at IS NULL) OR (ends_at > starts_at)) AND (weekly_days IS NULL) AND (after_rollback_minutes IS NULL)))),
     CONSTRAINT release_freezes_check1 CHECK (((kind <> 'weekly'::text) OR ((weekly_days IS NOT NULL) AND (weekly_start_minute IS NOT NULL) AND (weekly_duration_minutes IS NOT NULL) AND (time_zone IS NOT NULL) AND (starts_at IS NULL) AND (ends_at IS NULL) AND (after_rollback_minutes IS NULL)))),
@@ -52732,6 +52733,7 @@ CREATE TABLE public.release_freezes (
     CONSTRAINT release_freezes_created_by_check CHECK (((length(created_by) >= 1) AND (length(created_by) <= 320))),
     CONSTRAINT release_freezes_kind_check CHECK ((kind = ANY (ARRAY['window'::text, 'weekly'::text, 'after_rollback'::text]))),
     CONSTRAINT release_freezes_lifted_by_check CHECK (((lifted_by IS NULL) OR ((length(lifted_by) >= 1) AND (length(lifted_by) <= 320)))),
+    CONSTRAINT release_freezes_one_owner_chk CHECK (((account_id IS NULL) <> (org_id IS NULL))),
     CONSTRAINT release_freezes_reason_check CHECK (((length(reason) >= 1) AND (length(reason) <= 200))),
     CONSTRAINT release_freezes_source_check CHECK ((source = ANY (ARRAY['manual'::text, 'automatic_rollback'::text]))),
     CONSTRAINT release_freezes_time_zone_check CHECK (((time_zone IS NULL) OR ((length(time_zone) >= 1) AND (length(time_zone) <= 64)))),
@@ -77716,6 +77718,13 @@ CREATE UNIQUE INDEX release_freezes_one_per_rollback ON public.release_freezes U
 
 
 --
+-- Name: release_freezes_org_unlifted; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX release_freezes_org_unlifted ON public.release_freezes USING btree (org_id, created_at, id) WHERE ((lifted_at IS NULL) AND (org_id IS NOT NULL));
+
+
+--
 -- Name: release_freezes_unlifted; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -99744,6 +99753,14 @@ ALTER TABLE ONLY public.release_freezes
 
 ALTER TABLE ONLY public.release_freezes
     ADD CONSTRAINT release_freezes_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: release_freezes release_freezes_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.release_freezes
+    ADD CONSTRAINT release_freezes_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE CASCADE;
 
 
 --

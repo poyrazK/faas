@@ -103,7 +103,7 @@ func scheduledReleaseEligible(app state.App, scope string) *api.Problem {
 // freeze active then refuses the schedule unless override gives a reason;
 // the override then covers exactly those freezes.
 func (s *server) scheduledFreezeOverride(ctx context.Context, acct state.Account, app state.App, scope, override string, at time.Time) (string, []string, *api.Problem) {
-	active, err := freeze.ActiveFor(ctx, s.store, acct.ID, app.ID, scope, at)
+	active, err := freeze.ActiveFor(ctx, s.store, app, scope, at)
 	if err != nil {
 		logCustomerFailure(s.log, "read deploy freezes", err)
 		return "", nil, api.ErrInternal("Gregale could not read your deploy freezes.").WithHint("Retry in a moment.")

@@ -152,7 +152,7 @@ func TestRuntimeUpgradeOperationCutoverWaitsWhileFrozen(t *testing.T) {
 			t.Fatal("frozen upgrade did not keep waiting", held, err)
 		}
 		assertRuntimeUpgradeTraffic(t, s, serving, candidate, false)
-		if _, err := freezes.LiftReleaseFreeze(t.Context(), app.AccountID, frozen.ID, "ops", time.Now().UTC()); err != nil {
+		if _, err := freezes.LiftReleaseFreeze(t.Context(), state.ReleaseFreezeOwner{AccountID: app.AccountID}, frozen.ID, "ops", time.Now().UTC()); err != nil {
 			t.Fatal(err)
 		}
 		runRuntimeUpgradeExecutor(t, executor)

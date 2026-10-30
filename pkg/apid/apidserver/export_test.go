@@ -1569,6 +1569,9 @@ func (r testEnv) DoOperator(p0 *testing.T, p1 string, p2 string, p3 any, p4 map[
 func (r testEnv) DoAs(p0 *testing.T, p1 string, p2 string, p3 any, p4 map[string]string, p5 string) *httptest.ResponseRecorder {
 	return r.doAs(p0, p1, p2, p3, p4, p5)
 }
+func (r testEnv) FreezeAfterAutomaticRollback(ctx context.Context, app state.App, rolledBackID, cause string) {
+	r.s.freezeAfterAutomaticRollback(ctx, app, rolledBackID, cause)
+}
 
 // Issues acceptance tests share the original PostgreSQL fixture and evidence setup.
 var IssueSeedRequestAttribution = issueSeedRequestAttribution
