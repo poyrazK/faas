@@ -4,20 +4,26 @@ Stages per-reader seal-domain identities (ADR 20261022111812). Ten domains
 are wired, each opened by one daemon:
 - `outbound`: customer AI provider and other outbound credentials (outboundd);
 - `runtime`: customer env vars and secrets (vmmd);
-- `source`: GitHub install tokens and webhook secrets (githubd);
-- `build`: app and job private-registry passwords (imaged);
+- `source`: GitHub install tokens and webhook secrets (githubd;
+  `faas_seal_domain_source_contracted` contracts it as step 4 below does for
+  `outbound`);
+- `build`: app and job private-registry passwords (imaged;
+  `faas_seal_domain_build_contracted` contracts imaged as step 4 below does
+  for `outbound`);
 - `edge`: app basic-auth credentials and log drain headers (gatewayd-internal);
 - `alerting`: alert rule webhook secrets, notification channel destinations
   and MCP readiness provider keys (meterd, on the control plane like
-  `outbound`);
+  `outbound`; `faas_seal_domain_alerting_contracted` contracts it as step 4
+  below does for `outbound`);
 - `storage`: Gregale S3 secret access keys (s3-gatewayd, on the control
   plane; `faas_seal_domain_storage_contracted` contracts it as step 4 below
   does for `outbound`);
 - `control`: the cluster signing key (schedd, on every host; no writer
   drop-in, the key moves only through `seal-domain migrate`);
-- `delivery`: app webhook signing secrets, commit-source connections and
-  execution payloads (schedd, on every host; apid on the control plane
-  seals to the recipient);
+- `delivery`: app webhook signing secrets, commit-source connections,
+  execution payloads and trigger config credentials (schedd, on every host;
+  apid on the control plane seals to the recipient, and trigger configs to
+  the fleet key too until the next release);
 - `account`: TOTP secrets, inbound webhook secrets, billing keys, workflow
   plans, PagerDuty acknowledgement secrets, GitLab, Slack and Linear
   credentials, product email values, managed realtime credentials and

@@ -3,6 +3,7 @@ package sealmigrate_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"math/rand/v2"
 	"strconv"
@@ -604,5 +605,105 @@ func TestPostgresMigrateControl(t *testing.T) {
 	again, err := sealmigrate.MigrateControl(ctx, store, domain, []*age.X25519Identity{fleet})
 	if err != nil || again.Current != 1 {
 		t.Fatalf("second run = %+v, %v; want current", again, err)
+	}
+}
+
+// TestPostgresAlertingIncidentCopies runs the open-incident copy listing
+// against the real schema: the route key an open MCP readiness incident
+// copied before the domain is left on the fleet key, and stops counting
+// once the incident resolves.
+func TestPostgresAlertingIncidentCopies(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	ctx := context.Background()
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	store := state.NewPgStore(pool)
+	fleet, domain := mustIdentity(t), mustIdentity(t)
+	suffix := strconv.FormatInt(rand.Int64N(1<<40), 36)
+	ruleSecret, err := secretbox.SealBytes(domain.Recipient(), "alert_rule_secret", []byte("whsec-copies"), api.AlertRuleWebhookSecretMaxBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var account, app, rule, incident string
+	if err := pool.QueryRow(ctx, `INSERT INTO accounts(email,plan) VALUES($1,'pro') RETURNING id::text`, "copies-"+suffix+"@example.com").Scan(&account); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `INSERT INTO apps(account_id,slug,ram_mb) VALUES($1,$2,256) RETURNING id::text`, account, "copies-"+suffix).Scan(&app); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `INSERT INTO alert_rules(account_id,app_id,name,metric,comparison,threshold,window_spec,action,webhook_url,webhook_secret_sealed) VALUES($1,$2,'attention','mcp_readiness_unhealthy','gt',0,'5m','webhook','https://example.com/hook',$3) RETURNING id::text`, account, app, ruleSecret).Scan(&rule); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `INSERT INTO mcp_readiness_incidents(id,rule_id,account_id,app_id,scope,coverage,opened_at) VALUES(gen_random_uuid(),$1,$2,$3,'staging',repeat('a',64),now()) RETURNING id::text`, rule, account, app).Scan(&incident); err != nil {
+		t.Fatal(err)
+	}
+	key, err := secretbox.SealBytes(fleet.Recipient(), api.MCPReadinessPagerDutySecretNamespace, []byte("0123456789abcdef0123456789abcdef"), api.MCPReadinessPagerDutyKeyBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	route, err := json.Marshal(map[string]any{"primary": map[string]any{"provider": "pagerduty", "url": "https://events.pagerduty.com/v2/enqueue", "receiver_id": strings.Repeat("a", 64), "secret": key}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE mcp_readiness_incidents SET delivery_routing=$2 WHERE id=$1`, incident, route); err != nil {
+		t.Fatal(err)
+	}
+
+	copies, err := store.ListOpenMCPReadinessRoutingSecrets(ctx, "", "", 10)
+	if err != nil || len(copies) != 1 || copies[0].Kind != state.AlertingRoutingCopyPrimary || copies[0].ID != incident || !bytes.Equal(copies[0].Sealed, key) {
+		t.Fatalf("open copies = %+v, %v; want the incident's primary key", copies, err)
+	}
+	report, err := sealmigrate.CheckAlerting(ctx, store, domain, []*age.X25519Identity{fleet})
+	if err != nil || report.Pending != 0 || report.Skipped != 1 {
+		t.Fatalf("check = %+v, %v; want the incident copy left on the fleet key", report, err)
+	}
+	if report, err := sealmigrate.MigrateAlerting(ctx, store, domain, []*age.X25519Identity{fleet}); err != nil || report.Skipped != 1 {
+		t.Fatalf("migration = %+v, %v; want the incident copy skipped", report, err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE mcp_readiness_incidents SET resolved_at=now() WHERE id=$1`, incident); err != nil {
+		t.Fatal(err)
+	}
+	if report, err := sealmigrate.CheckAlerting(ctx, store, domain, []*age.X25519Identity{fleet}); err != nil || report.Skipped != 0 {
+		t.Fatalf("check once the incident resolved = %+v, %v; want nothing left", report, err)
+	}
+}
+
+// TestPostgresSourceUnexpiredTokens runs the install token listing against
+// the real schema: an unexpired token only the fleet identity opens is left
+// on the fleet key, and stops counting once it expires.
+func TestPostgresSourceUnexpiredTokens(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	ctx := context.Background()
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	store := state.NewPgStore(pool)
+	fleet, domain := mustIdentity(t), mustIdentity(t)
+	suffix := strconv.FormatInt(rand.Int64N(1<<40), 36)
+	account, err := store.CreateAccount(ctx, "source-tokens-"+suffix+"@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := secretbox.SealTo([]*age.X25519Recipient{fleet.Recipient()}, secretbox.Envelope{"GITHUB_INSTALL_TOKEN": "ghs_" + suffix})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO github_installations(account_id,installation_id,default_branch,sealed_install_token,token_expires_at,audit_github_login) VALUES($1,42,'main',$2,now()+interval '1 hour','octocat')`, account.ID, token); err != nil {
+		t.Fatal(err)
+	}
+
+	tokens, err := store.ListUnexpiredGithubInstallTokens(ctx, "", 0, 10)
+	if err != nil || len(tokens) != 1 || tokens[0].AccountID != account.ID || tokens[0].InstallationID != 42 || !bytes.Equal(tokens[0].Sealed, token) {
+		t.Fatalf("unexpired tokens = %+v, %v; want the installation's token", tokens, err)
+	}
+	if report, err := sealmigrate.CheckSource(ctx, store, domain, []*age.X25519Identity{fleet}); err != nil || report.Skipped != 1 {
+		t.Fatalf("check = %+v, %v; want the token left on the fleet key", report, err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE github_installations SET token_expires_at=now()-interval '1 minute' WHERE account_id=$1`, account.ID); err != nil {
+		t.Fatal(err)
+	}
+	if report, err := sealmigrate.CheckSource(ctx, store, domain, []*age.X25519Identity{fleet}); err != nil || report.Skipped != 0 {
+		t.Fatalf("check once the token expired = %+v, %v; want nothing left", report, err)
 	}
 }

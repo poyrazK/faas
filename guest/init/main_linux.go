@@ -1009,6 +1009,7 @@ func runBuild(m api.BuildManifest) error {
 // runBuildOnce executes one build attempt. It leaves the VM alive only when
 // the attempt succeeded and the manifest opted into the warm handoff.
 func runBuildOnce(m api.BuildManifest) error {
+	clock := newBuildClock()
 	if !api.ValidBuildDependencyDigest(m.BuildDependencyDigest) {
 		return writeAndPoweroff(m, errors.New("invalid build dependency digest"), "")
 	}
@@ -1102,6 +1103,9 @@ func runBuildOnce(m api.BuildManifest) error {
 	if err := os.MkdirAll("/run/buildkit", 0o755); err != nil {
 		return writeAndPoweroff(m, fmt.Errorf("mkdir buildkit run dir: %w", err), "")
 	}
+	if err := removeStaleSocket(buildkitSocketPath); err != nil {
+		return writeAndPoweroff(m, err, "")
+	}
 	// The merged root is an overlayfs view whose writable upper is the same
 	// builder drive. BuildKit keeps a BoltDB, lock, and runc state tree under
 	// its root; those operations are more restrictive than a simple touch and
@@ -1131,26 +1135,26 @@ func runBuildOnce(m api.BuildManifest) error {
 	if err := os.Chmod(buildkitRoot, 0o777); err != nil {
 		return writeAndPoweroff(m, fmt.Errorf("chmod buildkit root: %w", err), "")
 	}
-	guestStage("builder-workspace")
+	clock.stage("builder-workspace")
 	if diagnostic, err := probeBuilderWorkspace(buildkitRoot); err != nil {
 		return writeAndPoweroff(m, fmt.Errorf("builder workspace preflight: %w", err), diagnostic)
 	}
-	guestStage("workspace-probe")
+	clock.stage("workspace-probe")
 	if err := ensureFuseDevice(); err != nil {
 		return writeAndPoweroff(m, fmt.Errorf("fuse device: %w", err), "")
 	}
-	guestStage("fuse")
+	clock.stage("fuse")
 	if err := ensureBuilderResolver(); err != nil {
 		return writeAndPoweroff(m, fmt.Errorf("builder resolver: %w", err), "")
 	}
-	guestStage("resolver")
+	clock.stage("resolver")
 	if err := ensureRailpackMise(); err != nil {
 		return writeAndPoweroff(m, fmt.Errorf("railpack mise: %w", err), "")
 	}
 	if err := ensureBuilderShell(); err != nil {
 		return writeAndPoweroff(m, fmt.Errorf("builder shell: %w", err), "")
 	}
-	guestStage("mise")
+	clock.stage("mise")
 	// Railpack resolves language toolchains and package registries from inside
 	// the builder VM. Fail fast when the guest's DNS path is broken instead of
 	// spending the whole build budget in a registry client retry loop.
@@ -1177,7 +1181,7 @@ func runBuildOnce(m api.BuildManifest) error {
 		func(status int) bool { return status < http.StatusInternalServerError }); err != nil {
 		return writeAndPoweroff(m, err, "")
 	}
-	guestStage("network-preflight")
+	clock.stage("network-preflight")
 	runcCheck := exec.Command("/usr/local/bin/runc", "--version")
 	runcCheck.Env = builderEnv()
 	if runcOut, runcErr := runcCheck.CombinedOutput(); runcErr != nil {
@@ -1191,7 +1195,7 @@ func runBuildOnce(m api.BuildManifest) error {
 	if runcOut, runcErr := runcList.CombinedOutput(); runcErr != nil {
 		return writeAndPoweroff(m, fmt.Errorf("runc list preflight: %w (%s)", runcErr, runcOut), string(runcOut))
 	}
-	guestStage("runc-preflight")
+	clock.stage("runc-preflight")
 
 	buildkitArgs := []string{
 		"--debug",
@@ -1244,29 +1248,29 @@ func runBuildOnce(m api.BuildManifest) error {
 	if err := bk.Start(); err != nil {
 		return writeAndPoweroff(m, fmt.Errorf("start buildkitd: %w", err), tailOf(buildkitLog.Bytes(), m.LogTailBytes))
 	}
-	guestStage("buildkit-started")
+	clock.stage("buildkit-started")
 	bkDone := make(chan error, 1)
 	go func() { bkDone <- bk.Wait(); close(bkDone) }()
 	stopBuildkit := sync.OnceFunc(func() { stopBuildDaemon(bk, bkDone) })
 	defer stopBuildkit()
 	finish := func(err error, tail string) error {
 		stopBuildkit()
-		return writeAndPoweroff(m, err, tail)
+		return writeAndPoweroffTimed(m, err, tail, clock.timings())
 	}
 	// A cold BuildKit on nested KVM can need more than five seconds to
 	// initialize its rootless worker. Use the same bounded minute as the
 	// subsequent worker readiness RPC; keep polling so fast boots pay no delay.
 	startupDeadline := time.Now().Add(time.Minute)
 	for time.Now().Before(startupDeadline) {
-		if _, err := os.Stat("/run/buildkit/buildkitd.sock"); err == nil {
+		if _, err := os.Stat(buildkitSocketPath); err == nil {
 			break
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	if _, err := os.Stat("/run/buildkit/buildkitd.sock"); err != nil {
+	if _, err := os.Stat(buildkitSocketPath); err != nil {
 		return finish(fmt.Errorf("buildkitd socket never appeared: %w", err), tailOf(buildkitLog.Bytes(), m.LogTailBytes))
 	}
-	guestStage("buildkit-socket")
+	clock.stage("buildkit-socket")
 	checkCtx, checkCancel := context.WithTimeout(context.Background(), 60*time.Second)
 	check := exec.CommandContext(checkCtx, "/usr/local/bin/buildctl", "debug", "workers")
 	check.Env = builderEnv("BUILDKIT_HOST=unix:///run/buildkit/buildkitd.sock")
@@ -1296,7 +1300,7 @@ func runBuildOnce(m api.BuildManifest) error {
 		}
 		return finish(fmt.Errorf("buildkitd readiness: %w (%s)", workerErr, workerOut), tailOf(diagnostic, m.LogTailBytes))
 	}
-	guestStage("buildkit-ready")
+	clock.stage("buildkit-ready")
 
 	if m.DevWatchCommand != "" && m.Framework == api.FrameworkDockerfile {
 		return finish(errDevWatchUnsupported("watch mode needs an app Gregale builds without a Dockerfile; write a development stage in your Dockerfile instead"), "")
@@ -1363,6 +1367,8 @@ func runBuildOnce(m api.BuildManifest) error {
 	var buf bytes.Buffer
 	cmd.Stdout = io.MultiWriter(os.Stdout, &buf)
 	cmd.Stderr = io.MultiWriter(os.Stderr, &buf)
+	clock.stage("build-command")
+	buildStarted := time.Now()
 	if err := cmd.Start(); err != nil {
 		if restoreRailpackConfig != nil {
 			_ = restoreRailpackConfig()
@@ -1384,6 +1390,7 @@ func runBuildOnce(m api.BuildManifest) error {
 		// descendant prevents exec.Cmd.Wait from returning.
 		err = context.DeadlineExceeded
 	}
+	clock.finishBuild(time.Since(buildStarted), buf.Bytes())
 	// A deferred stop runs after writeAndPoweroff, which never returns on a
 	// successful halt. Quiesce the daemon before reading its log and syncing
 	// the writable drive so export cannot observe partially written metadata.
@@ -1432,7 +1439,7 @@ func runBuildOnce(m api.BuildManifest) error {
 		if unmountErr := syscall.Unmount(builderDriveMount, 0); unmountErr != nil {
 			return finish(fmt.Errorf("unmount builder scratch: %w", unmountErr), combined.String())
 		}
-		writeBuildDone(m, nil, combined.String())
+		writeBuildDone(m, nil, combined.String(), clock.timings())
 		guestStage("build-ready")
 		return nil
 	}
@@ -1493,6 +1500,21 @@ func removeOversizedDependencyCache(root string, maxBytes int64) (bool, error) {
 		return true, os.RemoveAll(root)
 	}
 	return false, nil
+}
+
+// buildkitSocketPath is where the builder's buildkitd listens.
+const buildkitSocketPath = "/run/buildkit/buildkitd.sock"
+
+// removeStaleSocket removes a socket file a previous boot left behind. A cache
+// export run boots on the drive its build left (ADR-20261029171525), and that
+// build's buildkitd was killed without unlinking its socket. The readiness
+// wait takes the socket's existence as the daemon's first sign of life, so a
+// stale one let buildctl dial before the new daemon listened.
+func removeStaleSocket(path string) error {
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove stale socket %s: %w", path, err)
+	}
+	return nil
 }
 
 // stopBuildDaemon stops writers before syncing the export drive. Bound the wait
@@ -1719,7 +1741,9 @@ func prepareRailpackConfig(m api.BuildManifest) (func() error, error) {
 	// platform default empty for musl runtimes and minimal scratch bases.
 	// A shared runner base ships the libraries Railpack's default apt step
 	// installs (libatomic1), and system packages outside /app keep an app
-	// off the /app-only layer (H10-140).
+	// off the /app-only layer (H10-140). A Python app's platform default stays
+	// what it was on its own minimal base, and Wolfi's runner-python313 has no
+	// apt (ADR-1500 amendment 2).
 	if isAlpineRuntime(m.Runtime) || m.Runtime == "" || m.SharedRuntime || strings.Contains(m.RuntimeBaseRef, "base-minimal") {
 		if _, ok := deploy["aptPackages"]; !ok {
 			deploy["aptPackages"] = []any{}
@@ -2302,7 +2326,8 @@ func goCommandAcknowledgement(m api.BuildManifest) string {
 // writeBuildDone writes /etc/faas/build-done.json (vmmd's Destroy loopback-
 // mounts the chroot drive1 to copy it out). Warm builders call this while the
 // guest remains alive; ordinary builders call it immediately before poweroff.
-func writeBuildDone(m api.BuildManifest, runErr error, logTail string) {
+// timings, when set, are reported whether the build succeeded or not.
+func writeBuildDone(m api.BuildManifest, runErr error, logTail string, timings *api.BuildTimings) {
 	exitCode, fc := buildExitStatus(runErr)
 	if logTail == "" && runErr != nil {
 		logTail = runErr.Error()
@@ -2317,6 +2342,7 @@ func writeBuildDone(m api.BuildManifest, runErr error, logTail string) {
 		FailureClass:    fc,
 		BuildkitVersion: buildkitVersion,
 		RailpackVersion: railpackVersion,
+		Timings:         timings,
 	}
 	if runErr == nil && !m.CacheExportOnly {
 		done.PublicBuildURLsSHA256 = api.PublicBuildURLsSHA256(m.PublicBuildURLs)
@@ -2360,7 +2386,12 @@ func writeBuildDone(m api.BuildManifest, runErr error, logTail string) {
 // Any write failure is logged but doesn't prevent the poweroff — vmmd will
 // surface a fallback exit-code classification via the watchdog capture.
 func writeAndPoweroff(m api.BuildManifest, runErr error, logTail string) error {
-	writeBuildDone(m, runErr, logTail)
+	return writeAndPoweroffTimed(m, runErr, logTail, nil)
+}
+
+// writeAndPoweroffTimed is writeAndPoweroff with the build's timings.
+func writeAndPoweroffTimed(m api.BuildManifest, runErr error, logTail string, timings *api.BuildTimings) error {
+	writeBuildDone(m, runErr, logTail, timings)
 	// Flush all overlay upper metadata/data before the forced poweroff. The
 	// host exports the ext4 immediately after Firecracker exits; without an
 	// explicit sync, the manifest and image can still be only in guest page

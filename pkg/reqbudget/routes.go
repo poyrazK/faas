@@ -50,10 +50,29 @@ var deploySubmissionRoutes = []struct{ method, path string }{
 // IsDeploySubmissionRequest identifies a request that uploads deploy source
 // or submits a deployment.
 func IsDeploySubmissionRequest(r *http.Request) bool {
+	return matchesRoute(r, deploySubmissionRoutes)
+}
+
+// accountExportRoutes assemble the whole account (every app, deployment and
+// audit row) into one spool before the first byte goes out. On
+// production-us a 44-app account outran the 5 s apid default on every
+// attempt and got 503 "could not assemble export" (hunt #9 H9-136; again on
+// rc.304 and rc.305, Hunt 14 H14-120).
+var accountExportRoutes = []struct{ method, path string }{
+	{http.MethodGet, "/v1/account/export"},
+	{http.MethodGet, "/dashboard/account/export"},
+}
+
+// IsAccountExportRequest identifies the REST and dashboard account exports.
+func IsAccountExportRequest(r *http.Request) bool {
+	return matchesRoute(r, accountExportRoutes)
+}
+
+func matchesRoute(r *http.Request, routes []struct{ method, path string }) bool {
 	if r == nil {
 		return false
 	}
-	for _, route := range deploySubmissionRoutes {
+	for _, route := range routes {
 		if r.Method == route.method && pathMatches(route.path, r.URL.Path) {
 			return true
 		}
@@ -63,32 +82,23 @@ func IsDeploySubmissionRequest(r *http.Request) bool {
 
 // longWaitRoutes are the apid routes that hold a request past the 5 s
 // default by design: queue lease long-polls of up to 20 s (ADR-1140), the
-// policy status wait of up to 10 s, and work that grows with the account or
-// the source (the account export, a project scan of a repository tarball, a
-// dev source upload). Under the default every one answered 504 at 5 s; an
-// SDK consumer leasing from an idle queue got an error and backed off
-// instead of an empty list (bug hunt 2026-10-28 B35). A route that needs
-// longer than the platform ceiling must detach its work instead.
+// policy status wait of up to 10 s, and work that grows with the source (a
+// project scan of a repository tarball, a dev source upload). Under the
+// default every one answered 504 at 5 s; an SDK consumer leasing from an idle
+// queue got an error and backed off instead of an empty list (bug hunt
+// 2026-10-28 B35). A route that needs longer than the platform ceiling must
+// detach its work instead.
 var longWaitRoutes = []struct{ method, path string }{
 	{http.MethodPost, "/v1/apps/*/queues/*/leases"},
 	{http.MethodPost, "/v1/orgs/*/apps/*/queues/*/leases"},
 	{http.MethodGet, "/v1/apps/*/policy/status"},
-	{http.MethodGet, "/v1/account/export"},
 	{http.MethodPost, "/v1/projects/scan/source-ref"},
 	{http.MethodPost, "/v1/apps/*/deployments/dev-source"},
 }
 
 // IsLongWaitRequest identifies a request on one of longWaitRoutes.
 func IsLongWaitRequest(r *http.Request) bool {
-	if r == nil {
-		return false
-	}
-	for _, route := range longWaitRoutes {
-		if r.Method == route.method && pathMatches(route.path, r.URL.Path) {
-			return true
-		}
-	}
-	return false
+	return matchesRoute(r, longWaitRoutes)
 }
 
 func pathMatches(pattern, path string) bool {

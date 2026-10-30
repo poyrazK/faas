@@ -87,13 +87,13 @@ any Kubernetes API.
 | Kind | Result |
 |---|---|
 | `Deployment` | An app. Request mode when a `Service` selects it, or when it declares a `containerPort`. Otherwise request mode with a warning: "no Service selects this Deployment; set `execution_mode: worker` if it consumes a queue". |
-| `CronJob` | A job with its schedule, as today. `timeZone` sets the cron timezone and `suspend` sets enabled, as today. `concurrencyPolicy`, `startingDeadlineSeconds` and the history limits are reported. |
+| `CronJob` | A job with its schedule, as today, and `suspend` sets enabled, as today. `timeZone` sets the cron timezone; it wins over a zone set on the existing cron, and a cron without one keeps its zone (UTC when new). An unknown zone fails the scan, as Kubernetes refuses it. Without the capability, a `timeZone` is reported, since the schedule would otherwise run in UTC unnoticed. `concurrencyPolicy` `Forbid` or `Replace`, `startingDeadlineSeconds` and the history limits are reported with the `gregale cron update` option that sets each after the first deploy (`--skip-if-running`, `--schedule-policy` overlap and `start_deadline_seconds`). |
 | `Job` | Reported: "one-off Jobs are run with `gregale job create` / `gregale job run`". |
 | `StatefulSet` | Refused, as today. When its image is a known datastore, the plan offers the managed resource (`gregale add postgres`, …) through the existing denylist path. |
 | `DaemonSet` | Refused: there is no per-node workload, and nodes are the platform's. |
 | `PersistentVolumeClaim`, `PersistentVolume`, `StorageClass` | Reported with the stateless reason (`docs/storage.md`) and the managed alternatives. |
 | `Service` | Not an app. Its selector links it to a Deployment (names, ports, address rewrite below). `type: LoadBalancer` and `NodePort` are reported: every app already gets an HTTPS URL. |
-| `Ingress`, Gateway API `HTTPRoute` | Not applied. Each host becomes a plan note with the `gregale domain add` command for the app it routes to. Domains need ownership verification and are a public change, so the scan never adds one. Path fan-out across services is reported. |
+| `Ingress`, Gateway API `HTTPRoute` | Not applied. Each host becomes a plan note with the `gregale domain add` command for the app it routes to. Domains need ownership verification and are a public change, so the scan never adds one. An Ingress that sends paths to more than one Service is reported with each path and Service: each Service's Deployment becomes its own app, and `route` edge rules serve them under one host. |
 | `HorizontalPodAutoscaler` | Section 4. |
 | `ConfigMap` | A source of plain values for section 5. Mounted as a volume, it is reported: there are no file mounts. |
 | `Secret` | Never imported (section 5). |
@@ -123,14 +123,37 @@ The app's container is the one named by the
   plan fails admission with the limit and the requested value, as the apps API
   does.
 - **Health.**
-  - `readinessProbe`, or `startupProbe` when there is no readiness probe, becomes
-    the app's healthcheck. It gates readiness (ADR-683) and replaces an instance
-    that fails after it was ready (ADR-684).
-  - `httpGet.path` sets the HTTP healthcheck path, and `grpc` the gRPC
-    healthcheck and its `service`. `exec.command` becomes an `api.ComposeHealthcheck`
-    `CMD` test. `periodSeconds`, `timeoutSeconds`, `failureThreshold` and
-    `initialDelaySeconds` map to interval, timeout, retries and start period. A
-    `startupProbe`'s `failureThreshold × periodSeconds` sets the start period.
+  - `readinessProbe`, or `startupProbe` when there is no readiness probe (or
+    only a `tcpSocket` one), becomes the app's healthcheck. The other probe's
+    action is reported; its budget still counts toward the start period.
+  - `exec.command` becomes an `api.ComposeHealthcheck` `CMD` test. It gates
+    readiness (ADR-683) and replaces an instance that fails after it was ready
+    (ADR-684).
+  - `httpGet` and `grpc` become the deployment's startup probe
+    (`api.DeploymentHealthcheck`): `httpGet.path` (default `/`) the HTTP path,
+    `grpc.service` the gRPC health service. The scan stores it on the app
+    (`project_readiness_check`), and every project deploy passes it as the
+    deployment's healthcheck override, so it gates readiness on every boot, and
+    as its liveness override with the plan's default timing, so an instance
+    that fails it after it was ready is replaced, as ADR-684 does for an exec
+    check. The liveness override is load-bearing: without it the plan-default
+    liveness probe calls `/healthz`, and once readiness is an HTTP path a 404
+    there counts as a failure, so an app that serves health elsewhere would
+    restart in a loop. A plan without liveness overrides (Free, or gRPC where
+    `GRPCLivenessAllowed` is false) gets neither, and its readiness stays the
+    TCP listener.
+  - The platform checks the serving port over plain HTTP or gRPC: a probe of
+    another port, or with `scheme: HTTPS`, is reported and not applied, since it
+    would check something else. A named port resolves through the container's
+    `ports`. `host` and `httpHeaders` are reported. Two differences from the
+    cluster are documented, not hidden: HTTP checks accept 2xx where Kubernetes
+    accepts 200–399, and an instance that fails its readiness check after it was
+    ready is replaced rather than taken out of traffic, which the scan reports.
+  - `periodSeconds`, `timeoutSeconds`, `failureThreshold` and
+    `initialDelaySeconds` map to interval, timeout, retries and start period,
+    with the Kubernetes defaults (10 s, 1 s, 3, 0) when absent. A
+    `startupProbe`'s `initialDelaySeconds + failureThreshold × periodSeconds`
+    sets the start period.
   - `tcpSocket` is reported: the platform already waits for the serving port.
   - **`livenessProbe` is not imported.** It is reported with the reason: the
     healthcheck above already replaces a broken instance. A liveness probe that
@@ -198,17 +221,42 @@ Examples: "proxy-body-size 50m: this plan accepts request bodies up to 25 MB",
 with `gregale app <slug> --websocket-enabled`". The numbers come from
 `pkg/api/limits.go` at plan time, never from the docs.
 
+The scan records each recognised annotation on the workload its Ingress
+routes to: through each backend Service (`spec.rules[].http.paths[].backend`,
+`spec.defaultBackend`, and the `extensions/v1beta1` `serviceName`) to the one
+scanned Deployment the Service selects in its namespace. A
+`websocket-services` annotation covers only the Services it lists. A backend
+that selects no scanned Deployment, or several, is reported. The plan step,
+which knows the account's plan, formats the notes (`projectsetup.IngressNotes`).
+
+| Setting | Annotations | Note compares with |
+|---|---|---|
+| Request body size | `nginx.ingress.kubernetes.io/proxy-body-size`, `nginx.org/client-max-body-size`, `haproxy-ingress.github.io/proxy-body-size` | the plan's `RequestBodyMaxBytes` |
+| Read / send timeout | `nginx.ingress.kubernetes.io/proxy-{read,send}-timeout`, `nginx.org/proxy-{read,send}-timeout`, `haproxy.org/timeout-server`, `haproxy-ingress.github.io/timeout-server` | the app request budget default and the ceiling `--request-timeout` may reach on the plan (ADR-093, ADR-1150) |
+| WebSockets | `nginx.ingress.kubernetes.io/websocket-services`, `nginx.org/websocket-services` | whether the plan forwards WebSockets by default, allows opting in, or refuses |
+| HTTPS redirect | `nginx.ingress.kubernetes.io/{ssl,force-ssl}-redirect`, `nginx.org/redirect-to-https`, `haproxy.org/ssl-redirect`, `haproxy-ingress.github.io/ssl-redirect`, `ingress.kubernetes.io/ssl-redirect`, `traefik.ingress.kubernetes.io/redirect-entry-point` | TLS ends at the Gregale edge |
+
+Traefik sets body size and timeouts through Middleware objects, not
+annotations, so only its redirect annotation is recognised. Other Ingress
+annotations (rewrites, CORS, rate limits) are not compared; the Ingress kind
+warning still names its hosts for `gregale domain add`.
+
 ### 7. Release, gating and limits
 
 - **Capability.** The new mappings ship behind a `kubernetes-manifests` preview
   capability (ADR-20261023115741). With it off, the scan keeps today's mapping,
-  but sections 1 (skip non-Kubernetes YAML, no rendering) and 2's reporting
-  apply to everyone: they turn silent drops and spurious failures into warnings.
+  but sections 1 (skip non-Kubernetes YAML, no rendering) and 2's reporting of
+  kinds apply to everyone: they turn silent drops and spurious failures into
+  warnings, and so does an unapplied CronJob `timeZone`. The reports that read
+  how Services link Deployments (a Deployment no Service selects, Ingress path
+  fan-out) or a CronJob's run policy come with the capability.
 - **Bounds.** The number of manifest files, documents per file and bytes read
   are bounded by constants in `pkg/api/limits.go`
-  (`KubernetesScanMaxFiles`, `KubernetesScanMaxDocuments`,
-  `KubernetesScanMaxBytes`), with the existing safe-path reader. Exceeding one
-  fails the scan with the limit and the observed value.
+  (`KubernetesScanMaxFiles` 500 YAML files, `KubernetesScanMaxDocuments` 1,000
+  documents in one file, `KubernetesScanMaxBytes` 16 MiB across every file),
+  with the existing safe-path reader. They bound every scan, with or without
+  the capability. Exceeding one fails the scan with the limit and the observed
+  value.
 - **Version skew.** New plan and receipt fields are additive and `omitempty`. An
   older apid plans a repository with today's mapping, and a newer CLI shows only
   the fields it receives. No migration and no proto change.

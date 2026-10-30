@@ -9632,7 +9632,7 @@ Create a broker trigger
 | `--lock <POLICY>` | run one at a time per --lock-key under this managed operation policy |  |
 | `--lock-key <JSON>` | JSON value that must run one at a time (requires --lock) |  |
 | `--app <slug>` | app slug | required |
-| `--kind <kind>` | trigger kind | required; one of `kafka` · `nats` · `redis_streams` · `sqs_compat` · `queue` · `realtime` |
+| `--kind <kind>` | trigger kind | required; one of `kafka` · `nats` · `redis_streams` · `queue` · `realtime` |
 | `--slug <slug>` | trigger slug |  |
 | `--config <JSON>` | JSON config (inline \| @file \| -) |  |
 | `--enabled` | enable the trigger |  |
@@ -9858,7 +9858,7 @@ Create a new job
 |---|---|---|
 | `--interactive` | choose a name, image, command, resources, and optional recurring schedule |  |
 | `--image <REF>` | OCI image (required unless interactive) |  |
-| `--command <ARGV>` | comma-separated entrypoint (e.g. /bin/sh,-c,echo hi) |  |
+| `--command <ARGV>` | comma-separated entrypoint (e.g. /bin/sh,-c,echo hi); escape a comma inside an argument with a backslash, or pass a JSON array |  |
 | `--ram <MB>` | billable memory in MB (0 = plan default) |  |
 | `--timeout <SECONDS>` | per-task wall-clock deadline (0 = plan default) |  |
 | `--parallelism <N>` | max concurrent tasks across a run (0 = plan default) |  |
@@ -9906,7 +9906,7 @@ Update one job
 |---|---|---|
 | `--interactive` | choose a Job, edit resources and schedule, and confirm changes |  |
 | `--image <REF>` | new OCI image |  |
-| `--command <ARGV>` | new comma-separated entrypoint |  |
+| `--command <ARGV>` | new comma-separated entrypoint (e.g. /bin/sh,-c,echo hi); escape a comma inside an argument with a backslash, or pass a JSON array |  |
 | `--ram <MB>` | new RAM (MB) |  |
 | `--timeout <SECONDS>` | new per-task timeout |  |
 | `--parallelism <N>` | new max parallel tasks |  |

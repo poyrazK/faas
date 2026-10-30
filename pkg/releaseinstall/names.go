@@ -31,6 +31,11 @@ var supportBinaryNames = []string{
 	// the signed bundle so compute hosts never rebuild a host-specific kernel
 	// during a production join.
 	"vmlinux",
+	// imaged verifies platform base provenance offline against the Sigstore
+	// root its own release shipped, and admits the frozen pre-attestation
+	// digest list without an attestation (ADR-20261029155852).
+	"sigstore-trusted-root.json",
+	"base-provenance-legacy.txt",
 }
 
 // legacyUnhashedSupportBinaryNames contains support files that appeared in

@@ -61,6 +61,7 @@ func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log 
 	}
 	data.Protection = s.edgeRules.AppEdgeProtection(ctx, app, edgerules.EdgeProtectionDefaultRange)
 	data.AttackModeAvailable = s.edgeRules.AttackModeReleased(acct)
+	data.ChallengeAvailable = s.edgeRules.FeatureReleased(acct, api.EdgeFeatureChallenge)
 	data.Trace = dashboard.EdgeRuleTraceFormData{Host: app.Slug, Path: "/", Method: http.MethodGet}
 	if appURL, parseErr := url.Parse(data.App.URL); parseErr == nil && appURL.Hostname() != "" {
 		data.Trace.Host = appURL.Hostname()

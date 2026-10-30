@@ -14,55 +14,47 @@ import (
 // plan's quota (Free allows none). The oldest crons keep firing; the rest wait
 // until the plan allows them again.
 //
-// The eligible set is resolved once per account per tick from the store, which
-// ranks the account's crons globally by age. Every schedd node therefore agrees
+// The owning account is the app's billing subject (ADR-202610171904), whose
+// plan admitted the cron when it was written: a company once it adopted
+// billing, with the company's plan and one allowance across its members, and
+// otherwise the app's creator. A company app keeps its creator's account_id,
+// so the creator's personal plan and crons must not gate it.
+//
+// The eligible set is resolved once per subject per tick from the store, which
+// ranks the subject's crons globally by age. Every schedd node therefore agrees
 // on the same set, so the per-account cap holds across the fleet rather than
 // once per node (a node-local per-tick counter let an account whose apps span N
 // nodes keep up to N x CronLimitPerAccount crons firing after a downgrade).
-//
-// The plan and the cap are the app's billing subject's: for a company app with
-// resource ownership that is the organization, not the member who created the
-// app. Reading the creator skipped every cron of a paid organization's app
-// whose creator was on a personal Free plan, and split one organization's
-// crons across its members' personal caps (bug hunt 2026-10-28 B37).
 type cronPlanGate struct {
-	store    cronPlanGateStore
-	subjects map[string]cronPlanSubject       // app ID -> its billing subject this tick
-	eligible map[string]map[string]struct{} // subject ID -> eligible cron ids; nil value = admit all
+	store    state.AppOwnerReader
+	owners   map[string]*state.Account      // org_id/account_id -> resource owner; nil = unreadable
+	eligible map[string]map[string]struct{} // subject -> eligible cron ids; nil value = admit all
 }
 
-type cronPlanSubject struct {
-	id   string
-	plan api.Plan
-	ok   bool
-}
-
-type cronPlanGateStore interface {
-	state.AppOwnerReader
-}
-
-func newCronPlanGate(store cronPlanGateStore) *cronPlanGate {
-	return &cronPlanGate{store: store, subjects: map[string]cronPlanSubject{}, eligible: map[string]map[string]struct{}{}}
+func newCronPlanGate(store state.AppOwnerReader) *cronPlanGate {
+	return &cronPlanGate{store: store, owners: map[string]*state.Account{}, eligible: map[string]map[string]struct{}{}}
 }
 
 // admit reports whether the given due cron of app may fire. A nil eligible set
-// (the subject or its plan could not be read, or the store cannot rank crons)
-// admits: the cron passed its plan's limits when it was written.
+// (the app's owner or its plan could not be read, or the store cannot rank
+// crons) admits: the cron passed its plan's limits when it was written.
 func (g *cronPlanGate) admit(ctx context.Context, app state.App, cron state.Cron) bool {
-	subject, seen := g.subjects[app.ID]
+	key := app.OrgID + "/" + app.AccountID
+	owner, seen := g.owners[key]
 	if !seen {
 		if acct, err := state.AppResourceAccount(ctx, g.store, app); err == nil {
-			subject = cronPlanSubject{id: acct.ResourceOwnerID(), plan: acct.Plan, ok: true}
+			owner = &acct
 		}
-		g.subjects[app.ID] = subject
+		g.owners[key] = owner
 	}
-	if !subject.ok {
+	if owner == nil {
 		return true
 	}
-	set, seen := g.eligible[subject.id]
+	subject := owner.ResourceOwnerID()
+	set, seen := g.eligible[subject]
 	if !seen {
-		set = g.loadEligible(ctx, subject)
-		g.eligible[subject.id] = set
+		set = g.loadEligible(ctx, subject, owner.Plan)
+		g.eligible[subject] = set
 	}
 	if set == nil {
 		return true
@@ -73,16 +65,16 @@ func (g *cronPlanGate) admit(ctx context.Context, app state.App, cron state.Cron
 
 // loadEligible resolves the subject's eligible cron ids, or nil to admit all.
 // An empty (non-nil) set correctly denies every cron — a Free account's 0 cap.
-func (g *cronPlanGate) loadEligible(ctx context.Context, subject cronPlanSubject) map[string]struct{} {
+func (g *cronPlanGate) loadEligible(ctx context.Context, subject string, plan api.Plan) map[string]struct{} {
 	quota, ok := g.store.(state.CronAccountQuotaStore)
 	if !ok {
 		return nil
 	}
-	limits, ok := api.LimitsFor(subject.plan)
+	limits, ok := api.LimitsFor(plan)
 	if !ok {
 		return nil
 	}
-	ids, err := quota.AccountEligibleCronIDs(ctx, subject.id, limits.CronLimitPerApp, limits.CronLimitPerAccount)
+	ids, err := quota.BillingSubjectEligibleCronIDs(ctx, subject, limits.CronLimitPerApp, limits.CronLimitPerAccount)
 	if err != nil {
 		return nil
 	}

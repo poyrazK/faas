@@ -42,8 +42,9 @@ type DeferredCacheVM interface {
 	VM
 	// ExportDeferredCache boots a second VM on the kept drive, waits for it to
 	// export only the dependency cache, and publishes that cache. The drive is
-	// removed on every path. An error costs only the next build's cache.
-	ExportDeferredCache(ctx context.Context, h BuildHandle) error
+	// removed on every path. An error costs only the next build's cache. The
+	// outcome carries the run's log tail whenever the VM wrote a result.
+	ExportDeferredCache(ctx context.Context, h BuildHandle) (BuildOutcome, error)
 	// DiscardDeferredCache removes the kept drive without exporting.
 	DiscardDeferredCache(h BuildHandle)
 }
@@ -205,6 +206,9 @@ type BuildOutcome struct {
 	// DependencyCacheDeferred: the guest exported only the image, and the
 	// driver kept the drive for DeferredCacheVM.ExportDeferredCache.
 	DependencyCacheDeferred bool
+	// Timings is where the build spent its time in the builder VM, as the
+	// guest reported it; nil from older guests.
+	Timings *api.BuildTimings
 	// WarmSnapshotError reports a non-fatal cache-capture failure. The build
 	// artifact remains authoritative and can still complete successfully.
 	WarmSnapshotError string

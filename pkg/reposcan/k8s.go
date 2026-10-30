@@ -92,10 +92,143 @@ func detectK8s(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 // pod-spec mapping when opts.KubernetesManifests is on.
 func detectK8sWith(fsys fs.FS, opts ScanOptions) ([]workloadSeed, []Managed, []string, error) {
 	var (
-		seeds    []workloadSeed
-		managed  []Managed
-		warnings []string
+		seeds       []workloadSeed
+		managed     []Managed
+		warnings    []string
+		autoscalers []k8sAutoscaler
+		sources     = k8sEnvSources{}
+		ingresses   []k8sIngress
+		deployments []k8sEnvWorkload
 	)
+	err := k8sWalk(fsys, func(warning string) { warnings = append(warnings, warning) }, func(o k8sObject) error {
+		p, node, header := o.src, o.node, o.header
+		var m k8sManifest
+		switch header.Kind {
+		case "Deployment", "CronJob":
+			if err := node.Decode(&m); err != nil {
+				return fmt.Errorf("reposcan: parse %s document %d: %w", p, o.index, err)
+			}
+		}
+		switch header.Kind {
+		case "Deployment":
+			if len(m.Spec.Template.Spec.Containers) == 0 ||
+				strings.TrimSpace(m.Spec.Template.Spec.Containers[0].Image) == "" {
+				return fmt.Errorf("reposcan: %s Deployment %q requires a first container image", p, m.Metadata.Name)
+			}
+			// Stateless → http. The first container's
+			// command/args/env/ports/apply. (We don't
+			// model initContainers / sidecars here.)
+			seed := k8sDeploymentSeed(p, m)
+			if hint, ok := denylistKind(seed.image); ok {
+				managed = append(managed, Managed{
+					Name: m.Metadata.Name, Kind: imageBase(seed.image),
+					EnvHint: hint, Source: seed.source, Image: seed.image,
+				})
+				return nil
+			}
+			if opts.KubernetesManifests {
+				podWarnings, err := applyK8sPodTemplate(&seed, node, header.Kind, m.Spec.Template.Spec.Containers)
+				if err != nil {
+					return fmt.Errorf("reposcan: %s Deployment %q: %w", p, m.Metadata.Name, err)
+				}
+				replicaWarnings, err := k8sDeploymentReplicas(&seed, node)
+				if err != nil {
+					return fmt.Errorf("reposcan: %s Deployment %q: %w", p, m.Metadata.Name, err)
+				}
+				podWarnings = append(podWarnings, replicaWarnings...)
+				warnings = append(warnings, k8sSeedWarnings(p, seed.name, podWarnings)...)
+				deployment, err := k8sReadEnvWorkload(o)
+				if err != nil {
+					return fmt.Errorf("reposcan: %s Deployment %q: %w", p, m.Metadata.Name, err)
+				}
+				deployments = append(deployments, deployment)
+			}
+			seeds = append(seeds, seed)
+		case "CronJob":
+			containers := m.Spec.JobTemplate.Spec.Template.Spec.Containers
+			if len(containers) == 0 || strings.TrimSpace(containers[0].Image) == "" {
+				return fmt.Errorf("reposcan: %s CronJob %q requires a first container image", p, m.Metadata.Name)
+			}
+			seed := k8sCronJobSeed(p, m)
+			cronWarnings, err := applyK8sCronJobSpec(&seed, node, opts.KubernetesManifests)
+			if err != nil {
+				return fmt.Errorf("reposcan: %s CronJob %q: %w", p, m.Metadata.Name, err)
+			}
+			if opts.KubernetesManifests {
+				podWarnings, err := applyK8sPodTemplate(&seed, node, header.Kind, containers)
+				if err != nil {
+					return fmt.Errorf("reposcan: %s CronJob %q: %w", p, m.Metadata.Name, err)
+				}
+				cronWarnings = append(cronWarnings, podWarnings...)
+			}
+			warnings = append(warnings, k8sSeedWarnings(p, seed.name, cronWarnings)...)
+			seeds = append(seeds, seed)
+		case "HorizontalPodAutoscaler":
+			if !opts.KubernetesManifests {
+				if warning := k8sKindWarning(p, node, header); warning != "" {
+					warnings = append(warnings, warning)
+				}
+				return nil
+			}
+			autoscaler, err := k8sReadAutoscaler(p, node, header)
+			if err != nil {
+				return fmt.Errorf("reposcan: %s HorizontalPodAutoscaler %q: %w", p, header.Metadata.Name, err)
+			}
+			autoscalers = append(autoscalers, autoscaler)
+		case "StatefulSet":
+			warnings = append(warnings, "reposcan: "+p+
+				": refusing StatefulSet "+header.Metadata.Name+
+				" (stateless contract, ADR-046)")
+		default:
+			if opts.KubernetesManifests {
+				if err := sources.add(node, header); err != nil {
+					return fmt.Errorf("reposcan: %s %s %q: %w", p, header.Kind, header.Metadata.Name, err)
+				}
+				if header.Kind == "Ingress" {
+					ingress, ok, err := k8sReadIngress(p, node, header)
+					if err != nil {
+						return fmt.Errorf("reposcan: %s Ingress %q: %w", p, header.Metadata.Name, err)
+					}
+					if ok {
+						ingresses = append(ingresses, ingress)
+					}
+				}
+			}
+			if warning := k8sKindWarning(p, node, header); warning != "" {
+				warnings = append(warnings, warning)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	warnings = append(warnings, applyK8sAutoscalers(seeds, autoscalers)...)
+	if opts.KubernetesManifests {
+		warnings = append(warnings, applyK8sEnvFrom(seeds, sources)...)
+		warnings = append(warnings, applyK8sIngresses(seeds, ingresses, sources.services, deployments)...)
+		warnings = append(warnings, k8sUnservedDeployments(seeds, sources.services, deployments)...)
+	}
+	// Deterministic order to keep the merge input stable.
+	sort.SliceStable(seeds, func(i, j int) bool { return seeds[i].name < seeds[j].name })
+	return seeds, managed, warnings, nil
+}
+
+// k8sObject is one Kubernetes object document the scan read.
+type k8sObject struct {
+	src    string
+	index  int // the document's number in src, from 1
+	node   *yaml.Node
+	header k8sHeader
+}
+
+// k8sWalk reads every manifest file under the Kubernetes directories, within
+// the scan's bounds (ADR-20261029093621 §7), and calls object for each
+// Kubernetes object in file order. Helm and Kustomize sources are skipped,
+// and so are documents that are not Kubernetes objects; skipped receives one
+// warning per skipped directory and per file with such documents.
+func k8sWalk(fsys fs.FS, skipped func(string), object func(k8sObject) error) error {
+	var budget k8sScanBudget
 	for _, d := range k8sRootDirs {
 		// Stat the directory; if present, walk it.
 		info, err := fs.Stat(fsys, d)
@@ -108,7 +241,7 @@ func detectK8sWith(fsys fs.FS, opts ScanOptions) ([]workloadSeed, []Managed, []s
 			}
 			if entry.IsDir() {
 				if warning, ok := k8sRenderedSourceWarning(fsys, p); ok {
-					warnings = append(warnings, warning)
+					skipped(warning)
 					return fs.SkipDir
 				}
 				return nil
@@ -117,11 +250,14 @@ func detectK8sWith(fsys fs.FS, opts ScanOptions) ([]workloadSeed, []Managed, []s
 			if !containsExt(k8sManifestExts, ext) {
 				return nil
 			}
-			body, err := readValidFile(fsys, p)
+			body, err := budget.readFile(fsys, p, entry)
 			if err != nil {
 				return err
 			}
 			docs := splitYAMLDocs(body)
+			if err := budget.checkDocuments(p, len(docs)); err != nil {
+				return err
+			}
 			notObjects := 0
 			for docIndex, doc := range docs {
 				if len(strings.TrimSpace(doc)) == 0 {
@@ -142,75 +278,21 @@ func detectK8sWith(fsys fs.FS, opts ScanOptions) ([]workloadSeed, []Managed, []s
 					}
 					continue
 				}
-				var m k8sManifest
-				switch header.Kind {
-				case "Deployment", "CronJob":
-					if err := node.Decode(&m); err != nil {
-						return fmt.Errorf("reposcan: parse %s document %d: %w", p, docIndex+1, err)
-					}
-				}
-				switch header.Kind {
-				case "Deployment":
-					if len(m.Spec.Template.Spec.Containers) == 0 ||
-						strings.TrimSpace(m.Spec.Template.Spec.Containers[0].Image) == "" {
-						return fmt.Errorf("reposcan: %s Deployment %q requires a first container image", p, m.Metadata.Name)
-					}
-					// Stateless → http. The first container's
-					// command/args/env/ports/apply. (We don't
-					// model initContainers / sidecars here.)
-					seed := k8sDeploymentSeed(p, m)
-					if hint, ok := denylistKind(seed.image); ok {
-						managed = append(managed, Managed{
-							Name: m.Metadata.Name, Kind: imageBase(seed.image),
-							EnvHint: hint, Source: seed.source, Image: seed.image,
-						})
-						continue
-					}
-					if opts.KubernetesManifests {
-						podWarnings, err := applyK8sPodTemplate(&seed, &node, header.Kind, m.Spec.Template.Spec.Containers)
-						if err != nil {
-							return fmt.Errorf("reposcan: %s Deployment %q: %w", p, m.Metadata.Name, err)
-						}
-						warnings = append(warnings, k8sSeedWarnings(p, seed.name, podWarnings)...)
-					}
-					seeds = append(seeds, seed)
-				case "CronJob":
-					containers := m.Spec.JobTemplate.Spec.Template.Spec.Containers
-					if len(containers) == 0 || strings.TrimSpace(containers[0].Image) == "" {
-						return fmt.Errorf("reposcan: %s CronJob %q requires a first container image", p, m.Metadata.Name)
-					}
-					seed := k8sCronJobSeed(p, m)
-					if opts.KubernetesManifests {
-						podWarnings, err := applyK8sPodTemplate(&seed, &node, header.Kind, containers)
-						if err != nil {
-							return fmt.Errorf("reposcan: %s CronJob %q: %w", p, m.Metadata.Name, err)
-						}
-						warnings = append(warnings, k8sSeedWarnings(p, seed.name, podWarnings)...)
-					}
-					seeds = append(seeds, seed)
-				case "StatefulSet":
-					warnings = append(warnings, "reposcan: "+p+
-						": refusing StatefulSet "+header.Metadata.Name+
-						" (stateless contract, ADR-046)")
-				default:
-					if warning := k8sKindWarning(p, &node, header); warning != "" {
-						warnings = append(warnings, warning)
-					}
+				if err := object(k8sObject{src: p, index: docIndex + 1, node: &node, header: header}); err != nil {
+					return err
 				}
 			}
 			if notObjects > 0 {
-				warnings = append(warnings, fmt.Sprintf(
+				skipped(fmt.Sprintf(
 					"reposcan: %s: skipped %d YAML document(s) that are not Kubernetes objects (no apiVersion and kind)", p, notObjects))
 			}
 			return nil
 		})
 		if err != nil {
-			return nil, nil, nil, err
+			return err
 		}
 	}
-	// Deterministic order to keep the merge input stable.
-	sort.SliceStable(seeds, func(i, j int) bool { return seeds[i].name < seeds[j].name })
-	return seeds, managed, warnings, nil
+	return nil
 }
 
 // k8sSeedWarnings prefixes a workload's pod-spec warnings the way Compose

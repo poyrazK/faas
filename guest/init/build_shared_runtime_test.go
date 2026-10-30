@@ -43,7 +43,7 @@ func TestBuildSharedRuntimeVerdict(t *testing.T) {
 		{name: "node app is classified", manifest: m, read: read, wantReason: sharedruntime.ReasonSystemPackages},
 		{name: "function is not classified", manifest: function, read: read, wantNil: true},
 		{name: "dockerfile is not classified", manifest: withFramework(api.FrameworkDockerfile), read: read, wantNil: true},
-		{name: "python is not classified yet", manifest: withFramework(api.FrameworkRailpackPython), read: read, wantNil: true},
+		{name: "python without a plan", manifest: withFramework(api.FrameworkRailpackPython), read: func(string) ([]byte, error) { return nil, fs.ErrNotExist }, wantReason: sharedruntime.ReasonPlanUnreadable},
 		{name: "auto without package.json is not node", manifest: withFramework(api.FrameworkAuto), read: func(string) ([]byte, error) { return nil, fs.ErrNotExist }, wantNil: true},
 		{name: "node without package.json", manifest: m, read: func(string) ([]byte, error) { return nil, fs.ErrNotExist }, wantReason: sharedruntime.ReasonPackageUnreadable},
 		{name: "unreadable plan", manifest: m, read: func(name string) ([]byte, error) {
@@ -66,5 +66,29 @@ func TestBuildSharedRuntimeVerdict(t *testing.T) {
 				t.Fatalf("verdict = %+v, want reason %q", got, tt.wantReason)
 			}
 		})
+	}
+}
+
+// ADR-1500 amendment 2: a Python app's plan is classified without a
+// package.json; Railpack's requirements.txt plan needs only /app.
+func TestBuildSharedRuntimeVerdictPython(t *testing.T) {
+	plan, err := os.ReadFile("../../pkg/sharedruntime/testdata/railpack-0.38.0-py-req.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := api.BuildManifest{Framework: api.FrameworkRailpackPython, Workdir: "/build/src", OutDir: "/build/out"}
+	read := func(name string) ([]byte, error) {
+		if name == railpackPlanPath(m) {
+			return plan, nil
+		}
+		return nil, fs.ErrNotExist
+	}
+	got := buildSharedRuntimeVerdict(m, read)
+	if got == nil || !got.Eligible || got.Env["PATH"] != sharedruntime.PythonRunnerPath {
+		t.Fatalf("verdict = %+v, want eligible on the Python runner PATH", got)
+	}
+	m.Function = true
+	if got := buildSharedRuntimeVerdict(m, read); got != nil {
+		t.Fatalf("function verdict = %+v, want none", *got)
 	}
 }

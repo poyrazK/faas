@@ -1,6 +1,7 @@
 package reposcan
 
 import (
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -144,7 +145,7 @@ func TestDetectK8s_PodSpecMapping(t *testing.T) {
 			"api: securityContext.fsGroup ignored: each service runs in its own microVM",
 			"api: securityContext.capabilities ignored",
 			"api: livenessProbe ignored: an instance whose healthcheck fails after it was ready is replaced",
-			"api: startupProbe.httpGet ignored: HTTP and gRPC readiness",
+			"api: startupProbe.httpGet ignored: readinessProbe is the healthcheck, and startupProbe sets only how long it may take to pass",
 			"api: resources.limits.ephemeral-storage ignored",
 		} {
 			if !slices.ContainsFunc(warnings, func(w string) bool { return strings.Contains(w, want) }) {
@@ -219,36 +220,73 @@ func TestK8sHealthcheck(t *testing.T) {
 		}
 		return probe
 	}
+	httpGet := func(action map[string]any, extra map[string]any) map[string]any {
+		probe := map[string]any{"httpGet": action}
+		for k, v := range extra {
+			probe[k] = v
+		}
+		return probe
+	}
+	named := []any{map[string]any{"name": "http", "containerPort": 8080}}
 	tests := []struct {
 		name        string
 		container   map[string]any
 		wantTest    []string
+		wantProbe   *api.DeploymentHealthcheck
 		wantStart   time.Duration
 		wantWarning string
-		wantErr     bool
+		wantErr     string
 	}{
 		{name: "no probes", container: map[string]any{}},
 		{name: "readiness defaults are Kubernetes defaults", container: map[string]any{"readinessProbe": exec(nil)},
 			wantTest: []string{"CMD", "check"}},
 		{name: "startup exec alone", container: map[string]any{"startupProbe": exec(map[string]any{"failureThreshold": 6, "periodSeconds": 5})},
 			wantTest: []string{"CMD", "check"}, wantStart: 30 * time.Second},
-		{name: "http readiness is reported", container: map[string]any{"readinessProbe": map[string]any{"httpGet": map[string]any{"path": "/ready"}}},
-			wantWarning: "readinessProbe.httpGet ignored"},
-		{name: "tcp readiness is reported", container: map[string]any{"readinessProbe": map[string]any{"tcpSocket": map[string]any{"port": 80}}},
-			wantWarning: "readinessProbe.tcpSocket ignored: the platform already waits for the serving port"},
-		{name: "http readiness, exec startup", container: map[string]any{
-			"readinessProbe": map[string]any{"grpc": map[string]any{"port": 9000}},
+		{name: "http readiness becomes the startup probe",
+			container: map[string]any{"readinessProbe": httpGet(map[string]any{"path": "/ready", "port": 8080}, map[string]any{"periodSeconds": 3, "timeoutSeconds": 2, "failureThreshold": 5, "initialDelaySeconds": 4})},
+			wantProbe: &api.DeploymentHealthcheck{Path: "/ready", IntervalS: 3, TimeoutS: 2, Retries: 5, StartPeriodS: 4}},
+		{name: "http path defaults to the root, named port resolves",
+			container: map[string]any{"ports": named, "readinessProbe": httpGet(map[string]any{"port": "http"}, nil)},
+			wantProbe: &api.DeploymentHealthcheck{Path: "/", IntervalS: 10, TimeoutS: 1, Retries: 3}},
+		{name: "startup http budget sets the start period",
+			container: map[string]any{"startupProbe": httpGet(map[string]any{"path": "/up", "port": 8080}, map[string]any{"failureThreshold": 30, "periodSeconds": 2})},
+			wantProbe: &api.DeploymentHealthcheck{Path: "/up", IntervalS: 2, TimeoutS: 1, Retries: 30, StartPeriodS: 60}},
+		{name: "grpc readiness with its service",
+			container: map[string]any{"readinessProbe": map[string]any{"grpc": map[string]any{"port": 8080, "service": "api.v1"}}},
+			wantProbe: &api.DeploymentHealthcheck{GRPC: &api.DeploymentGRPCHealthcheck{Service: "api.v1"}, IntervalS: 10, TimeoutS: 1, Retries: 3}},
+		{name: "grpc readiness wins over exec startup", container: map[string]any{
+			"readinessProbe": map[string]any{"grpc": map[string]any{"port": 8080}},
 			"startupProbe":   exec(nil),
-		}, wantTest: []string{"CMD", "check"}, wantStart: 30 * time.Second, wantWarning: "readinessProbe.grpc ignored"},
-		{name: "bad threshold", container: map[string]any{"readinessProbe": exec(map[string]any{"failureThreshold": 0})}, wantErr: true},
+		}, wantProbe: &api.DeploymentHealthcheck{GRPC: &api.DeploymentGRPCHealthcheck{}, IntervalS: 10, TimeoutS: 1, Retries: 3, StartPeriodS: 30},
+			wantWarning: "startupProbe.exec ignored: readinessProbe is the healthcheck"},
+		{name: "tcp readiness falls back to the startup probe", container: map[string]any{
+			"readinessProbe": map[string]any{"tcpSocket": map[string]any{"port": 8080}},
+			"startupProbe":   exec(nil),
+		}, wantTest: []string{"CMD", "check"}, wantStart: 30 * time.Second,
+			wantWarning: "readinessProbe.tcpSocket ignored: the platform already waits for the serving port"},
+		{name: "another port is reported", container: map[string]any{"readinessProbe": httpGet(map[string]any{"path": "/ready", "port": 9090}, nil)},
+			wantWarning: "readinessProbe.httpGet ignored: it checks port 9090, and the platform checks the serving port 8080"},
+		{name: "https is reported", container: map[string]any{"readinessProbe": httpGet(map[string]any{"port": 8080, "scheme": "HTTPS"}, nil)},
+			wantWarning: "readinessProbe.httpGet.scheme HTTPS ignored"},
+		{name: "headers are reported, the probe still applies",
+			container: map[string]any{"readinessProbe": httpGet(map[string]any{"path": "/r", "port": 8080, "httpHeaders": []any{map[string]any{"name": "X", "value": "1"}}}, nil)},
+			wantProbe: &api.DeploymentHealthcheck{Path: "/r", IntervalS: 10, TimeoutS: 1, Retries: 3}, wantWarning: "readinessProbe.httpGet.httpHeaders ignored"},
+		{name: "unknown named port", container: map[string]any{"readinessProbe": httpGet(map[string]any{"port": "admin"}, nil)},
+			wantErr: `readinessProbe.httpGet.port "admin" names no port of the container`},
+		{name: "relative path", container: map[string]any{"readinessProbe": httpGet(map[string]any{"path": "ready", "port": 8080}, nil)},
+			wantErr: "healthcheck.path must start with"},
+		{name: "exec without a command", container: map[string]any{"readinessProbe": map[string]any{"exec": map[string]any{}}},
+			wantErr: "readinessProbe.exec.command must be a list of strings"},
+		{name: "bad threshold", container: map[string]any{"readinessProbe": exec(map[string]any{"failureThreshold": 0})},
+			wantErr: "readinessProbe.failureThreshold must be a whole number of at least 1"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got, warnings, err := k8sHealthcheck(tt.container)
-			if tt.wantErr {
-				if err == nil {
-					t.Fatal("err = nil, want a validation error")
+			got, probe, warnings, err := k8sHealthcheck(tt.container, 8080)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("err = %v, want one containing %q", err, tt.wantErr)
 				}
 				return
 			}
@@ -269,6 +307,9 @@ func TestK8sHealthcheck(t *testing.T) {
 				if time.Duration(got.StartPeriodNS) != tt.wantStart {
 					t.Errorf("start period = %s, want %s", time.Duration(got.StartPeriodNS), tt.wantStart)
 				}
+			}
+			if !reflect.DeepEqual(probe, tt.wantProbe) {
+				t.Errorf("startup probe = %+v, want %+v", probe, tt.wantProbe)
 			}
 			if tt.wantWarning != "" && !slices.ContainsFunc(warnings, func(w string) bool { return strings.Contains(w, tt.wantWarning) }) {
 				t.Errorf("warnings = %q, want one containing %q", warnings, tt.wantWarning)
@@ -423,5 +464,46 @@ func TestScanWith_KubernetesManifestsReachesWorkloads(t *testing.T) {
 		if mapped := w.Resources != nil && w.ImageHealthcheck != nil && w.ImageProcess != nil; mapped != on {
 			t.Errorf("ScanWithOptions(%v): resources=%+v healthcheck=%+v process=%+v", on, w.Resources, w.ImageHealthcheck, w.ImageProcess)
 		}
+	}
+}
+
+// An HTTP readiness probe reaches the workload as its readiness check, and
+// only with the capability on.
+func TestScanWithOptions_KubernetesReadinessCheck(t *testing.T) {
+	t.Parallel()
+	fsys := k8sPodFS(`apiVersion: apps/v1
+kind: Deployment
+metadata: {name: api}
+spec:
+  template:
+    spec:
+      containers:
+        - name: api
+          image: acme/api:1
+          ports: [{name: http, containerPort: 3000}]
+          readinessProbe:
+            httpGet: {path: /ready, port: http}
+            periodSeconds: 5
+`)
+	for _, tc := range []struct {
+		name string
+		opts ScanOptions
+		want *api.DeploymentHealthcheck
+	}{
+		{"capability on", k8sOn(), &api.DeploymentHealthcheck{Path: "/ready", IntervalS: 5, TimeoutS: 1, Retries: 3}},
+		{"capability off", ScanOptions{}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := ScanWithOptions(fsys, tc.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(result.Workloads) != 1 {
+				t.Fatalf("workloads = %+v, want one", result.Workloads)
+			}
+			if got := result.Workloads[0].ReadinessCheck; !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("ReadinessCheck = %+v, want %+v", got, tc.want)
+			}
+		})
 	}
 }

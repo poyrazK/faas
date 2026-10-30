@@ -344,6 +344,11 @@ func idempotentCommand(args []string) bool {
 		return sub == "delete" || sub == "runs" || sub == "list"
 	case "key":
 		return sub == "delete" || sub == "list"
+	case "bucket":
+		return sub == "list" || sub == "delete"
+	case "add":
+		// add bucket reuses the bucket and binding an attempt left behind.
+		return sub == "bucket"
 	}
 	return false
 }
@@ -933,7 +938,16 @@ var httpClient = &http.Client{
 }
 
 func fetch(method, rawURL string, header map[string]string) httpResult {
-	req, err := http.NewRequest(method, rawURL, nil)
+	return send(method, rawURL, header, nil)
+}
+
+// send is fetch with a request body; a nil body sends none.
+func send(method, rawURL string, header map[string]string, body []byte) httpResult {
+	var reader io.Reader
+	if body != nil {
+		reader = bytes.NewReader(body)
+	}
+	req, err := http.NewRequest(method, rawURL, reader)
 	if err != nil {
 		return httpResult{err: err}
 	}
@@ -947,8 +961,8 @@ func fetch(method, rawURL string, header map[string]string) httpResult {
 		return httpResult{err: err, elapsed: time.Since(start)}
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
-	return httpResult{status: resp.StatusCode, header: resp.Header, body: body, elapsed: time.Since(start), err: err}
+	got, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	return httpResult{status: resp.StatusCode, header: resp.Header, body: got, elapsed: time.Since(start), err: err}
 }
 
 func get(rawURL string) httpResult { return fetch(http.MethodGet, rawURL, nil) }

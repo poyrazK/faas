@@ -131,6 +131,13 @@ UPDATE agent_runs SET cancel_requested_at=coalesce(cancel_requested_at,now()), u
 SELECT id::text AS id, account_id::text AS account_id FROM agent_runs
  WHERE state='queued' ORDER BY queued_at, id LIMIT sqlc.arg(max_rows)::integer FOR UPDATE SKIP LOCKED;
 
+-- name: AgentRunQueueStats :one
+-- Every account's queued runs and how long the oldest has waited, for
+-- agentd's queue gauges. agent_runs_queue_idx covers it.
+SELECT count(*)::integer AS queued,
+  coalesce(extract(epoch FROM now()-min(queued_at)), 0)::float8 AS oldest_seconds
+ FROM agent_runs WHERE state='queued';
+
 -- name: TryLockAccountAgents :one
 -- The same per-account key apid admits under; agentd never waits for it, so
 -- an apid transaction that holds it and wants a run row cannot deadlock.
@@ -150,7 +157,7 @@ UPDATE agent_runs SET state='starting', lease_token=sqlc.arg(lease_token)::text,
 SELECT r.id::text AS id, r.account_id::text AS account_id, a.plan, r.agent_id::text AS agent_id, ag.name AS agent_name,
   r.agent_version, coalesce(r.tenant_id::text, '')::text AS tenant_id, r.prompt, r.inputs, r.ram_mb, r.timeout_sec, r.attempt,
   v.harness_preset, v.harness_image, v.harness_run, v.harness_models, v.prompt_template, v.model_integrations, v.ai_budget_millicents,
-  r.checkout_repository, r.checkout_commit, r.checkout_installation_id
+  r.checkout_repository, r.checkout_commit, r.checkout_installation_id, r.queued_at
  FROM agent_runs r JOIN accounts a ON a.id=r.account_id JOIN agents ag ON ag.id=r.agent_id
   JOIN agent_versions v ON v.agent_id=r.agent_id AND v.version=r.agent_version
  WHERE r.id=sqlc.arg(run_id)::text::uuid;

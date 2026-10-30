@@ -42,6 +42,7 @@ type drainSynth struct {
 	maxActive      atomic.Int64
 	permanent      atomic.Bool // if true, return ErrPermanentInvoke
 	transient      atomic.Bool // if true, return a transient error
+	refused        atomic.Bool // if true, the gateway refuses the dispatch before the app
 	responseStatus int
 	outcomeCode    string
 	hold           time.Duration
@@ -74,6 +75,9 @@ func (d *drainSynth) Invoke(_ context.Context, appID string, inv state.Invocatio
 	}
 	if trans {
 		return inv, errors.New("drain synth: transient")
+	}
+	if d.refused.Load() {
+		return inv, dispatchRefusedError{err: errors.New("sched: invocation: gateway returned 503 (traffic_policy_unavailable)")}
 	}
 	inv.State = state.InvocationDispatching
 	inv.InstanceID = "inst-" + inv.ID
@@ -690,7 +694,7 @@ func TestDrain_InvocationRetryPolicyIsClampedByPlanAndKeepsDelay(t *testing.T) {
 	if got := d.invocationAttemptBudget(context.Background(), inv); got != 3 {
 		t.Fatalf("attempt budget = %d, want Hobby cap 3", got)
 	}
-	if got := d.invocationRetryDelay(inv); got != 8*time.Second {
+	if got := d.invocationRetryDelay(context.Background(), inv); got != 8*time.Second {
 		t.Fatalf("retry delay = %s, want 8s", got)
 	}
 }

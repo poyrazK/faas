@@ -169,7 +169,8 @@ func (s *Service) providerRefusingCredentials() bool {
 	}
 	var backends []string
 	for _, region := range registry.Regions() {
-		if backend, err := registry.Default(region); err == nil {
+		placements, _ := registry.Placements(region)
+		for _, backend := range placements {
 			backends = append(backends, backend.ID)
 		}
 	}
@@ -206,6 +207,8 @@ func BucketProblem(w http.ResponseWriter, err error) {
 		status, code, detail = 503, "object_storage_usage_stale", "Storage accounting is not configured or usage data is stale; new provider requests and transfer authorizations are blocked."
 	case errors.Is(err, state.ErrObjectBudget):
 		status, code, detail = 402, "object_storage_budget_reached", "The object storage safety budget has been reached; new provider requests and transfer authorizations are blocked."
+	case errors.Is(err, state.ErrObjectStorageRegionFull):
+		status, code, detail = 503, "object_storage_region_full", "Gregale has no room for new buckets in this region right now, and its operators are alerted. No bucket was created and existing buckets are unaffected; retry later."
 	case errors.Is(err, state.ErrObjectCapacity):
 		status, code, detail = 409, "object_storage_capacity_reserved", "The object storage capacity limit would be exceeded by this upload reservation."
 	case errors.Is(err, state.ErrNotFound), errors.Is(err, objectstorage.ErrNotFound):
@@ -404,12 +407,19 @@ func (s *Service) reserveBucket(ctx context.Context, st state.ObjectBucketStore,
 	if !s.Host.ObjectStorage().CanProvisionAllRegions() {
 		return state.ObjectBucket{}, state.ErrObjectUsageStale
 	}
-	backend, err := s.Host.ObjectStorage().Default(req.Region)
-	if err != nil {
-		return state.ObjectBucket{}, err
-	}
 	id := uuid.NewString()
-	b, err := st.ReserveObjectBucket(ctx, state.ObjectBucket{ID: id, AccountID: account, AppID: app, Name: req.Name, Scope: req.Scope, Region: req.Region, BackendID: backend.ID, BackendFingerprint: backend.Fingerprint, PhysicalName: objectstorage.PhysicalBucketPrefix + strings.ReplaceAll(id, "-", ""), PublicRead: req.Public, ServeAt: req.ServeAt}, s.Host.ObjectStorage().MaxBucketsPerApp)
+	want := state.ObjectBucket{ID: id, AccountID: account, AppID: app, Name: req.Name, Scope: req.Scope, Region: req.Region, PhysicalName: objectstorage.PhysicalBucketPrefix + strings.ReplaceAll(id, "-", ""), PublicRead: req.Public, ServeAt: req.ServeAt}
+	var b state.ObjectBucket
+	if s.Host.ObjectStorage().PlacementLimited(req.Region) {
+		b, err = s.reservePlacedBucket(ctx, st, want)
+	} else {
+		var backend objectstorage.Backend
+		if backend, err = s.Host.ObjectStorage().Default(req.Region); err != nil {
+			return state.ObjectBucket{}, err
+		}
+		want.BackendID, want.BackendFingerprint = backend.ID, backend.Fingerprint
+		b, err = st.ReserveObjectBucket(ctx, want, s.Host.ObjectStorage().MaxBucketsPerApp)
+	}
 	if err == nil && b.Region != req.Region {
 		return b, state.ErrConflict
 	}

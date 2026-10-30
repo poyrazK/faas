@@ -105,6 +105,22 @@ func TestWriteProblem(t *testing.T) {
 	if got.Limit == nil || *got.Limit != 10 {
 		t.Errorf("decoded Limit = %v", got.Limit)
 	}
+	// ADR-20261030115139: the public edge tells a platform problem from an
+	// app's response by this header.
+	if got := rr.Header().Get(ErrorCodeHeader); got != "x" {
+		t.Errorf("%s = %q, want x", ErrorCodeHeader, got)
+	}
+}
+
+// A writer that already chose an error code keeps it (the request budget
+// writer sets its own before rendering).
+func TestWriteProblemKeepsAnExplicitErrorCode(t *testing.T) {
+	rr := httptest.NewRecorder()
+	rr.Header().Set(ErrorCodeHeader, CodeRequestBudgetExceeded)
+	WriteProblem(rr, NewProblem(http.StatusGatewayTimeout, "other", "Other", "d"))
+	if got := rr.Header().Get(ErrorCodeHeader); got != CodeRequestBudgetExceeded {
+		t.Fatalf("%s = %q, want %q", ErrorCodeHeader, got, CodeRequestBudgetExceeded)
+	}
 }
 
 func TestWriteProblemUsesRFC9457Defaults(t *testing.T) {

@@ -115,6 +115,14 @@ type Workload struct {
 	GoCommand        string
 	Image            string                  // prebuilt OCI image when the source declares one
 	ImageHealthcheck *api.ComposeHealthcheck // partial Compose healthcheck override, prebuilt or built
+	// ReadinessCheck is an HTTP or gRPC check of the serving port that gates
+	// readiness, from a Kubernetes readinessProbe or startupProbe
+	// (ADR-20261029093621 §3). The deployment runs it as its startup probe.
+	ReadinessCheck *api.DeploymentHealthcheck
+	// IngressSettings are the proxy annotations of the Kubernetes Ingresses
+	// that route to the workload (ADR-20261029093621 §6). They are not
+	// applied; the plan compares each with what the account's plan does.
+	IngressSettings []IngressSetting
 	// ImageProcess carries the Compose entrypoint, user, working_dir and stop
 	// contract (ADR-1337). A built service's entrypoint is folded into its
 	// Command instead (ADR-20261022160000). Nil inherits the image.
@@ -230,10 +238,13 @@ const (
 )
 
 // CronSchedule is one schedule discovered for a workload. Enabled preserves
-// source activation state such as Kubernetes CronJob spec.suspend.
+// source activation state such as Kubernetes CronJob spec.suspend. Timezone
+// is the IANA zone the expression runs in (a CronJob's timeZone); empty is
+// UTC, or the zone an operator set on an existing cron.
 type CronSchedule struct {
 	Expression string
 	Enabled    bool
+	Timezone   string `json:",omitempty"`
 }
 
 // CronSchedules returns the complete schedule set and adapts legacy detector

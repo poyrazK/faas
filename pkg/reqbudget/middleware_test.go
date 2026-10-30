@@ -407,9 +407,36 @@ func TestIsDeploySubmissionRequest(t *testing.T) {
 	}
 }
 
+// TestIsAccountExportRequest pins H14-120: both account exports assemble the
+// whole account before answering, so apid lifts them off its 5 s default; on
+// production-us a 44-app account's export failed with 503 on every attempt.
+func TestIsAccountExportRequest(t *testing.T) {
+	cases := []struct {
+		method string
+		path   string
+		want   bool
+	}{
+		{http.MethodGet, "/v1/account/export", true},
+		{http.MethodGet, "/dashboard/account/export", true},
+		{http.MethodPost, "/v1/account/export", false},
+		{http.MethodGet, "/v1/account", false},
+		{http.MethodGet, "/v1/account/export/extra", false},
+		{http.MethodGet, "/dashboard/account", false},
+		{http.MethodGet, "/v1/outbound/integrations/x/ai-usage/users/export", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.method+"_"+tc.path, func(t *testing.T) {
+			r := httptest.NewRequest(tc.method, tc.path, nil)
+			if got := IsAccountExportRequest(r); got != tc.want {
+				t.Fatalf("IsAccountExportRequest(%s %s) = %v, want %v", tc.method, tc.path, got, tc.want)
+			}
+		})
+	}
+}
+
 // A queue lease long-polls up to 20 s and the other long-wait routes scale
-// with the account or source; under apid's 5 s default each answered 504
-// before it was done (bug hunt 2026-10-28 B35).
+// with the source; under apid's 5 s default each answered 504 before it was
+// done (bug hunt 2026-10-28 B35).
 func TestIsLongWaitRequest(t *testing.T) {
 	cases := []struct {
 		method string
@@ -419,7 +446,6 @@ func TestIsLongWaitRequest(t *testing.T) {
 		{http.MethodPost, "/v1/apps/demo/queues/jobs/leases", true},
 		{http.MethodPost, "/v1/orgs/acme/apps/demo/queues/jobs/leases", true},
 		{http.MethodGet, "/v1/apps/demo/policy/status", true},
-		{http.MethodGet, "/v1/account/export", true},
 		{http.MethodPost, "/v1/projects/scan/source-ref", true},
 		{http.MethodPost, "/v1/apps/demo/deployments/dev-source", true},
 		{http.MethodPost, "/v1/apps/demo/queues/jobs/leases:ack", false},

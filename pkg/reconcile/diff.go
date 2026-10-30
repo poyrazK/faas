@@ -304,6 +304,9 @@ func diffFieldsChanged(a state.App, w reposcan.Workload, startCmd string, availa
 	if !reflect.DeepEqual(a.Manifest.ProjectImageHealthcheck, imageManifest.ProjectImageHealthcheck) {
 		changed = append(changed, "image_healthcheck")
 	}
+	if !reflect.DeepEqual(a.Manifest.ProjectReadinessCheck, imageManifest.ProjectReadinessCheck) {
+		changed = append(changed, "readiness_check")
+	}
 	if !reflect.DeepEqual(a.Manifest.ProjectImageProcess, imageManifest.ProjectImageProcess) {
 		changed = append(changed, "image_process")
 	}

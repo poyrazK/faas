@@ -118,3 +118,46 @@ still open:
   (`TestSafeReleaseZeroDowntime`, `TestGuestGuarantees/burst_wake`,
   `TestHealthGate`, `TestServeAndObserve`) and a cache-miss build on a node
   under 21.5 GB free.
+
+## Amendment 1 (2026-10-29): over-limit requests stay 429 when the counter fails
+
+Eight parallel requests against a 2 rps, burst 3 throttle rule returned 503
+`rate_limit_unavailable` for three of them instead of 429. Two things turned
+one slow counter round trip into refusals of requests that were over the
+limit anyway:
+
+- A request that joins a batched consume waited only
+  `centralConsumeTimeout` (1 s), although its batch starts only when the
+  statement in flight ends and each statement may take that long
+  (ADR-570 amendment 2026-10-28). Two in-bound statements timed it out, and
+  the failure opened the 1 s consult breaker for every other request.
+- Past the grace, every counter failure was answered as unverified, even
+  for a request the gateway's own bucket already refused.
+
+Decision:
+
+1. A joined request waits up to `2 × centralConsumeTimeout`: the statement
+   in flight plus its own batch.
+2. Past the grace (or before the gateway ever reached the counter), a
+   request refused because the counter failed gives its token back to the
+   gateway's bucket, so that bucket counts only requests the counter
+   admitted and never holds fewer tokens than the counter. A request the
+   bucket refuses is therefore over the limit and gets the ordinary 429; a
+   request the bucket would admit is refused with 503
+   `rate_limit_unavailable` as before. Both still count in
+   `gateway_ratelimit_degraded_total`. No request is admitted without the
+   counter, so the decision of ADR-570 stands; only the refusal code
+   changes. This applies to app, account and throttle-rule limiters,
+   dimensional rules included.
+
+Consequences: a burst over a limit during a counter blip past the grace now
+reads as rate limiting, not as a platform outage. A pure outage still
+answers every request 503, because the returned tokens keep the bucket from
+draining.
+
+Verification: `pkg/gateway`
+`TestLimiter_CentralOutageRefusesDrainedBucketAsOverLimit`,
+`TestCentralCoalescer_FollowerWaitsForLeaderAndOwnBatch`, and the existing
+outage tests (`TestLimiter_RealBackend_PGErrorFailsClosed`,
+`TestLimiter_CentralOutageGraceDecidesLocally`,
+`TestSharedRateStoreFailureReturns503BeforeGuest`).

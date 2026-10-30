@@ -214,6 +214,7 @@ var PrimeObservationInstance = primeObservationInstance
 var PrimeRunPlusFrameworkReady = primeRunPlusFrameworkReady
 var PrimeStartupExtension = primeStartupExtension
 var ProfileCaptureOutcomeOf = profileCaptureOutcome
+var ProfileCaptureResultLabel = profileCaptureResultLabel
 var QuietEffective = quietEffective
 var QuietLog = quietLog
 var NewWorkPool = newWorkPool
@@ -602,6 +603,14 @@ func (r *composedWaveNativeVMM) Identity() *runtimeadmission.Identity { return &
 // Members of drainSynth
 func (r *drainSynth) Calls() *atomic.Int64    { return &r.calls }
 func (r *drainSynth) Transient() *atomic.Bool { return &r.transient }
+func (r *drainSynth) Refused() *atomic.Bool   { return &r.refused }
+
+// XHTTPGatewaySynth is the drain's real gateway client pointed at base.
+func XHTTPGatewaySynth(client *http.Client, base string) interface {
+	InvokeWithWake(context.Context, string, state.Invocation, WakeResult) (state.Invocation, error)
+} {
+	return &httpGatewaySynth{client: client, basePrefix: base}
+}
 
 // Members of fakeNotifier
 func (r *fakeNotifier) Events() *[]notifyEvent { return &r.events }
@@ -934,7 +943,7 @@ var LogVMMBootFailure = logVMMBootFailure
 var WorkerRecoveryRetryDelay = workerRecoveryRetryDelay
 
 // NewCronPlanGate exposes the cron plan gate's admit decision.
-func NewCronPlanGate(store cronPlanGateStore) func(context.Context, state.App, state.Cron) bool {
+func NewCronPlanGate(store state.AppOwnerReader) func(context.Context, state.App, state.Cron) bool {
 	return newCronPlanGate(store).admit
 }
 
@@ -966,3 +975,13 @@ var XRepeatFullBatches = repeatFullBatches
 
 // XTriggerAppConsumes is the broker trigger's may-take-records check.
 var XTriggerAppConsumes = triggerAppConsumes
+
+// adr: 20261029190000 — event deliveries retry by their app's policy or the
+// event delivery backoff.
+func (d *Drain) XInvocationRetryDelay(ctx context.Context, inv state.Invocation) time.Duration {
+	return d.invocationRetryDelay(ctx, inv)
+}
+
+func (d *Drain) XInvocationAttemptBudget(ctx context.Context, inv state.Invocation) int {
+	return d.invocationAttemptBudget(ctx, inv)
+}
