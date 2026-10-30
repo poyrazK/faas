@@ -184,9 +184,6 @@ var cliTreeAliases = []cliTreeAlias{
 	{"flag", "flags"},
 
 	// Data.
-	// `postgres restore` is point-in-time restore, so bringing a deleted
-	// database back in its delete window is `recover`.
-	{"postgres recover", "postgres undelete"},
 	{"postgres", "postgres"},
 	{"bucket multipart get", "bucket uploads status"},
 	{"bucket multipart", "bucket uploads"},

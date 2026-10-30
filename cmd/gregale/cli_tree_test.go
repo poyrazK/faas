@@ -17,6 +17,9 @@ var cliTreeVerbs = []string{
 	"pause", "resume", "cancel", "retry", "wait", "watch", "logs", "diff", "doctor", "status",
 	"promote", "rollback", "purge", "rotate", "approve", "reject", "join", "leave", "explain",
 	"replay", "recover", "scale", "park", "wake", "wake-ahead", "restart", "rename", "restore",
+	// undelete: bring a deleted database back inside its delete window, where
+	// `postgres restore` already means point-in-time restore.
+	"undelete",
 	"exec", "cp", "port-forward", "run", "publish", "send", "deliver", "receive", "peek", "ack",
 	"apply", "check", "verify", "setup", "sync", "connect", "disconnect", "link", "advance",
 	"simulate", "hide", "prune", "reorder", "serve", "call", "complete", "read", "render",
