@@ -180,6 +180,9 @@ func (s *Service) create(ctx context.Context, request CreateRequest, reservedID 
 	}
 	existing, err := s.store.FindByName(ctx, request.AccountID, request.Name)
 	if err == nil {
+		if existing.Restorable(s.now()) {
+			return Database{}, fmt.Errorf("%w: the name %q belongs to a database scheduled for deletion; undelete it, or delete it with purge=true to reuse the name now", ErrConflict, request.Name)
+		}
 		if reservedID != "" && existing.ID != reservedID {
 			return Database{}, ErrConflict
 		}

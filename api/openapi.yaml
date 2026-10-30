@@ -7921,9 +7921,15 @@ paths:
     delete:
       operationId: deleteManagedPostgresDatabase
       summary: Delete a managed PostgreSQL database
+      description: "A ready database is kept for 7 days with its compute stopped and its connections refused, and can be undeleted until restorable_until. It still counts toward the plan's database limit and keeps its name until it is purged. Any other database, or a delete with purge=true, is deleted at once. Bindings and restore dependencies must be removed first."
       tags: [managed_postgres]
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
+        - name: purge
+          in: query
+          required: false
+          description: "true deletes the database at once, including one already scheduled for deletion. It cannot be undone."
+          schema: { type: boolean, default: false }
       responses:
         '200':
           description: Database deletion status
@@ -7932,6 +7938,28 @@ paths:
               schema: { $ref: '#/components/schemas/ManagedPostgresDatabase' }
         default:
           description: Authentication or database deletion error
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/postgres/databases/{id}/undelete:
+    parameters:
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    post:
+      operationId: undeleteManagedPostgresDatabase
+      summary: Undelete a managed PostgreSQL database
+      description: "Returns a database whose delete is scheduled to ready, with its data, spec and restore history, while restorable_until is in the future. The plan must still allow the database's spec. After the window the database is gone and the request returns 404."
+      tags: [managed_postgres]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Database returned to ready
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresDatabase' }
+        default:
+          description: Window ended, database not scheduled for deletion, plan limit, or provider error
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -64287,10 +64315,15 @@ paths:
     delete:
       operationId: deleteOrgManagedPostgresDatabase
       summary: "Delete a company PostgreSQL resource."
-      description: "An owner or admin requests provider cleanup. Active bindings and retained restore dependencies must be removed first; accounting evidence remains available."
+      description: "An owner or admin requests provider cleanup. Active bindings and retained restore dependencies must be removed first; accounting evidence remains available. A ready database is kept for 7 days and can be undeleted until restorable_until; purge=true deletes at once."
       tags: [managed_postgres]
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
+        - name: purge
+          in: query
+          required: false
+          description: "true deletes the company database at once, even during its undelete window. It cannot be undone."
+          schema: { type: boolean, default: false }
       responses:
         '200':
           description: "Result of the request to delete a company PostgreSQL resource."
@@ -64471,6 +64504,36 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+  /v1/orgs/{organization}/postgres/databases/{id}/undelete:
+    parameters:
+      - name: organization
+        in: path
+        required: true
+        description: "Organization that owns the company database to undelete."
+        schema: { type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$' }
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    post:
+      operationId: undeleteOrgManagedPostgresDatabase
+      summary: "Undelete a company PostgreSQL database."
+      description: "An owner or admin returns a company database whose delete is scheduled to ready while restorable_until is in the future. The company plan must still allow the database's spec."
+      tags: [managed_postgres]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: "Result of the request to undelete a company PostgreSQL database."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresDatabase' }
+        default:
+          description: "Problem while attempting to undelete a company PostgreSQL database."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
@@ -82228,6 +82291,10 @@ components:
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
         deleted_at: { type: [string, "null"], format: date-time }
+        restorable_until:
+          type: string
+          format: date-time
+          description: "Set while the database's delete is scheduled: it can be undeleted until then, and is purged after."
     ManagedPostgresDatabaseList:
       description: Account-scoped managed PostgreSQL database collection.
       type: object
