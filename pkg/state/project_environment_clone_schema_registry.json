@@ -12425,6 +12425,20 @@
     "kind": "operational"
   },
   {
+    "table": "object_storage_inventory_scans",
+    "columns": [
+      "after_key",
+      "bucket_id",
+      "complete",
+      "listed_bytes",
+      "listed_keys",
+      "pages",
+      "progress_at",
+      "started_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "object_storage_key_grants",
     "columns": [
       "bucket_id",

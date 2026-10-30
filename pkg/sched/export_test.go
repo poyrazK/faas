@@ -990,3 +990,9 @@ func (d *Drain) XInvocationRetryDelay(ctx context.Context, inv state.Invocation)
 func (d *Drain) XInvocationAttemptBudget(ctx context.Context, inv state.Invocation) int {
 	return d.invocationAttemptBudget(ctx, inv)
 }
+
+// CustomerCapacityProblem exposes the customer restatement of a node-budget
+// refusal, built from a refusal carrying the given blockers.
+func CustomerCapacityProblem(detail string, blockers ...api.WorkerAdmissionBlocker) *api.Problem {
+	return customerCapacityProblem(explainAdmission(api.ErrCapacity(detail), blockers...))
+}

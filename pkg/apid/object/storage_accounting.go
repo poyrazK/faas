@@ -233,6 +233,9 @@ func (s *Service) reconcileObjectInventory(ctx context.Context, st state.ObjectS
 	if err != nil || native {
 		return err
 	}
+	if scans, ok := st.(state.ObjectInventoryScanStore); ok {
+		return s.advanceObjectInventory(ctx, st, scans, b, report, page)
+	}
 	token := uuid.NewString()
 	if err := st.ClaimObjectInventory(ctx, b.ID, token); err != nil {
 		if errors.Is(err, state.ErrConflict) {
@@ -312,14 +315,21 @@ func (s *Service) scanObjectInventory(ctx context.Context, st state.ObjectStorag
 	if page != nil {
 		record = func(context.Context) error { page(); return nil }
 	}
-	bytes, objects, counters, err := objectstorage.CompleteOwnedUsageCounters(ctx, backend.Provider, b.PhysicalName, record)
-	if !counters {
-		bytes, objects, err = CompleteObjectInventory(ctx, backend.Provider, b.PhysicalName, record)
-	}
+	bytes, objects, err := completeBucketInventory(ctx, backend.Provider, b.PhysicalName, record)
 	if err != nil {
 		return err
 	}
 	return st.FinishObjectInventory(ctx, b.ID, token, bytes, objects)
+}
+
+// completeBucketInventory lists a whole bucket in one attempt: from an owned
+// node's usage counters when it has them, otherwise by listing.
+func completeBucketInventory(ctx context.Context, p objectstorage.Provider, physical string, record func(context.Context) error) (bytes, objects int64, err error) {
+	bytes, objects, counters, err := objectstorage.CompleteOwnedUsageCounters(ctx, p, physical, record)
+	if !counters {
+		bytes, objects, err = CompleteObjectInventory(ctx, p, physical, record)
+	}
+	return bytes, objects, err
 }
 
 func (s *Service) inventoryRequestRecorder(b state.ObjectBucket) func(context.Context) error {
@@ -352,7 +362,7 @@ func (s *Service) CustomerObjectRequestRecorder(b state.ObjectBucket) func(conte
 }
 
 func (s *Service) RunObjectStorageAccounting(ctx context.Context) {
-	counter := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "faas_object_storage_inventory_scans_total", Help: "Complete or failed object storage inventory scans."}, []string{"outcome"})
+	counter := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "faas_object_storage_inventory_scans_total", Help: "Object storage inventory attempts: success publishes, partial records progress of a listing that continues (ADR-20261030100835), failed does neither or keeps the pages listed before the failure."}, []string{"outcome"})
 	pages := prometheus.NewCounter(prometheus.CounterOpts{Name: "faas_object_storage_inventory_provider_requests_total", Help: "Provider listing requests made by periodic inventory scans; platform maintenance, not charged to accounts."})
 	accruals := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "faas_object_storage_gateway_storage_accruals_total", Help: "Gateway-metered stored byte-hour accruals (ADR-20261024132844)."}, []string{"outcome"})
 	placement := newPlacementMetrics()

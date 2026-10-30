@@ -5,7 +5,7 @@ Gregale bills the account that owns an app. Plan prices and included capacity ar
 ```bash
 gregale billing usage --month 2026-09
 gregale billing status
-gregale billing portal
+gregale billing portal open
 ```
 
 Usage is measured in GB-RAM-hours for running app instances. The plan also sets deployed-app, developer-app, concurrency, storage-layer, and idle-timeout limits. Apps parked by scale-to-zero, and instances held frozen between requests, do not accrue running-instance usage; storage and other explicitly metered services remain separate line items. Where early freeze is enabled, a `between_requests` workload (functions by default) is frozen a few seconds after its last request rather than at its idle timeout, so it is billed for little more than the time it spends serving ([how frozen instances work](cold-wake.md#frozen-instances)).
@@ -298,7 +298,7 @@ Object storage cannot be selected on app, job, project or environment budgets
 
 The amount is the live object-storage estimate: this month's stored
 GiB-months, requests and egress, priced with the same rates and plan
-allowance as `gregale billing usage object-storage` and month close. Gross is before the
+allowance as `gregale bucket usage` and month close. Gross is before the
 allowance and net is after. Gregale refreshes it every five minutes, and an
 estimate more than 15 minutes old counts as stale. `GET /v1/billing/costs`
 shows it as the `object_storage` meter. Threshold and projected-overrun alerts
