@@ -1098,6 +1098,24 @@ func scanLayer(slug string, dep state.Deployment) (string, string) {
 	return slug, dep.ID
 }
 
+// liveRescanKey marks a scan that re-checks a live deployment's evidence
+// rather than admitting a new deployment.
+type liveRescanKey struct{}
+
+// stampScanFailure records a scan that could not run. A live rescan of a
+// deployment with complete evidence leaves that evidence in place: the failed
+// stamp replaced it, and the evidence lease then parked the enforce app
+// within a minute although its image and findings had not changed (bug hunt
+// 2026-10-28 H84). New deployments still record the failure.
+func (h *Handler) stampScanFailure(ctx context.Context, dep state.Deployment, result []byte) {
+	if ctx.Value(liveRescanKey{}) != nil && dep.ScanStatus == "complete" {
+		return
+	}
+	if err := h.store.UpsertDeploymentScanResult(ctx, dep.ID, result, "failed"); err != nil {
+		h.log.Warn("imaged: stamp scan_status=failed", "deployment", dep.ID, "err", err)
+	}
+}
+
 // Marshal contract: *ScanResult + Error field are plain Go
 // types (ints, string) so json.Marshal can't fail at runtime.
 // A future field that breaks this invariant (e.g. a chan)
@@ -1137,10 +1155,7 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 		if mErr != nil {
 			return verifiedScanFailure(app.SecurityPolicy, "marshal failed scan result: "+mErr.Error())
 		}
-		if writeErr := h.store.UpsertDeploymentScanResult(ctx, dep.ID, b, "failed"); writeErr != nil {
-			h.log.Warn("imaged: stamp scan_status=failed",
-				"deployment", dep.ID, "err", writeErr)
-		}
+		h.stampScanFailure(ctx, dep, b)
 		h.ops.ObserveDeployScanDuration(app.Slug, "skipped", time.Since(start))
 		h.ops.ObserveDeployScanTotal(app.Slug, "skipped")
 		return verifiedScanFailure(app.SecurityPolicy, "scan staging failed: "+err.Error())
@@ -1159,10 +1174,7 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 		if mErr != nil {
 			return verifiedScanFailure(app.SecurityPolicy, "marshal failed scan result: "+mErr.Error())
 		}
-		if writeErr := h.store.UpsertDeploymentScanResult(ctx, dep.ID, b, "failed"); writeErr != nil {
-			h.log.Warn("imaged: stamp scan_status=failed",
-				"deployment", dep.ID, "err", writeErr)
-		}
+		h.stampScanFailure(ctx, dep, b)
 		h.ops.ObserveDeployScanDuration(app.Slug, "skipped", time.Since(start))
 		h.ops.ObserveDeployScanTotal(app.Slug, "skipped")
 		return verifiedScanFailure(app.SecurityPolicy, "scan staging failed: "+err.Error())
@@ -1199,10 +1211,7 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 				"deployment", dep.ID, "err", mErr)
 			return verifiedScanFailure(app.SecurityPolicy, "marshal failed scan result: "+mErr.Error())
 		}
-		if writeErr := h.store.UpsertDeploymentScanResult(ctx, dep.ID, b, "failed"); writeErr != nil {
-			h.log.Warn("imaged: stamp scan_status=failed",
-				"deployment", dep.ID, "err", writeErr)
-		}
+		h.stampScanFailure(ctx, dep, b)
 		// ADR-075: surface the failure as a metric increment so
 		// the §12 dashboard panel can render a 5-min red rate.
 		// Duration histogram is observed on the failed branch too

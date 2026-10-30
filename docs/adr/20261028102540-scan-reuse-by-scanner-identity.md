@@ -123,3 +123,17 @@ days (bug hunt 2026-10-28 H102).
   completes, the result is published as before: blocking findings and unscanned
   bytes still refuse.
 - Staging new base bytes is unchanged: they have no earlier scan to hold.
+
+## Amendment 3 (2026-10-30): a live rescan that cannot run keeps the evidence
+
+A live rescan that could not run (Grype unavailable, a storage read, a control
+plane read error) stamped `scan_status = failed` over complete evidence, or was
+read as a regression, and the enforce lease parked the app within a minute
+although its image and findings had not changed (bug hunt 2026-10-28 H84).
+
+- A live rescan that fails to run leaves complete evidence in place and logs the
+  failure; a new deployment still records `failed` as before.
+- Quarantine follows a completed scan with blocking findings, a missing or
+  invalid signature, or evidence the lease finds expired, drifted or invalid. A
+  store read error skips that lease tick instead of counting as missing evidence.
+- The lease is unchanged: evidence that no rescan renews still expires on it.

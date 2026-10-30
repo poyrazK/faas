@@ -3,12 +3,15 @@ package imaged
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"testing"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -495,5 +498,70 @@ func TestQuarantineSecurityRegressionParksAndNotifies(t *testing.T) {
 	}
 	if len(notif.calls) != 2 {
 		t.Fatalf("notification calls = %d, want one per durable retry", len(notif.calls))
+	}
+}
+
+// A live rescan that could not run must leave complete evidence in place: the
+// failed stamp replaced it and the lease parked the enforce app on a Grype or
+// storage hiccup (bug hunt 2026-10-28 H84). A new deployment still records it.
+func TestLiveRescanFailureKeepsCompleteEvidence(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	h := &Handler{store: store, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	account, err := store.CreateAccount(ctx, "stamp-failure@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "stamp-app", Status: state.AppActive, SecurityPolicy: api.AppSecurityPolicyEnforce})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name   string
+		live   bool
+		status string
+		want   string
+	}{
+		{"live rescan keeps complete evidence", true, "complete", "complete"},
+		{"live rescan of failed evidence stamps", true, "failed", "failed"},
+		{"new deployment stamps", false, "", "failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, ScanStatus: tc.status, ScanResult: []byte(`{}`)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			stampCtx := ctx
+			if tc.live {
+				stampCtx = context.WithValue(ctx, liveRescanKey{}, true)
+			}
+			h.stampScanFailure(stampCtx, dep, []byte(`{"error":"grype unavailable"}`))
+			got, err := store.DeploymentByID(ctx, dep.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.ScanStatus != tc.want {
+				t.Fatalf("scan_status = %q, want %q", got.ScanStatus, tc.want)
+			}
+		})
+	}
+}
+
+func TestLeaseEvidenceDefinitive(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		want bool
+	}{
+		{state.ErrNotFound, true},
+		{fmt.Errorf("read: %w", state.ErrApplicationStandardRuntimeStale), true},
+		{state.ErrApplicationStandardsPending, true},
+		{cosign.ErrSignatureInvalid, true},
+		{cosign.ErrSignatureMissing, true},
+		{errors.New("pq: canceling statement due to statement timeout"), false},
+		{context.DeadlineExceeded, false},
+	} {
+		if got := leaseEvidenceDefinitive(tc.err); got != tc.want {
+			t.Errorf("leaseEvidenceDefinitive(%v) = %v, want %v", tc.err, got, tc.want)
+		}
 	}
 }
