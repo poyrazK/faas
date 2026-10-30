@@ -349,6 +349,7 @@ func (g *gatewaydEdgeRules) loadHostUncached(ctx context.Context, host string) (
 		return nil, err
 	}
 	entry.SetOwner(owner)
+	entry.SetInheritedApp(gateway.EdgeRuleInheritedApp(ctx))
 	g.cache.PutIfGeneration(gateway.EdgeRuleCacheKey(host, appID), entry, generation)
 	return entry, nil
 }
@@ -362,6 +363,40 @@ func (g *gatewaydEdgeRules) loadHostUncached(ctx context.Context, host string) (
 // the host are read as before, and owner is "". The owner's rules come from
 // its cached rule set when it has one (ADR-091 amendment 2026-10-27).
 func (g *gatewaydEdgeRules) hostStoreRules(ctx context.Context, host string) ([]state.EdgeRule, string, error) {
+	rules, owner, err := g.hostOwnStoreRules(ctx, host)
+	if err != nil {
+		return nil, "", err
+	}
+	inherited, err := g.previewInheritedRules(ctx)
+	if err != nil {
+		return nil, "", err
+	}
+	return state.MergeEdgeRulesInOrder(rules, inherited), owner, nil
+}
+
+// previewInheritedRules returns the production app's app-wide rules a PR
+// preview applies as well as its own (ADR-091 amendment 2026-10-30), or nil
+// for any other request.
+func (g *gatewaydEdgeRules) previewInheritedRules(ctx context.Context) ([]state.EdgeRule, error) {
+	production := gateway.EdgeRuleInheritedApp(ctx)
+	store, ok := g.store.(state.AppWideEdgeRuleStore)
+	if production == "" || !ok {
+		return nil, nil
+	}
+	appWide, err := store.AppWideEdgeRules(ctx, production)
+	if err != nil {
+		return nil, fmt.Errorf("production app-wide rules for preview: %w", err)
+	}
+	inherited := appWide[:0]
+	for _, rule := range appWide {
+		if state.EdgeRuleAppliesToPreviews(rule) {
+			inherited = append(inherited, rule)
+		}
+	}
+	return inherited, nil
+}
+
+func (g *gatewaydEdgeRules) hostOwnStoreRules(ctx context.Context, host string) ([]state.EdgeRule, string, error) {
 	owner, appID := gateway.EdgeRuleOwner(ctx), gateway.EdgeRuleApp(ctx)
 	if owner != "" {
 		rules, ok, err := g.ownerStoreRules(ctx, host, owner, appID)

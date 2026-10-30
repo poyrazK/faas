@@ -1627,6 +1627,7 @@ func newServerWithDeps(
 	s.dataRepair.Host = operationHost{s}
 	s.edgeRules.Host = edgeRulesHost{s}
 	s.edgeRules.SettingCheck = s.edgeRuleSettingsProblem
+	s.edgeRules.AuthorizeApp = s.authorizeNamedApp
 	s.profileCaptures.Host = profileCaptureHost{s}
 	s.queueLeases.Host = queueLeasesHost{s}
 	s.realtime.Host = realtimeHost{s}

@@ -206,6 +206,16 @@ func EdgeRulesCoveringHost(rules []EdgeRule, host, appID string, now time.Time) 
 	return out
 }
 
+// EdgeRuleAppliesToPreviews reports whether a production app's app-wide rule
+// also applies to its PR previews (ADR-091 amendment 2026-10-30). Previews
+// serve the PR's code on guessable hosts, so the production app's gates
+// (jwt, ip, geo, waf, challenge, throttle, ...) and request shaping hold
+// there too. A route rule sends traffic to a fixed app and an async rule
+// queues it for that app, so a preview keeps neither: it serves its own code.
+func EdgeRuleAppliesToPreviews(r EdgeRule) bool {
+	return api.IsEdgeRuleAppHosts(r.MatchHost) && r.Kind != EdgeRuleKindRoute && r.Kind != EdgeRuleKindAsync
+}
+
 // MergeEdgeRulesInOrder merges two rule slices already in evaluation order
 // into one, keeping that order and dropping duplicate ids.
 func MergeEdgeRulesInOrder(a, b []EdgeRule) []EdgeRule {

@@ -41,6 +41,17 @@ than `@app` covers every host of your account that it matches, including
 hosts of your other apps. To keep a rule to one app, use `@app` or the app's
 own hostnames.
 
+A PR preview applies its production app's `@app` rules as well as its own, so
+a `jwt`, `ip`, `geo`, `waf` or `challenge` rule on production also gates the
+preview's hosts. `route` and `async` rules are the exception: a preview serves
+its own code. An inherited `throttle` rule shares production's buckets.
+
+Edge rules do not run for managed realtime connections
+(`/__gregale/realtime/`), which authenticate with their own tokens, for
+requests to a production fork, which carry the fork's token, or for the
+`robots.txt`, `favicon.ico` and health-check answers the gateway serves itself
+when your manifest configures them.
+
 ### Path globs
 
 | Pattern | Matches |
@@ -201,6 +212,7 @@ keep refusing in a penalty box for the whole app; see
 
 The matched request is served by `target_app_slug`, which must be an app of
 the same account. The path is unchanged; add a `rewrite` rule to change it.
+Renaming the target app updates the route rules that name it.
 
 ### rewrite
 
@@ -602,6 +614,10 @@ A rule past a count limit is refused with 403
 total), a kind your plan does not include with 402
 `plan_edge_rule_kind_not_allowed`, and a kind not enabled for your account
 with 403 `capability_not_released`.
+
+After a downgrade, rules your new plan would not allow keep applying, so a
+gate you set up does not open on its own; new rules of those kinds are
+refused until the plan allows them again. Delete the ones you no longer need.
 
 ## Responses from the edge
 

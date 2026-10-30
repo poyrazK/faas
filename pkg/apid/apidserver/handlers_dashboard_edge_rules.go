@@ -156,6 +156,7 @@ func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log 
 			for _, rule := range rules {
 				apiRules = append(apiRules, s.edgeRules.RuleResponse(acct, rule))
 			}
+			apiRules = append(apiRules, s.dashboardPreviewInheritedRules(ctx, log, acct, app)...)
 			if names := edgeruletrace.ReferencedEdgeRuleLists(apiRules); len(names) > 0 {
 				if store, ok := s.store.(state.EdgeRuleListStore); ok {
 					lists, listErr := store.EdgeRuleListsByName(ctx, acct.ID, names)
@@ -364,6 +365,30 @@ func dashboardEdgeRulesActionFlash(r *http.Request) string {
 	default:
 		return ""
 	}
+}
+
+// dashboardPreviewInheritedRules returns, for a PR preview, the production
+// app's rules the preview also applies (ADR-091 amendment 2026-10-30), so the
+// trace matches the gateway. Read failures leave the trace with the preview's
+// own rules and are logged.
+func (s *server) dashboardPreviewInheritedRules(ctx context.Context, log *slog.Logger, acct state.Account, app state.App) []api.EdgeRuleResponse {
+	if app.PreviewOfSlug == "" {
+		return nil
+	}
+	production, err := s.store.AppBySlug(ctx, app.PreviewOfSlug)
+	if err != nil || production.AccountID != app.AccountID {
+		return nil
+	}
+	rules, err := s.store.ListEdgeRulesForApp(ctx, production.ID)
+	if err != nil {
+		log.Warn("dashboard edge rules: list production rules for preview trace", "app_id", app.ID, "err", err)
+		return nil
+	}
+	responses := make([]api.EdgeRuleResponse, 0, len(rules))
+	for _, rule := range rules {
+		responses = append(responses, s.edgeRules.RuleResponse(acct, rule))
+	}
+	return edgeruletrace.PreviewInheritedRules(responses)
 }
 
 func (s *server) dashboardCreateEdgeRule(w http.ResponseWriter, r *http.Request) {
