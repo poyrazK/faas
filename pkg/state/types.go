@@ -3879,6 +3879,7 @@ type UpdateAlertRuleParams struct {
 	WebhookURL          *string
 	WebhookSecretSealed *[]byte // nil = don't reseal; non-nil replaces
 	CooldownMinutes     *int
+	NotifyResolved      *bool
 }
 
 // AlertRule is one customer-configurable rule (issue #396, ADR-045).
@@ -3917,12 +3918,15 @@ type AlertRule struct {
 	Action              AlertAction        // issue #976 / ADR-122 / SAFE-RELEASES-B
 	WebhookURL          string
 	WebhookSecretSealed []byte // age/X25519 ciphertext; never logged
-	CooldownMinutes     int
-	State               AlertState
-	LastFiredAt         time.Time // zero until first fire
-	LastEvaluatedAt     time.Time
-	CreatedAt           time.Time
-	UpdatedAt           time.Time
+	// NotifyResolved also sends the webhook a signed resolve event when the
+	// rule recovers (ADR-20261029203000); channels always get one.
+	NotifyResolved  bool
+	CooldownMinutes int
+	State           AlertState
+	LastFiredAt     time.Time // zero until first fire
+	LastEvaluatedAt time.Time
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 // AlertDelivery is one delivery attempt record. IdempotencyKey is

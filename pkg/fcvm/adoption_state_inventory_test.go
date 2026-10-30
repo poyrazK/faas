@@ -21,6 +21,7 @@ import (
 //	bootonly  daemon wiring, or only for kinds that are never adopted
 var adoptionStateInventory = map[string]map[string]string{
 	"Manager": {
+		"agentWaits":                        "reset",    // agent-run guests are refused at adoption, so no run has one
 		"appCPUPolicies":                    "repushed", // per-app CPU policy revisions; the lease keeps the applied quota
 		"appEgressPolicies":                 "repushed", // egress policy revisions; per-netns rules survive in the netns
 		"appResolved":                       "reset",    // DNS-gated egress resolution cache
@@ -117,6 +118,7 @@ var adoptionInstanceInventory = map[string]string{
 	"AppTaskOnly":                     "refused", // app-task kind
 	"AgentRunOnly":                    "refused", // agent runs record the execution kind and are killed
 	"AgentRunRelay":                   "refused", // agent-run guests only
+	"AgentWaitPauseAfter":             "refused", // agent-run guests only
 	"QualificationOnly":               "refused", // qualification kind
 	"Paused":                          "rebuilt", // warm-pool restore, claimed or not
 	"QuietPauseAfter":                 "rebuilt",
