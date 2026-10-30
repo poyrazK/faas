@@ -112,6 +112,18 @@ func TestDockerfileTarballAndSecretReload(t *testing.T) {
 			doc := secretHash(t)
 			return str(doc, "sha256") == sha(first), "app sees " + compact(doc)
 		})
+		// `env set --restart` returns once the fresh instance serves, while the
+		// rolling refresh is still retiring the instance it replaced. A write
+		// in that window is folded into the refresh, which boots another
+		// instance with the value instead of reloading it in process (Hunt 14
+		// H14-125), so the next step waits for the refresh to settle.
+		eventually(t, "restart settled on one running instance", 2*time.Minute, 3*time.Second, func() (bool, string) {
+			rows := objects(t, tg.ok(t, time.Minute, "app", "instances", slug).stdout)
+			if len(rows) == 1 && strings.Contains(strings.ToLower(str(rows[0], "state")), "running") {
+				return true, ""
+			}
+			return false, "instances: " + compact(rows)
+		})
 		pid = str(secretHash(t), "pid")
 	})
 	s.step("hot_reload_without_restart", func(t *testing.T) {
