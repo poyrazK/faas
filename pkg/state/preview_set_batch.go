@@ -48,6 +48,16 @@ var (
 	_ PreviewTombstoneStore = (*MemStore)(nil)
 )
 
+// previewTornDown reports a preview the janitor or a destroy has torn down
+// (or is tearing down). Such a tombstone is never restored: the janitor skips
+// torn-down rows and a preview that is not open holds no allowance, so a
+// restored one would serve its PR code forever outside the quota and keep the
+// PR from getting a new preview.
+func previewTornDown(app App) bool {
+	return app.PreviewOfSlug != "" &&
+		(app.PreviewPrState == PreviewPrStateTearingDown || app.PreviewPrState == PreviewPrStateTornDown)
+}
+
 // releasesPreviewTombstone reports whether existing is a deleted row of the
 // preview desired re-creates: same account, organization, project, parent and
 // pull request. Any other holder keeps the slug.

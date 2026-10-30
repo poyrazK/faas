@@ -192,6 +192,9 @@ type Service struct {
 	// WritePreviewCheck.
 	WritePreviewCheckForkRefused                WritePreviewCheckForkRefused
 	WritePreviewCheckForkRefusedForInstallation WritePreviewCheckForkRefusedForInstallationFunc
+	// WritePreviewCheckNeutralForInstallation posts the neutral check of
+	// a PR the project's policy skips (bot or draft). Nil-safe.
+	WritePreviewCheckNeutralForInstallation WritePreviewCheckNeutralForInstallationFunc
 	// WritePreviewDestroyComment is the one-time PR-thread
 	// destroy-hint writer (issue #961 Mega-C PR-1, leaf 3).
 	// Same nil-safe posture as WritePreviewCheck. The dedupe
@@ -1332,6 +1335,25 @@ func (s *Service) writePreviewCheck(ctx context.Context, installationID int64, r
 	return nil
 }
 
+type WritePreviewCheckNeutralForInstallationFunc func(ctx context.Context, installationID int64, repoFullName, commitSHA, title, summary string) error
+
+// previewSkipReason names why the project's policy skips this pull
+// request's preview, or "" to preview it. A close always proceeds so an
+// existing preview is torn down. The policy reads the PR's author, not the
+// event's sender: a human pushing to a Dependabot branch is still a bot PR.
+func previewSkipReason(ev PullRequestEvent, policy state.GitHubDeployPolicy) string {
+	switch {
+	case ev.Action == PullRequestActionClosed:
+		return ""
+	case ev.PullRequest.OpenedByBot() && !policy.PreviewBotPRs:
+		return fmt.Sprintf("This pull request was opened by a bot (%s); the project does not preview bot pull requests. Enable them with `gregale github setup <app> --preview-bots`.",
+			ev.PullRequest.User.Login)
+	case ev.PullRequest.Draft && !policy.PreviewDraftPRs:
+		return "This pull request is a draft; the project previews it once it is marked ready for review."
+	}
+	return ""
+}
+
 func (s *Service) writeForkRefusedCheck(ctx context.Context, installationID int64, repoFullName, commitSHA, summary string) error {
 	if s.WritePreviewCheckForkRefusedForInstallation != nil {
 		return s.WritePreviewCheckForkRefusedForInstallation(ctx, installationID, repoFullName, commitSHA, summary)
@@ -1440,6 +1462,16 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 			"head_repo", ev.HeadRepoFullName(),
 			"pr_number", ev.Number, "action", string(ev.Action),
 			"sender", ev.Sender.Login)
+		return reconcile.Result{WasIgnored: true}, ErrIgnored
+	}
+	if reason := previewSkipReason(ev, target.policy); reason != "" {
+		if s.WritePreviewCheckNeutralForInstallation != nil {
+			if werr := s.WritePreviewCheckNeutralForInstallation(ctx, target.install.InstallationID,
+				ev.Repository.FullName, ev.PullRequest.HeadSHA, "Preview skipped", reason); werr != nil {
+				s.Log.Warn("githubd: write skipped preview check", "err", werr,
+					"repo", ev.Repository.FullName, "sha", ev.PullRequest.HeadSHA)
+			}
+		}
 		return reconcile.Result{WasIgnored: true}, ErrIgnored
 	}
 	if current, currentErr := s.currentPullRequestDelivery(ctx, target.install.InstallationID, ev); currentErr != nil {
@@ -1690,6 +1722,14 @@ func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, tar
 	var available map[string]struct{}
 	var headValues map[string]map[string]string
 	if sourceReady {
+		reopened, reopenErr := s.reopenLivePullRequestPreview(ctx, ev, install.InstallationID, previewLimits,
+			"https://"+previewHostnameForSlug(previewSlugVal), expiresAt)
+		if reopenErr != nil {
+			return reconcile.Result{}, reopenErr
+		}
+		if reopened {
+			return reconcile.Result{}, nil
+		}
 		skipped, skipErr := s.skipIgnoredPullRequestPush(ctx, ev, install.InstallationID, policy,
 			"https://"+previewHostnameForSlug(previewSlugVal), expiresAt)
 		if skipErr != nil {
@@ -1929,7 +1969,7 @@ func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, tar
 	if sourceReady {
 		if parentApp.ProjectID != "" {
 			created, err = s.applyPRHeadWorkload(ctx, created, workloads[strings.ToLower(parentApp.WorkloadName)], available, policy,
-				headValues[strings.ToLower(parentApp.WorkloadName)])
+				headValues[strings.ToLower(parentApp.WorkloadName)], previewPlatformEnv(ev))
 			if err != nil {
 				return result, fmt.Errorf("githubd: apply PR head workload %q: %w", parentApp.WorkloadName, err)
 			}
@@ -1942,7 +1982,7 @@ func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, tar
 				return result, fmt.Errorf("githubd: refresh PR dependency %q: %w", dependency.WorkloadName, refreshErr)
 			}
 			preview, err = s.applyPRHeadWorkload(ctx, preview, workloads[strings.ToLower(dependency.WorkloadName)], available, policy,
-				headValues[strings.ToLower(dependency.WorkloadName)])
+				headValues[strings.ToLower(dependency.WorkloadName)], previewPlatformEnv(ev))
 			if err != nil {
 				return result, fmt.Errorf("githubd: apply PR head dependency %q: %w", dependency.WorkloadName, err)
 			}
