@@ -55,13 +55,17 @@ func TestProducedBaseScanRenewalKeepsVerdictUntilReplaced(t *testing.T) {
 		newDatabase  bool
 		scanFails    bool
 		changedBytes bool
+		holdExpired  bool // the last complete scan is older than the hold
 		wantScans    int
 		wantRefusal  bool // the sidecar ends as the refusal
 		keepsVerdict bool // no write publishes the refusal before the result
 	}{
 		{name: "rescan after a database update", newDatabase: true, wantScans: 1, keepsVerdict: true},
 		{name: "renewal without rescanning", keepsVerdict: true},
-		{name: "rescan fails", newDatabase: true, scanFails: true, wantScans: 1, wantRefusal: true, keepsVerdict: true},
+		// A scanner failure on unchanged bytes keeps the last complete scan
+		// in force (bug hunt 2026-10-28 H102) until the hold runs out.
+		{name: "rescan fails", newDatabase: true, scanFails: true, wantScans: 1, keepsVerdict: true},
+		{name: "rescan fails after the hold ran out", newDatabase: true, scanFails: true, holdExpired: true, wantScans: 1, wantRefusal: true, keepsVerdict: true},
 		{name: "bytes changed", newDatabase: true, changedBytes: true, wantRefusal: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -90,6 +94,11 @@ func TestProducedBaseScanRenewalKeepsVerdictUntilReplaced(t *testing.T) {
 				return scanned, nil
 			})
 			h.scannerIdentityCache.set(installedScanner{}, prior.ScannedAt) // the fixture's real scan filled it
+			if tc.holdExpired {
+				saved := sharedBaseScanFailureGrace
+				sharedBaseScanFailureGrace = 0
+				t.Cleanup(func() { sharedBaseScanFailureGrace = saved })
+			}
 			be, err := h.storageFor()
 			if err != nil {
 				t.Fatal(err)

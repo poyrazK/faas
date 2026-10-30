@@ -494,6 +494,15 @@ const (
 	// fail-closed.
 	ApplicationStandardBaseScanTimeout = 20 * time.Minute
 
+	// SharedBaseScanFailureGrace is how long the last clean scan of a shared
+	// base's unchanged bytes stays in force while renewals fail for a reason
+	// other than the bytes or their findings (the scanner, its database, a
+	// storage read, a refused publication). Publishing the refusal on the
+	// first such failure stopped every boot on the base: three production
+	// outages in three days (bug hunt 2026-10-28 H102). Changed bytes and
+	// blocking findings still refuse at once.
+	SharedBaseScanFailureGrace = 24 * time.Hour
+
 	// Safety bounds for a complete filesystem projection handed to Grype.
 	// These are separate from the tenant's rootfs/disk entitlements.
 	ApplicationStandardRuntimeScanMaxBytes           int64 = 32 << 30

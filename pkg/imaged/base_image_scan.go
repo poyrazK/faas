@@ -124,6 +124,9 @@ func (h *Handler) loadOrRunProducedBaseScan(ctx context.Context, be storage.Stor
 			"duration", time.Since(started).Round(time.Second), "failure", failure)
 	}
 	if failure != "" {
+		if held, ok := h.holdBaseScanFailure(ctx, store, base, failure); ok {
+			return held, nil
+		}
 		return h.publishBaseScanFailure(ctx, store, in, failure)
 	}
 	in.Status, in.ScannerName = "complete", result.ScannerName
@@ -131,11 +134,47 @@ func (h *Handler) loadOrRunProducedBaseScan(ctx context.Context, be storage.Stor
 	value, err := store.PublishBaseImageScan(ctx, in)
 	if err != nil {
 		if errors.Is(err, state.ErrInvalidArgument) || errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
+			if held, ok := h.holdBaseScanFailure(ctx, store, base, "scanner_invalid"); ok {
+				return held, nil
+			}
 			return h.publishBaseScanFailure(ctx, store, in, "scanner_invalid")
 		}
 		return state.BaseImageScan{}, err
 	}
 	return value, nil
+}
+
+// sharedBaseScanFailureGrace is a variable so tests need not wait a day.
+var sharedBaseScanFailureGrace = api.SharedBaseScanFailureGrace
+
+// holdBaseScanFailure keeps the base's last complete scan in force when a
+// renewal of the same producer bytes failed for a reason that says nothing
+// about the bytes or their findings: the scanner or its database
+// (scanner_unavailable, scanner_invalid) or a storage read (artifact_read).
+// Publishing the refusal instead stopped every cold boot and restore on the
+// base, three production outages in three days (bug hunt 2026-10-28 H102).
+// The hold lasts SharedBaseScanFailureGrace from that scan, counts in
+// <daemon>_base_scan_failures_held_total so it alerts at once, and never
+// covers changed bytes (artifact_mismatch) or a scan that completed: those
+// publish their verdict as before.
+func (h *Handler) holdBaseScanFailure(ctx context.Context, store state.BaseImageScanStore, base state.BaseImageProducer, failure string) (state.BaseImageScan, bool) {
+	switch failure {
+	case "scanner_unavailable", "scanner_invalid", "artifact_read":
+	default:
+		return state.BaseImageScan{}, false
+	}
+	prior, err := store.GetCurrentBaseImageScan(ctx, base.Input.Artifact.StorageKey)
+	if err != nil || prior.Input.Report == nil || !producedBaseScanCoversProducer(prior, base) ||
+		time.Since(prior.ScannedAt) > sharedBaseScanFailureGrace {
+		return state.BaseImageScan{}, false
+	}
+	h.ops.ObserveBaseScanFailureHeld(base.Input.Artifact.StorageKey, failure)
+	if h.log != nil {
+		h.log.Error("imaged: shared base scan failed; the last complete scan of these bytes stays in force",
+			"key", base.Input.Artifact.StorageKey, "failure", failure, "scan", prior.ID,
+			"scanned_at", prior.ScannedAt, "refuses_after", prior.ScannedAt.Add(sharedBaseScanFailureGrace))
+	}
+	return prior, true
 }
 
 // renewProducedBaseScanWithoutScanning renews shared-base scan evidence

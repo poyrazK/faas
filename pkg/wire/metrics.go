@@ -1717,6 +1717,10 @@ type OpsMetrics struct {
 	// whose scan found a fixable CRITICAL refused every boot on it with
 	// no metric and no alert (Hunt 12 H12-1).
 	baseScanRefusals *prometheus.CounterVec
+	// baseScanFailuresHeld counts shared-base scans that failed for a
+	// reason other than the bytes or their findings while a clean scan of
+	// the same bytes stayed in force (bug hunt 2026-10-28 H102).
+	baseScanFailuresHeld *prometheus.CounterVec
 	// liveMigrationDecisions: Tier A5 / ADR-066 cross-node
 	// live-instance migration observability. Counter labelled by
 	// outcome ∈ {migrated, conflict, no_headroom, no_eligibility,
@@ -4232,6 +4236,11 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Help: "Instance boots vmmd's base scan gate refused (issue #299), labelled by base (the storage key of the staged base ext4) and reason (critical, sidecar_missing, generation_mismatch, generation_unavailable, incomplete). Any increase means no instance on that base can start until the base is rebuilt or rescanned.",
 	}, []string{"base", "reason"})
 	commonCollectors = append(commonCollectors, baseScanRefusals)
+	baseScanFailuresHeld := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_base_scan_failures_held_total",
+		Help: "Shared-base scans that failed for a reason other than the bytes or their findings (scanner_unavailable, artifact_read, scanner_invalid) while the last clean scan of the same bytes stayed in force, labelled by base (the artifact storage key) and reason. Boots continue; the base is refused only once the hold runs out (api.SharedBaseScanFailureGrace).",
+	}, []string{"base", "reason"})
+	commonCollectors = append(commonCollectors, baseScanFailuresHeld)
 	// ADR-055: per-deploy grype scan metrics. Labelled by
 	// severity (the Grype closed set) — the same vocabulary
 	// imageScanVulns uses, so anyone familiar with the base-ext4
@@ -5801,6 +5810,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		provenanceWrites:                     provenanceWrites,
 		imageScanVulns:                       imageScanVulns,
 		baseScanRefusals:                     baseScanRefusals,
+		baseScanFailuresHeld:                 baseScanFailuresHeld,
 		deployScanDuration:                   deployScanDuration,
 		deployStageDuration:                  deployStageDuration,
 		apiHostingPhaseTotal:                 apiHostingPhaseTotal,
@@ -8742,6 +8752,15 @@ func (m *OpsMetrics) ObserveBaseScanRefusal(base, reason string) {
 		return
 	}
 	m.baseScanRefusals.WithLabelValues(base, reason).Inc()
+}
+
+// ObserveBaseScanFailureHeld counts one failed shared-base scan whose last
+// clean verdict stayed in force. Safe on a nil receiver.
+func (m *OpsMetrics) ObserveBaseScanFailureHeld(base, reason string) {
+	if m == nil {
+		return
+	}
+	m.baseScanFailuresHeld.WithLabelValues(base, reason).Inc()
 }
 
 // ObserveDeployScanDuration records one per-deploy grype scan's

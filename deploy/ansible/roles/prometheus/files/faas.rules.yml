@@ -4259,6 +4259,22 @@ groups:
           description: "vmmd's base scan gate has kept refusing boots on {{ $labels.base }} for fifteen minutes with reason {{ $labels.reason }}. No instance on that base can cold boot or restore, so every app on its runtime fails to deploy and to wake. critical means the node-side Grype scan found a fixable CRITICAL vulnerability: publish a patched base. sidecar_missing, incomplete and generation_* mean the scan record is absent or stale: rerun the base stage."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBaseScanRefusingBoots.md"
 
+      # Bug hunt 2026-10-28 H102: a shared-base scan that fails for a reason
+      # other than the bytes keeps the last complete scan in force for
+      # api.SharedBaseScanFailureGrace instead of refusing every boot. Boots
+      # continue, but the base is refused once the hold runs out.
+      - alert: FaasBaseScanFailureHeld
+        expr: sum by (base, reason) (increase(imaged_base_scan_failures_held_total[10m])) > 0
+        for: 10m
+        labels:
+          severity: page
+          component: imaged
+          family: base_scan_gate
+        annotations:
+          summary: "Scans of {{ $labels.base }} keep failing ({{ $labels.reason }}); boots run on its last complete scan"
+          description: "imaged's renewals of {{ $labels.base }} have kept failing with {{ $labels.reason }} for ten minutes. Boots continue on the last complete scan of the same bytes, but vmmd refuses every boot on the base once that scan is 24 hours old. scanner_unavailable and scanner_invalid point at Grype or its database, artifact_read at the artifact store."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBaseScanRefusingBoots.md"
+
       # ADR-20261029155852: imaged checks a platform base's SLSA provenance
       # before it builds the base. The counter only grows while imaged runs and
       # a base is checked when it is built, so any unverified result since
