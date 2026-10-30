@@ -16909,6 +16909,7 @@
       "latency_ms",
       "method",
       "node_id",
+      "platform_refusal",
       "platform_tenant_id",
       "received_at",
       "referrer_host",
