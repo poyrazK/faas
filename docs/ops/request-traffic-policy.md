@@ -926,7 +926,10 @@ A stored deployment alias reserves its hostname independently from its target's
 current ability to serve. Failed or cancelled deployments, cleared targets and
 deleted or internal owners return a routing miss while the alias mapping remains.
 Terminal pipeline status changes can still be recorded. A genuinely absent alias
-retains the legacy primary-slug fallback.
+retains the legacy primary-slug fallback. An alias whose target is superseded (a
+rollback) or not yet live still resolves, but public routing refuses its host pin
+and schedd wakes only live deployments; the gateway answers that verified refusal
+with 409 `Deployment not serving`, not 503 `traffic_policy_unavailable`.
 
 Removing an alias, permanently purging its app or retiring its account can expose
 a primary hostname owned by another account. These removals use the shared binding

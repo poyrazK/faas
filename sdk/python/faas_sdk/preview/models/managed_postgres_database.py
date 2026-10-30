@@ -49,6 +49,8 @@ class ManagedPostgresDatabase:
     restore_point_in_time: datetime.datetime | None | Unset = UNSET
     last_error_code: None | str | Unset = UNSET
     deleted_at: datetime.datetime | None | Unset = UNSET
+    restorable_until: datetime.datetime | Unset = UNSET
+    """Set while the database's delete is scheduled: it can be undeleted until then, and is purged after."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -108,6 +110,10 @@ class ManagedPostgresDatabase:
         else:
             deleted_at = self.deleted_at
 
+        restorable_until: str | Unset = UNSET
+        if not isinstance(self.restorable_until, Unset):
+            restorable_until = self.restorable_until.isoformat()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -136,6 +142,8 @@ class ManagedPostgresDatabase:
             field_dict["last_error_code"] = last_error_code
         if deleted_at is not UNSET:
             field_dict["deleted_at"] = deleted_at
+        if restorable_until is not UNSET:
+            field_dict["restorable_until"] = restorable_until
 
         return field_dict
 
@@ -227,6 +235,13 @@ class ManagedPostgresDatabase:
 
         deleted_at = _parse_deleted_at(d.pop("deleted_at", UNSET))
 
+        _restorable_until = d.pop("restorable_until", UNSET)
+        restorable_until: datetime.datetime | Unset
+        if isinstance(_restorable_until, Unset):
+            restorable_until = UNSET
+        else:
+            restorable_until = datetime.datetime.fromisoformat(_restorable_until)
+
         managed_postgres_database = cls(
             id=id,
             name=name,
@@ -245,6 +260,7 @@ class ManagedPostgresDatabase:
             restore_point_in_time=restore_point_in_time,
             last_error_code=last_error_code,
             deleted_at=deleted_at,
+            restorable_until=restorable_until,
         )
 
         managed_postgres_database.additional_properties = d

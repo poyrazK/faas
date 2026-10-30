@@ -562,7 +562,7 @@ type CreateAppRequest struct {
 	ServiceBindingTransport *ServiceBindingTransport `json:"service_binding_transport,omitempty"`
 	Type                    string                   `json:"type,omitempty"`             // "app" (default) | "function"
 	Runtime                 string                   `json:"runtime,omitempty"`          // node22|python312|go124|go124-alpine|node24|python313|binary for functions
-	RAMMB                   int                      `json:"ram_mb,omitempty"`           // 0 => plan default
+	RAMMB                   int                      `json:"ram_mb,omitempty"`           // 0 => StandaloneAppDefaultRAMMB; the plan's RAM when vcpu is set
 	VCPU                    int                      `json:"vcpu,omitempty"`             // 0 => plan default; explicit values must match the plan RAM/vCPU shape
 	CPUMillicores           int                      `json:"cpu_millicores,omitempty"`   // 0 => 1000; allowed: 250, 500, 1000
 	ResourceProfile         string                   `json:"resource_profile,omitempty"` // named RAM/CPU shape; overrides omitted resource values
@@ -2825,6 +2825,20 @@ type DeploymentHealthcheck struct {
 // primary-app readiness. An empty service checks the overall server health.
 type DeploymentGRPCHealthcheck struct {
 	Service string `json:"service,omitempty"`
+}
+
+// Clone returns a deep copy; nil stays nil.
+func (h *DeploymentHealthcheck) Clone() *DeploymentHealthcheck {
+	if h == nil {
+		return nil
+	}
+	out := *h
+	out.Test = slices.Clone(h.Test)
+	if h.GRPC != nil {
+		grpc := *h.GRPC
+		out.GRPC = &grpc
+	}
+	return &out
 }
 
 // DeploymentReadinessProbe is a reversible, steady-state traffic gate for

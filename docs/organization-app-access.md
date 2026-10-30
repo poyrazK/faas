@@ -62,7 +62,8 @@ it does not delete existing applications.
 
 Other per-account plan allowances follow the app's billing subject
 (ADR-202610171904): API consumer keys, log drains, realtime endpoints, inbound
-and outbound webhooks, alert rules, CORS presets, triggers and reserved
+and outbound webhooks, alert rules, CORS presets, triggers, crons (created
+singly, by a deploy or by a project apply) and reserved
 (`eviction_priority: reserved`) apps. Once an
 organization has adopted billing, a company app's resources count toward the
 organization's allowance, whoever created the app, and never toward the

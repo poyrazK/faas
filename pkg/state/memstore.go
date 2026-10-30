@@ -193,6 +193,7 @@ type MemStore struct {
 	managedRealtimeSchedules                   map[managedRealtimeScheduleKey]ManagedRealtimeSchedule
 	managedRealtimeScheduleHistory             map[managedRealtimeScheduleKey][]ManagedRealtimeScheduleHistoryEvent
 	managedRealtimeEventSchemas                map[managedRealtimeEventSchemaKey]ManagedRealtimeEventSchema
+	realtimeEventSchemas                       *realtimeEventSchemaCache
 	managedRealtimeBatches                     map[managedRealtimeBatchKey]managedRealtimeBatchRecord
 	managedRealtimeSnapshots                   map[managedRealtimeHistoryKey]ManagedRealtimeChannelSnapshot
 	realtimeNotificationTimeline               map[string][]api.ManagedRealtimeNotificationTimelineEvent
@@ -1624,6 +1625,7 @@ type builderVMCleanupRow struct {
 // Production (PgStore) gets the same row from the migration.
 func NewMemStore(options ...StoreOption) *MemStore {
 	m := &MemStore{
+		realtimeEventSchemas:            newRealtimeEventSchemaCache(),
 		trafficAppsSuffix:               configuredTrafficAppsSuffix(options),
 		workflowFailureCaptureStartedAt: time.Now().UTC(),
 		deploymentDependencyGates:       map[string]DeploymentDependencyGate{},
@@ -4450,15 +4452,8 @@ func (m *MemStore) ApplyProjectPlan(
 				NotAllowed: true,
 			}
 		}
-		observedCrons := 0
-		for _, c := range m.crons {
-			for _, a := range m.apps {
-				if c.AppID == a.ID && SameAppResourceOwner(a, App{AccountID: project.AccountID, OrgID: project.OrgID}) && a.Status != AppDeleted {
-					observedCrons++
-					break
-				}
-			}
-		}
+		// The allowance is the project's billing subject's (ADR-202610171904).
+		observedCrons := m.quotaSubjectCronsLocked(m.billingSubjectLocked(project.AccountID, project.OrgID))
 		if observedCrons+len(crons) > limits.CronLimitPerAccount {
 			return Project{}, nil, nil, &QuotaError{
 				Kind:     QuotaErrorKindCrons,
@@ -4720,11 +4715,13 @@ func (m *MemStore) ApplyProjectReconcile(
 		for id := range liveProjectApps {
 			projectAppIDs[id] = true
 		}
+		// The allowance is the project's billing subject's (ADR-202610171904).
+		subject := m.billingSubjectLocked(storedProject.AccountID, storedProject.OrgID)
 		observedCrons := 0
 		projectCronCount := 0
 		for _, cron := range stagedCrons {
 			app, exists := stagedApps[cron.AppID]
-			if !exists || app.Status == AppDeleted || !SameAppResourceOwner(app, App{AccountID: storedProject.AccountID, OrgID: storedProject.OrgID}) {
+			if !exists || app.Status == AppDeleted || m.billingSubjectLocked(app.AccountID, app.OrgID) != subject {
 				continue
 			}
 			observedCrons++
@@ -5962,7 +5959,9 @@ func (m *MemStore) AdvanceCanary(ctx context.Context, id string, params CanaryAd
 			} else {
 				other.Status = DeploySuperseded
 			}
+			before := m.deployments[sibling.ID]
 			other.TrafficPercent = 0
+			m.endSupersededCanaryRolloutLocked(before, &other, id, now)
 			m.putDeploymentLocked(sibling.ID, other)
 		}
 	} else {
@@ -10114,10 +10113,12 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 			} else {
 				other.Status = DeploySuperseded
 			}
+			before := other
 			other.TrafficPercent = 0
 			// A retained stable revision, not a manual dark deployment
 			// (RetireLiveDeploymentSiblings; Hunt 14 H14-71).
 			other.TrafficPercentExplicit = false
+			m.endSupersededCanaryRolloutLocked(before, &other, id, time.Now().UTC())
 			m.putDeploymentLocked(otherID, other)
 		}
 		m.reactivateCronsForAppLocked(d.AppID)
@@ -10130,10 +10131,22 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 	// initial stage and reset the wall-clock anchor at activation time;
 	// build time must not consume the customer's observation window.
 	siblings := make([]siblingRow, 0)
+	inFlightCanaries := make([]siblingRow, 0)
 	for otherID, other := range m.deployments {
 		if other.AppID == d.AppID && normalizedDeploymentScope(other.Scope) == normalizedDeploymentScope(d.Scope) && other.Status == DeployLive && otherID != id {
-			siblings = append(siblings, siblingRow{ID: otherID, Prior: other.TrafficPercent})
+			if rolloutInFlight(other) {
+				inFlightCanaries = append(inFlightCanaries, siblingRow{ID: otherID, Prior: other.TrafficPercent})
+			} else {
+				siblings = append(siblings, siblingRow{ID: otherID, Prior: other.TrafficPercent})
+			}
 		}
+	}
+	// A newer canary replaces the one still rolling out, whose traffic returns
+	// to the serving deployment (ADR-20261030102813, Hunt 14 H14-112).
+	supersede := len(inFlightCanaries) > 0 && supersedesInFlightCanaries(toHelperSiblings(siblings))
+	if !supersede {
+		siblings = append(siblings, inFlightCanaries...)
+		inFlightCanaries = inFlightCanaries[:0]
 	}
 	sort.SliceStable(siblings, func(i, j int) bool { return siblings[i].ID < siblings[j].ID })
 	if len(siblings) == 0 && d.TrafficPercent != 100 {
@@ -10172,10 +10185,18 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 	d.RolloutStartedAt = &now
 	d.CanaryStepStartedAt = &now
 	newWeights := RedistributeTraffic(toHelperSiblings(siblings), 100-d.TrafficPercent)
-	updatedSiblings := make(map[string]Deployment, len(siblings))
+	updatedSiblings := make(map[string]Deployment, len(siblings)+len(inFlightCanaries))
 	for i, sibling := range siblings {
 		other := m.deployments[sibling.ID]
 		other.TrafficPercent = newWeights[i]
+		if err := m.checkRuntimeUpgradeTrafficLocked(other); err != nil {
+			return err
+		}
+		updatedSiblings[sibling.ID] = other
+	}
+	for _, sibling := range inFlightCanaries {
+		other := m.deployments[sibling.ID]
+		other.TrafficPercent = 0
 		if err := m.checkRuntimeUpgradeTrafficLocked(other); err != nil {
 			return err
 		}
@@ -10193,6 +10214,17 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 	}
 	if err := m.enqueueDeploymentOutcomeActivityLocked(id, "live", ""); err != nil {
 		return err
+	}
+	for _, sibling := range inFlightCanaries {
+		before, other := m.deployments[sibling.ID], updatedSiblings[sibling.ID]
+		if m.deploymentRevisionRetainedLocked(sibling.ID) || m.deploymentInUsableReleaseLocked(sibling.ID) {
+			other.Status = DeployLive
+		} else {
+			other.Status = DeploySuperseded
+		}
+		other.TrafficPercentExplicit = false
+		m.endSupersededCanaryRolloutLocked(before, &other, id, now)
+		updatedSiblings[sibling.ID] = other
 	}
 	for siblingID, other := range updatedSiblings {
 		m.putDeploymentLocked(siblingID, other)
@@ -13315,18 +13347,10 @@ func (m *MemStore) CreateCronIfUnderQuotaWithOptions(_ context.Context, appID, s
 			Observed: appCount,
 		}
 	}
-	// 2. Per-account count. Excludes deleted apps so their crons don't
+	// 2. Per-account count, over the crons of the app's billing subject
+	//    (ADR-202610171904). Excludes deleted apps so their crons don't
 	//    poison the cap.
-	accountCount := 0
-	for _, c := range m.crons {
-		a, exists := m.apps[c.AppID]
-		if !exists || a.Status == AppDeleted {
-			continue
-		}
-		if a.AccountID == app.AccountID {
-			accountCount++
-		}
-	}
+	accountCount := m.quotaSubjectCronsLocked(m.appBillingSubjectLocked(app.AccountID, app.ID))
 	if accountCount >= limits.CronLimitPerAccount {
 		return Cron{}, &CronQuotaError{
 			Scope:    CronQuotaScopeAccount,

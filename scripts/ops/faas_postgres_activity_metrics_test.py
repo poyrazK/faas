@@ -97,6 +97,22 @@ class PostgresActivityMetricsTest(unittest.TestCase):
         # Idle backends never count as waiting.
         self.assertNotIn('wait_event_type="Client"', body)
 
+    def test_watched_tables_are_exported_whatever_their_rank(self):
+        seen = []
+        base = fake_psql({"FROM pg_stat_user_tables": [
+            ["instances", "500", "28586", "100", "2858600", "9000"],
+            ["managed_realtime_channel_heads", "0", "1234", "0", "0", "88"],
+        ]})
+
+        def q(db, sql):
+            seen.append(sql)
+            return base(db, sql)
+
+        code, body = self.run_collector(q)
+        self.assertEqual(code, 0)
+        self.assertTrue(any("relname IN ('managed_realtime_channel_heads')" in sql for sql in seen))
+        self.assertIn('faas_postgres_table_live_tuples{table="managed_realtime_channel_heads"} 1234', body)
+
     def test_only_plain_dml_text_is_exported(self):
         _, body = self.run_collector(fake_psql())
         self.assertNotIn("ALTER ROLE", body)

@@ -118,7 +118,7 @@ RULES = [
     (r"app-changes", "Change timeline"),
     (r"faas-implementation-spec|faas-ux-spec|ga-capability-inventory|^status$|^capabilities$", "TOOLING"),
     (r"^quickstart$", "Docs site and trust pages"),
-    (r"^security$|httpsec|hsts", "Docs site and trust pages"),
+    (r"^security$|^supply-chain$|httpsec|hsts", "Docs site and trust pages"),
     (r"^internal$|^observability$", "INFRA"),
     (r"^runs$", "Disposable isolated runs"),
     (r"^add$", "`gregale` CLI"),
@@ -133,7 +133,7 @@ RULES = [
     (r"^(honeytokens|bridgeproc|sdunit)$", "INFRA"),
     # vmmd's instance bridge switches (connection-survival ADR): data-path plumbing.
     (r"^(instance-)?bridge-(unprivileged|sessions|unit|drop-to-uid)$", "INFRA"),
-    (r"auth-rpc|rekey|standby-warmup|service-capacity-policy|service-recovery|worker-recovery|production-lifecycle-review|app-service-address-cursor|warm-hint|capdecl|renderer|role-templating|safetext|cursor|^data$|dispatch|hostsize|authcode|cosign|daemonenv|daemonunit|cpstate|drills|grafana|pki|guestmemproto|resumetimingproto|loglevel|logsanitize|lruutil|jsonschemautil|httpjson|middleware|nodeclaim|nodejoin|nodereport|promql|redact|crashcrypt|crashcapturewire|markers-internal", "INFRA"),
+    (r"auth-rpc|rekey|standby-warmup|service-capacity-policy|service-recovery|worker-recovery|production-lifecycle-review|app-service-address-cursor|warm-hint|capdecl|renderer|role-templating|safetext|publicdest|cursor|^data$|dispatch|hostsize|authcode|cosign|daemonenv|daemonunit|cpstate|drills|grafana|pki|guestmemproto|resumetimingproto|loglevel|logsanitize|lruutil|jsonschemautil|httpjson|middleware|nodeclaim|nodejoin|nodereport|promql|redact|crashcrypt|crashcapturewire|markers-internal", "INFRA"),
     (r"^declarative-response-caching$", "Declarative response caching"),
     (r"crash-capture", "Crash snapshots"),
     (r"app-config-(guard|revision)", "`gregale.yaml` deploy overrides"),
@@ -367,6 +367,8 @@ INFRA_RULES = [
     r"release-artifact|releasebundle|releaseinstall|release-compat|unit-|deploy-order|version-skew|pricing-md|standards-md|capabilities-md|obs-rule|denylist-md|runtime-qualification|api-hosting-(scorecard|contract)",
     r"metric|prometheus|promauto|otel|slog|log$|telemetry-internal|healthz|livez|readyz|^/metrics|^loki-",
     r"^target-(hydration|placement|publication)$|^(pgbackend-)?public-routing-(burst|capacity|view)$|^publicrouting$|^at-capacity-settle$",
+    # ADR-20261030115139: the public edge's status for platform problems.
+    r"^platform-error-status$",
 ]
 
 

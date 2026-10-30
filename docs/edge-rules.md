@@ -451,7 +451,7 @@ the app woken and capacity found. `total_deadline_ms` (optional) bounds the
 whole request from arrival, including upload, wake and queueing. Both are
 capped by your plan: 30 s on Free, 60 s on Hobby, 5 minutes on Pro and
 15 minutes on Scale. A request past its budget before the response starts
-gets 504 `request_budget_exceeded`. A client may lower or raise the execution
+gets 503 `request_budget_exceeded`. A client may lower or raise the execution
 budget within the plan ceiling with the `x-faas-budget-ms` header, or the
 header named in `allow_override_header`; it never extends
 `total_deadline_ms`.
@@ -638,7 +638,7 @@ refused until the plan allows them again. Delete the ones you no longer need.
 | 429 `rate_limited` | `throttle` |
 | 503 `edge_rule_maintenance` | `maintenance` |
 | 503 `capacity_unavailable` | a rule change being applied, rules the gateway cannot load, an unreachable JWKS |
-| 504 `request_budget_exceeded` | `budget` |
+| 503 `request_budget_exceeded` | `budget` |
 
 Errors use the [problem format](errors); `gregale edge rule events
 --request-id <id>` finds the rule behind a refused request.

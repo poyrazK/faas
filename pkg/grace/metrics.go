@@ -8,6 +8,7 @@ type metrics struct {
 	lastSuccess          prometheus.Gauge
 	deleted              prometheus.Counter
 	failures             *prometheus.CounterVec
+	blockedApps          *prometheus.GaugeVec
 	accountsDeferred     prometheus.Gauge
 }
 
@@ -33,13 +34,17 @@ func newMetrics(reg prometheus.Registerer) *metrics {
 			Name: "apid_app_grace_failures_total",
 			Help: "Total app deletion grace failures by stage.",
 		}, []string{"stage"}),
+		blockedApps: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "apid_app_grace_blocked_apps",
+			Help: "Expired app tombstones whose last permanent delete was refused, by reason.",
+		}, []string{"reason"}),
 		accountsDeferred: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "apid_account_grace_deferred_accounts",
 			Help: "Accounts past their deletion grace whose row the last sweep kept because external cleanup (object buckets, managed PostgreSQL, archived logs) is not finished.",
 		}),
 	}
 	if reg != nil {
-		reg.MustRegister(m.missingDeadlines, m.expiredArtifactBytes, m.lastSuccess, m.deleted, m.failures, m.accountsDeferred)
+		reg.MustRegister(m.missingDeadlines, m.expiredArtifactBytes, m.lastSuccess, m.deleted, m.failures, m.blockedApps, m.accountsDeferred)
 	}
 	return m
 }

@@ -516,11 +516,30 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	for _, n := range nodes {
 		nodeInfos = append(nodeInfos, sched.ComputeNodeInfo{ID: n.ID, TargetURL: n.TargetURL})
 	}
+	// The clone ownership recorders serve only full environment clones
+	// (ADR-590). They run while full_environment_clones_enabled is on, which
+	// it is until the first runtime reconcile applies the durable value.
+	fullEnvironmentClones := runtimeconfig.NewBoolFlag(true)
 	vmmRouter := sched.NewVMMRouter(nodeInfos, deps.dialVMM, vmmTLS).
 		WithExecutionOutboundRelay(sched.NewLoopbackExecutionOutboundRelay()).
-		WithCloneWakeDispatchRecorder(store.RecordCloneCheckpointWakeDispatch).
-		WithCloneMigrationAdoptionRecorder(store.RecordCloneCheckpointMigrationAdoption).
-		WithCloneMigrationResumeRecorder(store.RecordCloneCheckpointMigrationResume).
+		WithCloneWakeDispatchRecorder(func(ctx context.Context, instance, app, deployment, node, method string) error {
+			if !fullEnvironmentClones.Load() {
+				return nil
+			}
+			return store.RecordCloneCheckpointWakeDispatch(ctx, instance, app, deployment, node, method)
+		}).
+		WithCloneMigrationAdoptionRecorder(func(ctx context.Context, instance, app, deployment, node, memKey, vmstateKey, lease string) error {
+			if !fullEnvironmentClones.Load() {
+				return nil
+			}
+			return store.RecordCloneCheckpointMigrationAdoption(ctx, instance, app, deployment, node, memKey, vmstateKey, lease)
+		}).
+		WithCloneMigrationResumeRecorder(func(ctx context.Context, instance, node, lease string) error {
+			if !fullEnvironmentClones.Load() {
+				return nil
+			}
+			return store.RecordCloneCheckpointMigrationResume(ctx, instance, node, lease)
+		}).
 		WithFinancialComputeAuthority(store)
 	nodeRegistry := sched.NewNodeRegistry(nodes)
 
@@ -760,11 +779,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR-1155: on-demand profile capture outcomes, queue waits and the
 	// automatic captures schedd skips, for the capture alerts.
 	engine.WithProfileCaptureMetrics(wire.NewProfileCaptureMetrics(ops.Registry()))
-	runtimeKeys, runtimeApply := runtimeconfig.WithPlatformFlags([]string{runtimeconfig.KeyDataPlacement},
+	runtimeKeys, runtimeApply := runtimeconfig.WithPlatformFlags([]string{runtimeconfig.KeyDataPlacement, runtimeconfig.KeyFullEnvironmentClones},
 		func(ctx context.Context, key string, value json.RawMessage, _ int64) error {
 			enabled, err := runtimeconfig.Bool(value)
 			if err != nil {
 				return err
+			}
+			if key == runtimeconfig.KeyFullEnvironmentClones {
+				fullEnvironmentClones.Store(enabled)
 			}
 			if key == runtimeconfig.KeyDataPlacement {
 				upstreamAffinityEnabled.Store(enabled)
@@ -1894,8 +1916,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if hostAgeErr != nil {
 		log.Warn("trigger credentials: host age identities unavailable", "path", hostAgePath, "err", hostAgeErr)
 	}
-	// Trigger configs stay sealed to the fleet key (hostAgeIdentities):
-	// apid still opens a stored config to merge an update into it.
+	// Trigger configs join the delivery domain (ADR 20261022111812): apid
+	// seals their credentials to it and the fleet key, and merges an update
+	// without opening the stored config.
 	deliveryReaders := domainReaders(deliveryIdentities, hostAgeIdentities)
 	if err := startCommitRelay(ctx, store, deliveryReaders, log, ops.Registry()); err != nil {
 		return err
@@ -1920,7 +1943,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithPrivateNetworkPolicySubscriber(privateNetworkPolicySubscriber).
 		WithPrivateNetworkPeeringSubscriber(privateNetworkPeeringSubscriber).
 		WithPrivateNetworkFabricDeletionSubscriber(privateNetworkFabricDeletionSubscriber).
-		WithTriggerSecretIdentities(hostAgeIdentities).
+		WithTriggerSecretIdentities(deliveryReaders).
 		WithJobsDispatched(jobsDispatched).
 		WithFlowCounter(sched.NewNodeAwareFlowCounter(engine.NodeTelemetryCache(), flowcount.NewReader(wire.ExecRunner{}))).
 		WithWatchdog(sched.NewWatchdog(store, engine, log)).

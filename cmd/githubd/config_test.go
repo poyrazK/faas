@@ -149,28 +149,25 @@ func TestConfig_LoadServerTLS(t *testing.T) {
 	}
 }
 
-func TestHostKeyPath_Precedence(t *testing.T) {
-	origIdentity := os.Getenv("FAAS_HOST_AGE_IDENTITY_PATH")
-	origKey := os.Getenv("FAAS_HOST_AGE_KEY")
-	defer func() {
-		os.Setenv("FAAS_HOST_AGE_IDENTITY_PATH", origIdentity)
-		os.Setenv("FAAS_HOST_AGE_KEY", origKey)
-	}()
-
-	os.Unsetenv("FAAS_HOST_AGE_IDENTITY_PATH")
-	os.Unsetenv("FAAS_HOST_AGE_KEY")
-	if got := hostKeyPath(); got != "/etc/faas/secrets/host.age" {
-		t.Errorf("default hostKeyPath() = %q, want /etc/faas/secrets/host.age", got)
-	}
-
-	os.Setenv("FAAS_HOST_AGE_KEY", "/custom/key.age")
-	if got := hostKeyPath(); got != "/custom/key.age" {
-		t.Errorf("FAAS_HOST_AGE_KEY hostKeyPath() = %q, want /custom/key.age", got)
-	}
-
-	os.Setenv("FAAS_HOST_AGE_IDENTITY_PATH", "/credential/identity.age")
-	if got := hostKeyPath(); got != "/credential/identity.age" {
-		t.Errorf("FAAS_HOST_AGE_IDENTITY_PATH hostKeyPath() = %q, want /credential/identity.age", got)
+func TestLegacyKeyPath(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		env    map[string]string
+		staged bool
+		want   string
+	}{
+		{name: "default", want: "/etc/faas/secrets/host.age"},
+		{name: "host key", env: map[string]string{"FAAS_HOST_AGE_KEY": "/custom/key.age"}, want: "/custom/key.age"},
+		{name: "credential wins", env: map[string]string{"FAAS_HOST_AGE_KEY": "/custom/key.age", "FAAS_HOST_AGE_IDENTITY_PATH": "/credential/identity.age"}, want: "/credential/identity.age"},
+		{name: "domain staged beside the fleet key", env: map[string]string{"FAAS_HOST_AGE_IDENTITY_PATH": "/credential/identity.age"}, staged: true, want: "/credential/identity.age"},
+		// ADR 20261022111812: the contracted drop-in unsets both paths.
+		{name: "contracted", staged: true, want: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := legacyKeyPath(func(k string) string { return tc.env[k] }, tc.staged); got != tc.want {
+				t.Errorf("legacyKeyPath = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 

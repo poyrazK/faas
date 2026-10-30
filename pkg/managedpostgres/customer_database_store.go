@@ -94,6 +94,9 @@ func databaseFromSQL(row sqlc.ManagedPostgresDatabase) Database {
 		at := row.DeletedAt.Time
 		database.DeletedAt = &at
 	}
+	if row.PurgeAfter.Valid {
+		database.PurgeAfter = row.PurgeAfter.Time
+	}
 	return database
 }
 

@@ -176,6 +176,9 @@ func (s *server) adminRuntimeConfigPatch(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	value, prob := s.checkRuntimeConfigChange(def, req.Value, req.Force)
+	if prob == nil {
+		prob = s.fullEnvironmentClonesOffProblem(r.Context(), key, value)
+	}
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -367,6 +370,10 @@ func (s *server) adminRuntimeConfigRollback(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if _, prob := s.checkRuntimeConfigChange(def, revision.NewValue, req.Force); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	if prob := s.fullEnvironmentClonesOffProblem(r.Context(), key, revision.NewValue); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
