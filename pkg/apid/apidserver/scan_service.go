@@ -2045,6 +2045,11 @@ func (s *server) scanService(
 		pw.UnsetEnvKeys, pw.ImportedEnvKeys, pw.UnsetEnvKeyReasons = projectsetup.SplitEnvImport(
 			withoutProvidedKeys(w.Name, unset, composePostgres), envImport)
 		warnings = append(warnings, projectsetup.RewrittenEnvNotes(w.Name, pw.ImportedEnvKeys, envImport)...)
+		slug := w.AppSlug
+		if slug == "" {
+			slug = w.Name
+		}
+		warnings = append(warnings, projectsetup.IngressNotes(w.Name, slug, w.IngressSettings, acct.Plan, limits)...)
 		if w.ServiceBindingPolicy == "" && existing != nil {
 			pw.ServiceBindingPolicy = existing.Manifest.EffectiveServiceBindingPolicy()
 		}

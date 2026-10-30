@@ -115,6 +115,7 @@ type workloadSeed struct {
 	goCommand           string
 	image               string
 	healthcheck         *api.ComposeHealthcheck
+	ingressSettings     []IngressSetting
 	imageProcess        *api.ComposeProcess
 	secretFiles         []api.SecretFile
 	resources           *api.ComposeResources
