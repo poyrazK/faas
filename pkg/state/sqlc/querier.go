@@ -277,6 +277,9 @@ type Querier interface {
 	CancelPlannedEnvironmentWorkloadRetirement(ctx context.Context, db DBTX, arg CancelPlannedEnvironmentWorkloadRetirementParams) (int64, error)
 	CancelProfileCanaryChecks(ctx context.Context, db DBTX, appID string) error
 	CancelProfileDeploymentChecks(ctx context.Context, db DBTX, appID string) error
+	// A data-less clone that will not publish cancels the deployments it created
+	// for its target; schedd drains their instances on the notification.
+	CancelProjectEnvironmentCloneTargetDeployments(ctx context.Context, db DBTX, arg CancelProjectEnvironmentCloneTargetDeploymentsParams) (int64, error)
 	CancelProjectReleaseStage(ctx context.Context, db DBTX, arg CancelProjectReleaseStageParams) (int64, error)
 	CancelQueueCanary(ctx context.Context, db DBTX, arg CancelQueueCanaryParams) error
 	CancelQueuedBuildsForDeployment(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (int64, error)
@@ -662,6 +665,7 @@ type Querier interface {
 	CountTriggersByAccount(ctx context.Context, db DBTX, subject pgtype.UUID) (int64, error)
 	CountTriggersByApp(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
 	CountUDPListenersForApp(ctx context.Context, db DBTX, appID string) (int64, error)
+	CountUnfinishedProjectEnvironmentCloneOperations(ctx context.Context, db DBTX) (int64, error)
 	CountUnfinishedVerificationResources(ctx context.Context, db DBTX, arg CountUnfinishedVerificationResourcesParams) (int64, error)
 	CountUnresolvedOperatorIntents(ctx context.Context, db DBTX, threshold pgtype.Timestamptz) ([]CountUnresolvedOperatorIntentsRow, error)
 	CountWorkflowAutomationRevisions(ctx context.Context, db DBTX, arg CountWorkflowAutomationRevisionsParams) (int64, error)
@@ -927,6 +931,7 @@ type Querier interface {
 	// A customer deletes one capture of a live app; its profiles cascade.
 	DeleteProfileCapture(ctx context.Context, db DBTX, arg DeleteProfileCaptureParams) (int64, error)
 	DeleteProfileInvestigation(ctx context.Context, db DBTX, arg DeleteProfileInvestigationParams) (int64, error)
+	DeleteProjectEnvironmentCloneTargetPolicies(ctx context.Context, db DBTX, arg DeleteProjectEnvironmentCloneTargetPoliciesParams) error
 	DeleteProjectEnvironmentSecret(ctx context.Context, db DBTX, arg DeleteProjectEnvironmentSecretParams) (int64, error)
 	DeleteQueueLeaseReceipt(ctx context.Context, db DBTX, invocationID pgtype.UUID) error
 	DeleteQueuedOperation(ctx context.Context, db DBTX, operationID pgtype.UUID) error
@@ -3519,6 +3524,9 @@ type Querier interface {
 	ListProjectReleaseAdditions(ctx context.Context, db DBTX, projectID string) ([]ListProjectReleaseAdditionsRow, error)
 	// Retired and expired graphs remain visible for diagnosis. UUID breaks ties.
 	ListProjectReleaseSetsBefore(ctx context.Context, db DBTX, arg ListProjectReleaseSetsBeforeParams) ([][]byte, error)
+	// Receipts whose activation or rollback wrote this flag version; Go decides
+	// which promotion states still hold it.
+	ListPromotionFeatureFlagHolds(ctx context.Context, db DBTX, arg ListPromotionFeatureFlagHoldsParams) ([]ListPromotionFeatureFlagHoldsRow, error)
 	ListQueueBindingHistoryForApp(ctx context.Context, db DBTX, arg ListQueueBindingHistoryForAppParams) ([]QueueBinding, error)
 	ListQueuedOperationsForGroup(ctx context.Context, db DBTX, arg ListQueuedOperationsForGroupParams) ([]ListQueuedOperationsForGroupRow, error)
 	ListReadinessFollowUps(ctx context.Context, db DBTX, arg ListReadinessFollowUpsParams) ([][]byte, error)
@@ -5449,6 +5457,7 @@ type Querier interface {
 	ReadProjectBindingVerificationRunForBudget(ctx context.Context, db DBTX, arg ReadProjectBindingVerificationRunForBudgetParams) (ProjectBindingVerificationRun, error)
 	ReadProjectCanaryRouting(ctx context.Context, db DBTX, appID pgtype.UUID) (ProjectReleaseCanary, error)
 	ReadProjectDependencyOwner(ctx context.Context, db DBTX, appID pgtype.UUID) (ReadProjectDependencyOwnerRow, error)
+	ReadProjectEnvironmentCloneClock(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
 	ReadProjectEnvironmentCloneConfigurationCaptureIdentity(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneConfigurationCaptureIdentityParams) (ReadProjectEnvironmentCloneConfigurationCaptureIdentityRow, error)
 	ReadProjectEnvironmentCloneConfigurationGuard(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneConfigurationGuardParams) (ProjectEnvironmentCloneConfigurationGuard, error)
 	// Include all application-schema tables. Several configuration tables have
@@ -5462,7 +5471,9 @@ type Querier interface {
 	ReadProjectEnvironmentCloneDeployedSettings(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (ReadProjectEnvironmentCloneDeployedSettingsRow, error)
 	ReadProjectEnvironmentCloneEnvironmentPresence(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneEnvironmentPresenceParams) (ReadProjectEnvironmentCloneEnvironmentPresenceRow, error)
 	ReadProjectEnvironmentCloneFlagScope(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneFlagScopeParams) (pgtype.UUID, error)
+	ReadProjectEnvironmentCloneInventoryPresent(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneInventoryPresentParams) ([]string, error)
 	ReadProjectEnvironmentCloneLegacySettings(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneLegacySettingsParams) (ReadProjectEnvironmentCloneLegacySettingsRow, error)
+	ReadProjectEnvironmentCloneLiveTargetDatabases(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneLiveTargetDatabasesParams) ([]string, error)
 	ReadProjectEnvironmentCloneMaterialization(ctx context.Context, db DBTX, operationID pgtype.UUID) (ProjectEnvironmentCloneMaterialization, error)
 	ReadProjectEnvironmentCloneMaterializedWorkloads(ctx context.Context, db DBTX, environmentID pgtype.UUID) ([]ReadProjectEnvironmentCloneMaterializedWorkloadsRow, error)
 	ReadProjectEnvironmentCloneObjectBucket(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneObjectBucketParams) (ObjectBucket, error)
@@ -5498,6 +5509,11 @@ type Querier interface {
 	// Empty scope means that an active graph has an invalid or missing member.
 	ReadProjectEnvironmentCloneProductionValueScope(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneProductionValueScopeParams) (string, error)
 	ReadProjectEnvironmentCloneProjectConfiguration(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneProjectConfigurationParams) (ReadProjectEnvironmentCloneProjectConfigurationRow, error)
+	ReadProjectEnvironmentCloneProjectSlug(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneProjectSlugParams) (string, error)
+	// Each ready target database this clone restored, with a provider restore
+	// proof that still matches the row (the same checks as
+	// ReadManagedPostgresCloneRestoreProof).
+	ReadProjectEnvironmentCloneRestoredDatabases(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneRestoredDatabasesParams) ([]ReadProjectEnvironmentCloneRestoredDatabasesRow, error)
 	ReadProjectEnvironmentCloneScopedEdgePolicy(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneScopedEdgePolicyParams) ([]byte, error)
 	ReadProjectEnvironmentCloneScopedPolicyProof(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneScopedPolicyProofParams) ([]byte, error)
 	// Decode the explicit configuration fields in Go; delivery observations do
@@ -5507,9 +5523,11 @@ type Querier interface {
 	ReadProjectEnvironmentCloneSidecarLayers(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([][]byte, error)
 	ReadProjectEnvironmentCloneSidecarSignals(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]ReadProjectEnvironmentCloneSidecarSignalsRow, error)
 	ReadProjectEnvironmentCloneSourceAppIDs(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneSourceAppIDsParams) ([]string, error)
+	ReadProjectEnvironmentCloneSourceEnvironmentID(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneSourceEnvironmentIDParams) (pgtype.UUID, error)
 	ReadProjectEnvironmentCloneSourceRelease(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneSourceReleaseParams) (string, error)
 	ReadProjectEnvironmentCloneTargetArtifact(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]byte, error)
 	ReadProjectEnvironmentCloneTargetOperationID(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneTargetOperationIDParams) (string, error)
+	ReadProjectEnvironmentCloneTargetRetirement(ctx context.Context, db DBTX, operationID pgtype.UUID) (ReadProjectEnvironmentCloneTargetRetirementRow, error)
 	ReadProjectEnvironmentCloneTargetSettings(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneTargetSettingsParams) (ReadProjectEnvironmentCloneTargetSettingsRow, error)
 	ReadProjectEnvironmentCloneValueQuota(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneValueQuotaParams) ([]ReadProjectEnvironmentCloneValueQuotaRow, error)
 	ReadProjectEnvironmentCloneVariables(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneVariablesParams) ([]ReadProjectEnvironmentCloneVariablesRow, error)
@@ -7000,6 +7018,10 @@ type Querier interface {
 	WithdrawCloneCheckpointPgBinding(ctx context.Context, db DBTX, arg WithdrawCloneCheckpointPgBindingParams) (int64, error)
 	WithdrawCloneCheckpointPgPublication(ctx context.Context, db DBTX, arg WithdrawCloneCheckpointPgPublicationParams) (int64, error)
 	WithdrawEnvironmentWorkloadRetirementTraffic(ctx context.Context, db DBTX, arg WithdrawEnvironmentWorkloadRetirementTrafficParams) error
+	// Compensation withdraws the target bindings a clone prepared. Their provider
+	// credentials live in the clone's own target database, which is deleted next.
+	WithdrawProjectEnvironmentCloneTargetBindingSecrets(ctx context.Context, db DBTX, arg WithdrawProjectEnvironmentCloneTargetBindingSecretsParams) error
+	WithdrawProjectEnvironmentCloneTargetBindings(ctx context.Context, db DBTX, arg WithdrawProjectEnvironmentCloneTargetBindingsParams) error
 	WorkAdmissionCancel(ctx context.Context, db DBTX, arg WorkAdmissionCancelParams) (int64, error)
 	WorkAdmissionCancelBroker(ctx context.Context, db DBTX, arg WorkAdmissionCancelBrokerParams) (int64, error)
 	WorkAdmissionCancellation(ctx context.Context, db DBTX, id pgtype.UUID) (InvocationWorkCancellation, error)

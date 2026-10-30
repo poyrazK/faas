@@ -170,6 +170,13 @@ const server = http.createServer((req, res) => {
       const sha256 = createHash("sha256").update(String(value)).digest("hex");
       return json(res, 200, { key, present: true, sha256, source, revision: liveRevision, pid: process.pid });
     }
+    case "/slow": {
+      // Holds the response so the gateway reports a slow request and the
+      // platform captures the instance automatically (ADR-1155).
+      const ms = Math.min(Math.max(Number(url.searchParams.get("ms")) || 0, 0), 20000);
+      setTimeout(() => json(res, 200, { slept_ms: ms }), ms);
+      return;
+    }
     case "/healthz":
       if (version.startsWith("broken")) {
         return json(res, 503, { ok: false, version });

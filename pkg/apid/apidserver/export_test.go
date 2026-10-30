@@ -552,6 +552,13 @@ var NewAuditor = newAuditor
 var NewAuthedDashboardServer = newAuthedDashboardServer
 var NewAuthedDashboardServerFull = newAuthedDashboardServerFull
 var NewCloneCoordinatorFixture = newCloneCoordinatorFixture
+
+// NewCloneSourceFixture builds a clone source with no configuration write
+// fence; postgres binds a point-in-time-restorable managed database.
+func NewCloneSourceFixture(t *testing.T, postgres bool) cloneCoordinatorFixture {
+	return newCloneSourceFixture(t, cloneSourceData{postgres: postgres}, false)
+}
+
 var NewForceHarness = newForceHarness
 var NewGithubdClient = newGithubdClient
 var NewGoogleIDTokenVerifier = newGoogleIDTokenVerifier
@@ -852,9 +859,13 @@ func (r *cloneCheckpointClosureProvider) Roles() *int { return &r.roles }
 func (r *cloneCoordinatorFailureStore) LoseCaptureAck() *bool { return &r.loseCaptureAck }
 
 // Members of cloneCoordinatorFixture
+func (r *cloneCoordinatorFixture) Account() *state.Account                    { return &r.account }
 func (r *cloneCoordinatorFixture) Apps() *[]state.App                         { return &r.apps }
 func (r *cloneCoordinatorFixture) Lease() *state.ProjectEnvironmentCloneLease { return &r.lease }
 func (r *cloneCoordinatorFixture) Pool() **pgxpool.Pool                       { return &r.pool }
+func (r *cloneCoordinatorFixture) Postgres() **managedpostgres.Service        { return &r.postgres }
+func (r *cloneCoordinatorFixture) Database() **cloneDatabaseDeadlineProvider  { return &r.database }
+func (r *cloneCoordinatorFixture) Project() *state.Project                    { return &r.project }
 func (r *cloneCoordinatorFixture) Srv() **server                              { return &r.srv }
 func (r *cloneCoordinatorFixture) Store() **cloneCoordinatorFailureStore      { return &r.store }
 func (r cloneCoordinatorFixture) Targets(p0 *testing.T) []state.ProjectEnvironmentCloneWorkload {
@@ -1037,6 +1048,7 @@ func (r *server) PromqlClient() **promql.Client                 { return &r.prom
 func (r *server) Realtime() *managedrealtime.Service            { return &r.realtime }
 func (r *server) ResendWebhookSecret() *string                  { return &r.resendWebhookSecret }
 func (r *server) RuntimeConfig() **runtimeConfigManager         { return &r.runtimeConfig }
+func (r *server) CloneDataPointSettle() *time.Duration          { return &r.cloneDataPointSettle }
 func (r *server) Sessions() **session.Manager                   { return &r.sessions }
 func (r *server) StatementInvoices() *statementinvoices.Service { return &r.statementInvoices }
 func (r *server) BillingRuns() *billingruns.Service             { return &r.billingRuns }
@@ -1802,6 +1814,12 @@ func VerifyCandidateObjectStorageCredentialForTest(ctx context.Context, c state.
 	hmacKey []byte, canary func(context.Context, string, string, func(string) string) api.ObjectStorageBindingProbeReport) error {
 	return verifyCandidateObjectStorageCredentialWith(ctx, identities, hmacKey, canary, c)
 }
+
+// Members of cloneDatabaseDeadlineProvider
+func (r *cloneDatabaseDeadlineProvider) Restores() []managedpostgres.RestoreRequest {
+	return r.restores
+}
+func (r *cloneDatabaseDeadlineProvider) OnRestore() *func() error { return &r.onRestore }
 
 // SetDatabaseSwitchDrain gives a test server's database switch worker drain
 // evidence the in-memory store lacks (ADR-20261023181931).

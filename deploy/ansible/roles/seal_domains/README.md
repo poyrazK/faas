@@ -4,7 +4,9 @@ Stages per-reader seal-domain identities (ADR 20261022111812). Ten domains
 are wired, each opened by one daemon:
 - `outbound`: customer AI provider and other outbound credentials (outboundd);
 - `runtime`: customer env vars and secrets (vmmd);
-- `source`: GitHub install tokens and webhook secrets (githubd);
+- `source`: GitHub install tokens and webhook secrets (githubd;
+  `faas_seal_domain_source_contracted` contracts it as step 4 below does for
+  `outbound`);
 - `build`: app and job private-registry passwords (imaged);
 - `edge`: app basic-auth credentials and log drain headers (gatewayd-internal);
 - `alerting`: alert rule webhook secrets, notification channel destinations

@@ -119,6 +119,10 @@ type Workload struct {
 	// readiness, from a Kubernetes readinessProbe or startupProbe
 	// (ADR-20261029093621 §3). The deployment runs it as its startup probe.
 	ReadinessCheck *api.DeploymentHealthcheck
+	// IngressSettings are the proxy annotations of the Kubernetes Ingresses
+	// that route to the workload (ADR-20261029093621 §6). They are not
+	// applied; the plan compares each with what the account's plan does.
+	IngressSettings []IngressSetting
 	// ImageProcess carries the Compose entrypoint, user, working_dir and stop
 	// contract (ADR-1337). A built service's entrypoint is folded into its
 	// Command instead (ADR-20261022160000). Nil inherits the image.

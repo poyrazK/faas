@@ -221,6 +221,26 @@ Examples: "proxy-body-size 50m: this plan accepts request bodies up to 25 MB",
 with `gregale app <slug> --websocket-enabled`". The numbers come from
 `pkg/api/limits.go` at plan time, never from the docs.
 
+The scan records each recognised annotation on the workload its Ingress
+routes to: through each backend Service (`spec.rules[].http.paths[].backend`,
+`spec.defaultBackend`, and the `extensions/v1beta1` `serviceName`) to the one
+scanned Deployment the Service selects in its namespace. A
+`websocket-services` annotation covers only the Services it lists. A backend
+that selects no scanned Deployment, or several, is reported. The plan step,
+which knows the account's plan, formats the notes (`projectsetup.IngressNotes`).
+
+| Setting | Annotations | Note compares with |
+|---|---|---|
+| Request body size | `nginx.ingress.kubernetes.io/proxy-body-size`, `nginx.org/client-max-body-size`, `haproxy-ingress.github.io/proxy-body-size` | the plan's `RequestBodyMaxBytes` |
+| Read / send timeout | `nginx.ingress.kubernetes.io/proxy-{read,send}-timeout`, `nginx.org/proxy-{read,send}-timeout`, `haproxy.org/timeout-server`, `haproxy-ingress.github.io/timeout-server` | the app request budget default and the ceiling `--request-timeout` may reach on the plan (ADR-093, ADR-1150) |
+| WebSockets | `nginx.ingress.kubernetes.io/websocket-services`, `nginx.org/websocket-services` | whether the plan forwards WebSockets by default, allows opting in, or refuses |
+| HTTPS redirect | `nginx.ingress.kubernetes.io/{ssl,force-ssl}-redirect`, `nginx.org/redirect-to-https`, `haproxy.org/ssl-redirect`, `haproxy-ingress.github.io/ssl-redirect`, `ingress.kubernetes.io/ssl-redirect`, `traefik.ingress.kubernetes.io/redirect-entry-point` | TLS ends at the Gregale edge |
+
+Traefik sets body size and timeouts through Middleware objects, not
+annotations, so only its redirect annotation is recognised. Other Ingress
+annotations (rewrites, CORS, rate limits) are not compared; the Ingress kind
+warning still names its hosts for `gregale domain add`.
+
 ### 7. Release, gating and limits
 
 - **Capability.** The new mappings ship behind a `kubernetes-manifests` preview

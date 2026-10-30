@@ -104,8 +104,19 @@ func capturedClonePostgresMaterializationContract(t *testing.T, store *state.PgS
 		_, err := store.AdvanceProjectEnvironmentCloneOperation(ctx, op.AccountID, op.ProjectID, op.ID, op.Status, state.CloneOperationPublishing, op.Revision, resources, "")
 		return err
 	}
-	if err := advance(); !errors.Is(err, state.ErrProjectEnvironmentCloneResourcePublicationProof) {
-		t.Fatalf("authentic PostgreSQL values did not reach independent resource guard: %v", err)
+	// Authentic values still need the target database's provider restore
+	// proof (ADR-20261024224230). A proof that no longer matches the target's
+	// generation also voids the prepared credential for that target, so the
+	// managed-value gate refuses first; the end-to-end clone tests cover
+	// success.
+	if _, err := pool.Exec(ctx, "update managed_postgres_restore_proofs set generation = generation + 1 where database_id = $1", prepared.Binding.DatabaseID); err != nil {
+		t.Fatal(err)
+	}
+	if err := advance(); !errors.Is(err, state.ErrProjectEnvironmentCloneManagedValueProof) {
+		t.Fatalf("authentic PostgreSQL values published without a matching restore proof: %v", err)
+	}
+	if _, err := pool.Exec(ctx, "update managed_postgres_restore_proofs set generation = generation - 1 where database_id = $1", prepared.Binding.DatabaseID); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, "update app_secrets set ciphertext='\\x6368616e676564' where managed_postgres_binding_id=$1", prepared.Binding.ID); err != nil {
 		t.Fatal(err)
