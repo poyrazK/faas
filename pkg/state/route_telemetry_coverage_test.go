@@ -43,7 +43,7 @@ func TestRouteEvidenceUnavailableWhileGatewayLostTelemetry(t *testing.T) {
 	}
 	for _, tc := range []struct{ name, sql string }{
 		{"restart inside the windows", "UPDATE request_telemetry_coverage SET healthy_since=statement_timestamp(),received_at=statement_timestamp()"},
-		{"no report since the windows ended", "UPDATE request_telemetry_coverage SET healthy_since=clock_timestamp()-interval '2 hours',source_at=clock_timestamp()-interval '10 minutes'"},
+		{"fell silent inside the windows", "UPDATE request_telemetry_coverage SET healthy_since=clock_timestamp()-interval '2 hours',source_at=clock_timestamp()-interval '90 seconds'"},
 		{"sampled", "UPDATE request_telemetry_coverage SET source_at=clock_timestamp(),sampling_basis_points=5000,healthy_since=NULL"},
 		{"disabled", "UPDATE request_telemetry_coverage SET sampling_basis_points=10000,enabled=false,healthy_since=NULL"},
 	} {
@@ -62,6 +62,15 @@ func TestRouteEvidenceUnavailableWhileGatewayLostTelemetry(t *testing.T) {
 	if _, total, err := s.RouteHealthHoldsSince(ctx, app.ID, time.Now().Add(-time.Hour), 5); err != nil || total != 0 {
 		t.Fatalf("lost evidence started a customer-visible hold: total %d err %v", total, err)
 	}
+	// ADR-20261028110044 amendment 2: a gateway silent since before the
+	// windows serves none of them, whatever its last report said, so one
+	// stopped gateway cannot hold every app's evidence.
+	exec(`UPDATE request_telemetry_coverage SET source_at=clock_timestamp()-interval '10 minutes'`)
+	if r := report(); r.Status != "healthy" || routehealth.EvidenceLost(r) {
+		t.Fatalf("long-silent gateway counted: status %s (%s)", r.Status, r.Reason)
+	}
+	exec(`UPDATE request_telemetry_coverage SET source_at=clock_timestamp(),enabled=true,healthy_since=clock_timestamp()-interval '2 hours',received_at=clock_timestamp()`)
+	exec(`UPDATE request_telemetry_coverage SET healthy_since=statement_timestamp(),received_at=statement_timestamp()`)
 	exec(`UPDATE compute_nodes SET lifecycle='unavailable' WHERE name='coverage-gw'`)
 	if r := report(); r.Status != "healthy" || routehealth.EvidenceLost(r) {
 		t.Fatalf("inactive node counted: status %s (%s)", r.Status, r.Reason)

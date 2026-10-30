@@ -112,6 +112,7 @@ const ScanSourceRankWorkspace = scanSourceRankWorkspace
 const StageHistoryStatusCancelled = stageHistoryStatusCancelled
 
 // Package-level vars
+var SnapshotGCPageRows = &snapshotGCPageRows
 var ErrAutomaticPollingData = &errAutomaticPollingData
 var ErrMemStoreAppErrors = &errMemStoreAppErrors
 var ErrMemStoreB3AlertMetrics = &errMemStoreB3AlertMetrics
@@ -1142,3 +1143,6 @@ func (r *workflowOperationWindow) Deadline() *time.Time { return &r.deadline }
 func (r *workflowOperationWindow) Lease() *time.Time    { return &r.lease }
 
 var LiveServiceProxyIdentities = liveServiceProxyIdentities
+
+// OperatorIntents exposes the MemStore's operator intents to tests.
+func (r *MemStore) OperatorIntents() map[string]OperatorIntent { return r.operatorIntents }

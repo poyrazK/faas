@@ -77,6 +77,14 @@ type PullRequestPayload struct {
 	HeadSHA string             `json:"head_sha"`
 	HeadRef string             `json:"head_ref"` // branch name
 	Head    PullRequestHeadRef `json:"head"`
+	// Base is the branch the PR merges into; it selects the binding when a
+	// repository binds apps on several production branches.
+	Base PullRequestBaseRef `json:"base"`
+}
+
+// PullRequestBaseRef carries the base side of a PR.
+type PullRequestBaseRef struct {
+	Ref string `json:"ref"` // branch name
 }
 
 // PullRequestHeadRef carries the head side of a PR — used to
@@ -123,12 +131,11 @@ func (ev *PullRequestEvent) HeadRepoFullName() string {
 func (ev *PullRequestEvent) IsFork() bool {
 	head := ev.HeadRepoFullName()
 	if head == "" {
-		// Head repo missing — treat conservatively as not-fork
-		// (we cannot prove it IS a fork, so don't refuse). This
-		// means a malformed payload where head.repo is absent
-		// gets the regular path; we'll surface the missing-field
-		// error from DecodePullRequest if the SHA is also missing.
-		return false
+		// GitHub sends head.repo null when the head repository was
+		// deleted, which is a deleted fork: refuse it rather than build
+		// code nobody can trace back to a repository (bug hunt 2026-10-28
+		// B27).
+		return true
 	}
 	return head != ev.Repository.FullName
 }
@@ -359,7 +366,28 @@ type RepositoryNameFrom struct {
 }
 
 type RepositoryOwnerChange struct {
-	From PushRepositoryOwner `json:"from"`
+	From RepositoryPreviousOwner `json:"from"`
+}
+
+// RepositoryPreviousOwner is changes.owner.from of a transferred
+// repository. GitHub nests the previous owner one level deeper, as user or
+// organization; reading a login directly under from always found it empty,
+// so a transfer never moved its binding (bug hunt 2026-10-28 B28). Login is
+// kept as a fallback for older fixtures.
+type RepositoryPreviousOwner struct {
+	Login        string              `json:"login"`
+	User         PushRepositoryOwner `json:"user"`
+	Organization PushRepositoryOwner `json:"organization"`
+}
+
+// PreviousLogin returns the previous owner's login, or "".
+func (o RepositoryPreviousOwner) PreviousLogin() string {
+	for _, login := range []string{o.User.Login, o.Organization.Login, o.Login} {
+		if login != "" {
+			return login
+		}
+	}
+	return ""
 }
 
 func DecodeRepository(body []byte) (RepositoryEvent, error) {

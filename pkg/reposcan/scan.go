@@ -344,16 +344,28 @@ func Scan(fsys fs.FS) (Result, error) {
 	return ScanWithOptions(fsys, ScanOptions{})
 }
 
-// ScanOptions extends Scan with lookups outside the repository. The zero
-// value scans the repository alone.
+// KubernetesManifestsCapability is the product capability that releases
+// ScanOptions.KubernetesManifests (pkg/productcap/catalog.json).
+const KubernetesManifestsCapability = "kubernetes-manifests"
+
+// ScanOptions extends Scan with lookups outside the repository and with
+// behaviour a product capability releases per account. The zero value
+// scans the repository alone, with the behaviour every account gets.
 type ScanOptions struct {
 	// ImageListening, when set, tells whether a prebuilt Compose image
 	// that a request-serving service depends on listens, so it can deploy
 	// as an HTTP service (ADR-20261029120000 amendment 2).
 	ImageListening ImageListening
+	// KubernetesManifests maps a Kubernetes container's resources,
+	// readiness/startup exec probe and process fields onto the workload,
+	// and reports the pod-spec fields it does not apply
+	// (ADR-20261029093621 §3, the kubernetes-manifests capability).
+	KubernetesManifests bool
 }
 
-// ScanWithOptions is Scan with opts.
+// ScanWithOptions is Scan with opts. Every caller that scans a project for
+// an account must pass the same capability options for it, so a push
+// deploy and a reviewed deploy produce the same workloads.
 func ScanWithOptions(fsys fs.FS, opts ScanOptions) (Result, error) {
 	var (
 		seeds             []workloadSeed
@@ -376,7 +388,7 @@ func ScanWithOptions(fsys fs.FS, opts ScanOptions) (Result, error) {
 	}{
 		{detCompose, detectCompose},
 		{detProcfile, detectProcfile},
-		{detK8s, detectK8s},
+		{detK8s, func(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) { return detectK8sWith(fsys, opts) }},
 		{detRender, detectRender},
 		{detFly, detectFly},
 		{detServerless, detectServerless},

@@ -66,6 +66,7 @@ type Reconciler struct {
 	mfaRecoveryAlertEnabled     func() bool
 	mfaDisabledAlertEnabled     func() bool
 	deploymentFailedEnabled     func() bool
+	agentRunDeliveredEnabled    func() bool
 	subscriptionEndedEnabled    func() bool
 	quotaWarningEnabled         func() bool
 	nonpaymentDeletionEnabled   func() bool
@@ -101,6 +102,8 @@ func (s *Reconciler) templateEnabled(template string) bool {
 		return s.mfaDisableEnabled != nil && s.mfaDisableEnabled()
 	case DeploymentFailedTemplate:
 		return s.deploymentFailedEnabled != nil && s.deploymentFailedEnabled()
+	case AgentRunDeliveredTemplate:
+		return s.agentRunDeliveredEnabled != nil && s.agentRunDeliveredEnabled()
 	case SubscriptionEndedTemplate:
 		return s.subscriptionEndedEnabled != nil && s.subscriptionEndedEnabled()
 	case QuotaWarningTemplate:
@@ -342,5 +345,11 @@ func (s *Reconciler) WithSubscriptionEnded(enabled func() bool) *Reconciler {
 func (s *Reconciler) WithDeploymentFailed(enabled func() bool) *Reconciler {
 	copy := *s
 	copy.deploymentFailedEnabled = enabled
+	return &copy
+}
+
+func (s *Reconciler) WithAgentRunDelivered(enabled func() bool) *Reconciler {
+	copy := *s
+	copy.agentRunDeliveredEnabled = enabled
 	return &copy
 }

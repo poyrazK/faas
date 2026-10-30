@@ -60,6 +60,7 @@ type Service struct {
 	MFARecoveryAlertOutboxEnabled     func() bool
 	MFADisabledAlertOutboxEnabled     func() bool
 	DeploymentFailedOutboxEnabled     func() bool
+	AgentRunDeliveredOutboxEnabled    func() bool
 	SubscriptionEndedOutboxEnabled    func() bool
 	QuotaWarningOutboxEnabled         func() bool
 	NonpaymentDeletionOutboxEnabled   func() bool

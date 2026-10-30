@@ -202,6 +202,7 @@ RULES = [
     (r"debug|regression", "Debug:"),
     (r"change-timeline|/changes|^changes", "Change timeline"),
     (r"service-map|servicemap", "Service map"),
+    (r"profile-?captures?|profilecapture|capture-diff", "On-demand profile captures"),
     (r"profiling|profiled|pyroscope|profile-push", "Continuous profiling"),
     (r"profile|attribution|request-mix", "Traffic profiles"),
     (r"synthetic", "Synthetic checks"),

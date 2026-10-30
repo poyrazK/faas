@@ -57,6 +57,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/githubd"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/reconcile"
 	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/secretscan"
@@ -1022,7 +1023,7 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			command: append([]string(nil), workload.ReleaseCommand...),
 			shell:   workload.ReleaseCommandShell,
 		}
-		manifest, manifestProblem := loadSourceRefManifest(staged, sourceApp, acct.Plan)
+		manifest, manifestProblem := loadSourceRefManifest(staged, sourceApp, acct.Plan, s.agentStepsAllowed(acct))
 		if manifestProblem != nil {
 			_ = os.Remove(staged)
 			res.Error = "operation or release declaration invalid"
@@ -1031,6 +1032,12 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			continue
 		}
 		operationDefinitions := sourceOperationSpecs(manifest)
+		// The workload's own gregale.yaml declares its workflows (ADR-081),
+		// exactly as on a single-app deploy of the same directory.
+		var workflowDefinitions []api.WorkflowSpec
+		if manifest != nil {
+			workflowDefinitions = manifest.Workflows
+		}
 		// A single-workload project has no ownership ambiguity, so it may
 		// also use the explicit gregale.yaml release.command declaration.
 		// Multi-workload Procfiles are already assigned exactly once by
@@ -1127,6 +1134,7 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			ReleaseCommand:      releaseCommand.command,
 			ReleaseCommandShell: releaseCommand.shell,
 			ServiceRollout:      !safe && app.Manifest.ExecutionMode == api.ExecutionModeService,
+			Workflows:           marshalWorkflowDefinitions(workflowDefinitions),
 		})
 		if app.Manifest.ProjectImage != "" {
 			_ = os.Remove(staged)
@@ -1484,7 +1492,9 @@ func (s *server) scanService(
 		}
 	}
 
-	result, scanErr := reposcan.ScanWithOptions(os.DirFS(req.ScanDir), reposcan.ScanOptions{ImageListening: s.imageListening})
+	scanOpts := s.projectScanOptions(acct)
+	scanOpts.ImageListening = s.imageListening
+	result, scanErr := reposcan.ScanWithOptions(os.DirFS(req.ScanDir), scanOpts)
 	if scanErr != nil {
 		return nil, state.Project{}, nil, nil, nil, nil, api.NewProblem(
 			http.StatusBadRequest, api.CodeSourceInvalid,
@@ -1975,7 +1985,7 @@ func (s *server) scanService(
 	// reposcan type carries. See toPlanWorkload / toPlanManaged.
 	// The Compose environment's values are read apart from the scan so they
 	// never enter a plan; an unreadable one only means nothing is imported.
-	composeEnv, composeEnvErr := reposcan.ReadComposeEnv(os.DirFS(req.ScanDir))
+	composeEnv, composeEnvErr := reposcan.ReadProjectEnv(os.DirFS(req.ScanDir), s.projectScanOptions(acct))
 	if composeEnvErr != nil {
 		composeEnv = reposcan.ComposeEnv{}
 	}
@@ -3069,3 +3079,14 @@ func projectCronsWithPreserved(
 // field is informational — the hash is the load-bearing field —
 // but exposing a function variable lets tests freeze the clock.
 var nowUnix = func() int64 { return time.Now().Unix() }
+
+// projectScanOptions are the capability-gated scan options for an account.
+// They are decided by account rules alone, as githubd decides them, so a
+// push deploy rescans with the options the account reviewed
+// (ADR-20261029093621 §7). Without a gate (unit tests) every option is on.
+func (s *server) projectScanOptions(acct state.Account) reposcan.ScanOptions {
+	subject := platformflags.Subject{AccountID: acct.ID}
+	return reposcan.ScanOptions{
+		KubernetesManifests: s.capGate == nil || s.capGate.Enabled(reposcan.KubernetesManifestsCapability, subject),
+	}
+}

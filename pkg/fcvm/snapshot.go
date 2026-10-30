@@ -230,6 +230,11 @@ type RestoreSpec struct {
 	// before Restore was entered, so the wake.restore_breakdown event can
 	// attribute the whole vmmd window rather than only the JailerVMM part.
 	Prepare WakePrepareTimings
+	// AgentInput and InputKey are the restore counterparts of
+	// ColdBootSpec's: an agent run VM's input drive, staged at its fixed
+	// capacity so it matches the drive the snapshot was captured with.
+	AgentInput bool
+	InputKey   string
 	// Storage, when set, carries a sealed crash capture's memory, vmstate,
 	// private drive and backing identity (a crashcrypt.Backend decrypting
 	// on read). Those objects are copied into this instance's staging and

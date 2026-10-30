@@ -550,6 +550,9 @@ jobs:
             deploy/ansible/roles/livequeryd_service/files/faas-livequeryd.service \
             "${BUNDLE_ROOT}/optional-systemd/faas-livequeryd.service"
           install -m 0644 \
+            deploy/ansible/roles/agentd_service/files/faas-agentd.service \
+            "${BUNDLE_ROOT}/optional-systemd/faas-agentd.service"
+          install -m 0644 \
             deploy/ansible/roles/control_plane_service/files/faas-mcp-bridge.service \
             "${BUNDLE_ROOT}/optional-systemd/faas-mcp-bridge.service"
           # Files required before deployctl can activate outboundd. Keep the

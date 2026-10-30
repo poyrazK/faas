@@ -271,6 +271,68 @@ func TestLimiter_CentralOutageGraceDecidesLocally(t *testing.T) {
 	}
 }
 
+// A burst against a throttle rule while the shared counter is unreachable
+// past the grace: requests this gateway's bucket already refuses are over the
+// limit and get the ordinary 429, while one the bucket would admit stays
+// unverified (503) and gives its token back, so a pure outage never drains the
+// bucket into 429s (ADR-20261027173012 amendment 1).
+func TestLimiter_CentralOutageRefusesDrainedBucketAsOverLimit(t *testing.T) {
+	const centralKey = "rule:00000000-0000-0000-0000-000000000002:scale"
+	for _, dimension := range []string{"route", "consumer"} {
+		t.Run(dimension, func(t *testing.T) {
+			fake := newFakeCentral()
+			var failing atomic.Bool
+			balance := 3
+			fake.consumeResult = func() (int, bool, error) {
+				if failing.Load() {
+					return 0, false, errors.New("postgres down")
+				}
+				if balance == 0 {
+					return 0, false, nil
+				}
+				balance--
+				return balance, true, nil
+			}
+			now := time.Unix(1_700_000_000, 0)
+			l := NewLimiterWithCentralAndClock(fake, func() time.Time { return now })
+			l.centralOutageGrace = -1
+			allow := func(key string) (allowed, unavailable bool) {
+				ctx := withRateAdmissionEvidence(t.Context())
+				if dimension == "consumer" {
+					allowed = l.AllowWithCentralConsumerKey(ctx, key, "header", "consumer-id", 0.001, 3, 100, centralKey)
+				} else {
+					allowed = l.AllowWithCentralParams(ctx, key, 0.001, 3, centralKey)
+				}
+				flag, _ := ctx.Value(rateAdmissionKey{}).(*atomic.Bool)
+				return allowed, flag.Load()
+			}
+
+			// A fresh bucket during the outage: every request is unverified,
+			// however many arrive, because each refusal returns its token.
+			failing.Store(true)
+			for i := range 5 {
+				if allowed, unavailable := allow("fresh"); allowed || !unavailable {
+					t.Fatalf("outage request %d: allowed=%v unavailable=%v, want an unverified refusal", i, allowed, unavailable)
+				}
+			}
+
+			// Three verified admissions drain the bucket; once the counter
+			// fails, the next request is over the limit, not unverified.
+			failing.Store(false)
+			now = now.Add(centralBreakerWindow)
+			for i := range 3 {
+				if allowed, _ := allow("drained"); !allowed {
+					t.Fatalf("verified request %d refused", i)
+				}
+			}
+			failing.Store(true)
+			if allowed, unavailable := allow("drained"); allowed || unavailable {
+				t.Fatalf("drained bucket during outage: allowed=%v unavailable=%v, want an ordinary over-limit refusal", allowed, unavailable)
+			}
+		})
+	}
+}
+
 func TestLimiter_CentralBreakerIgnoresCallerCancellation(t *testing.T) {
 	fake := newFakeCentral()
 	fake.consumeResult = func() (int, bool, error) { return 0, false, context.Canceled }

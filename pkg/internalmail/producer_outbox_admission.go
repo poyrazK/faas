@@ -102,6 +102,10 @@ func (s *Service) ProducerOutboxAdmission(ctx context.Context, id string) (Produ
 		review.CanAcknowledge = false
 		review.BlockReason = "deployment_failed_disabled"
 	}
+	if review.Template == ProducerOutboxAgentRunDeliveredTemplate && !s.agentRunDeliveredOutboxEnabled() {
+		review.CanAcknowledge = false
+		review.BlockReason = "agent_run_delivered_disabled"
+	}
 	if review.Template == ProducerOutboxSubscriptionEndedTemplate && !s.subscriptionEndedOutboxEnabled() {
 		review.CanAcknowledge = false
 		review.BlockReason = "subscription_ended_disabled"

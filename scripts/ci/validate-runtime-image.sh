@@ -35,6 +35,12 @@ case "${runtime_image}" in
   runner-go124-alpine)
     required=(etc/passwd lib/ld-musl-x86_64.so.1)
     ;;
+  agent-base)
+    # ADR-20261027090010 §2: the preset harnesses, their catalog, and the tools agents
+    # expect in a checkout.
+    required=(etc/passwd usr/local/bin/node usr/local/bin/codex usr/local/bin/claude usr/local/bin/opencode
+      usr/bin/git usr/bin/rg usr/share/faas/agent-presets.json work/output)
+    ;;
   *)
     echo "unsupported runtime image ${runtime_image}" >&2
     exit 2
@@ -147,6 +153,28 @@ assert float(numpy.mean([1, 3])) == 2
 report = json.loads(pathlib.Path("/usr/share/faas/execution-profile-build.json").read_text())
 assert report["installed_bytes"] > 0
 print(json.dumps(report))
+'
+fi
+if [[ "${runtime_image}" == agent-base ]]; then
+  # The image must carry this checkout's preset catalog, and every preset must
+  # start as the tenant uid with no network and a read-only rootfs, reporting
+  # the version the catalog pins.
+  image_catalog=$(docker run --rm --platform "${expected_platform}" --entrypoint /bin/cat "${image_ref}" \
+    /usr/share/faas/agent-presets.json)
+  if [[ "${image_catalog}" != "$(cat pkg/agentpresets/presets.json)" ]]; then
+    echo "::error::${image_ref} carries a different agent preset catalog than pkg/agentpresets/presets.json" >&2
+    exit 1
+  fi
+  docker run --rm --platform "${expected_platform}" --network none --read-only --tmpfs /tmp \
+    --user 1000:1000 -e HOME=/tmp --entrypoint /usr/bin/python3 "${image_ref}" -I -c '
+import json, subprocess
+catalog = json.load(open("/usr/share/faas/agent-presets.json"))
+for preset in catalog["presets"]:
+    env = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": "/tmp", **preset.get("env", {})}
+    out = subprocess.run([preset["binary"], "--version"], env=env, capture_output=True, text=True, timeout=60)
+    text = out.stdout + out.stderr
+    assert out.returncode == 0 and preset["version"] in text, (preset["name"], text)
+    print(preset["name"], preset["version"], "ok")
 '
 fi
 echo "OK: ${image_ref} contains the ${runtime_image} rootfs contract"

@@ -690,7 +690,7 @@ func TestDrain_InvocationRetryPolicyIsClampedByPlanAndKeepsDelay(t *testing.T) {
 	if got := d.invocationAttemptBudget(context.Background(), inv); got != 3 {
 		t.Fatalf("attempt budget = %d, want Hobby cap 3", got)
 	}
-	if got := d.invocationRetryDelay(inv); got != 8*time.Second {
+	if got := d.invocationRetryDelay(context.Background(), inv); got != 8*time.Second {
 		t.Fatalf("retry delay = %s, want 8s", got)
 	}
 }
