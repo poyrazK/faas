@@ -82,6 +82,7 @@ type contractTestStore interface {
 	state.ObjectBucketWriteFenceStore
 	state.ObjectReadAdmissionStore
 	state.ObjectCapacityStore
+	state.ObjectInventoryScanStore
 	state.ObjectMultipartCompletionStore
 	state.ObjectMultipartTransferStore
 	state.ObjectMultipartURLCapabilityStore
