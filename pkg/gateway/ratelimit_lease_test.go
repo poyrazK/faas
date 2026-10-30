@@ -363,6 +363,32 @@ func TestLeaseShortfallIsCountedAndMarksTheCounterEmpty(t *testing.T) {
 	}
 }
 
+// A counter commit past the 250 ms pre-auth bound (a checkpoint or fsync
+// stall) failed the lease, opened the breaker and refused requests within
+// their limit with 503. A lease now gets the consume bound, and a request
+// waiting on it the batch wait (ADR-20261027173012 amendment 2).
+func TestLeaseOutlastsASlowCommit(t *testing.T) {
+	clock := newFakeClock(time.Unix(1_700_000_000, 0))
+	hold := make(chan struct{})
+	bucket := &sharedBucket{clock: clock, hold: hold}
+	l, _ := leasingGateway(bucket, clock)
+	const rps, burst = 10.0, 10.0
+	// The first request is admitted from the allowance and starts a lease
+	// that stalls in Postgres; the second has no allowance left and waits.
+	if !l.AllowWithCentralParams(t.Context(), "lease-app", rps, burst, leaseTestKey) {
+		t.Fatal("first request refused")
+	}
+	stall := time.AfterFunc(400*time.Millisecond, func() { close(hold) })
+	defer stall.Stop()
+	ctx := withRateAdmissionEvidence(t.Context())
+	allowed := l.AllowWithCentralParams(ctx, "lease-app", rps, burst, leaseTestKey)
+	unavailable, _ := ctx.Value(rateAdmissionKey{}).(*atomic.Bool)
+	if !allowed || unavailable.Load() {
+		t.Fatalf("request behind a 400 ms commit: allowed=%v unavailable=%v, want admitted", allowed, unavailable.Load())
+	}
+	l.lease.calls.Wait()
+}
+
 func TestLeaseDropsIdleStates(t *testing.T) {
 	clock := newFakeClock(time.Unix(1_700_000_000, 0))
 	bucket := &sharedBucket{clock: clock}
