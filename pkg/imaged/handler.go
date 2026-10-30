@@ -1011,12 +1011,12 @@ func (h *Handler) runGrype(ctx context.Context, dir string) (*ScanResult, error)
 // backend. The grype runner is NOT called in that case; the
 // caller stamps scan_status='failed' with the error string.
 func (h *Handler) stageScanExt4(ctx context.Context, be storage.StorageBackend, app state.App, dep state.Deployment) (string, func(), error) {
-	layerID := scanLayerDeploymentID(app.Slug, dep)
+	layerSlug, layerID := scanLayer(app.Slug, dep)
 	// Local backend short-circuit. The legacy appsRootPath stays
 	// because SetDeploymentRootfs (handler.go:1334+1380+1697)
 	// stamps it onto the deployment row as a diagnostic column.
 	if _, isLocal := be.(*storage.LocalStorageBackend); isLocal {
-		p := h.appsRootPath(app.Slug, layerID)
+		p := h.appsRootPath(layerSlug, layerID)
 		if p == "" {
 			return "", func() {}, errors.New("slug/path-traversal guard rejected")
 		}
@@ -1027,7 +1027,7 @@ func (h *Handler) stageScanExt4(ctx context.Context, be storage.StorageBackend, 
 	// the ext4 bytes to a local tempdir so grype dir:<path> can
 	// scan a filesystem path regardless of where the canonical
 	// bytes live.
-	appsKey := storagekey.AppLayer(app.Slug, layerID)
+	appsKey := storagekey.AppLayer(layerSlug, layerID)
 	rc, err := be.Get(ctx, appsKey)
 	if err != nil {
 		return "", func() {}, fmt.Errorf("imaged: scan stage backend.Get(%q): %w", appsKey, err)
@@ -1077,23 +1077,25 @@ func (h *Handler) stageScanExt4(ctx context.Context, be storage.StorageBackend, 
 	return stageDir, cleanup, nil
 }
 
-// scanLayerDeploymentID names the deployment whose layer holds this
-// deployment's rootfs. A promoted deployment reuses its source's artifact
-// (rootfs_key apps/<slug>/<source-id>.ext4); keying the scan by the new ID
-// read a missing object, so every promotion skipped its scan, and an
-// enforcing security policy would refuse it (hunt #10). Anything other than
-// this app's own layer key falls back to the deployment's ID.
-func scanLayerDeploymentID(slug string, dep state.Deployment) string {
-	prefix := "apps/" + slug + "/"
-	key := dep.RootfsKey
-	if !strings.HasPrefix(key, prefix) || !strings.HasSuffix(key, ".ext4") {
-		return dep.ID
+// scanLayer names the layer that holds this deployment's rootfs: the slug and
+// deployment ID in its rootfs_key, as wakes read it. A promoted deployment
+// reuses its source's artifact (rootfs_key apps/<slug>/<source-id>.ext4);
+// keying the scan by the new ID read a missing object, so every promotion
+// skipped its scan (hunt #10). The key also keeps the slug the app had when
+// the layer was written: a rename moves no objects, so rebuilding the key from
+// the current slug failed every scan of a deployment built before the rename,
+// and the live rescan parked enforce apps (bug hunt 2026-10-28 B31). Anything
+// other than a well-formed apps/ key falls back to the current slug and the
+// deployment's ID.
+func scanLayer(slug string, dep state.Deployment) (string, string) {
+	if rest, ok := strings.CutPrefix(dep.RootfsKey, "apps/"); ok {
+		if keySlug, file, ok := strings.Cut(rest, "/"); ok && isSlugSafe(keySlug) && strings.HasSuffix(file, ".ext4") {
+			if id := strings.TrimSuffix(file, ".ext4"); isDeploymentIDSafe(id) {
+				return keySlug, id
+			}
+		}
 	}
-	id := strings.TrimSuffix(strings.TrimPrefix(key, prefix), ".ext4")
-	if !isDeploymentIDSafe(id) {
-		return dep.ID
-	}
-	return id
+	return slug, dep.ID
 }
 
 // Marshal contract: *ScanResult + Error field are plain Go
@@ -1167,7 +1169,7 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 	}
 	defer cleanup()
 	markScanPhase(ctx, "stage")
-	artifactDigest, artifactErr := h.scanArtifactDigest(be, storagekey.AppLayer(app.Slug, scanLayerDeploymentID(app.Slug, dep)), scanDir)
+	artifactDigest, artifactErr := h.scanArtifactDigest(be, storagekey.AppLayer(scanLayer(app.Slug, dep)), scanDir)
 	markScanPhase(ctx, "digest")
 	if artifactErr != nil {
 		h.log.Warn("imaged: hash scan artifact", "deployment", dep.ID, "app", app.Slug, "err", artifactErr)
