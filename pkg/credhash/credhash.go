@@ -11,6 +11,7 @@ package credhash
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -23,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 const (
@@ -340,6 +342,49 @@ func For(family Family) *Policy {
 	activeMu.RLock()
 	defer activeMu.RUnlock()
 	return active[family]
+}
+
+// Remote answers, for a family this process holds no ring for, whether
+// stored is the value a credential whose SHA-256 is sum may hold: a daemon
+// on a compute node installs apid's MatchCredential (amendment 1, decision
+// 2).
+type Remote func(ctx context.Context, tag Tag, stored, sum []byte) (bool, error)
+
+var (
+	remoteMu sync.RWMutex
+	remotes  = map[Family]Remote{}
+)
+
+// SetRemote routes family's matches to r; nil matches locally again.
+func SetRemote(family Family, r Remote) {
+	remoteMu.Lock()
+	defer remoteMu.Unlock()
+	if r == nil {
+		delete(remotes, family)
+		return
+	}
+	remotes[family] = r
+}
+
+// remoteTimeout bounds a remote match: a slow apid refuses the credential
+// rather than holding the request.
+const remoteTimeout = 5 * time.Second
+
+// Match reports whether stored, read from column tag, is the value family's
+// credential whose token hashes to sum may hold: under this process's
+// policy for family, or by asking the remote installed for it. A remote
+// failure refuses the credential.
+func Match(ctx context.Context, family Family, tag Tag, sum, stored []byte) bool {
+	remoteMu.RLock()
+	r := remotes[family]
+	remoteMu.RUnlock()
+	if r == nil {
+		return For(family).Matches(tag, sum, stored)
+	}
+	ctx, cancel := context.WithTimeout(ctx, remoteTimeout)
+	defer cancel()
+	ok, err := r(ctx, tag, stored, sum)
+	return err == nil && ok
 }
 
 // SetAccount installs the account family's policy for this process; nil

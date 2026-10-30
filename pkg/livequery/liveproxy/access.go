@@ -1,14 +1,15 @@
 package liveproxy
 
 import (
+	"context"
 	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"slices"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/credhash"
 	"github.com/onebox-faas/faas/pkg/livequery/liveproto"
 	"github.com/onebox-faas/faas/pkg/livequery/rest"
 )
@@ -139,13 +140,15 @@ func readRelations(read string) ([]string, error) {
 }
 
 // matchServerKey finds the slot whose hash matches key, comparing every slot.
+// A stored hash may be keyed under the data-api ring, which realtimed does
+// not hold: credhash.Match asks apid (ADR 20261029202403 amendment 1).
 func matchServerKey(keys []api.DataAPIServerKey, key string) (api.DataAPIServerKey, bool) {
 	sum := sha256.Sum256([]byte(key))
 	var match api.DataAPIServerKey
 	found := false
 	for _, k := range keys {
 		want, err := hex.DecodeString(k.SHA256)
-		if err == nil && len(want) == len(sum) && subtle.ConstantTimeCompare(sum[:], want) == 1 && !found {
+		if err == nil && credhash.Match(context.Background(), credhash.FamilyDataAPI, api.DataAPIServerKeyCredentialTag, sum[:], want) && !found {
 			match, found = k, true
 		}
 	}

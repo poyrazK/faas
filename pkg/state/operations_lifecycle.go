@@ -1,9 +1,9 @@
 package state
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/credhash"
 	"github.com/onebox-faas/faas/pkg/operations"
 )
 
@@ -26,7 +27,7 @@ func operationClaim(op *Operation, inv Invocation, now time.Time) (string, api.O
 		return "", api.OperationEvent{}, err
 	}
 	capability := hex.EncodeToString(secret)
-	op.ExecutionCapabilityDigest = operationCapabilityDigest(capability)
+	op.ExecutionCapabilityDigest = familyStoredCredentialHex(credhash.FamilyScheduler, CredentialColumnOperationCapability, operationCapabilityDigest(capability))
 	op.ExecutionAttempt = inv.Attempts
 	op.State, op.Progress = api.OperationRunning, nil
 	op.FailureCode = ""
@@ -92,8 +93,10 @@ func ValidateOperationExecutionAuthority(op Operation, inv Invocation, authority
 	if op.CurrentInvocationID != inv.ID || authority.InvocationID != inv.ID || authority.Attempt <= 0 || authority.Attempt != inv.Attempts || op.ExecutionAttempt != authority.Attempt || op.State != api.OperationRunning || inv.State != InvocationDispatching || inv.LeaseExpiresAt == nil || !inv.LeaseExpiresAt.After(now) || inv.DeadlineAt == nil || !inv.DeadlineAt.After(now) {
 		return ErrOperationStaleAttempt
 	}
+	// ADR 20261029202403 amendment 1: the stored digest may be keyed under
+	// the scheduler ring, which gatewayd-internal asks apid to match.
 	digest := operationCapabilityDigest(authority.Capability)
-	if len(authority.Capability) != 64 || subtle.ConstantTimeCompare([]byte(digest), []byte(op.ExecutionCapabilityDigest)) != 1 {
+	if len(authority.Capability) != 64 || !familyCredentialHexMatches(context.Background(), credhash.FamilyScheduler, CredentialColumnOperationCapability, digest, op.ExecutionCapabilityDigest) {
 		return ErrNotFound
 	}
 	return nil

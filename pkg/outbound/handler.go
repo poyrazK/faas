@@ -18,6 +18,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/credhash"
 	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/trace"
 )
@@ -890,7 +891,7 @@ func (h *Handler) callerAppID(w http.ResponseWriter, r *http.Request, integratio
 		}
 		return identity.AppID, identity.InstanceID, true
 	}
-	if !validToken(r.Header.Get(TokenHeader), integration.TokenHash) {
+	if !validToken(r.Header.Get(TokenHeader), integration) {
 		writeProblem(w, http.StatusUnauthorized, "outbound_unauthorized", "Outbound token is invalid", "")
 		return "", "", false
 	}
@@ -1021,9 +1022,15 @@ func targetURL(origin *url.URL, path, rawQuery string) (string, error) {
 	return u.String(), nil
 }
 
-func validToken(token string, expected [32]byte) bool {
+// validToken reports whether token is the integration's: against the hash
+// the database holds, plain or keyed, or the configured hash of a static
+// integration.
+func validToken(token string, integration Integration) bool {
 	got := sha256.Sum256([]byte(token))
-	return subtle.ConstantTimeCompare(got[:], expected[:]) == 1
+	if len(integration.StoredTokenHash) != 0 {
+		return credhash.For(credhash.FamilyOutbound).Matches(IntegrationTokenColumn, got[:], integration.StoredTokenHash)
+	}
+	return subtle.ConstantTimeCompare(got[:], integration.TokenHash[:]) == 1
 }
 
 func forwardedHeaders(in http.Header) http.Header {
