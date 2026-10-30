@@ -1,6 +1,6 @@
 # Concurrent document edits
 
-Run `gregale data-api dev --port 0` here to generate `database.types.ts` and start
+Run `gregale data-api serve --port 0` here to generate `database.types.ts` and start
 a disposable API. Install `@gregale/data` in your application and use `client.ts`
 as the typed edit/delete workflow. The Alice identity owns a team-a document;
 the other identity has the same subject and a different tenant.

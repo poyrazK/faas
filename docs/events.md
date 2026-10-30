@@ -943,7 +943,7 @@ routing outcomes and replay requests for one published event, use
 `events fanout-history`:
 
 ```bash
-gregale event fanout-history APP \
+gregale event fanout history APP \
   --event-source billing.stripe \
   --event-id evt-123
 ```
@@ -1418,7 +1418,7 @@ Before switching a producer to a new version, check consumer version coverage
 and validate event data with a read-only rollout preview:
 
 ```sh
-gregale event schema-rollout-preview billing.stripe invoice.paid \
+gregale event schema check billing.stripe invoice.paid \
   --version v2 --schema @invoice-v2.schema.json \
   --samples @invoice-samples.json \
   --from 2026-10-01T00:00:00Z --until 2026-10-08T00:00:00Z \
