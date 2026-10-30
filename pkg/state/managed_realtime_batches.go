@@ -237,7 +237,7 @@ func (s *PgStore) AppendManagedRealtimeBatchConditional(ctx context.Context, ep,
 		floor = expired
 	}
 	for i, item := range items {
-		if err := validateEventSchemaPG(ctx, tx, ep, ch, item.Data, item.Binary, item.Metadata); err != nil {
+		if err := validateEventSchemaPG(ctx, tx, s.realtimeEventSchemas, ep, ch, item.Data, item.Binary, item.Metadata); err != nil {
 			var detail *ManagedRealtimeEventSchemaError
 			if errors.As(err, &detail) {
 				detail.Item = i

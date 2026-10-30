@@ -288,8 +288,12 @@ func cmdStatus(args []string) int {
 // flow as `gregale secrets set`; `--restart` opts into an immediate
 // park-and-wake after every requested key has been persisted.
 func cmdEnv(args []string) int {
-	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale env <create|clone-status|pull|push|diff|history|rollback>", "env")
+	if len(args) == 0 || args[0] == "clone-status" && !fullEnvironmentCloneCLI() {
+		usage := "usage: gregale env <create|pull|push|diff|history|rollback>"
+		if fullEnvironmentCloneCLI() {
+			usage = "usage: gregale env <create|clone-status|pull|push|diff|history|rollback>"
+		}
+		PrintUsage(os.Stderr, usage, "env")
 		return 1
 	}
 	switch args[0] {
@@ -1080,7 +1084,11 @@ func cmdAppScale(slug string, args []string) int {
 			revision := workloadRevision
 			expectedWorkloadRevision = &revision
 		}
-		return cmdAppScalePlan(client, appClient, slug, *environment, req, *planOutput, expectedWorkloadRevision)
+		// The preview's read pins its own revision, so a change since the
+		// merge reads above shows up as a different one.
+		observed := int64(-1)
+		previewClient := environmentAppClient{Client: client, environment: *environment, revision: &observed}
+		return cmdAppScalePlan(client, previewClient, slug, *environment, req, *planOutput, expectedWorkloadRevision)
 	}
 	printAppSettingsTarget(slug, *environment, "explicit --environment", req)
 	updated, err := appClient.UpdateApp(context.Background(), slug, req)
@@ -1777,11 +1785,11 @@ func cmdQueueDeadLetter(args []string) int {
 		return printErr("Invalid arguments", mergeErr)
 	}
 	if len(pos) != 1 || rejectUnexpectedFlagArgs(fs) {
-		PrintUsage(os.Stderr, "usage: gregale queue dead-letter <slug> [--limit N] [--cursor C] [--all]", "queue")
+		PrintUsage(os.Stderr, "usage: gregale queue dlq list <slug> [--limit N] [--cursor C] [--all]", "queue")
 		return 1
 	}
 	if err := validateCLILimit("limit", *limit, 100); err != nil {
-		PrintUsage(os.Stderr, "usage: gregale queue dead-letter <slug> --limit N (1 <= N <= 100)", "queue")
+		PrintUsage(os.Stderr, "usage: gregale queue dlq list <slug> --limit N (1 <= N <= 100)", "queue")
 		return 1
 	}
 	slug := pos[0]

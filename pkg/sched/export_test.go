@@ -974,6 +974,9 @@ func (l *Loop) XDispatchEventFanoutSweep(ctx context.Context) { l.dispatchEventF
 // adr: 20261029012000 — a step repeats while its batches come back full.
 var XRepeatFullBatches = repeatFullBatches
 
+// XTriggerAppConsumes is the broker trigger's may-take-records check.
+var XTriggerAppConsumes = triggerAppConsumes
+
 // adr: 20261029190000 — event deliveries retry by their app's policy or the
 // event delivery backoff.
 func (d *Drain) XInvocationRetryDelay(ctx context.Context, inv state.Invocation) time.Duration {
@@ -982,4 +985,10 @@ func (d *Drain) XInvocationRetryDelay(ctx context.Context, inv state.Invocation)
 
 func (d *Drain) XInvocationAttemptBudget(ctx context.Context, inv state.Invocation) int {
 	return d.invocationAttemptBudget(ctx, inv)
+}
+
+// CustomerCapacityProblem exposes the customer restatement of a node-budget
+// refusal, built from a refusal carrying the given blockers.
+func CustomerCapacityProblem(detail string, blockers ...api.WorkerAdmissionBlocker) *api.Problem {
+	return customerCapacityProblem(explainAdmission(api.ErrCapacity(detail), blockers...))
 }

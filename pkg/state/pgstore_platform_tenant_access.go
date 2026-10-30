@@ -60,7 +60,7 @@ func (s *PgStore) CreatePlatformTenantAccessToken(ctx context.Context, in Platfo
 	token, err := scanPlatformTenantAccessToken(tx.QueryRow(ctx, `insert into platform_tenant_access_tokens
 		(account_id, platform_tenant_id, name, prefix, token_hash, scopes, expires_at)
 		values ($1::uuid, $2::uuid, $3, $4, $5, $6, $7) returning `+platformTenantAccessTokenCols,
-		in.AccountID, in.TenantID, in.Name, in.Prefix, in.TokenHash, in.Scopes, in.ExpiresAt.UTC()))
+		in.AccountID, in.TenantID, in.Name, in.Prefix, storedCredential(credTagTenantAccessToken, in.TokenHash), in.Scopes, in.ExpiresAt.UTC()))
 	if err != nil {
 		if isUniqueViolation(err) {
 			return PlatformTenantAccessToken{}, ErrConflict
@@ -136,8 +136,13 @@ func (s *PgStore) AuthenticatePlatformTenantAccessToken(ctx context.Context, has
 	if len(hash) != 32 {
 		return Account{}, PlatformTenantAccessToken{}, ErrNotFound
 	}
-	token, err := scanPlatformTenantAccessToken(s.pool.QueryRow(ctx, `update platform_tenant_access_tokens set last_used_at=now()
-		where token_hash=$1 and revoked_at is null and expires_at>now() returning `+platformTenantAccessTokenCols, hash))
+	// ADR 20261029202403: the stored hash may be keyed or plain; a plain or
+	// older-key one is rewritten under the current key in the same update.
+	next := storedCredential(credTagTenantAccessToken, hash)
+	token, err := firstCredential(ctx, credentialLookups(credTagTenantAccessToken, hash), func(ctx context.Context, value []byte) (PlatformTenantAccessToken, error) {
+		return scanPlatformTenantAccessToken(s.pool.QueryRow(ctx, `update platform_tenant_access_tokens set last_used_at=now(), token_hash=$2
+			where token_hash=$1 and revoked_at is null and expires_at>now() returning `+platformTenantAccessTokenCols, value, next))
+	})
 	if err != nil {
 		return Account{}, PlatformTenantAccessToken{}, err
 	}

@@ -50,7 +50,7 @@ native_e2e_phase_files() {
     # phase by far (a stalled build rides out its 10-minute budget), and the
     # one everything below depends on.
     build) printf '%s\n' build_metal_test.go catalog_runtime_metal_test.go binary_function_metal_test.go \
-      dockerfile_healthcheck_metal_test.go ;;
+      dockerfile_healthcheck_metal_test.go deferred_cache_export_metal_test.go ;;
     # Deploy and safe-release paths: image, canary progression, healthcheck,
     # rollback, port override and secrets.
     deploy) printf '%s\n' \

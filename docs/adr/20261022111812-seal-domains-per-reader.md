@@ -763,6 +763,124 @@ from meterd.
   `account`, incident copies for `alerting`, and application standards for
   `edge`. Before, every domain's summary showed the `edge` reason.
 
+## Implemented: the source contract step
+
+`source` contracts the same way, through `faas_seal_domain_source_contracted`.
+
+- **githubd runs on the domain alone.** With neither
+  `FAAS_HOST_AGE_IDENTITY_PATH` nor `FAAS_HOST_AGE_KEY` set it used to fall
+  back to `/etc/faas/secrets/host.age`. With the source domain staged it
+  now loads no legacy identity: the source fetcher, the webhook secret
+  resolver and the install-token service open with the domain identity
+  only. An older githubd falls back to that path, which it cannot read, so
+  an environment contracts only once its previous release carries this one.
+- **The drop-in keeps githubd's other credentials.** githubd's base unit
+  also loads the GitHub App key and the public fleet recipient, which the
+  reset drops with the identities. The contracted drop-in loads both again,
+  and the role's proof checks that the App key is there. The role test
+  requires every credential a base unit loads to be either a legacy
+  identity the proof checks for, or loaded again after the reset.
+- **Unexpired install tokens count.** The migration does not re-seal
+  install tokens: each expires within the hour, and githubd seals its
+  successor under the write mode. But githubd reopens an unexpired token
+  from its row rather than mint a new one. `--check` and the migration
+  therefore report the unexpired tokens that a legacy identity opens and
+  the domain does not as skipped. The check fails on them, and on webhook
+  secret copies the migration would still write.
+
+## Implemented: the build contract step for imaged
+
+`build` contracts imaged through `faas_seal_domain_build_contracted`.
+vmmd, the domain's other reader, keeps the fleet and host identities for
+`runtime` values until that domain contracts.
+
+- **Crash captures were the blocker, and are not one.** imaged's ADR-733
+  at-rest pass encrypts a capture taken in plaintext to the fleet
+  recipient, and decrypts it with the fleet identity when a fork needs it.
+  But schedd always asks vmmd to seal a capture at the source
+  (`WithSealedCrashCaptures(true)` whenever crash snapshots are on), and
+  vmmd seals it to the runtime domain once staged, so no capture reaches
+  that pass. `crash_captures.sealed_key` stays a `runtime` column.
+  `--check --domain build` counts unexpired ready captures in an imaged
+  state (`present`, `absent`, `staging`, `staged`) as skipped, in case one
+  exists, and fails on them. They expire within seven days.
+- **imaged already runs on the domain alone.** Without
+  `FAAS_HOST_AGE_IDENTITY_PATH` it loads no legacy identity and opens
+  registry passwords with the build identity. It now warns about the unset
+  path only when the build domain is not staged either, and logs
+  `fleet_identity`. An older imaged behaves the same, so contracting does
+  not hold back a rollback.
+- The contracted drop-in resets imaged's credentials and unsets the path,
+  as for the other domains. imaged's other drop-ins all sort after it.
+
+## Implemented: trigger configs join the delivery domain
+
+Section 3's last crossing read goes: apid no longer opens a stored trigger
+config to update it.
+
+- **The merge keeps ciphertext.** `triggerconfig.MergeForUpdate` takes no
+  identity. For a credential the update omits, it carries over the stored
+  ciphertext, or a credential stored in plaintext before sealing. It drops
+  any ciphertext the client supplied. `SealMerged` then seals the update's
+  new credentials and keeps the carried ciphertext; `Seal`, for a new
+  trigger, still drops supplied ciphertext.
+  - The validator checks that a Kafka SASL password or TLS client key is
+    set. It sees the merge through `ValidationView`, where a kept
+    credential reads as a placeholder.
+  - An update that changes only the retry policy no longer fails that check
+    on a stored sealed password, and no longer drops it.
+  - A stored credential apid cannot open is kept as it is. schedd, which
+    opens it, reports it.
+- **apid seals to the delivery domain.** New credentials go to
+  `triggerConfigRecipients`: the delivery write mode's recipients, except
+  that domain mode still adds the fleet recipient. schedd opens trigger
+  configs with the delivery identity first, then the fleet and host
+  identities.
+- **Domain-only comes a release later.** A schedd of the previous release
+  opens trigger configs with the fleet key alone. So in this release apid
+  keeps sealing them to the fleet key too, and the migration does not
+  re-seal them. The release after makes them follow the write mode and
+  re-seals the stored ones; the delivery contract waits for that.
+
+## Implemented: the runtime check and its short-lived copies
+
+`gregalectl seal-domain migrate --domain runtime --check` measures what
+still holds vmmd to the fleet and host identities. It writes nothing.
+
+- **Pending:** the rekey documents a runtime migration would still rewrite.
+  These are envelopes a legacy identity opens, or the domain opens under
+  another label. An envelope nothing opens is reported as failed and does
+  not block.
+- **Skipped:** values vmmd could need the fleet key for, which the
+  migration does not re-seal:
+  - **short-lived copies under another key id:**
+    - the replaced secrets an open config guard keeps, to restore them if
+      the change regresses;
+    - the credentials a managed Postgres cutover has sealed but not yet
+      published;
+  - **crash capture keys** sealed before the runtime domain was staged,
+    which only legacy identities open.
+
+  The check fails while any are left.
+
+The short-lived copies were listed as needing a re-seal of their own. They
+do not need one:
+
+- a guard's copies are deleted when it closes (`ConfigGuardWindowMinutes`,
+  ten minutes);
+- a cutover's ciphertext is cleared when it publishes or cancels;
+- both carry a key id, so the count needs no opening. A crash capture key
+  has none, so the check opens it.
+
+A copy that a restore or a publish moves into `app_secrets` after the
+migration becomes a rekey document under the fleet key. The check reports
+it as pending, and the next migration run re-seals it. Each copy is written
+under the runtime write mode, so in domain mode new copies are filed under
+the domain.
+
+vmmd's own contract (it reads the secrets directory as root rather than
+through credentials) is a separate step.
+
 ## CD and node join stage the domain keys
 
 Each domain's key pair is a pair of GitHub environment secrets:
@@ -790,9 +908,6 @@ Each domain's key pair is a pair of GitHub environment secrets:
 
 Later slices:
 - the other domains, in the order above;
-- re-sealing the short-lived copies in `app_config_guard_secrets` and
-  `managed_postgres_cutover_credentials`, which the rekey documents do not
-  cover;
 - the contract steps of the other domains, and then dropping the fleet
   credential from each contracted reader's base unit;
 - dropping `github_webhook_secrets.secret_value` (step 2 above), after the

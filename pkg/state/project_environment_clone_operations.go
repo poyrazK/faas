@@ -115,3 +115,9 @@ type ProjectEnvironmentCloneOperationStore interface {
 	ProjectEnvironmentCloneOperationByIdempotencyKey(ctx context.Context, accountID, projectID, key string) (ProjectEnvironmentCloneOperation, error)
 	AdvanceProjectEnvironmentCloneOperation(ctx context.Context, accountID, projectID, id, expectedStatus, nextStatus string, expectedRevision int64, resources []ProjectEnvironmentCloneResource, errorCode string) (ProjectEnvironmentCloneOperation, error)
 }
+
+// ProjectEnvironmentCloneActivityStore counts clone operations a worker still
+// has to finish: every status but ready, failed and compensated.
+type ProjectEnvironmentCloneActivityStore interface {
+	UnfinishedProjectEnvironmentClones(ctx context.Context) (int64, error)
+}

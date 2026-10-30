@@ -434,6 +434,69 @@ func TestIsAccountExportRequest(t *testing.T) {
 	}
 }
 
+// A queue lease long-polls up to 20 s and the other long-wait routes scale
+// with the source; under apid's 5 s default each answered 504 before it was
+// done (bug hunt 2026-10-28 B35).
+func TestIsLongWaitRequest(t *testing.T) {
+	cases := []struct {
+		method string
+		path   string
+		want   bool
+	}{
+		{http.MethodPost, "/v1/apps/demo/queues/jobs/leases", true},
+		{http.MethodPost, "/v1/orgs/acme/apps/demo/queues/jobs/leases", true},
+		{http.MethodGet, "/v1/apps/demo/policy/status", true},
+		{http.MethodPost, "/v1/projects/scan/source-ref", true},
+		{http.MethodPost, "/v1/apps/demo/deployments/dev-source", true},
+		{http.MethodPost, "/v1/apps/demo/queues/jobs/leases:ack", false},
+		{http.MethodGet, "/v1/apps/demo/queues/jobs/leases", false},
+		{http.MethodPost, "/v1/apps/demo/queues//leases", false},
+		{http.MethodGet, "/v1/account", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.method+"_"+tc.path, func(t *testing.T) {
+			if got := IsLongWaitRequest(httptest.NewRequest(tc.method, tc.path, nil)); got != tc.want {
+				t.Fatalf("IsLongWaitRequest(%s %s) = %v, want %v", tc.method, tc.path, got, tc.want)
+			}
+		})
+	}
+	if IsLongWaitRequest(nil) {
+		t.Fatal("nil request selected a long-wait budget")
+	}
+}
+
+// Through the real middleware, a lease that waits past the default with
+// nothing to return still answers 200 with its empty list, while the same
+// wait on an ordinary route gets the 504.
+func TestMiddleware_LongWaitRouteOutlastsTheDefault(t *testing.T) {
+	cfg, _, _ := newCfg(t, 50*time.Millisecond, time.Second)
+	cfg.DefaultFor = func(r *http.Request) time.Duration {
+		if IsLongWaitRequest(r) {
+			return cfg.Max
+		}
+		return 0
+	}
+	waits := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-time.After(200 * time.Millisecond):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"messages":[]}`))
+		case <-r.Context().Done():
+		}
+	})
+	handler := cfg.Middleware(waits)
+	for path, want := range map[string]int{
+		"/v1/apps/demo/queues/jobs/leases": http.StatusOK,
+		"/v1/apps/demo/queues/jobs/stats":  http.StatusGatewayTimeout,
+	} {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, path, nil))
+		if rec.Code != want {
+			t.Fatalf("POST %s = %d, want %d", path, rec.Code, want)
+		}
+	}
+}
+
 // TestMiddleware_EndToEndTimeoutEnforced is the ADR-093 §14
 // metal-acceptance smoke: a 100ms budget with a 1s slow
 // downstream fake must 504 in <200ms with a stable

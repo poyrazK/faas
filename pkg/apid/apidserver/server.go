@@ -222,6 +222,9 @@ type server struct {
 	realtimeRollout               managedrealtime.PreviewGate
 	clonePostgresContentsReadPool *copycontents.ReadPool
 	cloneWorkerAdmission          func(context.Context) error
+	// cloneDataPointSettle is how old a clone's data point must be before its
+	// managed databases are restored (ADR-20261024224230).
+	cloneDataPointSettle time.Duration
 	// Installed only by private wiring for an independently qualified owner.
 	cloneWorkloadRetirementDriver cloneCheckpointWorkloadRetirementDriver
 	managedPostgresReconciler     *managedpostgres.Reconciler
@@ -239,9 +242,11 @@ type server struct {
 	// by the usage views (ADR-20261025094915).
 	managedPostgresCapMode         managedpostgres.CapEnforcementMode
 	managedPostgresHealthCollector *managedpostgres.HealthCollector
-	store                          state.Store
-	domainVerificationMetrics      *domainVerificationMetrics
-	log                            *slog.Logger
+	// managedPostgresSQLProber probes the canary databases (ADR-20261029172812); nil when unconfigured.
+	managedPostgresSQLProber  *managedpostgres.SQLProber
+	store                     state.Store
+	domainVerificationMetrics *domainVerificationMetrics
+	log                       *slog.Logger
 	// devSourceCacheMu serializes reconstruction with best-effort cache
 	// replacement. The cache is node-local and disposable; this lock is not
 	// cross-node coordination and never guards customer-intent state.
@@ -1498,6 +1503,7 @@ func newServerWithDeps(
 		mailer:                 mailer,
 		githubd:                githubd,
 		githubDeploysAvailable: func(context.Context) bool { return false },
+		cloneDataPointSettle:   projectEnvironmentCloneDataPointSettle,
 		events:                 bcaster,
 		bindingKeyFn:           func() []byte { return sessions.BindingKey() },
 		sessions:               sessions,
@@ -1627,6 +1633,7 @@ func newServerWithDeps(
 	s.dataRepair.Host = operationHost{s}
 	s.edgeRules.Host = edgeRulesHost{s}
 	s.edgeRules.SettingCheck = s.edgeRuleSettingsProblem
+	s.edgeRules.AuthorizeApp = s.authorizeNamedApp
 	s.profileCaptures.Host = profileCaptureHost{s}
 	s.queueLeases.Host = queueLeasesHost{s}
 	s.realtime.Host = realtimeHost{s}
@@ -1869,6 +1876,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/postgres/databases/{id}/resizes/{resize_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getManagedPostgresResize))))
 	mux.HandleFunc("GET /v1/postgres/databases/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getManagedPostgresDatabase))))
 	mux.HandleFunc("DELETE /v1/postgres/databases/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.idempotent(s.deleteManagedPostgresDatabase)))))
+	mux.HandleFunc("POST /v1/postgres/databases/{id}/undelete", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.idempotent(s.undeleteManagedPostgresDatabase))))))
 	mux.HandleFunc("POST /v1/postgres/databases/{id}/restore", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.idempotent(s.restoreManagedPostgresDatabase))))))
 	mux.HandleFunc("GET /v1/postgres/databases/{id}/bindings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.listManagedPostgresBindings))))
 	mux.HandleFunc("GET /v1/postgres/databases/{id}/connection-budget", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.managedPostgresConnectionBudget))))
@@ -3802,7 +3810,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/bindings/queue-canaries/{canary}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getQueueBindingCanary))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/bindings/queue-canaries/{canary}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.cancelQueueBindingCanary))))
 	mux.HandleFunc("GET /v1/apps/{slug}/queue-bindings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listQueueBindings))))
-	mux.HandleFunc("POST /v1/apps/{slug}/queue-bindings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(productionQueueBindingHandler(s.idempotent(s.createQueueBinding))))))
+	mux.HandleFunc("POST /v1/apps/{slug}/queue-bindings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(productionQueueBindingHandler(s.idempotentInRequestedEnvironment(defaultJSONBodyLimit, s.createQueueBinding))))))
 	mux.HandleFunc("GET /v1/apps/{slug}/queue-bindings/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getQueueBinding))))
 	mux.HandleFunc("GET /v1/apps/{slug}/queue-bindings/{id}/status", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getQueueBindingStatus))))
 	mux.HandleFunc("PATCH /v1/apps/{slug}/queue-bindings/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateQueueBinding))))
@@ -4091,8 +4099,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/apps/{slug}/entities/restore", s.durable.Route(s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.durable.App(s.durable.Restore))))))
 	mux.HandleFunc("POST /v1/apps/{slug}/entities/retry", s.durable.Route(s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.durable.App(s.durable.Retry))))))
 	mux.HandleFunc("POST /v1/apps/{slug}/invoke/async", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.invokeAppAsync)))))
-	mux.HandleFunc("POST /v1/apps/{slug}/queues/send", s.authLimited(s.requireMFA(s.requireScope(api.ScopesQueuesSendSurface...)(productionQueueBindingHandler(s.idempotent(s.queueSend))))))
-	mux.HandleFunc("POST /v1/apps/{slug}/inbox", s.authLimited(s.requireMFA(s.requireScope(api.ScopesEventsPublishSurface...)(productionQueueBindingHandler(s.idempotent(s.sendAppMessage))))))
+	mux.HandleFunc("POST /v1/apps/{slug}/queues/send", s.authLimited(s.requireMFA(s.requireScope(api.ScopesQueuesSendSurface...)(productionQueueBindingHandler(s.idempotentInRequestedEnvironment(queueSendBodyLimit, s.queueSend))))))
+	mux.HandleFunc("POST /v1/apps/{slug}/inbox", s.authLimited(s.requireMFA(s.requireScope(api.ScopesEventsPublishSurface...)(productionQueueBindingHandler(s.idempotentInRequestedEnvironment(queueSendBodyLimit, s.sendAppMessage))))))
 	mux.HandleFunc("POST /v1/apps/{slug}/commit-sources", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.createCommitSource))))
 	mux.HandleFunc("PUT /v1/commit-sources/{source}/connection", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putCommitSourceConnection))))
 	mux.HandleFunc("GET /v1/commit-sources/{source}/publications", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listCommitPublications))))
@@ -4631,6 +4639,13 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/freezes", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.createReleaseFreeze)))
 	mux.HandleFunc("DELETE /v1/freezes/{id}", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.liftReleaseFreeze)))
 	mux.HandleFunc("GET /v1/apps/{slug}/freeze-status", s.authLimited(s.requireScope(api.ScopesDeploymentReadSurface...)(s.getReleaseFreezeStatus)))
+	// Amendment 4: a company organization owns its apps' freezes.
+	mux.HandleFunc("GET /v1/apps/{slug}/freezes", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listAppReleaseFreezes)))
+	mux.HandleFunc("POST /v1/apps/{slug}/freezes", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.createAppReleaseFreeze)))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/freezes/{id}", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.liftAppReleaseFreeze)))
+	mux.HandleFunc("GET /v1/orgs/{slug}/freezes", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.listOrgReleaseFreezes)))))
+	mux.HandleFunc("POST /v1/orgs/{slug}/freezes", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.loadOrg(s.createOrgReleaseFreeze)))))
+	mux.HandleFunc("DELETE /v1/orgs/{slug}/freezes/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.loadOrg(s.liftOrgReleaseFreeze)))))
 	// ADR-20261019071734: release gates on customer signals.
 	mux.HandleFunc("GET /v1/apps/{slug}/release-gates", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listReleaseGates)))
 	mux.HandleFunc("POST /v1/apps/{slug}/release-gates", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.createReleaseGate)))
@@ -5209,6 +5224,12 @@ func (s *server) handler() http.Handler {
 	// ADR-960: switch a rule between log and enforce mode.
 	mux.Handle("POST /dashboard/apps/{slug}/edge-rules/{id}/mode", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardSetEdgeRuleMode))))
 	mux.Handle("POST /dashboard/apps/{slug}/edge-rules/{id}/delete", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDeleteEdgeRule))))
+	// ADR-091 amendment 2026-10-30: edit a rule, roll the set back, manage lists.
+	mux.Handle("POST /dashboard/apps/{slug}/edge-rules/{id}/edit", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardEditEdgeRule))))
+	mux.Handle("POST /dashboard/apps/{slug}/edge-rules/rollback", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardRollbackEdgeRules))))
+	mux.Handle("POST /dashboard/apps/{slug}/edge-rule-lists", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardCreateEdgeRuleList))))
+	mux.Handle("POST /dashboard/apps/{slug}/edge-rule-lists/{name}/update", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardUpdateEdgeRuleList))))
+	mux.Handle("POST /dashboard/apps/{slug}/edge-rule-lists/{name}/delete", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDeleteEdgeRuleList))))
 	mux.Handle("POST /dashboard/apps/{slug}/edge-rules/{id}/waf-exclusions", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardExcludeEdgeWAFRule))))
 	mux.Handle("POST /dashboard/apps/{slug}/edge-rules/security-headers", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardSecurityHeaders))))
 	// ADR-986: protection recipes add one ordinary rule, in log mode by default.

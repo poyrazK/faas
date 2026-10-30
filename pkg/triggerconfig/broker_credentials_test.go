@@ -18,7 +18,7 @@ func TestRedisPasswordSealOpenRedactMerge(t *testing.T) {
 	if _, err := Seal(api.TriggerKindRedisStreams, raw, nil); !errors.Is(err, ErrRecipientUnavailable) {
 		t.Fatalf("Seal without recipient = %v, want ErrRecipientUnavailable", err)
 	}
-	sealed, err := Seal(api.TriggerKindRedisStreams, raw, identity.Recipient())
+	sealed, err := Seal(api.TriggerKindRedisStreams, raw, []*age.X25519Recipient{identity.Recipient()})
 	if err != nil {
 		t.Fatalf("Seal: %v", err)
 	}
@@ -45,16 +45,19 @@ func TestRedisPasswordSealOpenRedactMerge(t *testing.T) {
 		t.Fatalf("Open = %s", opened)
 	}
 
-	// A client round-trips the redacted config and keeps the password; a
-	// new password replaces it.
-	kept, err := MergeForUpdate(api.TriggerKindRedisStreams, sealed, Redact(api.TriggerKindRedisStreams, sealed), []*age.X25519Identity{identity})
+	// A client round-trips the redacted config and keeps the password, as
+	// its stored ciphertext; a new password replaces it.
+	kept, err := MergeForUpdate(api.TriggerKindRedisStreams, sealed, Redact(api.TriggerKindRedisStreams, sealed))
 	if err != nil {
 		t.Fatalf("MergeForUpdate keep: %v", err)
 	}
-	if object := decodeMap(t, kept); object["password"] != "redis-secret" || object["password_set"] != nil {
+	if object := decodeMap(t, kept); object["password_sealed"] != sealedObject["password_sealed"] || object["password"] != nil || object["password_set"] != nil {
 		t.Fatalf("merged keep = %s", kept)
 	}
-	rotated, err := MergeForUpdate(api.TriggerKindRedisStreams, sealed, json.RawMessage(`{"addr":"redis.example:6379","stream":"orders","group":"g","password":"rotated"}`), []*age.X25519Identity{identity})
+	if opened, err := Open(api.TriggerKindRedisStreams, kept, []*age.X25519Identity{identity}); err != nil || decodeMap(t, opened)["password"] != "redis-secret" {
+		t.Fatalf("kept password open = %s, %v", opened, err)
+	}
+	rotated, err := MergeForUpdate(api.TriggerKindRedisStreams, sealed, json.RawMessage(`{"addr":"redis.example:6379","stream":"orders","group":"g","password":"rotated"}`))
 	if err != nil {
 		t.Fatalf("MergeForUpdate rotate: %v", err)
 	}
@@ -72,7 +75,7 @@ func TestNATSURLCredentialsSealOpenRedactMerge(t *testing.T) {
 		if _, err := Seal(api.TriggerKindNATS, raw, nil); !errors.Is(err, ErrRecipientUnavailable) {
 			t.Fatalf("Seal without recipient = %v, want ErrRecipientUnavailable", err)
 		}
-		sealed, err := Seal(api.TriggerKindNATS, raw, identity.Recipient())
+		sealed, err := Seal(api.TriggerKindNATS, raw, []*age.X25519Recipient{identity.Recipient()})
 		if err != nil {
 			t.Fatalf("Seal %s: %v", original, err)
 		}
@@ -103,16 +106,19 @@ func TestNATSURLCredentialsSealOpenRedactMerge(t *testing.T) {
 			t.Fatalf("Open = %s, want url %s", opened, original)
 		}
 
-		// Round-tripping the redacted config keeps the credentials for the
-		// same server only.
-		kept, err := MergeForUpdate(api.TriggerKindNATS, sealed, Redact(api.TriggerKindNATS, sealed), identities)
+		// Round-tripping the redacted config keeps the credentials, still
+		// sealed, for the same server only.
+		kept, err := MergeForUpdate(api.TriggerKindNATS, sealed, Redact(api.TriggerKindNATS, sealed))
 		if err != nil {
 			t.Fatalf("MergeForUpdate keep: %v", err)
 		}
-		if object := decodeMap(t, kept); object["url"] != original || object["url_credentials_set"] != nil {
+		if object := decodeMap(t, kept); object["url"] != host || object["url_credentials_sealed"] != decodeMap(t, sealed)["url_credentials_sealed"] || object["url_credentials_set"] != nil {
 			t.Fatalf("merged keep = %s", kept)
 		}
-		moved, err := MergeForUpdate(api.TriggerKindNATS, sealed, json.RawMessage(`{"url":"nats://elsewhere.example:4222","stream":"ORDERS","subject":"orders.*","durable":"d"}`), identities)
+		if opened, err := Open(api.TriggerKindNATS, kept, identities); err != nil || decodeMap(t, opened)["url"] != original {
+			t.Fatalf("kept credentials open = %s, %v; want url %s", opened, err, original)
+		}
+		moved, err := MergeForUpdate(api.TriggerKindNATS, sealed, json.RawMessage(`{"url":"nats://elsewhere.example:4222","stream":"ORDERS","subject":"orders.*","durable":"d"}`))
 		if err != nil {
 			t.Fatalf("MergeForUpdate move: %v", err)
 		}

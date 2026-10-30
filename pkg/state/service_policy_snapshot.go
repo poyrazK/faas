@@ -107,7 +107,8 @@ func (s servicePolicyReader) ProjectAppByWorkload(ctx context.Context, account, 
 		return App{}, fmt.Errorf("resolve project service: %w", mapErr(err))
 	}
 	if len(ids) == 0 {
-		return App{}, ErrNotFound
+		return App{}, projectServiceNotFound(ctx, s.tx, sqlc.ProjectServiceHasDeletedAppParams{
+			AccountID: uuidToPgtype(account), ProjectID: uuidToPgtype(project), WorkloadName: workload})
 	}
 	if len(ids) != 1 {
 		return App{}, ErrConflict

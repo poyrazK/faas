@@ -7069,7 +7069,10 @@ func (e *Engine) markPrimeFailed(ctx context.Context, deploymentID string, cause
 	problem := api.ErrDeployFailed(cause.Error())
 	code := api.CodeDeployFailed
 	var upstream *api.Problem
-	if errors.As(cause, &upstream) && upstream != nil && upstream.Code != "" {
+	capacity := customerCapacityProblem(cause)
+	if capacity != nil {
+		problem, code = capacity, capacity.Code
+	} else if errors.As(cause, &upstream) && upstream != nil && upstream.Code != "" {
 		problem = upstream
 		code = upstream.Code
 	} else if errors.Is(cause, context.DeadlineExceeded) || status.Code(cause) == codes.DeadlineExceeded {
@@ -7093,6 +7096,10 @@ func (e *Engine) markPrimeFailed(ctx context.Context, deploymentID string, cause
 
 	now := time.Now().UTC()
 	message := "snapshot prime failed: " + cause.Error()
+	if capacity != nil {
+		// The node-budget refusal's own text names nodes and their ledgers.
+		message = "snapshot prime failed: " + capacity.Detail
+	}
 	switch code {
 	case api.CodeStageSnapshotPrepareTimeout:
 		message = "snapshot prime failed: " + problem.Error()

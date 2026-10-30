@@ -30,7 +30,7 @@ func (s LinearOAuthService) Start(ctx context.Context, app, account, issue strin
 	if err != nil {
 		return "", "", err
 	}
-	hash := LinearOAuthStateHash(nonce)
+	hash := state.StoredCredentialHex(state.CredentialColumnLinearOAuthState, LinearOAuthStateHash(nonce))
 	secret := LinearOAuthFlowSecret{AppID: app, AccountID: account, IssueID: issue, Hash: hash, ExpectedRevision: revision, Verifier: verifier, ClientID: s.Config.ClientID, RedirectURI: s.Config.RedirectURI}
 	sealed, err := SealLinearOAuthFlowTo(s.Recipients, secret)
 	if err != nil {
@@ -43,7 +43,9 @@ func (s LinearOAuthService) Exchange(ctx context.Context, nonce, account, code s
 	if !s.Config.Enabled() || !validLinearToken(code) {
 		return api.ErrValidation("restart Linear authorization")
 	}
-	row, err := s.Store.ClaimLinearOAuthFlow(ctx, LinearOAuthStateHash(nonce), account, "authorizing", "exchanging")
+	row, err := state.FirstCredentialHex(ctx, state.CredentialColumnLinearOAuthState, LinearOAuthStateHash(nonce), func(ctx context.Context, hash string) (state.LinearOAuthFlow, error) {
+		return s.Store.ClaimLinearOAuthFlow(ctx, hash, account, "authorizing", "exchanging")
+	})
 	if err != nil {
 		return api.ErrValidation("Linear authorization expired or was already used; restart it")
 	}
@@ -67,8 +69,21 @@ func (s LinearOAuthService) Exchange(ctx context.Context, nonce, account, code s
 	}
 	return s.Store.SaveLinearOAuthFlow(ctx, row, sealed)
 }
+
+// Decline drops the consent flow nonce started for account, whose state
+// hash may be stored plain or keyed (ADR 20261029202403).
+func (s LinearOAuthService) Decline(ctx context.Context, nonce, account string) {
+	row, err := state.FirstCredentialHex(ctx, state.CredentialColumnLinearOAuthState, LinearOAuthStateHash(nonce), func(ctx context.Context, hash string) (state.LinearOAuthFlow, error) {
+		return s.Store.GetLinearOAuthFlow(ctx, hash, account)
+	})
+	if err == nil {
+		_ = s.Store.DeleteLinearOAuthFlow(ctx, row.Hash, account)
+	}
+}
 func (s LinearOAuthService) Pending(ctx context.Context, nonce, account string) (state.LinearOAuthFlow, LinearOAuthFlowSecret, error) {
-	row, err := s.Store.GetLinearOAuthFlow(ctx, LinearOAuthStateHash(nonce), account)
+	row, err := state.FirstCredentialHex(ctx, state.CredentialColumnLinearOAuthState, LinearOAuthStateHash(nonce), func(ctx context.Context, hash string) (state.LinearOAuthFlow, error) {
+		return s.Store.GetLinearOAuthFlow(ctx, hash, account)
+	})
 	if err != nil || row.Phase != "choosing" {
 		return row, LinearOAuthFlowSecret{}, api.ErrValidation("Linear authorization expired or incomplete; restart it")
 	}

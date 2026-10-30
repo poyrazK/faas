@@ -203,3 +203,39 @@ func TestOperatorOptInAndSelfServeWritesAreChecked(t *testing.T) {
 		t.Fatalf("operator opt-in counts = %+v", item.OptIns)
 	}
 }
+
+// Joining a product's preview joins the sub-feature previews the operator
+// also offers, at any depth: joining events used to leave its sub-features
+// hidden behind their own flags. One the operator does not offer stays out.
+func TestJoiningAPreviewJoinsItsOfferedSubFeatures(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	events := platformflags.CapabilityFlagKey("events")
+	replays := platformflags.CapabilityFlagKey("event-replays")
+	schemas := platformflags.CapabilityFlagKey("event-schemas")
+	dlq := platformflags.CapabilityFlagKey("dead-letter-queues")
+	console := platformflags.CapabilityFlagKey("failed-events-console")
+	for _, key := range []string{events, replays, dlq, console} {
+		(*e.S()).SeedPlatformFlag(key, selfServe("pro", "scale"))
+	}
+	acct := (*e.Acct()).ID
+
+	if rec := e.Do(t, http.MethodPut, "/v1/previews/"+events, nil, nil); rec.Code != http.StatusOK {
+		t.Fatalf("join events = %d %s", rec.Code, rec.Body)
+	}
+	if optIns, _ := optInRow(t, e, replays); !optIns.HasAccount(acct) {
+		t.Errorf("joining events did not join %s", replays)
+	}
+	if optIns, _ := optInRow(t, e, schemas); optIns.HasAccount(acct) {
+		t.Errorf("joining events joined %s, which the operator does not offer", schemas)
+	}
+	if optIns, _ := optInRow(t, e, console); optIns.HasAccount(acct) {
+		t.Errorf("joining events joined %s, which now sits under dead-letter-queues", console)
+	}
+
+	if rec := e.Do(t, http.MethodPut, "/v1/previews/"+dlq, nil, nil); rec.Code != http.StatusOK {
+		t.Fatalf("join dead-letter-queues = %d %s", rec.Code, rec.Body)
+	}
+	if optIns, _ := optInRow(t, e, console); !optIns.HasAccount(acct) {
+		t.Errorf("joining dead-letter-queues did not join %s", console)
+	}
+}

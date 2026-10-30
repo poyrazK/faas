@@ -120,5 +120,11 @@ with debugfs as its non-root user, as the warm-builder refresh already does.
 - The build drive lives for the extra minutes on the builder disk. The
   janitor still removes any drive older than an hour that a crash left
   behind.
+- The export VM runs while imaged scans and primes the same deployment on
+  the same node. Before, the export finished before imaging began. On the
+  shared two-vCPU acceptance host (2026-10-30, already loaded by other
+  work) imaging then took more than five minutes. On a production node the
+  overlap takes at most the builder VM's two vCPUs. Rollout step 2 also
+  compares the time from handoff to live on the canary node.
 - Not covered: a faster cache export itself. Kernel overlayfs
   (ADR-20261029105325) and zstd layers (ADR-20261028084018) work on that.

@@ -196,7 +196,8 @@ jobs:
     needs: runtime-change
     if: needs.runtime-change.outputs.builder == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # About 17 minutes on main (2026-10-29) before the two SBOM scans.
+    timeout-minutes: 30
     # Issue #295: main pushes attest the promoted image's provenance
     # (Sigstore keyless, through the workflow's OIDC token).
     permissions:
@@ -496,6 +497,47 @@ jobs:
           subject-digest: ${{ steps.platform-digests.outputs.arm64 }}
           push-to-registry: true
 
+      # Issue #295: an SPDX SBOM of each platform image, attested beside its
+      # provenance. Verify with
+      #   gh attestation verify oci://ghcr.io/poyrazk/builder-base@<digest> --owner poyrazK \
+      #     --predicate-type https://spdx.dev/Document/v2.3
+      - name: Install pinned Syft (main)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          SYFT_VERSION: "1.49.0"
+          SYFT_SHA256: "7aa2f03ee92739cf643279ba3990548b9925d4e22cae13f46831ee62821147fe"
+        run: bash scripts/ci/install-syft.sh "$RUNNER_TEMP/syft"
+
+      - name: Generate builder base SBOMs (main)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          AMD64_DIGEST: ${{ steps.platform-digests.outputs.amd64 }}
+          ARM64_DIGEST: ${{ steps.platform-digests.outputs.arm64 }}
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/syft" scan "registry:${IMAGE_NAME}@${AMD64_DIGEST}" --platform linux/amd64 -q \
+            -o "spdx-json=$RUNNER_TEMP/sbom-amd64.spdx.json"
+          "$RUNNER_TEMP/syft" scan "registry:${IMAGE_NAME}@${ARM64_DIGEST}" --platform linux/arm64 -q \
+            -o "spdx-json=$RUNNER_TEMP/sbom-arm64.spdx.json"
+
+      - name: Attest builder base SBOM (main, linux/amd64)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.platform-digests.outputs.amd64 }}
+          sbom-path: ${{ runner.temp }}/sbom-amd64.spdx.json
+          push-to-registry: true
+
+      - name: Attest builder base SBOM (main, linux/arm64)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.platform-digests.outputs.arm64 }}
+          sbom-path: ${{ runner.temp }}/sbom-arm64.spdx.json
+          push-to-registry: true
+
   # Runtime bases are single-arch artifacts today because the image lock and
   # the production compute fleet pin linux/amd64 children. They are published
   # separately from the multi-arch builder image so an operator can resolve a
@@ -669,6 +711,33 @@ jobs:
         with:
           subject-name: ${{ env.IMAGE_NAME }}
           subject-digest: ${{ steps.platform-digest.outputs.amd64 }}
+          push-to-registry: true
+
+      # Issue #295: as for builder-base, an SPDX SBOM attested beside the
+      # provenance of the linux/amd64 image the release pins.
+      - name: Install pinned Syft (main)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          SYFT_VERSION: "1.49.0"
+          SYFT_SHA256: "7aa2f03ee92739cf643279ba3990548b9925d4e22cae13f46831ee62821147fe"
+        run: bash scripts/ci/install-syft.sh "$RUNNER_TEMP/syft"
+
+      - name: Generate runtime base SBOM (main)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          AMD64_DIGEST: ${{ steps.platform-digest.outputs.amd64 }}
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/syft" scan "registry:${IMAGE_NAME}@${AMD64_DIGEST}" --platform linux/amd64 -q \
+            -o "spdx-json=$RUNNER_TEMP/sbom-amd64.spdx.json"
+
+      - name: Attest runtime base SBOM (main, linux/amd64)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.platform-digest.outputs.amd64 }}
+          sbom-path: ${{ runner.temp }}/sbom-amd64.spdx.json
           push-to-registry: true
 
   # Keep source-artifact tests parallel with the image matrix. This job runs

@@ -177,6 +177,8 @@ type Harness struct {
 	scheddEnv        []string
 	scheddConfigPath string
 	vmmdLaunchEnv    []string
+	// vmmdJournalDir is vmmd's resource journal directory.
+	vmmdJournalDir string
 	// nativeRuntimeSnapshotRoot is vmmd's private tree for native runtime
 	// snapshots when the run enables them (ADR 20261022184951 amendment 1).
 	nativeRuntimeSnapshotRoot string
@@ -357,6 +359,10 @@ failure_report_dir = %q
 `,
 			sockPath, "root", kernelPath, filepath.Join(tmp, "vmmd-resources"), filepath.Join(tmp, "vmmd-failures"),
 		)
+		h.vmmdJournalDir = filepath.Join(tmp, "vmmd-resources")
+		if dir := os.Getenv("FAAS_VMMD_RESOURCE_JOURNAL_DIR"); dir != "" {
+			h.vmmdJournalDir = dir // vmmd's environment override wins over the TOML
+		}
 		if os.Getenv("GREGALE_GITOPS_NATIVE_ACCEPTANCE") == "1" || os.Getenv("FAAS_FINANCIAL_SYSTEM_ACCEPTANCE") == "1" {
 			images, publications := filepath.Join(tmp, "native-images"), filepath.Join(tmp, "native-publications")
 			for _, path := range []string{images, publications} {
@@ -1880,6 +1886,9 @@ func (h *Harness) stop() {
 	for _, p := range h.procs {
 		needsRuntime := false
 		for _, arg := range p.Args {
+			if isVMMDProc(p) {
+				break
+			}
 			switch filepath.Base(arg) {
 			case "builderd", "imaged", "schedd":
 				needsRuntime = true
@@ -1901,6 +1910,10 @@ func (h *Harness) stopProcs(procs []*exec.Cmd) {
 		if p.Process == nil {
 			continue
 		}
+		if isVMMDProc(p) {
+			_ = stopVMMD(p)
+			continue
+		}
 		_ = p.Process.Signal(syscall.SIGTERM)
 	}
 	for _, proc := range procs {
@@ -1915,6 +1928,9 @@ func (h *Harness) stopProcs(procs []*exec.Cmd) {
 		select {
 		case <-done:
 		case <-time.After(5 * time.Second):
+			if vmmdUnitOf(proc) != "" {
+				_ = killVMMD(proc)
+			}
 			_ = proc.Process.Kill()
 			<-done
 		}
@@ -2135,14 +2151,14 @@ func (h *Harness) PlannedRestartVMMD(stopTimeout time.Duration) error {
 	}
 	var old *exec.Cmd
 	for _, proc := range h.procs {
-		if proc != nil && proc.Process != nil && filepath.Base(proc.Path) == "vmmd" && proc.ProcessState == nil {
+		if proc != nil && proc.Process != nil && isVMMDProc(proc) && proc.ProcessState == nil {
 			old = proc
 		}
 	}
 	if old == nil {
 		return fmt.Errorf("e2etest: vmmd process not found")
 	}
-	if err := old.Process.Signal(syscall.SIGTERM); err != nil {
+	if err := stopVMMD(old); err != nil {
 		return fmt.Errorf("e2etest: stop vmmd: %w", err)
 	}
 	exited := make(chan error, 1)
@@ -2170,6 +2186,9 @@ func (h *Harness) PlannedRestartVMMD(stopTimeout time.Duration) error {
 	h.requireDaemonsAlive(h.T)
 	return nil
 }
+
+// VMMDResourceJournalDir is the directory vmmd keeps its resource journal in.
+func (h *Harness) VMMDResourceJournalDir() string { return h.vmmdJournalDir }
 
 // SetVMMDEnv changes one variable of the retained vmmd launch recipe; the
 // next PlannedRestartVMMD starts the successor with it. Launch entries come
@@ -2550,6 +2569,9 @@ func startProc(t *testing.T, bin, name string, env []string) *exec.Cmd {
 	t.Helper()
 	argv := append(boundingSetPrefix(t, name), filepath.Join(bin, name))
 	argv = append(argv, daemonConfigArgs(name, env)...)
+	if name == "vmmd" && vmmdUnderSystemd() {
+		argv = vmmdSystemdArgv(t, argv[0], argv[1:], env)
+	}
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Env = append(os.Environ(), env...)
 	cmd.Stdout = &safeBuffer{}
@@ -2712,7 +2734,7 @@ func (h *Harness) MeterdLogs() string {
 // fallback (vs the planner-side cold-boot rejection) actually ran.
 func (h *Harness) VmmdLogs() string {
 	for _, p := range h.procs {
-		if filepath.Base(p.Path) != "vmmd" {
+		if !isVMMDProc(p) {
 			continue
 		}
 		if buf, ok := p.Stdout.(*safeBuffer); ok {

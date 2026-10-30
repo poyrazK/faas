@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "b6ac73cb6f425671adb19a9bc326c005472204671ff6b66cfd4281bce9b74f73",
+      "revision": "761a0be43740a495e1ed9c8069cbe28d32318dd3136f996246daf536c43cbc44",
       "files": [
         "faas.rules.yml"
       ],
@@ -2337,6 +2337,19 @@
           }
         },
         {
+          "id": "55349918505deb077b54e6607da27bc9bde131defa6ddea99ccb0a9ed4675377",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_managed_postgres",
+          "rule_name": "FaasManagedPostgresSQLErrorBudgetBurn",
+          "definition": {
+            "expression_hash": "3a9505a3851c078ce2e11db722f27e2e6da084ff8a556a88c73375fc4486975e",
+            "labels_hash": "aebc875004971cd9671458a8413ef6bb54bb80cfb52783c1087048a49eba3924",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "be619a42980ea337c22a52a7def5da48fa592e503616043e8829fcb56b253f52"
+          }
+        },
+        {
           "id": "55be9401678623b0bf9300a516988cd930e64fbbc01577620dfbec622d41c1ff",
           "file_name": "faas.rules.yml",
           "group_name": "faas_billing",
@@ -3634,6 +3647,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "2e76efde300dc712601ad553438525e986396f94dd8ce602d682711f570a6431"
+          }
+        },
+        {
+          "id": "9198dcd55fedf46941cdc104b31a40a26cab00053c9830f4771d79600427f049",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_managed_postgres",
+          "rule_name": "FaasManagedPostgresSQLProbeFailing",
+          "definition": {
+            "expression_hash": "a7c14ef5fdd5da95d14930be38f91ff6a7fe896c5737eaedf40a7c6d34692147",
+            "labels_hash": "67c13b5fb00f6279ddb46a958a9810deb3a919aee6c88ba5227a582d4c4e14ec",
+            "for_seconds": 120,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "e1a513732ee1275d5a7c28b082e3de5aeedbc738ea92ee25d4fd53e80fccdaeb"
           }
         },
         {
@@ -6461,7 +6487,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "9e6860d5395340d80e86f2045887b7f84c38cd2761783697c325f9b75fb09f22",
+      "revision": "46182b80dafa049a21a883bc3c9e8d6a4493b9253eeafd4c47504d851333b6ab",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -8902,6 +8928,19 @@
           }
         },
         {
+          "id": "55349918505deb077b54e6607da27bc9bde131defa6ddea99ccb0a9ed4675377",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_managed_postgres",
+          "rule_name": "FaasManagedPostgresSQLErrorBudgetBurn",
+          "definition": {
+            "expression_hash": "3a9505a3851c078ce2e11db722f27e2e6da084ff8a556a88c73375fc4486975e",
+            "labels_hash": "aebc875004971cd9671458a8413ef6bb54bb80cfb52783c1087048a49eba3924",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "be619a42980ea337c22a52a7def5da48fa592e503616043e8829fcb56b253f52"
+          }
+        },
+        {
           "id": "55be9401678623b0bf9300a516988cd930e64fbbc01577620dfbec622d41c1ff",
           "file_name": "faas.rules.yml",
           "group_name": "faas_billing",
@@ -10277,6 +10316,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "2e76efde300dc712601ad553438525e986396f94dd8ce602d682711f570a6431"
+          }
+        },
+        {
+          "id": "9198dcd55fedf46941cdc104b31a40a26cab00053c9830f4771d79600427f049",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_managed_postgres",
+          "rule_name": "FaasManagedPostgresSQLProbeFailing",
+          "definition": {
+            "expression_hash": "a7c14ef5fdd5da95d14930be38f91ff6a7fe896c5737eaedf40a7c6d34692147",
+            "labels_hash": "67c13b5fb00f6279ddb46a958a9810deb3a919aee6c88ba5227a582d4c4e14ec",
+            "for_seconds": 120,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "e1a513732ee1275d5a7c28b082e3de5aeedbc738ea92ee25d4fd53e80fccdaeb"
           }
         },
         {

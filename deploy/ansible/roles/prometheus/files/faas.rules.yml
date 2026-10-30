@@ -835,6 +835,21 @@ groups:
           description: "Daemon sessions have consumed more than 90% of PostgreSQL's ordinary-client capacity for 5m. New API, scheduler, restore, backup, and rollout work can fail when the remaining ordinary slots are exhausted."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresConnectionsHigh.md"
 
+      # Retained-channel heads outlive their messages so a channel's sequence
+      # never restarts under a client's cursor (ADR-1323); they grow by one row
+      # per distinct retained channel and are never deleted.
+      - alert: FaasRealtimeChannelHeadsGrowing
+        expr: max(faas_postgres_table_live_tuples{table="managed_realtime_channel_heads"}) > 1e6
+        for: 1h
+        labels:
+          severity: warn
+          component: postgres
+          family: database_capacity
+        annotations:
+          summary: "Retained realtime channel heads passed 1,000,000 rows"
+          description: "managed_realtime_channel_heads holds {{ $value | humanize }} rows (about 200 bytes each with its index). Heads are kept after their messages expire so sequences never restart. Find the endpoints creating the most distinct retained channels before deciding on cleanup."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRealtimeChannelHeads.md"
+
   - name: public_status
     rules:
       - alert: FaasPublicStatusEvaluationStalled
@@ -6050,6 +6065,44 @@ groups:
           description: "At least one ready database has no recent metadata check. Check collector capacity, provider backoff, and apid catalog connectivity before relying on cached health."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasManagedPostgresDegraded.md"
 
+      # ADR-20261029172812: apid opens a new connection to each backend's
+      # canary database, writes a row and reads it back. Provider health above
+      # reads metadata only and cannot see a database that refuses SQL. The
+      # page needs every apid to have failed for five minutes; the warning
+      # holds the 99.95% GA availability bar over six hours, where sparse
+      # one-a-minute samples would make a one-hour burn window page on a blip.
+      - alert: FaasManagedPostgresSQLProbeFailing
+        expr: |
+          (time() - max by (backend) (apid_managed_postgres_sql_probe_last_success_timestamp_seconds)) > 300
+          and on() max(apid_managed_postgres_sql_probe_enabled) == 1
+        for: 2m
+        labels:
+          severity: page
+          component: apid
+          family: managed_postgres
+        annotations:
+          summary: "Managed PostgreSQL backend {{ $labels.backend }} has failed every SQL probe for 5 minutes"
+          description: "No apid could connect to the backend's canary database, write a row and read it back for at least five minutes, so customer databases on this backend are likely unreachable or read-only. apid_managed_postgres_sql_probe_total shows which step fails."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasManagedPostgresSQLProbeFailing.md"
+
+      - alert: FaasManagedPostgresSQLErrorBudgetBurn
+        expr: |
+          (
+            sum by (backend) (increase(apid_managed_postgres_sql_probe_total{outcome!="ok"}[6h]))
+            /
+            sum by (backend) (increase(apid_managed_postgres_sql_probe_total[6h]))
+          ) > 0.003
+          and sum by (backend) (increase(apid_managed_postgres_sql_probe_total[6h])) >= 180
+        for: 15m
+        labels:
+          severity: warn
+          component: apid
+          family: managed_postgres
+        annotations:
+          summary: "Managed PostgreSQL backend {{ $labels.backend }} is spending its availability budget"
+          description: "More than 0.3% of canary SQL probes failed over six hours: six times the failure rate that would spend the 99.95% monthly budget. Intermittent failures that never reach the five-minute page still count against the GA bar."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasManagedPostgresSQLProbeFailing.md"
+
       - alert: FaasManagedPostgresHealthCollectorStalled
         expr: |
           apid_managed_postgres_health_enabled == 1
@@ -7249,7 +7302,7 @@ groups:
         annotations:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
           summary: "Object storage inventory scans are failing"
-          description: "More than 20% of apid's bucket inventory scans failed over 15m. A bucket whose inventory is older than 900 s refuses its own uploads and reads until a scan succeeds."
+          description: "More than 20% of apid's bucket inventory attempts failed over 15m. A bucket whose inventory is older than 900 s, and whose listing is not advancing, refuses its own uploads and reads until a listing completes."
       - alert: FaasS3GatewayErrorRateHigh
         expr: |
           sum(rate(s3_gateway_ops_total{op="s3_request",code="5xx"}[10m]))

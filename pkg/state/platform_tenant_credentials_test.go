@@ -3,7 +3,9 @@ package state_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -16,6 +18,7 @@ type credentialFixtureStore interface {
 	CreateAccount(context.Context, string, api.Plan) (state.Account, error)
 	CreateApp(context.Context, state.App) (state.App, error)
 	CreateAPIConsumer(context.Context, string, string, string, string) (state.APIConsumer, error)
+	CreateConsumerKeyForConsumer(ctx context.Context, accountID, consumerID, name, prefix string, hash []byte, scopes []string, expiresAt *time.Time) (state.ConsumerKey, error)
 	CreatePlatformTenant(context.Context, string, string, string, int) (state.PlatformTenant, bool, error)
 	LinkPlatformTenantConsumer(context.Context, string, string, string) (state.APIConsumer, error)
 }
@@ -66,7 +69,7 @@ func testPlatformTenantCredentialDelegationPolicy(t *testing.T, store credential
 		t.Helper()
 		return store.ApplyPlatformTenantCredentials(ctx, state.ApplyPlatformTenantCredentialsParams{
 			AccountID: account.ID, TenantID: tenant.ID, EnforceDelegationPolicy: true,
-			AppLimit: 100, AccountLimit: 100, Keys: keys, RevokeKeyIDs: revokeIDs,
+			Keys: keys, RevokeKeyIDs: revokeIDs,
 		})
 	}
 	first, err := apply([]state.PlatformTenantCredentialIntent{newIntent("v1", []string{"read"})})
@@ -127,7 +130,7 @@ func testPlatformTenantCredentialRotation(t *testing.T, store credentialFixtureS
 		t.Fatal(err)
 	}
 	in := state.ApplyPlatformTenantCredentialsParams{AccountID: account.ID, TenantID: tenant.ID,
-		AppLimit: 1, AccountLimit: 1, Keys: []state.PlatformTenantCredentialIntent{{ConsumerID: consumer.ID,
+		Keys: []state.PlatformTenantCredentialIntent{{ConsumerID: consumer.ID,
 			Name: "v1", Prefix: prefix, Hash: hash, Scopes: []string{"read"}}}, DryRun: true}
 	preview, err := store.ApplyPlatformTenantCredentials(ctx, in)
 	if err != nil || len(preview.Keys) != 1 || preview.Keys[0].Action != "create" {
@@ -170,6 +173,21 @@ func testPlatformTenantCredentialRotation(t *testing.T, store credentialFixtureS
 	if _, err := store.ApplyPlatformTenantCredentials(ctx, conflict); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("changed hash = %v", err)
 	}
+	// Another consumer's keys fill the app to its plan's allowance; the
+	// tenant's rotated key holds the last slot.
+	other, err := store.CreateAPIConsumer(ctx, account.ID, app.ID, "other", "Other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range api.PlanPro.ConsumerKeysPerApp() - 1 {
+		_, prefix, hash, err := api.GenerateConsumerKey()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.CreateConsumerKeyForConsumer(ctx, account.ID, other.ID, fmt.Sprintf("fill-%d", i), prefix, hash, []string{"read"}, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
 	_, prefix3, hash3, err := api.GenerateConsumerKey()
 	if err != nil {
 		t.Fatal(err)
@@ -177,8 +195,9 @@ func testPlatformTenantCredentialRotation(t *testing.T, store credentialFixtureS
 	tooMany := in
 	tooMany.Keys = []state.PlatformTenantCredentialIntent{{ConsumerID: consumer.ID, Name: "v3", Prefix: prefix3, Hash: hash3, Scopes: []string{"read"}}}
 	var quota *state.PlatformTenantCredentialQuotaError
-	if _, err := store.ApplyPlatformTenantCredentials(ctx, tooMany); !errors.As(err, &quota) {
-		t.Fatalf("quota = %v", err)
+	if _, err := store.ApplyPlatformTenantCredentials(ctx, tooMany); !errors.As(err, &quota) || quota.Scope != api.PlanQuotaScopeApp ||
+		quota.Plan != api.PlanPro || quota.Limit != api.PlanPro.ConsumerKeysPerApp() {
+		t.Fatalf("quota = %v (%+v), want the app's %s quota", err, quota, api.PlanPro)
 	}
 	rows, err = store.ListPlatformTenantCredentials(ctx, account.ID, tenant.ID, 100, 0)
 	if err != nil || len(rows) != 2 {

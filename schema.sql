@@ -22613,6 +22613,50 @@ $$;
 
 
 --
+-- Name: project_environment_clone_inventory_present(uuid, uuid, text[], uuid[], uuid[], jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.project_environment_clone_inventory_present(p_project_id uuid, p_environment_id uuid, p_environment_slugs text[], p_app_ids uuid[], p_deployment_ids uuid[], p_tables jsonb) RETURNS SETOF text
+    LANGUAGE plpgsql STABLE
+    AS $_$
+DECLARE
+    probe jsonb;
+    hop jsonb;
+    alias text;
+    query text;
+    hops integer;
+    present boolean;
+BEGIN
+    FOR probe IN SELECT value FROM jsonb_array_elements(p_tables) ORDER BY value->>'table' LOOP
+        query := format('SELECT EXISTS (SELECT 1 FROM public.%I t0', probe->>'table');
+        alias := 't0';
+        hops := 0;
+        FOR hop IN SELECT value FROM jsonb_array_elements(COALESCE(probe->'via', '[]'::jsonb)) LOOP
+            hops := hops + 1;
+            query := query || format(' JOIN public.%I t%s ON t%s.%I = %s.%I', hop->>1, hops, hops, hop->>2, alias, hop->>0);
+            alias := 't' || hops;
+        END LOOP;
+        query := query || CASE probe->>'owner'
+            WHEN 'environment' THEN CASE WHEN probe->>'slug_column' IS NOT NULL
+                THEN format(' WHERE %s.project_id = $1 AND %s.%I = ANY ($3))', alias, alias, probe->>'slug_column')
+                ELSE format(' WHERE %s.%I = $2)', alias, probe->>'column') END
+            WHEN 'project' THEN format(' WHERE %s.%I = $1)', alias, COALESCE(probe->>'column', 'project_id'))
+            WHEN 'app' THEN format(' WHERE %s.%I = ANY ($4))', alias, COALESCE(probe->>'column', 'app_id'))
+            WHEN 'deployment' THEN format(' WHERE %s.%I = ANY ($5))', alias, COALESCE(probe->>'column', 'deployment_id'))
+        END;
+        IF query IS NULL OR probe->>'table' IS NULL THEN
+            RAISE EXCEPTION 'clone inventory probe is invalid: %', probe USING ERRCODE = '22023';
+        END IF;
+        EXECUTE query INTO present USING p_project_id, p_environment_id, p_environment_slugs, p_app_ids, p_deployment_ids;
+        IF present THEN
+            RETURN NEXT probe->>'table';
+        END IF;
+    END LOOP;
+END
+$_$;
+
+
+--
 -- Name: project_environment_config_env(jsonb); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -24532,6 +24576,28 @@ BEGIN
     END IF;
     RETURN NEW;
 END;
+$$;
+
+
+--
+-- Name: record_managed_postgres_usage_waiver(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.record_managed_postgres_usage_waiver() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF OLD.purge_after IS NULL AND NEW.purge_after IS NOT NULL THEN
+        INSERT INTO managed_postgres_usage_waivers (database_id, waived_from)
+        VALUES (NEW.id, NEW.updated_at)
+        ON CONFLICT (database_id, waived_from) DO NOTHING;
+    ELSIF OLD.purge_after IS NOT NULL AND NEW.purge_after IS NULL THEN
+        UPDATE managed_postgres_usage_waivers
+        SET waived_until = greatest(waived_from, NEW.updated_at)
+        WHERE database_id = NEW.id AND waived_until IS NULL;
+    END IF;
+    RETURN NULL;
+END
 $$;
 
 
@@ -26897,6 +26963,35 @@ $$;
 
 
 --
+-- Name: set_full_clone_configuration_fences(boolean); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.set_full_clone_configuration_fences(enabled boolean) RETURNS integer
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    fence record;
+    changed integer := 0;
+BEGIN
+    FOR fence IN
+        SELECT c.relname
+        FROM pg_trigger t
+        JOIN pg_class c ON c.oid = t.tgrelid
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE t.tgname = 'clone_configuration_write_fence' AND NOT t.tgisinternal
+          AND n.nspname = 'public' AND c.relname <> 'object_version_protection'
+        ORDER BY c.relname
+    LOOP
+        EXECUTE format('ALTER TABLE public.%I %s TRIGGER clone_configuration_write_fence',
+            fence.relname, CASE WHEN enabled THEN 'ENABLE' ELSE 'DISABLE' END);
+        changed := changed + 1;
+    END LOOP;
+    RETURN changed;
+END
+$$;
+
+
+--
 -- Name: set_service_capacity_protection(boolean); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -27564,6 +27659,82 @@ BEGIN
     END LOOP;
     RETURN NULL;
 END;
+$$;
+
+
+--
+-- Name: traffic_binding_capture(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.traffic_binding_capture() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    CASE TG_TABLE_NAME
+    WHEN 'custom_domains' THEN
+        IF TG_OP = 'INSERT' THEN
+            PERFORM traffic_binding_capture_append('domain+' || E'\t' || NEW.domain::text);
+        ELSE
+            PERFORM traffic_binding_capture_append('domain' || E'\t' || OLD.domain::text);
+            IF TG_OP = 'UPDATE' AND NEW.domain IS DISTINCT FROM OLD.domain THEN
+                PERFORM traffic_binding_capture_append('domain+' || E'\t' || NEW.domain::text);
+            END IF;
+        END IF;
+    WHEN 'tenant_hostnames' THEN
+        IF TG_OP = 'INSERT' THEN
+            PERFORM traffic_binding_capture_append('tenant+' || E'\t' || NEW.hostname::text);
+        ELSE
+            PERFORM traffic_binding_capture_append('tenant' || E'\t' || OLD.hostname::text);
+            IF TG_OP = 'UPDATE' AND NEW.hostname IS DISTINCT FROM OLD.hostname THEN
+                PERFORM traffic_binding_capture_append('tenant+' || E'\t' || NEW.hostname::text);
+            END IF;
+        END IF;
+    WHEN 'tenant_surfaces' THEN
+        PERFORM traffic_binding_capture_append('surface' || E'\t' ||
+            CASE WHEN TG_OP = 'DELETE' THEN OLD.id ELSE NEW.id END::text);
+    WHEN 'platform_tenants' THEN
+        PERFORM traffic_binding_capture_append('platform' || E'\t' ||
+            CASE WHEN TG_OP = 'DELETE' THEN OLD.id ELSE NEW.id END::text);
+    WHEN 'deployment_aliases' THEN
+        IF TG_OP = 'INSERT' THEN
+            PERFORM traffic_binding_capture_append('alias+' || E'\t' || NEW.app_id::text || E'\t' || NEW.name);
+        ELSE
+            PERFORM traffic_binding_capture_append('alias' || E'\t' || OLD.app_id::text || E'\t' || OLD.name);
+            IF TG_OP = 'UPDATE' THEN
+                PERFORM traffic_binding_capture_append('alias+' || E'\t' || NEW.app_id::text || E'\t' || NEW.name);
+            END IF;
+        END IF;
+    WHEN 'apps' THEN
+        IF TG_OP = 'INSERT' THEN
+            PERFORM traffic_binding_capture_append('app+' || E'\t' || NEW.id::text);
+        ELSIF TG_OP = 'DELETE' THEN
+            PERFORM traffic_binding_capture_append('slug' || E'\t' || OLD.slug);
+        ELSIF NEW.slug IS DISTINCT FROM OLD.slug THEN
+            -- The new slug's primary URL is a newly reserved name.
+            PERFORM traffic_binding_capture_append('app+' || E'\t' || NEW.id::text);
+            PERFORM traffic_binding_capture_append('slug' || E'\t' || OLD.slug);
+        ELSE
+            PERFORM traffic_binding_capture_append('app' || E'\t' || NEW.id::text);
+        END IF;
+    WHEN 'project_environments' THEN
+        PERFORM traffic_binding_capture_append('environment' || E'\t' ||
+            CASE WHEN TG_OP = 'DELETE' THEN OLD.id ELSE NEW.id END::text);
+    ELSE
+        NULL;
+    END CASE;
+    RETURN NULL;
+END $$;
+
+
+--
+-- Name: traffic_binding_capture_append(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.traffic_binding_capture_append(line text) RETURNS void
+    LANGUAGE sql
+    AS $$
+  SELECT set_config('gregale.traffic_binding_touched',
+    coalesce(current_setting('gregale.traffic_binding_touched', true), '') || line || E'\n', true);
 $$;
 
 
@@ -28947,6 +29118,7 @@ CREATE TABLE public.alert_rules (
     mcp_readiness_scope text DEFAULT ''::text NOT NULL,
     log_query text,
     created_by_account_id uuid,
+    notify_resolved boolean DEFAULT false NOT NULL,
     CONSTRAINT alert_rules_action_chk CHECK ((action = ANY (ARRAY['webhook'::text, 'rollback'::text, 'demote'::text, 'promote'::text]))),
     CONSTRAINT alert_rules_comparison_chk CHECK ((comparison = ANY (ARRAY['gt'::text, 'gte'::text, 'lt'::text, 'lte'::text, 'above_baseline'::text, 'below_baseline'::text]))),
     CONSTRAINT alert_rules_cooldown_chk CHECK (((cooldown_minutes >= 5) AND (cooldown_minutes <= 1440))),
@@ -29356,7 +29528,7 @@ CREATE TABLE public.api_consumer_signups (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     expires_at timestamp with time zone NOT NULL,
     completed_at timestamp with time zone,
-    CONSTRAINT api_consumer_signups_claim_chk CHECK ((octet_length(claim_hash) = 32)),
+    CONSTRAINT api_consumer_signups_claim_credhash_chk CHECK ((octet_length(claim_hash) = ANY (ARRAY[32, 33]))),
     CONSTRAINT api_consumer_signups_completed_chk CHECK (((status = 'completed'::text) = (completed_at IS NOT NULL))),
     CONSTRAINT api_consumer_signups_email_chk CHECK (((char_length(email) >= 3) AND (char_length(email) <= 254))),
     CONSTRAINT api_consumer_signups_expiry_chk CHECK ((expires_at > created_at)),
@@ -30123,7 +30295,7 @@ CREATE TABLE public.app_forks (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     access_token_hash bytea,
     crash_capture_id uuid,
-    CONSTRAINT app_forks_access_token_hash_chk CHECK (((access_token_hash IS NULL) OR (octet_length(access_token_hash) = 32))),
+    CONSTRAINT app_forks_access_token_credhash_chk CHECK (((access_token_hash IS NULL) OR (octet_length(access_token_hash) = ANY (ARRAY[32, 33])))),
     CONSTRAINT app_forks_expires_chk CHECK ((expires_at = (created_at + make_interval(secs => (ttl_seconds)::double precision)))),
     CONSTRAINT app_forks_failure_shape_chk CHECK ((((failure_code IS NULL) = (failure_message IS NULL)) AND ((failure_code IS NULL) OR (status = 'failed'::text)) AND ((status <> 'failed'::text) OR (failure_code IS NOT NULL)) AND ((failure_code IS NULL) OR ((octet_length(failure_code) >= 1) AND (octet_length(failure_code) <= 64))) AND ((failure_message IS NULL) OR (octet_length(failure_message) <= 4096)))),
     CONSTRAINT app_forks_instance_chk CHECK (((status = 'running'::text) <= ((instance_id IS NOT NULL) AND (snapshot_id IS NOT NULL)))),
@@ -33259,7 +33431,7 @@ CREATE TABLE public.consumer_keys (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     consumer_id uuid,
     CONSTRAINT consumer_keys_expires_after_created_chk CHECK (((expires_at IS NULL) OR (expires_at > created_at))),
-    CONSTRAINT consumer_keys_hashed_secret_len_chk CHECK ((octet_length(hashed_secret) = 32)),
+    CONSTRAINT consumer_keys_hashed_secret_credhash_chk CHECK ((octet_length(hashed_secret) = ANY (ARRAY[32, 33]))),
     CONSTRAINT consumer_keys_name_len_chk CHECK (((length(name) >= 1) AND (length(name) <= 64))),
     CONSTRAINT consumer_keys_prefix_len_chk CHECK (((length(prefix) >= 1) AND (length(prefix) <= 16))),
     CONSTRAINT consumer_keys_revoked_state_chk CHECK (((revoked_at IS NULL) OR (revoked_at >= created_at))),
@@ -34785,7 +34957,7 @@ CREATE TABLE public.deploy_tokens (
     revoked_at timestamp with time zone,
     rotated_from_id uuid,
     CONSTRAINT deploy_tokens_expiry_chk CHECK ((expires_at > created_at)),
-    CONSTRAINT deploy_tokens_hash_len_chk CHECK ((octet_length(token_sha256) = 32)),
+    CONSTRAINT deploy_tokens_hash_credhash_chk CHECK ((octet_length(token_sha256) = ANY (ARRAY[32, 33]))),
     CONSTRAINT deploy_tokens_label_len_chk CHECK ((length(label) <= 100)),
     CONSTRAINT deploy_tokens_scopes_chk CHECK (((scopes <@ ARRAY['deploy:write'::text]) AND (cardinality(scopes) > 0))),
     CONSTRAINT deploy_tokens_status_chk CHECK ((status = ANY (ARRAY['active'::text, 'grace'::text, 'revoked'::text])))
@@ -38328,9 +38500,9 @@ CREATE TABLE public.execution_artifact_grants (
     revoked_at timestamp with time zone,
     created_at timestamp with time zone NOT NULL,
     CONSTRAINT execution_artifact_grants_artifact_name_check CHECK (((length(artifact_name) >= 1) AND (length(artifact_name) <= 256))),
+    CONSTRAINT execution_artifact_grants_credhash_chk CHECK ((octet_length(token_hash) = ANY (ARRAY[32, 33]))),
     CONSTRAINT execution_artifact_grants_expiry_check CHECK ((expires_at > created_at)),
-    CONSTRAINT execution_artifact_grants_redeemed_pair_check CHECK (((redeemed_at IS NULL) = (redeemed_execution_id IS NULL))),
-    CONSTRAINT execution_artifact_grants_token_hash_check CHECK ((octet_length(token_hash) = 32))
+    CONSTRAINT execution_artifact_grants_redeemed_pair_check CHECK (((redeemed_at IS NULL) = (redeemed_execution_id IS NULL)))
 );
 
 
@@ -39500,9 +39672,9 @@ CREATE TABLE public.hosting_automation_credentials (
     oidc_trust_id uuid,
     CONSTRAINT hosting_automation_credentials_check CHECK ((isfinite(expires_at) AND (expires_at > created_at))),
     CONSTRAINT hosting_automation_credentials_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT hosting_automation_credentials_credhash_chk CHECK ((octet_length(token_hash) = ANY (ARRAY[32, 33]))),
     CONSTRAINT hosting_automation_credentials_label_check CHECK (((octet_length(label) >= 1) AND (octet_length(label) <= 64))),
-    CONSTRAINT hosting_automation_credentials_operations_check CHECK ((((cardinality(operations) >= 1) AND (cardinality(operations) <= 2)) AND (operations <@ ARRAY['stage'::text, 'preview'::text]))),
-    CONSTRAINT hosting_automation_credentials_token_hash_check CHECK ((octet_length(token_hash) = 32))
+    CONSTRAINT hosting_automation_credentials_operations_check CHECK ((((cardinality(operations) >= 1) AND (cardinality(operations) <= 2)) AND (operations <@ ARRAY['stage'::text, 'preview'::text])))
 );
 
 
@@ -39786,10 +39958,10 @@ CREATE TABLE public.inbound_webhook_endpoints (
     enabled boolean DEFAULT true NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT inbound_webhook_endpoints_credhash_chk CHECK ((octet_length(token_hash) = ANY (ARRAY[32, 33]))),
     CONSTRAINT inbound_webhook_endpoints_delivery_path_chk CHECK ((((char_length(delivery_path) >= 1) AND (char_length(delivery_path) <= 256)) AND ("left"(delivery_path, 1) = '/'::text) AND (POSITION(('?'::text) IN (delivery_path)) = 0) AND (POSITION(('#'::text) IN (delivery_path)) = 0))),
     CONSTRAINT inbound_webhook_endpoints_name_chk CHECK ((name ~ '^[a-z][a-z0-9-]{0,62}$'::text)),
-    CONSTRAINT inbound_webhook_endpoints_provider_chk CHECK ((provider = ANY (ARRAY['stripe'::text, 'generic'::text]))),
-    CONSTRAINT inbound_webhook_endpoints_token_hash_len_chk CHECK ((octet_length(token_hash) = 32))
+    CONSTRAINT inbound_webhook_endpoints_provider_chk CHECK ((provider = ANY (ARRAY['stripe'::text, 'generic'::text])))
 );
 
 
@@ -40673,8 +40845,8 @@ CREATE TABLE public.invocation_environment_queue_receipts (
     lease_expires_at timestamp with time zone NOT NULL,
     CONSTRAINT invocation_environment_queue_receipts_attempt_check CHECK ((attempt > 0)),
     CONSTRAINT invocation_environment_queue_receipts_check CHECK ((lease_expires_at > issued_at)),
-    CONSTRAINT invocation_environment_queue_receipts_owner_hash_check CHECK ((owner_hash ~ '^[a-f0-9]{64}$'::text)),
-    CONSTRAINT invocation_environment_queue_receipts_token_hash_check CHECK ((token_hash ~ '^[a-f0-9]{64}$'::text))
+    CONSTRAINT invocation_environment_queue_receipts_credhash_chk CHECK ((token_hash ~ '^[a-f0-9]{64}([a-f0-9]{2})?$'::text)),
+    CONSTRAINT invocation_environment_queue_receipts_owner_hash_check CHECK ((owner_hash ~ '^[a-f0-9]{64}$'::text))
 );
 
 
@@ -40714,8 +40886,8 @@ CREATE TABLE public.invocation_queue_lease_receipts (
     lease_expires_at timestamp with time zone NOT NULL,
     CONSTRAINT invocation_queue_lease_receipts_attempt_check CHECK ((attempt > 0)),
     CONSTRAINT invocation_queue_lease_receipts_check CHECK ((lease_expires_at > issued_at)),
-    CONSTRAINT invocation_queue_lease_receipts_replay_generation_check CHECK ((replay_generation >= 0)),
-    CONSTRAINT invocation_queue_lease_receipts_token_hash_check CHECK ((token_hash ~ '^[a-f0-9]{64}$'::text))
+    CONSTRAINT invocation_queue_lease_receipts_credhash_chk CHECK ((token_hash ~ '^[a-f0-9]{64}([a-f0-9]{2})?$'::text)),
+    CONSTRAINT invocation_queue_lease_receipts_replay_generation_check CHECK ((replay_generation >= 0))
 );
 
 
@@ -41407,9 +41579,9 @@ CREATE TABLE public.issue_ingest_tokens (
     expires_at timestamp with time zone NOT NULL,
     revoked_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT issue_ingest_tokens_credhash_chk CHECK ((octet_length(token_hash) = ANY (ARRAY[32, 33]))),
     CONSTRAINT issue_ingest_tokens_environment_check CHECK ((environment ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text)),
-    CONSTRAINT issue_ingest_tokens_name_check CHECK (((length(name) >= 1) AND (length(name) <= 64))),
-    CONSTRAINT issue_ingest_tokens_token_hash_check CHECK ((octet_length(token_hash) = 32))
+    CONSTRAINT issue_ingest_tokens_name_check CHECK (((length(name) >= 1) AND (length(name) <= 64)))
 );
 
 
@@ -41739,7 +41911,7 @@ CREATE TABLE public.issue_slack_oauth_flows (
     CONSTRAINT issue_slack_oauth_flows_expected_revision_check CHECK ((expected_revision >= 0)),
     CONSTRAINT issue_slack_oauth_flows_phase_check CHECK ((phase = ANY (ARRAY['authorizing'::text, 'exchanging'::text, 'choosing'::text]))),
     CONSTRAINT issue_slack_oauth_flows_sealed_check CHECK (((octet_length(sealed) >= 1) AND (octet_length(sealed) <= 16384))),
-    CONSTRAINT issue_slack_oauth_flows_state_hash_check CHECK ((state_hash ~ '^[0-9a-f]{64}$'::text))
+    CONSTRAINT issue_slack_oauth_flows_state_credhash_chk CHECK ((state_hash ~ '^[0-9a-f]{64}([0-9a-f]{2})?$'::text))
 );
 
 
@@ -41999,7 +42171,7 @@ CREATE TABLE public.issue_tracker_linear_oauth_flows (
     CONSTRAINT issue_tracker_linear_oauth_flows_expected_revision_check CHECK ((expected_revision >= 0)),
     CONSTRAINT issue_tracker_linear_oauth_flows_phase_check CHECK ((phase = ANY (ARRAY['authorizing'::text, 'exchanging'::text, 'choosing'::text, 'consuming'::text]))),
     CONSTRAINT issue_tracker_linear_oauth_flows_sealed_state_check CHECK ((octet_length(sealed_state) > 0)),
-    CONSTRAINT issue_tracker_linear_oauth_flows_state_hash_check CHECK ((state_hash ~ '^[a-f0-9]{64}$'::text))
+    CONSTRAINT issue_tracker_linear_oauth_flows_state_credhash_chk CHECK ((state_hash ~ '^[a-f0-9]{64}([a-f0-9]{2})?$'::text))
 );
 
 
@@ -42649,12 +42821,12 @@ CREATE TABLE public.magic_link_tokens (
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     CONSTRAINT magic_link_tokens_check CHECK ((isfinite(created_at) AND (expires_at > created_at))),
     CONSTRAINT magic_link_tokens_consumed_at_check CHECK (((consumed_at IS NULL) OR isfinite(consumed_at))),
+    CONSTRAINT magic_link_tokens_credhash_chk CHECK ((octet_length(token_hash) = ANY (ARRAY[32, 33]))),
     CONSTRAINT magic_link_tokens_email_address_check CHECK ((((length(email_address) >= 3) AND (length(email_address) <= 254)) AND (email_address = lower(email_address)) AND (POSITION((chr(10)) IN (email_address)) = 0) AND (POSITION((chr(13)) IN (email_address)) = 0))),
     CONSTRAINT magic_link_tokens_email_verified_at_check CHECK (((email_verified_at IS NULL) OR isfinite(email_verified_at))),
     CONSTRAINT magic_link_tokens_expires_at_check CHECK (isfinite(expires_at)),
     CONSTRAINT magic_link_tokens_namespace_check CHECK ((namespace ~ '^[a-z][a-z0-9_-]{0,63}$'::text)),
-    CONSTRAINT magic_link_tokens_password_revision_check CHECK ((password_revision > 0)),
-    CONSTRAINT magic_link_tokens_token_hash_check CHECK ((octet_length(token_hash) = 32))
+    CONSTRAINT magic_link_tokens_password_revision_check CHECK ((password_revision > 0))
 );
 
 
@@ -43466,6 +43638,18 @@ CREATE TABLE public.managed_postgres_usage_imports (
     CONSTRAINT managed_postgres_usage_imports_preview_revision_check CHECK ((preview_revision ~ '^[a-f0-9]{64}$'::text)),
     CONSTRAINT managed_postgres_usage_imports_reason_check CHECK (((octet_length(reason) >= 1) AND (octet_length(reason) <= 512))),
     CONSTRAINT managed_postgres_usage_imports_request_sha256_check CHECK ((request_sha256 ~ '^[a-f0-9]{64}$'::text))
+);
+
+
+--
+-- Name: managed_postgres_usage_waivers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_usage_waivers (
+    database_id uuid NOT NULL,
+    waived_from timestamp with time zone NOT NULL,
+    waived_until timestamp with time zone,
+    CONSTRAINT managed_postgres_usage_waivers_check CHECK (((waived_until IS NULL) OR (waived_until >= waived_from)))
 );
 
 
@@ -44357,6 +44541,7 @@ CREATE TABLE public.managed_realtime_publisher_credentials (
     CONSTRAINT managed_realtime_publisher_credentials_accepted_count_check CHECK ((accepted_count >= 0)),
     CONSTRAINT managed_realtime_publisher_credentials_channels_check CHECK (((cardinality(channels) >= 1) AND (cardinality(channels) <= 32))),
     CONSTRAINT managed_realtime_publisher_credentials_check CHECK ((expires_at > issued_at)),
+    CONSTRAINT managed_realtime_publisher_credentials_credhash_chk CHECK ((octet_length(token_hash) = ANY (ARRAY[32, 33]))),
     CONSTRAINT managed_realtime_publisher_credentials_event_types_check CHECK (((cardinality(event_types) >= 1) AND (cardinality(event_types) <= 16))),
     CONSTRAINT managed_realtime_publisher_credentials_generation_check CHECK ((generation > 0)),
     CONSTRAINT managed_realtime_publisher_credentials_last_channel_check CHECK (((last_channel IS NULL) OR ((octet_length(last_channel) >= 1) AND (octet_length(last_channel) <= 256)))),
@@ -44364,8 +44549,7 @@ CREATE TABLE public.managed_realtime_publisher_credentials (
     CONSTRAINT managed_realtime_publisher_credentials_max_payload_bytes_check CHECK (((max_payload_bytes >= 1) AND (max_payload_bytes <= 4096))),
     CONSTRAINT managed_realtime_publisher_credentials_name_check CHECK (((octet_length(name) >= 1) AND (octet_length(name) <= 128))),
     CONSTRAINT managed_realtime_publisher_credentials_rate_count_check CHECK ((rate_count >= 0)),
-    CONSTRAINT managed_realtime_publisher_credentials_replay_count_check CHECK ((replay_count >= 0)),
-    CONSTRAINT managed_realtime_publisher_credentials_token_hash_check CHECK ((octet_length(token_hash) = 32))
+    CONSTRAINT managed_realtime_publisher_credentials_replay_count_check CHECK ((replay_count >= 0))
 );
 
 
@@ -44646,8 +44830,8 @@ CREATE TABLE public.managed_realtime_subscription_tickets (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     CONSTRAINT managed_realtime_subscription_tickets_channels_check CHECK (((jsonb_typeof(channels) = 'array'::text) AND ((jsonb_array_length(channels) >= 1) AND (jsonb_array_length(channels) <= 32)))),
     CONSTRAINT managed_realtime_subscription_tickets_check CHECK (((expires_at > issued_at) AND (expires_at <= (issued_at + '00:05:00'::interval)))),
-    CONSTRAINT managed_realtime_subscription_tickets_principal_check CHECK (((octet_length(principal) >= 1) AND (octet_length(principal) <= 256))),
-    CONSTRAINT managed_realtime_subscription_tickets_token_hash_check CHECK ((octet_length(token_hash) = 32))
+    CONSTRAINT managed_realtime_subscription_tickets_credhash_chk CHECK ((octet_length(token_hash) = ANY (ARRAY[32, 33]))),
+    CONSTRAINT managed_realtime_subscription_tickets_principal_check CHECK (((octet_length(principal) >= 1) AND (octet_length(principal) <= 256)))
 );
 
 
@@ -44669,11 +44853,11 @@ CREATE TABLE public.managed_realtime_worker_credentials (
     last_operation text,
     use_count bigint DEFAULT 0 NOT NULL,
     CONSTRAINT managed_realtime_worker_credentials_check CHECK ((expires_at > issued_at)),
+    CONSTRAINT managed_realtime_worker_credentials_credhash_chk CHECK ((octet_length(token_hash) = ANY (ARRAY[32, 33]))),
     CONSTRAINT managed_realtime_worker_credentials_generation_check CHECK ((generation > 0)),
     CONSTRAINT managed_realtime_worker_credentials_last_operation_check CHECK (((last_operation IS NULL) OR (last_operation = ANY (ARRAY['status'::text, 'claim'::text, 'renew'::text, 'complete'::text, 'retry'::text, 'dead_letters'::text, 'replay'::text, 'resync'::text, 'delete'::text, 'pause'::text, 'resume'::text, 'drain'::text, 'heartbeat'::text, 'release'::text])))),
     CONSTRAINT managed_realtime_worker_credentials_name_check CHECK (((octet_length(name) >= 1) AND (octet_length(name) <= 128))),
     CONSTRAINT managed_realtime_worker_credentials_permissions_check CHECK ((((cardinality(permissions) >= 1) AND (cardinality(permissions) <= 14)) AND (permissions <@ ARRAY['status'::text, 'claim'::text, 'renew'::text, 'complete'::text, 'retry'::text, 'dead_letters'::text, 'replay'::text, 'resync'::text, 'delete'::text, 'pause'::text, 'resume'::text, 'drain'::text, 'heartbeat'::text, 'release'::text]))),
-    CONSTRAINT managed_realtime_worker_credentials_token_hash_check CHECK ((octet_length(token_hash) = 32)),
     CONSTRAINT managed_realtime_worker_credentials_use_count_check CHECK ((use_count >= 0))
 );
 
@@ -45130,13 +45314,13 @@ CREATE TABLE public.mfa_disable_tokens (
     CONSTRAINT mfa_disable_tokens_check CHECK ((isfinite(ready_at) AND (ready_at = (requested_at + '24:00:00'::interval)))),
     CONSTRAINT mfa_disable_tokens_check1 CHECK ((isfinite(expires_at) AND (expires_at = (ready_at + '24:00:00'::interval)))),
     CONSTRAINT mfa_disable_tokens_consumed_at_check CHECK (((consumed_at IS NULL) OR isfinite(consumed_at))),
+    CONSTRAINT mfa_disable_tokens_credhash_chk CHECK ((octet_length(token_hash) = ANY (ARRAY[32, 33]))),
     CONSTRAINT mfa_disable_tokens_email_address_check CHECK ((((length(email_address) >= 3) AND (length(email_address) <= 254)) AND (email_address = lower(email_address)) AND (POSITION((chr(10)) IN (email_address)) = 0) AND (POSITION((chr(13)) IN (email_address)) = 0))),
     CONSTRAINT mfa_disable_tokens_mfa_enrolled_at_check CHECK (isfinite(mfa_enrolled_at)),
     CONSTRAINT mfa_disable_tokens_mfa_revision_check CHECK ((mfa_revision > 0)),
     CONSTRAINT mfa_disable_tokens_namespace_check CHECK ((namespace ~ '^[a-z][a-z0-9_-]{0,63}$'::text)),
     CONSTRAINT mfa_disable_tokens_password_revision_check CHECK ((password_revision > 0)),
-    CONSTRAINT mfa_disable_tokens_requested_at_check CHECK (isfinite(requested_at)),
-    CONSTRAINT mfa_disable_tokens_token_hash_check CHECK ((octet_length(token_hash) = 32))
+    CONSTRAINT mfa_disable_tokens_requested_at_check CHECK (isfinite(requested_at))
 );
 
 
@@ -46238,6 +46422,28 @@ CREATE TABLE public.object_storage_inventory_samples (
     CONSTRAINT object_storage_inventory_samples_bytes_check CHECK ((bytes >= 0)),
     CONSTRAINT object_storage_inventory_samples_objects_check CHECK ((objects >= 0)),
     CONSTRAINT object_storage_inventory_samples_token_check CHECK ((token <> ''::text))
+);
+
+
+--
+-- Name: object_storage_inventory_scans; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_storage_inventory_scans (
+    bucket_id uuid NOT NULL,
+    started_at timestamp with time zone NOT NULL,
+    progress_at timestamp with time zone NOT NULL,
+    after_key text DEFAULT ''::text NOT NULL,
+    listed_bytes bigint DEFAULT 0 NOT NULL,
+    listed_keys bigint DEFAULT 0 NOT NULL,
+    pages integer DEFAULT 0 NOT NULL,
+    complete boolean DEFAULT false NOT NULL,
+    CONSTRAINT object_storage_inventory_scans_after_key_check CHECK ((octet_length(after_key) <= 1024)),
+    CONSTRAINT object_storage_inventory_scans_check CHECK ((progress_at >= started_at)),
+    CONSTRAINT object_storage_inventory_scans_check1 CHECK (((pages > 0) OR ((after_key = ''::text) AND (listed_bytes = 0) AND (listed_keys = 0) AND (NOT complete)))),
+    CONSTRAINT object_storage_inventory_scans_listed_bytes_check CHECK ((listed_bytes >= 0)),
+    CONSTRAINT object_storage_inventory_scans_listed_keys_check CHECK ((listed_keys >= 0)),
+    CONSTRAINT object_storage_inventory_scans_pages_check CHECK ((pages >= 0))
 );
 
 
@@ -47920,11 +48126,11 @@ CREATE TABLE public.password_reset_tokens (
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     CONSTRAINT password_reset_tokens_check CHECK ((isfinite(created_at) AND (expires_at > created_at))),
     CONSTRAINT password_reset_tokens_consumed_at_check CHECK (((consumed_at IS NULL) OR isfinite(consumed_at))),
+    CONSTRAINT password_reset_tokens_credhash_chk CHECK ((octet_length(token_hash) = ANY (ARRAY[32, 33]))),
     CONSTRAINT password_reset_tokens_email_address_check CHECK ((((length(email_address) >= 3) AND (length(email_address) <= 254)) AND (email_address = lower(email_address)) AND (POSITION((chr(10)) IN (email_address)) = 0) AND (POSITION((chr(13)) IN (email_address)) = 0))),
     CONSTRAINT password_reset_tokens_expires_at_check CHECK (isfinite(expires_at)),
     CONSTRAINT password_reset_tokens_namespace_check CHECK ((namespace ~ '^[a-z][a-z0-9_-]{0,63}$'::text)),
-    CONSTRAINT password_reset_tokens_password_revision_check CHECK ((password_revision > 0)),
-    CONSTRAINT password_reset_tokens_token_hash_check CHECK ((octet_length(token_hash) = 32))
+    CONSTRAINT password_reset_tokens_password_revision_check CHECK ((password_revision > 0))
 );
 
 
@@ -48152,7 +48358,7 @@ CREATE TABLE public.platform_mail_producer_outbox (
     CONSTRAINT platform_mail_producer_outbox_template_check CHECK ((template = ANY (ARRAY['account_deletion_pending'::text, 'email_verification'::text, 'password_reset'::text, 'magic_link'::text, 'mfa_recovery_used'::text, 'mfa_disable_request'::text, 'mfa_disabled'::text, 'password_changed'::text, 'mfa_enabled'::text, 'payment_failed'::text, 'account_restored'::text, 'account_suspended'::text, 'nonpayment_deletion'::text, 'quota_warning'::text, 'subscription_ended'::text, 'deployment_failed'::text, 'managed_postgres_cap'::text, 'agent_run_delivered'::text]))),
     CONSTRAINT platform_mail_producer_outbox_template_version_check CHECK ((template_version = 1)),
     CONSTRAINT platform_mail_producer_outbox_updated_at_check CHECK (isfinite(updated_at)),
-    CONSTRAINT platform_mail_producer_outbox_verification_check CHECK ((((template = 'account_deletion_pending'::text) AND (deletion_requested_at IS NOT NULL) AND (restore_until IS NOT NULL) AND (verification_token_hash IS NULL) AND (octet_length(sealed_verification) = 0) AND (verification_key_id = ''::text) AND (verification_origin = ''::text)) OR ((template = ANY (ARRAY['mfa_recovery_used'::text, 'mfa_disabled'::text, 'password_changed'::text, 'mfa_enabled'::text, 'payment_failed'::text, 'account_restored'::text, 'account_suspended'::text, 'nonpayment_deletion'::text, 'quota_warning'::text, 'subscription_ended'::text, 'deployment_failed'::text, 'managed_postgres_cap'::text, 'agent_run_delivered'::text])) AND (deletion_requested_at IS NULL) AND (restore_until IS NULL) AND (verification_token_hash IS NULL) AND (octet_length(sealed_verification) = 0) AND (verification_key_id = ''::text) AND (verification_origin = ''::text)) OR ((template = ANY (ARRAY['email_verification'::text, 'password_reset'::text, 'magic_link'::text, 'mfa_disable_request'::text])) AND (deletion_requested_at IS NULL) AND (restore_until IS NULL) AND (((state = ANY (ARRAY['queued'::text, 'claimed'::text])) AND (verification_token_hash IS NOT NULL) AND (octet_length(verification_token_hash) = 32) AND ((octet_length(sealed_verification) >= 64) AND (octet_length(sealed_verification) <= 4096)) AND (verification_key_id ~ '^[0-9a-f]{64}$'::text) AND ((length(verification_origin) >= 9) AND (length(verification_origin) <= 2048)) AND (verification_origin ~ '^https://[^/?#[:space:]]+$'::text)) OR ((state <> ALL (ARRAY['queued'::text, 'claimed'::text])) AND (verification_token_hash IS NULL) AND (octet_length(sealed_verification) = 0) AND (verification_key_id = ''::text) AND (verification_origin = ''::text))))))
+    CONSTRAINT platform_mail_producer_outbox_verification_v2_check CHECK ((((template = 'account_deletion_pending'::text) AND (deletion_requested_at IS NOT NULL) AND (restore_until IS NOT NULL) AND (verification_token_hash IS NULL) AND (octet_length(sealed_verification) = 0) AND (verification_key_id = ''::text) AND (verification_origin = ''::text)) OR ((template = ANY (ARRAY['mfa_recovery_used'::text, 'mfa_disabled'::text, 'password_changed'::text, 'mfa_enabled'::text, 'payment_failed'::text, 'account_restored'::text, 'account_suspended'::text, 'nonpayment_deletion'::text, 'quota_warning'::text, 'subscription_ended'::text, 'deployment_failed'::text, 'managed_postgres_cap'::text, 'agent_run_delivered'::text])) AND (deletion_requested_at IS NULL) AND (restore_until IS NULL) AND (verification_token_hash IS NULL) AND (octet_length(sealed_verification) = 0) AND (verification_key_id = ''::text) AND (verification_origin = ''::text)) OR ((template = ANY (ARRAY['email_verification'::text, 'password_reset'::text, 'magic_link'::text, 'mfa_disable_request'::text])) AND (deletion_requested_at IS NULL) AND (restore_until IS NULL) AND (((state = ANY (ARRAY['queued'::text, 'claimed'::text])) AND (verification_token_hash IS NOT NULL) AND (octet_length(verification_token_hash) = ANY (ARRAY[32, 33])) AND ((octet_length(sealed_verification) >= 64) AND (octet_length(sealed_verification) <= 4096)) AND (verification_key_id ~ '^[0-9a-f]{64}$'::text) AND ((length(verification_origin) >= 9) AND (length(verification_origin) <= 2048)) AND (verification_origin ~ '^https://[^/?#[:space:]]+$'::text)) OR ((state <> ALL (ARRAY['queued'::text, 'claimed'::text])) AND (verification_token_hash IS NULL) AND (octet_length(sealed_verification) = 0) AND (verification_key_id = ''::text) AND (verification_origin = ''::text))))))
 );
 
 
@@ -48212,10 +48418,10 @@ CREATE TABLE public.platform_tenant_access_tokens (
     expires_at timestamp with time zone NOT NULL,
     last_used_at timestamp with time zone,
     revoked_at timestamp with time zone,
+    CONSTRAINT platform_tenant_access_tokens_credhash_chk CHECK ((octet_length(token_hash) = ANY (ARRAY[32, 33]))),
     CONSTRAINT platform_tenant_access_tokens_name_check CHECK (((length(name) >= 1) AND (length(name) <= 64))),
     CONSTRAINT platform_tenant_access_tokens_prefix_check CHECK ((prefix ~ '^fp_tenant_[0-9a-f]{8}$'::text)),
-    CONSTRAINT platform_tenant_access_tokens_scopes_check CHECK (((cardinality(scopes) > 0) AND (scopes <@ ARRAY['platform_tenant:usage:read'::text, 'platform_tenant:statements:read'::text, 'platform_tenant:activation:read'::text, 'platform_tenant:hostnames:manage'::text, 'platform_tenant:credentials:read'::text, 'platform_tenant:credentials:manage'::text, 'platform_tenant:consumers:manage'::text, 'platform_tenant:invocations:read'::text, 'platform_tenant:invocations:manage'::text, 'platform_tenant:operations:read'::text, 'platform_tenant:operations:manage'::text]))),
-    CONSTRAINT platform_tenant_access_tokens_token_hash_check CHECK ((octet_length(token_hash) = 32))
+    CONSTRAINT platform_tenant_access_tokens_scopes_check CHECK (((cardinality(scopes) > 0) AND (scopes <@ ARRAY['platform_tenant:usage:read'::text, 'platform_tenant:statements:read'::text, 'platform_tenant:activation:read'::text, 'platform_tenant:hostnames:manage'::text, 'platform_tenant:credentials:read'::text, 'platform_tenant:credentials:manage'::text, 'platform_tenant:consumers:manage'::text, 'platform_tenant:invocations:read'::text, 'platform_tenant:invocations:manage'::text, 'platform_tenant:operations:read'::text, 'platform_tenant:operations:manage'::text])))
 );
 
 
@@ -49103,7 +49309,7 @@ CREATE TABLE public.product_control_email_deliveries (
     CONSTRAINT product_control_email_deliveries_recipient_sealed_check CHECK ((octet_length(recipient_sealed) <= 4096)),
     CONSTRAINT product_control_email_deliveries_source_revision_check CHECK ((source_revision ~ '^[a-f0-9]{64}$'::text)),
     CONSTRAINT product_control_email_deliveries_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'leased'::text, 'captured'::text, 'provider_accepted'::text, 'delivered'::text, 'bounced'::text, 'complained'::text, 'failed'::text, 'cancelled'::text]))),
-    CONSTRAINT product_control_email_deliveries_unsubscribe_hash_check CHECK (((unsubscribe_hash IS NULL) OR (octet_length(unsubscribe_hash) = 32))),
+    CONSTRAINT product_control_email_deliveries_unsubscribe_credhash_chk CHECK (((unsubscribe_hash IS NULL) OR (octet_length(unsubscribe_hash) = ANY (ARRAY[32, 33])))),
     CONSTRAINT product_control_email_deliveries_unsubscribe_sealed_check CHECK ((octet_length(unsubscribe_sealed) <= 4096)),
     CONSTRAINT product_control_email_deliveries_updated_at_check CHECK (isfinite(updated_at)),
     CONSTRAINT product_email_feedback_shape CHECK ((((provider_id IS NOT NULL) OR ((delivered_at IS NULL) AND (bounced_at IS NULL) AND (complained_at IS NULL))) AND ((NOT hard_bounced) OR (bounced_at IS NOT NULL)))),
@@ -49770,10 +49976,10 @@ CREATE TABLE public.project_environment_approvals (
     token_kind text DEFAULT 'plan'::text NOT NULL,
     consumed_at timestamp with time zone,
     approved_by_account_id uuid,
+    CONSTRAINT project_environment_approvals_approval_credhash_chk CHECK ((approval_token_hash ~ '^[a-f0-9]{64}([a-f0-9]{2})?$'::text)),
     CONSTRAINT project_environment_approvals_environment_slug_shape CHECK ((environment_slug ~ '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$'::text)),
-    CONSTRAINT project_environment_approvals_plan_hash_shape CHECK ((plan_token_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_environment_approvals_plan_credhash_chk CHECK ((plan_token_hash ~ '^[a-f0-9]{64}([a-f0-9]{2})?$'::text)),
     CONSTRAINT project_environment_approvals_project_slug_shape CHECK ((project_slug ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text)),
-    CONSTRAINT project_environment_approvals_token_hash_shape CHECK ((approval_token_hash ~ '^[a-f0-9]{64}$'::text)),
     CONSTRAINT project_environment_approvals_token_kind_check CHECK ((token_kind = ANY (ARRAY['plan'::text, 'promotion'::text])))
 );
 
@@ -52524,7 +52730,7 @@ CREATE TABLE public.release_database_switches (
 
 CREATE TABLE public.release_freezes (
     id uuid NOT NULL,
-    account_id uuid NOT NULL,
+    account_id uuid,
     app_id uuid,
     kind text NOT NULL,
     starts_at timestamp with time zone,
@@ -52541,6 +52747,7 @@ CREATE TABLE public.release_freezes (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     lifted_at timestamp with time zone,
     lifted_by text,
+    org_id uuid,
     CONSTRAINT release_freezes_after_rollback_minutes_check CHECK (((after_rollback_minutes IS NULL) OR ((after_rollback_minutes >= 1) AND (after_rollback_minutes <= 1440)))),
     CONSTRAINT release_freezes_check CHECK (((kind <> 'window'::text) OR ((starts_at IS NOT NULL) AND ((ends_at IS NULL) OR (ends_at > starts_at)) AND (weekly_days IS NULL) AND (after_rollback_minutes IS NULL)))),
     CONSTRAINT release_freezes_check1 CHECK (((kind <> 'weekly'::text) OR ((weekly_days IS NOT NULL) AND (weekly_start_minute IS NOT NULL) AND (weekly_duration_minutes IS NOT NULL) AND (time_zone IS NOT NULL) AND (starts_at IS NULL) AND (ends_at IS NULL) AND (after_rollback_minutes IS NULL)))),
@@ -52550,6 +52757,7 @@ CREATE TABLE public.release_freezes (
     CONSTRAINT release_freezes_created_by_check CHECK (((length(created_by) >= 1) AND (length(created_by) <= 320))),
     CONSTRAINT release_freezes_kind_check CHECK ((kind = ANY (ARRAY['window'::text, 'weekly'::text, 'after_rollback'::text]))),
     CONSTRAINT release_freezes_lifted_by_check CHECK (((lifted_by IS NULL) OR ((length(lifted_by) >= 1) AND (length(lifted_by) <= 320)))),
+    CONSTRAINT release_freezes_one_owner_chk CHECK (((account_id IS NULL) <> (org_id IS NULL))),
     CONSTRAINT release_freezes_reason_check CHECK (((length(reason) >= 1) AND (length(reason) <= 200))),
     CONSTRAINT release_freezes_source_check CHECK ((source = ANY (ARRAY['manual'::text, 'automatic_rollback'::text]))),
     CONSTRAINT release_freezes_time_zone_check CHECK (((time_zone IS NULL) OR ((length(time_zone) >= 1) AND (length(time_zone) <= 64)))),
@@ -55728,10 +55936,10 @@ CREATE TABLE public.workflow_automation_publish_receipts (
     policy_version bigint NOT NULL,
     expires_at timestamp with time zone NOT NULL,
     evidence jsonb NOT NULL,
+    CONSTRAINT workflow_automation_publish_receipts_credhash_chk CHECK ((token_hash ~ '^[0-9a-f]{64}([0-9a-f]{2})?$'::text)),
     CONSTRAINT workflow_automation_publish_receipts_evidence_check CHECK ((jsonb_typeof(evidence) = 'object'::text)),
     CONSTRAINT workflow_automation_publish_receipts_name_check CHECK (((length(name) >= 1) AND (length(name) <= 128))),
-    CONSTRAINT workflow_automation_publish_receipts_policy_version_check CHECK ((policy_version >= 0)),
-    CONSTRAINT workflow_automation_publish_receipts_token_hash_check CHECK ((token_hash ~ '^[0-9a-f]{64}$'::text))
+    CONSTRAINT workflow_automation_publish_receipts_policy_version_check CHECK ((policy_version >= 0))
 );
 
 
@@ -63248,6 +63456,14 @@ ALTER TABLE ONLY public.managed_postgres_usage
 
 
 --
+-- Name: managed_postgres_usage_waivers managed_postgres_usage_waivers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_usage_waivers
+    ADD CONSTRAINT managed_postgres_usage_waivers_pkey PRIMARY KEY (database_id, waived_from);
+
+
+--
 -- Name: managed_realtime_channel_batches managed_realtime_channel_batches_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -64317,6 +64533,14 @@ ALTER TABLE ONLY public.object_storage_gateway_storage
 
 ALTER TABLE ONLY public.object_storage_inventory_samples
     ADD CONSTRAINT object_storage_inventory_samples_pkey PRIMARY KEY (token);
+
+
+--
+-- Name: object_storage_inventory_scans object_storage_inventory_scans_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_storage_inventory_scans
+    ADD CONSTRAINT object_storage_inventory_scans_pkey PRIMARY KEY (bucket_id);
 
 
 --
@@ -69047,6 +69271,13 @@ CREATE UNIQUE INDEX agents_account_name_active_idx ON public.agents USING btree 
 
 
 --
+-- Name: alert_deliveries_fired_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX alert_deliveries_fired_idx ON public.alert_deliveries USING btree (fired_at);
+
+
+--
 -- Name: alert_deliveries_idempotency_uniq; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -69131,10 +69362,17 @@ CREATE INDEX alert_rule_channels_channel_idx ON public.alert_rule_channels USING
 
 
 --
--- Name: alert_rules_account_name_uniq; Type: INDEX; Schema: public; Owner: -
+-- Name: alert_rules_account_wide_name_uniq; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX alert_rules_account_name_uniq ON public.alert_rules USING btree (account_id, name);
+CREATE UNIQUE INDEX alert_rules_account_wide_name_uniq ON public.alert_rules USING btree (account_id, name) WHERE (app_id IS NULL);
+
+
+--
+-- Name: alert_rules_app_name_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX alert_rules_app_name_uniq ON public.alert_rules USING btree (app_id, name) WHERE (app_id IS NOT NULL);
 
 
 --
@@ -70990,6 +71228,13 @@ CREATE INDEX custom_domain_tls_hosts_wildcard_admitted_idx ON public.custom_doma
 
 
 --
+-- Name: custom_domains_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX custom_domains_app_idx ON public.custom_domains USING btree (app_id);
+
+
+--
 -- Name: custom_domains_cert_expiry_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -71015,6 +71260,20 @@ CREATE INDEX custom_domains_environment_app_idx ON public.custom_domains USING b
 --
 
 CREATE INDEX custom_domains_org_id_idx ON public.custom_domains USING btree (org_id) WHERE (org_id IS NOT NULL);
+
+
+--
+-- Name: custom_domains_redirect_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX custom_domains_redirect_app_idx ON public.custom_domains USING btree (app_id_redirect) WHERE (app_id_redirect IS NOT NULL);
+
+
+--
+-- Name: custom_domains_reversed_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX custom_domains_reversed_idx ON public.custom_domains USING btree (reverse(lower((domain)::text)) text_pattern_ops);
 
 
 --
@@ -77521,6 +77780,13 @@ CREATE UNIQUE INDEX release_freezes_one_per_rollback ON public.release_freezes U
 
 
 --
+-- Name: release_freezes_org_unlifted; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX release_freezes_org_unlifted ON public.release_freezes USING btree (org_id, created_at, id) WHERE ((lifted_at IS NULL) AND (org_id IS NOT NULL));
+
+
+--
 -- Name: release_freezes_unlifted; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -78341,6 +78607,13 @@ CREATE UNIQUE INDEX tenant_hostnames_hostname_uniq ON public.tenant_hostnames US
 --
 
 CREATE INDEX tenant_hostnames_pending_idx ON public.tenant_hostnames USING btree (last_check_at) WHERE (verified_at IS NULL);
+
+
+--
+-- Name: tenant_hostnames_reversed_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX tenant_hostnames_reversed_idx ON public.tenant_hostnames USING btree (reverse(lower((hostname)::text)) text_pattern_ops);
 
 
 --
@@ -80904,12 +81177,16 @@ CREATE TRIGGER clone_checkpoint_scheduler_fence_truncate BEFORE TRUNCATE ON publ
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.app_environment_secret_ref_suppressions FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
 
+ALTER TABLE public.app_environment_secret_ref_suppressions DISABLE TRIGGER clone_configuration_write_fence;
+
 
 --
 -- Name: app_environment_secret_refs clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.app_environment_secret_refs FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+ALTER TABLE public.app_environment_secret_refs DISABLE TRIGGER clone_configuration_write_fence;
 
 
 --
@@ -80918,12 +81195,16 @@ CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.app_environment_workload_intents FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
 
+ALTER TABLE public.app_environment_workload_intents DISABLE TRIGGER clone_configuration_write_fence;
+
 
 --
 -- Name: app_envs clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.app_envs FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+ALTER TABLE public.app_envs DISABLE TRIGGER clone_configuration_write_fence;
 
 
 --
@@ -80932,12 +81213,16 @@ CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.app_secrets FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
 
+ALTER TABLE public.app_secrets DISABLE TRIGGER clone_configuration_write_fence;
+
 
 --
 -- Name: app_work_policies clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.app_work_policies FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+ALTER TABLE public.app_work_policies DISABLE TRIGGER clone_configuration_write_fence;
 
 
 --
@@ -80946,12 +81231,16 @@ CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.apps FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('project', 'project_id');
 
+ALTER TABLE public.apps DISABLE TRIGGER clone_configuration_write_fence;
+
 
 --
 -- Name: deployment_sidecar_layers clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.deployment_sidecar_layers FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('deployment', 'deployment_id');
+
+ALTER TABLE public.deployment_sidecar_layers DISABLE TRIGGER clone_configuration_write_fence;
 
 
 --
@@ -80960,12 +81249,16 @@ CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.deployment_sidecar_secret_reload_signals FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('deployment', 'deployment_id');
 
+ALTER TABLE public.deployment_sidecar_secret_reload_signals DISABLE TRIGGER clone_configuration_write_fence;
+
 
 --
 -- Name: deployments clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+ALTER TABLE public.deployments DISABLE TRIGGER clone_configuration_write_fence;
 
 
 --
@@ -80974,12 +81267,16 @@ CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.environment_git_sources FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('project', 'project_id');
 
+ALTER TABLE public.environment_git_sources DISABLE TRIGGER clone_configuration_write_fence;
+
 
 --
 -- Name: event_subscription_work_bindings clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.event_subscription_work_bindings FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+ALTER TABLE public.event_subscription_work_bindings DISABLE TRIGGER clone_configuration_write_fence;
 
 
 --
@@ -80988,12 +81285,16 @@ CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.feature_flag_versions FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('project', 'project_id');
 
+ALTER TABLE public.feature_flag_versions DISABLE TRIGGER clone_configuration_write_fence;
+
 
 --
 -- Name: managed_postgres_bindings clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.managed_postgres_bindings FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+ALTER TABLE public.managed_postgres_bindings DISABLE TRIGGER clone_configuration_write_fence;
 
 
 --
@@ -81002,12 +81303,16 @@ CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.managed_postgres_databases FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('database', 'id');
 
+ALTER TABLE public.managed_postgres_databases DISABLE TRIGGER clone_configuration_write_fence;
+
 
 --
 -- Name: object_bucket_encryption clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.object_bucket_encryption FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('bucket', 'bucket_id');
+
+ALTER TABLE public.object_bucket_encryption DISABLE TRIGGER clone_configuration_write_fence;
 
 
 --
@@ -81016,12 +81321,16 @@ CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.object_bucket_lifecycle FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('bucket', 'bucket_id');
 
+ALTER TABLE public.object_bucket_lifecycle DISABLE TRIGGER clone_configuration_write_fence;
+
 
 --
 -- Name: object_bucket_object_lock clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.object_bucket_object_lock FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('bucket', 'bucket_id');
+
+ALTER TABLE public.object_bucket_object_lock DISABLE TRIGGER clone_configuration_write_fence;
 
 
 --
@@ -81030,6 +81339,8 @@ CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.object_bucket_versioning FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('bucket', 'bucket_id');
 
+ALTER TABLE public.object_bucket_versioning DISABLE TRIGGER clone_configuration_write_fence;
+
 
 --
 -- Name: object_buckets clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
@@ -81037,12 +81348,16 @@ CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.object_buckets FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
 
+ALTER TABLE public.object_buckets DISABLE TRIGGER clone_configuration_write_fence;
+
 
 --
 -- Name: object_storage_s3_credentials clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.object_storage_s3_credentials FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('bucket', 'bucket_id');
+
+ALTER TABLE public.object_storage_s3_credentials DISABLE TRIGGER clone_configuration_write_fence;
 
 
 --
@@ -81058,12 +81373,16 @@ CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_environment_config_versions FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('project', 'project_id');
 
+ALTER TABLE public.project_environment_config_versions DISABLE TRIGGER clone_configuration_write_fence;
+
 
 --
 -- Name: project_environment_edge_policies clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_environment_edge_policies FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('project', 'project_id');
+
+ALTER TABLE public.project_environment_edge_policies DISABLE TRIGGER clone_configuration_write_fence;
 
 
 --
@@ -81072,12 +81391,16 @@ CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_environment_route_policies FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('project', 'project_id');
 
+ALTER TABLE public.project_environment_route_policies DISABLE TRIGGER clone_configuration_write_fence;
+
 
 --
 -- Name: project_environment_workload_deployment_specs clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_environment_workload_deployment_specs FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('deployment', 'deployment_id');
+
+ALTER TABLE public.project_environment_workload_deployment_specs DISABLE TRIGGER clone_configuration_write_fence;
 
 
 --
@@ -81086,12 +81409,16 @@ CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_environment_workload_heads FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
 
+ALTER TABLE public.project_environment_workload_heads DISABLE TRIGGER clone_configuration_write_fence;
+
 
 --
 -- Name: project_environment_workload_specs clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_environment_workload_specs FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+ALTER TABLE public.project_environment_workload_specs DISABLE TRIGGER clone_configuration_write_fence;
 
 
 --
@@ -81100,12 +81427,16 @@ CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_environments FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('project', 'project_id');
 
+ALTER TABLE public.project_environments DISABLE TRIGGER clone_configuration_write_fence;
+
 
 --
 -- Name: project_release_members clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_release_members FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+ALTER TABLE public.project_release_members DISABLE TRIGGER clone_configuration_write_fence;
 
 
 --
@@ -81114,12 +81445,16 @@ CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_release_sets FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('project', 'project_id');
 
+ALTER TABLE public.project_release_sets DISABLE TRIGGER clone_configuration_write_fence;
+
 
 --
 -- Name: projects clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE DELETE OR UPDATE ON public.projects FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('project', 'id');
+
+ALTER TABLE public.projects DISABLE TRIGGER clone_configuration_write_fence;
 
 
 --
@@ -81128,12 +81463,16 @@ CREATE TRIGGER clone_configuration_write_fence BEFORE DELETE OR UPDATE ON public
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.queue_bindings FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
 
+ALTER TABLE public.queue_bindings DISABLE TRIGGER clone_configuration_write_fence;
+
 
 --
 -- Name: trigger_work_bindings clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.trigger_work_bindings FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+ALTER TABLE public.trigger_work_bindings DISABLE TRIGGER clone_configuration_write_fence;
 
 
 --
@@ -83213,6 +83552,13 @@ CREATE TRIGGER managed_postgres_cutover_sql_owner BEFORE INSERT OR UPDATE OF sta
 --
 
 CREATE TRIGGER managed_postgres_database_bindings_guard BEFORE UPDATE OF state ON public.managed_postgres_databases FOR EACH ROW EXECUTE FUNCTION public.guard_managed_postgres_database_bindings();
+
+
+--
+-- Name: managed_postgres_databases managed_postgres_databases_usage_waiver; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_postgres_databases_usage_waiver AFTER UPDATE OF purge_after ON public.managed_postgres_databases FOR EACH ROW WHEN ((old.purge_after IS DISTINCT FROM new.purge_after)) EXECUTE FUNCTION public.record_managed_postgres_usage_waiver();
 
 
 --
@@ -85705,6 +86051,104 @@ CREATE TRIGGER tenant_hostnames_emit_change AFTER INSERT OR DELETE OR UPDATE ON 
 --
 
 CREATE TRIGGER tenant_surfaces_emit_change AFTER INSERT OR DELETE OR UPDATE ON public.tenant_surfaces FOR EACH ROW EXECUTE FUNCTION public.notify_tenant_surface_changed();
+
+
+--
+-- Name: apps traffic_binding_capture_rows; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER traffic_binding_capture_rows AFTER INSERT OR DELETE ON public.apps FOR EACH ROW EXECUTE FUNCTION public.traffic_binding_capture();
+
+
+--
+-- Name: custom_domains traffic_binding_capture_rows; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER traffic_binding_capture_rows AFTER INSERT OR DELETE ON public.custom_domains FOR EACH ROW EXECUTE FUNCTION public.traffic_binding_capture();
+
+
+--
+-- Name: deployment_aliases traffic_binding_capture_rows; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER traffic_binding_capture_rows AFTER INSERT OR DELETE ON public.deployment_aliases FOR EACH ROW EXECUTE FUNCTION public.traffic_binding_capture();
+
+
+--
+-- Name: platform_tenants traffic_binding_capture_rows; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER traffic_binding_capture_rows AFTER DELETE ON public.platform_tenants FOR EACH ROW EXECUTE FUNCTION public.traffic_binding_capture();
+
+
+--
+-- Name: project_environments traffic_binding_capture_rows; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER traffic_binding_capture_rows AFTER INSERT OR DELETE ON public.project_environments FOR EACH ROW EXECUTE FUNCTION public.traffic_binding_capture();
+
+
+--
+-- Name: tenant_hostnames traffic_binding_capture_rows; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER traffic_binding_capture_rows AFTER INSERT OR DELETE ON public.tenant_hostnames FOR EACH ROW EXECUTE FUNCTION public.traffic_binding_capture();
+
+
+--
+-- Name: tenant_surfaces traffic_binding_capture_rows; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER traffic_binding_capture_rows AFTER INSERT OR DELETE ON public.tenant_surfaces FOR EACH ROW EXECUTE FUNCTION public.traffic_binding_capture();
+
+
+--
+-- Name: apps traffic_binding_capture_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER traffic_binding_capture_update AFTER UPDATE OF slug, status, visibility, account_id, project_id ON public.apps FOR EACH ROW WHEN (((old.slug IS DISTINCT FROM new.slug) OR (old.status IS DISTINCT FROM new.status) OR (old.visibility IS DISTINCT FROM new.visibility) OR (old.account_id IS DISTINCT FROM new.account_id) OR (old.project_id IS DISTINCT FROM new.project_id))) EXECUTE FUNCTION public.traffic_binding_capture();
+
+
+--
+-- Name: custom_domains traffic_binding_capture_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER traffic_binding_capture_update AFTER UPDATE OF domain, app_id, environment_id, app_id_redirect, verified_at ON public.custom_domains FOR EACH ROW WHEN (((old.domain IS DISTINCT FROM new.domain) OR (old.app_id IS DISTINCT FROM new.app_id) OR (old.environment_id IS DISTINCT FROM new.environment_id) OR (old.app_id_redirect IS DISTINCT FROM new.app_id_redirect) OR ((old.verified_at IS NULL) <> (new.verified_at IS NULL)))) EXECUTE FUNCTION public.traffic_binding_capture();
+
+
+--
+-- Name: deployment_aliases traffic_binding_capture_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER traffic_binding_capture_update AFTER UPDATE OF name, app_id ON public.deployment_aliases FOR EACH ROW WHEN (((old.name IS DISTINCT FROM new.name) OR (old.app_id IS DISTINCT FROM new.app_id))) EXECUTE FUNCTION public.traffic_binding_capture();
+
+
+--
+-- Name: platform_tenants traffic_binding_capture_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER traffic_binding_capture_update AFTER UPDATE OF status ON public.platform_tenants FOR EACH ROW WHEN ((old.status IS DISTINCT FROM new.status)) EXECUTE FUNCTION public.traffic_binding_capture();
+
+
+--
+-- Name: project_environments traffic_binding_capture_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER traffic_binding_capture_update AFTER UPDATE OF account_id, project_id ON public.project_environments FOR EACH ROW WHEN (((old.account_id IS DISTINCT FROM new.account_id) OR (old.project_id IS DISTINCT FROM new.project_id))) EXECUTE FUNCTION public.traffic_binding_capture();
+
+
+--
+-- Name: tenant_hostnames traffic_binding_capture_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER traffic_binding_capture_update AFTER UPDATE OF hostname, surface_id, verified_at ON public.tenant_hostnames FOR EACH ROW WHEN (((old.hostname IS DISTINCT FROM new.hostname) OR (old.surface_id IS DISTINCT FROM new.surface_id) OR ((old.verified_at IS NULL) <> (new.verified_at IS NULL)))) EXECUTE FUNCTION public.traffic_binding_capture();
+
+
+--
+-- Name: tenant_surfaces traffic_binding_capture_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER traffic_binding_capture_update AFTER UPDATE OF app_id, account_id, platform_tenant_id, status ON public.tenant_surfaces FOR EACH ROW WHEN (((old.app_id IS DISTINCT FROM new.app_id) OR (old.account_id IS DISTINCT FROM new.account_id) OR (old.platform_tenant_id IS DISTINCT FROM new.platform_tenant_id) OR (old.status IS DISTINCT FROM new.status))) EXECUTE FUNCTION public.traffic_binding_capture();
 
 
 --
@@ -94389,6 +94833,14 @@ ALTER TABLE ONLY public.managed_postgres_usage_imports
 
 
 --
+-- Name: managed_postgres_usage_waivers managed_postgres_usage_waivers_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_usage_waivers
+    ADD CONSTRAINT managed_postgres_usage_waivers_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
+
+
+--
 -- Name: managed_realtime_channel_batches managed_realtime_channel_batches_endpoint_id_channel_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -95546,6 +95998,14 @@ ALTER TABLE ONLY public.object_storage_gateway_storage
 
 ALTER TABLE ONLY public.object_storage_inventory_samples
     ADD CONSTRAINT object_storage_inventory_samples_bucket_id_fkey FOREIGN KEY (bucket_id) REFERENCES public.object_buckets(id) ON DELETE CASCADE;
+
+
+--
+-- Name: object_storage_inventory_scans object_storage_inventory_scans_bucket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_storage_inventory_scans
+    ADD CONSTRAINT object_storage_inventory_scans_bucket_id_fkey FOREIGN KEY (bucket_id) REFERENCES public.object_buckets(id) ON DELETE CASCADE;
 
 
 --
@@ -99370,6 +99830,14 @@ ALTER TABLE ONLY public.release_freezes
 
 ALTER TABLE ONLY public.release_freezes
     ADD CONSTRAINT release_freezes_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: release_freezes release_freezes_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.release_freezes
+    ADD CONSTRAINT release_freezes_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE CASCADE;
 
 
 --

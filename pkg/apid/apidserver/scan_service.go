@@ -805,6 +805,9 @@ type planCron struct {
 	Schedule     string `json:"schedule"`
 	Path         string `json:"path"`
 	Enabled      bool   `json:"enabled"`
+	// Timezone is the zone the source declares (a CronJob's timeZone); empty
+	// keeps the cron's current zone, UTC for a new one.
+	Timezone string `json:"timezone,omitempty"`
 }
 
 func projectWorkloadCrons(workloads []reposcan.Workload) []planCron {
@@ -816,6 +819,7 @@ func projectWorkloadCrons(workloads []reposcan.Workload) []planCron {
 				Schedule:     schedule.Expression,
 				Path:         "/",
 				Enabled:      schedule.Enabled,
+				Timezone:     schedule.Timezone,
 			})
 		}
 	}
@@ -2048,6 +2052,11 @@ func (s *server) scanService(
 		pw.UnsetEnvKeys, pw.ImportedEnvKeys, pw.UnsetEnvKeyReasons = projectsetup.SplitEnvImport(
 			withoutProvidedKeys(w.Name, unset, composePostgres), envImport)
 		warnings = append(warnings, projectsetup.RewrittenEnvNotes(w.Name, pw.ImportedEnvKeys, envImport)...)
+		slug := w.AppSlug
+		if slug == "" {
+			slug = w.Name
+		}
+		warnings = append(warnings, projectsetup.IngressNotes(w.Name, slug, w.IngressSettings, acct.Plan, limits)...)
 		if w.ServiceBindingPolicy == "" && existing != nil {
 			pw.ServiceBindingPolicy = existing.Manifest.EffectiveServiceBindingPolicy()
 		}

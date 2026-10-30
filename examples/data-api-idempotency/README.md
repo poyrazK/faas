@@ -1,6 +1,6 @@
 # Idempotent order creation
 
-Run `gregale data-api dev --port 0` in this directory. It generates
+Run `gregale data-api serve --port 0` in this directory. It generates
 `database.types.ts`, exposes the approved `create_order_once` RPC, and verifies
 replay, payload conflicts and tenant isolation. Install `@gregale/data` in your
 application and use `client.ts` for the typed workflow.

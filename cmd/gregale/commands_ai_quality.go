@@ -47,7 +47,7 @@ func cmdAIFeedback(args []string) int {
 	return 0
 }
 
-const aiQualityAlertsUsage = "usage: gregale ai quality-alerts <integration-id> [--limit N]"
+const aiQualityAlertsUsage = "usage: gregale ai quality-alert list <integration-id> [--limit N]"
 
 // cmdAIQualityAlerts lists an integration's drift alerts, newest first.
 func cmdAIQualityAlerts(args []string) int {

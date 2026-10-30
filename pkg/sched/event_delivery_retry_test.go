@@ -39,6 +39,15 @@ func TestEventDeliveryRetriesBackOffAndHonourTheAppPolicy(t *testing.T) {
 		t.Errorf("delivery attempt budget = %d, want Pro's %d", got, want)
 	}
 
+	// A keyed delivery holds its lane while it waits, so its backoff caps
+	// at 30 s instead of 5 minutes.
+	keyed := delivery
+	keyed.WorkPolicyName = "orders"
+	keyed.Attempts = 12
+	if got := d.XInvocationRetryDelay(ctx, keyed); !within(got, 30*time.Second) {
+		t.Errorf("keyed delivery after 12 attempts waits %s, want 30s ±20 %%", got)
+	}
+
 	policy := []byte(`{"max_attempts":4,"base_seconds":2,"max_seconds":10}`)
 	if _, err := store.UpdateApp(ctx, delivery.AppID, state.UpdateAppParams{RetryPolicyJSON: &policy, SetRetryPolicy: true}); err != nil {
 		t.Fatal(err)

@@ -334,7 +334,11 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 		cpuMillicores = profile.CPUMillicores
 	}
 	if ram == 0 {
-		ram = limits.RAMMB
+		ram = api.StandaloneAppDefaultRAMMB(limits)
+		if req.VCPU != 0 {
+			// An explicit vCPU asks for the plan's joint RAM/vCPU shape.
+			ram = limits.RAMMB
+		}
 	}
 	if cpuMillicores == 0 {
 		cpuMillicores = api.DefaultAppCPUMillicores

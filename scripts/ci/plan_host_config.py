@@ -37,9 +37,19 @@ Writes plan.json and, for converge, record.json into --out. With
 platform SLOs as unit host-config and each daemon `deployctl
 restart-changed` reported.
 
+With --full-release SHA, plans a full release's convergence instead
+(docs/adr/20261030150000-full-release-converges-changed-roles.md): the
+roles whose content hash differs from the record, plus the roles whose
+handlers they notify (action `roles`), every role when the record is
+missing or has other globals (action `all`), or `contract` when no role
+changed, which leaves the decision to ADR-580's contract. Nothing is
+refused: a full release may restart PostgreSQL or pgbouncer, and may go
+back to an older commit, whose content the hashes compare all the same.
+
 Usage:
   plan_host_config.py --units-manifest M --host-state H --out DIR \\
       [--previous-release SHA] [--repo .]
+  plan_host_config.py --full-release SHA --host-state H --out DIR [--repo .]
   plan_host_config.py --gate-from RESTART_JSON --out DIR
 """
 import argparse
@@ -60,6 +70,21 @@ GROUP = "control_plane"
 
 class Refused(Exception):
     pass
+
+
+def usable_record(host):
+    """The host's record, when it is one this planner reads and still
+    describes the host: a record names the contract written beside it, and
+    a convergence that moved the contract without the record (an older
+    release's whole play) leaves its role hashes stale. (None, reason)
+    otherwise."""
+    record = host.get("record")
+    if not (isinstance(record, dict) and record.get("kind") == KIND_RECORD
+            and record.get("format_version") == host_roles.FORMAT and record.get("group") == GROUP):
+        return None, "every role: the host has no role record yet"
+    if record.get("contract") and record["contract"] != host.get("contract"):
+        return None, "every role: the control plane converged without updating its role record"
+    return record, ""
 
 
 def git_is_ancestor(ancestor, descendant, root="."):
@@ -95,9 +120,8 @@ def plan(release, host, new, deps=None, is_ancestor=git_is_ancestor, previous_re
             raise Refused(f"{', '.join(moved)} changed since the full release and can restart "
                           f"{', '.join(sorted({s for r in moved for s in stateful[r]}))}, which the lane never "
                           "does: deploy a full release")
-    record = host.get("record")
-    usable = (isinstance(record, dict) and record.get("kind") == KIND_RECORD
-              and record.get("format_version") == host_roles.FORMAT and record.get("group") == GROUP)
+    record, stale = usable_record(host)
+    usable = record is not None
     if usable and record.get("commit") and not is_ancestor(record["commit"], commit):
         raise Refused(f"the control plane converged its roles at {record['commit']}, which is not an ancestor of "
                       f"{commit}: a newer host configuration is already there")
@@ -107,7 +131,7 @@ def plan(release, host, new, deps=None, is_ancestor=git_is_ancestor, previous_re
         previous = record.get("commit") or base
     else:
         diff = {"all": True, "roles": list(new["order"])}
-        reason = "every role: the host has no role record yet"
+        reason = stale
         previous = base
     if not diff["all"]:
         # Their content is the full release's, which converged it.
@@ -122,6 +146,30 @@ def plan(release, host, new, deps=None, is_ancestor=git_is_ancestor, previous_re
     return out, record_out
 
 
+def plan_full_release(commit, host, new, deps=None):
+    """A full release's plan. new is host_roles.group_hashes at commit; deps
+    its notify_targets. The record it returns describes the host once the
+    plan's convergence succeeded."""
+    record, stale = usable_record(host)
+    if record is not None:
+        diff = host_roles.changed(record, new, deps)
+        if diff["all"]:
+            reason = "every role: the record has other globals"
+        elif diff["roles"]:
+            reason = "roles whose content hash changed"
+        else:
+            reason = "no role's content hash changed"
+    else:
+        diff = {"all": True, "roles": list(new["order"])}
+        reason = stale
+    action = "all" if diff["all"] else "roles" if diff["roles"] else "contract"
+    out = {"action": action, "group": GROUP, "commit": commit, "roles": diff["roles"], "all": diff["all"],
+           "reason": reason}
+    record_out = {"format_version": host_roles.FORMAT, "kind": KIND_RECORD, "group": GROUP, "commit": commit,
+                  "globals": new["globals"], "order": new["order"], "roles": new["roles"]}
+    return out, record_out
+
+
 def gate(report):
     """slo_gate.py argument lists for a host-config step: the platform SLOs
     (no daemon of its own: roles also reload Prometheus, Caddy, PostgreSQL
@@ -130,9 +178,21 @@ def gate(report):
     return [["--unit", "host-config", "--component", "host-config"]] + [plan_unit_deploy.gate_args(s) for s in services]
 
 
+def write_plan(out, result, record):
+    os.makedirs(out, exist_ok=True)
+    if record:
+        with open(os.path.join(out, "record.json"), "w", encoding="utf-8") as fh:
+            json.dump(record, fh, indent=2, sort_keys=True)
+            fh.write("\n")
+    with open(os.path.join(out, "plan.json"), "w", encoding="utf-8") as fh:
+        json.dump(result, fh, indent=2, sort_keys=True)
+        fh.write("\n")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--gate-from", help="deployctl restart-changed --json report: write gate.json")
+    ap.add_argument("--full-release", metavar="SHA", help="plan a full release's convergence at this commit")
     ap.add_argument("--units-manifest")
     ap.add_argument("--host-state")
     ap.add_argument("--out", required=True)
@@ -148,6 +208,23 @@ def main():
         with open(os.path.join(args.out, "gate.json"), "w", encoding="utf-8") as fh:
             json.dump({"gate": gate(report)}, fh, indent=2)
             fh.write("\n")
+        return 0
+    if args.full_release:
+        if not args.host_state:
+            ap.error("--host-state is required to plan")
+        with open(args.host_state, encoding="utf-8") as fh:
+            host = json.load(fh)
+        try:
+            tree = host_roles.git_tree(args.full_release, args.repo)
+            new = host_roles.group_hashes(tree, GROUP)
+            result, record = plan_full_release(args.full_release, host, new,
+                                               host_roles.notify_targets(tree, new["order"]))
+        except (RuntimeError, ValueError, KeyError) as err:
+            print(f"plan_host_config: {err}", file=sys.stderr)
+            return 1
+        write_plan(args.out, result, record)
+        print(f"plan: full release converges {result['action']}: {', '.join(result['roles']) or '<none>'} "
+              f"({result['reason']})", file=sys.stderr)
         return 0
     if not args.units_manifest or not args.host_state:
         ap.error("--units-manifest and --host-state are required to plan")
@@ -167,14 +244,7 @@ def main():
     except (Refused, RuntimeError, ValueError, KeyError) as err:
         print(f"plan_host_config: refused: {err}", file=sys.stderr)
         return 1
-    os.makedirs(args.out, exist_ok=True)
-    if record:
-        with open(os.path.join(args.out, "record.json"), "w", encoding="utf-8") as fh:
-            json.dump(record, fh, indent=2, sort_keys=True)
-            fh.write("\n")
-    with open(os.path.join(args.out, "plan.json"), "w", encoding="utf-8") as fh:
-        json.dump(result, fh, indent=2, sort_keys=True)
-        fh.write("\n")
+    write_plan(args.out, result, record)
     print(f"plan: host config {result['action']}: {', '.join(result['roles']) or '<none>'} "
           f"({result['reason']}; rollback to {result['previous'][:12]})", file=sys.stderr)
     return 0

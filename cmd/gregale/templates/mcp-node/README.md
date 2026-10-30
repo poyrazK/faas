@@ -14,7 +14,7 @@ gregale mcp server doctor --url http://127.0.0.1:8080/mcp --legacy
 gregale mcp client call --url http://127.0.0.1:8080/mcp --tool add --arguments '{"a":7,"b":5}'
 gregale mcp client complete --url http://127.0.0.1:8080/mcp --prompt summarize --argument style --value exec
 gregale mcp server deploy --path . --name my-mcp --profile small
-gregale mcp server config --url https://my-mcp.gregale.dev/mcp --name my-mcp
+gregale mcp server export --url https://my-mcp.gregale.dev/mcp --name my-mcp
 ```
 
 `gregale-mcp.json` declares the MCP contract. `gregale.yaml` declares ordinary
@@ -366,9 +366,9 @@ Configure the dedicated worker's task-backlog scaler after deploying the worker:
 
 ```sh
 gregale mcp server tasks setup --app mcp-worker
-gregale mcp server tasks observer setup --app mcp-observer --worker-app mcp-worker --config ./gregale-mcp.json
-gregale mcp server tasks observer setup --app mcp-observer --worker-app mcp-worker --config ./gregale-mcp.json --apply
-gregale mcp server tasks observer status --app mcp-observer --worker-app mcp-worker --config ./gregale-mcp.json
+gregale mcp observer setup --app mcp-observer --worker-app mcp-worker --config ./gregale-mcp.json
+gregale mcp observer setup --app mcp-observer --worker-app mcp-worker --config ./gregale-mcp.json --apply
+gregale mcp observer status --app mcp-observer --worker-app mcp-worker --config ./gregale-mcp.json
 gregale mcp server tasks setup --app mcp-worker --observer-app mcp-observer --min 0 --apply
 gregale mcp server tasks status --app mcp-worker
 ```
@@ -723,7 +723,7 @@ worker that exceeds its shutdown deadline retains its registration until expiry;
 the gate fails rather than promoting prematurely.
 
 Gregale also provides a native deployment adapter:
-`gregale mcp server tasks release --plan release.json --state release-state.json`.
+`gregale mcp server tasks deploy --plan release.json --state release-state.json`.
 Its plan names the web app/source, an empty candidate worker app/source, previous
 worker apps, and the always-on observer and its metric destination. It deploys
 candidates, verifies endpoint/observer health, captures worker IDs from runtime

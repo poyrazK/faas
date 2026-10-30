@@ -10531,9 +10531,14 @@ type RunAgentStart struct {
 	InputKey string `protobuf:"bytes,11,opt,name=input_key,json=inputKey,proto3" json:"input_key,omitempty"`
 	// snapshot is the preset snapshot to restore. Absent, stale or failing:
 	// a cold boot of the same image (ADR-005).
-	Snapshot      *AgentRunSnapshot `protobuf:"bytes,12,opt,name=snapshot,proto3" json:"snapshot,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Snapshot *AgentRunSnapshot `protobuf:"bytes,12,opt,name=snapshot,proto3" json:"snapshot,omitempty"`
+	// model_wait_pause_after_ms is the run's model-wait pause delay
+	// (ADR-20261027090012): with vmmd's agent_wait_pause on, the VM is paused
+	// once it has waited this long on the relay and nothing else. 0 (an older
+	// schedd) keeps it running.
+	ModelWaitPauseAfterMs int32 `protobuf:"varint,13,opt,name=model_wait_pause_after_ms,json=modelWaitPauseAfterMs,proto3" json:"model_wait_pause_after_ms,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
 }
 
 func (x *RunAgentStart) Reset() {
@@ -10648,6 +10653,13 @@ func (x *RunAgentStart) GetSnapshot() *AgentRunSnapshot {
 		return x.Snapshot
 	}
 	return nil
+}
+
+func (x *RunAgentStart) GetModelWaitPauseAfterMs() int32 {
+	if x != nil {
+		return x.ModelWaitPauseAfterMs
+	}
+	return 0
 }
 
 // AgentRunSnapshot locates a preset snapshot CaptureAgentSnapshot made.
@@ -18092,7 +18104,7 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x0fRunAgentRequest\x12:\n" +
 	"\x05start\x18\x01 \x01(\v2\".onebox.faas.vmmd.v1.RunAgentStartH\x00R\x05start\x12=\n" +
 	"\x06cancel\x18\x02 \x01(\v2#.onebox.faas.vmmd.v1.RunAgentCancelH\x00R\x06cancelB\a\n" +
-	"\x05frame\"\xaa\x03\n" +
+	"\x05frame\"\xe4\x03\n" +
 	"\rRunAgentStart\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12\x1d\n" +
 	"\n" +
@@ -18109,7 +18121,8 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x05relay\x18\n" +
 	" \x01(\v2\".onebox.faas.vmmd.v1.RunAgentRelayR\x05relay\x12\x1b\n" +
 	"\tinput_key\x18\v \x01(\tR\binputKey\x12A\n" +
-	"\bsnapshot\x18\f \x01(\v2%.onebox.faas.vmmd.v1.AgentRunSnapshotR\bsnapshot\"\x9f\x01\n" +
+	"\bsnapshot\x18\f \x01(\v2%.onebox.faas.vmmd.v1.AgentRunSnapshotR\bsnapshot\x128\n" +
+	"\x19model_wait_pause_after_ms\x18\r \x01(\x05R\x15modelWaitPauseAfterMs\"\x9f\x01\n" +
 	"\x10AgentRunSnapshot\x12\x1f\n" +
 	"\vstorage_key\x18\x01 \x01(\tR\n" +
 	"storageKey\x12.\n" +

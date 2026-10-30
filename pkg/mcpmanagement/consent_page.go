@@ -35,7 +35,11 @@ func consentPage(v consentView) string {
 	hidden := `<input type="hidden" name="request_id" value="` + e(v.RequestID) + `"><input type="hidden" name="csrf" value="` + e(v.CSRF) + `">`
 	w(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Connect to Gregale</title></head>
-<body><main><h1>Connect to Gregale</h1><p>Client: <strong>`, e(v.Client), `</strong></p><p>Return address: `, e(v.Redirect), `</p><p>Gregale API: `, e(v.APIBase), "</p>\n")
+<body><main><h1>Connect to Gregale</h1><p>Client: <strong>`, e(v.Client), `</strong></p>`)
+	if v.ClientHost != "" {
+		w(`<p>Published by <strong>`, e(v.ClientHost), `</strong></p>`)
+	}
+	w(`<p>Return address: `, e(v.Redirect), `</p><p>Gregale API: `, e(v.APIBase), "</p>\n")
 	switch {
 	case v.Account != "":
 		w(`<p>Account: <strong>`, e(v.Account), `</strong></p><p>This client can inspect apps, deployments, logs, metrics, health and routes in this account. App logs may contain private data.</p>`)
