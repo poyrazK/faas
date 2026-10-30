@@ -136,7 +136,7 @@ generation. Manual `start-job` requests and app work with the same account
 policy and business key therefore contend in one lane.
 
 `broker` binds a non-cron Trigger resource, including an in-platform queue
-trigger or a Kafka, NATS, Redis Streams, SQS-compatible, or AMQP consumer.
+trigger or a Kafka, NATS or Redis Streams consumer.
 Gregale admits each stable broker message identity into the operation lane
 before acknowledging the delivery. A `reject` policy dead-letters a competing
 message with an explicit operation-rejection reason; it does not silently

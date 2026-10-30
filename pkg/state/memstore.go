@@ -2520,6 +2520,15 @@ func (m *MemStore) UpdateAccountPlan(_ context.Context, id string, plan api.Plan
 			}
 		}
 	}
+	var current *int64
+	if cents, ok := m.overageCapCents[id]; ok {
+		current = &cents
+	}
+	if next := planChangeOverageCap(a.Plan, plan, current); next == nil {
+		delete(m.overageCapCents, id)
+	} else {
+		m.overageCapCents[id] = *next
+	}
 	a.Plan = plan
 	m.storeRouteCheckAccountLocked(id, a)
 	now := time.Now().UTC()
@@ -3287,6 +3296,17 @@ func (m *MemStore) TouchKeyLastUsed(_ context.Context, keyID string) error {
 	}
 	now := time.Now()
 	k.LastUsedAt = &now
+	// Mirrors PgStore: an mcp-login key slides (ADR-20261028205920).
+	if k.Label == api.MCPLoginKeyLabel && k.Status == "active" && k.ExpiresAt != nil && !slices.Contains(k.Scopes, api.ScopeAdmin) {
+		slid := now.Add(api.MCPLoginKeyIdle)
+		if limit := k.CreatedAt.Add(api.MCPLoginKeyMaxAge); limit.Before(slid) {
+			slid = limit
+		}
+		if slid.After(*k.ExpiresAt) {
+			k.ExpiresAt = &slid
+		}
+		m.keyByHash[hex.EncodeToString(k.Hash)] = k
+	}
 	m.keys[keyID] = k
 	return nil
 }
@@ -7153,6 +7173,16 @@ func (m *MemStore) RenameApp(ctx context.Context, accountID, oldSlug, newSlug st
 		return App{}, err
 	}
 	m.apps[found.ID] = *found
+	// Mirrors PgStore: PR previews follow their production app's new slug.
+	if found.PreviewOfSlug == "" {
+		for id, preview := range m.apps {
+			if preview.AccountID == accountID && preview.PreviewOfSlug == oldSlug &&
+				preview.PreviewPrNumber > 0 && preview.Status != AppDeleted {
+				preview.PreviewOfSlug = newSlug
+				m.apps[id] = preview
+			}
+		}
+	}
 	return *found, nil
 }
 

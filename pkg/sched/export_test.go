@@ -942,7 +942,7 @@ var LogVMMBootFailure = logVMMBootFailure
 var WorkerRecoveryRetryDelay = workerRecoveryRetryDelay
 
 // NewCronPlanGate exposes the cron plan gate's admit decision.
-func NewCronPlanGate(store cronPlanGateStore) func(context.Context, state.App, state.Cron) bool {
+func NewCronPlanGate(store state.AppOwnerReader) func(context.Context, state.App, state.Cron) bool {
 	return newCronPlanGate(store).admit
 }
 
@@ -971,3 +971,13 @@ func (l *Loop) XDispatchEventFanoutSweep(ctx context.Context) { l.dispatchEventF
 // XRepeatFullBatches is invocation retention's batch repeater.
 // adr: 20261029012000 — a step repeats while its batches come back full.
 var XRepeatFullBatches = repeatFullBatches
+
+// adr: 20261029190000 — event deliveries retry by their app's policy or the
+// event delivery backoff.
+func (d *Drain) XInvocationRetryDelay(ctx context.Context, inv state.Invocation) time.Duration {
+	return d.invocationRetryDelay(ctx, inv)
+}
+
+func (d *Drain) XInvocationAttemptBudget(ctx context.Context, inv state.Invocation) int {
+	return d.invocationAttemptBudget(ctx, inv)
+}

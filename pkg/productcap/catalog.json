@@ -1937,7 +1937,7 @@
         "scale"
       ],
       "docs_url": "/docs/edge-rule-trace",
-      "acceptance_test": "pkg/apid/apidserver/handlers_dashboard_edge_rules_test.go::TestDashboardEdgeRuleTraceShowsRetryPolicy",
+      "acceptance_test": "cmd/e2e/edge_rules_trace_e2e_test.go::TestE2E_EdgeRules_TraceMatchesGateway",
       "parent": "edge-rules",
       "routes": [
         "/dashboard/apps/{}/edge-rules/trace"
@@ -2395,7 +2395,7 @@
       "id": "event-triggers",
       "name": "Event triggers",
       "category": "async",
-      "description": "Consume Kafka, NATS, Redis Streams, AMQP, SQS-compatible and bucket events.",
+      "description": "Consume Kafka, NATS JetStream and Redis Streams records and Gregale queues.",
       "maturity": "preview",
       "plans": [
         "hobby",
