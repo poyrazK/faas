@@ -2911,7 +2911,7 @@ export class OrgsService {
   }
   /**
    * Read the organization's monthly spend cap.
-   * Requires current organization membership and usage:read. Integer cents, zero when no overage is allowed, or null when no cap is set. An organization that owns its resources is billed, and capped, apart from its members (ADR-20261030093512).
+   * Requires current organization membership and usage:read. Integer cents, zero when no overage is allowed, or null when no cap is set. An organization that owns its resources is billed, and capped, apart from its members.
    * @returns AccountOverageCapResponse The saved monthly spend cap.
    * @throws ApiError
    */

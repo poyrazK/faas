@@ -405,7 +405,6 @@ ListWorkflowRuns
 LiveCrashCaptureDeploymentIDs
 LiveDeploymentForScope
 LiveDeployments
-LoadAllOverageCapCents
 LoadAndStampLastQuotaWarning
 LookupBootStartedForWakes
 LookupDeploymentScopeExclusions
