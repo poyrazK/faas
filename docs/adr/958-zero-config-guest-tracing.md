@@ -301,9 +301,9 @@ and its HTTP client span reached the evidence classified as
 VM resources behind. The Node bundle adds about 111 MB (uncompressed) to the
 shared read-only runner base; per-app layers are unaffected.
 
-Still pending: the same checks on a dedicated native host, the Python
-preload inside a VM (validated outside a VM only), and the split-box mTLS
-path on a two-node layout.
+Still pending: the same checks on a dedicated native host and the Python
+preload inside a VM (validated outside a VM only). The split-box mTLS path
+is covered by the 2026-10-28 amendment's validation.
 
 ## Amendment (2026-10-22): a tracing package for Go apps
 
@@ -417,3 +417,21 @@ another node's instance, another deployment, app or account, an unknown and a
 non-UUID instance refused, for spans and logs; an unregistered node
 `Unauthenticated`; local socket and unbound apid unchanged; cache hit, expiry,
 refusal expiry after migration, lookup errors not cached, and the bound.
+
+Split-box path (2026-10-30, `gregale-internal-test-1`, nested KVM, revision
+4195bf562a): `TestGuestTracingSplitBoxMetal` passed. apid opened its private
+mTLS listener on loopback TCP with the node verifier on; vmmd had no local
+spans socket and sent the guest exports with an `apid-client` leaf whose CN
+is the instance's compute node. The app's `SELECT orders` span reached the
+request evidence after a snapshot-restore wake. With real certificates, apid
+then answered `invalid` to spans and logs from that leaf for an instance its
+node does not run and for its running instance under another account, and
+refused a leaf whose CN names no compute node. Leakcheck clean. This covers
+§4's split-box mTLS path on one host; only the network distance differs from
+two machines.
+
+The run found that an apid started without `apid.toml` ignored
+`FAAS_NODE_NAME`, so it never built the node verifier and the binding stayed
+off. `LoadConfig` now applies it on that path too, as it already did the role
+and the listener's TLS paths. Production apid reads a TOML file and was not
+affected.
