@@ -5302,20 +5302,29 @@ func (m *MemStore) PreviewAppByProjectWorkload(_ context.Context, accountID, pro
 }
 
 // ProjectAppByWorkload mirrors PgStore: a service-name production alias in
-// the owner's project, ErrConflict when two apps share it.
+// the owner's project, ErrConflict when two apps share it, and
+// ErrProjectServiceDeleted when only a deleted member holds it.
 func (m *MemStore) ProjectAppByWorkload(_ context.Context, accountID, projectID, name string) (App, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var found App
+	deleted := false
 	for _, app := range m.apps {
 		if app.AccountID != accountID || app.ProjectID == "" || app.ProjectID != projectID ||
-			app.PreviewOfSlug != "" || app.Status == AppDeleted || !api.SameServiceName(app.WorkloadName, name) {
+			app.PreviewOfSlug != "" || !api.SameServiceName(app.WorkloadName, name) {
+			continue
+		}
+		if app.Status == AppDeleted {
+			deleted = true
 			continue
 		}
 		if found.ID != "" {
 			return App{}, ErrConflict
 		}
 		found = app
+	}
+	if found.ID == "" && deleted {
+		return App{}, ErrProjectServiceDeleted
 	}
 	if found.ID == "" {
 		return App{}, ErrNotFound
