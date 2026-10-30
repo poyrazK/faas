@@ -26,9 +26,11 @@ type NodeAdmission struct {
 }
 
 // NodeCompute is an admission's guest vCPUs and sustained CPU millicores, and
-// the quiet-pause discounts (ADR-1151) the scheduler applied to the node's
-// bookings when it chose the node. The guard bounds each discount by
-// api.QuietPauseMaxVCPUOvercommitPercent of the budget.
+// the discounts the scheduler applied to the node's bookings when it chose
+// the node: quiet-paused instances (ADR-1151) and, since ADR 20261029151111,
+// measured instances' unused CPU. The Quiet names predate the second source.
+// The guard bounds each discount by api.MeasuredCPUMaxOvercommitPercent of
+// the budget, the larger of the two schedulers' caps.
 type NodeCompute struct {
 	VCPU, CPUMillicores           int
 	QuietVCPU, QuietCPUMillicores int
@@ -86,9 +88,9 @@ func nodeComputeAdmission(ctx context.Context, nodeID string) NodeCompute {
 }
 
 // nodeComputeRefusal is the durable vCPU and CPU check: the live instances'
-// bookings, less the scheduler's quiet-pause discount, plus the admission
-// must fit each budget. A zero request or budget is not checked, as in
-// placement.
+// bookings, less the scheduler's quiet-pause and measured CPU discount, plus
+// the admission must fit each budget. A zero request or budget is not
+// checked, as in placement.
 func nodeComputeRefusal(nodeID string, c NodeCompute, vcpuBudget, usedVCPU, cpuBudget, usedCPU int64) error {
 	if c.VCPU > 0 && vcpuBudget > 0 {
 		quiet := min(int64(c.QuietVCPU), quietDiscountBound(vcpuBudget))
@@ -107,10 +109,12 @@ func nodeComputeRefusal(nodeID string, c NodeCompute, vcpuBudget, usedVCPU, cpuB
 	return nil
 }
 
-// quietDiscountBound is the largest quiet-pause discount the guard accepts:
-// bookings may reach api.QuietPauseMaxVCPUOvercommitPercent of the budget.
+// quietDiscountBound is the largest discount the guard accepts: bookings
+// may reach api.MeasuredCPUMaxOvercommitPercent of the budget. A scheduler
+// with only quiet pause admission on holds itself to the lower
+// api.QuietPauseMaxVCPUOvercommitPercent (ADR 20261029151111).
 func quietDiscountBound(budget int64) int64 {
-	return budget * (api.QuietPauseMaxVCPUOvercommitPercent - 100) / 100
+	return budget * (api.MeasuredCPUMaxOvercommitPercent - 100) / 100
 }
 
 // nodeCPUBudgetMillicores is placement's physical CPU budget for a node with

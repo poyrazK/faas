@@ -7,6 +7,9 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+
+	quotasql "github.com/onebox-faas/faas/pkg/state/appquota/sqlc"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 // Per-account plan allowances belong to the billing subject of an app
@@ -75,4 +78,66 @@ func lockAccountQuotaSubjectTx(ctx context.Context, tx pgx.Tx, accountID string)
 		return fmt.Errorf("state: lock account %s: %w", accountID, err)
 	}
 	return nil
+}
+
+// lockCronQuotaSubjectTx locks what an app's cron quota check serializes on
+// and returns the app's namespace (its account_id) and billing subject. The
+// namespace row comes first, as every cron write and project apply take it
+// (LockCronAccountForApp); then cronQuotaSubjectTx. Callers lock the app row
+// afterwards.
+func lockCronQuotaSubjectTx(ctx context.Context, tx pgx.Tx, appID string) (accountID, subject string, err error) {
+	accountID, err = sqlc.New().LockCronAccountForApp(ctx, tx, appID)
+	if err != nil {
+		return "", "", mapErr(err)
+	}
+	// An app's organization never changes, so it is read before the app row
+	// is locked.
+	var orgID pgtype.UUID
+	if err := tx.QueryRow(ctx, `select org_id from apps where id = $1`, appID).Scan(&orgID); err != nil {
+		return "", "", mapErr(err)
+	}
+	subject, err = cronQuotaSubjectTx(ctx, tx, accountID, orgID)
+	return accountID, subject, err
+}
+
+// cronQuotaSubjectTx returns the billing subject whose cron allowance the
+// crons of a namespace's apps in orgID share. As app admission does
+// (resolveAppQuotaTx), it share-locks the organization and, once the
+// organization adopted billing, writes its app quota fence, so the cron quota
+// checks of one company's creators, and its project applies, serialize. The
+// caller holds the namespace lock, so the creator's own allowance is
+// serialized already.
+func cronQuotaSubjectTx(ctx context.Context, tx pgx.Tx, accountID string, orgID pgtype.UUID) (string, error) {
+	if !orgID.Valid {
+		return accountID, nil
+	}
+	var adopted bool
+	err := tx.QueryRow(ctx, `select not personal_org and resource_ownership_enabled from orgs where id = $1 for share`, orgID).Scan(&adopted)
+	if err != nil {
+		return "", fmt.Errorf("state: lock organization %s for its cron quota: %w", pgUUIDString(orgID), mapErr(err))
+	}
+	if !adopted {
+		return accountID, nil
+	}
+	if err := quotasql.New().LockOwner(ctx, tx, orgID); err != nil {
+		return "", fmt.Errorf("state: lock organization %s cron quota: %w", pgUUIDString(orgID), err)
+	}
+	return pgUUIDString(orgID), nil
+}
+
+// countQuotaSubjectCronsTx counts the crons of subject's live apps, the
+// per-account cron allowance's usage (see quotaSubjectSQL). The
+// account_id/org_id prefilter keeps the scan on apps_account_idx and
+// apps_org_quota_idx.
+func countQuotaSubjectCronsTx(ctx context.Context, tx pgx.Tx, subject string) (int, error) {
+	var n int
+	err := tx.QueryRow(ctx, `select count(*) from crons c
+		join apps a on a.id = c.app_id
+		left join orgs o on o.id = a.org_id
+		where (a.account_id = $1::uuid or a.org_id = $1::uuid)
+		  and `+quotaSubjectSQL+` = $1::uuid and a.status <> 'deleted'`, subject).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("state: count crons of billing subject %s: %w", subject, err)
+	}
+	return n, nil
 }

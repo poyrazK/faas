@@ -9967,7 +9967,7 @@ Create a broker trigger
 | `--lock <POLICY>` | run one at a time per --lock-key under this managed operation policy |  |
 | `--lock-key <JSON>` | JSON value that must run one at a time (requires --lock) |  |
 | `--app <slug>` | app slug | required |
-| `--kind <kind>` | trigger kind | required; one of `kafka` · `nats` · `redis_streams` · `sqs_compat` · `queue` · `realtime` |
+| `--kind <kind>` | trigger kind | required; one of `kafka` · `nats` · `redis_streams` · `queue` · `realtime` |
 | `--slug <slug>` | trigger slug |  |
 | `--config <JSON>` | JSON config (inline \| @file \| -) |  |
 | `--enabled` | enable the trigger |  |

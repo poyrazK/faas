@@ -43,11 +43,24 @@ var triggerBrokerKindNames = []string{
 	string(api.TriggerKindRealtime),
 }
 
+// triggerCreateKindNames are the broker kinds `trigger create` offers:
+// sqs_compat is delisted (2026-10-29), though existing ones still list.
+var triggerCreateKindNames = []string{
+	string(api.TriggerKindKafka),
+	string(api.TriggerKindNATS),
+	string(api.TriggerKindRedisStreams),
+	string(api.TriggerKindQueue),
+	string(api.TriggerKindRealtime),
+}
+
 var triggerRecordStateNames = []string{
 	"pending", "claimed", "succeeded", "retry", "dead_letter", "superseded",
 }
 
 const triggerBrokerKindsUsage = "kafka|nats|redis_streams|sqs_compat|queue|realtime"
+
+// triggerCreateKindsUsage lists the kinds `trigger create` makes.
+const triggerCreateKindsUsage = "kafka|nats|redis_streams|queue|realtime"
 
 // triggerCronHint answers a cron filter or cron flag on a triggers command.
 const triggerCronHint = "cron schedules are not triggers; use `gregale cron list --app <slug>` and `gregale cron update <id>`"
@@ -134,6 +147,17 @@ func triggerKindValid(kind string) bool {
 
 func triggerBrokerKindValid(kind string) bool {
 	return kind != string(api.TriggerKindCron) && triggerKindValid(kind)
+}
+
+// triggerCreateKindValid reports whether `trigger create` makes kind:
+// a broker kind other than the delisted sqs_compat.
+func triggerCreateKindValid(kind string) bool {
+	for _, name := range triggerCreateKindNames {
+		if kind == name {
+			return true
+		}
+	}
+	return false
 }
 
 func triggerStateValid(state string) bool {
@@ -236,7 +260,7 @@ func cmdTriggersCreate(args []string) int {
 		return printErr("Invalid lock", lockErr)
 	}
 	flags, pos := splitArgsForFlags(args, "disabled", "enabled")
-	usage := "usage: gregale trigger create --app <slug> --kind <" + triggerBrokerKindsUsage + "> [flags]"
+	usage := "usage: gregale trigger create --app <slug> --kind <" + triggerCreateKindsUsage + "> [flags]"
 	fs := triggerFlagSet("triggers-create", usage)
 	appSlug := fs.String("app", "", "app slug (required)")
 	kind := fs.String("kind", "", "trigger kind (required)")
@@ -263,13 +287,13 @@ func cmdTriggersCreate(args []string) int {
 	if !triggerKindValid(*kind) {
 		// cron is a valid trigger kind but not one `triggers create` makes,
 		// so list only the kinds this command accepts.
-		return triggerUsageError(usage, "invalid --kind %q (expected one of %s)", *kind, triggerBrokerKindsUsage)
+		return triggerUsageError(usage, "invalid --kind %q (expected one of %s)", *kind, triggerCreateKindsUsage)
 	}
 	if *kind == string(api.TriggerKindCron) {
 		return triggerUsageError(usage, "kind=cron is managed by `gregale cron create`; POST /v1/triggers rejects cron rows")
 	}
-	if !triggerBrokerKindValid(*kind) {
-		return triggerUsageError(usage, "invalid --kind %q (expected one of %s)", *kind, triggerBrokerKindsUsage)
+	if !triggerCreateKindValid(*kind) {
+		return triggerUsageError(usage, "invalid --kind %q (expected one of %s)", *kind, triggerCreateKindsUsage)
 	}
 	if *slug == "" || !explicit["config"] {
 		return triggerUsageError(usage, "--slug and --config are required for non-cron triggers")

@@ -7124,8 +7124,9 @@ func runLogsExplainingMissingArchive(ctx context.Context, slug, deployment strin
 		// removed.
 		if e.Event == "degraded" {
 			// A parked app has no running instance; show its newest
-			// retained logs instead of only naming the archive flags (H10-72).
-			if archive == nil && !follow && !jsonOutput && isNoRunningInstanceLogs(e.Data) {
+			// retained logs instead of only naming the archive flags (H10-72),
+			// under --json too, where scripts and agents read logs (H14-126).
+			if archive == nil && !follow && isNoRunningInstanceLogs(e.Data) {
 				parkedFallback = true
 				return true, 0
 			}

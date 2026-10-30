@@ -1,6 +1,8 @@
 package main_test
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -8,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	main "github.com/onebox-faas/faas/cmd/gregale"
 )
 
 // ADR-20261026145832: exclusive keyed work is a --lock on the job run, cron
@@ -63,6 +67,23 @@ func TestLockOnJobRunCronAndTrigger(t *testing.T) {
 		if code, _, _ := runCLI(t, args...); code == 0 || len(requests) != 0 {
 			t.Errorf("%v = %d with requests %v; want a local usage error", args, code, requests)
 		}
+	}
+}
+
+// A failed binding names the retry command; a key with an apostrophe stays
+// one shell argument in it.
+func TestLockBindingRetryQuotesTheKey(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = fmt.Fprint(w, `{"title":"boom","status":500}`)
+	}))
+	defer srv.Close()
+
+	lock := &main.ExclusiveLock{Policy: "sync", Key: json.RawMessage(`"it's"`)}
+	_, err := main.BindExclusiveLock(context.Background(), main.NewClient(srv.URL, "test-token"), "cron", "cron-1", lock)
+	if want := `--key '"it'\''s"' cron cron-1`; err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("bind error = %v, want the retry command to contain %q", err, want)
 	}
 }
 

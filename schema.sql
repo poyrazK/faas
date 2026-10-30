@@ -259,16 +259,17 @@ BEGIN
                         AND i.state IN ('waking','cold_booting','running','draining','warm')), 0)::bigint
       INTO node_vcpu_budget, node_cpu_budget, used_vcpu, used_cpu
       FROM compute_nodes n WHERE n.id = p_node_id;
-    -- A quiet-pause discount is the scheduler's measurement; it never lets
-    -- bookings pass api.QuietPauseMaxVCPUOvercommitPercent (300) of a budget.
-    quiet_vcpu := least(greatest(coalesce(p_quiet_vcpu, 0), 0), node_vcpu_budget * 2);
+    -- A discount is the scheduler's measurement: quiet-paused instances, and
+    -- since ADR 20261029151111 measured instances' unused CPU. It never lets
+    -- bookings pass api.MeasuredCPUMaxOvercommitPercent (700) of a budget.
+    quiet_vcpu := least(greatest(coalesce(p_quiet_vcpu, 0), 0), node_vcpu_budget * 6);
     IF p_vcpu > 0 AND node_vcpu_budget > 0 AND used_vcpu - quiet_vcpu + p_vcpu > node_vcpu_budget THEN
         RAISE EXCEPTION 'node vCPU headroom exhausted'
             USING ERRCODE = '23514', CONSTRAINT = 'instance_node_capacity',
                   DETAIL = format('resource=vcpu used_vcpu=%s quiet_vcpu=%s admit_vcpu=%s budget_vcpu=%s',
                                   used_vcpu, quiet_vcpu, p_vcpu, node_vcpu_budget);
     END IF;
-    quiet_cpu := least(greatest(coalesce(p_quiet_cpu_millicores, 0), 0), node_cpu_budget * 2);
+    quiet_cpu := least(greatest(coalesce(p_quiet_cpu_millicores, 0), 0), node_cpu_budget * 6);
     IF p_cpu_millicores > 0 AND node_cpu_budget > 0 AND used_cpu - quiet_cpu + p_cpu_millicores > node_cpu_budget THEN
         RAISE EXCEPTION 'node CPU headroom exhausted'
             USING ERRCODE = '23514', CONSTRAINT = 'instance_node_capacity',
@@ -43187,6 +43188,7 @@ CREATE TABLE public.managed_postgres_databases (
     clone_resource_role text DEFAULT 'target'::text NOT NULL,
     accounting_required boolean DEFAULT true NOT NULL,
     org_id uuid NOT NULL,
+    purge_after timestamp with time zone,
     CONSTRAINT managed_postgres_clone_has_restore CHECK (((environment_clone_operation_id IS NULL) OR ((restore_source_database_id IS NOT NULL) AND (restore_source_resource_id IS NOT NULL) AND (restore_point_in_time IS NOT NULL)))),
     CONSTRAINT managed_postgres_clone_is_independent CHECK (((environment_clone_operation_id IS NULL) OR ((id <> restore_source_database_id) AND ((provider_resource_id IS NULL) OR (provider_resource_id <> restore_source_resource_id))))),
     CONSTRAINT managed_postgres_databases_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 30))),
@@ -74694,6 +74696,13 @@ CREATE INDEX managed_postgres_usage_account_period_idx ON public.managed_postgre
 --
 
 CREATE INDEX managed_realtime_channel_batches_cleanup_idx ON public.managed_realtime_channel_batches USING btree (endpoint_id, created_at);
+
+
+--
+-- Name: managed_realtime_channel_heads_held_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_channel_heads_held_idx ON public.managed_realtime_channel_heads USING btree (endpoint_id) WHERE (oldest_sequence < next_sequence);
 
 
 --

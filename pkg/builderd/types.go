@@ -205,6 +205,9 @@ type BuildOutcome struct {
 	// DependencyCacheDeferred: the guest exported only the image, and the
 	// driver kept the drive for DeferredCacheVM.ExportDeferredCache.
 	DependencyCacheDeferred bool
+	// Timings is where the build spent its time in the builder VM, as the
+	// guest reported it; nil from older guests.
+	Timings *api.BuildTimings
 	// WarmSnapshotError reports a non-fatal cache-capture failure. The build
 	// artifact remains authoritative and can still complete successfully.
 	WarmSnapshotError string

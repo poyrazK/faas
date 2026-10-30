@@ -9,8 +9,12 @@
 # Names are canonical database node names. Turning a node off again is safe:
 # its next vmmd stops every bridge unit it finds before serving. Widen the
 # list only after the canary has served and restarted cleanly with it on.
-vmmd_bridge_canary_nodes:
-  - fsn-2.faas
+#
+# Paused 2026-10-29: on rc.305, fsn-2's first bridge units never started.
+# systemd refused NetworkNamespacePath=/run/netns/fc-<instance> with EINVAL
+# (status 225/NETWORK), and the woken guests answered 503. Put fsn-2.faas back
+# after a metal run reproduces and fixes that on a production-shaped host.
+vmmd_bridge_canary_nodes: []
 vmmd_bridge_unprivileged: "{{ (faas_join_database_node | default(faas_node_name | default(''))) in vmmd_bridge_canary_nodes }}"
 vmmd_instance_bridge_sessions: "{{ (faas_join_database_node | default(faas_node_name | default(''))) in vmmd_bridge_canary_nodes }}"
 vmmd_instance_bridge_unit: "{{ (faas_join_database_node | default(faas_node_name | default(''))) in vmmd_bridge_canary_nodes }}"

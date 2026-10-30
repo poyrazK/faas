@@ -588,8 +588,13 @@ On-demand captures need no Pyroscope backend. Set `FAAS_PROFILING_ON_DEMAND=1`
 for apid (captures API), imaged (stamps dormant collectors into new
 deployments), gatewayd-internal (slow-request captures) and schedd
 (CPU-saturation captures), apply the `profile_captures` migrations, and release
-guest-init, vmmd, schedd and the managed runtime bases together. Existing deployments gain
-collectors on their next deploy. Continuous heap profiles additionally need
+guest-init, vmmd, schedd and the managed runtime bases together. Captures are a
+preview: release them to accounts with the `profile_captures` platform flag
+(`gregalectl flags allow --capability profile-captures …`). apid hides the API,
+schedd skips automatic captures and imaged stamps no collectors for accounts
+it is not released to. Existing deployments gain collectors on their next
+deploy. Capture health has its own alerts and runbook
+(docs/runbooks/FaasProfileCaptures.md). Continuous heap profiles additionally need
 the Pyroscope backend above; they are stored as
 `memory:inuse_space:bytes:space:bytes` under the same tenant selectors.
 

@@ -101,6 +101,7 @@ var memDispatched = map[string]bool{
 	"FailRunningInstanceIfOwnedByNode":                        true,
 	"FinalizeManagedPostgresBindingRotationsForApp":           true,
 	"FinancialEvidenceCoverage":                               true,
+	"ListFinancialPriceSnapshots":                             true,
 	"FinalizeObjectS3CredentialRotationsForApp":               true,
 	"FinishPublishedEventRecipient":                           true,
 	"GetAppErrorSample":                                       true,
@@ -453,6 +454,15 @@ func (s *Mem) FinancialEvidenceCoverage(p0 context.Context) (time.Time, error) {
 		return o.FinancialEvidenceCoverage(p0)
 	}
 	return s.MemStore.FinancialEvidenceCoverage(p0)
+}
+
+func (s *Mem) ListFinancialPriceSnapshots(p0 context.Context, p1 string, p2 time.Time) ([]state.FinancialPriceSnapshot, error) {
+	if o, ok := s.over.(interface {
+		ListFinancialPriceSnapshots(context.Context, string, time.Time) ([]state.FinancialPriceSnapshot, error)
+	}); ok {
+		return o.ListFinancialPriceSnapshots(p0, p1, p2)
+	}
+	return s.MemStore.ListFinancialPriceSnapshots(p0, p1, p2)
 }
 
 func (s *Mem) DeleteAppPermanently(p0 context.Context, p1 string) error {

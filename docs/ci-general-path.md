@@ -94,6 +94,8 @@ the change, and check each one on the app's public URL:
 | `TestE2E_EdgeRules_KindsActOnPublicTraffic` | one rule of each Hobby kind (redirect, rewrite, headers, CORS, IP with HEAD covered by a GET rule, limit, validate, maintenance, throttle, JWT, cache) acts on public traffic, a deleted rule stops acting, and a `*` method or an `X-Forwarded-For` header op is refused |
 | `TestE2E_EdgeRules_ListsAndRollback` | a list edit reaches the rule that uses it, a rollback restores an earlier rule set on the gateways, a list in use cannot be deleted, and a rollback to a version whose list is gone is refused |
 | `TestE2E_EdgeRules_DeletedAppRulesStopApplying` | a deleted app's `*` rule stops applying to the account's other apps |
+| `TestE2E_EdgeRules_TraceMatchesGateway` | `gregale edge rule trace` (the real CLI, the dashboard's engine) predicts what the gateway does: its status, Location, Retry-After and problem code when the edge answers, the app's final path and response headers when the request continues |
+| `TestE2E_EdgeRules_ManifestRoutesServePaths` | a `gregale.yaml` route applied with a project sends a custom host's path to another service with its prefix stripped, the rest of the host stays on the domain's app, and `routes: []` removes the route |
 
 The tests seed a deployment after the source/build/image pipeline has produced
 its durable state. They must not become a second KVM suite. Add a scenario here
