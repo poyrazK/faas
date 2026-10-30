@@ -197,6 +197,18 @@ data-preserving rotation, and rejection of retired sessions and fresh logins.
 Version 7 also requires independent proof of the exact source and requested
 restore point, and replay of the same physical target. Versions 1–7 must be
 replaced by a new qualification run.
+
+A provider that holds databases for the delete grace period
+([ADR-20261029174950](adr/20261029174950-managed-postgres-delete-grace-period.md))
+must also pass `deletion_hold_probe` on the disposable resource. Neon documents
+the endpoint `disabled` flag only in its API schema, so the run checks what it
+does:
+- With the hold set, the compute suspends and a new connection is refused.
+- After the release, the next connection wakes it.
+
+The report carries this as `deletion_hold` evidence. An approval made before
+the check existed has no `deletion_hold` and still validates until it expires;
+run qualification again to prove the hold before customers can delete.
 The [2026-10-07 live acceptance](ops/evidence/20261007-managed-postgres-qualification/REPORT.md)
 passed the version-7 PostgreSQL 18 provider and lifecycle contract. Snapshot
 capture and native copy remain unqualified; the evidence does not enable
