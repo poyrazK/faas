@@ -241,6 +241,7 @@ touch them. The tables below map each earlier name.
 | `gregale deployment diff` | `gregale release diff` |
 | `gregale deployment runtime` | `gregale release runtime` |
 | `gregale deployment summary` | `gregale release summary` |
+| `gregale deployment timeline` | `gregale release timeline` |
 | `gregale deployment wait` | `gregale release wait` |
 | `gregale deployments alias` | `gregale release alias` |
 | `gregale deploys cancel` | `gregale release cancel` |

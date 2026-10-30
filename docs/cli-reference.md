@@ -1641,6 +1641,23 @@ gregale release diff v42 --against v38 --app my-api
 
 Covers code, config keys, packages, runtime settings and the release command.
 
+### release timeline
+
+Show a release&#39;s rollout, gates, approvals and history
+
+`gregale release timeline [--app <SLUG>] <id|vN>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug, to resolve vN revisions |  |
+
+Examples:
+
+```sh
+gregale release timeline v42 --app my-api
+gregale release timeline v42 --app my-api --json
+```
+
 ### release hide
 
 Hide one deployment from the list

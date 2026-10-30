@@ -20,7 +20,7 @@ Entries are kept for 30 days.
 ```bash
 gregale dlq list my-api                     # newest first, every source
 gregale dlq list my-api --source trigger    # only one source
-gregale dlq inspect my-api <event-id>       # payload, headers and the last error
+gregale dlq get my-api <event-id>       # payload, headers and the last error
 gregale dlq replay my-api <event-id>        # put one entry back to work
 gregale dlq replay my-api --all             # replay up to --limit pending entries
 gregale dlq purge my-api <event-id>         # delete one entry

@@ -2751,6 +2751,7 @@ var cliCommands = []cliCommand{
 			{Position: 1, Role: cliCompletionDeploymentID},
 			{Path: []string{"advance"}, Position: 1, Role: cliCompletionDeploymentID},
 			{Path: []string{"summary"}, Position: 1, Role: cliCompletionDeploymentID},
+			{Path: []string{"timeline"}, Position: 1, Role: cliCompletionDeploymentID},
 			{Path: []string{"wait"}, Position: 1, Role: cliCompletionDeploymentID},
 			{Path: []string{"set-min-instances"}, Position: 1, Role: cliCompletionDeploymentID},
 		},
@@ -2767,6 +2768,9 @@ var cliCommands = []cliCommand{
 			{Name: "advance", Positionals: []string{"<ID|vN>"}, Short: "Advance a canary by one stage with route enforcement", Examples: []string{"gregale deployment advance DEPLOYMENT_UUID --expected-step 1", "gregale deployment advance v42 --app my-api --expected-step 1"}, Flags: []cliFlag{{Name: "expected-step", Value: "N", Short: "observed current canary step (see deployment summary)", Req: true}, {Name: "app", Value: "SLUG", Short: "app slug, to resolve a vN revision"}}},
 			{Name: "diff", Short: "Show what changed since the previous release", Notes: []string{"Covers code, config keys, packages, runtime settings and the release command."}, Examples: []string{"gregale release diff v42 --app my-api", "gregale release diff v42 --against v38 --app my-api"}, Positionals: []string{"<id|vN>"}, Flags: []cliFlag{
 				{Name: "against", Value: "ID|vN", Short: "release to compare with (default: the release that served before it)"},
+				{Name: "app", Value: "SLUG", Short: "app slug, to resolve vN revisions"},
+			}},
+			{Name: "timeline", Short: "Show a release's rollout, gates, approvals and history", Examples: []string{"gregale release timeline v42 --app my-api", "gregale release timeline v42 --app my-api --json"}, Positionals: []string{"<id|vN>"}, Flags: []cliFlag{
 				{Name: "app", Value: "SLUG", Short: "app slug, to resolve vN revisions"},
 			}},
 			{Name: "summary", Short: "Show the release diff and rollback target", Examples: []string{"gregale release summary --app my-api --interactive", "gregale release summary v42 --app my-api", "gregale release summary v42 --app my-api --json"}, Positionals: []string{"[<id|vN>]"}, Flags: []cliFlag{
