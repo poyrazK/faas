@@ -568,6 +568,16 @@ const (
 	ImageSignatureVerificationTTL                   = 24 * time.Hour
 )
 
+// Platform base provenance (ADR-20261029155852): imaged reads at most
+// BaseProvenanceMaxBundles Sigstore bundles for a base digest, each manifest
+// and bundle bounded, and gives the host's cosign a fixed time per bundle.
+const (
+	BaseProvenanceMaxBundles             = 8
+	BaseProvenanceMaxBundleBytes   int64 = 1 << 20
+	BaseProvenanceMaxManifestBytes int64 = 64 << 10
+	BaseProvenanceVerifyTimeout          = 30 * time.Second
+)
+
 // Owner-authorized deployment GET checks retain only a bounded response preview.
 const DeploymentResponseCheckMaxBodyBytes = 4096
 const DeploymentResponseCheckMaxPathBytes = 2048
