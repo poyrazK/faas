@@ -73,7 +73,7 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 			return nil, nil, nil, nil, nil, nil, err
 		}
 	}
-	usageOptions := managedpostgres.UsageCollectorOptions{Logger: log}
+	usageOptions := managedpostgres.UsageCollectorOptions{Logger: log, Exclusive: store.TryAcquireUsageSweep}
 	if metrics != nil {
 		usageOptions.Observe = metrics.ObserveUsage
 		usageOptions.ObserveSweep = metrics.ObserveUsageSweep

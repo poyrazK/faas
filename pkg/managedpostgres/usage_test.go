@@ -286,6 +286,8 @@ type usageTestProvider struct {
 	windows       []UsageWindow
 	usageError    func(UsageWindow) error
 	usageReadings func(UsageWindow) []MeterReading
+	// backgroundCalls counts Usage calls made under WithBackgroundRequests.
+	backgroundCalls int
 }
 
 func (p *usageTestProvider) Capabilities() Capabilities {
@@ -297,7 +299,10 @@ func (p *usageTestProvider) Capabilities() Capabilities {
 	return capabilities
 }
 
-func (p *usageTestProvider) Usage(_ context.Context, providerResourceID string, window UsageWindow) (Usage, error) {
+func (p *usageTestProvider) Usage(ctx context.Context, providerResourceID string, window UsageWindow) (Usage, error) {
+	if BackgroundRequests(ctx) {
+		p.backgroundCalls++
+	}
 	p.usageCalls = append(p.usageCalls, providerResourceID)
 	p.windows = append(p.windows, window)
 	if p.usageError != nil {

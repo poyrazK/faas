@@ -46,7 +46,8 @@ func TestUsageFleetRecoveryPrecedesOtherDatabaseCorrections(t *testing.T) {
 	to := now.Truncate(time.Hour)
 	for id, database := range store.databases {
 		if id != "db-019" {
-			seedUsageFleetCoverage(t, store, []Database{database}, to.Add(-3*time.Hour), to, now)
+			// Observed an hour ago, so their corrections are due.
+			seedUsageFleetCoverage(t, store, []Database{database}, to.Add(-3*time.Hour), to, now.Add(-time.Hour))
 		}
 	}
 	// A deterministic shared quota simulation, not live provider qualification.
@@ -66,7 +67,9 @@ func TestUsageFleetRecoveryPrecedesOtherDatabaseCorrections(t *testing.T) {
 			t.Fatal(err)
 		}
 		summary, err := collector.Collect(ctx)
-		if !errors.Is(err, ErrUnavailable) || summary.Discovered != 20 {
+		// Corrections exhaust the quota in the first sweep; later sweeps only
+		// finish the replays it cut short.
+		if (sweep == 0 && !errors.Is(err, ErrUnavailable)) || (err != nil && !errors.Is(err, ErrUnavailable)) || summary.Discovered != 20 {
 			t.Fatalf("sweep %d: %+v, %v", sweep, summary, err)
 		}
 		progress, err := store.UsageProgress(ctx, "account", "db-019", time.Hour)
