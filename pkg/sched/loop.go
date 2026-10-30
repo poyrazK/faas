@@ -4031,6 +4031,8 @@ func (h *httpGatewaySynth) invokeWithStatusUsing(ctx context.Context, client *ht
 		err := fmt.Errorf("sched: invocation: gateway returned %d%s", resp.StatusCode, dispatchProblemSuffix(resp))
 		if resp.StatusCode >= http.StatusBadRequest && resp.StatusCode < http.StatusInternalServerError {
 			err = fmt.Errorf("%w: %w", ErrPermanentInvoke, err)
+		} else if resp.StatusCode >= http.StatusInternalServerError {
+			err = dispatchRefusedError{err: err}
 		}
 		return inv, 0, err
 	}

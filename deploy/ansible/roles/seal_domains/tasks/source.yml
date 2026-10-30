@@ -11,6 +11,7 @@
       - faas_seal_domain_source_recipient_src | length > 0
       - faas_seal_domain_source_writes in ['', 'fleet', 'dual', 'domain']
       - faas_seal_domain_source_writes != 'domain' or (faas_seal_domain_source_readers_verified | bool)
+      - not (faas_seal_domain_source_contracted | bool) or faas_seal_domain_source_writes == 'domain'
     fail_msg: >-
       The source seal domain runs where githubd runs (a control-plane or
       single-box host). Set faas_seal_domain_source_identity_src and
@@ -18,6 +19,7 @@
       `gregalectl seal-domain init --domain source`. writes=domain also
       needs faas_seal_domain_source_readers_verified once every githubd
       verified the domain and the previous release left the rollback window.
+      faas_seal_domain_source_contracted needs writes=domain.
 
 # 0400 root:root. systemd hands the identity to githubd alone as a
 # credential; no other unit names it.
@@ -72,6 +74,26 @@
     mode: "0755"
   loop: [faas-githubd, faas-apid]
 
+# The contract step (ADR 20261022111812, step 4): githubd keeps no identity
+# that opens a value the domain does not. The check writes nothing and
+# fails while a webhook secret copy still opens with the fleet or host
+# identity (or has none yet), or an unexpired install token only they open;
+# writes=domain keeps new values off them.
+- name: seal_domains — check every source value opens with the domain alone before githubd drops the fleet identity
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/gregalectl
+      - seal-domain
+      - migrate
+      - --domain
+      - source
+      - --check
+      - --db-env
+      - "{{ faas_seal_domain_db_env }}"
+      - --json
+  changed_when: false
+  when: faas_seal_domain_source_contracted | bool
+
 - name: seal_domains — give githubd the source domain identity
   ansible.builtin.template:
     src: 60-faas-seal-domain-source-reader.conf.j2
@@ -83,6 +105,20 @@
 
 - name: seal_domains — restart githubd before proving the domain
   ansible.builtin.meta: flush_handlers
+
+# systemd places a running unit's credentials in its credentials directory:
+# a contracted githubd has the domain identity and its GitHub App key there,
+# and no fleet or host identity.
+- name: seal_domains — prove a contracted githubd runs without the fleet and host identities
+  ansible.builtin.find:
+    paths: /run/credentials/faas-githubd.service
+  register: faas_seal_domain_source_credentials
+  failed_when: >-
+    'faas_seal_domain_source' not in (faas_seal_domain_source_credentials.files | map(attribute='path') | map('basename') | list) or
+    'faas_github_app_key_unit' not in (faas_seal_domain_source_credentials.files | map(attribute='path') | map('basename') | list) or
+    'faas_fleet_age_identity' in (faas_seal_domain_source_credentials.files | map(attribute='path') | map('basename') | list) or
+    'faas_host_age_identity' in (faas_seal_domain_source_credentials.files | map(attribute='path') | map('basename') | list)
+  when: faas_seal_domain_source_contracted | bool
 
 - name: seal_domains — prove this node opens the source domain probe
   ansible.builtin.command:

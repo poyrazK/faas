@@ -98,7 +98,7 @@ func (h *Handler) sharedRuntimeAppLayers(ctx context.Context, runtime, archivePa
 	if start < 0 || start > len(layers) {
 		return sharedRuntimeLayers{}, fmt.Errorf("runtime base layer boundary %d is outside artifact layer count %d", start, len(layers))
 	}
-	report := &appLayerReport{}
+	report := &appLayerReport{PythonInterpreter: sharedruntime.PythonInterpreter(runtime)}
 	filtered, cleanup, filterErr := filterAppLayers(layers[start:], report)
 	reason := ""
 	switch {
@@ -107,7 +107,7 @@ func (h *Handler) sharedRuntimeAppLayers(ctx context.Context, runtime, archivePa
 	case len(report.Unexpected) > 0:
 		reason = "content_outside_app"
 	default:
-		argv, why := sharedRuntimeStart(*manifest, app, report.PackageJSON)
+		argv, why := sharedRuntimeStart(*manifest, app, runtime, report.PackageJSON)
 		if why != "" {
 			reason = why
 			break
@@ -117,6 +117,10 @@ func (h *Handler) sharedRuntimeAppLayers(ctx context.Context, runtime, archivePa
 			manifest.Env = map[string]string{}
 		}
 		manifest.Env["PATH"] = sharedruntime.RunnerPath
+		if report.PythonInterpreter != "" {
+			manifest.Env["PATH"] = sharedruntime.PythonRunnerPath
+			manifest.Env["VIRTUAL_ENV"] = "/app/.venv"
+		}
 		return sharedRuntimeLayers{layers: filtered, cleanup: cleanup}, nil
 	}
 	if filterErr == nil {
@@ -136,20 +140,25 @@ func (h *Handler) sharedRuntimeAppLayers(ctx context.Context, runtime, archivePa
 }
 
 // sharedRuntimeStart resolves the app's start command for the runner base,
-// which ships no npm: the customer's start command when set, else the
-// image's shell-form command.
-func sharedRuntimeStart(manifest api.AppManifest, app state.App, packageJSON []byte) ([]string, string) {
+// which ships no npm and no Python package manager: the customer's start
+// command when set, else the image's shell-form command.
+func sharedRuntimeStart(manifest api.AppManifest, app state.App, runtime string, packageJSON []byte) ([]string, string) {
+	resolve := func(command string) ([]string, string) { return sharedruntime.ResolveStart(command, packageJSON) }
+	needsTool := func(name string) bool { return name == "npm" }
+	if sharedruntime.PythonRuntime(runtime) {
+		resolve, needsTool = sharedruntime.ResolvePythonStart, sharedruntime.PythonPackageManager
+	}
 	command := strings.TrimSpace(app.StartCommand)
 	if command == "" {
 		argv := manifest.Entrypoint
 		switch {
 		case len(argv) == 3 && (argv[0] == "/bin/sh" || argv[0] == "/bin/bash" || argv[0] == "sh" || argv[0] == "bash") && argv[1] == "-c":
 			command = argv[2]
-		case len(argv) > 0 && argv[0] != "npm":
+		case len(argv) > 0 && !needsTool(argv[0]):
 			return argv, ""
 		default:
 			command = strings.Join(argv, " ")
 		}
 	}
-	return sharedruntime.ResolveStart(command, packageJSON)
+	return resolve(command)
 }

@@ -628,7 +628,8 @@ func planCreatedSlugs(plan api.PlanResponse) map[string]bool {
 
 // printDefaultMemoryServices names the new services that start with the
 // project default RAM because their Compose file declares no memory, which
-// is easy to miss: a standalone app gets the plan's RAM (Hunt 14 H14-36).
+// is easy to miss: a standalone app gets the plan's RAM, capped at
+// api.StandaloneAppDefaultMaxRAMMB (Hunt 14 H14-36).
 //
 //nolint:errcheck // a failed write is handled like printPlanTextWithExplain's
 func printDefaultMemoryServices(w io.Writer, plan api.PlanResponse) {

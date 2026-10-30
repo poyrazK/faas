@@ -1062,7 +1062,12 @@ const (
 	// after the first page goes quiet so terminal persistence does not race
 	// serial delivery.
 	jobTaskLogSettleWindow = 250 * time.Millisecond
-	jobTaskLogPollInterval = 25 * time.Millisecond
+	// A task that ran for a few milliseconds can ship its exit envelope before
+	// any of its output is in the ring, and an empty first snapshot used to end
+	// the capture with nothing. Wait this long for a first line: vmmd's console
+	// tail polls an idle console every consoleTailIdle (200 ms).
+	jobTaskLogFirstLineWindow = 500 * time.Millisecond
+	jobTaskLogPollInterval    = 25 * time.Millisecond
 )
 
 // captureJobTaskLogs copies vmmd's bounded per-instance ring before the job
@@ -1078,9 +1083,8 @@ func (e *Engine) captureJobTaskLogs(ctx context.Context, nodeID, instanceID stri
 	buf := make([]byte, 0, 4096)
 	truncated := false
 	var lastSeq int64
-	var sawLine bool
 	sequenced := true
-	settleUntil := time.Time{}
+	settleUntil := time.Now().Add(jobTaskLogFirstLineWindow)
 	for {
 		// Logs snapshots are inclusive, so advance one past the last line
 		// already persisted to avoid duplicating it on a replay.
@@ -1117,7 +1121,6 @@ func (e *Engine) captureJobTaskLogs(ctx context.Context, nodeID, instanceID stri
 				sequenced = false
 			}
 			gotLine = true
-			sawLine = true
 			buf = append(buf, line.Line...)
 			if !strings.HasSuffix(line.Line, "\n") {
 				buf = append(buf, '\n')
@@ -1138,7 +1141,7 @@ func (e *Engine) captureJobTaskLogs(ctx context.Context, nodeID, instanceID stri
 		}
 		if gotLine {
 			settleUntil = time.Now().Add(jobTaskLogSettleWindow)
-		} else if !sawLine || time.Now().After(settleUntil) {
+		} else if time.Now().After(settleUntil) {
 			return string(buf), truncated, nil
 		}
 

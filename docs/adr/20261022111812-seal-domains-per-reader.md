@@ -763,6 +763,56 @@ from meterd.
   `account`, incident copies for `alerting`, and application standards for
   `edge`. Before, every domain's summary showed the `edge` reason.
 
+## Implemented: the source contract step
+
+`source` contracts the same way, through `faas_seal_domain_source_contracted`.
+
+- **githubd runs on the domain alone.** With neither
+  `FAAS_HOST_AGE_IDENTITY_PATH` nor `FAAS_HOST_AGE_KEY` set it used to fall
+  back to `/etc/faas/secrets/host.age`. With the source domain staged it
+  now loads no legacy identity: the source fetcher, the webhook secret
+  resolver and the install-token service open with the domain identity
+  only. An older githubd falls back to that path, which it cannot read, so
+  an environment contracts only once its previous release carries this one.
+- **The drop-in keeps githubd's other credentials.** githubd's base unit
+  also loads the GitHub App key and the public fleet recipient, which the
+  reset drops with the identities. The contracted drop-in loads both again,
+  and the role's proof checks that the App key is there. The role test
+  requires every credential a base unit loads to be either a legacy
+  identity the proof checks for, or loaded again after the reset.
+- **Unexpired install tokens count.** The migration does not re-seal
+  install tokens: each expires within the hour, and githubd seals its
+  successor under the write mode. But githubd reopens an unexpired token
+  from its row rather than mint a new one. `--check` and the migration
+  therefore report the unexpired tokens that a legacy identity opens and
+  the domain does not as skipped. The check fails on them, and on webhook
+  secret copies the migration would still write.
+
+## Implemented: the build contract step for imaged
+
+`build` contracts imaged through `faas_seal_domain_build_contracted`.
+vmmd, the domain's other reader, keeps the fleet and host identities for
+`runtime` values until that domain contracts.
+
+- **Crash captures were the blocker, and are not one.** imaged's ADR-733
+  at-rest pass encrypts a capture taken in plaintext to the fleet
+  recipient, and decrypts it with the fleet identity when a fork needs it.
+  But schedd always asks vmmd to seal a capture at the source
+  (`WithSealedCrashCaptures(true)` whenever crash snapshots are on), and
+  vmmd seals it to the runtime domain once staged, so no capture reaches
+  that pass. `crash_captures.sealed_key` stays a `runtime` column.
+  `--check --domain build` counts unexpired ready captures in an imaged
+  state (`present`, `absent`, `staging`, `staged`) as skipped, in case one
+  exists, and fails on them. They expire within seven days.
+- **imaged already runs on the domain alone.** Without
+  `FAAS_HOST_AGE_IDENTITY_PATH` it loads no legacy identity and opens
+  registry passwords with the build identity. It now warns about the unset
+  path only when the build domain is not staged either, and logs
+  `fleet_identity`. An older imaged behaves the same, so contracting does
+  not hold back a rollback.
+- The contracted drop-in resets imaged's credentials and unsets the path,
+  as for the other domains. imaged's other drop-ins all sort after it.
+
 ## CD and node join stage the domain keys
 
 Each domain's key pair is a pair of GitHub environment secrets:

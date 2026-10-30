@@ -22,7 +22,10 @@ func (r ProjectEnvironmentCleanupResources) ValidateForEnvironment(slug string) 
 		return ErrInvalidArgument
 	}
 	for _, resource := range r.Postgres {
-		if resource.AppID == "" || resource.Scope != slug || resource.BindingID == "" || resource.DatabaseID == "" {
+		// A stage copy unbound before deletion has no app or binding left;
+		// only deleting the clone database itself is a valid unbound cleanup.
+		unbound := resource.BindingID == "" && resource.DeleteDatabase
+		if (resource.AppID == "" || resource.BindingID == "") && !unbound || resource.Scope != slug || resource.DatabaseID == "" {
 			return ErrInvalidArgument
 		}
 		if resource.DeleteDatabase && (resource.DatabaseName == "" || resource.RestoreSourceDatabaseID == "") {

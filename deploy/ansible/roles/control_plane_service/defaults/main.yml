@@ -60,6 +60,15 @@ faas_route_probe_url: http://127.0.0.1:8080
 faas_workload_identity_source_dir: ""
 faas_workload_jwks_path: /etc/faas/workload-identity.jwks.json
 faas_workload_identity_issuer: ""
+
+# ADR-989 app outbound relay listener (tasks/outbound_relay.yml). Empty keeps
+# the relay off. A split box sets "tcp://0.0.0.0:8096", where compute vmmd
+# dials it (faas_vmmd_outbound_relay_target): this role then issues
+# outboundd's relay server leaf. A single box sets
+# "unix:///run/faas/outboundd-relay.sock". Either needs the workload-identity
+# JWKS above. Turn the compute side on with vmmd_service's
+# faas_vmmd_outbound_relay_tls_managed.
+faas_outboundd_relay_listen: ""
 # ADR-1736: schedd's listen address, rendered into both schedd's
 # FAAS_SCHEDD_LISTEN_ADDR and faas-schedd.socket. The split-box manifest sets
 # it from daemons.schedd.bind. Empty keeps schedd.toml in charge and leaves the

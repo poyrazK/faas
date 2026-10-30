@@ -2,7 +2,7 @@
 
 Alerts: `FaasObjectStorageInventoryFailing`, `FaasS3GatewayErrorRateHigh`,
 `FaasObjectStorageUsageExportStale`, `FaasObjectStorageRegionNearlyFull`,
-`FaasObjectStorageRegionFull`.
+`FaasObjectStorageRegionFull`, `FaasS3GatewayReadUsageFlushFailing`.
 Sources: apid's inventory sweep (`pkg/apid/object/storage_accounting.go`),
 `s3-gatewayd` (`pkg/s3gateway`) and its usage exporter
 (`cmd/s3-gatewayd/main.go`).
@@ -12,9 +12,12 @@ Metrics: `faas_object_storage_inventory_scans_total{outcome}`,
 `s3_gateway_usage_export_last_success_timestamp_seconds{backend}`,
 `faas_object_storage_backend_buckets{region,backend}`,
 `faas_object_storage_backend_bucket_limit{region,backend}`,
-`faas_object_storage_region_full{region}`.
+`faas_object_storage_region_full{region}`,
+`s3_gateway_read_admission_decisions_total{source}`,
+`s3_gateway_read_usage_flushes_total{outcome}`.
 Decision records: [ADR 20261023223000](../adr/20261023223000-object-storage-bucket-scoped-availability.md),
-[ADR 20261029174627](../adr/20261029174627-object-storage-backend-pools.md) (bucket placement).
+[ADR 20261029174627](../adr/20261029174627-object-storage-backend-pools.md) (bucket placement),
+[ADR 20261030075301](../adr/20261030075301-object-storage-reads-off-the-database.md) (cached read admission).
 Severity: warn.
 
 ## Symptom
@@ -29,6 +32,10 @@ Severity: warn.
 - **Usage export stale.** With provider-report accounting, admission refuses
   transfers on every bucket of that backend once reports exceed
   `max_report_age_seconds`.
+- **Read count flushes failing.** `s3-gatewayd` admits `GET`/`HEAD` from a
+  per-bucket decision it caches for 2 s and writes read counts every second.
+  While flushes fail, counts wait in memory; while the decisions cannot be
+  refreshed, reads keep working for 30 s and then answer `503`.
 - **Region nearly full or full.** Each customer bucket is its own provider
   bucket, and a provider project holds a limited number (OVH: 100, at most
   1,000 on request). Once every backend in a region's `pools` entry reaches
@@ -46,7 +53,10 @@ Severity: warn.
    holding its key, not an outage.
 3. Usage export: `s3_gateway_usage_exports_total{outcome}` by backend, and the
    exporter's provider credentials.
-4. Capacity: `faas_object_storage_backend_buckets` against
+4. Read counts: `journalctl -u faas-s3-gatewayd | grep "read usage flush failed"`
+   and `s3_gateway_read_admission_decisions_total{source="failed"|"stale"}`
+   for database reachability from the gateway.
+5. Capacity: `faas_object_storage_backend_buckets` against
    `faas_object_storage_backend_bucket_limit` per backend, and
    `journalctl -u faas-apid | grep "no backend with room"` for refusals.
 
@@ -58,7 +68,10 @@ Severity: warn.
    45 s scan can list.
 3. Usage export: rotate or repair the provider usage credentials in the
    operator config, then restart `faas-s3-gatewayd`.
-4. Region capacity: add a provider project to the region's pool.
+4. Read count flushes: restore the gateway's database connection. Counts
+   held in memory are written by the next successful flush; a restart
+   writes them once before exiting.
+5. Region capacity: add a provider project to the region's pool.
    1. Create the OVH Public Cloud project, its S3 user and keys, and ask OVH
       support for the project's 1,000-bucket quota.
    2. Add a backend to `/etc/faas/object-storage.json` with a new `id`, the

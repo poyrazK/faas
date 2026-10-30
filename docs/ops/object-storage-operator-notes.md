@@ -1442,6 +1442,28 @@ Deferred: the S3 compatibility gaps listed above, production edge/service
 activation, unsupported lifecycle/version behavior, untracked object-capacity rebasing,
 historical untracked multipart reclamation, and automatic migrations.
 
+## Cached read admission
+
+Under gateway-safety accounting, `s3-gatewayd` admits `GET` and `HEAD` from a
+per-bucket decision it reads without row locks and caches for 2 s: the
+owner's status, the bucket's inventory freshness and the month's request,
+egress and authorization counts against their ceilings. Read counts are
+written in one batch per process every second
+([ADR-20261030075301](../adr/20261030075301-object-storage-reads-off-the-database.md)).
+
+- A suspension, abuse hold, deletion or stale inventory stops reads within
+  2 s, or within 30 s while the gateway cannot reach the database; after
+  that, reads answer `503`.
+- The monthly request, egress and authorization ceilings are exact within
+  one gateway process and approximate across several: each can admit about
+  3 s of a bucket's reads the others have not written yet. A crashed gateway
+  loses at most 1 s of counts; a clean restart writes them first.
+- Every authenticated request takes a token from its owner's bucket:
+  100 per second, bursts of 200, per gateway process. Over that, clients get
+  `503 SlowDown`.
+- Writes, provider-report accounting and credentials issued under an
+  organization access fence keep the locking admission.
+
 ## Recoverable branded PUTs
 
 Native S3 metadata and error responses are capped at 32 MiB before SDK
