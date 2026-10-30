@@ -23,7 +23,8 @@ file per daemon.
   release that contains #5730 (`593c954510`) and the agentd run metrics.
 - **Account.** You have the account's UUID, an API token for it, and the
   Gregale GitHub App is installed on the repository you will open the test
-  pull request on.
+  pull request on. The account is on a paid plan: Free runs no agents
+  (`AgentRunConcurrentPerAccount` is 0), so every run would wait in the queue.
 - **Model key.** You have an Anthropic API key that belongs to the account.
   It becomes the account's own AI integration; it is never a platform key.
 - **Agent-pool node.** You picked one compute node with room for the runs:
@@ -31,18 +32,32 @@ file per daemon.
   runs 5 at once (`AgentRunConcurrentPerAccount`). Use its compute node ID or
   name below.
 - **Relay.** Agent runs reach the model only through vmmd's outbound relay and
-  outboundd, the same path apps' outbound integrations use. Check that the
-  node's vmmd has `FAAS_VMMD_OUTBOUND_RELAY_TARGET` and a workload-identity
-  signing key (`FAAS_WORKLOAD_IDENTITY_KEY_PATH`), and that outboundd's
-  `/etc/faas/outboundd.toml` sets `relay_listen` and
-  `workload_identity_jwks_path`. If any is missing, set the relay up first: a
-  run without it fails at its first model call.
+  outboundd, the same path apps' outbound integrations use. A run without it
+  fails at its first model call. Check, and set it up if any is missing:
+  - the cluster workload-identity key: the node's vmmd has
+    `99-faas-workload-identity.conf`, and `/etc/faas/workload-identity.jwks.json`
+    is on the control plane
+    ([FaasWorkloadIdentityNotConfigured](FaasWorkloadIdentityNotConfigured.md));
+  - outboundd's relay listener: `faas_outboundd_relay_listen` on the control
+    plane;
+  - the node's relay client leaf: `faas_vmmd_outbound_relay_tls_managed` on
+    the agent-pool node.
+
+  The two switches are in the
+  [outbound integrations guide](../ops/outbound-integrations.md#app-relay).
+  Turn the control plane on first. On the node, `journalctl -u faas-vmmd`
+  must not show `outbound relay disabled`.
 - **Agent base.** The images workflow publishes `ghcr.io/poyrazk/agent-base`
-  for every main commit as `ci-<sha>`. Resolve the release commit's image to
-  its digest:
+  as `ci-<sha>` only for a main commit that changes a base image's inputs, so
+  most release commits have no tag of their own. Use the newest tag whose
+  commit the release contains, and resolve it to its digest:
 
   ```bash
-  docker buildx imagetools inspect ghcr.io/poyrazk/agent-base:ci-<release-sha> --format '{{json .Manifest}}' | jq -r .digest
+  release=<release-sha>
+  tag=$(gh api '/users/poyrazK/packages/container/agent-base/versions?per_page=30' \
+      --jq '.[].metadata.container.tags[] | select(startswith("ci-"))' |
+    while read -r t; do git merge-base --is-ancestor "${t#ci-}" "$release" 2>/dev/null && { echo "$t"; break; }; done)
+  docker buildx imagetools inspect "ghcr.io/poyrazk/agent-base:$tag" --format '{{json .Manifest}}' | jq -r .digest
   ```
 
 ## 1. Stage the agent base on the agent-pool node
@@ -239,13 +254,13 @@ curl -fsS "$API/v1/agent-runs/<run-id>/outputs" -H "Authorization: Bearer $TOKEN
 
 | What you see | Where to look |
 |---|---|
-| `Queued runs` grows and nothing is claimed | `systemctl status faas-agentd`; agentd's log; the account is at its concurrent-run limit |
+| `Queued runs` grows and nothing is claimed | `systemctl status faas-agentd`; agentd's log; the account is at its concurrent-run limit, or on Free, which runs none |
 | `Requeues by cause`: `Unimplemented` | schedd or vmmd is missing its switch (steps 2–3) |
 | `Requeues by cause`: `ResourceExhausted` | the agent-pool node has no room; check `FAAS_SCHEDD_AGENT_RUN_NODES` names it |
 | `Requeues by cause`: `Unavailable` | schedd or vmmd unreachable; their logs |
 | No run at all after the pull request | `gregalectl flags inspect --key agents`; githubd's log for the delivery; `FAAS_GITHUBD_AUTOMATION_EVENTS`; the workflow's filter |
 | Run `failed` with `checkout_failed` | agentd's githubd target and storage settings; the App's access to the repository |
-| Run `failed` or `timed_out` at the first model call | the relay prerequisites; outboundd `agent_runs_enabled`; the integration's credential |
+| Run `failed` or `timed_out` at the first model call | the relay prerequisites (vmmd logs `outbound relay disabled` without its client leaf); outboundd `agent_runs_enabled`; the integration's credential |
 | Run `succeeded`, no comment | `Delivery attempts` by result; agentd's log for the delivery; `result.json` has no `comment` |
 
 Outcome codes are on the run (`outcome.code`), never metric labels; a run's

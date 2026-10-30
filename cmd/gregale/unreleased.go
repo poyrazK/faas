@@ -25,11 +25,12 @@ func applicationAuthCLI() bool {
 
 // visibleCliCommands is the manifest every discovery surface reads: without
 // unreleased Auth commands and flags, API monetization's verbs and flags
-// (monetization.go) or the realtime preview's (realtime_preview.go), unless
-// they are turned on.
+// (monetization.go), the realtime preview's (realtime_preview.go), or full
+// environment clones (fullclone.go), unless they are turned on.
 func visibleCliCommands() []cliCommand {
-	auth, monetization, realtimePreview := applicationAuthCLI(), monetizationCLI(), realtimePreviewCLI()
-	if auth && monetization && realtimePreview {
+	auth, monetization := applicationAuthCLI(), monetizationCLI()
+	realtimePreview, fullClone := realtimePreviewCLI(), fullEnvironmentCloneCLI()
+	if auth && monetization && realtimePreview && fullClone {
 		return cliCommands
 	}
 	visible := make([]cliCommand, 0, len(cliCommands))
@@ -46,6 +47,9 @@ func visibleCliCommands() []cliCommand {
 		}
 		if !realtimePreview {
 			command = withoutRealtimePreview(command)
+		}
+		if !fullClone {
+			command = withoutFullEnvironmentClone(command)
 		}
 		visible = append(visible, command)
 	}

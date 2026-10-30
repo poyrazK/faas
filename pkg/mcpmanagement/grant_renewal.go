@@ -24,6 +24,7 @@ func (r *remoteServer) slideCredential(g *oauthGrant) {
 		return
 	}
 	g.credentialExpires, g.expires = next, next
+	r.holdClientLocked(g)
 	// A commit failure disables the store; the hosted bridge then restarts.
 	_ = r.opts.StateStore.update("oauth", r.snapshotLocked())
 }

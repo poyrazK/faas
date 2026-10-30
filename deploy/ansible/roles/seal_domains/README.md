@@ -7,7 +7,9 @@ are wired, each opened by one daemon:
 - `source`: GitHub install tokens and webhook secrets (githubd;
   `faas_seal_domain_source_contracted` contracts it as step 4 below does for
   `outbound`);
-- `build`: app and job private-registry passwords (imaged);
+- `build`: app and job private-registry passwords (imaged;
+  `faas_seal_domain_build_contracted` contracts imaged as step 4 below does
+  for `outbound`);
 - `edge`: app basic-auth credentials and log drain headers (gatewayd-internal);
 - `alerting`: alert rule webhook secrets, notification channel destinations
   and MCP readiness provider keys (meterd, on the control plane like
@@ -18,9 +20,10 @@ are wired, each opened by one daemon:
   does for `outbound`);
 - `control`: the cluster signing key (schedd, on every host; no writer
   drop-in, the key moves only through `seal-domain migrate`);
-- `delivery`: app webhook signing secrets, commit-source connections and
-  execution payloads (schedd, on every host; apid on the control plane
-  seals to the recipient);
+- `delivery`: app webhook signing secrets, commit-source connections,
+  execution payloads and trigger config credentials (schedd, on every host;
+  apid on the control plane seals to the recipient, and trigger configs to
+  the fleet key too until the next release);
 - `account`: TOTP secrets, inbound webhook secrets, billing keys, workflow
   plans, PagerDuty acknowledgement secrets, GitLab, Slack and Linear
   credentials, product email values, managed realtime credentials and

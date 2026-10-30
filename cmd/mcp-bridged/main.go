@@ -154,7 +154,7 @@ func serve(ctx context.Context, log *slog.Logger, cfg config) error {
 	service, err := mcpmanagement.NewHTTPService(mcpmanagement.HTTPOptions{
 		Lifecycle: lifecycle, Telemetry: telemetry, AuditLogger: log, Onboarding: "browser", APIBase: cfg.apiBase, ResourceURL: cfg.resourceURL,
 		RedirectURIs: cfg.redirects, Version: wire.Version, Timeout: cfg.timeout, AllowWrites: true, Toolsets: cfg.toolsets,
-		StateStore: store, Hosted: true, AgentKeys: true, UploadDir: cfg.uploadDir, CLIRunner: mcpmanagement.HostedCLIRunner(cfg.cliPath, cfg.apiBase, cfg.uploadDir),
+		StateStore: store, Hosted: true, AgentKeys: true, ClientMetadataDocuments: true, UploadDir: cfg.uploadDir, CLIRunner: mcpmanagement.HostedCLIRunner(cfg.cliPath, cfg.apiBase, cfg.uploadDir),
 	})
 	if err != nil {
 		_ = store.Close()

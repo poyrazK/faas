@@ -43,6 +43,18 @@ Qualification candidates do not get the relay. Their restore transport binds onl
 - **Firewall:** the control-plane firewall opens the relay port (8096) to compute CIDRs.
 - **Unconfigured target:** when no target is configured, vmmd closes relay connections immediately, and apps see a connection error rather than a hung request.
 
+**As built (2026-10-30): the relay leaves are feature leaves.** The two leaves first went into the required PKI role sets. No rollout or renewal path issues a required leaf to a host that already exists, so every compute rollout of v0.1.18-rc.255 failed and they were removed (#4660). They are now the `outbound-relay` feature leaves in `pkg/pki`, issued only where an operator turns the relay on:
+
+- `outboundd/server` (CN `outboundd.faas`) on the control plane;
+- `vmmd/outboundd-client` on each compute node. Its CN is the node's `compute_nodes.name`, which outboundd's node verifier requires. It sits beside vmmd's required leaves at the path vmmd's relay drop-in already names.
+
+`gregalectl pki issue-feature --feature outbound-relay` issues them from the CA, with `--cn` for a compute node's leaf. Two Ansible switches, both off by default:
+
+- `control_plane_service`'s `faas_outboundd_relay_listen` issues the server leaf and sets outboundd's relay settings in a drop-in (`FAAS_OUTBOUNDD_RELAY_*`, `FAAS_OUTBOUNDD_WORKLOAD_IDENTITY_JWKS_PATH`), which override `outboundd.toml`.
+- `vmmd_service`'s `faas_vmmd_outbound_relay_tls_managed` has the control plane issue the node's client leaf and installs it.
+
+As with the other feature leaves, each run of either role renews its leaf within 30 days of expiry, and `pki_renew.yml` runs the same tasks.
+
 ## Deferred
 
 - Per-binding token limits.

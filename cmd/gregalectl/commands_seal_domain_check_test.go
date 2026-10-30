@@ -29,8 +29,8 @@ import (
 // runs before outboundd drops the fleet identity (ADR 20261022111812, step
 // 4): it fails while a credential still opens with the fleet identity,
 // writes nothing, and passes once the re-seal moved every row. The storage,
-// alerting and source checks run the same way for s3-gatewayd, meterd and
-// githubd.
+// alerting, source and build checks run the same way for s3-gatewayd,
+// meterd, githubd and imaged.
 func TestSealDomainCheckOutboundPostgres(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
 	ctx := context.Background()
@@ -116,9 +116,9 @@ func TestSealDomainCheckOutboundPostgres(t *testing.T) {
 		t.Fatalf("check after the re-seal = %+v, %v; want it passed", report, err)
 	}
 
-	// The storage, alerting and source checks run their own walks: with nothing
-	// stored nothing is pending.
-	for _, d := range []sealdomain.Domain{sealdomain.Storage, sealdomain.Alerting, sealdomain.Source} {
+	// The storage, alerting, source and build checks run their own walks:
+	// with nothing stored nothing is pending.
+	for _, d := range []sealdomain.Domain{sealdomain.Storage, sealdomain.Alerting, sealdomain.Source, sealdomain.Build} {
 		id := mustCheckIdentity(t)
 		if err := secretbox.WriteHostKeyAtPath(sealdomain.IdentityPath(dir, d), id); err != nil {
 			t.Fatal(err)
@@ -140,7 +140,7 @@ func TestSealDomainCheckOutboundPostgres(t *testing.T) {
 		}
 	}
 
-	if err := runSealDomainMigrate([]string{"--check", "--domain", "build", "--pg-dsn", dsn}); err == nil || !strings.Contains(err.Error(), "only in this release") {
+	if err := runSealDomainMigrate([]string{"--check", "--domain", "edge", "--pg-dsn", dsn}); err == nil || !strings.Contains(err.Error(), "only in this release") {
 		t.Fatalf("check of a domain that cannot contract yet = %v; want it refused", err)
 	}
 }
@@ -153,6 +153,7 @@ func TestSkippedReasonNamesTheDomainsLeftovers(t *testing.T) {
 		sealdomain.Account:  "clone",
 		sealdomain.Alerting: "MCP readiness incidents",
 		sealdomain.Source:   "install tokens",
+		sealdomain.Build:    "crash captures",
 		sealdomain.Edge:     "application-standard log destinations",
 	} {
 		if got := skippedReason(d); !strings.Contains(got, want) {
