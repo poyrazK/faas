@@ -7463,6 +7463,13 @@ const (
 	EventDeliveryRetryBaseSeconds = 5
 	EventDeliveryRetryMaxSeconds  = 300
 	EventDeliveryRetryJitter      = 0.2
+	// EventDeliveryKeyedRetryMaxSeconds caps that backoff for a delivery in
+	// a keyed lane (a work policy, ordered or not): a pending delivery holds
+	// every younger one of its key, so a failing one is dead-lettered after
+	// about 15 s on Hobby, 4 minutes on Pro and 11 minutes on Scale instead
+	// of stalling its key for up to 95 minutes (ADR-20261029190000
+	// amendment).
+	EventDeliveryKeyedRetryMaxSeconds = 30
 	// MaxAsyncRouteAgeSeconds bounds a customer-authored async edge
 	// rule age before the serving plan applies its lower deadline cap.
 	// The Scale plan currently owns the largest invocation deadline.
