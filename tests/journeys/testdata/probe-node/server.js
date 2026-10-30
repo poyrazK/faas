@@ -238,10 +238,53 @@ const server = http.createServer((req, res) => {
       req.on("close", () => clearInterval(timer));
       return;
     }
+    case "/.well-known/jwks.json": {
+      // The realtime journey signs its clients' tokens and publishes the
+      // public key here, so this app is the endpoint's OIDC issuer.
+      const jwks = process.env.E2E_REALTIME_JWKS_B64;
+      if (!jwks) {
+        return json(res, 404, { error: "no realtime JWKS configured" });
+      }
+      res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+      return res.end(Buffer.from(jwks, "base64"));
+    }
+    case "/realtime/connect":
+    case "/realtime/message":
+    case "/realtime/disconnect":
+    case "/realtime/authorize-channel":
+      return realtimeCallback(req, res, url.pathname);
     default:
       return json(res, 404, { error: "not found" });
   }
 });
+
+// realtimeCallback answers a managed realtime endpoint's callbacks once
+// they carry the endpoint's callback token. It grants every channel except
+// those named denied-*, so the realtime journey can see a refusal.
+function realtimeCallback(req, res, path) {
+  const token = process.env.E2E_REALTIME_CALLBACK_TOKEN;
+  if (req.method !== "POST" || !token || req.headers.authorization !== `Bearer ${token}`) {
+    req.resume();
+    return json(res, 401, { error: "bad realtime callback token" });
+  }
+  const chunks = [];
+  req.on("data", (c) => chunks.push(c));
+  req.on("end", () => {
+    let event = {};
+    try {
+      event = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    } catch {
+      return json(res, 400, { error: "callback body is not JSON" });
+    }
+    const channel = String(event.channel || "");
+    console.log(`e2e-probe-realtime path=${path} permission=${event.permission || ""} channel=${channel}`);
+    if (path === "/realtime/authorize-channel" && channel.startsWith("denied-")) {
+      return json(res, 403, { granted: false });
+    }
+    res.writeHead(204);
+    res.end();
+  });
+}
 
 // Minimal WebSocket endpoint (RFC 6455): handshake, one text frame, close.
 server.on("upgrade", (req, socket) => {
