@@ -61,9 +61,8 @@ func TestDeferredCacheExportMetal(t *testing.T) {
 
 	first := runBuildSubtest(t, h, pool, key, "deferapp", "", NodeFixture(t), false)
 	t.Run("image-handed-off-before-cache-export", func(t *testing.T) {
-		if done := readBuildDone(t, h, first.buildID); !done.DependencyCacheDeferred {
-			t.Fatalf("build-done.dependency_cache_deferred = false; the build VM exported its cache inline")
-		}
+		// builderd writes this line only when the guest reported the export
+		// deferred. (build-done.json itself may already be swept by now.)
 		if log := deploymentBuildLog(t, pool, first.deploymentID); !strings.Contains(log, "dependency cache will be saved after the image is handed off") {
 			t.Fatalf("first build log does not report the owed export:\n%s", log)
 		}

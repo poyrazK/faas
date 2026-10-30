@@ -1103,6 +1103,9 @@ func runBuildOnce(m api.BuildManifest) error {
 	if err := os.MkdirAll("/run/buildkit", 0o755); err != nil {
 		return writeAndPoweroff(m, fmt.Errorf("mkdir buildkit run dir: %w", err), "")
 	}
+	if err := removeStaleSocket(buildkitSocketPath); err != nil {
+		return writeAndPoweroff(m, err, "")
+	}
 	// The merged root is an overlayfs view whose writable upper is the same
 	// builder drive. BuildKit keeps a BoltDB, lock, and runc state tree under
 	// its root; those operations are more restrictive than a simple touch and
@@ -1259,12 +1262,12 @@ func runBuildOnce(m api.BuildManifest) error {
 	// subsequent worker readiness RPC; keep polling so fast boots pay no delay.
 	startupDeadline := time.Now().Add(time.Minute)
 	for time.Now().Before(startupDeadline) {
-		if _, err := os.Stat("/run/buildkit/buildkitd.sock"); err == nil {
+		if _, err := os.Stat(buildkitSocketPath); err == nil {
 			break
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	if _, err := os.Stat("/run/buildkit/buildkitd.sock"); err != nil {
+	if _, err := os.Stat(buildkitSocketPath); err != nil {
 		return finish(fmt.Errorf("buildkitd socket never appeared: %w", err), tailOf(buildkitLog.Bytes(), m.LogTailBytes))
 	}
 	clock.stage("buildkit-socket")
@@ -1497,6 +1500,21 @@ func removeOversizedDependencyCache(root string, maxBytes int64) (bool, error) {
 		return true, os.RemoveAll(root)
 	}
 	return false, nil
+}
+
+// buildkitSocketPath is where the builder's buildkitd listens.
+const buildkitSocketPath = "/run/buildkit/buildkitd.sock"
+
+// removeStaleSocket removes a socket file a previous boot left behind. A cache
+// export run boots on the drive its build left (ADR-20261029171525), and that
+// build's buildkitd was killed without unlinking its socket. The readiness
+// wait takes the socket's existence as the daemon's first sign of life, so a
+// stale one let buildctl dial before the new daemon listened.
+func removeStaleSocket(path string) error {
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove stale socket %s: %w", path, err)
+	}
+	return nil
 }
 
 // stopBuildDaemon stops writers before syncing the export drive. Bound the wait
