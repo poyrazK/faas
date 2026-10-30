@@ -6,17 +6,13 @@
 -- +goose NO TRANSACTION
 
 -- +goose Up
-SET lock_timeout = '5s';
 CREATE INDEX CONCURRENTLY IF NOT EXISTS custom_domains_app_idx ON custom_domains (app_id);
 CREATE INDEX CONCURRENTLY IF NOT EXISTS custom_domains_redirect_app_idx ON custom_domains (app_id_redirect) WHERE app_id_redirect IS NOT NULL;
 CREATE INDEX CONCURRENTLY IF NOT EXISTS custom_domains_reversed_idx ON custom_domains (reverse(lower(domain::text)) text_pattern_ops);
 CREATE INDEX CONCURRENTLY IF NOT EXISTS tenant_hostnames_reversed_idx ON tenant_hostnames (reverse(lower(hostname::text)) text_pattern_ops);
-RESET lock_timeout;
 
 -- +goose Down
-SET lock_timeout = '5s';
 DROP INDEX CONCURRENTLY IF EXISTS tenant_hostnames_reversed_idx;
 DROP INDEX CONCURRENTLY IF EXISTS custom_domains_reversed_idx;
 DROP INDEX CONCURRENTLY IF EXISTS custom_domains_redirect_app_idx;
 DROP INDEX CONCURRENTLY IF EXISTS custom_domains_app_idx;
-RESET lock_timeout;
