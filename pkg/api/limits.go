@@ -2463,6 +2463,13 @@ const (
 	// deletes cannot starve inventory (ADR-20261025115958).
 	ObjectInventoryDeletionDrain = 10 * time.Second
 	ObjectInventoryDeletionYield = ObjectInventoryDeletionDrain + ObjectCapacityInventoryTimeout
+	// A bucket's listing resumes across attempts from its last listed key
+	// (ADR-20261030100835). While it advanced within
+	// ObjectInventoryScanProgressWindow, its bucket stays fresh on an
+	// observation up to ObjectInventoryScanMaxAge old; a listing that started
+	// longer ago than that starts again.
+	ObjectInventoryScanMaxAge         = time.Hour
+	ObjectInventoryScanProgressWindow = 5 * time.Minute
 	// Read-only owned-node audits retain bounded diagnostics and publish cached
 	// metrics. These are operator work bounds, not customer allowances.
 	ObjectNodeInventoryInterval         = time.Minute
@@ -7463,6 +7470,13 @@ const (
 	EventDeliveryRetryBaseSeconds = 5
 	EventDeliveryRetryMaxSeconds  = 300
 	EventDeliveryRetryJitter      = 0.2
+	// EventDeliveryKeyedRetryMaxSeconds caps that backoff for a delivery in
+	// a keyed lane (a work policy, ordered or not): a pending delivery holds
+	// every younger one of its key, so a failing one is dead-lettered after
+	// about 15 s on Hobby, 4 minutes on Pro and 11 minutes on Scale instead
+	// of stalling its key for up to 95 minutes (ADR-20261029190000
+	// amendment).
+	EventDeliveryKeyedRetryMaxSeconds = 30
 	// MaxAsyncRouteAgeSeconds bounds a customer-authored async edge
 	// rule age before the serving plan applies its lower deadline cap.
 	// The Scale plan currently owns the largest invocation deadline.
@@ -9150,6 +9164,13 @@ const (
 	// AgentRunStopGraceSec is how long a timed-out or cancelled harness has
 	// between SIGTERM and SIGKILL.
 	AgentRunStopGraceSec = 10
+	// AgentWaitPauseCPUMaxMillis is the most CPU an agent run VM may use over
+	// its quiet window and still be paused while it waits on the model
+	// (ADR-20261027090012 §2). A harness running tests is not paused.
+	AgentWaitPauseCPUMaxMillis = 50
+	// AgentWaitPauseAfterMaxMillis bounds the model-wait pause delay a run
+	// spec may carry (ADR-20261027090012 §1).
+	AgentWaitPauseAfterMaxMillis = 60_000
 	// AgentModelIntegrationsMax bounds a version's model integrations: one
 	// per model provider a harness may point at the relay.
 	AgentModelIntegrationsMax = 2

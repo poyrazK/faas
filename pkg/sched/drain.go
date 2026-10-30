@@ -1476,8 +1476,14 @@ func invocationRetryPolicy(inv state.Invocation, app *state.App) dispatch.RetryP
 			return appPolicy
 		}
 	}
+	maxSeconds := float64(api.EventDeliveryRetryMaxSeconds)
+	if inv.WorkPolicyName != "" {
+		// A pending delivery holds every younger one of its key, so a
+		// keyed delivery backs off only to 30 s.
+		maxSeconds = api.EventDeliveryKeyedRetryMaxSeconds
+	}
 	return dispatch.RetryPolicy{BaseSeconds: api.EventDeliveryRetryBaseSeconds,
-		MaxSeconds: api.EventDeliveryRetryMaxSeconds, JitterSeconds: api.EventDeliveryRetryJitter}
+		MaxSeconds: maxSeconds, JitterSeconds: api.EventDeliveryRetryJitter}
 }
 
 // retryAfterFor is retained as a compatibility wrapper for drain callers

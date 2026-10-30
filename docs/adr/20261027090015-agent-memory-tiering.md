@@ -3,6 +3,7 @@
 - **Status:** proposed. The native-host latency check (§6) is owed before compress-on-wait is turned on.
 - **Date:** 2026-10-19
 - **Amended by ADR-20261027090019** (proposed), §1: preset snapshots carry two empty context drive slots, filled at restore.
+- **Amended 2026-10-30 (proposed), §7:** flexible RAM with virtio-mem. A run boots with only its measured working set plugged, grows up to `ram_mb` on demand, and shrinks again when it starts waiting on the model.
 - **Amends (when accepted), for agent VMs on agent nodes only:**
   - ADR-909, proposal 1 (charge) and proposal 2 (the overcommit bound), and with them spec §6.2 invariant 2;
   - ADR-20261027090010 §2 (preset snapshots);
@@ -194,6 +195,39 @@ The check runs on a native x86_64 KVM host with the fleet Firecracker, such as f
 | Warm restore to first model call | ≤ 1 s to a ready VM (ADR-20261027090010), and first model call ≤ 3.5 s for Codex and Claude Code |
 | Density soak: 100 runs on 64 GB at a ≈ 0.3 for 30 minutes | No eviction; memory PSI some avg10 < 10%; measured charge below the ceiling minus the headroom |
 
+### 7. Flexible RAM with virtio-mem (amendment, 2026-10-30, proposed)
+
+**Goal (owner, 2026-10-30).** A run's guest memory follows its work in both directions, so a minimal harness holds little more than it uses.
+
+Free page reporting (ADR-907) returns only pages the guest has freed. Guest page cache grows into whatever RAM the guest has. ADR-909 measured Firecracker 1.17's virtio-mem on a Node VM with guest 6.18:
+- plugging 768 MiB took 66 ms;
+- unplugging to 0 took 272 ms while the VM was idle;
+- under load, unplug took 1.7–1.9 s and stalled requests.
+
+**Boot small.**
+- A run boots with `plugged = max(AgentVirtioMemBootMinMB, its §3 reservation)` and a hotplug area up to `ram_mb`.
+- `memory.max = ram_mb + 8 MB` is unchanged, so the ceiling, the plan cap and the burst headroom stay as configured.
+- Preset snapshots (§1) are captured with `AgentVirtioMemBootMinMB` plugged, and the plugged size is part of the snapshot shape key.
+
+**Grow on demand.**
+- vmmd reads the guest's available memory from the balloon statistics every second.
+- When it falls below `AgentVirtioMemGrowFreePercent` of the plugged size, vmmd plugs the next `AgentVirtioMemStepMB`, up to `ram_mb`.
+- Growth changes no admission term: the §3 charge already follows `memory.current`, and the thaw headroom and eviction order cover it.
+- A run that needs more than `ram_mb` still OOMs and is rerun at the next size (ADR-20261027090010 step 13).
+
+**Shrink while waiting.**
+- When a run becomes eligible to pause (ADR-20261027090012 §2), vmmd first unplugs down to `max(AgentVirtioMemBootMinMB, guest used + AgentVirtioMemStepMB)`, within `AgentVirtioMemUnplugBudgetMillis`, then pauses.
+- A relay byte that arrives first cancels the rest of the unplug and never waits on it.
+- vmmd never unplugs a run that is working, because unplug under load stalls the guest.
+- Compression (§2) then works on the smaller VM.
+
+**Requirements.**
+- Agent nodes run Firecracker 1.17 or later.
+- The agent base kernel supports memory hotplug with `memhp_default_state=online_movable`.
+- A run on a node without virtio-mem boots with `ram_mb` plugged, as today.
+
+The switch is vmmd `agent_virtio_mem`, default off.
+
 ## Limits (`pkg/api/limits.go`, proposed)
 
 | Name | Value |
@@ -205,6 +239,10 @@ The check runs on a native x86_64 KVM host with the fleet Firecracker, such as f
 | `AgentThawHeadroomPercent` | 10 |
 | `AgentWaitCompressAfterMillis` | 10,000 |
 | `AgentWaitCompressWatermarkPercent` | 60 |
+| `AgentVirtioMemBootMinMB` | 256 |
+| `AgentVirtioMemStepMB` | 256 |
+| `AgentVirtioMemGrowFreePercent` | 15 |
+| `AgentVirtioMemUnplugBudgetMillis` | 500 |
 | `MeasuredAdmissionMaxOvercommitPercent` | 200 (existing, unchanged) |
 
 ## Metrics (§12 additions)
@@ -237,8 +275,13 @@ All steps stay on local branches until the owner asks for PRs. Each sits behind 
    - a held relay response pauses and compresses the VM, and the first byte resumes it;
    - no swap is opened without writeback disabled;
    - 1,000 cycles leave no leaks.
-6. **The native-host check (§6),** then the limits are set from it.
-7. **Turn on** with ADR-20261027090011 billing at milestone B. Amend ADR-20261027090014 §3 with measured capacity.
+6. **vmmd flexible RAM (§7)** behind `agent_virtio_mem` (default off). Metal tests:
+   - a run that allocates up to `ram_mb` grows without an OOM;
+   - a waiting run shrinks before it pauses;
+   - a relay byte during an unplug resumes the run at once;
+   - 1,000 grow and shrink cycles leave no leaks.
+7. **The native-host check (§6),** extended to §7's grow latency and shrink returns. The limits are set from it.
+8. **Turn on** with ADR-20261027090011 billing at milestone B. Amend ADR-20261027090014 §3 with measured capacity.
 
 ## Open questions
 
