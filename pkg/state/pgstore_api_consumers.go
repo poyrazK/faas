@@ -8,6 +8,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 type consumerRowScanner interface {
@@ -136,33 +138,46 @@ func (s *PgStore) RevokeAPIConsumer(ctx context.Context, accountID, consumerID s
 }
 
 func (s *PgStore) CreateConsumerKeyForConsumer(ctx context.Context, accountID, consumerID, name, prefix string, hash []byte, scopes []string, expiresAt *time.Time) (ConsumerKey, error) {
+	if err := validatePgConsumerKeyForConsumer(accountID, consumerID, name, prefix, hash, scopes, expiresAt); err != nil {
+		return ConsumerKey{}, err
+	}
+	return insertConsumerKeyForConsumer(ctx, s.pool, accountID, consumerID, name, prefix, hash, scopes, expiresAt)
+}
+
+func validatePgConsumerKeyForConsumer(accountID, consumerID, name, prefix string, hash []byte, scopes []string, expiresAt *time.Time) error {
 	if accountID == "" || consumerID == "" {
-		return ConsumerKey{}, errors.New("pgstore: CreateConsumerKeyForConsumer: empty account_id or consumer_id")
+		return errors.New("pgstore: CreateConsumerKeyForConsumer: empty account_id or consumer_id")
 	}
 	if name == "" || len(name) > 64 {
-		return ConsumerKey{}, errors.New("pgstore: CreateConsumerKeyForConsumer: name must be 1-64 characters")
+		return errors.New("pgstore: CreateConsumerKeyForConsumer: name must be 1-64 characters")
 	}
 	if prefix == "" || len(prefix) > 16 {
-		return ConsumerKey{}, errors.New("pgstore: CreateConsumerKeyForConsumer: prefix must be 1-16 characters")
+		return errors.New("pgstore: CreateConsumerKeyForConsumer: prefix must be 1-16 characters")
 	}
 	if len(hash) != 32 {
-		return ConsumerKey{}, fmt.Errorf("pgstore: CreateConsumerKeyForConsumer: hash must be 32 bytes, got %d", len(hash))
+		return fmt.Errorf("pgstore: CreateConsumerKeyForConsumer: hash must be 32 bytes, got %d", len(hash))
 	}
 	hash = storedCredential(CredentialColumnConsumerKey, hash)
 	if len(scopes) == 0 {
-		return ConsumerKey{}, errors.New("pgstore: CreateConsumerKeyForConsumer: scopes cannot be empty")
+		return errors.New("pgstore: CreateConsumerKeyForConsumer: scopes cannot be empty")
 	}
 	for _, scope := range scopes {
 		switch scope {
 		case "read", "write", "admin", "billing":
 		default:
-			return ConsumerKey{}, fmt.Errorf("pgstore: CreateConsumerKeyForConsumer: scope %q is not in the closed-set {read, write, admin}", scope)
+			return fmt.Errorf("pgstore: CreateConsumerKeyForConsumer: scope %q is not in the closed-set {read, write, admin}", scope)
 		}
 	}
 	if expiresAt != nil && expiresAt.Before(time.Now()) {
-		return ConsumerKey{}, errors.New("pgstore: CreateConsumerKeyForConsumer: expires_at must be in the future")
+		return errors.New("pgstore: CreateConsumerKeyForConsumer: expires_at must be in the future")
 	}
-	row := s.pool.QueryRow(ctx,
+	return nil
+}
+
+// insertConsumerKeyForConsumer issues a key for an active consumer of
+// accountID on db, the pool or a transaction.
+func insertConsumerKeyForConsumer(ctx context.Context, db sqlc.DBTX, accountID, consumerID, name, prefix string, hash []byte, scopes []string, expiresAt *time.Time) (ConsumerKey, error) {
+	row := db.QueryRow(ctx,
 		`insert into consumer_keys
 		   (consumer_id, account_id, app_id, name, prefix, hashed_secret, scopes, expires_at)
 		 select c.id, c.account_id, c.app_id, $3, $4, $5, $6, $7
@@ -179,7 +194,12 @@ func (s *PgStore) CreateConsumerKeyForConsumer(ctx context.Context, accountID, c
 		// consumer. The SQL insert intentionally filters on active status;
 		// this second, scoped read preserves the memstore's ErrConflict
 		// contract for attempts to issue a credential after revocation.
-		c, getErr := s.GetAPIConsumerByID(ctx, accountID, consumerID)
+		c, getErr := scanAPIConsumerRow(db.QueryRow(ctx,
+			`select `+apiConsumerSelectCols+` from api_consumers where id = $1::uuid and account_id = $2::uuid`,
+			consumerID, accountID))
+		if errors.Is(getErr, pgx.ErrNoRows) {
+			return ConsumerKey{}, ErrNotFound
+		}
 		if getErr == nil && !c.Active() {
 			return ConsumerKey{}, ErrConflict
 		}
@@ -187,7 +207,7 @@ func (s *PgStore) CreateConsumerKeyForConsumer(ctx context.Context, accountID, c
 			return ConsumerKey{}, getErr
 		}
 		var suspended bool
-		if checkErr := s.pool.QueryRow(ctx, `select exists (
+		if checkErr := db.QueryRow(ctx, `select exists (
 			select 1 from api_consumers c join platform_tenants t on t.id = c.platform_tenant_id
 			where c.id = $1::uuid and c.account_id = $2::uuid and t.status = 'suspended'
 		)`, consumerID, accountID).Scan(&suspended); checkErr != nil {

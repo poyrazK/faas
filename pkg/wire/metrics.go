@@ -353,6 +353,9 @@ type OpsMetrics struct {
 	// what it changed (ADR 20261027163626); labels are closed pkg/state kinds.
 	trafficBindingScopeAudits *prometheus.CounterVec
 	trafficBindingScopeMisses *prometheus.CounterVec
+	// trafficBindingCaptureGaps counts changed hostnames the capture triggers
+	// did not record (ADR 20261029190349); labels are closed pkg/state kinds.
+	trafficBindingCaptureGaps *prometheus.CounterVec
 	// wakeFailure (issue #1059 / ADR-127) — operator-facing wake
 	// failure-mode counter. Labelled by (box, reason). The closed
 	// reason vocabulary is
@@ -1376,7 +1379,15 @@ type OpsMetrics struct {
 	// would book.
 	nodeMemoryReservedMB *prometheus.GaugeVec
 	nodeMemoryMeasuredMB *prometheus.GaugeVec
-	instanceInflightReqs *prometheus.GaugeVec
+	// nodeCPUMeasuredMillicores: the host CPU measured CPU admission
+	// charges a node's measured instances (ADR 20261029151111).
+	nodeCPUMeasuredMillicores *prometheus.GaugeVec
+	// instanceCPUMeasuredMillicores: each measured instance's measured CPU
+	// per tick, the distribution measured CPU admission's floor and window
+	// are tuned on (ADR 20261029151111). Per node, not per instance, so its
+	// cardinality is bounded by the fleet.
+	instanceCPUMeasuredMillicores *prometheus.HistogramVec
+	instanceInflightReqs          *prometheus.GaugeVec
 	// instanceCPUSecondsTotal (issue #279 / PR-B): cumulative
 	// CPU-seconds per (app, node). Counter (not Gauge) because
 	// the value is monotonic between cgroup regressions — the
@@ -2204,7 +2215,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		}
 	}
 	var trafficPolicyPhase *prometheus.HistogramVec
-	var trafficBindingScopeAudits, trafficBindingScopeMisses *prometheus.CounterVec
+	var trafficBindingScopeAudits, trafficBindingScopeMisses, trafficBindingCaptureGaps *prometheus.CounterVec
 	if prefix == "apid" {
 		trafficPolicyPhase = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "traffic_policy_analysis_seconds",
@@ -2219,7 +2230,11 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 			Name: "traffic_binding_scope_misses_total",
 			Help: "Changed hostnames outside a binding write's declared scope, by writer and kind. Must stay zero before the scoped guard is enabled.",
 		}, []string{"writer", "kind"})
-		reg.MustRegister(trafficPolicyPhase, trafficBindingScopeAudits, trafficBindingScopeMisses)
+		trafficBindingCaptureGaps = prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "traffic_binding_capture_gaps_total",
+			Help: "Changed hostnames of a binding write that the change-capture triggers did not record, by writer and kind. Must stay zero before scoped writes rely on the capture.",
+		}, []string{"writer", "kind"})
+		reg.MustRegister(trafficPolicyPhase, trafficBindingScopeAudits, trafficBindingScopeMisses, trafficBindingCaptureGaps)
 	}
 	watchdogKills := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_watchdog_kills_total",
@@ -3578,6 +3593,15 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_node_memory_measured_mb",
 		Help: "What admission by measured memory would book on a node: per instance its cgroup memory plus headroom, capped at plan RAM + 8 MB (ADR-909 shadow mode; admission is unchanged).",
 	}, []string{"node"})
+	nodeCPUMeasuredMillicores := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: prefix + "_node_cpu_measured_millicores",
+		Help: "Host CPU millicores summed over a node's measured instances: per instance the larger of its latest CPU and its p95 over the charge window (ADR 20261029151111). Instances without enough history are not counted.",
+	}, []string{"node"})
+	instanceCPUMeasuredMillicores := prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    prefix + "_instance_cpu_measured_millicores",
+		Help:    "Each measured instance's host CPU millicores per instance stats tick, as measured CPU admission measures it: the larger of its latest CPU and its p95 over the charge window (ADR 20261029151111). 125 is the booking model's assumption for a 1000 mc booking.",
+		Buckets: []float64{1, 2, 5, 10, 15, 25, 50, 125, 250, 500, 1000, 2000},
+	}, []string{"node"})
 	instanceInflightReqs := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: prefix + "_instance_inflight_requests",
 		Help: "Outbound ForwardHTTP count in flight, per (app, node) — sum over live siblings (issue #170 / PR-A). Load rollup.",
@@ -4054,7 +4078,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		imagedOCIPull, imagedOCIBlobCacheHits, imagedOCIBlobCacheMisses, imagedOCIBlobCacheEvictions,
 		staleDeploymentOldestAge, staleDeploymentsReconciled,
 		instanceCPUPct, instanceRSSMB, instanceInflightReqs,
-		nodeMemoryReservedMB, nodeMemoryMeasuredMB,
+		nodeMemoryReservedMB, nodeMemoryMeasuredMB, nodeCPUMeasuredMillicores, instanceCPUMeasuredMillicores,
 		instanceCPUSecondsTotal,
 		instanceStatsCollectDur, instanceStatsPartialErrors,
 		sidecarRestartTotal,
@@ -5607,6 +5631,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		trafficPolicyPhase:                         trafficPolicyPhase,
 		trafficBindingScopeAudits:                  trafficBindingScopeAudits,
 		trafficBindingScopeMisses:                  trafficBindingScopeMisses,
+		trafficBindingCaptureGaps:                  trafficBindingCaptureGaps,
 		wakeFailure:                                wakeFailure,
 		wakeLatency:                                wakeLatency,
 		boxLabels:                                  newBoxLabelSet(maxBoxLabelValues),
@@ -5742,6 +5767,8 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		instanceRSSMB:                        instanceRSSMB,
 		nodeMemoryReservedMB:                 nodeMemoryReservedMB,
 		nodeMemoryMeasuredMB:                 nodeMemoryMeasuredMB,
+		nodeCPUMeasuredMillicores:            nodeCPUMeasuredMillicores,
+		instanceCPUMeasuredMillicores:        instanceCPUMeasuredMillicores,
 		instanceInflightReqs:                 instanceInflightReqs,
 		instanceCPUSecondsTotal:              instanceCPUSecondsTotal,
 		instanceStatsCollectDur:              instanceStatsCollectDur,
@@ -8338,6 +8365,17 @@ func (m *OpsMetrics) ObserveTrafficBindingScope(writer string, missed []string) 
 	}
 }
 
+// ObserveTrafficBindingCapture counts the changed hostnames of one binding
+// write that the capture triggers did not record.
+func (m *OpsMetrics) ObserveTrafficBindingCapture(writer string, gaps []string) {
+	if m == nil || m.trafficBindingCaptureGaps == nil {
+		return
+	}
+	for _, kind := range gaps {
+		m.trafficBindingCaptureGaps.WithLabelValues(writer, kind).Inc()
+	}
+}
+
 // SetExclusiveOperationDueCandidates publishes the bounded scan result size.
 func (m *OpsMetrics) SetExclusiveOperationDueCandidates(n int) {
 	if m == nil || m.exclusiveOperationDueRows == nil {
@@ -9514,6 +9552,26 @@ func (m *OpsMetrics) ReplaceNodeMemoryShadow(byNode map[string][2]int) {
 	for node, v := range byNode {
 		m.nodeMemoryReservedMB.WithLabelValues(node).Set(float64(v[0]))
 		m.nodeMemoryMeasuredMB.WithLabelValues(node).Set(float64(v[1]))
+	}
+}
+
+// ReplaceNodeCPUMeasured publishes each node's measured CPU millicores for
+// measured CPU admission, per node and per instance: byNode maps a node to
+// its measured instances' millicores. Nodes absent from byNode are dropped
+// from the gauge.
+func (m *OpsMetrics) ReplaceNodeCPUMeasured(byNode map[string]map[string]int) {
+	if m == nil {
+		return
+	}
+	m.nodeCPUMeasuredMillicores.Reset()
+	for node, instances := range byNode {
+		sum := 0
+		perInstance := m.instanceCPUMeasuredMillicores.WithLabelValues(node)
+		for _, v := range instances {
+			sum += v
+			perInstance.Observe(float64(v))
+		}
+		m.nodeCPUMeasuredMillicores.WithLabelValues(node).Set(float64(sum))
 	}
 }
 

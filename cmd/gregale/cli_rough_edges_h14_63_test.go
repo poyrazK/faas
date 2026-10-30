@@ -20,7 +20,9 @@ func TestCLIRoughEdgesH14_63(t *testing.T) {
 		args []string
 		want []string
 	}{
-		{[]string{"env", "bogus"}, []string{`unknown subcommand "bogus"`, "Subcommands: create, clone-status, pull, push, diff, history, rollback"}},
+		// clone-status stays hidden until full environment clones are on
+		// (ADR-20261023091049).
+		{[]string{"env", "bogus"}, []string{`unknown subcommand "bogus"`, "Subcommands: create, pull, push, diff, history, rollback"}},
 		{[]string{"flags", "list", "--project", "shop"}, []string{`gregale flags: unknown subcommand "list"`, "Subcommands: get, apply"}},
 		{[]string{"flags", "apply", "--project", "shop"}, []string{"gregale flag apply needs --file"}},
 		{[]string{"jobs", "list", "--app", "shop"}, []string{"lists every job in the account; it has no --app filter"}},

@@ -5,6 +5,8 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -33,6 +35,7 @@ func quotaSubjectLimits() api.Limits {
 	limits.AlertRuleLimitPerApp, limits.AlertRuleLimitPerAccount = 10, 1
 	limits.CorsPresetsPerApp, limits.CorsPresetsPerAccount = 10, 1
 	limits.WebhookPerApp, limits.WebhookPerAccount = 10, 1
+	limits.CronLimitPerApp, limits.CronLimitPerAccount = 10, 1
 	return limits
 }
 
@@ -146,7 +149,68 @@ func quotaSubjectKinds() []quotaSubjectKind {
 			return err
 		},
 		accountCap: func(err error) bool { return errors.Is(err, errReservedAppCap) },
+	}, {
+		name: "crons",
+		onApp: func(ctx context.Context, store state.Store, app state.App) error {
+			_, err := store.CreateCronIfUnderQuota(ctx, app.ID, "*/5 * * * *", "/tick-"+uuid.NewString()[:8], true, limits)
+			return err
+		},
+		accountCap: cronAccountCap,
+	}, {
+		// A deploy replaces the app's HTTP crons with its manifest's.
+		name: "deployment crons",
+		onApp: func(ctx context.Context, store state.Store, app state.App) error {
+			staging := store.(state.DeploymentCronStagingStore)
+			snapshot, err := staging.DeploymentCronStagingSnapshot(ctx, app.AccountID, app.ID)
+			if err != nil {
+				return err
+			}
+			desired := append(slices.Clone(snapshot.Crons), api.DeploymentCronConfig{ID: uuid.NewString(), Schedule: "*/5 * * * *", Path: "/deploy", Enabled: true, Timezone: "UTC"})
+			_, err = staging.ApplyDeploymentCronStaging(ctx, app.ID, state.DeploymentCronStagingParams{AccountID: app.AccountID, Limits: limits,
+				Request: api.DeploymentCronStagingRequest{SessionID: strings.ReplaceAll(uuid.NewString(), "-", ""), Operation: "stage", ExpectedAppID: app.ID,
+					ExpectedDeploymentID: snapshot.LatestDeploymentID, ExpectedRevision: snapshot.Revision, Before: snapshot.Crons, Desired: desired}})
+			return err
+		},
+		accountCap: cronAccountCap,
+	}, {
+		// A project apply in the app's namespace and organization whose
+		// cron runs on the app.
+		name: "project crons",
+		onApp: func(ctx context.Context, store state.Store, app state.App) error {
+			_, _, _, err := store.ApplyProjectPlan(ctx, state.Project{AccountID: app.AccountID, OrgID: app.OrgID, Slug: "crons-" + uuid.NewString()[:8],
+				ProductionBranch: "main", ScanSource: state.ProjectScanSourceCompose},
+				nil, []state.Cron{{AppID: app.ID, Schedule: "*/5 * * * *", Path: "/project", Enabled: true}}, limits)
+			return err
+		},
+		accountCap: func(err error) bool {
+			var q *state.QuotaError
+			return errors.As(err, &q) && q.Kind == state.QuotaErrorKindCrons && !q.NotAllowed
+		},
+	}, {
+		name: "consumer keys",
+		onApp: func(ctx context.Context, store state.Store, app state.App) error {
+			consumer, err := store.CreateAPIConsumer(ctx, app.AccountID, app.ID, "ref-"+uuid.NewString()[:8], "quota")
+			if err != nil {
+				return err
+			}
+			_, prefix, hash, err := api.GenerateConsumerKey()
+			if err != nil {
+				return err
+			}
+			_, err = store.CreateConsumerKeyForConsumerIfUnderQuota(ctx, app.AccountID, consumer.ID, "key", prefix, hash, []string{"read"}, nil,
+				state.ConsumerKeyQuota{PerApp: 10, PerAccount: 1})
+			return err
+		},
+		accountCap: func(err error) bool {
+			var q *state.ConsumerKeyQuotaError
+			return errors.As(err, &q) && q.Scope == api.PlanQuotaScopeAccount
+		},
 	}}
+}
+
+func cronAccountCap(err error) bool {
+	var q *state.CronQuotaError
+	return errors.As(err, &q) && q.Scope == state.CronQuotaScopeAccount
 }
 
 // Per-account plan allowances belong to an app's billing subject
@@ -194,8 +258,16 @@ func quotaSubjectContract(t *testing.T, store state.Store, kind quotaSubjectKind
 	if err != nil {
 		t.Fatal(err)
 	}
-	if adopted && adopt != nil {
-		adopt(org.ID)
+	if adopted {
+		if adopt != nil {
+			adopt(org.ID)
+		}
+		// A company keeps its adoption when it upgrades, and its plan's
+		// application quota then admits the contract's company apps where a
+		// project apply checks it.
+		if err := store.UpdateOrgPlan(ctx, org.ID, api.PlanPro); err != nil {
+			t.Fatal(err)
+		}
 	}
 	for id, role := range map[string]state.OrgRole{creator.ID: state.OrgRoleOwner, member.ID: state.OrgRoleDeveloper} {
 		if err := store.AddOrgMember(ctx, org.ID, id, role, nil); err != nil {

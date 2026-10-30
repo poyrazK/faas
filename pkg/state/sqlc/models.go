@@ -8153,6 +8153,7 @@ type ManagedPostgresDatabase struct {
 	CloneResourceRole           string
 	AccountingRequired          bool
 	OrgID                       pgtype.UUID
+	PurgeAfter                  pgtype.Timestamptz
 }
 
 type ManagedPostgresDatabaseEndpoint struct {
@@ -8290,6 +8291,12 @@ type ManagedPostgresUsageImport struct {
 	AfterRecords      []byte
 	Result            []byte
 	CreatedAt         pgtype.Timestamptz
+}
+
+type ManagedPostgresUsageWaiver struct {
+	DatabaseID  pgtype.UUID
+	WaivedFrom  pgtype.Timestamptz
+	WaivedUntil pgtype.Timestamptz
 }
 
 type ManagedRealtimeChannelBatch struct {
@@ -13356,6 +13363,7 @@ type ReleaseFreeze struct {
 	CreatedAt             pgtype.Timestamptz
 	LiftedAt              pgtype.Timestamptz
 	LiftedBy              pgtype.Text
+	OrgID                 pgtype.UUID
 }
 
 type ReleaseSecretKeyRetirement struct {

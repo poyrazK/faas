@@ -244,6 +244,7 @@ type EnqueueParams struct {
 	OverrideEnv              json.RawMessage
 	MCPTaskMigrationOverride bool
 	OverrideHealthcheck      json.RawMessage
+	OverrideLivenessProbe    json.RawMessage
 	OverrideMainDependsOn    json.RawMessage
 	TrafficPercent           int
 	TrafficPercentExplicit   bool
@@ -646,6 +647,7 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 		OverrideEnv:              append(json.RawMessage(nil), p.OverrideEnv...),
 		MCPTaskMigrationOverride: p.MCPTaskMigrationOverride,
 		OverrideHealthcheck:      append(json.RawMessage(nil), p.OverrideHealthcheck...),
+		OverrideLivenessProbe:    append(json.RawMessage(nil), p.OverrideLivenessProbe...),
 		OverrideMainDependsOn:    append(json.RawMessage(nil), p.OverrideMainDependsOn...),
 		InferredProfile:          append(json.RawMessage(nil), inferredProfile...),
 		TrafficPercent:           p.TrafficPercent,

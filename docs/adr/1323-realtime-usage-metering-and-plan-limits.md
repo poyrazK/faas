@@ -143,3 +143,47 @@ tenant, was then refused.
   is refused like a full queue and counted as a node budget drop.
 - The bytes are counted per account (`accountConnections.outbound`) at the
   same points the node total is reserved and released.
+
+## Amendment (2026-10-27): resume subscriptions per plan
+
+Resume, inbox and SSE subscriptions each read their channel's history from the
+control plane at least every 5 seconds. A node holds at most 256 of them
+(`RealtimeResumeSubscriptionsPerNode`) and one account at most half of those
+(amendment of 2026-10-24). With fair use on, an account now holds at most its
+plan's share of one node: Hobby 16, Pro 64, Scale 128
+(`RealtimeLimits.ResumeSubscriptionsPerNode`). The node and per-connection
+bounds stay; the plan share only divides the node's history-read budget.
+
+realtimed learns the plan from the account connection allowance apid already
+sends with every endpoint (`RealtimeResumeSubscriptionsPerNodeFor`), so no new
+registration field is needed: realtime nodes refuse unknown fields, and a
+release upgrades apid before them. Plans' connection allowances must stay
+distinct; a test pins it. Without fair use only the node share applies.
+
+## Amendment (2026-10-27): retained channels per account
+
+Retained history was bounded per endpoint (32 channels, 1,024 messages of
+4 KiB each, 24 hours), but the 32 counted every channel head ever created.
+Heads outlive their messages so a channel's sequences never restart, so an
+endpoint could retain on only 32 distinct channels in its lifetime, and an
+account's retained storage was bounded only through its endpoint count (up to
+about 32 GiB for Scale).
+
+- The limits now count channels that hold something now: retained messages
+  (`oldest_sequence < next_sequence`), reducer state or a snapshot.
+  `PruneExpiredManagedRealtimeChannelMessages` already deletes expired
+  messages and advances `oldest_sequence`, which frees the channel.
+- An endpoint holds at most 32 such channels at a time, as before, and an
+  account its plan's `RealtimeLimits.RetainedChannelsPerAccount`: Hobby 32,
+  Pro 256, Scale 1,024. At 4 MiB a channel that bounds an account's retained
+  control-plane storage to about 128 MiB, 1 GiB and 4 GiB.
+- The check runs only when a publish, batch or reducer starts holding a
+  channel, inside the transaction that holds the endpoint's row lock. The
+  account count is not serialized across the account's endpoints, so racing
+  publishes can run it over by a few channels.
+- A partial index, `managed_realtime_channel_heads_held_idx`, keeps both
+  counts proportional to the held channels, not to every head ever created.
+- Dormant heads are kept. Removing them safely needs the durable cursor,
+  read-progress and schedule rows that name a channel considered first; that
+  is a follow-up, not a limit.
+

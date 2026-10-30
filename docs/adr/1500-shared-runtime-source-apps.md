@@ -119,6 +119,67 @@ Dockerfile build and a shared source build back and forth. Its Node fixture
 now declares Node 24; that variant has not yet run on metal. Python remains a
 later slice.
 
+## Amendment 2 (2026-10-29): Python
+
+Python container apps share the runner bases too, under the same flag and
+default. Without it a Python app from source carries Railpack's mise Python
+in drive1 like Node did, which is over the Free plan's 256 MB layer cap once
+its dependencies are added.
+
+1. **Runtime selection (builderd).** A Railpack Python build of a container
+   app with an empty runtime, no Dockerfile and no job mode picks
+   `python313`, or `python312` when every version declaration names 3.12.
+   The declarations are read as written: `.python-version` and `runtime.txt`
+   (first line), Pipfile's `python_version`, a python entry in
+   `.tool-versions`, `mise.toml` or `.mise.toml`, and `packages.python` in
+   `railpack.json` (`markers.PythonVersionSpecsAtRoot`). No declaration
+   picks `python313`, the Python Railpack 0.38 installs on its own, so the
+   build's toolchain does not change. Any other declaration (3.11, 3.14, a
+   range, an unreadable TOML value, two that disagree) keeps today's
+   full-layer path: the builder pins Railpack's Python to the base's minor,
+   and a declared version must never be replaced. The same rule now also
+   reads `packages.node` in `railpack.json` for Node, which the builder's
+   pin would otherwise overwrite.
+2. **Eligibility (builder VM).** `sharedruntime.ClassifyPython` applies the
+   Node checks to the plan (deploy inputs are the base, the mise toolchain
+   and `/app`; no system packages), with no npm script to resolve. A start
+   command that runs through a Python package manager (`uv run`,
+   `poetry run`, `pipenv`, ...) is ineligible: those tools live in the
+   toolchain the layer drops. As for Node, the platform clears Railpack's
+   default apt step, which the app's own minimal base also did; Wolfi's
+   runner-python313 has no apt.
+3. **Layer (imaged).** Railpack creates `/app/.venv` with mise's Python, so
+   its interpreter links (`python`, `python3`, `python3.N`) and the `home`
+   and `executable` keys of `pyvenv.cfg` point into `/mise`. imaged moves
+   them to the base's interpreter of the same minor
+   (`/usr/local/bin/python3.12` on Debian runner-python312,
+   `/usr/bin/python3.13` on Wolfi runner-python313), so the virtualenv and
+   every console script in it run on the base unchanged. A link into the
+   toolchain that is not an interpreter keeps the full layer. The app runs
+   with `PATH=/app/.venv/bin:...` and `VIRTUAL_ENV=/app/.venv`. Compiled
+   wheels target the CPython ABI of the minor, which both interpreters
+   share.
+4. **Records.** `python312` and `python313` join the runner bases a
+   `source-app-layer` record, a signed export claim and
+   `deployments.runtime_base` may name. Migration 20261029134512301 widens
+   `source_build_rootfs_check1` and `deployments_runtime_base_check` online
+   and replaces the two functions that list the bases. A previous-release
+   schedd refuses to boot a `python3xx` runtime base rather than guessing
+   one, and the deploy order (control plane before node units) keeps it
+   from seeing one.
+5. **Hint.** An app layer over the plan cap from a Python app whose declared
+   version has no shared runtime says to declare 3.12 or 3.13, as Node 22
+   apps are told to declare Node 24 (ADR-20261029103512 amendment 1).
+
+Acceptance is `TestSharedRuntimePythonMetal`: a Python 3.11 own-base
+deployment, `python313` and `python312` shared deployments started through
+the virtualenv's gunicorn script, and rollback between the own base and
+`python313`, each from a cold boot and a snapshot restore. It passed on the
+n2 metal host on 2026-10-30 (5/5 subtests, leakcheck clean) with app layers
+of 298 MB for the Python 3.11 own-base deployment against 50.8 MB
+(`python313`) and 51.2 MB (`python312`) on the shared bases;
+`TestSharedRuntimeRollbackMetal` passed again in the same run.
+
 ## Consequences
 
 - An eligible Node app layer is its source plus `node_modules`, a few MB for

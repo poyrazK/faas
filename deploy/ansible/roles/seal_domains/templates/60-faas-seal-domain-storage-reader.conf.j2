@@ -5,9 +5,10 @@
 [Service]
 {% if faas_seal_domain_storage_contracted | bool %}
 # Contracted: an empty LoadCredential= drops every credential loaded before
-# this drop-in, the base unit's fleet and host identities included, so
+# this drop-in: the base unit's fleet and host identities and the
+# host.age.previous the optional_credentials role projects (40-*).
 # s3-gatewayd holds only the domain identity below and skips its startup
-# rekey. No other drop-in loads one for s3-gatewayd.
+# rekey.
 LoadCredential=
 UnsetEnvironment=FAAS_HOST_AGE_IDENTITY_PATH
 {% endif %}

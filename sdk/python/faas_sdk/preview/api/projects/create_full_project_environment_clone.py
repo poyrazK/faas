@@ -8,6 +8,7 @@ from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.create_project_environment_request import CreateProjectEnvironmentRequest
 from ...models.problem import Problem
+from ...models.project_environment_response import ProjectEnvironmentResponse
 from ...types import Response
 
 
@@ -33,7 +34,14 @@ def _get_kwargs(
     return _kwargs
 
 
-def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> Problem | None:
+def _parse_response(
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> Problem | ProjectEnvironmentResponse | None:
+    if response.status_code == 202:
+        response_202 = ProjectEnvironmentResponse.from_dict(response.json())
+
+        return response_202
+
     if response.status_code == 400:
         response_400 = Problem.from_dict(response.json())
 
@@ -65,7 +73,9 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
         return None
 
 
-def _build_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> Response[Problem]:
+def _build_response(
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> Response[Problem | ProjectEnvironmentResponse]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -79,12 +89,16 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: CreateProjectEnvironmentRequest,
-) -> Response[Problem]:
+) -> Response[Problem | ProjectEnvironmentResponse]:
     """Request a complete isolated environment clone.
 
-     This dedicated route never falls back to partial cloning. Full admission
-    currently returns environment_full_clone_unavailable with named blockers
-    until complete coverage and coordinated data-copy proofs are available.
+     This dedicated route never falls back to partial cloning. While full
+    admission is closed it returns environment_full_clone_unavailable with
+    named blockers. When open, a source whose every used resource has an
+    isolated strategy, including managed databases with point-in-time
+    restore, is captured and a durable clone operation is returned; any
+    other source is refused with each uncopyable resource named under
+    resource_coverage.
 
     Args:
         slug (str):
@@ -96,7 +110,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Problem]
+        Response[Problem | ProjectEnvironmentResponse]
     """
 
     kwargs = _get_kwargs(
@@ -116,12 +130,16 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: CreateProjectEnvironmentRequest,
-) -> Problem | None:
+) -> Problem | ProjectEnvironmentResponse | None:
     """Request a complete isolated environment clone.
 
-     This dedicated route never falls back to partial cloning. Full admission
-    currently returns environment_full_clone_unavailable with named blockers
-    until complete coverage and coordinated data-copy proofs are available.
+     This dedicated route never falls back to partial cloning. While full
+    admission is closed it returns environment_full_clone_unavailable with
+    named blockers. When open, a source whose every used resource has an
+    isolated strategy, including managed databases with point-in-time
+    restore, is captured and a durable clone operation is returned; any
+    other source is refused with each uncopyable resource named under
+    resource_coverage.
 
     Args:
         slug (str):
@@ -133,7 +151,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Problem
+        Problem | ProjectEnvironmentResponse
     """
 
     return sync_detailed(
@@ -148,12 +166,16 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: CreateProjectEnvironmentRequest,
-) -> Response[Problem]:
+) -> Response[Problem | ProjectEnvironmentResponse]:
     """Request a complete isolated environment clone.
 
-     This dedicated route never falls back to partial cloning. Full admission
-    currently returns environment_full_clone_unavailable with named blockers
-    until complete coverage and coordinated data-copy proofs are available.
+     This dedicated route never falls back to partial cloning. While full
+    admission is closed it returns environment_full_clone_unavailable with
+    named blockers. When open, a source whose every used resource has an
+    isolated strategy, including managed databases with point-in-time
+    restore, is captured and a durable clone operation is returned; any
+    other source is refused with each uncopyable resource named under
+    resource_coverage.
 
     Args:
         slug (str):
@@ -165,7 +187,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Problem]
+        Response[Problem | ProjectEnvironmentResponse]
     """
 
     kwargs = _get_kwargs(
@@ -183,12 +205,16 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: CreateProjectEnvironmentRequest,
-) -> Problem | None:
+) -> Problem | ProjectEnvironmentResponse | None:
     """Request a complete isolated environment clone.
 
-     This dedicated route never falls back to partial cloning. Full admission
-    currently returns environment_full_clone_unavailable with named blockers
-    until complete coverage and coordinated data-copy proofs are available.
+     This dedicated route never falls back to partial cloning. While full
+    admission is closed it returns environment_full_clone_unavailable with
+    named blockers. When open, a source whose every used resource has an
+    isolated strategy, including managed databases with point-in-time
+    restore, is captured and a durable clone operation is returned; any
+    other source is refused with each uncopyable resource named under
+    resource_coverage.
 
     Args:
         slug (str):
@@ -200,7 +226,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Problem
+        Problem | ProjectEnvironmentResponse
     """
 
     return (

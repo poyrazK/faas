@@ -1002,6 +1002,9 @@ type AppEdgeRulesData struct {
 	// account (ADR-20261021220456 amendment 1); the card then offers no
 	// switch to turn it on.
 	AttackModeAvailable bool
+	// ChallengeAvailable is false while the browser challenge is not released
+	// to the account; the create form then offers no challenge kind.
+	ChallengeAvailable bool
 	// Events is the ADR-964 security-events section.
 	Events EdgeRuleEventsPageData
 	// WAFReview is the WAF false-positive review (ADR-831 amendment 13).
@@ -3584,6 +3587,9 @@ type ManagedPostgresDatabaseItem struct {
 	UpdatedAt            string
 	Bindings             []ManagedPostgresBindingItem
 	BindingsError        string
+	// RestorableUntil is when a scheduled delete becomes final
+	// (ADR-20261029174950); empty when no delete is scheduled.
+	RestorableUntil string
 }
 
 // ManagedPostgresBindingItem is the safe metadata shown for an app binding.

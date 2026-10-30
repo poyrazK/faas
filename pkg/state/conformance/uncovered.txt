@@ -9,7 +9,6 @@
 # contract is unpinned there, which is how both stores came to return zero
 # from every live-instance reader while the suite sat green (#1666, #1669,
 # #1672). Sorted; keep it that way.
-APIKeyByHash
 AbortMigratingInstance
 AbortServiceRollout
 AccountByEmail
@@ -118,6 +117,7 @@ CreateAppWebhookIfUnderQuota
 CreateBuildProvenance
 CreateBuildWithID
 CreateConsumerKey
+CreateConsumerKeyForConsumerIfUnderQuota
 CreateCorsPresetIfUnderQuota
 CreateCreditLedgerEntry
 CreateCronIfUnderQuotaWithOptions
@@ -556,7 +556,6 @@ TakeOverAbandonedAppFork
 TenantSurfaceByHostname
 TouchConsumerKeyLastUsed
 TouchInstancesWithRequestDelta
-TouchKeyLastUsed
 TouchSessionLastSeen
 TouchTenantSurfaceForRenewal
 TrafficAnomalyAggregate

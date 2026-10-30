@@ -416,6 +416,9 @@
 - name: control_plane_service — converge cluster workload trust (ADR-1141)
   ansible.builtin.include_tasks: workload_trust.yml
 
+- name: control_plane_service — converge the app outbound relay (ADR-989)
+  ansible.builtin.include_tasks: outbound_relay.yml
+
 - name: control_plane_service — set public status launch boundary
   notify: restart faas-apid
   ansible.builtin.template:

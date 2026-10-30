@@ -1151,6 +1151,20 @@ Each slice is one reviewable change on a branch. Slices 2–4 are behind
      (see ADR-971's amendment). A read-only dry run on fsn-2's journal
      (rc.304 host) retires those 11, keeps a dead build VM whose jail and
      namespace survive, marking it gone, and keeps the 4 live guests.
+   - **Re-staged bind sources (2026-10-30).** The first production no-drain
+     restart (rc.306, fsn-2) adopted 1 of 2 guests: the release's base
+     pre-stage had published a refreshed file over the cache path the other
+     guest's base drive was bound from, and adoption reopened the source by
+     path and refused it (`source was replaced`). The guest kept running
+     on the recorded inode through its jail. When the path names another
+     file, adoption now opens the bind target beneath the adopted
+     Firecracker's root (`/proc/<pid>/root`, openat2 `RESOLVE_BENEATH |
+     RESOLVE_NO_SYMLINKS`, `O_PATH` until the device and inode match the
+     record) and pins that inode under its (path, inode) key, as a live
+     vmmd already does for a source the cache renamed (rc.236). Teardown
+     restores the recorded inode's mode through that handle, and a new bind
+     of the refreshed file counts apart. `TestVMMDRestartKeepsRunningAppMetal`
+     re-stages one of the guest's run-owned bind sources before the restart.
 5. **fsn-4 acceptance** (§5), then flip `adopt_running_vms` to true by default.
 
 ## Risks

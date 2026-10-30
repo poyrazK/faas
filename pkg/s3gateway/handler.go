@@ -69,6 +69,11 @@ type Config struct {
 	MinSpoolFreeBytes int64
 	Now               func() time.Time
 	Log               *slog.Logger
+	// ReadAdmitter admits gateway-safety GETs and HEADs from cached
+	// decisions and batches their counts; nil keeps the locking admission
+	// (ADR-20261030075301). AccountLimiter bounds each owner's requests.
+	ReadAdmitter   *objectstorage.ReadAdmitter
+	AccountLimiter *objectstorage.AccountRequestLimiter
 }
 
 type Handler struct {
@@ -76,6 +81,8 @@ type Handler struct {
 	store           Store
 	multipartStore  state.ObjectMultipartUploadStore
 	requestMetrics  state.ObjectStorageProviderUsageStore
+	readAdmitter    *objectstorage.ReadAdmitter
+	accountLimiter  *objectstorage.AccountRequestLimiter
 	openSecret      func([]byte) (string, error)
 	client          *http.Client
 	enabled         func() bool
@@ -175,7 +182,7 @@ func New(c Config) (*Handler, error) {
 		c.Log = slog.Default()
 	}
 	return &Handler{
-		registry: c.Registry, store: c.Store, requestMetrics: c.RequestMetrics, openSecret: c.OpenSecret, client: c.HTTPClient,
+		registry: c.Registry, store: c.Store, requestMetrics: c.RequestMetrics, readAdmitter: c.ReadAdmitter, accountLimiter: c.AccountLimiter, openSecret: c.OpenSecret, client: c.HTTPClient,
 		multipartStore: multipartStore(c.Store),
 		enabled:        c.Enabled, host: strings.ToLower(c.Host), region: c.Region, spoolDir: c.SpoolDir,
 		maxPutBytes: c.MaxPutBytes, uploadGrants: c.UploadGrants, putSlots: make(chan struct{}, c.MaxConcurrentPuts),
@@ -245,6 +252,9 @@ type requestContext struct {
 	encryption       objectstorage.ResolvedObjectEncryption
 	copySource       *state.ObjectBucket
 	copyGrantID      string
+	// read is set when the cached read admission let this GET or HEAD
+	// through; its counts are then batched instead of written.
+	read *objectstorage.AdmittedRead
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -307,6 +317,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	secret, err := h.openSecret(credential.SecretSealed)
 	if err != nil || presigned && verifyPresignedSigV4(ctx, r, parsed, secret, h.region) != nil || !presigned && verifySigV4(ctx, r, parsed, secret, h.region) != nil {
 		writeS3Error(w, http.StatusForbidden, "SignatureDoesNotMatch", "The request signature we calculated does not match the signature you provided.", r.URL.Path, requestID)
+		return
+	}
+	if h.accountLimiter != nil && !h.accountLimiter.Allow(bucket) {
+		writeS3Error(w, http.StatusServiceUnavailable, "SlowDown", "Please reduce your request rate.", r.URL.Path, requestID)
 		return
 	}
 	if !h.applyBucketCORS(w, r, bucket, requestID) || !h.boundURLRequest(w, r, credential, bucket, requestID) {
@@ -631,7 +645,7 @@ func (h *Handler) routeObject(w http.ResponseWriter, r *http.Request, req reques
 	}
 	switch r.Method {
 	case http.MethodGet, http.MethodHead:
-		if !h.require(w, req, state.ObjectBucketPermissionRead, r.URL.Path) || !h.admit(w, r, req, key, 0, false) {
+		if !h.require(w, req, state.ObjectBucketPermissionRead, r.URL.Path) || !h.admitRead(w, r, &req, key) {
 			return
 		}
 		h.download(w, r, req, key)
@@ -670,6 +684,21 @@ func (h *Handler) require(w http.ResponseWriter, req requestContext, permission,
 	}
 	writeS3Error(w, http.StatusForbidden, "AccessDenied", "Access Denied.", resource, req.requestID)
 	return false
+}
+
+// admitRead admits a GET or HEAD from the cached read decision when it can
+// (ADR-20261030075301): gateway-safety accounting and a credential without
+// an organization access fence, whose check still needs a transaction.
+func (h *Handler) admitRead(w http.ResponseWriter, r *http.Request, req *requestContext, key string) bool {
+	if h.readAdmitter == nil || !h.registry.Accounting.GatewaySafety() || req.credential.IssuerAccountID != "" && req.bucket.OrgID != "" {
+		return h.admit(w, r, *req, key, 0, false)
+	}
+	admitted, err := h.readAdmitter.AdmitRead(r.Context(), req.bucket)
+	if err != nil {
+		return h.writeAdmissionError(w, r, *req, err)
+	}
+	req.read = &admitted
+	return true
 }
 
 func (h *Handler) admit(w http.ResponseWriter, r *http.Request, req requestContext, key string, size int64, put bool) bool {
@@ -877,7 +906,7 @@ func (h *Handler) download(w http.ResponseWriter, r *http.Request, req requestCo
 	if !ok {
 		return
 	}
-	if native != "" && !h.admit(w, r, req, key, 0, false) {
+	if native != "" && req.read == nil && !h.admit(w, r, req, key, 0, false) {
 		return
 	}
 	upstream, err := h.prepareGatewayRead(r, req, key, native)
@@ -984,9 +1013,10 @@ func unsupportedS3SemanticName(name string) bool {
 // unaccounted provider call to escape; the resulting 503 is preferable to
 // silently under-reporting customer usage.
 func (h *Handler) recordProviderRequest(w http.ResponseWriter, r *http.Request, req requestContext) bool {
-	if h.requestMetrics == nil {
+	if h.requestMetrics == nil || req.read != nil {
 		// Unit fixtures may omit persistence. Production s3-gatewayd rejects
-		// startup when the configured store lacks this capability.
+		// startup when the configured store lacks this capability. A cached
+		// read admission already counted this request.
 		return true
 	}
 	if h.registry.Accounting.GatewaySafety() && r.Method != http.MethodDelete {
@@ -1188,7 +1218,14 @@ func (h *Handler) writeGatewayRead(w http.ResponseWriter, r *http.Request, req r
 		return
 	}
 	if r.Method == http.MethodGet && h.registry.Accounting.GatewaySafety() {
-		if !h.writeAdmissionError(w, r, req, objectstorage.ReserveGatewayRead(r.Context(), h.requestMetrics, req.bucket.ID, response, h.registry.Accounting, h.now().UTC())) {
+		reserved := error(state.ErrObjectUsageStale)
+		switch {
+		case req.read == nil:
+			reserved = objectstorage.ReserveGatewayRead(r.Context(), h.requestMetrics, req.bucket.ID, response, h.registry.Accounting, h.now().UTC())
+		case !response.Uncompressed:
+			reserved = h.readAdmitter.ReserveEgress(*req.read, response.ContentLength)
+		}
+		if !h.writeAdmissionError(w, r, req, reserved) {
 			return
 		}
 	}

@@ -50,7 +50,7 @@ func parseAppEdgeRulesPath(rest string) (string, bool) {
 func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log *slog.Logger, acct state.Account, slug string, traceForm *dashboard.EdgeRuleTraceFormData, traceInput *edgeruletrace.Input) {
 	ctx := r.Context()
 	app, err := s.store.AppBySlug(ctx, slug)
-	if err != nil || app.AccountID != acct.ID {
+	if err != nil || !dashboardAppOwner(r, &acct, app) {
 		http.NotFound(w, r)
 		return
 	}
@@ -61,6 +61,7 @@ func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log 
 	}
 	data.Protection = s.edgeRules.AppEdgeProtection(ctx, app, edgerules.EdgeProtectionDefaultRange)
 	data.AttackModeAvailable = s.edgeRules.AttackModeReleased(acct)
+	data.ChallengeAvailable = s.edgeRules.FeatureReleased(acct, api.EdgeFeatureChallenge)
 	data.Trace = dashboard.EdgeRuleTraceFormData{Host: app.Slug, Path: "/", Method: http.MethodGet}
 	if appURL, parseErr := url.Parse(data.App.URL); parseErr == nil && appURL.Hostname() != "" {
 		data.Trace.Host = appURL.Hostname()
@@ -177,9 +178,9 @@ func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log 
 		}
 	}
 	if s.sessions != nil {
-		token, tokenErr := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardEdgeRulesAction, acct.ID, dashboardEdgeRulesCSRFCookie)
+		token, tokenErr := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardEdgeRulesAction, actorAccount(r, acct).ID, dashboardEdgeRulesCSRFCookie)
 		if tokenErr != nil {
-			log.Warn("dashboard edge rules: issue csrf", "account_id", acct.ID, "app_id", app.ID, "err", tokenErr)
+			log.Warn("dashboard edge rules: issue csrf", "account_id", actorAccount(r, acct).ID, "app_id", app.ID, "err", tokenErr)
 		} else {
 			data.ActionCSRF = token
 			http.SetCookie(w, &http.Cookie{Name: dashboardEdgeRulesCSRFCookie, Value: token, Path: "/", HttpOnly: true,
@@ -440,7 +441,7 @@ func (s *server) dashboardToggleEdgeRule(w http.ResponseWriter, r *http.Request)
 	}
 	slug, id := r.PathValue("slug"), r.PathValue("id")
 	app, err := s.store.AppBySlug(r.Context(), slug)
-	if err != nil || app.AccountID != acct.ID {
+	if err != nil || !dashboardAppOwner(r, &acct, app) {
 		http.NotFound(w, r)
 		return
 	}
@@ -472,7 +473,7 @@ func (s *server) dashboardDeleteEdgeRule(w http.ResponseWriter, r *http.Request)
 	// be that app's, as the toggle and mode handlers require. Company apps and
 	// their creator's personal apps share AccountID.
 	app, err := s.store.AppBySlug(r.Context(), slug)
-	if err != nil || app.AccountID != acct.ID {
+	if err != nil || !dashboardAppOwner(r, &acct, app) {
 		http.NotFound(w, r)
 		return
 	}
@@ -499,7 +500,7 @@ func (s *server) dashboardSecurityHeaders(w http.ResponseWriter, r *http.Request
 	}
 	slug := r.PathValue("slug")
 	app, err := s.store.AppBySlug(r.Context(), slug)
-	if err != nil || app.AccountID != acct.ID {
+	if err != nil || !dashboardAppOwner(r, &acct, app) {
 		http.NotFound(w, r)
 		return
 	}
@@ -623,7 +624,7 @@ func (s *server) dashboardApplyEdgeRuleRecipe(w http.ResponseWriter, r *http.Req
 	}
 	slug := r.PathValue("slug")
 	app, err := s.store.AppBySlug(r.Context(), slug)
-	if err != nil || app.AccountID != acct.ID {
+	if err != nil || !dashboardAppOwner(r, &acct, app) {
 		http.NotFound(w, r)
 		return
 	}

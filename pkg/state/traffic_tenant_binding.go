@@ -303,7 +303,9 @@ func (tx *trafficTenantBindingTx) Validate(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		missed := auditTrafficBindingScope(tx.writer, tx.scope, trafficBindingChanges(tx.before, claims, tx.globalBefore.Reservations, globalAfter.Reservations))
+		changes := trafficBindingChanges(tx.before, claims, tx.globalBefore.Reservations, globalAfter.Reservations)
+		missed := auditTrafficBindingScope(tx.writer, tx.scope, changes)
+		auditTrafficBindingCapture(bounded, tx.Tx, tx.writer, tx.appsSuffix, changes)
 		if tx.scoped && len(missed) > 0 {
 			// The scoped analysis cannot verify a hostname it did not lock or read.
 			return analysisLimit("binding_scope", "hostnames", 0, int64(len(missed)))

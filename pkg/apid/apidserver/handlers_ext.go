@@ -2615,7 +2615,7 @@ func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.
 	}
 	s.recordAppActivity(ctx, r, acct, app, activity)
 	if trigger != state.RollbackTriggerManual {
-		s.freezeAfterAutomaticRollback(ctx, acct.ID, app, current.ID, automaticRollbackCause(trigger, current))
+		s.freezeAfterAutomaticRollback(ctx, app, current.ID, automaticRollbackCause(trigger, current))
 	}
 	return target, s.plainRollbacks().Record(ctx, acct, app, target, current.ID, trigger), nil
 }
@@ -3164,6 +3164,14 @@ func (s *server) renameApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	oldSlug := r.PathValue("slug")
 	app, ok := s.loadApp(w, r, acct, oldSlug)
 	if !ok {
+		return
+	}
+	// A preview's slug is its identity (pr-<N>-<app>): renamed, the next
+	// PR head no longer finds it and reserves a second preview while this
+	// one holds its slot until the lease ends.
+	if app.PreviewOfSlug != "" {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+			"Preview cannot be renamed", "a preview app's name is derived from its production app; rename the production app instead"))
 		return
 	}
 	var req api.RenameAppRequest

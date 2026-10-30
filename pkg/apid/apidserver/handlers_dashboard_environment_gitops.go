@@ -124,7 +124,7 @@ func (s *server) renderDashboardEnvironmentGitOps(w http.ResponseWriter, r *http
 		api.WriteProblem(w, api.ErrCapacity("Could not read environment GitOps status."))
 		return
 	}
-	token, err := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardEnvironmentGitOpsAction, acct.ID, dashboardEnvironmentGitOpsCookie)
+	token, err := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardEnvironmentGitOpsAction, actorAccount(r, acct).ID, dashboardEnvironmentGitOpsCookie)
 	if err != nil {
 		renderProblem(w, s.log, err)
 		return

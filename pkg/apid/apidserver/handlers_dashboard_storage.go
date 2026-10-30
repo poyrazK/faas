@@ -55,7 +55,7 @@ func (s *server) renderAppStorage(w http.ResponseWriter, r *http.Request, log *s
 func (s *server) renderAppStoragePage(w http.ResponseWriter, r *http.Request, log *slog.Logger, acct state.Account, slug string, signed *dashboard.StorageSignedURLPageItem) {
 	ctx := r.Context()
 	app, err := s.store.AppBySlug(ctx, slug)
-	if err != nil || app.AccountID != acct.ID {
+	if err != nil || !dashboardAppOwner(r, &acct, app) {
 		http.NotFound(w, r)
 		return
 	}
@@ -117,8 +117,8 @@ func (s *server) renderAppStoragePage(w http.ResponseWriter, r *http.Request, lo
 	}
 
 	if s.sessions != nil {
-		if token, tokenErr := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardStorageAction, acct.ID, dashboardStorageCSRFCookie); tokenErr != nil {
-			log.Warn("dashboard storage: issue csrf", "account_id", acct.ID, "app_id", app.ID, "err", tokenErr)
+		if token, tokenErr := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardStorageAction, actorAccount(r, acct).ID, dashboardStorageCSRFCookie); tokenErr != nil {
+			log.Warn("dashboard storage: issue csrf", "account_id", actorAccount(r, acct).ID, "app_id", app.ID, "err", tokenErr)
 		} else {
 			data.ActionCSRF = token
 			http.SetCookie(w, &http.Cookie{Name: dashboardStorageCSRFCookie, Value: token, Path: "/", HttpOnly: true, Secure: s.domain != "", SameSite: http.SameSiteLaxMode, MaxAge: int(middleware.DefaultCSRFTTL.Seconds())})

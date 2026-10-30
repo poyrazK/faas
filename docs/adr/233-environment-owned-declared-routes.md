@@ -47,6 +47,12 @@ the API requires MFA and deploy-write scope. The database rejects an enabled
 gate with an empty explicit list, so direct store writes cannot accidentally
 restore a shared OpenAPI fallback.
 
+Protected environments other than production refuse this direct edit (409),
+as they refuse direct workload settings edits: their route contracts change
+through an approved project plan or an environment promotion, which carries the
+source stage's contract. Production, protected by default, keeps the direct
+edit, as it keeps the unscoped application settings edit.
+
 ## Follow-up: stable platform URL for a named environment
 
 Each registered project environment now has a stable platform URL per public

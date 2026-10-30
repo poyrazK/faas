@@ -31,14 +31,14 @@ func composeResourcesAdmissionReasons(plan api.Plan, w reposcan.Workload) []stri
 		switch replicas := *r.Replicas; scanExecutionMode(w) {
 		case "":
 			if replicas > limits.MaxConcurrency {
-				reasons = append(reasons, fmt.Sprintf("workload %q: deploy.replicas %d exceeds the %s plan's %d concurrent instances", w.Name, replicas, plan, limits.MaxConcurrency))
+				reasons = append(reasons, fmt.Sprintf("workload %q: %s %d exceeds the %s plan's %d concurrent instances", w.Name, w.ReplicasKey(), replicas, plan, limits.MaxConcurrency))
 			}
 		case api.ExecutionModeWorker:
 			if replicas > limits.WorkerReplicasMax {
-				reasons = append(reasons, fmt.Sprintf("workload %q: deploy.replicas %d exceeds the %s plan's %d worker replicas", w.Name, replicas, plan, limits.WorkerReplicasMax))
+				reasons = append(reasons, fmt.Sprintf("workload %q: %s %d exceeds the %s plan's %d worker replicas", w.Name, w.ReplicasKey(), replicas, plan, limits.WorkerReplicasMax))
 			}
 		default:
-			reasons = append(reasons, fmt.Sprintf("workload %q: deploy.replicas applies to services and workers, not jobs", w.Name))
+			reasons = append(reasons, fmt.Sprintf("workload %q: %s applies to services and workers, not jobs", w.Name, w.ReplicasKey()))
 		}
 	}
 	return reasons

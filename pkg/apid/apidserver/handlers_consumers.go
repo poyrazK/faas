@@ -185,86 +185,6 @@ func (s *server) listConsumerKeys(w http.ResponseWriter, r *http.Request, acct s
 	writeJSON(w, http.StatusOK, api.ConsumerKeyListResponse{Keys: out})
 }
 
-func (s *server) countConsumerKeys(ctx context.Context, acctID, appID string) (int, error) {
-	rows, err := s.store.ListConsumerKeysForApp(ctx, acctID, appID)
-	if err != nil {
-		return 0, err
-	}
-	count := 0
-	for _, row := range rows {
-		if row.RevokedAt == nil {
-			count++
-		}
-	}
-	return count, nil
-}
-
-// countAccountConsumerKeys counts the unrevoked keys that share app's
-// per-account allowance, the keys of its billing subject's apps (see
-// consumerKeyScopeApps).
-func (s *server) countAccountConsumerKeys(ctx context.Context, app state.App) (int, error) {
-	apps, err := s.consumerKeyScopeApps(ctx, app)
-	if err != nil {
-		return 0, err
-	}
-	count := 0
-	for _, scoped := range apps {
-		n, err := s.countConsumerKeys(ctx, scoped.AccountID, scoped.ID)
-		if err != nil {
-			return 0, err
-		}
-		count += n
-	}
-	return count, nil
-}
-
-// consumerKeyScopeApps returns the apps whose keys share app's per-account
-// key allowance, those of its billing subject (ADR-202610171904): every app
-// of its organization, whoever created it, once the organization adopted
-// billing, and otherwise its creator's apps outside adopted organizations,
-// personal and unadopted company apps alike. A company app's rows keep its
-// creator's account_id, so counting by that account alone would spend an
-// adopted organization's allowance on its creator's personal one.
-func (s *server) consumerKeyScopeApps(ctx context.Context, app state.App) ([]state.App, error) {
-	owner, err := state.AppResourceAccount(ctx, s.store, app)
-	if err != nil {
-		return nil, err
-	}
-	if owner.ResourceOrgID != "" {
-		lister, ok := s.store.(state.OrgAppLister)
-		if !ok {
-			return nil, errors.New("store cannot list organization apps")
-		}
-		return lister.ListAppsByOrg(ctx, owner.ResourceOrgID)
-	}
-	apps, err := s.store.ListApps(ctx, app.AccountID)
-	if err != nil {
-		return nil, err
-	}
-	adopted, scoped := map[string]bool{}, apps[:0]
-	for _, candidate := range apps {
-		if candidate.AccountID != app.AccountID {
-			continue
-		}
-		if candidate.OrgID != "" {
-			orgAdopted, seen := adopted[candidate.OrgID]
-			if !seen {
-				org, err := s.store.OrgByID(ctx, candidate.OrgID)
-				if err != nil {
-					return nil, err
-				}
-				orgAdopted = !org.Personal && org.ResourceOwnershipEnabled
-				adopted[candidate.OrgID] = orgAdopted
-			}
-			if orgAdopted {
-				continue
-			}
-		}
-		scoped = append(scoped, candidate)
-	}
-	return scoped, nil
-}
-
 // consumerKeyScopesProblem trims scopes in place and rejects unknown or
 // repeated ones. The billing scope only reaches API monetization's
 // self-service routes, so it is not offered until monetization is released
@@ -337,37 +257,26 @@ func (s *server) createConsumerKey(w http.ResponseWriter, r *http.Request, acct 
 
 // issueConsumerKey creates a key for an active consumer within the plan's
 // per-app and per-account key quotas and returns its plaintext once. The
-// owner's key route and consumer sign-up (ADR-20261021143000) share it.
+// owner's key route and consumer sign-up (ADR-20261021143000) share it. The
+// store counts the quotas and inserts the key in one step: the per-account
+// allowance belongs to the app's billing subject (ADR-202610171904), and
+// concurrent issues must not each see the last free slot.
 func (s *server) issueConsumerKey(ctx context.Context, acct state.Account, c state.APIConsumer, name string, scopes []string,
 	expiresAt *time.Time) (state.ConsumerKey, string, *api.Problem) {
-	appCount, err := s.countConsumerKeys(ctx, acct.ID, c.AppID)
-	if err != nil {
-		return state.ConsumerKey{}, "", api.ErrInternal("could not count consumer keys")
-	}
-	if appCount >= acct.Plan.ConsumerKeysPerApp() {
-		return state.ConsumerKey{}, "", api.ErrConsumerKeyQuota(acct.Plan, api.PlanQuotaScopeApp, acct.Plan.ConsumerKeysPerApp(), appCount)
-	}
-	app, err := s.store.AppByID(ctx, c.AppID)
-	if err != nil {
-		return state.ConsumerKey{}, "", api.ErrInternal("could not count account consumer keys")
-	}
-	accountCount, err := s.countAccountConsumerKeys(ctx, app)
-	if err != nil {
-		return state.ConsumerKey{}, "", api.ErrInternal("could not count account consumer keys")
-	}
-	if accountCount >= acct.Plan.ConsumerKeysPerAccount() {
-		return state.ConsumerKey{}, "", api.ErrConsumerKeyQuota(acct.Plan, api.PlanQuotaScopeAccount, acct.Plan.ConsumerKeysPerAccount(), accountCount)
-	}
 	plaintext, prefix, hash, err := api.GenerateConsumerKey()
 	if err != nil {
 		return state.ConsumerKey{}, "", api.ErrInternal("could not generate consumer key")
 	}
-	k, err := s.store.CreateConsumerKeyForConsumer(ctx, acct.ID, c.ID, name, prefix, hash, scopes, expiresAt)
-	if err != nil {
-		if errors.Is(err, state.ErrConflict) {
-			return state.ConsumerKey{}, "", api.NewProblem(http.StatusConflict, api.CodeValidation,
-				"Consumer key already exists", "a key with this name or generated prefix already exists for the app")
-		}
+	quota := state.ConsumerKeyQuota{PerApp: acct.Plan.ConsumerKeysPerApp(), PerAccount: acct.Plan.ConsumerKeysPerAccount()}
+	k, err := s.store.CreateConsumerKeyForConsumerIfUnderQuota(ctx, acct.ID, c.ID, name, prefix, hash, scopes, expiresAt, quota)
+	var exceeded *state.ConsumerKeyQuotaError
+	switch {
+	case errors.As(err, &exceeded):
+		return state.ConsumerKey{}, "", api.ErrConsumerKeyQuota(acct.Plan, exceeded.Scope, exceeded.Limit, exceeded.Observed)
+	case errors.Is(err, state.ErrConflict):
+		return state.ConsumerKey{}, "", api.NewProblem(http.StatusConflict, api.CodeValidation,
+			"Consumer key already exists", "a key with this name or generated prefix already exists for the app")
+	case err != nil:
 		return state.ConsumerKey{}, "", api.ErrInternal("could not create consumer key")
 	}
 	s.audit.Emit(ctx, "consumer_key.created", &acct.ID, map[string]any{

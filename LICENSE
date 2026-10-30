@@ -13,6 +13,11 @@ holder:
   - Email:  hpk.poyraz@gmail.com
   - GitHub: https://github.com/poyrazK
 
+EXCEPTION: the client SDKs in sdk/node, sdk/python, sdk/go, sdk/data and
+sdk/auth are licensed under the Apache License, Version 2.0. Each of those
+directories carries the license text in its own LICENSE file, which governs
+the files in that directory.
+
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
 EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
 MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
