@@ -438,6 +438,7 @@ func PostOTLPEncoded(t *testing.T, e testEnv, contentType, encoding string, body
 	e.h.ServeHTTP(rec, r)
 	return rec
 }
+
 var CreateAppTaskForTest = createAppTaskForTest
 var CreateExecutionAs = createExecutionAs
 var CreateProjectEnvironmentConfigFixture = createProjectEnvironmentConfigFixture
