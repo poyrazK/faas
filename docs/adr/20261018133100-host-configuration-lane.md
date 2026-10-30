@@ -413,7 +413,8 @@ session, so this change does not touch it, `node_join`, `cmd/vmmd`,
 - **The full lane writes the record.** When the tag carries
   `scripts/ci/host_roles.py`, cd-controlplane's ADR-580 step should record
   the role hashes after activation, so the lane's first diff after a full
-  release is exact.
+  release is exact. Done by ADR-20261030150000, which also has the full
+  release converge only the roles whose hash differs from the record.
 - **ADR-580's contract misses role inputs outside `deploy/ansible`.** For
   example, `deploy/systemd/faas-pg-*`, `deploy/scripts/*`, the status page
   and `docs/DPA.md`. The role hashes cover them, and the contract should

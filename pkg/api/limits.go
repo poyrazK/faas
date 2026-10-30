@@ -528,6 +528,12 @@ const (
 // MemoryMax (4 GiB) covers all of them, so the count stays small.
 const ImagedImagePrepWorkers = 2
 
+// ImagedPublishedLayerDigests bounds how many just-published app layers one
+// imaged remembers the digest of, so the deploy scan can skip hashing them
+// again. An entry leaves when the scan uses it; the bound only covers layers
+// whose scan never ran.
+const ImagedPublishedLayerDigests = 256
+
 // Source-build OCI verification bounds the intermediate image, including its
 // builder base. Final app layers still obey the creating account's plan limit.
 const (
@@ -15014,6 +15020,18 @@ const (
 	AlertAccountTickBudget = 45 * time.Second
 )
 
+// Alert delivery retention (ADR-20261029203000): meterd deletes settled
+// deliveries fired more than AlertDeliveryRetentionDays ago, at most
+// AlertDeliveryPurgeBatch rows per statement and AlertDeliveryPurgeBatches
+// statements per AlertDeliveryPurgeInterval. A rule's newest delivery, and a
+// delivery with a rollback action, stay.
+const (
+	AlertDeliveryRetentionDays = 90
+	AlertDeliveryPurgeBatch    = 1000
+	AlertDeliveryPurgeBatches  = 20
+	AlertDeliveryPurgeInterval = time.Hour
+)
+
 // NotificationChannelTestsPerAccountMinute caps test sends to an account's
 // notification channels (ADR-20261028101615): each one is a real Slack post,
 // PagerDuty event or email.
@@ -15126,8 +15144,9 @@ var (
 )
 
 // Synthetic checks (ADR-748). The 5-minute floor keeps a check from pinning
-// an app resident on Free, Hobby and Pro (idle timeouts 30/60/300 s); the
-// timeout ceiling matches the gateway wake hold.
+// a Hobby app resident (idle timeout 60 s; Free has no checks); on Pro
+// (300 s) a 5-minute check keeps the app warm. The timeout ceiling matches
+// the gateway wake hold.
 const (
 	MaxSyntheticChecksPerApp       = 5
 	SyntheticCheckTimeoutMinMS     = 1000

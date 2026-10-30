@@ -978,6 +978,9 @@ func (l *Loop) XDispatchEventFanoutSweep(ctx context.Context) { l.dispatchEventF
 // adr: 20261029012000 — a step repeats while its batches come back full.
 var XRepeatFullBatches = repeatFullBatches
 
+// XTriggerAppConsumes is the broker trigger's may-take-records check.
+var XTriggerAppConsumes = triggerAppConsumes
+
 // adr: 20261029190000 — event deliveries retry by their app's policy or the
 // event delivery backoff.
 func (d *Drain) XInvocationRetryDelay(ctx context.Context, inv state.Invocation) time.Duration {

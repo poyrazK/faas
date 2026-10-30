@@ -24,7 +24,7 @@ func (s *server) renderReleaseSafetyDashboard(w http.ResponseWriter, r *http.Req
 		return
 	}
 	app, err := s.store.AppBySlug(r.Context(), r.PathValue("slug"))
-	if err != nil || app.AccountID != acct.ID {
+	if err != nil || !dashboardAppOwner(r, &acct, app) {
 		http.NotFound(w, r)
 		return
 	}

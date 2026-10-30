@@ -30,10 +30,15 @@ type trafficTenantBindingTx struct {
 	writer       string
 	scope        trafficBindingScope
 	// scoped binding writes lock and analyse only scope; routes is nil for
-	// the fleet-wide guard (ADR-20261027163626).
-	scoped  bool
-	routes  *trafficRouteScope
-	release func(context.Context)
+	// the fleet-wide guard (ADR-20261027163626). They read only the claims
+	// lookup reaches, and only its reservations unless an empty-scope route
+	// needs them all (reservations nil; ADR-20261029190349).
+	scoped       bool
+	routes       *trafficRouteScope
+	appID        string
+	lookup       trafficScopeLookup
+	reservations *trafficScopeLookup
+	release      func(context.Context)
 }
 
 func trafficBindingAffectedHosts(claims trafficBindingClaims, account string, requested []string, appID string) []string {
@@ -180,17 +185,17 @@ func (s *PgStore) tryBeginTrafficBinding(ctx context.Context, writer, account st
 	var routes *trafficRouteScope
 	discover := time.Now()
 	err := boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
-		claims, err := readTrafficBindingClaims(bounded, s.pool, s.trafficAppsSuffix)
-		if err != nil {
-			return err
-		}
-		hosts = trafficBindingAffectedHosts(claims, account, requested, appID)
+		var claims trafficBindingClaims
+		var err error
 		if s.trafficScopedBinding {
-			if scope, err = declareTrafficBindingScope(bounded, s.pool, claims, account, requested, appID, s.trafficAppsSuffix); err != nil {
+			if claims, scope, _, err = readTrafficBindingScopeClaims(bounded, s.pool, account, requested, appID, s.trafficAppsSuffix); err != nil {
 				return err
 			}
 			routes = newTrafficRouteScope(scope.Hosts, scope.Subtrees)
+		} else if claims, err = readTrafficBindingClaims(bounded, s.pool, s.trafficAppsSuffix); err != nil {
+			return err
 		}
+		hosts = trafficBindingAffectedHosts(claims, account, requested, appID)
 		accounts, err = trafficTenantBindingOwners(bounded, s.pool, claims, hosts, account, routes)
 		return err
 	})
@@ -217,7 +222,7 @@ func (s *PgStore) tryBeginTrafficBinding(ctx context.Context, writer, account st
 		return nil, false, fmt.Errorf("state: begin tenant binding change: %w", err)
 	}
 	tx := &trafficTenantBindingTx{Tx: base, beforeViews: make(map[string]trafficHostAnalysis), accounts: accounts, hosts: hosts, account: account,
-		appsSuffix: s.trafficAppsSuffix, writer: writer, scoped: s.trafficScopedBinding, routes: routes, release: release}
+		appsSuffix: s.trafficAppsSuffix, writer: writer, scoped: s.trafficScopedBinding, routes: routes, appID: appID, release: release}
 	retry := false
 	before := time.Now()
 	err = boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
@@ -233,14 +238,15 @@ func (s *PgStore) tryBeginTrafficBinding(ctx context.Context, writer, account st
 			return err
 		}
 		var err error
-		tx.before, err = readTrafficBindingClaims(bounded, base, s.trafficAppsSuffix)
+		if tx.scoped {
+			tx.before, tx.scope, tx.lookup, err = readTrafficBindingScopeClaims(bounded, base, account, requested, appID, tx.appsSuffix)
+		} else if tx.before, err = readTrafficBindingClaims(bounded, base, s.trafficAppsSuffix); err == nil {
+			tx.scope, err = declareTrafficBindingScope(bounded, base, tx.before, account, requested, appID, tx.appsSuffix)
+		}
 		if err != nil {
 			return err
 		}
 		freshHosts := trafficBindingAffectedHosts(tx.before, account, requested, appID)
-		if tx.scope, err = declareTrafficBindingScope(bounded, base, tx.before, account, requested, appID, tx.appsSuffix); err != nil {
-			return err
-		}
 		freshAccounts, err := trafficTenantBindingOwners(bounded, base, tx.before, freshHosts, account, routes)
 		if err != nil {
 			return err
@@ -251,7 +257,18 @@ func (s *PgStore) tryBeginTrafficBinding(ctx context.Context, writer, account st
 		if retry {
 			return nil
 		}
-		tx.globalBefore, err = readTrafficHostAnalysisScoped(bounded, base, pgtype.UUID{}, tx.appsSuffix, tx.routes)
+		if tx.scoped {
+			// An empty-scope route can match any unclaimed hostname, so its
+			// candidates need every reservation (ADR-20261029190349).
+			everywhere, err := sqlc.New().ReadTrafficEmptyScopeRoute(bounded, base)
+			if err != nil {
+				return err
+			}
+			if !everywhere {
+				tx.reservations = &tx.lookup
+			}
+		}
+		tx.globalBefore, err = readTrafficHostAnalysisFor(bounded, base, pgtype.UUID{}, tx.appsSuffix, tx.routes, tx.reservations)
 		if err != nil {
 			return err
 		}
@@ -295,20 +312,23 @@ func (tx *trafficTenantBindingTx) Validate(ctx context.Context) error {
 		observeTrafficPolicyPhase(tx.writer, TrafficPolicyPhaseValidate, time.Since(start))
 	}(time.Now())
 	return boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
-		claims, err := readTrafficBindingClaims(bounded, tx.Tx, tx.appsSuffix)
-		if err != nil {
-			return err
-		}
-		globalAfter, err := readTrafficHostAnalysisScoped(bounded, tx.Tx, pgtype.UUID{}, tx.appsSuffix, tx.routes)
-		if err != nil {
-			return err
-		}
-		changes := trafficBindingChanges(tx.before, claims, tx.globalBefore.Reservations, globalAfter.Reservations)
-		missed := auditTrafficBindingScope(tx.writer, tx.scope, changes)
-		auditTrafficBindingCapture(bounded, tx.Tx, tx.writer, tx.appsSuffix, changes)
-		if tx.scoped && len(missed) > 0 {
-			// The scoped analysis cannot verify a hostname it did not lock or read.
-			return analysisLimit("binding_scope", "hostnames", 0, int64(len(missed)))
+		var claims trafficBindingClaims
+		var globalAfter trafficHostAnalysis
+		var err error
+		if tx.scoped {
+			if claims, globalAfter, err = tx.readScopedAfter(bounded); err != nil {
+				return err
+			}
+		} else {
+			if claims, err = readTrafficBindingClaims(bounded, tx.Tx, tx.appsSuffix); err != nil {
+				return err
+			}
+			if globalAfter, err = readTrafficHostAnalysisScoped(bounded, tx.Tx, pgtype.UUID{}, tx.appsSuffix, tx.routes); err != nil {
+				return err
+			}
+			changes := trafficBindingChanges(tx.before, claims, tx.globalBefore.Reservations, globalAfter.Reservations)
+			auditTrafficBindingScope(tx.writer, tx.scope, changes)
+			auditTrafficBindingCapture(bounded, tx.Tx, tx.writer, tx.appsSuffix, changes)
 		}
 		views := make(map[string]trafficHostAnalysis, len(tx.accounts))
 		for _, owner := range tx.accounts {
@@ -320,6 +340,28 @@ func (tx *trafficTenantBindingTx) Validate(ctx context.Context) error {
 		}
 		return tx.validate(bounded, claims, globalAfter, views)
 	})
+}
+
+// readScopedAfter refuses a change outside the declared scope, which the
+// capture triggers recorded, then reads what the scope can see after the
+// write. A write that touched no claim or reservation left the route view as
+// it was, so the global check compares the before view with itself
+// (ADR-20261029190349).
+func (tx *trafficTenantBindingTx) readScopedAfter(ctx context.Context) (trafficBindingClaims, trafficHostAnalysis, error) {
+	captured, err := readTrafficBindingCapture(ctx, tx.Tx, tx.appsSuffix)
+	if err != nil {
+		return trafficBindingClaims{}, trafficHostAnalysis{}, err
+	}
+	if missed := auditTrafficBindingScope(tx.writer, tx.scope, captured); len(missed) > 0 {
+		// The scoped analysis cannot verify a hostname it did not lock or read.
+		return trafficBindingClaims{}, trafficHostAnalysis{}, analysisLimit("binding_scope", "hostnames", 0, int64(len(missed)))
+	}
+	claims, err := readTrafficBindingClaimsScoped(ctx, tx.Tx, tx.appsSuffix, []string{tx.account}, tx.appID, tx.lookup)
+	if err != nil || len(captured) == 0 {
+		return claims, tx.globalBefore, err
+	}
+	globalAfter, err := readTrafficHostAnalysisFor(ctx, tx.Tx, pgtype.UUID{}, tx.appsSuffix, tx.routes, tx.reservations)
+	return claims, globalAfter, err
 }
 
 func (tx *trafficTenantBindingTx) Commit(ctx context.Context) error {

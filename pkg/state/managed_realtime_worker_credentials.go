@@ -91,7 +91,8 @@ func newRealtimeWorkerToken() (string, []byte, error) {
 	}
 	token := "grw_" + base64.RawURLEncoding.EncodeToString(raw)
 	hash, _ := realtimeWorkerTokenHash(token)
-	return token, hash, nil
+	// The stored form: keyed once keyed writes are on (ADR 20261029202403).
+	return token, storedCredential(credTagRealtimeWorker, hash), nil
 }
 func validateRealtimeWorkerCredentialRequest(req RealtimeWorkerCredentialRequest) error {
 	if !validRealtimeWorkerName(req.Name, api.RealtimeWorkerCredentialNameMaxBytes) || len(req.Permissions) < 1 || len(req.Permissions) > api.RealtimeWorkerCredentialPermissionsMax || req.TTLSeconds < 1 || req.TTLSeconds > api.RealtimeWorkerCredentialTTLMaxSeconds {

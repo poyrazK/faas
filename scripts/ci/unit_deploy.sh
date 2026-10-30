@@ -615,10 +615,15 @@ record=null
 if jq -e 'type == "object"' "$1/control-plane-roles.json" >/dev/null 2>&1; then
   record="$(cat "$1/control-plane-roles.json")"
 fi
+contract=""
+if [[ -f "$1/control-plane-bootstrap-contract.sha256" ]]; then
+  contract="$(tr -d '[:space:]' < "$1/control-plane-bootstrap-contract.sha256")"
+fi
 jq -n --arg current "$(basename "$current")" \
   --argjson release "$(cat "$current/release-manifest.json")" \
-  --argjson record "$record" \
-  '{current: $current, base_git_sha: $release.git_sha, manifest_hash: $release.manifest_hash, record: $record}'
+  --argjson record "$record" --arg contract "$contract" \
+  '{current: $current, base_git_sha: $release.git_sha, manifest_hash: $release.manifest_hash, record: $record,
+    contract: (if $contract == "" then null else $contract end)}'
 REMOTE
 }
 
@@ -669,7 +674,11 @@ cmd_host_record() {
          and (.commit | test("^[0-9a-f]{40}$")) and (.environment | test("^sha256:[0-9a-f]{64}$"))
          and (.roles | type == "object")' "$record" >/dev/null || die "not a host-config record with an environment: $record"
   [[ "$contract" =~ ^sha256:[0-9a-f]{64}$ ]] || die "bad bootstrap contract: $contract"
-  payload="$(base64 < "$record" | tr -d '\n')"
+  # The record names the contract written beside it: a convergence that
+  # moves the contract without the record (an older release's whole play)
+  # makes the record stale, and the planners then converge every role
+  # (docs/adr/20261030150000-full-release-converges-changed-roles.md).
+  payload="$(jq -c --arg contract "$contract" '.contract = $contract' "$record" | base64 | tr -d '\n')"
   [[ "$payload" =~ ^[A-Za-z0-9+/=]+$ ]] || die "record did not encode"
   remote UNIT "$target" "$(as_root "$target") -s -- '$(host_config_dir)' '$payload' '$contract'" <<'REMOTE'
 set -euo pipefail

@@ -82,7 +82,7 @@ func (s *PgStore) CreateExecutionArtifactGrant(ctx context.Context, params Creat
 		WHERE e.id = $3 AND e.account_id = $2 AND e.status = 'succeeded'
 		RETURNING `+executionArtifactGrantColumns,
 		mustPgUUID(params.ID), mustPgUUID(params.AccountID), mustPgUUID(params.SourceExecutionID),
-		params.ArtifactName, creatorID, params.TokenHash, executionTime(params.ExpiresAt), executionTime(params.CreatedAt))
+		params.ArtifactName, creatorID, storedCredential(credTagArtifactGrant, params.TokenHash), executionTime(params.ExpiresAt), executionTime(params.CreatedAt))
 	grant, err := scanExecutionArtifactGrant(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -97,17 +97,19 @@ func (s *PgStore) ExecutionArtifactGrantByToken(ctx context.Context, accountID s
 	if len(tokenHash) != 32 {
 		return ExecutionArtifactGrant{}, ErrNotFound
 	}
-	grant, err := scanExecutionArtifactGrant(s.pool.QueryRow(ctx, `SELECT `+executionArtifactGrantColumns+`
-		FROM execution_artifact_grants
-		WHERE account_id = $1 AND token_hash = $2 AND revoked_at IS NULL
-		  AND redeemed_at IS NULL AND expires_at > $3`, mustPgUUID(accountID), tokenHash, executionTime(at)))
-	if err != nil {
+	return firstCredential(ctx, credentialLookups(credTagArtifactGrant, tokenHash), func(ctx context.Context, value []byte) (ExecutionArtifactGrant, error) {
+		grant, err := scanExecutionArtifactGrant(s.pool.QueryRow(ctx, `SELECT `+executionArtifactGrantColumns+`
+			FROM execution_artifact_grants
+			WHERE account_id = $1 AND token_hash = $2 AND revoked_at IS NULL
+			  AND redeemed_at IS NULL AND expires_at > $3`, mustPgUUID(accountID), value, executionTime(at)))
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ExecutionArtifactGrant{}, ErrNotFound
 		}
-		return ExecutionArtifactGrant{}, fmt.Errorf("load execution artifact grant: %w", err)
-	}
-	return grant, nil
+		if err != nil {
+			return ExecutionArtifactGrant{}, fmt.Errorf("load execution artifact grant: %w", err)
+		}
+		return grant, nil
+	})
 }
 
 func (s *PgStore) RevokeExecutionArtifactGrant(ctx context.Context, accountID, grantID string, principalID *string, accountWide bool, at time.Time) (ExecutionArtifactGrant, error) {

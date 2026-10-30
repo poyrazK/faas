@@ -26,6 +26,148 @@ func TestSecurityScanDue(t *testing.T) {
 	if securityScanDue(dep, now, time.Hour) {
 		t.Fatal("fresh scan evidence should not be due")
 	}
+	dep.ScannedAt = now.Add(-55 * time.Minute)
+	if !securityScanDue(dep, now, time.Hour) {
+		t.Fatal("evidence inside the renew margin should be due")
+	}
+}
+
+// The live sweep must check evidence before the enforce lease runs out,
+// whatever the sweep's phase and however long the scan takes up to a
+// generous bound. With due == every, a tick landing just short of the mark
+// skipped the deployment and the lease expired first (bug hunt 2026-10-28
+// B34).
+func TestSecurityScanSweepChecksEvidenceBeforeTheLeaseExpires(t *testing.T) {
+	every := securityScanSweepEvery
+	check := securityScanCheckEvery(every)
+	lease := every + securityScanLeaseSweepEvery
+	start := time.Date(2026, 10, 29, 0, 0, 0, 0, time.UTC)
+	for phase := time.Duration(0); phase < check; phase += time.Minute {
+		for _, scanTook := range []time.Duration{0, 3 * time.Minute, 30 * time.Minute} {
+			checked := start
+			for tick := start.Add(phase); tick.Before(start.Add(72 * time.Hour)); tick = tick.Add(check) {
+				if !securityScanDue(state.Deployment{ScannedAt: checked}, tick, every) {
+					continue
+				}
+				done := tick.Add(scanTook)
+				if done.Sub(checked) > lease {
+					t.Fatalf("phase %s, scan %s: evidence from %s renewed at %s, after its %s lease", phase, scanTook, checked, done, lease)
+				}
+				checked = done
+			}
+		}
+	}
+	if check > securityScanRenewMargin(every)/2 {
+		t.Fatalf("sweep every %s leaves too little of the %s margin", check, securityScanRenewMargin(every))
+	}
+}
+
+// An enforce app whose image and scanner database stay unchanged for a day
+// must stay live. #5776's live rescan skipped current evidence without
+// writing anything, so the lease parked the app six hours after its last
+// real scan (bug hunt 2026-10-28 B33).
+func TestReusedLiveEvidenceKeepsAnEnforceAppServing(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "renew-evidence@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "renew-app", Status: state.AppActive, SecurityPolicy: api.AppSecurityPolicyEnforce})
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now().UTC()
+	built := start.Add(-2 * time.Hour).Format(time.RFC3339Nano)
+	scannedClock := start.Add(-5*time.Hour - 30*time.Minute)
+	scannedAt := scannedClock.Format(time.RFC3339Nano)
+	evidence, err := json.Marshal(ScanResult{
+		ImageDigest: "sha256:renew", ArtifactDigest: "sha256:artifact", ScannedAt: scannedAt,
+		ScannerVersion: "0.116.0", ScannerDBStatus: "valid", ScannerDBVersion: "v6.1.10", ScannerDBBuiltAt: built,
+		SeverityCounts: SeverityCounts{Low: 1}, Vulnerabilities: []Vulnerability{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep, err := store.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, ImageDigest: "sha256:renew", Status: state.DeployLive,
+		ScanStatus: "complete", ScanResult: evidence, ScannedAt: scannedClock,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock := start
+	loop := &Loop{
+		store: store,
+		log:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		now:   func() time.Time { return clock },
+		handler: (&Handler{store: store, notif: &fakeNotifier{}}).WithScannerIdentity(func(context.Context) (installedScanner, error) {
+			return installedScanner{Version: "0.116.0", DBVersion: "v6.1.10", DBBuiltAt: built}, nil
+		}),
+	}
+	check := securityScanCheckEvery(securityScanSweepEvery)
+	for clock.Before(start.Add(24 * time.Hour)) {
+		if clock.Sub(start)%check == 0 {
+			loop.reconcileSecurityScans(ctx, clock, securityScanSweepEvery)
+		}
+		loop.reconcileSecurityLeases(ctx, clock, securityScanSweepEvery)
+		got, err := store.AppByID(ctx, app.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Status != state.AppActive {
+			t.Fatalf("enforce app parked after %s with unchanged image and database", clock.Sub(start))
+		}
+		clock = clock.Add(time.Minute)
+	}
+	got, err := store.DeploymentByID(ctx, dep.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := decodeScanEvidence(got.ScanResult)
+	if result == nil || result.ScannedAt != scannedAt || result.VerifiedAt == "" {
+		t.Fatalf("evidence = %+v, want the original scanned_at and a verified_at", result)
+	}
+}
+
+// A renewal must not replace evidence another imaged wrote after this one
+// read the row: a newer scan under a newer database may carry findings.
+func TestRenewScanEvidenceLeavesANewerScanAlone(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "renew-race@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "renew-race", Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:renew", Status: state.DeployLive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := []byte(`{"scanned_at":"2026-10-29T00:00:00Z","severity_counts":{"critical":0,"high":0,"medium":0,"low":0,"unknown":0},"vulnerabilities":[]}`)
+	if err := store.UpsertDeploymentScanResult(ctx, dep.ID, old, "complete"); err != nil {
+		t.Fatal(err)
+	}
+	read, err := store.DeploymentByID(ctx, dep.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newer := []byte(`{"scanned_at":"2026-10-29T05:00:00Z","severity_counts":{"critical":1,"high":0,"medium":0,"low":0,"unknown":0},"vulnerabilities":[]}`)
+	if err := store.UpsertDeploymentScanResult(ctx, dep.ID, newer, "complete"); err != nil {
+		t.Fatal(err)
+	}
+	loop := &Loop{store: store, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	loop.renewScanEvidence(ctx, read)
+	got, err := store.DeploymentByID(ctx, dep.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result := decodeScanEvidence(got.ScanResult); result == nil || result.SeverityCounts.Critical != 1 || result.VerifiedAt != "" {
+		t.Fatalf("evidence after a stale renewal = %s, want the newer scan untouched", got.ScanResult)
+	}
 }
 
 func TestSecurityScanLeaseFailure(t *testing.T) {
@@ -65,6 +207,23 @@ func TestSecurityScanLeaseFailure(t *testing.T) {
 	}())
 	if got := securityScanLeaseFailure(dep, now, 2*time.Hour); got != "security_scan_evidence_expired" {
 		t.Fatalf("expired reason = %q", got)
+	}
+	dep.ScanResult = encode(func() ScanResult {
+		result := base
+		result.ScannedAt = now.Add(-3 * time.Hour).Format(time.RFC3339Nano)
+		result.VerifiedAt = now.Add(-time.Hour).Format(time.RFC3339Nano)
+		return result
+	}())
+	if got := securityScanLeaseFailure(dep, now, 2*time.Hour); got != "" {
+		t.Fatalf("renewed evidence lease failure = %q, want none", got)
+	}
+	dep.ScanResult = encode(func() ScanResult {
+		result := base
+		result.VerifiedAt = now.Add(-2 * time.Hour).Format(time.RFC3339Nano)
+		return result
+	}())
+	if got := securityScanLeaseFailure(dep, now, 2*time.Hour); got != "security_scan_evidence_invalid" {
+		t.Fatalf("verified before scanned reason = %q, want invalid", got)
 	}
 }
 

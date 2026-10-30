@@ -670,6 +670,9 @@ const (
 	// notification channels more test messages than a minute allows
 	// (ADR-20261028101615).
 	CodeNotificationChannelTestRateLimited = "notification_channel_test_rate_limited"
+	// CodeNotificationChannelInUse marks a channel delete refused because the
+	// channel is the only destination of alert rules (ADR-20261029203000).
+	CodeNotificationChannelInUse = "notification_channel_in_use"
 	// CodeEventPublishRateLimited marks a publication beyond the account's
 	// event publish rate (EventPublishLimits); retry after Retry-After.
 	CodeEventPublishRateLimited = "event_publish_rate_limited"
@@ -3056,6 +3059,17 @@ func ErrNotificationChannelTestRateLimited(limit, retryAfterS int) *Problem {
 		WithDocs("https://gregale.dev/docs/alerts#notification-channels")
 }
 
+// ErrNotificationChannelInUse is a 409 for deleting a channel that is the only
+// destination of rules, which would fire into nothing (ADR-20261029203000).
+// rules names them as "name (id)".
+func ErrNotificationChannelInUse(rules []string) *Problem {
+	return NewProblem(http.StatusConflict, CodeNotificationChannelInUse,
+		"Notification channel in use",
+		fmt.Sprintf("This channel is the only destination of %d alert rule(s): %s. Give them a webhook or another channel, or delete them, before deleting the channel.",
+			len(rules), strings.Join(rules, ", "))).
+		WithDocs("https://gregale.dev/docs/alerts#notification-channels")
+}
+
 // ErrEventPublishRateLimited reports a publication of events beyond the
 // account's per-second event publish rate. Nothing was accepted.
 // EventsPausedRetryAfter is the Retry-After a refused publication carries
@@ -5334,8 +5348,8 @@ func ErrAccountDeletionManagedPostgres(live int64) *Problem {
 	}
 	return NewProblem(http.StatusConflict, CodeAccountDeletionManagedPostgres,
 		"Managed PostgreSQL databases must be deleted first",
-		fmt.Sprintf("this account still has %s; delete them before deleting the account. Run `gregale postgres list` to see them and `gregale postgres delete <database>` to delete each one, then delete the account again.", what)).
-		WithHint("run `gregale postgres list`, then `gregale postgres delete <database>` for each database").
+		fmt.Sprintf("this account still has %s; delete them before deleting the account. Run `gregale postgres list` to see them and `gregale postgres delete <database> --purge` to delete each one, then delete the account again. A database whose delete is only scheduled still counts until it is purged.", what)).
+		WithHint("run `gregale postgres list`, then `gregale postgres delete <database> --purge` for each database").
 		WithDocs(docsBase + "/postgres")
 }
 

@@ -1633,6 +1633,7 @@ func newServerWithDeps(
 	s.dataRepair.Host = operationHost{s}
 	s.edgeRules.Host = edgeRulesHost{s}
 	s.edgeRules.SettingCheck = s.edgeRuleSettingsProblem
+	s.edgeRules.AuthorizeApp = s.authorizeNamedApp
 	s.profileCaptures.Host = profileCaptureHost{s}
 	s.queueLeases.Host = queueLeasesHost{s}
 	s.realtime.Host = realtimeHost{s}
@@ -5226,6 +5227,12 @@ func (s *server) handler() http.Handler {
 	// ADR-960: switch a rule between log and enforce mode.
 	mux.Handle("POST /dashboard/apps/{slug}/edge-rules/{id}/mode", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardSetEdgeRuleMode))))
 	mux.Handle("POST /dashboard/apps/{slug}/edge-rules/{id}/delete", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDeleteEdgeRule))))
+	// ADR-091 amendment 2026-10-30: edit a rule, roll the set back, manage lists.
+	mux.Handle("POST /dashboard/apps/{slug}/edge-rules/{id}/edit", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardEditEdgeRule))))
+	mux.Handle("POST /dashboard/apps/{slug}/edge-rules/rollback", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardRollbackEdgeRules))))
+	mux.Handle("POST /dashboard/apps/{slug}/edge-rule-lists", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardCreateEdgeRuleList))))
+	mux.Handle("POST /dashboard/apps/{slug}/edge-rule-lists/{name}/update", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardUpdateEdgeRuleList))))
+	mux.Handle("POST /dashboard/apps/{slug}/edge-rule-lists/{name}/delete", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDeleteEdgeRuleList))))
 	mux.Handle("POST /dashboard/apps/{slug}/edge-rules/{id}/waf-exclusions", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardExcludeEdgeWAFRule))))
 	mux.Handle("POST /dashboard/apps/{slug}/edge-rules/security-headers", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardSecurityHeaders))))
 	// ADR-986: protection recipes add one ordinary rule, in log mode by default.

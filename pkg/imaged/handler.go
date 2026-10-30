@@ -101,7 +101,10 @@ type Handler struct {
 	notif                  Notifier
 	oci                    oci.Puller
 	builder                LayerBuilder
-	log                    *slog.Logger
+	// layerDigests remembers the digest of each layer this process just
+	// published, so the deploy scan does not hash the same bytes again.
+	layerDigests *publishedLayerDigests
+	log          *slog.Logger
 	// profilingOnDemand stamps dormant guest collectors into manifests for
 	// plans that include profiling (ADR-1155, FAAS_PROFILING_ON_DEMAND).
 	profilingOnDemand bool
@@ -345,7 +348,7 @@ func New(store state.Store, notif Notifier, puller oci.Puller, b LayerBuilder,
 		puller = oci.DefaultPuller{}
 	}
 	return &Handler{
-		store: store, notif: notif, oci: puller, builder: b,
+		store: store, notif: notif, oci: puller, builder: b, layerDigests: &publishedLayerDigests{},
 		guestInitPath: guestInitPath, appsRoot: appsRoot, log: log,
 	}
 }
@@ -1164,7 +1167,7 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 	}
 	defer cleanup()
 	markScanPhase(ctx, "stage")
-	artifactDigest, artifactErr := digestScanArtifact(scanDir)
+	artifactDigest, artifactErr := h.scanArtifactDigest(be, storagekey.AppLayer(app.Slug, scanLayerDeploymentID(app.Slug, dep)), scanDir)
 	markScanPhase(ctx, "digest")
 	if artifactErr != nil {
 		h.log.Warn("imaged: hash scan artifact", "deployment", dep.ID, "app", app.Slug, "err", artifactErr)
@@ -2632,7 +2635,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 					_ = c.Close()
 				}
 			}()
-			result, err := h.builder.Build(ctx, rootfs.BuildInput{
+			result, err := h.buildAppLayer(ctx, rootfs.BuildInput{
 				Layers:        above.readers,
 				Manifest:      manifest,
 				GuestInitPath: h.guestInitPath,
@@ -2703,7 +2706,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 			_ = h.markDeployFailed(ctx, dep.ID, err, "verify app image chain")
 			return err
 		}
-		result, err := h.builder.Build(ctx, rootfs.BuildInput{
+		result, err := h.buildAppLayer(ctx, rootfs.BuildInput{
 			Layers:        layersAsReaders(pulled.Layers),
 			Manifest:      manifest,
 			GuestInitPath: h.guestInitPath,
@@ -2909,7 +2912,7 @@ func (h *Handler) buildSidecarLayers(ctx context.Context, app state.App, dep sta
 			_ = h.markDeployFailed(ctx, dep.ID, err, fmt.Sprintf("sidecar %q manifest", sc.Name))
 			return findings, fmt.Errorf("imaged: sidecar %q manifest: %w", sc.Name, err)
 		}
-		result, err := h.builder.Build(ctx, rootfs.BuildInput{
+		result, err := h.buildAppLayer(ctx, rootfs.BuildInput{
 			Layers:           layersAsReaders(pulled.Layers),
 			Manifest:         api.SidecarBuildManifest(),
 			WorkloadName:     sc.Name,
@@ -3275,7 +3278,7 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 		buildInput.Layers = builtLayers
 		buildInput.TarballPath = dep.SourcePath
 	}
-	result, err := h.builder.Build(ctx, buildInput)
+	result, err := h.buildAppLayer(ctx, buildInput)
 	if err != nil {
 		_ = h.markDeployFailed(ctx, dep.ID, err, "build function layer")
 		return fmt.Errorf("imaged: build function layer: %w", err)

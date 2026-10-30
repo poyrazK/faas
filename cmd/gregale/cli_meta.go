@@ -1250,6 +1250,7 @@ var cliCommands = []cliCommand{
 				{Name: "post-deploy-rollback-window", Short: "completed-release rollback window (0 off; up to 1h)", Value: "duration"},
 				{Name: "webhook-secret-stdin", Short: "read the webhook signing secret from stdin (this or --webhook-secret is required)"},
 				{Name: "webhook-secret", Short: "webhook signing secret (prefer --webhook-secret-stdin)", Value: "VALUE"},
+				{Name: "notify-resolved", Short: "also send the webhook a signed alert.resolved event when the rule recovers", Bool: true},
 			}, Examples: []string{`printf '%s\n' "$WEBHOOK_SECRET" | gregale alert create --app my-api --name p95-latency --metric latency_p95_ms --comparison gt --threshold 800 --window-spec 15m --webhook-url https://hooks.example.com/gregale --webhook-secret-stdin`, `printf '%s\n' "$WEBHOOK_SECRET" | gregale alert create --app mcp-worker --name mcp-oldest-task-age --metric mcp_tasks_oldest_age_seconds --comparison gt --threshold 300 --window-spec 5m --webhook-url https://hooks.example.com/gregale --webhook-secret-stdin`, `printf '%s\n' "$WEBHOOK_SECRET" | gregale alert create --app mcp-worker --name mcp-task-metrics-stale --metric mcp_tasks_metrics_stale --comparison gt --threshold 0 --window-spec 5m --webhook-url https://hooks.example.com/gregale --webhook-secret-stdin`}},
 			{Name: "info", Short: "Show one alert rule and its last delivery", Positionals: []string{"<alert-id>"}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
@@ -1266,6 +1267,7 @@ var cliCommands = []cliCommand{
 				{Name: flagNameAction, Short: "alert action", Value: "ACTION", ClosedSet: api.AllowedAlertRuleActions},
 				{Name: "post-deploy-rollback-window", Short: "completed-release rollback window (0 off; up to 1h)", Value: "duration"},
 				{Name: "webhook-secret-stdin", Short: "read the replacement webhook secret from stdin"},
+				{Name: "notify-resolved", Short: "send the webhook alert.resolved events (=false turns them off)", Bool: true},
 			}, Examples: []string{"gregale alert update --app my-api --interactive"}},
 			{Name: "rm", Short: "Delete one alert rule", Positionals: []string{"<alert-id>"}, Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "slug"}, {Name: "yes", Short: "accepted for consistency; rm does not prompt", Bool: true}}},
 			{Name: "rotate-secret", Short: "Rotate the alert's webhook secret", Positionals: []string{"<alert-id>"}, Flags: []cliFlag{
@@ -5732,7 +5734,11 @@ var cliCommands = []cliCommand{
 				{Name: "restore-window-seconds", Short: "point-in-time restore window", Value: "N"},
 			}, Examples: []string{"gregale postgres create orders --region us-east-2 --class development --scale-to-zero"}},
 			{Name: "get", Short: "Show one managed PostgreSQL database", Positionals: []string{"<database>"}},
-			{Name: "delete", Short: "Delete a managed PostgreSQL database and its restore history", Positionals: []string{"<database>"}, Flags: []cliFlag{{Name: "yes", Short: "skip the typed confirmation (alias: --quiet)"}}},
+			{Name: "delete", Short: "Delete a managed PostgreSQL database; it can be undone for 7 days", Positionals: []string{"<database>"}, Flags: []cliFlag{
+				{Name: "purge", Short: "delete at once with its restore history; cannot be undone"},
+				{Name: "yes", Short: "skip the typed confirmation (alias: --quiet)"},
+			}, Notes: []string{"The database stops at once; `gregale postgres undelete` brings it back until its restorable_until.", "A deleted database still counts toward the plan's database limit until it is purged."}, Examples: []string{"gregale postgres delete orders", "gregale postgres delete orders --purge"}},
+			{Name: "undelete", Short: "Bring back a deleted managed PostgreSQL database", Positionals: []string{"<database>"}, Notes: []string{"Works until the database's restorable_until, 7 days after the delete; a purged database is gone."}, Examples: []string{"gregale postgres undelete orders"}},
 			{Name: "compute-policy", Short: "Durably switch between idle suspension and always-on compute", Positionals: []string{"<database>"}, Flags: []cliFlag{
 				{Name: "scale-to-zero", Short: "true for idle suspension, false for always-on", Req: true, Value: "BOOL", ClosedSet: []string{"true", "false"}},
 				{Name: "request-id", Short: "stable request UUID; reuse after uncertain responses", Req: true, Value: "UUID"},

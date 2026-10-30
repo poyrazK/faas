@@ -2912,7 +2912,12 @@ from triggers where enabled = true AND NOT environment_workload_admission_retire
 -- broker; its queue, cron and realtime inputs stay inside the app
 -- (ADR-20261019180000).
 AND NOT (kind IN ('kafka','nats','redis_streams','sqs_compat')
-  AND EXISTS (SELECT 1 FROM scenario_test_action_policies p WHERE p.app_id=triggers.app_id));
+  AND EXISTS (SELECT 1 FROM scenario_test_action_policies p WHERE p.app_id=triggers.app_id))
+-- A deleted app's triggers stay enabled so a restore inside the grace window
+-- brings them back, but nothing polls them meanwhile: a broker trigger kept
+-- draining the customer's queue into the dead app's dead letters (bug hunt
+-- 2026-10-28 B32).
+AND EXISTS (SELECT 1 FROM apps a WHERE a.id = triggers.app_id AND a.status <> 'deleted');
 
 -- name: CountTriggersByApp :one
 select count(*) from triggers t where t.app_id = $1
@@ -9394,16 +9399,33 @@ WITH environment_policies AS MATERIALIZED (
     WHERE a.account_id=sqlc.narg(account_id)::uuid AND a.status<>'deleted' AND a.visibility<>'internal'
       AND d.verified_at IS NOT NULL AND (d.environment_id IS NULL OR e.environment_id IS NOT NULL)
     ORDER BY d.domain LIMIT (sqlc.arg(max_inputs)::integer+1)
+), reservation_trees AS (
+    -- Reversed '.'||subtree: every name inside sorts in [low, low with its
+    -- final '.' raised to '/') under text_pattern_ops (ADR-20261029190349).
+    SELECT low, left(low, -1) || '/' AS high FROM unnest(sqlc.narg(reservation_trees)::text[]) AS t(low)
 ), reservations AS (
+    -- A NULL reservation_names reads every reservation in the fleet.
     SELECT data FROM (
         SELECT jsonb_build_object('Kind','primary','Host',slug||sqlc.arg(apps_suffix)::text) AS data FROM apps
         WHERE sqlc.narg(account_id)::uuid IS NULL AND sqlc.arg(apps_suffix)::text<>''
+          AND (sqlc.narg(reservation_names)::text[] IS NULL OR sqlc.arg(reservation_all_apps)::boolean
+               OR slug = ANY(sqlc.narg(reservation_slugs)::text[]))
         UNION ALL
         SELECT jsonb_build_object('Kind','domain','Host',domain) FROM custom_domains
         WHERE sqlc.narg(account_id)::uuid IS NULL
+          AND (sqlc.narg(reservation_names)::text[] IS NULL OR domain = ANY(sqlc.narg(reservation_names)::text[]::citext[]))
+        UNION ALL
+        SELECT jsonb_build_object('Kind','domain','Host',d.domain) FROM custom_domains d JOIN reservation_trees r
+          ON reverse(lower(d.domain::text)) ~>=~ r.low AND reverse(lower(d.domain::text)) ~<~ r.high
+        WHERE sqlc.narg(account_id)::uuid IS NULL AND sqlc.narg(reservation_names)::text[] IS NOT NULL
         UNION ALL
         SELECT jsonb_build_object('Kind','tenant','Host',hostname) FROM tenant_hostnames
         WHERE sqlc.narg(account_id)::uuid IS NULL
+          AND (sqlc.narg(reservation_names)::text[] IS NULL OR hostname = ANY(sqlc.narg(reservation_names)::text[]::citext[]))
+        UNION ALL
+        SELECT jsonb_build_object('Kind','tenant','Host',h.hostname) FROM tenant_hostnames h JOIN reservation_trees r
+          ON reverse(lower(h.hostname::text)) ~>=~ r.low AND reverse(lower(h.hostname::text)) ~<~ r.high
+        WHERE sqlc.narg(account_id)::uuid IS NULL AND sqlc.narg(reservation_names)::text[] IS NOT NULL
     ) claim ORDER BY data->>'Kind',data->>'Host' LIMIT (sqlc.arg(max_inputs)::integer+1)
 ), bounds AS (
     SELECT (SELECT count(*) FROM groups)+(SELECT count(*) FROM assets)+(SELECT count(*) FROM environments)+(SELECT count(*) FROM primary_hosts)+(SELECT count(*) FROM alias_hosts)+(SELECT count(*) FROM revision_hosts)+(SELECT count(*) FROM domain_hosts)+(SELECT count(*) FROM tenant_hosts)+(SELECT count(*) FROM reservations) AS inputs,
@@ -9501,21 +9523,107 @@ WITH touched_apps AS (
 ), touched_environments AS (
     SELECT DISTINCT id::uuid AS id FROM unnest(sqlc.arg(environment_ids)::text[]) AS t(id)
 )
-SELECT (a.slug || sqlc.arg(apps_suffix)::text)::text AS host, t.added::boolean AS added
+SELECT (a.slug || sqlc.arg(apps_suffix)::text)::text AS host, t.added::boolean AS added, 'primary'::text AS kind
 FROM apps a JOIN touched_apps t ON a.id = t.id WHERE sqlc.arg(apps_suffix)::text <> ''
 UNION ALL
-SELECT d.domain::text, false FROM custom_domains d JOIN touched_apps t ON d.app_id = t.id OR d.app_id_redirect = t.id
+SELECT d.domain::text, false, 'domain' FROM custom_domains d JOIN touched_apps t ON d.app_id = t.id OR d.app_id_redirect = t.id
 UNION ALL
-SELECT h.hostname::text, false FROM tenant_hostnames h JOIN tenant_surfaces s ON s.id = h.surface_id JOIN touched_apps t ON s.app_id = t.id
+SELECT h.hostname::text, false, 'tenant' FROM tenant_hostnames h JOIN tenant_surfaces s ON s.id = h.surface_id JOIN touched_apps t ON s.app_id = t.id
 UNION ALL
-SELECT 'tag-' || z.name || '-' || replace(z.app_id::text, '-', '') || sqlc.arg(apps_suffix)::text, false
+SELECT 'tag-' || z.name || '-' || replace(z.app_id::text, '-', '') || sqlc.arg(apps_suffix)::text, false, 'alias'
 FROM deployment_aliases z JOIN touched_apps t ON z.app_id = t.id WHERE sqlc.arg(apps_suffix)::text <> ''
 UNION ALL
-SELECT h.hostname::text, false FROM tenant_hostnames h JOIN touched_surfaces s ON h.surface_id = s.id
+SELECT h.hostname::text, false, 'tenant' FROM tenant_hostnames h JOIN touched_surfaces s ON h.surface_id = s.id
 UNION ALL
-SELECT h.hostname::text, false FROM tenant_hostnames h JOIN tenant_surfaces s ON s.id = h.surface_id JOIN touched_platforms p ON s.platform_tenant_id = p.id
+SELECT h.hostname::text, false, 'tenant' FROM tenant_hostnames h JOIN tenant_surfaces s ON s.id = h.surface_id JOIN touched_platforms p ON s.platform_tenant_id = p.id
 UNION ALL
-SELECT d.domain::text, false FROM custom_domains d JOIN touched_environments e ON d.environment_id = e.id;
+SELECT d.domain::text, false, 'domain' FROM custom_domains d JOIN touched_environments e ON d.environment_id = e.id;
+
+-- name: ReadTrafficEmptyScopeRoute :one
+-- Whether an enabled route can match every unclaimed hostname.
+SELECT EXISTS (SELECT 1 FROM edge_rules WHERE enabled AND kind = 'route' AND match_host_scope = '')::boolean AS present;
+
+-- name: ReadTrafficBindingClaimsScoped :one
+-- The claims a scoped binding write can see (ADR-20261029190349 decision 3):
+-- its accounts' claims and their redirects, the claims its hostnames name
+-- (with their wildcard ancestors), and those inside its subtrees. Same shape
+-- as ReadTrafficBindingClaims.
+WITH trees AS (
+    SELECT low, left(low, -1) || '/' AS high FROM unnest(sqlc.arg(trees)::text[]) AS t(low)
+), account_apps AS (
+    SELECT id FROM apps WHERE account_id = ANY(sqlc.arg(accounts)::uuid[])
+), scoped_domains AS (
+    SELECT d.domain FROM custom_domains d WHERE d.domain = ANY(sqlc.arg(names)::text[]::citext[])
+    UNION
+    SELECT d.domain FROM custom_domains d JOIN trees r
+      ON reverse(lower(d.domain::text)) ~>=~ r.low AND reverse(lower(d.domain::text)) ~<~ r.high
+    UNION
+    SELECT d.domain FROM custom_domains d JOIN account_apps a ON a.id = d.app_id
+    UNION
+    SELECT d.domain FROM custom_domains d JOIN account_apps a ON a.id = d.app_id_redirect
+    UNION
+    SELECT d.domain FROM custom_domains d WHERE d.app_id_redirect = sqlc.narg(app_id)::uuid
+), domains AS (
+    SELECT jsonb_build_object('Domain',d.domain,'App',d.app_id,
+        'Environment',coalesce(d.environment_id::text,''),'Account',a.account_id,
+        'RedirectApp',coalesce(d.app_id_redirect::text,''),
+        'RedirectAccount',coalesce(redirect.account_id::text,''),
+        'Eligible',d.verified_at IS NOT NULL AND a.status<>'deleted' AND a.visibility<>'internal'
+            AND (d.environment_id IS NULL OR EXISTS (
+                SELECT 1 FROM project_environments e WHERE e.id=d.environment_id
+                  AND e.account_id=a.account_id AND e.project_id=a.project_id))) AS data
+    FROM custom_domains d JOIN scoped_domains s ON s.domain = d.domain JOIN apps a ON a.id=d.app_id
+    LEFT JOIN apps redirect ON redirect.id=d.app_id_redirect
+    ORDER BY d.domain::text COLLATE "C" LIMIT (sqlc.arg(max_inputs)::integer+1)
+), scoped_tenants AS (
+    SELECT h.id FROM tenant_hostnames h WHERE h.hostname = ANY(sqlc.arg(names)::text[]::citext[])
+    UNION
+    SELECT h.id FROM tenant_hostnames h JOIN trees r
+      ON reverse(lower(h.hostname::text)) ~>=~ r.low AND reverse(lower(h.hostname::text)) ~<~ r.high
+    UNION
+    SELECT h.id FROM tenant_hostnames h JOIN tenant_surfaces s ON s.id = h.surface_id
+    WHERE s.account_id = ANY(sqlc.arg(accounts)::uuid[])
+    UNION
+    SELECT h.id FROM tenant_hostnames h JOIN tenant_surfaces s ON s.id = h.surface_id JOIN account_apps a ON a.id = s.app_id
+), tenants AS (
+    SELECT jsonb_build_object('Host',lower(h.hostname::text),'ID',h.id,
+        'Surface',s.id,'App',s.app_id,'Account',s.account_id,'AppAccount',coalesce(a.account_id::text,''),
+        'PlatformTenant',coalesce(s.platform_tenant_id::text,''),'Status',s.status,
+        'Verified',h.verified_at IS NOT NULL,
+        'Public',coalesce(a.account_id=s.account_id AND a.status<>'deleted' AND a.visibility<>'internal',false),
+        'Suspended',coalesce(t.status='suspended',false)) AS data
+    FROM tenant_hostnames h JOIN scoped_tenants x ON x.id = h.id JOIN tenant_surfaces s ON s.id=h.surface_id
+    LEFT JOIN apps a ON a.id=s.app_id
+    LEFT JOIN platform_tenants t ON t.id=s.platform_tenant_id
+    ORDER BY h.hostname::text COLLATE "C" LIMIT (sqlc.arg(max_inputs)::integer+1)
+), aliases AS (
+    SELECT jsonb_build_object('Host','tag-'||z.name||'-'||replace(a.id::text,'-','')||sqlc.arg(apps_suffix)::text,
+        'App',a.id,'Account',a.account_id) AS data
+    FROM deployment_aliases z JOIN apps a ON a.id=z.app_id
+    WHERE sqlc.arg(apps_suffix)::text<>''
+      AND (sqlc.arg(all_app_hosts)::boolean OR a.account_id = ANY(sqlc.arg(accounts)::uuid[])
+           OR z.app_id = ANY(sqlc.arg(alias_apps)::uuid[]))
+    ORDER BY z.app_id,z.name LIMIT (sqlc.arg(max_inputs)::integer+1)
+), primaries AS (
+    SELECT jsonb_build_object('Host',slug||sqlc.arg(apps_suffix)::text,'App',id,'Account',account_id) AS data
+    FROM apps WHERE slug LIKE 'tag-%' AND sqlc.arg(apps_suffix)::text<>''
+      AND (sqlc.arg(all_app_hosts)::boolean OR account_id = ANY(sqlc.arg(accounts)::uuid[]) OR slug = ANY(sqlc.arg(slugs)::text[]))
+    ORDER BY slug LIMIT (sqlc.arg(max_inputs)::integer+1)
+), bounds AS (
+    SELECT (SELECT count(*) FROM domains)+(SELECT count(*) FROM tenants)+
+        (SELECT count(*) FROM aliases)+(SELECT count(*) FROM primaries) AS inputs,
+        (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM domains)+
+        (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM tenants)+
+        (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM aliases)+
+        (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM primaries)+
+        octet_length(jsonb_build_object('Domains','[]'::jsonb,'Tenants','[]'::jsonb,'Aliases','[]'::jsonb,'Primaries','[]'::jsonb)::text) AS bytes
+)
+SELECT CASE WHEN inputs<=sqlc.arg(max_inputs)::integer AND bytes<=sqlc.arg(max_bytes)::bigint
+    THEN jsonb_build_object('Domains',(SELECT coalesce(jsonb_agg(data),'[]'::jsonb) FROM domains),
+        'Tenants',(SELECT coalesce(jsonb_agg(data),'[]'::jsonb) FROM tenants),
+        'Aliases',(SELECT coalesce(jsonb_agg(data),'[]'::jsonb) FROM aliases),
+        'Primaries',(SELECT coalesce(jsonb_agg(data),'[]'::jsonb) FROM primaries)) ELSE NULL::jsonb END::jsonb AS data,
+    inputs::bigint,bytes::bigint FROM bounds;
 
 -- name: ReadTrafficBindingClaims :one
 -- All hostname reservations, including inactive/deleted surfaces. Discovery
@@ -19611,10 +19719,10 @@ INSERT INTO alert_historical_rollback_claims(deployment_id,fire_id)
 
 -- name: InsertCustomerAlertRule :one
 INSERT INTO alert_rules(account_id,app_id,name,enabled,metric,comparison,threshold,window_spec,failure_source,event_subscription_id,
- edge_rule_id,action,webhook_url,webhook_secret_sealed,cooldown_minutes,state,post_deploy_rollback_window_seconds,custom_metric_name,slo_id,synthetic_check_id,mcp_min_calls,mcp_for_minutes,mcp_readiness_scope,log_query,created_by_account_id)
+ edge_rule_id,action,webhook_url,webhook_secret_sealed,cooldown_minutes,state,post_deploy_rollback_window_seconds,custom_metric_name,slo_id,synthetic_check_id,mcp_min_calls,mcp_for_minutes,mcp_readiness_scope,log_query,created_by_account_id,notify_resolved)
 VALUES(sqlc.arg(account_id),sqlc.narg(app_id),sqlc.arg(name),sqlc.arg(enabled),sqlc.arg(metric),sqlc.arg(comparison),
  sqlc.arg(threshold),sqlc.arg(window_spec),sqlc.narg(failure_source),sqlc.narg(event_subscription_id),sqlc.narg(edge_rule_id),sqlc.arg(action),sqlc.arg(webhook_url),
- sqlc.arg(webhook_secret_sealed),sqlc.arg(cooldown_minutes),sqlc.arg(state),sqlc.arg(post_deploy_rollback_window_seconds),sqlc.narg(custom_metric_name),sqlc.narg(slo_id),sqlc.narg(synthetic_check_id),sqlc.arg(mcp_min_calls),sqlc.arg(mcp_for_minutes),sqlc.arg(mcp_readiness_scope),sqlc.narg(log_query),sqlc.narg(created_by_account_id))
+ sqlc.arg(webhook_secret_sealed),sqlc.arg(cooldown_minutes),sqlc.arg(state),sqlc.arg(post_deploy_rollback_window_seconds),sqlc.narg(custom_metric_name),sqlc.narg(slo_id),sqlc.narg(synthetic_check_id),sqlc.arg(mcp_min_calls),sqlc.arg(mcp_for_minutes),sqlc.arg(mcp_readiness_scope),sqlc.narg(log_query),sqlc.narg(created_by_account_id),sqlc.arg(notify_resolved))
 RETURNING *;
 
 -- name: UpdateCustomerAlertRule :one
@@ -19625,7 +19733,8 @@ UPDATE alert_rules SET mcp_min_calls=coalesce(sqlc.narg(mcp_min_calls)::integer,
  action=coalesce(sqlc.narg(action)::text,action),webhook_url=coalesce(sqlc.narg(webhook_url)::text,webhook_url),
  webhook_secret_sealed=coalesce(sqlc.narg(webhook_secret_sealed)::bytea,webhook_secret_sealed),
  cooldown_minutes=coalesce(sqlc.narg(cooldown_minutes)::integer,cooldown_minutes),
- post_deploy_rollback_window_seconds=coalesce(sqlc.narg(post_deploy_rollback_window_seconds)::integer,post_deploy_rollback_window_seconds),updated_at=now()
+ post_deploy_rollback_window_seconds=coalesce(sqlc.narg(post_deploy_rollback_window_seconds)::integer,post_deploy_rollback_window_seconds),
+ notify_resolved=coalesce(sqlc.narg(notify_resolved)::boolean,notify_resolved),updated_at=now()
 WHERE id=sqlc.arg(id) RETURNING *;
 
 -- name: ReadCustomerAlertRule :one
@@ -19634,8 +19743,24 @@ SELECT * FROM alert_rules WHERE id=sqlc.arg(id);
 -- name: ListCustomerAlertRulesForAccount :many
 SELECT * FROM alert_rules WHERE account_id=sqlc.arg(account_id) ORDER BY created_at DESC;
 
+-- name: PurgeAlertDeliveriesBefore :execrows
+-- Deletes up to max_rows settled deliveries fired before the cutoff, oldest
+-- first (ADR-20261029203000). A rule's newest delivery stays, because
+-- MCP connection health and the delivery CLI read it, and so does a delivery
+-- with a rollback action, which would cascade away with it.
+DELETE FROM alert_deliveries d WHERE d.id IN (
+  SELECT o.id FROM alert_deliveries o
+  WHERE o.fired_at < sqlc.arg(before)::timestamptz AND o.status <> 'pending'
+    AND EXISTS (SELECT 1 FROM alert_deliveries n WHERE n.rule_id = o.rule_id AND n.fired_at > o.fired_at)
+    AND NOT EXISTS (SELECT 1 FROM alert_rollback_actions a WHERE a.fire_id = o.id)
+  ORDER BY o.fired_at LIMIT sqlc.arg(max_rows)::integer);
+
 -- name: ListEnabledCustomerAlertRules :many
-SELECT * FROM alert_rules WHERE enabled=true ORDER BY account_id;
+-- A deleted app's rules wait out its restore grace without evaluating
+-- (ADR-20261029203000); account-wide rules have no app.
+SELECT * FROM alert_rules r WHERE r.enabled=true
+ AND NOT EXISTS (SELECT 1 FROM apps a WHERE a.id=r.app_id AND a.status='deleted')
+ ORDER BY r.account_id;
 
 -- name: ListCustomerAlertRulesByPreset :many
 SELECT r.* FROM alert_rules r WHERE r.account_id=sqlc.arg(account_id) AND r.app_id=sqlc.arg(app_id)
@@ -25726,6 +25851,20 @@ SELECT * FROM notification_channels WHERE account_id = sqlc.arg(account_id)::uui
 -- name: DeleteNotificationChannel :execrows
 DELETE FROM notification_channels WHERE account_id = sqlc.arg(account_id)::uuid AND id = sqlc.arg(id)::uuid;
 
+-- name: LockNotificationChannel :one
+-- Holds the channel while its delete checks the rules bound to it; a binding
+-- insert waits on the row through its foreign key.
+SELECT id FROM notification_channels WHERE account_id = sqlc.arg(account_id)::uuid AND id = sqlc.arg(id)::uuid FOR UPDATE;
+
+-- name: ListRulesOnlyNotifyingChannel :many
+-- Rules with no webhook whose only channel is this one: deleting it would
+-- leave them no destination (ADR-20261029203000).
+SELECT r.id::text AS id, r.name FROM alert_rules r
+JOIN alert_rule_channels b ON b.rule_id = r.id AND b.channel_id = sqlc.arg(channel_id)::uuid
+WHERE r.account_id = sqlc.arg(account_id)::uuid AND r.webhook_url = ''
+  AND NOT EXISTS (SELECT 1 FROM alert_rule_channels o WHERE o.rule_id = r.id AND o.channel_id <> sqlc.arg(channel_id)::uuid)
+ORDER BY r.name, r.id LIMIT sqlc.arg(max_rows)::integer;
+
 -- name: RecordNotificationChannelDelivery :exec
 -- meterd and apid's test send record the latest outcome; err NULL = success.
 UPDATE notification_channels SET
@@ -25798,7 +25937,11 @@ DELETE FROM app_slos WHERE app_id = sqlc.arg(app_id)::uuid AND id = sqlc.arg(id)
 -- ADR-747 slice 2: hourly SLO budget rows (meterd is the only writer).
 
 -- name: ListAllAppSLOs :many
-SELECT * FROM app_slos ORDER BY id;
+-- A deleted app's SLOs wait out its restore grace without rollups
+-- (ADR-20261029203000).
+SELECT * FROM app_slos s
+WHERE NOT EXISTS (SELECT 1 FROM apps a WHERE a.id = s.app_id AND a.status = 'deleted')
+ORDER BY s.id;
 
 -- name: ListSLOHourStarts :many
 SELECT hour FROM app_slo_hourly WHERE slo_id = sqlc.arg(slo_id)::uuid AND hour >= sqlc.arg(since)::timestamptz;

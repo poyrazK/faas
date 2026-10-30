@@ -147,16 +147,15 @@ func NewAuthorizer(store AuthorizationStore) gateway.ServiceProxyAuthorizer {
 		}
 		// The project policy needs no declaration for a service in the caller's
 		// own project (ADR-20261022111119); every other target falls through to
-		// the declared check.
+		// the declared check. A project workload's bindings name its own
+		// project's services (ADR-20261030131528), so they declare nothing
+		// outside it: a binding left by a deleted member never matches another
+		// app that holds the member's name as its slug.
 		policy := caller.Manifest.EffectiveServiceBindingPolicy()
 		if policy == api.ServiceBindingPolicyDeclared || (policy == api.ServiceBindingPolicyProject && !projectAliases) {
 			declared := false
-			for _, binding := range caller.Manifest.ServiceBindings {
-				if api.SameServiceName(binding.Service, bindingTarget) ||
-					api.SameServiceName(binding.Service, legacyBindingTarget) {
-					declared = true
-					break
-				}
+			if projectAliases || caller.ProjectID == "" || callerIsTest {
+				declared = caller.BindsService(bindingTarget) || caller.BindsService(legacyBindingTarget)
 			}
 			if !declared {
 				return gateway.ServiceCaller{}, gateway.ErrServiceProxyBindingDenied
@@ -262,6 +261,10 @@ func slugNamesCaller(ctx context.Context, store AuthorizationStore, caller, targ
 	}
 	member, err := state.ProjectMemberByWorkload(ctx, store, target.AccountID, target.ProjectID, slug)
 	switch {
+	case errors.Is(err, state.ErrProjectServiceDeleted):
+		// A deleted member keeps its name until purge; the app holding the
+		// bare slug does not inherit its grant meanwhile.
+		return false, nil
 	case errors.Is(err, state.ErrNotFound):
 		return true, nil
 	case errors.Is(err, state.ErrConflict):
