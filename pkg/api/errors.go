@@ -290,8 +290,18 @@ func WriteProblem(w http.ResponseWriter, p *Problem) {
 			w.Header().Add(k, v)
 		}
 	}
+	stampErrorCode(w.Header(), p)
 	w.WriteHeader(p.Status)
 	_ = json.NewEncoder(w).Encode(&wire)
+}
+
+// stampErrorCode marks a problem as platform-owned with ErrorCodeHeader,
+// unless the writer already chose a value. The public edge keys on it to keep
+// a platform 502/504 body away from Cloudflare (ADR-20261030115139).
+func stampErrorCode(h http.Header, p *Problem) {
+	if p.Code != "" && h.Get(ErrorCodeHeader) == "" {
+		h.Set(ErrorCodeHeader, p.Code)
+	}
 }
 
 // WriteProblemForRequest renders the browser-safe HTML variant when r

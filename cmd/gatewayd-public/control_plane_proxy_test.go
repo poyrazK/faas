@@ -521,9 +521,13 @@ func TestDevBridgeControlPlaneIngressStreamsDuplex(t *testing.T) {
 func TestControlPlaneProxyTransportsApidGatewayErrorsAcrossWorker(t *testing.T) {
 	const problem = `{"code":"long_poll_timeout","status":504}`
 	status := http.StatusGatewayTimeout
+	errorCode := ""
 	controlPlane := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		// An upstream must not be able to forge the private marker.
 		w.Header().Set("X-Faas-Edge-Original-Status", "200")
+		if errorCode != "" {
+			w.Header().Set("X-Faas-Error-Code", errorCode)
+		}
 		w.Header().Set("Content-Type", "application/problem+json")
 		w.WriteHeader(status)
 		_, _ = w.Write([]byte(problem))
@@ -536,12 +540,16 @@ func TestControlPlaneProxyTransportsApidGatewayErrorsAcrossWorker(t *testing.T) 
 	cases := []struct {
 		name       string
 		upstream   int
+		errorCode  string
 		worker     bool
 		restorable string
 		wantStatus int
 		wantMarker string
 	}{
 		{name: "504 behind the Worker", upstream: http.StatusGatewayTimeout, worker: true, wantStatus: http.StatusConflict, wantMarker: "504"},
+		// An apid that marks its problems leaves them for PlatformErrorStatus
+		// to send as 503 (ADR-20261030115139).
+		{name: "marked 504 behind the Worker", upstream: http.StatusGatewayTimeout, errorCode: "long_poll_timeout", worker: true, wantStatus: http.StatusGatewayTimeout},
 		{name: "502 behind a 502-aware Worker", upstream: http.StatusBadGateway, worker: true, restorable: "502,504", wantStatus: http.StatusConflict, wantMarker: "502"},
 		{name: "502 behind an older Worker", upstream: http.StatusBadGateway, worker: true, wantStatus: http.StatusBadGateway},
 		{name: "504 without the Worker", upstream: http.StatusGatewayTimeout, wantStatus: http.StatusGatewayTimeout},
@@ -549,6 +557,7 @@ func TestControlPlaneProxyTransportsApidGatewayErrorsAcrossWorker(t *testing.T) 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			status = tc.upstream
+			errorCode = tc.errorCode
 			req := httptest.NewRequest(http.MethodPost, "https://api.gregale.dev/v1/apps/demo/invoke", nil)
 			if tc.worker {
 				req.Header.Set("CF-Worker", "gregale.dev")
