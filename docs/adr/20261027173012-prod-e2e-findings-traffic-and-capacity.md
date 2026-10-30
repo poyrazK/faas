@@ -161,3 +161,34 @@ Verification: `pkg/gateway`
 outage tests (`TestLimiter_RealBackend_PGErrorFailsClosed`,
 `TestLimiter_CentralOutageGraceDecidesLocally`,
 `TestSharedRateStoreFailureReturns503BeforeGuest`).
+
+## Amendment 2 (2026-10-30): leases get the consume bound
+
+Production gateways run with ADR-1520 leasing on (`ratelimit_lease: true` in
+the production manifest since 2026-10-25), so their counters are consumed by
+lease statements, not by the direct consume amendment 1 and ADR-570's
+2026-10-28 amendment bounded at 1 s. A lease statement was still bounded by
+`centralConsultTimeout` (250 ms), the pre-auth bound, and so was a request
+waiting for one. A counter commit past 250 ms (a checkpoint or fsync stall)
+failed the lease, opened the 1 s breaker, and refused requests within their
+limit with 503 `rate_limit_unavailable`.
+
+Decision:
+
+1. A lease statement is an authoritative consume and is bounded by
+   `centralConsumeTimeout` (1 s). The PostgreSQL backend still bounds
+   connection acquisition by 250 ms, so a saturated pool fails fast and opens
+   the breaker as before.
+2. A request waiting for a lease waits up to `centralBatchWait`
+   (`2 × centralConsumeTimeout`): the statement in flight plus the one sized
+   for it, as a joined batched consume does (amendment 1).
+3. Returning unspent lease tokens stays bounded by 250 ms; it runs off the
+   request path.
+
+Consequences: a request that waits for a lease can take up to 2 s longer
+before its answer when Postgres stalls, instead of failing at 250 ms. Only
+counters at or near their limit wait (ADR-1520), and the request budget
+still bounds the request as a whole.
+
+Verification: `pkg/gateway` `TestLeaseOutlastsASlowCommit` (a 400 ms commit
+admits the waiting request) and the existing lease tests.

@@ -15,6 +15,7 @@ from ..models.git_hub_deployment_policy_production_trigger import (
     GitHubDeploymentPolicyProductionTrigger,
     check_git_hub_deployment_policy_production_trigger,
 )
+from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="GitHubDeploymentPolicy")
 
@@ -39,6 +40,11 @@ class GitHubDeploymentPolicy:
     """
     production_trigger: GitHubDeploymentPolicyProductionTrigger = "webhook"
     """The single production deploy authority; GitHub App PR previews continue in either mode."""
+    preview_bot_prs: bool | Unset = False
+    """Preview pull requests opened by bots such as Dependabot and Renovate. Off by default so they do not use up
+    the preview allowance."""
+    preview_draft_prs: bool | Unset = True
+    """Preview draft pull requests. When off, a draft gets its preview once it is marked ready for review."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -56,6 +62,10 @@ class GitHubDeploymentPolicy:
 
         production_trigger: str = self.production_trigger
 
+        preview_bot_prs = self.preview_bot_prs
+
+        preview_draft_prs = self.preview_draft_prs
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -69,6 +79,10 @@ class GitHubDeploymentPolicy:
                 "production_trigger": production_trigger,
             }
         )
+        if preview_bot_prs is not UNSET:
+            field_dict["preview_bot_prs"] = preview_bot_prs
+        if preview_draft_prs is not UNSET:
+            field_dict["preview_draft_prs"] = preview_draft_prs
 
         return field_dict
 
@@ -89,6 +103,10 @@ class GitHubDeploymentPolicy:
 
         production_trigger = check_git_hub_deployment_policy_production_trigger(d.pop("production_trigger"))
 
+        preview_bot_prs = d.pop("preview_bot_prs", UNSET)
+
+        preview_draft_prs = d.pop("preview_draft_prs", UNSET)
+
         git_hub_deployment_policy = cls(
             project_id=project_id,
             root_dir=root_dir,
@@ -97,6 +115,8 @@ class GitHubDeploymentPolicy:
             preview_ttl_hours=preview_ttl_hours,
             preview_service_policy=preview_service_policy,
             production_trigger=production_trigger,
+            preview_bot_prs=preview_bot_prs,
+            preview_draft_prs=preview_draft_prs,
         )
 
         git_hub_deployment_policy.additional_properties = d

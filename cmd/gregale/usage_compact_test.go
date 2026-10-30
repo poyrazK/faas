@@ -138,7 +138,7 @@ func TestUnmanifestedVerbHelpPrintsParserFlags(t *testing.T) {
 	// Without --help the same verb still fails with its usage.
 	var out, errOut bytes.Buffer
 	*main.OsStdout, *main.OsStderr = &out, &errOut
-	if code := main.Run([]string{"realtime", "drain_status"}); code != 1 || !strings.Contains(errOut.String(), "usage: gregale realtime drain-status") {
+	if code := main.Run([]string{"realtime", "drain_status"}); code != 1 || !strings.Contains(errOut.String(), "usage: gregale realtime drain status") {
 		t.Errorf("missing arguments: exit %d stderr %q", code, errOut.String())
 	}
 }

@@ -199,31 +199,22 @@ func (s *server) patchOpenAPIDoc(w http.ResponseWriter, r *http.Request, acct st
 			"doc must be a JSON object with a top-level 'openapi' or 'swagger' key", ""))
 		return
 	}
-	// Per-account quota gate. The COUNT is computed server-side
-	// via a SELECT COUNT(*) so the apid doesn't load the full
-	// body slice. The same deployment's doc is allowed to be
-	// overwritten (last-write-wins) — the count is the current
-	// row count, not the post-upsert count.
-	_, _, getErr := s.store.GetDeploymentOpenAPIDoc(r.Context(), depID, acct.ID)
-	alreadyExists := getErr == nil
-	if !alreadyExists {
-		count, err := s.store.CountOpenAPIDocsByAccount(r.Context(), acct.ID)
-		if err != nil {
-			logCustomerFailure(s.log, "failed to count OpenAPI documents", err)
-			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error",
-				"failed to count OpenAPI documents", api.DetailServerFailure))
-			return
-		}
-		if count >= acct.Plan.OpenAPIDocsPerAccount() {
-			api.WriteProblem(w, api.ErrPlanOpenAPIDocQuota(acct.Plan, acct.Plan.OpenAPIDocsPerAccount(), count))
-			return
-		}
-	}
 	truncated := false
 	if req.Truncated != nil {
 		truncated = *req.Truncated
 	}
-	if err := s.store.UpsertDeploymentOpenAPIDoc(r.Context(), depID, acct.ID, app.ID, docBytes, source, truncated); err != nil {
+	// The store counts the documents of the app's billing subject
+	// (ADR-202610171904) and saves this one in one step, so concurrent
+	// captures cannot all take the last slot. Replacing this deployment's
+	// document is not a new one.
+	err = s.store.UpsertDeploymentOpenAPIDocIfUnderQuota(r.Context(), depID, acct.ID, app.ID, docBytes, source, truncated,
+		acct.Plan.OpenAPIDocsPerAccount())
+	var quota *state.OpenAPIDocQuotaError
+	switch {
+	case errors.As(err, &quota):
+		api.WriteProblem(w, api.ErrPlanOpenAPIDocQuota(acct.Plan, quota.Limit, quota.Observed))
+		return
+	case err != nil:
 		logCustomerFailure(s.log, "failed to persist OpenAPI document", err)
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error",
 			"failed to persist OpenAPI document", api.DetailServerFailure))

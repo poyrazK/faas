@@ -739,7 +739,8 @@ Account deletion is fail-closed until all managed databases reach their
 provider-confirmed `deleted` tombstone. A self-service deletion that a live
 database blocks returns `409 account_deletion_managed_postgres_databases` with
 the number of databases; delete them with `gregale postgres list` and
-`gregale postgres delete`, then retry. A non-payment deletion includes the
+`gregale postgres delete <database> --purge`, then retry. A database whose
+delete is only scheduled still blocks it until the window ends. A non-payment deletion includes the
 account's databases and deletes them when the 30-day grace ends
 ([ADR-20261024150500](adr/20261024150500-account-deletion-includes-managed-postgres.md)). The final GDPR deletion transaction
 then removes usage, binding, and database tombstones before deleting apps and
@@ -1310,12 +1311,43 @@ gregale postgres bindings list DATABASE_ID
 gregale postgres bindings rotate BINDING_ID --wait
 gregale postgres attach orders api --scope production --env DATABASE_URL
 gregale postgres delete DATABASE_ID
+gregale postgres undelete DATABASE_ID
+gregale postgres delete DATABASE_ID --purge
 ```
 
-`postgres delete` asks you to type the database's name: deletion removes the
-database and its point-in-time restore history at the provider and cannot be
-undone. Scripts pass `--yes` (or `--quiet`); JSON and `--non-interactive` mode
-require it.
+### Deleting and undeleting a database
+
+`postgres delete` does not delete a ready database at once
+([ADR-20261029174950](adr/20261029174950-managed-postgres-delete-grace-period.md)).
+- The database moves to `deleting`. Its compute stops and it refuses
+  connections.
+- Its view shows `restorable_until`, 7 days out. `gregale postgres get` and
+  `gregale postgres list` show it too.
+- Until then, `gregale postgres undelete <database>` (API:
+  `POST /v1/postgres/databases/{id}/undelete`) returns it to `ready` with its
+  data and restore history.
+- After that, the provider deletes it for good.
+- A database that never became ready is deleted at once.
+
+`postgres delete --purge` (API: `DELETE …?purge=true`) deletes the database
+and its point-in-time restore history at once, even during the window. It
+cannot be undone.
+
+During the window:
+- The database still counts toward the plan's database limit, and the fleet
+  database cap counts it as well.
+- Its name stays taken. A create with that name returns 409 and names
+  undelete and `--purge`.
+- Its usage is waived: it does not count toward the usage view, the compute
+  allowance or the storage pool.
+- Account deletion waits for it, so purge a database before deleting the
+  account.
+
+Undelete applies the same plan check as create and restore. A database the
+current plan no longer allows, after a downgrade, is refused with a 403.
+
+`postgres delete` asks you to type the database's name. Scripts pass `--yes`
+(or `--quiet`); JSON and `--non-interactive` mode require it.
 
 Binding rotation returns as soon as the new credential is active. Add
 `--wait` to poll until `rotation_pending` clears; the wait defaults to five

@@ -104,7 +104,7 @@ func (s *server) renderProjectPreview(w http.ResponseWriter, r *http.Request, lo
 			return
 		}
 	}
-	tok, err := middleware.IssueForAuthenticated(s.sessions, projectPreviewAction, acct.ID)
+	tok, err := middleware.IssueForAuthenticated(s.sessions, projectPreviewAction, actorAccount(r, acct).ID)
 	if err != nil {
 		log.Error("dashboard project_preview: csrf issue",
 			"account_id", acct.ID, "slug", slug, "err", err)
@@ -151,7 +151,7 @@ func (s *server) submitProjectPreview(w http.ResponseWriter, r *http.Request, lo
 		// pass VerifyAuthenticated. The old envelope is consumed.
 		// Cookie binds to the preview action — the operator is
 		// still in the upload-fix loop, not yet at apply.
-		tok, err := middleware.IssueForAuthenticated(s.sessions, projectPreviewAction, acct.ID)
+		tok, err := middleware.IssueForAuthenticated(s.sessions, projectPreviewAction, actorAccount(r, acct).ID)
 		if err != nil {
 			log.Error("dashboard project_preview submit: csrf re-issue",
 				"account_id", acct.ID, "slug", slug, "err", err)
@@ -188,14 +188,14 @@ func (s *server) submitProjectPreview(w http.ResponseWriter, r *http.Request, lo
 	// privilege endpoint — we explicitly cross that boundary here
 	// because the populated page is the operator's decision point
 	// and the apply form's csrf_token field MUST match the cookie.)
-	previewTok, err := middleware.IssueForAuthenticated(s.sessions, projectPreviewAction, acct.ID)
+	previewTok, err := middleware.IssueForAuthenticated(s.sessions, projectPreviewAction, actorAccount(r, acct).ID)
 	if err != nil {
 		log.Error("dashboard project_preview submit: csrf preview re-issue",
 			"account_id", acct.ID, "slug", slug, "err", err)
 		renderProblem(w, log, err)
 		return
 	}
-	applyTok, err := middleware.IssueForAuthenticated(s.sessions, projectPreviewApplyAction, acct.ID)
+	applyTok, err := middleware.IssueForAuthenticated(s.sessions, projectPreviewApplyAction, actorAccount(r, acct).ID)
 	if err != nil {
 		log.Error("dashboard project_preview submit: csrf apply issue",
 			"account_id", acct.ID, "slug", slug, "err", err)
@@ -387,7 +387,7 @@ func (s *server) applyProjectPreview(w http.ResponseWriter, r *http.Request, log
 // cookie after a problem-driven re-render. Returns the token
 // so the caller can populate the matching form field.
 func (s *server) mintAndBindCSRF(w http.ResponseWriter, log *slog.Logger, r *http.Request, slug string, acct state.Account, action string) (string, error) {
-	tok, err := middleware.IssueForAuthenticated(s.sessions, action, acct.ID)
+	tok, err := middleware.IssueForAuthenticated(s.sessions, action, actorAccount(r, acct).ID)
 	if err != nil {
 		log.Error("dashboard project_preview: csrf issue",
 			"account_id", acct.ID, "slug", slug, "action", action, "err", err)

@@ -21,6 +21,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/onebox-faas/faas/pkg/apid/credentialkeys"
 	"github.com/onebox-faas/faas/pkg/apid/mcpreadiness"
 	"log/slog"
 	"net"
@@ -1903,12 +1904,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			if reqbudget.IsDeploymentResponseCheckRequest(r) {
 				return api.DeploymentResponseCheckTimeout
 			}
-			if reqbudget.IsSyncInvokeRequest(r) || reqbudget.IsDeploySubmissionRequest(r) || reqbudget.IsAccountExportRequest(r) || managedrealtime.IsRealtimeGroupClaimRequest(r) {
+			if reqbudget.IsSyncInvokeRequest(r) || reqbudget.IsDeploySubmissionRequest(r) || reqbudget.IsAccountExportRequest(r) ||
+				managedrealtime.IsRealtimeGroupClaimRequest(r) || reqbudget.IsLongWaitRequest(r) {
 				// invokeApp applies the plan-specific 5s/30s wait, a deploy
 				// commit scans its source archive (H9-157), an account
-				// export assembles the whole account (H14-120), and realtime
-				// group claims may long-poll; all get the platform ceiling
-				// instead of the 5 s default.
+				// export assembles the whole account (H14-120), realtime
+				// group claims and queue leases long-poll, and the other
+				// long-wait routes scale with the source (B35); all get the
+				// platform ceiling instead of the 5 s default.
 				return api.RequestBudgetMax
 			}
 			return 0
@@ -2065,6 +2068,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return err
 	}
 	defer uninstallRuntimeSigner()
+	if err := installCredentialPolicy(deps.getenv, log); err != nil {
+		return err
+	}
 	// ADR 20261022111812: apid reads the account domain.
 	sealdomain.RegisterLoaded(ops.Registry(), sealdomain.Account, len(accountDomainIdentities) > 0)
 
@@ -2318,6 +2324,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	go srv.runApplicationStandardWorker(ctx)
 	go srv.runMigrationVerificationWorker(ctx)
 	go srv.runMigrationCutoverWorker(ctx)
+	go credentialkeys.RunRekey(ctx, srv.store, log)
 	if deps.bgBefore != nil {
 		deps.bgBefore(ctx, log, srv)
 	}
@@ -3287,8 +3294,12 @@ func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, 
 	)...)
 	receivers.RegisterAppErrorsReceiver(srv, store, ops, appErrorsEnabled, ingest)
 	// The private history reader shares this authenticated listener for
-	// compute-only realtimed nodes in split-box deployments.
+	// compute-only realtimed nodes in split-box deployments. So does
+	// credential lookup: a compute node's gatewayd-internal cannot key a
+	// credential hash itself (ADR 20261029202403); single-box gateways ask
+	// over /run/faas/auth.sock.
 	if !isUnixSocketPath(target) {
+		receivers.RegisterAuthReceiver(srv, store)
 		receivers.RegisterRealtimeHistoryReceiver(srv, store)
 		if len(fleetRouter) > 0 {
 			receivers.RegisterRealtimeFleetReceiver(srv, store, fleetRouter[0], registerPush)

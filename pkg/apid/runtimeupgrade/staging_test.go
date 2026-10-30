@@ -307,7 +307,7 @@ func TestStagingRefusesFrozenApp(t *testing.T) {
 	if _, err := store.RuntimeUpgradeOperation(t.Context(), r.AccountID, r.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatal("a frozen app's upgrade was registered", err)
 	}
-	if _, err := store.LiftReleaseFreeze(t.Context(), r.AccountID, frozen.ID, "ops", now); err != nil {
+	if _, err := store.LiftReleaseFreeze(t.Context(), state.ReleaseFreezeOwner{AccountID: r.AccountID}, frozen.ID, "ops", now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.StageAndRegister(t.Context(), r); err != nil {

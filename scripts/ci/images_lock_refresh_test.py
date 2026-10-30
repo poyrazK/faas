@@ -122,6 +122,29 @@ class RefreshTest(unittest.TestCase):
         self.assertFalse([c for c in calls if c.startswith("issue create")])
         self.assertTrue([c for c in calls if c.startswith("issue comment 9 ")])
 
+    def test_drift_lists_the_bases_that_did_not_resolve(self) -> None:
+        unresolved = self.tmp / "unresolved.txt"
+        unresolved.write_text("entry[16] images/ci-runner.Dockerfile: could not resolve "
+                              "public.ecr.aws/docker/library/debian:12-slim for linux/amd64\n")
+        (self.repo / "images" / "Dockerfile.lock").write_text(lock(NEW, "2026-10-26"))
+        result = self.refresh("--unresolved-file", str(unresolved))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        create = [c for c in self.gh_calls() if c.startswith("issue create")]
+        self.assertEqual(len(create), 1)
+        self.assertIn("Not refreshed this run", create[0])
+        self.assertIn("public.ecr.aws/docker/library/debian:12-slim", create[0])
+
+    def test_no_drift_with_unresolved_bases_fails_without_pushing(self) -> None:
+        unresolved = self.tmp / "unresolved.txt"
+        unresolved.write_text("entry[15] images/ci-runner.Dockerfile: could not resolve "
+                              "public.ecr.aws/docker/library/golang:1.26.10 for linux/amd64\n")
+        (self.repo / "images" / "Dockerfile.lock").write_text(lock(OLD, "2026-10-26"))
+        result = self.refresh("--unresolved-file", str(unresolved))
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("golang:1.26.10", result.stderr)
+        self.assertEqual(git(self.origin, "branch", "--list"), "")
+        self.assertEqual(self.gh_calls(), [])
+
     def test_dry_run_changes_nothing(self) -> None:
         (self.repo / "images" / "Dockerfile.lock").write_text(lock(NEW, "2026-10-26"))
         result = self.refresh("--dry-run")

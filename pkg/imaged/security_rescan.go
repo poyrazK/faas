@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -29,17 +30,28 @@ func (l *Loop) reconcileSecurityScans(ctx context.Context, now time.Time, every 
 	if every <= 0 {
 		every = securityScanSweepEvery
 	}
+	// The sweep runs far more often than a deployment comes due, so a
+	// sweep still scanning when the next tick fires lets that tick go.
+	if !l.securityScanRunning.CompareAndSwap(false, true) {
+		return
+	}
+	defer l.securityScanRunning.Store(false)
 	deployments, err := l.store.ListAllDeployments(ctx)
 	if err != nil {
 		l.log.Warn("imaged: list deployments for security re-scan", "err", err)
 		return
 	}
+	due := deployments[:0]
 	for _, dep := range deployments {
-		if dep.Status != state.DeployLive || strings.TrimSpace(dep.ImageDigest) == "" {
-			continue
+		if dep.Status == state.DeployLive && strings.TrimSpace(dep.ImageDigest) != "" && securityScanDue(dep, now.UTC(), every) {
+			due = append(due, dep)
 		}
-		if !securityScanDue(dep, now.UTC(), every) {
-			continue
+	}
+	// Oldest evidence first: it is the nearest to its lease running out.
+	slices.SortStableFunc(due, func(a, b state.Deployment) int { return a.ScannedAt.Compare(b.ScannedAt) })
+	for _, dep := range due {
+		if ctx.Err() != nil {
+			return
 		}
 		app, err := l.store.AppByID(ctx, dep.AppID)
 		if err != nil {
@@ -58,6 +70,11 @@ func (l *Loop) rescanLiveDeployment(ctx context.Context, app state.App, dep stat
 		return
 	}
 	if l.handler.scanEvidenceCurrent(ctx, dep) {
+		// The skip must renew the evidence, or the enforce lease, which
+		// knows only when the evidence was last checked, parks the app
+		// once the database has gone unchanged for a lease (bug hunt
+		// 2026-10-28 B33).
+		l.renewScanEvidence(ctx, dep)
 		return
 	}
 	previousStatus := dep.ScanStatus
@@ -85,6 +102,36 @@ func (l *Loop) rescanLiveDeployment(ctx context.Context, app state.App, dep stat
 	}
 	if quarantineErr := l.quarantineSecurityRegression(ctx, app, dep); quarantineErr != nil {
 		l.log.Warn("imaged: quarantine security regression", "deployment", dep.ID, "app", app.ID, "err", quarantineErr)
+	}
+}
+
+type scanEvidenceRenewer interface {
+	RenewDeploymentScanEvidence(ctx context.Context, deploymentID string, expected, renewed []byte) (bool, error)
+}
+
+// renewScanEvidence stamps verified_at on evidence the installed scanner and
+// database would only repeat, keeping scanned_at the time Grype ran. The write
+// is conditional on the row still holding the evidence that was checked, so a
+// newer scan written meanwhile, possibly by another imaged under a newer
+// database, is never replaced.
+func (l *Loop) renewScanEvidence(ctx context.Context, dep state.Deployment) {
+	renewer, ok := l.store.(scanEvidenceRenewer)
+	result := decodeScanEvidence(dep.ScanResult)
+	if !ok || result == nil {
+		return
+	}
+	at := time.Now().UTC()
+	if l.now != nil {
+		at = l.now().UTC()
+	}
+	result.VerifiedAt = at.Format(time.RFC3339Nano)
+	renewed, err := json.Marshal(result)
+	if err != nil {
+		l.log.Warn("imaged: marshal renewed scan evidence", "deployment", dep.ID, "err", err)
+		return
+	}
+	if _, err := renewer.RenewDeploymentScanEvidence(ctx, dep.ID, dep.ScanResult, renewed); err != nil {
+		l.log.Warn("imaged: renew scan evidence", "deployment", dep.ID, "err", err)
 	}
 }
 
@@ -236,12 +283,19 @@ func securityScanLeaseFailure(dep state.Deployment, now time.Time, scanEvery tim
 		!strings.EqualFold(strings.TrimSpace(result.ScannerDBStatus), "valid") {
 		return "security_scan_evidence_invalid"
 	}
-	scannedAt, err := parseScanEvidenceTime(result.ScannedAt)
+	checkedAt, err := parseScanEvidenceTime(result.ScannedAt)
 	if err != nil {
 		return "security_scan_evidence_invalid"
 	}
+	if strings.TrimSpace(result.VerifiedAt) != "" {
+		verifiedAt, err := parseScanEvidenceTime(result.VerifiedAt)
+		if err != nil || verifiedAt.Before(checkedAt) {
+			return "security_scan_evidence_invalid"
+		}
+		checkedAt = verifiedAt
+	}
 	lease := scanEvery + securityScanLeaseSweepEvery
-	if scannedAt.After(now) || now.Sub(scannedAt) > lease {
+	if checkedAt.After(now) || now.Sub(checkedAt) > lease {
 		return "security_scan_evidence_expired"
 	}
 	dbBuiltAt, err := parseScanEvidenceTime(result.ScannerDBBuiltAt)
@@ -359,11 +413,30 @@ func (l *Loop) appendSecurityScanLeaseAudit(ctx context.Context, app state.App, 
 	return err
 }
 
+// securityScanDue reports whether a deployment's evidence should be checked
+// again. The enforce lease expires one lease tick after every, and scanned_at
+// is stamped when a scan finishes, so a deployment due exactly at every was
+// checked by a sweep that landed anywhere up to a whole sweep interval late:
+// the lease won that race on almost every tick (bug hunt 2026-10-28 B34). It
+// is due securityScanRenewMargin early instead, and the sweep runs every
+// securityScanCheckEvery, well inside that margin.
 func securityScanDue(dep state.Deployment, now time.Time, every time.Duration) bool {
 	if dep.ScannedAt.IsZero() {
 		return true
 	}
-	return !now.Before(dep.ScannedAt.UTC().Add(every))
+	return !now.Before(dep.ScannedAt.UTC().Add(every - securityScanRenewMargin(every)))
+}
+
+// securityScanRenewMargin is how long before a full interval a deployment
+// comes due: an hour of the default six.
+func securityScanRenewMargin(every time.Duration) time.Duration {
+	return every / 6
+}
+
+// securityScanCheckEvery is the sweep cadence: a sixth of the renew margin,
+// ten minutes by default. The sweep picks only due deployments.
+func securityScanCheckEvery(every time.Duration) time.Duration {
+	return max(securityScanRenewMargin(every)/6, time.Millisecond)
 }
 
 // scanEvidenceCurrent reports whether a live deployment's last scan already

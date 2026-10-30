@@ -94,7 +94,7 @@ func TestRetryMeetsDeployFreezes(t *testing.T) {
 	if latest, err := store.LatestDeployment(t.Context(), app.ID); err != nil || latest.ID != dep.ID {
 		t.Fatalf("a frozen retry created a deployment: %s %v", latest.ID, err)
 	}
-	if _, err := store.LiftReleaseFreeze(t.Context(), acct.ID, frozen.ID, "ops", now); err != nil {
+	if _, err := store.LiftReleaseFreeze(t.Context(), state.ReleaseFreezeOwner{AccountID: acct.ID}, frozen.ID, "ops", now); err != nil {
 		t.Fatal(err)
 	}
 	r = e.Do(t, http.MethodPost, "/v1/deployments/"+dep.ID+"/retry", api.RetryDeploymentRequest{FromStage: "source_download"}, nil)

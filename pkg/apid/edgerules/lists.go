@@ -230,6 +230,10 @@ func (s *Service) UpdateEdgeRuleList(w http.ResponseWriter, r *http.Request, acc
 	edit := ReferencedEdit{Operation: "list_updated", Subject: "edge rule list", Hosts: func(ctx context.Context) (map[string][]string, error) {
 		return s.edgeRuleListHosts(ctx, store, acct.ID, name)
 	}}
+	if prob := s.AuthorizeReferencedEdit(r, acct, edit); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	convergences, release, prob := s.PrepareReferencedEdit(r.Context(), edit)
 	if prob != nil {
 		api.WriteProblem(w, prob)

@@ -54,6 +54,11 @@ type AgentRunWakeRequest struct {
 	// Snapshot is the preset snapshot to restore, from
 	// CaptureAgentRunSnapshot; nil, unusable or failing: a cold boot.
 	Snapshot *Snapshot
+	// ModelWaitPauseAfter is the run's model-wait pause delay
+	// (ADR-20261027090012): with vmmd's agent_wait_pause on, the VM is paused
+	// once it has waited this long on the relay and nothing else. Zero keeps
+	// it running.
+	ModelWaitPauseAfter time.Duration
 }
 
 // AgentRunRelay is the agent run principal of a run VM's relay (ADR-20261027090010
@@ -94,6 +99,9 @@ func (m *Manager) WakeAgentRun(ctx context.Context, req AgentRunWakeRequest) (*I
 		req.VcpuCount <= 0 || req.MemSizeMiB <= 0 || req.CPUMillicores <= 0 {
 		return nil, errors.New("fcvm: incomplete agent run wake request")
 	}
+	if req.ModelWaitPauseAfter < 0 || req.ModelWaitPauseAfter > api.AgentWaitPauseAfterMaxMillis*time.Millisecond {
+		return nil, errors.New("fcvm: agent run model-wait pause delay is out of range")
+	}
 	if req.Snapshot != nil && !req.Snapshot.Networkless {
 		return nil, errors.New("fcvm: an agent run restores only a networkless snapshot")
 	}
@@ -107,7 +115,8 @@ func (m *Manager) WakeAgentRun(ctx context.Context, req AgentRunWakeRequest) (*I
 	}
 	inst, err := m.Wake(ctx, WakeRequest{
 		Instance: req.Instance, ExecutionOnly: true, agentRunOnly: true, agentRunRelay: relay, agentRunInputKey: req.InputKey,
-		AccountID: req.AccountID, Plan: req.Plan,
+		agentRunWaitPauseAfter: req.ModelWaitPauseAfter,
+		AccountID:              req.AccountID, Plan: req.Plan,
 		BaseKey: req.BaseKey, LayerKey: req.LayerKey, VcpuCount: req.VcpuCount, MemSizeMiB: req.MemSizeMiB,
 		CPUMillicores: req.CPUMillicores, Snapshot: req.Snapshot,
 	})
@@ -160,6 +169,9 @@ func (m *Manager) RunAgent(ctx context.Context, instance string, req agentrunpro
 		return agentrunproto.Result{}, fmt.Errorf("fcvm: dial agent run: %w", err)
 	}
 	defer func() { _ = conn.Close() }()
+	// ADR-20261027090012: the VM may be paused while it waits on the model.
+	receive, cancel, stopWait := m.agentWaitRun(runCtx, instance, inst, time.Duration(req.TimeoutSec)*time.Second, receive, cancel)
+	defer stopWait()
 	result, err := agentrunproto.Run(runCtx, conn, req, receive, cancel)
 	if err != nil {
 		return agentrunproto.Result{}, fmt.Errorf("fcvm: agent run exchange: %w", err)

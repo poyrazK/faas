@@ -339,7 +339,7 @@ until the copy is ready and its credentials are verified:
 5. **Resume.** The fence lifts. The first request cold-boots the target with
    the copy's credentials.
 
-Until the switch reaches step 4, any failure (or `gregale rollback switch
+Until the switch reaches step 4, any failure (or `gregale release rollback status
 my-api <id> --cancel`) unwinds it, and the app keeps serving its current
 release on the original database. The restored copy is kept either way;
 delete it with `gregale postgres delete` if you do not need it.
@@ -474,7 +474,7 @@ gregale release approval pending                 # releases waiting right now
 gregale release approve <deployment> --comment "canary looks clean"
 gregale release reject <deployment> --reason "checkout latency is up"
 gregale release approval status <deployment>
-gregale release approval off
+gregale release approval disable
 ```
 
 A production release is one to the default scope or to the project's
@@ -560,22 +560,33 @@ releases.
 
 ## Deploy freezes
 
-A freeze stops new production releases of one app, or of every app in the
-account, while it is active
+A freeze stops new production releases of one app, or of all of its owner's
+apps, while it is active
 ([ADR-20261019071733](adr/20261019071733-deploy-freezes-and-release-windows.md)):
 
 ```bash
 # Freeze one app for two hours, starting now.
 gregale release freeze create --app my-api --for 2h --reason "incident 4711"
-# No releases from Friday 16:00 to Monday 08:00 (64 hours), Istanbul time, for every app.
+# No releases from Friday 16:00 to Monday 08:00 (64 hours), Istanbul time, for every personal app.
 gregale release freeze create --all-apps --weekly fri --at 16:00 --for 64h --tz Europe/Istanbul --reason "no weekend releases"
 # After Gregale rolls a release back on its own, freeze the app for an hour.
 gregale release freeze create --app my-api --after-rollback 1h --reason "settle after automatic rollbacks"
+# Freeze every app of the company organization acme for three days.
+gregale release freeze create --org acme --for 72h --reason "holiday freeze"
 
 gregale release freeze status --app my-api
-gregale release freeze list
-gregale release freeze lift <id>
+gregale release freeze list [--app my-api | --org acme]
+gregale release freeze lift <id> [--app my-api | --org acme]
 ```
+
+A company organization owns the freezes of its apps, whoever created the app.
+A freeze on all apps with `--org` covers every app of that organization; a
+freeze with `--all-apps` covers only your personal apps. On a company app,
+every member sees its freezes, and a member who deploys can freeze it with a
+window and lift a window they created. Weekly and after-rollback freezes are
+standing policies, so only owners and admins create them, and they can lift
+any freeze. A company's freezes stay when the member who created them leaves,
+and they appear in the organization's activity.
 
 While a freeze is active, every way of releasing to production is refused
 with `release_frozen`, which names the freeze, its reason and its creator:
@@ -1517,7 +1528,7 @@ health generation and available operator action. For a health-gated HTTP promoti
 including supported production push workers:
 
 ```bash
-gregale environment abort shop PROMOTION_ID --to production --generation 7 --wait
+gregale environment cancel shop PROMOTION_ID --to production --generation 7 --wait
 # After a blocked restoration and dependency repair, inspect status again:
 gregale environment recover shop PROMOTION_ID --to production --generation 12 --wait
 ```

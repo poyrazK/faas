@@ -15,6 +15,7 @@ func (m *MemStore) CreateHostingAutomationCredential(_ context.Context, c api.Ho
 	if c.OIDCTrustID != "" || !validHostingCredential(c) {
 		return c, ErrInvalidArgument
 	}
+	c.Hash = storedCredential(credTagHostingAutomation, c.Hash)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	site := m.hostingSites[c.SiteID]
@@ -77,7 +78,7 @@ func (m *MemStore) AuthenticateHostingAutomationToken(_ context.Context, hash []
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, c := range m.hostingCredentials {
-		if string(c.Hash) != string(hash) {
+		if !CredentialMatches(credTagHostingAutomation, hash, c.Hash) {
 			continue
 		}
 		site := m.hostingSites[c.SiteID]

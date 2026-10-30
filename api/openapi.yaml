@@ -21056,13 +21056,14 @@ paths:
     delete:
       operationId: deleteNotificationChannel
       summary: Delete a notification channel
-      description: "Removes the channel; alert rules stop delivering to it."
+      description: "Removes the channel; alert rules stop delivering to it. Refused with 409 notification_channel_in_use while the channel is the only destination of a rule (no webhook and no other channel), naming those rules."
       tags: [alert_rules]
       responses:
         '204':
           description: The channel was deleted.
         '402': { $ref: '#/components/responses/PaymentRequired' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
   /v1/notification-channels/{id}/test:
     parameters:
       - name: id
@@ -31042,8 +31043,8 @@ paths:
     get:
       tags: [deployments]
       operationId: listReleaseFreezes
-      summary: List deploy freezes.
-      description: "Unlifted freezes that have not ended: active and upcoming windows, weekly windows and after-rollback policies. `app` narrows the list to the freezes covering one app."
+      summary: List the account's deploy freezes.
+      description: "The account's unlifted freezes that have not ended: active and upcoming windows, weekly windows and after-rollback policies. They cover the account's personal apps; a company organization's freezes are on `/v1/orgs/{slug}/freezes`. `app` narrows the list to the freezes covering one personal app; a company app is refused with 409."
       parameters:
         - name: app
           in: query
@@ -31063,7 +31064,7 @@ paths:
       tags: [deployments]
       operationId: createReleaseFreeze
       summary: Freeze production releases.
-      description: "Creates a window, weekly or after-rollback freeze for one app or, without `app`, for every app of the account. While a freeze is active, new production deployments are refused with `release_frozen` unless the request carries `override_freeze`."
+      description: "Creates a window, weekly or after-rollback freeze for one personal app or, without `app`, for every personal app of the account. While a freeze is active, new production deployments are refused with `release_frozen` unless the request carries `override_freeze`. A company app's freezes belong to its organization: naming one is refused with 409."
       requestBody:
         required: true
         content:
@@ -31120,6 +31121,140 @@ paths:
               schema: { $ref: '#/components/schemas/ReleaseFreezeStatus' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/freezes:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [deployments]
+      operationId: listAppReleaseFreezes
+      summary: List the deploy freezes covering an app.
+      description: "The app owner's unlifted freezes that have not ended, on all of its apps and on this app. A company app's freezes belong to its organization; a personal app's to its account. Requires `org.read_app` on a company app."
+      responses:
+        '200':
+          description: The freezes covering the app.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListReleaseFreezesResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    post:
+      tags: [deployments]
+      operationId: createAppReleaseFreeze
+      summary: Freeze production releases of an app.
+      description: "Creates a window, weekly or after-rollback freeze on the app, owned by the app's owner: the company organization of a company app. On a company app a member who deploys may create a window; weekly and after-rollback policies need an owner or admin (`org.manage_app_security`). `app` in the body must be empty or this app."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateReleaseFreezeRequest' }
+            example: {"kind": "window", "ends_at": "2026-12-27T09:00:00Z", "reason": "incident 4711"}
+      responses:
+        '201':
+          description: The freeze on the app, owned by the app's owner.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReleaseFreeze' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/freezes/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        description: The ID of a freeze on this app.
+        schema: { type: string, format: uuid }
+    delete:
+      tags: [deployments]
+      operationId: liftAppReleaseFreeze
+      summary: Lift a deploy freeze on an app.
+      description: "Lifts a freeze on this app. Freezes on all of an owner's apps are lifted on `/v1/freezes/{id}` or `/v1/orgs/{slug}/freezes/{id}`. On a company app a member who deploys may lift a window they created; any other freeze needs an owner or admin. 404 `release_freeze_not_found` when no unlifted freeze on this app has this ID."
+      responses:
+        '200':
+          description: The lifted freeze on the app.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReleaseFreeze' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/orgs/{slug}/freezes:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+    get:
+      tags: [orgs]
+      operationId: listOrgReleaseFreezes
+      summary: List a company organization's deploy freezes.
+      description: "The organization's unlifted freezes that have not ended, on all of its apps and on single apps. Requires `org.read_app`. A personal organization's apps use `/v1/freezes` (409)."
+      responses:
+        '200':
+          description: The organization's freezes.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListReleaseFreezesResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    post:
+      tags: [orgs]
+      operationId: createOrgReleaseFreeze
+      summary: Freeze production releases of every app of a company organization.
+      description: "Creates a freeze on all of the organization's apps; `app` must be empty (freeze one app with `POST /v1/apps/{slug}/freezes`). A member who deploys (`org.deploy_app`) may create a window; weekly and after-rollback policies need an owner or admin."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateReleaseFreezeRequest' }
+            example: {"kind": "window", "ends_at": "2026-12-27T09:00:00Z", "reason": "holiday freeze"}
+      responses:
+        '201':
+          description: The freeze on all of the organization's apps.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReleaseFreeze' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/orgs/{slug}/freezes/{id}:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+      - name: id
+        in: path
+        required: true
+        description: The ID of one of the organization's freezes.
+        schema: { type: string, format: uuid }
+    delete:
+      tags: [orgs]
+      operationId: liftOrgReleaseFreeze
+      summary: Lift a company organization's deploy freeze.
+      description: "Lifts one of the organization's freezes. A member who deploys may lift a window they created; any other freeze needs an owner or admin. 404 `release_freeze_not_found` when the organization has no unlifted freeze with this ID."
+      responses:
+        '200':
+          description: The organization's lifted freeze.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReleaseFreeze' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/apps/{slug}/release-gates:
@@ -84730,6 +84865,14 @@ components:
           description: Exact paths, one-segment globs, or trailing /** directory patterns that do not trigger builds.
         preview_enabled: { type: boolean, default: true }
         preview_ttl_hours: { type: integer, minimum: 1, maximum: 720, default: 168 }
+        preview_bot_prs:
+          type: boolean
+          default: false
+          description: Preview pull requests opened by bots such as Dependabot and Renovate. Off by default so they do not use up the preview allowance.
+        preview_draft_prs:
+          type: boolean
+          default: true
+          description: Preview draft pull requests. When off, a draft gets its preview once it is marked ready for review.
         preview_service_policy:
           type: string
           enum: [deny, allow_marked]
@@ -84758,6 +84901,8 @@ components:
           items: { type: string, minLength: 1, maxLength: 255 }
         preview_enabled: { type: boolean }
         preview_ttl_hours: { type: integer, minimum: 1, maximum: 720 }
+        preview_bot_prs: { type: boolean }
+        preview_draft_prs: { type: boolean }
         preview_service_policy:
           type: string
           enum: [deny, allow_marked]
@@ -85096,6 +85241,8 @@ components:
         crons: { type: array, items: { $ref: '#/components/schemas/CronResponse' } }
         api_keys: { type: array, items: { $ref: '#/components/schemas/APIKeyExportResponse' } }
         app_secrets: { type: array, items: { $ref: '#/components/schemas/AppSecretExportResponse' } }
+        edge_rules: { type: array, items: { $ref: '#/components/schemas/EdgeRuleResponse' }, description: "Edge rules on the exported apps." }
+        edge_rule_lists: { type: array, items: { $ref: '#/components/schemas/EdgeRuleListResponse' }, description: "The account's edge rule lists, with their items." }
         audit_trail:
           type: array
           items: { $ref: '#/components/schemas/GdprAuditExportResponse' }
@@ -107610,6 +107757,9 @@ components:
           minimum: 0
           maximum: 3600
           description: Configured completed-release rollback eligibility window in seconds; 0 is disabled. Acceptance requires deployment-specific error_rate_pct evidence, a gt or gte comparison, and recorded predecessor lineage.
+        notify_resolved:
+          type: boolean
+          description: "The webhook also receives a signed alert.resolved event when the rule recovers. Omitted when false."
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }
         app_id:
           type: string
@@ -107801,6 +107951,9 @@ components:
           minimum: 0
           maximum: 3600
           description: Enable completed-release rollback for this many seconds after cutover; 0 disables it. Requires action=rollback. Only deployment-specific error_rate_pct breaches with gt or gte comparisons can qualify.
+        notify_resolved:
+          type: boolean
+          description: "Also send the webhook a signed alert.resolved event when the rule recovers. Requires webhook_url; notification channels always receive resolves. Defaults to false, because receivers that predate it count every delivery as a fire."
         name: { type: string, example: "p99 > 500ms" }
         enabled: { type: boolean, example: true }
         metric:
@@ -107886,6 +108039,9 @@ components:
           minimum: 0
           maximum: 3600
           description: Change the completed-release recovery window. Omission preserves it and explicit 0 disables it. Positive values require action=rollback; only error_rate_pct with gt or gte and sufficient exact deployment telemetry qualifies.
+        notify_resolved:
+          type: boolean
+          description: "Turn the webhook's alert.resolved events on or off. Turning them on requires the rule to have a webhook_url."
         name: { type: string }
         enabled: { type: boolean }
         metric:
@@ -110970,12 +111126,13 @@ components:
         duration_minutes: { type: integer, minimum: 1, maximum: 10080, description: How long each window lasts. }
         time_zone: { type: string, maxLength: 64, description: "IANA time zone, such as Europe/Istanbul or UTC." }
     ReleaseFreeze:
-      description: "A deploy freeze on production releases of one app or, without `app`, of every app of the account."
+      description: "A deploy freeze on production releases of one app or, without `app`, of every app of its owner. An account's freezes cover its personal apps; a company organization's freezes (`org`) cover the organization's apps."
       type: object
       required: [id, kind, reason, source, created_by, created_at, active]
       properties:
         id: { type: string, format: uuid }
-        app: { type: string, description: "The covered app's slug; omitted for an account-wide freeze." }
+        app: { type: string, description: "The covered app's slug; omitted for a freeze on all of the owner's apps." }
+        org: { type: string, description: "Slug of the company organization that owns the freeze; omitted for an account's freeze." }
         kind: { type: string, enum: [window, weekly, after_rollback] }
         starts_at: { type: string, format: date-time, description: "Window start." }
         ends_at: { type: string, format: date-time, description: "Window end; omitted for a window that lasts until lifted." }
@@ -110993,7 +111150,7 @@ components:
       type: object
       required: [kind, reason]
       properties:
-        app: { type: string, description: "App slug; omit to freeze every app of the account." }
+        app: { type: string, description: "App slug. On `/v1/freezes`, omit to freeze every personal app of the account; a company app is refused with 409 (use `/v1/apps/{slug}/freezes`). On an app route, empty or that app; on an organization route, empty." }
         kind: { type: string, enum: [window, weekly, after_rollback] }
         starts_at: { type: string, format: date-time, description: "Window start; default now." }
         ends_at: { type: string, format: date-time, description: "Window end; omit to freeze until lifted." }

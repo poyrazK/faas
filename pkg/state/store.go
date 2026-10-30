@@ -3280,10 +3280,17 @@ type Store interface {
 	// migration 00330 makes this unreachable in practice, but
 	// the explicit error lets a misuse at the call site fail
 	// closed). Idempotent: a re-delivered cold-boot event
-	// overwrites the same row, not create a second one. The
-	// capture count for the per-account quota is computed via
-	// CountOpenAPIDocsByAccount.
+	// overwrites the same row, not create a second one. It checks
+	// no quota.
 	UpsertDeploymentOpenAPIDoc(ctx context.Context, deploymentID, accountID, appID string, doc []byte, source string, truncated bool) error
+	// UpsertDeploymentOpenAPIDocIfUnderQuota is UpsertDeploymentOpenAPIDoc
+	// for the per-account allowance (api.Plan.OpenAPIDocsPerAccount): it
+	// counts the documents of the app's billing subject
+	// (ADR-202610171904) and saves this one in one step, under the
+	// subject's lock. Replacing a deployment's document is not a new one.
+	// Over the allowance it returns *OpenAPIDocQuotaError; a deployment
+	// that is not the app's is ErrNotFound.
+	UpsertDeploymentOpenAPIDocIfUnderQuota(ctx context.Context, deploymentID, accountID, appID string, doc []byte, source string, truncated bool, limit int) error
 	// DeleteDeploymentOpenAPIDoc removes the doc row for one
 	// deployment. ErrNotFound when no row OR the caller's
 	// accountID does not match — same IDOR floor as the read.
@@ -3292,10 +3299,9 @@ type Store interface {
 	// caller treats a 404 as success after a delete).
 	DeleteDeploymentOpenAPIDoc(ctx context.Context, deploymentID, accountID string) error
 	// CountOpenAPIDocsByAccount returns the number of doc rows
-	// the account owns. Drives the per-account quota gate
-	// (api.Plan.OpenAPIDocsPerAccount). The count is computed
-	// server-side via a SELECT COUNT(*) so the apid doesn't
-	// load the full body slice.
+	// the account owns. The per-account quota counts the app's
+	// billing subject instead, in
+	// UpsertDeploymentOpenAPIDocIfUnderQuota.
 	CountOpenAPIDocsByAccount(ctx context.Context, accountID string) (int, error)
 
 	// Per-app OpenAPI import (issue #975 item #2 / ADR-126).
@@ -3906,9 +3912,9 @@ type Store interface {
 	// pinned by the createAlertRuleIfUnderQuota path at
 	// handlers_alert_presets.go:255. We match by joining
 	// alert_presets on (name) and selecting the rule whose name LIKE
-	// (display_name || ' (%'); the existing
-	// alert_rules_account_name_uniq index covers the LIKE prefix
-	// scan as a range scan on (account_id, name) — no new index.
+	// (display_name || ' (%'); the alert_rules_app_name_uniq index
+	// covers the LIKE prefix scan as a range scan on (app_id, name)
+	// (ADR-20261029203000).
 	//
 	// Returns:
 	//   - (AlertRule{}, ErrNotFound) when no rule exists for this

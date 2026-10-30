@@ -116,7 +116,7 @@ func (s *Service) authenticate(w http.ResponseWriter, r *http.Request) (caller, 
 		return caller{}, false
 	}
 	key, err := s.Host.Store().ConsumerKeyByAppAndPrefix(ctx, app.AccountID, app.ID, prefix)
-	if err != nil || !api.ConstantTimeEqualHash(api.HashConsumerKey(token), key.Hash) || key.RevokedAt != nil ||
+	if err != nil || !state.CredentialMatches(state.CredentialColumnConsumerKey, api.HashConsumerKey(token), key.Hash) || key.RevokedAt != nil ||
 		(key.ExpiresAt != nil && !key.ExpiresAt.After(s.now())) || key.ConsumerID == "" {
 		unauthorized(w)
 		return caller{}, false
