@@ -5693,6 +5693,7 @@ type Querier interface {
 	// org_id is the tenant boundary SameAppResourceOwner checks (Hunt 23 H23-1).
 	ReadServicePolicyAppByID(ctx context.Context, db DBTX, id pgtype.UUID) (ReadServicePolicyAppByIDRow, error)
 	ReadServicePolicyAppBySlug(ctx context.Context, db DBTX, slug string) (ReadServicePolicyAppBySlugRow, error)
+	ReadServicePolicyCallerScope(ctx context.Context, db DBTX, arg ReadServicePolicyCallerScopeParams) (string, error)
 	ReadServicePolicyDeploymentOverride(ctx context.Context, db DBTX, arg ReadServicePolicyDeploymentOverrideParams) (bool, error)
 	ReadServicePolicyDeploymentWeights(ctx context.Context, db DBTX, arg ReadServicePolicyDeploymentWeightsParams) ([]ReadServicePolicyDeploymentWeightsRow, error)
 	ReadServicePolicyProject(ctx context.Context, db DBTX, arg ReadServicePolicyProjectParams) (string, error)

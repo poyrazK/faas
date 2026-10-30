@@ -8724,15 +8724,21 @@ ORDER BY rs.created_at DESC LIMIT 2;
 SELECT EXISTS (
     SELECT 1 FROM deployments d JOIN apps a ON a.id = d.app_id
     WHERE d.id = sqlc.arg(deployment_id)::uuid AND d.app_id = sqlc.arg(app_id)::uuid AND d.status = 'live'
+      AND d.scope = ANY(sqlc.arg(scopes)::text[])
       AND (d.traffic_percent > 0 OR d.traffic_percent_explicit
            OR (coalesce((a.manifest->>'revision_pin_ttl_seconds')::integer, 0) > 0
                AND EXISTS (SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id = d.id AND p.expires_at > now())))
 )::boolean AS allowed;
 
 -- name: ReadServicePolicyDeploymentWeights :many
-SELECT id, traffic_percent FROM deployments
+SELECT id, traffic_percent, scope FROM deployments
 WHERE app_id = sqlc.arg(app_id)::uuid AND status = 'live' AND traffic_percent > 0
+  AND scope = ANY(sqlc.arg(scopes)::text[])
 ORDER BY id LIMIT sqlc.arg(row_limit)::integer;
+
+-- name: ReadServicePolicyCallerScope :one
+SELECT scope FROM deployments
+WHERE id = sqlc.arg(deployment_id)::uuid AND app_id = sqlc.arg(app_id)::uuid;
 
 -- name: ReadPublicRoutingOwner :one
 SELECT EXISTS (

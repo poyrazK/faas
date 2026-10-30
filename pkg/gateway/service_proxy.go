@@ -1033,6 +1033,13 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if p.policy != nil {
 		var err error
 		versionDeploymentID, err = p.serviceSnapshotDeployment(r.Context(), target.AppID)
+		var missing *ServiceEnvironmentMissingError
+		if errors.As(err, &missing) {
+			p.metrics.IncServiceCall(ServiceCallEnvironmentDenied)
+			serviceProxyProblem(dispatchWriter, http.StatusForbidden,
+				fmt.Sprintf("service %q has no deployment in environment %q; deploy it to %q", service, missing.Environment, missing.Environment))
+			return
+		}
 		if err != nil {
 			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service routing policy has no admitted deployment")
 			return
