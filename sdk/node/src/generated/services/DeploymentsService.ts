@@ -1516,7 +1516,7 @@ export class DeploymentsService {
   /**
    * Freeze production releases of an app.
    * Creates a window, weekly or after-rollback freeze on the app, owned by the app's owner: the company organization of a company app. On a company app a member who deploys may create a window; weekly and after-rollback policies need an owner or admin (`org.manage_app_security`). `app` in the body must be empty or this app.
-   * @returns ReleaseFreeze The freeze.
+   * @returns ReleaseFreeze The freeze on the app, owned by the app's owner.
    * @throws ApiError
    */
   public static createAppReleaseFreeze({
@@ -1554,7 +1554,7 @@ export class DeploymentsService {
   /**
    * Lift a deploy freeze on an app.
    * Lifts a freeze on this app. Freezes on all of an owner's apps are lifted on `/v1/freezes/{id}` or `/v1/orgs/{slug}/freezes/{id}`. On a company app a member who deploys may lift a window they created; any other freeze needs an owner or admin. 404 `release_freeze_not_found` when no unlifted freeze on this app has this ID.
-   * @returns ReleaseFreeze The lifted freeze.
+   * @returns ReleaseFreeze The lifted freeze on the app.
    * @throws ApiError
    */
   public static liftAppReleaseFreeze({
@@ -1566,7 +1566,7 @@ export class DeploymentsService {
      */
     slug: string,
     /**
-     * The freeze's ID.
+     * The ID of a freeze on this app.
      */
     id: string,
   }): CancelablePromise<ReleaseFreeze> {

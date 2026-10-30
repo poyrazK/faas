@@ -31075,7 +31075,7 @@ paths:
             example: {"kind": "window", "ends_at": "2026-12-27T09:00:00Z", "reason": "incident 4711"}
       responses:
         '201':
-          description: The freeze.
+          description: The freeze on the app, owned by the app's owner.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ReleaseFreeze' }
@@ -31092,7 +31092,7 @@ paths:
       - name: id
         in: path
         required: true
-        description: The freeze's ID.
+        description: The ID of a freeze on this app.
         schema: { type: string, format: uuid }
     delete:
       tags: [deployments]
@@ -31101,7 +31101,7 @@ paths:
       description: "Lifts a freeze on this app. Freezes on all of an owner's apps are lifted on `/v1/freezes/{id}` or `/v1/orgs/{slug}/freezes/{id}`. On a company app a member who deploys may lift a window they created; any other freeze needs an owner or admin. 404 `release_freeze_not_found` when no unlifted freeze on this app has this ID."
       responses:
         '200':
-          description: The lifted freeze.
+          description: The lifted freeze on the app.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ReleaseFreeze' }
@@ -31142,7 +31142,7 @@ paths:
             example: {"kind": "window", "ends_at": "2026-12-27T09:00:00Z", "reason": "holiday freeze"}
       responses:
         '201':
-          description: The freeze.
+          description: The freeze on all of the organization's apps.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ReleaseFreeze' }
@@ -31159,7 +31159,7 @@ paths:
       - name: id
         in: path
         required: true
-        description: The freeze's ID.
+        description: The ID of one of the organization's freezes.
         schema: { type: string, format: uuid }
     delete:
       tags: [orgs]
@@ -31168,7 +31168,7 @@ paths:
       description: "Lifts one of the organization's freezes. A member who deploys may lift a window they created; any other freeze needs an owner or admin. 404 `release_freeze_not_found` when the organization has no unlifted freeze with this ID."
       responses:
         '200':
-          description: The lifted freeze.
+          description: The organization's lifted freeze.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ReleaseFreeze' }

@@ -100,7 +100,7 @@ export class OrgsService {
   /**
    * Freeze production releases of every app of a company organization.
    * Creates a freeze on all of the organization's apps; `app` must be empty (freeze one app with `POST /v1/apps/{slug}/freezes`). A member who deploys (`org.deploy_app`) may create a window; weekly and after-rollback policies need an owner or admin.
-   * @returns ReleaseFreeze The freeze.
+   * @returns ReleaseFreeze The freeze on all of the organization's apps.
    * @throws ApiError
    */
   public static createOrgReleaseFreeze({
@@ -141,7 +141,7 @@ export class OrgsService {
   /**
    * Lift a company organization's deploy freeze.
    * Lifts one of the organization's freezes. A member who deploys may lift a window they created; any other freeze needs an owner or admin. 404 `release_freeze_not_found` when the organization has no unlifted freeze with this ID.
-   * @returns ReleaseFreeze The lifted freeze.
+   * @returns ReleaseFreeze The organization's lifted freeze.
    * @throws ApiError
    */
   public static liftOrgReleaseFreeze({
@@ -156,7 +156,7 @@ export class OrgsService {
      */
     slug: string,
     /**
-     * The freeze's ID.
+     * The ID of one of the organization's freezes.
      */
     id: string,
   }): CancelablePromise<ReleaseFreeze> {
