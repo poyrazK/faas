@@ -26938,7 +26938,7 @@ func (s *PgStore) IssueLoginToken(ctx context.Context, tokenHash []byte, account
 	_, err := s.pool.Exec(ctx,
 		`insert into login_tokens (token_hash, account_id, expires_at) values ($1, $2, $3)
 		 on conflict (token_hash) do nothing`,
-		tokenHash, accountID, expiresAt)
+		storedCredential(credTagLoginToken, tokenHash), accountID, expiresAt)
 	return err
 }
 
@@ -26947,23 +26947,22 @@ func (s *PgStore) IssueLoginToken(ctx context.Context, tokenHash []byte, account
 // token returns ErrNotFound — never a stale account. Single-statement
 // compare-and-set keeps the consume race-free.
 func (s *PgStore) ConsumeLoginToken(ctx context.Context, tokenHash []byte) (string, error) {
-	var accountID string
-	err := s.pool.QueryRow(ctx,
-		`update login_tokens
-		 set consumed_at = now()
-		 where token_hash = $1
-		   and consumed_at is null
-		   and expires_at > now()
-		 returning account_id`,
-		tokenHash,
-	).Scan(&accountID)
-	if err != nil {
+	return firstCredential(ctx, credentialLookups(credTagLoginToken, tokenHash), func(ctx context.Context, value []byte) (string, error) {
+		var accountID string
+		err := s.pool.QueryRow(ctx,
+			`update login_tokens
+			 set consumed_at = now()
+			 where token_hash = $1
+			   and consumed_at is null
+			   and expires_at > now()
+			 returning account_id`,
+			value,
+		).Scan(&accountID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return "", ErrNotFound
 		}
-		return "", err
-	}
-	return accountID, nil
+		return accountID, err
+	})
 }
 
 // DeleteOldLoginTokens prunes tokens whose expires_at < before,
@@ -26984,7 +26983,7 @@ func (s *PgStore) IssueMFADisableRequest(ctx context.Context, tokenHash []byte, 
 	if err != nil {
 		return err
 	}
-	n, err := sqlc.New().IssueMFADisableRequest(ctx, s.pool, sqlc.IssueMFADisableRequestParams{TokenHash: tokenHash, ID: account, RequestedAt: pgtype.Timestamptz{Time: requestedAt, Valid: true}})
+	n, err := sqlc.New().IssueMFADisableRequest(ctx, s.pool, sqlc.IssueMFADisableRequestParams{TokenHash: storedCredential(credTagMFADisableRequest, tokenHash), ID: account, RequestedAt: pgtype.Timestamptz{Time: requestedAt, Valid: true}})
 	if err != nil {
 		return mapErr(err)
 	}
@@ -26997,39 +26996,40 @@ func (s *PgStore) IssueMFADisableRequest(ctx context.Context, tokenHash []byte, 
 // GetMFADisableRequest reads a live request without consuming it. Consumed or
 // unknown tokens share ErrNotFound so replays do not reveal token history.
 func (s *PgStore) GetMFADisableRequest(ctx context.Context, tokenHash []byte) (MFADisableRequest, error) {
-	var req MFADisableRequest
-	var consumedAt *time.Time
-	err := s.pool.QueryRow(ctx, `
-		select token_hash, account_id, requested_at, consumed_at
-		  from mfa_disable_requests
-		 where token_hash = $1 and consumed_at is null`, tokenHash).
-		Scan(&req.TokenHash, &req.AccountID, &req.RequestedAt, &consumedAt)
-	if err != nil {
+	return firstCredential(ctx, credentialLookups(credTagMFADisableRequest, tokenHash), func(ctx context.Context, value []byte) (MFADisableRequest, error) {
+		var req MFADisableRequest
+		var consumedAt *time.Time
+		err := s.pool.QueryRow(ctx, `
+			select token_hash, account_id, requested_at, consumed_at
+			  from mfa_disable_requests
+			 where token_hash = $1 and consumed_at is null`, value).
+			Scan(&req.TokenHash, &req.AccountID, &req.RequestedAt, &consumedAt)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return MFADisableRequest{}, ErrNotFound
 		}
-		return MFADisableRequest{}, err
-	}
-	req.ConsumedAt = consumedAt
-	return req, nil
+		if err != nil {
+			return MFADisableRequest{}, err
+		}
+		req.ConsumedAt = consumedAt
+		return req, nil
+	})
 }
 
 // ConsumeMFADisableRequest atomically consumes a live request and returns its
 // bound account. A replay or unknown token returns ErrNotFound.
 func (s *PgStore) ConsumeMFADisableRequest(ctx context.Context, tokenHash []byte) (string, error) {
-	var accountID string
-	err := s.pool.QueryRow(ctx, `
-		update mfa_disable_requests
-		   set consumed_at = now()
-		 where token_hash = $1 and consumed_at is null
-		 returning account_id`, tokenHash).Scan(&accountID)
-	if err != nil {
+	return firstCredential(ctx, credentialLookups(credTagMFADisableRequest, tokenHash), func(ctx context.Context, value []byte) (string, error) {
+		var accountID string
+		err := s.pool.QueryRow(ctx, `
+			update mfa_disable_requests
+			   set consumed_at = now()
+			 where token_hash = $1 and consumed_at is null
+			 returning account_id`, value).Scan(&accountID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return "", ErrNotFound
 		}
-		return "", err
-	}
-	return accountID, nil
+		return accountID, err
+	})
 }
 
 // IssueEmailVerificationToken is the legacy hash-only issuance path. Durable
@@ -27039,18 +27039,20 @@ func (s *PgStore) IssueEmailVerificationToken(ctx context.Context, tokenHash []b
 	if err != nil {
 		return err
 	}
-	return mapErr(sqlc.New().IssueEmailVerificationToken(ctx, s.pool, sqlc.IssueEmailVerificationTokenParams{TokenHash: tokenHash, AccountID: account, ExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: true}}))
+	return mapErr(sqlc.New().IssueEmailVerificationToken(ctx, s.pool, sqlc.IssueEmailVerificationTokenParams{TokenHash: storedCredential(credTagEmailVerification, tokenHash), AccountID: account, ExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: true}}))
 }
 
 // ConsumeEmailVerificationToken locks account before token, matching private
 // handoff and account erasure. New bound tokens verify only their saved address;
 // the empty-address legacy token format retains its existing behavior.
 func (s *PgStore) ConsumeEmailVerificationToken(ctx context.Context, tokenHash []byte) (string, error) {
-	account, err := sqlc.New().ConsumeEmailVerificationToken(ctx, s.pool, tokenHash)
-	if err != nil {
-		return "", mapErr(err)
-	}
-	return uuidString(account), nil
+	return firstCredential(ctx, credentialLookups(credTagEmailVerification, tokenHash), func(ctx context.Context, value []byte) (string, error) {
+		account, err := sqlc.New().ConsumeEmailVerificationToken(ctx, s.pool, value)
+		if err != nil {
+			return "", mapErr(err)
+		}
+		return uuidString(account), nil
+	})
 }
 
 // MarkAccountEmailVerified marks an account verified without changing an
@@ -27219,7 +27221,7 @@ func (s *PgStore) IssueCliAuthCode(ctx context.Context, tokenHash []byte, expire
 	_, err := s.pool.Exec(ctx,
 		`insert into cli_auth_codes (token_hash, expires_at) values ($1, $2)
 		 on conflict (token_hash) do nothing`,
-		tokenHash, expiresAt)
+		storedCredential(credTagCLIAuthCode, tokenHash), expiresAt)
 	return err
 }
 
@@ -27229,19 +27231,29 @@ func (s *PgStore) IssueCliAuthCode(ctx context.Context, tokenHash []byte, expire
 // A missing or expired row returns (Expired, "", ErrNotFound) — the
 // dashboard treats every not-pending state identically.
 func (s *PgStore) PeekCliAuthCode(ctx context.Context, tokenHash []byte) (api.CliAuthStatus, string, error) {
-	var status string
-	var accountID *string
-	err := s.pool.QueryRow(ctx,
-		`select status, account_id
-		 from cli_auth_codes
-		 where token_hash = $1 and expires_at > now()`,
-		tokenHash).Scan(&status, &accountID)
-	if err != nil {
+	type peek struct {
+		status    string
+		accountID *string
+	}
+	found, err := firstCredential(ctx, credentialLookups(credTagCLIAuthCode, tokenHash), func(ctx context.Context, value []byte) (peek, error) {
+		var p peek
+		err := s.pool.QueryRow(ctx,
+			`select status, account_id
+			 from cli_auth_codes
+			 where token_hash = $1 and expires_at > now()`,
+			value).Scan(&p.status, &p.accountID)
 		if errors.Is(err, pgx.ErrNoRows) {
+			return p, ErrNotFound
+		}
+		return p, err
+	})
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
 			return api.CliAuthStatusExpired, "", ErrNotFound
 		}
 		return "", "", err
 	}
+	status, accountID := found.status, found.accountID
 	var aid string
 	if accountID != nil {
 		aid = *accountID
@@ -27266,32 +27278,38 @@ func (s *PgStore) PeekCliAuthCode(ctx context.Context, tokenHash []byte) (api.Cl
 // the UPDATE is still atomic — the post-classification SELECT only
 // affects the error we report, not the state).
 func (s *PgStore) ClaimCliAuthCode(ctx context.Context, tokenHash []byte, accountID string) error {
-	tag, err := s.pool.Exec(ctx,
-		`update cli_auth_codes
-		 set status = 'consumed', account_id = $2
-		 where token_hash = $1
-		   and status = 'pending'
-		   and expires_at > now()`,
-		tokenHash, accountID)
-	if err != nil {
-		return mapErr(err)
-	}
-	if tag.RowsAffected() != 0 {
-		return nil
+	lookups := credentialLookups(credTagCLIAuthCode, tokenHash)
+	for _, value := range lookups {
+		tag, err := s.pool.Exec(ctx,
+			`update cli_auth_codes
+			 set status = 'consumed', account_id = $2
+			 where token_hash = $1
+			   and status = 'pending'
+			   and expires_at > now()`,
+			value, accountID)
+		if err != nil {
+			return mapErr(err)
+		}
+		if tag.RowsAffected() != 0 {
+			return nil
+		}
 	}
 	// Classify the zero-rows case. If the row doesn't exist at all
 	// (never minted) or has expired, the user typed a stale code and
 	// gets the "expired" banner. If the row exists and isn't expired
 	// it must have been claimed already → ErrConflict.
-	var exists, fresh bool
-	err = s.pool.QueryRow(ctx,
-		`select true, expires_at > now()
-		 from cli_auth_codes where token_hash = $1`,
-		tokenHash,
-	).Scan(&exists, &fresh)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return ErrNotFound
-	}
+	fresh, err := firstCredential(ctx, lookups, func(ctx context.Context, value []byte) (bool, error) {
+		var fresh bool
+		err := s.pool.QueryRow(ctx,
+			`select expires_at > now()
+			 from cli_auth_codes where token_hash = $1`,
+			value,
+		).Scan(&fresh)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, ErrNotFound
+		}
+		return fresh, err
+	})
 	if err != nil {
 		return err
 	}
@@ -27321,33 +27339,46 @@ func (s *PgStore) ClaimCliAuthCode(ctx context.Context, tokenHash []byte, accoun
 //	consumed (first call)        → (Consumed, acct_id,  nil)        mint API key
 //	consumed (replay) / expired / unknown → (Expired, "", ErrNotFound)
 func (s *PgStore) ConsumeCliAuthCode(ctx context.Context, tokenHash []byte) (api.CliAuthStatus, string, error) {
-	var accountID string
-	err := s.pool.QueryRow(ctx,
-		`update cli_auth_codes
-		 set consumed_at = now()
-		 where token_hash = $1
-		   and device_hash is null
-		   and status = 'consumed'
-		   and account_id is not null
-		   and consumed_at is null
-		   and expires_at > now()
-		 returning account_id`,
-		tokenHash,
-	).Scan(&accountID)
-	if err != nil {
+	lookups := credentialLookups(credTagCLIAuthCode, tokenHash)
+	accountID, err := firstCredential(ctx, lookups, func(ctx context.Context, value []byte) (string, error) {
+		var accountID string
+		err := s.pool.QueryRow(ctx,
+			`update cli_auth_codes
+			 set consumed_at = now()
+			 where token_hash = $1
+			   and device_hash is null
+			   and status = 'consumed'
+			   and account_id is not null
+			   and consumed_at is null
+			   and expires_at > now()
+			 returning account_id`,
+			value,
+		).Scan(&accountID)
 		if errors.Is(err, pgx.ErrNoRows) {
+			return "", ErrNotFound
+		}
+		return accountID, err
+	})
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
 			// Either pending, expired, already-consumed, or never
 			// minted. Disambiguate pending vs not-found for the
 			// polling CLI: if the row exists and is still pending
 			// we tell it to keep waiting; otherwise we stop.
-			var status string
 			// A device-bound row answers the short code as if it did
 			// not exist (H67).
-			err2 := s.pool.QueryRow(ctx,
-				`select status from cli_auth_codes
-				 where token_hash = $1 and device_hash is null and expires_at > now()`,
-				tokenHash,
-			).Scan(&status)
+			status, err2 := firstCredential(ctx, lookups, func(ctx context.Context, value []byte) (string, error) {
+				var status string
+				err := s.pool.QueryRow(ctx,
+					`select status from cli_auth_codes
+					 where token_hash = $1 and device_hash is null and expires_at > now()`,
+					value,
+				).Scan(&status)
+				if errors.Is(err, pgx.ErrNoRows) {
+					return "", ErrNotFound
+				}
+				return status, err
+			})
 			if err2 == nil && status == string(api.CliAuthStatusPending) {
 				return api.CliAuthStatusPending, "", nil
 			}
@@ -27365,7 +27396,7 @@ func (s *PgStore) IssueCliAuthDeviceCode(ctx context.Context, tokenHash, deviceH
 	tag, err := s.pool.Exec(ctx,
 		`insert into cli_auth_codes (token_hash, device_hash, expires_at) values ($1, $2, $3)
 		 on conflict do nothing`,
-		tokenHash, deviceHash, expiresAt)
+		storedCredential(credTagCLIAuthCode, tokenHash), storedCredential(credTagCLIDeviceCode, deviceHash), expiresAt)
 	if err != nil {
 		return err
 	}
@@ -27378,29 +27409,42 @@ func (s *PgStore) IssueCliAuthDeviceCode(ctx context.Context, tokenHash, deviceH
 // ConsumeCliAuthDeviceCode implements CliAuthDeviceCodeStore with
 // ConsumeCliAuthCode's contract, keyed by the device code's hash.
 func (s *PgStore) ConsumeCliAuthDeviceCode(ctx context.Context, deviceHash []byte) (api.CliAuthStatus, string, error) {
-	var accountID string
-	err := s.pool.QueryRow(ctx,
-		`update cli_auth_codes
-		 set consumed_at = now()
-		 where device_hash = $1
-		   and status = 'consumed'
-		   and account_id is not null
-		   and consumed_at is null
-		   and expires_at > now()
-		 returning account_id`,
-		deviceHash,
-	).Scan(&accountID)
+	lookups := credentialLookups(credTagCLIDeviceCode, deviceHash)
+	accountID, err := firstCredential(ctx, lookups, func(ctx context.Context, value []byte) (string, error) {
+		var accountID string
+		err := s.pool.QueryRow(ctx,
+			`update cli_auth_codes
+			 set consumed_at = now()
+			 where device_hash = $1
+			   and status = 'consumed'
+			   and account_id is not null
+			   and consumed_at is null
+			   and expires_at > now()
+			 returning account_id`,
+			value,
+		).Scan(&accountID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", ErrNotFound
+		}
+		return accountID, err
+	})
 	if err == nil {
 		return api.CliAuthStatusConsumed, accountID, nil
 	}
-	if !errors.Is(err, pgx.ErrNoRows) {
+	if !errors.Is(err, ErrNotFound) {
 		return "", "", err
 	}
-	var status string
-	err = s.pool.QueryRow(ctx,
-		`select status from cli_auth_codes where device_hash = $1 and expires_at > now()`,
-		deviceHash,
-	).Scan(&status)
+	status, err := firstCredential(ctx, lookups, func(ctx context.Context, value []byte) (string, error) {
+		var status string
+		err := s.pool.QueryRow(ctx,
+			`select status from cli_auth_codes where device_hash = $1 and expires_at > now()`,
+			value,
+		).Scan(&status)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", ErrNotFound
+		}
+		return status, err
+	})
 	if err == nil && status == string(api.CliAuthStatusPending) {
 		return api.CliAuthStatusPending, "", nil
 	}
@@ -29114,7 +29158,7 @@ func (s *PgStore) CreateOrgInvitation(ctx context.Context, inv OrgInvitation) (O
 			id, org_id, email, role, token_hash, invited_by_account_id,
 			expires_at, created_at
 		) values ($1,$2,$3,$4,$5,$6,$7,$8)
-	`, inv.ID, inv.OrgID, inv.Email, string(inv.Role), inv.TokenHash,
+	`, inv.ID, inv.OrgID, inv.Email, string(inv.Role), storedCredential(credTagOrgInvitation, inv.TokenHash),
 		invitedBy, inv.ExpiresAt, inv.CreatedAt)
 	if err != nil {
 		var pgErr *pgconn.PgError
@@ -29131,13 +29175,14 @@ func (s *PgStore) CreateOrgInvitation(ctx context.Context, inv OrgInvitation) (O
 
 // OrgInvitationByTokenHash is the consume / revoke lookup.
 func (s *PgStore) OrgInvitationByTokenHash(ctx context.Context, hash []byte) (OrgInvitation, error) {
-	row := s.pool.QueryRow(ctx, `
-		select id, org_id, email::text, role, token_hash, invited_by_account_id,
-		       expires_at, consumed_at, revoked_at, accepting_account_id, created_at
-		  from org_invitations
-		 where token_hash = $1
-	`, hash)
-	return scanOrgInvitation(row)
+	return firstCredential(ctx, credentialLookups(credTagOrgInvitation, hash), func(ctx context.Context, value []byte) (OrgInvitation, error) {
+		return scanOrgInvitation(s.pool.QueryRow(ctx, `
+			select id, org_id, email::text, role, token_hash, invited_by_account_id,
+			       expires_at, consumed_at, revoked_at, accepting_account_id, created_at
+			  from org_invitations
+			 where token_hash = $1
+		`, value))
+	})
 }
 
 // RevokeOrgInvitation stamps revoked_at on one org-scoped, still-pending row.
@@ -29335,14 +29380,15 @@ func (s *PgStore) ConsumeOrgInvitation(ctx context.Context, hash []byte, accepti
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck
 
 	// (1) Lock + read the invitation.
-	row := tx.QueryRow(ctx, `
-		select id, org_id, email::text, role, token_hash, invited_by_account_id,
-		       expires_at, consumed_at, revoked_at, accepting_account_id, created_at
-		  from org_invitations
-		 where token_hash = $1
-		   for update
-	`, hash)
-	inv, err := scanOrgInvitation(row)
+	inv, err := firstCredential(ctx, credentialLookups(credTagOrgInvitation, hash), func(ctx context.Context, value []byte) (OrgInvitation, error) {
+		return scanOrgInvitation(tx.QueryRow(ctx, `
+			select id, org_id, email::text, role, token_hash, invited_by_account_id,
+			       expires_at, consumed_at, revoked_at, accepting_account_id, created_at
+			  from org_invitations
+			 where token_hash = $1
+			   for update
+		`, value))
+	})
 	if err != nil {
 		return OrgMembership{}, OrgInvitation{}, err
 	}

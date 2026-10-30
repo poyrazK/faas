@@ -21384,6 +21384,7 @@ func derefDeclaredRoutes(p *[]DeclaredRoute) []DeclaredRoute {
 // (32-byte hex); see pkg/api.HashAPIKey for the canonical hash fn.
 // Re-issue of the same hash is a no-op (the entry is overwritten).
 func (m *MemStore) IssueLoginToken(_ context.Context, tokenHash []byte, accountID string, expiresAt time.Time) error {
+	tokenHash = storedCredential(credTagLoginToken, tokenHash)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.loginTokens == nil {
@@ -21404,21 +21405,22 @@ func (m *MemStore) IssueLoginToken(_ context.Context, tokenHash []byte, accountI
 func (m *MemStore) ConsumeLoginToken(_ context.Context, tokenHash []byte) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	tok, ok := m.loginTokens[string(tokenHash)]
+	key, _ := rawCredentialKey(m.loginTokens, credTagLoginToken, tokenHash)
+	tok, ok := m.loginTokens[key]
 	if !ok {
 		return "", ErrNotFound
 	}
 	if tok.ConsumedAt != nil {
-		delete(m.loginTokens, string(tokenHash))
+		delete(m.loginTokens, key)
 		return "", ErrNotFound
 	}
 	if !tok.ExpiresAt.After(time.Now()) {
-		delete(m.loginTokens, string(tokenHash))
+		delete(m.loginTokens, key)
 		return "", ErrNotFound
 	}
 	now := time.Now()
 	tok.ConsumedAt = &now
-	m.loginTokens[string(tokenHash)] = tok
+	m.loginTokens[key] = tok
 	return tok.AccountID, nil
 }
 
@@ -21441,6 +21443,7 @@ func (m *MemStore) DeleteOldLoginTokens(_ context.Context, before time.Time) (in
 // IssueMFADisableRequest stores a new email-recovery request and invalidates
 // any older pending request for the same account.
 func (m *MemStore) IssueMFADisableRequest(_ context.Context, tokenHash []byte, accountID string, requestedAt time.Time) error {
+	tokenHash = storedCredential(credTagMFADisableRequest, tokenHash)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, ok := m.accounts[accountID]; !ok {
@@ -21468,7 +21471,8 @@ func (m *MemStore) IssueMFADisableRequest(_ context.Context, tokenHash []byte, a
 func (m *MemStore) GetMFADisableRequest(_ context.Context, tokenHash []byte) (MFADisableRequest, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	req, ok := m.mfaDisableRequests[string(tokenHash)]
+	key, _ := rawCredentialKey(m.mfaDisableRequests, credTagMFADisableRequest, tokenHash)
+	req, ok := m.mfaDisableRequests[key]
 	if !ok || req.ConsumedAt != nil {
 		return MFADisableRequest{}, ErrNotFound
 	}
@@ -21481,18 +21485,20 @@ func (m *MemStore) GetMFADisableRequest(_ context.Context, tokenHash []byte) (MF
 func (m *MemStore) ConsumeMFADisableRequest(_ context.Context, tokenHash []byte) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	req, ok := m.mfaDisableRequests[string(tokenHash)]
+	key, _ := rawCredentialKey(m.mfaDisableRequests, credTagMFADisableRequest, tokenHash)
+	req, ok := m.mfaDisableRequests[key]
 	if !ok || req.ConsumedAt != nil {
 		return "", ErrNotFound
 	}
 	now := time.Now()
 	req.ConsumedAt = &now
-	m.mfaDisableRequests[string(tokenHash)] = req
+	m.mfaDisableRequests[key] = req
 	return req.AccountID, nil
 }
 
 // IssueEmailVerificationToken stores a one-shot verification token hash.
 func (m *MemStore) IssueEmailVerificationToken(_ context.Context, tokenHash []byte, accountID string, expiresAt time.Time) error {
+	tokenHash = storedCredential(credTagEmailVerification, tokenHash)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, ok := m.accounts[accountID]; !ok {
@@ -21515,9 +21521,10 @@ func (m *MemStore) IssueEmailVerificationToken(_ context.Context, tokenHash []by
 func (m *MemStore) ConsumeEmailVerificationToken(_ context.Context, tokenHash []byte) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	tok, ok := m.emailVerificationTokens[string(tokenHash)]
+	key, _ := rawCredentialKey(m.emailVerificationTokens, credTagEmailVerification, tokenHash)
+	tok, ok := m.emailVerificationTokens[key]
 	if !ok || tok.ConsumedAt != nil || !tok.ExpiresAt.After(time.Now()) {
-		delete(m.emailVerificationTokens, string(tokenHash))
+		delete(m.emailVerificationTokens, key)
 		return "", ErrNotFound
 	}
 	acct, ok := m.accounts[tok.AccountID]
@@ -21526,7 +21533,7 @@ func (m *MemStore) ConsumeEmailVerificationToken(_ context.Context, tokenHash []
 	}
 	now := time.Now().UTC()
 	tok.ConsumedAt = &now
-	m.emailVerificationTokens[string(tokenHash)] = tok
+	m.emailVerificationTokens[key] = tok
 	if acct.EmailVerifiedAt == nil {
 		acct.EmailVerifiedAt = &now
 		m.storeRouteCheckAccountLocked(acct.ID, acct)
@@ -21699,6 +21706,7 @@ func (m *MemStore) OAuthLinkByProviderSubject(_ context.Context, provider, provi
 // re-issue of the same hash is a no-op overwriting the entry, which
 // matches the production on-conflict-do-nothing semantics.
 func (m *MemStore) IssueCliAuthCode(_ context.Context, tokenHash []byte, expiresAt time.Time) error {
+	tokenHash = storedCredential(credTagCLIAuthCode, tokenHash)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.cliAuthCodes == nil {
@@ -21713,6 +21721,8 @@ func (m *MemStore) IssueCliAuthCode(_ context.Context, tokenHash []byte, expires
 
 // IssueCliAuthDeviceCode implements CliAuthDeviceCodeStore.
 func (m *MemStore) IssueCliAuthDeviceCode(_ context.Context, tokenHash, deviceHash []byte, expiresAt time.Time) error {
+	tokenHash = storedCredential(credTagCLIAuthCode, tokenHash)
+	deviceHash = storedCredential(credTagCLIDeviceCode, deviceHash)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.cliAuthCodes == nil {
@@ -21734,7 +21744,7 @@ func (m *MemStore) ConsumeCliAuthDeviceCode(_ context.Context, deviceHash []byte
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for key, row := range m.cliAuthCodes {
-		if len(row.DeviceHash) == 0 || string(row.DeviceHash) != string(deviceHash) {
+		if len(row.DeviceHash) == 0 || !credentialIn(credTagCLIDeviceCode, deviceHash, row.DeviceHash) {
 			continue
 		}
 		return m.consumeCliAuthRowLocked(key, row)
@@ -21748,7 +21758,8 @@ func (m *MemStore) ConsumeCliAuthDeviceCode(_ context.Context, deviceHash []byte
 func (m *MemStore) PeekCliAuthCode(_ context.Context, tokenHash []byte) (api.CliAuthStatus, string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	row, ok := m.cliAuthCodes[string(tokenHash)]
+	key, _ := rawCredentialKey(m.cliAuthCodes, credTagCLIAuthCode, tokenHash)
+	row, ok := m.cliAuthCodes[key]
 	if !ok {
 		return api.CliAuthStatusExpired, "", ErrNotFound
 	}
@@ -21778,7 +21789,8 @@ func (m *MemStore) PeekCliAuthCode(_ context.Context, tokenHash []byte) (api.Cli
 func (m *MemStore) ClaimCliAuthCode(_ context.Context, tokenHash []byte, accountID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	row, ok := m.cliAuthCodes[string(tokenHash)]
+	key, _ := rawCredentialKey(m.cliAuthCodes, credTagCLIAuthCode, tokenHash)
+	row, ok := m.cliAuthCodes[key]
 	if !ok {
 		return ErrNotFound
 	}
@@ -21794,7 +21806,7 @@ func (m *MemStore) ClaimCliAuthCode(_ context.Context, tokenHash []byte, account
 		return ErrConflict
 	}
 	row.AccountID = accountID
-	m.cliAuthCodes[string(tokenHash)] = row
+	m.cliAuthCodes[key] = row
 	return nil
 }
 
@@ -21817,12 +21829,13 @@ func (m *MemStore) ClaimCliAuthCode(_ context.Context, tokenHash []byte, account
 func (m *MemStore) ConsumeCliAuthCode(_ context.Context, tokenHash []byte) (api.CliAuthStatus, string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	row, ok := m.cliAuthCodes[string(tokenHash)]
+	key, _ := rawCredentialKey(m.cliAuthCodes, credTagCLIAuthCode, tokenHash)
+	row, ok := m.cliAuthCodes[key]
 	// A device-bound row answers the short code as if it did not exist.
 	if !ok || len(row.DeviceHash) > 0 {
 		return api.CliAuthStatusExpired, "", ErrNotFound
 	}
-	return m.consumeCliAuthRowLocked(string(tokenHash), row)
+	return m.consumeCliAuthRowLocked(key, row)
 }
 
 func (m *MemStore) consumeCliAuthRowLocked(key string, row CliAuthCode) (api.CliAuthStatus, string, error) {
