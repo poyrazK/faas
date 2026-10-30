@@ -131,6 +131,9 @@ RULES = [
     (r"penalty-box|attack-mode|ai-crawler|crawler-ip-ranges|crawler-ranges", "Edge protection"),
     (r"^quiet-pause-watermarks$", "Instances:"),
     (r"^(honeytokens|bridgeproc|sdunit)$", "INFRA"),
+    # Keyed credential hashes (ADR 20261029202403): storage plumbing under
+    # every credential, no capability of its own.
+    (r"^credhash$", "INFRA"),
     # vmmd's instance bridge switches (connection-survival ADR): data-path plumbing.
     (r"^(instance-)?bridge-(unprivileged|sessions|unit|drop-to-uid)$", "INFRA"),
     (r"auth-rpc|rekey|standby-warmup|service-capacity-policy|service-recovery|worker-recovery|production-lifecycle-review|app-service-address-cursor|warm-hint|capdecl|renderer|role-templating|safetext|publicdest|cursor|^data$|dispatch|hostsize|authcode|cosign|daemonenv|daemonunit|cpstate|drills|grafana|pki|guestmemproto|resumetimingproto|loglevel|logsanitize|lruutil|jsonschemautil|httpjson|middleware|nodeclaim|nodejoin|nodereport|promql|redact|crashcrypt|crashcapturewire|markers-internal", "INFRA"),

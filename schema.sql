@@ -29528,7 +29528,7 @@ CREATE TABLE public.api_consumer_signups (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     expires_at timestamp with time zone NOT NULL,
     completed_at timestamp with time zone,
-    CONSTRAINT api_consumer_signups_claim_chk CHECK ((octet_length(claim_hash) = 32)),
+    CONSTRAINT api_consumer_signups_claim_credhash_chk CHECK ((octet_length(claim_hash) = ANY (ARRAY[32, 33]))),
     CONSTRAINT api_consumer_signups_completed_chk CHECK (((status = 'completed'::text) = (completed_at IS NOT NULL))),
     CONSTRAINT api_consumer_signups_email_chk CHECK (((char_length(email) >= 3) AND (char_length(email) <= 254))),
     CONSTRAINT api_consumer_signups_expiry_chk CHECK ((expires_at > created_at)),
@@ -30295,7 +30295,7 @@ CREATE TABLE public.app_forks (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     access_token_hash bytea,
     crash_capture_id uuid,
-    CONSTRAINT app_forks_access_token_hash_chk CHECK (((access_token_hash IS NULL) OR (octet_length(access_token_hash) = 32))),
+    CONSTRAINT app_forks_access_token_credhash_chk CHECK (((access_token_hash IS NULL) OR (octet_length(access_token_hash) = ANY (ARRAY[32, 33])))),
     CONSTRAINT app_forks_expires_chk CHECK ((expires_at = (created_at + make_interval(secs => (ttl_seconds)::double precision)))),
     CONSTRAINT app_forks_failure_shape_chk CHECK ((((failure_code IS NULL) = (failure_message IS NULL)) AND ((failure_code IS NULL) OR (status = 'failed'::text)) AND ((status <> 'failed'::text) OR (failure_code IS NOT NULL)) AND ((failure_code IS NULL) OR ((octet_length(failure_code) >= 1) AND (octet_length(failure_code) <= 64))) AND ((failure_message IS NULL) OR (octet_length(failure_message) <= 4096)))),
     CONSTRAINT app_forks_instance_chk CHECK (((status = 'running'::text) <= ((instance_id IS NOT NULL) AND (snapshot_id IS NOT NULL)))),
@@ -33430,7 +33430,7 @@ CREATE TABLE public.consumer_keys (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     consumer_id uuid,
     CONSTRAINT consumer_keys_expires_after_created_chk CHECK (((expires_at IS NULL) OR (expires_at > created_at))),
-    CONSTRAINT consumer_keys_hashed_secret_len_chk CHECK ((octet_length(hashed_secret) = 32)),
+    CONSTRAINT consumer_keys_hashed_secret_credhash_chk CHECK ((octet_length(hashed_secret) = ANY (ARRAY[32, 33]))),
     CONSTRAINT consumer_keys_name_len_chk CHECK (((length(name) >= 1) AND (length(name) <= 64))),
     CONSTRAINT consumer_keys_prefix_len_chk CHECK (((length(prefix) >= 1) AND (length(prefix) <= 16))),
     CONSTRAINT consumer_keys_revoked_state_chk CHECK (((revoked_at IS NULL) OR (revoked_at >= created_at))),
@@ -34956,7 +34956,7 @@ CREATE TABLE public.deploy_tokens (
     revoked_at timestamp with time zone,
     rotated_from_id uuid,
     CONSTRAINT deploy_tokens_expiry_chk CHECK ((expires_at > created_at)),
-    CONSTRAINT deploy_tokens_hash_len_chk CHECK ((octet_length(token_sha256) = 32)),
+    CONSTRAINT deploy_tokens_hash_credhash_chk CHECK ((octet_length(token_sha256) = ANY (ARRAY[32, 33]))),
     CONSTRAINT deploy_tokens_label_len_chk CHECK ((length(label) <= 100)),
     CONSTRAINT deploy_tokens_scopes_chk CHECK (((scopes <@ ARRAY['deploy:write'::text]) AND (cardinality(scopes) > 0))),
     CONSTRAINT deploy_tokens_status_chk CHECK ((status = ANY (ARRAY['active'::text, 'grace'::text, 'revoked'::text])))
@@ -38499,9 +38499,9 @@ CREATE TABLE public.execution_artifact_grants (
     revoked_at timestamp with time zone,
     created_at timestamp with time zone NOT NULL,
     CONSTRAINT execution_artifact_grants_artifact_name_check CHECK (((length(artifact_name) >= 1) AND (length(artifact_name) <= 256))),
+    CONSTRAINT execution_artifact_grants_credhash_chk CHECK ((octet_length(token_hash) = ANY (ARRAY[32, 33]))),
     CONSTRAINT execution_artifact_grants_expiry_check CHECK ((expires_at > created_at)),
-    CONSTRAINT execution_artifact_grants_redeemed_pair_check CHECK (((redeemed_at IS NULL) = (redeemed_execution_id IS NULL))),
-    CONSTRAINT execution_artifact_grants_token_hash_check CHECK ((octet_length(token_hash) = 32))
+    CONSTRAINT execution_artifact_grants_redeemed_pair_check CHECK (((redeemed_at IS NULL) = (redeemed_execution_id IS NULL)))
 );
 
 
@@ -39671,9 +39671,9 @@ CREATE TABLE public.hosting_automation_credentials (
     oidc_trust_id uuid,
     CONSTRAINT hosting_automation_credentials_check CHECK ((isfinite(expires_at) AND (expires_at > created_at))),
     CONSTRAINT hosting_automation_credentials_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT hosting_automation_credentials_credhash_chk CHECK ((octet_length(token_hash) = ANY (ARRAY[32, 33]))),
     CONSTRAINT hosting_automation_credentials_label_check CHECK (((octet_length(label) >= 1) AND (octet_length(label) <= 64))),
-    CONSTRAINT hosting_automation_credentials_operations_check CHECK ((((cardinality(operations) >= 1) AND (cardinality(operations) <= 2)) AND (operations <@ ARRAY['stage'::text, 'preview'::text]))),
-    CONSTRAINT hosting_automation_credentials_token_hash_check CHECK ((octet_length(token_hash) = 32))
+    CONSTRAINT hosting_automation_credentials_operations_check CHECK ((((cardinality(operations) >= 1) AND (cardinality(operations) <= 2)) AND (operations <@ ARRAY['stage'::text, 'preview'::text])))
 );
 
 
@@ -39957,10 +39957,10 @@ CREATE TABLE public.inbound_webhook_endpoints (
     enabled boolean DEFAULT true NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT inbound_webhook_endpoints_credhash_chk CHECK ((octet_length(token_hash) = ANY (ARRAY[32, 33]))),
     CONSTRAINT inbound_webhook_endpoints_delivery_path_chk CHECK ((((char_length(delivery_path) >= 1) AND (char_length(delivery_path) <= 256)) AND ("left"(delivery_path, 1) = '/'::text) AND (POSITION(('?'::text) IN (delivery_path)) = 0) AND (POSITION(('#'::text) IN (delivery_path)) = 0))),
     CONSTRAINT inbound_webhook_endpoints_name_chk CHECK ((name ~ '^[a-z][a-z0-9-]{0,62}$'::text)),
-    CONSTRAINT inbound_webhook_endpoints_provider_chk CHECK ((provider = ANY (ARRAY['stripe'::text, 'generic'::text]))),
-    CONSTRAINT inbound_webhook_endpoints_token_hash_len_chk CHECK ((octet_length(token_hash) = 32))
+    CONSTRAINT inbound_webhook_endpoints_provider_chk CHECK ((provider = ANY (ARRAY['stripe'::text, 'generic'::text])))
 );
 
 
@@ -40844,8 +40844,8 @@ CREATE TABLE public.invocation_environment_queue_receipts (
     lease_expires_at timestamp with time zone NOT NULL,
     CONSTRAINT invocation_environment_queue_receipts_attempt_check CHECK ((attempt > 0)),
     CONSTRAINT invocation_environment_queue_receipts_check CHECK ((lease_expires_at > issued_at)),
-    CONSTRAINT invocation_environment_queue_receipts_owner_hash_check CHECK ((owner_hash ~ '^[a-f0-9]{64}$'::text)),
-    CONSTRAINT invocation_environment_queue_receipts_token_hash_check CHECK ((token_hash ~ '^[a-f0-9]{64}$'::text))
+    CONSTRAINT invocation_environment_queue_receipts_credhash_chk CHECK ((token_hash ~ '^[a-f0-9]{64}([a-f0-9]{2})?$'::text)),
+    CONSTRAINT invocation_environment_queue_receipts_owner_hash_check CHECK ((owner_hash ~ '^[a-f0-9]{64}$'::text))
 );
 
 
@@ -40885,8 +40885,8 @@ CREATE TABLE public.invocation_queue_lease_receipts (
     lease_expires_at timestamp with time zone NOT NULL,
     CONSTRAINT invocation_queue_lease_receipts_attempt_check CHECK ((attempt > 0)),
     CONSTRAINT invocation_queue_lease_receipts_check CHECK ((lease_expires_at > issued_at)),
-    CONSTRAINT invocation_queue_lease_receipts_replay_generation_check CHECK ((replay_generation >= 0)),
-    CONSTRAINT invocation_queue_lease_receipts_token_hash_check CHECK ((token_hash ~ '^[a-f0-9]{64}$'::text))
+    CONSTRAINT invocation_queue_lease_receipts_credhash_chk CHECK ((token_hash ~ '^[a-f0-9]{64}([a-f0-9]{2})?$'::text)),
+    CONSTRAINT invocation_queue_lease_receipts_replay_generation_check CHECK ((replay_generation >= 0))
 );
 
 
@@ -41578,9 +41578,9 @@ CREATE TABLE public.issue_ingest_tokens (
     expires_at timestamp with time zone NOT NULL,
     revoked_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT issue_ingest_tokens_credhash_chk CHECK ((octet_length(token_hash) = ANY (ARRAY[32, 33]))),
     CONSTRAINT issue_ingest_tokens_environment_check CHECK ((environment ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text)),
-    CONSTRAINT issue_ingest_tokens_name_check CHECK (((length(name) >= 1) AND (length(name) <= 64))),
-    CONSTRAINT issue_ingest_tokens_token_hash_check CHECK ((octet_length(token_hash) = 32))
+    CONSTRAINT issue_ingest_tokens_name_check CHECK (((length(name) >= 1) AND (length(name) <= 64)))
 );
 
 
@@ -41910,7 +41910,7 @@ CREATE TABLE public.issue_slack_oauth_flows (
     CONSTRAINT issue_slack_oauth_flows_expected_revision_check CHECK ((expected_revision >= 0)),
     CONSTRAINT issue_slack_oauth_flows_phase_check CHECK ((phase = ANY (ARRAY['authorizing'::text, 'exchanging'::text, 'choosing'::text]))),
     CONSTRAINT issue_slack_oauth_flows_sealed_check CHECK (((octet_length(sealed) >= 1) AND (octet_length(sealed) <= 16384))),
-    CONSTRAINT issue_slack_oauth_flows_state_hash_check CHECK ((state_hash ~ '^[0-9a-f]{64}$'::text))
+    CONSTRAINT issue_slack_oauth_flows_state_credhash_chk CHECK ((state_hash ~ '^[0-9a-f]{64}([0-9a-f]{2})?$'::text))
 );
 
 
@@ -42170,7 +42170,7 @@ CREATE TABLE public.issue_tracker_linear_oauth_flows (
     CONSTRAINT issue_tracker_linear_oauth_flows_expected_revision_check CHECK ((expected_revision >= 0)),
     CONSTRAINT issue_tracker_linear_oauth_flows_phase_check CHECK ((phase = ANY (ARRAY['authorizing'::text, 'exchanging'::text, 'choosing'::text, 'consuming'::text]))),
     CONSTRAINT issue_tracker_linear_oauth_flows_sealed_state_check CHECK ((octet_length(sealed_state) > 0)),
-    CONSTRAINT issue_tracker_linear_oauth_flows_state_hash_check CHECK ((state_hash ~ '^[a-f0-9]{64}$'::text))
+    CONSTRAINT issue_tracker_linear_oauth_flows_state_credhash_chk CHECK ((state_hash ~ '^[a-f0-9]{64}([a-f0-9]{2})?$'::text))
 );
 
 
@@ -42820,12 +42820,12 @@ CREATE TABLE public.magic_link_tokens (
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     CONSTRAINT magic_link_tokens_check CHECK ((isfinite(created_at) AND (expires_at > created_at))),
     CONSTRAINT magic_link_tokens_consumed_at_check CHECK (((consumed_at IS NULL) OR isfinite(consumed_at))),
+    CONSTRAINT magic_link_tokens_credhash_chk CHECK ((octet_length(token_hash) = ANY (ARRAY[32, 33]))),
     CONSTRAINT magic_link_tokens_email_address_check CHECK ((((length(email_address) >= 3) AND (length(email_address) <= 254)) AND (email_address = lower(email_address)) AND (POSITION((chr(10)) IN (email_address)) = 0) AND (POSITION((chr(13)) IN (email_address)) = 0))),
     CONSTRAINT magic_link_tokens_email_verified_at_check CHECK (((email_verified_at IS NULL) OR isfinite(email_verified_at))),
     CONSTRAINT magic_link_tokens_expires_at_check CHECK (isfinite(expires_at)),
     CONSTRAINT magic_link_tokens_namespace_check CHECK ((namespace ~ '^[a-z][a-z0-9_-]{0,63}$'::text)),
-    CONSTRAINT magic_link_tokens_password_revision_check CHECK ((password_revision > 0)),
-    CONSTRAINT magic_link_tokens_token_hash_check CHECK ((octet_length(token_hash) = 32))
+    CONSTRAINT magic_link_tokens_password_revision_check CHECK ((password_revision > 0))
 );
 
 
@@ -44540,6 +44540,7 @@ CREATE TABLE public.managed_realtime_publisher_credentials (
     CONSTRAINT managed_realtime_publisher_credentials_accepted_count_check CHECK ((accepted_count >= 0)),
     CONSTRAINT managed_realtime_publisher_credentials_channels_check CHECK (((cardinality(channels) >= 1) AND (cardinality(channels) <= 32))),
     CONSTRAINT managed_realtime_publisher_credentials_check CHECK ((expires_at > issued_at)),
+    CONSTRAINT managed_realtime_publisher_credentials_credhash_chk CHECK ((octet_length(token_hash) = ANY (ARRAY[32, 33]))),
     CONSTRAINT managed_realtime_publisher_credentials_event_types_check CHECK (((cardinality(event_types) >= 1) AND (cardinality(event_types) <= 16))),
     CONSTRAINT managed_realtime_publisher_credentials_generation_check CHECK ((generation > 0)),
     CONSTRAINT managed_realtime_publisher_credentials_last_channel_check CHECK (((last_channel IS NULL) OR ((octet_length(last_channel) >= 1) AND (octet_length(last_channel) <= 256)))),
@@ -44547,8 +44548,7 @@ CREATE TABLE public.managed_realtime_publisher_credentials (
     CONSTRAINT managed_realtime_publisher_credentials_max_payload_bytes_check CHECK (((max_payload_bytes >= 1) AND (max_payload_bytes <= 4096))),
     CONSTRAINT managed_realtime_publisher_credentials_name_check CHECK (((octet_length(name) >= 1) AND (octet_length(name) <= 128))),
     CONSTRAINT managed_realtime_publisher_credentials_rate_count_check CHECK ((rate_count >= 0)),
-    CONSTRAINT managed_realtime_publisher_credentials_replay_count_check CHECK ((replay_count >= 0)),
-    CONSTRAINT managed_realtime_publisher_credentials_token_hash_check CHECK ((octet_length(token_hash) = 32))
+    CONSTRAINT managed_realtime_publisher_credentials_replay_count_check CHECK ((replay_count >= 0))
 );
 
 
@@ -44829,8 +44829,8 @@ CREATE TABLE public.managed_realtime_subscription_tickets (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     CONSTRAINT managed_realtime_subscription_tickets_channels_check CHECK (((jsonb_typeof(channels) = 'array'::text) AND ((jsonb_array_length(channels) >= 1) AND (jsonb_array_length(channels) <= 32)))),
     CONSTRAINT managed_realtime_subscription_tickets_check CHECK (((expires_at > issued_at) AND (expires_at <= (issued_at + '00:05:00'::interval)))),
-    CONSTRAINT managed_realtime_subscription_tickets_principal_check CHECK (((octet_length(principal) >= 1) AND (octet_length(principal) <= 256))),
-    CONSTRAINT managed_realtime_subscription_tickets_token_hash_check CHECK ((octet_length(token_hash) = 32))
+    CONSTRAINT managed_realtime_subscription_tickets_credhash_chk CHECK ((octet_length(token_hash) = ANY (ARRAY[32, 33]))),
+    CONSTRAINT managed_realtime_subscription_tickets_principal_check CHECK (((octet_length(principal) >= 1) AND (octet_length(principal) <= 256)))
 );
 
 
@@ -44852,11 +44852,11 @@ CREATE TABLE public.managed_realtime_worker_credentials (
     last_operation text,
     use_count bigint DEFAULT 0 NOT NULL,
     CONSTRAINT managed_realtime_worker_credentials_check CHECK ((expires_at > issued_at)),
+    CONSTRAINT managed_realtime_worker_credentials_credhash_chk CHECK ((octet_length(token_hash) = ANY (ARRAY[32, 33]))),
     CONSTRAINT managed_realtime_worker_credentials_generation_check CHECK ((generation > 0)),
     CONSTRAINT managed_realtime_worker_credentials_last_operation_check CHECK (((last_operation IS NULL) OR (last_operation = ANY (ARRAY['status'::text, 'claim'::text, 'renew'::text, 'complete'::text, 'retry'::text, 'dead_letters'::text, 'replay'::text, 'resync'::text, 'delete'::text, 'pause'::text, 'resume'::text, 'drain'::text, 'heartbeat'::text, 'release'::text])))),
     CONSTRAINT managed_realtime_worker_credentials_name_check CHECK (((octet_length(name) >= 1) AND (octet_length(name) <= 128))),
     CONSTRAINT managed_realtime_worker_credentials_permissions_check CHECK ((((cardinality(permissions) >= 1) AND (cardinality(permissions) <= 14)) AND (permissions <@ ARRAY['status'::text, 'claim'::text, 'renew'::text, 'complete'::text, 'retry'::text, 'dead_letters'::text, 'replay'::text, 'resync'::text, 'delete'::text, 'pause'::text, 'resume'::text, 'drain'::text, 'heartbeat'::text, 'release'::text]))),
-    CONSTRAINT managed_realtime_worker_credentials_token_hash_check CHECK ((octet_length(token_hash) = 32)),
     CONSTRAINT managed_realtime_worker_credentials_use_count_check CHECK ((use_count >= 0))
 );
 
@@ -45313,13 +45313,13 @@ CREATE TABLE public.mfa_disable_tokens (
     CONSTRAINT mfa_disable_tokens_check CHECK ((isfinite(ready_at) AND (ready_at = (requested_at + '24:00:00'::interval)))),
     CONSTRAINT mfa_disable_tokens_check1 CHECK ((isfinite(expires_at) AND (expires_at = (ready_at + '24:00:00'::interval)))),
     CONSTRAINT mfa_disable_tokens_consumed_at_check CHECK (((consumed_at IS NULL) OR isfinite(consumed_at))),
+    CONSTRAINT mfa_disable_tokens_credhash_chk CHECK ((octet_length(token_hash) = ANY (ARRAY[32, 33]))),
     CONSTRAINT mfa_disable_tokens_email_address_check CHECK ((((length(email_address) >= 3) AND (length(email_address) <= 254)) AND (email_address = lower(email_address)) AND (POSITION((chr(10)) IN (email_address)) = 0) AND (POSITION((chr(13)) IN (email_address)) = 0))),
     CONSTRAINT mfa_disable_tokens_mfa_enrolled_at_check CHECK (isfinite(mfa_enrolled_at)),
     CONSTRAINT mfa_disable_tokens_mfa_revision_check CHECK ((mfa_revision > 0)),
     CONSTRAINT mfa_disable_tokens_namespace_check CHECK ((namespace ~ '^[a-z][a-z0-9_-]{0,63}$'::text)),
     CONSTRAINT mfa_disable_tokens_password_revision_check CHECK ((password_revision > 0)),
-    CONSTRAINT mfa_disable_tokens_requested_at_check CHECK (isfinite(requested_at)),
-    CONSTRAINT mfa_disable_tokens_token_hash_check CHECK ((octet_length(token_hash) = 32))
+    CONSTRAINT mfa_disable_tokens_requested_at_check CHECK (isfinite(requested_at))
 );
 
 
@@ -48103,11 +48103,11 @@ CREATE TABLE public.password_reset_tokens (
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     CONSTRAINT password_reset_tokens_check CHECK ((isfinite(created_at) AND (expires_at > created_at))),
     CONSTRAINT password_reset_tokens_consumed_at_check CHECK (((consumed_at IS NULL) OR isfinite(consumed_at))),
+    CONSTRAINT password_reset_tokens_credhash_chk CHECK ((octet_length(token_hash) = ANY (ARRAY[32, 33]))),
     CONSTRAINT password_reset_tokens_email_address_check CHECK ((((length(email_address) >= 3) AND (length(email_address) <= 254)) AND (email_address = lower(email_address)) AND (POSITION((chr(10)) IN (email_address)) = 0) AND (POSITION((chr(13)) IN (email_address)) = 0))),
     CONSTRAINT password_reset_tokens_expires_at_check CHECK (isfinite(expires_at)),
     CONSTRAINT password_reset_tokens_namespace_check CHECK ((namespace ~ '^[a-z][a-z0-9_-]{0,63}$'::text)),
-    CONSTRAINT password_reset_tokens_password_revision_check CHECK ((password_revision > 0)),
-    CONSTRAINT password_reset_tokens_token_hash_check CHECK ((octet_length(token_hash) = 32))
+    CONSTRAINT password_reset_tokens_password_revision_check CHECK ((password_revision > 0))
 );
 
 
@@ -48335,7 +48335,7 @@ CREATE TABLE public.platform_mail_producer_outbox (
     CONSTRAINT platform_mail_producer_outbox_template_check CHECK ((template = ANY (ARRAY['account_deletion_pending'::text, 'email_verification'::text, 'password_reset'::text, 'magic_link'::text, 'mfa_recovery_used'::text, 'mfa_disable_request'::text, 'mfa_disabled'::text, 'password_changed'::text, 'mfa_enabled'::text, 'payment_failed'::text, 'account_restored'::text, 'account_suspended'::text, 'nonpayment_deletion'::text, 'quota_warning'::text, 'subscription_ended'::text, 'deployment_failed'::text, 'managed_postgres_cap'::text, 'agent_run_delivered'::text]))),
     CONSTRAINT platform_mail_producer_outbox_template_version_check CHECK ((template_version = 1)),
     CONSTRAINT platform_mail_producer_outbox_updated_at_check CHECK (isfinite(updated_at)),
-    CONSTRAINT platform_mail_producer_outbox_verification_check CHECK ((((template = 'account_deletion_pending'::text) AND (deletion_requested_at IS NOT NULL) AND (restore_until IS NOT NULL) AND (verification_token_hash IS NULL) AND (octet_length(sealed_verification) = 0) AND (verification_key_id = ''::text) AND (verification_origin = ''::text)) OR ((template = ANY (ARRAY['mfa_recovery_used'::text, 'mfa_disabled'::text, 'password_changed'::text, 'mfa_enabled'::text, 'payment_failed'::text, 'account_restored'::text, 'account_suspended'::text, 'nonpayment_deletion'::text, 'quota_warning'::text, 'subscription_ended'::text, 'deployment_failed'::text, 'managed_postgres_cap'::text, 'agent_run_delivered'::text])) AND (deletion_requested_at IS NULL) AND (restore_until IS NULL) AND (verification_token_hash IS NULL) AND (octet_length(sealed_verification) = 0) AND (verification_key_id = ''::text) AND (verification_origin = ''::text)) OR ((template = ANY (ARRAY['email_verification'::text, 'password_reset'::text, 'magic_link'::text, 'mfa_disable_request'::text])) AND (deletion_requested_at IS NULL) AND (restore_until IS NULL) AND (((state = ANY (ARRAY['queued'::text, 'claimed'::text])) AND (verification_token_hash IS NOT NULL) AND (octet_length(verification_token_hash) = 32) AND ((octet_length(sealed_verification) >= 64) AND (octet_length(sealed_verification) <= 4096)) AND (verification_key_id ~ '^[0-9a-f]{64}$'::text) AND ((length(verification_origin) >= 9) AND (length(verification_origin) <= 2048)) AND (verification_origin ~ '^https://[^/?#[:space:]]+$'::text)) OR ((state <> ALL (ARRAY['queued'::text, 'claimed'::text])) AND (verification_token_hash IS NULL) AND (octet_length(sealed_verification) = 0) AND (verification_key_id = ''::text) AND (verification_origin = ''::text))))))
+    CONSTRAINT platform_mail_producer_outbox_verification_v2_check CHECK ((((template = 'account_deletion_pending'::text) AND (deletion_requested_at IS NOT NULL) AND (restore_until IS NOT NULL) AND (verification_token_hash IS NULL) AND (octet_length(sealed_verification) = 0) AND (verification_key_id = ''::text) AND (verification_origin = ''::text)) OR ((template = ANY (ARRAY['mfa_recovery_used'::text, 'mfa_disabled'::text, 'password_changed'::text, 'mfa_enabled'::text, 'payment_failed'::text, 'account_restored'::text, 'account_suspended'::text, 'nonpayment_deletion'::text, 'quota_warning'::text, 'subscription_ended'::text, 'deployment_failed'::text, 'managed_postgres_cap'::text, 'agent_run_delivered'::text])) AND (deletion_requested_at IS NULL) AND (restore_until IS NULL) AND (verification_token_hash IS NULL) AND (octet_length(sealed_verification) = 0) AND (verification_key_id = ''::text) AND (verification_origin = ''::text)) OR ((template = ANY (ARRAY['email_verification'::text, 'password_reset'::text, 'magic_link'::text, 'mfa_disable_request'::text])) AND (deletion_requested_at IS NULL) AND (restore_until IS NULL) AND (((state = ANY (ARRAY['queued'::text, 'claimed'::text])) AND (verification_token_hash IS NOT NULL) AND (octet_length(verification_token_hash) = ANY (ARRAY[32, 33])) AND ((octet_length(sealed_verification) >= 64) AND (octet_length(sealed_verification) <= 4096)) AND (verification_key_id ~ '^[0-9a-f]{64}$'::text) AND ((length(verification_origin) >= 9) AND (length(verification_origin) <= 2048)) AND (verification_origin ~ '^https://[^/?#[:space:]]+$'::text)) OR ((state <> ALL (ARRAY['queued'::text, 'claimed'::text])) AND (verification_token_hash IS NULL) AND (octet_length(sealed_verification) = 0) AND (verification_key_id = ''::text) AND (verification_origin = ''::text))))))
 );
 
 
@@ -48395,10 +48395,10 @@ CREATE TABLE public.platform_tenant_access_tokens (
     expires_at timestamp with time zone NOT NULL,
     last_used_at timestamp with time zone,
     revoked_at timestamp with time zone,
+    CONSTRAINT platform_tenant_access_tokens_credhash_chk CHECK ((octet_length(token_hash) = ANY (ARRAY[32, 33]))),
     CONSTRAINT platform_tenant_access_tokens_name_check CHECK (((length(name) >= 1) AND (length(name) <= 64))),
     CONSTRAINT platform_tenant_access_tokens_prefix_check CHECK ((prefix ~ '^fp_tenant_[0-9a-f]{8}$'::text)),
-    CONSTRAINT platform_tenant_access_tokens_scopes_check CHECK (((cardinality(scopes) > 0) AND (scopes <@ ARRAY['platform_tenant:usage:read'::text, 'platform_tenant:statements:read'::text, 'platform_tenant:activation:read'::text, 'platform_tenant:hostnames:manage'::text, 'platform_tenant:credentials:read'::text, 'platform_tenant:credentials:manage'::text, 'platform_tenant:consumers:manage'::text, 'platform_tenant:invocations:read'::text, 'platform_tenant:invocations:manage'::text, 'platform_tenant:operations:read'::text, 'platform_tenant:operations:manage'::text]))),
-    CONSTRAINT platform_tenant_access_tokens_token_hash_check CHECK ((octet_length(token_hash) = 32))
+    CONSTRAINT platform_tenant_access_tokens_scopes_check CHECK (((cardinality(scopes) > 0) AND (scopes <@ ARRAY['platform_tenant:usage:read'::text, 'platform_tenant:statements:read'::text, 'platform_tenant:activation:read'::text, 'platform_tenant:hostnames:manage'::text, 'platform_tenant:credentials:read'::text, 'platform_tenant:credentials:manage'::text, 'platform_tenant:consumers:manage'::text, 'platform_tenant:invocations:read'::text, 'platform_tenant:invocations:manage'::text, 'platform_tenant:operations:read'::text, 'platform_tenant:operations:manage'::text])))
 );
 
 
@@ -49286,7 +49286,7 @@ CREATE TABLE public.product_control_email_deliveries (
     CONSTRAINT product_control_email_deliveries_recipient_sealed_check CHECK ((octet_length(recipient_sealed) <= 4096)),
     CONSTRAINT product_control_email_deliveries_source_revision_check CHECK ((source_revision ~ '^[a-f0-9]{64}$'::text)),
     CONSTRAINT product_control_email_deliveries_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'leased'::text, 'captured'::text, 'provider_accepted'::text, 'delivered'::text, 'bounced'::text, 'complained'::text, 'failed'::text, 'cancelled'::text]))),
-    CONSTRAINT product_control_email_deliveries_unsubscribe_hash_check CHECK (((unsubscribe_hash IS NULL) OR (octet_length(unsubscribe_hash) = 32))),
+    CONSTRAINT product_control_email_deliveries_unsubscribe_credhash_chk CHECK (((unsubscribe_hash IS NULL) OR (octet_length(unsubscribe_hash) = ANY (ARRAY[32, 33])))),
     CONSTRAINT product_control_email_deliveries_unsubscribe_sealed_check CHECK ((octet_length(unsubscribe_sealed) <= 4096)),
     CONSTRAINT product_control_email_deliveries_updated_at_check CHECK (isfinite(updated_at)),
     CONSTRAINT product_email_feedback_shape CHECK ((((provider_id IS NOT NULL) OR ((delivered_at IS NULL) AND (bounced_at IS NULL) AND (complained_at IS NULL))) AND ((NOT hard_bounced) OR (bounced_at IS NOT NULL)))),
@@ -49953,10 +49953,10 @@ CREATE TABLE public.project_environment_approvals (
     token_kind text DEFAULT 'plan'::text NOT NULL,
     consumed_at timestamp with time zone,
     approved_by_account_id uuid,
+    CONSTRAINT project_environment_approvals_approval_credhash_chk CHECK ((approval_token_hash ~ '^[a-f0-9]{64}([a-f0-9]{2})?$'::text)),
     CONSTRAINT project_environment_approvals_environment_slug_shape CHECK ((environment_slug ~ '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$'::text)),
-    CONSTRAINT project_environment_approvals_plan_hash_shape CHECK ((plan_token_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT project_environment_approvals_plan_credhash_chk CHECK ((plan_token_hash ~ '^[a-f0-9]{64}([a-f0-9]{2})?$'::text)),
     CONSTRAINT project_environment_approvals_project_slug_shape CHECK ((project_slug ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text)),
-    CONSTRAINT project_environment_approvals_token_hash_shape CHECK ((approval_token_hash ~ '^[a-f0-9]{64}$'::text)),
     CONSTRAINT project_environment_approvals_token_kind_check CHECK ((token_kind = ANY (ARRAY['plan'::text, 'promotion'::text])))
 );
 
@@ -55913,10 +55913,10 @@ CREATE TABLE public.workflow_automation_publish_receipts (
     policy_version bigint NOT NULL,
     expires_at timestamp with time zone NOT NULL,
     evidence jsonb NOT NULL,
+    CONSTRAINT workflow_automation_publish_receipts_credhash_chk CHECK ((token_hash ~ '^[0-9a-f]{64}([0-9a-f]{2})?$'::text)),
     CONSTRAINT workflow_automation_publish_receipts_evidence_check CHECK ((jsonb_typeof(evidence) = 'object'::text)),
     CONSTRAINT workflow_automation_publish_receipts_name_check CHECK (((length(name) >= 1) AND (length(name) <= 128))),
-    CONSTRAINT workflow_automation_publish_receipts_policy_version_check CHECK ((policy_version >= 0)),
-    CONSTRAINT workflow_automation_publish_receipts_token_hash_check CHECK ((token_hash ~ '^[0-9a-f]{64}$'::text))
+    CONSTRAINT workflow_automation_publish_receipts_policy_version_check CHECK ((policy_version >= 0))
 );
 
 

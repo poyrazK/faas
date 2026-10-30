@@ -13,7 +13,10 @@ import (
 // publicObjectStorageRoot serves public bucket reads and policy-controlled
 // uploads on app hostnames in front of next. The edge store implements every
 // store the handlers take (edge_store_contract.go), so both are always on.
-func publicObjectStorageRoot(store *state.EdgeStore, registry *objectstorage.Registry, enabled func() bool,
+//
+// Upload keys are resolved by apid (credentials, ADR 20261029202403): their
+// stored hashes are keyed by a secret only apid holds.
+func publicObjectStorageRoot(store *state.EdgeStore, credentials objectstorage.UploadAuthenticator, registry *objectstorage.Registry, enabled func() bool,
 	domains hostidentity.Domains, next http.Handler, log *slog.Logger) (http.Handler, error) {
 	publicHandler, err := objectstorage.NewPublicReadHandler(objectstorage.PublicReadConfig{
 		Store: store, Registry: registry, RequestMetrics: store, Accounting: store,
@@ -23,7 +26,7 @@ func publicObjectStorageRoot(store *state.EdgeStore, registry *objectstorage.Reg
 		return nil, fmt.Errorf("gatewayd-public: public object storage handler: %w", err)
 	}
 	upload, err := objectstorage.NewUploadHandler(objectstorage.UploadConfig{
-		Store: store, Routes: store, Buckets: store, Authenticator: store,
+		Store: store, Routes: store, Buckets: store, Authenticator: credentials,
 		Registry: registry, Accounting: store, RequestMetrics: store, Enabled: enabled,
 		AppsDomain: domains.Apps, Next: publicHandler, Log: log,
 	})
