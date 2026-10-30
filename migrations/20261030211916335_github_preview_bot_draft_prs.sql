@@ -1,4 +1,4 @@
--- filename: 20261030070000000_github_preview_bot_draft_prs.sql
+-- filename: 20261030211916335_github_preview_bot_draft_prs.sql
 -- migration-compat: expand
 
 -- ADR-20261030070000: a project chooses whether pull requests opened by bots
