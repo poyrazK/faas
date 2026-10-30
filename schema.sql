@@ -28931,6 +28931,7 @@ CREATE TABLE public.agent_versions (
     model_integrations jsonb DEFAULT '{}'::jsonb NOT NULL,
     ai_budget_millicents bigint,
     deliveries jsonb DEFAULT '[]'::jsonb NOT NULL,
+    pause_during_model_calls boolean DEFAULT true NOT NULL,
     CONSTRAINT agent_versions_ai_budget_millicents_check CHECK (((ai_budget_millicents IS NULL) OR ((ai_budget_millicents >= 1) AND (ai_budget_millicents <= '1000000000000'::bigint)))),
     CONSTRAINT agent_versions_deliveries_check CHECK (((jsonb_typeof(deliveries) = 'array'::text) AND (jsonb_array_length(deliveries) <= 4))),
     CONSTRAINT agent_versions_harness_check CHECK (((harness_preset IS NULL) <> (harness_image IS NULL))),
