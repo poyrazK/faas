@@ -121,6 +121,7 @@ func NewUsageCollector(registry *Registry, store UsageStore, options UsageCollec
 }
 
 func (c *UsageCollector) Collect(ctx context.Context) (summary UsageCollectionSummary, sweepErr error) {
+	ctx = WithBackgroundRequests(ctx)
 	summary.Enabled = c.policy.Enabled
 	defer func() {
 		summary.CompletedAt = c.now().UTC()
