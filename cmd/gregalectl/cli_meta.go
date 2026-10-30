@@ -324,6 +324,15 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		Name:    dispatchCredentials,
+		DocSlug: "credentials",
+		Short:   "Key stored credential hashes (ADR 20261029202403)",
+		Subcommands: []cliSub{
+			{Name: "keygen", Short: "Write apid's account credential key ring", Flags: []cliFlag{{Name: "out", Short: "new ring path", Req: true}, {Name: "rotate-from", Short: "existing ring whose keys follow the new one"}}},
+			{Name: "status", Short: "Count stored credential hashes by key", Flags: []cliFlag{{Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "json", Short: "emit structured JSON"}}},
+		},
+	},
+	{
 		// PR-911 image rollout (PR #929 mega; ADR-110 + ADR-111). Operator
 		// surfaces draining + activation of compute_nodes rows so the
 		// deployctl upgrade-node orchestrator can reason about which box

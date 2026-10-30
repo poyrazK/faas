@@ -56,9 +56,14 @@ cannot mint one.
    invitation tokens, approvals, and apid's own receipts and grants.
 
    The ring is `FAAS_APID_CREDENTIAL_KEYS_FILE`: one `kid:base64key` per line,
-   the first line current. `gregalectl credentials keygen` writes a key. The
-   control-plane role installs the operator's file on every apid host, as for
-   the session key.
+   the first line current. `gregalectl credentials keygen` writes a ring, and
+   with `--rotate-from` a new current key ahead of an existing ring's. The
+   control-plane role installs the operator's file
+   (`faas_apid_credential_keys_src`) on every apid host as a systemd
+   credential, root-only on disk like the session key. `gregalectl
+   release-acceptance mint-token` writes an API key directly, so it reads the
+   same three variables; the operator runs it with them once keyed writes
+   are on.
 
    Other families get their own rings in a later change:
    - schedd's event acknowledgements, consumer-group leases, and CI and
@@ -88,16 +93,21 @@ cannot mint one.
       up only the plain hash.
 
       The length checks on these columns (`octet_length = 32`) are relaxed to
-      32 or 33 bytes. Each is a new constraint added NOT VALID, then
-      validated, then the old one dropped, in one NO TRANSACTION migration.
+      32 or 33 bytes, and the hex columns' shape checks to 64 or 66
+      characters. Each is a new constraint added NOT VALID, then validated,
+      then the old one dropped, in one NO TRANSACTION migration.
    2. *Keyed writes.* Once every apid and gateway runs this release, the
       operator sets `FAAS_APID_CREDENTIAL_WRITES=keyed`. apid then writes
       keyed digests, and rewrites a plain row to keyed when it is used.
       It also backfills the long-lived families in a background loop:
       - API, deploy, tenant, hosting-automation and consumer keys;
+      - fork tokens;
       - inbound webhooks and issue-ingest tokens;
       - realtime publisher and worker credentials;
       - invitations and unsubscribe links.
+
+      Every apid runs the loop. Each rewrite is guarded by the value it
+      replaces, so two apids or a concurrent use cannot lose a credential.
 
       `gregalectl credentials status` counts the plain rows left in each
       column by length, so it needs no key.

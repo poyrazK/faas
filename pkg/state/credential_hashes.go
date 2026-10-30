@@ -11,39 +11,38 @@ import (
 // Account-family credential columns (ADR 20261029202403). Each names the
 // column its keyed digests are bound to.
 const (
-	credTagAPIKey                  credhash.Tag = "api_keys.key_sha256"
-	credTagOIDCToken               credhash.Tag = "oidc_exchanged_tokens.token_hash"
-	credTagDeployToken             credhash.Tag = "deploy_tokens.token_sha256"
-	credTagTenantAccessToken       credhash.Tag = "platform_tenant_access_tokens.token_hash"
-	credTagHostingAutomation       credhash.Tag = "hosting_automation_credentials.token_hash"
-	credTagCLIAuthCode             credhash.Tag = "cli_auth_codes.token_hash"
-	credTagCLIDeviceCode           credhash.Tag = "cli_auth_codes.device_hash"
-	credTagLoginToken              credhash.Tag = "login_tokens.token_hash"
-	credTagMFADisableRequest       credhash.Tag = "mfa_disable_requests.token_hash"
-	credTagOrgInvitation           credhash.Tag = "org_invitations.token_hash"
-	credTagPromotionPlanToken      credhash.Tag = "project_environment_approvals.plan_token_hash"
-	credTagPromotionApprovalToken  credhash.Tag = "project_environment_approvals.approval_token_hash"
-	credTagEmailVerification       credhash.Tag = "email_verification_tokens.token_hash"
-	credTagIssueIngestToken        credhash.Tag = "issue_ingest_tokens.token_hash"
-	credTagInboundWebhook          credhash.Tag = "inbound_webhook_endpoints.token_hash"
-	credTagArtifactGrant           credhash.Tag = "execution_artifact_grants.token_hash"
-	credTagRealtimePublisher       credhash.Tag = "managed_realtime_publisher_credentials.token_hash"
-	credTagRealtimeWorker          credhash.Tag = "managed_realtime_worker_credentials.token_hash"
-	credTagRealtimeTicket          credhash.Tag = "managed_realtime_subscription_tickets.token_hash"
-	credTagQueueLeaseReceipt       credhash.Tag = "invocation_queue_lease_receipts.token_hash"
-	credTagEnvironmentQueueReceipt credhash.Tag = "invocation_environment_queue_receipts.token_hash"
-	credTagPublishReceipt          credhash.Tag = "workflow_automation_publish_receipts.token_hash"
-	credTagConsumerSignupClaim     credhash.Tag = "api_consumer_signups.claim_hash"
+	credTagAPIKey                       credhash.Tag = "api_keys.key_sha256"
+	credTagOIDCToken                    credhash.Tag = "oidc_exchanged_tokens.token_hash"
+	credTagDeployToken                  credhash.Tag = "deploy_tokens.token_sha256"
+	credTagTenantAccessToken            credhash.Tag = "platform_tenant_access_tokens.token_hash"
+	credTagHostingAutomation            credhash.Tag = "hosting_automation_credentials.token_hash"
+	credTagCLIAuthCode                  credhash.Tag = "cli_auth_codes.token_hash"
+	credTagCLIDeviceCode                credhash.Tag = "cli_auth_codes.device_hash"
+	credTagLoginToken                   credhash.Tag = "login_tokens.token_hash"
+	credTagMFADisableRequest            credhash.Tag = "mfa_disable_requests.token_hash"
+	credTagOrgInvitation                credhash.Tag = "org_invitations.token_hash"
+	credTagPromotionPlanToken           credhash.Tag = "project_environment_approvals.plan_token_hash"
+	credTagPromotionApprovalToken       credhash.Tag = "project_environment_approvals.approval_token_hash"
+	credTagEmailVerification            credhash.Tag = "email_verification_tokens.token_hash"
+	credTagIssueIngestToken             credhash.Tag = "issue_ingest_tokens.token_hash"
+	credTagInboundWebhook               credhash.Tag = "inbound_webhook_endpoints.token_hash"
+	credTagArtifactGrant                credhash.Tag = "execution_artifact_grants.token_hash"
+	credTagRealtimePublisher            credhash.Tag = "managed_realtime_publisher_credentials.token_hash"
+	credTagRealtimeWorker               credhash.Tag = "managed_realtime_worker_credentials.token_hash"
+	credTagRealtimeTicket               credhash.Tag = "managed_realtime_subscription_tickets.token_hash"
+	credTagQueueLeaseReceipt            credhash.Tag = "invocation_queue_lease_receipts.token_hash"
+	credTagEnvironmentQueueReceipt      credhash.Tag = "invocation_environment_queue_receipts.token_hash"
+	credTagPublishReceipt               credhash.Tag = "workflow_automation_publish_receipts.token_hash"
+	CredentialColumnConsumerSignupClaim credhash.Tag = "api_consumer_signups.claim_hash"
 
 	// Account-family columns outside pkg/state, keyed by their packages
 	// through StoredCredential and CredentialMatches.
-	CredentialColumnMagicLink          credhash.Tag = "magic_link_tokens.token_hash"
-	CredentialColumnPasswordReset      credhash.Tag = "password_reset_tokens.token_hash"
-	CredentialColumnMFADisable         credhash.Tag = "mfa_disable_tokens.token_hash"
-	CredentialColumnSlackOAuthState    credhash.Tag = "issue_slack_oauth_flows.state_hash"
-	CredentialColumnLinearOAuthState   credhash.Tag = "issue_tracker_linear_oauth_flows.state_hash"
-	CredentialColumnEmailUnsubscribe   credhash.Tag = "product_control_email_deliveries.unsubscribe_hash"
-	CredentialColumnVerificationOutbox credhash.Tag = "platform_mail_producer_outbox.verification_token_hash"
+	CredentialColumnMagicLink        credhash.Tag = "magic_link_tokens.token_hash"
+	CredentialColumnPasswordReset    credhash.Tag = "password_reset_tokens.token_hash"
+	CredentialColumnMFADisable       credhash.Tag = "mfa_disable_tokens.token_hash"
+	CredentialColumnSlackOAuthState  credhash.Tag = "issue_slack_oauth_flows.state_hash"
+	CredentialColumnLinearOAuthState credhash.Tag = "issue_tracker_linear_oauth_flows.state_hash"
+	CredentialColumnEmailUnsubscribe credhash.Tag = "product_control_email_deliveries.unsubscribe_hash"
 
 	// CredentialColumnConsumerKey and CredentialColumnForkToken are checked
 	// by gatewayd-internal, which loads the row itself and asks apid whether
@@ -75,6 +74,33 @@ func StoredCredential(tag credhash.Tag, sum []byte) []byte {
 	return storedCredential(tag, sum)
 }
 
+// StoredCredentialHex is the hex value to write in column tag for a
+// credential whose hex SHA-256 is sumHex.
+func StoredCredentialHex(tag credhash.Tag, sumHex string) string {
+	return storedCredentialHex(tag, sumHex)
+}
+
+// FirstCredentialHex runs find with each hex value a credential whose hex
+// SHA-256 is sumHex may be stored as in column tag, the current key's
+// digest first, and returns the first result that is not ErrNotFound.
+func FirstCredentialHex[T any](ctx context.Context, tag credhash.Tag, sumHex string, find func(context.Context, string) (T, error)) (T, error) {
+	lookups := []string{sumHex}
+	if sum, err := hex.DecodeString(sumHex); err == nil && len(sum) == credhash.PlainSize {
+		lookups = lookups[:0]
+		for _, value := range credentialLookups(tag, sum) {
+			lookups = append(lookups, hex.EncodeToString(value))
+		}
+	}
+	var zero T
+	for _, value := range lookups {
+		out, err := find(ctx, value)
+		if err == nil || !errors.Is(err, ErrNotFound) {
+			return out, err
+		}
+	}
+	return zero, ErrNotFound
+}
+
 // credentialLookups are the stored values to try for a credential: a stored
 // digest (credhash.DigestSize bytes, as a caller re-checking a stored key
 // passes) is looked up as it is; a token's SHA-256 gives the account
@@ -94,6 +120,12 @@ func storedCredential(tag credhash.Tag, sum []byte) []byte {
 		return sum
 	}
 	return credhash.Account().Store(tag, sum)
+}
+
+// storedCredentialShape reports whether b has the length of a stored
+// credential: a plain SHA-256 or a keyed digest.
+func storedCredentialShape(b []byte) bool {
+	return len(b) == credhash.PlainSize || credhash.Keyed(b)
 }
 
 // staleCredential reports whether a credential found by its token's SHA-256
@@ -209,4 +241,26 @@ func approvalTokensMatch(approval ProjectEnvironmentApproval, planHex, approvalH
 		}
 	}
 	return false
+}
+
+// storedCredentialHex is storedCredential for a column that holds hex
+// text. A value that is not a hex SHA-256 is written as it is.
+func storedCredentialHex(tag credhash.Tag, sumHex string) string {
+	sum, err := hex.DecodeString(sumHex)
+	if err != nil || len(sum) != credhash.PlainSize {
+		return sumHex
+	}
+	return hex.EncodeToString(storedCredential(tag, sum))
+}
+
+// credentialHexMatches reports, in constant time per candidate, whether
+// storedHex is the hex value a credential whose hex SHA-256 is sumHex may
+// hold.
+func credentialHexMatches(tag credhash.Tag, sumHex, storedHex string) bool {
+	sum, err := hex.DecodeString(sumHex)
+	stored, serr := hex.DecodeString(storedHex)
+	if err != nil || serr != nil {
+		return false
+	}
+	return CredentialMatches(tag, sum, stored)
 }

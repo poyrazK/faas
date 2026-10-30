@@ -21,6 +21,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/onebox-faas/faas/pkg/apid/credentialkeys"
 	"github.com/onebox-faas/faas/pkg/apid/mcpreadiness"
 	"log/slog"
 	"net"
@@ -2315,6 +2316,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	go srv.runApplicationStandardWorker(ctx)
 	go srv.runMigrationVerificationWorker(ctx)
 	go srv.runMigrationCutoverWorker(ctx)
+	go credentialkeys.RunRekey(ctx, srv.store, log)
 	if deps.bgBefore != nil {
 		deps.bgBefore(ctx, log, srv)
 	}

@@ -115,6 +115,24 @@ func NewKeyLine(kid int) (string, error) {
 	return fmt.Sprintf("%d:%s", kid, base64.StdEncoding.EncodeToString(key)), nil
 }
 
+// NextKeyID is the ID a rotation's new key takes: one above the highest in
+// the ring, or the lowest free ID once 255 is taken.
+func (r *Ring) NextKeyID() (int, error) {
+	highest := 0
+	for _, kid := range r.order {
+		highest = max(highest, int(kid))
+	}
+	if highest < 255 {
+		return highest + 1, nil
+	}
+	for kid := 1; kid <= 255; kid++ {
+		if _, used := r.keys[byte(kid)]; !used {
+			return kid, nil
+		}
+	}
+	return 0, errors.New("credhash: every key ID is in use")
+}
+
 // Current is the ID of the key new digests use.
 func (r *Ring) Current() byte { return r.current }
 

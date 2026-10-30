@@ -210,6 +210,46 @@
     mode: "0644"
   notify: restart faas-apid
 
+# ADR 20261029202403: apid keys stored account credential hashes with a ring
+# no other daemon and never the database holds. The file stays root:root
+# 0400; systemd hands it to apid as a credential.
+- name: control_plane_service — refuse keyed credential writes without a key ring
+  ansible.builtin.assert:
+    that:
+      - faas_apid_credential_writes in ['plain', 'keyed']
+      - faas_apid_credential_writes == 'plain' or faas_apid_credential_keys_src | length > 0
+      - faas_apid_credential_plain_lookup | bool or faas_apid_credential_writes == 'keyed'
+    fail_msg: >-
+      faas_apid_credential_writes must be plain or keyed; keyed needs
+      faas_apid_credential_keys_src, and plain lookup may be turned off only
+      with keyed writes.
+
+- name: control_plane_service — install the account credential key ring
+  ansible.builtin.copy:
+    src: "{{ faas_apid_credential_keys_src }}"
+    dest: /etc/faas/secrets/credential-keys
+    owner: root
+    group: root
+    mode: "0400"
+  no_log: true
+  notify: restart faas-apid
+  when: faas_apid_credential_keys_src | length > 0
+
+- name: control_plane_service — remove the account credential key ring
+  ansible.builtin.file:
+    path: /etc/faas/secrets/credential-keys
+    state: absent
+  when: faas_apid_credential_keys_src | length == 0
+
+- name: control_plane_service — give apid its credential key settings
+  ansible.builtin.template:
+    src: 60-faas-credential-keys.conf.j2
+    dest: /etc/systemd/system/faas-apid.service.d/60-faas-credential-keys.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-apid
+
 - name: control_plane_service — set developer live patch gate (ADR-740)
   ansible.builtin.template:
     src: 99-faas-dev-patch.conf.j2

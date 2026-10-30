@@ -49,7 +49,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_APID_APP_ERRORS_TLS_CA_PATH` | apid, gatewayd-internal | `dropin` |  |  | `` |  |
 | `FAAS_APID_APP_ERRORS_TLS_CERT_PATH` | apid, gatewayd-internal | `dropin` |  |  | `` |  |
 | `FAAS_APID_APP_ERRORS_TLS_KEY_PATH` | apid, gatewayd-internal | `dropin` |  |  | `` |  |
-| `FAAS_APID_AUTH_SOCKET` | apid, gatewayd-public | `default` |  |  | `` |  |
+| `FAAS_APID_AUTH_SOCKET` | apid, gatewayd-internal, gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_APID_GITHUBD_BRIDGE_SOCK` | apid, githubd | `default` |  |  | `` |  |
 | `FAAS_APID_INTERNAL_BASE_URL` | meterd | `default` |  | http://127.0.0.1:9101 | `` | Safe Deploy meterd-to-apid operator listener; must remain a loopback HTTP origin |
 | `FAAS_APID_LISTEN` | apid | `default` |  |  | `` |  |
@@ -65,6 +65,9 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_APID_REQUEST_TELEMETRY_TARGET` | apid, gatewayd-internal | `dropin` |  |  | `` |  |
 | `FAAS_APID_REQUEST_WRITE_TIMEOUT` | apid | `default` |  |  | `` |  |
 | `FAAS_APID_ROLE` | apid, shared | `dropin` |  |  | `` |  |
+| `FAAS_APID_CREDENTIAL_KEYS_FILE` | apid, gregalectl, shared | `dropin` |  |  | `` | ADR 20261029202403: the account credential key ring, one kid:base64key per line, the current key first; apid keys stored credential hashes with it. Delivered as a credential by the control_plane_service role (faas_apid_credential_keys_src); gregalectl release-acceptance mint-token reads it too. Unset keys nothing; read at start |
+| `FAAS_APID_CREDENTIAL_WRITES` | apid, gregalectl, shared | `dropin` |  | plain | `` | ADR 20261029202403: plain or keyed. keyed writes keyed digests, rewrites plain rows on use and backfills long-lived ones; needs FAAS_APID_CREDENTIAL_KEYS_FILE. Set keyed only once every apid and gateway runs a release that reads keyed digests; read at start |
+| `FAAS_APID_CREDENTIAL_PLAIN_LOOKUP` | apid, gregalectl, shared | `dropin` |  | true | `` | ADR 20261029202403 contract step: false stops looking credentials up by their plain hash. Turn it off once gregalectl credentials status reports no plain long-lived rows and 14 days have passed since keyed writes began; read at start |
 | `FAAS_APID_RUNTIME_SIGNING_KEY_FILE` | apid | `dropin` |  |  | `` | runtime secret writer signing key (ADR 20261028161502 amendment 1): an Ed25519 PKCS#8 key apid signs every runtime secret it seals with, storing the signature in runtime_secret_signatures; delivered as a credential by the seal_domains role to faas-apid and faas-apid-clone-worker; unset seals unsigned |
 | `FAAS_API_CONTRACT_DIFF_ENABLED` | shared | `dropin` |  |  | `` | public-beta control-plane and compute-only drop-ins enable the OpenAPI contract-diff gate; unset remains off for local/dev installs |
 | `FAAS_API_DISCOVERY_ENABLED` | gatewayd-internal | `default` |  |  | `` | opt-in durable API route inventory; off by default pending operator path-privacy review (ADR-270) |
