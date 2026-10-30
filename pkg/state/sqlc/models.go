@@ -9794,6 +9794,17 @@ type ObjectStorageInventorySample struct {
 	Objects    int64
 }
 
+type ObjectStorageInventoryScan struct {
+	BucketID    pgtype.UUID
+	StartedAt   pgtype.Timestamptz
+	ProgressAt  pgtype.Timestamptz
+	AfterKey    string
+	ListedBytes int64
+	ListedKeys  int64
+	Pages       int32
+	Complete    bool
+}
+
 type ObjectStorageKeyGrant struct {
 	BucketID    pgtype.UUID
 	KeyHash     string

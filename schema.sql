@@ -46425,6 +46425,28 @@ CREATE TABLE public.object_storage_inventory_samples (
 
 
 --
+-- Name: object_storage_inventory_scans; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_storage_inventory_scans (
+    bucket_id uuid NOT NULL,
+    started_at timestamp with time zone NOT NULL,
+    progress_at timestamp with time zone NOT NULL,
+    after_key text DEFAULT ''::text NOT NULL,
+    listed_bytes bigint DEFAULT 0 NOT NULL,
+    listed_keys bigint DEFAULT 0 NOT NULL,
+    pages integer DEFAULT 0 NOT NULL,
+    complete boolean DEFAULT false NOT NULL,
+    CONSTRAINT object_storage_inventory_scans_after_key_check CHECK ((octet_length(after_key) <= 1024)),
+    CONSTRAINT object_storage_inventory_scans_check CHECK ((progress_at >= started_at)),
+    CONSTRAINT object_storage_inventory_scans_check1 CHECK (((pages > 0) OR ((after_key = ''::text) AND (listed_bytes = 0) AND (listed_keys = 0) AND (NOT complete)))),
+    CONSTRAINT object_storage_inventory_scans_listed_bytes_check CHECK ((listed_bytes >= 0)),
+    CONSTRAINT object_storage_inventory_scans_listed_keys_check CHECK ((listed_keys >= 0)),
+    CONSTRAINT object_storage_inventory_scans_pages_check CHECK ((pages >= 0))
+);
+
+
+--
 -- Name: object_storage_key_grants; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -64510,6 +64532,14 @@ ALTER TABLE ONLY public.object_storage_gateway_storage
 
 ALTER TABLE ONLY public.object_storage_inventory_samples
     ADD CONSTRAINT object_storage_inventory_samples_pkey PRIMARY KEY (token);
+
+
+--
+-- Name: object_storage_inventory_scans object_storage_inventory_scans_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_storage_inventory_scans
+    ADD CONSTRAINT object_storage_inventory_scans_pkey PRIMARY KEY (bucket_id);
 
 
 --
@@ -95967,6 +95997,14 @@ ALTER TABLE ONLY public.object_storage_gateway_storage
 
 ALTER TABLE ONLY public.object_storage_inventory_samples
     ADD CONSTRAINT object_storage_inventory_samples_bucket_id_fkey FOREIGN KEY (bucket_id) REFERENCES public.object_buckets(id) ON DELETE CASCADE;
+
+
+--
+-- Name: object_storage_inventory_scans object_storage_inventory_scans_bucket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_storage_inventory_scans
+    ADD CONSTRAINT object_storage_inventory_scans_bucket_id_fkey FOREIGN KEY (bucket_id) REFERENCES public.object_buckets(id) ON DELETE CASCADE;
 
 
 --

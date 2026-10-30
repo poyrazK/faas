@@ -40,6 +40,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -226,11 +227,12 @@ func cmdJobsAdd(args []string) int {
 	schedulePolicyJSON := fs.String("schedule-policy", "", "versioned schedule policy as JSON")
 	failureRulesJSON := fs.String("failure-rules", "", "versioned retry/failure rules as JSON")
 	env := registerJobsMultiFlag(fs, "env", "repeatable; e.g. --env K=V --env K2=V2")
+	args, argv := splitJobArgv(args)
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale job create <name> --image REF [--schedule EXPR [--timezone TZ]] [--command A,B,C] [--ram N] [--timeout S] [--parallelism N] [--retries N] [--env K=V ...]", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale job create <name> --image REF [--schedule EXPR [--timezone TZ]] [--command A,B,C] [--ram N] [--timeout S] [--parallelism N] [--retries N] [--env K=V ...] [-- COMMAND ARG...]", "jobs")
 		return 1
 	}
 	name := fs.Arg(0)
@@ -271,8 +273,14 @@ func cmdJobsAdd(args []string) int {
 		}
 		req.FailureRules = rules
 	}
+	if *command != "" && argv != nil {
+		PrintUsage(os.Stderr, "give the command as --command or after --, not both", "jobs")
+		return 1
+	}
 	if *command != "" {
 		req.Command = parseJobCommand(*command)
+	} else if len(argv) > 0 {
+		req.Command = argv
 	}
 	client, err := authedClient()
 	if err != nil {
@@ -289,7 +297,7 @@ func cmdJobsAdd(args []string) int {
 	return 0
 }
 
-const jobCommandFlagUsage = "comma-separated entrypoint (e.g. /bin/sh,-c,echo hi); escape a comma inside an argument with a backslash, or pass a JSON array"
+const jobCommandFlagUsage = "comma-separated entrypoint (e.g. /bin/sh,-c,echo hi); escape a comma inside an argument with a backslash, pass a JSON array, or give the command after --"
 
 // parseJobCommand reads --command. A JSON array of strings is taken as the
 // exact argv; otherwise the value is split on commas, and "\," is a comma
@@ -317,6 +325,16 @@ func parseJobCommand(value string) []string {
 		}
 	}
 	return append(argv, part.String())
+}
+
+// splitJobArgv separates a command given after a bare "--" from the job's own
+// arguments, so `job create <name> --image REF -- /bin/sh -c 'echo a, b'`
+// passes the script unchanged. argv is nil without a "--".
+func splitJobArgv(args []string) (own, argv []string) {
+	if i := slices.Index(args, "--"); i >= 0 {
+		return args[:i], append([]string{}, args[i+1:]...)
+	}
+	return args, nil
 }
 
 // cmdJobsInfo implements `gregale jobs info <name>`. Returns the
@@ -353,11 +371,12 @@ func cmdJobsUpdate(args []string) int {
 	pause := fs.Bool("pause", false, "halt future dispatches (status=paused)")
 	resume := fs.Bool("resume", false, "resume dispatches (status=active)")
 	env := registerJobsMultiFlag(fs, "env", "repeatable; e.g. --env K=V --env K2=V2")
+	args, argv := splitJobArgv(args)
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale job update <name> [--image REF] [--command A,B,C] [--schedule EXPR] [--timezone TZ] [--unschedule] [--ram N] [--timeout S] [--parallelism N] [--retries N] [--pause|--resume]", "jobs")
+		PrintUsage(os.Stderr, "usage: gregale job update <name> [--image REF] [--command A,B,C] [--schedule EXPR] [--timezone TZ] [--unschedule] [--ram N] [--timeout S] [--parallelism N] [--retries N] [--pause|--resume] [-- COMMAND ARG...]", "jobs")
 		return 1
 	}
 	name := fs.Arg(0)
@@ -386,8 +405,15 @@ func cmdJobsUpdate(args []string) int {
 		req.ImageRef = &s
 		touched = true
 	}
+	if set["command"] && argv != nil {
+		PrintUsage(os.Stderr, "give the command as --command or after --, not both", "jobs")
+		return 1
+	}
 	if set["command"] {
 		req.Command = parseJobCommand(*command)
+		touched = true
+	} else if len(argv) > 0 {
+		req.Command = argv
 		touched = true
 	}
 	if set["ram"] {

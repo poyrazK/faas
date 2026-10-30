@@ -935,6 +935,8 @@ var CmdMan = cmdMan
 var CmdMetrics = cmdMetrics
 
 var ParseJobCommand = parseJobCommand
+
+var SplitJobArgv = splitJobArgv
 var CmdMfa = cmdMfa
 var CmdMfaConfirm = cmdMfaConfirm
 var CmdMfaDisable = cmdMfaDisable

@@ -2463,6 +2463,13 @@ const (
 	// deletes cannot starve inventory (ADR-20261025115958).
 	ObjectInventoryDeletionDrain = 10 * time.Second
 	ObjectInventoryDeletionYield = ObjectInventoryDeletionDrain + ObjectCapacityInventoryTimeout
+	// A bucket's listing resumes across attempts from its last listed key
+	// (ADR-20261030100835). While it advanced within
+	// ObjectInventoryScanProgressWindow, its bucket stays fresh on an
+	// observation up to ObjectInventoryScanMaxAge old; a listing that started
+	// longer ago than that starts again.
+	ObjectInventoryScanMaxAge         = time.Hour
+	ObjectInventoryScanProgressWindow = 5 * time.Minute
 	// Read-only owned-node audits retain bounded diagnostics and publish cached
 	// metrics. These are operator work bounds, not customer allowances.
 	ObjectNodeInventoryInterval         = time.Minute
