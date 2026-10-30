@@ -20,9 +20,10 @@ are wired, each opened by one daemon:
   does for `outbound`);
 - `control`: the cluster signing key (schedd, on every host; no writer
   drop-in, the key moves only through `seal-domain migrate`);
-- `delivery`: app webhook signing secrets, commit-source connections and
-  execution payloads (schedd, on every host; apid on the control plane
-  seals to the recipient);
+- `delivery`: app webhook signing secrets, commit-source connections,
+  execution payloads and trigger config credentials (schedd, on every host;
+  apid on the control plane seals to the recipient, and trigger configs to
+  the fleet key too until the next release);
 - `account`: TOTP secrets, inbound webhook secrets, billing keys, workflow
   plans, PagerDuty acknowledgement secrets, GitLab, Slack and Linear
   credentials, product email values, managed realtime credentials and
