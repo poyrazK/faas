@@ -4342,6 +4342,8 @@ func (m *MemStore) CreateProjectEnvironmentApproval(ctx context.Context, approva
 	if err := m.checkOrgAccessLocked(ctx); err != nil {
 		return ProjectEnvironmentApproval{}, err
 	}
+	approval.PlanTokenHash = storedApprovalTokenHash(credTagPromotionPlanToken, approval.PlanTokenHash)
+	approval.ApprovalTokenHash = storedApprovalTokenHash(credTagPromotionApprovalToken, approval.ApprovalTokenHash)
 	for _, existing := range m.projectEnvironmentApprovals {
 		if existing.ApprovalTokenHash == approval.ApprovalTokenHash {
 			return ProjectEnvironmentApproval{}, ErrConflict
@@ -4378,7 +4380,7 @@ func (m *MemStore) ProjectEnvironmentApprovalByToken(_ context.Context, accountI
 	defer m.mu.Unlock()
 	now := time.Now()
 	for _, approval := range m.projectEnvironmentApprovals {
-		if approval.AccountID == accountID && approval.ProjectSlug == projectSlug && approval.EnvironmentSlug == environmentSlug && approval.PlanTokenHash == planTokenHash && approval.ApprovalTokenHash == approvalTokenHash && approval.ConsumedAt == nil && approval.ExpiresAt.After(now) {
+		if approval.AccountID == accountID && approval.ProjectSlug == projectSlug && approval.EnvironmentSlug == environmentSlug && approvalTokensMatch(approval, planTokenHash, approvalTokenHash) && approval.ConsumedAt == nil && approval.ExpiresAt.After(now) {
 			return approval, nil
 		}
 	}
@@ -4396,7 +4398,7 @@ func (m *MemStore) ConsumeProjectEnvironmentApproval(ctx context.Context, accoun
 		consumedAt = now
 	}
 	for id, approval := range m.projectEnvironmentApprovals {
-		if approval.AccountID == accountID && approval.ProjectSlug == projectSlug && approval.EnvironmentSlug == environmentSlug && approval.PlanTokenHash == planTokenHash && approval.ApprovalTokenHash == approvalTokenHash && approval.ConsumedAt == nil && approval.ExpiresAt.After(now) {
+		if approval.AccountID == accountID && approval.ProjectSlug == projectSlug && approval.EnvironmentSlug == environmentSlug && approvalTokensMatch(approval, planTokenHash, approvalTokenHash) && approval.ConsumedAt == nil && approval.ExpiresAt.After(now) {
 			approval.ConsumedAt = &consumedAt
 			m.projectEnvironmentApprovals[id] = approval
 			return approval, nil
@@ -26991,6 +26993,7 @@ func (m *MemStore) CreateOrgInvitation(ctx context.Context, inv OrgInvitation) (
 	if inv.CreatedAt.IsZero() {
 		inv.CreatedAt = time.Now().UTC()
 	}
+	inv.TokenHash = storedCredential(credTagOrgInvitation, inv.TokenHash)
 	hashKey := hex.EncodeToString(inv.TokenHash)
 	if _, exists := m.invitations[hashKey]; exists {
 		return OrgInvitation{}, ErrConflict
@@ -27003,7 +27006,7 @@ func (m *MemStore) CreateOrgInvitation(ctx context.Context, inv OrgInvitation) (
 func (m *MemStore) OrgInvitationByTokenHash(_ context.Context, hash []byte) (OrgInvitation, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	inv, ok := m.invitations[hex.EncodeToString(hash)]
+	inv, _, ok := credentialEntry(m.invitations, credTagOrgInvitation, hash)
 	if !ok {
 		return OrgInvitation{}, ErrNotFound
 	}
@@ -27017,8 +27020,7 @@ func (m *MemStore) OrgInvitationByTokenHash(_ context.Context, hash []byte) (Org
 func (m *MemStore) ConsumeOrgInvitation(_ context.Context, hash []byte, acceptingAccount Account) (OrgMembership, OrgInvitation, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	hashKey := hex.EncodeToString(hash)
-	inv, ok := m.invitations[hashKey]
+	inv, hashKey, ok := credentialEntry(m.invitations, credTagOrgInvitation, hash)
 	if !ok {
 		return OrgMembership{}, OrgInvitation{}, ErrOrgInvitationInvalid
 	}

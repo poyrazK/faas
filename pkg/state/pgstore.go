@@ -5215,6 +5215,8 @@ func (s *PgStore) CreateProjectEnvironmentApproval(ctx context.Context, approval
 	if approval.TokenKind == "" {
 		approval.TokenKind = "plan"
 	}
+	approval.PlanTokenHash = storedApprovalTokenHash(credTagPromotionPlanToken, approval.PlanTokenHash)
+	approval.ApprovalTokenHash = storedApprovalTokenHash(credTagPromotionApprovalToken, approval.ApprovalTokenHash)
 	row := s.pool.QueryRow(ctx, `
 		insert into project_environment_approvals
 			(account_id, project_slug, environment_slug, token_kind, plan_token_hash, approval_token_hash, expires_at, approved_by_account_id)
@@ -5234,30 +5236,40 @@ func (s *PgStore) ProjectEnvironmentApprovalByID(ctx context.Context, accountID,
 }
 
 func (s *PgStore) ProjectEnvironmentApprovalByToken(ctx context.Context, accountID, projectSlug, environmentSlug, planTokenHash, approvalTokenHash string) (ProjectEnvironmentApproval, error) {
-	row := s.pool.QueryRow(ctx, `
-		select id, account_id, project_slug, environment_slug, token_kind, plan_token_hash, approval_token_hash, expires_at, consumed_at, created_at, coalesce(approved_by_account_id::text, '')
-		  from project_environment_approvals
-		 where account_id = $1 and project_slug = $2 and environment_slug = $3
-		   and plan_token_hash = $4 and approval_token_hash = $5 and consumed_at is null and expires_at > now()
-		 order by created_at desc
-		 limit 1
-	`, accountID, projectSlug, environmentSlug, planTokenHash, approvalTokenHash)
-	return scanProjectEnvironmentApproval(row)
+	for _, pair := range approvalTokenPairs(planTokenHash, approvalTokenHash) {
+		approval, err := scanProjectEnvironmentApproval(s.pool.QueryRow(ctx, `
+			select id, account_id, project_slug, environment_slug, token_kind, plan_token_hash, approval_token_hash, expires_at, consumed_at, created_at, coalesce(approved_by_account_id::text, '')
+			  from project_environment_approvals
+			 where account_id = $1 and project_slug = $2 and environment_slug = $3
+			   and plan_token_hash = $4 and approval_token_hash = $5 and consumed_at is null and expires_at > now()
+			 order by created_at desc
+			 limit 1
+		`, accountID, projectSlug, environmentSlug, pair[0], pair[1]))
+		if !errors.Is(err, ErrNotFound) {
+			return approval, err
+		}
+	}
+	return ProjectEnvironmentApproval{}, ErrNotFound
 }
 
 func (s *PgStore) ConsumeProjectEnvironmentApproval(ctx context.Context, accountID, projectSlug, environmentSlug, planTokenHash, approvalTokenHash string, consumedAt time.Time) (ProjectEnvironmentApproval, error) {
 	if consumedAt.IsZero() {
 		consumedAt = time.Now().UTC()
 	}
-	row := s.pool.QueryRow(ctx, `
-		update project_environment_approvals
-		   set consumed_at = $6
-		 where account_id = $1 and project_slug = $2 and environment_slug = $3
-		   and plan_token_hash = $4 and approval_token_hash = $5
-		   and consumed_at is null and expires_at > now()
-		returning id, account_id, project_slug, environment_slug, token_kind, plan_token_hash, approval_token_hash, expires_at, consumed_at, created_at, coalesce(approved_by_account_id::text, '')
-	`, accountID, projectSlug, environmentSlug, planTokenHash, approvalTokenHash, consumedAt)
-	return scanProjectEnvironmentApproval(row)
+	for _, pair := range approvalTokenPairs(planTokenHash, approvalTokenHash) {
+		approval, err := scanProjectEnvironmentApproval(s.pool.QueryRow(ctx, `
+			update project_environment_approvals
+			   set consumed_at = $6
+			 where account_id = $1 and project_slug = $2 and environment_slug = $3
+			   and plan_token_hash = $4 and approval_token_hash = $5
+			   and consumed_at is null and expires_at > now()
+			returning id, account_id, project_slug, environment_slug, token_kind, plan_token_hash, approval_token_hash, expires_at, consumed_at, created_at, coalesce(approved_by_account_id::text, '')
+		`, accountID, projectSlug, environmentSlug, pair[0], pair[1], consumedAt))
+		if !errors.Is(err, ErrNotFound) {
+			return approval, err
+		}
+	}
+	return ProjectEnvironmentApproval{}, ErrNotFound
 }
 
 // CreateProject inserts a new project row. The accounts FK is enforced

@@ -106,6 +106,22 @@ func staleCredential(tag credhash.Tag, sum, stored []byte) ([]byte, bool) {
 	return p.Store(tag, sum), true
 }
 
+// firstCredentialMatch is firstCredential that also returns the stored value
+// that matched, for a caller that rewrites it under the current key.
+func firstCredentialMatch[T any](ctx context.Context, lookups [][]byte, find func(context.Context, []byte) (T, error)) (T, []byte, error) {
+	var zero T
+	for _, value := range lookups {
+		out, err := find(ctx, value)
+		if err == nil {
+			return out, value, nil
+		}
+		if !errors.Is(err, ErrNotFound) {
+			return zero, nil, err
+		}
+	}
+	return zero, nil, ErrNotFound
+}
+
 // firstCredential runs find for each lookup in turn and returns the first
 // result that is not ErrNotFound.
 func firstCredential[T any](ctx context.Context, lookups [][]byte, find func(context.Context, []byte) (T, error)) (T, error) {
@@ -148,6 +164,47 @@ func rawCredentialKey[T any](rows map[string]T, tag credhash.Tag, sum []byte) (s
 func credentialIn(tag credhash.Tag, sum, stored []byte) bool {
 	for _, value := range credentialLookups(tag, sum) {
 		if string(value) == string(stored) {
+			return true
+		}
+	}
+	return false
+}
+
+// approvalTokenPairs are the (plan, approval) stored hex pairs to try for a
+// promotion approval's token hashes (ADR 20261029202403): both columns of a
+// row are written in one insert under one key, so the pairs run key by key,
+// the current key's first, then the plain pair while plain lookup is on.
+// Hashes that are not a token's hex SHA-256 are tried as given.
+func approvalTokenPairs(planHex, approvalHex string) [][2]string {
+	plan, perr := hex.DecodeString(planHex)
+	approval, aerr := hex.DecodeString(approvalHex)
+	if perr != nil || aerr != nil || len(plan) != credhash.PlainSize || len(approval) != credhash.PlainSize {
+		return [][2]string{{planHex, approvalHex}}
+	}
+	plans := credentialLookups(credTagPromotionPlanToken, plan)
+	approvals := credentialLookups(credTagPromotionApprovalToken, approval)
+	out := make([][2]string, 0, len(plans))
+	for i := 0; i < len(plans) && i < len(approvals); i++ {
+		out = append(out, [2]string{hex.EncodeToString(plans[i]), hex.EncodeToString(approvals[i])})
+	}
+	return out
+}
+
+// storedApprovalTokenHash is the hex value to write for a promotion
+// approval token hash.
+func storedApprovalTokenHash(tag credhash.Tag, sumHex string) string {
+	sum, err := hex.DecodeString(sumHex)
+	if err != nil || len(sum) != credhash.PlainSize {
+		return sumHex
+	}
+	return hex.EncodeToString(storedCredential(tag, sum))
+}
+
+// approvalTokensMatch reports whether a stored approval holds one of the
+// token-hash pairs approvalTokenPairs gives.
+func approvalTokensMatch(approval ProjectEnvironmentApproval, planHex, approvalHex string) bool {
+	for _, pair := range approvalTokenPairs(planHex, approvalHex) {
+		if approval.PlanTokenHash == pair[0] && approval.ApprovalTokenHash == pair[1] {
 			return true
 		}
 	}
