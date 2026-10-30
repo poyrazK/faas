@@ -83,19 +83,26 @@ var routeActions = map[string]authz.OrgAction{
 	// incident. Members who deploy also operate releases; viewers read their
 	// state. Release gates and the route-health guard stop releases, so only
 	// owners and admins change them, as with the approval policy.
-	"POST /v1/apps/{slug}/rollback":                                                   authz.OrgActionDeployApp,
-	"GET /v1/apps/{slug}/rollbacks/{operation}":                                       authz.OrgActionReadApp,
-	"POST /v1/apps/{slug}/rollouts/recover":                                           authz.OrgActionDeployApp,
-	"GET /v1/apps/{slug}/rollouts/{id}/observation":                                   authz.OrgActionReadApp,
-	"GET /v1/apps/{slug}/debug/rollout":                                               authz.OrgActionReadApp,
-	"GET /v1/apps/{slug}/release-review":                                              authz.OrgActionReadApp,
-	"POST /v1/apps/{slug}/config/rollback":                                            authz.OrgActionConfigureApp,
-	"POST /v1/deployments/{id}/canary/advance":                                        authz.OrgActionDeployApp,
-	"GET /v1/deployments/{id}/canary/profile-gate":                                    authz.OrgActionReadApp,
-	"PATCH /v1/deployments/{id}/traffic":                                              authz.OrgActionDeployApp,
-	"POST /v1/deployments/{id}/promote":                                               authz.OrgActionDeployApp,
-	"POST /v1/deployments/{id}/promote-with-application-ack":                          authz.OrgActionDeployApp,
-	"GET /v1/apps/{slug}/freeze-status":                                               authz.OrgActionReadApp,
+	"POST /v1/apps/{slug}/rollback":                          authz.OrgActionDeployApp,
+	"GET /v1/apps/{slug}/rollbacks/{operation}":              authz.OrgActionReadApp,
+	"POST /v1/apps/{slug}/rollouts/recover":                  authz.OrgActionDeployApp,
+	"GET /v1/apps/{slug}/rollouts/{id}/observation":          authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/debug/rollout":                      authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/release-review":                     authz.OrgActionReadApp,
+	"POST /v1/apps/{slug}/config/rollback":                   authz.OrgActionConfigureApp,
+	"POST /v1/deployments/{id}/canary/advance":               authz.OrgActionDeployApp,
+	"GET /v1/deployments/{id}/canary/profile-gate":           authz.OrgActionReadApp,
+	"PATCH /v1/deployments/{id}/traffic":                     authz.OrgActionDeployApp,
+	"POST /v1/deployments/{id}/promote":                      authz.OrgActionDeployApp,
+	"POST /v1/deployments/{id}/promote-with-application-ack": authz.OrgActionDeployApp,
+	"GET /v1/apps/{slug}/freeze-status":                      authz.OrgActionReadApp,
+	// Deploy freezes (ADR-20261019071733 amendment 4): a member who deploys
+	// may freeze an app with a window and lift a window they created; the
+	// handlers hold standing policies and everyone else's freezes to owners
+	// and admins.
+	"GET /v1/apps/{slug}/freezes":                                                     authz.OrgActionReadApp,
+	"POST /v1/apps/{slug}/freezes":                                                    authz.OrgActionDeployApp,
+	"DELETE /v1/apps/{slug}/freezes/{id}":                                             authz.OrgActionDeployApp,
 	"GET /v1/apps/{slug}/release-gates":                                               authz.OrgActionReadApp,
 	"POST /v1/apps/{slug}/release-gates":                                              authz.OrgActionManageAppSecurity,
 	"DELETE /v1/apps/{slug}/release-gates/{name}":                                     authz.OrgActionManageAppSecurity,

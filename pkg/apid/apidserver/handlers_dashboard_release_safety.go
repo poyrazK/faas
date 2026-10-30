@@ -41,8 +41,8 @@ func (s *server) dashboardReleaseSafetyData(ctx context.Context, acct state.Acco
 		s.log.Warn("dashboard: release safety section unavailable", "app", app.ID, "section", section, "err", err)
 		data.Unavailable = append(data.Unavailable, section)
 	}
-	if store, ok := s.releaseFreezes(); ok && s.capabilityEnabledFor("deploy-freezes", acct, app) {
-		if status, err := s.releaseFreezeStatus(ctx, store, acct.ID, app); err != nil {
+	if _, ok := s.releaseFreezes(); ok && s.capabilityEnabledFor("deploy-freezes", acct, app) {
+		if status, err := s.releaseFreezeStatus(ctx, app); err != nil {
 			unavailable("Deploy freezes", err)
 		} else {
 			data.Freezes = &status

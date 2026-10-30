@@ -242,9 +242,11 @@ type server struct {
 	// by the usage views (ADR-20261025094915).
 	managedPostgresCapMode         managedpostgres.CapEnforcementMode
 	managedPostgresHealthCollector *managedpostgres.HealthCollector
-	store                          state.Store
-	domainVerificationMetrics      *domainVerificationMetrics
-	log                            *slog.Logger
+	// managedPostgresSQLProber probes the canary databases (ADR-20261029172812); nil when unconfigured.
+	managedPostgresSQLProber  *managedpostgres.SQLProber
+	store                     state.Store
+	domainVerificationMetrics *domainVerificationMetrics
+	log                       *slog.Logger
 	// devSourceCacheMu serializes reconstruction with best-effort cache
 	// replacement. The cache is node-local and disposable; this lock is not
 	// cross-node coordination and never guards customer-intent state.
@@ -4636,6 +4638,13 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/freezes", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.createReleaseFreeze)))
 	mux.HandleFunc("DELETE /v1/freezes/{id}", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.liftReleaseFreeze)))
 	mux.HandleFunc("GET /v1/apps/{slug}/freeze-status", s.authLimited(s.requireScope(api.ScopesDeploymentReadSurface...)(s.getReleaseFreezeStatus)))
+	// Amendment 4: a company organization owns its apps' freezes.
+	mux.HandleFunc("GET /v1/apps/{slug}/freezes", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listAppReleaseFreezes)))
+	mux.HandleFunc("POST /v1/apps/{slug}/freezes", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.createAppReleaseFreeze)))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/freezes/{id}", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.liftAppReleaseFreeze)))
+	mux.HandleFunc("GET /v1/orgs/{slug}/freezes", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.listOrgReleaseFreezes)))))
+	mux.HandleFunc("POST /v1/orgs/{slug}/freezes", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.loadOrg(s.createOrgReleaseFreeze)))))
+	mux.HandleFunc("DELETE /v1/orgs/{slug}/freezes/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.loadOrg(s.liftOrgReleaseFreeze)))))
 	// ADR-20261019071734: release gates on customer signals.
 	mux.HandleFunc("GET /v1/apps/{slug}/release-gates", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listReleaseGates)))
 	mux.HandleFunc("POST /v1/apps/{slug}/release-gates", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.createReleaseGate)))

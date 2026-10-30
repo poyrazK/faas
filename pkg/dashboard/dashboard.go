@@ -3587,6 +3587,9 @@ type ManagedPostgresDatabaseItem struct {
 	UpdatedAt            string
 	Bindings             []ManagedPostgresBindingItem
 	BindingsError        string
+	// RestorableUntil is when a scheduled delete becomes final
+	// (ADR-20261029174950); empty when no delete is scheduled.
+	RestorableUntil string
 }
 
 // ManagedPostgresBindingItem is the safe metadata shown for an app binding.

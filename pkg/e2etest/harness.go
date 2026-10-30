@@ -177,6 +177,8 @@ type Harness struct {
 	scheddEnv        []string
 	scheddConfigPath string
 	vmmdLaunchEnv    []string
+	// vmmdJournalDir is vmmd's resource journal directory.
+	vmmdJournalDir string
 	// nativeRuntimeSnapshotRoot is vmmd's private tree for native runtime
 	// snapshots when the run enables them (ADR 20261022184951 amendment 1).
 	nativeRuntimeSnapshotRoot string
@@ -357,6 +359,10 @@ failure_report_dir = %q
 `,
 			sockPath, "root", kernelPath, filepath.Join(tmp, "vmmd-resources"), filepath.Join(tmp, "vmmd-failures"),
 		)
+		h.vmmdJournalDir = filepath.Join(tmp, "vmmd-resources")
+		if dir := os.Getenv("FAAS_VMMD_RESOURCE_JOURNAL_DIR"); dir != "" {
+			h.vmmdJournalDir = dir // vmmd's environment override wins over the TOML
+		}
 		if os.Getenv("GREGALE_GITOPS_NATIVE_ACCEPTANCE") == "1" || os.Getenv("FAAS_FINANCIAL_SYSTEM_ACCEPTANCE") == "1" {
 			images, publications := filepath.Join(tmp, "native-images"), filepath.Join(tmp, "native-publications")
 			for _, path := range []string{images, publications} {
@@ -2170,6 +2176,9 @@ func (h *Harness) PlannedRestartVMMD(stopTimeout time.Duration) error {
 	h.requireDaemonsAlive(h.T)
 	return nil
 }
+
+// VMMDResourceJournalDir is the directory vmmd keeps its resource journal in.
+func (h *Harness) VMMDResourceJournalDir() string { return h.vmmdJournalDir }
 
 // SetVMMDEnv changes one variable of the retained vmmd launch recipe; the
 // next PlannedRestartVMMD starts the successor with it. Launch entries come

@@ -838,6 +838,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go srv.runProjectEnvironmentCloneCoordinator(ctx)
 		go srv.runManagedPostgresUsageCollector(ctx)
 		go srv.runManagedPostgresHealthCollector(ctx)
+		go srv.runManagedPostgresSQLProber(ctx)
 		go srv.runAppHealthCollector(ctx)
 		go srv.runEdgeCrawlerRangesRefresher(ctx)
 		go mcpcatalog.RunManagedObservers(ctx, srv.store, srv.domain, hostIdentitiesForUnseal, log, srv.mcpReadinessPreview)
@@ -1693,6 +1694,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	srv.WithManagedPostgres(managedPostgresService, managedPostgresReconciler, managedPostgresBindings, managedPostgresBindingReconciler, managedPostgresUsageCollector, managedPostgresHealthCollector)
 	srv.configureManagedPostgresCapMode(deps.getenv)
+	if err := srv.configureManagedPostgresSQLProber(deps.getenv, ops.Registry()); err != nil {
+		return fmt.Errorf("apid managed postgres sql probe: %w", err)
+	}
 	if err := srv.configureRealtimePreview(deps.getenv); err != nil {
 		return fmt.Errorf("apid realtime preview: %w", err)
 	}
@@ -1872,6 +1876,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR 20261027163626: time each phase of the traffic binding guard.
 	state.SetTrafficPolicyPhaseObserver(ops.ObserveTrafficPolicyPhase)
 	state.SetTrafficBindingScopeObserver(ops.ObserveTrafficBindingScope)
+	state.SetTrafficBindingCaptureObserver(ops.ObserveTrafficBindingCapture)
 
 	// ADR-093 / PR-D: end-to-end request budgets on the apid
 	// listener. Same shape as gatewayd-public PR-B: a fresh

@@ -303,7 +303,7 @@ func (s *PgStore) appendManagedRealtimeChannel(ctx context.Context, endpointID, 
 		}
 	}
 	if expiration == nil {
-		if err := validateEventSchemaPG(ctx, tx, endpointID, channel, data, binary, metadata); err != nil {
+		if err := validateEventSchemaPG(ctx, tx, s.realtimeEventSchemas, endpointID, channel, data, binary, metadata); err != nil {
 			return ManagedRealtimeChannelMessage{}, err
 		}
 	}

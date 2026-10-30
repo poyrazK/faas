@@ -199,6 +199,34 @@ jobs:
         with:
           subject-path: /tmp/gregale-build/gregale_*.tar.gz
 
+      # Issue #295: one SPDX SBOM over the binaries of every CLI archive,
+      # attested to each archive; verify with `gh attestation verify <archive>
+      # -R poyrazK/faas --predicate-type https://spdx.dev/Document/v2.3`.
+      - name: Install pinned Syft
+        env:
+          SYFT_VERSION: "1.49.0"
+          SYFT_SHA256: "7aa2f03ee92739cf643279ba3990548b9925d4e22cae13f46831ee62821147fe"
+        run: bash scripts/ci/install-syft.sh "$RUNNER_TEMP/syft"
+
+      - name: Generate CLI SBOM
+        run: |
+          set -euo pipefail
+          # One directory per archive, so the SBOM records which archive's
+          # binary each package was found in.
+          for archive in /tmp/gregale-build/gregale_*.tar.gz; do
+            dir="$RUNNER_TEMP/cli-sbom/$(basename "$archive" .tar.gz)"
+            mkdir -p "$dir"
+            tar -xzf "$archive" -C "$dir"
+          done
+          "$RUNNER_TEMP/syft" scan "dir:$RUNNER_TEMP/cli-sbom" -q \
+            -o "spdx-json=$RUNNER_TEMP/cli.spdx.json"
+
+      - name: Attest CLI SBOM
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: /tmp/gregale-build/gregale_*.tar.gz
+          sbom-path: ${{ runner.temp }}/cli.spdx.json
+
       # Handed to publish-npm, which stages the five npm packages from
       # these exact archives rather than rebuilding the CLI. One build per
       # release, consumed by every channel.

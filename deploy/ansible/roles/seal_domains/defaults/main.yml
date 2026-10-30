@@ -135,6 +135,14 @@ faas_seal_domain_build_writes: ""
 # the rollback window. Required for writes=domain.
 faas_seal_domain_build_readers_verified: false
 
+# The contract step: imaged drops the fleet and host identities and opens
+# private-registry passwords with the domain identity alone. Needs
+# writes=domain, and the role refuses it while `gregalectl seal-domain
+# migrate --domain build --check` finds a password the fleet or host
+# identity still opens, or an unexpired crash capture imaged keeps with the
+# fleet key. vmmd, the domain's other reader, keeps them for runtime.
+faas_seal_domain_build_contracted: false
+
 # Operator-local files from `gregalectl seal-domain init --domain edge`.
 # Compute hosts stage the identity (gatewayd-internal opens basic-auth
 # credentials and log drain headers), control-plane hosts the recipient
