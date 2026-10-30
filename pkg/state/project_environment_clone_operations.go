@@ -120,4 +120,5 @@ type ProjectEnvironmentCloneOperationStore interface {
 // has to finish: every status but ready, failed and compensated.
 type ProjectEnvironmentCloneActivityStore interface {
 	UnfinishedProjectEnvironmentClones(ctx context.Context) (int64, error)
+	UnfinishedProjectEnvironmentClonesForProject(ctx context.Context, projectID string) (int64, error)
 }

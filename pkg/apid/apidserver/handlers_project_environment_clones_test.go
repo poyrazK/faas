@@ -111,6 +111,8 @@ func TestFullProjectEnvironmentCloneNamesSchemaBlockersAndFailsClosed(t *testing
 			name := map[bool]string{true: "dedicated", false: "legacy"}[dedicated] + "/" + map[bool]string{true: "read_failure", false: "blockers"}[failed]
 			t.Run(name, func(t *testing.T) {
 				srv, store, acct, project, _ := apidserver.NewProjectLifecycleFixture(t)
+				// The platform's registry gap is named to operators only.
+				srv.WithAdminAllowlist(acct.Email)
 				coverageStore := &cloneSchemaCoverageTestStore{MemStore: store, report: state.ProjectEnvironmentCloneSchemaCoverage{Blockers: []state.ProjectEnvironmentCloneCoverageBlocker{
 					{Table: "queue_bindings", Code: "isolated_strategy_unavailable"},
 					{Table: "app_envs", Column: "new_setting", Code: "unregistered_column"},
@@ -190,8 +192,10 @@ func TestFullProjectEnvironmentCloneHidesInternalHostingBlockers(t *testing.T) {
 							t.Fatalf("unexpected internal table visibility: %s", rec.Body.String())
 						}
 					}
-					if !strings.Contains(rec.Body.String(), "resource_coverage.queue_bindings") {
-						t.Fatalf("public coverage blocker missing: %s", rec.Body.String())
+					// The registry gap is the platform's: operators see it, customers
+					// get only the four resource categories.
+					if strings.Contains(rec.Body.String(), "resource_coverage.queue_bindings") != operator || len(problem.Errors) < 4 {
+						t.Fatalf("registry blockers shown to the wrong caller (operator=%v): %s", operator, rec.Body.String())
 					}
 					if _, err := store.ProjectEnvironmentBySlug(context.Background(), acct.ID, project.ID, "stage"); !errors.Is(err, state.ErrNotFound) {
 						t.Fatalf("partial target exists: %v", err)
