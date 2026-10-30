@@ -21542,8 +21542,8 @@ paths:
       operationId: getAppStatus
       summary: Read an app's conditions.
       description: |
-        Preview (resource-conditions capability, ADR-20261030151810). The
-        app's Ready, Progressing and Degraded conditions, derived when read
+        Preview (resource-conditions capability). The app's Ready,
+        Progressing and Degraded conditions, derived when read
         from the same evidence as GET /v1/apps/{slug}/health and never
         stored. It never wakes or probes a workload. An idle app that scales
         to zero is Ready=True with reason idle. A terminal condition will not
@@ -32519,8 +32519,8 @@ paths:
       operationId: getDeploymentStatus
       summary: Read a deployment's conditions.
       description: |
-        Preview (resource-conditions capability, ADR-20261030151810). The
-        deployment's Ready, Progressing and RolledOut conditions, mapped from
+        Preview (resource-conditions capability). The deployment's Ready,
+        Progressing and RolledOut conditions, mapped from
         the response GET /v1/deployments/{id} returns and never stored.
         Failed, cancelled and superseded deployments report terminal
         conditions. Cache-Control no-store.
@@ -111959,7 +111959,7 @@ components:
         assessment: { $ref: '#/components/schemas/AppHealthResponse' }
     ResourceStatus:
       type: object
-      description: A resource's status subresource (ADR-20261030151810).
+      description: A resource's status subresource: conditions derived when read, never stored.
       required: [kind, name, observed_at, conditions]
       properties:
         kind: { type: string, enum: [app, deployment] }
