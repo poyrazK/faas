@@ -291,7 +291,8 @@ func (linuxNativeJailDevices) NamespaceRemoved(ctx context.Context, s jailsetup.
 		}
 		for _, task := range tasks {
 			if err := nativeDeviceNamespacePathGone(filepath.Join(path, "task", task.Name(), "ns", "mnt"), s.Namespace); err != nil {
-				return err
+				// Name the holder: recovery refuses to start until it exits.
+				return fmt.Errorf("%w (process %s %q, task %s)", err, process.Name(), nativeProcessComm(path), task.Name())
 			}
 		}
 		descriptors, err := os.ReadDir(filepath.Join(path, "fd"))
@@ -319,6 +320,17 @@ func (linuxNativeJailDevices) NamespaceRemoved(ctx context.Context, s jailsetup.
 	}
 	return nil
 }
+
+// nativeProcessComm is a process's command name for a recovery diagnostic,
+// empty when it has exited or cannot be read.
+func nativeProcessComm(procPath string) string {
+	comm, err := os.ReadFile(filepath.Join(procPath, "comm"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(comm))
+}
+
 func nativeDeviceNamespacePathGone(path string, expected jailsetup.DeviceFDIdentity) error {
 	var stat unix.Stat_t
 	err := unix.Stat(path, &stat)

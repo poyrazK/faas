@@ -89,8 +89,22 @@ func TestFinancialBudgetPreviewStopMetal(t *testing.T) {
 	if err := s.RecordFinancialBudgetEvaluation(ctx, account, p.ID, p.Revision, financial.BudgetEvaluation{PeriodStart: month, PeriodEnd: month.AddDate(0, 1, 0), AsOf: now, EvaluatedAt: now, KnownMillicents: &amount, Fresh: true}); err != nil {
 		t.Fatal(err)
 	}
-	if body := request("budget-preview", http.StatusPaymentRequired); !strings.Contains(string(body), "financial_budget_held") {
-		t.Fatalf("unstable budget problem: %s", body)
+	// A gateway answers a warm decision older than FinancialBudgetAdmissionCacheTTL
+	// while one background read refreshes it (ADR-20261028083324), so the first
+	// request after the policy holds may still be admitted; the next one is not.
+	holdBy := time.Now().Add(api.FinancialBudgetAdmissionCacheTTL + api.FinancialBudgetAdmissionRefreshTimeout + 2*time.Second)
+	for {
+		body, status := doGetWithHost(t, &http.Client{}, h.GatewayURL+"/", "budget-preview.apps.test.example", 30*time.Second)
+		if status == http.StatusPaymentRequired {
+			if !strings.Contains(string(body), "financial_budget_held") {
+				t.Fatalf("unstable budget problem: %s", body)
+			}
+			break
+		}
+		if status != http.StatusOK || time.Now().After(holdBy) {
+			t.Fatalf("budget-preview after hold: status=%d body=%s", status, body)
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 	request("budget-production", http.StatusOK)
 	deadline := time.Now().Add(time.Minute)
