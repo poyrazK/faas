@@ -285,6 +285,13 @@ ADR-568 requires.
   - Serving still failed on every pass, now with a bare `state: conflict`.
     Many store calls return that.
   - 44e992a7f0 names the failing step in the verification error.
+- 2026-10-30, n2, rerun with 44e992a7f0:
+  - The named step was `reconcile preparation`. Preparation reconciliation
+    compared the activated candidate's inputs strictly, and so did source
+    requests.
+  - eb173a4d6d routes all three post-activation checks through one helper
+    with the activated-candidate comparison. Activation itself keeps the
+    strict match on a held candidate.
 - Pending: the n2 native GitOps journey through serving and the resilience
   phases.
 
