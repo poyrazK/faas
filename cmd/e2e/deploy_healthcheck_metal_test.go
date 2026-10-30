@@ -124,6 +124,11 @@ func TestDeployHealthcheckMetal(t *testing.T) {
 	if got := postOK(t, h, key, "/v1/apps", api.CreateAppRequest{Slug: slug, Type: "app", RequireAuthn: &falsy}); got != 201 {
 		t.Fatalf("create app %q: status=%d", slug, got)
 	}
+	// require_authn=false leaves public_auth_mode=bearer on: open it too.
+	if body, status := doReq(t, h, key, http.MethodPatch, "/v1/apps/"+slug,
+		api.UpdateAppRequest{PublicAuth: &api.PublicAuthBlock{Mode: api.AppPublicAuthModeOpen}}); status != http.StatusOK {
+		t.Fatalf("open public auth: status=%d body=%s", status, body)
+	}
 	appID := mustGetAppID(t, h, key, slug)
 
 	// Multipart deploy via builderd (same path build_metal_test uses)
