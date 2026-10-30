@@ -432,6 +432,7 @@ type AlertRule struct {
 	McpReadinessScope               string
 	LogQuery                        pgtype.Text
 	CreatedByAccountID              pgtype.UUID
+	NotifyResolved                  bool
 }
 
 type AlertRuleChannel struct {

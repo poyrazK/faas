@@ -266,7 +266,7 @@ internal hosting service and Gregale Agents are already unreachable.
 | 138 | Audit log | `audit-events` | **MISSING** | — | GA |
 | 139 | Operational summary | `operational-summary` | **MISSING** | — | internal |
 | 140 | Per-app costs and cost trend | dashboard `app_costs_*` | **MISSING** | — | GA |
-| 141 | Public status page and incidents | `/v1/status`, `/v1/status/incidents` | **MISSING** | — | GA |
+| 141 | Public status page and incidents | `/v1/status` (active and resolved incidents), `/v1/status/incidents/{public_id}` | **MISSING** | — | GA |
 
 ## H. Account, teams and billing
 

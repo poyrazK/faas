@@ -28946,6 +28946,7 @@ CREATE TABLE public.alert_rules (
     mcp_readiness_scope text DEFAULT ''::text NOT NULL,
     log_query text,
     created_by_account_id uuid,
+    notify_resolved boolean DEFAULT false NOT NULL,
     CONSTRAINT alert_rules_action_chk CHECK ((action = ANY (ARRAY['webhook'::text, 'rollback'::text, 'demote'::text, 'promote'::text]))),
     CONSTRAINT alert_rules_comparison_chk CHECK ((comparison = ANY (ARRAY['gt'::text, 'gte'::text, 'lt'::text, 'lte'::text, 'above_baseline'::text, 'below_baseline'::text]))),
     CONSTRAINT alert_rules_cooldown_chk CHECK (((cooldown_minutes >= 5) AND (cooldown_minutes <= 1440))),
@@ -69044,6 +69045,13 @@ CREATE UNIQUE INDEX agents_account_name_active_idx ON public.agents USING btree 
 
 
 --
+-- Name: alert_deliveries_fired_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX alert_deliveries_fired_idx ON public.alert_deliveries USING btree (fired_at);
+
+
+--
 -- Name: alert_deliveries_idempotency_uniq; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -69128,10 +69136,17 @@ CREATE INDEX alert_rule_channels_channel_idx ON public.alert_rule_channels USING
 
 
 --
--- Name: alert_rules_account_name_uniq; Type: INDEX; Schema: public; Owner: -
+-- Name: alert_rules_account_wide_name_uniq; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX alert_rules_account_name_uniq ON public.alert_rules USING btree (account_id, name);
+CREATE UNIQUE INDEX alert_rules_account_wide_name_uniq ON public.alert_rules USING btree (account_id, name) WHERE (app_id IS NULL);
+
+
+--
+-- Name: alert_rules_app_name_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX alert_rules_app_name_uniq ON public.alert_rules USING btree (app_id, name) WHERE (app_id IS NOT NULL);
 
 
 --

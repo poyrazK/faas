@@ -1214,7 +1214,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	evaluator.SetLogContext(logSearch.Released)
 	// ADR-747: record customer SLO budget hours from Prometheus.
-	go runSLORollup(ctx, store, promClient, loops, log)
+	go runSLORollup(ctx, store, promClient, release.SLO, loops, log)
 	// ADR-098 PR-C: connection-aware upstream probe + partition
 	// cron. The FAAS_UPSTREAM_PROBE environment value is the
 	// bootstrap fallback; the durable data-placement flag can

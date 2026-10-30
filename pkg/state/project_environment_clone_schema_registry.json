@@ -525,6 +525,7 @@
       "mcp_readiness_scope",
       "metric",
       "name",
+      "notify_resolved",
       "org_id",
       "post_deploy_rollback_window_seconds",
       "slo_id",
