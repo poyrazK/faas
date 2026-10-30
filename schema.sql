@@ -29765,6 +29765,28 @@ CREATE TABLE public.api_consumers (
 
 
 --
+-- Name: api_key_agent_clients; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_key_agent_clients (
+    key_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    client_name text NOT NULL,
+    client_site text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT api_key_agent_clients_client_name_check CHECK (((char_length(client_name) >= 1) AND (char_length(client_name) <= 80))),
+    CONSTRAINT api_key_agent_clients_client_site_check CHECK ((char_length(client_site) <= 253))
+);
+
+
+--
+-- Name: TABLE api_key_agent_clients; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.api_key_agent_clients IS 'ADR-20261030133644 agent client names for hosted MCP keys; apid is the only writer.';
+
+
+--
 -- Name: api_keys; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -57102,6 +57124,14 @@ ALTER TABLE ONLY public.api_consumers
 
 
 --
+-- Name: api_key_agent_clients api_key_agent_clients_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_key_agent_clients
+    ADD CONSTRAINT api_key_agent_clients_pkey PRIMARY KEY (key_id);
+
+
+--
 -- Name: api_keys api_keys_key_sha256_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -69493,6 +69523,13 @@ CREATE UNIQUE INDEX api_consumers_app_external_ref_uniq ON public.api_consumers 
 --
 
 CREATE INDEX api_consumers_platform_tenant_idx ON public.api_consumers USING btree (platform_tenant_id) WHERE (platform_tenant_id IS NOT NULL);
+
+
+--
+-- Name: api_key_agent_clients_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX api_key_agent_clients_account_idx ON public.api_key_agent_clients USING btree (account_id);
 
 
 --
@@ -87027,6 +87064,14 @@ ALTER TABLE ONLY public.api_consumers
 
 ALTER TABLE ONLY public.api_consumers
     ADD CONSTRAINT api_consumers_platform_tenant_fkey FOREIGN KEY (account_id, platform_tenant_id) REFERENCES public.platform_tenants(account_id, id) ON DELETE SET NULL (platform_tenant_id);
+
+
+--
+-- Name: api_key_agent_clients api_key_agent_clients_key_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_key_agent_clients
+    ADD CONSTRAINT api_key_agent_clients_key_id_fkey FOREIGN KEY (key_id) REFERENCES public.api_keys(id) ON DELETE CASCADE;
 
 
 --

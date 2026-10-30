@@ -41,6 +41,10 @@ type remoteFixture struct {
 	keyScopes  map[string][]string
 	apiHook    func(http.ResponseWriter, *http.Request, string) bool
 	mints      []api.CliAuthCodeRequest
+	// agentClients and disconnects record what the bridge told apid about
+	// its keys (ADR-20261030133644), by key.
+	agentClients map[string]api.AgentClientRequest
+	disconnects  map[string]int
 	opts       HTTPOptions
 	setHandler func(http.Handler)
 	// prefix is /mcp on a hosted bridge, whose OAuth routes live under it.
@@ -53,7 +57,7 @@ func newRemoteFixture(t *testing.T, writes bool) *remoteFixture {
 
 func newRemoteFixtureWithOptions(t *testing.T, writes bool, options HTTPOptions) *remoteFixture {
 	t.Helper()
-	f := &remoteFixture{t: t, accounts: map[string]string{"fp_test_alice_remote_key": "alice", "fp_test_bob_remote_key": "bob"}}
+	f := &remoteFixture{t: t, accounts: map[string]string{"fp_test_alice_remote_key": "alice", "fp_test_bob_remote_key": "bob"}, agentClients: map[string]api.AgentClientRequest{}, disconnects: map[string]int{}}
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if req.URL.Path == "/v1/cli-auth/code" {
 			var input api.CliAuthCodeRequest
@@ -132,6 +136,18 @@ func newRemoteFixtureWithOptions(t *testing.T, writes bool, options HTTPOptions)
 			_ = json.NewEncoder(w).Encode(api.AccountResponse{ID: account, Plan: "free", Status: "active", KeyScopes: scopes})
 		case "/v1/capabilities":
 			_ = json.NewEncoder(w).Encode(api.CapabilitiesResponse{Plan: "free"})
+		case "/v1/agent-connections/self":
+			key := strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer ")
+			f.mu.Lock()
+			if req.Method == http.MethodPut {
+				var input api.AgentClientRequest
+				_ = json.NewDecoder(req.Body).Decode(&input)
+				f.agentClients[key] = input
+			} else {
+				f.disconnects[key]++
+			}
+			f.mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
 		case "/v1/apps":
 			_ = json.NewEncoder(w).Encode([]api.AppResponse{{ID: account + "-app", Slug: "alpha"}})
 		case "/v1/apps/alpha":
