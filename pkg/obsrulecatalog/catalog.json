@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "2915e71e3b92d0d4f22abe4e9891c5b1f5d6ae99eadcae34190743d14491fa16",
+      "revision": "c87e283c2e53f60c4a0ee61e80e375fa3c3564548711b4df8e7390ffc8e4ed7a",
       "files": [
         "faas.rules.yml"
       ],
@@ -3728,6 +3728,19 @@
           }
         },
         {
+          "id": "94b95cf19da5d23db0b166e67dcd7155cad95a6d1cb5b63a3cb6423dddeeaccb",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_billing",
+          "rule_name": "FaasBaseProvenanceUnverified",
+          "definition": {
+            "expression_hash": "14918bb1803c152d9efc6808b54ba1532953481736933ac9d915b2ef34e50d71",
+            "labels_hash": "770741579de89d193a9eb62d4a0a8e3f5a4024aaf04b17bdd0d4bd48faf3ab80",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "61ab61d58a1f9dec28b02b3ff87049744f9820725e4f56d32e21fd9a5375738d"
+          }
+        },
+        {
           "id": "94c416f56402ed09141c715001f4df3d694f4d1fa308567dbd8116079fc15014",
           "file_name": "faas.rules.yml",
           "group_name": "account_lifecycle",
@@ -6448,7 +6461,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "0e162f13160ab09f8f67070b92df052113332f52310cc60e724455019d8d533c",
+      "revision": "f3d6c572193e5820b4fb0ab2ff01d1eefffe2a05a094d2f3e9cb08aac8e0f3c1",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -10355,6 +10368,19 @@
             "for_seconds": 120,
             "keep_firing_for_seconds": 0,
             "fingerprint": "9f1d77a3720fcf7ff5ca36466db4500043d1212b4bd0e54949c6577d1527703d"
+          }
+        },
+        {
+          "id": "94b95cf19da5d23db0b166e67dcd7155cad95a6d1cb5b63a3cb6423dddeeaccb",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_billing",
+          "rule_name": "FaasBaseProvenanceUnverified",
+          "definition": {
+            "expression_hash": "14918bb1803c152d9efc6808b54ba1532953481736933ac9d915b2ef34e50d71",
+            "labels_hash": "770741579de89d193a9eb62d4a0a8e3f5a4024aaf04b17bdd0d4bd48faf3ab80",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "61ab61d58a1f9dec28b02b3ff87049744f9820725e4f56d32e21fd9a5375738d"
           }
         },
         {

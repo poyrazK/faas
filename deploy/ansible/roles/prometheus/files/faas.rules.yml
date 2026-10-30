@@ -4244,6 +4244,23 @@ groups:
           description: "vmmd's base scan gate has kept refusing boots on {{ $labels.base }} for fifteen minutes with reason {{ $labels.reason }}. No instance on that base can cold boot or restore, so every app on its runtime fails to deploy and to wake. critical means the node-side Grype scan found a fixable CRITICAL vulnerability: publish a patched base. sidecar_missing, incomplete and generation_* mean the scan record is absent or stale: rerun the base stage."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBaseScanRefusingBoots.md"
 
+      # ADR-20261029155852: imaged checks a platform base's SLSA provenance
+      # before it builds the base. The counter only grows while imaged runs and
+      # a base is checked when it is built, so any unverified result since
+      # imaged started stays visible until a restart (re-pinning a base
+      # restarts imaged through its EnvironmentFile).
+      - alert: FaasBaseProvenanceUnverified
+        expr: sum by (instance, base, result) (imaged_base_provenance_verifications_total{result!~"verified|cached|legacy"}) > 0
+        for: 5m
+        labels:
+          severity: warn
+          component: imaged
+          family: base_provenance
+        annotations:
+          summary: "imaged could not verify the provenance of {{ $labels.base }} ({{ $labels.result }}) on {{ $labels.instance }}"
+          description: "imaged built or tried to build a platform base whose SLSA provenance did not verify: result {{ $labels.result }}. missing means the registry holds no attestation for the digest, rejected means cosign or the runner check refused every attestation, unavailable means the host has no cosign or no trusted root, error means the registry or cosign failed. In observe mode the base was staged anyway; in enforce mode it was refused and a rolled node stays drained."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBaseProvenanceUnverified.md"
+
       # ─────────────────────────────────────────────────────────────────
       # ADR-127 PR-B production debugger alerts. Mirrors the
       # FaasDomainDoctorStalled / FaasAuditRetentionLoopStalled
