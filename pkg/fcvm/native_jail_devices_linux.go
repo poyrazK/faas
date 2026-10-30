@@ -292,7 +292,8 @@ func (linuxNativeJailDevices) NamespaceRemoved(ctx context.Context, s jailsetup.
 		for _, task := range tasks {
 			if err := nativeDeviceNamespacePathGone(filepath.Join(path, "task", task.Name(), "ns", "mnt"), s.Namespace); err != nil {
 				// Name the holder: recovery refuses to start until it exits.
-				return fmt.Errorf("%w (process %s %q, task %s)", err, process.Name(), nativeProcessComm(path), task.Name())
+				// Its cgroup names the jail it was launched into.
+				return fmt.Errorf("%w (process %s %q, task %s, cgroup %q)", err, process.Name(), nativeProcessComm(path), task.Name(), nativeProcessCgroupPath(path))
 			}
 		}
 		descriptors, err := os.ReadDir(filepath.Join(path, "fd"))
@@ -329,6 +330,21 @@ func nativeProcessComm(procPath string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(comm))
+}
+
+// nativeProcessCgroupPath is a process's cgroup v2 path for a recovery
+// diagnostic, empty when it has exited or cannot be read.
+func nativeProcessCgroupPath(procPath string) string {
+	data, err := os.ReadFile(filepath.Join(procPath, "cgroup"))
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		if path, ok := strings.CutPrefix(line, "0::"); ok {
+			return path
+		}
+	}
+	return strings.TrimSpace(string(data))
 }
 
 func nativeDeviceNamespacePathGone(path string, expected jailsetup.DeviceFDIdentity) error {
