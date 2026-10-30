@@ -2064,6 +2064,13 @@ The server is the `mcp-bridged` daemon:
 - **Clients:** the unit allows Claude's and ChatGPT's published OAuth
   callbacks plus loopback clients. Override `ExecStart` in a drop-in to
   change the list.
+- **Client identity:** a client either registers (Dynamic Client
+  Registration) or names a Client ID Metadata Document URL as its
+  `client_id` (ADR-20261030065746). The server fetches the document over
+  HTTPS from public addresses only, caches it for up to a day, keeps only
+  the redirect URIs above, and shows the client's site on the consent page.
+  Every authorization response carries `iss`. The control plane needs
+  outbound HTTPS for document fetches.
 - **Bounds:**
   - 2,000 each of clients, pending sign-ins, codes and grants;
   - 10 grants per account;
