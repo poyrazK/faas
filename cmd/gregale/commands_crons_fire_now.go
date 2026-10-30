@@ -64,19 +64,25 @@ const (
 // same posture as cmdCronsUpdate and cmdCronsRuns.
 //
 // Async-by-design: the POST returns 202 + request_id, and the row
-// becomes terminal only after schedd dispatches the cron. We never
-// poll from the explicit-ID path; interactive mode follows the request
-// after reviewing and confirming the selected task.
+// becomes terminal only after schedd delivers the run. Without --wait the
+// explicit-ID path prints the request id and exits 0 once the run is
+// queued; --wait follows it and exits 0 only when the run succeeded.
+// Interactive mode follows the request after reviewing and confirming the
+// selected task.
 func cmdCronsRun(args []string) int {
 	fs := newFlagSet("crons-run", flag.ContinueOnError)
 	interactive := fs.Bool("interactive", false, "choose a task, confirm one manual run, and follow its request")
+	wait := fs.Bool("wait", false, "follow the run and exit non-zero unless it succeeds")
 	app := fs.String("app", "", "app slug for interactive task selection")
-	timeout := fs.Duration("timeout", 2*time.Minute, "maximum interactive fire-now wait")
-	flags, pos := splitArgsForFlags(args, "interactive")
+	timeout := fs.Duration("timeout", 2*time.Minute, "maximum follow duration with --wait or --interactive")
+	flags, pos := splitArgsForFlags(args, "interactive", "wait")
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
 	if *interactive {
+		if *wait {
+			return printErr("Invalid interactive run flags", fmt.Errorf("--interactive already follows the run; drop --wait"))
+		}
 		if len(pos) != 0 || *timeout <= 0 {
 			return printErr("Invalid interactive run flags", fmt.Errorf("use crons run --interactive with optional --app and a positive --timeout; choose the task in the flow"))
 		}
@@ -89,8 +95,11 @@ func cmdCronsRun(args []string) int {
 		}
 		return cmdCronsRunInteractive(slug, *timeout)
 	}
-	if logsFlagWasSet(fs, "app") || logsFlagWasSet(fs, "timeout") {
-		return printErr("Invalid run flags", fmt.Errorf("--app and --timeout require --interactive"))
+	if logsFlagWasSet(fs, "app") {
+		return printErr("Invalid run flags", fmt.Errorf("--app requires --interactive"))
+	}
+	if logsFlagWasSet(fs, "timeout") && !*wait || *timeout <= 0 {
+		return printErr("Invalid run flags", fmt.Errorf("--timeout must be positive and requires --wait or --interactive"))
 	}
 	if len(pos) != 1 {
 		printCommandValidation(os.Stderr, "usage: gregale cron run <id>\n")
@@ -108,6 +117,12 @@ func cmdCronsRun(args []string) int {
 	resp, err := client.FireCron(context.Background(), id)
 	if err != nil {
 		return printErr("Could not enqueue fire-now", err)
+	}
+	if *wait {
+		if !jsonOutput {
+			PrintProgress(osStdout, "Fire-now request enqueued: %s", resp.RequestID)
+		}
+		return followCronFireNowRequest(context.Background(), client, id, resp.RequestID, *timeout)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(resp))

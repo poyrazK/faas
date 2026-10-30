@@ -78,8 +78,15 @@ func TestMigrations_00046_APIKeyScopesV2_BackfillAndCheck(t *testing.T) {
 	// want the constraint to filter them out at INSERT time. We do
 	// the round-trip the way the deployment pipeline would: drop the
 	// constraint, apply the backfill CTE, re-add the constraint.
-	if _, err := pool.Exec(ctx,
-		`ALTER TABLE api_keys DROP CONSTRAINT IF EXISTS api_keys_scopes_vocab_chk`); err != nil {
+	// Later migrations replace the check under a versioned name
+	// (api_keys_scopes_vocab_v2_chk, _v3_chk, ...); drop whichever is current.
+	if _, err := pool.Exec(ctx, `
+		DO $$ DECLARE c text; BEGIN
+		  FOR c IN SELECT conname FROM pg_constraint
+		            WHERE conrelid = 'api_keys'::regclass AND conname LIKE 'api_keys\_scopes\_vocab%' LOOP
+		    EXECUTE format('ALTER TABLE api_keys DROP CONSTRAINT %I', c);
+		  END LOOP;
+		END $$`); err != nil {
 		t.Fatalf("drop chk for setup: %v", err)
 	}
 

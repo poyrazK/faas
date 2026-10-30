@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -75,8 +76,14 @@ type liveSignStore interface {
 type liveSignCounts struct {
 	// Signed rows were unsigned and now carry a signature.
 	Signed int `json:"signed"`
-	// AlreadySigned rows carried a signature and were left as they are.
+	// AlreadySigned rows carried this key's signature.
 	AlreadySigned int `json:"already_signed"`
+	// Resigned rows carried a trusted previous key's signature and now
+	// carry this key's (a signing-key rotation).
+	Resigned int `json:"resigned"`
+	// Invalid rows carry a signature neither this key nor a trusted one
+	// made. They are left as they are: livequeryd refuses them.
+	Invalid int `json:"invalid"`
 	// Changed rows were rewritten while the backfill ran; run it again.
 	Changed int `json:"changed"`
 }
@@ -90,10 +97,12 @@ type liveSignReport struct {
 const liveSignPage = 100
 
 // signExistingLive signs every unsigned live key and login as it stands
-// (ADR 20261028161502, backfill: trust on first use). Each signature names
-// the row it is stored on, and each write is a compare-and-swap on the
-// ciphertext and recipient the backfill read.
-func signExistingLive(ctx context.Context, store liveSignStore, signer *livekeys.Signer) (liveSignReport, error) {
+// (ADR 20261028161502, backfill: trust on first use), and signs again each
+// row whose signature a trusted previous key made (a signing-key rotation;
+// trusted may be nil). Each signature names the row it is stored on, and
+// each write is a compare-and-swap on the ciphertext, recipient and
+// signature the backfill read.
+func signExistingLive(ctx context.Context, store liveSignStore, signer *livekeys.Signer, trusted *livekeys.Verifier) (liveSignReport, error) {
 	var report liveSignReport
 	kinds := []struct {
 		kind   string
@@ -112,18 +121,29 @@ func signExistingLive(ctx context.Context, store liveSignStore, signer *livekeys
 				return report, err
 			}
 			for _, row := range rows {
-				if len(row.Signature) > 0 {
+				// Ed25519 is deterministic: this key's signature of the row
+				// is the one it already carries, if any.
+				sig := signer.Sign(k.kind, row.DatabaseID, k.kid(row), row.Recipient, row.Blob)
+				resign := len(row.Signature) > 0
+				switch {
+				case bytes.Equal(row.Signature, sig):
 					k.counts.AlreadySigned++
 					continue
+				case resign && (trusted == nil || trusted.Check(k.kind, row.DatabaseID, k.kid(row), row.Recipient, row.Blob, row.Signature) != nil):
+					k.counts.Invalid++
+					continue
 				}
-				signed, err := k.sign(ctx, row, signer.Sign(k.kind, row.DatabaseID, k.kid(row), row.Recipient, row.Blob))
+				signed, err := k.sign(ctx, row, sig)
 				if err != nil {
 					return report, err
 				}
-				if signed {
-					k.counts.Signed++
-				} else {
+				switch {
+				case !signed:
 					k.counts.Changed++
+				case resign:
+					k.counts.Resigned++
+				default:
+					k.counts.Signed++
 				}
 			}
 			if len(rows) < liveSignPage {
@@ -139,6 +159,7 @@ func runLiveQuerySignExisting(args []string) error {
 	fs := flag.NewFlagSet("live-query sign-existing", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	signKey := fs.String("sign-key", defaultLiveSigningKey, "apid's live signing key")
+	trustedKeys := fs.String("trusted-keys", "", "public keys of previous live signing keys; rows they signed are signed again with --sign-key")
 	dsn := fs.String("pg-dsn", "", "PostgreSQL DSN (default: FAAS_PG_DSN, DATABASE_URL, or deploy env)")
 	dbEnv := fs.String("db-env", "", "systemd env file containing DATABASE_URL")
 	jsonOut := fs.Bool("json", false, "emit JSON")
@@ -149,6 +170,14 @@ func runLiveQuerySignExisting(args []string) error {
 	if err != nil {
 		return err
 	}
+	var trusted *livekeys.Verifier
+	if *trustedKeys != "" {
+		keys, err := livekeys.LoadVerifyKeys(*trustedKeys)
+		if err != nil {
+			return err
+		}
+		trusted = livekeys.NewVerifier(keys, true)
+	}
 	pool, err := openFleetSealPool(*dsn, *dbEnv)
 	if err != nil {
 		return err
@@ -156,15 +185,27 @@ func runLiveQuerySignExisting(args []string) error {
 	defer pool.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
-	report, err := signExistingLive(ctx, livekeys.New(pool), livekeys.NewSigner(key))
+	report, err := signExistingLive(ctx, livekeys.New(pool), livekeys.NewSigner(key), trusted)
 	if err != nil {
 		return err
 	}
 	if *jsonOut || jsonOutput {
-		return json.NewEncoder(osStdout).Encode(report)
+		if err := json.NewEncoder(osStdout).Encode(report); err != nil {
+			return err
+		}
+	} else {
+		for _, kind := range []struct {
+			name   string
+			counts liveSignCounts
+		}{{"Live keys", report.Keys}, {"Live logins", report.Logins}} {
+			c := kind.counts
+			PrintOK(osStdout, "%s: %d signed, %d signed again, %d already signed, %d signed by an untrusted key, %d changed meanwhile\n",
+				kind.name, c.Signed, c.Resigned, c.AlreadySigned, c.Invalid, c.Changed)
+		}
 	}
-	PrintOK(osStdout, "Live keys: %d signed, %d already signed, %d changed meanwhile\nLive logins: %d signed, %d already signed, %d changed meanwhile\n",
-		report.Keys.Signed, report.Keys.AlreadySigned, report.Keys.Changed, report.Logins.Signed, report.Logins.AlreadySigned, report.Logins.Changed)
+	if report.Keys.Invalid+report.Logins.Invalid > 0 {
+		return errors.New("some rows carry a signature neither --sign-key nor --trusted-keys made; review them, or pass the previous key's public key as --trusted-keys")
+	}
 	if report.Keys.Changed+report.Logins.Changed > 0 {
 		return errors.New("rows changed while signing; run sign-existing again")
 	}

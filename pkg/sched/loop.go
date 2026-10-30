@@ -130,6 +130,7 @@ type Loop struct {
 	work                        *workPool
 	workOnce                    sync.Once
 	eventFanoutLastPrune        time.Time
+	eventFanoutBacklog          bool
 	eventBackfillLifecycleAt    time.Time
 	eventClaimRenewalEvery      time.Duration
 	eventFanoutHistoryLastPrune time.Time
@@ -245,6 +246,8 @@ type Loop struct {
 	tenantWorkflowScheduleFailed      bool
 	workflowOrch                      *WorkflowOrchestrator
 	workflowRetention                 *WorkflowRetention
+	// triggerAgents admits the runs of agent-target triggers (ADR-20261027090010 §9).
+	triggerAgents TriggerAgents
 
 	// triggerHealthMu guards triggerHealthLast, the last consumer health row
 	// written per trigger (trigger_health_throttle.go).
@@ -289,6 +292,7 @@ func (l *Loop) WithWorkflowsDispatched(enabled bool) *Loop {
 func (l *Loop) WithWorkflowOrchestrator(o *WorkflowOrchestrator) *Loop {
 	if o != nil {
 		o.capabilityAllowed = l.workflowCapabilityAllowed
+		o.agentsAllowed = l.agentsCapabilityAllowed
 	}
 	l.workflowOrch = o
 	return l
@@ -298,6 +302,13 @@ func (l *Loop) WithWorkflowOrchestrator(o *WorkflowOrchestrator) *Loop {
 // account (ADR-20261023115741).
 func (l *Loop) workflowCapabilityAllowed(ctx context.Context, appID string) bool {
 	return l.engine.appIDCapabilityAllowed(ctx, appID, "workflows")
+}
+
+// agentsCapabilityAllowed decides the agents capability for an app's account
+// (ADR-20261027090010): agent-target triggers and runs with an agent step
+// are held while it is off.
+func (l *Loop) agentsCapabilityAllowed(ctx context.Context, appID string) bool {
+	return l.engine.appIDCapabilityAllowed(ctx, appID, "agents")
 }
 
 // WithWorkflowRetention attaches the workflow retention cleaner.
@@ -1324,7 +1335,7 @@ func (l *Loop) Run(ctx context.Context) error {
 			l.runDeadLetterRetention(ctx)
 			l.runCronHistoryRetention(ctx)
 		case <-invocationsRetentionTick(invocationsRetentionT):
-			l.runInvocationsRetention(ctx)
+			l.submitWork(workInvocationsRetention, "tick", func() { l.runInvocationsRetention(ctx) })
 		case <-triggersRetentionTick(triggersRetentionT):
 			l.runTriggersRetention(ctx)
 		case <-fireNowT.C:
@@ -4309,6 +4320,13 @@ func (l *Loop) runWorkflowsDispatchTick(ctx context.Context) {
 			l.log.Warn("schedd: workflow schedule tick failed", "error_type", logsanitize.Field(fmt.Sprintf("%T", err)))
 		}
 	})
+	if orch := l.workflowOrch; orch != nil {
+		l.submitWork(workWorkflowAgentRuns, "tick", func() {
+			if err := orch.DeliverAgentRunEnds(ctx); err != nil && l.log != nil {
+				l.log.Warn("schedd: agent step delivery failed", "err", err)
+			}
+		})
+	}
 	// The base slots are offered every tick. A further slot is offered only
 	// while every lower slot is still busy, so an idle scheduler polls as
 	// before and capacity grows by one slot a tick under load (ADR-20261025232118).
@@ -4322,6 +4340,7 @@ func (l *Loop) runWorkflowsDispatchTick(ctx context.Context) {
 			if orch == nil {
 				orch = NewWorkflowOrchestrator(l.engine.Store(), nil, l.audit, nil, l.log)
 				orch.capabilityAllowed = l.workflowCapabilityAllowed
+				orch.agentsAllowed = l.agentsCapabilityAllowed
 			}
 			if err := orch.DispatchBatch(ctx); err != nil && l.log != nil {
 				l.log.Warn("schedd: workflow dispatch tick failed", "err", err)
@@ -4341,7 +4360,15 @@ func (l *Loop) dispatchTriggerTick(ctx context.Context) {
 }
 
 func (l *Loop) dispatchEventFanoutSweep(ctx context.Context) {
-	l.submitWork(workEventFanout, "tick", func() { l.runEventFanoutSweep(ctx) })
+	l.submitWork(workEventFanout, "tick", func() {
+		l.runEventFanoutSweep(ctx)
+		// ADR-20261029012000: a pass that used a whole budget asks for the
+		// next one now, instead of waiting for a wake or the safety tick.
+		// The pass is still in flight, so this coalesces into one rerun.
+		if l.eventFanoutBacklog && ctx.Err() == nil {
+			l.dispatchEventFanoutSweep(ctx)
+		}
+	})
 }
 
 func (l *Loop) runWorkflowRetention(ctx context.Context) {
@@ -4376,7 +4403,6 @@ func (l *Loop) runCronTick(ctx context.Context) {
 		return
 	}
 	now := l.now()
-	appRank := oldestCronsFirst(crons)
 	plans := newCronPlanGate(store)
 	apps := map[string]state.App{}
 	for _, c := range crons {
@@ -4407,7 +4433,7 @@ func (l *Loop) runCronTick(ctx context.Context) {
 			}
 			continue
 		}
-		if !plans.admit(ctx, app, appRank[c.ID]) {
+		if !plans.admit(ctx, app, c) {
 			if len(c.Command) > 0 {
 				l.cronMetrics.decision("plan_limit")
 			}
@@ -4580,6 +4606,32 @@ func (l *Loop) dispatchOneCron(ctx context.Context, c state.Cron, now time.Time)
 	firedBoundary := now
 	if c.SchedulePolicy != nil {
 		firedBoundary = scheduledFor
+	}
+	// Claim the occurrence before dispatching so two schedds that briefly both
+	// own this app (a placement handoff) cannot each fire it. Unlike the modern
+	// schedule_policy path, this legacy policy-less path has no per-occurrence
+	// row; the compare-and-swap on last_fired_at is the dedup. A store without
+	// the claim method keeps the prior dispatch-then-mark behaviour.
+	if claimer, ok := l.engine.Store().(state.CronFireClaimStore); ok {
+		claimed, err := claimer.ClaimCronFire(ctx, c.ID, c.LastFiredAt, firedBoundary)
+		if err != nil {
+			l.log.Warn("cron: claim fire", "cron_id", c.ID, "err", err)
+			return
+		}
+		if !claimed {
+			// Another schedd advanced the cursor first; it owns this occurrence.
+			return
+		}
+		res, ok := l.dispatchCronLocked(ctx, c, now, TriggerSchedule, firedBoundary)
+		_ = res
+		if !ok {
+			// Dispatch failed after the claim; roll the cursor back so a later
+			// tick retries this occurrence instead of silently skipping it.
+			if _, rbErr := claimer.ClaimCronFire(ctx, c.ID, firedBoundary, c.LastFiredAt); rbErr != nil {
+				l.log.Warn("cron: roll back fire claim", "cron_id", c.ID, "err", rbErr)
+			}
+		}
+		return
 	}
 	res, ok := l.dispatchCronLocked(ctx, c, now, TriggerSchedule, firedBoundary)
 	_ = res

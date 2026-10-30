@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -38,7 +39,7 @@ func TestStampProfilingFollowsInstallationFlags(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			h := (&Handler{}).WithContinuousProfiling(tc.continuous).WithProfilingOnDemand(tc.onDemand)
 			in := api.AppManifest{Entrypoint: []string{"/app/server"}, Profiling: tc.profiling}
-			got := h.stampProfiling(in, state.Account{Plan: tc.plan})
+			got := h.stampProfiling(in, state.App{}, state.Account{Plan: tc.plan})
 			if got.ProfilingOnDemand != tc.wantStamp {
 				t.Fatalf("profiling_on_demand = %v, want %v", got.ProfilingOnDemand, tc.wantStamp)
 			}
@@ -64,5 +65,27 @@ func TestStampProfilingFollowsInstallationFlags(t *testing.T) {
 				t.Fatalf("stamped manifest invalid: %v", err)
 			}
 		})
+	}
+}
+
+// TestStampProfilingFollowsCapabilityRelease pins ADR-20261023115741 for
+// on-demand captures: collectors reach only deployments of accounts the
+// profile-captures preview is released to, decided for the app's account,
+// plan and organization.
+func TestStampProfilingFollowsCapabilityRelease(t *testing.T) {
+	var asked []platformflags.Subject
+	h := (&Handler{}).WithProfilingOnDemand(true).WithProfileCapturesRelease(func(s platformflags.Subject) bool {
+		asked = append(asked, s)
+		return s.AccountID == "released"
+	})
+	app := state.App{OrgID: "org-1"}
+	if got := h.stampProfiling(api.AppManifest{}, app, state.Account{ID: "held", Plan: api.PlanPro}); got.ProfilingOnDemand {
+		t.Fatal("collectors stamped for an account captures are not released to")
+	}
+	if got := h.stampProfiling(api.AppManifest{}, app, state.Account{ID: "released", Plan: api.PlanPro}); !got.ProfilingOnDemand {
+		t.Fatal("collectors not stamped for an account captures are released to")
+	}
+	if len(asked) != 2 || asked[1] != (platformflags.Subject{AccountID: "released", Plan: string(api.PlanPro), OrgID: "org-1"}) {
+		t.Fatalf("subjects = %+v", asked)
 	}
 }

@@ -566,6 +566,16 @@ Free is 0 for every limit. Values are per plan as Hobby / Pro / Scale.
 
 The per-run timeline in the API and CLI shows the same stages. Billing metrics are in ADR-20261027090011.
 
+**As built in agentd (2026-10-29).**
+- `agent_runs_total{outcome}` counts terminal states: succeeded, failed, timed_out, out_of_memory and cancelled. Outcome codes stay on the run; nothing a guest reports becomes a label.
+- `agent_run_start_seconds{stage}` measures `queue` (queued until claimed; a requeued run keeps its queue time), `input` (the checkout), `place` (schedd's admission on the agent pool) and `boot` (vmmd's boot as schedd reports it). `harness` and `delivery` are not measured yet; delivery attempts have `agent_delivery_attempt_seconds`.
+- `agent_run_duration_seconds` runs from placement to the terminal state.
+- `agent_run_queue_depth` and `agent_run_queue_oldest_seconds` are read on each lease sweep. Every replica reports the same queue, so dashboards take the max.
+- `agent_run_requeues_total{cause}` counts claimed runs queued again before a VM, by gRPC code.
+- `agent_run_oom_reruns_total` waits for OOM reruns.
+
+The dashboard is `deploy/grafana/agent-runs.json`.
+
 ## Rollout
 
 Each step is one PR behind the switches. PRs that touch the VM lifecycle run `make test-metal` and `make leakcheck`.

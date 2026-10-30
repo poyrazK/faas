@@ -82,6 +82,9 @@ type Poller struct {
 	// rssHistory is each instance's recent resident memory for the ADR-909
 	// charge; only the tick goroutine touches it.
 	rssHistory *rssHistory
+	// cpuHistory is each instance's recent CPU peaks for measured CPU
+	// admission; only the tick goroutine touches it.
+	cpuHistory *cpuHistory
 	Interval   time.Duration
 	Store      state.Store
 	Dialer     Dialer
@@ -320,6 +323,7 @@ func (p *Poller) Tick(ctx context.Context) error {
 		p.Reader.Replace(rows)
 		p.publishMemoryShadowWithBridges(instances, rows, bridgeMB, started)
 		p.publishQuietPaused(rows, started)
+		p.publishMeasuredCPU(rows, started)
 		p.PauseLedger.Observe(ctx, rows, p.now())
 		if p.Metrics != nil {
 			p.Metrics.ReplaceInstanceStats(rolled, p.now().Sub(started))
@@ -343,6 +347,7 @@ func (p *Poller) Tick(ctx context.Context) error {
 		p.Reader.Replace(rows)
 		p.publishMemoryShadowWithBridges(instances, rows, p.Telemetry.InstanceBridgeMB(p.now()), started)
 		p.publishQuietPaused(rows, started)
+		p.publishMeasuredCPU(rows, started)
 		p.PauseLedger.Observe(ctx, rows, p.now())
 		p.enforceDiskPressure(ctx, rows)
 		p.enforceEgressAbuse(ctx, rows)
@@ -368,6 +373,7 @@ func (p *Poller) Tick(ctx context.Context) error {
 	p.Reader.Replace(rows)
 	p.publishMemoryShadowWithBridges(instances, rows, bridgeMB, started)
 	p.publishQuietPaused(rows, started)
+	p.publishMeasuredCPU(rows, started)
 	p.PauseLedger.Observe(ctx, rows, p.now())
 	p.enforceDiskPressure(ctx, rows)
 	p.enforceEgressAbuse(ctx, rows)

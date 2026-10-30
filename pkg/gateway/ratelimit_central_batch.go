@@ -24,8 +24,14 @@ type CentralBatchBackend interface {
 }
 
 // errCentralBatchWait marks a request whose batched consume did not finish
-// within centralConsumeTimeout of joining it.
+// within centralBatchWait of joining it.
 var errCentralBatchWait = errors.New("ratelimit central: batched consume did not finish in time")
+
+// centralBatchWait bounds a joined request's wait. Its batch starts only when
+// the statement in flight ends, and each statement may take
+// centralConsumeTimeout; waiting just one timeout refused requests whose two
+// statements were each within bounds (ADR-20261027173012 amendment 1).
+const centralBatchWait = 2 * centralConsumeTimeout
 
 type centralBatchKey struct {
 	scope, subjectID, plan string
@@ -81,7 +87,7 @@ func (c *centralCoalescer) consume(ctx context.Context, single CentralBackend, b
 	next.rps, next.burst = rps, burst
 	c.mu.Unlock()
 
-	timer := time.NewTimer(centralConsumeTimeout)
+	timer := time.NewTimer(centralBatchWait)
 	defer timer.Stop()
 	select {
 	case <-next.done:

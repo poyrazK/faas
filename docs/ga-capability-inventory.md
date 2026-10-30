@@ -257,6 +257,7 @@ internal hosting service and Gregale Agents are already unreachable.
 | 129 | Synthetic checks | `synthetics` | `synthetic-checks` preview | — | preview |
 | 130 | Traffic profiles: routes, request mix, attribution | `profiles`, dashboard `profile_*` | **MISSING** | — | internal |
 | 131 | Continuous profiling | | `continuous-profiling` internal | env flag | internal |
+| 168 | On-demand profile captures: CPU, heap, stacks, Go locks; automatic captures; capture diff | `profiles/captures`, `gregale debug capture`, dashboard `profile_capture*` | `profile-captures` preview | `pf: profile_captures`, `env: FAAS_PROFILING_ON_DEMAND` | preview |
 | 132 | Service map | | `service-map` internal | `pf: service_map` | internal |
 | 133 | Change timeline | `changes` | `change-timeline` internal | `pf: change_timeline` | internal |
 | 134 | Debug: debug bundle and telemetry, dependency view, post-deploy regressions | `debug`, `gregale debug` | **MISSING** | — | beta |
@@ -307,4 +308,4 @@ internal hosting service and Gregale Agents are already unreachable.
 | 164 | Internal mail service | maild, mailctl | **MISSING** | `env: FAAS_INTERNAL_MAIL_*=0` | internal |
 | 165 | Operator admin, compute nodes, `gregalectl` | `/v1/admin`, `/v1/compute-nodes` | n/a | admin auth | internal |
 | 166 | Platform OCI registry: internal snapshot and image storage backend | `pkg/oci/registry.go` (`/v2/`) | n/a | internal | internal |
-| 167 | Gregale Agents | branch `feat/agent-runs` | not on `main` | — | internal |
+| 167 | Gregale Agents: agent runs, the automation agent step, agent triggers | `/v1/agents`, `/v1/agent-runs`, agentd | `agents` internal | `pf: agents` | internal |

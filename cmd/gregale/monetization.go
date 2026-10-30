@@ -85,10 +85,20 @@ func releasedUsage(command, usage string) string {
 func withoutMonetization(command cliCommand) cliCommand {
 	hidden := monetizationVerbs[command.Name]
 	command.Examples = slices.DeleteFunc(slices.Clone(command.Examples), func(example string) bool {
-		// The verb follows today's command (`gregale consumers <verb>`) or
-		// its tree path (`gregale api consumer <verb>`).
+		// An example spells today's command (`gregale consumers
+		// rate-card-create`) or its tree path (`gregale api consumer
+		// rate-card create`); both run today's verb. The alias table is
+		// read directly: the manifest lookups of rewriteCliTree come back
+		// here.
 		fields := strings.Fields(example)
-		return len(fields) > 2 && slices.ContainsFunc(fields[2:min(len(fields), 4)], func(word string) bool { return slices.Contains(hidden, word) })
+		if len(fields) < 3 {
+			return false
+		}
+		today := fields[1:]
+		if alias, used, ok := matchCliTreeAlias(today); ok {
+			today = append(strings.Fields(alias.Old), today[used:]...)
+		}
+		return len(today) > 1 && slices.Contains(hidden, today[1])
 	})
 	if command.Subcommands == nil {
 		return command

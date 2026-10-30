@@ -26,6 +26,12 @@ func (h projectSecretsHost) Seal(accountID, key, value string, maxBytes int) (pr
 	return projectsecrets.Sealed{Ciphertext: ciphertext, Kid: kid, ValueHash: valueHash}, problem
 }
 
+// DisplayValueHash re-keys a stored fingerprint per owner for responses
+// (bug hunt 2026-10-28 H37).
+func (h projectSecretsHost) DisplayValueHash(ownerID, stored string) string {
+	return displayValueHash(ownerID, stored)
+}
+
 func (s *server) projectSecrets() projectsecrets.Service {
 	return projectsecrets.Service{Host: projectSecretsHost{s}}
 }

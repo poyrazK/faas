@@ -10,6 +10,7 @@
       - faas_seal_domain_alerting_recipient_src | length > 0
       - faas_seal_domain_alerting_writes in ['', 'fleet', 'dual', 'domain']
       - faas_seal_domain_alerting_writes != 'domain' or (faas_seal_domain_alerting_readers_verified | bool)
+      - not (faas_seal_domain_alerting_contracted | bool) or faas_seal_domain_alerting_writes == 'domain'
     fail_msg: >-
       The alerting seal domain runs where meterd runs (a control-plane or
       single-box host). Set faas_seal_domain_alerting_identity_src and
@@ -17,6 +18,7 @@
       `gregalectl seal-domain init --domain alerting`. writes=domain also
       needs faas_seal_domain_alerting_readers_verified once every meterd
       verified the domain and the previous release left the rollback window.
+      faas_seal_domain_alerting_contracted needs writes=domain.
 
 # 0400 root:root. systemd hands the identity to meterd alone as a
 # credential; no other unit names it.
@@ -71,6 +73,26 @@
     mode: "0755"
   loop: [faas-meterd, faas-apid]
 
+# The contract step (ADR 20261022111812, step 4): meterd keeps no identity
+# that opens a value the domain does not. The check writes nothing and
+# fails while a value still opens with the fleet or host identity, or an
+# open MCP readiness incident carries a key copy only they open;
+# writes=domain keeps new values off them.
+- name: seal_domains — check every alerting value opens with the domain alone before meterd drops the fleet identity
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/gregalectl
+      - seal-domain
+      - migrate
+      - --domain
+      - alerting
+      - --check
+      - --db-env
+      - "{{ faas_seal_domain_db_env }}"
+      - --json
+  changed_when: false
+  when: faas_seal_domain_alerting_contracted | bool
+
 - name: seal_domains — give meterd the alerting domain identity
   ansible.builtin.template:
     src: 60-faas-seal-domain-alerting-reader.conf.j2
@@ -82,6 +104,20 @@
 
 - name: seal_domains — restart meterd before proving the domain
   ansible.builtin.meta: flush_handlers
+
+# systemd places a running unit's credentials in its credentials directory:
+# a contracted meterd has the domain identity there and no fleet or host
+# one, including the host.age.previous optional_credentials projects.
+- name: seal_domains — prove a contracted meterd runs without the fleet and host identities
+  ansible.builtin.find:
+    paths: /run/credentials/faas-meterd.service
+  register: faas_seal_domain_alerting_credentials
+  failed_when: >-
+    'faas_seal_domain_alerting' not in (faas_seal_domain_alerting_credentials.files | map(attribute='path') | map('basename') | list) or
+    'faas_fleet_age_identity' in (faas_seal_domain_alerting_credentials.files | map(attribute='path') | map('basename') | list) or
+    'faas_host_age_identity' in (faas_seal_domain_alerting_credentials.files | map(attribute='path') | map('basename') | list) or
+    'faas_host_age_identity_previous' in (faas_seal_domain_alerting_credentials.files | map(attribute='path') | map('basename') | list)
+  when: faas_seal_domain_alerting_contracted | bool
 
 - name: seal_domains — prove this node opens the alerting domain probe
   ansible.builtin.command:

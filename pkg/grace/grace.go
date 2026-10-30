@@ -22,6 +22,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -177,6 +178,11 @@ func (g *Grace) RunOnce(ctx context.Context) error {
 				continue
 			}
 		}
+		if err := g.deleteAccountAppArtifacts(ctx, acct.ID); err != nil {
+			g.p.Log.Warn("grace: app artifact cleanup deferred", "account", acct.ID, "err", err)
+			deferred++
+			continue
+		}
 		// Past grace — hard delete. The next tick will skip this row
 		// because DeleteAccount removed it; we still guard on the
 		// returned ErrNotFound for the redelivery race (two ticks
@@ -234,6 +240,38 @@ func (g *Grace) RunOnce(ctx context.Context) error {
 		g.p.Log.Info("grace: account hard-deleted", "account", acct.ID)
 	}
 	return g.RunAppsOnce(ctx)
+}
+
+// deleteAccountAppArtifacts deletes the stored rootfs layers, sidecar layers
+// and snapshot objects of an account's live personal apps before
+// DeleteAccount drops the rows that name them. Account deletion does not
+// tombstone the apps, so the app purge never ran for them and their objects
+// stayed in the snapshot backend and layer store forever (bug hunt
+// 2026-10-28 B19). Any failure defers the account to the next pass.
+func (g *Grace) deleteAccountAppArtifacts(ctx context.Context, accountID string) error {
+	apps, err := g.p.Store.ListApps(ctx, accountID)
+	if err != nil {
+		return fmt.Errorf("list account apps: %w", err)
+	}
+	for _, app := range apps {
+		if app.AccountID != accountID {
+			continue
+		}
+		artifacts, err := g.p.Store.ListAppDeletionArtifacts(ctx, app.ID)
+		if err != nil {
+			return fmt.Errorf("list artifacts of app %s: %w", app.ID, err)
+		}
+		if len(artifacts) != 0 && g.p.Artifacts == nil {
+			return fmt.Errorf("app %s has %d artifacts and no artifact backend is configured", app.ID, len(artifacts))
+		}
+		for _, artifact := range artifacts {
+			if err := g.p.Artifacts.Delete(ctx, artifact.Key); err != nil && !storage.IsNotFound(err) {
+				g.metrics.failure("delete_artifact")
+				return fmt.Errorf("delete artifact of app %s: %w", app.ID, err)
+			}
+		}
+	}
+	return nil
 }
 
 // RunAppsOnce permanently removes app tombstones whose seven-day restore

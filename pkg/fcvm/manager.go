@@ -36,6 +36,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/privatenetwork"
 	"github.com/onebox-faas/faas/pkg/rehearsalrecorder"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
+	"github.com/onebox-faas/faas/pkg/sealsig"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/storagekey"
@@ -444,6 +445,11 @@ type Instance struct {
 	// one-shot guest by guessing its instance id.
 	ExecutionOnly  bool
 	DataRepairOnly bool
+	// AgentRunOnly marks a VM WakeAgentRun booted for one agent run. It is
+	// also ExecutionOnly; ExecuteExecution refuses it and RunAgent requires it.
+	AgentRunOnly bool
+	// AgentRunRelay is the run principal of the VM's relay; host-only.
+	AgentRunRelay *AgentRunRelay `json:"-"`
 	// ExecutionID is the Runs execution principal (the one-shot instance ID).
 	// The lease and grant list are host-only broker inputs and must never be
 	// serialized into guest-visible state.
@@ -1127,6 +1133,10 @@ type Manager struct {
 	// binding (ADR-20261023173624, contract step). Off until every stored
 	// envelope is bound.
 	requireSecretBinding bool
+	// runtimeSignatures verifies apid's writer signature on runtime
+	// envelopes before any is opened (ADR 20261028161502, amendment 1).
+	// nil checks nothing.
+	runtimeSignatures *sealsig.RuntimeChecker
 	// conntrackCap is the effective per-instance conntrack cap. Probed once
 	// at construction from api.ConntrackCapProbe(): DefaultConntrackCap when
 	// the kernel supports ct expressions in netns (CONFIG_NF_CONNTRACK_NET_NS),
@@ -1646,6 +1656,33 @@ func (m *Manager) SetHostIdentities(ids []*age.X25519Identity) {
 // production wires it before serving traffic.
 func (m *Manager) RequireSecretBinding(required bool) {
 	m.requireSecretBinding = required
+}
+
+// WithRuntimeSecretSignatures makes every path that opens runtime secrets
+// verify their writer signatures first (ADR 20261028161502, amendment 1).
+// NOT safe to call concurrently with Wake; production wires it before
+// serving traffic.
+func (m *Manager) WithRuntimeSecretSignatures(checker *sealsig.RuntimeChecker) *Manager {
+	m.runtimeSignatures = checker
+	return m
+}
+
+// checkRuntimeSignatures refuses the entries if any envelope's signature
+// does not verify, naming the entry.
+func (m *Manager) checkRuntimeSignatures(ctx context.Context, entries []SealedEnvEntry) error {
+	if m.runtimeSignatures == nil {
+		return nil
+	}
+	blobs := make([][]byte, len(entries))
+	for i, entry := range entries {
+		blobs[i] = entry.Ciphertext
+	}
+	err := m.runtimeSignatures.Check(ctx, blobs)
+	var refused *sealsig.BlobError
+	if errors.As(err, &refused) {
+		return fmt.Errorf("sealed env[%s]: %w", logsanitize.Field(entries[refused.Index].Key), refused.Err)
+	}
+	return err
 }
 
 // WithStorage wires the artifact backend the Manager uses to read
@@ -3489,10 +3526,10 @@ func jsonMarshalEnvelope(e secretbox.Envelope) ([]byte, error) {
 // is still closed; keeping the preparation here preserves the Manager as the
 // only secret-unseal boundary without allowing guest-init to race a late
 // loopback write.
-func (m *Manager) prepareWakeFiles(req WakeRequest) (secretsJSON, apiJSON []byte, err error) {
+func (m *Manager) prepareWakeFiles(ctx context.Context, req WakeRequest) (secretsJSON, apiJSON []byte, err error) {
 	var merged secretbox.Envelope
 	if len(req.SealedEnvEntries) > 0 {
-		merged, err = m.openSealedEnvEntries(req.SealedEnvEntries, req.AccountID)
+		merged, err = m.openSealedEnvEntries(ctx, req.SealedEnvEntries, req.AccountID)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -3530,12 +3567,15 @@ func (m *Manager) prepareWakeFiles(req WakeRequest) (secretsJSON, apiJSON []byte
 // openSealedEnvEntries opens a workload's selected ciphertext for accountID,
 // the account the workload runs for. An envelope bound to another account
 // (ADR-20261023173624) is refused before any of its values are used.
-func (m *Manager) openSealedEnvEntries(entries []SealedEnvEntry, accountID string) (secretbox.Envelope, error) {
+func (m *Manager) openSealedEnvEntries(ctx context.Context, entries []SealedEnvEntry, accountID string) (secretbox.Envelope, error) {
 	if len(entries) == 0 {
 		return nil, nil
 	}
 	if len(m.hostIdentities) == 0 {
 		return nil, ErrNoHostKey
+	}
+	if err := m.checkRuntimeSignatures(ctx, entries); err != nil {
+		return nil, err
 	}
 	merged := secretbox.Envelope{}
 	for _, entry := range entries {
@@ -3564,12 +3604,15 @@ func (m *Manager) openSealedEnvEntries(entries []SealedEnvEntry, accountID strin
 // remains in caller memory only; callers must not log or persist it outside
 // the guest's runtime projection. accountID is the account the workload runs
 // for; an envelope bound to another account is refused.
-func (m *Manager) UnsealRuntimeSecrets(entries []SealedEnvEntry, accountID string) (map[string]string, error) {
+func (m *Manager) UnsealRuntimeSecrets(ctx context.Context, entries []SealedEnvEntry, accountID string) (map[string]string, error) {
 	if len(entries) == 0 {
 		return map[string]string{}, nil
 	}
 	if len(m.hostIdentities) == 0 {
 		return nil, ErrNoHostKey
+	}
+	if err := m.checkRuntimeSignatures(ctx, entries); err != nil {
+		return nil, err
 	}
 	secrets := make(map[string]string, len(entries))
 	for _, entry := range entries {
@@ -3620,7 +3663,7 @@ func selectedSealedValue(entry SealedEnvEntry, inner secretbox.Envelope) (string
 // by apid and keeps plaintext only in the wake request until the concrete VMM
 // writes it to that sidecar's workload-specific env file in the instance's
 // writable main upper. It never modifies the shared sidecar image.
-func (m *Manager) prepareSidecarEnvFiles(req *WakeRequest) error {
+func (m *Manager) prepareSidecarEnvFiles(ctx context.Context, req *WakeRequest) error {
 	for i := range req.Sidecars {
 		entries := req.Sidecars[i].SealedEnv
 		secretEntries := req.Sidecars[i].SealedSecrets
@@ -3655,7 +3698,7 @@ func (m *Manager) prepareSidecarEnvFiles(req *WakeRequest) error {
 			}
 			merged[entry.Key] = string(plaintext)
 		}
-		secrets, err := m.UnsealRuntimeSecrets(secretEntries, req.AccountID)
+		secrets, err := m.UnsealRuntimeSecrets(ctx, secretEntries, req.AccountID)
 		if err != nil {
 			return fmt.Errorf("open sidecar app secrets: %w", err)
 		}
@@ -3717,8 +3760,14 @@ type WakeRequest struct {
 	// NodeID is supplied by the serving vmmd, never by a guest frame.
 	NodeID         string
 	dataRepairOnly bool
-	RehearsalRunID string // exact durable containment run; ordinary legacy callers may omit it
-	Instance       string
+	// agentRunOnly is set only by WakeAgentRun (ADR-20261027090010 §6), on top of
+	// ExecutionOnly; RunAgent accepts no other instance. agentRunRelay is
+	// the run's relay principal, accepted only with agentRunOnly.
+	agentRunOnly     bool
+	agentRunRelay    *AgentRunRelay
+	agentRunInputKey string
+	RehearsalRunID   string // exact durable containment run; ordinary legacy callers may omit it
+	Instance         string
 	// Set only by WakeAdmitted after validating and consuming its grant.
 	admission *runtimeadmission.Binding
 	// Complete approved source identities; only WakeAdmitted accepts them.
@@ -4259,7 +4308,7 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 	// per-task secrets.env file before Firecracker starts.
 	var secretsEnvJSON []byte
 	if len(req.SealedEnvEntries) > 0 {
-		secretsEnvJSON, _, err = m.prepareWakeFiles(WakeRequest{SealedEnvEntries: req.SealedEnvEntries, AccountID: req.AccountID})
+		secretsEnvJSON, _, err = m.prepareWakeFiles(ctx, WakeRequest{SealedEnvEntries: req.SealedEnvEntries, AccountID: req.AccountID})
 		if err != nil {
 			return nil, fmt.Errorf("manager: BootJob %s: prepare sealed env: %w", req.Instance, err)
 		}
@@ -4713,7 +4762,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 
 	lease, preparedNetwork, err := m.acquireWakeNetwork(req, computeLease.egressFunded()) //nolint:contextcheck // Failed cache claims use bounded daemon-owned cleanup, independent of a canceled Wake RPC.
 	if err != nil {
-		return nil, fmt.Errorf("wake %s: acquire lease: %w", req.Instance, err)
+		return nil, wakeNotStarted(fmt.Errorf("wake %s: acquire lease: %w", req.Instance, err))
 	}
 	phases.mark("lease_acquire")
 	// Stamp the Plan onto the Lease (issue #301, ADR-044) so the
@@ -4831,12 +4880,12 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	// stages these bytes before releasing Firecracker's config FIFO; test VMMs
 	// without the pre-boot marker keep the legacy post-ready staging hooks
 	// below for compatibility.
-	req.preparedSecretsEnvJSON, req.preparedAPIEnvJSON, err = m.prepareWakeFiles(req)
+	req.preparedSecretsEnvJSON, req.preparedAPIEnvJSON, err = m.prepareWakeFiles(ctx, req)
 	if err != nil {
 		err = fmt.Errorf("wake %s: prepare runtime env: %w", req.Instance, err)
 		return nil, err
 	}
-	if err = m.prepareSidecarEnvFiles(&req); err != nil {
+	if err = m.prepareSidecarEnvFiles(ctx, &req); err != nil {
 		err = fmt.Errorf("wake %s: prepare sidecar env: %w", req.Instance, err)
 		return nil, err
 	}
@@ -5065,7 +5114,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 			if m.wakeFailureMetrics != nil {
 				m.wakeFailureMetrics.WakeFailure("", req.AppID, WakeReasonNetnsFail).Inc()
 			}
-			return nil, fmt.Errorf("wake %s: network setup: %w", req.Instance, netErr)
+			return nil, wakeNotStarted(fmt.Errorf("wake %s: network setup: %w", req.Instance, netErr))
 		}
 		timings.netnsTapMs = network.duration.Milliseconds()
 		if m.preparedNetworks != nil {
@@ -5105,7 +5154,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 			if m.wakeFailureMetrics != nil {
 				m.wakeFailureMetrics.WakeFailure("", req.AppID, WakeReasonNetnsFail).Inc()
 			}
-			return nil, fmt.Errorf("wake %s: network setup: %w", req.Instance, err)
+			return nil, wakeNotStarted(fmt.Errorf("wake %s: network setup: %w", req.Instance, err))
 		}
 		timings.netnsTapMs = time.Since(netnsStart).Milliseconds()
 		if !req.ExecutionOnly {
@@ -5246,7 +5295,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		if lease.IsBuilder {
 			err = writeBuildCgroup(req.Instance, req.MemSizeMiB)
 		} else {
-			err = writeAppCgroup(req.Instance, req.Plan, wakeGuestMemoryMiB(req), req.CPUMillicores)
+			err = writeLeaseCgroup(lease, wakeGuestMemoryMiB(req))
 		}
 		if err != nil {
 			// Cgroup setup is a mandatory isolation boundary. The VM is already
@@ -5356,7 +5405,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		publicForwardTarget: publicTarget,
 		Lease:               lease, Net: nc, Method: method, wakeID: wakeID,
 		adoptionVCPUs: req.VcpuCount, adoptionMemSizeMiB: req.MemSizeMiB,
-		ExecutionOnly: req.ExecutionOnly, DataRepairOnly: req.dataRepairOnly, AppTaskOnly: req.AppTaskOnly, QualificationOnly: qualificationOnly, Paused: req.KeepPaused, warmSpare: req.KeepPaused,
+		ExecutionOnly: req.ExecutionOnly, DataRepairOnly: req.dataRepairOnly, AgentRunOnly: req.agentRunOnly, AgentRunRelay: req.agentRunRelay, AppTaskOnly: req.AppTaskOnly, QualificationOnly: qualificationOnly, Paused: req.KeepPaused, warmSpare: req.KeepPaused,
 		ExecutionID:                     executionID,
 		ExecutionLeaseToken:             req.ExecutionLeaseToken,
 		ExecutionOutboundIntegrationIDs: append([]string(nil), req.ExecutionOutboundIntegrationIDs...),
@@ -5688,6 +5737,8 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 			ServiceDiscoveryIP: serviceDiscoveryIP,
 			Networkless:        req.ExecutionOnly,
 			KeepPaused:         req.KeepPaused,
+			AgentInput:         req.agentRunOnly,
+			InputKey:           req.agentRunInputKey,
 		}
 		if timings != nil {
 			// ADR-192: hand the pre-restore Manager phases to the VMM so

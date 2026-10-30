@@ -27,9 +27,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
 
+	githubdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/githubd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/agents"
 	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/apid/billingruns"
+	"github.com/onebox-faas/faas/pkg/apid/billingsync"
 	"github.com/onebox-faas/faas/pkg/apid/consumerbilling"
 	"github.com/onebox-faas/faas/pkg/apid/consumercontrols"
 	"github.com/onebox-faas/faas/pkg/apid/consumercredits"
@@ -293,6 +296,9 @@ var RuntimeSecretRecipient = runtimeSecretRecipient
 var RuntimeSealDomainBlocksRekey = runtimeSealDomainBlocksRekey
 var RuntimeSecretsBound = &runtimeSecretsBound
 var LoadRuntimeSecretBinding = loadRuntimeSecretBinding
+var LoadCloneWorkerSealing = loadCloneWorkerSealing
+var RuntimeSecretBinding = runtimeSecretBinding
+var InstallRuntimeSigner = installRuntimeSigner
 var PgBackupStateRoot = &pgBackupStateRoot
 var PlanCache = &planCache
 var PlanCacheRoot = &planCacheRoot
@@ -886,10 +892,43 @@ func (r *googleJWKSVerifier) JwksURL() *string { return &r.jwksURL }
 
 // Members of invocationCompletionWaiter
 func (r *invocationCompletionWaiter) Mu() *sync.Mutex { return &r.mu }
-func (r *invocationCompletionWaiter) Waiters() *map[string]map[chan struct{}]struct{} {
+func (r *invocationCompletionWaiter) Waiters() *map[string]map[*completionWait]struct{} {
 	return &r.waiters
 }
 func (r *invocationCompletionWaiter) CompleteFromPayload(p0 string) { r.completeFromPayload(p0) }
+func (r *invocationCompletionWaiter) WakeAll()                      { r.wakeAll() }
+func (r *invocationCompletionWaiter) RecentCount() int              { return len(r.recent) }
+func (r *invocationCompletionWaiter) AppWaiterCount(appID string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.appWaiters[appID])
+}
+
+const InvocationCompletionRecentCap = invocationCompletionRecentCap
+
+var NextExecutionEventsPoll = nextExecutionEventsPoll
+
+// StatusJSONHandler serves GET /status/slo.json from a server over store
+// whose status cache reads prometheusURL.
+func StatusJSONHandler(store state.Store, prometheusURL string) http.HandlerFunc {
+	return newServer(store, slog.Default(), "gregale.dev", nil).WithStatusCache(prometheusURL, "").statusJSONHandler
+}
+
+func NewAPIRequestBudgetAt(now func() time.Time) *apiRequestBudget {
+	b := newAPIRequestBudget()
+	b.now = now
+	return b
+}
+
+func (b *apiRequestBudget) Take(accountID string, capacity int) (time.Duration, bool) {
+	return b.take(accountID, capacity)
+}
+
+type QueueReceiveSlots = queueReceiveSlots
+
+func (q *queueReceiveSlots) Acquire(accountID string) (func(), int, int, bool) {
+	return q.acquire(accountID)
+}
 
 // Members of mfaTestEnv
 func (r *mfaTestEnv) Acct() *state.Account    { return &r.acct }
@@ -1001,6 +1040,7 @@ func (r *server) RuntimeConfig() **runtimeConfigManager         { return &r.runt
 func (r *server) Sessions() **session.Manager                   { return &r.sessions }
 func (r *server) StatementInvoices() *statementinvoices.Service { return &r.statementInvoices }
 func (r *server) BillingRuns() *billingruns.Service             { return &r.billingRuns }
+func (r *server) BillingSync() *billingsync.Service             { return &r.billingSync }
 func (r *server) ConsumerBilling() *consumerbilling.Service     { return &r.consumerBilling }
 func (r *server) ConsumerCredits() *consumercredits.Service     { return &r.consumerCredits }
 func (r *server) ConsumerControls() *consumercontrols.Service   { return &r.consumerControls }
@@ -1671,11 +1711,26 @@ func (s *server) ConfigureLiveQueriesForTest(getenv func(string) string) error {
 	return s.configureLiveQueries(nil, getenv)
 }
 
+// ConfigureAgentsForTest wires the agent API without Postgres: the agents
+// capability decides who sees it, and released accounts meet
+// capacity_unavailable.
+func (s *server) ConfigureAgentsForTest() { s.configureAgents(nil) }
+
 // LiveRoutesForTest lists an app's live routes; accounts outside the rollout
 // get none before the store is read.
 func (s *server) LiveRoutesForTest(ctx context.Context, accountID, appID string) ([]realtime.LiveRoute, error) {
 	return s.liveRoutes(ctx, nil, accountID, appID)
 }
+
+// NewGithubdBridgeForTest builds apid's githubd bridge on store; agentSteps
+// decides the agents capability for an account.
+func NewGithubdBridgeForTest(store githubdBridgeStore, notif githubdBridgeNotifier, agentSteps func(state.Account) bool) githubdpb.GithubdServer {
+	return &githubdBridge{store: store, notif: notif, log: slog.New(slog.DiscardHandler), agentSteps: agentSteps}
+}
+
+// SetAgentStoreForTest gives the configured agent API a store; call it
+// after ConfigureAgentsForTest.
+func (s *server) SetAgentStoreForTest(store agents.Store) { s.agentAPI.Store = store }
 
 // RealtimePreviewEveryone shows realtime preview features to every account
 // (ADR-20261019102657).
@@ -1835,3 +1890,14 @@ func SecurityMailAllow(now func() time.Time) func(accountID, kind string) bool {
 	l.now = now
 	return l.allow
 }
+
+// AdvanceSecurityMailClockForTest moves the per-account sign-in mail
+// limiter's clock d ahead, as if the next request came that much later.
+func (r *server) AdvanceSecurityMailClockForTest(d time.Duration) {
+	r.securityMail.mu.Lock()
+	defer r.securityMail.mu.Unlock()
+	r.securityMail.now = func() time.Time { return time.Now().Add(d) }
+}
+
+// SealOAuthCodeState mints a Connect GitHub state for accountID (H64).
+var SealOAuthCodeState = sealOAuthCodeState
