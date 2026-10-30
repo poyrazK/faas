@@ -177,7 +177,8 @@ func (s *MemoryStore) UsageSnapshot(_ context.Context, accountID string, periodS
 		}
 	}
 	for _, record := range s.usage {
-		if s.billingSubject(s.databases[record.DatabaseID]) != accountID || record.WindowFrom.Before(periodStart) || !record.WindowFrom.Before(periodEnd) {
+		if s.billingSubject(s.databases[record.DatabaseID]) != accountID || record.WindowFrom.Before(periodStart) || !record.WindowFrom.Before(periodEnd) ||
+			s.usageWaivedLocked(record) {
 			continue
 		}
 		var err error

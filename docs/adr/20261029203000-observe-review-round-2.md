@@ -62,11 +62,11 @@
      now describes the signature, retries and ledger. The synthetic check cost
      table used half the plans' RAM and the included GB-hours from before
      ADR-1430, so every figure was about half the real cost.
-- **Migrations:** `20261030090000000_alert_rule_notify_resolved` (expand: a
-  boolean column with a constant default), `20261030090000001_alert_rule_names_per_app`
+- **Migrations:** `20261030150252870_alert_rule_notify_resolved` (expand: a
+  boolean column with a constant default), `20261030150257194_alert_rule_names_per_app`
   (contract: it drops the account-wide name index, so only a full release
   applies it; the new indexes are built concurrently first), and
-  `20261030090000002_alert_deliveries_fired_idx` (expand, concurrent).
+  `20261030150300623_alert_deliveries_fired_idx` (expand, concurrent).
 - **Consequences:**
   - Restoring an app resumes its rules and SLO rollups; the hours it was
     deleted have no rollup rows.

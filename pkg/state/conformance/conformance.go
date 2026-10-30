@@ -66,6 +66,7 @@ func Run(t *testing.T, open Open) {
 		{"config_revisions_and_guards_track_each_write", testConfigRevisionsAndGuards},
 		{"post_release_watch_candidates_follow_the_newest_release", testPostReleaseWatchCandidates},
 		{"release_freezes_limit_list_and_lift", testReleaseFreezes},
+		{"org_release_freezes_keep_to_their_owner", testOrgReleaseFreezes},
 		{"release_gates_round_trip_and_follow_their_slo", testReleaseGates},
 		{"release_approvals_policy_and_one_decision_per_person", testReleaseApprovals},
 		{"release_approval_events_once_due_and_retried", testReleaseApprovalEvents},
@@ -140,6 +141,7 @@ func Run(t *testing.T, open Open) {
 		{"billing_usage_delivery_is_provider_qualified", testBillingUsageDelivery},
 		{"paddle_overage_window_existence_is_durable", testPaddleOverageWindowExistence},
 		{"overage_cap_distinguishes_zero_from_unset", testOverageCap},
+		{"overage_cap_default_follows_the_plan", testOverageCapDefaultFollowsThePlan},
 		{"account_lifecycle_leaves_the_dunning_ladder", testAccountLifecycleLeavesTheDunningLadder},
 		{"dunning_deletion_is_scheduled_and_paid_back", testDunningDeletionIsScheduledAndPaidBack},
 		{"self_service_deletion_only_from_active", testSelfServiceDeletionOnlyFromActive},
@@ -161,6 +163,7 @@ func Run(t *testing.T, open Open) {
 		{"mfa_disable_request_single_use", testMFADisableRequestSingleUse},
 		{"deploy_token_authentication", testDeployTokenAuthentication},
 		{"api_key_rotation_grace", testAPIKeyRotationGrace},
+		{"mcp_login_key_slides_on_use", testMCPLoginKeySlides},
 		{"consumer_key_lookup_is_app_scoped", testConsumerKeyLookupIsAppScoped},
 		{"app_secret_scope_and_class", testAppSecretScopeAndClass},
 		{"oidc_empty_subject_pattern_binds_nothing", testOIDCEmptySubjectPatternBindsNothing},
@@ -1107,12 +1110,12 @@ func testPreviewLifecycle(t *testing.T, fx *Fixture) {
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}
-	create := func(slug string, prNumber int) state.App {
+	create := func(slug string, prNumber int, workload string) state.App {
 		app, err := fx.Store.CreateAppIfUnderQuota(fx.Ctx, state.App{
 			AccountID:        fx.Account.ID,
 			ProjectID:        project.ID,
 			Slug:             slug,
-			WorkloadName:     "api",
+			WorkloadName:     workload,
 			Type:             state.AppTypeApp,
 			Runtime:          "node22",
 			RAMMB:            limits.RAMMB,
@@ -1127,8 +1130,8 @@ func testPreviewLifecycle(t *testing.T, fx *Fixture) {
 		}
 		return app
 	}
-	developer := create("preview-dev-"+uuid.NewString()[:8], 0)
-	pr := create("preview-pr-"+uuid.NewString()[:8], 42)
+	developer := create("preview-dev-"+uuid.NewString()[:8], 0, "api")
+	pr := create("preview-pr-"+uuid.NewString()[:8], 42, "api")
 
 	byParent, err := fx.Store.PreviewAppsByParent(fx.Ctx, fx.Account.ID, fx.App.Slug)
 	if err != nil {
@@ -1152,8 +1155,9 @@ func testPreviewLifecycle(t *testing.T, fx *Fixture) {
 		t.Fatalf("PreviewAppByProjectWorkload(developer) = %v, want ErrNotFound", err)
 	}
 	// A second preview of the PR that answers to the same service name makes
-	// the name ambiguous; the lookup refuses it rather than pick one.
-	collider := create("preview-pr-"+uuid.NewString()[:8], 42)
+	// the name ambiguous; the lookup refuses it rather than pick one. Its
+	// name differs only in DNS form: PostgreSQL refuses an exact duplicate.
+	collider := create("preview-pr-"+uuid.NewString()[:8], 42, "API")
 	if _, err := fx.Store.PreviewAppByProjectWorkload(fx.Ctx, fx.Account.ID, project.ID, 42, "api"); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("PreviewAppByProjectWorkload(ambiguous) = %v, want ErrConflict", err)
 	}

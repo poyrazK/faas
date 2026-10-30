@@ -47,6 +47,7 @@ func writeProblemHTML(w http.ResponseWriter, p *Problem) {
 			w.Header().Add(k, v)
 		}
 	}
+	stampErrorCode(w.Header(), p)
 	w.WriteHeader(p.Status)
 
 	status := http.StatusText(p.Status)

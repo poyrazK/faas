@@ -427,7 +427,17 @@ the host's units back to the release that was active before
 (`deployctl rollback --only … --expect-current <overlay> --to <base>`) and
 stops the run.
 `scripts/ci/observe_rollout_availability.sh` keeps doing the black-box
-probing during the control plane's activation itself.
+probing during the control plane's activation itself. Its canary app is the
+`ROLLOUT_APP_PROBE_URL` repository or environment variable, defaulting to
+`https://e2e-probe.gregale.dev/`; a canary whose baseline is unhealthy gates
+nothing, so the run carries a warning annotation and step-summary callout.
+A gated path fails on any failure other than a timeout. Up to three timed-out
+samples (at most two in a row, final sample healthy) are tolerated and
+annotated: the observer runs on the busy control plane it measures, and
+rc.304, rc.305 and rc.307 each failed activation on one or two 3 s timeouts
+while the bundle unpacked. Release acceptance's redeploy continuity probe
+likewise retries one failed probe once and fails on a failed retry or a second
+failure.
 
 ## Deploy order and skew in the unit lanes
 
@@ -463,6 +473,16 @@ The unit lanes enforce the rules above in their workflows:
   work with the binaries the host runs, as an expand migration does: add
   a variable an older binary ignores, and never remove one the running
   binaries read in the same change.
+
+  Every `deploy/` path has one class
+  (docs/adr/20261027151755-unit-lane-deploy-path-classes.md). A daemon
+  change must not need a change of the classes the lanes leave at the base:
+  the release's unit files and `blocking` paths (the production manifest,
+  operator playbooks) wait for the next full release and close both lanes
+  until then, and compute roles and playbooks hold the edge lane while it
+  restarts a gateway on a compute host. Documentation, samples, the
+  dashboard mirror and changes that only touch comment lines change
+  nothing a host runs, so they close nothing.
 
   `release-units.yml` deploys the control-plane lane first, and the edge
   lane (`cd-edge-units.yml`) only after it. When the edge lane runs alone,

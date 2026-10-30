@@ -30,7 +30,16 @@ func TestProjectPlanShowsComposeEnvImport(t *testing.T) {
 				UnsetEnvKeys:       []string{"BILLING_URL", "STRIPE_KEY"},
 				UnsetEnvKeyReasons: map[string]string{"BILLING_URL": "service_address", "STRIPE_KEY": "secret"}},
 			want:    []string{"Imported from Compose", "LOG_LEVEL, NODE_ENV", "BILLING_URL (Docker address of a datastore or non-HTTP service)", "STRIPE_KEY (looks like a secret)"},
-			wantNot: []string{"x-gregale-env-import"},
+			wantNot: []string{"x-gregale-env-import", "` or `gregale env set"},
+		},
+		{
+			name: "kubernetes imported",
+			workload: api.PlanWorkload{Name: "api", RootDir: "api",
+				DetectedBy:      &api.PlanDetectedBy{Detector: "k8s", Marker: "k8s/api.yaml"},
+				ImportedEnvKeys: []string{"LOG_LEVEL"},
+				UnsetEnvKeys:    []string{"DB_PASSWORD"}, UnsetEnvKeyReasons: map[string]string{"DB_PASSWORD": "secret_ref"}},
+			want:    []string{"Imported from Kubernetes manifests", "LOG_LEVEL", "Set them with `gregale env set --app <app> KEY=VALUE`,"},
+			wantNot: []string{"Imported from Compose"},
 		},
 		{
 			name: "not opted in",
@@ -39,6 +48,15 @@ func TestProjectPlanShowsComposeEnvImport(t *testing.T) {
 				UnsetEnvKeyReasons: map[string]string{"LOG_LEVEL": "not_opted_in"}},
 			want:    []string{"LOG_LEVEL (plain value in Compose)", "x-gregale-env-import: true"},
 			wantNot: []string{"Imported from Compose"},
+		},
+		{
+			name: "kubernetes not annotated",
+			workload: api.PlanWorkload{Name: "api", RootDir: "api",
+				UnsetEnvKeys:       []string{"DB_PASSWORD", "LOG_LEVEL"},
+				UnsetEnvKeyReasons: map[string]string{"DB_PASSWORD": "secret_ref", "LOG_LEVEL": "not_annotated"}},
+			want: []string{"LOG_LEVEL (plain value in a Kubernetes manifest)", "DB_PASSWORD (from a Kubernetes Secret; never imported)",
+				`gregale.dev/env-import: "true"`},
+			wantNot: []string{"x-gregale-env-import"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

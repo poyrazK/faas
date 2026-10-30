@@ -86,7 +86,7 @@ func ownedResourceApp(r *http.Request, store Store, actorID string) (string, err
 		if !ok {
 			return "", nil
 		}
-		rows, err := freezes.ListReleaseFreezes(ctx, actorID, time.Now().UTC())
+		rows, err := freezes.ListReleaseFreezes(ctx, state.ReleaseFreezeOwner{AccountID: actorID}, time.Now().UTC())
 		for _, row := range rows {
 			if row.ID == id {
 				return row.AppID, nil
@@ -100,6 +100,15 @@ func ownedResourceApp(r *http.Request, store Store, actorID string) (string, err
 		}
 		operation, err := operations.ExclusiveOperationByID(ctx, actorID, id)
 		return operation.AppID, missing(err)
+	case strings.HasPrefix(path, "/v1/event-recoveries/") && validID(r.PathValue("jobID")):
+		// A recovery job stays under the creator's account; its pause,
+		// cancel and workflow-cancel actions act on the company app.
+		recoveries, ok := store.(state.EventRecoveryStore)
+		if !ok {
+			return "", nil
+		}
+		job, err := recoveries.GetEventRecovery(ctx, actorID, r.PathValue("jobID"))
+		return job.AppID, missing(err)
 	case strings.HasPrefix(path, "/v1/commit-sources/") && r.PathValue("source") != "":
 		sources, ok := store.(state.CommitStore)
 		if !ok {

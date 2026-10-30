@@ -40,6 +40,20 @@ var _ dispatch.JobKind = dispatch.JobKindInvocation
 // retried bad payload just keeps failing.
 var ErrPermanentInvoke = errors.New("sched: permanent invoke error")
 
+// ErrDispatchRefused marks a 5xx answer from gatewayd-internal's dispatch
+// endpoint. The endpoint answers 200 with the app's response whenever the
+// app received the request, so a 5xx means the gateway refused or failed
+// the dispatch before the app saw it.
+var ErrDispatchRefused = errors.New("sched: gateway refused the dispatch")
+
+// dispatchRefusedError keeps the gateway's own message as the error text
+// while matching ErrDispatchRefused.
+type dispatchRefusedError struct{ err error }
+
+func (e dispatchRefusedError) Error() string        { return e.err.Error() }
+func (e dispatchRefusedError) Unwrap() error        { return e.err }
+func (e dispatchRefusedError) Is(target error) bool { return target == ErrDispatchRefused }
+
 // ErrPermanentWake is the sentinel for wake errors that the drain
 // will never recover from (no such app, app PARKED, account deleted).
 // Surfaced by the engine's Wake implementation; the drain short-circuits
@@ -940,7 +954,7 @@ func (d *Drain) deliverClaimed(ctx context.Context, inv state.Invocation, timeou
 	if isDebugMirrorReplay(inv) {
 		if d.gateway == nil {
 			err := errors.New("sched: debug replay gateway is not configured")
-			retryAfter := d.invocationRetryDelay(inv)
+			retryAfter := d.invocationRetryDelay(ctx, inv)
 			budget := d.invocationAttemptBudget(ctx, inv)
 			if failErr := d.store.FailInvocation(ctx, inv.ID, err.Error(), retryAfter, budget, failOutcome(err), state.WithInvocationClaim(inv)); failErr != nil {
 				d.log.Warn("drain: fail debug replay without gateway", "inv", inv.ID, "err", failErr)
@@ -949,7 +963,7 @@ func (d *Drain) deliverClaimed(ctx context.Context, inv state.Invocation, timeou
 		}
 		dispatched, err := d.gateway.Invoke(claimCtx, inv.AppID, inv)
 		if err != nil {
-			retryAfter := d.invocationRetryDelay(inv)
+			retryAfter := d.invocationRetryDelay(ctx, inv)
 			if errors.Is(err, ErrPermanentInvoke) {
 				retryAfter = 0
 			}
@@ -982,11 +996,14 @@ func (d *Drain) deliverClaimed(ctx context.Context, inv state.Invocation, timeou
 	var deliveryCtx context.Context
 	deliveryCtx, inv, version, traffic, err = d.prepareInvocationTraffic(claimCtx, inv)
 	if err != nil {
-		retryAfter := d.invocationRetryDelay(inv)
+		retryAfter := d.invocationRetryDelay(ctx, inv)
 		if errors.Is(err, state.ErrNotFound) || errors.Is(err, state.ErrInvalidArgument) || errors.Is(err, state.ErrConflict) {
 			retryAfter = 0
 		}
 		budget := d.invocationAttemptBudget(ctx, inv)
+		if retryAfter == 0 && !errors.Is(err, state.ErrNotFound) && !errors.Is(err, state.ErrInvalidArgument) && !errors.Is(err, state.ErrConflict) {
+			retryAfter, budget = cronPlatformRetry(inv, retryAfter, budget)
+		}
 		if failErr := d.store.FailInvocation(ctx, inv.ID, "version pin: "+err.Error(), retryAfter, budget, failOutcome(err), state.WithInvocationClaim(inv), state.WithDispatchNotStarted()); failErr == nil && retryAfter == 0 {
 			d.emitDone(ctx, inv, state.InvocationFailed)
 		}
@@ -1027,16 +1044,18 @@ func (d *Drain) deliverClaimed(ctx context.Context, inv state.Invocation, timeou
 		deliveryCtx, err = traffic.handoff(deliveryCtx)
 	}
 	if err != nil {
-		retryAfter := d.invocationRetryDelay(inv)
+		retryAfter := d.invocationRetryDelay(ctx, inv)
 		// Permanent wake errors short-circuit to state='failed' — a
 		// missing app, a deleted account, or a PARKED app will not
 		// recover by waiting 5s. The engine
 		// wraps the cause; we use errors.Is so the sentinels survive
 		// any future fmt.Errorf wrapping.
+		budget := d.invocationAttemptBudget(ctx, inv)
 		if errors.Is(err, ErrPermanentWake) {
 			retryAfter = 0
+		} else {
+			retryAfter, budget = cronPlatformRetry(inv, retryAfter, budget)
 		}
-		budget := d.invocationAttemptBudget(ctx, inv)
 		failErr := d.store.FailInvocation(ctx, inv.ID, "wake: "+err.Error(), retryAfter, budget, failOutcome(err), state.WithInvocationClaim(inv), state.WithDispatchNotStarted())
 		d.observeScheduledFailure(inv, retryAfter, budget, failErr)
 		if failErr == nil && retryAfter > 0 && budget > 0 && inv.Attempts >= budget {
@@ -1050,7 +1069,7 @@ func (d *Drain) deliverClaimed(ctx context.Context, inv state.Invocation, timeou
 	if err := d.stampInvocationInstance(deliveryCtx, inv, wakeRes.InstanceID); err != nil {
 		d.log.Warn("drain: stamp instance", "inv", logsanitize.Field(inv.ID), "inst", wakeRes.InstanceID, "err", dispatchErrorClass(err))
 		if state.InvocationHasOperation(inv) {
-			if failErr := d.store.FailInvocation(ctx, inv.ID, "bind operation instance: "+err.Error(), d.invocationRetryDelay(inv), d.invocationAttemptBudget(ctx, inv), failOutcome(err), state.WithClaimAttempt(inv.Attempts), state.WithDispatchNotStarted()); failErr != nil {
+			if failErr := d.store.FailInvocation(ctx, inv.ID, "bind operation instance: "+err.Error(), d.invocationRetryDelay(ctx, inv), d.invocationAttemptBudget(ctx, inv), failOutcome(err), state.WithClaimAttempt(inv.Attempts), state.WithDispatchNotStarted()); failErr != nil {
 				d.log.Warn("drain: settle operation binding failure", "inv", logsanitize.Field(inv.ID), "err", dispatchErrorClass(failErr))
 			}
 			return
@@ -1068,7 +1087,7 @@ func (d *Drain) deliverClaimed(ctx context.Context, inv state.Invocation, timeou
 	}
 	acknowledgmentToken, ackErr := d.prepareEventAcknowledgment(ctx, inv)
 	if ackErr != nil {
-		if failErr := d.store.FailInvocation(ctx, inv.ID, "prepare event acknowledgment: "+ackErr.Error(), d.invocationRetryDelay(inv), d.invocationAttemptBudget(ctx, inv), failOutcome(ackErr), state.WithInvocationClaim(inv)); failErr != nil {
+		if failErr := d.store.FailInvocation(ctx, inv.ID, "prepare event acknowledgment: "+ackErr.Error(), d.invocationRetryDelay(ctx, inv), d.invocationAttemptBudget(ctx, inv), failOutcome(ackErr), state.WithInvocationClaim(inv)); failErr != nil {
 			d.log.Warn("drain: event acknowledgment preparation failed", "inv", inv.ID, "err", failErr)
 		}
 		return
@@ -1111,11 +1130,14 @@ func (d *Drain) deliverClaimed(ctx context.Context, inv state.Invocation, timeou
 		// Permanent invoke errors (4xx) terminal-fail; transient
 		// (network / 5xx) retry. The gateway is the source of
 		// truth — it knows whether the failure is recoverable.
-		retryAfter := d.invocationRetryDelay(inv)
+		retryAfter := d.invocationRetryDelay(ctx, inv)
 		if errors.Is(err, ErrPermanentInvoke) {
 			retryAfter = 0
 		}
 		budget := d.invocationAttemptBudget(ctx, inv)
+		if errors.Is(err, ErrDispatchRefused) {
+			retryAfter, budget = cronPlatformRetry(inv, retryAfter, budget)
+		}
 		failErr := d.store.FailInvocation(ctx, inv.ID, "invoke: "+err.Error(), retryAfter, budget, failOutcome(err), state.WithInvocationClaim(inv))
 		d.observeScheduledFailure(inv, retryAfter, budget, failErr)
 		if failErr == nil && retryAfter == 0 {
@@ -1182,7 +1204,7 @@ func (d *Drain) settleCronWorkPolicyResponse(ctx context.Context, inv, response 
 		message = fmt.Sprintf("scheduled outcome %q classified as %s", response.OutcomeCode, decision.Action)
 	}
 	if decision.Action == "retry" {
-		retryAfter = d.invocationRetryDelay(inv)
+		retryAfter = d.invocationRetryDelay(ctx, inv)
 		budget = d.invocationAttemptBudget(ctx, inv)
 	}
 	options := []state.FailOption{
@@ -1205,7 +1227,7 @@ func (d *Drain) settleCronWorkPolicyUncertain(ctx context.Context, inv state.Inv
 	decision := workpolicy.Evaluate(inv.FailureRules, workpolicy.Evidence{Uncertain: true})
 	retryAfter, budget := time.Duration(0), 0
 	if decision.Action == "retry" {
-		retryAfter = d.invocationRetryDelay(inv)
+		retryAfter = d.invocationRetryDelay(ctx, inv)
 		budget = d.invocationAttemptBudget(ctx, inv)
 	}
 	options := []state.FailOption{
@@ -1391,6 +1413,7 @@ func (d *Drain) invocationAttemptBudget(ctx context.Context, inv state.Invocatio
 			"inv_id", logsanitize.Field(inv.ID), "app_id", logsanitize.Field(inv.AppID), "err", err)
 		return api.EffectiveRetryMaxAttempts(requested, api.DurableRetryMaxAttempts)
 	}
+	requested = invocationRetryPolicy(inv, &app).MaxAttempts
 	acct, err := state.AppResourceAccount(ctx, d.engine.Store(), app)
 	if err != nil {
 		d.log.WarnContext(ctx, "invocationAttemptBudget: AccountByID failed; using finite safety ceiling",
@@ -1404,21 +1427,63 @@ func (d *Drain) invocationAttemptBudget(ctx context.Context, inv state.Invocatio
 // supplied and preserves the drain's configured fixed delay as the producer
 // default for rows without an override. A plain HTTP cron fire makes one
 // delivery attempt (ADR-20261026201726): zero ends it as failed rather than
-// dead-lettered, and the next schedule boundary is its retry.
-func (d *Drain) invocationRetryDelay(inv state.Invocation) time.Duration {
+// dead-lettered, and the next schedule boundary is its retry. The exception
+// is a run Gregale refused before the app saw it; see cronPlatformRetry.
+func (d *Drain) invocationRetryDelay(ctx context.Context, inv state.Invocation) time.Duration {
 	if cronSingleAttempt(inv) {
 		return 0
 	}
-	if delay := inv.RetryPolicy().Backoff(inv.Attempts); delay > 0 {
+	policy := inv.RetryPolicy()
+	if policy.Zero() && state.IsEventDelivery(inv) {
+		// Only a failed event delivery reads its app: the hot path never does.
+		var app *state.App
+		if found, err := d.engine.Store().AppByID(ctx, inv.AppID); err == nil {
+			app = &found
+		}
+		policy = invocationRetryPolicy(inv, app)
+	}
+	if delay := policy.Backoff(inv.Attempts); delay > 0 {
 		return delay
 	}
 	return time.Duration(d.retryAfterSeconds) * time.Second
 }
 
+// cronPlatformRetry lets a plain HTTP cron run that Gregale refused before
+// the app received the request try again: the app has not seen it, so a
+// retry cannot repeat its side effects (ADR-20261026201726 amendment
+// 2026-10-29). Any other invocation, or a run on its last attempt, keeps
+// the caller's retry decision.
+func cronPlatformRetry(inv state.Invocation, retryAfter time.Duration, budget int) (time.Duration, int) {
+	if !cronSingleAttempt(inv) || inv.Attempts >= api.CronPlatformAttempts {
+		return retryAfter, budget
+	}
+	return time.Duration(inv.Attempts) * api.CronPlatformRetryDelay, api.CronPlatformAttempts
+}
+
+// invocationRetryPolicy is the policy that paces an invocation's retries
+// (ADR-20261029190000). Event routing creates a delivery without one, so a
+// delivery takes its app's retry policy (gregale.yaml retry_policy) when the
+// app sets one, else the default event delivery backoff; with neither it
+// retried every 5 s and was dead-lettered within two minutes. Every other
+// row keeps its own policy, or the producer default when it has none.
+func invocationRetryPolicy(inv state.Invocation, app *state.App) dispatch.RetryPolicy {
+	policy := inv.RetryPolicy()
+	if !policy.Zero() || !state.IsEventDelivery(inv) {
+		return policy
+	}
+	if app != nil {
+		if appPolicy := app.RetryPolicy(); !appPolicy.Zero() {
+			return appPolicy
+		}
+	}
+	return dispatch.RetryPolicy{BaseSeconds: api.EventDeliveryRetryBaseSeconds,
+		MaxSeconds: api.EventDeliveryRetryMaxSeconds, JitterSeconds: api.EventDeliveryRetryJitter}
+}
+
 // retryAfterFor is retained as a compatibility wrapper for drain callers
 // that predate the unified invocation retry policy helper.
 func (d *Drain) retryAfterFor(inv state.Invocation) time.Duration {
-	return d.invocationRetryDelay(inv)
+	return d.invocationRetryDelay(context.Background(), inv)
 }
 
 // accountAsyncCap (ADR-134 PR-B) returns the per-plan cap on

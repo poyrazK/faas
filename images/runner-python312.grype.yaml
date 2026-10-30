@@ -8,9 +8,12 @@
 #
 # Reviewed 2026-10-24 against the CPython sources of v3.12.15, v3.13.16 and
 # v3.14.8 (the fix lines themselves, not grype's fix versions or OSV's git
-# ranges, which both count release commits as fixes). No 3.12 release fixes
-# any of these, so a base refresh cannot clear them. Each one is reached only
-# when function code calls the named standard-library API.
+# ranges, which both count release commits as fixes). Re-reviewed 2026-10-30
+# for v3.12.16 against its 13 commits and Misc/NEWS.d/3.12.16.rst: it fixes
+# CVE-2026-12345 (tempfile.TemporaryDirectory cleanup, gh-157579), whose rule
+# is gone, and none of the five below. No 3.12 release fixes these, so a base
+# refresh cannot clear them. Each one is reached only when function code calls
+# the named standard-library API.
 ignore:
   - vulnerability: CVE-2025-12781
     reason: >-
@@ -19,7 +22,7 @@ ignore:
       code that decodes untrusted input with altchars.
     package:
       name: python
-      version: 3.12.15
+      version: 3.12.16
       type: binary
   - vulnerability: CVE-2025-15366
     reason: >-
@@ -28,7 +31,7 @@ ignore:
       code that builds imaplib commands from untrusted input.
     package:
       name: python
-      version: 3.12.15
+      version: 3.12.16
       type: binary
   - vulnerability: CVE-2025-15367
     reason: >-
@@ -37,16 +40,7 @@ ignore:
       that builds poplib commands from untrusted input.
     package:
       name: python
-      version: 3.12.15
-      type: binary
-  - vulnerability: CVE-2026-12345
-    reason: >-
-      tempfile.TemporaryDirectory cleanup races with a writer that swaps a
-      directory for a symlink. Needs an attacker already running code in the
-      same guest. No CPython release fixes it; the 3.14 branch has the fix.
-    package:
-      name: python
-      version: 3.12.15
+      version: 3.12.16
       type: binary
   - vulnerability: CVE-2026-3446
     reason: >-
@@ -55,7 +49,7 @@ ignore:
       relies on base64 decoding to validate untrusted input.
     package:
       name: python
-      version: 3.12.15
+      version: 3.12.16
       type: binary
   - vulnerability: CVE-2026-6019
     reason: >-
@@ -64,5 +58,5 @@ ignore:
       only by code that renders cookies into HTML with js_output().
     package:
       name: python
-      version: 3.12.15
+      version: 3.12.16
       type: binary

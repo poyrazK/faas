@@ -669,6 +669,14 @@ export class AlertRulesService {
         investigator; the customer's receiver likely rejected
         the request, was unreachable, or returned 5xx.
         `,
+        503: `Webhook delivery failed after the dispatcher's retry
+        budget (5 attempts, 2s/8s/32s/128s backoff). The audit
+        log entry (\`alert_preset.test_sent\`) carries the
+        \`delivery_status_code\` + \`delivery_attempts\` for the
+        investigator; the customer's receiver likely rejected
+        the request, was unreachable, or returned 5xx.
+        Sent as 503 by the public edge.
+        `,
       },
     });
   }

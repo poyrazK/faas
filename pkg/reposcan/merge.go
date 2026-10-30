@@ -2,6 +2,7 @@ package reposcan
 
 import (
 	"maps"
+	"slices"
 	"sort"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -56,6 +57,8 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		goCommand           string
 		image               string // highest-tier seed's prebuilt image
 		healthcheck         *api.ComposeHealthcheck
+		readinessCheck      *api.DeploymentHealthcheck
+		ingressSettings     []IngressSetting
 		imageProcess        *api.ComposeProcess
 		secretFiles         []api.SecretFile
 		resources           *api.ComposeResources
@@ -158,9 +161,13 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		if b.resources == nil && s.resources != nil {
 			b.resources = s.resources.Clone()
 		}
+		if b.ingressSettings == nil && s.ingressSettings != nil {
+			b.ingressSettings = slices.Clone(s.ingressSettings)
+		}
 		if !b.imageSet && (s.imageSet || s.image != "") {
 			b.image = s.image
 			b.healthcheck = s.healthcheck.Clone()
+			b.readinessCheck = s.readinessCheck.Clone()
 			b.imageProcess = s.imageProcess.Clone()
 			b.imageSet = true
 		}
@@ -274,6 +281,8 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			Command:             b.command,
 			CommandShell:        b.commandShell,
 			ImageHealthcheck:    b.healthcheck.Clone(),
+			ReadinessCheck:      b.readinessCheck.Clone(),
+			IngressSettings:     slices.Clone(b.ingressSettings),
 			ImageProcess:        b.imageProcess.Clone(),
 			SecretFiles:         api.CloneSecretFiles(b.secretFiles),
 			Resources:           b.resources.Clone(),

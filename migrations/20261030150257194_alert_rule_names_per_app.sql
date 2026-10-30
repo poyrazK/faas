@@ -1,4 +1,4 @@
--- filename: 20261030090000001_alert_rule_names_per_app.sql
+-- filename: 20261030150257194_alert_rule_names_per_app.sql
 -- migration-compat: contract
 -- ADR-20261029203000: an alert rule's name is unique within its app (and an
 -- account-wide rule's within its account), not across the account, so two

@@ -811,6 +811,48 @@ Bucket names in Gregale are logical and app/scope-local. Physical names are
 UUID-based to avoid leaking customer identifiers or colliding across providers.
 Only configured region defaults appear in the creation catalog.
 
+### Several provider projects per region
+
+Each Gregale bucket is its own provider bucket, and a provider project holds
+a limited number of them: OVH allows 100 per project, and at most 1,000 after
+a support request. To serve more, give the region a pool of backends, one per
+project ([ADR-20261029174627](../adr/20261029174627-object-storage-backend-pools.md)):
+
+```json
+"pools": {"us-east-1": ["ovh-us-1", "ovh-us-2"]},
+"backends": [
+  {"id": "ovh-us-1", "driver": "s3", "region": "us-east-1", "namespace": "<project 1>", "max_buckets": 950},
+  {"id": "ovh-us-2", "driver": "s3", "region": "us-east-1", "namespace": "<project 2>", "max_buckets": 950}
+]
+```
+
+The backends also need their usual endpoint, S3 region and key settings.
+
+- `pools` lists the backends that receive new buckets, in fill order. A
+  region in `pools` may leave out `defaults`; if it has both, the default must
+  be the pool's first backend.
+- `max_buckets` caps the live buckets placed on a backend; omit it for no
+  ceiling. Every member of a pool with more than one backend needs one, set
+  below the provider's quota.
+- A new bucket goes to the pool backend that holds most of its account's
+  buckets while it has room, otherwise to the first with room, so an
+  account's buckets stay together for cross-bucket copies. When none has
+  room, creation answers `503 object_storage_region_full` and the
+  `FaasObjectStorageRegionFull` alert fires.
+- A pool's backends must declare the same driver, Object Lock settings,
+  encryption algorithms and `allowed_origins`, and no customer encryption
+  keys, so a bucket's features never depend on where it landed.
+- A backend's buckets stay on it for life. Removing a backend from its pool
+  stops new placements only; keep it under `backends` while buckets use it.
+- Restart `s3-gatewayd` and `gatewayd-public` before apid after adding a
+  backend. Releases older than this change reject a registry with `pools` or
+  `max_buckets`.
+- Isolated environment clones are refused when the source bucket's backend
+  has a ceiling.
+
+The [FaasObjectStorage runbook](../runbooks/FaasObjectStorage.md) adds a
+project when a region nears its capacity.
+
 ## Accounting and safety budgets
 
 The `accounting` object in the same provider-registry JSON sets uniform
@@ -1399,6 +1441,28 @@ separate tenant IAM adapter; never hand out the operator-wide credential.
 Deferred: the S3 compatibility gaps listed above, production edge/service
 activation, unsupported lifecycle/version behavior, untracked object-capacity rebasing,
 historical untracked multipart reclamation, and automatic migrations.
+
+## Cached read admission
+
+Under gateway-safety accounting, `s3-gatewayd` admits `GET` and `HEAD` from a
+per-bucket decision it reads without row locks and caches for 2 s: the
+owner's status, the bucket's inventory freshness and the month's request,
+egress and authorization counts against their ceilings. Read counts are
+written in one batch per process every second
+([ADR-20261030075301](../adr/20261030075301-object-storage-reads-off-the-database.md)).
+
+- A suspension, abuse hold, deletion or stale inventory stops reads within
+  2 s, or within 30 s while the gateway cannot reach the database; after
+  that, reads answer `503`.
+- The monthly request, egress and authorization ceilings are exact within
+  one gateway process and approximate across several: each can admit about
+  3 s of a bucket's reads the others have not written yet. A crashed gateway
+  loses at most 1 s of counts; a clean restart writes them first.
+- Every authenticated request takes a token from its owner's bucket:
+  100 per second, bursts of 200, per gateway process. Over that, clients get
+  `503 SlowDown`.
+- Writes, provider-report accounting and credentials issued under an
+  organization access fence keep the locking admission.
 
 ## Recoverable branded PUTs
 

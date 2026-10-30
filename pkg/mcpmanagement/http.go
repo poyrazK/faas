@@ -53,6 +53,9 @@ type HTTPOptions struct {
 	// OAuth endpoints live under /mcp and the metadata at the RFC 8414 path
 	// insertion URLs; the host's root metadata belongs to the API.
 	Hosted bool
+	// ClientMetadataDocuments accepts clients identified by a Client ID
+	// Metadata Document URL beside registered ones (ADR-20261030065746).
+	ClientMetadataDocuments bool
 	// AgentKeys lets a headless agent authenticate with an API key carrying
 	// the agent scope instead of OAuth (ADR-20261029085359).
 	AgentKeys bool
@@ -84,6 +87,8 @@ type remoteServer struct {
 	usedRefresh map[string]*oauthGrant
 	// keyConns are agent-key connections by key hash; nothing durable.
 	keyConns map[string]*keyConnection
+	// metadataClient fetches client metadata documents; nil disables them.
+	metadataClient *http.Client
 }
 
 type grantContextKey struct{}
@@ -159,6 +164,9 @@ func NewHTTPService(opts HTTPOptions) (*RemoteService, error) {
 			return nil, err
 		}
 	}
+	if opts.ClientMetadataDocuments {
+		r.metadataClient = newClientMetadataHTTPClient()
+	}
 	if err := r.restoreOAuth(); err != nil {
 		return nil, err
 	}
@@ -186,7 +194,13 @@ func validConfiguredRedirectURI(value string) bool {
 	return err == nil && len(value) <= 2048 && u.Scheme == "http" && loopbackHost(u.Hostname()) && u.User == nil && u.Fragment == "" && u.RawQuery == "" && u.Path == "/callback/*" && strings.HasSuffix(value, "/callback/*") && strings.Count(value, "*") == 1
 }
 
+// callbackSuffixAllowed matches /callback with at most one plain final path
+// component. Codex adds the component only for servers that do not name their
+// issuer (RFC 9207); this one does (ADR-20261030065746).
 func callbackSuffixAllowed(path string) bool {
+	if path == "/callback" {
+		return true
+	}
 	if !strings.HasPrefix(path, "/callback/") {
 		return false
 	}
@@ -240,6 +254,7 @@ func (r *remoteServer) handler() http.Handler {
 	mux.HandleFunc("POST "+prefix+"/oauth/consent", r.consent)
 	mux.HandleFunc("POST "+prefix+"/oauth/token", r.token)
 	mux.HandleFunc("POST "+prefix+"/oauth/revoke", r.revoke)
+	mux.HandleFunc("GET "+prefix+"/oauth/continue", r.continueLogin)
 	getServer := func(req *http.Request) *mcp.Server {
 		server, _ := req.Context().Value(grantServerKey{}).(*mcp.Server)
 		return server
@@ -298,7 +313,13 @@ func (r *remoteServer) resourceMetadata(w http.ResponseWriter, _ *http.Request) 
 }
 
 func (r *remoteServer) authorizationMetadata(w http.ResponseWriter, _ *http.Request) {
-	writeOAuthJSON(w, http.StatusOK, map[string]any{"issuer": r.issuer, "authorization_endpoint": r.issuer + "/oauth/authorize", "token_endpoint": r.issuer + "/oauth/token", "registration_endpoint": r.issuer + "/oauth/register", "revocation_endpoint": r.issuer + "/oauth/revoke", "response_types_supported": []string{"code"}, "grant_types_supported": []string{"authorization_code", "refresh_token"}, "token_endpoint_auth_methods_supported": []string{"none"}, "code_challenge_methods_supported": []string{"S256"}, "scopes_supported": r.scopes()})
+	metadata := map[string]any{"issuer": r.issuer, "authorization_endpoint": r.issuer + "/oauth/authorize", "token_endpoint": r.issuer + "/oauth/token", "registration_endpoint": r.issuer + "/oauth/register", "revocation_endpoint": r.issuer + "/oauth/revoke", "response_types_supported": []string{"code"}, "grant_types_supported": []string{"authorization_code", "refresh_token"}, "token_endpoint_auth_methods_supported": []string{"none"}, "code_challenge_methods_supported": []string{"S256"}, "scopes_supported": r.scopes()}
+	// RFC 9207: every authorization response names this issuer.
+	metadata["authorization_response_iss_parameter_supported"] = true
+	if r.metadataClient != nil {
+		metadata["client_id_metadata_document_supported"] = true
+	}
+	writeOAuthJSON(w, http.StatusOK, metadata)
 }
 
 func (r *remoteServer) authenticate(next http.Handler) http.Handler {
@@ -339,6 +360,7 @@ func (r *remoteServer) authenticate(next http.Handler) http.Handler {
 			return
 		}
 		defer release()
+		r.slideCredential(g)
 		// Reverification may shorten a lease, but refresh cannot extend this request.
 		if currentExpiry.Before(leaseExpires) {
 			leaseExpires = currentExpiry

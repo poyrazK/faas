@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/capflags"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -126,6 +127,16 @@ func TestQueueSlowRequestCapture(t *testing.T) {
 	}
 	if queued, reason, _ := e.QueueSlowRequestCapture(ctx, optedOutIns.ID, "req-4", "trace-4", "GET /", 10*time.Second); queued || !strings.Contains(reason, "turned automatic captures off") {
 		t.Fatalf("app that turned automatic captures off: queued=%v reason=%q", queued, reason)
+	}
+	// profile-captures is a preview capability: with no operator value its
+	// flag is off, and no account gets automatic captures.
+	capabilities, err := capflags.Load(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.WithCapabilities(capabilities)
+	if queued, reason, _ := e.QueueSlowRequestCapture(ctx, ins.ID, "req-5", "trace-5", "GET /", 10*time.Second); queued || !strings.Contains(reason, "not released") {
+		t.Fatalf("account captures are not released to: queued=%v reason=%q", queued, reason)
 	}
 }
 

@@ -502,10 +502,11 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 		PRNumber:   int(req.PullRequestNumber),
 		Tag:        req.Tag,
 	}
+	params.OverrideHealthcheck, params.OverrideLivenessProbe = projectReadinessOverrides(app.Manifest, resource.Plan)
 	if kind == state.DeploymentKindGitHub {
 		// ADR-20261019071733: a push cannot carry an override, so a freeze
 		// refuses it; githubd reports the reason on the commit.
-		active, freezeErr := freeze.ActiveFor(ctx, g.store, acct.ID, app.ID, req.DeploymentScope, time.Now().UTC())
+		active, freezeErr := freeze.ActiveFor(ctx, g.store, app, req.DeploymentScope, time.Now().UTC())
 		if freezeErr != nil {
 			g.log.Warn("githubd bridge: could not read deploy freezes; releasing", "app_id", app.ID, "err", freezeErr)
 		} else if len(active) > 0 {

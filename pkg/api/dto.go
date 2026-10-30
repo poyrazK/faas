@@ -562,7 +562,7 @@ type CreateAppRequest struct {
 	ServiceBindingTransport *ServiceBindingTransport `json:"service_binding_transport,omitempty"`
 	Type                    string                   `json:"type,omitempty"`             // "app" (default) | "function"
 	Runtime                 string                   `json:"runtime,omitempty"`          // node22|python312|go124|go124-alpine|node24|python313|binary for functions
-	RAMMB                   int                      `json:"ram_mb,omitempty"`           // 0 => plan default
+	RAMMB                   int                      `json:"ram_mb,omitempty"`           // 0 => StandaloneAppDefaultRAMMB; the plan's RAM when vcpu is set
 	VCPU                    int                      `json:"vcpu,omitempty"`             // 0 => plan default; explicit values must match the plan RAM/vCPU shape
 	CPUMillicores           int                      `json:"cpu_millicores,omitempty"`   // 0 => 1000; allowed: 250, 500, 1000
 	ResourceProfile         string                   `json:"resource_profile,omitempty"` // named RAM/CPU shape; overrides omitted resource values
@@ -2825,6 +2825,20 @@ type DeploymentHealthcheck struct {
 // primary-app readiness. An empty service checks the overall server health.
 type DeploymentGRPCHealthcheck struct {
 	Service string `json:"service,omitempty"`
+}
+
+// Clone returns a deep copy; nil stays nil.
+func (h *DeploymentHealthcheck) Clone() *DeploymentHealthcheck {
+	if h == nil {
+		return nil
+	}
+	out := *h
+	out.Test = slices.Clone(h.Test)
+	if h.GRPC != nil {
+		grpc := *h.GRPC
+		out.GRPC = &grpc
+	}
+	return &out
 }
 
 // DeploymentReadinessProbe is a reversible, steady-state traffic gate for
@@ -5319,6 +5333,10 @@ type AccountExportResponse struct {
 	Crons          []CronResponse                `json:"crons"`
 	APIKeys        []APIKeyExportResponse        `json:"api_keys"`
 	AppSecrets     []AppSecretExportResponse     `json:"app_secrets"`
+	// EdgeRules and EdgeRuleLists are the account's edge configuration on
+	// the exported apps (ADR-091 amendment 2026-10-30).
+	EdgeRules     []EdgeRuleResponse     `json:"edge_rules,omitempty"`
+	EdgeRuleLists []EdgeRuleListResponse `json:"edge_rule_lists,omitempty"`
 	// AuditTrail is the customer's own GDPR ledger slice: every
 	// export/delete/restore the customer has hit. Surfaced in the
 	// bundle so the export is self-describing (the customer can see
@@ -7472,7 +7490,8 @@ type PlanWorkload struct {
 	// UnsetEnvKeyReasons says why a Compose value for an UnsetEnvKeys name
 	// is not imported (ADR-20261023085230): not_opted_in, secret,
 	// service_address, local_address, interpolated, host_value, empty or
-	// invalid. Names and reasons only, never values.
+	// invalid; for a Kubernetes workload also not_annotated and secret_ref
+	// (ADR-20261029093621 §5). Names and reasons only, never values.
 	UnsetEnvKeyReasons map[string]string `json:"unset_env_key_reasons,omitempty"`
 	// ImportedEnvKeys are the Compose environment names whose plain values
 	// apply will write, because the project opted in and they are unset.

@@ -257,6 +257,7 @@ internal hosting service and Gregale Agents are already unreachable.
 | 129 | Synthetic checks | `synthetics` | `synthetic-checks` preview | — | preview |
 | 130 | Traffic profiles: routes, request mix, attribution | `profiles`, dashboard `profile_*` | **MISSING** | — | internal |
 | 131 | Continuous profiling | | `continuous-profiling` internal | env flag | internal |
+| 168 | On-demand profile captures: CPU, heap, stacks, Go locks; automatic captures; capture diff | `profiles/captures`, `gregale debug capture`, dashboard `profile_capture*` | `profile-captures` preview | `pf: profile_captures`, `env: FAAS_PROFILING_ON_DEMAND` | preview |
 | 132 | Service map | | `service-map` internal | `pf: service_map` | internal |
 | 133 | Change timeline | `changes` | `change-timeline` internal | `pf: change_timeline` | internal |
 | 134 | Debug: debug bundle and telemetry, dependency view, post-deploy regressions | `debug`, `gregale debug` | **MISSING** | — | beta |

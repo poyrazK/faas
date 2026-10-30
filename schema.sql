@@ -259,16 +259,17 @@ BEGIN
                         AND i.state IN ('waking','cold_booting','running','draining','warm')), 0)::bigint
       INTO node_vcpu_budget, node_cpu_budget, used_vcpu, used_cpu
       FROM compute_nodes n WHERE n.id = p_node_id;
-    -- A quiet-pause discount is the scheduler's measurement; it never lets
-    -- bookings pass api.QuietPauseMaxVCPUOvercommitPercent (300) of a budget.
-    quiet_vcpu := least(greatest(coalesce(p_quiet_vcpu, 0), 0), node_vcpu_budget * 2);
+    -- A discount is the scheduler's measurement: quiet-paused instances, and
+    -- since ADR 20261029151111 measured instances' unused CPU. It never lets
+    -- bookings pass api.MeasuredCPUMaxOvercommitPercent (700) of a budget.
+    quiet_vcpu := least(greatest(coalesce(p_quiet_vcpu, 0), 0), node_vcpu_budget * 6);
     IF p_vcpu > 0 AND node_vcpu_budget > 0 AND used_vcpu - quiet_vcpu + p_vcpu > node_vcpu_budget THEN
         RAISE EXCEPTION 'node vCPU headroom exhausted'
             USING ERRCODE = '23514', CONSTRAINT = 'instance_node_capacity',
                   DETAIL = format('resource=vcpu used_vcpu=%s quiet_vcpu=%s admit_vcpu=%s budget_vcpu=%s',
                                   used_vcpu, quiet_vcpu, p_vcpu, node_vcpu_budget);
     END IF;
-    quiet_cpu := least(greatest(coalesce(p_quiet_cpu_millicores, 0), 0), node_cpu_budget * 2);
+    quiet_cpu := least(greatest(coalesce(p_quiet_cpu_millicores, 0), 0), node_cpu_budget * 6);
     IF p_cpu_millicores > 0 AND node_cpu_budget > 0 AND used_cpu - quiet_cpu + p_cpu_millicores > node_cpu_budget THEN
         RAISE EXCEPTION 'node CPU headroom exhausted'
             USING ERRCODE = '23514', CONSTRAINT = 'instance_node_capacity',
@@ -4133,7 +4134,7 @@ CREATE TABLE public.deployments (
     CONSTRAINT deployments_revision_nonneg_chk CHECK ((revision >= 0)),
     CONSTRAINT deployments_rollout_decision_chk CHECK (((rollout_decision IS NULL) OR ((jsonb_typeof(rollout_decision) = 'object'::text) AND ((rollout_decision ->> 'kind'::text) = ANY (ARRAY['advance'::text, 'abort'::text])) AND (octet_length((rollout_decision)::text) <= 4096)))),
     CONSTRAINT deployments_rollout_state_chk CHECK ((rollout_state = ANY (ARRAY['pending'::text, 'rolling_out'::text, 'complete'::text, 'aborted'::text]))),
-    CONSTRAINT deployments_runtime_base_check CHECK ((runtime_base = ANY (ARRAY[''::text, 'node22'::text, 'node24'::text]))),
+    CONSTRAINT deployments_runtime_base_check CHECK ((runtime_base = ANY (ARRAY[''::text, 'node22'::text, 'node24'::text, 'python312'::text, 'python313'::text]))),
     CONSTRAINT deployments_runtime_upgrade_routing_token_check CHECK ((runtime_upgrade_routing_token <> '00000000-0000-0000-0000-000000000000'::uuid)),
     CONSTRAINT deployments_scan_status_chk CHECK (((scan_status IS NULL) OR (scan_status = ANY (ARRAY['pending'::text, 'complete'::text, 'failed'::text, 'skipped'::text, 'complete_with_redactions'::text])))),
     CONSTRAINT deployments_scope_shape CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text)),
@@ -4932,7 +4933,7 @@ BEGIN
  -- A container app without a runtime may run on a shared runner base its signed
  -- export claims (docs/adr/20261017-shared-runtime-source-apps.md).
  runtime:=CASE WHEN a.type='function' OR coalesce(a.runtime,'')<>'' THEN coalesce(nullif(a.runtime,''),d.handler,'')
-  WHEN origin.input_snapshot->'claims'->>'runtime' IN ('node22','node24') THEN origin.input_snapshot->'claims'->>'runtime' ELSE '' END;
+  WHEN origin.input_snapshot->'claims'->>'runtime' IN ('node22','node24','python312','python313') THEN origin.input_snapshot->'claims'->>'runtime' ELSE '' END;
  kind:=CASE WHEN a.type='function' OR coalesce(a.runtime,'')<>'' THEN 'function-layer' ELSE 'source-app-layer' END;
  IF (origin.input_snapshot->'claims'->>'account_id'=a.account_id::text AND origin.input_snapshot->'claims'->>'app_id'=a.id::text
   AND origin.input_snapshot->'claims'->>'org_id'=coalesce(a.org_id::text,'')
@@ -19975,7 +19976,7 @@ BEGIN
  SELECT * INTO b FROM builds WHERE id=(c->>'build_id')::uuid FOR UPDATE NOWAIT;
  IF NOT FOUND THEN RAISE EXCEPTION 'build export claim missing' USING ERRCODE='23514',CONSTRAINT='build_export_publication_missing';END IF;
  IF (a.id=d.app_id AND b.deployment_id=d.id AND a.account_id::text=c->>'account_id'
-  AND coalesce(a.org_id::text,'')=c->>'org_id' AND (coalesce(a.runtime,'')=c->>'runtime' OR (a.type<>'function' AND coalesce(a.runtime,'')='' AND c->>'runtime' IN ('node22','node24'))) AND a.status<>'deleted'
+  AND coalesce(a.org_id::text,'')=c->>'org_id' AND (coalesce(a.runtime,'')=c->>'runtime' OR (a.type<>'function' AND coalesce(a.runtime,'')='' AND c->>'runtime' IN ('node22','node24','python312','python313'))) AND a.status<>'deleted'
   AND b.started_at=(c->>'claim_started_at')::timestamptz
   AND d.kind IN ('tarball','dockerfile','github','preview')
   AND d.status IN ('pending','building','imaging','snapshotting','live','superseded')
@@ -22612,6 +22613,50 @@ $$;
 
 
 --
+-- Name: project_environment_clone_inventory_present(uuid, uuid, text[], uuid[], uuid[], jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.project_environment_clone_inventory_present(p_project_id uuid, p_environment_id uuid, p_environment_slugs text[], p_app_ids uuid[], p_deployment_ids uuid[], p_tables jsonb) RETURNS SETOF text
+    LANGUAGE plpgsql STABLE
+    AS $_$
+DECLARE
+    probe jsonb;
+    hop jsonb;
+    alias text;
+    query text;
+    hops integer;
+    present boolean;
+BEGIN
+    FOR probe IN SELECT value FROM jsonb_array_elements(p_tables) ORDER BY value->>'table' LOOP
+        query := format('SELECT EXISTS (SELECT 1 FROM public.%I t0', probe->>'table');
+        alias := 't0';
+        hops := 0;
+        FOR hop IN SELECT value FROM jsonb_array_elements(COALESCE(probe->'via', '[]'::jsonb)) LOOP
+            hops := hops + 1;
+            query := query || format(' JOIN public.%I t%s ON t%s.%I = %s.%I', hop->>1, hops, hops, hop->>2, alias, hop->>0);
+            alias := 't' || hops;
+        END LOOP;
+        query := query || CASE probe->>'owner'
+            WHEN 'environment' THEN CASE WHEN probe->>'slug_column' IS NOT NULL
+                THEN format(' WHERE %s.project_id = $1 AND %s.%I = ANY ($3))', alias, alias, probe->>'slug_column')
+                ELSE format(' WHERE %s.%I = $2)', alias, probe->>'column') END
+            WHEN 'project' THEN format(' WHERE %s.%I = $1)', alias, COALESCE(probe->>'column', 'project_id'))
+            WHEN 'app' THEN format(' WHERE %s.%I = ANY ($4))', alias, COALESCE(probe->>'column', 'app_id'))
+            WHEN 'deployment' THEN format(' WHERE %s.%I = ANY ($5))', alias, COALESCE(probe->>'column', 'deployment_id'))
+        END;
+        IF query IS NULL OR probe->>'table' IS NULL THEN
+            RAISE EXCEPTION 'clone inventory probe is invalid: %', probe USING ERRCODE = '22023';
+        END IF;
+        EXECUTE query INTO present USING p_project_id, p_environment_id, p_environment_slugs, p_app_ids, p_deployment_ids;
+        IF present THEN
+            RETURN NEXT probe->>'table';
+        END IF;
+    END LOOP;
+END
+$_$;
+
+
+--
 -- Name: project_environment_config_env(jsonb); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -24531,6 +24576,28 @@ BEGIN
     END IF;
     RETURN NEW;
 END;
+$$;
+
+
+--
+-- Name: record_managed_postgres_usage_waiver(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.record_managed_postgres_usage_waiver() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF OLD.purge_after IS NULL AND NEW.purge_after IS NOT NULL THEN
+        INSERT INTO managed_postgres_usage_waivers (database_id, waived_from)
+        VALUES (NEW.id, NEW.updated_at)
+        ON CONFLICT (database_id, waived_from) DO NOTHING;
+    ELSIF OLD.purge_after IS NOT NULL AND NEW.purge_after IS NULL THEN
+        UPDATE managed_postgres_usage_waivers
+        SET waived_until = greatest(waived_from, NEW.updated_at)
+        WHERE database_id = NEW.id AND waived_until IS NULL;
+    END IF;
+    RETURN NULL;
+END
 $$;
 
 
@@ -26896,6 +26963,35 @@ $$;
 
 
 --
+-- Name: set_full_clone_configuration_fences(boolean); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.set_full_clone_configuration_fences(enabled boolean) RETURNS integer
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    fence record;
+    changed integer := 0;
+BEGIN
+    FOR fence IN
+        SELECT c.relname
+        FROM pg_trigger t
+        JOIN pg_class c ON c.oid = t.tgrelid
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE t.tgname = 'clone_configuration_write_fence' AND NOT t.tgisinternal
+          AND n.nspname = 'public' AND c.relname <> 'object_version_protection'
+        ORDER BY c.relname
+    LOOP
+        EXECUTE format('ALTER TABLE public.%I %s TRIGGER clone_configuration_write_fence',
+            fence.relname, CASE WHEN enabled THEN 'ENABLE' ELSE 'DISABLE' END);
+        changed := changed + 1;
+    END LOOP;
+    RETURN changed;
+END
+$$;
+
+
+--
 -- Name: set_service_capacity_protection(boolean); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -27563,6 +27659,82 @@ BEGIN
     END LOOP;
     RETURN NULL;
 END;
+$$;
+
+
+--
+-- Name: traffic_binding_capture(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.traffic_binding_capture() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    CASE TG_TABLE_NAME
+    WHEN 'custom_domains' THEN
+        IF TG_OP = 'INSERT' THEN
+            PERFORM traffic_binding_capture_append('domain+' || E'\t' || NEW.domain::text);
+        ELSE
+            PERFORM traffic_binding_capture_append('domain' || E'\t' || OLD.domain::text);
+            IF TG_OP = 'UPDATE' AND NEW.domain IS DISTINCT FROM OLD.domain THEN
+                PERFORM traffic_binding_capture_append('domain+' || E'\t' || NEW.domain::text);
+            END IF;
+        END IF;
+    WHEN 'tenant_hostnames' THEN
+        IF TG_OP = 'INSERT' THEN
+            PERFORM traffic_binding_capture_append('tenant+' || E'\t' || NEW.hostname::text);
+        ELSE
+            PERFORM traffic_binding_capture_append('tenant' || E'\t' || OLD.hostname::text);
+            IF TG_OP = 'UPDATE' AND NEW.hostname IS DISTINCT FROM OLD.hostname THEN
+                PERFORM traffic_binding_capture_append('tenant+' || E'\t' || NEW.hostname::text);
+            END IF;
+        END IF;
+    WHEN 'tenant_surfaces' THEN
+        PERFORM traffic_binding_capture_append('surface' || E'\t' ||
+            CASE WHEN TG_OP = 'DELETE' THEN OLD.id ELSE NEW.id END::text);
+    WHEN 'platform_tenants' THEN
+        PERFORM traffic_binding_capture_append('platform' || E'\t' ||
+            CASE WHEN TG_OP = 'DELETE' THEN OLD.id ELSE NEW.id END::text);
+    WHEN 'deployment_aliases' THEN
+        IF TG_OP = 'INSERT' THEN
+            PERFORM traffic_binding_capture_append('alias+' || E'\t' || NEW.app_id::text || E'\t' || NEW.name);
+        ELSE
+            PERFORM traffic_binding_capture_append('alias' || E'\t' || OLD.app_id::text || E'\t' || OLD.name);
+            IF TG_OP = 'UPDATE' THEN
+                PERFORM traffic_binding_capture_append('alias+' || E'\t' || NEW.app_id::text || E'\t' || NEW.name);
+            END IF;
+        END IF;
+    WHEN 'apps' THEN
+        IF TG_OP = 'INSERT' THEN
+            PERFORM traffic_binding_capture_append('app+' || E'\t' || NEW.id::text);
+        ELSIF TG_OP = 'DELETE' THEN
+            PERFORM traffic_binding_capture_append('slug' || E'\t' || OLD.slug);
+        ELSIF NEW.slug IS DISTINCT FROM OLD.slug THEN
+            -- The new slug's primary URL is a newly reserved name.
+            PERFORM traffic_binding_capture_append('app+' || E'\t' || NEW.id::text);
+            PERFORM traffic_binding_capture_append('slug' || E'\t' || OLD.slug);
+        ELSE
+            PERFORM traffic_binding_capture_append('app' || E'\t' || NEW.id::text);
+        END IF;
+    WHEN 'project_environments' THEN
+        PERFORM traffic_binding_capture_append('environment' || E'\t' ||
+            CASE WHEN TG_OP = 'DELETE' THEN OLD.id ELSE NEW.id END::text);
+    ELSE
+        NULL;
+    END CASE;
+    RETURN NULL;
+END $$;
+
+
+--
+-- Name: traffic_binding_capture_append(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.traffic_binding_capture_append(line text) RETURNS void
+    LANGUAGE sql
+    AS $$
+  SELECT set_config('gregale.traffic_binding_touched',
+    coalesce(current_setting('gregale.traffic_binding_touched', true), '') || line || E'\n', true);
 $$;
 
 
@@ -43188,6 +43360,7 @@ CREATE TABLE public.managed_postgres_databases (
     clone_resource_role text DEFAULT 'target'::text NOT NULL,
     accounting_required boolean DEFAULT true NOT NULL,
     org_id uuid NOT NULL,
+    purge_after timestamp with time zone,
     CONSTRAINT managed_postgres_clone_has_restore CHECK (((environment_clone_operation_id IS NULL) OR ((restore_source_database_id IS NOT NULL) AND (restore_source_resource_id IS NOT NULL) AND (restore_point_in_time IS NOT NULL)))),
     CONSTRAINT managed_postgres_clone_is_independent CHECK (((environment_clone_operation_id IS NULL) OR ((id <> restore_source_database_id) AND ((provider_resource_id IS NULL) OR (provider_resource_id <> restore_source_resource_id))))),
     CONSTRAINT managed_postgres_databases_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 30))),
@@ -43464,6 +43637,18 @@ CREATE TABLE public.managed_postgres_usage_imports (
     CONSTRAINT managed_postgres_usage_imports_preview_revision_check CHECK ((preview_revision ~ '^[a-f0-9]{64}$'::text)),
     CONSTRAINT managed_postgres_usage_imports_reason_check CHECK (((octet_length(reason) >= 1) AND (octet_length(reason) <= 512))),
     CONSTRAINT managed_postgres_usage_imports_request_sha256_check CHECK ((request_sha256 ~ '^[a-f0-9]{64}$'::text))
+);
+
+
+--
+-- Name: managed_postgres_usage_waivers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_usage_waivers (
+    database_id uuid NOT NULL,
+    waived_from timestamp with time zone NOT NULL,
+    waived_until timestamp with time zone,
+    CONSTRAINT managed_postgres_usage_waivers_check CHECK (((waived_until IS NULL) OR (waived_until >= waived_from)))
 );
 
 
@@ -52522,7 +52707,7 @@ CREATE TABLE public.release_database_switches (
 
 CREATE TABLE public.release_freezes (
     id uuid NOT NULL,
-    account_id uuid NOT NULL,
+    account_id uuid,
     app_id uuid,
     kind text NOT NULL,
     starts_at timestamp with time zone,
@@ -52539,6 +52724,7 @@ CREATE TABLE public.release_freezes (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     lifted_at timestamp with time zone,
     lifted_by text,
+    org_id uuid,
     CONSTRAINT release_freezes_after_rollback_minutes_check CHECK (((after_rollback_minutes IS NULL) OR ((after_rollback_minutes >= 1) AND (after_rollback_minutes <= 1440)))),
     CONSTRAINT release_freezes_check CHECK (((kind <> 'window'::text) OR ((starts_at IS NOT NULL) AND ((ends_at IS NULL) OR (ends_at > starts_at)) AND (weekly_days IS NULL) AND (after_rollback_minutes IS NULL)))),
     CONSTRAINT release_freezes_check1 CHECK (((kind <> 'weekly'::text) OR ((weekly_days IS NOT NULL) AND (weekly_start_minute IS NOT NULL) AND (weekly_duration_minutes IS NOT NULL) AND (time_zone IS NOT NULL) AND (starts_at IS NULL) AND (ends_at IS NULL) AND (after_rollback_minutes IS NULL)))),
@@ -52548,6 +52734,7 @@ CREATE TABLE public.release_freezes (
     CONSTRAINT release_freezes_created_by_check CHECK (((length(created_by) >= 1) AND (length(created_by) <= 320))),
     CONSTRAINT release_freezes_kind_check CHECK ((kind = ANY (ARRAY['window'::text, 'weekly'::text, 'after_rollback'::text]))),
     CONSTRAINT release_freezes_lifted_by_check CHECK (((lifted_by IS NULL) OR ((length(lifted_by) >= 1) AND (length(lifted_by) <= 320)))),
+    CONSTRAINT release_freezes_one_owner_chk CHECK (((account_id IS NULL) <> (org_id IS NULL))),
     CONSTRAINT release_freezes_reason_check CHECK (((length(reason) >= 1) AND (length(reason) <= 200))),
     CONSTRAINT release_freezes_source_check CHECK ((source = ANY (ARRAY['manual'::text, 'automatic_rollback'::text]))),
     CONSTRAINT release_freezes_time_zone_check CHECK (((time_zone IS NULL) OR ((length(time_zone) >= 1) AND (length(time_zone) <= 64)))),
@@ -54786,7 +54973,7 @@ CREATE TABLE public.source_build_rootfs (
     published_at timestamp with time zone NOT NULL,
     expires_at timestamp with time zone NOT NULL,
     CONSTRAINT source_build_rootfs_check CHECK (((expires_at > published_at) AND (expires_at <= (published_at + '24:00:00'::interval)))),
-    CONSTRAINT source_build_rootfs_check1 CHECK (((((input_snapshot ->> 'publication_id'::text) = (publication_id)::text) AND ((input_snapshot ->> 'deployment_id'::text) = (deployment_id)::text) AND ((input_snapshot ->> 'account_id'::text) ~ '^[a-f0-9-]{36}$'::text) AND ((input_snapshot ->> 'app_id'::text) ~ '^[a-f0-9-]{36}$'::text) AND ((input_snapshot ->> 'publication_hash'::text) ~ '^[a-f0-9]{64}$'::text) AND ((input_snapshot ->> 'intent_hash'::text) ~ '^[a-f0-9]{64}$'::text) AND ((input_snapshot ->> 'base_producer_id'::text) ~ '^[a-f0-9-]{36}$'::text) AND ((input_snapshot ->> 'base_input_hash'::text) ~ '^[a-f0-9]{64}$'::text) AND ((input_snapshot ->> 'artifact_digest'::text) ~ '^sha256:[a-f0-9]{64}$'::text) AND (((input_snapshot ->> 'artifact_bytes'::text))::bigint > 0) AND (((input_snapshot ->> 'content_bytes'::text))::bigint >= 0) AND (COALESCE((input_snapshot ->> 'storage_key'::text), ''::text) <> ''::text) AND (COALESCE((input_snapshot ->> 'rootfs_path'::text), ''::text) <> ''::text) AND ((input_snapshot ->> 'guest_init_digest'::text) ~ '^sha256:[a-f0-9]{64}$'::text) AND ((input_snapshot ->> 'layout_version'::text) = 'faas-app-layer-layout-v1'::text) AND ((((input_snapshot ->> 'kind'::text) = 'source-app-layer'::text) AND ((input_snapshot ->> 'runtime'::text) = ANY (ARRAY[''::text, 'node22'::text, 'node24'::text])) AND ((input_snapshot ->> 'runner_digest'::text) = ''::text)) OR (((input_snapshot ->> 'kind'::text) = 'function-layer'::text) AND (COALESCE((input_snapshot ->> 'runtime'::text), ''::text) <> ''::text) AND ((input_snapshot ->> 'runner_digest'::text) ~ '^sha256:[a-f0-9]{64}$'::text)))) IS TRUE)),
+    CONSTRAINT source_build_rootfs_check1 CHECK (((((input_snapshot ->> 'publication_id'::text) = (publication_id)::text) AND ((input_snapshot ->> 'deployment_id'::text) = (deployment_id)::text) AND ((input_snapshot ->> 'account_id'::text) ~ '^[a-f0-9-]{36}$'::text) AND ((input_snapshot ->> 'app_id'::text) ~ '^[a-f0-9-]{36}$'::text) AND ((input_snapshot ->> 'publication_hash'::text) ~ '^[a-f0-9]{64}$'::text) AND ((input_snapshot ->> 'intent_hash'::text) ~ '^[a-f0-9]{64}$'::text) AND ((input_snapshot ->> 'base_producer_id'::text) ~ '^[a-f0-9-]{36}$'::text) AND ((input_snapshot ->> 'base_input_hash'::text) ~ '^[a-f0-9]{64}$'::text) AND ((input_snapshot ->> 'artifact_digest'::text) ~ '^sha256:[a-f0-9]{64}$'::text) AND (((input_snapshot ->> 'artifact_bytes'::text))::bigint > 0) AND (((input_snapshot ->> 'content_bytes'::text))::bigint >= 0) AND (COALESCE((input_snapshot ->> 'storage_key'::text), ''::text) <> ''::text) AND (COALESCE((input_snapshot ->> 'rootfs_path'::text), ''::text) <> ''::text) AND ((input_snapshot ->> 'guest_init_digest'::text) ~ '^sha256:[a-f0-9]{64}$'::text) AND ((input_snapshot ->> 'layout_version'::text) = 'faas-app-layer-layout-v1'::text) AND ((((input_snapshot ->> 'kind'::text) = 'source-app-layer'::text) AND ((input_snapshot ->> 'runtime'::text) = ANY (ARRAY[''::text, 'node22'::text, 'node24'::text, 'python312'::text, 'python313'::text])) AND ((input_snapshot ->> 'runner_digest'::text) = ''::text)) OR (((input_snapshot ->> 'kind'::text) = 'function-layer'::text) AND (COALESCE((input_snapshot ->> 'runtime'::text), ''::text) <> ''::text) AND ((input_snapshot ->> 'runner_digest'::text) ~ '^sha256:[a-f0-9]{64}$'::text)))) IS TRUE)),
     CONSTRAINT source_build_rootfs_input_hash_check CHECK ((input_hash ~ '^[a-f0-9]{64}$'::text)),
     CONSTRAINT source_build_rootfs_input_snapshot_check CHECK ((jsonb_typeof(input_snapshot) = 'object'::text))
 );
@@ -63246,6 +63433,14 @@ ALTER TABLE ONLY public.managed_postgres_usage
 
 
 --
+-- Name: managed_postgres_usage_waivers managed_postgres_usage_waivers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_usage_waivers
+    ADD CONSTRAINT managed_postgres_usage_waivers_pkey PRIMARY KEY (database_id, waived_from);
+
+
+--
 -- Name: managed_realtime_channel_batches managed_realtime_channel_batches_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -71002,6 +71197,13 @@ CREATE INDEX custom_domain_tls_hosts_wildcard_admitted_idx ON public.custom_doma
 
 
 --
+-- Name: custom_domains_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX custom_domains_app_idx ON public.custom_domains USING btree (app_id);
+
+
+--
 -- Name: custom_domains_cert_expiry_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -71027,6 +71229,20 @@ CREATE INDEX custom_domains_environment_app_idx ON public.custom_domains USING b
 --
 
 CREATE INDEX custom_domains_org_id_idx ON public.custom_domains USING btree (org_id) WHERE (org_id IS NOT NULL);
+
+
+--
+-- Name: custom_domains_redirect_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX custom_domains_redirect_app_idx ON public.custom_domains USING btree (app_id_redirect) WHERE (app_id_redirect IS NOT NULL);
+
+
+--
+-- Name: custom_domains_reversed_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX custom_domains_reversed_idx ON public.custom_domains USING btree (reverse(lower((domain)::text)) text_pattern_ops);
 
 
 --
@@ -74712,6 +74928,13 @@ CREATE INDEX managed_realtime_channel_batches_cleanup_idx ON public.managed_real
 
 
 --
+-- Name: managed_realtime_channel_heads_held_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_realtime_channel_heads_held_idx ON public.managed_realtime_channel_heads USING btree (endpoint_id) WHERE (oldest_sequence < next_sequence);
+
+
+--
 -- Name: managed_realtime_channel_messages_created_at_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -77526,6 +77749,13 @@ CREATE UNIQUE INDEX release_freezes_one_per_rollback ON public.release_freezes U
 
 
 --
+-- Name: release_freezes_org_unlifted; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX release_freezes_org_unlifted ON public.release_freezes USING btree (org_id, created_at, id) WHERE ((lifted_at IS NULL) AND (org_id IS NOT NULL));
+
+
+--
 -- Name: release_freezes_unlifted; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -78346,6 +78576,13 @@ CREATE UNIQUE INDEX tenant_hostnames_hostname_uniq ON public.tenant_hostnames US
 --
 
 CREATE INDEX tenant_hostnames_pending_idx ON public.tenant_hostnames USING btree (last_check_at) WHERE (verified_at IS NULL);
+
+
+--
+-- Name: tenant_hostnames_reversed_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX tenant_hostnames_reversed_idx ON public.tenant_hostnames USING btree (reverse(lower((hostname)::text)) text_pattern_ops);
 
 
 --
@@ -80909,12 +81146,16 @@ CREATE TRIGGER clone_checkpoint_scheduler_fence_truncate BEFORE TRUNCATE ON publ
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.app_environment_secret_ref_suppressions FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
 
+ALTER TABLE public.app_environment_secret_ref_suppressions DISABLE TRIGGER clone_configuration_write_fence;
+
 
 --
 -- Name: app_environment_secret_refs clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.app_environment_secret_refs FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+ALTER TABLE public.app_environment_secret_refs DISABLE TRIGGER clone_configuration_write_fence;
 
 
 --
@@ -80923,12 +81164,16 @@ CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.app_environment_workload_intents FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
 
+ALTER TABLE public.app_environment_workload_intents DISABLE TRIGGER clone_configuration_write_fence;
+
 
 --
 -- Name: app_envs clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.app_envs FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+ALTER TABLE public.app_envs DISABLE TRIGGER clone_configuration_write_fence;
 
 
 --
@@ -80937,12 +81182,16 @@ CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.app_secrets FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
 
+ALTER TABLE public.app_secrets DISABLE TRIGGER clone_configuration_write_fence;
+
 
 --
 -- Name: app_work_policies clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.app_work_policies FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+ALTER TABLE public.app_work_policies DISABLE TRIGGER clone_configuration_write_fence;
 
 
 --
@@ -80951,12 +81200,16 @@ CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.apps FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('project', 'project_id');
 
+ALTER TABLE public.apps DISABLE TRIGGER clone_configuration_write_fence;
+
 
 --
 -- Name: deployment_sidecar_layers clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.deployment_sidecar_layers FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('deployment', 'deployment_id');
+
+ALTER TABLE public.deployment_sidecar_layers DISABLE TRIGGER clone_configuration_write_fence;
 
 
 --
@@ -80965,12 +81218,16 @@ CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.deployment_sidecar_secret_reload_signals FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('deployment', 'deployment_id');
 
+ALTER TABLE public.deployment_sidecar_secret_reload_signals DISABLE TRIGGER clone_configuration_write_fence;
+
 
 --
 -- Name: deployments clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+ALTER TABLE public.deployments DISABLE TRIGGER clone_configuration_write_fence;
 
 
 --
@@ -80979,12 +81236,16 @@ CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.environment_git_sources FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('project', 'project_id');
 
+ALTER TABLE public.environment_git_sources DISABLE TRIGGER clone_configuration_write_fence;
+
 
 --
 -- Name: event_subscription_work_bindings clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.event_subscription_work_bindings FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+ALTER TABLE public.event_subscription_work_bindings DISABLE TRIGGER clone_configuration_write_fence;
 
 
 --
@@ -80993,12 +81254,16 @@ CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.feature_flag_versions FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('project', 'project_id');
 
+ALTER TABLE public.feature_flag_versions DISABLE TRIGGER clone_configuration_write_fence;
+
 
 --
 -- Name: managed_postgres_bindings clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.managed_postgres_bindings FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+ALTER TABLE public.managed_postgres_bindings DISABLE TRIGGER clone_configuration_write_fence;
 
 
 --
@@ -81007,12 +81272,16 @@ CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.managed_postgres_databases FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('database', 'id');
 
+ALTER TABLE public.managed_postgres_databases DISABLE TRIGGER clone_configuration_write_fence;
+
 
 --
 -- Name: object_bucket_encryption clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.object_bucket_encryption FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('bucket', 'bucket_id');
+
+ALTER TABLE public.object_bucket_encryption DISABLE TRIGGER clone_configuration_write_fence;
 
 
 --
@@ -81021,12 +81290,16 @@ CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.object_bucket_lifecycle FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('bucket', 'bucket_id');
 
+ALTER TABLE public.object_bucket_lifecycle DISABLE TRIGGER clone_configuration_write_fence;
+
 
 --
 -- Name: object_bucket_object_lock clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.object_bucket_object_lock FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('bucket', 'bucket_id');
+
+ALTER TABLE public.object_bucket_object_lock DISABLE TRIGGER clone_configuration_write_fence;
 
 
 --
@@ -81035,6 +81308,8 @@ CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.object_bucket_versioning FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('bucket', 'bucket_id');
 
+ALTER TABLE public.object_bucket_versioning DISABLE TRIGGER clone_configuration_write_fence;
+
 
 --
 -- Name: object_buckets clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
@@ -81042,12 +81317,16 @@ CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.object_buckets FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
 
+ALTER TABLE public.object_buckets DISABLE TRIGGER clone_configuration_write_fence;
+
 
 --
 -- Name: object_storage_s3_credentials clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.object_storage_s3_credentials FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('bucket', 'bucket_id');
+
+ALTER TABLE public.object_storage_s3_credentials DISABLE TRIGGER clone_configuration_write_fence;
 
 
 --
@@ -81063,12 +81342,16 @@ CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_environment_config_versions FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('project', 'project_id');
 
+ALTER TABLE public.project_environment_config_versions DISABLE TRIGGER clone_configuration_write_fence;
+
 
 --
 -- Name: project_environment_edge_policies clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_environment_edge_policies FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('project', 'project_id');
+
+ALTER TABLE public.project_environment_edge_policies DISABLE TRIGGER clone_configuration_write_fence;
 
 
 --
@@ -81077,12 +81360,16 @@ CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_environment_route_policies FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('project', 'project_id');
 
+ALTER TABLE public.project_environment_route_policies DISABLE TRIGGER clone_configuration_write_fence;
+
 
 --
 -- Name: project_environment_workload_deployment_specs clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_environment_workload_deployment_specs FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('deployment', 'deployment_id');
+
+ALTER TABLE public.project_environment_workload_deployment_specs DISABLE TRIGGER clone_configuration_write_fence;
 
 
 --
@@ -81091,12 +81378,16 @@ CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_environment_workload_heads FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
 
+ALTER TABLE public.project_environment_workload_heads DISABLE TRIGGER clone_configuration_write_fence;
+
 
 --
 -- Name: project_environment_workload_specs clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_environment_workload_specs FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+ALTER TABLE public.project_environment_workload_specs DISABLE TRIGGER clone_configuration_write_fence;
 
 
 --
@@ -81105,12 +81396,16 @@ CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_environments FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('project', 'project_id');
 
+ALTER TABLE public.project_environments DISABLE TRIGGER clone_configuration_write_fence;
+
 
 --
 -- Name: project_release_members clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_release_members FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+ALTER TABLE public.project_release_members DISABLE TRIGGER clone_configuration_write_fence;
 
 
 --
@@ -81119,12 +81414,16 @@ CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.project_release_sets FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('project', 'project_id');
 
+ALTER TABLE public.project_release_sets DISABLE TRIGGER clone_configuration_write_fence;
+
 
 --
 -- Name: projects clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE DELETE OR UPDATE ON public.projects FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('project', 'id');
+
+ALTER TABLE public.projects DISABLE TRIGGER clone_configuration_write_fence;
 
 
 --
@@ -81133,12 +81432,16 @@ CREATE TRIGGER clone_configuration_write_fence BEFORE DELETE OR UPDATE ON public
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.queue_bindings FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
 
+ALTER TABLE public.queue_bindings DISABLE TRIGGER clone_configuration_write_fence;
+
 
 --
 -- Name: trigger_work_bindings clone_configuration_write_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER clone_configuration_write_fence BEFORE INSERT OR DELETE OR UPDATE ON public.trigger_work_bindings FOR EACH ROW EXECUTE FUNCTION public.guard_clone_configuration_mutation('app', 'app_id');
+
+ALTER TABLE public.trigger_work_bindings DISABLE TRIGGER clone_configuration_write_fence;
 
 
 --
@@ -83218,6 +83521,13 @@ CREATE TRIGGER managed_postgres_cutover_sql_owner BEFORE INSERT OR UPDATE OF sta
 --
 
 CREATE TRIGGER managed_postgres_database_bindings_guard BEFORE UPDATE OF state ON public.managed_postgres_databases FOR EACH ROW EXECUTE FUNCTION public.guard_managed_postgres_database_bindings();
+
+
+--
+-- Name: managed_postgres_databases managed_postgres_databases_usage_waiver; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_postgres_databases_usage_waiver AFTER UPDATE OF purge_after ON public.managed_postgres_databases FOR EACH ROW WHEN ((old.purge_after IS DISTINCT FROM new.purge_after)) EXECUTE FUNCTION public.record_managed_postgres_usage_waiver();
 
 
 --
@@ -85710,6 +86020,104 @@ CREATE TRIGGER tenant_hostnames_emit_change AFTER INSERT OR DELETE OR UPDATE ON 
 --
 
 CREATE TRIGGER tenant_surfaces_emit_change AFTER INSERT OR DELETE OR UPDATE ON public.tenant_surfaces FOR EACH ROW EXECUTE FUNCTION public.notify_tenant_surface_changed();
+
+
+--
+-- Name: apps traffic_binding_capture_rows; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER traffic_binding_capture_rows AFTER INSERT OR DELETE ON public.apps FOR EACH ROW EXECUTE FUNCTION public.traffic_binding_capture();
+
+
+--
+-- Name: custom_domains traffic_binding_capture_rows; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER traffic_binding_capture_rows AFTER INSERT OR DELETE ON public.custom_domains FOR EACH ROW EXECUTE FUNCTION public.traffic_binding_capture();
+
+
+--
+-- Name: deployment_aliases traffic_binding_capture_rows; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER traffic_binding_capture_rows AFTER INSERT OR DELETE ON public.deployment_aliases FOR EACH ROW EXECUTE FUNCTION public.traffic_binding_capture();
+
+
+--
+-- Name: platform_tenants traffic_binding_capture_rows; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER traffic_binding_capture_rows AFTER DELETE ON public.platform_tenants FOR EACH ROW EXECUTE FUNCTION public.traffic_binding_capture();
+
+
+--
+-- Name: project_environments traffic_binding_capture_rows; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER traffic_binding_capture_rows AFTER INSERT OR DELETE ON public.project_environments FOR EACH ROW EXECUTE FUNCTION public.traffic_binding_capture();
+
+
+--
+-- Name: tenant_hostnames traffic_binding_capture_rows; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER traffic_binding_capture_rows AFTER INSERT OR DELETE ON public.tenant_hostnames FOR EACH ROW EXECUTE FUNCTION public.traffic_binding_capture();
+
+
+--
+-- Name: tenant_surfaces traffic_binding_capture_rows; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER traffic_binding_capture_rows AFTER INSERT OR DELETE ON public.tenant_surfaces FOR EACH ROW EXECUTE FUNCTION public.traffic_binding_capture();
+
+
+--
+-- Name: apps traffic_binding_capture_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER traffic_binding_capture_update AFTER UPDATE OF slug, status, visibility, account_id, project_id ON public.apps FOR EACH ROW WHEN (((old.slug IS DISTINCT FROM new.slug) OR (old.status IS DISTINCT FROM new.status) OR (old.visibility IS DISTINCT FROM new.visibility) OR (old.account_id IS DISTINCT FROM new.account_id) OR (old.project_id IS DISTINCT FROM new.project_id))) EXECUTE FUNCTION public.traffic_binding_capture();
+
+
+--
+-- Name: custom_domains traffic_binding_capture_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER traffic_binding_capture_update AFTER UPDATE OF domain, app_id, environment_id, app_id_redirect, verified_at ON public.custom_domains FOR EACH ROW WHEN (((old.domain IS DISTINCT FROM new.domain) OR (old.app_id IS DISTINCT FROM new.app_id) OR (old.environment_id IS DISTINCT FROM new.environment_id) OR (old.app_id_redirect IS DISTINCT FROM new.app_id_redirect) OR ((old.verified_at IS NULL) <> (new.verified_at IS NULL)))) EXECUTE FUNCTION public.traffic_binding_capture();
+
+
+--
+-- Name: deployment_aliases traffic_binding_capture_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER traffic_binding_capture_update AFTER UPDATE OF name, app_id ON public.deployment_aliases FOR EACH ROW WHEN (((old.name IS DISTINCT FROM new.name) OR (old.app_id IS DISTINCT FROM new.app_id))) EXECUTE FUNCTION public.traffic_binding_capture();
+
+
+--
+-- Name: platform_tenants traffic_binding_capture_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER traffic_binding_capture_update AFTER UPDATE OF status ON public.platform_tenants FOR EACH ROW WHEN ((old.status IS DISTINCT FROM new.status)) EXECUTE FUNCTION public.traffic_binding_capture();
+
+
+--
+-- Name: project_environments traffic_binding_capture_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER traffic_binding_capture_update AFTER UPDATE OF account_id, project_id ON public.project_environments FOR EACH ROW WHEN (((old.account_id IS DISTINCT FROM new.account_id) OR (old.project_id IS DISTINCT FROM new.project_id))) EXECUTE FUNCTION public.traffic_binding_capture();
+
+
+--
+-- Name: tenant_hostnames traffic_binding_capture_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER traffic_binding_capture_update AFTER UPDATE OF hostname, surface_id, verified_at ON public.tenant_hostnames FOR EACH ROW WHEN (((old.hostname IS DISTINCT FROM new.hostname) OR (old.surface_id IS DISTINCT FROM new.surface_id) OR ((old.verified_at IS NULL) <> (new.verified_at IS NULL)))) EXECUTE FUNCTION public.traffic_binding_capture();
+
+
+--
+-- Name: tenant_surfaces traffic_binding_capture_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER traffic_binding_capture_update AFTER UPDATE OF app_id, account_id, platform_tenant_id, status ON public.tenant_surfaces FOR EACH ROW WHEN (((old.app_id IS DISTINCT FROM new.app_id) OR (old.account_id IS DISTINCT FROM new.account_id) OR (old.platform_tenant_id IS DISTINCT FROM new.platform_tenant_id) OR (old.status IS DISTINCT FROM new.status))) EXECUTE FUNCTION public.traffic_binding_capture();
 
 
 --
@@ -94394,6 +94802,14 @@ ALTER TABLE ONLY public.managed_postgres_usage_imports
 
 
 --
+-- Name: managed_postgres_usage_waivers managed_postgres_usage_waivers_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_usage_waivers
+    ADD CONSTRAINT managed_postgres_usage_waivers_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
+
+
+--
 -- Name: managed_realtime_channel_batches managed_realtime_channel_batches_endpoint_id_channel_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -99375,6 +99791,14 @@ ALTER TABLE ONLY public.release_freezes
 
 ALTER TABLE ONLY public.release_freezes
     ADD CONSTRAINT release_freezes_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: release_freezes release_freezes_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.release_freezes
+    ADD CONSTRAINT release_freezes_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE CASCADE;
 
 
 --

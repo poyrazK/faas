@@ -82,6 +82,30 @@ func TestStatusVerdicts(t *testing.T) {
 	}
 }
 
+// adr: 1447 — a rollback leaves the candidate live at 0% traffic (recover
+// rollout's abort). Its failures explain the rollback; they do not make the
+// stable release that now serves look failing.
+func TestStatusLeavesARolledBackCandidateOutOfHealth(t *testing.T) {
+	stable := state.Deployment{ID: testStable, AppID: testApp, TrafficPercent: 100, RolloutState: "complete"}
+	abort := &api.RolloutDecision{Kind: api.RolloutDecisionAbort, Rule: api.RolloutRuleAbort5xx, TrafficPercent: 50, Summary: "5xx regression"}
+	candidate := state.Deployment{ID: testCandidate, AppID: testApp, CanaryTotalSteps: 4, RolloutState: "aborted",
+		RolloutAbortedAt: at(-5 * time.Minute), CanaryStepStartedAt: at(-15 * time.Minute), RolloutDecision: encode(t, abort)}
+	store := &fakeStore{
+		deployments: []state.Deployment{candidate, stable}, live: []state.Deployment{stable, candidate},
+		routes: map[string]map[string]routeStats{testStable: {"/checkout": {30, 0, 20}}, testCandidate: {"/checkout": {30, 30, 25}}},
+	}
+	out, err := reader(store, nil, nil).Status(context.Background(), state.App{ID: testApp}, time.Hour, 7*24*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Verdict != api.DebugStatusRollback || len(out.Deployments) != 1 || out.Deployments[0].ID != testStable {
+		t.Fatalf("verdict=%q deployments=%+v, want rolled back with only the stable release serving", out.Verdict, out.Deployments)
+	}
+	if out.Health.Requests != 30 || out.Health.ServerErrors != 0 {
+		t.Fatalf("health = %+v, want the stable release's 30 requests and no errors", out.Health)
+	}
+}
+
 func TestStatusReportsReleaseAndTracing(t *testing.T) {
 	stable := state.Deployment{ID: testStable, AppID: testApp, TrafficPercent: 90}
 	candidate := state.Deployment{ID: testCandidate, AppID: testApp, TrafficPercent: 10, CanaryTotalSteps: 4, RolloutState: "rolling_out"}

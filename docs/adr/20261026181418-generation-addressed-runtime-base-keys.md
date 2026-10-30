@@ -275,3 +275,52 @@ The macOS development host cannot run these.
 3. **Key the producer catalogue's current pointer by generation.** This needs
    the ADR-595 SQL functions and the ADR-435 lineage to accept generation
    keys.
+
+## Amendment 2026-10-30 · A scan checks the shared publication when this node's cached copy changed
+
+**Incident.** production-us, 2026-10-29 21:28 UTC, rc.305 rollout on fsn-2.
+The pre-stage built `base-minimal`'s new generation. While it scanned, the
+serving rc.304 imaged's convergence (ADR-567) put rc.304's generation back
+into the node cache: "runtime base converged to its shared publication".
+The scan's stored-artifact check then read rc.304's bytes and failed with
+`artifact_mismatch`. It published the fail-closed scan under the new
+generation's keys, and fsn-2's vmmd refused every minimal-base boot
+(`scan_critical`) for about two hours. #5959 lets a later pre-stage rescan a
+fail-closed scan; this amendment stops the failure.
+
+**Cause.** §1 keeps one cache entry per logical key ("No extra node disk"),
+and every daemon on a node shares that cache. During a rollout the serving
+N-1 imaged and the N pre-stage therefore write the same local file, each with
+its own generation. The scan read that file twice: for its private copy, and
+to confirm the stored artifact still held the scanned bytes.
+
+**Decision.** A produced-artifact scan reads the stored artifact from this
+node's cache first, as before. When that copy no longer holds the producer's
+bytes, it reads the canonical publication (`storage.GetCanonical`), which is
+routed to the generation's own key. A generation's key is written only by
+releases configured for that generation, and it is the copy the scan evidence
+vouches for on every node. Only a publication that differs as well fails the
+scan. The same check guards reuse and renewal of a stored scan, so this covers
+both directions:
+- the N pre-stage's first scan while N-1's convergence rewrites the entry;
+- the serving N imaged's deploy-time scan of its own generation while the
+  N+1 pre-stage has written the entry. Before this change, that scan failed
+  closed for every node on N.
+
+Only release N needs this change, so it protects N's own rollout. It costs a
+read of the shared publication only when the cached copy differs.
+
+`TestPrestageScanSurvivesServingConvergenceOfTheSharedCacheEntry` runs the
+serving daemon's real convergence inside the pre-stage's scan.
+`TestServingScanSurvivesPrestageReplacingTheSharedCacheEntry` covers the other
+direction.
+
+**Residual risk, not closed here.** The pre-stage still commits its cache
+generation marker (`markCachedBaseGeneration`) and the content sidecar from
+the shared local file. If N-1's convergence rewrote that file first, the
+marker names N while the file holds N-1's bytes. This repairs itself:
+imaged N's startup staging and convergence re-adopt N's publication, and
+re-adoption drops the marker. Until then, a vmmd N boot can attach N-1's
+bytes. Closing this needs the pre-stage to verify the cached bytes after it
+marks them, or a per-base lock shared by the daemons on a node. A lock only
+helps once both N and N-1 take it.

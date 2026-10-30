@@ -35,7 +35,7 @@ func (s *server) profileCapturesView(w http.ResponseWriter, r *http.Request, acc
 		view.Error = "Recent captures could not be listed."
 	}
 	view.Captures = captures
-	token, err := middleware.IssueForAuthenticatedNamed(s.sessions, profileCaptureAction, acct.ID, profileCaptureCookie)
+	token, err := middleware.IssueForAuthenticatedNamed(s.sessions, profileCaptureAction, actorAccount(r, acct).ID, profileCaptureCookie)
 	if err != nil {
 		view.Error = "Captures are temporarily unavailable."
 		return view
@@ -54,11 +54,11 @@ func (s *server) dashboardCreateProfileCapture(w http.ResponseWriter, r *http.Re
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, api.ProfileControlMaxBytes)
 	if err := r.ParseForm(); err != nil {
-		api.WriteProblem(w, api.ErrValidation("invalid profile capture form"))
+		api.WriteProblemForRequest(w, r, api.ErrValidation("invalid profile capture form"))
 		return
 	}
 	if err := middleware.VerifyAuthenticatedNamed(s.sessions, r, profileCaptureAction, acct.ID, profileCaptureCookie); err != nil {
-		api.WriteProblem(w, api.ErrValidation("invalid CSRF token; reload before starting a capture"))
+		api.WriteProblemForRequest(w, r, api.ErrValidation("invalid CSRF token; reload before starting a capture"))
 		return
 	}
 	app, store, ok := s.profileCaptures.Target(w, r, acct)
@@ -67,13 +67,13 @@ func (s *server) dashboardCreateProfileCapture(w http.ResponseWriter, r *http.Re
 	}
 	duration, err := strconv.Atoi(r.PostForm.Get("duration_seconds"))
 	if err != nil {
-		api.WriteProblem(w, api.ErrValidation("duration_seconds must be a whole number of seconds"))
+		api.WriteProblemForRequest(w, r, api.ErrValidation("duration_seconds must be a whole number of seconds"))
 		return
 	}
 	req := api.CreateProfileCaptureRequest{Kinds: r.PostForm["kind"], DurationSeconds: duration, InstanceID: r.PostForm.Get("instance_id")}
 	capture, problem := s.profileCaptures.Queue(r.Context(), acct, app, store, req)
 	if problem != nil {
-		api.WriteProblem(w, problem)
+		api.WriteProblemForRequest(w, r, problem)
 		return
 	}
 	http.Redirect(w, r, dashboard.ProfileCaptureURL(app.Slug, capture.ID), http.StatusSeeOther)

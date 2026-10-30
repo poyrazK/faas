@@ -1,14 +1,13 @@
 package apidserver
 
 import (
-	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -81,6 +80,7 @@ func (s *server) renderGoogleAuthRedirect(w http.ResponseWriter, r *http.Request
 	setOAuthFlowCookie(w, r, googleAuthStateCookie, stateToken, googleCallbackPath)
 	setOAuthFlowCookie(w, r, googleAuthNonceCookie, nonce, googleCallbackPath)
 	setOAuthFlowCookie(w, r, googleAuthPKCECookie, codeVerifier, googleCallbackPath)
+	setOAuthNext(w, r, googleCallbackPath)
 
 	redirectURI := s.oauthConfig.Google.RedirectURI
 	if redirectURI == "" {
@@ -302,7 +302,11 @@ func (s *server) handleGoogleOAuthCallback(w http.ResponseWriter, r *http.Reques
 	// passed so the helper can do a sub-first lookup against the
 	// oauth_links table — the §11 anti-takeover invariant
 	// (one OAuth subject binds to one account, period).
-	acct, err := s.provisionOrFetchGoogleAccount(r.Context(), googleUser)
+	acct, err := s.provisionOrFetchGoogleAccount(r, googleUser, signupSource(oauthNext(r)))
+	if errors.Is(err, errSignupNetworkCap) {
+		writeSignupNetworkCap(w)
+		return
+	}
 	if err != nil {
 		writeCustomerInternalProblem(w, r, s.log, "complete Google sign-in",
 			"Gregale could not finish setting up your account.",
@@ -340,14 +344,11 @@ func (s *server) handleGoogleOAuthCallback(w http.ResponseWriter, r *http.Reques
 		"email":  googleUser.Email,
 	})
 
-	redirectTarget := os.Getenv("WEBSITE_URL")
-	if redirectTarget == "" {
-		redirectTarget = "/"
-	}
-	http.Redirect(w, r, redirectTarget, http.StatusFound)
+	finishOAuthSignIn(w, r, googleCallbackPath)
 }
 
-func (s *server) provisionOrFetchGoogleAccount(ctx context.Context, info GoogleUserInfo) (state.Account, error) {
+func (s *server) provisionOrFetchGoogleAccount(r *http.Request, info GoogleUserInfo, source string) (state.Account, error) {
+	ctx := r.Context()
 	email := strings.TrimSpace(strings.ToLower(info.Email))
 
 	// Sub-first lookup (spec §11 anti-takeover invariant, issue #165
@@ -384,7 +385,7 @@ func (s *server) provisionOrFetchGoogleAccount(ctx context.Context, info GoogleU
 
 	// Neither sub nor email is bound: create a fresh account on
 	// the Free plan and bind the link.
-	res, err := s.store.CreateAccountWithPersonalOrg(ctx, state.CreateAccountWithPersonalOrgParams{
+	res, err := s.createSignupAccount(r, signupMethodGoogle, source, state.CreateAccountWithPersonalOrgParams{
 		Email: email,
 		Plan:  api.PlanFree,
 	})

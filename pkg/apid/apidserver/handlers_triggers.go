@@ -429,7 +429,13 @@ func validateCreateTriggerRequest(req *api.CreateTriggerRequest) *api.Problem {
 			"")
 	}
 	switch req.Kind {
-	case api.TriggerKindKafka, api.TriggerKindNATS, api.TriggerKindRedisStreams, api.TriggerKindSQSCompat, api.TriggerKindQueue, api.TriggerKindRealtime:
+	case api.TriggerKindSQSCompat:
+		// Delisted 2026-10-29: the poller speaks an invented wire protocol
+		// with no SigV4, so it reaches neither AWS SQS nor Gregale queues.
+		// Existing triggers keep their rows; no new one is created.
+		return api.NewProblem(http.StatusUnprocessableEntity, "trigger_kind_unavailable", "Trigger kind unavailable",
+			"sqs_compat triggers are not available; consume Gregale queues with kind=queue")
+	case api.TriggerKindKafka, api.TriggerKindNATS, api.TriggerKindRedisStreams, api.TriggerKindQueue, api.TriggerKindRealtime:
 		if req.Slug == "" {
 			return api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", "slug is required for non-cron triggers")
 		}
@@ -442,7 +448,7 @@ func validateCreateTriggerRequest(req *api.CreateTriggerRequest) *api.Problem {
 		return nil
 	default:
 		return api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request",
-			"unknown kind: must be one of cron|kafka|nats|redis_streams|sqs_compat|queue|realtime")
+			"unknown kind: must be one of cron|kafka|nats|redis_streams|queue|realtime")
 	}
 }
 
@@ -832,7 +838,7 @@ func (s *server) updateTrigger(w http.ResponseWriter, r *http.Request, acct stat
 			api.WriteProblem(w, problem)
 			return
 		}
-		if err := validateTriggerConfig(api.TriggerKind(t.Kind), mergedConfig); err != nil {
+		if err := validateTriggerConfig(api.TriggerKind(t.Kind), triggerconfig.ValidationView(api.TriggerKind(t.Kind), mergedConfig)); err != nil {
 			api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, "trigger_invalid_config", "Invalid trigger config", err.Error()))
 			return
 		}
@@ -846,7 +852,7 @@ func (s *server) updateTrigger(w http.ResponseWriter, r *http.Request, acct stat
 		return
 	}
 	if mergedConfig != nil {
-		sealed, problem := sealTriggerConfig(api.TriggerKind(t.Kind), mergedConfig)
+		sealed, problem := sealMergedTriggerConfig(api.TriggerKind(t.Kind), mergedConfig)
 		if problem != nil {
 			api.WriteProblem(w, problem)
 			return
@@ -1536,26 +1542,26 @@ func validateTriggerConfig(kind api.TriggerKind, raw json.RawMessage) error {
 	return probe.Validate()
 }
 
-func triggerConfigIdentities() []*age.X25519Identity {
-	if mfaIdentities != nil {
-		if identities := mfaIdentities(); len(identities) > 0 {
-			return append([]*age.X25519Identity(nil), identities...)
-		}
-	}
-	if mfaIdentity != nil {
-		if identity := mfaIdentity(); identity != nil {
-			return []*age.X25519Identity{identity}
-		}
-	}
-	return nil
+// sealTriggerConfig seals a new trigger config's credentials to the
+// delivery domain, which schedd opens them with (ADR 20261022111812).
+func sealTriggerConfig(kind api.TriggerKind, raw json.RawMessage) (json.RawMessage, *api.Problem) {
+	return sealTriggerConfigWith(triggerconfig.Seal, kind, raw)
 }
 
-func sealTriggerConfig(kind api.TriggerKind, raw json.RawMessage) (json.RawMessage, *api.Problem) {
-	var recipient *age.X25519Recipient
+// sealMergedTriggerConfig seals an updated config's new credentials and
+// keeps the stored ciphertext the merge carried over.
+func sealMergedTriggerConfig(kind api.TriggerKind, merged json.RawMessage) (json.RawMessage, *api.Problem) {
+	return sealTriggerConfigWith(triggerconfig.SealMerged, kind, merged)
+}
+
+func sealTriggerConfigWith(seal func(api.TriggerKind, json.RawMessage, []*age.X25519Recipient) (json.RawMessage, error), kind api.TriggerKind, raw json.RawMessage) (json.RawMessage, *api.Problem) {
+	var recipients []*age.X25519Recipient
 	if setSecretRecipient != nil {
-		recipient = hostSecretRecipient()
+		// Without a recipient the seal fails only for a config that holds a
+		// credential, as it always has.
+		recipients, _ = triggerConfigRecipients()
 	}
-	sealed, err := triggerconfig.Seal(kind, raw, recipient)
+	sealed, err := seal(kind, raw, recipients)
 	if err == nil {
 		return sealed, nil
 	}
@@ -1566,8 +1572,10 @@ func sealTriggerConfig(kind api.TriggerKind, raw json.RawMessage) (json.RawMessa
 	return nil, api.ErrSecretStoreUnavailable()
 }
 
+// mergeTriggerConfigForUpdate merges an update into the stored config
+// without opening it: apid holds no identity for trigger credentials.
 func mergeTriggerConfigForUpdate(kind api.TriggerKind, stored, incoming json.RawMessage) (json.RawMessage, *api.Problem) {
-	merged, err := triggerconfig.MergeForUpdate(kind, stored, incoming, triggerConfigIdentities())
+	merged, err := triggerconfig.MergeForUpdate(kind, stored, incoming)
 	if err != nil {
 		return nil, api.ErrSecretStoreUnavailable()
 	}

@@ -111,6 +111,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	cfg.ApplyRelayEnv(os.Getenv)
 	pool, err := db.OpenWithAppName(ctx, cfg.DBURL, "outboundd")
 	if err != nil {
 		return fmt.Errorf("outboundd: open db: %w", err)

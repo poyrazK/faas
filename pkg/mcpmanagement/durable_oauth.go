@@ -28,6 +28,10 @@ type storedGrant struct {
 	Environments          *EnvironmentConsent
 	AvailableEnvironments []EnvironmentGrant
 	Capabilities          []string
+	// Renewable marks an mcp-login key apid slides while used, issued at
+	// CredentialIssued (ADR-20261028205920).
+	Renewable        bool      `json:",omitempty"`
+	CredentialIssued time.Time `json:",omitzero"`
 }
 
 type oauthSnapshot struct {
@@ -44,7 +48,7 @@ type oauthSnapshot struct {
 func (r *remoteServer) snapshotLocked() oauthSnapshot {
 	snapshot := oauthSnapshot{Format: stateFormat, APIBase: r.opts.APIBase, ResourceURL: r.opts.ResourceURL, Clients: r.clients, Requests: r.requests, Codes: r.codes, Grants: map[string]storedGrant{}, UsedRefresh: map[string]string{}}
 	for id, g := range r.grants {
-		snapshot.Grants[id] = storedGrant{ID: id, ClientID: g.clientID, AccountID: g.accountID, Scopes: g.scopes, Key: g.client.Token(), Expires: g.expires, CredentialExpires: g.credentialExpires, AccessExpires: g.accessExpires, AccessHash: g.accessHash, RefreshHash: g.refreshHash, Active: g.approved, AllowedApps: g.allowedApps, AvailableApps: g.availableApps, Environments: g.environments, AvailableEnvironments: g.availableEnvironments, Capabilities: g.capabilities}
+		snapshot.Grants[id] = storedGrant{ID: id, ClientID: g.clientID, AccountID: g.accountID, Scopes: g.scopes, Key: g.client.Token(), Expires: g.expires, CredentialExpires: g.credentialExpires, AccessExpires: g.accessExpires, AccessHash: g.accessHash, RefreshHash: g.refreshHash, Active: g.approved, AllowedApps: g.allowedApps, AvailableApps: g.availableApps, Environments: g.environments, AvailableEnvironments: g.availableEnvironments, Capabilities: g.capabilities, Renewable: g.renewable, CredentialIssued: g.credentialIssued}
 	}
 	for hash, grant := range r.usedRefresh {
 		snapshot.UsedRefresh[hash] = grant.id
@@ -69,7 +73,18 @@ func (r *remoteServer) restoreOAuth() error {
 	if len(snapshot.Clients) > r.capacity() || len(snapshot.Requests) > r.capacity() || len(snapshot.Codes) > r.capacity() || len(snapshot.Grants) > r.capacity() || len(snapshot.UsedRefresh) > maxRefreshHistory {
 		return errors.New("stored OAuth capacity is invalid")
 	}
+	// A client lasts as long as the grants it holds; older journals let
+	// clients lapse first and lost those grants on restart.
+	held := map[string]time.Time{}
+	for _, record := range snapshot.Grants {
+		if record.Expires.After(held[record.ClientID]) {
+			held[record.ClientID] = record.Expires
+		}
+	}
 	for id, client := range snapshot.Clients {
+		if until := held[id]; client != nil && until.After(client.Expires) {
+			client.Expires = until
+		}
 		if client.ID != id {
 			return errors.New("stored client identity mismatch")
 		}
@@ -96,7 +111,7 @@ func (r *remoteServer) restoreOAuth() error {
 		client := r.apiClient(record.Key)
 		g := &oauthGrant{id: id, clientID: record.ClientID, accountID: record.AccountID, scopes: record.Scopes, client: client, expires: record.Expires, credentialExpires: record.CredentialExpires, accessExpires: record.AccessExpires, accessHash: record.AccessHash, refreshHash: record.RefreshHash, allowedApps: record.AllowedApps, availableApps: record.AvailableApps}
 		g.environments, g.availableEnvironments = record.Environments, record.AvailableEnvironments
-		g.capabilities = record.Capabilities
+		g.capabilities, g.renewable, g.credentialIssued = record.Capabilities, record.Renewable, record.CredentialIssued
 		// Journals written before environment consent had default release access;
 		// restoring them must never grant named environments implicitly.
 		if g.environments == nil {

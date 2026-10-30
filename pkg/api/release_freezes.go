@@ -27,11 +27,15 @@ type ReleaseFreezeWeekly struct {
 }
 
 // ReleaseFreeze withholds production releases of one app or, with App empty,
-// of all the account's apps.
+// of all its owner's apps. An account's freezes cover its personal apps; a
+// company organization's freezes (Org set) cover the organization's apps.
 type ReleaseFreeze struct {
 	ID string `json:"id"`
-	// App is the app's slug; empty covers every app of the account.
-	App  string `json:"app,omitempty"`
+	// App is the app's slug; empty covers every app of the owner.
+	App string `json:"app,omitempty"`
+	// Org is the slug of the company organization that owns the freeze;
+	// empty for an account's freeze.
+	Org  string `json:"org,omitempty"`
 	Kind string `json:"kind"`
 	// StartsAt and EndsAt bound a window; EndsAt empty means until lifted.
 	StartsAt string               `json:"starts_at,omitempty"`
@@ -105,20 +109,30 @@ func ErrReleaseFrozen(app string, active []ReleaseFreeze) *Problem {
 // ErrReleaseFreezeNotFound reports a missing or already-lifted freeze.
 func ErrReleaseFreezeNotFound(id string) *Problem {
 	return NewProblem(http.StatusNotFound, CodeReleaseFreezeNotFound, "Freeze not found",
-		fmt.Sprintf("No unlifted freeze %q exists in this account.", id)).
-		WithHint("List freezes with `gregale freeze list`.")
+		fmt.Sprintf("No unlifted freeze %q exists here.", id)).
+		WithHint("List freezes with `gregale freeze list`. A company's freezes are lifted with --org ORG, or --app APP for a freeze on one app.")
 }
 
-// ErrReleaseFreezeLimit reports the per-account freeze limit.
+// ErrReleaseFreezeLimit reports the per-owner freeze limit.
 func ErrReleaseFreezeLimit(observed int) *Problem {
 	return NewProblem(http.StatusConflict, CodeReleaseFreezeLimit, "Too many freezes",
-		fmt.Sprintf("An account can hold %d freezes that have not ended; this one holds %d.", ReleaseFreezesMax, observed)).
+		fmt.Sprintf("An account or organization can hold %d freezes that have not ended; this one holds %d.", ReleaseFreezesMax, observed)).
 		WithHint("Lift freezes you no longer need with `gregale freeze lift`.").
 		WithDocs(docsBase + "/deploys#deploy-freezes")
 }
 
+// ErrReleaseFreezeCompanyApp refuses an account freeze route that names a
+// company organization's app: the organization owns that app's freezes
+// (ADR-20261019071733 amendment 4).
+func ErrReleaseFreezeCompanyApp(app, org string) *Problem {
+	return NewProblem(http.StatusConflict, CodeConflict, "App freezes belong to its organization",
+		fmt.Sprintf("%s belongs to the organization %s, which owns its freezes; /v1/freezes holds your personal apps' freezes.", app, org)).
+		WithHint(fmt.Sprintf("Use /v1/apps/%s/freezes (CLI: gregale freeze ... --app %s), or /v1/orgs/%s/freezes for all of the organization's apps (CLI: --org %s).", app, app, org, org)).
+		WithDocs(docsBase + "/deploys#deploy-freezes")
+}
+
 // ListReleaseFreezes lists the account's freezes; app filters to the freezes
-// covering one app.
+// covering one of its personal apps.
 func (c *Client) ListReleaseFreezes(ctx context.Context, app string) (ListReleaseFreezesResponse, error) {
 	var out ListReleaseFreezesResponse
 	path := "/v1/freezes"
@@ -138,6 +152,46 @@ func (c *Client) CreateReleaseFreeze(ctx context.Context, req CreateReleaseFreez
 func (c *Client) LiftReleaseFreeze(ctx context.Context, id string) (ReleaseFreeze, error) {
 	var out ReleaseFreeze
 	return out, c.do(ctx, http.MethodDelete, "/v1/freezes/"+url.PathEscape(id), nil, &out)
+}
+
+// ListAppReleaseFreezes lists the freezes covering the app slug: its owner's
+// freezes on all apps and on this app.
+func (c *Client) ListAppReleaseFreezes(ctx context.Context, slug string) (ListReleaseFreezesResponse, error) {
+	var out ListReleaseFreezesResponse
+	return out, c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(slug)+"/freezes", nil, &out)
+}
+
+// CreateAppReleaseFreeze freezes the app slug; its owner, the account or the
+// company organization, owns the freeze. req.App must be empty or slug.
+func (c *Client) CreateAppReleaseFreeze(ctx context.Context, slug string, req CreateReleaseFreezeRequest) (ReleaseFreeze, error) {
+	var out ReleaseFreeze
+	return out, c.do(ctx, http.MethodPost, "/v1/apps/"+url.PathEscape(slug)+"/freezes", req, &out)
+}
+
+// LiftAppReleaseFreeze lifts a freeze on the app slug.
+func (c *Client) LiftAppReleaseFreeze(ctx context.Context, slug, id string) (ReleaseFreeze, error) {
+	var out ReleaseFreeze
+	return out, c.do(ctx, http.MethodDelete, "/v1/apps/"+url.PathEscape(slug)+"/freezes/"+url.PathEscape(id), nil, &out)
+}
+
+// ListOrgReleaseFreezes lists a company organization's freezes, on all of
+// its apps and on single apps.
+func (c *Client) ListOrgReleaseFreezes(ctx context.Context, org string) (ListReleaseFreezesResponse, error) {
+	var out ListReleaseFreezesResponse
+	return out, c.do(ctx, http.MethodGet, "/v1/orgs/"+url.PathEscape(org)+"/freezes", nil, &out)
+}
+
+// CreateOrgReleaseFreeze freezes all of a company organization's apps;
+// req.App must be empty.
+func (c *Client) CreateOrgReleaseFreeze(ctx context.Context, org string, req CreateReleaseFreezeRequest) (ReleaseFreeze, error) {
+	var out ReleaseFreeze
+	return out, c.do(ctx, http.MethodPost, "/v1/orgs/"+url.PathEscape(org)+"/freezes", req, &out)
+}
+
+// LiftOrgReleaseFreeze lifts one of a company organization's freezes.
+func (c *Client) LiftOrgReleaseFreeze(ctx context.Context, org, id string) (ReleaseFreeze, error) {
+	var out ReleaseFreeze
+	return out, c.do(ctx, http.MethodDelete, "/v1/orgs/"+url.PathEscape(org)+"/freezes/"+url.PathEscape(id), nil, &out)
 }
 
 // GetReleaseFreezeStatus reports whether a production release of slug would

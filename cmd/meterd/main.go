@@ -1196,7 +1196,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return err
 	}
 	sealdomain.RegisterLoaded(ops.Registry(), sealdomain.Alerting, len(alertingIdentities) > 0)
-	log.Info("alerting seal domain", "domain_identity", len(alertingIdentities) > 0)
+	log.Info("alerting seal domain", "domain_identity", len(alertingIdentities) > 0, "fleet_identity", deps.getenv("FAAS_HOST_AGE_IDENTITY_PATH") != "")
 	evaluator := buildAlertEvaluatorWithPromQL(deps, store, log, ops, promClient, alertingIdentities...)
 	// ADR-749: deliver alerts to Slack, PagerDuty and email channels.
 	evaluator.SetChannels(newAlertChannelSender(mailer), newAlertChannelCounter(ops.Registry()))
@@ -1598,7 +1598,7 @@ func buildPromQLClient(deps runDeps) appmetrics.PromQL {
 
 func buildAlertEvaluatorWithPromQL(deps runDeps, store state.Store, log *slog.Logger, ops *wire.OpsMetrics, promClient appmetrics.PromQL, alerting ...*age.X25519Identity) *alerts.Evaluator {
 	identityPath := deps.getenv("FAAS_HOST_AGE_IDENTITY_PATH")
-	if promClient == nil && identityPath == "" {
+	if promClient == nil && identityPath == "" && len(alerting) == 0 {
 		log.Warn("meterd: alert evaluator disabled — both FAAS_PROMETHEUS_URL and FAAS_HOST_AGE_IDENTITY_PATH unset; running with five ticks")
 		return nil
 	}
@@ -1649,6 +1649,13 @@ func buildAlertEvaluatorWithPromQL(deps runDeps, store state.Store, log *slog.Lo
 		}
 		readers := alertingReaders(alerting, legacy)
 		identitiesLoader = func() []*age.X25519Identity { return readers }
+		// ADR 20261022111812: a contracted meterd has no fleet or host
+		// identity; the alerting domain is the identity the evaluator
+		// opens with.
+		if identityLoader == nil {
+			domain := alerting[0]
+			identityLoader = func() *age.X25519Identity { return domain }
+		}
 	}
 
 	dispatcher := webhookout.NewDispatcher(webhookout.DispatcherOptions{})

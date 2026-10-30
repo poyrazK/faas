@@ -97,8 +97,8 @@ func newPreviewService(t *testing.T, rig *previewTestRig) (*Service, *previewRec
 	t.Helper()
 	svc := NewService(slog.New(slog.NewTextHandler(io.Discard, nil)))
 	svc.Bindings = &stubBindings{byRepo: map[string]state.GitHubBinding{
-		// Branch-agnostic binding — the handler passes ""
-		// for branch, so the key is "octo/api|".
+		// Legacy branch-less binding: these payloads carry no base
+		// branch, so the handler's last lookup uses "" ("octo/api|").
 		"octo/api|": {
 			BindingID:        "b-pr-1",
 			AccountID:        rig.acct,

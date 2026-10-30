@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -185,7 +186,14 @@ func TestPgTrafficScopedBindingRefusesUndeclaredChange(t *testing.T) {
 		if refused != scoped || !scoped && err != nil {
 			t.Fatalf("scoped=%v: commit err=%v", scoped, err)
 		}
-		if len(missed) != 1 || missed[0] != TrafficBindingScopeKindReservationPrimary {
+		// The fleet-wide guard finds the move in its diff of the reservations;
+		// the scoped guard in the capture, which names the app's primary URL
+		// before and after (ADR-20261029190349).
+		want := TrafficBindingScopeKindReservationPrimary
+		if scoped {
+			want = TrafficBindingScopeKindPrimary
+		}
+		if len(missed) == 0 || slices.ContainsFunc(missed, func(kind string) bool { return kind != want }) {
 			t.Fatalf("scoped=%v: missed=%v", scoped, missed)
 		}
 	}
@@ -330,5 +338,34 @@ func TestPgTrafficScopedDomainRefusesUndeclaredChange(t *testing.T) {
 		if len(missed) != 1 || missed[0] != TrafficBindingScopeKindReservationPrimary {
 			t.Fatalf("scoped=%v: missed=%v", scoped, missed)
 		}
+	}
+}
+
+// A scoped binding write reads its account's claims, the claims its scope
+// names or encloses, and their wildcard ancestors; nothing else in the fleet.
+func TestPgTrafficScopedClaimsReadOnlyTheScope(t *testing.T) {
+	const suffix = ".apps.example.test"
+	store, pool, account, app := trafficHostPGFixture(t)
+	other, peer := globalTrafficPeer(t, store, "scoped-claims-peer")
+	for _, seed := range []struct{ domain, app string }{
+		{"own.example.org", app.ID}, {"shop.example.net", peer.ID}, {"*.example.net", peer.ID},
+		{"deep.wild.example.com", peer.ID}, {"unrelated.example.io", peer.ID},
+	} {
+		if _, err := pool.Exec(t.Context(), `INSERT INTO custom_domains(domain,app_id,challenge_token,verified_at) VALUES ($1,$2,'token',now())`, seed.domain, seed.app); err != nil {
+			t.Fatal(err)
+		}
+	}
+	lookup := newTrafficScopeLookup(trafficBindingScope{Hosts: []string{"shop.example.net"}, Subtrees: []string{"wild.example.com"}}, suffix)
+	claims, err := readTrafficBindingClaimsScoped(t.Context(), pool, suffix, []string{account.ID}, app.ID, lookup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, claim := range claims.Domains {
+		got = append(got, claim.Domain)
+	}
+	slices.Sort(got)
+	if want := []string{"*.example.net", "deep.wild.example.com", "own.example.org", "shop.example.net"}; !slices.Equal(got, want) {
+		t.Fatalf("scoped claims %v, want %v (other account %s)", got, want, other.ID)
 	}
 }

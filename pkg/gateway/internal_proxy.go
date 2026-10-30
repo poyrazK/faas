@@ -181,9 +181,14 @@ func isEdgeWorkerZone(zone string) bool {
 // original contract). 502 is encoded only when the Worker advertises it, so a
 // Worker that predates it never hands a customer a raw 409. Production-us
 // hunt #9 (H9-96): an app OOM-killed mid-request reached API clients as
-// Cloudflare HTML with no request id.
-func edgeTransportStatus(r *http.Request, status int) bool {
+// Cloudflare HTML with no request id. A platform problem (header carries
+// api.ErrorCodeHeader) is not encoded: PlatformErrorStatus sends it as 503,
+// which Cloudflare and every Worker pass through (ADR-20261030115139).
+func edgeTransportStatus(r *http.Request, status int, header http.Header) bool {
 	if r == nil || !isEdgeWorkerZone(r.Header.Get(cloudflareWorkerHeader)) {
+		return false
+	}
+	if header.Get(api.ErrorCodeHeader) != "" {
 		return false
 	}
 	switch status {
@@ -211,7 +216,7 @@ func EncodeEdgeTransportResponse(resp *http.Response) {
 		return
 	}
 	resp.Header.Del(edgeOriginalStatusHeader)
-	if !edgeTransportStatus(resp.Request, resp.StatusCode) {
+	if !edgeTransportStatus(resp.Request, resp.StatusCode, resp.Header) {
 		return
 	}
 	resp.Header.Set(edgeOriginalStatusHeader, strconv.Itoa(resp.StatusCode))
@@ -227,7 +232,7 @@ type edgeTransportWriter struct {
 }
 
 func (w edgeTransportWriter) WriteHeader(status int) {
-	if edgeTransportStatus(w.r, status) {
+	if edgeTransportStatus(w.r, status, w.Header()) {
 		w.Header().Set(edgeOriginalStatusHeader, strconv.Itoa(status))
 		status = edgeOrigin504TransportStatus
 	}
@@ -675,7 +680,7 @@ func (p *InternalReverseProxy) serveHTTP(w http.ResponseWriter, r *http.Request)
 	// in place on the response (RFC 7230 §6.1) — the internal
 	// daemon may have set Connection: close and we don't want to
 	// leak that to the customer.
-	encodeOriginStatus := edgeTransportStatus(r, resp.StatusCode)
+	encodeOriginStatus := edgeTransportStatus(r, resp.StatusCode, resp.Header)
 	customerOwned := httpsec.SurfaceFrom(r.Context()).CustomerOwned()
 	// H2 can expose trailer declarations only in the header map. Retain
 	// them so this hop can announce its own trailers after stripping.

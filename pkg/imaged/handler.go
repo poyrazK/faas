@@ -35,6 +35,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/rehearsalcommand"
 	"github.com/onebox-faas/faas/pkg/rootfs"
 	"github.com/onebox-faas/faas/pkg/secretbox"
@@ -100,13 +101,19 @@ type Handler struct {
 	notif                  Notifier
 	oci                    oci.Puller
 	builder                LayerBuilder
-	log                    *slog.Logger
+	// layerDigests remembers the digest of each layer this process just
+	// published, so the deploy scan does not hash the same bytes again.
+	layerDigests *publishedLayerDigests
+	log          *slog.Logger
 	// profilingOnDemand stamps dormant guest collectors into manifests for
 	// plans that include profiling (ADR-1155, FAAS_PROFILING_ON_DEMAND).
 	profilingOnDemand bool
 	// continuousProfiling lets an app's profiling.enabled reach its guest
 	// (ADR-819, FAAS_PROFILING_ENABLED).
 	continuousProfiling bool
+	// profileCapturesReleased decides the profile-captures capability for a
+	// deployment's account (ADR-20261023115741); nil releases it.
+	profileCapturesReleased func(platformflags.Subject) bool
 	// hostingSmoke is optional in single-box and offline deployments. When
 	// configured, it must pass before the deployment is promoted to live.
 	hostingSmoke func(context.Context, state.App, state.Deployment) (apihostingreceipt.SmokeResult, error)
@@ -222,6 +229,9 @@ type Handler struct {
 	// sidecar write at base_stage.go::writeScanSidecar reads the
 	// counts off the struct to build the legacy sidecar JSON.
 	grypeRun func(ctx context.Context, dir string) (*ScanResult, error)
+	// baseProvenance checks a platform base digest's SLSA provenance before
+	// ensureVerifiedBaseExt4 builds it (ADR-20261029155852); nil checks none.
+	baseProvenance *BaseProvenanceVerifier
 	// lastDeployScanner is the scanner and database the last per-deploy
 	// Grype run used; a redeploy of an unchanged artifact reuses a result
 	// only from that same scanner (scan_reuse.go).
@@ -338,7 +348,7 @@ func New(store state.Store, notif Notifier, puller oci.Puller, b LayerBuilder,
 		puller = oci.DefaultPuller{}
 	}
 	return &Handler{
-		store: store, notif: notif, oci: puller, builder: b,
+		store: store, notif: notif, oci: puller, builder: b, layerDigests: &publishedLayerDigests{},
 		guestInitPath: guestInitPath, appsRoot: appsRoot, log: log,
 	}
 }
@@ -546,14 +556,24 @@ func (h *Handler) WithContinuousProfiling(enabled bool) *Handler {
 	return h
 }
 
+// WithProfileCapturesRelease installs the per-account decision of the
+// profile-captures capability: a preview released to selected accounts, so
+// collectors reach only their deployments (ADR-20261023115741).
+func (h *Handler) WithProfileCapturesRelease(released func(platformflags.Subject) bool) *Handler {
+	h.profileCapturesReleased = released
+	return h
+}
+
 // stampProfiling applies the installation's profiling flags to the guest
 // manifest. Dormant on-demand collectors are stamped when the account's plan
-// includes profiling; the control plane enforces the plan again at capture
-// time. The rest of the app's profiling settings stay, as pprof_port also
-// serves on-demand captures.
-func (h *Handler) stampProfiling(manifest api.AppManifest, acct state.Account) api.AppManifest {
+// includes profiling and on-demand captures are released to the account; the
+// control plane enforces both again at capture time. Unreleased accounts'
+// runtimes keep no collector preload. The rest of the app's profiling
+// settings stay, as pprof_port also serves on-demand captures.
+func (h *Handler) stampProfiling(manifest api.AppManifest, app state.App, acct state.Account) api.AppManifest {
 	limits, ok := api.LimitsFor(acct.Plan)
-	manifest.ProfilingOnDemand = h.profilingOnDemand && ok && limits.Profiling.Enabled
+	released := h.profileCapturesReleased == nil || h.profileCapturesReleased(platformflags.Subject{AccountID: acct.ID, Plan: string(acct.Plan), OrgID: app.OrgID})
+	manifest.ProfilingOnDemand = h.profilingOnDemand && ok && limits.Profiling.Enabled && released
 	if manifest.Profiling != nil && (manifest.Profiling.Enabled && !h.continuousProfiling || manifest.Profiling.AutomaticCaptures != nil) {
 		cfg := *manifest.Profiling
 		cfg.Enabled = cfg.Enabled && h.continuousProfiling
@@ -773,6 +793,13 @@ func (h *Handler) WithAudit(a *audit.Auditor) *Handler {
 // Handler-Builder seam, same With* fluent setter shape.
 func (h *Handler) WithGrypeRun(fn func(ctx context.Context, dir string) (*ScanResult, error)) *Handler {
 	h.grypeRun = fn
+	return h
+}
+
+// WithBaseProvenance wires the platform base provenance check
+// (ADR-20261029155852).
+func (h *Handler) WithBaseProvenance(v *BaseProvenanceVerifier) *Handler {
+	h.baseProvenance = v
 	return h
 }
 
@@ -1140,7 +1167,7 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 	}
 	defer cleanup()
 	markScanPhase(ctx, "stage")
-	artifactDigest, artifactErr := digestScanArtifact(scanDir)
+	artifactDigest, artifactErr := h.scanArtifactDigest(be, storagekey.AppLayer(app.Slug, scanLayerDeploymentID(app.Slug, dep)), scanDir)
 	markScanPhase(ctx, "digest")
 	if artifactErr != nil {
 		h.log.Warn("imaged: hash scan artifact", "deployment", dep.ID, "app", app.Slug, "err", artifactErr)
@@ -2472,7 +2499,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 		_ = h.markDeployFailed(ctx, dep.ID, err, "manifest overrides: decode failed")
 		return fmt.Errorf("imaged: apply overrides: %w", err)
 	}
-	manifest = h.stampProfiling(applyAppLifecycle(manifest, app), acct)
+	manifest = h.stampProfiling(applyAppLifecycle(manifest, app), app, acct)
 	manifest, err = state.ApplyDeploymentRuntime(manifest, dep)
 	if err != nil {
 		return fmt.Errorf("imaged: scoped runtime: %w", err)
@@ -2608,7 +2635,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 					_ = c.Close()
 				}
 			}()
-			result, err := h.builder.Build(ctx, rootfs.BuildInput{
+			result, err := h.buildAppLayer(ctx, rootfs.BuildInput{
 				Layers:        above.readers,
 				Manifest:      manifest,
 				GuestInitPath: h.guestInitPath,
@@ -2679,7 +2706,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 			_ = h.markDeployFailed(ctx, dep.ID, err, "verify app image chain")
 			return err
 		}
-		result, err := h.builder.Build(ctx, rootfs.BuildInput{
+		result, err := h.buildAppLayer(ctx, rootfs.BuildInput{
 			Layers:        layersAsReaders(pulled.Layers),
 			Manifest:      manifest,
 			GuestInitPath: h.guestInitPath,
@@ -2885,7 +2912,7 @@ func (h *Handler) buildSidecarLayers(ctx context.Context, app state.App, dep sta
 			_ = h.markDeployFailed(ctx, dep.ID, err, fmt.Sprintf("sidecar %q manifest", sc.Name))
 			return findings, fmt.Errorf("imaged: sidecar %q manifest: %w", sc.Name, err)
 		}
-		result, err := h.builder.Build(ctx, rootfs.BuildInput{
+		result, err := h.buildAppLayer(ctx, rootfs.BuildInput{
 			Layers:           layersAsReaders(pulled.Layers),
 			Manifest:         api.SidecarBuildManifest(),
 			WorkloadName:     sc.Name,
@@ -3157,7 +3184,7 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 		_ = h.markDeployFailed(ctx, dep.ID, err, "manifest overrides: decode failed")
 		return fmt.Errorf("imaged: apply overrides: %w", err)
 	}
-	manifest = applyFunctionConcurrency(h.stampProfiling(applyAppLifecycle(manifest, app), acct), app)
+	manifest = applyFunctionConcurrency(h.stampProfiling(applyAppLifecycle(manifest, app), app, acct), app)
 	manifest, err = state.ApplyDeploymentRuntime(manifest, dep)
 	if err != nil {
 		return fmt.Errorf("imaged: scoped runtime: %w", err)
@@ -3251,7 +3278,7 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 		buildInput.Layers = builtLayers
 		buildInput.TarballPath = dep.SourcePath
 	}
-	result, err := h.builder.Build(ctx, buildInput)
+	result, err := h.buildAppLayer(ctx, buildInput)
 	if err != nil {
 		_ = h.markDeployFailed(ctx, dep.ID, err, "build function layer")
 		return fmt.Errorf("imaged: build function layer: %w", err)
@@ -4479,8 +4506,8 @@ func (h *Handler) markDeployFailed(ctx context.Context, depID string, err error,
 		explained := whycopy.Decorate(&api.Problem{Code: p.Code, Hint: p.Hint, Why: p.Why, Fix: p.Fix}, p.Code, nil)
 		hint, why, fix = explained.Hint, explained.Why, explained.Fix
 		if code == api.CodeAppLayerTooBig {
-			if nodeFix := h.layerTooLargeNodeFix(ctx, depID); nodeFix != "" {
-				fix = strings.TrimSpace(nodeFix + "\n" + fix)
+			if versionFix := h.layerTooLargeVersionFix(ctx, depID); versionFix != "" {
+				fix = strings.TrimSpace(versionFix + "\n" + fix)
 			}
 		}
 	}

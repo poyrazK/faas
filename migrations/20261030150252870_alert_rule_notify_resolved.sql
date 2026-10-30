@@ -1,4 +1,4 @@
--- filename: 20261030090000000_alert_rule_notify_resolved.sql
+-- filename: 20261030150252870_alert_rule_notify_resolved.sql
 -- migration-compat: expand
 
 -- +goose Up

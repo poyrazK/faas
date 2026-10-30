@@ -19,7 +19,7 @@ Gregale pricing and quotas come from [`pkg/api/limits.go`](../pkg/api/limits.go)
 - **PR preview environments** is the separate limit for temporary pull-request previews: one per open pull request, however many workloads it runs. One environment runs at most as many workloads as the plan can deploy, and a closed pull request frees its environment at once. See [PR preview environments](preview-environments.md#quota).
 - **Concurrent instances** is the per-app wake/instance ceiling; request concurrency inside one VM is separately bounded by the plan.
 - **RAM / app** and **app layer** are hard build/runtime ceilings. Smaller resource profiles remain available where the plan permits them.
-- **Included GB-RAM-hours** is the monthly compute allowance. Free stops at its allowance; paid plans can accrue overage at the published rate.
+- **Included GB-RAM-hours** is the monthly compute allowance. Free stops at its allowance; paid plans can accrue overage at the published rate, up to a [spend cap](billing.md#spend-cap). A paid plan starts with a cap of one more allowance of overage (Hobby $2, Pro $10, Scale $30); `gregale billing spend-cap` raises or clears it.
 - **Idle timeout** is when an inactive app is parked. A later request wakes it from its snapshot; see [scale-to-zero](cold-wake.md). Functions default to 30s on every plan; any app or function can set its own value from 10s up to twice the plan default.
 - **Max request timeout** is the longest `request_timeout_s` an app or function may set (`gregale app APP --request-timeout SECONDS`). Without one, a function request must start its response within 3s and an app request within 30s; a function's whole invocation, a streamed response included, may then run for the longer of its timeout and 30s.
 

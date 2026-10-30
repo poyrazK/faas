@@ -81,7 +81,7 @@ type Capability struct {
 }
 
 // KnownConsumers are the daemons that may decide capability flags.
-var KnownConsumers = []string{"schedd", "githubd", "gatewayd-internal", "vmmd", "meterd"}
+var KnownConsumers = []string{"schedd", "githubd", "gatewayd-internal", "vmmd", "meterd", "imaged"}
 
 // Catalog is the versioned on-disk product capability registry.
 type Catalog struct {

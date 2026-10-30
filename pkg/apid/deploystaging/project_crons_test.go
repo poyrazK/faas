@@ -166,3 +166,47 @@ func TestProjectCronUnchangedPendingDeploymentDoesNotSelectBuild(t *testing.T) {
 		t.Fatalf("unchanged pending plan=%+v err=%v", again, err)
 	}
 }
+
+// A zone the source declares wins; without one a matched cron keeps the zone
+// an operator set, and a new cron runs in UTC.
+func TestProjectCronTimezones(t *testing.T) {
+	store := state.NewMemStore()
+	acct, err := store.CreateAccount(t.Context(), "zones@example.test", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(t.Context(), state.App{AccountID: acct.ID, Slug: "zones"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	limits, _ := api.LimitsFor(acct.Plan)
+	zone := "America/New_York"
+	for _, schedule := range []string{"0 1 * * *", "0 2 * * *"} {
+		old, err := store.CreateCronIfUnderQuota(t.Context(), app.ID, schedule, "/", true, limits)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.UpdateCronWithOptions(t.Context(), old.ID, nil, nil, nil, &zone, nil, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	desired := []api.DeploymentCronConfig{
+		{Schedule: "0 1 * * *", Path: "/", Enabled: true, Timezone: "Europe/Berlin"},
+		{Schedule: "0 2 * * *", Path: "/", Enabled: true},
+		{Schedule: "0 3 * * *", Path: "/", Enabled: true},
+		{Schedule: "0 4 * * *", Path: "/", Enabled: true, Timezone: "Asia/Tokyo"},
+	}
+	plan, err := PlanProjectCrons(t.Context(), store, acct.ID, app.ID, desired)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"0 1 * * *": "Europe/Berlin", "0 2 * * *": zone, "0 3 * * *": "UTC", "0 4 * * *": "Asia/Tokyo"}
+	for _, cron := range plan.Request.Desired {
+		if cron.Timezone != want[cron.Schedule] {
+			t.Errorf("%s timezone = %q, want %q", cron.Schedule, cron.Timezone, want[cron.Schedule])
+		}
+	}
+	if !plan.Changed {
+		t.Error("a declared zone change did not change the plan")
+	}
+}

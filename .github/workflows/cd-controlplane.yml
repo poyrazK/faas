@@ -173,6 +173,9 @@ jobs:
       # compute hosts. Keep the shared storage.env credential read-only.
       APID_STORAGE_LIFECYCLE_ENV: ${{ secrets.COMPUTE_IMAGED_STORAGE_ENV }}
       RELEASE_TAG: ${{ inputs.release_tag }}
+      # The canary app the activation observer gates on. Unset, it defaults
+      # to an always-deployed app in scripts/ci/observe_remote_rollout.sh.
+      ROLLOUT_APP_PROBE_URL: ${{ vars.ROLLOUT_APP_PROBE_URL }}
       # The critical / best-effort service split is owned by
       # pkg/daemonunitspec (Entry.Critical) and shipped as
       # deploy/etc/daemons.json; the env lists that used to live here were
@@ -296,6 +299,31 @@ jobs:
           mkdir -p "$CANONICAL_ROOT/unpacked"
           tar -xzf "$CANONICAL_ROOT/release.tar.gz" -C "$CANONICAL_ROOT/unpacked"
           cmp "$CANONICAL_ROOT/unpacked/release-manifest.json" "$CANONICAL_ROOT/release-manifest.json"
+          # ADR-20261030140000: deployctl and migrate, built and signed by
+          # the same release.yml run. Releases before it ship neither; the
+          # bundle step builds them for those.
+          if jq -e '.assets[] | select(.name == "controller-tools.tar.gz")' <<<"$release_json" >/dev/null; then
+            for asset in controller-tools.tar.gz controller-tools.cosign.bundle; do
+              asset_url="$(jq -er --arg name "$asset" \
+                '.assets[] | select(.name == $name) | .browser_download_url' <<<"$release_json")"
+              curl --fail --silent --show-error --location \
+                --proto '=https' --tlsv1.2 --retry 3 --retry-all-errors \
+                --header "Authorization: Bearer ${GH_TOKEN}" \
+                -o "$CANONICAL_ROOT/$asset" "$asset_url"
+            done
+            cosign verify-blob \
+              --bundle "$CANONICAL_ROOT/controller-tools.cosign.bundle" \
+              --certificate-identity "https://github.com/poyrazK/faas/.github/workflows/release.yml@refs/tags/${RELEASE_TAG}" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              "$CANONICAL_ROOT/controller-tools.tar.gz"
+            [[ "$(tar -tzf "$CANONICAL_ROOT/controller-tools.tar.gz" | sort | tr '\n' ' ')" == "deployctl migrate " ]] || {
+              echo "::error::controller-tools.tar.gz must hold exactly deployctl and migrate" >&2
+              exit 1
+            }
+            mkdir -p "$CANONICAL_ROOT/controller-tools"
+            tar -xzf "$CANONICAL_ROOT/controller-tools.tar.gz" -C "$CANONICAL_ROOT/controller-tools" --no-same-owner
+            echo "CONTROLLER_TOOLS=$CANONICAL_ROOT/controller-tools" >> "$GITHUB_ENV"
+          fi
           RELEASE_ID="$(jq -er '.git_sha' "$CANONICAL_ROOT/release-manifest.json")"
           RELEASE_MANIFEST_HASH="$(jq -er '.manifest_hash' "$CANONICAL_ROOT/release-manifest.json")"
           ACTUAL_MANIFEST_HASH="sha256:$(sha256sum "$CANONICAL_ROOT/production-manifest.yaml" | awk '{print $1}')"
@@ -477,9 +505,10 @@ jobs:
           install -m 0644 deploy/ansible/roles/prometheus/files/data_repair.rules.yml "${BUNDLE_ROOT}/prometheus/data_repair.rules.yml"
           install -m 0644 pkg/promqlrules/data_placement.yaml "${BUNDLE_ROOT}/prometheus/data_placement.yaml"
           # The daemon and guest-runner bytes come only from the verified
-          # release.tar.gz. The two controller-local tools are compiled on
-          # the CI runner from the checked-out release tag; the production
-          # host never invokes a Go compiler.
+          # release.tar.gz, and the two controller-local tools from the
+          # verified controller-tools.tar.gz (ADR-20261030140000). A release
+          # that predates that asset has them compiled here from the
+          # checked-out tag; the production host never invokes a Go compiler.
           cp -a "${CANONICAL_ROOT}/unpacked/." "${BUNDLE_ROOT}/bin/"
           install -m 0644 "${CANONICAL_ROOT}/unpacked/release-manifest.json" \
             "${BUNDLE_ROOT}/release-manifest.json"
@@ -487,12 +516,18 @@ jobs:
           for asset in release.tar.gz release.cosign.bundle release.sbom.json production-manifest.yaml runtime-bases.env SHA256SUMS; do
             install -m 0644 "${CANONICAL_ROOT}/${asset}" "${BUNDLE_ROOT}/${asset}"
           done
-          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath \
-            -ldflags "-s -w -X github.com/onebox-faas/faas/pkg/wire.Version=${RELEASE_TAG}" \
-            -o "${BUNDLE_ROOT}/bin/deployctl" ./cmd/deployctl
-          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath \
-            -ldflags "-s -w -X github.com/onebox-faas/faas/pkg/wire.Version=${RELEASE_TAG}" \
-            -o "${BUNDLE_ROOT}/bin/migrate" ./cmd/migrate
+          if [[ -n "${CONTROLLER_TOOLS:-}" ]]; then
+            install -m 0755 "${CONTROLLER_TOOLS}/deployctl" "${BUNDLE_ROOT}/bin/deployctl"
+            install -m 0755 "${CONTROLLER_TOOLS}/migrate" "${BUNDLE_ROOT}/bin/migrate"
+          else
+            echo "::notice::${RELEASE_TAG} predates signed controller tools; building deployctl and migrate on the runner"
+            GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath \
+              -ldflags "-s -w -X github.com/onebox-faas/faas/pkg/wire.Version=${RELEASE_TAG}" \
+              -o "${BUNDLE_ROOT}/bin/deployctl" ./cmd/deployctl
+            GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath \
+              -ldflags "-s -w -X github.com/onebox-faas/faas/pkg/wire.Version=${RELEASE_TAG}" \
+              -o "${BUNDLE_ROOT}/bin/migrate" ./cmd/migrate
+          fi
           # PR-1: the systemd units + slice + tmpfiles.d are read from the v2
           # ansible role files/ tree (the canonical source for both the
           # ansible-managed boxes and this controller-managed CD path). The
@@ -1427,6 +1462,9 @@ jobs:
       CP_HOST: ${{ secrets.CP_HOST || secrets.DO_HOST }}
       CP_SSH_KEY: ${{ secrets.CP_SSH_KEY || secrets.DO_SSH_KEY }}
       SLO_GATE: ${{ inputs.slo_gate }}
+      # The canary app the activation observer gates on. Unset, it defaults
+      # to an always-deployed app in scripts/ci/observe_remote_rollout.sh.
+      ROLLOUT_APP_PROBE_URL: ${{ vars.ROLLOUT_APP_PROBE_URL }}
     steps:
       - name: Install pinned cosign verifier
         env:
@@ -1762,6 +1800,9 @@ jobs:
       EXPECT_UNITS: ${{ inputs.units }}
       UNITS_LANE: ${{ inputs.units_lane }}
       SLO_GATE: ${{ inputs.slo_gate }}
+      # The canary app the activation observer gates on. Unset, it defaults
+      # to an always-deployed app in scripts/ci/observe_remote_rollout.sh.
+      ROLLOUT_APP_PROBE_URL: ${{ vars.ROLLOUT_APP_PROBE_URL }}
     steps:
       - name: Require a unit release, not a tag
         env:

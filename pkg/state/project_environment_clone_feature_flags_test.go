@@ -102,6 +102,17 @@ func projectEnvironmentCloneFeatureFlagsIsolation(t *testing.T, s cloneFlagTestS
 	if err != nil || edited.Version != 2 || edited.Flags[0].Seed != source.Flags[0].Seed || edited.Flags[2].Seed != uuid.NewSHA1(uuid.MustParse(stage.ID), []byte("new_stage_flag")).String() {
 		t.Fatalf("stage edit/new flag seed: %v", err)
 	}
+	// Restoring the cloned version after deleting one of its flags keeps the
+	// seed the clone carried, so the restored rollout keeps its buckets.
+	edited.Flags = edited.Flags[1:]
+	removed, err := s.UpdateFeatureFlags(ctx, state.FeatureFlagUpdate{Scope: targetScope, ExpectedVersion: edited.Version, Config: edited.Config, Actor: "developer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := s.UpdateFeatureFlags(ctx, state.FeatureFlagUpdate{Scope: targetScope, ExpectedVersion: removed.Version, RestoreVersion: 1, Actor: "developer"})
+	if err != nil || restored.RestoredFrom != 1 || len(restored.Flags) != 2 || restored.Flags[0].Key != "checkout" || restored.Flags[0].Seed != source.Flags[0].Seed {
+		t.Fatalf("restore cloned flag after deletion: %+v %v", restored.Flags, err)
+	}
 	unchanged, err := s.GetFeatureFlags(ctx, scope, 0)
 	if err != nil || unchanged.Flags[0].Description != "production-only" || len(unchanged.Flags) != 2 {
 		t.Fatalf("stage edit changed production: %v", err)
