@@ -325,7 +325,7 @@ RULES = [
     (r"manifest|gregalemanifest|config$|deploy-override", "`gregale.yaml` deploy overrides"),
     (r"framework|profile-catalog", "Framework profiles"),
     (r"template", "Starter templates"),
-    (r"decompos", "Repo decomposition"),
+    (r"decompos|^kubernetes$", "Repo decomposition"),
     (r"migration-(verif|cutover)|project-migration|service-migration|preflight|migrate-from", "Service migration"),
     (r"gitlab", "GitLab connect"),
     (r"github|install", "GitHub:"),

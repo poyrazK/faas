@@ -93,7 +93,7 @@ any Kubernetes API.
 | `DaemonSet` | Refused: there is no per-node workload, and nodes are the platform's. |
 | `PersistentVolumeClaim`, `PersistentVolume`, `StorageClass` | Reported with the stateless reason (`docs/storage.md`) and the managed alternatives. |
 | `Service` | Not an app. Its selector links it to a Deployment (names, ports, address rewrite below). `type: LoadBalancer` and `NodePort` are reported: every app already gets an HTTPS URL. |
-| `Ingress`, Gateway API `HTTPRoute` | Not applied. Each host becomes a plan note with the `gregale domain add` command for the app it routes to. Domains need ownership verification and are a public change, so the scan never adds one. An Ingress that sends paths to more than one Service is reported with each path and Service: each Service's Deployment becomes its own app, and `route` edge rules serve them under one host. |
+| `Ingress`, Gateway API `HTTPRoute` | Not applied. Each host becomes a plan note with the `gregale domain create --app <app> --domain <host>` command. Domains need ownership verification and are a public change, so the scan never adds one. An Ingress that sends paths to more than one Service is reported with each path and Service: each Service's Deployment becomes its own app, and `route` edge rules serve them under one host. |
 | `HorizontalPodAutoscaler` | Section 4. |
 | `ConfigMap` | A source of plain values for section 5. Mounted as a volume, it is reported: there are no file mounts. |
 | `Secret` | Never imported (section 5). |
@@ -217,8 +217,8 @@ and their Traefik and HAProxy equivalents) are not applied. Each becomes a plan
 note comparing what the manifest asked for with what Gregale does on this plan.
 Examples: "proxy-body-size 50m: this plan accepts request bodies up to 25 MB",
 "proxy-read-timeout 120: requests time out after 30 s by default; a
-`kind=budget` edge rule allows up to 5 m on this plan", "WebSockets: enable
-with `gregale app <slug> --websocket-enabled`". The numbers come from
+`gregale app update --request-timeout` allows up to 5 min on this plan",
+"WebSockets: enable with `gregale app update --websocket-enabled <slug>`". The numbers come from
 `pkg/api/limits.go` at plan time, never from the docs.
 
 The scan records each recognised annotation on the workload its Ingress
@@ -232,14 +232,14 @@ which knows the account's plan, formats the notes (`projectsetup.IngressNotes`).
 | Setting | Annotations | Note compares with |
 |---|---|---|
 | Request body size | `nginx.ingress.kubernetes.io/proxy-body-size`, `nginx.org/client-max-body-size`, `haproxy-ingress.github.io/proxy-body-size` | the plan's `RequestBodyMaxBytes` |
-| Read / send timeout | `nginx.ingress.kubernetes.io/proxy-{read,send}-timeout`, `nginx.org/proxy-{read,send}-timeout`, `haproxy.org/timeout-server`, `haproxy-ingress.github.io/timeout-server` | the app request budget default and the ceiling `--request-timeout` may reach on the plan (ADR-093, ADR-1150) |
+| Read / send timeout | `nginx.ingress.kubernetes.io/proxy-{read,send}-timeout`, `nginx.org/proxy-{read,send}-timeout`, `haproxy.org/timeout-server`, `haproxy-ingress.github.io/timeout-server` | the app request budget default and the ceiling `gregale app update --request-timeout` may reach on the plan (ADR-093, ADR-1150) |
 | WebSockets | `nginx.ingress.kubernetes.io/websocket-services`, `nginx.org/websocket-services` | whether the plan forwards WebSockets by default, allows opting in, or refuses |
 | HTTPS redirect | `nginx.ingress.kubernetes.io/{ssl,force-ssl}-redirect`, `nginx.org/redirect-to-https`, `haproxy.org/ssl-redirect`, `haproxy-ingress.github.io/ssl-redirect`, `ingress.kubernetes.io/ssl-redirect`, `traefik.ingress.kubernetes.io/redirect-entry-point` | TLS ends at the Gregale edge |
 
 Traefik sets body size and timeouts through Middleware objects, not
 annotations, so only its redirect annotation is recognised. Other Ingress
 annotations (rewrites, CORS, rate limits) are not compared; the Ingress kind
-warning still names its hosts for `gregale domain add`.
+warning still names its hosts for `gregale domain create`.
 
 ### 7. Release, gating and limits
 

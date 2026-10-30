@@ -19,6 +19,11 @@ info:
     Errors use RFC 9457 `application/problem+json` with a stable `code`
     field — see `Problem` schema. Authentication rate limits use the same
     envelope with `code: auth_rate_limited` and a `Retry-After` header.
+    Gregale's own problems are sent as 503 where an operation lists 502 or
+    504, with the same `code` and an `X-Faas-Error-Code` header, because the
+    CDN in front of the API replaces 502 and 504 bodies.
+    Edges released before that change still send 502 or 504, so both are
+    listed. Key on `code`, not on the status.
 
     Dashboard pages, server-sent event streams (account events and
     deployment logs), the CLI sign-in flow and operator-only routes are not
@@ -5862,6 +5867,11 @@ paths:
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
+        '503':
+          description: GitHub could not be reached. Sent as 503 by the public edge.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
   /v1/apps/{slug}/github/sync:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -5889,6 +5899,11 @@ paths:
         '409': {$ref: '#/components/responses/Conflict'}
         '502':
           description: The GitHub repository catalog was unavailable during reconciliation.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '503':
+          description: The GitHub repository catalog was unavailable during reconciliation. Sent as 503 by the public edge.
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
@@ -5994,6 +6009,11 @@ paths:
           $ref: '#/components/responses/NotFound'
         '502':
           description: 'code: github_unreachable — the GitHub integration could not reach api.github.com when persisting the bind; retry in a minute.'
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '503':
+          description: 'code: github_unreachable — the GitHub integration could not reach api.github.com when persisting the bind; retry in a minute. Sent as 503 by the public edge.'
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
@@ -11096,6 +11116,18 @@ paths:
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
+        '503':
+          description: |
+            Webhook delivery failed after the dispatcher's retry
+            budget (5 attempts, 2s/8s/32s/128s backoff). The audit
+            log entry (`alert_preset.test_sent`) carries the
+            `delivery_status_code` + `delivery_attempts` for the
+            investigator; the customer's receiver likely rejected
+            the request, was unreachable, or returned 5xx.
+            Sent as 503 by the public edge.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
   # Dashboard form-POST sibling of
   # /v1/apps/{slug}/alert-presets/{name}/test. Accepts no body
@@ -12486,7 +12518,7 @@ paths:
       description: |
         Enqueues an invocation row and waits for the drain to drive it
         to a terminal state. Server-side cap is 30s on paid plans, 5s
-        on Free. Returns 504 (long_poll_timeout) when the cap elapses;
+        on Free. Returns 503 (long_poll_timeout) when the cap elapses;
         the customer can immediately re-call /v1/invocations/{id}
         to pick up the eventual result.
       parameters:
@@ -12509,6 +12541,7 @@ paths:
         '403': {$ref: '#/components/responses/PlanFeatureGated'}
         '413': {$ref: '#/components/responses/PlanSourceBytes'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/LongPollTimeout'}
         '504': {$ref: '#/components/responses/LongPollTimeout'}
   /v1/deployments/response-check/capabilities:
     get:
@@ -12736,6 +12769,11 @@ paths:
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
         '409': {$ref: '#/components/responses/Conflict'}
+        '503':
+          description: Policy change preview inspection timed out. Sent as 503 by the public edge.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
         '504':
           description: Policy change preview inspection timed out.
           content:
@@ -15383,6 +15421,11 @@ paths:
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
+        '503':
+          description: Provider-side failure. The CLI surfaces this as 'retry failed'. Sent as 503 by the public edge.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
         '501':
           description: The provider has no direct saved-card retry API; use the billing portal URL in the response.
           content:
@@ -15442,6 +15485,11 @@ paths:
               schema: {$ref: '#/components/schemas/Problem'}
         '502':
           description: Provider-side failure.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '503':
+          description: Provider-side failure. Sent as 503 by the public edge.
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
@@ -34314,7 +34362,7 @@ components:
         override. Zero or omission leaves existing execution semantics.
         Both values are at most 15 min (`RequestBudgetPlanMax`); the plan
         ceiling (`Plan.RequestBudgetMaxMs`: Free 30 s, Hobby 60 s, Pro 5 min,
-        Scale 15 min) caps them at request time. Expiry returns a 504 problem with code
+        Scale 15 min) caps them at request time. Expiry returns a 503 problem with code
         request_budget_exceeded before response commitment; a committed
         ordinary response is terminated on expiry. Streaming and upgrades
         use their idle/session contract after successful response headers.
