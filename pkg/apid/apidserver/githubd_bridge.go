@@ -503,6 +503,12 @@ func (g *githubdBridge) EnqueueBuild(ctx context.Context, req *githubdpb.Enqueue
 		Tag:        req.Tag,
 	}
 	params.OverrideHealthcheck, params.OverrideLivenessProbe = projectReadinessOverrides(app.Manifest, resource.Plan)
+	// A push deploys the workflows its gregale.yaml declares, as a CLI deploy
+	// of the same source does (ADR-081). A PR preview does not: its scheduled
+	// workflows would run against the preview.
+	if kind != state.DeploymentKindPreview && manifest != nil {
+		params.Workflows = marshalWorkflowDefinitions(manifest.Workflows)
+	}
 	if kind == state.DeploymentKindGitHub {
 		// ADR-20261019071733: a push cannot carry an override, so a freeze
 		// refuses it; githubd reports the reason on the commit.
