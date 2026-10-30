@@ -87,8 +87,16 @@ func TestScanWithOptions_KubernetesIngressSettings(t *testing.T) {
 		t.Errorf("chat settings = %+v, want %+v", got["chat"], want)
 	}
 	joined := strings.Join(result.Warnings, "\n")
-	if want := `Ingress "web": backend Service "gone" does not select exactly one scanned Deployment`; !strings.Contains(joined, want) {
-		t.Errorf("warnings missing %q:\n%s", want, joined)
+	for _, want := range []string{
+		`Ingress "web": backend Service "gone" does not select exactly one scanned Deployment`,
+		`Ingress "web" routes paths to several Services (/api → api-svc, /chat → chat-svc, /old → gone): each Service's Deployment becomes its own app`,
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("warnings missing %q:\n%s", want, joined)
+		}
+	}
+	if strings.Contains(joined, `Ingress "legacy" routes paths`) {
+		t.Errorf("an Ingress with one backend was reported as fanning out:\n%s", joined)
 	}
 
 	off, err := ScanWithOptions(k8sPodFS(k8sIngressManifests), ScanOptions{})
@@ -100,8 +108,29 @@ func TestScanWithOptions_KubernetesIngressSettings(t *testing.T) {
 			t.Errorf("without the capability %s settings = %+v, want none", w.Name, w.IngressSettings)
 		}
 	}
-	if strings.Contains(strings.Join(off.Warnings, "\n"), "proxy settings") {
-		t.Errorf("without the capability the scan reported Ingress settings:\n%s", strings.Join(off.Warnings, "\n"))
+	if offJoined := strings.Join(off.Warnings, "\n"); strings.Contains(offJoined, "proxy settings") || strings.Contains(offJoined, "routes paths") {
+		t.Errorf("without the capability the scan reported Ingress settings or routes:\n%s", offJoined)
+	}
+}
+
+// An Ingress without proxy annotations is still read for its routes, so a
+// fan-out across Services is reported.
+func TestScanWithOptions_KubernetesIngressFanOutWithoutSettings(t *testing.T) {
+	t.Parallel()
+	manifests := strings.Replace(k8sIngressManifests, `    nginx.ingress.kubernetes.io/proxy-body-size: 50m
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
+    nginx.ingress.kubernetes.io/websocket-services: chat-svc
+`, "", 1)
+	result, err := ScanWithOptions(k8sPodFS(manifests), k8sOn())
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(result.Warnings, "\n")
+	if want := `Ingress "web" routes paths to several Services (/api → api-svc, /chat → chat-svc, /old → gone)`; !strings.Contains(joined, want) {
+		t.Errorf("warnings missing %q:\n%s", want, joined)
+	}
+	if strings.Contains(joined, `Ingress "web": backend Service "gone"`) {
+		t.Errorf("an Ingress without proxy settings warned about comparing them:\n%s", joined)
 	}
 }
 

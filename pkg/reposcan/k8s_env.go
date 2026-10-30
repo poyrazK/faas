@@ -152,6 +152,62 @@ func applyK8sEnvFrom(seeds []workloadSeed, sources k8sEnvSources) []string {
 	return warnings
 }
 
+// k8sConfigMap is a ConfigMap the scan read. Its warning waits for the end of
+// the walk, because whether its values are imported depends on the
+// workloads that read it.
+type k8sConfigMap struct{ src, name, warning string }
+
+// k8sConfigMapWarnings reports a ConfigMap's values as not imported, unless
+// every workload whose app container reads it carries the env-import
+// annotation; when some do not, the warning names them.
+func k8sConfigMapWarnings(configMaps []k8sConfigMap, readers []k8sEnvWorkload) []string {
+	var warnings []string
+	for _, cm := range configMaps {
+		read := false
+		var unannotated []string
+		for _, w := range readers {
+			if !k8sReadsConfigMap(w.container, cm.name) {
+				continue
+			}
+			read = true
+			if !w.optIn {
+				unannotated = append(unannotated, w.name)
+			}
+		}
+		switch {
+		case !read:
+			if cm.warning != "" {
+				warnings = append(warnings, cm.warning)
+			}
+		case len(unannotated) > 0:
+			slices.Sort(unannotated)
+			warnings = append(warnings, fmt.Sprintf("reposcan: %s: kind ConfigMap %q: values not imported into %s; annotate the workload with `%s: \"true\"` to import them, or set them with `gregale env set`",
+				cm.src, cm.name, strings.Join(slices.Compact(unannotated), ", "), K8sEnvImportAnnotation))
+		}
+	}
+	return warnings
+}
+
+// k8sReadsConfigMap reports whether a container takes any environment from
+// the named ConfigMap, through envFrom or a configMapKeyRef.
+func k8sReadsConfigMap(container map[string]any, name string) bool {
+	envFrom, _ := container["envFrom"].([]any)
+	for _, raw := range envFrom {
+		entry, _ := raw.(map[string]any)
+		if ref, ok := entry["configMapRef"].(map[string]any); ok && ref["name"] == name {
+			return true
+		}
+	}
+	env, _ := container["env"].([]any)
+	for _, raw := range env {
+		entry, _ := raw.(map[string]any)
+		if k8sMap(entry, "valueFrom", "configMapKeyRef")["name"] == name {
+			return true
+		}
+	}
+	return false
+}
+
 // sourceFile is the file part of a seed source ("k8s/app.yaml: api").
 func sourceFile(source string) string {
 	file, _, _ := strings.Cut(source, ": ")
@@ -343,6 +399,33 @@ func k8sServiceTargets(services []k8sService, workloads []k8sEnvWorkload) map[st
 		targets[strings.ToLower(svc.name)+"."+k8sNamespace(svc.namespace)] = picked[0]
 	}
 	return targets
+}
+
+// k8sUnservedDeployments reports each Deployment that no Service selects and
+// that declares no containerPort (ADR-20261029093621 §2). It still runs in
+// request mode, which waits for a port; a queue consumer is a worker.
+func k8sUnservedDeployments(seeds []workloadSeed, services []k8sService, workloads []k8sEnvWorkload) []string {
+	sources := map[string]string{}
+	for _, s := range seeds {
+		sources[s.name] = s.source
+	}
+	var warnings []string
+	for _, w := range workloads {
+		source, seeded := sources[w.name]
+		if w.kind != "Deployment" || !seeded {
+			continue
+		}
+		if ports, _ := w.container["ports"].([]any); len(ports) > 0 {
+			continue
+		}
+		served := slices.ContainsFunc(services, func(svc k8sService) bool {
+			return len(svc.selector) > 0 && k8sNamespace(svc.namespace) == k8sNamespace(w.namespace) && k8sSelects(svc.selector, w.labels)
+		})
+		if !served {
+			warnings = append(warnings, "reposcan: "+source+": no Service selects this Deployment and it declares no containerPort, so it runs in request mode; set `execution_mode: worker` in gregale.yaml if it consumes a queue")
+		}
+	}
+	return warnings
 }
 
 func k8sNamespace(ns string) string {

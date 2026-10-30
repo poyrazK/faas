@@ -1283,8 +1283,10 @@ connections and execution payloads; apid seals them. schedd runs on
 control-plane and compute hosts alike, so every host stages
 `delivery.age`, and the control plane also stages the recipient for apid.
 At the end of this stage only `delivery.age` opens them, except trigger
-configs, which stay on the fleet key for now (ADR 20261022111812, ninth
-slice).
+configs. apid seals a trigger config's credentials to the domain and the
+fleet key even in domain mode, and the migration leaves them, until the
+release after the one that moved them (ADR 20261022111812, "trigger configs
+join the delivery domain").
 
 ### 11a. Create the identity (operator machine)
 

@@ -90,7 +90,7 @@ func (p *InternalReverseProxy) serveUpgrade(w http.ResponseWriter, r *http.Reque
 				// reconnect to the replacement process.
 				drain.EndOnShutdown(streamCtx, cancelStream)
 				return copyPublicUpgrade(streamCtx, w, r, resp)
-			} else if edgeTransportStatus(r, resp.StatusCode) {
+			} else if edgeTransportStatus(r, resp.StatusCode, w.Header()) {
 				w.Header().Set(edgeOriginalStatusHeader, strconv.Itoa(resp.StatusCode))
 				resp.StatusCode = edgeOrigin504TransportStatus
 			}

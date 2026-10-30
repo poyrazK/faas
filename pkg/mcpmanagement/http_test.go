@@ -588,7 +588,7 @@ func TestRemoteManagementOfficialSDKOAuthDiscoveryAndRefresh(t *testing.T) {
 			if err != nil {
 				return nil, err
 			}
-			return &auth.AuthorizationResult{Code: location.Query().Get("code"), State: location.Query().Get("state")}, nil
+			return &auth.AuthorizationResult{Code: location.Query().Get("code"), State: location.Query().Get("state"), Iss: location.Query().Get("iss")}, nil
 		},
 		NewTokenSource: func(ctx context.Context, config *oauth2.Config, token *oauth2.Token) (oauth2.TokenSource, error) {
 			// Force a standard-library refresh before the retried MCP request.

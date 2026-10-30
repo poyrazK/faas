@@ -722,8 +722,10 @@ type Querier interface {
 	// ConsumeRecoveryCode, ApplyProjectPlan) renders those inline.
 	CreateOrg(ctx context.Context, db DBTX, arg CreateOrgParams) (CreateOrgRow, error)
 	CreateProjectMigration(ctx context.Context, db DBTX, arg CreateProjectMigrationParams) error
-	// ADR-20261019071733: deploy freezes and release windows.
-	// Inserts a freeze only while the account holds fewer than max_unlifted
+	// ADR-20261019071733: deploy freezes and release windows. A freeze belongs to
+	// an account or, since amendment 4, to a company organization; exactly one of
+	// account_id and org_id is set.
+	// Inserts a freeze only while its owner holds fewer than max_unlifted
 	// unlifted freezes that have not ended.
 	CreateReleaseFreezeWithinLimit(ctx context.Context, db DBTX, arg CreateReleaseFreezeWithinLimitParams) (ReleaseFreeze, error)
 	// One automatic freeze per rolled-back deployment; a retried rollback reuses it.
@@ -1504,6 +1506,10 @@ type Querier interface {
 	ExecutionWorkflowSummary(ctx context.Context, db DBTX, arg ExecutionWorkflowSummaryParams) (ExecutionWorkflowSummaryRow, error)
 	ExhaustEnvironmentQueueDeliveryInvocation(ctx context.Context, db DBTX, arg ExhaustEnvironmentQueueDeliveryInvocationParams) (int64, error)
 	ExistsManagedPostgresLifecycleDatabase(ctx context.Context, db DBTX, arg ExistsManagedPostgresLifecycleDatabaseParams) (bool, error)
+	// The hostnames of captured identities whose claims or reservations follow
+	// other rows: an app's primary URL, domains, redirects, tenant hostnames and
+	// aliases; a surface's, platform tenant's or environment's hostnames.
+	ExpandTrafficBindingCapture(ctx context.Context, db DBTX, arg ExpandTrafficBindingCaptureParams) ([]ExpandTrafficBindingCaptureRow, error)
 	// imaged, after deleting every object: the sealed key goes with them.
 	ExpireCrashCapture(ctx context.Context, db DBTX, arg ExpireCrashCaptureParams) (CrashCapture, error)
 	ExpireOrgInvitations(ctx context.Context, db DBTX, expiresAt pgtype.Timestamptz) (int64, error)
@@ -3034,6 +3040,7 @@ type Querier interface {
 	LayerArtifactHasReferences(ctx context.Context, db DBTX, arg LayerArtifactHasReferencesParams) (pgtype.Bool, error)
 	LifecycleApprovalClock(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
 	LifecycleHistoryCursorExists(ctx context.Context, db DBTX, arg LifecycleHistoryCursorExistsParams) (bool, error)
+	LiftOrgReleaseFreeze(ctx context.Context, db DBTX, arg LiftOrgReleaseFreezeParams) (ReleaseFreeze, error)
 	LiftReleaseFreeze(ctx context.Context, db DBTX, arg LiftReleaseFreezeParams) (ReleaseFreeze, error)
 	LinearOAuthFlowClaim(ctx context.Context, db DBTX, arg LinearOAuthFlowClaimParams) (IssueTrackerLinearOauthFlow, error)
 	LinearOAuthFlowCleanup(ctx context.Context, db DBTX, limit int32) error
@@ -3658,8 +3665,10 @@ type Querier interface {
 	// type. (commit 6 of the issue #757 mega-PR.)
 	ListTriggersForApp(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListTriggersForAppRow, error)
 	ListUDPListenersForApp(ctx context.Context, db DBTX, appID string) ([]AppUdpListener, error)
-	// Unlifted freezes that have not ended: active and upcoming windows, weekly
-	// windows and after-rollback policies.
+	// An organization's unlifted freezes that have not ended.
+	ListUnliftedOrgReleaseFreezes(ctx context.Context, db DBTX, arg ListUnliftedOrgReleaseFreezesParams) ([]ReleaseFreeze, error)
+	// An account's unlifted freezes that have not ended: active and upcoming
+	// windows, weekly windows and after-rollback policies.
 	ListUnliftedReleaseFreezes(ctx context.Context, db DBTX, arg ListUnliftedReleaseFreezesParams) ([]ReleaseFreeze, error)
 	// The account trace view's per-request wakes: one canonical instance per wake
 	// (its first), scoped to the account's apps before reading wake metadata, with
@@ -5721,6 +5730,9 @@ type Querier interface {
 	// account, may publish or release: each primary and alias URL, whatever the
 	// app's status (ADR-20261027163626).
 	ReadTrafficAppBindingHosts(ctx context.Context, db DBTX, arg ReadTrafficAppBindingHostsParams) ([]string, error)
+	// What this transaction's statements touched in the claim and reservation
+	// sources, as recorded by the capture triggers (ADR-20261029190349).
+	ReadTrafficBindingCapture(ctx context.Context, db DBTX) (string, error)
 	// All hostname reservations, including inactive/deleted surfaces. Discovery
 	// transfers only identities and routing eligibility; no challenge or cert data.
 	ReadTrafficBindingClaims(ctx context.Context, db DBTX, arg ReadTrafficBindingClaimsParams) (ReadTrafficBindingClaimsRow, error)

@@ -353,6 +353,9 @@ type OpsMetrics struct {
 	// what it changed (ADR 20261027163626); labels are closed pkg/state kinds.
 	trafficBindingScopeAudits *prometheus.CounterVec
 	trafficBindingScopeMisses *prometheus.CounterVec
+	// trafficBindingCaptureGaps counts changed hostnames the capture triggers
+	// did not record (ADR 20261029190349); labels are closed pkg/state kinds.
+	trafficBindingCaptureGaps *prometheus.CounterVec
 	// wakeFailure (issue #1059 / ADR-127) — operator-facing wake
 	// failure-mode counter. Labelled by (box, reason). The closed
 	// reason vocabulary is
@@ -2212,7 +2215,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		}
 	}
 	var trafficPolicyPhase *prometheus.HistogramVec
-	var trafficBindingScopeAudits, trafficBindingScopeMisses *prometheus.CounterVec
+	var trafficBindingScopeAudits, trafficBindingScopeMisses, trafficBindingCaptureGaps *prometheus.CounterVec
 	if prefix == "apid" {
 		trafficPolicyPhase = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "traffic_policy_analysis_seconds",
@@ -2227,7 +2230,11 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 			Name: "traffic_binding_scope_misses_total",
 			Help: "Changed hostnames outside a binding write's declared scope, by writer and kind. Must stay zero before the scoped guard is enabled.",
 		}, []string{"writer", "kind"})
-		reg.MustRegister(trafficPolicyPhase, trafficBindingScopeAudits, trafficBindingScopeMisses)
+		trafficBindingCaptureGaps = prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "traffic_binding_capture_gaps_total",
+			Help: "Changed hostnames of a binding write that the change-capture triggers did not record, by writer and kind. Must stay zero before scoped writes rely on the capture.",
+		}, []string{"writer", "kind"})
+		reg.MustRegister(trafficPolicyPhase, trafficBindingScopeAudits, trafficBindingScopeMisses, trafficBindingCaptureGaps)
 	}
 	watchdogKills := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_watchdog_kills_total",
@@ -5624,6 +5631,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		trafficPolicyPhase:                         trafficPolicyPhase,
 		trafficBindingScopeAudits:                  trafficBindingScopeAudits,
 		trafficBindingScopeMisses:                  trafficBindingScopeMisses,
+		trafficBindingCaptureGaps:                  trafficBindingCaptureGaps,
 		wakeFailure:                                wakeFailure,
 		wakeLatency:                                wakeLatency,
 		boxLabels:                                  newBoxLabelSet(maxBoxLabelValues),
@@ -8354,6 +8362,17 @@ func (m *OpsMetrics) ObserveTrafficBindingScope(writer string, missed []string) 
 	m.trafficBindingScopeAudits.WithLabelValues(writer, outcome).Inc()
 	for _, kind := range missed {
 		m.trafficBindingScopeMisses.WithLabelValues(writer, kind).Inc()
+	}
+}
+
+// ObserveTrafficBindingCapture counts the changed hostnames of one binding
+// write that the capture triggers did not record.
+func (m *OpsMetrics) ObserveTrafficBindingCapture(writer string, gaps []string) {
+	if m == nil || m.trafficBindingCaptureGaps == nil {
+		return
+	}
+	for _, kind := range gaps {
+		m.trafficBindingCaptureGaps.WithLabelValues(writer, kind).Inc()
 	}
 }
 

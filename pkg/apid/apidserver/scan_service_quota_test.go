@@ -176,7 +176,7 @@ func TestProjectWorkloadCrons_PreservesMultiplicityAndEnabledState(t *testing.T)
 		Name: "cleanup",
 		Schedules: []reposcan.CronSchedule{
 			{Expression: "*/5 * * * *", Enabled: true},
-			{Expression: "0 12 * * *", Enabled: false},
+			{Expression: "0 12 * * *", Enabled: false, Timezone: "Europe/Berlin"},
 		},
 	}})
 	if len(got) != 2 {
@@ -184,6 +184,9 @@ func TestProjectWorkloadCrons_PreservesMultiplicityAndEnabledState(t *testing.T)
 	}
 	if !got[0].Enabled || got[1].Enabled || got[1].Schedule != "0 12 * * *" {
 		t.Fatalf("crons = %#v, enabled state or schedules changed", got)
+	}
+	if got[0].Timezone != "" || got[1].Timezone != "Europe/Berlin" {
+		t.Fatalf("crons = %#v, want only the second in its declared zone", got)
 	}
 }
 

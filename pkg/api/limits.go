@@ -528,6 +528,12 @@ const (
 // MemoryMax (4 GiB) covers all of them, so the count stays small.
 const ImagedImagePrepWorkers = 2
 
+// ImagedPublishedLayerDigests bounds how many just-published app layers one
+// imaged remembers the digest of, so the deploy scan can skip hashing them
+// again. An entry leaves when the scan uses it; the bound only covers layers
+// whose scan never ran.
+const ImagedPublishedLayerDigests = 256
+
 // Source-build OCI verification bounds the intermediate image, including its
 // builder base. Final app layers still obey the creating account's plan limit.
 const (
@@ -1245,8 +1251,9 @@ const ConfigGuardBaseline = time.Hour
 const ConfigGuardCheckIntervalSeconds = 15
 const ConfigGuardBatchSize = 50
 
-// Deploy freezes (ADR-20261019071733). An account holds at most
-// ReleaseFreezesMax unlifted freezes that have not ended; reasons are at most
+// Deploy freezes (ADR-20261019071733). An account, and a company organization
+// (amendment 4), each hold at most ReleaseFreezesMax unlifted freezes that
+// have not ended; reasons are at most
 // ReleaseFreezeReasonMax characters. A weekly window lasts at most a week, and
 // an after-rollback policy freezes for at most ReleaseFreezeAfterRollbackMax.
 // Plan-independent: a freeze only ever withholds releases.

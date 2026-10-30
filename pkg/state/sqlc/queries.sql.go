@@ -20161,6 +20161,79 @@ func (q *Queries) ExistsManagedPostgresLifecycleDatabase(ctx context.Context, db
 	return exists, err
 }
 
+const expandTrafficBindingCapture = `-- name: ExpandTrafficBindingCapture :many
+WITH touched_apps AS (
+    SELECT id::uuid AS id, false AS added FROM unnest($1::text[]) AS t(id)
+    UNION ALL
+    SELECT id::uuid AS id, true AS added FROM unnest($2::text[]) AS t(id)
+), touched_surfaces AS (
+    SELECT DISTINCT id::uuid AS id FROM unnest($3::text[]) AS t(id)
+), touched_platforms AS (
+    SELECT DISTINCT id::uuid AS id FROM unnest($4::text[]) AS t(id)
+), touched_environments AS (
+    SELECT DISTINCT id::uuid AS id FROM unnest($5::text[]) AS t(id)
+)
+SELECT (a.slug || $6::text)::text AS host, t.added::boolean AS added
+FROM apps a JOIN touched_apps t ON a.id = t.id WHERE $6::text <> ''
+UNION ALL
+SELECT d.domain::text, false FROM custom_domains d JOIN touched_apps t ON d.app_id = t.id OR d.app_id_redirect = t.id
+UNION ALL
+SELECT h.hostname::text, false FROM tenant_hostnames h JOIN tenant_surfaces s ON s.id = h.surface_id JOIN touched_apps t ON s.app_id = t.id
+UNION ALL
+SELECT 'tag-' || z.name || '-' || replace(z.app_id::text, '-', '') || $6::text, false
+FROM deployment_aliases z JOIN touched_apps t ON z.app_id = t.id WHERE $6::text <> ''
+UNION ALL
+SELECT h.hostname::text, false FROM tenant_hostnames h JOIN touched_surfaces s ON h.surface_id = s.id
+UNION ALL
+SELECT h.hostname::text, false FROM tenant_hostnames h JOIN tenant_surfaces s ON s.id = h.surface_id JOIN touched_platforms p ON s.platform_tenant_id = p.id
+UNION ALL
+SELECT d.domain::text, false FROM custom_domains d JOIN touched_environments e ON d.environment_id = e.id
+`
+
+type ExpandTrafficBindingCaptureParams struct {
+	AppIds         []string
+	AddedAppIds    []string
+	SurfaceIds     []string
+	PlatformIds    []string
+	EnvironmentIds []string
+	AppsSuffix     string
+}
+
+type ExpandTrafficBindingCaptureRow struct {
+	Host  string
+	Added bool
+}
+
+// The hostnames of captured identities whose claims or reservations follow
+// other rows: an app's primary URL, domains, redirects, tenant hostnames and
+// aliases; a surface's, platform tenant's or environment's hostnames.
+func (q *Queries) ExpandTrafficBindingCapture(ctx context.Context, db DBTX, arg ExpandTrafficBindingCaptureParams) ([]ExpandTrafficBindingCaptureRow, error) {
+	rows, err := db.Query(ctx, expandTrafficBindingCapture,
+		arg.AppIds,
+		arg.AddedAppIds,
+		arg.SurfaceIds,
+		arg.PlatformIds,
+		arg.EnvironmentIds,
+		arg.AppsSuffix,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ExpandTrafficBindingCaptureRow{}
+	for rows.Next() {
+		var i ExpandTrafficBindingCaptureRow
+		if err := rows.Scan(&i.Host, &i.Added); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const expireCrashCapture = `-- name: ExpireCrashCapture :one
 UPDATE crash_captures
 SET status = 'expired', finished_at = $1::timestamptz,
@@ -86221,6 +86294,19 @@ func (q *Queries) ReadTrafficAppBindingHosts(ctx context.Context, db DBTX, arg R
 		return nil, err
 	}
 	return items, nil
+}
+
+const readTrafficBindingCapture = `-- name: ReadTrafficBindingCapture :one
+SELECT coalesce(current_setting('gregale.traffic_binding_touched', true), '')::text AS touched
+`
+
+// What this transaction's statements touched in the claim and reservation
+// sources, as recorded by the capture triggers (ADR-20261029190349).
+func (q *Queries) ReadTrafficBindingCapture(ctx context.Context, db DBTX) (string, error) {
+	row := db.QueryRow(ctx, readTrafficBindingCapture)
+	var touched string
+	err := row.Scan(&touched)
+	return touched, err
 }
 
 const readTrafficBindingClaims = `-- name: ReadTrafficBindingClaims :one
