@@ -1021,13 +1021,18 @@ jobs:
             coverage_file: cover-shard2b.out
             gitops_acceptance: false
             state_coverage: false
-            test_timeout: 30m
+            # cmd/gregale under -race and coverage on two CPUs took 1037 s on
+            # 2026-10-27, 1243 s on 2026-10-29 and passed the 30m package
+            # timeout on 2026-10-30 (run 40995340344); it is 501 s without
+            # race or coverage. The job keeps 30 minutes past the package
+            # budget for race compilation and coverage upload.
+            test_timeout: 45m
             # Shard b alone runs the PostgreSQL native verdict, starter TLS,
             # fixture and GitOps compilation gates before its tests: about
             # 28 minutes on 2026-10-18 (20 on 2026-10-17), ahead of a ~20
             # minute test step. 45 cancelled it mid-suite. The gates moved to
             # shard c when they reached 36 minutes (run 40420329172).
-            job_timeout_minutes: 60
+            job_timeout_minutes: 75
           - id: c
             label: PostgreSQL native and starter gates
             # Shard b's pre-test gates took 26 minutes on 2026-10-26 and 36 on
