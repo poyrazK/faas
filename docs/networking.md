@@ -144,8 +144,10 @@ services:
 With this setting, each canonical `_URL` uses `https://<service>.internal`;
 the `_HTTPS_URL` companion remains available with the same value. Plain HTTP
 calls from that caller are rejected by the service proxy, so client retries do
-not silently downgrade. Enable private HTTPS and workload CA trust on the
-compute path before adopting the setting. Omitted transport keeps existing
+not silently downgrade. The transport needs private HTTPS and workload CA
+trust on the compute path: until the operator enables the
+`private-service-https` capability, Gregale refuses the setting with that
+reason ([ADR-20261029230000](adr/20261029230000-private-service-https-capability.md)). Omitted transport keeps existing
 workloads' stored choice and defaults new workloads to HTTP; set the extension
 to `http` to explicitly return to the legacy endpoint. The app API exposes the
 same choice as `service_binding_transport` for standalone apps. `gregale
@@ -609,7 +611,9 @@ Gregale does not claim the customer's entire private namespace. The existing
 `*.svc.gregale` endpoint and default generated URLs remain unchanged for
 rolling-upgrade compatibility; callers may opt into HTTPS-first URLs after the
 listener and trust are ready. The private HTTPS listener is not enabled on
-every installation. Where it is, guest-init builds a per-workload bundle in `/tmp`, exports
+every installation, and `_HTTPS_URL` answers only where it is: the operator
+enables the `private-service-https` capability once every compute node runs
+it. Where it is, guest-init builds a per-workload bundle in `/tmp`, exports
 `GREGALE_SERVICE_CA_BUNDLE`, and configures common TLS clients (`SSL_CERT_FILE`,
 Python Requests, and curl) to trust the private endpoint when the image includes
 a standard system CA bundle. Node receives the CA through its additive

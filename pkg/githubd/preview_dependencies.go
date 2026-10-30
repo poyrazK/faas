@@ -200,7 +200,7 @@ func prHeadComposeValues(fsys fs.FS, scan reposcan.Result, opts reposcan.ScanOpt
 	}
 	out := make(map[string]map[string]string, len(scan.Workloads))
 	for _, workload := range scan.Workloads {
-		if values := projectsetup.PlanEnvImport(env, workload.Name, callable, limits).Values; len(values) > 0 {
+		if values := projectsetup.PlanEnvImport(env, workload.Name, callable, limits, !opts.HTTPSTransportUnavailable).Values; len(values) > 0 {
 			out[strings.ToLower(workload.Name)] = values
 		}
 	}
