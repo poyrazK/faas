@@ -95,19 +95,22 @@ metrics, which an app list or detail read must not pay for.
 
 | Type | `True` | `False` | `Unknown` |
 |---|---|---|---|
-| `Ready` | health `healthy` or `degraded`; reason is the phase (`serving`, `idle`, `starting`) | phase `not_deployed`, `deploying` with nothing serving, or `maintenance` (reason is the phase); health `unhealthy` (reason is the failing check's code). Terminal when the latest deployment failed and nothing serves. | health `unknown` (reason is the unknown check's code); phase `unsupported` (reason `not_assessed`) |
+| `Ready` | no check fails or is unknown; reason is the phase (`serving`, `idle`, `starting`) | phase `not_deployed`, `deploying` with nothing serving, or `maintenance` (reason is the phase); phase `stopped`, a service scaled to zero (terminal); a failing check (reason is its code). Terminal when the latest deployment failed and nothing serves. | an unknown check (reason is its code); phase `unsupported` (reason `not_assessed`) |
 | `Progressing` | a deployment in the scope is in progress (reason `deploying`) | otherwise: reason `latest_deployment_failed` or `complete` | the deployment history is unknown |
 | `Degraded` | health `degraded` or `unhealthy`; reason is the worst check's code | health `healthy` | health `unknown` |
 
-An idle app that scales to zero is `Ready=True reason=idle`: the next request
-wakes it, and that is the product working, not a failure.
+`Ready` reads every check except `requests`. Request telemetry says how
+traffic went, not whether the app can serve, and plans without per-app metrics
+never have it; a failing or unknown `requests` check shows in `Degraded`. So an
+idle app that scales to zero is `Ready=True reason=idle` on every plan: the
+next request wakes it, and that is the product working, not a failure.
 
 **Deployment** (from its status and rollout fields):
 
 | Type | `True` | `False` |
 |---|---|---|
-| `Ready` | `live` (reason `live`) | `pending`, `building`, `imaging`, `snapshotting` (reason is the status); `failed`, `cancelled`, `superseded` (reason is the status, terminal) |
-| `Progressing` | `pending`, `building`, `imaging` or `snapshotting` (reason is the status), or live with a rollout still advancing (reason `rolling_out`) | otherwise (reason `complete`, or the terminal status) |
+| `Ready` | `live` and its readiness stage completed (reason `live`) | live while readiness checks still run (reason `verifying`; the release is routable but not yet confirmed, as `release wait` already treats it); `pending`, `building`, `imaging`, `snapshotting` (reason is the status); `failed`, `cancelled`, `superseded` (reason is the status, terminal) |
+| `Progressing` | `pending`, `building`, `imaging` or `snapshotting` (reason is the status), live while readiness runs (reason `verifying`), or live with a rollout still advancing (reason `rolling_out`) | otherwise (reason `complete`, or the terminal status) |
 | `RolledOut` | live and the rollout reached 100% traffic, or no safe rollout (reason `rolled_out`) | rolling out (reason `rolling_out`); rollout aborted (reason `rollout_aborted`, terminal); not live (reason is the status, terminal when `Ready` is) |
 
 Domains, databases, crons and job runs follow in later steps with the same
