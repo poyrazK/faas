@@ -2996,7 +2996,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/multi-service-apps",
+      "docs_url": "/docs/kubernetes",
       "acceptance_test": "pkg/reposcan/k8s_pod_test.go::TestScanWith_KubernetesManifestsReachesWorkloads",
       "parent": "projects",
       "consumers": [
