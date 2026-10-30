@@ -75,6 +75,16 @@ func TestSealDomainContractRole(t *testing.T) {
 			units:      []string{filepath.Join(root, "deploy", "ansible", "roles", "control_plane_service", "files", "faas-meterd.service")},
 		},
 		{
+			domain:     "build",
+			unit:       "faas-imaged",
+			legacyPath: "FAAS_HOST_AGE_IDENTITY_PATH",
+			legacy:     []string{"faas_fleet_age_identity", "faas_host_age_identity"},
+			units: []string{
+				filepath.Join(root, "deploy", "systemd", "faas-imaged.service"),
+				filepath.Join(root, "deploy", "ansible", "roles", "compute_only_service", "files", "faas-imaged.service"),
+			},
+		},
+		{
 			domain:     "source",
 			unit:       "faas-githubd",
 			legacyPath: "FAAS_HOST_AGE_IDENTITY_PATH",

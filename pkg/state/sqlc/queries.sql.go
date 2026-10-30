@@ -20161,6 +20161,79 @@ func (q *Queries) ExistsManagedPostgresLifecycleDatabase(ctx context.Context, db
 	return exists, err
 }
 
+const expandTrafficBindingCapture = `-- name: ExpandTrafficBindingCapture :many
+WITH touched_apps AS (
+    SELECT id::uuid AS id, false AS added FROM unnest($1::text[]) AS t(id)
+    UNION ALL
+    SELECT id::uuid AS id, true AS added FROM unnest($2::text[]) AS t(id)
+), touched_surfaces AS (
+    SELECT DISTINCT id::uuid AS id FROM unnest($3::text[]) AS t(id)
+), touched_platforms AS (
+    SELECT DISTINCT id::uuid AS id FROM unnest($4::text[]) AS t(id)
+), touched_environments AS (
+    SELECT DISTINCT id::uuid AS id FROM unnest($5::text[]) AS t(id)
+)
+SELECT (a.slug || $6::text)::text AS host, t.added::boolean AS added
+FROM apps a JOIN touched_apps t ON a.id = t.id WHERE $6::text <> ''
+UNION ALL
+SELECT d.domain::text, false FROM custom_domains d JOIN touched_apps t ON d.app_id = t.id OR d.app_id_redirect = t.id
+UNION ALL
+SELECT h.hostname::text, false FROM tenant_hostnames h JOIN tenant_surfaces s ON s.id = h.surface_id JOIN touched_apps t ON s.app_id = t.id
+UNION ALL
+SELECT 'tag-' || z.name || '-' || replace(z.app_id::text, '-', '') || $6::text, false
+FROM deployment_aliases z JOIN touched_apps t ON z.app_id = t.id WHERE $6::text <> ''
+UNION ALL
+SELECT h.hostname::text, false FROM tenant_hostnames h JOIN touched_surfaces s ON h.surface_id = s.id
+UNION ALL
+SELECT h.hostname::text, false FROM tenant_hostnames h JOIN tenant_surfaces s ON s.id = h.surface_id JOIN touched_platforms p ON s.platform_tenant_id = p.id
+UNION ALL
+SELECT d.domain::text, false FROM custom_domains d JOIN touched_environments e ON d.environment_id = e.id
+`
+
+type ExpandTrafficBindingCaptureParams struct {
+	AppIds         []string
+	AddedAppIds    []string
+	SurfaceIds     []string
+	PlatformIds    []string
+	EnvironmentIds []string
+	AppsSuffix     string
+}
+
+type ExpandTrafficBindingCaptureRow struct {
+	Host  string
+	Added bool
+}
+
+// The hostnames of captured identities whose claims or reservations follow
+// other rows: an app's primary URL, domains, redirects, tenant hostnames and
+// aliases; a surface's, platform tenant's or environment's hostnames.
+func (q *Queries) ExpandTrafficBindingCapture(ctx context.Context, db DBTX, arg ExpandTrafficBindingCaptureParams) ([]ExpandTrafficBindingCaptureRow, error) {
+	rows, err := db.Query(ctx, expandTrafficBindingCapture,
+		arg.AppIds,
+		arg.AddedAppIds,
+		arg.SurfaceIds,
+		arg.PlatformIds,
+		arg.EnvironmentIds,
+		arg.AppsSuffix,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ExpandTrafficBindingCaptureRow{}
+	for rows.Next() {
+		var i ExpandTrafficBindingCaptureRow
+		if err := rows.Scan(&i.Host, &i.Added); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const expireCrashCapture = `-- name: ExpireCrashCapture :one
 UPDATE crash_captures
 SET status = 'expired', finished_at = $1::timestamptz,
@@ -59657,6 +59730,8 @@ SELECT
 FROM managed_postgres_usage u JOIN managed_postgres_databases d ON d.id=u.database_id
 WHERE managed_postgres_usage_subject(d.org_id,d.account_id)=$1::uuid
 AND u.window_from>=$2::timestamptz AND u.window_from<$3::timestamptz
+AND NOT EXISTS(SELECT 1 FROM managed_postgres_usage_waivers w WHERE w.database_id=u.database_id
+ AND u.window_from>=w.waived_from AND (w.waived_until IS NULL OR u.window_to<=w.waived_until))
 `
 
 type ManagedPostgresUsageForSubjectParams struct {
@@ -59673,6 +59748,8 @@ type ManagedPostgresUsageForSubjectRow struct {
 	CostMillicents     int64
 }
 
+// ADR-20261029174950 decision 6: a window wholly inside a scheduled delete is
+// waived. The fleet spend breaker (ManagedPostgresFleetTotals) still counts it.
 func (q *Queries) ManagedPostgresUsageForSubject(ctx context.Context, db DBTX, arg ManagedPostgresUsageForSubjectParams) (ManagedPostgresUsageForSubjectRow, error) {
 	row := db.QueryRow(ctx, managedPostgresUsageForSubject, arg.SubjectID, arg.PeriodStart, arg.PeriodEnd)
 	var i ManagedPostgresUsageForSubjectRow
@@ -86222,6 +86299,19 @@ func (q *Queries) ReadTrafficAppBindingHosts(ctx context.Context, db DBTX, arg R
 	return items, nil
 }
 
+const readTrafficBindingCapture = `-- name: ReadTrafficBindingCapture :one
+SELECT coalesce(current_setting('gregale.traffic_binding_touched', true), '')::text AS touched
+`
+
+// What this transaction's statements touched in the claim and reservation
+// sources, as recorded by the capture triggers (ADR-20261029190349).
+func (q *Queries) ReadTrafficBindingCapture(ctx context.Context, db DBTX) (string, error) {
+	row := db.QueryRow(ctx, readTrafficBindingCapture)
+	var touched string
+	err := row.Scan(&touched)
+	return touched, err
+}
+
 const readTrafficBindingClaims = `-- name: ReadTrafficBindingClaims :one
 WITH domains AS (
     SELECT jsonb_build_object('Domain',d.domain,'App',d.app_id,
@@ -94434,21 +94524,29 @@ UPDATE deployments d SET status = CASE WHEN
     OR EXISTS(SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id=rm.release_id
         WHERE rm.deployment_id=d.id AND (rs.active OR rs.expires_at>now()))
     OR EXISTS(SELECT 1 FROM durable_work_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
-    THEN 'live' ELSE 'superseded' END, traffic_percent=0, traffic_percent_explicit=false
-WHERE d.app_id=$1::uuid AND d.scope=$2::text
-AND d.status='live' AND d.id<>$3::uuid
+    THEN 'live' ELSE 'superseded' END, traffic_percent=0, traffic_percent_explicit=false,
+    rollout_state = CASE WHEN d.canary_total_steps>0 AND COALESCE(NULLIF(d.rollout_state,''),'pending') IN ('pending','rolling_out')
+        THEN 'aborted' ELSE d.rollout_state END,
+    rollout_aborted_at = CASE WHEN d.canary_total_steps>0 AND COALESCE(NULLIF(d.rollout_state,''),'pending') IN ('pending','rolling_out')
+        THEN now() ELSE d.rollout_aborted_at END,
+    rollout_aborted_reason = CASE WHEN d.canary_total_steps>0 AND COALESCE(NULLIF(d.rollout_state,''),'pending') IN ('pending','rolling_out')
+        THEN 'superseded by deployment ' || ($1::uuid)::text ELSE d.rollout_aborted_reason END
+WHERE d.app_id=$2::uuid AND d.scope=$3::text
+AND d.status='live' AND d.id<>$1::uuid
 `
 
 type RetireLiveDeploymentSiblingsParams struct {
+	DeploymentID pgtype.UUID
 	AppID        pgtype.UUID
 	Scope        string
-	DeploymentID pgtype.UUID
 }
 
 // A retired sibling is a retained stable revision, not a manual dark
-// deployment, so it loses traffic_percent_explicit (Hunt 14 H14-71).
+// deployment, so it loses traffic_percent_explicit (Hunt 14 H14-71). A
+// retired canary that was still rolling out ends its rollout as aborted, so
+// it never reads as in flight again (ADR-20261030102813, Hunt 14 H14-112).
 func (q *Queries) RetireLiveDeploymentSiblings(ctx context.Context, db DBTX, arg RetireLiveDeploymentSiblingsParams) (int64, error) {
-	result, err := db.Exec(ctx, retireLiveDeploymentSiblings, arg.AppID, arg.Scope, arg.DeploymentID)
+	result, err := db.Exec(ctx, retireLiveDeploymentSiblings, arg.DeploymentID, arg.AppID, arg.Scope)
 	if err != nil {
 		return 0, err
 	}
@@ -100028,6 +100126,58 @@ type SupersedeEnvironmentGitOpsRunsParams struct {
 func (q *Queries) SupersedeEnvironmentGitOpsRuns(ctx context.Context, db DBTX, arg SupersedeEnvironmentGitOpsRunsParams) error {
 	_, err := db.Exec(ctx, supersedeEnvironmentGitOpsRuns, arg.NowAt, arg.SourceID)
 	return err
+}
+
+const supersedeInFlightCanarySiblings = `-- name: SupersedeInFlightCanarySiblings :many
+UPDATE deployments d SET status = CASE WHEN
+    EXISTS(SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id=d.id AND p.expires_at>now())
+    OR EXISTS(SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id=rm.release_id
+        WHERE rm.deployment_id=d.id AND (rs.active OR rs.expires_at>now()))
+    OR EXISTS(SELECT 1 FROM durable_work_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
+    THEN 'live' ELSE 'superseded' END, traffic_percent=0, traffic_percent_explicit=false,
+    rollout_state='aborted', rollout_aborted_at=$1::timestamptz,
+    rollout_aborted_reason='superseded by deployment ' || ($2::uuid)::text
+WHERE d.app_id=$3::uuid AND d.scope=$4::text
+AND d.status='live' AND d.id<>$2::uuid
+AND d.canary_total_steps>0 AND COALESCE(NULLIF(d.rollout_state,''),'pending') IN ('pending','rolling_out')
+RETURNING d.id
+`
+
+type SupersedeInFlightCanarySiblingsParams struct {
+	AbortedAt    pgtype.Timestamptz
+	DeploymentID pgtype.UUID
+	AppID        pgtype.UUID
+	Scope        string
+}
+
+// A newer canary replaces one still rolling out in its scope
+// (ADR-20261030102813, Hunt 14 H14-112). The older canary leaves traffic
+// and ends its rollout as aborted, so the newer canary has one serving
+// predecessor to be judged against. A retained revision stays live at 0%,
+// as in RetireLiveDeploymentSiblings.
+func (q *Queries) SupersedeInFlightCanarySiblings(ctx context.Context, db DBTX, arg SupersedeInFlightCanarySiblingsParams) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, supersedeInFlightCanarySiblings,
+		arg.AbortedAt,
+		arg.DeploymentID,
+		arg.AppID,
+		arg.Scope,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const supersedeTriggerRecordItems = `-- name: SupersedeTriggerRecordItems :execrows

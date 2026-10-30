@@ -1916,8 +1916,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if hostAgeErr != nil {
 		log.Warn("trigger credentials: host age identities unavailable", "path", hostAgePath, "err", hostAgeErr)
 	}
-	// Trigger configs stay sealed to the fleet key (hostAgeIdentities):
-	// apid still opens a stored config to merge an update into it.
+	// Trigger configs join the delivery domain (ADR 20261022111812): apid
+	// seals their credentials to it and the fleet key, and merges an update
+	// without opening the stored config.
 	deliveryReaders := domainReaders(deliveryIdentities, hostAgeIdentities)
 	if err := startCommitRelay(ctx, store, deliveryReaders, log, ops.Registry()); err != nil {
 		return err
@@ -1942,7 +1943,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithPrivateNetworkPolicySubscriber(privateNetworkPolicySubscriber).
 		WithPrivateNetworkPeeringSubscriber(privateNetworkPeeringSubscriber).
 		WithPrivateNetworkFabricDeletionSubscriber(privateNetworkFabricDeletionSubscriber).
-		WithTriggerSecretIdentities(hostAgeIdentities).
+		WithTriggerSecretIdentities(deliveryReaders).
 		WithJobsDispatched(jobsDispatched).
 		WithFlowCounter(sched.NewNodeAwareFlowCounter(engine.NodeTelemetryCache(), flowcount.NewReader(wire.ExecRunner{}))).
 		WithWatchdog(sched.NewWatchdog(store, engine, log)).

@@ -242,9 +242,11 @@ type server struct {
 	// by the usage views (ADR-20261025094915).
 	managedPostgresCapMode         managedpostgres.CapEnforcementMode
 	managedPostgresHealthCollector *managedpostgres.HealthCollector
-	store                          state.Store
-	domainVerificationMetrics      *domainVerificationMetrics
-	log                            *slog.Logger
+	// managedPostgresSQLProber probes the canary databases (ADR-20261029172812); nil when unconfigured.
+	managedPostgresSQLProber  *managedpostgres.SQLProber
+	store                     state.Store
+	domainVerificationMetrics *domainVerificationMetrics
+	log                       *slog.Logger
 	// devSourceCacheMu serializes reconstruction with best-effort cache
 	// replacement. The cache is node-local and disposable; this lock is not
 	// cross-node coordination and never guards customer-intent state.

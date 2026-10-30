@@ -301,6 +301,26 @@ type RegistrySealedCredential struct {
 	Sealed []byte
 }
 
+// CountImagedKeyedCrashCaptures counts the unexpired ready crash captures
+// whose at-rest state imaged keeps with the fleet key (ADR-733): plaintext
+// it would still encrypt to the fleet recipient, and captures it encrypted
+// with a fleet-sealed key and would decrypt for a fork. A capture vmmd
+// sealed at the source (plaintext_state sealed) is not counted: imaged only
+// expires and purges those.
+func (s *PgStore) CountImagedKeyedCrashCaptures(ctx context.Context) (int, error) {
+	var n int
+	err := s.pool.QueryRow(ctx, `
+		SELECT count(*) FROM crash_captures
+		 WHERE status = 'ready'
+		   AND plaintext_state IN ('present', 'absent', 'staging', 'staged')
+		   AND (expires_at IS NULL OR expires_at > now())
+	`).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("state: count imaged-keyed crash captures: %w", err)
+	}
+	return n, nil
+}
+
 // ListRegistrySealedCredentials pages through every sealed registry
 // password in (kind, id) order, after the given cursor.
 func (s *PgStore) ListRegistrySealedCredentials(ctx context.Context, afterKind, afterID string, limit int) ([]RegistrySealedCredential, error) {

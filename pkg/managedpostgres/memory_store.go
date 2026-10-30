@@ -33,6 +33,7 @@ type MemoryStore struct {
 	overage                   map[string]bool
 	capEvents                 map[memoryCapEventKey]CapEvent
 	capEventsMailed           map[memoryCapEventKey]bool
+	usageWaivers              map[string][]usageWaiver
 }
 
 func NewMemoryStore() *MemoryStore {
@@ -57,6 +58,7 @@ func NewMemoryStore() *MemoryStore {
 		overage:                   map[string]bool{},
 		capEvents:                 map[memoryCapEventKey]CapEvent{},
 		capEventsMailed:           map[memoryCapEventKey]bool{},
+		usageWaivers:              map[string][]usageWaiver{},
 	}
 }
 
@@ -270,6 +272,7 @@ func (s *MemoryStore) ClaimDelete(ctx context.Context, accountID, databaseID, le
 	if database.AttemptCount < 30 {
 		database.AttemptCount++
 	}
+	before := database
 	database.State = StateDeleting
 	// An immediate delete ends any scheduled window (ADR-20261029174950).
 	database.PurgeAfter = time.Time{}
@@ -278,6 +281,7 @@ func (s *MemoryStore) ClaimDelete(ctx context.Context, accountID, databaseID, le
 	database.UpdatedAt = now
 	database.RetryAt = now
 	s.databases[databaseID] = database
+	s.trackUsageWaiverLocked(before, database)
 	return cloneDatabase(database), nil
 }
 

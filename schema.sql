@@ -24580,6 +24580,28 @@ $$;
 
 
 --
+-- Name: record_managed_postgres_usage_waiver(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.record_managed_postgres_usage_waiver() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF OLD.purge_after IS NULL AND NEW.purge_after IS NOT NULL THEN
+        INSERT INTO managed_postgres_usage_waivers (database_id, waived_from)
+        VALUES (NEW.id, NEW.updated_at)
+        ON CONFLICT (database_id, waived_from) DO NOTHING;
+    ELSIF OLD.purge_after IS NOT NULL AND NEW.purge_after IS NULL THEN
+        UPDATE managed_postgres_usage_waivers
+        SET waived_until = greatest(waived_from, NEW.updated_at)
+        WHERE database_id = NEW.id AND waived_until IS NULL;
+    END IF;
+    RETURN NULL;
+END
+$$;
+
+
+--
 -- Name: record_object_s3_copy_source_epoch(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -27637,6 +27659,82 @@ BEGIN
     END LOOP;
     RETURN NULL;
 END;
+$$;
+
+
+--
+-- Name: traffic_binding_capture(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.traffic_binding_capture() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    CASE TG_TABLE_NAME
+    WHEN 'custom_domains' THEN
+        IF TG_OP = 'INSERT' THEN
+            PERFORM traffic_binding_capture_append('domain+' || E'\t' || NEW.domain::text);
+        ELSE
+            PERFORM traffic_binding_capture_append('domain' || E'\t' || OLD.domain::text);
+            IF TG_OP = 'UPDATE' AND NEW.domain IS DISTINCT FROM OLD.domain THEN
+                PERFORM traffic_binding_capture_append('domain+' || E'\t' || NEW.domain::text);
+            END IF;
+        END IF;
+    WHEN 'tenant_hostnames' THEN
+        IF TG_OP = 'INSERT' THEN
+            PERFORM traffic_binding_capture_append('tenant+' || E'\t' || NEW.hostname::text);
+        ELSE
+            PERFORM traffic_binding_capture_append('tenant' || E'\t' || OLD.hostname::text);
+            IF TG_OP = 'UPDATE' AND NEW.hostname IS DISTINCT FROM OLD.hostname THEN
+                PERFORM traffic_binding_capture_append('tenant+' || E'\t' || NEW.hostname::text);
+            END IF;
+        END IF;
+    WHEN 'tenant_surfaces' THEN
+        PERFORM traffic_binding_capture_append('surface' || E'\t' ||
+            CASE WHEN TG_OP = 'DELETE' THEN OLD.id ELSE NEW.id END::text);
+    WHEN 'platform_tenants' THEN
+        PERFORM traffic_binding_capture_append('platform' || E'\t' ||
+            CASE WHEN TG_OP = 'DELETE' THEN OLD.id ELSE NEW.id END::text);
+    WHEN 'deployment_aliases' THEN
+        IF TG_OP = 'INSERT' THEN
+            PERFORM traffic_binding_capture_append('alias+' || E'\t' || NEW.app_id::text || E'\t' || NEW.name);
+        ELSE
+            PERFORM traffic_binding_capture_append('alias' || E'\t' || OLD.app_id::text || E'\t' || OLD.name);
+            IF TG_OP = 'UPDATE' THEN
+                PERFORM traffic_binding_capture_append('alias+' || E'\t' || NEW.app_id::text || E'\t' || NEW.name);
+            END IF;
+        END IF;
+    WHEN 'apps' THEN
+        IF TG_OP = 'INSERT' THEN
+            PERFORM traffic_binding_capture_append('app+' || E'\t' || NEW.id::text);
+        ELSIF TG_OP = 'DELETE' THEN
+            PERFORM traffic_binding_capture_append('slug' || E'\t' || OLD.slug);
+        ELSIF NEW.slug IS DISTINCT FROM OLD.slug THEN
+            -- The new slug's primary URL is a newly reserved name.
+            PERFORM traffic_binding_capture_append('app+' || E'\t' || NEW.id::text);
+            PERFORM traffic_binding_capture_append('slug' || E'\t' || OLD.slug);
+        ELSE
+            PERFORM traffic_binding_capture_append('app' || E'\t' || NEW.id::text);
+        END IF;
+    WHEN 'project_environments' THEN
+        PERFORM traffic_binding_capture_append('environment' || E'\t' ||
+            CASE WHEN TG_OP = 'DELETE' THEN OLD.id ELSE NEW.id END::text);
+    ELSE
+        NULL;
+    END CASE;
+    RETURN NULL;
+END $$;
+
+
+--
+-- Name: traffic_binding_capture_append(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.traffic_binding_capture_append(line text) RETURNS void
+    LANGUAGE sql
+    AS $$
+  SELECT set_config('gregale.traffic_binding_touched',
+    coalesce(current_setting('gregale.traffic_binding_touched', true), '') || line || E'\n', true);
 $$;
 
 
@@ -43538,6 +43636,18 @@ CREATE TABLE public.managed_postgres_usage_imports (
     CONSTRAINT managed_postgres_usage_imports_preview_revision_check CHECK ((preview_revision ~ '^[a-f0-9]{64}$'::text)),
     CONSTRAINT managed_postgres_usage_imports_reason_check CHECK (((octet_length(reason) >= 1) AND (octet_length(reason) <= 512))),
     CONSTRAINT managed_postgres_usage_imports_request_sha256_check CHECK ((request_sha256 ~ '^[a-f0-9]{64}$'::text))
+);
+
+
+--
+-- Name: managed_postgres_usage_waivers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_usage_waivers (
+    database_id uuid NOT NULL,
+    waived_from timestamp with time zone NOT NULL,
+    waived_until timestamp with time zone,
+    CONSTRAINT managed_postgres_usage_waivers_check CHECK (((waived_until IS NULL) OR (waived_until >= waived_from)))
 );
 
 
@@ -63322,6 +63432,14 @@ ALTER TABLE ONLY public.managed_postgres_usage_imports
 
 ALTER TABLE ONLY public.managed_postgres_usage
     ADD CONSTRAINT managed_postgres_usage_pkey PRIMARY KEY (database_id, window_from, window_to, meter);
+
+
+--
+-- Name: managed_postgres_usage_waivers managed_postgres_usage_waivers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_usage_waivers
+    ADD CONSTRAINT managed_postgres_usage_waivers_pkey PRIMARY KEY (database_id, waived_from);
 
 
 --
@@ -83359,6 +83477,13 @@ CREATE TRIGGER managed_postgres_database_bindings_guard BEFORE UPDATE OF state O
 
 
 --
+-- Name: managed_postgres_databases managed_postgres_databases_usage_waiver; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_postgres_databases_usage_waiver AFTER UPDATE OF purge_after ON public.managed_postgres_databases FOR EACH ROW WHEN ((old.purge_after IS DISTINCT FROM new.purge_after)) EXECUTE FUNCTION public.record_managed_postgres_usage_waiver();
+
+
+--
 -- Name: managed_postgres_cutover_drain_plans managed_postgres_drain_plan_evidence_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -85848,6 +85973,104 @@ CREATE TRIGGER tenant_hostnames_emit_change AFTER INSERT OR DELETE OR UPDATE ON 
 --
 
 CREATE TRIGGER tenant_surfaces_emit_change AFTER INSERT OR DELETE OR UPDATE ON public.tenant_surfaces FOR EACH ROW EXECUTE FUNCTION public.notify_tenant_surface_changed();
+
+
+--
+-- Name: apps traffic_binding_capture_rows; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER traffic_binding_capture_rows AFTER INSERT OR DELETE ON public.apps FOR EACH ROW EXECUTE FUNCTION public.traffic_binding_capture();
+
+
+--
+-- Name: custom_domains traffic_binding_capture_rows; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER traffic_binding_capture_rows AFTER INSERT OR DELETE ON public.custom_domains FOR EACH ROW EXECUTE FUNCTION public.traffic_binding_capture();
+
+
+--
+-- Name: deployment_aliases traffic_binding_capture_rows; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER traffic_binding_capture_rows AFTER INSERT OR DELETE ON public.deployment_aliases FOR EACH ROW EXECUTE FUNCTION public.traffic_binding_capture();
+
+
+--
+-- Name: platform_tenants traffic_binding_capture_rows; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER traffic_binding_capture_rows AFTER DELETE ON public.platform_tenants FOR EACH ROW EXECUTE FUNCTION public.traffic_binding_capture();
+
+
+--
+-- Name: project_environments traffic_binding_capture_rows; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER traffic_binding_capture_rows AFTER INSERT OR DELETE ON public.project_environments FOR EACH ROW EXECUTE FUNCTION public.traffic_binding_capture();
+
+
+--
+-- Name: tenant_hostnames traffic_binding_capture_rows; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER traffic_binding_capture_rows AFTER INSERT OR DELETE ON public.tenant_hostnames FOR EACH ROW EXECUTE FUNCTION public.traffic_binding_capture();
+
+
+--
+-- Name: tenant_surfaces traffic_binding_capture_rows; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER traffic_binding_capture_rows AFTER INSERT OR DELETE ON public.tenant_surfaces FOR EACH ROW EXECUTE FUNCTION public.traffic_binding_capture();
+
+
+--
+-- Name: apps traffic_binding_capture_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER traffic_binding_capture_update AFTER UPDATE OF slug, status, visibility, account_id, project_id ON public.apps FOR EACH ROW WHEN (((old.slug IS DISTINCT FROM new.slug) OR (old.status IS DISTINCT FROM new.status) OR (old.visibility IS DISTINCT FROM new.visibility) OR (old.account_id IS DISTINCT FROM new.account_id) OR (old.project_id IS DISTINCT FROM new.project_id))) EXECUTE FUNCTION public.traffic_binding_capture();
+
+
+--
+-- Name: custom_domains traffic_binding_capture_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER traffic_binding_capture_update AFTER UPDATE OF domain, app_id, environment_id, app_id_redirect, verified_at ON public.custom_domains FOR EACH ROW WHEN (((old.domain IS DISTINCT FROM new.domain) OR (old.app_id IS DISTINCT FROM new.app_id) OR (old.environment_id IS DISTINCT FROM new.environment_id) OR (old.app_id_redirect IS DISTINCT FROM new.app_id_redirect) OR ((old.verified_at IS NULL) <> (new.verified_at IS NULL)))) EXECUTE FUNCTION public.traffic_binding_capture();
+
+
+--
+-- Name: deployment_aliases traffic_binding_capture_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER traffic_binding_capture_update AFTER UPDATE OF name, app_id ON public.deployment_aliases FOR EACH ROW WHEN (((old.name IS DISTINCT FROM new.name) OR (old.app_id IS DISTINCT FROM new.app_id))) EXECUTE FUNCTION public.traffic_binding_capture();
+
+
+--
+-- Name: platform_tenants traffic_binding_capture_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER traffic_binding_capture_update AFTER UPDATE OF status ON public.platform_tenants FOR EACH ROW WHEN ((old.status IS DISTINCT FROM new.status)) EXECUTE FUNCTION public.traffic_binding_capture();
+
+
+--
+-- Name: project_environments traffic_binding_capture_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER traffic_binding_capture_update AFTER UPDATE OF account_id, project_id ON public.project_environments FOR EACH ROW WHEN (((old.account_id IS DISTINCT FROM new.account_id) OR (old.project_id IS DISTINCT FROM new.project_id))) EXECUTE FUNCTION public.traffic_binding_capture();
+
+
+--
+-- Name: tenant_hostnames traffic_binding_capture_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER traffic_binding_capture_update AFTER UPDATE OF hostname, surface_id, verified_at ON public.tenant_hostnames FOR EACH ROW WHEN (((old.hostname IS DISTINCT FROM new.hostname) OR (old.surface_id IS DISTINCT FROM new.surface_id) OR ((old.verified_at IS NULL) <> (new.verified_at IS NULL)))) EXECUTE FUNCTION public.traffic_binding_capture();
+
+
+--
+-- Name: tenant_surfaces traffic_binding_capture_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER traffic_binding_capture_update AFTER UPDATE OF app_id, account_id, platform_tenant_id, status ON public.tenant_surfaces FOR EACH ROW WHEN (((old.app_id IS DISTINCT FROM new.app_id) OR (old.account_id IS DISTINCT FROM new.account_id) OR (old.platform_tenant_id IS DISTINCT FROM new.platform_tenant_id) OR (old.status IS DISTINCT FROM new.status))) EXECUTE FUNCTION public.traffic_binding_capture();
 
 
 --
@@ -94529,6 +94752,14 @@ ALTER TABLE ONLY public.managed_postgres_usage_imports
 
 ALTER TABLE ONLY public.managed_postgres_usage_imports
     ADD CONSTRAINT managed_postgres_usage_imports_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) DEFERRABLE INITIALLY DEFERRED;
+
+
+--
+-- Name: managed_postgres_usage_waivers managed_postgres_usage_waivers_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_usage_waivers
+    ADD CONSTRAINT managed_postgres_usage_waivers_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
 
 
 --
