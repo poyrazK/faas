@@ -33,13 +33,18 @@ type ProjectServiceLookupReader interface {
 
 // AppByServiceName resolves a production project's repository aliases before
 // the established global app-slug fallback. A name a deleted member still
-// holds does not fall back (ErrProjectServiceDeleted). Preview and scenario
-// routing keep their separate environment-aware owners.
+// holds does not fall back (ErrProjectServiceDeleted), and a name the caller
+// binds falls back only to an app of its own project: a project workload's
+// bindings name its own project's services (ADR-20261030131528). Preview and
+// scenario routing keep their separate environment-aware owners.
 func AppByServiceName(ctx context.Context, reader ProjectServiceReader, caller App, service string) (App, error) {
 	if caller.ProjectID != "" && caller.PreviewOfSlug == "" {
 		app, err := ProjectMemberByWorkload(ctx, reader, caller.AccountID, caller.ProjectID, service)
 		if !errors.Is(err, ErrNotFound) || errors.Is(err, ErrProjectServiceDeleted) {
 			return app, err
+		}
+		if caller.BindsService(service) {
+			return boundProjectAppBySlug(ctx, reader, caller, service)
 		}
 	}
 	return reader.AppBySlug(ctx, service)
@@ -53,8 +58,39 @@ func AppByServiceLookup(ctx context.Context, reader ProjectServiceLookupReader, 
 		if !errors.Is(err, ErrNotFound) || errors.Is(err, ErrProjectServiceDeleted) {
 			return app, err
 		}
+		if caller.BindsService(service) {
+			return boundProjectAppBySlug(ctx, reader, caller, service)
+		}
 	}
 	return reader.AppBySlug(ctx, service)
+}
+
+// boundProjectAppBySlug resolves a bound name no member holds as its service
+// name. An older binding may name a member of the caller's project by its
+// slug; any other app holding the slug is outside the project, as is the
+// app now holding a purged member's name, so the name resolves to nothing.
+func boundProjectAppBySlug(ctx context.Context, reader interface {
+	AppBySlug(context.Context, string) (App, error)
+}, caller App, service string) (App, error) {
+	app, err := reader.AppBySlug(ctx, service)
+	if err != nil {
+		return App{}, err
+	}
+	if app.AccountID != caller.AccountID || app.ProjectID != caller.ProjectID || app.PreviewOfSlug != "" {
+		return App{}, ErrNotFound
+	}
+	return app, nil
+}
+
+// BindsService reports whether the app's manifest declares a binding to the
+// named service.
+func (a App) BindsService(service string) bool {
+	for _, binding := range a.Manifest.ServiceBindings {
+		if api.SameServiceName(binding.Service, service) {
+			return true
+		}
+	}
+	return false
 }
 
 // ProjectMemberByWorkload returns the live production member of a project

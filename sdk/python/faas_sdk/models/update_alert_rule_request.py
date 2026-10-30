@@ -48,6 +48,8 @@ class UpdateAlertRuleRequest:
     """Change the completed-release recovery window. Omission preserves it and explicit 0 disables it. Positive
     values require action=rollback; only error_rate_pct with gt or gte and sufficient exact deployment telemetry
     qualifies."""
+    notify_resolved: bool | Unset = UNSET
+    """Turn the webhook's alert.resolved events on or off. Turning them on requires the rule to have a webhook_url."""
     name: str | Unset = UNSET
     enabled: bool | Unset = UNSET
     metric: UpdateAlertRuleRequestMetric | Unset = UNSET
@@ -76,6 +78,8 @@ class UpdateAlertRuleRequest:
         mcp_for_minutes = self.mcp_for_minutes
 
         post_deploy_rollback_window_seconds = self.post_deploy_rollback_window_seconds
+
+        notify_resolved = self.notify_resolved
 
         name = self.name
 
@@ -123,6 +127,8 @@ class UpdateAlertRuleRequest:
             field_dict["mcp_for_minutes"] = mcp_for_minutes
         if post_deploy_rollback_window_seconds is not UNSET:
             field_dict["post_deploy_rollback_window_seconds"] = post_deploy_rollback_window_seconds
+        if notify_resolved is not UNSET:
+            field_dict["notify_resolved"] = notify_resolved
         if name is not UNSET:
             field_dict["name"] = name
         if enabled is not UNSET:
@@ -158,6 +164,8 @@ class UpdateAlertRuleRequest:
         mcp_for_minutes = d.pop("mcp_for_minutes", UNSET)
 
         post_deploy_rollback_window_seconds = d.pop("post_deploy_rollback_window_seconds", UNSET)
+
+        notify_resolved = d.pop("notify_resolved", UNSET)
 
         name = d.pop("name", UNSET)
 
@@ -213,6 +221,7 @@ class UpdateAlertRuleRequest:
             mcp_min_calls=mcp_min_calls,
             mcp_for_minutes=mcp_for_minutes,
             post_deploy_rollback_window_seconds=post_deploy_rollback_window_seconds,
+            notify_resolved=notify_resolved,
             name=name,
             enabled=enabled,
             metric=metric,

@@ -1250,6 +1250,7 @@ var cliCommands = []cliCommand{
 				{Name: "post-deploy-rollback-window", Short: "completed-release rollback window (0 off; up to 1h)", Value: "duration"},
 				{Name: "webhook-secret-stdin", Short: "read the webhook signing secret from stdin (this or --webhook-secret is required)"},
 				{Name: "webhook-secret", Short: "webhook signing secret (prefer --webhook-secret-stdin)", Value: "VALUE"},
+				{Name: "notify-resolved", Short: "also send the webhook a signed alert.resolved event when the rule recovers", Bool: true},
 			}, Examples: []string{`printf '%s\n' "$WEBHOOK_SECRET" | gregale alert create --app my-api --name p95-latency --metric latency_p95_ms --comparison gt --threshold 800 --window-spec 15m --webhook-url https://hooks.example.com/gregale --webhook-secret-stdin`, `printf '%s\n' "$WEBHOOK_SECRET" | gregale alert create --app mcp-worker --name mcp-oldest-task-age --metric mcp_tasks_oldest_age_seconds --comparison gt --threshold 300 --window-spec 5m --webhook-url https://hooks.example.com/gregale --webhook-secret-stdin`, `printf '%s\n' "$WEBHOOK_SECRET" | gregale alert create --app mcp-worker --name mcp-task-metrics-stale --metric mcp_tasks_metrics_stale --comparison gt --threshold 0 --window-spec 5m --webhook-url https://hooks.example.com/gregale --webhook-secret-stdin`}},
 			{Name: "info", Short: "Show one alert rule and its last delivery", Positionals: []string{"<alert-id>"}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
@@ -1266,6 +1267,7 @@ var cliCommands = []cliCommand{
 				{Name: flagNameAction, Short: "alert action", Value: "ACTION", ClosedSet: api.AllowedAlertRuleActions},
 				{Name: "post-deploy-rollback-window", Short: "completed-release rollback window (0 off; up to 1h)", Value: "duration"},
 				{Name: "webhook-secret-stdin", Short: "read the replacement webhook secret from stdin"},
+				{Name: "notify-resolved", Short: "send the webhook alert.resolved events (=false turns them off)", Bool: true},
 			}, Examples: []string{"gregale alert update --app my-api --interactive"}},
 			{Name: "rm", Short: "Delete one alert rule", Positionals: []string{"<alert-id>"}, Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "slug"}, {Name: "yes", Short: "accepted for consistency; rm does not prompt", Bool: true}}},
 			{Name: "rotate-secret", Short: "Rotate the alert's webhook secret", Positionals: []string{"<alert-id>"}, Flags: []cliFlag{
@@ -2321,7 +2323,7 @@ var cliCommands = []cliCommand{
 			{Name: "add", Short: "Create a new job", Positionals: []string{"[<name>]"}, Examples: []string{"gregale job create --interactive"}, Flags: []cliFlag{
 				{Name: "interactive", Bool: true, Short: "choose a name, image, command, resources, and optional recurring schedule"},
 				{Name: "image", Value: "REF", Short: "OCI image (required unless interactive)"},
-				{Name: "command", Value: "ARGV", Short: "comma-separated entrypoint (e.g. /bin/sh,-c,echo hi); escape a comma inside an argument with a backslash, or pass a JSON array"},
+				{Name: "command", Value: "ARGV", Short: "comma-separated entrypoint (e.g. /bin/sh,-c,echo hi); escape a comma inside an argument with a backslash, pass a JSON array, or give the command after --"},
 				{Name: "ram", Value: "MB", Short: "billable memory in MB (0 = plan default)"},
 				{Name: "timeout", Value: "SECONDS", Short: "per-task wall-clock deadline (0 = plan default)"},
 				{Name: "parallelism", Value: "N", Short: "max concurrent tasks across a run (0 = plan default)"},
@@ -2340,7 +2342,7 @@ var cliCommands = []cliCommand{
 			{Name: "update", Short: "Update one job", Positionals: []string{"[<name>]"}, Examples: []string{"gregale job update --interactive"}, Flags: []cliFlag{
 				{Name: "interactive", Bool: true, Short: "choose a Job, edit resources and schedule, and confirm changes"},
 				{Name: "image", Value: "REF", Short: "new OCI image"},
-				{Name: "command", Value: "ARGV", Short: "new comma-separated entrypoint (e.g. /bin/sh,-c,echo hi); escape a comma inside an argument with a backslash, or pass a JSON array"},
+				{Name: "command", Value: "ARGV", Short: "new comma-separated entrypoint (e.g. /bin/sh,-c,echo hi); escape a comma inside an argument with a backslash, pass a JSON array, or give the command after --"},
 				{Name: "ram", Value: "MB", Short: "new RAM (MB)"},
 				{Name: "timeout", Value: "SECONDS", Short: "new per-task timeout"},
 				{Name: "parallelism", Value: "N", Short: "new max parallel tasks"},
@@ -5033,7 +5035,7 @@ var cliCommands = []cliCommand{
 		Flags: []cliFlag{
 			{Name: "range", Short: "window (5m|15m|1h|6h|24h|7d|15d)", Value: "WINDOW", ClosedSet: []string{"5m", "15m", "1h", "6h", "24h", "7d", "15d"}},
 			{Name: "account", Short: "account-wide roll-up"},
-			{Name: "services", Short: "service map of app-to-app calls (default range 1h)"},
+			{Name: "services", Short: "service map of app-to-app calls (default range 1h)", Capability: "service-map"},
 			{Name: "custom", Short: "history of one pushed custom metric (ranges 1h|6h|24h|7d|15d)", Value: "NAME"},
 		},
 		Positionals: []string{"[<slug>]"},

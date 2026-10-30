@@ -301,6 +301,67 @@ type RegistrySealedCredential struct {
 	Sealed []byte
 }
 
+// CountRuntimeCopiesOffDomain counts the short-lived copies of runtime
+// secrets filed under another key id than kid (ADR 20261022111812): the
+// replaced secrets an open config guard keeps to restore, and the
+// credentials a managed Postgres cutover has sealed and not yet published.
+// A guard's copies are deleted when it closes, and a cutover's ciphertext
+// is cleared when it publishes or cancels; a copy that lands in app_secrets
+// is listed with the rekey documents.
+func (s *PgStore) CountRuntimeCopiesOffDomain(ctx context.Context, kid string) (int, error) {
+	var n int
+	err := s.pool.QueryRow(ctx, `
+		SELECT (SELECT count(*) FROM app_config_guard_secrets s
+		          JOIN app_config_guards g ON g.id = s.guard_id
+		         WHERE g.status = 'watching' AND s.ciphertext IS NOT NULL AND s.kid IS DISTINCT FROM $1)
+		     + (SELECT count(*) FROM managed_postgres_cutover_credentials
+		         WHERE state = 'sealed' AND kid IS DISTINCT FROM $1)
+	`, kid).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("state: count runtime copies off the domain: %w", err)
+	}
+	return n, nil
+}
+
+// CrashCaptureKey is a ready crash capture's sealed per-capture key.
+type CrashCaptureKey struct {
+	ID        string
+	SealedKey []byte
+}
+
+// ListSealedCrashCaptureKeys pages, in id order after the cursor, through
+// the keys of the unexpired ready captures vmmd sealed at the source
+// (ADR-733): the keys a restoring vmmd opens.
+func (s *PgStore) ListSealedCrashCaptureKeys(ctx context.Context, afterID string, limit int) ([]CrashCaptureKey, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 1000
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT id::text, sealed_key FROM crash_captures
+		 WHERE status = 'ready' AND plaintext_state = 'sealed' AND sealed_key IS NOT NULL
+		   AND (expires_at IS NULL OR expires_at > now())
+		   AND id::text > $1
+		 ORDER BY id::text
+		 LIMIT $2
+	`, afterID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("state: list sealed crash capture keys: %w", err)
+	}
+	defer rows.Close()
+	var out []CrashCaptureKey
+	for rows.Next() {
+		var k CrashCaptureKey
+		if err := rows.Scan(&k.ID, &k.SealedKey); err != nil {
+			return nil, fmt.Errorf("state: scan crash capture key: %w", err)
+		}
+		out = append(out, k)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("state: list sealed crash capture keys: %w", err)
+	}
+	return out, nil
+}
+
 // CountImagedKeyedCrashCaptures counts the unexpired ready crash captures
 // whose at-rest state imaged keeps with the fleet key (ADR-733): plaintext
 // it would still encrypt to the fleet recipient, and captures it encrypted

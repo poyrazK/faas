@@ -260,8 +260,8 @@ func TestAlertsAndChannels(t *testing.T) {
 	})
 	var ruleID string
 	s.step("add_rule", func(t *testing.T) {
-		// Rule names are unique per account, and a deleted app's rules
-		// keep theirs, so each run names its own.
+		// Each run names its own rule, so runs against a release that
+		// still made names unique per account do not collide.
 		args := []string{"alerts", "add", "--app", slug, "--name", tg.slug("requests"),
 			"--metric", "request_count", "--comparison", "gt", "--threshold", "5", "--window-spec", "5m",
 			"--webhook-url", base + "/hook", "--webhook-secret-stdin"}

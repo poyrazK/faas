@@ -649,6 +649,13 @@ func deployJoinValidate(opts deployJoinOptions) (deployJoinReport, error) {
 	if info, err := os.Stat(opts.CosignBinary); err == nil && info.Mode()&0o111 == 0 {
 		return report, fmt.Errorf("--cosign-binary is not executable: %s", opts.CosignBinary)
 	}
+	// Node join stages this binary as the host's /usr/local/bin/cosign, which
+	// verifies releases and platform base provenance.
+	if _, err := os.Stat(opts.CosignBinary); err == nil {
+		if err := releaseinstall.CheckCosignBinary(opts.CosignBinary, pinnedCosignSHA256); err != nil {
+			return report, fmt.Errorf("--cosign-binary: %w", err)
+		}
+	}
 	// A PKI source may be either a ready trust bundle or the operator-side
 	// issuance root. Do not reject missing leaves here: the latter is allowed
 	// to issue/refresh the compute-only leaves in copyTrustBundle below. The

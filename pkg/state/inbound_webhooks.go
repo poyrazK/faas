@@ -69,6 +69,7 @@ type InboundWebhookStore interface {
 }
 
 func (m *MemStore) CreateInboundWebhookEndpointIfUnderQuota(_ context.Context, in InboundWebhookEndpoint, limits api.Limits) (InboundWebhookEndpoint, error) {
+	in.TokenHash = storedCredential(credTagInboundWebhook, in.TokenHash)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	app, ok := m.apps[in.AppID]
@@ -148,7 +149,7 @@ func (m *MemStore) InboundWebhookEndpointByTokenHash(_ context.Context, tokenHas
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, endpoint := range m.inboundWebhookEndpoints {
-		if bytes.Equal(endpoint.TokenHash, tokenHash) {
+		if credentialIn(credTagInboundWebhook, tokenHash, endpoint.TokenHash) {
 			app, exists := m.apps[endpoint.AppID]
 			if !exists || app.Status == AppDeleted {
 				return InboundWebhookEndpoint{}, ErrNotFound
@@ -228,6 +229,7 @@ func scanInboundWebhookEndpoint(row inboundWebhookEndpointScanner) (InboundWebho
 }
 
 func (s *PgStore) CreateInboundWebhookEndpointIfUnderQuota(ctx context.Context, in InboundWebhookEndpoint, limits api.Limits) (InboundWebhookEndpoint, error) {
+	in.TokenHash = storedCredential(credTagInboundWebhook, in.TokenHash)
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return InboundWebhookEndpoint{}, fmt.Errorf("state: begin inbound webhook create: %w", err)
@@ -301,12 +303,21 @@ func (s *PgStore) InboundWebhookEndpointByID(ctx context.Context, id string) (In
 }
 
 func (s *PgStore) InboundWebhookEndpointByTokenHash(ctx context.Context, tokenHash []byte) (InboundWebhookEndpoint, error) {
-	endpoint, err := scanInboundWebhookEndpoint(s.pool.QueryRow(ctx, `select `+prefixedInboundWebhookEndpointColumns("w")+`
-		from inbound_webhook_endpoints w
-		join apps a on a.id=w.app_id and a.status <> 'deleted'
-		where w.token_hash=$1`, tokenHash))
+	endpoint, err := firstCredential(ctx, credentialLookups(credTagInboundWebhook, tokenHash), func(ctx context.Context, value []byte) (InboundWebhookEndpoint, error) {
+		endpoint, err := scanInboundWebhookEndpoint(s.pool.QueryRow(ctx, `select `+prefixedInboundWebhookEndpointColumns("w")+`
+			from inbound_webhook_endpoints w
+			join apps a on a.id=w.app_id and a.status <> 'deleted'
+			where w.token_hash=$1`, value))
+		return endpoint, mapErr(err)
+	})
 	if err != nil {
-		return InboundWebhookEndpoint{}, mapErr(err)
+		return InboundWebhookEndpoint{}, err
+	}
+	// ADR 20261029202403: rewrite a plain or older-key hash on use.
+	if next, stale := staleCredential(credTagInboundWebhook, tokenHash, endpoint.TokenHash); stale {
+		if _, err := s.pool.Exec(ctx, `update inbound_webhook_endpoints set token_hash = $1 where id = $2 and token_hash = $3`, next, endpoint.ID, endpoint.TokenHash); err == nil {
+			endpoint.TokenHash = next
+		}
 	}
 	return endpoint, nil
 }

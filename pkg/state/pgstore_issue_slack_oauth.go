@@ -61,7 +61,7 @@ func (s *PgStore) slackOAuthTransaction(ctx context.Context, app, owner string, 
 	return tx.Commit(ctx)
 }
 func (s *PgStore) StartIssueSlackOAuth(ctx context.Context, f IssueSlackOAuthFlow) error {
-	if !slackLinkToken.MatchString(f.Hash) || f.ExpectedRevision < 0 || len(f.Sealed) == 0 || len(f.Sealed) > api.IssueSlackOAuthSealedMaxBytes || !f.ExpiresAt.After(time.Now()) || f.ExpiresAt.After(time.Now().Add(api.IssueSlackOAuthFlowTTL)) {
+	if !slackOAuthStateHash.MatchString(f.Hash) || f.ExpectedRevision < 0 || len(f.Sealed) == 0 || len(f.Sealed) > api.IssueSlackOAuthSealedMaxBytes || !f.ExpiresAt.After(time.Now()) || f.ExpiresAt.After(time.Now().Add(api.IssueSlackOAuthFlowTTL)) {
 		return ErrInvalidArgument
 	}
 	return s.slackOAuthTransaction(ctx, f.AppID, f.AccountID, func(q *sqlc.Queries, tx pgx.Tx, a sqlc.IssueLockAppRow) error {

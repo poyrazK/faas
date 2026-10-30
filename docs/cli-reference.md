@@ -9870,7 +9870,7 @@ Create a new job
 |---|---|---|
 | `--interactive` | choose a name, image, command, resources, and optional recurring schedule |  |
 | `--image <REF>` | OCI image (required unless interactive) |  |
-| `--command <ARGV>` | comma-separated entrypoint (e.g. /bin/sh,-c,echo hi); escape a comma inside an argument with a backslash, or pass a JSON array |  |
+| `--command <ARGV>` | comma-separated entrypoint (e.g. /bin/sh,-c,echo hi); escape a comma inside an argument with a backslash, pass a JSON array, or give the command after -- |  |
 | `--ram <MB>` | billable memory in MB (0 = plan default) |  |
 | `--timeout <SECONDS>` | per-task wall-clock deadline (0 = plan default) |  |
 | `--parallelism <N>` | max concurrent tasks across a run (0 = plan default) |  |
@@ -9918,7 +9918,7 @@ Update one job
 |---|---|---|
 | `--interactive` | choose a Job, edit resources and schedule, and confirm changes |  |
 | `--image <REF>` | new OCI image |  |
-| `--command <ARGV>` | new comma-separated entrypoint (e.g. /bin/sh,-c,echo hi); escape a comma inside an argument with a backslash, or pass a JSON array |  |
+| `--command <ARGV>` | new comma-separated entrypoint (e.g. /bin/sh,-c,echo hi); escape a comma inside an argument with a backslash, pass a JSON array, or give the command after -- |  |
 | `--ram <MB>` | new RAM (MB) |  |
 | `--timeout <SECONDS>` | new per-task timeout |  |
 | `--parallelism <N>` | new max parallel tasks |  |
@@ -15270,7 +15270,7 @@ List alert rules
 
 Add an alert rule
 
-`gregale alert create --app <slug> --name <NAME> [--metric <METRIC>] [--comparison <OP>] [--threshold <N>] [--window-spec <WINDOW>] [--event-subscription-id <UUID>] [--edge-rule-id <ID>] [--mcp-readiness-scope <SCOPE>] [--failure-source <SOURCE>] [--channel <CHANNEL_ID>]... [--custom-metric <NAME>] [--log-query <FILTERS>] [--saved-search <NAME>] [--slo <SLO_ID>] [--synthetic-check <CHECK_ID>] [--webhook-url <URL>] [--action <ACTION>] [--post-deploy-rollback-window <duration>] [--webhook-secret-stdin] [--webhook-secret <VALUE>]`
+`gregale alert create --app <slug> --name <NAME> [--metric <METRIC>] [--comparison <OP>] [--threshold <N>] [--window-spec <WINDOW>] [--event-subscription-id <UUID>] [--edge-rule-id <ID>] [--mcp-readiness-scope <SCOPE>] [--failure-source <SOURCE>] [--channel <CHANNEL_ID>]... [--custom-metric <NAME>] [--log-query <FILTERS>] [--saved-search <NAME>] [--slo <SLO_ID>] [--synthetic-check <CHECK_ID>] [--webhook-url <URL>] [--action <ACTION>] [--post-deploy-rollback-window <duration>] [--webhook-secret-stdin] [--webhook-secret <VALUE>] [--notify-resolved]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -15295,6 +15295,7 @@ Add an alert rule
 | `--post-deploy-rollback-window <duration>` | completed-release rollback window (0 off; up to 1h) |  |
 | `--webhook-secret-stdin` | read the webhook signing secret from stdin (this or --webhook-secret is required) |  |
 | `--webhook-secret <VALUE>` | webhook signing secret (prefer --webhook-secret-stdin) |  |
+| `--notify-resolved` | also send the webhook a signed alert.resolved event when the rule recovers |  |
 
 Examples:
 
@@ -15337,7 +15338,7 @@ gregale alert deliveries --app my-api --interactive
 
 Update one alert rule
 
-`gregale alert update [--interactive] [--app <slug>] [--action <ACTION>] [--post-deploy-rollback-window <duration>] [--webhook-secret-stdin] [<alert-id>]`
+`gregale alert update [--interactive] [--app <slug>] [--action <ACTION>] [--post-deploy-rollback-window <duration>] [--webhook-secret-stdin] [--notify-resolved] [<alert-id>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -15346,6 +15347,7 @@ Update one alert rule
 | `--action <ACTION>` | alert action | one of `webhook` · `rollback` · `demote` · `promote` |
 | `--post-deploy-rollback-window <duration>` | completed-release rollback window (0 off; up to 1h) |  |
 | `--webhook-secret-stdin` | read the replacement webhook secret from stdin |  |
+| `--notify-resolved` | send the webhook alert.resolved events (=false turns them off) |  |
 
 Examples:
 
