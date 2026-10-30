@@ -49,6 +49,8 @@ type Claim struct {
 	// Checkout is the tree the run asked for, if any (ADR-20261027090010 §3).
 	Checkout   *Checkout
 	LeaseToken string
+	// QueuedAt is when apid queued the run. A run queued again keeps it.
+	QueuedAt time.Time
 }
 
 // ClaimRun moves the oldest claimable queued run to starting under token.
@@ -89,6 +91,16 @@ func (s *Store) ClaimRun(ctx context.Context, owner, token string, ttl time.Dura
 	}
 	claim, err = claimFrom(row, token)
 	return claim, err == nil, err
+}
+
+// QueueStats reports every account's queued runs and how long the oldest
+// has waited.
+func (s *Store) QueueStats(ctx context.Context) (queued int, oldest time.Duration, err error) {
+	row, err := s.q.AgentRunQueueStats(ctx, s.pool)
+	if err != nil {
+		return 0, 0, fmt.Errorf("read queue stats: %w", err)
+	}
+	return int(row.Queued), time.Duration(row.OldestSeconds * float64(time.Second)), nil
 }
 
 // claimable takes the account's lock without waiting and checks its load.
@@ -330,7 +342,8 @@ func claimFrom(row sqlc.GetAgentRunClaimRow, token string) (Claim, error) {
 		TimeoutSec: int(row.TimeoutSec), Attempt: int(row.Attempt), Template: row.PromptTemplate, LeaseToken: token,
 		Integrations: nilIfEmpty(integrations), AIBudgetMillicents: row.AiBudgetMillicents.Int64,
 		Checkout: checkoutFrom(row.CheckoutRepository, row.CheckoutCommit, row.CheckoutInstallationID),
-		Harness:  Harness{Preset: row.HarnessPreset.String, Image: row.HarnessImage.String, Run: row.HarnessRun, Models: models}}
+		Harness:  Harness{Preset: row.HarnessPreset.String, Image: row.HarnessImage.String, Run: row.HarnessRun, Models: models},
+		QueuedAt: row.QueuedAt.Time}
 	if row.Prompt.Valid {
 		prompt := row.Prompt.String
 		c.Prompt = &prompt

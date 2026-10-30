@@ -208,7 +208,8 @@ func TestDetectK8s_KindsAreExplained(t *testing.T) {
 
 // TestDetectK8s_KindWarningsNameNoWorkload — --explain must not attribute an
 // explained object or a skipped file to a workload named "kind" or
-// "skipped"; a refused DaemonSet is attributed to its own name.
+// "skipped"; a refused DaemonSet is attributed to its own name, and a
+// "<name>: <warning>" warning to that name without its colon.
 func TestDetectK8s_KindWarningsNameNoWorkload(t *testing.T) {
 	t.Parallel()
 	tests := map[string]string{
@@ -217,6 +218,8 @@ func TestDetectK8s_KindWarningsNameNoWorkload(t *testing.T) {
 		"reposcan: deploy/chart: skipped Helm chart; render it":                                 "",
 		"reposcan: k8s/a.yaml: refusing DaemonSet agent (there are no per-node workloads)":      "agent",
 		"reposcan: k8s/a.yaml: refusing StatefulSet db (stateless contract, ADR-046)":           "db",
+		"reposcan: k8s/a.yaml: api: spec.replicas 0 ignored: instances start on demand":         "api",
+		"reposcan: compose.yaml: web: deploy.mode global ignored":                               "web",
 	}
 	for raw, want := range tests {
 		if got := detectionWarningFromString(detK8s, raw).Workload; got != want {

@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/safetext"
 )
 
 type exclusiveLock struct {
@@ -85,8 +86,8 @@ func operationsHidden() bool {
 func bindExclusiveLock(ctx context.Context, client *Client, source, id string, lock *exclusiveLock) (*api.ExclusiveTriggerBindingRecord, error) {
 	row, err := client.UpsertExclusiveTriggerBinding(ctx, source, id, api.ExclusiveTriggerBindingRequest{Policy: lock.Policy, Key: lock.Key})
 	if err != nil {
-		return nil, fmt.Errorf("created %s %s, but binding it to lock %s failed; retry with: gregale operations bind-trigger --policy %s --key '%s' %s %s: %w",
-			source, id, lock.Policy, lock.Policy, lock.Key, source, id, err)
+		return nil, fmt.Errorf("created %s %s, but binding it to lock %s failed; retry with: gregale operations bind-trigger --policy %s --key %s %s %s: %w",
+			source, id, lock.Policy, lock.Policy, safetext.ShellSingleQuote(string(lock.Key)), source, id, err)
 	}
 	return &row, nil
 }

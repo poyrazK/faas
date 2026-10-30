@@ -214,6 +214,7 @@ var PrimeObservationInstance = primeObservationInstance
 var PrimeRunPlusFrameworkReady = primeRunPlusFrameworkReady
 var PrimeStartupExtension = primeStartupExtension
 var ProfileCaptureOutcomeOf = profileCaptureOutcome
+var ProfileCaptureResultLabel = profileCaptureResultLabel
 var QuietEffective = quietEffective
 var QuietLog = quietLog
 var NewWorkPool = newWorkPool

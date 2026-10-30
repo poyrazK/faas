@@ -814,6 +814,23 @@ func (c *ChecksAPI) WritePreviewCheckForInstallation(ctx context.Context, instal
 	})
 }
 
+// WritePreviewCheckNeutralForInstallation completes the gregale-preview check
+// of a commit no open PR previews any more (closed, superseded or torn down
+// before its build finished), so it does not stay pending forever.
+func (c *ChecksAPI) WritePreviewCheckNeutralForInstallation(ctx context.Context, installationID int64, repoFullName, commitSHA, title, summary string) error {
+	if repoFullName == "" || commitSHA == "" {
+		return fmt.Errorf("githubd: repo and sha required for preview check-run")
+	}
+	return c.writeCheckRunForInstallation(ctx, installationID, repoFullName, commitSHA, previewCheckName, checkRunRequest{
+		Name:       previewCheckName,
+		HeadSHA:    commitSHA,
+		Status:     statusCompleted,
+		Conclusion: previewCheckConclusionNeutral,
+		Output:     &checkRunOutput{Title: title, Summary: summary},
+		ExternalID: fmt.Sprintf("faas/%s/%s", repoFullName, commitSHA),
+	})
+}
+
 func (c *ChecksAPI) WritePreviewCheckForkRefusedForInstallation(ctx context.Context, installationID int64, repoFullName, commitSHA, summary string) error {
 	if repoFullName == "" || commitSHA == "" {
 		return fmt.Errorf("githubd: repo and sha required for preview check-run")

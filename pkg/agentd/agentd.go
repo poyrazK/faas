@@ -38,6 +38,7 @@ type Store interface {
 	Requeue(ctx context.Context, runID, token string) error
 	FinishRun(ctx context.Context, accountID, runID, token string, f agentstore.Finish) error
 	ExpireLeases(ctx context.Context) (int64, int64, error)
+	QueueStats(ctx context.Context) (int, time.Duration, error)
 }
 
 // Schedd opens RunAgent streams; scheddpb.ScheddClient implements it.
@@ -94,6 +95,7 @@ type Agentd struct {
 	checkouts *Checkouts
 	deliverer *Deliverer
 	outputs   *OutputFiles
+	metrics   *Metrics
 
 	mu           sync.Mutex
 	backoffUntil time.Time
@@ -125,6 +127,12 @@ func (a *Agentd) WithOutputFiles(o *OutputFiles) *Agentd {
 // Without it a run's declared deliveries fail as deliveries_unavailable.
 func (a *Agentd) WithDeliveries(d *Deliverer) *Agentd {
 	a.deliverer = d
+	return a
+}
+
+// WithMetrics records the replica's runs and the queue on m.
+func (a *Agentd) WithMetrics(m *Metrics) *Agentd {
+	a.metrics = m
 	return a
 }
 
@@ -191,12 +199,13 @@ func (a *Agentd) claim(ctx context.Context) (agentstore.Claim, bool, error) {
 	})
 }
 
-// SweepOnce handles expired leases once.
+// SweepOnce handles expired leases once and refreshes the queue gauges.
 func (a *Agentd) SweepOnce(ctx context.Context) error {
 	requeued, failed, err := a.store.ExpireLeases(ctx)
 	if requeued+failed > 0 {
 		a.log.Info("agentd: expired leases", "requeued", requeued, "failed", failed)
 	}
+	a.observeQueue(ctx)
 	return err
 }
 
@@ -213,6 +222,22 @@ func (a *Agentd) sweep(ctx context.Context) {
 			}
 		}
 	}
+}
+
+// observeQueue reads the queue for the queue gauges. Every replica reports
+// the same queue, so dashboards take the max across replicas.
+func (a *Agentd) observeQueue(ctx context.Context) {
+	if a.metrics == nil {
+		return
+	}
+	depth, oldest, err := a.store.QueueStats(ctx)
+	if err != nil {
+		if ctx.Err() == nil {
+			a.log.Warn("agentd: read queue stats", "err", err)
+		}
+		return
+	}
+	a.metrics.queue(depth, oldest)
 }
 
 func (a *Agentd) backoff() time.Duration {
@@ -252,11 +277,18 @@ type run struct {
 	stopRun context.CancelFunc
 	// aiBudget is the run's model spend cap, recorded with the fence.
 	aiBudget int64
+	// opened is when the RunAgent stream was opened; placedAt is when
+	// schedd placed the run (zero until then).
+	opened   time.Time
+	placedAt time.Time
 }
 
 // drive takes one claimed run from starting to a terminal state, or back to
 // the queue if it never reached a VM.
 func (a *Agentd) drive(ctx context.Context, claim agentstore.Claim) {
+	if !claim.QueuedAt.IsZero() {
+		a.metrics.stage(stageQueue, time.Since(claim.QueuedAt))
+	}
 	machine, req, err := prepare(claim)
 	if err != nil {
 		a.finish(ctx, claim, agentstore.Finish{State: agentstore.StateFailed, OutcomeCode: "invalid_run", OutcomeMessage: err.Error()})
@@ -264,11 +296,13 @@ func (a *Agentd) drive(ctx context.Context, claim agentstore.Claim) {
 	}
 	var inputKey string
 	if claim.Checkout != nil {
+		prepared := time.Now()
 		key, checkout, err := a.prepareCheckout(ctx, claim)
 		if err != nil {
 			a.checkoutFailed(ctx, claim, err)
 			return
 		}
+		a.metrics.stage(stageInput, time.Since(prepared))
 		inputKey, req.Checkout = key, &checkout
 		if err := req.Validate(); err != nil {
 			a.finish(ctx, claim, agentstore.Finish{State: agentstore.StateFailed, OutcomeCode: "invalid_run", OutcomeMessage: err.Error()})
@@ -277,12 +311,13 @@ func (a *Agentd) drive(ctx context.Context, claim agentstore.Claim) {
 	}
 	runCtx, stop := context.WithCancel(ctx)
 	defer stop()
+	opened := time.Now()
 	stream, err := a.schedd.RunAgent(runCtx, grpc.MaxCallRecvMsgSize(recvMaxBytes))
 	if err != nil {
 		a.requeue(ctx, claim, err)
 		return
 	}
-	r := &run{a: a, claim: claim, stream: stream, stopRun: stop, aiBudget: aiBudget(claim)}
+	r := &run{a: a, claim: claim, stream: stream, stopRun: stop, aiBudget: aiBudget(claim), opened: opened}
 	body, err := json.Marshal(req)
 	if err == nil {
 		err = r.send(&scheddpb.AgentRunRequest{Frame: &scheddpb.AgentRunRequest_Start{Start: &scheddpb.AgentRunStart{
@@ -416,6 +451,7 @@ func (r *run) receive(ctx context.Context) {
 			}
 		case event.GetBooted() != nil:
 			boot := time.Duration(event.GetBooted().GetBootMs()) * time.Millisecond
+			r.a.metrics.stage(stageBoot, boot)
 			if err := r.a.store.RecordBoot(ctx, r.claim.RunID, r.claim.LeaseToken, boot); err != nil {
 				r.a.log.Warn("agentd: record boot", "run_id", r.claim.RunID, "err", err)
 			}
@@ -438,8 +474,10 @@ func (r *run) placed(ctx context.Context, p *scheddpb.AgentRunPlaced) bool {
 		r.stopRun()
 		return false
 	}
+	r.a.metrics.stage(stagePlace, time.Since(r.opened))
 	r.mu.Lock()
 	r.running = true
+	r.placedAt = time.Now()
 	r.mu.Unlock()
 	if err := r.send(&scheddpb.AgentRunRequest{Frame: &scheddpb.AgentRunRequest_Proceed{Proceed: &scheddpb.AgentRunProceed{}}}); err != nil {
 		r.streamEnded(ctx, err)
@@ -451,7 +489,7 @@ func (r *run) placed(ctx context.Context, p *scheddpb.AgentRunPlaced) bool {
 func (r *run) result(ctx context.Context, body []byte) {
 	var result agentrunproto.Result
 	if err := json.Unmarshal(body, &result); err != nil || !result.Status.Valid() {
-		r.a.finish(ctx, r.claim, agentstore.Finish{State: agentstore.StateFailed, OutcomeCode: "invalid_result",
+		r.finish(ctx, agentstore.Finish{State: agentstore.StateFailed, OutcomeCode: "invalid_result",
 			OutcomeMessage: "schedd returned an unreadable result", LogTail: r.tail.String(), LogTruncated: r.tail.dropped})
 		return
 	}
@@ -464,7 +502,7 @@ func (r *run) result(ctx context.Context, body []byte) {
 	if len(result.Files) > 0 && r.a.outputs != nil {
 		files, err := r.a.outputs.Store(ctx, r.claim.AccountID, r.claim.RunID, result.Files)
 		if err != nil {
-			r.a.finish(ctx, r.claim, agentstore.Finish{State: agentstore.StateFailed, OutcomeCode: outcomeOutputsUnavailable,
+			r.finish(ctx, agentstore.Finish{State: agentstore.StateFailed, OutcomeCode: outcomeOutputsUnavailable,
 				OutcomeMessage: err.Error(), ExitCode: &exit, LogTail: r.tail.String(), LogTruncated: f.LogTruncated})
 			return
 		}
@@ -474,7 +512,7 @@ func (r *run) result(ctx context.Context, body []byte) {
 			f.Files = append(f.Files, agentstore.OutputFile{Name: file.Name, Size: file.Size, SHA256: file.SHA256})
 		}
 	}
-	r.a.finish(ctx, r.claim, f)
+	r.finish(ctx, f)
 }
 
 // streamEnded decides what an early end means. Before placed nothing booted:
@@ -494,15 +532,15 @@ func (r *run) streamEnded(ctx context.Context, err error) {
 	code := status.Code(err)
 	switch {
 	case cancelled && (code == codes.Aborted || !running):
-		r.a.finish(ctx, r.claim, agentstore.Finish{State: agentstore.StateCancelled, OutcomeCode: "cancelled", LogTail: r.tail.String()})
+		r.finish(ctx, agentstore.Finish{State: agentstore.StateCancelled, OutcomeCode: "cancelled", LogTail: r.tail.String()})
 	case running:
 		// The seller sees a generic outcome; schedd's cause, which can name a
 		// host path or a vmmd refusal, goes to the operator's log.
 		r.a.log.Warn("agentd: run stream ended before its result", "run_id", r.claim.RunID, "err", err)
-		r.a.finish(ctx, r.claim, agentstore.Finish{State: agentstore.StateFailed, OutcomeCode: "transport_failed",
+		r.finish(ctx, agentstore.Finish{State: agentstore.StateFailed, OutcomeCode: "transport_failed",
 			OutcomeMessage: "the run's stream ended before its result", LogTail: r.tail.String(), LogTruncated: r.tail.dropped})
 	case code == codes.FailedPrecondition || code == codes.InvalidArgument:
-		r.a.finish(ctx, r.claim, agentstore.Finish{State: agentstore.StateFailed, OutcomeCode: "rejected", OutcomeMessage: status.Convert(err).Message()})
+		r.finish(ctx, agentstore.Finish{State: agentstore.StateFailed, OutcomeCode: "rejected", OutcomeMessage: status.Convert(err).Message()})
 	default:
 		r.a.requeue(ctx, r.claim, err)
 	}
@@ -514,16 +552,30 @@ func (a *Agentd) requeue(ctx context.Context, claim agentstore.Claim, cause erro
 		a.log.Warn("agentd: requeue", "run_id", claim.RunID, "err", err)
 		return
 	}
+	a.metrics.requeued(status.Code(cause).String())
 	a.log.Info("agentd: run queued again", "run_id", claim.RunID, "cause", status.Code(cause).String())
 }
 
-func (a *Agentd) finish(ctx context.Context, claim agentstore.Claim, f agentstore.Finish) {
+// finish moves the run to its terminal state and reports whether it did.
+func (a *Agentd) finish(ctx context.Context, claim agentstore.Claim, f agentstore.Finish) bool {
 	f.DeliveriesOff = a.deliverer == nil
 	if err := a.store.FinishRun(ctx, claim.AccountID, claim.RunID, claim.LeaseToken, f); err != nil {
 		a.log.Warn("agentd: finish", "run_id", claim.RunID, "state", f.State, "err", err)
-		return
+		return false
 	}
+	a.metrics.finished(f.State)
 	a.log.Info("agentd: run finished", "run_id", claim.RunID, "state", f.State, "outcome", f.OutcomeCode)
+	return true
+}
+
+// finish ends the run and, once schedd had placed it, records how long it ran.
+func (r *run) finish(ctx context.Context, f agentstore.Finish) {
+	r.mu.Lock()
+	placedAt := r.placedAt
+	r.mu.Unlock()
+	if r.a.finish(ctx, r.claim, f) && !placedAt.IsZero() {
+		r.a.metrics.ran(time.Since(placedAt))
+	}
 }
 
 // logTail keeps the last logTailBytes of a run's output.

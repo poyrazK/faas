@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -243,6 +245,93 @@ func TestRunOutcomesBeforeAndAfterPlacement(t *testing.T) {
 			}
 		}
 	}
+}
+
+// A replica with metrics counts terminal states and requeues, times the
+// start stages and the placed run, and reports the queue on each sweep tick.
+func TestRunMetrics(t *testing.T) {
+	_, store := openStore(t)
+	reg := prometheus.NewRegistry()
+	metrics, err := agentd.NewMetrics(reg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := newAgentd(t, store, &fakeSchedd{}).WithMetrics(metrics)
+	for _, script := range []string{"ok", "full", "reject"} {
+		id := queueRun(t, store, script)
+		if claimed, err := a.ClaimOnce(context.Background()); err != nil || !claimed {
+			t.Fatalf("%s: claim %v %v", script, claimed, err)
+		}
+		if script == "full" {
+			if _, err := store.CancelRun(context.Background(), account, id); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	for _, c := range []struct {
+		name   string
+		labels map[string]string
+		want   float64
+	}{
+		{"agent_runs_total", map[string]string{"outcome": agentstore.StateSucceeded}, 1},
+		{"agent_runs_total", map[string]string{"outcome": agentstore.StateFailed}, 1},
+		{"agent_run_requeues_total", map[string]string{"cause": codes.ResourceExhausted.String()}, 1},
+	} {
+		if got := counterValue(t, reg, c.name, c.labels); got != c.want {
+			t.Errorf("%s %v = %v, want %v", c.name, c.labels, got, c.want)
+		}
+	}
+	// Three claims waited in the queue; one run was placed, booted and ran.
+	for stage, want := range map[string]uint64{"queue": 3, "place": 1, "boot": 1} {
+		if got := histogramCount(t, reg, "agent_run_start_seconds", map[string]string{"stage": stage}); got != want {
+			t.Errorf("stage %s observed %d times, want %d", stage, got, want)
+		}
+	}
+	if got := histogramCount(t, reg, "agent_run_duration_seconds", nil); got != 1 {
+		t.Errorf("run duration observed %d times, want 1", got)
+	}
+
+	queueRun(t, store, "queued-only")
+	if err := a.SweepOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := metricOf(t, reg, "agent_run_queue_depth", nil).GetGauge().GetValue(); got != 1 {
+		t.Errorf("queue depth %v, want 1", got)
+	}
+	if got := metricOf(t, reg, "agent_run_queue_oldest_seconds", nil).GetGauge().GetValue(); got <= 0 || got > 60 {
+		t.Errorf("oldest queued run waited %vs", got)
+	}
+}
+
+// histogramCount is how many observations one histogram of a family holds.
+func histogramCount(t *testing.T, reg *prometheus.Registry, name string, labels map[string]string) uint64 {
+	t.Helper()
+	return metricOf(t, reg, name, labels).GetHistogram().GetSampleCount()
+}
+
+// metricOf finds the series of a family in reg whose labels include labels.
+func metricOf(t *testing.T, reg *prometheus.Registry, name string, labels map[string]string) *dto.Metric {
+	t.Helper()
+	families, err := reg.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range families {
+		if f.GetName() != name {
+			continue
+		}
+	series:
+		for _, m := range f.GetMetric() {
+			for _, l := range m.GetLabel() {
+				if v, ok := labels[l.GetName()]; ok && v != l.GetValue() {
+					continue series
+				}
+			}
+			return m
+		}
+	}
+	t.Fatalf("no %s %v", name, labels)
+	return nil
 }
 
 func TestCancelReachesARunningRun(t *testing.T) {

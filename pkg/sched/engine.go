@@ -430,8 +430,10 @@ type Engine struct {
 	fcVer               string // running Firecracker version — snapshots load only on a match (ADR-005)
 	// capabilities holds a capability's background work while its platform
 	// flag is off for the owning account (ADR-20261023115741); nil allows all.
-	capabilities       *capflags.Decider
-	capabilitySubjects capabilitySubjects
+	capabilities *capflags.Decider
+	// profileCaptureMetrics records on-demand captures (ADR-1155); nil records nothing.
+	profileCaptureMetrics *wire.ProfileCaptureMetrics
+	capabilitySubjects    capabilitySubjects
 	// sealCrashCaptures seals crash captures at the source (ADR-733,
 	// remote storage backends).
 	sealCrashCaptures bool

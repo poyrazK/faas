@@ -1691,8 +1691,17 @@ func (s *PgStore) GetAPIKey(ctx context.Context, accountID, keyID string) (APIKe
 		accountID, keyID))
 }
 
+// TouchKeyLastUsed stamps last_used_at. An active, non-admin mcp-login key
+// also slides (ADR-20261028205920): use extends it to api.MCPLoginKeyIdle from
+// now, never past api.MCPLoginKeyMaxAge after creation, and never shortens it.
 func (s *PgStore) TouchKeyLastUsed(ctx context.Context, keyID string) error {
-	_, err := s.pool.Exec(ctx, `update api_keys set last_used_at = now() where id = $1`, keyID)
+	_, err := s.pool.Exec(ctx, `update api_keys set last_used_at = now(),
+		expires_at = case
+			when label = $2 and status = 'active' and expires_at is not null and not ('admin' = any(scopes))
+			then greatest(expires_at, least(now() + make_interval(secs => $3), created_at + make_interval(secs => $4)))
+			else expires_at
+		end
+		where id = $1`, keyID, api.MCPLoginKeyLabel, api.MCPLoginKeyIdle.Seconds(), api.MCPLoginKeyMaxAge.Seconds())
 	return err
 }
 
@@ -4661,6 +4670,18 @@ func (s *PgStore) RenameApp(ctx context.Context, accountID, oldSlug, newSlug str
 	if err != nil {
 		return App{}, err
 	}
+	// PR previews name their production app by slug. Left on the old slug
+	// they read as orphaned, and the preview janitor tore every open one
+	// down within minutes of the rename. They keep their pr-<N>-<old> hosts
+	// until the PR's next head replaces them.
+	if updated.PreviewOfSlug == "" {
+		if _, err := tx.Exec(ctx, `update apps set preview_of_slug = $3
+			 where account_id = $1 and preview_of_slug = $2
+			   and coalesce(preview_pr_number, 0) > 0 and status <> 'deleted'`,
+			accountID, oldSlug, newSlug); err != nil {
+			return App{}, fmt.Errorf("state: relink PR previews of renamed app: %w", err)
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return App{}, err
 	}
@@ -4917,13 +4938,13 @@ func (s *PgStore) DeleteAppPermanently(ctx context.Context, id string) error {
 		return fmt.Errorf("state: begin app purge: %w", err)
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
-	var activeBuckets int
+	var activeBuckets int64
 	if err := tx.QueryRow(ctx,
 		`select count(*) from object_buckets where app_id = $1 and state <> 'deleted'`, id).Scan(&activeBuckets); err != nil {
 		return fmt.Errorf("state: count app buckets: %w", err)
 	}
 	if activeBuckets != 0 {
-		return ErrConflict
+		return &AppPurgeBlockedError{Reason: AppPurgeBlockedObjectBucket, Count: activeBuckets}
 	}
 	// A live managed PostgreSQL binding still owns provider credentials, and
 	// a dispatched, unsettled multipart part writer is an uncertain backend
@@ -4931,15 +4952,18 @@ func (s *PgStore) DeleteAppPermanently(ctx context.Context, id string) error {
 	// rows (deleted bindings, settled writers) are removed below. Without
 	// that, the RESTRICT keys failed every purge and the grace sweep retried
 	// the same apps every minute forever (Hunt 11 H11-21).
-	var retained int
+	var liveBindings, uncertainWrites int64
 	if err := tx.QueryRow(ctx,
-		`select (select count(*) from managed_postgres_bindings where app_id = $1 and state <> 'deleted')
-		      + (select count(*) from object_multipart_part_writers w join object_buckets b on b.id = w.bucket_id
-		          where b.app_id = $1 and w.dispatched and not w.settled)`, id).Scan(&retained); err != nil {
+		`select (select count(*) from managed_postgres_bindings where app_id = $1 and state <> 'deleted'),
+		        (select count(*) from object_multipart_part_writers w join object_buckets b on b.id = w.bucket_id
+		          where b.app_id = $1 and w.dispatched and not w.settled)`, id).Scan(&liveBindings, &uncertainWrites); err != nil {
 		return fmt.Errorf("state: count app retained resources: %w", err)
 	}
-	if retained != 0 {
-		return ErrConflict
+	if liveBindings != 0 {
+		return &AppPurgeBlockedError{Reason: AppPurgeBlockedManagedPostgresBinding, Count: liveBindings}
+	}
+	if uncertainWrites != 0 {
+		return &AppPurgeBlockedError{Reason: AppPurgeBlockedMultipartWrite, Count: uncertainWrites}
 	}
 	var exists int
 	if err := tx.QueryRow(ctx,
@@ -5001,7 +5025,7 @@ func (s *PgStore) DeleteAppPermanently(ctx context.Context, id string) error {
 	}
 	for _, step := range steps {
 		if _, err := tx.Exec(ctx, step.sql, id); err != nil {
-			return fmt.Errorf("state: purge %s for app %s: %w", step.name, id, err)
+			return fmt.Errorf("state: purge %s for app %s: %w", step.name, id, appPurgeForeignKeyError(err))
 		}
 	}
 	// Most app-owned tables use ON DELETE CASCADE (alerts, mirrors,
@@ -5014,13 +5038,19 @@ func (s *PgStore) DeleteAppPermanently(ctx context.Context, id string) error {
 	tag, err := tx.Exec(ctx,
 		`delete from apps where id = $1 and status = 'deleted' and delete_grace_until <= now() and purge_claimed_at is not null`, id)
 	if err != nil {
-		return fmt.Errorf("state: purge app %s: %w", id, err)
+		// A key the steps above do not clear (Hunt 11 H11-21's binding
+		// tombstones were one) fails here after the steps and the cascades
+		// have locked their rows. The typed error makes the grace sweep back
+		// off instead of retaking those locks every minute: on 2026-10-24 that
+		// retry deadlocked a migration adding a foreign key to apps.
+		return fmt.Errorf("state: purge app %s: %w", id, appPurgeForeignKeyError(err))
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("state: commit app purge %s: %w", id, err)
+		// A deferred key is checked here.
+		return fmt.Errorf("state: commit app purge %s: %w", id, appPurgeForeignKeyError(err))
 	}
 	return nil
 }
@@ -5767,14 +5797,15 @@ func (s *PgStore) ApplyProjectPlan(
 				NotAllowed: true,
 			}
 		}
-		var observedCrons int
-		if err := tx.QueryRow(ctx,
-			`select count(*) from crons c
-			 join apps a on a.id = c.app_id
-			 where (a.org_id=$2::uuid OR $2::uuid IS NULL AND a.account_id=$1) and a.status <> 'deleted'`,
-			project.AccountID, nullString(project.OrgID),
-		).Scan(&observedCrons); err != nil {
-			return Project{}, nil, nil, fmt.Errorf("state: count crons for account %s: %w", project.AccountID, err)
+		// The allowance is the project's billing subject's
+		// (ADR-202610171904), counted under its quota lock.
+		subject, err := cronQuotaSubjectTx(ctx, tx, project.AccountID, mustPgUUID(project.OrgID))
+		if err != nil {
+			return Project{}, nil, nil, err
+		}
+		observedCrons, err := countQuotaSubjectCronsTx(ctx, tx, subject)
+		if err != nil {
+			return Project{}, nil, nil, err
 		}
 		if observedCrons+len(crons) > limits.CronLimitPerAccount {
 			return Project{}, nil, nil, &QuotaError{
@@ -6020,10 +6051,17 @@ func (s *PgStore) ApplyProjectReconcile(
 		for _, app := range existing {
 			projectIDs = append(projectIDs, app.ID)
 		}
-		var observedCrons, projectCronCount int
-		if err := tx.QueryRow(ctx, `select count(*) from crons c join apps a on a.id = c.app_id where (a.org_id=$2::uuid OR $2::uuid IS NULL AND a.account_id=$1) and a.status <> 'deleted'`, project.AccountID, nullString(storedProject.OrgID)).Scan(&observedCrons); err != nil {
-			return ProjectReconcileResult{}, fmt.Errorf("state: count account crons: %w", err)
+		// The allowance is the project's billing subject's
+		// (ADR-202610171904), counted under its quota lock.
+		subject, err := cronQuotaSubjectTx(ctx, tx, storedProject.AccountID, mustPgUUID(storedProject.OrgID))
+		if err != nil {
+			return ProjectReconcileResult{}, err
 		}
+		observedCrons, err := countQuotaSubjectCronsTx(ctx, tx, subject)
+		if err != nil {
+			return ProjectReconcileResult{}, err
+		}
+		projectCronCount := 0
 		for _, appID := range projectIDs {
 			var n int
 			if err := tx.QueryRow(ctx, `select count(*) from crons where app_id = $1`, appID).Scan(&n); err != nil {
@@ -6844,13 +6882,39 @@ func (s *PgStore) RenameGitHubRepository(ctx context.Context, installationID int
 	if installationID <= 0 || oldRepoFullName == "" || newRepoFullName == "" {
 		return ErrNotFound
 	}
-	_, err := s.pool.Exec(ctx, `
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("state: begin GitHub repository rename: %w", err)
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }() //nolint:errcheck // no-op after Commit
+	if _, err := tx.Exec(ctx, `
 		update apps
 		   set github_repo_full_name = $3
 		 where github_install_id = $1
-		   and github_repo_full_name = $2`, installationID, oldRepoFullName, newRepoFullName)
-	if err != nil {
+		   and github_repo_full_name = $2`, installationID, oldRepoFullName, newRepoFullName); err != nil {
 		return fmt.Errorf("state: rename GitHub repository binding: %w", err)
+	}
+	// PR preview environments are keyed by repository name. Left on the old
+	// name they never close, and they keep their members from being retired
+	// when the PR's next head (delivered under the new name) replaces them.
+	// A PR already recorded under the new name keeps that row; its old-name
+	// row is dropped, since any set naming a member keeps it from retiring.
+	if _, err := tx.Exec(ctx, `
+		update pr_preview_sets old_set
+		   set repo_full_name = $3, updated_at = now()
+		 where old_set.installation_id = $1 and old_set.repo_full_name = $2
+		   and not exists (select 1 from pr_preview_sets renamed
+		     where renamed.installation_id = $1 and renamed.repo_full_name = $3
+		       and renamed.pr_number = old_set.pr_number)`, installationID, oldRepoFullName, newRepoFullName); err != nil {
+		return fmt.Errorf("state: rename PR preview environments: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		delete from pr_preview_sets where installation_id = $1 and repo_full_name = $2`,
+		installationID, oldRepoFullName); err != nil {
+		return fmt.Errorf("state: drop superseded PR preview environments: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("state: commit GitHub repository rename: %w", err)
 	}
 	return nil
 }
@@ -14046,8 +14110,9 @@ func (s *PgStore) CreateCronIfUnderQuotaWithOptions(ctx context.Context, appID, 
 	}
 	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
 
-	if _, err := sqlc.New().LockCronAccountForApp(ctx, tx, appID); err != nil {
-		return Cron{}, mapErr(err)
+	_, subject, err := lockCronQuotaSubjectTx(ctx, tx, appID)
+	if err != nil {
+		return Cron{}, err
 	}
 
 	// 1. Lock the parent apps row. SELECT 1 + FOR UPDATE keeps the lock
@@ -14101,24 +14166,13 @@ func (s *PgStore) CreateCronIfUnderQuotaWithOptions(ctx context.Context, appID, 
 		}
 	}
 
-	// 3. Per-account count under the same tx. account_id is read off
-	//    the apps row we just locked (no second round-trip to
-	//    accounts). The join through apps excludes deleted apps so
-	//    their cron rows don't poison the cap.
-	var accountID string
-	if err := tx.QueryRow(ctx,
-		`select account_id from apps where id = $1`, appID,
-	).Scan(&accountID); err != nil {
-		return Cron{}, fmt.Errorf("state: read account_id for app %s: %w", appID, err)
-	}
-	var accountCount int
-	if err := tx.QueryRow(ctx,
-		`select count(*) from crons c
-		 join apps a on a.id = c.app_id
-		 where a.account_id = $1 and a.status <> 'deleted'`,
-		accountID,
-	).Scan(&accountCount); err != nil {
-		return Cron{}, fmt.Errorf("state: count crons for account %s: %w", accountID, err)
+	// 3. Per-account count under the same tx, over the crons of the app's
+	//    billing subject (ADR-202610171904), whose quota lock
+	//    lockCronQuotaSubjectTx took. Deleted apps' crons don't poison the
+	//    cap.
+	accountCount, err := countQuotaSubjectCronsTx(ctx, tx, subject)
+	if err != nil {
+		return Cron{}, err
 	}
 	if accountCount >= limits.CronLimitPerAccount {
 		return Cron{}, &CronQuotaError{
