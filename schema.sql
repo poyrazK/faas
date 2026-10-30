@@ -24580,6 +24580,28 @@ $$;
 
 
 --
+-- Name: record_managed_postgres_usage_waiver(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.record_managed_postgres_usage_waiver() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF OLD.purge_after IS NULL AND NEW.purge_after IS NOT NULL THEN
+        INSERT INTO managed_postgres_usage_waivers (database_id, waived_from)
+        VALUES (NEW.id, NEW.updated_at)
+        ON CONFLICT (database_id, waived_from) DO NOTHING;
+    ELSIF OLD.purge_after IS NOT NULL AND NEW.purge_after IS NULL THEN
+        UPDATE managed_postgres_usage_waivers
+        SET waived_until = greatest(waived_from, NEW.updated_at)
+        WHERE database_id = NEW.id AND waived_until IS NULL;
+    END IF;
+    RETURN NULL;
+END
+$$;
+
+
+--
 -- Name: record_object_s3_copy_source_epoch(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -43538,6 +43560,18 @@ CREATE TABLE public.managed_postgres_usage_imports (
     CONSTRAINT managed_postgres_usage_imports_preview_revision_check CHECK ((preview_revision ~ '^[a-f0-9]{64}$'::text)),
     CONSTRAINT managed_postgres_usage_imports_reason_check CHECK (((octet_length(reason) >= 1) AND (octet_length(reason) <= 512))),
     CONSTRAINT managed_postgres_usage_imports_request_sha256_check CHECK ((request_sha256 ~ '^[a-f0-9]{64}$'::text))
+);
+
+
+--
+-- Name: managed_postgres_usage_waivers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_usage_waivers (
+    database_id uuid NOT NULL,
+    waived_from timestamp with time zone NOT NULL,
+    waived_until timestamp with time zone,
+    CONSTRAINT managed_postgres_usage_waivers_check CHECK (((waived_until IS NULL) OR (waived_until >= waived_from)))
 );
 
 
@@ -63317,6 +63351,14 @@ ALTER TABLE ONLY public.managed_postgres_usage_imports
 
 ALTER TABLE ONLY public.managed_postgres_usage
     ADD CONSTRAINT managed_postgres_usage_pkey PRIMARY KEY (database_id, window_from, window_to, meter);
+
+
+--
+-- Name: managed_postgres_usage_waivers managed_postgres_usage_waivers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_usage_waivers
+    ADD CONSTRAINT managed_postgres_usage_waivers_pkey PRIMARY KEY (database_id, waived_from);
 
 
 --
@@ -83354,6 +83396,13 @@ CREATE TRIGGER managed_postgres_database_bindings_guard BEFORE UPDATE OF state O
 
 
 --
+-- Name: managed_postgres_databases managed_postgres_databases_usage_waiver; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_postgres_databases_usage_waiver AFTER UPDATE OF purge_after ON public.managed_postgres_databases FOR EACH ROW WHEN ((old.purge_after IS DISTINCT FROM new.purge_after)) EXECUTE FUNCTION public.record_managed_postgres_usage_waiver();
+
+
+--
 -- Name: managed_postgres_cutover_drain_plans managed_postgres_drain_plan_evidence_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -94524,6 +94573,14 @@ ALTER TABLE ONLY public.managed_postgres_usage_imports
 
 ALTER TABLE ONLY public.managed_postgres_usage_imports
     ADD CONSTRAINT managed_postgres_usage_imports_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) DEFERRABLE INITIALLY DEFERRED;
+
+
+--
+-- Name: managed_postgres_usage_waivers managed_postgres_usage_waivers_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_usage_waivers
+    ADD CONSTRAINT managed_postgres_usage_waivers_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
 
 
 --

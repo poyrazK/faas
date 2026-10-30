@@ -26363,7 +26363,11 @@ SELECT
  COALESCE(sum(u.cost_millicents),0)::bigint AS cost_millicents
 FROM managed_postgres_usage u JOIN managed_postgres_databases d ON d.id=u.database_id
 WHERE managed_postgres_usage_subject(d.org_id,d.account_id)=sqlc.arg(subject_id)::uuid
-AND u.window_from>=sqlc.arg(period_start)::timestamptz AND u.window_from<sqlc.arg(period_end)::timestamptz;
+AND u.window_from>=sqlc.arg(period_start)::timestamptz AND u.window_from<sqlc.arg(period_end)::timestamptz
+-- ADR-20261029174950 decision 6: a window wholly inside a scheduled delete is
+-- waived. The fleet spend breaker (ManagedPostgresFleetTotals) still counts it.
+AND NOT EXISTS(SELECT 1 FROM managed_postgres_usage_waivers w WHERE w.database_id=u.database_id
+ AND u.window_from>=w.waived_from AND (w.waived_until IS NULL OR u.window_to<=w.waived_until));
 
 -- name: ManagedPostgresFleetTotals :one
 -- ADR-20261028103115: the fleet database cap counts what reservation limits
