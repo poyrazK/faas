@@ -432,6 +432,7 @@ type AlertRule struct {
 	McpReadinessScope               string
 	LogQuery                        pgtype.Text
 	CreatedByAccountID              pgtype.UUID
+	NotifyResolved                  bool
 }
 
 type AlertRuleChannel struct {
@@ -9791,6 +9792,17 @@ type ObjectStorageInventorySample struct {
 	ObservedAt pgtype.Timestamptz
 	Bytes      int64
 	Objects    int64
+}
+
+type ObjectStorageInventoryScan struct {
+	BucketID    pgtype.UUID
+	StartedAt   pgtype.Timestamptz
+	ProgressAt  pgtype.Timestamptz
+	AfterKey    string
+	ListedBytes int64
+	ListedKeys  int64
+	Pages       int32
+	Complete    bool
 }
 
 type ObjectStorageKeyGrant struct {

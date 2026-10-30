@@ -5337,8 +5337,10 @@ WHERE m.bucket_id=b.id AND m.state <> 'completed'),0)::bigint AS multipart_bytes
 COALESCE(r.request_count, 0)::bigint AS gateway_request_count,
 COALESCE(r.egress_bytes, 0)::bigint AS gateway_egress_bytes,
 COALESCE(floor(s.stored_byte_hours), 0)::bigint AS gateway_stored_byte_hours,
-s.accrued_through AS gateway_storage_through
+s.accrued_through AS gateway_storage_through,
+i.started_at AS scan_started_at, i.progress_at AS scan_progress_at, i.listed_bytes AS scan_bytes, i.listed_keys AS scan_keys, i.pages AS scan_pages, i.complete AS scan_complete
 FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id = b.id
+LEFT JOIN object_storage_inventory_scans i ON i.bucket_id = b.id
 LEFT JOIN object_storage_request_metrics r ON r.bucket_id = b.id AND r.period_start = sqlc.arg(period_start)
 LEFT JOIN object_storage_gateway_storage s ON s.bucket_id = b.id AND s.period_start = sqlc.arg(period_start)
 WHERE object_storage_usage_subject(b.org_id,b.account_id,sqlc.arg(period_start)) = sqlc.arg(account_id);
@@ -5471,10 +5473,13 @@ INSERT INTO object_storage_usage_reports (account_id,backend_id,backend_fingerpr
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10);
 
 -- name: ObjectInventoriesDue :many
+-- A bucket whose listing is unfinished is due at once (ADR-20261030100835).
 SELECT b.* FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id=b.id
-WHERE b.state='ready' AND NOT EXISTS(SELECT 1 FROM object_bucket_versioning WHERE bucket_id=b.id AND state<>'ready') AND NOT EXISTS (SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=b.id AND c.state IN ('waiting','scanning')) AND (u.attempt_at IS NULL OR u.attempt_at < now() - interval '5 minutes')
+WHERE b.state='ready' AND NOT EXISTS(SELECT 1 FROM object_bucket_versioning WHERE bucket_id=b.id AND state<>'ready') AND NOT EXISTS (SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=b.id AND c.state IN ('waiting','scanning'))
+AND (u.attempt_at IS NULL OR u.attempt_at < now() - interval '5 minutes' OR EXISTS (SELECT 1 FROM object_storage_inventory_scans s WHERE s.bucket_id=b.id AND s.pages > 0 AND NOT s.complete
+  AND s.started_at > COALESCE(u.observed_at, '-infinity'::timestamptz) AND s.started_at > now() - sqlc.arg(scan_max_age_seconds)::bigint * interval '1 second'))
 AND (u.lease_until IS NULL OR u.lease_until < now())
-ORDER BY u.attempt_at NULLS FIRST, b.id LIMIT $1;
+ORDER BY u.attempt_at NULLS FIRST, b.id LIMIT sqlc.arg(row_limit);
 
 -- name: ObjectInventoryClaim :execrows
 INSERT INTO object_storage_bucket_usage (bucket_id, attempt_at, lease_until, token)
@@ -5503,6 +5508,56 @@ AND NOT EXISTS (SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.
 -- name: ObjectInventorySample :exec
 INSERT INTO object_storage_inventory_samples (token,bucket_id,observed_at,bytes,objects)
 SELECT $2,u.bucket_id,u.observed_at,u.observed_bytes,u.observed_keys FROM object_storage_bucket_usage u WHERE u.bucket_id=$1;
+
+-- name: ObjectInventoryScanGet :one
+-- Claim, checkpoint and finish lock the bucket's usage row before its scan
+-- row (ADR-20261030100835).
+SELECT i.*, u.observed_at FROM object_storage_inventory_scans i
+LEFT JOIN object_storage_bucket_usage u ON u.bucket_id=i.bucket_id
+WHERE i.bucket_id=$1 FOR UPDATE OF i;
+
+-- name: ObjectInventoryScanClaim :execrows
+-- ObjectInventoryClaim without a new attempt time: a claim that continues a
+-- listing keeps it, so deletions do not yield to it (ADR-20261030100835).
+INSERT INTO object_storage_bucket_usage (bucket_id, attempt_at, lease_until, token)
+SELECT b.id, now(), now()+interval '2 minutes', sqlc.arg(token)::text FROM object_buckets b WHERE b.id=$1 AND b.state='ready' AND NOT EXISTS(SELECT 1 FROM object_bucket_versioning WHERE bucket_id=$1 AND state<>'ready') AND NOT EXISTS (SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=$1 AND c.state IN ('waiting','scanning'))
+ON CONFLICT (bucket_id) DO UPDATE SET attempt_at=COALESCE(object_storage_bucket_usage.attempt_at, now()),lease_until=now()+interval '2 minutes',token=EXCLUDED.token
+WHERE object_storage_bucket_usage.lease_until IS NULL OR object_storage_bucket_usage.lease_until < now();
+
+-- name: ObjectInventoryScanAttempt :execrows
+-- A claim that starts or publishes a listing makes new deletions yield.
+UPDATE object_storage_bucket_usage SET attempt_at=now() WHERE bucket_id=$1 AND token=sqlc.arg(token)::text AND token<>'';
+
+-- name: ObjectInventoryScanStart :one
+INSERT INTO object_storage_inventory_scans (bucket_id, started_at, progress_at) VALUES ($1, now(), now())
+ON CONFLICT (bucket_id) DO UPDATE SET started_at=now(), progress_at=now(), after_key='', listed_bytes=0, listed_keys=0, pages=0, complete=false
+RETURNING *;
+
+-- name: ObjectInventoryScanCheckpoint :execrows
+UPDATE object_storage_inventory_scans SET after_key=sqlc.arg(after_key), listed_bytes=sqlc.arg(listed_bytes), listed_keys=sqlc.arg(listed_keys),
+pages=sqlc.arg(pages), complete=sqlc.arg(complete), progress_at=now()
+WHERE bucket_id=$1 AND started_at=sqlc.arg(started_at) AND sqlc.arg(pages)::integer >= pages;
+
+-- name: ObjectInventoryScanFinish :execrows
+-- ObjectInventoryFinish for a listing that may have spanned several attempts:
+-- it is observed as of the listing's start and never replaces a newer
+-- observation.
+UPDATE object_storage_bucket_usage u SET baseline_bytes = CASE WHEN u.observed_at IS NULL THEN sqlc.arg(listed_bytes)::bigint ELSE u.baseline_bytes END,
+baseline_keys = CASE WHEN u.observed_at IS NULL THEN sqlc.arg(listed_keys)::bigint ELSE u.baseline_keys END,
+observed_bytes=sqlc.arg(listed_bytes),observed_keys=sqlc.arg(listed_keys),observed_at=sqlc.arg(started_at),lease_until=NULL,token=''
+WHERE u.bucket_id=$1 AND u.token=sqlc.arg(token)::text AND u.token<>'' AND u.lease_until > now()
+AND sqlc.arg(started_at)::timestamptz > COALESCE(u.observed_at, '-infinity'::timestamptz)
+AND EXISTS (SELECT 1 FROM object_storage_inventory_scans i WHERE i.bucket_id=$1 AND i.started_at=sqlc.arg(started_at))
+AND EXISTS (SELECT 1 FROM object_buckets WHERE id=$1 AND state='ready')
+AND u.inventory_scope='current'
+AND NOT EXISTS(SELECT 1 FROM object_upload_completions WHERE bucket_id=$1 AND recovery_versions_observed)
+AND NOT EXISTS(SELECT 1 FROM object_version_references WHERE bucket_id=$1 AND versions_observed)
+AND NOT EXISTS(SELECT 1 FROM object_storage_multipart_uploads WHERE bucket_id=$1 AND completion_versions_observed)
+AND NOT EXISTS(SELECT 1 FROM object_bucket_versioning WHERE bucket_id=$1 AND (versions_required OR state<>'ready'))
+AND NOT EXISTS (SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=$1 AND c.state IN ('waiting','scanning'));
+
+-- name: ObjectInventoryScanDelete :exec
+DELETE FROM object_storage_inventory_scans WHERE bucket_id=$1;
 
 -- name: ObjectMultipartByKey :one
 SELECT * FROM object_storage_multipart_uploads
@@ -19741,10 +19796,10 @@ INSERT INTO alert_historical_rollback_claims(deployment_id,fire_id)
 
 -- name: InsertCustomerAlertRule :one
 INSERT INTO alert_rules(account_id,app_id,name,enabled,metric,comparison,threshold,window_spec,failure_source,event_subscription_id,
- edge_rule_id,action,webhook_url,webhook_secret_sealed,cooldown_minutes,state,post_deploy_rollback_window_seconds,custom_metric_name,slo_id,synthetic_check_id,mcp_min_calls,mcp_for_minutes,mcp_readiness_scope,log_query,created_by_account_id)
+ edge_rule_id,action,webhook_url,webhook_secret_sealed,cooldown_minutes,state,post_deploy_rollback_window_seconds,custom_metric_name,slo_id,synthetic_check_id,mcp_min_calls,mcp_for_minutes,mcp_readiness_scope,log_query,created_by_account_id,notify_resolved)
 VALUES(sqlc.arg(account_id),sqlc.narg(app_id),sqlc.arg(name),sqlc.arg(enabled),sqlc.arg(metric),sqlc.arg(comparison),
  sqlc.arg(threshold),sqlc.arg(window_spec),sqlc.narg(failure_source),sqlc.narg(event_subscription_id),sqlc.narg(edge_rule_id),sqlc.arg(action),sqlc.arg(webhook_url),
- sqlc.arg(webhook_secret_sealed),sqlc.arg(cooldown_minutes),sqlc.arg(state),sqlc.arg(post_deploy_rollback_window_seconds),sqlc.narg(custom_metric_name),sqlc.narg(slo_id),sqlc.narg(synthetic_check_id),sqlc.arg(mcp_min_calls),sqlc.arg(mcp_for_minutes),sqlc.arg(mcp_readiness_scope),sqlc.narg(log_query),sqlc.narg(created_by_account_id))
+ sqlc.arg(webhook_secret_sealed),sqlc.arg(cooldown_minutes),sqlc.arg(state),sqlc.arg(post_deploy_rollback_window_seconds),sqlc.narg(custom_metric_name),sqlc.narg(slo_id),sqlc.narg(synthetic_check_id),sqlc.arg(mcp_min_calls),sqlc.arg(mcp_for_minutes),sqlc.arg(mcp_readiness_scope),sqlc.narg(log_query),sqlc.narg(created_by_account_id),sqlc.arg(notify_resolved))
 RETURNING *;
 
 -- name: UpdateCustomerAlertRule :one
@@ -19755,7 +19810,8 @@ UPDATE alert_rules SET mcp_min_calls=coalesce(sqlc.narg(mcp_min_calls)::integer,
  action=coalesce(sqlc.narg(action)::text,action),webhook_url=coalesce(sqlc.narg(webhook_url)::text,webhook_url),
  webhook_secret_sealed=coalesce(sqlc.narg(webhook_secret_sealed)::bytea,webhook_secret_sealed),
  cooldown_minutes=coalesce(sqlc.narg(cooldown_minutes)::integer,cooldown_minutes),
- post_deploy_rollback_window_seconds=coalesce(sqlc.narg(post_deploy_rollback_window_seconds)::integer,post_deploy_rollback_window_seconds),updated_at=now()
+ post_deploy_rollback_window_seconds=coalesce(sqlc.narg(post_deploy_rollback_window_seconds)::integer,post_deploy_rollback_window_seconds),
+ notify_resolved=coalesce(sqlc.narg(notify_resolved)::boolean,notify_resolved),updated_at=now()
 WHERE id=sqlc.arg(id) RETURNING *;
 
 -- name: ReadCustomerAlertRule :one
@@ -19764,8 +19820,24 @@ SELECT * FROM alert_rules WHERE id=sqlc.arg(id);
 -- name: ListCustomerAlertRulesForAccount :many
 SELECT * FROM alert_rules WHERE account_id=sqlc.arg(account_id) ORDER BY created_at DESC;
 
+-- name: PurgeAlertDeliveriesBefore :execrows
+-- Deletes up to max_rows settled deliveries fired before the cutoff, oldest
+-- first (ADR-20261029203000). A rule's newest delivery stays, because
+-- MCP connection health and the delivery CLI read it, and so does a delivery
+-- with a rollback action, which would cascade away with it.
+DELETE FROM alert_deliveries d WHERE d.id IN (
+  SELECT o.id FROM alert_deliveries o
+  WHERE o.fired_at < sqlc.arg(before)::timestamptz AND o.status <> 'pending'
+    AND EXISTS (SELECT 1 FROM alert_deliveries n WHERE n.rule_id = o.rule_id AND n.fired_at > o.fired_at)
+    AND NOT EXISTS (SELECT 1 FROM alert_rollback_actions a WHERE a.fire_id = o.id)
+  ORDER BY o.fired_at LIMIT sqlc.arg(max_rows)::integer);
+
 -- name: ListEnabledCustomerAlertRules :many
-SELECT * FROM alert_rules WHERE enabled=true ORDER BY account_id;
+-- A deleted app's rules wait out its restore grace without evaluating
+-- (ADR-20261029203000); account-wide rules have no app.
+SELECT * FROM alert_rules r WHERE r.enabled=true
+ AND NOT EXISTS (SELECT 1 FROM apps a WHERE a.id=r.app_id AND a.status='deleted')
+ ORDER BY r.account_id;
 
 -- name: ListCustomerAlertRulesByPreset :many
 SELECT r.* FROM alert_rules r WHERE r.account_id=sqlc.arg(account_id) AND r.app_id=sqlc.arg(app_id)
@@ -25856,6 +25928,20 @@ SELECT * FROM notification_channels WHERE account_id = sqlc.arg(account_id)::uui
 -- name: DeleteNotificationChannel :execrows
 DELETE FROM notification_channels WHERE account_id = sqlc.arg(account_id)::uuid AND id = sqlc.arg(id)::uuid;
 
+-- name: LockNotificationChannel :one
+-- Holds the channel while its delete checks the rules bound to it; a binding
+-- insert waits on the row through its foreign key.
+SELECT id FROM notification_channels WHERE account_id = sqlc.arg(account_id)::uuid AND id = sqlc.arg(id)::uuid FOR UPDATE;
+
+-- name: ListRulesOnlyNotifyingChannel :many
+-- Rules with no webhook whose only channel is this one: deleting it would
+-- leave them no destination (ADR-20261029203000).
+SELECT r.id::text AS id, r.name FROM alert_rules r
+JOIN alert_rule_channels b ON b.rule_id = r.id AND b.channel_id = sqlc.arg(channel_id)::uuid
+WHERE r.account_id = sqlc.arg(account_id)::uuid AND r.webhook_url = ''
+  AND NOT EXISTS (SELECT 1 FROM alert_rule_channels o WHERE o.rule_id = r.id AND o.channel_id <> sqlc.arg(channel_id)::uuid)
+ORDER BY r.name, r.id LIMIT sqlc.arg(max_rows)::integer;
+
 -- name: RecordNotificationChannelDelivery :exec
 -- meterd and apid's test send record the latest outcome; err NULL = success.
 UPDATE notification_channels SET
@@ -25928,7 +26014,11 @@ DELETE FROM app_slos WHERE app_id = sqlc.arg(app_id)::uuid AND id = sqlc.arg(id)
 -- ADR-747 slice 2: hourly SLO budget rows (meterd is the only writer).
 
 -- name: ListAllAppSLOs :many
-SELECT * FROM app_slos ORDER BY id;
+-- A deleted app's SLOs wait out its restore grace without rollups
+-- (ADR-20261029203000).
+SELECT * FROM app_slos s
+WHERE NOT EXISTS (SELECT 1 FROM apps a WHERE a.id = s.app_id AND a.status = 'deleted')
+ORDER BY s.id;
 
 -- name: ListSLOHourStarts :many
 SELECT hour FROM app_slo_hourly WHERE slo_id = sqlc.arg(slo_id)::uuid AND hour >= sqlc.arg(since)::timestamptz;

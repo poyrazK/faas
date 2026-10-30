@@ -1053,6 +1053,37 @@ jobs:
             "$OUT_DIR/release.tar.gz"
           (cd "$OUT_DIR" && sha256sum release.tar.gz release.cosign.bundle release.sbom.json production-manifest.yaml runtime-bases.env > SHA256SUMS)
 
+      # ADR-20261030140000: cd-controlplane's two controller tools ride the
+      # release, signed like release.tar.gz, as the unit lane's do (ADR-1650).
+      # The deploy job used to compile them on the fleet runner, which on
+      # production-us is the saturated 2-vCPU control plane (8.5-12 min a
+      # release). They stay out of release.tar.gz: older hosts' releaseinstall
+      # refuses a tool_hashes entry it does not know.
+      - name: Build and sign controller tools
+        env:
+          OUT_DIR: ${{ runner.temp }}/gregale-release
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          tools="$RUNNER_TEMP/controller-tools"
+          rm -rf -- "$tools"
+          mkdir -p "$tools"
+          # The flags cd-controlplane built them with, version included.
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -buildvcs=false \
+            -ldflags "-s -w -X github.com/onebox-faas/faas/pkg/wire.Version=${VERSION}" \
+            -o "$tools/" ./cmd/deployctl ./cmd/migrate
+          tar --create --gzip --sort=name --owner=0 --group=0 --numeric-owner \
+            --mtime="@$(git log -1 --format=%ct)" \
+            --file "$OUT_DIR/controller-tools.tar.gz" -C "$tools" deployctl migrate
+          cosign sign-blob --yes \
+            --bundle "$OUT_DIR/controller-tools.cosign.bundle" \
+            "$OUT_DIR/controller-tools.tar.gz"
+          cosign verify-blob \
+            --bundle "$OUT_DIR/controller-tools.cosign.bundle" \
+            --certificate-identity-regexp '^https://github\.com/poyrazK/faas/\.github/workflows/release\.yml@refs/tags/.+$' \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "$OUT_DIR/controller-tools.tar.gz"
+
       # SLSA build provenance (issue #295) for the daemon bundle, beside the
       # cosign signature hosts already verify; verify with
       # `gh attestation verify release.tar.gz -R poyrazK/faas`.
@@ -1098,6 +1129,8 @@ jobs:
             ${{ runner.temp }}/gregale-release/production-manifest.yaml
             ${{ runner.temp }}/gregale-release/runtime-bases.env
             ${{ runner.temp }}/gregale-release/SHA256SUMS
+            ${{ runner.temp }}/gregale-release/controller-tools.tar.gz
+            ${{ runner.temp }}/gregale-release/controller-tools.cosign.bundle
         run: |
           set -euo pipefail
           mapfile -t assets < <(printf '%s\n' "$CANONICAL_RELEASE_ASSETS" | sed '/^[[:space:]]*$/d')

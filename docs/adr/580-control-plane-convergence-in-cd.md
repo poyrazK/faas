@@ -89,3 +89,13 @@ variable and inventory-rendering changes.
 Related: [ADR-143](143-deploy-configuration-contract.md) defined the deploy
 configuration contract and its convergence checks; this ADR makes CD apply the
 control-plane half of it.
+
+## Amendment 2 (2026-10-30): a full release converges only changed roles
+
+The contract covers every control-plane role, so almost every release
+changed it and ran the whole play: 18–27 minutes on production-us
+(rc.294–rc.308). [ADR-20261030150000](20261030150000-full-release-converges-changed-roles.md)
+has the full release converge only the roles whose content hash differs from
+the host's role record, through the host-configuration lane's planner and
+`--roles --full-release`. The contract still decides when no role changed,
+and is still recorded after convergence.

@@ -74,7 +74,7 @@ func (s *Service) QueuePasswordReset(ctx context.Context, accountID, expectedEma
 	}
 	r := q.PlatformMailProducerOutbox{ID: pgID(uuid.NewString()), AccountID: account.ID, Namespace: s.namespace, ProducerID: s.producer, FromAddress: s.from, RecipientAddress: address,
 		Template: PasswordResetTemplate, TemplateVersion: 1, ExpiresAt: pgtype.Timestamptz{Time: issued.Time.Add(api.PasswordResetTTL), Valid: true}, RecoveryID: recovery.RecoveryID,
-		VerificationTokenHash: api.HashToken(raw), VerificationKeyID: s.passwordReset.keyID, VerificationOrigin: s.passwordReset.origin}
+		VerificationTokenHash: storedTokenHash(tagPasswordReset, api.HashToken(raw)), VerificationKeyID: s.passwordReset.keyID, VerificationOrigin: s.passwordReset.origin}
 	sealed, err := secretbox.SealBytes(s.passwordReset.writer.Recipient(), verificationBinding(r), raw, api.PasswordResetTokenBytes)
 	if err != nil || len(sealed) > api.InternalMailVerificationCipherMaxBytes {
 		return errVerificationPayloadUnavailable

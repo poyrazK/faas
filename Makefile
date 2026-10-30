@@ -242,8 +242,9 @@ build-release-unit: ## Build one release binary: UNIT=<cmd> VERSION=unit-<commit
 	@CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) $(if $(filter $(UNIT),$(DAEMONS)),-tags $(DAEMON_TAGS)) \
 	  -ldflags '$(LDFLAGS) -s -w' -o $(BINDIR)/$(UNIT) ./cmd/$(UNIT)
 
-# Issue #295: release.yml attests an SPDX SBOM for the CLI archives and ships
-# release.sbom.json for the daemon bundle (docs/supply-chain.md). `make sbom`
+# Issue #295: images.yml attests an SPDX SBOM for every platform image,
+# release.yml one for the CLI archives, and the release ships release.sbom.json
+# for the daemon bundle (docs/supply-chain.md). `make sbom`
 # writes the same inventory locally as CycloneDX: the binaries in $(BINDIR),
 # plus any image references in SBOM_IMAGES (linux/amd64).
 SYFT ?= syft

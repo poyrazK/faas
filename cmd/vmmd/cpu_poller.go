@@ -92,3 +92,13 @@ func runCPUSampleLoop(ctx context.Context, cache *cpustats.Cache, log *slog.Logg
 		}
 	}
 }
+
+// agentWaitCPU reads an instance's cumulative CPU seconds from the cache for
+// the model-wait pause (ADR-20261027090012). A reading the cache marks
+// invalid is no reading: the pause then waits.
+type agentWaitCPU struct{ cache *cpustats.Cache }
+
+func (c agentWaitCPU) CPUSeconds(instance string) (float64, bool) {
+	r, ok := c.cache.Lookup(instance)
+	return r.CPUSeconds, ok && r.Valid
+}

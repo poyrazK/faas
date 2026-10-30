@@ -45,6 +45,9 @@ type ObjectBucketUsage struct {
 	// (ADR-20261024132844).
 	StoredByteHours       int64
 	StorageMeteredThrough time.Time
+	// InventoryScan is the bucket's listing in progress, if any
+	// (ADR-20261030100835).
+	InventoryScan ObjectInventoryScan
 }
 
 type ObjectUsageSnapshot struct {
@@ -142,8 +145,7 @@ func SummarizeObjectUsage(s ObjectUsageSnapshot, p api.ObjectStoragePolicy, now 
 // account-wide inputs (policy, provider reports, gateway metering coverage),
 // and returns the live buckets whose inventory is missing or older than
 // ObjectStorageInventoryMaxAgeSeconds. A stale bucket still counts toward the
-// account totals with its conservative capacity: the larger of its last
-// observation and baseline plus grants, plus open multipart reservations.
+// account totals with its conservative capacity (objectBucketCapacity).
 func summarizeObjectUsage(s ObjectUsageSnapshot, p api.ObjectStoragePolicy, now time.Time) (api.ObjectStorageUsage, map[string]bool) {
 	u := api.ObjectStorageUsage{Fresh: ValidObjectStoragePolicy(p), PeriodStart: ObjectStoragePeriod(now), Authorizations: s.Authorizations}
 	stale := map[string]bool{}
@@ -159,9 +161,10 @@ func summarizeObjectUsage(s ObjectUsageSnapshot, p api.ObjectStoragePolicy, now 
 			continue
 		}
 		u.ObservedBytes = boundedObjectAdd(u.ObservedBytes, b.ObservedBytes)
-		u.CapacityBytes = boundedObjectAdd(u.CapacityBytes, boundedObjectAdd(max(b.ObservedBytes, boundedObjectAdd(b.BaselineBytes, b.GrantedBytes)), b.MultipartBytes))
-		u.CapacityKeys = boundedObjectAdd(u.CapacityKeys, max(b.ObservedKeys, boundedObjectAdd(b.BaselineKeys, b.GrantedKeys)))
-		if objectInventoryStale(b.ObservedAt, time.Duration(api.ObjectStorageInventoryMaxAgeSeconds)*time.Second, now) {
+		capacityBytes, capacityKeys := objectBucketCapacity(b)
+		u.CapacityBytes = boundedObjectAdd(u.CapacityBytes, capacityBytes)
+		u.CapacityKeys = boundedObjectAdd(u.CapacityKeys, capacityKeys)
+		if objectBucketInventoryStale(b, time.Duration(api.ObjectStorageInventoryMaxAgeSeconds)*time.Second, now) {
 			stale[b.Bucket.ID] = true
 		}
 	}
@@ -184,6 +187,17 @@ func summarizeObjectUsage(s ObjectUsageSnapshot, p api.ObjectStoragePolicy, now 
 		u.Fresh = false
 	}
 	return u, stale
+}
+
+// objectBucketCapacity is a live bucket's conservative capacity: the largest
+// of its last observation, what its current listing has seen so far
+// (ADR-20261030100835) and baseline plus grants, plus open multipart
+// reservations.
+func objectBucketCapacity(b ObjectBucketUsage) (bytes, keys int64) {
+	listedBytes, listedKeys := b.listedSoFar()
+	bytes = boundedObjectAdd(max(b.ObservedBytes, listedBytes, boundedObjectAdd(b.BaselineBytes, b.GrantedBytes)), b.MultipartBytes)
+	keys = max(b.ObservedKeys, listedKeys, boundedObjectAdd(b.BaselineKeys, b.GrantedKeys))
+	return bytes, keys
 }
 
 func objectInventoryStale(observedAt time.Time, maxAge time.Duration, now time.Time) bool {
@@ -213,10 +227,11 @@ func summarizeGatewaySafety(s ObjectUsageSnapshot, p api.ObjectStoragePolicy, no
 			continue
 		}
 		u.ObservedBytes = boundedObjectAdd(u.ObservedBytes, b.ObservedBytes)
-		u.CapacityBytes = boundedObjectAdd(u.CapacityBytes, boundedObjectAdd(max(b.ObservedBytes, boundedObjectAdd(b.BaselineBytes, b.GrantedBytes)), b.MultipartBytes))
-		u.CapacityKeys = boundedObjectAdd(u.CapacityKeys, max(b.ObservedKeys, boundedObjectAdd(b.BaselineKeys, b.GrantedKeys)))
+		capacityBytes, capacityKeys := objectBucketCapacity(b)
+		u.CapacityBytes = boundedObjectAdd(u.CapacityBytes, capacityBytes)
+		u.CapacityKeys = boundedObjectAdd(u.CapacityKeys, capacityKeys)
 		maxAge := time.Duration(min(p.MaxReportAgeSeconds, int64(api.ObjectStorageInventoryMaxAgeSeconds))) * time.Second
-		if objectInventoryStale(b.ObservedAt, maxAge, now) {
+		if objectBucketInventoryStale(b, maxAge, now) {
 			stale[b.Bucket.ID] = true
 		}
 	}
@@ -366,7 +381,7 @@ func checkObjectAdmission(s ObjectUsageSnapshot, bucketID string, size, oldSize 
 	if !exists {
 		keys = 1
 	}
-	bucketCapacity := boundedObjectAdd(max(found.ObservedBytes, boundedObjectAdd(found.BaselineBytes, found.GrantedBytes)), found.MultipartBytes)
+	bucketCapacity, _ := objectBucketCapacity(*found)
 	for _, limit := range []struct {
 		name          string
 		observed, max int64

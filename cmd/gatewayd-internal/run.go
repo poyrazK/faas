@@ -1148,6 +1148,10 @@ func isHandlerErrorResult(body []byte) bool {
 // runDeps is the dependency seam for run. Tests inject net.Listen / http.Server
 // wrappers so the seam is fully exercised without spawning a real daemon.
 type runDeps struct {
+	// credentialMatcher checks consumer keys and fork tokens against their
+	// stored hashes through apid (ADR 20261029202403). Nil compares plain
+	// hashes locally (unit tests).
+	credentialMatcher gateway.CredentialMatcher
 	// apiMonetization is the API monetization release gate
 	// (ADR-20261018090210), following the api_monetization_enabled runtime
 	// setting. Nil keeps monetization off.
@@ -1625,6 +1629,15 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 		return fmt.Errorf("gatewayd: load schedd TLS: %w", err)
 	}
 	deps := defaultDeps()
+	// Credentials are resolved and matched by apid, which alone holds the key
+	// their stored hashes are computed with (ADR 20261029202403).
+	credentialAuth, err := dialCredentialAuth(ctx, cfg, osGetenv)
+	if err != nil {
+		return fmt.Errorf("gatewayd: dial apid credential auth: %w", err)
+	}
+	defer func() { _ = credentialAuth.Close() }()
+	credentialMatcher := apidgrpc.NewCredentialMatcher(credentialAuth)
+	deps.credentialMatcher = credentialMatcher
 	// handoffCtx carries the work that speaks for this node's gateway rather
 	// than for one request: a hand-off ends it here and the successor takes it
 	// over (ADR-1736). Requests and their sinks keep ctx.
@@ -1803,7 +1816,7 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 		// ADR-732: route a fork request only when the fork, its token and
 		// its instance all check out (gateway.ForkTargetFromState), and the
 		// fork's creator still holds the app (forkTargetLoader).
-		WithForkTargetLoader(forkTargetLoader(pgStore, pgStore, time.Now)).
+		WithForkTargetLoader(forkTargetLoader(pgStore, pgStore, time.Now, credentialMatcher)).
 		WithClientForApp(func(ctx context.Context, app gateway.App) (gateway.Scheduler, bool, error) {
 			cli, err := deps.scheddRouter.ScheddForApp(ctx, state.App{ID: app.ID, NodeID: app.NodeID})
 			if err != nil {
@@ -2330,7 +2343,7 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	deps.apiAuthLimiter = middleware.NewLimiter(middleware.AuthLimitConfig{Log: log})
 	deps.audit = audit.New(pgStore, log, nil, "gatewayd")
 	deps.authMw = authmw.New(
-		storeAsAuthenticator(pgStore),
+		storeAsAuthenticator(pgStore, apidgrpc.CredentialLookup{Apid: credentialAuth, Fallback: pgStore, Log: log}),
 		sessions,
 		storeAsSessionLookup(pgStore),
 		auditorAsAuthAuditor(deps.audit),
@@ -2984,6 +2997,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// PgStore used by apid. The gateway keeps the hot-path policy and the
 	// adapter translates only the narrow lookup/touch contract.
 	handler.WithConsumerAuth(newConsumerAuthStore(deps.pgStore))
+	if deps.credentialMatcher != nil {
+		handler.WithCredentialMatcher(deps.credentialMatcher)
+	}
 	handler.WithTenantRequestBudgetStore(newTenantRequestBudgetStore(deps.pgStore))
 	handler.WithAPIMonetization(deps.apiMonetization)
 	handler.WithAPIMonetizationFlags(deps.platformFlags)

@@ -136,6 +136,16 @@
 # Default: false
 # quiet_pause_observe = false
 
+# agent_wait_pause: pause an agent run VM while its harness waits on a model
+# call through the outbound relay and does nothing else, and resume it when
+# the relay's next bytes arrive (ADR-20261027090012). It needs an open relay
+# connection, no relay or output bytes for the run's delay, and under 50 ms of
+# CPU over that window. schedd marks which runs are eligible. A paused run uses
+# no host CPU; the run's deadline, a cancel and teardown resume it first.
+# FAAS_VMMD_AGENT_WAIT_PAUSE overrides.
+# Default: false
+# agent_wait_pause = true
+
 # invoke_hook_backoff: stop per-request invoke extension events to an instance
 # for 30 s after its guest reports no extension endpoint
 # (ADR-20261025150000). On by default since the 2026-10-27 amendment.
