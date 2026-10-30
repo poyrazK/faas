@@ -22,6 +22,8 @@ func TestObjectVersionProtectionMem(t *testing.T) {
 }
 func TestObjectVersionProtectionPG(t *testing.T) {
 	s, pool, ctx := pgStoreWithPool(t)
+	// Protection settlement is checked against the configuration hold.
+	enableFullCloneConfigurationFences(t, ctx, pool)
 	versionProtectionSuite(t, s, pool, func(bucket string) {
 		for _, query := range strings.Split(`UPDATE object_bucket_versioning SET retry_at=clock_timestamp(),propagation_until=CASE WHEN state IN ('waiting','propagating') THEN clock_timestamp()-interval '1 second' ELSE propagation_until END WHERE bucket_id=$1 AND state<>'ready';UPDATE object_bucket_object_lock SET retry_at=clock_timestamp() WHERE bucket_id=$1 AND state<>'ready';UPDATE object_version_protection SET retry_at=clock_timestamp(),lease_until=CASE WHEN lease_until IS NULL THEN NULL ELSE clock_timestamp()-interval '1 second' END WHERE bucket_id=$1`, ";") {
 			if _, err := pool.Exec(ctx, query, bucket); err != nil {

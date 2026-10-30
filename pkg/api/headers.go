@@ -80,8 +80,9 @@ const (
 	// understand the result protocol. Handlers should require value "1".
 	ManagedOperationResultVersionHeader = "X-Gregale-Operation-Result-Version"
 	// ErrorCodeHeader identifies a platform-owned error independently of the
-	// response body. Edge adapters use it to distinguish a Gregale timeout
-	// from a genuine CDN/origin failure.
+	// response body. Every problem WriteProblem renders carries it, and
+	// gatewayd-internal drops a guest's copy, so the public edge can tell a
+	// platform 502/504 from an app's own (ADR-20261030115139).
 	ErrorCodeHeader = "X-Faas-Error-Code"
 	// QueueWaitHeader reports warm saturation delay for a successfully
 	// admitted request. It is customer-facing diagnostic metadata; Server-

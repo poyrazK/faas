@@ -628,7 +628,8 @@ func planCreatedSlugs(plan api.PlanResponse) map[string]bool {
 
 // printDefaultMemoryServices names the new services that start with the
 // project default RAM because their Compose file declares no memory, which
-// is easy to miss: a standalone app gets the plan's RAM (Hunt 14 H14-36).
+// is easy to miss: a standalone app gets the plan's RAM, capped at
+// api.StandaloneAppDefaultMaxRAMMB (Hunt 14 H14-36).
 //
 //nolint:errcheck // a failed write is handled like printPlanTextWithExplain's
 func printDefaultMemoryServices(w io.Writer, plan api.PlanResponse) {
@@ -757,7 +758,7 @@ func printUnsetEnvKeys(w io.Writer, workloads []api.PlanWorkload) {
 		unset = unset || len(wl.UnsetEnvKeys) > 0
 	}
 	if imported {
-		fmt.Fprintln(w, "\nImported from Compose (values already set on an app are kept):")
+		fmt.Fprintf(w, "\nImported from %s (values already set on an app are kept):\n", envImportSource(ws))
 		for _, wl := range ws {
 			if len(wl.ImportedEnvKeys) > 0 {
 				fmt.Fprintf(w, "  - %-20s %s\n", wl.Name, strings.Join(wl.ImportedEnvKeys, ", "))
@@ -784,7 +785,7 @@ func printUnsetEnvKeys(w io.Writer, workloads []api.PlanWorkload) {
 		}
 		fmt.Fprintf(w, "  - %-20s %s\n", wl.Name, strings.Join(keys, ", "))
 	}
-	fmt.Fprintln(w, "  Set them with `gregale env set --app <app> KEY=VALUE` or `gregale env set --app <app> KEY=VALUE`,")
+	fmt.Fprintln(w, "  Set them with `gregale env set --app <app> KEY=VALUE`,")
 	fmt.Fprintln(w, "  or pass them in a --secrets-file to gregale deploy.")
 	if notOptedIn {
 		fmt.Fprintln(w, "  To import plain Compose values, add `x-gregale-env-import: true` at the top of the Compose file.")
@@ -792,6 +793,30 @@ func printUnsetEnvKeys(w io.Writer, workloads []api.PlanWorkload) {
 	if notAnnotated {
 		fmt.Fprintln(w, "  To import a Kubernetes Deployment's or CronJob's plain values, annotate it with `gregale.dev/env-import: \"true\"`.")
 	}
+}
+
+// envImportSource names where the imported values come from: Compose, or
+// Kubernetes manifests for workloads the k8s detector found. A plan from a
+// server without detected_by reads as Compose, the only source it imported.
+func envImportSource(workloads []api.PlanWorkload) string {
+	compose, k8s := false, false
+	for _, wl := range workloads {
+		if len(wl.ImportedEnvKeys) == 0 {
+			continue
+		}
+		if wl.DetectedBy != nil && wl.DetectedBy.Detector == "k8s" {
+			k8s = true
+		} else {
+			compose = true
+		}
+	}
+	switch {
+	case k8s && compose:
+		return "Compose and Kubernetes manifests"
+	case k8s:
+		return "Kubernetes manifests"
+	}
+	return "Compose"
 }
 
 // envImportReasonText renders the plan's unset_env_key_reasons codes.

@@ -113,5 +113,5 @@ func undeleteRefusal(database Database, now time.Time) error {
 	if database.State == StateDeleting || database.State == StateDeleted {
 		return ErrNotFound
 	}
-	return ErrConflict
+	return fmt.Errorf("%w: the database is not scheduled for deletion", ErrConflict)
 }

@@ -147,7 +147,7 @@ func (s Stager) stagingInputs(ctx context.Context, r state.RuntimeUpgradeOperati
 	// A runtime upgrade is a new production release of the app, so a deploy
 	// freeze refuses it (ADR-20261019071733 amendment 1). Unlike a customer
 	// deploy it fails closed: the upgrade can wait for a readable store.
-	active, err := freeze.ActiveFor(ctx, s.Store, r.AccountID, r.AppID, serving.Scope, time.Now().UTC())
+	active, err := freeze.ActiveForAppID(ctx, s.Store, r.AppID, serving.Scope, time.Now().UTC())
 	if err != nil {
 		return state.Deployment{}, err
 	}

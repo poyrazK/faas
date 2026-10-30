@@ -777,11 +777,15 @@ export class ProjectsService {
   }
   /**
    * Request a complete isolated environment clone.
-   * This dedicated route never falls back to partial cloning. Full admission
-   * currently returns environment_full_clone_unavailable with named blockers
-   * until complete coverage and coordinated data-copy proofs are available.
+   * This dedicated route never falls back to partial cloning. While full
+   * admission is closed it returns environment_full_clone_unavailable with
+   * named blockers. When open, a source whose every used resource has an
+   * isolated strategy, including managed databases with point-in-time
+   * restore, is captured and a durable clone operation is returned; any
+   * other source is refused with each uncopyable resource named under
+   * resource_coverage.
    *
-   * @returns void
+   * @returns ProjectEnvironmentResponse The source was captured; poll the clone operation until it is ready or compensated.
    * @throws ApiError
    */
   public static createFullProjectEnvironmentClone({
@@ -793,7 +797,7 @@ export class ProjectsService {
      */
     slug: string,
     requestBody: CreateProjectEnvironmentRequest,
-  }): CancelablePromise<void> {
+  }): CancelablePromise<ProjectEnvironmentResponse> {
     return __request(OpenAPI, {
       method: 'POST',
       url: '/v1/projects/{slug}/environment-clones',

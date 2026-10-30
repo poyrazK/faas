@@ -320,7 +320,7 @@ replays. Supported windows are `5m`, `15m`, `1h`, `6h`, and `24h`. Unlike routin
 alerts, they remain active during subscription pauses. Truncated observations,
 missing roots, unknown states, or insufficient samples produce `unknown`.
 Failure percentages require 20 retained success/failure attempts, and completion
-latency requires one success. See [consumer execution health](events.md#consumer-execution-health)
+latency requires one success. See [consumer execution health](events-operations.md#consumer-execution-health)
 for retention coverage and the distinction between backlog and formation rate.
 
 ## Custom metric alerts

@@ -229,6 +229,12 @@ func orgActivitySummary(row state.OrgActivity) string {
 		return fmt.Sprintf("Rollback of %s failed (requested by %s)", row.ResourceLabel, row.ActorLabel)
 	case "deploy.rollback_requested":
 		return fmt.Sprintf("%s requested a rollback of %s", row.ActorLabel, row.ResourceLabel)
+	case "release.freeze_created":
+		return fmt.Sprintf("%s froze production releases of %s: %s", row.ActorLabel, row.ResourceLabel, orgActivityDataString(row, "reason"))
+	case "release.freeze_lifted":
+		return fmt.Sprintf("%s lifted the freeze on %s: %s", row.ActorLabel, row.ResourceLabel, orgActivityDataString(row, "reason"))
+	case "release.freeze_overridden":
+		return fmt.Sprintf("%s released %s through a freeze: %s", row.ActorLabel, row.ResourceLabel, orgActivityDataString(row, "reason"))
 	default:
 		return strings.TrimSpace(fmt.Sprintf("%s %s %s", row.ActorLabel, row.Kind, row.ResourceLabel))
 	}

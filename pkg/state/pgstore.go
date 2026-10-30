@@ -66,6 +66,7 @@ type PgStore struct {
 	pgCore
 	trafficAppsSuffix    string
 	trafficScopedBinding bool
+	realtimeEventSchemas *realtimeEventSchemaCache
 }
 
 // NewPgStore wraps a pool. The pool is owned by the caller; PgStore does not
@@ -73,7 +74,7 @@ type PgStore struct {
 // their LISTEN goroutine.
 func NewPgStore(pool *pgxpool.Pool, options ...StoreOption) *PgStore {
 	return &PgStore{pgCore: newPgCore(pool), trafficAppsSuffix: configuredTrafficAppsSuffix(options),
-		trafficScopedBinding: configuredTrafficScopedBinding(options)}
+		trafficScopedBinding: configuredTrafficScopedBinding(options), realtimeEventSchemas: newRealtimeEventSchemaCache()}
 }
 
 // Ping tests database connectivity through the underlying connection pool.
@@ -5682,11 +5683,25 @@ func (s *PgStore) deleteProjectEnvironmentOnce(
 			return ProjectEnvironmentCleanupJob{}, mapErr(err)
 		}
 	}
+	if err := deleteProjectEnvironmentRowsTx(ctx, tx, accountID, projectID, projectSlug, slug); err != nil {
+		return ProjectEnvironmentCleanupJob{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return ProjectEnvironmentCleanupJob{}, fmt.Errorf("state: commit project environment delete: %w", err)
+	}
+	return job, nil
+}
+
+// deleteProjectEnvironmentRowsTx removes an environment's scoped values,
+// configuration and approvals, then the environment row, whose foreign keys
+// cascade to its workload specifications and flags. Deployments stay as
+// history; callers first make sure none is live.
+func deleteProjectEnvironmentRowsTx(ctx context.Context, tx pgx.Tx, accountID, projectID, projectSlug, slug string) error {
 	if _, err := tx.Exec(ctx, `
 		delete from app_envs e using apps a
 		 where e.app_id = a.id and a.account_id = $1 and a.project_id = $2 and e.scope = $3
 	`, accountID, projectID, slug); err != nil {
-		return ProjectEnvironmentCleanupJob{}, mapErr(err)
+		return mapErr(err)
 	}
 	if _, err := tx.Exec(ctx, `
 		delete from app_secrets s using apps a
@@ -5694,35 +5709,32 @@ func (s *PgStore) deleteProjectEnvironmentOnce(
 		   and s.managed_postgres_binding_id is null
 		   and s.managed_object_storage_credential_id is null
 	`, accountID, projectID, slug); err != nil {
-		return ProjectEnvironmentCleanupJob{}, mapErr(err)
+		return mapErr(err)
 	}
 
 	if _, err := tx.Exec(ctx, `
 		delete from project_environment_config_versions
 		 where project_id = $1 and environment_slug = $2
 	`, projectID, slug); err != nil {
-		return ProjectEnvironmentCleanupJob{}, mapErr(err)
+		return mapErr(err)
 	}
 	if _, err := tx.Exec(ctx, `
 		delete from project_environment_approvals
 		 where account_id = $1 and project_slug = $2 and environment_slug = $3
 	`, accountID, projectSlug, slug); err != nil {
-		return ProjectEnvironmentCleanupJob{}, mapErr(err)
+		return mapErr(err)
 	}
 	tag, err := tx.Exec(ctx, `
 		delete from project_environments
 		 where project_id = $1 and slug = $2
 	`, projectID, slug)
 	if err != nil {
-		return ProjectEnvironmentCleanupJob{}, mapErr(hostingParentDeleteError(err))
+		return mapErr(hostingParentDeleteError(err))
 	}
 	if tag.RowsAffected() == 0 {
-		return ProjectEnvironmentCleanupJob{}, ErrNotFound
+		return ErrNotFound
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return ProjectEnvironmentCleanupJob{}, fmt.Errorf("state: commit project environment delete: %w", err)
-	}
-	return job, nil
+	return nil
 }
 
 // ApplyProjectPlan persists a project + its member apps + crons in
@@ -10417,14 +10429,15 @@ func (s *PgStore) markDeploymentLiveOnce(ctx context.Context, id string, fenceLa
 	}
 
 	rows, err := tx.Query(ctx,
-		`select id, traffic_percent
+		`select id, traffic_percent,
+		        canary_total_steps > 0 and coalesce(nullif(rollout_state, ''), 'pending') in ('pending','rolling_out')
 		   from deployments
 		  where app_id = $1 and scope = $2 and status = 'live'
 		  for update`, dep.AppID, normalizedDeploymentScope(dep.Scope))
 	if err != nil {
 		return fmt.Errorf("state: mark canary live lock siblings: %w", err)
 	}
-	var siblings []struct {
+	var siblings, inFlightCanaries []struct {
 		ID    string
 		Prior int
 	}
@@ -10433,11 +10446,16 @@ func (s *PgStore) markDeploymentLiveOnce(ctx context.Context, id string, fenceLa
 			ID    string
 			Prior int
 		}
-		if err := rows.Scan(&sibling.ID, &sibling.Prior); err != nil {
+		var inFlight bool
+		if err := rows.Scan(&sibling.ID, &sibling.Prior, &inFlight); err != nil {
 			rows.Close()
 			return fmt.Errorf("state: mark canary live scan sibling: %w", err)
 		}
-		if sibling.ID != id {
+		switch {
+		case sibling.ID == id:
+		case inFlight:
+			inFlightCanaries = append(inFlightCanaries, sibling)
+		default:
 			siblings = append(siblings, sibling)
 		}
 	}
@@ -10449,6 +10467,25 @@ func (s *PgStore) markDeploymentLiveOnce(ctx context.Context, id string, fenceLa
 	var now time.Time
 	if err := tx.QueryRow(ctx, `select clock_timestamp()`).Scan(&now); err != nil {
 		return fmt.Errorf("state: mark canary live read database clock: %w", err)
+	}
+	if len(inFlightCanaries) > 0 {
+		if supersedesInFlightCanaries(siblings) {
+			// A newer canary replaces the one still rolling out, whose traffic
+			// returns to the serving deployment (ADR-20261030102813, Hunt 14
+			// H14-112). Two canaries beside one stable never promote: meterd
+			// judges a candidate against exactly one serving predecessor.
+			if _, err := sqlc.New().SupersedeInFlightCanarySiblings(ctx, tx, sqlc.SupersedeInFlightCanarySiblingsParams{
+				AbortedAt: pgtype.Timestamptz{Time: now, Valid: true}, DeploymentID: mustPgUUID(id),
+				AppID: mustPgUUID(dep.AppID), Scope: normalizedDeploymentScope(dep.Scope),
+			}); err != nil {
+				return fmt.Errorf("state: mark canary live supersede in-flight canary: %w", err)
+			}
+			if err := notifyRetiredCanarySiblingsTx(ctx, tx, dep.AppID, inFlightCanaries); err != nil {
+				return err
+			}
+		} else {
+			siblings = append(siblings, inFlightCanaries...)
+		}
 	}
 	if len(siblings) == 0 && dep.TrafficPercent != 100 {
 		// A first deployment has no residual bucket. Complete it at
@@ -11837,6 +11874,21 @@ func (s *PgStore) UpsertDeploymentScanResult(ctx context.Context, deploymentID s
 		return ErrNotFound
 	}
 	return nil
+}
+
+// RenewDeploymentScanEvidence replaces a complete scan result only while the
+// row still holds expected, so a renewal never overwrites a newer scan another
+// imaged wrote meanwhile. It reports whether the row was renewed.
+func (s *PgStore) RenewDeploymentScanEvidence(ctx context.Context, deploymentID string, expected, renewed []byte) (bool, error) {
+	tag, err := s.pool.Exec(ctx,
+		`update deployments
+		    set scan_result = $3, scanned_at = now()
+		  where id = $1 and scan_status = 'complete' and scan_result = $2::jsonb`,
+		deploymentID, expected, renewed)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
 }
 
 // UpsertDeploymentSecretFindings writes the secret-scan audit row

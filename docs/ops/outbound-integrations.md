@@ -508,24 +508,40 @@ Only managed integrations are reachable this way. Token-authenticated
 integrations return `403 outbound_relay_not_supported`. Bindings, route
 policy, budgets, caching and AI usage all apply as usual.
 
-Enable the relay in two places:
+Enable the relay with two Ansible switches. Both are off by default, and
+both need the cluster workload-identity key first: vmmd signs relay
+assertions with it, and outboundd verifies them against its JWKS (see
+[FaasWorkloadIdentityNotConfigured](../runbooks/FaasWorkloadIdentityNotConfigured.md)).
 
-- **outboundd.toml.** Set `relay_listen`:
+- **Control plane.** Set `faas_outboundd_relay_listen` for
+  `control_plane_service`:
+  - Split box: `tcp://0.0.0.0:8096`. The role issues outboundd's relay server
+    leaf (`outboundd/server`, a fleet-PKI feature leaf) from the CA on the
+    control plane.
   - Single box: `unix:///run/faas/outboundd-relay.sock`.
-  - Split box: `tcp://0.0.0.0:8096`, with `relay_tls_cert_path`,
-    `relay_tls_key_path` and `relay_tls_ca_path` pointing at the
-    `outboundd/server` leaf and the fleet CA.
 
-  The relay needs `workload_identity_jwks_path`. On a split box, clients must
-  present a fleet certificate whose name is a registered compute node.
-- **vmmd.** Set `faas_vmmd_outbound_relay_target`:
-  - The manifest renders `tcp://outboundd.faas:8096` for compute hosts.
-  - Single-box hosts set the Unix socket path.
+  The role writes `99-faas-outbound-relay.conf` for outboundd with the
+  listener, the TLS paths and `workload_identity_jwks_path`. These override
+  the same settings in `outboundd.toml`, which you don't need to edit. The
+  play stops if the JWKS is missing, because outboundd would not start the
+  relay without it. On a split box, clients must present a fleet certificate
+  whose name is a registered compute node.
+- **Compute nodes.** The manifest already sets
+  `faas_vmmd_outbound_relay_target` to `tcp://outboundd.faas:8096`. Set
+  `faas_vmmd_outbound_relay_tls_managed: true` for `vmmd_service`. The control
+  plane then issues the node's `vmmd/outboundd-client` leaf, with the node's
+  name as its CN, and the node installs it and restarts vmmd. Until the leaf
+  exists, vmmd logs `outbound relay disabled` and keeps the relay closed. VM
+  hosting is unaffected.
 
-  The TCP target uses the `vmmd/outboundd-client` node-identity leaf. Issue
-  the two new leaves (`outboundd/server`, `vmmd/outboundd-client`) with the
-  usual PKI run. Until they exist, vmmd logs `outbound relay disabled` and
-  keeps the relay closed. VM hosting is unaffected.
+  Single-box hosts set the target to the Unix socket path and need no leaf.
+
+Turn on the control plane first, then the compute nodes. Each later run of
+the roles, and the scheduled `pki_renew.yml`, renews a leaf that has less
+than 30 days left. By hand,
+`gregalectl pki issue-feature --feature outbound-relay --box-role
+control-plane` issues the server leaf, and `--box-role compute-only --cn
+<node>` a node's client leaf.
 
 The control-plane firewall opens TCP 8096 to compute CIDRs. When the relay is
 off, apps get an immediate connection error from `GREGALE_OUTBOUND_URL`.

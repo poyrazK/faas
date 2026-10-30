@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // PlatformTenantCredentialStore reconciles client-generated key hashes and
@@ -25,8 +27,6 @@ type ApplyPlatformTenantCredentialsParams struct {
 	// EnforceDelegationPolicy is set only by tenant-self management routes.
 	// Owner-managed account routes retain their existing behavior.
 	EnforceDelegationPolicy bool
-	AppLimit                int
-	AccountLimit            int
 	Keys                    []PlatformTenantCredentialIntent
 	RevokeKeyIDs            []string
 }
@@ -51,8 +51,13 @@ type ApplyPlatformTenantCredentialsResult struct {
 	Keys     []PlatformTenantCredentialResult
 }
 
+// PlatformTenantCredentialQuotaError refuses a bundle that takes an app, or
+// the app's billing subject (ADR-202610171904), past the subject's plan's
+// consumer key allowance. Plan is the subject's plan, which for a company app
+// is the company's, not the caller's.
 type PlatformTenantCredentialQuotaError struct {
-	Scope    string // app, account
+	Scope    string // api.PlanQuotaScopeApp, api.PlanQuotaScopeAccount
+	Plan     api.Plan
 	Limit    int
 	Observed int
 }
@@ -121,7 +126,7 @@ func validatePlatformTenantCredentials(in ApplyPlatformTenantCredentialsParams) 
 	if _, err := uuid.Parse(in.TenantID); err != nil {
 		return ErrInvalidArgument
 	}
-	if in.AppLimit < 1 || in.AccountLimit < 1 || len(in.Keys)+len(in.RevokeKeyIDs) == 0 {
+	if len(in.Keys)+len(in.RevokeKeyIDs) == 0 {
 		return ErrInvalidArgument
 	}
 	seenKeys := make(map[string]bool, len(in.Keys))

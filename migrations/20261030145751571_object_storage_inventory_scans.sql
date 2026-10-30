@@ -1,5 +1,5 @@
 -- migration-compat: expand
--- filename: 20261030100835417_object_storage_inventory_scans.sql
+-- filename: 20261030145751571_object_storage_inventory_scans.sql
 --
 -- ADR-20261030100835: a bucket's inventory listing in progress, so a bucket
 -- too large to list in one attempt resumes from its last listed key. A new

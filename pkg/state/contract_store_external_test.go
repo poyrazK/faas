@@ -45,6 +45,7 @@ type contractTestStore interface {
 	state.EventSubscriptionControlStore
 	state.EventSubscriptionStore
 	state.EventWorkBindingStore
+	state.FeatureFlagPromotionHoldReader
 	state.FeatureFlagStore
 	state.HostPortLeaseStore
 	state.InvocationEnvironmentQueueAdmissionReader

@@ -3656,6 +3656,35 @@ func (q *Queries) CancelManagedPostgresScheduledDelete(ctx context.Context, db D
 	return i, err
 }
 
+const cancelProjectEnvironmentCloneTargetDeployments = `-- name: CancelProjectEnvironmentCloneTargetDeployments :execrows
+WITH cancelled AS (
+    UPDATE deployments d SET status = 'cancelled'
+    FROM project_environment_clone_workloads w
+    WHERE w.operation_id = $1::uuid AND d.id = w.target_deployment_id
+      AND d.app_id = w.app_id AND d.scope = $2::text
+      AND d.status NOT IN ('failed', 'superseded', 'cancelled')
+    RETURNING d.id, d.app_id
+)
+SELECT pg_notify('deployment_changed', json_build_object('kind', 'cancelled', 'app_id', app_id, 'deployment_id', id,
+    'to', id, 'status', 'cancelled')::text)
+FROM cancelled
+`
+
+type CancelProjectEnvironmentCloneTargetDeploymentsParams struct {
+	OperationID pgtype.UUID
+	Environment string
+}
+
+// A data-less clone that will not publish cancels the deployments it created
+// for its target; schedd drains their instances on the notification.
+func (q *Queries) CancelProjectEnvironmentCloneTargetDeployments(ctx context.Context, db DBTX, arg CancelProjectEnvironmentCloneTargetDeploymentsParams) (int64, error) {
+	result, err := db.Exec(ctx, cancelProjectEnvironmentCloneTargetDeployments, arg.OperationID, arg.Environment)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const cancelQueuedCustomerOperationJobTask = `-- name: CancelQueuedCustomerOperationJobTask :exec
 UPDATE job_tasks SET status='cancelled',finished_at=clock_timestamp() WHERE run_id=$1::uuid AND task_index=0 AND status='queued'
 `
@@ -10871,6 +10900,18 @@ func (q *Queries) CountUDPListenersForApp(ctx context.Context, db DBTX, appID st
 	return count, err
 }
 
+const countUnfinishedProjectEnvironmentCloneOperations = `-- name: CountUnfinishedProjectEnvironmentCloneOperations :one
+SELECT count(*)::bigint FROM project_environment_clone_operations
+WHERE status IN ('pending','capturing','copying','publishing','compensating')
+`
+
+func (q *Queries) CountUnfinishedProjectEnvironmentCloneOperations(ctx context.Context, db DBTX) (int64, error) {
+	row := db.QueryRow(ctx, countUnfinishedProjectEnvironmentCloneOperations)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const countWorkflowAutomationRevisions = `-- name: CountWorkflowAutomationRevisions :one
 SELECT count(*) FROM workflow_automation_revisions WHERE app_id=$1 AND name=$2
 `
@@ -14664,6 +14705,25 @@ func (q *Queries) DeleteProductionDeadLetterEvents(ctx context.Context, db DBTX,
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const deleteProjectEnvironmentCloneTargetPolicies = `-- name: DeleteProjectEnvironmentCloneTargetPolicies :exec
+WITH routes AS (
+    DELETE FROM project_environment_route_policies
+    WHERE project_id = $1::uuid AND environment_slug = $2::text
+)
+DELETE FROM project_environment_edge_policies
+WHERE project_id = $1::uuid AND environment_slug = $2::text
+`
+
+type DeleteProjectEnvironmentCloneTargetPoliciesParams struct {
+	ProjectID   pgtype.UUID
+	Environment string
+}
+
+func (q *Queries) DeleteProjectEnvironmentCloneTargetPolicies(ctx context.Context, db DBTX, arg DeleteProjectEnvironmentCloneTargetPoliciesParams) error {
+	_, err := db.Exec(ctx, deleteProjectEnvironmentCloneTargetPolicies, arg.ProjectID, arg.Environment)
+	return err
 }
 
 const deleteReadinessSubscription = `-- name: DeleteReadinessSubscription :execrows
@@ -20099,6 +20159,80 @@ func (q *Queries) ExistsManagedPostgresLifecycleDatabase(ctx context.Context, db
 	var exists bool
 	err := row.Scan(&exists)
 	return exists, err
+}
+
+const expandTrafficBindingCapture = `-- name: ExpandTrafficBindingCapture :many
+WITH touched_apps AS (
+    SELECT id::uuid AS id, false AS added FROM unnest($1::text[]) AS t(id)
+    UNION ALL
+    SELECT id::uuid AS id, true AS added FROM unnest($2::text[]) AS t(id)
+), touched_surfaces AS (
+    SELECT DISTINCT id::uuid AS id FROM unnest($3::text[]) AS t(id)
+), touched_platforms AS (
+    SELECT DISTINCT id::uuid AS id FROM unnest($4::text[]) AS t(id)
+), touched_environments AS (
+    SELECT DISTINCT id::uuid AS id FROM unnest($5::text[]) AS t(id)
+)
+SELECT (a.slug || $6::text)::text AS host, t.added::boolean AS added, 'primary'::text AS kind
+FROM apps a JOIN touched_apps t ON a.id = t.id WHERE $6::text <> ''
+UNION ALL
+SELECT d.domain::text, false, 'domain' FROM custom_domains d JOIN touched_apps t ON d.app_id = t.id OR d.app_id_redirect = t.id
+UNION ALL
+SELECT h.hostname::text, false, 'tenant' FROM tenant_hostnames h JOIN tenant_surfaces s ON s.id = h.surface_id JOIN touched_apps t ON s.app_id = t.id
+UNION ALL
+SELECT 'tag-' || z.name || '-' || replace(z.app_id::text, '-', '') || $6::text, false, 'alias'
+FROM deployment_aliases z JOIN touched_apps t ON z.app_id = t.id WHERE $6::text <> ''
+UNION ALL
+SELECT h.hostname::text, false, 'tenant' FROM tenant_hostnames h JOIN touched_surfaces s ON h.surface_id = s.id
+UNION ALL
+SELECT h.hostname::text, false, 'tenant' FROM tenant_hostnames h JOIN tenant_surfaces s ON s.id = h.surface_id JOIN touched_platforms p ON s.platform_tenant_id = p.id
+UNION ALL
+SELECT d.domain::text, false, 'domain' FROM custom_domains d JOIN touched_environments e ON d.environment_id = e.id
+`
+
+type ExpandTrafficBindingCaptureParams struct {
+	AppIds         []string
+	AddedAppIds    []string
+	SurfaceIds     []string
+	PlatformIds    []string
+	EnvironmentIds []string
+	AppsSuffix     string
+}
+
+type ExpandTrafficBindingCaptureRow struct {
+	Host  string
+	Added bool
+	Kind  string
+}
+
+// The hostnames of captured identities whose claims or reservations follow
+// other rows: an app's primary URL, domains, redirects, tenant hostnames and
+// aliases; a surface's, platform tenant's or environment's hostnames.
+func (q *Queries) ExpandTrafficBindingCapture(ctx context.Context, db DBTX, arg ExpandTrafficBindingCaptureParams) ([]ExpandTrafficBindingCaptureRow, error) {
+	rows, err := db.Query(ctx, expandTrafficBindingCapture,
+		arg.AppIds,
+		arg.AddedAppIds,
+		arg.SurfaceIds,
+		arg.PlatformIds,
+		arg.EnvironmentIds,
+		arg.AppsSuffix,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ExpandTrafficBindingCaptureRow{}
+	for rows.Next() {
+		var i ExpandTrafficBindingCaptureRow
+		if err := rows.Scan(&i.Host, &i.Added, &i.Kind); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const expireCrashCapture = `-- name: ExpireCrashCapture :one
@@ -46386,6 +46520,7 @@ select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id, qu
 from triggers where enabled = true AND NOT environment_workload_admission_retired(app_id,queue_binding_scope)
 AND NOT (kind IN ('kafka','nats','redis_streams','sqs_compat')
   AND EXISTS (SELECT 1 FROM scenario_test_action_policies p WHERE p.app_id=triggers.app_id))
+AND EXISTS (SELECT 1 FROM apps a WHERE a.id = triggers.app_id AND a.status <> 'deleted')
 `
 
 type ListEnabledTriggersRow struct {
@@ -46424,6 +46559,10 @@ type ListEnabledTriggersRow struct {
 // A rehearsal-enrolled app never polls or commits offsets on a real external
 // broker; its queue, cron and realtime inputs stay inside the app
 // (ADR-20261019180000).
+// A deleted app's triggers stay enabled so a restore inside the grace window
+// brings them back, but nothing polls them meanwhile: a broker trigger kept
+// draining the customer's queue into the dead app's dead letters (bug hunt
+// 2026-10-28 B32).
 func (q *Queries) ListEnabledTriggers(ctx context.Context, db DBTX) ([]ListEnabledTriggersRow, error) {
 	rows, err := db.Query(ctx, listEnabledTriggers)
 	if err != nil {
@@ -50429,6 +50568,61 @@ func (q *Queries) ListProjectReleaseSetsBefore(ctx context.Context, db DBTX, arg
 			return nil, err
 		}
 		items = append(items, release)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listPromotionFeatureFlagHolds = `-- name: ListPromotionFeatureFlagHolds :many
+SELECT p.status, p.rollback_status, f.target_version, f.rollback_version
+FROM project_environment_promotion_feature_flags f
+JOIN project_environment_promotions p ON p.id = f.promotion_id
+WHERE p.account_id = $1::uuid AND p.project_id = $2::uuid
+ AND f.previous_target_snapshot->>'source_environment_id' = $3::text
+ AND (f.target_version = $4::bigint OR f.rollback_version = $4::bigint)
+`
+
+type ListPromotionFeatureFlagHoldsParams struct {
+	AccountID     pgtype.UUID
+	ProjectID     pgtype.UUID
+	EnvironmentID string
+	Version       int64
+}
+
+type ListPromotionFeatureFlagHoldsRow struct {
+	Status          string
+	RollbackStatus  string
+	TargetVersion   int64
+	RollbackVersion int64
+}
+
+// Receipts whose activation or rollback wrote this flag version; Go decides
+// which promotion states still hold it.
+func (q *Queries) ListPromotionFeatureFlagHolds(ctx context.Context, db DBTX, arg ListPromotionFeatureFlagHoldsParams) ([]ListPromotionFeatureFlagHoldsRow, error) {
+	rows, err := db.Query(ctx, listPromotionFeatureFlagHolds,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.Version,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListPromotionFeatureFlagHoldsRow{}
+	for rows.Next() {
+		var i ListPromotionFeatureFlagHoldsRow
+		if err := rows.Scan(
+			&i.Status,
+			&i.RollbackStatus,
+			&i.TargetVersion,
+			&i.RollbackVersion,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -59539,6 +59733,8 @@ SELECT
 FROM managed_postgres_usage u JOIN managed_postgres_databases d ON d.id=u.database_id
 WHERE managed_postgres_usage_subject(d.org_id,d.account_id)=$1::uuid
 AND u.window_from>=$2::timestamptz AND u.window_from<$3::timestamptz
+AND NOT EXISTS(SELECT 1 FROM managed_postgres_usage_waivers w WHERE w.database_id=u.database_id
+ AND u.window_from>=w.waived_from AND (w.waived_until IS NULL OR u.window_to<=w.waived_until))
 `
 
 type ManagedPostgresUsageForSubjectParams struct {
@@ -59555,6 +59751,8 @@ type ManagedPostgresUsageForSubjectRow struct {
 	CostMillicents     int64
 }
 
+// ADR-20261029174950 decision 6: a window wholly inside a scheduled delete is
+// waived. The fleet spend breaker (ManagedPostgresFleetTotals) still counts it.
 func (q *Queries) ManagedPostgresUsageForSubject(ctx context.Context, db DBTX, arg ManagedPostgresUsageForSubjectParams) (ManagedPostgresUsageForSubjectRow, error) {
 	row := db.QueryRow(ctx, managedPostgresUsageForSubject, arg.SubjectID, arg.PeriodStart, arg.PeriodEnd)
 	var i ManagedPostgresUsageForSubjectRow
@@ -80441,6 +80639,17 @@ func (q *Queries) ReadProjectCanaryRouting(ctx context.Context, db DBTX, appID p
 	return i, err
 }
 
+const readProjectEnvironmentCloneClock = `-- name: ReadProjectEnvironmentCloneClock :one
+SELECT clock_timestamp()::timestamptz AS now
+`
+
+func (q *Queries) ReadProjectEnvironmentCloneClock(ctx context.Context, db DBTX) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, readProjectEnvironmentCloneClock)
+	var now pgtype.Timestamptz
+	err := row.Scan(&now)
+	return now, err
+}
+
 const readProjectEnvironmentCloneConfigurationCaptureIdentity = `-- name: ReadProjectEnvironmentCloneConfigurationCaptureIdentity :one
 SELECT o.configuration_capture_version,o.source_revision_hash,o.source_environment,coalesce(o.source_release_set_id::text,'')::text AS source_release_set_id,
     EXISTS(SELECT 1 FROM project_environment_clone_configuration_captures c WHERE c.operation_id=o.id)::boolean AS has_capture
@@ -80769,6 +80978,49 @@ func (q *Queries) ReadProjectEnvironmentCloneFlagScope(ctx context.Context, db D
 	return id, err
 }
 
+const readProjectEnvironmentCloneInventoryPresent = `-- name: ReadProjectEnvironmentCloneInventoryPresent :many
+SELECT present::text AS table_name
+FROM project_environment_clone_inventory_present(
+    $1::uuid, $2::uuid, $3::text[],
+    $4::uuid[], $5::uuid[], $6::jsonb) AS present
+`
+
+type ReadProjectEnvironmentCloneInventoryPresentParams struct {
+	ProjectID        pgtype.UUID
+	EnvironmentID    pgtype.UUID
+	EnvironmentSlugs []string
+	AppIds           []pgtype.UUID
+	DeploymentIds    []pgtype.UUID
+	Probes           []byte
+}
+
+func (q *Queries) ReadProjectEnvironmentCloneInventoryPresent(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneInventoryPresentParams) ([]string, error) {
+	rows, err := db.Query(ctx, readProjectEnvironmentCloneInventoryPresent,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.EnvironmentSlugs,
+		arg.AppIds,
+		arg.DeploymentIds,
+		arg.Probes,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var table_name string
+		if err := rows.Scan(&table_name); err != nil {
+			return nil, err
+		}
+		items = append(items, table_name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const readProjectEnvironmentCloneLegacySettings = `-- name: ReadProjectEnvironmentCloneLegacySettings :one
 SELECT (to_jsonb(a) || jsonb_build_object('public_auth_basic_sealed', encode(a.public_auth_basic, 'base64'),
        'only_allow_declared_routes', a.only_declared_routes, 'retry_policy_json', a.retry_policy))::jsonb AS app, coalesce(to_jsonb(r), '{}'::jsonb)::jsonb AS route
@@ -80791,6 +81043,38 @@ func (q *Queries) ReadProjectEnvironmentCloneLegacySettings(ctx context.Context,
 	var i ReadProjectEnvironmentCloneLegacySettingsRow
 	err := row.Scan(&i.App, &i.Route)
 	return i, err
+}
+
+const readProjectEnvironmentCloneLiveTargetDatabases = `-- name: ReadProjectEnvironmentCloneLiveTargetDatabases :many
+SELECT id::text AS database_id FROM managed_postgres_databases
+WHERE environment_clone_operation_id = $1::uuid AND account_id = $2::uuid
+    AND clone_resource_role = 'target' AND state <> 'deleted'
+ORDER BY id
+`
+
+type ReadProjectEnvironmentCloneLiveTargetDatabasesParams struct {
+	OperationID pgtype.UUID
+	AccountID   pgtype.UUID
+}
+
+func (q *Queries) ReadProjectEnvironmentCloneLiveTargetDatabases(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneLiveTargetDatabasesParams) ([]string, error) {
+	rows, err := db.Query(ctx, readProjectEnvironmentCloneLiveTargetDatabases, arg.OperationID, arg.AccountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var database_id string
+		if err := rows.Scan(&database_id); err != nil {
+			return nil, err
+		}
+		items = append(items, database_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const readProjectEnvironmentCloneMaterialization = `-- name: ReadProjectEnvironmentCloneMaterialization :one
@@ -82080,6 +82364,75 @@ func (q *Queries) ReadProjectEnvironmentCloneProjectConfiguration(ctx context.Co
 	return i, err
 }
 
+const readProjectEnvironmentCloneProjectSlug = `-- name: ReadProjectEnvironmentCloneProjectSlug :one
+SELECT slug FROM projects WHERE id = $1::uuid AND account_id = $2::uuid
+`
+
+type ReadProjectEnvironmentCloneProjectSlugParams struct {
+	ProjectID pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) ReadProjectEnvironmentCloneProjectSlug(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneProjectSlugParams) (string, error) {
+	row := db.QueryRow(ctx, readProjectEnvironmentCloneProjectSlug, arg.ProjectID, arg.AccountID)
+	var slug string
+	err := row.Scan(&slug)
+	return slug, err
+}
+
+const readProjectEnvironmentCloneRestoredDatabases = `-- name: ReadProjectEnvironmentCloneRestoredDatabases :many
+SELECT d.id::text AS database_id, p.source_database_id::text AS source_database_id, p.point_in_time
+FROM managed_postgres_databases d
+JOIN managed_postgres_restore_proofs p ON p.database_id = d.id
+WHERE d.environment_clone_operation_id = $1::uuid AND d.account_id = $2::uuid
+    AND d.clone_resource_role = 'target' AND d.state = 'ready' AND d.deleted_at IS NULL AND d.lease_token IS NULL
+    AND p.account_id = d.account_id AND p.operation_id = d.environment_clone_operation_id
+    AND p.backend_id = d.backend_id AND p.backend_fingerprint = d.backend_fingerprint
+    AND p.provider_resource_id = d.provider_resource_id AND p.data_resource_id = d.data_resource_id
+    AND p.source_database_id = d.restore_source_database_id AND p.source_resource_id = d.restore_source_resource_id
+    AND p.point_in_time = d.restore_point_in_time
+    AND p.generation = d.desired_generation AND p.generation = d.observed_generation
+    AND p.spec = jsonb_build_object('Region',d.region,'PostgresMajor',d.postgres_major,
+        'Class',d.service_class,'Availability',d.availability,'ScaleToZero',d.scale_to_zero,
+        'StorageLimitBytes',d.storage_limit_bytes,'RestoreWindowSeconds',d.restore_window_seconds)
+ORDER BY d.id
+FOR SHARE OF d, p
+`
+
+type ReadProjectEnvironmentCloneRestoredDatabasesParams struct {
+	OperationID pgtype.UUID
+	AccountID   pgtype.UUID
+}
+
+type ReadProjectEnvironmentCloneRestoredDatabasesRow struct {
+	DatabaseID       string
+	SourceDatabaseID string
+	PointInTime      pgtype.Timestamptz
+}
+
+// Each ready target database this clone restored, with a provider restore
+// proof that still matches the row (the same checks as
+// ReadManagedPostgresCloneRestoreProof).
+func (q *Queries) ReadProjectEnvironmentCloneRestoredDatabases(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneRestoredDatabasesParams) ([]ReadProjectEnvironmentCloneRestoredDatabasesRow, error) {
+	rows, err := db.Query(ctx, readProjectEnvironmentCloneRestoredDatabases, arg.OperationID, arg.AccountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadProjectEnvironmentCloneRestoredDatabasesRow{}
+	for rows.Next() {
+		var i ReadProjectEnvironmentCloneRestoredDatabasesRow
+		if err := rows.Scan(&i.DatabaseID, &i.SourceDatabaseID, &i.PointInTime); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const readProjectEnvironmentCloneScopedEdgePolicy = `-- name: ReadProjectEnvironmentCloneScopedEdgePolicy :one
 SELECT jsonb_build_object('edge_present', p.app_id IS NOT NULL, 'edge_rules', coalesce(p.rules, '[]'::jsonb)) AS definition
 FROM apps a LEFT JOIN project_environment_edge_policies p ON p.app_id = a.id
@@ -82281,6 +82634,23 @@ func (q *Queries) ReadProjectEnvironmentCloneSourceAppIDs(ctx context.Context, d
 	return items, nil
 }
 
+const readProjectEnvironmentCloneSourceEnvironmentID = `-- name: ReadProjectEnvironmentCloneSourceEnvironmentID :one
+SELECT id FROM project_environments
+WHERE project_id = $1::uuid AND slug = $2::text
+`
+
+type ReadProjectEnvironmentCloneSourceEnvironmentIDParams struct {
+	ProjectID pgtype.UUID
+	Slug      string
+}
+
+func (q *Queries) ReadProjectEnvironmentCloneSourceEnvironmentID(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneSourceEnvironmentIDParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, readProjectEnvironmentCloneSourceEnvironmentID, arg.ProjectID, arg.Slug)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const readProjectEnvironmentCloneSourceRelease = `-- name: ReadProjectEnvironmentCloneSourceRelease :one
 SELECT coalesce((SELECT id::text FROM project_release_sets WHERE project_id = $1::uuid
        AND environment_slug = $2::text AND active), '')::text AS release_id
@@ -82328,6 +82698,28 @@ func (q *Queries) ReadProjectEnvironmentCloneTargetOperationID(ctx context.Conte
 	var id string
 	err := row.Scan(&id)
 	return id, err
+}
+
+const readProjectEnvironmentCloneTargetRetirement = `-- name: ReadProjectEnvironmentCloneTargetRetirement :one
+SELECT count(*) FILTER (WHERE d.status NOT IN ('failed', 'superseded', 'cancelled'))::bigint AS unretired,
+       (SELECT count(*) FROM instances i
+         WHERE i.deployment_id IN (SELECT target_deployment_id FROM project_environment_clone_workloads WHERE operation_id = $1::uuid)
+           AND i.state NOT IN ('parked', 'stopped', 'failed'))::bigint AS active_instances
+FROM project_environment_clone_workloads w
+JOIN deployments d ON d.id = w.target_deployment_id
+WHERE w.operation_id = $1::uuid
+`
+
+type ReadProjectEnvironmentCloneTargetRetirementRow struct {
+	Unretired       int64
+	ActiveInstances int64
+}
+
+func (q *Queries) ReadProjectEnvironmentCloneTargetRetirement(ctx context.Context, db DBTX, operationID pgtype.UUID) (ReadProjectEnvironmentCloneTargetRetirementRow, error) {
+	row := db.QueryRow(ctx, readProjectEnvironmentCloneTargetRetirement, operationID)
+	var i ReadProjectEnvironmentCloneTargetRetirementRow
+	err := row.Scan(&i.Unretired, &i.ActiveInstances)
+	return i, err
 }
 
 const readProjectEnvironmentCloneTargetSettings = `-- name: ReadProjectEnvironmentCloneTargetSettings :one
@@ -86113,6 +86505,19 @@ func (q *Queries) ReadTrafficAppBindingHosts(ctx context.Context, db DBTX, arg R
 	return items, nil
 }
 
+const readTrafficBindingCapture = `-- name: ReadTrafficBindingCapture :one
+SELECT coalesce(current_setting('gregale.traffic_binding_touched', true), '')::text AS touched
+`
+
+// What this transaction's statements touched in the claim and reservation
+// sources, as recorded by the capture triggers (ADR-20261029190349).
+func (q *Queries) ReadTrafficBindingCapture(ctx context.Context, db DBTX) (string, error) {
+	row := db.QueryRow(ctx, readTrafficBindingCapture)
+	var touched string
+	err := row.Scan(&touched)
+	return touched, err
+}
+
 const readTrafficBindingClaims = `-- name: ReadTrafficBindingClaims :one
 WITH domains AS (
     SELECT jsonb_build_object('Domain',d.domain,'App',d.app_id,
@@ -86181,6 +86586,126 @@ type ReadTrafficBindingClaimsRow struct {
 func (q *Queries) ReadTrafficBindingClaims(ctx context.Context, db DBTX, arg ReadTrafficBindingClaimsParams) (ReadTrafficBindingClaimsRow, error) {
 	row := db.QueryRow(ctx, readTrafficBindingClaims, arg.MaxInputs, arg.MaxBytes, arg.AppsSuffix)
 	var i ReadTrafficBindingClaimsRow
+	err := row.Scan(&i.Data, &i.Inputs, &i.Bytes)
+	return i, err
+}
+
+const readTrafficBindingClaimsScoped = `-- name: ReadTrafficBindingClaimsScoped :one
+WITH trees AS (
+    SELECT low, left(low, -1) || '/' AS high FROM unnest($3::text[]) AS t(low)
+), account_apps AS (
+    SELECT id FROM apps WHERE account_id = ANY($4::uuid[])
+), scoped_domains AS (
+    SELECT d.domain FROM custom_domains d WHERE d.domain = ANY($5::text[]::citext[])
+    UNION
+    SELECT d.domain FROM custom_domains d JOIN trees r
+      ON reverse(lower(d.domain::text)) ~>=~ r.low AND reverse(lower(d.domain::text)) ~<~ r.high
+    UNION
+    SELECT d.domain FROM custom_domains d JOIN account_apps a ON a.id = d.app_id
+    UNION
+    SELECT d.domain FROM custom_domains d JOIN account_apps a ON a.id = d.app_id_redirect
+    UNION
+    SELECT d.domain FROM custom_domains d WHERE d.app_id_redirect = $6::uuid
+), domains AS (
+    SELECT jsonb_build_object('Domain',d.domain,'App',d.app_id,
+        'Environment',coalesce(d.environment_id::text,''),'Account',a.account_id,
+        'RedirectApp',coalesce(d.app_id_redirect::text,''),
+        'RedirectAccount',coalesce(redirect.account_id::text,''),
+        'Eligible',d.verified_at IS NOT NULL AND a.status<>'deleted' AND a.visibility<>'internal'
+            AND (d.environment_id IS NULL OR EXISTS (
+                SELECT 1 FROM project_environments e WHERE e.id=d.environment_id
+                  AND e.account_id=a.account_id AND e.project_id=a.project_id))) AS data
+    FROM custom_domains d JOIN scoped_domains s ON s.domain = d.domain JOIN apps a ON a.id=d.app_id
+    LEFT JOIN apps redirect ON redirect.id=d.app_id_redirect
+    ORDER BY d.domain::text COLLATE "C" LIMIT ($1::integer+1)
+), scoped_tenants AS (
+    SELECT h.id FROM tenant_hostnames h WHERE h.hostname = ANY($5::text[]::citext[])
+    UNION
+    SELECT h.id FROM tenant_hostnames h JOIN trees r
+      ON reverse(lower(h.hostname::text)) ~>=~ r.low AND reverse(lower(h.hostname::text)) ~<~ r.high
+    UNION
+    SELECT h.id FROM tenant_hostnames h JOIN tenant_surfaces s ON s.id = h.surface_id
+    WHERE s.account_id = ANY($4::uuid[])
+    UNION
+    SELECT h.id FROM tenant_hostnames h JOIN tenant_surfaces s ON s.id = h.surface_id JOIN account_apps a ON a.id = s.app_id
+), tenants AS (
+    SELECT jsonb_build_object('Host',lower(h.hostname::text),'ID',h.id,
+        'Surface',s.id,'App',s.app_id,'Account',s.account_id,'AppAccount',coalesce(a.account_id::text,''),
+        'PlatformTenant',coalesce(s.platform_tenant_id::text,''),'Status',s.status,
+        'Verified',h.verified_at IS NOT NULL,
+        'Public',coalesce(a.account_id=s.account_id AND a.status<>'deleted' AND a.visibility<>'internal',false),
+        'Suspended',coalesce(t.status='suspended',false)) AS data
+    FROM tenant_hostnames h JOIN scoped_tenants x ON x.id = h.id JOIN tenant_surfaces s ON s.id=h.surface_id
+    LEFT JOIN apps a ON a.id=s.app_id
+    LEFT JOIN platform_tenants t ON t.id=s.platform_tenant_id
+    ORDER BY h.hostname::text COLLATE "C" LIMIT ($1::integer+1)
+), aliases AS (
+    SELECT jsonb_build_object('Host','tag-'||z.name||'-'||replace(a.id::text,'-','')||$7::text,
+        'App',a.id,'Account',a.account_id) AS data
+    FROM deployment_aliases z JOIN apps a ON a.id=z.app_id
+    WHERE $7::text<>''
+      AND ($8::boolean OR a.account_id = ANY($4::uuid[])
+           OR z.app_id = ANY($9::uuid[]))
+    ORDER BY z.app_id,z.name LIMIT ($1::integer+1)
+), primaries AS (
+    SELECT jsonb_build_object('Host',slug||$7::text,'App',id,'Account',account_id) AS data
+    FROM apps WHERE slug LIKE 'tag-%' AND $7::text<>''
+      AND ($8::boolean OR account_id = ANY($4::uuid[]) OR slug = ANY($10::text[]))
+    ORDER BY slug LIMIT ($1::integer+1)
+), bounds AS (
+    SELECT (SELECT count(*) FROM domains)+(SELECT count(*) FROM tenants)+
+        (SELECT count(*) FROM aliases)+(SELECT count(*) FROM primaries) AS inputs,
+        (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM domains)+
+        (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM tenants)+
+        (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM aliases)+
+        (SELECT coalesce(sum(octet_length(data::text)+2),0) FROM primaries)+
+        octet_length(jsonb_build_object('Domains','[]'::jsonb,'Tenants','[]'::jsonb,'Aliases','[]'::jsonb,'Primaries','[]'::jsonb)::text) AS bytes
+)
+SELECT CASE WHEN inputs<=$1::integer AND bytes<=$2::bigint
+    THEN jsonb_build_object('Domains',(SELECT coalesce(jsonb_agg(data),'[]'::jsonb) FROM domains),
+        'Tenants',(SELECT coalesce(jsonb_agg(data),'[]'::jsonb) FROM tenants),
+        'Aliases',(SELECT coalesce(jsonb_agg(data),'[]'::jsonb) FROM aliases),
+        'Primaries',(SELECT coalesce(jsonb_agg(data),'[]'::jsonb) FROM primaries)) ELSE NULL::jsonb END::jsonb AS data,
+    inputs::bigint,bytes::bigint FROM bounds
+`
+
+type ReadTrafficBindingClaimsScopedParams struct {
+	MaxInputs   int32
+	MaxBytes    int64
+	Trees       []string
+	Accounts    []pgtype.UUID
+	Names       []string
+	AppID       pgtype.UUID
+	AppsSuffix  string
+	AllAppHosts bool
+	AliasApps   []pgtype.UUID
+	Slugs       []string
+}
+
+type ReadTrafficBindingClaimsScopedRow struct {
+	Data   []byte
+	Inputs int64
+	Bytes  int64
+}
+
+// The claims a scoped binding write can see (ADR-20261029190349 decision 3):
+// its accounts' claims and their redirects, the claims its hostnames name
+// (with their wildcard ancestors), and those inside its subtrees. Same shape
+// as ReadTrafficBindingClaims.
+func (q *Queries) ReadTrafficBindingClaimsScoped(ctx context.Context, db DBTX, arg ReadTrafficBindingClaimsScopedParams) (ReadTrafficBindingClaimsScopedRow, error) {
+	row := db.QueryRow(ctx, readTrafficBindingClaimsScoped,
+		arg.MaxInputs,
+		arg.MaxBytes,
+		arg.Trees,
+		arg.Accounts,
+		arg.Names,
+		arg.AppID,
+		arg.AppsSuffix,
+		arg.AllAppHosts,
+		arg.AliasApps,
+		arg.Slugs,
+	)
+	var i ReadTrafficBindingClaimsScopedRow
 	err := row.Scan(&i.Data, &i.Inputs, &i.Bytes)
 	return i, err
 }
@@ -86257,6 +86782,18 @@ func (q *Queries) ReadTrafficDomainClaims(ctx context.Context, db DBTX, arg Read
 	var i ReadTrafficDomainClaimsRow
 	err := row.Scan(&i.Data, &i.Inputs, &i.Bytes)
 	return i, err
+}
+
+const readTrafficEmptyScopeRoute = `-- name: ReadTrafficEmptyScopeRoute :one
+SELECT EXISTS (SELECT 1 FROM edge_rules WHERE enabled AND kind = 'route' AND match_host_scope = '')::boolean AS present
+`
+
+// Whether an enabled route can match every unclaimed hostname.
+func (q *Queries) ReadTrafficEmptyScopeRoute(ctx context.Context, db DBTX) (bool, error) {
+	row := db.QueryRow(ctx, readTrafficEmptyScopeRoute)
+	var present bool
+	err := row.Scan(&present)
+	return present, err
 }
 
 const readTrafficGlobalRouteAccounts = `-- name: ReadTrafficGlobalRouteAccounts :many
@@ -86456,16 +86993,33 @@ WITH environment_policies AS MATERIALIZED (
     WHERE a.account_id=$3::uuid AND a.status<>'deleted' AND a.visibility<>'internal'
       AND d.verified_at IS NOT NULL AND (d.environment_id IS NULL OR e.environment_id IS NOT NULL)
     ORDER BY d.domain LIMIT ($1::integer+1)
+), reservation_trees AS (
+    -- Reversed '.'||subtree: every name inside sorts in [low, low with its
+    -- final '.' raised to '/') under text_pattern_ops (ADR-20261029190349).
+    SELECT low, left(low, -1) || '/' AS high FROM unnest($10::text[]) AS t(low)
 ), reservations AS (
+    -- A NULL reservation_names reads every reservation in the fleet.
     SELECT data FROM (
         SELECT jsonb_build_object('Kind','primary','Host',slug||$8::text) AS data FROM apps
         WHERE $3::uuid IS NULL AND $8::text<>''
+          AND ($11::text[] IS NULL OR $12::boolean
+               OR slug = ANY($13::text[]))
         UNION ALL
         SELECT jsonb_build_object('Kind','domain','Host',domain) FROM custom_domains
         WHERE $3::uuid IS NULL
+          AND ($11::text[] IS NULL OR domain = ANY($11::text[]::citext[]))
+        UNION ALL
+        SELECT jsonb_build_object('Kind','domain','Host',d.domain) FROM custom_domains d JOIN reservation_trees r
+          ON reverse(lower(d.domain::text)) ~>=~ r.low AND reverse(lower(d.domain::text)) ~<~ r.high
+        WHERE $3::uuid IS NULL AND $11::text[] IS NOT NULL
         UNION ALL
         SELECT jsonb_build_object('Kind','tenant','Host',hostname) FROM tenant_hostnames
         WHERE $3::uuid IS NULL
+          AND ($11::text[] IS NULL OR hostname = ANY($11::text[]::citext[]))
+        UNION ALL
+        SELECT jsonb_build_object('Kind','tenant','Host',h.hostname) FROM tenant_hostnames h JOIN reservation_trees r
+          ON reverse(lower(h.hostname::text)) ~>=~ r.low AND reverse(lower(h.hostname::text)) ~<~ r.high
+        WHERE $3::uuid IS NULL AND $11::text[] IS NOT NULL
     ) claim ORDER BY data->>'Kind',data->>'Host' LIMIT ($1::integer+1)
 ), bounds AS (
     SELECT (SELECT count(*) FROM groups)+(SELECT count(*) FROM assets)+(SELECT count(*) FROM environments)+(SELECT count(*) FROM primary_hosts)+(SELECT count(*) FROM alias_hosts)+(SELECT count(*) FROM revision_hosts)+(SELECT count(*) FROM domain_hosts)+(SELECT count(*) FROM tenant_hosts)+(SELECT count(*) FROM reservations) AS inputs,
@@ -86506,6 +87060,10 @@ type ReadTrafficHostAnalysisParams struct {
 	Defaults             []byte
 	AppsSuffix           string
 	DeploySuffix         string
+	ReservationTrees     []string
+	ReservationNames     []string
+	ReservationAllApps   bool
+	ReservationSlugs     []string
 }
 
 type ReadTrafficHostAnalysisRow struct {
@@ -86526,6 +87084,10 @@ func (q *Queries) ReadTrafficHostAnalysis(ctx context.Context, db DBTX, arg Read
 		arg.Defaults,
 		arg.AppsSuffix,
 		arg.DeploySuffix,
+		arg.ReservationTrees,
+		arg.ReservationNames,
+		arg.ReservationAllApps,
+		arg.ReservationSlugs,
 	)
 	var i ReadTrafficHostAnalysisRow
 	err := row.Scan(&i.Data, &i.Inputs, &i.Bytes)
@@ -94325,21 +94887,29 @@ UPDATE deployments d SET status = CASE WHEN
     OR EXISTS(SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id=rm.release_id
         WHERE rm.deployment_id=d.id AND (rs.active OR rs.expires_at>now()))
     OR EXISTS(SELECT 1 FROM durable_work_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
-    THEN 'live' ELSE 'superseded' END, traffic_percent=0, traffic_percent_explicit=false
-WHERE d.app_id=$1::uuid AND d.scope=$2::text
-AND d.status='live' AND d.id<>$3::uuid
+    THEN 'live' ELSE 'superseded' END, traffic_percent=0, traffic_percent_explicit=false,
+    rollout_state = CASE WHEN d.canary_total_steps>0 AND COALESCE(NULLIF(d.rollout_state,''),'pending') IN ('pending','rolling_out')
+        THEN 'aborted' ELSE d.rollout_state END,
+    rollout_aborted_at = CASE WHEN d.canary_total_steps>0 AND COALESCE(NULLIF(d.rollout_state,''),'pending') IN ('pending','rolling_out')
+        THEN now() ELSE d.rollout_aborted_at END,
+    rollout_aborted_reason = CASE WHEN d.canary_total_steps>0 AND COALESCE(NULLIF(d.rollout_state,''),'pending') IN ('pending','rolling_out')
+        THEN 'superseded by deployment ' || ($1::uuid)::text ELSE d.rollout_aborted_reason END
+WHERE d.app_id=$2::uuid AND d.scope=$3::text
+AND d.status='live' AND d.id<>$1::uuid
 `
 
 type RetireLiveDeploymentSiblingsParams struct {
+	DeploymentID pgtype.UUID
 	AppID        pgtype.UUID
 	Scope        string
-	DeploymentID pgtype.UUID
 }
 
 // A retired sibling is a retained stable revision, not a manual dark
-// deployment, so it loses traffic_percent_explicit (Hunt 14 H14-71).
+// deployment, so it loses traffic_percent_explicit (Hunt 14 H14-71). A
+// retired canary that was still rolling out ends its rollout as aborted, so
+// it never reads as in flight again (ADR-20261030102813, Hunt 14 H14-112).
 func (q *Queries) RetireLiveDeploymentSiblings(ctx context.Context, db DBTX, arg RetireLiveDeploymentSiblingsParams) (int64, error) {
-	result, err := db.Exec(ctx, retireLiveDeploymentSiblings, arg.AppID, arg.Scope, arg.DeploymentID)
+	result, err := db.Exec(ctx, retireLiveDeploymentSiblings, arg.DeploymentID, arg.AppID, arg.Scope)
 	if err != nil {
 		return 0, err
 	}
@@ -99894,6 +100464,58 @@ func (q *Queries) SupersedeEnvironmentGitOpsRuns(ctx context.Context, db DBTX, a
 	return err
 }
 
+const supersedeInFlightCanarySiblings = `-- name: SupersedeInFlightCanarySiblings :many
+UPDATE deployments d SET status = CASE WHEN
+    EXISTS(SELECT 1 FROM deployment_revision_pins p WHERE p.deployment_id=d.id AND p.expires_at>now())
+    OR EXISTS(SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id=rm.release_id
+        WHERE rm.deployment_id=d.id AND (rs.active OR rs.expires_at>now()))
+    OR EXISTS(SELECT 1 FROM durable_work_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
+    THEN 'live' ELSE 'superseded' END, traffic_percent=0, traffic_percent_explicit=false,
+    rollout_state='aborted', rollout_aborted_at=$1::timestamptz,
+    rollout_aborted_reason='superseded by deployment ' || ($2::uuid)::text
+WHERE d.app_id=$3::uuid AND d.scope=$4::text
+AND d.status='live' AND d.id<>$2::uuid
+AND d.canary_total_steps>0 AND COALESCE(NULLIF(d.rollout_state,''),'pending') IN ('pending','rolling_out')
+RETURNING d.id
+`
+
+type SupersedeInFlightCanarySiblingsParams struct {
+	AbortedAt    pgtype.Timestamptz
+	DeploymentID pgtype.UUID
+	AppID        pgtype.UUID
+	Scope        string
+}
+
+// A newer canary replaces one still rolling out in its scope
+// (ADR-20261030102813, Hunt 14 H14-112). The older canary leaves traffic
+// and ends its rollout as aborted, so the newer canary has one serving
+// predecessor to be judged against. A retained revision stays live at 0%,
+// as in RetireLiveDeploymentSiblings.
+func (q *Queries) SupersedeInFlightCanarySiblings(ctx context.Context, db DBTX, arg SupersedeInFlightCanarySiblingsParams) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, supersedeInFlightCanarySiblings,
+		arg.AbortedAt,
+		arg.DeploymentID,
+		arg.AppID,
+		arg.Scope,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const supersedeTriggerRecordItems = `-- name: SupersedeTriggerRecordItems :execrows
 UPDATE trigger_records
    SET state = 'superseded', last_error = $1,
@@ -103168,6 +103790,45 @@ func (q *Queries) WithdrawCloneCheckpointPgPublication(ctx context.Context, db D
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const withdrawProjectEnvironmentCloneTargetBindingSecrets = `-- name: WithdrawProjectEnvironmentCloneTargetBindingSecrets :exec
+DELETE FROM app_secrets s
+USING project_environment_clone_postgres_bindings c
+WHERE c.operation_id = $1::uuid AND s.managed_postgres_binding_id = c.target_binding_id
+    AND s.scope = $2::text
+`
+
+type WithdrawProjectEnvironmentCloneTargetBindingSecretsParams struct {
+	OperationID pgtype.UUID
+	Environment string
+}
+
+// Compensation withdraws the target bindings a clone prepared. Their provider
+// credentials live in the clone's own target database, which is deleted next.
+func (q *Queries) WithdrawProjectEnvironmentCloneTargetBindingSecrets(ctx context.Context, db DBTX, arg WithdrawProjectEnvironmentCloneTargetBindingSecretsParams) error {
+	_, err := db.Exec(ctx, withdrawProjectEnvironmentCloneTargetBindingSecrets, arg.OperationID, arg.Environment)
+	return err
+}
+
+const withdrawProjectEnvironmentCloneTargetBindings = `-- name: WithdrawProjectEnvironmentCloneTargetBindings :exec
+UPDATE managed_postgres_bindings b SET state = 'deleted', last_error_code = NULL, lease_token = NULL, lease_until = NULL,
+    rotation_previous_generation = NULL, rotation_wake_id = NULL, rotation_cleanup_ready = false,
+    attempt_count = 0, retry_at = clock_timestamp(), updated_at = clock_timestamp(), deleted_at = clock_timestamp()
+FROM project_environment_clone_postgres_bindings c
+WHERE c.operation_id = $1::uuid AND b.id = c.target_binding_id
+    AND b.scope = $2::text AND b.state <> 'deleted'
+    AND NOT EXISTS (SELECT 1 FROM app_secrets s WHERE s.managed_postgres_binding_id = b.id)
+`
+
+type WithdrawProjectEnvironmentCloneTargetBindingsParams struct {
+	OperationID pgtype.UUID
+	Environment string
+}
+
+func (q *Queries) WithdrawProjectEnvironmentCloneTargetBindings(ctx context.Context, db DBTX, arg WithdrawProjectEnvironmentCloneTargetBindingsParams) error {
+	_, err := db.Exec(ctx, withdrawProjectEnvironmentCloneTargetBindings, arg.OperationID, arg.Environment)
+	return err
 }
 
 const workerAdmissionCount = `-- name: WorkerAdmissionCount :one
