@@ -439,6 +439,9 @@ func TestScheddRouter_WatchNodeChanges_EvictsOnPayload(t *testing.T) {
 		defer close(done)
 		r.WatchNodeChanges(ctx, nil, fake.Subscribe)
 	}()
+	// The watcher must be gone before the test returns: an Evict still in
+	// flight reads scheddRouterCloseGrace, which other tests set.
+	defer func() { cancel(); <-done }()
 
 	// Send a payload that mirrors the trigger payload from
 	// pkg/db/notify.go:248-250 — the wire contract the router
@@ -504,6 +507,9 @@ func TestScheddRouter_WatchNodeChanges_MalformedPayloadDropped(t *testing.T) {
 		defer close(done)
 		r.WatchNodeChanges(ctx, nil, fake.Subscribe)
 	}()
+	// The watcher must be gone before the test returns: an Evict still in
+	// flight reads scheddRouterCloseGrace, which other tests set.
+	defer func() { cancel(); <-done }()
 
 	// Three flavours of malformed payload — none must trigger
 	// Evict. The router's defensive drop (scheddrouter.go:309-311)

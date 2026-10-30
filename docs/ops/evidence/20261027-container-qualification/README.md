@@ -69,3 +69,34 @@ The cause was that the gateway's deployment-routed wake and the raw TCP/UDP edge
 | `TestAfterRestoreMetal` first wake 503 "wake failed" (one of three runs) | Unknown: the gateway refused it in 17 ms and logged no cause | #5748 now logs the cause of such a wake | did not recur |
 
 Re-runs used revisions `1380fa85c0`, `92961f1c5a` and `92514a2b61` (main plus the open fix) in `/mnt/e2e-scratch/cq-rerun-20261027`. Leakcheck was clean on all three. The #5611 re-run used main `c2d9c248c6` in `/mnt/e2e-scratch/cq-rerun-20261028`, attempt 1, with leakcheck clean.
+
+## Remaining gates on the shared test host (2026-10-28/29, main `bd5c7e719b`)
+
+These runs tried the remaining container gates on `gregale-internal-test-1`. It is still a nested 2-vCPU host, so none of this is native acceptance. Other sessions' Go builds and unit tests do not take the acceptance lock, and they compete for its CPU and scratch disk during a run. The harness checks for a quiet host only before it waits for the lock.
+
+### Containers lane, image runs and lifecycle (`/mnt/e2e-scratch/cq-ga-20261028`)
+
+- **Attempt 1 is invalid.** The run started 2 h after its quiet check, with 14.7 GB of scratch free, below builderd's 20 GiB build-drive floor. Every source build was refused with `insufficient host free space for build drive`. Its image-run phase is valid: `TestImageRunsMetal`, `TestImageRunProcessMetal`, `TestJobTaskLiveOutputMetal` and `TestInteractiveImageRunMetal` all PASS.
+- **Attempt 2 is invalid.** CPU pressure was 93% (load 9.4) from other sessions. Builds reached the 15-minute ceiling with no build log, and 19 of 21 tests failed. Two builder VMs it leaked were reaped later.
+- **Attempt 3:** 9 of 21 pass, with leakcheck clean.
+  - **PASS:** `TestInteractiveAppTaskMetal`, `TestDirectOCIFullRootfsMetal`, `TestDirectOCIMainHealthcheckWithCompanionMetal`, `TestDirectOCIPort3000Metal`, `TestE2E_Streaming_Metal_QuotaNonCounting`, `TestTCPIngressMetal`, `TestUDPIngressMetal` and `TestSourceDeployWakeMetal`.
+  - **Host speed:** deployments sat in `imaging` past their 75 s deadlines (`ProcessContract`, `MainHealthcheck`, both §11 fences, `TxBytesAccuracy`, `BeforeCheckpoint`). Streaming TTFB was 2.7 s and 3.0 s against a 1 s ceiling. `TestDeployHealthcheckMetal` missed its 90 s park deadline.
+  - **Builder egress:** `TestAfterRestoreMetal`'s builder VM timed out resolving `ghcr.io` through 1.1.1.1 while pulling the platform base image, and no layer downloaded. The log has four such DNS timeouts. The host itself resolved and reached `ghcr.io` in 80 ms, and its NAT and forward rules for `10.100.0.0/16` were in place.
+  - **Test bug:** `TestDirectOCIAutoscaleScaleToZeroMetal` went live, then its anonymous request got 401. A Pro app keeps bearer public auth under `require_authn: false`. #5985 fixes it and `TestDeployHealthcheckMetal`'s same setup.
+
+### Companion and fcvm lifecycle (`run-native-metal-smoke.sh`)
+
+The host carries `/etc/faas/builder-acceptance-host` and has no faas services, so the CI runner was used as written, with this host's kernel (6.1.134) and Firecracker (1.7.0).
+
+- **Attempt 1 is invalid.** The runner does not park another session's native ownership journal (`/srv/fc/jail/.native-processes`), so every metal manager refused to start (`existing ownership journal requires native_process_recovery`).
+- **Attempt 2** used a copy of the runner that parks the journal the way the cmd/e2e harness does. Result: 1,644 passed, 90 skipped and 28 failed, and the final leakcheck failed.
+  - The first failures are `unmount owned image: exit status 32` during teardown. `umountRetryBusy` gives up after 1 s (`pkg/fcvm/umount_retry.go`), while a killed VM's drive stays busy until its process exits.
+  - The leaked mounts then fail every later test's own leakcheck, including all five companion tests. The companion gate is therefore not qualified.
+  - Eight leaked jail chroots (1.9 GB of tmpfs, 24 bind mounts) were removed by hand afterwards, and leakcheck was then clean.
+  - `TestMetalOperatorParkCapture` failed because the run's `TMPDIR` pointed outside `/tmp`. That is a harness difference, not a product failure.
+
+### Findings
+
+- **Build failure blamed on the user.** builderd classified the builder's DNS failure fetching the platform's own base image as `failure_class: user_error`. A platform network failure should not be reported to the customer as their build error.
+- **Slow teardown leaks mounts.** A 1 s unmount budget leaks a VM's bind mounts and jail whenever process exit is slow. A loaded node can hit this too.
+- **Harness gap.** The `cq-ga-20261028` copy of `cq2.sh` now re-checks scratch and root free space after taking the lock (`DISK_LOW_AFTER_LOCK`). Nothing can stop other sessions' unlocked builds from starving a run mid-way.
