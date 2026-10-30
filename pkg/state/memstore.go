@@ -7252,7 +7252,8 @@ func (m *MemStore) restoreAppLocked(ctx context.Context, id string, limits api.L
 	if !ok {
 		return App{}, ErrNotFound
 	}
-	if _, claimed := m.appDeletionClaims[id]; claimed || a.Status != AppDeleted || a.DeleteGraceUntil == nil || !a.DeleteGraceUntil.After(time.Now()) {
+	if _, claimed := m.appDeletionClaims[id]; claimed || a.Status != AppDeleted || a.DeleteGraceUntil == nil || !a.DeleteGraceUntil.After(time.Now()) ||
+		previewTornDown(a) {
 		return App{}, ErrConflict
 	}
 	if err := m.checkAppQuotaLocked(a, limits); err != nil {
@@ -7815,8 +7816,34 @@ func (m *MemStore) DeleteGithubInstallBinding(_ context.Context, appID string) e
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, ok := m.apps[appID]; !ok {
+	parent, ok := m.apps[appID]
+	if !ok {
 		return ErrNotFound
+	}
+	// Mirrors PgStore: the app's PR preview environments go stale.
+	anchors := make(map[string]string)
+	for _, set := range m.previewSets {
+		if root, ok := m.apps[set.RootAppID]; ok {
+			for _, id := range set.MemberAppIDs {
+				anchors[id] = root.PreviewOfSlug
+			}
+		}
+	}
+	now := time.Now()
+	for id, preview := range m.apps {
+		if preview.AccountID != parent.AccountID || preview.PreviewOfSlug == "" || preview.PreviewPrNumber <= 0 ||
+			preview.Status == AppDeleted || preview.PreviewPrState == PreviewPrStateTearingDown || preview.PreviewPrState == PreviewPrStateTornDown {
+			continue
+		}
+		anchor, inSet := anchors[id]
+		if !inSet {
+			anchor = preview.PreviewOfSlug
+		}
+		if anchor == parent.Slug {
+			preview.PreviewPrState = PreviewPrStateStale
+			preview.PreviewExpiresAt = &now
+			m.apps[id] = preview
+		}
 	}
 	delete(m.githubBindings, appID)
 	return nil

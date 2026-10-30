@@ -4778,6 +4778,9 @@ func restoreAppTx(ctx context.Context, tx pgx.Tx, id string, limits api.Limits) 
 		}
 		return App{}, mapErr(err)
 	}
+	if previewTornDown(tomb) {
+		return App{}, ErrConflict
+	}
 	// A restored app counts against the deployed-app quota like a new
 	// one. Without the check, delete → create → restore gave any plan an
 	// unlimited number of live apps.
@@ -4798,6 +4801,7 @@ func restoreAppTx(ctx context.Context, tx pgx.Tx, id string, limits api.Limits) 
 		   and status = 'deleted'
 		   and delete_grace_until > now()
 		   and purge_claimed_at is null
+		   and not (preview_of_slug is not null and coalesce(preview_pr_state, '') in ('tearing_down', 'torn_down'))
 		 returning `+appsSelectColumns, id)
 	if err := scanAppInto(&a, row); err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -6468,11 +6472,44 @@ func (s *PgStore) UpsertGithubInstallBinding(ctx context.Context, b GitHubBindin
 // dashboard's "unbind" action is safe to retry. Returns ErrNotFound
 // when the app row itself is missing — the caller can distinguish
 // "not bound" from "app not found".
+//
+// The app's PR preview environments go stale in the same transaction, as on
+// an installation revoke: without the binding no close event reaches them,
+// so they served PR code to the end of their lease.
 func (s *PgStore) DeleteGithubInstallBinding(ctx context.Context, appID string) error {
 	if appID == "" {
 		return ErrNotFound
 	}
-	tag, err := s.pool.Exec(ctx,
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("state: begin GitHub unbind: %w", err)
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }() //nolint:errcheck // no-op after Commit
+	// An environment belongs to its root's production app, the anchor the
+	// orphan sweep uses (MarkOrphanedPRPreviewsForTeardown).
+	if _, err := tx.Exec(ctx, `
+		update apps set preview_pr_state = $2, preview_expires_at = now()
+		 where id in (
+		   select p.id
+		     from apps p
+		     join apps parent on parent.id = $1 and parent.account_id = p.account_id
+		     left join lateral (
+		       select root.preview_of_slug as anchor
+		         from pr_preview_sets s
+		         join apps root on root.id = s.root_app_id
+		        where s.root_app_id = p.id or p.id::text = any(s.member_app_ids)
+		        order by s.updated_at desc
+		        limit 1
+		     ) env on true
+		    where p.preview_of_slug is not null
+		      and coalesce(p.preview_pr_number, 0) > 0
+		      and p.status <> 'deleted'
+		      and coalesce(p.preview_pr_state, '') not in ($3, $4)
+		      and coalesce(env.anchor, p.preview_of_slug) = parent.slug)`,
+		appID, PreviewPrStateStale, PreviewPrStateTearingDown, PreviewPrStateTornDown); err != nil {
+		return fmt.Errorf("state: mark unbound app's PR previews stale: %w", err)
+	}
+	tag, err := tx.Exec(ctx,
 		`update apps
 		 set github_install_id = null,
 		     github_repo_full_name = null,
@@ -6490,6 +6527,9 @@ func (s *PgStore) DeleteGithubInstallBinding(ctx context.Context, appID string) 
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("state: commit GitHub unbind: %w", err)
 	}
 	return nil
 }

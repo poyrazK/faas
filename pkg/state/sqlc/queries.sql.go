@@ -259,6 +259,7 @@ SELECT id::text AS id, slug, deleted_at, delete_grace_until,
 FROM apps
 WHERE account_id = $1::text::uuid
   AND id = $2::text::uuid AND status = 'deleted'
+  AND NOT (preview_of_slug IS NOT NULL AND coalesce(preview_pr_state, '') IN ('tearing_down', 'torn_down'))
 `
 
 type AccountDeletedAppByIDParams struct {
@@ -40714,6 +40715,8 @@ SELECT id::text AS id, slug, deleted_at, delete_grace_until,
        (purge_claimed_at IS NOT NULL)::boolean AS purge_started
 FROM apps
 WHERE account_id = $1::text::uuid AND status = 'deleted'
+  -- A torn-down preview is not restorable (previewTornDown).
+  AND NOT (preview_of_slug IS NOT NULL AND coalesce(preview_pr_state, '') IN ('tearing_down', 'torn_down'))
   AND ($2::text = '' OR
        (coalesce(deleted_at, created_at), id::text) <
        ($3::timestamptz, $2::text))

@@ -75,7 +75,14 @@ used, whatever branch the PR targets. Any production branch works (`main`,
 | **Torn down** | App row tombstoned, instances reaped, snapshot freed. The URL returns `404`, the PR's GitHub deployment turns inactive, and the status comment says the preview is gone. |
 
 A reopened PR during the grace period bumps the row back to
-**Open** and the URL starts serving again on the next push.
+**Open**. If the preview is still serving the PR's head, it is reopened in
+place without a rebuild; otherwise the reopened head is built.
+
+A torn-down preview cannot be restored with `gregale app restore`; push a
+commit to the open pull request to get a new one. Deleting a preview app
+(`DELETE /v1/apps/{slug}`) tears down its whole PR environment, like
+`gregale preview delete`. Disconnecting the repository from its app tears down
+that app's PR previews, as uninstalling the GitHub App does.
 
 Renaming the production app keeps its open previews serving at their
 `pr-<N>-<old-name>` URLs; the PR's next push moves each to
@@ -230,6 +237,13 @@ projects previously backfilled to `allow_marked` are migrated to `deny` and
 must explicitly opt in again if production calls are intended. Previews are
 enabled by default, with a 7-day TTL, no ignored paths, and the repository root.
 
+`preview_bot_prs` (default off) and `preview_draft_prs` (default on) decide
+whether pull requests opened by bots such as Dependabot and Renovate, and draft
+pull requests, get previews. The PR's author decides, not whoever pushed to it.
+A skipped pull request gets a neutral `gregale-preview` check that says why;
+with draft previews off, a draft gets its preview when it is marked ready for
+review. Closing a pull request always tears its preview down.
+
 When all changed files match ignored paths, githubd records the delivery as a
 successful no-op and does not enqueue builds. The same holds for a push to a
 pull request whose preview is live: the preview keeps serving its last built
@@ -244,7 +258,8 @@ From a checkout, `gregale github setup <slug> --repo OWNER/NAME` binds the
 application, writes `.github/workflows/gregale.yml`, selects Actions as the
 single production push deploy owner, and sets preview-to-production service
 calls to `deny`. The GitHub App continues to own PR previews. Add `--preview`,
-`--no-preview`,
+`--no-preview`, `--preview-bots`/`--no-preview-bots`,
+`--preview-drafts`/`--no-preview-drafts`,
 `--preview-ttl-hours`, `--preview-service-policy deny|allow_marked`,
 `--root-dir`, or `--ignore` to configure the project policy in the same
 command. Use `--rollout safe` to generate a production
@@ -355,7 +370,11 @@ Gregale does not provision isolated databases or buckets for the PR.
 
 ## Configuration
 
-A preview gets configuration from two places
+Every PR preview runs with `GREGALE_PREVIEW=1`, `GREGALE_PR_NUMBER`,
+`GREGALE_GIT_BRANCH` and `GREGALE_GIT_COMMIT`, refreshed on every push, so app
+code can tell a preview from production.
+
+A preview gets the rest of its configuration from two places
 ([ADR-20261028090000](adr/20261028090000-preview-configuration.md)):
 
 - **The pull request's Compose values.** When the Compose file opts in with
