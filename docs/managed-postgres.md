@@ -415,7 +415,11 @@ gregale postgres capabilities --region eu-central-1 --json
 ```
 
 The versioned response lists PostgreSQL versions, service classes, access modes,
-availability, pooling, scale-to-zero and restore/storage limits. It exposes no
+availability, pooling, scale-to-zero and restore/storage limits. PostgreSQL 14 is
+retiring: it reaches upstream end of life in November 2026 and Neon has no
+in-place major upgrade. Existing PostgreSQL 14 databases keep restore, resize
+and maintenance, but a new database is refused with `422 managed_postgres_unsupported`, naming the
+offered versions, and discovery no longer lists 14. It exposes no
 backend identity, credentials or provider costs. `provisioning_enabled` describes
 the qualification/canary gate separately from configured support; usage, budget
 and current quota admission are checked when reserving a resource. Discovery
