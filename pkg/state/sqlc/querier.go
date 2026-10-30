@@ -4406,12 +4406,28 @@ type Querier interface {
 	ObjectDeletionKeyReadiness(ctx context.Context, db DBTX, arg ObjectDeletionKeyReadinessParams) (ObjectDeletionKeyReadinessRow, error)
 	ObjectDeletionSave(ctx context.Context, db DBTX, arg ObjectDeletionSaveParams) error
 	ObjectGatewayUploadInsert(ctx context.Context, db DBTX, arg ObjectGatewayUploadInsertParams) (ObjectUploadCompletion, error)
-	ObjectInventoriesDue(ctx context.Context, db DBTX, limit int32) ([]ObjectBucket, error)
+	// A bucket whose listing is unfinished is due at once (ADR-20261030100835).
+	ObjectInventoriesDue(ctx context.Context, db DBTX, arg ObjectInventoriesDueParams) ([]ObjectBucket, error)
 	ObjectInventoryClaim(ctx context.Context, db DBTX, arg ObjectInventoryClaimParams) (int64, error)
 	ObjectInventoryFinish(ctx context.Context, db DBTX, arg ObjectInventoryFinishParams) (int64, error)
 	// Give up a claim without publishing; attempt_at keeps the retry cadence.
 	ObjectInventoryRelease(ctx context.Context, db DBTX, arg ObjectInventoryReleaseParams) (int64, error)
 	ObjectInventorySample(ctx context.Context, db DBTX, arg ObjectInventorySampleParams) error
+	// A claim that starts or publishes a listing makes new deletions yield.
+	ObjectInventoryScanAttempt(ctx context.Context, db DBTX, arg ObjectInventoryScanAttemptParams) (int64, error)
+	ObjectInventoryScanCheckpoint(ctx context.Context, db DBTX, arg ObjectInventoryScanCheckpointParams) (int64, error)
+	// ObjectInventoryClaim without a new attempt time: a claim that continues a
+	// listing keeps it, so deletions do not yield to it (ADR-20261030100835).
+	ObjectInventoryScanClaim(ctx context.Context, db DBTX, arg ObjectInventoryScanClaimParams) (int64, error)
+	ObjectInventoryScanDelete(ctx context.Context, db DBTX, bucketID pgtype.UUID) error
+	// ObjectInventoryFinish for a listing that may have spanned several attempts:
+	// it is observed as of the listing's start and never replaces a newer
+	// observation.
+	ObjectInventoryScanFinish(ctx context.Context, db DBTX, arg ObjectInventoryScanFinishParams) (int64, error)
+	// Claim, checkpoint and finish lock the bucket's usage row before its scan
+	// row (ADR-20261030100835).
+	ObjectInventoryScanGet(ctx context.Context, db DBTX, bucketID pgtype.UUID) (ObjectInventoryScanGetRow, error)
+	ObjectInventoryScanStart(ctx context.Context, db DBTX, bucketID pgtype.UUID) (ObjectStorageInventoryScan, error)
 	// A lifecycle scan pauses only for its own unsettled deletions and for a
 	// version protection job in its bucket (ADR-20261025115958).
 	ObjectLifecycleDeletionActive(ctx context.Context, db DBTX, arg ObjectLifecycleDeletionActiveParams) (bool, error)
