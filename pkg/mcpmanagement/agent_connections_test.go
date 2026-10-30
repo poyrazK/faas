@@ -18,7 +18,9 @@ const nativeKey = "fp_test_alice_remote_key"
 
 func browserService(t *testing.T, options HTTPOptions) (*remoteFixture, *remoteServer) {
 	t.Helper()
+	// The state store carries the fixture's registered client to the service.
 	options.Onboarding = "browser"
+	options.StateStore, _, _ = testStateStore(t)
 	f := newRemoteFixtureWithOptions(t, false, options)
 	service, err := NewHTTPService(f.opts)
 	if err != nil {

@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AgentClientRequest } from '../models/AgentClientRequest.js';
+import type { AgentConnectionsResponse } from '../models/AgentConnectionsResponse.js';
+import type { AgentConnectionsRevokeAllResponse } from '../models/AgentConnectionsRevokeAllResponse.js';
 import type { APIKeyResponse } from '../models/APIKeyResponse.js';
 import type { CreateKeyRequest } from '../models/CreateKeyRequest.js';
 import type { CreateOrgAPIKeyRequest } from '../models/CreateOrgAPIKeyRequest.js';
@@ -86,6 +89,146 @@ export class KeysService {
       },
       errors: {
         401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * List the agents connected to the account.
+   * The account's connected agents (ADR-20261030133644), newest first:
+   * hosted MCP sign-ins, whose `mcp-login` keys the hosted MCP server
+   * holds, and API keys with the `agent` scope. Only keys that still work
+   * are listed. A hosted sign-in shows the client name its consent page
+   * showed and the site the client was verified at, when known.
+   *
+   * @returns AgentConnectionsResponse The connected agents.
+   * @throws ApiError
+   */
+  public static listAgentConnections(): CancelablePromise<AgentConnectionsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/agent-connections',
+      errors: {
+        401: `code: unauthorized`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Revoke every agent connected to the account.
+   * Revokes the API key of every connected agent; each must sign in
+   * again. Needs an admin credential. Audits `key.revoked` with reason
+   * `agent_disconnected` for each key and `agent_connections.revoke_all`
+   * with the count.
+   *
+   * @returns AgentConnectionsRevokeAllResponse How many connections were revoked.
+   * @throws ApiError
+   */
+  public static revokeAllAgentConnections(): CancelablePromise<AgentConnectionsRevokeAllResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/agent-connections/revoke_all',
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Name the client of the calling hosted MCP key.
+   * Called by the hosted MCP server after a browser sign-in, with the
+   * connection's own `mcp-login` key. Any other credential is refused.
+   * The first name wins.
+   *
+   * @returns void
+   * @throws ApiError
+   */
+  public static nameAgentClient({
+    requestBody,
+  }: {
+    requestBody: AgentClientRequest,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/agent-connections/self',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Revoke the calling hosted MCP key.
+   * Called by the hosted MCP server when a connection ends (consent
+   * denied, or the connection revoked or expired), with that connection's
+   * own `mcp-login` key. Any other credential is refused.
+   *
+   * @returns void
+   * @throws ApiError
+   */
+  public static disconnectAgent(): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/agent-connections/self',
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Revoke one connected agent.
+   * Revokes the agent's API key; the agent must sign in again. Needs an
+   * admin credential. Revoking it again succeeds; an id that is not one of
+   * the account's connected agents is 404.
+   *
+   * @returns void
+   * @throws ApiError
+   */
+  public static revokeAgentConnection({
+    id,
+  }: {
+    /**
+     * The connected agent's API key id.
+     */
+    id: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/agent-connections/{id}',
+      path: {
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
