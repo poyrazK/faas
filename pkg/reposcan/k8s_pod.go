@@ -27,7 +27,6 @@ const k8sDefaultContainerAnnotation = "kubectl.kubernetes.io/default-container"
 const (
 	k8sPlacementReason = "the scheduler places instances"
 	k8sLivenessReason  = "an instance whose healthcheck fails after it was ready is replaced; a separate liveness check is not used, because a strict one is the usual cause of restart loops"
-	k8sHTTPProbeReason = "HTTP and gRPC readiness from Kubernetes manifests are not applied yet; the platform waits for the serving port"
 )
 
 var k8sPodAppliedKeys = map[string]bool{
@@ -65,7 +64,7 @@ var k8sPodKeyReasons = map[string]string{
 var k8sContainerAppliedKeys = map[string]bool{
 	"name": true, "image": true, "command": true, "args": true, "env": true, "ports": true,
 	"workingDir": true, "resources": true, "readinessProbe": true, "startupProbe": true,
-	"securityContext": true,
+	"securityContext": true, "envFrom": true,
 }
 
 var k8sContainerHarmlessKeys = map[string]bool{
@@ -75,7 +74,6 @@ var k8sContainerHarmlessKeys = map[string]bool{
 
 var k8sContainerKeyReasons = map[string]string{
 	"livenessProbe": k8sLivenessReason,
-	"envFrom":       "ConfigMap and Secret values are not imported; set them with `gregale env set`",
 	"volumeMounts":  composeVolumesReason,
 	"lifecycle":     "lifecycle hooks are not run; terminationGracePeriodSeconds sets how long shutdown may take",
 }
@@ -138,11 +136,15 @@ func applyK8sPodTemplate(s *workloadSeed, doc *yaml.Node, kind string, container
 	s.resources = resources
 	warnings = append(warnings, resourceWarnings...)
 
-	healthcheck, probeWarnings, err := k8sHealthcheck(container)
+	servingPort := 0
+	if len(s.ports) > 0 {
+		servingPort = s.ports[0]
+	}
+	healthcheck, readiness, probeWarnings, err := k8sHealthcheck(container, servingPort)
 	if err != nil {
 		return nil, err
 	}
-	s.healthcheck = healthcheck
+	s.healthcheck, s.readinessCheck = healthcheck, readiness
 	warnings = append(warnings, probeWarnings...)
 
 	warnings = append(warnings, k8sEnvRefs(s, container)...)
@@ -319,63 +321,148 @@ const (
 	k8sProbeFailures = 3
 )
 
-// k8sHealthcheck turns the first exec probe of readinessProbe and
-// startupProbe into the app's healthcheck, which gates readiness (ADR-683)
-// and replaces an instance that fails after it was ready (ADR-684). A
-// startupProbe's whole budget becomes the start period, during which
+// k8sHealthcheck turns the readinessProbe, or the startupProbe when there is
+// no readiness probe, into the app's healthcheck. An exec probe becomes the
+// image healthcheck, which gates readiness (ADR-683) and replaces an instance
+// that fails after it was ready (ADR-684). An httpGet or grpc probe becomes
+// the deployment's startup probe, which gates readiness on the serving port.
+// A startupProbe's whole budget becomes the start period, during which
 // failures do not count.
-func k8sHealthcheck(container map[string]any) (*api.ComposeHealthcheck, []string, error) {
+func k8sHealthcheck(container map[string]any, servingPort int) (*api.ComposeHealthcheck, *api.DeploymentHealthcheck, []string, error) {
 	var (
-		check    *api.ComposeHealthcheck
-		warnings []string
+		name, handler string
+		fields        map[string]any
+		warnings      []string
 	)
 	readiness, startup := k8sMap(container, "readinessProbe"), k8sMap(container, "startupProbe")
 	for _, probe := range []struct {
 		name   string
 		fields map[string]any
 	}{{"readinessProbe", readiness}, {"startupProbe", startup}} {
-		if probe.fields == nil {
-			continue
-		}
-		for _, handler := range []string{"httpGet", "grpc"} {
-			if probe.fields[handler] != nil {
-				warnings = append(warnings, fmt.Sprintf("%s.%s ignored: %s", probe.name, handler, k8sHTTPProbeReason))
-			}
-		}
-		if probe.fields["tcpSocket"] != nil {
+		kind := k8sProbeHandler(probe.fields)
+		switch {
+		case kind == "":
+		case kind == "tcpSocket":
 			warnings = append(warnings, probe.name+".tcpSocket ignored: the platform already waits for the serving port")
+		case fields != nil:
+			warnings = append(warnings, fmt.Sprintf("%s.%s ignored: %s is the healthcheck, and %s sets only how long it may take to pass", probe.name, kind, name, probe.name))
+		default:
+			name, handler, fields = probe.name, kind, probe.fields
 		}
-		command, ok := k8sStrings(k8sMap(probe.fields, "exec")["command"])
-		if !ok || check != nil {
-			continue
-		}
-		timing, err := k8sProbeTiming(probe.name, probe.fields)
+	}
+	if fields == nil {
+		return nil, nil, warnings, nil
+	}
+	timing, err := k8sProbeTiming(name, fields)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	startPeriod := timing.delay
+	if startup != nil {
+		budget, err := k8sProbeTiming("startupProbe", startup)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
-		check = &api.ComposeHealthcheck{
+		startPeriod = max(startPeriod, budget.delay+budget.failures*budget.period)
+	}
+	if handler == "exec" {
+		command, ok := k8sStrings(k8sMap(fields, "exec")["command"])
+		if !ok || len(command) == 0 {
+			return nil, nil, nil, fmt.Errorf("%s.exec.command must be a list of strings", name)
+		}
+		check := &api.ComposeHealthcheck{
 			Test:          append([]string{"CMD"}, command...),
 			IntervalNS:    int64(timing.period) * int64(time.Second),
 			TimeoutNS:     int64(timing.timeout) * int64(time.Second),
-			StartPeriodNS: int64(timing.delay) * int64(time.Second),
+			StartPeriodNS: int64(startPeriod) * int64(time.Second),
 			Retries:       timing.failures,
 		}
-	}
-	if check == nil {
-		return nil, warnings, nil
-	}
-	if startup != nil {
-		timing, err := k8sProbeTiming("startupProbe", startup)
-		if err != nil {
-			return nil, nil, err
+		if err := check.Validate(); err != nil {
+			return nil, nil, nil, err
 		}
-		budget := int64(timing.delay+timing.failures*timing.period) * int64(time.Second)
-		check.StartPeriodNS = max(check.StartPeriodNS, budget)
+		return check, nil, warnings, nil
 	}
-	if err := check.Validate(); err != nil {
+	probe, probeWarnings, err := k8sNetworkProbe(name, handler, container, k8sMap(fields, handler), servingPort)
+	warnings = append(warnings, probeWarnings...)
+	if err != nil || probe == nil {
+		return nil, nil, warnings, err
+	}
+	probe.IntervalS, probe.TimeoutS, probe.Retries, probe.StartPeriodS = timing.period, timing.timeout, timing.failures, startPeriod
+	if name == "readinessProbe" {
+		warnings = append(warnings, fmt.Sprintf("readinessProbe.%s: an instance that fails it after it was ready is replaced, not taken out of traffic", handler))
+	}
+	if problem := (&api.CreateDeploymentOverrides{Healthcheck: probe}).Validate(api.Limits{}); problem != nil {
+		return nil, nil, nil, fmt.Errorf("%s: %s", name, problem.Detail)
+	}
+	return nil, probe, warnings, nil
+}
+
+// k8sProbeHandler is the action a probe declares; Kubernetes allows one.
+func k8sProbeHandler(probe map[string]any) string {
+	for _, handler := range []string{"exec", "httpGet", "grpc", "tcpSocket"} {
+		if probe[handler] != nil {
+			return handler
+		}
+	}
+	return ""
+}
+
+// k8sNetworkProbe maps an httpGet or grpc probe onto the deployment's startup
+// probe. The platform checks the serving port over plain HTTP or gRPC from
+// inside the VM's network, so a probe of another port or over HTTPS is
+// reported instead of applied: applying it would check something else.
+func k8sNetworkProbe(name, handler string, container, action map[string]any, servingPort int) (*api.DeploymentHealthcheck, []string, error) {
+	field := name + "." + handler
+	port, err := k8sProbePort(field, container, action["port"])
+	if err != nil {
 		return nil, nil, err
 	}
-	return check, warnings, nil
+	if servingPort != 0 && port != servingPort {
+		return nil, []string{fmt.Sprintf("%s ignored: it checks port %d, and the platform checks the serving port %d", field, port, servingPort)}, nil
+	}
+	if handler == "grpc" {
+		service, _ := action["service"].(string)
+		return &api.DeploymentHealthcheck{GRPC: &api.DeploymentGRPCHealthcheck{Service: service}}, nil, nil
+	}
+	if scheme, _ := action["scheme"].(string); strings.EqualFold(scheme, "HTTPS") {
+		return nil, []string{field + ".scheme HTTPS ignored: the platform checks the serving port over plain HTTP; the probe is not applied"}, nil
+	}
+	var warnings []string
+	for _, key := range []string{"host", "httpHeaders"} {
+		if action[key] != nil {
+			warnings = append(warnings, fmt.Sprintf("%s.%s ignored: the platform checks the app inside its VM without custom headers", field, key))
+		}
+	}
+	path := "/"
+	if raw, ok := action["path"]; ok {
+		text, isString := raw.(string)
+		if !isString {
+			return nil, nil, fmt.Errorf("%s.path must be a string", field)
+		}
+		path = text
+	}
+	return &api.DeploymentHealthcheck{Path: path}, warnings, nil
+}
+
+// k8sProbePort resolves a probe's port, a number or the name of one of the
+// container's ports.
+func k8sProbePort(field string, container map[string]any, raw any) (int, error) {
+	switch port := raw.(type) {
+	case int:
+		if port >= 1 && port <= 65535 {
+			return port, nil
+		}
+	case string:
+		ports, _ := container["ports"].([]any)
+		for _, entry := range ports {
+			declared, _ := entry.(map[string]any)
+			if number, ok := declared["containerPort"].(int); ok && declared["name"] == port {
+				return number, nil
+			}
+		}
+		return 0, fmt.Errorf("%s.port %q names no port of the container", field, port)
+	}
+	return 0, fmt.Errorf("%s.port must be a port number or the name of a container port", field)
 }
 
 type k8sTiming struct{ period, timeout, failures, delay int }

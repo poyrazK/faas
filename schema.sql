@@ -4134,7 +4134,7 @@ CREATE TABLE public.deployments (
     CONSTRAINT deployments_revision_nonneg_chk CHECK ((revision >= 0)),
     CONSTRAINT deployments_rollout_decision_chk CHECK (((rollout_decision IS NULL) OR ((jsonb_typeof(rollout_decision) = 'object'::text) AND ((rollout_decision ->> 'kind'::text) = ANY (ARRAY['advance'::text, 'abort'::text])) AND (octet_length((rollout_decision)::text) <= 4096)))),
     CONSTRAINT deployments_rollout_state_chk CHECK ((rollout_state = ANY (ARRAY['pending'::text, 'rolling_out'::text, 'complete'::text, 'aborted'::text]))),
-    CONSTRAINT deployments_runtime_base_check CHECK ((runtime_base = ANY (ARRAY[''::text, 'node22'::text, 'node24'::text]))),
+    CONSTRAINT deployments_runtime_base_check CHECK ((runtime_base = ANY (ARRAY[''::text, 'node22'::text, 'node24'::text, 'python312'::text, 'python313'::text]))),
     CONSTRAINT deployments_runtime_upgrade_routing_token_check CHECK ((runtime_upgrade_routing_token <> '00000000-0000-0000-0000-000000000000'::uuid)),
     CONSTRAINT deployments_scan_status_chk CHECK (((scan_status IS NULL) OR (scan_status = ANY (ARRAY['pending'::text, 'complete'::text, 'failed'::text, 'skipped'::text, 'complete_with_redactions'::text])))),
     CONSTRAINT deployments_scope_shape CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text)),
@@ -4933,7 +4933,7 @@ BEGIN
  -- A container app without a runtime may run on a shared runner base its signed
  -- export claims (docs/adr/20261017-shared-runtime-source-apps.md).
  runtime:=CASE WHEN a.type='function' OR coalesce(a.runtime,'')<>'' THEN coalesce(nullif(a.runtime,''),d.handler,'')
-  WHEN origin.input_snapshot->'claims'->>'runtime' IN ('node22','node24') THEN origin.input_snapshot->'claims'->>'runtime' ELSE '' END;
+  WHEN origin.input_snapshot->'claims'->>'runtime' IN ('node22','node24','python312','python313') THEN origin.input_snapshot->'claims'->>'runtime' ELSE '' END;
  kind:=CASE WHEN a.type='function' OR coalesce(a.runtime,'')<>'' THEN 'function-layer' ELSE 'source-app-layer' END;
  IF (origin.input_snapshot->'claims'->>'account_id'=a.account_id::text AND origin.input_snapshot->'claims'->>'app_id'=a.id::text
   AND origin.input_snapshot->'claims'->>'org_id'=coalesce(a.org_id::text,'')
@@ -19976,7 +19976,7 @@ BEGIN
  SELECT * INTO b FROM builds WHERE id=(c->>'build_id')::uuid FOR UPDATE NOWAIT;
  IF NOT FOUND THEN RAISE EXCEPTION 'build export claim missing' USING ERRCODE='23514',CONSTRAINT='build_export_publication_missing';END IF;
  IF (a.id=d.app_id AND b.deployment_id=d.id AND a.account_id::text=c->>'account_id'
-  AND coalesce(a.org_id::text,'')=c->>'org_id' AND (coalesce(a.runtime,'')=c->>'runtime' OR (a.type<>'function' AND coalesce(a.runtime,'')='' AND c->>'runtime' IN ('node22','node24'))) AND a.status<>'deleted'
+  AND coalesce(a.org_id::text,'')=c->>'org_id' AND (coalesce(a.runtime,'')=c->>'runtime' OR (a.type<>'function' AND coalesce(a.runtime,'')='' AND c->>'runtime' IN ('node22','node24','python312','python313'))) AND a.status<>'deleted'
   AND b.started_at=(c->>'claim_started_at')::timestamptz
   AND d.kind IN ('tarball','dockerfile','github','preview')
   AND d.status IN ('pending','building','imaging','snapshotting','live','superseded')
@@ -43188,6 +43188,7 @@ CREATE TABLE public.managed_postgres_databases (
     clone_resource_role text DEFAULT 'target'::text NOT NULL,
     accounting_required boolean DEFAULT true NOT NULL,
     org_id uuid NOT NULL,
+    purge_after timestamp with time zone,
     CONSTRAINT managed_postgres_clone_has_restore CHECK (((environment_clone_operation_id IS NULL) OR ((restore_source_database_id IS NOT NULL) AND (restore_source_resource_id IS NOT NULL) AND (restore_point_in_time IS NOT NULL)))),
     CONSTRAINT managed_postgres_clone_is_independent CHECK (((environment_clone_operation_id IS NULL) OR ((id <> restore_source_database_id) AND ((provider_resource_id IS NULL) OR (provider_resource_id <> restore_source_resource_id))))),
     CONSTRAINT managed_postgres_databases_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 30))),
@@ -54786,7 +54787,7 @@ CREATE TABLE public.source_build_rootfs (
     published_at timestamp with time zone NOT NULL,
     expires_at timestamp with time zone NOT NULL,
     CONSTRAINT source_build_rootfs_check CHECK (((expires_at > published_at) AND (expires_at <= (published_at + '24:00:00'::interval)))),
-    CONSTRAINT source_build_rootfs_check1 CHECK (((((input_snapshot ->> 'publication_id'::text) = (publication_id)::text) AND ((input_snapshot ->> 'deployment_id'::text) = (deployment_id)::text) AND ((input_snapshot ->> 'account_id'::text) ~ '^[a-f0-9-]{36}$'::text) AND ((input_snapshot ->> 'app_id'::text) ~ '^[a-f0-9-]{36}$'::text) AND ((input_snapshot ->> 'publication_hash'::text) ~ '^[a-f0-9]{64}$'::text) AND ((input_snapshot ->> 'intent_hash'::text) ~ '^[a-f0-9]{64}$'::text) AND ((input_snapshot ->> 'base_producer_id'::text) ~ '^[a-f0-9-]{36}$'::text) AND ((input_snapshot ->> 'base_input_hash'::text) ~ '^[a-f0-9]{64}$'::text) AND ((input_snapshot ->> 'artifact_digest'::text) ~ '^sha256:[a-f0-9]{64}$'::text) AND (((input_snapshot ->> 'artifact_bytes'::text))::bigint > 0) AND (((input_snapshot ->> 'content_bytes'::text))::bigint >= 0) AND (COALESCE((input_snapshot ->> 'storage_key'::text), ''::text) <> ''::text) AND (COALESCE((input_snapshot ->> 'rootfs_path'::text), ''::text) <> ''::text) AND ((input_snapshot ->> 'guest_init_digest'::text) ~ '^sha256:[a-f0-9]{64}$'::text) AND ((input_snapshot ->> 'layout_version'::text) = 'faas-app-layer-layout-v1'::text) AND ((((input_snapshot ->> 'kind'::text) = 'source-app-layer'::text) AND ((input_snapshot ->> 'runtime'::text) = ANY (ARRAY[''::text, 'node22'::text, 'node24'::text])) AND ((input_snapshot ->> 'runner_digest'::text) = ''::text)) OR (((input_snapshot ->> 'kind'::text) = 'function-layer'::text) AND (COALESCE((input_snapshot ->> 'runtime'::text), ''::text) <> ''::text) AND ((input_snapshot ->> 'runner_digest'::text) ~ '^sha256:[a-f0-9]{64}$'::text)))) IS TRUE)),
+    CONSTRAINT source_build_rootfs_check1 CHECK (((((input_snapshot ->> 'publication_id'::text) = (publication_id)::text) AND ((input_snapshot ->> 'deployment_id'::text) = (deployment_id)::text) AND ((input_snapshot ->> 'account_id'::text) ~ '^[a-f0-9-]{36}$'::text) AND ((input_snapshot ->> 'app_id'::text) ~ '^[a-f0-9-]{36}$'::text) AND ((input_snapshot ->> 'publication_hash'::text) ~ '^[a-f0-9]{64}$'::text) AND ((input_snapshot ->> 'intent_hash'::text) ~ '^[a-f0-9]{64}$'::text) AND ((input_snapshot ->> 'base_producer_id'::text) ~ '^[a-f0-9-]{36}$'::text) AND ((input_snapshot ->> 'base_input_hash'::text) ~ '^[a-f0-9]{64}$'::text) AND ((input_snapshot ->> 'artifact_digest'::text) ~ '^sha256:[a-f0-9]{64}$'::text) AND (((input_snapshot ->> 'artifact_bytes'::text))::bigint > 0) AND (((input_snapshot ->> 'content_bytes'::text))::bigint >= 0) AND (COALESCE((input_snapshot ->> 'storage_key'::text), ''::text) <> ''::text) AND (COALESCE((input_snapshot ->> 'rootfs_path'::text), ''::text) <> ''::text) AND ((input_snapshot ->> 'guest_init_digest'::text) ~ '^sha256:[a-f0-9]{64}$'::text) AND ((input_snapshot ->> 'layout_version'::text) = 'faas-app-layer-layout-v1'::text) AND ((((input_snapshot ->> 'kind'::text) = 'source-app-layer'::text) AND ((input_snapshot ->> 'runtime'::text) = ANY (ARRAY[''::text, 'node22'::text, 'node24'::text, 'python312'::text, 'python313'::text])) AND ((input_snapshot ->> 'runner_digest'::text) = ''::text)) OR (((input_snapshot ->> 'kind'::text) = 'function-layer'::text) AND (COALESCE((input_snapshot ->> 'runtime'::text), ''::text) <> ''::text) AND ((input_snapshot ->> 'runner_digest'::text) ~ '^sha256:[a-f0-9]{64}$'::text)))) IS TRUE)),
     CONSTRAINT source_build_rootfs_input_hash_check CHECK ((input_hash ~ '^[a-f0-9]{64}$'::text)),
     CONSTRAINT source_build_rootfs_input_snapshot_check CHECK ((jsonb_typeof(input_snapshot) = 'object'::text))
 );

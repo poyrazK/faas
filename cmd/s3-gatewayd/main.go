@@ -94,6 +94,26 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if !ok {
 		return errors.New("s3-gatewayd: state store lacks object-storage request metrics")
 	}
+	// Gateway-safety reads are admitted from cached decisions and their
+	// counts batched (ADR-20261030075301). The last flush runs after the
+	// servers stop and before the pool closes.
+	var readAdmitter *objectstorage.ReadAdmitter
+	readsDone := make(chan struct{})
+	readsCtx, stopReads := context.WithCancel(context.WithoutCancel(ctx))
+	if registry.Accounting.GatewaySafety() {
+		readAdmitter = objectstorage.NewReadAdmitter(store, registry.Accounting, nil)
+		ops.Registry().MustRegister(readAdmitter.Collectors()...)
+		go func() {
+			defer close(readsDone)
+			readAdmitter.Run(readsCtx, func(err error) { log.Warn("s3-gatewayd: read usage flush failed", "err", err) })
+		}()
+	} else {
+		close(readsDone)
+	}
+	defer func() {
+		stopReads()
+		<-readsDone
+	}()
 	usageJobs, err := usageExportJobs(registry, requestMetrics, os.Getenv)
 	if err != nil {
 		return err
@@ -156,6 +176,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 
 	handler, err := s3gateway.New(s3gateway.Config{
 		Registry: registry, Store: store, RequestMetrics: requestMetrics, Enabled: serving, SpoolDir: os.Getenv("FAAS_S3_GATEWAY_SPOOL_DIR"), Log: log,
+		ReadAdmitter: readAdmitter, AccountLimiter: objectstorage.NewAccountRequestLimiter(),
 		OpenSecret: func(sealed []byte) (string, error) {
 			namespace, plaintext, err := secretbox.OpenBytesMulti(readers, sealed)
 			if err != nil || namespace != s3gateway.CredentialSecretNamespace || len(plaintext) != 40 {

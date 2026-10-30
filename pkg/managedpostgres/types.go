@@ -911,6 +911,15 @@ type Database struct {
 	CreatedAt                   time.Time
 	UpdatedAt                   time.Time
 	DeletedAt                   *time.Time
+	// PurgeAfter is when a scheduled delete's undo window ends
+	// (ADR-20261029174950); zero unless the database is deleting on a
+	// schedule. An immediate delete clears it.
+	PurgeAfter time.Time
+}
+
+// Restorable reports whether a scheduled delete can still be undone at now.
+func (d Database) Restorable(now time.Time) bool {
+	return d.State == StateDeleting && !d.PurgeAfter.IsZero() && d.PurgeAfter.After(now)
 }
 
 type BindingState string

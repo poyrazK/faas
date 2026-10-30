@@ -19,11 +19,13 @@ func TestRolloutAvailabilitySeparatesStatusAndCustomerPaths(t *testing.T) {
 		commandExit        int
 		wantExit           int
 		wantText           string
+		wantWarning        string
 	}{
 		{name: "status timeout is diagnostic", failTarget: "status", wantExit: 0, wantText: "status: HTTP status counts: 000"},
 		{name: "canary app failure gates", failTarget: "app", wantExit: 1, wantText: "public readiness or canary app failed after a healthy pre-rollout baseline"},
 		{name: "API readiness failure gates", failTarget: "api", wantExit: 1, wantText: "public readiness or canary app failed after a healthy pre-rollout baseline"},
-		{name: "unhealthy app baseline is inconclusive", baselineFailTarget: "app", wantExit: 0, wantText: "app: rollout attribution is **inconclusive**"},
+		{name: "unhealthy app baseline is inconclusive", baselineFailTarget: "app", wantExit: 0, wantText: "app: rollout attribution is **inconclusive**",
+			wantWarning: "app gate gave this activation no signal: its baseline was 0/1 healthy (HTTP 000: 1). Check that https://app.example/ still serves. ROLLOUT_APP_PROBE_URL names the canary app."},
 		{name: "API-only observer supports empty optional targets", withoutOptional: true, wantExit: 0, wantText: "api: HTTP status counts: 200"},
 		{name: "wrapped command failure wins", failTarget: "app", commandExit: 17, wantExit: 17, wantText: "app: HTTP status counts: 000"},
 	} {
@@ -83,6 +85,19 @@ printf '200\t0.010\t0.001\t0.005'
 			}
 			if !strings.Contains(string(output), tc.wantText) {
 				t.Fatalf("observer output missing %q:\n%s", tc.wantText, output)
+			}
+			// A gate with an unhealthy baseline is annotated and called out in
+			// the step summary, so a vanished canary does not pass unnoticed.
+			if tc.wantWarning == "" {
+				if strings.Contains(string(output), "[!WARNING]") || strings.Contains(string(output), "::warning") {
+					t.Fatalf("observer warned about a healthy baseline:\n%s", output)
+				}
+			} else {
+				for _, want := range []string{"::warning title=Rollout gate baseline unhealthy::" + tc.wantWarning, "> [!WARNING]\n> " + tc.wantWarning} {
+					if !strings.Contains(string(output), want) {
+						t.Fatalf("observer output missing %q:\n%s", want, output)
+					}
+				}
 			}
 			if tc.failTarget == "status" {
 				log, readErr := os.ReadFile(filepath.Join(temp, "gregale-rollout-availability-local-1-status.tsv"))

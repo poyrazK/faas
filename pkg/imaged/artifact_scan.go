@@ -218,14 +218,40 @@ func artifactScanReport(result *ScanResult, in state.DeploymentArtifactScanInput
 	return report
 }
 
+// Stored scan artifacts are read from this node's cache first, then from the
+// shared publication when the cached copy no longer holds the producer's
+// bytes (ADR-20261026181418, amendment 2026-10-30). The cache keeps one entry
+// per logical base key for every release on the node, so during a rollout the
+// serving N-1 imaged's convergence (ADR-567) can put its own generation's
+// bytes there while the N pre-stage scans N's. On production-us (rc.305,
+// 2026-10-29) fsn-2's pre-stage then failed its scan with artifact_mismatch
+// and published the fail-closed sidecar for N's generation, and fsn-2
+// refused every minimal-base boot for about two hours. The shared copy is
+// routed to the generation's own key, which N-1 never writes, and it is what
+// the scan evidence vouches for on every node.
+func openStoredScanArtifact(ctx context.Context, be storage.StorageBackend, key string, shared bool) (io.ReadCloser, error) {
+	if shared {
+		return storage.GetCanonical(ctx, be, key)
+	}
+	return be.Get(ctx, key)
+}
+
 // Always copy, including local backends: the scanner must never receive the
 // mutable canonical path. Hash exactly the bounded bytes written to 0600 scratch.
-func stageProducedScanArtifact(ctx context.Context, be storage.StorageBackend, scratch string, expected scanArtifactTarget) (path string, cleanup func(), err error) {
+func stageProducedScanArtifact(ctx context.Context, be storage.StorageBackend, scratch string, expected scanArtifactTarget) (string, func(), error) {
+	path, cleanup, err := stageStoredScanArtifact(ctx, be, scratch, expected, false)
+	if errors.Is(err, errScanArtifactMismatch) && expected.valid() {
+		path, cleanup, err = stageStoredScanArtifact(ctx, be, scratch, expected, true)
+	}
+	return path, cleanup, err
+}
+
+func stageStoredScanArtifact(ctx context.Context, be storage.StorageBackend, scratch string, expected scanArtifactTarget, shared bool) (path string, cleanup func(), err error) {
 	cleanup = func() {}
 	if !expected.valid() {
 		return "", cleanup, errScanArtifactMismatch
 	}
-	rc, err := be.Get(ctx, expected.StorageKey)
+	rc, err := openStoredScanArtifact(ctx, be, expected.StorageKey, shared)
 	if err != nil {
 		return "", cleanup, err
 	}
@@ -271,8 +297,18 @@ func checkStagedScanArtifact(ctx context.Context, path string, expected scanArti
 	return nil
 }
 
+// checkStoredScanArtifact reports whether the stored artifact still holds
+// expected: this node's cached copy, or else the shared publication.
 func checkStoredScanArtifact(ctx context.Context, be storage.StorageBackend, expected scanArtifactTarget) error {
-	rc, err := be.Get(ctx, expected.StorageKey)
+	err := checkStoredScanArtifactCopy(ctx, be, expected, false)
+	if errors.Is(err, errScanArtifactMismatch) {
+		err = checkStoredScanArtifactCopy(ctx, be, expected, true)
+	}
+	return err
+}
+
+func checkStoredScanArtifactCopy(ctx context.Context, be storage.StorageBackend, expected scanArtifactTarget, shared bool) error {
+	rc, err := openStoredScanArtifact(ctx, be, expected.StorageKey, shared)
 	if err != nil {
 		return err
 	}

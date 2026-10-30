@@ -218,6 +218,9 @@ spec:
 	if strings.Contains(joined, `"maybe"`) {
 		t.Errorf("an optional source was reported:\n%s", joined)
 	}
+	if strings.Contains(joined, "envFrom ignored") {
+		t.Errorf("envFrom, which the scan reads, was reported as ignored:\n%s", joined)
+	}
 	assertNoK8sSecretValue(t, fmt.Sprintf("%#v", result))
 
 	off, err := ScanWithOptions(fsys, ScanOptions{})

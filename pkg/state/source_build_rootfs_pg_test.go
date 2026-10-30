@@ -186,7 +186,11 @@ func TestPgSetDeploymentRuntimeBase(t *testing.T) {
 	if got, err := s.DeploymentByID(t.Context(), dep.ID); err != nil || got.RuntimeBase != "node22" {
 		t.Fatalf("runtime base = %q (%v), want node22", got.RuntimeBase, err)
 	}
-	if err := s.SetDeploymentRuntimeBase(t.Context(), dep.ID, "python312"); !errors.Is(err, state.ErrInvalidArgument) {
+	// The widened deployments_runtime_base_check (ADR-1500 amendment 2).
+	if err := s.SetDeploymentRuntimeBase(t.Context(), dep.ID, "python312"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetDeploymentRuntimeBase(t.Context(), dep.ID, "go124"); !errors.Is(err, state.ErrInvalidArgument) {
 		t.Fatalf("non-shared runtime accepted: %v", err)
 	}
 }

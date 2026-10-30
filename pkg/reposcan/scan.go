@@ -115,6 +115,10 @@ type Workload struct {
 	GoCommand        string
 	Image            string                  // prebuilt OCI image when the source declares one
 	ImageHealthcheck *api.ComposeHealthcheck // partial Compose healthcheck override, prebuilt or built
+	// ReadinessCheck is an HTTP or gRPC check of the serving port that gates
+	// readiness, from a Kubernetes readinessProbe or startupProbe
+	// (ADR-20261029093621 §3). The deployment runs it as its startup probe.
+	ReadinessCheck *api.DeploymentHealthcheck
 	// ImageProcess carries the Compose entrypoint, user, working_dir and stop
 	// contract (ADR-1337). A built service's entrypoint is folded into its
 	// Command instead (ADR-20261022160000). Nil inherits the image.

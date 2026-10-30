@@ -1723,7 +1723,9 @@ func prepareRailpackConfig(m api.BuildManifest) (func() error, error) {
 	// platform default empty for musl runtimes and minimal scratch bases.
 	// A shared runner base ships the libraries Railpack's default apt step
 	// installs (libatomic1), and system packages outside /app keep an app
-	// off the /app-only layer (H10-140).
+	// off the /app-only layer (H10-140). A Python app's platform default stays
+	// what it was on its own minimal base, and Wolfi's runner-python313 has no
+	// apt (ADR-1500 amendment 2).
 	if isAlpineRuntime(m.Runtime) || m.Runtime == "" || m.SharedRuntime || strings.Contains(m.RuntimeBaseRef, "base-minimal") {
 		if _, ok := deploy["aptPackages"]; !ok {
 			deploy["aptPackages"] = []any{}
