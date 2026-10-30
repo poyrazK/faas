@@ -292,6 +292,16 @@ ADR-568 requires.
   - eb173a4d6d routes all three post-activation checks through one helper
     with the activated-candidate comparison. Activation itself keeps the
     strict match on a held candidate.
+- 2026-10-30, n2, reruns with eb173a4d6d and then f4121638b6. Each cleared
+  the next refusal that came after activation:
+  - The preparation reconcile computed `preparing` for live candidates and
+    tried `prepared` → `preparing`, which the graph guard refuses.
+    f4121638b6 counts a live candidate as prepared.
+  - Qualification was re-queued on every pass. Its guard admits only
+    snapshotting candidates. f86f27291e queues nothing for an activated
+    graph.
+  - gitlab's vmmd once stalled in native recovery right after github's
+    teardown and never opened its socket. Every earlier run started.
 - Pending: the n2 native GitOps journey through serving and the resilience
   phases.
 
