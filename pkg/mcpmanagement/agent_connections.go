@@ -67,6 +67,8 @@ func (r *remoteServer) nameAgentClient(ctx context.Context, client *api.Client, 
 // retireCredentialLocked revokes the mcp-login key of an ending connection
 // in the background, so apid lists only live connections. A connection made
 // with the customer's own key (api-key onboarding) keeps it.
+//
+//nolint:contextcheck // The retirement outlives the request or restore that ends the connection; it has its own bounded timeout.
 func (r *remoteServer) retireCredentialLocked(g *oauthGrant) {
 	if !g.renewable || g.client == nil || !time.Now().Before(g.credentialExpires) {
 		return
