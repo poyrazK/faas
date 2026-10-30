@@ -19257,7 +19257,7 @@ func scanComputeNode(row pgx.Row) (ComputeNode, error) {
 		&n.ReleaseID, &n.ManifestHash, &n.HostCertificate, &n.CertFingerprint,
 		&n.Role, &n.Generation, &n.Lifecycle, &n.LifecycleGeneration,
 		&n.Readiness, &n.ReadinessReason,
-		&n.CPUTemplate, &n.CPUModel, &n.WakeBreakerOpenUntil, &n.WakeBreakerReason); err != nil {
+		&n.CPUTemplate, &n.CPUModel, &n.WakeBreakerOpenUntil, &n.WakeBreakerReason, &n.CPUPressureUntil); err != nil {
 		return ComputeNode{}, mapErr(err)
 	}
 	return n, nil
@@ -19271,7 +19271,7 @@ func (s *pgCore) ActiveComputeNodes(ctx context.Context) ([]ComputeNode, error) 
 		       public_ip, public_ip_set_at,
 		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
 		       lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model,
-		       wake_breaker_open_until, wake_breaker_reason
+		       wake_breaker_open_until, wake_breaker_reason, cpu_pressure_until
 		  from compute_nodes
 		 where active = true
 		 order by name
@@ -19304,7 +19304,7 @@ func (s *PgStore) ListAllComputeNodes(ctx context.Context) ([]ComputeNode, error
 		       public_ip, public_ip_set_at,
 		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
 		       lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model,
-		       wake_breaker_open_until, wake_breaker_reason
+		       wake_breaker_open_until, wake_breaker_reason, cpu_pressure_until
 		  from compute_nodes
 		 order by name
 	`)
@@ -19331,7 +19331,7 @@ func (s *pgCore) ComputeNodeByID(ctx context.Context, id string) (ComputeNode, e
 		       public_ip, public_ip_set_at,
 		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
 		       lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model,
-		       wake_breaker_open_until, wake_breaker_reason
+		       wake_breaker_open_until, wake_breaker_reason, cpu_pressure_until
 		  from compute_nodes
 		 where id = $1
 	`, id)
@@ -19350,7 +19350,7 @@ func (s *PgStore) ComputeNodeByName(ctx context.Context, name string) (ComputeNo
 		       public_ip, public_ip_set_at,
 		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
 		       lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model,
-		       wake_breaker_open_until, wake_breaker_reason
+		       wake_breaker_open_until, wake_breaker_reason, cpu_pressure_until
 		  from compute_nodes
 		 where name = $1
 	`, name)
@@ -19577,6 +19577,19 @@ func (s *PgStore) OpenComputeNodeWakeBreaker(ctx context.Context, nodeID string,
 		 where id = $1
 	`, nodeID, until, reason); err != nil {
 		return fmt.Errorf("state: open compute_node %s wake breaker: %w", nodeID, err)
+	}
+	return nil
+}
+
+// HoldComputeNodeCPUPressure implements ComputeNodeCPUPressureStore. An
+// unchanged value fires no compute_node_changed.
+func (s *PgStore) HoldComputeNodeCPUPressure(ctx context.Context, nodeID string, until time.Time) error {
+	if _, err := s.pool.Exec(ctx, `
+		update compute_nodes
+		   set cpu_pressure_until = $2
+		 where id = $1 and cpu_pressure_until is distinct from $2
+	`, nodeID, until); err != nil {
+		return fmt.Errorf("state: hold compute_node %s cpu pressure: %w", nodeID, err)
 	}
 	return nil
 }
@@ -20064,7 +20077,7 @@ func (s *PgStore) CreateComputeNode(ctx context.Context, node ComputeNode) (Comp
 		          public_ip, public_ip_set_at,
 		          release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
 		          lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model,
-		          wake_breaker_open_until, wake_breaker_reason
+		          wake_breaker_open_until, wake_breaker_reason, cpu_pressure_until
 	`, node.Name, node.TargetURL, node.OverlayIP, node.VPCPUs, node.MemMB, node.MaxConcurrency,
 		node.AdmissionCeilingMB, node.VCPUBudget, string(lifecycle),
 		node.Region, node.Zone, node.GatewayTargetURL,
@@ -20149,7 +20162,7 @@ func (s *PgStore) UpsertComputeNode(ctx context.Context, node ComputeNode) (Comp
 		          public_ip, public_ip_set_at,
 		          release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
 		          lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model,
-		          wake_breaker_open_until, wake_breaker_reason
+		          wake_breaker_open_until, wake_breaker_reason, cpu_pressure_until
 	`, node.Name, node.TargetURL, node.OverlayIP, node.VPCPUs, node.MemMB, node.MaxConcurrency,
 		node.AdmissionCeilingMB, node.VCPUBudget,
 		node.Region, node.Zone, node.GatewayTargetURL,
@@ -20229,7 +20242,7 @@ func (s *PgStore) UpsertComputeNodeFromOperator(ctx context.Context, node Comput
 		          public_ip, public_ip_set_at,
 		          release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
 		          lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model,
-		          wake_breaker_open_until, wake_breaker_reason
+		          wake_breaker_open_until, wake_breaker_reason, cpu_pressure_until
 	`, node.Name, node.TargetURL, node.VPCPUs, node.MemMB, node.MaxConcurrency,
 		node.AdmissionCeilingMB, vcpuBudget, lifecycle,
 		node.Region, node.Zone, node.ScheddTargetURL, node.GatewayTargetURL,
@@ -20353,7 +20366,7 @@ func (s *PgStore) UpsertComputeNodeFromVmmd(ctx context.Context, node ComputeNod
 		          public_ip, public_ip_set_at,
 		          release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
 		          lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model,
-		          wake_breaker_open_until, wake_breaker_reason
+		          wake_breaker_open_until, wake_breaker_reason, cpu_pressure_until
 	`, node.Name, node.TargetURL, node.OverlayIP, node.VPCPUs, node.MemMB, node.MaxConcurrency,
 		node.AdmissionCeilingMB, node.VCPUBudget,
 		node.Region, node.Zone, node.ScheddTargetURL, node.GatewayTargetURL,
@@ -20615,7 +20628,7 @@ func (s *PgStore) ListComputeNodes(ctx context.Context, includeInactive bool) ([
 		       public_ip, public_ip_set_at,
 		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
 		       lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model,
-		       wake_breaker_open_until, wake_breaker_reason
+		       wake_breaker_open_until, wake_breaker_reason, cpu_pressure_until
 		  from compute_nodes
 	`
 	if !includeInactive {
@@ -20652,7 +20665,7 @@ func (s *PgStore) ListComputeNodesPage(ctx context.Context, includeInactive bool
 		       public_ip, public_ip_set_at,
 		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
 		       lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model,
-		       wake_breaker_open_until, wake_breaker_reason
+		       wake_breaker_open_until, wake_breaker_reason, cpu_pressure_until
 		  from compute_nodes
 	`
 	if !includeInactive {
