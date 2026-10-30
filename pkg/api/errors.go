@@ -971,9 +971,10 @@ const (
 	// platform (ADR 20261022140000), for example while a security incident is
 	// contained. Nothing the caller sends overrides it; rollbacks still work.
 	CodePlatformReleasePaused = "platform_release_paused"
-	// CodeReleaseFreezeNotFound means the account has no such unlifted freeze.
+	// CodeReleaseFreezeNotFound means the account, organization or app has
+	// no such unlifted freeze.
 	CodeReleaseFreezeNotFound = "release_freeze_not_found"
-	// CodeReleaseFreezeLimit means the account already holds
+	// CodeReleaseFreezeLimit means the account or organization already holds
 	// ReleaseFreezesMax freezes that have not ended.
 	CodeReleaseFreezeLimit = "release_freeze_limit"
 	// CodeReleaseGateLimit means the app already has ReleaseGatesPerAppMax

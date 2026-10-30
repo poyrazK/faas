@@ -86,7 +86,7 @@ func ownedResourceApp(r *http.Request, store Store, actorID string) (string, err
 		if !ok {
 			return "", nil
 		}
-		rows, err := freezes.ListReleaseFreezes(ctx, actorID, time.Now().UTC())
+		rows, err := freezes.ListReleaseFreezes(ctx, state.ReleaseFreezeOwner{AccountID: actorID}, time.Now().UTC())
 		for _, row := range rows {
 			if row.ID == id {
 				return row.AppID, nil
