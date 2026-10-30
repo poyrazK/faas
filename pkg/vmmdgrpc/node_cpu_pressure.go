@@ -11,7 +11,6 @@ package vmmdgrpc
 //     api.NodeCPUBusyWindowSeconds, from /proc/stat.
 
 import (
-	"bufio"
 	"os"
 	"strconv"
 	"strings"
@@ -75,15 +74,11 @@ type cpuTimes struct {
 // Busy is everything but idle and iowait. guest and guest_nice are already
 // counted in user and nice, so they are left out of the total.
 func readCPUTimes(at time.Time) (cpuTimes, bool) {
-	f, err := os.Open(procStatPath)
+	raw, err := os.ReadFile(procStatPath)
 	if err != nil {
 		return cpuTimes{}, false
 	}
-	defer f.Close()
-	line, err := bufio.NewReader(f).ReadString('\n')
-	if err != nil && line == "" {
-		return cpuTimes{}, false
-	}
+	line, _, _ := strings.Cut(string(raw), "\n")
 	fields := strings.Fields(line)
 	if len(fields) < 9 || fields[0] != "cpu" {
 		return cpuTimes{}, false
