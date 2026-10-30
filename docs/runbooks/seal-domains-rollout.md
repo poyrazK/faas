@@ -438,6 +438,23 @@ and fingerprints stay as they were.
   secrets were already broken for their customers; investigate with
   [FaasFleetSealDomain](FaasFleetSealDomain.md#recover).
 
+To see what still holds vmmd to the fleet key, run:
+
+```bash
+sudo gregalectl seal-domain migrate --domain runtime --check --db-env /etc/faas/compute-db.env
+```
+
+It writes nothing. `pending` is what another migration run would re-seal.
+That includes a secret a config guard restored, or a cutover published,
+after this step. `left on the fleet key` counts two kinds of value:
+
+- the short-lived copies an open config guard or an unpublished cutover
+  holds under another key;
+- crash capture keys sealed before the domain was staged.
+
+These clear on their own, within the guard window, when the cutover
+finishes, or when the capture expires (seven days).
+
 Then watch wake errors across the compute nodes for the next hour. A node
 that fails wakes for apps with secrets is missing `runtime.age`: see
 [FaasSealDomain](FaasSealDomain.md).

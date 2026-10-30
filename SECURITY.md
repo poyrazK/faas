@@ -36,8 +36,7 @@ Controllers.
 ## Supply chain
 
 Release bundles, CLI archives and platform images carry keyless Sigstore
-signatures and SLSA build provenance. The release bundle and CLI archives also
-carry SPDX SBOMs. See
+signatures, SLSA build provenance and SPDX SBOMs. See
 [docs/supply-chain.md](docs/supply-chain.md) for what each artifact carries and
 how to verify it.
 

@@ -341,7 +341,10 @@ func countInstances(t *testing.T, pool *pgxpool.Pool, appID, st string) int {
 // bind sources (copy, then rename over the path), as the cache does when a
 // release re-stages a file: the path then names a new inode while the guest
 // keeps the recorded one through its jail. It picks a source the run owns,
-// never a shared host base image or the kernel, and returns its path.
+// never a shared host base image or the kernel, and returns its path. A
+// read-only bind (the jail's Firecracker binary, a base image) is the case
+// that matters: the guest's view of it cannot change its mode, and the guest
+// must still park afterwards.
 func restageGuestBindSource(t *testing.T, journalDir, instance string) string {
 	t.Helper()
 	paths, err := filepath.Glob(filepath.Join(journalDir, "*.json"))

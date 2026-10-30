@@ -3,11 +3,13 @@ package edgerules
 import (
 	"context"
 	"errors"
+	"fmt"
 	"maps"
 	"net/http"
 	"slices"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // ReferencedEdit is an edit to an object edge rules reference, such as an
@@ -24,6 +26,35 @@ type ReferencedEdit struct {
 	// Hosts maps each app with a referencing rule to those rules' match
 	// hosts. It is read once before and once under the account's lock.
 	Hosts func(context.Context) (map[string][]string, error)
+}
+
+// AuthorizeReferencedEdit applies the organization access check to every app
+// whose rules the edit changes (ADR-091 amendment 2026-10-30). Lists and
+// account-wide CORS presets belong to an account, and a company app's rules
+// stay under its creator's account, so a creator removed from or demoted in
+// the company could otherwise still change what the app's rules let through
+// by editing the object they use.
+func (s *Service) AuthorizeReferencedEdit(r *http.Request, acct state.Account, edit ReferencedEdit) *api.Problem {
+	if s.AuthorizeApp == nil {
+		return nil
+	}
+	hosts, err := edit.Hosts(r.Context())
+	if err != nil {
+		return api.ErrCapacity("could not read the apps that use the " + edit.Subject)
+	}
+	for _, appID := range slices.Sorted(maps.Keys(hosts)) {
+		app, err := s.Host.Store().AppByID(r.Context(), appID)
+		if errors.Is(err, state.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return api.ErrCapacity("could not read the apps that use the " + edit.Subject)
+		}
+		if prob := s.AuthorizeApp(r, acct, app); prob != nil {
+			return prob
+		}
+	}
+	return nil
 }
 
 // PrepareReferencedEdit fences the referencing rules' hosts. The returned
@@ -88,6 +119,58 @@ func AbortEdgeRuleConvergences(ctx context.Context, convergences []*EdgeRuleConv
 	for _, conv := range convergences {
 		conv.Abort(ctx)
 	}
+}
+
+// RouteTargetRenameEdit is the barrier edit for renaming an app that kind=route
+// rules send traffic to (ADR-091 amendment 2026-10-30). A route rule names its
+// target by slug, so a rename left it naming a slug that no longer resolved,
+// and the gateway quietly served the routed paths from the host's own app.
+func (s *Service) RouteTargetRenameEdit(accountID, oldSlug string) ReferencedEdit {
+	return ReferencedEdit{Operation: "route_target_renamed", Subject: "app", Hosts: func(ctx context.Context) (map[string][]string, error) {
+		rules, err := s.routeRulesTargeting(ctx, accountID, oldSlug)
+		if err != nil {
+			return nil, err
+		}
+		hosts := map[string][]string{}
+		for _, rule := range rules {
+			hosts[rule.AppID] = append(hosts[rule.AppID], rule.MatchHost)
+		}
+		return hosts, nil
+	}}
+}
+
+// RetargetRouteRules points the account's route rules from oldSlug to newSlug
+// after the rename, inside the RouteTargetRenameEdit barrier. It returns how
+// many rules it changed.
+func (s *Service) RetargetRouteRules(ctx context.Context, accountID, oldSlug, newSlug string) (int, error) {
+	rules, err := s.routeRulesTargeting(ctx, accountID, oldSlug)
+	if err != nil {
+		return 0, err
+	}
+	for i, rule := range rules {
+		action := rule.Action
+		route := *action.Route
+		route.TargetAppSlug = newSlug
+		action.Route = &route
+		if _, err := s.Host.Store().UpdateEdgeRule(ctx, rule.ID, state.UpdateEdgeRuleParams{Action: &action}); err != nil {
+			return i, fmt.Errorf("retarget route rule %s: %w", rule.ID, err)
+		}
+	}
+	return len(rules), nil
+}
+
+func (s *Service) routeRulesTargeting(ctx context.Context, accountID, slug string) ([]state.EdgeRule, error) {
+	rules, err := s.Host.Store().ListEdgeRulesForAccount(ctx, accountID)
+	if err != nil {
+		return nil, err
+	}
+	var out []state.EdgeRule
+	for _, rule := range rules {
+		if rule.Kind == state.EdgeRuleKindRoute && rule.Action.Route != nil && rule.Action.Route.TargetAppSlug == slug {
+			out = append(out, rule)
+		}
+	}
+	return out, nil
 }
 
 // CorsPresetEdit is the barrier edit for updating or deleting a CORS preset:

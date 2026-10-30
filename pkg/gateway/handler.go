@@ -192,6 +192,10 @@ type App struct {
 	// deliberately limited to these apps and the gateway rechecks this flag
 	// even when a rule was written through a non-HTTP path.
 	IsPreview bool
+	// ProductionAppID is a PR preview's production app, whose app-wide edge
+	// rules the preview applies too (ADR-091 amendment 2026-10-30). Empty
+	// for production apps.
+	ProductionAppID string
 	// MaintenanceMode (ADR-091 amendment / §4.1.2.0) is the
 	// coarse-grained per-app maintenance flag mirrored from
 	// apps.maintenance_mode. When true, every inbound request is
@@ -2561,7 +2565,7 @@ func (h *Handler) routeRuleForHost(r *http.Request, appHost string) *EdgeRuleRes
 		return nil
 	}
 	rememberPublicRouteSourcePolicy(r, hostApp, found)
-	ctx := WithEdgeRuleApp(WithEdgeRuleOwner(r.Context(), hostApp.AccountID), hostApp.ID)
+	ctx := WithEdgeRuleScope(r.Context(), hostApp)
 	rule := h.edgeRules.MatchRoute(ctx, hostname(r.Host), r.URL.Path, r.Method)
 	if rule == nil || rule.AccountID != hostApp.AccountID {
 		return nil
@@ -6207,11 +6211,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// The fence is scoped to the host's owner (resolved above, before any
 	// route substitution or edge rule runs): another account's mutation,
 	// even on match_host "*", cannot change this host's policy.
-	var fenceAccount, fenceApp string
+	var fenceAccount, fenceApp, fenceProductionApp string
 	if ok {
-		fenceAccount, fenceApp = lookedApp.AccountID, lookedApp.ID
+		fenceAccount, fenceApp, fenceProductionApp = lookedApp.AccountID, lookedApp.ID, lookedApp.ProductionAppID
 	}
-	if h.edgeRules != nil && h.edgeRules.Converging(host, fenceAccount, fenceApp) {
+	// A preview applies its production app's "@app" rules, so a mutation of
+	// those fences the preview's hosts too.
+	if h.edgeRules != nil && (h.edgeRules.Converging(host, fenceAccount, fenceApp) ||
+		fenceProductionApp != "" && h.edgeRules.Converging(host, fenceAccount, fenceProductionApp)) {
 		w.Header().Set("Retry-After", "1")
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable,
 			api.CodeCapacity, "Edge policy update in progress",
@@ -6278,7 +6285,7 @@ haveApp:
 	// wrote (OwnedEdgeRules): match_host is free-form, so a foreign rule
 	// could otherwise shadow this app's own gates.
 	//nolint:contextcheck // same request context, extended with the owner.
-	r = r.WithContext(WithEdgeRuleApp(WithEdgeRuleOwner(r.Context(), app.AccountID), app.ID))
+	r = r.WithContext(WithEdgeRuleScope(r.Context(), app))
 	r = r.WithContext(withRateAdmissionEvidence(r.Context()))
 	if h.applyTotalDeadline(w, r, app) {
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
