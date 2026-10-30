@@ -26,7 +26,7 @@ func cmdDataAPIMigration(args []string) int {
 		return cmdDataAPIMigrationGuide(args[1:])
 	}
 	if len(args) == 0 || args[0] != "preview" {
-		PrintUsage(os.Stderr, "usage: gregale data-api migration preview --baseline FILE [--directory DIR] [--config FILE] [--output FILE] [--dependencies FILE] [--approval FILE] [--replay FILE] [--scenario NAME] [--from-version N] [--fixture FILE] [--data-check FILE]", "data-api")
+		PrintUsage(os.Stderr, "usage: gregale data-api migration check --baseline FILE [--directory DIR] [--config FILE] [--output FILE] [--dependencies FILE] [--approval FILE] [--replay FILE] [--scenario NAME] [--from-version N] [--fixture FILE] [--data-check FILE]", "data-api")
 		return 1
 	}
 	fs := newFlagSet("data-api migration preview", flag.ContinueOnError)

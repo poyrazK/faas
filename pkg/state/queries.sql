@@ -4,6 +4,8 @@ SELECT id::text AS id, slug, deleted_at, delete_grace_until,
        (purge_claimed_at IS NOT NULL)::boolean AS purge_started
 FROM apps
 WHERE account_id = sqlc.arg(account_id)::text::uuid AND status = 'deleted'
+  -- A torn-down preview is not restorable (previewTornDown).
+  AND NOT (preview_of_slug IS NOT NULL AND coalesce(preview_pr_state, '') IN ('tearing_down', 'torn_down'))
   AND (sqlc.arg(before_id)::text = '' OR
        (coalesce(deleted_at, created_at), id::text) <
        (sqlc.arg(before_at)::timestamptz, sqlc.arg(before_id)::text))
@@ -16,7 +18,8 @@ SELECT id::text AS id, slug, deleted_at, delete_grace_until,
        (purge_claimed_at IS NOT NULL)::boolean AS purge_started
 FROM apps
 WHERE account_id = sqlc.arg(account_id)::text::uuid
-  AND id = sqlc.arg(app_id)::text::uuid AND status = 'deleted';
+  AND id = sqlc.arg(app_id)::text::uuid AND status = 'deleted'
+  AND NOT (preview_of_slug IS NOT NULL AND coalesce(preview_pr_state, '') IN ('tearing_down', 'torn_down'));
 
 -- name: GetInstanceApplicationStandardAdmission :one
 SELECT input_snapshot, captured_at, coalesce(node_id::text,'')::text AS node_id, native_input_hash FROM instance_application_standard_admissions
