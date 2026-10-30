@@ -63,6 +63,9 @@ import (
 )
 
 func main() {
+	if code, ok := runBaseProvenanceCommand(os.Args[1:], os.Stdout, os.Stderr); ok {
+		os.Exit(code)
+	}
 	wire.Daemon("imaged", run)
 }
 
@@ -493,6 +496,11 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	if artifactErr != nil {
 		return artifactErr
 	}
+	// ADR-20261029155852: check a platform base's provenance before building it.
+	baseProvenance, err := newBaseProvenanceVerifier(getenv, puller, envOr("FAAS_STORAGE_ROOT", defaultStorageRoot), ops.Registry(), log)
+	if err != nil {
+		return err
+	}
 	// ADR-1155: on-demand collectors reach only accounts profile-captures is
 	// released to, so the flag watcher runs only when captures are installed.
 	var profileCapturesReleased func(platformflags.Subject) bool
@@ -530,6 +538,7 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		WithGrypeIdentityProbe(os.Getenv("FAAS_GRYPE_BIN")).
 		WithRuntimeGrypeRun(makeRuntimeGrypeRunner(os.Getenv("FAAS_GRYPE_BIN"))).
 		WithSyftRun(makeSyftRunner(os.Getenv("FAAS_SYFT_BIN"))).
+		WithBaseProvenance(baseProvenance).
 		// PR-A: layer-side secret-scan walker. Wired
 		// unconditionally so the default in
 		// pkg/imaged/secretscan.go::runDeployLayerSecretScan

@@ -141,6 +141,13 @@ func secretAckProgressWithRestart(secret api.AppSecretResponse, restartInstanceI
 			}
 			return targetCount, pending, fmt.Errorf("%s could not deliver the rotated secret to the application", secretRuntimeTargetName(target))
 		}
+		// "unchanged" means the runtime already held these values: it booted
+		// after the write, or the write repeated a value it had applied. Guest
+		// init then sends no signal, so the application never acknowledges this
+		// version and waiting would burn the whole --timeout (Hunt 14 H14-125).
+		if target.Reported && target.Version == secret.DeliveryVersion && target.Projection == "unchanged" {
+			continue
+		}
 		pending++
 	}
 	return targetCount, pending, nil
