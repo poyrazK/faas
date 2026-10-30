@@ -102,6 +102,11 @@ Each step is one PR. VM-lifecycle PRs run `make test-metal` and `make leakcheck`
    - CPU load prevents the pause;
    - teardown and a timeout while paused work;
    - 1,000 pause and resume cycles leave no leaks.
+   **Built (2026-10-30), behind vmmd `agent_wait_pause` / `FAAS_VMMD_AGENT_WAIT_PAUSE`, default off.** `pkg/fcvm/agent_wait_pause.go` adds agent runs to ADR-1151's pause pass with their own eligibility and idle rule. The rule needs an open relay connection, no relay or output bytes for the run's `RunAgentStart.model_wait_pause_after_ms`, and less than `AgentWaitPauseCPUMaxMillis` of CPU from vmmd's cpustats cache over the window.
+   - The relay splice resumes the VM before it writes outboundd's bytes. A cancel or the run's host deadline resumes it and stops it from being paused again.
+   - Condition 2 (no other active flow) holds because only networkless run VMs are eligible. A networked agent run waits for the conntrack check.
+   - Unit tests cover the pass, the relay, cancel, deadline and cleanup.
+   - The metal tests listed above are still owed.
 3. schedd eligibility in the agent run spec.
 4. `paused_seconds` excluded from billed GB-seconds, with a property test that paused seconds are never billed.
 5. Turn it on with ADR-20261027090011 billing at milestone B of ADR-20261027090010. Before then, the dogfood canary compares resume latency and errors with the pause on and off.

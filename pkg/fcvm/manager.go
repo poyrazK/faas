@@ -471,6 +471,10 @@ type Instance struct {
 	// QuietPauseAfter is the ADR-1151 quiet pause delay; zero means the
 	// instance keeps running between requests (quiet_pause.go).
 	QuietPauseAfter time.Duration
+	// AgentWaitPauseAfter is an agent run's model-wait pause delay
+	// (ADR-20261027090012; agent_wait_pause.go); zero means the run VM keeps
+	// running while it waits on the model.
+	AgentWaitPauseAfter time.Duration
 	// Frozen (ADR-1151; freeze.go) marks an instance Freeze paused in place
 	// for the frozen tier, until Thaw resumes it or teardown kills it.
 	// FrozenSince is when that pause took effect. Both are guarded by
@@ -1332,6 +1336,14 @@ type Manager struct {
 	quietTick     time.Duration
 	quietMu       sync.Mutex
 	quietStates   map[string]*quietState
+
+	// Model-wait pause of agent runs (ADR-20261027090012;
+	// agent_wait_pause.go). agentWaitCPU is nil unless vmmd.toml enables it.
+	// agentWaitMu guards agentWaits and is a leaf lock, like quietMu.
+	agentWaitCPU     AgentWaitCPU
+	agentWaitMetrics *AgentWaitMetrics
+	agentWaitMu      sync.Mutex
+	agentWaits       map[string]*agentWaitState
 
 	// Frozen tier (ADR-1151; freeze.go). freezeActivity is vmmd's forward
 	// activity tracker; without it Freeze cannot see forwards in flight.
@@ -3766,8 +3778,11 @@ type WakeRequest struct {
 	agentRunOnly     bool
 	agentRunRelay    *AgentRunRelay
 	agentRunInputKey string
-	RehearsalRunID   string // exact durable containment run; ordinary legacy callers may omit it
-	Instance         string
+	// agentRunWaitPauseAfter is the run's model-wait pause delay, accepted
+	// only with agentRunOnly (ADR-20261027090012).
+	agentRunWaitPauseAfter time.Duration
+	RehearsalRunID         string // exact durable containment run; ordinary legacy callers may omit it
+	Instance               string
 	// Set only by WakeAdmitted after validating and consuming its grant.
 	admission *runtimeadmission.Binding
 	// Complete approved source identities; only WakeAdmitted accepts them.
@@ -5416,9 +5431,10 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		LivenessProbe:            append(json.RawMessage(nil), req.LivenessProbe...),
 		ReadinessProbe:           append(json.RawMessage(nil), req.ReadinessProbe...),
 		StartupDeadlineS:         req.StartupDeadlineS, WorkloadNames: workloadNamesFor(req.Sidecars),
-		QuietPauseAfter:  quietPauseAfterFor(req, qualificationOnly),
-		ExecutionMode:    req.ExecutionMode,
-		Characterization: report, Runtime: req.Runtime,
+		QuietPauseAfter:     quietPauseAfterFor(req, qualificationOnly),
+		AgentWaitPauseAfter: agentWaitPauseAfterFor(req),
+		ExecutionMode:       req.ExecutionMode,
+		Characterization:    report, Runtime: req.Runtime,
 		RestoreMs: timings.restoreMs, NetnsTapMs: timings.netnsTapMs, GuestReadyMs: guestReadyMs,
 		RestoreError: timings.restoreError, RestoreFallbackReason: timings.restoreFallbackReason,
 	}
