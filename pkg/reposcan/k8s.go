@@ -150,13 +150,18 @@ func detectK8sWith(fsys fs.FS, opts ScanOptions) ([]workloadSeed, []Managed, []s
 				return fmt.Errorf("reposcan: %s CronJob %q requires a first container image", p, m.Metadata.Name)
 			}
 			seed := k8sCronJobSeed(p, m)
+			cronWarnings, err := applyK8sCronJobSpec(&seed, node, opts.KubernetesManifests)
+			if err != nil {
+				return fmt.Errorf("reposcan: %s CronJob %q: %w", p, m.Metadata.Name, err)
+			}
 			if opts.KubernetesManifests {
 				podWarnings, err := applyK8sPodTemplate(&seed, node, header.Kind, containers)
 				if err != nil {
 					return fmt.Errorf("reposcan: %s CronJob %q: %w", p, m.Metadata.Name, err)
 				}
-				warnings = append(warnings, k8sSeedWarnings(p, seed.name, podWarnings)...)
+				cronWarnings = append(cronWarnings, podWarnings...)
 			}
+			warnings = append(warnings, k8sSeedWarnings(p, seed.name, cronWarnings)...)
 			seeds = append(seeds, seed)
 		case "HorizontalPodAutoscaler":
 			if !opts.KubernetesManifests {
@@ -202,6 +207,7 @@ func detectK8sWith(fsys fs.FS, opts ScanOptions) ([]workloadSeed, []Managed, []s
 	if opts.KubernetesManifests {
 		warnings = append(warnings, applyK8sEnvFrom(seeds, sources)...)
 		warnings = append(warnings, applyK8sIngresses(seeds, ingresses, sources.services, deployments)...)
+		warnings = append(warnings, k8sUnservedDeployments(seeds, sources.services, deployments)...)
 	}
 	// Deterministic order to keep the merge input stable.
 	sort.SliceStable(seeds, func(i, j int) bool { return seeds[i].name < seeds[j].name })

@@ -805,6 +805,9 @@ type planCron struct {
 	Schedule     string `json:"schedule"`
 	Path         string `json:"path"`
 	Enabled      bool   `json:"enabled"`
+	// Timezone is the zone the source declares (a CronJob's timeZone); empty
+	// keeps the cron's current zone, UTC for a new one.
+	Timezone string `json:"timezone,omitempty"`
 }
 
 func projectWorkloadCrons(workloads []reposcan.Workload) []planCron {
@@ -816,6 +819,7 @@ func projectWorkloadCrons(workloads []reposcan.Workload) []planCron {
 				Schedule:     schedule.Expression,
 				Path:         "/",
 				Enabled:      schedule.Enabled,
+				Timezone:     schedule.Timezone,
 			})
 		}
 	}

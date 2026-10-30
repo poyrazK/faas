@@ -816,13 +816,13 @@ var _ DeferredCacheVM = (*VMMDriver)(nil)
 // second VM boots on the drive the build left, with its BuildKit state and
 // plan, and its solve hits that state at every step. It therefore spends its
 // time on the cache export the build skipped.
-func (d *VMMDriver) ExportDeferredCache(ctx context.Context, h BuildHandle) error {
+func (d *VMMDriver) ExportDeferredCache(ctx context.Context, h BuildHandle) (BuildOutcome, error) {
 	if d == nil || d.cli == nil {
-		return fmt.Errorf("builderd: VMMDriver not wired")
+		return BuildOutcome{}, fmt.Errorf("builderd: VMMDriver not wired")
 	}
 	if h.DeferredCache == nil || h.HostDrive1 == "" || h.DependencyCacheKey == "" {
 		d.DiscardDeferredCache(h)
-		return errors.New("builderd: build did not defer its dependency cache export")
+		return BuildOutcome{}, errors.New("builderd: build did not defer its dependency cache export")
 	}
 	manifest := h.DeferredCache.Manifest
 	manifest.DeferCacheExport = false
@@ -833,7 +833,7 @@ func (d *VMMDriver) ExportDeferredCache(ctx context.Context, h BuildHandle) erro
 	defer func() { _ = os.RemoveAll(exportDir) }()
 	if err := prepareCacheExportDrive(ctx, h.HostDrive1, manifest); err != nil {
 		d.DiscardDeferredCache(h)
-		return fmt.Errorf("builderd: prepare cache export drive: %w", err)
+		return BuildOutcome{}, fmt.Errorf("builderd: prepare cache export drive: %w", err)
 	}
 	oomKillsAtStart, oomCounterErr := readCgroupOOMKills(builderSliceMemoryEventsPath)
 	cacheHandle := BuildHandle{
@@ -869,20 +869,20 @@ func (d *VMMDriver) ExportDeferredCache(ctx context.Context, h BuildHandle) erro
 	}
 	if err != nil {
 		d.DiscardDeferredCache(h)
-		return fmt.Errorf("builderd: cold boot cache export: %w", err)
+		return BuildOutcome{}, fmt.Errorf("builderd: cold boot cache export: %w", err)
 	}
 	out, err := d.waitForCompletion(ctx, cacheHandle, false)
 	switch {
 	case err != nil:
-		return fmt.Errorf("builderd: wait for cache export: %w", err)
+		return out, fmt.Errorf("builderd: wait for cache export: %w", err)
 	case out.ExitCode != 0:
-		return fmt.Errorf("builderd: cache export exited %d (%s)", out.ExitCode, out.FailureClass)
+		return out, fmt.Errorf("builderd: cache export exited %d (%s)", out.ExitCode, out.FailureClass)
 	case out.DependencyCacheStoreError != "":
-		return fmt.Errorf("builderd: store exported dependency cache: %s", out.DependencyCacheStoreError)
+		return out, fmt.Errorf("builderd: store exported dependency cache: %s", out.DependencyCacheStoreError)
 	case !out.DependencyCacheStored:
-		return errors.New("builderd: cache export stored nothing")
+		return out, errors.New("builderd: cache export stored nothing")
 	}
-	return nil
+	return out, nil
 }
 
 // DiscardDeferredCache implements DeferredCacheVM.

@@ -345,6 +345,33 @@ func k8sServiceTargets(services []k8sService, workloads []k8sEnvWorkload) map[st
 	return targets
 }
 
+// k8sUnservedDeployments reports each Deployment that no Service selects and
+// that declares no containerPort (ADR-20261029093621 §2). It still runs in
+// request mode, which waits for a port; a queue consumer is a worker.
+func k8sUnservedDeployments(seeds []workloadSeed, services []k8sService, workloads []k8sEnvWorkload) []string {
+	sources := map[string]string{}
+	for _, s := range seeds {
+		sources[s.name] = s.source
+	}
+	var warnings []string
+	for _, w := range workloads {
+		source, seeded := sources[w.name]
+		if w.kind != "Deployment" || !seeded {
+			continue
+		}
+		if ports, _ := w.container["ports"].([]any); len(ports) > 0 {
+			continue
+		}
+		served := slices.ContainsFunc(services, func(svc k8sService) bool {
+			return len(svc.selector) > 0 && k8sNamespace(svc.namespace) == k8sNamespace(w.namespace) && k8sSelects(svc.selector, w.labels)
+		})
+		if !served {
+			warnings = append(warnings, "reposcan: "+source+": no Service selects this Deployment and it declares no containerPort, so it runs in request mode; set `execution_mode: worker` in gregale.yaml if it consumes a queue")
+		}
+	}
+	return warnings
+}
+
 func k8sNamespace(ns string) string {
 	if ns == "" {
 		return "default"

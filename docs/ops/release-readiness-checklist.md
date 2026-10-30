@@ -38,13 +38,18 @@ Track the release workflow in GitHub Actions (`.github/workflows/release.yml`):
 - Creation of `release.tar.gz` and SPDX SBOM (`release.sbom.json`).
 - Keyless signing with GitHub OIDC via Cosign/Rekor (`release.cosign.bundle`).
 - SLSA build provenance attestations for `release.tar.gz` and the CLI
-  archives (issue #295).
+  archives, and an SPDX SBOM attestation for the CLI archives (issue #295).
+- "Verify platform image provenance": every pinned image digest needs
+  provenance from images.yml on main (#5895).
+- "Verify pinned bases with the release's imaged": the packed imaged checks
+  every pin with the shipped Sigstore root (ADR-20261029155852).
 - Release publication with SHA256 checksums.
 
-Platform images on ghcr carry the same kind of attestation. `images.yml`
-attests each promoted image's platform digests on main: builder-base for
-linux/amd64 and linux/arm64, each runtime base for linux/amd64. These are the
-digests the release pins in `runtime-bases.env`. To check an image or an asset:
+Platform images on ghcr carry the same kind of provenance attestation.
+`images.yml` attests each promoted image's platform digests on main:
+builder-base for linux/amd64 and linux/arm64, each runtime base for
+linux/amd64. These are the digests the release pins in `runtime-bases.env`.
+`docs/supply-chain.md` covers every artifact. To check an image or an asset:
 
 ```bash
 gh attestation verify oci://ghcr.io/poyrazk/base-minimal@sha256:<digest> --owner poyrazK

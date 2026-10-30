@@ -322,6 +322,19 @@ func deliveryValueRecipients() ([]*age.X25519Recipient, error) {
 	return sealdomain.Recipients(deliveryWriteMode, recipientOrNil(deliveryDomainRecipient), hostSecretRecipient())
 }
 
+// triggerConfigRecipients returns who a trigger config's credentials are
+// sealed to: as deliveryValueRecipients, except that domain mode still
+// seals to the fleet recipient too. A schedd of the previous release opens
+// trigger configs with the fleet identity alone, so domain-only trigger
+// configs wait for the release after this one (ADR 20261022111812).
+func triggerConfigRecipients() ([]*age.X25519Recipient, error) {
+	mode := deliveryWriteMode
+	if mode == sealdomain.WriteDomain {
+		mode = sealdomain.WriteDual
+	}
+	return sealdomain.Recipients(mode, recipientOrNil(deliveryDomainRecipient), hostSecretRecipient())
+}
+
 // commitConnectionRecipients is deliveryValueRecipients for a commit
 // source's database connection. Its fleet recipient must be the shared one
 // (FAAS_FLEET_AGE_RECIPIENT_PATH), never a host's own: schedd on any node
