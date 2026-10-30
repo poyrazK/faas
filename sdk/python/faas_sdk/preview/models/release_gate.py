@@ -16,12 +16,12 @@ T = TypeVar("T", bound="ReleaseGate")
 
 @_attrs_define
 class ReleaseGate:
-    """One of an app's release gates."""
+    """One of an app's release gates (ADR-20261019071734, ADR-20261022082305)."""
 
     name: str
     kind: ReleaseGateKind
     min_samples: int
-    """Requests, metric values or AI calls (on each side, for ai gates) needed before the gate is judged."""
+    """Requests, probes, metric values or AI calls (on each side, for ai gates) needed before the gate is judged."""
     created_by: str
     created_at: datetime.datetime
     slo: str | Unset = UNSET
@@ -33,13 +33,21 @@ class ReleaseGate:
     min_events: int | Unset = UNSET
     """new_errors gates: events before a group counts."""
     metric: str | Unset = UNSET
-    """custom_metric gates: the custom metric. ai gates: error_rate, flagged_rate, cost_per_call or ttfb_ms."""
+    """custom_metric and metric_change gates: the custom metric. ai gates: error_rate, flagged_rate, cost_per_call
+    or ttfb_ms."""
     comparison: ReleaseGateComparison | Unset = UNSET
-    """custom_metric gates: which side of the threshold fails."""
+    """custom_metric gates: which side of the threshold fails; metric_change gates: which direction of change
+    fails."""
     threshold: float | Unset = UNSET
     """custom_metric gates: the bound on the metric's average."""
     max_increase_percent: int | Unset = UNSET
     """ai gates: the largest increase over the baseline, in percent."""
+    check: str | Unset = UNSET
+    """synthetic gates: the synthetic check probed on the canary and its stable revision."""
+    max_failure_percent: int | Unset = UNSET
+    """synthetic gates: the share of the candidate's probes that may fail."""
+    max_change_percent: int | Unset = UNSET
+    """metric_change gates: how far the metric may move from its average before the rollout, in percent."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -71,6 +79,12 @@ class ReleaseGate:
 
         max_increase_percent = self.max_increase_percent
 
+        check = self.check
+
+        max_failure_percent = self.max_failure_percent
+
+        max_change_percent = self.max_change_percent
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -98,6 +112,12 @@ class ReleaseGate:
             field_dict["threshold"] = threshold
         if max_increase_percent is not UNSET:
             field_dict["max_increase_percent"] = max_increase_percent
+        if check is not UNSET:
+            field_dict["check"] = check
+        if max_failure_percent is not UNSET:
+            field_dict["max_failure_percent"] = max_failure_percent
+        if max_change_percent is not UNSET:
+            field_dict["max_change_percent"] = max_change_percent
 
         return field_dict
 
@@ -135,6 +155,12 @@ class ReleaseGate:
 
         max_increase_percent = d.pop("max_increase_percent", UNSET)
 
+        check = d.pop("check", UNSET)
+
+        max_failure_percent = d.pop("max_failure_percent", UNSET)
+
+        max_change_percent = d.pop("max_change_percent", UNSET)
+
         release_gate = cls(
             name=name,
             kind=kind,
@@ -149,6 +175,9 @@ class ReleaseGate:
             comparison=comparison,
             threshold=threshold,
             max_increase_percent=max_increase_percent,
+            check=check,
+            max_failure_percent=max_failure_percent,
+            max_change_percent=max_change_percent,
         )
 
         release_gate.additional_properties = d

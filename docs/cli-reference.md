@@ -2088,7 +2088,7 @@ Show whether production releases of an app are frozen now
 
 ### release gate
 
-Stop rollouts on SLO, error, metric or AI regressions and roll back
+Stop rollouts on SLO, error, metric, check or AI regressions
 
 Examples:
 
@@ -2096,6 +2096,8 @@ Examples:
 gregale release gate create --app my-api --name checkout-slo --slo checkout --max-burn-rate 10
 gregale release gate create --app my-api --name no-new-errors --new-errors --min-events 3
 gregale release gate create --app my-api --name orders --metric orders_per_minute --below 5
+gregale release gate create --app my-api --name orders-drop --metric orders_per_minute --max-drop 30
+gregale release gate create --app my-api --name checkout-probe --check checkout
 gregale release gate create --app my-api --name ai-cost --ai cost_per_call --max-increase 30
 gregale release gate list --app my-api
 ```
@@ -2114,7 +2116,7 @@ List an app&#39;s release gates
 
 Add a release gate
 
-`gregale release gate create [--app <slug>] --name <NAME> [--slo <NAME>] [--max-burn-rate <N>] [--new-errors] [--max-new-groups <N>] [--min-events <N>] [--metric <NAME>] [--below <VALUE>] [--above <VALUE>] [--ai <METRIC>] [--max-increase <PCT>] [--min-samples <N>]`
+`gregale release gate create [--app <slug>] --name <NAME> [--slo <NAME>] [--max-burn-rate <N>] [--new-errors] [--max-new-groups <N>] [--min-events <N>] [--metric <NAME>] [--below <VALUE>] [--above <VALUE>] [--max-rise <PCT>] [--max-drop <PCT>] [--check <NAME>] [--max-failure-percent <PCT>] [--ai <METRIC>] [--max-increase <PCT>] [--min-samples <N>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -2125,12 +2127,16 @@ Add a release gate
 | `--new-errors` | fail when the release introduces new error groups |  |
 | `--max-new-groups <N>` | new error groups allowed (default 0) |  |
 | `--min-events <N>` | events before a new error group counts (default 3) |  |
-| `--metric <NAME>` | fail when this custom metric crosses a bound |  |
+| `--metric <NAME>` | fail when this custom metric crosses a bound or moves too far |  |
 | `--below <VALUE>` | fail when the metric averages below this |  |
 | `--above <VALUE>` | fail when the metric averages above this |  |
+| `--max-rise <PCT>` | fail when the metric rises more than this percent from before the rollout |  |
+| `--max-drop <PCT>` | fail when the metric drops more than this percent from before the rollout |  |
+| `--check <NAME>` | probe the canary and its stable revision with this synthetic check |  |
+| `--max-failure-percent <PCT>` | failed probes allowed, in percent (default 10) |  |
 | `--ai <METRIC>` | fail when this AI gateway metric gets worse than the previous release&#39;s: error_rate, flagged_rate, cost_per_call or ttfb_ms |  |
 | `--max-increase <PCT>` | percent over the previous release that fails an --ai gate (default 50) |  |
-| `--min-samples <N>` | requests, metric values or AI calls before the gate is judged (default 20) |  |
+| `--min-samples <N>` | requests, probes, metric values or AI calls before the gate is judged (default 20; 6 probes for --check) |  |
 
 #### release gate delete
 

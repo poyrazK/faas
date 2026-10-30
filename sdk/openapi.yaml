@@ -35308,12 +35308,13 @@ components:
       required: [name, kind, passed, summary, observed, bound, samples]
       properties:
         name: {type: string}
-        kind: {type: string, enum: [slo, new_errors, custom_metric, ai]}
+        kind: {type: string, enum: [slo, new_errors, custom_metric, ai, synthetic, metric_change]}
         passed: {type: boolean}
-        observed: {type: number, description: "The burn rate, new error groups, metric average, or the release's AI metric."}
+        observed: {type: number, description: "The burn rate, new error groups, metric average, the release's AI metric, failed-probe percentage, or signed change in percent."}
         bound: {type: number, description: "The value that fails the gate."}
-        samples: {type: integer, format: int64, minimum: 0, description: "The release's requests, new-error events, metric values or AI calls."}
+        samples: {type: integer, format: int64, minimum: 0, description: "The release's requests, new-error events, probes, metric values or AI calls."}
         baseline_bad_fraction: {type: number, description: "slo gates: the predecessor's bad fraction."}
+        baseline: {type: number, description: "synthetic gates: the stable revision's failed-probe percentage; metric_change gates: the metric's average before the rollout."}
         error_classes: {type: array, maxItems: 5, items: {type: string}, description: "new_errors gates: the new groups' error classes."}
         summary: {type: string, description: "What the gate measured, in one line."}
         not_judged: {type: boolean, description: "True when the gate had too few samples or unreadable evidence. It did not hold the rollout; summary says what it was waiting for."}

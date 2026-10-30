@@ -85,6 +85,7 @@ func (s *server) evaluatePostRelease(ctx context.Context, store state.PostReleas
 		req := gather.Request{AppID: c.AppID, ReleaseID: c.DeploymentID, BaselineID: c.PredecessorID,
 			ReleaseWindow:  gather.Window{Since: since, Until: until},
 			BaselineWindow: gather.Window{Since: baselineEnd.Add(-api.PostReleaseWatchBaseline), Until: baselineEnd},
+			PriorWindow:    gather.Window{Since: baselineEnd.Add(-api.PostReleaseWatchBaseline), Until: baselineEnd},
 			Evidence:       s.releaseGateEvidence}
 		if history := appmetrics.NewCustomMetricHistory(s.promqlClient); history != nil {
 			req.CustomMetrics = history

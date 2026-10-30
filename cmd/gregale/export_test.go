@@ -228,6 +228,7 @@ type ProjectEnvironmentInspection = projectEnvironmentInspection
 type ProjectEnvironmentPromotionWaitReceipt = projectEnvironmentPromotionWaitReceipt
 type QueueCanaryConsentKey = queueCanaryConsentKey
 type QueueStatusReport = queueStatusReport
+type ReleaseGateFlags = releaseGateFlags
 type ResumableUploadState = resumableUploadState
 type RolloutHeldNotice = rolloutHeldNotice
 type RouteHealthCorrelationReport = routeHealthCorrelationReport
@@ -1121,12 +1122,8 @@ var CmdWorkflowsStatus = cmdWorkflowsStatus
 var CmdWorkflowsSteps = cmdWorkflowsSteps
 var CollectEventDeliveryPages = collectEventDeliveryPages
 
-// ReleaseGateRequest builds a release-gates add request from its flags.
-func ReleaseGateRequest(name, slo string, maxBurn int, newErrors bool, maxGroups, minEvents int, metric, below, above, aiMetric string,
-	maxIncrease, minSamples int) (api.CreateReleaseGateRequest, error) {
-	return releaseGateRequest(releaseGateFlags{name: name, slo: slo, maxBurn: maxBurn, newErrors: newErrors, maxGroups: maxGroups,
-		minEvents: minEvents, metric: metric, below: below, above: above, aiMetric: aiMetric, maxIncrease: maxIncrease, minSamples: minSamples})
-}
+// ReleaseGateRequest builds a release gate create request from its flags.
+var ReleaseGateRequest = releaseGateRequest
 
 func CollectListPages[T any](p0 context.Context, p1 string, p2 bool, p3 func(context.Context, string) ([]T, string, error)) ([]T, string, error) {
 	return collectListPages[T](p0, p1, p2, p3)
