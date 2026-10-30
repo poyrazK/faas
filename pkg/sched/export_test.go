@@ -253,6 +253,14 @@ var TruncateCodeError = truncateCodeError
 
 var JobDispatchResult = jobDispatchResult
 
+// SidecarsForDeploymentOn builds a deployment's sidecar workload specs, as a
+// wake does, on an engine over store.
+func SidecarsForDeploymentOn(ctx context.Context, store state.Store, dep state.Deployment, accountID string) ([]fcvm.WorkloadSpec, error) {
+	e := &Engine{store: store, log: testLog()}
+	specs, _, err := e.sidecarsForDeployment(ctx, dep, accountID)
+	return specs, err
+}
+
 // Dispatch DB-phase tokens (ADR-20261025232118).
 func (o *WorkflowOrchestrator) SetDBPhaseSlotsForTest(slots int) {
 	o.dbPhase = newWorkflowDBPhase(slots)

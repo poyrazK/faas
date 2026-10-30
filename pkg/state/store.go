@@ -3386,6 +3386,11 @@ type Store interface {
 	// returns ([]nil, nil). vmmd's Wake path consumes this
 	// eagerly to convert into wake.Workloads entries.
 	ListDeploymentSidecarLayers(ctx context.Context, deploymentID string) ([]DeploymentSidecarLayer, error)
+	// ListDeploymentSidecarEnvReseals returns the runtime-domain copies of the
+	// deployment's sidecar env values that `gregalectl seal-domain migrate`
+	// wrote (ADR 20261022111812), ordered by sidecar and key; empty when
+	// there are none.
+	ListDeploymentSidecarEnvReseals(ctx context.Context, deploymentID string) ([]SidecarEnvReseal, error)
 
 	// SetDeploymentSourceURL records the canonical upstream URL +
 	// commit SHA the build was triggered from (Tier 3 / issue #197
