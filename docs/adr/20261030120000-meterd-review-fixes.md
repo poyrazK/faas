@@ -43,10 +43,12 @@ in the billing paths:
 2. **No billing subject, no roll.** A failed billing-account read fails the
    minute's roll; a later tick rolls it with the right subject.
 3. **Paid warnings follow the month's plan history.** A paid account warns
-   only above the largest compute allowance its month's recorded plans
-   granted, never less than the current plan's: the allowance the pusher and
-   the spend cap remove. Free keeps its own allowance after a downgrade: its
-   hard stop is what the financial model prices.
+   only above the compute allowance its month's recorded plans grant,
+   computed by the same function the pusher uses
+   (`state.MonthComputeIncludedMBSeconds`), so the warning follows any later
+   change to that rule. The history is read only once usage reaches the
+   current plan's allowance. Free keeps its own allowance after a downgrade:
+   its hard stop is what the financial model prices.
 4. **Dunning reports per-account failures.** Failed suspension, deletion and
    follow-up steps fail the tick, joined, after the sweep has visited every
    account. A status that moved under the sweep and a deletion guard are not
