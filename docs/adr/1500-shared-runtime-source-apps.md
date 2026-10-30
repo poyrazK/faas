@@ -174,7 +174,11 @@ its dependencies are added.
 Acceptance is `TestSharedRuntimePythonMetal`: a Python 3.11 own-base
 deployment, `python313` and `python312` shared deployments started through
 the virtualenv's gunicorn script, and rollback between the own base and
-`python313`, each from a cold boot and a snapshot restore.
+`python313`, each from a cold boot and a snapshot restore. It passed on the
+n2 metal host on 2026-10-30 (5/5 subtests, leakcheck clean) with app layers
+of 298 MB for the Python 3.11 own-base deployment against 50.8 MB
+(`python313`) and 51.2 MB (`python312`) on the shared bases;
+`TestSharedRuntimeRollbackMetal` passed again in the same run.
 
 ## Consequences
 
