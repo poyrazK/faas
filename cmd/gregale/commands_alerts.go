@@ -41,6 +41,7 @@ const (
 	flagNameEnabled         = "enabled"
 	flagNameCooldownMinutes = "cooldown-minutes"
 	flagNameAction          = "action"
+	flagNameNotifyResolved  = "notify-resolved"
 )
 
 func cmdAlerts(args []string) int {
@@ -141,6 +142,7 @@ func cmdAlertAdd(args []string) int {
 	postWindow := fs.Duration("post-deploy-rollback-window", 0, "completed-release recovery window (0 off; up to 1h; requires rollback action)")
 	cooldown := fs.Int(flagNameCooldownMinutes, api.AlertRuleDefaultCooldownMinutes, fmt.Sprintf("cooldown window in minutes (%d..%d)", api.AlertRuleCooldownMinMinutes, api.AlertRuleCooldownMaxMinutes))
 	enabled := fs.Bool(flagNameEnabled, true, "whether the rule is enabled")
+	notifyResolved := fs.Bool(flagNameNotifyResolved, false, "also send the webhook a signed alert.resolved event when the rule recovers")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -206,6 +208,7 @@ func cmdAlertAdd(args []string) int {
 		WebhookSecret:                   *webhookSecret,
 		CooldownMinutes:                 cooldown,
 		PostDeployRollbackWindowSeconds: &windowSeconds,
+		NotifyResolved:                  *notifyResolved,
 	})
 	if err != nil {
 		return printErr("Could not create alert rule", err)
@@ -487,6 +490,7 @@ func cmdAlertUpdate(args []string) int {
 	webhookSecretStdin := fs.Bool("webhook-secret-stdin", false, "read the replacement webhook secret from stdin")
 	postWindow := fs.Duration("post-deploy-rollback-window", 0, "completed-release recovery window (0 off; up to 1h; requires rollback action)")
 	cooldown := fs.Int(flagNameCooldownMinutes, api.AlertRuleDefaultCooldownMinutes, fmt.Sprintf("cooldown (%d..%d)", api.AlertRuleCooldownMinMinutes, api.AlertRuleCooldownMaxMinutes))
+	notifyResolved := fs.Bool(flagNameNotifyResolved, false, "send the webhook alert.resolved events (--notify-resolved=false turns them off)")
 	// `alerts info|deliveries|rm <id> --app X` take the id first; update
 	// stopped parsing at it and never saw --app (production-us hunt #4).
 	if err := parseInterspersed(fs, args); err != nil {
@@ -536,6 +540,7 @@ func cmdAlertUpdate(args []string) int {
 	enabledSet := false
 	cooldownSet := false
 	postWindowSet := false
+	notifyResolvedSet := false
 	fs.Visit(func(f *flag.Flag) {
 		switch f.Name {
 		case flagNameEnabled:
@@ -544,6 +549,8 @@ func cmdAlertUpdate(args []string) int {
 			cooldownSet = true
 		case "post-deploy-rollback-window":
 			postWindowSet = true
+		case flagNameNotifyResolved:
+			notifyResolvedSet = true
 		}
 	})
 	req := api.UpdateAlertRuleRequest{
@@ -568,6 +575,9 @@ func cmdAlertUpdate(args []string) int {
 	}
 	if cooldownSet {
 		req.CooldownMinutes = cooldown
+	}
+	if notifyResolvedSet {
+		req.NotifyResolved = notifyResolved
 	}
 	client, err := authedClient()
 	if err != nil {

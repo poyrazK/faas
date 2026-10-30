@@ -23,8 +23,10 @@ const observeReleaseTTL = time.Minute
 // synthetic probes. It follows the account's plan, as apid's create checks do,
 // and the capability flags (ADR-20261023115741), so a downgraded account or a
 // capability an operator switched off stops costing the customer wakes and
-// stops paging. A failed read keeps the work running: a database hiccup must
-// never silence alerts.
+// stops paging. A suspended account, or one pending deletion, gets neither
+// (ADR-20261029203000): its apps do not serve, so probes would only fail and
+// page it. A failed read keeps the work running: a database hiccup must never
+// silence alerts.
 type observeRelease struct {
 	flags   *platformflags.Set
 	decider *capflags.Decider
@@ -37,9 +39,9 @@ type observeRelease struct {
 }
 
 type releaseAccount struct {
-	plan  api.Plan
-	found bool
-	at    time.Time
+	plan api.Plan
+	live bool
+	at   time.Time
 }
 
 type releaseApp struct {
@@ -59,11 +61,11 @@ func newObserveRelease(flags *platformflags.Set, store logSearchReleaseStore) (*
 // ForAccount is the alerts.RuleRelease for one account's tick. nil (evaluate
 // everything) when the account cannot be read.
 func (r *observeRelease) ForAccount(ctx context.Context, accountID string) alerts.RuleRelease {
-	plan, found, err := r.account(ctx, accountID)
+	plan, live, err := r.account(ctx, accountID)
 	switch {
 	case err != nil:
 		return nil
-	case !found:
+	case !live:
 		return func(context.Context, state.AlertRule) (bool, bool) { return false, false }
 	}
 	if limits, ok := api.LimitsFor(plan); !ok || limits.AlertRuleLimitPerApp == 0 {
@@ -93,15 +95,30 @@ func (r *observeRelease) ForAccount(ctx context.Context, accountID string) alert
 // account's plan has per-app metrics (Hobby and above, as creating one needs)
 // and synthetic-checks is released to it.
 func (r *observeRelease) Synthetic(ctx context.Context, check state.RunnableSyntheticCheck) bool {
-	plan, found, err := r.account(ctx, check.AccountID)
+	plan, live, err := r.account(ctx, check.AccountID)
 	switch {
 	case err != nil:
 		return true
-	case !found, !plan.PerAppMetricsAllowed():
+	case !live, !plan.PerAppMetricsAllowed():
 		return false
 	}
 	subject := platformflags.Subject{AccountID: check.AccountID, Plan: string(plan), OrgID: r.orgOf(ctx, check.AppID)}
 	return r.allows("synthetic-checks", subject)
+}
+
+// SLO reports whether an SLO still gets hourly rollups: its account is live,
+// its plan has per-app metrics (as creating one needs) and custom-slos is
+// released to it (ADR-20261029203000).
+func (r *observeRelease) SLO(ctx context.Context, def state.SLO) bool {
+	plan, live, err := r.account(ctx, def.AccountID)
+	switch {
+	case err != nil:
+		return true
+	case !live, !plan.PerAppMetricsAllowed():
+		return false
+	}
+	subject := platformflags.Subject{AccountID: def.AccountID, Plan: string(plan), OrgID: r.orgOf(ctx, def.AppID)}
+	return r.allows("custom-slos", subject)
 }
 
 // allows decides a capability's flag for subject. A hand-written flag no
@@ -119,29 +136,30 @@ func (r *observeRelease) allows(capability string, subject platformflags.Subject
 	return r.decider.Enabled(capability, subject)
 }
 
-// account reads an account's plan through the cache; found is false for an
-// account that no longer exists.
+// account reads an account's plan through the cache; live is false for an
+// account that no longer exists, is suspended, or is pending deletion.
 func (r *observeRelease) account(ctx context.Context, id string) (api.Plan, bool, error) {
 	now := r.now()
 	r.mu.Lock()
 	cached, ok := r.accounts[id]
 	r.mu.Unlock()
 	if ok && now.Sub(cached.at) < observeReleaseTTL {
-		return cached.plan, cached.found, nil
+		return cached.plan, cached.live, nil
 	}
 	acct, err := r.store.AccountByID(ctx, id)
 	switch {
 	case errors.Is(err, state.ErrNotFound):
-		cached = releaseAccount{found: false, at: now}
+		cached = releaseAccount{live: false, at: now}
 	case err != nil:
 		return "", false, err
 	default:
-		cached = releaseAccount{plan: acct.Plan, found: true, at: now}
+		live := acct.Status != state.AccountSuspended && acct.Status != state.AccountDeletedPending
+		cached = releaseAccount{plan: acct.Plan, live: live, at: now}
 	}
 	r.mu.Lock()
 	r.accounts[id] = cached
 	r.mu.Unlock()
-	return cached.plan, cached.found, nil
+	return cached.plan, cached.live, nil
 }
 
 // orgOf is the organization an app belongs to, for organization rules; "" for

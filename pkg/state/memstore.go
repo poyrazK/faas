@@ -24366,7 +24366,9 @@ func (m *MemStore) CreateAlertRule(_ context.Context, in AlertRule) (AlertRule, 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, existing := range m.alertRules {
-		if existing.AccountID == in.AccountID && existing.Name == in.Name {
+		// Names are unique per app, and per account among account-wide
+		// rules (ADR-20261029203000).
+		if existing.AccountID == in.AccountID && existing.AppID == in.AppID && existing.Name == in.Name {
 			return AlertRule{}, ErrConflict
 		}
 	}
@@ -24400,7 +24402,9 @@ func (m *MemStore) CreateAlertRuleIfUnderQuota(_ context.Context, in AlertRule, 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, existing := range m.alertRules {
-		if existing.AccountID == in.AccountID && existing.Name == in.Name {
+		// Names are unique per app, and per account among account-wide
+		// rules (ADR-20261029203000).
+		if existing.AccountID == in.AccountID && existing.AppID == in.AppID && existing.Name == in.Name {
 			return AlertRule{}, ErrConflict
 		}
 	}
@@ -24554,6 +24558,9 @@ func (m *MemStore) UpdateAlertRule(_ context.Context, id string, p UpdateAlertRu
 	if p.CooldownMinutes != nil {
 		r.CooldownMinutes = *p.CooldownMinutes
 	}
+	if p.NotifyResolved != nil {
+		r.NotifyResolved = *p.NotifyResolved
+	}
 	// Action (issue #976 / ADR-122 / SAFE-RELEASES-B). Pointer PATCH
 	// shape so a missing field leaves the row alone. Mirrors the
 	// pgstore's coalesce($N, action) in the UPDATE statement.
@@ -24637,9 +24644,11 @@ func (m *MemStore) ListEnabledAlertRules(_ context.Context) ([]AlertRule, error)
 	defer m.mu.Unlock()
 	var out []AlertRule
 	for _, r := range m.alertRules {
-		if r.Enabled {
-			out = append(out, r)
+		// A deleted app's rules wait out its restore grace (ADR-20261029203000).
+		if app, ok := m.apps[r.AppID]; !r.Enabled || ok && app.Status == AppDeleted {
+			continue
 		}
+		out = append(out, r)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].AccountID < out[j].AccountID })
 	return out, nil

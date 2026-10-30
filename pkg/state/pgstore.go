@@ -14584,9 +14584,9 @@ func (s *PgStore) AlertRuleByID(ctx context.Context, id string) (AlertRule, erro
 // rejected a preset_id FK on alert_rules — the binding is the parsed
 // display-name prefix "<DisplayName> (<app_slug>)". The query joins
 // alert_presets on name to translate the catalog key into the prefix,
-// then matches rules via LIKE '<prefix>%'. The existing
-// alert_rules_account_name_uniq index covers the LIKE as a prefix
-// range scan on (account_id, name).
+// then matches rules via LIKE '<prefix>%'. The
+// alert_rules_app_name_uniq index covers the LIKE as a prefix range
+// scan on (app_id, name) (ADR-20261029203000).
 //
 // Returns:
 //   - ErrNotFound when no rule matches the (account, app, preset)

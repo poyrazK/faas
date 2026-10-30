@@ -76,6 +76,8 @@ class AlertRuleResponse:
     post_deploy_rollback_window_seconds: int | Unset = UNSET
     """Configured completed-release rollback eligibility window in seconds; 0 is disabled. Acceptance requires
     deployment-specific error_rate_pct evidence, a gt or gte comparison, and recorded predecessor lineage."""
+    notify_resolved: bool | Unset = UNSET
+    """The webhook also receives a signed alert.resolved event when the rule recovers. Omitted when false."""
     failure_source: AlertRuleResponseFailureSource | Unset = UNSET
     """Source dimension for failed_invocations; omit when metric is not failed_invocations (xor_chk)."""
     custom_metric_name: str | Unset = UNSET
@@ -139,6 +141,8 @@ class AlertRuleResponse:
             edge_rule_id = str(self.edge_rule_id)
 
         post_deploy_rollback_window_seconds = self.post_deploy_rollback_window_seconds
+
+        notify_resolved = self.notify_resolved
 
         failure_source: str | Unset = UNSET
         if not isinstance(self.failure_source, Unset):
@@ -204,6 +208,8 @@ class AlertRuleResponse:
             field_dict["edge_rule_id"] = edge_rule_id
         if post_deploy_rollback_window_seconds is not UNSET:
             field_dict["post_deploy_rollback_window_seconds"] = post_deploy_rollback_window_seconds
+        if notify_resolved is not UNSET:
+            field_dict["notify_resolved"] = notify_resolved
         if failure_source is not UNSET:
             field_dict["failure_source"] = failure_source
         if custom_metric_name is not UNSET:
@@ -278,6 +284,8 @@ class AlertRuleResponse:
 
         post_deploy_rollback_window_seconds = d.pop("post_deploy_rollback_window_seconds", UNSET)
 
+        notify_resolved = d.pop("notify_resolved", UNSET)
+
         _failure_source = d.pop("failure_source", UNSET)
         failure_source: AlertRuleResponseFailureSource | Unset
         if isinstance(_failure_source, Unset):
@@ -348,6 +356,7 @@ class AlertRuleResponse:
             event_subscription_id=event_subscription_id,
             edge_rule_id=edge_rule_id,
             post_deploy_rollback_window_seconds=post_deploy_rollback_window_seconds,
+            notify_resolved=notify_resolved,
             failure_source=failure_source,
             custom_metric_name=custom_metric_name,
             log_query=log_query,
