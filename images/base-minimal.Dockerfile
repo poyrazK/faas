@@ -10,7 +10,7 @@
 # Debian backport without dpkg metadata leaves binary scanners seeing 1.35.0.
 # The musl variant is statically linked, so it does not replace the glibc ABI
 # supplied below for Bash and customer applications.
-FROM mirror.gcr.io/library/busybox:1.37.0-musl@sha256:8fddc201ee902ceabe7f766612d597201b70592e95451c9410f446440ef4786f AS busybox
+FROM mirror.gcr.io/library/busybox:1.37.0-musl@sha256:f6a95d611e0a8780fabdb2aec43e31275b2720dfefa3e41b16835bfc42454478 AS busybox
 
 FROM mirror.gcr.io/library/debian:13-slim@sha256:1e1a22175fbf1b32157ddaf0219e1db4e5401fab2b94ed285add64d18587cd2d AS build
 # Issue #197 B3.5 (extension): pinned via images/Dockerfile.lock, at the same
