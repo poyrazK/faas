@@ -49,11 +49,17 @@ func selectTrafficTenantBindings(bindings map[trafficHostDomain]*trafficHostEnvi
 }
 
 func readTrafficBindingClaims(ctx context.Context, reader sqlc.DBTX, appsSuffix string) (trafficBindingClaims, error) {
+	return readBoundedTrafficBindingClaims(ctx, func(bounded context.Context) (sqlc.ReadTrafficBindingClaimsRow, error) {
+		return sqlc.New().ReadTrafficBindingClaims(bounded, reader, sqlc.ReadTrafficBindingClaimsParams{
+			MaxInputs: api.TrafficPolicyMaxAnalysisInputs, MaxBytes: api.TrafficPolicyMaxAnalysisMetadataBytes, AppsSuffix: appsSuffix,
+		})
+	})
+}
+
+func readBoundedTrafficBindingClaims(ctx context.Context, read func(context.Context) (sqlc.ReadTrafficBindingClaimsRow, error)) (trafficBindingClaims, error) {
 	bounded, cancel := context.WithTimeout(ctx, api.TrafficPolicyAnalysisSQLTimeout)
 	defer cancel()
-	row, err := sqlc.New().ReadTrafficBindingClaims(bounded, reader, sqlc.ReadTrafficBindingClaimsParams{
-		MaxInputs: api.TrafficPolicyMaxAnalysisInputs, MaxBytes: api.TrafficPolicyMaxAnalysisMetadataBytes, AppsSuffix: appsSuffix,
-	})
+	row, err := read(bounded)
 	if err != nil {
 		if ctx.Err() != nil {
 			return trafficBindingClaims{}, ctx.Err()

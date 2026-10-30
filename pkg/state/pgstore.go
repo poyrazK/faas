@@ -11876,6 +11876,21 @@ func (s *PgStore) UpsertDeploymentScanResult(ctx context.Context, deploymentID s
 	return nil
 }
 
+// RenewDeploymentScanEvidence replaces a complete scan result only while the
+// row still holds expected, so a renewal never overwrites a newer scan another
+// imaged wrote meanwhile. It reports whether the row was renewed.
+func (s *PgStore) RenewDeploymentScanEvidence(ctx context.Context, deploymentID string, expected, renewed []byte) (bool, error) {
+	tag, err := s.pool.Exec(ctx,
+		`update deployments
+		    set scan_result = $3, scanned_at = now()
+		  where id = $1 and scan_status = 'complete' and scan_result = $2::jsonb`,
+		deploymentID, expected, renewed)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
 // UpsertDeploymentSecretFindings writes the secret-scan audit row
 // (migrations/00221, secret-scan v2). Mirrors UpsertDeploymentScanResult:
 // scopes to one deployment row, overwrites (not creates a second),

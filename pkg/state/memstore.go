@@ -5304,20 +5304,29 @@ func (m *MemStore) PreviewAppByProjectWorkload(_ context.Context, accountID, pro
 }
 
 // ProjectAppByWorkload mirrors PgStore: a service-name production alias in
-// the owner's project, ErrConflict when two apps share it.
+// the owner's project, ErrConflict when two apps share it, and
+// ErrProjectServiceDeleted when only a deleted member holds it.
 func (m *MemStore) ProjectAppByWorkload(_ context.Context, accountID, projectID, name string) (App, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var found App
+	deleted := false
 	for _, app := range m.apps {
 		if app.AccountID != accountID || app.ProjectID == "" || app.ProjectID != projectID ||
-			app.PreviewOfSlug != "" || app.Status == AppDeleted || !api.SameServiceName(app.WorkloadName, name) {
+			app.PreviewOfSlug != "" || !api.SameServiceName(app.WorkloadName, name) {
+			continue
+		}
+		if app.Status == AppDeleted {
+			deleted = true
 			continue
 		}
 		if found.ID != "" {
 			return App{}, ErrConflict
 		}
 		found = app
+	}
+	if found.ID == "" && deleted {
+		return App{}, ErrProjectServiceDeleted
 	}
 	if found.ID == "" {
 		return App{}, ErrNotFound
@@ -11087,6 +11096,20 @@ func (m *MemStore) UpsertDeploymentScanResult(_ context.Context, id string, scan
 	return nil
 }
 
+// RenewDeploymentScanEvidence mirrors PgStore.RenewDeploymentScanEvidence.
+func (m *MemStore) RenewDeploymentScanEvidence(_ context.Context, id string, expected, renewed []byte) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d, ok := m.deployments[id]
+	if !ok || d.ScanStatus != "complete" || !jsonEqual(d.ScanResult, expected) {
+		return false, nil
+	}
+	d.ScanResult = append([]byte(nil), renewed...)
+	d.ScannedAt = time.Now()
+	m.putDeploymentLocked(id, d)
+	return true, nil
+}
+
 // UpsertDeploymentSecretFindings mirrors
 // PgStore.UpsertDeploymentSecretFindings (migrations/00221,
 // secret-scan v2). Stamps the per-deploy secret-scan audit row
@@ -14279,7 +14302,9 @@ func (m *MemStore) ListEnabledTriggers(_ context.Context) ([]sqlc.Trigger, error
 	defer m.mu.Unlock()
 	var out []sqlc.Trigger
 	for _, t := range m.triggers {
-		if t.Enabled && !m.workloadAdmissionRetiredLocked(t.AppID.String(), t.QueueBindingScope) && !m.rehearsalBrokerTriggerLocked(t) {
+		app, live := m.triggerAppLocked(t)
+		live = live && app.Status != AppDeleted
+		if t.Enabled && live && !m.workloadAdmissionRetiredLocked(t.AppID.String(), t.QueueBindingScope) && !m.rehearsalBrokerTriggerLocked(t) {
 			out = append(out, t)
 		}
 	}

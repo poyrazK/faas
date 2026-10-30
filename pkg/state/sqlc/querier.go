@@ -3354,6 +3354,10 @@ type Querier interface {
 	// A rehearsal-enrolled app never polls or commits offsets on a real external
 	// broker; its queue, cron and realtime inputs stay inside the app
 	// (ADR-20261019180000).
+	// A deleted app's triggers stay enabled so a restore inside the grace window
+	// brings them back, but nothing polls them meanwhile: a broker trigger kept
+	// draining the customer's queue into the dead app's dead letters (bug hunt
+	// 2026-10-28 B32).
 	ListEnabledTriggers(ctx context.Context, db DBTX) ([]ListEnabledTriggersRow, error)
 	ListEnabledUDPListeners(ctx context.Context, db DBTX) ([]AppUdpListener, error)
 	ListEnvironmentGitOpsOverrideExpirations(ctx context.Context, db DBTX, sourceID pgtype.UUID) ([]ListEnvironmentGitOpsOverrideExpirationsRow, error)
@@ -4983,6 +4987,9 @@ type Querier interface {
 	// plan on every project service call through the transaction pooler while no
 	// deployment on production-us was pinned (Hunt 14 H14-35).
 	ProjectServiceGraphCallerPinned(ctx context.Context, db DBTX, arg ProjectServiceGraphCallerPinnedParams) (bool, error)
+	// A deleted production member keeps its service name until it is purged, so
+	// the name does not fall back to an app slug elsewhere (ErrProjectServiceDeleted).
+	ProjectServiceHasDeletedApp(ctx context.Context, db DBTX, arg ProjectServiceHasDeletedAppParams) (bool, error)
 	ProjectStabilizationSuperseded(ctx context.Context, db DBTX, arg ProjectStabilizationSupersededParams) (bool, error)
 	ProjectWorkerGraphAdmission(ctx context.Context, db DBTX, arg ProjectWorkerGraphAdmissionParams) (bool, error)
 	PromotionControlBaselineUsable(ctx context.Context, db DBTX, releaseID string) (bool, error)
@@ -5736,6 +5743,11 @@ type Querier interface {
 	// All hostname reservations, including inactive/deleted surfaces. Discovery
 	// transfers only identities and routing eligibility; no challenge or cert data.
 	ReadTrafficBindingClaims(ctx context.Context, db DBTX, arg ReadTrafficBindingClaimsParams) (ReadTrafficBindingClaimsRow, error)
+	// The claims a scoped binding write can see (ADR-20261029190349 decision 3):
+	// its accounts' claims and their redirects, the claims its hostnames name
+	// (with their wildcard ancestors), and those inside its subtrees. Same shape
+	// as ReadTrafficBindingClaims.
+	ReadTrafficBindingClaimsScoped(ctx context.Context, db DBTX, arg ReadTrafficBindingClaimsScopedParams) (ReadTrafficBindingClaimsScopedRow, error)
 	// A rule-only traffic policy write holds no lock on the fleet capacity policy
 	// unless one of its statements fired a capacity trigger (ADR-20261029150627).
 	ReadTrafficCapacityLockHeld(ctx context.Context, db DBTX) (bool, error)
@@ -5744,6 +5756,8 @@ type Querier interface {
 	// Secret-free binding metadata only, bounded before transfer. Unverified and
 	// ineligible claims are retained because they block less-specific fallbacks.
 	ReadTrafficDomainClaims(ctx context.Context, db DBTX, arg ReadTrafficDomainClaimsParams) (ReadTrafficDomainClaimsRow, error)
+	// Whether an enabled route can match every unclaimed hostname.
+	ReadTrafficEmptyScopeRoute(ctx context.Context, db DBTX) (bool, error)
 	ReadTrafficGlobalRouteAccounts(ctx context.Context, db DBTX, arg ReadTrafficGlobalRouteAccountsParams) ([]pgtype.UUID, error)
 	// Only selectors, counts, sizes and referenced IDs leave the database.
 	ReadTrafficHostAnalysis(ctx context.Context, db DBTX, arg ReadTrafficHostAnalysisParams) (ReadTrafficHostAnalysisRow, error)

@@ -24,7 +24,7 @@ func (s *server) dashboardSetEdgeAttackMode(w http.ResponseWriter, r *http.Reque
 	slug := r.PathValue("slug")
 	page := "/dashboard/apps/" + url.PathEscape(slug) + "/edge-rules"
 	app, err := s.store.AppBySlug(r.Context(), slug)
-	if err != nil || app.AccountID != acct.ID {
+	if err != nil || !dashboardAppOwner(r, &acct, app) {
 		http.NotFound(w, r)
 		return
 	}

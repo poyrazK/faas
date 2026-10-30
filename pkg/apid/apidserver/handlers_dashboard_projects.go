@@ -105,7 +105,7 @@ func (s *server) renderProjectDetail(w http.ResponseWriter, r *http.Request, log
 		api.WriteProblem(w, problem)
 		return
 	}
-	token, err := middleware.IssueForAuthenticated(s.sessions, dashboardProjectManageAction, acct.ID)
+	token, err := middleware.IssueForAuthenticated(s.sessions, dashboardProjectManageAction, actorAccount(r, acct).ID)
 	if err != nil {
 		renderProblem(w, log, err)
 		return

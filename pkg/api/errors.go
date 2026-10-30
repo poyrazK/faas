@@ -5334,8 +5334,8 @@ func ErrAccountDeletionManagedPostgres(live int64) *Problem {
 	}
 	return NewProblem(http.StatusConflict, CodeAccountDeletionManagedPostgres,
 		"Managed PostgreSQL databases must be deleted first",
-		fmt.Sprintf("this account still has %s; delete them before deleting the account. Run `gregale postgres list` to see them and `gregale postgres delete <database>` to delete each one, then delete the account again.", what)).
-		WithHint("run `gregale postgres list`, then `gregale postgres delete <database>` for each database").
+		fmt.Sprintf("this account still has %s; delete them before deleting the account. Run `gregale postgres list` to see them and `gregale postgres delete <database> --purge` to delete each one, then delete the account again. A database whose delete is only scheduled still counts until it is purged.", what)).
+		WithHint("run `gregale postgres list`, then `gregale postgres delete <database> --purge` for each database").
 		WithDocs(docsBase + "/postgres")
 }
 

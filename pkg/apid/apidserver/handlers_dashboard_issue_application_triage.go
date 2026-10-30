@@ -42,7 +42,7 @@ func (s *server) dashboardApplicationTriageHandler(w http.ResponseWriter, r *htt
 		writeNativeIssueTrackerError(w, err)
 		return
 	}
-	token, err := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardIssueAction, acct.ID, dashboardIssueCookie)
+	token, err := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardIssueAction, actorAccount(r, acct).ID, dashboardIssueCookie)
 	if err != nil {
 		renderProblem(w, s.log, err)
 		return

@@ -131,3 +131,15 @@ func TestManagedPostgresUndeleteChecksThePlan(t *testing.T) {
 		t.Fatalf("refused undelete changed the database: %+v %v releases=%d", got, err, *provider.releases)
 	}
 }
+
+func TestManagedPostgresDashboardShowsTheScheduledDelete(t *testing.T) {
+	purgeAfter := time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)
+	items := apidserver.ProjectManagedPostgresDashboard([]managedpostgres.Database{
+		{ID: "scheduled", Name: "orders", State: managedpostgres.StateDeleting, PurgeAfter: purgeAfter},
+		{ID: "purging", Name: "logs", State: managedpostgres.StateDeleting},
+		{ID: "ready", Name: "users", State: managedpostgres.StateReady},
+	})
+	if got := []string{items[0].RestorableUntil, items[1].RestorableUntil, items[2].RestorableUntil}; got[0] != "2026-11-06T12:00:00Z" || got[1] != "" || got[2] != "" {
+		t.Fatalf("restorable_until = %q; want only the scheduled delete's", got)
+	}
+}
