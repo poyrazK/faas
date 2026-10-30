@@ -387,6 +387,19 @@ func Match(ctx context.Context, family Family, tag Tag, sum, stored []byte) bool
 	return err == nil && ok
 }
 
+// AnyKeyedWrites reports whether any family's installed policy writes keyed
+// digests.
+func AnyKeyedWrites() bool {
+	activeMu.RLock()
+	defer activeMu.RUnlock()
+	for _, p := range active {
+		if p != nil && p.KeyedWrites {
+			return true
+		}
+	}
+	return false
+}
+
 // SetAccount installs the account family's policy for this process; nil
 // restores plain hashes. apid installs it at start.
 func SetAccount(p *Policy) { Set(FamilyAccount, p) }

@@ -19,6 +19,7 @@ import (
 
 	"filippo.io/age"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/credhash"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
@@ -43,6 +44,10 @@ func main() {
 }
 
 func run(ctx context.Context, log *slog.Logger) error {
+	// ADR 20261029202403 amendment 1: the uploads credential ring: s3-gatewayd checks object upload grants.
+	if err := credhash.Install(os.Getenv, credhash.FamilyUploads); err != nil {
+		return fmt.Errorf("s3-gatewayd: %w", err)
+	}
 	if err := role.Require("s3-gatewayd", role.FromConfig("", "FAAS_S3_GATEWAY_ROLE"), role.RoleSingleBox, role.RoleControlPlane); err != nil {
 		return err
 	}

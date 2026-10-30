@@ -73,9 +73,9 @@ func TestLoadAccountPolicyReadsUnitConfiguration(t *testing.T) {
 // adr: 20261029202403 decision 2 — each family reads its own ring and
 // switches, and installing one family's policy leaves the others plain.
 func TestFamiliesHaveTheirOwnPolicies(t *testing.T) {
-	const events credhash.Family = "event-acks"
+	const events = credhash.FamilyDevBridge
 	keys, writes, plain := credhash.EnvNames(events)
-	if keys != "FAAS_CREDENTIAL_EVENT_ACKS_KEYS_FILE" || writes != "FAAS_CREDENTIAL_EVENT_ACKS_WRITES" || plain != "FAAS_CREDENTIAL_EVENT_ACKS_PLAIN_LOOKUP" {
+	if keys != "FAAS_CREDENTIAL_DEV_BRIDGE_KEYS_FILE" || writes != "FAAS_CREDENTIAL_DEV_BRIDGE_WRITES" || plain != "FAAS_CREDENTIAL_DEV_BRIDGE_PLAIN_LOOKUP" {
 		t.Fatalf("names = %s %s %s", keys, writes, plain)
 	}
 	if keys, _, _ := credhash.EnvNames(credhash.FamilyAccount); keys != credhash.EnvAccountKeysFile {
@@ -88,7 +88,7 @@ func TestFamiliesHaveTheirOwnPolicies(t *testing.T) {
 		t.Fatal(err)
 	}
 	if p := credhash.For(events); p == nil || !p.KeyedWrites || p.Ring.Current() != 4 {
-		t.Fatalf("event-acks policy = %+v", p)
+		t.Fatalf("dev-bridge policy = %+v", p)
 	}
 	if credhash.Account() != nil {
 		t.Fatal("installing one family installed the account family")

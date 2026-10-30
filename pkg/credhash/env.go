@@ -3,7 +3,6 @@ package credhash
 import (
 	"fmt"
 	"strconv"
-	"strings"
 )
 
 // A family's ring and its two rollout switches are unit configuration, like
@@ -17,13 +16,26 @@ const (
 )
 
 // EnvNames are the variables family's policy is read from: the ring file,
-// the write mode and the plain-lookup switch.
+// the write mode and the plain-lookup switch. They are spelled out so the
+// deploy tree and the environment contract can find each one.
 func EnvNames(family Family) (keysFile, writes, plainLookup string) {
-	if family == FamilyAccount {
+	switch family {
+	case FamilyAccount:
 		return EnvAccountKeysFile, EnvAccountWrites, EnvAccountPlainLookup
+	case FamilyScheduler:
+		return "FAAS_CREDENTIAL_SCHEDULER_KEYS_FILE", "FAAS_CREDENTIAL_SCHEDULER_WRITES", "FAAS_CREDENTIAL_SCHEDULER_PLAIN_LOOKUP"
+	case FamilyOutbound:
+		return "FAAS_CREDENTIAL_OUTBOUND_KEYS_FILE", "FAAS_CREDENTIAL_OUTBOUND_WRITES", "FAAS_CREDENTIAL_OUTBOUND_PLAIN_LOOKUP"
+	case FamilyUploads:
+		return "FAAS_CREDENTIAL_UPLOADS_KEYS_FILE", "FAAS_CREDENTIAL_UPLOADS_WRITES", "FAAS_CREDENTIAL_UPLOADS_PLAIN_LOOKUP"
+	case FamilyAttach:
+		return "FAAS_CREDENTIAL_ATTACH_KEYS_FILE", "FAAS_CREDENTIAL_ATTACH_WRITES", "FAAS_CREDENTIAL_ATTACH_PLAIN_LOOKUP"
+	case FamilyDevBridge:
+		return "FAAS_CREDENTIAL_DEV_BRIDGE_KEYS_FILE", "FAAS_CREDENTIAL_DEV_BRIDGE_WRITES", "FAAS_CREDENTIAL_DEV_BRIDGE_PLAIN_LOOKUP"
+	case FamilyDataAPI:
+		return "FAAS_CREDENTIAL_DATA_API_KEYS_FILE", "FAAS_CREDENTIAL_DATA_API_WRITES", "FAAS_CREDENTIAL_DATA_API_PLAIN_LOOKUP"
 	}
-	prefix := "FAAS_CREDENTIAL_" + strings.ToUpper(strings.ReplaceAll(string(family), "-", "_"))
-	return prefix + "_KEYS_FILE", prefix + "_WRITES", prefix + "_PLAIN_LOOKUP"
+	return "", "", ""
 }
 
 // LoadAccountPolicy reads the account family's policy from getenv.
@@ -35,6 +47,9 @@ func LoadAccountPolicy(getenv func(string) string) (*Policy, error) {
 // is the release before: plain writes and lookups.
 func LoadPolicy(family Family, getenv func(string) string) (*Policy, error) {
 	keysEnv, writesEnv, plainEnv := EnvNames(family)
+	if keysEnv == "" {
+		return nil, fmt.Errorf("credhash: unknown credential family %q", family)
+	}
 	p := &Policy{PlainLookup: true}
 	if path := getenv(keysEnv); path != "" {
 		ring, err := LoadRing(path)

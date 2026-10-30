@@ -64,6 +64,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/capflags"
 	"github.com/onebox-faas/faas/pkg/chaos"
 	"github.com/onebox-faas/faas/pkg/circuit"
+	"github.com/onebox-faas/faas/pkg/credhash"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/edgewaf"
 	"github.com/onebox-faas/faas/pkg/events"
@@ -1638,6 +1639,10 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	defer func() { _ = credentialAuth.Close() }()
 	credentialMatcher := apidgrpc.NewCredentialMatcher(credentialAuth)
 	deps.credentialMatcher = credentialMatcher
+	// Operation capabilities and dev-bridge tokens are keyed under rings this
+	// node never holds; apid matches them (amendment 1, decision 2).
+	credhash.SetRemote(credhash.FamilyScheduler, credentialMatcher.Remote())
+	credhash.SetRemote(credhash.FamilyDevBridge, credentialMatcher.Remote())
 	// handoffCtx carries the work that speaks for this node's gateway rather
 	// than for one request: a hand-off ends it here and the successor takes it
 	// over (ADR-1736). Requests and their sinks keep ctx.
