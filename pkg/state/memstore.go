@@ -1084,7 +1084,10 @@ type MemStore struct {
 	// names are validated to a portable charset and
 	// deploymentIDs are UUIDs).
 	deploymentSidecarLayers map[string]DeploymentSidecarLayer
-	snapshots               []Snapshot
+	// sidecarEnvReseals mirrors deployment_sidecar_env_reseals, keyed by
+	// sidecarEnvResealKey; nil until the first upsert.
+	sidecarEnvReseals map[string]SidecarEnvReseal
+	snapshots         []Snapshot
 	// snapshotStaleAt mirrors snapshots.stale_at: when a snapshot was marked
 	// stale, which stale retention counts from (Hunt 21 H21-2). A stale row
 	// without an entry falls back to its creation time.

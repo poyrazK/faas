@@ -2,9 +2,12 @@ package sealmigrate
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 
 	"filippo.io/age"
 
@@ -19,9 +22,21 @@ import (
 // release bundles, deployment snapshots, and release and promotion captures.
 // The compare-and-swap rewrites only kid and ciphertext, so no runtime-change
 // trigger fires and no immutable snapshot changes meaning.
+//
+// Sidecar env values live inside deployments.sidecars, which stays as apid
+// wrote it; the runtime-domain copy of each goes to
+// deployment_sidecar_env_reseals, which schedd prefers at wake.
 type RuntimeStore interface {
 	ListSecretRekeyDocuments(ctx context.Context, kid, after string, limit int) ([]state.SecretRekeyDocument, error)
 	CompareAndSwapSecretRekeyDocument(ctx context.Context, before state.SecretRekeyDocument, after json.RawMessage) error
+	sidecarEnvLister
+	UpsertSidecarEnvReseal(ctx context.Context, r state.SidecarEnvReseal, previous []byte) (bool, error)
+}
+
+// sidecarEnvLister lists the declared sidecar env values and their copies.
+type sidecarEnvLister interface {
+	ListSidecarEnvDeployments(ctx context.Context, afterID string, limit int) ([]state.DeploymentSidecars, error)
+	ListDeploymentSidecarEnvReseals(ctx context.Context, deploymentID string) ([]state.SidecarEnvReseal, error)
 }
 
 // errUnopenable marks an envelope no supplied identity opens.
@@ -31,7 +46,8 @@ var errUnopenable = errors.New("sealmigrate: no supplied identity opens the enve
 // recipient alone (ADR 20261022111812, step 3). legacy are the fleet and host
 // identities that open envelopes sealed before the domain. The store lists
 // only documents with an envelope labelled for another key, so a complete
-// migration lists nothing and a rerun scans 0. A document rewritten between
+// migration lists nothing and a rerun scans only the sidecar env values,
+// which carry no key id and are opened to tell. A document rewritten between
 // read and write is left for the next run. Run it only after every vmmd
 // reports faas_seal_domain_loaded{domain="runtime"} 1: a re-sealed envelope
 // no longer opens with the fleet identity.
@@ -59,9 +75,26 @@ func MigrateRuntime(ctx context.Context, store RuntimeStore, domain *age.X25519I
 			}
 		}
 		if len(docs) < migrateBatch {
-			return report, nil
+			break
 		}
 	}
+	err := walkSidecarEnv(ctx, store, func(v sidecarEnvValue) error {
+		report.Scanned++
+		sealed, outcome, err := resealBlob(v.current, sidecarEnvNamespace, 0, domain, legacy)
+		if err != nil {
+			return fmt.Errorf("sealmigrate: reseal sidecar env of deployment %s: %w", v.reseal.DeploymentID, err)
+		}
+		replaced := false
+		if outcome == resealWrite {
+			v.reseal.Kid, v.reseal.Ciphertext = kid, sealed
+			if replaced, err = store.UpsertSidecarEnvReseal(ctx, v.reseal, v.previous); err != nil {
+				return fmt.Errorf("sealmigrate: persist sidecar env of deployment %s: %w", v.reseal.DeploymentID, err)
+			}
+		}
+		report.count(outcome, replaced)
+		return nil
+	})
+	return report, err
 }
 
 func resealRuntimeDocument(ctx context.Context, store RuntimeStore, doc state.SecretRekeyDocument, domain *age.X25519Identity, legacy []*age.X25519Identity, recipient *age.X25519Recipient, report *MigrationReport) error {
@@ -116,11 +149,13 @@ type RuntimeLister interface {
 	ListSecretRekeyDocuments(ctx context.Context, kid, after string, limit int) ([]state.SecretRekeyDocument, error)
 	CountRuntimeCopiesOffDomain(ctx context.Context, kid string) (int, error)
 	ListSealedCrashCaptureKeys(ctx context.Context, afterID string, limit int) ([]state.CrashCaptureKey, error)
+	sidecarEnvLister
 }
 
-// CheckRuntime counts, without writing, the rekey documents a migration
-// would still rewrite (Pending) and the values vmmd could open only with a
-// legacy identity that the migration does not re-seal (Skipped), ADR
+// CheckRuntime counts, without writing, the rekey documents and sidecar env
+// values a migration would still rewrite (Pending) and the values vmmd could
+// open only with a legacy identity that the migration does not re-seal
+// (Skipped), ADR
 // 20261022111812's contract precondition for vmmd:
 //   - short-lived copies of runtime secrets filed under another key id: an
 //     open config guard's replaced secrets and a cutover's unpublished
@@ -154,6 +189,18 @@ func CheckRuntime(ctx context.Context, store RuntimeLister, domain *age.X25519Id
 		if len(docs) < migrateBatch {
 			break
 		}
+	}
+	err := walkSidecarEnv(ctx, store, func(v sidecarEnvValue) error {
+		report.Scanned++
+		_, outcome, err := resealBlob(v.current, sidecarEnvNamespace, 0, domain, legacy)
+		if err != nil {
+			return fmt.Errorf("sealmigrate: check sidecar env of deployment %s: %w", v.reseal.DeploymentID, err)
+		}
+		report.checked(outcome)
+		return nil
+	})
+	if err != nil {
+		return report, err
 	}
 	copies, err := store.CountRuntimeCopiesOffDomain(ctx, kid)
 	if err != nil {
@@ -231,4 +278,84 @@ func runtimeCaptureKeysLeft(ctx context.Context, store RuntimeLister, domain *ag
 			return left, nil
 		}
 	}
+}
+
+// sidecarEnvNamespace is the namespace apid seals sidecar env values under.
+const sidecarEnvNamespace = "sidecar_env"
+
+// sidecarEnvValue is one declared sidecar env value: the copy the re-seal
+// would write, the ciphertext schedd sends today (the stored copy, or the
+// declared value when no copy matches it), and the stored copy to replace.
+type sidecarEnvValue struct {
+	reseal   state.SidecarEnvReseal
+	current  []byte
+	previous []byte
+}
+
+// walkSidecarEnv visits every declared sidecar env value, deployment by
+// deployment in id order.
+func walkSidecarEnv(ctx context.Context, store sidecarEnvLister, visit func(sidecarEnvValue) error) error {
+	after := ""
+	for {
+		page, err := store.ListSidecarEnvDeployments(ctx, after, migrateBatch)
+		if err != nil {
+			return fmt.Errorf("sealmigrate: list sidecar env deployments: %w", err)
+		}
+		for _, d := range page {
+			if d.ID <= after {
+				return errors.New("sealmigrate: sidecar env deployments listed out of order")
+			}
+			after = d.ID
+			values, err := sidecarEnvValues(ctx, store, d)
+			if err != nil {
+				return err
+			}
+			for _, v := range values {
+				if err := visit(v); err != nil {
+					return err
+				}
+			}
+		}
+		if len(page) < migrateBatch {
+			return nil
+		}
+	}
+}
+
+func sidecarEnvValues(ctx context.Context, store sidecarEnvLister, d state.DeploymentSidecars) ([]sidecarEnvValue, error) {
+	var declared []struct {
+		Name string            `json:"name"`
+		Env  map[string]string `json:"env"`
+	}
+	if err := json.Unmarshal(d.Sidecars, &declared); err != nil {
+		return nil, fmt.Errorf("sealmigrate: decode sidecars of deployment %s: %w", d.ID, err)
+	}
+	reseals, err := store.ListDeploymentSidecarEnvReseals(ctx, d.ID)
+	if err != nil {
+		return nil, fmt.Errorf("sealmigrate: list sidecar env reseals of deployment %s: %w", d.ID, err)
+	}
+	stored := make(map[[2]string]state.SidecarEnvReseal, len(reseals))
+	for _, r := range reseals {
+		stored[[2]string{r.SidecarName, r.Key}] = r
+	}
+	var out []sidecarEnvValue
+	for _, sidecar := range declared {
+		for _, key := range slices.Sorted(maps.Keys(sidecar.Env)) {
+			// An undecodable value stays empty, which nothing opens: it is
+			// reported as failed.
+			ciphertext, _ := base64.StdEncoding.DecodeString(sidecar.Env[key])
+			v := sidecarEnvValue{
+				reseal:  state.SidecarEnvReseal{DeploymentID: d.ID, SidecarName: sidecar.Name, Key: key, SourceSHA256: state.SidecarEnvSourceDigest(ciphertext)},
+				current: ciphertext,
+			}
+			if r, ok := stored[[2]string{sidecar.Name, key}]; ok {
+				v.previous = r.Ciphertext
+				if r.SourceSHA256 == v.reseal.SourceSHA256 {
+					v.current = r.Ciphertext
+				}
+			}
+			out = append(out, v)
+		}
+	}
+	return out, nil
 }
