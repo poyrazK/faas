@@ -231,6 +231,12 @@ func TestWorkloadRetirementRetainsOriginalLayerAfterReleaseExpiry(t *testing.T) 
 	record := m.environmentGitOps[lease.Source.ID].retirements[r.Resource]
 	record.Phase = "recovered"
 	m.environmentGitOps[lease.Source.ID].retirements[r.Resource] = record
+	// Newer releases move it out of the rollback window, which keeps a
+	// recent superseded release's layers (Hunt 21 H21-1).
+	for i := range api.SnapshotRollbackRetentionDeployments {
+		newer := Deployment{ID: newID(), AppID: d.AppID, Scope: d.Scope, Status: DeploySuperseded, CreatedAt: d.CreatedAt.Add(time.Duration(i+1) * time.Minute)}
+		m.deployments[newer.ID] = newer
+	}
 	if m.durableWorkRetainsDeploymentLocked(d.ID) || m.deploymentLayerArtifactReferencedLocked(d) {
 		t.Fatal("recovered historical code acquired a permanent retirement pin")
 	}

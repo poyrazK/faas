@@ -2234,9 +2234,10 @@ const (
 	OutboundAIEvaluationJudgeErrorMaxPercent    = 50
 )
 
-// Operator-only managed realtime resume preview safety bounds. These are not
-// plan entitlements or a billing allowance; product limits are decided before
-// the preview is promoted.
+// Managed realtime resume bounds per node and per connection. Each plan's
+// share of a node's subscriptions is RealtimeLimits.ResumeSubscriptionsPerNode
+// (ADR-1323, amendment of 2026-10-27); these are the node-wide caps that
+// protect control-plane Postgres from history reads.
 const (
 	RealtimeResumeSubscriptionsPerNode       = 256
 	RealtimeResumeSubscriptionsPerConnection = 8
@@ -3055,13 +3056,43 @@ type RealtimeLimits struct {
 	EndpointsPerApp       int
 	EndpointsPerAccount   int
 	ConnectionsPerAccount int
+	// ResumeSubscriptionsPerNode caps an account's resume, inbox and SSE
+	// subscriptions on one realtime node, within the node's
+	// RealtimeResumeSubscriptionsPerNode and the 50% account share. Each one
+	// reads its channel's history from the control plane at least every
+	// 5 seconds, so the node bound protects control-plane Postgres and this
+	// share divides it by plan (ADR-1323, amendment of 2026-10-27).
+	ResumeSubscriptionsPerNode int
+	// RetainedChannelsPerAccount caps the channels an account's endpoints hold
+	// retained messages, reducer state or a snapshot on, on top of 32 per
+	// endpoint. A channel holds at most 1,024 messages of 4 KiB, so this bounds
+	// the account's retained control-plane storage to about 4 MiB a channel:
+	// 128 MiB, 1 GiB and 4 GiB by plan (ADR-1323, amendment of 2026-10-27).
+	RetainedChannelsPerAccount int
 }
 
 var realtimeLimits = map[Plan]RealtimeLimits{
 	PlanFree:  {Plan: PlanFree},
-	PlanHobby: {Plan: PlanHobby, EndpointsPerApp: 2, EndpointsPerAccount: 10, ConnectionsPerAccount: 200},
-	PlanPro:   {Plan: PlanPro, EndpointsPerApp: 10, EndpointsPerAccount: 50, ConnectionsPerAccount: 1_000},
-	PlanScale: {Plan: PlanScale, EndpointsPerApp: 25, EndpointsPerAccount: 250, ConnectionsPerAccount: 5_000},
+	PlanHobby: {Plan: PlanHobby, EndpointsPerApp: 2, EndpointsPerAccount: 10, ConnectionsPerAccount: 200, ResumeSubscriptionsPerNode: 16, RetainedChannelsPerAccount: 32},
+	PlanPro:   {Plan: PlanPro, EndpointsPerApp: 10, EndpointsPerAccount: 50, ConnectionsPerAccount: 1_000, ResumeSubscriptionsPerNode: 64, RetainedChannelsPerAccount: 256},
+	PlanScale: {Plan: PlanScale, EndpointsPerApp: 25, EndpointsPerAccount: 250, ConnectionsPerAccount: 5_000, ResumeSubscriptionsPerNode: 128, RetainedChannelsPerAccount: 1_024},
+}
+
+// RealtimeResumeSubscriptionsPerNodeFor maps the account connection allowance
+// apid sends with every endpoint under fair use back to the plan's resume
+// allowance. realtimed learns the plan only through that allowance: a new
+// registration field would be refused by realtime nodes one release behind
+// apid. Each plan's ConnectionsPerAccount is distinct (TestRealtimeLimits).
+func RealtimeResumeSubscriptionsPerNodeFor(accountMaxConnections int) int {
+	if accountMaxConnections <= 0 {
+		return 0
+	}
+	for _, plan := range Plans {
+		if l, ok := realtimeLimits[plan]; ok && l.ConnectionsPerAccount == accountMaxConnections {
+			return l.ResumeSubscriptionsPerNode
+		}
+	}
+	return 0
 }
 
 // Platform side of realtime fair use (ADR-1323). realtimed runs with
