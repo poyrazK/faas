@@ -30,7 +30,6 @@ func resolveEvaluator(store *state.MemStore, prom *stubPromQL, dispatch alerts.D
 }
 
 func TestEvaluator_NotifyResolvedSendsResolveToWebhook(t *testing.T) {
-	ctx := context.Background()
 	for _, tc := range []struct {
 		name           string
 		notifyResolved bool
@@ -42,17 +41,17 @@ func TestEvaluator_NotifyResolvedSendsResolveToWebhook(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			store := state.NewMemStore()
 			rule, ident, _ := seedRule(t, store, state.AlertMetricErrorRate, state.AlertGt, 5)
-			if _, err := store.UpdateAlertRule(ctx, rule.ID, state.UpdateAlertRuleParams{NotifyResolved: &tc.notifyResolved}); err != nil {
+			if _, err := store.UpdateAlertRule(context.Background(), rule.ID, state.UpdateAlertRuleParams{NotifyResolved: &tc.notifyResolved}); err != nil {
 				t.Fatal(err)
 			}
 			prom := &stubPromQL{value: 10}
 			dispatch := &recordingDispatcher{result: webhookout.Result{StatusCode: 200, Attempts: 1}}
 			ev := resolveEvaluator(store, prom, dispatch, ident)
-			if stats, err := ev.RunOnce(ctx); err != nil || stats.Fired != 1 {
+			if stats, err := ev.RunOnce(context.Background()); err != nil || stats.Fired != 1 {
 				t.Fatalf("firing tick = %+v, %v", stats, err)
 			}
 			prom.value = 0
-			stats, err := ev.RunOnce(ctx)
+			stats, err := ev.RunOnce(context.Background())
 			if err != nil {
 				t.Fatal(err)
 			}
