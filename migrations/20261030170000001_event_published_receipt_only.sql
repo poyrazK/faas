@@ -11,7 +11,7 @@ SET LOCAL lock_timeout = '5s';
 -- receipt window and its storage budget. The trigger now runs before the
 -- insert, writes the receipt and skips the events row. Other kinds are
 -- inserted as before. The function body is unchanged except its last line.
-CREATE OR REPLACE FUNCTION public.enqueue_event_fanout() RETURNS trigger
+CREATE OR REPLACE FUNCTION enqueue_event_fanout() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 DECLARE existing_type text;
@@ -105,15 +105,15 @@ BEGIN
     RETURN NULL;
 END;
 $$;
-DROP TRIGGER IF EXISTS events_enqueue_fanout ON public.events;
-CREATE TRIGGER events_enqueue_fanout BEFORE INSERT ON public.events
-    FOR EACH ROW EXECUTE FUNCTION public.enqueue_event_fanout();
+DROP TRIGGER IF EXISTS events_enqueue_fanout ON events;
+CREATE TRIGGER events_enqueue_fanout BEFORE INSERT ON events
+    FOR EACH ROW EXECUTE FUNCTION enqueue_event_fanout();
 -- +goose StatementEnd
 
 -- +goose Down
 -- +goose StatementBegin
 SET LOCAL lock_timeout = '5s';
-CREATE OR REPLACE FUNCTION public.enqueue_event_fanout() RETURNS trigger
+CREATE OR REPLACE FUNCTION enqueue_event_fanout() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 DECLARE existing_type text;
@@ -207,7 +207,7 @@ BEGIN
     RETURN NEW;
 END;
 $$;
-DROP TRIGGER IF EXISTS events_enqueue_fanout ON public.events;
-CREATE TRIGGER events_enqueue_fanout AFTER INSERT ON public.events
-    FOR EACH ROW EXECUTE FUNCTION public.enqueue_event_fanout();
+DROP TRIGGER IF EXISTS events_enqueue_fanout ON events;
+CREATE TRIGGER events_enqueue_fanout AFTER INSERT ON events
+    FOR EACH ROW EXECUTE FUNCTION enqueue_event_fanout();
 -- +goose StatementEnd
