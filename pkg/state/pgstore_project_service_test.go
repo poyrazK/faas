@@ -80,3 +80,21 @@ func TestPgServicePolicyViewKeepsADeletedProjectMembersServiceName(t *testing.T)
 		}
 	})
 }
+
+// adr: 20261030131528
+func TestPgProjectBindingNamesOnlyItsProject(t *testing.T) {
+	store, _ := pgStore(t)
+	boundProjectServiceContract(t, store, func(read func(deletedMemberLookup)) { read(store) })
+}
+
+func TestPgServicePolicyViewProjectBindingNamesOnlyItsProject(t *testing.T) {
+	store, ctx := pgStore(t)
+	boundProjectServiceContract(t, store, func(read func(deletedMemberLookup)) {
+		if err := store.WithServicePolicySnapshot(ctx, func(view state.ServicePolicyReader) error {
+			read(view)
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
