@@ -4186,6 +4186,16 @@ type DeploymentScopeExclusion struct {
 	UpdatedAt pgtype.Timestamptz
 }
 
+type DeploymentSidecarEnvReseal struct {
+	DeploymentID pgtype.UUID
+	SidecarName  string
+	EnvKey       string
+	SourceSha256 string
+	Kid          string
+	Ciphertext   []byte
+	ResealedAt   pgtype.Timestamptz
+}
+
 type DeploymentSidecarLayer struct {
 	DeploymentID  pgtype.UUID
 	SidecarName   string

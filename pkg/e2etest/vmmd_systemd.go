@@ -98,7 +98,8 @@ func vmmdSystemdArgv(t *testing.T, binary string, args, env []string) []string {
 }
 
 // vmmdSandboxProperties picks the sandbox settings out of the rendered
-// production unit's [Service] section, adding writable to ReadWritePaths.
+// production unit's [Service] section, adding writable to ReadWritePaths and
+// marking every ReadWritePaths entry optional.
 func vmmdSandboxProperties(rendered []byte, writable []string) []string {
 	var props []string
 	sc := bufio.NewScanner(bytes.NewReader(rendered))
@@ -114,7 +115,17 @@ func vmmdSandboxProperties(rendered []byte, writable []string) []string {
 			continue
 		}
 		if key == "ReadWritePaths" {
-			value = strings.TrimSpace(value + " " + strings.Join(writable, " "))
+			// A production path the test host lacks (/var/lib/faas/cache)
+			// would fail the start with 226/NAMESPACE; the sandbox is the
+			// same wherever the path exists.
+			var paths []string
+			for _, path := range strings.Fields(value) {
+				if !strings.HasPrefix(path, "-") {
+					path = "-" + path
+				}
+				paths = append(paths, path)
+			}
+			value = strings.Join(append(paths, writable...), " ")
 		}
 		props = append(props, key+"="+value)
 	}

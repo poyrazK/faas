@@ -131,6 +131,7 @@ case "$1 $2" in
     fi
     printf '{"ready":false,"nodes":[{"name":"fsn-2"},{"name":"fsn-3"}]}\n'; exit 3 ;;
   'release-acceptance verify-node')
+    printf '%s\n' "$*" >>"${TEST_VERIFY_NODE_LOG:-/dev/null}"
     if [[ "${TEST_NODE_NEVER_READY:-}" != 1 && "$*" == *-fsn-2-2* ]]; then
       printf '{"node":"fsn-2.faas","instance":true,"build":true,"ready":true}\n'; exit 0
     fi
@@ -406,21 +407,26 @@ fi
 
 	// The per-node canary (ACCEPTANCE_NODE) deploys until verify-node proves
 	// the node, skips the fleet gate, stays bounded, and fails on any failed
-	// deployment, revoking its token every time.
+	// deployment, revoking its token every time. Each round deploys both
+	// shapes at once, so another node's single build slot cannot take every
+	// build: one round, one verify-node, proves a healthy node.
 	for _, tt := range []struct {
 		name, extraEnv, wantOutput, wantDeployed, notDeployed string
 		wantErr                                               bool
+		wantVerifies                                          int
 	}{
 		{name: "node proven", wantOutput: "node canary passed: release=" + strings.Repeat("a", 40) + " node=fsn-2 deployments=2",
-			wantDeployed: "-fsn-2-2\n", notDeployed: "-a1\n"},
+			wantDeployed: "-fsn-2-2\n", notDeployed: "-a1\n", wantVerifies: 1},
 		{name: "node never proven", extraEnv: "TEST_NODE_NEVER_READY=1", wantErr: true,
-			wantOutput: "node canary did not see fsn-2 serve and build", wantDeployed: "-fsn-2-3\n", notDeployed: "-fsn-2-4\n"},
+			wantOutput: "node canary did not see fsn-2 serve and build", wantDeployed: "-fsn-2-3\n", notDeployed: "-fsn-2-4\n",
+			wantVerifies: 2},
 		{name: "deployment failed", extraEnv: "TEST_FAIL_SLUG_SUFFIX=-fsn-2-1", wantErr: true,
-			wantOutput: "node canary deployment for fsn-2 failed", wantDeployed: "-fsn-2-1\n", notDeployed: "-fsn-2-2\n"},
+			wantOutput: "node canary deployment for fsn-2 failed", wantDeployed: "-fsn-2-2\n", notDeployed: "-fsn-2-3\n"},
 	} {
 		t.Run("node canary "+tt.name, func(t *testing.T) {
 			log := filepath.Join(t.TempDir(), "deploys")
 			revokes := filepath.Join(t.TempDir(), "revokes")
+			verifies := filepath.Join(t.TempDir(), "verifies")
 			cmd := exec.Command("bash", script)
 			cmd.Env = append(os.Environ(),
 				"PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"),
@@ -428,6 +434,7 @@ fi
 				"GREGALE_BIN="+gregale, "GREGALECTL_BIN="+gregalectl,
 				"TEST_DEPLOY_LOG="+log, "TEST_CURL_LOG="+filepath.Join(t.TempDir(), "curls"),
 				"TEST_REVOKE_LOG="+revokes, "ACCEPTANCE_NODE=fsn-2", "NODE_CANARY_MAX_DEPLOYMENTS=3",
+				"TEST_VERIFY_NODE_LOG="+verifies,
 				tt.extraEnv,
 			)
 			out, err := cmd.CombinedOutput()
@@ -440,6 +447,10 @@ fi
 			}
 			if _, err := os.Stat(revokes); err != nil {
 				t.Fatalf("node canary did not revoke its token: %v", err)
+			}
+			calls, _ := os.ReadFile(verifies)
+			if got := strings.Count(string(calls), "verify-node"); got != tt.wantVerifies {
+				t.Fatalf("verify-node ran %d times, want %d: %s", got, tt.wantVerifies, calls)
 			}
 		})
 	}

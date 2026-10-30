@@ -4118,6 +4118,25 @@
       ]
     },
     {
+      "id": "private-service-https",
+      "name": "Private HTTPS between services",
+      "category": "runtime",
+      "description": "Call another service at https://<service>.internal with workload CA trust. An installation option: turn it on once every compute node runs the private HTTPS listener.",
+      "maturity": "internal",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/networking",
+      "acceptance_test": "pkg/reposcan/https_transport_test.go::TestScanRefusesHTTPSTransportWhereUnavailable",
+      "parent": "service-bindings",
+      "consumers": [
+        "githubd"
+      ]
+    },
+    {
       "id": "product-control",
       "name": "Gregale Product Control",
       "category": "product",
