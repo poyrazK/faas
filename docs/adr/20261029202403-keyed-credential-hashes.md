@@ -179,6 +179,10 @@ are checked by daemons other than the one that issues them.
    API server keys. They ask apid's `MatchCredential`, as for consumer keys.
    No ring other than `attach` reaches a compute node.
 
+   realtimed asks over the connection it already holds to apid. When no
+   preview opened that connection, it dials one for matches alone. If that
+   dial fails, it logs the failure and refuses keyed server keys.
+
    vmmd holds the `attach` ring instead. Attach tokens are one-shot and live
    at most five minutes, and vmmd must not depend on apid. schedd forwards the
    stored digest to vmmd without needing the key.
