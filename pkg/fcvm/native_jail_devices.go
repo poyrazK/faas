@@ -153,7 +153,8 @@ func (j *nativeHostHelperJournal) requireDeviceNamespacesRemoved(ctx context.Con
 			return errors.New("native jail device cleanup: original producer has no descriptor retirement proof")
 		}
 		if err := j.owner.jailDevices.NamespaceRemoved(ctx, *scope); err != nil {
-			return err
+			return fmt.Errorf("%w; retired attempt: instance %s, generation %s, launch pid %d, purpose %q", err,
+				record.Launch.Lease.Instance, record.Launch.Generation, record.Launch.PID, record.Purpose)
 		}
 	}
 	return nil
