@@ -1320,28 +1320,23 @@
       "id": "dead-letter-queues",
       "name": "Dead-letter queues",
       "category": "async",
-      "description": "Inspect, replay and purge dead-lettered work.",
+      "description": "Inspect, replay and purge failed work from invocations, triggers, webhooks and event deliveries in one ledger.",
       "maturity": "preview",
       "plans": [
         "hobby",
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/queue-pull-leases",
+      "docs_url": "/docs/dead-letters",
       "acceptance_test": "pkg/apid/apidserver/handlers_dead_letter_test.go::TestUnifiedDeadLetter_QueueListInspectAndReplay",
-      "parent": "queues",
       "routes": [
-        "/dashboard/apps/{}/queues/dead_letter",
         "/v1/account/dlq",
         "/v1/account/dlq:replay_all",
         "/v1/apps/{}/dlq",
-        "/v1/apps/{}/dlq:replay_all",
-        "/v1/apps/{}/queues/dead_letter",
-        "/v1/orgs/{}/apps/{}/queues/dead_letter"
+        "/v1/apps/{}/dlq:replay_all"
       ],
       "cli": [
-        "dlq",
-        "queue dead-letter"
+        "dlq"
       ]
     },
     {
@@ -2276,7 +2271,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/event-driven",
+      "docs_url": "/docs/events",
       "acceptance_test": "pkg/apid/apidserver/event_acknowledgment_acceptance_test.go::TestEventAcknowledgmentLifecycle",
       "parent": "events",
       "routes": [
@@ -2296,7 +2291,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/event-driven",
+      "docs_url": "/docs/events",
       "acceptance_test": "pkg/apid/apidserver/event_delivery_controls_acceptance_test.go::TestEventDeliveryControlsPauseAndResume",
       "parent": "events",
       "routes": [
@@ -2317,7 +2312,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/event-driven",
+      "docs_url": "/docs/events",
       "acceptance_test": "pkg/apid/apidserver/handlers_keyed_invocation_replay_test.go::TestKeyedInvocationReplayIndependentEventRecovery",
       "parent": "events",
       "routes": [
@@ -2337,7 +2332,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/event-driven",
+      "docs_url": "/docs/events",
       "acceptance_test": "pkg/apid/apidserver/handlers_event_replay_preview_test.go::TestEventReplayPreviewAPIReadScopes",
       "parent": "events",
       "routes": [
@@ -2361,7 +2356,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/event-driven",
+      "docs_url": "/docs/events",
       "acceptance_test": "pkg/apid/apidserver/handlers_event_schemas_test.go::TestEventSchemaRegistrationAndPublishValidation",
       "parent": "events",
       "routes": [
@@ -2380,7 +2375,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/event-driven",
+      "docs_url": "/docs/events",
       "acceptance_test": "pkg/apid/apidserver/handlers_event_subscriptions_test.go::TestListEventSubscriptions_CrossAccountIsNotVisible",
       "parent": "events",
       "settings": [
@@ -2435,7 +2430,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/event-driven",
+      "docs_url": "/docs/events",
       "acceptance_test": "cmd/e2e/events_fanout_e2e_test.go::TestE2E_EventFanout_MatchesFiltersAndIsolatesAccounts",
       "consumers": [
         "schedd",
@@ -2487,9 +2482,9 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/event-driven",
+      "docs_url": "/docs/dead-letters",
       "acceptance_test": "pkg/apid/apidserver/handlers_dashboard_failed_events_test.go::TestDashboardFailedEvents_PaginatesAtPageSize",
-      "parent": "events",
+      "parent": "dead-letter-queues",
       "routes": [
         "/dashboard/failed-events"
       ]
