@@ -788,6 +788,31 @@ from meterd.
   the domain does not as skipped. The check fails on them, and on webhook
   secret copies the migration would still write.
 
+## Implemented: the build contract step for imaged
+
+`build` contracts imaged through `faas_seal_domain_build_contracted`.
+vmmd, the domain's other reader, keeps the fleet and host identities for
+`runtime` values until that domain contracts.
+
+- **Crash captures were the blocker, and are not one.** imaged's ADR-733
+  at-rest pass encrypts a capture taken in plaintext to the fleet
+  recipient, and decrypts it with the fleet identity when a fork needs it.
+  But schedd always asks vmmd to seal a capture at the source
+  (`WithSealedCrashCaptures(true)` whenever crash snapshots are on), and
+  vmmd seals it to the runtime domain once staged, so no capture reaches
+  that pass. `crash_captures.sealed_key` stays a `runtime` column.
+  `--check --domain build` counts unexpired ready captures in an imaged
+  state (`present`, `absent`, `staging`, `staged`) as skipped, in case one
+  exists, and fails on them. They expire within seven days.
+- **imaged already runs on the domain alone.** Without
+  `FAAS_HOST_AGE_IDENTITY_PATH` it loads no legacy identity and opens
+  registry passwords with the build identity. It now warns about the unset
+  path only when the build domain is not staged either, and logs
+  `fleet_identity`. An older imaged behaves the same, so contracting does
+  not hold back a rollback.
+- The contracted drop-in resets imaged's credentials and unsets the path,
+  as for the other domains. imaged's other drop-ins all sort after it.
+
 ## CD and node join stage the domain keys
 
 Each domain's key pair is a pair of GitHub environment secrets:

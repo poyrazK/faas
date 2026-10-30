@@ -110,10 +110,13 @@ var registry = []Spec{
 		cols("managed_postgres_cutover_credentials", "ciphertext"),
 		cols("deployment_release_secret_snapshots", "values_json"),
 		cols("project_release_secret_bundles", "values_json"),
-		// ADR-733: a crash capture's per-capture age key. vmmd opens it to
-		// restore a sealed capture into a fork. imaged's at-rest pass for
-		// local captures also opens it today: a cross-domain read, to move
-		// behind vmmd like the reads in the ADR's section 3.
+		// ADR-733: a crash capture's per-capture age key. vmmd seals every
+		// capture at the source (schedd always asks it to), to the runtime
+		// domain once staged, and opens the key to restore a fork. imaged's
+		// at-rest pass seals and opens a key with the fleet identity only
+		// for a capture taken in plaintext, which no schedd produces; the
+		// build domain's contract check waits for any such capture to
+		// expire.
 		cols("crash_captures", "sealed_key"),
 	)},
 	{Domain: Outbound, Readers: []string{"outboundd"}, Roles: cpOnly, Wired: true, Columns: join(
