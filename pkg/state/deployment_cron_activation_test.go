@@ -15,7 +15,7 @@ func TestDeploymentCronActivationMemory(t *testing.T) {
 	testCronActivation(t, func(t *testing.T) state.Store { return state.NewMemStore() })
 }
 func testCronActivation(t *testing.T, newStore func(*testing.T) state.Store) {
-	for _, mode := range []string{"ready", "failed", "cancelled", "user-edit", "dark", "canary", "superseded", "quota", "user-aba", "canary-complete", "later-dark", "upload", "scope", "competing", "no-op-quota"} {
+	for _, mode := range []string{"ready", "failed", "cancelled", "user-edit", "dark", "canary", "superseded", "quota", "user-aba", "canary-complete", "later-dark", "upload", "scope", "named-production", "competing", "no-op-quota"} {
 		t.Run(mode, func(t *testing.T) {
 			store := newStore(t)
 			app, p, _ := cronStageFixture(t, store)
@@ -48,6 +48,11 @@ func testCronActivation(t *testing.T, newStore func(*testing.T) state.Store) {
 			candidate := state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, Status: state.DeployPending, TrafficPercent: 100}
 			if mode == "scope" {
 				candidate.Scope = "preview-a"
+			}
+			// A named production deploy is the production lane and activates
+			// its crons; only stages are discarded.
+			if mode == "named-production" {
+				candidate.Scope = "production"
 			}
 			if mode == "competing" {
 				predecessor, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, TrafficPercent: 25, TrafficPercentExplicit: true})

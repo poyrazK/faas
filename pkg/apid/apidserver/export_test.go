@@ -1154,6 +1154,9 @@ func (r *server) DashboardSaveProfileInvestigation(p0 http.ResponseWriter, p1 *h
 func (r *server) DeleteProjectEnvironment(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.deleteProjectEnvironment(p0, p1, p2)
 }
+func (r *server) DeleteProjectForTest(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
+	r.deleteProject(p0, p1, p2)
+}
 func (r *server) DeleteQueueBinding(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.deleteQueueBinding(p0, p1, p2)
 }

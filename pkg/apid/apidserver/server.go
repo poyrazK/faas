@@ -6036,6 +6036,8 @@ func idempotencyReplayable(status int) bool {
 
 // Binding refusals depend on fresh evidence and policy, and must not freeze a
 // worker's exact recovery key for 24 hours after the recipient is verified.
+// A full clone refusal clears once the source stops using a blocking resource
+// or admission opens, so a retry with the same key must be evaluated again.
 func idempotencyResponseReplayable(status int, body []byte) bool {
 	if !idempotencyReplayable(status) {
 		return false
@@ -6050,7 +6052,8 @@ func idempotencyResponseReplayable(status int, body []byte) bool {
 		return true
 	}
 	switch problem.Code {
-	case "bindings_check_failed", "bindings_check_changed", api.CodeBindingReleaseRequired, api.CodeBindingReleasePolicyChanged, api.CodeRouteRemovalRequired, api.CodeRouteRemovalPolicyChanged:
+	case "bindings_check_failed", "bindings_check_changed", api.CodeBindingReleaseRequired, api.CodeBindingReleasePolicyChanged, api.CodeRouteRemovalRequired, api.CodeRouteRemovalPolicyChanged,
+		api.CodeFullEnvironmentCloneUnavailable:
 		return false
 	default:
 		return true

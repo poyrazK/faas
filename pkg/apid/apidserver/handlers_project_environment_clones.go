@@ -106,7 +106,8 @@ func (s *server) admitFullProjectEnvironmentClone(w http.ResponseWriter, r *http
 	op, err := store.CreateCapturedProjectEnvironmentCloneOperation(r.Context(), state.ProjectEnvironmentCloneCaptureRequest{AccountID: acct.ID, ProjectID: project.ID,
 		SourceEnvironment: req.FromEnvironment, TargetEnvironment: req.Slug, IdempotencyKey: key, RequireCompleteInventory: true})
 	if err != nil {
-		api.WriteProblem(w, fullProjectEnvironmentCloneAdmissionProblem(project.Slug, req.FromEnvironment, err))
+		operator, _ := s.adminAllows(acct)
+		api.WriteProblem(w, fullProjectEnvironmentCloneAdmissionProblem(project.Slug, req.FromEnvironment, operator, err))
 		return
 	}
 	s.audit.Emit(r.Context(), "project.environment.clone_admitted", &acct.ID, map[string]any{
@@ -121,7 +122,10 @@ func (s *server) admitFullProjectEnvironmentClone(w http.ResponseWriter, r *http
 		CreatedAt: response.CreatedAt, UpdatedAt: response.UpdatedAt, CloneOperation: &response})
 }
 
-func fullProjectEnvironmentCloneAdmissionProblem(projectSlug, source string, err error) *api.Problem {
+// fullProjectEnvironmentCloneAdmissionProblem maps a refused capture. Inventory
+// blockers are tables the source itself uses, so they are named; a schema
+// coverage gap is the platform's and is named to operators only.
+func fullProjectEnvironmentCloneAdmissionProblem(projectSlug, source string, operator bool, err error) *api.Problem {
 	var inventory *state.ProjectEnvironmentCloneInventoryError
 	var coverage *state.ProjectEnvironmentCloneSchemaCoverageError
 	switch {
@@ -134,6 +138,9 @@ func fullProjectEnvironmentCloneAdmissionProblem(projectSlug, source string, err
 		return problem
 	case errors.As(err, &coverage):
 		problem := fullProjectEnvironmentCloneUnavailable()
+		if !operator {
+			return problem
+		}
 		problem.Errors = nil
 		for _, blocker := range coverage.Blockers {
 			field := "resource_coverage." + blocker.Table
@@ -153,8 +160,15 @@ func fullProjectEnvironmentCloneAdmissionProblem(projectSlug, source string, err
 	}
 }
 
+// fullProjectEnvironmentCloneProblem refuses a full clone while admission is
+// closed. The registry gap is the whole platform's, not this project's, and
+// names internal tables of dark product areas, so only operators see it;
+// customers get the four resource categories.
 func (s *server) fullProjectEnvironmentCloneProblem(r *http.Request, acct state.Account, project state.Project) *api.Problem {
 	problem := fullProjectEnvironmentCloneUnavailable()
+	if operator, _ := s.adminAllows(acct); !operator {
+		return problem
+	}
 	store, ok := s.store.(state.ProjectEnvironmentCloneSchemaCoverageStore)
 	if !ok {
 		return problem
@@ -163,8 +177,7 @@ func (s *server) fullProjectEnvironmentCloneProblem(r *http.Request, acct state.
 	if err != nil {
 		return api.ErrCapacity("could not verify clone configuration schema coverage")
 	}
-	hostingVisible, _ := s.adminAllows(acct)
-	hostingVisible = hostingVisible && s.runtimeBool(runtimeConfigFrontendHosting, false)
+	hostingVisible := s.runtimeBool(runtimeConfigFrontendHosting, false)
 	for _, blocker := range coverage.Blockers {
 		if strings.HasPrefix(blocker.Table, "hosting_") && !hostingVisible {
 			continue

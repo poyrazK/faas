@@ -253,8 +253,11 @@ func readCronActivation(ctx context.Context, q *sqlc.Queries, tx sqlc.DBTX, appI
 	return a, err
 }
 
+// cronDeploymentDisposition activates crons only from a production-lane
+// deployment: no, default or named production scope. A stage never fires
+// production schedules; the lane's latest deployment wins within its lane.
 func cronDeploymentDisposition(status, scope, rollout string, traffic, steps int, explicit, competing bool, id, latest string) string {
-	if rollout == "aborted" || scope != "" && scope != DefaultEnvScope || explicit && traffic == 0 && steps == 0 {
+	if rollout == "aborted" || !IsProductionScope(scope) || explicit && traffic == 0 && steps == 0 {
 		return "discarded"
 	}
 	switch status {
@@ -301,7 +304,7 @@ func (m *MemStore) ReconcileDeploymentCrons(_ context.Context) ([]CronActivation
 		var newest Deployment
 		competing := false
 		for _, candidate := range m.deployments {
-			if candidate.AppID != appID || normalizedDeploymentScope(candidate.Scope) != DefaultEnvScope {
+			if candidate.AppID != appID || normalizedDeploymentScope(candidate.Scope) != normalizedDeploymentScope(d.Scope) {
 				continue
 			}
 			if candidate.ID != d.ID && candidate.Status == DeployLive && candidate.TrafficPercent > 0 {

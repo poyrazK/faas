@@ -31,6 +31,8 @@ func projectDashboardFlash(r *http.Request) string {
 		return "The project action expired. Reload the page and try again."
 	case "confirm":
 		return "Type the project slug exactly before deleting it."
+	case "stages":
+		return "Delete the project's stage environments first; that removes their managed resources."
 	case "error":
 		return "The project action failed. Try again."
 	default:
@@ -282,6 +284,14 @@ func (s *server) dashboardDeleteProject(w http.ResponseWriter, r *http.Request) 
 	project, err := s.store.ProjectBySlug(r.Context(), acct.ID, slug)
 	if err != nil {
 		http.NotFound(w, r)
+		return
+	}
+	if problem := s.projectStagesRemainProblem(r, acct, project); problem != nil {
+		status := "stages"
+		if problem.Status != http.StatusConflict {
+			status = "error"
+		}
+		projectDashboardRedirect(w, r, slug, status)
 		return
 	}
 	if err := s.store.DeleteProject(r.Context(), project.ID); err != nil {
