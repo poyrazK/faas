@@ -49,8 +49,8 @@ func NewCredentialMatcher(client credentialMatchClient) *CredentialMatcher {
 func matchKey(column string, stored, sum []byte) [sha256.Size]byte {
 	h := sha256.New()
 	for _, part := range [][]byte{[]byte(column), stored, sum} {
-		fmt.Fprintf(h, "%d:", len(part))
-		h.Write(part)
+		_, _ = fmt.Fprintf(h, "%d:", len(part))
+		_, _ = h.Write(part)
 	}
 	var out [sha256.Size]byte
 	copy(out[:], h.Sum(nil))
