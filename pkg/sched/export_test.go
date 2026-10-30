@@ -557,11 +557,12 @@ func (r *MemLeaser) Now() *func() time.Time { return &r.now }
 func (r *NodeAwareFlowCounter) Now() *func() time.Time { return &r.now }
 
 // Members of NodeLedger
-func (r *NodeLedger) Entries() *map[string]*reservation      { return &r.entries }
-func (r *NodeLedger) Now() *func() time.Time                 { return &r.now }
-func (r *NodeLedger) PerApp() *map[string]int                { return &r.perApp }
-func (r *NodeLedger) PerAppEnvironment() *map[string]int     { return &r.perAppEnvironment }
-func (r *NodeLedger) Resident() *map[string]*nodeReservation { return &r.resident }
+func (r *NodeLedger) CPUPressured() *func(string, time.Time) bool { return &r.cpuPressured }
+func (r *NodeLedger) Entries() *map[string]*reservation           { return &r.entries }
+func (r *NodeLedger) Now() *func() time.Time                      { return &r.now }
+func (r *NodeLedger) PerApp() *map[string]int                     { return &r.perApp }
+func (r *NodeLedger) PerAppEnvironment() *map[string]int          { return &r.perAppEnvironment }
+func (r *NodeLedger) Resident() *map[string]*nodeReservation      { return &r.resident }
 func (r *NodeLedger) CeilingForNode_locked(p0 string, p1 api.Limits) int {
 	return r.ceilingForNode_locked(p0, p1)
 }

@@ -2841,6 +2841,7 @@ type ComputeNode struct {
 	EdgeListenerHeartbeatAt pgtype.Timestamptz
 	WakeBreakerOpenUntil    pgtype.Timestamptz
 	WakeBreakerReason       pgtype.Text
+	CpuPressureUntil        pgtype.Timestamptz
 }
 
 type ComputeNodeHeartbeat struct {

@@ -24,6 +24,7 @@ type contractTestStore interface {
 	state.ComputeNodeCPUUsageBatcher
 	state.ComputeNodeReadinessStore
 	state.ComputeNodeWakeBreakerStore
+	state.ComputeNodeCPUPressureStore
 	state.ComputeNodeUsageBatcher
 	state.DeploymentAliasStore
 	state.DeploymentHostingFailureStore

@@ -5725,12 +5725,21 @@ type ComputeNode struct {
 	// nil. WakeBreakerReason says what opened it.
 	WakeBreakerOpenUntil *time.Time
 	WakeBreakerReason    *string
+	// CPUPressureUntil is how long the node's schedd holds it under CPU
+	// pressure (ADR 20261030100950): its tenant tasks waited for CPU while
+	// its CPUs were nearly all busy. It only expires; nil when never set.
+	CPUPressureUntil *time.Time
 }
 
 // WakeBreakerOpen reports whether the node's wake breaker holds it degraded
 // at now.
 func (n ComputeNode) WakeBreakerOpen(now time.Time) bool {
 	return n.WakeBreakerOpenUntil != nil && now.Before(*n.WakeBreakerOpenUntil)
+}
+
+// CPUPressured reports whether the node is held under CPU pressure at now.
+func (n ComputeNode) CPUPressured(now time.Time) bool {
+	return n.CPUPressureUntil != nil && now.Before(*n.CPUPressureUntil)
 }
 
 // NodeReadiness is whether a compute node has proven it can take a wake
@@ -5795,6 +5804,14 @@ type ComputeNodeWakeBreakerStore interface {
 	// CloseComputeNodeWakeBreaker clears the breaker and reports whether one
 	// was set.
 	CloseComputeNodeWakeBreaker(ctx context.Context, nodeID string) (bool, error)
+}
+
+// ComputeNodeCPUPressureStore records how long a node is held under CPU
+// pressure (ADR 20261030100950). Only the schedd that receives the node's
+// readings writes it; every schedd places by it.
+type ComputeNodeCPUPressureStore interface {
+	// HoldComputeNodeCPUPressure sets the node's cpu_pressure_until.
+	HoldComputeNodeCPUPressure(ctx context.Context, nodeID string, until time.Time) error
 }
 
 // ComputeNodeReadinessStore records a node's proven readiness. schedd's

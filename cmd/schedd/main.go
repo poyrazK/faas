@@ -1827,6 +1827,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			"max_overcommit_percent", api.MeasuredCPUMaxOvercommitPercent,
 			"peer_nodes", ownerNodeID != "")
 	}
+	// ADR 20261030100950: the CPU pressure backstop reads the local reader
+	// only. Each node's own schedd decides for it; peers honour its hold.
+	if cfg.CPUPressureBackstop {
+		engine.EnableCPUPressureBackstop(reader.NodeCPUPressure)
+		log.Info("CPU pressure backstop enabled (ADR 20261030100950)",
+			"stall_percent", api.NodeCPUPressureStallPercent,
+			"busy_percent", api.NodeCPUPressureBusyPercent,
+			"hold_seconds", api.NodeCPUPressureHoldSeconds)
+	}
 	// Register the gRPC server with the Reader wired so the
 	// ListInstanceStats RPC (issue #279 / PR-B) can serve the
 	// per-instance CPU-µs snapshot to meterd. The reader is

@@ -6759,6 +6759,19 @@ const (
 	// admission to 606 apps; at 700% measured CPU binds first, at 1,122. The
 	// durable guard bounds every discount by this cap.
 	MeasuredCPUMaxOvercommitPercent = 700
+	// CPU pressure backstop (ADR 20261030100950). A node is under CPU
+	// pressure when its tenant slice's cpu.pressure "some avg10" is at least
+	// NodeCPUPressureStallPercent and its host CPUs were at least
+	// NodeCPUPressureBusyPercent busy over the last NodeCPUBusyWindowSeconds:
+	// tasks wait and the CPUs are nearly all in use, so the wait is not one
+	// app's own cpu.max quota. The node's schedd then holds it pressured for
+	// NodeCPUPressureHoldSeconds past the last such reading. Initial values,
+	// to be tuned from schedd_node_cpu_pressure_some_avg10 and
+	// schedd_node_cpu_busy_percent.
+	NodeCPUPressureStallPercent = 20
+	NodeCPUPressureBusyPercent  = 90
+	NodeCPUPressureHoldSeconds  = 30
+	NodeCPUBusyWindowSeconds    = 10
 	// QuietPauseLedgerFlushSeconds is how often schedd writes a node's quiet
 	// pauses and watermark to the pause ledger (ADR-20261023171905): one
 	// statement per node per flush, however many requests the node serves.
