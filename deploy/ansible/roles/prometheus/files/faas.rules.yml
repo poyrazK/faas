@@ -835,6 +835,21 @@ groups:
           description: "Daemon sessions have consumed more than 90% of PostgreSQL's ordinary-client capacity for 5m. New API, scheduler, restore, backup, and rollout work can fail when the remaining ordinary slots are exhausted."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresConnectionsHigh.md"
 
+      # Retained-channel heads outlive their messages so a channel's sequence
+      # never restarts under a client's cursor (ADR-1323); they grow by one row
+      # per distinct retained channel and are never deleted.
+      - alert: FaasRealtimeChannelHeadsGrowing
+        expr: max(faas_postgres_table_live_tuples{table="managed_realtime_channel_heads"}) > 1e6
+        for: 1h
+        labels:
+          severity: warn
+          component: postgres
+          family: database_capacity
+        annotations:
+          summary: "Retained realtime channel heads passed 1,000,000 rows"
+          description: "managed_realtime_channel_heads holds {{ $value | humanize }} rows (about 200 bytes each with its index). Heads are kept after their messages expire so sequences never restart. Find the endpoints creating the most distinct retained channels before deciding on cleanup."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRealtimeChannelHeads.md"
+
   - name: public_status
     rules:
       - alert: FaasPublicStatusEvaluationStalled
