@@ -1373,9 +1373,11 @@ type WakeResponse struct {
 	// host (restore / netns) or in the guest (init handshake).
 	GuestReadyMs int64 `protobuf:"varint,13,opt,name=guest_ready_ms,json=guestReadyMs,proto3" json:"guest_ready_ms,omitempty"`
 	// Set only when an attempted snapshot restore falls back to a successful
-	// cold boot because the configured application after_restore hook failed.
-	// Closed value: after_restore_failed. No callback URL or error text crosses
-	// the customer telemetry boundary; empty on other wake paths.
+	// cold boot. Closed values: after_restore_failed when the configured
+	// application after_restore hook failed, and node_local when the failure
+	// was this node's (disk, jail, unreadable backing images), so schedd keeps
+	// the snapshot. No callback URL or error text crosses the customer
+	// telemetry boundary; empty on other wake paths.
 	RestoreFallbackReason string `protobuf:"bytes,14,opt,name=restore_fallback_reason,json=restoreFallbackReason,proto3" json:"restore_fallback_reason,omitempty"`
 	// ADR-423: the serving handler understands source_key alias delivery.
 	SupportsSecretAliases bool `protobuf:"varint,15,opt,name=supports_secret_aliases,json=supportsSecretAliases,proto3" json:"supports_secret_aliases,omitempty"`

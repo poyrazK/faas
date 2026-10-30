@@ -324,7 +324,8 @@ type bringUpTimings struct {
 	coldBootMs   int64
 	restoreError string
 	// restoreFallbackReason is customer-safe only for the application
-	// after_restore failure. Other restore diagnostics stay operator-only.
+	// after_restore failure. RestoreFallbackNodeLocal tells schedd to keep the
+	// snapshot; other restore diagnostics stay operator-only.
 	restoreFallbackReason string
 	// prepare is filled by Wake from wakePhases just before bringUp so the
 	// RestoreSpec can carry the pre-restore phases onto the timeline
@@ -516,9 +517,11 @@ type Instance struct {
 	// operator can distinguish a stale snapshot from a guest resume-hook
 	// failure (including its ACK code).
 	RestoreError string
-	// RestoreFallbackReason is the closed customer-facing reason for a
-	// successful cold-boot fallback after an application restore hook failure.
-	// Empty for other failures, planned cold boots, and successful restores.
+	// RestoreFallbackReason is the closed reason for a successful cold-boot
+	// fallback: WakeReasonAfterRestoreFailed (customer-facing) after an
+	// application restore hook failure, RestoreFallbackNodeLocal (operator
+	// only) when the failure was this node's. Empty for other failures,
+	// planned cold boots, and successful restores.
 	RestoreFallbackReason string
 	// AppID is the apps.id UUID the instance was woken for.
 	// UpdateEgressAllowlist (PR-B, ADR-031+033) uses it to walk
@@ -5679,6 +5682,9 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 				"instance", req.Instance, "storage_key", req.Snapshot.StorageKey, "err", refusal)
 			if timings != nil {
 				timings.restoreError = refusal.Error()
+				if RestoreFailureNodeLocal(refusal) {
+					timings.restoreFallbackReason = RestoreFallbackNodeLocal
+				}
 			}
 			m.metrics.ObserveFallback()
 			if m.wakeFailureMetrics != nil {
@@ -5801,6 +5807,8 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 				timings.restoreError = rErr.Error()
 				if errors.Is(rErr, ErrAfterRestoreHook) {
 					timings.restoreFallbackReason = WakeReasonAfterRestoreFailed
+				} else if RestoreFailureNodeLocal(rErr) {
+					timings.restoreFallbackReason = RestoreFallbackNodeLocal
 				}
 			}
 			m.metrics.ObserveFallback()
