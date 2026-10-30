@@ -183,7 +183,9 @@ func preparationGraphPhase(candidates []EnvironmentWorkloadCandidate) (string, s
 		if candidate.Status.IsTerminal() || candidate.Status == DeploySuperseded {
 			return "failed", "environment_workload_artifact_failed"
 		}
-		ready = ready && candidate.Status == DeploySnapshotting && candidate.HasRootfs
+		// A candidate goes live only through activation, which requires a
+		// prepared, qualified graph: live is still prepared.
+		ready = ready && (candidate.Status == DeploySnapshotting || candidate.Status == DeployLive) && candidate.HasRootfs
 	}
 	if ready {
 		return "prepared", ""

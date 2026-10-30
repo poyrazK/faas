@@ -8,6 +8,28 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
+// After activation the graph's candidates are live. Reconciling it again must
+// keep it prepared: on n2 every pass tried prepared -> preparing, which the
+// graph guard refuses, and serving never converged.
+func TestActivatedCandidatesKeepTheGraphPrepared(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		candidates []EnvironmentWorkloadCandidate
+		want       string
+	}{
+		{"snapshotting", []EnvironmentWorkloadCandidate{{Status: DeploySnapshotting, HasRootfs: true}}, "prepared"},
+		{"activated", []EnvironmentWorkloadCandidate{{Status: DeployLive, HasRootfs: true}, {Status: DeployLive, HasRootfs: true}}, "prepared"},
+		{"still building", []EnvironmentWorkloadCandidate{{Status: DeployLive, HasRootfs: true}, {Status: DeployBuilding}}, "preparing"},
+		{"superseded", []EnvironmentWorkloadCandidate{{Status: DeploySuperseded, HasRootfs: true}}, "failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if phase, _ := preparationGraphPhase(tc.candidates); phase != tc.want {
+				t.Fatalf("phase = %q, want %q", phase, tc.want)
+			}
+		})
+	}
+}
+
 // Activation makes the candidate a live deployment of its own app, so inputs
 // recomputed after activation inherit from it: on n2 every later GitOps pass
 // refused the activated candidate ("stored candidate inputs differ from the
