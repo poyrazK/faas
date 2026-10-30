@@ -270,6 +270,7 @@ type Querier interface {
 	CancelExpiredAppTasksForClaim(ctx context.Context, db DBTX, claimedAt pgtype.Timestamptz) error
 	// An activated cutover is final (ADR-20261023181931); cancelling it matches no row.
 	CancelManagedPostgresCutover(ctx context.Context, db DBTX, arg CancelManagedPostgresCutoverParams) (ManagedPostgresCutover, error)
+	CancelManagedPostgresScheduledDelete(ctx context.Context, db DBTX, arg CancelManagedPostgresScheduledDeleteParams) (ManagedPostgresDatabase, error)
 	// ADR-20261021152201: scheduled releases.
 	// Ends the app's pending schedule before another one is recorded.
 	CancelPendingScheduledReleasesForApp(ctx context.Context, db DBTX, arg CancelPendingScheduledReleasesForAppParams) ([]ScheduledRelease, error)
@@ -376,9 +377,17 @@ type Querier interface {
 	ClaimManagedPostgresCutover(ctx context.Context, db DBTX, arg ClaimManagedPostgresCutoverParams) (ManagedPostgresCutover, error)
 	ClaimManagedPostgresCutoverSourceFence(ctx context.Context, db DBTX, arg ClaimManagedPostgresCutoverSourceFenceParams) (int64, error)
 	ClaimManagedPostgresHealthCheck(ctx context.Context, db DBTX, arg ClaimManagedPostgresHealthCheckParams) (ClaimManagedPostgresHealthCheckRow, error)
+	// An immediate delete ends any scheduled window (ADR-20261029174950), so an
+	// undo can never race the provider delete.
 	ClaimManagedPostgresLifecycleDelete(ctx context.Context, db DBTX, arg ClaimManagedPostgresLifecycleDeleteParams) (ManagedPostgresDatabase, error)
 	ClaimManagedPostgresLifecycleProvision(ctx context.Context, db DBTX, arg ClaimManagedPostgresLifecycleProvisionParams) (ManagedPostgresDatabase, error)
 	ClaimManagedPostgresResize(ctx context.Context, db DBTX, arg ClaimManagedPostgresResizeParams) (ManagedPostgresDatabase, error)
+	// ADR-20261029174950: a ready database starts its delete window under a
+	// lease. The caller holds the provider resource, then releases the lease with
+	// retry_at at purge_after, or cancels on failure. Dependants are checked in
+	// the same transaction, after LockManagedPostgresLifecycleDatabase.
+	ClaimManagedPostgresScheduledDelete(ctx context.Context, db DBTX, arg ClaimManagedPostgresScheduledDeleteParams) (ManagedPostgresDatabase, error)
+	ClaimManagedPostgresUndelete(ctx context.Context, db DBTX, arg ClaimManagedPostgresUndeleteParams) (ManagedPostgresDatabase, error)
 	// ADR-732 scheduler side. schedd holds a lease on every restoring or running
 	// fork; terminal transitions clear it (app_forks_lease_status_chk).
 	ClaimNextAppFork(ctx context.Context, db DBTX, arg ClaimNextAppForkParams) (AppFork, error)
