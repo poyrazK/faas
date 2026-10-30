@@ -11584,6 +11584,10 @@ func (m *MemStore) GetDeploymentOpenAPIDoc(_ context.Context, deploymentID, acco
 func (m *MemStore) UpsertDeploymentOpenAPIDoc(_ context.Context, deploymentID, accountID, appID string, doc []byte, source string, truncated bool) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.upsertDeploymentOpenAPIDocLocked(deploymentID, accountID, appID, doc, source, truncated)
+}
+
+func (m *MemStore) upsertDeploymentOpenAPIDocLocked(deploymentID, accountID, appID string, doc []byte, source string, truncated bool) error {
 	if _, ok := m.deployments[deploymentID]; !ok {
 		return ErrNotFound
 	}
@@ -11649,9 +11653,8 @@ func (m *MemStore) DeleteDeploymentOpenAPIDoc(_ context.Context, deploymentID, a
 }
 
 // CountOpenAPIDocsByAccount returns the number of doc rows the
-// account owns. Drives the per-account quota gate. The count is
-// a single pass over the map — the in-memory store holds the
-// entire dataset under m.mu so an O(N) scan is fine.
+// account owns. The per-account quota counts the app's billing
+// subject instead, in UpsertDeploymentOpenAPIDocIfUnderQuota.
 func (m *MemStore) CountOpenAPIDocsByAccount(_ context.Context, accountID string) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
