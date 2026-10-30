@@ -157,7 +157,6 @@ func validatePgConsumerKeyForConsumer(accountID, consumerID, name, prefix string
 	if len(hash) != 32 {
 		return fmt.Errorf("pgstore: CreateConsumerKeyForConsumer: hash must be 32 bytes, got %d", len(hash))
 	}
-	hash = storedCredential(CredentialColumnConsumerKey, hash)
 	if len(scopes) == 0 {
 		return errors.New("pgstore: CreateConsumerKeyForConsumer: scopes cannot be empty")
 	}
@@ -177,6 +176,7 @@ func validatePgConsumerKeyForConsumer(accountID, consumerID, name, prefix string
 // insertConsumerKeyForConsumer issues a key for an active consumer of
 // accountID on db, the pool or a transaction.
 func insertConsumerKeyForConsumer(ctx context.Context, db sqlc.DBTX, accountID, consumerID, name, prefix string, hash []byte, scopes []string, expiresAt *time.Time) (ConsumerKey, error) {
+	hash = storedCredential(CredentialColumnConsumerKey, hash)
 	row := db.QueryRow(ctx,
 		`insert into consumer_keys
 		   (consumer_id, account_id, app_id, name, prefix, hashed_secret, scopes, expires_at)
