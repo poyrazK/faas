@@ -626,7 +626,8 @@ func (j *nativeHostHelperJournal) allRecords(ctx context.Context, current []nati
 						return nil, errors.New("native jail device recovery: namespace proof backend unavailable")
 					}
 					if err := j.owner.jailDevices.NamespaceRemoved(ctx, *scope); err != nil {
-						return nil, err
+						return nil, fmt.Errorf("%w; finished owner: instance %s, generation %s, launch pid %d, current %t; helper %q of launch pid %d",
+							err, owner.Lease.Instance, owner.Generation, owner.PID, ok, frame.Purpose, frame.Launch.PID)
 					}
 				}
 			}
