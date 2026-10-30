@@ -50,6 +50,11 @@ type ProjectEnvironmentPostgresCleanupResource struct {
 	DatabaseName            string `json:"database_name,omitempty"`
 	RestoreSourceDatabaseID string `json:"restore_source_database_id,omitempty"`
 	DeleteDatabase          bool   `json:"delete_database,omitempty"`
+	// CloneOperationID names the full environment clone that restored the
+	// database for this stage (ADR-20261024224230). Such a database is not
+	// customer-visible once its stage is gone, so cleanup reaches it through
+	// the clone.
+	CloneOperationID string `json:"clone_operation_id,omitempty"`
 }
 
 type ProjectEnvironmentObjectStorageCleanupResource struct {

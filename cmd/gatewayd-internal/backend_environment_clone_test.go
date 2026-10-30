@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -26,6 +27,7 @@ type environmentHostCloneStore interface {
 	state.ProjectReleaseSetStore
 	state.ProjectPromotionDeploymentStore
 	CloneProjectEnvironment(context.Context, state.ProjectEnvironmentClone, api.Limits) (state.ProjectEnvironment, state.ProjectEnvironmentCloneResult, error)
+	UpdateProjectEnvironmentProtection(context.Context, string, string, string, bool) (state.ProjectEnvironment, error)
 }
 
 func TestEnvironmentHostWaitsForAtomicCloneGraphPublication(t *testing.T) {
@@ -107,6 +109,16 @@ func testEnvironmentHostClonePublication(t *testing.T, store environmentHostClon
 	if err != nil || !found || !before.EnvironmentNotReady || before.PinnedDeploymentID != "" {
 		t.Fatalf("partial stage route = %+v, %v, %v", before, found, err)
 	}
+	// The deployment's own preview host must not open the unfinished stage.
+	preview := gateway.BuildDeploymentPreviewURL(".gregale.dev", target.Revision, app.Slug)
+	if got, found, err := router.ResolveHost(ctx, preview); err != nil || found {
+		t.Fatalf("partial stage preview = %+v, %v, %v", got, found, err)
+	}
+	// Protecting the unfinished target is refused: publication refuses a
+	// protected target, and compensation would then delete it.
+	if _, err := store.UpdateProjectEnvironmentProtection(ctx, acct.ID, project.ID, "stage", true); !errors.Is(err, state.ErrProjectEnvironmentCloneUnfinished) {
+		t.Fatalf("protecting an unfinished clone target = %v", err)
+	}
 	resources[1].TargetID, resources[1].Status = target.ID, "ready"
 	op, err = store.AdvanceProjectEnvironmentCloneOperation(ctx, acct.ID, project.ID, op.ID, op.Status, state.CloneOperationPublishing, op.Revision, resources, "")
 	if err != nil {
@@ -118,5 +130,11 @@ func testEnvironmentHostClonePublication(t *testing.T, store environmentHostClon
 	after, found, err := router.ResolveHost(ctx, host)
 	if err != nil || !found || after.EnvironmentNotReady || after.PinnedDeploymentID != target.ID || after.PinnedDeploymentScope != "stage" {
 		t.Fatalf("published stage route = %+v, %v, %v", after, found, err)
+	}
+	if got, found, err := router.ResolveHost(ctx, preview); err != nil || !found || got.PinnedDeploymentID != target.ID {
+		t.Fatalf("published stage preview = %+v, %v, %v", got, found, err)
+	}
+	if env, err := store.UpdateProjectEnvironmentProtection(ctx, acct.ID, project.ID, "stage", true); err != nil || !env.Protected {
+		t.Fatalf("protecting a ready clone target = %+v, %v", env, err)
 	}
 }

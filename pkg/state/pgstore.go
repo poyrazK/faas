@@ -5569,16 +5569,29 @@ func (s *PgStore) CreateProjectEnvironment(ctx context.Context, env ProjectEnvir
 }
 
 func (s *PgStore) UpdateProjectEnvironmentProtection(ctx context.Context, accountID, projectID, slug string, protected bool) (ProjectEnvironment, error) {
+	// An operation only moves from unfinished to ready, failed or compensated,
+	// and none can target an existing environment, so the single statement
+	// cannot protect a target its clone will refuse to publish or delete.
 	row := s.pool.QueryRow(ctx, `
 		update project_environments e
 		   set protected = $4, updated_at = now()
 		  from projects p
 		 where p.id = e.project_id and p.account_id = $1
 		   and e.project_id = $2 and e.slug = $3
+		   and (not $4 or not exists (
+		        select 1 from project_environment_clone_operations o
+		         where o.account_id = $1 and o.project_id = $2 and o.target_environment = $3
+		           and o.status not in ('ready', 'compensated')))
 		returning e.id, e.account_id, e.project_id, e.slug, e.protected,
 		          e.created_at, e.updated_at
 	`, accountID, projectID, slug, protected)
-	return scanProjectEnvironment(row)
+	environment, err := scanProjectEnvironment(row)
+	if errors.Is(err, ErrNotFound) && protected {
+		if _, lookupErr := s.ProjectEnvironmentBySlug(ctx, accountID, projectID, slug); lookupErr == nil {
+			return ProjectEnvironment{}, ErrProjectEnvironmentCloneUnfinished
+		}
+	}
+	return environment, err
 }
 
 func (s *PgStore) DeleteProjectEnvironment(ctx context.Context, accountID, projectID, slug string) error {

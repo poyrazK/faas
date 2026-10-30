@@ -34,6 +34,49 @@ type CloneInventoryPolicy struct {
 	Via         [][3]string `json:"via,omitempty"`
 	Strategy    string      `json:"strategy,omitempty"`
 	Unavailable string      `json:"unavailable,omitempty"`
+	// Live names what a row must meet to count as the source's: a deleted
+	// bucket, a retired queue binding or a revoked credential holds nothing a
+	// clone would copy, and a row scoped to another environment is not the
+	// source's. Conditions apply to the table itself, never to a via hop.
+	Live []CloneInventoryLiveCondition `json:"live,omitempty"`
+}
+
+// CloneInventoryLiveCondition is exactly one test of Column: Null needs it to
+// be NULL, Not needs it to differ from a fixed state, and SourceScope needs it
+// (empty read as default) to be one of the source environment's slugs.
+type CloneInventoryLiveCondition struct {
+	Column      string `json:"column"`
+	Null        bool   `json:"null,omitempty"`
+	Not         string `json:"not,omitempty"`
+	SourceScope bool   `json:"source_scope,omitempty"`
+}
+
+var cloneInventoryLiveValue = regexp.MustCompile(`^[a-z_]{1,32}$`)
+
+func validCloneInventoryLive(columns []string, live []CloneInventoryLiveCondition) bool {
+	known := map[string]bool{}
+	for _, column := range columns {
+		known[column] = true
+	}
+	for _, condition := range live {
+		tests := 0
+		if condition.Null {
+			tests++
+		}
+		if condition.Not != "" {
+			tests++
+			if !cloneInventoryLiveValue.MatchString(condition.Not) {
+				return false
+			}
+		}
+		if condition.SourceScope {
+			tests++
+		}
+		if tests != 1 || !known[condition.Column] || !cloneInventoryIdentifier.MatchString(condition.Column) {
+			return false
+		}
+	}
+	return true
 }
 
 const (
@@ -72,7 +115,7 @@ func validCloneInventory(policy ProjectEnvironmentCloneSchemaPolicy) bool {
 		return policy.Clone == nil
 	}
 	c := policy.Clone
-	if c == nil || len(c.Via) > 3 {
+	if c == nil || len(c.Via) > 3 || !validCloneInventoryLive(policy.Columns, c.Live) {
 		return false
 	}
 	for _, hop := range c.Via {
@@ -116,11 +159,12 @@ func validCloneInventory(policy ProjectEnvironmentCloneSchemaPolicy) bool {
 
 // cloneInventoryProbe is one table the source inventory must test for rows.
 type cloneInventoryProbe struct {
-	Table      string      `json:"table"`
-	Owner      string      `json:"owner"`
-	Column     string      `json:"column,omitempty"`
-	SlugColumn string      `json:"slug_column,omitempty"`
-	Via        [][3]string `json:"via,omitempty"`
+	Table      string                        `json:"table"`
+	Owner      string                        `json:"owner"`
+	Column     string                        `json:"column,omitempty"`
+	SlugColumn string                        `json:"slug_column,omitempty"`
+	Via        [][3]string                   `json:"via,omitempty"`
+	Live       []CloneInventoryLiveCondition `json:"live,omitempty"`
 }
 
 // cloneInventoryProbes lists, in table order, every table whose rows would
@@ -133,7 +177,7 @@ func cloneInventoryProbes(policies []ProjectEnvironmentCloneSchemaPolicy) ([]byt
 			continue
 		}
 		probes = append(probes, cloneInventoryProbe{Table: policy.TableName, Owner: policy.Clone.Owner,
-			Column: policy.Clone.Column, SlugColumn: policy.Clone.SlugColumn, Via: policy.Clone.Via})
+			Column: policy.Clone.Column, SlugColumn: policy.Clone.SlugColumn, Via: policy.Clone.Via, Live: policy.Clone.Live})
 	}
 	sort.Slice(probes, func(i, j int) bool { return probes[i].Table < probes[j].Table })
 	return json.Marshal(probes)

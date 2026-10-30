@@ -102,6 +102,11 @@ func (s *server) processNextProjectEnvironmentClone(ctx context.Context, store p
 	delay := projectEnvironmentCloneWorkerInterval
 	if stepErr != nil {
 		delay = cloneCoordinatorRetryDelay(lease.AttemptCount)
+	} else {
+		// A step that succeeded, including a normal wait, ends any failure
+		// streak: the next failure backs off from the start, not from every
+		// claim the operation has had.
+		lease.AttemptCount = 1
 	}
 	return errors.Join(stepErr, store.ReleaseProjectEnvironmentCloneLease(releaseCtx, lease, delay))
 }

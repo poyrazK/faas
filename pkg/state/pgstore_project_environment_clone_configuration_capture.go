@@ -88,6 +88,9 @@ func (s *PgStore) CreateCapturedProjectEnvironmentCloneOperation(ctx context.Con
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return ProjectEnvironmentCloneOperation{}, mapErr(err)
 	}
+	if err := lockCloneAdmissionSwitchesTx(ctx, tx, request.AdmissionSwitches); err != nil {
+		return ProjectEnvironmentCloneOperation{}, err
+	}
 	coverage, err := readCloneSchemaCoverageDB(ctx, tx)
 	if err != nil {
 		return ProjectEnvironmentCloneOperation{}, err
@@ -113,6 +116,11 @@ func (s *PgStore) CreateCapturedProjectEnvironmentCloneOperation(ctx context.Con
 		return op, mapErr(err)
 	}
 	records, err := captureCloneConfigurationWorkloadsTx(ctx, tx, op)
+	if errors.Is(err, ErrNotFound) {
+		// The source exists (checked above); a workload in it has no live
+		// deployment to clone, which is not a missing environment.
+		err = fmt.Errorf("%w: %v", ErrProjectEnvironmentCloneSourceNotDeployed, err)
+	}
 	if request.RequireCompleteInventory && errors.Is(err, ErrProjectEnvironmentCloneRestoreWindowUnavailable) {
 		return ProjectEnvironmentCloneOperation{}, &ProjectEnvironmentCloneInventoryError{Blockers: []ProjectEnvironmentCloneCoverageBlocker{
 			{Table: "managed_postgres_bindings", Code: CloneBlockerPointInTimeRestoreUnavailable}}}
@@ -150,6 +158,31 @@ func (s *PgStore) CreateCapturedProjectEnvironmentCloneOperation(ctx context.Con
 		return ProjectEnvironmentCloneOperation{}, mapProjectCloneSnapshotErr(err)
 	}
 	return created, nil
+}
+
+// lockCloneAdmissionSwitchesTx refuses unless every named switch is stored as
+// true. A missing row is the catalogue default, off. A switch turned off after
+// this transaction's snapshot fails the share lock with a serialization error,
+// which refuses the capture too.
+func lockCloneAdmissionSwitchesTx(ctx context.Context, tx pgx.Tx, keys []string) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	rows, err := new(sqlc.Queries).LockProjectEnvironmentCloneAdmissionSwitches(ctx, tx, keys)
+	if err != nil {
+		return mapProjectCloneSnapshotErr(err)
+	}
+	on := make(map[string]bool, len(rows))
+	for _, row := range rows {
+		var value bool
+		on[row.ConfigKey] = json.Unmarshal(row.DesiredValue, &value) == nil && value
+	}
+	for _, key := range keys {
+		if !on[key] {
+			return ErrProjectEnvironmentCloneAdmissionClosed
+		}
+	}
+	return nil
 }
 
 func captureCloneConfigurationWorkloadsTx(ctx context.Context, tx pgx.Tx, op ProjectEnvironmentCloneOperation) ([]projectCloneWorkloadRecord, error) {

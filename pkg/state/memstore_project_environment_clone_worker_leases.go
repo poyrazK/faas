@@ -85,6 +85,9 @@ func (m *MemStore) ReleaseProjectEnvironmentCloneLease(_ context.Context, lease 
 	op.Revision++
 	op.UpdatedAt = now
 	stored.token, stored.until, stored.nextAttemptAt = "", time.Time{}, now.Add(retryAfter)
+	if lease.AttemptCount >= 1 && lease.AttemptCount < stored.attemptCount {
+		stored.attemptCount = lease.AttemptCount
+	}
 	m.projectEnvironmentCloneOperations[op.ID] = op
 	m.projectEnvironmentCloneWorkerLeases[op.ID] = stored
 	return nil

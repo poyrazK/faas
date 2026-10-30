@@ -164,6 +164,27 @@ func projectEnvironmentCloneWorkerLeaseOwnership(t *testing.T, s cloneWorkerLeas
 	if views, err := s.CaptureProjectEnvironmentCloneWorkloads(ctx, acct.ID, project.ID, op.ID, replacement.Operation.Revision); err != nil || len(views) != 1 || views[0].SourceDeploymentID != source.ID {
 		t.Fatalf("replacement could not capture the valid workload: %v", err)
 	}
+	// A worker whose step succeeded ends the failure streak: release keeps at
+	// most the lease's count, and a count of zero keeps the stored one, since
+	// zero with no lease would readmit unleased legacy writers.
+	healthy := replacement
+	healthy.AttemptCount = 1
+	if err := s.ReleaseProjectEnvironmentCloneLease(ctx, healthy, 0); err != nil {
+		t.Fatal(err)
+	}
+	replacement, err = s.ClaimNextProjectEnvironmentClone(ctx, uuid.NewString(), time.Minute)
+	if err != nil || replacement.AttemptCount != 2 {
+		t.Fatalf("claim after a healthy release = %d, %v", replacement.AttemptCount, err)
+	}
+	unchanged := replacement
+	unchanged.AttemptCount = 0
+	if err := s.ReleaseProjectEnvironmentCloneLease(ctx, unchanged, 0); err != nil {
+		t.Fatal(err)
+	}
+	replacement, err = s.ClaimNextProjectEnvironmentClone(ctx, uuid.NewString(), time.Minute)
+	if err != nil || replacement.AttemptCount != 3 {
+		t.Fatalf("claim after a release keeping the count = %d, %v", replacement.AttemptCount, err)
+	}
 	if err := s.ReleaseProjectEnvironmentCloneLease(ctx, replacement, time.Hour); err != nil {
 		t.Fatal(err)
 	}

@@ -70,7 +70,9 @@ func (s *server) fullEnvironmentClonesOffProblem(ctx context.Context, key string
 	if enabled {
 		return nil
 	}
-	if s.runtimeBool(runtimeConfigFullEnvironmentCloneAdmission, false) {
+	if open, err := s.fullEnvironmentCloneAdmissionOpen(ctx); err != nil {
+		return api.ErrCapacity("could not read the full environment clone admission switch")
+	} else if open {
 		return api.NewProblem(http.StatusConflict, api.CodeConflict, "Full environment clone admission is open",
 			"turn off "+runtimeConfigFullEnvironmentCloneAdmission+" first, then wait for unfinished clones to end")
 	}
@@ -89,6 +91,25 @@ func (s *server) fullEnvironmentClonesOffProblem(ctx context.Context, key string
 	return nil
 }
 
+// fullEnvironmentCloneAdmissionOpen reads the stored admission switch, not only
+// this replica's cache, which can trail another replica's change. Admission
+// share-locks that row, so once it is stored as off every clone it admitted
+// has committed and the unfinished count that follows sees it.
+func (s *server) fullEnvironmentCloneAdmissionOpen(ctx context.Context) (bool, error) {
+	if s.runtimeBool(runtimeConfigFullEnvironmentCloneAdmission, false) {
+		return true, nil
+	}
+	stored, err := s.store.GetRuntimeConfig(ctx, runtimeConfigFullEnvironmentCloneAdmission, state.RuntimeConfigScopeGlobal, "")
+	if errors.Is(err, state.ErrRuntimeConfigNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	open, err := runtimeconfig.Bool(stored.DesiredValue)
+	return err != nil || open, nil
+}
+
 // admitFullProjectEnvironmentClone captures the source and creates the
 // operation in one transaction; the coordinator copies and publishes it. A
 // source that uses a table without an isolated strategy, or holds managed data,
@@ -104,7 +125,8 @@ func (s *server) admitFullProjectEnvironmentClone(w http.ResponseWriter, r *http
 		key = uuid.NewString()
 	}
 	op, err := store.CreateCapturedProjectEnvironmentCloneOperation(r.Context(), state.ProjectEnvironmentCloneCaptureRequest{AccountID: acct.ID, ProjectID: project.ID,
-		SourceEnvironment: req.FromEnvironment, TargetEnvironment: req.Slug, IdempotencyKey: key, RequireCompleteInventory: true})
+		SourceEnvironment: req.FromEnvironment, TargetEnvironment: req.Slug, IdempotencyKey: key, RequireCompleteInventory: true,
+		AdmissionSwitches: []string{runtimeConfigFullEnvironmentClones, runtimeConfigFullEnvironmentCloneAdmission}})
 	if err != nil {
 		api.WriteProblem(w, fullProjectEnvironmentCloneAdmissionProblem(project.Slug, req.FromEnvironment, err))
 		return
@@ -143,6 +165,21 @@ func fullProjectEnvironmentCloneAdmissionProblem(projectSlug, source string, err
 			problem.Errors = append(problem.Errors, api.FieldError{Field: field, Expected: "registered schema", Got: blocker.Code})
 		}
 		return problem
+	case errors.Is(err, state.ErrProjectEnvironmentCloneAdmissionClosed):
+		return fullProjectEnvironmentCloneUnavailable()
+	case errors.Is(err, state.ErrInvalidProjectEnvironmentCloneOperation):
+		return api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid full clone",
+			"the Idempotency-Key must be 1 to 255 characters and the source and target environments must differ")
+	case errors.Is(err, state.ErrProjectEnvironmentCloneSourceNotDeployed):
+		return cloneSourceRefusal("source.workloads", "a live deployment for every workload", "not_deployed")
+	case errors.Is(err, state.ErrReleaseConfigurationTransferUnsupported):
+		return cloneSourceRefusal("source.release_configuration", "deployments without a release configuration snapshot", "release_pinned")
+	case errors.Is(err, state.ErrProjectSecretCloneTransferUnsupported):
+		return cloneSourceRefusal("source.project_secrets", "no shared environment secrets", "shared_secrets")
+	case errors.Is(err, state.ErrProjectEnvironmentQueueCollectionUnavailable):
+		return cloneSourceRefusal("source.queue_bindings", "environment-owned queue bindings", "legacy_stage_bindings")
+	case errors.Is(err, state.ErrProjectEnvironmentCloneWorkPolicyIsolationUnavailable):
+		return cloneSourceRefusal("source.work_policies", "work policies scoped to the source environment", "isolation_unavailable")
 	case errors.Is(err, state.ErrNotFound):
 		return projectEnvironmentNotFound(projectSlug, source)
 	case errors.Is(err, state.ErrConflict), errors.Is(err, state.ErrInvalidArgument):
@@ -151,6 +188,15 @@ func fullProjectEnvironmentCloneAdmissionProblem(projectSlug, source string, err
 	default:
 		return api.ErrCapacity("could not capture the source environment")
 	}
+}
+
+// cloneSourceRefusal names what in the source keeps it from a full clone. These
+// last until the customer changes the source, so they are never 503s.
+func cloneSourceRefusal(field, expected, got string) *api.Problem {
+	problem := api.NewProblem(http.StatusConflict, api.CodeFullEnvironmentCloneUnavailable, "Full environment clone unavailable",
+		"the source environment holds something a full clone cannot copy into an isolated stage yet")
+	problem.Errors = []api.FieldError{{Field: field, Expected: expected, Got: got}}
+	return problem
 }
 
 func (s *server) fullProjectEnvironmentCloneProblem(r *http.Request, acct state.Account, project state.Project) *api.Problem {

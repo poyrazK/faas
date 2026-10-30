@@ -901,7 +901,13 @@
     "kind": "configuration",
     "capabilities": [],
     "clone": {
-      "owner": "app"
+      "owner": "app",
+      "live": [
+        {
+          "column": "revoked_at",
+          "null": true
+        }
+      ]
     }
   },
   {
@@ -2279,7 +2285,13 @@
     "kind": "configuration",
     "capabilities": [],
     "clone": {
-      "owner": "app"
+      "owner": "app",
+      "live": [
+        {
+          "column": "revoked_at",
+          "null": true
+        }
+      ]
     }
   },
   {
@@ -3708,7 +3720,13 @@
     "kind": "configuration",
     "capabilities": [],
     "clone": {
-      "owner": "app"
+      "owner": "app",
+      "live": [
+        {
+          "column": "revoked_at",
+          "null": true
+        }
+      ]
     }
   },
   {
@@ -8812,7 +8830,13 @@
     "kind": "configuration",
     "capabilities": [],
     "clone": {
-      "owner": "deployment"
+      "owner": "deployment",
+      "live": [
+        {
+          "column": "revoked_at",
+          "null": true
+        }
+      ]
     }
   },
   {
@@ -9702,7 +9726,21 @@
       "materialize"
     ],
     "clone": {
-      "owner": "app"
+      "owner": "app",
+      "live": [
+        {
+          "column": "state",
+          "not": "deleted"
+        },
+        {
+          "column": "deleted_at",
+          "null": true
+        },
+        {
+          "column": "scope",
+          "source_scope": true
+        }
+      ]
     }
   },
   {
@@ -10976,6 +11014,12 @@
           "managed_realtime_endpoints",
           "id"
         ]
+      ],
+      "live": [
+        {
+          "column": "revoked_at",
+          "null": true
+        }
       ]
     }
   },
@@ -11275,6 +11319,12 @@
           "managed_realtime_endpoints",
           "id"
         ]
+      ],
+      "live": [
+        {
+          "column": "revoked_at",
+          "null": true
+        }
       ]
     }
   },
@@ -12121,7 +12171,17 @@
     ],
     "clone": {
       "owner": "app",
-      "unavailable": "data_checkpoint_unavailable"
+      "unavailable": "data_checkpoint_unavailable",
+      "live": [
+        {
+          "column": "state",
+          "not": "deleted"
+        },
+        {
+          "column": "scope",
+          "source_scope": true
+        }
+      ]
     }
   },
   {
@@ -16744,7 +16804,13 @@
     ],
     "clone": {
       "owner": "app",
-      "unavailable": "work_activation_unavailable"
+      "unavailable": "work_activation_unavailable",
+      "live": [
+        {
+          "column": "retired_at",
+          "null": true
+        }
+      ]
     }
   },
   {

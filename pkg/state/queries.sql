@@ -6813,9 +6813,12 @@ WHERE id = sqlc.arg(operation_id)::uuid AND account_id = sqlc.arg(account_id)::u
 RETURNING lease_until, attempt_count;
 
 -- name: ReleaseProjectEnvironmentCloneWorkerLease :execrows
+-- keep_attempts may only lower the count, never below 1: zero with no lease
+-- would readmit unleased legacy writers.
 UPDATE project_environment_clone_operations
 SET lease_token = NULL, lease_until = NULL, revision = revision + 1, updated_at = clock_timestamp(),
-    next_attempt_at = clock_timestamp() + sqlc.arg(retry_microseconds)::bigint * interval '1 microsecond'
+    next_attempt_at = clock_timestamp() + sqlc.arg(retry_microseconds)::bigint * interval '1 microsecond',
+    attempt_count = CASE WHEN sqlc.arg(keep_attempts)::int BETWEEN 1 AND attempt_count THEN sqlc.arg(keep_attempts)::int ELSE attempt_count END
 WHERE id = sqlc.arg(operation_id)::uuid AND account_id = sqlc.arg(account_id)::uuid AND project_id = sqlc.arg(project_id)::uuid
   AND lease_token = sqlc.arg(lease_token)::uuid AND lease_until > clock_timestamp()
   AND revision = sqlc.arg(revision)::bigint AND status = sqlc.arg(status)::text
@@ -7134,6 +7137,13 @@ FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespac
 JOIN pg_catalog.pg_attribute a ON a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped
 WHERE n.nspname=current_schema() AND c.relkind IN ('r','p') AND NOT c.relispartition
 GROUP BY c.oid,c.relname ORDER BY c.relname;
+
+-- name: LockProjectEnvironmentCloneAdmissionSwitches :many
+-- Admission holds every switch it decides on until it commits, so turning one
+-- off waits for the admissions already reading it.
+SELECT config_key, desired_value FROM runtime_config_entries
+WHERE scope = 'global' AND scope_id = '' AND config_key = ANY(sqlc.arg(config_keys)::text[])
+FOR SHARE;
 
 -- name: CaptureProjectEnvironmentCloneWorkPolicies :one
 SELECT jsonb_build_object(

@@ -256,17 +256,29 @@ func (r pgRouter) environmentHost(ctx context.Context, environmentID, appID stri
 	return resolved, true, nil
 }
 
-func (r pgRouter) environmentDeployment(ctx context.Context, app state.App, environment state.ProjectEnvironment) (state.Deployment, bool, error) {
-	if clones, ok := r.store.(interface {
+// cloneTargetNotReady returns errProjectEnvironmentCloneNotReady while a clone
+// into the environment is unfinished. Every host that reaches a deployment in
+// that environment checks it, not only the environment's own host.
+func (r pgRouter) cloneTargetNotReady(ctx context.Context, accountID, projectID, slug string) error {
+	clones, ok := r.store.(interface {
 		ProjectEnvironmentCloneTargetOperation(context.Context, string, string, string) (state.ProjectEnvironmentCloneOperation, error)
-	}); ok && (r.fullEnvironmentClones == nil || r.fullEnvironmentClones()) {
-		op, err := clones.ProjectEnvironmentCloneTargetOperation(ctx, environment.AccountID, environment.ProjectID, environment.Slug)
-		if err != nil && !errors.Is(err, state.ErrNotFound) {
-			return state.Deployment{}, false, err
-		}
-		if err == nil && op.Status != state.CloneOperationReady {
-			return state.Deployment{}, false, errProjectEnvironmentCloneNotReady
-		}
+	})
+	if !ok || projectID == "" || state.IsProductionScope(slug) || (r.fullEnvironmentClones != nil && !r.fullEnvironmentClones()) {
+		return nil
+	}
+	op, err := clones.ProjectEnvironmentCloneTargetOperation(ctx, accountID, projectID, slug)
+	if err != nil && !errors.Is(err, state.ErrNotFound) {
+		return err
+	}
+	if err == nil && op.Status != state.CloneOperationReady {
+		return errProjectEnvironmentCloneNotReady
+	}
+	return nil
+}
+
+func (r pgRouter) environmentDeployment(ctx context.Context, app state.App, environment state.ProjectEnvironment) (state.Deployment, bool, error) {
+	if err := r.cloneTargetNotReady(ctx, environment.AccountID, environment.ProjectID, environment.Slug); err != nil {
+		return state.Deployment{}, false, err
 	}
 	if reader, ok := r.store.(interface {
 		ActiveProjectReleaseSet(context.Context, string, string, string) (state.ProjectReleaseSet, error)
@@ -338,6 +350,11 @@ func (r pgRouter) deploymentAliasByHostLabel(ctx context.Context, hostLabel stri
 	if deployment.AppID != app.ID || deployment.DeletedAt != nil || !deployment.DeploymentAliasActive() {
 		return gateway.App{}, false, nil
 	}
+	if err := r.cloneTargetNotReady(ctx, app.AccountID, app.ProjectID, deployment.Scope); errors.Is(err, errProjectEnvironmentCloneNotReady) {
+		return gateway.App{}, false, nil
+	} else if err != nil {
+		return gateway.App{}, false, err
+	}
 	resolved, found, err := r.toAppWithDeployment(ctx, app, &deployment)
 	if err != nil || !found {
 		return resolved, found, err
@@ -373,6 +390,13 @@ func (r pgRouter) deploymentPreview(ctx context.Context, slug string, revision i
 	}
 	if deployment.AppID != app.ID || deployment.DeletedAt != nil || !deployment.DeploymentPreviewActive() {
 		return gateway.App{}, false, nil
+	}
+	// A preview of a deployment in an unfinished clone target fails closed
+	// exactly like the environment's own host.
+	if err := r.cloneTargetNotReady(ctx, app.AccountID, app.ProjectID, deployment.Scope); errors.Is(err, errProjectEnvironmentCloneNotReady) {
+		return gateway.App{}, false, nil
+	} else if err != nil {
+		return gateway.App{}, false, err
 	}
 	resolved, ok, err := r.toAppWithDeployment(ctx, app, &deployment)
 	if err != nil || !ok {

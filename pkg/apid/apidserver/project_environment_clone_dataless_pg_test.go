@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -34,9 +35,15 @@ func newFullCloneFixture(t *testing.T, postgres bool) fullCloneFixture {
 	return fullCloneFixture{t: t, f: f, acct: *f.Account(), project: *f.Project()}
 }
 
+// open turns switches on as the admin API does: stored, then applied to this
+// replica's cache.
 func (d fullCloneFixture) open(keys ...string) {
 	d.t.Helper()
 	for _, key := range keys {
+		if _, err := (*d.f.Store()).UpsertRuntimeConfig(d.t.Context(), state.RuntimeConfigUpdate{Key: key, Scope: state.RuntimeConfigScopeGlobal,
+			DesiredValue: json.RawMessage("true"), ApplyMode: state.RuntimeConfigApplyHot, ActorID: d.acct.ID, Reason: "full clone test"}); err != nil {
+			d.t.Fatal(err)
+		}
 		if err := (*(*d.f.Srv()).RuntimeConfig()).Apply(key, json.RawMessage("true")); err != nil {
 			d.t.Fatal(err)
 		}
@@ -103,6 +110,14 @@ func TestPGDatalessFullCloneAdmitsCopiesAndPublishes(t *testing.T) {
 		if rec := d.admit("stage", "closed"); rec.Code != http.StatusConflict {
 			t.Fatalf("admission opened with %v: %d %s", keys, rec.Code, rec.Body.String())
 		}
+	}
+	// A replica whose cache trails the stored switch cannot admit: admission
+	// decides on the stored rows it share-locks, not on the cache.
+	if err := (*(*d.f.Srv()).RuntimeConfig()).Apply(fullCloneAdmissionKey, json.RawMessage("true")); err != nil {
+		t.Fatal(err)
+	}
+	if rec := d.admit("stage", "stale-cache"); rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), api.CodeFullEnvironmentCloneUnavailable) {
+		t.Fatalf("a stale cache admitted: %d %s", rec.Code, rec.Body.String())
 	}
 	d.open(fullCloneAdmissionKey)
 	op := d.admitted("stage", "stage-key")
