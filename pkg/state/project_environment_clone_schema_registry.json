@@ -3646,6 +3646,7 @@
       "admission_ceiling_mb",
       "cert_fingerprint",
       "cpu_model",
+      "cpu_pressure_until",
       "cpu_template",
       "created_at",
       "drain_completed_at",
