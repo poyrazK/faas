@@ -58,6 +58,7 @@ plain billing_subscription_ends.subscription_hash
 plain build_export_publications.payload
 plain build_export_publications.signature
 plain ci_job_runtime.capability_hash
+plain cli_auth_codes.device_hash
 plain cli_auth_codes.token_hash
 plain consumer_keys.hashed_secret
 plain customer_operation_webhook_receipts.body_sha256
@@ -139,6 +140,8 @@ plain product_control_email_deliveries.unsubscribe_hash
 plain profile_capture_data.profile
 plain route_removal_approvals.baseline_sha256
 plain route_removal_approvals.candidate_sha256
+plain runtime_secret_signatures.ciphertext_sha256
+plain runtime_secret_signatures.signature
 plain runtime_upgrade_external_fence_authorities.public_key
 plain runtime_upgrade_external_fence_receipts.envelope
 plain runtime_upgrade_native_public_startups.envelope

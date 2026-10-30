@@ -21,7 +21,9 @@ const routeHealthHoldScan = 20
 // It runs on the rollout worker's blocked advance, so the hold is current.
 func (s *server) abortRouteHealthHoldPastDeadline(ctx context.Context, err error, app state.App, d state.Deployment) {
 	var blocked *state.RouteHealthBlockedError
-	if !errors.As(err, &blocked) {
+	// A gateway that lost evidence holds the advance but never ends the
+	// release (ADR-20261028110044 amendment 1).
+	if !errors.As(err, &blocked) || blocked.EvidenceLost {
 		return
 	}
 	holds, ok := s.store.(state.RouteAlertStore)
@@ -46,5 +48,13 @@ func (s *server) abortRouteHealthHoldPastDeadline(ctx context.Context, err error
 	}
 	if _, _, abortErr := decisions.RecoverRolloutWithDecision(ctx, app.ID, "abort", "route health: "+summary, decision); abortErr != nil {
 		s.log.Warn("apid: abort route health hold failed", "deployment", d.ID, "err", abortErr)
+		return
+	}
+	// The hold reads as aborted and app webhooks hear about it
+	// (ADR-20261028110044 amendment 2).
+	if aborter, ok := s.store.(state.RouteHealthHoldAborter); ok {
+		if err := aborter.AbortRouteHealthHold(ctx, app.AccountID, app.ID, d.ID, now); err != nil {
+			s.log.Warn("apid: record route health hold abort failed", "deployment", d.ID, "err", err)
+		}
 	}
 }

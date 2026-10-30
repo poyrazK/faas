@@ -46,6 +46,11 @@ type secretEntryTicket struct {
 	Key          string
 	Reason       string
 	ExpiresAt    time.Time
+	// KeyID and KeyAccountID name the API key that asked, shown on the form
+	// so the owner can tell which credential is behind the reason it
+	// carries (bug hunt 2026-10-28 H54). Empty for a browser session.
+	KeyID        string `json:",omitempty"`
+	KeyAccountID string `json:",omitempty"`
 }
 
 func (t secretEntryTicket) actorID() string {
@@ -113,7 +118,8 @@ func (s *server) requestSecretEntry(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, prob)
 		return
 	}
-	response, err := s.mintSecretEntry(r.Context(), acct, actorAccount(r, acct), app, scope, input)
+	_, key, _, _ := middleware.PrincipalFrom(r)
+	response, err := s.mintSecretEntry(r.Context(), acct, actorAccount(r, acct), key, app, scope, input)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not start secret entry"))
 		return
@@ -138,7 +144,7 @@ func secretEntryScope(input api.SecretEntryRequest) (string, *api.Problem) {
 	return input.Scope, nil
 }
 
-func (s *server) mintSecretEntry(ctx context.Context, acct, actor state.Account, app state.App, scope string, input api.SecretEntryRequest) (api.SecretEntryResponse, error) {
+func (s *server) mintSecretEntry(ctx context.Context, acct, actor state.Account, key *state.APIKey, app state.App, scope string, input api.SecretEntryRequest) (api.SecretEntryResponse, error) {
 	entropy := make([]byte, 32)
 	if _, err := rand.Read(entropy); err != nil {
 		return api.SecretEntryResponse{}, err
@@ -146,6 +152,9 @@ func (s *server) mintSecretEntry(ctx context.Context, acct, actor state.Account,
 	code := base64.RawURLEncoding.EncodeToString(entropy)
 	hash := secretEntryCodeHash(code)
 	ticket := secretEntryTicket{Purpose: secretEntryPurpose, ExchangeHash: hex.EncodeToString(hash), AccountID: acct.ID, ActorID: actor.ID, AppID: app.ID, App: app.Slug, Scope: scope, Key: input.Key, Reason: input.Reason, ExpiresAt: time.Now().UTC().Add(secretEntryTTL)}
+	if key != nil {
+		ticket.KeyID, ticket.KeyAccountID = key.ID, key.AccountID
+	}
 	data, err := json.Marshal(ticket)
 	if err != nil {
 		return api.SecretEntryResponse{}, err

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/objectchecksum"
 )
 
 // TestLiveProviderQualification is deliberately opt-in because it creates,
@@ -27,7 +28,10 @@ import (
 // the same qualification applies to GCS, OVH, AWS, R2, Ceph RGW, or another
 // backend selected by the registry's default region. It intentionally does
 // not call the Gregale API: API auth/quotas are covered by the existing unit
-// and end-to-end suites.
+// and end-to-end suites. Its subtests (provider_live_compat_test.go) cover
+// the behaviors the branded gateway relies on beyond the basic contract:
+// conditional writes, multipart checksums, versioning, default encryption
+// and, when the backend declares it, Object Lock.
 func TestLiveProviderQualification(t *testing.T) {
 	if os.Getenv("FAAS_OBJECT_STORAGE_LIVE_TEST") != "1" {
 		t.Skip("set FAAS_OBJECT_STORAGE_LIVE_TEST=1 to run the object-storage provider qualification")
@@ -52,7 +56,7 @@ func TestLiveProviderQualification(t *testing.T) {
 		t.Fatalf("resolve qualification backend for region %q: %v", region, err)
 	}
 
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Minute)
 	defer cancel()
 	bucket := "gregale-qual-" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	singleKey := "qualification/hello +世界.txt"
@@ -330,7 +334,14 @@ func TestLiveProviderQualification(t *testing.T) {
 		t.Fatalf("repeat abort multipart upload: %v", err)
 	}
 
-	t.Logf("qualified backend %s (%s) in region %s", backend.ID, backend.Fingerprint[:12], region)
+	t.Run("conditional writes", func(t *testing.T) { qualifyConditionalWrites(t, ctx, backend) })
+	t.Run("multipart checksums", func(t *testing.T) { qualifyMultipartChecksums(t, ctx, backend) })
+	t.Run("versioning", func(t *testing.T) { qualifyVersioning(t, ctx, backend) })
+	t.Run("bucket encryption", func(t *testing.T) { qualifyBucketEncryption(t, ctx, backend) })
+	t.Run("object lock", func(t *testing.T) { qualifyObjectLock(t, ctx, backend) })
+	if !t.Failed() {
+		t.Logf("qualified backend %s (%s) in region %s", backend.ID, backend.Fingerprint[:12], region)
+	}
 }
 
 func putSigned(ctx context.Context, signed SignedRequest, body []byte, contentType string) error {
@@ -475,8 +486,13 @@ var qualificationHTTPClient = &http.Client{
 
 func uploadPart(t *testing.T, ctx context.Context, provider Provider, bucket, key, uploadID string, partNumber int32, body []byte) string {
 	t.Helper()
+	return uploadChecksumPart(t, ctx, provider, bucket, key, uploadID, partNumber, body, objectchecksum.Digest{})
+}
+
+func uploadChecksumPart(t *testing.T, ctx context.Context, provider Provider, bucket, key, uploadID string, partNumber int32, body []byte, checksum objectchecksum.Digest) string {
+	t.Helper()
 	signed, err := provider.PresignMultipartPart(ctx, bucket, MultipartPartRequest{
-		Key: key, ProviderUploadID: uploadID, PartNumber: partNumber, SizeBytes: int64(len(body)), ExpiresIn: 300,
+		Checksum: checksum, Key: key, ProviderUploadID: uploadID, PartNumber: partNumber, SizeBytes: int64(len(body)), ExpiresIn: 300,
 	})
 	if err != nil {
 		t.Fatalf("sign multipart part %d: %v", partNumber, err)

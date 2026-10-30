@@ -48,7 +48,7 @@ class Failure(Exception):
 # Deploy's recovery guidance after an uncertain submission (deploy_recovery.go,
 # deploy_success.go). These lines may name an accepted deployment that the
 # guided session has not adopted.
-RECOVERY_GUIDANCE = re.compile(r"Stage: \S+; inspect: |Deployment: \S+; resume: |deployment wait \S+")
+RECOVERY_GUIDANCE = re.compile(r"Stage: \S+; inspect: |Deployment: \S+; resume: |(?:deployment|release) wait \S+")
 
 
 def require(condition, message):

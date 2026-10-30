@@ -56,6 +56,17 @@ func (r *NodeRegistry) Remove(nodeID string) {
 	r.mu.Unlock()
 }
 
+// Node returns the registry's row for nodeID, if the node is active.
+func (r *NodeRegistry) Node(nodeID string) (state.ComputeNode, bool) {
+	if r == nil {
+		return state.ComputeNode{}, false
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	node, ok := r.nodes[nodeID]
+	return node, ok
+}
+
 // Snapshot returns a stable copy suitable for a placement or observer sweep.
 func (r *NodeRegistry) Snapshot() []state.ComputeNode {
 	if r == nil {

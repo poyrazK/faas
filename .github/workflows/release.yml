@@ -866,6 +866,59 @@ jobs:
           echo "RUNTIME_SOURCE_SHA=$RUNTIME_SOURCE_SHA" >> "$GITHUB_ENV"
           echo "materialized release runtime-base contract from source $RUNTIME_SOURCE_SHA"
 
+      # Issue #295: every platform image this release pins must carry the
+      # provenance images.yml attests on main (#5835): signed for this
+      # repository by images.yml, from refs/heads/main, on a GitHub-hosted
+      # runner. Both source commits above follow images.yml, so a release cut
+      # after #5835 pins only images built with that attestation. imaged
+      # verifies the same attestation again when it pulls a base.
+      - name: Verify platform image provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DOCKER_CONFIG: ${{ runner.temp }}/crane-config
+          OUT_DIR: ${{ runner.temp }}/gregale-release
+        run: |
+          set -euo pipefail
+          refs=("ghcr.io/poyrazk/builder-base@sha256:${BUILDER_BASE_DIGEST}")
+          while IFS='=' read -r _ ref; do
+            refs+=("$ref")
+          done < "$OUT_DIR/runtime-bases.env"
+          for ref in "${refs[@]}"; do
+            [[ "$ref" =~ ^ghcr\.io/poyrazk/[a-z0-9-]+@sha256:[0-9a-f]{64}$ ]] || {
+              echo "::error::pinned image $ref is not a ghcr.io/poyrazk digest reference" >&2
+              exit 1
+            }
+            if ! gh attestation verify "oci://${ref}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/images.yml" \
+              --source-ref refs/heads/main \
+              --deny-self-hosted-runners > /dev/null; then
+              echo "::error::$ref has no valid provenance attestation from images.yml on main" >&2
+              exit 1
+            fi
+            echo "provenance verified: $ref"
+          done
+
+      # ADR-20261029155852: imaged verifies base provenance offline against a
+      # Sigstore root shipped in this signed release. Attestations of this
+      # public repository are signed by public-good Sigstore, so keep only
+      # that root (gh fetches it through Sigstore's TUF repository).
+      - name: Fetch the Sigstore trusted root for imaged
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SIGSTORE_TRUSTED_ROOT_FILE: ${{ runner.temp }}/sigstore/trusted-root.json
+        run: |
+          set -euo pipefail
+          mkdir -p "$(dirname "$SIGSTORE_TRUSTED_ROOT_FILE")"
+          gh attestation trusted-root > "$RUNNER_TEMP/sigstore/trusted-roots.jsonl"
+          jq -c 'select(any(.certificateAuthorities[]?; .uri == "https://fulcio.sigstore.dev"))' \
+            "$RUNNER_TEMP/sigstore/trusted-roots.jsonl" > "$SIGSTORE_TRUSTED_ROOT_FILE"
+          [[ "$(wc -l < "$SIGSTORE_TRUSTED_ROOT_FILE")" -eq 1 ]] || {
+            echo "::error::gh attestation trusted-root did not return exactly one public-good Sigstore root" >&2
+            exit 1
+          }
+          jq -e '.tlogs | length > 0' "$SIGSTORE_TRUSTED_ROOT_FILE" > /dev/null
+
       - name: Reuse a prior signed Firecracker kernel
         id: reuse_kernel
         env:
@@ -918,6 +971,7 @@ jobs:
           OUT_DIR: ${{ runner.temp }}/gregale-release
           SYFT_BIN: syft
           KERNEL_FILE: ${{ runner.temp }}/gregale-release/vmlinux
+          SIGSTORE_TRUSTED_ROOT_FILE: ${{ runner.temp }}/sigstore/trusted-root.json
         run: |
           set -euo pipefail
           MANIFEST_FILE="$OUT_DIR/production-manifest.yaml"
@@ -934,6 +988,27 @@ jobs:
             KERNEL_FILE="$KERNEL_FILE" \
             SYFT_BIN="$SYFT_BIN" \
             scripts/build-canonical-tarball.sh
+
+      # ADR-20261029155852: run the imaged this release ships, with its own
+      # trusted root and the pinned cosign, on every digest the release pins.
+      # A release cannot ship a root, bundle location or policy its own imaged
+      # would reject. No --legacy: every pin must verify.
+      - name: Verify pinned bases with the release's imaged
+        env:
+          OUT_DIR: ${{ runner.temp }}/gregale-release
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/base-provenance"
+          mkdir -p "$work"
+          tar -xzf "$OUT_DIR/release.tar.gz" -C "$work" imaged sigstore-trusted-root.json
+          args=(--ref "ghcr.io/poyrazk/builder-base@sha256:${BUILDER_BASE_DIGEST}")
+          while IFS='=' read -r _ ref; do
+            args+=(--ref "$ref")
+          done < "$OUT_DIR/runtime-bases.env"
+          "$work/imaged" verify-base-provenance \
+            --cosign "$RUNNER_TEMP/release-tools/cosign" \
+            --trusted-root "$work/sigstore-trusted-root.json" \
+            "${args[@]}"
 
       - name: Sign canonical tarball with GitHub OIDC
         env:

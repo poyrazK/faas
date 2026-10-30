@@ -3,3 +3,10 @@
 # start; faas_runtime_secret_binding_required reports it.
 [Service]
 Environment=FAAS_RUNTIME_SECRET_BINDING_REQUIRED={{ faas_seal_domain_runtime_binding_required | bool | lower }}
+{% if faas_seal_domain_runtime_signing_pub_src | length > 0 %}
+# ADR 20261028161502 amendment 1: vmmd verifies apid's signature on every
+# runtime secret before it opens one, and with the required switch also
+# refuses unsigned ones. faas_runtime_secret_signature_enforcement reports it.
+Environment=FAAS_RUNTIME_SECRET_SIGNATURE_KEYS_FILE=/etc/faas/secrets/domains/runtime-signing.pub
+Environment=FAAS_RUNTIME_SECRET_SIGNATURE_REQUIRED={{ faas_seal_domain_runtime_signatures_required | bool | lower }}
+{% endif %}

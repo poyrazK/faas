@@ -38,6 +38,26 @@ WHERE d.app_id = sqlc.arg(app_id)::text::uuid
 ORDER BY s.updated_at DESC, s.deployment_id
 LIMIT sqlc.arg(row_limit)::int;
 
+-- name: RouteTelemetryLost :one
+-- ADR-20261028110044 amendments 1 and 2: whether a gateway may have lost
+-- request telemetry that route evidence over [window_from, window_until)
+-- reads. An active node whose last coverage report is at most
+-- RouteTelemetrySilenceGrace older than window_from counts when its telemetry
+-- is off or sampled, when it has not been continuously healthy since
+-- window_from (a restart, a heartbeat gap, or rows it could not attribute to
+-- an app), or when it fell silent before window_until. A gateway silent since
+-- before the windows serves none of them, so it cannot hold every app's
+-- evidence. Rows a gateway attributes to an app and drops (an account over its
+-- telemetry rate) do not count: the app's remaining rows stay comparable.
+SELECT EXISTS (
+  SELECT 1 FROM request_telemetry_coverage c
+  JOIN compute_nodes n ON n.name = c.node_name AND n.active
+  WHERE c.source_at >= sqlc.arg(reported_since)::timestamptz
+    AND (NOT c.enabled OR c.sampling_basis_points <> 10000
+      OR c.healthy_since > sqlc.arg(window_from)::timestamptz
+      OR c.source_at < sqlc.arg(window_until)::timestamptz)
+)::boolean AS lost;
+
 -- name: ObservedRouteLabels :many
 -- ADR-20261028110044: which of the given route labels ("METHOD /path") the
 -- app served at or after since, so saving a route guard or monitor can warn
@@ -48,3 +68,20 @@ WHERE app_id = sqlc.arg(app_id)::text::uuid
   AND account_id = sqlc.arg(account_id)::text::uuid
   AND received_at >= sqlc.arg(since)
   AND route = ANY(sqlc.arg(labels)::text[]);
+
+-- name: AbortRouteHealthHold :one
+-- ADR-20261028110044 amendment 2: the hold deadline ended a held canary, so
+-- its notification state records the abort. Returns the hold's first blocking
+-- decision; no row when the canary was not held.
+WITH held AS (
+  SELECT deployment_id, blocked_decision_id FROM route_health_notification_state
+  WHERE deployment_id = sqlc.arg(deployment_id)::text::uuid
+    AND app_id = sqlc.arg(app_id)::text::uuid
+    AND account_id = sqlc.arg(account_id)::text::uuid
+    AND status IN ('blocked_unknown', 'blocked_regressed')
+  FOR UPDATE
+)
+UPDATE route_health_notification_state s
+SET status = 'aborted', blocked_decision_id = NULL, updated_at = sqlc.arg(aborted_at)
+FROM held WHERE s.deployment_id = held.deployment_id
+RETURNING coalesce(held.blocked_decision_id::text, '')::text AS blocked_decision_id;

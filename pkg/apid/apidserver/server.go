@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/onebox-faas/faas/pkg/apid/issueslack"
+	"io/fs"
 
 	"github.com/onebox-faas/faas/pkg/apid/devloop"
 	"log/slog"
@@ -22,6 +23,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/apid/automationconsole"
 	"github.com/onebox-faas/faas/pkg/apid/billingruns"
+	"github.com/onebox-faas/faas/pkg/apid/billingsync"
 	"github.com/onebox-faas/faas/pkg/apid/capgate"
 	"github.com/onebox-faas/faas/pkg/apid/ciapi"
 	"github.com/onebox-faas/faas/pkg/apid/consumerbilling"
@@ -37,6 +39,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/apid/mailoutbox"
 
+	"github.com/onebox-faas/faas/pkg/apid/agents"
 	"github.com/onebox-faas/faas/pkg/apid/dashboards"
 	"github.com/onebox-faas/faas/pkg/apid/incidents"
 	"github.com/onebox-faas/faas/pkg/apid/issuetrackers"
@@ -87,11 +90,13 @@ import (
 	"github.com/onebox-faas/faas/pkg/profiling"
 	"github.com/onebox-faas/faas/pkg/promotionrollout"
 	"github.com/onebox-faas/faas/pkg/promql"
+	"github.com/onebox-faas/faas/pkg/ratelimit/peraccount"
 	"github.com/onebox-faas/faas/pkg/realtime"
 	"github.com/onebox-faas/faas/pkg/reconcile"
 	objruntime "github.com/onebox-faas/faas/pkg/rehearsalobj/runtime"
 	pgruntime "github.com/onebox-faas/faas/pkg/rehearsalpg/runtime"
 	"github.com/onebox-faas/faas/pkg/releasemetrics"
+	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
 	usagestore "github.com/onebox-faas/faas/pkg/state/dataapiusage"
@@ -178,6 +183,7 @@ type server struct {
 	flagsWorkloadVerifier *workloadidentity.Verifier
 	statementInvoices     statementinvoices.Service // ADR-1502; Host wired in newServer
 	billingRuns           billingruns.Service       // ADR-1503; Host wired in newServer
+	billingSync           billingsync.Service       // ADR-20261029094512; Host wired in newServer
 	consumerBilling       consumerbilling.Service   // ADR-1506; Host wired in newServer
 	consumerCredits       consumercredits.Service   // ADR-1306; Host wired in newServer
 	consumerControls      consumercontrols.Service  // ADR-1314, ADR-1315; Host wired in newServer
@@ -209,6 +215,8 @@ type server struct {
 	// liveRollout is who sees live queries (FAAS_LIVE_QUERIES_ACCOUNTS);
 	// nobody until configured.
 	liveRollout livequeries.Rollout
+	// agentAPI serves the agent routes; nil until configureAgents runs.
+	agentAPI *agents.Handler
 	// realtimeRollout is who sees the realtime preview until an operator
 	// writes the realtime_preview platform flag (ADR-20261019102657).
 	realtimeRollout               managedrealtime.PreviewGate
@@ -394,6 +402,10 @@ type server struct {
 	// to a fresh bucket in authLimited for unit tests; production
 	// wires it in newServer.
 	apiAuthLimiter *middleware.Limiter
+	// channelTests caps notification channel test sends per account
+	// (ADR-20261028101615); built on first use.
+	channelTestsOnce sync.Once
+	channelTests     *peraccount.Limiter
 	// dashboardAuthLimiter is the shared per-IP bucket for the
 	// dashboard auth surface (/login, /auth/verify). Separate from
 	// apiAuthLimiter because the two surfaces count different
@@ -426,9 +438,19 @@ type server struct {
 	// signups caps self-service accounts per address and network a day
 	// (signup_network_limit.go).
 	signups *signupNetworkLimiter
+	// loginFailures caps failed password sign-ins per email address across
+	// client addresses (login_failure_limit.go).
+	loginFailures *loginFailureLimiter
+	// apiRequests is each account's budget of authenticated API requests a
+	// minute (api_request_budget.go). Nil (bare test servers) is unlimited.
+	apiRequests *apiRequestBudget
 	// exportsInFlight holds the account IDs with a REST export bundle being
 	// built: one at a time per account.
 	exportsInFlight sync.Map
+	// exportReplays bounds the retries of one export (handlers_account.go).
+	exportReplays exportReplayCounter
+	// queueReceives caps queue receive long-polls (handlers_invocations.go).
+	queueReceives queueReceiveSlots
 	// domainCreateLimiter caps pending DNS challenges per client IP. The
 	// durable store separately enforces per-account outstanding-claim quotas;
 	// this edge bucket prevents one source from cycling accounts to create an
@@ -446,6 +468,8 @@ type server struct {
 	// page). Wired in production via WithStatusCache; nil keeps the
 	// route functional but degraded (returns source=empty payload).
 	statusCache *statusCache
+	// statusOverlay caches slo.json's operator-event read (status.go).
+	statusOverlay statusOverlayCache
 
 	// preflightOnce guards lazy construction of the public migration
 	// preflight handler (GET /v1/preflight). It is built on first use so the
@@ -455,6 +479,7 @@ type server struct {
 	preflightHandler   *preflight.Handler
 	statusMetrics      *statusMetrics
 	idempotencyMetrics *idempotencyMetrics
+	signupMetrics      *signupMetrics
 	devLoopMetrics     *devloop.Metrics
 	// releaseMetrics instruments the release guards; nil records nothing.
 	releaseMetrics *releasemetrics.Metrics
@@ -691,6 +716,9 @@ type server struct {
 	// Service.Reconcile) route through this seam — there is no
 	// other workload-mutation path post PR-G.
 	reconcileSvc *reconcile.Service
+	// imageListening answers whether a prebuilt Compose image listens
+	// (ADR-20261029120000 amendment 2); nil scans the repository alone.
+	imageListening reposcan.ImageListening
 }
 
 // anonymousAccountLabel is the literal value of the `account_id`
@@ -756,6 +784,11 @@ func (s *server) WithOpsMetrics(ctx context.Context, ops *wire.OpsMetrics) *serv
 		s.routeJobMetrics = routejobs.NewMetrics(ops.Registry(), ops.MetricPrefix())
 	}
 	if ops == nil {
+		s.billingSync.Metrics = nil
+	} else if s.billingSync.Metrics.Registry() != ops.Registry() {
+		s.billingSync.Metrics = billingsync.NewMetrics(ops.Registry(), ops.MetricPrefix())
+	}
+	if ops == nil {
 		s.edgeRules.Metrics = nil
 	} else if s.edgeRules.Metrics.Registry() != ops.Registry() {
 		s.edgeRules.Metrics = edgerules.NewMetrics(ops.Registry(), ops.MetricPrefix())
@@ -772,6 +805,11 @@ func (s *server) WithOpsMetrics(ctx context.Context, ops *wire.OpsMetrics) *serv
 		s.idempotencyMetrics = nil
 	} else if s.idempotencyMetrics == nil || s.idempotencyMetrics.registry != ops.Registry() {
 		s.idempotencyMetrics = newIdempotencyMetrics(ops.Registry(), ops.MetricPrefix())
+	}
+	if ops == nil {
+		s.signupMetrics = nil
+	} else if s.signupMetrics == nil || s.signupMetrics.registry != ops.Registry() {
+		s.signupMetrics = newSignupMetrics(ops.Registry(), ops.MetricPrefix())
 	}
 	if ops == nil {
 		s.releaseMetrics = nil
@@ -965,6 +1003,21 @@ func (s *server) MarkRekeyRunnerOptedIn() *server {
 // zero value (both providers Disabled → consent routes 503).
 func (s *server) WithOAuthConfig(cfg auth.SignInConfig) *server {
 	s.oauthConfig = cfg
+	return s
+}
+
+// WithImageListening lets project scans ask a registry whether a prebuilt
+// Compose image listens (ADR-20261029120000 amendment 2), and gives the
+// reconcile service's own scan the same answer. Tests leave it unset and scan
+// the repository alone.
+func (s *server) WithImageListening(lookup reposcan.ImageListening) *server {
+	s.imageListening = lookup
+	if s.reconcileSvc != nil {
+		s.reconcileSvc.Scan = func(fsys fs.FS, opts reposcan.ScanOptions) (reposcan.Result, error) {
+			opts.ImageListening = lookup
+			return reposcan.ScanWithOptions(fsys, opts)
+		}
+	}
 	return s
 }
 
@@ -1457,6 +1510,8 @@ func newServerWithDeps(
 		dashboardExportLimiter: dashboardExportLimiter,
 		securityMail:           newSecurityMailLimiter(),
 		signups:                newSignupNetworkLimiter(),
+		loginFailures:          newLoginFailureLimiter(),
+		apiRequests:            newAPIRequestBudget(),
 		domainCreateLimiter:    domainCreateLimiter,
 		audit:                  aud,
 		runtimeConfig:          newRuntimeConfigManager(nil),
@@ -1581,6 +1636,7 @@ func newServerWithDeps(
 	s.outboundAI.Host = outboundAIHost{s}
 	s.statementInvoices.Host = statementInvoicesHost{s}
 	s.billingRuns.Host = billingRunsHost{s}
+	s.billingSync.Host = billingSyncHost{s}
 	s.consumerBilling.Host = consumerBillingHost{s}
 	s.consumerCredits.Host = consumerCreditsHost{s}
 	s.consumerControls.Host = consumerControlsHost{s}
@@ -3156,6 +3212,21 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/jobs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listJobs))))
 	mux.HandleFunc("POST /v1/jobs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createJob)))))
 	mux.HandleFunc("POST /v1/image-runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createImageRun)))))
+	// ADR-20261027090010 agents: the agents capability owns these routes, so
+	// the capability gate hides them like unregistered routes from every
+	// account it is off for.
+	mux.HandleFunc("POST /v1/agents", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createAgent)))))
+	mux.HandleFunc("GET /v1/agents", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAgents))))
+	mux.HandleFunc("GET /v1/agents/{agent}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAgent))))
+	mux.HandleFunc("DELETE /v1/agents/{agent}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteAgent))))
+	mux.HandleFunc("POST /v1/agents/{agent}/versions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createAgentVersion)))))
+	mux.HandleFunc("GET /v1/agents/{agent}/versions/{version}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAgentVersion))))
+	mux.HandleFunc("POST /v1/agents/{agent}/runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.createAgentRun)))))
+	mux.HandleFunc("GET /v1/agent-runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAgentRuns))))
+	mux.HandleFunc("GET /v1/agent-runs/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAgentRun))))
+	mux.HandleFunc("GET /v1/agent-runs/{id}/outputs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAgentRunOutputs))))
+	mux.HandleFunc("GET /v1/agent-runs/{id}/outputs/files/{name...}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAgentRunOutputFile))))
+	mux.HandleFunc("DELETE /v1/agent-runs/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.cancelAgentRun))))
 	mux.HandleFunc("GET /v1/jobs/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getJob))))
 	mux.HandleFunc("PATCH /v1/jobs/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateJob))))
 	mux.HandleFunc("DELETE /v1/jobs/{name}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteJob))))
@@ -4204,7 +4275,7 @@ func (s *server) handler() http.Handler {
 	// implements billing.Provider.ReconcileUsage (Stripe today; Paddle
 	// returns ErrNotImplemented and maps to 501 via the handler).
 	mux.HandleFunc("GET /v1/admin/billing-paddle-catalog",
-		s.authLimited(s.requireScope(api.ScopesAdminOnly...)(s.listPaddleCatalog)))
+		s.authLimited(s.requireOperatorRead(s.listPaddleCatalog)))
 	mux.HandleFunc("POST /v1/admin/billing-paddle-catalog/sync",
 		s.authLimited(s.requireAdminMutation(s.syncPaddleCatalog)))
 	mux.HandleFunc("DELETE /v1/admin/billing-paddle-catalog",
@@ -4212,7 +4283,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/admin/billing-reconcile/{id}",
 		s.authLimited(s.requireAdminMutation(s.reconcileAccount)))
 	mux.HandleFunc("GET /v1/admin/billing-paddle-overage/preflight",
-		s.authLimited(s.requireScope(api.ScopesAdminOnly...)(s.paddleOveragePreflight)))
+		s.authLimited(s.requireOperatorRead(s.paddleOveragePreflight)))
 
 	// Operator observability backend (issue #777 / ADR-091). The
 	// /v1/admin/obs/* surface gives the platform owner read-only
@@ -4308,7 +4379,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/admin/obs/recording-coverage", s.authLimited(s.requireOperatorRead(s.obsRecordingCoverage)))
 	mux.HandleFunc("GET /v1/admin/obs/input-health", s.authLimited(s.requireOperatorRead(s.obsInputHealth)))
 	mux.HandleFunc("GET /v1/admin/ops/data-repairs",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.getOperatorDataRepairHealth))))
+		s.authLimited(s.requireOperatorSessionRead(s.getOperatorDataRepairHealth)))
 	// Unified incident inbox. This is a read-only correlation projection over
 	// the existing deployment, job-run, compute-node, and alert surfaces;
 	// it keeps operator triage out of the deployment request path.
@@ -4359,7 +4430,7 @@ func (s *server) handler() http.Handler {
 	// closure — fleet-level intents with account_id=NULL are
 	// visible to any admin).
 	mux.HandleFunc("GET /v1/admin/operator-intents/{id}",
-		s.authLimited(s.requireScope(api.ScopesAdminOnly...)(s.requireOperator(s.getOperatorIntent))))
+		s.authLimited(s.requireOperatorSessionRead(s.getOperatorIntent)))
 	// P2c (reclaim-stuck-build) — fleet-level sweep that calls
 	// state.Store.SweepStuckRunningBuilds directly (per user
 	// decision, NO builderd gRPC server). ?older_than= is
@@ -4391,7 +4462,7 @@ func (s *server) handler() http.Handler {
 	// retry paths use the strict provider-mutation policy; apid never opens or
 	// writes githubd's queue tables directly.
 	mux.HandleFunc("GET /v1/admin/ops/github/recovery",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.getGithubRecoveryStatus))))
+		s.authLimited(s.requireOperatorSessionRead(s.getGithubRecoveryStatus)))
 	mux.Handle("POST /v1/admin/ops/github/deliveries/{id}/retry",
 		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postGithubDeliveryRetry))))
 	mux.Handle("POST /v1/admin/ops/github/check-updates/{id}/retry",
@@ -4421,24 +4492,24 @@ func (s *server) handler() http.Handler {
 	// Filesystem/bootstrap settings remain visible as deployment-managed
 	// entries.
 	mux.HandleFunc("GET /v1/admin/config",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.adminRuntimeConfigList))))
+		s.authLimited(s.requireOperatorSessionRead(s.adminRuntimeConfigList)))
 	mux.Handle("PATCH /v1/admin/config/{key}",
 		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.adminRuntimeConfigPatch))))
 	mux.Handle("POST /v1/admin/config/{key}/rollback",
 		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.adminRuntimeConfigRollback))))
 	mux.HandleFunc("GET /v1/admin/config-operations/{id}",
-		s.authLimited(s.requireScope(api.ScopesAdminOnly...)(s.adminRuntimeConfigOperationGet)))
+		s.authLimited(s.requireOperatorSessionRead(s.adminRuntimeConfigOperationGet)))
 	mux.HandleFunc("GET /v1/admin/config/{key}/revisions",
-		s.authLimited(s.requireScope(api.ScopesAdminOnly...)(s.adminRuntimeConfigRevisions)))
+		s.authLimited(s.requireOperatorSessionRead(s.adminRuntimeConfigRevisions)))
 	// ADR-1700 — platform flags. Reads join the catalog, the durable rows,
 	// apid's compiled snapshot and per-daemon apply receipts; writes go
 	// through PATCH /v1/admin/config/platform_flag.<key>.
 	mux.HandleFunc("GET /v1/admin/flags",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.platformFlagAdmin.List))))
+		s.authLimited(s.requireOperatorSessionRead(s.platformFlagAdmin.List)))
 	mux.HandleFunc("GET /v1/admin/flags/{key}",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.platformFlagAdmin.Get))))
+		s.authLimited(s.requireOperatorSessionRead(s.platformFlagAdmin.Get)))
 	mux.HandleFunc("GET /v1/admin/flags/{key}/decision",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.platformFlagAdmin.Decision))))
+		s.authLimited(s.requireOperatorSessionRead(s.platformFlagAdmin.Decision)))
 	mux.HandleFunc("GET /v1/admin/accounts/{id}/flags",
 		s.authLimited(s.requireOperatorSessionRead(s.platformFlagAdmin.AccountFlags)))
 
@@ -4475,7 +4546,7 @@ func (s *server) handler() http.Handler {
 	// "feature is on and the table is empty". See
 	// handlers_rekey.go for the handler body.
 	mux.HandleFunc("GET /v1/admin/secrets/rekey-progress",
-		s.authLimited(s.requireScope(api.ScopesAdminOnly...)(s.getRekeyProgress)))
+		s.authLimited(s.requireOperatorRead(s.getRekeyProgress)))
 
 	// Issue #517 / PR-C / ADR-064: customer-facing wake-timeline
 	// surface. Sub-resource of /v1/apps/{slug} — same auth chain
@@ -5346,7 +5417,9 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PATCH /v1/admin/status/incidents/{public_id}", s.authLimited(s.requireAdminMutation(s.editAdminStatusEvent)))
 	mux.HandleFunc("POST /v1/admin/status/incidents/{public_id}/updates", s.authLimited(s.requireAdminMutation(s.updateAdminStatusEvent)))
 	mux.HandleFunc("PATCH /v1/admin/status/incidents/{public_id}/updates/{update_id}", s.authLimited(s.requireAdminMutation(s.editAdminStatusUpdate)))
-	mux.HandleFunc("GET /v1/admin/status/incidents", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireSessionPrincipal(s.listAdminStatusEvents)))))
+	// Session only with no FAAS_OPERATOR_BEARER_READS grace: this route was
+	// session-only before ADR 20261023214253 (its Migration section).
+	mux.HandleFunc("GET /v1/admin/status/incidents", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireOperator(s.requireSessionPrincipal(s.requireEnrolledOperatorSession(s.listAdminStatusEvents)))))))
 
 	// CLI auth device-code flow (spec §2.2). Code minting and exchange
 	// are anonymous because the CLI has no credential yet; the browser
@@ -5422,7 +5495,7 @@ func (s *server) handler() http.Handler {
 		func(*http.Request) bool { return true },
 		s.observeWrap(s.hosting.HideDisabled(s.hideDisabledMonetization(operation.OperationCustomerCORS(s.productControl.SurfaceGate(ciapi.HideDisabledRoutes(
 			func() ci.Config { return s.ciConfig }, s.capabilityKillSwitch(mux, apiContractHandler(mux, func(r *http.Request) bool {
-				return s.durable.Hidden(r) || s.liveGate().Hidden(r) || s.realtimePreviewProbe(r) || s.capabilityPathHidden(r)
+				return s.durable.Hidden(r) || s.liveGate().Hidden(r) || s.realtimePreviewProbe(r) || s.capabilityPathHidden(r) || s.agentPathHidden(r)
 			})),
 		)))))),
 	)))
@@ -5680,7 +5753,10 @@ func (s *server) cliAuthChain(h http.Handler) http.Handler {
 	h = middleware.RequestID(h)
 	h = middleware.Recovery(s.log)(h)
 	h = middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{
-		CountStatuses: []int{http.StatusTooManyRequests, http.StatusBadRequest},
+		// 410 is an exchange for a code that is unknown, used or expired:
+		// what guessing codes produces, and at most once per real login
+		// (bug hunt 2026-10-28 H67).
+		CountStatuses: []int{http.StatusTooManyRequests, http.StatusBadRequest, http.StatusGone},
 		Log:           s.log,
 	}, s.cliAuthLimiter)(h)
 	return h

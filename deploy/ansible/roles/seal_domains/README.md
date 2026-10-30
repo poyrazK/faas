@@ -9,9 +9,11 @@ are wired, each opened by one daemon:
 - `edge`: app basic-auth credentials and log drain headers (gatewayd-internal);
 - `alerting`: alert rule webhook secrets, notification channel destinations
   and MCP readiness provider keys (meterd, on the control plane like
-  `outbound`);
+  `outbound`; `faas_seal_domain_alerting_contracted` contracts it as step 4
+  below does for `outbound`);
 - `storage`: Gregale S3 secret access keys (s3-gatewayd, on the control
-  plane);
+  plane; `faas_seal_domain_storage_contracted` contracts it as step 4 below
+  does for `outbound`);
 - `control`: the cluster signing key (schedd, on every host; no writer
   drop-in, the key moves only through `seal-domain migrate`);
 - `delivery`: app webhook signing secrets, commit-source connections and
@@ -19,8 +21,9 @@ are wired, each opened by one daemon:
   seals to the recipient);
 - `account`: TOTP secrets, inbound webhook secrets, billing keys, workflow
   plans, PagerDuty acknowledgement secrets, GitLab, Slack and Linear
-  credentials, product email values and managed realtime credentials
-  (apid, which also seals them,
+  credentials, product email values, managed realtime credentials and
+  project environment clone values (apid and its clone worker, which also
+  seal them,
   so it holds the identity and there is no recipient file). The other
   account columns join in later releases.
 
@@ -40,8 +43,15 @@ The `outbound` steps:
    `gregalectl seal-domain migrate --domain outbound --readers-verified`.
    Re-sealing a credential bumps the binding promotion revision of the apps
    bound to it, so pending promotion approvals for them must be renewed.
-4. The contract step (removing the fleet identity from outboundd) ships in a
-   later release.
+4. Contract: once the migrate run reports nothing changed and nothing
+   failed, set `faas_seal_domain_outbound_contracted: true` and converge.
+   The role first runs `gregalectl seal-domain migrate --domain outbound
+   --check`, which writes nothing and fails while a credential still opens
+   with the fleet or host identity. It then renders outboundd's drop-in
+   with an empty `LoadCredential=`, which drops the base unit's fleet
+   identity, restarts outboundd, and checks its credentials directory
+   holds the domain identity and no fleet one. Setting the variable back
+   to false and converging gives outboundd the fleet identity again.
 
 The `runtime` domain covers app, project, release and binding secrets, which
 vmmd opens at wake:
@@ -63,6 +73,16 @@ vmmd opens at wake:
    `faas_seal_domain_runtime_binding_required: true` then writes vmmd's
    drop-in that refuses unbound secrets at vmmd's next start. Order and
    checks: runbook seal-domains-rollout.md §4e–4f.
+5. Writer signatures (ADR 20261028161502 amendment 1): `gregalectl
+   runtime-secret signing-keygen` writes a key pair. Set
+   `faas_seal_domain_runtime_signing_key_src` (control-plane hosts: apid
+   and its clone worker sign what they seal) and
+   `faas_seal_domain_runtime_signing_pub_src` (compute hosts: vmmd refuses a
+   signature that does not verify). Then `gregalectl runtime-secret
+   sign-existing` signs stored ones, and
+   `faas_seal_domain_runtime_signatures_required: true` makes vmmd refuse
+   unsigned ones at its next start. Order and checks: runbook
+   seal-domains-rollout.md §14.
 
 The `source` domain covers GitHub install tokens and webhook secret copies,
 which githubd opens. Set `faas_seal_domain_source_identity_src` and

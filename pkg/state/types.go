@@ -5715,6 +5715,17 @@ type ComputeNode struct {
 	Readiness NodeReadiness
 	// ReadinessReason says why a node is not ready; nil when it is.
 	ReadinessReason *string
+	// WakeBreakerOpenUntil is the node's wake breaker (ADR-20261022184531
+	// step 3): degraded until then, half-open once it passes, closed when
+	// nil. WakeBreakerReason says what opened it.
+	WakeBreakerOpenUntil *time.Time
+	WakeBreakerReason    *string
+}
+
+// WakeBreakerOpen reports whether the node's wake breaker holds it degraded
+// at now.
+func (n ComputeNode) WakeBreakerOpen(now time.Time) bool {
+	return n.WakeBreakerOpenUntil != nil && now.Before(*n.WakeBreakerOpenUntil)
 }
 
 // NodeReadiness is whether a compute node has proven it can take a wake
@@ -5742,10 +5753,16 @@ func (r NodeReadiness) Valid() bool {
 	return false
 }
 
-// EffectiveReadiness is the node's readiness with lifecycle applied: a node
-// that lifecycle keeps out of placement reads unavailable or draining even
-// before the heartbeat writes it, and a row with no readiness reads ready.
+// EffectiveReadiness is EffectiveReadinessAt the current time.
 func (n ComputeNode) EffectiveReadiness() NodeReadiness {
+	return n.EffectiveReadinessAt(time.Now())
+}
+
+// EffectiveReadinessAt is the node's readiness with lifecycle and its wake
+// breaker applied: a node that lifecycle keeps out of placement reads
+// unavailable or draining even before the heartbeat writes it, an open wake
+// breaker reads degraded, and a row with no readiness reads ready.
+func (n ComputeNode) EffectiveReadinessAt(now time.Time) NodeReadiness {
 	switch n.Lifecycle {
 	case NodeLifecycleDraining, NodeLifecycleForceDraining, NodeLifecycleMaintenance:
 		return NodeReadinessDraining
@@ -5755,14 +5772,30 @@ func (n ComputeNode) EffectiveReadiness() NodeReadiness {
 	if n.Lifecycle == "" && !n.Active {
 		return NodeReadinessUnavailable
 	}
+	if n.WakeBreakerOpen(now) {
+		return NodeReadinessDegraded
+	}
 	if n.Readiness == "" {
 		return NodeReadinessReady
 	}
 	return n.Readiness
 }
 
+// ComputeNodeWakeBreakerStore records a node's wake breaker
+// (ADR-20261022184531 step 3). Any schedd may write it; every schedd places
+// by it.
+type ComputeNodeWakeBreakerStore interface {
+	// OpenComputeNodeWakeBreaker holds the node degraded until until.
+	OpenComputeNodeWakeBreaker(ctx context.Context, nodeID string, until time.Time, reason string) error
+	// CloseComputeNodeWakeBreaker clears the breaker and reports whether one
+	// was set.
+	CloseComputeNodeWakeBreaker(ctx context.Context, nodeID string) (bool, error)
+}
+
 // ComputeNodeReadinessStore records a node's proven readiness. schedd's
-// heartbeat is the only writer (ADR-20261022184531).
+// heartbeat writes it (ADR-20261022184531), and so does the scheduler that
+// receives a node's capacity stream when that stream goes silent and vmmd
+// does not answer a ping (ADR-20261029085904).
 type ComputeNodeReadinessStore interface {
 	// SetComputeNodeReadiness writes readiness and reason (empty clears it)
 	// and reports whether either changed. Only a change fires
@@ -7037,14 +7070,26 @@ type EmailVerificationToken struct {
 
 // CliAuthCode is one row of the cli_auth_codes table (spec §2.2
 // device-code flow). AccountID is empty between mint and claim; the
-// claim statement fills it in atomically. The 4-byte entropy + 5-min
-// TTL + per-IP rate limit means brute-force on the code space is not
-// realistic, so we don't bump the byte length here.
+// claim statement fills it in atomically. TokenHash is the hash of the
+// short code the user approves. DeviceHash, when set, is the hash of a
+// 32-byte device code only the CLI holds, and the row can then be
+// exchanged only with that device code (bug hunt 2026-10-28 H67).
 type CliAuthCode struct {
 	TokenHash  []byte
+	DeviceHash []byte
 	AccountID  string // empty until ClaimCliAuthCode
 	ExpiresAt  time.Time
 	ConsumedAt *time.Time
+}
+
+// CliAuthDeviceCodeStore binds a CLI code to a device code (H67). A row
+// issued through it is refused by ConsumeCliAuthCode, so guessing the short
+// code the user approves never yields a key.
+type CliAuthDeviceCodeStore interface {
+	IssueCliAuthDeviceCode(ctx context.Context, tokenHash, deviceHash []byte, expiresAt time.Time) error
+	// ConsumeCliAuthDeviceCode has ConsumeCliAuthCode's contract, keyed by
+	// the device code's hash.
+	ConsumeCliAuthDeviceCode(ctx context.Context, deviceHash []byte) (api.CliAuthStatus, string, error)
 }
 
 // AccountPassword is one row of the account_passwords table

@@ -111,6 +111,15 @@ func (s *Service) previewDependencyParents(ctx context.Context, parent state.App
 			if !api.ValidAppSlug(name) {
 				return nil, previewSetupFailure("the new service %q needs a name of 3 to 40 lowercase letters, digits and dashes to be previewed", name)
 			}
+			// Its preview answers on pr-<N>-<name>, the host of <name>'s own
+			// PR previews. An app that already holds the name, in any
+			// account, owns that host: taking it would serve this PR's code
+			// as that app's preview and fail that app's own PR previews.
+			if holder, holderErr := s.Reconcile.Store.AppBySlug(ctx, name); holderErr == nil && holder.ID != "" {
+				return nil, previewSetupFailure("the new service %q has the name of an existing Gregale app, so it cannot be previewed under that name; give the service a unique name", name)
+			} else if holderErr != nil && !errors.Is(holderErr, state.ErrNotFound) {
+				return nil, fmt.Errorf("githubd: check new service name %q: %w", name, holderErr)
+			}
 			app = withParentAccessGates(state.App{
 				AccountID: parent.AccountID, ProjectID: parent.ProjectID,
 				Slug: name, WorkloadName: name, Type: state.AppTypeApp,
@@ -128,11 +137,13 @@ func (s *Service) previewDependencyParents(ctx context.Context, parent state.App
 		existing, err := s.Reconcile.Store.PreviewAppByProjectWorkload(ctx,
 			parent.AccountID, parent.ProjectID, prNumber, name)
 		if err == nil {
-			expected, slugErr := previewSlug(existing.PreviewOfSlug, prNumber)
-			if slugErr != nil || existing.Slug != expected {
-				return nil, fmt.Errorf("githubd: PR dependency %q has inconsistent preview identity: %w", name, state.ErrConflict)
+			// Renaming the production app relinks its previews to the new
+			// name but leaves their pr-<N>-<old> host. Such a preview is not
+			// reused: this head reserves pr-<N>-<new> and the set
+			// replacement retires the old row.
+			if expected, slugErr := previewSlug(existing.PreviewOfSlug, prNumber); slugErr == nil && existing.Slug == expected {
+				app.Slug = existing.PreviewOfSlug
 			}
-			app.Slug = existing.PreviewOfSlug
 		} else if !errors.Is(err, state.ErrNotFound) {
 			return nil, fmt.Errorf("githubd: resolve existing PR dependency %q: %w", name, err)
 		}
@@ -178,9 +189,9 @@ func previewManifest(parent state.AppManifest) state.AppManifest {
 // rules as a project deploy (ADR-20261026181020). They come from the PR's own
 // source, so a preview may run with them (ADR-20261028090000). An unreadable
 // Compose environment imports nothing, as on a project deploy.
-func prHeadComposeValues(fsys fs.FS, scan reposcan.Result, limits api.Limits) map[string]map[string]string {
-	env, err := reposcan.ReadComposeEnv(fsys)
-	if err != nil || !env.Import {
+func prHeadComposeValues(fsys fs.FS, scan reposcan.Result, opts reposcan.ScanOptions, limits api.Limits) map[string]map[string]string {
+	env, err := reposcan.ReadProjectEnv(fsys, opts)
+	if err != nil || !env.ImportsAny() {
 		return nil
 	}
 	callable := make([]string, 0, len(scan.Workloads))

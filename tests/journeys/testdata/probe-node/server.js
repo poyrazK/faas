@@ -18,10 +18,13 @@
 //   GET  /secret?key= presence and SHA-256 of an E2E_* secret from the live
 //                     reload snapshot (SIGHUP), else the environment
 //   GET  /ws          WebSocket: sends "hello <version>", then closes
+//   POST /hook        alert webhook receiver: 200 only when the delivery's
+//                     X-Faas-Alert-Signature verifies against E2E_HOOK_SECRET
+//                     (412 without the secret, 401 on a bad signature)
 
 import http from "node:http";
 import net from "node:net";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
 
 const version = readFileSync(new URL("./version.txt", import.meta.url), "utf8").trim();
@@ -82,6 +85,38 @@ const egressTargets = {
   smtp_587: ["smtp.gmail.com", 587],
 };
 
+// 169.254.169.254:80 is guest-init's own metadata proxy inside every Gregale
+// guest (guest/init/metadata_port.go), so a TCP connect there always succeeds
+// and proves nothing. A cloud metadata service is told apart by its API: the
+// guest proxy answers 404 to these paths, while GCP (with Metadata-Flavor)
+// and AWS (401 when IMDSv2 is enforced) answer otherwise. Only directory
+// listings are requested, never credentials.
+const metadataPaths = [
+  ["/computeMetadata/v1/", { "Metadata-Flavor": "Google" }],
+  ["/latest/meta-data/", {}],
+];
+
+function probeMetadata() {
+  const started = Date.now();
+  const ask = ([path, headers]) =>
+    new Promise((resolve) => {
+      const req = http.get({ host: "169.254.169.254", port: 80, path, headers, timeout: 3000 }, (res) => {
+        res.resume();
+        resolve({ path, status: res.statusCode });
+      });
+      req.once("timeout", () => req.destroy(new Error("timeout")));
+      req.once("error", (err) => resolve({ path, error: err.message === "timeout" ? "timeout" : err.code || String(err) }));
+    });
+  return Promise.all(metadataPaths.map(ask)).then((answers) => {
+    const cloud = answers.find((a) => a.status !== undefined && a.status !== 404);
+    return {
+      connected: Boolean(cloud),
+      error: cloud ? null : answers.map((a) => `${a.path} ${a.status ?? a.error}`).join("; "),
+      ms: Date.now() - started,
+    };
+  });
+}
+
 function tryConnect(host, port) {
   return new Promise((resolve) => {
     const started = Date.now();
@@ -94,6 +129,21 @@ function tryConnect(host, port) {
     socket.once("timeout", () => done(false, "timeout"));
     socket.once("error", (err) => done(false, err.code || String(err)));
   });
+}
+
+// verifyAlert checks an alert delivery's signature as pkg/webhookout makes
+// it: HMAC-SHA256 over "<timestamp>.<delivery id>.<body>", sent as
+// "sha256=<hex>".
+function verifyAlert(req, body) {
+  const { value: secret } = secretValue("E2E_HOOK_SECRET");
+  if (!secret) {
+    return 412;
+  }
+  const ts = req.headers["x-faas-alert-timestamp"] || "";
+  const id = req.headers["x-faas-alert-id"] || "";
+  const got = Buffer.from(String(req.headers["x-faas-alert-signature"] || ""));
+  const want = Buffer.from("sha256=" + createHmac("sha256", secret).update(`${ts}.${id}.`).update(body).digest("hex"));
+  return got.length === want.length && timingSafeEqual(got, want) ? 200 : 401;
 }
 
 function json(res, status, body) {
@@ -151,9 +201,19 @@ const server = http.createServer((req, res) => {
       return json(res, 200, { hits: cronHits });
     case "/cron-hits":
       return json(res, 200, { hits: cronHits });
+    case "/hook": {
+      const chunks = [];
+      req.on("data", (c) => chunks.push(c));
+      req.on("end", () => {
+        const status = verifyAlert(req, Buffer.concat(chunks));
+        console.log(`e2e-probe-hook status=${status} id=${req.headers["x-faas-alert-id"] || ""}`);
+        json(res, status, { verified: status === 200 });
+      });
+      return;
+    }
     case "/egress": {
       const names = Object.keys(egressTargets);
-      Promise.all(names.map((n) => tryConnect(...egressTargets[n]))).then((results) => {
+      Promise.all(names.map((n) => (n === "metadata" ? probeMetadata() : tryConnect(...egressTargets[n])))).then((results) => {
         const out = {};
         names.forEach((n, i) => {
           out[n] = { target: egressTargets[n].join(":"), ...results[i] };

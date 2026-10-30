@@ -28,6 +28,8 @@ func TestLayout(t *testing.T) {
 		{"runner base", storagekey.BaseForArch("node22", "arm64"), "base/runner-node22-arm64.ext4"},
 		{"binary shares the go124 base", storagekey.BaseForArch("binary", "amd64"), "base/runner-go124-amd64.ext4"},
 		{"parent base", storagekey.BaseForArch(storagekey.ParentBaseRuntime, "amd64"), "base/runner-base-debian-parent-amd64.ext4"},
+		{"agent base", storagekey.BaseForArch(storagekey.AgentRunBaseRuntime, "amd64"), "base/runner-agent-amd64.ext4"},
+		{"agent layer", storagekey.AgentRunLayerForArch("amd64"), "base/agent-layer-v1-amd64.ext4"},
 		{"plain base digest", storagekey.BaseDigestForArch("", "amd64"), "base/base-amd64.ext4.digest"},
 		{"runner base digest", storagekey.BaseDigestForArch("binary", "arm64"), "base/runner-go124-arm64.ext4.digest"},
 		{"host arch base", storagekey.Base("builder"), "base/runner-builder-" + goruntime.GOARCH + ".ext4"},

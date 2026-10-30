@@ -69,13 +69,17 @@ subscription does not wake your app:
       channels:
         - pattern: "org:{org_id}:room:*"   # {org_id} must equal the token's org_id claim
           read: true
+          presence: true                   # members may also set presence state and send signals
         - pattern: "user:{sub}"            # sub is the token's subject
           read: true
 ```
 
 A pattern is literal text, `{claim}` placeholders and an optional trailing `*`.
-A channel that matches a rule is granted (presence included) for as long as the
-token is valid; any other channel goes to your authorize callback as before.
+A channel that matches a rule is granted for as long as the token is valid; any
+other channel goes to your authorize callback as before. `read` lets a client
+subscribe and appear in presence; `presence: true` also lets it set presence
+state and send signals. Without it, presence state and signals on that channel
+go to your callback with `permission: "presence"`.
 Use claims your identity provider sets, never ones users can edit. Revoking a
 user takes effect when their token expires, so keep channels that need faster
 revocation on the callback. Activity-scope channels always use the callback.
@@ -103,8 +107,19 @@ where realtime holds real capacity on our servers:
   realtime node's connections, so one busy account cannot fill a node. This
   refusal names the per-node limit; retry with backoff, and new connections may
   land on another node.
-- **Retained history** is bounded per endpoint (24 hours, 1,024 messages per
-  channel, 4 KiB per message).
+- **Resumable subscriptions** (v2 WebSocket channels, the inbox and SSE
+  streams) each read their channel's history from the control plane, so an
+  account holds at most 16 (Hobby), 64 (Pro) or 128 (Scale) of them on one
+  realtime node, and a connection at most 8. A refused subscription gets
+  `subscription_limit` (HTTP 429 for SSE); new connections may land on another
+  node.
+- **Retained history** keeps a channel's messages for 24 hours, at most 1,024
+  of them of up to 4 KiB each. A channel counts while it holds retained
+  messages, reducer state or a snapshot: an endpoint holds at most 32 such
+  channels at a time, and an account 32 (Hobby), 256 (Pro) or 1,024 (Scale).
+  A channel frees its slot when its messages expire. A publish that would
+  retain on one more channel gets HTTP 409 naming the limit and the number
+  held.
 - **Functions triggered by channel messages** bill as normal compute.
 
 An endpoint's `max_connections` still caps that endpoint; the account limit

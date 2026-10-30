@@ -524,6 +524,25 @@ func TestCliTreeVerbBaseline(t *testing.T) {
 	}
 }
 
+// Every tree path runs the command its alias names, however many words it
+// has: four-word paths (`api consumer plan create`) once stopped at three
+// and answered "unknown command".
+func TestCliTreeEveryAliasRunsItsCommand(t *testing.T) {
+	enableEveryCLIFeature(t)
+	for _, alias := range *main.CliTreeAliases {
+		path := strings.Fields(alias.New)
+		// A tree path that is also today's command (`dashboard`) runs today's.
+		if alias.New == alias.Old || main.OldPathDepth(path) >= len(path) {
+			continue
+		}
+		got, err := main.RewriteCliTree(append(path, "--json"))
+		want := append(strings.Fields(alias.Old), "--json")
+		if err != nil || !slices.Equal(got, want) {
+			t.Errorf("%q rewrites to %q (err %v), want %q", alias.New, got, err, want)
+		}
+	}
+}
+
 // ADR-20261026145832 step 4: canonical flag spellings run today's
 // equivalent flag, only where its help names the same concept.
 func TestCliTreeFlagSpellings(t *testing.T) {
@@ -543,6 +562,26 @@ func TestCliTreeFlagSpellings(t *testing.T) {
 	for _, tc := range cases {
 		if got := strings.Join(main.NormalizeTreeFlags(strings.Fields(tc.in)), " "); got != tc.want {
 			t.Errorf("%q normalized to %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// A verb that answers --help from its own parser names its tree path and
+// canonical flags too, also when an earlier name asked for it.
+func TestCliTreeParserHelpSpellsCanonicalFlags(t *testing.T) {
+	enableEveryCLIFeature(t)
+	for _, args := range [][]string{{"app", "binding", "list", "--help"}, {"bindings", "list", "--help"}} {
+		code, help, _ := runCLI(t, args...)
+		if code != 0 || !strings.Contains(help, "Flags for gregale app binding list:") {
+			t.Errorf("%v help = %d, want the tree path:\n%s", args, code, help)
+		}
+		for _, want := range []string{"\n  --env <VALUE>", "\n  --release <VALUE>"} {
+			if !strings.Contains(help, want) {
+				t.Errorf("%v help lacks %q:\n%s", args, want, help)
+			}
+		}
+		if strings.Contains(help, "\n  --scope ") || strings.Contains(help, "\n  --deployment ") {
+			t.Errorf("%v help lists an earlier flag spelling as the flag:\n%s", args, help)
 		}
 	}
 }

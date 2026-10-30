@@ -176,8 +176,14 @@ subscriptions.
 The filter is a JSON object encoded as a string. `app` is optional for a
 single-app deploy and is bound to the target application during source-ref
 reconciliation. Event-only projects may use the equivalent TOML form,
-`[[triggers.event]]`. Both forms use the same source/type/filter validation;
-matching deliveries inherit the router's retry and dead-letter behavior.
+`[[triggers.event]]`. Both forms use the same source/type/filter validation.
+
+A delivery whose handler fails is retried with backoff: by the app's
+`retry_policy` in `gregale.yaml` when it sets one, otherwise 5 seconds
+doubling to 5 minutes, with ±20 % jitter. The plan limits the attempts (3 on
+Hobby, 10 on Pro, 25 on Scale), so a delivery that keeps failing is
+dead-lettered after about 15 seconds on Hobby, 20 minutes on Pro and 95
+minutes on Scale ([ADR 20261029190000](adr/20261029190000-event-delivery-retry-backoff.md)).
 When a delivery reaches a terminal failure, inspect and replay it through the
 app's unified dead-letter queue (`gregale dlq list <app>`); its origin is shown as
 `event_subscription`.
@@ -457,7 +463,14 @@ See [ADR-647](adr/647-independent-event-routing-default.md) for qualification,
 upgrade, and fallback requirements, and
 [ADR-606](adr/606-independent-event-recipient-routing.md) for the ownership model.
 
-Publish acceptance means the event is durably stored. A recipient marked
+Publish acceptance means the event is committed on the control plane's
+primary database. Its standby replicates asynchronously, so if the primary is
+lost in an unplanned failover, events accepted within the standby's
+replication lag (normally a few seconds) can be lost. A planned switchover
+loses nothing. If you must not lose an event, republish it with the same
+identity after a failover: one that survived answers `duplicate`, and one
+that was lost is accepted again. See
+[ADR 20261029093000](adr/20261029093000-event-ga-gate.md). A recipient marked
 `enqueued` has been handled by routing; normally it has an invocation, while
 work-policy `cancel_pending` creates a cancellation receipt instead; the receipt is `delivered` when all routing
 candidates settle, including terminal failures. Handler completion is tracked
@@ -1342,7 +1355,7 @@ To deliberately deliver stale work, request an explicit override:
 
 ```sh
 gregale event replay inventory-api --event-source inventory --event-id evt-123 --subscription-id <subscription-id> --allow-expired
-gregale event backfill create inventory-api --subscription-id <subscription-id> --from 2026-10-01T00:00:00Z --until 2026-10-02T00:00:00Z --allow-expired --yes
+gregale event backfill create inventory-api --subscription-id <subscription-id> --since 2026-10-01T00:00:00Z --until 2026-10-02T00:00:00Z --allow-expired --yes
 ```
 
 The equivalent replay/backfill request field is `allow_expired: true`.
@@ -2751,7 +2764,7 @@ A full budget warns that new command UUIDs can be rejected; it does not prevent 
 ### Watch for a full capacity-command receipt budget
 
 ```sh
-gregale event subscription-delivery-health APP SUB --watch --receipt-budget-full-threshold 30s --interval 5s --timeout 10m
+gregale event subscription-delivery-health APP SUB --follow --receipt-budget-full-threshold 30s --interval 5s --timeout 10m
 ```
 
 The optional threshold defaults to zero (disabled) and accepts the existing 100ms–24h duration range. Go SDK users set `EventDeliveryHealthWatchOptions.ReceiptBudgetFull` on `WatchEventConsumerDeliveryHealth`. The metric `capacity_command_receipt_budget_full_seconds` measures locally confirmed fullness: an incident opens only after at least two fresh full observations and the configured elapsed duration. A fresh valid budget with remaining receipt slots resolves it. It does not measure the age of a command or prove continuous fullness between polls.
@@ -2763,7 +2776,7 @@ The watcher only reads health. A full receipt budget can reject new command UUID
 ### Warn before receipt slots run out
 
 ```sh
-gregale event subscription-delivery-health APP SUB --watch --receipt-budget-remaining-threshold 16 --receipt-budget-low-sustain 30s --interval 5s --timeout 10m
+gregale event subscription-delivery-health APP SUB --follow --receipt-budget-remaining-threshold 16 --receipt-budget-low-sustain 30s --interval 5s --timeout 10m
 ```
 
 The remaining-slot threshold defaults to zero (disabled); enabled values are 1–128. A warning opens when remaining slots stay **strictly below** N across at least two fresh observations and the confirmation duration. It clears when a fresh valid budget has N or more remaining slots. Confirmation defaults to 30 seconds and accepts 100ms–24h; selecting `--receipt-budget-low-sustain` requires an enabled remaining threshold. Go users set `EventDeliveryHealthWatchOptions.ReceiptBudgetRemaining` and optional `ReceiptBudgetLowSustain`.
@@ -2775,7 +2788,7 @@ Missing, stale, incomplete, repeated, future-dated or scope-mismatched evidence 
 ### Stabilize receipt-budget warning recovery
 
 ```sh
-gregale event subscription-delivery-health APP SUB --watch --receipt-budget-remaining-threshold 16 --receipt-budget-low-sustain 30s --receipt-budget-recovery-threshold 24 --receipt-budget-recovery-sustain 30s --interval 5s --timeout 10m
+gregale event subscription-delivery-health APP SUB --follow --receipt-budget-remaining-threshold 16 --receipt-budget-low-sustain 30s --receipt-budget-recovery-threshold 24 --receipt-budget-recovery-sustain 30s --interval 5s --timeout 10m
 ```
 
 This warns below 16 remaining receipt slots and clears only after at least two fresh observations at **24 or more** remaining slots spanning 30 seconds. A confirmed incident remains firing between those boundaries and during pending recovery. Dropping below the recovery boundary resets recovery confirmation. Invalid or unavailable evidence loses confirmation and resets both timers. A resumed incident stays unknown in the middle band until a warning or recovery is freshly confirmed; downtime does not count.
@@ -2839,7 +2852,7 @@ to an immutable window shorter than normal acceptance retention. See
 counts, waiting-reason counts and separate recovery boundaries:
 
 ```sh
-gregale event subscription-delivery-health APP SUB --watch --deadline-window 5m --deadline-upcoming-threshold 50 --deadline-upcoming-recovery 20 --deadline-expired-threshold 1 --deadline-sustain 1m --deadline-recovery-sustain 2m --confirmation-progress
+gregale event subscription-delivery-health APP SUB --follow --deadline-window 5m --deadline-upcoming-threshold 50 --deadline-upcoming-recovery 20 --deadline-expired-threshold 1 --deadline-sustain 1m --deadline-recovery-sustain 2m --confirmation-progress
 ```
 
 Use repeatable `--deadline-upcoming-reason REASON=N` and
@@ -2851,7 +2864,7 @@ apply. See [CLI configuration, validation and recovery semantics](event-subscrip
 ### Expired backlog percentage alerts
 
 ```sh
-gregale event subscription-delivery-health APP SUB --watch --deadline-window 5m --deadline-expired-ratio-threshold 10 --deadline-expired-ratio-recovery 5 --deadline-expired-ratio-min-recipients 100 --deadline-sustain 1m --deadline-recovery-sustain 2m --confirmation-progress
+gregale event subscription-delivery-health APP SUB --follow --deadline-window 5m --deadline-expired-ratio-threshold 10 --deadline-expired-ratio-recovery 5 --deadline-expired-ratio-min-recipients 100 --deadline-sustain 1m --deadline-recovery-sustain 2m --confirmation-progress
 ```
 
 This opens at >=10% expired among at least 100 pending deadline-bearing recipients

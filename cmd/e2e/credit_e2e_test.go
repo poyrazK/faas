@@ -51,6 +51,8 @@ func newCreditRefundPolar(t *testing.T) (*httptest.Server, func() int) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/organizations/":
+			_, _ = w.Write([]byte(`{"items":[{"id":"org-1","subscription_settings":{"allow_multiple_subscriptions":false}}]}`))
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/products/"):
 			id := strings.TrimPrefix(r.URL.Path, "/v1/products/")
 			plan, ok := map[string]api.Plan{"hobby-product": api.PlanHobby, "pro-product": api.PlanPro, "scale-product": api.PlanScale}[id]

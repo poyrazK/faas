@@ -82,24 +82,32 @@ type ComputeCapQualification struct {
 
 // LoadComputeCapQualification reads one operator-owned artifact strictly.
 func LoadComputeCapQualification(path string) (ComputeCapQualification, error) {
+	return loadCapQualification[ComputeCapQualification](path)
+}
+
+// loadCapQualification decodes one operator-owned artifact strictly: unknown
+// fields and trailing data are refused.
+func loadCapQualification[T any](path string) (T, error) {
+	var artifact T
 	path = strings.TrimSpace(path)
 	if path == "" {
-		return ComputeCapQualification{}, ErrInvalid
+		return artifact, ErrInvalid
 	}
 	file, err := os.Open(path) //nolint:forbidigo // operator-owned deployment artifact
 	if err != nil {
-		return ComputeCapQualification{}, err
+		return artifact, err
 	}
 	defer func() { _ = file.Close() }()
 	decoder := json.NewDecoder(io.LimitReader(file, 1<<20))
 	decoder.DisallowUnknownFields()
-	var artifact ComputeCapQualification
 	if err := decoder.Decode(&artifact); err != nil {
-		return ComputeCapQualification{}, ErrInvalid
+		var zero T
+		return zero, ErrInvalid
 	}
 	var extra any
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-		return ComputeCapQualification{}, ErrInvalid
+		var zero T
+		return zero, ErrInvalid
 	}
 	return artifact, nil
 }

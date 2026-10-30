@@ -59,6 +59,20 @@ type Render struct {
 	Observed func(observed any) (why, fix string)
 }
 
+const (
+	executionModeConflictWhy = "a worker must keep running without listening on a port, and a job must run to completion without serving; at startup your app did the other thing (the detail shows the port it bound or the code it exited with)"
+	executionModeConflictFix = "• set `execution_mode` in gregale.yaml to match the app: `request` or `service` for a server, `worker` for a long-running consumer, `job` for a run-to-completion task\n• or change the start command so the process matches the mode you declared"
+)
+
+// ProjectServiceModeConflict is the observed value for a project service's
+// CodeExecutionModeConflict: the service's repository name and the conflict
+// vmmd reported. A service deployed as a worker that listens gets the
+// Compose fix instead of the gregale.yaml one (ADR-20261029120000).
+type ProjectServiceModeConflict struct {
+	Service  string
+	Conflict api.ExecutionModeConflict
+}
+
 // catalog is the static explanation table. Order does not matter;
 // lookup is map-based. Adding a new code → add a row here.
 // Tripwire: TestEveryCodeHasWhycopyEntry in
@@ -177,8 +191,17 @@ var catalog = map[string]Render{
 	api.CodeExecutionModeConflict: {
 		Title: "Execution mode conflict",
 		Hint:  "your app did not behave like its execution mode",
-		Why:   "a worker must keep running without listening on a port, and a job must run to completion without serving; at startup your app did the other thing (the detail shows the port it bound or the code it exited with)",
-		Fix:   "• set `execution_mode` in gregale.yaml to match the app: `request` or `service` for a server, `worker` for a long-running consumer, `job` for a run-to-completion task\n• or change the start command so the process matches the mode you declared",
+		Why:   executionModeConflictWhy,
+		Fix:   executionModeConflictFix,
+		Observed: func(observed any) (why, fix string) {
+			conflict, ok := observed.(ProjectServiceModeConflict)
+			if !ok || conflict.Service == "" || !conflict.Conflict.ListeningWorker() {
+				return executionModeConflictWhy, executionModeConflictFix
+			}
+			port := conflict.Conflict.Port
+			return fmt.Sprintf("nothing in the repository showed that other services call %q, so it was deployed as a background worker, but it listens on port %d; a worker must not listen", conflict.Service, port),
+				fmt.Sprintf("• if other services call it, give it `expose: [\"%d\"]` in Compose and list it in their depends_on, or set a caller's variable to its URL (http://%s:%d); the next deploy runs it as a service (ADR-20261029120000)\n• if it is a background worker, stop it from listening on a port", port, conflict.Service, port)
+		},
 	},
 	api.CodeStatelessOnlyViolation: {
 		Title: "Stateless-only platform",
@@ -227,6 +250,12 @@ var catalog = map[string]Render{
 		Hint:  "a platform problem stopped the build; your code did not cause it",
 		Why:   "the build failed in Gregale's build infrastructure (builder VM, build disk, or control plane) before your build steps could finish",
 		Fix:   "• deploy again; the build is retried from the start\n• if it keeps failing, contact support with the deployment id",
+	},
+	api.CodeAppLayerTooBig: {
+		Title: "App too large",
+		Hint:  "the built app is larger than your plan's app filesystem",
+		Why:   "your dependencies and code go into the app's own layer, apart from the shared runtime base, and each plan caps that layer; the error names the cap and the size this build needed",
+		Fix:   "• install production dependencies only, and keep build caches, test data and other large files out of the deployed source\n• or move to a plan with a larger app filesystem",
 	},
 	api.CodeStageSecurityScanFindings: {
 		Title: "Security scan flagged findings",

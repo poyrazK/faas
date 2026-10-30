@@ -148,27 +148,23 @@ done
 trap - INT TERM
 
 gate_status=0
-if summary="$(python3 - "${logs[@]}" <<'PY'
+if summary="$(python3 - "$probe_url" "$app_url" "${logs[@]}" <<'PY'
 import collections
 import math
 import sys
 
+urls = {"api": sys.argv[1], "app": sys.argv[2]}
 samples = collections.defaultdict(list)
-for path in sys.argv[1:]:
+for path in sys.argv[3:]:
     with open(path, encoding="utf-8") as stream:
         for line in stream:
             phase, target, sequence, observed_at, status, elapsed, connect, first_byte, curl_exit, error = line.rstrip("\n").split("\t", 9)
             samples[target].append((phase, int(sequence), observed_at, int(status), float(elapsed), float(connect), float(first_byte), int(curl_exit), error))
 
-print("### Control-plane activation public-path observations")
-print()
-print("API readiness and canary app are independent gates after healthy baselines. Public status is diagnostic only.")
-print()
-print("| Path | Baseline | Rollout samples | Successful | Failed | Max latency |")
-print("| --- | ---: | ---: | ---: | ---: | ---: |")
 gate_failed = False
 rows = []
 details = []
+warnings = []
 for target in ("api", "app", "status"):
     if target not in samples:
         continue
@@ -185,6 +181,12 @@ for target in ("api", "app", "status"):
     rows.append(f"| {target} | {len(baseline_successful)}/{len(baseline)} | {len(rollout)} | {len(successful)} | {len(failed)} | {maximum_latency_ms} ms |")
     if not baseline_ready:
         details.append(f"{target}: rollout attribution is **inconclusive** because its baseline was not healthy.")
+        if target != "status":
+            # A gate without a healthy baseline guards nothing; say so loudly
+            # so a vanished canary app is noticed, not read as a pass.
+            baseline_counts = ", ".join(f"HTTP {status:03d}: {count}" for status, count in sorted(collections.Counter(sample[3] for sample in baseline).items()))
+            hint = " ROLLOUT_APP_PROBE_URL names the canary app." if target == "app" else ""
+            warnings.append(f"{target} gate gave this activation no signal: its baseline was {len(baseline_successful)}/{len(baseline)} healthy ({baseline_counts or 'no samples'}). Check that {urls[target]} still serves.{hint}")
     status_counts = ", ".join(f"{status:03d}: {count}" for status, count in sorted(collections.Counter(sample[3] for sample in rollout).items()))
     exit_counts = ", ".join(f"{code}: {count}" for code, count in sorted(collections.Counter(sample[7] for sample in rollout).items()))
     details.append(f"{target}: HTTP status counts: {status_counts or 'none'}; curl exit counts: {exit_counts or 'none'}.")
@@ -196,6 +198,16 @@ for target in ("api", "app", "status"):
             details.append(f"- ... {len(failed) - 5} additional failures in the TSV artifact")
     details.append("")
 
+print("### Control-plane activation public-path observations")
+print()
+for warning in warnings:
+    print(f"> [!WARNING]\n> {warning}\n")
+    escaped = warning.replace("%", "%25")
+    print(f"::warning title=Rollout gate baseline unhealthy::{escaped}", file=sys.stderr)
+print("API readiness and canary app are independent gates after healthy baselines. Public status is diagnostic only.")
+print()
+print("| Path | Baseline | Rollout samples | Successful | Failed | Max latency |")
+print("| --- | ---: | ---: | ---: | ---: | ---: |")
 for row in rows:
     print(row)
 print()

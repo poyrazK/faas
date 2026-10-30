@@ -141,9 +141,13 @@ func TestTrafficFleetDaemonRateAdmissionAndRecovery(t *testing.T) {
 	// A locked counter row refuses within a bound instead of hanging. #5755
 	// (ADR-570 amendment 2026-10-28) lets the consume wait up to its 1 s
 	// centralConsumeTimeout for a row lock, so the bound is that plus slack.
-	response := fleetDaemonCall(t, second, f.apps[0], "/work", http.StatusServiceUnavailable)
-	if response.duration > 2*time.Second || !strings.Contains(response.body, "rate_limit_unavailable") {
-		t.Fatalf("bounded lock response=%+v", response)
+	// The refusal is 503 rate_limit_unavailable, or the ordinary 429 when the
+	// daemon's own bucket is already drained (ADR-20261027173012 amendment 1).
+	response, err := requestFleetDaemon(t.Context(), second.ready.Endpoint, f.apps[0].Host, "/work")
+	refused := response.status == http.StatusServiceUnavailable && strings.Contains(response.body, "rate_limit_unavailable") ||
+		response.status == http.StatusTooManyRequests && strings.Contains(response.body, "rate_limited")
+	if err != nil || !refused || response.duration > 2*time.Second {
+		t.Fatalf("bounded lock response=%+v err=%v", response, err)
 	}
 	if err := tx.Rollback(t.Context()); err != nil {
 		t.Fatal(err)

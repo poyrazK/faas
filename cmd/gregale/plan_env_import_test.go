@@ -40,6 +40,15 @@ func TestProjectPlanShowsComposeEnvImport(t *testing.T) {
 			want:    []string{"LOG_LEVEL (plain value in Compose)", "x-gregale-env-import: true"},
 			wantNot: []string{"Imported from Compose"},
 		},
+		{
+			name: "kubernetes not annotated",
+			workload: api.PlanWorkload{Name: "api", RootDir: "api",
+				UnsetEnvKeys:       []string{"DB_PASSWORD", "LOG_LEVEL"},
+				UnsetEnvKeyReasons: map[string]string{"DB_PASSWORD": "secret_ref", "LOG_LEVEL": "not_annotated"}},
+			want: []string{"LOG_LEVEL (plain value in a Kubernetes manifest)", "DB_PASSWORD (from a Kubernetes Secret; never imported)",
+				`gregale.dev/env-import: "true"`},
+			wantNot: []string{"x-gregale-env-import"},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

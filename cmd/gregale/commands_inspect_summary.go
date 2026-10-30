@@ -602,7 +602,8 @@ func inspectRecommendations(summary inspectSummary) []inspectRecommendation {
 		// request got 404 (Hunt 12 H12-59).
 		add("no_traffic", "error", "No deployment receives traffic, so requests to this app fail.",
 			"Check why deployment "+summary.Release.DeploymentID+" was not promoted, then run `gregale release traffic promote --app "+summary.App.Slug+" --deployment "+summary.Release.DeploymentID+"`.")
-	} else if summary.Release.Status == "live" && !inspectServesNoRequests(summary.App) && (summary.Runtime.Health == nil || summary.Runtime.Health.Status != apihostingreceipt.SmokeVerified) {
+	} else if summary.Release.Status == "live" && !inspectServesNoRequests(summary.App) && (summary.Runtime.Health == nil || summary.Runtime.Health.Status != apihostingreceipt.SmokeVerified) &&
+		(summary.Runtime.Health == nil || summary.Runtime.Health.ErrorCode != apihostingreceipt.SmokeErrorInternalApp) {
 		if summary.Runtime.Health != nil && (summary.Runtime.Health.ErrorCode == apihostingreceipt.SmokeErrorNotConfigured || summary.Runtime.Health.ErrorCode == apihostingreceipt.SmokeErrorVerifierNotConfigured) {
 			add("health_verifier_unconfigured", "error", "The public smoke verifier is not configured, so this deployment is not externally verified.", "External health verification is not available on this Gregale installation right now; contact support.")
 		} else if summary.Runtime.Health != nil && summary.Runtime.Health.ErrorCode == "smoke_health_path_missing" {

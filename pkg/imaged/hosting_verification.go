@@ -18,6 +18,15 @@ func (h *Handler) verifyHostingCandidate(ctx context.Context, app state.App, dep
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("hosting verification interrupted: %w", err)
 	}
+	// The gateway hides an internal app from every public host, so a public
+	// smoke can only get 404 until the recovery window fails the deploy
+	// (Hunt 14 H14-124). Readiness passed inside the guest before the
+	// snapshot was written; the receipt records why no public probe ran.
+	if api.NormalizeAppVisibility(app.Visibility) == api.AppVisibilityInternal {
+		smoke := apihostingreceipt.SmokeResult{Status: apihostingreceipt.SmokeSkipped, Path: HostingHealthPath(app, dep),
+			ErrorCode: apihostingreceipt.SmokeErrorInternalApp, Error: "internal app has no public route to verify"}
+		return h.finishHostingVerification(ctx, app, dep, smoke, nil, false, started)
+	}
 	progress, err := h.beginHostingVerification(ctx, app, dep, started)
 	if err != nil {
 		return err

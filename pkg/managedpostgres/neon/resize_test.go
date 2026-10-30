@@ -20,6 +20,7 @@ type resizeHTTPFixture struct {
 	suspendTimeout                                                          int64
 	policy                                                                  bool
 	pending, changedDefault, duplicatePrimary, drift, lostResponse, delayed bool
+	pooledStorage                                                           int64
 }
 
 func resizeHTTPProvider(t *testing.T, f *resizeHTTPFixture) *Provider {
@@ -39,6 +40,9 @@ func resizeHTTPProvider(t *testing.T, f *resizeHTTPFixture) *Provider {
 			storage := int64(10 << 30)
 			if f.drift {
 				storage++
+			}
+			if f.pooledStorage != 0 {
+				storage = f.pooledStorage
 			}
 			writeResponse(t, w, 200, map[string]any{"project": map[string]any{"id": "quiet-river-12345678", "region_id": "aws-eu-central-1", "pg_version": 17, "history_retention_seconds": 86400, "settings": map[string]any{"quota": map[string]any{"logical_size_bytes": storage}}}})
 		case root + "/branches":
@@ -115,6 +119,19 @@ func TestResizeAdoptsAppliedConfigurationAfterLostResponse(t *testing.T) {
 		t.Fatal("replay not stable", err)
 	}
 }
+
+// The storage pool lowers a project's logical_size_bytes below the spec
+// (ADR-20261025094915 decision 9); a resize still converges on the spec.
+func TestResizeCompletesUnderAPoolLoweredStorageLimit(t *testing.T) {
+	f := &resizeHTTPFixture{pooledStorage: 1 << 30}
+	p := resizeHTTPProvider(t, f)
+	r := resizeHTTPrequest()
+	observed, err := p.Update(t.Context(), r)
+	if err != nil || observed.Status != managedpostgres.ProviderStatusReady || observed.Spec != r.Spec || f.patches != 1 {
+		t.Fatal("pool-lowered storage limit blocked the resize", observed, err, f.patches)
+	}
+}
+
 func TestResizeFailsClosedBeforeMutation(t *testing.T) {
 	for _, kind := range []string{"changed default", "duplicate primary", "configuration drift", "pending operation", "different project", "different branch", "mixed compute mutation"} {
 		t.Run(kind, func(t *testing.T) {

@@ -142,6 +142,14 @@ jobs:
     uses: ./.github/workflows/s3-multipart-integrity.yml
     permissions:
       contents: read
+  service-binding-contract:
+    uses: ./.github/workflows/service-binding-contract.yml
+    permissions:
+      contents: read
+  function-backends:
+    uses: ./.github/workflows/function-backends.yml
+    permissions:
+      contents: read
 
   # Three parallel jobs (PR #167) so the long poles — unit tests (~4:20)
   # and spec-check (~3:54) — run in parallel instead of in series. Wall
@@ -1013,13 +1021,18 @@ jobs:
             coverage_file: cover-shard2b.out
             gitops_acceptance: false
             state_coverage: false
-            test_timeout: 30m
+            # cmd/gregale under -race and coverage on two CPUs took 1037 s on
+            # 2026-10-27, 1243 s on 2026-10-29 and passed the 30m package
+            # timeout on 2026-10-30 (run 40995340344); it is 501 s without
+            # race or coverage. The job keeps 30 minutes past the package
+            # budget for race compilation and coverage upload.
+            test_timeout: 45m
             # Shard b alone runs the PostgreSQL native verdict, starter TLS,
             # fixture and GitOps compilation gates before its tests: about
             # 28 minutes on 2026-10-18 (20 on 2026-10-17), ahead of a ~20
             # minute test step. 45 cancelled it mid-suite. The gates moved to
             # shard c when they reached 36 minutes (run 40420329172).
-            job_timeout_minutes: 60
+            job_timeout_minutes: 75
           - id: c
             label: PostgreSQL native and starter gates
             # Shard b's pre-test gates took 26 minutes on 2026-10-26 and 36 on
@@ -1542,8 +1555,10 @@ jobs:
     runs-on: ubuntu-latest
     # This job runs the package shard and property suite sequentially. Each
     # Go command has its own 10-minute test timeout, so the job budget must
-    # leave time for both commands plus setup, coverage, and cleanup.
-    timeout-minutes: 25
+    # leave time for both commands plus setup, coverage, and cleanup. The
+    # package step alone took 24 minutes on 2026-10-30 and the job was
+    # cancelled in the Codecov upload (run 41003329673).
+    timeout-minutes: 35
     permissions:
       contents: read
       id-token: write
@@ -3066,12 +3081,14 @@ jobs:
   e2e-shard1:
     name: e2e (shard 1 — 18 tests)
     runs-on: ubuntu-latest
-    # The test command has a 22m package timeout; leave runner cleanup
+    # The test command has a 40m package timeout; leave runner cleanup
     # headroom so slow shared runners fail with the test result instead of
     # being cancelled by the job budget first. The test steps took 10-18
     # minutes on 2026-10-24..27 and shard 1 was cancelled at the old
-    # 20-minute budget (run 40431847901), so every shard has 30.
-    timeout-minutes: 30
+    # 20-minute budget (run 40431847901). Shards split by test-name hash,
+    # not cost: on 2026-10-30 shard 4 ran 23-24 minutes against 10-13 for
+    # the others and passed the old 22m package timeout (run 41003329673).
+    timeout-minutes: 50
     services:
       postgres:
         image: mirror.gcr.io/library/postgres:16
@@ -3158,12 +3175,12 @@ jobs:
       - name: e2e tests (shard 1)
         run: |
           E2E_RUN=$(go run ./scripts/ci/e2eshard -shard=1 -shards=4)
-          go test -race -count=1 -timeout=22m -run "$E2E_RUN" ./cmd/e2e/...
+          go test -race -count=1 -timeout=40m -run "$E2E_RUN" ./cmd/e2e/...
 
   e2e-shard2:
     name: e2e (shard 2 — 15 tests)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 50
     services:
       postgres:
         image: mirror.gcr.io/library/postgres:16
@@ -3242,12 +3259,12 @@ jobs:
       - name: e2e tests (shard 2)
         run: |
           E2E_RUN=$(go run ./scripts/ci/e2eshard -shard=2 -shards=4)
-          go test -race -count=1 -timeout=22m -run "$E2E_RUN" ./cmd/e2e/...
+          go test -race -count=1 -timeout=40m -run "$E2E_RUN" ./cmd/e2e/...
 
   e2e-shard3:
     name: e2e (shard 3 — 24 tests)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 50
     services:
       postgres:
         image: mirror.gcr.io/library/postgres:16
@@ -3326,12 +3343,12 @@ jobs:
       - name: e2e tests (shard 3)
         run: |
           E2E_RUN=$(go run ./scripts/ci/e2eshard -shard=3 -shards=4)
-          go test -race -count=1 -timeout=22m -run "$E2E_RUN" ./cmd/e2e/...
+          go test -race -count=1 -timeout=40m -run "$E2E_RUN" ./cmd/e2e/...
 
   e2e-shard4:
     name: e2e (shard 4 — 22 tests)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 50
     services:
       postgres:
         image: mirror.gcr.io/library/postgres:16
@@ -3410,4 +3427,4 @@ jobs:
       - name: e2e tests (shard 4)
         run: |
           E2E_RUN=$(go run ./scripts/ci/e2eshard -shard=4 -shards=4)
-          go test -race -count=1 -timeout=22m -run "$E2E_RUN" ./cmd/e2e/...
+          go test -race -count=1 -timeout=40m -run "$E2E_RUN" ./cmd/e2e/...

@@ -4,6 +4,7 @@ package state_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -85,5 +86,63 @@ func testComputeNodeReadiness(t *testing.T, store computeNodeReadinessTestStore)
 		if n.ID == node.ID && n.Readiness != state.NodeReadinessDegraded {
 			t.Fatalf("listed readiness = %q, want degraded", n.Readiness)
 		}
+	}
+}
+
+func TestMemComputeNodeWakeBreaker(t *testing.T) {
+	testComputeNodeWakeBreaker(t, state.NewMemStore())
+}
+
+// A node's wake breaker opens until a time, reads degraded until then and
+// half-open after, closes only when set, and survives vmmd re-registration.
+func testComputeNodeWakeBreaker(t *testing.T, store computeNodeReadinessTestStore) {
+	ctx := context.Background()
+	node, err := store.UpsertComputeNodeFromOperator(ctx, state.ComputeNode{Name: "fsn-breaker", TargetURL: "tcp://10.0.9.4:7000",
+		VPCPUs: 8, MemMB: 16384, MaxConcurrency: 50, AdmissionCeilingMB: 8593, VCPUBudget: 80, Active: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	read := func() state.ComputeNode {
+		t.Helper()
+		got, err := store.ComputeNodeByID(ctx, node.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+	now := time.Now()
+	if got := read(); got.WakeBreakerOpenUntil != nil || got.EffectiveReadinessAt(now) != state.NodeReadinessReady {
+		t.Fatalf("new node breaker = %v, readiness %q", got.WakeBreakerOpenUntil, got.EffectiveReadinessAt(now))
+	}
+	if closed, err := store.CloseComputeNodeWakeBreaker(ctx, node.ID); err != nil || closed {
+		t.Fatalf("closing a closed breaker = %t, %v", closed, err)
+	}
+	until := now.Add(30 * time.Second).Truncate(time.Microsecond)
+	const reason = "3 consecutive base_generation refusals"
+	if err := store.OpenComputeNodeWakeBreaker(ctx, node.ID, until, reason); err != nil {
+		t.Fatal(err)
+	}
+	got := read()
+	if got.WakeBreakerOpenUntil == nil || !got.WakeBreakerOpenUntil.Equal(until) || got.WakeBreakerReason == nil || *got.WakeBreakerReason != reason {
+		t.Fatalf("opened breaker = %v (%v), want %v (%q)", got.WakeBreakerOpenUntil, got.WakeBreakerReason, until, reason)
+	}
+	if r := got.EffectiveReadinessAt(now); r != state.NodeReadinessDegraded {
+		t.Fatalf("readiness while open = %q, want degraded", r)
+	}
+	if r := got.EffectiveReadinessAt(until.Add(time.Second)); r != state.NodeReadinessReady {
+		t.Fatalf("readiness once half-open = %q, want ready", r)
+	}
+	if _, err := store.UpsertComputeNodeFromVmmd(ctx, state.ComputeNode{Name: "fsn-breaker", TargetURL: "tcp://10.0.9.4:7000",
+		VPCPUs: 8, MemMB: 16384, MaxConcurrency: 50, AdmissionCeilingMB: 8593, VCPUBudget: 80, Active: true}); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(); got.WakeBreakerOpenUntil == nil {
+		t.Fatal("vmmd re-registration closed the wake breaker")
+	}
+	if closed, err := store.CloseComputeNodeWakeBreaker(ctx, node.ID); err != nil || !closed {
+		t.Fatalf("closing an open breaker = %t, %v", closed, err)
+	}
+	if got := read(); got.WakeBreakerOpenUntil != nil || got.WakeBreakerReason != nil {
+		t.Fatalf("closed breaker = %v (%v)", got.WakeBreakerOpenUntil, got.WakeBreakerReason)
 	}
 }

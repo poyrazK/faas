@@ -19,12 +19,17 @@ The client opens a Gregale page to connect:
    - ask you for secrets;
    - create buckets;
    - create PostgreSQL databases.
-2. Sign in to Gregale and authorize the connection.
+2. Sign in to Gregale and authorize the connection. No account yet? Sign up
+   with GitHub or Google on the same page; you come back to the authorization.
 3. Review the account, choose which apps the agent may use, and connect.
 
-The connection issues an eight-hour credential that refreshes while the
-agent uses it. Revoke it from your account's API keys page; its label is
-`mcp-login`. An account can have 10 connections at a time.
+It all happens in one browser tab (ADR-20261028205920).
+
+The connection's credential stays valid while the agent uses it: it ends
+after a week unused, and 30 days after you connect at the latest. Then the
+agent asks you to connect again. Revoke it any time from your account's API
+keys page; its label is `mcp-login`. An account can have 10 connections at a
+time.
 
 The hosted server lists the `core` and `provision` toolsets. A connection
 sees only the tools its consent covers:
@@ -54,6 +59,34 @@ deploy:
 
 Uploads may contain only regular files and directories. Links, devices and
 anything named `.git` are refused.
+
+### Headless agents with an agent key
+
+An agent with no person at a browser, such as one in CI or a scheduled job,
+connects with an agent key instead of signing in (ADR-20261029085359):
+
+```sh
+gregale key create ci-agent --scopes agent,deploy:write
+claude mcp add --transport http gregale https://api.gregale.dev/mcp \
+  --header "Authorization: Bearer $GREGALE_AGENT_KEY"
+```
+
+Only keys with the `agent` scope work here; a deploy key or an admin key is
+refused with a pointer to agent keys. The key's other scopes stand in for the
+consent screen:
+
+| Key scope | Tools |
+|---|---|
+| `agent` (always with `apps:read`) | Inspection |
+| `deploy:write` | Upload deploys, promotion, rollback, domains, crons |
+| `secrets:request` | Asking a person to enter a secret on a Gregale page |
+| `storage:manage` | Buckets |
+| `postgres:manage`, `postgres:read` | PostgreSQL databases |
+
+The key reaches every app in its account. Agent keys expire after 90 days by
+default; rotate them like any key. Revoking the key ends the agent's access at
+its next request. Release plans made with a key are kept in memory, so after a
+server restart the agent plans again.
 
 ## Connect a local agent to Gregale
 
@@ -2044,6 +2077,11 @@ The server is the `mcp-bridged` daemon:
 Operate it with:
 - **Metrics** on `127.0.0.1:9110/metrics`, scraped as the `mcp-bridged` job.
   The `gregale_management_mcp_*` series have no account, grant or app labels.
+- **Sign-up funnel:** `gregale_management_mcp_consent_total{step}` counts
+  connections reaching each consent step (`started`, `sign_in_started`,
+  `signed_in`, `approved`, `denied`). apid's `apid_signups_total{method,source}`
+  counts new accounts; `source="agent"` marks sign-ups that continued to an
+  agent's approval. Each new account also gets an `auth.signup` audit event.
 - **Alerts:** `FaasHostedMCPDown`, `FaasHostedMCPRestarting` and
   `FaasHostedMCPConnectionsNearCapacity`, all warn. See the
   [runbook](runbooks/FaasHostedMCP.md).
@@ -2065,8 +2103,9 @@ Streamable HTTP includes a self-hosted OAuth authorization bridge, independent
 of the API's existing OIDC token-exchange issuer. Browser onboarding is the
 default: start sign-in on the bridge, authorize in Gregale's signed-in dashboard,
 and return to review the resolved account, agent, callback, and apps. Gregale
-issues a dedicated eight-hour `mcp-login` credential with `apps:read` and optional
-`deploy:write`; it cannot administer keys, read secrets or change account settings.
+issues a dedicated `mcp-login` credential with `apps:read` and optional
+`deploy:write`. It lasts a week and is extended while used, up to 30 days after
+it was issued (ADR-20261028205920); it cannot administer keys, read secrets or change account settings.
 The existing dashboard session chooses the account. To connect another account,
 switch accounts in Gregale before authorizing.
 
@@ -2159,7 +2198,9 @@ both scopes in the client's OAuth settings as well as enabling bridge writes.
 Each grant has its own SDK server, API credential, and plan store. Every remote
 request rechecks its account credential through the API. Access tokens expire
 after 15 minutes; refresh rotates both tokens, and reusing a spent refresh token
-revokes the grant. Grants expire after eight hours. `POST /oauth/revoke` disconnects
+revokes the grant. A browser sign-in's grant follows its `mcp-login` credential:
+a week after its last use, 30 days after consent at the latest. A grant made with
+a pasted API key expires after eight hours. `POST /oauth/revoke` disconnects
 a grant using its token and registered client ID. Token/code lookups use hashes.
 Revoking the backing `mcp-login` credential in Gregale also disables the connection
 on its next request. Without a state file, restarting disconnects clients. Durable
@@ -2548,7 +2589,7 @@ Use `--endpoint /custom/path` when the app config uses a path other than `/mcp`.
 Tokens are passed in a dedicated request header and are not included in status
 reports.
 
-Run `gregale mcp server status --app my-mcp --watch` to keep polling the serving fleet.
+Run `gregale mcp server status --app my-mcp --follow` to keep polling the serving fleet.
 It emits an initial snapshot and then reports changes to replica health,
 protocol qualification, catalog revision or digest, and serving replica
 membership. Set `--interval` to change the 30-second polling interval. With
@@ -4786,7 +4827,7 @@ MCP traffic decisions are retained as `deploy.mcp_admission` events in the
 existing deployment audit timeline. Inspect a promotion or recovery target with:
 
 ```sh
-gregale mcp server access history --deployment DEPLOYMENT_ID --json
+gregale mcp server access history --release DEPLOYMENT_ID --json
 ```
 
 History pages contain up to 50 MCP receipts, with a continuation cursor.
@@ -4833,7 +4874,7 @@ These signals attest replay freshness, not live token enforcement.
 
 ### Search retained admission receipts
 
-Use `gregale mcp server access history --deployment UUID --limit 50` to page MCP-only receipts. Filter with `--outcome accepted` or `--outcome rejected`; pass the returned `next_cursor` as `--cursor` for the next page. `gregale mcp server access history --evidence UUID` reads an exact receipt, including receipts outside the recent generic audit window. These commands are read-only and account-authorized. Retention and deployment deletion can remove receipts; this is not permanent archival storage. Status and overview show the first MCP-only page and independently query the latest accepted and rejected receipts.
+Use `gregale mcp server access history --release UUID --limit 50` to page MCP-only receipts. Filter with `--outcome accepted` or `--outcome rejected`; pass the returned `next_cursor` as `--cursor` for the next page. `gregale mcp server access history --evidence UUID` reads an exact receipt, including receipts outside the recent generic audit window. These commands are read-only and account-authorized. Retention and deployment deletion can remove receipts; this is not permanent archival storage. Status and overview show the first MCP-only page and independently query the latest accepted and rejected receipts.
 
 ### Explain an admission decision
 
@@ -5333,7 +5374,7 @@ reports contain actionable checks without remote error bodies.
 To inspect every running replica through the existing account-scoped protocol API:
 
 ```sh
-gregale mcp server validate --app my-mcp --deployment DEPLOYMENT_ID --url https://my-mcp.example.com/mcp --endpoint-path /mcp
+gregale mcp server validate --app my-mcp --release DEPLOYMENT_ID --url https://my-mcp.example.com/mcp --endpoint-path /mcp
 ```
 
 The deployment preflight checks an independently running endpoint before source
@@ -5617,7 +5658,7 @@ Check a zero-traffic candidate or serving deployment through its public preview
 endpoint without moving traffic:
 
 ```sh
-gregale mcp server readiness --app my-mcp --deployment <deployment-uuid> \
+gregale mcp server readiness --app my-mcp --release <deployment-uuid> \
   --token-env MCP_PROBE_TOKEN --baseline gregale-mcp.lock.json --json > readiness.json
 ```
 
@@ -5654,7 +5695,7 @@ probe itself; uploading a local success report cannot satisfy the gate.
 3. Deploy a zero-traffic candidate and record each role's platform probe:
 
 ```sh
-gregale mcp server readiness --app my-mcp --deployment <uuid> --record \
+gregale mcp server readiness --app my-mcp --release <uuid> --record \
   --role reader --token-env MCP_READER_PROBE_TOKEN --json
 ```
 
@@ -5760,7 +5801,7 @@ Scheduled checks refresh expiring tokens under the existing connection lease and
 Explicit platform probes also use the managed connection:
 
 ```sh
-gregale mcp server readiness --app my-mcp --deployment <uuid> --role reader --record --json
+gregale mcp server readiness --app my-mcp --release <uuid> --role reader --record --json
 ```
 
 Omit `--token-env` for an OAuth-bound role. Supplying a probe token header is rejected. The platform never exports the managed token. Local checks in a release policy continue to use their configured local credentials; platform evidence recording selects the managed connection automatically.
@@ -5771,7 +5812,7 @@ Connection changes invalidate readiness evidence, including results still being 
 
 ### Separate OAuth grants for staging and production
 
-Set a connection's environment with `gregale mcp server monitor setup --scope staging
+Set a connection's environment with `gregale mcp server monitor setup --env staging
 --role staging-reader ...` (alongside the existing baseline/provider flags).
 Store its refresh source and confidential client secret in the same scope.
 Connection role names are app-wide and their scope is immutable; create separate
@@ -5807,8 +5848,8 @@ policies remain in `default`. Updating staging's catalog expectations or pinned
 OAuth connection requires new staging evidence; production evidence stays valid.
 
 ```sh
-gregale mcp server readiness policy get --app my-mcp --scope staging
-gregale mcp server readiness policy set --app my-mcp --scope staging --file staging-readiness.json
+gregale mcp server readiness policy get --app my-mcp --env staging
+gregale mcp server readiness policy set --app my-mcp --env staging --file staging-readiness.json
 ```
 
 The file contains the existing policy fields, `expected_revision` from the selected
@@ -5833,11 +5874,11 @@ existing behavior. Existing serving traffic and traffic decreases continue.
 Inspect policy revisions separately for each environment:
 
 ```sh
-gregale mcp server readiness policy history --app my-mcp --scope staging --limit 20
-gregale mcp server readiness policy history --app my-mcp --scope staging --before-revision <cursor>
-gregale mcp server readiness policy diff --app my-mcp --scope staging --from-revision <old-revision>
-gregale mcp server readiness policy diff --app my-mcp --scope staging --from-revision <old-revision> --to-revision <new-revision>
-gregale mcp server readiness policy restore --app my-mcp --scope staging --revision <old-revision> --expected-revision <current-revision> --reason 'Restore reviewed catalog expectations'
+gregale mcp server readiness policy history --app my-mcp --env staging --limit 20
+gregale mcp server readiness policy history --app my-mcp --env staging --before-revision <cursor>
+gregale mcp server readiness policy diff --app my-mcp --env staging --from-revision <old-revision>
+gregale mcp server readiness policy diff --app my-mcp --env staging --from-revision <old-revision> --to-revision <new-revision>
+gregale mcp server readiness policy restore --app my-mcp --env staging --revision <old-revision> --expected-revision <current-revision> --reason 'Restore reviewed catalog expectations'
 ```
 
 History contains author, time, audit reason and restore provenance. Diffs compare
@@ -5897,8 +5938,8 @@ next observed breach.
 Inspect events and delivery attempts for one environment:
 
 ```sh
-gregale mcp server readiness incidents --app my-mcp --scope staging --limit 20
-gregale mcp server readiness incidents --app my-mcp --scope staging --before '<next_before>'
+gregale mcp server readiness incidents --app my-mcp --env staging --limit 20
+gregale mcp server readiness incidents --app my-mcp --env staging --cursor '<next_before>'
 ```
 
 The read-only `GET /v1/apps/{slug}/mcp-readiness-incidents` endpoint accepts
@@ -5932,9 +5973,9 @@ notification control.
 Start a temporary silence immediately or schedule a future window:
 
 ```sh
-gregale alert maintenance create --app my-mcp --scope staging --duration 30m --reason 'Upgrade staging database'
-gregale alert maintenance create --app my-mcp --scope staging --start 2026-10-17T01:00:00Z --end 2026-10-17T02:00:00Z --reason 'Planned maintenance'
-gregale alert maintenance list --app my-mcp --scope staging --limit 20
+gregale alert maintenance create --app my-mcp --env staging --duration 30m --reason 'Upgrade staging database'
+gregale alert maintenance create --app my-mcp --env staging --since 2026-10-17T01:00:00Z --until 2026-10-17T02:00:00Z --reason 'Planned maintenance'
+gregale alert maintenance list --app my-mcp --env staging --limit 20
 gregale alert maintenance cancel --app my-mcp --id '<window UUID>' --reason 'Work finished early'
 ```
 
@@ -5981,7 +6022,7 @@ suppressed delivery state.
 Inspect delivery separately from MCP readiness:
 
 ```sh
-gregale mcp server readiness notifications list --app demo --scope production
+gregale mcp server readiness notifications list --app demo --env production
 ```
 
 The API is `GET /v1/apps/{slug}/mcp-readiness-notifications`, with optional
@@ -6035,7 +6076,7 @@ resolving it. Initial failure, recovery and maintenance-end notifications contin
 only reminders pause. An in-flight reminder may finish.
 
 ```sh
-gregale mcp server readiness attention list --app demo --scope production
+gregale mcp server readiness attention list --app demo --env production
 gregale mcp server readiness attention acknowledge --app demo --incident '<incident UUID>' \
   --expected-version 0 --request-id '<stable decision UUID>' \
   --reason 'Investigating provider outage' --expires-at 2026-10-18T12:00:00+03:00

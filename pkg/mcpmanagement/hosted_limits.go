@@ -13,7 +13,13 @@ const (
 	hostedOAuthEntries      = 2000
 	hostedGrantsPerAccount  = 10
 	hostedRegistrationLimit = 20
-	registrationWindowSize  = time.Hour
+	// hostedAuthorizeLimit bounds authorization starts per client address an
+	// hour. GET /oauth/authorize is unauthenticated and created a pending
+	// flow per call, so about 7 requests a second filled the pool and every
+	// real sign-in got "Authorization capacity reached" (bug hunt 2026-10-28
+	// H40).
+	hostedAuthorizeLimit   = 60
+	registrationWindowSize = time.Hour
 )
 
 type registrationWindow struct {
@@ -44,6 +50,16 @@ func (r *remoteServer) accountGrantsLocked(accountID string) int {
 // client address on the hosted bridge. gatewayd-public sets X-Forwarded-For
 // to the canonical client address; it is trusted only over loopback.
 func (r *remoteServer) registrationAllowedLocked(req *http.Request) bool {
+	return r.addressAllowedLocked(&r.registrations, req, hostedRegistrationLimit)
+}
+
+// authorizeAllowedLocked rate-limits authorization starts per client address
+// on the hosted bridge.
+func (r *remoteServer) authorizeAllowedLocked(req *http.Request) bool {
+	return r.addressAllowedLocked(&r.authorizations, req, hostedAuthorizeLimit)
+}
+
+func (r *remoteServer) addressAllowedLocked(windows *map[string]registrationWindow, req *http.Request, limit int) bool {
 	if !r.opts.Hosted {
 		return true
 	}
@@ -57,17 +73,42 @@ func (r *remoteServer) registrationAllowedLocked(req *http.Request) bool {
 		}
 	}
 	now := time.Now()
-	if r.registrations == nil || len(r.registrations) > 4*hostedOAuthEntries {
-		r.registrations = map[string]registrationWindow{}
+	if *windows == nil {
+		*windows = map[string]registrationWindow{}
 	}
-	window := r.registrations[address]
+	if len(*windows) > 4*hostedOAuthEntries {
+		// Drop finished windows first: wiping them all let an address that
+		// cycled through many others start over.
+		for key, w := range *windows {
+			if now.Sub(w.start) >= registrationWindowSize {
+				delete(*windows, key)
+			}
+		}
+		if len(*windows) > 4*hostedOAuthEntries {
+			*windows = map[string]registrationWindow{}
+		}
+	}
+	window := (*windows)[address]
 	if now.Sub(window.start) >= registrationWindowSize {
 		window = registrationWindow{start: now}
 	}
-	if window.count >= hostedRegistrationLimit {
+	if window.count >= limit {
 		return false
 	}
 	window.count++
-	r.registrations[address] = window
+	(*windows)[address] = window
 	return true
+}
+
+// evictOldestRequestLocked drops the pending authorization that expires
+// first, making room for a new one instead of refusing every sign-in while
+// the pool is full.
+func (r *remoteServer) evictOldestRequestLocked() {
+	var oldest string
+	for id, flow := range r.requests {
+		if oldest == "" || flow.Expires.Before(r.requests[oldest].Expires) {
+			oldest = id
+		}
+	}
+	delete(r.requests, oldest)
 }

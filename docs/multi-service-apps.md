@@ -110,6 +110,26 @@ The plan lists every public service under **Public on the internet** and marks
 the rest `visibility=internal`. Visibility is set when the app is created; see
 [networking](networking.md) for changing it later.
 
+A service without `ports:` serves requests (`class=http` in the plan) when
+another service calls it:
+
+- another service's `environment:` addresses it by URL, such as
+  `API_URL: http://api:8000`, or
+- a service that serves requests lists it in `depends_on`, and it shows that it
+  listens: it declares the port with `expose:`, or it runs its own image's
+  command (no `command:` override) and its Dockerfile has `EXPOSE`, or, built
+  without a Dockerfile, it is an Express, Fastify, NestJS, Hono, FastAPI,
+  Flask, Django or Gin app, or, for a prebuilt `image:`, the image's config
+  exposes a port. Gregale reads public images' configs; a private image
+  counts only with `expose:` or a URL.
+
+Like any service, it then parks when idle and wakes when called. Any other
+service without `ports:` is a background worker (`class=worker`): it runs all
+the time and a request never wakes it. When a web service lists a worker in
+`depends_on`, the plan warns, because Compose also uses `depends_on` for start
+order; if the web service does call it, add `expose:` or the URL
+([ADR-20261029120000](adr/20261029120000-called-compose-services-serve-requests.md)).
+
 ## Call another service
 
 Services in the same project and environment can call each other by name:
@@ -271,7 +291,7 @@ credentials. It gets:
 - the values and secrets you set for previews on the production app:
 
   ```sh
-  gregale env set --app shop-web --scope pr-preview STRIPE_KEY=sk_test_…
+  gregale env set --app shop-web --env pr-preview STRIPE_KEY=sk_test_…
   ```
 
 `pr-preview` values override the PR's Compose values. See

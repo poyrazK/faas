@@ -66,8 +66,8 @@ func TestEdgeRulesLimit_E2E(t *testing.T) {
 			"kind": "limit", "match_host": host, "match_path": "/upload",
 			"action": map[string]any{"max_body_bytes": maxBytes},
 		})
-		if status != http.StatusUnprocessableEntity {
-			t.Fatalf("max_body_bytes=%d: status=%d body=%s, want 422", maxBytes, status, body)
+		if status != http.StatusBadRequest || problemCode(body) != api.CodeValidation {
+			t.Fatalf("max_body_bytes=%d: status=%d body=%s, want 400 %s", maxBytes, status, body, api.CodeValidation)
 		}
 	}
 	createEdgeRuleE2E(t, h, key, slug, map[string]any{

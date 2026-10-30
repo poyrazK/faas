@@ -1,6 +1,7 @@
 package projectsetup
 
 import (
+	"fmt"
 	"maps"
 	"testing"
 
@@ -53,5 +54,53 @@ func TestPlanEnvImport(t *testing.T) {
 	got = PlanEnvImport(env, "api", []string{"api"}, api.MustLimitsFor(api.PlanPro))
 	if len(got.Values) != 0 || got.Skipped["LOG_LEVEL"] != EnvSkipNotOptedIn || got.Skipped["STRIPE_KEY"] != EnvSkipSecret {
 		t.Fatalf("without the opt-in: values %v, skipped %v", got.Values, got.Skipped)
+	}
+}
+
+// A Kubernetes workload opts in with its own annotation, never with a
+// Compose file's opt-in; its Secret keys are reported, never imported; and a
+// cluster DNS name it did not resolve to a scanned workload is not imported
+// (ADR-20261029093621 §5).
+func TestPlanEnvImport_Kubernetes(t *testing.T) {
+	value := func(s string) *string { return &s }
+	env := reposcan.ComposeEnv{
+		Import: true,
+		Services: map[string]map[string]*string{
+			"api": {
+				"LOG_LEVEL":   value("debug"),
+				"BILLING_URL": value("http://billing:8080/v1"),
+				"CACHE_URL":   value("redis://cache.infra.svc.cluster.local:6379"),
+				"SEARCH":      value("http://search.infra.svc:9200"),
+			},
+			"worker":  {"LOG_LEVEL": value("info")},
+			"billing": {},
+		},
+		Kubernetes:     map[string]bool{"api": true, "worker": true, "billing": true},
+		ImportServices: map[string]bool{"api": true},
+		SecretRefs:     map[string][]string{"api": {"DB_PASSWORD"}, "worker": {"API_TOKEN"}},
+	}
+	limits := api.MustLimitsFor(api.PlanPro)
+
+	plan := PlanEnvImport(env, "api", []string{"api", "billing"}, limits)
+	if got, want := plan.Values, map[string]string{
+		"LOG_LEVEL":   "debug",
+		"BILLING_URL": "http://billing.svc.gregale:" + fmt.Sprint(api.ServiceBindingPort) + "/v1",
+	}; !maps.Equal(got, want) {
+		t.Errorf("api values = %v, want %v", got, want)
+	}
+	if got, want := plan.Skipped, map[string]string{
+		"CACHE_URL":   EnvSkipServiceAddress,
+		"SEARCH":      EnvSkipServiceAddress,
+		"DB_PASSWORD": EnvSkipSecretRef,
+	}; !maps.Equal(got, want) {
+		t.Errorf("api skipped = %v, want %v", got, want)
+	}
+
+	worker := PlanEnvImport(env, "worker", nil, limits)
+	if len(worker.Values) != 0 {
+		t.Errorf("worker values = %v, want none: Compose's opt-in does not cover it", worker.Values)
+	}
+	if got, want := worker.Skipped, map[string]string{"LOG_LEVEL": EnvSkipNotAnnotated, "API_TOKEN": EnvSkipSecretRef}; !maps.Equal(got, want) {
+		t.Errorf("worker skipped = %v, want %v", got, want)
 	}
 }

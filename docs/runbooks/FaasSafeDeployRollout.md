@@ -179,7 +179,8 @@ these staging checks against an app with a known-good predecessor:
   increases. Send a single candidate 5xx in a fresh rollout and confirm it
   keeps holding instead. This path runs only when probes give no evidence.
 - **Probe-backed low traffic (ADR-1446):** with `FAAS_ROUTE_PROBE_URL` set on
-  apid, a quiet safe-policy canary gets `GET /` probes on both revisions.
+  apid (the control-plane role's default since ADR-847 amendment 1; check
+  `systemctl show faas-apid -p Environment`), a quiet safe-policy canary gets `GET /` probes on both revisions.
   Confirm `route_probe_observations` gains rows with path `/` for the
   candidate and the predecessor (20 requests each per minute, ADR-1321), and
   that each stage advances with

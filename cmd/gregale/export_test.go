@@ -506,6 +506,7 @@ const UploadSessionAlreadyCommittedCode = uploadSessionAlreadyCommittedCode
 const UploadSessionOffsetConflictCode = uploadSessionOffsetConflictCode
 
 // Package-level vars
+var TerminalSafe = terminalSafe
 var AuthAdminHTTPClient = &authAdminHTTPClient
 var AuthAdminKeyID = &authAdminKeyID
 var AuthAdminKeyName = &authAdminKeyName
@@ -672,6 +673,12 @@ var CliConfigPath = cliConfigPath
 var CliTreePlaces = cliTreePlaces
 var CliTreeManifest = cliTreeManifest
 var CliTreeSpelling = cliTreeSpelling
+var CliTreeCanonicalFlag = cliTreeCanonicalFlag
+var CliTreeFlagsForDisplay = cliTreeFlagsForDisplay
+var CliTreeFlagSynonyms = &cliTreeFlagSynonyms
+var CliTreeFolds = &cliTreeFolds
+var CliTreeEarlierName = cliTreeEarlierName
+var CliTreeNounsHolding = cliTreeNounsHolding
 var CliTreeHintTerminal = &cliTreeHintTerminal
 
 // CustomerManifest is every customer command, earlier names included.
@@ -2575,3 +2582,8 @@ func TierDiscoverableFlags(names, capabilities []string) []string {
 	}
 	return kept
 }
+
+// BindExclusiveLock binds a created cron or broker trigger to its lock.
+var BindExclusiveLock = bindExclusiveLock
+
+type ExclusiveLock = exclusiveLock

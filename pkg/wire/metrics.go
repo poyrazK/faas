@@ -118,6 +118,9 @@ type OpsMetrics struct {
 	// computeNodeReadiness is one-hot per node: 1 for the node's current
 	// readiness, 0 for the others (ADR-20261022184531).
 	computeNodeReadiness *prometheus.GaugeVec
+	// nodeWakeBreaker counts node wake breaker transitions
+	// (ADR-20261022184531 step 3).
+	nodeWakeBreaker *prometheus.CounterVec
 	// warmPoolSize (issue #1056 / ADR-074) exposes the desired paused
 	// warm-pool size by plan. Runtime reconciliation will update the
 	// gauge in a follow-up; registering it here makes the contract
@@ -1373,7 +1376,15 @@ type OpsMetrics struct {
 	// would book.
 	nodeMemoryReservedMB *prometheus.GaugeVec
 	nodeMemoryMeasuredMB *prometheus.GaugeVec
-	instanceInflightReqs *prometheus.GaugeVec
+	// nodeCPUMeasuredMillicores: the host CPU measured CPU admission
+	// charges a node's measured instances (ADR 20261029151111).
+	nodeCPUMeasuredMillicores *prometheus.GaugeVec
+	// instanceCPUMeasuredMillicores: each measured instance's measured CPU
+	// per tick, the distribution measured CPU admission's floor and window
+	// are tuned on (ADR 20261029151111). Per node, not per instance, so its
+	// cardinality is bounded by the fleet.
+	instanceCPUMeasuredMillicores *prometheus.HistogramVec
+	instanceInflightReqs          *prometheus.GaugeVec
 	// instanceCPUSecondsTotal (issue #279 / PR-B): cumulative
 	// CPU-seconds per (app, node). Counter (not Gauge) because
 	// the value is monotonic between cgroup regressions — the
@@ -2247,6 +2258,15 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 			for _, outcome := range WakeFailoverOutcomes {
 				wakeFailover.WithLabelValues(reason, outcome)
 			}
+		}
+	}
+	nodeWakeBreaker := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_node_wake_breaker_total",
+		Help: "Node wake breaker transitions this schedd wrote (ADR-20261022184531): opened after consecutive platform-attributable wake failures on a node, reopened when the first wake after the cooldown failed too, closed when a wake there succeeded.",
+	}, []string{"transition"})
+	if prefix == "schedd" {
+		for _, transition := range NodeWakeBreakerTransitions {
+			nodeWakeBreaker.WithLabelValues(transition)
 		}
 	}
 	computeNodeReadiness := prometheus.NewGaugeVec(prometheus.GaugeOpts{
@@ -3566,6 +3586,15 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_node_memory_measured_mb",
 		Help: "What admission by measured memory would book on a node: per instance its cgroup memory plus headroom, capped at plan RAM + 8 MB (ADR-909 shadow mode; admission is unchanged).",
 	}, []string{"node"})
+	nodeCPUMeasuredMillicores := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: prefix + "_node_cpu_measured_millicores",
+		Help: "Host CPU millicores summed over a node's measured instances: per instance the larger of its latest CPU and its p95 over the charge window (ADR 20261029151111). Instances without enough history are not counted.",
+	}, []string{"node"})
+	instanceCPUMeasuredMillicores := prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    prefix + "_instance_cpu_measured_millicores",
+		Help:    "Each measured instance's host CPU millicores per instance stats tick, as measured CPU admission measures it: the larger of its latest CPU and its p95 over the charge window (ADR 20261029151111). 125 is the booking model's assumption for a 1000 mc booking.",
+		Buckets: []float64{1, 2, 5, 10, 15, 25, 50, 125, 250, 500, 1000, 2000},
+	}, []string{"node"})
 	instanceInflightReqs := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: prefix + "_instance_inflight_requests",
 		Help: "Outbound ForwardHTTP count in flight, per (app, node) — sum over live siblings (issue #170 / PR-A). Load rollup.",
@@ -4042,7 +4071,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		imagedOCIPull, imagedOCIBlobCacheHits, imagedOCIBlobCacheMisses, imagedOCIBlobCacheEvictions,
 		staleDeploymentOldestAge, staleDeploymentsReconciled,
 		instanceCPUPct, instanceRSSMB, instanceInflightReqs,
-		nodeMemoryReservedMB, nodeMemoryMeasuredMB,
+		nodeMemoryReservedMB, nodeMemoryMeasuredMB, nodeCPUMeasuredMillicores, instanceCPUMeasuredMillicores,
 		instanceCPUSecondsTotal,
 		instanceStatsCollectDur, instanceStatsPartialErrors,
 		sidecarRestartTotal,
@@ -4100,7 +4129,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		planGateRescuedByExclude,
 	}
 	if prefix == "schedd" {
-		commonCollectors = append(commonCollectors, initSnapshotAttempts, initSnapshotCaptureDuration, wakeFailover, computeNodeReadiness)
+		commonCollectors = append(commonCollectors, initSnapshotAttempts, initSnapshotCaptureDuration, wakeFailover, computeNodeReadiness, nodeWakeBreaker)
 	}
 	if prefix == "imaged" {
 		commonCollectors = append(commonCollectors, snapshotPublication)
@@ -4955,7 +4984,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	}, []string{"kind", "outcome"})
 	loopWorkDuration := prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name: prefix + "_loop_work_duration_seconds",
-		Help: "How long one off-loop task ran (ADR-191), labelled by kind. The prime bucket carries cold boot plus snapshot capture, so its tail is tens of seconds by design.",
+		Help: "How long one pass of an off-loop task ran (ADR-191), labelled by kind; each rerun of a rerunCoalesced kind such as event_fanout is its own pass (ADR-20261029012000). The prime bucket carries cold boot plus snapshot capture, so its tail is tens of seconds by design.",
 		// Reconciles are millisecond-scale database work; prime is
 		// tens of seconds. One set of buckets has to span both.
 		Buckets: []float64{0.005, 0.025, 0.1, 0.5, 1, 5, 15, 30, 60, 120},
@@ -5543,6 +5572,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		initSnapshotCaptureDuration:                initSnapshotCaptureDuration,
 		wakeFailover:                               wakeFailover,
 		computeNodeReadiness:                       computeNodeReadiness,
+		nodeWakeBreaker:                            nodeWakeBreaker,
 		snapshotPublication:                        snapshotPublication,
 		warmPoolSize:                               warmPoolSize,
 		warmPoolResumeTotal:                        warmPoolResumeTotal,
@@ -5729,6 +5759,8 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		instanceRSSMB:                        instanceRSSMB,
 		nodeMemoryReservedMB:                 nodeMemoryReservedMB,
 		nodeMemoryMeasuredMB:                 nodeMemoryMeasuredMB,
+		nodeCPUMeasuredMillicores:            nodeCPUMeasuredMillicores,
+		instanceCPUMeasuredMillicores:        instanceCPUMeasuredMillicores,
 		instanceInflightReqs:                 instanceInflightReqs,
 		instanceCPUSecondsTotal:              instanceCPUSecondsTotal,
 		instanceStatsCollectDur:              instanceStatsCollectDur,
@@ -6280,6 +6312,12 @@ func (m *OpsMetrics) RecordInitSnapshotAttempt(site, outcome string, duration ti
 const (
 	WakeFailoverReasonBaseGeneration     = "base_generation"
 	WakeFailoverReasonScanSidecarMissing = "scan_sidecar_missing"
+	// WakeFailoverReasonNodeSetup: vmmd failed to acquire a jail lease or
+	// set up the network before the VM started (wake_stage=pre_start).
+	WakeFailoverReasonNodeSetup = "node_setup"
+	// WakeFailoverReasonVMMDUnreachable: the boot request never reached the
+	// node's vmmd (ADR-20261029085904).
+	WakeFailoverReasonVMMDUnreachable = "vmmd_unreachable"
 
 	WakeFailoverOutcomeSucceeded    = "succeeded"
 	WakeFailoverOutcomeRefusedAgain = "refused_again"
@@ -6291,9 +6329,22 @@ const (
 // WakeFailoverReasons and WakeFailoverOutcomes are pre-instantiated so the
 // counter reads zero, not absent, on a fleet that has never failed over.
 var (
-	WakeFailoverReasons  = []string{WakeFailoverReasonBaseGeneration, WakeFailoverReasonScanSidecarMissing}
+	WakeFailoverReasons  = []string{WakeFailoverReasonBaseGeneration, WakeFailoverReasonScanSidecarMissing, WakeFailoverReasonNodeSetup, WakeFailoverReasonVMMDUnreachable}
 	WakeFailoverOutcomes = []string{WakeFailoverOutcomeSucceeded, WakeFailoverOutcomeRefusedAgain, WakeFailoverOutcomeNoAlternate, WakeFailoverOutcomeOutOfTime, WakeFailoverOutcomeFailed}
 )
+
+// NodeWakeBreakerTransitions are the closed transition label values of
+// schedd_node_wake_breaker_total.
+var NodeWakeBreakerTransitions = []string{"opened", "reopened", "closed"}
+
+// RecordNodeWakeBreaker counts one breaker transition. Only schedd exports
+// the counter; an unknown transition is dropped.
+func (m *OpsMetrics) RecordNodeWakeBreaker(transition string) {
+	if m == nil || m.nodeWakeBreaker == nil || m.metricPrefix != "schedd" || !slices.Contains(NodeWakeBreakerTransitions, transition) {
+		return
+	}
+	m.nodeWakeBreaker.WithLabelValues(transition).Inc()
+}
 
 // ComputeNodeReadinessStates are the closed state label values of
 // schedd_compute_node_readiness; they mirror compute_nodes_readiness_chk.
@@ -9482,6 +9533,26 @@ func (m *OpsMetrics) ReplaceNodeMemoryShadow(byNode map[string][2]int) {
 	for node, v := range byNode {
 		m.nodeMemoryReservedMB.WithLabelValues(node).Set(float64(v[0]))
 		m.nodeMemoryMeasuredMB.WithLabelValues(node).Set(float64(v[1]))
+	}
+}
+
+// ReplaceNodeCPUMeasured publishes each node's measured CPU millicores for
+// measured CPU admission, per node and per instance: byNode maps a node to
+// its measured instances' millicores. Nodes absent from byNode are dropped
+// from the gauge.
+func (m *OpsMetrics) ReplaceNodeCPUMeasured(byNode map[string]map[string]int) {
+	if m == nil {
+		return
+	}
+	m.nodeCPUMeasuredMillicores.Reset()
+	for node, instances := range byNode {
+		sum := 0
+		perInstance := m.instanceCPUMeasuredMillicores.WithLabelValues(node)
+		for _, v := range instances {
+			sum += v
+			perInstance.Observe(float64(v))
+		}
+		m.nodeCPUMeasuredMillicores.WithLabelValues(node).Set(float64(sum))
 	}
 }
 

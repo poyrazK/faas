@@ -149,7 +149,7 @@ func (m *Manager) serveSSE(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer m.release(node)
-	if !m.reserveResume(node.account) {
+	if !m.reserveResume(node) {
 		http.Error(w, "subscription limit reached", http.StatusTooManyRequests)
 		return
 	}
@@ -392,7 +392,7 @@ func (a *sseAuthorization) authorize(ctx context.Context) sseVerdict {
 	if verified != a.principal {
 		return sseDenied
 	}
-	if channelRulesAllow(&current, identity, a.channel) {
+	if channelRulesAllow(&current, identity, a.channel, false) {
 		return sseAllowed
 	}
 	parent, scope, err := api.ParseRealtimeActivityScope(a.channel)

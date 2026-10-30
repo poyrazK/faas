@@ -139,10 +139,13 @@ func capQuotaNeedsWrite(current, target, used int64) bool {
 // CapLimits are a usage subject's monthly compute limits in compute-unit
 // seconds. Allowance is the plan's; Ceiling is where databases are suspended,
 // the allowance or twice it with overage on. A zero Ceiling means uncapped.
+// StoragePool is the subject's pooled storage in bytes (decision 9), twice
+// the plan's with overage on; zero means uncapped.
 type CapLimits struct {
-	Allowance int64
-	Ceiling   int64
-	Overage   bool
+	Allowance   int64
+	Ceiling     int64
+	Overage     bool
+	StoragePool int64
 }
 
 // CapCeiling returns a usage subject's limits: an account, or an
@@ -206,11 +209,15 @@ func capThresholds(used int64, limits CapLimits, ceiling int64) []string {
 }
 
 type CapEnforcerOptions struct {
-	Mode    CapEnforcementMode
-	Ceiling CapCeiling
-	Now     func() time.Time
-	Logger  *slog.Logger
-	Observe func(CapSweepSummary)
+	Mode CapEnforcementMode
+	// StorageMode runs the storage pool pass (decision 9): off, shadow or on.
+	StorageMode CapEnforcementMode
+	// StorageQualification is the staging evidence storage `on` requires.
+	StorageQualification *StorageCapQualification
+	Ceiling              CapCeiling
+	Now                  func() time.Time
+	Logger               *slog.Logger
+	Observe              func(CapSweepSummary)
 	// BatchSize pages the catalog; zero uses the usage collector's default.
 	BatchSize int
 	// Qualification is the staging evidence `on` requires (decision 10).
@@ -238,19 +245,31 @@ type CapSweepSummary struct {
 	EventsRecorded    int
 	NotifyFailed      int
 	CompletedAt       time.Time
+	// The storage pool pass, counted apart so its failures never mark the
+	// compute sweep stale.
+	StorageMode            CapEnforcementMode
+	StorageAccounts        int
+	StorageBlockedAccounts int
+	StorageUncapped        int
+	StorageUnsupported     int
+	StorageFailed          int
+	StorageScopesUnchanged int
+	StorageScopesShadowed  int
+	StorageScopesApplied   int
 }
 
 // CapEnforcer applies compute ceilings to running databases.
 type CapEnforcer struct {
-	registry  *Registry
-	store     UsageStore
-	mode      CapEnforcementMode
-	ceiling   CapCeiling
-	now       func() time.Time
-	logger    *slog.Logger
-	observe   func(CapSweepSummary)
-	notify    func(context.Context, CapEvent) error
-	batchSize int
+	registry    *Registry
+	store       UsageStore
+	mode        CapEnforcementMode
+	storageMode CapEnforcementMode
+	ceiling     CapCeiling
+	now         func() time.Time
+	logger      *slog.Logger
+	observe     func(CapSweepSummary)
+	notify      func(context.Context, CapEvent) error
+	batchSize   int
 }
 
 func NewCapEnforcer(registry *Registry, store UsageStore, options CapEnforcerOptions) (*CapEnforcer, error) {
@@ -273,6 +292,20 @@ func NewCapEnforcer(registry *Registry, store UsageStore, options CapEnforcerOpt
 	default:
 		return nil, ErrInvalid
 	}
+	switch options.StorageMode {
+	case "":
+		options.StorageMode = CapEnforcementOff
+	case CapEnforcementOff, CapEnforcementShadow:
+	case CapEnforcementOn:
+		if options.StorageQualification == nil {
+			return nil, fmt.Errorf("%s=on needs a storage cap qualification at %s: %w", StorageCapEnforcementEnv, StorageCapQualificationPathEnv, ErrInvalid)
+		}
+		if err := registry.VerifyStorageCapQualification(*options.StorageQualification); err != nil {
+			return nil, fmt.Errorf("%s=on: %w", StorageCapEnforcementEnv, err)
+		}
+	default:
+		return nil, ErrInvalid
+	}
 	if options.BatchSize == 0 {
 		options.BatchSize = defaultUsageBatchSize
 	}
@@ -286,7 +319,7 @@ func NewCapEnforcer(registry *Registry, store UsageStore, options CapEnforcerOpt
 		options.Logger = slog.Default()
 	}
 	return &CapEnforcer{
-		registry: registry, store: store, mode: options.Mode, ceiling: options.Ceiling,
+		registry: registry, store: store, mode: options.Mode, storageMode: options.StorageMode, ceiling: options.Ceiling,
 		now: options.Now, logger: options.Logger, observe: options.Observe, notify: options.Notify,
 		batchSize: options.BatchSize,
 	}, nil
@@ -295,14 +328,14 @@ func NewCapEnforcer(registry *Registry, store UsageStore, options CapEnforcerOpt
 // Enforce runs one sweep. A failure for one account never stops the others;
 // the returned error joins them.
 func (e *CapEnforcer) Enforce(ctx context.Context) (summary CapSweepSummary, err error) {
-	summary.Mode = e.mode
+	summary.Mode, summary.StorageMode = e.mode, e.storageMode
 	defer func() {
 		summary.CompletedAt = e.now().UTC()
 		if e.observe != nil {
 			e.observe(summary)
 		}
 	}()
-	if e.mode == CapEnforcementOff {
+	if e.mode == CapEnforcementOff && e.storageMode == CapEnforcementOff {
 		return summary, nil
 	}
 	accounts, err := e.liveDatabasesBySubject(ctx)
@@ -319,10 +352,26 @@ func (e *CapEnforcer) Enforce(ctx context.Context) (summary CapSweepSummary, err
 		if err := ctx.Err(); err != nil {
 			return summary, err
 		}
-		summary.Accounts++
-		if err := e.enforceAccount(ctx, accountID, accounts[accountID], &summary); err != nil {
-			summary.Failed++
-			failures = append(failures, fmt.Errorf("account %s: %w", accountID, err))
+		limits, err := e.ceiling(ctx, accountID)
+		if e.mode != CapEnforcementOff {
+			summary.Accounts++
+			if err == nil {
+				err = e.enforceAccount(ctx, accountID, accounts[accountID], limits, &summary)
+			}
+			if err != nil {
+				summary.Failed++
+				failures = append(failures, fmt.Errorf("account %s: %w", accountID, err))
+			}
+		}
+		if e.storageMode != CapEnforcementOff {
+			summary.StorageAccounts++
+			if err == nil {
+				err = e.enforceStoragePool(ctx, accountID, accounts[accountID], limits, &summary)
+			}
+			if err != nil {
+				summary.StorageFailed++
+				e.logger.Warn("managed postgres storage cap sweep failed", "subject_id", accountID, "error", err)
+			}
 		}
 	}
 	return summary, errors.Join(failures...)
@@ -388,11 +437,7 @@ func capEnforceable(database Database) bool {
 	}
 }
 
-func (e *CapEnforcer) enforceAccount(ctx context.Context, accountID string, databases []Database, summary *CapSweepSummary) error {
-	limits, err := e.ceiling(ctx, accountID)
-	if err != nil {
-		return err
-	}
+func (e *CapEnforcer) enforceAccount(ctx context.Context, accountID string, databases []Database, limits CapLimits, summary *CapSweepSummary) error {
 	ceiling := limits.Ceiling
 	if ceiling <= 0 {
 		summary.Uncapped++
