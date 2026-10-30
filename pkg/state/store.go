@@ -4020,6 +4020,13 @@ type Store interface {
 	CreateEdgeRuleIfUnderQuota(ctx context.Context, in CreateEdgeRuleParams, limits api.Limits) (EdgeRule, error)
 	ListEdgeRulesForAccount(ctx context.Context, accountID string) ([]EdgeRule, error)
 	ListEdgeRulesForApp(ctx context.Context, appID string) ([]EdgeRule, error)
+	// ListEdgeRulesUsingCorsPreset returns the account's rules that apply
+	// presetID, and ListRouteRulesTargeting its route rules that send to
+	// targetSlug, in match order. The CORS preset barrier and the app rename
+	// read only the rules they change, not every rule of the account (ADR-091
+	// amendment 2026-10-30, round 5).
+	ListEdgeRulesUsingCorsPreset(ctx context.Context, accountID, presetID string) ([]EdgeRule, error)
+	ListRouteRulesTargeting(ctx context.Context, accountID, targetSlug string) ([]EdgeRule, error)
 	GetEdgeRuleByID(ctx context.Context, id string) (EdgeRule, error)
 	// UpdateEdgeRule coalesces the optional fields onto edge_rules.
 	// nil pointers leave the field untouched; Action is

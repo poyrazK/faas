@@ -72,8 +72,8 @@ func printEdgeWAFReview(slug string, out api.EdgeWAFReviewResponse) {
 			rule = truncate(rule, 24-len(g.RuleMode)-3) + " (" + g.RuleMode + ")"
 		}
 		_, _ = fmt.Fprintf(osStdout, "%-22s %-7d %-9s %6d %7d  %-24s %s\n",
-			g.Assessment, g.CRSRuleID, g.Category, g.Events, g.Clients, truncate(rule, 24), truncate(g.Path, 60))
-		_, _ = fmt.Fprintf(osStdout, "  %s\n", g.Reason)
+			g.Assessment, g.CRSRuleID, g.Category, g.Events, g.Clients, terminalSafe(truncate(rule, 24)), terminalSafe(truncate(g.Path, 60)))
+		_, _ = fmt.Fprintf(osStdout, "  %s\n", terminalSafe(g.Reason))
 		if g.Assessment == api.EdgeWAFReviewLikelyFalsePositive {
 			_, _ = fmt.Fprintf(osStdout, "  exclude: gregale edge rule waf-exclude %s --add %d\n", g.RuleID, g.CRSRuleID)
 		}
