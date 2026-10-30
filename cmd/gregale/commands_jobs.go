@@ -216,7 +216,7 @@ func cmdJobsAdd(args []string) int {
 	}
 	fs := newFlagSet("jobs-add", flag.ContinueOnError)
 	image := fs.String("image", "", "OCI image name[:tag | @digest] (required)")
-	command := fs.String("command", "", "comma-separated entrypoint (e.g. /bin/sh,-c,echo hi)")
+	command := fs.String("command", "", jobCommandFlagUsage)
 	ram := fs.Int("ram", 0, "billable memory in MB (0 = plan default)")
 	timeout := fs.Int("timeout", 0, "per-task wall-clock deadline in seconds (0 = plan default)")
 	parallelism := fs.Int("parallelism", 0, "max concurrent tasks across the run (0 = plan default)")
@@ -272,7 +272,7 @@ func cmdJobsAdd(args []string) int {
 		req.FailureRules = rules
 	}
 	if *command != "" {
-		req.Command = strings.Split(*command, ",")
+		req.Command = parseJobCommand(*command)
 	}
 	client, err := authedClient()
 	if err != nil {
@@ -287,6 +287,36 @@ func cmdJobsAdd(args []string) int {
 	}
 	PrintOK(osStdout, "Job %s created (image=%s ram=%dMB timeout=%ds)", j.Name, j.ImageRef, j.RAMMB, j.TaskTimeoutSec)
 	return 0
+}
+
+const jobCommandFlagUsage = "comma-separated entrypoint (e.g. /bin/sh,-c,echo hi); escape a comma inside an argument with a backslash, or pass a JSON array"
+
+// parseJobCommand reads --command. A JSON array of strings is taken as the
+// exact argv; otherwise the value is split on commas, and "\," is a comma
+// inside an argument. Splitting on every comma broke shell scripts such as
+// `/bin/sh,-c,echo a, b`.
+func parseJobCommand(value string) []string {
+	if strings.HasPrefix(strings.TrimSpace(value), "[") {
+		var argv []string
+		if err := json.Unmarshal([]byte(value), &argv); err == nil && len(argv) > 0 {
+			return argv
+		}
+	}
+	var argv []string
+	var part strings.Builder
+	for i := 0; i < len(value); i++ {
+		switch {
+		case value[i] == '\\' && i+1 < len(value) && value[i+1] == ',':
+			part.WriteByte(',')
+			i++
+		case value[i] == ',':
+			argv = append(argv, part.String())
+			part.Reset()
+		default:
+			part.WriteByte(value[i])
+		}
+	}
+	return append(argv, part.String())
 }
 
 // cmdJobsInfo implements `gregale jobs info <name>`. Returns the
@@ -310,7 +340,7 @@ func cmdJobsUpdate(args []string) int {
 	}
 	fs := newFlagSet("jobs-update", flag.ContinueOnError)
 	image := fs.String("image", "", "new OCI image")
-	command := fs.String("command", "", "new comma-separated entrypoint")
+	command := fs.String("command", "", "new "+jobCommandFlagUsage)
 	ram := fs.Int("ram", 0, "new RAM (MB)")
 	timeout := fs.Int("timeout", 0, "new per-task timeout (s)")
 	parallelism := fs.Int("parallelism", 0, "new max parallel tasks")
@@ -357,7 +387,7 @@ func cmdJobsUpdate(args []string) int {
 		touched = true
 	}
 	if set["command"] {
-		req.Command = strings.Split(*command, ",")
+		req.Command = parseJobCommand(*command)
 		touched = true
 	}
 	if set["ram"] {
