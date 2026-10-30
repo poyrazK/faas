@@ -127,10 +127,12 @@ the existing nouns, with the same flags and exit codes everywhere:
   [--timeout DURATION]` polls the status every 2 s (riding out transient
   errors as `release wait` does). `--for` defaults to `Ready`, and a bare type
   means `=True`.
-- **Exit codes** follow `job wait`: 0 when the condition holds, 1 when it is
-  terminal and does not hold (or the resource is gone), 3 on timeout. The
-  final status document is printed with `--json`, so an agent reads the
-  `reason` without a second call.
+- **Exit codes** follow the CLI's existing scheme (`exitCodeForStatus`): 0
+  when the condition holds, 1 when it is terminal and does not hold, 3 on
+  timeout (the CLI's retry-later code, as `job wait` uses it), 4 when the
+  resource or its conditions are not found. The final status document is
+  printed with `--json`, so an agent reads the `reason` without a second
+  call.
 - `gregale release wait` gains `--for` in a later step; `--rollout` stays as
   `--for RolledOut`. `gregale app health --wait` stays as it is: health is the
   evidence, conditions are the summary, and `app status` points to `app health`
