@@ -268,6 +268,22 @@ func (a *sharedRuntimeApp) coldThenRestore(t *testing.T, dep state.Deployment, w
 		t.Fatal(err)
 	}
 	a.park(t)
+	// imaged records the capture just after the park returns; a wake before
+	// that finds only stale rows and cold boots (cold reason snapshots_stale).
+	deadline := time.Now().Add(time.Minute)
+	for {
+		var usable int
+		if err := a.pool.QueryRow(ctx, `select count(*) from snapshots where deployment_id = $1 and stale = false`, dep.ID).Scan(&usable); err != nil {
+			t.Fatal(err)
+		}
+		if usable > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("deployment %s has no usable snapshot a minute after parking", dep.ID)
+		}
+		time.Sleep(time.Second)
+	}
 	a.wake(t, want, "restore")
 	a.park(t)
 }
