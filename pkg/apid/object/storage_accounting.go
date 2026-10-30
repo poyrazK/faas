@@ -355,8 +355,10 @@ func (s *Service) RunObjectStorageAccounting(ctx context.Context) {
 	counter := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "faas_object_storage_inventory_scans_total", Help: "Complete or failed object storage inventory scans."}, []string{"outcome"})
 	pages := prometheus.NewCounter(prometheus.CounterOpts{Name: "faas_object_storage_inventory_provider_requests_total", Help: "Provider listing requests made by periodic inventory scans; platform maintenance, not charged to accounts."})
 	accruals := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "faas_object_storage_gateway_storage_accruals_total", Help: "Gateway-metered stored byte-hour accruals (ADR-20261024132844)."}, []string{"outcome"})
+	placement := newPlacementMetrics()
 	if s.Host.Ops() != nil {
 		s.Host.Ops().Registry().MustRegister(counter, pages, accruals)
+		s.Host.Ops().Registry().MustRegister(placement.collectors()...)
 	}
 	var finalizedPeriod, estimatedAt, progressAt time.Time
 	ticker := time.NewTicker(time.Minute)
@@ -384,6 +386,9 @@ func (s *Service) RunObjectStorageAccounting(ctx context.Context) {
 		}
 		if outcome := s.AccrueGatewayStorage(ctx); outcome != "" {
 			accruals.WithLabelValues(outcome).Inc()
+		}
+		if err := s.observePlacement(ctx, placement); err != nil && ctx.Err() == nil {
+			s.Host.Logger().Warn("object storage placement counts failed", "err", err)
 		}
 		if s.Host.ObjectStorage() != nil && s.Host.ObjectStorage().Pricing != nil {
 			now := time.Now().UTC()

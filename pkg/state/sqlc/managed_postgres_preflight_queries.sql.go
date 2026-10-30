@@ -224,7 +224,7 @@ func (q *Queries) ReadManagedPostgresPreflightBindings(ctx context.Context, db D
 }
 
 const readManagedPostgresPreflightDatabases = `-- name: ReadManagedPostgresPreflightDatabases :many
-SELECT id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id FROM managed_postgres_databases WHERE id::text=ANY($1::text[])
+SELECT id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id, purge_after FROM managed_postgres_databases WHERE id::text=ANY($1::text[])
 `
 
 func (q *Queries) ReadManagedPostgresPreflightDatabases(ctx context.Context, db DBTX, ids []string) ([]ManagedPostgresDatabase, error) {
@@ -270,6 +270,7 @@ func (q *Queries) ReadManagedPostgresPreflightDatabases(ctx context.Context, db 
 			&i.CloneResourceRole,
 			&i.AccountingRequired,
 			&i.OrgID,
+			&i.PurgeAfter,
 		); err != nil {
 			return nil, err
 		}

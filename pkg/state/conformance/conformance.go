@@ -1109,12 +1109,12 @@ func testPreviewLifecycle(t *testing.T, fx *Fixture) {
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}
-	create := func(slug string, prNumber int) state.App {
+	create := func(slug string, prNumber int, workload string) state.App {
 		app, err := fx.Store.CreateAppIfUnderQuota(fx.Ctx, state.App{
 			AccountID:        fx.Account.ID,
 			ProjectID:        project.ID,
 			Slug:             slug,
-			WorkloadName:     "api",
+			WorkloadName:     workload,
 			Type:             state.AppTypeApp,
 			Runtime:          "node22",
 			RAMMB:            limits.RAMMB,
@@ -1129,8 +1129,8 @@ func testPreviewLifecycle(t *testing.T, fx *Fixture) {
 		}
 		return app
 	}
-	developer := create("preview-dev-"+uuid.NewString()[:8], 0)
-	pr := create("preview-pr-"+uuid.NewString()[:8], 42)
+	developer := create("preview-dev-"+uuid.NewString()[:8], 0, "api")
+	pr := create("preview-pr-"+uuid.NewString()[:8], 42, "api")
 
 	byParent, err := fx.Store.PreviewAppsByParent(fx.Ctx, fx.Account.ID, fx.App.Slug)
 	if err != nil {
@@ -1154,8 +1154,9 @@ func testPreviewLifecycle(t *testing.T, fx *Fixture) {
 		t.Fatalf("PreviewAppByProjectWorkload(developer) = %v, want ErrNotFound", err)
 	}
 	// A second preview of the PR that answers to the same service name makes
-	// the name ambiguous; the lookup refuses it rather than pick one.
-	collider := create("preview-pr-"+uuid.NewString()[:8], 42)
+	// the name ambiguous; the lookup refuses it rather than pick one. Its
+	// name differs only in DNS form: PostgreSQL refuses an exact duplicate.
+	collider := create("preview-pr-"+uuid.NewString()[:8], 42, "API")
 	if _, err := fx.Store.PreviewAppByProjectWorkload(fx.Ctx, fx.Account.ID, project.ID, 42, "api"); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("PreviewAppByProjectWorkload(ambiguous) = %v, want ErrConflict", err)
 	}

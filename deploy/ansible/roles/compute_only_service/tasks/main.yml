@@ -571,6 +571,17 @@
     group: root
     mode: "0644"
 
+# ADR-20261029155852: imaged checks platform base provenance with the cosign
+# node join stages; faas_imaged_base_provenance_mode picks the mode.
+- name: compute_only_service — install base provenance mode drop-in
+  notify: restart faas-imaged
+  ansible.builtin.template:
+    src: 99-faas-base-provenance.conf.j2
+    dest: /etc/systemd/system/faas-imaged.service.d/99-faas-base-provenance.conf
+    owner: root
+    group: root
+    mode: "0644"
+
 # Mega-PR-C (issue #911 / ADR-110): wire the per-box role gate
 # through to imaged via FAAS_IMAGED_ROLE so cmd/imaged/main.go
 # picks up faas_box_role (compute-only on fsn-2). See

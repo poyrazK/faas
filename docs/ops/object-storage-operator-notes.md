@@ -811,6 +811,48 @@ Bucket names in Gregale are logical and app/scope-local. Physical names are
 UUID-based to avoid leaking customer identifiers or colliding across providers.
 Only configured region defaults appear in the creation catalog.
 
+### Several provider projects per region
+
+Each Gregale bucket is its own provider bucket, and a provider project holds
+a limited number of them: OVH allows 100 per project, and at most 1,000 after
+a support request. To serve more, give the region a pool of backends, one per
+project ([ADR-20261029174627](../adr/20261029174627-object-storage-backend-pools.md)):
+
+```json
+"pools": {"us-east-1": ["ovh-us-1", "ovh-us-2"]},
+"backends": [
+  {"id": "ovh-us-1", "driver": "s3", "region": "us-east-1", "namespace": "<project 1>", "max_buckets": 950},
+  {"id": "ovh-us-2", "driver": "s3", "region": "us-east-1", "namespace": "<project 2>", "max_buckets": 950}
+]
+```
+
+The backends also need their usual endpoint, S3 region and key settings.
+
+- `pools` lists the backends that receive new buckets, in fill order. A
+  region in `pools` may leave out `defaults`; if it has both, the default must
+  be the pool's first backend.
+- `max_buckets` caps the live buckets placed on a backend; omit it for no
+  ceiling. Every member of a pool with more than one backend needs one, set
+  below the provider's quota.
+- A new bucket goes to the pool backend that holds most of its account's
+  buckets while it has room, otherwise to the first with room, so an
+  account's buckets stay together for cross-bucket copies. When none has
+  room, creation answers `503 object_storage_region_full` and the
+  `FaasObjectStorageRegionFull` alert fires.
+- A pool's backends must declare the same driver, Object Lock settings,
+  encryption algorithms and `allowed_origins`, and no customer encryption
+  keys, so a bucket's features never depend on where it landed.
+- A backend's buckets stay on it for life. Removing a backend from its pool
+  stops new placements only; keep it under `backends` while buckets use it.
+- Restart `s3-gatewayd` and `gatewayd-public` before apid after adding a
+  backend. Releases older than this change reject a registry with `pools` or
+  `max_buckets`.
+- Isolated environment clones are refused when the source bucket's backend
+  has a ceiling.
+
+The [FaasObjectStorage runbook](../runbooks/FaasObjectStorage.md) adds a
+project when a region nears its capacity.
+
 ## Accounting and safety budgets
 
 The `accounting` object in the same provider-registry JSON sets uniform

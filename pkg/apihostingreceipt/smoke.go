@@ -33,6 +33,9 @@ const (
 	SmokeErrorContractUnavailable      = "smoke_contract_unavailable"
 	SmokeErrorContractInvalid          = "smoke_contract_invalid"
 	SmokeErrorContractRouteFailed      = "smoke_contract_route_failed"
+	// SmokeErrorInternalApp explains a skipped smoke: an internal app has no
+	// public route, so in-guest readiness is the candidate's only proof.
+	SmokeErrorInternalApp = "smoke_internal_app"
 )
 
 const (
