@@ -59,7 +59,16 @@ func TestDeferredCacheExportMetal(t *testing.T) {
 	key := h.SeedAccount(context.Background(), api.PlanPro)
 	driveDir := filepath.Join(h.TmpDir, "drive")
 
-	first := runBuildSubtest(t, h, pool, key, "deferapp", "", NodeFixture(t), false)
+	const slug = "deferapp"
+	public := false
+	if got := postOK(t, h, key, "/v1/apps", api.CreateAppRequest{Slug: slug, Type: "app", RequireAuthn: &public}); got != http.StatusCreated {
+		t.Fatalf("create app %s: status=%d", slug, got)
+	}
+	if _, status := doReq(t, h, key, http.MethodPatch, "/v1/apps/"+slug, api.UpdateAppRequest{RequireAuthn: &public,
+		PublicAuth: &api.PublicAuthBlock{Mode: api.AppPublicAuthModeOpen}}); status != http.StatusOK {
+		t.Fatalf("open app auth %s: status=%d", slug, status)
+	}
+	first := deploySourceAndWait(t, h, pool, key, slug, NodeFixture(t))
 	t.Run("image-handed-off-before-cache-export", func(t *testing.T) {
 		// builderd writes this line only when the guest reported the export
 		// deferred. (build-done.json itself may already be swept by now.)
@@ -75,7 +84,7 @@ func TestDeferredCacheExportMetal(t *testing.T) {
 		}
 	})
 
-	second := redeploySource(t, h, pool, key, first.slug, NodeFixture(t))
+	second := deploySourceAndWait(t, h, pool, key, slug, NodeFixture(t))
 	t.Run("next-build-keeps-the-exported-cache", func(t *testing.T) {
 		if log := deploymentBuildLog(t, pool, second.deploymentID); !strings.Contains(log, "dependencies unchanged — kept the dependency cache") {
 			t.Fatalf("second build did not keep the exported cache; build log:\n%s", log)
@@ -85,23 +94,30 @@ func TestDeferredCacheExportMetal(t *testing.T) {
 	})
 }
 
-// redeploySource uploads a new source deployment to an existing app and waits
+// deferredExportStallWindow replaces the harness's five-minute stall window.
+// With the export deferred, imaged scans and primes the deployment while the
+// export VM still runs on the same node. Imaging moves no deployment row until
+// it finishes, and on a two-vCPU acceptance host sharing its CPU with that
+// VM it has taken longer than five minutes.
+const deferredExportStallWindow = 12 * time.Minute
+
+// deploySourceAndWait uploads a source deployment to an existing app and waits
 // for it to go live.
-func redeploySource(t *testing.T, h *e2etest.Harness, pool *pgxpool.Pool, key, slug string, sourceTar []byte) buildResult {
+func deploySourceAndWait(t *testing.T, h *e2etest.Harness, pool *pgxpool.Pool, key, slug string, sourceTar []byte) buildResult {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), sourceDeployCtxTimeout())
 	defer cancel()
 	body, status := postMultipartDeployment(t, h, key, slug, sourceTar, false, "")
 	if status != http.StatusAccepted {
-		t.Fatalf("redeploy %s: status=%d body=%s", slug, status, body)
+		t.Fatalf("deploy %s: status=%d body=%s", slug, status, body)
 	}
 	depID, buildID := parseQueuedDeployment(t, body)
-	_, build, err := e2etest.WaitForSourceDeployment(ctx, t, pool, depID, e2etest.DefaultBuildStallWindow, e2etest.DefaultBuildCeiling)
+	_, build, err := e2etest.WaitForSourceDeployment(ctx, t, pool, depID, deferredExportStallWindow, e2etest.DefaultBuildCeiling)
 	if err != nil {
-		t.Fatalf("redeploy %s did not go live: %v", slug, err)
+		t.Fatalf("deploy %s did not go live: %v", slug, err)
 	}
 	if build.ID != buildID || build.Status != state.BuildSucceeded {
-		t.Fatalf("redeploy %s: build %s is %s, want %s succeeded", slug, build.ID, build.Status, buildID)
+		t.Fatalf("deploy %s: build %s is %s, want %s succeeded", slug, build.ID, build.Status, buildID)
 	}
 	return buildResult{deploymentID: depID, buildID: buildID, slug: slug}
 }
