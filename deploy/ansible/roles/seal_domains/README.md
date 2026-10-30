@@ -7,7 +7,9 @@ are wired, each opened by one daemon:
 - `source`: GitHub install tokens and webhook secrets (githubd;
   `faas_seal_domain_source_contracted` contracts it as step 4 below does for
   `outbound`);
-- `build`: app and job private-registry passwords (imaged);
+- `build`: app and job private-registry passwords (imaged;
+  `faas_seal_domain_build_contracted` contracts imaged as step 4 below does
+  for `outbound`);
 - `edge`: app basic-auth credentials and log drain headers (gatewayd-internal);
 - `alerting`: alert rule webhook secrets, notification channel destinations
   and MCP readiness provider keys (meterd, on the control plane like

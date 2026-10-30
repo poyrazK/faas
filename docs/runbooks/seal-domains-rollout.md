@@ -782,6 +782,44 @@ Passwords re-sealed in this step stay domain-only, so:
 - never roll imaged back past the first release that carried the build
   reader.
 
+### 6e. Contract: imaged drops the fleet and host keys
+
+As for outbound in 2e, on compute hosts. vmmd, the build domain's other
+reader, keeps the fleet and host keys: it still needs them for runtime
+values. Go on once a 6d migration run shows only `current`. Add to the
+local variables file, and converge the compute hosts:
+
+```yaml
+faas_seal_domain_build_contracted: true
+```
+
+The role runs `seal-domain migrate --domain build --check` first. It stops
+while a registry password still opens with the fleet or host key
+(`pending`: run the 6d migration again). It also stops while a crash capture
+is left on the fleet key (`skipped`): a capture imaged would still encrypt
+or decrypt for a fork with that key. vmmd seals every capture at the
+source, so there should be none; any left expire within seven days. It
+then drops both keys from imaged's credentials, restarts imaged, and checks
+`/run/credentials/faas-imaged.service`.
+
+Check, on each compute host:
+
+```bash
+sudo ls /run/credentials/faas-imaged.service
+journalctl -u faas-imaged -b | grep '"build seal domain"'
+```
+
+- The directory lists `faas_seal_domain_build`, plus
+  `faas_seal_domain_build_previous` during a rotation, and nothing else.
+- imaged logs `"domain_identity":true` and `"fleet_identity":false`.
+
+Deploy the test app again. An older imaged also starts without the keys, so
+this step does not hold back a rollback.
+
+Rollback: set `faas_seal_domain_build_contracted: false` and converge.
+imaged loads the fleet and host keys again. Nothing stored changes in this
+step.
+
 ## 7. Edge seal domain
 
 gatewayd-internal on compute hosts is the only reader of app basic-auth
