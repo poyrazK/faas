@@ -1472,6 +1472,11 @@ written in one batch per process every second
   `503 SlowDown`.
 - Writes, provider-report accounting and credentials issued under an
   organization access fence keep the locking admission.
+- Public bucket reads on app hostnames are admitted the same way by
+  `gatewayd-public`, against the anonymous share (75%) of the ceilings, with
+  their own metrics (`gatewayd_public_object_read_*`) and alert
+  (`FaasPublicObjectReadUsageFlushFailing`). Their per-bucket limit of 100
+  requests per second is unchanged.
 
 ## Recoverable branded PUTs
 

@@ -39,15 +39,22 @@ type readUsageKey struct {
 	period time.Time
 }
 
+// NewReadAdmitter is s3-gatewayd's admitter; its metrics are s3_gateway_*.
 func NewReadAdmitter(store state.ObjectReadAdmissionStore, policy api.ObjectStoragePolicy, now func() time.Time) *ReadAdmitter {
+	return NewNamedReadAdmitter(store, policy, now, "s3_gateway")
+}
+
+// NewNamedReadAdmitter names its metrics <prefix>_read_admission_decisions_total
+// and <prefix>_read_usage_flushes_total, so each daemon alerts on its own.
+func NewNamedReadAdmitter(store state.ObjectReadAdmissionStore, policy api.ObjectStoragePolicy, now func() time.Time, prefix string) *ReadAdmitter {
 	if now == nil {
 		now = time.Now
 	}
 	return &ReadAdmitter{
 		store: store, policy: policy, now: now,
 		entries: map[string]*readDecision{}, pending: map[readUsageKey]*state.ObjectReadUsage{},
-		decisions: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "s3_gateway_read_admission_decisions_total", Help: "Read admission decisions by source: cached, refreshed, stale (served while the database is unreachable) or failed."}, []string{"source"}),
-		flushes:   prometheus.NewCounterVec(prometheus.CounterOpts{Name: "s3_gateway_read_usage_flushes_total", Help: "Batched read count writes by outcome."}, []string{"outcome"}),
+		decisions: prometheus.NewCounterVec(prometheus.CounterOpts{Name: prefix + "_read_admission_decisions_total", Help: "Read admission decisions by source: cached, refreshed, stale (served while the database is unreachable) or failed."}, []string{"source"}),
+		flushes:   prometheus.NewCounterVec(prometheus.CounterOpts{Name: prefix + "_read_usage_flushes_total", Help: "Batched read count writes by outcome."}, []string{"outcome"}),
 	}
 }
 

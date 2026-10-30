@@ -700,7 +700,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 		}
 		defer func() { _ = uploadAuth.Close() }()
 		credentials := apidgrpc.CredentialLookup{Apid: uploadAuth, Fallback: pgStore, Log: log}
-		rootHandler, err = publicObjectStorageRoot(pgStore, credentials, publicStorageRegistry, func() bool { return s3Flag.Load() && fence.Open() },
+		// runDrain returns after the servers stop, so the last read-count
+		// flush runs before the pool closes.
+		reads, stopReads := startPublicReadAdmitter(ctx, pgStore, publicStorageRegistry, opsMetrics.Registry(), log)
+		defer stopReads()
+		rootHandler, err = publicObjectStorageRoot(pgStore, credentials, publicStorageRegistry, reads, func() bool { return s3Flag.Load() && fence.Open() },
 			domains, controlPlaneHandler, log)
 		if err != nil {
 			return err
