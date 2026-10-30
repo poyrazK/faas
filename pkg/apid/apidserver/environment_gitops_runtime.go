@@ -137,6 +137,17 @@ func (b *environmentGitOpsBackend) prepareWorkloadCandidates(ctx context.Context
 	if !ok {
 		return false, nil // without a preparation adapter, the graph is not serving evidence
 	}
+	// A graph activated on an earlier tick is final for this reviewed plan. Its
+	// candidates are live and now part of the inherited baseline, so preparing
+	// them again conflicts. A scheduled-Job graph proves serving only on such a
+	// later tick, after an occurrence, so it goes straight to serving.
+	if evidenceStore, ok := b.intent.(state.EnvironmentGitOpsActivationEvidenceStore); ok {
+		evidence, err := evidenceStore.EnvironmentGitOpsActivationEvidence(ctx, lease, plan)
+		if err == nil && evidence.Qualified && evidence.Activated {
+			serving, err := b.convergeEnvironmentGitOpsWorkloadServing(ctx, lease, plan)
+			return serving, runtimeStep("serving", err)
+		}
+	}
 	requests, err := preparer.EnvironmentGitOpsSourceRequests(ctx, lease, plan)
 	if errors.Is(err, state.ErrEnvironmentWorkloadPreparationUnavailable) {
 		return false, nil
