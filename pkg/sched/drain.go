@@ -40,6 +40,20 @@ var _ dispatch.JobKind = dispatch.JobKindInvocation
 // retried bad payload just keeps failing.
 var ErrPermanentInvoke = errors.New("sched: permanent invoke error")
 
+// ErrDispatchRefused marks a 5xx answer from gatewayd-internal's dispatch
+// endpoint. The endpoint answers 200 with the app's response whenever the
+// app received the request, so a 5xx means the gateway refused or failed
+// the dispatch before the app saw it.
+var ErrDispatchRefused = errors.New("sched: gateway refused the dispatch")
+
+// dispatchRefusedError keeps the gateway's own message as the error text
+// while matching ErrDispatchRefused.
+type dispatchRefusedError struct{ err error }
+
+func (e dispatchRefusedError) Error() string        { return e.err.Error() }
+func (e dispatchRefusedError) Unwrap() error        { return e.err }
+func (e dispatchRefusedError) Is(target error) bool { return target == ErrDispatchRefused }
+
 // ErrPermanentWake is the sentinel for wake errors that the drain
 // will never recover from (no such app, app PARKED, account deleted).
 // Surfaced by the engine's Wake implementation; the drain short-circuits
@@ -987,6 +1001,9 @@ func (d *Drain) deliverClaimed(ctx context.Context, inv state.Invocation, timeou
 			retryAfter = 0
 		}
 		budget := d.invocationAttemptBudget(ctx, inv)
+		if retryAfter == 0 && !errors.Is(err, state.ErrNotFound) && !errors.Is(err, state.ErrInvalidArgument) && !errors.Is(err, state.ErrConflict) {
+			retryAfter, budget = cronPlatformRetry(inv, retryAfter, budget)
+		}
 		if failErr := d.store.FailInvocation(ctx, inv.ID, "version pin: "+err.Error(), retryAfter, budget, failOutcome(err), state.WithInvocationClaim(inv), state.WithDispatchNotStarted()); failErr == nil && retryAfter == 0 {
 			d.emitDone(ctx, inv, state.InvocationFailed)
 		}
@@ -1033,10 +1050,12 @@ func (d *Drain) deliverClaimed(ctx context.Context, inv state.Invocation, timeou
 		// recover by waiting 5s. The engine
 		// wraps the cause; we use errors.Is so the sentinels survive
 		// any future fmt.Errorf wrapping.
+		budget := d.invocationAttemptBudget(ctx, inv)
 		if errors.Is(err, ErrPermanentWake) {
 			retryAfter = 0
+		} else {
+			retryAfter, budget = cronPlatformRetry(inv, retryAfter, budget)
 		}
-		budget := d.invocationAttemptBudget(ctx, inv)
 		failErr := d.store.FailInvocation(ctx, inv.ID, "wake: "+err.Error(), retryAfter, budget, failOutcome(err), state.WithInvocationClaim(inv), state.WithDispatchNotStarted())
 		d.observeScheduledFailure(inv, retryAfter, budget, failErr)
 		if failErr == nil && retryAfter > 0 && budget > 0 && inv.Attempts >= budget {
@@ -1116,6 +1135,9 @@ func (d *Drain) deliverClaimed(ctx context.Context, inv state.Invocation, timeou
 			retryAfter = 0
 		}
 		budget := d.invocationAttemptBudget(ctx, inv)
+		if errors.Is(err, ErrDispatchRefused) {
+			retryAfter, budget = cronPlatformRetry(inv, retryAfter, budget)
+		}
 		failErr := d.store.FailInvocation(ctx, inv.ID, "invoke: "+err.Error(), retryAfter, budget, failOutcome(err), state.WithInvocationClaim(inv))
 		d.observeScheduledFailure(inv, retryAfter, budget, failErr)
 		if failErr == nil && retryAfter == 0 {
@@ -1405,7 +1427,8 @@ func (d *Drain) invocationAttemptBudget(ctx context.Context, inv state.Invocatio
 // supplied and preserves the drain's configured fixed delay as the producer
 // default for rows without an override. A plain HTTP cron fire makes one
 // delivery attempt (ADR-20261026201726): zero ends it as failed rather than
-// dead-lettered, and the next schedule boundary is its retry.
+// dead-lettered, and the next schedule boundary is its retry. The exception
+// is a run Gregale refused before the app saw it; see cronPlatformRetry.
 func (d *Drain) invocationRetryDelay(ctx context.Context, inv state.Invocation) time.Duration {
 	if cronSingleAttempt(inv) {
 		return 0
@@ -1423,6 +1446,18 @@ func (d *Drain) invocationRetryDelay(ctx context.Context, inv state.Invocation) 
 		return delay
 	}
 	return time.Duration(d.retryAfterSeconds) * time.Second
+}
+
+// cronPlatformRetry lets a plain HTTP cron run that Gregale refused before
+// the app received the request try again: the app has not seen it, so a
+// retry cannot repeat its side effects (ADR-20261026201726 amendment
+// 2026-10-29). Any other invocation, or a run on its last attempt, keeps
+// the caller's retry decision.
+func cronPlatformRetry(inv state.Invocation, retryAfter time.Duration, budget int) (time.Duration, int) {
+	if !cronSingleAttempt(inv) || inv.Attempts >= api.CronPlatformAttempts {
+		return retryAfter, budget
+	}
+	return time.Duration(inv.Attempts) * api.CronPlatformRetryDelay, api.CronPlatformAttempts
 }
 
 // invocationRetryPolicy is the policy that paces an invocation's retries

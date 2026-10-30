@@ -137,6 +137,35 @@ not interpret cached observations as a guaranteed real-time availability SLO.
 See [ADR-463](adr/463-managed-postgres-provider-health.md) and the
 [health runbook](runbooks/FaasManagedPostgresDegraded.md).
 
+## SQL availability probe
+
+Provider health reads metadata only, so it cannot see a database that refuses
+connections or writes. The canary SQL probe can
+([ADR-20261029172812](adr/20261029172812-managed-postgres-sql-availability-probe.md)):
+
+1. Create one managed database per backend under the operator account, with
+   the normal API, and bind a read-write credential to it.
+2. Put its connection string in apid's sealed environment, in a variable of
+   your choice.
+3. Point `FAAS_MANAGED_POSTGRES_SQL_PROBE_CONFIG` at a JSON file:
+
+   ```json
+   {"interval_seconds": 60, "timeout_seconds": 10,
+    "targets": [{"backend": "neon-eu", "dsn_env": "FAAS_MANAGED_POSTGRES_PROBE_DSN_NEON_EU"}]}
+   ```
+
+Each interval, apid opens a new connection to each canary, writes a row to
+`gregale_availability_probe` and reads it back. It never connects to a
+customer database. The interval is 30–3600 s (default 60) and the timeout
+1–30 s (default 10), below the interval. An invalid file or connection string
+fails apid startup; the error never quotes the connection string.
+
+`FaasManagedPostgresSQLProbeFailing` pages when no apid has had a successful
+probe of a backend for five minutes, and `FaasManagedPostgresSQLErrorBudgetBurn`
+warns when the backend spends its 99.95% availability budget six times too
+fast. See the [runbook](runbooks/FaasManagedPostgresSQLProbeFailing.md). The
+canary's compute setting decides whether probes include a wake.
+
 ## Provider qualification
 
 Qualification is a separate operator action and is never started by `apid`.

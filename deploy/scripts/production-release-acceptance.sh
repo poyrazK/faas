@@ -39,6 +39,7 @@ FAAS_API="${FAAS_API:-https://api.gregale.dev}"
 FAAS_APPS_DOMAIN="${FAAS_APPS_DOMAIN:-gregale.dev}"
 DEPLOY_TIMEOUT_SECONDS="${DEPLOY_TIMEOUT_SECONDS:-1200}"
 INFRA_RETRY_DELAY_SECONDS="${INFRA_RETRY_DELAY_SECONDS:-30}"
+CONTINUITY_PROBE_INTERVAL_SECONDS="${CONTINUITY_PROBE_INTERVAL_SECONDS:-2}"
 # ACCEPTANCE_NODE selects the per-node canary below instead of the fleet gate.
 ACCEPTANCE_NODE="${ACCEPTANCE_NODE:-}"
 NODE_CANARY_MAX_DEPLOYMENTS="${NODE_CANARY_MAX_DEPLOYMENTS:-6}"
@@ -481,28 +482,55 @@ FAAS_JSON=1 "$GREGALE_BIN" deployment wait "$redeploy_id" \
 wait_pid="$!"
 probe_headers="$workdir/redeploy-health-headers"
 probe_body="$workdir/redeploy-health-body"
-while kill -0 "$wait_pid" 2>/dev/null; do
-	probe_rc=0
+continuity_probe() {
 	curl --fail-with-body --silent --show-error --connect-timeout 3 --max-time 10 \
 		--dump-header "$probe_headers" --output "$probe_body" \
-		"https://${slugs[0]}.${FAAS_APPS_DOMAIN}/" || probe_rc=$?
-	if (( probe_rc != 0 )); then
-		kill "$wait_pid" 2>/dev/null || true
-		wait "$wait_pid" 2>/dev/null || true
-		echo "previous serving revision became unavailable during redeploy (curl exit ${probe_rc})" >&2
-		if [[ -s "$probe_headers" ]]; then
-			# Retain only response metadata. The request-id lets operators
-			# correlate this exact failed probe with edge and compute logs.
-			sed -n '1p' "$probe_headers" >&2
-			grep -i '^x-faas-request-id:' "$probe_headers" >&2 || true
-		fi
-		if [[ -s "$probe_body" ]]; then
-			head -c 2048 "$probe_body" >&2
-			echo >&2
-		fi
-		exit 1
+		"https://${slugs[0]}.${FAAS_APPS_DOMAIN}/"
+}
+report_continuity_failure() {
+	echo "continuity probe failed (curl exit $1)" >&2
+	if [[ -s "$probe_headers" ]]; then
+		# Retain only response metadata. The request-id lets operators
+		# correlate this exact failed probe with edge and compute logs.
+		sed -n '1p' "$probe_headers" >&2
+		grep -i '^x-faas-request-id:' "$probe_headers" >&2 || true
 	fi
-	sleep 2
+	if [[ -s "$probe_body" ]]; then
+		head -c 2048 "$probe_body" >&2
+		echo >&2
+	fi
+}
+# A lost serving revision keeps failing until the candidate is live, so one
+# failed probe gets an immediate retry. A failed retry, or a second failure
+# anywhere in the redeploy, fails the gate. rc.307's acceptance failed on a
+# single 503 (wake queue budget) during a 20 s control-plane Postgres stall.
+continuity_failures=0
+while kill -0 "$wait_pid" 2>/dev/null; do
+	probe_rc=0
+	continuity_probe || probe_rc=$?
+	if (( probe_rc != 0 )); then
+		continuity_failures=$((continuity_failures + 1))
+		report_continuity_failure "$probe_rc"
+		retry_rc=1
+		if (( continuity_failures == 1 )); then
+			sleep 1
+			retry_rc=0
+			continuity_probe || retry_rc=$?
+			if (( retry_rc != 0 )); then
+				continuity_failures=$((continuity_failures + 1))
+				probe_rc=$retry_rc
+				report_continuity_failure "$retry_rc"
+			fi
+		fi
+		if (( retry_rc != 0 )); then
+			kill "$wait_pid" 2>/dev/null || true
+			wait "$wait_pid" 2>/dev/null || true
+			echo "previous serving revision became unavailable during redeploy (${continuity_failures} failed probes, last curl exit ${probe_rc})" >&2
+			exit 1
+		fi
+		phase "continuity probe failed once and recovered on an immediate retry; one isolated failure is tolerated"
+	fi
+	sleep "$CONTINUITY_PROBE_INTERVAL_SECONDS"
 done
 wait "$wait_pid"
 verify_receipt "$redeploy_final" "$(jq -er '.app_url' "${outputs[0]}")"

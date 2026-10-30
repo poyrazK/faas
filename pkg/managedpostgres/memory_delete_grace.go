@@ -37,6 +37,7 @@ func (s *MemoryStore) ClaimScheduledDelete(ctx context.Context, accountID, datab
 			return Database{}, ErrConflict
 		}
 	}
+	before := database
 	database.State = StateDeleting
 	database.PurgeAfter = purgeAfter
 	database.LeaseToken = leaseToken
@@ -46,6 +47,7 @@ func (s *MemoryStore) ClaimScheduledDelete(ctx context.Context, accountID, datab
 	database.RetryAt = purgeAfter
 	database.UpdatedAt = now
 	s.databases[databaseID] = database
+	s.trackUsageWaiverLocked(before, database)
 	return cloneDatabase(database), nil
 }
 
@@ -89,6 +91,7 @@ func (s *MemoryStore) CancelScheduledDelete(ctx context.Context, databaseID, lea
 	if !ok || database.State != StateDeleting || database.PurgeAfter.IsZero() || database.LeaseToken != leaseToken || !database.LeaseUntil.After(now) {
 		return Database{}, ErrConflict
 	}
+	before := database
 	database.State = StateReady
 	database.PurgeAfter = time.Time{}
 	database.LeaseToken = ""
@@ -98,5 +101,41 @@ func (s *MemoryStore) CancelScheduledDelete(ctx context.Context, databaseID, lea
 	database.RetryAt = now
 	database.UpdatedAt = now
 	s.databases[databaseID] = database
+	s.trackUsageWaiverLocked(before, database)
 	return cloneDatabase(database), nil
+}
+
+// usageWaiver is one scheduled delete's window (ADR-20261029174950 decision
+// 6), as the managed_postgres_usage_waivers trigger keeps it.
+type usageWaiver struct {
+	from, until time.Time
+}
+
+// trackUsageWaiverLocked opens a waiver when a write sets PurgeAfter and closes
+// it when one clears it, at the write's UpdatedAt.
+func (s *MemoryStore) trackUsageWaiverLocked(before, after Database) {
+	switch {
+	case before.PurgeAfter.IsZero() && !after.PurgeAfter.IsZero():
+		s.usageWaivers[after.ID] = append(s.usageWaivers[after.ID], usageWaiver{from: after.UpdatedAt})
+	case !before.PurgeAfter.IsZero() && after.PurgeAfter.IsZero():
+		for i, waiver := range s.usageWaivers[after.ID] {
+			if waiver.until.IsZero() {
+				s.usageWaivers[after.ID][i].until = waiver.from
+				if after.UpdatedAt.After(waiver.from) {
+					s.usageWaivers[after.ID][i].until = after.UpdatedAt
+				}
+			}
+		}
+	}
+}
+
+// usageWaivedLocked reports whether a usage window lies wholly inside one of
+// its database's waivers.
+func (s *MemoryStore) usageWaivedLocked(record UsageRecord) bool {
+	for _, waiver := range s.usageWaivers[record.DatabaseID] {
+		if !record.WindowFrom.Before(waiver.from) && (waiver.until.IsZero() || !record.WindowTo.After(waiver.until)) {
+			return true
+		}
+	}
+	return false
 }

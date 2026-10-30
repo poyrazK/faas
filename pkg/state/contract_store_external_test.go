@@ -45,6 +45,7 @@ type contractTestStore interface {
 	state.EventSubscriptionControlStore
 	state.EventSubscriptionStore
 	state.EventWorkBindingStore
+	state.FeatureFlagPromotionHoldReader
 	state.FeatureFlagStore
 	state.HostPortLeaseStore
 	state.InvocationEnvironmentQueueAdmissionReader
@@ -79,6 +80,7 @@ type contractTestStore interface {
 	state.ObjectBucketReservationResultStore
 	state.ObjectBucketStore
 	state.ObjectBucketWriteFenceStore
+	state.ObjectReadAdmissionStore
 	state.ObjectCapacityStore
 	state.ObjectMultipartCompletionStore
 	state.ObjectMultipartTransferStore

@@ -84,11 +84,16 @@ timeout. Work that needs more time belongs in a [job](jobs).
 
 ## Delivery
 
-Each scheduled time produces one run, and Gregale makes one attempt at it. A
-run fails when the app answers with an error status, times out, or cannot be
-woken. A failed run is not retried; the next scheduled time is the next
-attempt. To retry by status code or outcome, set failure rules (see
+Each scheduled time produces one run, and your app receives it at most once. A
+run fails when the app answers with an error status or times out. A failed run
+is not retried; the next scheduled time is the next attempt. To retry by
+status code or outcome, set failure rules (see
 [Advanced scheduling](#advanced-scheduling)).
+
+If Gregale cannot hand the request to your app at all, for example because
+the app could not be woken or its ingress policy could not be checked, the app
+has not seen the run, so Gregale tries again after 5 seconds and then 10
+seconds. The run fails if the third attempt is also refused.
 
 Runs are delivered by the same queue as other background work. A run normally
 starts within a few seconds of its scheduled minute; it can start later when
@@ -158,6 +163,11 @@ period.
 Schedule decisions (`gregale cron occurrences CRON_ID`) and manual-run
 requests (`gregale cron run get REQUEST_ID`) are kept for 90 days. A
 decision that is still waiting or running is kept until it settles.
+
+A run that fails with `application returned HTTP 404` reached your app, but
+the app has no handler for `POST` at the cron's path. This is the most common
+cron failure. `gregale cron runs` points it out; serve the route in the app or
+change the cron's path with `gregale cron update ID --path /...`.
 
 To be told when runs fail, add an alert rule on failed cron invocations:
 

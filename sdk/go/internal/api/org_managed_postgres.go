@@ -18,6 +18,9 @@ type ManagedPostgresDatabase struct {
 	CreatedAt               string                 `json:"created_at"`
 	UpdatedAt               string                 `json:"updated_at"`
 	DeletedAt               string                 `json:"deleted_at,omitempty"`
+	// RestorableUntil is set while a customer's delete is scheduled: until
+	// then the database can be undeleted, and after it the database is purged.
+	RestorableUntil string `json:"restorable_until,omitempty"`
 }
 
 type ManagedPostgresHealth struct {

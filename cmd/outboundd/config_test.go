@@ -249,3 +249,27 @@ func TestLoadConfigRequiresLoopbackPublicListener(t *testing.T) {
 		}
 	}
 }
+
+// adr: 989 — the relay's drop-in overrides replace the TOML relay settings;
+// an unset or empty variable keeps what outboundd.toml says.
+func TestApplyRelayEnv(t *testing.T) {
+	c := &Config{RelayListen: "unix:///run/faas/outboundd-relay.sock", RelayTLSCAPath: "/toml/ca.crt"}
+	env := map[string]string{
+		"FAAS_OUTBOUNDD_RELAY_LISTEN":                "tcp://0.0.0.0:8096",
+		"FAAS_OUTBOUNDD_RELAY_TLS_CERT_PATH":         "/etc/faas/tls/outboundd/server.crt",
+		"FAAS_OUTBOUNDD_RELAY_TLS_KEY_PATH":          "/etc/faas/tls/outboundd/server.key",
+		"FAAS_OUTBOUNDD_RELAY_TLS_CA_PATH":           " ",
+		"FAAS_OUTBOUNDD_WORKLOAD_IDENTITY_JWKS_PATH": "/etc/faas/workload-identity.jwks.json",
+	}
+	c.ApplyRelayEnv(func(name string) string { return env[name] })
+	want := Config{
+		RelayListen:              "tcp://0.0.0.0:8096",
+		RelayTLSCertPath:         "/etc/faas/tls/outboundd/server.crt",
+		RelayTLSKeyPath:          "/etc/faas/tls/outboundd/server.key",
+		RelayTLSCAPath:           "/toml/ca.crt",
+		WorkloadIdentityJWKSPath: "/etc/faas/workload-identity.jwks.json",
+	}
+	if c.RelayListen != want.RelayListen || c.RelayTLSCertPath != want.RelayTLSCertPath || c.RelayTLSKeyPath != want.RelayTLSKeyPath || c.RelayTLSCAPath != want.RelayTLSCAPath || c.WorkloadIdentityJWKSPath != want.WorkloadIdentityJWKSPath {
+		t.Fatalf("relay settings = %+v", c)
+	}
+}
