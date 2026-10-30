@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "2e3057587e4e98e23d9b43034f59e2e4f2ff3be0d54a7d8d2927248571c9e5e1",
+      "revision": "d8abc5e606387e9d338e9cc3047be0714d6dab860fee47315c2e32ab6f839642",
       "files": [
         "faas.rules.yml"
       ],
@@ -358,6 +358,19 @@
             "for_seconds": 900,
             "keep_firing_for_seconds": 0,
             "fingerprint": "35b641e4ae6f082ef8745c6ec9857a5f80ddccc5a44e44c9ce33e334dcf2ca28"
+          }
+        },
+        {
+          "id": "0b33d7d3e26685b1a5f0081dbb9fe6e5956c2e681d67e31601f2abf964046504",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_profile_captures",
+          "rule_name": "FaasProfileCaptureQueueBacklog",
+          "definition": {
+            "expression_hash": "f94bdbe331cfb2df3986b5fa52cdeb868126c37ad4da817b9655505766ad8182",
+            "labels_hash": "c60714d8934be1e168fbb4c7cf514e4574c7ecfd1608cfd9673733fa058fcd73",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "6602fd1f8dc5b063ad9a457dfe7645cb1d7086cc77feeff1de949a38132d5320"
           }
         },
         {
@@ -4716,6 +4729,19 @@
           }
         },
         {
+          "id": "be83c088f4591d459552ac1e16913d526ca20a30bb0b8ac40d27dd92624ccfd2",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_profile_captures",
+          "rule_name": "FaasProfileCapturesFailing",
+          "definition": {
+            "expression_hash": "aadfb8d15e3f4bf8595885d8b1a299a5d4d8d117058fb2fc2b9f407aabe6ff5a",
+            "labels_hash": "c60714d8934be1e168fbb4c7cf514e4574c7ecfd1608cfd9673733fa058fcd73",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "600c7287a88aa8d8ba82ce3579579251112093e352084545a353aac55653a6ac"
+          }
+        },
+        {
           "id": "be9e7bdc5cae090df62d998d8c0b10f9c953f85e42545f49fec7ca8be266658d",
           "file_name": "faas.rules.yml",
           "group_name": "faas_edge_security",
@@ -6396,7 +6422,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "6bf57553062c196349250d09bd88a7b6b42fc7bc55d1a67163e40100d9be536e",
+      "revision": "0ad00893d009b997ca085e9ffb4e2797ee8af154ec2d15ff57f544fd75f0dd69",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -6767,6 +6793,19 @@
             "for_seconds": 900,
             "keep_firing_for_seconds": 0,
             "fingerprint": "35b641e4ae6f082ef8745c6ec9857a5f80ddccc5a44e44c9ce33e334dcf2ca28"
+          }
+        },
+        {
+          "id": "0b33d7d3e26685b1a5f0081dbb9fe6e5956c2e681d67e31601f2abf964046504",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_profile_captures",
+          "rule_name": "FaasProfileCaptureQueueBacklog",
+          "definition": {
+            "expression_hash": "f94bdbe331cfb2df3986b5fa52cdeb868126c37ad4da817b9655505766ad8182",
+            "labels_hash": "c60714d8934be1e168fbb4c7cf514e4574c7ecfd1608cfd9673733fa058fcd73",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "6602fd1f8dc5b063ad9a457dfe7645cb1d7086cc77feeff1de949a38132d5320"
           }
         },
         {
@@ -11343,6 +11382,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "ea55011beca2f6e7d5289374eba211952124b4ed11c4b6132bc8d2aae94d556c"
+          }
+        },
+        {
+          "id": "be83c088f4591d459552ac1e16913d526ca20a30bb0b8ac40d27dd92624ccfd2",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_profile_captures",
+          "rule_name": "FaasProfileCapturesFailing",
+          "definition": {
+            "expression_hash": "aadfb8d15e3f4bf8595885d8b1a299a5d4d8d117058fb2fc2b9f407aabe6ff5a",
+            "labels_hash": "c60714d8934be1e168fbb4c7cf514e4574c7ecfd1608cfd9673733fa058fcd73",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "600c7287a88aa8d8ba82ce3579579251112093e352084545a353aac55653a6ac"
           }
         },
         {
