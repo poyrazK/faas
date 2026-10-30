@@ -137,6 +137,11 @@ type Config struct {
 	// quiet_pause wins when both are set. Off by default.
 	// FAAS_QUIET_PAUSE_OBSERVE overrides TOML.
 	QuietPauseObserve bool `toml:"quiet_pause_observe"`
+	// AgentWaitPause enables the model-wait pause of agent runs
+	// (ADR-20261027090012): vmmd pauses a run VM while it waits on the
+	// outbound relay and nothing else, and resumes it on the relay's next
+	// bytes. schedd marks which runs are eligible. Off by default.
+	AgentWaitPause bool `toml:"agent_wait_pause"`
 	// InvokeHookBackoff stops per-request invoke extension events to an
 	// instance for extension.InvokeUnavailableBackoff after its guest reports
 	// that no extension endpoint is listening (ADR-20261025150000). On by
@@ -891,6 +896,13 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("vmmd: FAAS_QUIET_PAUSE_OBSERVE must be a boolean (got %q)", v)
 		}
 		c.QuietPauseObserve = enabled
+	}
+	if v := os.Getenv("FAAS_VMMD_AGENT_WAIT_PAUSE"); v != "" {
+		enabled, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_VMMD_AGENT_WAIT_PAUSE must be a boolean (got %q)", v)
+		}
+		c.AgentWaitPause = enabled
 	}
 	if v, ok := os.LookupEnv("FAAS_CPU_TEMPLATE"); ok {
 		c.CPUTemplate = strings.TrimSpace(v)

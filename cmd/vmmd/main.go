@@ -1279,6 +1279,22 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return err
 	}
 	mgr.WithRuntimeSecretSignatures(signatures)
+	// CPU cache: a per-instance rate + accumulator over cgroup
+	// usage_usec, fed by runCPUSampleLoop below and consumed by
+	// vmmdgrpc.Server.Stats and the model-wait pause. issue #279 / PR-B.
+	// nil-safe so tests that don't care about CPU can pass a fresh
+	// cpustats.NewWithDefaults() and skip the sample loop
+	// entirely via runCPUSampleInterval=0.
+	cpuCache := cpustats.NewWithDefaults()
+	// ADR-20261027090012: pause an eligible agent run VM while it waits on
+	// the model. It shares ADR-1151's pause pass below.
+	if cfg.AgentWaitPause {
+		mgr.WithAgentWaitPause(fcvm.AgentWaitPauseConfig{
+			CPU:     agentWaitCPU{cache: cpuCache},
+			Metrics: fcvm.NewAgentWaitMetrics(ops.Registry()),
+		})
+		log.Info("agent run model-wait pause enabled (ADR-20261027090012)")
+	}
 	// ADR-1151 quiet pause: pause eligible instances between requests. schedd
 	// marks which instances are eligible; this flag lets an operator keep
 	// the whole node out of it. Observe mode measures the pauses instead of
@@ -1293,12 +1309,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			Metrics:  fcvm.NewQuietPauseMetrics(ops.Registry()),
 			Observe:  observe,
 		})
-		go mgr.RunQuietPause(ctx)
 		if observe {
 			log.Info("quiet pause observe mode enabled (ADR-1151): measuring would-be pauses, pausing nothing")
 		} else {
 			log.Info("quiet pause enabled (ADR-1151)")
 		}
+	}
+	if cfg.QuietPause || cfg.QuietPauseObserve || cfg.AgentWaitPause {
+		go mgr.RunQuietPause(ctx)
 	}
 	// ADR-1151 frozen tier: nothing is frozen until schedd calls
 	// FreezeInstance. The activity tracker lets a freeze refuse an instance
@@ -1829,13 +1847,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// setup below cannot leave /readyz reporting ready while
 	// no gRPC server is actually running (PR #1091 review
 	// Finding 5).
-	// CPU cache: a per-instance rate + accumulator over cgroup
-	// usage_usec, fed by runCPUSampleLoop below and consumed by
-	// vmmdgrpc.Server.Stats. issue #279 / PR-B. nil-safe so
-	// tests that don't care about CPU can pass a fresh
-	// cpustats.NewWithDefaults() and skip the sample loop
-	// entirely via runCPUSampleInterval=0.
-	cpuCache := cpustats.NewWithDefaults()
+	// cpuCache (created before quiet pause below) feeds
+	// vmmdgrpc.Server.Stats.
 	// Netstats cache: per-instance byte-counter over root-side
 	// vethHost.rx_bytes, fed by runNetworkEgressPoll below and
 	// consumed by vmmdgrpc.Server.Stats as the net_tx_bytes

@@ -3906,9 +3906,9 @@ type Store interface {
 	// pinned by the createAlertRuleIfUnderQuota path at
 	// handlers_alert_presets.go:255. We match by joining
 	// alert_presets on (name) and selecting the rule whose name LIKE
-	// (display_name || ' (%'); the existing
-	// alert_rules_account_name_uniq index covers the LIKE prefix
-	// scan as a range scan on (account_id, name) — no new index.
+	// (display_name || ' (%'); the alert_rules_app_name_uniq index
+	// covers the LIKE prefix scan as a range scan on (app_id, name)
+	// (ADR-20261029203000).
 	//
 	// Returns:
 	//   - (AlertRule{}, ErrNotFound) when no rule exists for this
