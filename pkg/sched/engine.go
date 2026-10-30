@@ -749,6 +749,10 @@ type Engine struct {
 	// min-floor is a wake-shape concern, the cap is a budget
 	// concern, separated in time so the audit row is unambiguous).
 	overage OverageChecker
+	// capSubjects remembers, per organization, whether it is its apps'
+	// billing subject, so the spend cap gate reads the right cap without a
+	// store read per wake (ADR-20261030093512).
+	capSubjects spendCapSubjects
 	// (obs, cap) cents ride on the (outcome, obs, cap) tuple
 	// admitGate returns. The earlier field-on-Engine shape was
 	// racy across goroutines hitting the cap-reached branch.
@@ -10735,14 +10739,15 @@ func (e *Engine) admitSpendCap(ctx context.Context, app *state.App) (bool, int64
 	if e.overage == nil {
 		return false, 0, 0
 	}
-	status, observedCents, capCents, _ := e.overage.Check(ctx, app.AccountID)
+	subject := e.spendCapSubject(ctx, *app)
+	status, observedCents, capCents, _ := e.overage.Check(ctx, subject)
 	if status != OverageReached {
 		return false, 0, 0
 	}
 	if e.ops != nil {
 		e.ops.ObserveScaleUp(app.ID, "overage_cap_reached")
 	}
-	e.overage.RecordReached(ctx, app.AccountID, observedCents, capCents)
+	e.overage.RecordReached(ctx, subject, observedCents, capCents)
 	return true, observedCents, capCents
 }
 

@@ -201,12 +201,23 @@ func (m *MemStore) updateOrgResourcePlanLocked(org Org, plan api.Plan) error {
 			}
 		}
 	}
+	from := org.Plan
 	org.Plan = plan
 	if err := m.validateObjectBillingAdoptionLocked(org); err != nil {
 		return err
 	}
 	org = m.activateOrgResourceOwnershipLocked(org)
 	m.orgs[org.ID] = org
+	// The default spend cap moves with the plan (ADR-20261030093512).
+	var current *int64
+	if cents, ok := m.overageCapCents[org.ID]; ok {
+		current = &cents
+	}
+	if next := planChangeOverageCap(from, plan, current); next == nil {
+		delete(m.overageCapCents, org.ID)
+	} else {
+		m.overageCapCents[org.ID] = *next
+	}
 	return nil
 }
 

@@ -141,6 +141,7 @@ func Run(t *testing.T, open Open) {
 		{"paddle_overage_window_existence_is_durable", testPaddleOverageWindowExistence},
 		{"overage_cap_distinguishes_zero_from_unset", testOverageCap},
 		{"overage_cap_default_follows_the_plan", testOverageCapDefaultFollowsThePlan},
+		{"organization_billing_subject_has_its_own_spend_cap", testOrgSpendCap},
 		{"account_lifecycle_leaves_the_dunning_ladder", testAccountLifecycleLeavesTheDunningLadder},
 		{"dunning_deletion_is_scheduled_and_paid_back", testDunningDeletionIsScheduledAndPaidBack},
 		{"self_service_deletion_only_from_active", testSelfServiceDeletionOnlyFromActive},

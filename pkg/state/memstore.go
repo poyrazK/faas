@@ -20353,7 +20353,7 @@ func (m *MemStore) LoadAllOverageCapCents(_ context.Context) (map[string]int64, 
 
 // CurrentMonthOverageCents sums the account's compute usage_minutes.mb_seconds
 // from the UTC month start, removes the month's included allowance (the
-// largest plan grant recorded this month, ADR-1162), and converts the
+// time-weighted plan grant this month, ADR-20261030093512), and converts the
 // remainder to integer cents. Integer math only — never float on money
 // (CLAUDE.md).
 //
@@ -20368,6 +20368,8 @@ func (m *MemStore) CurrentMonthOverageCents(_ context.Context, accountID string)
 	var plan api.Plan
 	if acct, ok := m.accounts[accountID]; ok {
 		plan = acct.Plan
+	} else if org, ok := m.orgs[accountID]; ok && !org.Personal {
+		plan = org.Plan
 	}
 	var mbSeconds int64
 	for _, u := range m.usage {
