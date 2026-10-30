@@ -89,7 +89,7 @@ func (r *remoteServer) fetchClientMetadata(ctx context.Context, id string) (clie
 	if err != nil {
 		return doc, 0, fmt.Errorf("fetch client metadata: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return doc, 0, fmt.Errorf("%w: document answered %d", errClientMetadata, resp.StatusCode)
 	}

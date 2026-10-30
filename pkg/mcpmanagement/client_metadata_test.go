@@ -169,7 +169,9 @@ func TestAuthorizationResponsesNameTheIssuer(t *testing.T) {
 		t.Fatalf("denial redirect %q lacks iss", response.Header.Get("Location"))
 	}
 	var metadata map[string]any
-	decodeResponse(t, f.request(http.MethodGet, "/.well-known/oauth-authorization-server", nil, "", ""), &metadata)
+	discovery := f.request(http.MethodGet, "/.well-known/oauth-authorization-server", nil, "", "")
+	decodeResponse(t, discovery, &metadata)
+	_ = discovery.Body.Close()
 	if metadata["authorization_response_iss_parameter_supported"] != true || metadata["client_id_metadata_document_supported"] != nil {
 		t.Fatalf("metadata = %v", metadata)
 	}
