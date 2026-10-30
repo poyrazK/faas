@@ -16,7 +16,7 @@ import (
 // act on (labeled, edited, review_requested, ...). GitHub sends every action
 // to an App subscribed to pull_request, so this is an ignored delivery, not a
 // malformed one.
-var ErrPullRequestActionIgnored = errors.New("githubd: pull_request action not in {opened,synchronize,reopened,closed}")
+var ErrPullRequestActionIgnored = errors.New("githubd: pull_request action not in {opened,synchronize,reopened,ready_for_review,closed}")
 
 // PullRequestAction enumerates the GitHub `pull_request` webhook
 // actions githubd reacts to. Anything not in this set is logged
@@ -29,6 +29,9 @@ const (
 	PullRequestActionSynchronize PullRequestAction = "synchronize"
 	PullRequestActionReopened    PullRequestAction = "reopened"
 	PullRequestActionClosed      PullRequestAction = "closed"
+	// PullRequestActionReadyForReview marks a draft ready. A project that
+	// does not preview drafts gets the preview here (ADR-20261030070000).
+	PullRequestActionReadyForReview PullRequestAction = "ready_for_review"
 )
 
 // IsPreviewAction reports whether the action is one of the four
@@ -39,6 +42,7 @@ func (a PullRequestAction) IsPreviewAction() bool {
 	case PullRequestActionOpened,
 		PullRequestActionSynchronize,
 		PullRequestActionReopened,
+		PullRequestActionReadyForReview,
 		PullRequestActionClosed:
 		return true
 	default:
@@ -80,6 +84,22 @@ type PullRequestPayload struct {
 	// Base is the branch the PR merges into; it selects the binding when a
 	// repository binds apps on several production branches.
 	Base PullRequestBaseRef `json:"base"`
+	// Draft and User (the PR's author, not the event sender) let a project
+	// skip draft and bot pull requests (ADR-20261030070000).
+	Draft bool            `json:"draft"`
+	User  PullRequestUser `json:"user"`
+}
+
+// PullRequestUser is the PR author. GitHub types bot accounts
+// (dependabot[bot], renovate[bot]) as "Bot".
+type PullRequestUser struct {
+	Login string `json:"login"`
+	Type  string `json:"type"`
+}
+
+// OpenedByBot reports whether a bot account opened the pull request.
+func (p PullRequestPayload) OpenedByBot() bool {
+	return strings.EqualFold(p.User.Type, "Bot")
 }
 
 // PullRequestBaseRef carries the base side of a PR.

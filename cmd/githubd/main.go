@@ -497,6 +497,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				webhookSvc.WritePreviewCheckForInstallation = checks.WritePreviewCheckForInstallation
 				webhookSvc.WritePreviewCheckForkRefused = checks.WritePreviewCheckForkRefused
 				webhookSvc.WritePreviewCheckForkRefusedForInstallation = checks.WritePreviewCheckForkRefusedForInstallation
+				webhookSvc.WritePreviewCheckNeutralForInstallation = checks.WritePreviewCheckNeutralForInstallation
 				webhookSvc.WritePreviewCommentForInstallation = checks.UpsertPreviewComment
 				// GitHub's own delivery log is the only witness of a delivery
 				// that never reached this listener (wrong webhook URL, stale

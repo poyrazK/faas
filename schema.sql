@@ -35729,6 +35729,26 @@ CREATE TABLE public.deployment_scope_exclusions (
 
 
 --
+-- Name: deployment_sidecar_env_reseals; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_sidecar_env_reseals (
+    deployment_id uuid NOT NULL,
+    sidecar_name text NOT NULL,
+    env_key text NOT NULL,
+    source_sha256 text NOT NULL,
+    kid text NOT NULL,
+    ciphertext bytea NOT NULL,
+    resealed_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT deployment_sidecar_env_reseals_ciphertext_check CHECK ((octet_length(ciphertext) > 0)),
+    CONSTRAINT deployment_sidecar_env_reseals_env_key_check CHECK ((env_key <> ''::text)),
+    CONSTRAINT deployment_sidecar_env_reseals_kid_check CHECK ((kid ~ '^age1[0-9a-z]{58}$'::text)),
+    CONSTRAINT deployment_sidecar_env_reseals_sidecar_name_check CHECK ((sidecar_name <> ''::text)),
+    CONSTRAINT deployment_sidecar_env_reseals_source_sha256_check CHECK ((source_sha256 ~ '^[0-9a-f]{64}$'::text))
+);
+
+
+--
 -- Name: deployment_sidecar_layers; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -39500,6 +39520,8 @@ CREATE TABLE public.github_deploy_policies (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     preview_service_policy text DEFAULT 'deny'::text NOT NULL,
     production_trigger text DEFAULT 'webhook'::text NOT NULL,
+    preview_bot_prs boolean DEFAULT false NOT NULL,
+    preview_draft_prs boolean DEFAULT true NOT NULL,
     CONSTRAINT github_deploy_policies_ignored_paths_array_chk CHECK ((jsonb_typeof(ignored_paths) = 'array'::text)),
     CONSTRAINT github_deploy_policies_preview_service_policy_chk CHECK ((preview_service_policy = ANY (ARRAY['deny'::text, 'allow_marked'::text]))),
     CONSTRAINT github_deploy_policies_preview_ttl_chk CHECK (((preview_ttl_hours >= 1) AND (preview_ttl_hours <= 720))),
@@ -60029,6 +60051,14 @@ ALTER TABLE ONLY public.deployment_scope_exclusions
 
 ALTER TABLE ONLY public.deployment_scope_exclusions
     ADD CONSTRAINT deployment_scope_exclusions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: deployment_sidecar_env_reseals deployment_sidecar_env_reseals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_sidecar_env_reseals
+    ADD CONSTRAINT deployment_sidecar_env_reseals_pkey PRIMARY KEY (deployment_id, sidecar_name, env_key);
 
 
 --
@@ -90974,6 +91004,14 @@ ALTER TABLE ONLY public.deployment_scope_exclusions
 
 ALTER TABLE ONLY public.deployment_scope_exclusions
     ADD CONSTRAINT deployment_scope_exclusions_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_sidecar_env_reseals deployment_sidecar_env_reseals_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_sidecar_env_reseals
+    ADD CONSTRAINT deployment_sidecar_env_reseals_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
 
 
 --

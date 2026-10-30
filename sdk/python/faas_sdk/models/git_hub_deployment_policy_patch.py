@@ -26,6 +26,8 @@ class GitHubDeploymentPolicyPatch:
     ignored_paths: list[str] | Unset = UNSET
     preview_enabled: bool | Unset = UNSET
     preview_ttl_hours: int | Unset = UNSET
+    preview_bot_prs: bool | Unset = UNSET
+    preview_draft_prs: bool | Unset = UNSET
     preview_service_policy: GitHubDeploymentPolicyPatchPreviewServicePolicy | Unset = UNSET
     production_trigger: GitHubDeploymentPolicyPatchProductionTrigger | Unset = UNSET
 
@@ -39,6 +41,10 @@ class GitHubDeploymentPolicyPatch:
         preview_enabled = self.preview_enabled
 
         preview_ttl_hours = self.preview_ttl_hours
+
+        preview_bot_prs = self.preview_bot_prs
+
+        preview_draft_prs = self.preview_draft_prs
 
         preview_service_policy: str | Unset = UNSET
         if not isinstance(self.preview_service_policy, Unset):
@@ -59,6 +65,10 @@ class GitHubDeploymentPolicyPatch:
             field_dict["preview_enabled"] = preview_enabled
         if preview_ttl_hours is not UNSET:
             field_dict["preview_ttl_hours"] = preview_ttl_hours
+        if preview_bot_prs is not UNSET:
+            field_dict["preview_bot_prs"] = preview_bot_prs
+        if preview_draft_prs is not UNSET:
+            field_dict["preview_draft_prs"] = preview_draft_prs
         if preview_service_policy is not UNSET:
             field_dict["preview_service_policy"] = preview_service_policy
         if production_trigger is not UNSET:
@@ -76,6 +86,10 @@ class GitHubDeploymentPolicyPatch:
         preview_enabled = d.pop("preview_enabled", UNSET)
 
         preview_ttl_hours = d.pop("preview_ttl_hours", UNSET)
+
+        preview_bot_prs = d.pop("preview_bot_prs", UNSET)
+
+        preview_draft_prs = d.pop("preview_draft_prs", UNSET)
 
         _preview_service_policy = d.pop("preview_service_policy", UNSET)
         preview_service_policy: GitHubDeploymentPolicyPatchPreviewServicePolicy | Unset
@@ -98,6 +112,8 @@ class GitHubDeploymentPolicyPatch:
             ignored_paths=ignored_paths,
             preview_enabled=preview_enabled,
             preview_ttl_hours=preview_ttl_hours,
+            preview_bot_prs=preview_bot_prs,
+            preview_draft_prs=preview_draft_prs,
             preview_service_policy=preview_service_policy,
             production_trigger=production_trigger,
         )

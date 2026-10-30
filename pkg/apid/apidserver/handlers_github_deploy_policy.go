@@ -14,6 +14,8 @@ type githubDeployPolicyResponse struct {
 	IgnoredPaths         []string                   `json:"ignored_paths"`
 	PreviewEnabled       bool                       `json:"preview_enabled"`
 	PreviewTTLHours      int                        `json:"preview_ttl_hours"`
+	PreviewBotPRs        bool                       `json:"preview_bot_prs"`
+	PreviewDraftPRs      bool                       `json:"preview_draft_prs"`
 	PreviewServicePolicy state.PreviewServicePolicy `json:"preview_service_policy"`
 	ProductionTrigger    state.ProductionTrigger    `json:"production_trigger"`
 }
@@ -23,6 +25,8 @@ type githubDeployPolicyPatch struct {
 	IgnoredPaths         *[]string                   `json:"ignored_paths,omitempty"`
 	PreviewEnabled       *bool                       `json:"preview_enabled,omitempty"`
 	PreviewTTLHours      *int                        `json:"preview_ttl_hours,omitempty"`
+	PreviewBotPRs        *bool                       `json:"preview_bot_prs,omitempty"`
+	PreviewDraftPRs      *bool                       `json:"preview_draft_prs,omitempty"`
 	PreviewServicePolicy *state.PreviewServicePolicy `json:"preview_service_policy,omitempty"`
 	ProductionTrigger    *state.ProductionTrigger    `json:"production_trigger,omitempty"`
 }
@@ -34,6 +38,8 @@ func githubDeployPolicyDTO(policy state.GitHubDeployPolicy) githubDeployPolicyRe
 		IgnoredPaths:         append([]string(nil), policy.IgnoredPaths...),
 		PreviewEnabled:       policy.PreviewEnabled,
 		PreviewTTLHours:      policy.PreviewTTLHours,
+		PreviewBotPRs:        policy.PreviewBotPRs,
+		PreviewDraftPRs:      policy.PreviewDraftPRs,
 		PreviewServicePolicy: policy.PreviewServicePolicy,
 		ProductionTrigger:    policy.ProductionTrigger,
 	}
@@ -87,32 +93,8 @@ func (s *server) patchGitHubDeployPolicy(w http.ResponseWriter, r *http.Request,
 			"Invalid GitHub deployment policy", err.Error()))
 		return
 	}
-	if req.RootDir != nil {
-		current.RootDir = *req.RootDir
-	}
-	if req.IgnoredPaths != nil {
-		current.IgnoredPaths = append([]string(nil), (*req.IgnoredPaths)...)
-	}
-	if req.PreviewEnabled != nil {
-		current.PreviewEnabled = *req.PreviewEnabled
-	}
-	if req.PreviewTTLHours != nil {
-		current.PreviewTTLHours = *req.PreviewTTLHours
-	}
-	if req.PreviewServicePolicy != nil {
-		current.PreviewServicePolicy = *req.PreviewServicePolicy
-	}
-	if req.ProductionTrigger != nil {
-		if !req.ProductionTrigger.Valid() {
-			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
-				"Invalid GitHub deployment policy", "production_trigger must be webhook or actions"))
-			return
-		}
-		current.ProductionTrigger = *req.ProductionTrigger
-	}
-	if err := current.Validate(); err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
-			"Invalid GitHub deployment policy", err.Error()))
+	if problem := applyGitHubDeployPolicyPatch(&current, req); problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
 	store, ok := s.store.(state.GitHubDeployPolicyStore)
@@ -137,8 +119,47 @@ func (s *server) patchGitHubDeployPolicy(w http.ResponseWriter, r *http.Request,
 		"ignored_paths":          len(stored.IgnoredPaths),
 		"preview_enabled":        stored.PreviewEnabled,
 		"preview_ttl_hours":      stored.PreviewTTLHours,
+		"preview_bot_prs":        stored.PreviewBotPRs,
+		"preview_draft_prs":      stored.PreviewDraftPRs,
 		"preview_service_policy": stored.PreviewServicePolicy,
 		"production_trigger":     stored.ProductionTrigger,
 	})
 	writeJSON(w, http.StatusOK, githubDeployPolicyDTO(stored))
+}
+
+// applyGitHubDeployPolicyPatch merges a partial update into current and
+// validates the result.
+func applyGitHubDeployPolicyPatch(current *state.GitHubDeployPolicy, req githubDeployPolicyPatch) *api.Problem {
+	if req.RootDir != nil {
+		current.RootDir = *req.RootDir
+	}
+	if req.IgnoredPaths != nil {
+		current.IgnoredPaths = append([]string(nil), (*req.IgnoredPaths)...)
+	}
+	if req.PreviewEnabled != nil {
+		current.PreviewEnabled = *req.PreviewEnabled
+	}
+	if req.PreviewTTLHours != nil {
+		current.PreviewTTLHours = *req.PreviewTTLHours
+	}
+	if req.PreviewBotPRs != nil {
+		current.PreviewBotPRs = *req.PreviewBotPRs
+	}
+	if req.PreviewDraftPRs != nil {
+		current.PreviewDraftPRs = *req.PreviewDraftPRs
+	}
+	if req.PreviewServicePolicy != nil {
+		current.PreviewServicePolicy = *req.PreviewServicePolicy
+	}
+	if req.ProductionTrigger != nil {
+		if !req.ProductionTrigger.Valid() {
+			return api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Invalid GitHub deployment policy", "production_trigger must be webhook or actions")
+		}
+		current.ProductionTrigger = *req.ProductionTrigger
+	}
+	if err := current.Validate(); err != nil {
+		return api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid GitHub deployment policy", err.Error())
+	}
+	return nil
 }
