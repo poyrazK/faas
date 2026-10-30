@@ -1602,7 +1602,7 @@ export class OrgsService {
    * `admission_refused`) until the cap is raised or the month ends. A paid
    * organization starts with its plan's default cap.
    *
-   * @returns AccountOverageCapResponse The saved monthly spend cap.
+   * @returns AccountOverageCapResponse The organization's spend cap after the change.
    * @throws ApiError
    */
   public static setOrgOverageCap({

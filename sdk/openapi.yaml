@@ -17748,7 +17748,7 @@ paths:
             example: {"overage_cap_cents": 10000}
       responses:
         '200':
-          description: The saved monthly spend cap.
+          description: The organization's spend cap after the change.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/AccountOverageCapResponse'}
