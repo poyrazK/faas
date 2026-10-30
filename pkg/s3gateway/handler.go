@@ -72,8 +72,11 @@ type Config struct {
 	// ReadAdmitter admits gateway-safety GETs and HEADs from cached
 	// decisions and batches their counts; nil keeps the locking admission
 	// (ADR-20261030075301). AccountLimiter bounds each owner's requests.
+	// Credentials, when set, caches GET and HEAD credential resolutions
+	// (step 4); nil resolves every request.
 	ReadAdmitter   *objectstorage.ReadAdmitter
 	AccountLimiter *objectstorage.AccountRequestLimiter
+	Credentials    *CredentialCache
 }
 
 type Handler struct {
@@ -82,6 +85,7 @@ type Handler struct {
 	multipartStore  state.ObjectMultipartUploadStore
 	requestMetrics  state.ObjectStorageProviderUsageStore
 	readAdmitter    *objectstorage.ReadAdmitter
+	credentials     *CredentialCache
 	accountLimiter  *objectstorage.AccountRequestLimiter
 	openSecret      func([]byte) (string, error)
 	client          *http.Client
@@ -182,7 +186,7 @@ func New(c Config) (*Handler, error) {
 		c.Log = slog.Default()
 	}
 	return &Handler{
-		registry: c.Registry, store: c.Store, requestMetrics: c.RequestMetrics, readAdmitter: c.ReadAdmitter, accountLimiter: c.AccountLimiter, openSecret: c.OpenSecret, client: c.HTTPClient,
+		registry: c.Registry, store: c.Store, requestMetrics: c.RequestMetrics, readAdmitter: c.ReadAdmitter, credentials: c.Credentials, accountLimiter: c.AccountLimiter, openSecret: c.OpenSecret, client: c.HTTPClient,
 		multipartStore: multipartStore(c.Store),
 		enabled:        c.Enabled, host: strings.ToLower(c.Host), region: c.Region, spoolDir: c.SpoolDir,
 		maxPutBytes: c.MaxPutBytes, uploadGrants: c.UploadGrants, putSlots: make(chan struct{}, c.MaxConcurrentPuts),
@@ -303,19 +307,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeS3Error(w, http.StatusForbidden, "SignatureDoesNotMatch", "The request signature we calculated does not match the signature you provided.", r.URL.Path, requestID)
 		return
 	}
-	credential, bucket, err := h.store.ResolveObjectS3Credential(ctx, parsed.AccessKeyID)
-	if err != nil {
+	resolved, err := h.resolveCredential(ctx, r.Method, parsed.AccessKeyID)
+	if err != nil && !errors.Is(err, errCredentialSecret) {
 		writeS3Error(w, http.StatusForbidden, "InvalidAccessKeyId", "The AWS access key ID you provided does not exist in Gregale.", r.URL.Path, requestID)
 		return
 	}
-	if credential.IssuerAccountID != "" && bucket.OrgID != "" {
+	credential, bucket := resolved.credential, resolved.bucket
+	if err == nil && credential.IssuerAccountID != "" && bucket.OrgID != "" {
 		fenced, release := state.WithOrgAccessFence(ctx, state.OrgAccessFence{OrgID: bucket.OrgID, AccountID: credential.IssuerAccountID, Revision: credential.IssuerAccessRevision})
 		defer release(nil)
 		ctx = fenced
 		r = r.WithContext(ctx)
 	}
-	secret, err := h.openSecret(credential.SecretSealed)
-	if err != nil || presigned && verifyPresignedSigV4(ctx, r, parsed, secret, h.region) != nil || !presigned && verifySigV4(ctx, r, parsed, secret, h.region) != nil {
+	if err != nil || presigned && verifyPresignedSigV4(ctx, r, parsed, resolved.secret, h.region) != nil || !presigned && verifySigV4(ctx, r, parsed, resolved.secret, h.region) != nil {
 		writeS3Error(w, http.StatusForbidden, "SignatureDoesNotMatch", "The request signature we calculated does not match the signature you provided.", r.URL.Path, requestID)
 		return
 	}
@@ -348,7 +352,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPut && r.URL.Query().Get("uploadId") != "" {
 		bodyLimit = h.registry.MaxPartBytes
 	}
-	streaming, err := prepareAWSChunkedBody(r, parsed, secret, h.region, bodyLimit)
+	streaming, err := prepareAWSChunkedBody(r, parsed, resolved.secret, h.region, bodyLimit)
 	if err != nil {
 		h.writeAWSChunkedError(w, r, requestID, err)
 		return

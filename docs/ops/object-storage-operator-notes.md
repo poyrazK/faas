@@ -1472,6 +1472,10 @@ written in one batch per process every second
   `503 SlowDown`.
 - Writes, provider-report accounting and credentials issued under an
   organization access fence keep the locking admission.
+- `GET` and `HEAD` reuse a credential's resolution, with its opened secret,
+  for 2 s (30 s while the database is unreachable); revoking a credential
+  stops its reads within that window and its writes at once. Signed-URL
+  credentials and other methods resolve on every request.
 
 ## Recoverable branded PUTs
 

@@ -14,7 +14,8 @@ Metrics: `faas_object_storage_inventory_scans_total{outcome}`,
 `faas_object_storage_backend_bucket_limit{region,backend}`,
 `faas_object_storage_region_full{region}`,
 `s3_gateway_read_admission_decisions_total{source}`,
-`s3_gateway_read_usage_flushes_total{outcome}`.
+`s3_gateway_read_usage_flushes_total{outcome}`,
+`s3_gateway_credential_resolutions_total{source}`.
 Decision records: [ADR 20261023223000](../adr/20261023223000-object-storage-bucket-scoped-availability.md),
 [ADR 20261030100835](../adr/20261030100835-object-storage-resumable-inventory.md) (resumable inventory),
 [ADR 20261029174627](../adr/20261029174627-object-storage-backend-pools.md) (bucket placement),

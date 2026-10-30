@@ -45,6 +45,8 @@ type gatewayTestStore struct {
 	fenced                              bool
 	activityBeginErr, activityFinishErr error
 	cors                                []api.ObjectBucketCORSRule
+	resolves                            int
+	resolveErr                          error
 }
 
 func (s *gatewayTestStore) ObjectBucketCORSRules(context.Context, string) ([]api.ObjectBucketCORSRule, error) {
@@ -111,6 +113,10 @@ func (s *gatewayTestStore) RevokeObjectS3Credential(context.Context, string, str
 	panic("not used")
 }
 func (s *gatewayTestStore) ResolveObjectS3Credential(_ context.Context, access string) (state.ObjectS3Credential, state.ObjectBucket, error) {
+	s.resolves++
+	if s.resolveErr != nil {
+		return state.ObjectS3Credential{}, state.ObjectBucket{}, s.resolveErr
+	}
 	if access != s.credential.AccessKeyID {
 		return state.ObjectS3Credential{}, state.ObjectBucket{}, state.ErrNotFound
 	}
