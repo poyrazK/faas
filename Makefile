@@ -242,6 +242,25 @@ build-release-unit: ## Build one release binary: UNIT=<cmd> VERSION=unit-<commit
 	@CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) $(if $(filter $(UNIT),$(DAEMONS)),-tags $(DAEMON_TAGS)) \
 	  -ldflags '$(LDFLAGS) -s -w' -o $(BINDIR)/$(UNIT) ./cmd/$(UNIT)
 
+# Issue #295: release.yml attests an SPDX SBOM for the CLI archives and ships
+# release.sbom.json for the daemon bundle (docs/supply-chain.md). `make sbom`
+# writes the same inventory locally as CycloneDX: the binaries in $(BINDIR),
+# plus any image references in SBOM_IMAGES (linux/amd64).
+SYFT ?= syft
+SBOM_DIR ?= sbom
+SBOM_IMAGES ?=
+.PHONY: sbom
+sbom: ## CycloneDX SBOMs for $(BINDIR) and SBOM_IMAGES="ref ..." into $(SBOM_DIR)/ (needs syft; CI pins 1.49.0)
+	@command -v $(SYFT) >/dev/null 2>&1 || { echo "sbom: $(SYFT) not found; install Syft 1.49.0, the version scripts/ci/install-syft.sh pins for CI"; exit 2; }
+	@test -d $(BINDIR) || { echo "sbom: $(BINDIR) is missing; run make build first"; exit 2; }
+	@mkdir -p $(SBOM_DIR)
+	$(SYFT) scan dir:$(BINDIR) -q -o cyclonedx-json=$(SBOM_DIR)/binaries.cdx.json
+	@for ref in $(SBOM_IMAGES); do \
+	  name=$$(printf '%s' "$$ref" | sed 's|.*/||; s|[@:].*||'); \
+	  echo "$(SYFT) scan registry:$$ref -> $(SBOM_DIR)/$$name.cdx.json"; \
+	  $(SYFT) scan "registry:$$ref" --platform linux/amd64 -q -o "cyclonedx-json=$(SBOM_DIR)/$$name.cdx.json" || exit 1; \
+	done
+
 # M1 gRPC codegen (ADR-013). Generated *.pb.go is COMMITTED — do not run
 # `make proto` to produce output; CI uses `proto-check` to verify drift only.
 PROTO_ROOT := api/proto
