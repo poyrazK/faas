@@ -91,6 +91,8 @@ func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log 
 			data.Review = dashboardEdgeRuleReview(rules, data.Rules, hits)
 		}
 		data.Events = s.loadDashboardEdgeRuleEvents(r, log, acct, app, rules)
+		data.Lists = s.loadDashboardEdgeRuleLists(r, log, acct)
+		data.Versions = s.loadDashboardEdgeRuleVersions(r, log, acct, app)
 		data.WAFReview = s.loadDashboardEdgeWAFReview(r, log, acct, app, rules)
 		for _, rule := range rules {
 			if isSecurityHeadersRule(rule) && rule.Enabled {
@@ -156,6 +158,7 @@ func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log 
 			for _, rule := range rules {
 				apiRules = append(apiRules, s.edgeRules.RuleResponse(acct, rule))
 			}
+			apiRules = append(apiRules, s.dashboardPreviewInheritedRules(ctx, log, acct, app)...)
 			if names := edgeruletrace.ReferencedEdgeRuleLists(apiRules); len(names) > 0 {
 				if store, ok := s.store.(state.EdgeRuleListStore); ok {
 					lists, listErr := store.EdgeRuleListsByName(ctx, acct.ID, names)
@@ -281,7 +284,7 @@ func projectDashboardEdgeRules(rows []state.EdgeRule, unreleased func(state.Edge
 		item := dashboard.EdgeRulePageItem{
 			ID: row.ID, Kind: string(row.Kind), MatchHost: row.MatchHost, MatchPath: row.MatchPath,
 			MatchMethods: strings.Join(row.MatchMethods, ", "), Priority: row.Priority, Enabled: row.Enabled,
-			ActionJSON: string(actionJSON), ActionSummary: edgeRuleActionSummary(row),
+			ActionJSON: string(actionJSON), ActionSummary: edgeRuleActionSummary(row), EditActionJSON: edgeRuleEditActionJSON(row),
 			CreatedAt: dashboardJobsTime(row.CreatedAt), UpdatedAt: dashboardJobsTime(row.UpdatedAt),
 			SecurityPreset: isSecurityHeadersRule(row),
 			Name:           row.Name, Mode: edgeRuleModeOrDefault(row.Mode),
@@ -357,13 +360,38 @@ func edgeRuleActionSummary(rule state.EdgeRule) string {
 func dashboardEdgeRulesActionFlash(r *http.Request) string {
 	switch r.URL.Query().Get("action") {
 	case "created", "updated", "deleted", "security_headers_enabled", "mode_enforce", "mode_log", "recipe_log", "recipe_enforce",
-		"recipe_log_alert", "recipe_enforce_alert", "recipe_alert_failed", "attack_mode_on", "attack_mode_off", "waf_excluded":
+		"recipe_log_alert", "recipe_enforce_alert", "recipe_alert_failed", "attack_mode_on", "attack_mode_off", "waf_excluded",
+		"rolled_back", "list_created", "list_updated", "list_deleted":
 		return r.URL.Query().Get("action")
 	case "error":
 		return "error"
 	default:
 		return ""
 	}
+}
+
+// dashboardPreviewInheritedRules returns, for a PR preview, the production
+// app's rules the preview also applies (ADR-091 amendment 2026-10-30), so the
+// trace matches the gateway. Read failures leave the trace with the preview's
+// own rules and are logged.
+func (s *server) dashboardPreviewInheritedRules(ctx context.Context, log *slog.Logger, acct state.Account, app state.App) []api.EdgeRuleResponse {
+	if app.PreviewOfSlug == "" {
+		return nil
+	}
+	production, err := s.store.AppBySlug(ctx, app.PreviewOfSlug)
+	if err != nil || production.AccountID != app.AccountID {
+		return nil
+	}
+	rules, err := s.store.ListEdgeRulesForApp(ctx, production.ID)
+	if err != nil {
+		log.Warn("dashboard edge rules: list production rules for preview trace", "app_id", app.ID, "err", err)
+		return nil
+	}
+	responses := make([]api.EdgeRuleResponse, 0, len(rules))
+	for _, rule := range rules {
+		responses = append(responses, s.edgeRules.RuleResponse(acct, rule))
+	}
+	return edgeruletrace.PreviewInheritedRules(responses)
 }
 
 func (s *server) dashboardCreateEdgeRule(w http.ResponseWriter, r *http.Request) {
@@ -601,6 +629,8 @@ func (s *server) forwardDashboardEdgeRuleJSON(r *http.Request, acct state.Accoun
 	req.Header.Set("Content-Type", "application/json")
 	req.SetPathValue("slug", r.PathValue("slug"))
 	req.SetPathValue("id", id)
+	// The rule-list routes name their list by {name}.
+	req.SetPathValue("name", id)
 	resp := httptest.NewRecorder()
 	handler(resp, req, acct)
 	return resp
