@@ -339,7 +339,7 @@ func cmdPostgresList(args []string) int {
 	}
 	for _, database := range resp.Items {
 		if database.RestorableUntil != "" {
-			_, _ = fmt.Fprintf(osStdout, "%s is scheduled for deletion; undo before %s with: gregale postgres undelete %s\n", database.Name, database.RestorableUntil, database.Name)
+			_, _ = fmt.Fprintf(osStdout, "%s is scheduled for deletion; undo before %s with: gregale postgres recover %s\n", database.Name, database.RestorableUntil, database.Name)
 		}
 	}
 	return 0
@@ -475,7 +475,7 @@ func postgresDeletePrompt(database api.ManagedPostgresDatabase, purge bool) stri
 		return fmt.Sprintf("Delete managed PostgreSQL database %q (%s) now? Its data and point-in-time restore history are deleted at the provider and cannot be recovered.", database.Name, database.ID)
 	}
 	days := int(api.ManagedPostgresDeleteGracePeriod / (24 * time.Hour))
-	return fmt.Sprintf("Delete managed PostgreSQL database %q (%s)? It stops at once. For %d days `gregale postgres undelete %s` brings it back with its data; after that it is deleted for good.", database.Name, database.ID, days, database.Name)
+	return fmt.Sprintf("Delete managed PostgreSQL database %q (%s)? It stops at once. For %d days `gregale postgres recover %s` brings it back with its data; after that it is deleted for good.", database.Name, database.ID, days, database.Name)
 }
 
 func printPostgresDeleted(w io.Writer, database api.ManagedPostgresDatabase) {
@@ -488,7 +488,7 @@ func printPostgresDeleted(w io.Writer, database api.ManagedPostgresDatabase) {
 		name = database.ID
 	}
 	_, _ = fmt.Fprintf(w, "Managed PostgreSQL database %s (%s) is scheduled for deletion.\n", name, database.ID)
-	_, _ = fmt.Fprintf(w, "Undo before %s with: gregale postgres undelete %s\n", database.RestorableUntil, name)
+	_, _ = fmt.Fprintf(w, "Undo before %s with: gregale postgres recover %s\n", database.RestorableUntil, name)
 	_, _ = fmt.Fprintf(w, "Until then it counts toward your plan's database limit. To delete it now: gregale postgres delete %s --purge\n", name)
 }
 
@@ -811,7 +811,7 @@ func renderPostgresDatabase(w io.Writer, database api.ManagedPostgresDatabase) {
 	_, _ = fmt.Fprintf(w, "  restore_window:   %s\n", formatPostgresDuration(database.RestoreWindowSeconds))
 	_, _ = fmt.Fprintf(w, "  state:            %s\n", database.State)
 	if database.RestorableUntil != "" {
-		_, _ = fmt.Fprintf(w, "  restorable_until: %s (gregale postgres undelete %s)\n", database.RestorableUntil, database.Name)
+		_, _ = fmt.Fprintf(w, "  restorable_until: %s (gregale postgres recover %s)\n", database.RestorableUntil, database.Name)
 	}
 	if health := database.Health; health != nil {
 		_, _ = fmt.Fprintf(w, "  provider_health:  %s (fresh=%t)\n", health.Status, health.Fresh)

@@ -5741,8 +5741,8 @@ var cliCommands = []cliCommand{
 			{Name: "delete", Short: "Delete a managed PostgreSQL database; it can be undone for 7 days", Positionals: []string{"<database>"}, Flags: []cliFlag{
 				{Name: "purge", Short: "delete at once with its restore history; cannot be undone"},
 				{Name: "yes", Short: "skip the typed confirmation (alias: --quiet)"},
-			}, Notes: []string{"The database stops at once; `gregale postgres undelete` brings it back until its restorable_until.", "A deleted database still counts toward the plan's database limit until it is purged."}, Examples: []string{"gregale postgres delete orders", "gregale postgres delete orders --purge"}},
-			{Name: "undelete", Short: "Bring back a deleted managed PostgreSQL database", Positionals: []string{"<database>"}, Notes: []string{"Works until the database's restorable_until, 7 days after the delete; a purged database is gone."}, Examples: []string{"gregale postgres undelete orders"}},
+			}, Notes: []string{"The database stops at once; `gregale postgres recover` brings it back until its restorable_until.", "A deleted database still counts toward the plan's database limit until it is purged."}, Examples: []string{"gregale postgres delete orders", "gregale postgres delete orders --purge"}},
+			{Name: "undelete", Short: "Bring back a deleted managed PostgreSQL database", Positionals: []string{"<database>"}, Notes: []string{"Works until the database's restorable_until, 7 days after the delete; a purged database is gone."}, Examples: []string{"gregale postgres recover orders"}},
 			{Name: "compute-policy", Short: "Durably switch between idle suspension and always-on compute", Positionals: []string{"<database>"}, Flags: []cliFlag{
 				{Name: "scale-to-zero", Short: "true for idle suspension, false for always-on", Req: true, Value: "BOOL", ClosedSet: []string{"true", "false"}},
 				{Name: "request-id", Short: "stable request UUID; reuse after uncertain responses", Req: true, Value: "UUID"},

@@ -595,12 +595,13 @@ var cliTreeShorts = map[string]string{
 // cliTreeVerbSynonyms gives, for a standard verb, today's spellings that a
 // command may use instead (ADR-20261026145832 rule 3).
 var cliTreeVerbSynonyms = map[string][]string{
-	"list":   {"ls"},
-	"get":    {"info", "show", "inspect"},
-	"create": {"add"},
-	"update": {"replace"},
-	"delete": {"rm", "remove", "destroy"},
-	"ack":    {"acknowledge"},
+	"list":    {"ls"},
+	"get":     {"info", "show", "inspect"},
+	"create":  {"add"},
+	"update":  {"replace"},
+	"delete":  {"rm", "remove", "destroy"},
+	"ack":     {"acknowledge"},
+	"recover": {"undelete"},
 }
 
 // cliTreeStandardVerb is the reverse of cliTreeVerbSynonyms, for help.

@@ -10,7 +10,8 @@ import (
 )
 
 // A scheduled delete shows its restorable_until in list and get, and
-// `postgres undelete` brings the database back (ADR-20261029174950).
+// `postgres undelete` brings the database back (ADR-20261029174950); the
+// tree spells it `postgres recover` (ADR-20261026145832).
 func TestPostgresUndeleteAndTheScheduledDeleteView(t *testing.T) {
 	const id = "5b0c6f0e-6a55-4d3b-9b8e-2f1a0c9d7e61"
 	const scheduled = `{"id":"` + id + `","name":"orders","region":"eu","service_class":"development","state":"deleting","restorable_until":"2026-11-06T12:00:00Z"}`
@@ -46,8 +47,8 @@ func TestPostgresUndeleteAndTheScheduledDeleteView(t *testing.T) {
 		wantStdout []string
 		wantStderr string
 	}{
-		{name: "list notes the window", run: main.CmdPostgresList, wantStdout: []string{"orders is scheduled for deletion; undo before 2026-11-06T12:00:00Z with: gregale postgres undelete orders"}},
-		{name: "get shows restorable_until", run: main.CmdPostgresGet, args: []string{"orders"}, wantStdout: []string{"restorable_until: 2026-11-06T12:00:00Z (gregale postgres undelete orders)"}},
+		{name: "list notes the window", run: main.CmdPostgresList, wantStdout: []string{"orders is scheduled for deletion; undo before 2026-11-06T12:00:00Z with: gregale postgres recover orders"}},
+		{name: "get shows restorable_until", run: main.CmdPostgresGet, args: []string{"orders"}, wantStdout: []string{"restorable_until: 2026-11-06T12:00:00Z (gregale postgres recover orders)"}},
 		{name: "undelete by name", run: main.CmdPostgresUndelete, args: []string{"orders"}, wantStdout: []string{"state:            ready"}},
 		{name: "undelete after the window", run: main.CmdPostgresUndelete, args: []string{id}, gone: true, wantCode: 4, wantStderr: "managed postgres database not found"},
 		{name: "undelete needs a database", run: main.CmdPostgresUndelete, wantCode: 1, wantStderr: "usage: gregale postgres undelete"},
@@ -72,5 +73,9 @@ func TestPostgresUndeleteAndTheScheduledDeleteView(t *testing.T) {
 				t.Fatalf("stderr %q lacks %q", stderr(), tc.wantStderr)
 			}
 		})
+	}
+	undeleteStatus = http.StatusOK
+	if code, stdout, stderr := runCLI(t, "postgres", "recover", "orders"); code != 0 || !strings.Contains(stdout, "state:            ready") {
+		t.Fatalf("postgres recover: exit %d, stdout %q, stderr %q", code, stdout, stderr)
 	}
 }
