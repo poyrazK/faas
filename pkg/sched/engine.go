@@ -361,6 +361,16 @@ func staticEgressIPString(ip *netip.Addr) string {
 	return ip.String()
 }
 
+// deploymentStaticEgressIP pins the app's static egress IP (ADR-119) only for
+// a production-lane deployment. A stage leaves through the shared egress pool,
+// so a partner allowlist for production's address never accepts stage traffic.
+func deploymentStaticEgressIP(app state.App, dep state.Deployment) string {
+	if !state.ProductionDeploymentScope(dep.Scope) {
+		return ""
+	}
+	return staticEgressIPString(app.StaticEgressIP)
+}
+
 // startupDeadlineForApp resolves the readiness budget at the scheduler
 // boundary. The manifest stores an optional customer override; zero inherits
 // the plan default. Returning zero for an unknown plan preserves the vmmd
@@ -3959,7 +3969,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		// their old netns — the app_changed pg_notify path
 		// fires UpdateStaticEgressIP gRPC to patch them
 		// (pkg/sched/egress_drift.go).
-		StaticEgressIP: staticEgressIPString(app.StaticEgressIP),
+		StaticEgressIP: deploymentStaticEgressIP(app, dep),
 		// Issue #460 / ADR-053 (PR-C): per-deployment runtime port
 		// resolved from the explicit override or persisted source
 		// profile. The host-facing readiness port stays on 8080;
@@ -6026,7 +6036,7 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 		// ADR-119: customer-supplied static egress IPv4
 		// (BYOIP, Scale-only). Same threading as the Wake
 		// path above.
-		StaticEgressIP: staticEgressIPString(app.StaticEgressIP),
+		StaticEgressIP: deploymentStaticEgressIP(app, dep),
 		// Issue #460 / ADR-053 (PR-C): effective deployment runtime
 		// port. 0 = legacy 8080 (vmmd wire default).
 		Port: deploymentRuntimePort(dep),

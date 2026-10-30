@@ -32,10 +32,20 @@ const (
 var ErrInvalidWorkloadIdentity = errors.New("invalid outbound workload identity")
 
 // WorkloadIdentity is the authenticated caller, not a guest-supplied app ID.
+// Environment is the caller deployment's scope; tokens minted before it was
+// carried, and nodes without a database, leave it empty.
 type WorkloadIdentity struct {
-	AccountID  string
-	AppID      string
-	InstanceID string
+	AccountID   string
+	AppID       string
+	InstanceID  string
+	Environment string
+}
+
+// productionWorkloadEnvironment reports whether a caller runs the production
+// lane. Managed integrations hold production provider keys and quotas, so a
+// stage calls providers with its own credentials instead.
+func productionWorkloadEnvironment(environment string) bool {
+	return environment == "" || environment == workloadidentity.DefaultEnvironment || environment == "production"
 }
 
 type IdentityVerifier interface {
@@ -166,7 +176,7 @@ func (v *WorkloadIdentityVerifier) verifyAppAudience(rawToken, audience string) 
 	}, identityClockSkew); err != nil {
 		return WorkloadIdentity{}, ErrInvalidWorkloadIdentity
 	}
-	return WorkloadIdentity{AccountID: claims.AccountID, AppID: claims.AppID, InstanceID: claims.InstanceID}, nil
+	return WorkloadIdentity{AccountID: claims.AccountID, AppID: claims.AppID, InstanceID: claims.InstanceID, Environment: claims.Environment}, nil
 }
 
 var _ IdentityVerifier = (*WorkloadIdentityVerifier)(nil)

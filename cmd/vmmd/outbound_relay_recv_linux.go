@@ -23,12 +23,21 @@ const VsockOutboundRelayHostPort uint32 = fcvm.VsockOutboundRelayHostPort
 // OutboundRelayReceiver splices an app's relay connection to outboundd. The
 // per-instance listener identifies the app; vmmd never parses the bytes.
 type OutboundRelayReceiver struct {
-	ctx    context.Context
-	log    *slog.Logger
-	mgr    *fcvm.Manager
-	signer *workloadidentity.Signer
-	dial   outboundRelayDialer
-	now    func() time.Time
+	ctx         context.Context
+	log         *slog.Logger
+	mgr         *fcvm.Manager
+	signer      *workloadidentity.Signer
+	dial        outboundRelayDialer
+	now         func() time.Time
+	deployments workloadIdentityDeployments
+}
+
+// UseDeployments names each app relay assertion's environment, so outboundd
+// can keep stage instances off production's managed integrations.
+func (r *OutboundRelayReceiver) UseDeployments(d workloadIdentityDeployments) {
+	if r != nil {
+		r.deployments = d
+	}
 }
 
 // StartOutboundRelayReceiver binds the relay port. Without a signer or a
@@ -132,7 +141,11 @@ func (r *OutboundRelayReceiver) relayPreamble(instance string) (relaywire.Preamb
 	if appID == "" || accountID == "" {
 		return relaywire.Preamble{}, fmt.Errorf("outbound relay: instance identity unavailable")
 	}
-	token, err := r.signer.Mint(r.now(), accountID, appID, instance, workloadidentity.OutboundRelayAudience)
+	environment, err := instanceEnvironment(r.ctx, r.mgr, r.deployments, instance)
+	if err != nil {
+		return relaywire.Preamble{}, fmt.Errorf("outbound relay: %w", err)
+	}
+	token, err := r.signer.MintEnvironment(r.now(), accountID, appID, instance, environment, workloadidentity.OutboundRelayAudience)
 	if err != nil {
 		return relaywire.Preamble{}, fmt.Errorf("outbound relay: mint assertion: %w", err)
 	}
