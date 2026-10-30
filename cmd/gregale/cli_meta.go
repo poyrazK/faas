@@ -1697,6 +1697,15 @@ var cliCommands = []cliCommand{
 		},
 		SubcommandsAfterPositionals: true,
 		Subcommands: []cliSub{
+			{Name: subStatus, Short: "Show the app's Ready, Progressing and Degraded conditions (preview)", Notes: []string{"Conditions are derived from the health assessment; `app health` shows the evidence."}, Examples: []string{"gregale app status my-api", "gregale app status my-api --json"}, Flags: []cliFlag{
+				{Name: "environment", Short: "read this project environment's conditions instead of the default scope", Value: "SLUG"},
+			}},
+			{Name: subWait, Short: "Wait until a condition holds (preview)", Notes: []string{"Exits 0 when the condition holds, 1 when it is terminal and does not, 3 on timeout."}, Examples: []string{"gregale app wait my-api", "gregale app wait my-api --for Progressing=False --timeout 10m"}, Flags: []cliFlag{
+				{Name: "for", Short: "TYPE or TYPE=True|False|Unknown (default Ready)", Value: "CONDITION"},
+				{Name: "environment", Short: "wait on this project environment's conditions instead of the default scope", Value: "SLUG"},
+				{Name: "timeout", Short: "maximum wait (default 2m)", Value: "DURATION"},
+				{Name: "poll-interval", Short: "poll interval (default 2s; 1s to 1h)", Value: "DURATION"},
+			}},
 			{Name: subHealth, Common: true, Short: "Check serving health and readiness", Examples: []string{"gregale app health my-api --wait --timeout 2m"}, Flags: []cliFlag{
 				{Name: "check", Short: "single read; exit 0 only for a fresh healthy default-scope assessment; excludes wait and history options", Bool: true},
 				{Name: "wait", Short: "wait for a fresh healthy default-scope assessment", Bool: true},

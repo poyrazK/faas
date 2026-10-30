@@ -4738,6 +4738,10 @@
       "routes": [
         "/v1/apps/{}/status",
         "/v1/deployments/{}/status"
+      ],
+      "cli": [
+        "app status",
+        "app wait"
       ]
     },
     {
