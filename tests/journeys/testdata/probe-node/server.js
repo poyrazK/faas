@@ -18,10 +18,13 @@
 //   GET  /secret?key= presence and SHA-256 of an E2E_* secret from the live
 //                     reload snapshot (SIGHUP), else the environment
 //   GET  /ws          WebSocket: sends "hello <version>", then closes
+//   POST /hook        alert webhook receiver: 200 only when the delivery's
+//                     X-Faas-Alert-Signature verifies against E2E_HOOK_SECRET
+//                     (412 without the secret, 401 on a bad signature)
 
 import http from "node:http";
 import net from "node:net";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
 
 const version = readFileSync(new URL("./version.txt", import.meta.url), "utf8").trim();
@@ -128,6 +131,21 @@ function tryConnect(host, port) {
   });
 }
 
+// verifyAlert checks an alert delivery's signature as pkg/webhookout makes
+// it: HMAC-SHA256 over "<timestamp>.<delivery id>.<body>", sent as
+// "sha256=<hex>".
+function verifyAlert(req, body) {
+  const { value: secret } = secretValue("E2E_HOOK_SECRET");
+  if (!secret) {
+    return 412;
+  }
+  const ts = req.headers["x-faas-alert-timestamp"] || "";
+  const id = req.headers["x-faas-alert-id"] || "";
+  const got = Buffer.from(String(req.headers["x-faas-alert-signature"] || ""));
+  const want = Buffer.from("sha256=" + createHmac("sha256", secret).update(`${ts}.${id}.`).update(body).digest("hex"));
+  return got.length === want.length && timingSafeEqual(got, want) ? 200 : 401;
+}
+
 function json(res, status, body) {
   res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" });
   res.end(JSON.stringify(body));
@@ -151,6 +169,13 @@ const server = http.createServer((req, res) => {
       }
       const sha256 = createHash("sha256").update(String(value)).digest("hex");
       return json(res, 200, { key, present: true, sha256, source, revision: liveRevision, pid: process.pid });
+    }
+    case "/slow": {
+      // Holds the response so the gateway reports a slow request and the
+      // platform captures the instance automatically (ADR-1155).
+      const ms = Math.min(Math.max(Number(url.searchParams.get("ms")) || 0, 0), 20000);
+      setTimeout(() => json(res, 200, { slept_ms: ms }), ms);
+      return;
     }
     case "/healthz":
       if (version.startsWith("broken")) {
@@ -183,6 +208,16 @@ const server = http.createServer((req, res) => {
       return json(res, 200, { hits: cronHits });
     case "/cron-hits":
       return json(res, 200, { hits: cronHits });
+    case "/hook": {
+      const chunks = [];
+      req.on("data", (c) => chunks.push(c));
+      req.on("end", () => {
+        const status = verifyAlert(req, Buffer.concat(chunks));
+        console.log(`e2e-probe-hook status=${status} id=${req.headers["x-faas-alert-id"] || ""}`);
+        json(res, status, { verified: status === 200 });
+      });
+      return;
+    }
     case "/egress": {
       const names = Object.keys(egressTargets);
       Promise.all(names.map((n) => (n === "metadata" ? probeMetadata() : tryConnect(...egressTargets[n])))).then((results) => {
@@ -210,10 +245,53 @@ const server = http.createServer((req, res) => {
       req.on("close", () => clearInterval(timer));
       return;
     }
+    case "/.well-known/jwks.json": {
+      // The realtime journey signs its clients' tokens and publishes the
+      // public key here, so this app is the endpoint's OIDC issuer.
+      const jwks = process.env.E2E_REALTIME_JWKS_B64;
+      if (!jwks) {
+        return json(res, 404, { error: "no realtime JWKS configured" });
+      }
+      res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+      return res.end(Buffer.from(jwks, "base64"));
+    }
+    case "/realtime/connect":
+    case "/realtime/message":
+    case "/realtime/disconnect":
+    case "/realtime/authorize-channel":
+      return realtimeCallback(req, res, url.pathname);
     default:
       return json(res, 404, { error: "not found" });
   }
 });
+
+// realtimeCallback answers a managed realtime endpoint's callbacks once
+// they carry the endpoint's callback token. It grants every channel except
+// those named denied-*, so the realtime journey can see a refusal.
+function realtimeCallback(req, res, path) {
+  const token = process.env.E2E_REALTIME_CALLBACK_TOKEN;
+  if (req.method !== "POST" || !token || req.headers.authorization !== `Bearer ${token}`) {
+    req.resume();
+    return json(res, 401, { error: "bad realtime callback token" });
+  }
+  const chunks = [];
+  req.on("data", (c) => chunks.push(c));
+  req.on("end", () => {
+    let event = {};
+    try {
+      event = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    } catch {
+      return json(res, 400, { error: "callback body is not JSON" });
+    }
+    const channel = String(event.channel || "");
+    console.log(`e2e-probe-realtime path=${path} permission=${event.permission || ""} channel=${channel}`);
+    if (path === "/realtime/authorize-channel" && channel.startsWith("denied-")) {
+      return json(res, 403, { granted: false });
+    }
+    res.writeHead(204);
+    res.end();
+  });
+}
 
 // Minimal WebSocket endpoint (RFC 6455): handshake, one text frame, close.
 server.on("upgrade", (req, socket) => {

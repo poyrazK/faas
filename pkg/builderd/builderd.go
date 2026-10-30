@@ -30,7 +30,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/buildpublisher"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
-	"github.com/onebox-faas/faas/pkg/markers"
 	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
@@ -920,11 +919,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	}
 	// The runner base reaches imaged through the signed export claim, or, on
 	// a node without a build publisher, through this build's provenance.
-	nodeSpec := ""
-	if fw == FrameworkNode {
-		nodeSpec = markers.NodeVersionSpecAtRoot(dep.SourcePath, dep.SourceRoot)
-	}
-	sharedRuntime := sharedSourceAppRuntime(app, fw, nodeSpec, dockerfilePath, os.Getenv)
+	sharedRuntime := sharedSourceAppRuntime(app, fw, sourceVersionSpecs(fw, dep.SourcePath, dep.SourceRoot), dockerfilePath, os.Getenv)
 	if sharedRuntime != "" {
 		ref, refErr := resolveBuildRuntimeBaseRef(sharedRuntime, fw, os.Getenv)
 		if refErr != nil {
@@ -1362,6 +1357,9 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	}()
 	phases.vmDone = time.Now()
 	b.emitBuildLog(ctx, build.ID, phases.vmLine())
+	if line := guestTimingsLog(out.Timings); line != "" {
+		b.emitBuildLog(ctx, build.ID, line)
+	}
 	if out.WarmSnapshotError != "" {
 		b.log.Warn("builderd: warm snapshot unavailable; build artifact preserved", "build", build.ID, "err", out.WarmSnapshotError)
 		b.emitBuildLog(ctx, build.ID, "warm builder cache unavailable — deployment completed from the built artifact\n")
@@ -1516,7 +1514,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		return result, err
 	}
 	phases.completed = time.Now()
-	b.log.Info("builderd: build phases", append([]any{"build", build.ID, "deployment", build.DeploymentID}, phases.attrs()...)...)
+	b.log.Info("builderd: build phases", append(append([]any{"build", build.ID, "deployment", build.DeploymentID}, phases.attrs()...), guestTimingAttrs(out.Timings)...)...)
 	// Only cache a successfully committed build produced by the same builder
 	// environment observed before VM launch. A concurrent base restage leaves
 	// the successful deployment intact but deliberately skips cache publication.

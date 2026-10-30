@@ -1,6 +1,7 @@
 [Service]
-# ADR-847 synthetic route probes. apid sends opted-in probes through the public
-# gateway origin; unset (route_probes_enabled false) keeps probes off.
-{% if route_probes_enabled | default(false) | bool %}
-Environment=FAAS_ROUTE_PROBE_URL=https://{{ gatewayd_apps_domain | default('gregale.dev') }}
+# ADR-847 synthetic route probes (on by default, amendment 1). apid sends them
+# to the local gatewayd-public listener; route_probes_enabled false keeps
+# probes off.
+{% if route_probes_enabled | default(true) | bool %}
+Environment=FAAS_ROUTE_PROBE_URL={{ faas_route_probe_url | default('http://127.0.0.1:8080') }}
 {% endif %}

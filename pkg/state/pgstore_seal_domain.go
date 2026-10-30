@@ -245,6 +245,48 @@ func (s *PgStore) ResealGithubWebhookSecret(ctx context.Context, installationID 
 	return tag.RowsAffected() == 1, nil
 }
 
+// GithubInstallTokenSealed is a stored GitHub install token that has not
+// expired yet, as sealed.
+type GithubInstallTokenSealed struct {
+	AccountID      string
+	InstallationID int64
+	Sealed         []byte
+}
+
+// ListUnexpiredGithubInstallTokens pages, in (account, installation) order
+// after the cursor, through the install tokens githubd may still open: a
+// githubd rehydrates an unexpired token from its row rather than mint a new
+// one. An empty afterAccountID starts at the beginning.
+func (s *PgStore) ListUnexpiredGithubInstallTokens(ctx context.Context, afterAccountID string, afterInstallationID int64, limit int) ([]GithubInstallTokenSealed, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 1000
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT account_id::text, installation_id, sealed_install_token
+		  FROM github_installations
+		 WHERE token_expires_at > now()
+		   AND (account_id::text, installation_id) > ($1, $2)
+		 ORDER BY account_id::text, installation_id
+		 LIMIT $3
+	`, afterAccountID, afterInstallationID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("state: list unexpired github install tokens: %w", err)
+	}
+	defer rows.Close()
+	var out []GithubInstallTokenSealed
+	for rows.Next() {
+		var t GithubInstallTokenSealed
+		if err := rows.Scan(&t.AccountID, &t.InstallationID, &t.Sealed); err != nil {
+			return nil, fmt.Errorf("state: scan github install token: %w", err)
+		}
+		out = append(out, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("state: list unexpired github install tokens: %w", err)
+	}
+	return out, nil
+}
+
 // Registry credential kinds: an app's and a job's private-registry password.
 const (
 	RegistrySealedCredentialApp = "app"
@@ -510,6 +552,59 @@ func (s *PgStore) ResealAlertingCredential(ctx context.Context, c AlertingSealed
 		return false, fmt.Errorf("state: reseal alerting credential %s %s: %w", c.Kind, c.ID, err)
 	}
 	return tag.RowsAffected() == 1, nil
+}
+
+// Kinds of the MCP readiness destination secret copies open incidents carry.
+const (
+	AlertingRoutingCopyPrimary  = "mcp_incident_primary"
+	AlertingRoutingCopyFallback = "mcp_incident_fallback"
+)
+
+// ListOpenMCPReadinessRoutingSecrets pages, in (kind, id) order after the
+// cursor, through the sealed destination secrets that MCP readiness
+// incidents copy into delivery_routing when they open. ID is the incident
+// id. Only incidents delivery may still read are listed: those not yet
+// resolved and those with an event still to deliver. Delivery opens a copy
+// when the route names a receiver the current policy no longer does.
+func (s *PgStore) ListOpenMCPReadinessRoutingSecrets(ctx context.Context, afterKind, afterID string, limit int) ([]AlertingSealedCredential, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 1000
+	}
+	rows, err := s.pool.Query(ctx, `
+		WITH open_incident AS (
+			SELECT i.id, i.delivery_routing FROM mcp_readiness_incidents i
+			 WHERE i.resolved_at IS NULL
+			    OR EXISTS (SELECT 1 FROM mcp_readiness_incident_events e
+			                WHERE e.incident_id = i.id
+			                  AND e.delivery_status NOT IN ('delivered', 'suppressed', 'abandoned'))
+		)
+		SELECT kind, id, sealed FROM (
+			SELECT 'mcp_incident_primary' AS kind, id::text AS id, decode(delivery_routing->'primary'->>'secret', 'base64') AS sealed
+			  FROM open_incident WHERE coalesce(delivery_routing->'primary'->>'secret', '') <> ''
+			UNION ALL
+			SELECT 'mcp_incident_fallback', id::text, decode(delivery_routing->'fallback'->>'secret', 'base64')
+			  FROM open_incident WHERE coalesce(delivery_routing->'fallback'->>'secret', '') <> ''
+		) copy
+		 WHERE (kind, id) > ($1, $2)
+		 ORDER BY kind, id
+		 LIMIT $3
+	`, afterKind, afterID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("state: list open MCP readiness routing secrets: %w", err)
+	}
+	defer rows.Close()
+	var out []AlertingSealedCredential
+	for rows.Next() {
+		var c AlertingSealedCredential
+		if err := rows.Scan(&c.Kind, &c.ID, &c.Sealed); err != nil {
+			return nil, fmt.Errorf("state: scan MCP readiness routing secret: %w", err)
+		}
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("state: list open MCP readiness routing secrets: %w", err)
+	}
+	return out, nil
 }
 
 // ResealStorageCredential replaces an active S3 credential's sealed secret

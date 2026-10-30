@@ -35,3 +35,22 @@ func TestOverageCentsForMBSecondsUsesCorrectUnits(t *testing.T) {
 		t.Fatalf("at-allowance overage = %d, want 0", got)
 	}
 }
+
+// A paid plan's default spend cap is one more allowance at the overage rate,
+// the managed PostgreSQL overage ceiling; Free has none.
+// adr: 20261029180000
+func TestDefaultOverageCapCents(t *testing.T) {
+	for plan, want := range map[Plan]int64{PlanHobby: 200, PlanPro: 1_000, PlanScale: 3_000} {
+		got, ok := plan.DefaultOverageCapCents()
+		if !ok || got != want {
+			t.Errorf("%s default cap = (%d, %v), want (%d, true)", plan, got, ok, want)
+		}
+		allowance := int64(plan.PlanIncludedGBHours()) * OverageMillicentsPerGBHour / MillicentsPerCent
+		if got != allowance*(ManagedPostgresOverageCeilingMultiplier-1) {
+			t.Errorf("%s default cap %d is not one allowance (%d cents) of overage", plan, got, allowance)
+		}
+	}
+	if got, ok := PlanFree.DefaultOverageCapCents(); ok {
+		t.Errorf("free default cap = %d, want none", got)
+	}
+}

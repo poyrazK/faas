@@ -18,30 +18,57 @@ import (
 // earlier one-year immutable lifetime kept deleted files public.
 var publicCacheControl = "public, max-age=" + strconv.Itoa(api.PublicObjectReadMaxAgeSeconds) + ", must-revalidate"
 
-// publicReadLimiters holds one token bucket per public bucket, bounded to
-// MaxPublicObjectReadLimiters; when full it starts over rather than grow, which
-// at worst lets a bucket burst again.
-type publicReadLimiters struct {
+// keyedLimiters holds one token bucket per key, bounded to max keys; when
+// full it starts over rather than grow, which at worst lets a key burst again.
+type keyedLimiters struct {
 	mu      sync.Mutex
+	rate    rate.Limit
+	burst   int
+	max     int
 	buckets map[string]*rate.Limiter
 }
 
-func newPublicReadLimiters() *publicReadLimiters {
-	return &publicReadLimiters{buckets: map[string]*rate.Limiter{}}
+func newKeyedLimiters(r rate.Limit, burst, max int) *keyedLimiters {
+	return &keyedLimiters{rate: r, burst: burst, max: max, buckets: map[string]*rate.Limiter{}}
 }
 
-func (l *publicReadLimiters) allow(bucket string) bool {
+func (l *keyedLimiters) allow(key string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	limiter, ok := l.buckets[bucket]
+	limiter, ok := l.buckets[key]
 	if !ok {
-		if len(l.buckets) >= api.MaxPublicObjectReadLimiters {
+		if len(l.buckets) >= l.max {
 			clear(l.buckets)
 		}
-		limiter = rate.NewLimiter(api.PublicObjectReadRatePerBucket, api.PublicObjectReadBurstPerBucket)
-		l.buckets[bucket] = limiter
+		limiter = rate.NewLimiter(l.rate, l.burst)
+		l.buckets[key] = limiter
 	}
 	return limiter.Allow()
+}
+
+// publicReadLimiters holds one token bucket per public bucket.
+type publicReadLimiters = keyedLimiters
+
+func newPublicReadLimiters() *publicReadLimiters {
+	return newKeyedLimiters(api.PublicObjectReadRatePerBucket, api.PublicObjectReadBurstPerBucket, api.MaxPublicObjectReadLimiters)
+}
+
+// AccountRequestLimiter bounds each bucket owner's authenticated S3 requests
+// per gateway process (ADR-20261030075301).
+type AccountRequestLimiter struct{ limiters *keyedLimiters }
+
+func NewAccountRequestLimiter() *AccountRequestLimiter {
+	return &AccountRequestLimiter{limiters: newKeyedLimiters(api.ObjectStorageAccountRequestsPerSecond, api.ObjectStorageAccountRequestBurst, api.MaxObjectStorageAccountLimiters)}
+}
+
+// Allow takes one token from the owner of b: its organization, which is the
+// account's personal organization for a personal bucket.
+func (l *AccountRequestLimiter) Allow(b state.ObjectBucket) bool {
+	owner := b.OrgID
+	if owner == "" {
+		owner = b.AccountID
+	}
+	return l.limiters.allow(owner)
 }
 
 // writePublicReadRefusal answers an admission or reservation failure. A

@@ -13,12 +13,16 @@ import (
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/webhookdedupe"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // polarWebhook accepts Polar Standard Webhooks deliveries. The provider
 // verifies the signature and translates Polar's subscription/order payloads
 // into billing.Event before this handler touches account state.
 func (s *server) polarWebhook(w http.ResponseWriter, r *http.Request) {
+	rec := &webhookOutcomeWriter{ResponseWriter: w, status: http.StatusOK}
+	w = rec
+	defer rec.observe(s.ops, "polar_webhook", time.Now())
 	if s.billingProvider == nil || providerName(s.billingProvider) != "polar" {
 		s.log.Error("polar_webhook.no_provider", "provider", providerName(s.billingProvider), "err", "Polar is not the active billing provider")
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
@@ -183,4 +187,41 @@ func (s *server) startPolarInvoicePDF(ctx context.Context, ev billing.Event) {
 			s.requestPolarInvoicePDFAsync(ctx, requester, ev.Invoice.ProviderInvoiceID, ev.EventID)
 		}
 	}
+}
+
+// webhookOutcomeWriter records the status a provider webhook handler answered
+// with. Polar disables an endpoint after ten consecutive non-2xx deliveries,
+// so each answer is counted as apid_ops_total{op,code} with code ok (2xx),
+// rejected (4xx) or unavailable (5xx), and FaasPolarWebhookFailing fires
+// before Polar gives up on the endpoint (ADR-20261029180000).
+type webhookOutcomeWriter struct {
+	http.ResponseWriter
+	status      int
+	wroteHeader bool
+}
+
+func (w *webhookOutcomeWriter) WriteHeader(status int) {
+	if !w.wroteHeader {
+		w.status, w.wroteHeader = status, true
+	}
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *webhookOutcomeWriter) Write(b []byte) (int, error) {
+	w.wroteHeader = true
+	return w.ResponseWriter.Write(b)
+}
+
+func (w *webhookOutcomeWriter) observe(ops *wire.OpsMetrics, op string, start time.Time) {
+	if ops == nil {
+		return
+	}
+	code := "ok"
+	switch {
+	case w.status >= http.StatusInternalServerError:
+		code = "unavailable"
+	case w.status >= http.StatusBadRequest:
+		code = "rejected"
+	}
+	ops.ObserveCode(op, code, time.Since(start))
 }

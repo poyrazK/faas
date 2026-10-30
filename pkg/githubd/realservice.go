@@ -346,6 +346,9 @@ func (s *RealService) ExchangeOAuthCode(accountID, code, stateStr string) (strin
 	if err != nil {
 		return "", "", err
 	}
+	if err := s.Auth.AuthorizeInstallationBinder(context.Background(), userToken, pick); err != nil {
+		return "", "", err
+	}
 	// Defense-in-depth §11 re-verify.
 	instPayload, verified, err := s.Auth.VerifyInstallation(context.Background(), pick.ID, pick.Account.Login)
 	if err != nil {

@@ -89,6 +89,21 @@ signal behind quiet pause's soft CPU guarantee. UID
 fixtures in `pkg/promqlrules/testdata/frozen_tier.test.yml`. Runbook:
 `docs/runbooks/FaasFrozenTier.md`.
 
+## `agent-runs.json` (ADR-20261027090010)
+
+Gregale Agents runs, from agentd's `/metrics` (the `agentd` scrape job, on
+only with `faas_agentd_managed`). The **Agent runs** row shows the queue
+(`agent_run_queue_depth`, `agent_run_queue_oldest_seconds`, max over
+replicas), runs finished by terminal state (`agent_runs_total`), requeues by
+gRPC cause (`agent_run_requeues_total`), the p95 of each start stage
+(`agent_run_start_seconds`: queue, input, place, boot) and run duration from
+placement (`agent_run_duration_seconds`). The **Deliveries** row shows
+deliveries ended, attempts by result and attempt latency
+(`agent_deliveries_total`, `agent_delivery_attempts_total`,
+`agent_delivery_attempt_seconds`). There are no alerts yet; the dogfood
+runbook is `docs/runbooks/AgentsDogfood.md`. UID
+`faas-agent-runs-adr-20261027090010`.
+
 ## `customer-operations.json` (ADR-20261016123221)
 
 Customer Operations. The **Pending Operations** row shows accepted, running,

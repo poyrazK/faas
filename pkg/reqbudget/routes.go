@@ -50,10 +50,29 @@ var deploySubmissionRoutes = []struct{ method, path string }{
 // IsDeploySubmissionRequest identifies a request that uploads deploy source
 // or submits a deployment.
 func IsDeploySubmissionRequest(r *http.Request) bool {
+	return matchesRoute(r, deploySubmissionRoutes)
+}
+
+// accountExportRoutes assemble the whole account (every app, deployment and
+// audit row) into one spool before the first byte goes out. On
+// production-us a 44-app account outran the 5 s apid default on every
+// attempt and got 503 "could not assemble export" (hunt #9 H9-136; again on
+// rc.304 and rc.305, Hunt 14 H14-120).
+var accountExportRoutes = []struct{ method, path string }{
+	{http.MethodGet, "/v1/account/export"},
+	{http.MethodGet, "/dashboard/account/export"},
+}
+
+// IsAccountExportRequest identifies the REST and dashboard account exports.
+func IsAccountExportRequest(r *http.Request) bool {
+	return matchesRoute(r, accountExportRoutes)
+}
+
+func matchesRoute(r *http.Request, routes []struct{ method, path string }) bool {
 	if r == nil {
 		return false
 	}
-	for _, route := range deploySubmissionRoutes {
+	for _, route := range routes {
 		if r.Method == route.method && pathMatches(route.path, r.URL.Path) {
 			return true
 		}

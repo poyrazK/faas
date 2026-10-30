@@ -22,7 +22,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -80,6 +82,10 @@ type Params struct {
 type Grace struct {
 	p       Params
 	metrics *metrics
+	// mu guards blocked: the tombstones whose last purge was refused. It is
+	// in memory, so a restart retries every one at once.
+	mu      sync.Mutex
+	blocked map[string]purgeBlock
 }
 
 // New returns a Grace ready to Run. Defaults: Interval 60s, Now
@@ -106,7 +112,7 @@ func New(p Params) *Grace {
 	if p.Audit == nil {
 		p.Audit = noopAuditor{}
 	}
-	return &Grace{p: p, metrics: newMetrics(p.Registry)}
+	return &Grace{p: p, metrics: newMetrics(p.Registry), blocked: map[string]purgeBlock{}}
 }
 
 // noopAuditor discards every emit. Default for tests.
@@ -177,6 +183,11 @@ func (g *Grace) RunOnce(ctx context.Context) error {
 				continue
 			}
 		}
+		if err := g.deleteAccountAppArtifacts(ctx, acct.ID); err != nil {
+			g.p.Log.Warn("grace: app artifact cleanup deferred", "account", acct.ID, "err", err)
+			deferred++
+			continue
+		}
 		// Past grace — hard delete. The next tick will skip this row
 		// because DeleteAccount removed it; we still guard on the
 		// returned ErrNotFound for the redelivery race (two ticks
@@ -236,6 +247,38 @@ func (g *Grace) RunOnce(ctx context.Context) error {
 	return g.RunAppsOnce(ctx)
 }
 
+// deleteAccountAppArtifacts deletes the stored rootfs layers, sidecar layers
+// and snapshot objects of an account's live personal apps before
+// DeleteAccount drops the rows that name them. Account deletion does not
+// tombstone the apps, so the app purge never ran for them and their objects
+// stayed in the snapshot backend and layer store forever (bug hunt
+// 2026-10-28 B19). Any failure defers the account to the next pass.
+func (g *Grace) deleteAccountAppArtifacts(ctx context.Context, accountID string) error {
+	apps, err := g.p.Store.ListApps(ctx, accountID)
+	if err != nil {
+		return fmt.Errorf("list account apps: %w", err)
+	}
+	for _, app := range apps {
+		if app.AccountID != accountID {
+			continue
+		}
+		artifacts, err := g.p.Store.ListAppDeletionArtifacts(ctx, app.ID)
+		if err != nil {
+			return fmt.Errorf("list artifacts of app %s: %w", app.ID, err)
+		}
+		if len(artifacts) != 0 && g.p.Artifacts == nil {
+			return fmt.Errorf("app %s has %d artifacts and no artifact backend is configured", app.ID, len(artifacts))
+		}
+		for _, artifact := range artifacts {
+			if err := g.p.Artifacts.Delete(ctx, artifact.Key); err != nil && !storage.IsNotFound(err) {
+				g.metrics.failure("delete_artifact")
+				return fmt.Errorf("delete artifact of app %s: %w", app.ID, err)
+			}
+		}
+	}
+	return nil
+}
+
 // RunAppsOnce permanently removes app tombstones whose seven-day restore
 // window has elapsed. It is separate so callers and tests can drive app
 // cleanup independently from the account sweep.
@@ -248,8 +291,15 @@ func (g *Grace) RunAppsOnce(ctx context.Context) error {
 	now := g.p.Now()
 	missingDeadlines := 0
 	var retainedArtifactBytes int64
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	listed := make(map[string]struct{}, len(rows))
 	for _, app := range rows {
+		listed[app.ID] = struct{}{}
 		if app.DeleteGraceUntil != nil && app.DeleteGraceUntil.After(now) {
+			continue
+		}
+		if g.backingOff(app.ID, now) {
 			continue
 		}
 		if app.DeleteGraceUntil != nil {
@@ -306,22 +356,10 @@ func (g *Grace) RunAppsOnce(ctx context.Context) error {
 			continue
 		}
 		if err := g.p.Store.DeleteAppPermanently(ctx, app.ID); err != nil {
-			if errors.Is(err, state.ErrNotFound) {
-				continue
-			}
-			if errors.Is(err, state.ErrConflict) {
-				// A live bucket, managed PostgreSQL binding or unsettled
-				// multipart write still holds the app. That is a wait, not a
-				// failure; logging it as one every minute buried real purge
-				// errors (Hunt 11 H11-21).
-				g.metrics.failure("retained_resources")
-				g.p.Log.Debug("grace: app hard delete waits for retained resources", "app", app.ID)
-				continue
-			}
-			g.metrics.failure("delete_database")
-			g.p.Log.Warn("grace: app hard delete failed", "app", app.ID, "err", err)
+			g.purgeRefused(ctx, app, err, now)
 			continue
 		}
+		delete(g.blocked, app.ID)
 		g.metrics.deleted.Inc()
 		// Reuse the existing lifecycle channel so schedd's cleanup path
 		// gets a durable redelivery signal. The app row has already been
@@ -336,6 +374,7 @@ func (g *Grace) RunAppsOnce(ctx context.Context) error {
 		})
 		g.p.Log.Info("grace: app hard-deleted", "app", app.ID, "slug", app.Slug)
 	}
+	g.recordBlocked(listed)
 	g.metrics.missingDeadlines.Set(float64(missingDeadlines))
 	g.metrics.expiredArtifactBytes.Set(float64(retainedArtifactBytes))
 	g.metrics.lastSuccess.SetToCurrentTime()

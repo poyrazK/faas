@@ -1984,6 +1984,10 @@ type AppManifest struct {
 	ProjectImageCommand     []string                `json:"project_image_command,omitempty"`
 	ProjectImagePort        int                     `json:"project_image_port,omitempty"`
 	ProjectImageHealthcheck *api.ComposeHealthcheck `json:"project_image_healthcheck,omitempty"`
+	// ProjectReadinessCheck is the scanned HTTP or gRPC readiness check
+	// (ADR-20261029093621 §3); project deploys pass it as the deployment's
+	// startup probe. Nil leaves readiness to the image and inferred profile.
+	ProjectReadinessCheck *api.DeploymentHealthcheck `json:"project_readiness_check,omitempty"`
 	// ProjectImageProcess is the Compose entrypoint, user, working_dir and
 	// stop contract for the image (ADR-1337); nil inherits the image's.
 	ProjectImageProcess         *api.ComposeProcess `json:"project_image_process,omitempty"`
@@ -2096,7 +2100,7 @@ func (m AppManifest) EffectivePreviewServiceCallsPolicy() api.PreviewServiceCall
 // app rows to persist a non-empty contract.
 func (m AppManifest) IsZero() bool {
 	return len(m.PublicBuildURLs) == 0 && m.Entrypoint == nil && m.Env == nil && m.ProjectSourceSHA256 == "" &&
-		m.BuildDockerfile == "" && m.DockerfileBuild == nil && m.BuildGoCommand == "" && m.ProjectImage == "" && m.ProjectImageCommand == nil && m.ProjectImagePort == 0 && m.ProjectImageHealthcheck == nil && m.ProjectImageProcess == nil && len(m.ProjectDependencyConditions) == 0 && len(m.ProjectSecretFiles) == 0 && len(m.ServiceBindings) == 0 && len(m.ServiceReliability) == 0 && m.ServiceBindingPolicy == "" && m.ServiceBindingTransport == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.AllowedServiceCallScopes == nil && m.WorkingDir == "" &&
+		m.BuildDockerfile == "" && m.DockerfileBuild == nil && m.BuildGoCommand == "" && m.ProjectImage == "" && m.ProjectImageCommand == nil && m.ProjectImagePort == 0 && m.ProjectImageHealthcheck == nil && m.ProjectReadinessCheck == nil && m.ProjectImageProcess == nil && len(m.ProjectDependencyConditions) == 0 && len(m.ProjectSecretFiles) == 0 && len(m.ServiceBindings) == 0 && len(m.ServiceReliability) == 0 && m.ServiceBindingPolicy == "" && m.ServiceBindingTransport == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.AllowedServiceCallScopes == nil && m.WorkingDir == "" &&
 		m.Port == 0 && len(m.Ports) == 0 && m.Healthz == "" && m.User == "" &&
 		m.ExecutionMode == "" && m.RestartPolicy == "" && m.AfterRestore == nil && m.BeforeCheckpoint == nil && m.Pause == "" && m.Profiling == nil && m.Tracing == nil &&
 		m.StartupDeadlineS == 0 && m.MaxRetries == 0 && m.RequestTimeoutS == 0 && m.FunctionConcurrency == 0 &&
@@ -2119,6 +2123,7 @@ func mergeProjectManagedManifest(existing, desired AppManifest) AppManifest {
 	existing.ProjectImageCommand = desired.ProjectImageCommand
 	existing.ProjectImagePort = desired.ProjectImagePort
 	existing.ProjectImageHealthcheck = desired.ProjectImageHealthcheck.Clone()
+	existing.ProjectReadinessCheck = desired.ProjectReadinessCheck.Clone()
 	existing.ProjectImageProcess = desired.ProjectImageProcess.Clone()
 	existing.ProjectDependencyConditions = maps.Clone(desired.ProjectDependencyConditions)
 	existing.ProjectSecretFiles = api.CloneSecretFiles(desired.ProjectSecretFiles)
@@ -7070,14 +7075,26 @@ type EmailVerificationToken struct {
 
 // CliAuthCode is one row of the cli_auth_codes table (spec §2.2
 // device-code flow). AccountID is empty between mint and claim; the
-// claim statement fills it in atomically. The 4-byte entropy + 5-min
-// TTL + per-IP rate limit means brute-force on the code space is not
-// realistic, so we don't bump the byte length here.
+// claim statement fills it in atomically. TokenHash is the hash of the
+// short code the user approves. DeviceHash, when set, is the hash of a
+// 32-byte device code only the CLI holds, and the row can then be
+// exchanged only with that device code (bug hunt 2026-10-28 H67).
 type CliAuthCode struct {
 	TokenHash  []byte
+	DeviceHash []byte
 	AccountID  string // empty until ClaimCliAuthCode
 	ExpiresAt  time.Time
 	ConsumedAt *time.Time
+}
+
+// CliAuthDeviceCodeStore binds a CLI code to a device code (H67). A row
+// issued through it is refused by ConsumeCliAuthCode, so guessing the short
+// code the user approves never yields a key.
+type CliAuthDeviceCodeStore interface {
+	IssueCliAuthDeviceCode(ctx context.Context, tokenHash, deviceHash []byte, expiresAt time.Time) error
+	// ConsumeCliAuthDeviceCode has ConsumeCliAuthCode's contract, keyed by
+	// the device code's hash.
+	ConsumeCliAuthDeviceCode(ctx context.Context, deviceHash []byte) (api.CliAuthStatus, string, error)
 }
 
 // AccountPassword is one row of the account_passwords table

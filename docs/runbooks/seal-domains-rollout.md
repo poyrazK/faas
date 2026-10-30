@@ -632,6 +632,58 @@ this step stay domain-only, so:
 - never roll githubd back past the first release that carried the source
   reader.
 
+### 5e. Contract: githubd drops the fleet and host keys
+
+As for outbound in 2e. Go on only when all of these hold:
+
+- a 5d migration run shows only `current`;
+- an hour has passed since writes became domain-only, so every unexpired
+  install token is sealed to the domain. githubd reopens an unexpired token
+  rather than mint a new one, so a token only the fleet key opens would
+  fail it until it expires. The check below reports such tokens as `left
+  on the fleet key`;
+- githubd's previous release (N-1) also starts without the fleet and host
+  keys, so rolling back one release keeps it starting. An older githubd
+  falls back to `/etc/faas/secrets/host.age`, which it cannot read. To roll
+  back past that release, set the variable below back to false first.
+
+Add to the local variables file, and converge the control plane:
+
+```yaml
+faas_seal_domain_source_contracted: true
+```
+
+The role runs `seal-domain migrate --domain source --check` first, and
+stops while a webhook secret copy still opens with the fleet or host key or
+has none yet (`pending`: run the 5d migration again), or while an unexpired
+token is left on the fleet key (`skipped`: wait for it to expire). It then
+rewrites githubd's drop-in:
+
+1. an empty `LoadCredential=` drops the base unit's credentials;
+2. the GitHub App key and the public fleet recipient are loaded again;
+3. both key paths are unset.
+
+Last, it restarts githubd and checks `/run/credentials/faas-githubd.service`.
+
+Check, on each host:
+
+```bash
+sudo ls /run/credentials/faas-githubd.service
+journalctl -u faas-githubd -b | grep '"source seal domain"'
+```
+
+- The directory lists `faas_seal_domain_source` (plus
+  `faas_seal_domain_source_previous` during a rotation),
+  `faas_github_app_key_unit` and `faas_fleet_age_recipient`. It lists no
+  `faas_fleet_age_identity` or `faas_host_age_identity`.
+- githubd logs `"domain_identity":true` and `"fleet_identity":false`.
+
+Push to a connected repository again to confirm.
+
+Rollback: set `faas_seal_domain_source_contracted: false` and converge.
+githubd loads the fleet and host keys again. Nothing stored changes in this
+step.
+
 ## 6. Build seal domain
 
 imaged on compute hosts is the only reader of app and job private-registry
@@ -935,6 +987,52 @@ Values re-sealed in this step stay domain-only, so:
 - never roll meterd back past the first release that carried the alerting
   reader.
 
+### 8e. Contract: meterd drops the fleet and host keys
+
+As for outbound in 2e. Go on only when all of these hold:
+
+- a 8d migration run shows only `current`;
+- no open MCP readiness incident still carries a key copy that only the
+  fleet or host key opens. The check below reports them as `left on the
+  fleet key`; they clear as the incidents resolve;
+- meterd's previous release (N-1) also runs its alert evaluator without the
+  fleet and host keys, so rolling back one release keeps alerts flowing. To
+  roll back past that release, set the variable below back to false first.
+
+Add to the local variables file, and converge the control plane:
+
+```yaml
+faas_seal_domain_alerting_contracted: true
+```
+
+The role runs `seal-domain migrate --domain alerting --check` first. It
+stops while a value still opens with the fleet or host key (`pending`: run
+the 8d migration again), or while an incident copy is left on the fleet
+key (`skipped`: wait for those incidents to resolve). It then drops the
+fleet key, the host key and the `host.age.previous` that the
+`optional_credentials` role projects, restarts meterd, and checks
+`/run/credentials/faas-meterd.service`.
+
+Check, on each host:
+
+```bash
+sudo ls /run/credentials/faas-meterd.service
+journalctl -u faas-meterd -b | grep '"alerting seal domain"'
+```
+
+- The directory lists `faas_seal_domain_alerting`, plus
+  `faas_seal_domain_alerting_previous` during a rotation, and no
+  `faas_fleet_age_identity`, `faas_host_age_identity` or
+  `faas_host_age_identity_previous`.
+- meterd logs `"domain_identity":true` and `"fleet_identity":false`.
+- `meterd_alert_evaluator_enabled` stays 1.
+
+Run the test sends from 8b again.
+
+Rollback: set `faas_seal_domain_alerting_contracted: false` and converge.
+meterd loads the fleet and host keys again. Nothing stored changes in this
+step.
+
 ## 9. Storage seal domain
 
 s3-gatewayd on the control plane is the only reader of Gregale S3 secret
@@ -1045,7 +1143,8 @@ faas_seal_domain_storage_contracted: true
 The role runs `seal-domain migrate --domain storage --check` first, and
 stops while a credential still opens with the fleet or host key. If it
 stops, run the 9d migration again, then converge again. It then drops both
-keys from s3-gatewayd's credentials and restarts it. Without them
+keys, and the `host.age.previous` that the `optional_credentials` role
+projects, from s3-gatewayd's credentials and restarts it. Without them
 s3-gatewayd skips its startup rekey. Last, the role checks
 `/run/credentials/faas-s3-gatewayd.service`.
 

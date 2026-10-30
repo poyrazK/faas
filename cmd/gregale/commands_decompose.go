@@ -628,7 +628,8 @@ func planCreatedSlugs(plan api.PlanResponse) map[string]bool {
 
 // printDefaultMemoryServices names the new services that start with the
 // project default RAM because their Compose file declares no memory, which
-// is easy to miss: a standalone app gets the plan's RAM (Hunt 14 H14-36).
+// is easy to miss: a standalone app gets the plan's RAM, capped at
+// api.StandaloneAppDefaultMaxRAMMB (Hunt 14 H14-36).
 //
 //nolint:errcheck // a failed write is handled like printPlanTextWithExplain's
 func printDefaultMemoryServices(w io.Writer, plan api.PlanResponse) {
@@ -751,7 +752,7 @@ func printPublicURLs(w io.Writer, workloads []api.PlanWorkload) {
 func printUnsetEnvKeys(w io.Writer, workloads []api.PlanWorkload) {
 	ws := append([]api.PlanWorkload(nil), workloads...)
 	sort.Slice(ws, func(i, j int) bool { return ws[i].Name < ws[j].Name })
-	imported, unset, notOptedIn := false, false, false
+	imported, unset, notOptedIn, notAnnotated := false, false, false, false
 	for _, wl := range ws {
 		imported = imported || len(wl.ImportedEnvKeys) > 0
 		unset = unset || len(wl.UnsetEnvKeys) > 0
@@ -776,6 +777,7 @@ func printUnsetEnvKeys(w io.Writer, workloads []api.PlanWorkload) {
 		for _, key := range wl.UnsetEnvKeys {
 			reason := wl.UnsetEnvKeyReasons[key]
 			notOptedIn = notOptedIn || reason == "not_opted_in"
+			notAnnotated = notAnnotated || reason == "not_annotated"
 			if text := envImportReasonText[reason]; text != "" {
 				key += " (" + text + ")"
 			}
@@ -788,11 +790,16 @@ func printUnsetEnvKeys(w io.Writer, workloads []api.PlanWorkload) {
 	if notOptedIn {
 		fmt.Fprintln(w, "  To import plain Compose values, add `x-gregale-env-import: true` at the top of the Compose file.")
 	}
+	if notAnnotated {
+		fmt.Fprintln(w, "  To import a Kubernetes Deployment's or CronJob's plain values, annotate it with `gregale.dev/env-import: \"true\"`.")
+	}
 }
 
 // envImportReasonText renders the plan's unset_env_key_reasons codes.
 var envImportReasonText = map[string]string{
 	"not_opted_in":    "plain value in Compose",
+	"not_annotated":   "plain value in a Kubernetes manifest",
+	"secret_ref":      "from a Kubernetes Secret; never imported",
 	"secret":          "looks like a secret",
 	"service_address": "Docker address of a datastore or non-HTTP service",
 	"local_address":   "local address",

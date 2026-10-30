@@ -477,20 +477,10 @@ func (m *streamBridgeManager) startEntryProcess(ctx context.Context, entry *stre
 	spawnNetns, guestIP := streamBridgeTarget(withPublicTarget(ctx, entry.target), entry.netns)
 	env := m.bridgeEnv(req, entry.target)
 	if m.useUnit(entry) {
-		if err := m.startEntryUnit(ctx, entry, bridgePath, spawnNetns, guestIP, port, deadline, env, req.GetAppProtocol()); err != nil {
+		err := m.startUnitBridge(ctx, entry, bridgePath, spawnNetns, guestIP, port, deadline, env, req.GetAppProtocol())
+		if err == nil || !m.fallBackFromUnit(ctx, entry, err) {
 			return err
 		}
-		if err := m.waitSocket(entry.socket, streamBridgeSocketReadyTimeout); err != nil {
-			return fmt.Errorf("stream bridge socket not ready: %w", err)
-		}
-		if !entry.alive() {
-			return fmt.Errorf("instance bridge unit %s exited before becoming ready", entry.unit.name)
-		}
-		if err := m.connectEntry(entry); err != nil {
-			return err
-		}
-		m.recordUnit(entry)
-		return nil
 	}
 	if entry.identity.unprivileged() {
 		if err := entry.identity.prepareSocketDir(entry.socket); err != nil {

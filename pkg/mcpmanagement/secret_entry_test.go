@@ -124,7 +124,7 @@ func testRequestSecretOpensTheEntryPage(t *testing.T, version string) {
 	if stringField(t, out, "elicitation") != "opened" || stringField(t, out, "status") != "pending" || out["entry_url"] != nil {
 		t.Fatalf("request = %v", out)
 	}
-	if len(asked) != 1 || asked[0].Mode != "url" || asked[0].URL != testEntryURL || asked[0].ElicitationID != stringField(t, out, "request_id") || !strings.Contains(asked[0].Message, "never sees it") {
+	if len(asked) != 1 || asked[0].Mode != "url" || asked[0].URL != testEntryURL || asked[0].ElicitationID != stringField(t, out, "request_id") || !strings.Contains(asked[0].Message, "cannot read it through Gregale") {
 		t.Fatalf("elicitation = %+v", asked)
 	}
 	if len(f.requests) != 1 || f.requests[0].Key != "STRIPE_KEY" || f.requests[0].Reason != "payments" {

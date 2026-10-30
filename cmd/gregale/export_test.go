@@ -506,6 +506,7 @@ const UploadSessionAlreadyCommittedCode = uploadSessionAlreadyCommittedCode
 const UploadSessionOffsetConflictCode = uploadSessionOffsetConflictCode
 
 // Package-level vars
+var TerminalSafe = terminalSafe
 var AuthAdminHTTPClient = &authAdminHTTPClient
 var AuthAdminKeyID = &authAdminKeyID
 var AuthAdminKeyName = &authAdminKeyName
@@ -932,6 +933,8 @@ var CmdMCPTasksReport = cmdMCPTasksReport
 var CmdMail = cmdMail
 var CmdMan = cmdMan
 var CmdMetrics = cmdMetrics
+
+var ParseJobCommand = parseJobCommand
 var CmdMfa = cmdMfa
 var CmdMfaConfirm = cmdMfaConfirm
 var CmdMfaDisable = cmdMfaDisable
@@ -1494,6 +1497,11 @@ var ParseCustomerOperationSignal = parseCustomerOperationSignal
 // (ADR-20261017100853), whose fields are unexported.
 func NewTenantCustomerOperationSignalClient(client *api.Client, definition string) tenantCustomerOperationSignalClient {
 	return tenantCustomerOperationSignalClient{client: client, definition: definition}
+}
+
+// NewEnvironmentAppClient builds a stage app client whose revision pin starts unset.
+func NewEnvironmentAppClient(client *api.Client, environment string, revision *int64) EnvironmentAppClient {
+	return environmentAppClient{Client: client, environment: environment, revision: revision}
 }
 
 var ParseDataAPIContract = parseDataAPIContract
@@ -2581,3 +2589,8 @@ func TierDiscoverableFlags(names, capabilities []string) []string {
 	}
 	return kept
 }
+
+// BindExclusiveLock binds a created cron or broker trigger to its lock.
+var BindExclusiveLock = bindExclusiveLock
+
+type ExclusiveLock = exclusiveLock

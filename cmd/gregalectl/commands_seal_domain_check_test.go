@@ -28,8 +28,9 @@ import (
 // TestSealDomainCheckOutboundPostgres pins the check the seal_domains role
 // runs before outboundd drops the fleet identity (ADR 20261022111812, step
 // 4): it fails while a credential still opens with the fleet identity,
-// writes nothing, and passes once the re-seal moved every row. The storage
-// check runs the same way for s3-gatewayd.
+// writes nothing, and passes once the re-seal moved every row. The storage,
+// alerting and source checks run the same way for s3-gatewayd, meterd and
+// githubd.
 func TestSealDomainCheckOutboundPostgres(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
 	ctx := context.Background()
@@ -115,30 +116,48 @@ func TestSealDomainCheckOutboundPostgres(t *testing.T) {
 		t.Fatalf("check after the re-seal = %+v, %v; want it passed", report, err)
 	}
 
-	// The storage check runs the storage walk: with no S3 credential stored
-	// nothing is pending.
-	storage := mustCheckIdentity(t)
-	if err := secretbox.WriteHostKeyAtPath(sealdomain.IdentityPath(dir, sealdomain.Storage), storage); err != nil {
-		t.Fatal(err)
-	}
-	storageProbe, err := sealdomain.SealProbe(sealdomain.Storage, storage.Recipient())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.UpsertSealDomainProbe(ctx, string(sealdomain.Storage), storage.Recipient().String(), storageProbe); err != nil {
-		t.Fatal(err)
-	}
-	out.Reset()
-	if err := runSealDomainMigrate([]string{"--check", "--domain", "storage", "--pg-dsn", dsn, "--dir", dir, "--fleet-key", fleetPath, "--host-key", filepath.Join(dir, "host.age"), "--json"}); err != nil {
-		t.Fatal(err)
-	}
-	var storageReport sealmigrate.MigrationReport
-	if err := json.Unmarshal(out.Bytes(), &storageReport); err != nil || storageReport.Domain != sealdomain.Storage || storageReport.Pending != 0 {
-		t.Fatalf("storage check = %s, %v; want the storage domain with nothing pending", out.String(), err)
+	// The storage, alerting and source checks run their own walks: with nothing
+	// stored nothing is pending.
+	for _, d := range []sealdomain.Domain{sealdomain.Storage, sealdomain.Alerting, sealdomain.Source} {
+		id := mustCheckIdentity(t)
+		if err := secretbox.WriteHostKeyAtPath(sealdomain.IdentityPath(dir, d), id); err != nil {
+			t.Fatal(err)
+		}
+		probe, err := sealdomain.SealProbe(d, id.Recipient())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.UpsertSealDomainProbe(ctx, string(d), id.Recipient().String(), probe); err != nil {
+			t.Fatal(err)
+		}
+		out.Reset()
+		if err := runSealDomainMigrate([]string{"--check", "--domain", string(d), "--pg-dsn", dsn, "--dir", dir, "--fleet-key", fleetPath, "--host-key", filepath.Join(dir, "host.age"), "--json"}); err != nil {
+			t.Fatal(err)
+		}
+		var report sealmigrate.MigrationReport
+		if err := json.Unmarshal(out.Bytes(), &report); err != nil || report.Domain != d || report.Pending != 0 {
+			t.Fatalf("%s check = %s, %v; want the %s domain with nothing pending", d, out.String(), err, d)
+		}
 	}
 
 	if err := runSealDomainMigrate([]string{"--check", "--domain", "build", "--pg-dsn", dsn}); err == nil || !strings.Contains(err.Error(), "only in this release") {
 		t.Fatalf("check of a domain that cannot contract yet = %v; want it refused", err)
+	}
+}
+
+// TestSkippedReasonNamesTheDomainsLeftovers: the rows a domain's migration
+// leaves on the fleet key are named for that domain, so an operator waiting
+// on account clone rows is not told about log destinations.
+func TestSkippedReasonNamesTheDomainsLeftovers(t *testing.T) {
+	for d, want := range map[sealdomain.Domain]string{
+		sealdomain.Account:  "clone",
+		sealdomain.Alerting: "MCP readiness incidents",
+		sealdomain.Source:   "install tokens",
+		sealdomain.Edge:     "application-standard log destinations",
+	} {
+		if got := skippedReason(d); !strings.Contains(got, want) {
+			t.Errorf("skippedReason(%s) = %q, want it to name %q", d, got, want)
+		}
 	}
 }
 

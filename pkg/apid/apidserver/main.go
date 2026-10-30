@@ -1898,9 +1898,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			if reqbudget.IsDeploymentResponseCheckRequest(r) {
 				return api.DeploymentResponseCheckTimeout
 			}
-			if reqbudget.IsSyncInvokeRequest(r) || reqbudget.IsDeploySubmissionRequest(r) || managedrealtime.IsRealtimeGroupClaimRequest(r) {
+			if reqbudget.IsSyncInvokeRequest(r) || reqbudget.IsDeploySubmissionRequest(r) || reqbudget.IsAccountExportRequest(r) || managedrealtime.IsRealtimeGroupClaimRequest(r) {
 				// invokeApp applies the plan-specific 5s/30s wait, a deploy
-				// commit scans its source archive (H9-157), and realtime
+				// commit scans its source archive (H9-157), an account
+				// export assembles the whole account (H14-120), and realtime
 				// group claims may long-poll; all get the platform ceiling
 				// instead of the 5 s default.
 				return api.RequestBudgetMax
@@ -2573,6 +2574,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	var guestSpans *receivers.GuestSpansIngester
 	if deps.getenv("FAAS_OTEL_SPANS_WRITER_ENABLED") != "false" {
 		guestSpans = receivers.NewGuestSpansIngester(srv.store, sharedLimiter, log).WithLogs(srv.store)
+		// Multi-box: a node's vmmd/apid-client leaf names the node, so its
+		// spans and logs must come from instances on that node.
+		if nodes, ok := nodeVerifier.(wire.NodeIdentityResolver); ok {
+			guestSpans.WithPeerNodes(nodes, srv.store)
+		}
 		guestSpansWriter := receivers.NewSpansWriterReceiver(srv.store, srv.ops, sharedLimiter, true)
 		go func() {
 			if err := guestSpans.Run(ctx, receivers.OtelFlushInterval(deps.getenv), guestSpansWriter.WriteSpansSummary); err != nil && ctx.Err() == nil {

@@ -11,9 +11,11 @@ import (
 )
 
 // fakeGrype counts its directory scans in state/count and fails a scan while
-// state/fail exists.
+// state/fail exists. Like grype, every run rewrites the database directory's
+// last_update_check.
 const fakeGrype = `#!/bin/sh
 state='@STATE@'
+date +%s%N >"$GRYPE_DB_CACHE_DIR/6/last_update_check"
 case "$1" in
 version) echo "fake grype 1.0"; exit 0 ;;
 esac
@@ -31,6 +33,7 @@ func TestGrypeReplayReplaysOnlyByteIdenticalScans(t *testing.T) {
 	real := filepath.Join(state, "grype")
 	writeTestFile(t, real, strings.ReplaceAll(fakeGrype, "@STATE@", state), 0o700)
 	writeTestFile(t, filepath.Join(db, "6", "vulnerability.db"), "db v1\n", 0o600)
+	writeTestFile(t, filepath.Join(db, "6", "import.json"), `{"digest":"v1"}`, 0o600)
 	t.Setenv("FAAS_GRYPE_BIN", real)
 	t.Setenv("GRYPE_DB_CACHE_DIR", db)
 	bin, err := writeGrypeReplay(root)

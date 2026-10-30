@@ -101,6 +101,7 @@ var memDispatched = map[string]bool{
 	"FailRunningInstanceIfOwnedByNode":                        true,
 	"FinalizeManagedPostgresBindingRotationsForApp":           true,
 	"FinancialEvidenceCoverage":                               true,
+	"ListFinancialPriceSnapshots":                             true,
 	"FinalizeObjectS3CredentialRotationsForApp":               true,
 	"FinishPublishedEventRecipient":                           true,
 	"GetAppErrorSample":                                       true,
@@ -275,6 +276,7 @@ var memDispatched = map[string]bool{
 	"RecordProjectMigrationBaseline":                true,
 	"PinnedProjectReleaseWorkers":                   true,
 	"HeldProjectReleaseWorkers":                     true,
+	"ListConsumerKeysForApp":                        true,
 }
 
 func (s *Mem) AppTaskByID(ctx context.Context, account, app, id string) (state.AppTask, error) {
@@ -453,6 +455,15 @@ func (s *Mem) FinancialEvidenceCoverage(p0 context.Context) (time.Time, error) {
 		return o.FinancialEvidenceCoverage(p0)
 	}
 	return s.MemStore.FinancialEvidenceCoverage(p0)
+}
+
+func (s *Mem) ListFinancialPriceSnapshots(p0 context.Context, p1 string, p2 time.Time) ([]state.FinancialPriceSnapshot, error) {
+	if o, ok := s.over.(interface {
+		ListFinancialPriceSnapshots(context.Context, string, time.Time) ([]state.FinancialPriceSnapshot, error)
+	}); ok {
+		return o.ListFinancialPriceSnapshots(p0, p1, p2)
+	}
+	return s.MemStore.ListFinancialPriceSnapshots(p0, p1, p2)
 }
 
 func (s *Mem) DeleteAppPermanently(p0 context.Context, p1 string) error {
@@ -705,6 +716,15 @@ func (s *Mem) FinalizeObjectS3CredentialRotationsForApp(p0 context.Context, p1 s
 		return o.FinalizeObjectS3CredentialRotationsForApp(p0, p1, p2)
 	}
 	return s.MemStore.FinalizeObjectS3CredentialRotationsForApp(p0, p1, p2)
+}
+
+func (s *Mem) ListConsumerKeysForApp(p0 context.Context, p1 string, p2 string) ([]state.ConsumerKey, error) {
+	if o, ok := s.over.(interface {
+		ListConsumerKeysForApp(context.Context, string, string) ([]state.ConsumerKey, error)
+	}); ok {
+		return o.ListConsumerKeysForApp(p0, p1, p2)
+	}
+	return s.MemStore.ListConsumerKeysForApp(p0, p1, p2)
 }
 
 func (s *Mem) GetAppErrorSample(p0 context.Context, p1 sqlc.GetAppErrorSampleParams) (state.AppErrorSampleRow, error) {

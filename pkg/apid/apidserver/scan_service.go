@@ -1032,6 +1032,12 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			continue
 		}
 		operationDefinitions := sourceOperationSpecs(manifest)
+		// The workload's own gregale.yaml declares its workflows (ADR-081),
+		// exactly as on a single-app deploy of the same directory.
+		var workflowDefinitions []api.WorkflowSpec
+		if manifest != nil {
+			workflowDefinitions = manifest.Workflows
+		}
 		// A single-workload project has no ownership ambiguity, so it may
 		// also use the explicit gregale.yaml release.command declaration.
 		// Multi-workload Procfiles are already assigned exactly once by
@@ -1088,6 +1094,7 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			operationID = run.OperationID(app.ID)
 			buildDependencies = run.BuildDependencies(app.ID)
 		}
+		readinessCheck, livenessCheck := projectReadinessOverrides(app.Manifest, acct.Plan)
 		enqRes, enqErr := apidsource.Enqueue(deployCtx, s.store, s.notif, apidsource.EnqueueParams{
 			TrafficPercentExplicit:    safe,
 			OperationID:               operationID,
@@ -1100,6 +1107,8 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			ImagePort:                 app.Manifest.ProjectImagePort,
 			ImageCommand:              app.Manifest.ProjectImageCommand,
 			ImageHealthcheck:          app.Manifest.ProjectImageHealthcheck,
+			OverrideHealthcheck:       readinessCheck,
+			OverrideLivenessProbe:     livenessCheck,
 			ImageProcess:              app.Manifest.ProjectImageProcess,
 			FullRootfsAllowAuto:       api.FullRootfsAllowAutoDefault[acct.Plan],
 			SourcePath:                staged,
@@ -1128,6 +1137,7 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			ReleaseCommand:      releaseCommand.command,
 			ReleaseCommandShell: releaseCommand.shell,
 			ServiceRollout:      !safe && app.Manifest.ExecutionMode == api.ExecutionModeService,
+			Workflows:           marshalWorkflowDefinitions(workflowDefinitions),
 		})
 		if app.Manifest.ProjectImage != "" {
 			_ = os.Remove(staged)
@@ -1978,7 +1988,7 @@ func (s *server) scanService(
 	// reposcan type carries. See toPlanWorkload / toPlanManaged.
 	// The Compose environment's values are read apart from the scan so they
 	// never enter a plan; an unreadable one only means nothing is imported.
-	composeEnv, composeEnvErr := reposcan.ReadComposeEnv(os.DirFS(req.ScanDir))
+	composeEnv, composeEnvErr := reposcan.ReadProjectEnv(os.DirFS(req.ScanDir), s.projectScanOptions(acct))
 	if composeEnvErr != nil {
 		composeEnv = reposcan.ComposeEnv{}
 	}
@@ -2038,6 +2048,11 @@ func (s *server) scanService(
 		pw.UnsetEnvKeys, pw.ImportedEnvKeys, pw.UnsetEnvKeyReasons = projectsetup.SplitEnvImport(
 			withoutProvidedKeys(w.Name, unset, composePostgres), envImport)
 		warnings = append(warnings, projectsetup.RewrittenEnvNotes(w.Name, pw.ImportedEnvKeys, envImport)...)
+		slug := w.AppSlug
+		if slug == "" {
+			slug = w.Name
+		}
+		warnings = append(warnings, projectsetup.IngressNotes(w.Name, slug, w.IngressSettings, acct.Plan, limits)...)
 		if w.ServiceBindingPolicy == "" && existing != nil {
 			pw.ServiceBindingPolicy = existing.Manifest.EffectiveServiceBindingPolicy()
 		}

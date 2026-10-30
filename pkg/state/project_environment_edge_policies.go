@@ -132,7 +132,7 @@ func (s *PgStore) PutProjectEnvironmentEdgePolicy(ctx context.Context, policy Pr
 	if err != nil {
 		return ProjectEnvironmentEdgePolicy{}, err
 	}
-	tx, err := s.beginTrafficPolicyMutation(ctx, uuidToPgtype(policy.AccountID))
+	tx, err := s.beginRuleOnlyTrafficPolicyMutation(ctx, uuidToPgtype(policy.AccountID))
 	if err != nil {
 		return ProjectEnvironmentEdgePolicy{}, err
 	}

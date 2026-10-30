@@ -1195,7 +1195,16 @@ select id, account_id, key_sha256, coalesce(label, ''), scopes, created_at, coal
 from api_keys where key_sha256 = $1;
 
 -- name: TouchKeyLastUsed :exec
-update api_keys set last_used_at = now() where id = $1;
+-- An active, non-admin mcp-login key also slides (ADR-20261028205920): use
+-- extends it to idle_seconds from now, never past max_age_seconds after it was
+-- created, and never shortens it.
+update api_keys set last_used_at = now(),
+    expires_at = case
+        when label = @mcp_login_label::text and status = 'active' and expires_at is not null and not ('admin' = any(scopes))
+        then greatest(expires_at, least(now() + make_interval(secs => @idle_seconds::double precision), created_at + make_interval(secs => @max_age_seconds::double precision)))
+        else expires_at
+    end
+where id = @id;
 
 -- name: CreateApp :one
 insert into apps (id, account_id, slug, type, runtime, ram_mb, idle_timeout_s, max_concurrency, status, manifest)
@@ -3223,6 +3232,19 @@ where lower(a.github_repo_full_name) = lower(sqlc.arg(repo_full_name)::text)
   and (sqlc.arg(repo_id)::bigint = 0 or a.github_repo_id = sqlc.arg(repo_id)::bigint)
 having count(distinct a.github_install_account_id) = 1;
 
+-- name: GitHubRepositoryIDsBoundToAccount :one
+-- The immutable owner and repository IDs an account's app binding recorded
+-- for a repository name (bug hunt 2026-10-28 H68): the OIDC exchange
+-- requires a token's repository_owner_id and repository_id claims to match
+-- them, so a recreated repository under a freed owner name does not pass.
+-- Zero when no binding of the name records them.
+select coalesce(max(a.github_owner_id), 0)::bigint as owner_id,
+       coalesce(max(a.github_repo_id), 0)::bigint as repo_id
+from apps a
+where a.account_id = sqlc.arg(account_id)::uuid
+  and lower(a.github_repo_full_name) = lower(sqlc.arg(repo_full_name)::text)
+  and a.deleted_at is null;
+
 -- name: InsertOIDCExchangedToken :one
 -- Fresh-token insert. The id is server-minted by sqlc (gen_random_uuid).
 -- Returns the full row (with created_at server-stamped).
@@ -5105,6 +5127,17 @@ SELECT * FROM object_buckets WHERE app_id = $1 AND account_id = $2 AND name = $3
 -- name: ObjectBucketCount :one
 SELECT count(*) FROM object_buckets WHERE app_id = $1 AND state <> 'deleted';
 
+-- name: ObjectBucketPlacementLock :exec
+-- Serializes bucket placement in one region (ADR-20261029174627).
+SELECT pg_advisory_xact_lock(hashtextextended('object-bucket-placement:' || sqlc.arg(region)::text, 0));
+
+-- name: ObjectBucketPlacementCounts :many
+SELECT backend_id, count(*)::bigint AS buckets,
+  count(*) FILTER (WHERE account_id = sqlc.narg(account_id)::uuid)::bigint AS account_buckets
+FROM object_buckets
+WHERE backend_id = ANY(sqlc.arg(backend_ids)::text[]) AND state <> 'deleted'
+GROUP BY backend_id;
+
 -- name: ObjectBucketCountForAccount :one
 SELECT count(*) FROM object_buckets WHERE account_id = $1 AND org_id IN (SELECT id FROM orgs WHERE personal_org) AND state <> 'deleted';
 
@@ -5360,6 +5393,34 @@ SELECT count FROM object_storage_authorizations WHERE account_id=$1 AND period_s
 -- name: ObjectUsageAuthorize :exec
 INSERT INTO object_storage_authorizations (account_id, period_start, count) VALUES ($1,$2,1)
 ON CONFLICT (account_id,period_start) DO UPDATE SET count = object_storage_authorizations.count + 1;
+
+-- name: ObjectStorageReadOwner :one
+-- The owner check of ObjectStorageLockOwner without its row locks, for the
+-- cached read decision (ADR-20261030075301).
+SELECT object_storage_usage_subject(b.org_id,b.account_id)::uuid AS subject
+FROM object_buckets b JOIN orgs o ON o.id=b.org_id
+WHERE b.id=sqlc.arg(bucket_id)::uuid AND b.account_id=sqlc.arg(account_id)::uuid
+AND (CASE WHEN NOT o.personal_org AND o.resource_ownership_enabled THEN o.status IN ('active','past_due') AND o.abuse_hold_at IS NULL
+ELSE EXISTS(SELECT 1 FROM accounts a WHERE a.id=b.account_id AND a.status IN ('active','past_due') AND a.abuse_hold_at IS NULL) END);
+
+-- name: ObjectReadUsageRecordMetrics :exec
+-- Batched read counts (ADR-20261030075301); a deleted bucket is skipped.
+INSERT INTO object_storage_request_metrics (bucket_id, period_start, request_count, egress_bytes)
+SELECT b.id, sqlc.arg(period_start)::timestamptz, sqlc.arg(requests)::bigint, sqlc.arg(egress_bytes)::bigint
+FROM object_buckets b WHERE b.id = sqlc.arg(bucket_id)::uuid
+ON CONFLICT (bucket_id, period_start) DO UPDATE
+SET request_count = object_storage_request_metrics.request_count + EXCLUDED.request_count,
+    egress_bytes = object_storage_request_metrics.egress_bytes + EXCLUDED.egress_bytes;
+
+-- name: ObjectReadUsageSubjects :many
+SELECT b.id, object_storage_usage_subject(b.org_id, b.account_id, sqlc.arg(period_start)::timestamptz)::uuid AS subject
+FROM object_buckets b WHERE b.id = ANY(sqlc.arg(bucket_ids)::uuid[]);
+
+-- name: ObjectUsageAuthorizeBy :exec
+INSERT INTO object_storage_authorizations (account_id, period_start, count)
+VALUES (sqlc.arg(account_id)::uuid, sqlc.arg(period_start)::timestamptz, sqlc.arg(count)::bigint)
+ON CONFLICT (account_id, period_start) DO UPDATE
+SET count = object_storage_authorizations.count + EXCLUDED.count;
 
 -- name: ObjectStorageProviderRequestIncrement :exec
 INSERT INTO object_storage_request_metrics (bucket_id, period_start, request_count)
@@ -6577,6 +6638,98 @@ SELECT EXISTS(SELECT 1 FROM project_environments
               WHERE project_id = sqlc.arg(project_id)::uuid
                 AND slug = sqlc.arg(target_environment)::text)::boolean AS target_exists;
 
+-- name: ReadProjectEnvironmentCloneInventoryPresent :many
+SELECT present::text AS table_name
+FROM project_environment_clone_inventory_present(
+    sqlc.arg(project_id)::uuid, sqlc.arg(environment_id)::uuid, sqlc.arg(environment_slugs)::text[],
+    sqlc.arg(app_ids)::uuid[], sqlc.arg(deployment_ids)::uuid[], sqlc.arg(probes)::jsonb) AS present;
+
+-- name: CancelProjectEnvironmentCloneTargetDeployments :execrows
+-- A data-less clone that will not publish cancels the deployments it created
+-- for its target; schedd drains their instances on the notification.
+WITH cancelled AS (
+    UPDATE deployments d SET status = 'cancelled'
+    FROM project_environment_clone_workloads w
+    WHERE w.operation_id = sqlc.arg(operation_id)::uuid AND d.id = w.target_deployment_id
+      AND d.app_id = w.app_id AND d.scope = sqlc.arg(environment)::text
+      AND d.status NOT IN ('failed', 'superseded', 'cancelled')
+    RETURNING d.id, d.app_id
+)
+SELECT pg_notify('deployment_changed', json_build_object('kind', 'cancelled', 'app_id', app_id, 'deployment_id', id,
+    'to', id, 'status', 'cancelled')::text)
+FROM cancelled;
+
+-- name: ReadProjectEnvironmentCloneTargetRetirement :one
+SELECT count(*) FILTER (WHERE d.status NOT IN ('failed', 'superseded', 'cancelled'))::bigint AS unretired,
+       (SELECT count(*) FROM instances i
+         WHERE i.deployment_id IN (SELECT target_deployment_id FROM project_environment_clone_workloads WHERE operation_id = sqlc.arg(operation_id)::uuid)
+           AND i.state NOT IN ('parked', 'stopped', 'failed'))::bigint AS active_instances
+FROM project_environment_clone_workloads w
+JOIN deployments d ON d.id = w.target_deployment_id
+WHERE w.operation_id = sqlc.arg(operation_id)::uuid;
+
+-- name: DeleteProjectEnvironmentCloneTargetPolicies :exec
+WITH routes AS (
+    DELETE FROM project_environment_route_policies
+    WHERE project_id = sqlc.arg(project_id)::uuid AND environment_slug = sqlc.arg(environment)::text
+)
+DELETE FROM project_environment_edge_policies
+WHERE project_id = sqlc.arg(project_id)::uuid AND environment_slug = sqlc.arg(environment)::text;
+
+-- name: ReadProjectEnvironmentCloneClock :one
+SELECT clock_timestamp()::timestamptz AS now;
+
+-- name: ReadProjectEnvironmentCloneRestoredDatabases :many
+-- Each ready target database this clone restored, with a provider restore
+-- proof that still matches the row (the same checks as
+-- ReadManagedPostgresCloneRestoreProof).
+SELECT d.id::text AS database_id, p.source_database_id::text AS source_database_id, p.point_in_time
+FROM managed_postgres_databases d
+JOIN managed_postgres_restore_proofs p ON p.database_id = d.id
+WHERE d.environment_clone_operation_id = sqlc.arg(operation_id)::uuid AND d.account_id = sqlc.arg(account_id)::uuid
+    AND d.clone_resource_role = 'target' AND d.state = 'ready' AND d.deleted_at IS NULL AND d.lease_token IS NULL
+    AND p.account_id = d.account_id AND p.operation_id = d.environment_clone_operation_id
+    AND p.backend_id = d.backend_id AND p.backend_fingerprint = d.backend_fingerprint
+    AND p.provider_resource_id = d.provider_resource_id AND p.data_resource_id = d.data_resource_id
+    AND p.source_database_id = d.restore_source_database_id AND p.source_resource_id = d.restore_source_resource_id
+    AND p.point_in_time = d.restore_point_in_time
+    AND p.generation = d.desired_generation AND p.generation = d.observed_generation
+    AND p.spec = jsonb_build_object('Region',d.region,'PostgresMajor',d.postgres_major,
+        'Class',d.service_class,'Availability',d.availability,'ScaleToZero',d.scale_to_zero,
+        'StorageLimitBytes',d.storage_limit_bytes,'RestoreWindowSeconds',d.restore_window_seconds)
+ORDER BY d.id
+FOR SHARE OF d, p;
+
+-- name: ReadProjectEnvironmentCloneLiveTargetDatabases :many
+SELECT id::text AS database_id FROM managed_postgres_databases
+WHERE environment_clone_operation_id = sqlc.arg(operation_id)::uuid AND account_id = sqlc.arg(account_id)::uuid
+    AND clone_resource_role = 'target' AND state <> 'deleted'
+ORDER BY id;
+
+-- name: WithdrawProjectEnvironmentCloneTargetBindingSecrets :exec
+-- Compensation withdraws the target bindings a clone prepared. Their provider
+-- credentials live in the clone's own target database, which is deleted next.
+DELETE FROM app_secrets s
+USING project_environment_clone_postgres_bindings c
+WHERE c.operation_id = sqlc.arg(operation_id)::uuid AND s.managed_postgres_binding_id = c.target_binding_id
+    AND s.scope = sqlc.arg(environment)::text;
+
+-- name: WithdrawProjectEnvironmentCloneTargetBindings :exec
+UPDATE managed_postgres_bindings b SET state = 'deleted', last_error_code = NULL, lease_token = NULL, lease_until = NULL,
+    rotation_previous_generation = NULL, rotation_wake_id = NULL, rotation_cleanup_ready = false,
+    attempt_count = 0, retry_at = clock_timestamp(), updated_at = clock_timestamp(), deleted_at = clock_timestamp()
+FROM project_environment_clone_postgres_bindings c
+WHERE c.operation_id = sqlc.arg(operation_id)::uuid AND b.id = c.target_binding_id
+    AND b.scope = sqlc.arg(environment)::text AND b.state <> 'deleted'
+    AND NOT EXISTS (SELECT 1 FROM app_secrets s WHERE s.managed_postgres_binding_id = b.id);
+
+-- name: ReadProjectEnvironmentCloneProjectSlug :one
+SELECT slug FROM projects WHERE id = sqlc.arg(project_id)::uuid AND account_id = sqlc.arg(account_id)::uuid;
+
+-- name: ReadProjectEnvironmentCloneSourceEnvironmentID :one
+SELECT id FROM project_environments
+WHERE project_id = sqlc.arg(project_id)::uuid AND slug = sqlc.arg(slug)::text;
+
 -- name: LockProjectEnvironmentCloneTargetReservation :one
 SELECT id::text, revision, status, source_environment,
        (lease_token IS NULL OR lease_until > clock_timestamp())::boolean AS lease_live
@@ -6946,6 +7099,10 @@ WHERE h.environment_id=$1 ORDER BY h.app_id FOR SHARE OF h,s;
 
 -- name: ReadProjectEnvironmentCloneOperationIDByKey :one
 SELECT id FROM project_environment_clone_operations WHERE account_id=$1 AND project_id=$2 AND idempotency_key=$3;
+
+-- name: CountUnfinishedProjectEnvironmentCloneOperations :one
+SELECT count(*)::bigint FROM project_environment_clone_operations
+WHERE status IN ('pending','capturing','copying','publishing','compensating');
 
 -- name: CreateCapturedProjectEnvironmentCloneOperation :exec
 INSERT INTO project_environment_clone_operations(id,account_id,project_id,source_environment,target_environment,idempotency_key,source_revision_hash,source_release_set_id,configuration_capture_version)
@@ -8155,13 +8312,18 @@ WITH metadata AS (
         AND legacy.account_id=a.account_id AND legacy.project_id=a.project_id AND legacy.slug=d.scope
         AND legacy.created_at<=d.created_at
 )
+-- 'active' pages by app (after_app_id, ordered by app): the rollback window
+-- needs every row of an app, and a newest-first cut over the whole fleet
+-- dropped exactly the oldest generations GC exists to reclaim once the live
+-- set passed the limit (bug hunt 2026-10-28 H66).
 SELECT * FROM metadata
-WHERE (sqlc.arg(mode)::text='active' AND (NOT stale OR runtime_owner_invalid))
+WHERE (sqlc.arg(mode)::text='active' AND (NOT stale OR runtime_owner_invalid) AND app_id>sqlc.arg(after_app_id)::text)
     OR (sqlc.arg(mode)::text='stale' AND stale AND stale_since<now()-sqlc.arg(retention_seconds)::bigint*interval '1 second')
     OR (sqlc.arg(mode)::text='pending' AND delete_pending)
-ORDER BY CASE WHEN sqlc.arg(mode)::text='active' THEN created_at END DESC,
+ORDER BY CASE WHEN sqlc.arg(mode)::text='active' THEN app_id END ASC,
+    CASE WHEN sqlc.arg(mode)::text='active' THEN created_at END DESC,
     CASE WHEN sqlc.arg(mode)::text<>'active' THEN created_at END ASC, id ASC
-LIMIT 10000;
+LIMIT sqlc.arg(row_limit)::integer;
 
 -- name: ReadRuntimeScalingStateForDeployment :one
 WITH owner AS (
@@ -8996,6 +9158,12 @@ FOR UPDATE OF n NOWAIT;
 -- LOCK takes no data snapshot. Exclude the RowShare locks acquired by the
 -- fleet capacity triggers before the repeatable-read account view begins.
 LOCK TABLE service_capacity_policy IN EXCLUSIVE MODE NOWAIT;
+
+-- name: ReadTrafficCapacityLockHeld :one
+-- A rule-only traffic policy write holds no lock on the fleet capacity policy
+-- unless one of its statements fired a capacity trigger (ADR-20261029150627).
+SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_locks WHERE pid = pg_backend_pid() AND locktype = 'relation'
+    AND relation = 'service_capacity_policy'::regclass AND mode <> 'AccessShareLock')::boolean AS held;
 
 -- name: LockTrafficCapacityWriter :exec
 -- A binding mutation takes its capacity triggers' RowShare lock first. Taken
@@ -10221,6 +10389,16 @@ VALUES ($1, $2, $3, $4, $5);
 SELECT f.* FROM project_environment_promotion_feature_flags f
 JOIN project_environment_promotions p ON p.id = f.promotion_id
 WHERE p.id = sqlc.arg(promotion_id)::uuid AND p.account_id = sqlc.arg(account_id)::uuid;
+
+-- name: ListPromotionFeatureFlagHolds :many
+-- Receipts whose activation or rollback wrote this flag version; Go decides
+-- which promotion states still hold it.
+SELECT p.status, p.rollback_status, f.target_version, f.rollback_version
+FROM project_environment_promotion_feature_flags f
+JOIN project_environment_promotions p ON p.id = f.promotion_id
+WHERE p.account_id = sqlc.arg(account_id)::uuid AND p.project_id = sqlc.arg(project_id)::uuid
+ AND f.previous_target_snapshot->>'source_environment_id' = sqlc.arg(environment_id)::text
+ AND (f.target_version = sqlc.arg(version)::bigint OR f.rollback_version = sqlc.arg(version)::bigint);
 
 -- name: UpdatePromotionFeatureFlagReceipt :one
 UPDATE project_environment_promotion_feature_flags
@@ -11907,10 +12085,10 @@ and queue_binding_id is not distinct from sqlc.narg(binding_id)::uuid for share;
 -- One snapshot includes active work and dead letters. A NULL queue selects
 -- every name in this scope; an empty string selects only legacy unnamed work.
 select
-  count(*) filter (where state in ('pending','dispatching'))::bigint as depth,
+  count(*) filter (where state='dispatching' or (state='pending' and due_at <= now()))::bigint as depth,
   count(*) filter (where state='dispatching' and lease_expires_at > now())::bigint as in_flight,
   count(*) filter (where state='dead_letter')::bigint as dead_letter,
-  min(created_at) filter (where state='pending')::timestamptz as oldest_pending_at
+  min(created_at) filter (where state='pending' and due_at <= now())::timestamptz as oldest_pending_at
 from invocations
 where app_id=sqlc.arg(app_id) and deployment_scope=sqlc.arg(deployment_scope)
   and source='queue' and state in ('pending','dispatching','dead_letter')
@@ -12262,7 +12440,7 @@ WHERE a.account_id=sqlc.arg(account_id)::uuid AND a.id=sqlc.arg(app_id)::uuid AN
  AND (coalesce(d.source_sha256,'')='' OR p.input_snapshot->'claims'->>'source_sha256'=d.source_sha256)
  AND (p.input_snapshot->'claims'->>'runtime'=coalesce(a.runtime,'')
   OR (a.type<>'function' AND coalesce(a.runtime,'')='' AND f.input_snapshot->>'kind'='source-app-layer'
-   AND p.input_snapshot->'claims'->>'runtime' IN ('node22','node24')
+   AND p.input_snapshot->'claims'->>'runtime' IN ('node22','node24','python312','python313')
    AND f.input_snapshot->>'runtime'=p.input_snapshot->'claims'->>'runtime'))
  AND f.input_snapshot->>'storage_key'=d.rootfs_key AND f.input_snapshot->>'rootfs_path'=d.rootfs_path
  AND (f.input_snapshot->>'content_bytes')::bigint=d.rootfs_bytes
@@ -12539,10 +12717,10 @@ and i.state in ('waking','cold_booting','running','draining','snapshotting','mig
 -- Legacy unassigned work remains visible under its historical name; pinned
 -- work never follows a replacement binding that reuses that name.
 select
-  count(*) filter (where i.state in ('pending','dispatching'))::bigint as depth,
+  count(*) filter (where i.state='dispatching' or (i.state='pending' and i.due_at <= now()))::bigint as depth,
   count(*) filter (where i.state='dispatching' and i.lease_expires_at > now())::bigint as in_flight,
   count(*) filter (where i.state='dead_letter')::bigint as dead_letter,
-  min(i.created_at) filter (where i.state='pending')::timestamptz as oldest_pending_at
+  min(i.created_at) filter (where i.state='pending' and i.due_at <= now())::timestamptz as oldest_pending_at
 from invocations i join queue_bindings b on b.app_id=i.app_id and b.account_id=i.account_id
 where b.id=sqlc.arg(binding_id)::uuid and b.app_id=sqlc.arg(app_id)::uuid
   and (sqlc.narg(deployment_scope)::text is null or i.deployment_scope=sqlc.narg(deployment_scope)::text)
@@ -12557,7 +12735,7 @@ where b.id=sqlc.arg(binding_id)::uuid and b.app_id=sqlc.arg(app_id)::uuid
 select count(*)::bigint as depth from (
   select 1 from invocations
   where app_id=sqlc.arg(app_id)::uuid and deployment_scope=sqlc.arg(deployment_scope)::text
-    and source='queue' and state in ('pending','dispatching')
+    and source='queue' and state in ('pending','dispatching') and (state='dispatching' or due_at <= now())
   limit sqlc.arg(row_limit)::integer
 ) bounded;
 
@@ -12573,7 +12751,7 @@ select
   (select count(*) from (
      select 1 from invocations i, b
      where i.app_id=sqlc.arg(app_id)::uuid and i.queue_binding_id=b.id and i.account_id=b.account_id
-       and i.source='queue' and i.state in ('pending','dispatching')
+       and i.source='queue' and i.state in ('pending','dispatching') and (i.state='dispatching' or i.due_at <= now())
        and (sqlc.narg(deployment_scope)::text is null or i.deployment_scope=sqlc.narg(deployment_scope)::text)
        and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
      limit sqlc.arg(row_limit)::integer) own)::bigint
@@ -12581,7 +12759,7 @@ select
      select 1 from invocations i, b
      where b.deployment_scope='' and i.app_id=sqlc.arg(app_id)::uuid and i.queue_binding_id is null
        and i.queue_name=b.queue_name and i.account_id=b.account_id
-       and i.source='queue' and i.state in ('pending','dispatching')
+       and i.source='queue' and i.state in ('pending','dispatching') and (i.state='dispatching' or i.due_at <= now())
        and (sqlc.narg(deployment_scope)::text is null or i.deployment_scope=sqlc.narg(deployment_scope)::text)
      limit sqlc.arg(row_limit)::integer) legacy)::bigint as depth;
 
@@ -12615,14 +12793,14 @@ select
   ((select count(*) from (
      select 1 from invocations i, b
      where i.app_id=sqlc.arg(app_id)::uuid and i.queue_binding_id=b.id and i.account_id=b.account_id
-       and i.source='queue' and i.state in ('pending','dispatching')
+       and i.source='queue' and i.state in ('pending','dispatching') and (i.state='dispatching' or i.due_at <= now())
        and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
      limit sqlc.arg(row_limit)::integer) own)
   + (select count(*) from (
      select 1 from invocations i, b
      where b.deployment_scope='' and i.app_id=sqlc.arg(app_id)::uuid and i.queue_binding_id is null
        and i.queue_name=b.queue_name and i.account_id=b.account_id
-       and i.source='queue' and i.state in ('pending','dispatching')
+       and i.source='queue' and i.state in ('pending','dispatching') and (i.state='dispatching' or i.due_at <= now())
      limit sqlc.arg(row_limit)::integer) legacy))::bigint as depth,
   (select count(*) from (
      select 1 from owned where state='dispatching' and lease_expires_at > now()
@@ -12633,13 +12811,13 @@ select
   (select min(first.created_at) from (
      (select i.created_at from invocations i, b
       where i.app_id=sqlc.arg(app_id)::uuid and i.queue_binding_id=b.id and i.account_id=b.account_id
-        and i.source='queue' and i.state='pending'
+        and i.source='queue' and i.state='pending' and i.due_at <= now()
         and (b.deployment_scope='' or i.deployment_scope=b.deployment_scope)
       order by i.due_at, i.created_at, i.id limit 1)
      union all
      (select i.created_at from invocations i, b
       where b.deployment_scope='' and i.app_id=sqlc.arg(app_id)::uuid and i.queue_binding_id is null
-        and i.queue_name=b.queue_name and i.account_id=b.account_id and i.source='queue' and i.state='pending'
+        and i.queue_name=b.queue_name and i.account_id=b.account_id and i.source='queue' and i.state='pending' and i.due_at <= now()
       order by i.due_at, i.created_at, i.id limit 1)
   ) first)::timestamptz as oldest_pending_at;
 
@@ -13804,7 +13982,7 @@ WHERE app_id = sqlc.arg(app_id)::text::uuid AND listener_name = sqlc.arg(listene
 -- name: UDPListenerByPublicPort :one
 SELECT * FROM app_udp_listeners l
 WHERE public_port = sqlc.arg(public_port) AND enabled
-AND EXISTS (SELECT 1 FROM apps a WHERE a.id = l.app_id AND a.account_id = l.account_id AND a.status <> 'deleted');
+AND EXISTS (SELECT 1 FROM apps a WHERE a.id = l.app_id AND a.account_id = l.account_id AND a.status <> 'deleted' AND a.visibility <> 'internal');
 
 -- name: ListUDPListenersForApp :many
 SELECT * FROM app_udp_listeners
@@ -13812,7 +13990,7 @@ WHERE app_id = sqlc.arg(app_id)::text::uuid ORDER BY created_at DESC, id DESC;
 
 -- name: ListEnabledUDPListeners :many
 SELECT * FROM app_udp_listeners l
-WHERE enabled AND EXISTS (SELECT 1 FROM apps a WHERE a.id = l.app_id AND a.account_id = l.account_id AND a.status <> 'deleted')
+WHERE enabled AND EXISTS (SELECT 1 FROM apps a WHERE a.id = l.app_id AND a.account_id = l.account_id AND a.status <> 'deleted' AND a.visibility <> 'internal')
 ORDER BY public_port ASC;
 
 -- name: SetUDPListenerEnabled :one
@@ -13828,11 +14006,11 @@ SELECT count(*) FROM app_udp_listeners WHERE app_id = sqlc.arg(app_id)::text::uu
 -- name: ActiveTCPListenerByPublicPort :one
 SELECT l.* FROM app_tcp_listeners l JOIN apps a ON a.id = l.app_id
 WHERE l.public_port = sqlc.arg(public_port) AND l.enabled
-  AND a.status <> 'deleted' AND a.account_id = l.account_id;
+  AND a.status <> 'deleted' AND a.visibility <> 'internal' AND a.account_id = l.account_id;
 
 -- name: ListActiveTCPListeners :many
 SELECT l.* FROM app_tcp_listeners l JOIN apps a ON a.id = l.app_id
-WHERE l.enabled AND a.status <> 'deleted' AND a.account_id = l.account_id
+WHERE l.enabled AND a.status <> 'deleted' AND a.visibility <> 'internal' AND a.account_id = l.account_id
 ORDER BY l.public_port;
 -- name: LockExclusiveWorkAccount :one
 SELECT id::text,plan FROM accounts WHERE id=sqlc.arg(account_id)::text::uuid
@@ -14290,13 +14468,40 @@ SELECT EXISTS(SELECT 1 FROM managed_postgres_bindings WHERE database_id=$1 AND s
     EXISTS(SELECT 1 FROM project_environment_clone_postgres_write_fences WHERE source_database_id=$1 AND state<>'released') AS has_clone_write_fence_holds;
 
 -- name: ClaimManagedPostgresLifecycleDelete :one
-UPDATE managed_postgres_databases SET state='deleting',lease_token=sqlc.arg(lease_token)::text,
+-- An immediate delete ends any scheduled window (ADR-20261029174950), so an
+-- undo can never race the provider delete.
+UPDATE managed_postgres_databases SET state='deleting',purge_after=NULL,lease_token=sqlc.arg(lease_token)::text,
     lease_until=sqlc.arg(lease_until)::timestamptz,updated_at=sqlc.arg(at)::timestamptz,
     attempt_count=CASE WHEN state<>'deleting' THEN 1 ELSE least(attempt_count+1,30) END,
     last_error_code=CASE WHEN state<>'deleting' THEN NULL ELSE last_error_code END,retry_at=sqlc.arg(at)::timestamptz
 WHERE account_id=sqlc.arg(account_id)::uuid AND id=sqlc.arg(database_id)::uuid AND clone_resource_role='target'
     AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_snapshot_restores r WHERE r.adopted_database_id=managed_postgres_databases.id AND r.state<>'deleted')
     AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets c WHERE c.target_database_id=managed_postgres_databases.id AND c.state<>'retired') RETURNING *;
+
+-- name: ClaimManagedPostgresScheduledDelete :one
+-- ADR-20261029174950: a ready database starts its delete window under a
+-- lease. The caller holds the provider resource, then releases the lease with
+-- retry_at at purge_after, or cancels on failure. Dependants are checked in
+-- the same transaction, after LockManagedPostgresLifecycleDatabase.
+UPDATE managed_postgres_databases SET state='deleting',purge_after=sqlc.arg(purge_after)::timestamptz,
+    lease_token=sqlc.arg(lease_token)::text,lease_until=sqlc.arg(lease_until)::timestamptz,attempt_count=0,
+    last_error_code=NULL,retry_at=sqlc.arg(purge_after)::timestamptz,updated_at=sqlc.arg(at)::timestamptz
+WHERE account_id=sqlc.arg(account_id)::uuid AND id=sqlc.arg(database_id)::uuid AND clone_resource_role='target' AND state='ready'
+    AND (lease_until IS NULL OR lease_until<=sqlc.arg(at)::timestamptz)
+    AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_snapshot_restores r WHERE r.adopted_database_id=managed_postgres_databases.id AND r.state<>'deleted')
+    AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets c WHERE c.target_database_id=managed_postgres_databases.id AND c.state<>'retired') RETURNING *;
+
+-- name: ClaimManagedPostgresUndelete :one
+UPDATE managed_postgres_databases SET lease_token=sqlc.arg(lease_token)::text,lease_until=sqlc.arg(lease_until)::timestamptz,
+    updated_at=sqlc.arg(at)::timestamptz
+WHERE account_id=sqlc.arg(account_id)::uuid AND id=sqlc.arg(database_id)::uuid AND state='deleting'
+    AND purge_after>sqlc.arg(at)::timestamptz AND (lease_until IS NULL OR lease_until<=sqlc.arg(at)::timestamptz) RETURNING *;
+
+-- name: CancelManagedPostgresScheduledDelete :one
+UPDATE managed_postgres_databases SET state='ready',purge_after=NULL,lease_token=NULL,lease_until=NULL,attempt_count=0,
+    last_error_code=NULL,retry_at=sqlc.arg(at)::timestamptz,updated_at=sqlc.arg(at)::timestamptz
+WHERE id=sqlc.arg(database_id)::uuid AND state='deleting' AND purge_after IS NOT NULL
+    AND lease_token=sqlc.arg(lease_token)::text AND lease_until>sqlc.arg(at)::timestamptz RETURNING *;
 
 -- name: RecordManagedPostgresLifecycleResource :execrows
 UPDATE managed_postgres_databases SET provider_resource_id=sqlc.arg(provider_resource_id)::text,accounting_required=true,updated_at=sqlc.arg(at)::timestamptz
@@ -23909,8 +24114,13 @@ SELECT id::text AS app_id, deployment_cron_revision,
 FROM apps a WHERE id=sqlc.arg(app_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid AND status <> 'deleted';
 
 -- name: CountDeploymentCrons :one
+-- account_count is the per-account allowance's usage: the crons of the app's
+-- billing subject (ADR-202610171904, quotaSubjectSQL in pgstore_quota_subject.go).
 SELECT (SELECT count(*) FROM crons WHERE app_id=sqlc.arg(app_id)::text::uuid)::bigint AS app_count,
- (SELECT count(*) FROM crons c JOIN apps a ON a.id=c.app_id WHERE a.account_id=sqlc.arg(account_id)::text::uuid AND a.status <> 'deleted')::bigint AS account_count;
+ (SELECT count(*) FROM crons c JOIN apps a ON a.id=c.app_id LEFT JOIN orgs o ON o.id=a.org_id
+  WHERE (a.account_id=sqlc.arg(subject_id)::text::uuid OR a.org_id=sqlc.arg(subject_id)::text::uuid)
+    AND (CASE WHEN NOT o.personal_org AND o.resource_ownership_enabled THEN o.id ELSE a.account_id END)=sqlc.arg(subject_id)::text::uuid
+    AND a.status <> 'deleted')::bigint AS account_count;
 
 -- name: DeleteDeploymentHTTPcrons :exec
 DELETE FROM crons WHERE app_id=sqlc.arg(app_id)::text::uuid AND cardinality(command)=0
@@ -23974,8 +24184,13 @@ WHERE d.app_id=sqlc.arg(app_id)::text::uuid AND c.session_id=sqlc.arg(session_id
 AND d.id::text=coalesce(r.deployment_id::text,u.deployment_id)
 FOR SHARE OF d;
 
--- name: CronActivationPlan :one
-SELECT plan FROM accounts WHERE id=sqlc.arg(account_id)::text::uuid;
+-- name: CronActivationOwnerPlan :one
+-- The plan of the app's billing subject (ADR-202610171904), as
+-- AppResourceAccount resolves it: its organization's once the organization
+-- adopted billing, else its creator's.
+SELECT coalesce(CASE WHEN NOT o.personal_org AND o.resource_ownership_enabled THEN o.plan ELSE acc.plan END, '')::text AS plan
+FROM apps a LEFT JOIN accounts acc ON acc.id=a.account_id LEFT JOIN orgs o ON o.id=a.org_id
+WHERE a.id=sqlc.arg(app_id)::text::uuid;
 
 -- name: TouchCronActivation :exec
 UPDATE deployment_cron_activations SET status=sqlc.arg(status),updated_at=now() WHERE app_id=sqlc.arg(app_id)::text::uuid;
