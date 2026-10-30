@@ -516,6 +516,7 @@ var cliCommands = []cliCommand{
 					{Name: "ssh-key", Short: "SSH private key"},
 					{Name: "repo-root", Short: "repository root containing deploy/ansible"},
 					{Name: "roles", Short: "converge only these comma-separated control-plane roles and record nothing (host-configuration lane)"},
+					{Name: "full-release", Short: "with --roles: converge them as a full release does (PostgreSQL and pgbouncer may restart) and record the contract"},
 					{Name: "json", Short: "emit structured JSON"},
 				},
 			},

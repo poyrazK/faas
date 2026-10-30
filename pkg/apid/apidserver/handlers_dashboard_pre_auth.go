@@ -24,7 +24,7 @@ func parseAppPreAuthPath(rest string) (string, bool) {
 // rows as GET /v1/apps/{slug}/pre-auth-observations. It has no mutation path.
 func (s *server) renderAppPreAuth(w http.ResponseWriter, r *http.Request, log *slog.Logger, acct state.Account, slug string) {
 	app, err := s.store.AppBySlug(r.Context(), slug)
-	if err != nil || app.AccountID != acct.ID {
+	if err != nil || !dashboardAppOwner(r, &acct, app) {
 		http.NotFound(w, r)
 		return
 	}

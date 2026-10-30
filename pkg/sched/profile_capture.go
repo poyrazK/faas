@@ -152,7 +152,8 @@ func (e *Engine) queueAutomaticCapture(ctx context.Context, instanceID string, c
 	if err != nil {
 		return false, "", err
 	}
-	acct, err := e.store.AccountByID(ctx, app.AccountID)
+	// The billing subject's plan, not the creator's (bug hunt 2026-10-28 B37).
+	acct, err := state.AppResourceAccount(ctx, e.store, app)
 	if err != nil {
 		return false, "", err
 	}

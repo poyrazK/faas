@@ -156,9 +156,13 @@ The same declared edges are exposed as service bindings by the app API and by
 and outbound integration bindings. New project workloads use the `project`
 caller policy
 ([ADR-20261022111119](adr/20261022111119-project-service-binding-policy.md)):
-they may call every service in their own project without listing it, while
-calls to services outside the project need `depends_on` and get 403 without
-it. A target's `x-gregale-allow-callers` list still applies. Existing apps
+they may call every service in their own project without listing it. A
+project service's `depends_on` bindings name only its own project's services
+([ADR-20261030131528](adr/20261030131528-project-bindings-name-project-services.md)):
+a bound name never resolves to an app outside the project, and a call to a
+service outside the project gets 403 unless the caller sets
+`x-gregale-service-policy: account`. A target's `x-gregale-allow-callers` list
+still applies. Existing apps
 retain their persisted policy on reapply; set `x-gregale-service-policy:
 project` on a service to move it over, or `declared` to require `depends_on`
 for every call. A top-level `x-gregale-service-policy` sets the policy of
@@ -513,8 +517,10 @@ app outside the project matches by its slug only when no service of the
 target's project has that name. A deleted service keeps its name until it is
 purged (7 days after the delete, while it can still be restored): its siblings'
 `depends_on` names and caller lists neither resolve to nor admit an app outside
-the project that holds the name as a slug. Calls to it fail as not found until
-it is restored or a project apply removes the dependency. This target check runs before routing or waking `billing`. Preview callers
+the project that holds the name as a slug. After the purge, a sibling's
+`depends_on` binding still resolves only inside the project. Calls to the
+service fail as not found until it is restored or a project apply removes the
+dependency. This target check runs before routing or waking `billing`. Preview callers
 must also pass the existing project and target preview policies.
 
 For least-privilege access, a target can grant each caller only specific HTTP

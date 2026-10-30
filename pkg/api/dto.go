@@ -5333,6 +5333,10 @@ type AccountExportResponse struct {
 	Crons          []CronResponse                `json:"crons"`
 	APIKeys        []APIKeyExportResponse        `json:"api_keys"`
 	AppSecrets     []AppSecretExportResponse     `json:"app_secrets"`
+	// EdgeRules and EdgeRuleLists are the account's edge configuration on
+	// the exported apps (ADR-091 amendment 2026-10-30).
+	EdgeRules     []EdgeRuleResponse     `json:"edge_rules,omitempty"`
+	EdgeRuleLists []EdgeRuleListResponse `json:"edge_rule_lists,omitempty"`
 	// AuditTrail is the customer's own GDPR ledger slice: every
 	// export/delete/restore the customer has hit. Surfaced in the
 	// bundle so the export is self-describing (the customer can see
