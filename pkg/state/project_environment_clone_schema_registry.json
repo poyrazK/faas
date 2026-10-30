@@ -10143,6 +10143,15 @@
     "kind": "account_identity"
   },
   {
+    "table": "managed_postgres_usage_waivers",
+    "columns": [
+      "database_id",
+      "waived_from",
+      "waived_until"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "managed_realtime_channel_batches",
     "columns": [
       "batch_id",
