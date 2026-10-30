@@ -791,7 +791,11 @@ Admission only stops new work. A running database is held to its account's
 monthly compute ceiling by the provider itself
 ([ADR-20261025094915](adr/20261025094915-managed-postgres-compute-caps-on-running-databases.md)).
 
-After each usage sweep, apid runs one enforcement sweep:
+After each usage sweep, apid runs one enforcement sweep. Only one apid at a
+time runs the two, under the `managed-postgres-usage-sweep` session advisory
+lock: replicas would otherwise send duplicate provider requests and overwrite
+each other's quota writes. Each write reads the project first and rewrites the
+whole quota. A replica that cannot take the lock skips that tick.
 
 - The ceiling is the plan's monthly compute allowance (`pkg/api/managed_postgres.go`),
   capped by `usage.max_monthly_compute_unit_seconds`.

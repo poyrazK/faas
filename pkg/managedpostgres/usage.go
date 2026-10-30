@@ -61,6 +61,10 @@ type UsageCollectorOptions struct {
 	// AfterSweep runs after every sweep, successful or not, on the
 	// collector's goroutine (the compute cap enforcer, ADR-20261025094915).
 	AfterSweep func(context.Context)
+	// Exclusive, when set, is asked before every sweep. Only the process that
+	// gets it collects and runs AfterSweep, so apid replicas neither duplicate
+	// provider requests nor overwrite each other's quota writes.
+	Exclusive func(context.Context) (release func(), acquired bool, err error)
 }
 
 // UsageCollector imports complete provider windows into the durable ledger.
@@ -78,6 +82,7 @@ type UsageCollector struct {
 	observe      func(UsageCollectionObservation)
 	observeSweep func(UsageCollectionSummary, error)
 	afterSweep   func(context.Context)
+	exclusive    func(context.Context) (func(), bool, error)
 }
 
 func NewUsageCollector(registry *Registry, store UsageStore, options UsageCollectorOptions) (*UsageCollector, error) {
@@ -117,6 +122,7 @@ func NewUsageCollector(registry *Registry, store UsageStore, options UsageCollec
 		observe:      options.Observe,
 		observeSweep: options.ObserveSweep,
 		afterSweep:   options.AfterSweep,
+		exclusive:    options.Exclusive,
 	}, nil
 }
 
@@ -463,17 +469,36 @@ func (c *UsageCollector) Run(ctx context.Context) error {
 	ticker := time.NewTicker(c.interval)
 	defer ticker.Stop()
 	for {
-		if _, err := c.Collect(ctx); err != nil && ctx.Err() == nil {
-			c.logger.Warn("managed postgres usage collection sweep failed", "error", err)
-		}
-		if c.afterSweep != nil && ctx.Err() == nil {
-			c.afterSweep(ctx)
-		}
+		c.sweep(ctx)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
 		}
+	}
+}
+
+// sweep runs one collection and AfterSweep, if this process holds the
+// exclusive sweep.
+func (c *UsageCollector) sweep(ctx context.Context) {
+	if c.exclusive != nil {
+		release, acquired, err := c.exclusive(ctx)
+		if err != nil {
+			if ctx.Err() == nil {
+				c.logger.Warn("managed postgres usage sweep lock unavailable", "error", err)
+			}
+			return
+		}
+		if !acquired {
+			return
+		}
+		defer release()
+	}
+	if _, err := c.Collect(ctx); err != nil && ctx.Err() == nil {
+		c.logger.Warn("managed postgres usage collection sweep failed", "error", err)
+	}
+	if c.afterSweep != nil && ctx.Err() == nil {
+		c.afterSweep(ctx)
 	}
 }
 
