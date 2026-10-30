@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -306,7 +305,7 @@ func (s *Service) Complete(w http.ResponseWriter, r *http.Request) {
 	}
 	signups := s.Host.Store().(state.APIConsumerSignupStore)
 	signup, err := signups.GetAPIConsumerSignup(ctx, app.AccountID, r.PathValue("signup"))
-	if err != nil || signup.AppID != app.ID || subtle.ConstantTimeCompare(claimHash(req.ClaimToken), signup.ClaimHash) != 1 {
+	if err != nil || signup.AppID != app.ID || !state.CredentialMatches(state.CredentialColumnConsumerSignupClaim, claimHash(req.ClaimToken), signup.ClaimHash) {
 		noSuchSignup(w)
 		return
 	}

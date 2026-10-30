@@ -85,7 +85,7 @@ func TestForkTargetLoaderFollowsTheCreatorsOrganizationAccess(t *testing.T) {
 	}
 	company := newFork(org.ID, "acme-api")
 	own := newFork("", "own-api")
-	load := forkTargetLoader(forks, store, time.Now)
+	load := forkTargetLoader(forks, store, time.Now, nil)
 	routes := func(app state.App, token string) bool {
 		t.Helper()
 		target, found, err := load(context.Background(), app.ID, forks.forks[app.ID].ID, token)

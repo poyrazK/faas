@@ -120,7 +120,7 @@ func (s *PgStore) CreateAPIConsumerSignup(ctx context.Context, in APIConsumerSig
 	out, err := scanAPIConsumerSignup(tx.QueryRow(ctx, `insert into api_consumer_signups
 			(account_id, app_id, email, name, plan_id, provider, livemode, claim_hash, expires_at)
 		values ($1::uuid, $2::uuid, $3, $4, nullif($5::text, '')::uuid, $6, $7, $8, $9)
-		returning `+apiConsumerSignupCols, in.AccountID, in.AppID, in.Email, in.Name, in.PlanID, in.Provider, in.Livemode, in.ClaimHash,
+		returning `+apiConsumerSignupCols, in.AccountID, in.AppID, in.Email, in.Name, in.PlanID, in.Provider, in.Livemode, storedCredential(CredentialColumnConsumerSignupClaim, in.ClaimHash),
 		in.ExpiresAt.UTC()))
 	if err != nil {
 		return APIConsumerSignup{}, fmt.Errorf("create consumer sign-up: %w", err)

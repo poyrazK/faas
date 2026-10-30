@@ -3084,6 +3084,8 @@ type Querier interface {
 	ListAlertRollbacks(ctx context.Context, db DBTX, arg ListAlertRollbacksParams) ([][]byte, error)
 	ListAlertRuleChannels(ctx context.Context, db DBTX, ruleID pgtype.UUID) ([]NotificationChannel, error)
 	// ADR-747 slice 2: hourly SLO budget rows (meterd is the only writer).
+	// A deleted app's SLOs wait out its restore grace without rollups
+	// (ADR-20261029203000).
 	ListAllAppSLOs(ctx context.Context, db DBTX) ([]AppSlo, error)
 	// ADR-091 §3.7 / PR #3 — operator-obs backend audit-reading surface.
 	// Reads the live events table (NOT audit_log — distinct source of
@@ -3341,6 +3343,8 @@ type Querier interface {
 	// log destination (ADR-20261019180000).
 	ListEnabledAppLogDrainsWithStandardBinding(ctx context.Context, db DBTX) ([]ListEnabledAppLogDrainsWithStandardBindingRow, error)
 	ListEnabledCrons(ctx context.Context, db DBTX) ([]ListEnabledCronsRow, error)
+	// A deleted app's rules wait out its restore grace without evaluating
+	// (ADR-20261029203000); account-wide rules have no app.
 	ListEnabledCustomerAlertRules(ctx context.Context, db DBTX) ([]AlertRule, error)
 	ListEnabledEventSubscriptionsForAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]EventSubscription, error)
 	// Pulled by schedd's runTriggerTick on each 1-second cadence. The
@@ -3604,6 +3608,9 @@ type Querier interface {
 	// ADR-847: apps whose route health gate opts a selector into probes and that
 	// have exactly one in-flight canary candidate in the default scope.
 	ListRouteProbeTargets(ctx context.Context, db DBTX, batchLimit int32) ([]ListRouteProbeTargetsRow, error)
+	// Rules with no webhook whose only channel is this one: deleting it would
+	// leave them no destination (ADR-20261029203000).
+	ListRulesOnlyNotifyingChannel(ctx context.Context, db DBTX, arg ListRulesOnlyNotifyingChannelParams) ([]ListRulesOnlyNotifyingChannelRow, error)
 	// ADR-748 slice 2: synthetic check runs (meterd is the only writer).
 	// Every enabled check on a live app, with its app slug and last run time;
 	// the runner decides which are due.
@@ -3953,6 +3960,9 @@ type Querier interface {
 	LockNodeAdmissionPolicy(ctx context.Context, db DBTX) error
 	LockNodeAdmissionTarget(ctx context.Context, db DBTX, nodeID pgtype.UUID) (LockNodeAdmissionTargetRow, error)
 	LockNodeLifecycleCompletionTarget(ctx context.Context, db DBTX, nodeID pgtype.UUID) (LockNodeLifecycleCompletionTargetRow, error)
+	// Holds the channel while its delete checks the rules bound to it; a binding
+	// insert waits on the row through its foreign key.
+	LockNotificationChannel(ctx context.Context, db DBTX, arg LockNotificationChannelParams) (pgtype.UUID, error)
 	// ADR-20261019001500 Approval input forms.
 	LockOperationApprovalFormByKey(ctx context.Context, db DBTX, arg LockOperationApprovalFormByKeyParams) (CustomerOperationApprovalForm, error)
 	LockOperationSchedule(ctx context.Context, db DBTX, arg LockOperationScheduleParams) (CustomerOperationSchedule, error)
@@ -5117,6 +5127,11 @@ type Querier interface {
 	PublishRuntimeUpgradeOperationBuild(ctx context.Context, db DBTX, arg PublishRuntimeUpgradeOperationBuildParams) (int64, error)
 	PublishRuntimeUpgradePublicEdgeRoster(ctx context.Context, db DBTX, arg PublishRuntimeUpgradePublicEdgeRosterParams) (int64, error)
 	PurgeAccountManagedPostgresCreationReceipts(ctx context.Context, db DBTX, accountID pgtype.UUID) error
+	// Deletes up to max_rows settled deliveries fired before the cutoff, oldest
+	// first (ADR-20261029203000). A rule's newest delivery stays, because
+	// MCP connection health and the delivery CLI read it, and so does a delivery
+	// with a rollback action, which would cascade away with it.
+	PurgeAlertDeliveriesBefore(ctx context.Context, db DBTX, arg PurgeAlertDeliveriesBeforeParams) (int64, error)
 	PurgeSLOHoursBefore(ctx context.Context, db DBTX, before pgtype.Timestamptz) (int64, error)
 	PurgeSyntheticCheckRunsBefore(ctx context.Context, db DBTX, before pgtype.Timestamptz) (int64, error)
 	PutAppEgressCircuits(ctx context.Context, db DBTX, arg PutAppEgressCircuitsParams) (PutAppEgressCircuitsRow, error)
