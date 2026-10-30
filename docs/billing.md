@@ -49,7 +49,10 @@ When the month's overage reaches the cap:
 
 Raising or clearing the cap, or the start of the next month, lets workloads
 wake again on the next request or scheduler tick. If you change plans during
-a month, the month keeps the largest allowance any of its plans granted.
+a month, the month keeps the largest allowance any of its plans granted, and
+the daily overage warning starts only above it. A move to Free is the
+exception: Free stops workloads at its own allowance, counting the month's
+usage so far.
 
 ## Retained usage costs and forecasts
 
