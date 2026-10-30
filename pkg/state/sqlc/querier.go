@@ -6196,7 +6196,9 @@ type Querier interface {
 	RetireEnvironmentQualificationExecution(ctx context.Context, db DBTX, arg RetireEnvironmentQualificationExecutionParams) (int64, error)
 	RetireGatewayTrafficRuntime(ctx context.Context, db DBTX, arg RetireGatewayTrafficRuntimeParams) (int64, error)
 	// A retired sibling is a retained stable revision, not a manual dark
-	// deployment, so it loses traffic_percent_explicit (Hunt 14 H14-71).
+	// deployment, so it loses traffic_percent_explicit (Hunt 14 H14-71). A
+	// retired canary that was still rolling out ends its rollout as aborted, so
+	// it never reads as in flight again (ADR-20261030102813, Hunt 14 H14-112).
 	RetireLiveDeploymentSiblings(ctx context.Context, db DBTX, arg RetireLiveDeploymentSiblingsParams) (int64, error)
 	// The copy's binding takes the same key at once, and only one binding per
 	// key may be undeleted, so the source binding is deleted here. Its provider
@@ -6696,6 +6698,12 @@ type Querier interface {
 	SummarizeCustomerOperationWorkflowOutcomes(ctx context.Context, db DBTX, arg SummarizeCustomerOperationWorkflowOutcomesParams) ([]byte, error)
 	SummarizeCustomerOperationWorkflowPerformance(ctx context.Context, db DBTX, arg SummarizeCustomerOperationWorkflowPerformanceParams) ([][]byte, error)
 	SupersedeEnvironmentGitOpsRuns(ctx context.Context, db DBTX, arg SupersedeEnvironmentGitOpsRunsParams) error
+	// A newer canary replaces one still rolling out in its scope
+	// (ADR-20261030102813, Hunt 14 H14-112). The older canary leaves traffic
+	// and ends its rollout as aborted, so the newer canary has one serving
+	// predecessor to be judged against. A retained revision stays live at 0%,
+	// as in RetireLiveDeploymentSiblings.
+	SupersedeInFlightCanarySiblings(ctx context.Context, db DBTX, arg SupersedeInFlightCanarySiblingsParams) ([]pgtype.UUID, error)
 	// Ends one realtime delivery's records whatever stage they reached; the
 	// consumer group redelivers under a new item identifier (ADR-1322).
 	SupersedeTriggerRecordItems(ctx context.Context, db DBTX, arg SupersedeTriggerRecordItemsParams) (int64, error)
