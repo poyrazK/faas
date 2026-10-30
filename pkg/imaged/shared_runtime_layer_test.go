@@ -342,9 +342,9 @@ func TestSharedRuntimeAppLayersPython(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			archive := sharedRuntimeArtifactFixture(t, map[string]string{
-				"app/app.py":            "print('hi')",
-				"app/.venv/pyvenv.cfg":  "home = /mise/installs/python/3.13.15/bin\n",
-				"app/.venv/bin/uvicorn": "#!/app/.venv/bin/python\n",
+				"app/app.py":                                  "print('hi')",
+				"app/.venv/pyvenv.cfg":                        "home = /mise/installs/python/3.13.15/bin\n",
+				"app/.venv/bin/uvicorn":                       "#!/app/.venv/bin/python\n",
 				"mise/installs/python/3.13.15/bin/python3.13": "elf",
 			})
 			config, layers, cleanup, err := loadLocalOCIArchiveContext(t.Context(), archive)
