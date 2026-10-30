@@ -5604,7 +5604,7 @@ Manage edge rules, rule lists, caching and CORS
 
 Route, rewrite, protect or rate-limit an app&#39;s requests at the edge
 
-`gregale edge rule <waf|attack-mode|recipe|list|summary|trace|create|get|update|delete|history|recipes|suggest|stats|review|events|waf-exclude|rollback> [--app <slug>] [--kind <value>]`
+`gregale edge rule <waf|attack-mode|recipe|list|summary|trace|create|get|update|delete|history|recipes|suggest|stats|review|events|rollback> [--app <slug>] [--kind <value>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -5613,9 +5613,9 @@ Route, rewrite, protect or rate-limit an app&#39;s requests at the edge
 
 #### edge rule waf
 
-review
+review · update
 
-`gregale edge rule waf <review>`
+`gregale edge rule waf <review|update>`
 
 ##### edge rule waf review
 
@@ -5639,6 +5639,26 @@ gregale edge rule waf review --app my-api --rule RULE_ID --since 24h
 Each group is assessed: likely_false_positive (a documented false positive, or many clients flagged on one path), likely_attack (clients flagged on many paths), excluded or review.
 
 Detections are sampled, so counts are lower bounds.
+
+##### edge rule waf update
+
+Add or remove CRS rule IDs on a kind=waf rule&#39;s exclusions
+
+`gregale edge rule waf update [--add <IDS>] [--remove <IDS>] <rule-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--add <IDS>` | CRS rule IDs to exclude, comma-separated |  |
+| `--remove <IDS>` | CRS rule IDs to stop excluding, comma-separated |  |
+
+Examples:
+
+```sh
+gregale edge rule waf update RULE_ID --add 942190
+gregale edge rule waf update RULE_ID --remove 942100
+```
+
+Keeps the rest of the rule&#39;s WAF action and its penalty.
 
 #### edge rule attack-mode
 
@@ -6182,26 +6202,6 @@ gregale edge rule events --app my-site --request-id REQUEST_ID
 ```
 
 Includes kind=waf detections; up to 10 of each per rule per minute, kept 7 days.
-
-#### edge rule waf-exclude
-
-Add or remove CRS rule IDs on a kind=waf rule&#39;s exclusions
-
-`gregale edge rule waf-exclude [--add <IDS>] [--remove <IDS>] <rule-id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--add <IDS>` | CRS rule IDs to exclude, comma-separated |  |
-| `--remove <IDS>` | CRS rule IDs to stop excluding, comma-separated |  |
-
-Examples:
-
-```sh
-gregale edge rule waf-exclude RULE_ID --add 942190
-gregale edge rule waf-exclude RULE_ID --remove 942100
-```
-
-Keeps the rest of the rule&#39;s WAF action and its penalty.
 
 #### edge rule rollback
 
