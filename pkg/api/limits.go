@@ -6945,6 +6945,12 @@ const (
 	// PreflightCacheMaxEntries bounds the in-process verdict cache.
 	PreflightCacheMaxEntries = 2_048
 
+	// PreflightConcurrentChecks caps how many unauthenticated checks fetch
+	// and unpack a repository on the control plane at once; the per-IP limit
+	// alone let many addresses unpack hostile archives together (bug hunt
+	// 2026-10-28 B39).
+	PreflightConcurrentChecks = 2
+
 	// Builder VM (spec §4.5, §1). Builds live in the control-plane slice, never
 	// tenant RAM.
 	BuildVMRAMMB = 2_048
