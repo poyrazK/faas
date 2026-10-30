@@ -14,9 +14,10 @@ import (
 // 20261022111812, step 4) in the seal_domains role: the read-only check runs
 // before the reader's drop-in changes, the contracted drop-in resets the
 // credentials before it loads the domain identity and unsets the legacy
-// path, and the proof checks every credential the reset drops is gone. The
-// reset drops what the base unit and the optional_credentials role (40-*,
-// before the 60- drop-in) load, so each of those must be a legacy identity.
+// path, and the proof checks every legacy identity the reset drops is gone.
+// The reset drops what the base unit and the optional_credentials role
+// (40-*, before the 60- drop-in) load, so each of those must be a legacy
+// identity or be loaded again by the contracted drop-in.
 func TestSealDomainContractRole(t *testing.T) {
 	t.Parallel()
 	root := filepath.Join("..", "..")
@@ -38,7 +39,7 @@ func TestSealDomainContractRole(t *testing.T) {
 	if err := yaml.Unmarshal([]byte(read(t, filepath.Join(root, "deploy", "ansible", "roles", "optional_credentials", "defaults", "main.yml"))), &optional); err != nil {
 		t.Fatal(err)
 	}
-	credentialRe := regexp.MustCompile(`(?m)^LoadCredential=([^:\s]+):`)
+	credentialRe := regexp.MustCompile(`(?m)^LoadCredential=([^:\s]+):\S+$`)
 	for _, tc := range []struct {
 		domain string
 		unit   string
@@ -72,6 +73,13 @@ func TestSealDomainContractRole(t *testing.T) {
 			legacyPath: "FAAS_HOST_AGE_IDENTITY_PATH",
 			legacy:     []string{"faas_fleet_age_identity", "faas_host_age_identity", "faas_host_age_identity_previous"},
 			units:      []string{filepath.Join(root, "deploy", "ansible", "roles", "control_plane_service", "files", "faas-meterd.service")},
+		},
+		{
+			domain:     "source",
+			unit:       "faas-githubd",
+			legacyPath: "FAAS_HOST_AGE_IDENTITY_PATH",
+			legacy:     []string{"faas_fleet_age_identity", "faas_host_age_identity"},
+			units:      []string{filepath.Join(root, "deploy", "ansible", "roles", "githubd_service", "files", "faas-githubd.service")},
 		},
 	} {
 		t.Run(tc.domain, func(t *testing.T) {
@@ -108,8 +116,8 @@ func TestSealDomainContractRole(t *testing.T) {
 			}
 			for _, unit := range tc.units {
 				for _, m := range credentialRe.FindAllStringSubmatch(read(t, unit), -1) {
-					if !legacy[m[1]] {
-						t.Errorf("%s loads %s, which the contracted drop-in's reset would drop; re-add it there or list it as legacy", unit, m[1])
+					if !legacy[m[1]] && strings.Index(template, "\n"+m[0]+"\n") < reset {
+						t.Errorf("%s loads %s, which the contracted drop-in's reset would drop; load it again after the reset or list it as legacy", unit, m[1])
 					}
 				}
 			}

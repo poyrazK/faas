@@ -763,6 +763,31 @@ from meterd.
   `account`, incident copies for `alerting`, and application standards for
   `edge`. Before, every domain's summary showed the `edge` reason.
 
+## Implemented: the source contract step
+
+`source` contracts the same way, through `faas_seal_domain_source_contracted`.
+
+- **githubd runs on the domain alone.** With neither
+  `FAAS_HOST_AGE_IDENTITY_PATH` nor `FAAS_HOST_AGE_KEY` set it used to fall
+  back to `/etc/faas/secrets/host.age`. With the source domain staged it
+  now loads no legacy identity: the source fetcher, the webhook secret
+  resolver and the install-token service open with the domain identity
+  only. An older githubd falls back to that path, which it cannot read, so
+  an environment contracts only once its previous release carries this one.
+- **The drop-in keeps githubd's other credentials.** githubd's base unit
+  also loads the GitHub App key and the public fleet recipient, which the
+  reset drops with the identities. The contracted drop-in loads both again,
+  and the role's proof checks that the App key is there. The role test
+  requires every credential a base unit loads to be either a legacy
+  identity the proof checks for, or loaded again after the reset.
+- **Unexpired install tokens count.** The migration does not re-seal
+  install tokens: each expires within the hour, and githubd seals its
+  successor under the write mode. But githubd reopens an unexpired token
+  from its row rather than mint a new one. `--check` and the migration
+  therefore report the unexpired tokens that a legacy identity opens and
+  the domain does not as skipped. The check fails on them, and on webhook
+  secret copies the migration would still write.
+
 ## CD and node join stage the domain keys
 
 Each domain's key pair is a pair of GitHub environment secrets:
