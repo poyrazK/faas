@@ -57,16 +57,18 @@ var k8sIngressAnnotations = map[string]string{
 	"traefik.ingress.kubernetes.io/redirect-entry-point": IngressSSLRedirect,
 }
 
-// k8sIngress is an Ingress the scan read: its proxy settings and the
-// Services its rules and default backend route to.
+// k8sIngress is an Ingress the scan read: its proxy settings, the Services
+// its rules and default backend route to, and which path goes where.
 type k8sIngress struct {
 	src, name, namespace string
 	settings             []IngressSetting
 	backends             []string
+	routes               []string // "<path> → <service>", "(default) → <service>"
 }
 
 // k8sReadIngress reads an Ingress's known proxy annotations and backend
 // Services, networking.k8s.io/v1 and the older extensions/v1beta1 shape.
+// It reports false for an Ingress with neither.
 func k8sReadIngress(src string, node *yaml.Node, h k8sHeader) (k8sIngress, bool, error) {
 	var obj map[string]any
 	if err := node.Decode(&obj); err != nil {
@@ -80,36 +82,46 @@ func k8sReadIngress(src string, node *yaml.Node, h k8sHeader) (k8sIngress, bool,
 			in.settings = append(in.settings, IngressSetting{Setting: setting, Annotation: key, Value: strings.TrimSpace(fmt.Sprint(annotations[key])), Ingress: in.name})
 		}
 	}
-	if len(in.settings) == 0 {
-		return k8sIngress{}, false, nil
-	}
 	spec := k8sMap(obj, "spec")
-	backends := []map[string]any{k8sMap(spec, "defaultBackend"), k8sMap(spec, "backend")}
+	add := func(path string, backend map[string]any) {
+		name, _ := k8sMap(backend, "service")["name"].(string)
+		if name == "" {
+			name, _ = backend["serviceName"].(string)
+		}
+		if name = strings.TrimSpace(name); name == "" {
+			return
+		}
+		if !slices.Contains(in.backends, name) {
+			in.backends = append(in.backends, name)
+		}
+		if route := path + " → " + name; !slices.Contains(in.routes, route) {
+			in.routes = append(in.routes, route)
+		}
+	}
+	add("(default)", k8sMap(spec, "defaultBackend"))
+	add("(default)", k8sMap(spec, "backend"))
 	rules, _ := spec["rules"].([]any)
 	for _, raw := range rules {
 		rule, _ := raw.(map[string]any)
 		paths, _ := k8sMap(rule, "http")["paths"].([]any)
 		for _, rawPath := range paths {
 			path, _ := rawPath.(map[string]any)
-			backends = append(backends, k8sMap(path, "backend"))
-		}
-	}
-	for _, backend := range backends {
-		name, _ := k8sMap(backend, "service")["name"].(string)
-		if name == "" {
-			name, _ = backend["serviceName"].(string)
-		}
-		if name = strings.TrimSpace(name); name != "" && !slices.Contains(in.backends, name) {
-			in.backends = append(in.backends, name)
+			p, _ := path["path"].(string)
+			if p = strings.TrimSpace(p); p == "" {
+				p = "/"
+			}
+			add(p, k8sMap(path, "backend"))
 		}
 	}
 	slices.Sort(in.backends)
-	return in, true, nil
+	return in, len(in.settings) > 0 || len(in.backends) > 0, nil
 }
 
 // applyK8sIngresses records each Ingress's proxy settings on the workload
 // each of its backend Services selects. A websocket-services annotation
-// names the Services it covers; the other settings cover every backend.
+// names the Services it covers; the other settings cover every backend. An
+// Ingress that sends paths to more than one Service is reported: each
+// Service's Deployment becomes its own app with its own URL.
 func applyK8sIngresses(seeds []workloadSeed, ingresses []k8sIngress, services []k8sService, deployments []k8sEnvWorkload) []string {
 	if len(ingresses) == 0 {
 		return nil
@@ -121,6 +133,12 @@ func applyK8sIngresses(seeds []workloadSeed, ingresses []k8sIngress, services []
 	}
 	var warnings []string
 	for _, in := range ingresses {
+		if len(in.backends) > 1 {
+			warnings = append(warnings, fmt.Sprintf("reposcan: %s: Ingress %q routes paths to several Services (%s): each Service's Deployment becomes its own app with its own URL; to serve them under one host, add `route` edge rules with `gregale edge rule create --kind route`", in.src, in.name, strings.Join(in.routes, ", ")))
+		}
+		if len(in.settings) == 0 {
+			continue
+		}
 		for _, backend := range in.backends {
 			name, ok := targets[strings.ToLower(backend)+"."+k8sNamespace(in.namespace)]
 			i, seeded := index[name]

@@ -33,7 +33,22 @@ type oauthClient struct {
 	ID        string
 	Name      string
 	Redirects []string
-	Expires   time.Time
+	// Expires is extended while a grant the client holds lasts
+	// (holdClientLocked), so a restart keeps that grant.
+	Expires time.Time
+	// Metadata marks a client identified by a Client ID Metadata Document
+	// (ADR-20261030065746): ID is the document's URL, fetched again after
+	// Refresh.
+	Metadata bool      `json:",omitempty"`
+	Refresh  time.Time `json:",omitzero"`
+}
+
+// holdClientLocked keeps g's client registered as long as g lasts. Caller
+// holds r.mu.
+func (r *remoteServer) holdClientLocked(g *oauthGrant) {
+	if c := r.clients[g.clientID]; c != nil && c.Expires.Before(g.expires) {
+		c.Expires = g.expires
+	}
 }
 
 type authorizationRequest struct {
