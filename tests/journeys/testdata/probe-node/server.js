@@ -195,6 +195,15 @@ const server = http.createServer((req, res) => {
       console.log(`e2e-probe-marker ${marker}`);
       return json(res, 200, { logged: marker });
     }
+    case "/fail": {
+      // A server error the debugger must explain (TestProductionDebugger).
+      const marker = url.searchParams.get("marker") || "";
+      if (!/^[a-z0-9-]{1,64}$/.test(marker)) {
+        return json(res, 400, { error: "marker must match [a-z0-9-]{1,64}" });
+      }
+      console.error(`e2e-probe-fail ${marker}`);
+      return json(res, 500, { failed: marker });
+    }
     case "/cron":
       cronHits += 1;
       console.log(`e2e-probe-cron method=${req.method} hits=${cronHits}`);
