@@ -87,13 +87,13 @@ any Kubernetes API.
 | Kind | Result |
 |---|---|
 | `Deployment` | An app. Request mode when a `Service` selects it, or when it declares a `containerPort`. Otherwise request mode with a warning: "no Service selects this Deployment; set `execution_mode: worker` if it consumes a queue". |
-| `CronJob` | A job with its schedule, as today. `timeZone` sets the cron timezone and `suspend` sets enabled, as today. `concurrencyPolicy`, `startingDeadlineSeconds` and the history limits are reported. |
+| `CronJob` | A job with its schedule, as today, and `suspend` sets enabled, as today. `timeZone` sets the cron timezone; it wins over a zone set on the existing cron, and a cron without one keeps its zone (UTC when new). An unknown zone fails the scan, as Kubernetes refuses it. Without the capability, a `timeZone` is reported, since the schedule would otherwise run in UTC unnoticed. `concurrencyPolicy` `Forbid` or `Replace`, `startingDeadlineSeconds` and the history limits are reported with the `gregale cron update` option that sets each after the first deploy (`--skip-if-running`, `--schedule-policy` overlap and `start_deadline_seconds`). |
 | `Job` | Reported: "one-off Jobs are run with `gregale job create` / `gregale job run`". |
 | `StatefulSet` | Refused, as today. When its image is a known datastore, the plan offers the managed resource (`gregale add postgres`, …) through the existing denylist path. |
 | `DaemonSet` | Refused: there is no per-node workload, and nodes are the platform's. |
 | `PersistentVolumeClaim`, `PersistentVolume`, `StorageClass` | Reported with the stateless reason (`docs/storage.md`) and the managed alternatives. |
 | `Service` | Not an app. Its selector links it to a Deployment (names, ports, address rewrite below). `type: LoadBalancer` and `NodePort` are reported: every app already gets an HTTPS URL. |
-| `Ingress`, Gateway API `HTTPRoute` | Not applied. Each host becomes a plan note with the `gregale domain add` command for the app it routes to. Domains need ownership verification and are a public change, so the scan never adds one. Path fan-out across services is reported. |
+| `Ingress`, Gateway API `HTTPRoute` | Not applied. Each host becomes a plan note with the `gregale domain add` command for the app it routes to. Domains need ownership verification and are a public change, so the scan never adds one. An Ingress that sends paths to more than one Service is reported with each path and Service: each Service's Deployment becomes its own app, and `route` edge rules serve them under one host. |
 | `HorizontalPodAutoscaler` | Section 4. |
 | `ConfigMap` | A source of plain values for section 5. Mounted as a volume, it is reported: there are no file mounts. |
 | `Secret` | Never imported (section 5). |
@@ -245,8 +245,11 @@ warning still names its hosts for `gregale domain add`.
 
 - **Capability.** The new mappings ship behind a `kubernetes-manifests` preview
   capability (ADR-20261023115741). With it off, the scan keeps today's mapping,
-  but sections 1 (skip non-Kubernetes YAML, no rendering) and 2's reporting
-  apply to everyone: they turn silent drops and spurious failures into warnings.
+  but sections 1 (skip non-Kubernetes YAML, no rendering) and 2's reporting of
+  kinds apply to everyone: they turn silent drops and spurious failures into
+  warnings, and so does an unapplied CronJob `timeZone`. The reports that read
+  how Services link Deployments (a Deployment no Service selects, Ingress path
+  fan-out) or a CronJob's run policy come with the capability.
 - **Bounds.** The number of manifest files, documents per file and bytes read
   are bounded by constants in `pkg/api/limits.go`
   (`KubernetesScanMaxFiles` 500 YAML files, `KubernetesScanMaxDocuments` 1,000

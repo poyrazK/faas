@@ -238,10 +238,13 @@ const (
 )
 
 // CronSchedule is one schedule discovered for a workload. Enabled preserves
-// source activation state such as Kubernetes CronJob spec.suspend.
+// source activation state such as Kubernetes CronJob spec.suspend. Timezone
+// is the IANA zone the expression runs in (a CronJob's timeZone); empty is
+// UTC, or the zone an operator set on an existing cron.
 type CronSchedule struct {
 	Expression string
 	Enabled    bool
+	Timezone   string `json:",omitempty"`
 }
 
 // CronSchedules returns the complete schedule set and adapts legacy detector
