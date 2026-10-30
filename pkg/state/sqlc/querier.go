@@ -614,6 +614,8 @@ type Querier interface {
 	CountCustomerOperationStreams(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	CountDataRepairRehearsalNode(ctx context.Context, db DBTX, nodeID pgtype.UUID) (int64, error)
 	CountDeployedApps(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
+	// account_count is the per-account allowance's usage: the crons of the app's
+	// billing subject (ADR-202610171904, quotaSubjectSQL in pgstore_quota_subject.go).
 	CountDeploymentCrons(ctx context.Context, db DBTX, arg CountDeploymentCronsParams) (CountDeploymentCronsRow, error)
 	CountEnvironmentQueueProducerDepth(ctx context.Context, db DBTX, arg CountEnvironmentQueueProducerDepthParams) (int64, error)
 	CountExclusiveWorkPending(ctx context.Context, db DBTX, accountID string) (int64, error)
@@ -757,7 +759,10 @@ type Querier interface {
 	// not the customer-facing quota.
 	CreateUploadSession(ctx context.Context, db DBTX, arg CreateUploadSessionParams) (UploadSession, error)
 	CreateWorkflowForEachItem(ctx context.Context, db DBTX, arg CreateWorkflowForEachItemParams) error
-	CronActivationPlan(ctx context.Context, db DBTX, accountID string) (string, error)
+	// The plan of the app's billing subject (ADR-202610171904), as
+	// AppResourceAccount resolves it: its organization's once the organization
+	// adopted billing, else its creator's.
+	CronActivationOwnerPlan(ctx context.Context, db DBTX, appID string) (string, error)
 	CronActivationUploadAccepted(ctx context.Context, db DBTX, arg CronActivationUploadAcceptedParams) (bool, error)
 	CronByID(ctx context.Context, db DBTX, id pgtype.UUID) (CronByIDRow, error)
 	CustomerOperationAccountPlan(ctx context.Context, db DBTX, accountID pgtype.UUID) (string, error)
