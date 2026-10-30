@@ -53,5 +53,15 @@
     "step": "TestObjectStorage/object_storage_enabled",
     "bug": "object storage is still preview (GA row 108): gregale feature list reports object-storage disabled until s3_enabled is on and the capability is released to the e2e account, and the journey's other steps report blocked; remove once the owner turns it on",
     "since": "2026-10-29"
+  },
+  {
+    "step": "TestRealtime/realtime_enabled",
+    "bug": "realtime is still preview (GA row 112): gregale feature list reports realtime disabled until the capability is released to the e2e account, and the journey's other steps report blocked; remove once the owner releases it",
+    "since": "2026-10-30"
+  },
+  {
+    "step": "TestRealtime/resumable_protocol_offered",
+    "bug": "the resumable realtime protocol (retained history, presence, occupancy, tickets) is still preview (GA row 112): realtimed offers gregale.realtime.v2 only to accounts in the realtime_preview rollout with FAAS_REALTIME_RESUME_PREVIEW_ENABLED on, and the journey's later steps report blocked; remove once the e2e account is released",
+    "since": "2026-10-30"
   }
 ]

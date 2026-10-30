@@ -312,4 +312,99 @@ func TestMemStoreStableDeploymentClearsCanaryOverlap(t *testing.T) {
 			t.Errorf("overlap deployment %s = %+v, want superseded/0 after promotion", id, got)
 		}
 	}
+	// The retired canary's rollout ends; a superseded row must not read as
+	// rolling out (Hunt 14 H14-112).
+	got, err := store.DeploymentByID(ctx, canary.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.RolloutState != "aborted" || got.RolloutAbortedReason != "superseded by deployment "+stable.ID {
+		t.Errorf("retired canary rollout = %s %q, want aborted by %s", got.RolloutState, got.RolloutAbortedReason, stable.ID)
+	}
+}
+
+// TestMemStoreNewerCanarySupersedesInFlightCanary mirrors the Postgres
+// supersede (ADR-20261030102813, Hunt 14 H14-112): a second canary going live
+// retires the one still rolling out, so one canary serves beside the stable.
+func TestMemStoreNewerCanarySupersedesInFlightCanary(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// stablePercent is the prior's share before the newer canary, so 0
+		// makes the older canary the only serving deployment.
+		stablePercent               int
+		wantOlder                   state.DeploymentStatus
+		wantOlderPct, wantStablePct int
+		wantOlderRollout            string
+	}{
+		{name: "stable serves", stablePercent: 99, wantOlder: state.DeploySuperseded, wantOlderPct: 0, wantStablePct: 99, wantOlderRollout: "aborted"},
+		{name: "older canary serves alone", stablePercent: 0, wantOlder: state.DeployLive, wantOlderPct: 99, wantStablePct: 0, wantOlderRollout: "rolling_out"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			store := state.NewMemStore()
+			account, err := store.CreateAccount(ctx, "canary-supersede@example.com", api.PlanPro)
+			if err != nil {
+				t.Fatal(err)
+			}
+			app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "canary-supersede"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			prior, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:prior"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := store.MarkDeploymentLive(ctx, prior.ID); err != nil {
+				t.Fatal(err)
+			}
+			newCanary := func(digest string) state.Deployment {
+				t.Helper()
+				dep, err := store.CreateDeployment(ctx, state.Deployment{
+					AppID: app.ID, ImageDigest: digest, CanaryPreset: "balanced",
+					CanaryStep: 0, CanaryTotalSteps: 4, RolloutState: "pending", TrafficPercent: 1,
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := store.MarkDeploymentLive(ctx, dep.ID); err != nil {
+					t.Fatal(err)
+				}
+				return dep
+			}
+			older := newCanary("sha256:older")
+			if tc.stablePercent == 0 {
+				store.SetDeploymentTrafficForTest(older.ID, 100, false)
+				store.SetDeploymentTrafficForTest(prior.ID, 0, false)
+			}
+			newer := newCanary("sha256:newer")
+
+			for _, want := range []struct {
+				id      string
+				status  state.DeploymentStatus
+				pct     int
+				rollout string
+			}{
+				{older.ID, tc.wantOlder, tc.wantOlderPct, tc.wantOlderRollout},
+				{prior.ID, state.DeployLive, tc.wantStablePct, "complete"},
+				{newer.ID, state.DeployLive, 1, "rolling_out"},
+			} {
+				got, err := store.DeploymentByID(ctx, want.id)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got.Status != want.status || got.TrafficPercent != want.pct || got.RolloutState != want.rollout {
+					t.Errorf("deployment %s = %s %d%% %s, want %s %d%% %s", want.id, got.Status, got.TrafficPercent, got.RolloutState, want.status, want.pct, want.rollout)
+				}
+			}
+			if tc.wantOlderRollout == "aborted" {
+				got, err := store.DeploymentByID(ctx, older.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got.RolloutAbortedAt == nil || got.RolloutAbortedReason != "superseded by deployment "+newer.ID {
+					t.Errorf("older canary abort = %v %q, want stamped by %s", got.RolloutAbortedAt, got.RolloutAbortedReason, newer.ID)
+				}
+			}
+		})
+	}
 }

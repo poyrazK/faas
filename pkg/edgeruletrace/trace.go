@@ -576,6 +576,21 @@ func RequiresAppCORSDefaultData(headers http.Header) bool {
 	return headers.Get("Origin") != ""
 }
 
+// PreviewInheritedRules returns the production app's rules a PR preview
+// applies as well as its own (ADR-091 amendment 2026-10-30): its app-wide
+// rules, except route and async rules, which would send the preview's
+// traffic to a fixed app. A trace of a preview adds them to the preview's
+// rules, as the gateway does.
+func PreviewInheritedRules(production []api.EdgeRuleResponse) []api.EdgeRuleResponse {
+	var out []api.EdgeRuleResponse
+	for _, rule := range production {
+		if api.IsEdgeRuleAppHosts(rule.MatchHost) && rule.Kind != "route" && rule.Kind != "async" {
+			out = append(out, rule)
+		}
+	}
+	return out
+}
+
 func previewNormalized(input Input, rules []api.EdgeRuleResponse) Result {
 	sorted := append([]api.EdgeRuleResponse(nil), rules...)
 	sort.SliceStable(sorted, func(i, j int) bool {

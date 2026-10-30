@@ -692,6 +692,12 @@ its own.
       it holds a pidfd on the main pid and checks that pid's cgroup is the
       unit's and its netns is the binding vmmd named. A run it cannot prove
       is stopped.
+    - `NetworkNamespacePath=` names the binding through vmmd's root,
+      `/proc/<vmmd pid>/root/run/netns/<name>`. faas-vmmd.service's sandbox
+      (`ProtectSystem=strict` and the rest) gives vmmd its own mount
+      namespace, a slave of the host's, so the namespace `ip netns add`
+      mounts there, or adoption re-anchors there, never reaches PID 1: at
+      `/run/netns/<name>` PID 1 opens only the empty placeholder file.
     - The unit does not set `User=`/`Group=`: systemd resolves them through
       the user database and refuses a uid with no account (`217/USER`), and
       bridge uids must have none (`checkBridgeUIDRange`). The unit starts
@@ -740,8 +746,10 @@ its own.
       older schedd ignores it.
     - Not yet: the bridge keeps the `vmmd-stream-bridge` binary and path
       until P5 launches from the release directory, and a failed bridge start
-      does not fail the wake (`bridge_start_failed`): the first request
-      still starts the bridge, as before.
+      does not fail the wake (`bridge_start_failed`). A unit that does not
+      start, cannot be proven, or exits or never answers before it is ready
+      is stopped, and the bridge starts as vmmd's child, as before units;
+      the instance's next bridge start tries a unit again.
     - Still owed in 1c: the `instance_bridge_*` metrics of §7. Streams
       through a restarting vmmd still end with it: the RPCs terminate there
       until P2.
@@ -770,6 +778,17 @@ its own.
       of falling back to the in-process bridge, so the per-node release
       canary's deployment failed. `vmmd_bridge_canary_nodes` is empty until
       a metal run on a production-shaped host reproduces and fixes both.
+    - Both causes found and fixed (2026-10-30). The e2e harness runs vmmd in
+      the host's mount namespace, where PID 1 sees vmmd's bindings; under
+      faas-vmmd.service it does not (above), so systemd opened the
+      placeholder file and refused it. vmmd now names the binding through
+      `/proc/<vmmd pid>/root`. And a unit start error was returned to the
+      request, which answered `Unavailable`: the process fallback above was
+      never wired. `TestInstanceBridgeUnitServesFromVmmdMountNamespaceMetal`
+      runs the vmmd side under faas-vmmd.service's rendered sandbox,
+      reproduces the 225/NETWORK failure with the old path, and serves a
+      request through a unit bridge. The canary stays paused until a
+      release carries the fix.
   - 1d: gate and counters move to the bridge, with ADR-1151 property tests.
 
   After P1, bridges survive vmmd, but streams are still cut, because the

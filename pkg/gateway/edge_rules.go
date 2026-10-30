@@ -465,6 +465,10 @@ type HostEntry struct {
 	// InvalidateAccountHosts drops an owned set only for its own account's
 	// mutations. Cache metadata, like expiresAt: not part of the sealed policy.
 	owner string
+	// inheritedApp is the production app whose app-wide rules a PR preview's
+	// set also holds (ADR-091 amendment 2026-10-30), so a mutation of that
+	// app's "@app" rules drops the preview's set too. Cache metadata.
+	inheritedApp string
 	// NotAfter is the earliest expires_at among the loaded rules (zero when
 	// none expire). The entry is neither served as current nor used as the
 	// last-known fallback past it, so a time-boxed rule stops applying on
@@ -1168,6 +1172,10 @@ func (c *EdgeRuleCache) HasHost(key string) bool {
 // when it read only that account's rules.
 func (e *HostEntry) SetOwner(accountID string) { e.owner = accountID }
 
+// SetInheritedApp records the production app whose app-wide rules a preview's
+// set holds; the loader calls it for a preview.
+func (e *HostEntry) SetInheritedApp(appID string) { e.inheritedApp = appID }
+
 // InvalidateAccountHosts drops the cached entries (current and last-known)
 // that one account's rule mutation can have changed: entries holding that
 // account's rules, or every account's, whose host one of patterns covers.
@@ -1196,7 +1204,7 @@ func (c *EdgeRuleCache) InvalidateAccountHosts(accountID, appID string, patterns
 		for _, pattern := range patterns {
 			covered := EdgeRuleHostPatternMatches(pattern, host)
 			if api.IsEdgeRuleAppHosts(pattern) {
-				covered = appID == "" || entryApp == "" || entryApp == appID
+				covered = appID == "" || entryApp == "" || entryApp == appID || entry.inheritedApp == appID
 			}
 			if covered {
 				c.removeElement(el)

@@ -225,12 +225,15 @@ func (p *OnDemandTLSPolicy) decideWildcard(ctx context.Context, host string) (bo
 // store without it skips the plan check.
 type onDemandTLSPlanStore interface {
 	AppByID(ctx context.Context, id string) (state.App, error)
-	AccountByID(ctx context.Context, id string) (state.Account, error)
+	state.AppOwnerReader
 }
 
 // wildcardPlanAllows reports whether the wildcard's owner is still on a plan
 // with wildcard domains. The plan is checked only when the domain is
 // created, so after a downgrade a wildcard kept drawing new certificates.
+// The owner is the app's billing subject: a company wildcard stopped getting
+// certificates when its creator's personal plan had no wildcards, and for
+// good once the creator's account was erased (bug hunt 2026-10-28 B37).
 func (p *OnDemandTLSPolicy) wildcardPlanAllows(ctx context.Context, wildcard state.CustomDomain) (bool, error) {
 	plans, ok := p.store.(onDemandTLSPlanStore)
 	if !ok || wildcard.AppID == "" {
@@ -240,7 +243,7 @@ func (p *OnDemandTLSPolicy) wildcardPlanAllows(ctx context.Context, wildcard sta
 	if err != nil {
 		return false, fmt.Errorf("wildcard app: %w", err)
 	}
-	acct, err := plans.AccountByID(ctx, app.AccountID)
+	acct, err := state.AppResourceAccount(ctx, plans, app)
 	if err != nil {
 		return false, fmt.Errorf("wildcard owner: %w", err)
 	}

@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -123,7 +124,7 @@ func TestUndeleteAfterTheWindowOrAPurgeIsGone(t *testing.T) {
 
 	*f.clock = later
 	// The first database keeps its name while it is scheduled.
-	if _, err := f.service.Create(ctx, CreateRequest{AccountID: "account-a", Name: "orders", Spec: testSpec()}); !errors.Is(err, ErrConflict) {
+	if _, err := f.service.Create(ctx, CreateRequest{AccountID: "account-a", Name: "orders", Spec: testSpec()}); !errors.Is(err, ErrConflict) || !strings.Contains(err.Error(), "scheduled for deletion") {
 		t.Fatalf("reusing a scheduled database's name: %v", err)
 	}
 	second := f.readyDatabase(t, "invoices")

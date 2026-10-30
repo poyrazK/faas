@@ -168,24 +168,29 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	//      path (this PR). Every inbound webhook needs an
 	//      unsealed install token to fetch the codeload archive.
 	//
-	// Loading the identity unconditionally (before the OAuth
-	// branch) keeps a single failure path: an operator who
-	// hasn't provisioned host.age yet gets a fatal startup error
-	// regardless of which daemon mode they want to run. The
-	// 0o400 perm check inside LoadHostKey trips first.
-	identity, err := secretbox.LoadHostKey(hostKeyPath())
-	if err != nil {
-		return fmt.Errorf("githubd: load host age identity: %w", err)
-	}
+	// Loading the identity before the OAuth branch keeps a single
+	// failure path: an operator who hasn't provisioned host.age yet
+	// gets a fatal startup error regardless of which daemon mode they
+	// want to run. The 0o400 perm check inside LoadHostKey trips first.
+	//
 	// ADR 20261022111812: once the seal_domains role stages the source
 	// domain, its identity opens install tokens and webhook secrets ahead
 	// of the fleet identity, and new install tokens follow its write mode.
+	// Once the domain is contracted the role unsets the key path, and
+	// githubd loads no fleet or host identity at all.
 	sourceDomain, err := loadSourceSealDomain(os.Getenv)
 	if err != nil {
 		return err
 	}
+	keyPath := legacyKeyPath(os.Getenv, sourceDomain.staged())
+	var identity *age.X25519Identity
+	if keyPath != "" {
+		if identity, err = secretbox.LoadHostKey(keyPath); err != nil {
+			return fmt.Errorf("githubd: load host age identity: %w", err)
+		}
+	}
 	sealdomain.RegisterLoaded(ops.Registry(), sealdomain.Source, sourceDomain.staged())
-	log.Info("source seal domain", "write_mode", string(sourceDomain.mode), "domain_identity", sourceDomain.staged())
+	log.Info("source seal domain", "write_mode", string(sourceDomain.mode), "domain_identity", sourceDomain.staged(), "fleet_identity", identity != nil)
 
 	// PR-H: per-daemon audit + reconcile services. The auditor
 	// carries actor="githubd" so every project.reconcile.* /
@@ -243,10 +248,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR 20261022111812: the webhook secret's sealed copy opens with the
 	// source domain identity once staged, then the fleet identity (and the
 	// host identities for legacy rows).
-	keyDir := filepath.Dir(hostKeyPath())
-	webhookIdentities, err := sealdomain.LoadReaderIdentities("", hostKeyPath(), filepath.Join(keyDir, "faas_host_age_identity"))
-	if err != nil {
-		return fmt.Errorf("githubd: load webhook secret identities: %w", err)
+	var webhookIdentities []*age.X25519Identity
+	if keyPath != "" {
+		webhookIdentities, err = sealdomain.LoadReaderIdentities("", keyPath, filepath.Join(filepath.Dir(keyPath), "faas_host_age_identity"))
+		if err != nil {
+			return fmt.Errorf("githubd: load webhook secret identities: %w", err)
+		}
 	}
 	webhookIdentities = sourceDomain.readers(webhookIdentities...)
 	secretResolver := githubd.NewPGWebhookSecretResolver(newStateSecretStoreAdapter(pool, webhookIdentities), log, 60*time.Second)
@@ -409,7 +416,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				// LoadHostKeys fails — the box still unseals
 				// current-keyed envelopes, just not previous-keyed ones.
 				var identities []*age.X25519Identity
-				if dir := filepath.Dir(hostKeyPath()); dir != "" {
+				if dir := filepath.Dir(keyPath); keyPath != "" && dir != "" {
 					if ids, loadErr := secretbox.LoadFleetAndHostKeys(dir); loadErr != nil {
 						log.Warn("githubd: LoadHostKeys (rotation overlap) failed; install-token unseal will work only for envelopes sealed under the current host.age",
 							"dir", dir, "err", loadErr.Error())
@@ -710,7 +717,7 @@ func readKeyPEMDefault() ([]byte, error) {
 	return data, nil
 }
 
-// hostKeyPath returns the path to the host age private key. Used
+// legacyKeyPath returns the path to the host age private key. Used
 // by ensureInstallToken's cold-start rehydrate path to unseal
 // stored install tokens. The default matches the rest of the
 // secrets tree (spec §11: /etc/faas/secrets/host.age, mode 0400
@@ -725,12 +732,20 @@ func readKeyPEMDefault() ([]byte, error) {
 // silently failed every unseal. Reconciled to host.age here so
 // LoadHostKeys(dir) (current + previous) returns the same pair
 // every daemon consumes.
-func hostKeyPath() string {
-	if p := os.Getenv("FAAS_HOST_AGE_IDENTITY_PATH"); p != "" {
+//
+// With the source seal domain staged and neither path set it returns "":
+// the seal_domains role unsets both when it contracts the domain (ADR
+// 20261022111812, step 4), and githubd then loads no fleet or host
+// identity.
+func legacyKeyPath(getenv func(string) string, sourceDomainStaged bool) string {
+	if p := getenv("FAAS_HOST_AGE_IDENTITY_PATH"); p != "" {
 		return p
 	}
-	if p := os.Getenv("FAAS_HOST_AGE_KEY"); p != "" {
+	if p := getenv("FAAS_HOST_AGE_KEY"); p != "" {
 		return p
+	}
+	if sourceDomainStaged {
+		return ""
 	}
 	return secretbox.DefaultHostKeyPath
 }

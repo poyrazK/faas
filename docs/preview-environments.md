@@ -399,7 +399,10 @@ A preview gets the rest of its configuration from two places
 Previews keep their production app's access and egress gates: password,
 IP allowlist, signed-request and consumer-auth requirements, the egress
 allowlist and the app's visibility. A gate changed on the production app
-applies to its live previews at once. A service the PR adds takes the bound
+applies to its live previews at once. Previews also apply the production
+app's `@app` edge rules (`jwt`, `ip`, `geo`, `waf`, `challenge` and the other
+kinds, except `route` and `async`) as well as their own; see
+[edge rules](./edge-rules.md#matching). A service the PR adds takes the bound
 app's gates and the visibility production would give it, so a service
 without ports stays internal.
 When a dependency preview is absent, the gateway considers the **production**

@@ -57,6 +57,9 @@ func projectManagedPostgresDashboard(databases []managedpostgres.Database) []das
 			State:             string(database.State), LastErrorCode: database.LastErrorCode,
 			CreatedAt: database.CreatedAt.UTC().Format(time.RFC3339), UpdatedAt: database.UpdatedAt.UTC().Format(time.RFC3339),
 		}
+		if managedPostgresDeleteScheduled(database) {
+			item.RestorableUntil = database.PurgeAfter.UTC().Format(time.RFC3339)
+		}
 		items = append(items, item)
 	}
 	return items

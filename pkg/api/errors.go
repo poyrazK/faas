@@ -290,8 +290,18 @@ func WriteProblem(w http.ResponseWriter, p *Problem) {
 			w.Header().Add(k, v)
 		}
 	}
+	stampErrorCode(w.Header(), p)
 	w.WriteHeader(p.Status)
 	_ = json.NewEncoder(w).Encode(&wire)
+}
+
+// stampErrorCode marks a problem as platform-owned with ErrorCodeHeader,
+// unless the writer already chose a value. The public edge keys on it to keep
+// a platform 502/504 body away from Cloudflare (ADR-20261030115139).
+func stampErrorCode(h http.Header, p *Problem) {
+	if p.Code != "" && h.Get(ErrorCodeHeader) == "" {
+		h.Set(ErrorCodeHeader, p.Code)
+	}
 }
 
 // WriteProblemForRequest renders the browser-safe HTML variant when r
@@ -961,9 +971,10 @@ const (
 	// platform (ADR 20261022140000), for example while a security incident is
 	// contained. Nothing the caller sends overrides it; rollbacks still work.
 	CodePlatformReleasePaused = "platform_release_paused"
-	// CodeReleaseFreezeNotFound means the account has no such unlifted freeze.
+	// CodeReleaseFreezeNotFound means the account, organization or app has
+	// no such unlifted freeze.
 	CodeReleaseFreezeNotFound = "release_freeze_not_found"
-	// CodeReleaseFreezeLimit means the account already holds
+	// CodeReleaseFreezeLimit means the account or organization already holds
 	// ReleaseFreezesMax freezes that have not ended.
 	CodeReleaseFreezeLimit = "release_freeze_limit"
 	// CodeReleaseGateLimit means the app already has ReleaseGatesPerAppMax
@@ -3062,7 +3073,7 @@ func ErrEventsPaused(accountScope bool) *Problem {
 	}
 	return NewProblem(http.StatusServiceUnavailable, CodeEventsPaused, "Event publishing is paused", detail).
 		WithHeader("Retry-After", strconv.Itoa(int(EventsPausedRetryAfter.Seconds()))).
-		WithDocs(docsBase + "/event-driven#pausing-events")
+		WithDocs(docsBase + "/events#pausing-events")
 }
 
 func ErrEventPublishRateLimited(perSecond, events int, retryAfter time.Duration) *Problem {
@@ -5323,8 +5334,8 @@ func ErrAccountDeletionManagedPostgres(live int64) *Problem {
 	}
 	return NewProblem(http.StatusConflict, CodeAccountDeletionManagedPostgres,
 		"Managed PostgreSQL databases must be deleted first",
-		fmt.Sprintf("this account still has %s; delete them before deleting the account. Run `gregale postgres list` to see them and `gregale postgres delete <database>` to delete each one, then delete the account again.", what)).
-		WithHint("run `gregale postgres list`, then `gregale postgres delete <database>` for each database").
+		fmt.Sprintf("this account still has %s; delete them before deleting the account. Run `gregale postgres list` to see them and `gregale postgres delete <database> --purge` to delete each one, then delete the account again. A database whose delete is only scheduled still counts until it is purged.", what)).
+		WithHint("run `gregale postgres list`, then `gregale postgres delete <database> --purge` for each database").
 		WithDocs(docsBase + "/postgres")
 }
 
@@ -6345,7 +6356,7 @@ func ErrEventReplayBackfillRange(limitSeconds, observedSeconds int64) *Problem {
 		fmt.Sprintf("A backfill range can span at most %s on this plan, its settled-receipt retention window; the requested range spans %s.",
 			time.Duration(limitSeconds)*time.Second, time.Duration(observedSeconds)*time.Second)).
 		WithLimit(limitSeconds, observedSeconds).
-		WithDocs(docsBase + "/event-driven#settled-receipt-retention")
+		WithDocs(docsBase + "/events#settled-receipt-retention")
 }
 
 // ErrEdgeRulesVersionMismatch (ADR-961) is the 412 for an edge-rule mutation
@@ -6501,7 +6512,7 @@ func ErrDeadLetterNotReplayable() *Problem {
 	return NewProblem(http.StatusConflict, CodeDeadLetterNotReplayable,
 		"Dead-letter event cannot be replayed",
 		"this routing failure's receipt has been pruned, so there is nothing to redrive; re-publish the event in its payload to deliver it again.").
-		WithDocs(docsBase + "/event-driven#routing-failures-in-the-dead-letter-queue")
+		WithDocs(docsBase + "/events#routing-failures-in-the-dead-letter-queue")
 }
 
 // ErrInvocationNotReplayable (issue #315 / tier-2 DX) is returned by

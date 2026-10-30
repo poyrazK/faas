@@ -1692,6 +1692,9 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	deps.capabilityAllowed = capabilityAllowed
 	hstsFlag := runtimeconfig.NewBoolFlag(httpsec.HSTSEnabledFromEnv(osGetenv))
 	httpsec.SetHSTSEnabled(hstsFlag.Load())
+	// On until the first reconcile applies the durable value, so a failed
+	// reconcile keeps the clone readiness read rather than skipping it.
+	fullEnvironmentClonesFlag := runtimeconfig.NewBoolFlag(true)
 	authoritativeHostPolicy, err := api.TrafficAuthoritativeHostPolicyEnabled(osGetenv("FAAS_TRAFFIC_AUTHORITATIVE_HOST_POLICY"))
 	if err != nil {
 		return fmt.Errorf("gatewayd: %w", err)
@@ -1702,6 +1705,7 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 		appsSuffix:            appsSuffix(appsDomain),
 		deploySuffix:          hostidentity.DeploySuffix(),
 		tenantSurfacesEnabled: tenantSurfacesFlag.Load,
+		fullEnvironmentClones: fullEnvironmentClonesFlag.Load,
 		cachedHostPolicy:      deps.cachedHostPolicy,
 	}
 	// ADR-025 axis 4: sticky-warm affinity cache. Built first so the
@@ -2167,7 +2171,7 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 		runtimeCtx, runtimeCancel := context.WithCancel(ctx)
 		defer runtimeCancel()
 		keys, apply := runtimeconfig.WithPlatformFlags(
-			[]string{runtimeconfig.KeyTenantSurfaces, runtimeconfig.KeyHSTS, runtimeconfig.KeyAPIMonetization},
+			[]string{runtimeconfig.KeyTenantSurfaces, runtimeconfig.KeyHSTS, runtimeconfig.KeyAPIMonetization, runtimeconfig.KeyFullEnvironmentClones},
 			func(ctx context.Context, key string, value json.RawMessage, _ int64) error {
 				enabled, err := runtimeconfig.Bool(value)
 				if err != nil {
@@ -2176,6 +2180,8 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 				switch key {
 				case runtimeconfig.KeyTenantSurfaces:
 					tenantSurfacesFlag.Store(enabled)
+				case runtimeconfig.KeyFullEnvironmentClones:
+					fullEnvironmentClonesFlag.Store(enabled)
 				case runtimeconfig.KeyAPIMonetization:
 					apiMonetizationFlag.Store(enabled)
 				case runtimeconfig.KeyHSTS:

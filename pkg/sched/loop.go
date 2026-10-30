@@ -107,8 +107,9 @@ type Loop struct {
 	// brokerLanes tracks broker trigger lanes and app owners (ADR-20261027162741).
 	brokerLanes brokerLanes
 	// triggerSecretIdentities opens Kafka credentials only in the
-	// short-lived trigger copy passed to a poller factory. Current and
-	// previous identities coexist here during host-key rotation.
+	// short-lived trigger copy passed to a poller factory: the delivery
+	// seal-domain identity first, then the fleet and host identities
+	// (current and previous during a rotation).
 	triggerSecretIdentities []*age.X25519Identity
 	// rateLimiter is the per-app wake rate limiter (shared with
 	// cron dispatch via pkg/sched/rate_limit.go).

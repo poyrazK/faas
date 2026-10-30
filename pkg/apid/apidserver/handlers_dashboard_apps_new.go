@@ -97,7 +97,7 @@ func (s *server) renderAppNew(w http.ResponseWriter, r *http.Request, log *slog.
 	// Create-app CSRF envelope — minted at GET time so the browser form
 	// carries a fresh sealed token. Use a dedicated sidecar cookie because
 	// this page may also render the Connect GitHub form.
-	createTok, err := middleware.IssueForAuthenticatedNamed(s.sessions, githubWizardCreateAction, acct.ID, githubWizardCreateCSRFCookie)
+	createTok, err := middleware.IssueForAuthenticatedNamed(s.sessions, githubWizardCreateAction, actorAccount(r, acct).ID, githubWizardCreateCSRFCookie)
 	if err != nil {
 		log.Error("renderAppNew: csrf issue create app", "account_id", acct.ID, "err", err)
 		renderProblem(w, log, err)

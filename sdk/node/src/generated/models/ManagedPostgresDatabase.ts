@@ -24,5 +24,9 @@ export type ManagedPostgresDatabase = {
   created_at: string;
   updated_at: string;
   deleted_at?: string | null;
+  /**
+   * Set while the database's delete is scheduled: it can be undeleted until then, and is purged after.
+   */
+  restorable_until?: string;
 };
 

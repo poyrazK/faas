@@ -381,6 +381,7 @@ what you used.
 | Notification rules per bucket | 1,000 |
 | CORS rules per bucket | 100 |
 | Anonymous reads of a public bucket | 75% of the account's monthly request and egress ceilings; 100 per second per bucket |
+| Requests through `s3.gregale.dev` | 100 per second per account, bursts of 200; more answer `503 SlowDown`, which S3 SDKs retry with backoff |
 
 Your plan and account also cap stored bytes, requests and egress each month.
 

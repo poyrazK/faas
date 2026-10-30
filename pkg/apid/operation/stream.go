@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -142,9 +143,30 @@ func (s *Service) streamOperationEvents(w http.ResponseWriter, r *http.Request, 
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.Header().Set("Vary", "Authorization, Accept")
+	r, cancel, ok := commitStream(w, r)
+	defer cancel()
+	if !ok {
+		return
+	}
 	wake, unwatch := s.streamHub.watch(op.ID)
 	defer unwatch()
 	s.streamOperationLoop(w, r, op, store, streams, lease, bearer, after, wake)
+}
+
+// commitStream commits a stream's headers and returns the request detached
+// from apid's request budget. The budget cancels r.Context() after 5 s, which
+// closed every stream built to run OperationStreamMaxDuration and made the SDK
+// reconnect, paying a lease, an authorization and an events read each time
+// (bug hunt 2026-10-28 B35). The detached stream still ends with the client
+// or the server. ok is false when the headers could not be sent.
+func commitStream(w http.ResponseWriter, r *http.Request) (*http.Request, context.CancelFunc, bool) {
+	ctx, detach, cancel := reqbudget.WithStream(r.Context())
+	w.WriteHeader(http.StatusOK)
+	if err := http.NewResponseController(w).Flush(); err != nil {
+		return r, cancel, false
+	}
+	detach()
+	return r.WithContext(ctx), cancel, true
 }
 
 func (s *Service) streamOperationLoop(w http.ResponseWriter, r *http.Request, op state.Operation, store state.OperationStore, streams state.OperationStreamStore, lease, bearer string, after int64, wake <-chan struct{}) {

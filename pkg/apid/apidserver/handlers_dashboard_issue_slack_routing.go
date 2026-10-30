@@ -25,7 +25,7 @@ func (s *server) dashboardSlackRoutingForAccount(w http.ResponseWriter, r *http.
 	if !ok {
 		return
 	}
-	if app.AccountID != acct.ID {
+	if !dashboardAppOwner(r, &acct, app) {
 		api.WriteProblem(w, api.NewProblem(403, api.CodeForbidden, "Owner required", "only the app owner may manage Slack channel rules"))
 		return
 	}
@@ -100,7 +100,7 @@ func (s *server) renderSlackRouting(w http.ResponseWriter, r *http.Request, acct
 		writeNativeIssueTrackerError(w, err)
 		return
 	}
-	csrf, err := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardIssueAction, acct.ID, dashboardIssueCookie)
+	csrf, err := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardIssueAction, actorAccount(r, acct).ID, dashboardIssueCookie)
 	if err != nil {
 		renderProblem(w, s.log, err)
 		return

@@ -16,8 +16,9 @@ Sections, each independent; a failing section is reported and skipped:
   transaction session;
 - checkpoints: timed and requested checkpoints, their write and sync time,
   and buffers written by checkpoints, the background writer and backends;
-- tables: the 10 tables with the most dead tuples and the 10 with the most
-  sequentially read tuples (labels stay bounded on a 1,000-table schema);
+- tables: the 10 tables with the most dead tuples, the 10 with the most
+  sequentially read tuples (labels stay bounded on a 1,000-table schema),
+  and the WATCHED_TABLES whose row counts are alerted on;
 - statements: the 20 statements with the most total execution time, from
   pg_stat_statements in the postgres database (#5072). Only normalized
   DML text is exported as a label; utility statements, which can carry
@@ -38,6 +39,8 @@ DEFAULT_TEXTFILE = "/var/lib/node_exporter/textfile_collector/faas_postgres_acti
 SEP = "\x1f"
 TOP_STATEMENTS = 20
 TOP_TABLES = 10
+# Exported whatever their rank: alerts read their row counts.
+WATCHED_TABLES = ("managed_realtime_channel_heads",)
 MAX_APPLICATIONS = 30
 QUERY_LABEL_CHARS = 160
 NAME_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,48}$")
@@ -169,12 +172,16 @@ FROM pg_stat_bgwriter""")
 
 
 def collect_tables(q, db):
+    watched = ", ".join(f"'{name}'" for name in WATCHED_TABLES)
     rows = q(db, f"""
 (SELECT relname, n_dead_tup, n_live_tup, seq_scan, seq_tup_read, COALESCE(idx_scan, 0)
  FROM pg_stat_user_tables ORDER BY n_dead_tup DESC LIMIT {TOP_TABLES})
 UNION
 (SELECT relname, n_dead_tup, n_live_tup, seq_scan, seq_tup_read, COALESCE(idx_scan, 0)
- FROM pg_stat_user_tables ORDER BY seq_tup_read DESC LIMIT {TOP_TABLES})""")
+ FROM pg_stat_user_tables ORDER BY seq_tup_read DESC LIMIT {TOP_TABLES})
+UNION
+(SELECT relname, n_dead_tup, n_live_tup, seq_scan, seq_tup_read, COALESCE(idx_scan, 0)
+ FROM pg_stat_user_tables WHERE relname IN ({watched}))""")
     out = {name: [] for name in (
         "faas_postgres_table_dead_tuples", "faas_postgres_table_live_tuples",
         "faas_postgres_table_seq_scans_total", "faas_postgres_table_seq_tuples_read_total",
