@@ -3354,6 +3354,10 @@ type Querier interface {
 	// A rehearsal-enrolled app never polls or commits offsets on a real external
 	// broker; its queue, cron and realtime inputs stay inside the app
 	// (ADR-20261019180000).
+	// A deleted app's triggers stay enabled so a restore inside the grace window
+	// brings them back, but nothing polls them meanwhile: a broker trigger kept
+	// draining the customer's queue into the dead app's dead letters (bug hunt
+	// 2026-10-28 B32).
 	ListEnabledTriggers(ctx context.Context, db DBTX) ([]ListEnabledTriggersRow, error)
 	ListEnabledUDPListeners(ctx context.Context, db DBTX) ([]AppUdpListener, error)
 	ListEnvironmentGitOpsOverrideExpirations(ctx context.Context, db DBTX, sourceID pgtype.UUID) ([]ListEnvironmentGitOpsOverrideExpirationsRow, error)

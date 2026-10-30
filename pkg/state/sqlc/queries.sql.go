@@ -46519,6 +46519,7 @@ select id, account_id, app_id, kind, slug, enabled, config, queue_binding_id, qu
 from triggers where enabled = true AND NOT environment_workload_admission_retired(app_id,queue_binding_scope)
 AND NOT (kind IN ('kafka','nats','redis_streams','sqs_compat')
   AND EXISTS (SELECT 1 FROM scenario_test_action_policies p WHERE p.app_id=triggers.app_id))
+AND EXISTS (SELECT 1 FROM apps a WHERE a.id = triggers.app_id AND a.status <> 'deleted')
 `
 
 type ListEnabledTriggersRow struct {
@@ -46557,6 +46558,10 @@ type ListEnabledTriggersRow struct {
 // A rehearsal-enrolled app never polls or commits offsets on a real external
 // broker; its queue, cron and realtime inputs stay inside the app
 // (ADR-20261019180000).
+// A deleted app's triggers stay enabled so a restore inside the grace window
+// brings them back, but nothing polls them meanwhile: a broker trigger kept
+// draining the customer's queue into the dead app's dead letters (bug hunt
+// 2026-10-28 B32).
 func (q *Queries) ListEnabledTriggers(ctx context.Context, db DBTX) ([]ListEnabledTriggersRow, error) {
 	rows, err := db.Query(ctx, listEnabledTriggers)
 	if err != nil {

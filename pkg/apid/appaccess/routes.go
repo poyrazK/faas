@@ -14,18 +14,21 @@ import (
 var routeActions = map[string]authz.OrgAction{
 	// The resumable upload routes name their app in the request body or the
 	// stored session, so the handlers call Authorize once they resolve it.
-	"POST /v1/uploads":                                authz.OrgActionDeployApp,
-	"GET /v1/uploads/{id}":                            authz.OrgActionDeployApp,
-	"PATCH /v1/uploads/{id}":                          authz.OrgActionDeployApp,
-	"POST /v1/uploads/{id}/commit":                    authz.OrgActionDeployApp,
-	"DELETE /v1/uploads/{id}":                         authz.OrgActionDeployApp,
-	"GET /v1/apps/{slug}":                             authz.OrgActionReadApp,
-	"PATCH /v1/apps/{slug}":                           authz.OrgActionConfigureApp,
-	"DELETE /v1/apps/{slug}":                          authz.OrgActionDeleteApp,
-	"POST /v1/apps/{slug}/restore":                    authz.OrgActionDeleteApp,
-	"POST /v1/apps/{slug}/park":                       authz.OrgActionDeployApp,
-	"POST /v1/apps/{slug}/park/conditional":           authz.OrgActionDeployApp,
-	"POST /v1/apps/{slug}/wake":                       authz.OrgActionDeployApp,
+	"POST /v1/uploads":                      authz.OrgActionDeployApp,
+	"GET /v1/uploads/{id}":                  authz.OrgActionDeployApp,
+	"PATCH /v1/uploads/{id}":                authz.OrgActionDeployApp,
+	"POST /v1/uploads/{id}/commit":          authz.OrgActionDeployApp,
+	"DELETE /v1/uploads/{id}":               authz.OrgActionDeployApp,
+	"GET /v1/apps/{slug}":                   authz.OrgActionReadApp,
+	"PATCH /v1/apps/{slug}":                 authz.OrgActionConfigureApp,
+	"DELETE /v1/apps/{slug}":                authz.OrgActionDeleteApp,
+	"POST /v1/apps/{slug}/restore":          authz.OrgActionDeleteApp,
+	"POST /v1/apps/{slug}/park":             authz.OrgActionDeployApp,
+	"POST /v1/apps/{slug}/park/conditional": authz.OrgActionDeployApp,
+	"POST /v1/apps/{slug}/wake":             authz.OrgActionDeployApp,
+	// A restart parks and wakes the app, so it takes their permission
+	// (bug hunt 2026-10-28 B36).
+	"POST /v1/apps/{slug}/restart":                    authz.OrgActionDeployApp,
 	"GET /v1/apps/{slug}/env":                         authz.OrgActionReadApp,
 	"PUT /v1/apps/{slug}/env/{key}":                   authz.OrgActionConfigureApp,
 	"DELETE /v1/apps/{slug}/env/{key}":                authz.OrgActionConfigureApp,
@@ -230,6 +233,16 @@ var routeActions = map[string]authz.OrgAction{
 	"POST /dashboard/apps/{slug}/secrets/{key}/rotate":           authz.OrgActionManageAppSecrets,
 	"POST /dashboard/apps/{slug}/secret-references":              authz.OrgActionManageAppSecrets,
 	"POST /dashboard/apps/{slug}/secret-references/{key}/delete": authz.OrgActionManageAppSecrets,
+	// Park, wake and restart; rollback; deployment retry; outbound webhooks
+	// (bug hunt 2026-10-28 B36).
+	"POST /dashboard/apps/{slug}/instances/{action}":                   authz.OrgActionDeployApp,
+	"POST /dashboard/apps/{slug}/rollback":                             authz.OrgActionDeployApp,
+	"POST /dashboard/apps/{slug}/deployments/{id}/retry":               authz.OrgActionDeployApp,
+	"POST /dashboard/apps/{slug}/webhooks":                             authz.OrgActionManageAppSecurity,
+	"POST /dashboard/apps/{slug}/webhooks/{id}/delete":                 authz.OrgActionManageAppSecurity,
+	"POST /dashboard/apps/{slug}/webhooks/{id}/toggle":                 authz.OrgActionManageAppSecurity,
+	"POST /dashboard/apps/{slug}/webhooks/{id}/rotate-secret":          authz.OrgActionManageAppSecurity,
+	"POST /dashboard/apps/{slug}/webhooks/{id}/deliveries/{did}/retry": authz.OrgActionManageAppSecurity,
 	// Team triage (ADR-1456–1498): members claim and acknowledge incidents;
 	// the handlers require the deploy-write scope.
 	"POST /dashboard/apps/{slug}/issues/{issue_id}/triage":                              authz.OrgActionDeployApp,
