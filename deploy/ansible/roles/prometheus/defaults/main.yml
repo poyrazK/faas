@@ -166,6 +166,11 @@ prom_targets:
     port: 9110
     box_roles: [control-plane, single-box]
     enabled: "{{ faas_mcp_bridge_enabled | default(true) | bool }}"
+  - job: agentd
+    host: 127.0.0.1
+    port: 9109
+    box_roles: [control-plane, single-box]
+    enabled: "{{ faas_agentd_managed | default(false) | bool }}"
   - job: prometheus
     host: 127.0.0.1
     port: 9095

@@ -92,7 +92,7 @@ func TestLoadIdentitiesAllowsMissingOptionalPreviousCredential(t *testing.T) {
 		default:
 			return ""
 		}
-	})
+	}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,8 +118,21 @@ func TestLoadIdentitiesRejectsInvalidExistingPreviousCredential(t *testing.T) {
 			return previous
 		}
 		return ""
-	})
+	}, false)
 	if err == nil {
 		t.Fatal("err = nil, want invalid previous identity failure")
+	}
+}
+
+// TestLoadIdentitiesWithoutPathNeedsTheStorageDomain: a contracted gateway
+// (ADR 20261022111812) starts with the storage domain alone, and a gateway
+// with neither identity refuses to start.
+func TestLoadIdentitiesWithoutPathNeedsTheStorageDomain(t *testing.T) {
+	unset := func(string) string { return "" }
+	if identities, err := loadIdentities(unset, true); err != nil || identities != nil {
+		t.Fatalf("contracted = %v, %v; want no legacy identity and no error", identities, err)
+	}
+	if _, err := loadIdentities(unset, false); err == nil {
+		t.Fatal("started with neither the storage domain nor the fleet identity")
 	}
 }

@@ -574,7 +574,7 @@ func (q *Queries) SealedLiveLoginsAfter(ctx context.Context, db DBTX, arg Sealed
 const signLiveKey = `-- name: SignLiveKey :execrows
 UPDATE managed_postgres_live_keys SET sealed_secret_sig=$1::bytea
  WHERE kid=$2::text AND database_id=$3::text::uuid AND sealed_secret=$4::bytea
-   AND recipient=$5::text AND sealed_secret_sig IS NULL
+   AND recipient=$5::text AND sealed_secret_sig IS NOT DISTINCT FROM $6::bytea
 `
 
 type SignLiveKeyParams struct {
@@ -583,11 +583,13 @@ type SignLiveKeyParams struct {
 	DatabaseID      string
 	SealedSecret    []byte
 	Recipient       string
+	PreviousSig     []byte
 }
 
-// The operator backfill signs an unsigned key as it stands (ADR
-// 20261028161502), only while it still holds the ciphertext and recipient
-// the backfill read.
+// The operator backfill signs a key as it stands, or signs it again after
+// a signing-key rotation (ADR 20261028161502), only while it still holds
+// the ciphertext, recipient and signature (NULL when unsigned) the backfill
+// read.
 func (q *Queries) SignLiveKey(ctx context.Context, db DBTX, arg SignLiveKeyParams) (int64, error) {
 	result, err := db.Exec(ctx, signLiveKey,
 		arg.SealedSecretSig,
@@ -595,6 +597,7 @@ func (q *Queries) SignLiveKey(ctx context.Context, db DBTX, arg SignLiveKeyParam
 		arg.DatabaseID,
 		arg.SealedSecret,
 		arg.Recipient,
+		arg.PreviousSig,
 	)
 	if err != nil {
 		return 0, err
@@ -605,7 +608,7 @@ func (q *Queries) SignLiveKey(ctx context.Context, db DBTX, arg SignLiveKeyParam
 const signLiveLogin = `-- name: SignLiveLogin :execrows
 UPDATE managed_postgres_live_logins SET sealed_login_sig=$1::bytea
  WHERE database_id=$2::text::uuid AND sealed_login=$3::bytea
-   AND recipient=$4::text AND sealed_login_sig IS NULL
+   AND recipient=$4::text AND sealed_login_sig IS NOT DISTINCT FROM $5::bytea
 `
 
 type SignLiveLoginParams struct {
@@ -613,6 +616,7 @@ type SignLiveLoginParams struct {
 	DatabaseID     string
 	SealedLogin    []byte
 	Recipient      string
+	PreviousSig    []byte
 }
 
 // As SignLiveKey, for a login.
@@ -622,6 +626,7 @@ func (q *Queries) SignLiveLogin(ctx context.Context, db DBTX, arg SignLiveLoginP
 		arg.DatabaseID,
 		arg.SealedLogin,
 		arg.Recipient,
+		arg.PreviousSig,
 	)
 	if err != nil {
 		return 0, err

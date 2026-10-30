@@ -36343,7 +36343,8 @@ paths:
         Returns every trigger owned by the calling account, optional
         ?app_id filter to scope to one app, ?kind to scope to one
         kind. Newest-first by created_at; result is unbounded but
-        the typical account has well under 200.
+        the typical account has well under 200. Cron schedules are
+        not triggers: list them with GET /v1/crons.
       parameters:
         - name: app_id
           in: query
@@ -36357,8 +36358,9 @@ paths:
           required: false
           description: |
             Optional trigger kind filter (kafka / nats / redis_streams
-            / sqs_compat / queue). Invalid values produce an empty list,
-            not 400.
+            / sqs_compat / queue / realtime). kind=cron answers 400
+            validation_failed pointing at GET /v1/crons; any other
+            unknown value produces an empty list.
           schema: { $ref: '#/components/schemas/TriggerKind' }
       responses:
         '200':
@@ -36368,6 +36370,7 @@ paths:
               schema:
                 type: array
                 items: { $ref: '#/components/schemas/Trigger' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
     post:
@@ -78825,6 +78828,13 @@ components:
         reason: { type: string }
         customers_limit: { type: integer, minimum: 20, maximum: 20 }
         routes: { type: array, maxItems: 20, items: { $ref: '#/components/schemas/RouteCustomerHealthRoute' } }
+    RouteHealthHold:
+      type: object
+      description: "Present on a route health report read while the enforced guard holds the canary: when the hold began (its first blocking decision) and when the hold deadline aborts the canary if the rollout worker still finds it held."
+      required: [since, aborts_at]
+      properties:
+        since: { type: string, format: date-time }
+        aborts_at: { type: string, format: date-time }
     RouteHealthReport:
       type: object
       description: Current observed-only critical-route health comparison with candidate, predecessor, policy, and telemetry provenance. When the app's automatic profile policy is enabled, profile_signal adds an ephemeral report-only comparison for an active canary; it never affects canary advancement or rollback and is not persisted.
@@ -78851,6 +78861,7 @@ components:
         minimum_latency_requests: { type: integer, format: int64, minimum: 100, maximum: 100, description: Present when any route has a latency check selected. Applies to each deployment per route per window. }
         routes: { type: array, maxItems: 20, items: { $ref: '#/components/schemas/RouteHealthFinding' } }
         profile_signal: { $ref: '#/components/schemas/CanaryProfileSignal' }
+        hold: { $ref: '#/components/schemas/RouteHealthHold' }
     CanaryProfileSignal:
       type: object
       description: Latest retained sampled CPU comparison for a deployment's canary stages, produced by a background worker using the app's enabled automatic profile policy and equal fixed windows. The stage and policy revision identify the assessment. Route-health reads return the saved result and never query profile storage. Checks are advisory unless canary_gate is explicitly configured. Gate evidence requires consecutive distinct qualified route windows; timeout behavior is configured explicitly. Completed assessments are retained for 30 days.
@@ -84564,6 +84575,7 @@ components:
         business_name: { type: string, maxLength: 256, description: "Legal business name used on future invoices." }
         billing_address: { type: string, maxLength: 1000, description: "Free-form billing address used on future invoices." }
         tax_id: { type: string, maxLength: 128, description: "Customer tax/VAT identifier used on future invoices." }
+        key_scopes: { type: array, items: { type: string }, description: "Scopes of the API key that authenticated this request; absent for a dashboard session. An agent key (scope agent) lists the tools the hosted MCP server offers it." }
         abuse_hold: { $ref: '#/components/schemas/AccountAbuseHold' }
 
     AccountAbuseHold:

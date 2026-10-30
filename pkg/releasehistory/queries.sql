@@ -43,3 +43,16 @@ SELECT id, host, kind, release_id, commit_sha, previous_release_id, services, ac
  WHERE (sqlc.narg(host)::text IS NULL OR host = sqlc.narg(host))
  ORDER BY started_at DESC, id DESC
  LIMIT sqlc.arg(row_limit);
+
+-- name: ImportActivation :execrows
+-- A finished activation recorded on a host without owner access to the
+-- history (a compute host's spool), under the id it got there: importing it
+-- again is a no-op.
+INSERT INTO platform_release_activations (
+    id, host, kind, release_id, commit_sha, previous_release_id, services, actor, status, detail, started_at, finished_at
+) VALUES (
+    sqlc.arg(id), sqlc.arg(host), sqlc.arg(kind), sqlc.arg(release_id), sqlc.narg(commit_sha), sqlc.narg(previous_release_id),
+    sqlc.narg(services)::text[], sqlc.arg(actor), sqlc.arg(status), sqlc.arg(detail), sqlc.arg(started_at),
+    GREATEST(sqlc.arg(finished_at)::timestamptz, sqlc.arg(started_at))
+)
+ON CONFLICT (id) DO NOTHING;

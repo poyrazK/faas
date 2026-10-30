@@ -23,7 +23,7 @@ func TestPRHeadComposeValuesFollowTheProjectImportRules(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	values := prHeadComposeValues(fsys, scan, api.MustLimitsFor(api.PlanPro))["web"]
+	values := prHeadComposeValues(fsys, scan, reposcan.ScanOptions{}, api.MustLimitsFor(api.PlanPro))["web"]
 	if values["LOG_LEVEL"] != "debug" || values["BILLING_URL"] != "http://billing-api.svc.gregale:10081/v1" {
 		t.Fatalf("PR head values = %v; want LOG_LEVEL and the rewritten BILLING_URL", values)
 	}
@@ -42,7 +42,7 @@ func TestPRHeadComposeValuesFollowTheProjectImportRules(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := prHeadComposeValues(noImport, scan, api.MustLimitsFor(api.PlanPro)); len(got) != 0 {
+	if got := prHeadComposeValues(noImport, scan, reposcan.ScanOptions{}, api.MustLimitsFor(api.PlanPro)); len(got) != 0 {
 		t.Fatalf("values imported without x-gregale-env-import: %v", got)
 	}
 }

@@ -1,12 +1,88 @@
 package main
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/onebox-faas/faas/pkg/githubd"
 	"github.com/onebox-faas/faas/pkg/githubdgrpc"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+type staticTokenFetcher struct{}
+
+func (staticTokenFetcher) ExchangeInstallationToken(context.Context, int64) (string, time.Time, error) {
+	return "ghs_test", time.Now().Add(time.Hour), nil
+}
+
+// rewriteClient sends api.github.com requests to a test server.
+type rewriteClient struct {
+	base   *http.Client
+	target *url.URL
+}
+
+func (c rewriteClient) Do(req *http.Request) (*http.Response, error) {
+	req.URL.Scheme, req.URL.Host = c.target.Scheme, c.target.Host
+	return c.base.Do(req)
+}
+
+type knownGitHubDeployment struct{ id int64 }
+
+func (k knownGitHubDeployment) GitHubDeploymentID(context.Context, string) (int64, error) {
+	return k.id, nil
+}
+
+func (knownGitHubDeployment) SaveGitHubDeploymentID(context.Context, string, int64) error { return nil }
+
+// An App without the Deployments permission must not keep a torn-down
+// preview's PR comment from saying so: the refusal is skipped, not retried
+// until the check update goes dead.
+func TestSyncTornDownPreviewWithoutDeploymentsPermission(t *testing.T) {
+	var patched bool
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/deployments/4242/statuses"):
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"message":"Resource not accessible by integration"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/octo/api/issues/42/comments":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[{"id":7,"body":"<!-- gregale-preview:pr-42-demo -->\nlive","user":{"type":"Bot"}}]`))
+		case r.Method == http.MethodPatch && r.URL.Path == "/repos/octo/api/issues/comments/7":
+			patched = true
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":7}`))
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer fake.Close()
+	target, err := url.Parse(fake.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checks, err := githubd.NewChecksAPI(githubd.NewTokenCache(staticTokenFetcher{}, time.Minute),
+		rewriteClient{base: fake.Client(), target: target}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checks.WithGitHubDeploymentStore(knownGitHubDeployment{id: 4242})
+	err = syncTornDownPreview(context.Background(), checks, tornDownPreview{
+		deploymentID: "deployment-1", installationID: 99, repo: "octo/api", commitSHA: "deadbeef",
+		environment: "preview/demo", appSlug: "pr-42-demo", prNumber: 42,
+	})
+	if err != nil {
+		t.Fatalf("syncTornDownPreview = %v, want the Deployments refusal skipped", err)
+	}
+	if !patched {
+		t.Fatal("the torn-down preview comment was not written")
+	}
+}
 
 func TestValidateDeploymentCheckTarget(t *testing.T) {
 	tests := []struct {

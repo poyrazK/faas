@@ -173,13 +173,12 @@ them.
   projection still can, as ADR-570 intends.
 - A `*` route write still serializes with every binding write and analyses
   every route in the fleet.
-- **Not addressed here:** every rule and policy write also takes ADR-570's
-  `service_capacity_policy` EXCLUSIVE table guard
-  (`LockTrafficCapacitySnapshot`) for its whole transaction. Rule writes
-  therefore stay serialized fleet-wide, and each one makes binding writes
-  retry until it commits. The guard also blocks any statement that fires a
-  capacity trigger, which includes instance state changes. Scoped name locks
-  only shorten that window; removing it needs its own decision.
+- Every rule and policy write also took ADR-570's `service_capacity_policy`
+  EXCLUSIVE table guard (`LockTrafficCapacitySnapshot`) for its whole
+  transaction. That serialized rule writes fleet-wide, made binding writes
+  retry, and blocked capacity statements such as instance state changes.
+  [ADR 20261029150627](20261029150627-rule-writes-skip-capacity-guard.md)
+  removes it from rule-only writes, so their scoped name locks decide.
 - A write takes more lock keys: name depth times hostnames, usually under 20.
 - Every route write maintains the new `edge_rules` column. The change is in
   `pkg/state`, so every daemon rebuilds.

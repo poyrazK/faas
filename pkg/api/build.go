@@ -144,6 +144,17 @@ type BuildManifest struct {
 	// FAAS_BUILD_KERNEL_OVERLAY, ADR-20261029105325). An older guest ignores
 	// it.
 	BuildKitSnapshotter string `json:"buildkit_snapshotter,omitempty"`
+	// DeferCacheExport moves the dependency-cache export off the deploy's
+	// critical path (builderd's FAAS_BUILD_DEFER_CACHE_EXPORT,
+	// ADR-20261029171525). The guest exports only the image and reports the
+	// owed export in BuildDone.DependencyCacheDeferred. After handing the image
+	// to imaged, builderd boots a CacheExportOnly VM on the same drive. An
+	// older guest ignores the field and exports the cache inline.
+	DeferCacheExport bool `json:"defer_cache_export,omitempty"`
+	// CacheExportOnly re-runs a deferred build on its retained drive to export
+	// only the dependency cache. It skips the source unpack and the image
+	// output, and it reuses the deferred run's plan and BuildKit state.
+	CacheExportOnly bool `json:"cache_export_only,omitempty"`
 	// KeepWarm leaves a successful builder guest alive in a host-controlled
 	// wait state so vmmd can capture a paused snapshot. Failed builds still
 	// power off immediately; the warm path is only a successful-build handoff.
@@ -213,11 +224,51 @@ type BuildDone struct {
 	// dependency cache instead of exporting it: its plan and install inputs
 	// matched the ones that produced it. builderd keeps the stored cache.
 	DependencyCacheUnchanged bool `json:"dependency_cache_unchanged,omitempty"`
+	// DependencyCacheDeferred reports that a DeferCacheExport build exported
+	// only its image and still owes its dependency cache. builderd keeps the
+	// drive for the CacheExportOnly run. Older guests omit it.
+	DependencyCacheDeferred bool `json:"dependency_cache_deferred,omitempty"`
 	// SharedRuntime records, for a successful Node source build of an app,
 	// whether its runtime artifact could run on the shared runner base
 	// (docs/adr/1500-shared-runtime-source-apps.md). It is informational
 	// until imaged consumes it; older guests omit it.
 	SharedRuntime *SharedRuntimeVerdict `json:"shared_runtime,omitempty"`
+	// Timings is where the build spent its time inside the builder VM, for
+	// builderd's build log. Older guests omit it.
+	Timings *BuildTimings `json:"timings,omitempty"`
+}
+
+// BuildTimings is where one build spent its time inside the builder VM.
+type BuildTimings struct {
+	// GuestStartMS is the time from kernel boot to the start of the build in
+	// guest-init; zero when unknown.
+	GuestStartMS int64 `json:"guest_start_ms,omitempty"`
+	// Stages are guest-init's milestones in order, in milliseconds since the
+	// build started in guest-init.
+	Stages []BuildStageTiming `json:"stages,omitempty"`
+	// BuildMS is the build command's wall time: the Railpack plan, when
+	// there is one, and the BuildKit solve with its exports.
+	BuildMS int64 `json:"build_ms,omitempty"`
+	// ImageExportMS and CacheExportMS are BuildKit's export steps: the image
+	// (with any other output) and the dependency cache.
+	ImageExportMS int64 `json:"image_export_ms,omitempty"`
+	CacheExportMS int64 `json:"cache_export_ms,omitempty"`
+	// SlowestSteps are the longest BuildKit steps, longest first, at most
+	// BuildTimingMaxSteps of them.
+	SlowestSteps []BuildStepTiming `json:"slowest_steps,omitempty"`
+}
+
+// BuildStageTiming is one guest-init milestone.
+type BuildStageTiming struct {
+	Stage string `json:"stage"`
+	AtMS  int64  `json:"at_ms"`
+}
+
+// BuildStepTiming is one BuildKit step, named as BuildKit printed it and cut
+// to BuildTimingStepNameMaxBytes.
+type BuildStepTiming struct {
+	Name string `json:"name"`
+	MS   int64  `json:"ms"`
 }
 
 // SharedRuntimeVerdict is the builder VM's classification of one Railpack

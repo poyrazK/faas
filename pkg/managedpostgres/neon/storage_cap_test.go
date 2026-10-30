@@ -10,6 +10,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgconn"
+
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 )
 
@@ -136,5 +138,24 @@ func TestSetStorageCapPreservesTheComputeQuota(t *testing.T) {
 	}
 	if err := provider.SetStorageCap(context.Background(), "quiet-river-12345678", 0); !errors.Is(err, managedpostgres.ErrInvalid) || len(f.patches) != 1 {
 		t.Fatalf("zero is no limit to Neon and must not be sent: %v", err)
+	}
+}
+
+// Only the server's size-limit error proves a write was refused at the limit;
+// a refused connection proves nothing.
+func TestStorageLimitRefusal(t *testing.T) {
+	for name, tc := range map[string]struct {
+		err  error
+		want bool
+	}{
+		"disk full":         {err: &pgconn.PgError{Code: "53100", Message: "could not extend file"}, want: true},
+		"size limit text":   {err: &pgconn.PgError{Code: "XX000", Message: "could not extend file because project size limit (512 MB) has been exceeded"}, want: true},
+		"another sql error": {err: &pgconn.PgError{Code: "42P01", Message: "relation does not exist"}},
+		"connection":        {err: errors.New("dial tcp: connection refused")},
+		"success":           {},
+	} {
+		if got := storageLimitRefusal(tc.err); got != tc.want {
+			t.Errorf("%s: %v, want %v", name, got, tc.want)
+		}
 	}
 }

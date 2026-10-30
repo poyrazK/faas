@@ -218,7 +218,15 @@ func loadSealDomains(getenv func(string) string, log *slog.Logger) error {
 	if err := loadAccountDomain(getenv, log); err != nil {
 		return err
 	}
+	return loadRuntimeSealDomain(getenv, log)
+}
 
+// loadRuntimeSealDomain reads who runtime secrets are sealed to and whether
+// they are bound to their account. Every apid process that seals runtime
+// secrets loads it, the clone worker included: one that skipped it would
+// seal to the fleet key, unbound, after the rollout moved on.
+func loadRuntimeSealDomain(getenv func(string) string, log *slog.Logger) error {
+	var err error
 	if runtimeDomainRecipient, runtimeWriteMode, err = loadDomainWriter(getenv, envSealDomainRuntimeRecipient, envSealDomainRuntimeWrites); err != nil {
 		return err
 	}

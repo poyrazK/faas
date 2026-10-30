@@ -23,6 +23,7 @@ type contractTestStore interface {
 	state.AuditEventOutboxStore
 	state.ComputeNodeCPUUsageBatcher
 	state.ComputeNodeReadinessStore
+	state.ComputeNodeWakeBreakerStore
 	state.ComputeNodeUsageBatcher
 	state.DeploymentAliasStore
 	state.DeploymentHostingFailureStore
@@ -74,6 +75,7 @@ type contractTestStore interface {
 	state.NodeLeaseStore
 	state.NodeLifecycleCompletionStore
 	state.ObjectBucketAccessStore
+	state.ObjectBucketPlacementStore
 	state.ObjectBucketReservationResultStore
 	state.ObjectBucketStore
 	state.ObjectBucketWriteFenceStore

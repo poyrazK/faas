@@ -13,6 +13,8 @@
 #   unit_deploy.sh rollback PLAN STAGE           put the plan's services back on the release that was
 #                                                active before the plan's
 #   unit_deploy.sh cleanup STAGE                 remove the stage dir
+#   unit_deploy.sh record NODE                   import the node's spooled deploys and rollbacks
+#                                                into the release history on the control plane
 #   unit_deploy.sh preflight-state               print the control plane's deploy-lock state, the
 #                                                alerts its Prometheus has active and the watch
 #                                                record, as JSON, for scripts/ci/deploy_preflight.py
@@ -330,6 +332,32 @@ cmd_cleanup() {
   target="$(deploy_target)"
   [[ "$stage" =~ ^/var/tmp/gregale-units\.[A-Za-z0-9]+$ ]] || return 0
   remote UNIT "$target" "$(as_root "$target") -c 'rm -rf -- $stage'" || true
+}
+
+# Issue #574: a compute host has no owner access to the release history, so
+# its deployctl spools each finished deploy and rollback
+# (cmd/deployctl/history.go, historySpoolPath). This copies the spool to the
+# control plane, where `deployctl record` imports it as the schema owner
+# under the node's compute_nodes name: <node>.faas for a compute-only box,
+# as `gregalectl release install` stamps it (canonicalComputeNodeName). Each
+# line keeps the id it got on the node, so importing the spool again adds
+# nothing. Best effort for its callers: the history never stops a lane.
+cmd_record() {
+  local node="$1" host target gate spool
+  local spool_path="${ACTIVATION_SPOOL:-/var/lib/faas/deploy/activations.jsonl}"
+  local deployctl="${CP_DEPLOYCTL:-/opt/faas/current/bin/deployctl}"
+  [[ "$node" =~ ^[a-z0-9][a-z0-9.-]{0,240}$ ]] || die "record needs a node name: $node"
+  [[ "$spool_path" =~ ^/[A-Za-z0-9._/-]+$ && "$deployctl" =~ ^/[A-Za-z0-9._/-]+$ ]] || die "bad spool or deployctl path"
+  host="$node"
+  [[ "$host" == *.faas ]] || host="${host}.faas"
+  target="$(deploy_target)"
+  spool="$(remote UNIT "$target" "$(as_root "$target") -c 'cat -- $spool_path 2>/dev/null || true'")"
+  if [[ -z "$spool" ]]; then
+    echo "release history: $node spooled no activations"
+    return 0
+  fi
+  gate="$(gate_target)"
+  printf '%s\n' "$spool" | remote UNIT_GATE "$gate" "$(as_root "$gate") -c '$deployctl record --host $host'"
 }
 
 # The deploy admission's view of the control plane
@@ -667,6 +695,7 @@ case "$command" in
   gate) cmd_gate "$@" ;;
   rollback) cmd_rollback "$@" ;;
   cleanup) cmd_cleanup "$@" ;;
+  record) cmd_record "$@" ;;
   host-state) cmd_host_state "$@" ;;
   host-manifest) cmd_host_manifest "$@" ;;
   host-stage) cmd_host_stage "$@" ;;

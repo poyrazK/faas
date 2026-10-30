@@ -407,6 +407,33 @@ func TestIsDeploySubmissionRequest(t *testing.T) {
 	}
 }
 
+// TestIsAccountExportRequest pins H14-120: both account exports assemble the
+// whole account before answering, so apid lifts them off its 5 s default; on
+// production-us a 44-app account's export failed with 503 on every attempt.
+func TestIsAccountExportRequest(t *testing.T) {
+	cases := []struct {
+		method string
+		path   string
+		want   bool
+	}{
+		{http.MethodGet, "/v1/account/export", true},
+		{http.MethodGet, "/dashboard/account/export", true},
+		{http.MethodPost, "/v1/account/export", false},
+		{http.MethodGet, "/v1/account", false},
+		{http.MethodGet, "/v1/account/export/extra", false},
+		{http.MethodGet, "/dashboard/account", false},
+		{http.MethodGet, "/v1/outbound/integrations/x/ai-usage/users/export", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.method+"_"+tc.path, func(t *testing.T) {
+			r := httptest.NewRequest(tc.method, tc.path, nil)
+			if got := IsAccountExportRequest(r); got != tc.want {
+				t.Fatalf("IsAccountExportRequest(%s %s) = %v, want %v", tc.method, tc.path, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestMiddleware_EndToEndTimeoutEnforced is the ADR-093 §14
 // metal-acceptance smoke: a 100ms budget with a 1s slow
 // downstream fake must 504 in <200ms with a stable

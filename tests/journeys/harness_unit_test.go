@@ -104,6 +104,19 @@ func TestHarnessDecodeObjectsReadsIndentedAndNDJSON(t *testing.T) {
 	}
 }
 
+func TestHarnessListOutReadsArraysAndNDJSON(t *testing.T) {
+	array := []byte("[\n  {\"id\": \"a\", \"last_status_code\": 200},\n  {\"id\": \"b\"}\n]\n")
+	if docs := listOut(t, array); len(docs) != 2 || str(docs[0], "id") != "a" || num(docs[0], "last_status_code") != 200 {
+		t.Fatalf("array: docs=%v", docs)
+	}
+	if docs := listOut(t, []byte("[]\n")); len(docs) != 0 {
+		t.Fatalf("empty array: docs=%v", docs)
+	}
+	if docs := listOut(t, []byte("{\"id\":\"a\"}\n{\"id\":\"b\"}\n")); len(docs) != 2 || str(docs[1], "id") != "b" {
+		t.Fatalf("ndjson: docs=%v", docs)
+	}
+}
+
 func TestHarnessFieldWalksMapsAndArrays(t *testing.T) {
 	doc := map[string]any{"a": map[string]any{"b": []any{"x", map[string]any{"c": "y"}}}}
 	tests := map[string]any{"a.b.0": "x", "a.b.1.c": "y", "a.b.2": nil, "a.z": nil, "a.b.x": nil}
@@ -138,6 +151,29 @@ func TestHarnessLoadTarget(t *testing.T) {
 		if _, err := loadTarget(env(bad)); err == nil {
 			t.Errorf("loadTarget(%v) accepted a bad configuration", bad)
 		}
+	}
+}
+
+func TestHarnessS3EndpointSitsBesideTheAPI(t *testing.T) {
+	for api, want := range map[string]string{
+		"https://api.gregale.dev":          "https://s3.gregale.dev",
+		"https://api.staging.example:8443": "https://s3.staging.example",
+		"http://gregale.test":              "https://s3.gregale.test",
+	} {
+		if got := (&target{api: api}).s3Endpoint(); got != want {
+			t.Errorf("s3Endpoint for %s = %q, want %q", api, got, want)
+		}
+	}
+}
+
+func TestHarnessBucketIDsCountsLiveBucketsOfTheJourneyName(t *testing.T) {
+	list := map[string]any{"items": []any{
+		map[string]any{"id": "a", "name": objectBucket, "state": "ready"},
+		map[string]any{"id": "b", "name": objectBucket, "state": "deleted"},
+		map[string]any{"id": "c", "name": "assets", "state": "ready"},
+	}}
+	if ids := bucketIDs(list); len(ids) != 1 || ids[0] != "a" {
+		t.Fatalf("bucketIDs = %v, want [a]", ids)
 	}
 }
 
@@ -235,12 +271,14 @@ func TestHarnessFailureCodeNamesProblemOrStatus(t *testing.T) {
 
 func TestHarnessIdempotentCommandRetriesOnlySafeCommands(t *testing.T) {
 	retry := [][]string{
-		{"app", "x", "--maintenance"}, {"park", "x"}, {"apps", "rm", "x", "--yes"},
-		{"secrets", "list", "--app", "x"}, {"secrets", "set", "K=V"}, {"crons", "rm", "id"}, {"keys", "rm", "id"},
+		{"app", "x", "--maintenance"}, {"app", "park", "x"}, {"app", "delete", "x", "--yes"},
+		{"env", "list", "--app", "x"}, {"env", "set", "K=V"}, {"cron", "delete", "id"}, {"key", "delete", "id"},
+		{"release", "list", "--app", "x"}, {"feature", "list"},
+		{"bucket", "list", "x"}, {"bucket", "delete", "x", "id", "--yes"}, {"add", "bucket", "b", "--app", "x"},
 	}
 	once := [][]string{
-		{"deploy", "--name", "x"}, {"rollback", "x"}, {"keys", "add", "l"}, {"crons", "add"},
-		{"crons", "run", "id"}, {"apps", "restore", "x"}, {},
+		{"deploy", "--name", "x"}, {"rollback", "x"}, {"key", "create", "l"}, {"cron", "create"},
+		{"cron", "run", "id"}, {"app", "restore", "x"}, {"release", "wait", "x"}, {"add", "postgres", "--app", "x"}, {},
 	}
 	for _, args := range retry {
 		if !idempotentCommand(args) {

@@ -4218,6 +4218,9 @@ type AccountResponse struct {
 	BusinessName   string `json:"business_name,omitempty"`
 	BillingAddress string `json:"billing_address,omitempty"`
 	TaxID          string `json:"tax_id,omitempty"`
+	// KeyScopes are the scopes of the API key that authenticated GET
+	// /v1/account; absent for a dashboard session (ADR-20261029085359).
+	KeyScopes []string `json:"key_scopes,omitempty"`
 }
 
 // AccountLimits is the read-only copy of api.Limits that survives
@@ -7469,7 +7472,8 @@ type PlanWorkload struct {
 	// UnsetEnvKeyReasons says why a Compose value for an UnsetEnvKeys name
 	// is not imported (ADR-20261023085230): not_opted_in, secret,
 	// service_address, local_address, interpolated, host_value, empty or
-	// invalid. Names and reasons only, never values.
+	// invalid; for a Kubernetes workload also not_annotated and secret_ref
+	// (ADR-20261029093621 §5). Names and reasons only, never values.
 	UnsetEnvKeyReasons map[string]string `json:"unset_env_key_reasons,omitempty"`
 	// ImportedEnvKeys are the Compose environment names whose plain values
 	// apply will write, because the project opted in and they are unset.

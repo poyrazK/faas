@@ -17,6 +17,62 @@ type ComposeEnv struct {
 	// Services maps a service name to its entries. A nil value is an entry
 	// without one (`- KEY`, or `KEY:`), which Compose reads from the host.
 	Services map[string]map[string]*string
+	// Kubernetes marks the workloads whose entries come from a Kubernetes
+	// Deployment or CronJob (ADR-20261029093621 §5). Each opts in on its
+	// own, with the gregale.dev/env-import annotation, listed in
+	// ImportServices; Import covers only Compose services.
+	Kubernetes     map[string]bool
+	ImportServices map[string]bool
+	// SecretRefs names, per workload, the keys its manifest takes from a
+	// Kubernetes Secret. They are never imported, and their values are never
+	// read.
+	SecretRefs map[string][]string
+}
+
+// OptedIn reports whether a service's plain values may be imported.
+func (e ComposeEnv) OptedIn(service string) bool {
+	if e.Kubernetes[service] {
+		return e.ImportServices[service]
+	}
+	return e.Import
+}
+
+// ImportsAny reports whether any service opted in.
+func (e ComposeEnv) ImportsAny() bool {
+	return e.Import || len(e.ImportServices) > 0
+}
+
+// ReadProjectEnv is ReadComposeEnv plus, with the kubernetes-manifests
+// capability, the Kubernetes Deployments' and CronJobs' environments. A
+// Compose service keeps its entries when a Kubernetes workload has its name,
+// as the scan merges the two.
+func ReadProjectEnv(fsys fs.FS, opts ScanOptions) (ComposeEnv, error) {
+	env, err := ReadComposeEnv(fsys)
+	if err != nil || !opts.KubernetesManifests {
+		return env, err
+	}
+	k8s, err := readKubernetesEnv(fsys)
+	if err != nil {
+		return ComposeEnv{}, err
+	}
+	if env.Services == nil {
+		env.Services = map[string]map[string]*string{}
+	}
+	env.Kubernetes, env.ImportServices, env.SecretRefs = map[string]bool{}, map[string]bool{}, map[string][]string{}
+	for name, entries := range k8s.Services {
+		if _, ok := env.Services[name]; ok {
+			continue
+		}
+		env.Services[name] = entries
+		env.Kubernetes[name] = true
+		if k8s.ImportServices[name] {
+			env.ImportServices[name] = true
+		}
+		if refs := k8s.SecretRefs[name]; len(refs) > 0 {
+			env.SecretRefs[name] = refs
+		}
+	}
+	return env, nil
 }
 
 type composeEnvDoc struct {

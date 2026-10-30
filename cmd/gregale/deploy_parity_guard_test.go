@@ -97,7 +97,6 @@ func TestValidateSingleAppManifestTargetsRejectsEveryUnifiedKindExplicitly(t *te
 		{"kafka", "slug: orders\n    config: {brokers: ['broker:9092'], topic: orders, group: workers}"},
 		{"nats", "slug: telemetry\n    config: {url: 'nats://nats:4222', stream: events, subject: 'events.>', durable: faas}"},
 		{"redis_streams", "slug: cache\n    config: {addr: 'redis:6379', stream: events, group: workers}"},
-		{"sqs_compat", "slug: external\n    config: {queue_url: 'https://queue.example.test/external'}"},
 		{"queue", "slug: internal\n    config: {mode: queue}"},
 	}
 	for _, test := range tests {

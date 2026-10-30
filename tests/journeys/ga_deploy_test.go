@@ -53,7 +53,7 @@ func TestAppSettingsAndRename(t *testing.T) {
 		}
 	})
 	newSlug := tg.slug("renamed")
-	t.Cleanup(func() { tg.run(t, 2*time.Minute, "apps", "rm", newSlug, "--yes") })
+	t.Cleanup(func() { tg.run(t, 2*time.Minute, "app", "delete", newSlug, "--yes") })
 	s.step("rename", func(t *testing.T) {
 		tg.ok(t, 2*time.Minute, "app", slug, "rename", newSlug)
 		eventually(t, "old hostname stops routing", 2*time.Minute, 3*time.Second, func() (bool, string) {
@@ -107,15 +107,27 @@ func TestDockerfileTarballAndSecretReload(t *testing.T) {
 	first, second := randomHex(t, 24), randomHex(t, 24)
 	var pid string
 	s.step("initial_secret_with_restart", func(t *testing.T) {
-		tg.ok(t, 5*time.Minute, "secrets", "set", "--app", slug, "E2E_HOT="+first, "--restart")
+		tg.ok(t, 5*time.Minute, "env", "set", "--app", slug, "E2E_HOT="+first, "--restart")
 		eventually(t, "first value delivered", 3*time.Minute, 3*time.Second, func() (bool, string) {
 			doc := secretHash(t)
 			return str(doc, "sha256") == sha(first), "app sees " + compact(doc)
 		})
+		// `env set --restart` returns once the fresh instance serves, while the
+		// rolling refresh is still retiring the instance it replaced. A write
+		// in that window is folded into the refresh, which boots another
+		// instance with the value instead of reloading it in process (Hunt 14
+		// H14-125), so the next step waits for the refresh to settle.
+		eventually(t, "restart settled on one running instance", 2*time.Minute, 3*time.Second, func() (bool, string) {
+			rows := objects(t, tg.ok(t, time.Minute, "app", "instances", slug).stdout)
+			if len(rows) == 1 && strings.Contains(strings.ToLower(str(rows[0], "state")), "running") {
+				return true, ""
+			}
+			return false, "instances: " + compact(rows)
+		})
 		pid = str(secretHash(t), "pid")
 	})
 	s.step("hot_reload_without_restart", func(t *testing.T) {
-		tg.ok(t, 4*time.Minute, "secrets", "set", "--app", slug, "E2E_HOT="+second, "--wait-for-ack", "--timeout", "3m")
+		tg.ok(t, 4*time.Minute, "env", "set", "--app", slug, "E2E_HOT="+second, "--wait-for-ack", "--timeout", "3m")
 		eventually(t, "second value served from the reload snapshot", 2*time.Minute, 3*time.Second, func() (bool, string) {
 			doc := secretHash(t)
 			return str(doc, "sha256") == sha(second) && str(doc, "source") == "reload", "app sees " + compact(doc)
@@ -125,7 +137,7 @@ func TestDockerfileTarballAndSecretReload(t *testing.T) {
 		}
 	})
 	s.check("revocation", func(t *testing.T) {
-		tg.ok(t, 4*time.Minute, "secrets", "unset", "--app", slug, "E2E_HOT", "--wait-for-ack", "--timeout", "3m")
+		tg.ok(t, 4*time.Minute, "env", "unset", "--app", slug, "E2E_HOT", "--wait-for-ack", "--timeout", "3m")
 		eventually(t, "revoked secret gone from the app", 2*time.Minute, 3*time.Second, func() (bool, string) {
 			doc := secretHash(t)
 			present, _ := field(doc, "present").(bool)
@@ -170,26 +182,26 @@ func TestBuildsAndProvenance(t *testing.T) {
 		})
 	}
 	s.check("build_log", func(t *testing.T) {
-		res := tg.ok(t, time.Minute, "deploys", "logs", tg.sharedDeployID, "--limit", "200")
+		res := tg.ok(t, time.Minute, "release", "logs", tg.sharedDeployID, "--limit", "200")
 		if !strings.Contains(string(res.stdout), "build") {
 			t.Fatalf("the deployment log does not mention the build: %s", tail(string(res.stdout), 400))
 		}
 	})
 }
 
-// TestImagePreflight checks `gregale doctor --image` accepts a deployable
+// TestImagePreflight checks `gregale deploy check --image` accepts a deployable
 // image and rejects one that does not exist (row 4).
 func TestImagePreflight(t *testing.T) {
 	tg := needs(t, tierSmoke, true)
 	t.Parallel()
 	t.Run("deployable_image", func(t *testing.T) {
-		res := tg.ok(t, 2*time.Minute, "doctor", "--image", probeImage)
-		t.Logf("doctor: %s", tail(string(res.stdout), 400))
+		res := tg.ok(t, 2*time.Minute, "deploy", "check", "--image", probeImage)
+		t.Logf("deploy check: %s", tail(string(res.stdout), 400))
 	})
 	t.Run("missing_image_rejected", func(t *testing.T) {
 		missing := "docker.io/library/alpine@sha256:" + strings.Repeat("0", 64)
-		if res := tg.run(t, 2*time.Minute, "doctor", "--image", missing); res.exit == 0 {
-			t.Fatalf("doctor accepted a digest that does not exist: %s", tail(string(res.stdout), 300))
+		if res := tg.run(t, 2*time.Minute, "deploy", "check", "--image", missing); res.exit == 0 {
+			t.Fatalf("deploy check accepted a digest that does not exist: %s", tail(string(res.stdout), 300))
 		}
 	})
 }
@@ -246,7 +258,7 @@ func TestImageRegistryAndDeployTokens(t *testing.T) {
 		if res.exit != 0 {
 			t.Fatalf("registry set: %s", res.problem())
 		}
-		t.Cleanup(func() { tg.run(t, time.Minute, "registry", "rm", "--app", slug, "--registry", "ghcr.io") })
+		t.Cleanup(func() { tg.run(t, time.Minute, "registry", "delete", "--app", slug, "--registry", "ghcr.io") })
 		listed := tg.ok(t, time.Minute, "registry", "list", "--app", slug)
 		if !strings.Contains(string(listed.stdout), "ghcr.io") {
 			t.Errorf("registry list does not show ghcr.io: %s", tail(string(listed.stdout), 300))
@@ -254,7 +266,7 @@ func TestImageRegistryAndDeployTokens(t *testing.T) {
 		if strings.Contains(string(listed.stdout), password) {
 			t.Errorf("registry list printed the password")
 		}
-		tg.ok(t, time.Minute, "registry", "rm", "--app", slug, "--registry", "ghcr.io")
+		tg.ok(t, time.Minute, "registry", "delete", "--app", slug, "--registry", "ghcr.io")
 		if again := tg.ok(t, time.Minute, "registry", "list", "--app", slug); strings.Contains(string(again.stdout), "e2e-journeys") {
 			t.Errorf("the removed credential is still listed")
 		}
@@ -293,7 +305,7 @@ func TestImageRegistryAndDeployTokens(t *testing.T) {
 		id := str(jsonBody(t, r), "id")
 		t.Logf("deploy token accepted deployment %s (HTTP %d)", id, r.status)
 		eventually(t, "the token's deployment goes live", deployLimit, 10*time.Second, func() (bool, string) {
-			res := tg.run(t, time.Minute, "deployments", "--app", slug, "--limit", "5")
+			res := tg.run(t, time.Minute, "release", "list", "--app", slug, "--limit", "5")
 			if res.exit != 0 {
 				return false, res.problem()
 			}
@@ -323,7 +335,7 @@ func TestImageRegistryAndDeployTokens(t *testing.T) {
 		}
 	})
 	s.check("token_is_app_scoped", func(t *testing.T) {
-		if res := tg.runAs(t, token, time.Minute, "apps"); res.exit == 0 {
+		if res := tg.runAs(t, token, time.Minute, "app", "list"); res.exit == 0 {
 			t.Errorf("a deploy token could list the account's apps")
 		}
 		if r := tg.apiCall(http.MethodGet, "/v1/keys", nil, token); r.status < 400 {

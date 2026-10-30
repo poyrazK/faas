@@ -125,6 +125,7 @@ func workloadDiff(
 			})
 			continue
 		}
+		w = keepServingClass(w, a)
 		desired := resolveStartCommand(w)
 		changed := diffFieldsChanged(a, w, desired, availableServices)
 		if len(changed) == 0 {

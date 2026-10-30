@@ -18,6 +18,10 @@ type Querier interface {
 	AbandonProjectEnvironmentCloneConfiguration(ctx context.Context, db DBTX, arg AbandonProjectEnvironmentCloneConfigurationParams) (int64, error)
 	AbortLockedInstanceMigration(ctx context.Context, db DBTX, arg AbortLockedInstanceMigrationParams) (int64, error)
 	AbortProfileGatedCanary(ctx context.Context, db DBTX, arg AbortProfileGatedCanaryParams) (int64, error)
+	// ADR-20261028110044 amendment 2: the hold deadline ended a held canary, so
+	// its notification state records the abort. Returns the hold's first blocking
+	// decision; no row when the canary was not held.
+	AbortRouteHealthHold(ctx context.Context, db DBTX, arg AbortRouteHealthHoldParams) (string, error)
 	AcceptObjectStorageTimeline(ctx context.Context, db DBTX, acceptedBy string) (string, error)
 	AccountByEmail(ctx context.Context, db DBTX, email interface{}) (AccountByEmailRow, error)
 	AccountByID(ctx context.Context, db DBTX, id pgtype.UUID) (AccountByIDRow, error)
@@ -31,6 +35,8 @@ type Querier interface {
 	// GitHub Actions subject to such an account.
 	AccountByOIDCIssuerSubject(ctx context.Context, db DBTX, arg AccountByOIDCIssuerSubjectParams) (AccountByOIDCIssuerSubjectRow, error)
 	AccountDeletedAppByID(ctx context.Context, db DBTX, arg AccountDeletedAppByIDParams) (AccountDeletedAppByIDRow, error)
+	// An installation ID is globally unique (github_installations_installation_id_uidx).
+	AccountIDByGitHubInstallation(ctx context.Context, db DBTX, installationID int64) (pgtype.UUID, error)
 	// First-use GitHub Actions bootstrap through an OAuth-verified install
 	// binding. Immutable subjects must match both persisted numeric IDs as well
 	// as the current repository name; a zero ID preserves legacy name-only
@@ -1144,8 +1150,13 @@ type Querier interface {
 	EventConsumerPressureTarget(ctx context.Context, db DBTX, arg EventConsumerPressureTargetParams) (pgtype.UUID, error)
 	EventConsumerPressureWaits(ctx context.Context, db DBTX, arg EventConsumerPressureWaitsParams) (EventConsumerPressureWaitsRow, error)
 	EventConsumerProcessingHealth(ctx context.Context, db DBTX, arg EventConsumerProcessingHealthParams) (EventConsumerProcessingHealthRow, error)
-	// Reads the account's live slots (event_delivery_slots_live), not its whole
-	// delivery history; the invocation's state still decides.
+	// ADR-614 amendment (2026-10-29): counts the account's live slots from the
+	// event_delivery_slots_live index alone. A slot's live flag is exact: it is
+	// stamped when the slot is written, with or after its invocation, and every
+	// state change re-syncs it. Joining each slot to its invocation planned a
+	// scan of every pending invocation on the platform, so each routed delivery
+	// paid for everyone's backlog. A keyed replace subtracts the pending
+	// deliveries it would replace, found through the work-lane index.
 	EventDeliveryCounts(ctx context.Context, db DBTX, arg EventDeliveryCountsParams) (EventDeliveryCountsRow, error)
 	EventDeliveryInsertSlot(ctx context.Context, db DBTX, arg EventDeliveryInsertSlotParams) error
 	EventDeliveryLockCapacity(ctx context.Context, db DBTX, arg EventDeliveryLockCapacityParams) error
@@ -2064,6 +2075,12 @@ type Querier interface {
 	// Replay reads and locks one retained occurrence inside the app admission lock.
 	// The replay run identity is separate from the original skipped outcome.
 	GetWorkflowScheduleOccurrenceForReplay(ctx context.Context, db DBTX, arg GetWorkflowScheduleOccurrenceForReplayParams) (WorkflowScheduleOccurrence, error)
+	// The immutable owner and repository IDs an account's app binding recorded
+	// for a repository name (bug hunt 2026-10-28 H68): the OIDC exchange
+	// requires a token's repository_owner_id and repository_id claims to match
+	// them, so a recreated repository under a freed owner name does not pass.
+	// Zero when no binding of the name records them.
+	GitHubRepositoryIDsBoundToAccount(ctx context.Context, db DBTX, arg GitHubRepositoryIDsBoundToAccountParams) (GitHubRepositoryIDsBoundToAccountRow, error)
 	// Repeatable-read callers only: a workflow admission committed after the
 	// snapshot raises a serialization failure. Read-committed callers return.
 	GuardWorkflowAdmissionSnapshot(ctx context.Context, db DBTX, appID string) error
@@ -4337,6 +4354,9 @@ type Querier interface {
 	ObjectBucketObjectLockGet(ctx context.Context, db DBTX, bucketID pgtype.UUID) (ObjectBucketObjectLock, error)
 	ObjectBucketObjectLockInsert(ctx context.Context, db DBTX, arg ObjectBucketObjectLockInsertParams) error
 	ObjectBucketObjectLockUpdate(ctx context.Context, db DBTX, arg ObjectBucketObjectLockUpdateParams) (int64, error)
+	ObjectBucketPlacementCounts(ctx context.Context, db DBTX, arg ObjectBucketPlacementCountsParams) ([]ObjectBucketPlacementCountsRow, error)
+	// Serializes bucket placement in one region (ADR-20261029174627).
+	ObjectBucketPlacementLock(ctx context.Context, db DBTX, region string) error
 	ObjectBucketPruneTombstones(ctx context.Context, db DBTX, accountID pgtype.UUID) error
 	ObjectBucketReserveLockAccount(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error)
 	ObjectBucketRetry(ctx context.Context, db DBTX, arg ObjectBucketRetryParams) (int64, error)
@@ -5643,6 +5663,10 @@ type Querier interface {
 	ReadServicePolicyReleaseCandidates(ctx context.Context, db DBTX, arg ReadServicePolicyReleaseCandidatesParams) ([]ReadServicePolicyReleaseCandidatesRow, error)
 	ReadServicePolicyTestApp(ctx context.Context, db DBTX, arg ReadServicePolicyTestAppParams) (ReadServicePolicyTestAppRow, error)
 	ReadServicePolicyTestMember(ctx context.Context, db DBTX, appID pgtype.UUID) (ReadServicePolicyTestMemberRow, error)
+	// 'active' pages by app (after_app_id, ordered by app): the rollback window
+	// needs every row of an app, and a newest-first cut over the whole fleet
+	// dropped exactly the oldest generations GC exists to reclaim once the live
+	// set passed the limit (bug hunt 2026-10-28 H66).
 	ReadSnapshotGarbageCollection(ctx context.Context, db DBTX, arg ReadSnapshotGarbageCollectionParams) ([]ReadSnapshotGarbageCollectionRow, error)
 	ReadSnapshotInvocationEnvironmentQueueAdmission(ctx context.Context, db DBTX, invocationID pgtype.UUID) (InvocationEnvironmentQueueAdmission, error)
 	ReadSnapshotPublicationConfigChange(ctx context.Context, db DBTX, appID pgtype.UUID) (pgtype.Timestamptz, error)
@@ -5664,6 +5688,9 @@ type Querier interface {
 	// All hostname reservations, including inactive/deleted surfaces. Discovery
 	// transfers only identities and routing eligibility; no challenge or cert data.
 	ReadTrafficBindingClaims(ctx context.Context, db DBTX, arg ReadTrafficBindingClaimsParams) (ReadTrafficBindingClaimsRow, error)
+	// A rule-only traffic policy write holds no lock on the fleet capacity policy
+	// unless one of its statements fired a capacity trigger (ADR-20261029150627).
+	ReadTrafficCapacityLockHeld(ctx context.Context, db DBTX) (bool, error)
 	ReadTrafficDeletionAccountStatus(ctx context.Context, db DBTX, accountID pgtype.UUID) (string, error)
 	ReadTrafficDeploymentStatus(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (string, error)
 	// Secret-free binding metadata only, bounded before transfer. Unverified and
@@ -6292,14 +6319,16 @@ type Querier interface {
 	// circuit breaker.
 	RouteProbeTotalsByDeployment(ctx context.Context, db DBTX, arg RouteProbeTotalsByDeploymentParams) ([]RouteProbeTotalsByDeploymentRow, error)
 	RouteRemovalCoverageBlockers(ctx context.Context, db DBTX, arg RouteRemovalCoverageBlockersParams) ([]byte, error)
-	// ADR-20261028110044 amendment 1: whether a gateway may have lost request
-	// telemetry that route evidence over [window_from, window_until) reads. An
-	// active node that reports coverage counts when its telemetry is off or
-	// sampled, when it has not been continuously healthy since window_from (a
-	// restart, a heartbeat gap, or rows it could not attribute to an app), or
-	// when its last report predates window_until. Rows a gateway attributes to an
-	// app and drops (an account over its telemetry rate) do not count: the app's
-	// remaining rows stay comparable.
+	// ADR-20261028110044 amendments 1 and 2: whether a gateway may have lost
+	// request telemetry that route evidence over [window_from, window_until)
+	// reads. An active node whose last coverage report is at most
+	// RouteTelemetrySilenceGrace older than window_from counts when its telemetry
+	// is off or sampled, when it has not been continuously healthy since
+	// window_from (a restart, a heartbeat gap, or rows it could not attribute to
+	// an app), or when it fell silent before window_until. A gateway silent since
+	// before the windows serves none of them, so it cannot hold every app's
+	// evidence. Rows a gateway attributes to an app and drops (an account over its
+	// telemetry rate) do not count: the app's remaining rows stay comparable.
 	RouteTelemetryLost(ctx context.Context, db DBTX, arg RouteTelemetryLostParams) (bool, error)
 	// Authenticated post-readiness verification targets one current candidate.
 	// Filter history and deployment ownership before choosing its newest resident;
@@ -6562,6 +6591,10 @@ type Querier interface {
 	SetServiceWakeAhead(ctx context.Context, db DBTX, arg SetServiceWakeAheadParams) (SetServiceWakeAheadRow, error)
 	SetSyntheticCheckEnabled(ctx context.Context, db DBTX, arg SetSyntheticCheckEnabledParams) (SyntheticCheck, error)
 	SetTrafficTenantSurfaceStatus(ctx context.Context, db DBTX, arg SetTrafficTenantSurfaceStatusParams) (int64, error)
+	// ADR-20261027090010 §9: point a just-created public broker trigger at an agent. The
+	// CHECK constraint refuses other kinds, batch delivery and binding-owned
+	// projections.
+	SetTriggerAgent(ctx context.Context, db DBTX, arg SetTriggerAgentParams) (int64, error)
 	// ADR-1321: switch a public trigger between per-record and batch delivery.
 	// The CHECK constraint refuses batch for cron and queue triggers.
 	SetTriggerDelivery(ctx context.Context, db DBTX, arg SetTriggerDeliveryParams) (int64, error)
@@ -6674,7 +6707,10 @@ type Querier interface {
 	TouchCustomerOperationWorkflowStep(ctx context.Context, db DBTX, arg TouchCustomerOperationWorkflowStepParams) error
 	TouchEdgeListenerHeartbeat(ctx context.Context, db DBTX, name string) error
 	TouchEnvironmentGitOpsIntent(ctx context.Context, db DBTX, sourceID pgtype.UUID) error
-	TouchKeyLastUsed(ctx context.Context, db DBTX, id pgtype.UUID) error
+	// An active, non-admin mcp-login key also slides (ADR-20261028205920): use
+	// extends it to idle_seconds from now, never past max_age_seconds after it was
+	// created, and never shortens it.
+	TouchKeyLastUsed(ctx context.Context, db DBTX, arg TouchKeyLastUsedParams) error
 	TouchProjectSubmission(ctx context.Context, db DBTX, arg TouchProjectSubmissionParams) error
 	// Best-effort, fire-and-forget. Allowed on revoked rows (observability
 	// signal only; not authorization). pgx interface returns nothing.

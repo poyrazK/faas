@@ -31,10 +31,10 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -110,6 +110,7 @@ func (s *server) renderGitHubAuthRedirect(w http.ResponseWriter, r *http.Request
 
 	setOAuthFlowCookie(w, r, githubAuthStateCookie, stateToken, githubCallbackPath)
 	setOAuthFlowCookie(w, r, githubAuthPKCECookie, codeVerifier, githubCallbackPath)
+	setOAuthNext(w, r, githubCallbackPath)
 
 	redirectURI := s.oauthConfig.GitHub.RedirectURI
 	if redirectURI == "" {
@@ -278,7 +279,11 @@ func (s *server) handleGitHubOAuthCallback(w http.ResponseWriter, r *http.Reques
 	// §11 anti-takeover invariant is the same regardless of the
 	// provider. GitHub's user id is int64; the oauth_links PK is
 	// keyed on the string form (decimal).
-	acct, err := s.provisionOrFetchOAuthAccount(r.Context(), "github", githubUserEmailID(githubUser), email, githubUser)
+	acct, err := s.provisionOrFetchOAuthAccount(r, "github", githubUserEmailID(githubUser), email, signupSource(oauthNext(r)))
+	if errors.Is(err, errSignupNetworkCap) {
+		writeSignupNetworkCap(w)
+		return
+	}
 	if err != nil {
 		writeCustomerInternalProblem(w, r, s.log, "complete GitHub sign-in",
 			"Gregale could not finish setting up your account.",
@@ -332,11 +337,7 @@ func (s *server) handleGitHubOAuthCallback(w http.ResponseWriter, r *http.Reques
 		"login":  githubUser.Login,
 	})
 
-	redirectTarget := os.Getenv("WEBSITE_URL")
-	if redirectTarget == "" {
-		redirectTarget = "/"
-	}
-	http.Redirect(w, r, redirectTarget, http.StatusFound)
+	finishOAuthSignIn(w, r, githubCallbackPath)
 }
 
 // githubUserEmailID converts a GitHub user-id (int64) into the
@@ -449,7 +450,8 @@ func fetchGitHubVerifiedPrimaryEmail(ctx context.Context, accessToken string) (s
 // The Google flow calls this with info.ProviderID (or equivalently
 // the GoogleUserInfo.ID), the GitHub flow with the GitHubUserInfo.ID
 // cast to string. The sub is what the oauth_links PK is keyed on.
-func (s *server) provisionOrFetchOAuthAccount(ctx context.Context, provider, sub, email string, _ any) (state.Account, error) {
+func (s *server) provisionOrFetchOAuthAccount(r *http.Request, provider, sub, email, source string) (state.Account, error) {
+	ctx := r.Context()
 	email = strings.TrimSpace(strings.ToLower(email))
 
 	// 1. Sub-first lookup.
@@ -473,7 +475,7 @@ func (s *server) provisionOrFetchOAuthAccount(ctx context.Context, provider, sub
 	}
 
 	// 3. Fresh account.
-	res, err := s.store.CreateAccountWithPersonalOrg(ctx, state.CreateAccountWithPersonalOrgParams{
+	res, err := s.createSignupAccount(r, provider, source, state.CreateAccountWithPersonalOrgParams{
 		Email: email,
 		Plan:  api.PlanFree,
 	})

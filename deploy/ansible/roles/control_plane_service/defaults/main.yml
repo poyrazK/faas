@@ -43,6 +43,15 @@ faas_custom_domain_tls: false
 faas_custom_domain_target: ""
 faas_custom_domain_addresses: []
 
+# ADR-847 amendment 1: synthetic route probes are on. They are the evidence an
+# ADR-1446 safe release of a quiet app advances on, about a minute per stage;
+# without them every stage waits out CanaryLowTrafficMaxHold. apid sends them
+# to this control plane's own gatewayd-public listener (FAAS_PUBLIC_LISTEN_ADDR
+# in faas-gatewayd-public.service, the public edge's upstream), the path the
+# metal tests exercise, not through the CDN. false turns probes off.
+route_probes_enabled: true
+faas_route_probe_url: http://127.0.0.1:8080
+
 # ADR-1141 cluster workload-identity trust (tasks/workload_trust.yml). The
 # same controller-side directory as vmmd_service's
 # faas_workload_identity_source_dir installs the JWKS apid verifies workload

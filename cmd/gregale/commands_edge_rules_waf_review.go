@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	edgeWAFReviewUsage  = "usage: gregale edge rule waf-review [--app <slug>] [--rule ID] [--since 7d]"
+	edgeWAFReviewUsage  = "usage: gregale edge rule waf review [--app <slug>] [--rule ID] [--since 7d]"
 	edgeWAFExcludeUsage = "usage: gregale edge rule waf-exclude <rule-id> [--add ID,...] [--remove ID,...]"
 )
 

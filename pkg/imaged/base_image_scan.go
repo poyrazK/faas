@@ -21,7 +21,7 @@ import (
 func (h *Handler) ensureProducedBaseScan(ctx context.Context, be storage.StorageBackend, base state.BaseImageProducer, out string) (state.BaseImageScan, error) {
 	// A fresh complete scan of these exact producer bytes already vouches for
 	// them, so republish it without first invalidating the shared sidecar. The
-	// invalidation below is for a rebuilt or refreshed base; running it on
+	// invalidation below is for bytes no complete scan covers; running it on
 	// every reuse made vmmd refuse every cold boot on the base, on every node,
 	// until the reload finished, and a transient store error (review busy)
 	// held the refusal for minutes (Hunt 14 H14-102).
@@ -31,8 +31,16 @@ func (h *Handler) ensureProducedBaseScan(ctx context.Context, be storage.Storage
 		}
 		return current, nil
 	}
-	if err := writeProducedBaseScanCompatibility(ctx, be, base.Input.Artifact.StorageKey, base.Input.SourceReference, out, state.BaseImageScan{}); err != nil {
-		return state.BaseImageScan{}, err
+	// Renewing a complete scan of these unchanged bytes keeps its verdict in
+	// the sidecar until the new result replaces it, exactly as the sidecar
+	// stands between deploys. Invalidating first refused every cold boot on
+	// the base, on that node, for the whole rescan: 503 scan_critical for
+	// ~50 s on prod rc.304 (2026-10-29 15:14, Hunt 14 H14-117). A failed
+	// rescan still publishes the refusal below.
+	if !h.producedBaseScanCoversBytes(ctx, be, base) {
+		if err := writeProducedBaseScanCompatibility(ctx, be, base.Input.Artifact.StorageKey, base.Input.SourceReference, out, state.BaseImageScan{}); err != nil {
+			return state.BaseImageScan{}, err
+		}
 	}
 	value, err := h.loadOrRunProducedBaseScan(ctx, be, base)
 	if err != nil {
@@ -63,6 +71,28 @@ func (h *Handler) reusableProducedBaseScan(ctx context.Context, be storage.Stora
 		return state.BaseImageScan{}, false
 	}
 	return again, true
+}
+
+// producedBaseScanCoversBytes reports whether the base's selected scan is
+// complete, was made for this producer, and the stored artifact still has the
+// bytes it scanned. Its expiry does not matter: vmmd keeps booting on that
+// verdict between deploys, which is all a renewal leaves in place.
+func (h *Handler) producedBaseScanCoversBytes(ctx context.Context, be storage.StorageBackend, base state.BaseImageProducer) bool {
+	store, ok := h.store.(state.BaseImageScanStore)
+	if !ok {
+		return false
+	}
+	prior, err := store.GetCurrentBaseImageScan(ctx, base.Input.Artifact.StorageKey)
+	if err != nil || !producedBaseScanCoversProducer(prior, base) {
+		return false
+	}
+	expected := scanArtifactTarget{StorageKey: base.Input.Artifact.StorageKey, ArtifactIdentity: rootfs.ArtifactIdentity{Digest: base.Input.Artifact.Digest, Bytes: base.Input.Artifact.Bytes}}
+	return checkStoredScanArtifact(ctx, be, expected) == nil
+}
+
+func producedBaseScanCoversProducer(scan state.BaseImageScan, base state.BaseImageProducer) bool {
+	return scan.Input.Status == "complete" && scan.Input.BaseProducerID == base.ID &&
+		scan.Input.BaseInputHash == base.InputHash && scan.Input.Artifact == base.Input.Artifact
 }
 
 func (h *Handler) loadOrRunProducedBaseScan(ctx context.Context, be storage.StorageBackend, base state.BaseImageProducer) (state.BaseImageScan, error) {
@@ -117,8 +147,7 @@ func (h *Handler) loadOrRunProducedBaseScan(ctx context.Context, be storage.Stor
 // changed bytes, a refused publication) returns false and the caller scans.
 func (h *Handler) renewProducedBaseScanWithoutScanning(ctx context.Context, store state.BaseImageScanStore, be storage.StorageBackend, base state.BaseImageProducer, expected scanArtifactTarget) (state.BaseImageScan, bool) {
 	prior, err := store.GetCurrentBaseImageScan(ctx, base.Input.Artifact.StorageKey)
-	if err != nil || prior.Input.Status != "complete" || prior.Input.Report == nil ||
-		prior.Input.BaseProducerID != base.ID || prior.Input.BaseInputHash != base.InputHash || prior.Input.Artifact != base.Input.Artifact {
+	if err != nil || prior.Input.Report == nil || !producedBaseScanCoversProducer(prior, base) {
 		return state.BaseImageScan{}, false
 	}
 	current, err := h.currentScannerIdentity(ctx)
