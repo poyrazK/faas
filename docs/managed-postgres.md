@@ -537,6 +537,17 @@ repeatedly failing requests do not advance their successful observation and can
 retain priority. Fleet recovery rounds do not establish an account-wide budget.
 See [ADR-500](adr/500-managed-postgres-provider-rate-limit-cooldowns.md).
 
+Background sweeps get a budget of their own, so that a 429 never comes from
+them. Usage collection, health checks and the cap sweep mark their requests as
+background, and the Neon client spaces those requests 200 ms apart: at most 300
+a minute per process, whatever the fleet's size.
+- Customer actions and the lifecycle reconciler are never paced or queued
+  behind them.
+- A background request whose deadline passes while it waits is not sent.
+- At about 100 databases, the minute-by-minute health checks (three requests
+  each) fill that budget. Checks then space out past a minute and the cap
+  sweep takes longer; customer requests are unaffected.
+
 The migration does not infer coverage from old ledger rows, because those rows
 may contain gaps. Existing databases replay from creation, replacing identical
 window keys without increasing totals. Admission stays stale until recovery
