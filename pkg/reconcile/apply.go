@@ -478,6 +478,7 @@ func applyProjectImage(manifest *state.AppManifest, w reposcan.Workload) {
 	// and so do the process overrides other than entrypoint, which the scan
 	// folds into a built service's command (ADR-20261022160000).
 	manifest.ProjectImageHealthcheck = w.ImageHealthcheck.Clone()
+	manifest.ProjectReadinessCheck = w.ReadinessCheck.Clone()
 	manifest.ProjectImageProcess = w.ImageProcess.Clone()
 	// Compose secrets become files for built and prebuilt images alike
 	// (ADR-20261023090000).
