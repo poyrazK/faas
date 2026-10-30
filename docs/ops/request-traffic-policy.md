@@ -223,6 +223,15 @@ create, update and rollback are scoped too.
 - **Before turning it on:** every binding write already audits its
   declaration, so `traffic_binding_scope_misses_total` must read zero over a
   representative period.
+- **Change capture** (ADR 20261029190349): row triggers on custom domains,
+  tenant hostnames, tenant surfaces, platform tenants, deployment aliases,
+  project environments and the binding columns of `apps` record what each
+  transaction touched. Every binding write compares that record with the
+  fleet-wide diff and counts each changed hostname the record lacks in
+  `traffic_binding_capture_gaps_total{writer,kind}`. The audit never refuses
+  a write. A capture it cannot read counts as kind `capture_unreadable`. Scoped
+  writes will check the record instead of diffing the fleet, so this counter
+  must also read zero first.
 - **To roll back:** unset the variable and restart apid.
 
 Legacy action aliases whose decoding cannot be verified by this projection

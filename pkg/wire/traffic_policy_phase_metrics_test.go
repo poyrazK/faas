@@ -37,3 +37,17 @@ func TestTrafficBindingScopeCountersAreApidOnly(t *testing.T) {
 	var unwired *OpsMetrics
 	unwired.ObserveTrafficBindingScope("app_binding", []string{"alias"})
 }
+
+func TestTrafficBindingCaptureGapsAreApidOnly(t *testing.T) {
+	apid := NewOpsMetrics("apid")
+	apid.ObserveTrafficBindingCapture("domain_binding", nil)
+	apid.ObserveTrafficBindingCapture("domain_binding", []string{"domain", "domain"})
+	if got := testutil.ToFloat64(apid.trafficBindingCaptureGaps.WithLabelValues("domain_binding", "domain")); got != 2 {
+		t.Fatalf("domain gaps = %v", got)
+	}
+	if got := testutil.CollectAndCount(NewOpsMetrics("schedd").Registry(), "traffic_binding_capture_gaps_total"); got != 0 {
+		t.Fatalf("schedd series = %d, want 0", got)
+	}
+	var unwired *OpsMetrics
+	unwired.ObserveTrafficBindingCapture("domain_binding", []string{"domain"})
+}
