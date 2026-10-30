@@ -91,6 +91,8 @@ func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log 
 			data.Review = dashboardEdgeRuleReview(rules, data.Rules, hits)
 		}
 		data.Events = s.loadDashboardEdgeRuleEvents(r, log, acct, app, rules)
+		data.Lists = s.loadDashboardEdgeRuleLists(r, log, acct)
+		data.Versions = s.loadDashboardEdgeRuleVersions(r, log, acct, app)
 		data.WAFReview = s.loadDashboardEdgeWAFReview(r, log, acct, app, rules)
 		for _, rule := range rules {
 			if isSecurityHeadersRule(rule) && rule.Enabled {
@@ -282,7 +284,7 @@ func projectDashboardEdgeRules(rows []state.EdgeRule, unreleased func(state.Edge
 		item := dashboard.EdgeRulePageItem{
 			ID: row.ID, Kind: string(row.Kind), MatchHost: row.MatchHost, MatchPath: row.MatchPath,
 			MatchMethods: strings.Join(row.MatchMethods, ", "), Priority: row.Priority, Enabled: row.Enabled,
-			ActionJSON: string(actionJSON), ActionSummary: edgeRuleActionSummary(row),
+			ActionJSON: string(actionJSON), ActionSummary: edgeRuleActionSummary(row), EditActionJSON: edgeRuleEditActionJSON(row),
 			CreatedAt: dashboardJobsTime(row.CreatedAt), UpdatedAt: dashboardJobsTime(row.UpdatedAt),
 			SecurityPreset: isSecurityHeadersRule(row),
 			Name:           row.Name, Mode: edgeRuleModeOrDefault(row.Mode),
@@ -358,7 +360,8 @@ func edgeRuleActionSummary(rule state.EdgeRule) string {
 func dashboardEdgeRulesActionFlash(r *http.Request) string {
 	switch r.URL.Query().Get("action") {
 	case "created", "updated", "deleted", "security_headers_enabled", "mode_enforce", "mode_log", "recipe_log", "recipe_enforce",
-		"recipe_log_alert", "recipe_enforce_alert", "recipe_alert_failed", "attack_mode_on", "attack_mode_off", "waf_excluded":
+		"recipe_log_alert", "recipe_enforce_alert", "recipe_alert_failed", "attack_mode_on", "attack_mode_off", "waf_excluded",
+		"rolled_back", "list_created", "list_updated", "list_deleted":
 		return r.URL.Query().Get("action")
 	case "error":
 		return "error"
@@ -626,6 +629,8 @@ func (s *server) forwardDashboardEdgeRuleJSON(r *http.Request, acct state.Accoun
 	req.Header.Set("Content-Type", "application/json")
 	req.SetPathValue("slug", r.PathValue("slug"))
 	req.SetPathValue("id", id)
+	// The rule-list routes name their list by {name}.
+	req.SetPathValue("name", id)
 	resp := httptest.NewRecorder()
 	handler(resp, req, acct)
 	return resp

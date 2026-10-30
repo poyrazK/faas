@@ -22285,6 +22285,8 @@ components:
         crons: {type: array, items: {$ref: '#/components/schemas/CronResponse'}}
         api_keys: {type: array, items: {$ref: '#/components/schemas/APIKeyExportResponse'}}
         app_secrets: {type: array, items: {$ref: '#/components/schemas/AppSecretExportResponse'}}
+        edge_rules: {type: array, items: {$ref: '#/components/schemas/EdgeRuleResponse'}, description: "Edge rules on the exported apps."}
+        edge_rule_lists: {type: array, items: {$ref: '#/components/schemas/EdgeRuleListResponse'}, description: "The account's edge rule lists, with their items."}
         audit_trail:
           type: array
           items: {$ref: '#/components/schemas/GdprAuditExportResponse'}
