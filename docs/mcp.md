@@ -2064,6 +2064,13 @@ The server is the `mcp-bridged` daemon:
 - **Clients:** the unit allows Claude's and ChatGPT's published OAuth
   callbacks plus loopback clients. Override `ExecStart` in a drop-in to
   change the list.
+- **Client identity:** a client either registers (Dynamic Client
+  Registration) or names a Client ID Metadata Document URL as its
+  `client_id` (ADR-20261030065746). The server fetches the document over
+  HTTPS from public addresses only, caches it for up to a day, keeps only
+  the redirect URIs above, and shows the client's site on the consent page.
+  Every authorization response carries `iss`. The control plane needs
+  outbound HTTPS for document fetches.
 - **Bounds:**
   - 2,000 each of clients, pending sign-ins, codes and grants;
   - 10 grants per account;
@@ -2179,10 +2186,12 @@ Replace the public resource and callback addresses with those used by your
 client. HTTPS callbacks must match the operator's allowlist exactly. A loopback
 HTTP entry without a port permits the client's ephemeral port on that same
 hostname, path, and query. The registered redirect is then bound exactly through
-authorization and code exchange. Codex adds a random final path component; the
-operator can allow `http://127.0.0.1/callback/*` for that single component and
-ephemeral port. This rule accepts only letters, digits, hyphens and underscores
-under `/callback/`, with no nested path or query. It cannot be used for HTTPS or
+authorization and code exchange. Codex adds a random final path component when
+a server does not name its issuer; Gregale names it (RFC 9207), so current Codex
+registers a bare `/callback`. The operator can allow `http://127.0.0.1/callback/*`
+for either form on an ephemeral port. This rule accepts `/callback` or one
+component of letters, digits, hyphens and underscores under `/callback/`, with no
+nested path or query. It cannot be used for HTTPS or
 non-loopback addresses. Configure the client with the public `/mcp` URL
 and use its OAuth connect/login flow. Codex's remote MCP configuration uses
 `url = "https://management.example.com/mcp"` in `[mcp_servers.gregale]`.

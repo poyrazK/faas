@@ -27,6 +27,8 @@ type consentView struct {
 	Writes       bool
 	Native       bool
 	LoginURL     string
+	// ClientHost is the site a metadata-document client is published at.
+	ClientHost string
 	// SameTab: the hosted bridge sends the browser to sign-in and back.
 	SameTab      bool
 	Apps         []consentApp
@@ -35,6 +37,10 @@ type consentView struct {
 
 func (r *remoteServer) authorize(w http.ResponseWriter, req *http.Request) {
 	query := req.URL.Query()
+	if err := r.resolveMetadataClient(req, query.Get("client_id")); err != nil {
+		oauthError(w, http.StatusBadRequest, "invalid_client", strings.TrimPrefix(err.Error(), errClientMetadata.Error()+": "))
+		return
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.pruneLocked()
@@ -83,7 +89,7 @@ func (r *remoteServer) renderConsent(w http.ResponseWriter, flow *authorizationR
 		oauthError(w, 400, "access_denied", "Client registration expired; start a new connection")
 		return
 	}
-	view := consentView{ConsentAction: r.issuer + "/oauth/consent", Capabilities: describeCapabilities(flow.Capabilities), Client: client.Name, Redirect: flow.Redirect, APIBase: r.opts.APIBase, Account: account, RequestID: flow.ID, CSRF: csrf, Writes: slices.Contains(flow.Scopes, scopeWrite), Native: r.opts.Onboarding == "browser", LoginURL: flow.NativeURL, SameTab: r.opts.Hosted}
+	view := consentView{ConsentAction: r.issuer + "/oauth/consent", Capabilities: describeCapabilities(flow.Capabilities), Client: client.Name, Redirect: flow.Redirect, APIBase: r.opts.APIBase, Account: account, RequestID: flow.ID, CSRF: csrf, Writes: slices.Contains(flow.Scopes, scopeWrite), Native: r.opts.Onboarding == "browser", LoginURL: flow.NativeURL, ClientHost: clientHost(client), SameTab: r.opts.Hosted}
 	if g := r.grants[flow.GrantID]; g != nil {
 		view.Environments = g.availableEnvironments
 		for _, app := range g.availableApps {
@@ -197,6 +203,7 @@ func (r *remoteServer) approveLocked(w http.ResponseWriter, req *http.Request, f
 		lifetime = maxConnectionLifetime
 	}
 	g.expires = minTime(g.credentialExpires, time.Now().Add(lifetime))
+	r.holdClientLocked(g)
 	g.availableApps = nil
 	g.availableEnvironments = nil
 	r.codes[tokenHash(code)] = &authorizationCode{ClientID: flow.ClientID, Redirect: flow.Redirect, Challenge: flow.Challenge, GrantID: g.id, Expires: time.Now().Add(oauthCodeTTL)}
@@ -216,6 +223,7 @@ func (r *remoteServer) finishAuthorization(w http.ResponseWriter, req *http.Requ
 	redirect, _ := url.Parse(flow.Redirect)
 	query := redirect.Query()
 	query.Set("state", flow.State)
+	query.Set("iss", r.issuer)
 	if errorCode != "" {
 		query.Set("error", errorCode)
 	} else {

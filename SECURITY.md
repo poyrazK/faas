@@ -33,6 +33,14 @@ in DPA §10 (GDPR Art. 33). When a vulnerability is exploited against
 customer data, the same 72-hour window applies for notifying
 Controllers.
 
+## Supply chain
+
+Release bundles, CLI archives and platform images carry keyless Sigstore
+signatures and SLSA build provenance. The release bundle and CLI archives also
+carry SPDX SBOMs. See
+[docs/supply-chain.md](docs/supply-chain.md) for what each artifact carries and
+how to verify it.
+
 ## Past advisories
 
 - (none yet — repo is pre-SOC 2 Type 1)

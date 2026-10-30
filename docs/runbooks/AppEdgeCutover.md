@@ -6,12 +6,21 @@ Cloudflare Tunnel connector and gatewayd-public on every compute node). It
 does one test app first. The `*.<apps domain>` wildcard moves only after that
 pilot passes.
 
-Production's public-timeout Worker (`deploy/cloudflare/public-timeout-worker`)
-sits on `*.<apps domain>/*` and sends every request to its origin with
-`cf.resolveOverride`. So the request host's DNS record does not choose the
-origin; the Worker does. The pilot is therefore a Worker setting, not a DNS
-change: hosts listed in `APP_EDGE_HOSTS` resolve to the tunnel, and every
-other host keeps `ORIGIN_HOSTNAME`.
+DNS chooses each host's origin (ADR-20261030115139): app hosts go to the
+tunnel and platform hosts to the control plane. The public-timeout Worker
+(`deploy/cloudflare/public-timeout-worker`) is being removed, because Workers
+bill per request. While one of its routes still covers a host, the Worker
+picks that host's origin with `cf.resolveOverride` and DNS does not matter.
+So a host moves with two changes: a route with no Worker for it, which beats
+the wildcard route, and its own DNS record.
+`deploy/scripts/cloudflare-app-dns.sh` makes both, prints each change, and
+writes nothing without `APPLY=1`.
+
+Before any app host leaves the Worker, the control plane and every compute
+node must run a release with #6015. That release sends Gregale's own 502/504
+problems as 503, which Cloudflare passes through. Without it, a timeout or a
+failed app connection on a host the Worker no longer covers reaches the
+client as Cloudflare's HTML page.
 
 Alerts for the running edge: [FaasComputeEdge](FaasComputeEdge.md).
 
@@ -31,9 +40,9 @@ Alerts for the running edge: [FaasComputeEdge](FaasComputeEdge.md).
 - No test app with a synthetic check or cron is pinned to a node: a rollout's
   drain waits for them (rc.290, 2026-10-22).
 - You have a Cloudflare API token for the account with
-  `Cloudflare Tunnel:Edit` and `DNS:Edit` on the zone, and Wrangler access
-  for the Worker. These stay on your workstation; nodes only ever get the
-  connector token.
+  `Cloudflare Tunnel:Edit`, and `DNS:Edit` and `Workers Routes:Edit` on the
+  zone. It stays on your workstation; nodes only ever get the connector
+  token.
 
 ## Steps 1–3 in one command
 
@@ -97,29 +106,37 @@ Nothing reaches the tunnel yet: no DNS record and no Worker route point at it.
 ## 3. Add the tunnel origin record
 
 Create `app-edge.<apps domain>` as a **proxied** CNAME to
-`<tunnel_id>.cfargotunnel.com`. The Worker resolves pilot hosts to it; it must
-be in the same zone, or Cloudflare ignores `resolveOverride` without an error.
+`<tunnel_id>.cfargotunnel.com`. `cloudflare-app-dns.sh` reads the tunnel from
+this record. Until the Worker is gone, a Worker that lists pilot hosts in
+`APP_EDGE_HOSTS` resolves them to it too; it must be in the same zone, or
+Cloudflare ignores `resolveOverride` without an error.
 
 ## 4. Route the pilot app to the tunnel
 
 Pick a platform-owned test app with no customer traffic, for example
-`h10-fn-go.<apps domain>`. Deploy the Worker from main with:
-
-```toml
-[vars]
-ORIGIN_HOSTNAME = "origin.gregale.dev"
-FRONTEND_HOSTNAME = "gregale.dev"
-APP_EDGE_ORIGIN_HOSTNAME = "app-edge.gregale.dev"
-APP_EDGE_HOSTS = "h10-fn-go.gregale.dev"
-```
+`h10-fn-go.<apps domain>`. Check the zone first, then give the platform hosts
+their own records and move the pilot host:
 
 ```bash
-npx wrangler deploy --config deploy/cloudflare/public-timeout-worker/wrangler.toml
+export CF_ZONE_ID=<gregale.dev zone id>
+deploy/scripts/cloudflare-app-dns.sh plan
+APPLY=1 deploy/scripts/cloudflare-app-dns.sh platform
+APPLY=1 deploy/scripts/cloudflare-app-dns.sh pilot h10-fn-go.gregale.dev
 ```
 
-Rollback at any point: remove the host from `APP_EDGE_HOSTS` and deploy again.
-The pilot host returns to the control-plane origin within seconds. To stop
-all tunnel traffic at once, also stop `faas-cloudflared` on every node.
+- **`plan`** lists the platform hosts' records, the wildcard, every address
+  record in the zone and the Worker routes. Run it again after each step.
+- **`platform`** gives the apex, `api.`, `operations.` and `s3.` a proxied
+  record to `origin.<apps domain>`. A record that already points there, or an
+  A record with the origin's address, is left alone. Today the Worker sends
+  every host, the apex included, to that origin, so this changes no traffic.
+- **`pilot`** adds the route `h10-fn-go.gregale.dev/*` with no Worker and a
+  proxied CNAME to the tunnel.
+
+Rollback at any point: `APPLY=1 deploy/scripts/cloudflare-app-dns.sh unpilot
+h10-fn-go.gregale.dev` deletes the route and the record, and the Worker serves
+the host again within seconds. To stop all tunnel traffic at once, also stop
+`faas-cloudflared` on every node.
 
 ## 5. Pilot evidence
 
@@ -151,8 +168,9 @@ headers. The other checks below are by hand. Record each result in the pilot's P
    your own `X-Forwarded-For` (ADR-1343 §2 replaces it from
    `CF-Connecting-IP`).
 4. **Timeouts keep their body.** A request that exceeds the app's budget
-   still returns 504 `request_budget_exceeded` with a request id (the Worker
-   restores it from the 409 transport).
+   returns 503 `request_budget_exceeded` with the problem body, a request id
+   and `X-Faas-Error-Code` (ADR-20261030115139). A Cloudflare HTML page
+   means the release with #6015 has not reached that host's edge.
 5. **Credential-bound routes forward.** If the pilot app has a public bucket,
    a public object read on the pilot host succeeds; it is forwarded to the
    control plane's private listener.
@@ -167,19 +185,35 @@ headers. The other checks below are by hand. Record each result in the pilot's P
 
 ## 6. Move every app host
 
-After the pilot passes, at low traffic, deploy the Worker with
-`APP_EDGE_HOSTS = "*"`. Every `<app>.<apps domain>` host then resolves to the
-tunnel. A host counts as an app when its one label is a valid, unreserved app
-name (`pkg/api` `ValidAppSlug` and `reservedAppSlugs`, mirrored in the
-Worker's `app-hosts.json`, kept equal by a Go test). The apex, `api.`,
-`operations.`, `s3.`, `origin.`, `app-edge.`, every other reserved name and
-every deeper name stay on the control plane.
+After the pilot passes, at low traffic:
+
+1. Run `plan` and read every address record. A name that is neither an app
+   nor a platform host, and has no record of its own, follows the wildcard to
+   the tunnel, where the edge answers 421 `misdirected_request`. Give each such
+   name that must keep working its own record:
+   `APPLY=1 deploy/scripts/cloudflare-app-dns.sh keep <name>`.
+2. `APPLY=1 deploy/scripts/cloudflare-app-dns.sh wildcard` points
+   `*.<apps domain>` at the tunnel. It refuses until every platform host has
+   its own record. No traffic moves yet: the Worker's wildcard route still
+   overrides DNS.
+3. `APPLY=1 deploy/scripts/cloudflare-app-dns.sh drop-worker-routes` deletes
+   every route that runs the Worker. From here DNS alone decides: app hosts
+   reach the tunnel and platform hosts the control plane.
+4. `unpilot` the pilot host. Its route is no longer needed, and the wildcard
+   covers it.
+5. After a day without rollback, delete the Worker
+   (`wrangler delete --name gregale-public-timeout`) and its directory in the
+   repository. One release later, the gateway's 409 transport goes
+   (ADR-20261030115139, order step 6).
+
+Notes:
 
 - WebSocket and SSE connections drop when their origin changes; clients
   reconnect to the tunnel.
 - To keep one app on the control plane (an app that misbehaves on the edge),
-  add its host to `APP_EDGE_EXCLUDE_HOSTS` and deploy again.
-- Rollback: set `APP_EDGE_HOSTS` back to the pilot host, or empty, and deploy.
+  run `keep <host>`. Delete that record to move it back.
+- Rollback: `APPLY=1 deploy/scripts/cloudflare-app-dns.sh unwildcard` points
+  the wildcard back at the control-plane origin. No Worker is needed.
 - Watch [FaasComputeEdge](FaasComputeEdge.md) alerts, the control plane's CPU,
   and the ADR-1343 exit criterion (§5 checks 1, 2 and 7 at full traffic).
 

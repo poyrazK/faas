@@ -1504,6 +1504,10 @@ type Querier interface {
 	ExecutionWorkflowSummary(ctx context.Context, db DBTX, arg ExecutionWorkflowSummaryParams) (ExecutionWorkflowSummaryRow, error)
 	ExhaustEnvironmentQueueDeliveryInvocation(ctx context.Context, db DBTX, arg ExhaustEnvironmentQueueDeliveryInvocationParams) (int64, error)
 	ExistsManagedPostgresLifecycleDatabase(ctx context.Context, db DBTX, arg ExistsManagedPostgresLifecycleDatabaseParams) (bool, error)
+	// The hostnames of captured identities whose claims or reservations follow
+	// other rows: an app's primary URL, domains, redirects, tenant hostnames and
+	// aliases; a surface's, platform tenant's or environment's hostnames.
+	ExpandTrafficBindingCapture(ctx context.Context, db DBTX, arg ExpandTrafficBindingCaptureParams) ([]ExpandTrafficBindingCaptureRow, error)
 	// imaged, after deleting every object: the sealed key goes with them.
 	ExpireCrashCapture(ctx context.Context, db DBTX, arg ExpireCrashCaptureParams) (CrashCapture, error)
 	ExpireOrgInvitations(ctx context.Context, db DBTX, expiresAt pgtype.Timestamptz) (int64, error)
@@ -5721,6 +5725,9 @@ type Querier interface {
 	// account, may publish or release: each primary and alias URL, whatever the
 	// app's status (ADR-20261027163626).
 	ReadTrafficAppBindingHosts(ctx context.Context, db DBTX, arg ReadTrafficAppBindingHostsParams) ([]string, error)
+	// What this transaction's statements touched in the claim and reservation
+	// sources, as recorded by the capture triggers (ADR-20261029190349).
+	ReadTrafficBindingCapture(ctx context.Context, db DBTX) (string, error)
 	// All hostname reservations, including inactive/deleted surfaces. Discovery
 	// transfers only identities and routing eligibility; no challenge or cert data.
 	ReadTrafficBindingClaims(ctx context.Context, db DBTX, arg ReadTrafficBindingClaimsParams) (ReadTrafficBindingClaimsRow, error)

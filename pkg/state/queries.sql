@@ -9481,6 +9481,42 @@ SELECT CASE WHEN inputs<=sqlc.arg(max_inputs)::integer AND bytes<=sqlc.arg(max_b
     THEN (SELECT coalesce(jsonb_agg(data),'[]'::jsonb) FROM claims) ELSE NULL::jsonb END::jsonb AS data,
     inputs,bytes FROM bounds;
 
+-- name: ReadTrafficBindingCapture :one
+-- What this transaction's statements touched in the claim and reservation
+-- sources, as recorded by the capture triggers (ADR-20261029190349).
+SELECT coalesce(current_setting('gregale.traffic_binding_touched', true), '')::text AS touched;
+
+-- name: ExpandTrafficBindingCapture :many
+-- The hostnames of captured identities whose claims or reservations follow
+-- other rows: an app's primary URL, domains, redirects, tenant hostnames and
+-- aliases; a surface's, platform tenant's or environment's hostnames.
+WITH touched_apps AS (
+    SELECT id::uuid AS id, false AS added FROM unnest(sqlc.arg(app_ids)::text[]) AS t(id)
+    UNION ALL
+    SELECT id::uuid AS id, true AS added FROM unnest(sqlc.arg(added_app_ids)::text[]) AS t(id)
+), touched_surfaces AS (
+    SELECT DISTINCT id::uuid AS id FROM unnest(sqlc.arg(surface_ids)::text[]) AS t(id)
+), touched_platforms AS (
+    SELECT DISTINCT id::uuid AS id FROM unnest(sqlc.arg(platform_ids)::text[]) AS t(id)
+), touched_environments AS (
+    SELECT DISTINCT id::uuid AS id FROM unnest(sqlc.arg(environment_ids)::text[]) AS t(id)
+)
+SELECT (a.slug || sqlc.arg(apps_suffix)::text)::text AS host, t.added::boolean AS added
+FROM apps a JOIN touched_apps t ON a.id = t.id WHERE sqlc.arg(apps_suffix)::text <> ''
+UNION ALL
+SELECT d.domain::text, false FROM custom_domains d JOIN touched_apps t ON d.app_id = t.id OR d.app_id_redirect = t.id
+UNION ALL
+SELECT h.hostname::text, false FROM tenant_hostnames h JOIN tenant_surfaces s ON s.id = h.surface_id JOIN touched_apps t ON s.app_id = t.id
+UNION ALL
+SELECT 'tag-' || z.name || '-' || replace(z.app_id::text, '-', '') || sqlc.arg(apps_suffix)::text, false
+FROM deployment_aliases z JOIN touched_apps t ON z.app_id = t.id WHERE sqlc.arg(apps_suffix)::text <> ''
+UNION ALL
+SELECT h.hostname::text, false FROM tenant_hostnames h JOIN touched_surfaces s ON h.surface_id = s.id
+UNION ALL
+SELECT h.hostname::text, false FROM tenant_hostnames h JOIN tenant_surfaces s ON s.id = h.surface_id JOIN touched_platforms p ON s.platform_tenant_id = p.id
+UNION ALL
+SELECT d.domain::text, false FROM custom_domains d JOIN touched_environments e ON d.environment_id = e.id;
+
 -- name: ReadTrafficBindingClaims :one
 -- All hostname reservations, including inactive/deleted surfaces. Discovery
 -- transfers only identities and routing eligibility; no challenge or cert data.

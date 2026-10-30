@@ -247,7 +247,9 @@ func (tx *trafficDomainBindingTx) validate(ctx context.Context) error {
 		// This transaction keeps no primary claims, so neither side compares them.
 		before := trafficBindingClaims{Domains: tx.beforeClaims, Tenants: tx.beforeTenants, Aliases: tx.beforeAliases}
 		after := trafficBindingClaims{Domains: claims.Domains, Tenants: claims.Tenants, Aliases: claims.Aliases}
-		missed = auditTrafficBindingScope(TrafficPolicyWriterDomainBinding, tx.scope, trafficBindingChanges(before, after, tx.globalBefore.Reservations, globalAfter.Reservations))
+		changes := trafficBindingChanges(before, after, tx.globalBefore.Reservations, globalAfter.Reservations)
+		missed = auditTrafficBindingScope(TrafficPolicyWriterDomainBinding, tx.scope, changes)
+		auditTrafficBindingCapture(bounded, tx.Tx, TrafficPolicyWriterDomainBinding, tx.appsSuffix, changes)
 		if tx.scoped && len(missed) > 0 {
 			return nil // refused below, outside the global route scope
 		}
