@@ -108,7 +108,9 @@ func TestDeploymentBaseKey(t *testing.T) {
 		{name: "shared runner base", app: state.App{Type: state.AppTypeApp}, base: "node24", want: BaseKey("node24")},
 		{name: "function with a runtime base", app: state.App{Type: state.AppTypeFunction, Runtime: "node22"}, base: "node24", wantErr: true},
 		{name: "container with its own runtime", app: state.App{Type: state.AppTypeApp, Runtime: "go124"}, base: "node24", wantErr: true},
-		{name: "unknown runtime base", app: state.App{Type: state.AppTypeApp}, base: "python312", wantErr: true},
+		// python312 became a shared runner base in ADR-1500 amendment 2;
+		// go124 is a runtime but never a runner base.
+		{name: "unknown runtime base", app: state.App{Type: state.AppTypeApp}, base: "go124", wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
