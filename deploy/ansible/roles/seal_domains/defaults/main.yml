@@ -105,6 +105,14 @@ faas_seal_domain_source_writes: ""
 # rollback window. Required for writes=domain.
 faas_seal_domain_source_readers_verified: false
 
+# The contract step: githubd drops the fleet and host identities and opens
+# install tokens and webhook secret copies with the domain identity alone.
+# Needs writes=domain, and the role refuses it while `gregalectl
+# seal-domain migrate --domain source --check` finds a webhook secret the
+# migration would still seal or an unexpired install token only the fleet
+# or host identity opens.
+faas_seal_domain_source_contracted: false
+
 # Operator-local files from `gregalectl seal-domain init --domain build`.
 # Compute hosts stage the identity (imaged opens registry passwords),
 # control-plane hosts the recipient (apid seals to it).
