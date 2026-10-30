@@ -105,10 +105,10 @@ func ResumeObjectInventory(ctx context.Context, p objectstorage.ObjectV2Lister, 
 			}
 		}
 		page, err := p.ListObjectsV2(ctx, physical, objectstorage.ObjectListRequest{StartAfter: after, Cursor: cursor, Limit: api.MaxObjectS3ListItems})
+		if ctx.Err() != nil {
+			return nil //nolint:nilerr // intentional: the attempt's time ran out mid-page, and the next attempt lists it
+		}
 		if err != nil {
-			if ctx.Err() != nil {
-				return nil
-			}
 			return err
 		}
 		if len(page.Items) > api.MaxObjectS3ListItems || len(page.CommonPrefixes) != 0 || len(page.Items) == 0 && page.NextCursor != "" {
