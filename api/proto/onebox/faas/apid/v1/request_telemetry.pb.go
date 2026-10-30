@@ -823,8 +823,11 @@ type IncrementRequestTelemetryRequest struct {
 	// ADR-1138: trace_id was inferred by Gregale (the calling instance sent no
 	// traceparent and was serving exactly one request) rather than propagated.
 	TraceInferred bool `protobuf:"varint,38,opt,name=trace_inferred,json=traceInferred,proto3" json:"trace_inferred,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// ADR-20261028110044 amendment 3: a 5xx the gateway returned because a
+	// Gregale dependency could not admit the request. Route evidence skips it.
+	PlatformRefusal bool `protobuf:"varint,39,opt,name=platform_refusal,json=platformRefusal,proto3" json:"platform_refusal,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *IncrementRequestTelemetryRequest) Reset() {
@@ -1119,6 +1122,13 @@ func (x *IncrementRequestTelemetryRequest) GetContentOutcome() string {
 func (x *IncrementRequestTelemetryRequest) GetTraceInferred() bool {
 	if x != nil {
 		return x.TraceInferred
+	}
+	return false
+}
+
+func (x *IncrementRequestTelemetryRequest) GetPlatformRefusal() bool {
+	if x != nil {
+		return x.PlatformRefusal
 	}
 	return false
 }
@@ -1490,7 +1500,7 @@ const file_onebox_faas_apid_v1_request_telemetry_proto_rawDesc = "" +
 	"\n" +
 	"request_id\x18\t \x01(\tR\trequestId\x12\x1b\n" +
 	"\tsource_ip\x18\n" +
-	" \x01(\tR\bsourceIp\"\xbf\v\n" +
+	" \x01(\tR\bsourceIp\"\xea\v\n" +
 	" IncrementRequestTelemetryRequest\x12\x1d\n" +
 	"\n" +
 	"account_id\x18\x01 \x01(\tR\taccountId\x12\x15\n" +
@@ -1536,7 +1546,8 @@ const file_onebox_faas_apid_v1_request_telemetry_proto_rawDesc = "" +
 	")platform_tenant_jwt_authorization_rule_id\x18# \x01(\tR$platformTenantJwtAuthorizationRuleId\x12,\n" +
 	"\x12flag_evidence_json\x18$ \x01(\tR\x10flagEvidenceJson\x12'\n" +
 	"\x0fcontent_outcome\x18% \x01(\tR\x0econtentOutcome\x12%\n" +
-	"\x0etrace_inferred\x18& \x01(\bR\rtraceInferred\"c\n" +
+	"\x0etrace_inferred\x18& \x01(\bR\rtraceInferred\x12)\n" +
+	"\x10platform_refusal\x18' \x01(\bR\x0fplatformRefusal\"c\n" +
 	"!IncrementRequestTelemetryResponse\x12\x18\n" +
 	"\aoutcome\x18\x01 \x01(\tR\aoutcome\x12$\n" +
 	"\x0eretry_after_ms\x18\x02 \x01(\x03R\fretryAfterMs\"\xc6\x03\n" +

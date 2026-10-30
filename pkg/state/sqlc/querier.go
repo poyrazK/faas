@@ -6244,6 +6244,7 @@ type Querier interface {
 	// Advisory identity cohorts use the same exact routes, deployment pair and
 	// closed windows as aggregate health. Rank before bounding output and sorting
 	// weighted latency. Request-time attribution never follows today's tenant link.
+	// Like the guard, skip platform refusals and rank only warm latency.
 	RouteCustomerHealthObservation(ctx context.Context, db DBTX, arg RouteCustomerHealthObservationParams) ([]byte, error)
 	// Live advisory reads only. Each code has its own weighted numerator and the
 	// entire deployment/route/window request count as denominator. No request expansion.
@@ -6258,13 +6259,19 @@ type Querier interface {
 	// Metadata only. Count all matching rows/weights before independently bounding
 	// each deployment/window. Error rows prefer trace links; latency rows prefer
 	// slowest latency buckets. Both then use newest timestamps and UUID ties.
+	// Same population as the evidence it explains: no platform refusals, and
+	// warm latency only for the canary guard (warm_latency).
 	RouteHealthInvestigationExamples(ctx context.Context, db DBTX, arg RouteHealthInvestigationExamplesParams) ([]byte, error)
 	// Independently bound the newest rows in each exact deployment/window. Read
 	// rows without spans too, so missing coverage is not hidden by selection.
+	// warm_latency reads the warm population the canary guard ranked.
 	RouteHealthLatencyEvidence(ctx context.Context, db DBTX, arg RouteHealthLatencyEvidenceParams) ([]RouteHealthLatencyEvidenceRow, error)
 	// Exact selected labels and shared windows. Aggregate publisher weights without
 	// expanding requests. Percentile ranks interpolate bucket representatives, like
 	// RequestTelemetryBaselineP95ByRoute. Old selectors skip the percentile sort.
+	// Platform refusals never count. warm_latency (the canary guard) ranks only
+	// requests that did not cold boot and reports how many it ranked
+	// (ADR-20261028110044 amendment 3); the production monitor stays end to end.
 	RouteHealthObservation(ctx context.Context, db DBTX, arg RouteHealthObservationParams) ([]byte, error)
 	RouteHealthStableIDs(ctx context.Context, db DBTX, arg RouteHealthStableIDsParams) ([]string, error)
 	// Route insights (ADR-1198): findings apid's evaluator derives from the

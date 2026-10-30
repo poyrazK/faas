@@ -39,7 +39,7 @@ func ValidateInvestigation(r api.RouteHealthInvestigation, opts api.RouteHealthI
 		}
 		candidate, stable := base.Candidate.ServerErrors, base.Stable.ServerErrors
 		if opts.Signal == "latency" {
-			candidate, stable = base.Candidate.Requests, base.Stable.Requests
+			candidate, stable = LatencySamples(base.Candidate), LatencySamples(base.Stable)
 		} else if opts.StatusCode != 0 {
 			candidate, stable = -1, -1
 			if f.ClientErrors != nil {
