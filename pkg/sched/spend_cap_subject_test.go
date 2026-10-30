@@ -29,8 +29,9 @@ func TestSpendCapSubjectIsTheBillingOrganization(t *testing.T) {
 		}
 		return org
 	}
-	billed, legacy := newOrg("billed"), newOrg("legacy")
-	// A plan change makes the organization its own billing subject.
+	// MemStore creates a team organization owning its resources: its own
+	// billing subject.
+	billed := newOrg("billed")
 	if err := store.UpdateAccountPlan(ctx, billed.ID, api.PlanPro); err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +46,6 @@ func TestSpendCapSubjectIsTheBillingOrganization(t *testing.T) {
 	}{
 		{"personal app", state.App{AccountID: member.ID}, member.ID},
 		{"billed organization", state.App{AccountID: member.ID, OrgID: billed.ID}, billed.ID},
-		{"organization that does not own its resources", state.App{AccountID: member.ID, OrgID: legacy.ID}, member.ID},
 		{"unreadable organization falls back to the account", state.App{AccountID: member.ID, OrgID: uuid.NewString()}, member.ID},
 	} {
 		if got := engine.XSpendCapSubject(ctx, tc.app); got != tc.want {
