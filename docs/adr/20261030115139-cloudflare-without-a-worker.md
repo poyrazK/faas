@@ -123,10 +123,12 @@ This is ADR-1343 §3 as first written.
   its retry hint.
 - **The `code` field and `X-Faas-Error-Code` are the contract.**
   `docs/errors.md` and the OpenAPI documents list 503 for these codes.
-  Shipped CLIs already treat 503 like 502 and 504
-  (`cmd/gregale/commands_deployments.go`,
-  `cmd/gregale/commands_rollouts_status.go`). The Go SDK builds its own
-  `long_poll_timeout` problem with 504, and moves to 503 with the rest.
+  Shipped CLIs and the Go SDK's retry paths already treat 503 like 502 and
+  504 (`cmd/gregale/commands_deployments.go`,
+  `cmd/gregale/commands_rollouts_status.go`,
+  `sdk/go/internal/bindingrun/status_retry.go`). OpenAPI lists 504 for
+  `long_poll_timeout`; changing it regenerates the Node and Python SDKs, so it
+  follows the gateway change.
 - **An app's own 502 or 504 passes through unchanged.** Cloudflare then
   replaces its body with its own page, as on any site behind Cloudflare.
   `docs/errors.md` says so. Rewriting a customer's status is not ours to do.
