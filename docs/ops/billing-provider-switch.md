@@ -103,9 +103,15 @@ enabled metered USD prices backed by their configured meters. The compute meter 
 included calendar-month allowance locally before sending overage events, so
 do not add a Polar meter-credit benefit to these products.
 
+In the organization's settings (Settings, Subscriptions), turn off multiple
+subscriptions per customer. Gregale follows one subscription per account;
+with the setting on, a customer who completes two checkouts pays twice.
+
 `apid` validates the catalog at boot. `meterd` validates it before starting
-the usage loop. A missing product, archived resource, wrong recurring period,
-wrong fixed price, wrong meter, or meter-credit benefit prevents startup.
+the usage loop. An organization that allows multiple subscriptions, a token
+that does not see exactly one organization, a missing product, archived
+resource, wrong recurring period, wrong fixed price, wrong meter, or
+meter-credit benefit prevents startup (ADR-20261029180000).
 
 ## Runtime behavior
 
@@ -194,7 +200,16 @@ Monitor these metrics and logs:
   expected while delivery catches up, a cap applies, or ledger evidence is
   missing.
 - `polar_webhook.verify_failed` and `polar_webhook.unknown_customer` identify
-  signature or customer-binding failures.
+  signature or customer-binding failures. A delivery for a customer no account
+  is bound to is acknowledged (logged as `polar_webhook.unknown_customer`);
+  only a failed lookup (`polar_webhook.customer_lookup_failed`) is retried.
+- `apid_billing_reconcile_corrections_total{correction}` counts accounts that
+  subscription reconciliation moved to their Polar subscription's state
+  (ADR-20261029094512). Any increase means a webhook delivery was missed:
+  check the Polar endpoint's delivery log, and whether Polar disabled the
+  endpoint. Each correction also writes a `billing.subscription_reconciled`
+  audit event. `apid_billing_reconcile_passes_total{result="failed"}` means
+  the pass itself could not run.
 - `meter` logs with `replay=true` show durable usage recovery after an outage.
 
 ## Switching providers
@@ -240,12 +255,40 @@ handling rules.
 
 ## Webhook and failure handling
 
-Register `https://<host>/v1/webhooks/polar` and subscribe to subscription
-creation/update/cancellation/past-due/revocation plus order creation/payment/
-refund events. Polar Standard Webhooks headers are verified before parsing;
+Register `https://<host>/v1/webhooks/polar` and subscribe to exactly these
+events:
+
+`subscription.created`, `subscription.updated`, `subscription.active`,
+`subscription.canceled`, `subscription.uncanceled`, `subscription.revoked`,
+`subscription.past_due`, `subscription.cycled`, `order.created`,
+`order.updated`, `order.paid`, `order.refunded`, `refund.created`,
+`refund.updated`.
+
+`order.created` and `order.updated` project an unpaid renewal as an `open`
+invoice, so a past-due customer sees what they owe; a late one never reopens a
+`paid` invoice (ADR-20261028101500). Compute and egress usage events are
+stamped when meterd sends them, so they land in the cycle that is open when
+they arrive. Polar processes an event a few minutes after it arrives: one
+processed after a renewal is billed on the next order, and one processed after
+the subscription ended is not billed (ADR-20261029094512). Polar Standard Webhooks headers are verified before parsing;
 database persistence and replay-claim failures return non-2xx so the provider
 can retry. A valid duplicate delivery is acknowledged without repeating the
 state transition.
+
+Polar disables an endpoint after 10 consecutive failed deliveries and does not
+re-enable it. apid counts every answer in
+`apid_ops_total{op="polar_webhook",code}`, and `FaasPolarWebhookFailing` fires
+after three failed answers in 30 minutes (runbook
+[PolarBillingWebhooks](../runbooks/PolarBillingWebhooks.md)). Re-enable the
+endpoint in the Polar dashboard once apid is healthy.
+Deliveries Polar dropped in the meantime are not replayed, but every 30
+minutes one apid replica compares each Polar-billed account with its
+customer's subscriptions and applies the missed transition when two passes in
+a row agree: a paid-up subscription ends dunning, a past-due one starts it
+(with its email), an ended one downgrades to Free, and a changed product
+re-binds the plan (ADR-20261029094512). `subscription.cycled` is a period
+change, not a payment: a payment success delivered while Polar still reports
+the subscription `past_due` keeps the plan but does not end dunning.
 
 The hourly pusher is intentionally at-least-once. If Polar is unavailable,
 the failed window remains durable and is retried on the next pass. Investigate

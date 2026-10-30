@@ -194,6 +194,15 @@ type Config struct {
 	// the same nodes. A node without a fresh sample counts every booking.
 	QuietPauseAdmission bool `toml:"quiet_pause_admission"`
 
+	// MeasuredCPUAdmission (ADR 20261029151111) makes the vCPU and CPU gates
+	// charge an instance the latest instance stats sample measured its
+	// measured host CPU instead of its booking, never less than
+	// api.MeasuredCPUMinChargePercent of the booking, and stops counting its
+	// guest vCPUs; all bookings stay capped at
+	// api.MeasuredCPUMaxOvercommitPercent of the budget. Off by default.
+	// A node without a fresh sample counts every booking.
+	MeasuredCPUAdmission bool `toml:"measured_cpu_admission"`
+
 	// QuietPauseLedger (ADR-20261023171905) records the quiet pauses this
 	// schedd's node reports in the pause ledger, for meterd to subtract from
 	// billed seconds once its quiet_pause_unbilled switch is on. Off by
@@ -209,8 +218,8 @@ type Config struct {
 	FrozenTier bool `toml:"frozen_tier"`
 	// FrozenTierApps (ADR-1151 step 3) extends the frozen tier from
 	// functions to request-mode apps whose declared pause is not never.
-	// Off by default and ignored unless frozen_tier is on.
-	// FAAS_FROZEN_TIER_APPS overrides it.
+	// On by default (ADR-1151 amendment 2026-10-27) and ignored unless
+	// frozen_tier is on. FAAS_FROZEN_TIER_APPS overrides it.
 	FrozenTierApps bool `toml:"frozen_tier_apps"`
 	// FrozenTierWorkers (ADR-20261019103000) lets a worker pool freeze a
 	// surplus worker that holds no queue lease instead of stopping it, and
@@ -490,6 +499,10 @@ func LoadConfig(path string) (*Config, error) {
 		ReaperAggressive: true,
 		// ADR-909 (accepted 2026-10-12): admit by measured memory.
 		MeasuredAdmission: true,
+		// ADR-1151 amendment 2026-10-27: request-mode apps join the frozen
+		// tier whenever frozen_tier is on. FAAS_FROZEN_TIER_APPS=false or
+		// frozen_tier_apps = false keeps the tier to functions.
+		FrozenTierApps: true,
 		// ADR-067: 0 means "use the api.* default"
 		// (api.MigratingWatchdogTickLimit = 50,
 		// api.MigratingWatchdogIntervalSeconds = 1). cmd/schedd/main.go

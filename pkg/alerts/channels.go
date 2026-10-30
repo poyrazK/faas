@@ -44,7 +44,7 @@ func (e *Evaluator) SetChannels(sender ChannelSender, outcome func(kind, outcome
 // the webhook, or the rule's action. Each outcome is recorded on its
 // channel. It returns how many channels were attempted and delivered.
 func (e *Evaluator) notifyChannels(ctx context.Context, rule state.AlertRule, event string, observed float64, now time.Time) (attempted, delivered int) {
-	if e.channels == nil {
+	if e.channels == nil || channelsOff(ctx) {
 		return 0, 0
 	}
 	bindings, ok := e.store.(state.AlertRuleChannelStore)
@@ -112,6 +112,9 @@ func (e *Evaluator) channelMessage(ctx context.Context, rule state.AlertRule, ev
 	}
 	if rule.Metric == state.AlertMetricRouteInsightsDetected && event == alertchannels.EventFire {
 		msg.Notes = e.routeInsightNotes(ctx, rule)
+	}
+	if (rule.Metric == state.AlertMetricRouteMonitorIncidents || rule.Metric == state.AlertMetricRouteHealthHolds) && event == alertchannels.EventFire {
+		msg.Notes = e.routeAlertNotes(ctx, rule)
 	}
 	if msg.AppSlug = e.appSlug(ctx, rule.AppID); msg.AppSlug != "" && e.dashboardBaseURL != "" {
 		msg.DashboardURL = e.dashboardBaseURL + "/dashboard/apps/" + msg.AppSlug

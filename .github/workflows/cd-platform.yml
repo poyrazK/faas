@@ -16,7 +16,7 @@ on:
           faas-fleet, production-us (gregale-prod, us-east1) uses
           faas-fleet-us, so one fleet's runner never deploys the other.
         required: false
-        default: production
+        default: production-us
         type: choice
         options:
           - production
@@ -24,10 +24,12 @@ on:
       rollback_on_gate_failure:
         description: >-
           Roll the control plane back to the previous release when a
-          post-activation gate fails. DEFAULT OFF: the acceptance gate has
-          never had a green run (0 successes in cd-platform's history), so
-          enabling this today rolls back every deploy. Turn it on once
-          cd-platform has passed once.
+          post-activation gate fails. DEFAULT OFF: the acceptance gate
+          has passed since 2026-09-30, but two of its four failures since
+          2026-10-21 were
+          defects in the acceptance script (rc.302, rc.303), and rolling
+          back on them would have reverted rc.302's fix for rc.301. It
+          also rolls back only the control plane, never compute nodes.
         type: boolean
         default: false
       hosted_runners:
@@ -37,6 +39,14 @@ on:
           dedicated fleet runner. Escape hatch for when the fleet runner host
           is unavailable; hosted jobs queue behind CI. Compute node rollouts
           always need the fleet runner.
+        type: boolean
+        default: false
+      skip_role_convergence:
+        description: >-
+          With hosted_runners only: activate the control plane without
+          converging its roles (ADR-580). Hosted runners cannot reach the
+          fleet's private names, so a hosted rollout refuses to start
+          without this acknowledgement.
         type: boolean
         default: false
       release_tag:
@@ -245,6 +255,7 @@ jobs:
     with:
       deploy_environment: ${{ inputs.deploy_environment }}
       hosted_runner: ${{ inputs.hosted_runners }}
+      skip_role_convergence: ${{ inputs.skip_role_convergence }}
       release_tag: ${{ inputs.release_tag }}
     secrets: inherit
 
@@ -327,6 +338,7 @@ jobs:
       format_storage: ${{ matrix.target.format_storage }}
       skip_fleet_preflight: ${{ matrix.target.skip_fleet_preflight }}
       rollout_phase: ${{ inputs.compute_rollout_mode == 'full' && 'full' || 'activate' }}
+      node_canary: true
     secrets: inherit
 
   verify:
@@ -553,12 +565,14 @@ jobs:
             "env RELEASE_SHA='${DESIRED_RELEASE}' RUN_ID='${GITHUB_RUN_ID_VALUE}' RUN_ATTEMPT='${GITHUB_RUN_ATTEMPT_VALUE}' ACTIVE_NODE_COUNT='${ACTIVE_NODE_COUNT}' bash -s" \
             < deploy/scripts/production-release-acceptance.sh
 
-      # OFF BY DEFAULT — see the rollback_on_gate_failure input. The acceptance
-      # gate below it has never had a green run (0 successes across
-      # cd-platform's entire history), so an unconditional `if: failure()`
-      # would roll back every single deploy. That was not the intent when the
-      # step was added in #3177; it assumed a failing gate was exceptional
-      # rather than the steady state.
+      # OFF BY DEFAULT — see the rollback_on_gate_failure input. When #3177
+      # added the step, the acceptance gate above had never passed, so an
+      # unconditional `if: failure()` would have rolled back every deploy. The
+      # gate has passed since 2026-09-30, but it still fails on its own defects
+      # as well as the release's: rc.302 and rc.303 failed on capability-gated
+      # checks, and rc.302 carried the fix for rc.301's build regression. Rolling back here also inverts the documented order
+      # (docs/release-compatibility.md: compute first, then the control plane),
+      # because compute nodes stay on this release.
       #
       # Every gate above runs AFTER deployctl has already activated the release
       # and returned success, so until now a failure left the bad release

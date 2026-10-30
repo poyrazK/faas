@@ -21,6 +21,8 @@ package oidc
 
 import (
 	"errors"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/state"
@@ -32,6 +34,26 @@ import (
 // TTL). Short enough that a leaked bearer expires before the next
 // operator rotation window.
 const OIDCBearerTTL = 5 * time.Minute
+
+// DefaultAudience is the aud the Gregale deploy action requests. An account
+// without an explicit trust policy exchanges only tokens minted for it, or
+// for an audience listed in FAAS_OIDC_EXCHANGE_AUDIENCES (bug hunt
+// 2026-10-28 H68).
+const DefaultAudience = "gregale"
+
+// PlatformAudience reports whether aud is one Gregale accepts without an
+// explicit trust policy.
+func PlatformAudience(aud string) bool {
+	if aud == DefaultAudience {
+		return true
+	}
+	for _, extra := range strings.Split(os.Getenv("FAAS_OIDC_EXCHANGE_AUDIENCES"), ",") {
+		if extra = strings.TrimSpace(extra); extra != "" && extra == aud {
+			return true
+		}
+	}
+	return false
+}
 
 // OIDCTrustPolicy is a per-(account, issuer) admission rule for
 // OIDC-derived bearer exchanges. The actual struct lives in pkg/state

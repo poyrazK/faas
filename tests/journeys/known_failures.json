@@ -1,0 +1,57 @@
+[
+  {
+    "step": "TestDocsPages",
+    "bug": "40 of 77 pages in docs/customer-pages.json answer 404 on gregale.dev",
+    "since": "2026-10-26"
+  },
+  {
+    "step": "TestPublicSurface/security_txt",
+    "bug": "security.txt Canonical URL ends in 404; its Encryption URL serves an HTML page, not a PGP key",
+    "since": "2026-10-26"
+  },
+  {
+    "step": "TestPublicSurface/status_incidents",
+    "bug": "GET /v1/status/incidents answers 404 no such API route (the inventory lists it as the public incidents API)",
+    "since": "2026-10-26"
+  },
+  {
+    "step": "TestCustomDomainBinding/add",
+    "bug": "custom domains are disabled on production: domains add answers 'Custom domains are unavailable ... not available on this Gregale installation right now' though the inventory lists them as GA",
+    "since": "2026-10-27"
+  },
+  {
+    "step": "TestImageRegistryAndDeployTokens/cli_deploy_with_token",
+    "bug": "gregale deploy with an app's deploy token fails insufficient_scope (the CLI calls an endpoint needing admin or apps:read); the deploy API itself accepts the token",
+    "since": "2026-10-27"
+  },
+  {
+    "step": "TestGitHubDeploys/push_to_deploy",
+    "bug": "a push to the production branch of an app bound with gregale github bind created no deployment within 25 min (three runs); github status reports the binding healthy",
+    "since": "2026-10-27"
+  },
+  {
+    "step": "TestGitHubDeploys/checks_status",
+    "bug": "follows from push_to_deploy: no deployment, so no Gregale check on the pushed commit",
+    "since": "2026-10-27"
+  },
+  {
+    "step": "TestGitHubDeploys/preview_created_on_pr_open",
+    "bug": "opening a pull request on the bound fixture repository created no preview within 5 min; gregale preview create works and the preview serves",
+    "since": "2026-10-27"
+  },
+  {
+    "step": "TestGitHubDeploys/preview_removed_on_pr_close",
+    "bug": "closing the pull request did not record the close (the step now checks pr_state=closed with a 24h grace; teardown after the grace is by design); root cause shared with push_to_deploy: the App webhook URL and secret were wrong (fixed on GitHub 2026-10-29) and githubd rejected every real pull_request payload (#5862), known until #5862 is released",
+    "since": "2026-10-28"
+  },
+  {
+    "step": "TestMultiServiceProject/deploy_project",
+    "bug": "the internal api service (Compose, no ports) fails deployment_verification_unavailable: imaged smokes it through its public host, which the gateway never routes for an internal app, so it gets 404 until the recovery window ends (Hunt 14 H14-124 on rc.307; #5840 made it an http service, #5934 made it really internal); fixed by the internal-app smoke skip, known until it is released",
+    "since": "2026-10-29"
+  },
+  {
+    "step": "TestObjectStorage/object_storage_enabled",
+    "bug": "object storage is still preview (GA row 108): gregale feature list reports object-storage disabled until s3_enabled is on and the capability is released to the e2e account, and the journey's other steps report blocked; remove once the owner turns it on",
+    "since": "2026-10-29"
+  }
+]

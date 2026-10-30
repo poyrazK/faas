@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/netip"
 	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/projectsetup"
 	"github.com/onebox-faas/faas/pkg/reconcile"
 	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -109,6 +111,15 @@ func (s *Service) previewDependencyParents(ctx context.Context, parent state.App
 			if !api.ValidAppSlug(name) {
 				return nil, previewSetupFailure("the new service %q needs a name of 3 to 40 lowercase letters, digits and dashes to be previewed", name)
 			}
+			// Its preview answers on pr-<N>-<name>, the host of <name>'s own
+			// PR previews. An app that already holds the name, in any
+			// account, owns that host: taking it would serve this PR's code
+			// as that app's preview and fail that app's own PR previews.
+			if holder, holderErr := s.Reconcile.Store.AppBySlug(ctx, name); holderErr == nil && holder.ID != "" {
+				return nil, previewSetupFailure("the new service %q has the name of an existing Gregale app, so it cannot be previewed under that name; give the service a unique name", name)
+			} else if holderErr != nil && !errors.Is(holderErr, state.ErrNotFound) {
+				return nil, fmt.Errorf("githubd: check new service name %q: %w", name, holderErr)
+			}
 			app = withParentAccessGates(state.App{
 				AccountID: parent.AccountID, ProjectID: parent.ProjectID,
 				Slug: name, WorkloadName: name, Type: state.AppTypeApp,
@@ -126,11 +137,13 @@ func (s *Service) previewDependencyParents(ctx context.Context, parent state.App
 		existing, err := s.Reconcile.Store.PreviewAppByProjectWorkload(ctx,
 			parent.AccountID, parent.ProjectID, prNumber, name)
 		if err == nil {
-			expected, slugErr := previewSlug(existing.PreviewOfSlug, prNumber)
-			if slugErr != nil || existing.Slug != expected {
-				return nil, fmt.Errorf("githubd: PR dependency %q has inconsistent preview identity: %w", name, state.ErrConflict)
+			// Renaming the production app relinks its previews to the new
+			// name but leaves their pr-<N>-<old> host. Such a preview is not
+			// reused: this head reserves pr-<N>-<new> and the set
+			// replacement retires the old row.
+			if expected, slugErr := previewSlug(existing.PreviewOfSlug, prNumber); slugErr == nil && existing.Slug == expected {
+				app.Slug = existing.PreviewOfSlug
 			}
-			app.Slug = existing.PreviewOfSlug
 		} else if !errors.Is(err, state.ErrNotFound) {
 			return nil, fmt.Errorf("githubd: resolve existing PR dependency %q: %w", name, err)
 		}
@@ -171,6 +184,45 @@ func previewManifest(parent state.AppManifest) state.AppManifest {
 	return parent
 }
 
+// prHeadComposeValues reads the plain values the PR head's Compose file
+// declares, for each service by lower-cased name, under the same opt-in and
+// rules as a project deploy (ADR-20261026181020). They come from the PR's own
+// source, so a preview may run with them (ADR-20261028090000). An unreadable
+// Compose environment imports nothing, as on a project deploy.
+func prHeadComposeValues(fsys fs.FS, scan reposcan.Result, opts reposcan.ScanOptions, limits api.Limits) map[string]map[string]string {
+	env, err := reposcan.ReadProjectEnv(fsys, opts)
+	if err != nil || !env.ImportsAny() {
+		return nil
+	}
+	callable := make([]string, 0, len(scan.Workloads))
+	for _, workload := range scan.Workloads {
+		callable = append(callable, workload.Name)
+	}
+	out := make(map[string]map[string]string, len(scan.Workloads))
+	for _, workload := range scan.Workloads {
+		if values := projectsetup.PlanEnvImport(env, workload.Name, callable, limits).Values; len(values) > 0 {
+			out[strings.ToLower(workload.Name)] = values
+		}
+	}
+	return out
+}
+
+// withPRHeadValues adds a preview's PR head values to its manifest
+// environment. Platform-owned keys, such as the service binding URLs, win.
+func withPRHeadValues(env, values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return env
+	}
+	merged := make(map[string]string, len(env)+len(values))
+	for key, value := range values {
+		merged[key] = value
+	}
+	for key, value := range env {
+		merged[key] = value
+	}
+	return merged
+}
+
 // withParentAccessGates copies the parent's access and egress gates onto a PR
 // preview. A preview answers on a guessable pr-<n>-<slug> host and runs the PR
 // head, so the preview of an IP-allowlisted, password-protected, signed-only
@@ -204,11 +256,12 @@ func makePRDependencyPreview(parent state.App, prNumber int, expiresAt time.Time
 	}, policy), parent), nil
 }
 
-func (s *Service) applyPRHeadWorkload(ctx context.Context, preview state.App, workload reposcan.Workload, available map[string]struct{}, policy state.GitHubDeployPolicy) (state.App, error) {
+func (s *Service) applyPRHeadWorkload(ctx context.Context, preview state.App, workload reposcan.Workload, available map[string]struct{}, policy state.GitHubDeployPolicy, headValues map[string]string) (state.App, error) {
 	// Also clear environment values on an existing preview. Earlier preview
 	// rows inherited parent values; a synchronize event must not retain them.
 	preview.Manifest = previewManifest(preview.Manifest)
 	desired := reconcile.ApplyScannedWorkloadToApp(preview, workload, available)
+	desired.Manifest.Env = withPRHeadValues(desired.Manifest.Env, headValues)
 	desired = applyGitHubRootPolicy(desired, policy)
 	params := state.UpdateAppParams{
 		RootDir: &desired.RootDir, WorkloadName: &desired.WorkloadName,

@@ -79,6 +79,17 @@ the control plane installs the public JWKS and apid trusts it, each compute
 node installs the signing key and vmmd mints tokens. Converge the control
 plane first. Leaving it out keeps issuance off.
 
+`log_archive` names the bucket customer logs are archived to
+(`pkg/logarchive`). It renders `faas_log_archive_*` for every control-plane
+and compute host, and the `log_archive` role writes it into
+`/etc/faas/secrets/storage-box/archive-creds.json`. `endpoint` must be https;
+`region` defaults to `auto`. `auth: gcp_metadata` uses the host's attached
+service account (GCS); `auth: static` reads `{"key_id", "secret"}` from the
+absolute controller path in `credentials_src` (OVH, R2, MinIO), so keys never
+enter the manifest. Leaving it out keeps each host's existing envelope, and
+the role fails a public node that has none. See
+`deploy/ansible/roles/log_archive/README.md`.
+
 The validator fails closed on every missing field, every
 malformed CIDR, every non-octal mode, every non-hex digest, and
 every misplaced TOML table (the load-bearing check from issue

@@ -318,7 +318,7 @@ Start in `observe`, look for false positives, then switch to `block`:
 
 ```sh
 gregale edge rule create --app my-api --kind waf --match-host my-api.example.com --match-path '/*'
-gregale edge rule waf-review --app my-api            # detections grouped by CRS rule and path, each assessed
+gregale edge rule waf review --app my-api            # detections grouped by CRS rule and path, each assessed
 gregale edge rule waf-exclude <rule-id> --add 942100  # silence a false positive, keeping the rest of the rule
 gregale edge rule update <rule-id> --kind waf --waf-mode block --waf-exclude-rules 942100
 ```
@@ -384,7 +384,10 @@ A matched request without a valid pass never reaches your app:
   challenged, so API clients keep working.
 
 The pass lasts an hour by default and is tied to the browser's address
-range and User-Agent, so it cannot be copied to another machine. Start in
+range and User-Agent, so it cannot be copied to another machine. It covers
+the whole host: one pass lets the browser through every challenge rule on
+that host, including paths a route rule sends to another of your apps, but
+not on your other hosts. Start in
 log mode to see what the rule would challenge, and add a `verified_bot
 missing` condition so search engine crawlers still reach your pages:
 

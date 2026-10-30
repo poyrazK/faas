@@ -53,7 +53,7 @@ func cmdProjectsEnvironmentPreflight(args []string) int {
 	if err := fs.Parse(flags); err != nil || len(positional) != 1 || !api.ValidProjectSlug(positional[0]) ||
 		!api.ValidProjectEnvironmentSlug(strings.TrimSpace(*from)) || !api.ValidProjectEnvironmentSlug(strings.TrimSpace(*to)) ||
 		strings.TrimSpace(*from) == strings.TrimSpace(*to) || strings.TrimSpace(*profile) == "" {
-		PrintUsage(osStderr, "usage: gregale projects environments preflight <project-slug> --from <environment> --to <environment> --profile <FILE> [--sync-config]", "projects environments")
+		PrintUsage(osStderr, "usage: gregale environment preflight <project-slug> --from <environment> --to <environment> --profile <FILE> [--sync-config]", "projects environments")
 		return 1
 	}
 	client, err := authedClient()

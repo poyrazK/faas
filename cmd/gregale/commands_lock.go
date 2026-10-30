@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/safetext"
 )
 
 type exclusiveLock struct {
@@ -85,13 +86,13 @@ func operationsHidden() bool {
 func bindExclusiveLock(ctx context.Context, client *Client, source, id string, lock *exclusiveLock) (*api.ExclusiveTriggerBindingRecord, error) {
 	row, err := client.UpsertExclusiveTriggerBinding(ctx, source, id, api.ExclusiveTriggerBindingRequest{Policy: lock.Policy, Key: lock.Key})
 	if err != nil {
-		return nil, fmt.Errorf("created %s %s, but binding it to lock %s failed; retry with: gregale operations bind-trigger --policy %s --key '%s' %s %s: %w",
-			source, id, lock.Policy, lock.Policy, lock.Key, source, id, err)
+		return nil, fmt.Errorf("created %s %s, but binding it to lock %s failed; retry with: gregale operations bind-trigger --policy %s --key %s %s %s: %w",
+			source, id, lock.Policy, lock.Policy, safetext.ShellSingleQuote(string(lock.Key)), source, id, err)
 	}
 	return &row, nil
 }
 
-const jobsRunLockedUsage = "usage: gregale jobs run <name> --lock POLICY --lock-key JSON [--tasks N | --run-file FILE] [--idempotency-key KEY]"
+const jobsRunLockedUsage = "usage: gregale job run <name> --lock POLICY --lock-key JSON [--tasks N | --run-file FILE] [--idempotency-key KEY]"
 
 // cmdJobsRunLocked is `jobs run <name> --lock POLICY --lock-key JSON`: the
 // run is submitted through the lock, as `operations start-job` does.

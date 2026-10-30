@@ -20,6 +20,15 @@ const oauthCodeTTL = time.Minute
 const oauthAccessTTL = 15 * time.Minute
 const oauthGrantTTL = 8 * time.Hour
 
+// A browser sign-in's connection slides with its mcp-login key
+// (ADR-20261028205920; api.MCPLoginKeyIdle and api.MCPLoginKeyMaxAge). A
+// pasted API key's connection keeps oauthGrantTTL. The bridge records a slid
+// expiry once it has moved by credentialRenewInterval.
+const (
+	maxConnectionLifetime   = api.MCPLoginKeyMaxAge
+	credentialRenewInterval = time.Hour
+)
+
 type oauthClient struct {
 	ID        string
 	Name      string
@@ -54,21 +63,31 @@ type authorizationCode struct {
 }
 
 type oauthGrant struct {
-	id                    string
-	clientID              string
-	accountID             string
-	scopes                []string
-	server                *mcp.Server
-	client                *api.Client
-	expires               time.Time
-	accessExpires         time.Time
-	accessHash            string
-	refreshHash           string
-	revoked               bool
-	management            *management
-	allowedApps           map[string]string
-	availableApps         []api.AppResponse
-	credentialExpires     time.Time
+	id        string
+	clientID  string
+	accountID string
+	scopes    []string
+	// approved is set once consent completes. server and management are
+	// built on first use and dropped when idle (grant_servers.go); inflight
+	// counts the requests using them.
+	approved          bool
+	server            *mcp.Server
+	inflight          int
+	lastUsed          time.Time
+	client            *api.Client
+	expires           time.Time
+	accessExpires     time.Time
+	accessHash        string
+	refreshHash       string
+	revoked           bool
+	management        *management
+	allowedApps       map[string]string
+	availableApps     []api.AppResponse
+	credentialExpires time.Time
+	// renewable grants hold an mcp-login key, issued at credentialIssued,
+	// that apid slides while it is used (grant_renewal.go).
+	renewable             bool
+	credentialIssued      time.Time
 	environments          *EnvironmentConsent
 	availableEnvironments []EnvironmentGrant
 	capabilities          []string
@@ -118,6 +137,7 @@ func (r *remoteServer) pruneLocked() {
 			delete(r.usedRefresh, key)
 		}
 	}
+	r.dropIdleServersLocked(now)
 }
 
 func (r *remoteServer) revokeLocked(g *oauthGrant) {

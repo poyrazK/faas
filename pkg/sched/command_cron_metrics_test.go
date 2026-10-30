@@ -242,7 +242,7 @@ func TestCommandCronMetricsClosedOutcomesAndLag(t *testing.T) {
 			t.Fatal("lag is not durable admission time")
 		}
 	}
-	if counts["schedd_command_cron_admissions_total"] != 11 || counts["schedd_command_cron_decisions_total"] != 14 || counts["schedd_command_cron_sweeps_total"] != 3 {
+	if counts["schedd_command_cron_admissions_total"] != 11 || counts["schedd_command_cron_decisions_total"] != 15 || counts["schedd_command_cron_sweeps_total"] != 3 {
 		t.Fatal(counts)
 	}
 }

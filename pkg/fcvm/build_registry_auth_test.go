@@ -1,6 +1,7 @@
 package fcvm
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"strings"
@@ -12,7 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/secretbox"
 )
 
-// adr: 20261026090000 — a builder VM gets the built app's registry logins
+// adr: 20261026091500 — a builder VM gets the built app's registry logins
 // as a Docker config in its secrets.env.
 
 func sealRegistryPassword(t *testing.T, m *Manager, ns, password string) []byte {
@@ -46,7 +47,7 @@ func TestBuilderSecretsCarryTheRegistryDockerConfig(t *testing.T) {
 		{Registry: "other.example", Username: "u", PasswordSealed: sealRegistryPassword(t, m, "app_secret", "wrong-namespace")},
 	}
 
-	files, _, err := m.prepareWakeFiles(WakeRequest{ExportDir: "/export", SealedEnvEntries: []SealedEnvEntry{{Key: "NPM_TOKEN", Ciphertext: buildSecret}}, BuildRegistryCredentials: creds})
+	files, _, err := m.prepareWakeFiles(context.Background(), WakeRequest{ExportDir: "/export", SealedEnvEntries: []SealedEnvEntry{{Key: "NPM_TOKEN", Ciphertext: buildSecret}}, BuildRegistryCredentials: creds})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +71,7 @@ func TestBuilderSecretsCarryTheRegistryDockerConfig(t *testing.T) {
 	}
 
 	// Without build secrets, the config alone still makes a secrets.env.
-	files, _, err = m.prepareWakeFiles(WakeRequest{ExportDir: "/export", BuildRegistryCredentials: creds[:1]})
+	files, _, err = m.prepareWakeFiles(context.Background(), WakeRequest{ExportDir: "/export", BuildRegistryCredentials: creds[:1]})
 	if err != nil || !strings.Contains(secretsEnvOf(t, files)[api.BuildRegistryAuthKey], "ghcr.io") {
 		t.Fatalf("builder without secrets: %s, %v", files, err)
 	}
@@ -83,11 +84,11 @@ func TestRegistryDockerConfigOnlyForBuildersThatCanOpenIt(t *testing.T) {
 	m.SetRegistryIdentities([]*age.X25519Identity{newIdentity(t)})
 	creds := []BuildRegistryCredential{{Registry: "ghcr.io", Username: "octo", PasswordSealed: sealRegistryPassword(t, m, registryCredentialNamespace, "gh-pw")}}
 
-	if files, _, err := m.prepareWakeFiles(WakeRequest{BuildRegistryCredentials: creds}); err != nil || len(files) != 0 {
+	if files, _, err := m.prepareWakeFiles(context.Background(), WakeRequest{BuildRegistryCredentials: creds}); err != nil || len(files) != 0 {
 		t.Fatalf("app VM got registry logins: %s, %v", files, err)
 	}
 	m.SetRegistryIdentities(nil)
-	if files, _, err := m.prepareWakeFiles(WakeRequest{ExportDir: "/export", BuildRegistryCredentials: creds}); err != nil || len(files) != 0 {
+	if files, _, err := m.prepareWakeFiles(context.Background(), WakeRequest{ExportDir: "/export", BuildRegistryCredentials: creds}); err != nil || len(files) != 0 {
 		t.Fatalf("builder without the build identity: %s, %v", files, err)
 	}
 }

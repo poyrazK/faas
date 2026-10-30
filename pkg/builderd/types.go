@@ -34,6 +34,31 @@ type WarmVM interface {
 	DeleteWarmSnapshot(ctx context.Context, snapshot WarmSnapshot) error
 }
 
+// DeferredCacheVM is the optional capability behind DeferCacheExport
+// (ADR-20261029171525). When WaitForCompletion reports
+// BuildOutcome.DependencyCacheDeferred, it has kept the build drive, and the
+// orchestrator passes the handle to exactly one of these methods.
+type DeferredCacheVM interface {
+	VM
+	// ExportDeferredCache boots a second VM on the kept drive, waits for it to
+	// export only the dependency cache, and publishes that cache. The drive is
+	// removed on every path. An error costs only the next build's cache.
+	ExportDeferredCache(ctx context.Context, h BuildHandle) error
+	// DiscardDeferredCache removes the kept drive without exporting.
+	DiscardDeferredCache(h BuildHandle)
+}
+
+// DeferredCacheInstanceSuffix names the second VM of a deferred cache
+// export: instance "build-<id>-cache". Cancel(buildID + suffix) stops it.
+const DeferredCacheInstanceSuffix = "-cache"
+
+// DeferredCacheSpec is what a deferred cache export's second VM boots with:
+// the build's manifest and plan.
+type DeferredCacheSpec struct {
+	Manifest api.BuildManifest
+	Plan     string
+}
+
 // VMRequest is the input to a builder VM spawn. The orchestrator at
 // builderd.go::ProcessOne populates this from a queued Build row.
 type VMRequest struct {
@@ -78,11 +103,19 @@ type VMRequest struct {
 	// The guaranteed-slot orchestrator sets it only after the vmmd warm
 	// transport capability has been confirmed.
 	KeepWarm bool
+	// LayerCompression is the build manifest's LayerCompression: "" for
+	// BuildKit's gzip or api.BuildLayerCompressionZstd.
+	LayerCompression string
+	// BuildKitSnapshotter is the build manifest's BuildKitSnapshotter.
+	BuildKitSnapshotter string
+	// DeferCacheExport asks the guest to export the dependency cache after the
+	// image handoff, from a second VM (DeferredCacheVM).
+	DeferCacheExport bool
 	// WarmScopeKey identifies the app/runtime scope allowed to reuse a warm
 	// builder drive. It is host metadata and is never written into the guest.
 	WarmScopeKey string
 	// RegistryCredentials are the app's sealed registry credentials a
-	// Dockerfile build pulls its base images with (ADR-20261026090000);
+	// Dockerfile build pulls its base images with (ADR-20261026091500);
 	// vmmd opens them into the builder VM's Docker config.
 	RegistryCredentials []SealedRegistryCredential
 }
@@ -115,6 +148,9 @@ type BuildHandle struct {
 	// build-done.json.
 	BuilderSliceOOMKillsAtStart uint64
 	BuilderSliceOOMCounterValid bool
+	// DeferredCache is set when the build's manifest asked the guest to defer
+	// its dependency-cache export.
+	DeferredCache *DeferredCacheSpec
 }
 
 // BuildOutcome is what WaitForCompletion returns. The orchestrator at
@@ -166,6 +202,12 @@ type BuildOutcome struct {
 	// DependencyCacheUnchanged: the guest kept the imported cache because
 	// the build's plan and install inputs matched it, so nothing was stored.
 	DependencyCacheUnchanged bool
+	// DependencyCacheDeferred: the guest exported only the image, and the
+	// driver kept the drive for DeferredCacheVM.ExportDeferredCache.
+	DependencyCacheDeferred bool
+	// Timings is where the build spent its time in the builder VM, as the
+	// guest reported it; nil from older guests.
+	Timings *api.BuildTimings
 	// WarmSnapshotError reports a non-fatal cache-capture failure. The build
 	// artifact remains authoritative and can still complete successfully.
 	WarmSnapshotError string

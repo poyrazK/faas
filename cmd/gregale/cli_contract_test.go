@@ -103,7 +103,7 @@ func TestKeysAddHelpNeverCreatesCredential(t *testing.T) {
 			if calls != 0 {
 				t.Fatalf("keys add %s made %d API request(s)", help, calls)
 			}
-			if !strings.Contains(stdout.String(), "gregale keys add <label>") {
+			if !strings.Contains(stdout.String(), "gregale key create <label>") {
 				t.Fatalf("help output = %q", stdout.String())
 			}
 		})

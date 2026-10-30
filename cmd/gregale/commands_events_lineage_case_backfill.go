@@ -21,7 +21,7 @@ func cmdEventsLineageCaseBackfill(args []string, request bool) int {
 		return 1
 	}
 	if len(positional) != 2 || rejectUnexpectedFlagArgs(fs) {
-		PrintUsage(os.Stderr, "usage: gregale events subscription-lineage-case-backfill APP SUB | subscription-lineage-case-backfill-request APP SUB --request-id UUID [--expected-previous-request-id UUID]", "events")
+		PrintUsage(os.Stderr, "usage: gregale event subscription-lineage-case-backfill APP SUB | subscription-lineage-case-backfill-request APP SUB --request-id UUID [--expected-previous-request-id UUID]", "events")
 		return 1
 	}
 	if request && requestID == "" {

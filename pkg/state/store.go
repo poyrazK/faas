@@ -2349,13 +2349,16 @@ type Store interface {
 	// deliberately separate from the deployed-app quota so local development
 	// cannot consume production or preview slots.
 	CountDeveloperApps(ctx context.Context, accountID string) (int, error)
-	// CountAppsWithEvictionPriority returns the per-account count of
-	// apps whose eviction_priority equals the given tier (issue #475).
-	// Counts APPS (not instances) — the per-account cap
+	// CountOtherBillingSubjectAppsWithEvictionPriority counts the apps other
+	// than appID that share appID's billing subject (ADR-202610171904): its
+	// company once the company adopted billing, else its creator; and that
+	// use the given eviction tier (issue #475) on the app itself or in any
+	// project environment's current workload settings. Counts APPS (not
+	// instances or environments) — the per-account cap
 	// (Plan.ReservedConcurrencyPerAccount) is over apps. Excludes
-	// soft-deleted apps so a recently-deleted reserved app doesn't
-	// leak into the cap and reject a subsequent recreate.
-	CountAppsWithEvictionPriority(ctx context.Context, accountID, priority string) (int, error)
+	// soft-deleted apps so a recently-deleted reserved app doesn't leak into
+	// the cap and reject a subsequent recreate. An unknown appID counts zero.
+	CountOtherBillingSubjectAppsWithEvictionPriority(ctx context.Context, appID, priority string) (int, error)
 	// CountAuthDefaultFlippedApps returns the per-account count of
 	// apps that were stamped by the apps-auth-default grand-father
 	// migration (issue #695 / ADR-080). The migration sets
@@ -4432,6 +4435,10 @@ type Store interface {
 	QueueDepthInScope(ctx context.Context, appID, scope string, limit int) (int, error)
 	QueueDepthForBindingInScope(ctx context.Context, appID, bindingID, scope string, limit int) (int, error)
 	QueueBindingHasInFlight(ctx context.Context, appID, bindingID, scope string) (bool, error)
+	// QueueBindingTelemetry is QueueStateForBinding for gauges and alerts:
+	// each count stops at limit and the oldest pending message comes from
+	// the lease indexes (ADR-20261018101500 amendment 2026-10-27).
+	QueueBindingTelemetry(ctx context.Context, appID, bindingID string, limit int) (QueueStats, error)
 	WorkerPoolHistory(ctx context.Context, appID, deploymentID string) (WorkerPoolHistory, error)
 	// QueuePeek lists the oldest pending queue messages for an app
 	// without acquiring a lease or incrementing attempts. Paginated by
@@ -6008,7 +6015,7 @@ type Store interface {
 	// Per-app private-registry Basic Auth (issue #461 / ADR-062). apid
 	// is the only writer. imaged opens the passwords to pull images;
 	// builderd forwards them unopened to vmmd, which opens them into a
-	// Dockerfile builder's Docker config (ADR-20261026090000). PasswordEncrypted
+	// Dockerfile builder's Docker config (ADR-20261026091500). PasswordEncrypted
 	// is the age-sealed bytea produced by pkg/secretbox.SealBytes with
 	// namespace="registry_creds" — the plaintext password is never
 	// stored, never logged, never returned over the wire.

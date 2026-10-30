@@ -35,6 +35,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/rehearsalcommand"
 	"github.com/onebox-faas/faas/pkg/rootfs"
 	"github.com/onebox-faas/faas/pkg/secretbox"
@@ -42,6 +43,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/storagekey"
+	"github.com/onebox-faas/faas/pkg/whycopy"
 	"github.com/onebox-faas/faas/pkg/wire"
 
 	"filippo.io/age"
@@ -106,6 +108,9 @@ type Handler struct {
 	// continuousProfiling lets an app's profiling.enabled reach its guest
 	// (ADR-819, FAAS_PROFILING_ENABLED).
 	continuousProfiling bool
+	// profileCapturesReleased decides the profile-captures capability for a
+	// deployment's account (ADR-20261023115741); nil releases it.
+	profileCapturesReleased func(platformflags.Subject) bool
 	// hostingSmoke is optional in single-box and offline deployments. When
 	// configured, it must pass before the deployment is promoted to live.
 	hostingSmoke func(context.Context, state.App, state.Deployment) (apihostingreceipt.SmokeResult, error)
@@ -221,10 +226,27 @@ type Handler struct {
 	// sidecar write at base_stage.go::writeScanSidecar reads the
 	// counts off the struct to build the legacy sidecar JSON.
 	grypeRun func(ctx context.Context, dir string) (*ScanResult, error)
+	// baseProvenance checks a platform base digest's SLSA provenance before
+	// ensureVerifiedBaseExt4 builds it (ADR-20261029155852); nil checks none.
+	baseProvenance *BaseProvenanceVerifier
+	// lastDeployScanner is the scanner and database the last per-deploy
+	// Grype run used; a redeploy of an unchanged artifact reuses a result
+	// only from that same scanner (scan_reuse.go).
+	lastDeployScanner scannerMemo
+	// lchown sets ownership in platform layer staging trees; nil is
+	// os.Lchown. Tests inject one because they run without CAP_CHOWN.
+	lchown func(path string, uid, gid int) error
 
 	// runtimeGrypeRun scans the native composed directory without treating a
 	// customer file named rootfs.ext4 as a nested image.
 	runtimeGrypeRun func(context.Context, string) (*ScanResult, error)
+	// scannerIdentityProbe reads the installed scanner and vulnerability
+	// database without scanning (ADR-20261028102540). Nil disables scan
+	// reuse, so every renewal scans.
+	scannerIdentityProbe func(context.Context) (installedScanner, error)
+	scannerIdentityCache scannerIdentityCache
+	// scannerDBUpdater refreshes the vulnerability database outside any scan.
+	scannerDBUpdater func(context.Context) error
 	// Active entries live only for a job; restart reconstructs work from durable
 	// producer selections and scan leases. Storage/native fences remain authoritative.
 	runtimeScanMu     sync.Mutex
@@ -531,14 +553,24 @@ func (h *Handler) WithContinuousProfiling(enabled bool) *Handler {
 	return h
 }
 
+// WithProfileCapturesRelease installs the per-account decision of the
+// profile-captures capability: a preview released to selected accounts, so
+// collectors reach only their deployments (ADR-20261023115741).
+func (h *Handler) WithProfileCapturesRelease(released func(platformflags.Subject) bool) *Handler {
+	h.profileCapturesReleased = released
+	return h
+}
+
 // stampProfiling applies the installation's profiling flags to the guest
 // manifest. Dormant on-demand collectors are stamped when the account's plan
-// includes profiling; the control plane enforces the plan again at capture
-// time. The rest of the app's profiling settings stay, as pprof_port also
-// serves on-demand captures.
-func (h *Handler) stampProfiling(manifest api.AppManifest, acct state.Account) api.AppManifest {
+// includes profiling and on-demand captures are released to the account; the
+// control plane enforces both again at capture time. Unreleased accounts'
+// runtimes keep no collector preload. The rest of the app's profiling
+// settings stay, as pprof_port also serves on-demand captures.
+func (h *Handler) stampProfiling(manifest api.AppManifest, app state.App, acct state.Account) api.AppManifest {
 	limits, ok := api.LimitsFor(acct.Plan)
-	manifest.ProfilingOnDemand = h.profilingOnDemand && ok && limits.Profiling.Enabled
+	released := h.profileCapturesReleased == nil || h.profileCapturesReleased(platformflags.Subject{AccountID: acct.ID, Plan: string(acct.Plan), OrgID: app.OrgID})
+	manifest.ProfilingOnDemand = h.profilingOnDemand && ok && limits.Profiling.Enabled && released
 	if manifest.Profiling != nil && (manifest.Profiling.Enabled && !h.continuousProfiling || manifest.Profiling.AutomaticCaptures != nil) {
 		cfg := *manifest.Profiling
 		cfg.Enabled = cfg.Enabled && h.continuousProfiling
@@ -761,6 +793,13 @@ func (h *Handler) WithGrypeRun(fn func(ctx context.Context, dir string) (*ScanRe
 	return h
 }
 
+// WithBaseProvenance wires the platform base provenance check
+// (ADR-20261029155852).
+func (h *Handler) WithBaseProvenance(v *BaseProvenanceVerifier) *Handler {
+	h.baseProvenance = v
+	return h
+}
+
 // WithSyftRun injects the post-build SBOM generator (issue #299 /
 // ADR-038 Phase 3). Mirrors WithGrypeRun's fluent setter shape.
 // Tests wire a stub returning canned CycloneDX bytes; production
@@ -909,10 +948,21 @@ func (h *Handler) CloseVMMClient() error {
 // placeholder). Production wires the default; tests wire a stub
 // via WithGrypeRun.
 func (h *Handler) runGrype(ctx context.Context, dir string) (*ScanResult, error) {
+	var (
+		result *ScanResult
+		err    error
+	)
 	if h.grypeRun != nil {
-		return h.grypeRun(ctx, dir)
+		result, err = h.grypeRun(ctx, dir)
+	} else {
+		result, err = defaultGrypeRun(ctx, dir)
 	}
-	return defaultGrypeRun(ctx, dir)
+	if err == nil && result != nil {
+		// A real scan may have updated the database; reuse decisions must not
+		// compare against an identity read before it.
+		h.scannerIdentityCache.observe(result.ScannerVersion, result.ScannerDBVersion, result.ScannerDBBuiltAt, time.Now())
+	}
+	return result, err
 }
 
 // runDeployScan runs the per-deploy grype scan and stamps the
@@ -1122,7 +1172,16 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 			return verifiedScanFailure(app.SecurityPolicy, "hash scan artifact failed: "+artifactErr.Error())
 		}
 	}
-	result, err := h.runGrype(ctx, scanDir)
+	var result *ScanResult
+	if artifactErr == nil {
+		result = h.reusableDeployScan(ctx, app, dep, artifactDigest)
+	}
+	if result != nil {
+		markScanPhase(ctx, "reuse")
+	} else {
+		result, err = h.runGrype(ctx, scanDir)
+		h.lastDeployScanner.record(result, err, time.Now())
+	}
 	if err != nil {
 		// Fail the scan, not the deploy. Log the grype error
 		// so the operator sees the underlying cause.
@@ -1165,7 +1224,10 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 	// stale or cross-deployment results instead of trusting severity counts.
 	result.ImageDigest = dep.ImageDigest
 	result.ArtifactDigest = artifactDigest
-	result.ScannedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	if result.ReusedFrom == "" {
+		// A reused result keeps the time its scan ran.
+		result.ScannedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	}
 	b, mErr := json.Marshal(result)
 	if mErr != nil {
 		h.log.Warn("imaged: marshal scan result",
@@ -1196,6 +1258,7 @@ func (h *Handler) runDeployScan(ctx context.Context, app state.App, dep state.De
 		"deployment", dep.ID, "app", app.Slug,
 		"critical", result.SeverityCounts.Critical, "high", result.SeverityCounts.High,
 		"medium", result.SeverityCounts.Medium, "low", result.SeverityCounts.Low, "unknown", result.SeverityCounts.Unknown,
+		"reused_from", result.ReusedFrom,
 	}, timing.attrs()...)...)
 	return checkVerifiedScanGate(app.SecurityPolicy, dep, "complete", result)
 }
@@ -2433,7 +2496,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 		_ = h.markDeployFailed(ctx, dep.ID, err, "manifest overrides: decode failed")
 		return fmt.Errorf("imaged: apply overrides: %w", err)
 	}
-	manifest = h.stampProfiling(applyAppLifecycle(manifest, app), acct)
+	manifest = h.stampProfiling(applyAppLifecycle(manifest, app), app, acct)
 	manifest, err = state.ApplyDeploymentRuntime(manifest, dep)
 	if err != nil {
 		return fmt.Errorf("imaged: scoped runtime: %w", err)
@@ -3118,7 +3181,7 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 		_ = h.markDeployFailed(ctx, dep.ID, err, "manifest overrides: decode failed")
 		return fmt.Errorf("imaged: apply overrides: %w", err)
 	}
-	manifest = applyFunctionConcurrency(h.stampProfiling(applyAppLifecycle(manifest, app), acct), app)
+	manifest = applyFunctionConcurrency(h.stampProfiling(applyAppLifecycle(manifest, app), app, acct), app)
 	manifest, err = state.ApplyDeploymentRuntime(manifest, dep)
 	if err != nil {
 		return fmt.Errorf("imaged: scoped runtime: %w", err)
@@ -4427,14 +4490,33 @@ func (h *Handler) markDeployFailed(ctx context.Context, depID string, err error,
 	if errors.Is(err, errImageAbuseDetected) {
 		code = api.CodeImageAbuseDetected
 	}
-	if code == "" {
-		code = api.CodeDeployFailed
-	}
 	detail := err.Error()
 	if prefix != "" {
 		detail = prefix + ": " + detail
 	}
-	row, err := h.store.SetDeploymentFailed(ctx, depID, code, detail)
+	// A typed problem (an app layer over the plan cap) keeps its stable code
+	// and customer-safe detail; before, it reached the customer as
+	// deploy_failed with imaged's wrapping (ADR-20261029103512 amendment 1).
+	var hint, why, fix string
+	if p := api.AsProblem(err); code == "" && p != nil && p.Code != "" {
+		code, detail = p.Code, p.Detail
+		explained := whycopy.Decorate(&api.Problem{Code: p.Code, Hint: p.Hint, Why: p.Why, Fix: p.Fix}, p.Code, nil)
+		hint, why, fix = explained.Hint, explained.Why, explained.Fix
+		if code == api.CodeAppLayerTooBig {
+			if nodeFix := h.layerTooLargeNodeFix(ctx, depID); nodeFix != "" {
+				fix = strings.TrimSpace(nodeFix + "\n" + fix)
+			}
+		}
+	}
+	if code == "" {
+		code = api.CodeDeployFailed
+	}
+	var row state.Deployment
+	if hint != "" || why != "" || fix != "" {
+		row, err = h.store.SetDeploymentFailedEx(ctx, depID, code, detail, hint, why, fix, nil)
+	} else {
+		row, err = h.store.SetDeploymentFailed(ctx, depID, code, detail)
+	}
 	if err != nil {
 		return fmt.Errorf("imaged: mark failed: %w", err)
 	}
@@ -4763,8 +4845,10 @@ func pullBlobWithAuth(ctx context.Context, mp oci.ManifestPuller, repo, digest s
 //
 // App soft-delete cleanup drops the ext4 AND the snap blobs for every
 // deployment of the app. Superseded deployments are intentionally left
-// intact here; the imaged GC owns the bounded rollback window and removes
-// both artifacts together once no restoreable snapshot remains.
+// intact here; the imaged GC owns the bounded rollback window. A rollback
+// target inside it keeps its cold-boot layers whatever state its snapshots
+// are in (Hunt 21 H21-1); outside it, a deployment's layers go once no
+// restoreable snapshot remains.
 
 // cleanupDeploymentFiles removes the on-disk artifacts for a single deployment.
 // It remains available for explicit destructive cleanup paths and tests;

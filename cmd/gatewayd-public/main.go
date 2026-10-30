@@ -281,6 +281,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("gatewayd-public: open db: %w", err)
 	}
 	defer pool.Close()
+	// pool.Close waits for every acquired connection, and the LISTEN
+	// subscriptions below hold one until their context ends. The daemon
+	// context ends only on SIGTERM, so a generation that handed off returned
+	// from run and then hung in pool.Close for good, its pollers failing with
+	// "closed pool" (#5709). Deferred after pool.Close, this runs first.
+	ctx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
 	trafficRevocations, err := newPublicTrafficRevocationRegistry(ctx, pool)
 	if err != nil {
 		return fmt.Errorf("gatewayd-public: %w", err)
@@ -455,6 +462,14 @@ func run(ctx context.Context, log *slog.Logger) error {
 		if transport, ok := proxy.Transport.(*http.Transport); ok {
 			transport.DisableKeepAlives = true
 		}
+	}
+	// ADR-20261022184531 step 5: retry a response gatewayd-internal marked
+	// not dispatched on another compute node. Off by default for a measured
+	// rollout; safe beside N-1 gatewayd-internal, which never marks. It
+	// needs a node-choosing dialer (the compute pool, or a compute edge's
+	// local-first dialer).
+	if envBoolOr("FAAS_GATEWAY_WAKE_FAILOVER", false) {
+		proxy.WithWakeFailover(gateway.NewWakeFailover(edgeMetricsSet.observeWakeFailover))
 	}
 	if err := configureRuntimeIngressProxy(proxy, pgStore, os.Getenv); err != nil {
 		return err

@@ -12,13 +12,25 @@ import (
 )
 
 const eventDeliveryCounts = `-- name: EventDeliveryCounts :one
-SELECT count(*)::bigint AS account_count,
- count(*) FILTER (WHERE s.app_id=$1::uuid)::bigint AS app_count,
- count(*) FILTER (WHERE s.app_id=$1::uuid AND s.subscription_id=$2::text)::bigint AS consumer_count
-FROM event_delivery_slots s JOIN invocations i ON i.id=s.invocation_id
-WHERE s.account_id=$3::uuid AND s.live AND i.state IN ('pending','dispatching')
- AND NOT ($4::boolean AND i.state='pending' AND i.app_id=$1::uuid
-   AND coalesce(i.work_policy_name,'')=$5::text AND i.work_key_digest=$6::bytea)
+WITH live AS (
+ SELECT count(*)::bigint AS account_count,
+  count(*) FILTER (WHERE s.app_id=$1::uuid)::bigint AS app_count,
+  count(*) FILTER (WHERE s.app_id=$1::uuid AND s.subscription_id=$2::text)::bigint AS consumer_count
+ FROM event_delivery_slots s
+ WHERE s.account_id=$3::uuid AND s.live
+), replaced AS (
+ SELECT count(*)::bigint AS account_count,
+  count(*) FILTER (WHERE s.app_id=$1::uuid)::bigint AS app_count,
+  count(*) FILTER (WHERE s.app_id=$1::uuid AND s.subscription_id=$2::text)::bigint AS consumer_count
+ FROM invocations i JOIN event_delivery_slots s ON s.invocation_id=i.id
+ WHERE $4::boolean AND i.app_id=$1::uuid
+  AND i.work_policy_name=nullif($5::text,'') AND i.work_key_digest=$6::bytea
+  AND i.state='pending' AND s.account_id=$3::uuid AND s.live
+)
+SELECT (live.account_count-replaced.account_count)::bigint AS account_count,
+ (live.app_count-replaced.app_count)::bigint AS app_count,
+ (live.consumer_count-replaced.consumer_count)::bigint AS consumer_count
+FROM live, replaced
 `
 
 type EventDeliveryCountsParams struct {
@@ -36,8 +48,13 @@ type EventDeliveryCountsRow struct {
 	ConsumerCount int64
 }
 
-// Reads the account's live slots (event_delivery_slots_live), not its whole
-// delivery history; the invocation's state still decides.
+// ADR-614 amendment (2026-10-29): counts the account's live slots from the
+// event_delivery_slots_live index alone. A slot's live flag is exact: it is
+// stamped when the slot is written, with or after its invocation, and every
+// state change re-syncs it. Joining each slot to its invocation planned a
+// scan of every pending invocation on the platform, so each routed delivery
+// paid for everyone's backlog. A keyed replace subtracts the pending
+// deliveries it would replace, found through the work-lane index.
 func (q *Queries) EventDeliveryCounts(ctx context.Context, db DBTX, arg EventDeliveryCountsParams) (EventDeliveryCountsRow, error) {
 	row := db.QueryRow(ctx, eventDeliveryCounts,
 		arg.AppID,
@@ -565,7 +582,7 @@ WITH candidate AS (
 ), claimed AS (
     UPDATE event_fanout_recipients r
     SET state = 'processing', claim_token = gen_random_uuid(),
-        lease_until = $1::timestamptz + interval '5 minutes',
+        lease_until = $1::timestamptz + interval '1 minute',
         attempts = r.attempts + 1, total_attempts = r.total_attempts + 1
     FROM candidate c
     WHERE r.outbox_id = c.outbox_id AND r.subscription_id = c.subscription_id
@@ -696,7 +713,7 @@ WITH eligible AS MATERIALIZED (
 ), claimed AS (
     UPDATE event_fanout_recipients r
     SET state = 'processing', claim_token = gen_random_uuid(),
-        lease_until = $1::timestamptz + interval '5 minutes',
+        lease_until = $1::timestamptz + interval '1 minute',
         attempts = r.attempts + 1, total_attempts = r.total_attempts + 1
     FROM candidate c
     WHERE r.outbox_id = c.outbox_id AND r.subscription_id = c.subscription_id
@@ -981,6 +998,33 @@ func (q *Queries) EventRecipientReleaseClaim(ctx context.Context, db DBTX, arg E
 		arg.SubscriptionID,
 		arg.ClaimToken,
 		arg.Generation,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const eventRecipientRenewClaims = `-- name: EventRecipientRenewClaims :execrows
+UPDATE event_fanout_recipients r SET lease_until=$1::timestamptz+interval '1 minute'
+WHERE r.state='processing' AND (r.outbox_id,r.subscription_id,r.claim_token) IN (
+    SELECT unnest($2::bigint[]), unnest($3::text[]), unnest($4::uuid[]))
+`
+
+type EventRecipientRenewClaimsParams struct {
+	NowAt           pgtype.Timestamptz
+	OutboxIds       []int64
+	SubscriptionIds []string
+	ClaimTokens     []pgtype.UUID
+}
+
+// ADR-20261028131500: a sweep renews the recipient claims it still holds.
+func (q *Queries) EventRecipientRenewClaims(ctx context.Context, db DBTX, arg EventRecipientRenewClaimsParams) (int64, error) {
+	result, err := db.Exec(ctx, eventRecipientRenewClaims,
+		arg.NowAt,
+		arg.OutboxIds,
+		arg.SubscriptionIds,
+		arg.ClaimTokens,
 	)
 	if err != nil {
 		return 0, err
@@ -1326,7 +1370,7 @@ WITH candidate AS (
  FOR UPDATE OF o SKIP LOCKED LIMIT 1
 ), claimed AS (
  UPDATE event_fanout_outbox o SET state='processing',claim_token=gen_random_uuid(),
- lease_until=$1::timestamptz+interval '5 minutes',attempts=o.attempts+1
+ lease_until=$1::timestamptz+interval '1 minute',attempts=o.attempts+1
  FROM candidate c WHERE o.id=c.id RETURNING o.id, o.account_id, o.source, o.event_id, o.event_type, o.schema_version, o.event_data, o.payload, o.state, o.attempts, o.available_at, o.lease_until, o.claim_token, o.last_error, o.created_at, o.delivered_at, o.recipient_snapshot, o.recipient_progress, o.recipient_claims, o.customer_storage_bytes
 ), fairness AS (
  INSERT INTO event_routing_fairness
@@ -1439,7 +1483,7 @@ WITH eligible AS MATERIALIZED (
  FOR UPDATE OF o SKIP LOCKED LIMIT $2::integer
 ), claimed AS (
  UPDATE event_fanout_outbox o SET state='processing',claim_token=gen_random_uuid(),
- lease_until=$1::timestamptz+interval '5 minutes',attempts=o.attempts+1
+ lease_until=$1::timestamptz+interval '1 minute',attempts=o.attempts+1
  FROM candidate c WHERE o.id=c.id RETURNING o.id, o.account_id, o.source, o.event_id, o.event_type, o.schema_version, o.event_data, o.payload, o.state, o.attempts, o.available_at, o.lease_until, o.claim_token, o.last_error, o.created_at, o.delivered_at, o.recipient_snapshot, o.recipient_progress, o.recipient_claims, o.customer_storage_bytes, c.position
 ), stamp AS MATERIALIZED (
  SELECT clock_timestamp() AS at
@@ -1750,6 +1794,29 @@ type EventRoutingReleaseAdoptionClaimParams struct {
 // Returns an unprocessed adoption claim as if it had not been made.
 func (q *Queries) EventRoutingReleaseAdoptionClaim(ctx context.Context, db DBTX, arg EventRoutingReleaseAdoptionClaimParams) (int64, error) {
 	result, err := db.Exec(ctx, eventRoutingReleaseAdoptionClaim, arg.ID, arg.ClaimToken)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const eventRoutingRenewReceiptClaims = `-- name: EventRoutingRenewReceiptClaims :execrows
+UPDATE event_fanout_outbox o SET lease_until=$1::timestamptz+interval '1 minute'
+WHERE o.state='processing' AND (o.id,o.claim_token) IN (
+    SELECT unnest($2::bigint[]), unnest($3::uuid[]))
+`
+
+type EventRoutingRenewReceiptClaimsParams struct {
+	NowAt       pgtype.Timestamptz
+	Ids         []int64
+	ClaimTokens []pgtype.UUID
+}
+
+// ADR-20261028131500: a sweep renews the receipt claims it still holds; a
+// claim another worker took since has a new token and stays. The arrays
+// are parallel: the select list unnests them in step.
+func (q *Queries) EventRoutingRenewReceiptClaims(ctx context.Context, db DBTX, arg EventRoutingRenewReceiptClaimsParams) (int64, error) {
+	result, err := db.Exec(ctx, eventRoutingRenewReceiptClaims, arg.NowAt, arg.Ids, arg.ClaimTokens)
 	if err != nil {
 		return 0, err
 	}

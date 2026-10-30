@@ -76,6 +76,9 @@ var consumerAttributes = map[string][]Attribute{
 	"vmmd": {AttributePlan, AttributeOrg},
 	// meterd reads the account and app of a firing alert (ADR-20261024222102).
 	"meterd": {AttributePlan, AttributeOrg},
+	// imaged decides profile-captures for the app a deployment builds, from
+	// its resource account and organization (ADR-1155).
+	"imaged": {AttributePlan, AttributeOrg},
 }
 
 // ConsumerAttributes is the set of attributes every consumer supplies.

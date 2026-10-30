@@ -77,6 +77,7 @@ func (l *Loop) drainProfileCaptures(ctx context.Context) {
 }
 
 func (l *Loop) runProfileCapture(ctx context.Context, queue state.ProfileCaptureQueue, c state.ClaimedProfileCapture) {
+	claimed := time.Now()
 	req := profileCaptureRequest(c)
 	callCtx, cancel := context.WithTimeout(ctx, req.Duration()+api.ProfileCaptureGrace+30*time.Second)
 	out, err := l.engine.CaptureAppProfile(callCtx, c.AppID, c.Capture.RequestedInstanceID, req, func(instanceID, deploymentID string) {
@@ -99,7 +100,9 @@ func (l *Loop) runProfileCapture(ctx context.Context, queue state.ProfileCapture
 		}
 	}
 	result, blobs := profileCaptureOutcome(out, err)
-	if ferr := finishProfileCapture(context.WithoutCancel(ctx), queue, c.ID, result, blobs, time.Sleep); ferr != nil {
+	ferr := finishProfileCapture(context.WithoutCancel(ctx), queue, c.ID, result, blobs, time.Sleep)
+	l.engine.profileCaptureMetrics.CaptureFinished(c.Capture.Trigger, profileCaptureResultLabel(err, ferr), claimed.Sub(c.Capture.CreatedAt), time.Since(claimed))
+	if ferr != nil {
 		l.log.Warn("sched: profile_capture: finish failed", "capture_id", c.ID, "err", ferr)
 		return
 	}
@@ -168,6 +171,33 @@ func finishProfileCapture(ctx context.Context, queue profileCaptureFinisher, id 
 		return errors.Join(err, ferr)
 	}
 	return fmt.Errorf("profiles not stored, capture marked failed: %w", err)
+}
+
+// profileCaptureResultLabel classifies a finished capture for metrics: ready,
+// why the capture failed, or why its result was not stored.
+func profileCaptureResultLabel(captureErr, finishErr error) string {
+	switch {
+	case errors.Is(finishErr, state.ErrNotFound):
+		return "gone" // deleted or expired while it ran
+	case finishErr != nil:
+		return "not_stored"
+	case captureErr == nil:
+		return "ready"
+	case errors.Is(captureErr, ErrNoRunningInstance):
+		return "no_running_instance"
+	}
+	switch status.Code(captureErr) {
+	case codes.NotFound:
+		return "instance_stopped"
+	case codes.FailedPrecondition, codes.InvalidArgument:
+		return "guest_refused"
+	case codes.DeadlineExceeded:
+		return "timeout"
+	}
+	if errors.Is(captureErr, context.DeadlineExceeded) {
+		return "timeout"
+	}
+	return "unreachable"
 }
 
 func profileCaptureFailureReason(err error) string {

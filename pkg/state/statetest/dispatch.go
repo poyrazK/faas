@@ -101,12 +101,14 @@ var memDispatched = map[string]bool{
 	"FailRunningInstanceIfOwnedByNode":                        true,
 	"FinalizeManagedPostgresBindingRotationsForApp":           true,
 	"FinancialEvidenceCoverage":                               true,
+	"ListFinancialPriceSnapshots":                             true,
 	"FinalizeObjectS3CredentialRotationsForApp":               true,
 	"FinishPublishedEventRecipient":                           true,
 	"GetAppErrorSample":                                       true,
 	"GetFeatureFlags":                                         true,
 	"GetObjectBucketObjectLock":                               true,
 	"GetRouteHealthReport":                                    true,
+	"ListRouteHealthHistory":                                  true,
 	"HasSnapshotHistory":                                      true,
 	"InstanceByID":                                            true,
 	"IssueObjectMultipartURLCredential":                       true,
@@ -174,6 +176,8 @@ var memDispatched = map[string]bool{
 	"RouteAwakeMinutes":                                       true,
 	"RouteInsightCandidateApps":                               true,
 	"RouteInsightsDetectedSince":                              true,
+	"RouteMonitorIncidentsSince":                              true,
+	"RouteHealthHoldsSince":                                   true,
 	"UpsertRouteInsight":                                      true,
 	"RouteAwakeRouteMinutes":                                  true,
 	"RouteAwakeSourceMinutes":                                 true,
@@ -452,6 +456,15 @@ func (s *Mem) FinancialEvidenceCoverage(p0 context.Context) (time.Time, error) {
 	return s.MemStore.FinancialEvidenceCoverage(p0)
 }
 
+func (s *Mem) ListFinancialPriceSnapshots(p0 context.Context, p1 string, p2 time.Time) ([]state.FinancialPriceSnapshot, error) {
+	if o, ok := s.over.(interface {
+		ListFinancialPriceSnapshots(context.Context, string, time.Time) ([]state.FinancialPriceSnapshot, error)
+	}); ok {
+		return o.ListFinancialPriceSnapshots(p0, p1, p2)
+	}
+	return s.MemStore.ListFinancialPriceSnapshots(p0, p1, p2)
+}
+
 func (s *Mem) DeleteAppPermanently(p0 context.Context, p1 string) error {
 	if o, ok := s.over.(interface {
 		DeleteAppPermanently(context.Context, string) error
@@ -641,6 +654,24 @@ func (s *Mem) RouteInsightsDetectedSince(p0 context.Context, p1 string, p2 time.
 	return s.MemStore.RouteInsightsDetectedSince(p0, p1, p2, p3)
 }
 
+func (s *Mem) RouteMonitorIncidentsSince(p0 context.Context, p1 string, p2 time.Time, p3 int) ([]state.RouteMonitorIncidentAlert, int64, error) {
+	if o, ok := s.over.(interface {
+		RouteMonitorIncidentsSince(context.Context, string, time.Time, int) ([]state.RouteMonitorIncidentAlert, int64, error)
+	}); ok {
+		return o.RouteMonitorIncidentsSince(p0, p1, p2, p3)
+	}
+	return s.MemStore.RouteMonitorIncidentsSince(p0, p1, p2, p3)
+}
+
+func (s *Mem) RouteHealthHoldsSince(p0 context.Context, p1 string, p2 time.Time, p3 int) ([]state.RouteHealthHoldAlert, int64, error) {
+	if o, ok := s.over.(interface {
+		RouteHealthHoldsSince(context.Context, string, time.Time, int) ([]state.RouteHealthHoldAlert, int64, error)
+	}); ok {
+		return o.RouteHealthHoldsSince(p0, p1, p2, p3)
+	}
+	return s.MemStore.RouteHealthHoldsSince(p0, p1, p2, p3)
+}
+
 func (s *Mem) EnvironmentWorkloadAdmissionRetired(p0 context.Context, p1 string, p2 string) (bool, error) {
 	if o, ok := s.over.(interface {
 		EnvironmentWorkloadAdmissionRetired(context.Context, string, string) (bool, error)
@@ -720,6 +751,15 @@ func (s *Mem) GetRouteHealthReport(p0 context.Context, p1 string, p2 string, p3 
 		return o.GetRouteHealthReport(p0, p1, p2, p3)
 	}
 	return s.MemStore.GetRouteHealthReport(p0, p1, p2, p3)
+}
+
+func (s *Mem) ListRouteHealthHistory(p0 context.Context, p1 string, p2 string, p3 string, p4 int, p5 string) (api.RouteHealthHistoryPage, error) {
+	if o, ok := s.over.(interface {
+		ListRouteHealthHistory(context.Context, string, string, string, int, string) (api.RouteHealthHistoryPage, error)
+	}); ok {
+		return o.ListRouteHealthHistory(p0, p1, p2, p3, p4, p5)
+	}
+	return s.MemStore.ListRouteHealthHistory(p0, p1, p2, p3, p4, p5)
 }
 
 func (s *Mem) HasSnapshotHistory(p0 context.Context, p1 string) (bool, error) {

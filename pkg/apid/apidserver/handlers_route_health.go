@@ -1,6 +1,7 @@
 package apidserver
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
@@ -53,6 +54,11 @@ func (s *server) putRouteHealthGate(w http.ResponseWriter, r *http.Request, acct
 		return
 	}
 	s.audit.Emit(r.Context(), "route_health.updated", &acct.ID, map[string]any{"app_id": app.ID, "mode": gate.Mode, "on_regression": gate.OnRegression, "revision": gate.Revision, "route_count": len(gate.Routes)})
+	labels := make([]string, 0, len(gate.Routes))
+	for _, route := range gate.Routes {
+		labels = append(labels, routehealth.RouteLabel(route.Method, route.Path))
+	}
+	gate.Warnings = append(s.routeHealthAbortWarning(r.Context(), gate), s.unobservedRouteWarnings(r.Context(), acct, app.ID, labels)...)
 	writeJSON(w, http.StatusOK, gate)
 }
 func (s *server) getRouteHealthReport(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -70,16 +76,40 @@ func (s *server) getRouteHealthReport(w http.ResponseWriter, r *http.Request, ac
 	if !ok {
 		return
 	}
+	if opts.Customers {
+		if p := s.routeCustomerGroupingProblem(acct, app, opts.CustomerGroupBy); p != nil {
+			api.WriteProblem(w, p)
+			return
+		}
+	}
 	report, err := s.readRouteHealthReport(r.Context(), store, acct.ID, app.ID, id.String(), opts)
 	if err != nil {
 		s.routeHealthError(w, err)
 		return
 	}
+	report = s.routeHealthReportAfterAbort(r.Context(), acct.ID, app.ID, id.String(), report)
+	report.Hold = s.routeHealthHold(r.Context(), report, app.ID, id.String())
 	if candidate, err := s.store.DeploymentByID(r.Context(), id.String()); err == nil && candidate.AppID == app.ID {
 		report.ProfileSignal = s.profileCanarySignal(r.Context(), acct, app, candidate)
 	}
 	writeJSON(w, http.StatusOK, report)
 }
+
+// routeHealthReportAfterAbort shows the evidence an ADR-458 abort was saved
+// with: the aborted candidate serves nothing, so the live windows read
+// unknown. Without readable history the live report stands.
+func (s *server) routeHealthReportAfterAbort(ctx context.Context, accountID, appID, deploymentID string, live api.RouteHealthReport) api.RouteHealthReport {
+	history, ok := s.store.(state.RouteHealthHistoryStore)
+	if !ok {
+		return live
+	}
+	page, err := history.ListRouteHealthHistory(ctx, accountID, appID, deploymentID, 1, "")
+	if err != nil || len(page.Entries) == 0 {
+		return live
+	}
+	return routehealth.WithSavedAbort(live, &page.Entries[0])
+}
+
 func (s *server) routeHealthError(w http.ResponseWriter, err error) {
 	var blocked *state.RouteHealthBlockedError
 	switch {

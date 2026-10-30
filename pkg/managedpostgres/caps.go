@@ -139,10 +139,13 @@ func capQuotaNeedsWrite(current, target, used int64) bool {
 // CapLimits are a usage subject's monthly compute limits in compute-unit
 // seconds. Allowance is the plan's; Ceiling is where databases are suspended,
 // the allowance or twice it with overage on. A zero Ceiling means uncapped.
+// StoragePool is the subject's pooled storage in bytes (decision 9), twice
+// the plan's with overage on; zero means uncapped.
 type CapLimits struct {
-	Allowance int64
-	Ceiling   int64
-	Overage   bool
+	Allowance   int64
+	Ceiling     int64
+	Overage     bool
+	StoragePool int64
 }
 
 // CapCeiling returns a usage subject's limits: an account, or an
@@ -168,15 +171,23 @@ type CapEvent struct {
 	Allowance   int64
 	Ceiling     int64
 	Overage     bool
+	// Mailed is read only: an email is linked to the event.
+	Mailed bool
 }
 
 // CapEventStore is an optional UsageStore capability. RecordCapEvent reports
 // whether the event is new; a repeat for the same subject, month and
-// threshold is a no-op.
+// threshold is a no-op. MostSevereCapEvent returns the subject's most severe
+// threshold of the month, or nil.
 type CapEventStore interface {
 	RecordCapEvent(ctx context.Context, event CapEvent) (bool, error)
 	CapSuspendedAt(ctx context.Context, subjectID string, periodStart time.Time) (*time.Time, error)
+	MostSevereCapEvent(ctx context.Context, subjectID string, periodStart time.Time) (*CapEvent, error)
 }
+
+// capMailWindow is how long after a threshold is reached its email may still
+// be queued; it matches api.InternalMailManagedPostgresCapTTL.
+const capMailWindow = 24 * time.Hour
 
 // capThresholds lists the thresholds used reaches: 80% of the allowance, the
 // allowance, 80% of the ceiling when overage raises it, and the ceiling.
@@ -198,15 +209,24 @@ func capThresholds(used int64, limits CapLimits, ceiling int64) []string {
 }
 
 type CapEnforcerOptions struct {
-	Mode    CapEnforcementMode
-	Ceiling CapCeiling
-	Now     func() time.Time
-	Logger  *slog.Logger
-	Observe func(CapSweepSummary)
+	Mode CapEnforcementMode
+	// StorageMode runs the storage pool pass (decision 9): off, shadow or on.
+	StorageMode CapEnforcementMode
+	// StorageQualification is the staging evidence storage `on` requires.
+	StorageQualification *StorageCapQualification
+	Ceiling              CapCeiling
+	Now                  func() time.Time
+	Logger               *slog.Logger
+	Observe              func(CapSweepSummary)
 	// BatchSize pages the catalog; zero uses the usage collector's default.
 	BatchSize int
 	// Qualification is the staging evidence `on` requires (decision 10).
 	Qualification *ComputeCapQualification
+	// Notify queues the email for a subject's most severe threshold of the
+	// month (decision 8). The sweep calls it only in mode on, after the
+	// subject's quotas are written, and again on later sweeps until the
+	// threshold is mailed or a day has passed. Nil sends no email.
+	Notify func(ctx context.Context, event CapEvent) error
 }
 
 // CapSweepSummary counts one enforcement sweep. Scopes are provider quota
@@ -223,19 +243,33 @@ type CapSweepSummary struct {
 	ScopesApplied     int
 	ScopesShadowed    int
 	EventsRecorded    int
+	NotifyFailed      int
 	CompletedAt       time.Time
+	// The storage pool pass, counted apart so its failures never mark the
+	// compute sweep stale.
+	StorageMode            CapEnforcementMode
+	StorageAccounts        int
+	StorageBlockedAccounts int
+	StorageUncapped        int
+	StorageUnsupported     int
+	StorageFailed          int
+	StorageScopesUnchanged int
+	StorageScopesShadowed  int
+	StorageScopesApplied   int
 }
 
 // CapEnforcer applies compute ceilings to running databases.
 type CapEnforcer struct {
-	registry  *Registry
-	store     UsageStore
-	mode      CapEnforcementMode
-	ceiling   CapCeiling
-	now       func() time.Time
-	logger    *slog.Logger
-	observe   func(CapSweepSummary)
-	batchSize int
+	registry    *Registry
+	store       UsageStore
+	mode        CapEnforcementMode
+	storageMode CapEnforcementMode
+	ceiling     CapCeiling
+	now         func() time.Time
+	logger      *slog.Logger
+	observe     func(CapSweepSummary)
+	notify      func(context.Context, CapEvent) error
+	batchSize   int
 }
 
 func NewCapEnforcer(registry *Registry, store UsageStore, options CapEnforcerOptions) (*CapEnforcer, error) {
@@ -258,6 +292,20 @@ func NewCapEnforcer(registry *Registry, store UsageStore, options CapEnforcerOpt
 	default:
 		return nil, ErrInvalid
 	}
+	switch options.StorageMode {
+	case "":
+		options.StorageMode = CapEnforcementOff
+	case CapEnforcementOff, CapEnforcementShadow:
+	case CapEnforcementOn:
+		if options.StorageQualification == nil {
+			return nil, fmt.Errorf("%s=on needs a storage cap qualification at %s: %w", StorageCapEnforcementEnv, StorageCapQualificationPathEnv, ErrInvalid)
+		}
+		if err := registry.VerifyStorageCapQualification(*options.StorageQualification); err != nil {
+			return nil, fmt.Errorf("%s=on: %w", StorageCapEnforcementEnv, err)
+		}
+	default:
+		return nil, ErrInvalid
+	}
 	if options.BatchSize == 0 {
 		options.BatchSize = defaultUsageBatchSize
 	}
@@ -271,22 +319,23 @@ func NewCapEnforcer(registry *Registry, store UsageStore, options CapEnforcerOpt
 		options.Logger = slog.Default()
 	}
 	return &CapEnforcer{
-		registry: registry, store: store, mode: options.Mode, ceiling: options.Ceiling,
-		now: options.Now, logger: options.Logger, observe: options.Observe, batchSize: options.BatchSize,
+		registry: registry, store: store, mode: options.Mode, storageMode: options.StorageMode, ceiling: options.Ceiling,
+		now: options.Now, logger: options.Logger, observe: options.Observe, notify: options.Notify,
+		batchSize: options.BatchSize,
 	}, nil
 }
 
 // Enforce runs one sweep. A failure for one account never stops the others;
 // the returned error joins them.
 func (e *CapEnforcer) Enforce(ctx context.Context) (summary CapSweepSummary, err error) {
-	summary.Mode = e.mode
+	summary.Mode, summary.StorageMode = e.mode, e.storageMode
 	defer func() {
 		summary.CompletedAt = e.now().UTC()
 		if e.observe != nil {
 			e.observe(summary)
 		}
 	}()
-	if e.mode == CapEnforcementOff {
+	if e.mode == CapEnforcementOff && e.storageMode == CapEnforcementOff {
 		return summary, nil
 	}
 	accounts, err := e.liveDatabasesBySubject(ctx)
@@ -303,10 +352,26 @@ func (e *CapEnforcer) Enforce(ctx context.Context) (summary CapSweepSummary, err
 		if err := ctx.Err(); err != nil {
 			return summary, err
 		}
-		summary.Accounts++
-		if err := e.enforceAccount(ctx, accountID, accounts[accountID], &summary); err != nil {
-			summary.Failed++
-			failures = append(failures, fmt.Errorf("account %s: %w", accountID, err))
+		limits, err := e.ceiling(ctx, accountID)
+		if e.mode != CapEnforcementOff {
+			summary.Accounts++
+			if err == nil {
+				err = e.enforceAccount(ctx, accountID, accounts[accountID], limits, &summary)
+			}
+			if err != nil {
+				summary.Failed++
+				failures = append(failures, fmt.Errorf("account %s: %w", accountID, err))
+			}
+		}
+		if e.storageMode != CapEnforcementOff {
+			summary.StorageAccounts++
+			if err == nil {
+				err = e.enforceStoragePool(ctx, accountID, accounts[accountID], limits, &summary)
+			}
+			if err != nil {
+				summary.StorageFailed++
+				e.logger.Warn("managed postgres storage cap sweep failed", "subject_id", accountID, "error", err)
+			}
 		}
 	}
 	return summary, errors.Join(failures...)
@@ -372,11 +437,7 @@ func capEnforceable(database Database) bool {
 	}
 }
 
-func (e *CapEnforcer) enforceAccount(ctx context.Context, accountID string, databases []Database, summary *CapSweepSummary) error {
-	limits, err := e.ceiling(ctx, accountID)
-	if err != nil {
-		return err
-	}
+func (e *CapEnforcer) enforceAccount(ctx context.Context, accountID string, databases []Database, limits CapLimits, summary *CapSweepSummary) error {
 	ceiling := limits.Ceiling
 	if ceiling <= 0 {
 		summary.Uncapped++
@@ -428,7 +489,31 @@ func (e *CapEnforcer) enforceAccount(ctx context.Context, accountID string, data
 		summary.ScopesApplied++
 		e.logger.Info("managed postgres compute cap applied", attrs...)
 	}
+	if e.mode == CapEnforcementOn && len(failures) == 0 {
+		e.notifyCapEvent(ctx, accountID, now, summary)
+	}
 	return errors.Join(failures...)
+}
+
+// notifyCapEvent mails the subject's most severe threshold of the month once:
+// a sweep that jumps past several thresholds sends one email. A failed email
+// does not fail the sweep; the next sweep retries it.
+func (e *CapEnforcer) notifyCapEvent(ctx context.Context, subjectID string, now time.Time, summary *CapSweepSummary) {
+	store, ok := e.store.(CapEventStore)
+	if !ok || e.notify == nil {
+		return
+	}
+	event, err := store.MostSevereCapEvent(ctx, subjectID, now)
+	if err == nil && (event == nil || event.Mailed || now.Sub(event.ReachedAt) >= capMailWindow) {
+		return
+	}
+	if err == nil {
+		err = e.notify(ctx, *event)
+	}
+	if err != nil {
+		summary.NotifyFailed++
+		e.logger.Warn("managed postgres compute cap email not queued", "subject_id", subjectID, "error", err)
+	}
 }
 
 // recordCapEvents records each threshold the subject reached this month the

@@ -22,6 +22,11 @@ Switches, all off by default:
   `meterd_quiet_pause_unbilled_seconds_total{mode="shadow"}`, bill as before)
   or `on` (subtract). Turning it off restores full billing from the next
   rolled minute; rolled minutes stay as they were.
+- platform flag `quiet_pause_unbilled` (docs/ops/platform-flags.md): in `on`
+  mode, the accounts paused seconds are subtracted for. Off by default; the
+  others are counted as `mode="shadow"` and billed in full. Turning the flag
+  off for an account stops subtracting for it from the next rolled minute,
+  without touching meterd.
 
 ```sh
 curl -fsS http://127.0.0.1:9103/metrics | grep -E '^schedd_quiet_pause_ledger_'

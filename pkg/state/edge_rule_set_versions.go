@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/jackc/pgerrcode"
@@ -12,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 // EdgeRuleSetVersionRetention is how many versions per app the store keeps
@@ -219,22 +221,31 @@ func getEdgeRuleSetVersion(ctx context.Context, q edgeRuleSetVersionQuerier, app
 }
 
 func (s *PgStore) RestoreEdgeRuleSetVersion(ctx context.Context, appID string, version int, limits api.Limits) (EdgeRuleSetRestore, error) {
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	return retryTrafficSerialization(ctx, func() (EdgeRuleSetRestore, error) {
+		return s.restoreEdgeRuleSetVersionOnce(ctx, appID, version, limits)
+	})
+}
+
+func (s *PgStore) restoreEdgeRuleSetVersionOnce(ctx context.Context, appID string, version int, limits api.Limits) (EdgeRuleSetRestore, error) {
+	tx, account, err := s.beginEdgeRuleRestore(ctx, appID, version)
 	if err != nil {
-		return EdgeRuleSetRestore{}, fmt.Errorf("state: begin tx: %w", err)
+		return EdgeRuleSetRestore{}, err
 	}
-	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }() //nolint:errcheck // no-op after Commit
 
 	// Same app-row lock CreateEdgeRuleIfUnderQuota takes, so a concurrent
 	// create cannot slip a rule in between the delete and the insert.
-	var locked int
+	var owner string
 	if err := tx.QueryRow(ctx,
-		`select 1 from apps where id = $1 and status <> 'deleted' for update`, appID,
-	).Scan(&locked); err != nil {
+		`select account_id::text from apps where id = $1 and status <> 'deleted' for update`, appID,
+	).Scan(&owner); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return EdgeRuleSetRestore{}, ErrNotFound
 		}
 		return EdgeRuleSetRestore{}, fmt.Errorf("state: lock app %s: %w", appID, err)
+	}
+	if owner != account {
+		return EdgeRuleSetRestore{}, ErrConflict
 	}
 	target, err := getEdgeRuleSetVersion(ctx, tx, appID, version)
 	if err != nil {
@@ -242,6 +253,11 @@ func (s *PgStore) RestoreEdgeRuleSetVersion(ctx context.Context, appID string, v
 	}
 	if err := checkEdgeRuleSetQuota(target.Rules, limits); err != nil {
 		return EdgeRuleSetRestore{}, err
+	}
+	for _, rule := range target.Rules {
+		if err := lockEdgeRuleListRefs(ctx, tx, rule.AccountID, rule.Match); err != nil {
+			return EdgeRuleSetRestore{}, err
+		}
 	}
 	var previousHosts []string
 	if err := tx.QueryRow(ctx,
@@ -294,4 +310,56 @@ func (s *PgStore) RestoreEdgeRuleSetVersion(ctx context.Context, appID string, v
 		return EdgeRuleSetRestore{}, fmt.Errorf("state: commit edge-rule restore: %w", err)
 	}
 	return EdgeRuleSetRestore{Rules: restored, PreviousHosts: previousHosts}, nil
+}
+
+// A restore replaces every rule of the app, so it passes the same traffic
+// policy guard as rule writes (ADR-570). The route patterns on either side
+// change the fleet's route view, so they take the route guard. The account
+// lock fences the app's rule writers, so the patterns read under it are final.
+func (s *PgStore) beginEdgeRuleRestore(ctx context.Context, appID string, version int) (pgx.Tx, string, error) {
+	account, err := sqlc.New().ReadAppTrafficAccount(ctx, s.pool, uuidToPgtype(appID))
+	if err != nil {
+		return nil, "", fmt.Errorf("state: read edge-rule restore owner: %w", mapErr(err))
+	}
+	patterns, err := edgeRuleRestoreRoutePatterns(ctx, s.pool, appID, version)
+	if err != nil {
+		return nil, "", err
+	}
+	for {
+		var tx pgx.Tx
+		if len(patterns) == 0 {
+			tx, err = s.beginRuleOnlyTrafficPolicyMutation(ctx, account)
+		} else {
+			tx, err = s.beginRouteTrafficPolicyMutation(ctx, account, patterns)
+		}
+		if err != nil {
+			return nil, "", err
+		}
+		locked, err := edgeRuleRestoreRoutePatterns(ctx, tx, appID, version)
+		if err == nil && slices.Equal(locked, patterns) {
+			return tx, account.String(), nil
+		}
+		_ = tx.Rollback(context.WithoutCancel(ctx))
+		if err != nil {
+			return nil, "", err
+		}
+		patterns = locked
+	}
+}
+
+// edgeRuleRestoreRoutePatterns lists the match hosts of the app's route rules
+// and of the version's, sorted and distinct.
+func edgeRuleRestoreRoutePatterns(ctx context.Context, q edgeRuleSetVersionQuerier, appID string, version int) ([]string, error) {
+	var patterns []string
+	if err := q.QueryRow(ctx, `
+		select coalesce(array_agg(distinct pattern order by pattern), '{}') from (
+		    select match_host as pattern from edge_rules where app_id = $1 and kind = 'route'
+		    union all
+		    select r->>'match_host' from edge_rule_set_versions v, jsonb_array_elements(v.rules) r
+		    where v.app_id = $1 and v.version = $2 and r->>'kind' = 'route') routes`,
+		appID, version,
+	).Scan(&patterns); err != nil {
+		return nil, fmt.Errorf("state: read edge-rule restore route patterns: %w", err)
+	}
+	return patterns, nil
 }

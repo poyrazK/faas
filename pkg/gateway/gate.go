@@ -32,6 +32,10 @@ type WakeGate struct {
 	inflight map[string]*wakeCall
 	cap      int
 	ttl      time.Duration
+	// leaderFloor is the least time the detached leader's ensure runs,
+	// whatever the TTL and the app's wait budget. The handler sets it to
+	// schedd's leader budget; zero keeps unit-test gates on their TTL.
+	leaderFloor time.Duration
 	// onChange is called whenever an entry's waiter count or completion state
 	// changes, so the metrics layer can keep gateway_queue_depth current.
 	// Optional; nil-safe at every call site.
@@ -105,7 +109,7 @@ type wakeTargetKey struct{}
 // ErrBootstrapAborted (ADR-098 C7) is returned when the detached-leader
 // goroutine aborts under the bootstrap cap (queue empty AND no live
 // instance AND plan.MaxMinInstances == 0). The followers see this
-// rather than waiting for the gate TTL.
+// rather than waiting for the leader's budget.
 var ErrBootstrapAborted = errors.New("gateway: leader bootstrap aborted")
 
 // NewWakeGate returns a gate with the given per-app waiter cap and wake TTL
@@ -121,7 +125,7 @@ func NewWakeGate(capacity int, ttl time.Duration) *WakeGate {
 }
 
 // Wait ensures an instance for appID is awake, coalescing concurrent callers onto
-// a single ensure() invocation. The leader runs ensure under the gate's TTL in a
+// a single ensure() invocation. The leader runs ensure under leaderBudget in a
 // detached goroutine (so the triggering request cancelling doesn't abort the wake
 // for other waiters); followers wait on the same result. Returns ErrQueueFull if
 // the waiter cap is exceeded, the ensure error, or the caller's ctx error.
@@ -172,9 +176,9 @@ func (g *WakeGate) Wait(
 }
 
 // WaitWithPolicy is Wait with an app-specific waiter cap and caller wait
-// budget. The detached leader still uses the gate's lifecycle TTL so an
-// individual client cancellation cannot orphan the shared wake; only the
-// caller's wait is bounded by policy.MaxWait.
+// budget. The detached leader runs for leaderBudget so an individual client
+// cancellation cannot orphan the shared wake; only the caller's wait is
+// bounded by policy.MaxWait.
 //
 //nolint:contextcheck // the caller context is intentionally wrapped with the app's wait budget.
 func (g *WakeGate) WaitWithPolicy(
@@ -292,17 +296,18 @@ func (g *WakeGate) WaitWithPolicy(
 	// so this waiter is bounded by WakeAdmissionPolicy.MaxWait instead. Reusing
 	// client cancellation for the leader would still break coalescing: a client
 	// that disconnects mid-wake must not abort the wake for other waiters. The
-	// leader's detached context continues to the gate TTL.
+	// leader's detached context continues for leaderBudget.
 	detached := context.WithoutCancel(ctx)
+	leaderBudget := g.leaderBudget(policy)
 	go func() {
-		ectx, cancel := context.WithTimeout(detached, g.ttl)
+		ectx, cancel := context.WithTimeout(detached, leaderBudget)
 		defer cancel()
 
 		// Optional bootstrap-cap poller. Lifecycle:
 		//   - spawned only when shouldAbort != nil
 		//   - fires at most once (close(abortCh)) on the first tick
 		//     where shouldAbort() returns true
-		//   - exits on ectx.Done() (TTL hit) before firing
+		//   - exits on ectx.Done() (leaderBudget hit) before firing
 		// This is the only goroutine that closes abortCh.
 		var abortCh chan struct{}
 		var pollerDone chan struct{}
@@ -348,12 +353,12 @@ func (g *WakeGate) WaitWithPolicy(
 				onAbort("queue_empty_no_instance")
 			}
 			// The ensure goroutine is still running; we accept
-			// the orphan: it'll exit on ectx.Done() (the TTL).
+			// the orphan: it'll exit on ectx.Done() (leaderBudget).
 			// The follower-facing contract is satisfied.
 			<-pollerDone
 			g.complete(appID, call, ErrBootstrapAborted)
 		case <-ectx.Done():
-			// TTL hit before either fired. The poller has exited
+			// leaderBudget hit before either fired. The poller has exited
 			// on the same ectx; reap it. ensure is still running
 			// (it's blocked on ectx from inside the user func);
 			// accept the orphan.
@@ -372,6 +377,15 @@ func (g *WakeGate) WaitWithPolicy(
 		observed = false
 	}
 	return err
+}
+
+// leaderBudget bounds the detached leader's ensure. It covers the app's own
+// wait budget, which wake_max_queue_wait_seconds and max_queue_wait_ms may set
+// above the TTL, and leaderFloor. Hunt 22 H22-1: the leader stopped at the
+// TTL, so those budgets could not take effect, and a wake schedd finished in
+// 30 to 45 s answered every waiter 503 instead of "wake in progress".
+func (g *WakeGate) leaderBudget(policy WakeAdmissionPolicy) time.Duration {
+	return max(g.ttl, policy.MaxWait, g.leaderFloor)
 }
 
 // join adds w to call. A waiter that arrives after the wake finished is

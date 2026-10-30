@@ -10,7 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const routesInsightsUsage = "usage: gregale routes insights APP [--fix INSIGHT_ID]"
+const routesInsightsUsage = "usage: gregale api route insights APP [--fix INSIGHT_ID]"
 
 // cmdRoutesInsights lists an app's proactive route insights (ADR-1198), or
 // applies one insight's fix (ADR-20261020161310).
@@ -55,7 +55,7 @@ func fixRouteInsight(ctx context.Context, client *api.Client, insights api.Route
 	}
 	switch {
 	case insight == nil:
-		return printErr("Unknown route insight", fmt.Errorf("%s has no route insight %q; run `gregale routes insights %s`", insights.Slug, id, insights.Slug))
+		return printErr("Unknown route insight", fmt.Errorf("%s has no route insight %q; run `gregale api route insights %s`", insights.Slug, id, insights.Slug))
 	case insight.Fix == nil:
 		return printErr("No fix to apply", fmt.Errorf("insight %s has no fix the platform can apply; its message says what to change", id))
 	}
@@ -71,7 +71,7 @@ func fixRouteInsight(ctx context.Context, client *api.Client, insights api.Route
 	case api.RouteInsightPurgeRequested:
 		_, _ = fmt.Fprintf(osStdout, "Cache purge requested for %s %s.\n", insight.Method, insight.Route)
 	case api.RouteInsightPurgeFailed:
-		_, _ = fmt.Fprintf(osStdout, "The cache purge could not be requested; run `gregale cache purge %s --path <glob>` to drop stale responses now.\n", insights.Slug)
+		_, _ = fmt.Fprintf(osStdout, "The cache purge could not be requested; run `gregale edge cache purge %s --path <glob>` to drop stale responses now.\n", insights.Slug)
 	}
 	return 0
 }
@@ -99,7 +99,7 @@ func renderRouteInsights(w io.Writer, r api.RouteInsightsResponse) {
 		}
 	}
 	if fixable {
-		_, _ = fmt.Fprintf(w, "\nApply a fix with `gregale routes insights %s --fix ID`.\n", r.Slug)
+		_, _ = fmt.Fprintf(w, "\nApply a fix with `gregale api route insights %s --fix ID`.\n", r.Slug)
 	}
 	_, _ = fmt.Fprintln(w, "\nSubscribe an app webhook to routes.insight.detected and routes.insight.resolved, or enable the \"New route insights\" alert preset, to be told when these change.")
 }

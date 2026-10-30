@@ -83,9 +83,10 @@ const (
 	// (issue #757). Config schema: RedisStreamsConfig{Addr, Stream,
 	// Group, Consumer}.
 	TriggerKindRedisStreams TriggerKind = "redis_streams"
-	// TriggerKindSQSCompat — long-poll the in-platform SQS-compatible
-	// HTTP queue (issue #757). Config schema:
-	// SQSCompatConfig{QueueURL, LongPollSecs}.
+	// TriggerKindSQSCompat — long-poll an SQS-compatible HTTP queue
+	// (issue #757). Delisted 2026-10-29: its poller speaks no real SQS
+	// wire protocol, so the manifest refuses it like amqp. Config
+	// schema: SQSCompatConfig{QueueURL, LongPollSecs}.
 	TriggerKindSQSCompat TriggerKind = "sqs_compat"
 	// TriggerKindQueue — in-platform queue / delayed_task merger
 	// (issue #757, ADR-0NN). The platform's own `invocations` rows
@@ -1820,6 +1821,30 @@ func (s WorkerScaleSpec) ToAPI() *api.WorkerScaling {
 	}
 }
 
+// ScalingPolicyRequest is the app scaling policy the manifest asks for: the
+// scaling block, with a worker block that names a metric taking its bounds
+// and target. The CLI and apid's source deploys both apply it, so a worker
+// deployed from a repository scales like one deployed from a laptop
+// (ADR-20261018101500 amendment 2026-10-27). Cooldowns default as the
+// scaling block's do, because the API refuses zero cooldowns.
+func (m *Manifest) ScalingPolicyRequest() *api.ScalingPolicy {
+	if m == nil {
+		return nil
+	}
+	policy := m.Scaling.ToAPI()
+	if m.Worker == nil || m.Worker.Scale.Metric == "" {
+		return policy
+	}
+	if policy == nil {
+		policy = &api.ScalingPolicy{ScaleOutCooldownS: defaultScaleOutCooldownS, ScaleInCooldownS: defaultScaleInCooldownS}
+	}
+	scale := m.Worker.Scale
+	policy.MinInstances, policy.MaxInstances = scale.Min, scale.Max
+	policy.Targets = nil
+	policy.Target = &api.ScalingTarget{Metric: scale.Metric, Name: scale.Name, Value: scale.Target}
+	return policy
+}
+
 // Validate checks worker configuration syntax and constraints.
 func (w *WorkerSpec) Validate() error {
 	if w == nil {
@@ -1847,14 +1872,14 @@ func (w *WorkerSpec) Validate() error {
 	}
 	if w.Source != nil {
 		switch w.Source.Kind {
-		case TriggerKindKafka, TriggerKindNATS, TriggerKindRedisStreams, TriggerKindSQSCompat, TriggerKindQueue:
+		case TriggerKindKafka, TriggerKindNATS, TriggerKindRedisStreams, TriggerKindQueue:
 			// valid broker kinds
-		case TriggerKindAMQP, TriggerKindRabbitMQ:
+		case TriggerKindAMQP, TriggerKindRabbitMQ, TriggerKindSQSCompat:
 			return fmt.Errorf("worker.source: %w", errBrokerKindUnavailable(w.Source.Kind))
 		case "":
 			return errors.New("worker.source: kind is required")
 		default:
-			return fmt.Errorf("worker.source: unsupported kind %q; must be one of kafka, nats, redis_streams, sqs_compat, queue", w.Source.Kind)
+			return fmt.Errorf("worker.source: unsupported kind %q; must be one of kafka, nats, redis_streams, queue", w.Source.Kind)
 		}
 		if err := w.Source.validateKindConfig(0); err != nil {
 			return fmt.Errorf("worker.source: %w", err)
@@ -2342,11 +2367,10 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 			TriggerKindKafka,
 			TriggerKindNATS,
 			TriggerKindRedisStreams,
-			TriggerKindSQSCompat,
 			TriggerKindQueue,
 			TriggerKindRealtime:
 			// fall through to per-kind validation below
-		case TriggerKindAMQP, TriggerKindRabbitMQ:
+		case TriggerKindAMQP, TriggerKindRabbitMQ, TriggerKindSQSCompat:
 			return fmt.Errorf("trigger[%d]: %w", i, errBrokerKindUnavailable(t.Kind))
 		case "":
 			return fmt.Errorf("trigger[%d]: missing kind (want one of %s)", i, supportedKindsList())
@@ -2631,7 +2655,7 @@ func validateAppRetryPolicy(policy *RetryPolicyConfig) error {
 // shape — then alphabetical) so a customer grep'ing for "kafka" in
 // the error message finds it consistently.
 func supportedKindsList() string {
-	return "cron, kafka, nats, redis_streams, sqs_compat, queue, realtime"
+	return "cron, kafka, nats, redis_streams, queue, realtime"
 }
 
 // errBrokerKindUnavailable rejects broker kinds the manifest can parse but

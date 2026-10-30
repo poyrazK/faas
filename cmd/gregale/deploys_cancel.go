@@ -19,7 +19,7 @@ import (
 	"os"
 )
 
-const deploysCancelUsage = "usage: gregale deploys cancel <id> [--reason <user|auto_quota|auto_health|system>] [--app <slug>] [--json]"
+const deploysCancelUsage = "usage: gregale release cancel <id> [--reason <user|auto_quota|auto_health|system>] [--app <slug>] [--json]"
 
 func cmdDeploysCancel(args []string) int {
 	fs := newFlagSet("deploys cancel", flag.ContinueOnError)

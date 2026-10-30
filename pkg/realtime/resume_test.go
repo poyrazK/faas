@@ -103,11 +103,11 @@ func (r *testChannelRouteReporter) snapshot() []testChannelRouteReport {
 	return append([]testChannelRouteReport(nil), r.reports...)
 }
 
-func newResumeTestManager(t *testing.T, history *testResumeHistory, hooks *testChannelHooks) (*Manager, *httptest.Server) {
+func newResumeTestManager(t *testing.T, history *testResumeHistory, hooks Hooks) (*Manager, *httptest.Server) {
 	return newResumeTestManagerWithReporter(t, history, hooks, nil)
 }
 
-func newResumeTestManagerWithReporter(t *testing.T, history *testResumeHistory, hooks *testChannelHooks, reporter ManagedRealtimeChannelRouteReporter) (*Manager, *httptest.Server) {
+func newResumeTestManagerWithReporter(t *testing.T, history *testResumeHistory, hooks Hooks, reporter ManagedRealtimeChannelRouteReporter) (*Manager, *httptest.Server) {
 	t.Helper()
 	m := NewManager(Config{
 		JWTAuthorizer: &recordingJWTAuthorizer{}, ResumePreview: true,

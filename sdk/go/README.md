@@ -560,7 +560,7 @@ policy, err := c.PutObjectBucketLifecycle(ctx, "demo", bucketID,
 A replacement must contain at least one rule; use DELETE to clear it. Starting
 or resuming a due scan returns its durable ID. A completed scan means discovery
 finished; admitted cleanup can still be retrying. Removing rules preserves that
-cleanup. See the [lifecycle guide](../../docs/object-storage.md#lifecycle-rules-and-discovery).
+cleanup. See the [lifecycle guide](../../docs/object-storage.md#lifecycle-rules).
 ## Internal HTTP Operations preview
 
 Operations is staged; production admission remains disabled. The typed client
@@ -604,7 +604,7 @@ protection operation inspection. Use an explicit owned public version UUIDv4
 operation ID and return a durable receipt; retain the returned ID for retries
 and status. Fixed GOVERNANCE/COMPLIANCE retention and independent ON/OFF legal
 holds are supported. Event-hold changes and governance bypass are unsupported.
-See [the protection contract](../../docs/object-storage.md#per-version-retention-and-legal-holds)
+See [the protection contract](../../docs/object-storage.md#object-lock-retention-and-legal-holds)
 for enrollment, pending-operation fences and recovery behavior.
 
 ## Recovery receipt protection
@@ -613,7 +613,7 @@ Set `protect_receipts: true` when creating an event recovery job (Go:
 `EventRecoveryRequest.ProtectReceipts`). Selected receipts remain held while
 items are pending and the job is active, until its original 24-hour expiry.
 Preview reserves nothing. Held receipts continue counting against account
-storage limits. See [recovery protection](../../docs/event-driven.md#protect-receipts-during-bulk-recovery).
+storage limits. See [recovery protection](../../docs/events.md#protect-receipts-during-bulk-recovery).
 
 ## Durable recovery outcomes
 
@@ -622,7 +622,7 @@ exact admitted replay generation. `execution.source` is `recovery_result`, with
 `recorded_at` and original `evidence_source`; job execution summaries include
 `saved_results`. These results survive execution-history pruning until the
 recovery job is pruned. Uncertain outcomes remain unknown. See
-[terminal recovery results](../../docs/event-driven.md#durable-terminal-recovery-results).
+[terminal recovery results](../../docs/events.md#durable-terminal-recovery-results).
 
 Recovery webhook filters support `event_recovery.execution_finished`, separately
 from admission completion. Its `EventRecoveryExecutionFinishedWebhookPayload`
@@ -640,7 +640,7 @@ retained terminal recovery in the same app. Child creation requires a stable
 retained child. Changed selections conflict, and the original audit reason wins.
 Items expose historical `parent_job_id`/`parent_position` links. Changed or pruned
 execution evidence is skipped at admission; newer replays are never substituted.
-See [parent-scoped retries](../../docs/event-driven.md#retry-failures-from-one-recovery-job).
+See [parent-scoped retries](../../docs/events.md#retry-failures-from-one-recovery-job).
 
 Application-scoped producer keys:
 

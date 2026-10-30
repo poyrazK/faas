@@ -87,7 +87,7 @@ func sourceRefManifestNeedsRollback(staged sourceRefManifestStaged) bool {
 // loadSourceRefManifest reads the root manifest from the already validated
 // source archive. A workload-local manifest is preferred for monorepos, with
 // the repository root as a fallback for the common single-manifest layout.
-func loadSourceRefManifest(sourcePath string, app state.App, plan api.Plan) (*gregalemanifest.Manifest, *api.Problem) {
+func loadSourceRefManifest(sourcePath string, app state.App, plan api.Plan, agentSteps bool) (*gregalemanifest.Manifest, *api.Problem) {
 	b, name, found, err := readSourceRefManifestBytes(sourcePath, app.RootDir)
 	if err != nil {
 		return nil, api.NewProblem(http.StatusBadRequest, api.CodeSourceInvalid, "Bad source", err.Error())
@@ -104,7 +104,7 @@ func loadSourceRefManifest(sourcePath string, app state.App, plan api.Plan) (*gr
 	if err != nil {
 		return nil, api.NewProblem(http.StatusUnprocessableEntity, CodeAppManifestInvalid, "Invalid manifest", err.Error())
 	}
-	if prob := validateManifestAgainstPlan(m, plan); prob != nil {
+	if prob := validateManifestAgainstPlan(m, plan, agentSteps); prob != nil {
 		return nil, prob
 	}
 	if err := m.ValidateForPlan(plan); err != nil {
@@ -352,12 +352,18 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 				fmt.Sprintf(`{"kind":"updated","slug":"%s","app_id":"%s","retry_policy_changed":true}`, app.Slug, app.ID))
 		}
 	}
-	if m.Scaling != nil {
+	// A worker block's scale applies here too, as the CLI applies it
+	// (ADR-20261018101500 amendment 2026-10-27).
+	if policy := m.ScalingPolicyRequest(); policy != nil {
 		limits, ok := api.LimitsFor(acct.Plan)
 		if !ok {
 			return staged, api.ErrCapacity("could not resolve account plan limits")
 		}
-		scalingReq := &api.UpdateAppRequest{ScalingPolicy: m.Scaling.ToAPI()}
+		scalingReq := &api.UpdateAppRequest{ScalingPolicy: policy}
+		if lifecycle, ok := m.LifecycleRequest(); ok {
+			// The lifecycle step below sets the mode a queue target needs.
+			scalingReq.ExecutionMode = lifecycle.ExecutionMode
+		}
 		if prob := validateUpdateApp(scalingReq, acct, limits, app); prob != nil {
 			return staged, prob
 		}

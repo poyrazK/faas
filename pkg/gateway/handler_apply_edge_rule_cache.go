@@ -73,7 +73,11 @@ func (h *Handler) applyEdgeRuleCache(w http.ResponseWriter, r *http.Request, app
 	if method != "GET" && method != "HEAD" {
 		return false, nil
 	}
-	host := r.Host
+	// The host without a port, as every other rule kind matches it: a
+	// request sent with "Host: example.com:443" missed the policy pinned for
+	// example.com and the exact-host cache rules (ADR-091 amendment
+	// 2026-10-28).
+	host := hostname(r.Host)
 	if host == "" {
 		host = app.Slug // fallback for unix-socket routing
 	}
@@ -127,7 +131,7 @@ func (h *Handler) applyEdgeRuleCache(w http.ResponseWriter, r *http.Request, app
 			// into the stored body anyway; mirroring
 			// cacheWriter's drop-list to keep behaviour
 			// symmetric.
-			if isHopByHopHeader(k) || isPerRequestPlatformHeader(k) {
+			if isHopByHopHeader(k) || isPerRequestPlatformHeader(k) || cachedHeaderSuperseded(w, k) {
 				continue
 			}
 			for _, v := range vs {
@@ -171,7 +175,7 @@ func (h *Handler) applyEdgeRuleCache(w http.ResponseWriter, r *http.Request, app
 		h.metricsIncCacheOutcome(app.ID, "stale_while_revalidate_served")
 		w.Header().Del(wire.WakeHeader)
 		for k, vs := range entry.header {
-			if isHopByHopHeader(k) || isPerRequestPlatformHeader(k) {
+			if isHopByHopHeader(k) || isPerRequestPlatformHeader(k) || cachedHeaderSuperseded(w, k) {
 				continue
 			}
 			for _, v := range vs {
@@ -258,6 +262,19 @@ func isHopByHopHeader(k string) bool {
 	case "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
 		"te", "trailer", "transfer-encoding", "upgrade":
 		return true
+	}
+	return false
+}
+
+// cachedHeaderSuperseded reports whether a stored header must not be replayed
+// because this gateway already set the same rate-limit header for the current
+// request. The stored copy was captured from an earlier request, so adding it
+// sent every X-RateLimit-* header twice, once with a stale value.
+func cachedHeaderSuperseded(w http.ResponseWriter, k string) bool {
+	switch lower := strings.ToLower(k); {
+	case strings.HasPrefix(lower, "x-ratelimit-"), strings.HasPrefix(lower, "x-accountratelimit-"),
+		strings.HasPrefix(lower, "x-routeratelimit-"):
+		return len(w.Header().Values(k)) > 0
 	}
 	return false
 }

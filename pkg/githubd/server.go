@@ -30,6 +30,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	githubdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/githubd/v1"
@@ -116,6 +117,8 @@ type Server struct {
 	// the same loopback mux as /metrics + /webhooks/github.
 	ReadyFunc  func() bool
 	ReasonFunc func() string
+
+	rejectLog webhookRejectLog
 }
 
 // DefaultSocketPath is the ADR-015 / spec §11 location for the
@@ -390,15 +393,12 @@ func (s *Server) handleWebhookPush(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		observe(errors.New("githubd: webhook method not allowed"))
+		s.rejectWebhook(w, r, start, http.StatusMethodNotAllowed, webhookRejectMethod, "method not allowed")
 		return
 	}
 	body, err := readBody(w, r)
 	if err != nil {
-		s.Log.Warn("githubd webhook body read", "err", err)
-		http.Error(w, "payload too large", http.StatusRequestEntityTooLarge)
-		observe(err)
+		s.rejectWebhook(w, r, start, http.StatusRequestEntityTooLarge, webhookRejectTooLarge, "payload too large")
 		return
 	}
 	// Re-verify the HMAC. The gateway proxy already did this, but a
@@ -411,8 +411,7 @@ func (s *Server) handleWebhookPush(w http.ResponseWriter, r *http.Request) {
 		secret = webhookSecretFromHeader(r.Context(), r, s.SecretResolver)
 	}
 	if secret == nil || !verifyOrLog(s, body, sig, secret) {
-		http.Error(w, "signature verification failed", http.StatusUnauthorized)
-		observe(errors.New("githubd: webhook signature invalid"))
+		s.rejectWebhook(w, r, start, http.StatusUnauthorized, webhookRejectSignature, "signature verification failed")
 		return
 	}
 	eventType := r.Header.Get("X-GitHub-Event")
@@ -425,8 +424,16 @@ func (s *Server) handleWebhookPush(w http.ResponseWriter, r *http.Request) {
 	}
 	if eventType != "" && eventType != "issues" && eventType != "push" && eventType != "pull_request" &&
 		eventType != "installation" && eventType != "installation_repositories" && eventType != "repository" {
-		http.Error(w, "unsupported event", http.StatusBadRequest)
-		observe(errors.New("githubd: unsupported webhook event"))
+		// An authenticated event githubd does not route (check_suite,
+		// workflow_run, ... when the App subscribes to more than it needs) is
+		// not a failure: a 4xx would show as a failed delivery in GitHub's log
+		// and trip the delivery-health alert.
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"status":"ignored"}`))
+		if s.Ops != nil {
+			s.Ops.ObserveCode(op, webhookCodeIgnored, time.Since(start))
+		}
 		return
 	}
 	if eventType == "issues" {
@@ -437,15 +444,13 @@ func (s *Server) handleWebhookPush(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err != nil {
-			http.Error(w, "invalid issue callback", http.StatusBadRequest)
-			observe(err)
+			s.rejectWebhook(w, r, start, http.StatusBadRequest, webhookRejectInvalidPayload, "invalid issue callback")
 			return
 		}
 		if len(s.WebhookSecret) == 0 {
 			headerID, parseErr := strconv.ParseInt(r.Header.Get("X-GitHub-Installation-id"), 10, 64)
 			if parseErr != nil || headerID != event.InstallationID {
-				http.Error(w, "installation scope mismatch", http.StatusUnauthorized)
-				observe(issuetracker.ErrInvalidCallback)
+				s.rejectWebhook(w, r, start, http.StatusUnauthorized, webhookRejectScope, "installation scope mismatch")
 				return
 			}
 		}
@@ -454,11 +459,21 @@ func (s *Server) handleWebhookPush(w http.ResponseWriter, r *http.Request) {
 	if s.Deliveries != nil {
 		deliveryID := r.Header.Get("X-GitHub-Delivery")
 		if eventType == "" || deliveryID == "" {
-			http.Error(w, "missing GitHub event or delivery id", http.StatusBadRequest)
-			observe(errors.New("githubd: missing webhook metadata"))
+			s.rejectWebhook(w, r, start, http.StatusBadRequest, webhookRejectMetadata, "missing GitHub event or delivery id")
 			return
 		}
 		installationID, repoFullName, commitSHA := webhookDeliveryMetadata(eventType, body)
+		// Legacy mode picks the HMAC secret by the header's installation, so
+		// the body must name that installation for every event, not only
+		// issues: otherwise a holder of one installation's secret could sign
+		// a push naming another installation's repository.
+		if len(s.WebhookSecret) == 0 && installationID != 0 {
+			headerID, parseErr := strconv.ParseInt(r.Header.Get("X-GitHub-Installation-id"), 10, 64)
+			if parseErr != nil || headerID != installationID {
+				s.rejectWebhook(w, r, start, http.StatusUnauthorized, webhookRejectScope, "installation scope mismatch")
+				return
+			}
+		}
 		inserted, enqueueErr := s.Deliveries.Enqueue(r.Context(), WebhookDelivery{
 			DeliveryID:     deliveryID,
 			EventType:      eventType,
@@ -468,18 +483,16 @@ func (s *Server) handleWebhookPush(w http.ResponseWriter, r *http.Request) {
 			CommitSHA:      commitSHA,
 		})
 		if enqueueErr != nil {
-			s.Log.Error("githubd webhook enqueue", "err", enqueueErr)
-			http.Error(w, "internal", http.StatusInternalServerError)
-			observe(enqueueErr)
+			s.Log.Error("githubd webhook enqueue", "delivery_id", logsanitize.Field(deliveryID), "err", enqueueErr)
+			s.rejectWebhook(w, r, start, http.StatusInternalServerError, webhookRejectEnqueue, "internal")
 			return
 		}
 		// CI trusts only GitHub App deliveries. Legacy installation-scoped
 		// senders cannot authenticate another installation's payload identity.
 		if s.RecordCI != nil && len(s.WebhookSecret) > 0 {
 			if err := s.RecordCI(r.Context(), WebhookDelivery{DeliveryID: deliveryID, EventType: eventType, Payload: body}); err != nil {
-				s.Log.Warn("githubd CI source journal unavailable", "err", err)
-				http.Error(w, "CI source journal unavailable", http.StatusServiceUnavailable)
-				observe(err)
+				s.Log.Warn("githubd CI source journal unavailable", "delivery_id", logsanitize.Field(deliveryID), "err", err)
+				s.rejectWebhook(w, r, start, http.StatusServiceUnavailable, webhookRejectCIJournal, "CI source journal unavailable")
 				return
 			}
 		}
@@ -515,6 +528,65 @@ func (s *Server) handleWebhookPush(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := s.Service.HandlePushRequest(r.Context(), body)
 	s.writeWebhookResult(w, result, err, observe)
+}
+
+// Stable githubd_ops_total{op="webhook_push"} codes for deliveries the
+// listener refuses. Each names its fix: signature_invalid is a secret out of
+// sync with the GitHub App, too_large and invalid_payload are a sender bug,
+// enqueue_failed and ci_journal_unavailable are githubd's own database.
+const (
+	webhookCodeIgnored          = "ignored"
+	webhookRejectMethod         = "method_not_allowed"
+	webhookRejectTooLarge       = "too_large"
+	webhookRejectSignature      = "signature_invalid"
+	webhookRejectInvalidPayload = "invalid_payload"
+	webhookRejectMetadata       = "missing_metadata"
+	webhookRejectScope          = "scope_mismatch"
+	webhookRejectEnqueue        = "enqueue_failed"
+	webhookRejectCIJournal      = "ci_journal_unavailable"
+)
+
+// webhookRejectLogEvery bounds the rejected-delivery warning to one line per
+// code per interval.
+const webhookRejectLogEvery = time.Minute
+
+// webhookRejectLog rate-limits the rejected-delivery warning so a GitHub App
+// with a stale secret cannot flood the journal. Codes are the closed set
+// above, so the map stays small. The zero value is ready to use.
+type webhookRejectLog struct {
+	mu   sync.Mutex
+	last map[string]time.Time
+}
+
+func (l *webhookRejectLog) allow(code string, now time.Time) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if last, ok := l.last[code]; ok && now.Sub(last) < webhookRejectLogEvery {
+		return false
+	}
+	if l.last == nil {
+		l.last = make(map[string]time.Time)
+	}
+	l.last[code] = now
+	return true
+}
+
+// rejectWebhook answers a delivery the listener will not accept, counts it
+// under its stable code and logs the GitHub delivery identity so an operator
+// can find it in the App's delivery log. The body and signature are never
+// logged.
+func (s *Server) rejectWebhook(w http.ResponseWriter, r *http.Request, start time.Time, status int, code, msg string) {
+	http.Error(w, msg, status)
+	if s.Ops != nil {
+		s.Ops.ObserveCode("webhook_push", code, time.Since(start))
+	}
+	if s.Log == nil || !s.rejectLog.allow(code, time.Now()) {
+		return
+	}
+	s.Log.Warn("githubd: webhook delivery rejected", "code", code, "status", status,
+		"event", logsanitize.Field(r.Header.Get("X-GitHub-Event")),
+		"delivery_id", logsanitize.Field(r.Header.Get("X-GitHub-Delivery")),
+		"hook_id", logsanitize.Field(r.Header.Get("X-GitHub-Hook-ID")))
 }
 
 // webhookDeliveryMetadata extracts only the identity needed for a customer

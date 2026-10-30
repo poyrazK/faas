@@ -128,6 +128,17 @@ type ProjectsData struct {
 	Environments  []string
 	CSRFToken     string
 	Flash         string
+	// CalledBy lists, by service name, the Project services that declare
+	// they call that service.
+	CalledBy map[string][]string
+	// ServiceCalls are the measured calls between Project's services over
+	// ServiceCallsRange, from the service map (ADR-1131). ServiceCallsRange
+	// is empty while the map is not released to the account or its plan has
+	// no per-app metrics; ServiceCallsNote explains degraded telemetry.
+	ServiceCalls      []api.ServiceMapEdge
+	ServiceCallsRange string
+	ServiceCallsNote  string
+	HighErrorRatePct  float64
 }
 
 type EnvironmentGitOpsData struct {
@@ -991,6 +1002,9 @@ type AppEdgeRulesData struct {
 	// account (ADR-20261021220456 amendment 1); the card then offers no
 	// switch to turn it on.
 	AttackModeAvailable bool
+	// ChallengeAvailable is false while the browser challenge is not released
+	// to the account; the create form then offers no challenge kind.
+	ChallengeAvailable bool
 	// Events is the ADR-964 security-events section.
 	Events EdgeRuleEventsPageData
 	// WAFReview is the WAF false-positive review (ADR-831 amendment 13).

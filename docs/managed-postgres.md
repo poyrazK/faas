@@ -10,8 +10,9 @@ remaining an opt-in operator preview. The API exposes account-scoped database
 CRUD/status, restore-to-new-database, and workload bindings under
 `/v1/postgres/*`. Provider IDs, passwords, connection URLs, and secret
 ciphertext never cross that API boundary. `provisioning_enabled` must remain
-false until an isolated provider qualification is approved; reads and durable
-deletion reconciliation remain safe while provisioning is disabled.
+false until an isolated provider qualification, or in production an operator
+approval, opens it; reads and durable deletion reconciliation remain safe while
+provisioning is disabled.
 
 Plan entitlements are enforced before provider work and again at the atomic
 database reservation boundary:
@@ -38,8 +39,8 @@ operations and `postgres:manage` for create, restore, delete, and binding
 operations. Binding credentials are delivered through the existing app-secret
 surface after the binding saga reaches `ready`.
 
-Keep `provisioning_enabled` false outside an isolated provider qualification
-environment. The lifecycle service and background discovery also require all
+Outside production ([below](#production)), keep `provisioning_enabled` false
+except in an isolated provider qualification environment. The lifecycle service and background discovery also require all
 of the following runtime gates before they will provision: `FAAS_ENVIRONMENT`
 must be `staging`, `FAAS_MANAGED_POSTGRES_QUALIFIED=true`,
 `FAAS_MANAGED_POSTGRES_QUALIFIED_VERSION=8`,
@@ -57,6 +58,37 @@ keeps all qualified staging accounts eligible. Empty entries, entries longer
 than 255 characters, or lists larger than 100 accounts fail closed. Reads and
 all deletion/revocation paths remain available outside the allowlist so an
 operator can drain a canary safely before expanding it.
+
+### Production
+
+In `FAAS_ENVIRONMENT=production` no qualification artifact is used
+([ADR-20261028103115](adr/20261028103115-managed-postgres-production-provisioning.md)).
+Provisioning opens while all of the following hold:
+
+- `provisioning_enabled` is true;
+- usage metering (`usage.enabled`) is on;
+- the `fleet` block sets both `max_databases` and
+  `max_monthly_cost_millicents`;
+- an operator approval pins the single default backend:
+  `FAAS_MANAGED_POSTGRES_PRODUCTION_BACKEND` and
+  `FAAS_MANAGED_POSTGRES_PRODUCTION_FINGERPRINT`, approved from
+  `FAAS_MANAGED_POSTGRES_PRODUCTION_APPROVED_AT` until
+  `FAAS_MANAGED_POSTGRES_PRODUCTION_UNTIL` (RFC 3339, at most 90 days).
+
+`managed-postgres-qualify --check-production` prints the readiness codes and
+the configured backend's fingerprint without contacting the provider.
+
+The `managed-postgres` capability flag decides which accounts may create
+databases. The staging canary list is not read in production. When the
+approval ends, new databases, bindings, restores and resizes close; existing
+databases and credentials keep working.
+
+The fleet ceilings apply across every account:
+
+- At `max_databases`, new databases, restores and snapshot copies answer
+  `503 managed_postgres_new_databases_paused`.
+- Once this UTC month's provider cost reaches `max_monthly_cost_millicents`,
+  cost-raising resizes pause as well, until the next month.
 
 ## Provider health
 
@@ -799,6 +831,76 @@ older apid decodes that approval strictly. Re-run it after a Neon plan or API
 change. A shadow week whose logged quotas match the ledger then completes
 ADR-20261025094915 decision 10.
 
+### Storage pool
+
+A plan's storage is pooled per account (ADR-1430), but each database may grow
+to its own spec limit, so an account with several databases could store more
+than its pool. The same sweep also works out, for each Neon project, the
+`settings.quota.logical_size_bytes` that keeps the usage subject inside its
+pool (decision 9):
+
+- The pool is the plan's storage limit, or twice it with overage on.
+- What remains is the pool minus the subject's current logical size.
+- Neon applies the limit to each branch of a project, not to their total. A
+  restore is a branch in its source's project, so the limit is set so that
+  the project's branches together can grow by at most what remains. A project
+  with one database gets its size plus what remains.
+- The limit is never above the smallest spec limit among the project's
+  databases, and never zero, which is no limit to Neon.
+- At the pool, writes that would grow a database fail; reads, deletes and
+  `VACUUM` keep working. Nothing is suspended or deleted.
+
+`FAAS_MANAGED_POSTGRES_STORAGE_CAP_ENFORCEMENT` selects the mode:
+
+- `shadow` (the default) logs `managed postgres storage cap (shadow)` with the
+  limit it would set, and writes nothing.
+- `on` writes the limits that changed, and requires a storage pool
+  qualification (below). A limit the pool lowered reads as the database's
+  spec everywhere apid compares the two, so it is not `spec_mismatch`.
+- `off` does nothing.
+
+Limits written earlier stay on the projects in every mode, so switching to
+`off` or rolling back never lifts a write block. A limit is rewritten when it
+moves by at least 1/64 of the pool (at least 1 MiB), or when it starts or
+stops blocking a branch.
+
+The storage pass is counted apart from the compute sweep: a subject it cannot
+observe is logged and counted as `failed`, and never marks the compute sweep
+stale or holds back a compute cap email. Metrics:
+
+- `apid_managed_postgres_storage_cap_accounts{state}`
+- `apid_managed_postgres_storage_cap_limit_decisions_total{outcome}`
+- `apid_managed_postgres_storage_cap_enforcement_mode{mode}`
+
+### Qualifying the storage pool
+
+Neon's documentation disagrees on what happens at the limit: the API reference
+says writes fail and the compute keeps running, while the consumption-limits
+guide says the compute is suspended. Storage `on` refuses to start without a
+qualification that settles it, read from
+`FAAS_MANAGED_POSTGRES_STORAGE_CAP_QUALIFICATION_PATH`, made in staging with
+the same environment as the compute cap qualification:
+
+```bash
+managed-postgres-qualify --storage-cap > storage-cap-qualification.json
+```
+
+The run creates a disposable database, probes it, and deletes it. The probe:
+
+1. Writes about 2 MB and waits for Neon to report the branch's size growing.
+2. Sets the limit to that size, then retries a growing write until Neon
+   refuses it with its size-limit error (`53100`). A refused connection does
+   not count.
+3. Checks that reads work and, for a minute, that the compute is never
+   reported suspended.
+4. Raises the limit by 1 GiB and retries the write until it succeeds.
+5. Checks that the compute quota did not change, and puts the original limit
+   back.
+
+The command exits non-zero, and `on` refuses the file, if any observation
+fails. If the compute is suspended at the limit, the pool would stop
+databases rather than block writes, and must not be turned on as specified.
+
 ## Restore-to-new-database safety
 
 The control plane exposes restore as a new logical database intent. A restore
@@ -833,7 +935,7 @@ After restoring to a ready target, stage every runtime and migration binding
 for one app and scope, then request SQL verification:
 
 ```sh
-gregale postgres cutover prepare orders orders-copy api --scope production
+gregale postgres cutover prepare orders orders-copy api --env production
 gregale postgres cutover get CUTOVER_ID
 gregale postgres cutover verify CUTOVER_ID
 gregale postgres cutover get CUTOVER_ID
@@ -1174,12 +1276,17 @@ gregale postgres usage
 gregale postgres create orders --region eu --class development
 gregale postgres get DATABASE_ID
 gregale postgres restore DATABASE_ID --name orders-copy --point-in-time 2026-09-09T10:00:00Z
-gregale postgres bindings create DATABASE_ID --app APP_ID --scope production --environment-key DATABASE_URL
+gregale postgres bindings create DATABASE_ID --app APP_ID --env production --environment-key DATABASE_URL
 gregale postgres bindings list DATABASE_ID
 gregale postgres bindings rotate BINDING_ID --wait
 gregale postgres attach orders api --scope production --env DATABASE_URL
 gregale postgres delete DATABASE_ID
 ```
+
+`postgres delete` asks you to type the database's name: deletion removes the
+database and its point-in-time restore history at the provider and cannot be
+undone. Scripts pass `--yes` (or `--quiet`); JSON and `--non-interactive` mode
+require it.
 
 Binding rotation returns as soon as the new credential is active. Add
 `--wait` to poll until `rotation_pending` clears; the wait defaults to five

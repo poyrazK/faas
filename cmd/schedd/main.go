@@ -59,6 +59,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/sealdomain"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
+	agentstore "github.com/onebox-faas/faas/pkg/state/agents"
 	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/webhook"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -756,6 +757,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("schedd: load capability catalog: %w", err)
 	}
 	engine.WithCapabilities(capabilities)
+	// ADR-1155: on-demand profile capture outcomes, queue waits and the
+	// automatic captures schedd skips, for the capture alerts.
+	engine.WithProfileCaptureMetrics(wire.NewProfileCaptureMetrics(ops.Registry()))
 	runtimeKeys, runtimeApply := runtimeconfig.WithPlatformFlags([]string{runtimeconfig.KeyDataPlacement},
 		func(ctx context.Context, key string, value json.RawMessage, _ int64) error {
 			enabled, err := runtimeconfig.Bool(value)
@@ -1746,13 +1750,6 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log.Info("quiet pause ledger enabled (ADR-20261023171905)",
 			"flush_seconds", api.QuietPauseLedgerFlushSeconds)
 	}
-	if cfg.QuietPauseAdmission {
-		engine.Ledger().EnableQuietPauseAdmission(func(nodeID string) (map[string]struct{}, time.Time, bool) {
-			return reader.QuietPaused(nodeID, time.Now())
-		})
-		log.Info("quiet pause admission enabled (ADR-1151)",
-			"max_overcommit_percent", api.QuietPauseMaxVCPUOvercommitPercent)
-	}
 	if cfg.FrozenTier {
 		engine.EnableFrozenTier()
 		if cfg.FrozenTierApps {
@@ -1806,6 +1803,30 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			"owner_node_id", ownerNodeID,
 			"interval", fleetInterval)
 	}
+	// ADR-1151 quiet pause admission discounts this schedd's bookings that
+	// vmmd reports quiet-paused: on its own node from the local reader, on
+	// peer nodes from the owner fleet reader above.
+	if cfg.QuietPauseAdmission {
+		quietPaused := instancestats.QuietPausedAcross(reader, autoscaleReader, ownerNodeID)
+		engine.Ledger().EnableQuietPauseAdmission(func(nodeID string) (map[string]struct{}, time.Time, bool) {
+			return quietPaused(nodeID, time.Now())
+		})
+		log.Info("quiet pause admission enabled (ADR-1151)",
+			"max_overcommit_percent", api.QuietPauseMaxVCPUOvercommitPercent,
+			"peer_nodes", ownerNodeID != "")
+	}
+	// ADR 20261029151111 measured CPU admission reads instances' measured
+	// CPU the same way: own node locally, peer nodes from the fleet reader.
+	if cfg.MeasuredCPUAdmission {
+		measuredCPU := instancestats.MeasuredCPUAcross(reader, autoscaleReader, ownerNodeID)
+		engine.Ledger().EnableMeasuredCPUAdmission(func(nodeID string) (map[string]int, time.Time, bool) {
+			return measuredCPU(nodeID, time.Now())
+		})
+		log.Info("measured CPU admission enabled (ADR 20261029151111)",
+			"min_charge_percent", api.MeasuredCPUMinChargePercent,
+			"max_overcommit_percent", api.MeasuredCPUMaxOvercommitPercent,
+			"peer_nodes", ownerNodeID != "")
+	}
 	// Register the gRPC server with the Reader wired so the
 	// ListInstanceStats RPC (issue #279 / PR-B) can serve the
 	// per-instance CPU-µs snapshot to meterd. The reader is
@@ -1816,6 +1837,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithOwner(scheddgrpc.OwnerNodeID(ownerNodeID), store).
 		WithAppOwnership(engine.OwnsApp).
 		WithForeignReportRelay(engine)
+	// ADR-20261027090010 §1: agent runs stay off unless this schedd opts in.
+	agentRunner, err := agentRunnerFromEnv(engine, vmmRouter, os.Getenv)
+	if err != nil {
+		return err
+	}
+	if agentRunner != nil {
+		grpcHandler.WithAgentRunner(agentRunner)
+		log.Info("agent runs enabled", "nodes", os.Getenv("FAAS_SCHEDD_AGENT_RUN_NODES"))
+	}
 	// An empty NodeName is the single-box, Unix-socket posture. Passing a
 	// typed nil *PGNodeVerifier as the resolver still creates a non-nil
 	// interface and would require mTLS peer identity on that Unix socket.
@@ -2279,6 +2309,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 						}
 						orchestrator.WithOutboundExecutor(sched.NewWorkflowOutboundExecutor(store, workflowOutboundMinter))
 					}
+					// ADR-20261027090010 §9: automation agent steps admit agent runs
+					// and wait for them; agentd runs them.
+					if os.Getenv("FAAS_SCHEDD_AGENT_STEPS") == "1" {
+						orchestrator.WithAgents(agentstore.New(pool))
+						log.Info("schedd workflow agent steps enabled — FAAS_SCHEDD_AGENT_STEPS=1")
+					}
 					loop.WithWorkflowsDispatched(true).
 						WithWorkflowOrchestrator(orchestrator).
 						WithWorkflowRetention(sched.NewWorkflowRetention(store, log))
@@ -2290,6 +2326,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				log.Info("schedd workflows dispatch disabled — set FAAS_WORKFLOWS_ENABLED=1 to enable")
 			}
 		}
+	}
+	// ADR-20261027090010 §9: broker triggers that target an agent admit one agent
+	// run per record; agentd runs them. Without the switch those triggers
+	// are not polled.
+	if os.Getenv("FAAS_SCHEDD_AGENT_TRIGGERS") == "1" {
+		loop.WithTriggerAgents(agentstore.New(pool))
+		log.Info("schedd agent trigger targets enabled — FAAS_SCHEDD_AGENT_TRIGGERS=1")
 	}
 
 	// Issue #757 / ADR-100 (commits #13/#14): wire the HTTP transport
@@ -3070,9 +3113,11 @@ func (s schedFloorLedger) ResidentRAM() int {
 	return s.ledger.ResidentRAM()
 }
 
-// HeadroomMB implements floor.Ledger.
+// HeadroomMB implements floor.Ledger with the best single node's admission
+// headroom, the figure Admit places against; the fleet sum went negative
+// under measured admission and stopped every floor refill.
 func (s schedFloorLedger) HeadroomMB() int {
-	return s.ledger.HeadroomMB()
+	return s.ledger.AdmissionHeadroomMB()
 }
 
 // schedTargetsLedger (PR-C, issue #462) adapts *sched.NodeLedger

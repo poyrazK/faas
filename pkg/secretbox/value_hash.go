@@ -68,3 +68,25 @@ func ValueFingerprint(plaintext []byte, hostHMACKey []byte) (string, error) {
 	// (NOT 15 or 17) — the SDK validator pattern is ^[a-f0-9]{16}$.
 	return hex.EncodeToString(full[:8]), nil
 }
+
+// OwnerValueFingerprint is the value_hash shown to customers: the stored
+// ValueFingerprint re-keyed by the owning account or organization. The
+// stored hash is keyed by the one per-host key every tenant shares, so any
+// account could set a guessed value in its own app, read its fingerprint
+// and compare it with another owner's secret it could only view, turning
+// the field into a cross-tenant guess oracle (bug hunt 2026-10-28 H37).
+// Re-keying keeps equality within one owner (ADR-117's cross-environment
+// comparison) and makes fingerprints of different owners unrelated. Stored
+// hashes are unchanged, so internal comparisons keep working. It returns ""
+// when there is no stored hash or no key.
+func OwnerValueFingerprint(storedHash, ownerID string, hostHMACKey []byte) string {
+	if storedHash == "" || len(hostHMACKey) == 0 {
+		return ""
+	}
+	mac := hmac.New(sha256.New, hostHMACKey)
+	mac.Write([]byte("gregale/secret-value-hash/owner/v1\x00"))
+	mac.Write([]byte(ownerID))
+	mac.Write([]byte{0})
+	mac.Write([]byte(storedHash))
+	return hex.EncodeToString(mac.Sum(nil)[:8])
+}

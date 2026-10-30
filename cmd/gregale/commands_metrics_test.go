@@ -287,7 +287,7 @@ func TestCmdMetrics_Services_OmittedRangeDefersToServer(t *testing.T) {
 		"Calls:      12040 (errors 48, 0.40%)",
 		"p50=11.2ms p95=38.0ms",
 		"Woke:       9030 calls (75%) found the target parked",
-		"run `gregale wake-ahead public-api on` to restore billing while public-api wakes",
+		"run `gregale app wake-ahead public-api on` to restore billing while public-api wakes",
 		"Wake-ahead: 8 of 10 restores used",
 		"showing the 2 busiest edges",
 	} {
@@ -371,6 +371,31 @@ func TestCmdMetrics_Services_RejectsAccountAndSlug(t *testing.T) {
 			t.Errorf("metrics %v: usage should mention --services\nfull: %s", args, readStderr())
 		}
 		restore()
+	}
+}
+
+// An account without the service map preview gets its route answered as
+// absent; --services names the preview instead of printing only
+// "Not found: no such API route".
+func TestCmdMetrics_ServicesExplainsHiddenServiceMap(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = io.WriteString(w, `{"type":"about:blank","title":"Not found","status":404,"code":"not_found","detail":"no such API route"}`)
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	var stderr bytes.Buffer
+	oldErr := (*main.OsStderr)
+	(*main.OsStderr) = &stderr
+	t.Cleanup(func() { (*main.OsStderr) = oldErr })
+
+	if code := main.CmdMetrics([]string{"--services"}); code != 2 {
+		t.Fatalf("metrics --services = %d, want 2; stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "service map (--services) is a preview that is not enabled for this account") {
+		t.Fatalf("stderr = %q", stderr.String())
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/canary"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/safedeploy"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -43,6 +44,7 @@ type Loop struct {
 	// health heartbeat active while provider delivery is intentionally paused.
 	billingDisabled       bool
 	financialBudgets      bool
+	quietPauseRelease     func(platformflags.Subject) bool
 	notif                 Notifier
 	quotaWarningRequested func() bool
 	quotaWarningCommands  QuotaWarningCommands
@@ -112,6 +114,11 @@ type Loop struct {
 	// lastTickErr records the latest error for each timer. A failed billing
 	// pass must not leave /healthz green merely because the ticker fired.
 	lastTickErr map[string]string
+
+	// pricedTerms maps an account to the month and terms whose price
+	// snapshots recordFinancialPricing last confirmed stored. Only the sample
+	// goroutine touches it.
+	pricedTerms map[string]string
 }
 
 // NewLoop wires the loop. The interfaces are local to pkg/meter so the
@@ -247,6 +254,15 @@ func (l *Loop) WithCanaryProgression(p *canary.Progression) *Loop {
 	return l
 }
 
+// WithQuietPauseRelease decides which accounts quiet_pause_unbilled = "on"
+// subtracts paused seconds for (ADR-20261023171905): cmd/meterd passes the
+// quiet_pause_unbilled platform flag. Without it on mode applies to every
+// account.
+func (l *Loop) WithQuietPauseRelease(released func(platformflags.Subject) bool) *Loop {
+	l.quietPauseRelease = released
+	return l
+}
+
 // WithSafeDeploy attaches the safedeploy orchestrator tick
 // runtime (issue #976 / ADR-122 / SAFE-RELEASES-F). cmd/meterd
 // calls this when FAAS_SAFEDEPLOY_TOKEN is set so the goroutine
@@ -286,10 +302,12 @@ func (l *Loop) Run(ctx context.Context) error {
 	if mode, err := ParseQuietPauseMode(l.cfg.QuietPauseUnbilled); err != nil {
 		l.log.Warn("meter: quiet pause billing stays off", "err", err)
 	} else if mode != QuietPauseOff {
-		sampler.WithQuietPause(mode, l.ops.Registry())
-		l.log.Info("meter: quiet pause billing (ADR-20261023171905)", "mode", mode)
+		sampler.WithQuietPause(mode, l.ops.Registry()).WithQuietPauseRelease(l.quietPauseRelease)
+		l.log.Info("meter: quiet pause billing (ADR-20261023171905)", "mode", mode,
+			"per_account_flag", l.quietPauseRelease != nil)
 	}
 	pusher := NewPusher(l.store, l.pusher, l.log, l.now, l.ops)
+	finalLag := newUsageFinalLagGauge(l.ops.Registry())
 	// One result slot per possible worker, including monitoring and delivery;
 	// a cancelled Run must not strand workers trying to report their exit.
 	errc := make(chan error, 12)
@@ -325,8 +343,11 @@ func (l *Loop) Run(ctx context.Context) error {
 				l.log.Warn("meter: job sampler tick failed",
 					slog.String("err", jerr.Error()))
 			}
-			sampleErr := errors.Join(err, jerr, pricingErr)
-			return errors.Join(sampleErr, l.recordFinancialSample(c, sampler, observedAt, sampleErr))
+			sampleErr := errors.Join(err, jerr)
+			if first := sampler.FirstIncompleteMinute(); !first.IsZero() {
+				finalLag.Set(observedAt.Sub(first).Seconds())
+			}
+			return errors.Join(sampleErr, pricingErr, l.recordFinancialSample(c, sampler, observedAt, sampleErr, pricingErr))
 		}, "sample")
 	}()
 	go func() { errc <- l.runQuotaTicks(ctx) }()

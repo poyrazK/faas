@@ -1,13 +1,15 @@
 # ADR-20261025150000 · Invoke hooks skip guests without an extension
 
-- **Status:** Proposed
+- **Status:** Proposed. Amended 2026-10-27: the switch is on by default
+  (see "Amendment 2026-10-27").
 - **Date:** 2026-10-25
 - **Amends:** the extension lifecycle contract in `pkg/extension` (wired for
   the invoke phase by #3003): one new guest acknowledgement value and a host
   backoff. No customer-facing change for apps without an extension.
 - **Switch:** vmmd `invoke_hook_backoff` / `FAAS_INVOKE_HOOK_BACKOFF`,
-  default off. The guest-side ack ships unconditionally; with the switch off
-  vmmd keeps sending every invoke event, as before.
+  default on since 2026-10-27 (default off before). The guest-side ack ships
+  unconditionally; with the switch off vmmd keeps sending every invoke event,
+  as before.
 
 ## Context
 
@@ -95,3 +97,23 @@ The contract calls lifecycle events best-effort hints.
   100 req/s measurement on the same app with its instance on that node. The VM cgroup should fall from ~5.7 to about
   1.3 ms per request, KVM exits should drop by about 110 per request, and vmmd's
   CPU per request should drop by about 12%.
+
+## Amendment 2026-10-27: on by default
+
+The production check above ran on rc.297 on 2026-10-27, with the switch on
+in compute-1's (fsn-2) `vmmd.toml`: k6 at 50 req/s for 120 s (6,000
+requests) against `h10-hello-node`, CPU read from the cgroups' `cpu.stat`.
+The VM cgroup used 19 s instead of 46 s (about 2.1 instead of 6.5 ms per
+request) and vmmd 9.9 s instead of 12.4 s. The app's snapshot post-dated the
+rc.297 guest-init that sends ack `16`; guests on older snapshots keep acking
+as before and are not backed off, so they lose nothing.
+
+vmmd's default is now on (`cmd/vmmd/config.go`). `invoke_hook_backoff =
+false` in `vmmd.toml` or `FAAS_INVOKE_HOOK_BACKOFF=false` turns it off; on a
+managed node, use a systemd drop-in, since the TOML is re-rendered.
+
+Why the binary and not the node: release rollouts run `gregalectl manifest
+render` on every compute node (`deploy/ansible/node_join.yml`), which rewrites
+`/etc/faas/vmmd.toml` and `/etc/faas/schedd.toml` from the manifest. A
+switch set by hand in those files is lost at the next rollout and is never
+present on a new node; a default in the binary reaches both the same way.

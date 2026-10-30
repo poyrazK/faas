@@ -2,5 +2,15 @@
 # customer outbound credentials with the outbound seal-domain identity. The
 # fleet identity stays in the base unit until the domain re-seal completes.
 [Service]
+{% if faas_seal_domain_outbound_contracted | bool %}
+# Contracted: an empty LoadCredential= drops every credential loaded before
+# this drop-in, the base unit's fleet identity included, so outboundd holds
+# only the domain identity below. No other drop-in loads one for outboundd.
+LoadCredential=
+UnsetEnvironment=FAAS_FLEET_AGE_IDENTITY_PATH
+{% endif %}
 LoadCredential=faas_seal_domain_outbound:/etc/faas/secrets/domains/outbound.age
+{% if faas_seal_domain_outbound_previous_identity_src | length > 0 %}
+LoadCredential=faas_seal_domain_outbound_previous:/etc/faas/secrets/domains/outbound.age.previous
+{% endif %}
 Environment=FAAS_SEAL_DOMAIN_OUTBOUND_IDENTITY_PATH=%d/faas_seal_domain_outbound

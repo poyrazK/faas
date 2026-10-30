@@ -117,7 +117,9 @@ func cmdLogin(args []string) int {
 		return printErr("Could not start login", err)
 	}
 
+	_, _ = fmt.Fprintf(osStdout, "Your code: %s\n", codeResp.Code)
 	_, _ = fmt.Fprintf(osStdout, "Opening %s in your browser...\n", codeResp.URL)
+	_, _ = fmt.Fprintln(osStdout, "  Type the code there to approve this terminal. Never type a code someone sent you.")
 	_, _ = fmt.Fprintln(osStdout, "  (or visit that URL and paste the code below)")
 
 	// Best-effort browser open. On a sandboxed CI box the helper
@@ -143,6 +145,15 @@ func cmdLogin(args []string) int {
 	}
 	if len(pasted) != 8 {
 		return printErr("Invalid login code", fmt.Errorf("code should be 8 characters (XXXX-NNNN), got %d; run gregale login again", len(pasted)))
+	}
+	// This terminal's own code is exchanged with the device code only it
+	// holds; the server no longer accepts the short code for it (H67).
+	if pasted == strings.ToUpper(strings.ReplaceAll(codeResp.Code, "-", "")) {
+		resp, err := c.ExchangeCliAuthLogin(ctx, codeResp)
+		if err != nil {
+			return printErr("Login failed", err)
+		}
+		return finalizeLogin(ctx, c, resp.Plaintext, resp.KeyID, resp.Account)
 	}
 	return exchangeOnce(ctx, c, pasted)
 }
@@ -170,11 +181,8 @@ func waitForApproval(ctx context.Context, c *Client, codeResp api.CliAuthCodeRes
 			return printErr("Login interrupted", ctx.Err())
 		case <-time.After(backoff):
 		}
-		// Strip the dash so the server's normalizeCliAuthCode
-		// doesn't have to. The server is case-insensitive so
-		// uppercase is purely cosmetic on the wire.
-		normalized := strings.ReplaceAll(codeResp.Code, "-", "")
-		resp, err := c.ExchangeCliAuthCode(ctx, normalized)
+		// The device code when the server issued one, else the code.
+		resp, err := c.ExchangeCliAuthLogin(ctx, codeResp)
 		if err == nil {
 			return finalizeLogin(ctx, c, resp.Plaintext, resp.KeyID, resp.Account)
 		}
@@ -618,7 +626,7 @@ func submitsDeployments(path string) bool {
 // server returned a Problem when the request never reached it.
 func transportProblem(err error) api.Problem {
 	detail := "The Gregale API could not be reached."
-	hint := "Check your network connection and FAAS_API endpoint; run gregale profile check."
+	hint := "Check your network connection and FAAS_API endpoint; run gregale config profile check."
 	canceledHint := "Canceling the CLI request does not guarantee the server stopped it; check the result before retrying a change."
 	if submitsDeployments(invokedCommandPath) {
 		hint += " Inspect deployment status before retrying a deploy."
@@ -640,10 +648,10 @@ func transportProblem(err error) api.Problem {
 		detail = "The request timed out before the Gregale API responded."
 	case errors.As(err, &dns):
 		detail = "The Gregale API hostname could not be resolved."
-		hint = "Check the selected profile's endpoint, FAAS_API override, and DNS connectivity with gregale profile check."
+		hint = "Check the selected profile's endpoint, FAAS_API override, and DNS connectivity with gregale config profile check."
 	case errors.As(err, &unknownCA) || errors.As(err, &invalidCertificate) || errors.As(err, &hostname) || errors.As(err, &tlsHeader):
 		detail = "The Gregale API TLS connection could not be verified or established."
-		hint = "Check the HTTPS endpoint and trusted certificates with gregale profile check."
+		hint = "Check the HTTPS endpoint and trusted certificates with gregale config profile check."
 	default:
 		cause := err
 		var urlErr *url.Error

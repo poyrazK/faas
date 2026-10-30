@@ -66,10 +66,12 @@ type Reconciler struct {
 	mfaRecoveryAlertEnabled     func() bool
 	mfaDisabledAlertEnabled     func() bool
 	deploymentFailedEnabled     func() bool
+	agentRunDeliveredEnabled    func() bool
 	subscriptionEndedEnabled    func() bool
 	quotaWarningEnabled         func() bool
 	nonpaymentDeletionEnabled   func() bool
 	accountSuspendedEnabled     func() bool
+	managedPostgresCapEnabled   func() bool
 	accountRestoredEnabled      func() bool
 	paymentFailedEnabled        func() bool
 	mfaEnabledAlertEnabled      func() bool
@@ -100,6 +102,8 @@ func (s *Reconciler) templateEnabled(template string) bool {
 		return s.mfaDisableEnabled != nil && s.mfaDisableEnabled()
 	case DeploymentFailedTemplate:
 		return s.deploymentFailedEnabled != nil && s.deploymentFailedEnabled()
+	case AgentRunDeliveredTemplate:
+		return s.agentRunDeliveredEnabled != nil && s.agentRunDeliveredEnabled()
 	case SubscriptionEndedTemplate:
 		return s.subscriptionEndedEnabled != nil && s.subscriptionEndedEnabled()
 	case QuotaWarningTemplate:
@@ -108,6 +112,8 @@ func (s *Reconciler) templateEnabled(template string) bool {
 		return s.nonpaymentDeletionEnabled != nil && s.nonpaymentDeletionEnabled()
 	case AccountSuspendedTemplate:
 		return s.accountSuspendedEnabled != nil && s.accountSuspendedEnabled()
+	case ManagedPostgresCapTemplate:
+		return s.managedPostgresCapEnabled != nil && s.managedPostgresCapEnabled()
 	case AccountRestoredTemplate:
 		return s.accountRestoredEnabled != nil && s.accountRestoredEnabled()
 	case PaymentFailedTemplate:
@@ -312,6 +318,12 @@ func (s *Reconciler) WithAccountSuspended(enabled func() bool) *Reconciler {
 	return &copy
 }
 
+func (s *Reconciler) WithManagedPostgresCap(enabled func() bool) *Reconciler {
+	copy := *s
+	copy.managedPostgresCapEnabled = enabled
+	return &copy
+}
+
 func (s *Reconciler) WithNonpaymentDeletion(enabled func() bool) *Reconciler {
 	copy := *s
 	copy.nonpaymentDeletionEnabled = enabled
@@ -333,5 +345,11 @@ func (s *Reconciler) WithSubscriptionEnded(enabled func() bool) *Reconciler {
 func (s *Reconciler) WithDeploymentFailed(enabled func() bool) *Reconciler {
 	copy := *s
 	copy.deploymentFailedEnabled = enabled
+	return &copy
+}
+
+func (s *Reconciler) WithAgentRunDelivered(enabled func() bool) *Reconciler {
+	copy := *s
+	copy.agentRunDeliveredEnabled = enabled
 	return &copy
 }

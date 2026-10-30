@@ -33,6 +33,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"gopkg.in/yaml.v3"
 )
@@ -175,6 +176,10 @@ type Manifest struct {
 	// (s3-gatewayd) under the playbooks (ADR 20261025111015). Absent keeps
 	// the gateway unmanaged; strict fleet verify then fails if one runs.
 	ObjectStorage ObjectStorage `yaml:"object_storage,omitempty"`
+
+	// LogArchive is the bucket customer logs are archived to. Absent leaves
+	// each host's archive credential envelope untouched.
+	LogArchive LogArchive `yaml:"log_archive,omitempty"`
 
 	// WorkloadIdentity turns on workload-identity tokens (ADR-1141): the
 	// renderer hands its source directory to every control-plane and
@@ -553,6 +558,14 @@ type DaemonConfig struct {
 	// central counters are spent from local leases instead of one Postgres
 	// consult per request. Omitted renders false. Requires central mode.
 	RateLimitLease *bool `yaml:"ratelimit_lease,omitempty"`
+
+	// FrozenTierEarlyFreezeAfterS is schedd's
+	// frozen_tier_early_freeze_after_s (ADR-20261021215353): freeze a quiet
+	// between_requests instance this many seconds after its last request.
+	// Omitted renders nothing, which keeps schedd's default (0, off); 0
+	// turns it off explicitly, otherwise api.FrozenEarlyFreezeMinSeconds-
+	// api.FrozenEarlyFreezeMaxSeconds. It needs schedd's frozen tier on.
+	FrozenTierEarlyFreezeAfterS *int `yaml:"frozen_tier_early_freeze_after_s,omitempty"`
 
 	// GatewaySynthTarget is schedd's optional remote gatewayd-internal
 	// synthesis endpoint. It is separate from Outbound because schedd has
@@ -1101,6 +1114,7 @@ func (m *Manifest) Validate() Errors {
 	errs = append(errs, m.PKI.validate()...)
 	errs = append(errs, m.Egress.validate(m.Overlay.CIDR)...)
 	errs = append(errs, m.ObjectStorage.validate()...)
+	errs = append(errs, m.LogArchive.validate()...)
 	errs = append(errs, m.WorkloadIdentity.validate()...)
 	if len(errs) > 0 {
 		return errs
@@ -1460,6 +1474,14 @@ func (d *Daemons) validate() Errors {
 				errs = append(errs, Error{path + ".ratelimit_lease", "is only valid for gatewayd_internal"})
 			} else if *dc.RateLimitLease && dc.RateLimitMode != "" && dc.RateLimitMode != "central" {
 				errs = append(errs, Error{path + ".ratelimit_lease", fmt.Sprintf("requires ratelimit_mode central, got %q", dc.RateLimitMode)})
+			}
+		}
+		if dc.FrozenTierEarlyFreezeAfterS != nil {
+			if name != "schedd" {
+				errs = append(errs, Error{path + ".frozen_tier_early_freeze_after_s", "is only valid for schedd"})
+			} else if v := *dc.FrozenTierEarlyFreezeAfterS; v != 0 && (v < api.FrozenEarlyFreezeMinSeconds || v > api.FrozenEarlyFreezeMaxSeconds) {
+				errs = append(errs, Error{path + ".frozen_tier_early_freeze_after_s",
+					fmt.Sprintf("must be 0 or %d-%d, got %d", api.FrozenEarlyFreezeMinSeconds, api.FrozenEarlyFreezeMaxSeconds, v)})
 			}
 		}
 	}

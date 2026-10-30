@@ -27,6 +27,8 @@ type consentView struct {
 	Writes       bool
 	Native       bool
 	LoginURL     string
+	// SameTab: the hosted bridge sends the browser to sign-in and back.
+	SameTab      bool
 	Apps         []consentApp
 	Environments []EnvironmentGrant
 }
@@ -42,9 +44,12 @@ func (r *remoteServer) authorize(w http.ResponseWriter, req *http.Request) {
 		oauthError(w, 400, "invalid_request", "Registered redirect URI, exact resource, supported scopes, code response type and S256 PKCE are required")
 		return
 	}
-	if len(r.requests) >= r.capacity() {
-		oauthError(w, 429, "temporarily_unavailable", "Authorization capacity reached")
+	if !r.authorizeAllowedLocked(req) {
+		oauthError(w, 429, "temporarily_unavailable", "Too many authorization requests from this address; retry later")
 		return
+	}
+	for len(r.requests) >= r.capacity() {
+		r.evictOldestRequestLocked()
 	}
 	id, csrf, cookie, err := newFlowTokens()
 	if err != nil {
@@ -54,6 +59,7 @@ func (r *remoteServer) authorize(w http.ResponseWriter, req *http.Request) {
 	flow := &authorizationRequest{ID: id, ClientID: c.ID, Redirect: query.Get("redirect_uri"), State: query.Get("state"), Challenge: query.Get("code_challenge"), Scopes: scopes, CSRFHash: tokenHash(csrf), CookieHash: tokenHash(cookie), Expires: time.Now().Add(oauthFlowTTL)}
 	r.requests[id] = flow
 	http.SetCookie(w, &http.Cookie{Name: flowCookieName, Value: cookie, Path: "/", Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: int(oauthFlowTTL.Seconds())})
+	r.opts.Telemetry.consentStep("started")
 	r.renderConsent(w, flow, csrf, "")
 }
 
@@ -77,7 +83,7 @@ func (r *remoteServer) renderConsent(w http.ResponseWriter, flow *authorizationR
 		oauthError(w, 400, "access_denied", "Client registration expired; start a new connection")
 		return
 	}
-	view := consentView{ConsentAction: r.issuer + "/oauth/consent", Capabilities: describeCapabilities(flow.Capabilities), Client: client.Name, Redirect: flow.Redirect, APIBase: r.opts.APIBase, Account: account, RequestID: flow.ID, CSRF: csrf, Writes: slices.Contains(flow.Scopes, scopeWrite), Native: r.opts.Onboarding == "browser", LoginURL: flow.NativeURL}
+	view := consentView{ConsentAction: r.issuer + "/oauth/consent", Capabilities: describeCapabilities(flow.Capabilities), Client: client.Name, Redirect: flow.Redirect, APIBase: r.opts.APIBase, Account: account, RequestID: flow.ID, CSRF: csrf, Writes: slices.Contains(flow.Scopes, scopeWrite), Native: r.opts.Onboarding == "browser", LoginURL: flow.NativeURL, SameTab: r.opts.Hosted}
 	if g := r.grants[flow.GrantID]; g != nil {
 		view.Environments = g.availableEnvironments
 		for _, app := range g.availableApps {
@@ -117,6 +123,7 @@ func (r *remoteServer) consent(w http.ResponseWriter, req *http.Request) {
 	defer r.mu.Unlock()
 	switch req.PostForm.Get("decision") {
 	case "deny":
+		r.opts.Telemetry.consentStep("denied")
 		r.finishAuthorization(w, req, flow, "", "access_denied")
 	case "approve":
 		r.approveLocked(w, req, flow)
@@ -139,7 +146,7 @@ func (r *remoteServer) verifyAccount(w http.ResponseWriter, req *http.Request, f
 		oauthError(w, 401, "access_denied", "Gregale could not verify this account credential")
 		return
 	}
-	r.prepareAccount(w, req, flow, client, account.ID, time.Now().Add(oauthGrantTTL))
+	r.prepareAccount(w, req, flow, client, account.ID, time.Now().Add(oauthGrantTTL), req.PostForm.Get("csrf"), false)
 }
 
 func (r *remoteServer) approveLocked(w http.ResponseWriter, req *http.Request, flow *authorizationRequest) {
@@ -168,7 +175,8 @@ func (r *remoteServer) approveLocked(w http.ResponseWriter, req *http.Request, f
 		oauthError(w, 400, "invalid_request", "Regression triage requires explicit write scope and diagnostic access to each selected app")
 		return
 	}
-	server, management, err := newManagementServer(g.client, Options{Lifecycle: r.opts.Lifecycle, Telemetry: r.opts.Telemetry, auditLogger: r.opts.AuditLogger, accountID: g.accountID, grantID: g.id, AllowedApps: apps, Environments: environments, planStore: r.opts.StateStore, planNamespace: g.id, Profile: "oauth", APIBase: r.opts.APIBase, Version: r.opts.Version, Timeout: r.opts.Timeout, Token: g.client.Token(), AllowWrites: r.opts.AllowWrites && slices.Contains(g.scopes, scopeWrite), Toolsets: r.opts.Toolsets, Capabilities: g.capabilities, LocalCLI: r.grantCLI(g.client.Token()), uploads: r.uploads})
+	// Building the server here checks the consent; the first request uses it.
+	server, management, err := newManagementServer(g.client, r.grantOptions(g, apps, environments))
 	if err != nil {
 		oauthError(w, 500, "server_error", "Could not prepare account tools")
 		return
@@ -182,13 +190,18 @@ func (r *remoteServer) approveLocked(w http.ResponseWriter, req *http.Request, f
 		oauthError(w, 429, "temporarily_unavailable", "Authorization code capacity reached")
 		return
 	}
-	g.server, g.management = server, management
+	g.server, g.management, g.approved, g.lastUsed = server, management, true, time.Now()
 	g.allowedApps, g.environments = apps, environments
-	g.expires = minTime(g.credentialExpires, time.Now().Add(oauthGrantTTL))
+	lifetime := oauthGrantTTL
+	if g.renewable {
+		lifetime = maxConnectionLifetime
+	}
+	g.expires = minTime(g.credentialExpires, time.Now().Add(lifetime))
 	g.availableApps = nil
 	g.availableEnvironments = nil
 	r.codes[tokenHash(code)] = &authorizationCode{ClientID: flow.ClientID, Redirect: flow.Redirect, Challenge: flow.Challenge, GrantID: g.id, Expires: time.Now().Add(oauthCodeTTL)}
 	r.audit("mcp.grant.approved", g)
+	r.opts.Telemetry.consentStep("approved")
 	r.finishAuthorization(w, req, flow, code, "")
 }
 

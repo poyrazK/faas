@@ -90,6 +90,9 @@ func TestSessionRoutesRefuseMFAPendingCookies(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	// Wire the agent API (ADR-20261027090010) so its MFA enforcement stays
+	// covered; without a capability gate the agents capability is on.
+	(*e.Srv()).ConfigureAgentsForTest()
 	// Outside the realtime preview rollout those routes answer the
 	// missing-route 404 before auth (ADR-20261019102657). Open it so their MFA
 	// enforcement stays covered.
