@@ -148,7 +148,7 @@ func (l *Loop) recordFinancialSample(ctx context.Context, sampler *Sampler, now 
 	// delays its record; leaving it unrecorded held provider delivery for
 	// every account until it aged out of the catch-up window
 	// (ADR-20261029180000). compute_complete only ever turns true.
-	newest := now.UTC().Truncate(time.Minute).Add(-time.Minute)
+	newest := sampler.newestClosedMinute(now.UTC())
 	var errs []error
 	newestRecorded := false
 	if pricingErr == nil {

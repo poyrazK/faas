@@ -98,6 +98,17 @@ type QuotaParams struct {
 func (p QuotaParams) Enforce(ctx context.Context, account state.Account, usedGB float64, at time.Time) (QuotaAction, error) {
 	store, notif, schedd, mailer, log := p.Store, p.Notif, p.Parker, p.Mailer, p.Log
 	res := CheckQuota(account.Plan, usedGB)
+	if res.Action == "warn" {
+		// A paid month bills overage above the largest allowance its plans
+		// granted (ADR-1162), so it warns only above that allowance too
+		// (ADR-20261030120000). Free keeps its own allowance: its hard stop is
+		// what the financial model prices, whatever plan the month began on.
+		quota, err := monthQuotaGB(ctx, store, account, at)
+		if err != nil {
+			return QuotaAction{AccountID: account.ID, Plan: account.Plan}, err
+		}
+		res = checkQuotaAgainst(account.Plan, usedGB, quota)
+	}
 	act := QuotaAction{
 		AccountID: account.ID, Plan: account.Plan,
 		Action: res.Action, UsedGB: res.UsedGB, QuotaGB: res.QuotaGB,
@@ -240,4 +251,22 @@ func notifyAccountAppLifecycle(ctx context.Context, store state.Store, notif Not
 			log.Warn("meter: account lifecycle notify app", "account", accountID, "app", app.ID, "kind", kind, "err", err)
 		}
 	}
+}
+
+// monthQuotaGB is a paid account's quota ladder allowance in GB-RAM-hours:
+// the largest compute allowance the month's recorded plans granted, never
+// less than the current plan's (the same allowance the provider pusher and
+// the spend cap remove). Stores without plan history keep the current plan's.
+func monthQuotaGB(ctx context.Context, store state.Store, account state.Account, at time.Time) (int, error) {
+	current := account.Plan.PlanIncludedGBHours()
+	history, ok := store.(state.FinancialStore)
+	if !ok {
+		return current, nil
+	}
+	snapshots, err := history.ListFinancialPriceSnapshots(ctx, account.ID, AccountMonthKey(at))
+	if err != nil {
+		return 0, fmt.Errorf("meter: quota plan history for %s: %w", account.ID, err)
+	}
+	granted := state.MonthComputeIncludedMBSeconds(account.Plan, snapshots, at) / api.SecondsPerGBHour
+	return max(current, int(granted)), nil
 }
