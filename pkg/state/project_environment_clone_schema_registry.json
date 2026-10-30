@@ -5223,6 +5223,19 @@
     }
   },
   {
+    "table": "deployment_sidecar_env_reseals",
+    "columns": [
+      "ciphertext",
+      "deployment_id",
+      "env_key",
+      "kid",
+      "resealed_at",
+      "sidecar_name",
+      "source_sha256"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "deployment_sidecar_layers",
     "columns": [
       "bytes",
