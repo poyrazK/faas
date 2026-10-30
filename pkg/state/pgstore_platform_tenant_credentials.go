@@ -18,11 +18,13 @@ func (s *PgStore) ApplyPlatformTenantCredentials(ctx context.Context, in ApplyPl
 		return ApplyPlatformTenantCredentialsResult{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var accountID string
-	if err := tx.QueryRow(ctx, `select id from accounts where id = $1::uuid for update`, in.AccountID).Scan(&accountID); err != nil {
-		return ApplyPlatformTenantCredentialsResult{}, applyNoRows(err)
+	// The billing subjects' locks serialize every issue that spends their
+	// allowances, on this route and the apps' own consumer routes.
+	subjects, err := lockPlatformTenantKeySubjectsTx(ctx, tx, in)
+	if err != nil {
+		return ApplyPlatformTenantCredentialsResult{}, err
 	}
-	result, err := planPlatformTenantCredentials(ctx, tx, in)
+	result, err := planPlatformTenantCredentials(ctx, tx, in, subjects)
 	if err != nil || in.DryRun {
 		return result, err
 	}
@@ -35,7 +37,8 @@ func (s *PgStore) ApplyPlatformTenantCredentials(ctx context.Context, in ApplyPl
 	return result, nil
 }
 
-func planPlatformTenantCredentials(ctx context.Context, tx pgx.Tx, in ApplyPlatformTenantCredentialsParams) (ApplyPlatformTenantCredentialsResult, error) {
+func planPlatformTenantCredentials(ctx context.Context, tx pgx.Tx, in ApplyPlatformTenantCredentialsParams,
+	subjects map[string]platformTenantKeySubject) (ApplyPlatformTenantCredentialsResult, error) {
 	result := ApplyPlatformTenantCredentialsResult{TenantID: in.TenantID, DryRun: in.DryRun,
 		Keys: make([]PlatformTenantCredentialResult, 0, len(in.Keys)+len(in.RevokeKeyIDs))}
 	var status string
@@ -45,22 +48,6 @@ func planPlatformTenantCredentials(ctx context.Context, tx pgx.Tx, in ApplyPlatf
 	}
 	if len(in.Keys) > 0 && status != PlatformTenantActive {
 		return result, ErrConflict
-	}
-	var accountCount int
-	if err := tx.QueryRow(ctx, `select count(*) from consumer_keys where account_id = $1::uuid and revoked_at is null`,
-		in.AccountID).Scan(&accountCount); err != nil {
-		return result, err
-	}
-	appCounts := make(map[string]int)
-	loadAppCount := func(appID string) (int, error) {
-		if count, ok := appCounts[appID]; ok {
-			return count, nil
-		}
-		var count int
-		err := tx.QueryRow(ctx, `select count(*) from consumer_keys where account_id = $1::uuid and app_id = $2::uuid and revoked_at is null`,
-			in.AccountID, appID).Scan(&count)
-		appCounts[appID] = count
-		return count, err
 	}
 	revoking := make(map[string]bool, len(in.RevokeKeyIDs))
 	for _, id := range in.RevokeKeyIDs {
@@ -77,12 +64,6 @@ func planPlatformTenantCredentials(ctx context.Context, tx pgx.Tx, in ApplyPlatf
 		item := PlatformTenantCredentialResult{Key: key, Action: "unchanged"}
 		if key.RevokedAt == nil {
 			item.Action = "revoke"
-			accountCount--
-			count, err := loadAppCount(key.AppID)
-			if err != nil {
-				return result, err
-			}
-			appCounts[key.AppID] = count - 1
 		}
 		result.Keys = append(result.Keys, item)
 	}
@@ -122,12 +103,6 @@ func planPlatformTenantCredentials(ctx context.Context, tx pgx.Tx, in ApplyPlatf
 			key = ConsumerKey{AccountID: in.AccountID, AppID: consumer.AppID, ConsumerID: consumer.ID,
 				Name: wanted.Name, Prefix: wanted.Prefix, Hash: append([]byte(nil), wanted.Hash...),
 				Scopes: append([]string(nil), wanted.Scopes...), ExpiresAt: wanted.ExpiresAt}
-			accountCount++
-			count, err := loadAppCount(consumer.AppID)
-			if err != nil {
-				return result, err
-			}
-			appCounts[consumer.AppID] = count + 1
 			result.Keys = append(result.Keys, PlatformTenantCredentialResult{Key: key, Action: "create"})
 		} else if err != nil {
 			return result, err
@@ -138,21 +113,12 @@ func planPlatformTenantCredentials(ctx context.Context, tx pgx.Tx, in ApplyPlatf
 			result.Keys = append(result.Keys, PlatformTenantCredentialResult{Key: key, Action: "unchanged"})
 		}
 	}
-	hasCreate := false
-	createdByApp := make(map[string]bool)
-	for _, item := range result.Keys {
-		if item.Action == "create" {
-			hasCreate = true
-			createdByApp[item.Key.AppID] = true
-		}
+	subjectKept, appKept, err := countPlatformTenantKeysKeptTx(ctx, tx, subjects, result)
+	if err != nil {
+		return result, err
 	}
-	if hasCreate && accountCount > in.AccountLimit {
-		return result, &PlatformTenantCredentialQuotaError{Scope: "account", Limit: in.AccountLimit, Observed: accountCount - 1}
-	}
-	for appID, count := range appCounts {
-		if createdByApp[appID] && count > in.AppLimit {
-			return result, &PlatformTenantCredentialQuotaError{Scope: "app", Limit: in.AppLimit, Observed: count - 1}
-		}
+	if err := checkPlatformTenantKeyQuota(result, subjects, subjectKept, appKept); err != nil {
+		return result, err
 	}
 	if in.EnforceDelegationPolicy {
 		policy, err := lockPlatformTenantCredentialPolicy(ctx, tx, in.AccountID, in.TenantID)
