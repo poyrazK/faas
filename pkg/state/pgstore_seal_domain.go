@@ -245,6 +245,48 @@ func (s *PgStore) ResealGithubWebhookSecret(ctx context.Context, installationID 
 	return tag.RowsAffected() == 1, nil
 }
 
+// GithubInstallTokenSealed is a stored GitHub install token that has not
+// expired yet, as sealed.
+type GithubInstallTokenSealed struct {
+	AccountID      string
+	InstallationID int64
+	Sealed         []byte
+}
+
+// ListUnexpiredGithubInstallTokens pages, in (account, installation) order
+// after the cursor, through the install tokens githubd may still open: a
+// githubd rehydrates an unexpired token from its row rather than mint a new
+// one. An empty afterAccountID starts at the beginning.
+func (s *PgStore) ListUnexpiredGithubInstallTokens(ctx context.Context, afterAccountID string, afterInstallationID int64, limit int) ([]GithubInstallTokenSealed, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 1000
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT account_id::text, installation_id, sealed_install_token
+		  FROM github_installations
+		 WHERE token_expires_at > now()
+		   AND (account_id::text, installation_id) > ($1, $2)
+		 ORDER BY account_id::text, installation_id
+		 LIMIT $3
+	`, afterAccountID, afterInstallationID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("state: list unexpired github install tokens: %w", err)
+	}
+	defer rows.Close()
+	var out []GithubInstallTokenSealed
+	for rows.Next() {
+		var t GithubInstallTokenSealed
+		if err := rows.Scan(&t.AccountID, &t.InstallationID, &t.Sealed); err != nil {
+			return nil, fmt.Errorf("state: scan github install token: %w", err)
+		}
+		out = append(out, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("state: list unexpired github install tokens: %w", err)
+	}
+	return out, nil
+}
+
 // Registry credential kinds: an app's and a job's private-registry password.
 const (
 	RegistrySealedCredentialApp = "app"
@@ -257,6 +299,26 @@ type RegistrySealedCredential struct {
 	Kind   string
 	ID     string
 	Sealed []byte
+}
+
+// CountImagedKeyedCrashCaptures counts the unexpired ready crash captures
+// whose at-rest state imaged keeps with the fleet key (ADR-733): plaintext
+// it would still encrypt to the fleet recipient, and captures it encrypted
+// with a fleet-sealed key and would decrypt for a fork. A capture vmmd
+// sealed at the source (plaintext_state sealed) is not counted: imaged only
+// expires and purges those.
+func (s *PgStore) CountImagedKeyedCrashCaptures(ctx context.Context) (int, error) {
+	var n int
+	err := s.pool.QueryRow(ctx, `
+		SELECT count(*) FROM crash_captures
+		 WHERE status = 'ready'
+		   AND plaintext_state IN ('present', 'absent', 'staging', 'staged')
+		   AND (expires_at IS NULL OR expires_at > now())
+	`).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("state: count imaged-keyed crash captures: %w", err)
+	}
+	return n, nil
 }
 
 // ListRegistrySealedCredentials pages through every sealed registry

@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "b92d2594dcc148efaed3269f2a0d439e27de2207bc6848833d17ca6d60a28e84",
+      "revision": "761a0be43740a495e1ed9c8069cbe28d32318dd3136f996246daf536c43cbc44",
       "files": [
         "faas.rules.yml"
       ],
@@ -1323,6 +1323,19 @@
           }
         },
         {
+          "id": "2d2139f8c687a310d1686a0b379cf1419435a1c6f172ebdd6cddb4e9d579bd75",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_object_storage",
+          "rule_name": "FaasS3GatewayReadUsageFlushFailing",
+          "definition": {
+            "expression_hash": "8be3f6781223faaf928ad0c1dd41587c0410fa2f38331b68ae98f7cd087e8136",
+            "labels_hash": "140ba2a4634c3854c97506082239ad2d1f9e2e0c8d8c9d34c00fbafc409805a9",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "9c3d3652eb16b767021358714937fed50d6eb7d8b4a2b46c42b8c568103edfd4"
+          }
+        },
+        {
           "id": "2e51db547ef677118f8672404a1bcb1c7129ee12574197839637d7ca5f040bf8",
           "file_name": "faas.rules.yml",
           "group_name": "outbound_webhook_delivery",
@@ -2324,6 +2337,19 @@
           }
         },
         {
+          "id": "55349918505deb077b54e6607da27bc9bde131defa6ddea99ccb0a9ed4675377",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_managed_postgres",
+          "rule_name": "FaasManagedPostgresSQLErrorBudgetBurn",
+          "definition": {
+            "expression_hash": "3a9505a3851c078ce2e11db722f27e2e6da084ff8a556a88c73375fc4486975e",
+            "labels_hash": "aebc875004971cd9671458a8413ef6bb54bb80cfb52783c1087048a49eba3924",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "be619a42980ea337c22a52a7def5da48fa592e503616043e8829fcb56b253f52"
+          }
+        },
+        {
           "id": "55be9401678623b0bf9300a516988cd930e64fbbc01577620dfbec622d41c1ff",
           "file_name": "faas.rules.yml",
           "group_name": "faas_billing",
@@ -3052,6 +3078,19 @@
           }
         },
         {
+          "id": "7525ac3261f394e8b4badad353ce8d29f8ddd8a689543008545bb823bb7c8400",
+          "file_name": "faas.rules.yml",
+          "group_name": "app_deletion_grace",
+          "rule_name": "FaasAppDeletionPurgeBlocked",
+          "definition": {
+            "expression_hash": "06a9bcf0717c397fccc21cdfb3fd069558ca77838609453c45013a3df94878fc",
+            "labels_hash": "11e63ad441e791fc9b1c9f4d0d65b62cd5a69b4bba2675e10a990c3479cbf6de",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "6814062548a89da7857c98f6050a1e9d8f23c8c56b92d7a5d5445dd964ed4518"
+          }
+        },
+        {
           "id": "75b833b90085738045ec4299e785ed5690f23d3275a203a34eab0eafd191657d",
           "file_name": "faas.rules.yml",
           "group_name": "faas_slo",
@@ -3608,6 +3647,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "2e76efde300dc712601ad553438525e986396f94dd8ce602d682711f570a6431"
+          }
+        },
+        {
+          "id": "9198dcd55fedf46941cdc104b31a40a26cab00053c9830f4771d79600427f049",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_managed_postgres",
+          "rule_name": "FaasManagedPostgresSQLProbeFailing",
+          "definition": {
+            "expression_hash": "a7c14ef5fdd5da95d14930be38f91ff6a7fe896c5737eaedf40a7c6d34692147",
+            "labels_hash": "67c13b5fb00f6279ddb46a958a9810deb3a919aee6c88ba5227a582d4c4e14ec",
+            "for_seconds": 120,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "e1a513732ee1275d5a7c28b082e3de5aeedbc738ea92ee25d4fd53e80fccdaeb"
           }
         },
         {
@@ -6435,7 +6487,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "1974eb98bc0512aaba979e6a4c6b09c5478ae5c1376970b70b9fced30e680a37",
+      "revision": "46182b80dafa049a21a883bc3c9e8d6a4493b9253eeafd4c47504d851333b6ab",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -7836,6 +7888,19 @@
           }
         },
         {
+          "id": "2d2139f8c687a310d1686a0b379cf1419435a1c6f172ebdd6cddb4e9d579bd75",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_object_storage",
+          "rule_name": "FaasS3GatewayReadUsageFlushFailing",
+          "definition": {
+            "expression_hash": "8be3f6781223faaf928ad0c1dd41587c0410fa2f38331b68ae98f7cd087e8136",
+            "labels_hash": "140ba2a4634c3854c97506082239ad2d1f9e2e0c8d8c9d34c00fbafc409805a9",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "9c3d3652eb16b767021358714937fed50d6eb7d8b4a2b46c42b8c568103edfd4"
+          }
+        },
+        {
           "id": "2e51db547ef677118f8672404a1bcb1c7129ee12574197839637d7ca5f040bf8",
           "file_name": "faas.rules.yml",
           "group_name": "outbound_webhook_delivery",
@@ -8863,6 +8928,19 @@
           }
         },
         {
+          "id": "55349918505deb077b54e6607da27bc9bde131defa6ddea99ccb0a9ed4675377",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_managed_postgres",
+          "rule_name": "FaasManagedPostgresSQLErrorBudgetBurn",
+          "definition": {
+            "expression_hash": "3a9505a3851c078ce2e11db722f27e2e6da084ff8a556a88c73375fc4486975e",
+            "labels_hash": "aebc875004971cd9671458a8413ef6bb54bb80cfb52783c1087048a49eba3924",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "be619a42980ea337c22a52a7def5da48fa592e503616043e8829fcb56b253f52"
+          }
+        },
+        {
           "id": "55be9401678623b0bf9300a516988cd930e64fbbc01577620dfbec622d41c1ff",
           "file_name": "faas.rules.yml",
           "group_name": "faas_billing",
@@ -9604,6 +9682,19 @@
           }
         },
         {
+          "id": "7525ac3261f394e8b4badad353ce8d29f8ddd8a689543008545bb823bb7c8400",
+          "file_name": "faas.rules.yml",
+          "group_name": "app_deletion_grace",
+          "rule_name": "FaasAppDeletionPurgeBlocked",
+          "definition": {
+            "expression_hash": "06a9bcf0717c397fccc21cdfb3fd069558ca77838609453c45013a3df94878fc",
+            "labels_hash": "11e63ad441e791fc9b1c9f4d0d65b62cd5a69b4bba2675e10a990c3479cbf6de",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "6814062548a89da7857c98f6050a1e9d8f23c8c56b92d7a5d5445dd964ed4518"
+          }
+        },
+        {
           "id": "75b833b90085738045ec4299e785ed5690f23d3275a203a34eab0eafd191657d",
           "file_name": "faas.rules.yml",
           "group_name": "faas_slo",
@@ -10225,6 +10316,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "2e76efde300dc712601ad553438525e986396f94dd8ce602d682711f570a6431"
+          }
+        },
+        {
+          "id": "9198dcd55fedf46941cdc104b31a40a26cab00053c9830f4771d79600427f049",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_managed_postgres",
+          "rule_name": "FaasManagedPostgresSQLProbeFailing",
+          "definition": {
+            "expression_hash": "a7c14ef5fdd5da95d14930be38f91ff6a7fe896c5737eaedf40a7c6d34692147",
+            "labels_hash": "67c13b5fb00f6279ddb46a958a9810deb3a919aee6c88ba5227a582d4c4e14ec",
+            "for_seconds": 120,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "e1a513732ee1275d5a7c28b082e3de5aeedbc738ea92ee25d4fd53e80fccdaeb"
           }
         },
         {

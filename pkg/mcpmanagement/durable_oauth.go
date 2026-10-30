@@ -73,7 +73,18 @@ func (r *remoteServer) restoreOAuth() error {
 	if len(snapshot.Clients) > r.capacity() || len(snapshot.Requests) > r.capacity() || len(snapshot.Codes) > r.capacity() || len(snapshot.Grants) > r.capacity() || len(snapshot.UsedRefresh) > maxRefreshHistory {
 		return errors.New("stored OAuth capacity is invalid")
 	}
+	// A client lasts as long as the grants it holds; older journals let
+	// clients lapse first and lost those grants on restart.
+	held := map[string]time.Time{}
+	for _, record := range snapshot.Grants {
+		if record.Expires.After(held[record.ClientID]) {
+			held[record.ClientID] = record.Expires
+		}
+	}
 	for id, client := range snapshot.Clients {
+		if until := held[id]; client != nil && until.After(client.Expires) {
+			client.Expires = until
+		}
 		if client.ID != id {
 			return errors.New("stored client identity mismatch")
 		}

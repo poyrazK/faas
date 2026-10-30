@@ -186,6 +186,25 @@ func quotaSubjectKinds() []quotaSubjectKind {
 			var q *state.QuotaError
 			return errors.As(err, &q) && q.Kind == state.QuotaErrorKindCrons && !q.NotAllowed
 		},
+	}, {
+		name: "consumer keys",
+		onApp: func(ctx context.Context, store state.Store, app state.App) error {
+			consumer, err := store.CreateAPIConsumer(ctx, app.AccountID, app.ID, "ref-"+uuid.NewString()[:8], "quota")
+			if err != nil {
+				return err
+			}
+			_, prefix, hash, err := api.GenerateConsumerKey()
+			if err != nil {
+				return err
+			}
+			_, err = store.CreateConsumerKeyForConsumerIfUnderQuota(ctx, app.AccountID, consumer.ID, "key", prefix, hash, []string{"read"}, nil,
+				state.ConsumerKeyQuota{PerApp: 10, PerAccount: 1})
+			return err
+		},
+		accountCap: func(err error) bool {
+			var q *state.ConsumerKeyQuotaError
+			return errors.As(err, &q) && q.Scope == api.PlanQuotaScopeAccount
+		},
 	}}
 }
 

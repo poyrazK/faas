@@ -57,120 +57,16 @@ type cloneCoordinatorFixture struct {
 	database *cloneDatabaseDeadlineProvider
 	objects  *capturedObjectWorkerProvider
 	apps     []state.App
+	postgres *managedpostgres.Service
+	account  state.Account
+	project  state.Project
+	point    time.Time
 }
 
 func newCloneCoordinatorFixture(t *testing.T, withData bool) cloneCoordinatorFixture {
 	t.Helper()
-	ctx := t.Context()
-	_, cleanup := withTestIdentities(t)
-	t.Cleanup(cleanup)
-	pool := pgtest.OpenMigrated(t)
-	if err := db.MigrateUp(ctx, pool); err != nil {
-		t.Fatal(err)
-	}
-	store := &cloneCoordinatorFailureStore{PgStore: state.NewPgStore(pool)}
-	account, err := store.CreateAccount(ctx, uuid.NewString()+"@coordinator.test", api.PlanPro)
-	if err != nil {
-		t.Fatal(err)
-	}
-	project, err := store.CreateProject(ctx, state.Project{AccountID: account.ID, Slug: "coordinator", ProductionBranch: "main"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	notifier := &clonePrimeNotifier{}
-	srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", notifier)
-	f := cloneCoordinatorFixture{srv: srv, store: store, pool: pool, notifier: notifier}
-	point := time.Now().UTC().Add(-time.Second).Truncate(time.Microsecond)
-	for _, slug := range []string{"coordinator-api", "coordinator-jobs"} {
-		app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, ProjectID: project.ID, Slug: slug, WorkloadName: slug,
-			Type: state.AppTypeApp, Status: state.AppActive, RAMMB: 256, MaxConcurrency: 1, Manifest: state.AppManifest{RevisionPinTTLSeconds: 3600}})
-		if err != nil {
-			t.Fatal(err)
-		}
-		f.apps = append(f.apps, app)
-		if err := store.UpsertAppEnvInScope(ctx, account.ID, app.ID, "production", "CAPTURED", "original"); err != nil {
-			t.Fatal(err)
-		}
-		deployment, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: "production", Kind: state.DeploymentKindImage, ImageDigest: "sha256:captured"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := store.SetDeploymentRootfs(ctx, deployment.ID, "/captured.ext4", "layers/"+deployment.ID, 4096); err != nil {
-			t.Fatal(err)
-		}
-		if err := store.MarkDeploymentLive(ctx, deployment.ID); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if withData {
-		f.database = &cloneDatabaseDeadlineProvider{}
-		registry, err := managedpostgres.NewRegistry(managedpostgres.Config{DefaultRegion: "eu", Defaults: map[string]string{"eu": "test"}, MaxDatabasesPerAccount: 3,
-			Backends: []managedpostgres.BackendConfig{{ID: "test", Driver: "test", Region: "eu", Namespace: "coordinator"}}}, func(string) string { return "" },
-			map[string]managedpostgres.Factory{"test": func(managedpostgres.BackendConfig, func(string) string) (managedpostgres.Provider, error) {
-				return f.database, nil
-			}})
-		if err != nil {
-			t.Fatal(err)
-		}
-		databases, err := managedpostgres.NewPostgresStore(pool)
-		if err != nil {
-			t.Fatal(err)
-		}
-		service, err := managedpostgres.NewService(registry, databases, managedpostgres.ServiceOptions{ProvisioningEnabled: func() bool { return true }})
-		if err != nil {
-			t.Fatal(err)
-		}
-		sink, err := newAppSecretCredentialSink(store, setSecretRecipient, hostHMACKey)
-		if err != nil {
-			t.Fatal(err)
-		}
-		bindings, err := managedpostgres.NewBindingService(registry, databases, databases, sink, managedpostgres.BindingServiceOptions{ProvisioningEnabled: func() bool { return true }})
-		if err != nil {
-			t.Fatal(err)
-		}
-		srv.WithManagedPostgres(service, nil, bindings, nil, nil, nil)
-		source, err := service.Create(ctx, managedpostgres.CreateRequest{AccountID: account.ID, Name: "orders", Spec: managedpostgres.Spec{Region: "eu", PostgresMajor: 17,
-			Class: managedpostgres.ClassDevelopment, Availability: managedpostgres.AvailabilitySingleZone, ScaleToZero: true, StorageLimitBytes: 1 << 30, RestoreWindowSeconds: 3600}})
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, app := range f.apps {
-			if _, err := bindings.Create(ctx, managedpostgres.CreateBindingRequest{AccountID: account.ID, DatabaseID: source.ID, AppID: app.ID, Scope: "production", EnvironmentKey: "DATABASE_URL", Access: managedpostgres.CredentialReadWrite}); err != nil {
-				t.Fatal(err)
-			}
-		}
-		f.objects = &capturedObjectWorkerProvider{environmentSnapshotProvider: &environmentSnapshotProvider{
-			versions: []objectstorage.ObjectVersion{{Key: "data.json", VersionID: "v1", Size: 3, LastModified: point.Add(-time.Second)}, {Key: "data.json", VersionID: "v2", Size: 3, LastModified: point.Add(time.Second)}},
-			bodies:   map[string]string{"v1": "old", "v2": "new"}}}
-		config := objectstorage.BackendConfig{ID: "storage", Driver: "fixture", Region: "us-east-1", Namespace: "coordinator", Endpoint: "https://storage.example.test", S3Region: "us-east-1"}
-		objects, err := objectstorage.NewRegistry(objectstorage.Config{DefaultRegion: config.Region, Defaults: map[string]string{config.Region: config.ID}, Backends: []objectstorage.BackendConfig{config}}, func(string) string { return "" },
-			map[string]objectstorage.Factory{"fixture": func(objectstorage.BackendConfig, func(string) string) (objectstorage.Provider, error) {
-				return f.objects, nil
-			}})
-		if err != nil {
-			t.Fatal(err)
-		}
-		srv.WithObjectStorage(objects)
-		if err := srv.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("true")); err != nil {
-			t.Fatal(err)
-		}
-		backend, err := objects.Default(config.Region)
-		if err != nil {
-			t.Fatal(err)
-		}
-		bucket, err := store.ReserveObjectBucket(ctx, state.ObjectBucket{ID: uuid.NewString(), AccountID: account.ID, AppID: f.apps[0].ID, Name: "assets", Scope: "production",
-			Region: config.Region, BackendID: backend.ID, BackendFingerprint: backend.Fingerprint, PhysicalName: "gregale-" + strings.ReplaceAll(uuid.NewString(), "-", "")}, objects.MaxBucketsPerApp)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := store.ClaimObjectBucket(ctx, account.ID, f.apps[0].ID, bucket.ID, "source", "provisioning"); err != nil {
-			t.Fatal(err)
-		}
-		if err := store.FinishObjectBucket(ctx, bucket.ID, "source", "ready"); err != nil {
-			t.Fatal(err)
-		}
-		capturedCloneObjectWorkerSourceCredentials(t, srv, store, account, f.apps[0], []state.ObjectBucket{bucket})
-	}
+	f := newCloneSourceFixture(t, cloneSourceData{postgres: withData, objects: withData}, true)
+	ctx, srv, store, account, project, point := t.Context(), f.srv, f.store, f.account, f.project, f.point
 	op, err := store.CreateCapturedProjectEnvironmentCloneOperation(ctx, state.ProjectEnvironmentCloneCaptureRequest{AccountID: account.ID, ProjectID: project.ID,
 		SourceEnvironment: "production", TargetEnvironment: "stage", IdempotencyKey: "coordinator"})
 	if err != nil {
@@ -227,6 +123,142 @@ func newCloneCoordinatorFixture(t *testing.T, withData bool) cloneCoordinatorFix
 		t.Fatal(err)
 	}
 	f.lease = lease
+	return f
+}
+
+// cloneSourceData selects the managed data a clone source fixture binds: a
+// point-in-time-restorable database bound to every workload, and a bucket
+// bound to the first.
+type cloneSourceData struct{ postgres, objects bool }
+
+// newCloneSourceFixture builds a project with two live production workloads,
+// and optionally managed data, without creating a clone operation.
+func newCloneSourceFixture(t *testing.T, data cloneSourceData, fences bool) cloneCoordinatorFixture {
+	t.Helper()
+	ctx := t.Context()
+	_, cleanup := withTestIdentities(t)
+	t.Cleanup(cleanup)
+	pool := pgtest.OpenMigrated(t)
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	// Data-bearing clones run with the configuration write fence on; migrations
+	// leave it off, and data-less clones never take it (ADR-20261023091049,
+	// ADR-20261024123122).
+	if fences {
+		if _, err := pool.Exec(ctx, `SELECT set_full_clone_configuration_fences(true)`); err != nil {
+			t.Fatal(err)
+		}
+	}
+	store := &cloneCoordinatorFailureStore{PgStore: state.NewPgStore(pool)}
+	account, err := store.CreateAccount(ctx, uuid.NewString()+"@coordinator.test", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := store.CreateProject(ctx, state.Project{AccountID: account.ID, Slug: "coordinator", ProductionBranch: "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	notifier := &clonePrimeNotifier{}
+	srv := newServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", notifier)
+	// The fixture's data point is already past; restore without the settle.
+	srv.cloneDataPointSettle = 0
+	f := cloneCoordinatorFixture{srv: srv, store: store, pool: pool, notifier: notifier}
+	point := time.Now().UTC().Add(-time.Second).Truncate(time.Microsecond)
+	for _, slug := range []string{"coordinator-api", "coordinator-jobs"} {
+		app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, ProjectID: project.ID, Slug: slug, WorkloadName: slug,
+			Type: state.AppTypeApp, Status: state.AppActive, RAMMB: 256, MaxConcurrency: 1, Manifest: state.AppManifest{RevisionPinTTLSeconds: 3600}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.apps = append(f.apps, app)
+		if err := store.UpsertAppEnvInScope(ctx, account.ID, app.ID, "production", "CAPTURED", "original"); err != nil {
+			t.Fatal(err)
+		}
+		deployment, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Scope: "production", Kind: state.DeploymentKindImage, ImageDigest: "sha256:captured"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.SetDeploymentRootfs(ctx, deployment.ID, "/captured.ext4", "layers/"+deployment.ID, 4096); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.MarkDeploymentLive(ctx, deployment.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if data.postgres {
+		f.database = &cloneDatabaseDeadlineProvider{}
+		registry, err := managedpostgres.NewRegistry(managedpostgres.Config{DefaultRegion: "eu", Defaults: map[string]string{"eu": "test"}, MaxDatabasesPerAccount: 3,
+			Backends: []managedpostgres.BackendConfig{{ID: "test", Driver: "test", Region: "eu", Namespace: "coordinator"}}}, func(string) string { return "" },
+			map[string]managedpostgres.Factory{"test": func(managedpostgres.BackendConfig, func(string) string) (managedpostgres.Provider, error) {
+				return f.database, nil
+			}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		databases, err := managedpostgres.NewPostgresStore(pool)
+		if err != nil {
+			t.Fatal(err)
+		}
+		service, err := managedpostgres.NewService(registry, databases, managedpostgres.ServiceOptions{ProvisioningEnabled: func() bool { return true }})
+		if err != nil {
+			t.Fatal(err)
+		}
+		sink, err := newAppSecretCredentialSink(store, setSecretRecipient, hostHMACKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		bindings, err := managedpostgres.NewBindingService(registry, databases, databases, sink, managedpostgres.BindingServiceOptions{ProvisioningEnabled: func() bool { return true }})
+		if err != nil {
+			t.Fatal(err)
+		}
+		srv.WithManagedPostgres(service, nil, bindings, nil, nil, nil)
+		source, err := service.Create(ctx, managedpostgres.CreateRequest{AccountID: account.ID, Name: "orders", Spec: managedpostgres.Spec{Region: "eu", PostgresMajor: 17,
+			Class: managedpostgres.ClassDevelopment, Availability: managedpostgres.AvailabilitySingleZone, ScaleToZero: true, StorageLimitBytes: 1 << 30, RestoreWindowSeconds: 3600}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, app := range f.apps {
+			if _, err := bindings.Create(ctx, managedpostgres.CreateBindingRequest{AccountID: account.ID, DatabaseID: source.ID, AppID: app.ID, Scope: "production", EnvironmentKey: "DATABASE_URL", Access: managedpostgres.CredentialReadWrite}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		f.postgres = service
+	}
+	if data.objects {
+		f.objects = &capturedObjectWorkerProvider{environmentSnapshotProvider: &environmentSnapshotProvider{
+			versions: []objectstorage.ObjectVersion{{Key: "data.json", VersionID: "v1", Size: 3, LastModified: point.Add(-time.Second)}, {Key: "data.json", VersionID: "v2", Size: 3, LastModified: point.Add(time.Second)}},
+			bodies:   map[string]string{"v1": "old", "v2": "new"}}}
+		config := objectstorage.BackendConfig{ID: "storage", Driver: "fixture", Region: "us-east-1", Namespace: "coordinator", Endpoint: "https://storage.example.test", S3Region: "us-east-1"}
+		objects, err := objectstorage.NewRegistry(objectstorage.Config{DefaultRegion: config.Region, Defaults: map[string]string{config.Region: config.ID}, Backends: []objectstorage.BackendConfig{config}}, func(string) string { return "" },
+			map[string]objectstorage.Factory{"fixture": func(objectstorage.BackendConfig, func(string) string) (objectstorage.Provider, error) {
+				return f.objects, nil
+			}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		srv.WithObjectStorage(objects)
+		if err := srv.runtimeConfig.apply(runtimeConfigS3, json.RawMessage("true")); err != nil {
+			t.Fatal(err)
+		}
+		backend, err := objects.Default(config.Region)
+		if err != nil {
+			t.Fatal(err)
+		}
+		bucket, err := store.ReserveObjectBucket(ctx, state.ObjectBucket{ID: uuid.NewString(), AccountID: account.ID, AppID: f.apps[0].ID, Name: "assets", Scope: "production",
+			Region: config.Region, BackendID: backend.ID, BackendFingerprint: backend.Fingerprint, PhysicalName: "gregale-" + strings.ReplaceAll(uuid.NewString(), "-", "")}, objects.MaxBucketsPerApp)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.ClaimObjectBucket(ctx, account.ID, f.apps[0].ID, bucket.ID, "source", "provisioning"); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.FinishObjectBucket(ctx, bucket.ID, "source", "ready"); err != nil {
+			t.Fatal(err)
+		}
+		capturedCloneObjectWorkerSourceCredentials(t, srv, store, account, f.apps[0], []state.ObjectBucket{bucket})
+	}
+	f.account, f.project, f.point = account, project, point
 	return f
 }
 
@@ -364,7 +396,10 @@ func TestPGCloneCredentialPreparationRequiresDurableRestoreReceipt(t *testing.T)
 	}
 }
 
-func TestPGCloneCoordinatorWaitsForEveryWorkloadAndPolicyActivation(t *testing.T) {
+// The source has no work policies, producer bindings or queue bindings; its
+// explicitly empty catalogues publish once every workload is live
+// (ADR-20261024123122).
+func TestPGCloneCoordinatorWaitsForEveryWorkloadThenPublishesEmptyWorkCatalogues(t *testing.T) {
 	f := newCloneCoordinatorFixture(t, false)
 	f.makeRunnable(t)
 	if err := f.srv.processNextProjectEnvironmentClone(t.Context(), f.store); err != nil {
@@ -386,13 +421,17 @@ func TestPGCloneCoordinatorWaitsForEveryWorkloadAndPolicyActivation(t *testing.T
 	if err := f.store.MarkDeploymentLiveDark(t.Context(), views[1].TargetDeploymentID); err != nil {
 		t.Fatal(err)
 	}
-	f.retryNow(t)
-	if err := f.srv.processNextProjectEnvironmentClone(t.Context(), f.store); !errors.Is(err, state.ErrProjectEnvironmentCloneWorkPolicyIsolationUnavailable) {
-		t.Fatalf("missing independent policy activation guard: %v", err)
+	for range 3 {
+		f.retryNow(t)
+		if err := f.srv.processNextProjectEnvironmentClone(t.Context(), f.store); err != nil {
+			t.Fatal(err)
+		}
+		if current, err = f.store.ProjectEnvironmentCloneOperationByID(t.Context(), op.AccountID, op.ProjectID, op.ID); err != nil || current.Status == state.CloneOperationReady {
+			break
+		}
 	}
-	current, err = f.store.ProjectEnvironmentCloneOperationByID(t.Context(), op.AccountID, op.ProjectID, op.ID)
-	if err != nil || current.Status != state.CloneOperationCopying || current.TargetReleaseSetID != "" {
-		t.Fatalf("unproved policies published release graph: %+v, %v", current, err)
+	if err != nil || current.Status != state.CloneOperationReady || current.TargetReleaseSetID == "" {
+		t.Fatalf("an empty work catalogue must publish: %+v, %v", current, err)
 	}
 }
 

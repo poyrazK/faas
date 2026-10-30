@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 
 	"github.com/onebox-faas/faas/pkg/fcvm/logbuf"
@@ -68,7 +69,7 @@ func (v *JailerVMM) adoptGuestProcess(l Lease, process resourceProcessIdentity, 
 			return fail(fmt.Errorf("vmm: adopt %s: %s %s is not the recorded file", l.Instance, a.Kind, a.Path))
 		}
 	}
-	if err := v.adoptGuestBinds(l.Instance, binds); err != nil {
+	if err := v.adoptGuestBinds(l.Instance, process.PID, binds); err != nil {
 		return fail(err)
 	}
 	if err := v.adoptTunSourceBind(l.Instance); err != nil {
@@ -154,26 +155,29 @@ func (v *JailerVMM) watchAdoptedProcess(l Lease, cmd *exec.Cmd, rec *instanceRec
 
 // adoptGuestBinds rebuilds bindMounts and bindSourceModes for one adopted
 // guest from its journaled bind assets. Each source is reopened and must
-// still be the recorded inode; its reference pins it for teardown.
-func (v *JailerVMM) adoptGuestBinds(instance string, binds []resourceAsset) error {
+// still be the recorded inode; its reference pins it for teardown. When the
+// cache has re-staged a source path since the guest bound it, the guest still
+// holds the recorded inode through its bind mount: it is reopened there, through
+// the Firecracker process pid, under the same (path, inode) key, so teardown
+// restores that inode's mode and a new bind of the refreshed file counts apart.
+func (v *JailerVMM) adoptGuestBinds(instance string, pid int, binds []resourceAsset) error {
+	chroot := v.chrootRoot(instance)
 	for _, a := range binds {
 		if a.Kind != "bind" || a.SourceFile == nil || a.Mount == nil || a.Target == nil {
 			return fmt.Errorf("vmm: adopt %s: bind %s lacks its checkpoint", instance, a.Path)
 		}
-		f, err := os.OpenFile(a.Source, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
-		if err != nil {
-			return fmt.Errorf("vmm: adopt %s: bind source %s: %w", instance, a.Source, err)
-		}
-		info, err := f.Stat()
-		if err == nil {
-			var id resourceFileIdentity
-			id, err = resourceFileID(info)
-			if err == nil && id != *a.SourceFile {
-				err = errors.New("source was replaced")
+		f, err := openRecordedBindSource(a.Source, *a.SourceFile)
+		if errors.Is(err, errBindSourceReplaced) {
+			// The path now names another file: take the recorded one from
+			// the guest's own view, where it is still bound.
+			rel, relErr := filepath.Rel(chroot, a.Path)
+			if relErr != nil || rel == "." || strings.HasPrefix(rel, "..") {
+				err = fmt.Errorf("%w; bind target %s is outside the jail", err, a.Path)
+			} else if f, err = openAdoptedBindTarget(pid, rel, *a.SourceFile); err != nil {
+				err = fmt.Errorf("%w, and through the guest: %w", errBindSourceReplaced, err)
 			}
 		}
 		if err != nil {
-			_ = f.Close()
 			return fmt.Errorf("vmm: adopt %s: bind source %s: %w", instance, a.Source, err)
 		}
 		mode := os.FileMode(a.OriginalMode).Perm()
@@ -199,6 +203,30 @@ func (v *JailerVMM) adoptGuestBinds(instance string, binds []resourceAsset) erro
 		}
 	}
 	return nil
+}
+
+// errBindSourceReplaced: a bind source path now names another file.
+var errBindSourceReplaced = errors.New("source was replaced")
+
+// openRecordedBindSource opens path when it is still the recorded file.
+func openRecordedBindSource(path string, want resourceFileIdentity) (*os.File, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil, err
+	}
+	info, err := f.Stat()
+	if err == nil {
+		var id resourceFileIdentity
+		id, err = resourceFileID(info)
+		if err == nil && id != want {
+			err = errBindSourceReplaced
+		}
+	}
+	if err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	return f, nil
 }
 
 // adoptTunSourceBind registers the TUN source bind (bindTunSourceForOwner)

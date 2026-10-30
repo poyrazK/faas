@@ -1,10 +1,12 @@
 package apidserver_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
+	"net/http"
 	"path/filepath"
 	"testing"
 
@@ -17,6 +19,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/executionpayload"
 	"github.com/onebox-faas/faas/pkg/sealdomain"
 	"github.com/onebox-faas/faas/pkg/secretbox"
+	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/triggerconfig"
 )
 
 // TestDeliveryValues_FollowTheDeliveryDomain pins who opens each value apid
@@ -151,4 +155,61 @@ func withDeliveryRecipients(t *testing.T, fleet *age.X25519Recipient, staged boo
 		*apidserver.DeliveryDomainRecipient = func() *age.X25519Recipient { return domain }
 	}
 	*apidserver.DeliveryWriteMode = mode
+}
+
+// TestTriggerConfigs_FollowTheDeliveryDomain pins who opens a trigger
+// config's credentials apid seals at each step of the delivery rollout (ADR
+// 20261022111812): the domain once staged, and the fleet key at every step,
+// domain-only included, since a schedd of the previous release opens trigger
+// configs with the fleet key alone. apid holds no identity, and an update
+// that omits the password keeps it.
+func TestTriggerConfigs_FollowTheDeliveryDomain(t *testing.T) {
+	fleet, domain := mustSealIdentity(t), mustSealIdentity(t)
+	for _, tc := range edgeDomainSteps {
+		t.Run(tc.name, func(t *testing.T) {
+			e := apidserver.Setup(t, api.PlanPro)
+			withDeliveryRecipients(t, fleet.Recipient(), tc.staged, domain.Recipient(), tc.mode)
+			prevIdents, prevIdent := *apidserver.MfaIdentities, *apidserver.MfaIdentity
+			t.Cleanup(func() { *apidserver.MfaIdentities, *apidserver.MfaIdentity = prevIdents, prevIdent })
+			*apidserver.MfaIdentities, *apidserver.MfaIdentity = nil, nil
+
+			app, err := (*e.Store()).CreateApp(t.Context(), state.App{AccountID: (*e.Acct()).ID, Slug: "trigger-domain"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			rec := e.Do(t, http.MethodPost, "/v1/triggers", api.CreateTriggerRequest{
+				AppID: app.ID, Kind: api.TriggerKindKafka, Slug: "orders",
+				Config: json.RawMessage(`{"brokers":["b:9092"],"topic":"orders","group":"g","sasl":{"mechanism":"PLAIN","username":"svc","password":"trigger-secret"}}`),
+			}, nil)
+			if tc.unavailable {
+				if rec.Code != http.StatusServiceUnavailable {
+					t.Fatalf("create status = %d, want 503 with no recipient for the write mode: %s", rec.Code, rec.Body.String())
+				}
+				return
+			}
+			if rec.Code != http.StatusCreated {
+				t.Fatalf("create status = %d: %s", rec.Code, rec.Body.String())
+			}
+			var trigger api.Trigger
+			if err := json.Unmarshal(rec.Body.Bytes(), &trigger); err != nil {
+				t.Fatal(err)
+			}
+			rec = e.Do(t, http.MethodPatch, "/v1/triggers/"+trigger.ID, api.UpdateTriggerRequest{
+				Config: json.RawMessage(`{"brokers":["c:9092"],"topic":"orders","group":"g","sasl":{"mechanism":"PLAIN","username":"svc","password_set":true}}`),
+			}, nil)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("update status = %d: %s", rec.Code, rec.Body.String())
+			}
+			stored, err := (*e.Store()).TriggerByID(t.Context(), trigger.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for id, want := range map[*age.X25519Identity]bool{fleet: true, domain: tc.domainOpens} {
+				opened, err := triggerconfig.Open(api.TriggerKindKafka, stored.Config, []*age.X25519Identity{id})
+				if got := err == nil && bytes.Contains(opened, []byte("trigger-secret")); got != want {
+					t.Fatalf("%s opens the kept password = %v, want %v (%v)", map[bool]string{true: "fleet", false: "domain"}[id == fleet], got, want, err)
+				}
+			}
+		})
+	}
 }

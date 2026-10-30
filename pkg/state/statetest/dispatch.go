@@ -276,6 +276,7 @@ var memDispatched = map[string]bool{
 	"RecordProjectMigrationBaseline":                true,
 	"PinnedProjectReleaseWorkers":                   true,
 	"HeldProjectReleaseWorkers":                     true,
+	"ListConsumerKeysForApp":                        true,
 }
 
 func (s *Mem) AppTaskByID(ctx context.Context, account, app, id string) (state.AppTask, error) {
@@ -715,6 +716,15 @@ func (s *Mem) FinalizeObjectS3CredentialRotationsForApp(p0 context.Context, p1 s
 		return o.FinalizeObjectS3CredentialRotationsForApp(p0, p1, p2)
 	}
 	return s.MemStore.FinalizeObjectS3CredentialRotationsForApp(p0, p1, p2)
+}
+
+func (s *Mem) ListConsumerKeysForApp(p0 context.Context, p1 string, p2 string) ([]state.ConsumerKey, error) {
+	if o, ok := s.over.(interface {
+		ListConsumerKeysForApp(context.Context, string, string) ([]state.ConsumerKey, error)
+	}); ok {
+		return o.ListConsumerKeysForApp(p0, p1, p2)
+	}
+	return s.MemStore.ListConsumerKeysForApp(p0, p1, p2)
 }
 
 func (s *Mem) GetAppErrorSample(p0 context.Context, p1 sqlc.GetAppErrorSampleParams) (state.AppErrorSampleRow, error) {

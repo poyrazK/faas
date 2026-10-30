@@ -290,8 +290,18 @@ func WriteProblem(w http.ResponseWriter, p *Problem) {
 			w.Header().Add(k, v)
 		}
 	}
+	stampErrorCode(w.Header(), p)
 	w.WriteHeader(p.Status)
 	_ = json.NewEncoder(w).Encode(&wire)
+}
+
+// stampErrorCode marks a problem as platform-owned with ErrorCodeHeader,
+// unless the writer already chose a value. The public edge keys on it to keep
+// a platform 502/504 body away from Cloudflare (ADR-20261030115139).
+func stampErrorCode(h http.Header, p *Problem) {
+	if p.Code != "" && h.Get(ErrorCodeHeader) == "" {
+		h.Set(ErrorCodeHeader, p.Code)
+	}
 }
 
 // WriteProblemForRequest renders the browser-safe HTML variant when r
@@ -3062,7 +3072,7 @@ func ErrEventsPaused(accountScope bool) *Problem {
 	}
 	return NewProblem(http.StatusServiceUnavailable, CodeEventsPaused, "Event publishing is paused", detail).
 		WithHeader("Retry-After", strconv.Itoa(int(EventsPausedRetryAfter.Seconds()))).
-		WithDocs(docsBase + "/event-driven#pausing-events")
+		WithDocs(docsBase + "/events#pausing-events")
 }
 
 func ErrEventPublishRateLimited(perSecond, events int, retryAfter time.Duration) *Problem {
@@ -6345,7 +6355,7 @@ func ErrEventReplayBackfillRange(limitSeconds, observedSeconds int64) *Problem {
 		fmt.Sprintf("A backfill range can span at most %s on this plan, its settled-receipt retention window; the requested range spans %s.",
 			time.Duration(limitSeconds)*time.Second, time.Duration(observedSeconds)*time.Second)).
 		WithLimit(limitSeconds, observedSeconds).
-		WithDocs(docsBase + "/event-driven#settled-receipt-retention")
+		WithDocs(docsBase + "/events#settled-receipt-retention")
 }
 
 // ErrEdgeRulesVersionMismatch (ADR-961) is the 412 for an edge-rule mutation
@@ -6501,7 +6511,7 @@ func ErrDeadLetterNotReplayable() *Problem {
 	return NewProblem(http.StatusConflict, CodeDeadLetterNotReplayable,
 		"Dead-letter event cannot be replayed",
 		"this routing failure's receipt has been pruned, so there is nothing to redrive; re-publish the event in its payload to deliver it again.").
-		WithDocs(docsBase + "/event-driven#routing-failures-in-the-dead-letter-queue")
+		WithDocs(docsBase + "/events#routing-failures-in-the-dead-letter-queue")
 }
 
 // ErrInvocationNotReplayable (issue #315 / tier-2 DX) is returned by
