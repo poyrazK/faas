@@ -90,6 +90,7 @@ native_e2e_phase_files() {
       image_process_identity_metal_test.go \
       source_deploy_wake_metal_test.go \
       shared_runtime_rollback_metal_test.go \
+      shared_runtime_python_metal_test.go \
       secrets_image_deploy_e2e_test.go \
       object_storage_native_metal_test.go \
       queue_binding_native_metal_test.go \
