@@ -8293,6 +8293,12 @@ type ManagedPostgresUsageImport struct {
 	CreatedAt         pgtype.Timestamptz
 }
 
+type ManagedPostgresUsageWaiver struct {
+	DatabaseID  pgtype.UUID
+	WaivedFrom  pgtype.Timestamptz
+	WaivedUntil pgtype.Timestamptz
+}
+
 type ManagedRealtimeChannelBatch struct {
 	EndpointID    pgtype.UUID
 	Channel       string
