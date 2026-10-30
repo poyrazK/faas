@@ -1556,7 +1556,7 @@ func (b *Builderd) exportDeferredCache(ctx context.Context, vm DeferredCacheVM, 
 	}
 	defer b.unregisterActiveVM(key)
 	start := time.Now()
-	err := vm.ExportDeferredCache(ctx, handle)
+	out, err := vm.ExportDeferredCache(ctx, handle)
 	if err != nil && ctx.Err() != nil {
 		// As after a build's own wait: stop the VM before Drain loses sight
 		// of it.
@@ -1569,10 +1569,18 @@ func (b *Builderd) exportDeferredCache(ctx context.Context, vm DeferredCacheVM, 
 	if err != nil {
 		b.log.Warn("builderd: deferred dependency cache export failed (continuing)", "build", build.ID,
 			"deployment", build.DeploymentID, "duration_ms", time.Since(start).Milliseconds(), "err", err)
+		// The run's output can carry the customer's build commands, so it
+		// goes to the deployment's build log, as a failed build's does, and
+		// never to the operator log.
+		b.emitBuildLog(ctx, build.ID, "dependency cache could not be saved — the next build may reinstall dependencies\n")
+		if tail := boundedGuestBuildLogTail(out.LogTail); tail != "" {
+			b.emitBuildLog(ctx, build.ID, "[dependency cache export output]\n"+tail+"\n")
+		}
 		return
 	}
 	b.log.Info("builderd: deferred dependency cache saved", "build", build.ID,
 		"deployment", build.DeploymentID, "duration_ms", time.Since(start).Milliseconds())
+	b.emitBuildLog(ctx, build.ID, "dependency cache saved for the next build\n")
 }
 
 func (b *Builderd) resolveBuildEnvironment() (BuildEnvironment, bool) {

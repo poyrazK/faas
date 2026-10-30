@@ -72,7 +72,7 @@ func TestDeferredCacheExportMetal(t *testing.T) {
 		waitForNoBuildDrives(t, driveDir)
 		published, err := filepath.Glob(filepath.Join(driveDir, "dev-dependency-cache", "*", "index.json"))
 		if err != nil || len(published) == 0 {
-			t.Fatalf("no dependency cache published under %s (%v)", driveDir, err)
+			t.Fatalf("no dependency cache published under %s (%v); first build log:\n%s", driveDir, err, deploymentBuildLog(t, pool, first.deploymentID))
 		}
 	})
 
