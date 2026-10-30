@@ -1311,7 +1311,7 @@ gregale postgres bindings list DATABASE_ID
 gregale postgres bindings rotate BINDING_ID --wait
 gregale postgres attach orders api --scope production --env DATABASE_URL
 gregale postgres delete DATABASE_ID
-gregale postgres undelete DATABASE_ID
+gregale postgres recover DATABASE_ID
 gregale postgres delete DATABASE_ID --purge
 ```
 
@@ -1323,7 +1323,7 @@ gregale postgres delete DATABASE_ID --purge
   connections.
 - Its view shows `restorable_until`, 7 days out. `gregale postgres get` and
   `gregale postgres list` show it too.
-- Until then, `gregale postgres undelete <database>` (API:
+- Until then, `gregale postgres recover <database>` (API:
   `POST /v1/postgres/databases/{id}/undelete`) returns it to `ready` with its
   data and restore history.
 - After that, the provider deletes it for good.
