@@ -229,6 +229,13 @@ without `--no-dev` syncs the dev group at every boot. On the shared base the
 app runs in the environment the build synced (`--no-dev`), which is what
 `uv run --no-sync` would do.
 
+Acceptance is `TestSharedRuntimePythonMetal/shared-python313-uv-run`. A uv
+project locked with uv 0.13.1 (Railpack 0.38's) and started by the Procfile
+line `web: uv run gunicorn ...` must land on `python313` with an /app-only
+layer and serve after a snapshot restore. The full test passed 6/6 on the n2
+metal host on 2026-10-30, with leakcheck clean. The `uv run` app layer was
+40.3 MB, against 298 MB for the Python 3.11 own-base deployment.
+
 ## Consequences
 
 - An eligible Node app layer is its source plus `node_modules`, a few MB for
