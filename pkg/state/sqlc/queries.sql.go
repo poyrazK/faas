@@ -64289,13 +64289,21 @@ func (q *Queries) ObjectGatewayUploadInsert(ctx context.Context, db DBTX, arg Ob
 
 const objectInventoriesDue = `-- name: ObjectInventoriesDue :many
 SELECT b.id, b.account_id, b.app_id, b.name, b.scope, b.region, b.backend_id, b.backend_fingerprint, b.physical_name, b.state, b.lease_token, b.lease_until, b.created_at, b.updated_at, b.attempt_count, b.retry_at, b.last_error_code, b.public_read, b.serve_at, b.environment_clone_source_bucket_id, b.environment_clone_operation_id, b.org_id FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id=b.id
-WHERE b.state='ready' AND NOT EXISTS(SELECT 1 FROM object_bucket_versioning WHERE bucket_id=b.id AND state<>'ready') AND NOT EXISTS (SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=b.id AND c.state IN ('waiting','scanning')) AND (u.attempt_at IS NULL OR u.attempt_at < now() - interval '5 minutes')
+WHERE b.state='ready' AND NOT EXISTS(SELECT 1 FROM object_bucket_versioning WHERE bucket_id=b.id AND state<>'ready') AND NOT EXISTS (SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=b.id AND c.state IN ('waiting','scanning'))
+AND (u.attempt_at IS NULL OR u.attempt_at < now() - interval '5 minutes' OR EXISTS (SELECT 1 FROM object_storage_inventory_scans s WHERE s.bucket_id=b.id AND s.pages > 0 AND NOT s.complete
+  AND s.started_at > COALESCE(u.observed_at, '-infinity'::timestamptz) AND s.started_at > now() - $1::bigint * interval '1 second'))
 AND (u.lease_until IS NULL OR u.lease_until < now())
-ORDER BY u.attempt_at NULLS FIRST, b.id LIMIT $1
+ORDER BY u.attempt_at NULLS FIRST, b.id LIMIT $2
 `
 
-func (q *Queries) ObjectInventoriesDue(ctx context.Context, db DBTX, limit int32) ([]ObjectBucket, error) {
-	rows, err := db.Query(ctx, objectInventoriesDue, limit)
+type ObjectInventoriesDueParams struct {
+	ScanMaxAgeSeconds int64
+	RowLimit          int32
+}
+
+// A bucket whose listing is unfinished is due at once (ADR-20261030100835).
+func (q *Queries) ObjectInventoriesDue(ctx context.Context, db DBTX, arg ObjectInventoriesDueParams) ([]ObjectBucket, error) {
+	rows, err := db.Query(ctx, objectInventoriesDue, arg.ScanMaxAgeSeconds, arg.RowLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -64423,6 +64431,187 @@ type ObjectInventorySampleParams struct {
 func (q *Queries) ObjectInventorySample(ctx context.Context, db DBTX, arg ObjectInventorySampleParams) error {
 	_, err := db.Exec(ctx, objectInventorySample, arg.BucketID, arg.Token)
 	return err
+}
+
+const objectInventoryScanAttempt = `-- name: ObjectInventoryScanAttempt :execrows
+UPDATE object_storage_bucket_usage SET attempt_at=now() WHERE bucket_id=$1 AND token=$2::text AND token<>''
+`
+
+type ObjectInventoryScanAttemptParams struct {
+	BucketID pgtype.UUID
+	Token    string
+}
+
+// A claim that starts or publishes a listing makes new deletions yield.
+func (q *Queries) ObjectInventoryScanAttempt(ctx context.Context, db DBTX, arg ObjectInventoryScanAttemptParams) (int64, error) {
+	result, err := db.Exec(ctx, objectInventoryScanAttempt, arg.BucketID, arg.Token)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectInventoryScanCheckpoint = `-- name: ObjectInventoryScanCheckpoint :execrows
+UPDATE object_storage_inventory_scans SET after_key=$2, listed_bytes=$3, listed_keys=$4,
+pages=$5, complete=$6, progress_at=now()
+WHERE bucket_id=$1 AND started_at=$7 AND $5::integer >= pages
+`
+
+type ObjectInventoryScanCheckpointParams struct {
+	BucketID    pgtype.UUID
+	AfterKey    string
+	ListedBytes int64
+	ListedKeys  int64
+	Pages       int32
+	Complete    bool
+	StartedAt   pgtype.Timestamptz
+}
+
+func (q *Queries) ObjectInventoryScanCheckpoint(ctx context.Context, db DBTX, arg ObjectInventoryScanCheckpointParams) (int64, error) {
+	result, err := db.Exec(ctx, objectInventoryScanCheckpoint,
+		arg.BucketID,
+		arg.AfterKey,
+		arg.ListedBytes,
+		arg.ListedKeys,
+		arg.Pages,
+		arg.Complete,
+		arg.StartedAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectInventoryScanClaim = `-- name: ObjectInventoryScanClaim :execrows
+INSERT INTO object_storage_bucket_usage (bucket_id, attempt_at, lease_until, token)
+SELECT b.id, now(), now()+interval '2 minutes', $2::text FROM object_buckets b WHERE b.id=$1 AND b.state='ready' AND NOT EXISTS(SELECT 1 FROM object_bucket_versioning WHERE bucket_id=$1 AND state<>'ready') AND NOT EXISTS (SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=$1 AND c.state IN ('waiting','scanning'))
+ON CONFLICT (bucket_id) DO UPDATE SET attempt_at=COALESCE(object_storage_bucket_usage.attempt_at, now()),lease_until=now()+interval '2 minutes',token=EXCLUDED.token
+WHERE object_storage_bucket_usage.lease_until IS NULL OR object_storage_bucket_usage.lease_until < now()
+`
+
+type ObjectInventoryScanClaimParams struct {
+	ID    pgtype.UUID
+	Token string
+}
+
+// ObjectInventoryClaim without a new attempt time: a claim that continues a
+// listing keeps it, so deletions do not yield to it (ADR-20261030100835).
+func (q *Queries) ObjectInventoryScanClaim(ctx context.Context, db DBTX, arg ObjectInventoryScanClaimParams) (int64, error) {
+	result, err := db.Exec(ctx, objectInventoryScanClaim, arg.ID, arg.Token)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectInventoryScanDelete = `-- name: ObjectInventoryScanDelete :exec
+DELETE FROM object_storage_inventory_scans WHERE bucket_id=$1
+`
+
+func (q *Queries) ObjectInventoryScanDelete(ctx context.Context, db DBTX, bucketID pgtype.UUID) error {
+	_, err := db.Exec(ctx, objectInventoryScanDelete, bucketID)
+	return err
+}
+
+const objectInventoryScanFinish = `-- name: ObjectInventoryScanFinish :execrows
+UPDATE object_storage_bucket_usage u SET baseline_bytes = CASE WHEN u.observed_at IS NULL THEN $2::bigint ELSE u.baseline_bytes END,
+baseline_keys = CASE WHEN u.observed_at IS NULL THEN $3::bigint ELSE u.baseline_keys END,
+observed_bytes=$2,observed_keys=$3,observed_at=$4,lease_until=NULL,token=''
+WHERE u.bucket_id=$1 AND u.token=$5::text AND u.token<>'' AND u.lease_until > now()
+AND $4::timestamptz > COALESCE(u.observed_at, '-infinity'::timestamptz)
+AND EXISTS (SELECT 1 FROM object_storage_inventory_scans i WHERE i.bucket_id=$1 AND i.started_at=$4)
+AND EXISTS (SELECT 1 FROM object_buckets WHERE id=$1 AND state='ready')
+AND u.inventory_scope='current'
+AND NOT EXISTS(SELECT 1 FROM object_upload_completions WHERE bucket_id=$1 AND recovery_versions_observed)
+AND NOT EXISTS(SELECT 1 FROM object_version_references WHERE bucket_id=$1 AND versions_observed)
+AND NOT EXISTS(SELECT 1 FROM object_storage_multipart_uploads WHERE bucket_id=$1 AND completion_versions_observed)
+AND NOT EXISTS(SELECT 1 FROM object_bucket_versioning WHERE bucket_id=$1 AND (versions_required OR state<>'ready'))
+AND NOT EXISTS (SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=$1 AND c.state IN ('waiting','scanning'))
+`
+
+type ObjectInventoryScanFinishParams struct {
+	BucketID    pgtype.UUID
+	ListedBytes int64
+	ListedKeys  int64
+	StartedAt   pgtype.Timestamptz
+	Token       string
+}
+
+// ObjectInventoryFinish for a listing that may have spanned several attempts:
+// it is observed as of the listing's start and never replaces a newer
+// observation.
+func (q *Queries) ObjectInventoryScanFinish(ctx context.Context, db DBTX, arg ObjectInventoryScanFinishParams) (int64, error) {
+	result, err := db.Exec(ctx, objectInventoryScanFinish,
+		arg.BucketID,
+		arg.ListedBytes,
+		arg.ListedKeys,
+		arg.StartedAt,
+		arg.Token,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectInventoryScanGet = `-- name: ObjectInventoryScanGet :one
+SELECT i.bucket_id, i.started_at, i.progress_at, i.after_key, i.listed_bytes, i.listed_keys, i.pages, i.complete, u.observed_at FROM object_storage_inventory_scans i
+LEFT JOIN object_storage_bucket_usage u ON u.bucket_id=i.bucket_id
+WHERE i.bucket_id=$1 FOR UPDATE OF i
+`
+
+type ObjectInventoryScanGetRow struct {
+	BucketID    pgtype.UUID
+	StartedAt   pgtype.Timestamptz
+	ProgressAt  pgtype.Timestamptz
+	AfterKey    string
+	ListedBytes int64
+	ListedKeys  int64
+	Pages       int32
+	Complete    bool
+	ObservedAt  pgtype.Timestamptz
+}
+
+// Claim, checkpoint and finish lock the bucket's usage row before its scan
+// row (ADR-20261030100835).
+func (q *Queries) ObjectInventoryScanGet(ctx context.Context, db DBTX, bucketID pgtype.UUID) (ObjectInventoryScanGetRow, error) {
+	row := db.QueryRow(ctx, objectInventoryScanGet, bucketID)
+	var i ObjectInventoryScanGetRow
+	err := row.Scan(
+		&i.BucketID,
+		&i.StartedAt,
+		&i.ProgressAt,
+		&i.AfterKey,
+		&i.ListedBytes,
+		&i.ListedKeys,
+		&i.Pages,
+		&i.Complete,
+		&i.ObservedAt,
+	)
+	return i, err
+}
+
+const objectInventoryScanStart = `-- name: ObjectInventoryScanStart :one
+INSERT INTO object_storage_inventory_scans (bucket_id, started_at, progress_at) VALUES ($1, now(), now())
+ON CONFLICT (bucket_id) DO UPDATE SET started_at=now(), progress_at=now(), after_key='', listed_bytes=0, listed_keys=0, pages=0, complete=false
+RETURNING bucket_id, started_at, progress_at, after_key, listed_bytes, listed_keys, pages, complete
+`
+
+func (q *Queries) ObjectInventoryScanStart(ctx context.Context, db DBTX, bucketID pgtype.UUID) (ObjectStorageInventoryScan, error) {
+	row := db.QueryRow(ctx, objectInventoryScanStart, bucketID)
+	var i ObjectStorageInventoryScan
+	err := row.Scan(
+		&i.BucketID,
+		&i.StartedAt,
+		&i.ProgressAt,
+		&i.AfterKey,
+		&i.ListedBytes,
+		&i.ListedKeys,
+		&i.Pages,
+		&i.Complete,
+	)
+	return i, err
 }
 
 const objectLifecycleDeletionActive = `-- name: ObjectLifecycleDeletionActive :one
@@ -69193,8 +69382,10 @@ WHERE m.bucket_id=b.id AND m.state <> 'completed'),0)::bigint AS multipart_bytes
 COALESCE(r.request_count, 0)::bigint AS gateway_request_count,
 COALESCE(r.egress_bytes, 0)::bigint AS gateway_egress_bytes,
 COALESCE(floor(s.stored_byte_hours), 0)::bigint AS gateway_stored_byte_hours,
-s.accrued_through AS gateway_storage_through
+s.accrued_through AS gateway_storage_through,
+i.started_at AS scan_started_at, i.progress_at AS scan_progress_at, i.listed_bytes AS scan_bytes, i.listed_keys AS scan_keys, i.pages AS scan_pages, i.complete AS scan_complete
 FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id = b.id
+LEFT JOIN object_storage_inventory_scans i ON i.bucket_id = b.id
 LEFT JOIN object_storage_request_metrics r ON r.bucket_id = b.id AND r.period_start = $1
 LEFT JOIN object_storage_gateway_storage s ON s.bucket_id = b.id AND s.period_start = $1
 WHERE object_storage_usage_subject(b.org_id,b.account_id,$1) = $2
@@ -69244,6 +69435,12 @@ type ObjectUsageBucketsRow struct {
 	GatewayEgressBytes             int64
 	GatewayStoredByteHours         int64
 	GatewayStorageThrough          pgtype.Timestamptz
+	ScanStartedAt                  pgtype.Timestamptz
+	ScanProgressAt                 pgtype.Timestamptz
+	ScanBytes                      pgtype.Int8
+	ScanKeys                       pgtype.Int8
+	ScanPages                      pgtype.Int4
+	ScanComplete                   pgtype.Bool
 }
 
 func (q *Queries) ObjectUsageBuckets(ctx context.Context, db DBTX, arg ObjectUsageBucketsParams) ([]ObjectUsageBucketsRow, error) {
@@ -69294,6 +69491,12 @@ func (q *Queries) ObjectUsageBuckets(ctx context.Context, db DBTX, arg ObjectUsa
 			&i.GatewayEgressBytes,
 			&i.GatewayStoredByteHours,
 			&i.GatewayStorageThrough,
+			&i.ScanStartedAt,
+			&i.ScanProgressAt,
+			&i.ScanBytes,
+			&i.ScanKeys,
+			&i.ScanPages,
+			&i.ScanComplete,
 		); err != nil {
 			return nil, err
 		}

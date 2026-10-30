@@ -1007,12 +1007,21 @@ through a complete fenced capacity reconciliation, described below. Historical
 or untracked grants remain conservative. Do not manually edit counters.
 
 Every apid runs a bounded inventory worker at startup and once a minute after
-the previous sweep. It claims up to ten ready buckets, with two-minute leases,
-a 45-second scan deadline and at most 1000 pages of 1000 keys. Buckets are due
-every five minutes. Only complete scans publish a durable observation/sample;
-failed/partial/cyclic scans preserve the last observation. Inventory older
-than 15 minutes blocks new URLs. Large inventories that cannot complete inside
-these bounds fail closed and need a qualified inventory adapter before launch.
+the previous sweep. It claims due buckets in batches (ADR 20261023223000), with
+two-minute leases and a 45-second deadline per attempt. Buckets are due every
+five minutes. A listing covers at most 1000 pages of 1000 keys. Only complete
+listings publish a durable observation/sample; failed or cyclic listings
+preserve the last observation. Inventory older than 15 minutes blocks new URLs.
+
+A bucket too large to list in one attempt is listed over several
+(ADR-20261030100835): each attempt continues after the last key the previous
+one listed, records its progress in `object_storage_inventory_scans` and is due
+again on the next sweep. The finished listing publishes as of its start. While
+a listing advances (within 5 minutes), its bucket stays available on an
+observation up to an hour old, and what it has listed so far counts toward
+capacity. Only the attempt that starts a listing and the one that publishes it
+make deletions in the bucket wait. Owned nodes and providers that cannot list
+from a key still list in one attempt.
 
 The data protocol cannot provide portable request/egress billing. Configure
 each backend's optional `usage_reports_path` to an **absolute, operator-owned
@@ -1098,7 +1107,7 @@ when a capacity reservation would exceed a limit. Limit errors include
 `limit`, `observed`, and a documentation link. Cleanup remains authorized and
 available when budgets or the global flag block new URLs.
 
-Monitor `faas_object_storage_inventory_scans_total{outcome="success|failed"}`,
+Monitor `faas_object_storage_inventory_scans_total{outcome="success|partial|failed"}`,
 inventory-sweep/provider-import warnings, usage freshness and admission errors.
 Logs omit provider error strings, credentials, signed URLs and object keys.
 

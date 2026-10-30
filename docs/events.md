@@ -184,6 +184,9 @@ doubling to 5 minutes, with ±20 % jitter. The plan limits the attempts (3 on
 Hobby, 10 on Pro, 25 on Scale), so a delivery that keeps failing is
 dead-lettered after about 15 seconds on Hobby, 20 minutes on Pro and 95
 minutes on Scale ([ADR 20261029190000](adr/20261029190000-event-delivery-retry-backoff.md)).
+A delivery with a `work_policy` holds the younger deliveries of its key while
+it waits, so it backs off only to 30 seconds and is dead-lettered after about
+15 seconds, 4 minutes or 11 minutes.
 When a delivery reaches a terminal failure, inspect and replay it through the
 app's unified dead-letter queue (`gregale dlq list <app>`); its origin is shown as
 `event_subscription`.
