@@ -1,4 +1,7 @@
-# Managed PostgreSQL operator preview
+# Managed PostgreSQL operator guide
+
+> Customers: see [Managed PostgreSQL](postgres.md). This page covers
+> qualification, rollout, accounting and the provider adapter.
 
 > Managed PostgreSQL remains gated to qualified accounts while the provider
 > qualification is completed. Its provider-neutral commands are nevertheless
@@ -89,6 +92,20 @@ The fleet ceilings apply across every account:
   `503 managed_postgres_new_databases_paused`.
 - Once this UTC month's provider cost reaches `max_monthly_cost_millicents`,
   cost-raising resizes pause as well, until the next month.
+
+Size `max_databases` to the Neon organization behind the backend. Every
+database is its own Neon project; restores are branches inside their source's
+project. Neon allows 100 projects on its Launch plan and 1,000 (a soft limit)
+on Scale, and the SQL probe's canary database is one of them. Keep
+`max_databases` below the organization's limit with room to spare: Neon keeps
+a deleted project recoverable for 7 days, and its docs don't say whether those
+count. Past about 1,000 databases the fleet needs a second Neon organization
+(another backend) or an agreement with Neon.
+
+A purge cannot be undone through Gregale. Within 7 days Neon can still recover
+the project (`POST /projects/{id}/recover`), but Gregale's catalog already
+records the database as deleted. Rescuing it is a manual operator task: recover
+the project in Neon, copy the data out, and import it into a new database.
 
 ## Provider health
 
@@ -1326,127 +1343,13 @@ checks, SQL preparation, full race suites and 99 selected nested metal tests.
 It includes the journal close/reopen regression and preserves failed attempts
 with their source revisions. Native lifecycle acceptance remains pending.
 
-A bound app reaches its database on every plan: when its guest resolves the
-database's host name, the platform opens that host's port (5432) to the
-answered addresses for the app's instances only
-([ADR-20261026150000](adr/20261026150000-managed-database-binding-egress.md)).
-Other destinations on that port stay closed unless the app declares it in its
-egress ports (Pro and Scale).
-
-The `gregale postgres` command is the supported customer entry point for the
-provider-neutral API:
-
-```sh
-gregale postgres list
-gregale postgres usage
-gregale postgres create orders --region eu --class development
-gregale postgres get DATABASE_ID
-gregale postgres restore DATABASE_ID --name orders-copy --point-in-time 2026-09-09T10:00:00Z
-gregale postgres bindings create DATABASE_ID --app APP_ID --env production --environment-key DATABASE_URL
-gregale postgres bindings list DATABASE_ID
-gregale postgres bindings rotate BINDING_ID --wait
-gregale postgres attach orders api --scope production --env DATABASE_URL
-gregale postgres delete DATABASE_ID
-gregale postgres recover DATABASE_ID
-gregale postgres delete DATABASE_ID --purge
-```
-
-### Deleting and undeleting a database
-
-`postgres delete` does not delete a ready database at once
-([ADR-20261029174950](adr/20261029174950-managed-postgres-delete-grace-period.md)).
-- The database moves to `deleting`. Its compute stops and it refuses
-  connections.
-- Its view shows `restorable_until`, 7 days out. `gregale postgres get` and
-  `gregale postgres list` show it too.
-- Until then, `gregale postgres recover <database>` (API:
-  `POST /v1/postgres/databases/{id}/undelete`) returns it to `ready` with its
-  data and restore history.
-- After that, the provider deletes it for good.
-- A database that never became ready is deleted at once.
-
-`postgres delete --purge` (API: `DELETE …?purge=true`) deletes the database
-and its point-in-time restore history at once, even during the window. It
-cannot be undone.
-
-During the window:
-- The database still counts toward the plan's database limit, and the fleet
-  database cap counts it as well.
-- Its name stays taken. A create with that name returns 409 and names
-  undelete and `--purge`.
-- Its usage is waived: it does not count toward the usage view, the compute
-  allowance or the storage pool.
-- Account deletion waits for it, so purge a database before deleting the
-  account.
-
-Undelete applies the same plan check as create and restore. A database the
-current plan no longer allows, after a downgrade, is refused with a 403.
-
-`postgres delete` asks you to type the database's name. Scripts pass `--yes`
-(or `--quiet`); JSON and `--non-interactive` mode require it.
-
-Binding rotation returns as soon as the new credential is active. Add
-`--wait` to poll until `rotation_pending` clears; the wait defaults to five
-minutes with one-second polling. Set `--wait-timeout` or `--poll-interval` to
-adjust those limits. If the timeout expires, the command prints the latest
-binding state and exits with status 1.
-
-For the App Platform-style happy path, `gregale add postgres` composes the
-same lifecycle and binding APIs. It reuses a matching account database when
-one exists, otherwise creates one, waits for readiness, and binds the sealed
-`DATABASE_URL` value to the app environment. The command never prints the
-credential or connection URL:
-
-```sh
-gregale add postgres --app api --env production --region eu
-gregale add postgres orders --app api --env production --region eu
-gregale add postgres --database orders --app api --env production
-```
-
-`--database` accepts either the database ID or logical name. `NAME` is
-optional when creating and defaults to `<app>-postgres`; `--region` is only
-required when a new database must be created. The existing `gregale postgres`
-verbs remain available for lower-level lifecycle and restore operations.
-
-For application deployments, declare the dependency in `gregale.yaml` and
-`gregale deploy` creates the durable binding before uploading compute:
-
-```yaml
-databases:
-  - database: orders       # logical database name or ID
-    scope: production      # defaults to default
-    env: DATABASE_URL      # defaults to DATABASE_URL
-    access: read_write     # read_only only when the selected backend supports it
-```
-
-The `app` field can be supplied for a multi-app project manifest; when it is
-omitted, the declaration applies to the app currently being deployed. For a
-project deploy with multiple selected workloads, `app` is required so each
-binding has an unambiguous target. Project deploys and immutable GitHub
-source-ref deploys perform the same server-side resolution and binding step as
-the single-app CLI path, before compute is queued. The CLI resolves the
-database name/ID, requires a ready binding response, and then relies on the
-existing sealed app-secret injection path. A binding that is still provisioning
-blocks the deployment with a retryable error; credentials are never written to
-the manifest or printed by the CLI. All dependencies for one deployment must
-use the same scope; an explicit `--environment` selects that scope and rejects
-conflicting manifest scopes so compute and the sealed database secret resolve
-together.
-
-Pass `--json` to any read or write command for automation. JSON responses use
-the same DTOs as the public API and deliberately contain no password, endpoint,
-connection URL, or secret ciphertext. Human output shows lifecycle state,
-placement, storage/restore allowances, and binding generation/state so a
-customer can tell whether a workload is ready without opening provider
-consoles.
-
-The signed-in dashboard exposes the same read-only view at
-`/dashboard/postgres`. It is safe to bookmark during a rollout: when the
-managed-Postgres service is disabled or temporarily unavailable, the page
-shows an explicit status message rather than implying that an empty catalog is
-healthy. Database creation, restore, deletion, and binding changes stay on the
-CLI/API surface, where the existing authentication, plan, idempotency, and
-provider-neutral validation rules apply.
+The customer guide, [Managed PostgreSQL](postgres.md), covers the `gregale
+postgres` and `gregale add postgres` commands, `gregale.yaml` database
+dependencies, binding egress
+([ADR-20261026150000](adr/20261026150000-managed-database-binding-egress.md)),
+delete and undelete
+([ADR-20261029174950](adr/20261029174950-managed-postgres-delete-grace-period.md)),
+and the read-only `/dashboard/postgres` page.
 
 ## Cutover staging and cancellation
 
