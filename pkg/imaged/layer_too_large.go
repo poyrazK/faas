@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/markers"
@@ -31,10 +32,29 @@ func nodeVersionLayerFix(spec string) string {
 	}
 }
 
-// layerTooLargeNodeFix returns nodeVersionLayerFix for a deployment whose
-// Node source build could have used the shared runtime, or "". It reads the
-// source archive, so it runs only for an app layer over the plan cap.
-func (h *Handler) layerTooLargeNodeFix(ctx context.Context, depID string) string {
+// pythonVersionLayerFix is nodeVersionLayerFix for a Python source app
+// (ADR-1500 amendment 2). specs are its declarations as written; none means
+// it already built on the shared runtime.
+func pythonVersionLayerFix(specs []string) string {
+	if len(specs) == 0 || sharedruntime.PythonRuntimeForSpecs(specs) != "" {
+		return ""
+	}
+	return fmt.Sprintf(`• this app declares Python %s, which has no shared runtime, so its layer carries a whole Python toolchain. Declare Python 3.12 or 3.13 (in .python-version) to build on the shared runtime, where the layer holds only your app and its packages`, quotedList(specs))
+}
+
+func quotedList(values []string) string {
+	quoted := make([]string, len(values))
+	for i, v := range values {
+		quoted[i] = fmt.Sprintf("%q", v)
+	}
+	return strings.Join(quoted, ", ")
+}
+
+// layerTooLargeVersionFix returns nodeVersionLayerFix or
+// pythonVersionLayerFix for a deployment whose source build could have used
+// the shared runtime, or "". It reads the source archive, so it runs only for
+// an app layer over the plan cap.
+func (h *Handler) layerTooLargeVersionFix(ctx context.Context, depID string) string {
 	if !sharedruntime.Enabled(os.Getenv(sharedruntime.Env)) {
 		return ""
 	}
@@ -53,5 +73,15 @@ func (h *Handler) layerTooLargeNodeFix(ctx context.Context, depID string) string
 		app.Manifest.BuildDockerfile != "" || app.Manifest.ExecutionMode == api.ExecutionModeJob {
 		return ""
 	}
-	return nodeVersionLayerFix(markers.NodeVersionSpecAtRoot(dep.SourcePath, dep.SourceRoot))
+	fw, err := markers.DetectFromTarballAtRoot(dep.SourcePath, dep.SourceRoot)
+	if err != nil {
+		return ""
+	}
+	switch fw {
+	case markers.FrameworkNode:
+		return nodeVersionLayerFix(markers.NodeVersionSpecAtRoot(dep.SourcePath, dep.SourceRoot))
+	case markers.FrameworkPython:
+		return pythonVersionLayerFix(markers.PythonVersionSpecsAtRoot(dep.SourcePath, dep.SourceRoot))
+	}
+	return ""
 }

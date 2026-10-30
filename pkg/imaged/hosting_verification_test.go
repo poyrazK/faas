@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apihostingreceipt"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -84,6 +86,56 @@ func TestHostingVerificationContractControlsCutover(t *testing.T) {
 			}
 			if receipt.Smoke.Verification != verification || receipt.Smoke.StatusCode != tc.status || receipt.Smoke.Authentication != apihostingreceipt.AuthenticationPlatformChallenge {
 				t.Fatalf("receipt=%+v", receipt.Smoke)
+			}
+		})
+	}
+}
+
+// An internal app has no public route, so the gateway answers its public
+// smoke 404 until the recovery window fails the deploy (Hunt 14 H14-124).
+// Readiness inside the guest is its proof; a public app still needs the smoke.
+func TestHostingVerificationSkipsPublicSmokeForInternalApps(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		visibility api.AppVisibility
+		wantStatus state.DeploymentStatus
+		wantSmoke  int32
+	}{
+		{"internal app goes live without a public probe", api.AppVisibilityInternal, state.DeployLive, 0},
+		{"public app still needs the public smoke", api.AppVisibilityPublic, state.DeployFailed, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			store := state.NewMemStore()
+			account, _ := store.CreateAccount(ctx, "internal@example.test", "pro")
+			app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "api", Visibility: tc.visibility, RAMMB: 256, IdleTimeoutS: 60})
+			if err != nil {
+				t.Fatal(err)
+			}
+			candidate, _ := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:candidate", Scope: state.DefaultEnvScope})
+			_ = store.UpdateDeploymentStatus(ctx, candidate.ID, state.DeploySnapshotting, "")
+			var smokes atomic.Int32
+			handler := New(store, &fakeNotifier{}, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger()).WithHostingSmokeRequired(true).WithHostingSmoke(func(context.Context, state.App, state.Deployment) (apihostingreceipt.SmokeResult, error) {
+				smokes.Add(1)
+				return apihostingreceipt.SmokeResult{Status: apihostingreceipt.SmokeFailed, Path: "/", StatusCode: http.StatusNotFound, Error: "health probe returned HTTP 404"}, nil
+			})
+			handler.HandleNotification(ctx, db.Notification{Channel: db.NotifySnapshotWritten, Payload: `{"deployment_id":"` + candidate.ID + `","storage_key":"snap/` + candidate.ID + `/mem","mem_bytes":268435456,"vmstate_bytes":40960,"fc_version":"firecracker-1.10"}`})
+			got, err := store.DeploymentByID(ctx, candidate.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Status != tc.wantStatus || smokes.Load() != tc.wantSmoke {
+				t.Fatalf("status=%s smokes=%d, want %s and %d", got.Status, smokes.Load(), tc.wantStatus, tc.wantSmoke)
+			}
+			if tc.visibility != api.AppVisibilityInternal {
+				return
+			}
+			receipt, err := apihostingreceipt.Decode(got.APIHostingReceipt)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if receipt.Smoke.Status != apihostingreceipt.SmokeSkipped || receipt.Smoke.ErrorCode != apihostingreceipt.SmokeErrorInternalApp {
+				t.Fatalf("receipt smoke=%+v, want skipped %s", receipt.Smoke, apihostingreceipt.SmokeErrorInternalApp)
 			}
 		})
 	}

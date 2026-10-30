@@ -1901,3 +1901,7 @@ func (r *server) AdvanceSecurityMailClockForTest(d time.Duration) {
 
 // SealOAuthCodeState mints a Connect GitHub state for accountID (H64).
 var SealOAuthCodeState = sealOAuthCodeState
+
+// ProjectReadinessOverrides exposes projectReadinessOverrides to the
+// external test package.
+var ProjectReadinessOverrides = projectReadinessOverrides

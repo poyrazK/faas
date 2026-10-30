@@ -123,14 +123,37 @@ The app's container is the one named by the
   plan fails admission with the limit and the requested value, as the apps API
   does.
 - **Health.**
-  - `readinessProbe`, or `startupProbe` when there is no readiness probe, becomes
-    the app's healthcheck. It gates readiness (ADR-683) and replaces an instance
-    that fails after it was ready (ADR-684).
-  - `httpGet.path` sets the HTTP healthcheck path, and `grpc` the gRPC
-    healthcheck and its `service`. `exec.command` becomes an `api.ComposeHealthcheck`
-    `CMD` test. `periodSeconds`, `timeoutSeconds`, `failureThreshold` and
-    `initialDelaySeconds` map to interval, timeout, retries and start period. A
-    `startupProbe`'s `failureThreshold × periodSeconds` sets the start period.
+  - `readinessProbe`, or `startupProbe` when there is no readiness probe (or
+    only a `tcpSocket` one), becomes the app's healthcheck. The other probe's
+    action is reported; its budget still counts toward the start period.
+  - `exec.command` becomes an `api.ComposeHealthcheck` `CMD` test. It gates
+    readiness (ADR-683) and replaces an instance that fails after it was ready
+    (ADR-684).
+  - `httpGet` and `grpc` become the deployment's startup probe
+    (`api.DeploymentHealthcheck`): `httpGet.path` (default `/`) the HTTP path,
+    `grpc.service` the gRPC health service. The scan stores it on the app
+    (`project_readiness_check`), and every project deploy passes it as the
+    deployment's healthcheck override, so it gates readiness on every boot, and
+    as its liveness override with the plan's default timing, so an instance
+    that fails it after it was ready is replaced, as ADR-684 does for an exec
+    check. The liveness override is load-bearing: without it the plan-default
+    liveness probe calls `/healthz`, and once readiness is an HTTP path a 404
+    there counts as a failure, so an app that serves health elsewhere would
+    restart in a loop. A plan without liveness overrides (Free, or gRPC where
+    `GRPCLivenessAllowed` is false) gets neither, and its readiness stays the
+    TCP listener.
+  - The platform checks the serving port over plain HTTP or gRPC: a probe of
+    another port, or with `scheme: HTTPS`, is reported and not applied, since it
+    would check something else. A named port resolves through the container's
+    `ports`. `host` and `httpHeaders` are reported. Two differences from the
+    cluster are documented, not hidden: HTTP checks accept 2xx where Kubernetes
+    accepts 200–399, and an instance that fails its readiness check after it was
+    ready is replaced rather than taken out of traffic, which the scan reports.
+  - `periodSeconds`, `timeoutSeconds`, `failureThreshold` and
+    `initialDelaySeconds` map to interval, timeout, retries and start period,
+    with the Kubernetes defaults (10 s, 1 s, 3, 0) when absent. A
+    `startupProbe`'s `initialDelaySeconds + failureThreshold × periodSeconds`
+    sets the start period.
   - `tcpSocket` is reported: the platform already waits for the serving port.
   - **`livenessProbe` is not imported.** It is reported with the reason: the
     healthcheck above already replaces a broken instance. A liveness probe that

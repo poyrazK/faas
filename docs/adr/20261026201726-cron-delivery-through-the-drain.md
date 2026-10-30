@@ -84,3 +84,27 @@ catalog, the CLI and the new customer page say so.
 - The trigger stamps the anchor whichever release writes the row, since
   the migration lands first (deploy order: data first). Release N-1 schedd
   ignores the column and keeps the old behaviour until it is replaced.
+
+## Amendment 2026-10-29: retry runs Gregale refused before delivery
+
+Production on rc.304 showed plain HTTP cron runs failing on their single
+attempt although the app never received the request: the gateway's dispatch
+endpoint answered `503 traffic_policy_unavailable` ("Retry shortly"), and
+before rc.304 the traffic-security version pin and the wake path timed out
+reading generations. One attempt was meant to keep a cron from running its
+handler twice, which a refusal before delivery cannot do.
+
+A plain HTTP cron run now gets up to `api.CronPlatformAttempts` (3) attempts
+when Gregale refuses it before the app sees it, waiting
+`api.CronPlatformRetryDelay` (5 s) times the attempt number between them:
+
+- a wake failure other than a permanent one;
+- a traffic-security version-pin failure (dispatch not started);
+- a 5xx from gatewayd-internal's dispatch endpoint (`sched.ErrDispatchRefused`).
+  The endpoint answers 200 with the app's response whenever the app received
+  the request, so a 5xx is a refusal before delivery.
+
+Anything the app answered, including its own 5xx inside the 200 envelope,
+and a dispatch that timed out in flight keep the single attempt. The last
+refused attempt ends `failed`, not dead-lettered. Crons with failure rules
+are unchanged: they already use the plan's retry budget.

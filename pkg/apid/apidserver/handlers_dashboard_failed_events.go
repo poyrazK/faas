@@ -176,6 +176,12 @@ func (s *server) dashboardFailedEventAction(w http.ResponseWriter, r *http.Reque
 		http.NotFound(w, r)
 		return
 	}
+	// Creating the app is not enough: a creator who left the company, or
+	// lost the role to deploy its apps, may not replay or discard its work.
+	if writable, err := s.deadLetterWritable(r.Context(), actorAccount(r, acct), app); err != nil || !writable {
+		http.NotFound(w, r)
+		return
+	}
 	event, err := s.store.DeadLetterEventByID(r.Context(), app.ID, eventID)
 	if err != nil || event.ReplayedAt != nil {
 		if err == nil {
@@ -230,7 +236,7 @@ func (s *server) dashboardAccountFailedEventAction(w http.ResponseWriter, r *htt
 		http.NotFound(w, r)
 		return
 	}
-	event, err := s.deadLetterAccess(r, acct).visibleEvent(r.Context(), eventID)
+	event, err := s.deadLetterWriteAccess(r, acct).visibleEvent(r.Context(), eventID)
 	if err != nil || event.ReplayedAt != nil {
 		if err == nil {
 			err = state.ErrNotFound
@@ -286,7 +292,11 @@ func (s *server) dashboardFailedEventsBulkAction(w http.ResponseWriter, r *http.
 	var app state.App
 	if selected != "" {
 		var visible bool
-		if app, visible = s.dashboardFailedEventsApp(r, acct, selected); !visible {
+		if app, visible = s.dashboardFailedEventsApp(r, acct, selected); visible {
+			writable, writeErr := s.deadLetterWritable(r.Context(), actorAccount(r, acct), app)
+			visible = writeErr == nil && writable
+		}
+		if !visible {
 			s.observeDashboardDeadLetterAction("account", action, state.ErrNotFound)
 			http.Redirect(w, r, failedEventsRedirect(selected, "error"), http.StatusSeeOther)
 			return
@@ -369,14 +379,18 @@ func (s *server) dashboardFailedEventsSelectedAction(w http.ResponseWriter, r *h
 	var err error
 	if selected != "" {
 		var visible bool
-		if app, visible = s.dashboardFailedEventsApp(r, acct, selected); !visible {
+		if app, visible = s.dashboardFailedEventsApp(r, acct, selected); visible {
+			writable, writeErr := s.deadLetterWritable(r.Context(), actorAccount(r, acct), app)
+			visible = writeErr == nil && writable
+		}
+		if !visible {
 			s.observeDashboardDeadLetterAction("account", action, state.ErrNotFound)
 			http.Redirect(w, r, failedEventsRedirect(selected, "error"), http.StatusSeeOther)
 			return
 		}
 		scope = app.Slug
 	}
-	access := s.deadLetterAccess(r, acct)
+	access := s.deadLetterWriteAccess(r, acct)
 
 	events := make([]state.DeadLetterEvent, 0, len(ids))
 	for _, id := range ids {
