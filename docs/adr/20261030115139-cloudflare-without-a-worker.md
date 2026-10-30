@@ -69,7 +69,7 @@ Cloudflare provides:
 - DNS;
 - the proxy: TLS, DDoS mitigation, the client connection;
 - Tunnel;
-- Pages for the frontend.
+- Pages, if a frontend moves there (none is on it today).
 
 Nothing billed per request sits on the request path: no Workers, Argo,
 Load Balancing or Snippets. Adding one needs a new ADR.
@@ -157,8 +157,8 @@ Units release independently, so each step works with the step before it.
 
 ## Consequences
 
-- **Cost.** Cloudflare costs nothing at any request volume: the Free zone,
-  Tunnel and Pages. The Workers Free plan's 100,000-a-day cap no longer
+- **Cost.** Cloudflare costs nothing at any request volume: the Free zone and
+  Tunnel. The Workers Free plan's 100,000-a-day cap no longer
   applies.
 - **Customer-visible change.** The platform errors listed in decision 3 move
   from 502/504 to 503. A client that keys on the status instead of the code
@@ -196,9 +196,11 @@ Units release independently, so each step works with the step before it.
 
 ## Open questions
 
-- **The apex's origin.** The Worker README says the apex keeps the Pages
-  origin. The live Worker (version `165ecd0c`, 2026-09-12) sends every host,
-  apex included, to `origin.gregale.dev`. Confirm which origin serves
-  `gregale.dev` before its route is removed.
+- **The apex's DNS record.** The Worker README says the apex keeps a Pages
+  origin, but the account has no Pages project (checked 2026-10-30), and the
+  live Worker (version `165ecd0c`, 2026-09-12) sends every host, apex
+  included, to `origin.gregale.dev`. The apex is therefore served by the
+  control-plane origin. Its record must point there before its route is
+  removed.
 - **The account's Workers plan.** On the Free plan the 100,000-a-day cap
   applies until step 5.
