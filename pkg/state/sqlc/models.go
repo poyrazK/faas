@@ -6081,6 +6081,8 @@ type GithubDeployPolicy struct {
 	UpdatedAt            pgtype.Timestamptz
 	PreviewServicePolicy string
 	ProductionTrigger    string
+	PreviewBotPrs        bool
+	PreviewDraftPrs      bool
 }
 
 type GithubDeployment struct {
