@@ -77,6 +77,9 @@ func runEnvironmentGitOpsNative(t *testing.T, providerName string) {
 	daemonEnv := []string{"FAAS_STORAGE_ROOT=" + storageRoot,
 		"GREGALE_GITOPS_ACCEPTANCE=1", "FAAS_ENVIRONMENT_GITOPS_ACCEPTANCE_ENFORCEMENT=1",
 		"FAAS_ENVIRONMENT_GITOPS_QUALIFICATION_DISPATCH=1",
+		// Serving convergence waits for route acknowledgements from the
+		// serving gateways; without a named gateway it never completes.
+		"FAAS_E2E_GATEWAY_NODE_NAME=" + state.DefaultLocalNodeName,
 		"FAAS_AUDIT_HMAC_KEY_FILE=" + gitOpsAcceptanceHMACKeyFile(t, "audit-hmac.key"),
 		"FAAS_RECOVERY_HMAC_KEY_FILE=" + gitOpsAcceptanceHMACKeyFile(t, "recovery-hmac.key")}
 	h := e2etest.StartWithAPIDEnv(t, pool, e2etest.DeployWake, providerEnv, daemonEnv...)
