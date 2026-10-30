@@ -4983,6 +4983,9 @@ type Querier interface {
 	// plan on every project service call through the transaction pooler while no
 	// deployment on production-us was pinned (Hunt 14 H14-35).
 	ProjectServiceGraphCallerPinned(ctx context.Context, db DBTX, arg ProjectServiceGraphCallerPinnedParams) (bool, error)
+	// A deleted production member keeps its service name until it is purged, so
+	// the name does not fall back to an app slug elsewhere (ErrProjectServiceDeleted).
+	ProjectServiceHasDeletedApp(ctx context.Context, db DBTX, arg ProjectServiceHasDeletedAppParams) (bool, error)
 	ProjectStabilizationSuperseded(ctx context.Context, db DBTX, arg ProjectStabilizationSupersededParams) (bool, error)
 	ProjectWorkerGraphAdmission(ctx context.Context, db DBTX, arg ProjectWorkerGraphAdmissionParams) (bool, error)
 	PromotionControlBaselineUsable(ctx context.Context, db DBTX, releaseID string) (bool, error)
