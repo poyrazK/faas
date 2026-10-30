@@ -2738,6 +2738,11 @@ message RunAgentStart {
   // snapshot is the preset snapshot to restore. Absent, stale or failing:
   // a cold boot of the same image (ADR-005).
   AgentRunSnapshot snapshot = 12;
+  // model_wait_pause_after_ms is the run's model-wait pause delay
+  // (ADR-20261027090012): with vmmd's agent_wait_pause on, the VM is paused
+  // once it has waited this long on the relay and nothing else. 0 (an older
+  // schedd) keeps it running.
+  int32 model_wait_pause_after_ms = 13;
 }
 
 // AgentRunSnapshot locates a preset snapshot CaptureAgentSnapshot made.

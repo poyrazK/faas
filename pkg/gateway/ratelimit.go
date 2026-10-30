@@ -26,14 +26,15 @@ import (
 // rather than O(n) when every bucket is mid-drain.
 const LimiterEvictScan = 32
 
-// centralConsultTimeout bounds the pre-auth and lease consults before they
-// refuse admission during a Postgres outage. Central mode requires a
-// successful consume for every admitted request so replicas share one burst.
-// The consult breaker refuses requests during an outage.
+// centralConsultTimeout bounds the pre-auth consults and the return of unspent
+// lease tokens. Central mode requires a successful consume for every admitted
+// request so replicas share one burst. The consult breaker refuses requests
+// during an outage.
 const centralConsultTimeout = 250 * time.Millisecond
 
-// centralConsumeTimeout bounds the authoritative app and account consume
-// (ADR-570 amendment 2026-10-28). A committed counter write occasionally
+// centralConsumeTimeout bounds the authoritative app, account and rule
+// consume, and each lease statement (ADR-570 amendment 2026-10-28,
+// ADR-20261027173012 amendment 2). A committed counter write occasionally
 // takes longer than 250 ms (a checkpoint or fsync stall, a row-lock wait),
 // and refusing then turned one slow commit into a customer 503. The
 // PostgreSQL backend still bounds connection acquisition by 250 ms, so a

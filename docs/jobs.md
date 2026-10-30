@@ -44,8 +44,8 @@ gregale job runs nightly
 gregale job tasks nightly RUN_ID
 gregale job attempts nightly RUN_ID 0
 gregale job retry nightly RUN_ID 0
-gregale job replay-failed nightly RUN_ID
-gregale job artifact-url nightly RUN_ID 0 result
+gregale job replay nightly RUN_ID
+gregale job artifact get nightly RUN_ID 0 result
 gregale job logs nightly RUN_ID 0 [--max-bytes N]
 ```
 
@@ -150,7 +150,7 @@ gregale job update customer-sync --failure-rules \
 When a Job partition classified `retry` has no attempt left, its final
 attempt records `dead_letter` (reason `retry_budget_exhausted`) and the run's
 dead-letter count rises. `gregale job retry` refuses a partition past its
-retry budget; re-run its input with `gregale job replay-failed JOB RUN_ID`.
+retry budget; re-run its input with `gregale job replay JOB RUN_ID`.
 For a command Cron, the bounded retry budget is per occurrence; for a Job, it
 is per partition. `gregale cron runs CRON_ID --run TASK_ID` shows the reported
 outcome code and saved work decision.
@@ -263,7 +263,7 @@ fail, so it follows the configured retry policy. For an `obj://` artifact, call
 Gregale verifies the current object's size and SHA-256, then returns a
 five-minute signed URL. The caller needs job and storage read access. Check
 the downloaded checksum too, because an object can change after verification.
-`gregale job artifact-url` prints the signed URL and expected digest; add
+`gregale job artifact get` prints the signed URL and expected digest; add
 the global JSON output option to retrieve the full signed request, including
 headers and expiry.
 Missing objects return 404; an object whose current bytes disagree with the

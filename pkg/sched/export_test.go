@@ -253,6 +253,14 @@ var TruncateCodeError = truncateCodeError
 
 var JobDispatchResult = jobDispatchResult
 
+// SidecarsForDeploymentOn builds a deployment's sidecar workload specs, as a
+// wake does, on an engine over store.
+func SidecarsForDeploymentOn(ctx context.Context, store state.Store, dep state.Deployment, accountID string) ([]fcvm.WorkloadSpec, error) {
+	e := &Engine{store: store, log: testLog()}
+	specs, _, err := e.sidecarsForDeployment(ctx, dep, accountID)
+	return specs, err
+}
+
 // Dispatch DB-phase tokens (ADR-20261025232118).
 func (o *WorkflowOrchestrator) SetDBPhaseSlotsForTest(slots int) {
 	o.dbPhase = newWorkflowDBPhase(slots)
@@ -984,4 +992,10 @@ func (d *Drain) XInvocationRetryDelay(ctx context.Context, inv state.Invocation)
 
 func (d *Drain) XInvocationAttemptBudget(ctx context.Context, inv state.Invocation) int {
 	return d.invocationAttemptBudget(ctx, inv)
+}
+
+// CustomerCapacityProblem exposes the customer restatement of a node-budget
+// refusal, built from a refusal carrying the given blockers.
+func CustomerCapacityProblem(detail string, blockers ...api.WorkerAdmissionBlocker) *api.Problem {
+	return customerCapacityProblem(explainAdmission(api.ErrCapacity(detail), blockers...))
 }

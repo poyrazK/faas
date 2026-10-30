@@ -86,7 +86,7 @@ func TestVMMDServiceAdoptionSwitchesDefaultOff(t *testing.T) {
 		}
 	}
 	// Production: the fleet writes adoption blocks (step 1), and adoption is
-	// a per-node canary (step 2), never a fleet-wide switch.
+	// on for the named canary nodes (step 2), never a fleet-wide switch.
 	fleet, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "group_vars", "compute_nodes", "vmmd_adoption.yml"))
 	if err != nil {
 		t.Fatal(err)
@@ -101,8 +101,17 @@ func TestVMMDServiceAdoptionSwitchesDefaultOff(t *testing.T) {
 	if adopt, _ := vars["vmmd_adopt_running_vms"].(string); !strings.Contains(adopt, "in vmmd_adoption_canary_nodes") {
 		t.Errorf("vmmd_adopt_running_vms = %v, want it limited to vmmd_adoption_canary_nodes", vars["vmmd_adopt_running_vms"])
 	}
-	if canary, _ := vars["vmmd_adoption_canary_nodes"].([]any); len(canary) != 1 {
-		t.Errorf("vmmd_adoption_canary_nodes = %v, want one canary node", vars["vmmd_adoption_canary_nodes"])
+	canary, _ := vars["vmmd_adoption_canary_nodes"].([]any)
+	if len(canary) == 0 {
+		t.Errorf("vmmd_adoption_canary_nodes = %v, want named canary nodes", vars["vmmd_adoption_canary_nodes"])
+	}
+	seen := map[string]bool{}
+	for _, n := range canary {
+		name, _ := n.(string)
+		if !strings.HasSuffix(name, ".faas") || seen[name] {
+			t.Errorf("vmmd_adoption_canary_nodes = %v, want distinct canonical node names", canary)
+		}
+		seen[name] = true
 	}
 	if _, set := vars["vmmd_adopt_admitted_runtimes"]; set {
 		t.Error("compute_nodes group vars set vmmd_adopt_admitted_runtimes")

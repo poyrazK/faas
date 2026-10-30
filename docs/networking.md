@@ -455,7 +455,7 @@ Customer-sealed outbound integrations can opt into verification by declaring a
 provider endpoint safe to call:
 
 ```sh
-gregale app binding probe-policy INTEGRATION_ID --path /health --method GET --expect-status 200
+gregale app binding probe-policy set INTEGRATION_ID --path /health --method GET --expect-status 200
 gregale app binding verify public-api --release v12 --outbound INTEGRATION_ID
 gregale app binding check public-api --release v12
 gregale release traffic promote --app public-api --release v12 --require-bindings
@@ -864,7 +864,7 @@ Then run:
 ```sh
 gregale environment qualify shop staging --profile gregale-qualification.yaml
 gregale environment preview shop --from staging --to production
-gregale environment preflight shop --from staging --to production \
+gregale environment check shop --from staging --to production \
   --profile gregale-qualification.yaml --json
 ```
 
@@ -908,7 +908,7 @@ availability without invoking customer code. To exercise a handler on one
 exact deployment, use an explicit smoke request from the caller:
 
 ```bash
-gregale app binding smoke public-api billing \
+gregale app binding call public-api billing \
   --caller-deployment v12 \
   --target-deployment TARGET_DEPLOYMENT_ID \
   --path /health \
@@ -1566,7 +1566,7 @@ dark-deployment preparation workflow first. GitOps-managed workloads, active
 service rollouts, mirror recipients and deactivation manifests are excluded.
 
 ```bash
-gregale environment release-sets stage shop production \
+gregale environment release-sets stage create shop production \
   --file manifest.json --ttl-seconds 600 --json > stage.json
 stage_id=$(jq -r .id stage.json)
 gregale environment release-sets stage status shop production \
@@ -1690,9 +1690,9 @@ The CLI prints the run ID before requesting creation and includes `run_id` in
 its verification report.
 
 ```sh
-gregale app binding verification-runs status my-api RUN_ID --json
-gregale app binding verification-runs resume my-api RUN_ID --concurrency 2 --json
-gregale app binding verification-runs cancel my-api RUN_ID --json
+gregale app binding verification status my-api RUN_ID --json
+gregale app binding verification resume my-api RUN_ID --concurrency 2 --json
+gregale app binding verification cancel my-api RUN_ID --json
 ```
 
 Status shows the original plan, resource IDs, ownership and current progress.
@@ -1737,9 +1737,9 @@ receipt commit together and share that fixed deadline. The CLI prints the parent
 ID before creation, so a lost creation response is recoverable with the same UUID.
 
 ```sh
-gregale environment release-sets verification-runs status my-project production RUN_UUID --json
-gregale environment release-sets verification-runs resume my-project production RUN_UUID --concurrency 2 --json
-gregale environment release-sets verification-runs cancel my-project production RUN_UUID --json
+gregale environment release-sets verification status my-project production RUN_UUID --json
+gregale environment release-sets verification resume my-project production RUN_UUID --concurrency 2 --json
+gregale environment release-sets verification cancel my-project production RUN_UUID --json
 ```
 
 Resume retains membership, routing expectations, policy revisions, exact service
@@ -1781,7 +1781,7 @@ SDK transport failures, caller stops and progress callback failures preserve ser
 
 ### Explain blocked verification receipts
 
-Use `gregale app binding verification-runs diagnostics APP RUN_ID --json` or `gregale environment release-sets verification-runs diagnostics PROJECT ENVIRONMENT RUN_ID --json` to inspect blockers and recovery suggestions. The corresponding GET endpoints end in `/verification-runs/{run}/diagnostics` on the app binding or project environment release-set surface.
+Use `gregale app binding verification diagnostics APP RUN_ID --json` or `gregale environment release-sets verification diagnostics PROJECT ENVIRONMENT RUN_ID --json` to inspect blockers and recovery suggestions. The corresponding GET endpoints end in `/verification-runs/{run}/diagnostics` on the app binding or project environment release-set surface.
 
 Responses preserve the original run ID and expiry and include `complete`, optional `check_passed`, `blockers`, `changes` and `recovery`. `complete` means applicable diagnostic reads succeeded; `check_passed` describes current public policy/evidence. Neither grants admission, confirms receipt completion or authorizes traffic changes. A previously passed or expired receipt can have current blockers.
 
@@ -1819,7 +1819,7 @@ Set `--status-read-retries 0` on durable CLI verify or receipt resume to disable
 
 ### Discover retained verification receipts
 
-Use `gregale app binding verification-runs list APP --json` or `gregale environment release-sets verification-runs list PROJECT ENVIRONMENT --json` when you need to recover a receipt ID. Lists are read-only summaries; they do not refresh evidence, admit work, resume or cancel receipts. A listed passed state does not establish current qualification.
+Use `gregale app binding verification list APP --json` or `gregale environment release-sets verification list PROJECT ENVIRONMENT --json` when you need to recover a receipt ID. Lists are read-only summaries; they do not refresh evidence, admit work, resume or cancel receipts. A listed passed state does not establish current qualification.
 
 Pages default to 20 entries (maximum 100), newest first by creation time and UUID. Use `--limit`, `--cursor`, `--deployment UUID` and `--status pending|passed|cancelled|expired`. App lists additionally accept `--scope` and `--include-members`; by default they omit graph members. Project lists show root receipts and match deployment filters against reviewed members. Included app members expose their original `graph_run_id`.
 
@@ -1845,7 +1845,7 @@ For CI, keep stdout as one final JSON report and stream typed events on stderr:
 
 ```sh
 gregale app binding verify api --release-policy --durable --json --progress ndjson
-gregale environment release-sets verification-runs resume project production RUN_ID --json --progress ndjson
+gregale environment release-sets verification resume project production RUN_ID --json --progress ndjson
 ```
 
 `binding_verification_progress` events include root/member IDs, step/resource status, `waiting_for_qualification` conditions, read retries and `reconciling` operations. Graph events also identify project and environment. During execution, cleanup failures use `binding_verification_notice` with code `cleanup_failed`. Pre-execution argument/authentication failures retain the normal CLI error contract.

@@ -5223,6 +5223,19 @@
     }
   },
   {
+    "table": "deployment_sidecar_env_reseals",
+    "columns": [
+      "ciphertext",
+      "deployment_id",
+      "env_key",
+      "kid",
+      "resealed_at",
+      "sidecar_name",
+      "source_sha256"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "deployment_sidecar_layers",
     "columns": [
       "bytes",
@@ -7456,6 +7469,8 @@
     "columns": [
       "account_id",
       "ignored_paths",
+      "preview_bot_prs",
+      "preview_draft_prs",
       "preview_enabled",
       "preview_service_policy",
       "preview_ttl_hours",
@@ -12421,6 +12436,20 @@
       "objects",
       "observed_at",
       "token"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "object_storage_inventory_scans",
+    "columns": [
+      "after_key",
+      "bucket_id",
+      "complete",
+      "listed_bytes",
+      "listed_keys",
+      "pages",
+      "progress_at",
+      "started_at"
     ],
     "kind": "operational"
   },

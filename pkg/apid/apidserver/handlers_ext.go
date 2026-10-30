@@ -1969,6 +1969,16 @@ func (s *server) deleteApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if !ok {
 		return
 	}
+	// A PR preview is one workload of its PR environment. Deleted alone it
+	// left its siblings serving to the end of their lease and stayed
+	// restorable; delete tears down the whole environment, as
+	// POST /v1/preview/{slug}/destroy does.
+	if app.PreviewOfSlug != "" && app.PreviewPrNumber > 0 {
+		if s.tearDownPreviewEnvironment(w, r, acct, app, "preview.destroyed_by_customer") {
+			w.WriteHeader(http.StatusNoContent)
+		}
+		return
+	}
 	if st, ok := s.store.(state.ObjectBucketStore); ok {
 		buckets, err := st.ListObjectBuckets(r.Context(), acct.ID, app.ID)
 		if err != nil {
