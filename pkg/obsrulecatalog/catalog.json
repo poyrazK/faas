@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "b92d2594dcc148efaed3269f2a0d439e27de2207bc6848833d17ca6d60a28e84",
+      "revision": "b6ac73cb6f425671adb19a9bc326c005472204671ff6b66cfd4281bce9b74f73",
       "files": [
         "faas.rules.yml"
       ],
@@ -1320,6 +1320,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "20ac855d098d8fdbc22b0cc1f8a43d82af1ea56700140347666a4b1357cae43d"
+          }
+        },
+        {
+          "id": "2d2139f8c687a310d1686a0b379cf1419435a1c6f172ebdd6cddb4e9d579bd75",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_object_storage",
+          "rule_name": "FaasS3GatewayReadUsageFlushFailing",
+          "definition": {
+            "expression_hash": "8be3f6781223faaf928ad0c1dd41587c0410fa2f38331b68ae98f7cd087e8136",
+            "labels_hash": "140ba2a4634c3854c97506082239ad2d1f9e2e0c8d8c9d34c00fbafc409805a9",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "9c3d3652eb16b767021358714937fed50d6eb7d8b4a2b46c42b8c568103edfd4"
           }
         },
         {
@@ -3049,6 +3062,19 @@
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "e7160612a860184150e9bc4ad60ca84b9ac79d47d121325afa4ef4dab093539c"
+          }
+        },
+        {
+          "id": "7525ac3261f394e8b4badad353ce8d29f8ddd8a689543008545bb823bb7c8400",
+          "file_name": "faas.rules.yml",
+          "group_name": "app_deletion_grace",
+          "rule_name": "FaasAppDeletionPurgeBlocked",
+          "definition": {
+            "expression_hash": "06a9bcf0717c397fccc21cdfb3fd069558ca77838609453c45013a3df94878fc",
+            "labels_hash": "11e63ad441e791fc9b1c9f4d0d65b62cd5a69b4bba2675e10a990c3479cbf6de",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "6814062548a89da7857c98f6050a1e9d8f23c8c56b92d7a5d5445dd964ed4518"
           }
         },
         {
@@ -6435,7 +6461,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "1974eb98bc0512aaba979e6a4c6b09c5478ae5c1376970b70b9fced30e680a37",
+      "revision": "9e6860d5395340d80e86f2045887b7f84c38cd2761783697c325f9b75fb09f22",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -7833,6 +7859,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "20ac855d098d8fdbc22b0cc1f8a43d82af1ea56700140347666a4b1357cae43d"
+          }
+        },
+        {
+          "id": "2d2139f8c687a310d1686a0b379cf1419435a1c6f172ebdd6cddb4e9d579bd75",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_object_storage",
+          "rule_name": "FaasS3GatewayReadUsageFlushFailing",
+          "definition": {
+            "expression_hash": "8be3f6781223faaf928ad0c1dd41587c0410fa2f38331b68ae98f7cd087e8136",
+            "labels_hash": "140ba2a4634c3854c97506082239ad2d1f9e2e0c8d8c9d34c00fbafc409805a9",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "9c3d3652eb16b767021358714937fed50d6eb7d8b4a2b46c42b8c568103edfd4"
           }
         },
         {
@@ -9601,6 +9640,19 @@
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "e7160612a860184150e9bc4ad60ca84b9ac79d47d121325afa4ef4dab093539c"
+          }
+        },
+        {
+          "id": "7525ac3261f394e8b4badad353ce8d29f8ddd8a689543008545bb823bb7c8400",
+          "file_name": "faas.rules.yml",
+          "group_name": "app_deletion_grace",
+          "rule_name": "FaasAppDeletionPurgeBlocked",
+          "definition": {
+            "expression_hash": "06a9bcf0717c397fccc21cdfb3fd069558ca77838609453c45013a3df94878fc",
+            "labels_hash": "11e63ad441e791fc9b1c9f4d0d65b62cd5a69b4bba2675e10a990c3479cbf6de",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "6814062548a89da7857c98f6050a1e9d8f23c8c56b92d7a5d5445dd964ed4518"
           }
         },
         {

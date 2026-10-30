@@ -3294,6 +3294,26 @@ const (
 // `max_buckets` placement ceiling (ADR-20261029174627).
 const MaxObjectStorageBackendBuckets = 1_000_000
 
+// Reads through the branded S3 gateway are admitted from a per-bucket
+// decision each gateway process caches for ObjectReadAdmissionTTL, serves for
+// up to ObjectReadAdmissionMaxStale while the database is unreachable, and
+// refreshes within ObjectReadAdmissionTimeout. Their counts are written every
+// ObjectReadUsageFlushInterval, and at most MaxObjectReadAdmissionEntries
+// buckets are cached. Every authenticated request takes a token from its
+// bucket owner's ObjectStorageAccountRequestsPerSecond bucket (burst
+// ObjectStorageAccountRequestBurst), tracking at most
+// MaxObjectStorageAccountLimiters owners (ADR-20261030075301).
+const (
+	ObjectReadAdmissionTTL                = 2 * time.Second
+	ObjectReadAdmissionMaxStale           = 30 * time.Second
+	ObjectReadAdmissionTimeout            = 2 * time.Second
+	ObjectReadUsageFlushInterval          = time.Second
+	MaxObjectReadAdmissionEntries         = 10_000
+	ObjectStorageAccountRequestsPerSecond = 100
+	ObjectStorageAccountRequestBurst      = 200
+	MaxObjectStorageAccountLimiters       = 10_000
+)
+
 // ObjectStorageBillingHoursPerMonth is the conventional month used to price
 // stored byte-hours as GiB-months and to convert IncludedBytes.
 const ObjectStorageBillingHoursPerMonth int64 = 730
