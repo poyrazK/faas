@@ -20,3 +20,5 @@ func StartOutboundRelayReceiver(context.Context, *slog.Logger, *fcvm.Manager, *w
 }
 
 func (*OutboundRelayReceiver) Close() {}
+
+func (*OutboundRelayReceiver) UseDeployments(workloadIdentityDeployments) {}

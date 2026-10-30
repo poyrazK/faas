@@ -166,7 +166,7 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 		EgressPorts:         app.EgressPorts,
 		PrivateNetworkCIDRs: privateNetwork.CIDRs, PrivateNetworkAllowedCIDRs: privateNetwork.AllowedCIDRs,
 		PrivateNetworkFirewallRules: privateNetwork.FirewallRules, PrivateNetworkID: privateNetwork.NetworkID,
-		PrivateNetworkAddress: privateNetwork.Address, StaticEgressIP: staticEgressIPString(app.StaticEgressIP),
+		PrivateNetworkAddress: privateNetwork.Address, StaticEgressIP: deploymentStaticEgressIP(app, dep),
 		Port: deploymentRuntimePort(dep), HealthcheckPath: healthcheckPath,
 		HealthcheckGRPC:        healthcheckGRPC,
 		HealthcheckGRPCService: healthcheckGRPCService,

@@ -876,6 +876,10 @@ func (h *Handler) callerAppID(w http.ResponseWriter, r *http.Request, integratio
 			writeProblem(w, http.StatusForbidden, "outbound_relay_not_supported", "This outbound integration is not available through the app relay", "")
 			return "", "", false
 		}
+		if !productionWorkloadEnvironment(identity.Environment) {
+			writeProblem(w, http.StatusForbidden, "outbound_stage_not_allowed", "Outbound integrations serve production deployments; a stage calls the provider with its own credentials", "")
+			return "", "", false
+		}
 		return identity.AppID, identity.InstanceID, true
 	}
 	if integration.ProviderAuthMode == ProviderAuthManaged {
@@ -886,6 +890,10 @@ func (h *Handler) callerAppID(w http.ResponseWriter, r *http.Request, integratio
 		identity, err := h.IdentityVerifier.Verify(r.Header.Get(WorkloadIdentityHeader), integration.ID)
 		if err != nil {
 			writeProblem(w, http.StatusUnauthorized, "outbound_unauthorized", "Outbound workload identity is invalid", "")
+			return "", "", false
+		}
+		if !productionWorkloadEnvironment(identity.Environment) {
+			writeProblem(w, http.StatusForbidden, "outbound_stage_not_allowed", "Outbound integrations serve production deployments; a stage calls the provider with its own credentials", "")
 			return "", "", false
 		}
 		return identity.AppID, identity.InstanceID, true
