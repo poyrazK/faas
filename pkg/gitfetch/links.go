@@ -1,6 +1,7 @@
 package gitfetch
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -21,8 +22,14 @@ type pendingLink struct {
 // "entry type 50 not allowed". The fetched tree is re-packed for the build,
 // so each link becomes a copy of its target, as `gregale deploy` does
 // locally. No link is ever created on this host, and copies count against
-// the same per-file, entry and total byte caps as extracted files.
+// the same per-file, entry and total byte caps as extracted files. Every
+// directory a copy creates counts as an entry too: two links per level to
+// the level below doubled the copied tree at each level from a few dozen
+// archive entries, so a public repository could make the control plane
+// create about 2^30 directories (bug hunt 2026-10-28 B39). The copy also
+// stops when the fetch is cancelled.
 type linkCopier struct {
+	ctx           context.Context
 	dst           string
 	links         map[string]string
 	done          map[string]bool
@@ -34,8 +41,8 @@ type linkCopier struct {
 	maxEntries    int
 }
 
-func materializeLinks(dst string, pending []pendingLink, total *int64, maxTotalBytes, maxFileBytes int64, entries *int, maxEntries int) error {
-	c := &linkCopier{dst: dst, links: make(map[string]string, len(pending)), done: map[string]bool{}, visiting: map[string]bool{},
+func materializeLinks(ctx context.Context, dst string, pending []pendingLink, total *int64, maxTotalBytes, maxFileBytes int64, entries *int, maxEntries int) error {
+	c := &linkCopier{ctx: ctx, dst: dst, links: make(map[string]string, len(pending)), done: map[string]bool{}, visiting: map[string]bool{},
 		total: total, maxTotalBytes: maxTotalBytes, maxFileBytes: maxFileBytes, entries: entries, maxEntries: maxEntries}
 	for _, link := range pending {
 		if _, dup := c.links[link.name]; dup {
@@ -104,12 +111,18 @@ func (c *linkCopier) materialize(name string) error {
 		if walkErr != nil {
 			return walkErr
 		}
+		if err := c.ctx.Err(); err != nil {
+			return err
+		}
 		rel, err := filepath.Rel(src, p)
 		if err != nil {
 			return err
 		}
 		dest := filepath.Join(out, rel)
 		if d.IsDir() {
+			if err := c.countEntry(); err != nil {
+				return err
+			}
 			return os.MkdirAll(dest, 0o755)
 		}
 		entryInfo, err := d.Info()
@@ -125,9 +138,8 @@ func (c *linkCopier) copyFile(src, dst string, info fs.FileInfo) error {
 		// Extraction only ever creates directories and regular files.
 		return fmt.Errorf("link target %q is not a regular file: %w", src, ErrBadArchive)
 	}
-	*c.entries++
-	if c.maxEntries > 0 && *c.entries > c.maxEntries {
-		return fmt.Errorf("too many files (>%d): %w", c.maxEntries, ErrBadArchive)
+	if err := c.countEntry(); err != nil {
+		return err
 	}
 	in, err := os.Open(src) //nolint:gosec,forbidigo // src is a regular file this extraction wrote under its own temp dir; links were never created
 	if err != nil {
@@ -135,4 +147,13 @@ func (c *linkCopier) copyFile(src, dst string, info fs.FileInfo) error {
 	}
 	defer func() { _ = in.Close() }()
 	return writeOneFile(dst, in, info.Size(), c.maxFileBytes, c.total, c.maxTotalBytes, info.Mode())
+}
+
+// countEntry charges one created file or directory against the entry cap.
+func (c *linkCopier) countEntry() error {
+	*c.entries++
+	if c.maxEntries > 0 && *c.entries > c.maxEntries {
+		return fmt.Errorf("too many files (>%d): %w", c.maxEntries, ErrBadArchive)
+	}
+	return nil
 }
