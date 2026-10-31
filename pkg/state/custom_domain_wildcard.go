@@ -112,6 +112,12 @@ func CustomDomainChallengeName(domain string) string {
 	return "_faas-verify." + domain
 }
 
+// WildcardProbeLabel is the label DNS/TLS probes of a wildcard row query. Only
+// the customer's wildcard record answers it. Probing "www" revoked verified
+// wildcards whose zone kept www on another host, because an explicit www
+// record overrides the wildcard (bug hunt 32 M4).
+const WildcardProbeLabel = "gregale-wildcard-check"
+
 // WildcardProbeHost returns a deterministic concrete host for DNS/TLS probes
 // of a wildcard row. It exercises the customer's wildcard record without
 // querying the literal '*' label.
@@ -120,19 +126,26 @@ func WildcardProbeHost(domain string) (string, bool) {
 	if !ok {
 		return domain, false
 	}
-	return "www." + suffix, true
+	return WildcardProbeLabel + "." + suffix, true
 }
 
-// ForeignVerifiedWildcard returns the verified wildcard custom domain, owned
-// by an account other than accountID, that covers domain (an exact name, or
-// every name below a wildcard), or "" when there is none. A verified wildcard
+// ForeignVerifiedWildcard returns the verified wildcard custom domain, held
+// by a tenant other than app's, that covers domain (an exact name, or every
+// name below a wildcard), or "" when there is none. A verified wildcard
 // proves control of its zone (ADR-167). A reservation below it needs no DNS
 // proof, yet while pending it shadows the wildcard's route and certificate,
-// so another account must not make one.
+// so another tenant must not make one. Tenants are compared with
+// AppTenantID, so a company's wildcard covers names for every company app,
+// whichever member created the app (ADR-167 amendment 2).
 func ForeignVerifiedWildcard(ctx context.Context, store interface {
 	DomainByName(context.Context, string) (CustomDomain, error)
 	AppByID(context.Context, string) (App, error)
-}, domain, accountID string) (string, error) {
+	OrgByID(context.Context, string) (Org, error)
+}, domain string, app App) (string, error) {
+	tenant, err := AppTenantID(ctx, store, app)
+	if err != nil {
+		return "", fmt.Errorf("load app tenant: %w", err)
+	}
 	base := strings.ToLower(strings.TrimSpace(domain))
 	if suffix, ok := WildcardDomainSuffix(base); ok {
 		base = suffix
@@ -153,17 +166,42 @@ func ForeignVerifiedWildcard(ctx context.Context, store interface {
 		if !wildcard.Verified() {
 			continue
 		}
-		app, err := store.AppByID(ctx, wildcard.AppID)
+		holder, err := store.AppByID(ctx, wildcard.AppID)
 		if errors.Is(err, ErrNotFound) {
 			continue
 		}
 		if err != nil {
 			return "", fmt.Errorf("load wildcard domain app: %w", err)
 		}
-		if app.AccountID != accountID {
+		holderTenant, err := AppTenantID(ctx, store, holder)
+		if err != nil {
+			return "", fmt.Errorf("load wildcard domain tenant: %w", err)
+		}
+		if holderTenant != tenant {
 			return wildcard.Domain, nil
 		}
 	}
+}
+
+// AppTenantID identifies the tenant that holds app's names: its shared
+// organization, else the account that created it (an app with no
+// organization, or one in its creator's personal organization). It is the
+// boundary for names, unlike AppResourceAccount, which keeps a company's
+// legacy billing on the creator until the company adopts its resources.
+func AppTenantID(ctx context.Context, store interface {
+	OrgByID(context.Context, string) (Org, error)
+}, app App) (string, error) {
+	if app.OrgID == "" {
+		return "account:" + app.AccountID, nil
+	}
+	org, err := store.OrgByID(ctx, app.OrgID)
+	if err != nil {
+		return "", err
+	}
+	if org.Personal {
+		return "account:" + app.AccountID, nil
+	}
+	return "org:" + org.ID, nil
 }
 
 var _ CustomDomainWildcardStore = (*PgStore)(nil)

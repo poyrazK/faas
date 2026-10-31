@@ -60,7 +60,7 @@ func (e *Engine) CaptureAppProfile(ctx context.Context, appID, instanceID string
 	if !ok {
 		return ProfileCaptureOutcome{}, errors.New("sched: vmm router does not support profile captures")
 	}
-	rows, err := e.store.ListInstancesForApp(ctx, appID)
+	rows, err := e.liveInstancesForApp(ctx, appID)
 	if err != nil {
 		return ProfileCaptureOutcome{}, fmt.Errorf("sched: CaptureAppProfile list instances: %w", err)
 	}

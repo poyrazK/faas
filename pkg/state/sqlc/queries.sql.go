@@ -52297,6 +52297,41 @@ func (q *Queries) ListSnapshotDeploymentIDs(ctx context.Context, db DBTX) ([]str
 	return items, nil
 }
 
+const listSoonestExpiringCustomDomainCerts = `-- name: ListSoonestExpiringCustomDomainCerts :many
+select domain::text as domain, cert_expires_at::timestamptz as cert_expires_at
+from custom_domains
+where verified_at is not null and cert_expires_at is not null
+order by cert_expires_at, domain
+limit $1
+`
+
+type ListSoonestExpiringCustomDomainCertsRow struct {
+	Domain        string
+	CertExpiresAt pgtype.Timestamptz
+}
+
+// Verified custom domains whose edge certificate the domain doctor observed,
+// soonest expiry first: the source of the certificate-expiry alerts.
+func (q *Queries) ListSoonestExpiringCustomDomainCerts(ctx context.Context, db DBTX, limit int32) ([]ListSoonestExpiringCustomDomainCertsRow, error) {
+	rows, err := db.Query(ctx, listSoonestExpiringCustomDomainCerts, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSoonestExpiringCustomDomainCertsRow{}
+	for rows.Next() {
+		var i ListSoonestExpiringCustomDomainCertsRow
+		if err := rows.Scan(&i.Domain, &i.CertExpiresAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSyntheticCheckRuns = `-- name: ListSyntheticCheckRuns :many
 SELECT check_id, started_at, ok, status_code, latency_ms, error_class FROM synthetic_check_runs WHERE check_id = $1::uuid
 ORDER BY started_at DESC LIMIT $2::integer

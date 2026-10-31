@@ -1367,6 +1367,15 @@ update custom_domains set verified_at = now() where domain = $1;
 -- name: DeleteCustomDomain :exec
 delete from custom_domains where domain = $1;
 
+-- name: ListSoonestExpiringCustomDomainCerts :many
+-- Verified custom domains whose edge certificate the domain doctor observed,
+-- soonest expiry first: the source of the certificate-expiry alerts.
+select domain::text as domain, cert_expires_at::timestamptz as cert_expires_at
+from custom_domains
+where verified_at is not null and cert_expires_at is not null
+order by cert_expires_at, domain
+limit $1;
+
 -- name: CreateCron :one
 insert into crons (id, app_id, schedule, path, enabled, timezone, skip_if_running)
 values (gen_random_uuid(), $1, $2, $3, $4, $5, $6)
