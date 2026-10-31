@@ -11,8 +11,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/financial"
-	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -147,17 +145,7 @@ func TestDrainDefersWorkHeldByAComputeBudget(t *testing.T) {
 	ctx := context.Background()
 	d, store, _, _, ds := sched.NewDrainHarness(t, api.PlanPro, true)
 	inv := sched.SeedDrainInvocation(t, store, state.InvocationAsyncInvoke)
-	mem, ok := store.(*state.MemStore)
-	if !ok {
-		t.Fatal("harness store is not a MemStore")
-	}
-	enableComputeAuthority(t, mem)
-	if _, err := mem.CreateFinancialBudget(ctx, inv.AccountID, uuid.NewString(), "test", financial.BudgetSpec{
-		Name: "compute cap", Scope: financial.BudgetScope{Kind: "app", ID: inv.AppID}, Currency: "USD", Meters: []string{"compute"},
-		Basis: "gross_usage", LimitMillicents: 0, Mode: "strict", Action: "suspend_workloads", ResumeRule: "manual", Enabled: true,
-	}); err != nil {
-		t.Fatal(err)
-	}
+	d.XHoldFinancialAdmission(state.ErrFinancialBudgetHeld)
 
 	d.Tick(ctx)
 
@@ -173,31 +161,5 @@ func TestDrainDefersWorkHeldByAComputeBudget(t *testing.T) {
 	}
 	if got.Attempts != inv.Attempts {
 		t.Fatalf("attempts = %d, want %d: a hold spends no attempt", got.Attempts, inv.Attempts)
-	}
-}
-
-// enableComputeAuthority gives every node a runtime identity and a compute
-// owner and records an hour of sampling, so a strict compute
-// budget can be created and enforced.
-func enableComputeAuthority(t *testing.T, store *state.MemStore) {
-	t.Helper()
-	ctx := context.Background()
-	nodes, err := store.ListComputeNodes(ctx, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, n := range nodes {
-		incarnation := uuid.NewString()
-		if err := store.RegisterComputeNodeRuntimeIdentity(ctx, runtimeadmission.Identity{NodeID: n.ID, Incarnation: incarnation, ProtocolVersion: 1}); err != nil {
-			t.Fatal(err)
-		}
-		if err := store.RegisterFinancialComputeOwner(ctx, n.ID, incarnation); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for at := time.Now().UTC().Add(-time.Hour).Truncate(time.Minute); !at.After(time.Now().UTC().Truncate(time.Minute)); at = at.Add(time.Minute) {
-		if err := store.RecordFinancialSamplingWindow(ctx, at, true, false); err != nil {
-			t.Fatal(err)
-		}
 	}
 }

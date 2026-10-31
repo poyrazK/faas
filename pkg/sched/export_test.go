@@ -1004,6 +1004,12 @@ func (d *Drain) XInvocationAttemptBudget(ctx context.Context, inv state.Invocati
 	return d.invocationAttemptBudget(ctx, inv)
 }
 
+// XHoldFinancialAdmission makes the drain's budget admission refuse every
+// app with err, as a held strict compute budget does.
+func (d *Drain) XHoldFinancialAdmission(err error) {
+	d.financialAdmission = func(context.Context, state.Store, state.App, string, string, time.Time) error { return err }
+}
+
 // CustomerCapacityProblem exposes the customer restatement of a node-budget
 // refusal, built from a refusal carrying the given blockers.
 func CustomerCapacityProblem(detail string, blockers ...api.WorkerAdmissionBlocker) *api.Problem {

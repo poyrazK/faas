@@ -127,16 +127,19 @@ func failOutcome(err error) state.FailOption {
 //   - No new daemon: drains live inside cmd/schedd. The schedd main
 //     goroutine subscribes to invocation_due + runDrainTick (1s).
 type Drain struct {
-	store     state.Store
-	engine    *Engine
-	gateway   GatewaySynth
-	notifier  Notifier
-	log       *slog.Logger
-	now       func() time.Time
-	batchSize int
-	audit     *audit.Auditor
-	ops       *wire.OpsMetrics
-	appTasks  *AppTaskCoordinator
+	store    state.Store
+	engine   *Engine
+	gateway  GatewaySynth
+	notifier Notifier
+	log      *slog.Logger
+	now      func() time.Time
+	// financialAdmission is state.CheckFinancialBudgetAdmissionForScope; a
+	// test holds an app through it without a funded compute ledger.
+	financialAdmission func(context.Context, state.Store, state.App, string, string, time.Time) error
+	batchSize          int
+	audit              *audit.Auditor
+	ops                *wire.OpsMetrics
+	appTasks           *AppTaskCoordinator
 	// wakeLeaseSeconds is the lease a claimed invocation holds. The
 	// drain races claim → wake → invoke → complete inside this window.
 	// 60s is generous (the Wake+Invoke flow normally completes in well
@@ -264,6 +267,7 @@ func NewDrain(store state.Store, engine *Engine, opts ...DrainOption) *Drain {
 		longSlots:           make(chan struct{}, DefaultDrainLongDispatches),
 		longQueueApps:       map[string]bool{},
 		log:                 slog.Default(),
+		financialAdmission:  state.CheckFinancialBudgetAdmissionForScope,
 	}
 	for _, o := range opts {
 		o(d)
@@ -795,7 +799,7 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 	if !d.engine.ownsApp(app) {
 		return
 	}
-	if err := state.CheckFinancialBudgetAdmissionForScope(ctx, d.store, app, inv.DeploymentScope, "", d.engine.financialBudgetNow()); err != nil {
+	if err := d.financialAdmission(ctx, d.store, app, inv.DeploymentScope, "", d.engine.financialBudgetNow()); err != nil {
 		// Keep pending work and its attempt count intact. A held budget is
 		// an admission decision, not a failed customer execution. The row
 		// moves back by a minute (ADR-20261031100000): left due, a held
