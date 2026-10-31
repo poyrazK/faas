@@ -49,7 +49,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`edge`](#edge) | Manage edge rules, rule lists, caching and CORS |
 | [`api`](#api) | Manage your API: routes, OpenAPI spec, consumers and tenants |
 | [`flag`](#flag) | Roll out feature flags to selected customers |
-| [`postgres`](#postgres) | Manage PostgreSQL databases: usage, overage and capabilities |
+| [`postgres`](#postgres) | Create, attach and restore managed PostgreSQL databases |
 | [`bucket`](#bucket) | Manage object storage buckets |
 | [`pipeline`](#pipeline) | Sync PostgreSQL sources into read-only mirrors |
 | [`data-api`](#data-api) | Generate an API from a PostgreSQL schema |
@@ -7745,7 +7745,7 @@ Promote a targeting rule rollout
 
 ## postgres
 
-Manage PostgreSQL databases: usage, overage and capabilities
+Create, attach and restore managed PostgreSQL databases
 
 `gregale postgres [<subcommand>]`
 

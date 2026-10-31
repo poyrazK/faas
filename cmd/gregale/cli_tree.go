@@ -51,7 +51,7 @@ var cliTreeNouns = []cliTreeNoun{
 	{"edge", "Manage edge rules, rule lists, caching and CORS", "Configure"},
 	{"api", "Manage your API: routes, OpenAPI spec, consumers and tenants", "Configure"},
 	{"flag", "Roll out feature flags to selected customers", "Configure"},
-	{"postgres", "Manage PostgreSQL databases: usage, overage and capabilities", "Data"},
+	{"postgres", "Create, attach and restore managed PostgreSQL databases", "Data"},
 	{"bucket", "Manage object storage buckets", "Data"},
 	{"pipeline", "Sync PostgreSQL sources into read-only mirrors", "Data"},
 	{"data-api", "Generate an API from a PostgreSQL schema", "Data"},
