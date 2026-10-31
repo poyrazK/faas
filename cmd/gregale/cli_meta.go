@@ -1670,7 +1670,7 @@ var cliCommands = []cliCommand{
 		Name:     dispatchApps,
 		DocSlug:  "apps",
 		Short:    "List your apps",
-		Examples: []string{"gregale app list", "gregale app list --json", "gregale app delete my-api --dry-run", "gregale app delete my-api --yes"},
+		Examples: []string{"gregale app list", "gregale app list --json", "gregale app list -l team=billing", "gregale app delete my-api --dry-run", "gregale app delete my-api --yes"},
 		Subcommands: []cliSub{
 			{Name: "ls", Short: "Alias for the default list action"},
 			{Name: "rm", Aliases: []string{"delete"}, Short: "Delete an app; restore it within the deletion grace window", Notes: []string{"Also accepted as delete."}, Positionals: []string{"<slug>"}, Flags: []cliFlag{
@@ -1685,7 +1685,7 @@ var cliCommands = []cliCommand{
 			appUDPListenerCLISubcommand(true),
 			{Name: "streaming-cap", Short: "Show app streaming classification", Positionals: []string{"<slug>"}},
 		},
-		Flags: []cliFlag{{Name: "dry-run", Short: "preview app deletion without changing resources", Bool: true}, {Name: "quiet", ShortName: "q", Short: "delete one app without prompting"}, {Name: "yes", Short: "confirm app deletion without prompting", Bool: true}},
+		Flags: []cliFlag{{Name: "selector", ShortName: "l", Short: "only apps whose labels match (preview)", Value: "SELECTOR"}, {Name: "dry-run", Short: "preview app deletion without changing resources", Bool: true}, {Name: "quiet", ShortName: "q", Short: "delete one app without prompting"}, {Name: "yes", Short: "confirm app deletion without prompting", Bool: true}},
 	},
 	{
 		Name:        appSlugFallback,
@@ -1706,11 +1706,17 @@ var cliCommands = []cliCommand{
 			{Name: subStatus, Short: "Show the app's Ready, Progressing and Degraded conditions (preview)", Notes: []string{"Conditions are derived from the health assessment; `app health` shows the evidence."}, Examples: []string{"gregale app status my-api", "gregale app status my-api --json"}, Flags: []cliFlag{
 				{Name: "environment", Short: "read this project environment's conditions instead of the default scope", Value: "SLUG"},
 			}},
-			{Name: subWait, Short: "Wait until a condition holds (preview)", Notes: []string{"Exits 0 when the condition holds, 1 when it is terminal and does not, 3 on timeout."}, Examples: []string{"gregale app wait my-api", "gregale app wait my-api --for Progressing=False --timeout 10m"}, Flags: []cliFlag{
+			{Name: subWait, Short: "Wait until a condition holds (preview)", Notes: []string{"Exits 0 when the condition holds, 1 when it is terminal and does not, 3 on timeout.", "With -l, waits on every matching app within one timeout and exits 4 when none matches."}, Examples: []string{"gregale app wait my-api", "gregale app wait my-api --for Progressing=False --timeout 10m"}, Flags: []cliFlag{
 				{Name: "for", Short: "TYPE or TYPE=True|False|Unknown (default Ready)", Value: "CONDITION"},
+				{Name: "selector", ShortName: "l", Short: "wait on every app whose labels match, instead of one app (preview)", Value: "SELECTOR"},
 				{Name: "environment", Short: "wait on this project environment's conditions instead of the default scope", Value: "SLUG"},
 				{Name: "timeout", Short: "maximum wait (default 2m)", Value: "DURATION"},
 				{Name: "poll-interval", Short: "poll interval (default 2s; 1s to 1h)", Value: "DURATION"},
+			}},
+			{Name: subLabel, Short: "List, set or unset an app's labels (preview)", Notes: []string{"Labels are key/value pairs with Kubernetes syntax; select apps with -l on app list, app wait and domain list.", "Labels are not secret."}, Examples: []string{"gregale app label set my-api team=billing tier=web", "gregale app label unset my-api tier", "gregale app label list my-api"}, Subcommands: []cliSub{
+				{Name: "list", Short: "Show an app's labels", Positionals: []string{"<app>"}},
+				{Name: "set", Short: "Set labels; an empty value is KEY=", Positionals: []string{"<app>", "KEY=VALUE..."}},
+				{Name: "unset", Short: "Remove labels", Positionals: []string{"<app>", "KEY..."}},
 			}},
 			{Name: subHealth, Common: true, Short: "Check serving health and readiness", Examples: []string{"gregale app health my-api --wait --timeout 2m"}, Flags: []cliFlag{
 				{Name: "check", Short: "single read; exit 0 only for a fresh healthy default-scope assessment; excludes wait and history options", Bool: true},
@@ -3065,7 +3071,7 @@ var cliCommands = []cliCommand{
 				{Name: "timeout", Short: "verification wait deadline (default 10m, maximum 1h)", Value: "DURATION"},
 				{Name: "poll-interval", Short: "verification interval (5s..1m, default 10s)", Value: "DURATION"},
 			}},
-			{Name: subList, Short: "List custom domain bindings", Flags: []cliFlag{{Name: "app", Short: "only this app's domains", Value: "SLUG"}}},
+			{Name: subList, Short: "List custom domain bindings", Flags: []cliFlag{{Name: "app", Short: "only this app's domains", Value: "SLUG"}, {Name: "selector", ShortName: "l", Short: "only domains of apps whose labels match (preview)", Value: "SELECTOR"}}},
 			{Name: subAdd, Short: "Bind a custom domain to an app or project environment", Positionals: []string{"[<domain>]"}, Flags: []cliFlag{
 				{Name: "domain", Short: "domain to attach (or the first argument)", Value: "DOMAIN"},
 				{Name: "app", Short: "app slug to attach to", Req: true, Value: "SLUG"},
