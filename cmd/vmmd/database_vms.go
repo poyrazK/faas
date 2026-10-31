@@ -260,7 +260,7 @@ func ensureDatabaseBase(ctx context.Context, rt *dbvm.Runtime, dir, guestInit st
 	} else if err != nil {
 		return err
 	}
-	rt.SetBase(img.major, path)
+	rt.SetBase(ctx, img.major, path)
 	if err := dbvm.PruneBases(dir, img.major, path); err != nil {
 		log.Warn("vmmd: prune old database bases", "major", img.major, "err", err)
 	}

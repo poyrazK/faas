@@ -2,6 +2,7 @@
 package dbvm
 
 import (
+	"context"
 	"testing"
 	"time"
 )
@@ -81,11 +82,11 @@ func TestStaleVMsAndRetiredSpares(t *testing.T) {
 	if rt.Stale(spareID) {
 		t.Fatal("a waiting spare is stale")
 	}
-	rt.SetBase(17, current)
+	rt.SetBase(context.Background(), 17, current)
 	if rt.waitingSpares(spare.spare) != 1 {
 		t.Fatal("setting the same base retired a spare")
 	}
-	rt.SetBase(17, "/srv/db/bases/17-new.ext4")
+	rt.SetBase(context.Background(), 17, "/srv/db/bases/17-new.ext4")
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		rt.mu.Lock()

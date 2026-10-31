@@ -189,7 +189,7 @@ func TestMetalRuntimeAdoptsVMsAfterARestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Remove(newBase) })
-	rt2.SetBase(17, newBase)
+	rt2.SetBase(context.Background(), 17, newBase)
 	if !rt2.Stale(id) {
 		t.Fatal("a VM on the previous base is not stale")
 	}

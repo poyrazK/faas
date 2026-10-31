@@ -266,7 +266,7 @@ func NewRuntime(cfg RuntimeConfig) (*Runtime, error) {
 // keep the base they booted from (it is bind-mounted into their jail) and
 // report Stale until they restart. Waiting spares on another base would
 // hand it to the next wake, so they stop, and the pool refills.
-func (r *Runtime) SetBase(major int, path string) {
+func (r *Runtime) SetBase(ctx context.Context, major int, path string) {
 	r.mu.Lock()
 	r.cfg.Bases[major] = path
 	var retired []string
@@ -278,7 +278,8 @@ func (r *Runtime) SetBase(major int, path string) {
 	}
 	r.mu.Unlock()
 	for _, id := range retired {
-		go func() { _ = r.Stop(context.Background(), id) }()
+		// The stop outlives the caller; ctx carries only its values.
+		go func() { _ = r.Stop(context.WithoutCancel(ctx), id) }()
 	}
 }
 
