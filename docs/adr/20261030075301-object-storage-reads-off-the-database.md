@@ -78,8 +78,13 @@ monthly counters, enforced by those same writes.
 2. Public bucket reads in `gatewayd-public` use the same admitter.
 3. Organization-fenced credentials: cache the fence check per credential and
    membership revision with the same TTL, and move those reads to the cache.
+   The gateway caches each (organization, member) revision, read without
+   locks (`s3_gateway_org_access_checks_total`), and a bucket's decision is
+   refreshed without the triggering request's fence, since every credential
+   shares it.
 4. Cache resolved credentials and invalidate them on revocation through
-   `pg_notify`, so a read needs no database round trip at all.
+   `pg_notify`, so a read needs no database round trip at all. Amended
+   below: a 2 s cache for reads, without `pg_notify`.
 
 Resumable inventory scans, which bound how many objects a bucket can hold,
 are a separate decision.
@@ -112,3 +117,29 @@ are a separate decision.
   until the next reconciliation.
 - **Plan-based rate limits.** Deferred until plans price requests; one
   operator constant bounds abuse now.
+
+## Amendment 1 (2026-10-31): step 4 caches credentials for reads, without `pg_notify`
+
+Whether an access key still resolves depends on six tables: the credential,
+its bucket, the bucket's organization or account (status, abuse hold,
+pending deletion), the issuer's membership, and the environment clone that
+owns the bucket. Invalidating a long-lived cache through `pg_notify` would
+need triggers on all of them, including `accounts` and `org_memberships`,
+which other daemons write constantly, plus a listener and resync handling in
+the gateway. The other decisions in this ADR already accept that a
+suspension reaches reads within 2 s.
+
+So `s3-gatewayd` caches a resolved credential, with its opened secret, for
+`api.ObjectReadAdmissionTTL` (2 s), and serves it for up to
+`api.ObjectReadAdmissionMaxStale` (30 s) only while the database is
+unreachable. Only `GET` and `HEAD` use the cache. Every other method still
+resolves its credential per request, so a revoked credential's writes stop at
+once. A key the store no longer resolves is dropped and never served stale.
+Signed-URL credentials are not cached either: they carry their own expiry and
+issuer checks. A busy credential costs one resolution every 2 s instead of
+one per request. The metric is `s3_gateway_credential_resolutions_total{source}`.
+
+Consequence: revoking a credential, deleting its bucket or suspending its
+owner stops that credential's reads within 2 s, or 30 s during a database
+outage. Its writes stop at once.
+

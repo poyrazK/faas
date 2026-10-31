@@ -369,6 +369,8 @@ func cmdDeployment(args []string) int {
 		return cmdDeploymentDiff(args[1:])
 	case "wait":
 		return cmdDeploymentWait(args[1:])
+	case subStatus:
+		return cmdDeploymentStatus(args[1:])
 	case "get":
 		// inspect and deploy recovery hints print `deployment get <id>`;
 		// it is the explicit spelling of the default read (H10-6).
@@ -392,12 +394,19 @@ func cmdDeploymentWait(args []string) int {
 	rollout := fs.Bool("rollout", false, "wait for a safe rollout to reach 100% traffic")
 	progress := fs.Bool("progress", false, "print rollout transitions while waiting (human output only)")
 	timeoutSeconds := secondsOrDurationFlag(fs, "timeout", defaultDeployWaitTimeoutSeconds, fmt.Sprintf("maximum wait (seconds or a duration such as 10m) (default %d)", defaultDeployWaitTimeoutSeconds))
+	forFlag := fs.String("for", "", "wait for a condition instead: TYPE or TYPE=True|False|Unknown (Ready, Progressing, RolledOut)")
 	if err := fs.Parse(flags); err != nil {
 		return 1
 	}
 	if len(pos) != 1 || *timeoutSeconds <= 0 || !validDeploymentReadRef(pos[0]) {
-		PrintUsage(os.Stderr, "usage: gregale release wait <id|vN|latest> [--app SLUG] [--rollout] [--progress] [--timeout SECONDS]", "deployment")
+		PrintUsage(os.Stderr, "usage: gregale release wait <id|vN|latest> [--app SLUG] [--rollout] [--progress] [--for CONDITION] [--timeout SECONDS]", "deployment")
 		return 1
+	}
+	if *forFlag != "" {
+		if *rollout || *progress {
+			return printErr("Invalid wait options", fmt.Errorf("--for replaces --rollout and --progress; --rollout is --for RolledOut"))
+		}
+		return waitDeploymentCondition(*appFlag, pos[0], *forFlag, time.Duration(*timeoutSeconds)*time.Second)
 	}
 	client, err := authedClient()
 	if err != nil {

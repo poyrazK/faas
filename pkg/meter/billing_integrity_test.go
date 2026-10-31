@@ -104,7 +104,8 @@ func TestPushPendingDeliversHourOlderThanCatchUpWindow(t *testing.T) {
 	// can no longer write this hour, so it is final by age.
 	now := hour.Add(time.Hour + api.MeterUsageFinalAfter)
 	pusher := meter.NewPusher(store, provider, discardLog(), func() time.Time { return now }, nil)
-	if pushed, err := pusher.PushPending(ctx, 48*time.Hour); pushed != 1 || err != nil {
+	// meterd's default lookback; it must reach past the catch-up window.
+	if pushed, err := pusher.PushPending(ctx, 30*24*time.Hour); pushed != 1 || err != nil {
 		t.Fatalf("PushPending = (%d, %v), want (1, nil)", pushed, err)
 	}
 }

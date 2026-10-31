@@ -1084,7 +1084,10 @@ type MemStore struct {
 	// names are validated to a portable charset and
 	// deploymentIDs are UUIDs).
 	deploymentSidecarLayers map[string]DeploymentSidecarLayer
-	snapshots               []Snapshot
+	// sidecarEnvReseals mirrors deployment_sidecar_env_reseals, keyed by
+	// sidecarEnvResealKey; nil until the first upsert.
+	sidecarEnvReseals map[string]SidecarEnvReseal
+	snapshots         []Snapshot
 	// snapshotStaleAt mirrors snapshots.stale_at: when a snapshot was marked
 	// stale, which stale retention counts from (Hunt 21 H21-2). A stale row
 	// without an entry falls back to its creation time.
@@ -11850,12 +11853,16 @@ func (m *MemStore) UpsertAppOpenAPIDocIfUnderQuota(_ context.Context, appID, acc
 	if !ok || app.AccountID != accountID {
 		return ErrNotFound
 	}
-	if _, ok := m.accounts[accountID]; !ok {
+	if _, ok := m.accounts[accountID]; !ok || app.Status == AppDeleted {
 		return ErrNotFound
 	}
+	// The allowance belongs to the app's billing subject
+	// (ADR-202610171904): a company's once it adopted billing, whichever
+	// member's app holds the import.
+	subject := m.appBillingSubjectLocked(app.AccountID, app.ID)
 	observed := 0
 	for _, r := range m.openAPIImports {
-		if r.AccountID == accountID {
+		if m.countsTowardQuotaSubjectLocked(r.AccountID, r.AppID, subject) {
 			observed++
 		}
 	}
@@ -17838,6 +17845,19 @@ func (m *MemStore) OpenComputeNodeWakeBreaker(_ context.Context, nodeID string, 
 	return nil
 }
 
+// HoldComputeNodeCPUPressure mirrors PgStore.HoldComputeNodeCPUPressure.
+func (m *MemStore) HoldComputeNodeCPUPressure(_ context.Context, nodeID string, until time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n, ok := m.computeNodes[nodeID]
+	if !ok {
+		return nil
+	}
+	n.CPUPressureUntil = &until
+	m.computeNodes[nodeID] = n
+	return nil
+}
+
 // CloseComputeNodeWakeBreaker mirrors PgStore.CloseComputeNodeWakeBreaker.
 func (m *MemStore) CloseComputeNodeWakeBreaker(_ context.Context, nodeID string) (bool, error) {
 	m.mu.Lock()
@@ -18865,13 +18885,10 @@ func (m *MemStore) appendEventLocked(actor, kind string, subject *string, data [
 		Data:    append([]byte(nil), data...),
 	}
 	if kind == "event.published" {
-		created, err := m.enqueuePublishedEventLocked(subj, data, at)
-		if err != nil {
-			return err
-		}
-		if !created && customerPublishedEvent(kind, data) {
-			return nil
-		}
+		// ADR-20261030170000: the receipt is the event's one copy, as the
+		// Postgres fanout trigger skips the events row.
+		_, err := m.enqueuePublishedEventLocked(subj, data, at)
+		return err
 	}
 	m.events = append(m.events, e)
 	return nil
@@ -20475,7 +20492,7 @@ func (m *MemStore) LoadAllOverageCapCents(_ context.Context) (map[string]int64, 
 
 // CurrentMonthOverageCents sums the account's compute usage_minutes.mb_seconds
 // from the UTC month start, removes the month's included allowance (the
-// largest plan grant recorded this month, ADR-1162), and converts the
+// time-weighted plan grant this month, ADR-20261030093512), and converts the
 // remainder to integer cents. Integer math only — never float on money
 // (CLAUDE.md).
 //
@@ -20490,6 +20507,8 @@ func (m *MemStore) CurrentMonthOverageCents(_ context.Context, accountID string)
 	var plan api.Plan
 	if acct, ok := m.accounts[accountID]; ok {
 		plan = acct.Plan
+	} else if org, ok := m.orgs[accountID]; ok && !org.Personal {
+		plan = org.Plan
 	}
 	var mbSeconds int64
 	for _, u := range m.usage {
@@ -24963,11 +24982,27 @@ func (m *MemStore) CreateEdgeRuleIfUnderQuota(ctx context.Context, in CreateEdge
 }
 
 func (m *MemStore) ListEdgeRulesForAccount(_ context.Context, accountID string) ([]EdgeRule, error) {
+	return m.listAccountEdgeRules(accountID, func(EdgeRule) bool { return true }), nil
+}
+
+func (m *MemStore) ListEdgeRulesUsingCorsPreset(_ context.Context, accountID, presetID string) ([]EdgeRule, error) {
+	return m.listAccountEdgeRules(accountID, func(r EdgeRule) bool {
+		return r.CorsPresetID != nil && *r.CorsPresetID == presetID
+	}), nil
+}
+
+func (m *MemStore) ListRouteRulesTargeting(_ context.Context, accountID, targetSlug string) ([]EdgeRule, error) {
+	return m.listAccountEdgeRules(accountID, func(r EdgeRule) bool {
+		return r.Kind == EdgeRuleKindRoute && r.Action.Route != nil && r.Action.Route.TargetAppSlug == targetSlug
+	}), nil
+}
+
+func (m *MemStore) listAccountEdgeRules(accountID string, keep func(EdgeRule) bool) []EdgeRule {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var out []EdgeRule
 	for _, r := range m.edgeRules {
-		if r.AccountID == accountID {
+		if r.AccountID == accountID && keep(r) {
 			r.MatchHeaders = cloneEdgeRuleMatchHeaders(r.MatchHeaders)
 			out = append(out, r)
 		}
@@ -24975,7 +25010,7 @@ func (m *MemStore) ListEdgeRulesForAccount(_ context.Context, accountID string) 
 	sort.Slice(out, func(i, j int) bool {
 		return edgeRuleMatchOrderLess(out[i], out[j])
 	})
-	return out, nil
+	return out
 }
 
 func (m *MemStore) ListEdgeRulesForApp(_ context.Context, appID string) ([]EdgeRule, error) {

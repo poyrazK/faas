@@ -8363,7 +8363,7 @@ BEGIN
                 USING ERRCODE = '23505', CONSTRAINT = 'event_fanout_identity_uniq';
         END IF;
     END IF;
-    RETURN NEW;
+    RETURN NULL;
 END;
 $$;
 
@@ -19833,13 +19833,22 @@ CREATE TABLE public.orgs (
     tax_id text DEFAULT ''::text NOT NULL,
     object_storage_owned_from timestamp with time zone,
     async_quota_pooled_at timestamp with time zone,
+    overage_cap_cents bigint,
     CONSTRAINT org_object_storage_owned_from_finite CHECK (((object_storage_owned_from IS NULL) OR isfinite(object_storage_owned_from))),
+    CONSTRAINT orgs_overage_cap_cents_chk CHECK (((overage_cap_cents IS NULL) OR (overage_cap_cents >= 0))),
     CONSTRAINT orgs_personal_owner_link CHECK ((((personal_org = true) AND (personal_owner_account_id IS NOT NULL)) OR ((personal_org = false) AND (personal_owner_account_id IS NULL)))),
     CONSTRAINT orgs_plan_chk CHECK ((plan = ANY (ARRAY['free'::text, 'hobby'::text, 'pro'::text, 'scale'::text]))),
     CONSTRAINT orgs_slug_shape CHECK ((slug ~ '^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$'::text)),
     CONSTRAINT orgs_status_chk CHECK ((status = ANY (ARRAY['active'::text, 'past_due'::text, 'suspended'::text, 'deleted_pending'::text]))),
     CONSTRAINT orgs_suspended_reason_check CHECK (((suspended_reason IS NULL) OR (suspended_reason = 'free_quota'::text)))
 );
+
+
+--
+-- Name: COLUMN orgs.overage_cap_cents; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.orgs.overage_cap_cents IS 'Monthly spend cap in cents for an organization that owns its resources; NULL = no cap (ADR-20261030093512).';
 
 
 --
@@ -27639,7 +27648,7 @@ DECLARE
     preview_id uuid;
 BEGIN
     -- A preview runs unreviewed code on a guessable host; it keeps the
-    -- access and egress gates of the production app it previews.
+    -- access, egress and route gates of the production app it previews.
     FOR preview_id IN
         UPDATE apps
         SET require_authn = NEW.require_authn,
@@ -27649,7 +27658,9 @@ BEGIN
             consumer_auth_mode = NEW.consumer_auth_mode,
             require_signed = NEW.require_signed,
             egress_allowlist = NEW.egress_allowlist,
-            visibility = NEW.visibility
+            visibility = NEW.visibility,
+            only_declared_routes = NEW.only_declared_routes,
+            declared_routes = NEW.declared_routes
         WHERE account_id = NEW.account_id
           AND preview_of_slug = NEW.slug
           AND status <> 'deleted'
@@ -33310,6 +33321,7 @@ CREATE TABLE public.compute_nodes (
     edge_listener_heartbeat_at timestamp with time zone,
     wake_breaker_open_until timestamp with time zone,
     wake_breaker_reason text,
+    cpu_pressure_until timestamp with time zone,
     CONSTRAINT compute_nodes_admission_ceiling_mb_check CHECK ((admission_ceiling_mb > 0)),
     CONSTRAINT compute_nodes_gateway_target_url_scheme_chk CHECK (((gateway_target_url IS NULL) OR (gateway_target_url ~ '^tcp://[^/:][^/]*:[0-9]+$'::text))),
     CONSTRAINT compute_nodes_last_recovery_outcome_chk CHECK (((last_recovery_outcome IS NULL) OR (last_recovery_outcome = ANY (ARRAY['succeeded'::text, 'failed'::text, 'partial'::text])))),
@@ -35716,6 +35728,26 @@ CREATE TABLE public.deployment_scope_exclusions (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT deployment_scope_exclusions_slug_check CHECK ((slug = lower(slug))),
     CONSTRAINT deployment_scope_exclusions_slug_check1 CHECK ((length(slug) > 0))
+);
+
+
+--
+-- Name: deployment_sidecar_env_reseals; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_sidecar_env_reseals (
+    deployment_id uuid NOT NULL,
+    sidecar_name text NOT NULL,
+    env_key text NOT NULL,
+    source_sha256 text NOT NULL,
+    kid text NOT NULL,
+    ciphertext bytea NOT NULL,
+    resealed_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT deployment_sidecar_env_reseals_ciphertext_check CHECK ((octet_length(ciphertext) > 0)),
+    CONSTRAINT deployment_sidecar_env_reseals_env_key_check CHECK ((env_key <> ''::text)),
+    CONSTRAINT deployment_sidecar_env_reseals_kid_check CHECK ((kid ~ '^age1[0-9a-z]{58}$'::text)),
+    CONSTRAINT deployment_sidecar_env_reseals_sidecar_name_check CHECK ((sidecar_name <> ''::text)),
+    CONSTRAINT deployment_sidecar_env_reseals_source_sha256_check CHECK ((source_sha256 ~ '^[0-9a-f]{64}$'::text))
 );
 
 
@@ -60025,6 +60057,14 @@ ALTER TABLE ONLY public.deployment_scope_exclusions
 
 
 --
+-- Name: deployment_sidecar_env_reseals deployment_sidecar_env_reseals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_sidecar_env_reseals
+    ADD CONSTRAINT deployment_sidecar_env_reseals_pkey PRIMARY KEY (deployment_id, sidecar_name, env_key);
+
+
+--
 -- Name: deployment_sidecar_layers deployment_sidecar_layers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -80777,7 +80817,7 @@ CREATE TRIGGER apps_streaming_plan_app_guard_trg BEFORE INSERT OR UPDATE OF acco
 -- Name: apps apps_sync_preview_access_gates; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER apps_sync_preview_access_gates AFTER UPDATE OF require_authn, public_auth_mode, public_auth_basic, public_auth_ip_allowlist, consumer_auth_mode, require_signed, egress_allowlist, visibility ON public.apps FOR EACH ROW WHEN (((new.preview_of_slug IS NULL) AND (new.status <> 'deleted'::text) AND ((old.require_authn IS DISTINCT FROM new.require_authn) OR (old.public_auth_mode IS DISTINCT FROM new.public_auth_mode) OR (old.public_auth_basic IS DISTINCT FROM new.public_auth_basic) OR (old.public_auth_ip_allowlist IS DISTINCT FROM new.public_auth_ip_allowlist) OR (old.consumer_auth_mode IS DISTINCT FROM new.consumer_auth_mode) OR (old.require_signed IS DISTINCT FROM new.require_signed) OR (old.egress_allowlist IS DISTINCT FROM new.egress_allowlist) OR (old.visibility IS DISTINCT FROM new.visibility)))) EXECUTE FUNCTION public.sync_preview_access_gates();
+CREATE TRIGGER apps_sync_preview_access_gates AFTER UPDATE OF require_authn, public_auth_mode, public_auth_basic, public_auth_ip_allowlist, consumer_auth_mode, require_signed, egress_allowlist, visibility, only_declared_routes, declared_routes ON public.apps FOR EACH ROW WHEN (((new.preview_of_slug IS NULL) AND (new.status <> 'deleted'::text) AND ((old.require_authn IS DISTINCT FROM new.require_authn) OR (old.public_auth_mode IS DISTINCT FROM new.public_auth_mode) OR (old.public_auth_basic IS DISTINCT FROM new.public_auth_basic) OR (old.public_auth_ip_allowlist IS DISTINCT FROM new.public_auth_ip_allowlist) OR (old.consumer_auth_mode IS DISTINCT FROM new.consumer_auth_mode) OR (old.require_signed IS DISTINCT FROM new.require_signed) OR (old.egress_allowlist IS DISTINCT FROM new.egress_allowlist) OR (old.visibility IS DISTINCT FROM new.visibility) OR (old.only_declared_routes IS DISTINCT FROM new.only_declared_routes) OR (old.declared_routes IS DISTINCT FROM new.declared_routes)))) EXECUTE FUNCTION public.sync_preview_access_gates();
 
 
 --
@@ -82628,7 +82668,7 @@ CREATE TRIGGER event_routing_backlog_root AFTER INSERT OR UPDATE OF recipient_sn
 -- Name: events events_enqueue_fanout; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER events_enqueue_fanout AFTER INSERT ON public.events FOR EACH ROW EXECUTE FUNCTION public.enqueue_event_fanout();
+CREATE TRIGGER events_enqueue_fanout BEFORE INSERT ON public.events FOR EACH ROW EXECUTE FUNCTION public.enqueue_event_fanout();
 
 
 --
@@ -86466,11 +86506,11 @@ ALTER TABLE ONLY public.account_passwords
 
 
 --
--- Name: account_spend_cap_holds account_spend_cap_holds_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: account_spend_cap_holds account_spend_cap_holds_subject_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.account_spend_cap_holds
-    ADD CONSTRAINT account_spend_cap_holds_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT account_spend_cap_holds_subject_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -90967,6 +91007,14 @@ ALTER TABLE ONLY public.deployment_scope_exclusions
 
 ALTER TABLE ONLY public.deployment_scope_exclusions
     ADD CONSTRAINT deployment_scope_exclusions_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_sidecar_env_reseals deployment_sidecar_env_reseals_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_sidecar_env_reseals
+    ADD CONSTRAINT deployment_sidecar_env_reseals_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
 
 
 --

@@ -535,6 +535,8 @@ var methodRouteMap = map[string]string{
 	"GET /v1/orgs/{slug}/invoices":                                                                                     "ListOrgInvoices",
 	"GET /v1/orgs/{slug}/billing/portal":                                                                               "GetOrgBillingPortal",
 	"PATCH /v1/orgs/{slug}/plan":                                                                                       "ChangeOrgPlan",
+	"GET /v1/orgs/{slug}/overage-cap":                                                                                  "GetOrgOverageCap", // ADR-20261030093512
+	"POST /v1/orgs/{slug}/overage-cap":                                                                                 "SetOrgOverageCap",
 	"GET /v1/orgs/{organization}/projects":                                                                             "ListOrgProjects",
 	"GET /v1/orgs/{organization}/projects/{slug}":                                                                      "GetOrgProject",
 	"PATCH /v1/orgs/{organization}/projects/{slug}":                                                                    "UpdateOrgProject",
@@ -1436,6 +1438,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/data/pipelines/{id}/control":                                            "ControlDataPipeline",
 	"POST /v1/postgres/databases":                                                     "CreateManagedPostgresDatabase",
 	"GET /v1/postgres/databases/{id}":                                                 "GetManagedPostgresDatabase",
+	"GET /v1/postgres/databases/{id}/status":                                          "GetManagedPostgresDatabaseStatus", // ADR-20261030151810
 	"DELETE /v1/postgres/databases/{id}":                                              "DeleteManagedPostgresDatabase",
 	"POST /v1/postgres/databases/{id}/restore":                                        "RestoreManagedPostgresDatabase",
 	"POST /v1/postgres/databases/{id}/undelete":                                       "UndeleteManagedPostgresDatabase",
@@ -1458,6 +1461,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/logs":                                                        "StreamAppLogs",
 	"GET /v1/deployments/{id}/logs":                                                   "StreamDeploymentLogs",
 	"GET /v1/deployments/{id}/scan":                                                   "GetDeploymentScan",                    // issue #464 / ADR-055; per-deploy grype CVE drill-down
+	"GET /v1/deployments/{id}/status":                                                 "GetDeploymentStatus",                  // ADR-20261030151810
 	"GET /v1/deployments/{id}/secret-scan":                                            "GetDeploymentSecretScan",              // PR-A / ADR-101; per-deploy image-layer secret-scan audit row
 	"GET /v1/deployments/{id}/runtime":                                                "GetDeploymentRuntime",                 // ADR-736
 	"GET /v1/deployments/{id}/runtime/upgrade-preview":                                "PreviewRuntimeUpgrade",                // ADR-736
@@ -1583,6 +1587,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/crons/{id}/run":                                                               "FireCron",             // issue #791 — manual fire-now (PR-C)
 	"GET /v1/cron-fire-now-requests/{request_id}":                                           "GetFireCronRequest",   // issue #791 PR-D — poll fire-now terminal state (IDOR-safe byte-identical-404)
 	"GET /v1/crons/{id}":                                                                    "GetCron",              // issue #791 PR-E / ADR-090 closure — backs `gregale crons info <id>`
+	"GET /v1/crons/{id}/status":                                                             "GetCronStatus",        // ADR-20261030151810
 	// Issue #1184 Workstream A — run-to-completion jobs. Same
 	// resource-noun convention as crons + alerts + edge-rules:
 	// auto-derivation produces verb+placeholder concatenation
@@ -1600,6 +1605,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/jobs/{name}/runs":                          "CreateJobRun",
 	"GET /v1/jobs/{name}/runs":                           "ListJobRuns",
 	"GET /v1/jobs/{name}/runs/{id}":                      "GetJobRun",
+	"GET /v1/jobs/{name}/runs/{id}/status":               "GetJobRunStatus", // ADR-20261030151810
 	"POST /v1/jobs/{name}/runs/{id}/cancel":              "CancelJobRun",
 	"POST /v1/jobs/{name}/runs/{id}/replay-failed":       "ReplayFailedJobRun",
 	"GET /v1/jobs/{name}/runs/{id}/tasks":                "ListJobRunTasks",
@@ -2422,6 +2428,7 @@ var methodRouteMap = map[string]string{
 	// names it GetAppMetrics to match the existing per-app methods
 	// (GetApp, ListApps) — drop the slug placeholder from the verb.
 	"GET /v1/apps/{slug}/health":                "GetAppHealth",
+	"GET /v1/apps/{slug}/status":                "GetAppStatus",
 	"GET /v1/apps/{slug}/health/history":        "ListAppHealthHistory",
 	"GET /v1/apps/{slug}/metrics":               "GetAppMetrics",
 	"GET /v1/apps/{slug}/pre-auth-observations": "GetAppPreAuthObservations",
@@ -2704,6 +2711,7 @@ var methodRouteMap = map[string]string{
 	// family (GetApp, GetDeployment, GetUsage).
 	"POST /v1/apps/{slug}/deployments/source-tarball": "DeployFromSourceTarball",
 	"GET /v1/domains/{domain}":                        "GetDomain",
+	"GET /v1/domains/{domain}/status":                 "GetDomainStatus", // ADR-20261030151810
 	"POST /v1/domains/{domain}/verify":                "VerifyDomain",
 	"GET /v1/domains/{domain}/doctor":                 "DomainDoctor",
 

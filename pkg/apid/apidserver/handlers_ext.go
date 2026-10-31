@@ -1079,6 +1079,10 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, serviceTransportProblem)
 		return
 	}
+	if problem := api.PrivateServiceHTTPSTransportProblem(serviceTransport, s.privateServiceHTTPS(acct)); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	selectedBindings := app.Manifest.ServiceBindings
 	if req.ServiceBindingTargets != nil {
 		selectedBindings = bindings
@@ -3323,17 +3327,10 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 			"Invalid domain", err.Error()))
 		return
 	}
-	app, err := s.store.AppByID(r.Context(), req.AppID)
-	if err != nil {
-		// The public CLI documents --app as an app slug. Keep accepting IDs
-		// for existing API clients, but resolve the documented slug form too.
-		app, err = s.store.AppBySlug(r.Context(), req.AppID)
-	}
-	if err != nil || app.AccountID != acct.ID {
-		s.notFound(w, "no such app")
-		return
-	}
-	if prob := s.authorizeNamedApp(r, acct, app); prob != nil {
+	// The public CLI documents --app as an app slug. Keep accepting IDs
+	// for existing API clients, but resolve the documented slug form too.
+	app, acct, prob := s.namedAppAs(r, acct, req.AppID, true)
+	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -3409,6 +3406,7 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 		Data: activityData(map[string]any{"app_id": app.ID, "environment": req.Environment}),
 	}
 	var d state.CustomDomain
+	var err error
 	var activityOutboxID int64
 	var activityMutationAtomic bool
 	if mutationStore, ok := s.store.(state.OrgActivityDomainMutationStore); ok {
@@ -4200,22 +4198,23 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 	// a migration that wrote a stale plan value — surfaces as a clean
 	// 402 rather than a process panic → 500. Fail-closed: an unknown
 	// plan is treated as if crons weren't unlocked.
+	//
+	// The plan is the app's resource account's (bug hunt 2026-10-28 B9): a
+	// company app's crons follow the organization's plan, whoever adds them.
+	// An app the caller cannot see is judged on the caller's own plan; a
+	// member the organization refuses is told so first.
+	app, acct, appProblem := s.namedAppAs(r, acct, req.AppID, true)
+	if appProblem != nil && appProblem.Status != http.StatusNotFound {
+		api.WriteProblem(w, appProblem)
+		return
+	}
 	limits, ok := api.LimitsFor(acct.Plan)
 	if !ok || limits.CronLimitPerApp == 0 {
 		api.WriteProblem(w, api.ErrPlanCronsNotAllowed(acct.Plan))
 		return
 	}
-	app, err := s.store.AppByID(r.Context(), req.AppID)
-	if err != nil || app.AccountID != acct.ID {
-		if a, aerr := s.store.AppBySlug(r.Context(), req.AppID); aerr == nil && a.AccountID == acct.ID {
-			app = a
-		} else {
-			s.notFound(w, "no such app")
-			return
-		}
-	}
-	if prob := s.authorizeNamedApp(r, acct, app); prob != nil {
-		api.WriteProblem(w, prob)
+	if appProblem != nil {
+		api.WriteProblem(w, appProblem)
 		return
 	}
 	enabled := true
@@ -5349,6 +5348,12 @@ func (s *server) raiseOverageCap(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, api.ErrInternal("could not update overage cap"))
 		return
 	}
+	if acct.ResourceOrgID != "" {
+		// POST /v1/orgs/{slug}/overage-cap: an organization has no account
+		// body to return (ADR-20261030093512).
+		writeJSON(w, http.StatusOK, api.AccountOverageCapResponse{OverageCapCents: req.OverageCapCents})
+		return
+	}
 	writeJSON(w, http.StatusOK, s.accountResponse(r.Context(), updated, r))
 }
 
@@ -5367,7 +5372,7 @@ func (s *server) raiseOverageCapSvc(ctx context.Context, acct state.Account, cen
 	if err := s.store.UpdateAccountOverageCapCents(ctx, acct.ID, cents); err != nil {
 		return acct, err
 	}
-	updated, err := s.store.AccountByID(ctx, acct.ID)
+	updated, err := state.BillingResourceAccount(ctx, s.store, acct.ID)
 	if err != nil {
 		return acct, err
 	}

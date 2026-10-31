@@ -3,6 +3,7 @@ package sealmigrate_test
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -26,6 +27,49 @@ type runtimeDocs struct {
 	copies int
 	// captures are the sealed crash capture keys, in id order.
 	captures []state.CrashCaptureKey
+	// sidecars are the deployments declaring sidecar env, in id order, and
+	// reseals their runtime-domain copies.
+	sidecars []state.DeploymentSidecars
+	reseals  map[[3]string]state.SidecarEnvReseal
+	// loseReseal makes the next upsert of this key lose once.
+	loseReseal string
+}
+
+func (f *runtimeDocs) ListSidecarEnvDeployments(_ context.Context, afterID string, limit int) ([]state.DeploymentSidecars, error) {
+	var out []state.DeploymentSidecars
+	for _, d := range f.sidecars {
+		if d.ID > afterID && len(out) < limit {
+			out = append(out, d)
+		}
+	}
+	return out, nil
+}
+
+func (f *runtimeDocs) ListDeploymentSidecarEnvReseals(_ context.Context, deploymentID string) ([]state.SidecarEnvReseal, error) {
+	var out []state.SidecarEnvReseal
+	for k, r := range f.reseals {
+		if k[0] == deploymentID {
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
+
+func (f *runtimeDocs) UpsertSidecarEnvReseal(_ context.Context, r state.SidecarEnvReseal, previous []byte) (bool, error) {
+	k := [3]string{r.DeploymentID, r.SidecarName, r.Key}
+	if f.loseReseal == r.Key {
+		f.loseReseal = ""
+		return false, nil
+	}
+	held, ok := f.reseals[k]
+	if ok && !bytes.Equal(held.Ciphertext, previous) {
+		return false, nil
+	}
+	if f.reseals == nil {
+		f.reseals = map[[3]string]state.SidecarEnvReseal{}
+	}
+	f.reseals[k] = r
+	return true, nil
 }
 
 func (f *runtimeDocs) CountRuntimeCopiesOffDomain(context.Context, string) (int, error) {
@@ -255,4 +299,89 @@ func TestCheckRuntime(t *testing.T) {
 	if report, err := sealmigrate.CheckRuntime(ctx, store, domain, []*age.X25519Identity{fleet}); err != nil || report.Pending != 0 || report.Skipped != 0 || report.Failed != 1 {
 		t.Fatalf("check after the re-seal = %+v, %v; want only the stranger left, failed", report, err)
 	}
+}
+
+func sealedSidecarEnv(t *testing.T, to *age.X25519Identity, value string) []byte {
+	t.Helper()
+	sealed, err := secretbox.SealBytes(to.Recipient(), "sidecar_env", []byte(value), 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sealed
+}
+
+func sidecarDeployment(t *testing.T, id, sidecar string, env map[string][]byte) state.DeploymentSidecars {
+	t.Helper()
+	encoded := map[string]string{}
+	for k, v := range env {
+		encoded[k] = base64.StdEncoding.EncodeToString(v)
+	}
+	raw, err := json.Marshal([]map[string]any{{"name": sidecar, "image": "nginx", "env": encoded}, {"name": "plain", "image": "redis"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return state.DeploymentSidecars{ID: id, Sidecars: raw}
+}
+
+// TestRuntimeSidecarEnv: sidecar env values, which carry no key id, are
+// opened to tell where they stand. The migration writes a runtime-domain
+// copy beside the declaration, replaces a copy made for other declared
+// bytes, and the check counts what it would still write.
+func TestRuntimeSidecarEnv(t *testing.T) {
+	domain, fleet, stranger := mustIdentity(t), mustIdentity(t), mustIdentity(t)
+	dk := domain.Recipient().String()
+	fleetA, fleetE := sealedSidecarEnv(t, fleet, "a-value"), sealedSidecarEnv(t, fleet, "e-value")
+	store := &runtimeDocs{
+		sidecars: []state.DeploymentSidecars{
+			sidecarDeployment(t, "d1", "proxy", map[string][]byte{
+				"A_FLEET":    fleetA,
+				"B_DOMAIN":   sealedSidecarEnv(t, domain, "b-value"),
+				"C_STRANGER": sealedSidecarEnv(t, stranger, "c-value"),
+				"D_GARBLED":  []byte("not age"),
+			}),
+			sidecarDeployment(t, "d2", "init", map[string][]byte{"E_FLEET": fleetE}),
+		},
+		// A copy made for other declared bytes is not sent, and is replaced.
+		reseals: map[[3]string]state.SidecarEnvReseal{{"d2", "init", "E_FLEET"}: {
+			DeploymentID: "d2", SidecarName: "init", Key: "E_FLEET", SourceSHA256: state.SidecarEnvSourceDigest([]byte("other")),
+			Kid: dk, Ciphertext: sealedSidecarEnv(t, domain, "stale"),
+		}},
+	}
+	ctx := context.Background()
+	legacy := []*age.X25519Identity{fleet}
+	check := func(want sealmigrate.MigrationReport) {
+		t.Helper()
+		want.Domain, want.Target = sealdomain.Runtime, dk
+		if report, err := sealmigrate.CheckRuntime(ctx, store, domain, legacy); err != nil || report != want {
+			t.Fatalf("check = %+v, %v\nwant    %+v", report, err, want)
+		}
+	}
+	check(sealmigrate.MigrationReport{Scanned: 5, Current: 1, Failed: 2, Pending: 2})
+	if len(store.reseals) != 1 {
+		t.Fatal("the check wrote a copy")
+	}
+
+	store.loseReseal = "E_FLEET"
+	report, err := sealmigrate.MigrateRuntime(ctx, store, domain, legacy)
+	want := sealmigrate.MigrationReport{Domain: sealdomain.Runtime, Target: dk, Scanned: 5, Resealed: 1, Current: 1, Changed: 1, Failed: 2}
+	if err != nil || report != want {
+		t.Fatalf("migrate = %+v, %v\nwant      %+v", report, err, want)
+	}
+	if report, err := sealmigrate.MigrateRuntime(ctx, store, domain, legacy); err != nil || report.Resealed != 1 || report.Current != 2 {
+		t.Fatalf("second migrate = %+v, %v; want the lost copy written", report, err)
+	}
+	for key, declared := range map[[3]string][]byte{{"d1", "proxy", "A_FLEET"}: fleetA, {"d2", "init", "E_FLEET"}: fleetE} {
+		r := store.reseals[key]
+		ns, plaintext, err := secretbox.OpenBytesMulti([]*age.X25519Identity{domain}, r.Ciphertext)
+		if err != nil || ns != "sidecar_env" || r.Kid != dk || r.SourceSHA256 != state.SidecarEnvSourceDigest(declared) {
+			t.Fatalf("copy of %v = %+v (%q, %v); want it sealed to the domain for the declared bytes", key, r, ns, err)
+		}
+		if _, _, err := secretbox.OpenBytesMulti(legacy, r.Ciphertext); err == nil {
+			t.Fatalf("the fleet identity opens the copy of %v", key)
+		}
+		if want := map[string]string{"A_FLEET": "a-value", "E_FLEET": "e-value"}[key[2]]; string(plaintext) != want {
+			t.Fatalf("copy of %v holds %q, want %q", key, plaintext, want)
+		}
+	}
+	check(sealmigrate.MigrationReport{Scanned: 5, Current: 3, Failed: 2})
 }

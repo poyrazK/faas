@@ -2670,28 +2670,6 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		go newAppErrorsPurger(srv.store, nil, srv.ops, log, true).Run(ctx)
 
-		// ADR-127 PR-D: gatewayd-public → apid AuthenticateKey
-		// unary RPC. Lives on /run/faas/auth.sock; the OTel spans
-		// writer refuses to start without it (fail-closed posture
-		// for an unauthenticated OTLP surface). Defaults to enabled
-		// when the env var is unset; set FAAS_AUTH_RPC_ENABLED=false
-		// to disable — but doing so will break the OTel handler
-		// at the gateway, which is the intended safe default.
-		if deps.getenv("FAAS_AUTH_RPC_ENABLED") != "false" {
-			authTarget := envOrFrom(deps.getenv, "FAAS_APID_AUTH_SOCKET", "/run/faas/auth.sock")
-			authSrv, authLis, err := runAuthServer(ctx, authTarget, srv.store, log)
-			if err != nil {
-				_ = l.Close()
-				return fmt.Errorf("apid: auth server: %w", err)
-			}
-			go func() {
-				log.Info("apid auth server listening")
-				if err := authSrv.Serve(authLis); err != nil {
-					log.Error("apid auth serve", "err", err)
-				}
-			}()
-		}
-
 		// ADR-052 §5 / PR-E: SIGHUP-driven TLS cert rotation. Apid
 		// doesn't yet have its own hupCh (pkg/wire.Daemon's is consumed
 		// by watchLogLevelReload). Install three parallel ones — each
@@ -2741,6 +2719,28 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		go func() {
 			if err := appErrSrv.Serve(appErrLis); err != nil {
 				log.Error("apid consumer usage serve", "err", err)
+			}
+		}()
+	}
+
+	// ADR-127 PR-D: gatewayd-public → apid AuthenticateKey unary RPC, on
+	// /run/faas/auth.sock; the OTel spans writer refuses to start without
+	// it (fail-closed posture for an unauthenticated OTLP surface). Since
+	// ADR 20261029202403 every gateway resolves API keys and OIDC bearers
+	// through it too, so it runs whether or not app errors are on. Set
+	// FAAS_AUTH_RPC_ENABLED=false to disable it — which breaks gateway
+	// key authentication and the OTel handler.
+	if deps.getenv("FAAS_AUTH_RPC_ENABLED") != "false" {
+		authTarget := envOrFrom(deps.getenv, "FAAS_APID_AUTH_SOCKET", "/run/faas/auth.sock")
+		authSrv, authLis, err := runAuthServer(ctx, authTarget, srv.store, log)
+		if err != nil {
+			_ = l.Close()
+			return fmt.Errorf("apid: auth server: %w", err)
+		}
+		go func() {
+			log.Info("apid auth server listening")
+			if err := authSrv.Serve(authLis); err != nil {
+				log.Error("apid auth serve", "err", err)
 			}
 		}()
 	}

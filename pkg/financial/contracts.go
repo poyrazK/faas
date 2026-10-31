@@ -27,7 +27,25 @@ type ContractCosts struct {
 // priced exactly. A plan downgrade cannot revoke an already granted allowance.
 // Provider reconciliation remains explicit during the dual-run migration.
 func CostContracts(account string, start, end time.Time, prices []Price, entries []VersionedEvidence) (ContractCosts, error) {
+	return costContracts(account, start, end, prices, entries, -1)
+}
+
+// CostContractsWithGrant is CostContracts with the period grant given: compute
+// grants each plan's allowance for its share of the month, the allowance the
+// provider is billed against (ADR-20261030093512), so the ledger and the
+// provider agree.
+func CostContractsWithGrant(account string, start, end time.Time, prices []Price, entries []VersionedEvidence, grant int64) (ContractCosts, error) {
+	if grant < 0 {
+		return ContractCosts{}, ErrInvalid
+	}
+	return costContracts(account, start, end, prices, entries, grant)
+}
+
+func costContracts(account string, start, end time.Time, prices []Price, entries []VersionedEvidence, grant int64) (ContractCosts, error) {
 	out := ContractCosts{AllowanceMethod: "maximum_period_grant_quantity_share_v1", Contracts: []MeterCost{}}
+	if grant >= 0 {
+		out.AllowanceMethod = "time_weighted_period_grant_quantity_share_v1"
+	}
 	if len(prices) == 0 {
 		return out, ErrInvalid
 	}
@@ -47,6 +65,9 @@ func CostContracts(account string, start, end time.Time, prices []Price, entries
 		}
 		byVersion[p.Version] = p
 		out.IncludedQuantity = max(out.IncludedQuantity, p.IncludedQuantity)
+	}
+	if grant >= 0 {
+		out.IncludedQuantity = grant
 	}
 	groups := map[string][]Evidence{}
 	weights := map[string]*big.Int{}

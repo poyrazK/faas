@@ -4044,7 +4044,7 @@ groups:
           public_status: internal
         annotations:
           summary: "meterd holds back usage older than 30 minutes"
-          description: "The oldest closed minute of meterd's 24 h catch-up window that is not recorded compute-complete is {{ $value | humanizeDuration }} old. The provider pusher delivers usage only for hours before that minute, so every account's usage waits and cost reports lose coverage (ADR-1162, ADR-20261029180000). A new environment shows this until its first catch-up finishes, about 100 minutes."
+          description: "The oldest closed minute of meterd's 72 h catch-up window that is not recorded compute-complete is {{ $value | humanizeDuration }} old. The provider pusher delivers usage only for hours before that minute, so every account's usage waits and cost reports lose coverage (ADR-1162, ADR-20261029180000). A new environment shows this until its first catch-up finishes, about five hours."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/MeterdBillingPipeline.md"
       - alert: FaasMeterdSampleFailing
         expr: increase(meterd_ops_total{op="sample",code="err"}[15m]) >= 5
@@ -4056,7 +4056,7 @@ groups:
           public_status: internal
         annotations:
           summary: "meterd sample ticks keep failing"
-          description: "At least five of meterd's one-minute sample ticks failed in 15 minutes, for 15 minutes. Usage rows, price capture or the compute-complete record are not being written; catch-up re-rolls the minutes once the cause clears, within 24 h."
+          description: "At least five of meterd's one-minute sample ticks failed in 15 minutes, for 15 minutes. Usage rows, price capture or the compute-complete record are not being written; catch-up re-rolls the minutes once the cause clears, within 72 h."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/MeterdBillingPipeline.md"
       - alert: FaasMeterdBillingPushFailing
         expr: increase(meterd_ops_total{op="stripe",code="err"}[3h]) >= 2
@@ -4253,6 +4253,22 @@ groups:
         annotations:
           summary: "vmmd refuses to boot {{ $labels.base }} ({{ $labels.reason }}) on {{ $labels.node }}"
           description: "vmmd's base scan gate has kept refusing boots on {{ $labels.base }} for fifteen minutes with reason {{ $labels.reason }}. No instance on that base can cold boot or restore, so every app on its runtime fails to deploy and to wake. critical means the node-side Grype scan found a fixable CRITICAL vulnerability: publish a patched base. sidecar_missing, incomplete and generation_* mean the scan record is absent or stale: rerun the base stage."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBaseScanRefusingBoots.md"
+
+      # Bug hunt 2026-10-28 H102: a shared-base scan that fails for a reason
+      # other than the bytes keeps the last complete scan in force for
+      # api.SharedBaseScanFailureGrace instead of refusing every boot. Boots
+      # continue, but the base is refused once the hold runs out.
+      - alert: FaasBaseScanFailureHeld
+        expr: sum by (base, reason) (increase(imaged_base_scan_failures_held_total[10m])) > 0
+        for: 10m
+        labels:
+          severity: page
+          component: imaged
+          family: base_scan_gate
+        annotations:
+          summary: "Scans of {{ $labels.base }} keep failing ({{ $labels.reason }}); boots run on its last complete scan"
+          description: "imaged's renewals of {{ $labels.base }} have kept failing with {{ $labels.reason }} for ten minutes. Boots continue on the last complete scan of the same bytes, but vmmd refuses every boot on the base once that scan is 24 hours old. scanner_unavailable and scanner_invalid point at Grype or its database, artifact_read at the artifact store."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBaseScanRefusingBoots.md"
 
       # ADR-20261029155852: imaged checks a platform base's SLSA provenance

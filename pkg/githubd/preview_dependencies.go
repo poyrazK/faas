@@ -201,7 +201,7 @@ func prHeadComposeValues(fsys fs.FS, scan reposcan.Result, opts reposcan.ScanOpt
 	}
 	out := make(map[string]map[string]string, len(scan.Workloads))
 	for _, workload := range scan.Workloads {
-		if values := projectsetup.PlanEnvImport(env, workload.Name, callable, limits).Values; len(values) > 0 {
+		if values := projectsetup.PlanEnvImport(env, workload.Name, callable, limits, !opts.HTTPSTransportUnavailable).Values; len(values) > 0 {
 			out[strings.ToLower(workload.Name)] = values
 		}
 	}
@@ -237,6 +237,10 @@ func withParentAccessGates(preview, parent state.App) state.App {
 	preview.ConsumerAuthMode = parent.ConsumerAuthMode
 	preview.RequireSigned = parent.RequireSigned
 	preview.EgressAllowlist = append([]netip.Prefix(nil), parent.EgressAllowlist...)
+	// The declared-route contract answers undeclared paths at the gateway; a
+	// preview without it served every path the production app hides.
+	preview.OnlyAllowDeclaredRoutes = parent.OnlyAllowDeclaredRoutes
+	preview.DeclaredRoutes = append([]state.DeclaredRoute(nil), parent.DeclaredRoutes...)
 	return preview
 }
 

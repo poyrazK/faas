@@ -219,7 +219,18 @@ func quotaSubjectKinds() []quotaSubjectKind {
 			var q *state.OpenAPIDocQuotaError
 			return errors.As(err, &q)
 		},
+	}, {
+		name: "openapi imports",
+		onApp: func(ctx context.Context, store state.Store, app state.App) error {
+			return store.UpsertAppOpenAPIDocIfUnderQuota(ctx, app.ID, app.AccountID, []byte(`{"openapi":"3.1.0","info":{"title":"quota"}}`), 1, "3.1.0", 1)
+		},
+		accountCap: openAPIImportAccountCap,
 	}}
+}
+
+func openAPIImportAccountCap(err error) bool {
+	var q *state.QuotaError
+	return errors.As(err, &q) && q.Kind == state.QuotaErrorKindOpenAPIImports && !q.NotAllowed
 }
 
 func cronAccountCap(err error) bool {

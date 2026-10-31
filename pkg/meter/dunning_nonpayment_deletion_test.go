@@ -85,8 +85,10 @@ func TestDunningDurableNonpaymentDeletionSelectionAndFollowup(t *testing.T) {
 				commands = nil
 			}
 			d := meter.NewDunning(meter.DunningParams{Store: store, Parker: parker, Notif: notif, Mailer: mailer, Now: func() time.Time { return *now }, Log: discardLog(), NonpaymentDeletionRequested: on.Load, NonpaymentDeletionCommands: commands})
-			if err := d.RunOnce(ctx); err != nil {
-				t.Fatal(err)
+			// A failed deletion command fails the tick, so the dunning alert
+			// sees it (adr: 20261030120000).
+			if err, wantErr := d.RunOnce(ctx), mode != "enabled" && mode != "off"; (err != nil) != wantErr {
+				t.Fatalf("RunOnce error = %v, want an error: %v", err, wantErr)
 			}
 			got, err := store.AccountByID(ctx, acct.ID)
 			if err != nil {

@@ -101,6 +101,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"release attempt retry", "deploy retry"},
 	{"release logs", "deploys logs"},
 	{"release wait", "deployment wait"},
+	{"release status", "deployment status"},
 	{"release cancel", "deploys cancel"},
 	{"release retry", "deploys retry"},
 	{"release resume", "deploy resume"},
@@ -567,6 +568,12 @@ var cliTreeAliases = []cliTreeAlias{
 	{"debug issue source-map get", "issues source-maps"},
 	{"debug issue source-map publish", "issues source-maps"},
 	{"edge rule attack-mode get", "edge-rules attack-mode"},
+	// Round 11 (2026-10-31): the last customer paths in the baseline. A
+	// WAF exclusion change updates the rule's WAF beside `waf review`;
+	// billing-connection's modes are manifest verbs, and status reads a
+	// stored record.
+	{"edge rule waf update", "edge-rules waf-exclude"},
+	{"account billing-connection get", "account billing-connection status"},
 
 	// Operator tools live under the hidden admin command (rule 7) and keep
 	// their names; the naming rules cover the customer tree.
