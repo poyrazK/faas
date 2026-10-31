@@ -60,7 +60,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}()
 	wire.BootStamps(ctx, "s3-gatewayd", ops)
 	wire.RegisterDefaultOps(ops)
-	registry, err := objectstorage.Load(os.Getenv)
+	registry, err := objectstorage.LoadGateway(os.Getenv)
 	if err != nil {
 		return fmt.Errorf("s3-gatewayd: load object storage: %w", err)
 	}
