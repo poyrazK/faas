@@ -2582,7 +2582,7 @@ func startProc(t *testing.T, bin, name string, env []string) *exec.Cmd {
 	t.Helper()
 	argv := append(boundingSetPrefix(t, name), filepath.Join(bin, name))
 	argv = append(argv, daemonConfigArgs(name, env)...)
-	if name == "vmmd" && vmmdUnderSystemd() {
+	if name == "vmmd" && VMMDUnderSystemd() {
 		argv = vmmdSystemdArgv(t, argv[0], argv[1:], env)
 	}
 	cmd := exec.Command(argv[0], argv[1:]...)
