@@ -2570,6 +2570,14 @@ func (h *Handler) routeRuleForHost(r *http.Request, appHost string) *EdgeRuleRes
 	}
 	rememberPublicRouteSourcePolicy(r, hostApp, found)
 	ctx := WithEdgeRuleScope(r.Context(), hostApp)
+	// The cached host pin predates the owner, so it holds only the host's own
+	// rules; the source app's app-wide rules (ADR-1191), its "@app" routes
+	// among them, join through its (host, app) pin (#6148).
+	ctx, err = h.pinAppEdgeHosts(ctx, hostApp.ID)
+	if err != nil {
+		*r = *r.WithContext(context.WithValue(r.Context(), hostPolicyLookupFailureKey{}, err))
+		return nil
+	}
 	rule := h.edgeRules.MatchRoute(ctx, hostname(r.Host), r.URL.Path, r.Method)
 	if rule == nil || rule.AccountID != hostApp.AccountID {
 		return nil
