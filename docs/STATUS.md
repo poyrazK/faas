@@ -16,6 +16,11 @@ database become their own preview, `database-rollbacks`. The code-side GA
 blockers from the 2026-10-23 review are closed (caps, storage pool, delete
 undo window, SQL probe, the Neon review fixes); all of it is unreleased.
 
+Managed PostgreSQL launches GA with the public release. Customers get it when
+the flag opens, after the public-release gate in the ADR: the P0 workstreams
+of [#6146](https://github.com/poyrazK/faas/issues/6146) (lifecycle evidence,
+sustained production use with priced continuation, customer recovery).
+
 Open evidence:
 - `tests/journeys/postgres_test.go::TestManagedPostgres` has not run against
   production yet. It needs the release, an approved production backend and

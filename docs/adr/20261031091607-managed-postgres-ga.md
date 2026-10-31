@@ -55,16 +55,22 @@
      - the SQL probe canary databases.
   4. **Approve the production backend** (ADR-20261028103115). This covers the backend pin and fingerprint, an approval window, and fleet ceilings sized to the Neon plan.
   5. **Run the journey** against production with the owner's account: `scripts/e2e-journeys.sh --tier full --run TestManagedPostgres`.
-  6. **Open it to every account:** `gregalectl flags default --key managed_postgres --value true --reason "GA" --yes`.
+  6. **Open it to every account at the public release,** once the public-release gate below is green: `gregalectl flags default --key managed_postgres --value true --reason "GA" --yes`.
 
   **Rollback.** `gregalectl flags disable --capability managed-postgres --reason … --yes` hides managed PostgreSQL and its sub-features for every account. Existing databases keep running, and credentials already delivered keep working. Closing the production approval stops new databases, bindings, restores and resizes without hiding anything.
-- **Open at acceptance** (the owner chose to ship GA in the release on 2026-10-31 before these were settled; each is a follow-up):
-  1. **Restore on one-database plans.** Free and Hobby cannot restore, because the restored database would be their second. The fix is either an in-place restore (Neon restores a branch to an earlier point) or a restore that may hold one database above the limit until the customer keeps one of the two. Either needs its own ADR.
+- **Public-release gate** (owner, 2026-10-31: managed PostgreSQL is a core feature of Gregale and launches GA with the public release). The code ships GA now. Step 6 waits for the P0 workstreams of the managed PostgreSQL epic, [#6146](https://github.com/poyrazK/faas/issues/6146):
+  - **PG-01: lifecycle evidence.** The journey green on production, extended to credential rotation, resize, suspend and wake, and restart recovery. Its result is recorded in `docs/STATUS.md`, and the qualification evidence is part of the release checks.
+  - **PG-02: sustained production use.** A Scale account includes 200 CU-hours a month. A production-class database never scales below 1 CU, so under steady traffic it spends that in about 8 days and is then suspended. Paid overage stays `internal` until it is invoiced. Before the public release, PG-02 must deliver:
+    - a priced continuation: overage billed at the COGS report's rate, or always-on compute as an entitlement;
+    - customer spending controls;
+    - invoicing that reconciles provider usage.
+  - **PG-03: customer recovery.** Restore on every plan (ADR-20261031123259, #6142). The earliest and latest recoverable points are shown. At least one supported restore-and-switch path, through database-aware rollback or qualified cutover activation, is measured against stated RPO and RTO.
+- **Open at acceptance** (follow-ups outside the public-release gate):
+  1. **Restore on one-database plans.** Free and Hobby cannot restore, because the restored database would be their second. ADR-20261031123259 (#6142) proposes a restore that may hold one database above the limit for 7 days. Restoring in place, in the same database, is a later follow-up.
   2. **A copy outside Neon.** There is no logical backup off the provider. A lost Neon project or organization loses its databases.
   3. **Invoicing.** Nothing past the allowances is billed, so overage stays `internal`. Billing it needs an invoice line and a financial-model decision.
   4. **Restore-history cost.** Neon bills instant restore at $0.20 per GB-month of history. A database with heavy writes costs more history than its storage limit suggests, and no plan limit bounds it yet (Neon's written-data quota is the candidate).
   5. **More than about 1,000 databases.** This needs a second Neon organization behind the provider-neutral backend, or an agreement with Neon.
-  6. **The journey green on production,** and its result recorded in `docs/STATUS.md`.
 - **Why:**
   - The GA blockers from the 2026-10-23 review are closed in code:
     - production provisioning and fleet ceilings (ADR-20261028103115);

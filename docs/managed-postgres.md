@@ -139,7 +139,9 @@ customers out until the owner has tested production
    scripts/e2e-journeys.sh --tier full --run TestManagedPostgres
    ```
 
-6. Open it to every account:
+6. At the public release, once the ADR's public-release gate (the P0
+   workstreams of [#6146](https://github.com/poyrazK/faas/issues/6146)) is
+   green, open it to every account:
 
    ```bash
    gregalectl flags default --key managed_postgres --value true --reason "GA" --yes
