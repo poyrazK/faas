@@ -645,6 +645,8 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_POLAR_EGRESS_USAGE_EVENT_NAME` | shared | `secrets-env` |  |  | `` | defaults to faas_egress_usage; delivered by /etc/faas/secrets/meterd/billing.env and /etc/faas/sealed.env |
 | `FAAS_POLAR_HOBBY_INCLUDED_EGRESS_GIB` | shared | `secrets-env` |  |  | `` | Hobby monthly allowance; delivered by /etc/faas/secrets/meterd/billing.env and /etc/faas/sealed.env |
 | `FAAS_POLAR_HOBBY_PRODUCT_ID` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
+| `FAAS_POLAR_MANAGED_POSTGRES_BILLING_FROM` | shared | `secrets-env` |  |  | `` | UTC-month boundary of the first managed PostgreSQL overage month billed (ADR-20261031165104); delivered by /etc/faas/secrets/meterd/billing.env and /etc/faas/sealed.env |
+| `FAAS_POLAR_MANAGED_POSTGRES_BILLING_MODE` | shared | `secrets-env` |  |  | `` | off (default) or shadow; live arrives with ADR-20261031165104 step 3; delivered by /etc/faas/secrets/meterd/billing.env and /etc/faas/sealed.env |
 | `FAAS_POLAR_METER_ID` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_POLAR_OBJECT_STORAGE_BILLING_FROM` | shared | `secrets-env` |  |  | `` | UTC-month activation boundary; delivered by /etc/faas/secrets/meterd/billing.env and /etc/faas/sealed.env |
 | `FAAS_POLAR_OBJECT_STORAGE_BILLING_MODE` | shared | `secrets-env` |  |  | `` | off (default), shadow, or live; delivered by /etc/faas/secrets/meterd/billing.env and /etc/faas/sealed.env |

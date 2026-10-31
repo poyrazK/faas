@@ -13,6 +13,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -33,6 +34,16 @@ type managedPostgresHooks struct {
 	Released managedPostgresRelease
 	// NotifyCap queues a compute cap email (ADR-20261025094915 decision 8).
 	NotifyCap func(context.Context, managedpostgres.CapEvent) error
+	// BillingPolicy reads the billing provider's managed PostgreSQL overage
+	// policy (ADR-20261031165104); nil or ok=false is off.
+	BillingPolicy func() (managedpostgres.BillingPolicy, bool)
+}
+
+func (h *managedPostgresHooks) billingPolicy() func() (managedpostgres.BillingPolicy, bool) {
+	if h == nil {
+		return nil
+	}
+	return h.BillingPolicy
 }
 
 func (h *managedPostgresHooks) overage() managedPostgresOverageGate {
@@ -83,10 +94,19 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, err
 	}
+	billingSweeper, err := loadManagedPostgresBillingSweeper(registry, store, accountStore, log, hooks, registerers...)
+	if err != nil {
+		return nil, nil, nil, nil, nil, nil, err
+	}
 	var fleet *managedpostgres.Service
 	usageOptions.AfterSweep = func(ctx context.Context) {
 		if _, err := capEnforcer.Enforce(ctx); err != nil && ctx.Err() == nil {
 			log.Warn("managed postgres compute cap sweep failed", "error", err)
+		}
+		if billingSweeper != nil {
+			if _, err := billingSweeper.Sweep(ctx); err != nil && ctx.Err() == nil {
+				log.Warn("managed postgres overage billing sweep failed", "error", err)
+			}
 		}
 		observeManagedPostgresFleet(ctx, fleet, metrics, log)
 	}
@@ -337,6 +357,45 @@ func (s *server) configureManagedPostgresCapMode(getenv func(string) string) {
 
 // managedPostgresStoredOverage reads a subject's overage choice when the
 // account may use overage at all.
+// loadManagedPostgresBillingSweeper builds the overage billing sweep
+// (ADR-20261031165104). A subject is billable on a paid plan with overage on;
+// it is priced against the plan's monthly compute allowance and storage pool.
+func loadManagedPostgresBillingSweeper(registry *managedpostgres.Registry, store *managedpostgres.PostgresStore, accountStore state.AppOwnerReader, log *slog.Logger, hooks *managedPostgresHooks, registerers ...prometheus.Registerer) (*managedpostgres.BillingSweeper, error) {
+	policy := hooks.billingPolicy()
+	if policy == nil {
+		return nil, nil
+	}
+	overage := hooks.overage()
+	options := managedpostgres.BillingSweeperOptions{
+		Policy: policy,
+		Logger: log,
+		Entitlement: func(ctx context.Context, subject string) (managedpostgres.OverageEntitlement, error) {
+			account, err := state.BillingResourceAccount(ctx, accountStore, subject)
+			if err != nil {
+				return managedpostgres.OverageEntitlement{}, err
+			}
+			limits, ok := api.ManagedPostgresLimitsFor(api.Plan(account.Plan))
+			if !api.Plan(account.Plan).IsPaid() || !ok || limits.DatabasesMax <= 0 {
+				return managedpostgres.OverageEntitlement{}, nil
+			}
+			on, err := managedPostgresStoredOverage(ctx, store, overage, account, subject)
+			if err != nil || !on {
+				return managedpostgres.OverageEntitlement{}, err
+			}
+			return managedpostgres.OverageEntitlement{Billable: true, ComputeAllowanceSeconds: limits.MonthlyComputeUnitSeconds,
+				StoragePoolBytes: limits.StorageLimitBytes}, nil
+		},
+	}
+	if len(registerers) > 0 {
+		metrics, err := managedpostgres.NewBillingMetrics(registerers[0], "apid")
+		if err != nil {
+			return nil, err
+		}
+		options.Observe = metrics.Observe
+	}
+	return managedpostgres.NewBillingSweeper(registry, store, options)
+}
+
 func managedPostgresStoredOverage(ctx context.Context, store managedpostgres.OverageStore, overage managedPostgresOverageGate, account state.Account, subject string) (bool, error) {
 	if overage == nil || !overage(account) {
 		return false, nil
@@ -395,4 +454,19 @@ func (s *server) runManagedPostgresBindingReconciler(ctx context.Context) {
 	if err := s.managedPostgresBindingReconciler.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		s.log.Error("managed postgres binding reconciler exited", "error", err)
 	}
+}
+
+// managedPostgresBillingPolicy reads the configured billing provider's
+// managed PostgreSQL overage policy (ADR-20261031165104). The provider is set
+// after managed PostgreSQL loads, so the sweep reads it on every run.
+func (s *server) managedPostgresBillingPolicy() (managedpostgres.BillingPolicy, bool) {
+	source, ok := s.billingProvider.(billing.ManagedPostgresBillingPolicySource)
+	if !ok {
+		return managedpostgres.BillingPolicy{}, false
+	}
+	provider, mode, from, enabled := source.ManagedPostgresBillingPolicy()
+	if !enabled {
+		return managedpostgres.BillingPolicy{}, false
+	}
+	return managedpostgres.BillingPolicy{Provider: provider, Mode: mode, EffectiveFrom: from}, true
 }

@@ -235,3 +235,10 @@ func FinalizeObjectStoragePeriod(ctx context.Context, store state.ObjectStorageB
 	}
 	return store.RecordObjectStorageBillingPeriod(ctx, record)
 }
+
+// ManagedPostgresBillingPolicySource exposes the managed PostgreSQL overage
+// rollout boundary (ADR-20261031165104): the provider's name, the mode
+// ("shadow" or "live") and the first UTC month billed. Off returns ok=false.
+type ManagedPostgresBillingPolicySource interface {
+	ManagedPostgresBillingPolicy() (provider, mode string, effectiveFrom time.Time, ok bool)
+}

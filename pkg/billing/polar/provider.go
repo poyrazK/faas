@@ -64,6 +64,8 @@ type Provider struct {
 	objectStorageFrom    time.Time
 	objectStorageEvent   string
 	objectStorageMeterID string
+	managedPostgresMode  string
+	managedPostgresFrom  time.Time
 	products             map[api.Plan]string
 	successURL           string
 	returnURL            string
@@ -116,6 +118,10 @@ func newProvider(cfg Config, log *slog.Logger, dedupe usageDedupe) (*Provider, e
 	if err := validateObjectStorageConfig(cfg); err != nil {
 		return nil, err
 	}
+	if err := validateManagedPostgresConfig(cfg); err != nil {
+		return nil, err
+	}
+	managedPostgresFrom, _ := time.Parse(time.RFC3339, cfg.ManagedPostgresBillingFrom)
 	egressFrom, _ := time.Parse(time.RFC3339, cfg.EgressBillingFrom)
 	objectStorageFrom, _ := time.Parse(time.RFC3339, cfg.ObjectStorageBillingFrom)
 	if log == nil {
@@ -148,6 +154,8 @@ func newProvider(cfg Config, log *slog.Logger, dedupe usageDedupe) (*Provider, e
 		objectStorageFrom:    objectStorageFrom.UTC(),
 		objectStorageEvent:   cfg.ObjectStorageUsageEventName,
 		objectStorageMeterID: cfg.ObjectStorageMeterID,
+		managedPostgresMode:  cfg.ManagedPostgresBillingMode,
+		managedPostgresFrom:  managedPostgresFrom.UTC(),
 		products: map[api.Plan]string{
 			api.PlanHobby: cfg.HobbyProductID,
 			api.PlanPro:   cfg.ProProductID,
@@ -161,6 +169,27 @@ func newProvider(cfg Config, log *slog.Logger, dedupe usageDedupe) (*Provider, e
 		webhookTol: time.Duration(cfg.ToleranceSeconds) * time.Second,
 		now:        time.Now,
 	}, nil
+}
+
+// validateManagedPostgresConfig admits off and shadow (ADR-20261031165104).
+// Live needs the publish of step 3, so it is refused rather than letting the
+// ledger acknowledge charges nothing sends.
+func validateManagedPostgresConfig(cfg Config) error {
+	switch cfg.ManagedPostgresBillingMode {
+	case ManagedPostgresBillingOff:
+		return nil
+	case ManagedPostgresBillingShadow:
+	case "live":
+		return errors.New("polar: managed_postgres_billing_mode=live is not available yet (ADR-20261031165104 step 3); use shadow")
+	default:
+		return fmt.Errorf("polar: invalid managed PostgreSQL billing mode %q (want off or shadow)", cfg.ManagedPostgresBillingMode)
+	}
+	effectiveFrom, err := time.Parse(time.RFC3339, cfg.ManagedPostgresBillingFrom)
+	_, utcOffset := effectiveFrom.Zone()
+	if err != nil || utcOffset != 0 || !effectiveFrom.Equal(state.ObjectStoragePeriod(effectiveFrom)) {
+		return errors.New("polar: managed PostgreSQL billing from must be an RFC3339 UTC-month boundary")
+	}
+	return nil
 }
 
 func validateObjectStorageConfig(cfg Config) error {
@@ -281,6 +310,15 @@ func (p *Provider) ObjectStorageLineItemPolicy() (billing.ObjectStorageLineItemP
 		Mode:          mode,
 		EffectiveFrom: p.objectStorageFrom,
 	}, true
+}
+
+// ManagedPostgresBillingPolicy exposes the managed PostgreSQL overage rollout
+// boundary to apid (ADR-20261031165104). Off returns ok=false.
+func (p *Provider) ManagedPostgresBillingPolicy() (provider, mode string, effectiveFrom time.Time, ok bool) {
+	if p == nil || p.managedPostgresMode == "" || p.managedPostgresMode == ManagedPostgresBillingOff {
+		return "", "", time.Time{}, false
+	}
+	return "polar", p.managedPostgresMode, p.managedPostgresFrom, true
 }
 
 // MeterUsagePolicy exposes the explicitly configured per-plan egress policy

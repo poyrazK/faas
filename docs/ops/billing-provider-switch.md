@@ -76,6 +76,16 @@ live object-storage charge under the overage cap:
 | `FAAS_POLAR_OBJECT_STORAGE_METER_ID` | Separate meter that sums `charge_millicents` |
 | `FAAS_POLAR_OBJECT_STORAGE_USAGE_EVENT_NAME` | Event filter; default `faas_object_storage_usage` |
 
+Managed PostgreSQL overage (ADR-20261031165104) has its own switch. In
+`shadow`, apid records each paid account's month-to-date overage in
+`managed_postgres_billing_progress` and sends nothing; `live` is refused until
+the publish lands (step 3):
+
+| Variable | Purpose |
+|---|---|
+| `FAAS_POLAR_MANAGED_POSTGRES_BILLING_MODE` | `off` (default) or `shadow` |
+| `FAAS_POLAR_MANAGED_POSTGRES_BILLING_FROM` | RFC3339 UTC-month boundary; earlier months are never billed |
+
 The object-storage rate card remains in the object-storage registry and must
 use USD, the billing currency (ADR-1430).
 

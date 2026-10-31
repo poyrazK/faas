@@ -280,6 +280,12 @@ func ApplyBillingEnvOverlay(cfg *RootBillingConfig, env func(string) string) *Ro
 	if v := env("FAAS_POLAR_OBJECT_STORAGE_BILLING_MODE"); v != "" {
 		cfg.Polar.ObjectStorageBillingMode = v
 	}
+	if v := env("FAAS_POLAR_MANAGED_POSTGRES_BILLING_MODE"); v != "" {
+		cfg.Polar.ManagedPostgresBillingMode = v
+	}
+	if v := env("FAAS_POLAR_MANAGED_POSTGRES_BILLING_FROM"); v != "" {
+		cfg.Polar.ManagedPostgresBillingFrom = v
+	}
 	if v := env("FAAS_POLAR_OBJECT_STORAGE_BILLING_FROM"); v != "" {
 		cfg.Polar.ObjectStorageBillingFrom = v
 	}

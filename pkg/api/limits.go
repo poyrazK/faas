@@ -622,6 +622,21 @@ const ManagedPostgresProductionApprovalMaxWindow = 90 * 24 * time.Hour
 // PostgreSQL delete can be undone before the provider resource is deleted
 // (ADR-20261029174950). Usage in the window is not billed.
 const ManagedPostgresDeleteGracePeriod = 7 * 24 * time.Hour
+
+// Managed PostgreSQL overage prices and billing cadence (ADR-20261031165104;
+// the rates are ADR-1430's). Compute past the month's allowance is billed per
+// CU-hour, storage past the plan's pool per GiB-month (2^30 bytes for every
+// second of that UTC month). apid steps a subject's month-to-date charge at
+// most once per ProgressInterval, retries a step left pending after
+// ProgressRetry, and closes a month Settle after it ends, past the usage
+// collector's correction tail (ADR-516).
+const (
+	ManagedPostgresComputeOverageMillicentsPerCUHour   = 20_000 // $0.20
+	ManagedPostgresStorageOverageMillicentsPerGiBMonth = 60_000 // $0.60
+	ManagedPostgresBillingProgressInterval             = 24 * time.Hour
+	ManagedPostgresBillingProgressRetry                = 5 * time.Minute
+	ManagedPostgresBillingSettle                       = 6 * time.Hour
+)
 const ManagedPostgresProductionApprovalWarning = 14 * 24 * time.Hour
 
 // Fleet safety ceilings bound what operators may configure as the platform's

@@ -94,6 +94,8 @@
 # pro_included_egress_gib   = 0
 # scale_included_egress_gib = 0
 # object_storage_billing_mode = "off" # off | shadow | live; disabled by default
+# managed_postgres_billing_mode = "off" # off | shadow; live arrives with ADR-20261031165104 step 3
+# managed_postgres_billing_from = "2026-12-01T00:00:00Z" # first UTC month billed
 # object_storage_billing_from = "" # RFC3339 UTC-month boundary required for shadow/live
 # object_storage_meter_id = "" # separate meter summing metadata.charge_millicents
 # object_storage_usage_event_name = "faas_object_storage_usage"

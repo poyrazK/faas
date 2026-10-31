@@ -90,8 +90,11 @@
 
 1. **Shadow billing:**
    - the pricing constants, the ledger migration and the shadow sweep;
-   - the charge in `postgres usage` and the dashboard;
    - metrics.
+
+   **Delivered:** `FAAS_POLAR_MANAGED_POSTGRES_BILLING_MODE` accepts `off` or `shadow` and refuses `live`. The sweep runs after the cap sweep, under the usage sweep lock.
+
+   **Moved to step 3:** the customer-facing charge in `postgres usage` and the dashboard, so customers never see a shadow amount that is not billed. The allowance follows the current plan; following time on each plan (ADR-20261030093512) also moves to step 3, before anything is charged.
 2. **The cap:**
    - meterd's reservation and the spend-cap hold;
    - the cap enforcer suspending at a hold;

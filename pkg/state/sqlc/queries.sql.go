@@ -26640,6 +26640,43 @@ func (q *Queries) GetManagedPostgresAccountingReconciliation(ctx context.Context
 	return i, err
 }
 
+const getManagedPostgresBillingProgress = `-- name: GetManagedPostgresBillingProgress :one
+SELECT provider, subject_id, period_start, mode, delivered_millicents, pending_millicents, pending_fixed, closed_at, version, updated_at FROM managed_postgres_billing_progress
+WHERE provider=$1::text AND subject_id=$2::uuid
+ AND period_start=$3::timestamptz AND mode=$4::text
+`
+
+type GetManagedPostgresBillingProgressParams struct {
+	Provider    string
+	SubjectID   pgtype.UUID
+	PeriodStart pgtype.Timestamptz
+	Mode        string
+}
+
+// ADR-20261031165104: one subject's overage billing ledger row for a month.
+func (q *Queries) GetManagedPostgresBillingProgress(ctx context.Context, db DBTX, arg GetManagedPostgresBillingProgressParams) (ManagedPostgresBillingProgress, error) {
+	row := db.QueryRow(ctx, getManagedPostgresBillingProgress,
+		arg.Provider,
+		arg.SubjectID,
+		arg.PeriodStart,
+		arg.Mode,
+	)
+	var i ManagedPostgresBillingProgress
+	err := row.Scan(
+		&i.Provider,
+		&i.SubjectID,
+		&i.PeriodStart,
+		&i.Mode,
+		&i.DeliveredMillicents,
+		&i.PendingMillicents,
+		&i.PendingFixed,
+		&i.ClosedAt,
+		&i.Version,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getManagedPostgresCustomerDatabase = `-- name: GetManagedPostgresCustomerDatabase :one
 SELECT d.id, d.account_id, d.name, d.region, d.postgres_major, d.service_class, d.availability, d.scale_to_zero, d.storage_limit_bytes, d.restore_window_seconds, d.backend_id, d.backend_fingerprint, d.provider_resource_id, d.state, d.desired_generation, d.observed_generation, d.last_error_code, d.lease_token, d.lease_until, d.created_at, d.updated_at, d.deleted_at, d.attempt_count, d.retry_at, d.restore_source_database_id, d.restore_source_resource_id, d.restore_point_in_time, d.cutover_id, d.environment_clone_operation_id, d.data_resource_id, d.clone_resource_role, d.accounting_required, d.org_id, d.purge_after FROM managed_postgres_databases d
 WHERE d.account_id=$1 AND d.id=$2 AND d.clone_resource_role='target'
@@ -33250,6 +33287,55 @@ func (q *Queries) InsertManagedPostgresAccountingReconciliation(ctx context.Cont
 		arg.CreatedAt,
 	)
 	return err
+}
+
+const insertManagedPostgresBillingProgress = `-- name: InsertManagedPostgresBillingProgress :one
+INSERT INTO managed_postgres_billing_progress (provider,subject_id,period_start,mode,delivered_millicents,
+ pending_millicents,pending_fixed,closed_at,version,updated_at)
+VALUES ($1::text,$2::uuid,$3::timestamptz,$4::text,
+ $5::bigint,$6::bigint,$7::boolean,
+ $8::timestamptz,1,$9::timestamptz)
+ON CONFLICT DO NOTHING RETURNING provider, subject_id, period_start, mode, delivered_millicents, pending_millicents, pending_fixed, closed_at, version, updated_at
+`
+
+type InsertManagedPostgresBillingProgressParams struct {
+	Provider            string
+	SubjectID           pgtype.UUID
+	PeriodStart         pgtype.Timestamptz
+	Mode                string
+	DeliveredMillicents int64
+	PendingMillicents   int64
+	PendingFixed        bool
+	ClosedAt            pgtype.Timestamptz
+	UpdatedAt           pgtype.Timestamptz
+}
+
+func (q *Queries) InsertManagedPostgresBillingProgress(ctx context.Context, db DBTX, arg InsertManagedPostgresBillingProgressParams) (ManagedPostgresBillingProgress, error) {
+	row := db.QueryRow(ctx, insertManagedPostgresBillingProgress,
+		arg.Provider,
+		arg.SubjectID,
+		arg.PeriodStart,
+		arg.Mode,
+		arg.DeliveredMillicents,
+		arg.PendingMillicents,
+		arg.PendingFixed,
+		arg.ClosedAt,
+		arg.UpdatedAt,
+	)
+	var i ManagedPostgresBillingProgress
+	err := row.Scan(
+		&i.Provider,
+		&i.SubjectID,
+		&i.PeriodStart,
+		&i.Mode,
+		&i.DeliveredMillicents,
+		&i.PendingMillicents,
+		&i.PendingFixed,
+		&i.ClosedAt,
+		&i.Version,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const insertManagedPostgresCutover = `-- name: InsertManagedPostgresCutover :exec
@@ -102413,6 +102499,58 @@ func (q *Queries) UpdateInstanceStateIf(ctx context.Context, db DBTX, arg Update
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const updateManagedPostgresBillingProgress = `-- name: UpdateManagedPostgresBillingProgress :one
+UPDATE managed_postgres_billing_progress SET delivered_millicents=$1::bigint,
+ pending_millicents=$2::bigint,pending_fixed=$3::boolean,
+ closed_at=$4::timestamptz,version=version+1,updated_at=$5::timestamptz
+WHERE provider=$6::text AND subject_id=$7::uuid
+ AND period_start=$8::timestamptz AND mode=$9::text AND version=$10::bigint
+RETURNING provider, subject_id, period_start, mode, delivered_millicents, pending_millicents, pending_fixed, closed_at, version, updated_at
+`
+
+type UpdateManagedPostgresBillingProgressParams struct {
+	DeliveredMillicents int64
+	PendingMillicents   int64
+	PendingFixed        bool
+	ClosedAt            pgtype.Timestamptz
+	UpdatedAt           pgtype.Timestamptz
+	Provider            string
+	SubjectID           pgtype.UUID
+	PeriodStart         pgtype.Timestamptz
+	Mode                string
+	ExpectedVersion     int64
+}
+
+// A compare-and-set on version: a concurrent writer's row returns no row.
+func (q *Queries) UpdateManagedPostgresBillingProgress(ctx context.Context, db DBTX, arg UpdateManagedPostgresBillingProgressParams) (ManagedPostgresBillingProgress, error) {
+	row := db.QueryRow(ctx, updateManagedPostgresBillingProgress,
+		arg.DeliveredMillicents,
+		arg.PendingMillicents,
+		arg.PendingFixed,
+		arg.ClosedAt,
+		arg.UpdatedAt,
+		arg.Provider,
+		arg.SubjectID,
+		arg.PeriodStart,
+		arg.Mode,
+		arg.ExpectedVersion,
+	)
+	var i ManagedPostgresBillingProgress
+	err := row.Scan(
+		&i.Provider,
+		&i.SubjectID,
+		&i.PeriodStart,
+		&i.Mode,
+		&i.DeliveredMillicents,
+		&i.PendingMillicents,
+		&i.PendingFixed,
+		&i.ClosedAt,
+		&i.Version,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const updateOrgPlan = `-- name: UpdateOrgPlan :exec

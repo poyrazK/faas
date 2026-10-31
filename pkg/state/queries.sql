@@ -26663,6 +26663,29 @@ AND u.window_from>=sqlc.arg(period_start)::timestamptz AND u.window_from<sqlc.ar
 AND NOT EXISTS(SELECT 1 FROM managed_postgres_usage_waivers w WHERE w.database_id=u.database_id
  AND u.window_from>=w.waived_from AND (w.waived_until IS NULL OR u.window_to<=w.waived_until));
 
+-- name: GetManagedPostgresBillingProgress :one
+-- ADR-20261031165104: one subject's overage billing ledger row for a month.
+SELECT * FROM managed_postgres_billing_progress
+WHERE provider=sqlc.arg(provider)::text AND subject_id=sqlc.arg(subject_id)::uuid
+ AND period_start=sqlc.arg(period_start)::timestamptz AND mode=sqlc.arg(mode)::text;
+
+-- name: InsertManagedPostgresBillingProgress :one
+INSERT INTO managed_postgres_billing_progress (provider,subject_id,period_start,mode,delivered_millicents,
+ pending_millicents,pending_fixed,closed_at,version,updated_at)
+VALUES (sqlc.arg(provider)::text,sqlc.arg(subject_id)::uuid,sqlc.arg(period_start)::timestamptz,sqlc.arg(mode)::text,
+ sqlc.arg(delivered_millicents)::bigint,sqlc.arg(pending_millicents)::bigint,sqlc.arg(pending_fixed)::boolean,
+ sqlc.narg(closed_at)::timestamptz,1,sqlc.arg(updated_at)::timestamptz)
+ON CONFLICT DO NOTHING RETURNING *;
+
+-- name: UpdateManagedPostgresBillingProgress :one
+-- A compare-and-set on version: a concurrent writer's row returns no row.
+UPDATE managed_postgres_billing_progress SET delivered_millicents=sqlc.arg(delivered_millicents)::bigint,
+ pending_millicents=sqlc.arg(pending_millicents)::bigint,pending_fixed=sqlc.arg(pending_fixed)::boolean,
+ closed_at=sqlc.narg(closed_at)::timestamptz,version=version+1,updated_at=sqlc.arg(updated_at)::timestamptz
+WHERE provider=sqlc.arg(provider)::text AND subject_id=sqlc.arg(subject_id)::uuid
+ AND period_start=sqlc.arg(period_start)::timestamptz AND mode=sqlc.arg(mode)::text AND version=sqlc.arg(expected_version)::bigint
+RETURNING *;
+
 -- name: ManagedPostgresFleetTotals :one
 -- ADR-20261028103115: the fleet database cap counts what reservation limits
 -- count; the spend breaker sums the month through the usage primary key, one

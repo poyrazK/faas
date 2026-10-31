@@ -10185,6 +10185,22 @@
     "kind": "operational"
   },
   {
+    "table": "managed_postgres_billing_progress",
+    "columns": [
+      "closed_at",
+      "delivered_millicents",
+      "mode",
+      "pending_fixed",
+      "pending_millicents",
+      "period_start",
+      "provider",
+      "subject_id",
+      "updated_at",
+      "version"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "managed_realtime_channel_batches",
     "columns": [
       "batch_id",

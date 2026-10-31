@@ -43046,6 +43046,38 @@ CREATE TABLE public.managed_postgres_accounting_reconciliations (
 
 
 --
+-- Name: managed_postgres_billing_progress; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_billing_progress (
+    provider text NOT NULL,
+    subject_id uuid NOT NULL,
+    period_start timestamp with time zone NOT NULL,
+    mode text NOT NULL,
+    delivered_millicents bigint NOT NULL,
+    pending_millicents bigint NOT NULL,
+    pending_fixed boolean NOT NULL,
+    closed_at timestamp with time zone,
+    version bigint NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT managed_postgres_billing_progress_check CHECK (((NOT pending_fixed) OR (pending_millicents > 0))),
+    CONSTRAINT managed_postgres_billing_progress_delivered_millicents_check CHECK ((delivered_millicents >= 0)),
+    CONSTRAINT managed_postgres_billing_progress_mode_check CHECK ((mode = ANY (ARRAY['shadow'::text, 'live'::text]))),
+    CONSTRAINT managed_postgres_billing_progress_pending_millicents_check CHECK ((pending_millicents >= 0)),
+    CONSTRAINT managed_postgres_billing_progress_period_start_check CHECK ((period_start = (date_trunc('month'::text, (period_start AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text))),
+    CONSTRAINT managed_postgres_billing_progress_provider_check CHECK ((provider <> ''::text)),
+    CONSTRAINT managed_postgres_billing_progress_version_check CHECK ((version > 0))
+);
+
+
+--
+-- Name: TABLE managed_postgres_billing_progress; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.managed_postgres_billing_progress IS 'Managed PostgreSQL overage charge delivered so far per provider, usage subject, UTC month and mode. Written by apid in daily steps and at month close (ADR-20261031165104).';
+
+
+--
 -- Name: managed_postgres_bindings; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -63376,6 +63408,14 @@ ALTER TABLE ONLY public.managed_postgres_accounting_reconciliations
 
 ALTER TABLE ONLY public.managed_postgres_accounting_reconciliations
     ADD CONSTRAINT managed_postgres_accounting_reconciliations_pkey PRIMARY KEY (account_id, reconciliation_id);
+
+
+--
+-- Name: managed_postgres_billing_progress managed_postgres_billing_progress_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_billing_progress
+    ADD CONSTRAINT managed_postgres_billing_progress_pkey PRIMARY KEY (provider, subject_id, period_start, mode);
 
 
 --

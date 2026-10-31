@@ -191,6 +191,12 @@ func resolvedPolarConfig(cfg *RootBillingConfig, env func(string) string) polar.
 	if v := env("FAAS_POLAR_OBJECT_STORAGE_BILLING_MODE"); v != "" {
 		out.ObjectStorageBillingMode = v
 	}
+	if v := env("FAAS_POLAR_MANAGED_POSTGRES_BILLING_MODE"); v != "" {
+		out.ManagedPostgresBillingMode = v
+	}
+	if v := env("FAAS_POLAR_MANAGED_POSTGRES_BILLING_FROM"); v != "" {
+		out.ManagedPostgresBillingFrom = v
+	}
 	if v := env("FAAS_POLAR_OBJECT_STORAGE_BILLING_FROM"); v != "" {
 		out.ObjectStorageBillingFrom = v
 	}

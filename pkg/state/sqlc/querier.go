@@ -1989,6 +1989,8 @@ type Querier interface {
 	GetMCPOAuthRetirementApp(ctx context.Context, db DBTX, arg GetMCPOAuthRetirementAppParams) (string, error)
 	// ADR-591: operator reconciliation only repairs an unresolved deleted catalog row.
 	GetManagedPostgresAccountingReconciliation(ctx context.Context, db DBTX, arg GetManagedPostgresAccountingReconciliationParams) (GetManagedPostgresAccountingReconciliationRow, error)
+	// ADR-20261031165104: one subject's overage billing ledger row for a month.
+	GetManagedPostgresBillingProgress(ctx context.Context, db DBTX, arg GetManagedPostgresBillingProgressParams) (ManagedPostgresBillingProgress, error)
 	GetManagedPostgresCustomerDatabase(ctx context.Context, db DBTX, arg GetManagedPostgresCustomerDatabaseParams) (ManagedPostgresDatabase, error)
 	GetManagedPostgresCutover(ctx context.Context, db DBTX, arg GetManagedPostgresCutoverParams) (ManagedPostgresCutover, error)
 	GetManagedPostgresCutoverPreflight(ctx context.Context, db DBTX, arg GetManagedPostgresCutoverPreflightParams) (ManagedPostgresCutoverPreflight, error)
@@ -2462,6 +2464,7 @@ type Querier interface {
 	InsertMCPReadinessReminder(ctx context.Context, db DBTX, arg InsertMCPReadinessReminderParams) error
 	InsertMCPRouteDelivery(ctx context.Context, db DBTX, arg InsertMCPRouteDeliveryParams) (pgtype.UUID, error)
 	InsertManagedPostgresAccountingReconciliation(ctx context.Context, db DBTX, arg InsertManagedPostgresAccountingReconciliationParams) error
+	InsertManagedPostgresBillingProgress(ctx context.Context, db DBTX, arg InsertManagedPostgresBillingProgressParams) (ManagedPostgresBillingProgress, error)
 	InsertManagedPostgresCutover(ctx context.Context, db DBTX, arg InsertManagedPostgresCutoverParams) error
 	InsertManagedPostgresCutoverCredential(ctx context.Context, db DBTX, arg InsertManagedPostgresCutoverCredentialParams) (int64, error)
 	InsertManagedPostgresCutoverSourceFence(ctx context.Context, db DBTX, arg InsertManagedPostgresCutoverSourceFenceParams) error
@@ -6975,6 +6978,8 @@ type Querier interface {
 	UpdateEventExecutionLineageCaseRetry(ctx context.Context, db DBTX, arg UpdateEventExecutionLineageCaseRetryParams) (EventExecutionLineageCase, error)
 	UpdateInstanceState(ctx context.Context, db DBTX, arg UpdateInstanceStateParams) error
 	UpdateInstanceStateIf(ctx context.Context, db DBTX, arg UpdateInstanceStateIfParams) (int64, error)
+	// A compare-and-set on version: a concurrent writer's row returns no row.
+	UpdateManagedPostgresBillingProgress(ctx context.Context, db DBTX, arg UpdateManagedPostgresBillingProgressParams) (ManagedPostgresBillingProgress, error)
 	UpdateOperationApprovalForm(ctx context.Context, db DBTX, arg UpdateOperationApprovalFormParams) (CustomerOperationApprovalForm, error)
 	UpdateOperationConcurrencyPolicy(ctx context.Context, db DBTX, arg UpdateOperationConcurrencyPolicyParams) (CustomerOperationConcurrencyPolicy, error)
 	UpdateOrgPlan(ctx context.Context, db DBTX, arg UpdateOrgPlanParams) error

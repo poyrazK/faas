@@ -12,6 +12,9 @@ import (
 // MemoryStore is useful for unit tests and local wiring. Production adapters
 // should enforce the same transitions transactionally in PostgreSQL.
 type MemoryStore struct {
+	// billingProgress holds overage billing ledger rows by
+	// provider, subject, month and mode (ADR-20261031165104).
+	billingProgress           map[string]BillingProgress
 	resizes                   map[string]ResizeOperation
 	cutovers                  map[string]Cutover
 	fences                    map[string]CutoverAdmissionFence

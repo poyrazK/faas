@@ -7929,6 +7929,20 @@ type ManagedPostgresAccountingReconciliation struct {
 	CreatedAt          pgtype.Timestamptz
 }
 
+// Managed PostgreSQL overage charge delivered so far per provider, usage subject, UTC month and mode. Written by apid in daily steps and at month close (ADR-20261031165104).
+type ManagedPostgresBillingProgress struct {
+	Provider            string
+	SubjectID           pgtype.UUID
+	PeriodStart         pgtype.Timestamptz
+	Mode                string
+	DeliveredMillicents int64
+	PendingMillicents   int64
+	PendingFixed        bool
+	ClosedAt            pgtype.Timestamptz
+	Version             int64
+	UpdatedAt           pgtype.Timestamptz
+}
+
 type ManagedPostgresBinding struct {
 	ID                         pgtype.UUID
 	AccountID                  pgtype.UUID

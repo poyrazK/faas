@@ -19,6 +19,11 @@ const (
 	ObjectStorageBillingOff    = "off"
 	ObjectStorageBillingShadow = "shadow"
 	ObjectStorageBillingLive   = "live"
+
+	// Managed PostgreSQL overage billing (ADR-20261031165104). Live arrives
+	// with the publish in step 3; until then only off and shadow load.
+	ManagedPostgresBillingOff    = "off"
+	ManagedPostgresBillingShadow = "shadow"
 )
 
 // Config is the Polar on-disk settings. Polar product, meter, and webhook
@@ -86,6 +91,12 @@ type Config struct {
 	// 0.001 euro cents, preserving Gregale's integer-millicent ledger exactly.
 	ObjectStorageUsageEventName string `toml:"object_storage_usage_event_name"`
 	ObjectStorageMeterID        string `toml:"object_storage_meter_id"`
+	// ManagedPostgresBillingMode gates managed PostgreSQL overage charges
+	// (ADR-20261031165104): shadow records month-to-date charges in apid's
+	// ledger without sending them. ManagedPostgresBillingFrom is the
+	// RFC3339 UTC-month boundary of the first month billed.
+	ManagedPostgresBillingMode string `toml:"managed_postgres_billing_mode"`
+	ManagedPostgresBillingFrom string `toml:"managed_postgres_billing_from"`
 	// SuccessURL and ReturnURL are optional hosted-checkout redirects.
 	SuccessURL string `toml:"success_url"`
 	ReturnURL  string `toml:"return_url"`
@@ -114,6 +125,9 @@ func (c *Config) Defaults() {
 	}
 	if c.ObjectStorageBillingMode == "" {
 		c.ObjectStorageBillingMode = ObjectStorageBillingOff
+	}
+	if c.ManagedPostgresBillingMode == "" {
+		c.ManagedPostgresBillingMode = ManagedPostgresBillingOff
 	}
 	if c.ObjectStorageUsageEventName == "" {
 		c.ObjectStorageUsageEventName = DefaultObjectStorageUsageEventName
