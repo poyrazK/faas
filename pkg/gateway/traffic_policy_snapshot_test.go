@@ -289,17 +289,17 @@ func legacyFreezeTrafficApp(ctx context.Context, app App) (App, string, error) {
 func TestAppFreezesMatchTheUnmemoizedFreeze(t *testing.T) {
 	enabled := true
 	apps := map[string]App{
-		"empty": {},
-		"minimal": {ID: "app", AccountID: "owner", Plan: api.PlanFree},
+		"empty":        {},
+		"minimal":      {ID: "app", AccountID: "owner", Plan: api.PlanFree},
 		"unknown plan": {ID: "app", AccountID: "owner", Plan: "legacy-plan"},
 		"escaped strings": {ID: "app", AccountID: "owner", Plan: api.PlanPro,
 			RobotsTxt: "User-agent: *\nDisallow: /<admin>&\u2028\u2029\"quoted\"", CanonicalHost: "ünïcode.test"},
 		"nested values": {ID: "app", AccountID: "owner", Plan: api.PlanScale, Favicon: bytes.Repeat([]byte{0, 0xff, '<'}, 700),
 			CORSDefaultEnabled: &enabled, CORSDefaultOrigins: []string{"https://a.test", "https://b.test"},
 			DeclaredRoutes: []DeclaredRoute{{Path: "/orders/{id}", Methods: []string{"GET", "POST"}}, {Path: "/empty", Methods: []string{}}},
-			Sidecars: []AppSidecar{{Name: "metrics", Port: 9100}}, Ports: []AppPort{{Name: "http", Port: 8080, Protocol: "http"}},
-			PreAuthRateLimit: &api.PreAuthRateLimitConfig{Mode: "enforce", RequestsPerSecond: 10, Burst: 20},
-			PublicAuth: PublicAuthConfig{Mode: "basic", BasicSealed: []byte("sealed"), IPAllowlist: []netip.Prefix{netip.MustParsePrefix("203.0.113.0/24")}},
+			Sidecars:       []AppSidecar{{Name: "metrics", Port: 9100}}, Ports: []AppPort{{Name: "http", Port: 8080, Protocol: "http"}},
+			PreAuthRateLimit:    &api.PreAuthRateLimitConfig{Mode: "enforce", RequestsPerSecond: 10, Burst: 20},
+			PublicAuth:          PublicAuthConfig{Mode: "basic", BasicSealed: []byte("sealed"), IPAllowlist: []netip.Prefix{netip.MustParsePrefix("203.0.113.0/24")}},
 			ImportedRoutePolicy: &ImportedRoutePolicy{Document: []byte("not encoded"), Found: true}},
 		"empty slices": {ID: "app", AccountID: "owner", Plan: api.PlanHobby, CORSDefaultOrigins: []string{}, DeclaredRoutes: []DeclaredRoute{}},
 	}
