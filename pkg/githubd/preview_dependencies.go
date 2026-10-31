@@ -237,6 +237,10 @@ func withParentAccessGates(preview, parent state.App) state.App {
 	preview.ConsumerAuthMode = parent.ConsumerAuthMode
 	preview.RequireSigned = parent.RequireSigned
 	preview.EgressAllowlist = append([]netip.Prefix(nil), parent.EgressAllowlist...)
+	// The declared-route contract answers undeclared paths at the gateway; a
+	// preview without it served every path the production app hides.
+	preview.OnlyAllowDeclaredRoutes = parent.OnlyAllowDeclaredRoutes
+	preview.DeclaredRoutes = append([]state.DeclaredRoute(nil), parent.DeclaredRoutes...)
 	return preview
 }
 
