@@ -13950,8 +13950,6 @@ paths:
       tags: [apps]
       operationId: listApps
       summary: List apps on the account.
-      parameters:
-        - $ref: '#/components/parameters/LabelSelector'
       responses:
         '200':
           description: Apps on the account.
@@ -21605,7 +21603,15 @@ paths:
         label_limit_exceeded; an invalid key or value with invalid_label_key
         or invalid_label_value; a key under gregale.dev/ with
         reserved_label_key. Emits a resource.labels.changed audit event.
-        Requires apps:deploy or admin scope and MFA.
+        Requires apps:deploy or admin scope and MFA. While the capability is
+        on, GET /v1/apps and GET /v1/apps/{slug} include each app's labels,
+        and GET /v1/apps and GET /v1/domains take ?selector=, a Kubernetes
+        label selector such as team=billing,tier in (web,api),!canary (=,
+        ==, !=, key, !key, in, notin; at most 4096 bytes); a domain matches
+        through its app. An invalid selector is a 400
+        invalid_label_selector, and a selector while the capability is off
+        a 403 capability_not_released. These fields join the GA
+        description of those routes when the capability does.
       requestBody:
         required: true
         content:
@@ -33217,8 +33223,6 @@ paths:
       tags: [domains]
       operationId: listDomains
       summary: List custom domain bindings.
-      parameters:
-        - $ref: '#/components/parameters/LabelSelector'
       responses:
         '200':
           description: Custom-domain bindings on the account.
@@ -67907,12 +67911,6 @@ components:
       required: false
       schema: { type: string, format: uuid }
       description: Immutable project release set. Defaults to the active set for project apps and is checked again at delivery.
-    LabelSelector:
-      name: selector
-      in: query
-      required: false
-      description: "Preview (resource-labels capability). A Kubernetes label selector, such as team=billing,tier in (web,api),!canary; only matching resources are listed (domains: those of matching apps). Supports =, ==, !=, key, !key, in and notin; at most 4096 bytes. An invalid selector is a 400 invalid_label_selector; a selector while the capability is off is a 403 capability_not_released."
-      schema: { type: string, maxLength: 4096 }
     Slug:
       name: slug
       in: path
@@ -88114,12 +88112,6 @@ components:
           type: string
           enum: [http1, http2, grpc]
           example: http1
-        labels:
-          description: "Key/value labels with Kubernetes syntax, at most 32. A key is an optional DNS-subdomain prefix and a slash, then a name of 1-63 letters, digits, '.', '_' or '-' that starts and ends with a letter or digit; a value is empty or 1-63 of the same. Keys under gregale.dev/ belong to Gregale. Labels are not secret: they appear in lists and audit events. Present while the resource-labels capability is on for the caller."
-          type: object
-          maxProperties: 32
-          additionalProperties: { type: string, maxLength: 63 }
-          example: {"team":"billing","tier":"web"}
 
     CreatePlatformTenantRequest:
       description: Register a stable external customer reference under this account.

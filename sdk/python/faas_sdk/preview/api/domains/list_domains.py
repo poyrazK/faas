@@ -7,24 +7,14 @@ from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.custom_domain_response import CustomDomainResponse
 from ...models.problem import Problem
-from ...types import UNSET, Response, Unset
+from ...types import Response
 
 
-def _get_kwargs(
-    *,
-    selector: str | Unset = UNSET,
-) -> dict[str, Any]:
-
-    params: dict[str, Any] = {}
-
-    params["selector"] = selector
-
-    params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
+def _get_kwargs() -> dict[str, Any]:
 
     _kwargs: dict[str, Any] = {
         "method": "get",
         "url": "/v1/domains",
-        "params": params,
     }
 
     return _kwargs
@@ -73,12 +63,8 @@ def _build_response(
 def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
-    selector: str | Unset = UNSET,
 ) -> Response[Problem | list[CustomDomainResponse]]:
     """List custom domain bindings.
-
-    Args:
-        selector (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -88,9 +74,7 @@ def sync_detailed(
         Response[Problem | list[CustomDomainResponse]]
     """
 
-    kwargs = _get_kwargs(
-        selector=selector,
-    )
+    kwargs = _get_kwargs()
 
     response = client.get_httpx_client().request(
         **kwargs,
@@ -102,12 +86,8 @@ def sync_detailed(
 def sync(
     *,
     client: AuthenticatedClient | Client,
-    selector: str | Unset = UNSET,
 ) -> Problem | list[CustomDomainResponse] | None:
     """List custom domain bindings.
-
-    Args:
-        selector (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -119,19 +99,14 @@ def sync(
 
     return sync_detailed(
         client=client,
-        selector=selector,
     ).parsed
 
 
 async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
-    selector: str | Unset = UNSET,
 ) -> Response[Problem | list[CustomDomainResponse]]:
     """List custom domain bindings.
-
-    Args:
-        selector (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -141,9 +116,7 @@ async def asyncio_detailed(
         Response[Problem | list[CustomDomainResponse]]
     """
 
-    kwargs = _get_kwargs(
-        selector=selector,
-    )
+    kwargs = _get_kwargs()
 
     response = await client.get_async_httpx_client().request(**kwargs)
 
@@ -153,12 +126,8 @@ async def asyncio_detailed(
 async def asyncio(
     *,
     client: AuthenticatedClient | Client,
-    selector: str | Unset = UNSET,
 ) -> Problem | list[CustomDomainResponse] | None:
     """List custom domain bindings.
-
-    Args:
-        selector (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -171,6 +140,5 @@ async def asyncio(
     return (
         await asyncio_detailed(
             client=client,
-            selector=selector,
         )
     ).parsed

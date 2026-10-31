@@ -69,7 +69,15 @@ def sync_detailed(
     label_limit_exceeded; an invalid key or value with invalid_label_key
     or invalid_label_value; a key under gregale.dev/ with
     reserved_label_key. Emits a resource.labels.changed audit event.
-    Requires apps:deploy or admin scope and MFA.
+    Requires apps:deploy or admin scope and MFA. While the capability is
+    on, GET /v1/apps and GET /v1/apps/{slug} include each app's labels,
+    and GET /v1/apps and GET /v1/domains take ?selector=, a Kubernetes
+    label selector such as team=billing,tier in (web,api),!canary (=,
+    ==, !=, key, !key, in, notin; at most 4096 bytes); a domain matches
+    through its app. An invalid selector is a 400
+    invalid_label_selector, and a selector while the capability is off
+    a 403 capability_not_released. These fields join the GA
+    description of those routes when the capability does.
 
     Args:
         slug (str):
@@ -112,7 +120,15 @@ def sync(
     label_limit_exceeded; an invalid key or value with invalid_label_key
     or invalid_label_value; a key under gregale.dev/ with
     reserved_label_key. Emits a resource.labels.changed audit event.
-    Requires apps:deploy or admin scope and MFA.
+    Requires apps:deploy or admin scope and MFA. While the capability is
+    on, GET /v1/apps and GET /v1/apps/{slug} include each app's labels,
+    and GET /v1/apps and GET /v1/domains take ?selector=, a Kubernetes
+    label selector such as team=billing,tier in (web,api),!canary (=,
+    ==, !=, key, !key, in, notin; at most 4096 bytes); a domain matches
+    through its app. An invalid selector is a 400
+    invalid_label_selector, and a selector while the capability is off
+    a 403 capability_not_released. These fields join the GA
+    description of those routes when the capability does.
 
     Args:
         slug (str):
@@ -150,7 +166,15 @@ async def asyncio_detailed(
     label_limit_exceeded; an invalid key or value with invalid_label_key
     or invalid_label_value; a key under gregale.dev/ with
     reserved_label_key. Emits a resource.labels.changed audit event.
-    Requires apps:deploy or admin scope and MFA.
+    Requires apps:deploy or admin scope and MFA. While the capability is
+    on, GET /v1/apps and GET /v1/apps/{slug} include each app's labels,
+    and GET /v1/apps and GET /v1/domains take ?selector=, a Kubernetes
+    label selector such as team=billing,tier in (web,api),!canary (=,
+    ==, !=, key, !key, in, notin; at most 4096 bytes); a domain matches
+    through its app. An invalid selector is a 400
+    invalid_label_selector, and a selector while the capability is off
+    a 403 capability_not_released. These fields join the GA
+    description of those routes when the capability does.
 
     Args:
         slug (str):
@@ -191,7 +215,15 @@ async def asyncio(
     label_limit_exceeded; an invalid key or value with invalid_label_key
     or invalid_label_value; a key under gregale.dev/ with
     reserved_label_key. Emits a resource.labels.changed audit event.
-    Requires apps:deploy or admin scope and MFA.
+    Requires apps:deploy or admin scope and MFA. While the capability is
+    on, GET /v1/apps and GET /v1/apps/{slug} include each app's labels,
+    and GET /v1/apps and GET /v1/domains take ?selector=, a Kubernetes
+    label selector such as team=billing,tier in (web,api),!canary (=,
+    ==, !=, key, !key, in, notin; at most 4096 bytes); a domain matches
+    through its app. An invalid selector is a 400
+    invalid_label_selector, and a selector while the capability is off
+    a 403 capability_not_released. These fields join the GA
+    description of those routes when the capability does.
 
     Args:
         slug (str):

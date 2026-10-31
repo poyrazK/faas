@@ -33,7 +33,6 @@ if TYPE_CHECKING:
     from ..models.app_configured_resources import AppConfiguredResources
     from ..models.app_effective_limits import AppEffectiveLimits
     from ..models.app_manifest import AppManifest
-    from ..models.app_response_labels import AppResponseLabels
     from ..models.app_service_binding import AppServiceBinding
     from ..models.declared_route import DeclaredRoute
     from ..models.parked_deployment_ref import ParkedDeploymentRef
@@ -261,11 +260,6 @@ class AppResponse:
     app_protocol: AppResponseAppProtocol | Unset = UNSET
     """Per-app wire-protocol selector. Closed set {http1, http2, grpc}. Default 'http1' (universal). Setting 'grpc'
     is plan-gated to Hobby+/Pro/Scale; Free customers see this as 'http1'."""
-    labels: AppResponseLabels | Unset = UNSET
-    """Key/value labels with Kubernetes syntax, at most 32. A key is an optional DNS-subdomain prefix and a slash,
-    then a name of 1-63 letters, digits, '.', '_' or '-' that starts and ends with a letter or digit; a value is
-    empty or 1-63 of the same. Keys under gregale.dev/ belong to Gregale. Labels are not secret: they appear in
-    lists and audit events. Present while the resource-labels capability is on for the caller."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -547,10 +541,6 @@ class AppResponse:
         if not isinstance(self.app_protocol, Unset):
             app_protocol = self.app_protocol
 
-        labels: dict[str, Any] | Unset = UNSET
-        if not isinstance(self.labels, Unset):
-            labels = self.labels.to_dict()
-
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -692,8 +682,6 @@ class AppResponse:
             field_dict["auth_default_flipped_at"] = auth_default_flipped_at
         if app_protocol is not UNSET:
             field_dict["app_protocol"] = app_protocol
-        if labels is not UNSET:
-            field_dict["labels"] = labels
 
         return field_dict
 
@@ -702,7 +690,6 @@ class AppResponse:
         from ..models.app_configured_resources import AppConfiguredResources
         from ..models.app_effective_limits import AppEffectiveLimits
         from ..models.app_manifest import AppManifest
-        from ..models.app_response_labels import AppResponseLabels
         from ..models.app_service_binding import AppServiceBinding
         from ..models.declared_route import DeclaredRoute
         from ..models.parked_deployment_ref import ParkedDeploymentRef
@@ -1128,13 +1115,6 @@ class AppResponse:
         else:
             app_protocol = check_app_response_app_protocol(_app_protocol)
 
-        _labels = d.pop("labels", UNSET)
-        labels: AppResponseLabels | Unset
-        if isinstance(_labels, Unset):
-            labels = UNSET
-        else:
-            labels = AppResponseLabels.from_dict(_labels)
-
         app_response = cls(
             id=id,
             slug=slug,
@@ -1212,7 +1192,6 @@ class AppResponse:
             public_auth=public_auth,
             auth_default_flipped_at=auth_default_flipped_at,
             app_protocol=app_protocol,
-            labels=labels,
         )
 
         app_response.additional_properties = d

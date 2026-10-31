@@ -268,9 +268,5 @@ export type AppResponse = {
    * Per-app wire-protocol selector. Closed set {http1, http2, grpc}. Default 'http1' (universal). Setting 'grpc' is plan-gated to Hobby+/Pro/Scale; Free customers see this as 'http1'.
    */
   app_protocol?: 'http1' | 'http2' | 'grpc';
-  /**
-   * Key/value labels with Kubernetes syntax, at most 32. A key is an optional DNS-subdomain prefix and a slash, then a name of 1-63 letters, digits, '.', '_' or '-' that starts and ends with a letter or digit; a value is empty or 1-63 of the same. Keys under gregale.dev/ belong to Gregale. Labels are not secret: they appear in lists and audit events. Present while the resource-labels capability is on for the caller.
-   */
-  labels?: Record<string, string>;
 };
 

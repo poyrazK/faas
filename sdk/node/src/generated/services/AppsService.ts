@@ -1565,20 +1565,10 @@ export class AppsService {
    * @returns AppResponse Apps on the account.
    * @throws ApiError
    */
-  public static listApps({
-    selector,
-  }: {
-    /**
-     * Preview (resource-labels capability). A Kubernetes label selector, such as team=billing,tier in (web,api),!canary; only matching resources are listed (domains: those of matching apps). Supports =, ==, !=, key, !key, in and notin; at most 4096 bytes. An invalid selector is a 400 invalid_label_selector; a selector while the capability is off is a 403 capability_not_released.
-     */
-    selector?: string,
-  }): CancelablePromise<Array<AppResponse>> {
+  public static listApps(): CancelablePromise<Array<AppResponse>> {
     return __request(OpenAPI, {
       method: 'GET',
       url: '/v1/apps',
-      query: {
-        'selector': selector,
-      },
       errors: {
         401: `code: unauthorized`,
         429: `429 application/problem+json response. Authentication throttling uses
@@ -3208,7 +3198,15 @@ export class AppsService {
    * label_limit_exceeded; an invalid key or value with invalid_label_key
    * or invalid_label_value; a key under gregale.dev/ with
    * reserved_label_key. Emits a resource.labels.changed audit event.
-   * Requires apps:deploy or admin scope and MFA.
+   * Requires apps:deploy or admin scope and MFA. While the capability is
+   * on, GET /v1/apps and GET /v1/apps/{slug} include each app's labels,
+   * and GET /v1/apps and GET /v1/domains take ?selector=, a Kubernetes
+   * label selector such as team=billing,tier in (web,api),!canary (=,
+   * ==, !=, key, !key, in, notin; at most 4096 bytes); a domain matches
+   * through its app. An invalid selector is a 400
+   * invalid_label_selector, and a selector while the capability is off
+   * a 403 capability_not_released. These fields join the GA
+   * description of those routes when the capability does.
    *
    * @returns LabelsResponse The app's labels after the write.
    * @returns Problem An invalid change, missing sign-in, deploy scope or MFA, an app this account does not own, the capability turned off, or the rate limit.

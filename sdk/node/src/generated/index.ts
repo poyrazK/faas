@@ -1208,7 +1208,6 @@ export type { KafkaSASLMechanism } from './models/KafkaSASLMechanism.js';
 export type { KafkaTLSConfig } from './models/KafkaTLSConfig.js';
 export type { KafkaTriggerConfig } from './models/KafkaTriggerConfig.js';
 export type { LabelChange } from './models/LabelChange.js';
-export type { LabelSelector } from './models/LabelSelector.js';
 export type { LabelsResponse } from './models/LabelsResponse.js';
 export type { LatestDeploymentsByAppResponse } from './models/LatestDeploymentsByAppResponse.js';
 export type { LinkPlatformTenantConsumerRequest } from './models/LinkPlatformTenantConsumerRequest.js';
