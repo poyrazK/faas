@@ -90,8 +90,11 @@ gregale edge rule create --app api --kind rewrite --match-host shop.example.com 
 
 Wildcard domains (`*.example.com`, Pro and Scale) prove ownership with the
 TXT record at `_faas-verify.example.com` and route with a wildcard CNAME.
-Each subdomain gets its own certificate on its first HTTPS connection; at
-most 40 new subdomains per wildcard get a certificate in any 7 days.
+Gregale checks the wildcard CNAME through `gregale-wildcard-check.example.com`,
+which only the wildcard record answers, so other explicit records such as `www`
+can point anywhere. Each subdomain gets its own certificate on its first HTTPS
+connection; at most 40 new subdomains per wildcard get a certificate in any 7
+days.
 Subdomains that already have one keep it and renew normally.
 
 ## Wildcard host allowlist

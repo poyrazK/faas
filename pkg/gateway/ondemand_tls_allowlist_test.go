@@ -72,6 +72,18 @@ func (f allowlistFailingTLSStore) AdmitCustomDomainTLSHost(ctx context.Context, 
 	return f.mem.AdmitCustomDomainTLSHost(ctx, wildcardDomain, host, now, window, limit)
 }
 
+func (f allowlistFailingTLSStore) AppByID(ctx context.Context, id string) (state.App, error) {
+	return f.mem.AppByID(ctx, id)
+}
+
+func (f allowlistFailingTLSStore) AccountByID(ctx context.Context, id string) (state.Account, error) {
+	return f.mem.AccountByID(ctx, id)
+}
+
+func (f allowlistFailingTLSStore) OrgByID(ctx context.Context, id string) (state.Org, error) {
+	return f.mem.OrgByID(ctx, id)
+}
+
 func (allowlistFailingTLSStore) CustomDomainTLSHostAllowed(context.Context, string, string) (bool, error) {
 	return false, errors.New("db down")
 }

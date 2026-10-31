@@ -109,7 +109,7 @@ func (e *Engine) reconcileFinancialBudgetStop(ctx context.Context, store state.F
 		return nil
 	}
 	target := financial.BudgetStopTarget{AppID: app.ID, EnvironmentID: environment, State: "requested", ObservedAt: now}
-	instances, err := e.store.ListInstancesForApp(ctx, app.ID)
+	instances, err := e.liveInstancesForApp(ctx, app.ID)
 	if err != nil {
 		return err
 	}

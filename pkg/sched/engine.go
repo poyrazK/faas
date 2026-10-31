@@ -2065,7 +2065,7 @@ func (e *Engine) runningInstanceForWake(ctx context.Context, appID, deploymentID
 			return state.Instance{}, err
 		}
 	}
-	instances, err := e.store.ListInstancesForApp(ctx, appID)
+	instances, err := e.liveInstancesForApp(ctx, appID)
 	if err != nil {
 		return state.Instance{}, err
 	}
@@ -5711,7 +5711,7 @@ func (e *Engine) RebalancePressuredApps(ctx context.Context, appID string) error
 // appHasResidentInstances reports whether any instance of appID still holds
 // resident RAM (state.CountsForRAM), wherever it runs.
 func (e *Engine) appHasResidentInstances(ctx context.Context, appID string) (bool, error) {
-	instances, err := e.store.ListInstancesForApp(ctx, appID)
+	instances, err := e.liveInstancesForApp(ctx, appID)
 	if err != nil {
 		return false, err
 	}
@@ -8114,7 +8114,7 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 		if !ok {
 			continue
 		}
-		instances, err := e.store.ListInstancesForApp(ctx, app.ID)
+		instances, err := e.liveInstancesForApp(ctx, app.ID)
 		if err != nil {
 			continue
 		}

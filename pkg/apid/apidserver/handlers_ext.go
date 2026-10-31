@@ -3288,11 +3288,11 @@ func (s *server) listInstances(w http.ResponseWriter, r *http.Request, acct stat
 
 // --- custom domains --------------------------------------------------------
 
-// domainOutsideForeignWildcard refuses a domain below another account's
+// domainOutsideForeignWildcard refuses a domain below another tenant's
 // verified wildcard (state.ForeignVerifiedWildcard) and reports whether the
 // create may continue.
-func (s *server) domainOutsideForeignWildcard(ctx context.Context, w http.ResponseWriter, domain, accountID string) bool {
-	wildcard, err := state.ForeignVerifiedWildcard(ctx, s.store, domain, accountID)
+func (s *server) domainOutsideForeignWildcard(ctx context.Context, w http.ResponseWriter, domain string, app state.App) bool {
+	wildcard, err := state.ForeignVerifiedWildcard(ctx, s.store, domain, app)
 	if err != nil {
 		s.log.Warn("create domain: wildcard ownership check failed", "err", err)
 		api.WriteProblem(w, api.ErrCapacity("could not check wildcard-domain ownership"))
@@ -3300,7 +3300,7 @@ func (s *server) domainOutsideForeignWildcard(ctx context.Context, w http.Respon
 	}
 	if wildcard != "" {
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation, "Domain taken",
-			fmt.Sprintf("%s is below the verified wildcard domain %s, which belongs to another account", domain, wildcard)))
+			fmt.Sprintf("%s is below the verified wildcard domain %s, which belongs to another account or organization", domain, wildcard)))
 		return false
 	}
 	return true
@@ -3341,7 +3341,7 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 			"Previews cannot have custom domains", "attach the domain to the production app; a preview answers on its own pr-<N>-<app> host"))
 		return
 	}
-	if !s.domainOutsideForeignWildcard(r.Context(), w, domain, acct.ID) {
+	if !s.domainOutsideForeignWildcard(r.Context(), w, domain, app) {
 		return
 	}
 	environmentID := ""
