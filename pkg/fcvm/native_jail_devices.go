@@ -8,11 +8,61 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/jailsetup"
 )
+
+var errNativeNamespaceHeld = errors.New("native jail device cleanup: original namespace still has a task")
+
+// nativeNamespaceHolderError is a task found in a namespace with a retired
+// attempt's recorded identity, an nsfs device and inode number.
+type nativeNamespaceHolderError struct {
+	err       error
+	PID       int
+	StartTime uint64
+	Task      string
+	Comm      string
+	Cgroup    string
+}
+
+func (e *nativeNamespaceHolderError) Error() string {
+	return fmt.Sprintf("%v (process %d %q, task %s, cgroup %q)", e.err, e.PID, e.Comm, e.Task, e.Cgroup)
+}
+
+func (e *nativeNamespaceHolderError) Unwrap() error { return e.err }
+
+// namespaceRemoved proves a retired attempt's mount namespace is gone. Linux
+// reuses a namespace's inode number once the namespace is freed, so a task
+// under the recorded identity can sit in a newer namespace that took the
+// number (ADR-568 amendment 2026-10-31). When that task is the recorded VM
+// process of another instance's live launch, its jail's namespace holds the
+// number now. Two live namespaces never share one, so the retired attempt's
+// namespace ended. Any other holder still refuses recovery.
+func (j *nativeHostHelperJournal) namespaceRemoved(ctx context.Context, scope jailsetup.DeviceSetupScope, retired string) error {
+	err := j.owner.jailDevices.NamespaceRemoved(ctx, scope)
+	var holder *nativeNamespaceHolderError
+	if errors.As(err, &holder) && j.owner.liveLaunchOfAnotherInstance(holder, retired) {
+		return nil
+	}
+	return err
+}
+
+// liveLaunchOfAnotherInstance reports whether holder is the launched process of
+// a live launch record for an instance other than retired. The holder's cgroup
+// leaf names its instance, as native recovery reads it (nativeProcessCgroup);
+// the record must name that same pid and start time.
+func (j *nativeLaunchJournal) liveLaunchOfAnotherInstance(holder *nativeNamespaceHolderError, retired string) bool {
+	instance := path.Base(holder.Cgroup)
+	if holder.PID <= 0 || holder.StartTime == 0 || instance == retired || !validNativeInstanceName(instance) {
+		return false
+	}
+	record, err := j.read(instance)
+	return err == nil && record.Authorized && !record.Revoked && !record.ResourcesRemoved &&
+		record.PID == holder.PID && record.StartTime == holder.StartTime
+}
 
 type nativeJailDeviceFrame struct {
 	Scope        jailsetup.DeviceSetupScope    `json:"scope"`
@@ -152,7 +202,7 @@ func (j *nativeHostHelperJournal) requireDeviceNamespacesRemoved(ctx context.Con
 		if !record.Launch.ResourcesRemoved || !inputsClosed || j.owner.jailDevices == nil {
 			return errors.New("native jail device cleanup: original producer has no descriptor retirement proof")
 		}
-		if err := j.owner.jailDevices.NamespaceRemoved(ctx, *scope); err != nil {
+		if err := j.namespaceRemoved(ctx, *scope, record.Launch.Lease.Instance); err != nil {
 			return fmt.Errorf("%w; retired attempt: instance %s, generation %s, launch pid %d, purpose %q", err,
 				record.Launch.Lease.Instance, record.Launch.Generation, record.Launch.PID, record.Purpose)
 		}

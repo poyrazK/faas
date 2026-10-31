@@ -290,10 +290,20 @@ func (linuxNativeJailDevices) NamespaceRemoved(ctx context.Context, s jailsetup.
 			return err
 		}
 		for _, task := range tasks {
-			if err := nativeDeviceNamespacePathGone(filepath.Join(path, "task", task.Name(), "ns", "mnt"), s.Namespace); err != nil {
-				// Name the holder: recovery refuses to start until it exits.
-				// Its cgroup names the jail it was launched into.
-				return fmt.Errorf("%w (process %s %q, task %s, cgroup %q)", err, process.Name(), nativeProcessComm(path), task.Name(), nativeProcessCgroupPath(path))
+			err := nativeDeviceNamespacePathGone(filepath.Join(path, "task", task.Name(), "ns", "mnt"), s.Namespace)
+			if errors.Is(err, errNativeNamespaceHeld) {
+				// Identify the holder: its cgroup names the jail it was
+				// launched into, and pid plus start time its incarnation.
+				pid, _ := strconv.Atoi(process.Name())
+				holder := &nativeNamespaceHolderError{err: err, PID: pid, Task: task.Name(),
+					Comm: nativeProcessComm(path), Cgroup: nativeProcessCgroupPath(path)}
+				if stat, statErr := os.ReadFile(filepath.Join(path, "stat")); statErr == nil {
+					holder.StartTime, _ = nativeProcessStartTime(string(stat), pid)
+				}
+				return holder
+			}
+			if err != nil {
+				return err
 			}
 		}
 		descriptors, err := os.ReadDir(filepath.Join(path, "fd"))
@@ -357,7 +367,7 @@ func nativeDeviceNamespacePathGone(path string, expected jailsetup.DeviceFDIdent
 		return err
 	}
 	if (jailsetup.DeviceFDIdentity{Device: uint64(stat.Dev), Inode: stat.Ino}) == expected {
-		return errors.New("native jail device cleanup: original namespace still has a task")
+		return errNativeNamespaceHeld
 	}
 	return nil
 }
