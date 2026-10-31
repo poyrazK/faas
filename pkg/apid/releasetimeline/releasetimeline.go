@@ -82,7 +82,10 @@ func Build(in Inputs) api.ReleaseTimeline {
 	b.schedule(d.ScheduledRelease)
 	b.approval(out.Approval)
 	b.audit()
-	if watched && !in.Now.Before(watchUntil) && out.Phase != api.ReleasePhaseRolledBack {
+	if kept := regressionKept(d); kept != nil {
+		at, _ := time.Parse(time.RFC3339Nano, kept.DecidedAt)
+		b.add(at, api.ReleaseEventWatchRegressed, regressionKeptText(kept), "", nil, kept)
+	} else if watched && !in.Now.Before(watchUntil) && out.Phase != api.ReleasePhaseRolledBack {
 		b.add(watchUntil, api.ReleaseEventWatchPassed, fmt.Sprintf("Post-release watch passed: no regression in %s", minutes(in.WatchWindow)), "", nil, nil)
 	}
 	if in.ReplacedBy != nil && !in.ReplacedBy.At.IsZero() {
@@ -141,6 +144,9 @@ func phase(in Inputs, approval *api.ReleaseApprovalStatus, watchUntil time.Time,
 		}
 		return api.ReleasePhaseRollingOut, "Rolling out: " + where
 	}
+	if kept := regressionKept(d); kept != nil {
+		return api.ReleasePhaseReleased, "Released, but " + regressionKeptText(kept)
+	}
 	if watched && in.Now.Before(watchUntil) {
 		return api.ReleasePhaseWatching, "Released; watched until " + watchUntil.Format("15:04 UTC")
 	}
@@ -153,6 +159,23 @@ func phase(in Inputs, approval *api.ReleaseApprovalStatus, watchUntil time.Time,
 func inFlight(d api.DeploymentResponse) bool {
 	state := strings.TrimSpace(d.RolloutState)
 	return d.Status == "live" && d.CanaryTotalSteps > 0 && (state == "" || state == "pending" || state == "rolling_out")
+}
+
+// regressionKept is the post-release watch's decision when it found a
+// regression but did not roll the release back (ADR-1448).
+func regressionKept(d api.DeploymentResponse) *api.RolloutDecision {
+	if dec := d.RolloutDecision; dec != nil && dec.RollbackSkipped != "" && d.Status == "live" {
+		return dec
+	}
+	return nil
+}
+
+func regressionKeptText(dec *api.RolloutDecision) string {
+	why := "Gregale could not roll it back"
+	if dec.RollbackSkipped == api.CodeRollbackCrossesRelease {
+		why = "rolling back would cross a release command, so a person decides"
+	}
+	return "the post-release watch found a regression (" + decisionText(dec) + ") and did not roll back: " + why
 }
 
 // rolledBackWhy prefers the abort decision's summary, then the recorded

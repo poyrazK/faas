@@ -553,6 +553,16 @@ sql:
         emit_methods_with_db_argument: true
         omit_unused_structs: true
   - engine: postgresql
+    queries: pkg/state/applabels/queries.sql
+    schema: pkg/state/applabels/schema.sql
+    gen:
+      go:
+        package: sqlc
+        out: pkg/state/applabels/sqlc
+        sql_package: pgx/v5
+        emit_methods_with_db_argument: true
+        omit_unused_structs: true
+  - engine: postgresql
     queries: pkg/state/orgaccess/queries.sql
     schema: pkg/state/orgaccess/schema.sql
     gen:

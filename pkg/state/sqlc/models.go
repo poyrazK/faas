@@ -876,6 +876,7 @@ type App struct {
 	DeploymentCronFingerprint         string
 	DeploymentCronBefore              []byte
 	DeploymentMailRevision            int64
+	Labels                            []byte
 }
 
 type AppApiRoute struct {

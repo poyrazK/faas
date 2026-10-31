@@ -1958,7 +1958,7 @@ Examples:
 gregale release approval require --app my-api --approvals 2 --notify releases
 gregale release approval require --app my-api --approvals 1 --approvers developer --timeout 4h
 gregale release approval pending --app my-api
-gregale release approve 3f9c1e2a-0b7d-4c55-9e1a-2d6f8b4c7e10 --comment "canary looks clean"
+gregale release approval status v42 --app my-api
 gregale release reject v42 --app my-api --reason "checkout latency is up"
 ```
 
@@ -2020,7 +2020,7 @@ Show a release&#39;s approvals
 
 ### release approve
 
-Approve a release
+Approve a release (in the dashboard; prints its approval page)
 
 `gregale release approve [--app <slug>] [--comment <TEXT>] <deployment>`
 
@@ -2028,6 +2028,8 @@ Approve a release
 |---|---|---|
 | `--app <slug>` | app slug, to resolve a vN revision |  |
 | `--comment <TEXT>` | note recorded with the approval |  |
+
+A person signed in to the dashboard approves a release; the CLI&#39;s login token, an API key or CI cannot. The command fails with the release&#39;s approval page to open. `gregale release reject` works from the CLI.
 
 ### release reject
 
