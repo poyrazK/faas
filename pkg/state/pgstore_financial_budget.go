@@ -186,7 +186,7 @@ func financialBudgetFromRow(row sqlc.FinancialBudgetPolicy) (FinancialBudget, er
 	if err := json.Unmarshal(row.Spec, &out.Spec); err != nil {
 		return out, fmt.Errorf("financial budget decode: %w", err)
 	}
-	if err := ValidateFinancialBudgetSpec(out.Spec); err != nil {
+	if err := validateStoredFinancialBudgetSpec(out.Spec); err != nil {
 		return out, fmt.Errorf("financial budget contract: %w", err)
 	}
 	if row.DeletedAt.Valid {

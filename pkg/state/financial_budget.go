@@ -55,6 +55,20 @@ func ValidateFinancialBudgetSpec(p financial.BudgetSpec) error {
 	return nil
 }
 
+// validateStoredFinancialBudgetSpec checks a spec read back from the store.
+// A draft written before the USD switch (ADR-1430) keeps EUR: the migration
+// refused enabled non-USD budgets but left disabled drafts and history as they
+// were. Such a draft must still decode, because every policy read of the
+// account (admission, monitoring, the API) reads all of its policies, and one
+// undecodable row refused every app of the account. It can be read, updated to
+// USD or deleted; every write still requires USD, so it is never enabled in EUR.
+func validateStoredFinancialBudgetSpec(p financial.BudgetSpec) error {
+	if p.Currency == financial.LegacyBillingCurrency && !p.Enabled {
+		p.Currency = financial.BillingCurrency
+	}
+	return ValidateFinancialBudgetSpec(p)
+}
+
 func NormalizeFinancialBudgetSpec(p financial.BudgetSpec) financial.BudgetSpec {
 	if p.Scope.ID != "" {
 		if id, err := uuid.Parse(p.Scope.ID); err == nil {

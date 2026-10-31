@@ -19,6 +19,10 @@ func Response(ctx context.Context, store state.Store, p state.FinancialBudget, n
 		return out, nil
 	}
 	if !p.Spec.Enabled {
+		if p.Spec.Currency == financial.LegacyBillingCurrency {
+			// A pre-USD draft (ADR-1430) is enabled only after an update to USD.
+			out.Reasons = append(out.Reasons, "legacy_currency_draft")
+		}
 		return out, nil
 	}
 	out.Status = "unavailable"
