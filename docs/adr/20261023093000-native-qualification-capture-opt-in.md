@@ -309,6 +309,18 @@ ADR-568 requires.
   - 17923ec133 registers gatewayd as the default-local serving gateway, as
     the edge-rule and runtime-policy journeys do.
   - gitlab's qualification cold boot timed out on the loaded host.
+- 2026-10-31, n2, rerun with 17923ec133:
+  - The first attempt never started. vmmd refused the shared native journal,
+    whose launch records another session's newer vmmd had written.
+  - After that session moved the journal aside, the rerun activated github.
+    Serving preparation then failed with `function
+    public.environment_workload_scheduled_job_acks(uuid, uuid) does not
+    exist`, the same qualification bug as 59adf9a06d.
+    - 4472b400d9 calls it unqualified. No other faas query qualifies a
+      schema function.
+  - The first queue delivery dead-lettered. All five attempts ran out while
+    the worker's cold boots waited on slow `nft` and `debugfs` steps.
+  - gitlab's capture was cancelled mid-copy of its private image.
 - Pending: the n2 native GitOps journey through serving and the resilience
   phases.
 
