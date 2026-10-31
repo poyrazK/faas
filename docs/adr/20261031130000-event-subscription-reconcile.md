@@ -55,7 +55,9 @@ The owner chose (2026-10-31):
    - batch trigger creation (`POST .../triggers:batch`).
 3. **Routing re-checks.** Admission of an application recipient that has no
    delivery yet reads the subscription. If it is disabled or gone, the
-   recipient settles as filtered with `filter_reason: subscription_disabled`:
+   recipient settles as filtered (no filter reason: the routing history's
+   `filter_reason` check admits none for it, and widening it would need a
+   migration on a large table):
    no invocation, no retry. Deliveries already created still run. Events
    published after the disable never capture the subscription, because the
    publish trigger selects only enabled ones.

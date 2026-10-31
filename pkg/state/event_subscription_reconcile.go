@@ -12,10 +12,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
-// EventSubscriptionFilterReasonDisabled settles a recipient whose
-// subscription was disabled or removed after the event was accepted.
-const EventSubscriptionFilterReasonDisabled = "subscription_disabled"
-
 // EventSubscriptionReconcileStore lets a deploy turn subscriptions off and
 // back on, and count them against the plan's caps.
 type EventSubscriptionReconcileStore interface {

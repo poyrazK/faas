@@ -15,8 +15,8 @@ import (
 )
 
 // An event accepted while its subscription was enabled is not delivered once
-// the subscription is disabled: routing settles it as filtered with
-// subscription_disabled and creates no invocation.
+// the subscription is disabled: routing settles it as filtered and creates no
+// invocation.
 func TestEventRoutingAdmissionSkipsDisabledSubscription(t *testing.T) {
 	forRoutingAdmissionStores(t, func(t *testing.T, store routingAdmissionTestStore, _ *pgxpool.Pool, adopted bool) {
 		claim, receipt, _ := seedRoutingAdmission(t, store, adopted, "")
@@ -29,9 +29,8 @@ func TestEventRoutingAdmissionSkipsDisabledSubscription(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if result.InvocationCreated || result.Progress.State != state.PublishedEventRecipientFiltered ||
-			result.Progress.FilterReason != state.EventSubscriptionFilterReasonDisabled {
-			t.Fatalf("disabled subscription admission = %+v, want filtered as subscription_disabled", result)
+		if result.InvocationCreated || result.Progress.State != state.PublishedEventRecipientFiltered {
+			t.Fatalf("disabled subscription admission = %+v, want filtered without a delivery", result)
 		}
 	})
 }

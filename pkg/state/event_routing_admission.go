@@ -79,16 +79,14 @@ type eventAdmissionPlan struct {
 	// reaccepted marks a delivery under PublishedEventReacceptanceID: an
 	// earlier acceptance of the identity kept the original delivery.
 	reaccepted bool
-	// unsubscribed marks a recipient whose subscription was disabled or
-	// removed after the event was accepted (ADR-20261031130000).
-	unsubscribed bool
 }
 
-// unsubscribe settles a recipient whose subscription is gone as filtered:
-// it is not delivered and not retried.
+// unsubscribe settles a recipient whose subscription was disabled or removed
+// after the event was accepted as filtered: it is not delivered and not
+// retried (ADR-20261031130000). It carries no filter reason, because the
+// routing history's filter_reason column admits none for it.
 func (p *eventAdmissionPlan) unsubscribe() {
 	p.matched = false
-	p.unsubscribed = true
 }
 
 // eventAdmissionChecksSubscription reports whether admission must confirm the
@@ -285,9 +283,6 @@ func eventAdmissionProgress(p eventAdmissionPlan, attempts int) PublishedEventRe
 		return EventSchemaVersionFilteredProgress(PublishedEventRecipientProgress{}, max(0, attempts-1), time.Now().UTC())
 	}
 	progress := PublishedEventRecipientProgress{State: state, Attempts: attempts, UpdatedAt: time.Now().UTC()}
-	if p.unsubscribed {
-		progress.FilterReason = EventSubscriptionFilterReasonDisabled
-	}
 	if p.reaccepted && p.matched {
 		progress.DeliveryID = p.invocation.ID
 	}

@@ -233,8 +233,8 @@ whole set of event subscriptions
 ([ADR 20261031130000](adr/20261031130000-event-subscription-reconcile.md)):
 
 - A trigger you remove is disabled. Events not yet routed to it are not
-  delivered, and their receipts show it as filtered with
-  `subscription_disabled`. Deliveries that already started finish.
+  delivered; their receipts show it as filtered. Deliveries that already
+  started finish.
 - Changing a trigger's filter replaces its subscription; the old filter stops
   delivering.
 - Declaring a trigger again re-enables the same subscription, with its
