@@ -111,7 +111,7 @@ next request wakes it, and that is the product working, not a failure.
 |---|---|---|
 | `Ready` | `live` and its readiness stage completed (reason `live`) | live while readiness checks still run (reason `verifying`; the release is routable but not yet confirmed, as `release wait` already treats it); `pending`, `building`, `imaging`, `snapshotting` (reason is the status); `failed`, `cancelled`, `superseded` (reason is the status, terminal) |
 | `Progressing` | `pending`, `building`, `imaging` or `snapshotting` (reason is the status), live while readiness runs (reason `verifying`), or live with a rollout still advancing (reason `rolling_out`) | otherwise (reason `complete`, or the terminal status) |
-| `RolledOut` | live and the rollout reached 100% traffic, or no safe rollout (reason `rolled_out`) | rolling out (reason `rolling_out`); rollout aborted (reason `rollout_aborted`, terminal); not live (reason is the status, terminal when `Ready` is) |
+| `RolledOut` | live and the rollout reached 100% traffic, or no safe rollout (reason `rolled_out`) | rolling out (reason `rolling_out`); rollout aborted (reason `rollout_aborted`, terminal); live at 0% in the default lane, as `deploy --no-traffic` leaves a release until it is promoted (reason `staged`, amendment 1); not live (reason is the status, terminal when `Ready` is) |
 
 **Database** (`GET /v1/postgres/databases/{id}/status`, from the database
 response with its cached health):
@@ -219,3 +219,19 @@ the existing nouns, with the same flags and exit codes everywhere:
 - Labels and selectors on apps (a separate ADR).
 - A server-side watch or event stream of condition changes; polling the status
   subresource is enough for the first steps.
+
+## Amendment 1 (2026-10-31): a staged release has not rolled out
+
+`deploy --no-traffic` leaves a release live at 0% until it is promoted. Its
+`RolledOut` read `True`, "serves its full share of traffic", so
+`release wait --for RolledOut` returned at once for a release production does
+not serve. It now reads `False` with reason `staged`, not terminal: a later
+promotion rolls it out, so a wait keeps polling until its timeout. `Ready` stays
+`True`, since the release serves on its own URL.
+
+Only the default lane (scope empty or `default`) routes by traffic weights, so
+only there does 0% mean staged. A project environment, `production` included,
+serves the members of its release set at 0%, and a service rollout warms its
+new generation at 0% (`rollout_state` `rolling_out`) before schedd promotes it;
+both keep their earlier answer. This matches the app health assessment, which
+counts a live deployment as serving only above 0%.
