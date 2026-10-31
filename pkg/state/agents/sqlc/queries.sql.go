@@ -720,6 +720,48 @@ func (q *Queries) GetAgentRunOutputs(ctx context.Context, db DBTX, arg GetAgentR
 	return i, err
 }
 
+const getAgentRunUsage = `-- name: GetAgentRunUsage :one
+SELECT method, samples, expected_samples, measured_ms, paused_ms, private_mb_ms, unpaused_private_mb_ms,
+       billable_mb_ms, peak_private_mb, cold_boot
+  FROM agent_run_usage WHERE run_id=$1::text::uuid AND account_id=$2::text::uuid
+`
+
+type GetAgentRunUsageParams struct {
+	RunID     string
+	AccountID string
+}
+
+type GetAgentRunUsageRow struct {
+	Method              int16
+	Samples             int32
+	ExpectedSamples     int32
+	MeasuredMs          int64
+	PausedMs            int64
+	PrivateMbMs         int64
+	UnpausedPrivateMbMs int64
+	BillableMbMs        int64
+	PeakPrivateMb       int64
+	ColdBoot            bool
+}
+
+func (q *Queries) GetAgentRunUsage(ctx context.Context, db DBTX, arg GetAgentRunUsageParams) (GetAgentRunUsageRow, error) {
+	row := db.QueryRow(ctx, getAgentRunUsage, arg.RunID, arg.AccountID)
+	var i GetAgentRunUsageRow
+	err := row.Scan(
+		&i.Method,
+		&i.Samples,
+		&i.ExpectedSamples,
+		&i.MeasuredMs,
+		&i.PausedMs,
+		&i.PrivateMbMs,
+		&i.UnpausedPrivateMbMs,
+		&i.BillableMbMs,
+		&i.PeakPrivateMb,
+		&i.ColdBoot,
+	)
+	return i, err
+}
+
 const getAgentVersion = `-- name: GetAgentVersion :one
 SELECT version,harness_preset,harness_image,harness_run,harness_models,prompt_template,ram_mb,timeout_sec,created_at,
   model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls FROM agent_versions
@@ -1528,6 +1570,56 @@ type RecordAgentRunBootParams struct {
 
 func (q *Queries) RecordAgentRunBoot(ctx context.Context, db DBTX, arg RecordAgentRunBootParams) (int64, error) {
 	result, err := db.Exec(ctx, recordAgentRunBoot, arg.BootMs, arg.RunID, arg.LeaseToken)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const recordAgentRunUsage = `-- name: RecordAgentRunUsage :execrows
+INSERT INTO agent_run_usage (run_id, account_id, method, samples, expected_samples, measured_ms, paused_ms,
+    private_mb_ms, unpaused_private_mb_ms, billable_mb_ms, peak_private_mb, cold_boot)
+SELECT r.id, r.account_id, $1::smallint, $2::integer, $3::integer,
+       $4::bigint, $5::bigint, $6::bigint,
+       $7::bigint, $8::bigint, $9::bigint,
+       $10::boolean
+  FROM agent_runs r
+ WHERE r.id=$11::text::uuid AND r.lease_token=$12::text AND r.state='running'
+ON CONFLICT (run_id) DO NOTHING
+`
+
+type RecordAgentRunUsageParams struct {
+	Method              int16
+	Samples             int32
+	ExpectedSamples     int32
+	MeasuredMs          int64
+	PausedMs            int64
+	PrivateMbMs         int64
+	UnpausedPrivateMbMs int64
+	BillableMbMs        int64
+	PeakPrivateMb       int64
+	ColdBoot            bool
+	RunID               string
+	LeaseToken          string
+}
+
+// ADR-20261027090011: vmmd's measured memory of the run VM. Only the first
+// record of a run is kept.
+func (q *Queries) RecordAgentRunUsage(ctx context.Context, db DBTX, arg RecordAgentRunUsageParams) (int64, error) {
+	result, err := db.Exec(ctx, recordAgentRunUsage,
+		arg.Method,
+		arg.Samples,
+		arg.ExpectedSamples,
+		arg.MeasuredMs,
+		arg.PausedMs,
+		arg.PrivateMbMs,
+		arg.UnpausedPrivateMbMs,
+		arg.BillableMbMs,
+		arg.PeakPrivateMb,
+		arg.ColdBoot,
+		arg.RunID,
+		arg.LeaseToken,
+	)
 	if err != nil {
 		return 0, err
 	}
