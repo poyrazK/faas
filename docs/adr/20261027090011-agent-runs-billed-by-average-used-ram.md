@@ -127,3 +127,8 @@ This example is illustrative and uses `k = 2`. A 5-minute run spends 4 minutes a
 
 1. The value of `k`, and whether it differs by plan.
 2. Whether the floor should be 256 MB or follow the preset's measured baseline.
+3. **A lower floor for minimal harnesses (owner goal, 2026-10-30).** The owner wants a minimal agent to be nearly free. A harness that touches 30–60 MB pays mostly for the 256 MB floor.
+   - **The cost of the floor today.** It bills about 264 MB per unpaused second: at `k` = 2, about $0.0053 per unpaused hour. A 64 MB floor, matching ADR-20261027090015's `AgentChargeFloorMB`, would bill 72 MB: about $0.0014 per hour.
+   - **The catch.** The economics evidence above shows agent nodes run out of CPU before RAM. Most of a minimal run's cost is harness start-up and tool CPU, which a lower RAM floor no longer recovers. So a lower floor needs a higher `k`, or a CPU term, to stay above break-even.
+   - **Where nearly free comes from instead.** ADR-20261030125501 (stateless agents on functions) holds no VM between events, and its work is billed as ordinary function time. That is the nearly free path for minimal agents. Harness runs keep a floor that covers a VM's CPU.
+   - **The financial model decides the floor and `k` together.**

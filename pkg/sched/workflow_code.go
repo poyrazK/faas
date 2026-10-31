@@ -186,7 +186,9 @@ func (o *WorkflowOrchestrator) workflowCodeLimits(ctx context.Context, run *stat
 	if err != nil {
 		return workflowcode.Limits{}, err
 	}
-	account, err := o.store.AccountByID(ctx, app.AccountID)
+	// The billing subject's plan: a company app's creator may be on Free
+	// (bug hunt 2026-10-28 B37).
+	account, err := state.AppResourceAccount(ctx, o.store, app)
 	if err != nil {
 		return workflowcode.Limits{}, err
 	}

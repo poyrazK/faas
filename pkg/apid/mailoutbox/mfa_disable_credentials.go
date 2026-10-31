@@ -60,7 +60,9 @@ func (c *MFADisableCredentials) redeem(ctx context.Context, accountID string, ha
 			return time.Time{}, err
 		}
 	}
-	account, err := queries.LockMFADisableCredentialAccount(ctx, tx, hash)
+	account, hash, err := lockByTokenHash(tagMFADisable, hash, func(value []byte) (q.LockMFADisableCredentialAccountRow, error) {
+		return queries.LockMFADisableCredentialAccount(ctx, tx, value)
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return time.Time{}, ErrMFADisableUnknown
 	}

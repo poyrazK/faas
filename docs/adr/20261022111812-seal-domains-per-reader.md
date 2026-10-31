@@ -842,6 +842,82 @@ config to update it.
   re-seal them. The release after makes them follow the write mode and
   re-seals the stored ones; the delivery contract waits for that.
 
+## Implemented: the runtime check and its short-lived copies
+
+`gregalectl seal-domain migrate --domain runtime --check` measures what
+still holds vmmd to the fleet and host identities. It writes nothing.
+
+- **Pending:** the rekey documents a runtime migration would still rewrite.
+  These are envelopes a legacy identity opens, or the domain opens under
+  another label. An envelope nothing opens is reported as failed and does
+  not block.
+- **Skipped:** values vmmd could need the fleet key for, which the
+  migration does not re-seal:
+  - **short-lived copies under another key id:**
+    - the replaced secrets an open config guard keeps, to restore them if
+      the change regresses;
+    - the credentials a managed Postgres cutover has sealed but not yet
+      published;
+  - **crash capture keys** sealed before the runtime domain was staged,
+    which only legacy identities open.
+
+  The check fails while any are left.
+
+The short-lived copies were listed as needing a re-seal of their own. They
+do not need one:
+
+- a guard's copies are deleted when it closes (`ConfigGuardWindowMinutes`,
+  ten minutes);
+- a cutover's ciphertext is cleared when it publishes or cancels;
+- both carry a key id, so the count needs no opening. A crash capture key
+  has none, so the check opens it.
+
+A copy that a restore or a publish moves into `app_secrets` after the
+migration becomes a rekey document under the fleet key. The check reports
+it as pending, and the next migration run re-seals it. Each copy is written
+under the runtime write mode, so in domain mode new copies are filed under
+the domain.
+
+vmmd's own contract (it reads the secrets directory as root rather than
+through credentials) is a separate step.
+
+## Implemented: sidecar env joins the runtime re-seal
+
+The runtime re-seal did not cover sidecar env. apid seals each value into
+`deployments.sidecars`, which is outside the rekey documents, so values
+sealed before the domain stayed on the fleet key. The runtime check missed
+them too. A vmmd without the fleet identity would have failed every wake of
+an app whose sidecars have env.
+
+- **The deployment row is not rewritten.** Guard triggers keep
+  `deployments.sidecars` immutable for frozen GitOps inputs, for
+  deployments under recovery retention, and for fenced clone deployments.
+  MCP readiness evidence and binding promotion revisions also hash the
+  column, so rewriting its ciphertext would void evidence and pending
+  approvals.
+- **The runtime-domain copy goes beside it.**
+  - The re-seal writes each value's copy to
+    `deployment_sidecar_env_reseals`, keyed by deployment, sidecar and
+    key.
+  - Each copy records `source_sha256`, the digest of the declared
+    ciphertext it replaces.
+  - At wake, schedd sends the copy instead of the declared value, but only
+    while the deployment still declares those exact bytes.
+  - A write is a compare-and-swap on the copy the run read. A copy whose
+    deployment was deleted in the meantime is dropped.
+- **No key id on the declared value.** A rerun therefore opens every
+  declared value or its copy to tell where it stands, and the check does
+  the same. A value that opens with a legacy identity is pending until a
+  run writes its copy.
+- **Copies of a deployment do not inherit its copies.** A clone or a
+  promotion copies the declared ciphertext into a new deployment without a
+  copy of its own. The check reports it as pending, and the next migration
+  run writes its copy.
+- **Release compatibility.** A schedd of the previous release ignores the
+  table and sends the declared value. vmmd contracts only after this
+  release has left the rollback window. Until then, every vmmd still
+  holds the fleet identity, which opens either.
+
 ## CD and node join stage the domain keys
 
 Each domain's key pair is a pair of GitHub environment secrets:
@@ -869,9 +945,6 @@ Each domain's key pair is a pair of GitHub environment secrets:
 
 Later slices:
 - the other domains, in the order above;
-- re-sealing the short-lived copies in `app_config_guard_secrets` and
-  `managed_postgres_cutover_credentials`, which the rekey documents do not
-  cover;
 - the contract steps of the other domains, and then dropping the fleet
   credential from each contracted reader's base unit;
 - dropping `github_webhook_secrets.secret_value` (step 2 above), after the

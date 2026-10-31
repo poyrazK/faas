@@ -147,7 +147,7 @@ func (s *server) linearOAuthCallbackForAccount(w http.ResponseWriter, r *http.Re
 	defer cancel()
 	r = r.WithContext(ctx)
 	if r.URL.Query().Get("error") != "" {
-		_ = service.Store.DeleteLinearOAuthFlow(ctx, issuetrackers.LinearOAuthStateHash(nonce), acct.ID)
+		service.Decline(ctx, nonce, acct.ID)
 		api.WriteProblem(w, api.ErrValidation("Linear authorization was declined; restart consent when ready"))
 		return
 	}

@@ -1399,3 +1399,54 @@ tenant's caches. All are fixed; none changes the rule format.
    every other kind is; a credentialed CORS rule or preset may not allow
    `https://*.<a platform domain>`, since every other customer's app is served
    there; a duplicated validation block on rule update is removed.
+
+## Amendment (2026-10-30): review round 4 — previews, renames and who may edit what rules use
+
+An end-to-end review found three places where a rule did not protect what its
+owner expected, one authorization gap, and missing surfaces. None changes the
+rule format.
+
+1. **A PR preview applies its production app's app-wide rules.** `@app`
+   matched only the rule's own app, and a preview is a separate app, so a
+   `jwt` rule on `/admin/**`, an `ip` or `geo` block, `waf` or `challenge` on
+   production left the preview, which serves the PR's code on a guessable
+   host, ungated. Previews already keep the production app's access gates
+   (password, IP allowlist, signed requests, consumer auth); edge rules now
+   follow. The gateway adds the production app's enabled `@app` rules to a
+   preview's own, in the usual evaluation order (priority, created_at, id),
+   except `route` and `async` rules: those send traffic to a fixed app or its
+   queue, and a preview serves its own code. An inherited `throttle` rule
+   keeps its id, so the preview's requests count against the same buckets as
+   production's. A mutation of the production app's `@app` rules drops the
+   previews' compiled sets and fences their hosts during convergence. The
+   trace (CLI and dashboard) adds the same rules for a preview. Exact-host
+   and wildcard rules are unchanged: they apply by host, as before.
+2. **Renaming an app retargets the route rules that name it.** A `route` rule
+   names its target by slug. A rename left it naming a slug that no longer
+   resolved, and the gateway quietly served the routed paths from the host's
+   own app; a new app later given the old slug in the same account would have
+   received them. The rename now fences the hosts of the account's route rules
+   naming the old slug, renames, points them at the new slug through the
+   ordinary rule update, and releases the fence. If the retarget fails after
+   the rename, the rename stands and the error is logged with the rules left
+   to fix. Exact-host rules on the old platform hostname do not follow a
+   rename; `@app` rules do.
+3. **Editing a list or CORS preset checks the apps whose rules use it.** Lists
+   and account-wide presets belong to an account, and a company app's rules
+   stay under its creator's account. A creator removed from or demoted in the
+   company could still change what the company app's rules let through by
+   editing the list or preset they use. A list update, and a preset update or
+   delete, now applies the organization access check to every app with a rule
+   that references the object, as a request naming the app does; a list in
+   use already cannot be deleted.
+4. **The dashboard edits rules and manages lists and history.** It could
+   create, toggle, change the mode of and delete a rule, but not edit one,
+   and had no view of rule lists or of rule-set history. It now edits a rule's
+   match and action, creates, edits and deletes lists, and lists the recorded
+   versions with a rollback to any of them, all through the API handlers.
+5. **The account export includes the edge configuration.** It now carries
+   `edge_rules` (on the exported apps) and `edge_rule_lists` with their items.
+6. Documentation: managed realtime connections (`/__gregale/realtime/`) and
+   production forks are served before edge rules; after a plan downgrade, rules
+   of kinds the new plan no longer allows keep applying (they fail closed),
+   and new rules of those kinds cannot be created until the plan allows them.

@@ -10,26 +10,29 @@ import (
 	"github.com/onebox-faas/faas/cmd/gregale"
 )
 
-// `postgres delete` removes the database and its restore history at the
-// provider with no grace period, so it asks for the database's name unless
-// the caller passes --yes or --quiet.
+// `postgres delete` schedules the delete, and --purge deletes the database
+// and its restore history at once (ADR-20261029174950). Either way it asks for
+// the database's name unless the caller passes --yes or --quiet.
 func TestPostgresDeleteAsksForTheDatabaseName(t *testing.T) {
 	const id = "5b0c6f0e-6a55-4d3b-9b8e-2f1a0c9d7e61"
 	var mu sync.Mutex
 	var requests []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
-		requests = append(requests, r.Method+" "+r.URL.Path)
+		requests = append(requests, r.Method+" "+r.URL.RequestURI())
 		mu.Unlock()
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/postgres/databases":
 			_, _ = w.Write([]byte(`{"items":[{"id":"` + id + `","name":"orders","state":"ready"}]}`))
 		case r.URL.Path == "/v1/postgres/databases/"+id:
-			state := "ready"
-			if r.Method == http.MethodDelete {
-				state = "deleting"
+			switch {
+			case r.Method == http.MethodDelete && r.URL.Query().Get("purge") == "true":
+				_, _ = w.Write([]byte(`{"id":"` + id + `","name":"orders","state":"deleting"}`))
+			case r.Method == http.MethodDelete:
+				_, _ = w.Write([]byte(`{"id":"` + id + `","name":"orders","state":"deleting","restorable_until":"2026-11-06T12:00:00Z"}`))
+			default:
+				_, _ = w.Write([]byte(`{"id":"` + id + `","name":"orders","state":"ready"}`))
 			}
-			_, _ = w.Write([]byte(`{"id":"` + id + `","name":"orders","state":"` + state + `"}`))
 		default:
 			http.Error(w, `{"status":404,"code":"not_found"}`, http.StatusNotFound)
 		}
@@ -40,16 +43,17 @@ func TestPostgresDeleteAsksForTheDatabaseName(t *testing.T) {
 	oldStdin, oldNonInteractive := *main.OsStdin, *main.NonInteractive
 	t.Cleanup(func() { *main.OsStdin, *main.NonInteractive = oldStdin, oldNonInteractive })
 
-	deleted := func() bool {
+	deleted := func() string {
 		mu.Lock()
 		defer mu.Unlock()
 		for _, request := range requests {
 			if strings.HasPrefix(request, http.MethodDelete+" ") {
-				return true
+				return request
 			}
 		}
-		return false
+		return ""
 	}
+	const scheduled, purged = "DELETE /v1/postgres/databases/" + id, "DELETE /v1/postgres/databases/" + id + "?purge=true"
 	for _, tc := range []struct {
 		name           string
 		args           []string
@@ -57,14 +61,18 @@ func TestPostgresDeleteAsksForTheDatabaseName(t *testing.T) {
 		nonInteractive bool
 		json           bool
 		wantCode       int
-		wantDeleted    bool
+		wantDeleted    string
 		wantStderr     string
+		wantStdout     string
 	}{
-		{name: "typed name deletes", args: []string{"orders"}, typed: "orders\n", wantDeleted: true, wantStderr: `Type "orders" to confirm`},
-		{name: "by ID asks for the name", args: []string{id}, typed: "orders\n", wantDeleted: true, wantStderr: "cannot be recovered"},
+		{name: "typed name schedules", args: []string{"orders"}, typed: "orders\n", wantDeleted: scheduled, wantStderr: `Type "orders" to confirm`,
+			wantStdout: "Undo before 2026-11-06T12:00:00Z with: gregale postgres recover orders"},
+		{name: "the prompt names recover", args: []string{id}, typed: "orders\n", wantDeleted: scheduled, wantStderr: "gregale postgres recover orders"},
+		{name: "the message names purge and the plan limit", args: []string{"orders", "--yes"}, wantDeleted: scheduled, wantStdout: "counts toward your plan's database limit. To delete it now: gregale postgres delete orders --purge"},
+		{name: "purge says it cannot be undone", args: []string{"orders", "--purge"}, typed: "orders\n", wantDeleted: purged, wantStderr: "cannot be recovered", wantStdout: "is deleting."},
+		{name: "purge with yes", args: []string{"--purge", "--yes", "orders"}, wantDeleted: purged},
 		{name: "wrong name keeps the database", args: []string{"orders"}, typed: "y\n", wantCode: 130},
-		{name: "yes skips the prompt", args: []string{"orders", "--yes"}, wantDeleted: true},
-		{name: "quiet before the name", args: []string{"--quiet", "orders"}, wantDeleted: true},
+		{name: "quiet before the name", args: []string{"--quiet", "orders"}, wantDeleted: scheduled},
 		{name: "non-interactive needs yes", args: []string{"orders"}, nonInteractive: true, wantCode: 1, wantStderr: "--yes"},
 		{name: "json needs yes", args: []string{"orders"}, json: true, wantCode: 1, wantStderr: "--yes"},
 	} {
@@ -73,16 +81,19 @@ func TestPostgresDeleteAsksForTheDatabaseName(t *testing.T) {
 			*main.OsStdin = strings.NewReader(tc.typed)
 			*main.NonInteractive = tc.nonInteractive
 			main.WithResetJSONOutput(t, tc.json)
-			_, stderr, restore := main.SwapIO(t)
+			stdout, stderr, restore := main.SwapIO(t)
 			defer restore()
 			if code := main.CmdPostgresDelete(tc.args); code != tc.wantCode {
 				t.Fatalf("exit %d, want %d; stderr %q", code, tc.wantCode, stderr())
 			}
-			if deleted() != tc.wantDeleted {
-				t.Fatalf("requests %v; want deleted=%v", requests, tc.wantDeleted)
+			if got := deleted(); got != tc.wantDeleted {
+				t.Fatalf("delete request %q, want %q; requests %v", got, tc.wantDeleted, requests)
 			}
 			if !strings.Contains(stderr(), tc.wantStderr) {
 				t.Fatalf("stderr %q lacks %q", stderr(), tc.wantStderr)
+			}
+			if !strings.Contains(stdout.String(), tc.wantStdout) {
+				t.Fatalf("stdout %q lacks %q", stdout.String(), tc.wantStdout)
 			}
 		})
 	}

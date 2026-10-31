@@ -1025,6 +1025,12 @@ message CapacityReport {
   // like the instance rows, outside the capacity signature; absent when
   // bridge units are off or on an older vmmd.
   google.protobuf.Int64Value instance_bridge_resident_bytes = 12;
+  // StatsResponse.tenant_cpu_pressure_some_avg10 and host_cpu_busy_percent
+  // from the same sample (ADR 20261030100950): the readings the node's
+  // schedd checks for CPU pressure. Telemetry outside the capacity
+  // signature; absent on an older vmmd or a host without the files.
+  google.protobuf.DoubleValue tenant_cpu_pressure_some_avg10 = 13;
+  google.protobuf.DoubleValue host_cpu_busy_percent = 14;
 }
 
 // Inherits node_id, sampled_at_unix_ms and node_key_id from CapacityReport.

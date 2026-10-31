@@ -85,7 +85,7 @@ export class AlertRulesService {
   }
   /**
    * Delete a notification channel
-   * Removes the channel; alert rules stop delivering to it.
+   * Removes the channel; alert rules stop delivering to it. Refused with 409 notification_channel_in_use while the channel is the only destination of a rule (no webhook and no other channel), naming those rules.
    * @returns void
    * @throws ApiError
    */
@@ -106,6 +106,7 @@ export class AlertRulesService {
       errors: {
         402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
         404: `code: not_found`,
+        409: `code: conflict`,
       },
     });
   }
@@ -667,6 +668,14 @@ export class AlertRulesService {
         \`delivery_status_code\` + \`delivery_attempts\` for the
         investigator; the customer's receiver likely rejected
         the request, was unreachable, or returned 5xx.
+        `,
+        503: `Webhook delivery failed after the dispatcher's retry
+        budget (5 attempts, 2s/8s/32s/128s backoff). The audit
+        log entry (\`alert_preset.test_sent\`) carries the
+        \`delivery_status_code\` + \`delivery_attempts\` for the
+        investigator; the customer's receiver likely rejected
+        the request, was unreachable, or returned 5xx.
+        Sent as 503 by the public edge.
         `,
       },
     });

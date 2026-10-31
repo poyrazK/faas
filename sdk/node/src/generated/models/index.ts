@@ -392,6 +392,7 @@ export type { CompleteWorkflowCallbackResponse } from './CompleteWorkflowCallbac
 export type { ComposeHealthcheck } from './ComposeHealthcheck.js';
 export type { ComposeProcess } from './ComposeProcess.js';
 export type { ComposeResources } from './ComposeResources.js';
+export type { Condition } from './Condition.js';
 export type { ConfigChangeReceipt } from './ConfigChangeReceipt.js';
 export type { ConfigGuard } from './ConfigGuard.js';
 export type { ConfigGuardDecision } from './ConfigGuardDecision.js';
@@ -2652,6 +2653,7 @@ export type { RequestEventExecutionLineageCaseBackfillRequest } from './RequestE
 export type { ResizeManagedPostgresDatabaseRequest } from './ResizeManagedPostgresDatabaseRequest.js';
 export type { ResolvedExecutionLimits } from './ResolvedExecutionLimits.js';
 export type { ResourceProfile } from './ResourceProfile.js';
+export type { ResourceStatus } from './ResourceStatus.js';
 export type { RestoreAutomationRevisionRequest } from './RestoreAutomationRevisionRequest.js';
 export type { RestoreMCPReadinessPolicyRequest } from './RestoreMCPReadinessPolicyRequest.js';
 export type { RestoreManagedPostgresDatabaseRequest } from './RestoreManagedPostgresDatabaseRequest.js';

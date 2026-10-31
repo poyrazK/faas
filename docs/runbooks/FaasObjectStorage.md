@@ -16,6 +16,7 @@ Metrics: `faas_object_storage_inventory_scans_total{outcome}`,
 `s3_gateway_read_admission_decisions_total{source}`,
 `s3_gateway_read_usage_flushes_total{outcome}`.
 Decision records: [ADR 20261023223000](../adr/20261023223000-object-storage-bucket-scoped-availability.md),
+[ADR 20261030100835](../adr/20261030100835-object-storage-resumable-inventory.md) (resumable inventory),
 [ADR 20261029174627](../adr/20261029174627-object-storage-backend-pools.md) (bucket placement),
 [ADR 20261030075301](../adr/20261030075301-object-storage-reads-off-the-database.md) (cached read admission).
 Severity: warn.
@@ -24,7 +25,8 @@ Severity: warn.
 
 - **Inventory failing.** Customers see `503 Object storage accounting is
   temporarily unavailable` on one bucket while the account's other buckets
-  work. A bucket needs a successful inventory every 900 s.
+  work. A bucket needs a successful inventory every 900 s, or a listing that
+  is still advancing and an inventory under an hour old.
 - **Gateway 5xx.** S3 clients get `ServiceUnavailable` (provider unreachable
   or accounting stale) or `SlowDown` (another delete or write of the same
   key, or an inventory scan of the bucket, is still settling). Both count as
@@ -45,8 +47,14 @@ Severity: warn.
 ## Check
 
 1. Inventory failures: `journalctl -u faas-apid | grep "object storage inventory failed"`
-   lists the bucket and backend IDs. A bucket over about 1M keys, or one that
-   cannot be listed within 45 s, never completes a scan.
+   lists the bucket and backend IDs and how many pages its listing has. A
+   large bucket is listed over several attempts (`outcome="partial"`); its
+   progress is in the database:
+   `SELECT bucket_id, started_at, progress_at, pages, complete FROM object_storage_inventory_scans ORDER BY started_at;`
+   A listing whose `progress_at` is older than 5 minutes is not advancing,
+   and its bucket refuses transfers once its last inventory is 900 s old. A
+   listing that cannot finish within an hour, or one over 1M keys, starts
+   again.
 2. Gateway errors: `journalctl -u faas-s3-gatewayd` around the alert window.
    Compare with the provider's status page. Many `SlowDown` answers on one
    bucket mean customer concurrency on the same keys, or an uncertain delete
@@ -63,9 +71,11 @@ Severity: warn.
 ## Recover
 
 1. Provider outage: wait for the provider. Do not raise ceilings.
-2. One bucket that cannot be listed: ask the customer to split the bucket or
-   delete keys. Keep the operator key ceiling (`max_account_keys`) below what a
-   45 s scan can list.
+2. One bucket whose listing does not advance: check the provider for that
+   bucket's backend first. A listing that fails every page keeps restarting;
+   the bucket's transfers recover once one listing completes. A listing
+   longer than an hour (about 1M keys at more than 1.5 s per page) never
+   completes: ask the customer to split the bucket or delete keys.
 3. Usage export: rotate or repair the provider usage credentials in the
    operator config, then restart `faas-s3-gatewayd`.
 4. Read count flushes: restore the gateway's database connection. Counts

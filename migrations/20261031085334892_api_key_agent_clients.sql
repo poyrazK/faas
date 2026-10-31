@@ -1,4 +1,4 @@
--- filename: 20261030133644187_api_key_agent_clients.sql
+-- filename: 20261031085334892_api_key_agent_clients.sql
 -- migration-compat: expand
 
 -- +goose Up

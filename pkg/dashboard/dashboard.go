@@ -1005,6 +1005,11 @@ type AppEdgeRulesData struct {
 	// ChallengeAvailable is false while the browser challenge is not released
 	// to the account; the create form then offers no challenge kind.
 	ChallengeAvailable bool
+	// Lists are the account's edge rule lists, which every app's rules may
+	// use; Versions are this app's recorded rule sets, newest first
+	// (ADR-091 amendment 2026-10-30).
+	Lists    []EdgeRuleListPageItem
+	Versions []EdgeRuleVersionPageItem
 	// Events is the ADR-964 security-events section.
 	Events EdgeRuleEventsPageData
 	// WAFReview is the WAF false-positive review (ADR-831 amendment 13).
@@ -1146,6 +1151,25 @@ type EdgeRuleTraceFormData struct {
 	Result       *edgeruletrace.Result
 }
 
+// EdgeRuleListPageItem is one account edge rule list on the edge-rules page.
+// Items is newline-separated for the edit textarea.
+type EdgeRuleListPageItem struct {
+	Name        string
+	Kind        string
+	Description string
+	ItemCount   int
+	Items       string
+	UsedBy      int
+}
+
+// EdgeRuleVersionPageItem is one recorded rule-set version of the app.
+type EdgeRuleVersionPageItem struct {
+	Version    int
+	RuleCount  int
+	RecordedAt string
+	Current    bool
+}
+
 // EdgeRulePageItem is a template-safe edge rule projection. ActionJSON is
 // intentionally a display string rather than a parsed map so the dashboard
 // never executes customer-provided JSON.
@@ -1167,6 +1191,9 @@ type EdgeRulePageItem struct {
 	// AttackMode is set for the app's attack-mode rule
 	// (ADR-20261021220456), which changes only through its switch.
 	AttackMode bool
+	// EditActionJSON is the action in the shape the edit form sends back
+	// (ADR-091 amendment 2026-10-30).
+	EditActionJSON string
 	// ADR-960/964: name, mode and 24 h hit counts.
 	Name       string
 	Mode       string
@@ -3587,6 +3614,9 @@ type ManagedPostgresDatabaseItem struct {
 	UpdatedAt            string
 	Bindings             []ManagedPostgresBindingItem
 	BindingsError        string
+	// RestorableUntil is when a scheduled delete becomes final
+	// (ADR-20261029174950); empty when no delete is scheduled.
+	RestorableUntil string
 }
 
 // ManagedPostgresBindingItem is the safe metadata shown for an app binding.

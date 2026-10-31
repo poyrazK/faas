@@ -15,14 +15,20 @@ re-type.
 
 Usage:
   ./scripts/ci/images_lock_update.py [--repo-root PATH] [--dry-run]
+      [--allow-partial --unresolved-file PATH]
 
   --dry-run prints the resolved digests without writing.
 
-Exits non-zero on any failure. Pure stdlib + urllib.
+Each tag gets RESOLVE_ATTEMPTS tries before it counts as unresolved. By
+default any unresolved tag fails the run and nothing is written. The weekly
+images-lock-refresh workflow passes --allow-partial: it writes every base that
+did resolve, lists the rest in --unresolved-file for the tracking issue, and
+still fails when no tag resolved at all. One flaky registry (public.ecr.aws on
+2026-10-26) must not hold back every other base's security refresh for a week.
+Pure stdlib + urllib.
 
-NOTE: this script is operator-only. CI does NOT call it; the
-`images-lock-check` gate fails the PR until the operator runs this
-locally and pushes the updated lock + Dockerfile FROM lines.
+Operators run it locally and push the updated lock + Dockerfile FROM lines;
+the `images-lock-check` gate fails a PR until they do.
 """
 from __future__ import annotations
 
@@ -34,12 +40,15 @@ import os
 import re
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
 
 PLACEHOLDER = "sha256:REPLACE_ME_AT_MERGE_TIME"
+RESOLVE_ATTEMPTS = 3
+RESOLVE_BACKOFF_SECONDS = (5, 20)
 DOCKER_CONFIG = Path.home() / ".docker" / "config.json"
 
 
@@ -295,7 +304,20 @@ def resolve_digest(repo: str, tag: str, platform: str, multi_arch: bool = False)
     )
 
 
-def update_lock_and_dockerfiles(repo_root: Path, dry_run: bool) -> int:
+def resolve_digest_with_retry(repo: str, tag: str, platform: str, multi_arch: bool = False,
+                              sleep=None) -> str | None:
+    sleep = sleep or time.sleep
+    for attempt in range(RESOLVE_ATTEMPTS):
+        digest = resolve_digest(repo, tag, platform, multi_arch)
+        if digest:
+            return digest
+        if attempt < len(RESOLVE_BACKOFF_SECONDS):
+            sleep(RESOLVE_BACKOFF_SECONDS[attempt])
+    return None
+
+
+def update_lock_and_dockerfiles(repo_root: Path, dry_run: bool, allow_partial: bool = False,
+                                unresolved_file: Path | None = None) -> int:
     lock_path = repo_root / "images" / "Dockerfile.lock"
     lock = json.loads(lock_path.read_text(encoding="utf-8"))
     pinned = lock.get("pinned", [])
@@ -306,7 +328,7 @@ def update_lock_and_dockerfiles(repo_root: Path, dry_run: bool) -> int:
         repo = entry["resolved_repo"]
         tag = entry["resolved_tag"]
         platform = entry.get("platform", "linux/amd64")
-        digest = resolve_digest(repo, tag, platform, bool(entry.get("multi_arch")))
+        digest = resolve_digest_with_retry(repo, tag, platform, bool(entry.get("multi_arch")))
         if not digest:
             failures.append(
                 f"entry[{i}] {entry.get('dockerfile', '?')}: "
@@ -328,7 +350,12 @@ def update_lock_and_dockerfiles(repo_root: Path, dry_run: bool) -> int:
     if failures:
         for f in failures:
             print(f"images-lock-update: FAIL: {f}", file=sys.stderr)
-        return 1
+        if unresolved_file is not None:
+            unresolved_file.write_text("".join(f"{f}\n" for f in failures), encoding="utf-8")
+        if not allow_partial or len(failures) == len(pinned):
+            return 1
+        print(f"images-lock-update: {len(failures)} of {len(pinned)} pinned tags unresolved; "
+              "writing the rest (--allow-partial)", file=sys.stderr)
 
     if dry_run:
         print("images-lock-update: dry run, no files written")
@@ -363,8 +390,13 @@ def main(argv: list[str]) -> int:
                     default=Path(__file__).resolve().parent.parent.parent)
     ap.add_argument("--dry-run", action="store_true",
                     help="Print resolved digests without writing files.")
+    ap.add_argument("--allow-partial", action="store_true",
+                    help="Write the bases that resolved even when others did not.")
+    ap.add_argument("--unresolved-file", type=Path,
+                    help="Write one line per unresolved tag here.")
     args = ap.parse_args(argv)
-    return update_lock_and_dockerfiles(args.repo_root, args.dry_run)
+    return update_lock_and_dockerfiles(args.repo_root, args.dry_run,
+                                       args.allow_partial, args.unresolved_file)
 
 
 if __name__ == "__main__":

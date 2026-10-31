@@ -109,7 +109,7 @@ func (s *server) dashboardIssueLifecycleDraft(w http.ResponseWriter, r *http.Req
 }
 
 func (s *server) renderIssueLifecycleAlerts(w http.ResponseWriter, r *http.Request, acct state.Account, view dashboardIssueLifecycleAlertsData) {
-	csrf, err := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardIssueAction, acct.ID, dashboardIssueCookie)
+	csrf, err := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardIssueAction, actorAccount(r, acct).ID, dashboardIssueCookie)
 	if err != nil {
 		renderProblem(w, s.log, err)
 		return

@@ -117,6 +117,7 @@ CreateAppWebhookIfUnderQuota
 CreateBuildProvenance
 CreateBuildWithID
 CreateConsumerKey
+CreateConsumerKeyForConsumerIfUnderQuota
 CreateCorsPresetIfUnderQuota
 CreateCreditLedgerEntry
 CreateCronIfUnderQuotaWithOptions
@@ -330,6 +331,7 @@ ListDeploymentAudit
 ListDeploymentAuditByAlertRule
 ListDeploymentLogs
 ListDeploymentScopeExclusions
+ListDeploymentSidecarEnvReseals
 ListDeploymentSidecarLayers
 ListDeploymentsByNodeID
 ListDeploymentsForAccount
@@ -404,7 +406,6 @@ ListWorkflowRuns
 LiveCrashCaptureDeploymentIDs
 LiveDeploymentForScope
 LiveDeployments
-LoadAllOverageCapCents
 LoadAndStampLastQuotaWarning
 LookupBootStartedForWakes
 LookupDeploymentScopeExclusions
@@ -602,6 +603,7 @@ UpsertAppTrustedSigner
 UpsertComputeNode
 UpsertComputeNodeFromOperator
 UpsertDeploymentOpenAPIDoc
+UpsertDeploymentOpenAPIDocIfUnderQuota
 UpsertDeploymentScanResult
 UpsertDeploymentSecretFindings
 UpsertDoctorObservation

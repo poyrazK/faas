@@ -76,7 +76,7 @@ ARG RUNC_SOURCE_SHA256=32286f18899a644ec7c1589688a9600ba54cc65264f23f1f5877ba214
 # stable across re-pulls, but the manifest-list digest is). Use the native
 # build platform for the toolchain and cross-compile the target artifact; this
 # avoids emulating the Go compiler for arm64 multi-arch builds.
-FROM --platform=$BUILDPLATFORM mirror.gcr.io/library/golang:1.26.10@sha256:672c944cfd07599b5f1bb179869270cdc94c6254e41db4d431259693cb286b82 AS guest-init-build
+FROM --platform=$BUILDPLATFORM mirror.gcr.io/library/golang:1.26.10@sha256:670bb5aa5349ae03b8516764718486f4f16399134bdc9acd0c46a23f043ab05c AS guest-init-build
 WORKDIR /src
 # guest-init is a pure-Go binary; no submodule vendoring needed. The
 # repository is the build context, so COPY . picks up the whole tree.
@@ -91,7 +91,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
 # The release binaries embed Go 1.26.7 and x/net 0.58.0, which admission
 # scanning rejects for fixed HIGH/CRITICAL advisories. Preserve the source
 # release and CLI version while compiling both targets with patched modules.
-FROM --platform=$BUILDPLATFORM mirror.gcr.io/library/golang:1.26.10@sha256:672c944cfd07599b5f1bb179869270cdc94c6254e41db4d431259693cb286b82 AS railpack-build
+FROM --platform=$BUILDPLATFORM mirror.gcr.io/library/golang:1.26.10@sha256:670bb5aa5349ae03b8516764718486f4f16399134bdc9acd0c46a23f043ab05c AS railpack-build
 WORKDIR /src/railpack
 ARG RAILPACK_VERSION
 ARG RAILPACK_SOURCE_SHA256
@@ -128,7 +128,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 # pinned release from source instead. We build on TARGETPLATFORM because runc
 # enables cgo for seccomp; buildx's QEMU path is bounded to this small binary
 # and keeps the cross-compiled BuildKit stages native and fast.
-FROM --platform=$TARGETPLATFORM mirror.gcr.io/library/golang:1.26.10@sha256:672c944cfd07599b5f1bb179869270cdc94c6254e41db4d431259693cb286b82 AS runc-build
+FROM --platform=$TARGETPLATFORM mirror.gcr.io/library/golang:1.26.10@sha256:670bb5aa5349ae03b8516764718486f4f16399134bdc9acd0c46a23f043ab05c AS runc-build
 WORKDIR /src/runc
 ARG RUNC_VERSION
 ARG RUNC_SOURCE_SHA256
@@ -161,7 +161,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # slow bare-metal builders can spend several minutes importing a remote layer.
 # Build both upstream binaries from the same source tree so the repository
 # patch and the dependency floors apply consistently to buildctl and buildkitd.
-FROM --platform=$BUILDPLATFORM mirror.gcr.io/library/golang:1.26.10@sha256:672c944cfd07599b5f1bb179869270cdc94c6254e41db4d431259693cb286b82 AS buildkit-client-build
+FROM --platform=$BUILDPLATFORM mirror.gcr.io/library/golang:1.26.10@sha256:670bb5aa5349ae03b8516764718486f4f16399134bdc9acd0c46a23f043ab05c AS buildkit-client-build
 WORKDIR /src/buildkit
 ARG BUILDKIT_VERSION
 ARG BUILDKIT_REVISION
@@ -212,7 +212,7 @@ COPY images/builder-resolv.conf /etc/resolv.conf
 
 # Alpine supplies the small, currently supported userland for the builder
 # VM. The image reference is digest-pinned via images/Dockerfile.lock.
-FROM mirror.gcr.io/library/alpine:3.22@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce
+FROM mirror.gcr.io/library/alpine:3.22@sha256:2e0b81d60597f449baa56dc25d355367869d2dca4cd57e866f1e2b52af3eb55f
 # Issue #197 B3.5: the `alpine:3.22` tag is mutable. The digest is
 # pinned via images/Dockerfile.lock; `make images-lock-update` resolves
 # the current registry digest and updates BOTH the lock and the FROM

@@ -215,7 +215,7 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 			// dead-letter replay for one app. The account-level jobs
 			// page remains the canonical landing surface.
 			if jslug, ok := parseAppJobsPath(slug); ok {
-				if app, err := s.store.AppBySlug(r.Context(), jslug); err != nil || app.AccountID != acct.ID {
+				if app, err := s.store.AppBySlug(r.Context(), jslug); err != nil || !dashboardAppOwner(r, &acct, app) {
 					http.NotFound(w, r)
 					return
 				}
@@ -223,7 +223,7 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 				return
 			}
 			if qslug, ok := parseAppQueuesPath(slug); ok {
-				if app, err := s.store.AppBySlug(r.Context(), qslug); err != nil || app.AccountID != acct.ID {
+				if app, err := s.store.AppBySlug(r.Context(), qslug); err != nil || !dashboardAppOwner(r, &acct, app) {
 					http.NotFound(w, r)
 					return
 				}
@@ -617,7 +617,7 @@ func (s *server) renderAppCostTrend(w http.ResponseWriter, r *http.Request, log 
 		return
 	}
 	app, err := s.store.AppBySlug(r.Context(), slug)
-	if err != nil || app.AccountID != acct.ID {
+	if err != nil || !dashboardAppOwner(r, &acct, app) {
 		http.NotFound(w, r)
 		return
 	}
@@ -641,7 +641,7 @@ func (s *server) renderAppCostTrend(w http.ResponseWriter, r *http.Request, log 
 func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *slog.Logger, acct state.Account, slug string) {
 	ctx := r.Context()
 	app, err := s.store.AppBySlug(ctx, slug)
-	if err != nil || app.AccountID != acct.ID {
+	if err != nil || !dashboardAppOwner(r, &acct, app) {
 		http.NotFound(w, r)
 		return
 	}
@@ -695,7 +695,7 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 	// The bound action is page-scoped ("fire_cron_{id}") so a token
 	// for cron A cannot be replayed against cron B; the same value
 	// is reused across renders as long as the cookie's MaxAge holds.
-	fireCSRFToken, err := middleware.IssueForAuthenticated(s.sessions, "fire_cron", acct.ID)
+	fireCSRFToken, err := middleware.IssueForAuthenticated(s.sessions, "fire_cron", actorAccount(r, acct).ID)
 	if err != nil {
 		log.Error("dashboard renderAppDetail: csrf issue fire_cron", "app_id", app.ID, "err", err)
 		fireCSRFToken = ""
@@ -711,7 +711,7 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 		})
 	}
 	rollbackCSRFToken, err := middleware.IssueForAuthenticatedNamed(
-		s.sessions, dashboardRollbackAction, acct.ID, dashboardRollbackCSRFCookie)
+		s.sessions, dashboardRollbackAction, actorAccount(r, acct).ID, dashboardRollbackCSRFCookie)
 	if err != nil {
 		log.Error("dashboard renderAppDetail: csrf issue rollback", "app_id", app.ID, "err", err)
 		rollbackCSRFToken = ""
@@ -729,7 +729,7 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 	cronPolicyCSRFAction := dashboardCronSchedulePolicyAction(app.Slug)
 	cronPolicyCSRFCookie := dashboardCronSchedulePolicyCookie(app.Slug)
 	schedulePolicyCSRFToken, err := middleware.IssueForAuthenticatedNamed(
-		s.sessions, cronPolicyCSRFAction, acct.ID, cronPolicyCSRFCookie)
+		s.sessions, cronPolicyCSRFAction, actorAccount(r, acct).ID, cronPolicyCSRFCookie)
 	if err != nil {
 		log.Error("dashboard renderAppDetail: csrf issue scheduled work policy", "app_id", app.ID, "err", err)
 		schedulePolicyCSRFToken = ""
@@ -1627,7 +1627,7 @@ func (s *server) renderBilling(w http.ResponseWriter, r *http.Request, log *slog
 	// only and leave the form's hidden input empty (the test
 	// TestDashboardRaiseOverageCap_PostsForm catches that exact
 	// regression).
-	if raiseTok, err := middleware.IssueForAuthenticated(s.sessions, "raise_overage_cap", acct.ID); err == nil {
+	if raiseTok, err := middleware.IssueForAuthenticated(s.sessions, "raise_overage_cap", actorAccount(r, acct).ID); err == nil {
 		data.RaiseCapConfirmToken = raiseTok
 		http.SetCookie(w, &http.Cookie{
 			Name:     middleware.CookieNameAuthenticated,
@@ -2941,7 +2941,7 @@ func parseDeployDetailPath(rest string) (string, string, bool) {
 func (s *server) renderDeploymentDetail(w http.ResponseWriter, r *http.Request, log *slog.Logger, acct state.Account, slug, deploymentID string) {
 	ctx := r.Context()
 	app, err := s.store.AppBySlug(ctx, slug)
-	if err != nil || app.AccountID != acct.ID {
+	if err != nil || !dashboardAppOwner(r, &acct, app) {
 		http.NotFound(w, r)
 		return
 	}
@@ -2980,7 +2980,7 @@ func (s *server) renderDeploymentDetail(w http.ResponseWriter, r *http.Request, 
 	if dep.Status == state.DeploySuperseded {
 		data.CanRollback = true
 		if tok, err := middleware.IssueForAuthenticatedNamed(
-			s.sessions, dashboardRollbackAction, acct.ID, dashboardRollbackCSRFCookie,
+			s.sessions, dashboardRollbackAction, actorAccount(r, acct).ID, dashboardRollbackCSRFCookie,
 		); err == nil {
 			data.RollbackConfirmToken = tok
 			http.SetCookie(w, &http.Cookie{
@@ -3103,7 +3103,7 @@ func (s *server) renderDeploymentDetail(w http.ResponseWriter, r *http.Request, 
 		if from := failedStageFromJSON(dep.StageState); from != "" {
 			data.CanRetry = true
 			data.RetryFromStage = from
-			if tok, err := middleware.IssueForAuthenticated(s.sessions, dashboardRetryDeploymentAction, acct.ID); err == nil {
+			if tok, err := middleware.IssueForAuthenticated(s.sessions, dashboardRetryDeploymentAction, actorAccount(r, acct).ID); err == nil {
 				data.DeploymentRetryCSRF = tok
 				http.SetCookie(w, &http.Cookie{
 					Name:     middleware.CookieNameAuthenticated,
@@ -3699,7 +3699,7 @@ func (s *server) renderDomainDoctor(w http.ResponseWriter, r *http.Request, log 
 	}
 	ctx := r.Context()
 	app, err := s.store.AppBySlug(ctx, slug)
-	if err != nil || app.AccountID != acct.ID {
+	if err != nil || !dashboardAppOwner(r, &acct, app) {
 		s.notFound(w, "no such app")
 		return
 	}
@@ -3811,7 +3811,7 @@ func parseWakeTimelinePath(rest string) (string, bool) {
 func (s *server) renderAppWakeTimeline(w http.ResponseWriter, r *http.Request, log *slog.Logger, acct state.Account, slug string) {
 	ctx := r.Context()
 	app, err := s.store.AppBySlug(ctx, slug)
-	if err != nil || app.AccountID != acct.ID {
+	if err != nil || !dashboardAppOwner(r, &acct, app) {
 		s.notFound(w, "no such app")
 		return
 	}

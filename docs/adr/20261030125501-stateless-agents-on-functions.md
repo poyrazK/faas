@@ -1,0 +1,128 @@
+# ADR-20261030125501 · Stateless agents on functions: event-driven agents that hold nothing while they wait
+
+- **Status:** proposed
+- **Date:** 2026-10-30
+- **Builds on:** ADR-1322 (realtime channels as function triggers), ADR-1030 (lease-fenced realtime consumer groups), ADR-1039 (per-entity consumer-group ordering), ADR-974 (function idle timeout), ADR-1180 (long async invocations), ADR-989 (outbound relay), ADR-994 (AI gateway end-user limits), ADR-20261027090016 (agent capability gateway).
+- **Related:** ADR-20261027090010 (agent runs), ADR-20261027090013 (sandbox sessions), ADR-20261027090015 (agent memory tiering). AWS Infinity and its Reactive Agent Protocol (RAP), released 2026-10-23 as a research release (`hydro-project/infinity`).
+- **Decision:**
+  - Gregale Agents gains a second shape beside harness runs: a **stateless agent**. Its loop runs as short, event-driven slices. Between events it is only its stored history, with no VM, process or open connection.
+  - Gregale supplies the platform around the loop, not the loop itself (owner decision D2):
+    - an ordered inbox per conversation thread;
+    - one function invocation per inbox message;
+    - signed callback URLs so tools answer asynchronously (RAP);
+    - delayed messages for timers;
+    - model calls through the AI gateway;
+    - sandboxed work through agent runs.
+  - Sellers bring the loop: Infinity's step mode with Gregale-backed stores, or any loop that keeps the slice contract (§1).
+  - Harness runs (Claude Code, Codex) keep their VM path. ADR-20261027090012 and ADR-20261027090015 bring their idle cost down to 0 CPU and about 25 MB.
+- **Why:**
+  - **Owner goal (2026-10-30):** an idle agent uses 0 CPU and as little RAM as possible, ideally none, and a minimal agent is nearly free.
+  - **An unmodified harness CLI keeps its state in process memory.** Its floor without writing memory to disk is the compressed live heap: about 25 MB for Claude Code and 14 MB for Codex (ADR-20261027090015).
+  - **A loop that keeps its state in a database has no such floor.** Infinity measured about 100 KB per idle agent, which is the size of its history, on a simulated model with in-memory stores.
+  - **Gregale already has the serverless pieces Infinity's AWS deployment uses:**
+    - functions scale to zero, and a parked function holds no RAM (invariant 4);
+    - realtime consumer groups lease, deduplicate, retry and dead-letter messages, and order them per key (ADR-1039). That is the SQS FIFO message-group contract.
+    - ADR-1322 already turns each consumer-group message into one function invocation.
+- **Consequences:**
+  - **Idle cost.** A stateless agent between events holds no VM and no instance: 0 CPU and 0 RAM. Its history and seen-message IDs stay in the seller's Postgres.
+  - **Work is billed as ordinary function time.** A slice is billed as function compute (plan RAM + 8 MB per running second, spec §4.7). A 256 MB function running 20 slices of 5 s costs about 0.007 GB-h, or $0.00007 at $0.01/GB-h, plus the seller's model tokens.
+  - **Sellers write their loop to the slice contract.** Claude Code and Codex cannot run as stateless agents. They stay harness runs, and a stateless agent can call one through `gregale.run` (§4).
+  - **New public surface:** the callback endpoint (§3) and the platform tools (§4). Both stay behind the `agents` capability until the owner tests them on production.
+- **Rejected alternatives:**
+  - **Gregale writes its own agent loop:** owner decision D2. Sellers' loops are the product.
+  - **An agentd-owned inbox table:** it would rebuild the ordering, leases, deduplication, retries and dead letters that consumer groups already have.
+  - **An external queue service (SQS, NATS):** a new control-plane dependency, and it does not run on bare metal.
+  - **A VM per conversation, kept warm:** that is harness runs, and its idle floor is the reason for this ADR.
+
+## 1. The slice contract
+
+A stateless agent's handler receives one inbox message and does at most this:
+
+1. loads the thread's history and the IDs of messages it has already processed;
+2. skips the message if its ID is already processed (delivery is at least once);
+3. runs at most one model completion;
+4. persists the new turn, before it dispatches anything;
+5. dispatches at most one asynchronous tool call, or runs cheap synchronous tools inline and completes again;
+6. returns.
+
+A handler that blocks on a tool for longer than its invocation limit fails the slice, and the consumer group retries it.
+
+The invocation limit is the app's request timeout under ADR-1180: Hobby 1 min, Pro 5 min, Scale 15 min. A completion has to finish inside it. ADR-1322 currently limits each realtime-trigger invocation to 30 s. Rollout step 2 raises that to the request timeout for agent inboxes, as ADR-1180 did for async, queue and cron invocations.
+
+## 2. The inbox
+
+- **Channel and group.** Each stateless agent app gets one realtime channel, `agent-inbox`, and one consumer group, `slices`:
+  - `ordering_metadata_key: thread_id`;
+  - dead-letter policy `block`, so a poisoned message stops only its own thread;
+  - deduplication on `message_id`.
+- **Trigger.** A `kind: realtime` trigger (ADR-1322) binds the group to the agent's function. The group never leases a message while an earlier message with the same ordering key is leased or pending (ADR-1039). So one thread's slices run in order, and different threads run in parallel up to the trigger's `max_concurrency`.
+- **Threads.** A thread is an ordering key. Spawning a child thread means publishing its first message under a new key. A child's report to its parent is an ordinary message on the parent's key.
+- **What arrives as a message:** user input, tool results, subscription events, timers and child reports. Each carries a stable `message_id`, the `thread_id` and a `kind`.
+
+## 3. Callbacks: the RAP callback endpoint
+
+- **Per-thread callback URLs.** apid issues a callback URL for one thread, signed with an HMAC over account, app, thread, expiry and allowed kinds. Example: `POST /v1/agents/callbacks/{token}`. The handler gets it from the platform SDK when it dispatches a tool call.
+- **What a post does.** A valid post publishes one message into that thread's lane on `agent-inbox`, through the same path as the realtime publish API.
+- **The token is the only credential.** It names one thread and the message kinds it may carry (`tool_result`, `event`). A tool cannot address another thread or another app.
+- **Lifetime.**
+  - A tool call's token expires after `AgentCallbackTokenTTLSec`.
+  - A subscription's token lives until the subscription or thread closes, and closing it revokes it.
+  - Following RAP's security guidance, tokens are short-lived where the tool allows.
+- **Protocol.** Results follow RAP's tool-result and subscription-event messages, so Infinity's RAP client works unchanged. A tool that speaks plain HTTP only needs to POST JSON.
+
+## 4. Platform tools
+
+The capability gateway (ADR-20261027090016) serves these platform tools over RAP. They acknowledge at once and post their results to the callback URL.
+
+| Tool | What it does |
+|---|---|
+| `gregale.run` | Starts an agent run (ADR-20261027090010) with the given harness, prompt and inputs, and posts its result when the run ends. Sandboxed shell, build and test work happens here, with the run's own pause and compression. |
+| `gregale.sleep` | Publishes a message to the thread after a delay (delayed tasks). |
+| `gregale.github.subscribe` | Turns githubd's `gregale.github` events for a repository into subscription events on the thread. |
+| `gregale.web.fetch`, `gregale.web.search` | The tier-1 web tools of ADR-20261027090018. |
+
+Existing MCP servers stay reachable through the capability gateway. A synchronous MCP call runs inside the slice, so it counts against the invocation limit.
+
+## 5. Stores
+
+- **History and seen-message IDs stay in the seller's Postgres:** managed Postgres or the app's own database. Gregale ships no platform history table. The data stays the seller's, under the seller's retention and tenancy (ADR-226).
+- **Gregale ships an open-source adapter** for Infinity's conversation store and state store on Postgres, and a template app that wires them to the inbox, the callback endpoint and the platform tools.
+
+## 6. Model access
+
+The slice calls the model through the app's managed AI integration over the relay (ADR-989). So the relay must be on for the app's node: control_plane_service `faas_outboundd_relay_listen` and vmmd_service `faas_vmmd_outbound_relay_tls_managed` (#6005).
+
+- Per-tenant token and cost limits (ADR-994) and spend caps apply as for apps.
+- A seller's tenant identity travels with each thread message as metadata, so the AI gateway attributes the call to the tenant.
+
+## 7. Capacity and cost
+
+- **Idle agents** are rows in the seller's database. A node holds none of them.
+- **Active slices** are function instances. They are admitted, frozen and parked like any function (ADR-974, ADR-1151). A thread that receives no message parks its function after the idle timeout, so 0 RAM.
+- **A slice that waits on a long model stream** holds its function instance for that time, billed as running. Pausing a function while it waits on the relay is open question 2.
+
+## Limits (`pkg/api/limits.go`, proposed)
+
+| Limit | Value | Basis |
+|---|---|---|
+| `AgentCallbackTokenTTLSec` | 86,400 | A tool call's result window. Subscriptions use their own lifetime. |
+| `AgentCallbackPayloadMaxBytes` | the realtime message limit | A result is one inbox message |
+| `AgentCallbacksPerMinutePerThread` | 600 | Stops a runaway tool from flooding one thread |
+
+## Rollout
+
+Each step is one PR behind the `agents` capability.
+
+1. This ADR.
+2. Raise the realtime-trigger invocation limit to the app's request timeout for agent inboxes (amends ADR-1322).
+3. The signed callback endpoint in `pkg/apid/agents`, which publishes into a thread's lane, with property tests: a token never publishes outside its thread, an expired or revoked token is refused, and a redelivered `message_id` is delivered once.
+4. The Infinity Postgres store adapter and the template app, and a journey in `tests/journeys`: a two-turn stateless agent that sleeps, wakes on its callback and answers.
+5. The platform tools: `gregale.sleep`, `gregale.run`, then `gregale.github.subscribe`.
+6. Preview on the dogfood account, then the seller beta with harness runs (ADR-20261027090010 milestone B).
+
+## Open questions
+
+1. **RAP is a week-old research protocol.** Pin the spec version Gregale implements, and decide whether MCP's asynchronous tasks are accepted too.
+2. **Should a slice that waits on the relay be paused like an agent run** (ADR-20261027090012) and its waiting seconds go unbilled? For functions that would change ADR-1151's semantics, so it needs its own decision.
+3. **Should Gregale offer a platform history store** for sellers without a database? It would need retention, tenancy and per-tenant deletion like outputs.
+4. **Should one invocation carry several inbox messages?** It would cut wake-ups for chatty threads. ADR-1322 left batching to a separate decision.

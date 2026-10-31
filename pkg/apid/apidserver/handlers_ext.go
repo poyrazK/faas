@@ -25,6 +25,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/appaccess"
+	"github.com/onebox-faas/faas/pkg/apid/edgerules"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/apid/orgbilling"
@@ -1078,6 +1079,10 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, serviceTransportProblem)
 		return
 	}
+	if problem := api.PrivateServiceHTTPSTransportProblem(serviceTransport, s.privateServiceHTTPS(acct)); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	selectedBindings := app.Manifest.ServiceBindings
 	if req.ServiceBindingTargets != nil {
 		selectedBindings = bindings
@@ -1968,6 +1973,16 @@ func (s *server) deleteApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if !ok {
 		return
 	}
+	// A PR preview is one workload of its PR environment. Deleted alone it
+	// left its siblings serving to the end of their lease and stayed
+	// restorable; delete tears down the whole environment, as
+	// POST /v1/preview/{slug}/destroy does.
+	if app.PreviewOfSlug != "" && app.PreviewPrNumber > 0 {
+		if s.tearDownPreviewEnvironment(w, r, acct, app, "preview.destroyed_by_customer") {
+			w.WriteHeader(http.StatusNoContent)
+		}
+		return
+	}
 	if st, ok := s.store.(state.ObjectBucketStore); ok {
 		buckets, err := st.ListObjectBuckets(r.Context(), acct.ID, app.ID)
 		if err != nil {
@@ -2615,7 +2630,7 @@ func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.
 	}
 	s.recordAppActivity(ctx, r, acct, app, activity)
 	if trigger != state.RollbackTriggerManual {
-		s.freezeAfterAutomaticRollback(ctx, acct.ID, app, current.ID, automaticRollbackCause(trigger, current))
+		s.freezeAfterAutomaticRollback(ctx, app, current.ID, automaticRollbackCause(trigger, current))
 	}
 	return target, s.plainRollbacks().Record(ctx, acct, app, target, current.ID, trigger), nil
 }
@@ -3198,10 +3213,27 @@ func (s *server) renameApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		writeJSON(w, http.StatusOK, s.withParkedDeploymentRef(r.Context(), resp, app))
 		return
 	}
+	// Route rules name their target by slug: fence their hosts, rename, and
+	// point them at the new slug before the fence lifts (ADR-091 amendment
+	// 2026-10-30).
+	routeEdit := s.edgeRules.RouteTargetRenameEdit(acct.ID, oldSlug)
+	convergences, release, prob := s.edgeRules.PrepareReferencedEdit(r.Context(), routeEdit)
+	if prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	defer release(context.WithoutCancel(r.Context()))
 	updated, err := s.store.RenameApp(r.Context(), acct.ID, oldSlug, req.NewSlug)
 	if err != nil {
+		edgerules.AbortEdgeRuleConvergences(r.Context(), convergences)
 		api.WriteProblem(w, appRenameWriteProblem(err, req.NewSlug))
 		return
+	}
+	if retargeted, err := s.edgeRules.RetargetRouteRules(r.Context(), acct.ID, oldSlug, req.NewSlug); err != nil {
+		s.log.Error("app renamed but its route rules still name the old slug", "app_id", updated.ID, "from", oldSlug, "to", req.NewSlug, "retargeted", retargeted, "err", err)
+	}
+	if prob := s.edgeRules.ApplyReferencedEdit(r.Context(), w, routeEdit, updated.ID, convergences); prob != nil {
+		s.log.Warn("app renamed; its route rules' fleet convergence is incomplete", "app_id", updated.ID, "detail", prob.Detail)
 	}
 	s.notifyAppRenamed(r.Context(), acct, updated, oldSlug, req.NewSlug)
 	// A rename moves the app's public hostname and frees the old one for any
@@ -5321,6 +5353,12 @@ func (s *server) raiseOverageCap(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, api.ErrInternal("could not update overage cap"))
 		return
 	}
+	if acct.ResourceOrgID != "" {
+		// POST /v1/orgs/{slug}/overage-cap: an organization has no account
+		// body to return (ADR-20261030093512).
+		writeJSON(w, http.StatusOK, api.AccountOverageCapResponse{OverageCapCents: req.OverageCapCents})
+		return
+	}
 	writeJSON(w, http.StatusOK, s.accountResponse(r.Context(), updated, r))
 }
 
@@ -5339,7 +5377,7 @@ func (s *server) raiseOverageCapSvc(ctx context.Context, acct state.Account, cen
 	if err := s.store.UpdateAccountOverageCapCents(ctx, acct.ID, cents); err != nil {
 		return acct, err
 	}
-	updated, err := s.store.AccountByID(ctx, acct.ID)
+	updated, err := state.BillingResourceAccount(ctx, s.store, acct.ID)
 	if err != nil {
 		return acct, err
 	}

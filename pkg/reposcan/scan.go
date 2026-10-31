@@ -372,6 +372,11 @@ type ScanOptions struct {
 	// and reports the pod-spec fields it does not apply
 	// (ADR-20261029093621 §3, the kubernetes-manifests capability).
 	KubernetesManifests bool
+	// HTTPSTransportUnavailable refuses a service that asks for the https
+	// service transport (x-gregale-service-transport: https) where the
+	// private-service-https capability is off (ADR-20261029230000). The zero
+	// value keeps the transport, so an offline scan is unchanged.
+	HTTPSTransportUnavailable bool
 }
 
 // ScanWithOptions is Scan with opts. Every caller that scans a project for
@@ -474,6 +479,13 @@ func ScanWithOptions(fsys fs.FS, opts ScanOptions) (Result, error) {
 	}
 	if err := applyProjectConfig(fsys, workloads); err != nil {
 		return Result{}, err
+	}
+	if opts.HTTPSTransportUnavailable {
+		for _, w := range workloads {
+			if w.ServiceBindingTransport == ServiceBindingTransportHTTPS {
+				return Result{}, fmt.Errorf("reposcan: service %q sets x-gregale-service-transport: https, but %s", w.Name, api.PrivateServiceHTTPSUnavailable)
+			}
+		}
 	}
 	warnings = append(warnings, classifyCalledComposeServices(fsys, workloads, opts.ImageListening)...)
 	detectionWarnings = append(detectionWarnings, mergedDetectionWarnings(workloads)...)

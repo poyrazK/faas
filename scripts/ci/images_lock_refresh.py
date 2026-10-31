@@ -13,8 +13,13 @@ The repository's Actions token may not open pull requests, and a pull request
 opened by that token would not start CI, so an engineer opens it from the
 link. images.yml then builds, smoke-tests and scans the new bases as usual.
 
+When the resolver ran with --allow-partial, --unresolved-file names the tags
+it could not resolve. The issue lists them so a reviewer knows those bases
+were not checked this week. With nothing moved, any unresolved tag fails the
+run instead.
+
 Usage:
-  ./scripts/ci/images_lock_refresh.py [--repo-root PATH] [--dry-run]
+  ./scripts/ci/images_lock_refresh.py [--repo-root PATH] [--dry-run] [--unresolved-file PATH]
 
 Environment: GITHUB_REPOSITORY (required), GITHUB_RUN_ID, and GH_TOKEN for
 the gh CLI. IMAGES_LOCK_REFRESH_DATE overrides the branch date (tests).
@@ -61,7 +66,8 @@ def short(digest: str) -> str:
     return digest.removeprefix("sha256:")[:12]
 
 
-def issue_body(repo: str, branch: str, moved: list[tuple[str, str, str, str]]) -> str:
+def issue_body(repo: str, branch: str, moved: list[tuple[str, str, str, str]],
+               unresolved: list[str] | None = None) -> str:
     query = urllib.parse.urlencode({"expand": "1", "title": PR_TITLE})
     compare = f"https://github.com/{repo}/compare/main...{branch}?{query}"
     rows = "\n".join(
@@ -76,7 +82,22 @@ def issue_body(repo: str, branch: str, moved: list[tuple[str, str, str, str]]) -
         "(ADR 20261024132405).\n\n"
         "| Dockerfile | Base | Old | New |\n|---|---|---|---|\n"
         f"{rows}\n"
+        + unresolved_section(unresolved or [])
     )
+
+
+def unresolved_section(unresolved: list[str]) -> str:
+    if not unresolved:
+        return ""
+    items = "\n".join(f"- {line}" for line in unresolved)
+    return ("\n**Not refreshed this run.** These tags did not resolve after retries, so "
+            f"their bases keep their current digests:\n\n{items}\n")
+
+
+def read_unresolved(path: Path | None) -> list[str]:
+    if path is None or not path.exists():
+        return []
+    return [line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
 def file_issue(repo_root: Path, body: str) -> None:
@@ -95,6 +116,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--repo-root", type=Path, default=Path.cwd())
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--unresolved-file", type=Path)
     args = parser.parse_args()
     root = args.repo_root
     repo = os.environ.get("GITHUB_REPOSITORY")
@@ -105,16 +127,21 @@ def main() -> int:
     old = json.loads(run(["git", "show", f"HEAD:{LOCK}"], root, capture=True))
     new = json.loads((root / LOCK).read_text(encoding="utf-8"))
     moved = moved_entries(old, new)
+    unresolved = read_unresolved(args.unresolved_file)
     # Only the lock and the Dockerfiles it pins are the resolver's to touch.
     touched = sorted({LOCK, *(entry["dockerfile"] for entry in new["pinned"])})
     if not moved:
         run(["git", "checkout", "--", *touched], root)
+        if unresolved:
+            print("images-lock-refresh: no resolved base moved, and these tags did not "
+                  "resolve:\n" + "\n".join(unresolved), file=sys.stderr)
+            return 1
         print("images-lock-refresh: every pinned base is current")
         return 0
 
     stamp = os.environ.get("IMAGES_LOCK_REFRESH_DATE") or dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d")
     branch = f"automation/images-lock-refresh-{stamp}-{os.environ.get('GITHUB_RUN_ID', 'local')}"
-    body = issue_body(repo, branch, moved)
+    body = issue_body(repo, branch, moved, unresolved)
     if args.dry_run:
         print(f"images-lock-refresh: dry run, would push {branch}\n\n{body}")
         return 0

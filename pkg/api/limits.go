@@ -528,6 +528,12 @@ const (
 // MemoryMax (4 GiB) covers all of them, so the count stays small.
 const ImagedImagePrepWorkers = 2
 
+// ImagedPublishedLayerDigests bounds how many just-published app layers one
+// imaged remembers the digest of, so the deploy scan can skip hashing them
+// again. An entry leaves when the scan uses it; the bound only covers layers
+// whose scan never ran.
+const ImagedPublishedLayerDigests = 256
+
 // Source-build OCI verification bounds the intermediate image, including its
 // builder base. Final app layers still obey the creating account's plan limit.
 const (
@@ -1245,8 +1251,9 @@ const ConfigGuardBaseline = time.Hour
 const ConfigGuardCheckIntervalSeconds = 15
 const ConfigGuardBatchSize = 50
 
-// Deploy freezes (ADR-20261019071733). An account holds at most
-// ReleaseFreezesMax unlifted freezes that have not ended; reasons are at most
+// Deploy freezes (ADR-20261019071733). An account, and a company organization
+// (amendment 4), each hold at most ReleaseFreezesMax unlifted freezes that
+// have not ended; reasons are at most
 // ReleaseFreezeReasonMax characters. A weekly window lasts at most a week, and
 // an after-rollback policy freezes for at most ReleaseFreezeAfterRollbackMax.
 // Plan-independent: a freeze only ever withholds releases.
@@ -2456,6 +2463,13 @@ const (
 	// deletes cannot starve inventory (ADR-20261025115958).
 	ObjectInventoryDeletionDrain = 10 * time.Second
 	ObjectInventoryDeletionYield = ObjectInventoryDeletionDrain + ObjectCapacityInventoryTimeout
+	// A bucket's listing resumes across attempts from its last listed key
+	// (ADR-20261030100835). While it advanced within
+	// ObjectInventoryScanProgressWindow, its bucket stays fresh on an
+	// observation up to ObjectInventoryScanMaxAge old; a listing that started
+	// longer ago than that starts again.
+	ObjectInventoryScanMaxAge         = time.Hour
+	ObjectInventoryScanProgressWindow = 5 * time.Minute
 	// Read-only owned-node audits retain bounded diagnostics and publish cached
 	// metrics. These are operator work bounds, not customer allowances.
 	ObjectNodeInventoryInterval         = time.Minute
@@ -6771,6 +6785,19 @@ const (
 	// admission to 606 apps; at 700% measured CPU binds first, at 1,122. The
 	// durable guard bounds every discount by this cap.
 	MeasuredCPUMaxOvercommitPercent = 700
+	// CPU pressure backstop (ADR 20261030100950). A node is under CPU
+	// pressure when its tenant slice's cpu.pressure "some avg10" is at least
+	// NodeCPUPressureStallPercent and its host CPUs were at least
+	// NodeCPUPressureBusyPercent busy over the last NodeCPUBusyWindowSeconds:
+	// tasks wait and the CPUs are nearly all in use, so the wait is not one
+	// app's own cpu.max quota. The node's schedd then holds it pressured for
+	// NodeCPUPressureHoldSeconds past the last such reading. Initial values,
+	// to be tuned from schedd_node_cpu_pressure_some_avg10 and
+	// schedd_node_cpu_busy_percent.
+	NodeCPUPressureStallPercent = 20
+	NodeCPUPressureBusyPercent  = 90
+	NodeCPUPressureHoldSeconds  = 30
+	NodeCPUBusyWindowSeconds    = 10
 	// QuietPauseLedgerFlushSeconds is how often schedd writes a node's quiet
 	// pauses and watermark to the pause ledger (ADR-20261023171905): one
 	// statement per node per flush, however many requests the node serves.
@@ -7456,6 +7483,13 @@ const (
 	EventDeliveryRetryBaseSeconds = 5
 	EventDeliveryRetryMaxSeconds  = 300
 	EventDeliveryRetryJitter      = 0.2
+	// EventDeliveryKeyedRetryMaxSeconds caps that backoff for a delivery in
+	// a keyed lane (a work policy, ordered or not): a pending delivery holds
+	// every younger one of its key, so a failing one is dead-lettered after
+	// about 15 s on Hobby, 4 minutes on Pro and 11 minutes on Scale instead
+	// of stalling its key for up to 95 minutes (ADR-20261029190000
+	// amendment).
+	EventDeliveryKeyedRetryMaxSeconds = 30
 	// MaxAsyncRouteAgeSeconds bounds a customer-authored async edge
 	// rule age before the serving plan applies its lower deadline cap.
 	// The Scale plan currently owns the largest invocation deadline.
@@ -9143,6 +9177,13 @@ const (
 	// AgentRunStopGraceSec is how long a timed-out or cancelled harness has
 	// between SIGTERM and SIGKILL.
 	AgentRunStopGraceSec = 10
+	// AgentWaitPauseCPUMaxMillis is the most CPU an agent run VM may use over
+	// its quiet window and still be paused while it waits on the model
+	// (ADR-20261027090012 §2). A harness running tests is not paused.
+	AgentWaitPauseCPUMaxMillis = 50
+	// AgentWaitPauseAfterMaxMillis bounds the model-wait pause delay a run
+	// spec may carry (ADR-20261027090012 §1).
+	AgentWaitPauseAfterMaxMillis = 60_000
 	// AgentModelIntegrationsMax bounds a version's model integrations: one
 	// per model provider a harness may point at the relay.
 	AgentModelIntegrationsMax = 2
@@ -15013,6 +15054,18 @@ const (
 	AlertAccountTickBudget = 45 * time.Second
 )
 
+// Alert delivery retention (ADR-20261029203000): meterd deletes settled
+// deliveries fired more than AlertDeliveryRetentionDays ago, at most
+// AlertDeliveryPurgeBatch rows per statement and AlertDeliveryPurgeBatches
+// statements per AlertDeliveryPurgeInterval. A rule's newest delivery, and a
+// delivery with a rollback action, stay.
+const (
+	AlertDeliveryRetentionDays = 90
+	AlertDeliveryPurgeBatch    = 1000
+	AlertDeliveryPurgeBatches  = 20
+	AlertDeliveryPurgeInterval = time.Hour
+)
+
 // NotificationChannelTestsPerAccountMinute caps test sends to an account's
 // notification channels (ADR-20261028101615): each one is a real Slack post,
 // PagerDuty event or email.
@@ -15125,8 +15178,9 @@ var (
 )
 
 // Synthetic checks (ADR-748). The 5-minute floor keeps a check from pinning
-// an app resident on Free, Hobby and Pro (idle timeouts 30/60/300 s); the
-// timeout ceiling matches the gateway wake hold.
+// a Hobby app resident (idle timeout 60 s; Free has no checks); on Pro
+// (300 s) a 5-minute check keeps the app warm. The timeout ceiling matches
+// the gateway wake hold.
 const (
 	MaxSyntheticChecksPerApp       = 5
 	SyntheticCheckTimeoutMinMS     = 1000

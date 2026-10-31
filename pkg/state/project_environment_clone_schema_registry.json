@@ -541,6 +541,7 @@
       "mcp_readiness_scope",
       "metric",
       "name",
+      "notify_resolved",
       "org_id",
       "post_deploy_rollback_window_seconds",
       "slo_id",
@@ -3656,6 +3657,7 @@
       "admission_ceiling_mb",
       "cert_fingerprint",
       "cpu_model",
+      "cpu_pressure_until",
       "cpu_template",
       "created_at",
       "drain_completed_at",
@@ -5231,6 +5233,19 @@
     "clone": {
       "owner": "app"
     }
+  },
+  {
+    "table": "deployment_sidecar_env_reseals",
+    "columns": [
+      "ciphertext",
+      "deployment_id",
+      "env_key",
+      "kid",
+      "resealed_at",
+      "sidecar_name",
+      "source_sha256"
+    ],
+    "kind": "operational"
   },
   {
     "table": "deployment_sidecar_layers",
@@ -7466,6 +7481,8 @@
     "columns": [
       "account_id",
       "ignored_paths",
+      "preview_bot_prs",
+      "preview_draft_prs",
       "preview_enabled",
       "preview_service_policy",
       "preview_ttl_hours",
@@ -12435,6 +12452,20 @@
     "kind": "operational"
   },
   {
+    "table": "object_storage_inventory_scans",
+    "columns": [
+      "after_key",
+      "bucket_id",
+      "complete",
+      "listed_bytes",
+      "listed_keys",
+      "pages",
+      "progress_at",
+      "started_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "object_storage_key_grants",
     "columns": [
       "bucket_id",
@@ -13058,6 +13089,7 @@
       "last_quota_warning_at",
       "name",
       "object_storage_owned_from",
+      "overage_cap_cents",
       "past_due_at",
       "personal_org",
       "personal_owner_account_id",
@@ -16829,6 +16861,7 @@
       "kind",
       "lifted_at",
       "lifted_by",
+      "org_id",
       "reason",
       "source",
       "source_deployment_id",

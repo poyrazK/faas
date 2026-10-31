@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 
 	"golang.org/x/sys/unix"
 )
@@ -28,10 +30,7 @@ func openAdoptedBindTarget(pid int, rel string, want resourceFileIdentity) (*os.
 		return nil, fmt.Errorf("open guest root: %w", err)
 	}
 	defer func() { _ = unix.Close(root) }()
-	fd, err := unix.Openat2(root, rel, &unix.OpenHow{
-		Flags:   unix.O_PATH | unix.O_CLOEXEC | unix.O_NOFOLLOW,
-		Resolve: unix.RESOLVE_BENEATH | unix.RESOLVE_NO_SYMLINKS | unix.RESOLVE_NO_MAGICLINKS,
-	})
+	fd, err := openBeneathNoFollow(root, rel)
 	if err != nil {
 		return nil, fmt.Errorf("open bind target %s in the guest's root: %w", rel, err)
 	}
@@ -55,4 +54,39 @@ func openAdoptedBindTarget(pid int, rel string, want resourceFileIdentity) (*os.
 		return nil, errors.New("the guest's bind target changed while it was opened")
 	}
 	return f, nil
+}
+
+// openBeneathNoFollow opens rel beneath root O_PATH one component at a time,
+// following no link and refusing "..", as openat2 with RESOLVE_BENEATH |
+// RESOLVE_NO_SYMLINKS would. It cannot use openat2: faas-vmmd.service sets
+// RestrictSUIDSGID=, whose seccomp filter answers openat2 with ENOSYS
+// (metal under the production unit, 2026-10-31).
+func openBeneathNoFollow(root int, rel string) (int, error) {
+	if filepath.IsAbs(rel) {
+		return -1, unix.EXDEV
+	}
+	parts := strings.Split(filepath.Clean(rel), "/")
+	dir := root
+	for i, name := range parts {
+		if name == "" || name == "." || name == ".." {
+			if dir != root {
+				_ = unix.Close(dir)
+			}
+			return -1, unix.EXDEV
+		}
+		flags := unix.O_PATH | unix.O_CLOEXEC | unix.O_NOFOLLOW
+		if i < len(parts)-1 {
+			// A symlink here fails ENOTDIR instead of being followed.
+			flags |= unix.O_DIRECTORY
+		}
+		fd, err := unix.Openat(dir, name, flags, 0)
+		if dir != root {
+			_ = unix.Close(dir)
+		}
+		if err != nil {
+			return -1, err
+		}
+		dir = fd
+	}
+	return dir, nil
 }

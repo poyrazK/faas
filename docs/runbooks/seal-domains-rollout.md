@@ -430,13 +430,37 @@ bundles, deployment snapshots, and release and promotion captures. It
 changes only each envelope's key label and ciphertext, so secret versions
 and fingerprints stay as they were.
 
+Sidecar env values are handled differently: the deployment keeps them as
+it was created. The pass writes each value's runtime-domain copy to
+`deployment_sidecar_env_reseals`, and schedd sends vmmd the copy instead.
+
 - Expect `0 failed`.
 - If `changed concurrently` is not 0, a customer changed that secret during
   the run; run the migration again.
-- A complete migration lists nothing, so a second run reports `0 scanned`.
+- A complete migration lists no secrets. A second run still scans every
+  sidecar env value, because those carry no key label and must be opened,
+  and reports them as current.
 - If `failed` is not 0, no key on the host opens those envelopes. Those
   secrets were already broken for their customers; investigate with
   [FaasFleetSealDomain](FaasFleetSealDomain.md#recover).
+
+To see what still holds vmmd to the fleet key, run:
+
+```bash
+sudo gregalectl seal-domain migrate --domain runtime --check --db-env /etc/faas/compute-db.env
+```
+
+It writes nothing. `pending` is what another migration run would re-seal.
+That includes a secret a config guard restored, or a cutover published,
+after this step. It also includes the sidecar env of a deployment created
+from an older one's sidecars, such as a clone or a promotion. `left on the fleet key` counts two kinds of value:
+
+- the short-lived copies an open config guard or an unpublished cutover
+  holds under another key;
+- crash capture keys sealed before the domain was staged.
+
+These clear on their own, within the guard window, when the cutover
+finishes, or when the capture expires (seven days).
 
 Then watch wake errors across the compute nodes for the next hour. A node
 that fails wakes for apps with secrets is missing `runtime.age`: see

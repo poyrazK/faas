@@ -37,7 +37,7 @@ func cmdFreeze(args []string) int {
 }
 
 // freezeAppFlag resolves --app from the flag or the linked project; an
-// empty result means every app of the account.
+// empty result means no app was named.
 func freezeAppFlag(app string) (string, error) {
 	if strings.TrimSpace(app) != "" {
 		return strings.TrimSpace(app), nil
@@ -47,6 +47,17 @@ func freezeAppFlag(app string) (string, error) {
 		return "", err
 	}
 	return resolved, nil
+}
+
+// countSet counts the set flags among exclusive choices.
+func countSet(set ...bool) int {
+	n := 0
+	for _, s := range set {
+		if s {
+			n++
+		}
+	}
+	return n
 }
 
 // freezeRequestFromFlags builds a create request from the mutually
@@ -117,7 +128,8 @@ func freezeRequestFromFlags(forDur, from, until, weekly, at, tz, afterRollback s
 func freezeCreate(args []string) int {
 	fs := newFlagSet("freeze create", flag.ContinueOnError)
 	app := fs.String("app", "", "app slug (defaults to linked project app)")
-	all := fs.Bool("all-apps", false, "freeze every app of the account")
+	all := fs.Bool("all-apps", false, "freeze every personal app of your account")
+	org := fs.String("org", "", "freeze every app of this company organization")
 	reason := fs.String("reason", "", "why releases are frozen (required)")
 	forDur := fs.String("for", "", "window or weekly length, such as 2h")
 	from := fs.String("from", "", "window start (RFC 3339; default now)")
@@ -129,7 +141,7 @@ func freezeCreate(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	usage := "usage: gregale release freeze create [--app <slug> | --all-apps] --reason TEXT (--for DUR | --until TIME | --weekly DAYS --at HH:MM --for DUR [--tz ZONE] | --after-rollback DUR)"
+	usage := "usage: gregale release freeze create [--app <slug> | --all-apps | --org <org>] --reason TEXT (--for DUR | --until TIME | --weekly DAYS --at HH:MM --for DUR [--tz ZONE] | --after-rollback DUR)"
 	if rejectUnexpectedFlagArgs(fs) || strings.TrimSpace(*reason) == "" {
 		PrintUsage(os.Stderr, usage, "freeze")
 		return 1
@@ -138,24 +150,32 @@ func freezeCreate(args []string) int {
 	if err != nil {
 		return printErr("Invalid freeze", err)
 	}
-	if !*all {
-		slug, err := freezeAppFlag(*app)
-		if err != nil {
+	if countSet(*app != "", *all, *org != "") > 1 {
+		return printErr("Invalid freeze", errors.New("use one of --app, --all-apps and --org"))
+	}
+	slug := ""
+	if !*all && *org == "" {
+		if slug, err = freezeAppFlag(*app); err != nil {
 			return printErr("Could not read local project context", err)
 		}
 		if slug == "" {
-			return printErr("App required", errors.New("pass --app <slug>, or --all-apps to freeze every app"))
+			return printErr("App required", errors.New("pass --app <slug>, --all-apps to freeze your personal apps, or --org <org> to freeze a company's apps"))
 		}
-		req.App = slug
-	} else if *app != "" {
-		return printErr("Invalid freeze", errors.New("use --app or --all-apps, not both"))
 	}
 	req.Reason = strings.TrimSpace(*reason)
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	out, err := client.CreateReleaseFreeze(context.Background(), req)
+	var out api.ReleaseFreeze
+	switch {
+	case slug != "":
+		out, err = client.CreateAppReleaseFreeze(context.Background(), slug, req)
+	case *org != "":
+		out, err = client.CreateOrgReleaseFreeze(context.Background(), strings.TrimSpace(*org), req)
+	default:
+		out, err = client.CreateReleaseFreeze(context.Background(), req)
+	}
 	if err != nil {
 		return printErr("Could not create freeze", err)
 	}
@@ -169,17 +189,29 @@ func freezeCreate(args []string) int {
 func freezeList(args []string) int {
 	fs := newFlagSet("freeze list", flag.ContinueOnError)
 	app := fs.String("app", "", "only freezes covering this app")
+	org := fs.String("org", "", "a company organization's freezes")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
+	if *app != "" && *org != "" {
+		return printErr("Invalid flags", errors.New("use --app or --org, not both"))
+	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	out, err := client.ListReleaseFreezes(context.Background(), strings.TrimSpace(*app))
+	var out api.ListReleaseFreezesResponse
+	switch {
+	case strings.TrimSpace(*app) != "":
+		out, err = client.ListAppReleaseFreezes(context.Background(), strings.TrimSpace(*app))
+	case strings.TrimSpace(*org) != "":
+		out, err = client.ListOrgReleaseFreezes(context.Background(), strings.TrimSpace(*org))
+	default:
+		out, err = client.ListReleaseFreezes(context.Background(), "")
+	}
 	if err != nil {
 		return printErr("Could not list freezes", err)
 	}
@@ -199,8 +231,11 @@ func printFreezeTable(freezes []api.ReleaseFreeze) {
 	_, _ = fmt.Fprintln(w, "ID\tAPP\tWHEN\tACTIVE\tREASON\tBY")
 	for _, f := range freezes {
 		app := f.App
-		if app == "" {
-			app = "(all apps)"
+		switch {
+		case app == "" && f.Org != "":
+			app = "(all " + f.Org + " apps)"
+		case app == "":
+			app = "(all personal apps)"
 		}
 		active := "no"
 		if f.Active {
@@ -231,6 +266,8 @@ func freezeWhen(f api.ReleaseFreeze) string {
 
 func freezeLift(args []string) int {
 	fs := newFlagSet("freeze lift", flag.ContinueOnError)
+	app := fs.String("app", "", "lift a freeze on this app")
+	org := fs.String("org", "", "lift a company organization's freeze")
 	var positional []string
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		positional, args = args[:1], args[1:]
@@ -240,14 +277,25 @@ func freezeLift(args []string) int {
 	}
 	positional = append(positional, fs.Args()...)
 	if len(positional) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale release freeze lift <id>", "freeze")
+		PrintUsage(os.Stderr, "usage: gregale release freeze lift <id> [--app <slug> | --org <org>]", "freeze")
 		return 1
+	}
+	if *app != "" && *org != "" {
+		return printErr("Invalid flags", errors.New("use --app or --org, not both"))
 	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	out, err := client.LiftReleaseFreeze(context.Background(), positional[0])
+	var out api.ReleaseFreeze
+	switch {
+	case strings.TrimSpace(*app) != "":
+		out, err = client.LiftAppReleaseFreeze(context.Background(), strings.TrimSpace(*app), positional[0])
+	case strings.TrimSpace(*org) != "":
+		out, err = client.LiftOrgReleaseFreeze(context.Background(), strings.TrimSpace(*org), positional[0])
+	default:
+		out, err = client.LiftReleaseFreeze(context.Background(), positional[0])
+	}
 	if err != nil {
 		return printErr("Could not lift freeze", err)
 	}

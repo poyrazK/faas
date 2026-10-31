@@ -1,0 +1,97 @@
+# deploy-config.yml — the deploy-configuration gates on the pull request that
+# changes the configuration.
+#
+# The control plane converges deploy/ansible during every release
+# (cd-controlplane, ADR-580), and the release is cut from main whenever the
+# owner ships, several times a day. These gates (playbook syntax, ansible-lint
+# at the production profile, Prometheus rules and rendered config,
+# Alertmanager routes, the nftables renderers) ran only in the nightly checks
+# job, so a change that broke one could reach a release before any of them ran.
+# They run here only when a pull request touches their inputs; the nightly job
+# keeps running them on main. Both call scripts/ci/deploy_config_gates.sh and
+# the same make targets.
+name: deploy-config
+
+on:
+  pull_request:
+    paths:
+      - "deploy/ansible/**"
+      - "deploy/systemd/**"
+      - "deploy/scripts/**"
+      - "pkg/promqlrules/**"
+      - "pkg/netns/**"
+      - "cmd/faas-nft-render/**"
+      - "examples/event-acknowledgment-monitoring/**"
+      - "docs/runbooks/**"
+      - "scripts/ci/deploy_config_gates.sh"
+      - "scripts/ci/check_alertmanager_config.sh"
+      - "scripts/ci/check_prometheus_alert_metadata.sh"
+      - "scripts/ci/ensure-ansible-toolchain.sh"
+      - "scripts/egress-render-cross-check.sh"
+      - "Makefile"
+      - ".github/workflows/deploy-config.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-config-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  gates:
+    name: "deploy config: playbooks, lint, Prometheus, Alertmanager, nftables"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      # The pinned ansible-core and collections, as the CD jobs install them.
+      # The venv also carries jinja2 for the nftables renderer cross-check.
+      - name: Install pinned Ansible toolchain
+        run: |
+          set -euo pipefail
+          toolchain="$(scripts/ci/ensure-ansible-toolchain.sh 'ansible-core==2.21.2' deploy/ansible/requirements.yml)"
+          venv_bin="$(sed -n 's/^ANSIBLE_VENV_BIN=//p' <<<"$toolchain")"
+          collections="$(sed -n 's/^ANSIBLE_COLLECTIONS_PATH=//p' <<<"$toolchain")"
+          [[ -x "$venv_bin/ansible-playbook" && -d "$collections" ]]
+          "$venv_bin/python3" -m pip install --quiet 'ansible-lint==26.8.0'
+          echo "$venv_bin" >> "$GITHUB_PATH"
+          echo "ANSIBLE_COLLECTIONS_PATH=$collections" >> "$GITHUB_ENV"
+
+      - name: Install nftables
+        run: |
+          set -euo pipefail
+          # Hosted images can carry stale third-party apt indexes that abort
+          # apt before nftables installs; this job needs none of them.
+          sudo find /etc/apt/sources.list.d -maxdepth 1 -type f \
+            \( -iname '*chrome*.list' -o -iname '*chrome*.sources' \
+               -o -iname '*microsoft*.list' -o -iname '*microsoft*.sources' \) -delete
+          sudo apt-get -o Acquire::Retries=3 update -qq
+          sudo apt-get install -y -qq nftables
+
+      - name: Playbook syntax
+        run: scripts/ci/deploy_config_gates.sh syntax
+
+      - name: ansible-lint (production profile)
+        run: make ansible-lint
+
+      - name: Prometheus rules and rendered config
+        run: |
+          set -euo pipefail
+          scripts/ci/deploy_config_gates.sh promtool-install
+          scripts/ci/deploy_config_gates.sh rules
+          scripts/ci/deploy_config_gates.sh templates
+          make prometheus-alert-metadata-check
+
+      - name: Alertmanager routes
+        run: make alertmanager-config-check
+
+      - name: nftables renderers
+        run: make egress-check

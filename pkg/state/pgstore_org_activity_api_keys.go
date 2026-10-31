@@ -10,6 +10,7 @@ import (
 var _ OrgActivityAPIKeyMutationStore = (*PgStore)(nil)
 
 func (s *PgStore) CreateOrgAPIKeyWithActivity(ctx context.Context, orgID, accountID string, hash []byte, label string, scopes []string, expiresAt *time.Time, createdIP, createdUA string, parent *string, activity OrgActivity) (APIKey, int64, error) {
+	hash = storedCredential(credTagAPIKey, hash)
 	activity, err := normalizeOrgActivity(activity, time.Now())
 	if err != nil {
 		return APIKey{}, 0, err
@@ -99,6 +100,7 @@ func (s *PgStore) RevokeOrgAPIKeyWithActivity(ctx context.Context, orgID, keyID 
 }
 
 func (s *PgStore) RotateOrgAPIKeyWithActivity(ctx context.Context, orgID, oldKeyID string, newHash []byte, newLabel string, graceWindow time.Duration, createdIP, createdUA string, parent *string, activity OrgActivity) (APIKey, APIKey, int64, error) {
+	newHash = storedCredential(credTagAPIKey, newHash)
 	activity, err := normalizeOrgActivity(activity, time.Now())
 	if err != nil {
 		return APIKey{}, APIKey{}, 0, err

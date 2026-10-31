@@ -43,7 +43,7 @@ func (s *server) getPlatformTenantCredentialPolicy(w http.ResponseWriter, r *htt
 	}
 	policy, err := store.GetPlatformTenantCredentialPolicy(r.Context(), acct.ID, tenantID)
 	if err != nil {
-		s.platformTenantCredentialError(w, err, acct.Plan)
+		s.platformTenantCredentialError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, platformTenantCredentialPolicyResponse(policy))
@@ -90,12 +90,12 @@ func (s *server) setPlatformTenantCredentialPolicy(w http.ResponseWriter, r *htt
 	sort.Strings(scopes)
 	prior, err := store.GetPlatformTenantCredentialPolicy(r.Context(), acct.ID, tenantID)
 	if err != nil {
-		s.platformTenantCredentialError(w, err, acct.Plan)
+		s.platformTenantCredentialError(w, err)
 		return
 	}
 	policy, err := store.SetPlatformTenantCredentialPolicy(r.Context(), acct.ID, tenantID, scopes, *req.MaxKeysPerConsumer)
 	if err != nil {
-		s.platformTenantCredentialError(w, err, acct.Plan)
+		s.platformTenantCredentialError(w, err)
 		return
 	}
 	if prior.MaxKeysPerConsumer != policy.MaxKeysPerConsumer || len(prior.AllowedScopes) != len(policy.AllowedScopes) {

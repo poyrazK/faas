@@ -11,6 +11,8 @@ import type { BuildExportResponse } from './BuildExportResponse.js';
 import type { CronResponse } from './CronResponse.js';
 import type { CustomDomainResponse } from './CustomDomainResponse.js';
 import type { DeploymentResponse } from './DeploymentResponse.js';
+import type { EdgeRuleListResponse } from './EdgeRuleListResponse.js';
+import type { EdgeRuleResponse } from './EdgeRuleResponse.js';
 import type { GdprAuditExportResponse } from './GdprAuditExportResponse.js';
 import type { InstanceResponse } from './InstanceResponse.js';
 import type { OrgInvitationResponse } from './OrgInvitationResponse.js';
@@ -43,6 +45,14 @@ export type AccountExportResponse = {
   crons: Array<CronResponse>;
   api_keys: Array<APIKeyExportResponse>;
   app_secrets: Array<AppSecretExportResponse>;
+  /**
+   * Edge rules on the exported apps.
+   */
+  edge_rules?: Array<EdgeRuleResponse>;
+  /**
+   * The account's edge rule lists, with their items.
+   */
+  edge_rule_lists?: Array<EdgeRuleListResponse>;
   audit_trail?: Array<GdprAuditExportResponse>;
 };
 

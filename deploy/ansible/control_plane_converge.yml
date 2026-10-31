@@ -19,6 +19,13 @@
 # every other role. A host whose operator variables or rendered inventory
 # changed since its record converges every role instead. The lane records
 # the contract and the role hashes itself, after its SLO gate passes.
+#
+# A full release runs it with `--roles --full-release`
+# (docs/adr/20261030150000-full-release-converges-changed-roles.md): the
+# same role selection, with stateful restarts allowed and the contract
+# recorded here. Either way the requested roles always run: they were picked
+# by their content hashes, which also cover inputs outside deploy/ansible
+# that the contract misses, so an unchanged contract does not skip them.
 - name: Probe the control-plane bootstrap contract
   hosts: control_plane
   gather_facts: false
@@ -45,11 +52,13 @@
     - name: Select convergence or the unchanged fast path
       ansible.builtin.set_fact:
         faas_join_bootstrap_contract_current: >-
-          {{ faas_cp_contract_probe.rc == 0
+          {{ faas_cp_converge_roles_requested is not defined
+             and faas_cp_contract_probe.rc == 0
              and (faas_cp_contract_probe.stdout | trim) == faas_cp_bootstrap_contract_sha256 }}
 
     # The lane never restarts PostgreSQL or pgbouncer: those roles report a
-    # restart-needing change in check mode and fail the run instead.
+    # restart-needing change in check mode and fail the run instead. A full
+    # release's --roles restarts them as the whole play does.
     - name: Require the stateful restart guard in lane mode
       ansible.builtin.assert:
         that:
@@ -57,7 +66,9 @@
         fail_msg: >-
           --roles converges in the host-configuration lane, which must pass
           faas_stateful_restart_allowed=false (docs/adr/20261018133100-host-configuration-lane.md).
-      when: faas_cp_converge_roles_requested is defined
+      when:
+        - faas_cp_converge_roles_requested is defined
+        - not (faas_cp_full_release | default(false) | bool)
 
     - name: Read the recorded control-plane role hashes
       ansible.builtin.command:
