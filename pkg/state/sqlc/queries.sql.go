@@ -80390,13 +80390,18 @@ func (q *Queries) ReadMigrationTaskForUpdate(ctx context.Context, db DBTX, id st
 
 const readOpenAPIImportQuota = `-- name: ReadOpenAPIImportQuota :one
 SELECT count(*)::bigint AS observed,
-    coalesce(bool_or(app_id = $1::uuid), false)::boolean AS replacement
-FROM app_openapi_docs WHERE account_id = $2::uuid
+    coalesce(bool_or(d.app_id = $1::uuid), false)::boolean AS replacement
+FROM app_openapi_docs d
+JOIN apps a ON a.id = d.app_id
+LEFT JOIN orgs o ON o.id = a.org_id
+WHERE (a.account_id = $2::uuid OR a.org_id = $2::uuid)
+  AND (CASE WHEN NOT o.personal_org AND o.resource_ownership_enabled THEN o.id ELSE a.account_id END) = $2::uuid
+  AND a.status <> 'deleted'
 `
 
 type ReadOpenAPIImportQuotaParams struct {
-	AppID     pgtype.UUID
-	AccountID pgtype.UUID
+	AppID   pgtype.UUID
+	Subject pgtype.UUID
 }
 
 type ReadOpenAPIImportQuotaRow struct {
@@ -80404,8 +80409,10 @@ type ReadOpenAPIImportQuotaRow struct {
 	Replacement bool
 }
 
+// The imports of the app's billing subject (ADR-202610171904): its
+// organization's once the organization adopted billing, else its creator's.
 func (q *Queries) ReadOpenAPIImportQuota(ctx context.Context, db DBTX, arg ReadOpenAPIImportQuotaParams) (ReadOpenAPIImportQuotaRow, error) {
-	row := db.QueryRow(ctx, readOpenAPIImportQuota, arg.AppID, arg.AccountID)
+	row := db.QueryRow(ctx, readOpenAPIImportQuota, arg.AppID, arg.Subject)
 	var i ReadOpenAPIImportQuotaRow
 	err := row.Scan(&i.Observed, &i.Replacement)
 	return i, err

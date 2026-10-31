@@ -9290,9 +9290,16 @@ SELECT CASE WHEN observed <= sqlc.arg(max_bytes)::bigint THEN data ELSE NULL::js
     observed::bigint FROM measured;
 
 -- name: ReadOpenAPIImportQuota :one
+-- The imports of the app's billing subject (ADR-202610171904): its
+-- organization's once the organization adopted billing, else its creator's.
 SELECT count(*)::bigint AS observed,
-    coalesce(bool_or(app_id = sqlc.arg(app_id)::uuid), false)::boolean AS replacement
-FROM app_openapi_docs WHERE account_id = sqlc.arg(account_id)::uuid;
+    coalesce(bool_or(d.app_id = sqlc.arg(app_id)::uuid), false)::boolean AS replacement
+FROM app_openapi_docs d
+JOIN apps a ON a.id = d.app_id
+LEFT JOIN orgs o ON o.id = a.org_id
+WHERE (a.account_id = sqlc.arg(subject)::uuid OR a.org_id = sqlc.arg(subject)::uuid)
+  AND (CASE WHEN NOT o.personal_org AND o.resource_ownership_enabled THEN o.id ELSE a.account_id END) = sqlc.arg(subject)::uuid
+  AND a.status <> 'deleted';
 
 -- name: ReadTrafficHostAnalysis :one
 -- Only selectors, counts, sizes and referenced IDs leave the database.

@@ -101,6 +101,8 @@ var memDispatched = map[string]bool{
 	"FailRunningInstanceIfOwnedByNode":                        true,
 	"FinalizeManagedPostgresBindingRotationsForApp":           true,
 	"FinancialEvidenceCoverage":                               true,
+	"ListAllAccounts":                                         true,
+	"MarkDunningStep":                                         true,
 	"ListFinancialPriceSnapshots":                             true,
 	"FinalizeObjectS3CredentialRotationsForApp":               true,
 	"FinishPublishedEventRecipient":                           true,
@@ -448,6 +450,24 @@ func (s *Mem) DeploymentClearSnapshotBackoff(p0 context.Context, p1 string) erro
 		return o.DeploymentClearSnapshotBackoff(p0, p1)
 	}
 	return s.MemStore.DeploymentClearSnapshotBackoff(p0, p1)
+}
+
+func (s *Mem) ListAllAccounts(p0 context.Context) ([]state.Account, error) {
+	if o, ok := s.over.(interface {
+		ListAllAccounts(context.Context) ([]state.Account, error)
+	}); ok {
+		return o.ListAllAccounts(p0)
+	}
+	return s.MemStore.ListAllAccounts(p0)
+}
+
+func (s *Mem) MarkDunningStep(p0 context.Context, p1 string, p2, p3 state.AccountStatus, p4 ...state.AccountDeletionOption) error {
+	if o, ok := s.over.(interface {
+		MarkDunningStep(context.Context, string, state.AccountStatus, state.AccountStatus, ...state.AccountDeletionOption) error
+	}); ok {
+		return o.MarkDunningStep(p0, p1, p2, p3, p4...)
+	}
+	return s.MemStore.MarkDunningStep(p0, p1, p2, p3, p4...)
 }
 
 func (s *Mem) FinancialEvidenceCoverage(p0 context.Context) (time.Time, error) {
