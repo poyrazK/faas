@@ -19429,6 +19429,7 @@
       "harness_preset",
       "harness_run",
       "model_integrations",
+      "pause_during_model_calls",
       "prompt_template",
       "ram_mb",
       "timeout_sec",

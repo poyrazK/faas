@@ -148,15 +148,19 @@ type AgentHarness struct {
 // the harness reaches through the relay (ADR-20261027090010 §7); a provider without
 // one gets no base URL. AIBudgetMillicents caps one run's model spend; 0
 // takes the plan's AgentRunAIBudgetDefaultMillicents. Deliveries are what a
-// succeeded run delivers (ADR-20261027090010 §8).
+// succeeded run delivers (ADR-20261027090010 §8). PauseDuringModelCalls
+// false opts the version's runs out of the model-wait pause
+// (ADR-20261027090012 §1), for a harness whose connections are
+// heartbeat-sensitive; omitted means true, and a version always reports it.
 type AgentVersionSpec struct {
-	Harness            AgentHarness      `json:"harness"`
-	PromptTemplate     string            `json:"prompt_template"`
-	RAMMB              int               `json:"ram_mb,omitempty"`
-	TimeoutSec         int               `json:"timeout_sec,omitempty"`
-	Integrations       map[string]string `json:"integrations,omitempty"`
-	AIBudgetMillicents int64             `json:"ai_budget_millicents,omitempty"`
-	Deliveries         []AgentDelivery   `json:"deliveries,omitempty"`
+	Harness               AgentHarness      `json:"harness"`
+	PromptTemplate        string            `json:"prompt_template"`
+	RAMMB                 int               `json:"ram_mb,omitempty"`
+	TimeoutSec            int               `json:"timeout_sec,omitempty"`
+	Integrations          map[string]string `json:"integrations,omitempty"`
+	AIBudgetMillicents    int64             `json:"ai_budget_millicents,omitempty"`
+	Deliveries            []AgentDelivery   `json:"deliveries,omitempty"`
+	PauseDuringModelCalls *bool             `json:"pause_during_model_calls,omitempty"`
 }
 
 // CreateAgentRequest is the body of POST /v1/agents: the agent and its
