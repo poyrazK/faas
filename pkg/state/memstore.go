@@ -29036,7 +29036,7 @@ func (m *MemStore) ReplayDeadLetterEventsForAccount(_ context.Context, accountID
 		} else {
 			_, err = m.replayAccountJobDeadLetterLocked(accountID, ev)
 		}
-		if errors.Is(err, ErrNotFound) {
+		if errors.Is(err, ErrNotFound) || errors.Is(err, ErrKeyedReplayExpired) {
 			continue
 		}
 		if err != nil {
@@ -29126,6 +29126,11 @@ func (m *MemStore) replayDeadLetterEventLocked(accountID, appID, eventID string)
 		}
 		if InvocationHasOperation(inv) {
 			return DeadLetterEvent{}, ErrNotFound
+		}
+		// ADR-20261031101000: replay resets attempts, so keyed work past its
+		// pending deadline would only expire again.
+		if inv.WorkPolicyName != "" && inv.WorkExpiresAt != nil && !inv.WorkExpiresAt.After(now) {
+			return DeadLetterEvent{}, ErrKeyedReplayExpired
 		}
 		if _, err := m.retryQueueDeadLetterLocked(accountID, event.SourceID, now); err != nil {
 			return DeadLetterEvent{}, err
@@ -29261,7 +29266,7 @@ func (m *MemStore) ReplayDeadLetterEvents(_ context.Context, accountID, appID st
 			continue
 		}
 		if _, err := m.replayDeadLetterEventLocked(accountID, appID, ev.ID); err != nil {
-			if errors.Is(err, ErrNotFound) {
+			if errors.Is(err, ErrNotFound) || errors.Is(err, ErrKeyedReplayExpired) {
 				continue
 			}
 			return replayed, err

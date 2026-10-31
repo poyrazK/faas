@@ -1403,6 +1403,10 @@ const (
 	// nothing left to redrive: an event_route routing failure whose receipt
 	// was pruned (ADR-20261026163443). Re-publish its payload instead.
 	CodeDeadLetterNotReplayable = "dead_letter_not_replayable"
+	// CodeKeyedReplayExpired is the 409 for replaying keyed work whose
+	// pending deadline has passed (ADR-609); from the dead-letter queue a
+	// replay would only expire again (ADR-20261031101000).
+	CodeKeyedReplayExpired = "keyed_replay_expired"
 	// CodeDebugReplayUnsupported is returned when a retained request has no
 	// enabled mirror rule for the deployment that served it. Replaying without
 	// that target would silently exercise a different deployment.
@@ -2539,7 +2543,7 @@ func StatusForCode(code string) int {
 		// surface 409 — the conflict is between the request and
 		// the resource's current state, not between two writes.
 		return http.StatusConflict
-	case CodeDeadLetterNotReplayable:
+	case CodeDeadLetterNotReplayable, CodeKeyedReplayExpired:
 		return http.StatusConflict
 	case CodeInvalidCredentials, CodeEmailNotVerified:
 		return http.StatusUnauthorized
@@ -6545,6 +6549,16 @@ func ErrDeadLetterNotReplayable() *Problem {
 		"Dead-letter event cannot be replayed",
 		"this routing failure's receipt has been pruned, so there is nothing to redrive; re-publish the event in its payload to deliver it again.").
 		WithDocs(docsBase + "/events#routing-failures-in-the-dead-letter-queue")
+}
+
+// ErrDeadLetterKeyedReplayExpired refuses a dead-letter replay of keyed work
+// whose pending deadline has passed: replay resets its attempts, so it would
+// only expire again (ADR-20261031101000).
+func ErrDeadLetterKeyedReplayExpired() *Problem {
+	return NewProblem(http.StatusConflict, CodeKeyedReplayExpired,
+		"Keyed replay deadline expired",
+		"this keyed delivery's pending deadline has passed, so a replay would expire at once; re-publish the event to deliver it again.").
+		WithDocs(docsBase + "/events#keyed-delivery-deadlines")
 }
 
 // ErrInvocationNotReplayable (issue #315 / tier-2 DX) is returned by
