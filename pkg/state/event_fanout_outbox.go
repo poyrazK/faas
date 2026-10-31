@@ -404,7 +404,7 @@ func validatePublishedEventRecipientProgress(progress PublishedEventRecipientPro
 	if progress.RetrySpentMS < 0 || progress.RetryGeneration < 0 {
 		return ErrInvalidArgument
 	}
-	if progress.FilterReason != "" && (progress.FilterReason != "schema_version_mismatch" || progress.State != PublishedEventRecipientFiltered) {
+	if progress.FilterReason != "" && (progress.FilterReason != "schema_version_mismatch" && progress.FilterReason != EventSubscriptionFilterReasonDisabled || progress.State != PublishedEventRecipientFiltered) {
 		return ErrInvalidArgument
 	}
 	switch progress.RetryStopReason {

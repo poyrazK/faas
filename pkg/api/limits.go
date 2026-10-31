@@ -3891,6 +3891,16 @@ type Limits struct {
 	CronLimitPerApp     int
 	CronLimitPerAccount int
 
+	// EventSubscriptionsPerApp and EventSubscriptionsPerAccount cap the
+	// enabled event subscriptions (gregale.yaml event_triggers) of one app
+	// and of all apps sharing a billing subject (ADR-20261031130000). Every
+	// publish is matched against each enabled subscription of its account,
+	// so the count bounds the routing work one event can cause. Enforced
+	// under the cron quota subject lock in
+	// pkg/state.PgStore.UpsertEventSubscriptionWithinLimits.
+	EventSubscriptionsPerApp     int
+	EventSubscriptionsPerAccount int
+
 	// QueueControlsAllowed (ADR-124 deployment queue controls)
 	// gates the reorder + deploy-immediately surface (Free =
 	// false; Hobby + Pro + Scale = true). Cancel and
@@ -5137,8 +5147,10 @@ var planLimits = map[Plan]Limits{
 		// invoke). Handler returns 402 ErrPlanCronsNotAllowed before
 		// the store is touched; the 0/0 here is a defence-in-depth
 		// value the store still reads.
-		CronLimitPerApp:     0,
-		CronLimitPerAccount: 0,
+		CronLimitPerApp:              0,
+		CronLimitPerAccount:          0,
+		EventSubscriptionsPerApp:     0,
+		EventSubscriptionsPerAccount: 0,
 		// M-2 / ADR-137+138: Free stays request-only — same
 		// posture as sidecars (ADR-069). Defaults are tight so
 		// a stray async deploy stays bounded; per-mode replica
@@ -5576,8 +5588,10 @@ var planLimits = map[Plan]Limits{
 		// budget that absorbs ~2 Hobby-tier apps (10). Tracks the
 		// Hobby apps cap (5) with headroom for the cron-example
 		// template's tutorials.
-		CronLimitPerApp:     5,
-		CronLimitPerAccount: 10,
+		CronLimitPerApp:              5,
+		CronLimitPerAccount:          10,
+		EventSubscriptionsPerApp:     5,
+		EventSubscriptionsPerAccount: 10,
 		// M-2 / ADR-137+138: Hobby gets the documented 30 s
 		// StopGracePeriod default + 30 s StartupDeadline default
 		// (ADR-138 §Decision 4 / §Decision 5). Hobby unlocks
@@ -6014,8 +6028,10 @@ var planLimits = map[Plan]Limits{
 		// ceiling is 4× Hobby (5→20); the per-account ceiling is 5×
 		// Hobby (10→50) — slightly steeper because Pro customers
 		// run more apps (25) than Hobby (5).
-		CronLimitPerApp:     20,
-		CronLimitPerAccount: 50,
+		CronLimitPerApp:              20,
+		CronLimitPerAccount:          50,
+		EventSubscriptionsPerApp:     20,
+		EventSubscriptionsPerAccount: 50,
 		// M-2 / ADR-137+138: Pro doubles Hobby's defaults
 		// (ADR-138 §Decision 4 / §Decision 5). Replica caps
 		// scale to a meaningful production fan-out (3 workers,
@@ -6425,8 +6441,10 @@ var planLimits = map[Plan]Limits{
 		// per-app ceiling (20→100) and 10× Pro's per-account ceiling
 		// (50→500); the per-account figure absorbs 5× Scale-tier apps
 		// at the per-app cap, the typical SaaS fan-out.
-		CronLimitPerApp:     100,
-		CronLimitPerAccount: 500,
+		CronLimitPerApp:              100,
+		CronLimitPerAccount:          500,
+		EventSubscriptionsPerApp:     100,
+		EventSubscriptionsPerAccount: 500,
 		// M-2 / ADR-137+138: Scale doubles Pro (ADR-138
 		// §Decision 4 / §Decision 5). Replica caps land where
 		// a single Scale customer can host a small SaaS
