@@ -2694,7 +2694,7 @@ func (h *Handler) matchAndApplyRedirect(w http.ResponseWriter, r *http.Request, 
 	// templated redirect renders its target and headers first (ADR-968).
 	target, redirectHeaders := expandRedirect(rule, r)
 	for k, v := range redirectHeaders {
-		w.Header().Set(k, v)
+		w.Header().Set(k, scopeTenantCookie(k, v))
 	}
 	status := rule.StatusCode
 	if status != http.StatusMovedPermanently &&
@@ -2916,7 +2916,7 @@ func (h *Handler) applyEdgeRuleCORS(w http.ResponseWriter, r *http.Request, app 
 	if r.Method == http.MethodOptions {
 		// Preflight short-circuit: 204 + headers, no proxy.
 		for _, op := range respOps {
-			applyHeaderOp(w.Header(), op)
+			applyResponseHeaderOp(w.Header(), op)
 		}
 		w.WriteHeader(http.StatusNoContent)
 		if h.edgeRuleAudit != nil {
@@ -4947,6 +4947,15 @@ func stampTrustedClientIP(r *http.Request) {
 // Blacklist (Host, Content-Length, Transfer-Encoding, Connection,
 // x-faas-*) is enforced at apid-Validate-time (PR 1) so this
 // helper trusts the input.
+// applyResponseHeaderOp applies an edge rule's response header op. A
+// Set-Cookie a rule adds is scoped like the guest's own (scopeTenantCookie):
+// a tenant must not reach the shared apps domain's cookies through its rules
+// either (bug hunt 32 M2).
+func applyResponseHeaderOp(hdr http.Header, op EdgeRuleHeaderOp) {
+	op.Value = scopeTenantCookie(op.Name, op.Value)
+	applyHeaderOp(hdr, op)
+}
+
 func applyHeaderOp(hdr http.Header, op EdgeRuleHeaderOp) {
 	switch op.Action {
 	case "remove":
@@ -9112,7 +9121,7 @@ func (s *statusRecorder) prepareResponseHeaders(code int) {
 		// and cannot impersonate or overwrite the abuse target signal.
 		s.capturePreAuthTargetHeader()
 		for _, op := range s.headerOps {
-			applyHeaderOp(s.Header(), op)
+			applyResponseHeaderOp(s.Header(), op)
 		}
 		s.Header().Del(preAuthTargetHeader)
 		s.commitTrafficResponse(code)
@@ -9132,7 +9141,7 @@ func (s *statusRecorder) WriteHeader(code int) {
 	if !s.wroteHeader && isInformationalStatus(code) {
 		header := s.Header().Clone()
 		for _, op := range s.headerOps {
-			applyHeaderOp(header, op)
+			applyResponseHeaderOp(header, op)
 		}
 		header.Del(preAuthTargetHeader)
 		if s.deploymentSmoke {
@@ -10031,12 +10040,16 @@ func defaultProxy(addr string, cap int64) http.Handler {
 	return p
 }
 
-// hostname strips any port from the Host header and lowercases it.
+// hostname strips any port from the Host header, lowercases it and drops a
+// trailing root dot. "app.example.com." names the same host as
+// "app.example.com"; keeping the dot missed the exact custom-domain row and
+// host-scoped edge rules while the wildcard lookup, which trims it, still
+// matched (bug hunt 32 M3).
 func hostname(host string) string {
 	if i := strings.IndexByte(host, ':'); i >= 0 {
 		host = host[:i]
 	}
-	return strings.ToLower(host)
+	return strings.TrimSuffix(strings.ToLower(host), ".")
 }
 
 // basicCredentialsMatch compares Basic credentials in time independent of
