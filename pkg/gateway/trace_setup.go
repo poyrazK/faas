@@ -90,7 +90,8 @@ type TraceSetup struct {
 }
 
 // InstallTracePipeline builds a TraceRing + OTLP exporter (if env
-// set) + TraceRingExporter + TraceHandler, installs the resulting
+// set) + TraceRingExporter (if FAAS_TRACE_OBSERVER_TOKEN is set) +
+// TraceHandler, installs the resulting
 // TracerProvider globally, and returns the bundle. The caller is
 // responsible for:
 //
@@ -135,13 +136,13 @@ func InstallTracePipelineWithRegistry(ctx context.Context, name, version string,
 		return nil, fmt.Errorf("trace_setup: build resource: %w", err)
 	}
 
-	// SpanExporter list: the ring exporter is always present; the
-	// OTLP exporter is conditional. Both share a single batch via
-	// the multi-exporter shape so we don't pay the per-batch
-	// overhead twice (issue #555 review: a previous revision
-	// mounted the ring exporter twice, doubling the ring's per-
-	// span cost).
-	exporters := []sdktrace.SpanExporter{NewTraceRingExporter(ring, log)}
+	// SpanExporter list: the ring exporter and the OTLP exporter are
+	// both conditional. They share a single batch via the
+	// multi-exporter shape so we don't pay the per-batch overhead
+	// twice (issue #555 review: a previous revision mounted the ring
+	// exporter twice, doubling the ring's per-span cost).
+	observerToken := os.Getenv(envObserverToken)
+	exporters := ringExporters(ring, observerToken, log)
 	health, err := otelinit.NewTraceExporterHealth(reg, metricPrefix)
 	if err != nil {
 		return nil, fmt.Errorf("trace_setup: register trace exporter health: %w", err)
@@ -168,16 +169,12 @@ func InstallTracePipelineWithRegistry(ctx context.Context, name, version string,
 	}
 
 	sampler, counter := buildSampler(log)
-	tp := sdktrace.NewTracerProvider(
-		sdktrace.WithBatcher(multiExporter(exporters)),
-		sdktrace.WithResource(res),
-		sdktrace.WithSampler(sampler),
-	)
+	tp := sdktrace.NewTracerProvider(tracerProviderOptions(res, sampler, exporters)...)
 	otel.SetTracerProvider(tp)
 
 	handler := NewTraceHandler(TraceHandlerConfig{
 		Ring:          ring,
-		ObserverToken: os.Getenv(envObserverToken),
+		ObserverToken: observerToken,
 	})
 
 	return &TraceSetup{
@@ -187,6 +184,34 @@ func InstallTracePipelineWithRegistry(ctx context.Context, name, version string,
 		Shutdown:          tp.Shutdown,
 		DeploymentCounter: counter,
 	}, nil
+}
+
+// ringExporters returns the ring exporter only when GET
+// /v1/traces/{trace_id} can read the ring. Without an observer token
+// the handler answers 404 before touching the ring, so filling it
+// would cost a span snapshot, a batch queue hop and up to
+// TraceRingMaxBytes of live heap per request for nothing. Sampling is
+// unchanged either way: the traceparent sent downstream keeps its
+// sampled flag, which customer SDKs with parent-based samplers follow.
+func ringExporters(ring *TraceRing, observerToken string, log *slog.Logger) []sdktrace.SpanExporter {
+	if observerToken == "" {
+		return nil
+	}
+	return []sdktrace.SpanExporter{NewTraceRingExporter(ring, log)}
+}
+
+// tracerProviderOptions registers a batch processor only when there is
+// an exporter to feed. With no span processor the SDK's Span.End
+// returns before snapshotting the span.
+func tracerProviderOptions(res *sdkresource.Resource, sampler sdktrace.Sampler, exporters []sdktrace.SpanExporter) []sdktrace.TracerProviderOption {
+	options := []sdktrace.TracerProviderOption{
+		sdktrace.WithResource(res),
+		sdktrace.WithSampler(sampler),
+	}
+	if len(exporters) > 0 {
+		options = append(options, sdktrace.WithBatcher(multiExporter(exporters)))
+	}
+	return options
 }
 
 // buildRingFromEnv reads FAAS_TRACE_RING_CAP. Empty or invalid
