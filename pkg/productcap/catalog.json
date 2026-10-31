@@ -4745,7 +4745,7 @@
       "id": "resource-conditions",
       "name": "Resource conditions",
       "category": "observability",
-      "description": "Read an app's or a deployment's Ready, Progressing and Degraded or RolledOut conditions, and wait for one.",
+      "description": "Read the conditions of an app, deployment, managed database, custom domain, cron or job run, and wait for one.",
       "maturity": "preview",
       "plans": [
         "free",
@@ -4758,12 +4758,21 @@
       "parent": "app-health",
       "routes": [
         "/v1/apps/{}/status",
-        "/v1/deployments/{}/status"
+        "/v1/deployments/{}/status",
+        "/v1/postgres/databases/{}/status",
+        "/v1/domains/{}/status",
+        "/v1/crons/{}/status",
+        "/v1/jobs/{}/runs/{}/status"
       ],
       "cli": [
         "app status",
         "app wait",
-        "deployment status"
+        "deployment status",
+        "postgres status",
+        "postgres wait",
+        "domains wait",
+        "crons status",
+        "crons wait"
       ]
     },
     {

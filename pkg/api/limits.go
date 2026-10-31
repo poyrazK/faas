@@ -6841,7 +6841,8 @@ const (
 	// RolloutConcurrencyGrant (ADR-199) is the number of instances an app
 	// may exceed its plan's max_concurrency by, and ONLY while a second
 	// deployment is coming up alongside the one already serving — i.e. the
-	// overlap window of a traffic split or a canary stage.
+	// overlap window of a traffic split or a canary stage, or a release staged
+	// with no traffic (ADR-20261031105227).
 	//
 	// Without it, opening traffic splitting to every plan would ship a
 	// broken feature: the concurrency ledger is per-app

@@ -161,6 +161,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_CONSUMER_USAGE_OUTBOX_ROOT` | gatewayd-internal | `default` |  |  | `` | optional durable financial usage spool override; defaults to /var/lib/faas/consumer-usage |
 | `FAAS_CONTROL_PLANE_API_TARGET` | gatewayd-public, shared | `unit` |  |  | `` |  |
 | `FAAS_COSIGN_BIN` | imaged, shared | `default` |  | /usr/local/bin/cosign | `` | the release-pinned cosign node join stages; imaged runs it offline to verify platform base provenance (ADR-20261029155852) |
+| `FAAS_CPU_PRESSURE_BACKSTOP` | schedd | `default` |  |  | `` | optional boolean switch for the ADR 20261030100950 CPU pressure backstop; default on since its 2026-10-31 amendment; overrides cpu_pressure_backstop in schedd.toml either way, so an environment drop-in turns it off on a node across manifest renders |
 | `FAAS_CPU_TEMPLATE` | vmmd | `default` |  |  | `` | optional Firecracker CPU template every guest boots with (ADR-20261024225612), e.g. T2CL for a Cascade Lake + Ice Lake cell; empty default boots with the host CPUID; vmmd refuses a template its host CPU is not documented as safe on |
 | `FAAS_CRASH_SNAPSHOTS` | apid, gatewayd-internal, schedd, vmmd | `default` |  |  | `` | exact opt-in for ADR-733 crash snapshots; apid serves the routes, gatewayd-internal requests 5xx captures, schedd captures and vmmd serves the guest SDK capture receiver only when 1; default off |
 | `FAAS_CUSTOM_DASHBOARDS_ENABLED` | apid | `default` |  | 0 | `` | ADR-20261022173833 operator gate for /v1/dashboards (saved custom dashboards); explicit 1 enables the internal preview |
@@ -568,6 +569,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_MANAGED_POSTGRES_STORAGE_CAP_QUALIFICATION_PATH` | apid, shared | `default` |  |  | `` | ADR-20261025094915 storage pool qualification artifact written by managed-postgres-qualify --storage-cap; required, and verified against the configured backend, when FAAS_MANAGED_POSTGRES_STORAGE_CAP_ENFORCEMENT=on |
 | `FAAS_MANIFEST_PATH` | imaged | `dropin` |  |  | `` |  |
 | `FAAS_MCP_BRIDGE_LOOPBACK` | gatewayd-public | `dropin` |  |  | `` | ADR-20261026195952; absolute URL of the hosted management MCP bridge on the control-plane host. Unset leaves /mcp on the api. host to the compute data plane |
+| `FAAS_MEASURED_CPU_ADMISSION` | schedd | `default` |  |  | `` | optional boolean switch for ADR 20261029151111 measured CPU admission; default on since its 2026-10-31 amendment; overrides measured_cpu_admission in schedd.toml either way, so an environment drop-in turns it off on a node across manifest renders |
 | `FAAS_METADATA_ENV_ENDPOINT` | guest, shared | `guest` |  | http://169.254.169.254/v1/metadata/env | `` | guest-init stamps the platform metadata endpoint; opt-in SDK helpers may override it for tests |
 | `FAAS_METERD_ROLE` | meterd, shared | `dropin` |  |  | `` |  |
 | `FAAS_MFA_RECOVERY_HMAC_KEY` | apid | `secrets-env` |  |  | `` | delivered by /etc/faas/sealed.env (apid, operator-provisioned via `gregalectl secrets init`) |
@@ -703,6 +705,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_PYROSCOPE_TOKEN` | apid, profiled | `default` |  |  | `` | operator backend credential; never sent into guests |
 | `FAAS_PYROSCOPE_URL` | apid, profiled | `default` |  |  | `` | private tenant-enabled backend configured in /etc/faas/profiling.env |
 | `FAAS_QUIET_PAUSE` | vmmd | `default` |  |  | `` | optional boolean switch for ADR-1151 quiet pause between requests; default on since the ADR-1151 amendment of 2026-10-27 (billing unchanged while FAAS_QUIET_PAUSE_LEDGER and FAAS_QUIET_PAUSE_UNBILLED stay off), false turns it off |
+| `FAAS_QUIET_PAUSE_ADMISSION` | schedd | `default` |  |  | `` | optional boolean switch for ADR-1151 quiet pause admission; default on since the ADR-1151 amendment of 2026-10-31; overrides quiet_pause_admission in schedd.toml either way, so an environment drop-in turns it off on a node across manifest renders |
 | `FAAS_QUIET_PAUSE_LEDGER` | schedd | `default` |  |  | `` | optional boolean switch recording this node's quiet pauses in the billing pause ledger (ADR-20261023171905); production default is off |
 | `FAAS_QUIET_PAUSE_OBSERVE` | vmmd | `default` |  |  | `` | optional boolean switch for ADR-1151 quiet pause observe mode: measures would-be pauses and pauses nothing; FAAS_QUIET_PAUSE (default on) wins when both are on, so observing needs FAAS_QUIET_PAUSE=false; production default is off |
 | `FAAS_QUIET_PAUSE_UNBILLED` | meterd | `default` |  |  | `` | optional off, shadow or on: whether billed residency subtracts the quiet-paused seconds the pause ledger proves (ADR-20261023171905); production default is off |
@@ -883,6 +886,8 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_STORAGE_ROOT` | builderd, imaged, vmmd, shared | `default` |  |  | `` |  |
 | `FAAS_STORAGE_SNAPSHOT_COMPRESSION` | shared | `envfile` |  |  | `` | remote snapshot-memory encoding; default none; enable zstd only after every compute node runs a compatible reader (ADR-165) |
 | `FAAS_STORAGE_SPARSE_EXTENTS` | shared | `envfile` |  |  | `` | GCS writers store compressed drives, rootfs images and snapshot memory as data extents only; default off; enable only after every node runs a compatible reader (ADR-1135) |
+| `FAAS_STREAM_BRIDGE_GOGC` | vmmd | `default` |  |  | `` | optional integer: GOGC for the stream bridges vmmd starts; 0 or unset keeps Go's default (stream_bridge_gogc in vmmd.toml) |
+| `FAAS_STREAM_BRIDGE_GOMAXPROCS` | vmmd | `default` |  |  | `` | optional integer: GOMAXPROCS for the stream bridges vmmd starts; 0 or unset keeps Go's default (stream_bridge_gomaxprocs in vmmd.toml) |
 | `FAAS_STREAM_BRIDGE_PERSISTENT` | shared | `default` |  |  | `` |  |
 | `FAAS_STREAM_BRIDGE_VERSION` | shared | `default` |  |  | `` | rollback lever, see docs/ops/h2c-rollback.md |
 | `FAAS_STRIPE_INTERVAL` | meterd | `default` |  |  | `` |  |
