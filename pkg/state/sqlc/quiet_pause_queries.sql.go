@@ -13,8 +13,13 @@ import (
 
 const deleteQuietPausesBefore = `-- name: DeleteQuietPausesBefore :execrows
 DELETE FROM instance_quiet_pauses
- WHERE ctid IN (SELECT ctid FROM instance_quiet_pauses
-                 WHERE started_at < $1::timestamptz
+ WHERE ctid IN (SELECT p.ctid FROM instance_quiet_pauses p
+                 WHERE p.ended_at < $1::timestamptz
+                    OR (p.ended_at IS NULL
+                        AND p.started_at < $1::timestamptz
+                        AND NOT EXISTS (SELECT 1 FROM quiet_pause_watermarks w
+                                         WHERE w.node_id = p.node_id
+                                           AND w.covered_until >= $1::timestamptz))
                  LIMIT $2::integer)
 `
 
@@ -23,9 +28,11 @@ type DeleteQuietPausesBeforeParams struct {
 	BatchLimit int32
 }
 
-// Retention: pauses that started before cutoff, at most batch_limit rows per
-// call. An open one that old belongs to a VM long gone; its node simply never
-// reported again.
+// Retention, at most batch_limit rows per call: pauses that ended before
+// cutoff, and open ones that started before it on a node whose watermark has
+// not reached it, a VM long gone whose node simply never reported again. An
+// open pause on a reporting node is kept however old: a floor-held VM with no
+// traffic stays quiet-paused for days, and its node sends the pause once.
 func (q *Queries) DeleteQuietPausesBefore(ctx context.Context, db DBTX, arg DeleteQuietPausesBeforeParams) (int64, error) {
 	result, err := db.Exec(ctx, deleteQuietPausesBefore, arg.Cutoff, arg.BatchLimit)
 	if err != nil {
@@ -65,6 +72,29 @@ func (q *Queries) OpenQuietPauses(ctx context.Context, db DBTX, nodeID pgtype.UU
 		return nil, err
 	}
 	return items, nil
+}
+
+const quietPausedMBSecondsByMonth = `-- name: QuietPausedMBSecondsByMonth :one
+select coalesce(sum(paused_mb_seconds), 0)::bigint as paused_mb_seconds
+  from usage_minutes
+ where account_id = $1::uuid
+   and minute >= $2::timestamptz
+   and minute <  $3::timestamptz
+`
+
+type QuietPausedMBSecondsByMonthParams struct {
+	AccountID  pgtype.UUID
+	MonthStart pgtype.Timestamptz
+	MonthEnd   pgtype.Timestamptz
+}
+
+// An account's quiet-paused MB-seconds for one UTC month, from the
+// (account_id, minute) index.
+func (q *Queries) QuietPausedMBSecondsByMonth(ctx context.Context, db DBTX, arg QuietPausedMBSecondsByMonthParams) (int64, error) {
+	row := db.QueryRow(ctx, quietPausedMBSecondsByMonth, arg.AccountID, arg.MonthStart, arg.MonthEnd)
+	var paused_mb_seconds int64
+	err := row.Scan(&paused_mb_seconds)
+	return paused_mb_seconds, err
 }
 
 const quietPausedSeconds = `-- name: QuietPausedSeconds :many
@@ -115,6 +145,39 @@ func (q *Queries) QuietPausedSeconds(ctx context.Context, db DBTX, arg QuietPaus
 		return nil, err
 	}
 	return items, nil
+}
+
+const recordQuietPausedUsage = `-- name: RecordQuietPausedUsage :exec
+insert into usage_minutes (account_id, app_id, instance_id, minute, mb_seconds, paused_mb_seconds)
+values ($1::uuid, $2::uuid, $3::uuid,
+        $4::timestamptz, 0, $5::bigint)
+on conflict (instance_id, minute) do update
+   set paused_mb_seconds = case when usage_minutes.paused_mb_seconds = 0 and EXCLUDED.paused_mb_seconds > 0
+                                then EXCLUDED.paused_mb_seconds else usage_minutes.paused_mb_seconds end
+`
+
+type RecordQuietPausedUsageParams struct {
+	AccountID       pgtype.UUID
+	AppID           pgtype.UUID
+	InstanceID      pgtype.UUID
+	Minute          pgtype.Timestamptz
+	PausedMbSeconds int64
+}
+
+// The MB-seconds of one instance-minute meterd did not bill because the
+// ledger proved the VM quiet-paused (rollout step 3). As with mb_seconds the
+// first positive value wins, so a caught-up minute never changes what the
+// customer already saw. A minute paused throughout bills nothing and writes
+// its row here, with mb_seconds 0.
+func (q *Queries) RecordQuietPausedUsage(ctx context.Context, db DBTX, arg RecordQuietPausedUsageParams) error {
+	_, err := db.Exec(ctx, recordQuietPausedUsage,
+		arg.AccountID,
+		arg.AppID,
+		arg.InstanceID,
+		arg.Minute,
+		arg.PausedMbSeconds,
+	)
+	return err
 }
 
 const recordQuietPauses = `-- name: RecordQuietPauses :exec

@@ -945,9 +945,11 @@ type Querier interface {
 	DeleteProjectEnvironmentSecret(ctx context.Context, db DBTX, arg DeleteProjectEnvironmentSecretParams) (int64, error)
 	DeleteQueueLeaseReceipt(ctx context.Context, db DBTX, invocationID pgtype.UUID) error
 	DeleteQueuedOperation(ctx context.Context, db DBTX, operationID pgtype.UUID) error
-	// Retention: pauses that started before cutoff, at most batch_limit rows per
-	// call. An open one that old belongs to a VM long gone; its node simply never
-	// reported again.
+	// Retention, at most batch_limit rows per call: pauses that ended before
+	// cutoff, and open ones that started before it on a node whose watermark has
+	// not reached it, a VM long gone whose node simply never reported again. An
+	// open pause on a reporting node is kept however old: a floor-held VM with no
+	// traffic stays quiet-paused for days, and its node sends the pause once.
 	DeleteQuietPausesBefore(ctx context.Context, db DBTX, arg DeleteQuietPausesBeforeParams) (int64, error)
 	DeleteReadinessSubscription(ctx context.Context, db DBTX, arg DeleteReadinessSubscriptionParams) (int64, error)
 	DeleteRoutePriorities(ctx context.Context, db DBTX, arg DeleteRoutePrioritiesParams) error
@@ -5256,6 +5258,9 @@ type Querier interface {
 	// every name in this scope; an empty string selects only legacy unnamed work.
 	QueueStateInScope(ctx context.Context, db DBTX, arg QueueStateInScopeParams) (QueueStateInScopeRow, error)
 	QueuedCustomerOperationJobTasks(ctx context.Context, db DBTX, pageLimit int32) ([]JobTask, error)
+	// An account's quiet-paused MB-seconds for one UTC month, from the
+	// (account_id, minute) index.
+	QuietPausedMBSecondsByMonth(ctx context.Context, db DBTX, arg QuietPausedMBSecondsByMonthParams) (int64, error)
 	// Each instance's proven quiet-paused seconds in [window_start, window_end).
 	// A closed pause is exact. An open pause counts only up to its node's
 	// watermark, and not at all without one, so a lagging node bills more, never
@@ -5985,6 +5990,12 @@ type Querier interface {
 	RecordProjectEnvironmentClonePostgresVerificationAttemptMatch(ctx context.Context, db DBTX, arg RecordProjectEnvironmentClonePostgresVerificationAttemptMatchParams) (ProjectEnvironmentClonePostgresVerificationAttempt, error)
 	RecordProjectEnvironmentClonePostgresVerificationClosure(ctx context.Context, db DBTX, arg RecordProjectEnvironmentClonePostgresVerificationClosureParams) (ProjectEnvironmentClonePostgresVerification, error)
 	RecordProjectEnvironmentClonePostgresVerificationMatch(ctx context.Context, db DBTX, arg RecordProjectEnvironmentClonePostgresVerificationMatchParams) (ProjectEnvironmentClonePostgresVerification, error)
+	// The MB-seconds of one instance-minute meterd did not bill because the
+	// ledger proved the VM quiet-paused (rollout step 3). As with mb_seconds the
+	// first positive value wins, so a caught-up minute never changes what the
+	// customer already saw. A minute paused throughout bills nothing and writes
+	// its row here, with mb_seconds 0.
+	RecordQuietPausedUsage(ctx context.Context, db DBTX, arg RecordQuietPausedUsageParams) error
 	// ADR-20261023171905: the quiet pause ledger. schedd records the pauses vmmd
 	// reports; meterd subtracts the paused seconds the ledger proves.
 	// One node report in one statement. A pause only ever gains a later end, so a

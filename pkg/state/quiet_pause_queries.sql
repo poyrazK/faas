@@ -47,10 +47,39 @@ SELECT p.instance_id::text AS instance_id,
  GROUP BY p.instance_id;
 
 -- name: DeleteQuietPausesBefore :execrows
--- Retention: pauses that started before cutoff, at most batch_limit rows per
--- call. An open one that old belongs to a VM long gone; its node simply never
--- reported again.
+-- Retention, at most batch_limit rows per call: pauses that ended before
+-- cutoff, and open ones that started before it on a node whose watermark has
+-- not reached it, a VM long gone whose node simply never reported again. An
+-- open pause on a reporting node is kept however old: a floor-held VM with no
+-- traffic stays quiet-paused for days, and its node sends the pause once.
 DELETE FROM instance_quiet_pauses
- WHERE ctid IN (SELECT ctid FROM instance_quiet_pauses
-                 WHERE started_at < sqlc.arg(cutoff)::timestamptz
+ WHERE ctid IN (SELECT p.ctid FROM instance_quiet_pauses p
+                 WHERE p.ended_at < sqlc.arg(cutoff)::timestamptz
+                    OR (p.ended_at IS NULL
+                        AND p.started_at < sqlc.arg(cutoff)::timestamptz
+                        AND NOT EXISTS (SELECT 1 FROM quiet_pause_watermarks w
+                                         WHERE w.node_id = p.node_id
+                                           AND w.covered_until >= sqlc.arg(cutoff)::timestamptz))
                  LIMIT sqlc.arg(batch_limit)::integer);
+
+-- name: RecordQuietPausedUsage :exec
+-- The MB-seconds of one instance-minute meterd did not bill because the
+-- ledger proved the VM quiet-paused (rollout step 3). As with mb_seconds the
+-- first positive value wins, so a caught-up minute never changes what the
+-- customer already saw. A minute paused throughout bills nothing and writes
+-- its row here, with mb_seconds 0.
+insert into usage_minutes (account_id, app_id, instance_id, minute, mb_seconds, paused_mb_seconds)
+values (sqlc.arg(account_id)::uuid, sqlc.arg(app_id)::uuid, sqlc.arg(instance_id)::uuid,
+        sqlc.arg(minute)::timestamptz, 0, sqlc.arg(paused_mb_seconds)::bigint)
+on conflict (instance_id, minute) do update
+   set paused_mb_seconds = case when usage_minutes.paused_mb_seconds = 0 and EXCLUDED.paused_mb_seconds > 0
+                                then EXCLUDED.paused_mb_seconds else usage_minutes.paused_mb_seconds end;
+
+-- name: QuietPausedMBSecondsByMonth :one
+-- An account's quiet-paused MB-seconds for one UTC month, from the
+-- (account_id, minute) index.
+select coalesce(sum(paused_mb_seconds), 0)::bigint as paused_mb_seconds
+  from usage_minutes
+ where account_id = sqlc.arg(account_id)::uuid
+   and minute >= sqlc.arg(month_start)::timestamptz
+   and minute <  sqlc.arg(month_end)::timestamptz;

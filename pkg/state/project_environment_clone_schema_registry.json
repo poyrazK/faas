@@ -18560,6 +18560,7 @@
       "net_rx_bytes",
       "net_tx_bytes",
       "org_id",
+      "paused_mb_seconds",
       "requests",
       "tail_seconds",
       "tx_bytes"

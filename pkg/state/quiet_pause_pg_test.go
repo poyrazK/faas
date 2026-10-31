@@ -122,9 +122,18 @@ func TestPgDeleteQuietPausesBefore(t *testing.T) {
 		start := old.Add(time.Duration(i) * time.Minute)
 		pauses = append(pauses, state.QuietPause{InstanceID: uuid.NewString(), StartedAt: start, EndedAt: start.Add(time.Second)})
 	}
-	openOld := state.QuietPause{InstanceID: uuid.NewString(), StartedAt: old}
+	// A floor-held VM with no traffic stays paused on a node that still
+	// reports; a pause that began before the cutoff may end after it.
+	openLive := state.QuietPause{InstanceID: uuid.NewString(), StartedAt: old}
+	straddling := state.QuietPause{InstanceID: uuid.NewString(), StartedAt: old, EndedAt: old.AddDate(0, 2, 0)}
 	recent := state.QuietPause{InstanceID: uuid.NewString(), StartedAt: old.AddDate(0, 2, 0), EndedAt: old.AddDate(0, 2, 0).Add(time.Second)}
-	if err := store.RecordQuietPauses(ctx, node, old.AddDate(0, 2, 0), append(pauses, openOld, recent)); err != nil {
+	if err := store.RecordQuietPauses(ctx, node, old.AddDate(0, 2, 0), append(pauses, openLive, straddling, recent)); err != nil {
+		t.Fatal(err)
+	}
+	// A VM long gone: its node stopped reporting before the cutoff.
+	goneNode := uuid.NewString()
+	openGone := state.QuietPause{InstanceID: uuid.NewString(), StartedAt: old}
+	if err := store.RecordQuietPauses(ctx, goneNode, old.Add(time.Hour), []state.QuietPause{openGone}); err != nil {
 		t.Fatal(err)
 	}
 	cutoff := old.AddDate(0, 1, 0)
@@ -132,17 +141,26 @@ func TestPgDeleteQuietPausesBefore(t *testing.T) {
 		t.Fatalf("first batch deleted %d, %v; want 3", n, err)
 	}
 	if n, err := store.DeleteQuietPausesBefore(ctx, cutoff, 3); err != nil || n != 1 {
-		t.Fatalf("second batch deleted %d, %v; want 1, the stale open pause", n, err)
+		t.Fatalf("second batch deleted %d, %v; want 1, the gone node's open pause", n, err)
 	}
 	if n, err := store.DeleteQuietPausesBefore(ctx, cutoff, 3); err != nil || n != 0 {
-		t.Fatalf("third batch deleted %d, %v; want 0: the recent pause stays", n, err)
+		t.Fatalf("third batch deleted %d, %v; want 0", n, err)
 	}
-	if open, err := store.OpenQuietPauses(ctx, node); err != nil || len(open) != 0 {
-		t.Fatalf("open pauses after retention = %+v, %v; want none", open, err)
+	if open, err := store.OpenQuietPauses(ctx, goneNode); err != nil || len(open) != 0 {
+		t.Fatalf("gone node's open pauses after retention = %+v, %v; want none", open, err)
 	}
-	got, err := store.QuietPausedSeconds(ctx, recent.StartedAt, recent.EndedAt)
-	if err != nil || got[recent.InstanceID].Seconds != 1 {
-		t.Fatalf("recent pause after retention = %+v, %v; want 1 s", got, err)
+	if open, err := store.OpenQuietPauses(ctx, node); err != nil || len(open) != 1 || open[0].InstanceID != openLive.InstanceID {
+		t.Fatalf("reporting node's open pauses after retention = %+v, %v; want %s", open, err, openLive.InstanceID)
+	}
+	window := old.AddDate(0, 2, 0)
+	got, err := store.QuietPausedSeconds(ctx, window.Add(-time.Minute), window.Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range map[string]int64{openLive.InstanceID: 60, straddling.InstanceID: 60, recent.InstanceID: 1} {
+		if got[id].Seconds != want {
+			t.Errorf("paused seconds of %s after retention = %+v; want %d", id, got[id], want)
+		}
 	}
 }
 
@@ -162,7 +180,8 @@ func (c *queryCapture) Query(ctx context.Context, sql string, args ...any) (pgx.
 // meterd reads the pauses overlapping one closed minute every minute it
 // rolls. A pause can stay open arbitrarily long, so the read bounds
 // started_at only from above, which the started_at index answers with the
-// whole retained ledger. Over 45 days of pauses the planner must reach the
+// whole retained ledger. Over 45 days of pauses (the retention before rollout
+// step 3, or a retention loop stalled that long) the planner must reach the
 // minute through the ended_at index instead.
 func TestPgQuietPausedSecondsReadsOnlyNearbyPauses(t *testing.T) {
 	ctx := context.Background()
@@ -215,5 +234,52 @@ SELECT md5((g % 716)::text)::uuid, $2::uuid,
 	plan := strings.Join(lines, "\n")
 	if strings.Contains(plan, "Seq Scan on instance_quiet_pauses") || !strings.Contains(plan, "instance_quiet_pauses_ended_at") {
 		t.Fatalf("QuietPausedSeconds does not reach the minute through the ended_at index:\n%s", plan)
+	}
+}
+
+// The customer-visible record of unbilled quiet pause (rollout step 3) sits
+// beside billed usage on the same row and never changes it. Like mb_seconds,
+// the first positive value of a minute wins.
+func TestPgQuietPausedUsage(t *testing.T) {
+	s, ctx := pgStore(t)
+	acctID, appID, depID := seedLiveDeploy(t, s, ctx)
+	ins, err := s.CreateInstance(ctx, appID, depID, string(state.StateRunning), 256, resolveDefaultLocal(t, ctx, s), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	october := time.Date(2026, 10, 31, 23, 59, 0, 0, time.UTC)
+	november := october.Add(time.Minute)
+	steps := []func() error{
+		func() error { return s.RecordQuietPausedUsage(ctx, acctID, appID, ins.ID, october, 1000) },
+		func() error { return s.AppendUsage(ctx, acctID, appID, ins.ID, october, 500, 1, 0, 0, 0, 0, 0, 0) },
+		func() error { return s.RecordQuietPausedUsage(ctx, acctID, appID, ins.ID, october, 2000) },
+		func() error { return s.AppendUsage(ctx, acctID, appID, ins.ID, november, 300, 0, 0, 0, 0, 0, 0, 0) },
+		func() error {
+			return s.RecordQuietPausedUsage(ctx, acctID, appID, ins.ID, november.Add(10*time.Second), 400)
+		},
+		func() error {
+			return s.RecordQuietPausedUsage(ctx, acctID, appID, ins.ID, november.Add(time.Minute), 0)
+		},
+	}
+	for i, step := range steps {
+		if err := step(); err != nil {
+			t.Fatalf("step %d: %v", i, err)
+		}
+	}
+	for month, want := range map[time.Time]int64{october: 1000, november: 400} {
+		got, err := s.QuietPausedMBSecondsByMonth(ctx, acctID, month)
+		if err != nil || got != want {
+			t.Errorf("paused MB-seconds in %s = %d, %v; want %d", month.Format("2006-01"), got, err, want)
+		}
+	}
+	if got, err := s.QuietPausedMBSecondsByMonth(ctx, uuid.NewString(), october); err != nil || got != 0 {
+		t.Errorf("another account's paused MB-seconds = %d, %v; want 0", got, err)
+	}
+	rows, err := s.UsageByMonth(ctx, acctID, october)
+	if err != nil || len(rows) != 1 || rows[0].MBSeconds != 500 {
+		t.Fatalf("billed usage in October = %+v, %v; want one row of 500 MB-seconds", rows, err)
+	}
+	if err := s.RecordQuietPausedUsage(ctx, "not-a-uuid", appID, ins.ID, october, 1); err == nil {
+		t.Fatal("recorded paused usage for an invalid account id")
 	}
 }

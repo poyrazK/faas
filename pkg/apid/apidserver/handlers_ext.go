@@ -6892,6 +6892,14 @@ func (s *server) buildUsageSummary(ctx context.Context, acct state.Account, mont
 		coldBoots += u.ColdBootCount
 	}
 	usedGB := meter.GBHours(mbSec)
+	// Quiet-paused time meterd did not bill (ADR-20261023171905); not part
+	// of usedGB.
+	var quietPausedMBSec int64
+	if paused, ok := s.store.(state.QuietPausedUsageStore); ok {
+		if quietPausedMBSec, err = paused.QuietPausedMBSecondsByMonth(ctx, acct.ID, month); err != nil {
+			return api.UsageSummaryResponse{}, err
+		}
+	}
 	// usedCPUHours is the per-month CPU-hours — informational only
 	// (issue #279 / PR-B). Billing math is on usedGB (plan RAM +
 	// 8 MB per running second). The conversion is the same shape
@@ -6941,6 +6949,7 @@ func (s *server) buildUsageSummary(ctx context.Context, acct state.Account, mont
 		IncludedGBHours:       included,
 		OverageGBHours:        overage,
 		OverageCents:          overageCents,
+		QuietPausedGBHours:    meter.GBHours(quietPausedMBSec),
 		UsedCPUHours:          usedCPUHours,
 		UsedEgressGB:          float64(egressBytes) / (1024 * 1024 * 1024),
 		EgressBillingMode:     egressMode,

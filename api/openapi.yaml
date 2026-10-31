@@ -114467,6 +114467,10 @@ components:
         included_gb_hours: { type: integer, format: int64 }
         overage_gb_hours: { type: number }
         overage_cents: { type: integer, format: int64, description: 'Integer cents. Includes compute at $0.01/GB-h and configured live egress overage; shadow egress is excluded.' }
+        quiet_paused_gb_hours:
+          type: number
+          description: 'GB-hours this month that an instance spent quiet-paused between requests and was not billed for, in the same plan RAM + 8 MB unit as used_gb_hours and not part of it (ADR-20261023171905). Absent while zero, which it stays until unbilled quiet pause is released to the account.'
+          x-since: "2026-10"
         used_cpu_hours:
           type: number
           description: 'Per-month CPU-hours (informational; not billed).'
