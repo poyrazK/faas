@@ -8315,23 +8315,30 @@ haveApp:
 		}
 		// Wake-locality classifier (PR scale-out readiness). Increment
 		// AFTER the existing first-byte observation so the 350 ms
-		// measurement path is unchanged. Only fires on a real admit
-		// (cold==true), so warm requests, at-capacity benign outcomes,
-		// and admission errors do not enumerate. Today's outcomes are
-		// local_snapshot / local_coldboot; remote_* outcomes slot in
-		// when a second compute node joins.
-		h.metrics.ObserveWakeLocality(wakeMethod.String())
-		// Snapshot-tier counter (issue #470 / PR #470-FU-B). The
-		// tier ∈ {warm, init, cold} refinement of the wake
-		// outcome is produced by PR #470-FU-A (engine
-		// usableSnapshotForWake). Until the engine threads the
-		// tier onto the Admit response, we map the existing
-		// WakeMethod to the closest tier: snapshot→init (today
-		// every restored snapshot is init; warm is a refinement)
-		// and cold-boot→cold. Update to the real tier field once
-		// PR #470-FU-A lands; the Observe method's empty-string
-		// fallback already covers the transition seam.
-		h.metrics.ObserveWakeSnapshotTier(tierFromWakeMethod(wakeMethod))
+		// measurement path is unchanged. Only fires on a real admit, so
+		// warm requests, at-capacity benign outcomes, and admission
+		// errors do not enumerate. Today's outcomes are local_snapshot /
+		// local_coldboot; remote_* outcomes slot in when a second compute
+		// node joins.
+		//
+		// A pinned-routing request that joined another request's wake is
+		// cold but admitted nothing, so it carries no method of its own.
+		// Counting it filed every such follower as local_coldboot: 8,497
+		// in a 2026-10-31 load test whose 15 wakes were all restores.
+		if wakeMethod != WakeMethodUnspecified {
+			h.metrics.ObserveWakeLocality(wakeMethod.String())
+			// Snapshot-tier counter (issue #470 / PR #470-FU-B). The
+			// tier ∈ {warm, init, cold} refinement of the wake
+			// outcome is produced by PR #470-FU-A (engine
+			// usableSnapshotForWake). Until the engine threads the
+			// tier onto the Admit response, we map the existing
+			// WakeMethod to the closest tier: snapshot→init (today
+			// every restored snapshot is init; warm is a refinement)
+			// and cold-boot→cold. Update to the real tier field once
+			// PR #470-FU-A lands; the Observe method's empty-string
+			// fallback already covers the transition seam.
+			h.metrics.ObserveWakeSnapshotTier(tierFromWakeMethod(wakeMethod))
+		}
 	}
 }
 
