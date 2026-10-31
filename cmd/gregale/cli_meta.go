@@ -1919,7 +1919,7 @@ var cliCommands = []cliCommand{
 			"gregale release approval require --app my-api --approvals 2 --notify releases",
 			"gregale release approval require --app my-api --approvals 1 --approvers developer --timeout 4h",
 			"gregale release approval pending --app my-api",
-			"gregale release approve 3f9c1e2a-0b7d-4c55-9e1a-2d6f8b4c7e10 --comment \"canary looks clean\"",
+			"gregale release approval status v42 --app my-api",
 			"gregale release reject v42 --app my-api --reason \"checkout latency is up\"",
 		},
 		Subcommands: []cliSub{
@@ -1944,10 +1944,12 @@ var cliCommands = []cliCommand{
 			{Name: "status", Short: "Show a release's approvals", Positionals: []string{"<deployment>"}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug, to resolve a vN revision", Value: "slug"},
 			}},
-			{Name: "approve", Short: "Approve a release", Positionals: []string{"<deployment>"}, Flags: []cliFlag{
-				{Name: "app", Short: "app slug, to resolve a vN revision", Value: "slug"},
-				{Name: "comment", Short: "note recorded with the approval", Value: "TEXT"},
-			}},
+			{Name: "approve", Short: "Approve a release (in the dashboard; prints its approval page)", Positionals: []string{"<deployment>"},
+				Notes: []string{"A person signed in to the dashboard approves a release; the CLI's login token, an API key or CI cannot. The command fails with the release's approval page to open. `gregale release reject` works from the CLI."},
+				Flags: []cliFlag{
+					{Name: "app", Short: "app slug, to resolve a vN revision", Value: "slug"},
+					{Name: "comment", Short: "note recorded with the approval", Value: "TEXT"},
+				}},
 			{Name: "reject", Short: "Reject a release and abort its rollout", Positionals: []string{"<deployment>"}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug, to resolve a vN revision", Value: "slug"},
 				{Name: "reason", Short: "why the release is rejected", Value: "TEXT", Req: true},
@@ -5748,10 +5750,9 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
-		Name:     "postgres",
-		DocSlug:  "postgres",
-		Short:    "Operator preview: manage PostgreSQL databases and bindings",
-		Audience: cliAudienceOperator,
+		Name:    "postgres",
+		DocSlug: "postgres",
+		Short:   "Create, attach and restore managed PostgreSQL databases",
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List managed PostgreSQL databases"},
 			{Name: "capabilities", Short: "Show plan and region PostgreSQL feature support", Flags: []cliFlag{
@@ -5808,7 +5809,7 @@ var cliCommands = []cliCommand{
 				{Name: "name", Short: "name for the restored database", Req: true, Value: "NAME"},
 				{Name: "point-in-time", Short: "RFC3339 restore timestamp", Req: true, Value: "TIMESTAMP"},
 			}},
-			{Name: "live", Short: "Enable live queries and manage the live secret (operator preview)", Subcommands: []cliSub{
+			{Name: "live", Short: "Enable live queries and manage the live secret (preview)", Subcommands: []cliSub{
 				{Name: "status", Short: "Show whether live queries are enabled and the live secrets' key IDs", Positionals: []string{"<database>"}},
 				{Name: "enable", Short: "Enable live queries and issue the live secret", Positionals: []string{"<database>"}, Flags: []cliFlag{
 					{Name: "app", Short: "store the secret as an app secret on this app", Value: "APP"},

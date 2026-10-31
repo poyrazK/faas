@@ -42,8 +42,11 @@ const (
 	ReleaseEventRollbackRequested = "rollback_requested"
 	ReleaseEventRolledBack        = "rolled_back"
 	ReleaseEventWatchPassed       = "watch_passed"
-	ReleaseEventSuperseded        = "superseded"
-	ReleaseEventNote              = "note"
+	// ReleaseEventWatchRegressed: the post-release watch found a regression
+	// but did not roll back (its decision carries rollback_skipped).
+	ReleaseEventWatchRegressed = "watch_regressed"
+	ReleaseEventSuperseded     = "superseded"
+	ReleaseEventNote           = "note"
 )
 
 // ReleaseTimeline is GET /v1/deployments/{id}/timeline: one release's phase

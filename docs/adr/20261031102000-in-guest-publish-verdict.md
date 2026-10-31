@@ -80,3 +80,15 @@ how:
   `202` as stored now get the guarantee they assumed.
 - No schema change. guest-init (runtime) and vmmd (node) release
   independently.
+
+## Amendment (2026-10-31): conflicts and full storage
+
+Two refusals fell to the catch-all `503 event_publish_unavailable` with
+`Retry-After: 1`. In both cases an app would retry forever, or hammer a full
+store every second. They now answer the way `POST /v1/events:publish` does:
+
+| Status | Code | Cause |
+|---|---|---|
+| `409` | `conflict` | The source and id already name an event with different content |
+| `429` | `event_storage_capacity_exhausted` | Retained event storage is full; `Retry-After: 60` |
+

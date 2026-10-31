@@ -147,8 +147,10 @@ effects with an idempotency key or version check. See
 `expires_after_ms` bounds how long a delivery may wait before it starts. A
 delivery that has not started by then expires and is not run. Once a delivery
 has started, its deadline no longer applies: a failed attempt keeps retrying
-until it succeeds or is dead-lettered, so a failure is never dropped silently
+until it succeeds or is dead-lettered
 ([ADR 20261031101000](adr/20261031101000-keyed-expiry-spares-started-work.md)).
+Under `pending_updates: keep_latest`, a newer event for the key still
+supersedes a delivery that is waiting to retry; that is the policy's point.
 A dead-lettered keyed delivery whose deadline has passed cannot be replayed
 from the dead-letter queue, because a replay starts it over and it would
 expire at once: replaying it answers `409 keyed_replay_expired`, and
@@ -211,7 +213,8 @@ app's unified dead-letter queue (`gregale dlq list <app>`); its origin is shown 
 `event_subscription`.
 
 Publish an event from the CLI without learning the CloudEvents envelope. Gregale
-generates the stable event id for you:
+generates an event id for you and prints it; if the command fails, it prints
+the id it used so you can retry with `--id` without publishing twice:
 
 ```bash
 gregale event publish billing.stripe invoice.paid \
@@ -225,6 +228,37 @@ choose the idempotency key explicitly. The flag-based form remains supported:
 gregale event publish --id evt-123 --source billing.stripe --type invoice.paid \
   --data '{"amount":150}'
 ```
+
+### Subscription limits and removal
+
+On a production deploy, the `event_triggers` in `gregale.yaml` are the app's
+whole set of event subscriptions
+([ADR 20261031130000](adr/20261031130000-event-subscription-reconcile.md)):
+
+- A trigger you remove is disabled. Events not yet routed to it are not
+  delivered; their receipts show it as filtered. Deliveries that already
+  started finish.
+- Changing a trigger's filter replaces its subscription; the old filter stops
+  delivering.
+- Declaring a trigger again re-enables the same subscription, with its
+  history and controls.
+- A deploy whose `gregale.yaml` has no `event_triggers` disables them all. A
+  deploy without a `gregale.yaml`, a stage deploy and `gregale deploy
+  --no-triggers` leave subscriptions as they are.
+
+Each plan caps the enabled subscriptions per app and per account:
+
+| Plan | Per app | Per account |
+|---|---:|---:|
+| Free | 0 | 0 |
+| Hobby | 5 | 10 |
+| Pro | 20 | 50 |
+| Scale | 100 | 500 |
+
+A deploy that would go past a cap is refused with `403
+plan_event_subscription_quota`, naming the limit and the count it would have
+reached, and changes nothing. Numbers in filters are kept exactly, so a filter
+on an integer ID larger than 2^53 matches only that ID.
 
 ### Delivery identity
 
@@ -411,6 +445,8 @@ decision on that event
 | `422` | `validation_failed` | The data does not match the event's registered schema. |
 | `429` | `event_publish_rate_limited` | Over your plan's [publish rate](#publish-rate). Retry the same event after `Retry-After`. |
 | `503` | `events_paused` | Events are [paused](#pausing-events). Retry the same event after `Retry-After`. |
+| `409` | `conflict` | The source and `id` already name an event with different content. Use a new `id`; retrying cannot succeed. |
+| `429` | `event_storage_capacity_exhausted` | Your plan's retained event storage is full. Retry the same event after `Retry-After`, once stored receipts are pruned or the plan is upgraded. |
 | `503` | `event_publish_unavailable` | Not stored. Retry the same event after `Retry-After`. |
 | `503` | `event_publish_unconfirmed` | The platform got the event but its answer was lost, so it may have been stored. Retry the same event, with the same `id`: if it was stored, the retry answers `202` and the event is still delivered once. |
 

@@ -46,7 +46,8 @@ func TestTopLevelUsageGroupsCustomerCommands(t *testing.T) {
 }
 
 // operatorCommands are callable but listed only by `help --all --operator`.
-var operatorCommands = []string{"admin", "commit", "data-repair", "entities", "github-webhook-secret", "mail", "postgres", "product", "rollouts", "tenant-surfaces"}
+// postgres left it when managed PostgreSQL reached GA (ADR-20261031091607).
+var operatorCommands = []string{"admin", "commit", "data-repair", "entities", "github-webhook-secret", "mail", "product", "rollouts", "tenant-surfaces"}
 
 // cliTreeFamilies are the sections of `help --all` after the shortcuts.
 var cliTreeFamilies = []string{"Shortcuts:", "Ship:", "Run:", "Configure:", "Data:", "Work:", "Observe:", "Agents:", "Account:"}
@@ -79,6 +80,7 @@ func TestTopLevelUsageAllListsTheCommandTree(t *testing.T) {
 		{"deploy", "Shortcuts:"}, {"logs", "Shortcuts:"}, {"release", "Ship:"}, {"app", "Run:"},
 		{"env", "Configure:"}, {"bucket", "Data:"}, {"cron", "Work:"}, {"alert", "Observe:"},
 		{"mcp", "Agents:"}, {"billing", "Account:"}, {"start", "Shortcuts:"}, {"operation", "Work:"},
+		{"postgres", "Data:"},
 	} {
 		if !strings.Contains(helpSection(out, tc.section), "\n  "+tc.command+" ") {
 			t.Errorf("--all help does not list %q under %q:\n%s", tc.command, tc.section, out)

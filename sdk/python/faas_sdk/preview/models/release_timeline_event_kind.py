@@ -21,6 +21,7 @@ ReleaseTimelineEventKind = Literal[
     "superseded",
     "traffic_changed",
     "watch_passed",
+    "watch_regressed",
 ]
 
 RELEASE_TIMELINE_EVENT_KIND_VALUES: set[ReleaseTimelineEventKind] = {
@@ -44,6 +45,7 @@ RELEASE_TIMELINE_EVENT_KIND_VALUES: set[ReleaseTimelineEventKind] = {
     "superseded",
     "traffic_changed",
     "watch_passed",
+    "watch_regressed",
 }
 
 

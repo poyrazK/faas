@@ -627,6 +627,149 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/StatusPage'}
+  /v1/postgres/capabilities:
+    get:
+      operationId: getManagedPostgresCapabilities
+      summary: Show plan and region PostgreSQL feature support
+      description: Returns configured provider-neutral support after plan limits without provider calls. provisioning_enabled includes qualification and canary gates. Current usage, budget, and quota admission are checked separately at reservation. Existing databases remain pinned to their original backend.
+      tags: [managed_postgres]
+      parameters:
+        - name: region
+          in: query
+          required: false
+          description: Portable region name; defaults to the configured region.
+          schema: {type: string, maxLength: 255}
+      responses:
+        '200':
+          description: Effective regional capability contract
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedPostgresCapabilities'}
+        default:
+          description: Authentication or capability lookup error
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+  /v1/postgres/databases:
+    get:
+      operationId: listManagedPostgresDatabases
+      summary: List managed PostgreSQL databases
+      tags: [managed_postgres]
+      responses:
+        '200':
+          description: Account databases
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedPostgresDatabaseList'}
+        default:
+          description: Authentication or database listing error
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+    post:
+      operationId: createManagedPostgresDatabase
+      summary: Create a managed PostgreSQL database
+      tags: [managed_postgres]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateManagedPostgresDatabaseRequest'}
+      responses:
+        '201':
+          description: Database accepted or ready
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedPostgresDatabase'}
+        default:
+          description: Invalid request, plan limit, or provider unavailable
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+  /v1/postgres/databases/{id}:
+    parameters:
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    get:
+      operationId: getManagedPostgresDatabase
+      summary: Get managed PostgreSQL database status
+      tags: [managed_postgres]
+      responses:
+        '200':
+          description: Database status without provider credentials
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedPostgresDatabase'}
+        default:
+          description: Authentication or database status error
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+    delete:
+      operationId: deleteManagedPostgresDatabase
+      summary: Delete a managed PostgreSQL database
+      description: "A ready database is kept for 7 days with its compute stopped and its connections refused, and can be undeleted until restorable_until. It still counts toward the plan's database limit and keeps its name until it is purged. Any other database, or a delete with purge=true, is deleted at once. Bindings and restore dependencies must be removed first."
+      tags: [managed_postgres]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - name: purge
+          in: query
+          required: false
+          description: "true deletes the database at once, including one already scheduled for deletion. It cannot be undone."
+          schema: {type: boolean, default: false}
+      responses:
+        '200':
+          description: Database deletion status
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedPostgresDatabase'}
+        default:
+          description: Authentication or database deletion error
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+  /v1/postgres/databases/{id}/undelete:
+    parameters:
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    post:
+      operationId: undeleteManagedPostgresDatabase
+      summary: Undelete a managed PostgreSQL database
+      description: "Returns a database whose delete is scheduled to ready, with its data, spec and restore history, while restorable_until is in the future. The plan must still allow the database's spec. After the window the database is gone and the request returns 404."
+      tags: [managed_postgres]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Database returned to ready
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedPostgresDatabase'}
+        default:
+          description: Window ended, database not scheduled for deletion, plan limit, or provider error
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+  /v1/account/managed-postgres-usage:
+    get:
+      operationId: getManagedPostgresUsage
+      summary: Read managed PostgreSQL usage and guardrail state
+      description: |
+        Requires usage read scope. Returns normalized current-month meters,
+        plan headroom, and freshness state. Provider IDs, rates, credentials,
+        and internal cost line items are never returned.
+      tags: [managed_postgres]
+      responses:
+        '200':
+          description: Current managed PostgreSQL usage; Cache-Control no-store
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedPostgresUsageResponse'}
+        default:
+          description: Authentication or managed PostgreSQL accounting error
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
   /v1/account/usage:
     get:
       operationId: getAccountUsage
@@ -654,6 +797,253 @@ paths:
               schema: {$ref: '#/components/schemas/AccountUsageResponse'}
         default:
           description: Authentication or usage accounting error
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+  /v1/postgres/databases/{id}/compute-policy:
+    parameters:
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    post:
+      operationId: changeManagedPostgresComputePolicy
+      summary: Change managed PostgreSQL scale-to-zero policy
+      description: Durably reserves a scale-to-zero policy change on the pinned dataset. Clients may disconnect during the policy change. The request_id UUID is the durable idempotency key; repeat the same UUID and target to recover progress. Another resize, deletion, binding change, restore or cutover conflicts while updating. Existing accepted requests remain replayable after admission closes. Only compute idle policy changes; ready confirms provider observation, not uninterrupted connections. Published environment-clone targets and databases without a pinned data identity are currently unsupported.
+      tags: [managed_postgres]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ChangeManagedPostgresComputePolicyRequest'}
+      responses:
+        '202':
+          description: Accepted policy change or current progress for an existing request
+          headers:
+            Location:
+              description: Progress URL for the compute policy request
+              schema: {type: string}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedPostgresComputePolicyChange'}
+        default:
+          description: Compute policy validation, concurrency, entitlement or provider admission failure
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+  /v1/postgres/databases/{id}/compute-policy-changes/{change_id}:
+    parameters:
+      - $ref: '#/components/parameters/ManagedPostgresID'
+      - name: change_id
+        in: path
+        required: true
+        description: Canonical UUID supplied as request_id when reserving this policy change.
+        schema: {type: string, format: uuid}
+    get:
+      operationId: getManagedPostgresComputePolicyChange
+      summary: Get managed PostgreSQL compute policy progress
+      description: Reads a durable compute policy request for the authenticated account and database. Responses are not cached and omit private provider identity.
+      tags: [managed_postgres]
+      responses:
+        '200':
+          description: Account and database scoped compute policy progress
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedPostgresComputePolicyChange'}
+        default:
+          description: Authentication or policy lookup error
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+  /v1/postgres/databases/{id}/resize:
+    parameters:
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    post:
+      operationId: resizeManagedPostgresDatabase
+      summary: Resize managed PostgreSQL compute
+      description: Durably reserves a service-class change on the pinned dataset. Clients may disconnect during resizing. The request_id UUID is the durable idempotency key; repeat the same UUID and target to recover progress. Another resize, deletion, binding change, restore or cutover conflicts while updating. Existing accepted requests remain replayable after admission closes. Only compute class changes; ready confirms provider observation, not uninterrupted connections. Published environment-clone targets and databases without a pinned data identity are currently unsupported.
+      tags: [managed_postgres]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ResizeManagedPostgresDatabaseRequest'}
+      responses:
+        '202':
+          description: Accepted resize or current progress for an existing request
+          headers:
+            Location:
+              description: Progress URL
+              schema: {type: string}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedPostgresResize'}
+        default:
+          description: Invalid request, conflict, plan limit or backend unavailable
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+  /v1/postgres/databases/{id}/resizes/{resize_id}:
+    parameters:
+      - $ref: '#/components/parameters/ManagedPostgresID'
+      - name: resize_id
+        in: path
+        required: true
+        description: Canonical UUID supplied as request_id when reserving this resize.
+        schema: {type: string, format: uuid}
+    get:
+      operationId: getManagedPostgresResize
+      summary: Get managed PostgreSQL resize progress
+      description: Reads a durable resize request for the authenticated account and database. Responses are not cached and omit private provider identity.
+      tags: [managed_postgres]
+      responses:
+        '200':
+          description: Account and database scoped resize progress
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedPostgresResize'}
+        default:
+          description: Authentication or resize lookup error
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+  /v1/postgres/databases/{id}/restore:
+    parameters:
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    post:
+      operationId: restoreManagedPostgresDatabase
+      summary: Restore a database into a new managed PostgreSQL database
+      tags: [managed_postgres]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RestoreManagedPostgresDatabaseRequest'}
+      responses:
+        '201':
+          description: Restore accepted or ready
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedPostgresDatabase'}
+        default:
+          description: Invalid point in time, plan limit, or provider error
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+  /v1/postgres/databases/{id}/connection-budget:
+    parameters:
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    get:
+      operationId: getManagedPostgresConnectionBudget
+      summary: Inspect read-only database connection planning
+      description: Account-scoped metadata only; requires managed PostgreSQL read permission. Does not wake SQL, reserve connections or change admission. Current adapters have no verified usable-capacity observation and return unknown with canonical pool estimates. Database snapshots are independent.
+      tags: [managed_postgres]
+      responses:
+        '200':
+          description: Bounded credential-free planning and explicit unknown coverage
+          headers:
+            Cache-Control: {schema: {type: string}, description: Always no-store}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedPostgresConnectionBudget'}
+        default:
+          description: Authentication, ownership or metadata read error
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+  /v1/postgres/databases/{id}/bindings:
+    parameters:
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    get:
+      operationId: listManagedPostgresBindings
+      summary: List workload bindings for a database
+      tags: [managed_postgres]
+      responses:
+        '200':
+          description: Bindings without credential material
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedPostgresBindingList'}
+        default:
+          description: Authentication or binding listing error
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+    post:
+      operationId: createManagedPostgresBinding
+      summary: Bind a workload app to a database
+      description: The selected database backend must advertise the requested credential access. Unsupported access is rejected before a durable binding is reserved or provider credentials are requested.
+      tags: [managed_postgres]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateManagedPostgresBindingRequest'}
+      responses:
+        '201':
+          description: Binding accepted or ready; credentials are delivered through the app secret
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedPostgresBinding'}
+        default:
+          description: Invalid request, conflict, or provider error
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+  /v1/postgres/bindings/{id}:
+    parameters:
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    get:
+      operationId: getManagedPostgresBinding
+      summary: Get a workload database binding
+      tags: [managed_postgres]
+      responses:
+        '200':
+          description: Binding metadata without credential material
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedPostgresBinding'}
+        default:
+          description: Authentication or binding status error
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+    delete:
+      operationId: deleteManagedPostgresBinding
+      summary: Remove a workload database binding
+      tags: [managed_postgres]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Binding deletion status
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedPostgresBinding'}
+        default:
+          description: Authentication or binding deletion error
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+  /v1/postgres/bindings/{id}/rotate:
+    parameters:
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    post:
+      operationId: rotateManagedPostgresBinding
+      summary: Rotate a workload database credential
+      description: Creates a replacement credential, refreshes the app runtime, and retains the previous provider identity until the rolling refresh completes.
+      tags: [managed_postgres]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Binding credential generation and rotation status
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedPostgresBinding'}
+        default:
+          description: Authentication or binding rotation error
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
@@ -18116,6 +18506,498 @@ paths:
         '413': {$ref: '#/components/responses/SourceTooLarge'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
         '404': {$ref: '#/components/responses/NotFound'}
+  /v1/orgs/{organization}/postgres/databases:
+    parameters:
+      - name: organization
+        in: path
+        required: true
+        description: "Organization selected to list the organization's managed postgresql databases."
+        schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$'}
+    get:
+      operationId: listOrgManagedPostgresDatabases
+      summary: "List the organization's managed PostgreSQL databases."
+      description: "Returns the company inventory across current and legacy storage namespaces. Current membership is required; personal databases are excluded."
+      tags: [managed_postgres]
+      responses:
+        '200':
+          description: "Result of the request to list the organization's managed PostgreSQL databases."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedPostgresDatabaseList'}
+        default:
+          description: "Problem while attempting to list the organization's managed PostgreSQL databases."
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+    post:
+      operationId: createOrgManagedPostgresDatabase
+      summary: "Create a database owned by the organization."
+      description: "An owner or admin reserves the database in the company namespace. Organization billing adoption, plan allowances and the shared database quota apply before provisioning."
+      tags: [managed_postgres]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateManagedPostgresDatabaseRequest'}
+      responses:
+        '201':
+          description: "Result of the request to create a database owned by the organization."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedPostgresDatabase'}
+        default:
+          description: "Problem while attempting to create a database owned by the organization."
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /v1/orgs/{organization}/postgres/capabilities:
+    parameters:
+      - name: organization
+        in: path
+        required: true
+        description: "Organization selected to read postgresql capabilities for the company plan."
+        schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$'}
+    get:
+      operationId: getOrgManagedPostgresCapabilities
+      summary: "Read PostgreSQL capabilities for the company plan."
+      description: "Reports qualified provider capabilities intersected with the organization's plan. Reading capabilities does not open the provisioning rollout gate."
+      tags: [managed_postgres]
+      parameters:
+        - name: region
+          in: query
+          required: false
+          description: "Placement region used to read postgresql capabilities for the company plan."
+          schema: {type: string, maxLength: 255}
+      responses:
+        '200':
+          description: "Result of the request to read PostgreSQL capabilities for the company plan."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedPostgresCapabilities'}
+        default:
+          description: "Problem while attempting to read PostgreSQL capabilities for the company plan."
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /v1/orgs/{organization}/postgres/databases/{id}:
+    parameters:
+      - name: organization
+        in: path
+        required: true
+        description: "Organization selected to inspect a company postgresql database."
+        schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$'}
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    get:
+      operationId: getOrgManagedPostgresDatabase
+      summary: "Inspect a company PostgreSQL database."
+      description: "Reads the database under its persisted organization owner. Existing resource and provider identities remain stable after the creator leaves."
+      tags: [managed_postgres]
+      responses:
+        '200':
+          description: "Result of the request to inspect a company PostgreSQL database."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedPostgresDatabase'}
+        default:
+          description: "Problem while attempting to inspect a company PostgreSQL database."
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+    delete:
+      operationId: deleteOrgManagedPostgresDatabase
+      summary: "Delete a company PostgreSQL resource."
+      description: "An owner or admin requests provider cleanup. Active bindings and retained restore dependencies must be removed first; accounting evidence remains available. A ready database is kept for 7 days and can be undeleted until restorable_until; purge=true deletes at once."
+      tags: [managed_postgres]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - name: purge
+          in: query
+          required: false
+          description: "true deletes the company database at once, even during its undelete window. It cannot be undone."
+          schema: {type: boolean, default: false}
+      responses:
+        '200':
+          description: "Result of the request to delete a company PostgreSQL resource."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedPostgresDatabase'}
+        default:
+          description: "Problem while attempting to delete a company PostgreSQL resource."
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /v1/orgs/{organization}/postgres/databases/{id}/bindings:
+    parameters:
+      - name: organization
+        in: path
+        required: true
+        description: "Organization selected to list the company database's app bindings."
+        schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$'}
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    get:
+      operationId: listOrgManagedPostgresBindings
+      summary: "List the company database's app bindings."
+      description: "Returns app and environment binding metadata for this organization-owned database. Connection credentials remain sealed and are not included in the response."
+      tags: [managed_postgres]
+      responses:
+        '200':
+          description: "Result of the request to list the company database's app bindings."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedPostgresBindingList'}
+        default:
+          description: "Problem while attempting to list the company database's app bindings."
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+    post:
+      operationId: createOrgManagedPostgresBinding
+      summary: "Attach the company database to an app environment."
+      description: "The app and database must belong to the addressed company. Their storage namespaces may differ. Owners, admins and developers may attach bindings with the required database scope."
+      tags: [managed_postgres]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateManagedPostgresBindingRequest'}
+      responses:
+        '201':
+          description: "Result of the request to attach the company database to an app environment."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedPostgresBinding'}
+        default:
+          description: "Problem while attempting to attach the company database to an app environment."
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /v1/orgs/{organization}/postgres/bindings/{id}:
+    parameters:
+      - name: organization
+        in: path
+        required: true
+        description: "Organization selected to inspect a company database binding."
+        schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$'}
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    get:
+      operationId: getOrgManagedPostgresBinding
+      summary: "Inspect a company database binding."
+      description: "Resolves ownership through the binding's database before exposing metadata. Current organization membership is required even when the binding retains a creator namespace."
+      tags: [managed_postgres]
+      responses:
+        '200':
+          description: "Result of the request to inspect a company database binding."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedPostgresBinding'}
+        default:
+          description: "Problem while attempting to inspect a company database binding."
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+    delete:
+      operationId: deleteOrgManagedPostgresBinding
+      summary: "Detach a company database binding."
+      description: "Revokes the managed provider credential and removes its sealed app-secret target. Other bindings on the same company database remain usable."
+      tags: [managed_postgres]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: "Result of the request to detach a company database binding."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedPostgresBinding'}
+        default:
+          description: "Problem while attempting to detach a company database binding."
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /v1/orgs/{organization}/postgres/databases/{id}/resizes/{resize_id}:
+    parameters:
+      - name: organization
+        in: path
+        required: true
+        description: "Organization selected to read a company database resize operation."
+        schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$'}
+      - $ref: '#/components/parameters/ManagedPostgresID'
+      - name: resize_id
+        in: path
+        required: true
+        description: "UUID of the resize request whose company database progress is returned."
+        schema: {type: string, format: uuid}
+    get:
+      operationId: getOrgManagedPostgresResize
+      summary: "Read a company database resize operation."
+      description: "Returns progress for a durable resize UUID owned by this database and organization. Reading progress does not submit another resize."
+      tags: [managed_postgres]
+      responses:
+        '200':
+          description: "Result of the request to read a company database resize operation."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedPostgresResize'}
+        default:
+          description: "Problem while attempting to read a company database resize operation."
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /v1/orgs/{organization}/postgres/databases/{id}/compute-policy-changes/{change_id}:
+    parameters:
+      - name: organization
+        in: path
+        required: true
+        description: "Organization selected to read a company database compute-policy operation."
+        schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$'}
+      - $ref: '#/components/parameters/ManagedPostgresID'
+      - name: change_id
+        in: path
+        required: true
+        description: "UUID of the compute-policy change recorded for the company database."
+        schema: {type: string, format: uuid}
+    get:
+      operationId: getOrgManagedPostgresComputePolicyChange
+      summary: "Read a company database compute-policy operation."
+      description: "Returns the durable policy change recorded for the addressed company database. The organization permission check also applies to old operation UUIDs."
+      tags: [managed_postgres]
+      responses:
+        '200':
+          description: "Result of the request to read a company database compute-policy operation."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedPostgresComputePolicyChange'}
+        default:
+          description: "Problem while attempting to read a company database compute-policy operation."
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /v1/orgs/{organization}/postgres/databases/{id}/undelete:
+    parameters:
+      - name: organization
+        in: path
+        required: true
+        description: "Organization that owns the company database to undelete."
+        schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$'}
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    post:
+      operationId: undeleteOrgManagedPostgresDatabase
+      summary: "Undelete a company PostgreSQL database."
+      description: "An owner or admin returns a company database whose delete is scheduled to ready while restorable_until is in the future. The company plan must still allow the database's spec."
+      tags: [managed_postgres]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: "Result of the request to undelete a company PostgreSQL database."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedPostgresDatabase'}
+        default:
+          description: "Problem while attempting to undelete a company PostgreSQL database."
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /v1/orgs/{organization}/postgres/databases/{id}/restore:
+    parameters:
+      - name: organization
+        in: path
+        required: true
+        description: "Organization selected to restore the company database to a separate resource."
+        schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$'}
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    post:
+      operationId: restoreOrgManagedPostgresDatabase
+      summary: "Restore the company database to a separate resource."
+      description: "An owner or admin creates a restore within the source database's organization. The company plan, restore window and aggregate database reservation quota are enforced."
+      tags: [managed_postgres]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RestoreManagedPostgresDatabaseRequest'}
+      responses:
+        '201':
+          description: "Result of the request to restore the company database to a separate resource."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedPostgresDatabase'}
+        default:
+          description: "Problem while attempting to restore the company database to a separate resource."
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /v1/orgs/{organization}/postgres/databases/{id}/resize:
+    parameters:
+      - name: organization
+        in: path
+        required: true
+        description: "Organization selected to change the company database service class."
+        schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$'}
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    post:
+      operationId: resizeOrgManagedPostgresDatabase
+      summary: "Change the company database service class."
+      description: "An owner or admin submits a durable resize request. The requested class must fit the company plan and provider capabilities; connection interruption may occur."
+      tags: [managed_postgres]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ResizeManagedPostgresDatabaseRequest'}
+      responses:
+        '202':
+          description: "Result of the request to change the company database service class."
+          headers:
+            Location:
+              description: Company database resize progress endpoint returned for this request
+              schema: {type: string}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedPostgresResize'}
+        default:
+          description: "Problem while attempting to change the company database service class."
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /v1/orgs/{organization}/postgres/databases/{id}/compute-policy:
+    parameters:
+      - name: organization
+        in: path
+        required: true
+        description: "Organization selected to change the company database compute policy."
+        schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$'}
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    post:
+      operationId: changeOrgManagedPostgresComputePolicy
+      summary: "Change the company database compute policy."
+      description: "An owner or admin changes scale-to-zero policy with a durable request UUID. Current organization entitlements govern the request, including legacy databases."
+      tags: [managed_postgres]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ChangeManagedPostgresComputePolicyRequest'}
+      responses:
+        '202':
+          description: "Result of the request to change the company database compute policy."
+          headers:
+            Location:
+              description: Company database compute-policy progress endpoint for the accepted change
+              schema: {type: string}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedPostgresComputePolicyChange'}
+        default:
+          description: "Problem while attempting to change the company database compute policy."
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /v1/orgs/{organization}/postgres/bindings/{id}/rotate:
+    parameters:
+      - name: organization
+        in: path
+        required: true
+        description: "Organization selected to rotate a credential for a company app binding."
+        schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$'}
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    post:
+      operationId: rotateOrgManagedPostgresBinding
+      summary: "Rotate a credential for a company app binding."
+      description: "An owner or admin starts the existing credential refresh protocol. The previous generation stays valid until runtime delivery completes; the binding ID is preserved."
+      tags: [managed_postgres]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: "Result of the request to rotate a credential for a company app binding."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedPostgresBinding'}
+        default:
+          description: "Problem while attempting to rotate a credential for a company app binding."
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /v1/orgs/{organization}/postgres/usage:
+    parameters:
+      - name: organization
+        in: path
+        required: true
+        description: "Organization selected to read the organization's postgresql usage totals."
+        schema: {type: string, minLength: 1, maxLength: 63, pattern: '^[a-z0-9][a-z0-9-]*$'}
+    get:
+      operationId: getOrgManagedPostgresUsage
+      summary: "Read the organization's PostgreSQL usage totals."
+      description: "Aggregates normalized usage across company database namespaces after billing adoption. Billing seats may read these totals without receiving database names or credentials."
+      tags: [managed_postgres]
+      responses:
+        '200':
+          description: "Result of the request to read the organization's PostgreSQL usage totals."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedPostgresUsageResponse'}
+        default:
+          description: "Problem while attempting to read the organization's PostgreSQL usage totals."
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
 components:
   securitySchemes:
     consumerKey:
@@ -18335,6 +19217,12 @@ components:
       required: true
       schema: {type: string, pattern: '^[a-f0-9]{32}$'}
       description: 32-hex-char opaque ID (NOT canonical UUID).
+    ManagedPostgresID:
+      name: id
+      in: path
+      required: true
+      schema: {type: string, minLength: 1, maxLength: 128}
+      description: Opaque Gregale managed PostgreSQL resource identifier.
     SecretKey:
       name: key
       in: path
@@ -21752,6 +22640,119 @@ components:
         degraded: {type: boolean}
         as_of: {type: string, format: date-time}
         source: {type: string}
+    ManagedPostgresCapabilities:
+      description: Versioned PostgreSQL support for the default backend in a region, intersected with customer plan limits. Provider identities, costs, endpoints and credentials are excluded. Capabilities remain visible while the rollout gate is closed.
+      type: object
+      required: [contract_version, region, provisioning_enabled, database_limit, postgres_majors, service_classes, availability, credential_access, scale_to_zero, always_on, pooled_connections, point_in_time_restore, class_resize, scale_to_zero_update, storage_limit_bytes, restore_window_seconds]
+      properties:
+        contract_version: {type: integer, minimum: 1}
+        region: {type: string}
+        provisioning_enabled: {type: boolean}
+        database_limit: {type: integer, minimum: 0}
+        postgres_majors: {type: array, items: {type: integer, minimum: 12, maximum: 99}}
+        service_classes: {type: array, items: {type: string, enum: [development, burstable, production]}}
+        availability: {type: array, items: {type: string, enum: [single_zone, high_availability]}}
+        credential_access: {type: array, items: {type: string, enum: [read_write, read_only, migration, data_api, auth]}}
+        scale_to_zero: {type: boolean}
+        always_on: {type: boolean}
+        pooled_connections: {type: boolean}
+        point_in_time_restore: {type: boolean}
+        scale_to_zero_update: {type: boolean, description: "Changing scale-to-zero on existing databases is supported. Disabling suspension additionally requires always_on plan entitlement; reservations require the pinned backend and admission."}
+        class_resize: {type: boolean, description: "Compute-class resizing supported by the configured regional backend. Reservations still require admission and the database pinned backend."}
+        storage_limit_bytes: {type: integer, format: int64, minimum: 0}
+        restore_window_seconds: {type: integer, format: int64, minimum: 0}
+    ChangeManagedPostgresComputePolicyRequest:
+      description: Canonical UUID request for a scale-to-zero change on an existing managed PostgreSQL database.
+      type: object
+      additionalProperties: false
+      required: [request_id, scale_to_zero]
+      properties:
+        request_id: {type: string, format: uuid, description: "Canonical nonzero UUID for this policy intent; replay with the same database and scale-to-zero setting after uncertain responses."}
+        scale_to_zero: {type: boolean}
+    ManagedPostgresComputePolicyChange:
+      description: Durable compute policy change progress. Provider identity and credentials are never returned; existing connections may be interrupted.
+      type: object
+      required: [id, database_id, from_scale_to_zero, target_scale_to_zero, generation, state, connection_interruption_expected, created_at]
+      properties:
+        id: {type: string, format: uuid}
+        database_id: {type: string}
+        from_scale_to_zero: {type: boolean}
+        target_scale_to_zero: {type: boolean}
+        generation: {type: integer, format: int64, minimum: 2}
+        state: {type: string, enum: [pending, succeeded]}
+        connection_interruption_expected: {type: boolean}
+        last_error_code: {type: string, description: "Safe policy-change diagnostic; an uncertain outcome keeps the accepted intent pending for recovery."}
+        created_at: {type: string, format: date-time}
+        completed_at: {type: string, format: date-time}
+    ResizeManagedPostgresDatabaseRequest:
+      description: Canonical UUID request for a compute-class change on an existing managed PostgreSQL database.
+      type: object
+      additionalProperties: false
+      required: [request_id, service_class]
+      properties:
+        request_id: {type: string, format: uuid, description: "Canonical nonzero UUID; reuse with the same database and target after uncertain responses."}
+        service_class: {type: string, enum: [development, burstable, production]}
+    ManagedPostgresResize:
+      description: Durable compute resize progress. Provider identity and credentials are never returned; existing connections may be interrupted.
+      type: object
+      required: [id, database_id, from_class, target_class, generation, state, connection_interruption_expected, created_at]
+      properties:
+        id: {type: string, format: uuid}
+        database_id: {type: string}
+        from_class: {type: string, enum: [development, burstable, production]}
+        target_class: {type: string, enum: [development, burstable, production]}
+        generation: {type: integer, format: int64, minimum: 2}
+        state: {type: string, enum: [pending, succeeded]}
+        connection_interruption_expected: {type: boolean}
+        last_error_code: {type: string, description: "Safe diagnostic code; pending intent remains recoverable after uncertain provider outcomes."}
+        created_at: {type: string, format: date-time}
+        completed_at: {type: string, format: date-time}
+    ManagedPostgresDatabase:
+      description: Managed PostgreSQL metadata. Provider IDs and credentials are never returned.
+      type: object
+      required: [id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, state, created_at, updated_at]
+      properties:
+        health: {$ref: '#/components/schemas/ManagedPostgresHealth'}
+        id: {type: string, minLength: 1, maxLength: 128}
+        name: {type: string, pattern: '^[a-z][a-z0-9-]{0,62}$'}
+        region: {type: string}
+        postgres_major: {type: integer, minimum: 12, maximum: 99}
+        service_class: {type: string, enum: [development, burstable, production]}
+        availability: {type: string, enum: [single_zone, high_availability]}
+        scale_to_zero: {type: boolean}
+        storage_limit_bytes: {type: integer, format: int64, minimum: 0}
+        restore_window_seconds: {type: integer, format: int64, minimum: 0}
+        restore_source_database_id: {type: [string, "null"], minLength: 1, maxLength: 128}
+        restore_point_in_time: {type: [string, "null"], format: date-time}
+        state: {type: string, enum: [provisioning, ready, updating, deleting, failed, deleted]}
+        last_error_code: {type: [string, "null"]}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+        deleted_at: {type: [string, "null"], format: date-time}
+        restorable_until:
+          type: string
+          format: date-time
+          description: "Set while the database's delete is scheduled: it can be undeleted until then, and is purged after."
+    ManagedPostgresDatabaseList:
+      description: Account-scoped managed PostgreSQL database collection.
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/ManagedPostgresDatabase'}}
+    ManagedPostgresHealth:
+      description: Cached read-only provider observation, separate from lifecycle state. Healthy does not prove SQL connectivity. Failed checks update checked_at while retaining last_success_at; stale observations must not imply current availability.
+      type: object
+      required: [enabled, status, fresh, provider_status, compute_state, stale_after_seconds]
+      properties:
+        enabled: {type: boolean}
+        status: {type: string, enum: [disabled, unknown, healthy, degraded, stale]}
+        fresh: {type: boolean}
+        provider_status: {type: string, enum: [unknown, missing, pending, ready, deleting, failed]}
+        compute_state: {type: string, enum: [unknown, active, suspended, waking]}
+        stale_after_seconds: {type: integer, format: int64, minimum: 0}
+        checked_at: {type: string, format: date-time, description: "Latest metadata attempt, including provider request failures."}
+        last_success_at: {type: string, format: date-time, description: "Latest valid metadata response, including responses describing degraded resources."}
+        last_error_code: {type: string, enum: [resource_missing, observer_unsupported, provider_unavailable, backend_unavailable, observation_invalid, spec_mismatch, provider_failed]}
     ManagedPostgresUsageResponse:
       description: Customer-safe current UTC-month managed PostgreSQL usage and guardrail state.
       type: object
@@ -21792,6 +22793,130 @@ components:
           description: When the compute cap suspended the account's databases this month; present while compute_cap_state is suspended.
           type: string
           format: date-time
+    CreateManagedPostgresDatabaseRequest:
+      description: Customer request to reserve a managed PostgreSQL database.
+      type: object
+      additionalProperties: false
+      required: [name, region]
+      properties:
+        name: {type: string, pattern: '^[a-z][a-z0-9-]{0,62}$'}
+        region: {type: string, pattern: '^[a-z][a-z0-9-]{0,62}$'}
+        postgres_major: {type: integer, minimum: 12, maximum: 99, default: 16}
+        service_class: {type: string, enum: [development, burstable, production], default: development}
+        availability: {type: string, enum: [single_zone, high_availability], default: single_zone}
+        scale_to_zero: {type: boolean, default: true}
+        storage_limit_bytes: {type: integer, format: int64, minimum: 0}
+        restore_window_seconds: {type: integer, format: int64, minimum: 0}
+    RestoreManagedPostgresDatabaseRequest:
+      description: Point-in-time restore request that creates a new database.
+      type: object
+      additionalProperties: false
+      required: [name, point_in_time]
+      properties:
+        name: {type: string, pattern: '^[a-z][a-z0-9-]{0,62}$'}
+        point_in_time: {type: string, format: date-time}
+    ManagedPostgresBinding:
+      description: Workload binding metadata. Credentials are delivered through the app secret surface and never returned here.
+      type: object
+      required: [id, database_id, app_id, scope, environment_key, access, credential_generation, rotation_pending, state, created_at, updated_at]
+      properties:
+        id: {type: string, minLength: 1, maxLength: 128}
+        database_id: {type: string, minLength: 1, maxLength: 128}
+        app_id: {type: string, minLength: 1, maxLength: 128}
+        scope: {type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'}
+        environment_key: {type: string, pattern: '^[A-Z][A-Z0-9_]*$'}
+        access: {type: string, enum: [read_write, read_only, migration, data_api, auth]}
+        credential_generation: {type: integer, format: int64, minimum: 1}
+        rotation_pending: {type: boolean, description: The previous provider credential remains valid until the rolling app runtime refresh completes.}
+        state: {type: string, enum: [provisioning, ready, deleting, retiring, failed, deleted]}
+        last_error_code: {type: [string, "null"]}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    ManagedPostgresConnectionBudget:
+      description: Canonical pool planning, not live SQL usage or reservation. A comparison requires complete verified capacity and consumer evidence; current adapters report unknown.
+      type: object
+      required: [version, database_id, database_name, state, checked_at, expires_at, enforced, model, inventory, demand, capacity, reasons]
+      properties:
+        version: {type: integer, enum: [1]}
+        database_id: {type: string, format: uuid}
+        database_name: {type: string}
+        state: {type: string, enum: [unknown, within_budget, over_budget]}
+        checked_at: {type: string, format: date-time}
+        expires_at: {type: string, format: date-time}
+        enforced: {type: boolean, enum: [false]}
+        model: {type: string, enum: [canonical_runtime_pools]}
+        inventory: {$ref: '#/components/schemas/ConnectionBudgetInventory'}
+        demand: {$ref: '#/components/schemas/ConnectionBudgetDemand'}
+        capacity: {$ref: '#/components/schemas/ConnectionBudgetCapacity'}
+        reasons: {type: array, items: {type: string}}
+    ConnectionBudgetInventory:
+      description: Deduplicated app/scope potential consumers; counts are not live SQL sessions.
+      type: object
+      required: [bindings, data_api_consumers, auth_consumers, migration_bindings, other_bindings, resident_instances, parked_instances, auxiliary_instances, active_tasks, rotation_pending, overlap_consumers, stale_node_instances]
+      properties:
+        bindings: {type: integer, format: int64, minimum: 0}
+        data_api_consumers: {type: integer, format: int64, minimum: 0}
+        auth_consumers: {type: integer, format: int64, minimum: 0}
+        migration_bindings: {type: integer, format: int64, minimum: 0}
+        other_bindings: {type: integer, format: int64, minimum: 0}
+        resident_instances: {type: integer, format: int64, minimum: 0}
+        parked_instances: {type: integer, format: int64, minimum: 0}
+        auxiliary_instances: {type: integer, format: int64, minimum: 0}
+        active_tasks: {type: integer, format: int64, minimum: 0}
+        rotation_pending: {type: integer, format: int64, minimum: 0}
+        overlap_consumers: {type: integer, format: int64, minimum: 0}
+        stale_node_instances: {type: integer, format: int64, minimum: 0}
+    ConnectionBudgetDemand:
+      description: Canonical runtime pools and explicit planning headroom. Unbounded consumers remain unknown.
+      type: object
+      required: [data_api_resident_estimate, data_api_wake_estimate, auth_wake_estimate, control_headroom, migration_headroom, modeled_peak_connections]
+      properties:
+        data_api_resident_estimate: {type: integer, format: int64, minimum: 0}
+        data_api_wake_estimate: {type: integer, format: int64, minimum: 0}
+        auth_wake_estimate: {type: integer, format: int64, minimum: 0}
+        control_headroom: {type: integer, format: int64, minimum: 0}
+        migration_headroom: {type: integer, format: int64, minimum: 0}
+        modeled_peak_connections: {type: integer, format: int64, minimum: 0}
+        runtime_observations: {$ref: '#/components/schemas/ConnectionBudgetRuntimeObservations'}
+    ConnectionBudgetRuntimeObservations:
+      description: Authenticated workload reports of configured resident Data API pools, including the refresh reader. Not live SQL sessions or independent guest attestation. Parked runtimes and future wakes remain estimates; this does not verify Auth or external consumers.
+      type: object
+      required: [state, source, observed_instances, unobserved_instances, parked_instances, configured_connections]
+      properties:
+        state: {type: string, enum: [unknown, partial, observed, not_applicable]}
+        source: {type: string, enum: [workload_report]}
+        observed_instances: {type: integer, format: int64, minimum: 0}
+        unobserved_instances: {type: integer, format: int64, minimum: 0}
+        parked_instances: {type: integer, format: int64, minimum: 0}
+        configured_connections: {type: integer, format: int64, minimum: 0}
+        checked_at: {type: string, format: date-time}
+        expires_at: {type: string, format: date-time}
+    ConnectionBudgetCapacity:
+      description: Operator-qualified tenant allocation clamped to observed SQL ceilings for the exact database generation and placement. Unknown without fresh evidence; this does not reserve connections or establish complete consumer coverage.
+      type: object
+      required: [state]
+      properties:
+        state: {type: string, enum: [unknown, verified]}
+        usable_connections: {type: integer, format: int64, minimum: 0}
+        source: {type: string, enum: [provider_api, native_qualification]}
+        checked_at: {type: string, format: date-time}
+        expires_at: {type: string, format: date-time}
+    ManagedPostgresBindingList:
+      description: Workload bindings attached to one managed PostgreSQL database.
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/ManagedPostgresBinding'}}
+    CreateManagedPostgresBindingRequest:
+      description: Request to inject a managed database credential into an app environment. Access values are provider-neutral; the selected database backend may support only a subset.
+      type: object
+      additionalProperties: false
+      required: [app_id, scope, environment_key, access]
+      properties:
+        app_id: {type: string, minLength: 1, maxLength: 128}
+        scope: {type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'}
+        environment_key: {type: string, pattern: '^[A-Z][A-Z0-9_]*$'}
+        access: {type: string, enum: [read_write, read_only, migration, data_api, auth], description: Portable credential mode. Unsupported modes are rejected before a binding is reserved.}
     ObjectStoragePolicy:
       description: Operator safety limits. Empty accounting_mode requires qualified provider reports including cost. Explicit gateway_safety_v1 requires a coverage start, proxied transfers, billing off and no cost ceiling; all other budgets remain positive and finite.
       type: object
@@ -26225,6 +27350,7 @@ components:
           maxItems: 10
           items: {$ref: '#/components/schemas/ReleaseGateResult'}
           description: "The release gates judged with this decision."
+        rollback_skipped: {type: string, description: "Post-release watch decisions only: the problem code that kept the release from being rolled back automatically, such as rollback_crosses_release. The regression was found; the release keeps serving until someone rolls back or ships a fix."}
         decided_at: {type: string, format: date-time}
     RolloutDecisionSample:
       description: "One side's aggregates over the observation window. Request counts are organic requests; probe counts are reported separately."
@@ -35341,7 +36467,7 @@ components:
         at: {type: string, format: date-time}
         kind:
           type: string
-          enum: [created, scheduled, schedule_started, schedule_blocked, schedule_cancelled, approval_requested, approved, rejected, approval_expired, rollout_started, advanced, traffic_changed, held, completed, aborted, rollback_requested, rolled_back, watch_passed, superseded, note]
+          enum: [created, scheduled, schedule_started, schedule_blocked, schedule_cancelled, approval_requested, approved, rejected, approval_expired, rollout_started, advanced, traffic_changed, held, completed, aborted, rollback_requested, rolled_back, watch_passed, watch_regressed, superseded, note]
         summary: {type: string, description: "What happened, in one sentence."}
         actor: {type: string, description: "A person's email, or Gregale for automatic steps."}
         traffic_percent: {type: integer, minimum: 0, maximum: 100, description: "The release's traffic share after this event."}
