@@ -570,6 +570,7 @@ export type { DashboardWidget } from './models/DashboardWidget.js';
 export type { DashboardWidgetValue } from './models/DashboardWidgetValue.js';
 export type { DataAPIAccessConfig } from './models/DataAPIAccessConfig.js';
 export type { DataAPIConnectionBudgets } from './models/DataAPIConnectionBudgets.js';
+export type { DataAPIRuntime } from './models/DataAPIRuntime.js';
 export type { DataAPIRuntimeConnectionReport } from './models/DataAPIRuntimeConnectionReport.js';
 export type { DataAPIServerKey } from './models/DataAPIServerKey.js';
 export type { DataAPIServerKeyPermissionSet } from './models/DataAPIServerKeyPermissionSet.js';

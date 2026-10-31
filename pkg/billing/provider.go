@@ -756,6 +756,10 @@ const (
 	// live object-storage charge meter and implements ObjectStorageLineItemSink.
 	// Shadow configurations retain local receipts without this capability.
 	CapObjectStorageUsage
+
+	// CapManagedPostgresUsage means the provider has a separately configured,
+	// live managed PostgreSQL overage charge meter (ADR-20261031110037).
+	CapManagedPostgresUsage
 )
 
 // CapabilitySet is the bitmask of capabilities a Provider exposes.
@@ -790,6 +794,7 @@ func (s CapabilitySet) String() string {
 		{CapUsageLineItem, "usage_line_item"},
 		{CapEgressUsage, "egress_usage"},
 		{CapObjectStorageUsage, "object_storage_usage"},
+		{CapManagedPostgresUsage, "managed_postgres_usage"},
 	} {
 		if s.Has(c.cap) {
 			parts = append(parts, c.name)

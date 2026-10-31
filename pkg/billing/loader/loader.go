@@ -46,6 +46,9 @@
 //	FAAS_POLAR_OBJECT_STORAGE_BILLING_MODE  off | shadow | live; default off
 //	FAAS_POLAR_OBJECT_STORAGE_BILLING_FROM  UTC-month activation boundary for shadow/live
 //	FAAS_POLAR_OBJECT_STORAGE_METER_ID      separate charge_millicents meter for shadow/live
+//	FAAS_POLAR_MANAGED_POSTGRES_BILLING_MODE  off | shadow | live; default off (ADR-20261031110037)
+//	FAAS_POLAR_MANAGED_POSTGRES_BILLING_FROM  UTC-month activation boundary for shadow/live
+//	FAAS_POLAR_MANAGED_POSTGRES_METER_ID      separate charge_millicents meter for shadow/live
 //	FAAS_POLAR_BASE_URL    optional; private API proxy / contract-test endpoint
 //
 // TOML config precedence: env > TOML > Defaults. The daemon's
@@ -199,6 +202,18 @@ func resolvedPolarConfig(cfg *RootBillingConfig, env func(string) string) polar.
 	}
 	if v := env("FAAS_POLAR_OBJECT_STORAGE_METER_ID"); v != "" {
 		out.ObjectStorageMeterID = v
+	}
+	if v := env("FAAS_POLAR_MANAGED_POSTGRES_BILLING_MODE"); v != "" {
+		out.ManagedPostgresBillingMode = v
+	}
+	if v := env("FAAS_POLAR_MANAGED_POSTGRES_BILLING_FROM"); v != "" {
+		out.ManagedPostgresBillingFrom = v
+	}
+	if v := env("FAAS_POLAR_MANAGED_POSTGRES_USAGE_EVENT_NAME"); v != "" {
+		out.ManagedPostgresUsageEventName = v
+	}
+	if v := env("FAAS_POLAR_MANAGED_POSTGRES_METER_ID"); v != "" {
+		out.ManagedPostgresMeterID = v
 	}
 	if v := env("FAAS_POLAR_SUCCESS_URL"); v != "" {
 		out.SuccessURL = v
@@ -385,6 +400,8 @@ func Providers() []ProviderMeta {
 				"FAAS_POLAR_SCALE_INCLUDED_EGRESS_GIB",
 				"FAAS_POLAR_OBJECT_STORAGE_BILLING_MODE", "FAAS_POLAR_OBJECT_STORAGE_BILLING_FROM",
 				"FAAS_POLAR_OBJECT_STORAGE_USAGE_EVENT_NAME", "FAAS_POLAR_OBJECT_STORAGE_METER_ID",
+				"FAAS_POLAR_MANAGED_POSTGRES_BILLING_MODE", "FAAS_POLAR_MANAGED_POSTGRES_BILLING_FROM",
+				"FAAS_POLAR_MANAGED_POSTGRES_USAGE_EVENT_NAME", "FAAS_POLAR_MANAGED_POSTGRES_METER_ID",
 			},
 			BuildAPID: func(cfg *RootBillingConfig, env func(string) string, log *slog.Logger) (any, error) {
 				p, err := polar.NewProvider(resolvedPolarConfig(cfg, env), log)

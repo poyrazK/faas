@@ -58,5 +58,10 @@
     "step": "TestRealtime/resumable_protocol_offered",
     "bug": "the resumable realtime protocol (retained history, presence, occupancy, tickets) is still preview (GA row 112): realtimed offers gregale.realtime.v2 only to accounts in the realtime_preview rollout with FAAS_REALTIME_RESUME_PREVIEW_ENABLED on, and the journey's later steps report blocked; remove once the e2e account is released",
     "since": "2026-10-30"
+  },
+  {
+    "step": "TestDataAPI/data_api_enabled",
+    "bug": "managed PostgreSQL and the Data API (GA rows 109 and 110) are preview and not released to production accounts: production provisioning waits on the operator approval pin (ADR-20261028103115), and the later steps report blocked; remove once the e2e account is released",
+    "since": "2026-10-31"
   }
 ]

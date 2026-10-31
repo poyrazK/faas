@@ -5579,12 +5579,16 @@ var cliCommands = []cliCommand{
 				{Name: "migrations", Value: "DIR", Short: "single-app project: run this migration directory as the app's release task"},
 				{Name: "release-command", Value: "COMMAND", Short: "single-app release command (default node migrations/release.mjs)"},
 			}, Examples: []string{"gregale data-api create shop-data --database shop-db --issuer https://id.example.com/ --jwks-url https://id.example.com/jwks.json --audience shop --migrations migrations"}},
-			{Name: "deploy", Short: "Deploy a single-app Data API with its migrations as the release task", Positionals: []string{"<name>"}, Flags: []cliFlag{
-				{Name: "migrations", Value: "DIR", Req: true, Short: "migration directory run with MIGRATION_DATABASE_URL"},
+			{Name: "deploy", Short: "Deploy the current Data API runtime, with migrations as the release task", Notes: []string{"Deploys the runtime the control plane serves; without --migrations it upgrades the runtime only."}, Positionals: []string{"<name>"}, Flags: []cliFlag{
+				{Name: "migrations", Value: "DIR", Short: "migration directory run with MIGRATION_DATABASE_URL"},
 				{Name: "release-command", Value: "COMMAND", Short: "release command (default node migrations/release.mjs)"},
 				{Name: "scope", Value: "SCOPE", Short: "environment scope"},
 				{Name: "timeout", Value: "DURATION", Short: "deployment and release wait (default 15m)"},
-			}},
+			}, Examples: []string{"gregale data-api deploy shop-data --migrations migrations", "gregale data-api deploy shop-data"}},
+			{Name: "delete", Short: "Revoke a Data API's database bindings and delete the app", Notes: []string{"Deleting the app alone is refused while its bindings are live."}, Positionals: []string{"<name>"}, Flags: []cliFlag{
+				{Name: "yes", Bool: true, Short: "confirm deletion without prompting"},
+				{Name: "timeout", Value: "DURATION", Short: "maximum time for the API calls (default 2m)"},
+			}, Examples: []string{"gregale data-api delete shop-data --yes"}},
 			{Name: "configure", Short: "Change access, aggregates, usage reporting or caps", Notes: []string{"Restarts the runtime fresh."}, Positionals: []string{"<name>"}, Flags: []cliFlag{
 				{Name: "public-read", Value: "SCHEMA.RELATION[,...]", Short: "relations readable without a token"},
 				{Name: "no-public-read", Short: "disable anonymous reads"},
