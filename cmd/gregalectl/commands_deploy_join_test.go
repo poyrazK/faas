@@ -674,7 +674,8 @@ func TestNodeJoinDefersFreshHostDaemonsUntilCredentialsAndDoctor(t *testing.T) {
 		t.Fatalf("fresh-host activation order invalid: install=%d secrets=%d doctor=%d restart=%d", install, secrets, doctor, restart)
 	}
 	installEnd := strings.Index(playbook[install:], "Verify the requested release is the active on-host release")
-	if installEnd < 0 || !strings.Contains(playbook[install:install+installEnd], "- --defer-activation") {
+	// A fresh host never restarts without a drain, so it always defers.
+	if installEnd < 0 || !strings.Contains(playbook[install:install+installEnd], `- "--defer-activation={{ 'false' if (faas_join_skip_drain | default(false) | bool) else 'true' }}"`) {
 		t.Fatal("node_join release install must defer first-boot daemon start and database activation")
 	}
 	credentialBlock := playbook[secrets:restart]
