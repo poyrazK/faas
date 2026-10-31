@@ -12156,6 +12156,16 @@ const (
 	// beyond that.
 	AppErrorsCardinalityBackstopMultiplier = 2
 
+	// AppErrorsRequestSamplesPerFlush and AppErrorsRequestRowsPerAppPerMinute
+	// bound the app_error_requests rows one gateway sends (bug hunt
+	// 2026-10-28 H41). Repeats of an app's error within one flush fold into
+	// the count of the last record sent for it; up to SamplesPerFlush of them
+	// carry a request row, and an app gets at most RowsPerAppPerMinute
+	// request rows a minute. Without them each 4xx/5xx, scanner 404s
+	// included, cost two control-plane writes.
+	AppErrorsRequestSamplesPerFlush     = 3
+	AppErrorsRequestRowsPerAppPerMinute = 60
+
 	// ObsAdminAuditLogLimitDefault / ObsAdminAuditLogLimitMax bound
 	// the top-N size of /v1/admin/obs/audit-log/search (ADR-091 §3.7 /
 	// PR #3). Default 200 covers the operator's "what happened in
