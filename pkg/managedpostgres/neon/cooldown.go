@@ -1,6 +1,7 @@
 package neon
 
 import (
+	"context"
 	"math"
 	"net/http"
 	"strconv"
@@ -10,6 +11,35 @@ import (
 )
 
 const defaultRateLimitCooldown = time.Minute
+
+// backgroundRequestInterval spaces the requests of background sweeps (usage,
+// health, caps): at most five a second, 300 a minute, whatever the fleet's
+// size. Neon does not publish its general API limit, and a 429 defers every
+// request through the provider, customer actions included, so sweeps keep
+// well clear of it. Requests without the background mark are never paced.
+const backgroundRequestInterval = 200 * time.Millisecond
+
+// requestPacer hands out background request slots in order.
+type requestPacer struct {
+	mu   sync.Mutex
+	next time.Time
+}
+
+// paceBackground reserves the next background slot and waits for it.
+func (p *Provider) paceBackground(ctx context.Context) error {
+	now := p.now()
+	p.pacer.mu.Lock()
+	slot := p.pacer.next
+	if slot.Before(now) {
+		slot = now
+	}
+	p.pacer.next = slot.Add(p.backgroundInterval)
+	p.pacer.mu.Unlock()
+	if wait := slot.Sub(now); wait > 0 {
+		return sleepContext(ctx, wait)
+	}
+	return nil
+}
 
 // Cooldowns are shared by requests through one provider instance. Neon's
 // consumption endpoints have a separate, lower account quota; exhausting it

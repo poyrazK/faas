@@ -1401,6 +1401,7 @@ func TestDeployJoinApply_RendersProviderConnectionOverride(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	standInCosign(t, cosign)
 	computeDBEnv := filepath.Join(artifactDir, "compute-db.env")
 	if err := os.WriteFile(computeDBEnv, []byte("DATABASE_URL=postgres://faas@example/faas\nFAAS_VMMD_DBURL=postgres://faas@example/faas\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -1621,6 +1622,14 @@ func TestDeployJoinApply_RendersProviderConnectionOverride(t *testing.T) {
 	}
 	if registrations != 1 {
 		t.Fatalf("preparation registered the shared release bundle; registrations=%d", registrations)
+	}
+
+	// The same complete inputs with a cosign that is not the pinned build:
+	// node join would stage it as the host's release and provenance verifier.
+	pinnedCosignSHA256 = releaseinstall.PinnedCosignSHA256
+	if _, err := deployJoinValidate(applyOpts); err == nil || !strings.Contains(err.Error(), "--cosign-binary") ||
+		!strings.Contains(err.Error(), releaseinstall.PinnedCosignSHA256) {
+		t.Fatalf("unpinned cosign error = %v", err)
 	}
 
 	calls = nil

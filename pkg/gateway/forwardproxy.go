@@ -638,6 +638,7 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 					forwardedResponseHeader(r.Context(), w.Header(), name, value)
 				}
 			}
+			stampInstanceNode(r.Context(), w.Header(), t.NodeID)
 			for _, trailer := range init.GetTrailers() {
 				if name := strings.TrimSpace(trailer.GetName()); name != "" && !isTrafficResponseControlHeader(name) {
 					w.Header().Add("Trailer", name)
@@ -1067,6 +1068,7 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 			for _, h := range init.GetHeaders() {
 				forwardedResponseHeaderWithUpgrade(r.Context(), w.Header(), h.GetName(), h.GetValue(), init.GetStatus() == http.StatusSwitchingProtocols)
 			}
+			stampInstanceNode(r.Context(), w.Header(), t.NodeID)
 			if init.GetStatus() == http.StatusSwitchingProtocols {
 				conn, reader, err := beginRawUpgrade(w)
 				if err != nil {

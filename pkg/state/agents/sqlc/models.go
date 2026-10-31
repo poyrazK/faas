@@ -108,20 +108,21 @@ type AgentRunOutput struct {
 }
 
 type AgentVersion struct {
-	AgentID            pgtype.UUID
-	Version            int32
-	AccountID          pgtype.UUID
-	HarnessPreset      pgtype.Text
-	HarnessImage       pgtype.Text
-	HarnessRun         []string
-	HarnessModels      []byte
-	PromptTemplate     string
-	RamMb              pgtype.Int4
-	TimeoutSec         int32
-	CreatedAt          pgtype.Timestamptz
-	ModelIntegrations  []byte
-	AiBudgetMillicents pgtype.Int8
-	Deliveries         []byte
+	AgentID               pgtype.UUID
+	Version               int32
+	AccountID             pgtype.UUID
+	HarnessPreset         pgtype.Text
+	HarnessImage          pgtype.Text
+	HarnessRun            []string
+	HarnessModels         []byte
+	PromptTemplate        string
+	RamMb                 pgtype.Int4
+	TimeoutSec            int32
+	CreatedAt             pgtype.Timestamptz
+	ModelIntegrations     []byte
+	AiBudgetMillicents    pgtype.Int8
+	Deliveries            []byte
+	PauseDuringModelCalls bool
 }
 
 type AppWebhook struct {

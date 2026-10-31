@@ -24,7 +24,7 @@ func cmdRealtimeDrainStatus(args []string) int {
 	wait := fs.Bool("wait", false, "wait for the drain to reach a terminal state")
 	timeout := fs.Duration("timeout", realtimeDrainWaitDefaultTimeout, "maximum time to wait with --wait")
 	if err := fs.Parse(args); err != nil || fs.NArg() != 3 || strings.TrimSpace(fs.Arg(0)) == "" || strings.TrimSpace(fs.Arg(1)) == "" || strings.TrimSpace(fs.Arg(2)) == "" {
-		PrintUsage(osStderr, "usage: gregale realtime drain-status APP_SLUG ENDPOINT_ID OPERATION_ID [--wait] [--timeout DURATION]", "realtime")
+		PrintUsage(osStderr, "usage: gregale realtime drain status APP_SLUG ENDPOINT_ID OPERATION_ID [--wait] [--timeout DURATION]", "realtime")
 		return 1
 	}
 	if *timeout <= 0 {
@@ -110,7 +110,7 @@ func renderRealtimeDrainStatus(response api.ManagedRealtimeDrainResponse) {
 
 func printRealtimeDrainTimeout(w io.Writer, appSlug, endpointID, operationID string, timeout time.Duration) {
 	PrintWarn(w, "Realtime drain %s did not finish after %s; the server continues processing.", operationID, timeout)
-	PrintProgress(w, "next: gregale realtime drain-status %s %s %s", appSlug, endpointID, operationID)
+	PrintProgress(w, "next: gregale realtime drain status %s %s %s", appSlug, endpointID, operationID)
 }
 
 func normalizeRealtimeDrainStatusArgs(args []string) []string {

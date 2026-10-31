@@ -41,6 +41,42 @@ func TestCacheWriter_Stores200(t *testing.T) {
 	}
 }
 
+// The gateway's own X-RateLimit-* values describe the request that filled
+// the cache; storing them replayed a stale allowance on every hit. Only those
+// values stay out: an origin's own rate-limit header and other headers are
+// stored.
+func TestCacheWriter_LeavesGatewayRateLimitHeadersOut(t *testing.T) {
+	now := time.Now()
+	cache := NewResponseCacheWithClock(DefaultResponseCacheMaxBytes, func() time.Time { return now })
+	rule := EdgeRuleCacheResolved{ID: "rule-1", MaxAgeSeconds: 60}
+	key := CacheKey{AppID: "app-1", RuleID: rule.ID, Method: "GET", NormalizedPath: "/catalog"}
+	rec := newTestStatusRecorder(httptest.NewRecorder())
+	rec.Header().Set("X-RateLimit-Limit", "100")
+	rec.Header().Set("X-RateLimit-Remaining", "99")
+	cw := newCacheWriter(rec, rec, &rule, ResponseCachePerEntryMaxBytes)
+	cw.Header().Add("X-RateLimit-Limit", "5")
+	cw.Header().Set("X-Catalog-Version", "7")
+	cw.WriteHeader(http.StatusOK)
+	_, _ = cw.Write([]byte("catalog"))
+	if !cw.finishCacheCapture(cache, key, now) {
+		t.Fatal("expected the response to be stored")
+	}
+	outcome, entry := cache.Get(key)
+	if outcome != "fresh" {
+		t.Fatalf("outcome = %q, want fresh", outcome)
+	}
+	stored := http.Header(entry.header)
+	if got := stored.Values("X-RateLimit-Limit"); len(got) != 1 || got[0] != "5" {
+		t.Errorf("stored X-RateLimit-Limit = %q, want only the origin's 5", got)
+	}
+	if got := stored.Values("X-RateLimit-Remaining"); len(got) != 0 {
+		t.Errorf("stored X-RateLimit-Remaining = %q, want none", got)
+	}
+	if got := stored.Get("X-Catalog-Version"); got != "7" {
+		t.Errorf("stored X-Catalog-Version = %q, want 7", got)
+	}
+}
+
 // adr: 122
 func TestCacheWriter_CacheTagsAreMetadata(t *testing.T) {
 	now := time.Now()

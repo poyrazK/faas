@@ -126,10 +126,12 @@ APPLY=1 deploy/scripts/cloudflare-app-dns.sh pilot h10-fn-go.gregale.dev
 
 - **`plan`** lists the platform hosts' records, the wildcard, every address
   record in the zone and the Worker routes. Run it again after each step.
-- **`platform`** gives the apex, `api.`, `operations.` and `s3.` a proxied
-  record to `origin.<apps domain>`. A record that already points there, or an
-  A record with the origin's address, is left alone. Today the Worker sends
-  every host, the apex included, to that origin, so this changes no traffic.
+- **`platform`** gives each platform host (the apex, `api.`, `operations.`,
+  `s3.`) that has no record of its own a proxied CNAME to
+  `origin.<apps domain>`. It never repoints an existing record. In production
+  (2026-10-31) every one already has its own: the apex and `operations.` are
+  on Vercel, and `api.` and `s3.` are A records to the control plane. So it
+  changes nothing there.
 - **`pilot`** adds the route `h10-fn-go.gregale.dev/*` with no Worker and a
   proxied CNAME to the tunnel.
 
@@ -187,11 +189,15 @@ headers. The other checks below are by hand. Record each result in the pilot's P
 
 After the pilot passes, at low traffic:
 
-1. Run `plan` and read every address record. A name that is neither an app
-   nor a platform host, and has no record of its own, follows the wildcard to
-   the tunnel, where the edge answers 421 `misdirected_request`. Give each such
-   name that must keep working its own record:
-   `APPLY=1 deploy/scripts/cloudflare-app-dns.sh keep <name>`.
+1. Run `plan` and read every address record and Worker route.
+   - **Names without a record of their own.** A name that is neither an app
+     nor a platform host follows the wildcard to the tunnel, where the edge
+     answers 421 `misdirected_request`. Give each one that must keep working
+     its own record: `APPLY=1 deploy/scripts/cloudflare-app-dns.sh keep <name>`.
+   - **Names whose own record goes elsewhere.** A Worker route sends such a name
+     to the control plane today, and it follows its record once the routes go.
+     In production that is `www.` (its record points to Vercel, and the control
+     plane answers it 404 today).
 2. `APPLY=1 deploy/scripts/cloudflare-app-dns.sh wildcard` points
    `*.<apps domain>` at the tunnel. It refuses until every platform host has
    its own record. No traffic moves yet: the Worker's wildcard route still

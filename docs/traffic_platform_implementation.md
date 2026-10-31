@@ -1470,7 +1470,8 @@ plus the gateway-wide admission queue and browser retry page. Ordinary burst
 expansion retains one app worker and pins every scheduler batch member and
 continuation to the admitted deployment. Steady app/plan limits are retained;
 the existing bounded rollout overlap applies to a cold second positive cohort
-beside a routable cohort and explicit verification. The scheduler owns that
+beside a routable cohort, to a cold cohort beside another deployment's instance
+(a release staged with no traffic, ADR-20261031105227) and explicit verification. The scheduler owns that
 capacity decision. Store failures, missing verdicts, malformed/oversized rosters
 and unavailable cohorts refuse before wake rather than falling back to live
 picker weights or a warm sibling. Existing pin validation and 410/503 release

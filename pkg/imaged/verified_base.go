@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/imagechain"
@@ -34,6 +35,24 @@ func baseGuestDigest(raw string) string {
 		return ""
 	}
 	return "sha256:" + raw
+}
+
+// keepsProducerGuestInit reports whether this imaged uses a base producer as
+// it stands although another release's guest-init may be built into it. Every
+// release has its own guest-init, so while two releases serve, each rebuilt
+// the other's base on its next stage and republished it as current: on
+// production-us (rc.312 rollout, 2026-10-31) runner-base-debian-parent swapped
+// ten times in 75 minutes, and every swap failed the scans and snapshot boots
+// in flight, including fsn-3's pre-stage. A serving imaged keeps a producer
+// that another release published after this imaged started: that release is
+// newer, and it is taking over. The release pre-stage always ships its own
+// guest-init, so a release or a rollback still replaces every base it stages
+// (ADR-20261026181418, amendment 2026-10-31).
+func (h *Handler) keepsProducerGuestInit(p state.BaseImageProducer, guestDigest string) bool {
+	if p.Input.GuestInitDigest == baseGuestDigest(guestDigest) {
+		return true
+	}
+	return !h.releasePrestage && !h.servingSince.IsZero() && p.PublishedAt.After(h.servingSince)
 }
 
 func (h *Handler) ensureVerifiedBaseExt4(ctx context.Context, r verifiedBaseRequest, resolver oci.ImageResolver) (BaseStageResult, error) {
@@ -86,7 +105,7 @@ func (h *Handler) reuseVerifiedBase(ctx context.Context, r verifiedBaseRequest, 
 		return BaseStageResult{}, false, err
 	}
 	in := producer.Input
-	if in.SourceReference != source || in.LayoutVersion != baseLayoutVersion || in.GuestInitDigest != baseGuestDigest(r.guestDigest) {
+	if in.SourceReference != source || in.LayoutVersion != baseLayoutVersion || !h.keepsProducerGuestInit(producer, r.guestDigest) {
 		return BaseStageResult{}, false, nil
 	}
 	if !baseCacheParentMatches(ctx, store, in, r) {
@@ -229,7 +248,7 @@ func (h *Handler) buildVerifiedChildBase(ctx context.Context, r verifiedBaseRequ
 	if err != nil {
 		return build, err
 	}
-	if !parentSourceMatches(parent.Input.SourceReference, r.parentRef) || parent.Input.LayoutVersion != baseLayoutVersion || parent.Input.GuestInitDigest != baseGuestDigest(r.guestDigest) {
+	if !parentSourceMatches(parent.Input.SourceReference, r.parentRef) || parent.Input.LayoutVersion != baseLayoutVersion || !h.keepsProducerGuestInit(parent, r.guestDigest) {
 		return build, fmt.Errorf("imaged: selected parent producer does not match base intent")
 	}
 	base, err := imagechain.Validate(parent.Input.ImageChain, parent.Input.SourceDigest, parent.Input.SelectedDigest)
@@ -319,7 +338,10 @@ func (h *Handler) finishVerifiedBase(ctx context.Context, r verifiedBaseRequest,
 			return BaseStageResult{}, err
 		}
 	}
-	if err := h.writeBaseDigestSidecar(ctx, r.be, r.digestKey, configDigest, r.guestDigest, producer.Input.SourceReference); err != nil {
+	// The guest-init built into the producer's bytes, which a kept producer
+	// of a newer release does not share with this imaged.
+	guestDigest := strings.TrimPrefix(producer.Input.GuestInitDigest, "sha256:")
+	if err := h.writeBaseDigestSidecar(ctx, r.be, r.digestKey, configDigest, guestDigest, producer.Input.SourceReference); err != nil {
 		return BaseStageResult{}, err
 	}
 	if err := h.writeProducedBaseScanSidecar(ctx, r, producer); err != nil {

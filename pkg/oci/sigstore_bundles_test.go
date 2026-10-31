@@ -183,6 +183,24 @@ func TestSigstoreBundlesReadOnlyTheNewestBounded(t *testing.T) {
 	}
 }
 
+// v0.1.18-rc.310: #6048 attests an SPDX SBOM beside each platform image's
+// provenance. The SBOM bundle is over the bundle limit for a Debian base, and
+// the release's provenance gate failed every such image on it.
+func TestSigstoreBundlesSkipARefusedBundleBesideAReadableOne(t *testing.T) {
+	reg, client := newBundleTestRegistry(t)
+	provenance := []byte(`{"predicate":"slsa"}`)
+	older := attachTestBundle(t, reg, provenance, nil)
+	newer := attachTestBundle(t, reg, []byte(`{"predicate":"spdx"}`), func(m map[string]any) {
+		m["layers"].([]any)[0].(map[string]any)["size"] = api.BaseProvenanceMaxBundleBytes + 1
+	})
+	reg.put(bundleTestRepo+"/manifests/sha256-"+strings.Repeat("d", 64), ociIndexMediaType, bundleTestIndex(t, older, newer))
+
+	got, err := pullTestBundles(client)
+	if err != nil || len(got) != 1 || string(got[0]) != string(provenance) {
+		t.Fatalf("bundles = %q, %v; want only the provenance bundle", got, err)
+	}
+}
+
 func TestSigstoreBundlesRejectInvalidTransportContent(t *testing.T) {
 	bundle := []byte(`{"bundle":true}`)
 	for _, tc := range []struct {

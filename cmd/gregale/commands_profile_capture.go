@@ -166,7 +166,7 @@ func printProfileCapture(c api.ProfileCapture) int {
 	return 0
 }
 
-const profileCaptureDiffUsage = "usage: gregale debug capture-diff <slug> <capture-id> --base <capture-id> [--type cpu|heap] [--top N]"
+const profileCaptureDiffUsage = "usage: gregale debug capture diff <slug> <capture-id> --base <capture-id> [--type cpu|heap] [--top N]"
 
 // cmdDebugCaptureDiff compares a capture with an earlier one (ADR-1155).
 func cmdDebugCaptureDiff(args []string) int {

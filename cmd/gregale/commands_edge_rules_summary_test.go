@@ -41,7 +41,7 @@ func TestRenderEdgeProtection(t *testing.T) {
 	buf.Reset()
 	main.RenderEdgeProtection(&buf, "shop", api.EdgeProtectionResponse{Range: "1h", Source: "prometheus",
 		AICrawlers: []api.EdgeProtectionAICrawler{{Name: "gptbot", Operator: "OpenAI", Purpose: "training", Count: 20}}})
-	for _, want := range []string{"ai crawlers:", "gptbot 20 (OpenAI, training)", "recipe control-ai-crawlers --app shop"} {
+	for _, want := range []string{"ai crawlers:", "gptbot 20 (OpenAI, training)", "recipe apply control-ai-crawlers --app shop"} {
 		if !strings.Contains(buf.String(), want) {
 			t.Errorf("ai crawler output missing %q:\n%s", want, buf.String())
 		}

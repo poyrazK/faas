@@ -93,6 +93,7 @@ const (
 	releaseGatesFile                 = "release_gates.go"        // ADR-20261019071734 release gates
 	releaseApprovalsFile             = "release_approvals.go"    // ADR-20261020085706 release approvals
 	releaseDiffFile                  = "release_diff.go"         // ADR-20261021101117 release diff
+	releaseTimelineFile              = "release_timeline.go"     // ADR-20261022120744 release page timeline
 	scheduledReleasesFile            = "scheduled_releases.go"   // ADR-20261021152201 scheduled releases
 	databaseSwitchFile               = "database_switch.go"      // ADR-20261023181931 rollbacks that restore the database
 	changeTimelineFile               = "change_timeline.go"      // ADR-751 app change timeline DTOs
@@ -548,6 +549,11 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/apps/{slug}/edge-rules/{id}/waf-exclusions":    true, // HTML form, WAF review exclude button (ADR-831 amendment 13)
 	"POST /dashboard/apps/{slug}/edge-rules/security-headers":       true, // HTML form, security-headers preset (issue #1397 G4)
 	"POST /dashboard/apps/{slug}/edge-rules/recipes":                true, // HTML form, protection recipe (ADR-986)
+	"POST /dashboard/apps/{slug}/edge-rules/{id}/edit":              true, // HTML form, edge-rule edit (ADR-091 amendment 2026-10-30)
+	"POST /dashboard/apps/{slug}/edge-rules/rollback":               true, // HTML form, rule-set rollback (ADR-091 amendment 2026-10-30)
+	"POST /dashboard/apps/{slug}/edge-rule-lists":                   true, // HTML form, rule list create (ADR-091 amendment 2026-10-30)
+	"POST /dashboard/apps/{slug}/edge-rule-lists/{name}/update":     true, // HTML form, rule list edit (ADR-091 amendment 2026-10-30)
+	"POST /dashboard/apps/{slug}/edge-rule-lists/{name}/delete":     true, // HTML form, rule list delete (ADR-091 amendment 2026-10-30)
 	"POST /dashboard/apps/{slug}/edge-protection/attack-mode":       true, // HTML form, attack mode switch (ADR-20261021220456)
 	"POST /dashboard/apps/{slug}/queues/dead_letter/{id}/replay":    true, // HTML form, queue DLQ replay (issue #1397 G7)
 	"POST /dashboard/jobs/{name}/policy":                            true, // HTML form, scheduled-work policy editor (ADR-385)
@@ -566,6 +572,7 @@ var routeExclude = map[string]bool{
 	"GET /dashboard/incidents/{id}":                                 true, // ADR-20261022193512 HTML view of GET /v1/incidents/{id}
 	"POST /dashboard/incidents/{id}/acknowledge":                    true, // ADR-20261022193512 CSRF form over POST /v1/incidents/{id}/acknowledge
 	"POST /dashboard/incidents/{id}/notes":                          true, // ADR-20261022193512 CSRF form over POST /v1/incidents/{id}/notes
+	"GET /dashboard/releases/{id}":                                  true, // ADR-20261022120744 HTML page over GET /v1/deployments/{id}/timeline
 	"GET /dashboard/apps/{slug}/custom-metrics":                     true, // ADR-745 HTML view of custom metric history
 	"GET /dashboard/apps/{slug}/automations":                        true, // ADR-1285 HTML authoring console
 	"POST /dashboard/apps/{slug}/automations/{action}":              true, // ADR-1285 app-bound CSRF forms
@@ -1752,6 +1759,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "edge_rule_challenge.go"),             // kind=challenge action (ADR-831)
 		filepath.Join(root, "pkg", "api", "edge_attack_mode.go"),                // attack mode (ADR-20261021220456)
 		filepath.Join(root, "pkg", "api", "edge_rule_penalty.go"),               // rule penalty box (ADR-20261022105846)
+		filepath.Join(root, "pkg", "api", "conditions.go"),                      // resource conditions (ADR-20261030151810)
 		filepath.Join(root, "pkg", "api", cliauthFile),
 		filepath.Join(root, "pkg", "api", "browser_approvals.go"),
 		filepath.Join(root, "pkg", "api", "source_review.go"),
@@ -1876,6 +1884,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", releaseGatesFile),
 		filepath.Join(root, "pkg", "api", releaseApprovalsFile),
 		filepath.Join(root, "pkg", "api", releaseDiffFile),
+		filepath.Join(root, "pkg", "api", releaseTimelineFile),
 		filepath.Join(root, "pkg", "api", scheduledReleasesFile),
 		filepath.Join(root, "pkg", "api", databaseSwitchFile),
 		filepath.Join(root, "pkg", "api", platformTenantsFile),

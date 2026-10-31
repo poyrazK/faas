@@ -2,6 +2,7 @@ package sched
 
 import (
 	"errors"
+	"fmt"
 	"slices"
 	"time"
 
@@ -28,6 +29,35 @@ func resourceBlocker(code, resource string, requested int64) api.WorkerAdmission
 
 func limitBlocker(code, resource string, used, limit int64) api.WorkerAdmissionBlocker {
 	return api.WorkerAdmissionBlocker{Code: code, Resource: resource, Used: &used, Limit: &limit}
+}
+
+// customerCapacityProblem restates a deployment refused by node budgets in
+// terms of the app's own size, the one thing its owner can change. The
+// scheduler's detail names nodes and their ledgers; deploying several
+// standalone Scale apps read only "capacity_unavailable" until --ram was
+// lowered. Other refusals keep their problem (nil).
+func customerCapacityProblem(err error) *api.Problem {
+	var refusal *admissionRefusal
+	if !errors.As(err, &refusal) {
+		return nil
+	}
+	for _, b := range refusal.blockers {
+		if b.Requested == nil {
+			continue
+		}
+		switch b.Code {
+		case "node_ram":
+			return api.ErrCapacity(fmt.Sprintf("no compute node has %d MB of memory free for this app right now (its ram_mb plus the %d MB VM overhead)", *b.Requested, api.PerVMOverheadMB)).
+				WithHint("Lower the app's memory with `gregale app <slug> --ram MB` or `--size`, or deploy again once capacity frees up.")
+		case "node_vcpu":
+			return api.ErrCapacity(fmt.Sprintf("no compute node has %d guest vCPUs free for this app right now", *b.Requested)).
+				WithHint("Deploy again once capacity frees up.")
+		case "node_cpu":
+			return api.ErrCapacity(fmt.Sprintf("no compute node has %d millicores of CPU free for this app right now", *b.Requested)).
+				WithHint("Lower the app's CPU with `gregale app <slug> --cpu-millicores` or `--size`, or deploy again once capacity frees up.")
+		}
+	}
+	return nil
 }
 
 func admissionBlockers(err error) []api.WorkerAdmissionBlocker {

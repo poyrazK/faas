@@ -48,6 +48,8 @@ import type { ReleaseDiff } from '../models/ReleaseDiff.js';
 import type { ReleaseFreeze } from '../models/ReleaseFreeze.js';
 import type { ReleaseFreezeStatus } from '../models/ReleaseFreezeStatus.js';
 import type { ReleaseGate } from '../models/ReleaseGate.js';
+import type { ReleaseTimeline } from '../models/ReleaseTimeline.js';
+import type { ResourceStatus } from '../models/ResourceStatus.js';
 import type { RetryDeploymentRequest } from '../models/RetryDeploymentRequest.js';
 import type { RollbackOperation } from '../models/RollbackOperation.js';
 import type { RollbackRequest } from '../models/RollbackRequest.js';
@@ -2466,6 +2468,37 @@ export class DeploymentsService {
     });
   }
   /**
+   * Show a release's phase and history.
+   * Composes what Gregale recorded about one release into a phase, a one-line summary and its events, oldest first: creation, schedule, approvals, rollout start, each canary step with the decision and gate results behind it, holds, completion, the post-release watch, abort or rollback, and the release that replaced it. Reads at most 500 audit rows; truncated=true means older history was left out.
+   * @returns ReleaseTimeline The release timeline.
+   * @throws ApiError
+   */
+  public static getReleaseTimeline({
+    id,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+  }): CancelablePromise<ReleaseTimeline> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/deployments/{id}/timeline',
+      path: {
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
    * Show a release's schedule.
    * The release's newest schedule: pending, or how it ended. 404 `scheduled_release_not_found` when the release was never scheduled.
    * @returns ScheduledRelease The schedule.
@@ -2743,6 +2776,34 @@ export class DeploymentsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
+      },
+    });
+  }
+  /**
+   * Read a deployment's conditions.
+   * Preview (resource-conditions capability). The deployment's Ready,
+   * Progressing and RolledOut conditions, mapped from
+   * the response GET /v1/deployments/{id} returns and never stored.
+   * Failed, cancelled and superseded deployments report terminal
+   * conditions. Cache-Control no-store.
+   *
+   * @returns ResourceStatus The deployment's conditions.
+   * @returns Problem Missing sign-in, read scope or MFA, a deployment this account does not own, the capability turned off, or the rate limit.
+   * @throws ApiError
+   */
+  public static getDeploymentStatus({
+    id,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+  }): CancelablePromise<ResourceStatus | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/deployments/{id}/status',
+      path: {
+        'id': id,
       },
     });
   }

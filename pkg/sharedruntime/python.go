@@ -39,7 +39,7 @@ const pythonDefault = RuntimePython313
 
 // pythonPackageManagers are start commands that need a tool the runner base
 // does not ship: Railpack installs them with mise, which the /app-only layer
-// drops.
+// drops. ResolvePythonStart drops the `run` of those in pythonRunTools.
 var pythonPackageManagers = map[string]bool{
 	"uv": true, "uvx": true, "poetry": true, "pdm": true, "pipenv": true, "pip": true,
 	"pipx": true, "hatch": true, "rye": true, "conda": true, "mise": true,
@@ -91,9 +91,10 @@ func pythonRuntimeForSpec(spec string) string {
 	return pythonMinors[minor]
 }
 
-// ClassifyPython reads a Railpack Python plan. Unlike Node there is no
-// package-manager script to resolve: the start command runs as written, with
-// the virtualenv's scripts on PATH.
+// ClassifyPython reads a Railpack Python plan. The start command runs with
+// the virtualenv's scripts on PATH, without a package manager's `run` in
+// front of it (see ResolvePythonStart; the plan alone cannot check its
+// target, which imaged does).
 func ClassifyPython(planJSON []byte) api.SharedRuntimeVerdict {
 	var p plan
 	if err := json.Unmarshal(planJSON, &p); err != nil {
@@ -105,7 +106,7 @@ func ClassifyPython(planJSON []byte) api.SharedRuntimeVerdict {
 	if reason := checkDeployInputs(p.Deploy.Inputs); reason != "" {
 		return ineligible(reason)
 	}
-	start, reason := ResolvePythonStart(p.Deploy.StartCommand)
+	start, reason := ResolvePythonStart(p.Deploy.StartCommand, nil)
 	if reason != "" {
 		return ineligible(reason)
 	}
@@ -116,21 +117,6 @@ func ClassifyPython(planJSON []byte) api.SharedRuntimeVerdict {
 	env["PATH"] = PythonRunnerPath
 	env["VIRTUAL_ENV"] = pythonVenv
 	return api.SharedRuntimeVerdict{Eligible: true, Start: start, Env: env}
-}
-
-// ResolvePythonStart turns a Python app's start command into an argv for the
-// runner base. A command that runs through a package manager (uv run, poetry
-// run, ...) keeps the full-layer path: that tool lives in the dropped
-// toolchain.
-func ResolvePythonStart(command string) ([]string, string) {
-	command = strings.TrimSpace(command)
-	if command == "" {
-		return nil, ReasonNoStartCommand
-	}
-	if PythonPackageManager(strings.Fields(command)[0]) {
-		return nil, ReasonPackageManagerStart
-	}
-	return []string{"/bin/sh", "-c", command}, ""
 }
 
 // PythonPackageManager reports whether a start command's program is a Python
@@ -170,8 +156,9 @@ const PyvenvConfigPath = "app/.venv/pyvenv.cfg"
 
 // RewritePyvenvConfig points a virtualenv's pyvenv.cfg at the runner base's
 // interpreter: Python finds its standard library through `home`. Keys naming
-// the toolchain interpreter move with it. ok is false when `home` is missing
-// or names something other than the toolchain.
+// the toolchain interpreter or its prefix (virtualenv's, which Pipenv and PDM
+// use) move with it. ok is false when `home` is missing or names something
+// other than the toolchain.
 func RewritePyvenvConfig(body []byte, interpreter string) ([]byte, bool) {
 	lines := strings.Split(string(body), "\n")
 	home := false
@@ -190,6 +177,10 @@ func RewritePyvenvConfig(body []byte, interpreter string) ([]byte, bool) {
 		case "executable", "base-executable":
 			if droppableToolchain(value) {
 				lines[i] = key + " = " + interpreter
+			}
+		case "base-prefix", "base-exec-prefix":
+			if droppableToolchain(value) {
+				lines[i] = key + " = " + path.Dir(path.Dir(interpreter))
 			}
 		}
 	}

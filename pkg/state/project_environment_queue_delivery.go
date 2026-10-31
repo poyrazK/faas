@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -115,7 +114,7 @@ func environmentQueueReceiptOwnerHash(owner InvocationEnvironmentQueueAdmission)
 }
 
 func validateEnvironmentQueueReceipt(receipt environmentQueueReceipt, owner InvocationEnvironmentQueueAdmission, inv Invocation, tokenHash string, now time.Time) error {
-	if subtle.ConstantTimeCompare([]byte(receipt.TokenHash), []byte(tokenHash)) != 1 ||
+	if !credentialHexMatches(credTagEnvironmentQueueReceipt, tokenHash, receipt.TokenHash) ||
 		receipt.OwnerHash != environmentQueueReceiptOwnerHash(owner) || receipt.Attempt != inv.Attempts ||
 		inv.State != InvocationDispatching || !inv.QuotaReserved || inv.LeaseExpiresAt == nil || inv.ReceivedAt == nil ||
 		!inv.ReceivedAt.Equal(receipt.IssuedAt) || !inv.LeaseExpiresAt.Equal(receipt.LeaseExpiresAt) ||

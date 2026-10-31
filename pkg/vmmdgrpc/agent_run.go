@@ -120,6 +120,12 @@ func agentRunStartFromProto(start *vmmdpb.RunAgentStart) (fcvm.AgentRunWakeReque
 		}
 		wake.InputKey = key
 	}
+	if ms := start.GetModelWaitPauseAfterMs(); ms != 0 {
+		if ms < 0 || ms > api.AgentWaitPauseAfterMaxMillis {
+			return fcvm.AgentRunWakeRequest{}, agentrunproto.Request{}, invalid("model_wait_pause_after_ms is out of range")
+		}
+		wake.ModelWaitPauseAfter = time.Duration(ms) * time.Millisecond
+	}
 	if relay := start.GetRelay(); relay != nil {
 		wake.Relay = &fcvm.AgentRunRelay{RunID: relay.GetRunId(), LeaseToken: relay.GetLeaseToken(), TenantID: relay.GetTenantId(),
 			AgentID: relay.GetAgentId(), AgentVersion: int(relay.GetAgentVersion())}

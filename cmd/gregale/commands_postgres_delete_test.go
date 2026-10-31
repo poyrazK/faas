@@ -66,8 +66,8 @@ func TestPostgresDeleteAsksForTheDatabaseName(t *testing.T) {
 		wantStdout     string
 	}{
 		{name: "typed name schedules", args: []string{"orders"}, typed: "orders\n", wantDeleted: scheduled, wantStderr: `Type "orders" to confirm`,
-			wantStdout: "Undo before 2026-11-06T12:00:00Z with: gregale postgres undelete orders"},
-		{name: "the prompt names undelete", args: []string{id}, typed: "orders\n", wantDeleted: scheduled, wantStderr: "gregale postgres undelete orders"},
+			wantStdout: "Undo before 2026-11-06T12:00:00Z with: gregale postgres recover orders"},
+		{name: "the prompt names recover", args: []string{id}, typed: "orders\n", wantDeleted: scheduled, wantStderr: "gregale postgres recover orders"},
 		{name: "the message names purge and the plan limit", args: []string{"orders", "--yes"}, wantDeleted: scheduled, wantStdout: "counts toward your plan's database limit. To delete it now: gregale postgres delete orders --purge"},
 		{name: "purge says it cannot be undone", args: []string{"orders", "--purge"}, typed: "orders\n", wantDeleted: purged, wantStderr: "cannot be recovered", wantStdout: "is deleting."},
 		{name: "purge with yes", args: []string{"--purge", "--yes", "orders"}, wantDeleted: purged},

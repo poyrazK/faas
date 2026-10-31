@@ -97,11 +97,11 @@ func (h *uploadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	acct, key, ok := h.authenticate(w, r, app)
+	acct, key, keySum, ok := h.authenticate(w, r, app)
 	if !ok {
 		return
 	}
-	completion, ok := h.prepareUpload(w, r, app, route, acct, key)
+	completion, ok := h.prepareUpload(w, r, app, route, acct, key, keySum)
 	if !ok {
 		return
 	}
@@ -156,7 +156,7 @@ func (h *uploadHandler) lookupUploadRoute(w http.ResponseWriter, r *http.Request
 	return app, route, true
 }
 
-func (h *uploadHandler) prepareUpload(w http.ResponseWriter, r *http.Request, app state.App, route state.ObjectUploadRoute, acct state.Account, key state.APIKey) (state.ObjectUploadCompletion, bool) {
+func (h *uploadHandler) prepareUpload(w http.ResponseWriter, r *http.Request, app state.App, route state.ObjectUploadRoute, acct state.Account, key state.APIKey, keySum []byte) (state.ObjectUploadCompletion, bool) {
 	subject := keySubject(acct, key)
 	c := state.ObjectUploadCompletion{ID: NewWriteReceiptID(), RouteID: route.ID, AccountID: app.AccountID, AppID: app.ID, BucketID: route.BucketID, SubjectID: subject, Key: generatedUploadKey(route.KeyPrefix, subject), Bytes: max(r.ContentLength, 0), ContentType: normalizedContentType(r.Header.Get("Content-Type")), RequestID: r.Header.Get("X-Request-ID"), Status: "pending", CreatedAt: h.now()}
 	if !h.validateUpload(w, r, route, c) {
@@ -169,8 +169,8 @@ func (h *uploadHandler) prepareUpload(w http.ResponseWriter, r *http.Request, ap
 	}
 	c.IdempotencyKey = idem
 	if idem != "" {
-		c.RequestFingerprint = uploadRequestFingerprint(key.Hash, route.ID, subject, r.ContentLength, c.ContentType, r.Header)
-		c.Key = idempotentUploadKey(key.Hash, route.KeyPrefix, route.ID, subject, idem)
+		c.RequestFingerprint = uploadRequestFingerprint(keySum, route.ID, subject, r.ContentLength, c.ContentType, r.Header)
+		c.Key = idempotentUploadKey(keySum, route.KeyPrefix, route.ID, subject, idem)
 		existing, err := h.routes.GetObjectUploadIntent(r.Context(), route.ID, subject, idem)
 		if err == nil {
 			h.replayIdempotent(w, existing, c.RequestFingerprint)
@@ -365,22 +365,26 @@ func (h *uploadHandler) replayIdempotent(w http.ResponseWriter, completion state
 	return true
 }
 
-func (h *uploadHandler) authenticate(w http.ResponseWriter, r *http.Request, app state.App) (state.Account, state.APIKey, bool) {
+// authenticate also returns the presented key's SHA-256, which upload
+// idempotency is keyed on: it is the same whether the stored hash is plain
+// or keyed (ADR 20261029202403).
+func (h *uploadHandler) authenticate(w http.ResponseWriter, r *http.Request, app state.App) (state.Account, state.APIKey, []byte, bool) {
 	token := bearerToken(r.Header.Get("Authorization"))
 	if token == "" || !api.ValidAPIKeyFormat(token) {
 		uploadProblem(w, http.StatusUnauthorized, "a Gregale API key is required")
-		return state.Account{}, state.APIKey{}, false
+		return state.Account{}, state.APIKey{}, nil, false
 	}
-	acct, key, err := h.authenticator.AuthenticateKey(r.Context(), api.HashAPIKey(token))
+	sum := api.HashAPIKey(token)
+	acct, key, err := h.authenticator.AuthenticateKey(r.Context(), sum)
 	if err != nil || acct.ID != app.AccountID {
 		uploadProblem(w, http.StatusUnauthorized, "the presented API key is not valid for this app")
-		return state.Account{}, state.APIKey{}, false
+		return state.Account{}, state.APIKey{}, nil, false
 	}
 	if !acct.Active() || key.AppID != "" && key.AppID != app.ID || !slices.Contains(key.Scopes, api.ScopeAdmin) && !slices.Contains(key.Scopes, api.ScopeStorageWrite) {
 		uploadProblem(w, http.StatusForbidden, "an active account and storage write permission for this app are required")
-		return state.Account{}, state.APIKey{}, false
+		return state.Account{}, state.APIKey{}, nil, false
 	}
-	return acct, key, true
+	return acct, key, sum, true
 }
 
 func (h *uploadHandler) lookupApp(r *http.Request) (state.App, error) {

@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -123,6 +124,35 @@ func (d *eventDeliveryRecoveryDispatcher) InvokeWithTargetStatus(ctx context.Con
 	return out, status, err
 }
 
+// legacyEventSettlementSynth answers like a scheduler from before
+// ADR-20261031100000, which runs beside the current one during a release: a
+// handler that threw is a plain permanent failure, so the delivery settles as
+// failed and recovers by handler replay. The current scheduler retries it and
+// dead-letters it instead.
+type legacyEventSettlementSynth struct{ sched.GatewaySynth }
+
+func (s legacyEventSettlementSynth) Invoke(ctx context.Context, app string, inv state.Invocation) (state.Invocation, error) {
+	out, err := s.GatewaySynth.Invoke(ctx, app, inv)
+	return out, legacyPermanentInvoke(err)
+}
+
+func (s legacyEventSettlementSynth) InvokeWithWake(ctx context.Context, app string, inv state.Invocation, wake sched.WakeResult) (state.Invocation, error) {
+	out, err := s.GatewaySynth.(interface {
+		InvokeWithWake(context.Context, string, state.Invocation, sched.WakeResult) (state.Invocation, error)
+	}).InvokeWithWake(ctx, app, inv, wake)
+	return out, legacyPermanentInvoke(err)
+}
+
+// legacyPermanentInvoke drops the HTTP status the current scheduler keeps on
+// an application's permanent failure: only the message survives, not the
+// wrapped status error.
+func legacyPermanentInvoke(err error) error {
+	if errors.Is(err, sched.ErrPermanentInvoke) {
+		return fmt.Errorf("%w: %s", sched.ErrPermanentInvoke, err.Error())
+	}
+	return err
+}
+
 func eventDeliveryRecoveryPostgresHTTP(t *testing.T, recoveryKind string) {
 	e := apidserver.SetupPGHandler(t, api.PlanHobby)
 	store := (*e.Store()).(*state.PgStore)
@@ -139,6 +169,11 @@ func eventDeliveryRecoveryPostgresHTTP(t *testing.T, recoveryKind string) {
 	gateway, err := sched.DialGatewaySynthTarget("tcp://"+strings.TrimPrefix(endpoint.URL, "http://"), nil, log)
 	if err != nil {
 		t.Fatal(err)
+	}
+	synth := gateway
+	if recoveryKind == "handler_replay" {
+		// Only an older scheduler leaves a thrown handler's delivery failed.
+		synth = legacyEventSettlementSynth{gateway}
 	}
 	published := e.Do(t, http.MethodPost, "/v1/events:publish", api.PublishEventRequest{ID: "delivery-recovery", Source: "orders", Type: "order.created", Data: json.RawMessage(`{"order_id":"o-1"}`)}, nil)
 	if published.Code != http.StatusAccepted {
@@ -164,7 +199,7 @@ func eventDeliveryRecoveryPostgresHTTP(t *testing.T, recoveryKind string) {
 		ids[i] = rows[0].ID
 	}
 	loss := &eventDeliverySettlementLossStore{PgStore: store, target: ids[1]}
-	drain := sched.NewDrain(statetest.NewPg(loss), engine, sched.WithDrainGatewaySynth(gateway), sched.WithDrainWakeLease(1), sched.WithDrainRetryAfter(1), sched.WithDrainLogger(log))
+	drain := sched.NewDrain(statetest.NewPg(loss), engine, sched.WithDrainGatewaySynth(synth), sched.WithDrainWakeLease(1), sched.WithDrainRetryAfter(1), sched.WithDrainLogger(log))
 	drain.Tick(ctx)
 	initial := readEventDeliveryRecoveryReceipt(t, e)
 	assertEventRecoveryConsumerState(t, initial, subscriptions[0].ID, "completed", 1)
@@ -179,7 +214,7 @@ func eventDeliveryRecoveryPostgresHTTP(t *testing.T, recoveryKind string) {
 		t.Fatal(err)
 	}
 	startEventDeliveryRecoveryScheduler(t, e, engine, log, false)
-	drain = sched.NewDrain(store, engine, sched.WithDrainGatewaySynth(gateway), sched.WithDrainWakeLease(1), sched.WithDrainRetryAfter(1), sched.WithDrainLogger(log))
+	drain = sched.NewDrain(store, engine, sched.WithDrainGatewaySynth(synth), sched.WithDrainWakeLease(1), sched.WithDrainRetryAfter(1), sched.WithDrainLogger(log))
 	waitEventRecoveryCondition(t, func() bool {
 		drain.Tick(ctx)
 		retry, err := store.InvocationByID(ctx, ids[1])
@@ -326,7 +361,10 @@ func seedEventDeliveryRecoveryConsumers(t *testing.T, store *state.PgStore, acco
 
 func waitEventRecoveryCondition(t *testing.T, condition func() bool) {
 	t.Helper()
-	deadline := time.NewTimer(10 * time.Second)
+	// Event deliveries back off 5 s doubling, +/-20 % (ADR-20261029190000):
+	// the Hobby poison delivery dead-letters about 15 s after its first
+	// attempt, up to ~13 s after the settlement loss this test waits on.
+	deadline := time.NewTimer(30 * time.Second)
 	defer deadline.Stop()
 	tick := time.NewTicker(25 * time.Millisecond)
 	defer tick.Stop()

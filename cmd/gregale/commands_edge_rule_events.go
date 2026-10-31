@@ -59,10 +59,10 @@ func printEdgeRuleEvents(slug string, out api.EdgeRuleEventsResponse) {
 			rule = e.RuleID
 		}
 		_, _ = fmt.Fprintf(osStdout, "%-20s %-8s %-24s %-7s %-39s %-3s %s\n",
-			e.OccurredAt.UTC().Format("2006-01-02 15:04:05"), e.Outcome, truncate(rule, 24), e.Method,
-			e.ClientIP, e.Country, truncate(e.Host+e.Path, 80))
+			e.OccurredAt.UTC().Format("2006-01-02 15:04:05"), e.Outcome, terminalSafe(truncate(rule, 24)), e.Method,
+			e.ClientIP, e.Country, terminalSafe(truncate(e.Host+e.Path, 80)))
 		if waf := e.WAFSummary(); waf != "" {
-			_, _ = fmt.Fprintf(osStdout, "%-20s waf: %s\n", "", waf)
+			_, _ = fmt.Fprintf(osStdout, "%-20s waf: %s\n", "", terminalSafe(waf))
 		}
 	}
 	if out.NextCursor != "" {

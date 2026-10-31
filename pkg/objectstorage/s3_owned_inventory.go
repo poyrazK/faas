@@ -141,6 +141,14 @@ func validOwnedInventoryPage(p objectinventory.Page, bucket, kind, cursor string
 	return count <= int(limit) && (p.NextCursor == "" || count != 0)
 }
 
+// OwnedInventory reports a provider whose inventory comes from an owned node's
+// catalog or usage counters. Its cursors expire with the catalog revision, so
+// its listing is never resumed across attempts (ADR-20261030100835).
+func OwnedInventory(provider Provider) bool {
+	p, ok := provider.(*S3)
+	return ok && (p.ownedNodeReceipts || p.ownedNodeUsageCounters)
+}
+
 // CompleteOwnedInventory feeds the existing capacity/accounting boundary. A
 // revision change, corrupt blob, missing field or partial scan changes no total.
 // The bool distinguishes managed providers, which keep their existing protocol.

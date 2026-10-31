@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -20,6 +21,11 @@ import (
 
 const computeGatewayPoolTTL = 5 * time.Second
 const computeGatewayDialTimeout = 2 * time.Second
+
+// internalKeepAlivePerNodeEnv keeps connections to gatewayd-internal alive per
+// compute node when the edge picks its upstream per request (the compute pool
+// or a compute edge). Off by default.
+const internalKeepAlivePerNodeEnv = "FAAS_INTERNAL_KEEPALIVE_PER_NODE"
 
 // computeGatewayPoolStaleTTL bounds how long the last successful inventory
 // keeps routing traffic while the registry cannot be read (ADR-1344 §5 rule
@@ -44,6 +50,9 @@ type computeGatewayNodeLister interface {
 }
 
 type computeGatewayEndpoint struct {
+	// id is the node's compute_nodes.id, which gatewayd-internal names in a
+	// placement answer (ADR-20261031105055).
+	id      string
 	name    string
 	address string
 }
@@ -52,11 +61,12 @@ type computeGatewayEndpoint struct {
 // the control-plane registry, so adding or draining a compute node does not
 // require changing the public gateway unit or restarting the edge.
 //
-// The pool deliberately opens a new connection for each request. The
-// InternalReverseProxy transport otherwise pools an idle connection under one
-// logical URL, which could keep sending traffic to a node after the registry
-// removed it. The small connection setup cost is the safe default until the
-// transport grows per-node connection keys.
+// Through DialContext the pool opens a new connection for each request: the
+// InternalReverseProxy transport would otherwise pool an idle connection under
+// one logical URL, which could keep sending traffic to a node after the
+// registry removed it. With FAAS_INTERNAL_KEEPALIVE_PER_NODE the edge uses
+// PickUpstream instead, which names the node before a connection is chosen,
+// so connections stay alive per node.
 //
 // A registry failure never turns into a data-plane failure while a recent
 // inventory exists (ADR-1344 §5): once the TTL expires, requests keep using
@@ -110,21 +120,59 @@ func (p *computeGatewayPool) DialContext(ctx context.Context, _ string) (net.Con
 		if rec.Excluded(endpoint.name) {
 			continue
 		}
-		dialCtx, cancel := context.WithTimeout(ctx, computeGatewayDialTimeout)
-		conn, dialErr := (&net.Dialer{}).DialContext(dialCtx, "tcp", endpoint.address)
-		cancel()
+		conn, dialErr := p.dial(ctx, endpoint)
 		if dialErr == nil {
 			rec.RecordDialed(endpoint.name)
 			return conn, nil
 		}
 		lastErr = dialErr
-		p.log.Warn("compute gateway unavailable; trying next node",
-			"node", endpoint.name, "target", endpoint.address, "err", dialErr)
 	}
 	if lastErr == nil {
 		lastErr = errors.New("all compute gateway dials failed")
 	}
 	return nil, fmt.Errorf("%w: %w", gateway.ErrNoComputeCapacity, lastErr)
+}
+
+// PickUpstream names the node for the next attempt: round robin with ready
+// nodes first, as DialContext tries them, skipping the nodes rec excludes and
+// the addresses whose dial already failed (gateway.UpstreamPicker).
+func (p *computeGatewayPool) PickUpstream(ctx context.Context, rec *gateway.DialRecord, failed []string) (gateway.Upstream, error) {
+	endpoints, err := p.snapshot(ctx)
+	if err != nil {
+		return gateway.Upstream{}, fmt.Errorf("%w: refresh compute gateway inventory: %w", gateway.ErrNoComputeCapacity, err)
+	}
+	if len(endpoints) == 0 {
+		return gateway.Upstream{}, gateway.ErrNoComputeCapacity
+	}
+	for _, endpoint := range p.readiness.order(endpoints, p.nextIndex(len(endpoints))) {
+		key := computeGatewayUpstreamKey(endpoint.address)
+		if rec.Excluded(endpoint.name) || slices.Contains(failed, key) {
+			continue
+		}
+		return gateway.Upstream{Key: key, Node: endpoint.name, Dial: func(ctx context.Context) (net.Conn, error) {
+			return p.dial(ctx, endpoint)
+		}}, nil
+	}
+	return gateway.Upstream{}, gateway.ErrNoComputeCapacity
+}
+
+// computeGatewayUpstreamKey keys a node's pooled connections by the address
+// they reach.
+func computeGatewayUpstreamKey(address string) string {
+	return "tcp://" + address
+}
+
+// dial opens a new connection to one node's gatewayd-internal.
+func (p *computeGatewayPool) dial(ctx context.Context, endpoint computeGatewayEndpoint) (net.Conn, error) {
+	dialCtx, cancel := context.WithTimeout(ctx, computeGatewayDialTimeout)
+	defer cancel()
+	conn, err := (&net.Dialer{}).DialContext(dialCtx, "tcp", endpoint.address)
+	if err != nil {
+		p.log.Warn("compute gateway unavailable; trying next node",
+			"node", endpoint.name, "target", endpoint.address, "err", err)
+		return nil, err
+	}
+	return conn, nil
 }
 
 // HasAlternate reports whether the inventory holds a compute node a retry
@@ -208,6 +256,36 @@ func (p *computeGatewayPool) snapshot(ctx context.Context) ([]computeGatewayEndp
 	return nil, err
 }
 
+// peekEndpoint returns the ready endpoint of the node with registry id from
+// the inventory the pool already holds (ADR-20261031105055). It never waits
+// on the registry: an expired inventory starts one background read, and a
+// missing or too old one finds nothing, so placement adds no control-plane
+// read to a request.
+func (p *computeGatewayPool) peekEndpoint(ctx context.Context, id string) (computeGatewayEndpoint, bool) {
+	p.mu.Lock()
+	now := time.Now()
+	if !p.usableLocked(now) {
+		p.mu.Unlock()
+		return computeGatewayEndpoint{}, false
+	}
+	if (p.invalidated || now.Sub(p.refreshed) >= computeGatewayPoolTTL) && !p.refreshing {
+		p.refreshing = true
+		go p.refreshInBackground(ctx)
+	}
+	var found computeGatewayEndpoint
+	for _, endpoint := range p.endpoints {
+		if endpoint.id == id {
+			found = endpoint
+			break
+		}
+	}
+	p.mu.Unlock()
+	if found.id == "" || !p.readiness.ready(found.address) {
+		return computeGatewayEndpoint{}, false
+	}
+	return found, true
+}
+
 // usableLocked reports whether the last successful inventory is recent
 // enough to route on. The caller holds p.mu.
 func (p *computeGatewayPool) usableLocked(now time.Time) bool {
@@ -277,7 +355,7 @@ func (p *computeGatewayPool) refresh(ctx context.Context) ([]computeGatewayEndpo
 			p.log.Warn("ignoring invalid compute gateway target", "node", node.Name, "target", *node.GatewayTargetURL)
 			continue
 		}
-		endpoints = append(endpoints, computeGatewayEndpoint{name: node.Name, address: address})
+		endpoints = append(endpoints, computeGatewayEndpoint{id: node.ID, name: node.Name, address: address})
 	}
 
 	p.mu.Lock()

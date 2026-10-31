@@ -393,6 +393,7 @@ export type { CompleteWorkflowCallbackResponse } from './models/CompleteWorkflow
 export type { ComposeHealthcheck } from './models/ComposeHealthcheck.js';
 export type { ComposeProcess } from './models/ComposeProcess.js';
 export type { ComposeResources } from './models/ComposeResources.js';
+export type { Condition } from './models/Condition.js';
 export type { ConfigChangeReceipt } from './models/ConfigChangeReceipt.js';
 export type { ConfigGuard } from './models/ConfigGuard.js';
 export type { ConfigGuardDecision } from './models/ConfigGuardDecision.js';
@@ -2626,6 +2627,8 @@ export type { ReleaseFreezeWeekly } from './models/ReleaseFreezeWeekly.js';
 export type { ReleaseGate } from './models/ReleaseGate.js';
 export type { ReleaseGateResult } from './models/ReleaseGateResult.js';
 export type { ReleaseRestorePoint } from './models/ReleaseRestorePoint.js';
+export type { ReleaseTimeline } from './models/ReleaseTimeline.js';
+export type { ReleaseTimelineEvent } from './models/ReleaseTimelineEvent.js';
 export type { RemoveEnvironmentGitOpsOverrideRequest } from './models/RemoveEnvironmentGitOpsOverrideRequest.js';
 export type { RenameAppRequest } from './models/RenameAppRequest.js';
 export type { ReplaceProjectEnvironmentQueueBindingsRequest } from './models/ReplaceProjectEnvironmentQueueBindingsRequest.js';
@@ -2654,6 +2657,7 @@ export type { RequestEventExecutionLineageCaseBackfillRequest } from './models/R
 export type { ResizeManagedPostgresDatabaseRequest } from './models/ResizeManagedPostgresDatabaseRequest.js';
 export type { ResolvedExecutionLimits } from './models/ResolvedExecutionLimits.js';
 export type { ResourceProfile } from './models/ResourceProfile.js';
+export type { ResourceStatus } from './models/ResourceStatus.js';
 export type { RestoreAutomationRevisionRequest } from './models/RestoreAutomationRevisionRequest.js';
 export type { RestoreManagedPostgresDatabaseRequest } from './models/RestoreManagedPostgresDatabaseRequest.js';
 export type { RestoreMCPReadinessPolicyRequest } from './models/RestoreMCPReadinessPolicyRequest.js';

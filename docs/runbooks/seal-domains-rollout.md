@@ -430,13 +430,37 @@ bundles, deployment snapshots, and release and promotion captures. It
 changes only each envelope's key label and ciphertext, so secret versions
 and fingerprints stay as they were.
 
+Sidecar env values are handled differently: the deployment keeps them as
+it was created. The pass writes each value's runtime-domain copy to
+`deployment_sidecar_env_reseals`, and schedd sends vmmd the copy instead.
+
 - Expect `0 failed`.
 - If `changed concurrently` is not 0, a customer changed that secret during
   the run; run the migration again.
-- A complete migration lists nothing, so a second run reports `0 scanned`.
+- A complete migration lists no secrets. A second run still scans every
+  sidecar env value, because those carry no key label and must be opened,
+  and reports them as current.
 - If `failed` is not 0, no key on the host opens those envelopes. Those
   secrets were already broken for their customers; investigate with
   [FaasFleetSealDomain](FaasFleetSealDomain.md#recover).
+
+To see what still holds vmmd to the fleet key, run:
+
+```bash
+sudo gregalectl seal-domain migrate --domain runtime --check --db-env /etc/faas/compute-db.env
+```
+
+It writes nothing. `pending` is what another migration run would re-seal.
+That includes a secret a config guard restored, or a cutover published,
+after this step. It also includes the sidecar env of a deployment created
+from an older one's sidecars, such as a clone or a promotion. `left on the fleet key` counts two kinds of value:
+
+- the short-lived copies an open config guard or an unpublished cutover
+  holds under another key;
+- crash capture keys sealed before the domain was staged.
+
+These clear on their own, within the guard window, when the cutover
+finishes, or when the capture expires (seven days).
 
 Then watch wake errors across the compute nodes for the next hour. A node
 that fails wakes for apps with secrets is missing `runtime.age`: see
@@ -530,6 +554,53 @@ again, and restart schedd.
 
 Rollback: set `faas_seal_domain_runtime_binding_required: false`, converge
 the compute nodes, and restart vmmd. Bound secrets stay bound.
+
+### 4g. Contract: vmmd drops the fleet and host keys
+
+This step needs:
+
+- 4d complete;
+- the build contract (6e), because a contracted vmmd also opens registry
+  passwords with the build domain alone;
+- the release that sends sidecar env copies past its rollback window.
+
+On a compute host, check what still holds vmmd to the fleet key, as in 4d:
+
+```bash
+sudo gregalectl seal-domain migrate --domain runtime --check --db-env /etc/faas/compute-db.env
+```
+
+- Go on only once it reports `0 pending` and nothing left on the fleet key.
+- If anything is pending, run the 4d migration again.
+- Short-lived copies and old crash capture keys clear on their own.
+
+Then restart schedd on every node, one at a time. A schedd whose owner cache
+predates the last migration run can still send a secret's old ciphertext.
+
+Add to the local variables file and converge the compute nodes:
+
+```yaml
+faas_seal_domain_runtime_contracted: true
+```
+
+The role runs the same check and fails while anything is pending. It then
+writes the switch into vmmd's drop-in, but does not restart vmmd. vmmd
+applies the switch at its next start (the next release, or a planned
+restart):
+
+- It then reads neither `fleet.age` nor `host.age`, and reports
+  `faas_seal_domain_legacy_identities 0`.
+- It refuses to start without `runtime.age` and `build.age`.
+
+`host.age` stays on the node, because the join check and other units still
+load it.
+
+Restart one vmmd first, wake a test app that has secrets and sidecar env,
+and run a build from a private base image. Then let the release restart the
+rest.
+
+Rollback: set `faas_seal_domain_runtime_contracted: false`, converge the
+compute nodes, and restart vmmd. It loads the fleet and host keys again.
 
 ## 5. Source seal domain
 

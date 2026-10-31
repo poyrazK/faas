@@ -1025,6 +1025,12 @@ message CapacityReport {
   // like the instance rows, outside the capacity signature; absent when
   // bridge units are off or on an older vmmd.
   google.protobuf.Int64Value instance_bridge_resident_bytes = 12;
+  // StatsResponse.tenant_cpu_pressure_some_avg10 and host_cpu_busy_percent
+  // from the same sample (ADR 20261030100950): the readings the node's
+  // schedd checks for CPU pressure. Telemetry outside the capacity
+  // signature; absent on an older vmmd or a host without the files.
+  google.protobuf.DoubleValue tenant_cpu_pressure_some_avg10 = 13;
+  google.protobuf.DoubleValue host_cpu_busy_percent = 14;
 }
 
 // Inherits node_id, sampled_at_unix_ms and node_key_id from CapacityReport.
@@ -1200,6 +1206,10 @@ message AgentRunStart {
   // input_key is the storage key of the run's input drive, the checkout
   // image agentd prepared (ADR-20261027090010 §3). Empty: no input drive.
   string input_key = 9;
+  // pause_during_model_calls is the version's model-wait pause opt-in
+  // (ADR-20261027090012 §1). false (a version that opted out, or an older
+  // agentd) keeps the run's VM running while it waits on the model.
+  bool pause_during_model_calls = 10;
 }
 
 // AgentRunRelay is placement data for the run's relay assertion (ADR-20261027090010

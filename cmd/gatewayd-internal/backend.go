@@ -234,7 +234,11 @@ func (r pgRouter) environmentHost(ctx context.Context, environmentID, appID stri
 		if app.Status == state.AppDeleted || api.NormalizeAppVisibility(app.Visibility) == api.AppVisibilityInternal {
 			return gateway.App{}, false, nil
 		}
-		return gateway.App{ID: app.ID, AccountID: acct.ID, ResourceOwnerID: acct.ResourceOrgID, Plan: acct.Plan, AccountStatus: string(acct.Status),
+		edgeRuleScope, scopeErr := state.AppEdgeRuleScope(ctx, r.store, app)
+		if scopeErr != nil {
+			return gateway.App{}, false, scopeErr
+		}
+		return gateway.App{ID: app.ID, AccountID: acct.ID, ResourceOwnerID: acct.ResourceOrgID, EdgeRuleScope: edgeRuleScope, Plan: acct.Plan, AccountStatus: string(acct.Status),
 			AccountAbuseHeld: acct.AbuseHeld(), EnvironmentNotReady: true, DynamicRoute: true}, true, nil
 	}
 	if err != nil || !found {
@@ -617,6 +621,27 @@ func (r pgRouter) toPublicApp(ctx context.Context, app state.App) (gateway.App, 
 	return resolved, found, err
 }
 
+// previewProductionAppID resolves a PR preview's production app, whose
+// app-wide edge rules the preview applies too (ADR-091 amendment 2026-10-30).
+// A production app the account no longer holds leaves the preview with its
+// own rules; a failed read fails the host's resolution closed.
+func (r pgRouter) previewProductionAppID(ctx context.Context, app state.App) (string, error) {
+	if app.PreviewOfSlug == "" {
+		return "", nil
+	}
+	production, err := r.store.AppBySlug(ctx, app.PreviewOfSlug)
+	if errors.Is(err, state.ErrNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("resolve the preview's production app: %w", err)
+	}
+	if production.AccountID != app.AccountID || production.Status == state.AppDeleted {
+		return "", nil
+	}
+	return production.ID, nil
+}
+
 func (r pgRouter) toAppWithDeployment(ctx context.Context, app state.App, exact *state.Deployment) (gateway.App, bool, error) {
 	if app.Status == state.AppDeleted {
 		return gateway.App{}, false, nil
@@ -692,6 +717,14 @@ func (r pgRouter) toAppWithDeployment(ctx context.Context, app state.App, exact 
 		wakeMaxQueueWaitSeconds = app.ScalingPolicy.WakeMaxQueueWaitSeconds
 		perInstanceConcurrency = app.ScalingPolicy.PerInstanceConcurrency
 	}
+	productionAppID, err := r.previewProductionAppID(ctx, app)
+	if err != nil {
+		return gateway.App{}, false, err
+	}
+	edgeRuleScope, err := state.AppEdgeRuleScope(ctx, r.store, app)
+	if err != nil {
+		return gateway.App{}, false, err
+	}
 	requestRateLimitRPS, requestRateLimitBurst := 0, 0
 	if app.RequestRateLimitRPS != nil {
 		requestRateLimitRPS = *app.RequestRateLimitRPS
@@ -703,6 +736,7 @@ func (r pgRouter) toAppWithDeployment(ctx context.Context, app state.App, exact 
 		ID:                           app.ID,
 		AccountID:                    acct.ID,
 		ResourceOwnerID:              acct.ResourceOrgID,
+		EdgeRuleScope:                edgeRuleScope,
 		SecurityQuarantined:          securityQuarantined,
 		Visibility:                   api.NormalizeAppVisibility(app.Visibility),
 		AccountStatus:                string(acct.Status),
@@ -725,6 +759,7 @@ func (r pgRouter) toAppWithDeployment(ctx context.Context, app state.App, exact 
 		Slug:                         app.Slug,
 		CanonicalHost:                app.Slug + r.appsSuffix,
 		IsPreview:                    app.PreviewOfSlug != "",
+		ProductionAppID:              productionAppID,
 		StreamingEnabled:             app.StreamingEnabled,
 		SessionAffinity:              app.Manifest.SessionAffinity,
 		VersionAffinityCookie:        app.Manifest.VersionAffinityCookie,

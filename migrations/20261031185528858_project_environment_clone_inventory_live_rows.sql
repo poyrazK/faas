@@ -1,10 +1,10 @@
--- filename: 20261030150337748_project_environment_clone_inventory_live_rows.sql
+-- filename: 20261031185528858_project_environment_clone_inventory_live_rows.sql
 -- migration-compat: expand
 
 -- +goose Up
 -- +goose StatementBegin
 SET LOCAL lock_timeout = '5s';
--- ADR-20261024123122 amendment 2026-10-30: a probe may name the conditions a
+-- ADR-20261024123122 Amendment 1: a probe may name the conditions a
 -- row must meet to count. A deleted bucket, a retired queue binding or a
 -- revoked credential holds nothing a clone would copy, and a row scoped to
 -- another environment is not the source's, so neither blocks admission.

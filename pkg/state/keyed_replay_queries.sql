@@ -90,12 +90,23 @@ WHERE (l.app_id,l.policy_name,l.key_digest) IN (
 
 -- name: DeadLetterReplayCandidateIDs :many
 -- event_route entries cannot be replayed (DeadLetterReplayable), so they never
--- take a page from replay-all.
-SELECT id::text FROM production_dead_letter_events
-WHERE account_id=sqlc.arg(account_id)::uuid AND replayed_at IS NULL AND source<>'event_route'
-  AND (sqlc.narg(expected_app_id)::uuid IS NULL OR app_id=sqlc.narg(expected_app_id)::uuid)
-  AND (sqlc.narg(expected_event_id)::uuid IS NULL OR id=sqlc.narg(expected_event_id)::uuid)
-ORDER BY last_failed_at DESC,id DESC LIMIT sqlc.arg(candidate_limit)::integer;
+-- take a page from replay-all. Neither does keyed work whose pending deadline
+-- has passed (ADR-20261031101000); replaying one entry by id still reaches it,
+-- so the refusal names the deadline.
+SELECT d.id::text FROM production_dead_letter_events d
+WHERE d.account_id=sqlc.arg(account_id)::uuid AND d.replayed_at IS NULL AND d.source<>'event_route'
+  AND (sqlc.narg(expected_app_id)::uuid IS NULL OR d.app_id=sqlc.narg(expected_app_id)::uuid)
+  AND (sqlc.narg(expected_event_id)::uuid IS NULL OR d.id=sqlc.narg(expected_event_id)::uuid)
+  AND (sqlc.narg(expected_event_id)::uuid IS NOT NULL OR d.source<>'invocation' OR NOT EXISTS (
+    SELECT 1 FROM invocations i WHERE i.id=d.source_id
+      AND i.work_policy_name IS NOT NULL AND i.work_expires_at<=now()))
+ORDER BY d.last_failed_at DESC,d.id DESC LIMIT sqlc.arg(candidate_limit)::integer;
+
+-- name: DeadLetterInvocationWorkExpired :one
+-- ADR-20261031101000: replay resets attempts, so a keyed row whose pending
+-- deadline has passed would only expire again.
+SELECT (work_policy_name IS NOT NULL AND work_expires_at IS NOT NULL AND work_expires_at<=now())::boolean
+FROM invocations WHERE id=sqlc.arg(invocation_id)::uuid;
 
 -- name: LockKeyedDeadLetterInvocationRows :exec
 SELECT i.id FROM invocations i WHERE i.work_policy_name IS NOT NULL AND i.id IN (

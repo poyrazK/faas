@@ -59,7 +59,7 @@
         <table>
           <tbody>
             <tr><th>State</th><td><strong>{{.State}}</strong>{{if .LastErrorCode}} <code>{{.LastErrorCode}}</code>{{end}}</td></tr>
-            {{if .RestorableUntil}}<tr><th>Scheduled for deletion</th><td>Undo before {{.RestorableUntil}} with <code>gregale postgres undelete {{.Name}}</code>. It counts toward your plan's database limit until then; <code>gregale postgres delete {{.Name}} --purge</code> deletes it now.</td></tr>{{end}}
+            {{if .RestorableUntil}}<tr><th>Scheduled for deletion</th><td>Undo before {{.RestorableUntil}} with <code>gregale postgres recover {{.Name}}</code>. It counts toward your plan's database limit until then; <code>gregale postgres delete {{.Name}} --purge</code> deletes it now.</td></tr>{{end}}
             <tr><th>Placement</th><td>{{.Region}} · PostgreSQL {{.PostgresMajor}} · {{.ServiceClass}} · {{.Availability}}</td></tr>
             <tr><th>Compute</th><td>{{if .ScaleToZero}}scales to zero when idle{{else}}always on{{end}}</td></tr>
             <tr><th>Storage / restore</th><td>{{.StorageLimitLabel}} · {{.RestoreWindowSeconds}} seconds</td></tr>

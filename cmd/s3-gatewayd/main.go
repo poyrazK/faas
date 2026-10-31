@@ -60,7 +60,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}()
 	wire.BootStamps(ctx, "s3-gatewayd", ops)
 	wire.RegisterDefaultOps(ops)
-	registry, err := objectstorage.Load(os.Getenv)
+	registry, err := objectstorage.LoadGateway(os.Getenv)
 	if err != nil {
 		return fmt.Errorf("s3-gatewayd: load object storage: %w", err)
 	}
@@ -98,11 +98,14 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// counts batched (ADR-20261030075301). The last flush runs after the
 	// servers stop and before the pool closes.
 	var readAdmitter *objectstorage.ReadAdmitter
+	var orgAccess *objectstorage.OrgAccessCache
 	readsDone := make(chan struct{})
 	readsCtx, stopReads := context.WithCancel(context.WithoutCancel(ctx))
 	if registry.Accounting.GatewaySafety() {
 		readAdmitter = objectstorage.NewReadAdmitter(store, registry.Accounting, nil)
 		ops.Registry().MustRegister(readAdmitter.Collectors()...)
+		orgAccess = objectstorage.NewOrgAccessCache(store, nil)
+		ops.Registry().MustRegister(orgAccess.Collectors()...)
 		go func() {
 			defer close(readsDone)
 			readAdmitter.Run(readsCtx, func(err error) { log.Warn("s3-gatewayd: read usage flush failed", "err", err) })
@@ -174,9 +177,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 	go fence.Run(ctx)
 	serving := func() bool { return enabled.Load() && fence.Open() }
 
+	// GET and HEAD reuse a credential's resolution for 2 s
+	// (ADR-20261030075301 step 4).
+	credentials := s3gateway.NewCredentialCache(nil)
+	ops.Registry().MustRegister(credentials.Collectors()...)
 	handler, err := s3gateway.New(s3gateway.Config{
 		Registry: registry, Store: store, RequestMetrics: requestMetrics, Enabled: serving, SpoolDir: os.Getenv("FAAS_S3_GATEWAY_SPOOL_DIR"), Log: log,
-		ReadAdmitter: readAdmitter, AccountLimiter: objectstorage.NewAccountRequestLimiter(),
+		ReadAdmitter: readAdmitter, OrgAccess: orgAccess, AccountLimiter: objectstorage.NewAccountRequestLimiter(), Credentials: credentials,
 		OpenSecret: func(sealed []byte) (string, error) {
 			namespace, plaintext, err := secretbox.OpenBytesMulti(readers, sealed)
 			if err != nil || namespace != s3gateway.CredentialSecretNamespace || len(plaintext) != 40 {

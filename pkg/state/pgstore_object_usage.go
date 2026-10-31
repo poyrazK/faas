@@ -73,6 +73,7 @@ func readObjectUsageForPeriod(ctx context.Context, db sqlc.DBTX, account string,
 			ObservedBytes: r.ObservedBytes.Int64, ObservedKeys: r.ObservedKeys.Int64, ObservedAt: r.ObservedAt.Time, AttemptAt: r.AttemptAt.Time, LeaseUntil: r.InventoryLeaseUntil.Time, Token: r.Token.String,
 			RequestCount: r.GatewayRequestCount, EgressBytes: r.GatewayEgressBytes, GatewayMetricsKnown: true,
 			StoredByteHours: r.GatewayStoredByteHours, StorageMeteredThrough: r.GatewayStorageThrough.Time,
+			InventoryScan: ObjectInventoryScan{StartedAt: r.ScanStartedAt.Time, ProgressAt: r.ScanProgressAt.Time, Bytes: r.ScanBytes.Int64, Keys: r.ScanKeys.Int64, Pages: int(r.ScanPages.Int32), Complete: r.ScanComplete.Bool},
 		})
 	}
 	reports, err := q.ObjectUsageReports(ctx, db, sqlc.ObjectUsageReportsParams{AccountID: mustPgUUID(account), PeriodStart: objectUsageTime(periodStart)})
@@ -253,7 +254,7 @@ func (s *pgCore) DueObjectInventories(ctx context.Context, limit int32) ([]Objec
 	if limit < 1 || limit > 100 {
 		return nil, ErrConflict
 	}
-	rows, err := sqlc.New().ObjectInventoriesDue(ctx, s.pool, limit)
+	rows, err := sqlc.New().ObjectInventoriesDue(ctx, s.pool, sqlc.ObjectInventoriesDueParams{ScanMaxAgeSeconds: int64(api.ObjectInventoryScanMaxAge / time.Second), RowLimit: limit})
 	if err != nil {
 		return nil, err
 	}
