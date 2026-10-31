@@ -86,8 +86,8 @@ func (s *Server) connect(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	done := make(chan struct{})
 	token := r.Header.Get(TokenHeader)
-	go s.watchAuthorization(ctx, cancel, done, session, func(current Session) error {
-		return current.AuthorizeAttachment(r.Context(), time.Now(), token)
+	go s.watchAuthorization(ctx, cancel, done, session, func(ctx context.Context, current Session) error {
+		return current.AuthorizeAttachment(ctx, time.Now(), token)
 	})
 	_ = s.relay.Attach(ctx, session, NewWebSocketConn(socket))
 	close(done)
@@ -95,7 +95,7 @@ func (s *Server) connect(w http.ResponseWriter, r *http.Request) {
 
 // Revocation by any apid replica also closes idle laptop connections and
 // long-lived upgraded sockets; authorize repeats the entry check.
-func (s *Server) watchAuthorization(ctx context.Context, cancel func(), done <-chan struct{}, session Session, authorize func(Session) error) {
+func (s *Server) watchAuthorization(ctx context.Context, cancel func(), done <-chan struct{}, session Session, authorize func(context.Context, Session) error) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
@@ -106,7 +106,7 @@ func (s *Server) watchAuthorization(ctx context.Context, cancel func(), done <-c
 			return
 		case <-ticker.C:
 			current, err := s.lookup(ctx, session.Scope.AccountID, session.ID)
-			if err != nil || authorize(current) != nil {
+			if err != nil || authorize(ctx, current) != nil {
 				cancel()
 				return
 			}

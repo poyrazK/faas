@@ -99,8 +99,8 @@ func (s *Server) upgradeTraffic(w http.ResponseWriter, r *http.Request, session 
 		}
 		stopOnce.Do(func() { close(stop) })
 	}()
-	go s.watchAuthorization(ctx, cancel, watching, session, func(current Session) error {
-		return current.AuthorizeRequest(r.Context(), time.Now(), token, session.Scope.AccountID, session.Scope.EnvironmentID, session.Scope.TargetAppID)
+	go s.watchAuthorization(ctx, cancel, watching, session, func(ctx context.Context, current Session) error {
+		return current.AuthorizeRequest(ctx, time.Now(), token, session.Scope.AccountID, session.Scope.EnvironmentID, session.Scope.TargetAppID)
 	})
 	tunnel(stop, s.relay.limitsForUpgrade(), func() { _ = conn.Close(); _ = writer.Close(); _ = response.Body.Close() },
 		writer, buffered.Reader, conn, response.Body, nil)
@@ -128,8 +128,8 @@ func (s *Server) upgradeDependency(w http.ResponseWriter, r *http.Request, sessi
 	app := r.PathValue("app")
 	watching := make(chan struct{})
 	defer close(watching)
-	go s.watchAuthorization(ctx, stop, watching, session, func(current Session) error {
-		return current.AuthorizeDependency(r.Context(), time.Now(), token, session.Scope.AccountID, session.Scope.EnvironmentID, app)
+	go s.watchAuthorization(ctx, stop, watching, session, func(ctx context.Context, current Session) error {
+		return current.AuthorizeDependency(ctx, time.Now(), token, session.Scope.AccountID, session.Scope.EnvironmentID, app)
 	})
 	s.serveDependency(limited, r.WithContext(ctx), session)
 }
