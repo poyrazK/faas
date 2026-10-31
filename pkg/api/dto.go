@@ -2328,6 +2328,23 @@ type AppResponse struct {
 	// the column carries a value, so dashboards can render
 	// the list directly.
 	CORSDefaultOrigins []string `json:"cors_default_origins"`
+	// Labels are the app's key/value labels (ADR-20261031100025), on the
+	// app list and app read while the resource-labels capability is on for
+	// the caller. Labels are not secret.
+	Labels map[string]string `json:"labels,omitempty"`
+}
+
+// LabelChange is the body of a label write (ADR-20261031100025): keys to set
+// and keys to remove, applied together. pkg/labels.Change has the same shape
+// and validates it.
+type LabelChange struct {
+	Set    map[string]string `json:"set,omitempty"`
+	Remove []string          `json:"remove,omitempty"`
+}
+
+// LabelsResponse is every label a resource carries after a label write.
+type LabelsResponse struct {
+	Labels map[string]string `json:"labels"`
 }
 
 // AppRestartResponse is returned when a customer restart request is accepted.

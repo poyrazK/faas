@@ -1459,6 +1459,10 @@ type MemStore struct {
 	// runtimeSecretSignatures maps an envelope's SHA-256 to its writer
 	// signature (ADR 20261028161502), created on first use.
 	runtimeSecretSignatures map[string][]byte
+
+	// appLabels holds each app's labels (ADR-20261031100025), created on
+	// first write; an app absent from it has none.
+	appLabels map[string]map[string]string
 }
 
 // installRepoKey mirrors the projects_install_repo_uniq partial index
