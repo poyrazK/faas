@@ -21,6 +21,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/edgerules"
+	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/edgeruletrace"
 	"github.com/onebox-faas/faas/pkg/httpsec"
@@ -620,7 +621,16 @@ func (s *server) forwardDashboardEdgeRuleJSON(r *http.Request, acct state.Accoun
 	if body != nil {
 		payload, _ = json.Marshal(body)
 	}
-	req := r.Clone(r.Context())
+	ctx := r.Context()
+	// A browser session carries no API principal, and the organization check
+	// for apps a request changes without naming them (authorizeNamedApp, e.g.
+	// the apps whose rules use an edited list) is skipped without one. The
+	// dashboard gate only checked the app in the URL (ADR-091 amendment
+	// 2026-10-30, round 5), so the session account acts as the principal.
+	if _, _, _, ok := authmw.PrincipalFrom(r); !ok {
+		ctx = authmw.WithPrincipal(ctx, acct, nil, nil)
+	}
+	req := r.Clone(ctx)
 	req.Method = method
 	req.URL = cloneDashboardURL(r.URL, path, "")
 	req.Body = io.NopCloser(bytes.NewReader(payload))

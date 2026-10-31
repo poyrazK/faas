@@ -184,12 +184,15 @@ func runPreviewEnvironmentAllowanceContract(t *testing.T, newStore func(t *testi
 		gated.RequireSigned, gated.Visibility = true, api.AppVisibilityInternal
 		gated.PublicAuthIPAllowlist = []netip.Prefix{netip.MustParsePrefix("198.51.100.0/24")}
 		gated.EgressAllowlist = []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}
+		gated.OnlyAllowDeclaredRoutes = true
+		gated.DeclaredRoutes = []state.DeclaredRoute{{Path: "/api/items", Methods: []string{"GET"}}}
 		if _, err := store.ReservePRPreviewSet(ctx, f.head(5, 'b'), []state.App{gated}, limits); err != nil {
 			t.Fatal(err)
 		}
 		app, err := store.AppByID(ctx, reserved[0].ID)
 		if err != nil || !app.RequireSigned || app.Visibility != api.AppVisibilityInternal ||
-			len(app.PublicAuthIPAllowlist) != 1 || len(app.EgressAllowlist) != 1 {
+			len(app.PublicAuthIPAllowlist) != 1 || len(app.EgressAllowlist) != 1 ||
+			!app.OnlyAllowDeclaredRoutes || len(app.DeclaredRoutes) != 1 {
 			t.Fatalf("reused preview = (%+v, %v), want the production app's gates", app, err)
 		}
 	})

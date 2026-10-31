@@ -52,6 +52,14 @@ requests to a production fork, which carry the fork's token, or for the
 `robots.txt`, `favicon.ico` and health-check answers the gateway serves itself
 when your manifest configures them.
 
+Edge rules apply to requests that arrive at your public hosts. A call from one
+of your apps to another over the internal service network goes straight to the
+target and skips the target's edge rules, `jwt`, `ip`, `waf`, `challenge` and
+`throttle` included. Which apps may make such calls is set by the service
+policy and `x-gregale-allow-callers` (see
+[Internal services](networking.md#internal-services)); check credentials in the
+app itself when a caller must prove more than which app it is.
+
 ### Path globs
 
 | Pattern | Matches |
@@ -469,7 +477,9 @@ app. After that,
 `stale_while_revalidate_seconds` (at most 300) serves the old response while
 one request refreshes it, and `stale_if_error_seconds` (at most 300; 0
 turns it off) serves it when the app fails. `vary_on` adds `Accept-Language`
-or `Accept-Encoding` to the cache key.
+or `Accept-Encoding` to the cache key. Responses over 1 MiB are not cached,
+and each gateway keeps at most 16 MiB of one app's responses: past that, the
+app's least recently used responses are dropped first.
 
 Requests with credentials (`Authorization`, cookies) are never cached or
 served from the cache, and neither are responses with `Set-Cookie` or

@@ -2711,14 +2711,17 @@ and a canonical HTTPS `FAAS_INTERNAL_MAIL_MFA_DISABLE_ORIGIN`. Request Host and
 forwarding headers never choose the confirmation destination. The fixed V1 path
 is `/auth/reset/mfa`.
 
-Opening the link renders a small authenticated confirmation page behind the same
-child gate. GET and email prefetch cannot consume the token or disable MFA. Only
+Opening the link renders a small authenticated confirmation page. The legacy
+inline path, used while the child gate is off, mails the same page with its
+sealed token (ADR-20261017091735 amendment 1). GET and email prefetch cannot
+consume the token or disable MFA. Only
 the explicit button obtains the existing action-bound CSRF token and sends the
 authenticated confirmation POST. The page uses no-store, no-referrer and CSP
 nonces, with no external resources or token in browser history after rendering.
-Pending MFA sessions can open this recovery page. Turning the child or base gate
-off hides the new page; the existing confirmation POST retains saved credential
-checks for clients after rollback.
+Pending MFA sessions can open this recovery page. The page is hidden only while
+the child gate is on and the outbox is unavailable, when no link is mailed;
+the existing confirmation POST retains saved credential checks for clients
+after rollback.
 
 The existing historical `FAAS_INTERNAL_MAIL_VERIFICATION_IDENTITY_PATH` and
 `FAAS_INTERNAL_MAIL_VERIFICATION_PREVIOUS_IDENTITY_PATH` identify the dedicated

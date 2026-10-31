@@ -551,6 +551,14 @@ func (s *Service) UpdateManagedRealtimeEndpoint(w http.ResponseWriter, r *http.R
 			api.WriteProblem(w, prob)
 			return
 		}
+		// The callback token tells the customer's app that Gregale is
+		// calling; it never follows the callback to another host (bug hunt
+		// 2026-10-28 H107).
+		if req.CallbackAuthToken == nil && len(existing.CallbackAuthTokenSealed) > 0 && !api.SameURLOrigin(existing.CallbackURL, *req.CallbackURL) {
+			api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Credential required",
+				"supply callback_auth_token again to send callbacks to a different host"))
+			return
+		}
 		params.CallbackURL = req.CallbackURL
 	}
 	if req.ConnectPath != nil {

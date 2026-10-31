@@ -22,6 +22,7 @@ package meter
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -175,6 +176,13 @@ func (d *Dunning) RunOnce(ctx context.Context) error {
 	now := d.p.Now()
 	blocked := newDeletionBlockTally()
 	defer blocked.publish(d.blocked)
+	// A step that fails for one account does not stop the sweep, but it fails
+	// the tick, so FaasMeterdDunningFailing sees it (ADR-20261030120000). A
+	// status that moved under us and a deletion guard are not failures.
+	var failed []error
+	fail := func(acct state.Account, step string, err error) {
+		failed = append(failed, fmt.Errorf("dunning %s %s: %w", step, acct.ID, err))
+	}
 	for _, acct := range rows {
 		switch acct.Status {
 		case state.AccountPastDue:
@@ -189,6 +197,7 @@ func (d *Dunning) RunOnce(ctx context.Context) error {
 				// pick up the now-stamped row.
 				if err := d.p.Store.MarkDunningStep(ctx, acct.ID, state.AccountPastDue, state.AccountPastDue); err != nil {
 					d.p.Log.Warn("meter: dunning backfill stamp", "account", acct.ID, "err", err)
+					fail(acct, "backfill past_due_at", err)
 					continue
 				}
 				d.p.Log.Warn("meter: dunning backfilled past_due_at on legacy row",
@@ -201,6 +210,7 @@ func (d *Dunning) RunOnce(ctx context.Context) error {
 			if handled, err := d.suspendWithNotice(ctx, acct); handled {
 				if err != nil {
 					d.p.Log.Warn("meter: durable suspension unavailable", "account", acct.ID)
+					fail(acct, "suspend", err)
 				}
 				continue
 			}
@@ -209,6 +219,7 @@ func (d *Dunning) RunOnce(ctx context.Context) error {
 					continue // redelivery race or status flipped under us
 				}
 				d.p.Log.Warn("meter: dunning suspend", "account", acct.ID, "err", err)
+				fail(acct, "suspend", err)
 				continue
 			}
 			d.suspensionFollowup(ctx, acct, now)
@@ -220,6 +231,7 @@ func (d *Dunning) RunOnce(ctx context.Context) error {
 			}
 			if _, err := d.suspendWithNotice(ctx, acct); err != nil {
 				d.p.Log.Warn("meter: suspension follow-up unavailable", "account", acct.ID)
+				fail(acct, "suspension follow-up", err)
 			}
 			if now.Sub(*acct.PastDueAt) < DunningSuspendedToDeletedDuration {
 				continue // still inside the 21-day window
@@ -227,6 +239,7 @@ func (d *Dunning) RunOnce(ctx context.Context) error {
 			if handled, err := d.scheduleNonpaymentDeletion(ctx, acct); handled {
 				if err != nil && !d.deletionBlocked(acct, err, blocked) {
 					d.p.Log.Warn("meter: durable non-payment deletion unavailable", "account", acct.ID)
+					fail(acct, "schedule deletion", err)
 				}
 				continue
 			}
@@ -238,6 +251,7 @@ func (d *Dunning) RunOnce(ctx context.Context) error {
 					continue
 				}
 				d.p.Log.Warn("meter: dunning delete_pending", "account", acct.ID, "err", err)
+				fail(acct, "schedule deletion", err)
 				continue
 			}
 			d.nonpaymentDeletionFollowup(ctx, acct, now)
@@ -247,11 +261,12 @@ func (d *Dunning) RunOnce(ctx context.Context) error {
 			if acct.PastDueAt != nil {
 				if _, err := d.scheduleNonpaymentDeletion(ctx, acct); err != nil {
 					d.p.Log.Warn("meter: non-payment deletion follow-up unavailable", "account", acct.ID)
+					fail(acct, "deletion follow-up", err)
 				}
 			}
 		}
 	}
-	return nil
+	return errors.Join(failed...)
 }
 
 // parkAll is the per-account ParkInstance fanout. Mirrors the shape of

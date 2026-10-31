@@ -16,7 +16,7 @@ import (
 func TestAnsibleToolchainPinnedIdenticallyAcrossCIAndCD(t *testing.T) {
 	corePin := regexp.MustCompile(`'ansible-core==([0-9][^']*)'`)
 	pins := map[string]string{}
-	for _, name := range []string{"ci.yml", "cd-controlplane.yml", "cd-compute.yml"} {
+	for _, name := range []string{"ci.yml", "deploy-config.yml", "cd-controlplane.yml", "cd-compute.yml"} {
 		matches := corePin.FindAllStringSubmatch(readWorkflow(t, name), -1)
 		if len(matches) == 0 {
 			t.Errorf("%s installs no pinned ansible-core", name)
@@ -32,6 +32,13 @@ func TestAnsibleToolchainPinnedIdenticallyAcrossCIAndCD(t *testing.T) {
 	}
 	if len(versions) > 1 {
 		t.Errorf("ansible-core pins differ across workflows: %v", pins)
+	}
+	// The pull-request deploy-config gates lint with the nightly's ansible-lint.
+	lintPin := regexp.MustCompile(`'ansible-lint==([0-9][^']*)'`)
+	nightly := lintPin.FindStringSubmatch(readWorkflow(t, "ci.yml"))
+	pr := lintPin.FindStringSubmatch(readWorkflow(t, "deploy-config.yml"))
+	if nightly == nil || pr == nil || nightly[1] != pr[1] {
+		t.Errorf("ansible-lint pins differ: ci.yml %v, deploy-config.yml %v", nightly, pr)
 	}
 
 	body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "requirements.yml"))

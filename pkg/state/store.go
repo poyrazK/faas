@@ -3336,10 +3336,12 @@ type Store interface {
 	UpsertAppOpenAPIDoc(ctx context.Context, appID, accountID string, doc []byte, endpointCount int, openapiVersion string) error
 	// UpsertAppOpenAPIDocIfUnderQuota bundles the per-account quota
 	// gate (count + lock + check) with the upsert so a TOCTOU race
-	// between two concurrent imports under the same account can't
-	// slip past the cap. The PgStore impl runs the count + upsert
-	// inside a transaction with a row lock on the account; the
-	// MemStore impl serialises under m.mu. Returns
+	// between two concurrent imports can't slip past the cap. The
+	// allowance and the count belong to the app's billing subject
+	// (ADR-202610171904). The PgStore impl runs the count + upsert
+	// inside a transaction under the subject's lock
+	// (lockQuotaSubjectTx); the MemStore impl serialises under m.mu.
+	// Returns
 	// ErrOpenAPIImportsPerAccountQuotaReached when count>=limit;
 	// ErrNotFound when the parent app row is missing or the
 	// caller's accountID does not match.
@@ -4031,6 +4033,13 @@ type Store interface {
 	CreateEdgeRuleIfUnderQuota(ctx context.Context, in CreateEdgeRuleParams, limits api.Limits) (EdgeRule, error)
 	ListEdgeRulesForAccount(ctx context.Context, accountID string) ([]EdgeRule, error)
 	ListEdgeRulesForApp(ctx context.Context, appID string) ([]EdgeRule, error)
+	// ListEdgeRulesUsingCorsPreset returns the account's rules that apply
+	// presetID, and ListRouteRulesTargeting its route rules that send to
+	// targetSlug, in match order. The CORS preset barrier and the app rename
+	// read only the rules they change, not every rule of the account (ADR-091
+	// amendment 2026-10-30, round 5).
+	ListEdgeRulesUsingCorsPreset(ctx context.Context, accountID, presetID string) ([]EdgeRule, error)
+	ListRouteRulesTargeting(ctx context.Context, accountID, targetSlug string) ([]EdgeRule, error)
 	GetEdgeRuleByID(ctx context.Context, id string) (EdgeRule, error)
 	// UpdateEdgeRule coalesces the optional fields onto edge_rules.
 	// nil pointers leave the field untouched; Action is

@@ -8,6 +8,8 @@
   schedd `frozen_tier_apps`, also off by default (2026-10-15). The canaries
   are pending. Amended 2026-10-27: vmmd `quiet_pause` and schedd
   `frozen_tier_apps` are on by default (see "Amendment 2026-10-27").
+  Amended 2026-10-31: schedd `quiet_pause_admission` is on by default (see
+  "Amendment 2026-10-31").
 - Date: 2026-10-12
 - Builds on: ADR-906 (frozen instances: prototype, measurements,
   economics), ADR-909 (measured admission), ADR-074 (warm pool), ADR-159
@@ -353,3 +355,28 @@ render` on every compute node (`deploy/ansible/node_join.yml`), which rewrites
 `/etc/faas/vmmd.toml` and `/etc/faas/schedd.toml` from the manifest. A
 switch set by hand in those files is lost at the next rollout and is never
 present on a new node; a default in the binary reaches both the same way.
+
+## Amendment 2026-10-31: quiet pause admission on by default
+
+The owner turned `quiet_pause_admission`, `measured_cpu_admission` and
+`cpu_pressure_backstop` on in production on 2026-10-31, 09:13-09:16 UTC, by
+hand in `/etc/faas/schedd.toml` on fsn-3, fsn-2 and the control plane
+(rc.311), one node at a time. Every schedd restarted cleanly, logged each
+switch enabled and raised no new warnings. The nodes were about 3% busy with
+no CPU pressure, and no node was held. vmmd's `quiet_pause` has been on by
+default since 2026-10-27.
+
+schedd `quiet_pause_admission` now defaults to on (`cmd/schedd/config.go`),
+together with measured CPU admission (ADR 20261029151111) and the CPU pressure
+backstop (ADR 20261030100950), which bounds the overcommit when paused
+instances resume together. `quiet_pause_admission = false` in `schedd.toml`
+turns it off. `frozen_tier`, `frozen_tier_workers`, early freeze and the
+billing switches (`quiet_pause_ledger`, meterd `quiet_pause_unbilled`) are
+unchanged.
+
+Release rollouts run `gregalectl manifest render` on every node, which
+rewrites `/etc/faas/schedd.toml` from the manifest, so the hand edit would be
+lost at the next rollout and would never reach a new node. The production
+manifest cannot carry a new key until every node's `gregalectl` and `imaged`
+parse it, as ADR-1151's 2026-10-27 amendment found. A default in the binary
+reaches every node with the release itself.

@@ -3,6 +3,7 @@ package meter
 import (
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/billing/reconciler"
 )
 
@@ -246,6 +247,9 @@ func (c *Config) Defaults() {
 	if c.BillingLookback == 0 {
 		c.BillingLookback = 30 * 24 * time.Hour
 	}
+	// The replay must reach past the catch-up window, or an hour that becomes
+	// final by age after a long outage is never delivered (ADR-20261030120000).
+	c.BillingLookback = max(c.BillingLookback, api.MeterUsageFinalAfter+24*time.Hour)
 	if c.DunningInterval == 0 {
 		c.DunningInterval = time.Hour
 	}

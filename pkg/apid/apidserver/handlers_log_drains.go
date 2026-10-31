@@ -322,6 +322,14 @@ func (s *server) updateAppLogDrain(w http.ResponseWriter, r *http.Request, acct 
 			api.WriteProblem(w, prob)
 			return
 		}
+		// The stored Authorization header never follows the drain to another
+		// host: anyone who could edit the drain could otherwise read it off
+		// their own server (bug hunt 2026-10-28 H107).
+		if req.AuthHeader == nil && len(existing.AuthHeaderSealed) > 0 && !api.SameURLOrigin(existing.TargetURL, targetURL) {
+			api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Credential required",
+				"supply auth_header again to send this drain to a different host"))
+			return
+		}
 		params.TargetURL = &targetURL
 	}
 	if req.AuthHeader != nil {

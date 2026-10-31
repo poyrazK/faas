@@ -17,7 +17,7 @@ func (b *keyRecordingBackend) Put(context.Context, string, io.Reader) error { re
 func (b *keyRecordingBackend) Delete(context.Context, string) error         { return nil }
 func (b *keyRecordingBackend) Get(_ context.Context, key string) (io.ReadCloser, error) {
 	b.gets = append(b.gets, key)
-	if key != "apps/web/source-dep.ext4" {
+	if key != "apps/web/source-dep.ext4" && key != "apps/old-web/before-rename.ext4" {
 		return nil, storage.ErrNotFound
 	}
 	return io.NopCloser(strings.NewReader("ext4")), nil
@@ -40,16 +40,26 @@ func TestStageScanReadsPromotedDeploymentLayer(t *testing.T) {
 		t.Fatalf("staged %q from %v, want the source layer", dir, be.gets)
 	}
 
-	for _, tc := range []struct{ key, want string }{
-		{"", "own-dep"},
-		{"apps/web/own-dep.ext4", "own-dep"},
-		{"apps/other/source-dep.ext4", "own-dep"},
-		{"apps/web/../x.ext4", "own-dep"},
-		{"apps/web/source-dep.ext4", "source-dep"},
+	for _, tc := range []struct{ key, wantSlug, wantID string }{
+		{"", "web", "own-dep"},
+		{"apps/web/own-dep.ext4", "web", "own-dep"},
+		// The layer of a deployment built before a rename stays under the
+		// old slug (bug hunt 2026-10-28 B31).
+		{"apps/old-web/own-dep.ext4", "old-web", "own-dep"},
+		{"apps/web/../x.ext4", "web", "own-dep"},
+		{"apps/../x/own-dep.ext4", "web", "own-dep"},
+		{"apps/web/source-dep.ext4", "web", "source-dep"},
 	} {
-		if got := scanLayerDeploymentID("web", state.Deployment{ID: "own-dep", RootfsKey: tc.key}); got != tc.want {
-			t.Errorf("scanLayerDeploymentID(%q) = %q, want %q", tc.key, got, tc.want)
+		if slug, id := scanLayer("web", state.Deployment{ID: "own-dep", RootfsKey: tc.key}); slug != tc.wantSlug || id != tc.wantID {
+			t.Errorf("scanLayer(%q) = %q, %q, want %q, %q", tc.key, slug, id, tc.wantSlug, tc.wantID)
 		}
+	}
+	renamed := state.Deployment{ID: "before-rename", RootfsKey: "apps/old-web/before-rename.ext4"}
+	be.gets = nil
+	if _, cleanup, err := h.stageScanExt4(t.Context(), be, app, renamed); err != nil || len(be.gets) != 1 || be.gets[0] != "apps/old-web/before-rename.ext4" {
+		t.Fatalf("stage after a rename = %v from %v, want the layer under the old slug", err, be.gets)
+	} else {
+		cleanup()
 	}
 	if _, _, err := h.stageScanExt4(t.Context(), be, app, state.Deployment{ID: "missing"}); !errors.Is(err, storage.ErrNotFound) {
 		t.Fatalf("missing own layer = %v, want ErrNotFound", err)

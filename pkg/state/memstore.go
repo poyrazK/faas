@@ -11856,12 +11856,16 @@ func (m *MemStore) UpsertAppOpenAPIDocIfUnderQuota(_ context.Context, appID, acc
 	if !ok || app.AccountID != accountID {
 		return ErrNotFound
 	}
-	if _, ok := m.accounts[accountID]; !ok {
+	if _, ok := m.accounts[accountID]; !ok || app.Status == AppDeleted {
 		return ErrNotFound
 	}
+	// The allowance belongs to the app's billing subject
+	// (ADR-202610171904): a company's once it adopted billing, whichever
+	// member's app holds the import.
+	subject := m.appBillingSubjectLocked(app.AccountID, app.ID)
 	observed := 0
 	for _, r := range m.openAPIImports {
-		if r.AccountID == accountID {
+		if m.countsTowardQuotaSubjectLocked(r.AccountID, r.AppID, subject) {
 			observed++
 		}
 	}
@@ -18884,13 +18888,10 @@ func (m *MemStore) appendEventLocked(actor, kind string, subject *string, data [
 		Data:    append([]byte(nil), data...),
 	}
 	if kind == "event.published" {
-		created, err := m.enqueuePublishedEventLocked(subj, data, at)
-		if err != nil {
-			return err
-		}
-		if !created && customerPublishedEvent(kind, data) {
-			return nil
-		}
+		// ADR-20261030170000: the receipt is the event's one copy, as the
+		// Postgres fanout trigger skips the events row.
+		_, err := m.enqueuePublishedEventLocked(subj, data, at)
+		return err
 	}
 	m.events = append(m.events, e)
 	return nil
@@ -24984,11 +24985,27 @@ func (m *MemStore) CreateEdgeRuleIfUnderQuota(ctx context.Context, in CreateEdge
 }
 
 func (m *MemStore) ListEdgeRulesForAccount(_ context.Context, accountID string) ([]EdgeRule, error) {
+	return m.listAccountEdgeRules(accountID, func(EdgeRule) bool { return true }), nil
+}
+
+func (m *MemStore) ListEdgeRulesUsingCorsPreset(_ context.Context, accountID, presetID string) ([]EdgeRule, error) {
+	return m.listAccountEdgeRules(accountID, func(r EdgeRule) bool {
+		return r.CorsPresetID != nil && *r.CorsPresetID == presetID
+	}), nil
+}
+
+func (m *MemStore) ListRouteRulesTargeting(_ context.Context, accountID, targetSlug string) ([]EdgeRule, error) {
+	return m.listAccountEdgeRules(accountID, func(r EdgeRule) bool {
+		return r.Kind == EdgeRuleKindRoute && r.Action.Route != nil && r.Action.Route.TargetAppSlug == targetSlug
+	}), nil
+}
+
+func (m *MemStore) listAccountEdgeRules(accountID string, keep func(EdgeRule) bool) []EdgeRule {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var out []EdgeRule
 	for _, r := range m.edgeRules {
-		if r.AccountID == accountID {
+		if r.AccountID == accountID && keep(r) {
 			r.MatchHeaders = cloneEdgeRuleMatchHeaders(r.MatchHeaders)
 			out = append(out, r)
 		}
@@ -24996,7 +25013,7 @@ func (m *MemStore) ListEdgeRulesForAccount(_ context.Context, accountID string) 
 	sort.Slice(out, func(i, j int) bool {
 		return edgeRuleMatchOrderLess(out[i], out[j])
 	})
-	return out, nil
+	return out
 }
 
 func (m *MemStore) ListEdgeRulesForApp(_ context.Context, appID string) ([]EdgeRule, error) {
