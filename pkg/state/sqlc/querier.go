@@ -3488,6 +3488,10 @@ type Querier interface {
 	ListPendingAlertRollbacks(ctx context.Context, db DBTX, batchSize int32) ([][]byte, error)
 	ListPendingApplicationStandardEgress(ctx context.Context, db DBTX, arg ListPendingApplicationStandardEgressParams) ([][]byte, error)
 	ListPendingCheckedRollbacks(ctx context.Context, db DBTX, batchSize int32) ([][]byte, error)
+	// Runs of a cron that have not started: queued, or waiting to retry. Deleting
+	// the cron cancels them so a deleted cron never calls the app again. The app
+	// check keeps a delete addressed to the wrong app from touching these runs.
+	ListPendingCronInvocationIDs(ctx context.Context, db DBTX, arg ListPendingCronInvocationIDsParams) ([]string, error)
 	ListPendingManagedPostgresDrains(ctx context.Context, db DBTX, arg ListPendingManagedPostgresDrainsParams) ([]ManagedPostgresCutoverDrain, error)
 	ListPendingSafeProjectSubmissions(ctx context.Context, db DBTX) ([]ListPendingSafeProjectSubmissionsRow, error)
 	ListPlatformTenantCustomerOperationMilestones(ctx context.Context, db DBTX, arg ListPlatformTenantCustomerOperationMilestonesParams) ([][]byte, error)

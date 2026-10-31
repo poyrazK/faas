@@ -48,6 +48,10 @@ func TestDrain_ObservesCronLagAndOutcomes(t *testing.T) {
 	synth.Transient().Store(false)
 	enqueue(now.Add(-3 * time.Second))
 	d.Tick(ctx)
+	enqueue(now.Add(-2 * time.Second))
+	synth.AppError().Store(true)
+	d.Tick(ctx)
+	synth.AppError().Store(false)
 
 	rec := httptest.NewRecorder()
 	metrics.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
@@ -55,10 +59,11 @@ func TestDrain_ObservesCronLagAndOutcomes(t *testing.T) {
 	for _, want := range []string{
 		`schedd_cron_delivery_total{outcome="failed"} 1`,
 		`schedd_cron_delivery_total{outcome="success"} 1`,
+		`schedd_cron_delivery_total{outcome="app_error"} 1`,
 		`schedd_cron_delivery_total{outcome="retry"} 0`,
-		`schedd_cron_schedule_lag_seconds_bucket{le="2.5"} 0`,
-		`schedd_cron_schedule_lag_seconds_bucket{le="30"} 2`,
-		`schedd_cron_schedule_lag_seconds_count 2`,
+		`schedd_cron_schedule_lag_seconds_bucket{le="2.5"} 1`,
+		`schedd_cron_schedule_lag_seconds_bucket{le="30"} 3`,
+		`schedd_cron_schedule_lag_seconds_count 3`,
 		`schedd_delayed_task_dispatch_total{outcome="success"} 0`,
 	} {
 		if !strings.Contains(body, want) {

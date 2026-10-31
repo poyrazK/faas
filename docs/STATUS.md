@@ -49,6 +49,19 @@ Follow-ups from the same review (#5711, #5906, and branch `fix/crons-prod-findin
   attempts (ADR-20261026201726 amendment 2026-10-29); `gregale cron runs`
   explains runs the app answered with 404.
 
+Audit findings 2026-10-30 (branch `fix/crons-audit-findings`):
+
+- Deleting a cron cancels its runs that have not started, including runs
+  waiting to retry.
+- `schedd_cron_delivery_total` counts runs the app answered with an error as
+  `app_error`, so `FaasCronDeliveryFailing` pages on platform failures only.
+- A schedule-policy cron's catch-up after a long gap records only the newest
+  `api.CronCatchUpRecordedMax` (20) due times.
+- The cron tick skips suspended accounts and apps without the crons
+  capability before claiming a fire.
+- A manual run of a cron that a plan downgrade stopped gets
+  `403 plan_cron_quota` (`pkg/apid/cronrun`), matching the scheduler's gate.
+
 Production evidence 2026-10-29 (rc.304): `tests/journeys` `TestCronDelivery`
 passed `manual_run` (2.4 s) and `scheduled_fire` (66 s). Prometheus showed the
 cron alerts loaded and quiet, first-claim lag p50 75 ms and p99 1.25 s. Of

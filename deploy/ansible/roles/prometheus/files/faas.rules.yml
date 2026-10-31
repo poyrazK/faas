@@ -6975,9 +6975,10 @@ groups:
           summary: "HTTP cron runs are starting late"
           description: "The p99 delay between an HTTP cron run's scheduled minute and its first delivery claim has exceeded 60 seconds for ten minutes. Check the cron tick, schedd health, invocation backlog, account concurrency pressure and database latency."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCronDelivery.md"
-      # Fleet-wide, so one customer's broken handler cannot fire it: more
-      # than half of at least 20 deliveries in 30 minutes failing points at
-      # the platform (wake, routing or the gateway), not at an app.
+      # Platform failures only: a run the app answered with an error counts as
+      # outcome="app_error" and never fires this. More than half of at least
+      # 20 deliveries in 30 minutes failing points at the platform (wake,
+      # routing or the gateway).
       - alert: FaasCronDeliveryFailing
         expr: |
           (
@@ -6992,7 +6993,7 @@ groups:
           family: crons
         annotations:
           summary: "Most HTTP cron runs are failing"
-          description: "More than half of HTTP cron deliveries across the fleet have ended failed or dead-lettered for thirty minutes. Check wake failures, gateway errors and recent deploys before blaming individual apps."
+          description: "More than half of HTTP cron deliveries across the fleet have failed on the platform side (failed or dead-lettered, not app errors) for thirty minutes. Check wake failures, gateway errors and recent deploys."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCronDelivery.md"
 
   - name: faas_tcp_tls

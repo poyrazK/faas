@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -43,6 +44,7 @@ type drainSynth struct {
 	permanent      atomic.Bool // if true, return ErrPermanentInvoke
 	transient      atomic.Bool // if true, return a transient error
 	refused        atomic.Bool // if true, the gateway refuses the dispatch before the app
+	appError       atomic.Bool // if true, the app answers with a 404
 	responseStatus int
 	outcomeCode    string
 	hold           time.Duration
@@ -75,6 +77,9 @@ func (d *drainSynth) Invoke(_ context.Context, appID string, inv state.Invocatio
 	}
 	if trans {
 		return inv, errors.New("drain synth: transient")
+	}
+	if d.appError.Load() {
+		return inv, appAnsweredError{err: fmt.Errorf("%w: application returned HTTP 404: not found", ErrPermanentInvoke)}
 	}
 	if d.refused.Load() {
 		return inv, dispatchRefusedError{err: errors.New("sched: invocation: gateway returned 503 (traffic_policy_unavailable)")}

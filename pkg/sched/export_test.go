@@ -604,6 +604,7 @@ func (r *composedWaveNativeVMM) Identity() *runtimeadmission.Identity { return &
 func (r *drainSynth) Calls() *atomic.Int64    { return &r.calls }
 func (r *drainSynth) Transient() *atomic.Bool { return &r.transient }
 func (r *drainSynth) Refused() *atomic.Bool   { return &r.refused }
+func (r *drainSynth) AppError() *atomic.Bool  { return &r.appError }
 
 // XHTTPGatewaySynth is the drain's real gateway client pointed at base.
 func XHTTPGatewaySynth(client *http.Client, base string) interface {
@@ -985,3 +986,6 @@ func (d *Drain) XInvocationRetryDelay(ctx context.Context, inv state.Invocation)
 func (d *Drain) XInvocationAttemptBudget(ctx context.Context, inv state.Invocation) int {
 	return d.invocationAttemptBudget(ctx, inv)
 }
+
+// XCronDueOccurrences is the catch-up walk for schedule-policy and command crons.
+var XCronDueOccurrences = cronDueOccurrences
