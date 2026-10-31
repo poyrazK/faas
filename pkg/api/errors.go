@@ -1001,6 +1001,10 @@ const (
 	// CodeReleaseApprovalSelf means the deployer tried to approve their own
 	// release while the policy does not allow self-approval.
 	CodeReleaseApprovalSelf = "release_approval_self"
+	// CodeReleaseApprovalSessionRequired means an API key or token tried to
+	// approve a release: approvals come from a person signed in to the
+	// dashboard (ADR-20261020085706 amendment 4).
+	CodeReleaseApprovalSessionRequired = "release_approval_session_required"
 	// CodeReleaseApprovalDecided means this person already decided on the
 	// release, or the release no longer accepts decisions.
 	CodeReleaseApprovalDecided = "release_approval_decided"
