@@ -44,7 +44,10 @@ const (
 	// released. Failure fences and reaps the bridge process instead.
 	TrafficBridgeCompletionTimeout    = 5 * time.Second
 	TrafficBridgeCompletionMaxEntries = 128
-	TrafficBridgeFenceDialTimeout     = 100 * time.Millisecond
+	// A bridge keeps this many recent completions, so vmmd's fallback wait
+	// after a canceled exchange still finds one that just finished.
+	TrafficBridgeCompletionRetained = 1024
+	TrafficBridgeFenceDialTimeout   = 100 * time.Millisecond
 )
 
 // DeploymentAttemptIDBytes is the encoded size of a random 128-bit submission identity.
