@@ -144,10 +144,11 @@ func (s legacyEventSettlementSynth) InvokeWithWake(ctx context.Context, app stri
 }
 
 // legacyPermanentInvoke drops the HTTP status the current scheduler keeps on
-// an application's permanent failure.
+// an application's permanent failure: only the message survives, not the
+// wrapped status error.
 func legacyPermanentInvoke(err error) error {
 	if errors.Is(err, sched.ErrPermanentInvoke) {
-		return fmt.Errorf("%w: %s", sched.ErrPermanentInvoke, err)
+		return fmt.Errorf("%w: %s", sched.ErrPermanentInvoke, err.Error())
 	}
 	return err
 }
