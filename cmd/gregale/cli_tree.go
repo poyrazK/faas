@@ -1014,8 +1014,8 @@ func lookupCliTreeTopic(words []string, help bool) (cliTreeTopic, bool) {
 // operator command (postgres) stays out of the tree (cliTreeDiscovery.node),
 // so it keeps today's help rather than a topic that lists nothing.
 func cliTreeListsNoun(noun string) bool {
-	_, ok := newCliTreeDiscovery().node(cliTreeNounCommand(noun))
-	return ok
+	command, ok := lookupCliCommand(cliTreeNounCommand(noun))
+	return ok && command.Audience == cliAudienceCustomer
 }
 
 // cliTreeReshapes reports a noun whose tree verbs differ from today's
