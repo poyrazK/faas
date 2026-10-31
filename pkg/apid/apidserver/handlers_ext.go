@@ -4318,18 +4318,43 @@ func (s *server) listCrons(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, api.ErrCapacity("could not authorize cron inventory"))
 		return
 	}
-	out := make([]api.CronResponse, 0)
+	var crons []state.Cron
 	for _, app := range apps {
 		cs, err := s.store.ListCronsForApp(r.Context(), app.ID)
 		if err != nil {
 			api.WriteProblem(w, api.ErrCapacity("could not list crons"))
 			return
 		}
-		for _, c := range cs {
-			out = append(out, cronResponse(c))
-		}
+		crons = append(crons, cs...)
+	}
+	out, problem := s.cronListResponse(r, acct, crons)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// cronListResponse applies ?selector= and labels to a cron list
+// (ADR-20261031100025).
+func (s *server) cronListResponse(r *http.Request, acct state.Account, crons []state.Cron) ([]api.CronResponse, *api.Problem) {
+	ids := make([]string, len(crons))
+	for i, c := range crons {
+		ids[i] = c.ID
+	}
+	filter, problem := s.listLabels(r, acct, state.LabelKindCron, ids)
+	if problem != nil {
+		return nil, problem
+	}
+	out := make([]api.CronResponse, 0, len(crons))
+	for _, c := range crons {
+		if filter.keep(c.ID) {
+			resp := cronResponse(c)
+			resp.Labels = filter.labelsOf(c.ID)
+			out = append(out, resp)
+		}
+	}
+	return out, nil
 }
 
 // ownedAppByRef resolves an app id or slug owned by accountID.
@@ -4526,7 +4551,9 @@ func (s *server) getCron(w http.ResponseWriter, r *http.Request, acct state.Acco
 		s.notFound(w, "no such cron")
 		return
 	}
-	writeJSON(w, http.StatusOK, cronResponse(c))
+	resp := cronResponse(c)
+	resp.Labels = s.resourceLabels(r, acct, state.LabelKindCron, c.ID)
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // listCronRuns is the per-cron execution history (issue #791):

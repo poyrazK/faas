@@ -7910,6 +7910,38 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/postgres/databases/{id}/labels:
+    parameters:
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    patch:
+      tags: [managed_postgres]
+      operationId: updateManagedPostgresDatabaseLabels
+      summary: Set and remove a database's labels.
+      description: |
+        Preview (resource-labels capability). Sets and removes labels in one
+        atomic write and returns every label the database carries after it, with
+        the same rules, codes and audit event as PATCH /v1/apps/{slug}/labels.
+        Requires postgres:manage or admin scope and MFA. While the capability is on,
+        GET /v1/postgres/databases and GET /v1/postgres/databases/{id} include labels, and GET /v1/postgres/databases
+        takes ?selector=, a Kubernetes label selector.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LabelChange'
+      responses:
+        '200':
+          description: The database's labels after the write.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LabelsResponse'
+        default:
+          description: An invalid change, missing sign-in, scope or MFA, a database this account does not own, the capability turned off, or the rate limit.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/postgres/databases/{id}:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
@@ -33521,6 +33553,38 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '501': { $ref: '#/components/responses/NotImplemented' }
 
+  /v1/crons/{id}/labels:
+    parameters:
+      - $ref: '#/components/parameters/Id32'
+    patch:
+      tags: [crons]
+      operationId: updateCronLabels
+      summary: Set and remove a cron's labels.
+      description: |
+        Preview (resource-labels capability). Sets and removes labels in one
+        atomic write and returns every label the cron carries after it, with
+        the same rules, codes and audit event as PATCH /v1/apps/{slug}/labels.
+        Requires deploy:write or admin scope and MFA. While the capability is on,
+        GET /v1/crons and GET /v1/crons/{id} include labels, and GET /v1/crons
+        takes ?selector=, a Kubernetes label selector.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LabelChange'
+      responses:
+        '200':
+          description: The cron's labels after the write.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LabelsResponse'
+        default:
+          description: An invalid change, missing sign-in, scope or MFA, a cron this account does not own, the capability turned off, or the rate limit.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/crons/{id}:
     parameters:
       - $ref: '#/components/parameters/Id32'
@@ -35906,6 +35970,42 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/jobs/{name}/labels:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$' }
+        description: The job slug (3-40 chars, lowercase letters/digits/hyphens).
+    patch:
+      tags: [jobs]
+      operationId: updateJobLabels
+      summary: Set and remove a job's labels.
+      description: |
+        Preview (resource-labels capability). Sets and removes labels in one
+        atomic write and returns every label the job carries after it, with
+        the same rules, codes and audit event as PATCH /v1/apps/{slug}/labels.
+        Requires deploy:write or admin scope and MFA. While the capability is on,
+        GET /v1/jobs and GET /v1/jobs/{name} include labels, and GET /v1/jobs
+        takes ?selector=, a Kubernetes label selector.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LabelChange'
+      responses:
+        '200':
+          description: The job's labels after the write.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LabelsResponse'
+        default:
+          description: An invalid change, missing sign-in, scope or MFA, a job this account does not own, the capability turned off, or the rate limit.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/jobs/{name}:
     parameters:
       - name: name

@@ -1463,6 +1463,10 @@ type MemStore struct {
 	// appLabels holds each app's labels (ADR-20261031100025), created on
 	// first write; an app absent from it has none.
 	appLabels map[string]map[string]string
+
+	// resourceLabels holds the labels of databases, crons and jobs by kind
+	// and ID, created on first write.
+	resourceLabels map[LabelKind]map[string]map[string]string
 }
 
 // installRepoKey mirrors the projects_install_repo_uniq partial index

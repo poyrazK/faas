@@ -4670,6 +4670,10 @@ type CronResponse struct {
 	SkipIfRunning       bool                       `json:"skip_if_running"`
 	CreatedAt           string                     `json:"created_at"`
 	LastFiredAt         string                     `json:"last_fired_at,omitempty"`
+	// Labels are the cron's key/value labels (ADR-20261031100025), on its
+	// list and read while the resource-labels capability is on for the
+	// caller. Labels are not secret.
+	Labels map[string]string `json:"labels,omitempty"`
 }
 
 // CreateCronRequest creates either a scheduled HTTP request or a
@@ -12932,6 +12936,10 @@ type JobResponse struct {
 	Status                     string            `json:"status"`
 	CreatedAt                  string            `json:"created_at"`
 	UpdatedAt                  string            `json:"updated_at"`
+	// Labels are the job's key/value labels (ADR-20261031100025), on its
+	// list and read while the resource-labels capability is on for the
+	// caller. Labels are not secret.
+	Labels map[string]string `json:"labels,omitempty"`
 }
 
 // JobRunResponse is the wire projection of state.JobRun.

@@ -8219,6 +8219,30 @@ func (c *Client) UpdateAppLabels(ctx context.Context, slug string, change LabelC
 	return out, err
 }
 
+// UpdateDatabaseLabels sets and removes a managed database's labels
+// (ADR-20261031100025, preview).
+func (c *Client) UpdateDatabaseLabels(ctx context.Context, id string, change LabelChange) (LabelsResponse, error) {
+	var out LabelsResponse
+	err := c.do(ctx, "PATCH", "/v1/postgres/databases/"+url.PathEscape(id)+"/labels", change, &out)
+	return out, err
+}
+
+// UpdateCronLabels sets and removes a cron's labels (ADR-20261031100025,
+// preview).
+func (c *Client) UpdateCronLabels(ctx context.Context, id string, change LabelChange) (LabelsResponse, error) {
+	var out LabelsResponse
+	err := c.do(ctx, "PATCH", "/v1/crons/"+url.PathEscape(id)+"/labels", change, &out)
+	return out, err
+}
+
+// UpdateJobLabels sets and removes a job's labels (ADR-20261031100025,
+// preview).
+func (c *Client) UpdateJobLabels(ctx context.Context, name string, change LabelChange) (LabelsResponse, error) {
+	var out LabelsResponse
+	err := c.do(ctx, "PATCH", "/v1/jobs/"+url.PathEscape(name)+"/labels", change, &out)
+	return out, err
+}
+
 // GetDeploymentStatus reads a deployment's conditions (ADR-20261030151810).
 func (c *Client) GetDeploymentStatus(ctx context.Context, id string) (ResourceStatus, error) {
 	var out ResourceStatus

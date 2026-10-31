@@ -71,6 +71,10 @@ type ManagedPostgresDatabase struct {
 	// RestorableUntil is set while a customer's delete is scheduled: until
 	// then the database can be undeleted, and after it the database is purged.
 	RestorableUntil string `json:"restorable_until,omitempty"`
+	// Labels are the database's key/value labels (ADR-20261031100025), on its
+	// list and read while the resource-labels capability is on for the
+	// caller. Labels are not secret.
+	Labels map[string]string `json:"labels,omitempty"`
 }
 
 // ManagedPostgresHealth reports cached provider metadata. Healthy does not

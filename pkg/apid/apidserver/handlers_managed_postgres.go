@@ -181,9 +181,22 @@ func (s *server) listManagedPostgresDatabases(w http.ResponseWriter, r *http.Req
 		managedPostgresProblem(w, err)
 		return
 	}
+	ids := make([]string, len(databases))
+	for i, database := range databases {
+		ids[i] = database.ID
+	}
+	filter, problem := s.listLabels(r, acct, state.LabelKindDatabase, ids)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	items := make([]api.ManagedPostgresDatabase, 0, len(databases))
 	for _, database := range databases {
-		items = append(items, managedPostgresView(database))
+		if filter.keep(database.ID) {
+			view := managedPostgresView(database)
+			view.Labels = filter.labelsOf(database.ID)
+			items = append(items, view)
+		}
 	}
 	writeJSON(w, http.StatusOK, api.ManagedPostgresDatabaseList{Items: items})
 }
@@ -421,7 +434,9 @@ func (s *server) getManagedPostgresDatabase(w http.ResponseWriter, r *http.Reque
 		managedPostgresProblem(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, managedPostgresView(database))
+	view := managedPostgresView(database)
+	view.Labels = s.resourceLabels(r, acct, state.LabelKindDatabase, database.ID)
+	writeJSON(w, http.StatusOK, view)
 }
 
 func (s *server) deleteManagedPostgresDatabase(w http.ResponseWriter, r *http.Request, acct state.Account) {

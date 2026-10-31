@@ -3030,6 +3030,7 @@ type Cron struct {
 	FailureRules          []byte
 	ScheduleRevision      int64
 	ScheduleAnchorAt      pgtype.Timestamptz
+	Labels                []byte
 }
 
 type CronFireNowRequest struct {
@@ -7638,6 +7639,7 @@ type Job struct {
 	ScheduleRevision                  int64
 	ImageEntrypoint                   []string
 	ImageCmd                          []string
+	Labels                            []byte
 }
 
 type JobRegistryCredential struct {
@@ -8200,6 +8202,7 @@ type ManagedPostgresDatabase struct {
 	AccountingRequired          bool
 	OrgID                       pgtype.UUID
 	PurgeAfter                  pgtype.Timestamptz
+	Labels                      []byte
 }
 
 type ManagedPostgresDatabaseEndpoint struct {
