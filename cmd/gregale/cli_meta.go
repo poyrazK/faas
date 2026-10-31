@@ -1699,6 +1699,15 @@ var cliCommands = []cliCommand{
 		},
 		SubcommandsAfterPositionals: true,
 		Subcommands: []cliSub{
+			{Name: subStatus, Short: "Show the app's Ready, Progressing and Degraded conditions (preview)", Notes: []string{"Conditions are derived from the health assessment; `app health` shows the evidence."}, Examples: []string{"gregale app status my-api", "gregale app status my-api --json"}, Flags: []cliFlag{
+				{Name: "environment", Short: "read this project environment's conditions instead of the default scope", Value: "SLUG"},
+			}},
+			{Name: subWait, Short: "Wait until a condition holds (preview)", Notes: []string{"Exits 0 when the condition holds, 1 when it is terminal and does not, 3 on timeout."}, Examples: []string{"gregale app wait my-api", "gregale app wait my-api --for Progressing=False --timeout 10m"}, Flags: []cliFlag{
+				{Name: "for", Short: "TYPE or TYPE=True|False|Unknown (default Ready)", Value: "CONDITION"},
+				{Name: "environment", Short: "wait on this project environment's conditions instead of the default scope", Value: "SLUG"},
+				{Name: "timeout", Short: "maximum wait (default 2m)", Value: "DURATION"},
+				{Name: "poll-interval", Short: "poll interval (default 2s; 1s to 1h)", Value: "DURATION"},
+			}},
 			{Name: subHealth, Common: true, Short: "Check serving health and readiness", Examples: []string{"gregale app health my-api --wait --timeout 2m"}, Flags: []cliFlag{
 				{Name: "check", Short: "single read; exit 0 only for a fresh healthy default-scope assessment; excludes wait and history options", Bool: true},
 				{Name: "wait", Short: "wait for a fresh healthy default-scope assessment", Bool: true},
@@ -2773,8 +2782,12 @@ var cliCommands = []cliCommand{
 				{Name: "interactive", Short: "choose a release from app history and show its summary", Bool: true},
 				{Name: "app", Short: "app slug (defaults to linked context or interactive picker)", Value: "SLUG"},
 			}},
+			{Name: subStatus, Short: "Show a release's Ready, Progressing and RolledOut conditions (preview)", Examples: []string{"gregale release status v42 --app my-api", "gregale release status latest --json"}, Positionals: []string{"<id|vN|latest>"}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug for vN or latest outside a linked project", Value: "SLUG"},
+			}},
 			{Name: "wait", Short: "Wait until a deployment is live (or safe rollout completes)", Examples: []string{"gregale release wait <id|vN> --app my-api", "gregale release wait 00000000000000000000000000000001", "gregale release wait 00000000000000000000000000000001 --rollout --progress"}, Positionals: []string{"<id|vN|latest>"}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug for vN or latest outside a linked project", Value: "SLUG"},
+				{Name: "for", Short: "wait for a condition instead (Ready, Progressing, RolledOut; TYPE=True|False|Unknown); exits 0 holds, 1 terminal, 3 timeout, 4 not found (preview)", Value: "CONDITION"},
 				{Name: "rollout", Short: "wait for safe rollout to reach 100% traffic"},
 				{Name: "progress", Short: "print rollout transitions while waiting (human output only)"},
 				{Name: "timeout", Short: "maximum wait (seconds, or a duration such as 10m)", Value: "SECONDS|DURATION"},

@@ -21530,6 +21530,38 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+  /v1/apps/{slug}/status:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: environment
+        in: query
+        required: false
+        description: Registered app environment whose conditions are read; omit for its default environment.
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,32}$' }
+    get:
+      tags: [apps]
+      operationId: getAppStatus
+      summary: Read an app's conditions.
+      description: |
+        Preview (resource-conditions capability). The app's Ready,
+        Progressing and Degraded conditions, derived when read
+        from the same evidence as GET /v1/apps/{slug}/health and never
+        stored. It never wakes or probes a workload. An idle app that scales
+        to zero is Ready=True with reason idle. A terminal condition will not
+        change without a new request. Requires apps:read or admin scope. No
+        MFA required. Cache-Control no-store.
+      responses:
+        '200':
+          description: The app's conditions.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceStatus'
+        default:
+          description: Missing sign-in or read scope, an app this account does not own, the capability turned off, or the rate limit.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/apps/{slug}/health/history:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -32480,6 +32512,31 @@ paths:
                 $ref: '#/components/schemas/Problem'
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/deployments/{id}/status:
+    parameters:
+      - $ref: '#/components/parameters/Id32'
+    get:
+      tags: [deployments]
+      operationId: getDeploymentStatus
+      summary: Read a deployment's conditions.
+      description: |
+        Preview (resource-conditions capability). The deployment's Ready,
+        Progressing and RolledOut conditions, mapped from
+        the response GET /v1/deployments/{id} returns and never stored.
+        Failed, cancelled and superseded deployments report terminal
+        conditions. Cache-Control no-store.
+      responses:
+        '200':
+          description: The deployment's conditions.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceStatus'
+        default:
+          description: Missing sign-in, read scope or MFA, a deployment this account does not own, the capability turned off, or the rate limit.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/deployments/{id}/scan:
     parameters:
       - $ref: '#/components/parameters/Id32'
@@ -111969,6 +112026,28 @@ components:
           type: string
           enum: [healthy, degraded, unhealthy, unknown]
         assessment: { $ref: '#/components/schemas/AppHealthResponse' }
+    ResourceStatus:
+      type: object
+      description: "A resource's status subresource: conditions derived when read, never stored."
+      required: [kind, name, observed_at, conditions]
+      properties:
+        kind: { type: string, enum: [app, deployment] }
+        name: { type: string, description: The app slug or deployment ID. }
+        observed_at: { type: string, format: date-time, description: When the evidence behind the conditions was read. }
+        conditions:
+          type: array
+          items: { $ref: '#/components/schemas/Condition' }
+    Condition:
+      type: object
+      description: One aspect of a resource's state, in the shape of a Kubernetes status condition.
+      required: [type, status, reason, message]
+      properties:
+        type: { type: string, enum: [Ready, Progressing, Degraded, RolledOut] }
+        status: { type: string, enum: ['True', 'False', 'Unknown'] }
+        reason: { type: string, description: 'Stable snake_case code, safe to branch on: an app health phase or check code, a deployment status, or one of not_assessed, deploying, complete, latest_deployment_failed, healthy, verifying, rolling_out, rolled_out, rollout_aborted.' }
+        message: { type: string, description: For people; may change. }
+        since: { type: string, format: date-time, description: When the condition last changed, only when a recorded time says so. }
+        terminal: { type: boolean, description: True when the condition will not change without a new request. }
     AppHealthResponse:
       description: Read-only observed health of selected-scope HTTP serving workloads.
       type: object

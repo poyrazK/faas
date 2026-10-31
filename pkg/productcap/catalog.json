@@ -4741,6 +4741,31 @@
       ]
     },
     {
+      "id": "resource-conditions",
+      "name": "Resource conditions",
+      "category": "observability",
+      "description": "Read an app's or a deployment's Ready, Progressing and Degraded or RolledOut conditions, and wait for one.",
+      "maturity": "preview",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/app-health",
+      "acceptance_test": "pkg/apid/apidserver/handlers_resource_status_test.go::TestResourceStatusAPI",
+      "parent": "app-health",
+      "routes": [
+        "/v1/apps/{}/status",
+        "/v1/deployments/{}/status"
+      ],
+      "cli": [
+        "app status",
+        "app wait",
+        "release status"
+      ]
+    },
+    {
       "id": "resource-sizing",
       "name": "Resource sizing",
       "category": "runtime",
