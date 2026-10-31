@@ -10505,6 +10505,35 @@ func (q *Queries) CountDeploymentCrons(ctx context.Context, db DBTX, arg CountDe
 	return i, err
 }
 
+const countEnabledEventSubscriptionsForQuota = `-- name: CountEnabledEventSubscriptionsForQuota :one
+with target as (
+  select (case when not o.personal_org and o.resource_ownership_enabled then o.id else a.account_id end) as subject
+  from apps a left join orgs o on o.id = a.org_id
+  where a.id = $1::uuid
+)
+select (count(*) filter (where s.app_id = $1::uuid))::int as app_count,
+       count(*)::int as account_count
+from target t
+join apps a on (a.account_id = t.subject or a.org_id = t.subject) and a.status <> 'deleted'
+left join orgs o on o.id = a.org_id
+join event_subscriptions s on s.app_id = a.id and s.enabled
+where (case when not o.personal_org and o.resource_ownership_enabled then o.id else a.account_id end) = t.subject
+`
+
+type CountEnabledEventSubscriptionsForQuotaRow struct {
+	AppCount     int32
+	AccountCount int32
+}
+
+// ADR-20261031130000: the enabled subscriptions of one app and of every app
+// sharing its billing subject (the cron quota subject).
+func (q *Queries) CountEnabledEventSubscriptionsForQuota(ctx context.Context, db DBTX, appID pgtype.UUID) (CountEnabledEventSubscriptionsForQuotaRow, error) {
+	row := db.QueryRow(ctx, countEnabledEventSubscriptionsForQuota, appID)
+	var i CountEnabledEventSubscriptionsForQuotaRow
+	err := row.Scan(&i.AppCount, &i.AccountCount)
+	return i, err
+}
+
 const countEnvironmentQueueProducerDepth = `-- name: CountEnvironmentQueueProducerDepth :one
 WITH owned AS (
     SELECT invocation_id AS id FROM invocation_environment_queue_admissions
@@ -17407,7 +17436,7 @@ func (q *Queries) EventAckExpire(ctx context.Context, db DBTX, arg EventAckExpir
 }
 
 const eventAckExpired = `-- name: EventAckExpired :many
-SELECT i.id,i.account_id,i.app_id,i.attempts,i.replay_generation,i.quota_reserved,a.max_attempts,a.retry_delay_ms,coalesce(i.headers->>'x-gregale-event-subscription-id','')::text AS subscription_id FROM invocations i JOIN event_delivery_acknowledgments a ON a.invocation_id=i.id AND a.attempt=i.attempts AND a.replay_generation=i.replay_generation
+SELECT i.id,i.account_id,i.app_id,i.attempts,i.replay_generation,i.quota_reserved,coalesce(i.async_quota_subject_id,i.account_id) AS quota_subject_id,a.max_attempts,a.retry_delay_ms,coalesce(i.headers->>'x-gregale-event-subscription-id','')::text AS subscription_id FROM invocations i JOIN event_delivery_acknowledgments a ON a.invocation_id=i.id AND a.attempt=i.attempts AND a.replay_generation=i.replay_generation
 WHERE i.state='dispatching' AND a.phase='awaiting' AND i.lease_expires_at<=clock_timestamp()
 ORDER BY i.lease_expires_at,i.id LIMIT $1::integer FOR UPDATE OF i SKIP LOCKED
 `
@@ -17419,6 +17448,7 @@ type EventAckExpiredRow struct {
 	Attempts         int32
 	ReplayGeneration int64
 	QuotaReserved    bool
+	QuotaSubjectID   pgtype.UUID
 	MaxAttempts      int32
 	RetryDelayMs     int64
 	SubscriptionID   string
@@ -17440,6 +17470,7 @@ func (q *Queries) EventAckExpired(ctx context.Context, db DBTX, batchLimit int32
 			&i.Attempts,
 			&i.ReplayGeneration,
 			&i.QuotaReserved,
+			&i.QuotaSubjectID,
 			&i.MaxAttempts,
 			&i.RetryDelayMs,
 			&i.SubscriptionID,
@@ -17491,7 +17522,7 @@ func (q *Queries) EventAckGet(ctx context.Context, db DBTX, invocationID pgtype.
 }
 
 const eventAckInvocationLock = `-- name: EventAckInvocationLock :one
-SELECT i.id,i.account_id,i.app_id,i.source,i.state,i.attempts,i.replay_generation,i.headers,i.operation_id,i.on_success_destination_id,i.on_failure_destination_id,i.lease_expires_at,i.result,i.quota_reserved FROM invocations i JOIN apps a ON a.id=i.app_id AND a.account_id=i.account_id
+SELECT i.id,i.account_id,i.app_id,i.source,i.state,i.attempts,i.replay_generation,i.headers,i.operation_id,i.on_success_destination_id,i.on_failure_destination_id,i.lease_expires_at,i.result,i.quota_reserved,coalesce(i.async_quota_subject_id,i.account_id) AS quota_subject_id FROM invocations i JOIN apps a ON a.id=i.app_id AND a.account_id=i.account_id
 WHERE i.id=$1::uuid AND i.account_id=$2::uuid AND i.app_id=$3::uuid AND a.status<>'deleted' FOR UPDATE OF i
 `
 
@@ -17516,6 +17547,7 @@ type EventAckInvocationLockRow struct {
 	LeaseExpiresAt         pgtype.Timestamptz
 	Result                 []byte
 	QuotaReserved          bool
+	QuotaSubjectID         pgtype.UUID
 }
 
 func (q *Queries) EventAckInvocationLock(ctx context.Context, db DBTX, arg EventAckInvocationLockParams) (EventAckInvocationLockRow, error) {
@@ -17536,6 +17568,7 @@ func (q *Queries) EventAckInvocationLock(ctx context.Context, db DBTX, arg Event
 		&i.LeaseExpiresAt,
 		&i.Result,
 		&i.QuotaReserved,
+		&i.QuotaSubjectID,
 	)
 	return i, err
 }
@@ -18173,6 +18206,27 @@ func (q *Queries) EventConsumerProcessingHealth(ctx context.Context, db DBTX, ar
 		&i.AcknowledgmentLatencyMaxSeconds,
 	)
 	return i, err
+}
+
+const eventRoutingSubscriptionEnabled = `-- name: EventRoutingSubscriptionEnabled :one
+select enabled from event_subscriptions
+where id = $1::uuid and account_id = $2::uuid
+  and app_id = $3::uuid
+`
+
+type EventRoutingSubscriptionEnabledParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+// ADR-20261031130000: routing admits a recipient only while its subscription
+// is still enabled.
+func (q *Queries) EventRoutingSubscriptionEnabled(ctx context.Context, db DBTX, arg EventRoutingSubscriptionEnabledParams) (bool, error) {
+	row := db.QueryRow(ctx, eventRoutingSubscriptionEnabled, arg.ID, arg.AccountID, arg.AppID)
+	var enabled bool
+	err := row.Scan(&enabled)
+	return enabled, err
 }
 
 const exclusiveWorkAppScope = `-- name: ExclusiveWorkAppScope :one
@@ -52212,6 +52266,41 @@ func (q *Queries) ListSnapshotDeploymentIDs(ctx context.Context, db DBTX) ([]str
 	return items, nil
 }
 
+const listSoonestExpiringCustomDomainCerts = `-- name: ListSoonestExpiringCustomDomainCerts :many
+select domain::text as domain, cert_expires_at::timestamptz as cert_expires_at
+from custom_domains
+where verified_at is not null and cert_expires_at is not null
+order by cert_expires_at, domain
+limit $1
+`
+
+type ListSoonestExpiringCustomDomainCertsRow struct {
+	Domain        string
+	CertExpiresAt pgtype.Timestamptz
+}
+
+// Verified custom domains whose edge certificate the domain doctor observed,
+// soonest expiry first: the source of the certificate-expiry alerts.
+func (q *Queries) ListSoonestExpiringCustomDomainCerts(ctx context.Context, db DBTX, limit int32) ([]ListSoonestExpiringCustomDomainCertsRow, error) {
+	rows, err := db.Query(ctx, listSoonestExpiringCustomDomainCerts, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSoonestExpiringCustomDomainCertsRow{}
+	for rows.Next() {
+		var i ListSoonestExpiringCustomDomainCertsRow
+		if err := rows.Scan(&i.Domain, &i.CertExpiresAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSyntheticCheckRuns = `-- name: ListSyntheticCheckRuns :many
 SELECT check_id, started_at, ok, status_code, latency_ms, error_class FROM synthetic_check_runs WHERE check_id = $1::uuid
 ORDER BY started_at DESC LIMIT $2::integer
@@ -73299,6 +73388,29 @@ func (q *Queries) PurgeAlertDeliveriesBefore(ctx context.Context, db DBTX, arg P
 	return result.RowsAffected(), nil
 }
 
+const purgeDeletedRuleEpisodesBefore = `-- name: PurgeDeletedRuleEpisodesBefore :execrows
+DELETE FROM alert_episodes e WHERE e.id IN (
+  SELECT o.id FROM alert_episodes o
+  WHERE o.resolved_at < $1::timestamptz
+    AND NOT EXISTS (SELECT 1 FROM alert_rules r WHERE r.id = o.rule_id)
+  ORDER BY o.resolved_at LIMIT $2::integer)
+`
+
+type PurgeDeletedRuleEpisodesBeforeParams struct {
+	Before  pgtype.Timestamptz
+	MaxRows int32
+}
+
+// Deletes up to max_rows resolved episodes, oldest first, whose rule was
+// deleted before the cutoff, and their notes with them (ADR-20261030214500).
+func (q *Queries) PurgeDeletedRuleEpisodesBefore(ctx context.Context, db DBTX, arg PurgeDeletedRuleEpisodesBeforeParams) (int64, error) {
+	result, err := db.Exec(ctx, purgeDeletedRuleEpisodesBefore, arg.Before, arg.MaxRows)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const purgeSLOHoursBefore = `-- name: PurgeSLOHoursBefore :execrows
 DELETE FROM app_slo_hourly WHERE hour < $1::timestamptz
 `
@@ -77049,6 +77161,7 @@ SELECT (jsonb_build_object(
     'project_environment_queue_runtime_sets_deployment_id_fkey', (SELECT count(*) FROM project_environment_queue_runtime_sets WHERE deployment_id = $1::uuid),
     'project_environment_workload_deployment_spec_deployment_id_fkey', (SELECT count(*) FROM project_environment_workload_deployment_specs WHERE deployment_id = $1::uuid),
     'project_release_members_deployment_id_fkey', (SELECT count(*) FROM project_release_members WHERE deployment_id = $1::uuid),
+    'release_gate_probe_results_deployment_id_fkey', (SELECT count(*) FROM release_gate_probe_results WHERE deployment_id = $1::uuid),
     'route_check_history_deployment_id_fkey', (SELECT count(*) FROM route_check_history WHERE deployment_id = $1::uuid),
     'route_health_history_deployment_id_fkey', (SELECT count(*) FROM route_health_history WHERE deployment_id = $1::uuid),
     'route_health_notification_state_deployment_id_fkey', (SELECT count(*) FROM route_health_notification_state WHERE deployment_id = $1::uuid),
@@ -98869,6 +98982,34 @@ type SetEnvironmentWorkloadServingTrafficParams struct {
 
 func (q *Queries) SetEnvironmentWorkloadServingTraffic(ctx context.Context, db DBTX, arg SetEnvironmentWorkloadServingTrafficParams) (int64, error) {
 	result, err := db.Exec(ctx, setEnvironmentWorkloadServingTraffic, arg.TrafficPercent, arg.DeploymentID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const setEventSubscriptionEnabled = `-- name: SetEventSubscriptionEnabled :execrows
+update event_subscriptions set enabled = $1::boolean, updated_at = now()
+where id = $2::uuid and account_id = $3::uuid
+  and app_id = $4::uuid
+`
+
+type SetEventSubscriptionEnabledParams struct {
+	Enabled   bool
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+}
+
+// ADR-20261031130000: a deploy disables the subscriptions its manifest no
+// longer declares; rolling the deploy back enables them again.
+func (q *Queries) SetEventSubscriptionEnabled(ctx context.Context, db DBTX, arg SetEventSubscriptionEnabledParams) (int64, error) {
+	result, err := db.Exec(ctx, setEventSubscriptionEnabled,
+		arg.Enabled,
+		arg.ID,
+		arg.AccountID,
+		arg.AppID,
+	)
 	if err != nil {
 		return 0, err
 	}

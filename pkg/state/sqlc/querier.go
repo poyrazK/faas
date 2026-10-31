@@ -624,6 +624,9 @@ type Querier interface {
 	// account_count is the per-account allowance's usage: the crons of the app's
 	// billing subject (ADR-202610171904, quotaSubjectSQL in pgstore_quota_subject.go).
 	CountDeploymentCrons(ctx context.Context, db DBTX, arg CountDeploymentCronsParams) (CountDeploymentCronsRow, error)
+	// ADR-20261031130000: the enabled subscriptions of one app and of every app
+	// sharing its billing subject (the cron quota subject).
+	CountEnabledEventSubscriptionsForQuota(ctx context.Context, db DBTX, appID pgtype.UUID) (CountEnabledEventSubscriptionsForQuotaRow, error)
 	CountEnvironmentQueueProducerDepth(ctx context.Context, db DBTX, arg CountEnvironmentQueueProducerDepthParams) (int64, error)
 	CountExclusiveWorkPending(ctx context.Context, db DBTX, accountID string) (int64, error)
 	CountLiveOperationSchedules(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
@@ -814,8 +817,13 @@ type Querier interface {
 	CutoverCheckedRollbackTarget(ctx context.Context, db DBTX, targetID pgtype.UUID) error
 	DataRepairHealthSnapshot(ctx context.Context, db DBTX, arg DataRepairHealthSnapshotParams) ([]byte, error)
 	DeactivateProjectReleaseSets(ctx context.Context, db DBTX, arg DeactivateProjectReleaseSetsParams) error
+	// ADR-20261031101000: replay resets attempts, so a keyed row whose pending
+	// deadline has passed would only expire again.
+	DeadLetterInvocationWorkExpired(ctx context.Context, db DBTX, invocationID pgtype.UUID) (bool, error)
 	// event_route entries cannot be replayed (DeadLetterReplayable), so they never
-	// take a page from replay-all.
+	// take a page from replay-all. Neither does keyed work whose pending deadline
+	// has passed (ADR-20261031101000); replaying one entry by id still reaches it,
+	// so the refusal names the deadline.
 	DeadLetterReplayCandidateIDs(ctx context.Context, db DBTX, arg DeadLetterReplayCandidateIDsParams) ([]string, error)
 	// issue #667 / ADR-078 — canonical "tail task reached terminal" path.
 	// Equivalent to BumpInstanceTailCount(ctx, id, -n) but kept as a
@@ -1424,6 +1432,9 @@ type Querier interface {
 	EventRoutingRetrySet(ctx context.Context, db DBTX, arg EventRoutingRetrySetParams) error
 	EventRoutingRetryTarget(ctx context.Context, db DBTX, arg EventRoutingRetryTargetParams) (EventSubscription, error)
 	EventRoutingSettleSnapshot(ctx context.Context, db DBTX, id int64) (int64, error)
+	// ADR-20261031130000: routing admits a recipient only while its subscription
+	// is still enabled.
+	EventRoutingSubscriptionEnabled(ctx context.Context, db DBTX, arg EventRoutingSubscriptionEnabledParams) (bool, error)
 	// Scan a fixed number of recent account receipts, including unrelated types.
 	EventSchemaRolloutCandidates(ctx context.Context, db DBTX, arg EventSchemaRolloutCandidatesParams) ([]EventSchemaRolloutCandidatesRow, error)
 	EventSchemaRolloutPayloads(ctx context.Context, db DBTX, arg EventSchemaRolloutPayloadsParams) ([]EventSchemaRolloutPayloadsRow, error)
@@ -3654,6 +3665,9 @@ type Querier interface {
 	// settled; a parent that started none qualifies at once.
 	ListSettledChildParents(ctx context.Context, db DBTX, arg ListSettledChildParentsParams) ([]ListSettledChildParentsRow, error)
 	ListSnapshotDeploymentIDs(ctx context.Context, db DBTX) ([]string, error)
+	// Verified custom domains whose edge certificate the domain doctor observed,
+	// soonest expiry first: the source of the certificate-expiry alerts.
+	ListSoonestExpiringCustomDomainCerts(ctx context.Context, db DBTX, limit int32) ([]ListSoonestExpiringCustomDomainCertsRow, error)
 	// Deployment watchdog (ADR-20261024140100). An in-flight deployment that can
 	// no longer finish on its own: a build queued since before queued_before, or
 	// no queued or running build and no stage progress since stalled_before.
@@ -3665,6 +3679,12 @@ type Querier interface {
 	ListStuckDeployments(ctx context.Context, db DBTX, arg ListStuckDeploymentsParams) ([]ListStuckDeploymentsRow, error)
 	ListSyntheticCheckRuns(ctx context.Context, db DBTX, arg ListSyntheticCheckRunsParams) ([]SyntheticCheckRun, error)
 	ListSyntheticChecks(ctx context.Context, db DBTX, appID pgtype.UUID) ([]SyntheticCheck, error)
+	// ADR-20261022082305: synthetic gates probe canaries.
+	// Each synthetic gate (with an enabled check) of a request app whose
+	// default-scope canary is rolling out beside a serving predecessor. An app
+	// with several serving predecessors returns several rows per gate and is
+	// skipped by the caller.
+	ListSyntheticGateProbeTargets(ctx context.Context, db DBTX, batchLimit int32) ([]ListSyntheticGateProbeTargetsRow, error)
 	ListTCPListenerTLSObservations(ctx context.Context, db DBTX, listenerID pgtype.UUID) ([]AppTcpListenerTlsObservation, error)
 	// Tenant schedule candidates are one row per active tenant/app binding. The
 	// composite cursor prevents large tenants from being starved by the page cap.
@@ -5103,6 +5123,7 @@ type Querier interface {
 	PruneProjectBindingVerificationRuns(ctx context.Context, db DBTX, projectID pgtype.UUID) error
 	PruneProjectMigrations(ctx context.Context, db DBTX, arg PruneProjectMigrationsParams) error
 	PruneReadinessNotifications(ctx context.Context, db DBTX, arg PruneReadinessNotificationsParams) error
+	PruneReleaseGateProbeResults(ctx context.Context, db DBTX, before pgtype.Timestamptz) error
 	PruneRouteCheckHistory(ctx context.Context, db DBTX, arg PruneRouteCheckHistoryParams) error
 	PruneRouteHealthHistory(ctx context.Context, db DBTX, arg PruneRouteHealthHistoryParams) error
 	PruneRouteMonitorIncidents(ctx context.Context, db DBTX, arg PruneRouteMonitorIncidentsParams) error
@@ -5140,6 +5161,9 @@ type Querier interface {
 	// MCP connection health and the delivery CLI read it, and so does a delivery
 	// with a rollback action, which would cascade away with it.
 	PurgeAlertDeliveriesBefore(ctx context.Context, db DBTX, arg PurgeAlertDeliveriesBeforeParams) (int64, error)
+	// Deletes up to max_rows resolved episodes, oldest first, whose rule was
+	// deleted before the cutoff, and their notes with them (ADR-20261030214500).
+	PurgeDeletedRuleEpisodesBefore(ctx context.Context, db DBTX, arg PurgeDeletedRuleEpisodesBeforeParams) (int64, error)
 	PurgeSLOHoursBefore(ctx context.Context, db DBTX, before pgtype.Timestamptz) (int64, error)
 	PurgeSyntheticCheckRunsBefore(ctx context.Context, db DBTX, before pgtype.Timestamptz) (int64, error)
 	PutAppEgressCircuits(ctx context.Context, db DBTX, arg PutAppEgressCircuitsParams) (PutAppEgressCircuitsRow, error)
@@ -5975,6 +5999,8 @@ type Querier interface {
 	// repeated open report never reopens or shortens a closed pause, and the
 	// node's watermark only moves forward. The caller sends each pause once.
 	RecordQuietPauses(ctx context.Context, db DBTX, arg RecordQuietPausesParams) error
+	// Adds one round's probe counts for a gate and revision.
+	RecordReleaseGateProbeResult(ctx context.Context, db DBTX, arg RecordReleaseGateProbeResultParams) error
 	// The request-ID journal is independent from sampled request telemetry. Only
 	// insert when the app is still owned by the authenticated account. The
 	// caller-generated record UUID makes an RPC retry idempotent without
@@ -6050,6 +6076,7 @@ type Querier interface {
 	// events, largest first. Error classes are a closed set; routes and
 	// messages are not returned.
 	ReleaseGateNewErrorGroups(ctx context.Context, db DBTX, arg ReleaseGateNewErrorGroupsParams) ([]ReleaseGateNewErrorGroupsRow, error)
+	ReleaseGateProbeTotals(ctx context.Context, db DBTX, arg ReleaseGateProbeTotalsParams) (ReleaseGateProbeTotalsRow, error)
 	ReleaseManagedPostgresCutover(ctx context.Context, db DBTX, arg ReleaseManagedPostgresCutoverParams) (int64, error)
 	ReleaseManagedPostgresDrainHostPorts(ctx context.Context, db DBTX, arg ReleaseManagedPostgresDrainHostPortsParams) error
 	ReleaseManagedPostgresLifecycleLease(ctx context.Context, db DBTX, arg ReleaseManagedPostgresLifecycleLeaseParams) (int64, error)
@@ -6660,6 +6687,9 @@ type Querier interface {
 	SetEnvironmentWorkloadQualificationContext(ctx context.Context, db DBTX, token string) (string, error)
 	SetEnvironmentWorkloadRetirementCutoverContext(ctx context.Context, db DBTX, token string) (string, error)
 	SetEnvironmentWorkloadServingTraffic(ctx context.Context, db DBTX, arg SetEnvironmentWorkloadServingTrafficParams) (int64, error)
+	// ADR-20261031130000: a deploy disables the subscriptions its manifest no
+	// longer declares; rolling the deploy back enables them again.
+	SetEventSubscriptionEnabled(ctx context.Context, db DBTX, arg SetEventSubscriptionEnabledParams) (int64, error)
 	SetExclusiveCaptureBarrier(ctx context.Context, db DBTX, arg SetExclusiveCaptureBarrierParams) error
 	SetFunctionMigrationCapturePermission(ctx context.Context, db DBTX, arg SetFunctionMigrationCapturePermissionParams) (int64, error)
 	SetFunctionMigrationDestination(ctx context.Context, db DBTX, arg SetFunctionMigrationDestinationParams) (int64, error)

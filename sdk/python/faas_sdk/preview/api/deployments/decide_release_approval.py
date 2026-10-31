@@ -97,10 +97,12 @@ def sync_detailed(
 ) -> Response[Problem | ReleaseApprovalStatus]:
     """Approve or reject a release.
 
-     Records one decision per person. A rejection is final and aborts the rollout, restoring the previous
-    release. 403 `release_approval_self` when the deployer approves their own release and the policy
-    does not allow it; 409 `release_approval_decided` for a second decision or a release that no longer
-    accepts one.
+     Records one decision per person. An approval needs a signed-in dashboard session: 403
+    `release_approval_session_required` to an API key or token, with the release's approval page as the
+    hint; a rejection is accepted from either. A rejection is final and aborts the rollout, restoring
+    the previous release. 403 `release_approval_self` when the deployer approves their own release and
+    the policy does not allow it; 409 `release_approval_decided` for a second decision or a release that
+    no longer accepts one.
 
     Args:
         id (str):
@@ -135,10 +137,12 @@ def sync(
 ) -> Problem | ReleaseApprovalStatus | None:
     """Approve or reject a release.
 
-     Records one decision per person. A rejection is final and aborts the rollout, restoring the previous
-    release. 403 `release_approval_self` when the deployer approves their own release and the policy
-    does not allow it; 409 `release_approval_decided` for a second decision or a release that no longer
-    accepts one.
+     Records one decision per person. An approval needs a signed-in dashboard session: 403
+    `release_approval_session_required` to an API key or token, with the release's approval page as the
+    hint; a rejection is accepted from either. A rejection is final and aborts the rollout, restoring
+    the previous release. 403 `release_approval_self` when the deployer approves their own release and
+    the policy does not allow it; 409 `release_approval_decided` for a second decision or a release that
+    no longer accepts one.
 
     Args:
         id (str):
@@ -168,10 +172,12 @@ async def asyncio_detailed(
 ) -> Response[Problem | ReleaseApprovalStatus]:
     """Approve or reject a release.
 
-     Records one decision per person. A rejection is final and aborts the rollout, restoring the previous
-    release. 403 `release_approval_self` when the deployer approves their own release and the policy
-    does not allow it; 409 `release_approval_decided` for a second decision or a release that no longer
-    accepts one.
+     Records one decision per person. An approval needs a signed-in dashboard session: 403
+    `release_approval_session_required` to an API key or token, with the release's approval page as the
+    hint; a rejection is accepted from either. A rejection is final and aborts the rollout, restoring
+    the previous release. 403 `release_approval_self` when the deployer approves their own release and
+    the policy does not allow it; 409 `release_approval_decided` for a second decision or a release that
+    no longer accepts one.
 
     Args:
         id (str):
@@ -204,10 +210,12 @@ async def asyncio(
 ) -> Problem | ReleaseApprovalStatus | None:
     """Approve or reject a release.
 
-     Records one decision per person. A rejection is final and aborts the rollout, restoring the previous
-    release. 403 `release_approval_self` when the deployer approves their own release and the policy
-    does not allow it; 409 `release_approval_decided` for a second decision or a release that no longer
-    accepts one.
+     Records one decision per person. An approval needs a signed-in dashboard session: 403
+    `release_approval_session_required` to an API key or token, with the release's approval page as the
+    hint; a rejection is accepted from either. A rejection is final and aborts the rollout, restoring
+    the previous release. 403 `release_approval_self` when the deployer approves their own release and
+    the policy does not allow it; 409 `release_approval_decided` for a second decision or a release that
+    no longer accepts one.
 
     Args:
         id (str):

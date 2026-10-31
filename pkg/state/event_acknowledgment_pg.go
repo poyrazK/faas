@@ -36,7 +36,7 @@ func (s *PgStore) EventAcknowledgmentPolicy(ctx context.Context, account, app, s
 	return api.EventAcknowledgmentPolicy{SubscriptionID: canonicalMemUUID(sub), LeaseSeconds: int(secondsNow)}, mapErr(err)
 }
 func acknowledgmentInvocation(row sqlc.EventAckInvocationLockRow) Invocation {
-	return Invocation{ID: uuidString(row.ID), AccountID: uuidString(row.AccountID), AppID: uuidString(row.AppID), Source: InvocationSource(row.Source), State: InvocationState(row.State), Attempts: int(row.Attempts), ReplayGeneration: row.ReplayGeneration, Headers: row.Headers, OperationID: uuidString(row.OperationID), OnSuccessDestinationID: uuidString(row.OnSuccessDestinationID), OnFailureDestinationID: uuidString(row.OnFailureDestinationID), LeaseExpiresAt: timestamptzToTimePtr(row.LeaseExpiresAt), Result: row.Result, QuotaReserved: row.QuotaReserved}
+	return Invocation{ID: uuidString(row.ID), AccountID: uuidString(row.AccountID), AppID: uuidString(row.AppID), Source: InvocationSource(row.Source), State: InvocationState(row.State), Attempts: int(row.Attempts), ReplayGeneration: row.ReplayGeneration, Headers: row.Headers, OperationID: uuidString(row.OperationID), OnSuccessDestinationID: uuidString(row.OnSuccessDestinationID), OnFailureDestinationID: uuidString(row.OnFailureDestinationID), LeaseExpiresAt: timestamptzToTimePtr(row.LeaseExpiresAt), Result: row.Result, QuotaReserved: row.QuotaReserved, AsyncQuotaSubjectID: uuidString(row.QuotaSubjectID)}
 }
 func acknowledgmentFromSQL(row sqlc.EventDeliveryAcknowledgment) eventAcknowledgment {
 	var digest [32]byte
@@ -236,10 +236,11 @@ func (s *PgStore) ExpireEventAcknowledgments(ctx context.Context, limit int) (in
 	})
 	previousAccount := ""
 	for _, row := range rows {
-		account := uuidString(row.AccountID)
+		account := uuidString(row.QuotaSubjectID)
 		if account != previousAccount {
 			// Lock even for unreserved attempts before touching this account's counters.
-			if err := q.EventAckMetricQuotaLock(ctx, tx, row.AccountID); err != nil {
+			// The counter is the one the delivery reserved: an org's pool or the account.
+			if err := q.EventAckMetricQuotaLock(ctx, tx, row.QuotaSubjectID); err != nil {
 				return 0, err
 			}
 			previousAccount = account
@@ -249,7 +250,7 @@ func (s *PgStore) ExpireEventAcknowledgments(ctx context.Context, limit int) (in
 		}
 		// Account quota precedes shared metric counters to avoid cross-app lock inversion.
 		if row.QuotaReserved {
-			if err := decrementAccountAsyncInflightTx(ctx, tx, uuidString(row.AccountID)); err != nil {
+			if err := decrementAccountAsyncInflightTx(ctx, tx, uuidString(row.QuotaSubjectID)); err != nil {
 				return 0, err
 			}
 		}

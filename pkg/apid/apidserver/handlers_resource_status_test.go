@@ -67,6 +67,71 @@ func TestResourceStatusAPI(t *testing.T) {
 	}
 }
 
+// Domains, crons and job runs read their conditions from durable rows: a
+// verified domain with an issued certificate serves, a cron that never ran
+// says so, a queued run is progressing, and a run under another job's name
+// is not found.
+func TestResourceStatusAPI_DomainCronJobRun(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	ctx := t.Context()
+	store := *e.Store()
+	app, err := store.CreateApp(ctx, state.App{AccountID: (*e.Acct()).ID, Slug: "status-kinds", Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := store.CreateCustomDomain(ctx, "shop.example.com", app.ID, "tok"); err != nil {
+		t.Fatal(err)
+	}
+	domain := readStatus(t, e, "/v1/domains/shop.example.com/status")
+	if ready := condition(t, domain, api.ConditionReady); ready.Status != api.ConditionFalse || ready.Reason != api.ConditionReasonDNSPending {
+		t.Errorf("unverified domain Ready = %+v", ready)
+	}
+	if err := store.MarkDomainVerified(ctx, "shop.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if verified := condition(t, readStatus(t, e, "/v1/domains/SHOP.example.com/status"), api.ConditionVerified); verified.Status != api.ConditionTrue || verified.Since == "" {
+		t.Errorf("verified domain Verified = %+v", verified)
+	}
+
+	cron, err := store.CreateCron(ctx, app.ID, "*/5 * * * *", "/tick", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cronStatus := readStatus(t, e, "/v1/crons/"+cron.ID+"/status")
+	if ready := condition(t, cronStatus, api.ConditionReady); ready.Status != api.ConditionTrue || ready.Reason != api.ConditionReasonScheduled {
+		t.Errorf("cron Ready = %+v", ready)
+	}
+	if last := condition(t, cronStatus, api.ConditionLastRunSucceeded); last.Status != api.ConditionUnknown || last.Reason != api.ConditionReasonNeverRun {
+		t.Errorf("cron LastRunSucceeded = %+v", last)
+	}
+
+	job, err := store.JobCreate(ctx, (*e.Acct()).ID, "status-job", "app", "", nil, 128, 60, 1, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, _, err := store.JobRunCreate(ctx, job.ID, (*e.Acct()).ID, "manual", nil, nil, nil, nil, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runStatus := readStatus(t, e, "/v1/jobs/status-job/runs/"+run.ID+"/status")
+	if runStatus.Kind != api.ResourceKindJobRun || runStatus.Name != run.ID {
+		t.Fatalf("job run status header = %+v", runStatus)
+	}
+	if progressing := condition(t, runStatus, api.ConditionProgressing); progressing.Status != api.ConditionTrue {
+		t.Errorf("queued run Progressing = %+v", progressing)
+	}
+	if succeeded := condition(t, runStatus, api.ConditionSucceeded); succeeded.Status != api.ConditionFalse || succeeded.Terminal {
+		t.Errorf("queued run Succeeded = %+v", succeeded)
+	}
+
+	for _, path := range []string{"/v1/domains/missing.example.com/status", "/v1/crons/00000000-0000-0000-0000-000000000000/status", "/v1/jobs/other-job/runs/" + run.ID + "/status"} {
+		if rec := e.Do(t, http.MethodGet, path, nil, nil); rec.Code != http.StatusNotFound {
+			t.Errorf("%s: %d %s", path, rec.Code, rec.Body)
+		}
+	}
+}
+
 func TestResourceStatusAPI_ReadScopeRequired(t *testing.T) {
 	e := apidserver.SetupWithScopes(t, []string{api.ScopeDeployWrite})
 	apidserver.MustSeedApp(t, e, "status-app")

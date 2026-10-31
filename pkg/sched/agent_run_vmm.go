@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"time"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/agentrunproto"
@@ -33,6 +34,9 @@ type AgentRunSpec struct {
 	// Snapshot is the preset snapshot to restore; vmmd cold-boots when it
 	// is nil, stale or fails (ADR-005).
 	Snapshot *AgentRunSnapshot
+	// ModelWaitPauseAfter is the model-wait pause delay (ADR-20261027090012);
+	// zero keeps the VM running.
+	ModelWaitPauseAfter time.Duration
 }
 
 // AgentRunSnapshot locates a preset snapshot vmmd captured (ADR-20261027090010 §2).
@@ -45,9 +49,27 @@ type AgentRunSnapshot struct {
 
 // AgentRunHooks observe a run while it streams. Booted runs once, after the
 // VM is up and before the run reaches the guest; Output runs per chunk.
+// Usage runs at most once, before the result or the error that ends the run.
 type AgentRunHooks struct {
 	Booted func(ctx context.Context, method string, bootMs int64) error
 	Output agentrunproto.OutputReceiver
+	Usage  func(ctx context.Context, u AgentRunUsage) error
+}
+
+// AgentRunUsage is vmmd's measured memory of a run VM (ADR-20261027090011):
+// vmmdpb.AgentRunUsage, whose comments give each field's meaning.
+type AgentRunUsage struct {
+	Method, Samples, ExpectedSamples                                          int
+	MeasuredMillis, PausedMillis                                              int64
+	PrivateMBMillis, UnpausedPrivateMBMillis, BillableMBMillis, PeakPrivateMB int64
+	ColdBoot                                                                  bool
+}
+
+func agentRunUsageFromProto(u *vmmdpb.AgentRunUsage) AgentRunUsage {
+	return AgentRunUsage{Method: int(u.GetMethod()), Samples: int(u.GetSamples()), ExpectedSamples: int(u.GetExpectedSamples()),
+		MeasuredMillis: u.GetMeasuredMs(), PausedMillis: u.GetPausedMs(), PrivateMBMillis: u.GetPrivateMbMs(),
+		UnpausedPrivateMBMillis: u.GetUnpausedPrivateMbMs(), BillableMBMillis: u.GetBillableMbMs(),
+		PeakPrivateMB: u.GetPeakPrivateMb(), ColdBoot: u.GetColdBoot()}
 }
 
 type agentRunVMMClient interface {
@@ -104,6 +126,7 @@ func (c *VMMClient) RunAgent(ctx context.Context, spec AgentRunSpec, run agentru
 		Instance: spec.Instance, AccountId: spec.AccountID, Plan: string(spec.Plan), BaseKey: spec.BaseKey, LayerKey: spec.LayerKey,
 		VcpuCount: int32(spec.VCPU), MemSizeMib: int32(spec.MemSizeMiB), CpuMillicores: int32(spec.CPUMillicores), Run: body,
 		Relay: relayToProto(spec.Relay), InputKey: spec.InputKey, Snapshot: snapshotToProto(spec.Snapshot),
+		ModelWaitPauseAfterMs: int32(spec.ModelWaitPauseAfter / time.Millisecond),
 	}}}); err != nil {
 		return agentrunproto.Result{}, liftErr(err)
 	}
@@ -151,6 +174,12 @@ func receiveAgentRun(ctx context.Context, stream vmmdpb.Vmmd_RunAgentClient, run
 			}
 			if hooks.Output != nil {
 				if err := hooks.Output(ctx, name, chunk); err != nil {
+					return agentrunproto.Result{}, err
+				}
+			}
+		case event.GetUsage() != nil:
+			if hooks.Usage != nil {
+				if err := hooks.Usage(ctx, agentRunUsageFromProto(event.GetUsage())); err != nil {
 					return agentrunproto.Result{}, err
 				}
 			}

@@ -67,5 +67,9 @@ before the deploy:
    off-host first).
 3. Deploy the previous release (`deployctl rollback`). Its daemons match the
    restored schema.
-4. Write a postmortem (`make postmortem`) recording what was restored and from
+4. Events accepted after the restore point are lost and deliveries that
+   finished after it run again. Follow
+   [Database restore or failover](FaasEventDriven.md#database-restore-or-failover)
+   before routing resumes in bulk.
+5. Write a postmortem (`make postmortem`) recording what was restored and from
    when.

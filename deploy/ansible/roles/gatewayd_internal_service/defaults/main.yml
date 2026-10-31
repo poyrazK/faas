@@ -12,7 +12,9 @@ gatewayd_route_metrics_enabled: true
 # ADR-143: streaming responses are a paid Hobby+ feature; production is on.
 gatewayd_streaming_enabled: true
 gatewayd_ratelimit_mode: central
-# ADR-1520 rate-limit token leasing; applies in central mode (bug hunt H39).
+# ADR-1520 rate-limit token leasing; requires gatewayd_ratelimit_mode central.
+# On by default: without it every request consults the control-plane Postgres
+# counter. Set false only together with gatewayd_ratelimit_mode local.
 gatewayd_ratelimit_lease: true
 
 # ADR-1736: hold gatewayd-internal's unix socket and split-box data listener
