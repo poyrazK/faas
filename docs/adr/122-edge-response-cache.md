@@ -287,3 +287,17 @@ delivered by ADR-214.
 - ADR-089 / ADR-091 (edge-rule surface, kind gating, ordering)
 - ADR-104 (authenticated-context carrier) — the hook a future
   per-principal cache would use
+
+## Amendment (2026-10-30): per-app share of the in-process store
+
+D7's store was one LRU under one byte ceiling for every app on a
+`gatewayd-internal`. One app caching many large responses (each up to the
+1 MiB entry cap) pushed every other app's entries out, so one tenant's
+traffic set every other tenant's hit rate. One app may now hold at most a
+quarter of the ceiling (`ResponseCacheAppShareDivisor`, 16 MiB of the default
+64 MiB, at least 16 maximum-size entries). A put that would take the app over
+its share evicts that app's own least recently used entries first, then the
+global LRU as before. A store too small to split (a quarter below one entry)
+keeps the whole ceiling per app. The ceiling, the entry cap, keys, TTLs and
+invalidation are unchanged; the Redis L2 (ADR-214) is unchanged. See ADR-091
+amendment 2026-10-30 (round 5).

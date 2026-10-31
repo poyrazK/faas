@@ -44,7 +44,7 @@ func cmdEdgeRulesHistory(args []string) int {
 			if rule.Name != "" {
 				label = "  " + truncate(rule.Name, 40)
 			}
-			_, _ = fmt.Fprintf(osStdout, "  %-36s %-12s %-6d %-32s %s%s\n", rule.ID, rule.Kind, rule.Priority, truncate(rule.MatchHost, 32), rule.MatchPath, label)
+			_, _ = fmt.Fprintf(osStdout, "  %-36s %-12s %-6d %-32s %s%s\n", rule.ID, rule.Kind, rule.Priority, terminalSafe(truncate(rule.MatchHost, 32)), terminalSafe(rule.MatchPath), terminalSafe(label))
 		}
 		return 0
 	}
