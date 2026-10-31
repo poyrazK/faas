@@ -642,6 +642,9 @@ type MemStore struct {
 	// customDomainTLSHosts mirrors custom_domain_tls_hosts (ADR-520),
 	// keyed by host. Lazily initialised by AdmitCustomDomainTLSHost.
 	customDomainTLSHosts map[string]customDomainTLSHost
+	// customDomainTLSAdmissions mirrors custom_domain_tls_admissions
+	// (ADR-520 amendment 1), oldest first.
+	customDomainTLSAdmissions []customDomainTLSAdmission
 	// doctorObs (ADR-120) is the in-memory mirror of the
 	// domain_doctor_observations table. The dns_poller is
 	// the sole writer; the doctor HTTP handler is the sole
