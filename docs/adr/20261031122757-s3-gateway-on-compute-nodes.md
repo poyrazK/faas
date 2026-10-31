@@ -94,11 +94,19 @@ credentials".
   (the contract step of ADR 20261022111812 §6). It never receives
   `fleet.age` or `host.age` for the gateway. A gateway on a compute node
   refuses to start with a fleet identity.
-- **Provider credential.** The gateway's provider credential allows object
-  operations only: get, put, delete, list and multipart. It is separate from
-  apid's credential, which also creates and deletes buckets. On OVH this is a
-  separate S3 user with an object-only policy. The registry gains a
-  per-backend gateway credential, and apid keeps the bucket-admin one.
+- **Provider credential.** The gateway's provider credential is separate
+  from apid's, which alone creates and deletes buckets. It allows object
+  operations (get, put, copy, delete, versions, tagging, retention and legal
+  hold), listing and multipart, and the bucket settings the S3 API forwards
+  (versioning, encryption and Object Lock configuration). It does not allow
+  bucket create or delete, CORS, policy or ACL. On OVH this is a separate S3
+  user with that policy. The registry gains a per-backend gateway credential
+  (`gateway_access_key_env`, `gateway_secret_key_env`) that s3-gatewayd and
+  gatewayd-public use, and apid keeps the bucket-admin one.
+- **Usage exports stay on the control plane.** A compute gateway runs no
+  provider usage export, so it never holds the provider's account API keys
+  (OVH application key, secret and consumer key), which reach more than
+  storage.
 - **Blast radius.** Root on a compute node can read and write every object
   in the cell's backends and open every S3 credential. The node already holds
   `compute-db.env`, which gives row DML on the shared schema. Tenant code
@@ -171,8 +179,9 @@ egress ceiling".
    - control-plane Postgres stays under its CPU alert.
 6. Cutover of `s3.gregale.dev` from the control-plane origin to the s3
    tunnel, one pilot first (as in `docs/runbooks/AppEdgeCutover.md`). The
-   control-plane gateway stays as a fallback for one release, then is
-   removed from the control plane.
+   control-plane gateway stays as a fallback for one release, then leaves
+   the route. It keeps running the provider usage exports until they move
+   to apid.
 7. The compute edge serves public object routes locally.
 
 ## Consequences
