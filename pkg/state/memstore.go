@@ -28390,7 +28390,7 @@ func (m *MemStore) ListAppsWithRecentTelemetry(_ context.Context, _ pgtype.Inter
 
 // UpdateSpansSummary is intentionally unsupported by MemStore. The writer
 // updates request_telemetry rows and must be covered against PgStore.
-func (m *MemStore) UpdateSpansSummary(_ context.Context, _ string, _ uuid.UUID, _ []byte) error {
+func (m *MemStore) UpdateSpansSummary(_ context.Context, _ string, _ uuid.UUID, _ []byte, _ int) error {
 	panic("memstore: UpdateSpansSummary unimplemented")
 }
 

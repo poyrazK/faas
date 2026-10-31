@@ -30765,11 +30765,12 @@ func (s *PgStore) InsertRequestTelemetry(ctx context.Context, arg sqlc.InsertReq
 // predicate is `account_id = $3::uuid` with no `RETURNING`
 // or named-arg convention. Mirror what `make sqlc-generate`
 // produces so the drift gate stays green.
-func (s *PgStore) UpdateSpansSummary(ctx context.Context, traceID string, accountID uuid.UUID, summary []byte) error {
+func (s *PgStore) UpdateSpansSummary(ctx context.Context, traceID string, accountID uuid.UUID, summary []byte, maxSpans int) error {
 	affected, err := s.appErrorsQueries().UpdateSpansSummary(ctx, s.pool, sqlc.UpdateSpansSummaryParams{
 		TraceID: pgtype.Text{String: traceID, Valid: traceID != ""},
 		Column2: summary,
 		Column3: pgtype.UUID{Bytes: accountID, Valid: true},
+		Column4: int32(min(max(maxSpans, 1), 1000)),
 	})
 	if err != nil {
 		return err
