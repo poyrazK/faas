@@ -1,6 +1,3 @@
 # Paths in the ADR-20261026145832 tree that still break its naming rules.
 # This list only shrinks: give a path a tree name in cli_tree.go instead of adding it.
-postgres compute-policy  # verb compute-policy
-postgres compute-policy-status  # hyphenated compute-policy-status, verb compute-policy-status
-postgres overage  # verb overage
-postgres resize-status  # hyphenated resize-status, verb resize-status
+
