@@ -364,7 +364,7 @@ func (s *PgStore) CreateAccountWithPersonalOrg(ctx context.Context, params Creat
 	return CreateAccountWithPersonalOrgResult{Account: acct, PersonalOrg: org}, nil
 }
 
-func (s *PgStore) AccountByID(ctx context.Context, id string) (Account, error) {
+func (s *pgCore) AccountByID(ctx context.Context, id string) (Account, error) {
 	row := s.pool.QueryRow(ctx,
 		`select id, email, plan, status, coalesce(provider_customer_id,''), coalesce(stripe_subscription_item,''), created_at, deletion_requested_at, last_quota_warning_at, past_due_at, mfa_enrolled_at, mfa_secret_encrypted, mfa_recovery_codes_hash, mfa_required, egress_allowlist_extra, email_verified_at, coalesce(business_name,''), coalesce(billing_address,''), coalesce(tax_id,''), abuse_hold_at, coalesce(abuse_hold_reason,'') from accounts where id = $1`, id)
 	return scanAccount(row)
@@ -28957,7 +28957,7 @@ func nullIfEmpty(s string) any {
 }
 
 // OrgByID is the canonical primary-key lookup.
-func (s *PgStore) OrgByID(ctx context.Context, id string) (Org, error) {
+func (s *pgCore) OrgByID(ctx context.Context, id string) (Org, error) {
 	row := s.pool.QueryRow(ctx, `
 		select id, slug, name, personal_org, personal_owner_account_id,
 		       plan, status, provider_customer_id, stripe_subscription_item,

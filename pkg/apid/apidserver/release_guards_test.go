@@ -34,6 +34,19 @@ func guardDo(t *testing.T, e apidserver.TestEnv, method, path string, body, out 
 	return rec
 }
 
+// sessionDo is guardDo as the account's signed-in dashboard session, for
+// routes that refuse API keys.
+func sessionDo(t *testing.T, e apidserver.TestEnv, method, path string, body, out any) *httptest.ResponseRecorder {
+	t.Helper()
+	rec := e.DoSession(t, "", method, path, body, nil)
+	if out != nil && rec.Code < 300 {
+		if err := json.Unmarshal(rec.Body.Bytes(), out); err != nil {
+			t.Fatalf("decode %s %s response %s: %v", method, path, rec.Body, err)
+		}
+	}
+	return rec
+}
+
 func decodeProblem(t *testing.T, body []byte) api.Problem {
 	t.Helper()
 	var p api.Problem

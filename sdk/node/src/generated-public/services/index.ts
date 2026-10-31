@@ -23,6 +23,7 @@ export { InstancesService } from './InstancesService.js';
 export { InvocationsService } from './InvocationsService.js';
 export { JobsService } from './JobsService.js';
 export { KeysService } from './KeysService.js';
+export { ManagedPostgresService } from './ManagedPostgresService.js';
 export { MetaService } from './MetaService.js';
 export { MfaService } from './MfaService.js';
 export { NetworkingService } from './NetworkingService.js';

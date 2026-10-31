@@ -25,6 +25,9 @@ const TrafficPolicyRevisionHeader = "X-Gregale-Traffic-Policy"
 type edgePolicySnapshot struct {
 	entry    HostEntry
 	revision string
+	// owner and inheritedApp are the sealed set's cache scope, which the JSON
+	// copy drops; UnchangedSince checks invalidations against them.
+	owner, inheritedApp string
 }
 
 type pinnedEdgePoliciesKey struct{}
@@ -69,7 +72,7 @@ func (e *HostEntry) SealPolicy() error {
 	if err != nil {
 		return fmt.Errorf("encode compiled host policy: %w", err)
 	}
-	sealed := &edgePolicySnapshot{revision: policyDigest(encoded)}
+	sealed := &edgePolicySnapshot{revision: policyDigest(encoded), owner: e.owner, inheritedApp: e.inheritedApp}
 	if err := json.Unmarshal(encoded, &sealed.entry); err != nil {
 		return fmt.Errorf("copy compiled host policy: %w", err)
 	}
@@ -396,14 +399,25 @@ func (h *Handler) pinAppTrafficPolicy(w http.ResponseWriter, r *http.Request, ap
 // per (host, app). The loader refuses a generation change since the host pin.
 // The authoritative owner policy already carries them (pinResolvedOwnerPolicies).
 func (h *Handler) pinAppEdgePolicies(w http.ResponseWriter, r *http.Request, appID string) bool {
+	ctx, err := h.pinAppEdgeHosts(r.Context(), appID)
+	if err != nil {
+		h.writeTrafficPolicyUnavailable(w, r)
+		return true
+	}
+	*r = *r.WithContext(ctx)
+	return false
+}
+
+// pinAppEdgeHosts is pinAppEdgePolicies on a context: ctx must carry appID's
+// edge-rule scope, and an error means the request fails closed.
+func (h *Handler) pinAppEdgeHosts(ctx context.Context, appID string) (context.Context, error) {
 	loader, ok := h.edgeRules.(EdgePolicySnapshotter)
 	if !ok || appID == "" {
-		return false
+		return ctx, nil
 	}
 	if owner, required := h.edgeRules.(EdgeOwnerPolicySnapshotter); required && owner.RequiresOwnerPolicySnapshot() {
-		return false
+		return ctx, nil
 	}
-	ctx := r.Context()
 	pinned, _ := ctx.Value(pinnedEdgePoliciesKey{}).(map[string]*edgePolicySnapshot)
 	hosts := make([]string, 0, len(pinned))
 	for key := range pinned {
@@ -418,12 +432,10 @@ func (h *Handler) pinAppEdgePolicies(w http.ResponseWriter, r *http.Request, app
 		}
 		var err error
 		if ctx, err = loader.PinHostPolicy(ctx, host); err != nil {
-			h.writeTrafficPolicyUnavailable(w, r)
-			return true
+			return nil, err
 		}
 	}
-	*r = *r.WithContext(ctx)
-	return false
+	return ctx, nil
 }
 
 func (h *Handler) writeTrafficPolicyUnavailable(w http.ResponseWriter, r *http.Request) {

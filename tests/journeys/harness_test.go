@@ -350,6 +350,8 @@ func idempotentCommand(args []string) bool {
 	case "add":
 		// add bucket reuses the bucket and binding an attempt left behind.
 		return sub == "bucket"
+	case "postgres":
+		return sub == "list" || sub == "get" || sub == "capabilities" || sub == "usage"
 	}
 	return false
 }

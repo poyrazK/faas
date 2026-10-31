@@ -8,7 +8,7 @@ import "errors"
 func resolveDeployRollbackOn5xx(safe, explicit, requested bool) (*bool, error) {
 	if safe {
 		if explicit && !requested {
-			return nil, errors.New("--safe requires first-wake 5xx rollback; omit --rollback-on-5xx=false")
+			return nil, errors.New("a safe rollout (--rollout safe or --safe) requires first-wake 5xx rollback; omit --rollback-on-5xx=false")
 		}
 		enabled := true
 		return &enabled, nil

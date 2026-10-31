@@ -64,7 +64,7 @@ func TestRunAgentStreamsAndDestroys(t *testing.T) {
 	vmm := &agentRunTestVMM{fakeVMM: &fakeVMM{}}
 	m := agentRunTestManager(t, vmm, &Instance{ExecutionOnly: true, AgentRunOnly: true})
 	var streamed string
-	result, err := m.RunAgent(context.Background(), "agent-vm-1", agentRunTestRequest(), func(_ context.Context, _ string, chunk []byte) error {
+	result, _, err := m.RunAgent(context.Background(), "agent-vm-1", agentRunTestRequest(), func(_ context.Context, _ string, chunk []byte) error {
 		streamed += string(chunk)
 		return nil
 	}, nil)
@@ -82,7 +82,7 @@ func TestRunAgentStreamsAndDestroys(t *testing.T) {
 func TestRunAgentDestroysAfterDialFailure(t *testing.T) {
 	vmm := &agentRunTestVMM{fakeVMM: &fakeVMM{}, dialErr: errors.New("guest never listened")}
 	m := agentRunTestManager(t, vmm, &Instance{ExecutionOnly: true, AgentRunOnly: true})
-	if _, err := m.RunAgent(context.Background(), "agent-vm-1", agentRunTestRequest(), nil, nil); err == nil {
+	if _, _, err := m.RunAgent(context.Background(), "agent-vm-1", agentRunTestRequest(), nil, nil); err == nil {
 		t.Fatal("dial failure not reported")
 	}
 	if got := m.LiveCount(); got != 0 {
@@ -95,7 +95,7 @@ func TestRunAgentDestroysAfterDialFailure(t *testing.T) {
 func TestAgentRunAndExecutionInstancesStayApart(t *testing.T) {
 	vmm := &agentRunTestVMM{fakeVMM: &fakeVMM{}}
 	m := agentRunTestManager(t, vmm, &Instance{ExecutionOnly: true})
-	if _, err := m.RunAgent(context.Background(), "agent-vm-1", agentRunTestRequest(), nil, nil); !errors.Is(err, ErrAgentRunInstanceNotFound) {
+	if _, _, err := m.RunAgent(context.Background(), "agent-vm-1", agentRunTestRequest(), nil, nil); !errors.Is(err, ErrAgentRunInstanceNotFound) {
 		t.Fatalf("execution instance accepted for an agent run: %v", err)
 	}
 	m = agentRunTestManager(t, vmm, &Instance{ExecutionOnly: true, AgentRunOnly: true})
@@ -106,7 +106,7 @@ func TestAgentRunAndExecutionInstancesStayApart(t *testing.T) {
 		t.Fatalf("agent run instance accepted for an execution: %v", err)
 	}
 	m = agentRunTestManager(t, vmm, &Instance{})
-	if _, err := m.RunAgent(context.Background(), "agent-vm-1", agentRunTestRequest(), nil, nil); !errors.Is(err, ErrAgentRunInstanceNotFound) {
+	if _, _, err := m.RunAgent(context.Background(), "agent-vm-1", agentRunTestRequest(), nil, nil); !errors.Is(err, ErrAgentRunInstanceNotFound) {
 		t.Fatalf("app instance accepted for an agent run: %v", err)
 	}
 }

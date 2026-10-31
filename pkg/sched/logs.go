@@ -119,7 +119,7 @@ func (e *Engine) StreamAppLogs(ctx context.Context, appID string, sinceSeq int64
 	if e.store == nil {
 		return errors.New("sched: StreamAppLogs requires a store")
 	}
-	rows, err := e.store.ListInstancesForApp(ctx, appID)
+	rows, err := e.liveInstancesForApp(ctx, appID)
 	if err != nil {
 		return fmt.Errorf("sched: StreamAppLogs list instances: %w", err)
 	}
@@ -253,7 +253,7 @@ func (e *Engine) StreamAppLogs(ctx context.Context, appID string, sinceSeq int64
 				delete(seen, ended.instanceID)
 			}
 		case <-ticker.C:
-			current, listErr := e.store.ListInstancesForApp(streamCtx, appID)
+			current, listErr := e.liveInstancesForApp(streamCtx, appID)
 			if listErr != nil {
 				continue
 			}

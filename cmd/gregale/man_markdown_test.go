@@ -40,7 +40,9 @@ func TestMarkdownReferenceOmitsAdvancedCommands(t *testing.T) {
 	var buf bytes.Buffer
 	main.RenderMarkdownReference(&buf, main.CliTreeManifest(main.VisibleCliCommands()))
 	out := buf.String()
-	for _, command := range []string{"admin", "mail", "postgres", "rollouts", "github-webhook-secret", "tenant-surfaces", "entities"} {
+	// postgres left this list when managed PostgreSQL reached GA
+	// (ADR-20261031091607); its operator verbs stay under admin.
+	for _, command := range []string{"admin", "mail", "rollouts", "github-webhook-secret", "tenant-surfaces", "entities"} {
 		if strings.Contains(out, "## "+command+"\n") {
 			t.Errorf("public Markdown reference exposes advanced command %q", command)
 		}
