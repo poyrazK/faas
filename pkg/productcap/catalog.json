@@ -4315,6 +4315,7 @@
         "/v1/deployments/{}/canary/advance",
         "/v1/deployments/{}/promote",
         "/v1/deployments/{}/promote-with-application-ack",
+        "/v1/deployments/{}/timeline",
         "/v1/deployments/{}/traffic"
       ],
       "cli": [
