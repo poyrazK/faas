@@ -60,4 +60,18 @@ func TestSimulateChallengeRule(t *testing.T) {
 			t.Fatalf("%s: simulation = %+v", name, sim)
 		}
 	}
+
+	// ADR-831 amendment 18: a CORS preflight is answered at the edge.
+	preflight := http.Header{}
+	preflight.Set("Origin", "https://app.example.org")
+	preflight.Set("Access-Control-Request-Method", "POST")
+	preflight.Set("Access-Control-Request-Headers", "authorization")
+	input := edgeruletrace.Input{App: "demo", Host: "example.com", Path: "/login", Method: http.MethodOptions, AppMaintenanceLoaded: true, AppCORSDefaultsLoaded: true, Headers: preflight}
+	cmp, err := edgeruletrace.SimulateProposal(input, nil, proposal, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sim := cmp.Proposed.Simulation; sim.Outcome != "challenge_preflight" || sim.Status != "complete" || sim.StatusCode != http.StatusNoContent || sim.StoppedAt != "challenge" {
+		t.Fatalf("preflight simulation = %+v", sim)
+	}
 }
