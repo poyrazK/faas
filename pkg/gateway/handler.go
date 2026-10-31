@@ -1054,6 +1054,9 @@ type Handler struct {
 	// origin response headers for parked-app HEAD / answers. It is process
 	// local; after restart the edge returns 204 until a live response lands.
 	headHeaders *edgeHeadHeaderCache
+	// appFreezes memoizes each request's app policy snapshot (ADR-570) by its
+	// encoding. nil freezes every request from scratch.
+	appFreezes *appFreezes
 	// headWakes is the process-wide opt-in for legacy HEAD wake behaviour;
 	// an App.HeadWakes value can enable it for one app.
 	headWakes bool
@@ -1528,6 +1531,7 @@ func NewHandlerWith(backend Backend, m *Metrics, log *slog.Logger) *Handler {
 		retryBudget:        NewRetryBudget(0, nil),
 		metrics:            m,
 		headHeaders:        newEdgeHeadHeaderCache(),
+		appFreezes:         newAppFreezes(),
 		log:                log,
 		wakePageCycles:     make(map[string]*wakePageCycle),
 		consumerKeyTouches: newConsumerKeyToucher(),
