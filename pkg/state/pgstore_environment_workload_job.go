@@ -112,7 +112,7 @@ func activateEnvironmentGitOpsScheduledJobsTx(ctx context.Context, tx pgx.Tx, gr
 
 func environmentGitOpsScheduledJobAcksTx(ctx context.Context, tx sqlc.DBTX, graphID, releaseID string) ([]EnvironmentWorkloadServingScheduledJobAck, error) {
 	rows, err := tx.Query(ctx, `SELECT app_id,job_id,job_run_id,occurrence_id,acknowledged_at,service_bindings
-		FROM public.environment_workload_scheduled_job_acks($1::uuid,$2::uuid) ORDER BY app_id`, graphID, releaseID)
+		FROM environment_workload_scheduled_job_acks($1::uuid,$2::uuid) ORDER BY app_id`, graphID, releaseID)
 	if err != nil {
 		return nil, mapErr(err)
 	}
