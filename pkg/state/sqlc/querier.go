@@ -5484,6 +5484,11 @@ type Querier interface {
 	// ADR-531: production filtering precedes aggregates, limits, and cursor anchors.
 	ReadProductionQueueInvocation(ctx context.Context, db DBTX, id pgtype.UUID) (Invocation, error)
 	ReadProductionQueueStateLive(ctx context.Context, db DBTX, arg ReadProductionQueueStateLiveParams) (ReadProductionQueueStateLiveRow, error)
+	// ReadProductionQueueStateLive plus CountProductionQueueDeadLetter for the
+	// status reads a customer can poll: each count stops at row_limit, and the
+	// oldest pending message is the first one due under each of the app's queue
+	// names, found one name at a time (ADR-20261018101500 amendment 2026-10-31).
+	ReadProductionQueueTelemetry(ctx context.Context, db DBTX, arg ReadProductionQueueTelemetryParams) (ReadProductionQueueTelemetryRow, error)
 	ReadProductionQueueTriggerInvocation(ctx context.Context, db DBTX, arg ReadProductionQueueTriggerInvocationParams) (Invocation, error)
 	ReadProfileAlertDeploymentScope(ctx context.Context, db DBTX, arg ReadProfileAlertDeploymentScopeParams) (string, error)
 	ReadProfileAlertOwner(ctx context.Context, db DBTX, arg ReadProfileAlertOwnerParams) (string, error)

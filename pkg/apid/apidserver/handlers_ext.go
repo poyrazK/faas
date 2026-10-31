@@ -152,6 +152,29 @@ func validateIdleTimeout(v int, limits api.Limits) *api.Problem {
 	return nil
 }
 
+// validateWorkerPlan refuses a worker the plan cannot run
+// (ADR-20261018101500 amendment 2026-10-31): a request that makes the app a
+// worker on a plan without workers, or whose worker bounds pass the plan's
+// running-worker cap. The pool would otherwise cap it silently, or on Free
+// never start it.
+func validateWorkerPlan(req *api.UpdateAppRequest, acct state.Account, limits api.Limits, app state.App) *api.Problem {
+	mode := app.Manifest.ExecutionMode
+	if req.ExecutionMode != nil {
+		mode = *req.ExecutionMode
+	}
+	if mode != api.ExecutionModeWorker || (req.ExecutionMode == nil && req.WorkerReplicas == nil) {
+		return nil
+	}
+	want := 1
+	if req.WorkerReplicas != nil {
+		want = max(req.WorkerReplicas.Min, req.WorkerReplicas.Max, 1)
+	}
+	if want > limits.WorkerReplicasMax {
+		return api.ErrPlanWorkerReplicas(acct.Plan, limits.WorkerReplicasMax, want)
+	}
+	return nil
+}
+
 // validatePerInstanceConcurrency gates and bounds
 // scaling_policy.per_instance_concurrency (ADR-20261022203523). Until the
 // account is listed in FAAS_PER_INSTANCE_CONCURRENCY_ACCOUNTS the field is
@@ -189,6 +212,9 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 		if prob := validateIdleTimeout(*req.IdleTimeoutS, limits); prob != nil {
 			return prob
 		}
+	}
+	if prob := validateWorkerPlan(req, acct, limits, app); prob != nil {
+		return prob
 	}
 	// The app-wide edge bucket is a tightening-only runtime policy. Zero
 	// restores the plan default; a positive override cannot exceed the plan

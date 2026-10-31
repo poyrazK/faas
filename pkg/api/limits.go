@@ -1516,6 +1516,12 @@ const (
 	RealtimeUsageQueryMaxHours     = 744
 )
 
+// QueueStatusCountLimit bounds every count a queue status read or gauge
+// makes: queue state, binding status, the dashboard and schedd's queue
+// gauges. A larger backlog reads as this many (ADR-20261018101500 amendments
+// 2026-10-27 and 2026-10-31).
+const QueueStatusCountLimit = 100_000
+
 // Pull leases (ADR-1140). One call leases at most QueueLeaseMaxMessages and
 // takes at most QueueLeaseMaxReceipts receipts. A lease without an explicit
 // timeout hides its message for QueueLeaseDefaultVisibilitySeconds; the

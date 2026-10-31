@@ -725,6 +725,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// scheduler's fleet-wide placement; a configured owner pins this
 	// schedd to its registered compute node.
 	engine.WithOwnerNodeID(ownerNodeID)
+	// Workloads reach this installation's API through GREGALE_API_URL; unset
+	// leaves the SDK default, https://api.gregale.dev.
+	engine.WithPublicAPIURL(os.Getenv("FAAS_PUBLIC_API_URL"))
 	if leaseGuard != nil {
 		engine.WithTakeoverGuard(leaseGuard)
 	}

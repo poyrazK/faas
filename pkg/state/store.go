@@ -4460,6 +4460,10 @@ type Store interface {
 	// each count stops at limit and the oldest pending message comes from
 	// the lease indexes (ADR-20261018101500 amendment 2026-10-27).
 	QueueBindingTelemetry(ctx context.Context, appID, bindingID string, limit int) (QueueStats, error)
+	// QueueAppTelemetry is QueueState with each count stopping at limit, for
+	// status reads a customer can poll (ADR-20261018101500 amendment
+	// 2026-10-31).
+	QueueAppTelemetry(ctx context.Context, appID string, limit int) (QueueStats, error)
 	WorkerPoolHistory(ctx context.Context, appID, deploymentID string) (WorkerPoolHistory, error)
 	// QueuePeek lists the oldest pending queue messages for an app
 	// without acquiring a lease or incrementing attempts. Paginated by

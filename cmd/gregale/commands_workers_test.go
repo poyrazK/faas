@@ -317,6 +317,47 @@ func TestCmdWorkersStatus_DetailAndDLQWarning(t *testing.T) {
 	}
 }
 
+// A pull-binding worker shows its binding's backlog and dead letters, and a
+// cron on the same app is not read as its broker (ADR-20261018101500
+// amendment 2026-10-31).
+func TestCmdWorkersStatus_PullBindingBacklog(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/apps/jobs-worker":
+			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "app-jobs", Slug: "jobs-worker", Status: "running", RAMMB: 512,
+				Manifest: api.AppManifest{ExecutionMode: api.ExecutionModeWorker,
+					WorkerReplicas: &api.WorkerScaling{Max: 3, Metric: "queue_depth", Target: 100}}})
+		case "/v1/apps/jobs-worker/instances":
+			_, _ = io.WriteString(w, `[]`)
+		case "/v1/apps/jobs-worker/queue-bindings":
+			_, _ = io.WriteString(w, `[{"id":"b-jobs","name":"jobs","queue_name":"jobs","mode":"pull","workload_class":"worker","enabled":true,"max_concurrency":4},
+				{"id":"b-old","name":"old","queue_name":"old","mode":"pull","workload_class":"worker","enabled":false,"max_concurrency":1}]`)
+		case "/v1/apps/jobs-worker/queue-bindings/b-jobs/status":
+			_, _ = io.WriteString(w, `{"binding_id":"b-jobs","name":"jobs","queue_name":"jobs","mode":"pull","enabled":true,"depth":7,"in_flight":1,"dead_letter":2}`)
+		case "/v1/triggers":
+			_ = json.NewEncoder(w).Encode([]api.Trigger{{ID: "trig-cron", AppID: "app-jobs", Kind: api.TriggerKindCron}})
+		case "/v1/triggers/trig-cron/metrics":
+			t.Errorf("a cron's metrics were read as the worker's backlog")
+			_, _ = io.WriteString(w, `{"pending_count":999}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "test-token")
+	main.ResetJSONOutput()
+	t.Cleanup(main.ResetJSONOutput)
+	stdout, restore := main.CaptureStdout(t)
+	code, _ := main.RunWithStderr(t, func() int { return main.CmdWorkersStatus([]string{"jobs-worker"}) })
+	restore()
+	out := stdout.String()
+	if code != 0 || !strings.Contains(out, "Backlog:    7 messages pending") || !strings.Contains(out, "DLQ:        2 dead-letter messages") || strings.Contains(out, "Broker:") {
+		t.Fatalf("status = %d; output:\n%s", code, out)
+	}
+}
+
 func TestCmdWorkersStatus_RejectsNonWorker(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/apps/web-app" {

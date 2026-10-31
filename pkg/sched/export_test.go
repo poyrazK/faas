@@ -299,6 +299,10 @@ var ReadWakeRPC = readWakeRPC
 // XWakeLeaderBudget is the deadline a coordinated wake's leader runs under.
 func (e *Engine) XWakeLeaderBudget() time.Duration { return e.wakeLeaderBudget() }
 
+func (e *Engine) XWithPublicAPIURL(env []fcvm.APIEnvEntry) []fcvm.APIEnvEntry {
+	return e.withPublicAPIURL(env)
+}
+
 // XSpendCapSubject is the billing subject whose spend cap governs app.
 func (e *Engine) XSpendCapSubject(ctx context.Context, app state.App) string {
 	return e.spendCapSubject(ctx, app)

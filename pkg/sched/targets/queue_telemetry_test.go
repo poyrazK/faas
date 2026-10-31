@@ -108,6 +108,36 @@ func TestTrigger_QueueReadsAreBoundedAndGaugesThrottled(t *testing.T) {
 	}
 }
 
+// A worker this schedd stops managing loses its queue gauges, so a backlog
+// alert does not keep reading the last value after another schedd takes the
+// app over (ADR-20261018101500 amendment 2026-10-31).
+func TestTrigger_ForgetsQueueGaugesOfAppsItNoLongerManages(t *testing.T) {
+	app := state.App{ID: "moved-worker", WorkloadClass: state.WorkloadClassWorker, MaxConcurrency: 5}
+	bindings := &boundedQueueBindings{fakeQueueBindings: fakeQueueBindings{
+		byApp:   map[string][]state.QueueBinding{app.ID: {{ID: "jobs", AppID: app.ID, QueueName: "jobs", Enabled: true, MaxConcurrency: 5}}},
+		byQueue: map[string]state.QueueStats{"jobs": {Depth: 40}},
+	}}
+	store := &fakeStore{apps: []state.App{app}}
+	metrics := wire.NewOpsMetrics("schedd")
+	engine := &scopedWorkerPoolFake{workerPoolFakeEngine: &workerPoolFakeEngine{fakeEngine: &fakeEngine{}}}
+	tr := New(store, nil, engine, &fakeLedger{conc: map[string]int{}}, Options{Metrics: metrics, QueueBindingStatsReader: bindings})
+	if err := tr.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	tr.waitWorkerPoolRuns()
+	if depth, ok := queueDepthGauge(t, metrics, app.ID); !ok || depth != 40 {
+		t.Fatalf("gauge = %v, %v; want 40", depth, ok)
+	}
+	store.apps = nil
+	if err := tr.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	tr.waitWorkerPoolRuns()
+	if depth, ok := queueDepthGauge(t, metrics, app.ID); ok {
+		t.Fatalf("gauge still %v after the app left this schedd", depth)
+	}
+}
+
 func TestQueueScalingLimit(t *testing.T) {
 	for _, tc := range []struct {
 		target float64

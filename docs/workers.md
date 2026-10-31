@@ -18,7 +18,7 @@ worker:
   drain_timeout: 30s
   scale:
     min: 0
-    max: 3
+    max: 3          # Pro runs 3 workers at once; Hobby 1
     metric: queue_depth
     target: 100
 queue_bindings:
@@ -30,7 +30,9 @@ queue_bindings:
 The `worker` block makes the app a worker and sets how its pool scales (see
 [Scale on the backlog](#scale-on-the-backlog)). A binding in `queue_bindings`
 is a **pull** binding by default: the worker leases messages when it has
-capacity and acks or nacks each one. A worker is not reaped when idle; if its
+capacity and acks or nacks each one. A binding you remove from the file is
+deleted by `gregale deploy` and disabled by a repository or GitHub deploy;
+delete it with `gregale queue bindings delete`. A worker is not reaped when idle; if its
 process exits, guest-init restarts it under the restart policy (see
 [declarative worker lifecycle](cli/deploy.md#declarative-worker-lifecycle)).
 
@@ -85,10 +87,13 @@ Messages are delivered at least once: make handlers idempotent.
 `worker.scale` says how many waiting messages one worker should take:
 `metric: queue_depth` with `target: 100` runs `ceil(depth / 100)` workers,
 between `min` and `max`, and never more than the binding's `max_concurrency`
-allows. The target is at most 10,000 messages per worker. With `min: 0` the pool stops when the queue is empty and starts a
-worker when the next message arrives. A worker that reads an external broker
-(Kafka, NATS, SQS and others) through `worker.source` scales on
-`metric: queue_lag` instead. A `scaling` block with a `queue_depth` target
+allows. The target is at most 10,000 messages per worker. `max` can't pass
+the plan's running workers (see [Limits](#limits)); a deploy that asks for more
+is refused with `plan_worker_replicas`, and Free runs no workers. With `min: 0`
+the pool stops when the queue is empty and starts a worker when the next
+message arrives. A worker that consumes an external broker (Kafka, NATS or
+Redis Streams) declares it under `triggers:` and scales on `metric: queue_lag`
+instead (see [scaling policy](scaling-policy.md)). A `scaling` block with a `queue_depth` target
 works the same way, with `min_instances` as the floor. It scales out on the tick that sees the
 backlog and scales in only after demand has stayed low for 60 seconds, so a
 queue that drains and refills does not restart workers. A worker that holds

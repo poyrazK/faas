@@ -502,6 +502,10 @@ type Engine struct {
 	// pre-Phase-2 tests stay green.
 	ownerNodeID string
 
+	// publicAPIURL is this installation's public API, handed to workloads
+	// as GREGALE_API_URL (WithPublicAPIURL). Empty leaves the SDK default.
+	publicAPIURL string
+
 	// tracer is the OTel Tracer that emits sched.wake + vmmd.create_*
 	// spans (issue #555 PR-3). nil = no spans emitted (the OTel
 	// SDK's noop fallback is a no-op cost). Wired via WithTracer
@@ -1445,6 +1449,31 @@ func (e *Engine) WithOwnerNodeID(nodeID string) *Engine {
 	}
 	e.ownerNodeID = nodeID
 	return e
+}
+
+// WithPublicAPIURL sets the public API URL workloads receive as
+// GREGALE_API_URL. The SDK queue consumers otherwise call
+// https://api.gregale.dev, which does not accept another installation's
+// workload tokens (ADR-20261018101500 amendment 2026-10-31).
+func (e *Engine) WithPublicAPIURL(url string) *Engine {
+	if e != nil {
+		e.publicAPIURL = strings.TrimRight(strings.TrimSpace(url), "/")
+	}
+	return e
+}
+
+// withPublicAPIURL adds GREGALE_API_URL to a workload's platform env unless
+// the app sets it itself.
+func (e *Engine) withPublicAPIURL(env []fcvm.APIEnvEntry) []fcvm.APIEnvEntry {
+	if e == nil || e.publicAPIURL == "" {
+		return env
+	}
+	for _, entry := range env {
+		if entry.Key == api.PublicAPIURLEnv {
+			return env
+		}
+	}
+	return append(env, fcvm.APIEnvEntry{Key: api.PublicAPIURLEnv, Value: e.publicAPIURL})
 }
 
 // WithRecoveryArbiter wires the single per-tick decision policy
@@ -3952,10 +3981,10 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		// sealed secrets surface but stores non-sensitive runtime
 		// config. Precedence at the guest layer is "secrets >
 		// api_env > manifest_env > os.environ".
-		APIEnv: appendPlatformIdentity(
+		APIEnv: e.withPublicAPIURL(appendPlatformIdentity(
 			runtimeValues.APIEnv,
 			app, dep, acct, placement.NodeID, ins.ID, placement.Region,
-		),
+		)),
 		// ADR-031: surface the per-app egress allowlist on the
 		// wake wire. vmmd translates the CIDRs into the per-netns
 		// forward chain. Empty slice = no allowlist rule (current
@@ -6033,7 +6062,7 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 		MainDependsOn:          mainDependencies,
 		// ADR-590: plaintext and sealed inputs share one owned snapshot.
 		// A lookup failure aborts migration before booting incomplete config.
-		APIEnv: appendPlatformIdentity(
+		APIEnv: e.withPublicAPIURL(appendPlatformIdentity(
 			runtimeValues.APIEnv,
 			app, dep, acct, ins.NodeID, ins.ID, func() string {
 				if node, err := e.store.ComputeNodeByID(ctx, ins.NodeID); err == nil {
@@ -6041,7 +6070,7 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 				}
 				return ""
 			}(),
-		),
+		)),
 		// ADR-031: per-app egress allowlist; same CIDR-string
 		// flattening as the Wake path.
 		EgressAllowlist:             prefixesToCIDRStrings(app.EgressAllowlist),

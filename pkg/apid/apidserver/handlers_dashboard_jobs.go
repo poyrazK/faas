@@ -197,7 +197,7 @@ func (s *server) renderJobsQueues(w http.ResponseWriter, r *http.Request, log *s
 }
 
 func (s *server) projectDashboardQueue(ctx context.Context, log *slog.Logger, acct state.Account, app state.App) (dashboard.QueuePageItem, bool) {
-	stats, err := s.store.QueueState(ctx, app.ID)
+	stats, err := s.store.QueueAppTelemetry(ctx, app.ID, api.QueueStatusCountLimit)
 	if err != nil {
 		log.Warn("dashboard jobs: queue state", "account_id", acct.ID, "app_id", app.ID, "err", err)
 		return dashboard.QueuePageItem{}, false

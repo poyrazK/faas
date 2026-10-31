@@ -45,7 +45,7 @@ func (s *server) queueState(w http.ResponseWriter, r *http.Request, acct state.A
 		return
 	}
 	limits := api.MustLimitsFor(acct.Plan)
-	stats, err := s.store.QueueState(r.Context(), app.ID)
+	stats, err := s.store.QueueAppTelemetry(r.Context(), app.ID, api.QueueStatusCountLimit)
 	if err != nil {
 		slog.Default().Error("queue state read failed", "app_id", app.ID, "err", err)
 		api.WriteProblem(w, api.ErrInternal("queue state"))

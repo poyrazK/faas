@@ -273,6 +273,11 @@ const (
 	PlatformImageDigestEnv       = "FAAS_IMAGE_DIGEST"
 )
 
+// PublicAPIURLEnv names the installation's public API URL in a workload's
+// environment. The SDK queue consumers read it; an app may set its own
+// (ADR-20261018101500 amendment 2026-10-31).
+const PublicAPIURLEnv = "GREGALE_API_URL"
+
 // IsPlatformIdentityEnvKey identifies keys that are owned by Gregale rather
 // than by the customer app. It is shared by the scheduler and guest-init so
 // the precedence rule remains explicit at both ends of the wake pipeline.

@@ -10853,6 +10853,17 @@ type appLabelSet struct {
 	cap      int
 }
 
+// has reports whether app is admitted as its own label, without admitting it.
+func (s *appLabelSet) has(app string) bool {
+	if app == labelAppUnknown || app == otherAppLabel {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.admitted[app]
+	return ok
+}
+
 // newAppLabelSet constructs an admission set with the given
 // capacity. capacity must be > 0; the call panics otherwise to
 // fail loud at boot rather than silently allow unbounded
