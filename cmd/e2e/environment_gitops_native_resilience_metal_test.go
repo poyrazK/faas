@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"slices"
 	"strconv"
@@ -20,6 +21,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/e2etest"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 const gitOpsNextBody = "reviewed next revision"
@@ -268,6 +270,13 @@ func (j *nativeGitOpsJourney) timeoutDiagnostics(t *testing.T, last api.Environm
 			WHERE r.project_id=$1 AND r.environment_slug='production' ORDER BY r.created_at`, []any{j.project.ID}},
 		{"deployment", `SELECT id::text, app_id::text, status, created_at::text, ''
 			FROM deployments WHERE app_id = ANY($1::uuid[]) ORDER BY created_at`, []any{[]string{j.app.ID, j.worker.ID}}},
+		// A pass that never finishes leaves no run record: show what every
+		// non-idle session waits on and who blocks it.
+		{"session", `SELECT pid::text, state || ' ' || coalesce(wait_event_type, '') || '/' || coalesce(wait_event, ''),
+			coalesce(extract(epoch FROM clock_timestamp() - xact_start)::int::text, ''), array_to_string(pg_blocking_pids(pid), ','),
+			left(regexp_replace(query, '\s+', ' ', 'g'), 200)
+			FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND state <> 'idle'
+			ORDER BY xact_start NULLS LAST`, nil},
 	}
 	for _, q := range queries {
 		rows, err := j.h.Pool.Query(ctx, q.sql, q.args...)
@@ -288,7 +297,53 @@ func (j *nativeGitOpsJourney) timeoutDiagnostics(t *testing.T, last api.Environm
 		}
 		rows.Close()
 	}
+	b.WriteString(j.apidGitOpsGoroutines(ctx))
 	return b.String()
+}
+
+// apidGitOpsGoroutines returns this run's apid stacks that are inside the
+// GitOps worker, read from its root-only pprof socket (ADR-20261023200002).
+// A pass blocked without a log line shows up here.
+func (j *nativeGitOpsJourney) apidGitOpsGoroutines(ctx context.Context) string {
+	pid, err := j.h.APIDPID()
+	if err != nil {
+		return "\n  apid goroutines: " + err.Error()
+	}
+	for _, socket := range []string{fmt.Sprintf("@%sapid.%d", wire.DebugProfileSocketPrefix, pid), "@" + wire.DebugProfileSocketPrefix + "apid"} {
+		client := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{
+			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				var d net.Dialer
+				return d.DialContext(ctx, "unix", socket)
+			}}}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://apid/debug/pprof/goroutine?debug=2", nil)
+		if err != nil {
+			return "\n  apid goroutines: " + err.Error()
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			continue
+		}
+		body, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
+		_ = resp.Body.Close()
+		if err != nil || resp.StatusCode != http.StatusOK {
+			continue
+		}
+		var b strings.Builder
+		shown := 0
+		for _, stack := range strings.Split(string(body), "\n\n") {
+			if shown == 4 || !strings.Contains(stack, "environmentgitops") && !strings.Contains(stack, "environment_gitops") {
+				continue
+			}
+			lines := strings.Split(stack, "\n")
+			fmt.Fprintf(&b, "\n  goroutine (%s):\n    %s", socket, strings.Join(lines[:min(len(lines), 40)], "\n    "))
+			shown++
+		}
+		if shown == 0 {
+			fmt.Fprintf(&b, "\n  goroutine (%s): no GitOps worker stack", socket)
+		}
+		return b.String()
+	}
+	return "\n  apid goroutines: no reachable pprof socket"
 }
 
 func (j *nativeGitOpsJourney) waitActivated(t *testing.T, revision string, generation int64) api.EnvironmentGitOpsStatusResponse {
