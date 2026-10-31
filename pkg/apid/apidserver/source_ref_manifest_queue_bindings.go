@@ -85,7 +85,8 @@ func (s *server) applySourceRefQueueBindings(ctx context.Context, acct state.Acc
 		params := state.UpdateQueueBindingParams{QueueName: &want.QueueName, Mode: &want.Mode, WorkloadClass: &want.WorkloadClass,
 			Enabled: &want.Enabled, MaxConcurrency: &want.MaxConcurrency}
 		if binding.RetryPolicy != nil {
-			params.RetryPolicyJSON = &want.RetryPolicyJSON
+			policy := []byte(want.RetryPolicyJSON)
+			params.RetryPolicyJSON = &policy
 		}
 		if problem := s.updateSourceRefQueueBinding(ctx, consumers, acct, row, params, staged); problem != nil {
 			return problem
@@ -174,9 +175,10 @@ func (s *server) rollbackSourceRefQueueBindings(ctx context.Context, staged sour
 			result, err = consumers.DeleteQueueBindingWithConsumer(ctx, staged.accountID, staged.appID, change.id)
 		} else {
 			old := change.previous
+			policy := []byte(old.RetryPolicyJSON)
 			result, err = consumers.UpdateQueueBindingWithConsumer(ctx, staged.accountID, staged.appID, change.id, state.UpdateQueueBindingParams{
 				QueueName: &old.QueueName, Mode: &old.Mode, WorkloadClass: &old.WorkloadClass, Enabled: &old.Enabled,
-				MaxConcurrency: &old.MaxConcurrency, RetryPolicyJSON: &old.RetryPolicyJSON})
+				MaxConcurrency: &old.MaxConcurrency, RetryPolicyJSON: &policy})
 		}
 		if err != nil {
 			errs = append(errs, fmt.Errorf("rollback queue binding %s: %w", change.id, err))

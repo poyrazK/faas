@@ -72,7 +72,7 @@ func TestUpdateAppRefusesWorkersOverThePlan(t *testing.T) {
 	} {
 		t.Run(string(tc.plan), func(t *testing.T) {
 			e := apidserver.Setup(t, tc.plan)
-			if _, err := (*e.Store()).CreateApp(context.Background(), state.App{AccountID: (*e.Acct()).ID, Slug: "plan-worker", Type: state.AppTypeApp}); err != nil {
+			if _, err := (*e.Store()).CreateApp(context.Background(), state.App{AccountID: (*e.Acct()).ID, Slug: "plan-worker", Type: state.AppTypeApp, RAMMB: 256, IdleTimeoutS: 60, MaxConcurrency: 1}); err != nil {
 				t.Fatal(err)
 			}
 			rec := e.Do(t, http.MethodPatch, "/v1/apps/plan-worker", api.UpdateAppRequest{ExecutionMode: &worker, WorkerReplicas: tc.replicas}, nil)
@@ -84,7 +84,7 @@ func TestUpdateAppRefusesWorkersOverThePlan(t *testing.T) {
 		})
 	}
 	e := apidserver.Setup(t, api.PlanPro)
-	if _, err := (*e.Store()).CreateApp(context.Background(), state.App{AccountID: (*e.Acct()).ID, Slug: "pro-worker", Type: state.AppTypeApp}); err != nil {
+	if _, err := (*e.Store()).CreateApp(context.Background(), state.App{AccountID: (*e.Acct()).ID, Slug: "pro-worker", Type: state.AppTypeApp, RAMMB: 256, IdleTimeoutS: 60, MaxConcurrency: 1}); err != nil {
 		t.Fatal(err)
 	}
 	rec := e.Do(t, http.MethodPatch, "/v1/apps/pro-worker", api.UpdateAppRequest{ExecutionMode: &worker, WorkerReplicas: &api.WorkerScaling{Max: 3}}, nil)

@@ -167,7 +167,13 @@ func validateWorkerPlan(req *api.UpdateAppRequest, acct state.Account, limits ap
 	}
 	want := 1
 	if req.WorkerReplicas != nil {
-		want = max(req.WorkerReplicas.Min, req.WorkerReplicas.Max, 1)
+		// The package declares a float64 max (handlers_dashboard.go), so the
+		// builtin is not reachable here.
+		for _, n := range []int{req.WorkerReplicas.Min, req.WorkerReplicas.Max} {
+			if n > want {
+				want = n
+			}
+		}
 	}
 	if want > limits.WorkerReplicasMax {
 		return api.ErrPlanWorkerReplicas(acct.Plan, limits.WorkerReplicasMax, want)
