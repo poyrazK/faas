@@ -4763,7 +4763,7 @@
       "cli": [
         "app status",
         "app wait",
-        "release status"
+        "deployment status"
       ]
     },
     {
