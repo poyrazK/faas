@@ -7749,6 +7749,93 @@ Create, attach and restore managed PostgreSQL databases
 
 `gregale postgres [<subcommand>]`
 
+### postgres overage
+
+Show or change compute overage past the monthly allowance
+
+`gregale postgres overage <get|set> [on|off]`
+
+Examples:
+
+```sh
+gregale postgres overage on
+```
+
+With overage on, databases keep running up to twice the allowance.
+
+#### postgres overage get
+
+Show or change compute overage past the monthly allowance
+
+`gregale postgres overage get [on|off]`
+
+Examples:
+
+```sh
+gregale postgres overage get on
+```
+
+With overage on, databases keep running up to twice the allowance.
+
+#### postgres overage set
+
+Show or change compute overage past the monthly allowance
+
+`gregale postgres overage set [on|off]`
+
+Examples:
+
+```sh
+gregale postgres overage set on
+```
+
+With overage on, databases keep running up to twice the allowance.
+
+### postgres compute-policy
+
+Durably switch between idle suspension and always-on compute
+
+`gregale postgres compute-policy <set|status> --scale-to-zero <BOOL> --request-id <UUID> <database>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--scale-to-zero <BOOL>` | true for idle suspension, false for always-on | required; one of `true` · `false` |
+| `--request-id <UUID>` | stable request UUID; reuse after uncertain responses | required |
+
+#### postgres compute-policy set
+
+Durably switch between idle suspension and always-on compute
+
+`gregale postgres compute-policy set --scale-to-zero <BOOL> --request-id <UUID> <database>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--scale-to-zero <BOOL>` | true for idle suspension, false for always-on | required; one of `true` · `false` |
+| `--request-id <UUID>` | stable request UUID; reuse after uncertain responses | required |
+
+#### postgres compute-policy status
+
+Read compute policy change progress
+
+`gregale postgres compute-policy status <database> <request_uuid>`
+
+### postgres resize
+
+Durably resize compute; clients may disconnect
+
+`gregale postgres resize <status> --class <CLASS> --request-id <UUID> <database>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--class <CLASS>` | target service class | required; one of `development` · `burstable` · `production` |
+| `--request-id <UUID>` | stable request UUID; reuse after uncertain responses | required |
+
+#### postgres resize status
+
+Read compute resize progress
+
+`gregale postgres resize status <database> <request_uuid>`
+
 ### postgres list
 
 List managed PostgreSQL databases
@@ -7772,20 +7859,6 @@ gregale postgres capabilities --json
 ### postgres usage
 
 Show monthly managed PostgreSQL usage and guardrail state
-
-### postgres overage
-
-Show or change compute overage past the monthly allowance
-
-`gregale postgres overage [on|off]`
-
-Examples:
-
-```sh
-gregale postgres overage on
-```
-
-With overage on, databases keep running up to twice the allowance.
 
 ### postgres create
 
@@ -7884,40 +7957,6 @@ gregale postgres recover orders
 ```
 
 Works until the database&#39;s restorable_until, 7 days after the delete; a purged database is gone.
-
-### postgres compute-policy
-
-Durably switch between idle suspension and always-on compute
-
-`gregale postgres compute-policy --scale-to-zero <BOOL> --request-id <UUID> <database>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--scale-to-zero <BOOL>` | true for idle suspension, false for always-on | required; one of `true` · `false` |
-| `--request-id <UUID>` | stable request UUID; reuse after uncertain responses | required |
-
-### postgres compute-policy-status
-
-Read compute policy change progress
-
-`gregale postgres compute-policy-status <database> <request_uuid>`
-
-### postgres resize
-
-Durably resize compute; clients may disconnect
-
-`gregale postgres resize --class <CLASS> --request-id <UUID> <database>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--class <CLASS>` | target service class | required; one of `development` · `burstable` · `production` |
-| `--request-id <UUID>` | stable request UUID; reuse after uncertain responses | required |
-
-### postgres resize-status
-
-Read compute resize progress
-
-`gregale postgres resize-status <database> <request_uuid>`
 
 ### postgres restore
 
