@@ -3886,6 +3886,16 @@
     }
   },
   {
+    "table": "custom_domain_tls_admissions",
+    "columns": [
+      "admitted_at",
+      "host",
+      "owner_id",
+      "registered_domain"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "custom_domain_tls_hosts",
     "columns": [
       "admitted_at",
