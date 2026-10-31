@@ -17,7 +17,7 @@ import (
 func computeGatewayRegistry(t *testing.T, gatewayCredential bool, bytesPerSecond int64) *objectstorage.Registry {
 	t.Helper()
 	backend := objectstorage.BackendConfig{ID: "ovh", Driver: "s3", Region: "us-east-1", S3Region: "us-east-va", Namespace: "project", Endpoint: "https://s3.example.test", PathStyle: true,
-		AccessKeyEnv: "ADMIN_KEY", SecretKeyEnv: "ADMIN_SECRET",
+		AccessKeyEnv: "ADMIN_KEY", SecretKeyEnv: "ADMIN_SECRET", UsageReportsPath: "/var/spool/faas/s3-gatewayd/ovh-usage.json",
 		Usage: objectstorage.UsageConfig{Driver: "ovh", ApplicationKeyEnv: "OVH_APP_KEY", ApplicationSecretEnv: "OVH_APP_SECRET", ConsumerKeyEnv: "OVH_CONSUMER_KEY", RequestLogBucket: "logs"}}
 	if gatewayCredential {
 		backend.GatewayAccessKeyEnv, backend.GatewaySecretKeyEnv = "GATEWAY_KEY", "GATEWAY_SECRET"
