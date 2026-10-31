@@ -5,6 +5,8 @@
 import type { CreateCustomDomainRequest } from '../models/CreateCustomDomainRequest.js';
 import type { CustomDomainResponse } from '../models/CustomDomainResponse.js';
 import type { DomainDoctorReport } from '../models/DomainDoctorReport.js';
+import type { Problem } from '../models/Problem.js';
+import type { ResourceStatus } from '../models/ResourceStatus.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
@@ -129,6 +131,35 @@ export class DomainsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
+      },
+    });
+  }
+  /**
+   * Read a custom domain's conditions.
+   * Preview (resource-conditions capability). The domain's Ready,
+   * Verified and CertificateReady conditions, from the domain's recorded
+   * verification and certificate state and never stored. Unlike
+   * GET /v1/domains/{domain} it never connects to the domain, so it is
+   * safe to poll. None of its conditions is terminal: DNS can change
+   * outside Gregale. Cache-Control no-store.
+   *
+   * @returns ResourceStatus The custom domain's conditions.
+   * @returns Problem Missing sign-in, read scope or MFA, a domain this account does not own, the capability turned off, or the rate limit.
+   * @throws ApiError
+   */
+  public static getDomainStatus({
+    domain,
+  }: {
+    /**
+     * The custom domain whose conditions are read.
+     */
+    domain: string,
+  }): CancelablePromise<ResourceStatus | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/domains/{domain}/status',
+      path: {
+        'domain': domain,
       },
     });
   }

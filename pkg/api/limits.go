@@ -6841,7 +6841,8 @@ const (
 	// RolloutConcurrencyGrant (ADR-199) is the number of instances an app
 	// may exceed its plan's max_concurrency by, and ONLY while a second
 	// deployment is coming up alongside the one already serving — i.e. the
-	// overlap window of a traffic split or a canary stage.
+	// overlap window of a traffic split or a canary stage, or a release staged
+	// with no traffic (ADR-20261031105227).
 	//
 	// Without it, opening traffic splitting to every plan would ship a
 	// broken feature: the concurrency ledger is per-app
@@ -16308,6 +16309,20 @@ const (
 	DataRepairPurgePlanTTLSeconds      = 15 * 60
 	DataRepairPurgeTimeoutSeconds      = 10
 	DataRepairPurgeLockTimeoutMS       = 2000
+)
+
+// Resource labels (ADR-20261031100025) use Kubernetes label syntax and are the
+// same on every plan: labels hold no resources. A resource carries at most
+// LabelsPerResourceMax labels. A key is an optional DNS-subdomain prefix of at
+// most LabelKeyPrefixMax bytes, a slash, and a name of 1–LabelKeyNameMax bytes;
+// a value is 0–LabelValueMax bytes. A selector is at most LabelSelectorMaxBytes,
+// which bounds parsing and matching for one list request.
+const (
+	LabelsPerResourceMax  = 32
+	LabelKeyNameMax       = 63
+	LabelKeyPrefixMax     = 253
+	LabelValueMax         = 63
+	LabelSelectorMaxBytes = 4096
 )
 
 // PendingTenantHostnamesPerSurface is the unverified-hostname cap for one
