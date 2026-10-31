@@ -56,6 +56,7 @@ func (b *environmentGitOpsBackend) VerifyRuntime(ctx context.Context, lease stat
 		return false, err
 	}
 	workloadReady := true
+	workloadServed := false
 	var workloadErr error
 	if lease.Source.Spec.Mode == "enforce" {
 		if retirement, ok := b.intent.(state.EnvironmentGitOpsWorkloadRetirementStore); ok {
@@ -97,6 +98,7 @@ func (b *environmentGitOpsBackend) VerifyRuntime(ctx context.Context, lease stat
 			}
 		} else {
 			workloadReady, workloadErr = b.prepareWorkloadCandidates(ctx, lease, plan)
+			workloadServed = workloadReady && workloadErr == nil
 		}
 		if err := b.recoverRuntime(ctx, lease); err != nil {
 			return false, fmt.Errorf("recover runtime: %w", err)
@@ -110,7 +112,11 @@ func (b *environmentGitOpsBackend) VerifyRuntime(ctx context.Context, lease stat
 		return false, fmt.Errorf("observe runtime: %w", err)
 	}
 	for _, target := range targets {
-		if !target.Ready() {
+		// The unqualified-workload fence predates graph qualification
+		// (ADR-568): it counts every Git-managed workload source. A reviewed
+		// graph that qualified, activated and served in this pass has met it,
+		// and nothing else ever clears it. Freshness still applies.
+		if !target.Fresh() || target.UnqualifiedWorkloads != 0 && !workloadServed {
 			return false, nil
 		}
 	}
