@@ -1297,6 +1297,19 @@ const ReleaseGateAIMaxIncreaseMin = 1
 const ReleaseGateAIMaxIncreaseMax = 1000
 const ReleaseGateAIDefaultMaxIncrease = 50
 
+// Synthetic and metric_change gates (ADR-20261022082305). A synthetic gate
+// allows ReleaseGateDefaultMaxFailurePercent failed probes by default and is
+// judged after ReleaseGateDefaultSyntheticMinSamples probes of the
+// candidate; each probe round sends a gate's check
+// ReleaseGateSyntheticProbesPerRound times to the candidate and to the
+// stable revision. A metric_change gate allows its metric to move at most
+// ReleaseGateMaxChangePercentMax percent. Plan-independent: gates judge
+// releases, they do not meter anything.
+const ReleaseGateDefaultMaxFailurePercent = 10
+const ReleaseGateDefaultSyntheticMinSamples = 6
+const ReleaseGateSyntheticProbesPerRound = 2
+const ReleaseGateMaxChangePercentMax = 1000
+
 // Release approvals (ADR-20261020085706). A policy requires 1 to
 // ReleaseApprovalsRequiredMax approvals, waits in canary stage 1 to
 // ReleaseApprovalStageMax, and aborts a release that waited longer than its
@@ -1323,6 +1336,10 @@ const ReleaseApprovalNotifyRetryBase = time.Minute
 // build's SBOM.
 const ReleaseDiffPackagesMax = 100
 const ReleaseDiffSBOMMaxBytes = 16 << 20
+
+// A release timeline (ADR-20261022120744) reads at most
+// ReleaseTimelineAuditRowsMax of the release's newest audit rows.
+const ReleaseTimelineAuditRowsMax = 500
 
 // Scheduled releases (ADR-20261021152201). A release may be scheduled at
 // most ScheduledReleaseMaxAhead ahead, and up to ScheduledReleasePastSkew in
