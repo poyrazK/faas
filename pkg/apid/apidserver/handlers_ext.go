@@ -2391,10 +2391,11 @@ func (s *server) rollbackApp(w http.ResponseWriter, r *http.Request, acct state.
 		}
 	}
 	if req.RestoreDatabases {
-		// The switch belongs to postgres-restore (ADR-20261023181931): while
-		// that capability is off for the caller, the field answers as the
-		// unknown field it is to them, like its hidden routes.
-		if !s.capabilityEnabledFor("postgres-restore", acct, app) {
+		// The switch belongs to database-rollbacks (ADR-20261023181931, split
+		// from postgres-restore by ADR-20261031091607): while that capability
+		// is off for the caller, the field answers as the unknown field it is
+		// to them, like its hidden routes.
+		if !s.capabilityEnabledFor("database-rollbacks", acct, app) {
 			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 				"Invalid rollback request", `json: unknown field "restore_databases"`))
 			return

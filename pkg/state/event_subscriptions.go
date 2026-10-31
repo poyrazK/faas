@@ -70,9 +70,17 @@ func normalizeEventSubscriptionFilter(filter json.RawMessage) ([]byte, error) {
 	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
 		return []byte("{}"), nil
 	}
+	// Decode numbers as json.Number: through float64 a filter on an integer
+	// above 2^53 was stored rounded and matched the wrong events
+	// (ADR-20261031130000).
+	decoder := json.NewDecoder(bytes.NewReader(trimmed))
+	decoder.UseNumber()
 	var value any
-	if err := json.Unmarshal(trimmed, &value); err != nil {
+	if err := decoder.Decode(&value); err != nil {
 		return nil, err
+	}
+	if decoder.More() {
+		return nil, errors.New("event subscription filter must be one JSON object")
 	}
 	if _, ok := value.(map[string]any); !ok {
 		return nil, errors.New("event subscription filter must be a JSON object")
@@ -344,6 +352,11 @@ func (m *MemStore) UpsertEventSubscription(_ context.Context, accountID, appID, 
 	}
 	mapKey := canonicalMemUUID(appID) + "\x00" + key
 	if existing, ok := m.eventSubscriptions[mapKey]; ok {
+		if !existing.Enabled {
+			existing.Enabled = true
+			existing.UpdatedAt = time.Now().UTC()
+			m.eventSubscriptions[mapKey] = existing
+		}
 		return cloneEventSubscription(existing), false, nil
 	}
 	now := time.Now().UTC()

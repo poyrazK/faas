@@ -33792,6 +33792,19 @@ CREATE TABLE public.crons (
 
 
 --
+-- Name: custom_domain_tls_admissions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.custom_domain_tls_admissions (
+    host public.citext NOT NULL,
+    registered_domain public.citext NOT NULL,
+    owner_id uuid NOT NULL,
+    admitted_at timestamp with time zone NOT NULL,
+    CONSTRAINT custom_domain_tls_admissions_host_chk CHECK (((host OPERATOR(public.!~~) '%*%'::public.citext) AND (host OPERATOR(public.~~) ('%.'::text || (registered_domain)::text))))
+);
+
+
+--
 -- Name: custom_domain_tls_hosts; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -59279,6 +59292,14 @@ ALTER TABLE ONLY public.crons
 
 
 --
+-- Name: custom_domain_tls_admissions custom_domain_tls_admissions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.custom_domain_tls_admissions
+    ADD CONSTRAINT custom_domain_tls_admissions_pkey PRIMARY KEY (host, admitted_at);
+
+
+--
 -- Name: custom_domain_tls_hosts custom_domain_tls_hosts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -71415,6 +71436,27 @@ CREATE INDEX crons_app_idx ON public.crons USING btree (app_id) WHERE enabled;
 --
 
 CREATE INDEX crons_org_id_idx ON public.crons USING btree (org_id) WHERE (org_id IS NOT NULL);
+
+
+--
+-- Name: custom_domain_tls_admissions_admitted_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX custom_domain_tls_admissions_admitted_idx ON public.custom_domain_tls_admissions USING btree (admitted_at);
+
+
+--
+-- Name: custom_domain_tls_admissions_owner_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX custom_domain_tls_admissions_owner_idx ON public.custom_domain_tls_admissions USING btree (owner_id, admitted_at);
+
+
+--
+-- Name: custom_domain_tls_admissions_registered_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX custom_domain_tls_admissions_registered_idx ON public.custom_domain_tls_admissions USING btree (registered_domain, admitted_at);
 
 
 --
