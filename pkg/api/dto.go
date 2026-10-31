@@ -5203,6 +5203,12 @@ type UsageSummaryResponse struct {
 	IncludedGBHours int64   `json:"included_gb_hours"` // from plan limits
 	OverageGBHours  float64 `json:"overage_gb_hours"`  // max(0, used - included)
 	OverageCents    int64   `json:"overage_cents"`     // compute plus live egress overage, in integer cents
+	// QuietPausedGBHours is the month's quiet-paused time that was not
+	// billed: Σ usage_minutes.paused_mb_seconds / 1024 / 3600, in the same
+	// plan RAM + 8 MB unit as UsedGBHours and not part of it
+	// (ADR-20261023171905). Omitted while it is zero, which it stays until
+	// unbilled quiet pause is released to the account.
+	QuietPausedGBHours float64 `json:"quiet_paused_gb_hours,omitempty"`
 	// UsedCPUHours is the per-month CPU-hours Σ CPUUsageUsec /
 	// 3.6e9. Informational only — billing is on UsedGBHours.
 	// Issue #279 / PR-B. The customer dashboard renders this

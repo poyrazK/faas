@@ -6211,6 +6211,11 @@ func renderUsageSummary(w io.Writer, s api.UsageSummaryResponse) {
 	_, _ = fmt.Fprintf(w, "  %-*s %d GB-hours\n", labelWidth, "Included:", s.IncludedGBHours)
 	_, _ = fmt.Fprintf(w, "  %-*s %.3f GB-hours\n", labelWidth, "Overage:", s.OverageGBHours)
 	_, _ = fmt.Fprintf(w, "  %-*s %d cents\n", labelWidth, "Overage cost:", s.OverageCents)
+	// ADR-20261023171905: quiet-paused time between requests that was not
+	// billed, beside Used rather than inside it. Shown once there is any.
+	if s.QuietPausedGBHours > 0 {
+		_, _ = fmt.Fprintf(w, "  %-*s %.3f GB-hours (not billed)\n", labelWidth, "Quiet paused:", s.QuietPausedGBHours)
+	}
 	// Issue #279 / PR-B: per-month CPU-hours is informational —
 	// not billed. Surfaced as a separate line so the customer
 	// sees the measurement next to the billing total without

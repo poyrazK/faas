@@ -67,6 +67,29 @@ func (q *Queries) OpenQuietPauses(ctx context.Context, db DBTX, nodeID pgtype.UU
 	return items, nil
 }
 
+const quietPausedMBSecondsByMonth = `-- name: QuietPausedMBSecondsByMonth :one
+select coalesce(sum(paused_mb_seconds), 0)::bigint as paused_mb_seconds
+  from usage_minutes
+ where account_id = $1::uuid
+   and minute >= $2::timestamptz
+   and minute <  $3::timestamptz
+`
+
+type QuietPausedMBSecondsByMonthParams struct {
+	AccountID  pgtype.UUID
+	MonthStart pgtype.Timestamptz
+	MonthEnd   pgtype.Timestamptz
+}
+
+// An account's quiet-paused MB-seconds for one UTC month, from the
+// (account_id, minute) index.
+func (q *Queries) QuietPausedMBSecondsByMonth(ctx context.Context, db DBTX, arg QuietPausedMBSecondsByMonthParams) (int64, error) {
+	row := db.QueryRow(ctx, quietPausedMBSecondsByMonth, arg.AccountID, arg.MonthStart, arg.MonthEnd)
+	var paused_mb_seconds int64
+	err := row.Scan(&paused_mb_seconds)
+	return paused_mb_seconds, err
+}
+
 const quietPausedSeconds = `-- name: QuietPausedSeconds :many
 SELECT p.instance_id::text AS instance_id,
        floor(sum(greatest(0, extract(epoch FROM
@@ -115,6 +138,39 @@ func (q *Queries) QuietPausedSeconds(ctx context.Context, db DBTX, arg QuietPaus
 		return nil, err
 	}
 	return items, nil
+}
+
+const recordQuietPausedUsage = `-- name: RecordQuietPausedUsage :exec
+insert into usage_minutes (account_id, app_id, instance_id, minute, mb_seconds, paused_mb_seconds)
+values ($1::uuid, $2::uuid, $3::uuid,
+        $4::timestamptz, 0, $5::bigint)
+on conflict (instance_id, minute) do update
+   set paused_mb_seconds = case when usage_minutes.paused_mb_seconds = 0 and EXCLUDED.paused_mb_seconds > 0
+                                then EXCLUDED.paused_mb_seconds else usage_minutes.paused_mb_seconds end
+`
+
+type RecordQuietPausedUsageParams struct {
+	AccountID       pgtype.UUID
+	AppID           pgtype.UUID
+	InstanceID      pgtype.UUID
+	Minute          pgtype.Timestamptz
+	PausedMbSeconds int64
+}
+
+// The MB-seconds of one instance-minute meterd did not bill because the
+// ledger proved the VM quiet-paused (rollout step 3). As with mb_seconds the
+// first positive value wins, so a caught-up minute never changes what the
+// customer already saw. A minute paused throughout bills nothing and writes
+// its row here, with mb_seconds 0.
+func (q *Queries) RecordQuietPausedUsage(ctx context.Context, db DBTX, arg RecordQuietPausedUsageParams) error {
+	_, err := db.Exec(ctx, recordQuietPausedUsage,
+		arg.AccountID,
+		arg.AppID,
+		arg.InstanceID,
+		arg.Minute,
+		arg.PausedMbSeconds,
+	)
+	return err
 }
 
 const recordQuietPauses = `-- name: RecordQuietPauses :exec

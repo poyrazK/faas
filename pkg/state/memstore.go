@@ -1590,6 +1590,10 @@ type usageMinute struct {
 	// cpu_usec / tx_bytes shape. Pinned by
 	// pkg/meter/pusher_shadow_test.go::TestPushHour_ExcludesTailSeconds.
 	TailSeconds int64
+	// PausedMBSeconds is the minute's quiet-paused MB-seconds meterd did
+	// not bill (ADR-20261023171905 rollout step 3). Informational; first
+	// positive value wins. See RecordQuietPausedUsage.
+	PausedMBSeconds int64
 }
 
 // builderUsageRow is the per-build grain (ADR-048 §4) backing

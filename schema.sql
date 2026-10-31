@@ -55582,6 +55582,7 @@ CREATE TABLE public.usage_minutes (
     job_id uuid,
     job_run_id uuid,
     job_execution_class text,
+    paused_mb_seconds bigint DEFAULT 0 NOT NULL,
     CONSTRAINT usage_minutes_app_or_job_chk CHECK ((((meter_kind = 'app'::text) AND (app_id IS NOT NULL) AND (job_id IS NULL)) OR ((meter_kind = 'job'::text) AND (app_id IS NULL) AND (job_id IS NOT NULL)))),
     CONSTRAINT usage_minutes_job_execution_class_check CHECK ((((meter_kind = 'app'::text) AND (job_execution_class IS NULL) AND (job_run_id IS NULL)) OR ((meter_kind = 'job'::text) AND (job_execution_class = ANY (ARRAY['standard'::text, 'flexible'::text]))))),
     CONSTRAINT usage_minutes_meter_kind_check CHECK ((meter_kind = ANY (ARRAY['app'::text, 'job'::text])))
