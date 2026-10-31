@@ -100,7 +100,7 @@ func (s *Server) upgradeTraffic(w http.ResponseWriter, r *http.Request, session 
 		stopOnce.Do(func() { close(stop) })
 	}()
 	go s.watchAuthorization(ctx, cancel, watching, session, func(current Session) error {
-		return current.AuthorizeRequest(time.Now(), token, session.Scope.AccountID, session.Scope.EnvironmentID, session.Scope.TargetAppID)
+		return current.AuthorizeRequest(r.Context(), time.Now(), token, session.Scope.AccountID, session.Scope.EnvironmentID, session.Scope.TargetAppID)
 	})
 	tunnel(stop, s.relay.limitsForUpgrade(), func() { _ = conn.Close(); _ = writer.Close(); _ = response.Body.Close() },
 		writer, buffered.Reader, conn, response.Body, nil)
@@ -129,7 +129,7 @@ func (s *Server) upgradeDependency(w http.ResponseWriter, r *http.Request, sessi
 	watching := make(chan struct{})
 	defer close(watching)
 	go s.watchAuthorization(ctx, stop, watching, session, func(current Session) error {
-		return current.AuthorizeDependency(time.Now(), token, session.Scope.AccountID, session.Scope.EnvironmentID, app)
+		return current.AuthorizeDependency(r.Context(), time.Now(), token, session.Scope.AccountID, session.Scope.EnvironmentID, app)
 	})
 	s.serveDependency(limited, r.WithContext(ctx), session)
 }

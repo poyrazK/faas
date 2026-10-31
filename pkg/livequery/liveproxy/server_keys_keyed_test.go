@@ -32,25 +32,25 @@ func TestMatchServerKeyAsksApidForKeyedHashes(t *testing.T) {
 		{Slot: "a", SHA256: hex.EncodeToString(apid.Store(api.DataAPIServerKeyCredentialTag, sumA[:]))},
 		{Slot: "b", SHA256: hex.EncodeToString(sumB[:])},
 	}
-	if _, ok := matchServerKey(keys, "gdsk_a"); ok {
+	if _, ok := matchServerKey(context.Background(), keys, "gdsk_a"); ok {
 		t.Fatal("a keyed hash matched without the ring or apid")
 	}
-	if k, ok := matchServerKey(keys, "gdsk_b"); !ok || k.Slot != "b" {
+	if k, ok := matchServerKey(context.Background(), keys, "gdsk_b"); !ok || k.Slot != "b" {
 		t.Fatal("a plain hash no longer matched locally")
 	}
 	credhash.SetRemote(credhash.FamilyDataAPI, func(_ context.Context, tag credhash.Tag, stored, sum []byte) (bool, error) {
 		return apid.Matches(tag, sum, stored), nil
 	})
-	if k, ok := matchServerKey(keys, "gdsk_a"); !ok || k.Slot != "a" {
+	if k, ok := matchServerKey(context.Background(), keys, "gdsk_a"); !ok || k.Slot != "a" {
 		t.Fatal("apid's match was not used")
 	}
-	if _, ok := matchServerKey(keys, "gdsk_other"); ok {
+	if _, ok := matchServerKey(context.Background(), keys, "gdsk_other"); ok {
 		t.Fatal("an unknown key matched")
 	}
 	credhash.SetRemote(credhash.FamilyDataAPI, func(context.Context, credhash.Tag, []byte, []byte) (bool, error) {
 		return false, errors.New("apid unreachable")
 	})
-	if _, ok := matchServerKey(keys, "gdsk_a"); ok {
+	if _, ok := matchServerKey(context.Background(), keys, "gdsk_a"); ok {
 		t.Fatal("an apid failure accepted the key")
 	}
 }

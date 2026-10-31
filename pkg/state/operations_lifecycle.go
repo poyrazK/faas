@@ -86,17 +86,34 @@ func operationEvent(op *Operation, inv Invocation, kind string, data any, now ti
 	return api.OperationEvent{OperationID: op.ID, Sequence: op.LatestSequence, Type: kind, ExecutionID: inv.ID, Attempt: inv.Attempts, Data: body, CreatedAt: now}
 }
 
+// ValidateOperationExecutionAuthority checks a capability in a process that
+// holds the scheduler ring (apid, schedd): the stored digest may be keyed
+// under it (ADR 20261029202403 amendment 1).
 func ValidateOperationExecutionAuthority(op Operation, inv Invocation, authority OperationExecutionAuthority, now time.Time) error {
+	return validateOperationExecutionAuthority(op, inv, authority, now, func(sum, stored []byte) bool {
+		return credhash.For(credhash.FamilyScheduler).Matches(CredentialColumnOperationCapability, sum, stored)
+	})
+}
+
+// ValidateOperationExecutionAuthorityContext is ValidateOperationExecutionAuthority
+// for a process that may hold no scheduler ring: gatewayd-internal asks apid
+// through the remote it installs (amendment 1, decision 2).
+func ValidateOperationExecutionAuthorityContext(ctx context.Context, op Operation, inv Invocation, authority OperationExecutionAuthority, now time.Time) error {
+	return validateOperationExecutionAuthority(op, inv, authority, now, func(sum, stored []byte) bool {
+		return credhash.Match(ctx, credhash.FamilyScheduler, CredentialColumnOperationCapability, sum, stored)
+	})
+}
+
+func validateOperationExecutionAuthority(op Operation, inv Invocation, authority OperationExecutionAuthority, now time.Time, matches func(sum, stored []byte) bool) error {
 	if authority.AccountID != op.AccountID || authority.AppID != op.AppID || authority.InstanceID == "" || authority.InstanceID != inv.InstanceID {
 		return ErrNotFound
 	}
 	if op.CurrentInvocationID != inv.ID || authority.InvocationID != inv.ID || authority.Attempt <= 0 || authority.Attempt != inv.Attempts || op.ExecutionAttempt != authority.Attempt || op.State != api.OperationRunning || inv.State != InvocationDispatching || inv.LeaseExpiresAt == nil || !inv.LeaseExpiresAt.After(now) || inv.DeadlineAt == nil || !inv.DeadlineAt.After(now) {
 		return ErrOperationStaleAttempt
 	}
-	// ADR 20261029202403 amendment 1: the stored digest may be keyed under
-	// the scheduler ring, which gatewayd-internal asks apid to match.
-	digest := operationCapabilityDigest(authority.Capability)
-	if len(authority.Capability) != 64 || !familyCredentialHexMatches(context.Background(), credhash.FamilyScheduler, CredentialColumnOperationCapability, digest, op.ExecutionCapabilityDigest) {
+	sum, err := hex.DecodeString(operationCapabilityDigest(authority.Capability))
+	stored, serr := hex.DecodeString(op.ExecutionCapabilityDigest)
+	if len(authority.Capability) != 64 || err != nil || serr != nil || !matches(sum, stored) {
 		return ErrNotFound
 	}
 	return nil

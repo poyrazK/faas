@@ -120,17 +120,6 @@ func familyStoredCredentialHex(family credhash.Family, tag credhash.Tag, sumHex 
 	return hex.EncodeToString(familyStoredCredential(family, tag, sum))
 }
 
-// familyCredentialHexMatches is FamilyCredentialMatches for a column that
-// holds hex text.
-func familyCredentialHexMatches(ctx context.Context, family credhash.Family, tag credhash.Tag, sumHex, storedHex string) bool {
-	sum, err := hex.DecodeString(sumHex)
-	stored, serr := hex.DecodeString(storedHex)
-	if err != nil || serr != nil {
-		return false
-	}
-	return FamilyCredentialMatches(ctx, family, tag, sum, stored)
-}
-
 // familyCredentialLookups are the stored values to try for family's
 // credential whose token hashes to sum; a stored digest is looked up as it
 // is.

@@ -73,15 +73,16 @@ func TestOperationCapabilityDigestIsMatchedRemotely(t *testing.T) {
 	stored := hex.EncodeToString(policy.Store(state.CredentialColumnOperationCapability, sum))
 	now := time.Now()
 	lease := now.Add(time.Minute)
-	op := state.Operation{AccountID: "a", AppID: "app", CurrentInvocationID: "inv", ExecutionAttempt: 1, State: api.OperationRunning, ExecutionCapabilityDigest: stored}
+	op := state.Operation{OperationResponse: api.OperationResponse{State: api.OperationRunning}, AccountID: "a", AppID: "app", CurrentInvocationID: "inv", ExecutionAttempt: 1, ExecutionCapabilityDigest: stored}
 	inv := state.Invocation{ID: "inv", InstanceID: "i", Attempts: 1, State: state.InvocationDispatching, LeaseExpiresAt: &lease, DeadlineAt: &lease}
 	authority := state.OperationExecutionAuthority{AccountID: "a", AppID: "app", InstanceID: "i", InvocationID: "inv", Attempt: 1, Capability: capability}
 	if err := state.ValidateOperationExecutionAuthority(op, inv, authority, now); err != nil {
 		t.Fatalf("apid's own ring refused the capability: %v", err)
 	}
 
+	ctx := context.Background()
 	credhash.Set(credhash.FamilyScheduler, nil)
-	if err := state.ValidateOperationExecutionAuthority(op, inv, authority, now); err == nil {
+	if err := state.ValidateOperationExecutionAuthorityContext(ctx, op, inv, authority, now); err == nil {
 		t.Fatal("a process without the ring or a remote accepted a keyed digest")
 	}
 	asked := 0
@@ -89,11 +90,11 @@ func TestOperationCapabilityDigestIsMatchedRemotely(t *testing.T) {
 		asked++
 		return tag == state.CredentialColumnOperationCapability && policy.Matches(tag, sum, s), nil
 	})
-	if err := state.ValidateOperationExecutionAuthority(op, inv, authority, now); err != nil || asked != 1 {
+	if err := state.ValidateOperationExecutionAuthorityContext(ctx, op, inv, authority, now); err != nil || asked != 1 {
 		t.Fatalf("remote match = %v after %d asks", err, asked)
 	}
 	authority.Capability = hex.EncodeToString([]byte("fedcba9876543210fedcba9876543210"))
-	if err := state.ValidateOperationExecutionAuthority(op, inv, authority, now); err == nil {
+	if err := state.ValidateOperationExecutionAuthorityContext(ctx, op, inv, authority, now); err == nil {
 		t.Fatal("another capability was accepted")
 	}
 }

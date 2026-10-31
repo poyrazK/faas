@@ -85,30 +85,30 @@ func NewSession(scope Scope, now, expiry time.Time) (Session, Credentials, error
 	return Session{ID: id, Scope: scope, ExpiresAt: expiry.UTC(), AttachmentDigest: storedDigest(AttachmentDigestColumn, attach), RequestDigest: storedDigest(RequestDigestColumn, request)}, Credentials{attach, request}, nil
 }
 
-func (s Session) valid(now time.Time, credential string, column credhash.Tag, stored []byte) bool {
+func (s Session) valid(ctx context.Context, now time.Time, credential string, column credhash.Tag, stored []byte) bool {
 	if credential == "" || s.RevokedAt != nil || !now.Before(s.ExpiresAt) {
 		return false
 	}
 	actual := sha256.Sum256([]byte(credential))
-	return credhash.Match(context.Background(), credhash.FamilyDevBridge, column, actual[:], stored)
+	return credhash.Match(ctx, credhash.FamilyDevBridge, column, actual[:], stored)
 }
 
-func (s Session) AuthorizeAttachment(now time.Time, credential string) error {
-	if !s.valid(now, credential, AttachmentDigestColumn, s.AttachmentDigest) {
+func (s Session) AuthorizeAttachment(ctx context.Context, now time.Time, credential string) error {
+	if !s.valid(ctx, now, credential, AttachmentDigestColumn, s.AttachmentDigest) {
 		return ErrUnauthorized
 	}
 	return nil
 }
 
-func (s Session) AuthorizeRequest(now time.Time, credential, accountID, environmentID, appID string) error {
-	if accountID != s.Scope.AccountID || environmentID != s.Scope.EnvironmentID || appID != s.Scope.TargetAppID || !s.valid(now, credential, RequestDigestColumn, s.RequestDigest) {
+func (s Session) AuthorizeRequest(ctx context.Context, now time.Time, credential, accountID, environmentID, appID string) error {
+	if accountID != s.Scope.AccountID || environmentID != s.Scope.EnvironmentID || appID != s.Scope.TargetAppID || !s.valid(ctx, now, credential, RequestDigestColumn, s.RequestDigest) {
 		return ErrUnauthorized
 	}
 	return nil
 }
 
-func (s Session) AuthorizeDependency(now time.Time, credential, accountID, environmentID, appID string) error {
-	if accountID != s.Scope.AccountID || environmentID != s.Scope.EnvironmentID || !s.valid(now, credential, AttachmentDigestColumn, s.AttachmentDigest) {
+func (s Session) AuthorizeDependency(ctx context.Context, now time.Time, credential, accountID, environmentID, appID string) error {
+	if accountID != s.Scope.AccountID || environmentID != s.Scope.EnvironmentID || !s.valid(ctx, now, credential, AttachmentDigestColumn, s.AttachmentDigest) {
 		return ErrUnauthorized
 	}
 	for _, allowed := range s.Scope.DependencyAppIDs {
@@ -121,8 +121,8 @@ func (s Session) AuthorizeDependency(now time.Time, credential, accountID, envir
 
 // AuthorizeContextRoute lets a request participate only in its selected
 // application graph. It cannot attach a tunnel or expand the dependency set.
-func (s Session) AuthorizeContextRoute(now time.Time, c RequestContext, environmentID, appID string) error {
-	if c.SessionID != s.ID || c.AccountID != s.Scope.AccountID || environmentID != s.Scope.EnvironmentID || !s.valid(now, c.Token, RequestDigestColumn, s.RequestDigest) {
+func (s Session) AuthorizeContextRoute(ctx context.Context, now time.Time, c RequestContext, environmentID, appID string) error {
+	if c.SessionID != s.ID || c.AccountID != s.Scope.AccountID || environmentID != s.Scope.EnvironmentID || !s.valid(ctx, now, c.Token, RequestDigestColumn, s.RequestDigest) {
 		return ErrUnauthorized
 	}
 	if appID == s.Scope.TargetAppID {

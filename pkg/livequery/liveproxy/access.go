@@ -35,7 +35,7 @@ func keylessKind(f liveproto.ClientFrame) string {
 // admitKeyless checks an anonymous or server-key read of read (in schema,
 // "" for the Data API's default) and turns f into the hub's frame. A
 // renewal passes its subscription's read, so it is checked again.
-func admitKeyless(route Route, f *liveproto.ClientFrame, read, schema string, now time.Time) (string, string) {
+func admitKeyless(ctx context.Context, route Route, f *liveproto.ClientFrame, read, schema string, now time.Time) (string, string) {
 	access := route.Access
 	if access == nil || len(access.Schemas) == 0 {
 		return liveproto.CodeForbidden, "the app's Data API has not reported its access settings; turn usage reporting on and restart it"
@@ -59,7 +59,7 @@ func admitKeyless(route Route, f *liveproto.ClientFrame, read, schema string, no
 		}
 		claims["gregale_access"] = liveproto.AccessAnonymous
 	} else {
-		key, ok := matchServerKey(access.ServerKeys, f.ServerKey)
+		key, ok := matchServerKey(ctx, access.ServerKeys, f.ServerKey)
 		if !ok {
 			return liveproto.CodeSealRejected, "the server key was not accepted"
 		}
@@ -142,13 +142,13 @@ func readRelations(read string) ([]string, error) {
 // matchServerKey finds the slot whose hash matches key, comparing every slot.
 // A stored hash may be keyed under the data-api ring, which realtimed does
 // not hold: credhash.Match asks apid (ADR 20261029202403 amendment 1).
-func matchServerKey(keys []api.DataAPIServerKey, key string) (api.DataAPIServerKey, bool) {
+func matchServerKey(ctx context.Context, keys []api.DataAPIServerKey, key string) (api.DataAPIServerKey, bool) {
 	sum := sha256.Sum256([]byte(key))
 	var match api.DataAPIServerKey
 	found := false
 	for _, k := range keys {
 		want, err := hex.DecodeString(k.SHA256)
-		if err == nil && credhash.Match(context.Background(), credhash.FamilyDataAPI, api.DataAPIServerKeyCredentialTag, sum[:], want) && !found {
+		if err == nil && credhash.Match(ctx, credhash.FamilyDataAPI, api.DataAPIServerKeyCredentialTag, sum[:], want) && !found {
 			match, found = k, true
 		}
 	}
