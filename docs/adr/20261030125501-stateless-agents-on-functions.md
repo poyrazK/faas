@@ -47,7 +47,7 @@ A stateless agent's handler receives one inbox message and does at most this:
 
 A handler that blocks on a tool for longer than its invocation limit fails the slice, and the consumer group retries it.
 
-The invocation limit is the app's request timeout under ADR-1180: Hobby 1 min, Pro 5 min, Scale 15 min. A completion has to finish inside it. ADR-1322 currently limits each realtime-trigger invocation to 30 s. Rollout step 2 raises that to the request timeout for agent inboxes, as ADR-1180 did for async, queue and cron invocations.
+The invocation limit is the app's request timeout under ADR-1180: Hobby 1 min, Pro 5 min, Scale 15 min. A completion has to finish inside it. Realtime-trigger invocations reach it since rollout step 2 (ADR-1322's 2026-10-31 amendment).
 
 ## 2. The inbox
 
@@ -115,6 +115,8 @@ Each step is one PR behind the `agents` capability.
 
 1. This ADR.
 2. Raise the realtime-trigger invocation limit to the app's request timeout for agent inboxes (amends ADR-1322).
+
+   **Built (2026-10-31), for every realtime trigger.** The gateway already gave each trigger record the app's timeout (ADR-1180). The limit was the consumer group's unrenewed claim lease. schedd now renews a realtime delivery's claim while it runs (ADR-1322 amendment), so no agent-inbox marker is needed.
 3. The signed callback endpoint in `pkg/apid/agents`, which publishes into a thread's lane, with property tests: a token never publishes outside its thread, an expired or revoked token is refused, and a redelivered `message_id` is delivered once.
 4. The Infinity Postgres store adapter and the template app, and a journey in `tests/journeys`: a two-turn stateless agent that sleeps, wakes on its callback and answers.
 5. The platform tools: `gregale.sleep`, `gregale.run`, then `gregale.github.subscribe`.
