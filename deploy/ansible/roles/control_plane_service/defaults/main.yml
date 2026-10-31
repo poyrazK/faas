@@ -4,6 +4,16 @@
 # before removing the tokens to switch Safe Deploy off.
 faas_safe_releases_enabled: true
 faas_dev_bridge_enabled: false
+# ADR 20261029202403: apid's account credential key ring, an operator-local
+# file from `gregalectl credentials keygen`. Empty removes it; apid then
+# writes and looks up plain hashes as before.
+faas_apid_credential_keys_src: ""
+# plain or keyed. Set keyed only once every apid and gateway runs the release
+# that reads keyed digests; it needs faas_apid_credential_keys_src.
+faas_apid_credential_writes: plain
+# Contract step: false once `gregalectl credentials status` reports no plain
+# long-lived rows and 14 days have passed since keyed writes began.
+faas_apid_credential_plain_lookup: true
 # ADR-740 developer live source patches. Must match vmmd_service's value:
 # apid publishes patches and vmmd serves them to developer environments.
 faas_dev_patch_delivery_enabled: false

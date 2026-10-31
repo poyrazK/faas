@@ -54,6 +54,11 @@ type AgentRunWakeRequest struct {
 	// Snapshot is the preset snapshot to restore, from
 	// CaptureAgentRunSnapshot; nil, unusable or failing: a cold boot.
 	Snapshot *Snapshot
+	// ModelWaitPauseAfter is the run's model-wait pause delay
+	// (ADR-20261027090012): with vmmd's agent_wait_pause on, the VM is paused
+	// once it has waited this long on the relay and nothing else. Zero keeps
+	// it running.
+	ModelWaitPauseAfter time.Duration
 }
 
 // AgentRunRelay is the agent run principal of a run VM's relay (ADR-20261027090010
@@ -94,6 +99,9 @@ func (m *Manager) WakeAgentRun(ctx context.Context, req AgentRunWakeRequest) (*I
 		req.VcpuCount <= 0 || req.MemSizeMiB <= 0 || req.CPUMillicores <= 0 {
 		return nil, errors.New("fcvm: incomplete agent run wake request")
 	}
+	if req.ModelWaitPauseAfter < 0 || req.ModelWaitPauseAfter > api.AgentWaitPauseAfterMaxMillis*time.Millisecond {
+		return nil, errors.New("fcvm: agent run model-wait pause delay is out of range")
+	}
 	if req.Snapshot != nil && !req.Snapshot.Networkless {
 		return nil, errors.New("fcvm: an agent run restores only a networkless snapshot")
 	}
@@ -107,7 +115,8 @@ func (m *Manager) WakeAgentRun(ctx context.Context, req AgentRunWakeRequest) (*I
 	}
 	inst, err := m.Wake(ctx, WakeRequest{
 		Instance: req.Instance, ExecutionOnly: true, agentRunOnly: true, agentRunRelay: relay, agentRunInputKey: req.InputKey,
-		AccountID: req.AccountID, Plan: req.Plan,
+		agentRunWaitPauseAfter: req.ModelWaitPauseAfter,
+		AccountID:              req.AccountID, Plan: req.Plan,
 		BaseKey: req.BaseKey, LayerKey: req.LayerKey, VcpuCount: req.VcpuCount, MemSizeMiB: req.MemSizeMiB,
 		CPUMillicores: req.CPUMillicores, Snapshot: req.Snapshot,
 	})
@@ -130,25 +139,35 @@ type AgentRunDialer interface {
 // RunAgent sends one run to a VM WakeAgentRun booted, streams its output to
 // receive, and destroys the VM on every path, so a run never outlives its
 // result (a parked app consumes zero resources; a finished run, too).
-// Closing cancel asks the guest to stop the harness.
-func (m *Manager) RunAgent(ctx context.Context, instance string, req agentrunproto.Request, receive agentrunproto.OutputReceiver, cancel <-chan struct{}) (agentrunproto.Result, error) {
+// Closing cancel asks the guest to stop the harness. Once the VM was found,
+// the run's measured usage (ADR-20261027090011) comes back on every path,
+// with or without an error; it is nil when the VMM cannot measure it.
+func (m *Manager) RunAgent(ctx context.Context, instance string, req agentrunproto.Request, receive agentrunproto.OutputReceiver, cancel <-chan struct{}) (agentrunproto.Result, *AgentRunUsage, error) {
 	if err := req.Validate(); err != nil {
-		return agentrunproto.Result{}, err
+		return agentrunproto.Result{}, nil, err
 	}
 	if m == nil || m.vmm == nil {
-		return agentrunproto.Result{}, ErrAgentRunNotConfigured
+		return agentrunproto.Result{}, nil, ErrAgentRunNotConfigured
 	}
 	m.mu.Lock()
 	inst, ok := m.live[instance]
 	m.mu.Unlock()
 	if !ok || inst == nil || !inst.AgentRunOnly {
-		return agentrunproto.Result{}, ErrAgentRunInstanceNotFound
+		return agentrunproto.Result{}, nil, ErrAgentRunInstanceNotFound
 	}
 	defer func() {
 		destroyCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), agentRunDestroyTimeout)
 		defer stop()
 		_ = m.Destroy(destroyCtx, instance)
 	}()
+	// The last sample is taken before the deferred destroy.
+	stopUsage := m.agentUsageRun(instance, inst)
+	result, err := m.agentRunExchange(ctx, instance, inst, req, receive, cancel)
+	return result, stopUsage(), err
+}
+
+func (m *Manager) agentRunExchange(ctx context.Context, instance string, inst *Instance, req agentrunproto.Request,
+	receive agentrunproto.OutputReceiver, cancel <-chan struct{}) (agentrunproto.Result, error) {
 	dialer, ok := m.vmm.(AgentRunDialer)
 	if !ok {
 		return agentrunproto.Result{}, ErrAgentRunNotConfigured
@@ -160,6 +179,9 @@ func (m *Manager) RunAgent(ctx context.Context, instance string, req agentrunpro
 		return agentrunproto.Result{}, fmt.Errorf("fcvm: dial agent run: %w", err)
 	}
 	defer func() { _ = conn.Close() }()
+	// ADR-20261027090012: the VM may be paused while it waits on the model.
+	receive, cancel, stopWait := m.agentWaitRun(runCtx, instance, inst, time.Duration(req.TimeoutSec)*time.Second, receive, cancel)
+	defer stopWait()
 	result, err := agentrunproto.Run(runCtx, conn, req, receive, cancel)
 	if err != nil {
 		return agentrunproto.Result{}, fmt.Errorf("fcvm: agent run exchange: %w", err)

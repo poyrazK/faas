@@ -119,6 +119,13 @@ This example is illustrative and uses `k = 2`. A 5-minute run spends 4 minutes a
 
 1. The financial-model update sets `k` and checks the plan economics with agent-shaped usage. The data comes from the ADR-20261027090010 prototype, which reports average, peak and configured GB-h for each run.
 2. vmmd measurement, recorded on runs but not billed. Compare it against configured billing on dogfood traffic (ADR-20261027090010 milestone A).
+
+   **Built (2026-10-31), method 1, on for every run (it only reads).**
+   - vmmd samples the run VM's `anon` + `shmem` every `AgentRunUsageSampleMillis` from the start of the exchange to its end, so boot time is not measured. It splits each interval by the VM's quiet pause ledger.
+   - It sends one usage frame before the result, or before the error of a failed exchange. schedd forwards it, and agentd writes it to `agent_run_usage`, fenced on the run's lease, because agentd owns the run's rows.
+   - The record has the Measurement fields, in MB × ms, plus `unpaused_private_mb_ms`. It also has `billable_mb_ms`: the unpaused time of the sampled intervals at max(private, `AgentRunUsageFloorMB`) + 8 MB per second. The gap rule and the cold-boot rule are left to step 3, which has `samples`, `expected_samples` and `cold_boot` to apply them.
+   - Metrics: `agent_run_memory_gb_seconds_total{measure}` (private, unpaused_private, billable, configured) and `agent_run_sample_gap_ratio`, on the agent runs dashboard. `agent_run_billed_gb_seconds_total` waits for step 3.
+   - Unit tests cover the meter, the bounds as a property test, the frame on both streams and the fenced write. The metal tests above are still owed.
 3. meterd's `agent` meter kind, conversion, statement lines and tenant statements, still behind the `agent_runs` switch.
 4. Accept this ADR, and amend spec §4.7 and the CLAUDE.md bullet in the same change.
 5. Turn billing on with the seller beta (ADR-20261027090010 milestone B).
@@ -127,3 +134,8 @@ This example is illustrative and uses `k = 2`. A 5-minute run spends 4 minutes a
 
 1. The value of `k`, and whether it differs by plan.
 2. Whether the floor should be 256 MB or follow the preset's measured baseline.
+3. **A lower floor for minimal harnesses (owner goal, 2026-10-30).** The owner wants a minimal agent to be nearly free. A harness that touches 30–60 MB pays mostly for the 256 MB floor.
+   - **The cost of the floor today.** It bills about 264 MB per unpaused second: at `k` = 2, about $0.0053 per unpaused hour. A 64 MB floor, matching ADR-20261027090015's `AgentChargeFloorMB`, would bill 72 MB: about $0.0014 per hour.
+   - **The catch.** The economics evidence above shows agent nodes run out of CPU before RAM. Most of a minimal run's cost is harness start-up and tool CPU, which a lower RAM floor no longer recovers. So a lower floor needs a higher `k`, or a CPU term, to stay above break-even.
+   - **Where nearly free comes from instead.** ADR-20261030125501 (stateless agents on functions) holds no VM between events, and its work is billed as ordinary function time. That is the nearly free path for minimal agents. Harness runs keep a floor that covers a VM's CPU.
+   - **The financial model decides the floor and `k` together.**

@@ -7,6 +7,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -359,5 +361,74 @@ func TestLaterWakeSupersedesAPendingBacking(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	if again, _ := f.m.awaitInstanceBacking(ctx, "i"); again.Base != sha256Of("base-layout-b") {
 		t.Fatalf("the superseded hash overwrote the identity: %+v", again)
+	}
+}
+
+type unreachableStore struct{ storage.StorageBackend }
+
+func (unreachableStore) Get(context.Context, string) (io.ReadCloser, error) {
+	return nil, errors.New("dial tcp: connection reset by peer")
+}
+
+// A restore this node could not check (an unreadable identity record, a base
+// it cannot read) cold-boots like any refusal, but says so, so schedd keeps a
+// snapshot that is still good for every other node (bug hunt 2026-10-28 B12).
+// A changed base or a missing identity still counts against the snapshot.
+func TestBackingRefusalsThisNodeCausedKeepTheSnapshot(t *testing.T) {
+	ctx := t.Context()
+	for _, tc := range []struct {
+		name  string
+		spoil func(t *testing.T, f backingFixture, snap *Snapshot)
+		want  string
+	}{
+		{"identity store unreachable", func(_ *testing.T, _ backingFixture, snap *Snapshot) { snap.Storage = unreachableStore{} }, RestoreFallbackNodeLocal},
+		{"base unreadable on this node", func(t *testing.T, f backingFixture, _ *Snapshot) {
+			if err := os.Remove(f.base); err != nil {
+				t.Fatal(err)
+			}
+		}, RestoreFallbackNodeLocal},
+		{"base changed", func(t *testing.T, f backingFixture, _ *Snapshot) { replaceFile(t, f.base, "base-layout-b") }, ""},
+		{"identity missing", func(_ *testing.T, _ backingFixture, snap *Snapshot) {
+			snap.StorageKey = "snap/d1/captures/legacy/v2/mem"
+		}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newBackingFixture(ctx, t)
+			snap := f.capture(ctx, t, "snap/d1/captures/c1/v2/mem")
+			tc.spoil(t, f, snap)
+			inst, err := f.m.Wake(ctx, WakeRequest{
+				Instance: "restore-" + tc.name, BaseKey: f.base, LayerKey: filepath.Join(f.dir, "layer.ext4"),
+				VcpuCount: 2, MemSizeMiB: 128, Plan: api.PlanHobby, Snapshot: snap,
+			})
+			if err != nil {
+				t.Fatalf("Wake: %v", err)
+			}
+			if inst.Method != WakeColdBoot || inst.RestoreFallbackReason != tc.want {
+				t.Fatalf("method %s, fallback reason %q; want cold boot, %q", inst.Method, inst.RestoreFallbackReason, tc.want)
+			}
+		})
+	}
+}
+
+func TestRestoreFailureNodeLocal(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		want bool
+	}{
+		{nil, false},
+		{fmt.Errorf("stage: %w", ErrDiskFull), true},
+		{errors.New("write mem: no space left on device"), true},
+		{fmt.Errorf("spawn: %w", ErrJailerFail), true},
+		{fmt.Errorf("scope: %w", ErrCgroupFail), true},
+		{fmt.Errorf("tap: %w", ErrNetnsFail), true},
+		{fmt.Errorf("ack: %w", ErrVSockFail), false},
+		{fmt.Errorf("hook: %w", ErrAfterRestoreHook), false},
+		{fmt.Errorf("%w: kernel", ErrSnapshotBackingChanged), false},
+		{fmt.Errorf("%w: no identity", ErrSnapshotBackingUnverified), false},
+		{errors.New("snapshot/load: invalid memory file"), false},
+	} {
+		if got := RestoreFailureNodeLocal(tc.err); got != tc.want {
+			t.Errorf("RestoreFailureNodeLocal(%v) = %v, want %v", tc.err, got, tc.want)
+		}
 	}
 }

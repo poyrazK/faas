@@ -670,6 +670,12 @@ const (
 	// notification channels more test messages than a minute allows
 	// (ADR-20261028101615).
 	CodeNotificationChannelTestRateLimited = "notification_channel_test_rate_limited"
+	// CodeNotificationChannelInUse marks a channel delete refused because the
+	// channel is the only destination of alert rules (ADR-20261029203000).
+	CodeNotificationChannelInUse = "notification_channel_in_use"
+	// CodeAlertPresetTestRateLimited marks an account that sent more preset
+	// test alerts than a minute allows (ADR-20261030214500).
+	CodeAlertPresetTestRateLimited = "alert_preset_test_rate_limited"
 	// CodeEventPublishRateLimited marks a publication beyond the account's
 	// event publish rate (EventPublishLimits); retry after Retry-After.
 	CodeEventPublishRateLimited = "event_publish_rate_limited"
@@ -1397,6 +1403,10 @@ const (
 	// nothing left to redrive: an event_route routing failure whose receipt
 	// was pruned (ADR-20261026163443). Re-publish its payload instead.
 	CodeDeadLetterNotReplayable = "dead_letter_not_replayable"
+	// CodeKeyedReplayExpired is the 409 for replaying keyed work whose
+	// pending deadline has passed (ADR-609); from the dead-letter queue a
+	// replay would only expire again (ADR-20261031101000).
+	CodeKeyedReplayExpired = "keyed_replay_expired"
 	// CodeDebugReplayUnsupported is returned when a retained request has no
 	// enabled mirror rule for the deployment that served it. Replaying without
 	// that target would silently exercise a different deployment.
@@ -2440,7 +2450,7 @@ func StatusForCode(code string) int {
 		return http.StatusPaymentRequired
 	case CodePlanCronsNotAllowed:
 		return http.StatusPaymentRequired
-	case CodePlanCronQuota:
+	case CodePlanCronQuota, CodePlanEventSubscriptionQuota:
 		return http.StatusForbidden
 	case CodePlanAlertRulesNotAllowed:
 		return http.StatusPaymentRequired
@@ -2533,7 +2543,7 @@ func StatusForCode(code string) int {
 		// surface 409 — the conflict is between the request and
 		// the resource's current state, not between two writes.
 		return http.StatusConflict
-	case CodeDeadLetterNotReplayable:
+	case CodeDeadLetterNotReplayable, CodeKeyedReplayExpired:
 		return http.StatusConflict
 	case CodeInvalidCredentials, CodeEmailNotVerified:
 		return http.StatusUnauthorized
@@ -3053,6 +3063,32 @@ func ErrNotificationChannelTestRateLimited(limit, retryAfterS int) *Problem {
 		fmt.Sprintf("This account has sent its notification channels %d test messages in the last minute.", limit)).
 		WithLimit(int64(limit), int64(limit)).
 		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
+		WithDocs("https://gregale.dev/docs/alerts#notification-channels")
+}
+
+// ErrAlertPresetTestRateLimited is a 429 for an account past
+// AlertPresetTestsPerAccountMinute (ADR-20261030214500): each test is a real
+// webhook post.
+func ErrAlertPresetTestRateLimited(limit, retryAfterS int) *Problem {
+	if retryAfterS <= 0 {
+		retryAfterS = 1
+	}
+	return NewProblem(http.StatusTooManyRequests, CodeAlertPresetTestRateLimited,
+		"Alert preset test rate limited",
+		fmt.Sprintf("This account has sent %d preset test alerts in the last minute.", limit)).
+		WithLimit(int64(limit), int64(limit)).
+		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
+		WithDocs("https://gregale.dev/docs/alerts")
+}
+
+// ErrNotificationChannelInUse is a 409 for deleting a channel that is the only
+// destination of rules, which would fire into nothing (ADR-20261029203000).
+// rules names them as "name (id)".
+func ErrNotificationChannelInUse(rules []string) *Problem {
+	return NewProblem(http.StatusConflict, CodeNotificationChannelInUse,
+		"Notification channel in use",
+		fmt.Sprintf("This channel is the only destination of %d alert rule(s): %s. Give them a webhook or another channel, or delete them, before deleting the channel.",
+			len(rules), strings.Join(rules, ", "))).
 		WithDocs("https://gregale.dev/docs/alerts#notification-channels")
 }
 
@@ -3641,6 +3677,11 @@ const CodePlanCronsNotAllowed = "plan_crons_not_allowed"
 // Distinct from CodePlanCronsNotAllowed so the CLI can branch on
 // upsell-vs-delete copy without parsing the body.
 const CodePlanCronQuota = "plan_cron_quota"
+
+// CodePlanEventSubscriptionQuota is the 403 a deploy gets when its
+// event_triggers would leave more enabled event subscriptions than the plan's
+// per-app or per-account cap (ADR-20261031130000).
+const CodePlanEventSubscriptionQuota = "plan_event_subscription_quota"
 
 // CodeCronFireNowBusy is the 429 a manual cron run gets while the cron
 // already has CronFireNowActivePerCron runs waiting or running
@@ -4343,6 +4384,19 @@ func ErrCronRunOverPlan(plan Plan, scope string, limit, observed int) *Problem {
 			plan, limit, PlanQuotaScopeDisplayName(scope), observed, limit)).
 		WithLimit(int64(limit), int64(observed)).
 		WithDocs(docsBase + "/plans#crons")
+}
+
+// ErrPlanEventSubscriptionQuota refuses a deploy whose gregale.yaml would
+// leave more enabled event subscriptions than the plan allows for the app or
+// the account (ADR-20261031130000).
+func ErrPlanEventSubscriptionQuota(plan Plan, scope string, limit, observed int) *Problem {
+	scopeName := PlanQuotaScopeDisplayName(scope)
+	return NewProblem(http.StatusForbidden, CodePlanEventSubscriptionQuota,
+		"Event subscription limit reached",
+		fmt.Sprintf("%s plan caps enabled event subscriptions at %d for %s; this deploy would leave %d. Remove event_triggers from gregale.yaml to add others.",
+			plan, limit, scopeName, observed)).
+		WithLimit(int64(limit), int64(observed)).
+		WithDocs(docsBase + "/events#subscription-limits")
 }
 
 // ErrCronFireNowBusy is the 429 for a manual run of a cron that already
@@ -6525,6 +6579,16 @@ func ErrDeadLetterNotReplayable() *Problem {
 		"Dead-letter event cannot be replayed",
 		"this routing failure's receipt has been pruned, so there is nothing to redrive; re-publish the event in its payload to deliver it again.").
 		WithDocs(docsBase + "/events#routing-failures-in-the-dead-letter-queue")
+}
+
+// ErrDeadLetterKeyedReplayExpired refuses a dead-letter replay of keyed work
+// whose pending deadline has passed: replay resets its attempts, so it would
+// only expire again (ADR-20261031101000).
+func ErrDeadLetterKeyedReplayExpired() *Problem {
+	return NewProblem(http.StatusConflict, CodeKeyedReplayExpired,
+		"Keyed replay deadline expired",
+		"this keyed delivery's pending deadline has passed, so a replay would expire at once; re-publish the event to deliver it again.").
+		WithDocs(docsBase + "/events#keyed-delivery-deadlines")
 }
 
 // ErrInvocationNotReplayable (issue #315 / tier-2 DX) is returned by

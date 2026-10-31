@@ -2048,7 +2048,7 @@ func (s *server) scanService(
 		if err != nil {
 			return nil, state.Project{}, nil, nil, nil, nil, api.ErrCapacity("could not read the configuration of a selected workload")
 		}
-		envImport := projectsetup.PlanEnvImport(composeEnv, w.Name, callableServices, limits)
+		envImport := projectsetup.PlanEnvImport(composeEnv, w.Name, callableServices, limits, s.privateServiceHTTPS(acct))
 		pw.UnsetEnvKeys, pw.ImportedEnvKeys, pw.UnsetEnvKeyReasons = projectsetup.SplitEnvImport(
 			withoutProvidedKeys(w.Name, unset, composePostgres), envImport)
 		warnings = append(warnings, projectsetup.RewrittenEnvNotes(w.Name, pw.ImportedEnvKeys, envImport)...)
@@ -3099,6 +3099,14 @@ var nowUnix = func() int64 { return time.Now().Unix() }
 func (s *server) projectScanOptions(acct state.Account) reposcan.ScanOptions {
 	subject := platformflags.Subject{AccountID: acct.ID}
 	return reposcan.ScanOptions{
-		KubernetesManifests: s.capGate == nil || s.capGate.Enabled(reposcan.KubernetesManifestsCapability, subject),
+		KubernetesManifests:       s.capGate == nil || s.capGate.Enabled(reposcan.KubernetesManifestsCapability, subject),
+		HTTPSTransportUnavailable: !s.privateServiceHTTPS(acct),
 	}
+}
+
+// privateServiceHTTPS decides the private-service-https capability for an
+// account, by account rules as githubd does (ADR-20261029230000). Without a
+// gate (unit tests) it is on.
+func (s *server) privateServiceHTTPS(acct state.Account) bool {
+	return s.capGate == nil || s.capGate.Enabled(api.PrivateServiceHTTPSCapability, platformflags.Subject{AccountID: acct.ID})
 }

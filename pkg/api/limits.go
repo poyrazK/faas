@@ -44,7 +44,10 @@ const (
 	// released. Failure fences and reaps the bridge process instead.
 	TrafficBridgeCompletionTimeout    = 5 * time.Second
 	TrafficBridgeCompletionMaxEntries = 128
-	TrafficBridgeFenceDialTimeout     = 100 * time.Millisecond
+	// A bridge keeps this many recent completions, so vmmd's fallback wait
+	// after a canceled exchange still finds one that just finished.
+	TrafficBridgeCompletionRetained = 1024
+	TrafficBridgeFenceDialTimeout   = 100 * time.Millisecond
 )
 
 // DeploymentAttemptIDBytes is the encoded size of a random 128-bit submission identity.
@@ -493,6 +496,15 @@ const (
 	// on a native host, and a base whose scan does not complete stays
 	// fail-closed.
 	ApplicationStandardBaseScanTimeout = 20 * time.Minute
+
+	// SharedBaseScanFailureGrace is how long the last clean scan of a shared
+	// base's unchanged bytes stays in force while renewals fail for a reason
+	// other than the bytes or their findings (the scanner, its database, a
+	// storage read, a refused publication). Publishing the refusal on the
+	// first such failure stopped every boot on the base: three production
+	// outages in three days (bug hunt 2026-10-28 H102). Changed bytes and
+	// blocking findings still refuse at once.
+	SharedBaseScanFailureGrace = 24 * time.Hour
 
 	// Safety bounds for a complete filesystem projection handed to Grype.
 	// These are separate from the tenant's rootfs/disk entitlements.
@@ -1285,6 +1297,19 @@ const ReleaseGateAIMaxIncreaseMin = 1
 const ReleaseGateAIMaxIncreaseMax = 1000
 const ReleaseGateAIDefaultMaxIncrease = 50
 
+// Synthetic and metric_change gates (ADR-20261022082305). A synthetic gate
+// allows ReleaseGateDefaultMaxFailurePercent failed probes by default and is
+// judged after ReleaseGateDefaultSyntheticMinSamples probes of the
+// candidate; each probe round sends a gate's check
+// ReleaseGateSyntheticProbesPerRound times to the candidate and to the
+// stable revision. A metric_change gate allows its metric to move at most
+// ReleaseGateMaxChangePercentMax percent. Plan-independent: gates judge
+// releases, they do not meter anything.
+const ReleaseGateDefaultMaxFailurePercent = 10
+const ReleaseGateDefaultSyntheticMinSamples = 6
+const ReleaseGateSyntheticProbesPerRound = 2
+const ReleaseGateMaxChangePercentMax = 1000
+
 // Release approvals (ADR-20261020085706). A policy requires 1 to
 // ReleaseApprovalsRequiredMax approvals, waits in canary stage 1 to
 // ReleaseApprovalStageMax, and aborts a release that waited longer than its
@@ -1311,6 +1336,10 @@ const ReleaseApprovalNotifyRetryBase = time.Minute
 // build's SBOM.
 const ReleaseDiffPackagesMax = 100
 const ReleaseDiffSBOMMaxBytes = 16 << 20
+
+// A release timeline (ADR-20261022120744) reads at most
+// ReleaseTimelineAuditRowsMax of the release's newest audit rows.
+const ReleaseTimelineAuditRowsMax = 500
 
 // Scheduled releases (ADR-20261021152201). A release may be scheduled at
 // most ScheduledReleaseMaxAhead ahead, and up to ScheduledReleasePastSkew in
@@ -2474,6 +2503,13 @@ const (
 	// deletes cannot starve inventory (ADR-20261025115958).
 	ObjectInventoryDeletionDrain = 10 * time.Second
 	ObjectInventoryDeletionYield = ObjectInventoryDeletionDrain + ObjectCapacityInventoryTimeout
+	// A bucket's listing resumes across attempts from its last listed key
+	// (ADR-20261030100835). While it advanced within
+	// ObjectInventoryScanProgressWindow, its bucket stays fresh on an
+	// observation up to ObjectInventoryScanMaxAge old; a listing that started
+	// longer ago than that starts again.
+	ObjectInventoryScanMaxAge         = time.Hour
+	ObjectInventoryScanProgressWindow = 5 * time.Minute
 	// Read-only owned-node audits retain bounded diagnostics and publish cached
 	// metrics. These are operator work bounds, not customer allowances.
 	ObjectNodeInventoryInterval         = time.Minute
@@ -3212,6 +3248,26 @@ func RealtimeLimitsFor(p Plan) (RealtimeLimits, bool) {
 	return l, ok
 }
 
+// RealtimeAllowedFor reports whether a plan includes managed realtime. Free
+// has no endpoints, and the zero limits it carries read as "no cap" where
+// they are enforced, so every realtime entry point checks this first.
+func RealtimeAllowedFor(p Plan) bool {
+	l, ok := realtimeLimits[p]
+	return ok && l.EndpointsPerApp > 0
+}
+
+// RealtimePlans lists the plans that include managed realtime, for queries
+// that admit only their accounts.
+func RealtimePlans() []string {
+	var out []string
+	for _, p := range Plans {
+		if RealtimeAllowedFor(p) {
+			out = append(out, string(p))
+		}
+	}
+	return out
+}
+
 // GDPR self-service export rate limit (issue #755 / PR-5.1). Single
 // global value (not per-plan) because the cost is per-bundle (one
 // export scans every per-account table) and the abuse case is
@@ -3344,6 +3400,16 @@ const (
 	MaxObjectStorageAccountLimiters       = 10_000
 )
 
+// ObjectStorageEgressPerIncludedByte sizes every plan's monthly egress
+// ceiling from its included storage (ADR-20261031122757). The ceiling is a
+// limit, not a meter: egress stays unpriced, and it bounds what a
+// traffic-heavy account costs the gateways that carry its bytes.
+const ObjectStorageEgressPerIncludedByte = 10
+
+// ObjectStorageLimitsDocsURL documents the object-storage limits an error
+// names.
+const ObjectStorageLimitsDocsURL = "https://github.com/poyrazK/faas/blob/main/docs/object-storage.md#limits"
+
 // ObjectStorageBillingHoursPerMonth is the conventional month used to price
 // stored byte-hours as GiB-months and to convert IncludedBytes.
 const ObjectStorageBillingHoursPerMonth int64 = 730
@@ -3404,8 +3470,10 @@ type Limits struct {
 	Profiling    ProfilingLimits
 	EventStorage EventStorageLimits
 	// ObjectStorage is the plan's object-storage ceilings and allowances
-	// (ADR-1320). Plans include stored bytes per ADR-1430; request and egress
-	// allowances wait for exporters that classify reads and writes.
+	// (ADR-1320). Plans include stored bytes per ADR-1430 and cap monthly
+	// egress at ObjectStorageEgressPerIncludedByte times that, unpriced
+	// (ADR-20261031122757); request and egress allowances wait for exporters
+	// that classify reads and writes.
 	ObjectStorage   ObjectStoragePlanLimits
 	EventDeliveries EventDeliveryLimits
 	EventPublish    EventPublishLimits
@@ -3862,6 +3930,16 @@ type Limits struct {
 	// pkg/state.PgStore.CreateCronIfUnderQuota.
 	CronLimitPerApp     int
 	CronLimitPerAccount int
+
+	// EventSubscriptionsPerApp and EventSubscriptionsPerAccount cap the
+	// enabled event subscriptions (gregale.yaml event_triggers) of one app
+	// and of all apps sharing a billing subject (ADR-20261031130000). Every
+	// publish is matched against each enabled subscription of its account,
+	// so the count bounds the routing work one event can cause. Enforced
+	// under the cron quota subject lock in
+	// pkg/state.PgStore.UpsertEventSubscriptionWithinLimits.
+	EventSubscriptionsPerApp     int
+	EventSubscriptionsPerAccount int
 
 	// QueueControlsAllowed (ADR-124 deployment queue controls)
 	// gates the reorder + deploy-immediately surface (Free =
@@ -5052,8 +5130,9 @@ var planLimits = map[Plan]Limits{
 		RequestBudgetMaxMs:    30_000, // request_timeout_s ceiling: 30 s (ADR-1150)
 		CertExpiryWarningDays: 30,
 		IncludedGBHours:       20,
-		// ADR-1430: 1 GiB included and Free's hard stop.
-		ObjectStorage:                  ObjectStoragePlanLimits{MaxAccountBytes: 1 << 30, IncludedBytes: 1 << 30},
+		// ADR-1430: 1 GiB included and Free's hard stop; egress capped at
+		// ten times that (ADR-20261031122757).
+		ObjectStorage:                  ObjectStoragePlanLimits{MaxAccountBytes: 1 << 30, MaxMonthlyEgressBytes: 10 << 30, IncludedBytes: 1 << 30},
 		PriceMillicents:                0,
 		RateLimitRPS:                   5,
 		RateLimitBurst:                 20,
@@ -5109,8 +5188,10 @@ var planLimits = map[Plan]Limits{
 		// invoke). Handler returns 402 ErrPlanCronsNotAllowed before
 		// the store is touched; the 0/0 here is a defence-in-depth
 		// value the store still reads.
-		CronLimitPerApp:     0,
-		CronLimitPerAccount: 0,
+		CronLimitPerApp:              0,
+		CronLimitPerAccount:          0,
+		EventSubscriptionsPerApp:     0,
+		EventSubscriptionsPerAccount: 0,
 		// M-2 / ADR-137+138: Free stays request-only — same
 		// posture as sidecars (ADR-069). Defaults are tight so
 		// a stray async deploy stays bounded; per-mode replica
@@ -5460,7 +5541,8 @@ var planLimits = map[Plan]Limits{
 		CertExpiryWarningDays: 30,
 		IncludedGBHours:       200,
 		// ADR-1430: 10 GiB included; usage above it is priced at month close.
-		ObjectStorage:   ObjectStoragePlanLimits{IncludedBytes: 10 << 30},
+		// Egress capped at ten times the included storage (ADR-20261031122757).
+		ObjectStorage:   ObjectStoragePlanLimits{MaxMonthlyEgressBytes: 100 << 30, IncludedBytes: 10 << 30},
 		PriceMillicents: 1_000_000, // $10.00 (ADR-1430)
 		// ConcurrencyPerVMBound (issue #559): Hobby = 5 — smallest
 		// paid tier, matches Cloud Run's framing. Spec §4.9.1.
@@ -5548,8 +5630,10 @@ var planLimits = map[Plan]Limits{
 		// budget that absorbs ~2 Hobby-tier apps (10). Tracks the
 		// Hobby apps cap (5) with headroom for the cron-example
 		// template's tutorials.
-		CronLimitPerApp:     5,
-		CronLimitPerAccount: 10,
+		CronLimitPerApp:              5,
+		CronLimitPerAccount:          10,
+		EventSubscriptionsPerApp:     5,
+		EventSubscriptionsPerAccount: 10,
 		// M-2 / ADR-137+138: Hobby gets the documented 30 s
 		// StopGracePeriod default + 30 s StartupDeadline default
 		// (ADR-138 §Decision 4 / §Decision 5). Hobby unlocks
@@ -5897,7 +5981,8 @@ var planLimits = map[Plan]Limits{
 		CertExpiryWarningDays: 30,
 		IncludedGBHours:       1000,
 		// ADR-1430: 50 GiB included; usage above it is priced at month close.
-		ObjectStorage:   ObjectStoragePlanLimits{IncludedBytes: 50 << 30},
+		// Egress capped at ten times the included storage (ADR-20261031122757).
+		ObjectStorage:   ObjectStoragePlanLimits{MaxMonthlyEgressBytes: 500 << 30, IncludedBytes: 50 << 30},
 		PriceMillicents: 3_000_000, // $30.00 (ADR-1430)
 		// ConcurrencyPerVMBound (issue #559): Pro allows up to
 		// 25 concurrent in-flight requests per VM. Matches the
@@ -5986,8 +6071,10 @@ var planLimits = map[Plan]Limits{
 		// ceiling is 4× Hobby (5→20); the per-account ceiling is 5×
 		// Hobby (10→50) — slightly steeper because Pro customers
 		// run more apps (25) than Hobby (5).
-		CronLimitPerApp:     20,
-		CronLimitPerAccount: 50,
+		CronLimitPerApp:              20,
+		CronLimitPerAccount:          50,
+		EventSubscriptionsPerApp:     20,
+		EventSubscriptionsPerAccount: 50,
 		// M-2 / ADR-137+138: Pro doubles Hobby's defaults
 		// (ADR-138 §Decision 4 / §Decision 5). Replica caps
 		// scale to a meaningful production fan-out (3 workers,
@@ -6299,7 +6386,8 @@ var planLimits = map[Plan]Limits{
 		CertExpiryWarningDays: 30,
 		IncludedGBHours:       3000,
 		// ADR-1430: 200 GiB included; usage above it is priced at month close.
-		ObjectStorage:   ObjectStoragePlanLimits{IncludedBytes: 200 << 30},
+		// Egress capped at ten times the included storage (ADR-20261031122757).
+		ObjectStorage:   ObjectStoragePlanLimits{MaxMonthlyEgressBytes: 2_000 << 30, IncludedBytes: 200 << 30},
 		PriceMillicents: 9_900_000, // $99.00 (ADR-1430)
 		// ConcurrencyPerVMBound (issue #559): Scale = 80 — same
 		// default as Cloud Run's `80 × vCPU` heuristic (the issue
@@ -6397,8 +6485,10 @@ var planLimits = map[Plan]Limits{
 		// per-app ceiling (20→100) and 10× Pro's per-account ceiling
 		// (50→500); the per-account figure absorbs 5× Scale-tier apps
 		// at the per-app cap, the typical SaaS fan-out.
-		CronLimitPerApp:     100,
-		CronLimitPerAccount: 500,
+		CronLimitPerApp:              100,
+		CronLimitPerAccount:          500,
+		EventSubscriptionsPerApp:     100,
+		EventSubscriptionsPerAccount: 500,
 		// M-2 / ADR-137+138: Scale doubles Pro (ADR-138
 		// §Decision 4 / §Decision 5). Replica caps land where
 		// a single Scale customer can host a small SaaS
@@ -6789,6 +6879,19 @@ const (
 	// admission to 606 apps; at 700% measured CPU binds first, at 1,122. The
 	// durable guard bounds every discount by this cap.
 	MeasuredCPUMaxOvercommitPercent = 700
+	// CPU pressure backstop (ADR 20261030100950). A node is under CPU
+	// pressure when its tenant slice's cpu.pressure "some avg10" is at least
+	// NodeCPUPressureStallPercent and its host CPUs were at least
+	// NodeCPUPressureBusyPercent busy over the last NodeCPUBusyWindowSeconds:
+	// tasks wait and the CPUs are nearly all in use, so the wait is not one
+	// app's own cpu.max quota. The node's schedd then holds it pressured for
+	// NodeCPUPressureHoldSeconds past the last such reading. Initial values,
+	// to be tuned from schedd_node_cpu_pressure_some_avg10 and
+	// schedd_node_cpu_busy_percent.
+	NodeCPUPressureStallPercent = 20
+	NodeCPUPressureBusyPercent  = 90
+	NodeCPUPressureHoldSeconds  = 30
+	NodeCPUBusyWindowSeconds    = 10
 	// QuietPauseLedgerFlushSeconds is how often schedd writes a node's quiet
 	// pauses and watermark to the pause ledger (ADR-20261023171905): one
 	// statement per node per flush, however many requests the node serves.
@@ -6804,6 +6907,22 @@ const (
 	// the same capacity as 1 h in the ADR's simulation while holding fewer
 	// resident VMs.
 	FrozenTTLSeconds = 600
+	// FrozenChargeFloorMB is a frozen instance's charge floor in place of
+	// MeasuredChargeFloorMB (ADR 20261031143521): a paused VM cannot grow and
+	// a thaw re-admits its full reservation. See FrozenChargeMB.
+	FrozenChargeFloorMB = 8
+	// Proactive compression (ADR 20261031143521). On a node whose admission
+	// usage reaches FrozenCompressHighWaterPercent of its ceiling, schedd
+	// compresses frozen VMs frozen at least FrozenCompressMinAgeSeconds,
+	// longest frozen first, at most FrozenCompressPerNodePerTick per reaper
+	// tick, until the charges it freed bring the node under
+	// FrozenCompressLowWaterPercent. A node whose vmmd cannot compress (no
+	// zswap) is not asked again for FrozenCompressUnavailableBackoffSeconds.
+	FrozenCompressHighWaterPercent          = 85
+	FrozenCompressLowWaterPercent           = 75
+	FrozenCompressMinAgeSeconds             = 60
+	FrozenCompressPerNodePerTick            = 4
+	FrozenCompressUnavailableBackoffSeconds = 600
 	// FrozenEarlyFreezeMinSeconds and FrozenEarlyFreezeMaxSeconds bound
 	// schedd's frozen_tier_early_freeze_after_s (ADR-20261021215353): at
 	// least the 2 s quiet pause, and well inside the shortest app idle
@@ -6823,7 +6942,8 @@ const (
 	// RolloutConcurrencyGrant (ADR-199) is the number of instances an app
 	// may exceed its plan's max_concurrency by, and ONLY while a second
 	// deployment is coming up alongside the one already serving — i.e. the
-	// overlap window of a traffic split or a canary stage.
+	// overlap window of a traffic split or a canary stage, or a release staged
+	// with no traffic (ADR-20261031105227).
 	//
 	// Without it, opening traffic splitting to every plan would ship a
 	// broken feature: the concurrency ledger is per-app
@@ -6955,6 +7075,12 @@ const (
 
 	// PreflightCacheMaxEntries bounds the in-process verdict cache.
 	PreflightCacheMaxEntries = 2_048
+
+	// PreflightConcurrentChecks caps how many unauthenticated checks fetch
+	// and unpack a repository on the control plane at once; the per-IP limit
+	// alone let many addresses unpack hostile archives together (bug hunt
+	// 2026-10-28 B39).
+	PreflightConcurrentChecks = 2
 
 	// Builder VM (spec §4.5, §1). Builds live in the control-plane slice, never
 	// tenant RAM.
@@ -7360,6 +7486,14 @@ const (
 	GatewaydInternalControlWriteTimeoutSecondsDefault = 30 // control + unix-socket
 	GatewaydInternalControlIdleTimeoutSecondsDefault  = 60 // control + unix-socket keep-alive
 
+	// VmmdLocalDataSocket is where vmmd serves its own node's
+	// gatewayd-internal without TLS, admitting only GatewaydInternalUser by
+	// peer uid and only the RPCs the gateway calls (ADR-20261030230157).
+	VmmdLocalDataSocket = "/run/faas/vmmd-data.sock"
+	// GatewaydInternalUser is the user gatewayd-internal runs as
+	// (pkg/daemonunitspec), the one uid vmmd's local data socket admits.
+	GatewaydInternalUser = "faas"
+
 	// MaxEdgeRuleLimitBodyBytesStreaming (ADR-091 D24 / kind=limit
 	// streaming carve-out) is the upper bound on the optional
 	// `max_body_bytes_streaming` field of a kind=limit edge rule.
@@ -7474,6 +7608,13 @@ const (
 	EventDeliveryRetryBaseSeconds = 5
 	EventDeliveryRetryMaxSeconds  = 300
 	EventDeliveryRetryJitter      = 0.2
+	// EventDeliveryKeyedRetryMaxSeconds caps that backoff for a delivery in
+	// a keyed lane (a work policy, ordered or not): a pending delivery holds
+	// every younger one of its key, so a failing one is dead-lettered after
+	// about 15 s on Hobby, 4 minutes on Pro and 11 minutes on Scale instead
+	// of stalling its key for up to 95 minutes (ADR-20261029190000
+	// amendment).
+	EventDeliveryKeyedRetryMaxSeconds = 30
 	// MaxAsyncRouteAgeSeconds bounds a customer-authored async edge
 	// rule age before the serving plan applies its lower deadline cap.
 	// The Scale plan currently owns the largest invocation deadline.
@@ -8156,6 +8297,14 @@ const (
 	// from several Prometheus replicas inside the same scrape interval.
 	CustomMetricExportCacheSeconds = 15
 
+	// CustomDomainCertExpiryExportMaxHosts caps the per-host certificate
+	// expiry series apid exports: the soonest-expiring verified domains,
+	// which are the ones an alert can be about (bug hunt 32 M6).
+	CustomDomainCertExpiryExportMaxHosts = 100
+	// CustomDomainCertExpiryExportCacheSeconds reuses one store read across
+	// scrapes; the doctor refreshes expiries every 30 s at most.
+	CustomDomainCertExpiryExportCacheSeconds = 60
+
 	// CustomMetricSeriesDefaultRange is the history window when ?range= is
 	// omitted (ADR-745).
 	CustomMetricSeriesDefaultRange = "24h"
@@ -8628,20 +8777,55 @@ const (
 	// asks gatewayd-public before it loads, obtains or renews a
 	// certificate for a customer hostname.
 	//
-	// OnDemandTLSWildcardNewHostsPerWeek caps how many distinct new
-	// hostnames below one verified wildcard custom domain may be admitted
-	// for certificate issuance in a rolling 7-day window. Hosts admitted
-	// before stay admitted, so reloads and renewals never consume it. 40
-	// stays under Let's Encrypt's 50 certificates per registered domain
-	// per week and bounds how many orders one wildcard can draw from the
-	// platform's shared ACME account.
+	// OnDemandTLSRegisteredDomainNewHostsPerWeek caps how many distinct
+	// new hostnames below wildcard custom domains may be admitted for
+	// certificate issuance per registered domain (public suffix + 1) in a
+	// rolling 7-day window, across every wildcard under that domain.
+	// Hosts admitted before stay admitted, so reloads and renewals never
+	// consume it. 40 stays under Let's Encrypt's 50 certificates per
+	// registered domain per week, which sibling wildcards share.
+	//
+	// OnDemandTLSOwnerNewHostsPerWeek caps the same admissions per owner
+	// (the wildcard app's organization, else its account) across all of
+	// the owner's registered domains, so one tenant with many domains
+	// cannot draw unbounded orders from the platform's shared ACME
+	// account.
+	//
+	// OnDemandTLSFleetNewHostsPer3h caps new-host admissions across the
+	// deployment in a rolling 3-hour window. Let's Encrypt allows one ACME
+	// account 300 new orders per 3 hours; the other half is left for
+	// exact custom domains, whose admission is their verified row.
+	//
+	// The three counts come from a ledger that outlives the wildcard
+	// (custom_domain_tls_admissions), so deleting and re-creating a
+	// wildcard does not reset them (bug hunt 32 M7, ADR-520 amendment 1).
+	//
+	// OnDemandTLSHostRetry* back off a host the edge keeps asking for
+	// right after being allowed: an admitted host costs no budget, so
+	// one whose ACME order keeps failing would otherwise draw an order
+	// on every handshake. OnDemandTLSHostRetryAllows allows, each in its
+	// own OnDemandTLSHostRetryBucketSeconds slice, within
+	// OnDemandTLSHostRetryWindowSeconds start a backoff of
+	// OnDemandTLSHostRetryBackoffSeconds that doubles on each repeat up to
+	// OnDemandTLSHostRetryMaxBackoffSeconds. A host that has not triggered
+	// a backoff for OnDemandTLSHostRetryResetSeconds starts again from the
+	// first step. OnDemandTLSHostRetryEntries bounds the tracked hosts.
 	//
 	// OnDemandTLSIssuanceGraceSeconds is how long after verification a
 	// failed port-443 probe is reported as pending instead of failed: the
 	// first probe's TLS handshake is what makes the edge issue the
 	// certificate, and ACME validation can outlast the probe timeout.
-	OnDemandTLSWildcardNewHostsPerWeek = 40
-	OnDemandTLSIssuanceGraceSeconds    = 900
+	OnDemandTLSRegisteredDomainNewHostsPerWeek = 40
+	OnDemandTLSOwnerNewHostsPerWeek            = 200
+	OnDemandTLSFleetNewHostsPer3h              = 150
+	OnDemandTLSHostRetryAllows                 = 3
+	OnDemandTLSHostRetryBucketSeconds          = 30
+	OnDemandTLSHostRetryWindowSeconds          = 10 * 60
+	OnDemandTLSHostRetryBackoffSeconds         = 60 * 60
+	OnDemandTLSHostRetryMaxBackoffSeconds      = 24 * 60 * 60
+	OnDemandTLSHostRetryResetSeconds           = 24 * 60 * 60
+	OnDemandTLSHostRetryEntries                = 10000
+	OnDemandTLSIssuanceGraceSeconds            = 900
 	// The edge asks on every TLS handshake whose server name has no
 	// certificate in memory, and 443 is open to the internet, so random
 	// server names would otherwise turn into unbounded Postgres lookups.
@@ -9161,6 +9345,21 @@ const (
 	// AgentRunStopGraceSec is how long a timed-out or cancelled harness has
 	// between SIGTERM and SIGKILL.
 	AgentRunStopGraceSec = 10
+	// AgentWaitPauseCPUMaxMillis is the most CPU an agent run VM may use over
+	// its quiet window and still be paused while it waits on the model
+	// (ADR-20261027090012 §2). A harness running tests is not paused.
+	AgentWaitPauseCPUMaxMillis = 50
+	// AgentWaitPauseAfterMaxMillis bounds the model-wait pause delay a run
+	// spec may carry (ADR-20261027090012 §1).
+	AgentWaitPauseAfterMaxMillis = 60_000
+	// AgentRunUsageFloorMB is the private memory an unpaused second of an
+	// agent run counts at when it uses less (ADR-20261027090011 floor,
+	// proposed; open questions 2 and 3). vmmd's usage record applies it to
+	// billable_mb_ms; nothing bills that yet (rollout step 2).
+	AgentRunUsageFloorMB = 256
+	// AgentRunUsageSampleMillis is how often vmmd samples an agent run VM's
+	// private memory (ADR-20261027090011 Measurement).
+	AgentRunUsageSampleMillis = 1000
 	// AgentModelIntegrationsMax bounds a version's model integrations: one
 	// per model provider a harness may point at the relay.
 	AgentModelIntegrationsMax = 2
@@ -11725,15 +11924,35 @@ func BillableRAMMBWithSidecars(ramMB int, sidecarMBs []int) int {
 // (instance, minute). MeterCatchUpMinutesPerTick bounds the extra work one
 // sample tick takes on, so a long backlog drains over several ticks instead
 // of starving the control plane.
-const MeterCatchUpWindow = 24 * time.Hour
+//
+// The window covers a weekend-long meterd outage: residency comes from the
+// instance billing ledger, which outlives it (instances are kept 30 days),
+// and 15 minutes a tick drain 72 hours in under five
+// (ADR-20261030120000).
+const MeterCatchUpWindow = 72 * time.Hour
 const MeterCatchUpMinutesPerTick = 15
+
+// MeterTelemetryDrainWindow is how long after an instance stops the sampler
+// still lists it, so the gateway and network counters its sources hold for
+// it are drained into usage rows. It is independent of how far catch-up
+// reaches back, which drains no live counter.
+const MeterTelemetryDrainWindow = 24 * time.Hour
+
+// MeterRollSettle is how long after a minute closes meterd waits before
+// rolling it. Residency intervals are stamped inside their writer's
+// transaction and become visible at commit; a roll right at the boundary
+// missed a transition still committing, and first-write-wins kept the short
+// row (ADR-20261030120000).
+const MeterRollSettle = 15 * time.Second
 
 // MeterUsageFinalAfter is how long after a minute starts meterd may still write
 // compute usage for it: the catch-up window, the sampler's newest-closed-minute
-// offset, and one tick of skew. The provider pusher delivers an hour only when
-// every minute up to its end is recorded compute-complete or older than this,
-// so late catch-up rows can never land in an hour already delivered (ADR-1162).
-const MeterUsageFinalAfter = MeterCatchUpWindow + 2*time.Minute
+// offset, one tick of skew and the roll settle, rounded up to a whole minute
+// so the pusher's completeness read stays minute-aligned. The provider pusher
+// delivers an hour only when every minute up to its end is recorded
+// compute-complete or older than this, so late catch-up rows can never land in
+// an hour already delivered (ADR-1162).
+const MeterUsageFinalAfter = MeterCatchUpWindow + 3*time.Minute
 
 // SpendCapJobDeferInterval is how long a queued job task of an account at its
 // monthly spend cap waits before the dispatcher re-checks the cap (ADR-1162).
@@ -12032,6 +12251,12 @@ const (
 	// stall shorter than it delays the request instead of refusing it with
 	// 503 traffic_policy_unavailable (ADR-20261027085556 amendment 1).
 	TrafficPublicRoutingColdReadTimeout = 2 * time.Second
+	// TrafficPublicHostColdReadTimeout bounds a public request's host policy
+	// lookup, which reads the store when the host misses the route cache: a
+	// new app's first request, or any host after a gateway restart. Its first
+	// attempt keeps TrafficPublicHostReadTimeout; a failed attempt is retried
+	// once within this bound (ADR-20261027085556 amendment 2).
+	TrafficPublicHostColdReadTimeout = 2 * time.Second
 	// Bound public policy host input and hostname expansion in environment
 	// overlays to the DNS name size accepted for custom domains (ADR-570).
 	TrafficPolicyMaxHostnameBytes = 253
@@ -15031,10 +15256,27 @@ const (
 	AlertAccountTickBudget = 45 * time.Second
 )
 
+// Alert delivery retention (ADR-20261029203000): meterd deletes settled
+// deliveries fired more than AlertDeliveryRetentionDays ago, at most
+// AlertDeliveryPurgeBatch rows per statement and AlertDeliveryPurgeBatches
+// statements per AlertDeliveryPurgeInterval. A rule's newest delivery, and a
+// delivery with a rollback action, stay.
+const (
+	AlertDeliveryRetentionDays = 90
+	AlertDeliveryPurgeBatch    = 1000
+	AlertDeliveryPurgeBatches  = 20
+	AlertDeliveryPurgeInterval = time.Hour
+)
+
 // NotificationChannelTestsPerAccountMinute caps test sends to an account's
 // notification channels (ADR-20261028101615): each one is a real Slack post,
 // PagerDuty event or email.
 const NotificationChannelTestsPerAccountMinute = 10
+
+// AlertPresetTestsPerAccountMinute caps preset test sends per account
+// (ADR-20261030214500): each one posts to the rule's webhook and records a
+// test delivery.
+const AlertPresetTestsPerAccountMinute = 10
 
 // Custom dashboards (ADR-20261022173833).
 const (
@@ -15143,8 +15385,9 @@ var (
 )
 
 // Synthetic checks (ADR-748). The 5-minute floor keeps a check from pinning
-// an app resident on Free, Hobby and Pro (idle timeouts 30/60/300 s); the
-// timeout ceiling matches the gateway wake hold.
+// a Hobby app resident (idle timeout 60 s; Free has no checks); on Pro
+// (300 s) a 5-minute check keeps the app warm. The timeout ceiling matches
+// the gateway wake hold.
 const (
 	MaxSyntheticChecksPerApp       = 5
 	SyntheticCheckTimeoutMinMS     = 1000
@@ -16224,6 +16467,20 @@ const (
 	DataRepairPurgePlanTTLSeconds      = 15 * 60
 	DataRepairPurgeTimeoutSeconds      = 10
 	DataRepairPurgeLockTimeoutMS       = 2000
+)
+
+// Resource labels (ADR-20261031100025) use Kubernetes label syntax and are the
+// same on every plan: labels hold no resources. A resource carries at most
+// LabelsPerResourceMax labels. A key is an optional DNS-subdomain prefix of at
+// most LabelKeyPrefixMax bytes, a slash, and a name of 1–LabelKeyNameMax bytes;
+// a value is 0–LabelValueMax bytes. A selector is at most LabelSelectorMaxBytes,
+// which bounds parsing and matching for one list request.
+const (
+	LabelsPerResourceMax  = 32
+	LabelKeyNameMax       = 63
+	LabelKeyPrefixMax     = 253
+	LabelValueMax         = 63
+	LabelSelectorMaxBytes = 4096
 )
 
 // PendingTenantHostnamesPerSurface is the unverified-hostname cap for one

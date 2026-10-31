@@ -14,7 +14,14 @@
 # systemd refused NetworkNamespacePath=/run/netns/fc-<instance> with EINVAL
 # (status 225/NETWORK), and the woken guests answered 503. Put fsn-2.faas back
 # after a metal run reproduces and fixes that on a production-shaped host.
-vmmd_bridge_canary_nodes: []
+#
+# Resumed 2026-10-31: #5999 (in rc.309) names the netns through vmmd's root
+# and falls back to the bridge process when a unit fails to start; metal
+# under the production faas-vmmd.service sandbox (#6089) reproduces the
+# rc.305 failure without it and serves through units with it. Pull fsn-2.faas
+# again if a bridge unit fails to start there.
+vmmd_bridge_canary_nodes:
+  - fsn-2.faas
 vmmd_bridge_unprivileged: "{{ (faas_join_database_node | default(faas_node_name | default(''))) in vmmd_bridge_canary_nodes }}"
 vmmd_instance_bridge_sessions: "{{ (faas_join_database_node | default(faas_node_name | default(''))) in vmmd_bridge_canary_nodes }}"
 vmmd_instance_bridge_unit: "{{ (faas_join_database_node | default(faas_node_name | default(''))) in vmmd_bridge_canary_nodes }}"

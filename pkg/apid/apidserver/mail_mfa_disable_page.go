@@ -10,8 +10,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// Gate before authentication or token parsing. This page adds no default-on
-// browser surface, and neither opening it nor email prefetch consumes a token.
+// Gate before authentication or token parsing. Neither opening the page nor
+// email prefetch consumes a token.
 func (s *server) mfaDisableEmailPageRoute() http.HandlerFunc {
 	handler := s.dashboardChain(s.authLimited(s.requireScope(api.ScopesAdminOnly...)(s.mfaDisableEmailPage)))
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -30,8 +30,17 @@ func (s *server) mfaDisableEmailPageRoute() http.HandlerFunc {
 	}
 }
 
+// mfaDisableEmailPageEnabled serves the page whenever a disable link can be
+// mailed. The legacy inline path mailed the POST-only confirmation endpoint,
+// which a mail client opens with GET and gets 405, so email recovery never
+// worked while the outbox was off (bug hunt 2026-10-28 B38); it now mails
+// this page too. The page is off only while the durable outbox is requested
+// but unavailable, when no link is mailed.
 func (s *server) mfaDisableEmailPageEnabled() bool {
-	return s.mfaDisableMailOutboxRequested != nil && s.mfaDisableMailOutboxRequested() && s.deletionMailOutbox.Enabled()
+	if s.mfaDisableMailOutboxRequested == nil || !s.mfaDisableMailOutboxRequested() {
+		return true
+	}
+	return s.deletionMailOutbox.Enabled()
 }
 
 func (s *server) mfaDisableEmailPage(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -42,7 +51,9 @@ func (s *server) mfaDisableEmailPage(w http.ResponseWriter, r *http.Request, acc
 	token := r.URL.Query().Get("token")
 	raw, err := base64.RawURLEncoding.DecodeString(token)
 	defer clear(raw)
-	if err != nil || len(raw) != api.MFADisableTokenBytes {
+	// A durable link carries the raw token; a legacy one the longer
+	// age-sealed token the confirmation endpoint opens with host keys.
+	if err != nil || len(raw) < api.MFADisableTokenBytes || len(raw) > api.MFADisableLegacyTokenMaxBytes {
 		s.writeMFADisableEmailInvalid(w, r, acct, "token_malformed")
 		return
 	}

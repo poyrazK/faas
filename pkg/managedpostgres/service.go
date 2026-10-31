@@ -207,7 +207,7 @@ func (s *Service) create(ctx context.Context, request CreateRequest, reservedID 
 	if err != nil {
 		return Database{}, err
 	}
-	if err := backend.Capabilities.Supports(request.Spec); err != nil {
+	if err := backend.Capabilities.SupportsNewDatabase(request.Spec); err != nil {
 		return Database{}, err
 	}
 	if s.admit != nil {

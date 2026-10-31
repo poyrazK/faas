@@ -1783,6 +1783,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if cfg.FrozenTierEarlyFreezeAfterS > 0 {
 			engine.EnableEarlyFreeze(time.Duration(cfg.FrozenTierEarlyFreezeAfterS) * time.Second)
 		}
+		if cfg.FrozenProactiveCompress {
+			engine.EnableFrozenProactiveCompress()
+			log.Info("proactive frozen compression enabled (ADR 20261031143521)",
+				"high_water_percent", api.FrozenCompressHighWaterPercent,
+				"low_water_percent", api.FrozenCompressLowWaterPercent,
+				"min_age_seconds", api.FrozenCompressMinAgeSeconds,
+				"per_node_per_tick", api.FrozenCompressPerNodePerTick)
+		}
 		log.Info("frozen tier enabled (ADR-1151)", "apps", cfg.FrozenTierApps, "workers", cfg.FrozenTierWorkers,
 			"early_freeze_after_s", cfg.FrozenTierEarlyFreezeAfterS,
 			"frozen_ttl_seconds", api.FrozenTTLSeconds, "frozen_max_per_node", api.FrozenMaxPerNode)
@@ -1848,6 +1856,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			"min_charge_percent", api.MeasuredCPUMinChargePercent,
 			"max_overcommit_percent", api.MeasuredCPUMaxOvercommitPercent,
 			"peer_nodes", ownerNodeID != "")
+	}
+	// ADR 20261030100950: the CPU pressure backstop reads the local reader
+	// only. Each node's own schedd decides for it; peers honour its hold.
+	if cfg.CPUPressureBackstop {
+		engine.EnableCPUPressureBackstop(reader.NodeCPUPressure)
+		log.Info("CPU pressure backstop enabled (ADR 20261030100950)",
+			"stall_percent", api.NodeCPUPressureStallPercent,
+			"busy_percent", api.NodeCPUPressureBusyPercent,
+			"hold_seconds", api.NodeCPUPressureHoldSeconds)
 	}
 	// Register the gRPC server with the Reader wired so the
 	// ListInstanceStats RPC (issue #279 / PR-B) can serve the

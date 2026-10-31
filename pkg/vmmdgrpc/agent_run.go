@@ -20,7 +20,7 @@ import (
 // implements it.
 type AgentRunVMMAPI interface {
 	WakeAgentRun(context.Context, fcvm.AgentRunWakeRequest) (*fcvm.Instance, error)
-	RunAgent(ctx context.Context, instance string, req agentrunproto.Request, receive agentrunproto.OutputReceiver, cancel <-chan struct{}) (agentrunproto.Result, error)
+	RunAgent(ctx context.Context, instance string, req agentrunproto.Request, receive agentrunproto.OutputReceiver, cancel <-chan struct{}) (agentrunproto.Result, *fcvm.AgentRunUsage, error)
 	Destroy(context.Context, string) error
 }
 
@@ -67,7 +67,14 @@ func (s *Server) RunAgent(stream vmmdpb.Vmmd_RunAgentServer) error {
 		opErr = err
 		return err
 	}
-	result, err := agentVMM.RunAgent(ctx, wake.Instance, run, agentRunOutputSender(stream), watchAgentRunCancel(stream))
+	result, usage, err := agentVMM.RunAgent(ctx, wake.Instance, run, agentRunOutputSender(stream), watchAgentRunCancel(stream))
+	if usage != nil {
+		// The usage goes first, so a failed run keeps its measurement too.
+		if serr := stream.Send(&vmmdpb.RunAgentEvent{Frame: &vmmdpb.RunAgentEvent_Usage{Usage: agentRunUsageToProto(usage)}}); serr != nil {
+			opErr = serr
+			return serr
+		}
+	}
 	if err != nil {
 		opErr = err
 		return grpcerr.ToStatus(api.NewProblem(int(codes.Unavailable), api.CodeInternal, "Agent run failed", "the agent run exchange did not complete"))
@@ -82,6 +89,13 @@ func (s *Server) RunAgent(stream vmmdpb.Vmmd_RunAgentServer) error {
 		return err
 	}
 	return nil
+}
+
+func agentRunUsageToProto(u *fcvm.AgentRunUsage) *vmmdpb.AgentRunUsage {
+	return &vmmdpb.AgentRunUsage{Method: int32(u.Method), Samples: int32(u.Samples), ExpectedSamples: int32(u.ExpectedSamples),
+		MeasuredMs: u.MeasuredMillis, PausedMs: u.PausedMillis, PrivateMbMs: u.PrivateMBMillis,
+		UnpausedPrivateMbMs: u.UnpausedPrivateMBMillis, BillableMbMs: u.BillableMBMillis, PeakPrivateMb: u.PeakPrivateMB,
+		ColdBoot: u.ColdBoot}
 }
 
 func agentRunStartFromProto(start *vmmdpb.RunAgentStart) (fcvm.AgentRunWakeRequest, agentrunproto.Request, *api.Problem) {
@@ -119,6 +133,12 @@ func agentRunStartFromProto(start *vmmdpb.RunAgentStart) (fcvm.AgentRunWakeReque
 			return fcvm.AgentRunWakeRequest{}, agentrunproto.Request{}, invalid("a checkout and its input drive key go together")
 		}
 		wake.InputKey = key
+	}
+	if ms := start.GetModelWaitPauseAfterMs(); ms != 0 {
+		if ms < 0 || ms > api.AgentWaitPauseAfterMaxMillis {
+			return fcvm.AgentRunWakeRequest{}, agentrunproto.Request{}, invalid("model_wait_pause_after_ms is out of range")
+		}
+		wake.ModelWaitPauseAfter = time.Duration(ms) * time.Millisecond
 	}
 	if relay := start.GetRelay(); relay != nil {
 		wake.Relay = &fcvm.AgentRunRelay{RunID: relay.GetRunId(), LeaseToken: relay.GetLeaseToken(), TenantID: relay.GetTenantId(),

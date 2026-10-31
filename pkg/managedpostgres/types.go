@@ -68,8 +68,8 @@ func QuotaProblem(err error) (status int, code, title string) {
 // ProvisioningClosedDetail and UnavailableDetail are the customer-facing
 // explanations for ErrProvisioningClosed and a real provider outage.
 const (
-	ProvisioningClosedDetail = "Managed PostgreSQL is an operator preview and provisioning is not open for this account right now. Existing databases and bindings keep working; ask the platform operator to open provisioning."
-	UnavailableDetail        = "Managed PostgreSQL is an operator preview. The configured provider is temporarily unavailable; retry later or contact the platform operator."
+	ProvisioningClosedDetail = "New managed PostgreSQL databases, bindings, restores and resizes are not open for this account right now. Existing databases and bindings keep working; retry later or contact support."
+	UnavailableDetail        = "The managed PostgreSQL provider is temporarily unavailable. Existing databases keep running; retry later or contact support."
 )
 
 // UsageStaleDetail is the customer-facing explanation for ErrUsageStale. A
@@ -711,6 +711,11 @@ type Capabilities struct {
 	MaxRestoreWindowSeconds      int64
 	MaxStorageBytes              int64
 	UsageMeters                  []Meter
+	// RetiringMajors are majors that existing databases keep (restore, resize
+	// and maintenance still work) but new databases may not choose: their
+	// upstream end of life is near or past, and no provider upgrades a major in
+	// place. Each is also in PostgresMajors.
+	RetiringMajors []int
 }
 
 func (c Capabilities) Validate() error {
@@ -728,6 +733,14 @@ func (c Capabilities) Validate() error {
 	}
 	hasRestoreUsageAccounting := c.RestoreUsageIsolated || c.RestoreUsageIncludedInSource
 	if (c.RestoreUsageIsolated && c.RestoreUsageIncludedInSource) || (hasRestoreUsageAccounting && !c.PointInTimeRestore) {
+		return ErrInvalid
+	}
+	for _, major := range c.RetiringMajors {
+		if !contains(c.PostgresMajors, major) {
+			return ErrInvalid
+		}
+	}
+	if len(c.NewDatabaseMajors()) == 0 || hasDuplicates(c.RetiringMajors) {
 		return ErrInvalid
 	}
 	if hasDuplicates(c.PostgresMajors) || hasDuplicates(c.ServiceClasses) || hasDuplicates(c.Availability) || hasDuplicates(c.CredentialAccess) || hasDuplicates(c.UsageMeters) {
@@ -771,6 +784,31 @@ func (c Capabilities) SupportsCredentialAccess(access CredentialAccess) error {
 	}
 	if !contains(c.CredentialAccess, access) {
 		return ErrUnsupported
+	}
+	return nil
+}
+
+// NewDatabaseMajors are the majors a new database may choose: every offered
+// major except the retiring ones.
+func (c Capabilities) NewDatabaseMajors() []int {
+	var majors []int
+	for _, major := range c.PostgresMajors {
+		if !contains(c.RetiringMajors, major) {
+			majors = append(majors, major)
+		}
+	}
+	return majors
+}
+
+// SupportsNewDatabase is Supports for a database being created: a retiring
+// major stays supported for the databases that have it, but no new database
+// may choose it.
+func (c Capabilities) SupportsNewDatabase(spec Spec) error {
+	if err := c.Supports(spec); err != nil {
+		return err
+	}
+	if contains(c.RetiringMajors, spec.PostgresMajor) {
+		return fmt.Errorf("%w: postgres major %d is retiring and no longer offered for new databases (offered: %s)", ErrUnsupported, spec.PostgresMajor, joinOffered(c.NewDatabaseMajors(), strconv.Itoa))
 	}
 	return nil
 }

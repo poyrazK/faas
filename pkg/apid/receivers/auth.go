@@ -20,6 +20,8 @@ package receivers
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"strings"
 
@@ -38,6 +40,7 @@ import (
 // spinning a real Postgres pool.
 type authStore interface {
 	AuthenticateKey(ctx context.Context, hash []byte) (state.Account, state.APIKey, error)
+	AuthenticateOIDCBearer(ctx context.Context, hash []byte) (state.Account, state.APIKey, error)
 }
 
 // authReceiver is the in-package server implementation of
@@ -102,6 +105,60 @@ func (r *authReceiver) AuthenticateKey(ctx context.Context, req *apidpb.Authenti
 		AccountId: acct.ID,
 		Plan:      string(acct.Plan),
 	}, nil
+}
+
+// AuthenticateCredential resolves a credential for a gateway that cannot
+// key its hash itself (ADR 20261029202403). The gateway sends the presented
+// token's SHA-256; an unknown, expired or revoked credential is an outcome,
+// so a store failure is the only error besides a malformed request.
+func (r *authReceiver) AuthenticateCredential(ctx context.Context, req *apidpb.AuthenticateCredentialRequest) (*apidpb.AuthenticateCredentialResponse, error) {
+	sum := req.GetSha256()
+	if len(sum) != sha256.Size {
+		return nil, status.Error(codes.InvalidArgument, "sha256 must be 32 bytes")
+	}
+	var lookup func(context.Context, []byte) (state.Account, state.APIKey, error)
+	switch req.GetKind() {
+	case apidpb.CredentialKind_CREDENTIAL_KIND_API_KEY:
+		lookup = r.store.AuthenticateKey
+	case apidpb.CredentialKind_CREDENTIAL_KIND_OIDC_BEARER:
+		lookup = r.store.AuthenticateOIDCBearer
+	default:
+		return nil, status.Error(codes.InvalidArgument, "unknown credential kind")
+	}
+	acct, key, err := lookup(ctx, sum)
+	switch {
+	case errors.Is(err, state.ErrNotFound):
+		return &apidpb.AuthenticateCredentialResponse{Outcome: apidpb.CredentialOutcome_CREDENTIAL_OUTCOME_NOT_FOUND}, nil
+	case errors.Is(err, state.ErrAPIKeyExpired):
+		return &apidpb.AuthenticateCredentialResponse{Outcome: apidpb.CredentialOutcome_CREDENTIAL_OUTCOME_EXPIRED}, nil
+	case errors.Is(err, state.ErrAPIKeyRevoked):
+		return &apidpb.AuthenticateCredentialResponse{Outcome: apidpb.CredentialOutcome_CREDENTIAL_OUTCOME_REVOKED}, nil
+	case err != nil:
+		return nil, status.Errorf(codes.Internal, "apid credential lookup: %v", err)
+	}
+	accountJSON, err := json.Marshal(acct)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "encode account: %v", err)
+	}
+	keyJSON, err := state.MarshalAPIKeyWire(key)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "encode key: %v", err)
+	}
+	return &apidpb.AuthenticateCredentialResponse{Outcome: apidpb.CredentialOutcome_CREDENTIAL_OUTCOME_OK, AccountJson: accountJSON, KeyJson: keyJSON}, nil
+}
+
+// MatchCredential answers whether a stored credential hash a gateway read
+// is the one the presented token may hold (ADR 20261029202403). It answers
+// only yes or no, and only for the columns gateways check.
+func (r *authReceiver) MatchCredential(_ context.Context, req *apidpb.MatchCredentialRequest) (*apidpb.MatchCredentialResponse, error) {
+	tag, ok := state.GatewayCheckedCredential(req.GetColumn())
+	if !ok {
+		return nil, status.Error(codes.InvalidArgument, "column is not a gateway-checked credential")
+	}
+	if len(req.GetSha256()) != sha256.Size {
+		return nil, status.Error(codes.InvalidArgument, "sha256 must be 32 bytes")
+	}
+	return &apidpb.MatchCredentialResponse{Match: state.CredentialMatches(tag, req.GetSha256(), req.GetStored())}, nil
 }
 
 // RegisterAuthReceiver binds the AuthServer onto a gRPC server.

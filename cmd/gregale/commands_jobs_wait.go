@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -24,8 +25,16 @@ func cmdJobsWait(args []string) int {
 	interactive := fs.Bool("interactive", false, "choose a Job and run")
 	timeout := fs.Duration("timeout", 10*time.Minute, "maximum wait duration")
 	interval := fs.Duration("poll-interval", 2*time.Second, "polling interval")
+	forFlag := fs.String("for", "", "wait for a run condition instead: Succeeded or Progressing, as TYPE or TYPE=True|False|Unknown")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
+	}
+	var want conditionWant
+	if *forFlag != "" {
+		var err error
+		if want, err = parseConditionFor(api.ResourceKindJobRun, *forFlag); err != nil {
+			return printErr("Invalid wait arguments", err)
+		}
 	}
 	if *timeout <= 0 || *interval <= 0 || *interactive && fs.NArg() != 0 || !*interactive && fs.NArg() > 2 {
 		return printErr("Invalid wait arguments", errors.New("use jobs wait [JOB] [RUN_ID|latest] or jobs wait --interactive, with positive --timeout and --poll-interval"))
@@ -120,6 +129,12 @@ func cmdJobsWait(args []string) int {
 			return printErr("Could not resolve Job run", err)
 		}
 		cancel()
+	}
+	if *forFlag != "" {
+		if outDirSet {
+			return printErr("Invalid wait arguments", errors.New("--for waits on conditions and collects nothing; drop --out-dir"))
+		}
+		return waitJobRunCondition(client, job.Name, run.ID, want, *timeout, *interval)
 	}
 	if outDirSet {
 		if job.ID == "" || job.AccountID == "" {
@@ -216,4 +231,23 @@ func followJobRun(ctx context.Context, client *api.Client, job api.JobResponse, 
 		case <-timer.C:
 		}
 	}
+}
+
+// waitJobRunCondition is `job wait --for`: the run's conditions through the
+// same wait and exit codes as `app wait` (ADR-20261030151810).
+func waitJobRunCondition(client *Client, job, runID string, want conditionWant, timeout, interval time.Duration) int {
+	read := func(ctx context.Context) (api.ResourceStatus, error) {
+		status, err := client.GetJobRunStatus(ctx, job, runID)
+		return status, jobRunStatusError(job, runID, err)
+	}
+	return waitForCondition(read, want, timeout, interval)
+}
+
+// jobRunStatusError explains a 404 as appStatusError does.
+func jobRunStatusError(job, runID string, err error) error {
+	var apiErr *api.APIError
+	if errors.As(err, &apiErr) && apiErr.Problem.Status == http.StatusNotFound {
+		return &exitErr{code: exitCodeForStatus(http.StatusNotFound), msg: fmt.Sprintf("no conditions for job run %s: it does not exist, or conditions are not available to this account yet; `gregale job wait %s %s` waits for it instead", runID, job, runID)}
+	}
+	return err
 }

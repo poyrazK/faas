@@ -388,6 +388,7 @@ export type { CompleteWorkflowCallbackResponse } from './CompleteWorkflowCallbac
 export type { ComposeHealthcheck } from './ComposeHealthcheck.js';
 export type { ComposeProcess } from './ComposeProcess.js';
 export type { ComposeResources } from './ComposeResources.js';
+export type { Condition } from './Condition.js';
 export type { ConfigChangeReceipt } from './ConfigChangeReceipt.js';
 export type { ConfigGuard } from './ConfigGuard.js';
 export type { ConfigGuardDecision } from './ConfigGuardDecision.js';
@@ -2620,6 +2621,8 @@ export type { ReleaseFreezeWeekly } from './ReleaseFreezeWeekly.js';
 export type { ReleaseGate } from './ReleaseGate.js';
 export type { ReleaseGateResult } from './ReleaseGateResult.js';
 export type { ReleaseRestorePoint } from './ReleaseRestorePoint.js';
+export type { ReleaseTimeline } from './ReleaseTimeline.js';
+export type { ReleaseTimelineEvent } from './ReleaseTimelineEvent.js';
 export type { RemoveEnvironmentGitOpsOverrideRequest } from './RemoveEnvironmentGitOpsOverrideRequest.js';
 export type { RenameAppRequest } from './RenameAppRequest.js';
 export type { ReplaceProjectEnvironmentQueueBindingsRequest } from './ReplaceProjectEnvironmentQueueBindingsRequest.js';
@@ -2648,6 +2651,7 @@ export type { RequestEventExecutionLineageCaseBackfillRequest } from './RequestE
 export type { ResizeManagedPostgresDatabaseRequest } from './ResizeManagedPostgresDatabaseRequest.js';
 export type { ResolvedExecutionLimits } from './ResolvedExecutionLimits.js';
 export type { ResourceProfile } from './ResourceProfile.js';
+export type { ResourceStatus } from './ResourceStatus.js';
 export type { RestoreAutomationRevisionRequest } from './RestoreAutomationRevisionRequest.js';
 export type { RestoreMCPReadinessPolicyRequest } from './RestoreMCPReadinessPolicyRequest.js';
 export type { RestoreManagedPostgresDatabaseRequest } from './RestoreManagedPostgresDatabaseRequest.js';

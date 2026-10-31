@@ -137,7 +137,7 @@ yourself stays disabled. Deleting an app suspends its crons with
 gregale cron run CRON_ID                         # queue the run, print its request id
 gregale cron run CRON_ID --wait                  # follow it; exit 0 only if it succeeds
 gregale cron run --app my-api --interactive      # pick a cron and follow the run
-gregale cron fire-now REQUEST_ID --wait          # follow a request you already made
+gregale cron run get REQUEST_ID --wait          # follow a request you already made
 ```
 
 A manual run sends the same request as a scheduled run and does not move the
@@ -166,7 +166,7 @@ Each run shows when it started, how long it took, its outcome (`success`,
 period.
 
 Schedule decisions (`gregale cron occurrences CRON_ID`) and manual-run
-requests (`gregale cron fire-now REQUEST_ID`) are kept for 90 days. A
+requests (`gregale cron run get REQUEST_ID`) are kept for 90 days. A
 decision that is still waiting or running is kept until it settles.
 
 A run that fails with `application returned HTTP 404` reached your app, but

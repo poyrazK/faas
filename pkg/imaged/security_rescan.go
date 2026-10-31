@@ -79,11 +79,19 @@ func (l *Loop) rescanLiveDeployment(ctx context.Context, app state.App, dep stat
 	}
 	previousStatus := dep.ScanStatus
 	previous := decodeScanEvidence(dep.ScanResult)
-	scanErr := l.handler.runDeployScan(ctx, app, dep)
+	scanErr := l.handler.runDeployScan(context.WithValue(ctx, liveRescanKey{}, true), app, dep)
 	if scanErr != nil {
-		l.log.Warn("imaged: security re-scan failed", "deployment", dep.ID, "app", app.Slug, "err", scanErr)
+		// A scan that could not run (storage, Grype, its database, a
+		// timeout) says nothing about the image. It used to park the live
+		// deployment, so one OOM-killed Grype or a bad database update took
+		// every enforce app on the node offline (bug hunt 2026-10-28 H84).
+		// The last complete evidence stays in place, the deployment stays
+		// due and is retried on the next sweep, and the evidence lease
+		// decides if no retry succeeds.
+		l.log.Warn("imaged: security re-scan could not run; keeping the last evidence", "deployment", dep.ID, "app", app.Slug, "err", scanErr)
+		return
 	}
-	if producedEvidenceBusy(scanErr) || ctx.Err() != nil {
+	if ctx.Err() != nil {
 		return
 	}
 	current, readErr := l.store.DeploymentByID(ctx, dep.ID)
@@ -92,7 +100,7 @@ func (l *Loop) rescanLiveDeployment(ctx context.Context, app state.App, dep stat
 		return
 	}
 	currentResult := decodeScanEvidence(current.ScanResult)
-	if app.SecurityPolicy != api.AppSecurityPolicyEnforce || scanErr == nil && !securityScanNeedsQuarantine(current.ScanStatus, currentResult) {
+	if app.SecurityPolicy != api.AppSecurityPolicyEnforce || !securityScanNeedsQuarantine(current.ScanStatus, currentResult) {
 		return
 	}
 	if securityScanRegression(previousStatus, previous, current.ScanStatus, currentResult) {
@@ -239,6 +247,15 @@ func (l *Loop) reconcileSecuritySignatures(ctx context.Context, now time.Time) {
 			// revalidates.
 			l.log.Warn("imaged: signature revalidation skipped", "deployment", dep.ID, "app", app.ID, "err", verifyErr)
 			return
+		}
+		if !errors.Is(verifyErr, cosign.ErrSignatureMissing) && !errors.Is(verifyErr, cosign.ErrSignatureInvalid) {
+			// A registry timeout or 429 while fetching the signature says
+			// nothing about it, and parked the already-verified image with
+			// security_signature_unavailable (bug hunt 2026-10-28 H84). The
+			// next signer change or restart verifies it again.
+			l.log.Warn("imaged: signature revalidation could not fetch the signature; keeping the verified image",
+				"deployment", dep.ID, "app", app.ID, "err", verifyErr)
+			continue
 		}
 
 		l.quarantineSignatureFailure(ctx, app, dep, verifyErr, now)

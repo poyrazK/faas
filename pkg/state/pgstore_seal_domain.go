@@ -362,6 +362,94 @@ func (s *PgStore) ListSealedCrashCaptureKeys(ctx context.Context, afterID string
 	return out, nil
 }
 
+// ListSidecarEnvDeployments pages, in id order after the cursor, through
+// the deployments whose sidecars declare env values: the sealed values the
+// runtime re-seal copies into deployment_sidecar_env_reseals. Soft-deleted
+// deployments are listed too, since recovery can serve them again.
+func (s *PgStore) ListSidecarEnvDeployments(ctx context.Context, afterID string, limit int) ([]DeploymentSidecars, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 1000
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT d.id::text, d.sidecars FROM deployments d
+		 WHERE d.id::text > $1
+		   AND EXISTS (SELECT 1 FROM jsonb_array_elements(d.sidecars) s
+		                WHERE jsonb_typeof(s->'env') = 'object' AND s->'env' <> '{}'::jsonb)
+		 ORDER BY d.id::text
+		 LIMIT $2
+	`, afterID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("state: list sidecar env deployments: %w", err)
+	}
+	defer rows.Close()
+	var out []DeploymentSidecars
+	for rows.Next() {
+		var d DeploymentSidecars
+		if err := rows.Scan(&d.ID, &d.Sidecars); err != nil {
+			return nil, fmt.Errorf("state: scan sidecar env deployment: %w", err)
+		}
+		out = append(out, d)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("state: list sidecar env deployments: %w", err)
+	}
+	return out, nil
+}
+
+// UpsertSidecarEnvReseal writes r when no copy is stored, or when the
+// stored copy is still previous, and reports whether it did; a copy
+// rewritten since it was read is left for the next run.
+func (s *PgStore) UpsertSidecarEnvReseal(ctx context.Context, r SidecarEnvReseal, previous []byte) (bool, error) {
+	if !validSidecarEnvReseal(r) {
+		return false, errors.New("state: sidecar env reseal needs a deployment, sidecar, key, source digest, key id and ciphertext")
+	}
+	tag, err := s.pool.Exec(ctx, `
+		INSERT INTO deployment_sidecar_env_reseals AS r
+		       (deployment_id, sidecar_name, env_key, source_sha256, kid, ciphertext)
+		VALUES ($1::uuid, $2, $3, $4, $5, $6)
+		ON CONFLICT (deployment_id, sidecar_name, env_key) DO UPDATE SET
+			source_sha256 = EXCLUDED.source_sha256,
+			kid = EXCLUDED.kid,
+			ciphertext = EXCLUDED.ciphertext,
+			resealed_at = now()
+		 WHERE r.ciphertext = $7
+	`, r.DeploymentID, r.SidecarName, r.Key, r.SourceSHA256, r.Kid, r.Ciphertext, previous)
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23503" {
+		return false, nil // the deployment was deleted since it was listed
+	}
+	if err != nil {
+		return false, fmt.Errorf("state: upsert sidecar env reseal: %w", err)
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+// ListDeploymentSidecarEnvReseals implements Store; schedd reads it at wake.
+func (s *PgStore) ListDeploymentSidecarEnvReseals(ctx context.Context, deploymentID string) ([]SidecarEnvReseal, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT sidecar_name, env_key, source_sha256, kid, ciphertext
+		  FROM deployment_sidecar_env_reseals
+		 WHERE deployment_id = $1::uuid
+		 ORDER BY sidecar_name, env_key
+	`, deploymentID)
+	if err != nil {
+		return nil, fmt.Errorf("state: list sidecar env reseals: %w", err)
+	}
+	defer rows.Close()
+	out := []SidecarEnvReseal{}
+	for rows.Next() {
+		r := SidecarEnvReseal{DeploymentID: deploymentID}
+		if err := rows.Scan(&r.SidecarName, &r.Key, &r.SourceSHA256, &r.Kid, &r.Ciphertext); err != nil {
+			return nil, fmt.Errorf("state: scan sidecar env reseal: %w", err)
+		}
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("state: list sidecar env reseals: %w", err)
+	}
+	return out, nil
+}
+
 // CountImagedKeyedCrashCaptures counts the unexpired ready crash captures
 // whose at-rest state imaged keeps with the fleet key (ADR-733): plaintext
 // it would still encrypt to the fleet recipient, and captures it encrypted

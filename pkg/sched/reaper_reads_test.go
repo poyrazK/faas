@@ -206,3 +206,39 @@ func TestReconcileWorkerAppReadsOnlyLiveInstances(t *testing.T) {
 		t.Fatalf("live worker = %+v (%v), want it still running", got, err)
 	}
 }
+
+// spec: §4.3
+// TestPerAppReconcilesReadOnlyLiveInstances pins the per-app reconciles that
+// app-change notifications and service recovery run: on production-us they
+// read whole instance histories (thousands of parked and failed rows per app)
+// about 700 times a minute at ~20 ms each, for a handful of live rows. They
+// now read live rows only and leave the running instance alone.
+func TestPerAppReconcilesReadOnlyLiveInstances(t *testing.T) {
+	ctx := context.Background()
+	mem := state.NewMemStore()
+	_, app, dep := sched.SeedApp(t, mem, api.PlanPro, 256, 4)
+	for i, st := range []state.State{state.StateParked, state.StateStopped, state.StateFailed} {
+		if _, err := mem.CreateInstance(ctx, app.ID, dep.ID, string(st), 256, state.DefaultLocalNodeName, fmt.Sprintf("wake-history-%d", i)); err != nil {
+			t.Fatalf("CreateInstance(%s): %v", st, err)
+		}
+	}
+	live, err := mem.CreateInstance(ctx, app.ID, dep.ID, string(state.StateRunning), 256, state.DefaultLocalNodeName, "wake-live")
+	if err != nil {
+		t.Fatalf("CreateInstance(running): %v", err)
+	}
+	counter := newReaperReadCounter(mem)
+	engine := sched.XNewEngine(t, statetest.NewMem(counter), &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0")
+	counter.reset()
+
+	engine.ReconcileServiceApp(ctx, app.ID)
+	if err := engine.ReconcileEnvironmentWarmPools(ctx, app.ID); err != nil {
+		t.Fatalf("ReconcileEnvironmentWarmPools: %v", err)
+	}
+	if n := counter.historyReads[app.ID]; n != 0 {
+		t.Fatalf("%d instance history reads, want 0", n)
+	}
+	got, err := mem.InstanceByID(ctx, live.ID)
+	if err != nil || got.State != string(state.StateRunning) {
+		t.Fatalf("live instance = %+v (%v), want it still running", got, err)
+	}
+}

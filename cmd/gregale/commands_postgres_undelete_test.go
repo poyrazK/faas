@@ -10,7 +10,8 @@ import (
 )
 
 // A scheduled delete shows its restorable_until in list and get, and
-// `postgres undelete` brings the database back (ADR-20261029174950).
+// `postgres recover` (once `postgres undelete`) brings the database back
+// (ADR-20261029174950).
 func TestPostgresUndeleteAndTheScheduledDeleteView(t *testing.T) {
 	const id = "5b0c6f0e-6a55-4d3b-9b8e-2f1a0c9d7e61"
 	const scheduled = `{"id":"` + id + `","name":"orders","region":"eu","service_class":"development","state":"deleting","restorable_until":"2026-11-06T12:00:00Z"}`
@@ -46,11 +47,11 @@ func TestPostgresUndeleteAndTheScheduledDeleteView(t *testing.T) {
 		wantStdout []string
 		wantStderr string
 	}{
-		{name: "list notes the window", run: main.CmdPostgresList, wantStdout: []string{"orders is scheduled for deletion; undo before 2026-11-06T12:00:00Z with: gregale postgres undelete orders"}},
-		{name: "get shows restorable_until", run: main.CmdPostgresGet, args: []string{"orders"}, wantStdout: []string{"restorable_until: 2026-11-06T12:00:00Z (gregale postgres undelete orders)"}},
+		{name: "list notes the window", run: main.CmdPostgresList, wantStdout: []string{"orders is scheduled for deletion; undo before 2026-11-06T12:00:00Z with: gregale postgres recover orders"}},
+		{name: "get shows restorable_until", run: main.CmdPostgresGet, args: []string{"orders"}, wantStdout: []string{"restorable_until: 2026-11-06T12:00:00Z (gregale postgres recover orders)"}},
 		{name: "undelete by name", run: main.CmdPostgresUndelete, args: []string{"orders"}, wantStdout: []string{"state:            ready"}},
 		{name: "undelete after the window", run: main.CmdPostgresUndelete, args: []string{id}, gone: true, wantCode: 4, wantStderr: "managed postgres database not found"},
-		{name: "undelete needs a database", run: main.CmdPostgresUndelete, wantCode: 1, wantStderr: "usage: gregale postgres undelete"},
+		{name: "undelete needs a database", run: main.CmdPostgresUndelete, wantCode: 1, wantStderr: "usage: gregale postgres recover"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			undeleteStatus = http.StatusOK
@@ -72,5 +73,28 @@ func TestPostgresUndeleteAndTheScheduledDeleteView(t *testing.T) {
 				t.Fatalf("stderr %q lacks %q", stderr(), tc.wantStderr)
 			}
 		})
+	}
+}
+
+// `undelete`, the API's word, still runs `postgres recover`.
+func TestPostgresUndeleteSpellingRunsRecover(t *testing.T) {
+	const id = "5b0c6f0e-6a55-4d3b-9b8e-2f1a0c9d7e61"
+	recovered := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/postgres/databases/"+id+"/undelete" {
+			recovered = true
+			_, _ = w.Write([]byte(`{"id":"` + id + `","name":"orders","state":"ready"}`))
+			return
+		}
+		http.Error(w, `{"status":404,"code":"not_found"}`, http.StatusNotFound)
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_test")
+	main.WithResetJSONOutput(t, false)
+	_, _, restore := main.SwapIO(t)
+	defer restore()
+	if code := main.CmdPostgres([]string{"undelete", id}); code != 0 || !recovered {
+		t.Fatalf("postgres undelete = %d, recovered=%v", code, recovered)
 	}
 }

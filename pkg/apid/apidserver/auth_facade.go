@@ -335,6 +335,16 @@ func (s *server) requireAdminRecoveryMutation(next accountHandler) accountHandle
 	return s.requireAdminMutationPolicy(next)
 }
 
+// Hosting site credentials outlive the session that issues them: an
+// automation credential deploys to a site and an OIDC trust lets a GitHub
+// workflow obtain one. Issuing or revoking either needs the same fresh
+// operator step-up as other provider writes. They stay outside generic
+// replay: a minted token is returned once and never stored in an idempotency
+// receipt (ADR-202610170925, ADR-202610171028), so clients send no key.
+func (s *server) requireAdminCredentialMutation(next accountHandler) accountHandler {
+	return s.requireAdminMutationPolicy(next)
+}
+
 func (s *server) requireAdminMutationPolicy(next accountHandler) accountHandler {
 	return s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireOperator(s.requireStepUpStrict(5 * time.Minute)(s.requireSameOrigin(next)))))
 }
@@ -571,6 +581,42 @@ func (s *server) authorizeNamedApp(r *http.Request, acct state.Account, app stat
 	}
 	_, prob := appaccess.Authorize(r, s.store, loadOrgAuditFrom(s.audit), actorAccount(r, acct), app)
 	return prob
+}
+
+// namedAppAs resolves the app a create request names in its body (its ID, or
+// also its slug when bySlug) and authorizes the caller through appaccess with
+// the route's action. It returns the account the handler acts as: the app's
+// resource account, so a company app's plan entitlements and quotas come from
+// the organization rather than the caller's personal plan, and members other
+// than the creator may act on it (bug hunt 2026-10-28 B9). A request without
+// an API principal keeps the creator check. On failure it returns acct, so
+// plan gates that answer before the app lookup keep their shape.
+func (s *server) namedAppAs(r *http.Request, acct state.Account, ref string, bySlug bool) (state.App, state.Account, *api.Problem) {
+	missing := api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no such app")
+	app, err := s.store.AppByID(r.Context(), ref)
+	if err != nil && bySlug {
+		app, err = s.store.AppBySlug(r.Context(), ref)
+	}
+	if err != nil {
+		return state.App{}, acct, missing
+	}
+	if grant, ok := appaccess.From(r); ok && grant.App.ID == app.ID {
+		return app, grant.Owner, nil
+	}
+	if _, _, _, ok := middleware.PrincipalFrom(r); !ok {
+		if app.AccountID != acct.ID {
+			return state.App{}, acct, missing
+		}
+		return app, acct, nil
+	}
+	owner, prob := appaccess.Authorize(r, s.store, loadOrgAuditFrom(s.audit), actorAccount(r, acct), app)
+	if prob != nil {
+		if prob.Status == http.StatusNotFound {
+			prob = missing
+		}
+		return state.App{}, acct, prob
+	}
+	return app, owner, nil
 }
 
 // loadOrg wraps an accountHandler with pkg/authz.LoadOrg — the

@@ -49,9 +49,9 @@ func TestDrain_ObservesCronLagAndOutcomes(t *testing.T) {
 	enqueue(now.Add(-3 * time.Second))
 	d.Tick(ctx)
 	enqueue(now.Add(-2 * time.Second))
-	synth.AppError().Store(true)
+	synth.AppStatus().Store(404)
 	d.Tick(ctx)
-	synth.AppError().Store(false)
+	synth.AppStatus().Store(0)
 
 	rec := httptest.NewRecorder()
 	metrics.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))

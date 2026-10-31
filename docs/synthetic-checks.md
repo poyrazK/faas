@@ -92,6 +92,15 @@ printf '%s\n' "$ALERT_SECRET" | gregale alert create --app shop --name "health s
 The dashboard's app page lists every check with its uptime, p95 latency and
 last result under **Synthetic checks**.
 
+## Probes are traffic
+
+A probe reaches your app through its public hostname like any other request,
+with the user agent `Gregale-Synthetics/1`. So probes appear in request
+analytics (group by `ua_family` to see them apart), count toward
+`request_count`, error-rate and latency alerts, and count in availability and
+latency SLOs. On an app with little other traffic, probes can be most of an
+SLO's requests; set its objective with that in mind.
+
 ## What checks cost
 
 A probe is an ordinary request and is billed like one. If your app is
@@ -100,13 +109,15 @@ parked, the probe wakes it, and it stays up for your plan's idle timeout
 before parking again. For an app with **no other traffic**, one check costs
 roughly:
 
-| Plan (idle timeout) | Every 5 min | Every 15 min | Every 60 min | Included per month |
+| Plan (RAM, idle timeout) | Every 5 min | Every 15 min | Every 60 min | Included per month |
 |---|---|---|---|---|
-| Hobby (60 s) | ~37 GB-h | ~12 GB-h | ~3 GB-h | 50 GB-h |
-| Pro (300 s) | ~366 GB-h (always warm) | ~122 GB-h | ~31 GB-h | 250 GB-h |
-| Scale (600 s) | ~726 GB-h (always warm) | ~484 GB-h | ~121 GB-h | 1,500 GB-h |
+| Hobby (512 MB, 60 s) | ~73 GB-h | ~24 GB-h | ~6 GB-h | 200 GB-h |
+| Pro (1,024 MB, 300 s) | ~726 GB-h (always warm) | ~242 GB-h | ~60 GB-h | 1,000 GB-h |
+| Scale (2,048 MB, 600 s) | ~1,446 GB-h (always warm) | ~964 GB-h | ~241 GB-h | 3,000 GB-h |
 
-Figures use the plan's RAM plus 8 MB per running second over a 30-day month.
+Figures assume the app uses its plan's full RAM, plus 8 MB, for every running
+second over a 30-day month (1 GB = 1,024 MB); an app given less RAM costs
+proportionally less.
 On Pro and Scale, a check at or below the idle timeout keeps the app warm
 continuously, which also removes cold starts for real users. Choose a
 longer interval for an app that should park. The shortest interval is

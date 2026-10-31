@@ -253,6 +253,14 @@ var TruncateCodeError = truncateCodeError
 
 var JobDispatchResult = jobDispatchResult
 
+// SidecarsForDeploymentOn builds a deployment's sidecar workload specs, as a
+// wake does, on an engine over store.
+func SidecarsForDeploymentOn(ctx context.Context, store state.Store, dep state.Deployment, accountID string) ([]fcvm.WorkloadSpec, error) {
+	e := &Engine{store: store, log: testLog()}
+	specs, _, err := e.sidecarsForDeployment(ctx, dep, accountID)
+	return specs, err
+}
+
 // Dispatch DB-phase tokens (ADR-20261025232118).
 func (o *WorkflowOrchestrator) SetDBPhaseSlotsForTest(slots int) {
 	o.dbPhase = newWorkflowDBPhase(slots)
@@ -283,6 +291,7 @@ var WorkflowFinalOutput = workflowFinalOutput
 var WorkflowJSONEqual = workflowJSONEqual
 var WorkflowStepIdempotencyKey = workflowStepIdempotencyKey
 var XBaseKey = baseKey
+var XEventRoutingOutcome = eventRoutingOutcome
 var XDeploymentRuntimePort = deploymentRuntimePort
 var XLayerKey = layerKey
 var XNewEngine = newEngine
@@ -290,6 +299,11 @@ var ReadWakeRPC = readWakeRPC
 
 // XWakeLeaderBudget is the deadline a coordinated wake's leader runs under.
 func (e *Engine) XWakeLeaderBudget() time.Duration { return e.wakeLeaderBudget() }
+
+// XSpendCapSubject is the billing subject whose spend cap governs app.
+func (e *Engine) XSpendCapSubject(ctx context.Context, app state.App) string {
+	return e.spendCapSubject(ctx, app)
+}
 
 // XEventFanoutSafetyTick and XRunEventFanoutSweep let the event substrate
 // benchmark schedule fanout exactly as Loop.Run does (spec Appendix D V12).
@@ -368,12 +382,15 @@ func (r EgressUpstream) Key() string { return r.key() }
 func (r *Engine) BootBudget() *func(state.State) time.Duration { return &r.bootBudget }
 func (r *Engine) DeadNodeSettle() *storeSettle                 { return &r.deadNodeSettle }
 func (r *Engine) DefaultLocalNodeID() *string                  { return &r.defaultLocalNodeID }
-func (r *Engine) FrozenFastPath() *atomic.Bool                 { return &r.frozenFastPath }
-func (r *Engine) Log() **slog.Logger                           { return &r.log }
-func (r *Engine) NodePresence() **nodePresenceTracker          { return &r.nodePresence }
-func (r *Engine) Now() *func() time.Time                       { return &r.now }
-func (r *Engine) Ops() **wire.OpsMetrics                       { return &r.ops }
-func (r *Engine) Owners() *ownerCache                          { return &r.owners }
+func (r *Engine) FrozenCompressOne() *func(context.Context, string) string {
+	return &r.frozenCompressOne
+}
+func (r *Engine) FrozenFastPath() *atomic.Bool        { return &r.frozenFastPath }
+func (r *Engine) Log() **slog.Logger                  { return &r.log }
+func (r *Engine) NodePresence() **nodePresenceTracker { return &r.nodePresence }
+func (r *Engine) Now() *func() time.Time              { return &r.now }
+func (r *Engine) Ops() **wire.OpsMetrics              { return &r.ops }
+func (r *Engine) Owners() *ownerCache                 { return &r.owners }
 func (r *Engine) ServiceReconcileSubmit() *func(context.Context, string) {
 	return &r.serviceReconcileSubmit
 }
@@ -557,11 +574,12 @@ func (r *MemLeaser) Now() *func() time.Time { return &r.now }
 func (r *NodeAwareFlowCounter) Now() *func() time.Time { return &r.now }
 
 // Members of NodeLedger
-func (r *NodeLedger) Entries() *map[string]*reservation      { return &r.entries }
-func (r *NodeLedger) Now() *func() time.Time                 { return &r.now }
-func (r *NodeLedger) PerApp() *map[string]int                { return &r.perApp }
-func (r *NodeLedger) PerAppEnvironment() *map[string]int     { return &r.perAppEnvironment }
-func (r *NodeLedger) Resident() *map[string]*nodeReservation { return &r.resident }
+func (r *NodeLedger) CPUPressured() *func(string, time.Time) bool { return &r.cpuPressured }
+func (r *NodeLedger) Entries() *map[string]*reservation           { return &r.entries }
+func (r *NodeLedger) Now() *func() time.Time                      { return &r.now }
+func (r *NodeLedger) PerApp() *map[string]int                     { return &r.perApp }
+func (r *NodeLedger) PerAppEnvironment() *map[string]int          { return &r.perAppEnvironment }
+func (r *NodeLedger) Resident() *map[string]*nodeReservation      { return &r.resident }
 func (r *NodeLedger) CeilingForNode_locked(p0 string, p1 api.Limits) int {
 	return r.ceilingForNode_locked(p0, p1)
 }
@@ -604,7 +622,10 @@ func (r *composedWaveNativeVMM) Identity() *runtimeadmission.Identity { return &
 func (r *drainSynth) Calls() *atomic.Int64    { return &r.calls }
 func (r *drainSynth) Transient() *atomic.Bool { return &r.transient }
 func (r *drainSynth) Refused() *atomic.Bool   { return &r.refused }
-func (r *drainSynth) AppError() *atomic.Bool  { return &r.appError }
+
+// AppStatus makes the fake gateway answer as if the app's own code returned
+// that status (ADR-20261031100001).
+func (r *drainSynth) AppStatus() *atomic.Int64 { return &r.appStatus }
 
 // XHTTPGatewaySynth is the drain's real gateway client pointed at base.
 func XHTTPGatewaySynth(client *http.Client, base string) interface {
@@ -989,3 +1010,15 @@ func (d *Drain) XInvocationAttemptBudget(ctx context.Context, inv state.Invocati
 
 // XCronDueOccurrences is the catch-up walk for schedule-policy and command crons.
 var XCronDueOccurrences = cronDueOccurrences
+
+// XHoldFinancialAdmission makes the drain's budget admission refuse every
+// app with err, as a held strict compute budget does.
+func (d *Drain) XHoldFinancialAdmission(err error) {
+	d.financialAdmission = func(context.Context, state.Store, state.App, string, string, time.Time) error { return err }
+}
+
+// CustomerCapacityProblem exposes the customer restatement of a node-budget
+// refusal, built from a refusal carrying the given blockers.
+func CustomerCapacityProblem(detail string, blockers ...api.WorkerAdmissionBlocker) *api.Problem {
+	return customerCapacityProblem(explainAdmission(api.ErrCapacity(detail), blockers...))
+}
