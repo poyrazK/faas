@@ -15,6 +15,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
+// adr: 20261026201726
+//
 // A plain HTTP cron run that fails ends failed on its single attempt; one
 // that succeeds counts as success. Both record first-claim lag from the
 // scheduled time.

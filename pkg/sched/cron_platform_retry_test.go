@@ -14,6 +14,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// adr: 20261026201726 (amendment 2026-10-29)
+//
 // A 5xx from gatewayd-internal's dispatch endpoint means the gateway refused
 // the dispatch before the app saw it; an app's own 5xx arrives inside a 200
 // envelope and a 4xx refusal stays permanent (ADR-20261026201726 amendment

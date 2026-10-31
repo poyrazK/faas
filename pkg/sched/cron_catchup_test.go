@@ -8,6 +8,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/sched"
 )
 
+// adr: 385 (amendment 2026-10-30)
+//
 // After a month without ticks, a per-minute cron's catch-up keeps only the
 // newest api.CronCatchUpRecordedMax due times, and the newest is the latest
 // minute at or before now; a short gap keeps every due time.
