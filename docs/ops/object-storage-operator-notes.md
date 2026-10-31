@@ -2125,6 +2125,16 @@ staging. Admission returns `SlowDown`; HTTP/1 connections with unread uploads
 close after the error. Clients using `Expect: 100-continue` can avoid sending a
 rejected body.
 
+`max_bytes_per_second` is the gateway's share of its node's port
+(ADR-20261031122757 §3): 0 (the default) leaves transfers unpaced, otherwise
+1 MiB/s–12.5 GB/s. Request bodies and object response bodies draw on that one
+budget, in steps of 1 MiB, so the port carries at most the budget each way.
+Transfers over it slow down; none fail, and the time a body waits for the
+budget does not count against the client's minimum upload rate. Set it on
+gateways that share a compute node's port with tenant apps, at
+`api.ObjectGatewayNodePortSharePercent` (30%) of the port speed; the compute
+play will render it (ADR step 4). Releases before this one refuse the field.
+
 The bucket catalog advertises `max_single_put_bytes`, `max_part_bytes`,
 `max_upload_bytes`, `transfer_timeout_seconds` and `upload_profile`, including
 in Go/Node/Python SDKs. The Ansible role requires its edge mode to match the
