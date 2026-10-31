@@ -65,7 +65,7 @@ func (s *PgStore) rejectEventAcknowledgmentTx(ctx context.Context, tx pgx.Tx, in
 	}
 	q := sqlc.New()
 	// Invocation -> account quota -> diagnostic rows, matching completion and expiry.
-	if err := q.EventAckMetricQuotaLock(ctx, tx, mustPgUUID(inv.AccountID)); err != nil {
+	if err := q.EventAckMetricQuotaLock(ctx, tx, mustPgUUID(invocationAsyncSubject(inv))); err != nil {
 		return api.EventAcknowledgmentStatus{}, err
 	}
 	row, err := q.EventAckReject(ctx, tx, sqlc.EventAckRejectParams{InvocationID: mustPgUUID(inv.ID), Permanent: action == "dead-letter", NowAt: pgtypeFromTime(now), FailureReason: "event acknowledgment " + action + ": " + reason})
@@ -73,7 +73,7 @@ func (s *PgStore) rejectEventAcknowledgmentTx(ctx context.Context, tx pgx.Tx, in
 		return api.EventAcknowledgmentStatus{}, err
 	}
 	if inv.QuotaReserved {
-		if err := decrementAccountAsyncInflightTx(ctx, tx, inv.AccountID); err != nil {
+		if err := decrementAccountAsyncInflightTx(ctx, tx, invocationAsyncSubject(inv)); err != nil {
 			return api.EventAcknowledgmentStatus{}, err
 		}
 	}
@@ -133,7 +133,7 @@ func (m *MemStore) rejectEventAcknowledgmentLocked(inv Invocation, ack eventAckn
 	m.eventAcknowledgments[inv.ID] = ack
 	m.setInvocationLocked(inv.ID, inv)
 	if reserved {
-		m.decrementAccountAsyncInflightLocked(inv.AccountID)
+		m.decrementAccountAsyncInflightLocked(invocationAsyncSubject(inv))
 	}
 	m.recordAcknowledgmentOutcomeLocked(inv, ack, acknowledgmentFailureKind(action), now)
 	return out, nil
