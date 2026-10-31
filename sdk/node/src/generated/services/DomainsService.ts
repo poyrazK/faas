@@ -3,10 +3,12 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { CreateCustomDomainRequest } from '../models/CreateCustomDomainRequest.js';
+import type { CustomDomainHostsResponse } from '../models/CustomDomainHostsResponse.js';
 import type { CustomDomainResponse } from '../models/CustomDomainResponse.js';
 import type { DomainDoctorReport } from '../models/DomainDoctorReport.js';
 import type { Problem } from '../models/Problem.js';
 import type { ResourceStatus } from '../models/ResourceStatus.js';
+import type { SetCustomDomainHostsRequest } from '../models/SetCustomDomainHostsRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
@@ -348,6 +350,112 @@ export class DomainsService {
         \`profile_investigation_limit\`.
         `,
         503: `Doctor is dark-launched (CodeDoctorDisabled) or the probe pass failed (CodeDoctorUnavailable).`,
+      },
+    });
+  }
+  /**
+   * Read a wildcard domain's host allowlist.
+   * Returns the names below the wildcard that may hold an on-demand
+   * certificate (ADR-520 amendment 2). `restricted: false` means no
+   * allowlist is set and every name below the wildcard may.
+   *
+   * @returns CustomDomainHostsResponse The host allowlist.
+   * @throws ApiError
+   */
+  public static getDomainHosts({
+    domain,
+  }: {
+    /**
+     * The wildcard custom domain (e.g. `*.example.com`).
+     */
+    domain: string,
+  }): CancelablePromise<CustomDomainHostsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/domains/{domain}/hosts',
+      path: {
+        'domain': domain,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        422: `Only a wildcard custom domain has a host allowlist to read.`,
+      },
+    });
+  }
+  /**
+   * Replace a wildcard domain's host allowlist.
+   * Only the listed names below the wildcard get certificates; the edge
+   * refuses every other server name, so random names cannot spend the
+   * wildcard's new-host budget. Names are the part of the host before
+   * the wildcard's suffix (`eu.shop` for `eu.shop.example.com`), or the
+   * full host. Routing is unchanged, and certificates the edge already
+   * holds for a removed name keep serving until their next reload or
+   * renewal. The domain doctor's probe host is always allowed.
+   *
+   * @returns CustomDomainHostsResponse The saved host allowlist.
+   * @throws ApiError
+   */
+  public static setDomainHosts({
+    domain,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * The wildcard custom domain (e.g. `*.example.com`).
+     */
+    domain: string,
+    requestBody: SetCustomDomainHostsRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<CustomDomainHostsResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/domains/{domain}/hosts',
+      path: {
+        'domain': domain,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        422: `Not a wildcard domain, an invalid name, or more than 100 names (the problem carries \`limit\` and \`observed\`).`,
+      },
+    });
+  }
+  /**
+   * Remove a wildcard domain's host allowlist.
+   * Every name below the wildcard may hold a certificate again.
+   * @returns void
+   * @throws ApiError
+   */
+  public static clearDomainHosts({
+    domain,
+  }: {
+    /**
+     * The wildcard custom domain (e.g. `*.example.com`).
+     */
+    domain: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/domains/{domain}/hosts',
+      path: {
+        'domain': domain,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        422: `Only a wildcard custom domain has a host allowlist to remove.`,
       },
     });
   }
