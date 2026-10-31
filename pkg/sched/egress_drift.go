@@ -334,7 +334,7 @@ func (e *EgressDriftSubscriber) fanOut(ctx context.Context, appID, slug string) 
 	// so a vmmd that hosts 3 instances of the app receives
 	// one call, not three — the per-app fan-out on vmmd's
 	// side is the responsibility of pkg/fcvm.Manager.
-	rows, err := e.engine.store.ListInstancesForApp(ctx, appID)
+	rows, err := e.engine.liveInstancesForApp(ctx, appID)
 	if err != nil {
 		e.log.Warn("schedd: egress drift list instances failed",
 			"app", appID, "slug", slug, "err", err)
@@ -417,7 +417,7 @@ func (e *EgressDriftSubscriber) fanOutStaticEgressIP(ctx context.Context, appID,
 		ipStr = ip.String()
 	}
 
-	rows, err := e.engine.store.ListInstancesForApp(ctx, appID)
+	rows, err := e.engine.liveInstancesForApp(ctx, appID)
 	if err != nil {
 		e.log.Warn("schedd: static egress IP drift list instances failed",
 			"app", appID, "slug", slug, "err", err)

@@ -444,7 +444,7 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	guestHeaders := stripHopByHop(r.Header)
 	injectGuestTraceContext(r.Context(), guestHeaders)
 	for name, vals := range guestHeaders {
-		if strings.HasPrefix(strings.ToLower(name), "x-faas-") && !guestReceivesFaasHeader(r.Context(), name) {
+		if api.HasLowerPrefix(name, "x-faas-") && !guestReceivesFaasHeader(r.Context(), name) {
 			continue
 		}
 		for _, v := range vals {
@@ -1312,7 +1312,7 @@ func rawRequestHead(r *http.Request) ([]byte, error) {
 
 	headers := r.Header.Clone()
 	for name := range headers {
-		if strings.HasPrefix(strings.ToLower(name), "x-faas-") && !guestReceivesFaasHeader(r.Context(), name) {
+		if api.HasLowerPrefix(name, "x-faas-") && !guestReceivesFaasHeader(r.Context(), name) {
 			headers.Del(name)
 		}
 	}

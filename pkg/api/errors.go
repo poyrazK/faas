@@ -2454,7 +2454,7 @@ func StatusForCode(code string) int {
 		return http.StatusPaymentRequired
 	case CodePlanCronsNotAllowed:
 		return http.StatusPaymentRequired
-	case CodePlanCronQuota:
+	case CodePlanCronQuota, CodePlanEventSubscriptionQuota:
 		return http.StatusForbidden
 	case CodePlanAlertRulesNotAllowed:
 		return http.StatusPaymentRequired
@@ -3682,6 +3682,11 @@ const CodePlanCronsNotAllowed = "plan_crons_not_allowed"
 // upsell-vs-delete copy without parsing the body.
 const CodePlanCronQuota = "plan_cron_quota"
 
+// CodePlanEventSubscriptionQuota is the 403 a deploy gets when its
+// event_triggers would leave more enabled event subscriptions than the plan's
+// per-app or per-account cap (ADR-20261031130000).
+const CodePlanEventSubscriptionQuota = "plan_event_subscription_quota"
+
 // CodeCronFireNowBusy is the 429 a manual cron run gets while the cron
 // already has CronFireNowActivePerCron runs waiting or running
 // (ADR-20261026201726).
@@ -4371,6 +4376,19 @@ func ErrPlanCronQuota(plan Plan, scope string, limit, observed int) *Problem {
 			plan, limit, scopeName, observed)).
 		WithLimit(int64(limit), int64(observed)).
 		WithDocs(docsBase + "/plans#crons")
+}
+
+// ErrPlanEventSubscriptionQuota refuses a deploy whose gregale.yaml would
+// leave more enabled event subscriptions than the plan allows for the app or
+// the account (ADR-20261031130000).
+func ErrPlanEventSubscriptionQuota(plan Plan, scope string, limit, observed int) *Problem {
+	scopeName := PlanQuotaScopeDisplayName(scope)
+	return NewProblem(http.StatusForbidden, CodePlanEventSubscriptionQuota,
+		"Event subscription limit reached",
+		fmt.Sprintf("%s plan caps enabled event subscriptions at %d for %s; this deploy would leave %d. Remove event_triggers from gregale.yaml to add others.",
+			plan, limit, scopeName, observed)).
+		WithLimit(int64(limit), int64(observed)).
+		WithDocs(docsBase + "/events#subscription-limits")
 }
 
 // ErrCronFireNowBusy is the 429 for a manual run of a cron that already

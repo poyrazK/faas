@@ -331,7 +331,7 @@ func (m *MemStore) ExpireEventAcknowledgments(ctx context.Context, limit int) (i
 		}
 		m.setInvocationLocked(id, inv)
 		if reserved {
-			m.decrementAccountAsyncInflightLocked(inv.AccountID)
+			m.decrementAccountAsyncInflightLocked(invocationAsyncSubject(inv))
 		}
 		count++
 		if count >= limit {

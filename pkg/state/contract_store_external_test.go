@@ -45,6 +45,7 @@ type contractTestStore interface {
 	state.EventStorageUsageStore
 	state.EventSubscriptionControlStore
 	state.EventSubscriptionStore
+	state.EventSubscriptionReconcileStore
 	state.EventWorkBindingStore
 	state.FeatureFlagPromotionHoldReader
 	state.FeatureFlagStore
