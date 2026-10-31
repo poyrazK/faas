@@ -65,6 +65,11 @@ and the spend cap counts exactly that. After a downgrade, usage your larger
 allowance already covered is never billed and does not count toward the cap;
 after an upgrade, overage already billed stays billed and keeps counting.
 
+Overage is billed hour by hour against the allowance in force at the time,
+and the spend cap counts exactly that. After a downgrade, usage your larger
+allowance already covered is never billed and does not count toward the cap;
+after an upgrade, overage already billed stays billed and keeps counting.
+
 An organization that owns its resources is billed apart from its members and
 has its own cap, with the same defaults. Its owner sets it with
 `POST /v1/orgs/{slug}/overage-cap`; any member reads it with

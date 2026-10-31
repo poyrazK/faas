@@ -118,6 +118,11 @@ type reservation struct {
 	// frozen marks a frozen reservation (ADR-1151): admissionMB is the
 	// instance's measured charge and it books no vCPU, CPU or concurrency.
 	frozen bool
+	// frozenAt is when the reservation froze (or was seeded frozen), and
+	// compressTried that proactive compression already asked vmmd about it
+	// (ADR 20261031143521): compressing again frees little.
+	frozenAt      time.Time
+	compressTried bool
 }
 
 // NewNodeLedger returns an empty per-node ledger. Backwards-compat
@@ -278,7 +283,7 @@ type Request struct {
 	// the Tier A5 destination-side reservation.
 	Kind Kind
 	// FrozenChargeMB is the RAM a KindFrozen reservation books, at least
-	// MeasuredChargeFloorMB.
+	// FrozenChargeFloorMB (ADR 20261031143521).
 	FrozenChargeMB int
 	// Flexible jobs may use only capacity above the per-node app wake
 	// reserve. Placement applies the same reserve before selecting a node.
