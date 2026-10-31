@@ -228,9 +228,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return fmt.Errorf("builderd: %w", err)
 	}
+	// ADR-20261031103801: dependency caches share platform image layers,
+	// off by default.
+	sharePlatformBlobs, err := builderdpkg.ParseSharedPlatformBlobs(os.Getenv(builderdpkg.SharedPlatformBlobsEnv))
+	if err != nil {
+		return fmt.Errorf("builderd: %w", err)
+	}
 	if d, ok := driver.(*builderdpkg.VMMDriver); ok {
 		d.WithBuilderBaseDigest(builderBaseDigestPath)
 		d.WithDockerHubMirrors(mirrors)
+		d.WithSharedPlatformBlobs(sharePlatformBlobs)
 		// The node artifact cache shares the build drive filesystem and keeps
 		// less free than one build needs (#5709, ADR-20261027173012).
 		if sourceStorage != nil {
