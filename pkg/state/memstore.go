@@ -18885,13 +18885,10 @@ func (m *MemStore) appendEventLocked(actor, kind string, subject *string, data [
 		Data:    append([]byte(nil), data...),
 	}
 	if kind == "event.published" {
-		created, err := m.enqueuePublishedEventLocked(subj, data, at)
-		if err != nil {
-			return err
-		}
-		if !created && customerPublishedEvent(kind, data) {
-			return nil
-		}
+		// ADR-20261030170000: the receipt is the event's one copy, as the
+		// Postgres fanout trigger skips the events row.
+		_, err := m.enqueuePublishedEventLocked(subj, data, at)
+		return err
 	}
 	m.events = append(m.events, e)
 	return nil
