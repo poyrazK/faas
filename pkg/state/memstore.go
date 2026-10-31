@@ -24999,11 +24999,27 @@ func (m *MemStore) CreateEdgeRuleIfUnderQuota(ctx context.Context, in CreateEdge
 }
 
 func (m *MemStore) ListEdgeRulesForAccount(_ context.Context, accountID string) ([]EdgeRule, error) {
+	return m.listAccountEdgeRules(accountID, func(EdgeRule) bool { return true }), nil
+}
+
+func (m *MemStore) ListEdgeRulesUsingCorsPreset(_ context.Context, accountID, presetID string) ([]EdgeRule, error) {
+	return m.listAccountEdgeRules(accountID, func(r EdgeRule) bool {
+		return r.CorsPresetID != nil && *r.CorsPresetID == presetID
+	}), nil
+}
+
+func (m *MemStore) ListRouteRulesTargeting(_ context.Context, accountID, targetSlug string) ([]EdgeRule, error) {
+	return m.listAccountEdgeRules(accountID, func(r EdgeRule) bool {
+		return r.Kind == EdgeRuleKindRoute && r.Action.Route != nil && r.Action.Route.TargetAppSlug == targetSlug
+	}), nil
+}
+
+func (m *MemStore) listAccountEdgeRules(accountID string, keep func(EdgeRule) bool) []EdgeRule {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var out []EdgeRule
 	for _, r := range m.edgeRules {
-		if r.AccountID == accountID {
+		if r.AccountID == accountID && keep(r) {
 			r.MatchHeaders = cloneEdgeRuleMatchHeaders(r.MatchHeaders)
 			out = append(out, r)
 		}
@@ -25011,7 +25027,7 @@ func (m *MemStore) ListEdgeRulesForAccount(_ context.Context, accountID string) 
 	sort.Slice(out, func(i, j int) bool {
 		return edgeRuleMatchOrderLess(out[i], out[j])
 	})
-	return out, nil
+	return out
 }
 
 func (m *MemStore) ListEdgeRulesForApp(_ context.Context, appID string) ([]EdgeRule, error) {
