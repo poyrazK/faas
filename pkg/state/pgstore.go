@@ -22914,7 +22914,21 @@ func (s *PgStore) CurrentMonthOverageCents(ctx context.Context, accountID string
 	if err != nil {
 		return 0, err
 	}
-	return monthOverageCents(plan, snapshots, now, mbSeconds), nil
+	// Only an account that changed plan this month reads its usage before the
+	// change: the month's total less the usage since, a short indexed range.
+	monthEnd := monthStart.AddDate(0, 1, 0)
+	usageBefore := func(at time.Time) (int64, error) {
+		var since int64
+		if err := s.pool.QueryRow(ctx,
+			`select COALESCE(SUM(mb_seconds), 0)::bigint
+			   from usage_minutes
+			  where account_id = $1 and minute >= $2 and minute < $3`,
+			accountID, at.UTC(), monthEnd).Scan(&since); err != nil {
+			return 0, err
+		}
+		return max(mbSeconds-since, 0), nil
+	}
+	return monthOverageCents(plan, snapshots, now, mbSeconds, usageBefore)
 }
 
 // UsageByHour returns per-app usage rolled up from the per-minute rows
@@ -22995,18 +23009,34 @@ func (s *PgStore) UsageWindows(ctx context.Context, start, end time.Time) ([]Usa
 	return out, rows.Err()
 }
 
+// pendingBillingSubjectsSQL lists provider's billing identities whose subject,
+// an account or a company organization, is on a paid plan. A cancelled
+// subject keeps its identity but is Free, and the pusher never delivers a Free
+// subject's hours, so scanning them only grew every pass and let their
+// month-old hours fill the row limit ahead of paying subjects' current ones
+// (ADR-20261031100000).
+const pendingBillingSubjectsSQL = `paid as (
+		   select bi.account_id, bi.billing_from
+		     from billing_identities bi
+		     left join accounts a on a.id = bi.account_id
+		     left join orgs o on o.id = bi.account_id and not o.personal_org
+		    where bi.provider = $1
+		      and coalesce(a.plan, o.plan, 'free') <> 'free'
+		 )`
+
 // PendingBillingUsageWindows returns bounded positive hourly usage without a
 // pusher-owned receipt for provider. billing_identities.billing_from prevents
 // a newly selected backend from charging pre-checkout/provider-switch usage.
+// Only paid subjects are listed.
 func (s *PgStore) PendingBillingUsageWindows(ctx context.Context, provider string, start, end time.Time) ([]UsageWindow, error) {
 	rows, err := s.pool.Query(ctx,
-		`with hourly as (
+		`with `+pendingBillingSubjectsSQL+`, hourly as (
 		   select u.account_id,
 		          date_trunc('hour', u.minute at time zone 'UTC') at time zone 'UTC' as window_start,
 		          sum(u.mb_seconds)::bigint as mb_seconds
 		     from usage_minutes u
-		     join billing_identities bi
-		       on bi.account_id = u.account_id and bi.provider = $1
+		     join paid bi
+		       on bi.account_id = u.account_id
 		    where u.minute >= $2 and u.minute < $3
 		      and u.minute >= bi.billing_from
 		    group by u.account_id, window_start
@@ -23065,13 +23095,13 @@ func (s *PgStore) PendingBillingMeterUsageWindows(ctx context.Context, provider 
 		return nil, fmt.Errorf("unsupported billing meter %q", meter)
 	}
 	rows, err := s.pool.Query(ctx,
-		`with hourly as (
+		`with `+pendingBillingSubjectsSQL+`, hourly as (
 		   select u.account_id,
 		          date_trunc('hour', u.minute at time zone 'UTC') at time zone 'UTC' as window_start,
 		          sum(u.net_tx_bytes)::bigint as quantity
 		     from usage_minutes u
-		     join billing_identities bi
-		       on bi.account_id = u.account_id and bi.provider = $1
+		     join paid bi
+		       on bi.account_id = u.account_id
 		    where u.minute >= $2 and u.minute < $3
 		      and u.minute >= bi.billing_from
 		    group by u.account_id, window_start
