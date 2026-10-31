@@ -54,7 +54,12 @@ Raising or clearing the cap, or the start of the next month, lets workloads
 wake again on the next request or scheduler tick. If you change plans during
 a month, each plan's included GB-RAM-hours count for the share of the month
 you held it: a whole month on Pro includes 1,000 GB-h, and half a month on
-Hobby then half on Pro includes 600 GB-h.
+Hobby then half on Pro includes 600 GB-h. Each hour is billed against the
+allowance in force when it ends, and the dashboard and the cap count overage
+the same way: usage a larger plan already covered is not billed after a
+downgrade, and overage billed before an upgrade stays billed. If a paid plan
+ends during a month, the Free plan's 20 GB-h count from the day you return to
+Free.
 
 An organization that owns its resources is billed apart from its members and
 has its own cap, with the same defaults. Its owner sets it with
@@ -99,8 +104,9 @@ continues to use its existing source until correction reconciliation is accepted
 
 All amounts use integer millicents (1,000 millicents per cent). One shared
 account allowance applies to each usage meter for the month. When plans change,
-the compute allowance is each plan's grant for its share of the month, the
-allowance the provider bills against; other meters keep the largest recorded
+the compute allowance is what the provider pusher applies hour by hour: each
+hour above the grant in force for it, so the ledger's net compute equals the
+billed overage (ADR-20261031090658); other meters keep the largest recorded
 grant. Its quantities are shared proportionally across price versions. Within each version, net cost and
 allowance value are allocated by workload quantity using stable largest-remainder
 rounding. Allocated amounts sum exactly to the meter totals. Shadow and disabled

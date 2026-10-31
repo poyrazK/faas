@@ -50,9 +50,13 @@ func ReadFinancialCosts(ctx context.Context, store state.Store, account string, 
 		return api.FinancialCostsResponse{}, err
 	}
 	out := api.FinancialCostsResponse{AccountID: account, Currency: api.BillingCurrency, PeriodStart: start, PeriodEnd: end, AsOf: asOf, RetainedFrom: retained, EvidenceThroughID: head, Scope: "retained_compute_and_interface_egress", Meters: []api.FinancialMeterCosts{}, Invoices: []api.Invoice{}, InvoiceReconciliation: "not_reconciled", MissingBillComponents: []string{"subscription_and_addons", "credits_and_adjustments", "tax", "external_and_managed_resource_meters"}}
+	computeGrant, err := billedComputeGrant(ctx, fs, account, start, asOf, head, prices)
+	if err != nil {
+		return api.FinancialCostsResponse{}, err
+	}
 	total := new(big.Int)
 	for _, meter := range []string{"compute", "egress"} {
-		m, err := financialMeterCosts(account, start, end, asOf, now, retained, meter, coverage, rows, prices)
+		m, err := financialMeterCosts(account, start, end, asOf, now, retained, meter, coverage, rows, prices, computeGrant)
 		if err != nil {
 			return out, err
 		}
@@ -75,6 +79,47 @@ func ReadFinancialCosts(ctx context.Context, store state.Store, account string, 
 	return out, nil
 }
 
+// billedComputeGrant is the compute allowance the provider pusher's billing
+// applies to [start, asOf) (ADR-20261031090658): the pusher bills each hour
+// above the allowance in force for it, so after a plan change in the month
+// the ledger's live compute usage, split at the hours its allowance changed,
+// less what the pusher bills for it. A month without a plan change keeps the
+// time-weighted grant (ADR-20261030093512).
+func billedComputeGrant(ctx context.Context, fs state.FinancialStore, account string, start, asOf time.Time, head int64, snapshots []state.FinancialPriceSnapshot) (int64, error) {
+	var live []state.FinancialPriceSnapshot
+	versions := map[string]bool{}
+	for _, p := range snapshots {
+		if p.Price.Meter != string(state.BillingMeterCompute) || p.EffectiveFrom.After(asOf) || p.Price.Currency != api.BillingCurrency || p.DeliveryMode != "live" {
+			continue
+		}
+		live = append(live, p)
+		versions[p.Price.Version] = true
+	}
+	boundaries := grantBoundaries(live, start, asOf)
+	if len(boundaries) == 0 {
+		return state.MonthComputeIncludedMBSeconds("", live, asOf), nil
+	}
+	var usage []state.HourMBSeconds
+	var total int64
+	from := start
+	for _, to := range append(boundaries, asOf) {
+		rows, err := fs.AggregateFinancialUsage(ctx, account, from, to, head)
+		if err != nil {
+			return 0, fmt.Errorf("financial compute usage before %s: %w", to.Format(time.RFC3339), err)
+		}
+		var quantity int64
+		for _, row := range rows {
+			if row.Meter == string(state.BillingMeterCompute) && versions[row.PriceVersion] {
+				quantity += row.Quantity
+			}
+		}
+		usage = append(usage, state.HourMBSeconds{Hour: from, MBSeconds: quantity})
+		total += quantity
+		from = to
+	}
+	return max(total-state.BilledComputeOverageMBSeconds("", live, usage), 0), nil
+}
+
 func minTime(a, b time.Time) time.Time {
 	if a.Before(b) {
 		return a
@@ -82,7 +127,7 @@ func minTime(a, b time.Time) time.Time {
 	return b
 }
 
-func financialMeterCosts(account string, start, end, asOf, now, retained time.Time, meter string, sampling state.FinancialSamplingCoverage, rows []state.FinancialUsageAggregate, snapshots []state.FinancialPriceSnapshot) (api.FinancialMeterCosts, error) {
+func financialMeterCosts(account string, start, end, asOf, now, retained time.Time, meter string, sampling state.FinancialSamplingCoverage, rows []state.FinancialUsageAggregate, snapshots []state.FinancialPriceSnapshot, computeGrant int64) (api.FinancialMeterCosts, error) {
 	expected := int64(asOf.Sub(start) / time.Minute)
 	minutes := sampling.ComputeMinutes
 	if meter == "egress" {
@@ -165,15 +210,8 @@ func financialMeterCosts(account string, start, end, asOf, now, retained time.Ti
 		var err error
 		if meter == string(state.BillingMeterCompute) {
 			// The allowance the provider pusher bills against
-			// (ADR-20261030093512): each plan's for its share of the month.
-			var live []state.FinancialPriceSnapshot
-			for _, p := range byVersion {
-				if p.DeliveryMode == "live" {
-					live = append(live, p)
-				}
-			}
-			grant := state.MonthComputeIncludedMBSeconds("", live, asOf)
-			cost, err = financial.CostContractsWithGrant(account, start, end, prices, entries, grant)
+			// (ADR-20261030093512, ADR-20261031090658).
+			cost, err = financial.CostContractsWithGrant(account, start, end, prices, entries, computeGrant)
 		} else {
 			cost, err = financial.CostContracts(account, start, end, prices, entries)
 		}

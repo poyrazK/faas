@@ -22868,10 +22868,9 @@ func (s *PgStore) LoadAllOverageCapCents(ctx context.Context) (map[string]int64,
 }
 
 // CurrentMonthOverageCents returns the account's derived compute overage in
-// integer cents for the current UTC month. It removes the month's included
-// allowance (each plan's grant for its share of the month, ADR-20261030093512) before
-// converting the remainder to cents. Integer math only — never float on
-// money (CLAUDE.md).
+// integer cents for the current UTC month: what the provider pusher bills,
+// each hour above the allowance in force for it (ADR-20261031090658), before
+// the spend cap. Integer math only — never float on money (CLAUDE.md).
 //
 // Hand-written: the formula is meterd-internal and not on the read
 // surface. The migration on usage_minutes is unchanged; we SELECT
@@ -22888,23 +22887,44 @@ func (s *PgStore) CurrentMonthOverageCents(ctx context.Context, accountID string
 	// pkg-state-usage-monthly-tz-compare) used elsewhere in this file.
 	now := time.Now().UTC()
 	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
-	var mbSeconds int64
 	var plan api.Plan
 	if err := s.pool.QueryRow(ctx,
-		`select COALESCE(SUM(u.mb_seconds), 0)::bigint,
-		        COALESCE((select a.plan from accounts a where a.id = $1),
-		                 (select o.plan from orgs o where o.id = $1 and not o.personal_org), 'free')
+		`select COALESCE((select a.plan from accounts a where a.id = $1),
+		                 (select o.plan from orgs o where o.id = $1 and not o.personal_org), 'free')`,
+		accountID).Scan(&plan); err != nil {
+		return 0, err
+	}
+	// Hourly sums, as the pusher reads them (UsageByHour): a month with a
+	// plan change is billed hour by hour against the allowance of the time.
+	rows, err := s.pool.Query(ctx,
+		`select date_trunc('hour', u.minute AT TIME ZONE 'UTC') as hour,
+		        sum(u.mb_seconds)::bigint
 		   from usage_minutes u
 		  where u.account_id = $1
-		    and u.minute >= $2`,
-		accountID, monthStart).Scan(&mbSeconds, &plan); err != nil {
+		    and u.minute >= $2
+		  group by hour`,
+		accountID, monthStart)
+	if err != nil {
+		return 0, err
+	}
+	var usage []HourMBSeconds
+	for rows.Next() {
+		var h HourMBSeconds
+		if err := rows.Scan(&h.Hour, &h.MBSeconds); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		usage = append(usage, h)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
 		return 0, err
 	}
 	snapshots, err := s.ListFinancialPriceSnapshots(ctx, accountID, monthStart)
 	if err != nil {
 		return 0, err
 	}
-	return monthOverageCents(plan, snapshots, now, mbSeconds), nil
+	return monthOverageCents(plan, snapshots, now, usage), nil
 }
 
 // UsageByHour returns per-app usage rolled up from the per-minute rows

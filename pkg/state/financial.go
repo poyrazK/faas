@@ -103,14 +103,61 @@ func MonthComputeIncludedMBSeconds(current api.Plan, snapshots []FinancialPriceS
 	return weighted / month
 }
 
-// monthOverageCents applies the month's recorded plan history (ADR-1162,
-// ADR-20261030093512): each plan's allowance for its share of the month, the
-// same allowance the provider pusher removes, so the spend cap, the dashboard
-// and the provider agree. meterd records a plan change within a minute; until
-// it has, the current plan counts from now.
-func monthOverageCents(current api.Plan, snapshots []FinancialPriceSnapshot, now time.Time, mbSeconds int64) int64 {
-	included := MonthComputeIncludedMBSeconds(current, withCurrentPlan(current, snapshots, now), now)
-	return api.OverageCentsForBillableMBSeconds(api.BillableMBSecondsAbove(included, mbSeconds))
+// HourMBSeconds is the compute usage (mb_seconds) of one UTC hour, or of a
+// run of hours that share one allowance, keyed by its first hour.
+type HourMBSeconds struct {
+	Hour      time.Time
+	MBSeconds int64
+}
+
+// BilledComputeOverageMBSeconds returns the compute overage (mb_seconds) the
+// provider pusher bills for one calendar month's usage, before the spend cap
+// (ADR-20261031090658). The pusher bills each hour above the allowance in
+// force when the hour ends (MonthComputeIncludedMBSeconds through the hour's
+// end), so a plan change applies from its hour on: a downgrade never bills
+// usage the larger allowance already covered, and an upgrade never takes back
+// overage already billed. The month's usage above its latest allowance is not
+// what the provider invoices once the plan changed during the month.
+func BilledComputeOverageMBSeconds(current api.Plan, snapshots []FinancialPriceSnapshot, usage []HourMBSeconds) int64 {
+	ordered := slices.Clone(usage)
+	slices.SortStableFunc(ordered, func(a, b HourMBSeconds) int { return a.Hour.Compare(b.Hour) })
+	var activations []time.Time
+	for _, s := range snapshots {
+		if s.Price.Meter == "compute" {
+			activations = append(activations, s.EffectiveFrom)
+		}
+	}
+	slices.SortFunc(activations, time.Time.Compare)
+	var billed, prior, included int64
+	active := -1
+	for _, u := range ordered {
+		through := u.Hour.UTC().Truncate(time.Hour).Add(time.Hour)
+		n := active
+		if n < 0 {
+			n = 0
+		}
+		for n < len(activations) && activations[n].Before(through) {
+			n++
+		}
+		// The allowance changes only when another activation applies.
+		if n != active {
+			included, active = MonthComputeIncludedMBSeconds(current, snapshots, through), n
+		}
+		total := prior + u.MBSeconds
+		billed += api.BillableMBSecondsAbove(included, total) - api.BillableMBSecondsAbove(included, prior)
+		prior = total
+	}
+	return billed
+}
+
+// monthOverageCents is the compute overage the provider bills for the
+// month's usage so far (ADR-20261031090658): the spend cap, the dashboard and
+// the provider agree because they share BilledComputeOverageMBSeconds. meterd
+// records a plan change within a minute; until it has, the current plan
+// counts from now.
+func monthOverageCents(current api.Plan, snapshots []FinancialPriceSnapshot, now time.Time, usage []HourMBSeconds) int64 {
+	billed := BilledComputeOverageMBSeconds(current, withCurrentPlan(current, snapshots, now), usage)
+	return api.OverageCentsForBillableMBSeconds(billed)
 }
 
 // withCurrentPlan adds current as an activation just before now when the

@@ -20490,10 +20490,10 @@ func (m *MemStore) LoadAllOverageCapCents(_ context.Context) (map[string]int64, 
 }
 
 // CurrentMonthOverageCents sums the account's compute usage_minutes.mb_seconds
-// from the UTC month start, removes the month's included allowance (the
-// time-weighted plan grant this month, ADR-20261030093512), and converts the
-// remainder to integer cents. Integer math only — never float on money
-// (CLAUDE.md).
+// by UTC hour from the month start and returns what the provider pusher
+// bills for it, each hour above the allowance in force for it
+// (ADR-20261031090658), in integer cents. Integer math only — never float on
+// money (CLAUDE.md).
 //
 // Mirrors pgstore.CurrentMonthOverageCents: the scan is O(rows-in-month)
 // which on a one-box is bounded. The `now` argument is the caller's
@@ -20509,7 +20509,7 @@ func (m *MemStore) CurrentMonthOverageCents(_ context.Context, accountID string)
 	} else if org, ok := m.orgs[accountID]; ok && !org.Personal {
 		plan = org.Plan
 	}
-	var mbSeconds int64
+	byHour := map[time.Time]int64{}
 	for _, u := range m.usage {
 		if u.AccountID != accountID {
 			continue
@@ -20517,7 +20517,11 @@ func (m *MemStore) CurrentMonthOverageCents(_ context.Context, accountID string)
 		if u.Minute.Before(monthStart) {
 			continue
 		}
-		mbSeconds += u.MBSeconds
+		byHour[u.Minute.UTC().Truncate(time.Hour)] += u.MBSeconds
+	}
+	usage := make([]HourMBSeconds, 0, len(byHour))
+	for hour, mbSeconds := range byHour {
+		usage = append(usage, HourMBSeconds{Hour: hour, MBSeconds: mbSeconds})
 	}
 	var snapshots []FinancialPriceSnapshot
 	for _, p := range m.financialPrices {
@@ -20525,7 +20529,7 @@ func (m *MemStore) CurrentMonthOverageCents(_ context.Context, accountID string)
 			snapshots = append(snapshots, p)
 		}
 	}
-	return monthOverageCents(plan, snapshots, now, mbSeconds), nil
+	return monthOverageCents(plan, snapshots, now, usage), nil
 }
 
 // UpdateAccountOverageCapCents writes accounts.overage_cap_cents for
