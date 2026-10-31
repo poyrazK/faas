@@ -79,6 +79,9 @@ func (s *Server) RunAgent(stream scheddpb.Schedd_RunAgentServer) error {
 		Output: func(_ context.Context, name string, chunk []byte) error {
 			return send(&scheddpb.AgentRunEvent{Frame: &scheddpb.AgentRunEvent_Output{Output: &scheddpb.AgentRunOutput{Stream: name, Chunk: append([]byte(nil), chunk...)}}})
 		},
+		Usage: func(_ context.Context, u sched.AgentRunUsage) error {
+			return send(&scheddpb.AgentRunEvent{Frame: &scheddpb.AgentRunEvent_Usage{Usage: agentRunUsageToProto(u)}})
+		},
 	}
 	result, err := s.agentRuns.Run(ctx, admission, run, placed, hooks, frames.cancel)
 	if err != nil {
@@ -94,12 +97,20 @@ func (s *Server) RunAgent(stream scheddpb.Schedd_RunAgentServer) error {
 	return opErr
 }
 
+func agentRunUsageToProto(u sched.AgentRunUsage) *scheddpb.AgentRunUsage {
+	return &scheddpb.AgentRunUsage{Method: int32(u.Method), Samples: int32(u.Samples), ExpectedSamples: int32(u.ExpectedSamples),
+		MeasuredMs: u.MeasuredMillis, PausedMs: u.PausedMillis, PrivateMbMs: u.PrivateMBMillis,
+		UnpausedPrivateMbMs: u.UnpausedPrivateMBMillis, BillableMbMs: u.BillableMBMillis, PeakPrivateMb: u.PeakPrivateMB,
+		ColdBoot: u.ColdBoot}
+}
+
 func agentRunStartFromProto(start *scheddpb.AgentRunStart) (sched.AgentRunAdmission, agentrunproto.Request, error) {
 	if start == nil {
 		return sched.AgentRunAdmission{}, agentrunproto.Request{}, status.Error(codes.InvalidArgument, "the first frame must be start")
 	}
 	admission := sched.AgentRunAdmission{RunID: start.GetRunId(), AccountID: start.GetAccountId(), Plan: api.Plan(start.GetPlan()),
-		RAMMB: int(start.GetRamMb()), VCPU: int(start.GetVcpu()), CPUMillicores: int(start.GetCpuMillicores())}
+		RAMMB: int(start.GetRamMb()), VCPU: int(start.GetVcpu()), CPUMillicores: int(start.GetCpuMillicores()),
+		PauseDuringModelCalls: start.GetPauseDuringModelCalls()}
 	var run agentrunproto.Request
 	if err := json.Unmarshal(start.GetRun(), &run); err != nil {
 		return sched.AgentRunAdmission{}, agentrunproto.Request{}, status.Error(codes.InvalidArgument, "run is not an agent run request")

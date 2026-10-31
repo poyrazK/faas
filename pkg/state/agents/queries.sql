@@ -30,17 +30,18 @@ UPDATE agents SET state='deleted', deleted_at=now(), updated_at=now()
 
 -- name: InsertAgentVersion :one
 INSERT INTO agent_versions (agent_id,version,account_id,harness_preset,harness_image,harness_run,harness_models,prompt_template,ram_mb,timeout_sec,
-  model_integrations,ai_budget_millicents,deliveries)
+  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls)
  VALUES (sqlc.arg(agent_id)::text::uuid,sqlc.arg(version)::integer,sqlc.arg(account_id)::text::uuid,
   sqlc.narg(harness_preset)::text,sqlc.narg(harness_image)::text,sqlc.arg(harness_run)::text[],sqlc.arg(harness_models)::jsonb,
   sqlc.arg(prompt_template)::text,sqlc.narg(ram_mb)::integer,sqlc.arg(timeout_sec)::integer,
-  sqlc.arg(model_integrations)::jsonb,sqlc.narg(ai_budget_millicents)::bigint,sqlc.arg(deliveries)::jsonb)
+  sqlc.arg(model_integrations)::jsonb,sqlc.narg(ai_budget_millicents)::bigint,sqlc.arg(deliveries)::jsonb,
+  sqlc.arg(pause_during_model_calls)::boolean)
  RETURNING version,harness_preset,harness_image,harness_run,harness_models,prompt_template,ram_mb,timeout_sec,created_at,
-  model_integrations,ai_budget_millicents,deliveries;
+  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls;
 
 -- name: GetAgentVersion :one
 SELECT version,harness_preset,harness_image,harness_run,harness_models,prompt_template,ram_mb,timeout_sec,created_at,
-  model_integrations,ai_budget_millicents,deliveries FROM agent_versions
+  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls FROM agent_versions
  WHERE agent_id=sqlc.arg(agent_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid AND version=sqlc.arg(version)::integer;
 
 -- name: ListAgentModelIntegrations :many
@@ -157,7 +158,7 @@ UPDATE agent_runs SET state='starting', lease_token=sqlc.arg(lease_token)::text,
 SELECT r.id::text AS id, r.account_id::text AS account_id, a.plan, r.agent_id::text AS agent_id, ag.name AS agent_name,
   r.agent_version, coalesce(r.tenant_id::text, '')::text AS tenant_id, r.prompt, r.inputs, r.ram_mb, r.timeout_sec, r.attempt,
   v.harness_preset, v.harness_image, v.harness_run, v.harness_models, v.prompt_template, v.model_integrations, v.ai_budget_millicents,
-  r.checkout_repository, r.checkout_commit, r.checkout_installation_id, r.queued_at
+  r.checkout_repository, r.checkout_commit, r.checkout_installation_id, r.queued_at, v.pause_during_model_calls
  FROM agent_runs r JOIN accounts a ON a.id=r.account_id JOIN agents ag ON ag.id=r.agent_id
   JOIN agent_versions v ON v.agent_id=r.agent_id AND v.version=r.agent_version
  WHERE r.id=sqlc.arg(run_id)::text::uuid;
@@ -171,6 +172,24 @@ UPDATE agent_runs SET state='running', running_at=now(), node_id=sqlc.arg(node_i
 -- name: RecordAgentRunBoot :execrows
 UPDATE agent_runs SET boot_ms=sqlc.arg(boot_ms)::integer, updated_at=now()
  WHERE id=sqlc.arg(run_id)::text::uuid AND lease_token=sqlc.arg(lease_token)::text AND state='running';
+
+-- name: RecordAgentRunUsage :execrows
+-- ADR-20261027090011: vmmd's measured memory of the run VM. Only the first
+-- record of a run is kept.
+INSERT INTO agent_run_usage (run_id, account_id, method, samples, expected_samples, measured_ms, paused_ms,
+    private_mb_ms, unpaused_private_mb_ms, billable_mb_ms, peak_private_mb, cold_boot)
+SELECT r.id, r.account_id, sqlc.arg(method)::smallint, sqlc.arg(samples)::integer, sqlc.arg(expected_samples)::integer,
+       sqlc.arg(measured_ms)::bigint, sqlc.arg(paused_ms)::bigint, sqlc.arg(private_mb_ms)::bigint,
+       sqlc.arg(unpaused_private_mb_ms)::bigint, sqlc.arg(billable_mb_ms)::bigint, sqlc.arg(peak_private_mb)::bigint,
+       sqlc.arg(cold_boot)::boolean
+  FROM agent_runs r
+ WHERE r.id=sqlc.arg(run_id)::text::uuid AND r.lease_token=sqlc.arg(lease_token)::text AND r.state='running'
+ON CONFLICT (run_id) DO NOTHING;
+
+-- name: GetAgentRunUsage :one
+SELECT method, samples, expected_samples, measured_ms, paused_ms, private_mb_ms, unpaused_private_mb_ms,
+       billable_mb_ms, peak_private_mb, cold_boot
+  FROM agent_run_usage WHERE run_id=sqlc.arg(run_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid;
 
 -- name: RenewAgentRunLease :one
 UPDATE agent_runs SET lease_expires_at=now()+make_interval(secs=>sqlc.arg(ttl_seconds)::double precision), updated_at=now()

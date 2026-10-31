@@ -62,7 +62,8 @@ it does not delete existing applications.
 
 Other per-account plan allowances follow the app's billing subject
 (ADR-202610171904): API consumer keys, log drains, realtime endpoints, inbound
-and outbound webhooks, alert rules, CORS presets, triggers, captured and imported OpenAPI
+and outbound webhooks, alert rules, CORS presets, triggers, pending custom domain
+claims, captured and imported OpenAPI
 documents, crons (created
 singly, by a deploy or by a project apply) and reserved
 (`eviction_priority: reserved`) apps. Once an

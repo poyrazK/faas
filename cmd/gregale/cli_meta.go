@@ -1913,7 +1913,7 @@ var cliCommands = []cliCommand{
 			"gregale release approval require --app my-api --approvals 2 --notify releases",
 			"gregale release approval require --app my-api --approvals 1 --approvers developer --timeout 4h",
 			"gregale release approval pending --app my-api",
-			"gregale release approve 3f9c1e2a-0b7d-4c55-9e1a-2d6f8b4c7e10 --comment \"canary looks clean\"",
+			"gregale release approval status v42 --app my-api",
 			"gregale release reject v42 --app my-api --reason \"checkout latency is up\"",
 		},
 		Subcommands: []cliSub{
@@ -1938,10 +1938,12 @@ var cliCommands = []cliCommand{
 			{Name: "status", Short: "Show a release's approvals", Positionals: []string{"<deployment>"}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug, to resolve a vN revision", Value: "slug"},
 			}},
-			{Name: "approve", Short: "Approve a release", Positionals: []string{"<deployment>"}, Flags: []cliFlag{
-				{Name: "app", Short: "app slug, to resolve a vN revision", Value: "slug"},
-				{Name: "comment", Short: "note recorded with the approval", Value: "TEXT"},
-			}},
+			{Name: "approve", Short: "Approve a release (in the dashboard; prints its approval page)", Positionals: []string{"<deployment>"},
+				Notes: []string{"A person signed in to the dashboard approves a release; the CLI's login token, an API key or CI cannot. The command fails with the release's approval page to open. `gregale release reject` works from the CLI."},
+				Flags: []cliFlag{
+					{Name: "app", Short: "app slug, to resolve a vN revision", Value: "slug"},
+					{Name: "comment", Short: "note recorded with the approval", Value: "TEXT"},
+				}},
 			{Name: "reject", Short: "Reject a release and abort its rollout", Positionals: []string{"<deployment>"}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug, to resolve a vN revision", Value: "slug"},
 				{Name: "reason", Short: "why the release is rejected", Value: "TEXT", Req: true},
@@ -2019,11 +2021,13 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "release-gates",
 		DocSlug: "release-gates",
-		Short:   "Stop rollouts on SLO, error, metric or AI regressions and roll back",
+		Short:   "Stop rollouts on SLO, error, metric, check or AI regressions",
 		Examples: []string{
 			"gregale release gate create --app my-api --name checkout-slo --slo checkout --max-burn-rate 10",
 			"gregale release gate create --app my-api --name no-new-errors --new-errors --min-events 3",
 			"gregale release gate create --app my-api --name orders --metric orders_per_minute --below 5",
+			"gregale release gate create --app my-api --name orders-drop --metric orders_per_minute --max-drop 30",
+			"gregale release gate create --app my-api --name checkout-probe --check checkout",
 			"gregale release gate create --app my-api --name ai-cost --ai cost_per_call --max-increase 30",
 			"gregale release gate list --app my-api",
 		},
@@ -2039,12 +2043,16 @@ var cliCommands = []cliCommand{
 				{Name: "new-errors", Short: "fail when the release introduces new error groups", Bool: true},
 				{Name: "max-new-groups", Short: "new error groups allowed (default 0)", Value: "N"},
 				{Name: "min-events", Short: "events before a new error group counts (default 3)", Value: "N"},
-				{Name: "metric", Short: "fail when this custom metric crosses a bound", Value: "NAME"},
+				{Name: "metric", Short: "fail when this custom metric crosses a bound or moves too far", Value: "NAME"},
 				{Name: "below", Short: "fail when the metric averages below this", Value: "VALUE"},
 				{Name: "above", Short: "fail when the metric averages above this", Value: "VALUE"},
+				{Name: "max-rise", Short: "fail when the metric rises more than this percent from before the rollout", Value: "PCT"},
+				{Name: "max-drop", Short: "fail when the metric drops more than this percent from before the rollout", Value: "PCT"},
+				{Name: "check", Short: "probe the canary and its stable revision with this synthetic check", Value: "NAME"},
+				{Name: "max-failure-percent", Short: "failed probes allowed, in percent (default 10)", Value: "PCT"},
 				{Name: "ai", Short: "fail when this AI gateway metric gets worse than the previous release's: error_rate, flagged_rate, cost_per_call or ttfb_ms", Value: "METRIC"},
 				{Name: "max-increase", Short: "percent over the previous release that fails an --ai gate (default 50)", Value: "PCT"},
-				{Name: "min-samples", Short: "requests, metric values or AI calls before the gate is judged (default 20)", Value: "N"},
+				{Name: "min-samples", Short: "requests, probes, metric values or AI calls before the gate is judged (default 20; 6 probes for --check)", Value: "N"},
 			}},
 			{Name: "rm", Short: "Remove a release gate", Aliases: []string{"delete"}, Positionals: []string{"<name>"}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug (defaults to linked project app)", Value: "slug"},
@@ -2188,6 +2196,12 @@ var cliCommands = []cliCommand{
 				{Name: "retry-backoff-seconds", Short: "base retry delay; doubles per attempt"},
 				{Name: "schedule-policy", Short: "versioned schedule policy JSON", Value: "JSON"},
 				{Name: "failure-rules", Short: "versioned failure and outcome-code rules JSON", Value: "JSON"},
+			}},
+			{Name: subStatus, Short: "Show the cron's Ready and LastRunSucceeded conditions (preview)", Positionals: []string{"<id>"}, Examples: []string{"gregale cron status CRON_ID"}},
+			{Name: subWait, Short: "Wait until a condition holds (preview)", Positionals: []string{"<id>"}, Notes: []string{"Exits 0 when the condition holds, 1 when it is terminal and does not, 3 on timeout, 4 when not found."}, Examples: []string{"gregale cron wait CRON_ID"}, Flags: []cliFlag{
+				{Name: "for", Short: "Ready or LastRunSucceeded; TYPE or TYPE=True|False|Unknown (default Ready)", Value: "CONDITION"},
+				{Name: "timeout", Short: "maximum wait (default 2m)", Value: "DURATION"},
+				{Name: "poll-interval", Short: "poll interval (default 2s; 1s to 1h)", Value: "DURATION"},
 			}},
 			{Name: "info", Short: "Show one cron rule", Positionals: []string{"<id>"}, Flags: []cliFlag{
 				{Name: "one-off", Short: "show a one-off request (--at or --in) instead of a cron rule", Bool: true, Capability: "delayed-execution"},
@@ -2406,7 +2420,7 @@ var cliCommands = []cliCommand{
 				{Name: "all", Short: "walk every page using --limit and --offset"},
 			}},
 			{Name: "overview", Short: "Summarize Job readiness, latest run and next commands", Notes: []string{"Uses the saved Job by default."}, Positionals: []string{"[<name>]"}, Flags: []cliFlag{{Name: "check", Bool: true, Short: "exit 0 only for an active Job, ready image, and succeeded latest run"}}, Examples: []string{"gregale job overview", "gregale job overview --check", "gregale job overview nightly-report --json"}},
-			{Name: "status", Short: "Read one exact or latest Job run summary", Notes: []string{"Uses the saved Job and its latest run by default."}, Positionals: []string{"[<name>]", "[<run-id|latest>]"}, Flags: []cliFlag{{Name: "check", Bool: true, Short: "exit 0 only when the recorded run status is succeeded"}}, Examples: []string{"gregale job status", "gregale job status nightly-report", "gregale job status nightly-report RUN_ID --check", "gregale job status nightly-report latest", "gregale --json jobs status nightly-report RUN_ID"}},
+			{Name: "status", Short: "Read one exact or latest Job run summary", Notes: []string{"Uses the saved Job and its latest run by default."}, Positionals: []string{"[<name>]", "[<run-id|latest>]"}, Flags: []cliFlag{{Name: "check", Bool: true, Short: "exit 0 only when the recorded run status is succeeded"}, {Name: "conditions", Bool: true, Short: "print the run's Succeeded and Progressing conditions instead (preview)"}}, Examples: []string{"gregale job status", "gregale job status nightly-report", "gregale job status nightly-report RUN_ID --check", "gregale job status nightly-report latest", "gregale --json jobs status nightly-report RUN_ID"}},
 			{Name: "occurrences", Short: "Inspect recurring schedule decisions", Positionals: []string{"[<name>]"}, Examples: []string{"gregale job occurrences --interactive"}, Flags: []cliFlag{
 				{Name: "interactive", Bool: true, Short: "choose a Job and browse scheduled occurrence decisions"},
 				{Name: "before", Short: "alias for --cursor", Value: "ID"},
@@ -2415,6 +2429,7 @@ var cliCommands = []cliCommand{
 				{Name: "limit", Short: "max occurrence decisions (1..200)", Value: "N"},
 			}},
 			{Name: "wait", Short: "Follow a Job run (saved Job and latest by default)", Positionals: []string{"[<name>]", "[<run-id|latest>]"}, Flags: []cliFlag{
+				{Name: "for", Value: "CONDITION", Short: "wait for a run condition instead (Succeeded, Progressing; TYPE=True|False|Unknown); exits 0 holds, 1 terminal, 3 timeout, 4 not found (preview)"},
 				{Name: "interactive", Bool: true, Short: "choose a Job and run"},
 				{Name: "out-dir", Value: "DIR", Short: "collect artifacts after success, verifying matching existing files; non-interactive target only"},
 				{Name: "include", Value: "GLOB", Short: "repeatable artifact-name glob for collection; requires --out-dir; quote patterns"}, {Name: "exclude", Value: "GLOB", Short: "repeatable artifact-name glob to omit; requires --out-dir; exclusions take precedence"},
@@ -2764,6 +2779,7 @@ var cliCommands = []cliCommand{
 			{Position: 1, Role: cliCompletionDeploymentID},
 			{Path: []string{"advance"}, Position: 1, Role: cliCompletionDeploymentID},
 			{Path: []string{"summary"}, Position: 1, Role: cliCompletionDeploymentID},
+			{Path: []string{"timeline"}, Position: 1, Role: cliCompletionDeploymentID},
 			{Path: []string{"wait"}, Position: 1, Role: cliCompletionDeploymentID},
 			{Path: []string{"set-min-instances"}, Position: 1, Role: cliCompletionDeploymentID},
 		},
@@ -2780,6 +2796,9 @@ var cliCommands = []cliCommand{
 			{Name: "advance", Positionals: []string{"<ID|vN>"}, Short: "Advance a canary by one stage with route enforcement", Examples: []string{"gregale deployment advance DEPLOYMENT_UUID --expected-step 1", "gregale deployment advance v42 --app my-api --expected-step 1"}, Flags: []cliFlag{{Name: "expected-step", Value: "N", Short: "observed current canary step (see deployment summary)", Req: true}, {Name: "app", Value: "SLUG", Short: "app slug, to resolve a vN revision"}}},
 			{Name: "diff", Short: "Show what changed since the previous release", Notes: []string{"Covers code, config keys, packages, runtime settings and the release command."}, Examples: []string{"gregale release diff v42 --app my-api", "gregale release diff v42 --against v38 --app my-api"}, Positionals: []string{"<id|vN>"}, Flags: []cliFlag{
 				{Name: "against", Value: "ID|vN", Short: "release to compare with (default: the release that served before it)"},
+				{Name: "app", Value: "SLUG", Short: "app slug, to resolve vN revisions"},
+			}},
+			{Name: "timeline", Short: "Show a release's rollout, gates, approvals and history", Examples: []string{"gregale release timeline v42 --app my-api", "gregale release timeline v42 --app my-api --json"}, Positionals: []string{"<id|vN>"}, Flags: []cliFlag{
 				{Name: "app", Value: "SLUG", Short: "app slug, to resolve vN revisions"},
 			}},
 			{Name: "summary", Short: "Show the release diff and rollback target", Examples: []string{"gregale release summary --app my-api --interactive", "gregale release summary v42 --app my-api", "gregale release summary v42 --app my-api --json"}, Positionals: []string{"[<id|vN>]"}, Flags: []cliFlag{
@@ -3058,7 +3077,12 @@ var cliCommands = []cliCommand{
 			{Name: subDomainsSetDefault, Short: "Set a verified domain as the app default", Positionals: []string{"<domain>"}},
 			{Name: subDomainsVerify, Short: "Check DNS and certificate verification status", Notes: []string{"Exits nonzero while pending."}, Positionals: []string{"<domain>"}},
 			{Name: subDomainsShow, Short: "Show a domain's cert details", Positionals: []string{"<domain>"}},
-			{Name: subDomainsStatus, Short: "Show durable TLS status for all domains"},
+			{Name: subDomainsStatus, Short: "Show TLS status for all domains, or one domain's conditions", Notes: []string{"With a domain, prints its Ready, Verified and CertificateReady conditions (preview)."}, Positionals: []string{"[<domain>]"}, Examples: []string{"gregale domain status", "gregale domain status shop.example.com"}},
+			{Name: subWait, Short: "Wait until a condition holds (preview)", Positionals: []string{"<domain>"}, Notes: []string{"Exits 0 when the condition holds, 1 when it is terminal and does not, 3 on timeout, 4 when not found."}, Examples: []string{"gregale domain wait shop.example.com"}, Flags: []cliFlag{
+				{Name: "for", Short: "Ready, Verified or CertificateReady; TYPE or TYPE=True|False|Unknown (default Ready)", Value: "CONDITION"},
+				{Name: "timeout", Short: "maximum wait (default 2m)", Value: "DURATION"},
+				{Name: "poll-interval", Short: "poll interval (default 2s; 1s to 1h)", Value: "DURATION"},
+			}},
 			{Name: subDomainsDoctor, Short: "Run a 5-check domain readiness report", Notes: []string{"Exits nonzero when unhealthy, including in JSON mode."}, Positionals: []string{"<domain>"}},
 		},
 	},
@@ -5720,10 +5744,9 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
-		Name:     "postgres",
-		DocSlug:  "postgres",
-		Short:    "Operator preview: manage PostgreSQL databases and bindings",
-		Audience: cliAudienceOperator,
+		Name:    "postgres",
+		DocSlug: "postgres",
+		Short:   "Create, attach and restore managed PostgreSQL databases",
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List managed PostgreSQL databases"},
 			{Name: "capabilities", Short: "Show plan and region PostgreSQL feature support", Flags: []cliFlag{
@@ -5755,6 +5778,12 @@ var cliCommands = []cliCommand{
 				{Name: "restore-window-seconds", Short: "point-in-time restore window", Value: "N"},
 			}, Examples: []string{"gregale postgres create orders --region us-east-2 --class development --scale-to-zero"}},
 			{Name: "get", Short: "Show one managed PostgreSQL database", Positionals: []string{"<database>"}},
+			{Name: subStatus, Short: "Show the database's conditions (preview)", Notes: []string{"Ready, Progressing and Degraded, from its state and cached health."}, Positionals: []string{"<database>"}, Examples: []string{"gregale postgres status orders"}},
+			{Name: subWait, Short: "Wait until a condition holds (preview)", Positionals: []string{"<database>"}, Notes: []string{"Exits 0 when the condition holds, 1 when it is terminal and does not, 3 on timeout, 4 when not found."}, Examples: []string{"gregale postgres wait orders"}, Flags: []cliFlag{
+				{Name: "for", Short: "Ready, Progressing or Degraded; TYPE or TYPE=True|False|Unknown (default Ready)", Value: "CONDITION"},
+				{Name: "timeout", Short: "maximum wait (default 2m)", Value: "DURATION"},
+				{Name: "poll-interval", Short: "poll interval (default 2s; 1s to 1h)", Value: "DURATION"},
+			}},
 			{Name: "delete", Short: "Delete a managed PostgreSQL database; it can be undone for 7 days", Positionals: []string{"<database>"}, Flags: []cliFlag{
 				{Name: "purge", Short: "delete at once with its restore history; cannot be undone"},
 				{Name: "yes", Short: "skip the typed confirmation (alias: --quiet)"},
@@ -5774,7 +5803,7 @@ var cliCommands = []cliCommand{
 				{Name: "name", Short: "name for the restored database", Req: true, Value: "NAME"},
 				{Name: "point-in-time", Short: "RFC3339 restore timestamp", Req: true, Value: "TIMESTAMP"},
 			}},
-			{Name: "live", Short: "Enable live queries and manage the live secret (operator preview)", Subcommands: []cliSub{
+			{Name: "live", Short: "Enable live queries and manage the live secret (preview)", Subcommands: []cliSub{
 				{Name: "status", Short: "Show whether live queries are enabled and the live secrets' key IDs", Positionals: []string{"<database>"}},
 				{Name: "enable", Short: "Enable live queries and issue the live secret", Positionals: []string{"<database>"}, Flags: []cliFlag{
 					{Name: "app", Short: "store the secret as an app secret on this app", Value: "APP"},

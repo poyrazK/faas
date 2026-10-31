@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -51,6 +52,9 @@ type Claim struct {
 	LeaseToken string
 	// QueuedAt is when apid queued the run. A run queued again keeps it.
 	QueuedAt time.Time
+	// PauseDuringModelCalls is the version's model-wait pause opt-in
+	// (ADR-20261027090012 §1); a version opts out with false.
+	PauseDuringModelCalls bool
 }
 
 // ClaimRun moves the oldest claimable queued run to starting under token.
@@ -138,6 +142,48 @@ func (s *Store) MarkRunning(ctx context.Context, runID, token, nodeID, instanceI
 func (s *Store) RecordBoot(ctx context.Context, runID, token string, boot time.Duration) error {
 	n, err := s.q.RecordAgentRunBoot(ctx, s.pool, sqlc.RecordAgentRunBootParams{BootMs: int32(boot.Milliseconds()), RunID: runID, LeaseToken: token})
 	return fenced(n, err, "record boot")
+}
+
+// Usage is vmmd's measured memory of a run VM (ADR-20261027090011, rollout
+// step 2): recorded, not billed. MB is MiB; the MBMillis fields sum
+// MB × milliseconds.
+type Usage struct {
+	Method, Samples, ExpectedSamples int
+	MeasuredMillis, PausedMillis     int64
+	// PrivateMBMillis covers the sampled intervals, UnpausedPrivateMBMillis
+	// their unpaused time, and BillableMBMillis that time at the ADR's floor
+	// and per-VM overhead.
+	PrivateMBMillis, UnpausedPrivateMBMillis, BillableMBMillis int64
+	PeakPrivateMB                                              int64
+	ColdBoot                                                   bool
+}
+
+// RecordUsage records a running run's usage while the lease is held. Only
+// the first record of a run is kept; a repeat reads as ErrLeaseLost.
+func (s *Store) RecordUsage(ctx context.Context, runID, token string, u Usage) error {
+	if u.Method < 1 || u.Method > math.MaxInt16 || u.Samples < 0 || u.ExpectedSamples > math.MaxInt32 {
+		return fmt.Errorf("record usage: method %d or %d samples out of range", u.Method, u.ExpectedSamples)
+	}
+	n, err := s.q.RecordAgentRunUsage(ctx, s.pool, sqlc.RecordAgentRunUsageParams{Method: int16(u.Method), Samples: int32(u.Samples),
+		ExpectedSamples: int32(u.ExpectedSamples), MeasuredMs: u.MeasuredMillis, PausedMs: u.PausedMillis, PrivateMbMs: u.PrivateMBMillis,
+		UnpausedPrivateMbMs: u.UnpausedPrivateMBMillis, BillableMbMs: u.BillableMBMillis, PeakPrivateMb: u.PeakPrivateMB,
+		ColdBoot: u.ColdBoot, RunID: runID, LeaseToken: token})
+	return fenced(n, err, "record usage")
+}
+
+// Usage returns a run's recorded usage; found is false when none was.
+func (s *Store) Usage(ctx context.Context, accountID, runID string) (u Usage, found bool, err error) {
+	row, err := s.q.GetAgentRunUsage(ctx, s.pool, sqlc.GetAgentRunUsageParams{RunID: runID, AccountID: accountID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Usage{}, false, nil
+	}
+	if err != nil {
+		return Usage{}, false, fmt.Errorf("get usage: %w", err)
+	}
+	return Usage{Method: int(row.Method), Samples: int(row.Samples), ExpectedSamples: int(row.ExpectedSamples),
+		MeasuredMillis: row.MeasuredMs, PausedMillis: row.PausedMs, PrivateMBMillis: row.PrivateMbMs,
+		UnpausedPrivateMBMillis: row.UnpausedPrivateMbMs, BillableMBMillis: row.BillableMbMs, PeakPrivateMB: row.PeakPrivateMb,
+		ColdBoot: row.ColdBoot}, true, nil
 }
 
 // Renew extends the lease and reports whether a cancel was requested.
@@ -343,7 +389,7 @@ func claimFrom(row sqlc.GetAgentRunClaimRow, token string) (Claim, error) {
 		Integrations: nilIfEmpty(integrations), AIBudgetMillicents: row.AiBudgetMillicents.Int64,
 		Checkout: checkoutFrom(row.CheckoutRepository, row.CheckoutCommit, row.CheckoutInstallationID),
 		Harness:  Harness{Preset: row.HarnessPreset.String, Image: row.HarnessImage.String, Run: row.HarnessRun, Models: models},
-		QueuedAt: row.QueuedAt.Time}
+		QueuedAt: row.QueuedAt.Time, PauseDuringModelCalls: row.PauseDuringModelCalls}
 	if row.Prompt.Valid {
 		prompt := row.Prompt.String
 		c.Prompt = &prompt

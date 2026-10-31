@@ -132,6 +132,9 @@ type InternalReverseProxy struct {
 	// trafficSecurityPeers says whether every compute gateway behind this edge
 	// stamps the traffic security snapshot; nil means it does.
 	trafficSecurityPeers TrafficSecurityPeers
+	// placement routes hosts to the node that last served them
+	// (ADR-20261031105055); nil keeps every request on the dialer's default.
+	placement EdgePlacement
 
 	trafficRevocations  *trafficrevocation.Registry
 	Dialer              InternalDialer
@@ -263,6 +266,53 @@ func ParseTrustedIngressCIDRs(value string) ([]netip.Prefix, error) {
 		prefixes = append(prefixes, prefix.Masked())
 	}
 	return prefixes, nil
+}
+
+// EdgePlacement is a compute edge's memory of which node serves each host
+// (ADR-20261031105055).
+type EdgePlacement interface {
+	// Prefer returns the node r's host was last served from.
+	Prefer(r *http.Request) (PreferredNode, bool)
+	// Learn records the node gatewayd-internal named for r's response.
+	Learn(r *http.Request, nodeID string)
+}
+
+// WithEdgePlacement makes the proxy ask gatewayd-internal for the node of
+// the instance behind each response, remember it in placement, and hand the
+// host's preferred node to the dialer through the request context. Every
+// proxy strips the answer from responses.
+func (p *InternalReverseProxy) WithEdgePlacement(placement EdgePlacement) *InternalReverseProxy {
+	p.placement = placement
+	return p
+}
+
+// withPreference attaches r's host's preferred node for the dialer.
+func (p *InternalReverseProxy) withPreference(r *http.Request) *http.Request {
+	if p.placement == nil {
+		return r
+	}
+	if pref, ok := p.placement.Prefer(r); ok {
+		return r.WithContext(WithPreferredNode(r.Context(), pref))
+	}
+	return r
+}
+
+// markPlacement replaces a client's placement request with this proxy's own.
+func (p *InternalReverseProxy) markPlacement(h http.Header) {
+	h.Del(EdgePlacementHeader)
+	if p.placement != nil {
+		h.Set(EdgePlacementHeader, "1")
+	}
+}
+
+// takeInstanceNode removes gatewayd-internal's node answer from a response
+// and records it.
+func (p *InternalReverseProxy) takeInstanceNode(r *http.Request, h http.Header) {
+	node := strings.TrimSpace(h.Get(InstanceNodeHeader))
+	h.Del(InstanceNodeHeader)
+	if node != "" && p.placement != nil {
+		p.placement.Learn(r, node)
+	}
 }
 
 // WithInFlightTracker installs the per-request drain tracker (see
@@ -460,7 +510,7 @@ func dialWithTimeout(ctx context.Context, dialer InternalDialer, dialTimeout tim
 func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx, release := p.publicTrafficContext(r.Context())
 	defer release()
-	p.serveHTTP(w, r.WithContext(WithStartTime(ctx, time.Now())))
+	p.serveHTTP(w, p.withPreference(r.WithContext(WithStartTime(ctx, time.Now()))))
 }
 
 func (p *InternalReverseProxy) serveHTTP(w http.ResponseWriter, r *http.Request) {
@@ -536,6 +586,7 @@ func (p *InternalReverseProxy) serveHTTP(w http.ResponseWriter, r *http.Request)
 	// Upgrade traffic branched above; plain HTTP must not forward hop-by-hop
 	// headers from an untrusted client.
 	stripHopByHopInPlace(outReq.Header)
+	p.markPlacement(outReq.Header)
 	stampTrafficStart(outReq)
 	// This transport is intentionally custom rather than otelhttp.Transport,
 	// so propagate the active public-edge span explicitly. The internal
@@ -680,6 +731,7 @@ func (p *InternalReverseProxy) serveHTTP(w http.ResponseWriter, r *http.Request)
 	// in place on the response (RFC 7230 §6.1) — the internal
 	// daemon may have set Connection: close and we don't want to
 	// leak that to the customer.
+	p.takeInstanceNode(r, resp.Header)
 	encodeOriginStatus := edgeTransportStatus(r, resp.StatusCode, resp.Header)
 	customerOwned := httpsec.SurfaceFrom(r.Context()).CustomerOwned()
 	// H2 can expose trailer declarations only in the header map. Retain

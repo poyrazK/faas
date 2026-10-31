@@ -2881,6 +2881,9 @@ func (l *Loop) runReaper(ctx context.Context) {
 	}
 
 	l.parkExpiredFrozen(ctx, snapshot, now)
+	// ADR 20261031143521: compress frozen VMs on nodes near their RAM
+	// ceiling before eviction looks at nodes over it.
+	l.engine.CompressFrozenForDensity(ctx, now)
 	l.evictForMeasuredMemory(ctx, snapshot, activityByInstance, now)
 	for _, id := range reservationEvictions(l.engine.Ledger(), now, snapshot) {
 		if err := l.engine.EvictUnderPressure(ctx, id); err != nil {
@@ -3897,7 +3900,8 @@ func (h *httpGatewaySynth) invoke(ctx context.Context, appID string, inv state.I
 		if detail == "" {
 			detail = http.StatusText(statusCode)
 		}
-		err = fmt.Errorf("%w: application returned HTTP %d: %s", ErrPermanentInvoke, statusCode, detail)
+		err = applicationStatusError{status: statusCode,
+			err: fmt.Errorf("%w: application returned HTTP %d: %s", ErrPermanentInvoke, statusCode, detail)}
 	} else if err == nil && statusCode >= http.StatusInternalServerError {
 		// An ordinary 5xx is retryable under the durable invocation contract.
 		// Runner-caught exceptions are marked InvocationFailed above and take

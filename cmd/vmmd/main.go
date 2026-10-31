@@ -904,7 +904,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		fanout := snapshothipd.New(replicaStore, storageBackend, nodeID, log).
 			WithMetrics(fanoutMetrics).
-			// ADR-956: on unless an operator switches it off.
+			// ADR-956 and its 2026-10-31 amendment (sharing between memory
+			// files): both on unless an operator switches them off.
+			WithMemoryPeerSharing(os.Getenv("FAAS_SNAPSHOT_MEMORY_PEER_SHARING") != "off").
 			WithMemorySharing(os.Getenv("FAAS_SNAPSHOT_MEMORY_SHARING") != "off")
 		if raw := os.Getenv("FAAS_SNAPSHOT_FANOUT_INTERVAL"); raw != "" {
 			interval, parseErr := time.ParseDuration(raw)
@@ -1878,6 +1880,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// Exec and destroy RPCs take schedd's certificate (bug hunt H17).
 		grpc.ChainUnaryInterceptor(vmmdgrpc.CallerPolicyUnaryInterceptor()),
 		grpc.ChainStreamInterceptor(vmmdgrpc.CallerPolicyStreamInterceptor()),
+		vmmdgrpc.StreamWorkers(),
 	)...)
 	impl := vmmdgrpc.NewWithCPUAndNetAndActivity(signalAdapter{mgr}, ops, fcVersion, log, cpuCache, netCache, activityTracker).
 		WithFlowCounter(flowcount.NewReader(wire.ExecRunner{})).
@@ -1890,6 +1893,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithDivergedInstances(divergedInstances).
 		WithInvokeHookBackoff(cfg.InvokeHookBackoff).
 		WithBridgeStreamHeadroom(cfg.BridgeStreamHeadroom).
+		WithStreamBridgeGoRuntime(cfg.StreamBridgeGOMAXPROCS, cfg.StreamBridgeGOGC).
 		// ADR-20261027090010 §1: agent runs stay off unless this node opts in.
 		WithAgentRuns(strings.TrimSpace(os.Getenv("FAAS_VMMD_AGENT_RUNS")) == "1")
 	// ADR-20261022184531: Ping tells schedd whether this vmmd can adopt each

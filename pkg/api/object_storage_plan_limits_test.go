@@ -15,18 +15,32 @@ func TestObjectStoragePlanLimitsZeroChangesNothing(t *testing.T) {
 }
 
 // adr: 1350 — plans include stored bytes from the October 2026 COGS report;
-// Free also stops at its allowance.
+// Free also stops at its allowance. ADR-20261031122757 caps each plan's
+// monthly egress at ten times its included storage.
 func TestObjectStoragePlanLimitsFollowCOGSReport(t *testing.T) {
 	const gib = int64(1 << 30)
 	want := map[Plan]ObjectStoragePlanLimits{
-		PlanFree:  {MaxAccountBytes: gib, IncludedBytes: gib},
-		PlanHobby: {IncludedBytes: 10 * gib},
-		PlanPro:   {IncludedBytes: 50 * gib},
-		PlanScale: {IncludedBytes: 200 * gib},
+		PlanFree:  {MaxAccountBytes: gib, MaxMonthlyEgressBytes: 10 * gib, IncludedBytes: gib},
+		PlanHobby: {MaxMonthlyEgressBytes: 100 * gib, IncludedBytes: 10 * gib},
+		PlanPro:   {MaxMonthlyEgressBytes: 500 * gib, IncludedBytes: 50 * gib},
+		PlanScale: {MaxMonthlyEgressBytes: 2_000 * gib, IncludedBytes: 200 * gib},
 	}
 	for plan, limits := range want {
 		if got := MustLimitsFor(plan).ObjectStorage; got != limits {
 			t.Fatalf("%s object-storage limits = %+v, want %+v", plan, got, limits)
+		}
+	}
+}
+
+// adr: 20261031122757
+func TestObjectStoragePlanEgressFollowsIncludedStorage(t *testing.T) {
+	for _, plan := range Plans {
+		l := MustLimitsFor(plan).ObjectStorage
+		if want := ObjectStorageEgressPerIncludedByte * l.IncludedBytes; l.MaxMonthlyEgressBytes != want {
+			t.Fatalf("%s monthly egress ceiling = %d, want %d× its %d included bytes", plan, l.MaxMonthlyEgressBytes, ObjectStorageEgressPerIncludedByte, l.IncludedBytes)
+		}
+		if l.IncludedEgressBytes != 0 {
+			t.Fatalf("%s includes %d egress bytes; egress is a limit, not a priced allowance", plan, l.IncludedEgressBytes)
 		}
 	}
 }

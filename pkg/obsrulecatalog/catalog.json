@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "79199bb65253e85bfe7a9d8c313da519f4bca817a58c55434cdd765d40575680",
+      "revision": "5408d9104cc35a43ba7d433870d3c8986b51037ecf87f8d945d140415947f56c",
       "files": [
         "faas.rules.yml"
       ],
@@ -686,6 +686,19 @@
           }
         },
         {
+          "id": "1748a92d2aadd9ca12c1d049545a7775e10fbef5e7a120f301af6d32f1f48095",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_event_routing",
+          "rule_name": "FaasEventRoutingFailing",
+          "definition": {
+            "expression_hash": "7f7dd61269b69120ce135ab68cd66afece1c3279657e380635687bfb7541878d",
+            "labels_hash": "8d92fa3abf8327e6a2e6bd0951e37822c2cd542e636c1d3452dd0935be8344e7",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "2a154c027d178ee4ec87e32a2c6adfe9c2b5ce6c42d3e79678f20df0504ba4d0"
+          }
+        },
+        {
           "id": "1780c955a5efdc90a29a3082b4342535d96692f05d7131ab39b6d78e9800c69a",
           "file_name": "faas.rules.yml",
           "group_name": "faas_billing",
@@ -704,11 +717,11 @@
           "group_name": "faas_slo",
           "rule_name": "FaasTLSCertExpiryPage",
           "definition": {
-            "expression_hash": "b57a047218c49771aa76fc90f80db3d445f8ec3f339f4c51094824bf51899631",
+            "expression_hash": "fea8b2cd291b4a33f0ade8a48aff2c6464bf308cd1a407ebd2607b9f1a6b0fb6",
             "labels_hash": "5f401b63403810688493f659a0f523b5757bbe66c89eb38be35e81ba43e8b1f7",
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "d1963fa9907276eed7bceb9bcbb0c94d68e0be49955be5fcef672a3ee9320d7f"
+            "fingerprint": "e9da530ba4597db8d9d8740f45a1b174a062c39c5c2ea1a78fc5a163501f7596"
           }
         },
         {
@@ -1146,11 +1159,11 @@
           "group_name": "faas_event_routing",
           "rule_name": "FaasDeadLetterSpike",
           "definition": {
-            "expression_hash": "f029c6dfc7c7202496ed508810328c5adc1654e51dcc486728bbcd4fa0932e2c",
+            "expression_hash": "2a6275d44cd8d923ac6b1cc9051e4d2b07149754a7b669f6410fbe6199e68e38",
             "labels_hash": "8d92fa3abf8327e6a2e6bd0951e37822c2cd542e636c1d3452dd0935be8344e7",
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "f0725e87c917b90cebdf77a7e2a0dea5b3e89ffb47020af1264bd5b71de8a073"
+            "fingerprint": "69e792e38ae4cf33530ac74e4825d993c9effb03542cc793b6f5fbee22253c07"
           }
         },
         {
@@ -1224,11 +1237,11 @@
           "group_name": "faas_slo",
           "rule_name": "FaasTLSCertExpiryWarnByHost",
           "definition": {
-            "expression_hash": "faae5f13b6c8ca191065943f6fa679febf0918bbff2b92d02bdc7c5e79d383ee",
+            "expression_hash": "89271418e58e9551afa75a1b0753cc6d1ccd9b6708d8dd625bd8d4664d95a4f3",
             "labels_hash": "3db2903e87c330e131ac9b7614ac55ff9cdfe07275e2b6b40320d63c678d0d08",
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "0afadd50370eed5865b51cec08ec3df1ca2c79ca2fc52b05ab6b03df968ca593"
+            "fingerprint": "3b422d85dfb794974db1554a8cf0a2970ec7702902db330f63ee32f489bb98d7"
           }
         },
         {
@@ -1367,11 +1380,11 @@
           "group_name": "faas_slo",
           "rule_name": "FaasTLSCertExpiryImminent",
           "definition": {
-            "expression_hash": "02b0636a4e2b952f7684d0de88b1a3fd2c75879e01348c2f92d25341adf63c20",
+            "expression_hash": "094a237f3ad7cd9e12cadac65f24190bbd41b2232bc78c4d88360b2d9eedcc02",
             "labels_hash": "07e1b0393ac0754ea29923c283812380f9067275750c297195ccee01289b2069",
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "b5e32dff6b5e14aac451c380b11c3bcee941b239bdc45156e8c2036280926387"
+            "fingerprint": "aa1f2eb1e79f2d351b501a08c7c2a288b2e7b0c8896f5921cdd000151845e3a6"
           }
         },
         {
@@ -1575,11 +1588,11 @@
           "group_name": "faas_event_routing",
           "rule_name": "FaasEventRoutingStalled",
           "definition": {
-            "expression_hash": "fc9305c5bfaba005366d87af08ede1d041dd801235d42c04d2458af33cd3032b",
+            "expression_hash": "bf2435f29ece57c4c756a96e37659a7cfdd307561ddf51708e24e9ba946e6aa5",
             "labels_hash": "3d015be31b6c301db2daab827186f0210ef8cffc64c00e2e7908f062784d8bbf",
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "89bfae90c6769e50f1d0d471833d6434b07e68fabb1f9a11c66ece9f5c4b7f0c"
+            "fingerprint": "76c85cc2e04685583b3ff8d24d01729fc05af4bf0e8d596cac4d3c9562037c5a"
           }
         },
         {
@@ -3078,6 +3091,19 @@
           }
         },
         {
+          "id": "74f7e1bcc6880cc37e94ea11d0049a7b9f2d13d5ba0ca28cadfb2c58f82b3540",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_custom_domain_tls",
+          "rule_name": "FaasCustomDomainTLSFleetBudget",
+          "definition": {
+            "expression_hash": "0602177407b6fcd36e840c408fd91f904c42f06faab3d0d1e2f11a39a4e9549a",
+            "labels_hash": "a9ce39d4afb3fa1b63b4ef6c513abd98122c083eb51a05b1744f8b371faa58f3",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "930143d9610286fd7a80498e362c763c1ea1e30779650fe953f97cacb647feb5"
+          }
+        },
+        {
           "id": "7511578876796cf7c7e18dec8595f6ba99262c39a2d922ae79ec0bc04fc3b3dc",
           "file_name": "faas.rules.yml",
           "group_name": "seal_domains",
@@ -3439,6 +3465,19 @@
             "for_seconds": 900,
             "keep_firing_for_seconds": 0,
             "fingerprint": "356c91f2fede0d262acf68191bff25889185c921b9212360689216c3ecadee3c"
+          }
+        },
+        {
+          "id": "84abb605b5b1da05320d069224d54811a466f58524a41b286f8d5a83caef4c95",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_object_storage",
+          "rule_name": "FaasPublicObjectReadUsageFlushFailing",
+          "definition": {
+            "expression_hash": "dfdae28c80242ae44bec6fa3eb604c9f856ca261546733c7c38c2e3c9fcc9856",
+            "labels_hash": "a3b79899300e8163cb3b09bc4e691d336d1a251b35d405f6884fe7d576c6d213",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "adfc970b6815e8cba9ef059ff2c304f48ef13480ac69fabb3131f791e2db013e"
           }
         },
         {
@@ -4175,11 +4214,11 @@
           "group_name": "faas_slo",
           "rule_name": "FaasTLSCertExpiryWarn",
           "definition": {
-            "expression_hash": "d56a6ce46f5aaf0afef848c15df7b80d6f102964d10dab57d3d4bd0603c35c6f",
+            "expression_hash": "8970695ac68aca248241b35afa7174ac2e61e358a5d3703b73cdf6d1efd41555",
             "labels_hash": "5f401b63403810688493f659a0f523b5757bbe66c89eb38be35e81ba43e8b1f7",
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "d0607102ab5413d8308a20ecb0cf18228fd42f5114658a53214223ce35f4640e"
+            "fingerprint": "384c106ed2eff29736c85147255eeaf9dee4d747bdf5ae7f725aa6e4d821f4db"
           }
         },
         {
@@ -5722,11 +5761,11 @@
           "group_name": "faas_slo",
           "rule_name": "FaasTLSCertExpiryPageByHost",
           "definition": {
-            "expression_hash": "940c7c67e0bbae583ae3b255fecebc73b27b9b12b6ba1e0debac29462c9c2580",
+            "expression_hash": "dfb6802f6eb5b03ad8592c83b088eef2e60e6d00a6d4f7df02c18e336c6d8cd3",
             "labels_hash": "3db2903e87c330e131ac9b7614ac55ff9cdfe07275e2b6b40320d63c678d0d08",
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "6cc30c5557ffcc6b27a2bf9dcaaae8416e46e4bccb9534316ff9626c3cdccbfb"
+            "fingerprint": "11d87b1f97f725a65727e658a81120601fb00964d5fa72e77aad278964e076b5"
           }
         },
         {
@@ -6513,7 +6552,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "a2ca37bfd6ac2c8cb5fe488829cbcf4d28e500c3674af24a14fc13bb63c32dd7",
+      "revision": "828d1682cc6f20fb987fe31e70f5805ee076119e5f5cdd8421495454ba4f82d0",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -7225,6 +7264,19 @@
           }
         },
         {
+          "id": "1748a92d2aadd9ca12c1d049545a7775e10fbef5e7a120f301af6d32f1f48095",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_event_routing",
+          "rule_name": "FaasEventRoutingFailing",
+          "definition": {
+            "expression_hash": "7f7dd61269b69120ce135ab68cd66afece1c3279657e380635687bfb7541878d",
+            "labels_hash": "8d92fa3abf8327e6a2e6bd0951e37822c2cd542e636c1d3452dd0935be8344e7",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "2a154c027d178ee4ec87e32a2c6adfe9c2b5ce6c42d3e79678f20df0504ba4d0"
+          }
+        },
+        {
           "id": "1780c955a5efdc90a29a3082b4342535d96692f05d7131ab39b6d78e9800c69a",
           "file_name": "faas.rules.yml",
           "group_name": "faas_billing",
@@ -7243,11 +7295,11 @@
           "group_name": "faas_slo",
           "rule_name": "FaasTLSCertExpiryPage",
           "definition": {
-            "expression_hash": "b57a047218c49771aa76fc90f80db3d445f8ec3f339f4c51094824bf51899631",
+            "expression_hash": "fea8b2cd291b4a33f0ade8a48aff2c6464bf308cd1a407ebd2607b9f1a6b0fb6",
             "labels_hash": "5f401b63403810688493f659a0f523b5757bbe66c89eb38be35e81ba43e8b1f7",
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "d1963fa9907276eed7bceb9bcbb0c94d68e0be49955be5fcef672a3ee9320d7f"
+            "fingerprint": "e9da530ba4597db8d9d8740f45a1b174a062c39c5c2ea1a78fc5a163501f7596"
           }
         },
         {
@@ -7737,11 +7789,11 @@
           "group_name": "faas_event_routing",
           "rule_name": "FaasDeadLetterSpike",
           "definition": {
-            "expression_hash": "f029c6dfc7c7202496ed508810328c5adc1654e51dcc486728bbcd4fa0932e2c",
+            "expression_hash": "2a6275d44cd8d923ac6b1cc9051e4d2b07149754a7b669f6410fbe6199e68e38",
             "labels_hash": "8d92fa3abf8327e6a2e6bd0951e37822c2cd542e636c1d3452dd0935be8344e7",
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "f0725e87c917b90cebdf77a7e2a0dea5b3e89ffb47020af1264bd5b71de8a073"
+            "fingerprint": "69e792e38ae4cf33530ac74e4825d993c9effb03542cc793b6f5fbee22253c07"
           }
         },
         {
@@ -7815,11 +7867,11 @@
           "group_name": "faas_slo",
           "rule_name": "FaasTLSCertExpiryWarnByHost",
           "definition": {
-            "expression_hash": "faae5f13b6c8ca191065943f6fa679febf0918bbff2b92d02bdc7c5e79d383ee",
+            "expression_hash": "89271418e58e9551afa75a1b0753cc6d1ccd9b6708d8dd625bd8d4664d95a4f3",
             "labels_hash": "3db2903e87c330e131ac9b7614ac55ff9cdfe07275e2b6b40320d63c678d0d08",
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "0afadd50370eed5865b51cec08ec3df1ca2c79ca2fc52b05ab6b03df968ca593"
+            "fingerprint": "3b422d85dfb794974db1554a8cf0a2970ec7702902db330f63ee32f489bb98d7"
           }
         },
         {
@@ -7958,11 +8010,11 @@
           "group_name": "faas_slo",
           "rule_name": "FaasTLSCertExpiryImminent",
           "definition": {
-            "expression_hash": "02b0636a4e2b952f7684d0de88b1a3fd2c75879e01348c2f92d25341adf63c20",
+            "expression_hash": "094a237f3ad7cd9e12cadac65f24190bbd41b2232bc78c4d88360b2d9eedcc02",
             "labels_hash": "07e1b0393ac0754ea29923c283812380f9067275750c297195ccee01289b2069",
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "b5e32dff6b5e14aac451c380b11c3bcee941b239bdc45156e8c2036280926387"
+            "fingerprint": "aa1f2eb1e79f2d351b501a08c7c2a288b2e7b0c8896f5921cdd000151845e3a6"
           }
         },
         {
@@ -8166,11 +8218,11 @@
           "group_name": "faas_event_routing",
           "rule_name": "FaasEventRoutingStalled",
           "definition": {
-            "expression_hash": "fc9305c5bfaba005366d87af08ede1d041dd801235d42c04d2458af33cd3032b",
+            "expression_hash": "bf2435f29ece57c4c756a96e37659a7cfdd307561ddf51708e24e9ba946e6aa5",
             "labels_hash": "3d015be31b6c301db2daab827186f0210ef8cffc64c00e2e7908f062784d8bbf",
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "89bfae90c6769e50f1d0d471833d6434b07e68fabb1f9a11c66ece9f5c4b7f0c"
+            "fingerprint": "76c85cc2e04685583b3ff8d24d01729fc05af4bf0e8d596cac4d3c9562037c5a"
           }
         },
         {
@@ -9708,6 +9760,19 @@
           }
         },
         {
+          "id": "74f7e1bcc6880cc37e94ea11d0049a7b9f2d13d5ba0ca28cadfb2c58f82b3540",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_custom_domain_tls",
+          "rule_name": "FaasCustomDomainTLSFleetBudget",
+          "definition": {
+            "expression_hash": "0602177407b6fcd36e840c408fd91f904c42f06faab3d0d1e2f11a39a4e9549a",
+            "labels_hash": "a9ce39d4afb3fa1b63b4ef6c513abd98122c083eb51a05b1744f8b371faa58f3",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "930143d9610286fd7a80498e362c763c1ea1e30779650fe953f97cacb647feb5"
+          }
+        },
+        {
           "id": "7511578876796cf7c7e18dec8595f6ba99262c39a2d922ae79ec0bc04fc3b3dc",
           "file_name": "faas.rules.yml",
           "group_name": "seal_domains",
@@ -10121,6 +10186,19 @@
             "for_seconds": 900,
             "keep_firing_for_seconds": 0,
             "fingerprint": "356c91f2fede0d262acf68191bff25889185c921b9212360689216c3ecadee3c"
+          }
+        },
+        {
+          "id": "84abb605b5b1da05320d069224d54811a466f58524a41b286f8d5a83caef4c95",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_object_storage",
+          "rule_name": "FaasPublicObjectReadUsageFlushFailing",
+          "definition": {
+            "expression_hash": "dfdae28c80242ae44bec6fa3eb604c9f856ca261546733c7c38c2e3c9fcc9856",
+            "labels_hash": "a3b79899300e8163cb3b09bc4e691d336d1a251b35d405f6884fe7d576c6d213",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "adfc970b6815e8cba9ef059ff2c304f48ef13480ac69fabb3131f791e2db013e"
           }
         },
         {
@@ -10883,11 +10961,11 @@
           "group_name": "faas_slo",
           "rule_name": "FaasTLSCertExpiryWarn",
           "definition": {
-            "expression_hash": "d56a6ce46f5aaf0afef848c15df7b80d6f102964d10dab57d3d4bd0603c35c6f",
+            "expression_hash": "8970695ac68aca248241b35afa7174ac2e61e358a5d3703b73cdf6d1efd41555",
             "labels_hash": "5f401b63403810688493f659a0f523b5757bbe66c89eb38be35e81ba43e8b1f7",
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "d0607102ab5413d8308a20ecb0cf18228fd42f5114658a53214223ce35f4640e"
+            "fingerprint": "384c106ed2eff29736c85147255eeaf9dee4d747bdf5ae7f725aa6e4d821f4db"
           }
         },
         {
@@ -12495,11 +12573,11 @@
           "group_name": "faas_slo",
           "rule_name": "FaasTLSCertExpiryPageByHost",
           "definition": {
-            "expression_hash": "940c7c67e0bbae583ae3b255fecebc73b27b9b12b6ba1e0debac29462c9c2580",
+            "expression_hash": "dfb6802f6eb5b03ad8592c83b088eef2e60e6d00a6d4f7df02c18e336c6d8cd3",
             "labels_hash": "3db2903e87c330e131ac9b7614ac55ff9cdfe07275e2b6b40320d63c678d0d08",
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "6cc30c5557ffcc6b27a2bf9dcaaae8416e46e4bccb9534316ff9626c3cdccbfb"
+            "fingerprint": "11d87b1f97f725a65727e658a81120601fb00964d5fa72e77aad278964e076b5"
           }
         },
         {

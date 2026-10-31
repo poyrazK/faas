@@ -21,7 +21,7 @@ tests:
         public_status: internal
       exp_annotations:
         summary: "Event routing has stopped on every schedd"
-        description: "No schedd has completed an event routing sweep for fifteen minutes, so published events, object notifications and webhook automations are accepted but not delivered. Check schedd health, the event_fanout work kind and database latency."
+        description: "For fifteen minutes no schedd has completed an event routing sweep, or the sweeps that ran could not claim any routing work, routed nothing and left events waiting over ten minutes, so published events, object notifications and webhook automations are accepted but not delivered. Check schedd health and its claim errors, the event_fanout work kind and database latency."
         runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEventDriven.md"
 - name: one schedd still sweeping keeps routing alive
   interval: 1m
@@ -33,6 +33,89 @@ tests:
   alert_rule_test:
   - eval_time: 20m
     alertname: FaasEventRoutingStalled
+    exp_alerts: []
+- name: sweeps run but every claim fails
+  interval: 1m
+  input_series:
+  - series: 'schedd_loop_work_duration_seconds_count{kind="event_fanout",job="schedd",instance="a"}'
+    values: '0+12x40'
+  - series: 'schedd_event_routing_outcomes_total{outcome="claim_error",job="schedd",instance="a"}'
+    values: '0+12x40'
+  - series: 'schedd_event_routing_outcomes_total{outcome="routed",job="schedd",instance="a"}'
+    values: '5+0x40'
+  - series: 'schedd_event_routing_oldest_pending_seconds{job="schedd",instance="a"}'
+    values: '0+60x40'
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasEventRoutingStalled
+    exp_alerts:
+    - exp_labels:
+        severity: page
+        component: schedd
+        family: event_routing
+        public_status: internal
+      exp_annotations:
+        summary: "Event routing has stopped on every schedd"
+        description: "For fifteen minutes no schedd has completed an event routing sweep, or the sweeps that ran could not claim any routing work, routed nothing and left events waiting over ten minutes, so published events, object notifications and webhook automations are accepted but not delivered. Check schedd health and its claim errors, the event_fanout work kind and database latency."
+        runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEventDriven.md"
+- name: one claim error on a quiet fleet does not page
+  interval: 1m
+  input_series:
+  - series: 'schedd_loop_work_duration_seconds_count{kind="event_fanout",job="schedd",instance="a"}'
+    values: '0+12x40'
+  - series: 'schedd_event_routing_outcomes_total{outcome="claim_error",job="schedd",instance="a"}'
+    values: '0x5 1+0x35'
+  - series: 'schedd_event_routing_outcomes_total{outcome="routed",job="schedd",instance="a"}'
+    values: '0+0x40'
+  - series: 'schedd_event_routing_oldest_pending_seconds{job="schedd",instance="a"}'
+    values: '0x40'
+  alert_rule_test:
+  - eval_time: 12m
+    alertname: FaasEventRoutingStalled
+    exp_alerts: []
+- name: claim errors on one schedd while another routes
+  interval: 1m
+  input_series:
+  - series: 'schedd_loop_work_duration_seconds_count{kind="event_fanout",job="schedd",instance="a"}'
+    values: '0+12x40'
+  - series: 'schedd_event_routing_outcomes_total{outcome="claim_error",job="schedd",instance="a"}'
+    values: '0+12x40'
+  - series: 'schedd_event_routing_outcomes_total{outcome="routed",job="schedd-compute",instance="b"}'
+    values: '0+3x40'
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasEventRoutingStalled
+    exp_alerts: []
+- name: most recipients failing to route
+  interval: 1m
+  input_series:
+  - series: 'schedd_event_routing_outcomes_total{outcome="retry"}'
+    values: '0+8x60'
+  - series: 'schedd_event_routing_outcomes_total{outcome="routed"}'
+    values: '0+2x60'
+  alert_rule_test:
+  - eval_time: 40m
+    alertname: FaasEventRoutingFailing
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: event_routing
+        public_status: internal
+      exp_annotations:
+        summary: "Most event recipients are failing to route"
+        description: "More than half of the event recipients routed in fifteen minutes failed or were put back to retry. Routing is running but not delivering. One subscription whose target is gone is the usual cause; many apps at once point at the database or the invocation queue."
+        runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEventDriven.md"
+- name: a few routing retries among healthy routing
+  interval: 1m
+  input_series:
+  - series: 'schedd_event_routing_outcomes_total{outcome="retry"}'
+    values: '0+1x60'
+  - series: 'schedd_event_routing_outcomes_total{outcome="routed"}'
+    values: '0+20x60'
+  alert_rule_test:
+  - eval_time: 40m
+    alertname: FaasEventRoutingFailing
     exp_alerts: []
 - name: slow sweeps
   interval: 1m
@@ -92,7 +175,25 @@ tests:
         public_status: internal
       exp_annotations:
         summary: "Dead letters are arriving fast"
-        description: "More than 200 invocations and trigger records reached the dead-letter queue in ten minutes, fleet-wide. One app's failing handler is the usual cause; many apps at once point at the gateway, wakes or a broker."
+        description: "More than 200 invocations, trigger records and event recipients whose routing failed reached the dead-letter queue in ten minutes, fleet-wide. One app's failing handler is the usual cause; many apps at once point at the gateway, wakes, a broker or event routing."
+        runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEventDriven.md"
+- name: event routing failures count as dead letters
+  interval: 1m
+  input_series:
+  - series: 'schedd_event_routing_outcomes_total{outcome="failed"}'
+    values: '0+50x30'
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasDeadLetterSpike
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: event_routing
+        public_status: internal
+      exp_annotations:
+        summary: "Dead letters are arriving fast"
+        description: "More than 200 invocations, trigger records and event recipients whose routing failed reached the dead-letter queue in ten minutes, fleet-wide. One app's failing handler is the usual cause; many apps at once point at the gateway, wakes, a broker or event routing."
         runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEventDriven.md"
 - name: broker polls failing
   interval: 1m

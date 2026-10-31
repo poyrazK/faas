@@ -202,3 +202,11 @@ A security audit found two ways around an app's policy.
   self-approval and the release has no recorded deployer, it needs one more
   approval than the policy asks, so at least one approver is someone else.
   The status shows the higher `required_approvals`.
+
+## Amendment 4 (2026-10-31): a person approves, signed in
+
+A release review found that any API key with `deploy:write`, the scope CI holds to deploy, could approve a release, and a bearer key skips MFA. A bot account's key, or a teammate's key in a CI job, could therefore give the second sign-off this ADR exists to require.
+
+- **Approving needs the dashboard session.** `POST /v1/deployments/{id}/approvals` with `decision: approve` answers `403 release_approval_session_required` to any API key or token, including the CLI's login token, with the release's approval page as the hint. The approval page and the notification links already decide with the session, so the organization access, role, MFA and self-approval checks apply as before.
+- **Rejecting stays open to keys.** Stopping a release needs no second person, and keys can already abort a rollout.
+- **The CLI and notices point to the page.** `gregale release approve` fails with the page's link; email notices drop the terminal command; the approval-required problem and the hold text name the approval page.

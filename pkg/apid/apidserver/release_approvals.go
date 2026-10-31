@@ -329,6 +329,12 @@ func (s *server) releaseApprovalDecision(r *http.Request, acct state.Account, ap
 	if d.RolloutAbortedAt != nil {
 		return state.ReleaseApproval{}, api.ErrReleaseApprovalDecided("This release's rollout was aborted; deploy it again to start a new approval.")
 	}
+	// ADR-20261020085706 amendment 4: an approval comes from a person signed
+	// in to the dashboard. A key or token, which skips MFA and is what CI
+	// holds, may still reject: stopping a release needs no second person.
+	if p, ok := principalFrom(r); req.Decision == api.ReleaseApprovalDecisionApprove && ok && p.Key != nil {
+		return state.ReleaseApproval{}, api.ErrReleaseApprovalSessionRequired(s.releaseApprovalReviewURL(d.ID))
+	}
 	actor := actorAccount(r, acct)
 	role, problem := s.releaseApproverRole(r, app, *policy)
 	if problem != nil {

@@ -118,6 +118,14 @@ type reservation struct {
 	// frozen marks a frozen reservation (ADR-1151): admissionMB is the
 	// instance's measured charge and it books no vCPU, CPU or concurrency.
 	frozen bool
+	// frozenAt is when the reservation froze (or was seeded frozen), and
+	// compressTried that proactive compression already asked vmmd about it
+	// (ADR 20261031143521): compressing again frees little.
+	frozenAt      time.Time
+	compressTried bool
+	// agentRun marks an agent run VM (KindAgentRun). It has no instances
+	// row, so no node measurement includes it.
+	agentRun bool
 }
 
 // NewNodeLedger returns an empty per-node ledger. Backwards-compat
@@ -278,7 +286,7 @@ type Request struct {
 	// the Tier A5 destination-side reservation.
 	Kind Kind
 	// FrozenChargeMB is the RAM a KindFrozen reservation books, at least
-	// MeasuredChargeFloorMB.
+	// FrozenChargeFloorMB (ADR 20261031143521).
 	FrozenChargeMB int
 	// Flexible jobs may use only capacity above the per-node app wake
 	// reserve. Placement applies the same reserve before selecting a node.
@@ -560,6 +568,7 @@ func (l *NodeLedger) Admit(r Request) error {
 		cpuBoostMillicores: boostCPU, cpuBoostUntil: r.CPUStartupBoostUntil,
 		countsConc: kindCountsConcurrency(r.Kind),
 		admittedAt: l.clock(),
+		agentRun:   r.Kind == KindAgentRun,
 	}
 	node.residentRAM += r.admissionMB()
 	node.usedVCPU += r.VCPU
@@ -980,9 +989,10 @@ func (l *NodeLedger) admissionUsed_locked(nodeID string, reserved, frozen, ceili
 	if !ok {
 		return reserved, "resident"
 	}
-	// The measurement cannot include instances admitted after it.
+	// The measurement cannot include instances admitted after it, nor agent
+	// run VMs at all: it sums instances rows, and agent runs have none.
 	for _, e := range l.entries {
-		if e.nodeID == nodeID && e.admittedAt.After(asOf) {
+		if e.nodeID == nodeID && (e.agentRun || e.admittedAt.After(asOf)) {
 			used += e.admissionMB
 		}
 	}

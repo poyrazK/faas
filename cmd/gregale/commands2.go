@@ -5195,7 +5195,7 @@ func cmdTraffic(args []string) int {
 func cmdDomains(args []string) int {
 	parent, _ := lookupCliCommand("domains")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale domains <setup|list|add|rm|set-default|verify|show|status|doctor> [args]", "domains")
+		PrintUsage(os.Stderr, "usage: gregale domains <setup|list|add|rm|set-default|verify|show|status|wait|doctor> [args]", "domains")
 		return 1
 	}
 	switch args[0] {
@@ -5284,6 +5284,8 @@ func cmdDomains(args []string) int {
 		return cmdDomainsStatus(args[1:])
 	case subDomainsDoctor:
 		return cmdDomainsDoctor(args[1:])
+	case subWait:
+		return domainConditions.wait(args[1:])
 	}
 	printCommandValidation(os.Stderr, "unknown domains subcommand %q\n", args[0])
 	return unknownSubcommandChoices(os.Stderr, "domains", parent, args[0])
@@ -5293,12 +5295,16 @@ func cmdDomains(args []string) int {
 func cmdCrons(args []string) int {
 	parent, _ := lookupCliCommand("crons")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale crons <list|next|add|info|update|rm|run|fire-now|runs|occurrences|cancel> [args]", "crons")
+		PrintUsage(os.Stderr, "usage: gregale crons <list|next|add|info|status|wait|update|rm|run|fire-now|runs|occurrences|cancel> [args]", "crons")
 		return 1
 	}
 	switch args[0] {
 	case "next":
 		return cmdCronsNext(args[1:])
+	case subStatus:
+		return cronConditions.status(args[1:])
+	case subWait:
+		return cronConditions.wait(args[1:])
 	case subList:
 		if rest, oneOff := takeBoolFlag(args[1:], "one-off"); oneOff {
 			if delayedTasksHidden() {

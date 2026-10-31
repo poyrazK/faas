@@ -411,6 +411,10 @@ type server struct {
 	// (ADR-20261028101615); built on first use.
 	channelTestsOnce sync.Once
 	channelTests     *peraccount.Limiter
+	// presetTests caps alert preset test sends per account
+	// (ADR-20261030214500); built on first use.
+	presetTestsOnce sync.Once
+	presetTests     *peraccount.Limiter
 	// dashboardAuthLimiter is the shared per-IP bucket for the
 	// dashboard auth surface (/login, /auth/verify). Separate from
 	// apiAuthLimiter because the two surfaces count different
@@ -1750,11 +1754,11 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PUT /v1/internal/hosting/sites/{site}/retention", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireOperator(s.hosting.SetRetentionPolicy))))
 	mux.Handle("POST /v1/internal/hosting/oidc/exchange", middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(s.hosting.ExchangeOIDC)))
 	mux.HandleFunc("GET /v1/internal/hosting/sites/{site}/oidc-trusts", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.requireOperator(s.hosting.ListOIDCTrusts))))
-	mux.HandleFunc("POST /v1/internal/hosting/sites/{site}/oidc-trusts", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireOperator(s.hosting.CreateOIDCTrust))))
-	mux.HandleFunc("DELETE /v1/internal/hosting/sites/{site}/oidc-trusts/{trust}", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireOperator(s.hosting.RevokeOIDCTrust))))
+	mux.HandleFunc("POST /v1/internal/hosting/sites/{site}/oidc-trusts", s.authLimited(s.requireAdminCredentialMutation(s.hosting.CreateOIDCTrust)))
+	mux.HandleFunc("DELETE /v1/internal/hosting/sites/{site}/oidc-trusts/{trust}", s.authLimited(s.requireAdminCredentialMutation(s.hosting.RevokeOIDCTrust)))
 	mux.HandleFunc("GET /v1/internal/hosting/sites/{site}/automation-credentials", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.requireOperator(s.hosting.ListAutomationCredentials))))
-	mux.HandleFunc("POST /v1/internal/hosting/sites/{site}/automation-credentials", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireOperator(s.hosting.CreateAutomationCredential))))
-	mux.HandleFunc("DELETE /v1/internal/hosting/sites/{site}/automation-credentials/{credential}", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireOperator(s.hosting.RevokeAutomationCredential))))
+	mux.HandleFunc("POST /v1/internal/hosting/sites/{site}/automation-credentials", s.authLimited(s.requireAdminCredentialMutation(s.hosting.CreateAutomationCredential)))
+	mux.HandleFunc("DELETE /v1/internal/hosting/sites/{site}/automation-credentials/{credential}", s.authLimited(s.requireAdminCredentialMutation(s.hosting.RevokeAutomationCredential)))
 	mux.HandleFunc("POST /v1/internal/hosting/sites/{site}/ci/{run}/cancel", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireOperator(s.hosting.CancelCIRun))))
 	mux.HandleFunc("PUT /v1/internal/hosting/sites/{site}/ci/{run}", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireOperator(s.hosting.CreateCIRun))))
 	mux.HandleFunc("GET /v1/internal/hosting/sites/{site}/ci/{run}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.requireOperator(s.hosting.GetCIRun))))
@@ -1875,6 +1879,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/postgres/databases/{id}/resize", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.resizeManagedPostgresDatabase)))))
 	mux.HandleFunc("GET /v1/postgres/databases/{id}/resizes/{resize_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getManagedPostgresResize))))
 	mux.HandleFunc("GET /v1/postgres/databases/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getManagedPostgresDatabase))))
+	mux.HandleFunc("GET /v1/postgres/databases/{id}/status", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getDatabaseStatus))))
 	mux.HandleFunc("DELETE /v1/postgres/databases/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.idempotent(s.deleteManagedPostgresDatabase)))))
 	mux.HandleFunc("POST /v1/postgres/databases/{id}/undelete", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.idempotent(s.undeleteManagedPostgresDatabase))))))
 	mux.HandleFunc("POST /v1/postgres/databases/{id}/restore", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.idempotent(s.restoreManagedPostgresDatabase))))))
@@ -3153,6 +3158,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/domains/{domain}/default", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.setDefaultDomain)))))
 	mux.HandleFunc("POST /v1/domains/{domain}/retry", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.retryDomainVerification)))))
 	mux.HandleFunc("GET /v1/domains/{domain}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getDomain))))
+	mux.HandleFunc("GET /v1/domains/{domain}/status", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getDomainStatus))))
 	// ADR-120: per-domain doctor surface for `gregale domains doctor`.
 	// Read-only; returns the latest observation row from
 	// domain_doctor_observations plus a synchronous re-probe if
@@ -3176,6 +3182,7 @@ func (s *server) handler() http.Handler {
 	// deleteCron all use requireMFA, so getCron is the lone exception
 	// if we skip it. code-review finding A4.
 	mux.HandleFunc("GET /v1/crons/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getCron))))
+	mux.HandleFunc("GET /v1/crons/{id}/status", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getCronStatus))))
 	// Per-cron execution history (issue #791). Read surface, so
 	// ScopesReadSurface and no idempotency wrapper.
 	mux.HandleFunc("GET /v1/crons/{id}/runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listCronRuns))))
@@ -3253,6 +3260,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/jobs/{name}/runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listJobRuns))))
 	mux.HandleFunc("GET /v1/jobs/{name}/occurrences", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listJobScheduleOccurrences))))
 	mux.HandleFunc("GET /v1/jobs/{name}/runs/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getJobRun))))
+	mux.HandleFunc("GET /v1/jobs/{name}/runs/{id}/status", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getJobRunStatus))))
 	mux.HandleFunc("POST /v1/jobs/{name}/runs/{id}/cancel", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.cancelJobRun))))
 	mux.HandleFunc("POST /v1/jobs/{name}/runs/{id}/replay-failed", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.replayFailedJobRun)))))
 	mux.HandleFunc("GET /v1/jobs/{name}/runs/{id}/tasks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listJobRunTasks))))
@@ -4661,6 +4669,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/deployments/{id}/approvals", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.decideReleaseApproval)))))
 	// Release diff (ADR-20261021101117).
 	mux.HandleFunc("GET /v1/deployments/{id}/diff", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getReleaseDiff)))
+	// ADR-20261022120744: one release's phase and history.
+	mux.HandleFunc("GET /v1/deployments/{id}/timeline", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getReleaseTimeline)))
 	// Scheduled releases (ADR-20261021152201).
 	mux.HandleFunc("GET /v1/scheduled-releases", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listScheduledReleases)))
 	mux.HandleFunc("GET /v1/deployments/{id}/schedule", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getDeploymentSchedule)))
@@ -5045,6 +5055,7 @@ func (s *server) handler() http.Handler {
 	mux.Handle("GET /dashboard/incidents/{id}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderIncident))))
 	mux.Handle("POST /dashboard/incidents/{id}/acknowledge", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIncidentAcknowledge))))
 	mux.Handle("POST /dashboard/incidents/{id}/notes", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIncidentNote))))
+	mux.Handle("GET /dashboard/releases/{id}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderReleasePage))))
 	mux.Handle("GET /dashboard/apps/{slug}/custom-metrics", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderCustomMetricsDashboard))))
 	mux.Handle("POST /dashboard/dev-bridges/{id}/revoke", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.revokeDevBridgeDashboard))))
 

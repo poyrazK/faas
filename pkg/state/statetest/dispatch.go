@@ -61,6 +61,7 @@ var memDispatched = map[string]bool{
 	"DeploymentSidecarRAMs":                                   true,
 	"ListBillingWindowInstances":                              true,
 	"ListInstancesForApp":                                     true,
+	"ListLiveInstancesForApps":                                true,
 	"AccountByID":                                             true,
 	"InstanceListByNodeForRecovery":                           true,
 	"ActiveComputeNodes":                                      true,
@@ -279,6 +280,7 @@ var memDispatched = map[string]bool{
 	"PinnedProjectReleaseWorkers":                   true,
 	"HeldProjectReleaseWorkers":                     true,
 	"ListConsumerKeysForApp":                        true,
+	"GetSLO":                                        true,
 	"CountOpenAPIDocsByAccount":                     true,
 }
 
@@ -1554,6 +1556,15 @@ func (s *Mem) ListInstancesForApp(p0 context.Context, p1 string) ([]state.Instan
 		return o.ListInstancesForApp(p0, p1)
 	}
 	return s.MemStore.ListInstancesForApp(p0, p1)
+}
+
+func (s *Mem) ListLiveInstancesForApps(p0 context.Context, p1 []string) ([]state.Instance, error) {
+	if o, ok := s.over.(interface {
+		ListLiveInstancesForApps(context.Context, []string) ([]state.Instance, error)
+	}); ok {
+		return o.ListLiveInstancesForApps(p0, p1)
+	}
+	return s.MemStore.ListLiveInstancesForApps(p0, p1)
 }
 
 func (s *Mem) SetDeploymentAlias(p0 context.Context, p1 string, p2 string, p3 string) (state.DeploymentAlias, error) {
@@ -4769,4 +4780,13 @@ func (s *Mem) HeldProjectReleaseWorkers(p0 context.Context, p1 string) ([]string
 		return o.HeldProjectReleaseWorkers(p0, p1)
 	}
 	return s.MemStore.HeldProjectReleaseWorkers(p0, p1)
+}
+
+func (s *Mem) GetSLO(p0 context.Context, p1 string, p2 string) (state.SLO, error) {
+	if o, ok := s.over.(interface {
+		GetSLO(context.Context, string, string) (state.SLO, error)
+	}); ok {
+		return o.GetSLO(p0, p1, p2)
+	}
+	return s.MemStore.GetSLO(p0, p1, p2)
 }
