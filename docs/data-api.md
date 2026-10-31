@@ -445,6 +445,14 @@ Preparation rechecks the full witness transactionally before publication. See
 
 ## Per-user request rate limits
 
+> **Runtime limits are per instance.** The rate limits, per-user and
+> server-key concurrency, and anonymous budgets below are counted inside each
+> running instance of the Data API. An app that scales to N instances admits
+> up to N times each limit for one client. For a limit that holds for the app
+> as a whole, add an edge [`throttle`](edge-rules.md#throttle) rule keyed by
+> `jwt_subject` or `ip`: edge buckets are counted across every gateway. Monthly
+> caps already count every instance.
+
 Enable an optional policy through the Data API deployment environment:
 
 ```sh
@@ -923,7 +931,8 @@ gregale data-api create notes-data --database notes-db \
 
 The command reserves an ordinary app, attaches a restricted `DATABASE_URL`
 binding, seals the authentication settings, enables plan-gated PostgreSQL egress
-and uploads the Data API template through the normal builder/deploy path.
+and deploys the Data API runtime the control plane serves through the normal
+builder/deploy path ([Runtime versions and upgrades](#runtime-versions-and-upgrades)).
 Creation and `--resume` set `require_authn=false` and change owner-key
 `public_auth.mode=bearer` to `open` so application JWTs reach the runtime verifier.
 Other explicitly configured ingress restrictions remain in place on resume.
@@ -940,8 +949,42 @@ The API verifies the database's TLS certificate against the public root store
 also registers `before_checkpoint` and `after_restore` hooks, so a parked API
 holds no database connection: the first request after a wake waits while the
 API reconnects, within the request deadline. For an API created before these
-hooks existed, `data-api create NAME ... --resume` (or `data-api deploy` for a
-single-app project) adds them with the current runtime.
+hooks existed, `gregale data-api deploy NAME` adds them with the current runtime.
+
+### Runtime versions and upgrades
+
+The platform owns the Data API runtime. `data-api create` and `data-api deploy`
+download the runtime the control plane currently serves
+(`GET /v1/apps/{slug}/data-api/runtime`) and deploy it, so the runtime does not
+depend on the CLI release you have installed. Only a control plane that predates
+the runtime route makes the CLI fall back to the runtime it carries, and it says
+so. Any other download failure stops the deploy.
+
+A running API reports the version it was built from as `runtime_version` on
+`/healthz`. `gregale data-api health NAME` compares it with the version the
+control plane serves. A different version, or a runtime old enough to report
+none, is listed as `runtime_not_current`. The finding leaves the health status
+unchanged, because the old runtime still serves requests. To upgrade the
+runtime without changing anything else, run:
+
+```sh
+gregale data-api deploy notes-data
+```
+
+For a single-app project, pass `--migrations` as usual. The release task then
+runs your migrations against the upgraded runtime.
+
+### Delete an API
+
+```sh
+gregale data-api delete notes-data --yes
+```
+
+This revokes the app's managed PostgreSQL bindings, which closes their database
+credentials, and then deletes the app. `gregale apps rm` refuses an app that
+still has a live database binding (`app_has_postgres_bindings`), because the
+credential would outlive the app. The database and its data are kept. Delete
+the database separately with `gregale postgres delete`.
 
 ## Define your application schema and authorization
 
@@ -1516,7 +1559,7 @@ The app holds two bindings to the same database:
 - `MIGRATION_DATABASE_URL` uses the `migration` login, which is delivered only
   to release tasks.
 
-The CLI uploads the pinned runtime together with your `migrations` directory and
+The CLI uploads the control plane's current runtime together with your `migrations` directory and
 declares `release: node migrations/release.mjs`. Every deployment therefore
 applies migrations first, and its new instances load the new schema when they
 start; no separate refresh is needed. Ship later schema changes with:

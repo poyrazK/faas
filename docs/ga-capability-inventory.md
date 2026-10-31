@@ -230,7 +230,7 @@ internal hosting service and Gregale Agents are already unreachable.
 |---|---|---|---|---|---|
 | 108 | Object storage: buckets, signed URLs, upload routes, S3 gateway, versioning, lifecycle rules, object lock, write protection, encryption keys, change notifications, multipart uploads | `buckets`, `upload-routes`, object-storaged, s3-gatewayd | `object-storage` preview | `s3_enabled` | preview |
 | 109 | Managed Postgres (account and org databases): point-in-time restore, scale-to-zero, availability classes, resize, connection pool | `/v1/postgres`, org `postgres` | `managed-postgres` internal | CLI operator audience | preview |
-| 110 | Data API | `data-api` | **MISSING** | — | preview |
+| 110 | Data API | `data-api`, `/v1/apps/{slug}/data-api` | `data-api` preview (child of `managed-postgres`) | platform flag; the parent must be released too | preview |
 | 111 | Durable entities and sessions, incl. browser sessions, backup, export and restore | `entities` | **MISSING** | — | preview |
 | 112 | Realtime channels: resume, tickets, access, occupancy | realtimed, app `realtime` (110 routes) | **MISSING** | `pf: realtime_*` | preview |
 | 113 | Live queries | livequeryd | **MISSING** | `pf: live_queries` | preview |

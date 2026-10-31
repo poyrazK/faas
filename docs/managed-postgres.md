@@ -28,9 +28,11 @@ database reservation boundary:
 | Scale | 10 | 20 GiB | 200 CU-hours | 7 days | development, burstable, production |
 
 Storage is pooled across the account's databases: one database may use the
-whole pool. Storage and compute are limits, not billed overage, until managed
-PostgreSQL is invoiced
+whole pool. Storage is a limit, not billed overage
 ([ADR-1430](adr/1430-plan-entitlements-from-october-2026-cogs-report.md)).
+Compute is a limit too, unless a paid account turns overage on: then compute
+above the allowance costs $0.20 per CU-hour, up to twice the allowance
+([Compute overage](#compute-overage)).
 
 All current plans use provider-managed compute suspension. Always-on database
 compute is not included in the bundled plans, and requests that disable
@@ -648,10 +650,9 @@ The billing seam emits stable internal line-item codes
 (`managed_postgres.compute`, `managed_postgres.storage`,
 `managed_postgres.restore_history`, and `managed_postgres.egress`) with
 normalized quantities and provider-cost millicents. They are COGS/invoice
-mapping inputs only: current plans are bundled and do not expose provider
-costs or surprise overage charges to customers. A future invoice adapter can
-attach the codes to the included managed-postgres product without changing
-the Neon adapter or the customer API.
+mapping inputs only: customers never see provider costs. The only customer
+charge is compute overage, which an account turns on itself
+([Compute overage](#compute-overage)).
 
 Customers can inspect the current account snapshot with
 `GET /v1/account/managed-postgres-usage` (the `usage:read` scope) or
@@ -855,9 +856,38 @@ choice, `{"enabled": true|false}`:
 - Off is the default, and the databases are suspended at the allowance.
 - On, they keep running until twice the allowance (the ceiling), then are
   suspended.
-- Compute above the allowance is not billed until managed PostgreSQL has
-  invoicing.
+- Compute above the allowance costs $0.20 per CU-hour
+  (`api.ManagedPostgresOverageMillicentsPerComputeUnitHour`). It is charged
+  only past the allowance and only up to the ceiling, so a month of overage
+  costs at most one allowance: $5 on Hobby, $15 on Pro, $40 on Scale. It
+  appears on the next invoice as its own line.
 - Free accounts get `403 managed_postgres_not_in_plan`.
+
+The charge does not count toward the account's spend cap: the overage
+setting has its own ceiling.
+
+apid delivers the charge after each compute cap sweep
+([ADR-20261031110037](adr/20261031110037-managed-postgres-overage-invoicing.md)):
+
+- It charges subjects that reached their allowance in the month (the
+  `allowance` cap event) with overage on at the time, or turned on later.
+- The month's total is cumulative. Each step sends only the difference from
+  the last delivered total, keyed by that total, so a retry is a duplicate,
+  never a second charge.
+- For seven days after a month ends
+  (`api.ManagedPostgresOverageCloseWindow`), late provider usage windows still
+  add to that month.
+- The allowance used is the larger of the plan's and the one recorded when
+  the subject reached it, so an upgrade never raises the charge.
+
+Delivery is off until an operator sets `FAAS_POLAR_MANAGED_POSTGRES_BILLING_MODE`
+to `shadow` (record each step, send nothing) or `live`, with
+`FAAS_POLAR_MANAGED_POSTGRES_BILLING_FROM` (a UTC month) and
+`FAAS_POLAR_MANAGED_POSTGRES_METER_ID`. That meter sums
+`metadata.charge_millicents` for the event `faas_managed_postgres_usage`, and
+each paid product carries a metered price of $0.00001 per unit on it.
+Receipts live in `managed_postgres_overage_deliveries`. Charges need cap
+enforcement on, because the cap sweep records the `allowance` event.
 
 The setting is the `postgres-overage` capability, at maturity `internal`.
 Every account reads as off, and the route answers as unknown, until an operator

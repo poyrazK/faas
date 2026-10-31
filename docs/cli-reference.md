@@ -8840,16 +8840,44 @@ gregale data-api create shop-data --database shop-db --issuer https://id.example
 
 ### data-api deploy
 
-Deploy a single-app Data API with its migrations as the release task
+Deploy the current Data API runtime, with migrations as the release task
 
-`gregale data-api deploy --migrations <DIR> [--release-command <COMMAND>] [--env <SCOPE>] [--timeout <DURATION>] <name>`
+`gregale data-api deploy [--migrations <DIR>] [--release-command <COMMAND>] [--env <SCOPE>] [--timeout <DURATION>] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--migrations <DIR>` | migration directory run with MIGRATION_DATABASE_URL | required |
+| `--migrations <DIR>` | migration directory run with MIGRATION_DATABASE_URL |  |
 | `--release-command <COMMAND>` | release command (default node migrations/release.mjs) |  |
 | `--env <SCOPE>` | environment scope (also --scope) |  |
 | `--timeout <DURATION>` | deployment and release wait (default 15m) |  |
+
+Examples:
+
+```sh
+gregale data-api deploy shop-data --migrations migrations
+gregale data-api deploy shop-data
+```
+
+Deploys the runtime the control plane serves; without --migrations it upgrades the runtime only.
+
+### data-api delete
+
+Revoke a Data API&#39;s database bindings and delete the app
+
+`gregale data-api delete [--yes] [--timeout <DURATION>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--yes` | confirm deletion without prompting |  |
+| `--timeout <DURATION>` | maximum time for the API calls (default 2m) |  |
+
+Examples:
+
+```sh
+gregale data-api delete shop-data --yes
+```
+
+Deleting the app alone is refused while its bindings are live.
 
 ### data-api configure
 
