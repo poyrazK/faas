@@ -53,7 +53,11 @@ type NodeLedger struct {
 	// measuredCPU, when set, charges measured instances their measured CPU
 	// at the vCPU and CPU gates (ADR 20261029151111, admission_cpu_discount.go).
 	measuredCPU MeasuredCPU
-	now         func() time.Time // nil means time.Now; tests set it
+	// cpuPressured, when set, reports whether a node is held under CPU
+	// pressure (ADR 20261030100950): the gates then count its bookings in
+	// full. The engine sets it from its node registry.
+	cpuPressured func(nodeID string, now time.Time) bool
+	now          func() time.Time // nil means time.Now; tests set it
 }
 
 func (l *NodeLedger) clock() time.Time {
@@ -514,11 +518,15 @@ func (l *NodeLedger) Admit(r Request) error {
 	}
 	discountVCPU, discountCPU := l.cpuDiscount_locked(r.NodeID)
 	overcommitCap := l.overcommitCap_locked()
+	pressure := ""
+	if l.nodeCPUPressured_locked(r.NodeID) {
+		pressure = " (node under CPU pressure: every booking counts)"
+	}
 	vcpuUsed := quietEffective(node.usedVCPU, discountVCPU, vcpuCeiling, overcommitCap)
 	if vcpuUsed+r.VCPU > vcpuCeiling && !r.AllowResidentRecovery {
 		return explainAdmission(api.ErrCapacity(fmt.Sprintf(
-			"vCPU headroom: node %q busy %d + %d requested exceeds the %d per-node vCPU budget",
-			r.NodeID, vcpuUsed, r.VCPU, vcpuCeiling)), resourceBlocker("node_vcpu", "vcpu", int64(r.VCPU)))
+			"vCPU headroom: node %q busy %d + %d requested exceeds the %d per-node vCPU budget%s",
+			r.NodeID, vcpuUsed, r.VCPU, vcpuCeiling, pressure)), resourceBlocker("node_vcpu", "vcpu", int64(r.VCPU)))
 	}
 
 	// Host CPU admission is distinct from guest-visible vCPU topology.
@@ -540,8 +548,8 @@ func (l *NodeLedger) Admit(r Request) error {
 		cpuUsed+reservedCPU > cpuCeiling &&
 		!r.AllowResidentRecovery {
 		return explainAdmission(api.ErrCapacity(fmt.Sprintf(
-			"CPU headroom: node %q reserved %d millicores + %d requested (including temporary startup boost) exceeds the %d millicore physical CPU budget",
-			r.NodeID, cpuUsed, reservedCPU, cpuCeiling)), resourceBlocker("node_cpu", "cpu_millicores", int64(reservedCPU)))
+			"CPU headroom: node %q reserved %d millicores + %d requested (including temporary startup boost) exceeds the %d millicore physical CPU budget%s",
+			r.NodeID, cpuUsed, reservedCPU, cpuCeiling, pressure)), resourceBlocker("node_cpu", "cpu_millicores", int64(reservedCPU)))
 	}
 
 	l.entries[r.Instance] = &reservation{

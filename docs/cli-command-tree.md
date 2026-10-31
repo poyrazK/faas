@@ -298,6 +298,7 @@ touch them. The tables below map each earlier name.
 | `gregale deploy status` | `gregale release attempt get` |
 | `gregale deployment diff` | `gregale release diff` |
 | `gregale deployment runtime` | `gregale release runtime` |
+| `gregale deployment status` | `gregale release status` |
 | `gregale deployment summary` | `gregale release summary` |
 | `gregale deployment wait` | `gregale release wait` |
 | `gregale deployments alias` | `gregale release alias` |

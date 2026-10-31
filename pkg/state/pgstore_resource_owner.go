@@ -106,6 +106,13 @@ func (s *PgStore) updateOrgResourcePlan(ctx context.Context, id string, plan api
 	if _, err = q.LockOrg(ctx, tx, key); err != nil {
 		return mapErr(err)
 	}
+	// The default spend cap moves with the plan, as for an account
+	// (ADR-20261029180000, ADR-20261030093512).
+	var from string
+	var capCents *int64
+	if err = tx.QueryRow(ctx, `select plan, overage_cap_cents from orgs where id = $1`, id).Scan(&from, &capCents); err != nil {
+		return mapErr(err)
+	}
 	if plan == api.PlanFree {
 		if err = q.DisableStreaming(ctx, tx, key); err != nil {
 			return err
@@ -113,6 +120,10 @@ func (s *PgStore) updateOrgResourcePlan(ctx context.Context, id string, plan api
 	}
 	if _, err = q.UpdatePlan(ctx, tx, ownersql.UpdatePlanParams{ID: key, Plan: string(plan)}); err != nil {
 		return mapErr(err)
+	}
+	if _, err = tx.Exec(ctx, `update orgs set overage_cap_cents = $2 where id = $1`, id,
+		planChangeOverageCap(api.Plan(from), plan, capCents)); err != nil {
+		return err
 	}
 	return tx.Commit(ctx)
 }

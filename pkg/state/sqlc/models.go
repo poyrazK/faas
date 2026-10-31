@@ -2842,6 +2842,7 @@ type ComputeNode struct {
 	EdgeListenerHeartbeatAt pgtype.Timestamptz
 	WakeBreakerOpenUntil    pgtype.Timestamptz
 	WakeBreakerReason       pgtype.Text
+	CpuPressureUntil        pgtype.Timestamptz
 }
 
 type ComputeNodeHeartbeat struct {
@@ -4183,6 +4184,16 @@ type DeploymentScopeExclusion struct {
 	CreatedBy string
 	CreatedAt pgtype.Timestamptz
 	UpdatedAt pgtype.Timestamptz
+}
+
+type DeploymentSidecarEnvReseal struct {
+	DeploymentID pgtype.UUID
+	SidecarName  string
+	EnvKey       string
+	SourceSha256 string
+	Kid          string
+	Ciphertext   []byte
+	ResealedAt   pgtype.Timestamptz
 }
 
 type DeploymentSidecarLayer struct {
@@ -6080,6 +6091,8 @@ type GithubDeployPolicy struct {
 	UpdatedAt            pgtype.Timestamptz
 	PreviewServicePolicy string
 	ProductionTrigger    string
+	PreviewBotPrs        bool
+	PreviewDraftPrs      bool
 }
 
 type GithubDeployment struct {
@@ -10227,6 +10240,8 @@ type Org struct {
 	TaxID                    string
 	ObjectStorageOwnedFrom   pgtype.Timestamptz
 	AsyncQuotaPooledAt       pgtype.Timestamptz
+	// Monthly spend cap in cents for an organization that owns its resources; NULL = no cap (ADR-20261030093512).
+	OverageCapCents pgtype.Int8
 }
 
 // Curated organization activity timeline; safe display facts only, FK-free and append-only

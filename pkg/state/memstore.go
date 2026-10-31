@@ -1084,7 +1084,10 @@ type MemStore struct {
 	// names are validated to a portable charset and
 	// deploymentIDs are UUIDs).
 	deploymentSidecarLayers map[string]DeploymentSidecarLayer
-	snapshots               []Snapshot
+	// sidecarEnvReseals mirrors deployment_sidecar_env_reseals, keyed by
+	// sidecarEnvResealKey; nil until the first upsert.
+	sidecarEnvReseals map[string]SidecarEnvReseal
+	snapshots         []Snapshot
 	// snapshotStaleAt mirrors snapshots.stale_at: when a snapshot was marked
 	// stale, which stale retention counts from (Hunt 21 H21-2). A stale row
 	// without an entry falls back to its creation time.
@@ -7287,7 +7290,8 @@ func (m *MemStore) restoreAppLocked(ctx context.Context, id string, limits api.L
 	if !ok {
 		return App{}, ErrNotFound
 	}
-	if _, claimed := m.appDeletionClaims[id]; claimed || a.Status != AppDeleted || a.DeleteGraceUntil == nil || !a.DeleteGraceUntil.After(time.Now()) {
+	if _, claimed := m.appDeletionClaims[id]; claimed || a.Status != AppDeleted || a.DeleteGraceUntil == nil || !a.DeleteGraceUntil.After(time.Now()) ||
+		previewTornDown(a) {
 		return App{}, ErrConflict
 	}
 	if err := m.checkAppQuotaLocked(a, limits); err != nil {
@@ -7850,8 +7854,34 @@ func (m *MemStore) DeleteGithubInstallBinding(_ context.Context, appID string) e
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, ok := m.apps[appID]; !ok {
+	parent, ok := m.apps[appID]
+	if !ok {
 		return ErrNotFound
+	}
+	// Mirrors PgStore: the app's PR preview environments go stale.
+	anchors := make(map[string]string)
+	for _, set := range m.previewSets {
+		if root, ok := m.apps[set.RootAppID]; ok {
+			for _, id := range set.MemberAppIDs {
+				anchors[id] = root.PreviewOfSlug
+			}
+		}
+	}
+	now := time.Now()
+	for id, preview := range m.apps {
+		if preview.AccountID != parent.AccountID || preview.PreviewOfSlug == "" || preview.PreviewPrNumber <= 0 ||
+			preview.Status == AppDeleted || preview.PreviewPrState == PreviewPrStateTearingDown || preview.PreviewPrState == PreviewPrStateTornDown {
+			continue
+		}
+		anchor, inSet := anchors[id]
+		if !inSet {
+			anchor = preview.PreviewOfSlug
+		}
+		if anchor == parent.Slug {
+			preview.PreviewPrState = PreviewPrStateStale
+			preview.PreviewExpiresAt = &now
+			m.apps[id] = preview
+		}
 	}
 	delete(m.githubBindings, appID)
 	return nil
@@ -17811,6 +17841,19 @@ func (m *MemStore) OpenComputeNodeWakeBreaker(_ context.Context, nodeID string, 
 	return nil
 }
 
+// HoldComputeNodeCPUPressure mirrors PgStore.HoldComputeNodeCPUPressure.
+func (m *MemStore) HoldComputeNodeCPUPressure(_ context.Context, nodeID string, until time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n, ok := m.computeNodes[nodeID]
+	if !ok {
+		return nil
+	}
+	n.CPUPressureUntil = &until
+	m.computeNodes[nodeID] = n
+	return nil
+}
+
 // CloseComputeNodeWakeBreaker mirrors PgStore.CloseComputeNodeWakeBreaker.
 func (m *MemStore) CloseComputeNodeWakeBreaker(_ context.Context, nodeID string) (bool, error) {
 	m.mu.Lock()
@@ -20448,7 +20491,7 @@ func (m *MemStore) LoadAllOverageCapCents(_ context.Context) (map[string]int64, 
 
 // CurrentMonthOverageCents sums the account's compute usage_minutes.mb_seconds
 // from the UTC month start, removes the month's included allowance (the
-// largest plan grant recorded this month, ADR-1162), and converts the
+// time-weighted plan grant this month, ADR-20261030093512), and converts the
 // remainder to integer cents. Integer math only — never float on money
 // (CLAUDE.md).
 //
@@ -20463,6 +20506,8 @@ func (m *MemStore) CurrentMonthOverageCents(_ context.Context, accountID string)
 	var plan api.Plan
 	if acct, ok := m.accounts[accountID]; ok {
 		plan = acct.Plan
+	} else if org, ok := m.orgs[accountID]; ok && !org.Personal {
+		plan = org.Plan
 	}
 	var mbSeconds int64
 	for _, u := range m.usage {

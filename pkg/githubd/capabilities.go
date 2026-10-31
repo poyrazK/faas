@@ -1,6 +1,9 @@
 package githubd
 
-import "github.com/onebox-faas/faas/pkg/reposcan"
+import (
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/reposcan"
+)
 
 // Capability flags (ADR-20261023115741): githubd stops the GitHub work of a
 // capability whose platform flag is off for the bound account. A push or pull
@@ -25,7 +28,8 @@ func (s *Service) capabilityAllowed(capability, accountID string) bool {
 // the workloads the account reviewed.
 func (s *Service) scanOptions(accountID string) reposcan.ScanOptions {
 	return reposcan.ScanOptions{
-		KubernetesManifests: s.capabilityAllowed(reposcan.KubernetesManifestsCapability, accountID),
+		KubernetesManifests:       s.capabilityAllowed(reposcan.KubernetesManifestsCapability, accountID),
+		HTTPSTransportUnavailable: !s.capabilityAllowed(api.PrivateServiceHTTPSCapability, accountID),
 	}
 }
 
