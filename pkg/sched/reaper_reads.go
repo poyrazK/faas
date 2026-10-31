@@ -81,8 +81,8 @@ type appInstanceLister interface {
 // app's history is all its wakes for the retention window (30 days): on
 // production-us the per-app reconciles, wake paths and log streams read it
 // about 700 times a minute at ~20 ms each, for a handful of live rows. Reads
-// that need parked or terminal rows (service replica classification,
-// admission repair, deleted-app cleanup) keep ListInstancesForApp.
+// that need parked or terminal rows (admission repair, deleted-app cleanup)
+// keep ListInstancesForApp.
 func liveInstancesOf(ctx context.Context, store appInstanceLister, appID string) ([]state.Instance, error) {
 	if reader, ok := store.(state.LiveInstancesForAppsReader); ok {
 		return reader.ListLiveInstancesForApps(ctx, []string{appID})
