@@ -107,8 +107,21 @@ func (s *PgStore) createCustomDomainIfUnderQuota(ctx context.Context, domain, ap
 	if n >= appLimit {
 		return CustomDomain{}, 0, &CustomDomainQuotaError{"app", appLimit}
 	}
-	// The account row serializes creates made concurrently for different apps.
-	if err = tx.QueryRow(ctx, `select count(*) from custom_domains d join apps a on a.id=d.app_id where a.account_id=$1 and d.verified_at is null and d.verification_expires_at > now()`, accountID).Scan(&n); err != nil {
+	// The pending-domain budget is the app's billing subject's
+	// (ADR-202610171904): a company's once it adopted billing, whoever
+	// created the app, else the creator's. The publication holds the
+	// subject's lock from before this transaction's snapshot, so claims on
+	// the subject's other apps are serialized and counted here.
+	var subject string
+	if err = tx.QueryRow(ctx, `select (`+quotaSubjectSQL+`)::text from apps a left join orgs o on o.id = a.org_id where a.id = $1`,
+		appID).Scan(&subject); err != nil {
+		return CustomDomain{}, 0, mapErr(err)
+	}
+	if err = tx.QueryRow(ctx, `select count(*) from custom_domains d
+		join apps a on a.id = d.app_id
+		left join orgs o on o.id = a.org_id
+		where (a.account_id = $1::uuid or a.org_id = $1::uuid) and `+quotaSubjectSQL+` = $1::uuid and a.status <> 'deleted'
+		  and d.verified_at is null and d.verification_expires_at > now()`, subject).Scan(&n); err != nil {
 		return CustomDomain{}, 0, err
 	}
 	if n >= accountLimit {
@@ -278,6 +291,9 @@ func (m *MemStore) createCustomDomainIfUnderQuotaLocked(ctx context.Context, dom
 			return CustomDomain{}, ErrConflict
 		}
 	}
+	// The pending-domain budget is the app's billing subject's
+	// (ADR-202610171904).
+	subject := m.appBillingSubjectLocked(a.AccountID, a.ID)
 	ac, ap := 0, 0
 	for _, d := range m.domains {
 		if d.Verified() || (!d.VerificationExpiresAt.IsZero() && !d.VerificationExpiresAt.After(now)) {
@@ -286,7 +302,7 @@ func (m *MemStore) createCustomDomainIfUnderQuotaLocked(ctx context.Context, dom
 		if d.AppID == appID {
 			ap++
 		}
-		if x := m.apps[d.AppID]; x.AccountID == a.AccountID {
+		if x := m.apps[d.AppID]; m.countsTowardQuotaSubjectLocked(x.AccountID, d.AppID, subject) {
 			ac++
 		}
 	}

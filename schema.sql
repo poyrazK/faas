@@ -27687,6 +27687,42 @@ BEGIN
     LOOP
         PERFORM pg_notify('app_changed', preview_id::text);
     END LOOP;
+    -- A service the PR adds has no production app; its preview keeps the
+    -- access and egress gates of the app the PR previews (the root of its
+    -- PR environment), not that app's visibility or route contract.
+    FOR preview_id IN
+        UPDATE apps service
+        SET require_authn = NEW.require_authn,
+            public_auth_mode = NEW.public_auth_mode,
+            public_auth_basic = NEW.public_auth_basic,
+            public_auth_ip_allowlist = NEW.public_auth_ip_allowlist,
+            consumer_auth_mode = NEW.consumer_auth_mode,
+            require_signed = NEW.require_signed,
+            egress_allowlist = NEW.egress_allowlist
+        FROM pr_preview_sets preview_set
+        JOIN apps root ON root.id = preview_set.root_app_id
+        WHERE root.account_id = NEW.account_id
+          AND root.preview_of_slug = NEW.slug
+          AND preview_set.member_app_ids @> ARRAY[service.id::text]
+          AND service.id <> root.id
+          AND service.account_id = NEW.account_id
+          AND service.status <> 'deleted'
+          AND NOT EXISTS (
+              SELECT 1 FROM apps production
+              WHERE production.account_id = service.account_id
+                AND production.slug = service.preview_of_slug
+                AND production.preview_of_slug IS NULL
+                AND production.status <> 'deleted')
+          AND (service.require_authn, service.public_auth_mode, service.public_auth_basic,
+               service.public_auth_ip_allowlist, service.consumer_auth_mode, service.require_signed,
+               service.egress_allowlist)
+              IS DISTINCT FROM (NEW.require_authn, NEW.public_auth_mode, NEW.public_auth_basic,
+               NEW.public_auth_ip_allowlist, NEW.consumer_auth_mode, NEW.require_signed,
+               NEW.egress_allowlist)
+        RETURNING service.id
+    LOOP
+        PERFORM pg_notify('app_changed', preview_id::text);
+    END LOOP;
     RETURN NULL;
 END;
 $$;
