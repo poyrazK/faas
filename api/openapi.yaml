@@ -8413,7 +8413,7 @@ paths:
         deploy this archive, so an older CLI release does not redeploy an older
         runtime. A running Data API reports the version it was built from as
         `runtime_version` on `/healthz`; a different version is not the
-        platform's current runtime (ADR-20261031095954).
+        platform's current runtime.
       tags: [managed_postgres]
       security: [{ bearerAuth: [] }]
       responses:
@@ -83406,7 +83406,7 @@ components:
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
     DataAPIRuntime:
-      description: The Data API runtime the control plane serves (ADR-20261031095954).
+      description: The Data API runtime the control plane serves.
       type: object
       additionalProperties: false
       required: [version, archive_sha256, archive]

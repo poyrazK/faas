@@ -10,7 +10,7 @@ T = TypeVar("T", bound="DataAPIRuntime")
 
 @_attrs_define
 class DataAPIRuntime:
-    """The Data API runtime the control plane serves (ADR-20261031095954)."""
+    """The Data API runtime the control plane serves."""
 
     version: str
     """Digest of the runtime's image files; running Data APIs report it as runtime_version on /healthz."""

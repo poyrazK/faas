@@ -59,7 +59,7 @@ def sync_detailed(
     deploy this archive, so an older CLI release does not redeploy an older
     runtime. A running Data API reports the version it was built from as
     `runtime_version` on `/healthz`; a different version is not the
-    platform's current runtime (ADR-20261031095954).
+    platform's current runtime.
 
     Args:
         slug (str):
@@ -96,7 +96,7 @@ def sync(
     deploy this archive, so an older CLI release does not redeploy an older
     runtime. A running Data API reports the version it was built from as
     `runtime_version` on `/healthz`; a different version is not the
-    platform's current runtime (ADR-20261031095954).
+    platform's current runtime.
 
     Args:
         slug (str):
@@ -128,7 +128,7 @@ async def asyncio_detailed(
     deploy this archive, so an older CLI release does not redeploy an older
     runtime. A running Data API reports the version it was built from as
     `runtime_version` on `/healthz`; a different version is not the
-    platform's current runtime (ADR-20261031095954).
+    platform's current runtime.
 
     Args:
         slug (str):
@@ -163,7 +163,7 @@ async def asyncio(
     deploy this archive, so an older CLI release does not redeploy an older
     runtime. A running Data API reports the version it was built from as
     `runtime_version` on `/healthz`; a different version is not the
-    platform's current runtime (ADR-20261031095954).
+    platform's current runtime.
 
     Args:
         slug (str):

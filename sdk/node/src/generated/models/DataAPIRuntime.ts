@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * The Data API runtime the control plane serves (ADR-20261031095954).
+ * The Data API runtime the control plane serves.
  */
 export type DataAPIRuntime = {
   /**

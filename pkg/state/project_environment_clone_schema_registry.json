@@ -9688,6 +9688,19 @@
     "kind": "account_identity"
   },
   {
+    "table": "managed_postgres_overage_deliveries",
+    "columns": [
+      "billed_unit_seconds",
+      "delivered_millicents",
+      "live",
+      "period_start",
+      "provider",
+      "subject_id",
+      "updated_at"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "managed_postgres_bindings",
     "columns": [
       "access",
