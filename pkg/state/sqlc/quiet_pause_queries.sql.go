@@ -13,8 +13,13 @@ import (
 
 const deleteQuietPausesBefore = `-- name: DeleteQuietPausesBefore :execrows
 DELETE FROM instance_quiet_pauses
- WHERE ctid IN (SELECT ctid FROM instance_quiet_pauses
-                 WHERE started_at < $1::timestamptz
+ WHERE ctid IN (SELECT p.ctid FROM instance_quiet_pauses p
+                 WHERE p.ended_at < $1::timestamptz
+                    OR (p.ended_at IS NULL
+                        AND p.started_at < $1::timestamptz
+                        AND NOT EXISTS (SELECT 1 FROM quiet_pause_watermarks w
+                                         WHERE w.node_id = p.node_id
+                                           AND w.covered_until >= $1::timestamptz))
                  LIMIT $2::integer)
 `
 
@@ -23,9 +28,11 @@ type DeleteQuietPausesBeforeParams struct {
 	BatchLimit int32
 }
 
-// Retention: pauses that started before cutoff, at most batch_limit rows per
-// call. An open one that old belongs to a VM long gone; its node simply never
-// reported again.
+// Retention, at most batch_limit rows per call: pauses that ended before
+// cutoff, and open ones that started before it on a node whose watermark has
+// not reached it, a VM long gone whose node simply never reported again. An
+// open pause on a reporting node is kept however old: a floor-held VM with no
+// traffic stays quiet-paused for days, and its node sends the pause once.
 func (q *Queries) DeleteQuietPausesBefore(ctx context.Context, db DBTX, arg DeleteQuietPausesBeforeParams) (int64, error) {
 	result, err := db.Exec(ctx, deleteQuietPausesBefore, arg.Cutoff, arg.BatchLimit)
 	if err != nil {

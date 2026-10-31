@@ -942,9 +942,11 @@ type Querier interface {
 	DeleteProjectEnvironmentSecret(ctx context.Context, db DBTX, arg DeleteProjectEnvironmentSecretParams) (int64, error)
 	DeleteQueueLeaseReceipt(ctx context.Context, db DBTX, invocationID pgtype.UUID) error
 	DeleteQueuedOperation(ctx context.Context, db DBTX, operationID pgtype.UUID) error
-	// Retention: pauses that started before cutoff, at most batch_limit rows per
-	// call. An open one that old belongs to a VM long gone; its node simply never
-	// reported again.
+	// Retention, at most batch_limit rows per call: pauses that ended before
+	// cutoff, and open ones that started before it on a node whose watermark has
+	// not reached it, a VM long gone whose node simply never reported again. An
+	// open pause on a reporting node is kept however old: a floor-held VM with no
+	// traffic stays quiet-paused for days, and its node sends the pause once.
 	DeleteQuietPausesBefore(ctx context.Context, db DBTX, arg DeleteQuietPausesBeforeParams) (int64, error)
 	DeleteReadinessSubscription(ctx context.Context, db DBTX, arg DeleteReadinessSubscriptionParams) (int64, error)
 	DeleteRoutePriorities(ctx context.Context, db DBTX, arg DeleteRoutePrioritiesParams) error

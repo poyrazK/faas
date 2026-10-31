@@ -257,7 +257,9 @@ func TestPgQuietPausedUsage(t *testing.T) {
 		func() error {
 			return s.RecordQuietPausedUsage(ctx, acctID, appID, ins.ID, november.Add(10*time.Second), 400)
 		},
-		func() error { return s.RecordQuietPausedUsage(ctx, acctID, appID, ins.ID, november.Add(time.Minute), 0) },
+		func() error {
+			return s.RecordQuietPausedUsage(ctx, acctID, appID, ins.ID, november.Add(time.Minute), 0)
+		},
 	}
 	for i, step := range steps {
 		if err := step(); err != nil {

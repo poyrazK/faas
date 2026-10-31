@@ -35,6 +35,10 @@ class UsageSummaryResponse:
     overage_gb_hours: float
     overage_cents: int
     """Integer cents. Includes compute at $0.01/GB-h and configured live egress overage; shadow egress is excluded."""
+    quiet_paused_gb_hours: float | Unset = UNSET
+    """GB-hours this month that an instance spent quiet-paused between requests and was not billed for, in the same
+    plan RAM + 8 MB unit as used_gb_hours and not part of it (ADR-20261023171905). Absent while zero, which it stays
+    until unbilled quiet pause is released to the account."""
     used_cpu_hours: float | Unset = UNSET
     """Per-month CPU-hours (informational; not billed)."""
     used_egress_gb: float | Unset = UNSET
@@ -75,6 +79,8 @@ class UsageSummaryResponse:
         overage_gb_hours = self.overage_gb_hours
 
         overage_cents = self.overage_cents
+
+        quiet_paused_gb_hours = self.quiet_paused_gb_hours
 
         used_cpu_hours = self.used_cpu_hours
 
@@ -120,6 +126,8 @@ class UsageSummaryResponse:
                 "overage_cents": overage_cents,
             }
         )
+        if quiet_paused_gb_hours is not UNSET:
+            field_dict["quiet_paused_gb_hours"] = quiet_paused_gb_hours
         if used_cpu_hours is not UNSET:
             field_dict["used_cpu_hours"] = used_cpu_hours
         if used_egress_gb is not UNSET:
@@ -160,6 +168,8 @@ class UsageSummaryResponse:
         overage_gb_hours = d.pop("overage_gb_hours")
 
         overage_cents = d.pop("overage_cents")
+
+        quiet_paused_gb_hours = d.pop("quiet_paused_gb_hours", UNSET)
 
         used_cpu_hours = d.pop("used_cpu_hours", UNSET)
 
@@ -211,6 +221,7 @@ class UsageSummaryResponse:
             included_gb_hours=included_gb_hours,
             overage_gb_hours=overage_gb_hours,
             overage_cents=overage_cents,
+            quiet_paused_gb_hours=quiet_paused_gb_hours,
             used_cpu_hours=used_cpu_hours,
             used_egress_gb=used_egress_gb,
             egress_billing_mode=egress_billing_mode,
