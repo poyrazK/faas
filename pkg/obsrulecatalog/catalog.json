@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "2a6b4c18e80aeda58b91f362dc3f001fbfd72352d8e097e004fe942c1db0f2b9",
+      "revision": "63e5afc28ac936e2e414d178e29569ff4ad527ae239dd42842e8494d2e193db4",
       "files": [
         "faas.rules.yml"
       ],
@@ -761,6 +761,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "f1dcf8eacd89b2b89d8c5681800ed87879d70f9d665bc13c270976886ed92020"
+          }
+        },
+        {
+          "id": "19979251c1e29c6d85a4113fa354c74a72a79141874ac480006d0ee52943d5e6",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_billing",
+          "rule_name": "FaasBaseScanFailureHeld",
+          "definition": {
+            "expression_hash": "863c7c8a322b3ce3f2a5b5d6b5c7386be1ce3c19bd0369eb4357a137ae657687",
+            "labels_hash": "aebbad069ab89dcbd1f799806cb1f75efca90884a73ed3f9dd93efffe834eed8",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "bdd0bc8e78c6fe9da16b7962aaafc3abc39186d759097ecf734a87d6a1eb5417"
           }
         },
         {
@@ -3426,6 +3439,19 @@
             "for_seconds": 900,
             "keep_firing_for_seconds": 0,
             "fingerprint": "356c91f2fede0d262acf68191bff25889185c921b9212360689216c3ecadee3c"
+          }
+        },
+        {
+          "id": "84abb605b5b1da05320d069224d54811a466f58524a41b286f8d5a83caef4c95",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_object_storage",
+          "rule_name": "FaasPublicObjectReadUsageFlushFailing",
+          "definition": {
+            "expression_hash": "dfdae28c80242ae44bec6fa3eb604c9f856ca261546733c7c38c2e3c9fcc9856",
+            "labels_hash": "a3b79899300e8163cb3b09bc4e691d336d1a251b35d405f6884fe7d576c6d213",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "adfc970b6815e8cba9ef059ff2c304f48ef13480ac69fabb3131f791e2db013e"
           }
         },
         {
@@ -6500,7 +6526,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "447f1a93b84f016bdeb64ead642083ded8dbc195b0bdbfdc3244d05ff558fbd2",
+      "revision": "c922ffe114eaef72d80c1eed38b0590114c49312721b444f623194429b403812",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -7287,6 +7313,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "f1dcf8eacd89b2b89d8c5681800ed87879d70f9d665bc13c270976886ed92020"
+          }
+        },
+        {
+          "id": "19979251c1e29c6d85a4113fa354c74a72a79141874ac480006d0ee52943d5e6",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_billing",
+          "rule_name": "FaasBaseScanFailureHeld",
+          "definition": {
+            "expression_hash": "863c7c8a322b3ce3f2a5b5d6b5c7386be1ce3c19bd0369eb4357a137ae657687",
+            "labels_hash": "aebbad069ab89dcbd1f799806cb1f75efca90884a73ed3f9dd93efffe834eed8",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "bdd0bc8e78c6fe9da16b7962aaafc3abc39186d759097ecf734a87d6a1eb5417"
           }
         },
         {
@@ -10095,6 +10134,19 @@
             "for_seconds": 900,
             "keep_firing_for_seconds": 0,
             "fingerprint": "356c91f2fede0d262acf68191bff25889185c921b9212360689216c3ecadee3c"
+          }
+        },
+        {
+          "id": "84abb605b5b1da05320d069224d54811a466f58524a41b286f8d5a83caef4c95",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_object_storage",
+          "rule_name": "FaasPublicObjectReadUsageFlushFailing",
+          "definition": {
+            "expression_hash": "dfdae28c80242ae44bec6fa3eb604c9f856ca261546733c7c38c2e3c9fcc9856",
+            "labels_hash": "a3b79899300e8163cb3b09bc4e691d336d1a251b35d405f6884fe7d576c6d213",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "adfc970b6815e8cba9ef059ff2c304f48ef13480ac69fabb3131f791e2db013e"
           }
         },
         {

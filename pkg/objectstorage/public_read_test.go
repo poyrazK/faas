@@ -61,11 +61,14 @@ func TestValidPublicReadPath(t *testing.T) {
 
 func TestPublicReadHandlerServesWithoutNext(t *testing.T) {
 	for _, mode := range []string{"", api.ObjectStorageGatewaySafetyV1} {
-		t.Run(mode, func(t *testing.T) { publicReadServesWithoutNext(t, mode) })
+		t.Run(mode, func(t *testing.T) { publicReadServesWithoutNext(t, mode, false) })
 	}
+	// ADR-20261030075301 step 2: the same read, admitted from a cached
+	// decision with its counts batched.
+	t.Run("cached admission", func(t *testing.T) { publicReadServesWithoutNext(t, api.ObjectStorageGatewaySafetyV1, true) })
 }
 
-func publicReadServesWithoutNext(t *testing.T, mode string) {
+func publicReadServesWithoutNext(t *testing.T, mode string, cached bool) {
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.Path != "/" || len(r.URL.Query()) != 0 {
 			t.Errorf("upstream request = %s %s", r.Method, r.URL.Path)
@@ -132,9 +135,15 @@ func publicReadServesWithoutNext(t *testing.T, mode string) {
 		// Anonymous reads get 75% of the ceiling (H9-S137): exactly 3 bytes.
 		registry.Accounting.MaxMonthlyEgressBytes = 4
 	}
+	var reads *ReadAdmitter
+	locking := state.ObjectStorageAccountingStore(store)
+	if cached {
+		reads = NewNamedReadAdmitter(store, registry.Accounting.AnonymousReadPolicy(), nil, "test")
+		locking = refusingAdmission{}
+	}
 	nextCalled := false
 	h, err := NewPublicReadHandler(PublicReadConfig{
-		Store: store, Registry: registry, RequestMetrics: store, Accounting: store, AppsDomain: "apps.example",
+		Store: store, Registry: registry, RequestMetrics: store, Accounting: locking, ReadAdmitter: reads, AppsDomain: "apps.example",
 		Next: http.HandlerFunc(func(http.ResponseWriter, *http.Request) { nextCalled = true }),
 	})
 	if err != nil {
@@ -152,6 +161,14 @@ func publicReadServesWithoutNext(t *testing.T, mode string) {
 	if got := res.Header().Get("Cache-Control"); got != publicCacheControl {
 		t.Fatalf("Cache-Control = %q", got)
 	}
+	if cached {
+		if metrics, _ := store.ListObjectStorageProviderRequestMetrics(context.Background(), backend.ID, backend.Fingerprint, time.Now().UTC()); len(metrics) != 0 && metrics[0].RequestCount != 0 {
+			t.Fatalf("a cached admission wrote its counts before the flush: %+v", metrics)
+		}
+		if err := reads.Flush(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
 	metrics, err := store.ListObjectStorageProviderRequestMetrics(context.Background(), backend.ID, backend.Fingerprint, time.Now().UTC())
 	if err != nil || len(metrics) != 1 || metrics[0].RequestCount != 1 || metrics[0].EgressBytes != 3 {
 		t.Fatalf("metrics = %+v, err=%v", metrics, err)
@@ -163,4 +180,28 @@ func publicReadServesWithoutNext(t *testing.T, mode string) {
 			t.Fatal("public asset bypassed consumed egress budget", blocked.Code)
 		}
 	}
+}
+
+// refusingAdmission fails a test that reaches the locking admission.
+type refusingAdmission struct{}
+
+const lockingAdmission = "a cached public read took the locking admission"
+
+func (refusingAdmission) ObjectUsage(context.Context, string, time.Time) (state.ObjectUsageSnapshot, error) {
+	panic(lockingAdmission)
+}
+func (refusingAdmission) AdmitObjectURL(context.Context, string, string, string, int64, bool, api.ObjectStoragePolicy) error {
+	panic(lockingAdmission)
+}
+func (refusingAdmission) RecordObjectUsageReport(context.Context, api.ObjectStorageUsageReport) error {
+	panic(lockingAdmission)
+}
+func (refusingAdmission) DueObjectInventories(context.Context, int32) ([]state.ObjectBucket, error) {
+	panic(lockingAdmission)
+}
+func (refusingAdmission) ClaimObjectInventory(context.Context, string, string) error {
+	panic(lockingAdmission)
+}
+func (refusingAdmission) FinishObjectInventory(context.Context, string, string, int64, int64) error {
+	panic(lockingAdmission)
 }

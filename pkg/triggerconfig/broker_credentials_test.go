@@ -64,6 +64,15 @@ func TestRedisPasswordSealOpenRedactMerge(t *testing.T) {
 	if object := decodeMap(t, rotated); object["password"] != "rotated" {
 		t.Fatalf("merged rotate = %s", rotated)
 	}
+	// The stored password never follows the trigger to another server (bug
+	// hunt 2026-10-28 H107); a new password with the new address is fine.
+	moved := json.RawMessage(`{"addr":"attacker.example:6379","stream":"orders","group":"g","password_set":true}`)
+	if _, err := MergeForUpdate(api.TriggerKindRedisStreams, sealed, moved); !errors.Is(err, ErrCredentialMove) {
+		t.Fatalf("MergeForUpdate to another server = %v, want ErrCredentialMove", err)
+	}
+	if _, err := MergeForUpdate(api.TriggerKindRedisStreams, sealed, json.RawMessage(`{"addr":"other.example:6379","stream":"orders","group":"g","password":"fresh"}`)); err != nil {
+		t.Fatalf("MergeForUpdate to another server with a new password: %v", err)
+	}
 }
 
 func TestNATSURLCredentialsSealOpenRedactMerge(t *testing.T) {

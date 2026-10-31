@@ -568,6 +568,20 @@ var cliTreeAliases = []cliTreeAlias{
 	{"debug issue source-map get", "issues source-maps"},
 	{"debug issue source-map publish", "issues source-maps"},
 	{"edge rule attack-mode get", "edge-rules attack-mode"},
+	// Round 11 (2026-10-31): the last customer paths in the baseline. A
+	// WAF exclusion change updates the rule's WAF beside `waf review`;
+	// billing-connection's modes are manifest verbs, and status reads a
+	// stored record.
+	{"edge rule waf update", "edge-rules waf-exclude"},
+	{"account billing-connection get", "account billing-connection status"},
+	// Round 12 (2026-10-31): the postgres verbs. Overage shows or sets a
+	// setting, so it gets both verbs; a compute policy is set, and the
+	// progress of a policy change or a resize is read with status.
+	{"postgres overage get", "postgres overage"},
+	{"postgres overage set", "postgres overage"},
+	{"postgres compute-policy set", "postgres compute-policy"},
+	{"postgres compute-policy status", "postgres compute-policy-status"},
+	{"postgres resize status", "postgres resize-status"},
 
 	// Operator tools live under the hidden admin command (rule 7) and keep
 	// their names; the naming rules cover the customer tree.

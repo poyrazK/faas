@@ -40,7 +40,14 @@ func (l *Loop) rescanProducedRuntime(ctx context.Context, app state.App, dep sta
 	if producedEvidenceBusy(readErr) || ctx.Err() != nil {
 		return true
 	}
-	if scanErr == nil && readErr == nil && privateSecurityScanFailure(fresh) == "" {
+	// Only a completed scan with blocking findings parks the app here. A
+	// renewal that could not run, or evidence that could not be read, says
+	// nothing about the runtime and parked enforce apps on a Grype or CP
+	// hiccup (bug hunt 2026-10-28 H84); the evidence lease decides those.
+	if readErr != nil || privateSecurityScanFailure(fresh) != "security_scan_regressed" {
+		if scanErr != nil {
+			l.log.Warn("imaged: composed scan renewal could not run; the evidence lease decides", "deployment", dep.ID, "err", scanErr)
+		}
 		return true
 	}
 	current, _ := scans.GetCurrentDeploymentRuntimeScan(ctx, app.AccountID, app.ID, dep.ID)

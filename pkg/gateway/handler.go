@@ -1054,6 +1054,9 @@ type Handler struct {
 	// origin response headers for parked-app HEAD / answers. It is process
 	// local; after restart the edge returns 204 until a live response lands.
 	headHeaders *edgeHeadHeaderCache
+	// appFreezes memoizes each request's app policy snapshot (ADR-570) by its
+	// encoding. nil freezes every request from scratch.
+	appFreezes *appFreezes
 	// headWakes is the process-wide opt-in for legacy HEAD wake behaviour;
 	// an App.HeadWakes value can enable it for one app.
 	headWakes bool
@@ -1528,6 +1531,7 @@ func NewHandlerWith(backend Backend, m *Metrics, log *slog.Logger) *Handler {
 		retryBudget:        NewRetryBudget(0, nil),
 		metrics:            m,
 		headHeaders:        newEdgeHeadHeaderCache(),
+		appFreezes:         newAppFreezes(),
 		log:                log,
 		wakePageCycles:     make(map[string]*wakePageCycle),
 		consumerKeyTouches: newConsumerKeyToucher(),
@@ -6022,6 +6026,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// The public edge's nonce for a not-dispatched marker lives in the
 	// request context from here on (ADR-20261022184531 step 5).
 	r = takeDispatchNonce(r)
+	// The compute edge's request for the instance's node, likewise
+	// (ADR-20261031105055).
+	r = takeEdgePlacement(r)
 	if h.devBridgeAuthorize != nil {
 		if problem := h.devBridgeAuthorize(r); problem != nil {
 			api.WriteProblem(w, problem)

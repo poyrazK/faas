@@ -190,8 +190,10 @@ type Config struct {
 	// QuietPauseAdmission (ADR-1151) makes the vCPU and CPU gates count only
 	// active instances: bookings less those vmmd reports quiet-paused, with
 	// all bookings capped at api.QuietPauseMaxVCPUOvercommitPercent of the
-	// budget. Off by default; turn it on together with vmmd's quiet_pause on
-	// the same nodes. A node without a fresh sample counts every booking.
+	// budget. On by default (ADR-1151 amendment 2026-10-31), as vmmd's
+	// quiet_pause is; quiet_pause_admission = false turns it off, and
+	// FAAS_QUIET_PAUSE_ADMISSION overrides it either way. A node without a
+	// fresh sample counts every booking.
 	QuietPauseAdmission bool `toml:"quiet_pause_admission"`
 
 	// MeasuredCPUAdmission (ADR 20261029151111) makes the vCPU and CPU gates
@@ -199,8 +201,10 @@ type Config struct {
 	// measured host CPU instead of its booking, never less than
 	// api.MeasuredCPUMinChargePercent of the booking, and stops counting its
 	// guest vCPUs; all bookings stay capped at
-	// api.MeasuredCPUMaxOvercommitPercent of the budget. Off by default.
-	// A node without a fresh sample counts every booking.
+	// api.MeasuredCPUMaxOvercommitPercent of the budget. On by default
+	// (amendment 2026-10-31); measured_cpu_admission = false turns it off,
+	// and FAAS_MEASURED_CPU_ADMISSION overrides it either way. A node
+	// without a fresh sample counts every booking.
 	MeasuredCPUAdmission bool `toml:"measured_cpu_admission"`
 
 	// CPUPressureBackstop (ADR 20261030100950) makes this schedd hold the
@@ -208,8 +212,10 @@ type Config struct {
 	// tasks wait for CPU (api.NodeCPUPressureStallPercent) and their CPUs
 	// are nearly all busy (api.NodeCPUPressureBusyPercent). Every schedd
 	// honours a hold: placement prefers other nodes and admission counts the
-	// node's bookings in full. Off by default; the readings' gauges are
-	// published either way.
+	// node's bookings in full. On by default (amendment 2026-10-31);
+	// cpu_pressure_backstop = false turns it off, and
+	// FAAS_CPU_PRESSURE_BACKSTOP overrides it either way. The readings'
+	// gauges are published either way.
 	CPUPressureBackstop bool `toml:"cpu_pressure_backstop"`
 
 	// QuietPauseLedger (ADR-20261023171905) records the quiet pauses this
@@ -512,6 +518,14 @@ func LoadConfig(path string) (*Config, error) {
 		// tier whenever frozen_tier is on. FAAS_FROZEN_TIER_APPS=false or
 		// frozen_tier_apps = false keeps the tier to functions.
 		FrozenTierApps: true,
+		// Amendments of 2026-10-31 to ADR-1151, ADR 20261029151111 and
+		// ADR 20261030100950: admit CPU by what instances use, with the
+		// pressure backstop. Release rollouts re-render schedd.toml from the
+		// manifest, so only a binary default keeps them on; each stays an
+		// opt-out (= false in schedd.toml).
+		QuietPauseAdmission:  true,
+		MeasuredCPUAdmission: true,
+		CPUPressureBackstop:  true,
 		// ADR-067: 0 means "use the api.* default"
 		// (api.MigratingWatchdogTickLimit = 50,
 		// api.MigratingWatchdogIntervalSeconds = 1). cmd/schedd/main.go
@@ -624,6 +638,25 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("schedd: FAAS_FROZEN_TIER_APPS must be a boolean (got %q)", v)
 		}
 		c.FrozenTierApps = enabled
+	}
+	// The density switches default on (amendments of 2026-10-31). A manifest
+	// render rewrites schedd.toml at every rollout, so a node's opt-out set
+	// there does not last; an environment drop-in does.
+	for _, sw := range []struct {
+		env string
+		dst *bool
+	}{
+		{"FAAS_QUIET_PAUSE_ADMISSION", &c.QuietPauseAdmission},
+		{"FAAS_MEASURED_CPU_ADMISSION", &c.MeasuredCPUAdmission},
+		{"FAAS_CPU_PRESSURE_BACKSTOP", &c.CPUPressureBackstop},
+	} {
+		if v := os.Getenv(sw.env); v != "" {
+			enabled, err := strconv.ParseBool(v)
+			if err != nil {
+				return nil, fmt.Errorf("schedd: %s must be a boolean (got %q)", sw.env, v)
+			}
+			*sw.dst = enabled
+		}
 	}
 	if v := os.Getenv("FAAS_FROZEN_TIER_WORKERS"); v != "" {
 		enabled, err := strconv.ParseBool(v)

@@ -40,8 +40,20 @@ func newMemorySharer() *memorySharer {
 func (r *Runner) WithMemorySharing(enabled bool) *Runner {
 	if enabled {
 		r.memory = newMemorySharer()
+		r.memory.index.SetPeerSharing(!r.memoryPeersOff)
 	} else {
 		r.memory = nil
+	}
+	return r
+}
+
+// WithMemoryPeerSharing turns sharing between snapshot memory files on or off
+// (ADR-956 amendment 2026-10-31). It is on by default and needs memory
+// sharing itself to be on.
+func (r *Runner) WithMemoryPeerSharing(enabled bool) *Runner {
+	r.memoryPeersOff = !enabled
+	if r.memory != nil {
+		r.memory.index.SetPeerSharing(enabled)
 	}
 	return r
 }
@@ -89,6 +101,8 @@ func (r *Runner) shareMemory(ctx context.Context, m *memorySharer, job state.Sna
 		return
 	}
 	if !result.Skipped {
-		r.log.Info("snapshothipd: snapshot memory shares its image blocks", "snapshot_id", job.SnapshotID, "deployment_id", job.DeploymentID, "shared_bytes", result.SharedBytes)
+		// shared_bytes: with app layer and base blocks; peer_shared_bytes:
+		// with other memory files on the node.
+		r.log.Info("snapshothipd: snapshot memory shares its image blocks", "snapshot_id", job.SnapshotID, "deployment_id", job.DeploymentID, "shared_bytes", result.SharedBytes, "peer_shared_bytes", result.PeerSharedBytes)
 	}
 }

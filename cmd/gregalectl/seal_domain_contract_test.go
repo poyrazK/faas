@@ -139,3 +139,45 @@ func TestSealDomainContractRole(t *testing.T) {
 		})
 	}
 }
+
+// TestSealDomainContractRoleVMMD pins the runtime domain's contract step for
+// vmmd (ADR 20261022111812). vmmd reads the secrets directory as root, so
+// the drop-in sets a switch instead of resetting credentials: the role
+// checks nothing still needs a legacy identity before it writes the switch,
+// requires the build contract (vmmd then opens registry passwords with the
+// build domain alone), and vmmd reads exactly that variable.
+func TestSealDomainContractRoleVMMD(t *testing.T) {
+	t.Parallel()
+	root := filepath.Join("..", "..")
+	role := filepath.Join(root, "deploy", "ansible", "roles", "seal_domains")
+	read := func(path string) string {
+		t.Helper()
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(body)
+	}
+	tasks := read(filepath.Join(role, "tasks", "runtime.yml"))
+	guard := "not (faas_seal_domain_runtime_contracted | bool) or (faas_seal_domain_runtime_writes == 'domain' and (faas_seal_domain_build_contracted | bool))"
+	if !strings.Contains(tasks, guard) {
+		t.Errorf("tasks/runtime.yml is missing %q", guard)
+	}
+	check := strings.Index(tasks, "      - runtime\n      - --check\n")
+	dropIn := strings.Index(tasks, "src: 60-faas-seal-domain-runtime-reader.conf.j2")
+	if check < 0 || dropIn < 0 || check >= dropIn {
+		t.Fatalf("tasks/runtime.yml order: check=%d drop-in=%d; want the check before vmmd's drop-in", check, dropIn)
+	}
+	main := read(filepath.Join(role, "tasks", "main.yml"))
+	if b, r := strings.Index(main, "include_tasks: build.yml"), strings.Index(main, "include_tasks: runtime.yml"); b < 0 || r < 0 || b >= r {
+		t.Errorf("tasks/main.yml includes build.yml at %d and runtime.yml at %d; the build check must run first", b, r)
+	}
+	template := read(filepath.Join(role, "templates", "60-faas-seal-domain-runtime-reader.conf.j2"))
+	block := "{% if faas_seal_domain_runtime_contracted | bool %}"
+	if i, j := strings.Index(template, block), strings.Index(template, "Environment=FAAS_SEAL_DOMAIN_RUNTIME_CONTRACTED=true"); i < 0 || j < i {
+		t.Errorf("vmmd's drop-in sets FAAS_SEAL_DOMAIN_RUNTIME_CONTRACTED outside %q", block)
+	}
+	if !strings.Contains(read(filepath.Join(root, "cmd", "vmmd", "config.go")), `os.Getenv("FAAS_SEAL_DOMAIN_RUNTIME_CONTRACTED")`) {
+		t.Error("vmmd does not read FAAS_SEAL_DOMAIN_RUNTIME_CONTRACTED")
+	}
+}

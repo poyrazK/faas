@@ -603,12 +603,16 @@ var cliCommands = []cliCommand{
 				{Name: "o", ShortName: "o", Short: "write the DPA template to a file", Value: "PATH"},
 			}},
 			{Name: "slo", Short: "Account-wide SLO panel"},
-			{Name: "billing-connection", Short: "Connect, show or disconnect a billing key for invoice exports", Notes: []string{"Supports Stripe, Paddle and Lago; connect reads the key from stdin."}, Positionals: []string{"{connect|status|disconnect}", "{stripe|paddle|lago}"}, Flags: []cliFlag{
-				{Name: "api-url", Short: "Lago API URL for the EU region or a self-hosted Lago (connect; default https://api.getlago.com)", Value: "URL"},
-				{Name: "collection", Short: "what the provider does with exported invoices: none leaves drafts, send emails them (Stripe, Paddle), charge charges the saved payment method (Stripe, Lago) (connect; default none)", Value: "MODE", ClosedSet: []string{"none", "send", "charge"}},
-				{Name: "days-until-due", Short: "days until a sent invoice is due (connect --collection send; default 30)", Value: "N"},
-				{Name: "automatic-tax", Short: "have Stripe Tax calculate tax on exported invoices; needs Stripe Tax and customer addresses (connect; Stripe only)"},
-			}, Examples: []string{"gregale account billing-connection connect paddle < paddle-key.txt", "gregale account billing-connection connect lago --api-url https://api.eu.getlago.com < lago-key.txt", "gregale account billing-connection connect stripe --collection charge < stripe-key.txt"}},
+			{Name: "billing-connection", Short: "Connect, show or disconnect a billing key for invoice exports", Notes: []string{"Supports Stripe, Paddle and Lago."}, Subcommands: []cliSub{
+				{Name: "connect", Short: "Connect a billing provider key", Notes: []string{"Reads the key from stdin, so it never appears in shell history or the process list."}, Positionals: []string{"{stripe|paddle|lago}"}, Flags: []cliFlag{
+					{Name: "api-url", Short: "Lago API URL for the EU region or a self-hosted Lago (default https://api.getlago.com)", Value: "URL"},
+					{Name: "collection", Short: "what the provider does with exported invoices: none leaves drafts, send emails them (Stripe, Paddle), charge charges the saved payment method (Stripe, Lago) (default none)", Value: "MODE", ClosedSet: []string{"none", "send", "charge"}},
+					{Name: "days-until-due", Short: "days until a sent invoice is due (--collection send; default 30)", Value: "N"},
+					{Name: "automatic-tax", Short: "have Stripe Tax calculate tax on exported invoices; needs Stripe Tax and customer addresses (Stripe only)"},
+				}, Examples: []string{"gregale account billing-connection connect paddle < paddle-key.txt", "gregale account billing-connection connect lago --api-url https://api.eu.getlago.com < lago-key.txt", "gregale account billing-connection connect stripe --collection charge < stripe-key.txt"}},
+				{Name: "status", Short: "Show a billing provider connection", Positionals: []string{"{stripe|paddle|lago}"}},
+				{Name: "disconnect", Short: "Disconnect a billing provider key", Positionals: []string{"{stripe|paddle|lago}"}},
+			}},
 			{Name: "billing-run", Short: "Bill an ended month for every API customer", Notes: []string{"Drafts, checks and finalizes each statement, and optionally exports it."}, Subcommands: []cliSub{
 				{Name: "start", Short: "Start a run for one ended UTC month", Flags: []cliFlag{
 					{Name: "month", Short: "UTC calendar month to bill (default: last month)", Value: "YYYY-MM"},
@@ -2185,6 +2189,12 @@ var cliCommands = []cliCommand{
 				{Name: "schedule-policy", Short: "versioned schedule policy JSON", Value: "JSON"},
 				{Name: "failure-rules", Short: "versioned failure and outcome-code rules JSON", Value: "JSON"},
 			}},
+			{Name: subStatus, Short: "Show the cron's Ready and LastRunSucceeded conditions (preview)", Positionals: []string{"<id>"}, Examples: []string{"gregale cron status CRON_ID"}},
+			{Name: subWait, Short: "Wait until a condition holds (preview)", Positionals: []string{"<id>"}, Notes: []string{"Exits 0 when the condition holds, 1 when it is terminal and does not, 3 on timeout, 4 when not found."}, Examples: []string{"gregale cron wait CRON_ID"}, Flags: []cliFlag{
+				{Name: "for", Short: "Ready or LastRunSucceeded; TYPE or TYPE=True|False|Unknown (default Ready)", Value: "CONDITION"},
+				{Name: "timeout", Short: "maximum wait (default 2m)", Value: "DURATION"},
+				{Name: "poll-interval", Short: "poll interval (default 2s; 1s to 1h)", Value: "DURATION"},
+			}},
 			{Name: "info", Short: "Show one cron rule", Positionals: []string{"<id>"}, Flags: []cliFlag{
 				{Name: "one-off", Short: "show a one-off request (--at or --in) instead of a cron rule", Bool: true, Capability: "delayed-execution"},
 				{Name: "app", Short: "with --one-off, require the request to belong to this app", Value: "SLUG"},
@@ -2402,7 +2412,7 @@ var cliCommands = []cliCommand{
 				{Name: "all", Short: "walk every page using --limit and --offset"},
 			}},
 			{Name: "overview", Short: "Summarize Job readiness, latest run and next commands", Notes: []string{"Uses the saved Job by default."}, Positionals: []string{"[<name>]"}, Flags: []cliFlag{{Name: "check", Bool: true, Short: "exit 0 only for an active Job, ready image, and succeeded latest run"}}, Examples: []string{"gregale job overview", "gregale job overview --check", "gregale job overview nightly-report --json"}},
-			{Name: "status", Short: "Read one exact or latest Job run summary", Notes: []string{"Uses the saved Job and its latest run by default."}, Positionals: []string{"[<name>]", "[<run-id|latest>]"}, Flags: []cliFlag{{Name: "check", Bool: true, Short: "exit 0 only when the recorded run status is succeeded"}}, Examples: []string{"gregale job status", "gregale job status nightly-report", "gregale job status nightly-report RUN_ID --check", "gregale job status nightly-report latest", "gregale --json jobs status nightly-report RUN_ID"}},
+			{Name: "status", Short: "Read one exact or latest Job run summary", Notes: []string{"Uses the saved Job and its latest run by default."}, Positionals: []string{"[<name>]", "[<run-id|latest>]"}, Flags: []cliFlag{{Name: "check", Bool: true, Short: "exit 0 only when the recorded run status is succeeded"}, {Name: "conditions", Bool: true, Short: "print the run's Succeeded and Progressing conditions instead (preview)"}}, Examples: []string{"gregale job status", "gregale job status nightly-report", "gregale job status nightly-report RUN_ID --check", "gregale job status nightly-report latest", "gregale --json jobs status nightly-report RUN_ID"}},
 			{Name: "occurrences", Short: "Inspect recurring schedule decisions", Positionals: []string{"[<name>]"}, Examples: []string{"gregale job occurrences --interactive"}, Flags: []cliFlag{
 				{Name: "interactive", Bool: true, Short: "choose a Job and browse scheduled occurrence decisions"},
 				{Name: "before", Short: "alias for --cursor", Value: "ID"},
@@ -2411,6 +2421,7 @@ var cliCommands = []cliCommand{
 				{Name: "limit", Short: "max occurrence decisions (1..200)", Value: "N"},
 			}},
 			{Name: "wait", Short: "Follow a Job run (saved Job and latest by default)", Positionals: []string{"[<name>]", "[<run-id|latest>]"}, Flags: []cliFlag{
+				{Name: "for", Value: "CONDITION", Short: "wait for a run condition instead (Succeeded, Progressing; TYPE=True|False|Unknown); exits 0 holds, 1 terminal, 3 timeout, 4 not found (preview)"},
 				{Name: "interactive", Bool: true, Short: "choose a Job and run"},
 				{Name: "out-dir", Value: "DIR", Short: "collect artifacts after success, verifying matching existing files; non-interactive target only"},
 				{Name: "include", Value: "GLOB", Short: "repeatable artifact-name glob for collection; requires --out-dir; quote patterns"}, {Name: "exclude", Value: "GLOB", Short: "repeatable artifact-name glob to omit; requires --out-dir; exclusions take precedence"},
@@ -3054,7 +3065,12 @@ var cliCommands = []cliCommand{
 			{Name: subDomainsSetDefault, Short: "Set a verified domain as the app default", Positionals: []string{"<domain>"}},
 			{Name: subDomainsVerify, Short: "Check DNS and certificate verification status", Notes: []string{"Exits nonzero while pending."}, Positionals: []string{"<domain>"}},
 			{Name: subDomainsShow, Short: "Show a domain's cert details", Positionals: []string{"<domain>"}},
-			{Name: subDomainsStatus, Short: "Show durable TLS status for all domains"},
+			{Name: subDomainsStatus, Short: "Show TLS status for all domains, or one domain's conditions", Notes: []string{"With a domain, prints its Ready, Verified and CertificateReady conditions (preview)."}, Positionals: []string{"[<domain>]"}, Examples: []string{"gregale domain status", "gregale domain status shop.example.com"}},
+			{Name: subWait, Short: "Wait until a condition holds (preview)", Positionals: []string{"<domain>"}, Notes: []string{"Exits 0 when the condition holds, 1 when it is terminal and does not, 3 on timeout, 4 when not found."}, Examples: []string{"gregale domain wait shop.example.com"}, Flags: []cliFlag{
+				{Name: "for", Short: "Ready, Verified or CertificateReady; TYPE or TYPE=True|False|Unknown (default Ready)", Value: "CONDITION"},
+				{Name: "timeout", Short: "maximum wait (default 2m)", Value: "DURATION"},
+				{Name: "poll-interval", Short: "poll interval (default 2s; 1s to 1h)", Value: "DURATION"},
+			}},
 			{Name: subDomainsDoctor, Short: "Run a 5-check domain readiness report", Notes: []string{"Exits nonzero when unhealthy, including in JSON mode."}, Positionals: []string{"<domain>"}},
 		},
 	},
@@ -4131,8 +4147,8 @@ var cliCommands = []cliCommand{
 				{Name: "since", Short: "how far back, e.g. 24h or 7d (default 7d, clamped to the plan window)", Value: "DURATION"},
 			}},
 			{Name: "waf-exclude", Short: "Add or remove CRS rule IDs on a kind=waf rule's exclusions", Notes: []string{"Keeps the rest of the rule's WAF action and its penalty."}, Positionals: []string{"<rule-id>"}, Examples: []string{
-				"gregale edge rule waf-exclude RULE_ID --add 942190",
-				"gregale edge rule waf-exclude RULE_ID --remove 942100",
+				"gregale edge rule waf update RULE_ID --add 942190",
+				"gregale edge rule waf update RULE_ID --remove 942100",
 			}, Flags: []cliFlag{
 				{Name: "add", Short: "CRS rule IDs to exclude, comma-separated", Value: "IDS"},
 				{Name: "remove", Short: "CRS rule IDs to stop excluding, comma-separated", Value: "IDS"},
@@ -5755,6 +5771,12 @@ var cliCommands = []cliCommand{
 				{Name: "restore-window-seconds", Short: "point-in-time restore window", Value: "N"},
 			}, Examples: []string{"gregale postgres create orders --region us-east-2 --class development --scale-to-zero"}},
 			{Name: "get", Short: "Show one managed PostgreSQL database", Positionals: []string{"<database>"}},
+			{Name: subStatus, Short: "Show the database's conditions (preview)", Notes: []string{"Ready, Progressing and Degraded, from its state and cached health."}, Positionals: []string{"<database>"}, Examples: []string{"gregale postgres status orders"}},
+			{Name: subWait, Short: "Wait until a condition holds (preview)", Positionals: []string{"<database>"}, Notes: []string{"Exits 0 when the condition holds, 1 when it is terminal and does not, 3 on timeout, 4 when not found."}, Examples: []string{"gregale postgres wait orders"}, Flags: []cliFlag{
+				{Name: "for", Short: "Ready, Progressing or Degraded; TYPE or TYPE=True|False|Unknown (default Ready)", Value: "CONDITION"},
+				{Name: "timeout", Short: "maximum wait (default 2m)", Value: "DURATION"},
+				{Name: "poll-interval", Short: "poll interval (default 2s; 1s to 1h)", Value: "DURATION"},
+			}},
 			{Name: "delete", Short: "Delete a managed PostgreSQL database; it can be undone for 7 days", Positionals: []string{"<database>"}, Flags: []cliFlag{
 				{Name: "purge", Short: "delete at once with its restore history; cannot be undone"},
 				{Name: "yes", Short: "skip the typed confirmation (alias: --quiet)"},
