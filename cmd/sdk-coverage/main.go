@@ -1443,6 +1443,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/data/pipelines/{id}/control":                                            "ControlDataPipeline",
 	"POST /v1/postgres/databases":                                                     "CreateManagedPostgresDatabase",
 	"GET /v1/postgres/databases/{id}":                                                 "GetManagedPostgresDatabase",
+	"GET /v1/postgres/databases/{id}/status":                                          "GetManagedPostgresDatabaseStatus", // ADR-20261030151810
 	"DELETE /v1/postgres/databases/{id}":                                              "DeleteManagedPostgresDatabase",
 	"POST /v1/postgres/databases/{id}/restore":                                        "RestoreManagedPostgresDatabase",
 	"POST /v1/postgres/databases/{id}/undelete":                                       "UndeleteManagedPostgresDatabase",
@@ -1591,6 +1592,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/crons/{id}/run":                                                               "FireCron",             // issue #791 — manual fire-now (PR-C)
 	"GET /v1/cron-fire-now-requests/{request_id}":                                           "GetFireCronRequest",   // issue #791 PR-D — poll fire-now terminal state (IDOR-safe byte-identical-404)
 	"GET /v1/crons/{id}":                                                                    "GetCron",              // issue #791 PR-E / ADR-090 closure — backs `gregale crons info <id>`
+	"GET /v1/crons/{id}/status":                                                             "GetCronStatus",        // ADR-20261030151810
 	// Issue #1184 Workstream A — run-to-completion jobs. Same
 	// resource-noun convention as crons + alerts + edge-rules:
 	// auto-derivation produces verb+placeholder concatenation
@@ -1608,6 +1610,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/jobs/{name}/runs":                          "CreateJobRun",
 	"GET /v1/jobs/{name}/runs":                           "ListJobRuns",
 	"GET /v1/jobs/{name}/runs/{id}":                      "GetJobRun",
+	"GET /v1/jobs/{name}/runs/{id}/status":               "GetJobRunStatus", // ADR-20261030151810
 	"POST /v1/jobs/{name}/runs/{id}/cancel":              "CancelJobRun",
 	"POST /v1/jobs/{name}/runs/{id}/replay-failed":       "ReplayFailedJobRun",
 	"GET /v1/jobs/{name}/runs/{id}/tasks":                "ListJobRunTasks",
@@ -2713,6 +2716,7 @@ var methodRouteMap = map[string]string{
 	// family (GetApp, GetDeployment, GetUsage).
 	"POST /v1/apps/{slug}/deployments/source-tarball": "DeployFromSourceTarball",
 	"GET /v1/domains/{domain}":                        "GetDomain",
+	"GET /v1/domains/{domain}/status":                 "GetDomainStatus", // ADR-20261030151810
 	"POST /v1/domains/{domain}/verify":                "VerifyDomain",
 	"GET /v1/domains/{domain}/doctor":                 "DomainDoctor",
 

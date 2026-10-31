@@ -8,6 +8,7 @@ import (
 	"errors"
 	"hash/maphash"
 	"os"
+	"strconv"
 	"syscall"
 
 	"golang.org/x/sys/unix"
@@ -99,25 +100,9 @@ func (idx *blockIndex) add(ctx context.Context, path string) error {
 // forEachDataPage calls fn for every whole, non-zero 4 KiB page in f's
 // allocated extents. Holes are skipped without reading them.
 func forEachDataPage(ctx context.Context, f *os.File, fn func(off int64, page []byte) error) error {
-	info, err := f.Stat()
-	if err != nil {
-		return err
-	}
-	size := info.Size()
 	zero := make([]byte, pageSize)
 	buf := make([]byte, memoryShareRun)
-	for off := int64(0); off < size; {
-		data, err := unix.Seek(int(f.Fd()), off, unix.SEEK_DATA)
-		if errors.Is(err, unix.ENXIO) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		hole, err := unix.Seek(int(f.Fd()), data, unix.SEEK_HOLE)
-		if err != nil {
-			return err
-		}
+	return forEachDataExtent(f, func(data, hole int64) error {
 		// Data extents start on filesystem block boundaries; align anyway so
 		// every page offset is valid for FIDEDUPERANGE.
 		for pos := data &^ (pageSize - 1); pos < hole; {
@@ -141,6 +126,33 @@ func forEachDataPage(ctx context.Context, f *os.File, fn func(off int64, page []
 			if n < pageSize {
 				break
 			}
+		}
+		return nil
+	})
+}
+
+// forEachDataExtent calls fn with the [data, hole) bounds of every allocated
+// extent of f, found with SEEK_DATA and SEEK_HOLE.
+func forEachDataExtent(f *os.File, fn func(data, hole int64) error) error {
+	info, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	size := info.Size()
+	for off := int64(0); off < size; {
+		data, err := unix.Seek(int(f.Fd()), off, unix.SEEK_DATA)
+		if errors.Is(err, unix.ENXIO) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		hole, err := unix.Seek(int(f.Fd()), data, unix.SEEK_HOLE)
+		if err != nil {
+			return err
+		}
+		if err := fn(data, hole); err != nil {
+			return err
 		}
 		off = hole
 	}
@@ -286,14 +298,24 @@ func (s *pageSharer) closeAll() {
 	}
 }
 
-func memorySharedMarker(path string) bool {
+// memorySharedLevel reads the marker: 0 when the file was never processed,
+// memorySharedWithImages for "1" (the value written before the 2026-10-31
+// amendment) and memorySharedWithPeers for "2".
+func memorySharedLevel(path string) int {
 	buf := make([]byte, 8)
-	_, err := unix.Getxattr(path, memorySharedXattr, buf)
-	return err == nil
+	n, err := unix.Getxattr(path, memorySharedXattr, buf)
+	switch {
+	case err != nil:
+		return 0
+	case n == 1 && buf[0] == '2':
+		return memorySharedWithPeers
+	default:
+		return memorySharedWithImages
+	}
 }
 
 // setMemorySharedMarker is best-effort: without user xattrs the in-process
 // record still prevents repeating the pass until vmmd restarts.
-func setMemorySharedMarker(path string) {
-	_ = unix.Setxattr(path, memorySharedXattr, []byte("1"), 0)
+func setMemorySharedMarker(path string, level int) {
+	_ = unix.Setxattr(path, memorySharedXattr, []byte(strconv.Itoa(level)), 0)
 }

@@ -15,5 +15,8 @@ func EventDeliveryReplayProblem(err error, fallback string) *api.Problem {
 	if errors.Is(err, state.ErrDeadLetterNotReplayable) {
 		return api.ErrDeadLetterNotReplayable()
 	}
+	if errors.Is(err, state.ErrKeyedReplayExpired) {
+		return api.ErrDeadLetterKeyedReplayExpired()
+	}
 	return api.ErrInternal(fallback)
 }

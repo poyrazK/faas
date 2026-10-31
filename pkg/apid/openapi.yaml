@@ -7952,6 +7952,33 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/postgres/databases/{id}/status:
+    parameters:
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    get:
+      tags: [managed_postgres]
+      operationId: getManagedPostgresDatabaseStatus
+      summary: Read a managed database's conditions.
+      description: |
+        Preview (resource-conditions capability). The database's Ready,
+        Progressing and Degraded conditions, mapped from the response
+        GET /v1/postgres/databases/{id} returns, cached health included, and
+        never stored. Ready follows the lifecycle state; a database whose
+        compute scaled to zero is Ready=True with reason suspended. Failed,
+        deleting and deleted databases report terminal conditions.
+        Cache-Control no-store.
+      responses:
+        '200':
+          description: The managed database's conditions.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceStatus'
+        default:
+          description: Missing sign-in, database read scope or MFA, a database this account does not own, managed databases not configured, the capability turned off, or the rate limit.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/postgres/databases/{id}/undelete:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
@@ -33211,6 +33238,36 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/domains/{domain}/status:
+    parameters:
+      - name: domain
+        in: path
+        required: true
+        schema: { type: string, pattern: '^[a-z0-9.\-]+$' }
+        description: The custom domain whose conditions are read.
+    get:
+      tags: [domains]
+      operationId: getDomainStatus
+      summary: Read a custom domain's conditions.
+      description: |
+        Preview (resource-conditions capability). The domain's Ready,
+        Verified and CertificateReady conditions, from the domain's recorded
+        verification and certificate state and never stored. Unlike
+        GET /v1/domains/{domain} it never connects to the domain, so it is
+        safe to poll. None of its conditions is terminal: DNS can change
+        outside Gregale. Cache-Control no-store.
+      responses:
+        '200':
+          description: The custom domain's conditions.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceStatus'
+        default:
+          description: Missing sign-in, read scope or MFA, a domain this account does not own, the capability turned off, or the rate limit.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/domains/{domain}/verify:
     parameters:
       - name: domain
@@ -33461,6 +33518,32 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/crons/{id}/status:
+    parameters:
+      - $ref: '#/components/parameters/Id32'
+    get:
+      tags: [crons]
+      operationId: getCronStatus
+      summary: Read a cron's conditions.
+      description: |
+        Preview (resource-conditions capability). The cron's Ready and
+        LastRunSucceeded conditions, from the cron and its newest run as
+        GET /v1/crons/{id}/runs reports it, and never stored. A disabled cron
+        is terminally not ready; a suspended one is not ready until the
+        suspension clears. LastRunSucceeded describes the newest run, so it
+        is never terminal. Cache-Control no-store.
+      responses:
+        '200':
+          description: The cron's conditions.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceStatus'
+        default:
+          description: Missing sign-in, read scope or MFA, a cron this account does not own, the capability turned off, or the rate limit.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/crons/{id}/runs:
     parameters:
       - $ref: '#/components/parameters/Id32'
@@ -36062,6 +36145,40 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/jobs/{name}/runs/{id}/status:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema: { type: string }
+        description: Name of the job the run belongs to.
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: The id of the run whose conditions are read.
+    get:
+      tags: [jobs]
+      operationId: getJobRunStatus
+      summary: Read a job run's conditions.
+      description: |
+        Preview (resource-conditions capability). The run's Succeeded and
+        Progressing conditions, mapped from the response
+        GET /v1/jobs/{name}/runs/{id} returns and never stored. A job run has
+        no Ready condition: it runs to completion. Failed, cancelled and
+        dead-letter runs report terminal conditions. Cache-Control no-store.
+      responses:
+        '200':
+          description: The job run's conditions.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceStatus'
+        default:
+          description: Missing sign-in, read scope or MFA, a run this account does not own or under another job's name, the capability turned off, or the rate limit.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/jobs/{name}/runs/{id}/cancel:
     parameters:
       - name: name
@@ -112171,8 +112288,8 @@ components:
       description: "A resource's status subresource: conditions derived when read, never stored."
       required: [kind, name, observed_at, conditions]
       properties:
-        kind: { type: string, enum: [app, deployment] }
-        name: { type: string, description: The app slug or deployment ID. }
+        kind: { type: string, enum: [app, deployment, database, domain, cron, job_run] }
+        name: { type: string, description: 'The app slug, deployment ID, database name, domain, cron ID or job run ID.' }
         observed_at: { type: string, format: date-time, description: When the evidence behind the conditions was read. }
         conditions:
           type: array
@@ -112182,9 +112299,9 @@ components:
       description: One aspect of a resource's state, in the shape of a Kubernetes status condition.
       required: [type, status, reason, message]
       properties:
-        type: { type: string, enum: [Ready, Progressing, Degraded, RolledOut] }
+        type: { type: string, enum: [Ready, Progressing, Degraded, RolledOut, Verified, CertificateReady, LastRunSucceeded, Succeeded] }
         status: { type: string, enum: ['True', 'False', 'Unknown'] }
-        reason: { type: string, description: 'Stable snake_case code, safe to branch on: an app health phase or check code, a deployment status, or one of not_assessed, deploying, complete, latest_deployment_failed, healthy, verifying, rolling_out, rolled_out, rollout_aborted.' }
+        reason: { type: string, description: 'Stable snake_case code, safe to branch on: an app health phase or check code; a deployment, database, certificate or job run status; a cron suspension or run outcome; a database health error code; or one of not_assessed, deploying, complete, latest_deployment_failed, healthy, verifying, rolling_out, rolled_out, rollout_aborted, suspended, stale, verified, dns_pending, serving, scheduled, disabled, never_run.' }
         message: { type: string, description: For people; may change. }
         since: { type: string, format: date-time, description: When the condition last changed, only when a recorded time says so. }
         terminal: { type: boolean, description: True when the condition will not change without a new request. }
