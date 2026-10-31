@@ -5605,7 +5605,7 @@ var cliCommands = []cliCommand{
 				{Name: "migrations", Value: "DIR", Short: "single-app project: run this migration directory as the app's release task"},
 				{Name: "release-command", Value: "COMMAND", Short: "single-app release command (default node migrations/release.mjs)"},
 			}, Examples: []string{"gregale data-api create shop-data --database shop-db --issuer https://id.example.com/ --jwks-url https://id.example.com/jwks.json --audience shop --migrations migrations"}},
-			{Name: "deploy", Short: "Deploy the current Data API runtime, with migrations as the release task", Notes: []string{"Deploys the runtime the control plane serves; without --migrations it upgrades the runtime only."}, Positionals: []string{"<name>"}, Flags: []cliFlag{
+			{Name: "deploy", Short: "Deploy the current Data API runtime and run migrations on release", Notes: []string{"Deploys the runtime the control plane serves; without --migrations it upgrades the runtime only."}, Positionals: []string{"<name>"}, Flags: []cliFlag{
 				{Name: "migrations", Value: "DIR", Short: "migration directory run with MIGRATION_DATABASE_URL"},
 				{Name: "release-command", Value: "COMMAND", Short: "release command (default node migrations/release.mjs)"},
 				{Name: "scope", Value: "SCOPE", Short: "environment scope"},

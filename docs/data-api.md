@@ -981,7 +981,7 @@ gregale data-api delete notes-data --yes
 ```
 
 This revokes the app's managed PostgreSQL bindings, which closes their database
-credentials, and then deletes the app. `gregale apps rm` refuses an app that
+credentials, and then deletes the app. `gregale app delete` refuses an app that
 still has a live database binding (`app_has_postgres_bindings`), because the
 credential would outlive the app. The database and its data are kept. Delete
 the database separately with `gregale postgres delete`.

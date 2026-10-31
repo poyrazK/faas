@@ -8863,7 +8863,7 @@ gregale data-api create shop-data --database shop-db --issuer https://id.example
 
 ### data-api deploy
 
-Deploy the current Data API runtime, with migrations as the release task
+Deploy the current Data API runtime and run migrations on release
 
 `gregale data-api deploy [--migrations <DIR>] [--release-command <COMMAND>] [--env <SCOPE>] [--timeout <DURATION>] <name>`
 

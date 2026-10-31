@@ -76,7 +76,7 @@ func cmdDataAPI(args []string) int {
 	case "sync":
 		return cmdDataAPISync(args[1:])
 	default:
-		return printErr("Unknown Data API command", fmt.Errorf("use create, deploy, configure, server-key, usage, live, storage, types, diff, refresh, sync, status, rotation, health, replay, diagnostics, check, dev, install, onboard, migration, fixture, explain, verify or transaction"))
+		return printErr("Unknown Data API command", fmt.Errorf("use create, delete, deploy, configure, server-key, usage, live, storage, types, diff, refresh, sync, status, rotation, health, replay, diagnostics, check, dev, install, onboard, migration, fixture, explain, verify or transaction"))
 	}
 }
 
