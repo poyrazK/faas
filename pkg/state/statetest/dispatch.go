@@ -101,6 +101,8 @@ var memDispatched = map[string]bool{
 	"FailRunningInstanceIfOwnedByNode":                        true,
 	"FinalizeManagedPostgresBindingRotationsForApp":           true,
 	"FinancialEvidenceCoverage":                               true,
+	"ListAllAccounts":                                         true,
+	"MarkDunningStep":                                         true,
 	"ListFinancialPriceSnapshots":                             true,
 	"FinalizeObjectS3CredentialRotationsForApp":               true,
 	"FinishPublishedEventRecipient":                           true,
@@ -277,6 +279,8 @@ var memDispatched = map[string]bool{
 	"PinnedProjectReleaseWorkers":                   true,
 	"HeldProjectReleaseWorkers":                     true,
 	"ListConsumerKeysForApp":                        true,
+	"GetSLO":                                        true,
+	"CountOpenAPIDocsByAccount":                     true,
 }
 
 func (s *Mem) AppTaskByID(ctx context.Context, account, app, id string) (state.AppTask, error) {
@@ -446,6 +450,24 @@ func (s *Mem) DeploymentClearSnapshotBackoff(p0 context.Context, p1 string) erro
 		return o.DeploymentClearSnapshotBackoff(p0, p1)
 	}
 	return s.MemStore.DeploymentClearSnapshotBackoff(p0, p1)
+}
+
+func (s *Mem) ListAllAccounts(p0 context.Context) ([]state.Account, error) {
+	if o, ok := s.over.(interface {
+		ListAllAccounts(context.Context) ([]state.Account, error)
+	}); ok {
+		return o.ListAllAccounts(p0)
+	}
+	return s.MemStore.ListAllAccounts(p0)
+}
+
+func (s *Mem) MarkDunningStep(p0 context.Context, p1 string, p2, p3 state.AccountStatus, p4 ...state.AccountDeletionOption) error {
+	if o, ok := s.over.(interface {
+		MarkDunningStep(context.Context, string, state.AccountStatus, state.AccountStatus, ...state.AccountDeletionOption) error
+	}); ok {
+		return o.MarkDunningStep(p0, p1, p2, p3, p4...)
+	}
+	return s.MemStore.MarkDunningStep(p0, p1, p2, p3, p4...)
 }
 
 func (s *Mem) FinancialEvidenceCoverage(p0 context.Context) (time.Time, error) {
@@ -725,6 +747,15 @@ func (s *Mem) ListConsumerKeysForApp(p0 context.Context, p1 string, p2 string) (
 		return o.ListConsumerKeysForApp(p0, p1, p2)
 	}
 	return s.MemStore.ListConsumerKeysForApp(p0, p1, p2)
+}
+
+func (s *Mem) CountOpenAPIDocsByAccount(p0 context.Context, p1 string) (int, error) {
+	if o, ok := s.over.(interface {
+		CountOpenAPIDocsByAccount(context.Context, string) (int, error)
+	}); ok {
+		return o.CountOpenAPIDocsByAccount(p0, p1)
+	}
+	return s.MemStore.CountOpenAPIDocsByAccount(p0, p1)
 }
 
 func (s *Mem) GetAppErrorSample(p0 context.Context, p1 sqlc.GetAppErrorSampleParams) (state.AppErrorSampleRow, error) {
@@ -4739,4 +4770,13 @@ func (s *Mem) HeldProjectReleaseWorkers(p0 context.Context, p1 string) ([]string
 		return o.HeldProjectReleaseWorkers(p0, p1)
 	}
 	return s.MemStore.HeldProjectReleaseWorkers(p0, p1)
+}
+
+func (s *Mem) GetSLO(p0 context.Context, p1 string, p2 string) (state.SLO, error) {
+	if o, ok := s.over.(interface {
+		GetSLO(context.Context, string, string) (state.SLO, error)
+	}); ok {
+		return o.GetSLO(p0, p1, p2)
+	}
+	return s.MemStore.GetSLO(p0, p1, p2)
 }

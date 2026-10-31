@@ -192,6 +192,9 @@ type Service struct {
 	// WritePreviewCheck.
 	WritePreviewCheckForkRefused                WritePreviewCheckForkRefused
 	WritePreviewCheckForkRefusedForInstallation WritePreviewCheckForkRefusedForInstallationFunc
+	// WritePreviewCheckNeutralForInstallation posts the neutral check of
+	// a PR the project's policy skips (bot or draft). Nil-safe.
+	WritePreviewCheckNeutralForInstallation WritePreviewCheckNeutralForInstallationFunc
 	// WritePreviewDestroyComment is the one-time PR-thread
 	// destroy-hint writer (issue #961 Mega-C PR-1, leaf 3).
 	// Same nil-safe posture as WritePreviewCheck. The dedupe
@@ -1332,6 +1335,25 @@ func (s *Service) writePreviewCheck(ctx context.Context, installationID int64, r
 	return nil
 }
 
+type WritePreviewCheckNeutralForInstallationFunc func(ctx context.Context, installationID int64, repoFullName, commitSHA, title, summary string) error
+
+// previewSkipReason names why the project's policy skips this pull
+// request's preview, or "" to preview it. A close always proceeds so an
+// existing preview is torn down. The policy reads the PR's author, not the
+// event's sender: a human pushing to a Dependabot branch is still a bot PR.
+func previewSkipReason(ev PullRequestEvent, policy state.GitHubDeployPolicy) string {
+	switch {
+	case ev.Action == PullRequestActionClosed:
+		return ""
+	case ev.PullRequest.OpenedByBot() && !policy.PreviewBotPRs:
+		return fmt.Sprintf("This pull request was opened by a bot (%s); the project does not preview bot pull requests. Enable them with `gregale github setup <app> --preview-bots`.",
+			ev.PullRequest.User.Login)
+	case ev.PullRequest.Draft && !policy.PreviewDraftPRs:
+		return "This pull request is a draft; the project previews it once it is marked ready for review."
+	}
+	return ""
+}
+
 func (s *Service) writeForkRefusedCheck(ctx context.Context, installationID int64, repoFullName, commitSHA, summary string) error {
 	if s.WritePreviewCheckForkRefusedForInstallation != nil {
 		return s.WritePreviewCheckForkRefusedForInstallation(ctx, installationID, repoFullName, commitSHA, summary)
@@ -1424,9 +1446,10 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 
 	// D3 fork refusal: short-circuit BEFORE any app creation. Only a bound
 	// repository with previews on hears about it, through the neutral Check
-	// Run; no apps row, no deployment row, no notifications.
+	// Run; no apps row, no deployment row, no notifications. A fork never
+	// had a preview, so previews being off leaves nothing to retire.
 	if ev.IsFork() {
-		if ev.Action != PullRequestActionClosed {
+		if ev.Action != PullRequestActionClosed && target.previewsOff == "" {
 			if werr := s.writeForkRefusedCheck(ctx, target.install.InstallationID,
 				ev.Repository.FullName, ev.PullRequest.HeadSHA,
 				"Fork PR refused — head repo differs from base repo "+
@@ -1442,9 +1465,34 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 			"sender", ev.Sender.Login)
 		return reconcile.Result{WasIgnored: true}, ErrIgnored
 	}
-	if current, currentErr := s.currentPullRequestDelivery(ctx, target.install.InstallationID, ev); currentErr != nil {
+	if target.previewsOff != "" && ev.Action != PullRequestActionClosed {
+		retired, err := s.retirePullRequestPreviews(ctx, ev, target)
+		if err != nil {
+			return reconcile.Result{}, err
+		}
+		// Only a PR that had a live preview hears about it; with previews
+		// off, the others stay as quiet as before.
+		if retired && s.WritePreviewCheckNeutralForInstallation != nil {
+			if werr := s.WritePreviewCheckNeutralForInstallation(ctx, target.install.InstallationID,
+				ev.Repository.FullName, ev.PullRequest.HeadSHA, "Previews off", target.previewsOff); werr != nil {
+				s.Log.Warn("githubd: write previews-off check", "err", werr,
+					"repo", ev.Repository.FullName, "sha", ev.PullRequest.HeadSHA)
+			}
+		}
+		return reconcile.Result{WasIgnored: true}, ErrIgnored
+	}
+	// The skip below retires a live preview, so it acts on the PR's current
+	// head and draft state, never on a delayed event's.
+	if current, currentErr := s.currentPullRequestDelivery(ctx, target.install.InstallationID, &ev); currentErr != nil {
 		return reconcile.Result{}, fmt.Errorf("githubd: verify current PR state: %w", currentErr)
 	} else if !current {
+		return reconcile.Result{WasIgnored: true}, ErrIgnored
+	}
+	if reason := previewSkipReason(ev, target.policy); reason != "" {
+		return s.skipPullRequestPreview(ctx, ev, target, reason)
+	}
+	if ev.Action == PullRequestActionConvertedToDraft {
+		// The project previews drafts: the preview keeps serving this head.
 		return reconcile.Result{WasIgnored: true}, ErrIgnored
 	}
 	result, err := s.applyPullRequest(ctx, ev, target)
@@ -1464,6 +1512,9 @@ type pullRequestTarget struct {
 	install state.GitHubInstall
 	parent  state.App
 	policy  state.GitHubDeployPolicy
+	// previewsOff, when set, says why previews are off for this PR's
+	// project or account.
+	previewsOff string
 }
 
 // resolvePullRequestTarget resolves the (repo) binding, its installation and
@@ -1538,11 +1589,72 @@ func (s *Service) resolvePullRequestTarget(ctx context.Context, ev PullRequestEv
 	if err != nil {
 		return pullRequestTarget{}, fmt.Errorf("githubd: resolve PR preview policy: %w", err)
 	}
-	// A closed PR still tears its preview down when previews are off.
-	if (!policy.PreviewEnabled || !s.previewsAllowed(binding.AccountID)) && ev.Action != PullRequestActionClosed {
-		return pullRequestTarget{}, ErrIgnored
+	target := pullRequestTarget{binding: binding, install: install, parent: parentApp, policy: policy}
+	// A closed PR still tears its preview down when previews are off; any
+	// other event retires the PR's open previews (handlePullRequest).
+	switch {
+	case !s.previewsAllowed(binding.AccountID):
+		target.previewsOff = "PR previews are not enabled for this account; this pull request's preview is being torn down."
+	case !policy.PreviewEnabled:
+		target.previewsOff = "PR previews are turned off for this project; this pull request's preview is being torn down."
 	}
-	return pullRequestTarget{binding: binding, install: install, parent: parentApp, policy: policy}, nil
+	return target, nil
+}
+
+// skipPullRequestPreview answers a PR head the project's policy does not
+// preview (a bot's PR, or a draft). A preview built for an earlier head is
+// retired too: GitHub's later events for the PR are skipped as well, so it
+// would serve that head to the end of its lease while the PR's check said
+// the preview was skipped.
+func (s *Service) skipPullRequestPreview(ctx context.Context, ev PullRequestEvent, target pullRequestTarget, reason string) (reconcile.Result, error) {
+	retired, err := s.retirePullRequestPreviews(ctx, ev, target)
+	if err != nil {
+		return reconcile.Result{}, err
+	}
+	if retired {
+		reason += " Its earlier preview is being torn down."
+	}
+	if s.WritePreviewCheckNeutralForInstallation != nil {
+		if werr := s.WritePreviewCheckNeutralForInstallation(ctx, target.install.InstallationID,
+			ev.Repository.FullName, ev.PullRequest.HeadSHA, "Preview skipped", reason); werr != nil {
+			s.Log.Warn("githubd: write skipped preview check", "err", werr,
+				"repo", ev.Repository.FullName, "sha", ev.PullRequest.HeadSHA)
+		}
+	}
+	return reconcile.Result{WasIgnored: true}, ErrIgnored
+}
+
+// retirePullRequestPreviews tears down an open PR's previews once previews
+// are off for its project or account, or its policy skips the PR. githubd
+// ignores the PR's pushes from then on, so the previews would otherwise serve
+// their last commit to the end of their lease. Their lease ends now; the
+// janitor tears them down.
+// retired reports whether the PR's preview was still open.
+func (s *Service) retirePullRequestPreviews(ctx context.Context, ev PullRequestEvent, target pullRequestTarget) (retired bool, err error) {
+	now := time.Now()
+	if err := s.closePRDependencies(ctx, target.parent, ev.Number, now); err != nil {
+		return false, fmt.Errorf("githubd: retire PR preview siblings: %w", err)
+	}
+	if sets, ok := s.Reconcile.Store.(state.PRPreviewSetStore); ok {
+		if err := sets.ClosePRPreviewSet(ctx, target.install.InstallationID, ev.Repository.FullName, ev.Number); err != nil {
+			return false, fmt.Errorf("githubd: retire PR preview set: %w", err)
+		}
+	}
+	slug, err := previewSlug(target.parent.Slug, ev.Number)
+	if err != nil {
+		return false, err
+	}
+	preview, err := s.Reconcile.Store.AppBySlug(ctx, slug)
+	if errors.Is(err, state.ErrNotFound) || (err == nil && preview.Status == state.AppDeleted) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("githubd: resolve retiring preview: %w", err)
+	}
+	if _, err := s.Reconcile.Store.ClosePRPreview(ctx, preview.ID, now); err != nil && !errors.Is(err, state.ErrNotFound) {
+		return false, fmt.Errorf("githubd: retire PR preview: %w", err)
+	}
+	return preview.PreviewPrState == state.PreviewPrStateOpen, nil
 }
 
 // pullRequestBinding finds the binding a PR previews. Bindings are keyed by
@@ -1649,27 +1761,34 @@ func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, tar
 		// ID is left blank — pgstore.CreateAppIfUnderQuota mints a
 		// UUIDv7 when App.ID is empty. The preview app is a fresh
 		// row; reusing the parent's ID would collide on the PK.
-		AccountID:        parentApp.AccountID,
-		OrgID:            parentApp.OrgID,
-		Slug:             previewSlugVal,
-		Type:             parentApp.Type,
-		Runtime:          parentApp.Runtime,
-		RAMMB:            parentApp.RAMMB,
-		MaxConcurrency:   parentApp.MaxConcurrency,
-		IdleTimeoutS:     parentApp.IdleTimeoutS,
-		ProjectID:        parentApp.ProjectID,
-		RootDir:          parentApp.RootDir,
-		WorkloadName:     parentApp.WorkloadName,
-		WorkloadClass:    parentApp.WorkloadClass,
-		StartCommand:     parentApp.StartCommand,
-		Manifest:         previewManifest(parentApp.Manifest),
-		AppProtocol:      parentApp.AppProtocol,
-		Status:           state.AppActive,
-		Visibility:       parentApp.Visibility,
-		PreviewOfSlug:    parentApp.Slug,
-		PreviewPrNumber:  ev.Number,
-		PreviewPrState:   previewState,
-		PreviewExpiresAt: &expiresAt,
+		AccountID:      parentApp.AccountID,
+		OrgID:          parentApp.OrgID,
+		Slug:           previewSlugVal,
+		Type:           parentApp.Type,
+		Runtime:        parentApp.Runtime,
+		RAMMB:          parentApp.RAMMB,
+		MaxConcurrency: parentApp.MaxConcurrency,
+		IdleTimeoutS:   parentApp.IdleTimeoutS,
+		// The preview serves what production serves: a WebSocket or
+		// streaming app's preview answered upgrades with 501 and buffered
+		// streamed responses (ADR-20261031120000).
+		CPUMillicores:       parentApp.CPUMillicores,
+		StreamingEnabled:    parentApp.StreamingEnabled,
+		WebSocketEnabled:    parentApp.WebSocketEnabled,
+		RouteMetricsEnabled: parentApp.RouteMetricsEnabled,
+		ProjectID:           parentApp.ProjectID,
+		RootDir:             parentApp.RootDir,
+		WorkloadName:        parentApp.WorkloadName,
+		WorkloadClass:       parentApp.WorkloadClass,
+		StartCommand:        parentApp.StartCommand,
+		Manifest:            previewManifest(parentApp.Manifest),
+		AppProtocol:         parentApp.AppProtocol,
+		Status:              state.AppActive,
+		Visibility:          parentApp.Visibility,
+		PreviewOfSlug:       parentApp.Slug,
+		PreviewPrNumber:     ev.Number,
+		PreviewPrState:      previewState,
+		PreviewExpiresAt:    &expiresAt,
 	}
 	previewApp = withParentAccessGates(applyGitHubRootPolicy(previewApp, policy), parentApp)
 	// Resolve the account server-side so the separate, bounded PR-preview
@@ -1690,6 +1809,14 @@ func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, tar
 	var available map[string]struct{}
 	var headValues map[string]map[string]string
 	if sourceReady {
+		reopened, reopenErr := s.reopenLivePullRequestPreview(ctx, ev, install.InstallationID, previewLimits,
+			"https://"+previewHostnameForSlug(previewSlugVal), expiresAt)
+		if reopenErr != nil {
+			return reconcile.Result{}, reopenErr
+		}
+		if reopened {
+			return reconcile.Result{}, nil
+		}
 		skipped, skipErr := s.skipIgnoredPullRequestPush(ctx, ev, install.InstallationID, policy,
 			"https://"+previewHostnameForSlug(previewSlugVal), expiresAt)
 		if skipErr != nil {
@@ -1724,7 +1851,7 @@ func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, tar
 	// Source fetching and scanning can take longer than a PR head update.
 	// Recheck before the first preview mutation or build reservation.
 	if sourceReady {
-		if current, currentErr := s.currentPullRequestDelivery(ctx, install.InstallationID, ev); currentErr != nil {
+		if current, currentErr := s.currentPullRequestDelivery(ctx, install.InstallationID, &ev); currentErr != nil {
 			return reconcile.Result{}, fmt.Errorf("githubd: recheck current PR state: %w", currentErr)
 		} else if !current {
 			return reconcile.Result{WasIgnored: true}, ErrIgnored
@@ -1929,7 +2056,7 @@ func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, tar
 	if sourceReady {
 		if parentApp.ProjectID != "" {
 			created, err = s.applyPRHeadWorkload(ctx, created, workloads[strings.ToLower(parentApp.WorkloadName)], available, policy,
-				headValues[strings.ToLower(parentApp.WorkloadName)])
+				headValues[strings.ToLower(parentApp.WorkloadName)], previewPlatformEnv(ev))
 			if err != nil {
 				return result, fmt.Errorf("githubd: apply PR head workload %q: %w", parentApp.WorkloadName, err)
 			}
@@ -1942,7 +2069,7 @@ func (s *Service) applyPullRequest(ctx context.Context, ev PullRequestEvent, tar
 				return result, fmt.Errorf("githubd: refresh PR dependency %q: %w", dependency.WorkloadName, refreshErr)
 			}
 			preview, err = s.applyPRHeadWorkload(ctx, preview, workloads[strings.ToLower(dependency.WorkloadName)], available, policy,
-				headValues[strings.ToLower(dependency.WorkloadName)])
+				headValues[strings.ToLower(dependency.WorkloadName)], previewPlatformEnv(ev))
 			if err != nil {
 				return result, fmt.Errorf("githubd: apply PR head dependency %q: %w", dependency.WorkloadName, err)
 			}

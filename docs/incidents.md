@@ -90,6 +90,11 @@ are shared by every account, but your acknowledgement and notes on them are
 yours. Acknowledging does not silence an alert: its rule's cool-down and
 enabled switch still decide what it sends.
 
+Deleting an alert rule — or the SLO, synthetic check or app it watches —
+keeps its incidents, with their acknowledgements and notes. They keep the
+rule's name, an open one is resolved at the delete, and they are removed
+90 days after they resolved.
+
 The dashboard shows the same list at **Incidents**, and each incident's page
 has an Acknowledge button and a note form.
 

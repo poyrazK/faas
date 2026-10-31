@@ -160,17 +160,7 @@ func (s *Service) RetargetRouteRules(ctx context.Context, accountID, oldSlug, ne
 }
 
 func (s *Service) routeRulesTargeting(ctx context.Context, accountID, slug string) ([]state.EdgeRule, error) {
-	rules, err := s.Host.Store().ListEdgeRulesForAccount(ctx, accountID)
-	if err != nil {
-		return nil, err
-	}
-	var out []state.EdgeRule
-	for _, rule := range rules {
-		if rule.Kind == state.EdgeRuleKindRoute && rule.Action.Route != nil && rule.Action.Route.TargetAppSlug == slug {
-			out = append(out, rule)
-		}
-	}
-	return out, nil
+	return s.Host.Store().ListRouteRulesTargeting(ctx, accountID, slug)
 }
 
 // CorsPresetEdit is the barrier edit for updating or deleting a CORS preset:
@@ -178,15 +168,13 @@ func (s *Service) routeRulesTargeting(ctx context.Context, accountID, slug strin
 // policy as an update does.
 func (s *Service) CorsPresetEdit(accountID, presetID, operation string) ReferencedEdit {
 	return ReferencedEdit{Operation: operation, Subject: "CORS preset", Hosts: func(ctx context.Context) (map[string][]string, error) {
-		rules, err := s.Host.Store().ListEdgeRulesForAccount(ctx, accountID)
+		rules, err := s.Host.Store().ListEdgeRulesUsingCorsPreset(ctx, accountID, presetID)
 		if err != nil {
 			return nil, err
 		}
 		hosts := map[string][]string{}
 		for _, rule := range rules {
-			if rule.CorsPresetID != nil && *rule.CorsPresetID == presetID {
-				hosts[rule.AppID] = append(hosts[rule.AppID], rule.MatchHost)
-			}
+			hosts[rule.AppID] = append(hosts[rule.AppID], rule.MatchHost)
 		}
 		return hosts, nil
 	}}

@@ -1,20 +1,26 @@
 package sched
 
-import "github.com/onebox-faas/faas/pkg/api"
+import (
+	"sort"
+	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
+)
 
 // Frozen reservations (ADR-1151). A frozen instance is a paused VM kept
 // resident after its idle timeout. It holds its measured memory, at least
-// MeasuredChargeFloorMB, and no vCPU, CPU millicores or concurrency. Under
+// FrozenChargeFloorMB (ADR 20261031143521), and no vCPU, CPU millicores or
+// concurrency. Under
 // measured admission its MB sit outside the reservation overcommit cap (the
 // node's measured memory already includes them), and a thaw re-admits the
 // instance's full reservation like a wake.
 
-// frozenChargeMB is what a frozen reservation books: the instance's
-// measured charge, never below MeasuredChargeFloorMB nor above its full
-// reservation.
+// frozenChargeMB is what a frozen reservation books: the instance's frozen
+// charge (api.FrozenChargeMB), never below FrozenChargeFloorMB nor above
+// its full reservation (ADR 20261031143521).
 func frozenChargeMB(ramMB int, residentMB float64) int {
-	charge := api.MeasuredChargeMB(ramMB, residentMB)
-	return max(charge, api.MeasuredChargeFloorMB)
+	charge := api.FrozenChargeMB(ramMB, residentMB)
+	return max(charge, api.FrozenChargeFloorMB)
 }
 
 // Freeze converts an instance's serving reservation into a frozen one that
@@ -31,7 +37,7 @@ func (l *NodeLedger) Freeze(instance string, chargeMB int) bool {
 	if e == nil || e.frozen {
 		return false
 	}
-	chargeMB = min(max(chargeMB, api.MeasuredChargeFloorMB), e.admissionMB)
+	chargeMB = min(max(chargeMB, api.FrozenChargeFloorMB), e.admissionMB)
 	if e.countsConc {
 		e.countsConc = false
 		l.perApp[e.appID]--
@@ -56,12 +62,13 @@ func (l *NodeLedger) Freeze(instance string, chargeMB int) bool {
 	e.admissionMB = chargeMB
 	e.vcpu, e.cpuMillicores, e.cpuBoostMillicores = 0, 0, 0
 	e.frozen = true
+	e.frozenAt, e.compressTried = l.clock(), false
 	return true
 }
 
 // ShrinkFrozenCharge rebooks a frozen reservation at chargeMB after vmmd
 // compressed the VM's memory (ADR-906 decision 6). A charge never grows
-// here, and never drops below MeasuredChargeFloorMB. It returns false for
+// here, and never drops below FrozenChargeFloorMB. It returns false for
 // an unknown or unfrozen instance.
 func (l *NodeLedger) ShrinkFrozenCharge(instance string, chargeMB int) bool {
 	if l == nil {
@@ -73,7 +80,7 @@ func (l *NodeLedger) ShrinkFrozenCharge(instance string, chargeMB int) bool {
 	if e == nil || !e.frozen {
 		return false
 	}
-	chargeMB = max(chargeMB, api.MeasuredChargeFloorMB)
+	chargeMB = max(chargeMB, api.FrozenChargeFloorMB)
 	if chargeMB >= e.admissionMB {
 		return true
 	}
@@ -89,7 +96,7 @@ func (l *NodeLedger) ShrinkFrozenCharge(instance string, chargeMB int) bool {
 // seed after a restart finds FROZEN rows whose VMs are already resident.
 // Like other seed reservations it is not refused for headroom.
 func (l *NodeLedger) admitFrozen_locked(r Request) {
-	charge := max(r.FrozenChargeMB, api.MeasuredChargeFloorMB)
+	charge := max(r.FrozenChargeMB, api.FrozenChargeFloorMB)
 	if full := r.admissionMB(); charge > full {
 		charge = full
 	}
@@ -103,7 +110,7 @@ func (l *NodeLedger) admitFrozen_locked(r Request) {
 	l.entries[r.Instance] = &reservation{
 		appID: r.AppID, deploymentID: r.DeploymentID, environmentKey: r.EnvironmentKey, nodeID: r.NodeID,
 		production: r.ProductionEnvironment, deploymentScope: r.DeploymentScope,
-		admissionMB: charge, frozen: true, admittedAt: l.clock(),
+		admissionMB: charge, frozen: true, admittedAt: l.clock(), frozenAt: l.clock(),
 	}
 }
 
@@ -151,4 +158,90 @@ func (l *NodeLedger) IsFrozen(instance string) bool {
 	defer l.mu.Unlock()
 	e := l.entries[instance]
 	return e != nil && e.frozen
+}
+
+// FrozenCompressCandidates lists, per node, the frozen reservations
+// proactive compression may ask vmmd about (ADR 20261031143521): frozen at
+// least minAge before now and not tried yet, longest frozen first.
+func (l *NodeLedger) FrozenCompressCandidates(now time.Time, minAge time.Duration) map[string][]string {
+	if l == nil {
+		return nil
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	type candidate struct {
+		id string
+		at time.Time
+	}
+	byNode := map[string][]candidate{}
+	for id, e := range l.entries {
+		if !e.frozen || e.compressTried || now.Sub(e.frozenAt) < minAge {
+			continue
+		}
+		byNode[e.nodeID] = append(byNode[e.nodeID], candidate{id: id, at: e.frozenAt})
+	}
+	out := make(map[string][]string, len(byNode))
+	for nodeID, cs := range byNode {
+		sort.Slice(cs, func(i, j int) bool {
+			if !cs[i].at.Equal(cs[j].at) {
+				return cs[i].at.Before(cs[j].at)
+			}
+			return cs[i].id < cs[j].id
+		})
+		ids := make([]string, len(cs))
+		for i, c := range cs {
+			ids[i] = c.id
+		}
+		out[nodeID] = ids
+	}
+	return out
+}
+
+// MarkFrozenCompressTried records that proactive compression asked vmmd
+// about a frozen reservation, so it is not asked again.
+func (l *NodeLedger) MarkFrozenCompressTried(instance string) {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if e := l.entries[instance]; e != nil && e.frozen {
+		e.compressTried = true
+	}
+}
+
+// FrozenChargeOf is the RAM a frozen reservation books; ok is false for an
+// unknown or unfrozen instance.
+func (l *NodeLedger) FrozenChargeOf(instance string) (chargeMB int, ok bool) {
+	if l == nil {
+		return 0, false
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if e := l.entries[instance]; e != nil && e.frozen {
+		return e.admissionMB, true
+	}
+	return 0, false
+}
+
+// FrozenCompressNeed is a node's admission usage and ceiling as Admit sees
+// them. ok is false when what binds is the cap on reservations beyond the
+// overcommit allowance, which frozen reservations are not part of, so
+// compressing a frozen VM cannot lower it.
+func (l *NodeLedger) FrozenCompressNeed(nodeID string) (usedMB, ceilingMB int, ok bool) {
+	if l == nil {
+		return 0, 0, false
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	node := l.resident[nodeID]
+	if node == nil {
+		return 0, 0, false
+	}
+	ceiling := node.ceilingMB
+	if ceiling <= 0 {
+		ceiling = l.ceilingForNode_locked(nodeID, api.Limits{})
+	}
+	used, basis := l.admissionUsed_locked(nodeID, node.residentRAM, node.frozenRAM, ceiling)
+	return used, ceiling, basis == "measured" || basis == "resident"
 }

@@ -404,6 +404,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// A dynamic dialer can pick a different upstream per request, so the
 	// transport must not pool connections under the one logical URL.
 	dynamicUpstream := upstreamMode == internalUpstreamDatabase
+	// ADR-20261031105055: a compute edge may route each host to the node
+	// that last served it. Off by default for a measured rollout.
+	var placement *edgePlacement
 	if edgeMode == edgeModeCompute {
 		// ADR-1343 §2: this node's gatewayd-internal first, the compute pool
 		// only while it is unhealthy.
@@ -418,6 +421,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// withdraws this edge's local path.
 		lfd := newLocalFirstDialer(localDialer, cgp, internalURL, edgeMetricsSet, log).
 			withDrainWatch(strings.TrimSpace(os.Getenv("FAAS_NODE_NAME")), cgp)
+		if envBoolOr(edgePlacementRoutingEnv, false) {
+			placement = newEdgePlacement()
+			lfd.withPlacement(placement, cgp)
+		}
 		go lfd.run(ctx)
 		internalDialer = lfd
 		dynamicUpstream = true
@@ -468,11 +475,22 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// rollout; safe beside N-1 gatewayd-internal, which never marks. It
 	// needs a node-choosing dialer (the compute pool, or a compute edge's
 	// local-first dialer).
+	if placement != nil {
+		proxy.WithEdgePlacement(placement)
+	}
 	if envBoolOr("FAAS_GATEWAY_WAKE_FAILOVER", false) {
 		proxy.WithWakeFailover(gateway.NewWakeFailover(edgeMetricsSet.observeWakeFailover))
 	}
 	if err := configureRuntimeIngressProxy(proxy, pgStore, os.Getenv); err != nil {
 		return err
+	}
+	// The pickers name the node before the transport looks for an idle
+	// connection, so connections can stay alive per node without reaching a
+	// drained node or a node a failover retry excluded. Off by default for a
+	// measured rollout. The runtime ingress guard proves every connection
+	// itself, so it keeps one connection per request.
+	if dynamicUpstream && envBoolOr(internalKeepAlivePerNodeEnv, false) && !proxy.WithUpstreamKeepAlive() {
+		log.Warn("gatewayd-public: " + internalKeepAlivePerNodeEnv + " ignored: this upstream cannot keep connections per node")
 	}
 	// Issue #587 / PR-A: per-request drain tracker shared between
 	// the InternalReverseProxy and the control mux so every
@@ -700,7 +718,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 		}
 		defer func() { _ = uploadAuth.Close() }()
 		credentials := apidgrpc.CredentialLookup{Apid: uploadAuth, Fallback: pgStore, Log: log}
-		rootHandler, err = publicObjectStorageRoot(pgStore, credentials, publicStorageRegistry, func() bool { return s3Flag.Load() && fence.Open() },
+		// runDrain returns after the servers stop, so the last read-count
+		// flush runs before the pool closes.
+		reads, stopReads := startPublicReadAdmitter(ctx, pgStore, publicStorageRegistry, opsMetrics.Registry(), log)
+		defer stopReads()
+		rootHandler, err = publicObjectStorageRoot(pgStore, credentials, publicStorageRegistry, reads, func() bool { return s3Flag.Load() && fence.Open() },
 			domains, controlPlaneHandler, log)
 		if err != nil {
 			return err

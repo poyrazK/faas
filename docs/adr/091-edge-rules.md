@@ -1450,3 +1450,88 @@ rule format.
    production forks are served before edge rules; after a plan downgrade, rules
    of kinds the new plan no longer allows keep applying (they fail closed),
    and new rules of those kinds cannot be created until the plan allows them.
+
+## Amendment (2026-10-30, later): review round 5 — terminal output, dashboard authorization, large changes
+
+A further review found one injection, one authorization gap that round 4
+left on the dashboard path, two ways a large account could break shared
+machinery, and an undocumented boundary. None changes the rule format or the
+API.
+
+1. **The CLI prints request-derived text through `terminalSafe`.** Edge-rule
+   events and the WAF review store the decoded request path, so a request to
+   `/%1b]52;c;...%07` put an escape sequence into `gregale edge rule events`
+   and `waf-review` output: it could rewrite the operator's clipboard or
+   terminal title. Every edge command now escapes control characters in
+   paths, hosts, rule names, descriptions, labels and reasons, as other
+   commands already did.
+2. **Dashboard edits carry the session's account as the principal.** Round 4
+   made a list or preset edit check the apps whose rules use it, but that
+   check reads the API principal, and a dashboard request forwarded to the
+   API handler had none, so it was skipped. A creator removed from the company
+   could edit, under one of their own apps' pages, the list a company app's
+   rule uses. The dashboard forward now sets the signed-in account as the
+   principal, and the check applies as it does to API requests.
+3. **A convergence over too many hosts fences the whole account.** The
+   prepare and apply payloads name the changed hosts, and NOTIFY refuses a
+   payload over 7,999 bytes, so a rollback or list edit across a few hundred
+   distinct hosts was refused every time. A host list over the payload budget
+   now collapses to `*`, which fences and invalidates every host of the
+   mutating account (fences and invalidations are scoped by account, so other
+   accounts are untouched). A larger fence for one change replaces a change
+   that could never be made.
+4. **One app holds at most a quarter of a gateway's response cache.** See
+   ADR-122 amendment 2026-10-30: one app caching many large responses no
+   longer evicts every other app's entries.
+5. **The preset barrier and the rename read only the rules they change.**
+   Both loaded every rule of the account and filtered in apid; they now query
+   the rules that use the preset (`cors_preset_id`, indexed) and the route
+   rules naming the slug. The account-wide list (`GET /v1/edge-rules`) and the
+   export still return every visible rule: the list is a bare array, so a
+   default page size would silently truncate older clients, and its size is
+   bounded by the plan's rules per app times its apps.
+6. Documentation: calls between your apps over the internal service network
+   skip the target's edge rules; the service policy and
+   `x-gregale-allow-callers` decide who may call.
+
+## Amendment (2026-10-31): review round 6 — owner scope, rule cookies, shared lists
+
+A further review found that the personal/company line, which rounds 4 and 5
+drew for named apps, lists and presets, did not hold for host patterns and
+route targets; that rule headers bypassed the cross-tenant cookie scoping;
+and that lists were compiled once per host. None changes the rule format or
+the API.
+
+1. **Rules stay inside their app's owner scope.** A company app keeps its
+   creator's account, and the gateway kept a host's rules to the host owner's
+   account, so a `*`, glob or exact-host rule on the creator's personal app
+   applied to the company app's hosts (redirect, respond, headers, CORS with
+   credentials, IP deny), and a company admin's `*` rule to the creator's
+   personal apps. An offboarded creator kept that reach: the rule sits on a
+   personal app, out of the company's sight. Each app now has an edge-rule
+   scope: the organization owning a company app, or none for a personal app
+   (no organization, or the account's personal one). gatewayd-internal keeps a
+   host's rules to those whose app shares the serving app's scope; the serving
+   app's own and inherited preview rules are unaffected. A `route` target must
+   share the host app's scope: apid refuses another scope's target when a rule
+   is written or restored, and the gateway refuses one at match time (a rule
+   written before this amendment). Lists and presets remain account objects;
+   editing them checks the apps whose rules use them (rounds 4 and 5).
+2. **Rule headers cannot set a cookie for the shared domain.** The app's own
+   `Set-Cookie` with `Domain=<apps or platform domain>` is made host-only, but a
+   `headers` rule's response operations and a `redirect` rule's headers were
+   written as they stood, so any tenant could set a cookie every other
+   tenant's app receives. Both now go through the same scoping; a custom
+   domain's `Domain` is kept.
+3. **Lists are compiled once per account.** Each host load read and compiled
+   every list its rules reference, so one 10,000-item list under a `*` rule
+   was held once per cached host (up to 10,000 hosts) and read from Postgres
+   on every host's load. gatewayd-internal now shares one compiled list per
+   account and name, with the owner rule set's TTL, dropped by the same
+   invalidations, and kept only if the cache generation did not move during
+   the load. An IP list's CIDRs are looked up by prefix length (one map lookup
+   per distinct length) instead of a scan of every CIDR.
+
+Checked and unchanged: the response cache key already varies on the request
+host (ADR-122, `computeVaryHash`), so one host's cached body is not served on
+another host of the same app.

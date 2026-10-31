@@ -744,6 +744,9 @@ from .compose_process import ComposeProcess
 from .compose_process_stop_signal import ComposeProcessStopSignal
 from .compose_resources import ComposeResources
 from .compose_resources_cpu_millicores import ComposeResourcesCpuMillicores
+from .condition import Condition
+from .condition_status import ConditionStatus
+from .condition_type import ConditionType
 from .config_change_receipt import ConfigChangeReceipt
 from .config_guard import ConfigGuard
 from .config_guard_decision import ConfigGuardDecision
@@ -4993,6 +4996,10 @@ from .release_gate_kind import ReleaseGateKind
 from .release_gate_result import ReleaseGateResult
 from .release_gate_result_kind import ReleaseGateResultKind
 from .release_restore_point import ReleaseRestorePoint
+from .release_timeline import ReleaseTimeline
+from .release_timeline_event import ReleaseTimelineEvent
+from .release_timeline_event_kind import ReleaseTimelineEventKind
+from .release_timeline_phase import ReleaseTimelinePhase
 from .remove_environment_git_ops_override_request import RemoveEnvironmentGitOpsOverrideRequest
 from .rename_app_request import RenameAppRequest
 from .reorder_deployment_body import ReorderDeploymentBody
@@ -5035,6 +5042,8 @@ from .resize_managed_postgres_database_request import ResizeManagedPostgresDatab
 from .resize_managed_postgres_database_request_service_class import ResizeManagedPostgresDatabaseRequestServiceClass
 from .resolved_execution_limits import ResolvedExecutionLimits
 from .resource_profile import ResourceProfile
+from .resource_status import ResourceStatus
+from .resource_status_kind import ResourceStatusKind
 from .restore_app_body import RestoreAppBody
 from .restore_automation_revision_request import RestoreAutomationRevisionRequest
 from .restore_deleted_app_body import RestoreDeletedAppBody
@@ -6950,6 +6959,9 @@ __all__ = (
     "ComposeProcessStopSignal",
     "ComposeResources",
     "ComposeResourcesCpuMillicores",
+    "Condition",
+    "ConditionStatus",
+    "ConditionType",
     "ConfigChangeReceipt",
     "ConfigGuard",
     "ConfigGuardDecision",
@@ -10903,6 +10915,10 @@ __all__ = (
     "ReleaseGateResult",
     "ReleaseGateResultKind",
     "ReleaseRestorePoint",
+    "ReleaseTimeline",
+    "ReleaseTimelineEvent",
+    "ReleaseTimelineEventKind",
+    "ReleaseTimelinePhase",
     "RemoveEnvironmentGitOpsOverrideRequest",
     "RenameAppRequest",
     "ReorderDeploymentBody",
@@ -10945,6 +10961,8 @@ __all__ = (
     "ResizeManagedPostgresDatabaseRequestServiceClass",
     "ResolvedExecutionLimits",
     "ResourceProfile",
+    "ResourceStatus",
+    "ResourceStatusKind",
     "RestoreAppBody",
     "RestoreAutomationRevisionRequest",
     "RestoreDeletedAppBody",

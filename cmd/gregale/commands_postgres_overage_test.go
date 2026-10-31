@@ -74,7 +74,9 @@ func TestPostgresOverageIsHiddenUntilReleased(t *testing.T) {
 	t.Setenv("FAAS_TOKEN", "test-token")
 	t.Setenv("FAAS_COMPLETION_CACHE_PATH", filepath.Join(t.TempDir(), "cache.json"))
 	view.setHidden("postgres-overage")
-	if _, help, _ := runCLI(t, "postgres", "--help"); !strings.Contains(help, "usage-import") || strings.Contains(help, "overage") {
+	// postgres is an operator command, outside the command tree, so its
+	// tree verbs (#6123) leave its own help in place.
+	if _, help, _ := runCLI(t, "postgres", "--help"); !strings.Contains(help, "Operator preview") || !strings.Contains(help, "usage-import") || strings.Contains(help, "overage") {
 		t.Fatalf("postgres help with overage hidden must list the rest and not overage:\n%s", help)
 	}
 	if code, _, stderr := runCLI(t, "postgres", "overage", "--help"); code == 0 || !strings.Contains(stderr, `unknown command "postgres overage"`) {

@@ -62,10 +62,10 @@ func cmdEdgeRulesSuggest(args []string) int {
 	}
 	_, _ = fmt.Fprintf(osStdout, "Suggested protections for %s, from the last %s of traffic:\n\n", slug, out.Window)
 	for _, sg := range out.Suggestions {
-		_, _ = fmt.Fprintf(osStdout, "%s — %s\n  %s\n  Add in log mode: %s\n", sg.Recipe, sg.Title, sg.Reason, edgeRuleSuggestCommand(slug, sg))
+		_, _ = fmt.Fprintf(osStdout, "%s — %s\n  %s\n  Add in log mode: %s\n", sg.Recipe, sg.Title, terminalSafe(sg.Reason), terminalSafe(edgeRuleSuggestCommand(slug, sg)))
 		if alt := sg.Alternative; alt != nil {
 			_, _ = fmt.Fprintf(osStdout, "  Or %s: %s\n", strings.ToLower(alt.Title[:1])+alt.Title[1:],
-				edgeRuleSuggestCommand(slug, api.EdgeRuleRecipeSuggestion{Recipe: alt.Recipe, Params: alt.Params}))
+				terminalSafe(edgeRuleSuggestCommand(slug, api.EdgeRuleRecipeSuggestion{Recipe: alt.Recipe, Params: alt.Params})))
 		}
 		_, _ = fmt.Fprintln(osStdout)
 	}
@@ -77,7 +77,7 @@ func cmdEdgeRulesSuggest(args []string) int {
 // parameters in name order and a placeholder for each required one the
 // suggestion cannot fill.
 func edgeRuleSuggestCommand(slug string, sg api.EdgeRuleRecipeSuggestion) string {
-	parts := []string{"gregale edge rule recipe", sg.Recipe, "--app", slug}
+	parts := []string{"gregale edge rule recipe apply", sg.Recipe, "--app", slug}
 	names := make([]string, 0, len(sg.Params))
 	for name := range sg.Params {
 		names = append(names, name)

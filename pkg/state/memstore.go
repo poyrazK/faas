@@ -384,6 +384,9 @@ type MemStore struct {
 	releaseFreezes map[string]ReleaseFreeze
 	// releaseGates mirrors app_release_gates (ADR-20261019071734).
 	releaseGates map[string]ReleaseGate
+	// releaseGateProbes mirrors release_gate_probe_results
+	// (ADR-20261022082305).
+	releaseGateProbes map[releaseGateProbeKey]ReleaseGateProbeResult
 	// releaseApprovalPolicies mirrors app_release_approval_policies, keyed by
 	// app ID; releaseApprovals mirrors deployment_release_approvals
 	// (ADR-20261020085706).
@@ -1084,7 +1087,10 @@ type MemStore struct {
 	// names are validated to a portable charset and
 	// deploymentIDs are UUIDs).
 	deploymentSidecarLayers map[string]DeploymentSidecarLayer
-	snapshots               []Snapshot
+	// sidecarEnvReseals mirrors deployment_sidecar_env_reseals, keyed by
+	// sidecarEnvResealKey; nil until the first upsert.
+	sidecarEnvReseals map[string]SidecarEnvReseal
+	snapshots         []Snapshot
 	// snapshotStaleAt mirrors snapshots.stale_at: when a snapshot was marked
 	// stale, which stale retention counts from (Hunt 21 H21-2). A stale row
 	// without an entry falls back to its creation time.
@@ -7287,7 +7293,8 @@ func (m *MemStore) restoreAppLocked(ctx context.Context, id string, limits api.L
 	if !ok {
 		return App{}, ErrNotFound
 	}
-	if _, claimed := m.appDeletionClaims[id]; claimed || a.Status != AppDeleted || a.DeleteGraceUntil == nil || !a.DeleteGraceUntil.After(time.Now()) {
+	if _, claimed := m.appDeletionClaims[id]; claimed || a.Status != AppDeleted || a.DeleteGraceUntil == nil || !a.DeleteGraceUntil.After(time.Now()) ||
+		previewTornDown(a) {
 		return App{}, ErrConflict
 	}
 	if err := m.checkAppQuotaLocked(a, limits); err != nil {
@@ -7850,8 +7857,34 @@ func (m *MemStore) DeleteGithubInstallBinding(_ context.Context, appID string) e
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, ok := m.apps[appID]; !ok {
+	parent, ok := m.apps[appID]
+	if !ok {
 		return ErrNotFound
+	}
+	// Mirrors PgStore: the app's PR preview environments go stale.
+	anchors := make(map[string]string)
+	for _, set := range m.previewSets {
+		if root, ok := m.apps[set.RootAppID]; ok {
+			for _, id := range set.MemberAppIDs {
+				anchors[id] = root.PreviewOfSlug
+			}
+		}
+	}
+	now := time.Now()
+	for id, preview := range m.apps {
+		if preview.AccountID != parent.AccountID || preview.PreviewOfSlug == "" || preview.PreviewPrNumber <= 0 ||
+			preview.Status == AppDeleted || preview.PreviewPrState == PreviewPrStateTearingDown || preview.PreviewPrState == PreviewPrStateTornDown {
+			continue
+		}
+		anchor, inSet := anchors[id]
+		if !inSet {
+			anchor = preview.PreviewOfSlug
+		}
+		if anchor == parent.Slug {
+			preview.PreviewPrState = PreviewPrStateStale
+			preview.PreviewExpiresAt = &now
+			m.apps[id] = preview
+		}
 	}
 	delete(m.githubBindings, appID)
 	return nil
@@ -11584,6 +11617,10 @@ func (m *MemStore) GetDeploymentOpenAPIDoc(_ context.Context, deploymentID, acco
 func (m *MemStore) UpsertDeploymentOpenAPIDoc(_ context.Context, deploymentID, accountID, appID string, doc []byte, source string, truncated bool) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.upsertDeploymentOpenAPIDocLocked(deploymentID, accountID, appID, doc, source, truncated)
+}
+
+func (m *MemStore) upsertDeploymentOpenAPIDocLocked(deploymentID, accountID, appID string, doc []byte, source string, truncated bool) error {
 	if _, ok := m.deployments[deploymentID]; !ok {
 		return ErrNotFound
 	}
@@ -11649,9 +11686,8 @@ func (m *MemStore) DeleteDeploymentOpenAPIDoc(_ context.Context, deploymentID, a
 }
 
 // CountOpenAPIDocsByAccount returns the number of doc rows the
-// account owns. Drives the per-account quota gate. The count is
-// a single pass over the map — the in-memory store holds the
-// entire dataset under m.mu so an O(N) scan is fine.
+// account owns. The per-account quota counts the app's billing
+// subject instead, in UpsertDeploymentOpenAPIDocIfUnderQuota.
 func (m *MemStore) CountOpenAPIDocsByAccount(_ context.Context, accountID string) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -11820,12 +11856,16 @@ func (m *MemStore) UpsertAppOpenAPIDocIfUnderQuota(_ context.Context, appID, acc
 	if !ok || app.AccountID != accountID {
 		return ErrNotFound
 	}
-	if _, ok := m.accounts[accountID]; !ok {
+	if _, ok := m.accounts[accountID]; !ok || app.Status == AppDeleted {
 		return ErrNotFound
 	}
+	// The allowance belongs to the app's billing subject
+	// (ADR-202610171904): a company's once it adopted billing, whichever
+	// member's app holds the import.
+	subject := m.appBillingSubjectLocked(app.AccountID, app.ID)
 	observed := 0
 	for _, r := range m.openAPIImports {
-		if r.AccountID == accountID {
+		if m.countsTowardQuotaSubjectLocked(r.AccountID, r.AppID, subject) {
 			observed++
 		}
 	}
@@ -17808,6 +17848,19 @@ func (m *MemStore) OpenComputeNodeWakeBreaker(_ context.Context, nodeID string, 
 	return nil
 }
 
+// HoldComputeNodeCPUPressure mirrors PgStore.HoldComputeNodeCPUPressure.
+func (m *MemStore) HoldComputeNodeCPUPressure(_ context.Context, nodeID string, until time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n, ok := m.computeNodes[nodeID]
+	if !ok {
+		return nil
+	}
+	n.CPUPressureUntil = &until
+	m.computeNodes[nodeID] = n
+	return nil
+}
+
 // CloseComputeNodeWakeBreaker mirrors PgStore.CloseComputeNodeWakeBreaker.
 func (m *MemStore) CloseComputeNodeWakeBreaker(_ context.Context, nodeID string) (bool, error) {
 	m.mu.Lock()
@@ -18835,13 +18888,10 @@ func (m *MemStore) appendEventLocked(actor, kind string, subject *string, data [
 		Data:    append([]byte(nil), data...),
 	}
 	if kind == "event.published" {
-		created, err := m.enqueuePublishedEventLocked(subj, data, at)
-		if err != nil {
-			return err
-		}
-		if !created && customerPublishedEvent(kind, data) {
-			return nil
-		}
+		// ADR-20261030170000: the receipt is the event's one copy, as the
+		// Postgres fanout trigger skips the events row.
+		_, err := m.enqueuePublishedEventLocked(subj, data, at)
+		return err
 	}
 	m.events = append(m.events, e)
 	return nil
@@ -20445,7 +20495,7 @@ func (m *MemStore) LoadAllOverageCapCents(_ context.Context) (map[string]int64, 
 
 // CurrentMonthOverageCents sums the account's compute usage_minutes.mb_seconds
 // from the UTC month start, removes the month's included allowance (the
-// largest plan grant recorded this month, ADR-1162), and converts the
+// time-weighted plan grant this month, ADR-20261030093512), and converts the
 // remainder to integer cents. Integer math only — never float on money
 // (CLAUDE.md).
 //
@@ -20460,6 +20510,8 @@ func (m *MemStore) CurrentMonthOverageCents(_ context.Context, accountID string)
 	var plan api.Plan
 	if acct, ok := m.accounts[accountID]; ok {
 		plan = acct.Plan
+	} else if org, ok := m.orgs[accountID]; ok && !org.Personal {
+		plan = org.Plan
 	}
 	var mbSeconds int64
 	for _, u := range m.usage {
@@ -20477,7 +20529,16 @@ func (m *MemStore) CurrentMonthOverageCents(_ context.Context, accountID string)
 			snapshots = append(snapshots, p)
 		}
 	}
-	return monthOverageCents(plan, snapshots, now, mbSeconds), nil
+	usageBefore := func(at time.Time) (int64, error) {
+		var before int64
+		for _, u := range m.usage {
+			if u.AccountID == accountID && !u.Minute.Before(monthStart) && u.Minute.Before(at) {
+				before += u.MBSeconds
+			}
+		}
+		return before, nil
+	}
+	return monthOverageCents(plan, snapshots, now, mbSeconds, usageBefore)
 }
 
 // UpdateAccountOverageCapCents writes accounts.overage_cap_cents for
@@ -20691,6 +20752,10 @@ func (m *MemStore) pendingBillingMeterUsageWindows(provider string, meter Billin
 	for _, row := range m.usage {
 		identity, ok := m.billingIdentities[billingIdentityKey(row.AccountID, provider)]
 		if !ok || row.Minute.Before(start) || !row.Minute.Before(end) || row.Minute.Before(identity.BillingFrom) {
+			continue
+		}
+		// Only paid subjects are pending, as in PgStore (ADR-20261031100000).
+		if !m.billingSubjectPaidLocked(row.AccountID) {
 			continue
 		}
 		hour := row.Minute.UTC().Truncate(time.Hour)
@@ -24619,6 +24684,24 @@ func (m *MemStore) DeleteAlertRule(_ context.Context, id string) error {
 	if _, ok := m.alertRules[id]; !ok {
 		return ErrNotFound
 	}
+	m.deleteAlertRuleLocked(id)
+	return nil
+}
+
+// deleteAlertRulesLocked deletes the rules matching match, as an SLO or a
+// synthetic check delete cascades to the rules built on it in PostgreSQL.
+func (m *MemStore) deleteAlertRulesLocked(match func(AlertRule) bool) {
+	for id, r := range m.alertRules {
+		if match(r) {
+			m.deleteAlertRuleLocked(id)
+		}
+	}
+}
+
+// deleteAlertRuleLocked mirrors the alert_rules delete: its episodes stay
+// (ADR-20261030214500) and everything else of the rule cascades.
+func (m *MemStore) deleteAlertRuleLocked(id string) {
+	m.keepDeletedRuleEpisodesLocked(m.alertRules[id], time.Now().UTC())
 	delete(m.alertRules, id)
 	delete(m.readinessIncidentCursors, id)
 	delete(m.readinessPagerDutyPolicies, id)
@@ -24658,7 +24741,6 @@ func (m *MemStore) DeleteAlertRule(_ context.Context, id string) error {
 			delete(m.alertRollbacks, alertRollbackFireID(delivery.ID))
 		}
 	}
-	return nil
 }
 
 func (m *MemStore) ListAlertRulesForAccount(_ context.Context, accountID string) ([]AlertRule, error) {
@@ -24933,11 +25015,27 @@ func (m *MemStore) CreateEdgeRuleIfUnderQuota(ctx context.Context, in CreateEdge
 }
 
 func (m *MemStore) ListEdgeRulesForAccount(_ context.Context, accountID string) ([]EdgeRule, error) {
+	return m.listAccountEdgeRules(accountID, func(EdgeRule) bool { return true }), nil
+}
+
+func (m *MemStore) ListEdgeRulesUsingCorsPreset(_ context.Context, accountID, presetID string) ([]EdgeRule, error) {
+	return m.listAccountEdgeRules(accountID, func(r EdgeRule) bool {
+		return r.CorsPresetID != nil && *r.CorsPresetID == presetID
+	}), nil
+}
+
+func (m *MemStore) ListRouteRulesTargeting(_ context.Context, accountID, targetSlug string) ([]EdgeRule, error) {
+	return m.listAccountEdgeRules(accountID, func(r EdgeRule) bool {
+		return r.Kind == EdgeRuleKindRoute && r.Action.Route != nil && r.Action.Route.TargetAppSlug == targetSlug
+	}), nil
+}
+
+func (m *MemStore) listAccountEdgeRules(accountID string, keep func(EdgeRule) bool) []EdgeRule {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var out []EdgeRule
 	for _, r := range m.edgeRules {
-		if r.AccountID == accountID {
+		if r.AccountID == accountID && keep(r) {
 			r.MatchHeaders = cloneEdgeRuleMatchHeaders(r.MatchHeaders)
 			out = append(out, r)
 		}
@@ -24945,7 +25043,7 @@ func (m *MemStore) ListEdgeRulesForAccount(_ context.Context, accountID string) 
 	sort.Slice(out, func(i, j int) bool {
 		return edgeRuleMatchOrderLess(out[i], out[j])
 	})
-	return out, nil
+	return out
 }
 
 func (m *MemStore) ListEdgeRulesForApp(_ context.Context, appID string) ([]EdgeRule, error) {
@@ -28954,7 +29052,7 @@ func (m *MemStore) ReplayDeadLetterEventsForAccount(_ context.Context, accountID
 		} else {
 			_, err = m.replayAccountJobDeadLetterLocked(accountID, ev)
 		}
-		if errors.Is(err, ErrNotFound) {
+		if errors.Is(err, ErrNotFound) || errors.Is(err, ErrKeyedReplayExpired) {
 			continue
 		}
 		if err != nil {
@@ -29044,6 +29142,11 @@ func (m *MemStore) replayDeadLetterEventLocked(accountID, appID, eventID string)
 		}
 		if InvocationHasOperation(inv) {
 			return DeadLetterEvent{}, ErrNotFound
+		}
+		// ADR-20261031101000: replay resets attempts, so keyed work past its
+		// pending deadline would only expire again.
+		if inv.WorkPolicyName != "" && inv.WorkExpiresAt != nil && !inv.WorkExpiresAt.After(now) {
+			return DeadLetterEvent{}, ErrKeyedReplayExpired
 		}
 		if _, err := m.retryQueueDeadLetterLocked(accountID, event.SourceID, now); err != nil {
 			return DeadLetterEvent{}, err
@@ -29179,7 +29282,7 @@ func (m *MemStore) ReplayDeadLetterEvents(_ context.Context, accountID, appID st
 			continue
 		}
 		if _, err := m.replayDeadLetterEventLocked(accountID, appID, ev.ID); err != nil {
-			if errors.Is(err, ErrNotFound) {
+			if errors.Is(err, ErrNotFound) || errors.Is(err, ErrKeyedReplayExpired) {
 				continue
 			}
 			return replayed, err
@@ -29586,4 +29689,16 @@ func requireAPIKeyScopes(scopes []string) error {
 		return fmt.Errorf("%w: api key scopes must not be empty", ErrInvalidArgument)
 	}
 	return nil
+}
+
+// billingSubjectPaidLocked reports whether a billing subject, an account or a
+// company organization, is on a paid plan. Caller holds m.mu.
+func (m *MemStore) billingSubjectPaidLocked(id string) bool {
+	if a, ok := m.accounts[id]; ok {
+		return a.Plan.IsPaid()
+	}
+	if o, ok := m.orgs[id]; ok && !o.Personal {
+		return o.Plan.IsPaid()
+	}
+	return false
 }

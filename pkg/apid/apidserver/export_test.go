@@ -1395,6 +1395,9 @@ func (r *server) RenderPreviewsList(p0 http.ResponseWriter, p1 *http.Request, p2
 func (r *server) RenderReleaseApprovalPage(p0 http.ResponseWriter, p1 *http.Request) {
 	r.renderReleaseApprovalPage(p0, p1)
 }
+func (r *server) RenderReleasePage(p0 http.ResponseWriter, p1 *http.Request) {
+	r.renderReleasePage(p0, p1)
+}
 func (r *server) ReplaceProjectEnvironmentQueueBindings(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.replaceProjectEnvironmentQueueBindings(p0, p1, p2)
 }
@@ -1939,3 +1942,6 @@ var SealOAuthCodeState = sealOAuthCodeState
 // ProjectReadinessOverrides exposes projectReadinessOverrides to the
 // external test package.
 var ProjectReadinessOverrides = projectReadinessOverrides
+
+// SetEventPublishClock pins the event publish rate limiter's clock.
+func SetEventPublishClock(e TestEnv, now func() time.Time) { e.s.eventPublishLimiter.Now = now }

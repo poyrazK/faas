@@ -25,9 +25,9 @@ func TestEdgeRuleResponseSetCookieIsTenantScoped(t *testing.T) {
 	t.Cleanup(hostidentity.Configure(d))
 
 	hdr := http.Header{}
-	applyResponseHeaderOp(hdr, EdgeRuleHeaderOp{Name: "Set-Cookie", Value: "sid=x; Domain=gregale.app; Path=/", Action: "add"})
-	applyResponseHeaderOp(hdr, EdgeRuleHeaderOp{Name: "set-cookie", Value: "pref=1; Domain=shop.example.com", Action: "add"})
-	applyResponseHeaderOp(hdr, EdgeRuleHeaderOp{Name: "X-Frame-Options", Value: "DENY; Domain=gregale.app", Action: "set"})
+	applyHeaderOp(hdr, EdgeRuleHeaderOp{Name: "Set-Cookie", Value: "sid=x; Domain=gregale.app; Path=/", Action: "add"})
+	applyHeaderOp(hdr, EdgeRuleHeaderOp{Name: "set-cookie", Value: "pref=1; Domain=shop.example.com", Action: "add"})
+	applyHeaderOp(hdr, EdgeRuleHeaderOp{Name: "X-Frame-Options", Value: "DENY; Domain=gregale.app", Action: "set"})
 	got := hdr.Values("Set-Cookie")
 	if len(got) != 2 || got[0] != "sid=x; Path=/" || got[1] != "pref=1; Domain=shop.example.com" {
 		t.Fatalf("Set-Cookie = %q, want the owned Domain dropped and a custom one kept", got)

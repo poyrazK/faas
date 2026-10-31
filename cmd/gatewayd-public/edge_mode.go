@@ -24,6 +24,7 @@ import (
 	"net/http/httputil"
 	"net/netip"
 	"net/url"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -99,6 +100,9 @@ type edgeMetrics struct {
 	// dispatched, by reason and by what the edge did (ADR-20261022184531
 	// step 5).
 	wakeFailover *prometheus.CounterVec
+	// placement counts how each dial attempt used placement routing
+	// (ADR-20261031105055).
+	placement *prometheus.CounterVec
 }
 
 func newEdgeMetrics() *edgeMetrics {
@@ -106,7 +110,7 @@ func newEdgeMetrics() *edgeMetrics {
 		registry: prometheus.NewRegistry(),
 		fallbacks: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "gatewayd_public_edge_local_fallback_total",
-			Help: "Upstream dials a compute-node edge sent to the compute pool because its own node's gatewayd-internal was unhealthy or refused the dial (ADR-1343).",
+			Help: "Requests a compute-node edge sent to the compute pool because its own node's gatewayd-internal was unhealthy or refused the dial (ADR-1343).",
 		}),
 		misdirected: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "gatewayd_public_edge_misdirected_total",
@@ -124,13 +128,20 @@ func newEdgeMetrics() *edgeMetrics {
 			Name: "gateway_wake_failover_total",
 			Help: "Responses gatewayd-internal marked not dispatched (no request byte reached a guest), by reason and outcome: retried on another compute node (succeeded, refused_again, failed) or not retried and why (ADR-20261022184531 step 5).",
 		}, []string{"reason", "outcome"}),
+		placement: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gatewayd_public_edge_placement_total",
+			Help: "Compute-edge dial attempts by placement result: remote (routed to the node that last served the host), self (that node is this one), miss (no node known), unusable (the node is not in the inventory, unready or excluded), failed (its dial failed) (ADR-20261031105055).",
+		}, []string{"result"}),
+	}
+	for _, result := range placementResults {
+		m.placement.WithLabelValues(result)
 	}
 	for _, reason := range gateway.NotDispatchedReasons {
 		for _, outcome := range gateway.FailoverOutcomes {
 			m.wakeFailover.WithLabelValues(reason, outcome)
 		}
 	}
-	m.registry.MustRegister(m.fallbacks, m.misdirected, m.localReady, m.nodeDrained, m.wakeFailover)
+	m.registry.MustRegister(m.fallbacks, m.misdirected, m.localReady, m.nodeDrained, m.wakeFailover, m.placement)
 	return m
 }
 
@@ -161,6 +172,11 @@ type localFirstDialer struct {
 	// leaves routing to the health check alone.
 	nodeName  string
 	inventory nodeInventory
+
+	// placement and placementPool route a host to the node that last served
+	// it (ADR-20261031105055); nil keeps every request local first.
+	placement     *edgePlacement
+	placementPool *computeGatewayPool
 }
 
 // nodeInventory reports a compute node's registry state: whether it is
@@ -181,11 +197,64 @@ func (d *localFirstDialer) withDrainWatch(nodeName string, inventory nodeInvento
 	return d
 }
 
+// withPlacement routes each host to the node that last served it, from
+// pool's in-memory inventory (ADR-20261031105055).
+func (d *localFirstDialer) withPlacement(placement *edgePlacement, pool *computeGatewayPool) *localFirstDialer {
+	d.placement = placement
+	d.placementPool = pool
+	return d
+}
+
+// placementRoute returns the ready node a request's host was last served
+// from, when that is another node this attempt may use.
+func (d *localFirstDialer) placementRoute(ctx context.Context, rec *gateway.DialRecord) (computeGatewayEndpoint, gateway.PreferredNode, bool) {
+	if d.placement == nil || d.placementPool == nil {
+		return computeGatewayEndpoint{}, gateway.PreferredNode{}, false
+	}
+	pref, ok := gateway.PreferredNodeFrom(ctx)
+	if !ok {
+		d.metrics.placement.WithLabelValues(placementMiss).Inc()
+		return computeGatewayEndpoint{}, pref, false
+	}
+	endpoint, ok := d.placementPool.peekEndpoint(ctx, pref.NodeID)
+	switch {
+	case ok && d.nodeName != "" && endpoint.name == d.nodeName:
+		d.metrics.placement.WithLabelValues(placementSelf).Inc()
+		return computeGatewayEndpoint{}, pref, false
+	case !ok || rec.Excluded(endpoint.name):
+		d.metrics.placement.WithLabelValues(placementUnusable).Inc()
+		return computeGatewayEndpoint{}, pref, false
+	}
+	return endpoint, pref, true
+}
+
+// dialPlacement dials the node placement named; a failure forgets the host,
+// so its next request routes locally until a response names a node again.
+func (d *localFirstDialer) dialPlacement(ctx context.Context, endpoint computeGatewayEndpoint, pref gateway.PreferredNode) (net.Conn, error) {
+	conn, err := d.placementPool.dial(ctx, endpoint)
+	if err != nil && ctx.Err() == nil {
+		d.placement.Forget(pref.Host)
+		d.metrics.placement.WithLabelValues(placementFailed).Inc()
+	}
+	return conn, err
+}
+
 func (d *localFirstDialer) DialContext(ctx context.Context, target string) (net.Conn, error) {
 	// A retry of a response this node's gateway refused goes to the other
 	// nodes: a planned route, like a drain, not a fallback
 	// (ADR-20261022184531 step 5).
 	rec := gateway.DialRecordFrom(ctx)
+	if endpoint, pref, ok := d.placementRoute(ctx, rec); ok {
+		conn, err := d.dialPlacement(ctx, endpoint, pref)
+		if err == nil {
+			rec.RecordDialed(endpoint.name)
+			d.metrics.placement.WithLabelValues(placementRemote).Inc()
+			return conn, nil
+		}
+		if ctx.Err() != nil {
+			return nil, err
+		}
+	}
 	localExcluded := d.nodeName != "" && rec.Excluded(d.nodeName)
 	if d.healthy.Load() && !localExcluded {
 		conn, err := d.local.DialContext(ctx, target)
@@ -211,6 +280,52 @@ func (d *localFirstDialer) DialContext(ctx context.Context, target string) (net.
 		return nil, fmt.Errorf("compute edge: local gateway unavailable and compute pool failed: %w", err)
 	}
 	return conn, nil
+}
+
+// localUpstreamKey keys the pooled connections to this node's own
+// gatewayd-internal socket.
+const localUpstreamKey = "local"
+
+// PickUpstream follows DialContext's routing for one attempt
+// (gateway.UpstreamPicker): this node's gatewayd-internal while it is healthy
+// and its dial has not failed, otherwise the compute pool. Only then is the
+// pool consulted, so a healthy local path never reads the registry. The pool
+// counts a fallback for each request it carries unless the route is planned
+// (a drain or a retry that excludes this node).
+func (d *localFirstDialer) PickUpstream(ctx context.Context, rec *gateway.DialRecord, failed []string) (gateway.Upstream, error) {
+	if endpoint, pref, ok := d.placementRoute(ctx, rec); ok {
+		if key := computeGatewayUpstreamKey(endpoint.address); !slices.Contains(failed, key) {
+			return gateway.Upstream{Key: key, Node: endpoint.name, Dial: func(ctx context.Context) (net.Conn, error) {
+				return d.dialPlacement(ctx, endpoint, pref)
+			}, Used: d.metrics.placement.WithLabelValues(placementRemote).Inc}, nil
+		}
+	}
+	localExcluded := d.nodeName != "" && rec.Excluded(d.nodeName)
+	viaLocal := d.healthy.Load() && !localExcluded
+	if viaLocal && !slices.Contains(failed, localUpstreamKey) {
+		return gateway.Upstream{Key: localUpstreamKey, Node: d.nodeName, Dial: d.dialLocal}, nil
+	}
+	pool, ok := d.fallback.(gateway.UpstreamPicker)
+	if !ok {
+		return gateway.Upstream{}, fmt.Errorf("%w: compute edge: the compute pool cannot name its nodes", gateway.ErrNoComputeCapacity)
+	}
+	upstream, err := pool.PickUpstream(ctx, rec, failed)
+	if err != nil {
+		return gateway.Upstream{}, fmt.Errorf("compute edge: compute pool: %w", err)
+	}
+	if planned := !viaLocal && (d.drained.Load() || localExcluded); !planned {
+		upstream.Used = d.metrics.fallbacks.Inc
+	}
+	return upstream, nil
+}
+
+// dialLocal opens a new connection to this node's gatewayd-internal.
+func (d *localFirstDialer) dialLocal(ctx context.Context) (net.Conn, error) {
+	conn, err := d.local.DialContext(ctx, "")
+	if err != nil && ctx.Err() == nil {
+		d.log.Warn("gatewayd-public: local gatewayd-internal refused the dial; using the compute pool", "err", err)
+	}
+	return conn, err
 }
 
 // HasAlternate reports whether the compute pool holds a node a retry has

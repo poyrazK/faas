@@ -483,7 +483,7 @@ func cmdEventsFanoutHistory(args []string) int {
 	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) ||
 		strings.TrimSpace(*eventSource) == "" || strings.TrimSpace(*eventID) == "" ||
 		validateCLILimit("limit", *limit, 200) != nil {
-		PrintUsage(os.Stderr, "usage: gregale event fanout-history <app> --event-source SOURCE --event-id ID [--subscription-id ID] [--cursor CURSOR] [--limit N] [--all]", "events")
+		PrintUsage(os.Stderr, "usage: gregale event fanout history <app> --event-source SOURCE --event-id ID [--subscription-id ID] [--cursor CURSOR] [--limit N] [--all]", "events")
 		return 1
 	}
 	client, err := authedClient()

@@ -314,7 +314,7 @@ enabled for your account, your own enrolled keys. See the
 
 - Tag objects with `gregale bucket tags`, or with S3 tagging calls.
 - `CopyObject` copies within a bucket. To copy from another of your buckets, give
-  the S3 credential a copy-source grant on it (`gregale bucket copy-sources`).
+  the S3 credential a copy-source grant on it (`gregale bucket copy-source`).
 - Conditional writes (`If-None-Match: *`, `If-Match`) work on single uploads.
 - Where your bucket's storage supports them, multipart uploads can carry CRC32,
   CRC32C, CRC64NVME, SHA1 or SHA256 checksums, validated on every part, and
@@ -356,7 +356,7 @@ is not authorization, and every request still needs a signature or grant.
 ## Usage
 
 ```sh
-gregale billing usage object-storage
+gregale bucket usage
 ```
 
 shows stored bytes, requests and egress for the current month, and marks any
@@ -382,6 +382,7 @@ what you used.
 | CORS rules per bucket | 100 |
 | Anonymous reads of a public bucket | 75% of the account's monthly request and egress ceilings; 100 per second per bucket |
 | Requests through `s3.gregale.dev` | 100 per second per account, bursts of 200; more answer `503 SlowDown`, which S3 SDKs retry with backoff |
+| Egress each month | 10 times your plan's included storage: Free 10 GiB, Hobby 100 GiB, Pro 500 GiB, Scale 2,000 GiB ([plans](plans.md#object-storage)). Public objects served from the CDN's cache do not count. At the limit, every request except deletes is refused until the month ends |
 
 Your plan and account also cap stored bytes, requests and egress each month.
 

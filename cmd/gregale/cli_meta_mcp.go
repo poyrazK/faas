@@ -117,7 +117,7 @@ func mcpCLICommand() cliCommand {
 			{Name: "role", Short: "configured probe role with --record (default default)", Value: "NAME"},
 			{Name: "legacy", Short: "use the legacy protocol"},
 			{Name: "timeout", Short: "overall deadline up to 30s", Value: "DURATION"},
-		}, Examples: []string{"gregale mcp server readiness --app my-mcp --release <uuid> --token-env MCP_PROBE_TOKEN --baseline gregale-mcp.lock.json --json"}},
+		}, Examples: []string{"gregale mcp readiness --app my-mcp --release <uuid> --token-env MCP_PROBE_TOKEN --baseline gregale-mcp.lock.json --json"}},
 		{Name: "init", Short: "Create an MCP starter in Node, Go or Python", Flags: []cliFlag{
 			{Name: "path", Short: "empty destination directory", Value: "DIR", Req: true},
 			{Name: "language", Short: "starter language alias", Value: "LANGUAGE", ClosedSet: []string{"node", "go", "python"}},
@@ -211,7 +211,7 @@ func mcpCLICommand() cliCommand {
 				{Name: "resume", Short: "resume a healthy failed rollout (recover only)"},
 				{Name: "plan", Short: "native deployment plan JSON", Value: "PATH", Req: true},
 				{Name: "state", Short: "persistent release journal outside source directories", Value: "PATH", Req: true},
-			}, Examples: []string{"gregale mcp server tasks release --plan release.json --state ./release-state.json", "gregale mcp server tasks release status --plan release.json --state ./release-state.json"}},
+			}, Examples: []string{"gregale mcp server tasks deploy --plan release.json --state ./release-state.json", "gregale mcp server tasks deploy status --plan release.json --state ./release-state.json"}},
 			{Name: "setup", Short: "Preview or apply the task-backlog scaling policy", Flags: []cliFlag{
 				{Name: "app", Short: "worker app slug (defaults to the linked project app)", Value: "SLUG"},
 				{Name: "min", Short: "minimum replicas (default 1; use 0 with an always-on observer)", Value: "N"},
@@ -254,7 +254,7 @@ func mcpCLICommand() cliCommand {
 			{Name: "resources", Short: "subscribe to resource and template definition changes"},
 			{Name: "prompts", Short: "subscribe to prompt definition changes"},
 		}, Examples: []string{"gregale mcp server watch --app my-mcp --baseline gregale-mcp.lock.json"}},
-		{Name: "config", Short: "Emit remote MCP connection JSON without credentials", Positionals: []string{"[<slug>]"}, Flags: remote, Examples: []string{"gregale mcp server config --app my-mcp --name my-mcp"}},
+		{Name: "config", Short: "Emit remote MCP connection JSON without credentials", Positionals: []string{"[<slug>]"}, Flags: remote, Examples: []string{"gregale mcp server export --app my-mcp --name my-mcp"}},
 		{Name: "lock", Short: "Capture MCP catalog definitions without invoking anything", Notes: []string{"Does not read resources, render prompts or invoke tools."}, Flags: []cliFlag{
 			{Name: "url", Short: "full MCP endpoint URL", Value: "URL"},
 			{Name: "app", Short: "resolve a Gregale app endpoint", Value: "SLUG"},

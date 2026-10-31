@@ -452,10 +452,13 @@
     "table": "alert_episodes",
     "columns": [
       "account_id",
+      "app_id",
       "id",
       "opened_at",
       "resolved_at",
-      "rule_id"
+      "rule_id",
+      "rule_metric",
+      "rule_name"
     ],
     "kind": "operational"
   },
@@ -1710,12 +1713,15 @@
       "id",
       "kind",
       "max_burn_rate",
+      "max_change_percent",
+      "max_failure_percent",
       "max_new_groups",
       "metric_name",
       "min_events",
       "min_samples",
       "name",
       "slo_id",
+      "synthetic_check_id",
       "threshold"
     ],
     "kind": "configuration",
@@ -3646,6 +3652,7 @@
       "admission_ceiling_mb",
       "cert_fingerprint",
       "cpu_model",
+      "cpu_pressure_until",
       "cpu_template",
       "created_at",
       "drain_completed_at",
@@ -5221,6 +5228,19 @@
     "clone": {
       "owner": "app"
     }
+  },
+  {
+    "table": "deployment_sidecar_env_reseals",
+    "columns": [
+      "ciphertext",
+      "deployment_id",
+      "env_key",
+      "kid",
+      "resealed_at",
+      "sidecar_name",
+      "source_sha256"
+    ],
+    "kind": "operational"
   },
   {
     "table": "deployment_sidecar_layers",
@@ -7456,6 +7476,8 @@
     "columns": [
       "account_id",
       "ignored_paths",
+      "preview_bot_prs",
+      "preview_draft_prs",
       "preview_enabled",
       "preview_service_policy",
       "preview_ttl_hours",
@@ -13062,6 +13084,7 @@
       "last_quota_warning_at",
       "name",
       "object_storage_owned_from",
+      "overage_cap_cents",
       "past_due_at",
       "personal_org",
       "personal_owner_account_id",
@@ -16846,6 +16869,18 @@
     "kind": "operational"
   },
   {
+    "table": "release_gate_probe_results",
+    "columns": [
+      "app_id",
+      "deployment_id",
+      "failures",
+      "gate_id",
+      "requests",
+      "window_start"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "release_secret_key_retirement_fence",
     "columns": [
       "generation",
@@ -19409,6 +19444,7 @@
       "harness_preset",
       "harness_run",
       "model_integrations",
+      "pause_during_model_calls",
       "prompt_template",
       "ram_mb",
       "timeout_sec",

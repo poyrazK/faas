@@ -7952,6 +7952,33 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/postgres/databases/{id}/status:
+    parameters:
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    get:
+      tags: [managed_postgres]
+      operationId: getManagedPostgresDatabaseStatus
+      summary: Read a managed database's conditions.
+      description: |
+        Preview (resource-conditions capability). The database's Ready,
+        Progressing and Degraded conditions, mapped from the response
+        GET /v1/postgres/databases/{id} returns, cached health included, and
+        never stored. Ready follows the lifecycle state; a database whose
+        compute scaled to zero is Ready=True with reason suspended. Failed,
+        deleting and deleted databases report terminal conditions.
+        Cache-Control no-store.
+      responses:
+        '200':
+          description: The managed database's conditions.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceStatus'
+        default:
+          description: Missing sign-in, database read scope or MFA, a database this account does not own, managed databases not configured, the capability turned off, or the rate limit.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/postgres/databases/{id}/undelete:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
@@ -21530,6 +21557,38 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+  /v1/apps/{slug}/status:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: environment
+        in: query
+        required: false
+        description: Registered app environment whose conditions are read; omit for its default environment.
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,32}$' }
+    get:
+      tags: [apps]
+      operationId: getAppStatus
+      summary: Read an app's conditions.
+      description: |
+        Preview (resource-conditions capability). The app's Ready,
+        Progressing and Degraded conditions, derived when read
+        from the same evidence as GET /v1/apps/{slug}/health and never
+        stored. It never wakes or probes a workload. An idle app that scales
+        to zero is Ready=True with reason idle. A terminal condition will not
+        change without a new request. Requires apps:read or admin scope. No
+        MFA required. Cache-Control no-store.
+      responses:
+        '200':
+          description: The app's conditions.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceStatus'
+        default:
+          description: Missing sign-in or read scope, an app this account does not own, the capability turned off, or the rate limit.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/apps/{slug}/health/history:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -32262,6 +32321,24 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/deployments/{id}/timeline:
+    parameters:
+      - $ref: '#/components/parameters/Id32'
+    get:
+      tags: [deployments]
+      operationId: getReleaseTimeline
+      summary: Show a release's phase and history.
+      description: "Composes what Gregale recorded about one release into a phase, a one-line summary and its events, oldest first: creation, schedule, approvals, rollout start, each canary step with the decision and gate results behind it, holds, completion, the post-release watch, abort or rollback, and the release that replaced it. Reads at most 500 audit rows; truncated=true means older history was left out."
+      responses:
+        '200':
+          description: The release timeline.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReleaseTimeline' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/deployments/{id}/schedule:
     parameters:
       - $ref: '#/components/parameters/Id32'
@@ -32480,6 +32557,31 @@ paths:
                 $ref: '#/components/schemas/Problem'
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/deployments/{id}/status:
+    parameters:
+      - $ref: '#/components/parameters/Id32'
+    get:
+      tags: [deployments]
+      operationId: getDeploymentStatus
+      summary: Read a deployment's conditions.
+      description: |
+        Preview (resource-conditions capability). The deployment's Ready,
+        Progressing and RolledOut conditions, mapped from
+        the response GET /v1/deployments/{id} returns and never stored.
+        Failed, cancelled and superseded deployments report terminal
+        conditions. Cache-Control no-store.
+      responses:
+        '200':
+          description: The deployment's conditions.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceStatus'
+        default:
+          description: Missing sign-in, read scope or MFA, a deployment this account does not own, the capability turned off, or the rate limit.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/deployments/{id}/scan:
     parameters:
       - $ref: '#/components/parameters/Id32'
@@ -33154,6 +33256,36 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/domains/{domain}/status:
+    parameters:
+      - name: domain
+        in: path
+        required: true
+        schema: { type: string, pattern: '^[a-z0-9.\-]+$' }
+        description: The custom domain whose conditions are read.
+    get:
+      tags: [domains]
+      operationId: getDomainStatus
+      summary: Read a custom domain's conditions.
+      description: |
+        Preview (resource-conditions capability). The domain's Ready,
+        Verified and CertificateReady conditions, from the domain's recorded
+        verification and certificate state and never stored. Unlike
+        GET /v1/domains/{domain} it never connects to the domain, so it is
+        safe to poll. None of its conditions is terminal: DNS can change
+        outside Gregale. Cache-Control no-store.
+      responses:
+        '200':
+          description: The custom domain's conditions.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceStatus'
+        default:
+          description: Missing sign-in, read scope or MFA, a domain this account does not own, the capability turned off, or the rate limit.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/domains/{domain}/verify:
     parameters:
       - name: domain
@@ -33404,6 +33536,32 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/crons/{id}/status:
+    parameters:
+      - $ref: '#/components/parameters/Id32'
+    get:
+      tags: [crons]
+      operationId: getCronStatus
+      summary: Read a cron's conditions.
+      description: |
+        Preview (resource-conditions capability). The cron's Ready and
+        LastRunSucceeded conditions, from the cron and its newest run as
+        GET /v1/crons/{id}/runs reports it, and never stored. A disabled cron
+        is terminally not ready; a suspended one is not ready until the
+        suspension clears. LastRunSucceeded describes the newest run, so it
+        is never terminal. Cache-Control no-store.
+      responses:
+        '200':
+          description: The cron's conditions.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceStatus'
+        default:
+          description: Missing sign-in, read scope or MFA, a cron this account does not own, the capability turned off, or the rate limit.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/crons/{id}/runs:
     parameters:
       - $ref: '#/components/parameters/Id32'
@@ -36005,6 +36163,40 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/jobs/{name}/runs/{id}/status:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema: { type: string }
+        description: Name of the job the run belongs to.
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: The id of the run whose conditions are read.
+    get:
+      tags: [jobs]
+      operationId: getJobRunStatus
+      summary: Read a job run's conditions.
+      description: |
+        Preview (resource-conditions capability). The run's Succeeded and
+        Progressing conditions, mapped from the response
+        GET /v1/jobs/{name}/runs/{id} returns and never stored. A job run has
+        no Ready condition: it runs to completion. Failed, cancelled and
+        dead-letter runs report terminal conditions. Cache-Control no-store.
+      responses:
+        '200':
+          description: The job run's conditions.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceStatus'
+        default:
+          description: Missing sign-in, read scope or MFA, a run this account does not own or under another job's name, the capability turned off, or the rate limit.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/jobs/{name}/runs/{id}/cancel:
     parameters:
       - name: name
@@ -63705,6 +63897,55 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/orgs/{slug}/overage-cap:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+    get:
+      tags: [orgs]
+      operationId: getOrgOverageCap
+      summary: Read the organization's monthly spend cap.
+      description: "Requires current organization membership and usage:read. Integer cents, zero when no overage is allowed, or null when no cap is set. An organization that owns its resources is billed, and capped, apart from its members."
+      responses:
+        '200':
+          description: The saved monthly spend cap.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AccountOverageCapResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    post:
+      tags: [orgs]
+      operationId: setOrgOverageCap
+      summary: Set or clear the organization's monthly spend cap.
+      description: |
+        Requires the organization owner, admin credential scope, verified email,
+        MFA and recent step-up. `{"overage_cap_cents": <int|null>}`: null clears
+        the cap, 0 allows no overage. Once the organization's overage this month
+        meets the cap, the scheduler stops its apps' wakes (HTTP 402
+        `admission_refused`) until the cap is raised or the month ends. A paid
+        organization starts with its plan's default cap.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RaiseOverageCapRequest' }
+            example: {"overage_cap_cents": 10000}
+      responses:
+        '200':
+          description: The organization's spend cap after the change.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AccountOverageCapResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/orgs/{organization}/projects:
     parameters:
       - $ref: '#/components/parameters/OrgProjectOrganization'
@@ -84865,6 +85106,14 @@ components:
           description: Exact paths, one-segment globs, or trailing /** directory patterns that do not trigger builds.
         preview_enabled: { type: boolean, default: true }
         preview_ttl_hours: { type: integer, minimum: 1, maximum: 720, default: 168 }
+        preview_bot_prs:
+          type: boolean
+          default: false
+          description: Preview pull requests opened by bots such as Dependabot and Renovate. Off by default so they do not use up the preview allowance.
+        preview_draft_prs:
+          type: boolean
+          default: true
+          description: Preview draft pull requests. When off, a draft gets its preview once it is marked ready for review.
         preview_service_policy:
           type: string
           enum: [deny, allow_marked]
@@ -84893,6 +85142,8 @@ components:
           items: { type: string, minLength: 1, maxLength: 255 }
         preview_enabled: { type: boolean }
         preview_ttl_hours: { type: integer, minimum: 1, maximum: 720 }
+        preview_bot_prs: { type: boolean }
+        preview_draft_prs: { type: boolean }
         preview_service_policy:
           type: string
           enum: [deny, allow_marked]
@@ -111168,16 +111419,19 @@ components:
       required: [name, kind, min_samples, created_by, created_at]
       properties:
         name: { type: string, pattern: '^[a-z][a-z0-9_-]{0,62}$' }
-        kind: { type: string, enum: [slo, new_errors, custom_metric, ai] }
+        kind: { type: string, enum: [slo, new_errors, custom_metric, ai, synthetic, metric_change] }
         slo: { type: string, description: "slo gates: the SLO judged." }
         max_burn_rate: { type: integer, minimum: 1, maximum: 1000, description: "slo gates: the burn rate that fails the gate." }
         max_new_groups: { type: integer, minimum: 0, maximum: 100, description: "new_errors gates: new error groups allowed." }
         min_events: { type: integer, minimum: 1, maximum: 100000, description: "new_errors gates: events before a group counts." }
-        metric: { type: string, description: "custom_metric gates: the custom metric. ai gates: error_rate, flagged_rate, cost_per_call or ttfb_ms." }
-        comparison: { type: string, enum: [below, above], description: "custom_metric gates: which side of the threshold fails." }
+        metric: { type: string, description: "custom_metric and metric_change gates: the custom metric. ai gates: error_rate, flagged_rate, cost_per_call or ttfb_ms." }
+        comparison: { type: string, enum: [below, above], description: "custom_metric gates: which side of the threshold fails; metric_change gates: which direction of change fails." }
         threshold: { type: number, description: "custom_metric gates: the bound on the metric's average." }
         max_increase_percent: { type: integer, minimum: 1, maximum: 1000, description: "ai gates: the largest increase over the baseline, in percent." }
-        min_samples: { type: integer, minimum: 1, maximum: 1000000, description: "Requests, metric values or AI calls (on each side, for ai gates) needed before the gate is judged." }
+        check: { type: string, description: "synthetic gates: the synthetic check probed on the canary and its stable revision." }
+        max_failure_percent: { type: integer, minimum: 0, maximum: 100, description: "synthetic gates: the share of the candidate's probes that may fail." }
+        max_change_percent: { type: integer, minimum: 1, maximum: 1000, description: "metric_change gates: how far the metric may move from its average before the rollout, in percent." }
+        min_samples: { type: integer, minimum: 1, maximum: 1000000, description: "Requests, probes, metric values or AI calls (on each side, for ai gates) needed before the gate is judged." }
         created_by: { type: string }
         created_at: { type: string, format: date-time }
     CreateReleaseGateRequest:
@@ -111186,16 +111440,19 @@ components:
       required: [name, kind]
       properties:
         name: { type: string, pattern: '^[a-z][a-z0-9_-]{0,62}$' }
-        kind: { type: string, enum: [slo, new_errors, custom_metric, ai] }
+        kind: { type: string, enum: [slo, new_errors, custom_metric, ai, synthetic, metric_change] }
         slo: { type: string, description: "slo gates: the name of one of the app's SLOs." }
         max_burn_rate: { type: integer, minimum: 1, maximum: 1000, description: "slo gates: default 10." }
         max_new_groups: { type: integer, minimum: 0, maximum: 100, description: "new_errors gates: default 0." }
         min_events: { type: integer, minimum: 1, maximum: 100000, description: "new_errors gates: default 3." }
-        metric: { type: string, pattern: '^[a-z][a-z0-9_]{0,62}$', description: "custom_metric gates: the custom metric's name. ai gates: error_rate, flagged_rate, cost_per_call or ttfb_ms." }
-        comparison: { type: string, enum: [below, above], description: "custom_metric gates: fail when the average is below or above the threshold." }
+        metric: { type: string, pattern: '^[a-z][a-z0-9_]{0,62}$', description: "custom_metric and metric_change gates: the custom metric's name. ai gates: error_rate, flagged_rate, cost_per_call or ttfb_ms." }
+        comparison: { type: string, enum: [below, above], description: "custom_metric gates: fail when the average is below or above the threshold. metric_change gates: fail when the average fell (below) or rose (above) too far." }
         threshold: { type: number, description: "custom_metric gates: the bound." }
         max_increase_percent: { type: integer, minimum: 1, maximum: 1000, description: "ai gates: fail when the release's metric is this many percent above its baseline's, and above a floor (1 percentage point, 50 ms or 1 millicent). Default 50." }
-        min_samples: { type: integer, minimum: 1, maximum: 1000000, description: "Default 20." }
+        check: { type: string, pattern: '^[a-z][a-z0-9_-]{0,62}$', description: "synthetic gates: the name of one of the app's synthetic checks." }
+        max_failure_percent: { type: integer, minimum: 0, maximum: 100, description: "synthetic gates: default 10." }
+        max_change_percent: { type: integer, minimum: 1, maximum: 1000, description: "metric_change gates: the change, in percent of the average before the rollout, that fails the gate." }
+        min_samples: { type: integer, minimum: 1, maximum: 1000000, description: "Default 20; 6 probes for synthetic gates." }
     ListReleaseGatesResponse:
       description: "An app's release gates, by name."
       type: object
@@ -111362,6 +111619,54 @@ components:
       required: [items]
       properties:
         items: { type: array, items: { $ref: '#/components/schemas/ReleaseApprovalStatus' } }
+    ReleaseTimeline:
+      description: "One release's phase and what happened to it."
+      type: object
+      required: [deployment_id, app, status, phase, summary, traffic_percent, created_at, events]
+      properties:
+        deployment_id: { type: string, format: uuid }
+        app: { type: string }
+        revision: { type: integer, minimum: 0 }
+        scope: { type: string }
+        status: { type: string, description: "The deployment's status, such as live or superseded." }
+        phase:
+          type: string
+          enum: [building, failed, cancelled, rolled_back, scheduled, awaiting_approval, superseded, held, rolling_out, watching, released]
+          description: "Where the release is, matched in this order."
+        summary: { type: string, description: "One line, such as \"Rolling out: step 2 of 4, 10% of traffic\"." }
+        traffic_percent: { type: integer, minimum: 0, maximum: 100 }
+        canary_step: { type: integer, minimum: 0, description: "Zero-based current canary step." }
+        canary_total_steps: { type: integer, minimum: 0 }
+        created_at: { type: string, format: date-time }
+        deployed_by: { type: string }
+        commit_sha: { type: string }
+        pr_number: { type: integer, minimum: 0 }
+        tag: { type: string }
+        reason: { type: string }
+        stable_deployment_id: { type: string, format: uuid, description: "The release this one replaces; an abort returns traffic to it." }
+        stable_revision: { type: integer, minimum: 0 }
+        replaced_by_deployment_id: { type: string, format: uuid, description: "The newer release of the same scope that took over." }
+        replaced_by_revision: { type: integer, minimum: 0 }
+        watch_until: { type: string, format: date-time, description: "When the post-release watch stops judging the release." }
+        approval: { $ref: '#/components/schemas/ReleaseApprovalStatus' }
+        schedule: { $ref: '#/components/schemas/ScheduledRelease' }
+        gates: { type: array, items: { $ref: '#/components/schemas/ReleaseGateResult' }, description: "The results of the newest decision that judged release gates." }
+        events: { type: array, items: { $ref: '#/components/schemas/ReleaseTimelineEvent' } }
+        truncated: { type: boolean, description: "Older audit history was left out." }
+    ReleaseTimelineEvent:
+      description: "One thing that happened to a release."
+      type: object
+      required: [at, summary, kind]
+      properties:
+        at: { type: string, format: date-time }
+        kind:
+          type: string
+          enum: [created, scheduled, schedule_started, schedule_blocked, schedule_cancelled, approval_requested, approved, rejected, approval_expired, rollout_started, advanced, traffic_changed, held, completed, aborted, rollback_requested, rolled_back, watch_passed, superseded, note]
+        summary: { type: string, description: "What happened, in one sentence." }
+        actor: { type: string, description: "A person's email, or Gregale for automatic steps." }
+        traffic_percent: { type: integer, minimum: 0, maximum: 100, description: "The release's traffic share after this event." }
+        repeats: { type: integer, minimum: 0, description: "Further holds with the same rule this event stands for." }
+        decision: { $ref: '#/components/schemas/RolloutDecision' }
     ReleaseDiff:
       description: "What changed between two releases of one app."
       type: object
@@ -111456,12 +111761,13 @@ components:
       required: [name, kind, passed, summary, observed, bound, samples]
       properties:
         name: { type: string }
-        kind: { type: string, enum: [slo, new_errors, custom_metric, ai] }
+        kind: { type: string, enum: [slo, new_errors, custom_metric, ai, synthetic, metric_change] }
         passed: { type: boolean }
-        observed: { type: number, description: "The burn rate, new error groups, metric average, or the release's AI metric." }
+        observed: { type: number, description: "The burn rate, new error groups, metric average, the release's AI metric, failed-probe percentage, or signed change in percent." }
         bound: { type: number, description: "The value that fails the gate." }
-        samples: { type: integer, format: int64, minimum: 0, description: "The release's requests, new-error events, metric values or AI calls." }
+        samples: { type: integer, format: int64, minimum: 0, description: "The release's requests, new-error events, probes, metric values or AI calls." }
         baseline_bad_fraction: { type: number, description: "slo gates: the predecessor's bad fraction." }
+        baseline: { type: number, description: "synthetic gates: the stable revision's failed-probe percentage; metric_change gates: the metric's average before the rollout." }
         error_classes: { type: array, maxItems: 5, items: { type: string }, description: "new_errors gates: the new groups' error classes." }
         summary: { type: string, description: "What the gate measured, in one line." }
         not_judged: { type: boolean, description: "True when the gate had too few samples or unreadable evidence. It did not hold the rollout; summary says what it was waiting for." }
@@ -111910,6 +112216,28 @@ components:
           type: string
           enum: [healthy, degraded, unhealthy, unknown]
         assessment: { $ref: '#/components/schemas/AppHealthResponse' }
+    ResourceStatus:
+      type: object
+      description: "A resource's status subresource: conditions derived when read, never stored."
+      required: [kind, name, observed_at, conditions]
+      properties:
+        kind: { type: string, enum: [app, deployment, database, domain, cron, job_run] }
+        name: { type: string, description: 'The app slug, deployment ID, database name, domain, cron ID or job run ID.' }
+        observed_at: { type: string, format: date-time, description: When the evidence behind the conditions was read. }
+        conditions:
+          type: array
+          items: { $ref: '#/components/schemas/Condition' }
+    Condition:
+      type: object
+      description: One aspect of a resource's state, in the shape of a Kubernetes status condition.
+      required: [type, status, reason, message]
+      properties:
+        type: { type: string, enum: [Ready, Progressing, Degraded, RolledOut, Verified, CertificateReady, LastRunSucceeded, Succeeded] }
+        status: { type: string, enum: ['True', 'False', 'Unknown'] }
+        reason: { type: string, description: 'Stable snake_case code, safe to branch on: an app health phase or check code; a deployment, database, certificate or job run status; a cron suspension or run outcome; a database health error code; or one of not_assessed, deploying, complete, latest_deployment_failed, healthy, verifying, rolling_out, rolled_out, rollout_aborted, suspended, stale, verified, dns_pending, serving, scheduled, disabled, never_run.' }
+        message: { type: string, description: For people; may change. }
+        since: { type: string, format: date-time, description: When the condition last changed, only when a recorded time says so. }
+        terminal: { type: boolean, description: True when the condition will not change without a new request. }
     AppHealthResponse:
       description: Read-only observed health of selected-scope HTTP serving workloads.
       type: object

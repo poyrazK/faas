@@ -34,7 +34,7 @@ func (s *server) dashboardEdgeRuleForm(w http.ResponseWriter, r *http.Request) (
 		return state.Account{}, state.App{}, false
 	}
 	app, err := s.store.AppBySlug(r.Context(), r.PathValue("slug"))
-	if err != nil || app.AccountID != acct.ID {
+	if err != nil || !dashboardAppOwner(r, &acct, app) {
 		http.NotFound(w, r)
 		return state.Account{}, state.App{}, false
 	}

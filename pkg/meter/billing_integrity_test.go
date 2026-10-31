@@ -104,7 +104,8 @@ func TestPushPendingDeliversHourOlderThanCatchUpWindow(t *testing.T) {
 	// can no longer write this hour, so it is final by age.
 	now := hour.Add(time.Hour + api.MeterUsageFinalAfter)
 	pusher := meter.NewPusher(store, provider, discardLog(), func() time.Time { return now }, nil)
-	if pushed, err := pusher.PushPending(ctx, 48*time.Hour); pushed != 1 || err != nil {
+	// meterd's default lookback; it must reach past the catch-up window.
+	if pushed, err := pusher.PushPending(ctx, 30*24*time.Hour); pushed != 1 || err != nil {
 		t.Fatalf("PushPending = (%d, %v), want (1, nil)", pushed, err)
 	}
 }
@@ -188,5 +189,49 @@ func TestPushPendingKeepsLargestRecordedGrantAfterDowngrade(t *testing.T) {
 	}
 	if calls := provider.Calls(); len(calls) != 0 {
 		t.Fatalf("deliveries after a downgrade = %+v, want none within the Pro grant", calls)
+	}
+}
+
+// An upgrade raises the allowance but does not credit overage already billed,
+// so the cap must count what the month is billed: billing past the upgrade
+// stops at the cap, not at the cap again above the new allowance.
+// adr: 20261031100000
+func TestPushPendingCapHoldsAcrossAnUpgrade(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	acct := makeBillableAccount(t, ctx, store, api.PlanHobby)
+	gbh := api.SecondsPerGBHour
+	monthStart := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	putComputeGrant(t, ctx, store, acct, api.PlanHobby, monthStart)
+	putComputeGrant(t, ctx, store, acct, api.PlanPro, monthStart.Add(time.Hour))
+	capCents := int64(10)
+	if err := store.UpdateAccountOverageCapCents(ctx, acct.ID, &capCents); err != nil {
+		t.Fatal(err)
+	}
+	// 5 GB-h above Hobby in hour 0, then enough in hour 1 to pass the
+	// upgraded allowance by more than the cap's remaining 5 GB-h.
+	hobby := int64(api.PlanHobby.PlanIncludedGBHours())
+	if err := store.AppendUsage(ctx, acct.ID, "app-a", "instance-0", monthStart, (hobby+5)*gbh, 0, 0, 0, 0, 0, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AppendUsage(ctx, acct.ID, "app-a", "instance-1", monthStart.Add(time.Hour), int64(api.PlanPro.PlanIncludedGBHours())*gbh, 0, 0, 0, 0, 0, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateAccountPlan(ctx, acct.ID, api.PlanPro); err != nil {
+		t.Fatal(err)
+	}
+	provider := &recordingOverage{}
+	now := monthStart.Add(3 * time.Hour)
+	markComputeComplete(t, ctx, store, now.Add(-api.MeterUsageFinalAfter), now)
+	pusher := meter.NewPusher(store, provider, discardLog(), func() time.Time { return now }, nil)
+	if _, err := pusher.PushPending(ctx, 24*time.Hour); err != nil {
+		t.Fatalf("PushPending: %v", err)
+	}
+	var billed int64
+	for _, call := range provider.Calls() {
+		billed += call.MBSeconds
+	}
+	if billed != capCents*gbh {
+		t.Fatalf("billed %d mb_seconds across the upgrade, want exactly the %d-cent cap (%d)", billed, capCents, capCents*gbh)
 	}
 }

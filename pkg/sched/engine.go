@@ -751,6 +751,10 @@ type Engine struct {
 	// min-floor is a wake-shape concern, the cap is a budget
 	// concern, separated in time so the audit row is unambiguous).
 	overage OverageChecker
+	// capSubjects remembers, per organization, whether it is its apps'
+	// billing subject, so the spend cap gate reads the right cap without a
+	// store read per wake (ADR-20261030093512).
+	capSubjects spendCapSubjects
 	// (obs, cap) cents ride on the (outcome, obs, cap) tuple
 	// admitGate returns. The earlier field-on-Engine shape was
 	// racy across goroutines hitting the cap-reached branch.
@@ -803,6 +807,18 @@ type Engine struct {
 	// view of the capacity streams it receives (ADR-20261029085904).
 	nodeBoots *nodeBootBreaker
 	streams   *capacityStreamWatch
+	// cpuPressureReadings and cpuPressureHolds, when set, make this schedd
+	// hold the nodes whose readings it receives under CPU pressure
+	// (ADR 20261030100950, node_cpu_pressure.go).
+	cpuPressureReadings CPUPressureReadings
+	cpuPressureHolds    *cpuPressureHolds
+	// frozenProactiveCompress, compressBackoff and frozenCompressOne drive
+	// proactive compression of frozen VMs (ADR 20261031143521,
+	// frozen_proactive_compress.go); frozenCompressOne replaces the vmmd
+	// call in tests.
+	frozenProactiveCompress bool
+	compressBackoff         *frozenCompressBackoff
+	frozenCompressOne       func(ctx context.Context, instanceID string) string
 
 	// telemetryCache is the receiver for the batched vmmd Stats rows carried
 	// on the persistent ReportCapacity stream. The instance-stats poller
@@ -1654,6 +1670,11 @@ func (e *Engine) WithNodeRegistry(reg *NodeRegistry) *Engine {
 		return e
 	}
 	e.nodeRegistry = reg
+	// ADR 20261030100950: the ledger withholds the CPU discount on a node
+	// the registry holds under CPU pressure.
+	if e.ledger != nil {
+		e.ledger.cpuPressured = func(nodeID string, now time.Time) bool { return nodeCPUPressured(reg, nodeID, now) }
+	}
 	return e
 }
 
@@ -1694,6 +1715,15 @@ func (e *Engine) InstanceBridgeSink() InstanceBridgeSink {
 		return func(string, time.Time, int64) {}
 	}
 	return e.telemetryCache.ReplaceInstanceBridge
+}
+
+// CPUPressureSink returns the callback scheddgrpc uses to record a node's
+// CPU pressure readings (ADR 20261030100950) with its telemetry.
+func (e *Engine) CPUPressureSink() CPUPressureSink {
+	if e == nil || e.telemetryCache == nil {
+		return func(string, time.Time, NodeCPUPressure) {}
+	}
+	return e.telemetryCache.ReplaceCPUPressure
 }
 
 // WithNodeKeyRegistry wires the ADR-053 signature-verification
@@ -4375,7 +4405,12 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	// park re-snapshots. Best-effort — failure here doesn't block the
 	// RUNNING transition (the stale snapshot also gets the next-park
 	// treatment from snapshotAndPark).
-	if bootInput.haveSnap && out.Method == vmmdpb.WakeMethod_WAKE_COLD_BOOT {
+	if bootInput.haveSnap && out.Method == vmmdpb.WakeMethod_WAKE_COLD_BOOT && out.RestoreFallbackReason == fcvm.RestoreFallbackNodeLocal {
+		// The restore failed for this node's reasons (a full disk, an image or
+		// identity it could not read, jail setup): the snapshot is still good
+		// for every other node, so it stays live (bug hunt 2026-10-28 B12).
+		e.log.Info("wake: restore fell back to cold boot on this node; snapshot kept", "app", logsanitize.Field(bootInput.appID), "instance", bootInput.insID, "node", bootInput.nodeID, "snapshot", bootInput.snapID, "wake_id", logsanitize.Field(bootInput.wakeID))
+	} else if bootInput.haveSnap && out.Method == vmmdpb.WakeMethod_WAKE_COLD_BOOT {
 		// A catalog-bound fallback still validates its selected capture through
 		// receipt acknowledgment and publication. Invalidate after that attempt
 		// so our own cache retirement cannot reject a verified cold runtime.
@@ -7050,7 +7085,10 @@ func (e *Engine) markPrimeFailed(ctx context.Context, deploymentID string, cause
 	problem := api.ErrDeployFailed(cause.Error())
 	code := api.CodeDeployFailed
 	var upstream *api.Problem
-	if errors.As(cause, &upstream) && upstream != nil && upstream.Code != "" {
+	capacity := customerCapacityProblem(cause)
+	if capacity != nil {
+		problem, code = capacity, capacity.Code
+	} else if errors.As(cause, &upstream) && upstream != nil && upstream.Code != "" {
 		problem = upstream
 		code = upstream.Code
 	} else if errors.Is(cause, context.DeadlineExceeded) || status.Code(cause) == codes.DeadlineExceeded {
@@ -7074,6 +7112,10 @@ func (e *Engine) markPrimeFailed(ctx context.Context, deploymentID string, cause
 
 	now := time.Now().UTC()
 	message := "snapshot prime failed: " + cause.Error()
+	if capacity != nil {
+		// The node-budget refusal's own text names nodes and their ledgers.
+		message = "snapshot prime failed: " + capacity.Detail
+	}
 	switch code {
 	case api.CodeStageSnapshotPrepareTimeout:
 		message = "snapshot prime failed: " + problem.Error()
@@ -10737,14 +10779,15 @@ func (e *Engine) admitSpendCap(ctx context.Context, app *state.App) (bool, int64
 	if e.overage == nil {
 		return false, 0, 0
 	}
-	status, observedCents, capCents, _ := e.overage.Check(ctx, app.AccountID)
+	subject := e.spendCapSubject(ctx, *app)
+	status, observedCents, capCents, _ := e.overage.Check(ctx, subject)
 	if status != OverageReached {
 		return false, 0, 0
 	}
 	if e.ops != nil {
 		e.ops.ObserveScaleUp(app.ID, "overage_cap_reached")
 	}
-	e.overage.RecordReached(ctx, app.AccountID, observedCents, capCents)
+	e.overage.RecordReached(ctx, subject, observedCents, capCents)
 	return true, observedCents, capCents
 }
 

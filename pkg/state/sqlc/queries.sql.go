@@ -259,6 +259,7 @@ SELECT id::text AS id, slug, deleted_at, delete_grace_until,
 FROM apps
 WHERE account_id = $1::text::uuid
   AND id = $2::text::uuid AND status = 'deleted'
+  AND NOT (preview_of_slug IS NOT NULL AND coalesce(preview_pr_state, '') IN ('tearing_down', 'torn_down'))
 `
 
 type AccountDeletedAppByIDParams struct {
@@ -40851,6 +40852,8 @@ SELECT id::text AS id, slug, deleted_at, delete_grace_until,
        (purge_claimed_at IS NOT NULL)::boolean AS purge_started
 FROM apps
 WHERE account_id = $1::text::uuid AND status = 'deleted'
+  -- A torn-down preview is not restorable (previewTornDown).
+  AND NOT (preview_of_slug IS NOT NULL AND coalesce(preview_pr_state, '') IN ('tearing_down', 'torn_down'))
   AND ($2::text = '' OR
        (coalesce(deleted_at, created_at), id::text) <
        ($3::timestamptz, $2::text))
@@ -73269,6 +73272,29 @@ func (q *Queries) PurgeAlertDeliveriesBefore(ctx context.Context, db DBTX, arg P
 	return result.RowsAffected(), nil
 }
 
+const purgeDeletedRuleEpisodesBefore = `-- name: PurgeDeletedRuleEpisodesBefore :execrows
+DELETE FROM alert_episodes e WHERE e.id IN (
+  SELECT o.id FROM alert_episodes o
+  WHERE o.resolved_at < $1::timestamptz
+    AND NOT EXISTS (SELECT 1 FROM alert_rules r WHERE r.id = o.rule_id)
+  ORDER BY o.resolved_at LIMIT $2::integer)
+`
+
+type PurgeDeletedRuleEpisodesBeforeParams struct {
+	Before  pgtype.Timestamptz
+	MaxRows int32
+}
+
+// Deletes up to max_rows resolved episodes, oldest first, whose rule was
+// deleted before the cutoff, and their notes with them (ADR-20261030214500).
+func (q *Queries) PurgeDeletedRuleEpisodesBefore(ctx context.Context, db DBTX, arg PurgeDeletedRuleEpisodesBeforeParams) (int64, error) {
+	result, err := db.Exec(ctx, purgeDeletedRuleEpisodesBefore, arg.Before, arg.MaxRows)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const purgeSLOHoursBefore = `-- name: PurgeSLOHoursBefore :execrows
 DELETE FROM app_slo_hourly WHERE hour < $1::timestamptz
 `
@@ -77002,6 +77028,7 @@ SELECT (jsonb_build_object(
     'deployment_rollbacks_target_deployment_id_fkey', (SELECT count(*) FROM deployment_rollbacks WHERE target_deployment_id = $1::uuid),
     'deployment_route_policy_snapshots_deployment_id_fkey', (SELECT count(*) FROM deployment_route_policy_snapshots WHERE deployment_id = $1::uuid),
     'deployment_runtime_environment_owners_deployment_id_fkey', (SELECT count(*) FROM deployment_runtime_environment_owners WHERE deployment_id = $1::uuid),
+    'deployment_sidecar_env_reseals_deployment_id_fkey', (SELECT count(*) FROM deployment_sidecar_env_reseals WHERE deployment_id = $1::uuid),
     'deployment_sidecar_layers_deployment_id_fkey', (SELECT count(*) FROM deployment_sidecar_layers WHERE deployment_id = $1::uuid),
     'deployment_sidecar_secret_reload_signals_deployment_id_fkey', (SELECT count(*) FROM deployment_sidecar_secret_reload_signals WHERE deployment_id = $1::uuid),
     'developer_sync_history_deployment_id_fkey', (SELECT count(*) FROM developer_sync_history WHERE deployment_id = $1::uuid),
@@ -80363,13 +80390,18 @@ func (q *Queries) ReadMigrationTaskForUpdate(ctx context.Context, db DBTX, id st
 
 const readOpenAPIImportQuota = `-- name: ReadOpenAPIImportQuota :one
 SELECT count(*)::bigint AS observed,
-    coalesce(bool_or(app_id = $1::uuid), false)::boolean AS replacement
-FROM app_openapi_docs WHERE account_id = $2::uuid
+    coalesce(bool_or(d.app_id = $1::uuid), false)::boolean AS replacement
+FROM app_openapi_docs d
+JOIN apps a ON a.id = d.app_id
+LEFT JOIN orgs o ON o.id = a.org_id
+WHERE (a.account_id = $2::uuid OR a.org_id = $2::uuid)
+  AND (CASE WHEN NOT o.personal_org AND o.resource_ownership_enabled THEN o.id ELSE a.account_id END) = $2::uuid
+  AND a.status <> 'deleted'
 `
 
 type ReadOpenAPIImportQuotaParams struct {
-	AppID     pgtype.UUID
-	AccountID pgtype.UUID
+	AppID   pgtype.UUID
+	Subject pgtype.UUID
 }
 
 type ReadOpenAPIImportQuotaRow struct {
@@ -80377,8 +80409,10 @@ type ReadOpenAPIImportQuotaRow struct {
 	Replacement bool
 }
 
+// The imports of the app's billing subject (ADR-202610171904): its
+// organization's once the organization adopted billing, else its creator's.
 func (q *Queries) ReadOpenAPIImportQuota(ctx context.Context, db DBTX, arg ReadOpenAPIImportQuotaParams) (ReadOpenAPIImportQuotaRow, error) {
-	row := db.QueryRow(ctx, readOpenAPIImportQuota, arg.AppID, arg.AccountID)
+	row := db.QueryRow(ctx, readOpenAPIImportQuota, arg.AppID, arg.Subject)
 	var i ReadOpenAPIImportQuotaRow
 	err := row.Scan(&i.Observed, &i.Replacement)
 	return i, err

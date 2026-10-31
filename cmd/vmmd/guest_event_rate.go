@@ -51,8 +51,7 @@ func (g *guestEventRate) allow(ctx context.Context, store any, accountID string)
 		return nil
 	}
 	if wait, ok := g.limiter.Allow(accountID, limits.EventPublish, 1); !ok {
-		return fmt.Errorf("event publish rate limited: the account publishes at most %d events per second; retry the same event after %s",
-			limits.EventPublish.PerSecond, wait.Round(time.Millisecond))
+		return guestEventRateLimitedError{perSecond: int(limits.EventPublish.PerSecond), wait: wait}
 	}
 	return nil
 }
