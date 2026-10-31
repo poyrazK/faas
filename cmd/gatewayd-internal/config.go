@@ -217,7 +217,8 @@ type TOMLRateLimitConfig struct {
 
 	// Lease makes central mode spend tokens from local leases instead of
 	// consulting Postgres for every request (ADR-1520). It requires
-	// Mode = "central" and is off by default.
+	// Mode = "central". Deployments turn it on (the Ansible default); a TOML
+	// without the key, as in local runs, keeps it off.
 	Lease bool `toml:"lease"`
 	// LeaseWindowMS is how long a lease should last at the counter's recent
 	// rate. 0 takes the default, 250.
