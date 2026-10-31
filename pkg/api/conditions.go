@@ -79,6 +79,7 @@ const (
 	ConditionReasonRollingOut             = "rolling_out"
 	ConditionReasonRolledOut              = "rolled_out"
 	ConditionReasonRolloutAborted         = "rollout_aborted"
+	ConditionReasonStaged                 = "staged" // live with no production traffic (deploy --no-traffic)
 	ConditionReasonSuspended              = "suspended"
 	ConditionReasonStale                  = "stale"
 	ConditionReasonVerified               = "verified"

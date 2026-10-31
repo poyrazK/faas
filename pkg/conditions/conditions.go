@@ -37,8 +37,9 @@ const (
 	deploymentCancelled  = "cancelled"
 	deploymentSuperseded = "superseded"
 
-	rolloutComplete = "complete"
-	rolloutAborted  = "aborted"
+	rolloutComplete   = "complete"
+	rolloutAborted    = "aborted"
+	rolloutRollingOut = "rolling_out"
 )
 
 // App returns an app's status from its health assessment.
@@ -214,6 +215,9 @@ func deploymentRolledOut(d api.DeploymentResponse) api.Condition {
 		}
 	case rollingOut(d):
 		c.Reason, c.Message = api.ConditionReasonRollingOut, rolloutMessage(d)
+	case staged(d):
+		c.Reason = api.ConditionReasonStaged
+		c.Message = "The deployment is staged with no production traffic; it rolls out when it is promoted."
 	default:
 		c.Status, c.Reason, c.Since = api.ConditionTrue, api.ConditionReasonRolledOut, timestamp(d.RolloutCompletedAt)
 		c.Message = "The deployment serves its full share of traffic."
@@ -247,6 +251,16 @@ func ReadinessComplete(d api.DeploymentResponse) bool {
 		}
 	}
 	return false
+}
+
+// staged reports a release deployed with --no-traffic: live and routable on
+// its own URL, but production sends it nothing until it is promoted. Only the
+// default lane routes by traffic weights; a project environment, production
+// included, serves its release set's members at 0%, and a service rollout
+// warms its new generation at 0% before schedd promotes it.
+func staged(d api.DeploymentResponse) bool {
+	return d.Status == deploymentLive && d.TrafficPercent == 0 &&
+		(d.Scope == "" || d.Scope == api.DefaultEnvScope) && d.RolloutState != rolloutRollingOut
 }
 
 func rollingOut(d api.DeploymentResponse) bool {
