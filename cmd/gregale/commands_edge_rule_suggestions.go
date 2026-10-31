@@ -77,7 +77,7 @@ func cmdEdgeRulesSuggest(args []string) int {
 // parameters in name order and a placeholder for each required one the
 // suggestion cannot fill.
 func edgeRuleSuggestCommand(slug string, sg api.EdgeRuleRecipeSuggestion) string {
-	parts := []string{"gregale edge rule recipe", sg.Recipe, "--app", slug}
+	parts := []string{"gregale edge rule recipe apply", sg.Recipe, "--app", slug}
 	names := make([]string, 0, len(sg.Params))
 	for name := range sg.Params {
 		names = append(names, name)

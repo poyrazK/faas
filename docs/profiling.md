@@ -506,7 +506,7 @@ A single heap capture shows where memory is held; two captures show what grew.
 Compare a capture with an earlier one of the same app:
 
 ```sh
-gregale debug capture-diff my-app CAPTURE_UUID --base EARLIER_CAPTURE_UUID
+gregale debug capture diff my-app CAPTURE_UUID --base EARLIER_CAPTURE_UUID
 ```
 
 The output lists functions by growth with their value in both captures. On the
@@ -827,7 +827,7 @@ GET /v1/apps/{slug}/profiles/canary-checks/{deployment_id}?limit=5
 ```
 
 Use `next_cursor` as the `before` query parameter to page through older stages.
-The deployment detail page and `gregale api route health profile-history APP`
+The deployment detail page and `gregale api route health profiles APP`
 show the same history. Each entry includes its exact stable/canary windows,
 threshold evidence and policy revision.
 
@@ -1315,7 +1315,7 @@ Other route, health and binding gates still apply.
 
 Inspect the baseline, route streaks, functions and call paths on the deployment
 dashboard, through `GET /v1/deployments/DEPLOYMENT_ID/canary/profile-gate`, or with
-`gregale release canary gate DEPLOYMENT_ID --json`. The readout uses retained evidence and
+`gregale release canary evidence DEPLOYMENT_ID --json`. The readout uses retained evidence and
 commit-pinned source links; it does not query profile storage. Changing the policy
 revision starts fresh evidence collection for the current stage. A passed gate
 certifies those recorded windows for that stage, rather than continuously

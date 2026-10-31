@@ -221,8 +221,9 @@ services:
 
 An `http`, `https`, `ws` or `wss` value that calls another service of the
 project by its Docker name is imported as that service's Gregale address:
-`http://billing.svc.gregale:10081` (or `https://billing.internal`), keeping the
-path. The service mesh forwards to the service's own port, so the Docker port
+`http://billing.svc.gregale:10081` (or `https://billing.internal` where private
+service HTTPS is enabled; elsewhere an `https` value imports as the `http`
+address, and the plan says so), keeping the path. The service mesh forwards to the service's own port, so the Docker port
 is dropped; a value for a second listener of that service, or for another
 protocol, needs its address set by hand
 ([ADR-20261026181020](adr/20261026181020-compose-service-address-import.md)).

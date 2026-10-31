@@ -156,6 +156,7 @@ import type { RenameAppRequest } from '../models/RenameAppRequest.js';
 import type { RequestAnalyticsResponse } from '../models/RequestAnalyticsResponse.js';
 import type { RequestAnalyticsTimeseriesResponse } from '../models/RequestAnalyticsTimeseriesResponse.js';
 import type { RequestAuditListResponse } from '../models/RequestAuditListResponse.js';
+import type { ResourceStatus } from '../models/ResourceStatus.js';
 import type { ReviewBindingVerificationRequest } from '../models/ReviewBindingVerificationRequest.js';
 import type { RotateDeployTokenRequest } from '../models/RotateDeployTokenRequest.js';
 import type { RotateDeployTokenResponse } from '../models/RotateDeployTokenResponse.js';
@@ -3146,6 +3147,44 @@ export class AppsService {
         403: `Read scope required.`,
         404: `App not found for this account.`,
         429: `Rate limit exceeded.`,
+      },
+    });
+  }
+  /**
+   * Read an app's conditions.
+   * Preview (resource-conditions capability). The app's Ready,
+   * Progressing and Degraded conditions, derived when read
+   * from the same evidence as GET /v1/apps/{slug}/health and never
+   * stored. It never wakes or probes a workload. An idle app that scales
+   * to zero is Ready=True with reason idle. A terminal condition will not
+   * change without a new request. Requires apps:read or admin scope. No
+   * MFA required. Cache-Control no-store.
+   *
+   * @returns ResourceStatus The app's conditions.
+   * @returns Problem Missing sign-in or read scope, an app this account does not own, the capability turned off, or the rate limit.
+   * @throws ApiError
+   */
+  public static getAppStatus({
+    slug,
+    environment,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Registered app environment whose conditions are read; omit for its default environment.
+     */
+    environment?: string,
+  }): CancelablePromise<ResourceStatus | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/status',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'environment': environment,
       },
     });
   }

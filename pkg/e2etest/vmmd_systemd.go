@@ -33,7 +33,9 @@ const (
 	vmmdUnitPrefix = "faas-e2e-vmmd-"
 )
 
-func vmmdUnderSystemd() bool { return os.Getenv(vmmdSystemdEnv) == "1" }
+// VMMDUnderSystemd reports whether the harness runs vmmd as a transient
+// service carrying the production unit's sandbox.
+func VMMDUnderSystemd() bool { return os.Getenv(vmmdSystemdEnv) == "1" }
 
 // vmmdSandboxKeys are the production unit's [Service] settings that shape
 // vmmd's mount namespace, privileges and filesystem view, and how it stops.
@@ -43,6 +45,9 @@ var vmmdSandboxKeys = map[string]bool{
 	"ProtectKernelModules": true, "ProtectKernelTunables": true, "ProtectControlGroups": true,
 	"SystemCallArchitectures": true, "LockPersonality": true, "RestrictRealtime": true, "RestrictSUIDSGID": true,
 	"RestrictAddressFamilies": true, "ProtectHostname": true, "ProtectClock": true, "KillMode": true,
+	// /run/faas-ibridge holds the bridge sockets; ProtectSystem=strict leaves
+	// it writable only as the unit's RuntimeDirectory.
+	"RuntimeDirectory": true, "RuntimeDirectoryMode": true, "RuntimeDirectoryPreserve": true,
 }
 
 // hostTreeRoots are never made writable for the harness's vmmd.
@@ -98,7 +103,8 @@ func vmmdSystemdArgv(t *testing.T, binary string, args, env []string) []string {
 }
 
 // vmmdSandboxProperties picks the sandbox settings out of the rendered
-// production unit's [Service] section, adding writable to ReadWritePaths.
+// production unit's [Service] section, adding writable to ReadWritePaths and
+// marking every ReadWritePaths entry optional.
 func vmmdSandboxProperties(rendered []byte, writable []string) []string {
 	var props []string
 	sc := bufio.NewScanner(bytes.NewReader(rendered))
@@ -114,7 +120,17 @@ func vmmdSandboxProperties(rendered []byte, writable []string) []string {
 			continue
 		}
 		if key == "ReadWritePaths" {
-			value = strings.TrimSpace(value + " " + strings.Join(writable, " "))
+			// A production path the test host lacks (/var/lib/faas/cache)
+			// would fail the start with 226/NAMESPACE; the sandbox is the
+			// same wherever the path exists.
+			var paths []string
+			for _, path := range strings.Fields(value) {
+				if !strings.HasPrefix(path, "-") {
+					path = "-" + path
+				}
+				paths = append(paths, path)
+			}
+			value = strings.Join(append(paths, writable...), " ")
 		}
 		props = append(props, key+"="+value)
 	}
@@ -140,6 +156,9 @@ func harnessWritablePaths(env []string) []string {
 	add(os.TempDir())
 	for _, kv := range env {
 		_, v, ok := strings.Cut(kv, "=")
+		// vmmd's listen address is a unix:// URL; its socket directory must
+		// be writable, or the sandbox's read-only /tmp refuses the bind.
+		v = strings.TrimPrefix(v, "unix://")
 		if !ok || !filepath.IsAbs(v) || strings.ContainsAny(v, " :") {
 			continue
 		}
