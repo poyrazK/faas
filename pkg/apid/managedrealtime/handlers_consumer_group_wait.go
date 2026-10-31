@@ -5,14 +5,47 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
-func (s *Service) claimRealtimeGroupWithWait(r *http.Request, store state.RealtimeConsumerGroupStore, ep, ch, group, worker string, seconds int) (*state.RealtimeConsumerGroupClaim, error) {
+// claimWaiters bounds long-poll claims: RealtimeConsumerGroupWaitersMax per
+// apid and RealtimeConsumerGroupWaitersPerAccount for one account, so one
+// account's idle workers cannot hold every slot.
+type claimWaiters struct {
+	mu        sync.Mutex
+	total     int
+	byAccount map[string]int
+}
+
+// admit reserves a long-poll slot for account, or reports false when the
+// apid-wide pool or the account's share is full.
+func (c *claimWaiters) admit(account string) (release func(), ok bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.total >= api.RealtimeConsumerGroupWaitersMax || c.byAccount[account] >= api.RealtimeConsumerGroupWaitersPerAccount {
+		return nil, false
+	}
+	if c.byAccount == nil {
+		c.byAccount = map[string]int{}
+	}
+	c.total++
+	c.byAccount[account]++
+	return func() {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		c.total--
+		if c.byAccount[account]--; c.byAccount[account] <= 0 {
+			delete(c.byAccount, account)
+		}
+	}, true
+}
+
+func (s *Service) claimRealtimeGroupWithWait(r *http.Request, store state.RealtimeConsumerGroupStore, account, ep, ch, group, worker string, seconds int) (*state.RealtimeConsumerGroupClaim, error) {
 	if seconds == 0 {
 		return store.ClaimRealtimeConsumerGroup(r.Context(), ep, ch, group, worker)
 	}
-	batch, err := s.waitRealtimeGroupBatch(r, ep, ch, group, worker, 1, seconds)
+	batch, err := s.waitRealtimeGroupBatch(r, account, ep, ch, group, worker, 1, seconds)
 	if err != nil {
 		return nil, err
 	}
@@ -36,7 +69,7 @@ func (s *Service) claimRealtimeGroupWithWait(r *http.Request, store state.Realti
 	}
 	return nil, nil
 }
-func (s *Service) waitRealtimeGroupBatch(r *http.Request, ep, ch, group, worker string, limit, seconds int) (state.RealtimeConsumerGroupBatch, error) {
+func (s *Service) waitRealtimeGroupBatch(r *http.Request, account, ep, ch, group, worker string, limit, seconds int) (state.RealtimeConsumerGroupBatch, error) {
 	var result state.RealtimeConsumerGroupBatch
 	if seconds < 0 || seconds > api.RealtimeConsumerGroupWaitMaxSeconds {
 		return result, state.ErrRealtimeConsumerGroupInvalid
@@ -48,13 +81,13 @@ func (s *Service) waitRealtimeGroupBatch(r *http.Request, ep, ch, group, worker 
 	if seconds == 0 {
 		return store.ClaimRealtimeConsumerGroupBatch(r.Context(), ep, ch, group, worker, limit)
 	}
-	s.ClaimWaitOnce.Do(func() { s.ClaimWaitSlots = make(chan struct{}, api.RealtimeConsumerGroupWaitersMax) })
-	select {
-	case s.ClaimWaitSlots <- struct{}{}:
-		defer func() { <-s.ClaimWaitSlots }()
-	default:
-		return result, &state.RealtimeConsumerGroupCapacityError{Resource: "long-poll requests per apid", Limit: api.RealtimeConsumerGroupWaitersMax, Observed: api.RealtimeConsumerGroupWaitersMax}
+	release, waiting := s.claimWaiters.admit(account)
+	if !waiting {
+		// No slot: claim once without waiting. An empty answer sends the
+		// worker to its poll interval; an error would stop SDK workers.
+		return store.ClaimRealtimeConsumerGroupBatch(r.Context(), ep, ch, group, worker, limit)
 	}
+	defer release()
 	deadline := time.Now().Add(time.Duration(seconds) * time.Second)
 	for {
 		var err error
