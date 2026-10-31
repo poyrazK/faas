@@ -86,6 +86,11 @@ type OnDemandTLSStore interface {
 	DomainByName(ctx context.Context, domain string) (state.CustomDomain, error)
 	state.CustomDomainWildcardStore
 	state.CustomDomainTLSHostStore
+	// The wildcard's owner and plan. Required: an optional seam let the
+	// production EdgeStore, which lacked these, skip the plan check silently
+	// (bug hunt 32 M1).
+	AppByID(ctx context.Context, id string) (state.App, error)
+	state.AppOwnerReader
 }
 
 // OnDemandTLSPolicy decides whether the edge may hold a certificate for a
@@ -269,13 +274,6 @@ func onDemandTLSVerdictDecision(v state.CustomDomainTLSVerdict) string {
 	return OnDemandTLSDenyError
 }
 
-// onDemandTLSPlanStore resolves the plan a wildcard domain is held under. A
-// store without it skips the plan check.
-type onDemandTLSPlanStore interface {
-	AppByID(ctx context.Context, id string) (state.App, error)
-	state.AppOwnerReader
-}
-
 // wildcardPlanAllows reports whether the wildcard's owner is still on a plan
 // with wildcard domains. The plan is checked only when the domain is
 // created, so after a downgrade a wildcard kept drawing new certificates.
@@ -283,15 +281,14 @@ type onDemandTLSPlanStore interface {
 // certificates when its creator's personal plan had no wildcards, and for
 // good once the creator's account was erased (bug hunt 2026-10-28 B37).
 func (p *OnDemandTLSPolicy) wildcardPlanAllows(ctx context.Context, wildcard state.CustomDomain) (bool, error) {
-	plans, ok := p.store.(onDemandTLSPlanStore)
-	if !ok || wildcard.AppID == "" {
+	if wildcard.AppID == "" {
 		return true, nil
 	}
-	app, err := plans.AppByID(ctx, wildcard.AppID)
+	app, err := p.store.AppByID(ctx, wildcard.AppID)
 	if err != nil {
 		return false, fmt.Errorf("wildcard app: %w", err)
 	}
-	acct, err := state.AppResourceAccount(ctx, plans, app)
+	acct, err := state.AppResourceAccount(ctx, p.store, app)
 	if err != nil {
 		return false, fmt.Errorf("wildcard owner: %w", err)
 	}
