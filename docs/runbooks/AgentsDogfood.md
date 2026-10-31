@@ -289,3 +289,10 @@ unset `FAAS_AGENT_BASE_REF` stops imaged from staging them again.
 - Email deliveries: `FAAS_INTERNAL_MAIL_AGENT_RUN_DELIVERED_OUTBOX_ENABLED=1`
   on apid and maild, on top of the producer outbox gates.
 - Broker trigger targets: `FAAS_SCHEDD_AGENT_TRIGGERS=1` on schedd.
+- Pause while waiting on the model (ADR-20261027090012): vmmd
+  `FAAS_VMMD_AGENT_WAIT_PAUSE=true` on the agent-pool node and schedd
+  `FAAS_SCHEDD_AGENT_WAIT_PAUSE=1`. A run's VM then uses no CPU while it waits
+  on a model call. `vmmd_agent_wait_paused_instances` shows how many are
+  paused. A harness that misbehaves can opt out with
+  `"pause_during_model_calls": false` on its version. Paused seconds are still
+  billed until ADR-20261027090012 step 4.

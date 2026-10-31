@@ -25,8 +25,10 @@ var externalMetricNames = map[string]bool{"up": true, "ALERTS": true, "ALERTS_FO
 
 // daemonMetricPrefixes are the runtime prefixes passed to wire.NewOpsMetrics
 // and the per-package registries, which build names as prefix + "_name".
+// emits stops at the first prefix that matches, so a longer prefix comes
+// before the one it extends.
 var daemonMetricPrefixes = []string{
-	"gatewayd_internal", "gatewayd_public", "s3_gateway", "outboundd", "realtimed",
+	"gatewayd_public_object", "gatewayd_internal", "gatewayd_public", "s3_gateway", "outboundd", "realtimed",
 	"builderd", "gatewayd", "githubd", "profiled", "imaged", "meterd", "schedd",
 	"apid", "vmmd",
 }

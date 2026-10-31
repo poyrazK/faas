@@ -542,6 +542,25 @@ func TestPgKeyedDeadLetterReplayDoesNotRenewExpiry(t *testing.T) {
 				t.Fatal(err)
 			}
 			identity := f.identity(t, old)
+			if !broker {
+				// ADR-20261031101000: replay would reset the attempts and the
+				// row would only expire again, so it is refused instead, and
+				// replay-all leaves it in the queue.
+				if err := f.replay(old, eventID, "app"); !errors.Is(err, state.ErrKeyedReplayExpired) {
+					t.Fatalf("replay of expired keyed work = %v, want ErrKeyedReplayExpired", err)
+				}
+				if n, err := f.store.ReplayDeadLetterEvents(f.ctx, f.accountID, f.appID, 100); err != nil || n != 0 {
+					t.Fatalf("replay-all over expired keyed work = %d, %v; want 0", n, err)
+				}
+				if f.identity(t, old) != identity {
+					t.Fatal("refused replay changed the work")
+				}
+				var st string
+				if err := f.pool.QueryRow(f.ctx, "select state from invocations where id=$1", old.id).Scan(&st); err != nil || st != "dead_letter" {
+					t.Fatalf("refused replay left state %q, %v; want dead_letter", st, err)
+				}
+				return
+			}
 			if err := f.replay(old, eventID, "app"); err != nil {
 				t.Fatal(err)
 			}

@@ -326,20 +326,21 @@ type AgentRunOutput struct {
 
 // ADR-20261027090010 immutable agent versions: harness descriptor, prompt template, size and timeout.
 type AgentVersion struct {
-	AgentID            pgtype.UUID
-	Version            int32
-	AccountID          pgtype.UUID
-	HarnessPreset      pgtype.Text
-	HarnessImage       pgtype.Text
-	HarnessRun         []string
-	HarnessModels      []byte
-	PromptTemplate     string
-	RamMb              pgtype.Int4
-	TimeoutSec         int32
-	CreatedAt          pgtype.Timestamptz
-	ModelIntegrations  []byte
-	AiBudgetMillicents pgtype.Int8
-	Deliveries         []byte
+	AgentID               pgtype.UUID
+	Version               int32
+	AccountID             pgtype.UUID
+	HarnessPreset         pgtype.Text
+	HarnessImage          pgtype.Text
+	HarnessRun            []string
+	HarnessModels         []byte
+	PromptTemplate        string
+	RamMb                 pgtype.Int4
+	TimeoutSec            int32
+	CreatedAt             pgtype.Timestamptz
+	ModelIntegrations     []byte
+	AiBudgetMillicents    pgtype.Int8
+	Deliveries            []byte
+	PauseDuringModelCalls bool
 }
 
 type AlertDelivery struct {
@@ -368,6 +369,9 @@ type AlertEpisode struct {
 	AccountID  pgtype.UUID
 	OpenedAt   pgtype.Timestamptz
 	ResolvedAt pgtype.Timestamptz
+	RuleName   pgtype.Text
+	RuleMetric pgtype.Text
+	AppID      pgtype.UUID
 }
 
 type AlertHistoricalRollbackClaim struct {

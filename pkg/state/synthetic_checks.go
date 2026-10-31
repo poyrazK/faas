@@ -232,6 +232,8 @@ func (m *MemStore) DeleteSyntheticCheck(_ context.Context, appID, id string) err
 					delete(m.releaseGates, gateID)
 				}
 			}
+			// alert_rules.synthetic_check_id ON DELETE CASCADE
+			m.deleteAlertRulesLocked(func(r AlertRule) bool { return r.SyntheticCheckID == id })
 			return nil
 		}
 	}
