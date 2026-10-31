@@ -38,7 +38,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.mux.Serve
 
 func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	session, err := s.session(r)
-	if err != nil || session.AuthorizeAttachment(time.Now(), r.Header.Get(TokenHeader)) != nil {
+	if err != nil || session.AuthorizeAttachment(r.Context(), time.Now(), r.Header.Get(TokenHeader)) != nil {
 		bridgeProblem(w, 403, "dev_bridge_unauthorized")
 		return
 	}
@@ -68,7 +68,7 @@ func (s *Server) session(r *http.Request) (Session, error) {
 
 func (s *Server) connect(w http.ResponseWriter, r *http.Request) {
 	session, err := s.session(r)
-	if err != nil || session.AuthorizeAttachment(time.Now(), r.Header.Get(TokenHeader)) != nil {
+	if err != nil || session.AuthorizeAttachment(r.Context(), time.Now(), r.Header.Get(TokenHeader)) != nil {
 		bridgeProblem(w, 403, "dev_bridge_unauthorized")
 		return
 	}
@@ -87,7 +87,7 @@ func (s *Server) connect(w http.ResponseWriter, r *http.Request) {
 	done := make(chan struct{})
 	token := r.Header.Get(TokenHeader)
 	go s.watchAuthorization(ctx, cancel, done, session, func(current Session) error {
-		return current.AuthorizeAttachment(time.Now(), token)
+		return current.AuthorizeAttachment(r.Context(), time.Now(), token)
 	})
 	_ = s.relay.Attach(ctx, session, NewWebSocketConn(socket))
 	close(done)
@@ -120,7 +120,7 @@ func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) { r
 
 func (s *Server) traffic(w http.ResponseWriter, r *http.Request) {
 	session, err := s.session(r)
-	if err != nil || session.AuthorizeRequest(time.Now(), r.Header.Get(TokenHeader), session.Scope.AccountID, session.Scope.EnvironmentID, session.Scope.TargetAppID) != nil {
+	if err != nil || session.AuthorizeRequest(r.Context(), time.Now(), r.Header.Get(TokenHeader), session.Scope.AccountID, session.Scope.EnvironmentID, session.Scope.TargetAppID) != nil {
 		bridgeProblem(w, 403, "dev_bridge_unauthorized")
 		return
 	}
@@ -151,13 +151,13 @@ func (s *Server) traffic(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) dependency(w http.ResponseWriter, r *http.Request) {
 	session, err := s.session(r)
-	if err != nil || session.AuthorizeDependency(time.Now(), r.Header.Get(TokenHeader), session.Scope.AccountID, session.Scope.EnvironmentID, r.PathValue("app")) != nil {
+	if err != nil || session.AuthorizeDependency(r.Context(), time.Now(), r.Header.Get(TokenHeader), session.Scope.AccountID, session.Scope.EnvironmentID, r.PathValue("app")) != nil {
 		bridgeProblem(w, 403, "dev_bridge_dependency_denied")
 		return
 	}
 	if value := r.Header.Get(ContextHeader); value != "" {
 		c, err := ParseRequestContext(value)
-		if err != nil || len(r.Header.Values(ContextHeader)) != 1 || session.AuthorizeContextRoute(time.Now(), c, session.Scope.EnvironmentID, r.PathValue("app")) != nil {
+		if err != nil || len(r.Header.Values(ContextHeader)) != 1 || session.AuthorizeContextRoute(r.Context(), time.Now(), c, session.Scope.EnvironmentID, r.PathValue("app")) != nil {
 			bridgeProblem(w, 403, "dev_bridge_dependency_denied")
 			return
 		}

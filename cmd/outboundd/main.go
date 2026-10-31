@@ -14,6 +14,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apidgrpc"
+	"github.com/onebox-faas/faas/pkg/credhash"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/outbound"
@@ -27,6 +28,11 @@ import (
 func main() { wire.Daemon("outboundd", run) }
 
 func run(ctx context.Context, log *slog.Logger) error {
+	// ADR 20261029202403 amendment 1: the outbound credential ring: outboundd checks integration and AI
+	// access tokens.
+	if err := credhash.Install(os.Getenv, credhash.FamilyOutbound); err != nil {
+		return fmt.Errorf("outboundd: %w", err)
+	}
 	ops := wire.NewOpsMetrics("outboundd")
 	var retainedSpansAcc *gateway.SpansAccumulator
 	var retainedSpansWriter *apidgrpc.SpansWriterClientImpl

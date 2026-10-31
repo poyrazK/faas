@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/credhash"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -29,6 +30,7 @@ func (s *PgStore) CreateObjectUploadGrant(ctx context.Context, g ObjectUploadGra
 	if !validObjectUploadGrant(g, ttl) {
 		return ObjectUploadGrant{}, ErrInvalidArgument
 	}
+	g.TokenHash = familyStoredCredentialHex(credhash.FamilyUploads, credTagUploadGrant, g.TokenHash)
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return ObjectUploadGrant{}, mapErr(err)
@@ -99,9 +101,16 @@ func (s *PgStore) ResolveObjectUploadGrant(ctx context.Context, hash string) (Ob
 		return ObjectUploadGrant{}, ErrNotFound
 	}
 	q := sqlc.New()
-	row, err := q.ObjectUploadGrantResolve(ctx, s.pool, hash)
+	var row sqlc.ObjectStorageUploadGrant
+	err := ErrNotFound
+	for _, value := range objectUploadGrantLookups(hash) {
+		row, err = q.ObjectUploadGrantResolve(ctx, s.pool, value)
+		if err = mapErr(err); !errors.Is(err, ErrNotFound) {
+			break
+		}
+	}
 	if err != nil {
-		return ObjectUploadGrant{}, mapErr(err)
+		return ObjectUploadGrant{}, err
 	}
 	g, err := objectUploadGrantFromSQL(row)
 	if err != nil {

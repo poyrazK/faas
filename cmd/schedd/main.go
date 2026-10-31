@@ -34,6 +34,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/capflags"
 	"github.com/onebox-faas/faas/pkg/ci"
 	"github.com/onebox-faas/faas/pkg/cosign"
+	"github.com/onebox-faas/faas/pkg/credhash"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/durableentity/validatorbundle"
@@ -303,6 +304,11 @@ func envOr(key, fallback string) string {
 }
 
 func run(ctx context.Context, log *slog.Logger) error {
+	// ADR 20261029202403 amendment 1: the scheduler credential ring: schedd offers event acknowledgements and
+	// consumer-group leases and issues CI and job operation capabilities.
+	if err := credhash.Install(os.Getenv, credhash.FamilyScheduler); err != nil {
+		return fmt.Errorf("schedd: %w", err)
+	}
 	return runWithDeps(ctx, log, defaultDeps())
 }
 
