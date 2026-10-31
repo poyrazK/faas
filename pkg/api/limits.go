@@ -3352,6 +3352,16 @@ const (
 	MaxObjectStorageAccountLimiters       = 10_000
 )
 
+// ObjectStorageEgressPerIncludedByte sizes every plan's monthly egress
+// ceiling from its included storage (ADR-20261031122757). The ceiling is a
+// limit, not a meter: egress stays unpriced, and it bounds what a
+// traffic-heavy account costs the gateways that carry its bytes.
+const ObjectStorageEgressPerIncludedByte = 10
+
+// ObjectStorageLimitsDocsURL documents the object-storage limits an error
+// names.
+const ObjectStorageLimitsDocsURL = "https://github.com/poyrazK/faas/blob/main/docs/object-storage.md#limits"
+
 // ObjectStorageBillingHoursPerMonth is the conventional month used to price
 // stored byte-hours as GiB-months and to convert IncludedBytes.
 const ObjectStorageBillingHoursPerMonth int64 = 730
@@ -3412,8 +3422,10 @@ type Limits struct {
 	Profiling    ProfilingLimits
 	EventStorage EventStorageLimits
 	// ObjectStorage is the plan's object-storage ceilings and allowances
-	// (ADR-1320). Plans include stored bytes per ADR-1430; request and egress
-	// allowances wait for exporters that classify reads and writes.
+	// (ADR-1320). Plans include stored bytes per ADR-1430 and cap monthly
+	// egress at ObjectStorageEgressPerIncludedByte times that, unpriced
+	// (ADR-20261031122757); request and egress allowances wait for exporters
+	// that classify reads and writes.
 	ObjectStorage   ObjectStoragePlanLimits
 	EventDeliveries EventDeliveryLimits
 	EventPublish    EventPublishLimits
@@ -5060,8 +5072,9 @@ var planLimits = map[Plan]Limits{
 		RequestBudgetMaxMs:    30_000, // request_timeout_s ceiling: 30 s (ADR-1150)
 		CertExpiryWarningDays: 30,
 		IncludedGBHours:       20,
-		// ADR-1430: 1 GiB included and Free's hard stop.
-		ObjectStorage:                  ObjectStoragePlanLimits{MaxAccountBytes: 1 << 30, IncludedBytes: 1 << 30},
+		// ADR-1430: 1 GiB included and Free's hard stop; egress capped at
+		// ten times that (ADR-20261031122757).
+		ObjectStorage:                  ObjectStoragePlanLimits{MaxAccountBytes: 1 << 30, MaxMonthlyEgressBytes: 10 << 30, IncludedBytes: 1 << 30},
 		PriceMillicents:                0,
 		RateLimitRPS:                   5,
 		RateLimitBurst:                 20,
@@ -5468,7 +5481,8 @@ var planLimits = map[Plan]Limits{
 		CertExpiryWarningDays: 30,
 		IncludedGBHours:       200,
 		// ADR-1430: 10 GiB included; usage above it is priced at month close.
-		ObjectStorage:   ObjectStoragePlanLimits{IncludedBytes: 10 << 30},
+		// Egress capped at ten times the included storage (ADR-20261031122757).
+		ObjectStorage:   ObjectStoragePlanLimits{MaxMonthlyEgressBytes: 100 << 30, IncludedBytes: 10 << 30},
 		PriceMillicents: 1_000_000, // $10.00 (ADR-1430)
 		// ConcurrencyPerVMBound (issue #559): Hobby = 5 — smallest
 		// paid tier, matches Cloud Run's framing. Spec §4.9.1.
@@ -5905,7 +5919,8 @@ var planLimits = map[Plan]Limits{
 		CertExpiryWarningDays: 30,
 		IncludedGBHours:       1000,
 		// ADR-1430: 50 GiB included; usage above it is priced at month close.
-		ObjectStorage:   ObjectStoragePlanLimits{IncludedBytes: 50 << 30},
+		// Egress capped at ten times the included storage (ADR-20261031122757).
+		ObjectStorage:   ObjectStoragePlanLimits{MaxMonthlyEgressBytes: 500 << 30, IncludedBytes: 50 << 30},
 		PriceMillicents: 3_000_000, // $30.00 (ADR-1430)
 		// ConcurrencyPerVMBound (issue #559): Pro allows up to
 		// 25 concurrent in-flight requests per VM. Matches the
@@ -6307,7 +6322,8 @@ var planLimits = map[Plan]Limits{
 		CertExpiryWarningDays: 30,
 		IncludedGBHours:       3000,
 		// ADR-1430: 200 GiB included; usage above it is priced at month close.
-		ObjectStorage:   ObjectStoragePlanLimits{IncludedBytes: 200 << 30},
+		// Egress capped at ten times the included storage (ADR-20261031122757).
+		ObjectStorage:   ObjectStoragePlanLimits{MaxMonthlyEgressBytes: 2_000 << 30, IncludedBytes: 200 << 30},
 		PriceMillicents: 9_900_000, // $99.00 (ADR-1430)
 		// ConcurrencyPerVMBound (issue #559): Scale = 80 — same
 		// default as Cloud Run's `80 × vCPU` heuristic (the issue
