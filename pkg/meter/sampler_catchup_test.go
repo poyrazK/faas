@@ -200,6 +200,94 @@ func completedMinutes(t *testing.T, store state.FinancialStore, from, to time.Ti
 	return out
 }
 
+// A minute is rolled only api.MeterRollSettle after it closes, so a residency
+// interval committed just after the boundary is in the roll.
+// adr: 20261030120000
+func TestSampler_RollSettleWaitsForTheBoundary(t *testing.T) {
+	store := newLedgerStore()
+	base := time.Date(2026, 10, 8, 2, 50, 0, 0, time.UTC)
+	seedRunningInstance(t, store, base.Add(-time.Minute), base.Add(2*time.Minute))
+	recordComplete(t, store, base.Add(-api.MeterCatchUpWindow), base.Add(-time.Minute))
+	now := base.Add(time.Minute + 5*time.Second) // 02:50 closed 5 s ago
+	sampler := NewSampler(store, nil, func() time.Time { return now }).WithRollSettle(api.MeterRollSettle)
+	if _, err := tick(t, store, sampler, now); err != nil {
+		t.Fatalf("tick inside the settle: %v", err)
+	}
+	if _, calls := store.appended(base); calls != 0 {
+		t.Fatalf("02:50 rolled %s after it closed, before the %s settle", 5*time.Second, api.MeterRollSettle)
+	}
+	if _, calls := store.appended(base.Add(-time.Minute)); calls != 1 {
+		t.Fatalf("02:49 rolled %d times, want once", calls)
+	}
+	now = base.Add(time.Minute + api.MeterRollSettle)
+	if _, err := tick(t, store, sampler, now); err != nil {
+		t.Fatalf("tick after the settle: %v", err)
+	}
+	if _, calls := store.appended(base); calls != 1 {
+		t.Fatalf("02:50 rolled %d times after the settle, want once", calls)
+	}
+}
+
+// A caught-up minute takes its deployment floor from the instances resident
+// in that minute, not from their state now: an instance parked since still
+// carries its deployment's floor for the minute it ran.
+// adr: 20261030120000
+func TestSampler_CaughtUpFloorUsesTheMinutesResidency(t *testing.T) {
+	ctx := context.Background()
+	store := newLedgerStore()
+	base := time.Date(2026, 10, 8, 2, 50, 0, 0, time.UTC)
+	acct, err := store.CreateAccount(ctx, "floor-catchup@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "floor-catchup", RAMMB: 256, Type: state.AppTypeApp})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Status: state.DeployLive, Kind: state.DeploymentKindImage, MinInstances: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ins, err := store.CreateInstance(ctx, app.ID, dep.ID, string(state.StateParked), 256, state.DefaultLocalNodeName, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.resident[base] = map[string]int64{ins.ID: 60}
+	recordComplete(t, store, base.Add(-api.MeterCatchUpWindow), base)
+	now := base.Add(2 * time.Minute) // 02:51 rolls live, 02:50 is caught up
+	sampler := NewSampler(store, nil, func() time.Time { return now })
+	if _, err := tick(t, store, sampler, now); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	perMinute := int64(api.BillableRAMMB(256)) * 60
+	if got, _ := store.appended(base); got != 2*perMinute {
+		t.Fatalf("caught-up 02:50 billed %d MB-s, want %d: the instance's minute plus one floor slot", got, 2*perMinute)
+	}
+}
+
+// A meterd outage longer than a day still bills its minutes: catch-up reaches
+// back api.MeterCatchUpWindow, past a weekend.
+// adr: 20261030120000
+func TestSampler_CatchesUpAfterAMultiDayOutage(t *testing.T) {
+	store := newLedgerStore()
+	base := time.Date(2026, 10, 8, 2, 50, 0, 0, time.UTC)
+	outageStart := base.Add(-48 * time.Hour)
+	seedRunningInstance(t, store, outageStart, outageStart.Add(10*time.Minute))
+	recordComplete(t, store, base.Add(-api.MeterCatchUpWindow), outageStart)
+	recordComplete(t, store, outageStart.Add(10*time.Minute), base)
+	perMinute := int64(api.BillableRAMMB(256)) * 60
+	now := base.Add(time.Minute)
+	sampler := NewSampler(store, nil, func() time.Time { return now })
+	if _, err := tick(t, store, sampler, now); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	for m := outageStart; m.Before(outageStart.Add(10 * time.Minute)); m = m.Add(time.Minute) {
+		if got, calls := store.appended(m); got != perMinute || calls != 1 {
+			t.Fatalf("minute %s, 48 h back: appended %d MB-s in %d calls, want %d once", m.Format(time.RFC3339), got, calls, perMinute)
+		}
+	}
+}
+
 // production-us hunt #6 (H5-55): while meterd crash-looped through the
 // rc.246 rollback, each start's tick was cancelled mid-walk and the next
 // tick rolled only the newest closed minute, so 02:52-03:00 stayed

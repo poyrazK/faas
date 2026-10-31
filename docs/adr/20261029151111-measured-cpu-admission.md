@@ -1,7 +1,8 @@
 # ADR 20261029151111 · Admission by measured CPU
 
 - **Status:** proposed. Built behind the schedd switch
-  `measured_cpu_admission`, off by default.
+  `measured_cpu_admission`, on by default since the amendment of
+  2026-10-31.
 - **Date:** 2026-10-29
 - **Amends:** ADR-1151 §3 (the booking cap once measured CPU admission is
   on), ADR 20261027220445 decision 3 (the bound on the discount the durable
@@ -211,3 +212,26 @@ under the cap, and measured CPU is 92% of the budget.
   the bucket peak and p95, the minimum history, stale samples, the node
   gauge and the histogram.
 - `cmd/schedd`: the switch is off by default and parses from TOML.
+
+## Amendment 2026-10-31: on by default
+
+The owner turned `quiet_pause_admission`, `measured_cpu_admission` and
+`cpu_pressure_backstop` on in production on 2026-10-31, 09:13-09:16 UTC, by
+hand in `/etc/faas/schedd.toml` on fsn-3, fsn-2 and the control plane
+(rc.311), one node at a time. Every schedd restarted cleanly, logged each
+switch enabled and raised no new warnings. The nodes were about 3% busy with
+no CPU pressure, and no node was held. vmmd's `quiet_pause` has been on by
+default since 2026-10-27.
+
+`measured_cpu_admission` now defaults to on (`cmd/schedd/config.go`);
+`measured_cpu_admission = false` in `schedd.toml` turns it off. The rollout
+above went fleet-wide at once rather than one node first, at the owner's
+request and at today's low load. Tuning the floor and the cap from
+`schedd_instance_cpu_measured_millicores` continues.
+
+Release rollouts run `gregalectl manifest render` on every node, which
+rewrites `/etc/faas/schedd.toml` from the manifest, so the hand edit would be
+lost at the next rollout and would never reach a new node. The production
+manifest cannot carry a new key until every node's `gregalectl` and `imaged`
+parse it, as ADR-1151's 2026-10-27 amendment found. A default in the binary
+reaches every node with the release itself.

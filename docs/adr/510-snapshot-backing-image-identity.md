@@ -61,3 +61,22 @@
     that rebuild images locally.
   - Allow legacy snapshots until the base changes, using file birth time: a
     heuristic that cannot verify cross-node restores.
+
+## Amendment 1 (2026-10-31): node-local refusals keep the snapshot
+
+schedd marked a snapshot stale for the whole fleet after any restore that fell
+back to cold boot, so a refusal caused by one node (a storage error reading
+the `…/backing` object, a base it could not fetch or hash on a full disk) and
+node-local restore failures (disk full, jailer, cgroup or network namespace
+setup) threw away snapshots that were still good everywhere else (bug hunt
+2026-10-28 B12).
+
+- vmmd tags those fallbacks `node_local` in the wake response's closed
+  `restore_fallback_reason`. It is operator-only: schedd forwards only
+  `after_restore_failed` to the customer timeline.
+- schedd keeps a `node_local` snapshot live and logs the fallback. The next
+  wake on any node tries it again.
+- A changed identity, an absent or invalid `…/backing` object, an
+  after_restore failure and every other restore failure still mark the
+  snapshot stale. Refusals still count as `snapshot_stale` on the
+  wake-failure counter.

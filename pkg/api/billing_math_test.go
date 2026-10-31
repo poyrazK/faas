@@ -1,6 +1,9 @@
 package api
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestBillableMBSecondsUsesPlanAllowance(t *testing.T) {
 	const sec = SecondsPerGBHour
@@ -52,5 +55,21 @@ func TestDefaultOverageCapCents(t *testing.T) {
 	}
 	if got, ok := PlanFree.DefaultOverageCapCents(); ok {
 		t.Errorf("free default cap = %d, want none", got)
+	}
+}
+
+// The finality bound covers every late write meterd can make: the catch-up
+// window, the newest-closed-minute offset, one tick and the roll settle. It
+// stays minute-aligned so the pusher's completeness read is a valid window.
+// adr: 20261030120000
+func TestMeterUsageFinalAfterCoversLateWrites(t *testing.T) {
+	if MeterUsageFinalAfter < MeterCatchUpWindow+2*time.Minute+MeterRollSettle {
+		t.Fatalf("MeterUsageFinalAfter %s does not cover catch-up %s + 2m + settle %s", MeterUsageFinalAfter, MeterCatchUpWindow, MeterRollSettle)
+	}
+	if MeterUsageFinalAfter%time.Minute != 0 {
+		t.Fatalf("MeterUsageFinalAfter %s is not a whole number of minutes", MeterUsageFinalAfter)
+	}
+	if MeterTelemetryDrainWindow > MeterCatchUpWindow {
+		t.Fatalf("telemetry drain window %s exceeds catch-up window %s", MeterTelemetryDrainWindow, MeterCatchUpWindow)
 	}
 }

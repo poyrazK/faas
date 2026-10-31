@@ -603,12 +603,16 @@ var cliCommands = []cliCommand{
 				{Name: "o", ShortName: "o", Short: "write the DPA template to a file", Value: "PATH"},
 			}},
 			{Name: "slo", Short: "Account-wide SLO panel"},
-			{Name: "billing-connection", Short: "Connect, show or disconnect a billing key for invoice exports", Notes: []string{"Supports Stripe, Paddle and Lago; connect reads the key from stdin."}, Positionals: []string{"{connect|status|disconnect}", "{stripe|paddle|lago}"}, Flags: []cliFlag{
-				{Name: "api-url", Short: "Lago API URL for the EU region or a self-hosted Lago (connect; default https://api.getlago.com)", Value: "URL"},
-				{Name: "collection", Short: "what the provider does with exported invoices: none leaves drafts, send emails them (Stripe, Paddle), charge charges the saved payment method (Stripe, Lago) (connect; default none)", Value: "MODE", ClosedSet: []string{"none", "send", "charge"}},
-				{Name: "days-until-due", Short: "days until a sent invoice is due (connect --collection send; default 30)", Value: "N"},
-				{Name: "automatic-tax", Short: "have Stripe Tax calculate tax on exported invoices; needs Stripe Tax and customer addresses (connect; Stripe only)"},
-			}, Examples: []string{"gregale account billing-connection connect paddle < paddle-key.txt", "gregale account billing-connection connect lago --api-url https://api.eu.getlago.com < lago-key.txt", "gregale account billing-connection connect stripe --collection charge < stripe-key.txt"}},
+			{Name: "billing-connection", Short: "Connect, show or disconnect a billing key for invoice exports", Notes: []string{"Supports Stripe, Paddle and Lago."}, Subcommands: []cliSub{
+				{Name: "connect", Short: "Connect a billing provider key", Notes: []string{"Reads the key from stdin, so it never appears in shell history or the process list."}, Positionals: []string{"{stripe|paddle|lago}"}, Flags: []cliFlag{
+					{Name: "api-url", Short: "Lago API URL for the EU region or a self-hosted Lago (default https://api.getlago.com)", Value: "URL"},
+					{Name: "collection", Short: "what the provider does with exported invoices: none leaves drafts, send emails them (Stripe, Paddle), charge charges the saved payment method (Stripe, Lago) (default none)", Value: "MODE", ClosedSet: []string{"none", "send", "charge"}},
+					{Name: "days-until-due", Short: "days until a sent invoice is due (--collection send; default 30)", Value: "N"},
+					{Name: "automatic-tax", Short: "have Stripe Tax calculate tax on exported invoices; needs Stripe Tax and customer addresses (Stripe only)"},
+				}, Examples: []string{"gregale account billing-connection connect paddle < paddle-key.txt", "gregale account billing-connection connect lago --api-url https://api.eu.getlago.com < lago-key.txt", "gregale account billing-connection connect stripe --collection charge < stripe-key.txt"}},
+				{Name: "status", Short: "Show a billing provider connection", Positionals: []string{"{stripe|paddle|lago}"}},
+				{Name: "disconnect", Short: "Disconnect a billing provider key", Positionals: []string{"{stripe|paddle|lago}"}},
+			}},
 			{Name: "billing-run", Short: "Bill an ended month for every API customer", Notes: []string{"Drafts, checks and finalizes each statement, and optionally exports it."}, Subcommands: []cliSub{
 				{Name: "start", Short: "Start a run for one ended UTC month", Flags: []cliFlag{
 					{Name: "month", Short: "UTC calendar month to bill (default: last month)", Value: "YYYY-MM"},
@@ -4143,8 +4147,8 @@ var cliCommands = []cliCommand{
 				{Name: "since", Short: "how far back, e.g. 24h or 7d (default 7d, clamped to the plan window)", Value: "DURATION"},
 			}},
 			{Name: "waf-exclude", Short: "Add or remove CRS rule IDs on a kind=waf rule's exclusions", Notes: []string{"Keeps the rest of the rule's WAF action and its penalty."}, Positionals: []string{"<rule-id>"}, Examples: []string{
-				"gregale edge rule waf-exclude RULE_ID --add 942190",
-				"gregale edge rule waf-exclude RULE_ID --remove 942100",
+				"gregale edge rule waf update RULE_ID --add 942190",
+				"gregale edge rule waf update RULE_ID --remove 942100",
 			}, Flags: []cliFlag{
 				{Name: "add", Short: "CRS rule IDs to exclude, comma-separated", Value: "IDS"},
 				{Name: "remove", Short: "CRS rule IDs to stop excluding, comma-separated", Value: "IDS"},

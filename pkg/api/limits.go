@@ -494,6 +494,15 @@ const (
 	// fail-closed.
 	ApplicationStandardBaseScanTimeout = 20 * time.Minute
 
+	// SharedBaseScanFailureGrace is how long the last clean scan of a shared
+	// base's unchanged bytes stays in force while renewals fail for a reason
+	// other than the bytes or their findings (the scanner, its database, a
+	// storage read, a refused publication). Publishing the refusal on the
+	// first such failure stopped every boot on the base: three production
+	// outages in three days (bug hunt 2026-10-28 H102). Changed bytes and
+	// blocking findings still refuse at once.
+	SharedBaseScanFailureGrace = 24 * time.Hour
+
 	// Safety bounds for a complete filesystem projection handed to Grype.
 	// These are separate from the tenant's rootfs/disk entitlements.
 	ApplicationStandardRuntimeScanMaxBytes           int64 = 32 << 30
@@ -6965,6 +6974,12 @@ const (
 	// PreflightCacheMaxEntries bounds the in-process verdict cache.
 	PreflightCacheMaxEntries = 2_048
 
+	// PreflightConcurrentChecks caps how many unauthenticated checks fetch
+	// and unpack a repository on the control plane at once; the per-IP limit
+	// alone let many addresses unpack hostile archives together (bug hunt
+	// 2026-10-28 B39).
+	PreflightConcurrentChecks = 2
+
 	// Builder VM (spec §4.5, §1). Builds live in the control-plane slice, never
 	// tenant RAM.
 	BuildVMRAMMB = 2_048
@@ -7368,6 +7383,14 @@ const (
 	GatewaydInternalControlReadTimeoutSecondsDefault  = 30 // control + unix-socket
 	GatewaydInternalControlWriteTimeoutSecondsDefault = 30 // control + unix-socket
 	GatewaydInternalControlIdleTimeoutSecondsDefault  = 60 // control + unix-socket keep-alive
+
+	// VmmdLocalDataSocket is where vmmd serves its own node's
+	// gatewayd-internal without TLS, admitting only GatewaydInternalUser by
+	// peer uid and only the RPCs the gateway calls (ADR-20261030230157).
+	VmmdLocalDataSocket = "/run/faas/vmmd-data.sock"
+	// GatewaydInternalUser is the user gatewayd-internal runs as
+	// (pkg/daemonunitspec), the one uid vmmd's local data socket admits.
+	GatewaydInternalUser = "faas"
 
 	// MaxEdgeRuleLimitBodyBytesStreaming (ADR-091 D24 / kind=limit
 	// streaming carve-out) is the upper bound on the optional
@@ -11748,15 +11771,35 @@ func BillableRAMMBWithSidecars(ramMB int, sidecarMBs []int) int {
 // (instance, minute). MeterCatchUpMinutesPerTick bounds the extra work one
 // sample tick takes on, so a long backlog drains over several ticks instead
 // of starving the control plane.
-const MeterCatchUpWindow = 24 * time.Hour
+//
+// The window covers a weekend-long meterd outage: residency comes from the
+// instance billing ledger, which outlives it (instances are kept 30 days),
+// and 15 minutes a tick drain 72 hours in under five
+// (ADR-20261030120000).
+const MeterCatchUpWindow = 72 * time.Hour
 const MeterCatchUpMinutesPerTick = 15
+
+// MeterTelemetryDrainWindow is how long after an instance stops the sampler
+// still lists it, so the gateway and network counters its sources hold for
+// it are drained into usage rows. It is independent of how far catch-up
+// reaches back, which drains no live counter.
+const MeterTelemetryDrainWindow = 24 * time.Hour
+
+// MeterRollSettle is how long after a minute closes meterd waits before
+// rolling it. Residency intervals are stamped inside their writer's
+// transaction and become visible at commit; a roll right at the boundary
+// missed a transition still committing, and first-write-wins kept the short
+// row (ADR-20261030120000).
+const MeterRollSettle = 15 * time.Second
 
 // MeterUsageFinalAfter is how long after a minute starts meterd may still write
 // compute usage for it: the catch-up window, the sampler's newest-closed-minute
-// offset, and one tick of skew. The provider pusher delivers an hour only when
-// every minute up to its end is recorded compute-complete or older than this,
-// so late catch-up rows can never land in an hour already delivered (ADR-1162).
-const MeterUsageFinalAfter = MeterCatchUpWindow + 2*time.Minute
+// offset, one tick of skew and the roll settle, rounded up to a whole minute
+// so the pusher's completeness read stays minute-aligned. The provider pusher
+// delivers an hour only when every minute up to its end is recorded
+// compute-complete or older than this, so late catch-up rows can never land in
+// an hour already delivered (ADR-1162).
+const MeterUsageFinalAfter = MeterCatchUpWindow + 3*time.Minute
 
 // SpendCapJobDeferInterval is how long a queued job task of an account at its
 // monthly spend cap waits before the dispatcher re-checks the cap (ADR-1162).
