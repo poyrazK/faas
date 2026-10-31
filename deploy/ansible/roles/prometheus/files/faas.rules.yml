@@ -3363,10 +3363,11 @@ groups:
       # shipper and the compute-side vmmd producer/shipper.
       - alert: FaasLogArchiveShipperDegraded
         expr: |
-          sum(rate({__name__=~"^(apid|vmmd)_log_archive_failures_total$"}[5m])) > 0
+          sum by (job, instance) (rate({__name__=~"^(apid|vmmd)_log_archive_failures_total$"}[5m])) > 0
           or (
-            sum({__name__=~"^(apid|vmmd)_log_archive_local_bytes$"}) > 0
-            and sum(rate({__name__=~"^(apid|vmmd)_log_archive_files_uploaded_total$",status="ok"}[30m])) == 0
+            sum by (job, instance) ({__name__=~"^(apid|vmmd)_log_archive_local_bytes$"}) > 0
+            and on (job, instance)
+            sum by (job, instance) (rate({__name__=~"^(apid|vmmd)_log_archive_files_uploaded_total$",status="ok"}[30m])) == 0
           )
         for: 10m
         labels:
@@ -3378,10 +3379,30 @@ groups:
           description: "The apid or vmmd log archive shipper has recorded failures or has pending local spool data without a successful upload for 30m. Check failure reasons, S3 credentials, bucket reachability, and the local spool."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLogArchiveShipperDegraded.md"
 
+      # A node that came up without archiving (no envelope, the `{}`
+      # placeholder, a client that failed) while others archive: its parked
+      # instances' logs are lost and, on apid, account erasure cannot reach
+      # the bucket. Fleets that archive nowhere never fire.
+      - alert: FaasLogArchiveNodeDisabled
+        expr: |
+          min by (job, instance) ({__name__=~"^(apid|vmmd)_log_archive_enabled$"}) == 0
+            and on () max({__name__=~"^(apid|vmmd)_log_archive_enabled$"}) == 1
+        for: 15m
+        labels:
+          severity: warn
+          component: platform
+          family: log_archive
+        annotations:
+          summary: "A daemon's log archive is off while the fleet archives"
+          description: "{{ $labels.job }} on {{ $labels.instance }} reports its log archive disabled while other daemons archive. Its parked instances' logs are not archived and, on apid, account erasure cannot reach the bucket. Check the node's archive credential envelope and the daemon's startup warnings."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasLogArchiveShipperDegraded.md"
+
+      # Per scrape target: a sum across apid and every vmmd averaged one full
+      # node with the empty ones and could never reach 80%.
       - alert: FaasLogArchiveSpoolNearCap
         expr: |
-          sum({__name__=~"^(apid|vmmd)_log_archive_local_bytes$"})
-            / sum({__name__=~"^(apid|vmmd)_log_archive_local_bytes_max$"}) > 0.8
+          max by (job, instance) ({__name__=~"^(apid|vmmd)_log_archive_local_bytes$"})
+            / on (job, instance) max by (job, instance) ({__name__=~"^(apid|vmmd)_log_archive_local_bytes_max$"}) > 0.8
         for: 15m
         labels:
           severity: warn
@@ -6882,6 +6903,7 @@ groups:
           or (
             sum(increase(schedd_event_routing_outcomes_total{outcome="claim_error"}[10m])) > 0
             and sum(increase(schedd_event_routing_outcomes_total{outcome=~"routed|waiting|retry|failed"}[10m])) == 0
+            and max(schedd_event_routing_oldest_pending_seconds) > 600
           )
         for: 5m
         labels:
@@ -6891,7 +6913,7 @@ groups:
           public_status: internal
         annotations:
           summary: "Event routing has stopped on every schedd"
-          description: "For fifteen minutes no schedd has completed an event routing sweep, or the sweeps that ran could not claim any routing work and routed nothing, so published events, object notifications and webhook automations are accepted but not delivered. Check schedd health and its claim errors, the event_fanout work kind and database latency."
+          description: "For fifteen minutes no schedd has completed an event routing sweep, or the sweeps that ran could not claim any routing work, routed nothing and left events waiting over ten minutes, so published events, object notifications and webhook automations are accepted but not delivered. Check schedd health and its claim errors, the event_fanout work kind and database latency."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEventDriven.md"
       - alert: FaasEventRoutingSweepSlow
         expr: |

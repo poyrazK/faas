@@ -2568,6 +2568,7 @@
       "github_repo_id",
       "id",
       "idle_timeout_s",
+      "labels",
       "last_deploy_failed_email_at",
       "last_scale_in_at",
       "last_scale_out_at",

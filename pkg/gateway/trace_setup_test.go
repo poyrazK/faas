@@ -24,6 +24,7 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 
+	sdkresource "go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
 	"github.com/onebox-faas/faas/pkg/wire/otelinit"
@@ -229,5 +230,41 @@ func TestTraceSetup_UnsetRateFallsBackToDefault(t *testing.T) {
 	res := sampler.ShouldSample(p)
 	if res.Decision != sdktrace.RecordAndSample {
 		t.Errorf("unset rate fallback: ShouldSample decision = %v, want RecordAndSample (default=1.0)", res.Decision)
+	}
+}
+
+// TestTraceSetup_RingFilledOnlyWhenReadable pins that spans reach the
+// ring only when GET /v1/traces can read it. Without an observer token
+// the handler answers 404, so filling the ring only costs CPU and heap.
+// The span must still be sampled: the propagated traceparent keeps its
+// sampled flag either way.
+func TestTraceSetup_RingFilledOnlyWhenReadable(t *testing.T) {
+	unsetEnv(t, "OTEL_TRACES_SAMPLER_ARG")
+	for _, tc := range []struct {
+		name     string
+		token    string
+		wantRing int
+	}{
+		{name: "no observer token", token: "", wantRing: 0},
+		{name: "observer token set", token: "secret", wantRing: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ring := NewTraceRing(16)
+			sampler, _ := buildSampler(discardLogger())
+			tp := sdktrace.NewTracerProvider(tracerProviderOptions(sdkresource.Empty(), sampler, ringExporters(ring, tc.token, discardLogger()))...)
+			t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
+
+			_, span := tp.Tracer("test").Start(context.Background(), "request")
+			if !span.SpanContext().IsSampled() {
+				t.Fatalf("span is not sampled; the propagated traceparent would lose its sampled flag")
+			}
+			span.End()
+			if err := tp.ForceFlush(context.Background()); err != nil {
+				t.Fatalf("ForceFlush: %v", err)
+			}
+			if got := ring.Len(); got != tc.wantRing {
+				t.Fatalf("ring.Len() = %d, want %d", got, tc.wantRing)
+			}
+		})
 	}
 }

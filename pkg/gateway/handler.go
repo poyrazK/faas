@@ -1917,7 +1917,7 @@ func (h *Handler) WithWakeAdmissionAudit(audit RequireAuthnAuditor) *Handler {
 // gateway audit writer; nil keeps the limiter useful in tests and on boxes
 // without event persistence.
 func (h *Handler) WithVMConcurrencyAudit(audit RequireAuthnAuditor) *Handler {
-	h.vmConcurrencyAudit = audit
+	h.vmConcurrencyAudit = throttleRepeatedAudit(audit)
 	return h
 }
 
@@ -2055,7 +2055,7 @@ func (h *Handler) WithConsumerAuth(store ConsumerAuthStore) *Handler {
 func (h *Handler) WithEdgeRules(matcher EdgeRuleMatcher, resolve ResolveTargetApp, audit EdgeRuleAuditor) *Handler {
 	h.edgeRules = matcher
 	h.resolveTargetApp = resolve
-	h.edgeRuleAudit = audit
+	h.edgeRuleAudit = throttleRepeatedAudit(audit)
 	return h
 }
 

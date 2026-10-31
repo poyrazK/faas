@@ -149,7 +149,11 @@ gregale job update customer-sync --failure-rules \
 `fail_partition` retains its outcome and excludes it from automatic retries.
 When a Job partition classified `retry` has no attempt left, its final
 attempt records `dead_letter` (reason `retry_budget_exhausted`) and the run's
-dead-letter count rises. `gregale job retry` refuses a partition past its
+dead-letter count rises. A retry Gregale cannot run, because the run is
+interactive or owned by an operation, or the Job's image changed since the
+run started, records `dead_letter` (reason `retry_refused`) the same way.
+Either way the partition has failed permanently, so `--fail-fast` stops the
+run. `gregale job retry` refuses a partition past its
 retry budget; re-run its input with `gregale job replay JOB RUN_ID`.
 For a command Cron, the bounded retry budget is per occurrence; for a Job, it
 is per partition. `gregale cron runs CRON_ID --run TASK_ID` shows the reported
