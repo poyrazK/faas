@@ -77,7 +77,8 @@ docs/adr/
 1. ≤ `max_concurrency(plan)` + `RolloutConcurrencyGrant` instances of an app in
    {WAKING, COLD_BOOTING, RUNNING}. The grant (ADR-199) is 1 and applies ONLY
    while a second deployment is coming up alongside the one already serving —
-   a traffic split or canary overlap. Steady state is still `max_concurrency`.
+   a traffic split, a canary overlap or a release staged with `--no-traffic`
+   (ADR-20261031105227). Steady state is still `max_concurrency`.
 2. Σ(ram_mb + 8) over live instances ≤ 47,600 MB (85% of 56 GB tenant budget).
    Under measured admission (ADR-909, schedd's default) a node's measured memory
    ≤ 47,600 MB and Σ(ram_mb + 8) ≤ 2× that, with eviction above the ceiling.
