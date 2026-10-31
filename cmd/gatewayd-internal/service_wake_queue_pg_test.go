@@ -189,14 +189,17 @@ func TestServiceDeploymentWakePostgresPinsCohortAndBoundsFanIn(t *testing.T) {
 	if scheduler.calls.Load() != 1 || forwards.Load() != 2 || backend.CapacityCount(target.ID) != 1 {
 		t.Fatalf("coalesced wake: admissions=%d forwards=%d capacity=%d", scheduler.calls.Load(), forwards.Load(), backend.CapacityCount(target.ID))
 	}
-	blocked := response(request(t.Context()))
-	if blocked.Code != http.StatusTooManyRequests || !strings.Contains(blocked.Body.String(), `"code":"`+api.CodeAppConcurReached+`"`) || !strings.Contains(blocked.Body.String(), `"observed":1`) || scheduler.calls.Load() != 1 || forwards.Load() != 2 {
-		t.Fatalf("fresh cold cohort bypassed app ceiling or used retired sibling: %d %s admissions=%d forwards=%d", blocked.Code, blocked.Body, scheduler.calls.Load(), forwards.Load())
-	}
-	backend.EvictInstance(target.ID, "instance-"+old.ID)
+	// ADR-20261031105227: the fresh cohort holds no instance while the retired
+	// sibling holds one, so it wakes with the rollout overlap (ADR-199) on its
+	// own deployment, never on the sibling.
 	w := response(request(t.Context()))
 	if w.Code != http.StatusNoContent || w.Header().Get("Observed-Deployment") != next.ID || w.Header().Get("Observed-Policy") == admittedRevision || scheduler.calls.Load() != 2 || forwards.Load() != 3 {
-		t.Fatalf("fresh service did not use new cohort: %d %v %s admissions=%d forwards=%d", w.Code, w.Header(), w.Body, scheduler.calls.Load(), forwards.Load())
+		t.Fatalf("fresh cold cohort did not wake beside the retired sibling: %d %v %s admissions=%d forwards=%d", w.Code, w.Header(), w.Body, scheduler.calls.Load(), forwards.Load())
+	}
+	backend.EvictInstance(target.ID, "instance-"+old.ID)
+	w = response(request(t.Context()))
+	if w.Code != http.StatusNoContent || w.Header().Get("Observed-Deployment") != next.ID || scheduler.calls.Load() != 2 || forwards.Load() != 4 {
+		t.Fatalf("fresh service did not stay on its cohort: %d %v %s admissions=%d forwards=%d", w.Code, w.Header(), w.Body, scheduler.calls.Load(), forwards.Load())
 	}
 	await(func() bool { return depth() == 0 })
 	if pool.Stat().AcquiredConns() != 0 {

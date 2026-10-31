@@ -160,6 +160,14 @@
 # Default: true
 # bridge_stream_headroom = false
 
+# stream_bridge_gomaxprocs / stream_bridge_gogc: GOMAXPROCS and GOGC for the
+# per-instance stream bridges vmmd starts from now on. 0 keeps Go's default
+# (one P per host CPU, GOGC=100). Set per node for a CPU A/B before they get
+# defaults. FAAS_STREAM_BRIDGE_GOMAXPROCS / FAAS_STREAM_BRIDGE_GOGC override.
+# Default: 0
+# stream_bridge_gomaxprocs = 1
+# stream_bridge_gogc = 200
+
 # local_data_socket: also serve /run/faas/vmmd-data.sock to this node's
 # gatewayd-internal without TLS, admitting only its uid and only its
 # forwarding RPCs (ADR-20261030230157). Off also removes the socket, so the

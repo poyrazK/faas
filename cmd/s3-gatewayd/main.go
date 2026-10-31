@@ -177,9 +177,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 	go fence.Run(ctx)
 	serving := func() bool { return enabled.Load() && fence.Open() }
 
+	// GET and HEAD reuse a credential's resolution for 2 s
+	// (ADR-20261030075301 step 4).
+	credentials := s3gateway.NewCredentialCache(nil)
+	ops.Registry().MustRegister(credentials.Collectors()...)
 	handler, err := s3gateway.New(s3gateway.Config{
 		Registry: registry, Store: store, RequestMetrics: requestMetrics, Enabled: serving, SpoolDir: os.Getenv("FAAS_S3_GATEWAY_SPOOL_DIR"), Log: log,
-		ReadAdmitter: readAdmitter, OrgAccess: orgAccess, AccountLimiter: objectstorage.NewAccountRequestLimiter(),
+		ReadAdmitter: readAdmitter, OrgAccess: orgAccess, AccountLimiter: objectstorage.NewAccountRequestLimiter(), Credentials: credentials,
 		OpenSecret: func(sealed []byte) (string, error) {
 			namespace, plaintext, err := secretbox.OpenBytesMulti(readers, sealed)
 			if err != nil || namespace != s3gateway.CredentialSecretNamespace || len(plaintext) != 40 {

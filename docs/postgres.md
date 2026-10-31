@@ -149,7 +149,7 @@ be deleted while a database restored from it exists.
 ```sh
 REQUEST_ID=$(uuidgen | tr A-Z a-z)
 gregale postgres resize orders --class burstable --request-id "$REQUEST_ID"
-gregale postgres resize-status orders "$REQUEST_ID"
+gregale postgres resize status orders "$REQUEST_ID"
 ```
 
 - Keep the request ID, a lowercase UUID: repeating it returns the same

@@ -34,29 +34,20 @@ func TestPublishEventPersistsCanonicalEnvelope(t *testing.T) {
 		t.Fatalf("response = %+v", response)
 	}
 
-	rows, err := (*e.Store()).ListEvents(context.Background(), (*e.Acct()).ID, 20)
+	// ADR-20261030170000: the receipt is a published event's only copy.
+	work, err := (*e.Store()).ClaimDuePublishedEvent(context.Background(), time.Now().Add(time.Hour))
 	if err != nil {
-		t.Fatalf("ListEvents: %v", err)
+		t.Fatalf("claim published event: %v", err)
 	}
-	var found bool
-	for _, row := range rows {
-		if row.Kind != "event.published" {
-			continue
-		}
-		found = true
-		var envelope events.Envelope
-		if err := json.Unmarshal(row.Data, &envelope); err != nil {
-			t.Fatalf("decode stored envelope: %v", err)
-		}
-		if envelope.ID != response.ID || envelope.AccountID != (*e.Acct()).ID || envelope.Type != "invoice.paid" {
-			t.Fatalf("stored envelope = %+v", envelope)
-		}
-		if string(envelope.Data) != `{"amount":150}` {
-			t.Fatalf("stored data = %s", envelope.Data)
-		}
+	var envelope events.Envelope
+	if err := json.Unmarshal(work.Payload, &envelope); err != nil {
+		t.Fatalf("decode stored envelope: %v", err)
 	}
-	if !found {
-		t.Fatalf("event.published row not found in %+v", rows)
+	if envelope.ID != response.ID || envelope.AccountID != (*e.Acct()).ID || envelope.Type != "invoice.paid" {
+		t.Fatalf("stored envelope = %+v", envelope)
+	}
+	if string(envelope.Data) != `{"amount":150}` {
+		t.Fatalf("stored data = %s", envelope.Data)
 	}
 }
 

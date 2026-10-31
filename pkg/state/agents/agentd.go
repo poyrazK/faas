@@ -51,6 +51,9 @@ type Claim struct {
 	LeaseToken string
 	// QueuedAt is when apid queued the run. A run queued again keeps it.
 	QueuedAt time.Time
+	// PauseDuringModelCalls is the version's model-wait pause opt-in
+	// (ADR-20261027090012 §1); a version opts out with false.
+	PauseDuringModelCalls bool
 }
 
 // ClaimRun moves the oldest claimable queued run to starting under token.
@@ -343,7 +346,7 @@ func claimFrom(row sqlc.GetAgentRunClaimRow, token string) (Claim, error) {
 		Integrations: nilIfEmpty(integrations), AIBudgetMillicents: row.AiBudgetMillicents.Int64,
 		Checkout: checkoutFrom(row.CheckoutRepository, row.CheckoutCommit, row.CheckoutInstallationID),
 		Harness:  Harness{Preset: row.HarnessPreset.String, Image: row.HarnessImage.String, Run: row.HarnessRun, Models: models},
-		QueuedAt: row.QueuedAt.Time}
+		QueuedAt: row.QueuedAt.Time, PauseDuringModelCalls: row.PauseDuringModelCalls}
 	if row.Prompt.Valid {
 		prompt := row.Prompt.String
 		c.Prompt = &prompt
