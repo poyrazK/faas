@@ -226,6 +226,26 @@ gregale event publish --id evt-123 --source billing.stripe --type invoice.paid \
   --data '{"amount":150}'
 ```
 
+### Delivery identity
+
+Delivery is at least once. A handler can see the same event more than once:
+after a retry, a replay, a lease that lapsed mid-run, or a database failover
+or restore. Each delivery carries headers that let the handler recognize
+repeats:
+
+| Header | Stays the same across | Use it to |
+|---|---|---|
+| `x-gregale-event-id` | every delivery, retry and replay of the event, and a republish with the same id | Deduplicate side effects. This is the key to store. |
+| `x-gregale-event-source`, `x-gregale-event-type` | every delivery | Route inside the handler. |
+| `x-gregale-event-subscription-id` | deliveries to this subscription | Tell apart two subscriptions of the same app that receive the same event. |
+| `x-gregale-event-acceptance-id` | deliveries of this accepted copy | Correlate with the publish receipt (`receipt_url`). A lost event that is published again gets a new one. |
+| `X-Faas-Invocation-Id` | retries of one delivery | Correlate with `gregale invocation` and logs. A recovery replay may run as a new invocation with a new id. |
+| `X-Faas-Invocation-Attempt` | nothing; it counts up from 1 on each retry | Log or back off; never deduplicate on it. |
+
+Deduplicate on `x-gregale-event-id` together with the subscription id when one
+app has several subscriptions to the same event. Record the id in the same
+transaction as the side effect, so a repeat finds it and stops.
+
 ### Settled receipt retention
 
 Gregale keeps an accepted event's receipt until routing settles, then for the

@@ -114,7 +114,12 @@ with the setting on, a customer who completes two checkouts pays twice.
 the usage loop. An organization that allows multiple subscriptions, a token
 that does not see exactly one organization, a missing product, archived
 resource, wrong recurring period, wrong fixed price, wrong meter, or
-meter-credit benefit prevents startup (ADR-20261029180000).
+meter-credit benefit prevents startup (ADR-20261029180000). Polar being
+unreachable does not: on a timeout, connection failure, HTTP 429 or 5xx the
+daemon starts, logs `billing: Polar unreachable at boot`, and retries the
+check in the background until it passes; a configuration problem it then
+finds is logged as `billing: Polar catalog does not satisfy the billing
+contract` on every retry (ADR-20261031100000).
 
 ## Runtime behavior
 
