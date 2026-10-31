@@ -1,4 +1,4 @@
-// spec: §10, ADR-1162 — the month's allowance follows its plan history.
+// spec: §10, ADR-1162, ADR-20261030093512 — the month's allowance follows its plan history.
 package state_test
 
 import (
@@ -10,8 +10,24 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func TestMonthComputeIncludedMBSecondsFollowsPlanHistory(t *testing.T) {
+// span is one plan held for part of a month, in whole seconds.
+type span struct {
+	plan api.Plan
+	d    time.Duration
+}
+
+// weighted is each plan's allowance for its share of the month.
+func weighted(month time.Duration, spans ...span) int64 {
+	var sum int64
+	for _, s := range spans {
+		sum += api.IncludedMBSeconds(s.plan) * int64(s.d/time.Second)
+	}
+	return sum / int64(month/time.Second)
+}
+
+func TestMonthComputeIncludedMBSecondsWeighsPlanHistory(t *testing.T) {
 	month := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	length := month.AddDate(0, 1, 0).Sub(month)
 	grant := func(plan api.Plan, at time.Time) state.FinancialPriceSnapshot {
 		return state.FinancialPriceSnapshot{Plan: plan, EffectiveFrom: at,
 			Price: financial.Price{Meter: "compute", IncludedQuantity: api.IncludedMBSeconds(plan)}}
@@ -24,37 +40,53 @@ func TestMonthComputeIncludedMBSecondsFollowsPlanHistory(t *testing.T) {
 		current   api.Plan
 		snapshots []state.FinancialPriceSnapshot
 		through   time.Time
-		want      api.Plan
+		want      int64
 	}{
-		{"no recorded history uses the current plan", api.PlanPro, nil, month.Add(day), api.PlanPro},
-		{"egress grants are ignored", api.PlanHobby, []state.FinancialPriceSnapshot{egress}, month.Add(day), api.PlanHobby},
-		{"downgrade keeps the larger grant", api.PlanHobby,
-			[]state.FinancialPriceSnapshot{grant(api.PlanPro, month), grant(api.PlanHobby, month.Add(10*day))}, month.Add(20 * day), api.PlanPro},
-		{"upgrade applies only after its activation", api.PlanPro,
-			[]state.FinancialPriceSnapshot{grant(api.PlanHobby, month), grant(api.PlanPro, month.Add(10*day))}, month.Add(5 * day), api.PlanHobby},
-		{"upgrade applies from its activation", api.PlanPro,
-			[]state.FinancialPriceSnapshot{grant(api.PlanHobby, month), grant(api.PlanPro, month.Add(10*day))}, month.Add(11 * day), api.PlanPro},
+		{"no recorded history uses the current plan", api.PlanPro, nil, month.Add(day), api.IncludedMBSeconds(api.PlanPro)},
+		{"egress grants are ignored", api.PlanHobby, []state.FinancialPriceSnapshot{egress}, month.Add(day), api.IncludedMBSeconds(api.PlanHobby)},
+		{"one plan all month grants its whole allowance", api.PlanScale,
+			[]state.FinancialPriceSnapshot{grant(api.PlanScale, month.Add(time.Minute))}, month.Add(29 * day), api.IncludedMBSeconds(api.PlanScale)},
+		{"a downgrade keeps the larger plan's share", api.PlanHobby,
+			[]state.FinancialPriceSnapshot{grant(api.PlanPro, month), grant(api.PlanHobby, month.Add(10*day))}, month.Add(20 * day),
+			weighted(length, span{api.PlanPro, 10 * day}, span{api.PlanHobby, length - 10*day})},
+		{"an upgrade applies only after its activation", api.PlanPro,
+			[]state.FinancialPriceSnapshot{grant(api.PlanHobby, month), grant(api.PlanPro, month.Add(10*day))}, month.Add(5 * day), api.IncludedMBSeconds(api.PlanHobby)},
+		{"an upgrade counts from its activation to the month's end", api.PlanPro,
+			[]state.FinancialPriceSnapshot{grant(api.PlanHobby, month), grant(api.PlanPro, month.Add(10*day))}, month.Add(11 * day),
+			weighted(length, span{api.PlanHobby, 10 * day}, span{api.PlanPro, length - 10*day})},
+		// The audit's exploit: five minutes on Scale used to grant Scale's
+		// whole allowance for the month.
+		{"a brief upgrade grants only its minutes", api.PlanHobby,
+			[]state.FinancialPriceSnapshot{grant(api.PlanHobby, month), grant(api.PlanScale, month.Add(10*day)), grant(api.PlanHobby, month.Add(10*day+5*time.Minute))}, month.Add(20 * day),
+			weighted(length, span{api.PlanHobby, length - 5*time.Minute}, span{api.PlanScale, 5 * time.Minute})},
+		// Subscribing near the month's end no longer grants that month's
+		// whole allowance on top of the next month's.
+		{"a subscription late in the month grants its days", api.PlanScale,
+			[]state.FinancialPriceSnapshot{grant(api.PlanFree, month), grant(api.PlanScale, month.Add(28*day))}, month.Add(29 * day),
+			weighted(length, span{api.PlanFree, 28 * day}, span{api.PlanScale, length - 28*day})},
 		{"usage before the first activation uses the earliest", api.PlanScale,
-			[]state.FinancialPriceSnapshot{grant(api.PlanHobby, month.Add(3*day)), grant(api.PlanScale, month.Add(9*day))}, month.Add(day), api.PlanHobby},
+			[]state.FinancialPriceSnapshot{grant(api.PlanHobby, month.Add(3*day)), grant(api.PlanScale, month.Add(9*day))}, month.Add(day), api.IncludedMBSeconds(api.PlanHobby)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got, want := state.MonthComputeIncludedMBSeconds(tc.current, tc.snapshots, tc.through), api.IncludedMBSeconds(tc.want); got != want {
-				t.Fatalf("included = %d, want %d (%s)", got, want, tc.want)
+			if got := state.MonthComputeIncludedMBSeconds(tc.current, tc.snapshots, tc.through); got != tc.want {
+				t.Fatalf("included = %d mb_seconds (%.1f GB-h), want %d (%.1f GB-h)", got,
+					float64(got)/float64(api.SecondsPerGBHour), tc.want, float64(tc.want)/float64(api.SecondsPerGBHour))
 			}
 		})
 	}
 }
 
-func TestMonthOverageCentsNeverUsesLessThanCurrentPlan(t *testing.T) {
+func TestMonthOverageCentsCountsAnUncapturedPlanChangeFromNow(t *testing.T) {
 	month := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
-	// The upgrade to Pro is not captured yet: the current plan still counts.
+	half := 15 * 24 * time.Hour
 	hobby := []state.FinancialPriceSnapshot{{Plan: api.PlanHobby, EffectiveFrom: month,
 		Price: financial.Price{Meter: "compute", IncludedQuantity: api.IncludedMBSeconds(api.PlanHobby)}}}
-	usage := 1010 * api.SecondsPerGBHour
-	if got := state.MonthOverageCents(api.PlanPro, hobby, month.Add(time.Hour), usage); got != 10 {
-		t.Fatalf("overage = %d cents, want 10 (1010 GB-h over Pro's 1000)", got)
+	// Half the month on Hobby (200), half on Pro (1000): 600 GB-h included.
+	usage := 610*api.SecondsPerGBHour + api.SecondsPerGBHour/2
+	if got := state.MonthOverageCents(api.PlanPro, hobby, month.Add(half), usage); got != 10 {
+		t.Fatalf("overage = %d cents, want 10 (610.5 GB-h over 600)", got)
 	}
-	if got := state.MonthOverageCents(api.PlanHobby, hobby, month.Add(time.Hour), usage); got != 810 {
-		t.Fatalf("overage = %d cents, want 810 (1010 GB-h over Hobby's 200)", got)
+	if got := state.MonthOverageCents(api.PlanHobby, hobby, month.Add(half), usage); got != 410 {
+		t.Fatalf("overage = %d cents, want 410 (610.5 GB-h over Hobby's 200)", got)
 	}
 }

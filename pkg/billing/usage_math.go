@@ -21,9 +21,10 @@ import (
 // month.
 //
 // The allowance follows the month's recorded plan history exactly as the
-// provider pusher applies it hour by hour (ADR-1162): each UTC hour uses the
-// largest grant activated before the hour ends. A segment is split at the
-// hours where that grant changes, so the result equals the sum of the
+// provider pusher applies it hour by hour (ADR-1162, ADR-20261030093512):
+// each UTC hour uses the time-weighted grant of the activations recorded
+// before the hour ends. A segment is split at the hours where that grant
+// changes, so the result equals the sum of the
 // pusher's hourly deliveries before any spend-cap clamp. acct.Plan is the
 // fallback for stores or months without recorded activations.
 func OverageMBSecondsForRange(ctx context.Context, store UsageRangeStore, acct state.Account, start, end time.Time) (int64, error) {

@@ -45,10 +45,12 @@ in the billing paths:
 3. **Paid warnings follow the month's plan history.** A paid account warns
    only above the compute allowance its month's recorded plans grant,
    computed by the same function the pusher uses
-   (`state.MonthComputeIncludedMBSeconds`), so the warning follows any later
-   change to that rule. The history is read only once usage reaches the
-   current plan's allowance. Free keeps its own allowance after a downgrade:
-   its hard stop is what the financial model prices.
+   (`state.MonthComputeIncludedMBSeconds`, time-weighted by
+   ADR-20261030093512), so the warning follows that rule. The history is read
+   once usage reaches the smallest paid plan's allowance, since after an
+   upgrade the month's allowance can sit below the current plan's. Free keeps
+   its own allowance after a downgrade: its hard stop is what the financial
+   model prices.
 4. **Dunning reports per-account failures.** Failed suspension, deletion and
    follow-up steps fail the tick, joined, after the sweep has visited every
    account. A status that moved under the sweep and a deletion guard are not

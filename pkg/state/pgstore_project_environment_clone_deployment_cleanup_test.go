@@ -42,7 +42,7 @@ func deploymentCleanupFixture(t *testing.T) (*state.PgStore, *pgxpool.Pool, stat
 }
 
 func TestPgCloneDeploymentCleanupAtomicRecovery(t *testing.T) {
-	for _, fault := range []string{"none", "write", "foreign_key", "submission_receipt", "release_env", "release_secrets", "soft", "partition", "drain_plan", "stale", "artifact", "sidecar", "runtime_owner", "missing_workload", "other_capture"} {
+	for _, fault := range []string{"none", "write", "foreign_key", "submission_receipt", "release_env", "release_secrets", "soft", "partition", "drain_plan", "stale", "artifact", "sidecar", "sidecar_env_reseal", "runtime_owner", "missing_workload", "other_capture"} {
 		t.Run(fault, func(t *testing.T) {
 			s, pool, l, native := deploymentCleanupFixture(t)
 			id := native.Plan.Workloads[0].TargetDeploymentID
@@ -78,6 +78,9 @@ func TestPgCloneDeploymentCleanupAtomicRecovery(t *testing.T) {
 				fault = "none"
 			case "sidecar":
 				_, err = pool.Exec(t.Context(), "INSERT INTO deployment_sidecar_layers(deployment_id,sidecar_name,storage_key,bytes,content_digest) VALUES($1,'foreign','foreign',1,'sha256:foreign')", id)
+			case "sidecar_env_reseal":
+				// A runtime-domain copy (ADR-20261022111812) is not a copied sidecar: it blocks.
+				_, err = pool.Exec(t.Context(), "INSERT INTO deployment_sidecar_env_reseals(deployment_id,sidecar_name,env_key,source_sha256,kid,ciphertext) VALUES($1,'agent','TOKEN',repeat('a',64),'age1'||repeat('q',58),'\\x01')", id)
 			case "runtime_owner":
 				_, err = pool.Exec(t.Context(), "UPDATE deployment_runtime_environment_owners SET environment_id=$2 WHERE deployment_id=$1", id, uuid.NewString())
 			case "missing_workload":

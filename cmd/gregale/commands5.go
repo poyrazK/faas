@@ -1172,6 +1172,9 @@ func cmdAppDispatch(args []string) int {
 		return 1
 	}
 	slug := args[0]
+	if code, ok := cmdAppConditions(slug, args[1:]); ok {
+		return code
+	}
 	if len(args) >= 2 {
 		switch args[1] {
 		case subHealth:
