@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "79199bb65253e85bfe7a9d8c313da519f4bca817a58c55434cdd765d40575680",
+      "revision": "0c73666aa5f2c741129526d9430f45c2ee579421c3e6a4f4d0ac32cc9fc3feb0",
       "files": [
         "faas.rules.yml"
       ],
@@ -686,6 +686,19 @@
           }
         },
         {
+          "id": "1748a92d2aadd9ca12c1d049545a7775e10fbef5e7a120f301af6d32f1f48095",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_event_routing",
+          "rule_name": "FaasEventRoutingFailing",
+          "definition": {
+            "expression_hash": "7f7dd61269b69120ce135ab68cd66afece1c3279657e380635687bfb7541878d",
+            "labels_hash": "8d92fa3abf8327e6a2e6bd0951e37822c2cd542e636c1d3452dd0935be8344e7",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "2a154c027d178ee4ec87e32a2c6adfe9c2b5ce6c42d3e79678f20df0504ba4d0"
+          }
+        },
+        {
           "id": "1780c955a5efdc90a29a3082b4342535d96692f05d7131ab39b6d78e9800c69a",
           "file_name": "faas.rules.yml",
           "group_name": "faas_billing",
@@ -1146,11 +1159,11 @@
           "group_name": "faas_event_routing",
           "rule_name": "FaasDeadLetterSpike",
           "definition": {
-            "expression_hash": "f029c6dfc7c7202496ed508810328c5adc1654e51dcc486728bbcd4fa0932e2c",
+            "expression_hash": "2a6275d44cd8d923ac6b1cc9051e4d2b07149754a7b669f6410fbe6199e68e38",
             "labels_hash": "8d92fa3abf8327e6a2e6bd0951e37822c2cd542e636c1d3452dd0935be8344e7",
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "f0725e87c917b90cebdf77a7e2a0dea5b3e89ffb47020af1264bd5b71de8a073"
+            "fingerprint": "69e792e38ae4cf33530ac74e4825d993c9effb03542cc793b6f5fbee22253c07"
           }
         },
         {
@@ -1575,11 +1588,11 @@
           "group_name": "faas_event_routing",
           "rule_name": "FaasEventRoutingStalled",
           "definition": {
-            "expression_hash": "fc9305c5bfaba005366d87af08ede1d041dd801235d42c04d2458af33cd3032b",
+            "expression_hash": "4273383ac53f5c1aa9277be8e93d9d8c5ebfc54476506663ad4b80bf148eff39",
             "labels_hash": "3d015be31b6c301db2daab827186f0210ef8cffc64c00e2e7908f062784d8bbf",
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "89bfae90c6769e50f1d0d471833d6434b07e68fabb1f9a11c66ece9f5c4b7f0c"
+            "fingerprint": "173af11c2ec93ebd8fae16b1b9286e37094eedd5412170ffa045b190314e5f21"
           }
         },
         {
@@ -6513,7 +6526,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "a2ca37bfd6ac2c8cb5fe488829cbcf4d28e500c3674af24a14fc13bb63c32dd7",
+      "revision": "8aa288411a97222dbf2cd9e14043eb921bb3f887b521e77acf0f38ba090d1339",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -7225,6 +7238,19 @@
           }
         },
         {
+          "id": "1748a92d2aadd9ca12c1d049545a7775e10fbef5e7a120f301af6d32f1f48095",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_event_routing",
+          "rule_name": "FaasEventRoutingFailing",
+          "definition": {
+            "expression_hash": "7f7dd61269b69120ce135ab68cd66afece1c3279657e380635687bfb7541878d",
+            "labels_hash": "8d92fa3abf8327e6a2e6bd0951e37822c2cd542e636c1d3452dd0935be8344e7",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "2a154c027d178ee4ec87e32a2c6adfe9c2b5ce6c42d3e79678f20df0504ba4d0"
+          }
+        },
+        {
           "id": "1780c955a5efdc90a29a3082b4342535d96692f05d7131ab39b6d78e9800c69a",
           "file_name": "faas.rules.yml",
           "group_name": "faas_billing",
@@ -7737,11 +7763,11 @@
           "group_name": "faas_event_routing",
           "rule_name": "FaasDeadLetterSpike",
           "definition": {
-            "expression_hash": "f029c6dfc7c7202496ed508810328c5adc1654e51dcc486728bbcd4fa0932e2c",
+            "expression_hash": "2a6275d44cd8d923ac6b1cc9051e4d2b07149754a7b669f6410fbe6199e68e38",
             "labels_hash": "8d92fa3abf8327e6a2e6bd0951e37822c2cd542e636c1d3452dd0935be8344e7",
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "f0725e87c917b90cebdf77a7e2a0dea5b3e89ffb47020af1264bd5b71de8a073"
+            "fingerprint": "69e792e38ae4cf33530ac74e4825d993c9effb03542cc793b6f5fbee22253c07"
           }
         },
         {
@@ -8166,11 +8192,11 @@
           "group_name": "faas_event_routing",
           "rule_name": "FaasEventRoutingStalled",
           "definition": {
-            "expression_hash": "fc9305c5bfaba005366d87af08ede1d041dd801235d42c04d2458af33cd3032b",
+            "expression_hash": "4273383ac53f5c1aa9277be8e93d9d8c5ebfc54476506663ad4b80bf148eff39",
             "labels_hash": "3d015be31b6c301db2daab827186f0210ef8cffc64c00e2e7908f062784d8bbf",
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "89bfae90c6769e50f1d0d471833d6434b07e68fabb1f9a11c66ece9f5c4b7f0c"
+            "fingerprint": "173af11c2ec93ebd8fae16b1b9286e37094eedd5412170ffa045b190314e5f21"
           }
         },
         {

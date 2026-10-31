@@ -6881,7 +6881,12 @@ groups:
       # sweep runs every 5 s on every schedd and on every publish; a fleet
       # with no completed sweep for ten minutes routes no event at all.
       - alert: FaasEventRoutingStalled
-        expr: sum(increase(schedd_loop_work_duration_seconds_count{kind="event_fanout"}[10m])) == 0
+        expr: |
+          sum(increase(schedd_loop_work_duration_seconds_count{kind="event_fanout"}[10m])) == 0
+          or (
+            sum(increase(schedd_event_routing_outcomes_total{outcome="claim_error"}[10m])) > 0
+            and sum(increase(schedd_event_routing_outcomes_total{outcome=~"routed|waiting|retry|failed"}[10m])) == 0
+          )
         for: 5m
         labels:
           severity: page
@@ -6890,7 +6895,7 @@ groups:
           public_status: internal
         annotations:
           summary: "Event routing has stopped on every schedd"
-          description: "No schedd has completed an event routing sweep for fifteen minutes, so published events, object notifications and webhook automations are accepted but not delivered. Check schedd health, the event_fanout work kind and database latency."
+          description: "For fifteen minutes no schedd has completed an event routing sweep, or the sweeps that ran could not claim any routing work and routed nothing, so published events, object notifications and webhook automations are accepted but not delivered. Check schedd health and its claim errors, the event_fanout work kind and database latency."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEventDriven.md"
       - alert: FaasEventRoutingSweepSlow
         expr: |
@@ -6918,8 +6923,25 @@ groups:
           summary: "Many event deliveries are waiting for consumer capacity"
           description: "{{ $value }} event deliveries platform-wide have waited for consumer capacity for thirty minutes. One account's slow consumer is the usual cause; many accounts at once point at the invocation drain or node capacity."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEventDriven.md"
+      - alert: FaasEventRoutingFailing
+        expr: |
+          sum(increase(schedd_event_routing_outcomes_total{outcome=~"retry|failed"}[15m]))
+            / sum(increase(schedd_event_routing_outcomes_total{outcome=~"routed|waiting|retry|failed"}[15m])) > 0.5
+          and on () sum(increase(schedd_event_routing_outcomes_total{outcome=~"retry|failed"}[15m])) >= 50
+        for: 15m
+        labels:
+          severity: warn
+          component: schedd
+          family: event_routing
+          public_status: internal
+        annotations:
+          summary: "Most event recipients are failing to route"
+          description: "More than half of the event recipients routed in fifteen minutes failed or were put back to retry. Routing is running but not delivering. One subscription whose target is gone is the usual cause; many apps at once point at the database or the invocation queue."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEventDriven.md"
       - alert: FaasDeadLetterSpike
-        expr: sum(increase(faas_dlq_events_total[10m])) > 200
+        expr: |
+          (sum(increase(faas_dlq_events_total[10m])) or vector(0))
+            + (sum(increase(schedd_event_routing_outcomes_total{outcome="failed"}[10m])) or vector(0)) > 200
         for: 5m
         labels:
           severity: warn
@@ -6928,7 +6950,7 @@ groups:
           public_status: internal
         annotations:
           summary: "Dead letters are arriving fast"
-          description: "More than 200 invocations and trigger records reached the dead-letter queue in ten minutes, fleet-wide. One app's failing handler is the usual cause; many apps at once point at the gateway, wakes or a broker."
+          description: "More than 200 invocations, trigger records and event recipients whose routing failed reached the dead-letter queue in ten minutes, fleet-wide. One app's failing handler is the usual cause; many apps at once point at the gateway, wakes, a broker or event routing."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEventDriven.md"
       - alert: FaasBrokerTriggerPollErrors
         expr: |
