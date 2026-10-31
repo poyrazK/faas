@@ -49,6 +49,7 @@ import (
 	"net"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -108,6 +109,11 @@ const (
 	// pressure report that schedd turns into an automatic heap capture
 	// (ADR-1155). Mirrors guest/init/memory_pressure_linux.go.
 	VsockFrameworkReadyHostTypeMemoryPressure byte = 0x0A
+	// VsockFrameworkReadyHostTypeEventPublishVerdict carries an in-guest
+	// event publish that waits for vmmd's verdict (ADR-20261031102000): a
+	// 4-byte big-endian body length, the body, and vmmd's reply. Unlike the
+	// other types it is not EOF-delimited.
+	VsockFrameworkReadyHostTypeEventPublishVerdict byte = 0x0B
 )
 
 // memoryPressureWire is the type=0x0A JSON body. Values are MiB.
@@ -208,10 +214,19 @@ func (r *FrameworkReadyReceiver) handleGuestStream(instance string, conn net.Con
 	if err := conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
 		return "read", fmt.Errorf("framework_ready set deadline: %w", err)
 	}
-	body, err := io.ReadAll(io.LimitReader(conn, int64(VsockEventPublishMaxBody)+2))
+	var kind [1]byte
+	n, err := io.ReadFull(conn, kind[:])
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "read", fmt.Errorf("framework_ready read: %w", err)
+	}
+	if n == 1 && kind[0] == VsockFrameworkReadyHostTypeEventPublishVerdict {
+		return r.handleEventPublishVerdict(instance, conn)
+	}
+	rest, err := io.ReadAll(io.LimitReader(conn, int64(VsockEventPublishMaxBody)+1))
 	if err != nil {
 		return "read", fmt.Errorf("framework_ready read: %w", err)
 	}
+	body := append(kind[:n:n], rest...)
 	if len(body) > int(VsockEventPublishMaxBody)+1 {
 		return "protocol", fmt.Errorf("framework_ready frame %d bytes exceeds event cap %d", len(body), VsockEventPublishMaxBody+1)
 	}
@@ -518,32 +533,81 @@ func (r *FrameworkReadyReceiver) dispatchDiskUsage(instance string, wire diskUsa
 		"capacity_bytes", wire.CapacityBytes)
 }
 
+// dispatchEventPublish handles a type=0x07 publish from a guest-init that
+// does not wait for an answer. A refusal can only be logged.
 func (r *FrameworkReadyReceiver) dispatchEventPublish(instance string, payload []byte) {
+	_ = r.publishGuestEvent(r.ctx, instance, payload)
+}
+
+// publishGuestEvent persists one in-guest publish and reports why it was
+// refused, if it was. Every refusal is logged, as before verdicts existed.
+func (r *FrameworkReadyReceiver) publishGuestEvent(ctx context.Context, instance string, payload []byte) error {
 	// A contained rehearsal guest's events are captured into its run and never
 	// reach the account's event bus (ADR-20261020090000).
 	if r.mgr != nil {
 		if app, account, run, contained := r.mgr.InstanceRehearsalEventIdentity(instance); contained {
 			if r.eventCapturer == nil {
 				r.log.Warn("rehearsal event capture unavailable", "instance", instance)
-				return
+				return errGuestEventPublishUnavailable
 			}
-			if err := r.eventCapturer(r.ctx, instance, app, account, run, payload); err != nil {
+			if err := r.eventCapturer(ctx, instance, app, account, run, payload); err != nil {
 				r.log.Warn("rehearsal event capture failed", "instance", instance, "err", err)
+				return err
 			}
-			return
+			return nil
 		}
 	}
 	if r.eventPublisher == nil || r.mgr == nil {
 		r.log.Warn("event publish receiver unavailable", "instance", instance)
-		return
+		return errGuestEventPublishUnavailable
 	}
-	if _, _, err := r.mgr.InstanceExternalActionIdentity(r.ctx, instance); err != nil {
+	if _, _, err := r.mgr.InstanceExternalActionIdentity(ctx, instance); err != nil {
 		r.log.Warn("event publish identity unavailable", "instance", instance, "err", err)
-		return
+		return err
 	}
-	if err := r.eventPublisher(r.ctx, instance, payload); err != nil {
+	if err := r.eventPublisher(ctx, instance, payload); err != nil {
 		r.log.Warn("in-guest event publish failed", "instance", instance, "err", err)
+		return err
 	}
+	return nil
+}
+
+// handleEventPublishVerdict serves a type=0x0B publish (ADR-20261031102000):
+// a 4-byte big-endian body length and the body, answered with a 2-byte
+// big-endian length and vmmd's JSON verdict. guest-init returns the verdict
+// to the app, so a refused event is no longer acknowledged with 202. Neither
+// side waits for EOF: Firecracker's vsock does not reliably carry a
+// half-close.
+func (r *FrameworkReadyReceiver) handleEventPublishVerdict(instance string, conn net.Conn) (string, error) {
+	var size [4]byte
+	if _, err := io.ReadFull(conn, size[:]); err != nil {
+		return "read", fmt.Errorf("event publish verdict length: %w", err)
+	}
+	n := binary.BigEndian.Uint32(size[:])
+	if n == 0 || n > uint32(VsockEventPublishMaxBody) {
+		return "protocol", fmt.Errorf("event publish verdict body %d bytes outside 1..%d", n, VsockEventPublishMaxBody)
+	}
+	body := make([]byte, n)
+	if _, err := io.ReadFull(conn, body); err != nil {
+		return "read", fmt.Errorf("event publish verdict body: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(r.ctx, guestEventPublishBudget)
+	verdict := guestEventPublishVerdict(r.publishGuestEvent(ctx, instance, body))
+	cancel()
+	reply, err := json.Marshal(verdict)
+	if err != nil || len(reply) > api.EventPublishVerdictMaxBytes {
+		return "protocol", fmt.Errorf("event publish verdict encode: %d bytes, %v", len(reply), err)
+	}
+	frame := make([]byte, 2+len(reply))
+	binary.BigEndian.PutUint16(frame, uint16(len(reply)))
+	copy(frame[2:], reply)
+	if err := conn.SetWriteDeadline(time.Now().Add(time.Second)); err != nil {
+		return "write", fmt.Errorf("event publish verdict deadline: %w", err)
+	}
+	if _, err := conn.Write(frame); err != nil {
+		return "write", fmt.Errorf("event publish verdict write: %w", err)
+	}
+	return "", nil
 }
 
 // parseFWKind is the discriminator for

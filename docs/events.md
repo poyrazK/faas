@@ -334,9 +334,10 @@ While it is paused:
 
 - Publishing answers `503 events_paused` with `Retry-After`, from
   `POST /v1/events:publish`, `:publish-batch`, the app producer route, the
-  platform-tenant route and in-app publishing (the runtime's metadata endpoint
-  answers `503 event_publish_unavailable`). Nothing is accepted, so resend the
-  same events after the back-off; the SDK outbox does this for you.
+  platform-tenant route and in-app publishing (see
+  [Publishing from inside your app](#publishing-from-inside-your-app)).
+  Nothing is accepted, so resend the same events after the back-off; the SDK
+  outbox does this for you.
 - Events already accepted are kept and wait to be routed; routing resumes when
   the pause ends. Delivery-age limits keep counting while they wait.
 - Deliveries that already became invocations run as usual.
@@ -355,6 +356,29 @@ event_publish_rate_limited` with the limit, the number of events it carried and
 `Retry-After`; retry the same events, with the same ids, after that delay. The
 rate is kept per API process, and the plan's retained event storage still bounds
 the sustained rate. See [ADR 20261026140000](adr/20261026140000-event-app-sources-and-publish-rate.md).
+
+### Publishing from inside your app
+
+Code running in your app can publish without an API key: POST one event
+envelope (at most 64 KiB) to the URL in `FAAS_EVENT_PUBLISH_ENDPOINT`. The
+platform fills in your account and app. The answer is the platform's
+decision on that event
+([ADR 20261031102000](adr/20261031102000-in-guest-publish-verdict.md)):
+
+| Status | Code | Meaning |
+|---|---|---|
+| `202` | | Accepted and stored; it will be routed. |
+| `400` | `invalid_event` | The envelope is malformed or uses a reserved source. Fix it; do not retry as is. |
+| `422` | `validation_failed` | The data does not match the event's registered schema. |
+| `429` | `event_publish_rate_limited` | Over your plan's [publish rate](#publish-rate). Retry the same event after `Retry-After`. |
+| `503` | `events_paused` | Events are [paused](#pausing-events). Retry the same event after `Retry-After`. |
+| `503` | `event_publish_unavailable` | Not stored. Retry the same event after `Retry-After`. |
+| `503` | `event_publish_unconfirmed` | The platform got the event but its answer was lost, so it may have been stored. Retry the same event, with the same `id`: if it was stored, the retry answers `202` and the event is still delivered once. |
+
+Set your own `id` on events whose loss matters. Without one, a retry after
+`event_publish_unconfirmed` can store the event twice. Apps on an older
+runtime receive `202` as soon as the event is handed to the platform, before
+it is checked.
 
 ### Batch event publishing
 
