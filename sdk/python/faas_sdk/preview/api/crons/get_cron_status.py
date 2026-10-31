@@ -1,0 +1,180 @@
+from http import HTTPStatus
+from typing import Any
+from urllib.parse import quote
+
+import httpx
+
+from ...client import AuthenticatedClient, Client
+from ...models.problem import Problem
+from ...models.resource_status import ResourceStatus
+from ...types import Response
+
+
+def _get_kwargs(
+    id: str,
+) -> dict[str, Any]:
+
+    _kwargs: dict[str, Any] = {
+        "method": "get",
+        "url": "/v1/crons/{id}/status".format(
+            id=quote(str(id), safe=""),
+        ),
+    }
+
+    return _kwargs
+
+
+def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> Problem | ResourceStatus:
+    if response.status_code == 200:
+        response_200 = ResourceStatus.from_dict(response.json())
+
+        return response_200
+
+    response_default = Problem.from_dict(response.json())
+
+    return response_default
+
+
+def _build_response(
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> Response[Problem | ResourceStatus]:
+    return Response(
+        status_code=HTTPStatus(response.status_code),
+        content=response.content,
+        headers=response.headers,
+        parsed=_parse_response(client=client, response=response),
+    )
+
+
+def sync_detailed(
+    id: str,
+    *,
+    client: AuthenticatedClient | Client,
+) -> Response[Problem | ResourceStatus]:
+    """Read a cron's conditions.
+
+     Preview (resource-conditions capability). The cron's Ready and
+    LastRunSucceeded conditions, from the cron and its newest run as
+    GET /v1/crons/{id}/runs reports it, and never stored. A disabled cron
+    is terminally not ready; a suspended one is not ready until the
+    suspension clears. LastRunSucceeded describes the newest run, so it
+    is never terminal. Cache-Control no-store.
+
+    Args:
+        id (str):
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        Response[Problem | ResourceStatus]
+    """
+
+    kwargs = _get_kwargs(
+        id=id,
+    )
+
+    response = client.get_httpx_client().request(
+        **kwargs,
+    )
+
+    return _build_response(client=client, response=response)
+
+
+def sync(
+    id: str,
+    *,
+    client: AuthenticatedClient | Client,
+) -> Problem | ResourceStatus | None:
+    """Read a cron's conditions.
+
+     Preview (resource-conditions capability). The cron's Ready and
+    LastRunSucceeded conditions, from the cron and its newest run as
+    GET /v1/crons/{id}/runs reports it, and never stored. A disabled cron
+    is terminally not ready; a suspended one is not ready until the
+    suspension clears. LastRunSucceeded describes the newest run, so it
+    is never terminal. Cache-Control no-store.
+
+    Args:
+        id (str):
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        Problem | ResourceStatus
+    """
+
+    return sync_detailed(
+        id=id,
+        client=client,
+    ).parsed
+
+
+async def asyncio_detailed(
+    id: str,
+    *,
+    client: AuthenticatedClient | Client,
+) -> Response[Problem | ResourceStatus]:
+    """Read a cron's conditions.
+
+     Preview (resource-conditions capability). The cron's Ready and
+    LastRunSucceeded conditions, from the cron and its newest run as
+    GET /v1/crons/{id}/runs reports it, and never stored. A disabled cron
+    is terminally not ready; a suspended one is not ready until the
+    suspension clears. LastRunSucceeded describes the newest run, so it
+    is never terminal. Cache-Control no-store.
+
+    Args:
+        id (str):
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        Response[Problem | ResourceStatus]
+    """
+
+    kwargs = _get_kwargs(
+        id=id,
+    )
+
+    response = await client.get_async_httpx_client().request(**kwargs)
+
+    return _build_response(client=client, response=response)
+
+
+async def asyncio(
+    id: str,
+    *,
+    client: AuthenticatedClient | Client,
+) -> Problem | ResourceStatus | None:
+    """Read a cron's conditions.
+
+     Preview (resource-conditions capability). The cron's Ready and
+    LastRunSucceeded conditions, from the cron and its newest run as
+    GET /v1/crons/{id}/runs reports it, and never stored. A disabled cron
+    is terminally not ready; a suspended one is not ready until the
+    suspension clears. LastRunSucceeded describes the newest run, so it
+    is never terminal. Cache-Control no-store.
+
+    Args:
+        id (str):
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        Problem | ResourceStatus
+    """
+
+    return (
+        await asyncio_detailed(
+            id=id,
+            client=client,
+        )
+    ).parsed
