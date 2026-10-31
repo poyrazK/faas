@@ -170,7 +170,9 @@ egress ceiling".
    - `s3_gateway_service` in the compute play, with the compute unit variant;
    - the `faas-cloudflared-s3` connector;
    - manifest `object_storage.gateway_on_compute` and per-node port speed;
-   - the two reserves in schedd's admission.
+   - the two reserves: the node join runs `gregalectl compute-nodes sizing
+     --edge --object-gateway`, which registers the node's tenant capacity
+     without them.
 5. Load test on one node, as the acceptance gate. Measure small GETs per
    second, large-GET throughput at the share, and PUTs per second for one
    account. It passes when:
