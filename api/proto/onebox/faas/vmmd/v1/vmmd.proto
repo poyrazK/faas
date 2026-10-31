@@ -2798,13 +2798,41 @@ message RunAgentRelay {
 message RunAgentCancel {}
 
 // RunAgentEvent is a server frame on the RunAgent stream: booted once, then
-// output chunks, then exactly one result.
+// output chunks, then at most one usage and exactly one result. A run whose
+// exchange failed still sends its usage before the error ends the stream.
 message RunAgentEvent {
   oneof frame {
     RunAgentBooted booted = 1;
     ExecuteExecutionOutputChunk output = 2;
     RunAgentResult result = 3;
+    AgentRunUsage usage = 4;
   }
+}
+
+// AgentRunUsage is a run VM's measured memory (ADR-20261027090011
+// Measurement): its private memory (anon + shmem) sampled each second, with
+// the time it spent quiet-paused waiting on the model (ADR-20261027090012)
+// counted apart. MB is MiB; mb_ms sums MB × milliseconds. Nothing bills it
+// yet. An older vmmd sends none.
+message AgentRunUsage {
+  // method versions the measurement rules; this vmmd's is 1.
+  int32 method = 1;
+  // samples counts the intervals whose memory was read; expected_samples
+  // counts every interval.
+  int32 samples = 2;
+  int32 expected_samples = 3;
+  int64 measured_ms = 4;
+  int64 paused_ms = 5;
+  // private_mb_ms covers the read intervals; unpaused_private_mb_ms only
+  // their unpaused time.
+  int64 private_mb_ms = 6;
+  int64 unpaused_private_mb_ms = 7;
+  // billable_mb_ms is the unpaused time of the read intervals at
+  // max(private, the 256 MB floor) + 8 MB per second.
+  int64 billable_mb_ms = 8;
+  int64 peak_private_mb = 9;
+  // cold_boot is true when the VM booted its image, not a snapshot.
+  bool cold_boot = 10;
 }
 
 message RunAgentBooted {

@@ -139,25 +139,35 @@ type AgentRunDialer interface {
 // RunAgent sends one run to a VM WakeAgentRun booted, streams its output to
 // receive, and destroys the VM on every path, so a run never outlives its
 // result (a parked app consumes zero resources; a finished run, too).
-// Closing cancel asks the guest to stop the harness.
-func (m *Manager) RunAgent(ctx context.Context, instance string, req agentrunproto.Request, receive agentrunproto.OutputReceiver, cancel <-chan struct{}) (agentrunproto.Result, error) {
+// Closing cancel asks the guest to stop the harness. Once the VM was found,
+// the run's measured usage (ADR-20261027090011) comes back on every path,
+// with or without an error; it is nil when the VMM cannot measure it.
+func (m *Manager) RunAgent(ctx context.Context, instance string, req agentrunproto.Request, receive agentrunproto.OutputReceiver, cancel <-chan struct{}) (agentrunproto.Result, *AgentRunUsage, error) {
 	if err := req.Validate(); err != nil {
-		return agentrunproto.Result{}, err
+		return agentrunproto.Result{}, nil, err
 	}
 	if m == nil || m.vmm == nil {
-		return agentrunproto.Result{}, ErrAgentRunNotConfigured
+		return agentrunproto.Result{}, nil, ErrAgentRunNotConfigured
 	}
 	m.mu.Lock()
 	inst, ok := m.live[instance]
 	m.mu.Unlock()
 	if !ok || inst == nil || !inst.AgentRunOnly {
-		return agentrunproto.Result{}, ErrAgentRunInstanceNotFound
+		return agentrunproto.Result{}, nil, ErrAgentRunInstanceNotFound
 	}
 	defer func() {
 		destroyCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), agentRunDestroyTimeout)
 		defer stop()
 		_ = m.Destroy(destroyCtx, instance)
 	}()
+	// The last sample is taken before the deferred destroy.
+	stopUsage := m.agentUsageRun(instance, inst)
+	result, err := m.agentRunExchange(ctx, instance, inst, req, receive, cancel)
+	return result, stopUsage(), err
+}
+
+func (m *Manager) agentRunExchange(ctx context.Context, instance string, inst *Instance, req agentrunproto.Request,
+	receive agentrunproto.OutputReceiver, cancel <-chan struct{}) (agentrunproto.Result, error) {
 	dialer, ok := m.vmm.(AgentRunDialer)
 	if !ok {
 		return agentrunproto.Result{}, ErrAgentRunNotConfigured
