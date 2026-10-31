@@ -207,6 +207,7 @@ sql:
 
   - engine: "postgresql"
     queries:
+      - "pkg/state/agent_connection_queries.sql"
       - "pkg/state/audit_anchor_queries.sql"
       - "pkg/state/audit_outbox_delivery_queries.sql"
       - "pkg/state/automation_live_queries.sql"

@@ -906,6 +906,17 @@
     }
   },
   {
+    "table": "api_key_agent_clients",
+    "columns": [
+      "account_id",
+      "client_name",
+      "client_site",
+      "created_at",
+      "key_id"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "api_keys",
     "columns": [
       "account_id",

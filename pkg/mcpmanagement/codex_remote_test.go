@@ -56,7 +56,9 @@ func runCodexRemoteOAuthAcceptance(t *testing.T, requestMode string) {
 	if requestMode != "" {
 		f.mu.Lock()
 		f.apiHook = func(w http.ResponseWriter, req *http.Request, account string) bool {
-			if req.Method != http.MethodGet && req.URL.Path != "/v1/apps/alpha/source-review" && req.URL.Path != "/v1/apps/alpha/debug/compare" {
+			// The bridge naming and retiring its own key is not an agent write
+			// (ADR-20261030133644).
+			if req.Method != http.MethodGet && req.URL.Path != "/v1/apps/alpha/source-review" && req.URL.Path != "/v1/apps/alpha/debug/compare" && req.URL.Path != "/v1/agent-connections/self" {
 				nativeWrites.Add(1)
 			}
 			if req.URL.Path == "/v1/apps/alpha" && replaced.Load() {
