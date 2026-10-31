@@ -34,6 +34,7 @@ type Store interface {
 	ClaimRun(ctx context.Context, owner, token string, ttl time.Duration, maxLive func(plan string) int) (agentstore.Claim, bool, error)
 	MarkRunning(ctx context.Context, runID, token, nodeID, instanceID string, aiBudgetMillicents int64) error
 	RecordBoot(ctx context.Context, runID, token string, boot time.Duration) error
+	RecordUsage(ctx context.Context, runID, token string, u agentstore.Usage) error
 	Renew(ctx context.Context, runID, token string, ttl time.Duration) (bool, error)
 	Requeue(ctx context.Context, runID, token string) error
 	FinishRun(ctx context.Context, accountID, runID, token string, f agentstore.Finish) error
@@ -277,6 +278,9 @@ type run struct {
 	stopRun context.CancelFunc
 	// aiBudget is the run's model spend cap, recorded with the fence.
 	aiBudget int64
+	// ramMB is the run's configured RAM, the base its measured usage is
+	// compared with.
+	ramMB int
 	// opened is when the RunAgent stream was opened; placedAt is when
 	// schedd placed the run (zero until then).
 	opened   time.Time
@@ -317,7 +321,7 @@ func (a *Agentd) drive(ctx context.Context, claim agentstore.Claim) {
 		a.requeue(ctx, claim, err)
 		return
 	}
-	r := &run{a: a, claim: claim, stream: stream, stopRun: stop, aiBudget: aiBudget(claim), opened: opened}
+	r := &run{a: a, claim: claim, stream: stream, stopRun: stop, aiBudget: aiBudget(claim), ramMB: machine.RAMMB, opened: opened}
 	body, err := json.Marshal(req)
 	if err == nil {
 		err = r.send(&scheddpb.AgentRunRequest{Frame: &scheddpb.AgentRunRequest_Start{Start: &scheddpb.AgentRunStart{
@@ -457,10 +461,26 @@ func (r *run) receive(ctx context.Context) {
 			}
 		case event.GetOutput() != nil:
 			r.tail.write(event.GetOutput().GetChunk())
+		case event.GetUsage() != nil:
+			r.usage(ctx, event.GetUsage())
 		case event.GetResult() != nil:
 			r.result(ctx, event.GetResult().GetResult())
 			return
 		}
+	}
+}
+
+// usage records vmmd's measured memory of the run VM (ADR-20261027090011,
+// not billed yet). A failed write is logged and the run goes on to its
+// outcome.
+func (r *run) usage(ctx context.Context, u *scheddpb.AgentRunUsage) {
+	usage := agentstore.Usage{Method: int(u.GetMethod()), Samples: int(u.GetSamples()), ExpectedSamples: int(u.GetExpectedSamples()),
+		MeasuredMillis: u.GetMeasuredMs(), PausedMillis: u.GetPausedMs(), PrivateMBMillis: u.GetPrivateMbMs(),
+		UnpausedPrivateMBMillis: u.GetUnpausedPrivateMbMs(), BillableMBMillis: u.GetBillableMbMs(), PeakPrivateMB: u.GetPeakPrivateMb(),
+		ColdBoot: u.GetColdBoot()}
+	r.a.metrics.used(usage, r.ramMB)
+	if err := r.a.store.RecordUsage(ctx, r.claim.RunID, r.claim.LeaseToken, usage); err != nil {
+		r.a.log.Warn("agentd: record usage", "run_id", r.claim.RunID, "err", err)
 	}
 }
 

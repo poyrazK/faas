@@ -216,7 +216,7 @@ func (e *Engine) parkZeroTrafficSibling(ctx context.Context, appID, requested st
 	if ctx.Err() != nil {
 		return false
 	}
-	instances, err := e.store.ListInstancesForApp(ctx, appID)
+	instances, err := e.liveInstancesForApp(ctx, appID)
 	if err != nil {
 		return false
 	}
