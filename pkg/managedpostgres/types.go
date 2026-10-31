@@ -975,6 +975,21 @@ type Database struct {
 	RestoreSlotUntil time.Time
 }
 
+// RestoreRange is the span a point-in-time restore from d can target at now:
+// from the later of its creation and the start of its restore window, up to
+// now (exclusive). Restore applies the same bounds; ok is false while d
+// cannot be restored from.
+func (d Database) RestoreRange(now time.Time) (earliest, latest time.Time, ok bool) {
+	if d.State != StateReady || d.ProviderResourceID == "" || d.Spec.RestoreWindowSeconds <= 0 || !d.CreatedAt.Before(now) {
+		return time.Time{}, time.Time{}, false
+	}
+	earliest = now.Add(-time.Duration(d.Spec.RestoreWindowSeconds) * time.Second)
+	if earliest.Before(d.CreatedAt) {
+		earliest = d.CreatedAt
+	}
+	return earliest, now, true
+}
+
 // Restorable reports whether a scheduled delete can still be undone at now.
 func (d Database) Restorable(now time.Time) bool {
 	return d.State == StateDeleting && !d.PurgeAfter.IsZero() && d.PurgeAfter.After(now)

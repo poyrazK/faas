@@ -26,7 +26,7 @@
      - A scheduled delete does not free room: a database in its undo window still counts (ADR-20261029174950).
   4. **When the slot ends with no room, the copy's delete is scheduled.**
      - At `restore_slot_until`, the reconciler schedules the database's delete exactly as a customer delete. The state becomes `deleting`, `restorable_until` is 7 days later, and the provider hold stops its compute.
-     - The account gets a `managed_postgres.database.restore_slot_expired` audit event and an email.
+     - The account gets a `managed_postgres.database.restore_slot_expired` audit event, and an email once its template lands (Delivery 2).
      - The source is never touched, so the only data the delete can lose is what was written to the copy after the restore.
   5. **Undo and a second restore.**
      - Recovering a copy whose slot expired needs room under the plan's limit, like any undelete. The slot is not granted again, so it cannot extend itself.
@@ -45,7 +45,7 @@
      - reservation in `PostgresStore` and `MemoryStore` (the contract test covers both);
      - the view field in OpenAPI and the SDKs;
      - CLI output, the catalog plans and the docs.
-  2. **Lifecycle:** the slot release and expiry in the lifecycle reconciler, through `ScheduleDelete` with a system actor; the recover rule; the audit event and the email template (the mail template CHECK hazard applies: re-create the full list).
+  2. **Lifecycle:** the slot release and expiry in the lifecycle reconciler, through `ScheduleDelete` with a system actor; the recover rule; the audit event. The email follows in its own change: a new mail template re-creates the template CHECK lists (the hazard recorded with the cap emails).
   3. **Storage pool:** the exclusion in the storage pool's sum.
   4. **Journey:** `TestManagedPostgres`'s restore step stops skipping on one-database plans and checks `restore_slot_until`.
 - **Why:** Free and Hobby customers should be able to recover from their own mistakes without upgrading first. A short-lived copy gives them that, while the plan's database count stays what the financial model sells.

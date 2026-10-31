@@ -209,3 +209,41 @@ func TestRestoreSlotStaysWithACopyTheCustomerDeleted(t *testing.T) {
 		t.Fatalf("restore after the purge: %v", err)
 	}
 }
+
+// TestRestoreRangeMatchesWhatRestoreAccepts pins the shown range to Restore's
+// own bounds: a point just inside it restores, one just outside is refused.
+func TestRestoreRangeMatchesWhatRestoreAccepts(t *testing.T) {
+	f := newSlotFixture(t)
+	*f.limit = 10
+	ctx := context.Background()
+	source, err := f.service.Create(ctx, CreateRequest{AccountID: "account-a", Name: "orders", Spec: testSpec()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok := source.RestoreRange(source.CreatedAt); ok {
+		t.Fatal("a database has a restore range at the instant it was created")
+	}
+	window := time.Duration(source.Spec.RestoreWindowSeconds) * time.Second
+	for i, age := range []time.Duration{time.Hour, window + 6*time.Hour} {
+		*f.clock = source.CreatedAt.Add(age)
+		earliest, latest, ok := source.RestoreRange(*f.clock)
+		wantEarliest := source.CreatedAt
+		if age > window {
+			wantEarliest = f.clock.Add(-window)
+		}
+		if !ok || !earliest.Equal(wantEarliest) || !latest.Equal(*f.clock) {
+			t.Fatalf("age %s: range = %v..%v ok=%v, want %v..%v", age, earliest, latest, ok, wantEarliest, *f.clock)
+		}
+		if _, err := f.service.Restore(ctx, RestoreDatabaseRequest{AccountID: "account-a", SourceDatabaseID: source.ID, Name: fmt.Sprintf("before-%d", i), PointInTime: earliest.Add(-time.Second)}); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("age %s: a point before the range = %v, want ErrInvalid", age, err)
+		}
+		if _, err := f.service.Restore(ctx, RestoreDatabaseRequest{AccountID: "account-a", SourceDatabaseID: source.ID, Name: fmt.Sprintf("inside-%d", i), PointInTime: earliest.Add(time.Second)}); err != nil {
+			t.Fatalf("age %s: a point inside the range: %v", age, err)
+		}
+	}
+	deleting := source
+	deleting.State = StateDeleting
+	if _, _, ok := deleting.RestoreRange(*f.clock); ok {
+		t.Fatal("a database being deleted shows a restore range")
+	}
+}
