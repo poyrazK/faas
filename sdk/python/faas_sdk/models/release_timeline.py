@@ -55,9 +55,9 @@ class ReleaseTimeline:
     watch_until: datetime.datetime | Unset = UNSET
     """When the post-release watch stops judging the release."""
     approval: ReleaseApprovalStatus | Unset = UNSET
-    """A release's approval state (ADR-20261020085706)."""
+    """A release's approval state."""
     schedule: ScheduledRelease | Unset = UNSET
-    """A release built ahead of time that starts its rollout at release_at (ADR-20261021152201)."""
+    """A release built ahead of time that starts its rollout at release_at."""
     gates: list[ReleaseGateResult] | Unset = UNSET
     """The results of the newest decision that judged release gates."""
     truncated: bool | Unset = UNSET
