@@ -1,7 +1,9 @@
 # ADR 20261030100950 · CPU pressure backstop
 
 - **Status:** proposed. Built behind the schedd switch
-  `cpu_pressure_backstop`, off by default.
+  `cpu_pressure_backstop`, on by default since the ADR-1151 amendment of
+  2026-10-31 (with `quiet_pause_admission`); `FAAS_CPU_PRESSURE_BACKSTOP`
+  overrides it.
 - **Date:** 2026-10-30
 - **Amends:** ADR 20261029151111 (measured CPU admission: its "planned
   next" pressure backstop), ADR-1151 §3 ("CPU pressure (PSI) alerts on it")

@@ -8,6 +8,9 @@
   schedd `frozen_tier_apps`, also off by default (2026-10-15). The canaries
   are pending. Amended 2026-10-27: vmmd `quiet_pause` and schedd
   `frozen_tier_apps` are on by default (see "Amendment 2026-10-27").
+  Amended 2026-10-31: schedd `quiet_pause_admission`, with the CPU pressure
+  backstop (ADR 20261030100950), is on by default (see "Amendment
+  2026-10-31").
 - Date: 2026-10-12
 - Builds on: ADR-906 (frozen instances: prototype, measurements,
   economics), ADR-909 (measured admission), ADR-074 (warm pool), ADR-159
@@ -353,3 +356,41 @@ render` on every compute node (`deploy/ansible/node_join.yml`), which rewrites
 `/etc/faas/vmmd.toml` and `/etc/faas/schedd.toml` from the manifest. A
 switch set by hand in those files is lost at the next rollout and is never
 present on a new node; a default in the binary reaches both the same way.
+
+## Amendment 2026-10-31: quiet pause admission on by default
+
+Since the 2026-10-27 amendment vmmd quiet-pauses `between_requests`
+instances on every node, but schedd still books each quiet-paused VM's full
+guest vCPUs and CPU quota: `quiet_pause_admission` is off, so the density
+this ADR exists for is not used. ADR 20261029151111's simulation of a
+16-thread node with the frozen tier on gives 195 apps by bookings and 561
+with quiet pause admission (300% cap), the guest vCPU gate binding in both.
+
+schedd `quiet_pause_admission` and `cpu_pressure_backstop` (ADR
+20261030100950) now default to on (`cmd/schedd/config.go`), for the same
+reason the 2026-10-27 amendment gave: manifest renders rewrite
+`schedd.toml`, so only a binary default reaches every node.
+
+What bounds the discount:
+
+- with quiet pause admission alone a scheduler keeps bookings, paused or
+  not, within `QuietPauseMaxVCPUOvercommitPercent` (300%) of the budget;
+  the durable node guard (ADR 20261027220445) still bounds any scheduler's
+  discount at its own cap (700%, ADR 20261029151111);
+- only a sample at most `QuietPauseSampleMaxAgeMillis` (2 s) old, by
+  vmmd's sample time, discounts anything, and only bookings admitted before
+  it; peer nodes are read through the owner fleet reader;
+- the backstop holds a node whose tenant tasks wait for CPU while its CPUs
+  are nearly all busy: placement prefers other nodes and admission counts
+  that node's bookings in full, today's behaviour. A false hold costs
+  density, never a request.
+
+`measured_cpu_admission` (ADR 20261029151111) stays off: its own rollout
+puts it on one node first. Unlike the 2026-10-27 amendment, this one has no
+production measurement of admission itself behind it; the evidence is the
+simulation, quiet pause's production record since 2026-10-27, and the
+bounds above. On the first release that carries it, watch
+`vmmd_quiet_resume_seconds`, `schedd_node_cpu_pressure_some_avg10`,
+`schedd_node_cpu_busy_percent` and `schedd_node_cpu_pressure_holds_total`. An operator turns either switch off on a node with an
+environment drop-in, which survives manifest renders:
+`FAAS_QUIET_PAUSE_ADMISSION=false`, `FAAS_CPU_PRESSURE_BACKSTOP=false`.
