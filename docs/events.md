@@ -142,6 +142,19 @@ work. Running work continues; handlers should still protect external side
 effects with an idempotency key or version check. See
 [application work policies](work-policies.md) for the complete contract.
 
+### Keyed delivery deadlines
+
+`expires_after_ms` bounds how long a delivery may wait before it starts. A
+delivery that has not started by then expires and is not run. Once a delivery
+has started, its deadline no longer applies: a failed attempt keeps retrying
+until it succeeds or is dead-lettered, so a failure is never dropped silently
+([ADR 20261031101000](adr/20261031101000-keyed-expiry-spares-started-work.md)).
+A dead-lettered keyed delivery whose deadline has passed cannot be replayed
+from the dead-letter queue, because a replay starts it over and it would
+expire at once: replaying it answers `409 keyed_replay_expired`, and
+replay-all skips it. Publish the event again, with a new id, to deliver
+it with a fresh deadline.
+
 To preserve event acceptance order for one key, opt the subscription into
 ordered delivery and use a policy that keeps every item until it runs:
 
@@ -178,8 +191,14 @@ single-app deploy and is bound to the target application during source-ref
 reconciliation. Event-only projects may use the equivalent TOML form,
 `[[triggers.event]]`. Both forms use the same source/type/filter validation.
 
-A delivery whose handler fails is retried with backoff: by the app's
-`retry_policy` in `gregale.yaml` when it sets one, otherwise 5 seconds
+A delivery whose handler fails is retried with backoff. That covers a handler
+that throws (the runner answers 500), any other 5xx, a timeout, and a handler
+that answers `408` or `429`. Any other 4xx means the handler refused the
+event, so it is not retried but moves straight to the dead-letter queue, where
+you can replay it after a fix
+([ADR 20261031100000](adr/20261031100000-event-delivery-failures.md)). Retries
+are paced by the app's `retry_policy` in `gregale.yaml` when it sets one,
+waiting at most 5 minutes between attempts, otherwise 5 seconds
 doubling to 5 minutes, with ±20 % jitter. The plan limits the attempts (3 on
 Hobby, 10 on Pro, 25 on Scale), so a delivery that keeps failing is
 dead-lettered after about 15 seconds on Hobby, 20 minutes on Pro and 95
@@ -187,7 +206,7 @@ minutes on Scale ([ADR 20261029190000](adr/20261029190000-event-delivery-retry-b
 A delivery with a `work_policy` holds the younger deliveries of its key while
 it waits, so it backs off only to 30 seconds and is dead-lettered after about
 15 seconds, 4 minutes or 11 minutes.
-When a delivery reaches a terminal failure, inspect and replay it through the
+When a delivery is dead-lettered, inspect and replay it through the
 app's unified dead-letter queue (`gregale dlq list <app>`); its origin is shown as
 `event_subscription`.
 
@@ -206,6 +225,26 @@ choose the idempotency key explicitly. The flag-based form remains supported:
 gregale event publish --id evt-123 --source billing.stripe --type invoice.paid \
   --data '{"amount":150}'
 ```
+
+### Delivery identity
+
+Delivery is at least once. A handler can see the same event more than once:
+after a retry, a replay, a lease that lapsed mid-run, or a database failover
+or restore. Each delivery carries headers that let the handler recognize
+repeats:
+
+| Header | Stays the same across | Use it to |
+|---|---|---|
+| `x-gregale-event-id` | every delivery, retry and replay of the event, and a republish with the same id | Deduplicate side effects. This is the key to store. |
+| `x-gregale-event-source`, `x-gregale-event-type` | every delivery | Route inside the handler. |
+| `x-gregale-event-subscription-id` | deliveries to this subscription | Tell apart two subscriptions of the same app that receive the same event. |
+| `x-gregale-event-acceptance-id` | deliveries of this accepted copy | Correlate with the publish receipt (`receipt_url`). A lost event that is published again gets a new one. |
+| `X-Faas-Invocation-Id` | retries of one delivery | Correlate with `gregale invocation` and logs. A recovery replay may run as a new invocation with a new id. |
+| `X-Faas-Invocation-Attempt` | nothing; it counts up from 1 on each retry | Log or back off; never deduplicate on it. |
+
+Deduplicate on `x-gregale-event-id` together with the subscription id when one
+app has several subscriptions to the same event. Record the id in the same
+transaction as the side effect, so a repeat finds it and stops.
 
 ### Settled receipt retention
 
@@ -334,9 +373,10 @@ While it is paused:
 
 - Publishing answers `503 events_paused` with `Retry-After`, from
   `POST /v1/events:publish`, `:publish-batch`, the app producer route, the
-  platform-tenant route and in-app publishing (the runtime's metadata endpoint
-  answers `503 event_publish_unavailable`). Nothing is accepted, so resend the
-  same events after the back-off; the SDK outbox does this for you.
+  platform-tenant route and in-app publishing (see
+  [Publishing from inside your app](#publishing-from-inside-your-app)).
+  Nothing is accepted, so resend the same events after the back-off; the SDK
+  outbox does this for you.
 - Events already accepted are kept and wait to be routed; routing resumes when
   the pause ends. Delivery-age limits keep counting while they wait.
 - Deliveries that already became invocations run as usual.
@@ -355,6 +395,29 @@ event_publish_rate_limited` with the limit, the number of events it carried and
 `Retry-After`; retry the same events, with the same ids, after that delay. The
 rate is kept per API process, and the plan's retained event storage still bounds
 the sustained rate. See [ADR 20261026140000](adr/20261026140000-event-app-sources-and-publish-rate.md).
+
+### Publishing from inside your app
+
+Code running in your app can publish without an API key: POST one event
+envelope (at most 64 KiB) to the URL in `FAAS_EVENT_PUBLISH_ENDPOINT`. The
+platform fills in your account and app. The answer is the platform's
+decision on that event
+([ADR 20261031102000](adr/20261031102000-in-guest-publish-verdict.md)):
+
+| Status | Code | Meaning |
+|---|---|---|
+| `202` | | Accepted and stored; it will be routed. |
+| `400` | `invalid_event` | The envelope is malformed or uses a reserved source. Fix it; do not retry as is. |
+| `422` | `validation_failed` | The data does not match the event's registered schema. |
+| `429` | `event_publish_rate_limited` | Over your plan's [publish rate](#publish-rate). Retry the same event after `Retry-After`. |
+| `503` | `events_paused` | Events are [paused](#pausing-events). Retry the same event after `Retry-After`. |
+| `503` | `event_publish_unavailable` | Not stored. Retry the same event after `Retry-After`. |
+| `503` | `event_publish_unconfirmed` | The platform got the event but its answer was lost, so it may have been stored. Retry the same event, with the same `id`: if it was stored, the retry answers `202` and the event is still delivered once. |
+
+Set your own `id` on events whose loss matters. Without one, a retry after
+`event_publish_unconfirmed` can store the event twice. Apps on an older
+runtime receive `202` as soon as the event is handed to the platform, before
+it is checked.
 
 ### Batch event publishing
 

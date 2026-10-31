@@ -79,28 +79,37 @@ func (s *PgStore) beginTrafficDomainRemoval(ctx context.Context, domain, expecte
 	if expectedApp != "" && owner.AppID != uuidToPgtype(expectedApp) {
 		return nil, ErrNotFound
 	}
-	return s.beginTrafficDomainBinding(ctx, domain, owner.AccountID, owner.AppID, true)
+	return s.beginTrafficDomainBinding(ctx, domain, owner.AccountID, owner.AppID, true, "")
 }
 
 func (s *PgStore) beginTrafficDomainPublication(ctx context.Context, domain, app string) (*trafficDomainBindingTx, error) {
 	appID := mustPgUUID(app)
 	var account pgtype.UUID
+	var subject string
 	err := boundedTrafficPolicyAnalysis(ctx, func(bounded context.Context) error {
 		var err error
-		account, err = sqlc.New().ReadAppTrafficAccount(bounded, s.pool, appID)
-		return mapErr(err)
+		if account, err = sqlc.New().ReadAppTrafficAccount(bounded, s.pool, appID); err != nil {
+			return mapErr(err)
+		}
+		// A new claim spends its billing subject's pending-domain budget
+		// (ADR-202610171904), so claims on the subject's other apps take
+		// its lock before their snapshot.
+		return mapErr(s.pool.QueryRow(bounded, `select (`+quotaSubjectSQL+`)::text from apps a left join orgs o on o.id = a.org_id
+			where a.id = $1`, appID).Scan(&subject))
 	})
 	if err != nil {
 		return nil, err
 	}
-	return s.beginTrafficDomainBinding(ctx, domain, account, appID, false)
+	return s.beginTrafficDomainBinding(ctx, domain, account, appID, false, subject)
 }
 
-func (s *PgStore) beginTrafficDomainBinding(ctx context.Context, domain string, account, app pgtype.UUID, requireClaim bool) (*trafficDomainBindingTx, error) {
+// beginTrafficDomainBinding also holds budget's pending-domain lock when it is
+// set, the billing subject of a new claim.
+func (s *PgStore) beginTrafficDomainBinding(ctx context.Context, domain string, account, app pgtype.UUID, requireClaim bool, budget string) (*trafficDomainBindingTx, error) {
 	start := time.Now()
 	for {
 		attempt := time.Now()
-		guarded, retry, err := s.tryBeginTrafficDomainBinding(ctx, domain, account, app, requireClaim)
+		guarded, retry, err := s.tryBeginTrafficDomainBinding(ctx, domain, account, app, requireClaim, budget)
 		if err != nil || !retry {
 			observeTrafficPolicyPhase(TrafficPolicyWriterDomainBinding, TrafficPolicyPhaseLockWait, attempt.Sub(start))
 			return guarded, err
@@ -116,7 +125,7 @@ func (s *PgStore) beginTrafficDomainBinding(ctx context.Context, domain string, 
 	}
 }
 
-func (s *PgStore) tryBeginTrafficDomainBinding(ctx context.Context, domain string, originalAccount, originalApp pgtype.UUID, requireClaim bool) (*trafficDomainBindingTx, bool, error) {
+func (s *PgStore) tryBeginTrafficDomainBinding(ctx context.Context, domain string, originalAccount, originalApp pgtype.UUID, requireClaim bool, budget string) (*trafficDomainBindingTx, bool, error) {
 	var accounts []string
 	var scope trafficBindingScope
 	var routes *trafficRouteScope
@@ -147,6 +156,11 @@ func (s *PgStore) tryBeginTrafficDomainBinding(ctx context.Context, domain strin
 	}
 	for _, account := range accounts {
 		locks = append(locks, trafficSessionLock{Key: "gregale.traffic.account.v1:" + account})
+	}
+	// The transaction below reads at one snapshot, so the budget's lock must
+	// be held before it begins for its count to see every earlier claim.
+	if budget != "" {
+		locks = append(locks, trafficSessionLock{Key: "gregale.traffic.domain-claims.v1:" + budget})
 	}
 	conn, release, busy, err := s.acquireTrafficBindingSessionLocks(ctx, locks)
 	if err != nil || busy {

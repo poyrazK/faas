@@ -337,7 +337,9 @@ func (s *PgStore) ReservePRPreviewSet(ctx context.Context, head PRPreviewHead, a
 // reused preview row. githubd derives them from the production app on every
 // PR head, so a gate the production app gained since the preview was created
 // (or a preview created before gates were copied) applies on the next push.
-// A changed row is announced so gateways drop their cached copy.
+// The WebSocket and streaming switches follow the same way, so the preview
+// serves the protocols production serves. A changed row is announced so
+// gateways drop their cached copy.
 func refreshPreviewGatesTx(ctx context.Context, tx pgx.Tx, id string, desired App) error {
 	publicAuthMode := desired.PublicAuthMode
 	if publicAuthMode == "" {
@@ -355,16 +357,19 @@ func refreshPreviewGatesTx(ctx context.Context, tx pgx.Tx, id string, desired Ap
 	_, err = tx.Exec(ctx, `with changed as (
 			update apps set require_authn = $2, public_auth_mode = $3, public_auth_basic = $4,
 			       public_auth_ip_allowlist = $5, consumer_auth_mode = $6, require_signed = $7,
-			       egress_allowlist = $8, visibility = $9, only_declared_routes = $10, declared_routes = $11::jsonb
+			       egress_allowlist = $8, visibility = $9, only_declared_routes = $10, declared_routes = $11::jsonb,
+			       websocket_enabled = $12, streaming_enabled = $13
 			where id = $1
 			  and (require_authn, public_auth_mode, public_auth_basic, public_auth_ip_allowlist,
-			       consumer_auth_mode, require_signed, egress_allowlist, visibility, only_declared_routes, declared_routes)
-			      is distinct from ($2, $3, $4::bytea, $5::cidr[], $6, $7, $8::cidr[], $9, $10, $11::jsonb)
+			       consumer_auth_mode, require_signed, egress_allowlist, visibility, only_declared_routes, declared_routes,
+			       websocket_enabled, streaming_enabled)
+			      is distinct from ($2, $3, $4::bytea, $5::cidr[], $6, $7, $8::cidr[], $9, $10, $11::jsonb, $12, $13)
 			returning id)
 		select pg_notify('app_changed', id::text) from changed`,
 		id, desired.RequireAuthn, publicAuthMode, desired.PublicAuthBasicSealed,
 		cidrPrefixesToArray(desired.PublicAuthIPAllowlist), string(consumerAuth), desired.RequireSigned,
-		cidrPrefixesToArray(desired.EgressAllowlist), visibility, desired.OnlyAllowDeclaredRoutes, string(declaredRoutes))
+		cidrPrefixesToArray(desired.EgressAllowlist), visibility, desired.OnlyAllowDeclaredRoutes, string(declaredRoutes),
+		desired.WebSocketEnabled, desired.StreamingEnabled)
 	if err != nil {
 		return fmt.Errorf("state: refresh PR preview gates: %w", err)
 	}
@@ -383,6 +388,8 @@ func copyPreviewGates(row, desired App) App {
 	row.Visibility = desired.Visibility
 	row.OnlyAllowDeclaredRoutes = desired.OnlyAllowDeclaredRoutes
 	row.DeclaredRoutes = previewDeclaredRoutes(desired.DeclaredRoutes)
+	row.WebSocketEnabled = desired.WebSocketEnabled
+	row.StreamingEnabled = desired.StreamingEnabled
 	return row
 }
 

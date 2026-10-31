@@ -291,6 +291,7 @@ var WorkflowFinalOutput = workflowFinalOutput
 var WorkflowJSONEqual = workflowJSONEqual
 var WorkflowStepIdempotencyKey = workflowStepIdempotencyKey
 var XBaseKey = baseKey
+var XEventRoutingOutcome = eventRoutingOutcome
 var XDeploymentRuntimePort = deploymentRuntimePort
 var XLayerKey = layerKey
 var XNewEngine = newEngine
@@ -618,6 +619,10 @@ func (r *composedWaveNativeVMM) Identity() *runtimeadmission.Identity { return &
 func (r *drainSynth) Calls() *atomic.Int64    { return &r.calls }
 func (r *drainSynth) Transient() *atomic.Bool { return &r.transient }
 func (r *drainSynth) Refused() *atomic.Bool   { return &r.refused }
+
+// AppStatus makes the fake gateway answer as if the app's own code returned
+// that status (ADR-20261031100000).
+func (r *drainSynth) AppStatus() *atomic.Int64 { return &r.appStatus }
 
 // XHTTPGatewaySynth is the drain's real gateway client pointed at base.
 func XHTTPGatewaySynth(client *http.Client, base string) interface {
@@ -998,6 +1003,12 @@ func (d *Drain) XInvocationRetryDelay(ctx context.Context, inv state.Invocation)
 
 func (d *Drain) XInvocationAttemptBudget(ctx context.Context, inv state.Invocation) int {
 	return d.invocationAttemptBudget(ctx, inv)
+}
+
+// XHoldFinancialAdmission makes the drain's budget admission refuse every
+// app with err, as a held strict compute budget does.
+func (d *Drain) XHoldFinancialAdmission(err error) {
+	d.financialAdmission = func(context.Context, state.Store, state.App, string, string, time.Time) error { return err }
 }
 
 // CustomerCapacityProblem exposes the customer restatement of a node-budget
