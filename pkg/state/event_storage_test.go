@@ -108,9 +108,12 @@ func TestEventStorageAtomicCountAdmission(t *testing.T) {
 		if err := store.AppendEvent(ctx, "apid", "event.published", &account.ID, storagePayload(accepted, "orders", `{"changed":true}`)); !errors.Is(err, state.ErrConflict) {
 			t.Fatalf("identity conflict=%v", err)
 		}
+		// ADR-20261030170000: the receipt is a published event's only copy, so
+		// the ledger gains no row, and the duplicates and the conflict add no receipt.
 		after, _ := store.ListEvents(ctx, account.ID, int(limit+10))
-		if len(after) != len(before)+1 {
-			t.Fatalf("ledger rows before=%d after=%d", len(before), len(after))
+		retained, err := store.EventStorageUsage(ctx, account.ID)
+		if err != nil || len(after) != len(before) || retained.RetainedEvents != limit {
+			t.Fatalf("ledger rows before=%d after=%d retained=%+v err=%v", len(before), len(after), retained, err)
 		}
 		if n, err := store.PruneSettledPublishedEvents(ctx, time.Now().Add(60*24*time.Hour), 100); err != nil || n != 0 {
 			t.Fatalf("pending receipts pruned=%d %v", n, err)
@@ -241,9 +244,10 @@ func TestEventStorageConcurrentByteAdmission(t *testing.T) {
 		if err != nil || accepted == 0 || rejected == 0 || usage.RetainedEvents != accepted || usage.RetainedBytes > usage.Limits.RetainedBytes {
 			t.Fatalf("burst accepted=%d rejected=%d usage=%+v err=%v", accepted, rejected, usage, err)
 		}
+		// ADR-20261030170000: the receipts counted above are the events' only copies.
 		ledger, _ := store.ListEvents(ctx, account.ID, 100)
-		if int64(len(ledger)) != accepted {
-			t.Fatalf("partial ledger=%d accepted=%d", len(ledger), accepted)
+		if len(ledger) != 0 {
+			t.Fatalf("published events kept ledger rows=%d accepted=%d", len(ledger), accepted)
 		}
 	})
 }
