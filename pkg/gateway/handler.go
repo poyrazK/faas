@@ -6180,7 +6180,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r.Header.Set(api.RequestIDHeader, rid)
 	if !isSyntheticInvocation(r.Context()) {
 		for name := range r.Header {
-			if api.IsReservedOperationHeader(name) || strings.HasPrefix(strings.ToLower(name), "x-gregale-event-") {
+			if api.IsReservedOperationHeader(name) || api.HasLowerPrefix(name, "x-gregale-event-") {
 				delete(r.Header, name)
 			}
 		}

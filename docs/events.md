@@ -226,6 +226,37 @@ gregale event publish --id evt-123 --source billing.stripe --type invoice.paid \
   --data '{"amount":150}'
 ```
 
+### Subscription limits and removal
+
+On a production deploy, the `event_triggers` in `gregale.yaml` are the app's
+whole set of event subscriptions
+([ADR 20261031130000](adr/20261031130000-event-subscription-reconcile.md)):
+
+- A trigger you remove is disabled. Events not yet routed to it are not
+  delivered; their receipts show it as filtered. Deliveries that already
+  started finish.
+- Changing a trigger's filter replaces its subscription; the old filter stops
+  delivering.
+- Declaring a trigger again re-enables the same subscription, with its
+  history and controls.
+- A deploy whose `gregale.yaml` has no `event_triggers` disables them all. A
+  deploy without a `gregale.yaml`, a stage deploy and `gregale deploy
+  --no-triggers` leave subscriptions as they are.
+
+Each plan caps the enabled subscriptions per app and per account:
+
+| Plan | Per app | Per account |
+|---|---:|---:|
+| Free | 0 | 0 |
+| Hobby | 5 | 10 |
+| Pro | 20 | 50 |
+| Scale | 100 | 500 |
+
+A deploy that would go past a cap is refused with `403
+plan_event_subscription_quota`, naming the limit and the count it would have
+reached, and changes nothing. Numbers in filters are kept exactly, so a filter
+on an integer ID larger than 2^53 matches only that ID.
+
 ### Delivery identity
 
 Delivery is at least once. A handler can see the same event more than once:
