@@ -4498,6 +4498,25 @@ type CustomDomainResponse struct {
 	DNSRecords []DNSRecordInstruction `json:"dns_records,omitempty"`
 }
 
+// CustomDomainHostsResponse is a wildcard custom domain's host allowlist
+// (ADR-520 amendment 2), the body of GET and PUT
+// /v1/domains/{domain}/hosts. Names are the parts of hosts before the
+// wildcard's suffix (`eu.shop` for eu.shop.example.com under
+// *.example.com). Restricted is false when no allowlist is set: every name
+// below the wildcard may hold a certificate.
+type CustomDomainHostsResponse struct {
+	Domain     string   `json:"domain"`
+	Names      []string `json:"names"`
+	Restricted bool     `json:"restricted"`
+}
+
+// SetCustomDomainHostsRequest replaces a wildcard custom domain's host
+// allowlist (PUT /v1/domains/{domain}/hosts). A name may also be given as
+// the full host. It must name at least one host; DELETE clears the list.
+type SetCustomDomainHostsRequest struct {
+	Names []string `json:"names"`
+}
+
 // DNS record purposes for DNSRecordInstruction.Purpose.
 const (
 	DNSRecordPurposeVerification = "verification"

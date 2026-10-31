@@ -146,9 +146,11 @@ func (m *MemStore) AdmitCustomDomainTLSHost(_ context.Context, wildcardDomain, h
 }
 
 // dropCustomDomainTLSHostsLocked mirrors the ON DELETE CASCADE from
-// custom_domains. Callers hold m.mu.
+// custom_domains to the admitted hosts and the host allowlist. Callers hold
+// m.mu.
 func (m *MemStore) dropCustomDomainTLSHostsLocked(domain string) {
 	domain = strings.ToLower(domain)
+	delete(m.customDomainTLSAllowedHosts, domain)
 	for host, h := range m.customDomainTLSHosts {
 		if h.wildcardDomain == domain {
 			delete(m.customDomainTLSHosts, host)

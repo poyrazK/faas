@@ -181,6 +181,7 @@ export type { CreateWorkflowCallbackWebhookBindingRequest } from './models/Creat
 export type { CronResponse } from './models/CronResponse.js';
 export type { CronRun } from './models/CronRun.js';
 export type { CSRFTokenResponse } from './models/CSRFTokenResponse.js';
+export type { CustomDomainHostsResponse } from './models/CustomDomainHostsResponse.js';
 export type { CustomDomainResponse } from './models/CustomDomainResponse.js';
 export type { CustomMetricListResponse } from './models/CustomMetricListResponse.js';
 export type { CustomMetricRequest } from './models/CustomMetricRequest.js';
@@ -1045,6 +1046,7 @@ export type { SessionListResponse } from './models/SessionListResponse.js';
 export type { SessionsRevokeAllResponse } from './models/SessionsRevokeAllResponse.js';
 export type { SetAccountEgressAllowlistExtraRequest } from './models/SetAccountEgressAllowlistExtraRequest.js';
 export type { SetBindingReleasePolicyRequest } from './models/SetBindingReleasePolicyRequest.js';
+export type { SetCustomDomainHostsRequest } from './models/SetCustomDomainHostsRequest.js';
 export type { SetDeploymentAliasRequest } from './models/SetDeploymentAliasRequest.js';
 export type { SetFinancialBudgetChannelsRequest } from './models/SetFinancialBudgetChannelsRequest.js';
 export type { SetGraceWindowRequest } from './models/SetGraceWindowRequest.js';

@@ -2954,6 +2954,28 @@ func (c *Client) SetDefaultDomain(ctx context.Context, domain string) (CustomDom
 	return c.PostDomainsDomainDefault(ctx, domain)
 }
 
+// GetDomainHosts returns a wildcard custom domain's host allowlist (ADR-520
+// amendment 2). Backed by GET /v1/domains/{domain}/hosts.
+func (c *Client) GetDomainHosts(ctx context.Context, domain string) (CustomDomainHostsResponse, error) {
+	var out CustomDomainHostsResponse
+	return out, c.do(ctx, "GET", "/v1/domains/"+domain+"/hosts", nil, &out)
+}
+
+// SetDomainHosts replaces a wildcard custom domain's host allowlist: only the
+// listed names below it get certificates. Backed by PUT
+// /v1/domains/{domain}/hosts.
+func (c *Client) SetDomainHosts(ctx context.Context, domain string, names []string) (CustomDomainHostsResponse, error) {
+	var out CustomDomainHostsResponse
+	return out, c.do(ctx, "PUT", "/v1/domains/"+domain+"/hosts", SetCustomDomainHostsRequest{Names: names}, &out)
+}
+
+// ClearDomainHosts removes a wildcard custom domain's host allowlist, so every
+// name below it may get a certificate again. Backed by DELETE
+// /v1/domains/{domain}/hosts.
+func (c *Client) ClearDomainHosts(ctx context.Context, domain string) error {
+	return c.do(ctx, "DELETE", "/v1/domains/"+domain+"/hosts", nil, nil)
+}
+
 // RetryDomainVerification re-arms a pending domain after its bounded polling
 // backoff or retry budget expires. The server returns 202 with no response
 // body; mutating-call idempotency is supplied by Client.do.

@@ -544,6 +544,7 @@ export type { CreateWorkflowCallbackWebhookBindingRequest } from './CreateWorkfl
 export type { CreatedOutboundAIAccessToken } from './CreatedOutboundAIAccessToken.js';
 export type { CronResponse } from './CronResponse.js';
 export type { CronRun } from './CronRun.js';
+export type { CustomDomainHostsResponse } from './CustomDomainHostsResponse.js';
 export type { CustomDomainResponse } from './CustomDomainResponse.js';
 export type { CustomMetricListResponse } from './CustomMetricListResponse.js';
 export type { CustomMetricRequest } from './CustomMetricRequest.js';
@@ -2937,6 +2938,7 @@ export type { SetAutomationFailurePolicyRequest } from './SetAutomationFailurePo
 export type { SetAutomationPublishPolicyRequest } from './SetAutomationPublishPolicyRequest.js';
 export type { SetBindingReleasePolicyRequest } from './SetBindingReleasePolicyRequest.js';
 export type { SetCanaryRouteGateRequest } from './SetCanaryRouteGateRequest.js';
+export type { SetCustomDomainHostsRequest } from './SetCustomDomainHostsRequest.js';
 export type { SetDeploymentAliasRequest } from './SetDeploymentAliasRequest.js';
 export type { SetEnvironmentRouteBudgetsRequest } from './SetEnvironmentRouteBudgetsRequest.js';
 export type { SetFinancialBudgetChannelsRequest } from './SetFinancialBudgetChannelsRequest.js';

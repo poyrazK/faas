@@ -67,7 +67,10 @@ and `FaasCustomDomainCertIssuanceFailing` cover this path; see
   (Postgres); certificates already in Caddy's memory keep working, but
   reloads, renewals and new issuance are refused until it recovers.
   `deny_wildcard_budget` means a wildcard reached
-  `OnDemandTLSWildcardNewHostsPerWeek` new hosts in 7 days. A sustained
+  `OnDemandTLSWildcardNewHostsPerWeek` new hosts in 7 days.
+  `deny_not_allowlisted` means the wildcard's owner set a host allowlist
+  (`gregale domain host get`) that does not name the host; it is the
+  customer's choice, not a fault. A sustained
   `deny_overload` means handshakes with unknown server names are arriving
   faster than `OnDemandTLSAskLookupsPerSecond`, usually a scan; legitimate
   names are retried on the client's next handshake. Hostnames with no
