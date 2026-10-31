@@ -61,7 +61,9 @@
 - **Public-release gate** (owner, 2026-10-31: managed PostgreSQL is a core feature of Gregale and launches GA with the public release). The code ships GA now. Step 6 waits for the P0 workstreams of the managed PostgreSQL epic, [#6146](https://github.com/poyrazK/faas/issues/6146):
   - **PG-01: lifecycle evidence.** The journey green on production, extended to credential rotation, resize, suspend and wake, and restart recovery. Its result is recorded in `docs/STATUS.md`, and the qualification evidence is part of the release checks.
   - **PG-02: sustained production use.** A Scale account includes 200 CU-hours a month. A production-class database never scales below 1 CU, so under steady traffic it spends that in about 8 days and is then suspended. Paid overage stays `internal` until it is invoiced. Before the public release, PG-02 must deliver:
-    - a priced continuation: overage billed at the COGS report's rate, or always-on compute as an entitlement;
+    - a priced continuation. The owner chose both (2026-10-31):
+      - billed overage at ADR-1430's rates ($0.20 per CU-hour, $0.60 per GB-month), released through the existing overage setting and its 2x ceiling;
+      - an always-on add-on for steady production databases. Its price is not in the financial model yet, so it needs that decision and its own ADR;
     - customer spending controls;
     - invoicing that reconciles provider usage.
   - **PG-03: customer recovery.** Restore on every plan (ADR-20261031123259, #6142). The earliest and latest recoverable points are shown. At least one supported restore-and-switch path, through database-aware rollback or qualified cutover activation, is measured against stated RPO and RTO.
