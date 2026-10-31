@@ -23,6 +23,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -687,6 +688,16 @@ func (tg *target) deployWith(t *testing.T, slug string, smoke bool, args ...stri
 			tail(string(res.stdout), 1500), tg.deployLogTail(t, slug, res.stdout))
 	}
 	receipt := object(t, res.stdout)
+	if slices.Contains(args, "--no-traffic") {
+		// A staged release goes live with no production traffic, so there is
+		// no rollout to follow and the public URL still serves the old one.
+		if str(receipt, "status") != "live" || num(receipt, "traffic_percent") != 0 {
+			t.Fatalf("staged deploy %s is not live with 0%% traffic: %s", slug, compact(map[string]any{"id": field(receipt, "id"),
+				"status": field(receipt, "status"), "traffic_percent": field(receipt, "traffic_percent")}))
+		}
+		t.Logf("staged %s as %s in %s", slug, str(receipt, "id"), res.elapsed.Round(time.Second))
+		return receipt
+	}
 	// A redeploy's --wait returns once the candidate is live and verified,
 	// while traffic is still shifting; follow the rollout like
 	// production-release-acceptance.sh does. The default safe ladder

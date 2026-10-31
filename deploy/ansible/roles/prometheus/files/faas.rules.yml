@@ -7375,6 +7375,19 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
           summary: "s3-gatewayd cannot write its batched read counts"
           description: "Read count flushes on {{ $labels.instance }} have failed for 10 minutes. Reads keep being served from cached decisions for up to 30 s and then fail closed; counts stay in memory until a flush succeeds."
+      # ADR-20261030075301 step 2: gatewayd-public admits public bucket reads
+      # the same way and batches their counts every second.
+      - alert: FaasPublicObjectReadUsageFlushFailing
+        expr: sum by (instance) (rate(gatewayd_public_object_read_usage_flushes_total{outcome="failed"}[5m])) > 0
+        for: 10m
+        labels:
+          severity: warn
+          component: gatewayd-public
+          family: object_storage
+        annotations:
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
+          summary: "gatewayd-public cannot write its batched public read counts"
+          description: "Public bucket read count flushes on {{ $labels.instance }} have failed for 10 minutes. Public reads keep being served from cached decisions for up to 30 s and then fail closed; counts stay in memory until a flush succeeds."
       - alert: FaasObjectStorageUsageExportStale
         expr: time() - s3_gateway_usage_export_last_success_timestamp_seconds > 3600
         for: 15m

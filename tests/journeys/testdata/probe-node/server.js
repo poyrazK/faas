@@ -177,6 +177,15 @@ const server = http.createServer((req, res) => {
       setTimeout(() => json(res, 200, { slept_ms: ms }), ms);
       return;
     }
+    case "/status": {
+      // Answers with the requested status, so a release can fail its
+      // requests while its health check passes (automatic 5xx rollback).
+      const code = Number(url.searchParams.get("code"));
+      if (!Number.isInteger(code) || code < 200 || code > 599) {
+        return json(res, 400, { error: "code must be an HTTP status from 200 to 599" });
+      }
+      return json(res, code, { status: code, version });
+    }
     case "/healthz":
       if (version.startsWith("broken")) {
         return json(res, 503, { ok: false, version });
