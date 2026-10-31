@@ -6901,6 +6901,11 @@ type Querier interface {
 	// as "skip the dead_letter insert; leave the record in
 	// poller.inFlight for the next tick to retry".
 	TriggerRecordIDByItemIdentifier(ctx context.Context, db DBTX, arg TriggerRecordIDByItemIdentifierParams) (pgtype.UUID, error)
+	// A completed queue message keeps its payload for a day after its ack, then
+	// only its history; failures and dead letters keep theirs for replay
+	// (ADR-20261018101500 amendment 2026-10-31). Reads
+	// invocations_queue_completed_payload_idx in completion order.
+	TrimCompletedQueuePayloads(ctx context.Context, db DBTX, arg TrimCompletedQueuePayloadsParams) (int64, error)
 	TryEdgeRuleAccountMutationLock(ctx context.Context, db DBTX, accountID string) (bool, error)
 	TryEdgeRuleMutationLock(ctx context.Context, db DBTX, appID string) (bool, error)
 	TryLockApplicationStandardApprovalArtifactChildren(ctx context.Context, db DBTX, deploymentIds []pgtype.UUID) (bool, error)

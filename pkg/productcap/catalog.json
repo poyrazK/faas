@@ -496,7 +496,9 @@
         "/v1/apps/{}/inbox",
         "/v1/apps/{}/outbox",
         "/v1/apps/{}/queues/send",
-        "/v1/orgs/{}/apps/{}/queues/send"
+        "/v1/apps/{}/queues/send-batch",
+        "/v1/orgs/{}/apps/{}/queues/send",
+        "/v1/orgs/{}/apps/{}/queues/send-batch"
       ],
       "cli": [
         "send",

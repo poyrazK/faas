@@ -4021,6 +4021,14 @@ func (c *Client) QueueSend(ctx context.Context, slug string, req QueueSendReques
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/queues/send", req, &out)
 }
 
+// QueueSendBatch sends up to QueueSendBatchMaxMessages messages to one queue
+// in order, as one API request. Each result says whether its message was
+// accepted.
+func (c *Client) QueueSendBatch(ctx context.Context, slug string, req QueueSendBatchRequest) (QueueSendBatchResponse, error) {
+	var out QueueSendBatchResponse
+	return out, c.do(ctx, http.MethodPost, "/v1/apps/"+url.PathEscape(slug)+"/queues/send-batch", req, &out)
+}
+
 // SendAppMessage reliably enqueues a CloudEvents-wrapped message for another
 // Gregale application. The returned invocation id is visible through the
 // ordinary invocation and DLQ APIs.

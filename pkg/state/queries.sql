@@ -7963,6 +7963,19 @@ FROM production_invocation_work WHERE app_id=sqlc.arg(app_id)::uuid AND source='
 SELECT count(*) FROM production_invocation_work WHERE app_id=sqlc.arg(app_id)::uuid AND source='queue' AND state='dead_letter'
     AND (NOT sqlc.arg(named)::boolean OR queue_name=sqlc.arg(queue_name)::text);
 
+-- name: TrimCompletedQueuePayloads :execrows
+-- A completed queue message keeps its payload for a day after its ack, then
+-- only its history; failures and dead letters keep theirs for replay
+-- (ADR-20261018101500 amendment 2026-10-31). Reads
+-- invocations_queue_completed_payload_idx in completion order.
+WITH due AS (
+    SELECT id FROM invocations
+    WHERE source='queue' AND state='completed' AND payload <> 'null'::jsonb
+      AND completed_at <= sqlc.arg(completed_before)::timestamptz
+    ORDER BY completed_at LIMIT sqlc.arg(row_limit)::integer
+    FOR UPDATE SKIP LOCKED)
+UPDATE invocations i SET payload='null'::jsonb FROM due WHERE i.id=due.id;
+
 -- name: ReadProductionQueueTelemetry :one
 -- ReadProductionQueueStateLive plus CountProductionQueueDeadLetter for the
 -- status reads a customer can poll: each count stops at row_limit, and the

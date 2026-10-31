@@ -5805,6 +5805,37 @@ type QueueSendResponse struct {
 	TraceID        string `json:"trace_id,omitempty"`
 }
 
+// QueueSendBatchRequest is POST /v1/apps/{slug}/queues/send-batch: up to
+// QueueSendBatchMaxMessages messages for one queue, sent in order as one API
+// request (ADR-20261018101500 amendment 2026-10-31).
+type QueueSendBatchRequest struct {
+	Environment string                  `json:"environment,omitempty"`
+	QueueName   string                  `json:"queue_name,omitempty"`
+	RetryPolicy *RetryPolicyDTO         `json:"retry_policy,omitempty"`
+	Messages    []QueueSendBatchMessage `json:"messages"`
+}
+
+// QueueSendBatchMessage is one message of a batch send.
+type QueueSendBatchMessage struct {
+	Payload json.RawMessage `json:"payload,omitempty"`
+}
+
+// QueueSendBatchResult reports one message by its zero-based input index:
+// "accepted" with the message, "rejected" with the problem, or
+// "not_attempted" after an earlier message was rejected. Resend from the
+// first message that was not accepted.
+type QueueSendBatchResult struct {
+	Index   int                `json:"index"`
+	Status  string             `json:"status"`
+	Message *QueueSendResponse `json:"message,omitempty"`
+	Problem *Problem           `json:"problem,omitempty"`
+}
+
+// QueueSendBatchResponse lists every message of the batch in input order.
+type QueueSendBatchResponse struct {
+	Results []QueueSendBatchResult `json:"results"`
+}
+
 // QueueReceiveResponse is returned on POST /v1/apps/{slug}/queues/invocations:receive.
 // 200 with the dequeued row's payload + result; 204 on timeout.
 type QueueReceiveResponse struct {

@@ -4102,6 +4102,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/apps/{slug}/entities/retry", s.durable.Route(s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.durable.App(s.durable.Retry))))))
 	mux.HandleFunc("POST /v1/apps/{slug}/invoke/async", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.invokeAppAsync)))))
 	mux.HandleFunc("POST /v1/apps/{slug}/queues/send", s.authLimited(s.requireMFA(s.requireScope(api.ScopesQueuesSendSurface...)(productionQueueBindingHandler(s.idempotentInRequestedEnvironment(queueSendBodyLimit, s.queueSend))))))
+	mux.HandleFunc("POST /v1/apps/{slug}/queues/send-batch", s.authLimited(s.requireMFA(s.requireScope(api.ScopesQueuesSendSurface...)(productionQueueBindingHandler(s.idempotentInRequestedEnvironment(queueSendBatchBodyLimit, s.queueSendBatch))))))
 	mux.HandleFunc("POST /v1/apps/{slug}/inbox", s.authLimited(s.requireMFA(s.requireScope(api.ScopesEventsPublishSurface...)(productionQueueBindingHandler(s.idempotentInRequestedEnvironment(queueSendBodyLimit, s.sendAppMessage))))))
 	mux.HandleFunc("POST /v1/apps/{slug}/commit-sources", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.createCommitSource))))
 	mux.HandleFunc("PUT /v1/commit-sources/{source}/connection", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putCommitSourceConnection))))

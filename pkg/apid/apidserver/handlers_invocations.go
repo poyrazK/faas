@@ -339,6 +339,50 @@ func (s *server) queueSend(w http.ResponseWriter, r *http.Request, acct state.Ac
 	})
 }
 
+// queueSendBatch sends up to QueueSendBatchMaxMessages messages to one queue,
+// in order, as one API request against the account's budget
+// (ADR-20261018101500 amendment 2026-10-31). Each message passes the same
+// admission as queueSend; the first refusal ends the batch, and the messages
+// after it are not attempted.
+func (s *server) queueSendBatch(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if !queueBindingProductionRequest(w, r) {
+		return
+	}
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return
+	}
+	if api.MustLimitsFor(acct.Plan).MaxQueueDepth == 0 {
+		api.WriteProblem(w, api.ErrPlanFeatureGated("queues", acct.Plan))
+		return
+	}
+	var req api.QueueSendBatchRequest
+	if !decodeJSONLimit(w, r, &req, api.QueueSendBatchMaxBytes) {
+		return
+	}
+	if len(req.Messages) == 0 || len(req.Messages) > api.QueueSendBatchMaxMessages {
+		api.WriteProblem(w, api.ErrValidation(fmt.Sprintf("messages must hold 1 to %d messages; got %d", api.QueueSendBatchMaxMessages, len(req.Messages))))
+		return
+	}
+	resp := api.QueueSendBatchResponse{Results: make([]api.QueueSendBatchResult, len(req.Messages))}
+	var refused *api.Problem
+	for i, message := range req.Messages {
+		resp.Results[i] = api.QueueSendBatchResult{Index: i, Status: "not_attempted"}
+		if refused != nil {
+			continue
+		}
+		inv, traceID, problem := s.enqueueAppMessage(r.Context(), r.Header, acct, app, message.Payload, "", req.QueueName, req.Environment, req.RetryPolicy, nil)
+		if problem != nil {
+			refused = problem
+			resp.Results[i] = api.QueueSendBatchResult{Index: i, Status: "rejected", Problem: problem}
+			continue
+		}
+		resp.Results[i] = api.QueueSendBatchResult{Index: i, Status: "accepted", Message: &api.QueueSendResponse{
+			Environment: inv.DeploymentScope, QueueBindingID: inv.QueueBindingID, ID: inv.ID, TraceID: traceID}}
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
 // sendAppMessage is the ergonomic application-inbox facade. It deliberately
 // reuses InvocationQueue so queue depth, retry, dead-letter, replay, wake, and
 // trace behavior stay identical to `queues/send`.

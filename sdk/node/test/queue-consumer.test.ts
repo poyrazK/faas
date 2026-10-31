@@ -76,6 +76,17 @@ test('acks handled messages and nacks failures with the error and delay', async 
   assert.ok(errors.some(e => e instanceof Error && e.message === 'boom'));
 });
 
+test('acks messages that finish together in one call', async () => {
+  const fake = fakeQueue([1, 2, 3, 4, 5]);
+  const c = consumer(fake, () => undefined, { concurrency: 5 });
+  void c.run();
+  await until(() => fake.calls.filter(call => call.verb === 'ack').flatMap(call => call.body.receipts as string[]).length === 5);
+  await c.stop();
+  const acks = fake.calls.filter(call => call.verb === 'ack');
+  assert.equal(acks.length, 1);
+  assert.deepEqual([...(acks[0].body.receipts as string[])].sort(), ['m0.r', 'm1.r', 'm2.r', 'm3.r', 'm4.r']);
+});
+
 test('authenticates with a cached gregale:queues workload token', async () => {
   const fake = fakeQueue([1, 2, 3]);
   const c = consumer(fake, () => {}, { apiKey: undefined, identityEndpoint: 'http://127.0.0.1:9/token' });
@@ -97,7 +108,7 @@ test('never runs more handlers than its concurrency', async () => {
     active--;
   }, { concurrency: 2 });
   void c.run();
-  await until(() => fake.calls.filter(call => call.verb === 'ack').length === 7);
+  await until(() => fake.calls.filter(call => call.verb === 'ack').flatMap(call => call.body.receipts as string[]).length === 7);
   await c.stop();
   assert.equal(peak, 2);
   assert.ok(fake.calls.filter(call => call.verb === 'lease').every(call => Number(call.body.max_messages) <= 2));

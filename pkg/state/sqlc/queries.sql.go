@@ -101544,6 +101544,33 @@ func (q *Queries) TriggerRecordIDByItemIdentifier(ctx context.Context, db DBTX, 
 	return id, err
 }
 
+const trimCompletedQueuePayloads = `-- name: TrimCompletedQueuePayloads :execrows
+WITH due AS (
+    SELECT id FROM invocations
+    WHERE source='queue' AND state='completed' AND payload <> 'null'::jsonb
+      AND completed_at <= $1::timestamptz
+    ORDER BY completed_at LIMIT $2::integer
+    FOR UPDATE SKIP LOCKED)
+UPDATE invocations i SET payload='null'::jsonb FROM due WHERE i.id=due.id
+`
+
+type TrimCompletedQueuePayloadsParams struct {
+	CompletedBefore pgtype.Timestamptz
+	RowLimit        int32
+}
+
+// A completed queue message keeps its payload for a day after its ack, then
+// only its history; failures and dead letters keep theirs for replay
+// (ADR-20261018101500 amendment 2026-10-31). Reads
+// invocations_queue_completed_payload_idx in completion order.
+func (q *Queries) TrimCompletedQueuePayloads(ctx context.Context, db DBTX, arg TrimCompletedQueuePayloadsParams) (int64, error) {
+	result, err := db.Exec(ctx, trimCompletedQueuePayloads, arg.CompletedBefore, arg.RowLimit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const tryEdgeRuleAccountMutationLock = `-- name: TryEdgeRuleAccountMutationLock :one
 SELECT pg_try_advisory_lock(hashtextextended('edge-rule-account:' || $1::text, 0))::boolean AS locked
 `

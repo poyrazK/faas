@@ -74095,6 +74095,13 @@ CREATE INDEX invocations_queue_binding_scope_idx ON public.invocations USING btr
 
 
 --
+-- Name: invocations_queue_completed_payload_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX invocations_queue_completed_payload_idx ON public.invocations USING btree (completed_at) WHERE ((source = 'queue'::text) AND (state = 'completed'::text) AND (payload <> 'null'::jsonb));
+
+
+--
 -- Name: invocations_queue_lease_binding_idx; Type: INDEX; Schema: public; Owner: -
 --
 

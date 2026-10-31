@@ -498,6 +498,10 @@ event deliveries, async edge routes and inbound webhooks. Async invokes and
 delayed tasks can ask for a shorter window with `retention_seconds`
 (`--retention` in the CLI).
 
+A completed queue message keeps its payload for 24 hours after a worker acks
+it; after that its history entry shows `"payload": null`, and its id, timings,
+attempts and outcome stay for the full retention.
+
 Failed and dead-lettered invocations are kept for at least 30 days, so you can
 inspect and replay them from the dead-letter queue (`gregale dlq list <app>`) on
 every plan. After the window, the invocation, its attempt history and its

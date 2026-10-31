@@ -46513,6 +46513,38 @@ paths:
         '413': { $ref: '#/components/responses/PlanSourceBytes' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/queues/send-batch:
+    post:
+      tags: [queues]
+      operationId: queueSendBatch
+      summary: Send up to 100 messages to one queue as one request.
+      description: |
+        Sends the messages in order with the same admission as a single send:
+        queue depth, backlog bytes and message size are checked for each one.
+        The first refused message ends the batch; the messages after it are
+        not attempted. Resend from the first message that was not accepted.
+        The batch counts as one request against the account's API budget.
+        API keys require `queues:send`, `deploy:write`, or `admin`.
+      x-faas-queue-leases: false
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QueueSendBatchRequest' }
+      responses:
+        '200':
+          description: The outcome of every message, in input order.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QueueSendBatchResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '403': { $ref: '#/components/responses/PlanQueueDepth' }
+        '413': { $ref: '#/components/responses/PlanSourceBytes' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/commit-sources:
     post:
       tags: [queues]
@@ -66200,6 +66232,49 @@ paths:
       required: true
       description: 'Organization queues: Enqueue a row on the per-app FIFO queue. Company owning the application or
         project.'
+      schema:
+        type: string
+  /v1/orgs/{organization}/apps/{slug}/queues/send-batch:
+    post:
+      tags:
+      - queues
+      operationId: sendOrgQueueMessageBatch
+      summary: 'Organization queues: Send up to 100 messages to one queue as one request'
+      description: 'Organization queues: Send up to 100 messages to one queue as one request. Owners, admins and
+        developers can configure and operate queues. Requires current membership and the corresponding credential
+        scope. Mutations require organization billing adoption. The first refused message ends the batch; resend from
+        the first message that was not accepted. API keys require `queues:send`, `deploy:write`, or `admin`.'
+      x-faas-queue-leases: false
+      parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QueueSendBatchRequest'
+      responses:
+        '200':
+          description: 'Organization queues: The outcome of every message, in input order.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueueSendBatchResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '403':
+          $ref: '#/components/responses/PlanQueueDepth'
+        '413':
+          $ref: '#/components/responses/PlanSourceBytes'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+    parameters:
+    - name: organization
+      in: path
+      required: true
+      description: 'Organization queues: Send up to 100 messages to one queue as one request. Company owning the
+        application or project.'
       schema:
         type: string
   /v1/orgs/{organization}/apps/{slug}/queue-bindings:
@@ -116164,6 +116239,49 @@ components:
         work:
           allOf: [{ $ref: '#/components/schemas/InvokeWork' }]
           description: "Optional keyed ordering policy for a queue message. Scoped environment bindings reject this option until their policy adapter is available."
+
+    QueueSendBatchRequest:
+      description: "Body for POST /v1/apps/{slug}/queues/send-batch: up to 100 messages for one queue, sent in order. The body is at most 8 MiB; each message meets its plan's message size."
+      type: object
+      required: [messages]
+      properties:
+        environment: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,31}[a-z0-9])?$', description: "Target registered environment with an enabled scoped queue binding. Omission sends through the default environment." }
+        queue_name: { type: string, pattern: '^[a-z][a-z0-9-]{0,62}$', description: "Optional logical queue name. Required when an app has multiple enabled queue consumers." }
+        retry_policy:
+          allOf:
+            - $ref: '#/components/schemas/RetryPolicyDTO'
+          description: Optional retry curve override for every message of the batch.
+        messages:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items: { $ref: '#/components/schemas/QueueSendBatchMessage' }
+
+    QueueSendBatchMessage:
+      description: One message of a batch send.
+      type: object
+      properties:
+        payload: { type: object, additionalProperties: true }
+
+    QueueSendBatchResult:
+      description: "The outcome of one message by its zero-based input index: accepted, rejected with the problem, or not attempted after an earlier rejection."
+      type: object
+      required: [index, status]
+      properties:
+        index: { type: integer, minimum: 0, description: Zero-based input position. }
+        status: { type: string, enum: [accepted, rejected, not_attempted] }
+        message: { $ref: '#/components/schemas/QueueSendResponse' }
+        problem: { $ref: '#/components/schemas/Problem' }
+
+    QueueSendBatchResponse:
+      description: Per-message outcomes in the original input order.
+      type: object
+      required: [results]
+      properties:
+        results:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/QueueSendBatchResult' }
 
     QueueWorkloadProfileRequest:
       description: |
