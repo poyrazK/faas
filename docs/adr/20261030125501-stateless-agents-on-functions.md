@@ -107,7 +107,7 @@ The slice calls the model through the app's managed AI integration over the rela
 |---|---|---|
 | `AgentCallbackTokenTTLSec` | 86,400 | A tool call's result window. Subscriptions use their own lifetime. |
 | `AgentCallbackPayloadMaxBytes` | 4,096, the realtime message limit | A result is one inbox message |
-| `AgentCallbacksPerMinutePerThread` | 600 | Stops a runaway tool from flooding one thread |
+| `AgentCallbacksPerMinutePerThread` | 600, per apid replica | Stops a runaway tool from flooding one thread |
 
 ## Rollout
 
@@ -125,7 +125,10 @@ Each step is one PR behind the `agents` capability.
    - **When a tool posts.** The token's expiry is checked, then the account's `agents` capability, then that the endpoint still belongs to the account. A failure answers like an unknown route.
    - **Publish.** `data` (JSON, at most `AgentCallbackPayloadMaxBytes`, the realtime message limit) is appended to the endpoint's `agent-inbox` channel with metadata `thread_id`, `kind` and `message_id`, and idempotency key `callback:{thread}:{message_id}`. A retried post lands once and gets the first sequence; the same `message_id` with other data is a 409.
    - **Tests.** Unit and property tests in `pkg/apid/agents` cover the thread scope against tampered tokens, issue and post rules, refusal after issue, and landing once.
-   - **Part two** adds revocation (closing a thread or subscription) and `AgentCallbacksPerMinutePerThread`.
+   **Built, part two (2026-11-01).**
+   - **Revocation.** `POST /v1/agent-callbacks/revocations` with `{endpoint_id, thread_id}` closes a thread to every URL issued for it until then. apid records the time in `agent_callback_revocations`, one row per endpoint and thread. A post is refused like an unknown route when its token was issued at or before that time. A URL issued later works, so a thread can reopen.
+   - **Rate limit.** Each apid counts one thread's posts in fixed one-minute windows. Past `AgentCallbacksPerMinutePerThread` (600) it answers `429 agent_callback_rate_limited` with the limit and the count. Each replica counts alone, so N replicas accept at most N × 600: the limit stops a runaway tool, and a post needs a valid token anyway.
+   - **Tests.** `TestPropertyRevokedCallbackNeverPublishes`: over random issues, revocations and posts, a URL publishes exactly when it was issued after its thread's latest revocation. Tests also cover the revoke and rate-limit rules and the store's revocation record.
 4. The Infinity Postgres store adapter and the template app, and a journey in `tests/journeys`: a two-turn stateless agent that sleeps, wakes on its callback and answers.
 5. The platform tools: `gregale.sleep`, `gregale.run`, then `gregale.github.subscribe`.
 6. Preview on the dogfood account, then the seller beta with harness runs (ADR-20261027090010 milestone B).

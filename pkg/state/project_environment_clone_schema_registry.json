@@ -19563,6 +19563,16 @@
     "kind": "operational"
   },
   {
+    "table": "agent_callback_revocations",
+    "columns": [
+      "account_id",
+      "endpoint_id",
+      "revoked_at",
+      "thread_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "agent_run_ai_spend",
     "columns": [
       "account_id",
