@@ -173,6 +173,14 @@ func (s *vmmdLogArchiveSink) Close(ctx context.Context) error {
 // logs with archive disabled; a malformed envelope emits a clear startup
 // warning, matching apid's best-effort archive policy.
 func startVMMDLogArchive(ctx context.Context, log *slog.Logger, ops *wire.OpsMetrics) (*vmmdLogArchiveSink, func()) {
+	var reg prometheus.Registerer
+	if ops != nil {
+		reg = ops.Registry()
+	}
+	// Every early return below leaves the archive off; the gauge makes that
+	// visible (FaasLogArchiveNodeDisabled) instead of one startup log line.
+	enabled := false
+	defer func() { logarchive.ReportEnabled(reg, "vmmd", enabled) }()
 	cfg, err := logarchive.ConfigFromEnv(os.Getenv, log)
 	if err != nil {
 		log.Warn("vmmd: log archive config failed", "err", err)
@@ -205,10 +213,6 @@ func startVMMDLogArchive(ctx context.Context, log *slog.Logger, ops *wire.OpsMet
 		return nil, nil
 	}
 	spool := logarchive.NewSpool(cfg.SpoolRoot, cfg.LocalBytesMax)
-	var reg prometheus.Registerer
-	if ops != nil {
-		reg = ops.Registry()
-	}
 	metrics := logarchive.NewMetricsWithPrefix(reg, "vmmd")
 	shipper, err := logarchive.NewShipper(cfg, spool, s3, log, metrics)
 	if err != nil {
@@ -239,5 +243,6 @@ func startVMMDLogArchive(ctx context.Context, log *slog.Logger, ops *wire.OpsMet
 		}
 	}
 	log.Info("vmmd: log archive enabled", "bucket", cfg.Bucket, "spool_root", cfg.SpoolRoot, "interval", cfg.FlushInterval)
+	enabled = true
 	return sink, cleanup
 }
