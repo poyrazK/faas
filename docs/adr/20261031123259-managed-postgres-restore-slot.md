@@ -1,6 +1,6 @@
 # ADR-20261031123259: A restore may hold one database over the plan's limit
 
-- **Status:** proposed
+- **Status:** accepted (owner, 2026-10-31: a copy whose slot ends with no room has its delete scheduled; suspension rejected)
 - **Date:** 2026-10-31
 - **Owner:** apid (managed PostgreSQL) maintainers
 - **Amends:** ADR-20261031091607 (managed PostgreSQL GA, PR #6126: open item 1 and `postgres-restore`'s plans), [ADR-20261025094915](20261025094915-managed-postgres-compute-caps-on-running-databases.md) decision 9 (the storage pool), [ADR-20261029174950](20261029174950-managed-postgres-delete-grace-period.md) (undelete)
