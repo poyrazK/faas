@@ -81,6 +81,7 @@ var _ billing.Classifier = (*Provider)(nil)
 var _ billing.MeterUsageProvider = (*Provider)(nil)
 var _ billing.MeterUsagePolicyProvider = (*Provider)(nil)
 var _ billing.ObjectStorageLineItemSink = (*Provider)(nil)
+var _ billing.CustomerBillingInfoProvider = (*Provider)(nil)
 
 // PolarCapabilities returns the static capabilities of this provider.
 func PolarCapabilities() billing.CapabilitySet {
@@ -363,12 +364,21 @@ func (p *Provider) EnsurePlanProducts(ctx context.Context) error {
 type catalogOrganization struct {
 	ID                   string `json:"id"`
 	SubscriptionSettings struct {
-		AllowMultipleSubscriptions *bool `json:"allow_multiple_subscriptions"`
+		AllowMultipleSubscriptions *bool  `json:"allow_multiple_subscriptions"`
+		ProrationBehavior          string `json:"proration_behavior"`
 	} `json:"subscription_settings"`
 }
 
+// prorationInvoice is the organization proration that charges a plan change
+// made in the customer portal when it is made (ADR-20261031090658). With
+// "prorate" the portal grants the larger plan at once and leaves the charge
+// for the next renewal, which a cancellation may never reach. apid's own
+// plan changes set their proration per request.
+const prorationInvoice = "invoice"
+
 // validateOrganization refuses an organization that lets one customer hold
-// several subscriptions, so a second checkout can never bill a customer twice.
+// several subscriptions, so a second checkout can never bill a customer twice,
+// or that defers the charge for a portal upgrade to the next renewal.
 func (p *Provider) validateOrganization(ctx context.Context) error {
 	var page struct {
 		Items []catalogOrganization `json:"items"`
@@ -382,6 +392,9 @@ func (p *Provider) validateOrganization(ctx context.Context) error {
 	org := page.Items[0]
 	if allow := org.SubscriptionSettings.AllowMultipleSubscriptions; allow == nil || *allow {
 		return fmt.Errorf("polar: organization %s allows multiple subscriptions per customer; turn it off in the Polar dashboard (Settings, Subscriptions) before billing starts", org.ID)
+	}
+	if got := org.SubscriptionSettings.ProrationBehavior; got != prorationInvoice {
+		return fmt.Errorf("polar: organization %s prorates plan changes as %q; set proration to %q (invoice immediately) in the Polar dashboard (Settings, Subscriptions) before billing starts", org.ID, got, prorationInvoice)
 	}
 	return nil
 }
@@ -608,6 +621,9 @@ func (p *Provider) CreateCustomer(ctx context.Context, acct state.Account) (stri
 			"faas_account_id": acct.ID,
 		},
 	}
+	if name := strings.TrimSpace(acct.BusinessName); name != "" {
+		body["name"] = name
+	}
 	var created customerResponse
 	if err := p.doJSON(ctx, http.MethodPost, "/v1/customers", body, &created, "faas-customer-"+acct.ID); err != nil {
 		// A concurrent creator can win between GET and POST. Re-read the
@@ -622,6 +638,27 @@ func (p *Provider) CreateCustomer(ctx context.Context, acct state.Account) (stri
 	}
 	p.log.Info("polar: customer created", "account", acct.ID, "customer_id", created.ID)
 	return created.ID, nil
+}
+
+// SyncCustomerBillingInfo gives the account's Polar customer its business
+// name, which Polar prints on invoices (ADR-20261031090658). Polar keeps a
+// structured billing address with a country and validates a tax ID against
+// that country, so Gregale's free-form address and tax ID are not sent: the
+// customer enters them at checkout or in the customer portal. An empty
+// business name leaves the customer's name as it is.
+func (p *Provider) SyncCustomerBillingInfo(ctx context.Context, acct state.Account) error {
+	if acct.ProviderCustomerID == "" {
+		return fmt.Errorf("polar: account %s has no provider customer", acct.ID)
+	}
+	name := strings.TrimSpace(acct.BusinessName)
+	if name == "" {
+		return nil
+	}
+	path := "/v1/customers/" + url.PathEscape(acct.ProviderCustomerID)
+	if err := p.doJSON(ctx, http.MethodPatch, path, map[string]any{"name": name}, nil, "faas-customer-name-"+acct.ID); err != nil {
+		return fmt.Errorf("polar: update customer name account=%s: %w", acct.ID, err)
+	}
+	return nil
 }
 
 type usageEvent struct {
