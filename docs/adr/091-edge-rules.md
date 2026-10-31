@@ -1493,3 +1493,45 @@ API.
 6. Documentation: calls between your apps over the internal service network
    skip the target's edge rules; the service policy and
    `x-gregale-allow-callers` decide who may call.
+
+## Amendment (2026-10-31): review round 6 — owner scope, rule cookies, shared lists
+
+A further review found that the personal/company line, which rounds 4 and 5
+drew for named apps, lists and presets, did not hold for host patterns and
+route targets; that rule headers bypassed the cross-tenant cookie scoping;
+and that lists were compiled once per host. None changes the rule format or
+the API.
+
+1. **Rules stay inside their app's owner scope.** A company app keeps its
+   creator's account, and the gateway kept a host's rules to the host owner's
+   account, so a `*`, glob or exact-host rule on the creator's personal app
+   applied to the company app's hosts (redirect, respond, headers, CORS with
+   credentials, IP deny), and a company admin's `*` rule to the creator's
+   personal apps. An offboarded creator kept that reach: the rule sits on a
+   personal app, out of the company's sight. Each app now has an edge-rule
+   scope: the organization owning a company app, or none for a personal app
+   (no organization, or the account's personal one). gatewayd-internal keeps a
+   host's rules to those whose app shares the serving app's scope; the serving
+   app's own and inherited preview rules are unaffected. A `route` target must
+   share the host app's scope: apid refuses another scope's target when a rule
+   is written or restored, and the gateway refuses one at match time (a rule
+   written before this amendment). Lists and presets remain account objects;
+   editing them checks the apps whose rules use them (rounds 4 and 5).
+2. **Rule headers cannot set a cookie for the shared domain.** The app's own
+   `Set-Cookie` with `Domain=<apps or platform domain>` is made host-only, but a
+   `headers` rule's response operations and a `redirect` rule's headers were
+   written as they stood, so any tenant could set a cookie every other
+   tenant's app receives. Both now go through the same scoping; a custom
+   domain's `Domain` is kept.
+3. **Lists are compiled once per account.** Each host load read and compiled
+   every list its rules reference, so one 10,000-item list under a `*` rule
+   was held once per cached host (up to 10,000 hosts) and read from Postgres
+   on every host's load. gatewayd-internal now shares one compiled list per
+   account and name, with the owner rule set's TTL, dropped by the same
+   invalidations, and kept only if the cache generation did not move during
+   the load. An IP list's CIDRs are looked up by prefix length (one map lookup
+   per distinct length) instead of a scan of every CIDR.
+
+Checked and unchanged: the response cache key already varies on the request
+host (ADR-122, `computeVaryHash`), so one host's cached body is not served on
+another host of the same app.

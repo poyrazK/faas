@@ -2381,10 +2381,12 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	}
 	frozenCompressTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_frozen_compress_total",
-		Help: "Compressions of frozen instances into memory-only swap before memory pressure would park them (ADR-906 decision 6), by outcome.",
-	}, []string{"outcome"})
-	for _, outcome := range FrozenCompressOutcomes {
-		frozenCompressTotal.WithLabelValues(outcome)
+		Help: "Compressions of frozen instances into memory-only swap (ADR-906 decision 6), by what asked for them (pressure: before memory pressure would park them; proactive: a node near its RAM ceiling, ADR 20261031143521) and outcome.",
+	}, []string{"trigger", "outcome"})
+	for _, trigger := range FrozenCompressTriggers {
+		for _, outcome := range FrozenCompressOutcomes {
+			frozenCompressTotal.WithLabelValues(trigger, outcome)
+		}
 	}
 	frozenInstances := prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: prefix + "_frozen_instances",
@@ -4066,7 +4068,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// only needs to be added here, not in two parallel MustRegister
 	// calls that would silently drift apart.
 	commonCollectors := []prometheus.Collector{
-		eventDelivery.deferrals, eventDelivery.waiting, eventDelivery.oldest,
+		eventDelivery.deferrals, eventDelivery.waiting, eventDelivery.oldest, eventDelivery.outcomes,
 		workerRecovery.apps, workerRecovery.replicas, workerRecovery.observedAt,
 		queue.depth, queue.inFlight, queue.oldestAge, queue.deadLetter,
 		queue.bindingDepth, queue.bindingInFlight, queue.bindingLagSeconds, queue.bindingDeadLetter, queue.bindingWorkerDemand, queue.bindingThrottled,
@@ -6484,6 +6486,9 @@ var (
 	// FrozenCompressOutcomes: compressed keeps the VM frozen; insufficient,
 	// unavailable (no memory-only swap) and error park it.
 	FrozenCompressOutcomes = []string{"compressed", "insufficient", "unavailable", "error"}
+	// FrozenCompressTriggers: pressure is eviction above a node's ceiling,
+	// proactive a node near it (ADR 20261031143521).
+	FrozenCompressTriggers = []string{"pressure", "proactive"}
 )
 
 // FrozenFreezeTotal is the idle-timeout freeze counter for one outcome.
@@ -6535,12 +6540,13 @@ func (m *OpsMetrics) FrozenParksTotal(reason string) prometheus.Counter {
 	return m.frozenParksTotal.WithLabelValues(reason)
 }
 
-// FrozenCompressTotal is the frozen-compression counter for one outcome.
-func (m *OpsMetrics) FrozenCompressTotal(outcome string) prometheus.Counter {
+// FrozenCompressTotal is the frozen-compression counter for one trigger and
+// outcome.
+func (m *OpsMetrics) FrozenCompressTotal(trigger, outcome string) prometheus.Counter {
 	if m == nil {
 		return nil
 	}
-	return m.frozenCompressTotal.WithLabelValues(outcome)
+	return m.frozenCompressTotal.WithLabelValues(trigger, outcome)
 }
 
 // SetFrozenInstances sets the number of instances held frozen.

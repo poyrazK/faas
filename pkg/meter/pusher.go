@@ -475,7 +475,9 @@ func (p *Pusher) pushPendingMeter(ctx context.Context, ops providerOps, byID map
 				}
 				continue
 			}
-			included, grantErr := grants.included(ctx, acct, hour)
+			// The compute the month is billed through this hour, not usage
+			// above its allowance (ADR-20261031100000).
+			compute, grantErr := grants.billedBefore(ctx, p.store, acct, hour.Add(time.Hour), computeRaw)
 			if grantErr != nil {
 				if firstErr == nil {
 					firstErr = grantErr
@@ -489,7 +491,6 @@ func (p *Pusher) pushPendingMeter(ctx context.Context, ops providerOps, byID map
 				}
 				continue
 			}
-			compute := api.BillableMBSecondsAbove(included, computeRaw)
 			if within := clampToAllowance(totalBillable-billable, totalBillable, capEgressAllowance(capCents, compute, objectStorage, policy)); within < billable {
 				p.log.Info("meter: egress overage cap reached", "account", acct.ID, "hour", window.Hour,
 					"cap_cents", capCents, "compute_mb_seconds", compute, "object_storage_millicents", objectStorage, "egress_quantity", totalBillable,
@@ -682,7 +683,13 @@ func (p *Pusher) billablePendingUsage(ctx context.Context, acct state.Account, w
 	after := api.BillableMBSecondsAbove(included, current)
 	cursors[key] = cursor
 	if capCents, capped := caps[acct.ID]; capped {
-		return p.computeWithinCap(ctx, acct, hour, capCents, before, after)
+		// The cap bounds what the month is billed, which after a plan change
+		// is not usage above this hour's allowance (ADR-20261031100000).
+		billed, err := grants.billedBefore(ctx, p.store, acct, hour, prior)
+		if err != nil {
+			return 0, err
+		}
+		return p.computeWithinCap(ctx, acct, hour, capCents, billed, billed+after-before)
 	}
 	return after - before, nil
 }
@@ -703,11 +710,22 @@ func (p *Pusher) newMonthGrants() *monthGrants {
 // through the end of hour. Stores without recorded activations keep the
 // current plan's allowance.
 func (g *monthGrants) included(ctx context.Context, acct state.Account, hour time.Time) (int64, error) {
+	hour = hour.UTC().Truncate(time.Hour)
+	snapshots, err := g.snapshots(ctx, acct, hour)
+	if err != nil {
+		return 0, err
+	}
+	return state.MonthComputeIncludedMBSeconds(acct.Plan, snapshots, hour.Add(time.Hour)), nil
+}
+
+// snapshots returns acct's recorded plan activations for hour's month; nil
+// for a store without them.
+func (g *monthGrants) snapshots(ctx context.Context, acct state.Account, hour time.Time) ([]state.FinancialPriceSnapshot, error) {
 	record, ok := g.store.(state.FinancialStore)
 	if !ok {
-		return api.IncludedMBSeconds(acct.Plan), nil
+		return nil, nil
 	}
-	hour = hour.UTC().Truncate(time.Hour)
+	hour = hour.UTC()
 	monthStart := time.Date(hour.Year(), hour.Month(), 1, 0, 0, 0, 0, time.UTC)
 	key := acct.ID + "\x00" + monthStart.Format("2006-01")
 	snapshots, cached := g.byKey[key]
@@ -715,11 +733,26 @@ func (g *monthGrants) included(ctx context.Context, acct state.Account, hour tim
 		var err error
 		snapshots, err = record.ListFinancialPriceSnapshots(ctx, acct.ID, monthStart)
 		if err != nil {
-			return 0, fmt.Errorf("meter: load plan history for %s: %w", acct.ID, err)
+			return nil, fmt.Errorf("meter: load plan history for %s: %w", acct.ID, err)
 		}
 		g.byKey[key] = snapshots
 	}
-	return state.MonthComputeIncludedMBSeconds(acct.Plan, snapshots, hour.Add(time.Hour)), nil
+	return snapshots, nil
+}
+
+// billedBefore is the compute overage the pusher bills acct's month before
+// at, given usage, the month's usage before at (state.MonthBilledComputeMBSeconds).
+// Only a month with a plan change reads its usage at the change.
+func (g *monthGrants) billedBefore(ctx context.Context, store state.Store, acct state.Account, at time.Time, usage int64) (int64, error) {
+	snapshots, err := g.snapshots(ctx, acct, at)
+	if err != nil {
+		return 0, err
+	}
+	at = at.UTC()
+	monthStart := time.Date(at.Year(), at.Month(), 1, 0, 0, 0, 0, time.UTC)
+	return state.MonthBilledComputeMBSeconds(acct.Plan, snapshots, at, usage, func(t time.Time) (int64, error) {
+		return sumUsageRows(ctx, store, acct.ID, monthStart, t)
+	})
 }
 
 // usageFinalThrough returns the instant before which meterd writes no further

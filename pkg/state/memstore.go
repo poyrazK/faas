@@ -384,6 +384,9 @@ type MemStore struct {
 	releaseFreezes map[string]ReleaseFreeze
 	// releaseGates mirrors app_release_gates (ADR-20261019071734).
 	releaseGates map[string]ReleaseGate
+	// releaseGateProbes mirrors release_gate_probe_results
+	// (ADR-20261022082305).
+	releaseGateProbes map[releaseGateProbeKey]ReleaseGateProbeResult
 	// releaseApprovalPolicies mirrors app_release_approval_policies, keyed by
 	// app ID; releaseApprovals mirrors deployment_release_approvals
 	// (ADR-20261020085706).
@@ -20526,7 +20529,16 @@ func (m *MemStore) CurrentMonthOverageCents(_ context.Context, accountID string)
 			snapshots = append(snapshots, p)
 		}
 	}
-	return monthOverageCents(plan, snapshots, now, mbSeconds), nil
+	usageBefore := func(at time.Time) (int64, error) {
+		var before int64
+		for _, u := range m.usage {
+			if u.AccountID == accountID && !u.Minute.Before(monthStart) && u.Minute.Before(at) {
+				before += u.MBSeconds
+			}
+		}
+		return before, nil
+	}
+	return monthOverageCents(plan, snapshots, now, mbSeconds, usageBefore)
 }
 
 // UpdateAccountOverageCapCents writes accounts.overage_cap_cents for
@@ -20740,6 +20752,10 @@ func (m *MemStore) pendingBillingMeterUsageWindows(provider string, meter Billin
 	for _, row := range m.usage {
 		identity, ok := m.billingIdentities[billingIdentityKey(row.AccountID, provider)]
 		if !ok || row.Minute.Before(start) || !row.Minute.Before(end) || row.Minute.Before(identity.BillingFrom) {
+			continue
+		}
+		// Only paid subjects are pending, as in PgStore (ADR-20261031100000).
+		if !m.billingSubjectPaidLocked(row.AccountID) {
 			continue
 		}
 		hour := row.Minute.UTC().Truncate(time.Hour)
@@ -29673,4 +29689,16 @@ func requireAPIKeyScopes(scopes []string) error {
 		return fmt.Errorf("%w: api key scopes must not be empty", ErrInvalidArgument)
 	}
 	return nil
+}
+
+// billingSubjectPaidLocked reports whether a billing subject, an account or a
+// company organization, is on a paid plan. Caller holds m.mu.
+func (m *MemStore) billingSubjectPaidLocked(id string) bool {
+	if a, ok := m.accounts[id]; ok {
+		return a.Plan.IsPaid()
+	}
+	if o, ok := m.orgs[id]; ok && !o.Personal {
+		return o.Plan.IsPaid()
+	}
+	return false
 }

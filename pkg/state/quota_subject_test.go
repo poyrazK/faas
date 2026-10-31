@@ -225,7 +225,28 @@ func quotaSubjectKinds() []quotaSubjectKind {
 			return store.UpsertAppOpenAPIDocIfUnderQuota(ctx, app.ID, app.AccountID, []byte(`{"openapi":"3.1.0","info":{"title":"quota"}}`), 1, "3.1.0", 1)
 		},
 		accountCap: openAPIImportAccountCap,
+	}, {
+		// A domain claim spends the pending-domain budget until it is
+		// verified (api.CustomDomainLimitsFor).
+		name: "pending custom domains",
+		onApp: func(ctx context.Context, store state.Store, app state.App) error {
+			_, err := store.(pendingDomainClaimer).CreateCustomDomainIfUnderQuota(ctx, "claim-"+uuid.NewString()[:8]+".example.test",
+				app.ID, "token-"+uuid.NewString(), 10, 1)
+			return err
+		},
+		accountCap: pendingDomainAccountCap,
 	}}
+}
+
+// pendingDomainClaimer is the domain claim both stores implement; it is not
+// part of state.Store.
+type pendingDomainClaimer interface {
+	CreateCustomDomainIfUnderQuota(ctx context.Context, domain, appID, token string, appLimit, accountLimit int) (state.CustomDomain, error)
+}
+
+func pendingDomainAccountCap(err error) bool {
+	var q *state.CustomDomainQuotaError
+	return errors.As(err, &q) && q.Scope == "account"
 }
 
 func openAPIImportAccountCap(err error) bool {

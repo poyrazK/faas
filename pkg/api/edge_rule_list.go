@@ -8,6 +8,7 @@ package api
 import (
 	"fmt"
 	"net"
+	"net/netip"
 	"regexp"
 	"sort"
 	"strconv"
@@ -133,8 +134,61 @@ type EdgeRuleList struct {
 	Kind     string
 	items    []string            // normalized source, for condition encoding
 	exact    map[string]struct{} // lowercased for country and host
-	nets     []*net.IPNet
+	nets     ipPrefixSet
 	suffixes map[string]struct{} // ".example.com" for "*.example.com"
+}
+
+// ipPrefixSet answers whether an address is inside any of a list's CIDRs
+// with one map lookup per distinct prefix length, not a scan of every CIDR:
+// a list holds up to 10,000 items and is checked on every matching request
+// (ADR-091 amendment 2026-10-31, round 6).
+type ipPrefixSet struct {
+	v4, v6 prefixesByLength
+}
+
+type prefixesByLength struct {
+	lengths  []int // distinct prefix lengths, ascending
+	networks map[int]map[netip.Addr]struct{}
+}
+
+func (s *ipPrefixSet) add(p netip.Prefix) {
+	p = p.Masked()
+	if p.Addr().Is4() {
+		s.v4.add(p)
+		return
+	}
+	s.v6.add(p)
+}
+
+func (s *prefixesByLength) add(p netip.Prefix) {
+	if s.networks == nil {
+		s.networks = map[int]map[netip.Addr]struct{}{}
+	}
+	bits := p.Bits()
+	if s.networks[bits] == nil {
+		s.networks[bits] = map[netip.Addr]struct{}{}
+		s.lengths = append(s.lengths, bits)
+		sort.Ints(s.lengths)
+	}
+	s.networks[bits][p.Addr()] = struct{}{}
+}
+
+func (s *ipPrefixSet) contains(addr netip.Addr) bool {
+	addr = addr.Unmap()
+	set := &s.v6
+	if addr.Is4() {
+		set = &s.v4
+	}
+	for _, bits := range set.lengths {
+		p, err := addr.Prefix(bits)
+		if err != nil {
+			continue
+		}
+		if _, ok := set.networks[bits][p.Addr()]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 // EdgeRuleLists resolves list names for one account.
@@ -150,8 +204,11 @@ func CompileEdgeRuleList(kind string, items []string) (*EdgeRuleList, error) {
 	for _, item := range items {
 		switch {
 		case kind == EdgeRuleListKindIP && strings.Contains(item, "/"):
-			_, ipnet, _ := net.ParseCIDR(item)
-			l.nets = append(l.nets, ipnet)
+			// Normalized items are canonical CIDRs (an IPv4-mapped one is
+			// written as IPv4), so ParsePrefix accepts every one.
+			if p, err := netip.ParsePrefix(item); err == nil {
+				l.nets.add(p)
+			}
 		case kind == EdgeRuleListKindHost && strings.HasPrefix(item, "*."):
 			if l.suffixes == nil {
 				l.suffixes = map[string]struct{}{}
@@ -187,12 +244,8 @@ func (l *EdgeRuleList) containsIP(ip net.IP) bool {
 	if _, ok := l.exact[ip.String()]; ok {
 		return true
 	}
-	for _, ipnet := range l.nets {
-		if ipnet.Contains(ip) {
-			return true
-		}
-	}
-	return false
+	addr, ok := netip.AddrFromSlice(ip)
+	return ok && l.nets.contains(addr)
 }
 
 // contains looks up an observed value; host and country values arrive

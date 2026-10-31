@@ -43,7 +43,7 @@ var ErrPermanentInvoke = errors.New("sched: permanent invoke error")
 // applicationStatusError is a failure the app's own code returned: a 4xx,
 // or a 500 the runner marked handler_error. It wraps ErrPermanentInvoke and
 // keeps the status, so an event delivery can tell a handler that threw from
-// one that refused its input (ADR-20261031100000).
+// one that refused its input (ADR-20261031100001).
 type applicationStatusError struct {
 	status int
 	err    error
@@ -802,7 +802,7 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 	if err := d.financialAdmission(ctx, d.store, app, inv.DeploymentScope, "", d.engine.financialBudgetNow()); err != nil {
 		// Keep pending work and its attempt count intact. A held budget is
 		// an admission decision, not a failed customer execution. The row
-		// moves back by a minute (ADR-20261031100000): left due, a held
+		// moves back by a minute (ADR-20261031100001): left due, a held
 		// app's rows stayed at the head of every walk, and a walk's 2,048
 		// rows of them hid other tenants' work behind them.
 		_ = d.store.FailInvocation(ctx, inv.ID, "held by the app's compute budget", financialHoldDeferral, 0)
@@ -1500,7 +1500,7 @@ func invocationRetryPolicy(inv state.Invocation, app *state.App) dispatch.RetryP
 	}
 	if app != nil {
 		if appPolicy := app.RetryPolicy(); !appPolicy.Zero() {
-			// The app's curve applies within bounds (ADR-20261031100000): an
+			// The app's curve applies within bounds (ADR-20261031100001): an
 			// app policy with no cap took the default event cap, and none may
 			// wait past 5 minutes between attempts, or a keyed delivery could
 			// hold its key for days.
@@ -1519,7 +1519,7 @@ func invocationRetryPolicy(inv state.Invocation, app *state.App) dispatch.RetryP
 // budget moves back: out of the head of the walk, attempts untouched.
 const financialHoldDeferral = time.Minute
 
-// eventDeliveryFailure applies ADR-20261031100000 to a failed event
+// eventDeliveryFailure applies ADR-20261031100001 to a failed event
 // delivery. A handler that threw (the runner's 500) or asked to be retried
 // (408, 429) retries with the event backoff and is dead-lettered when its
 // attempts run out; any other 4xx is final but dead-lettered at once, so it
