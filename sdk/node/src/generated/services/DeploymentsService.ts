@@ -48,6 +48,7 @@ import type { ReleaseDiff } from '../models/ReleaseDiff.js';
 import type { ReleaseFreeze } from '../models/ReleaseFreeze.js';
 import type { ReleaseFreezeStatus } from '../models/ReleaseFreezeStatus.js';
 import type { ReleaseGate } from '../models/ReleaseGate.js';
+import type { ResourceStatus } from '../models/ResourceStatus.js';
 import type { RetryDeploymentRequest } from '../models/RetryDeploymentRequest.js';
 import type { RollbackOperation } from '../models/RollbackOperation.js';
 import type { RollbackRequest } from '../models/RollbackRequest.js';
@@ -2743,6 +2744,34 @@ export class DeploymentsService {
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
         `,
+      },
+    });
+  }
+  /**
+   * Read a deployment's conditions.
+   * Preview (resource-conditions capability). The deployment's Ready,
+   * Progressing and RolledOut conditions, mapped from
+   * the response GET /v1/deployments/{id} returns and never stored.
+   * Failed, cancelled and superseded deployments report terminal
+   * conditions. Cache-Control no-store.
+   *
+   * @returns ResourceStatus The deployment's conditions.
+   * @returns Problem Missing sign-in, read scope or MFA, a deployment this account does not own, the capability turned off, or the rate limit.
+   * @throws ApiError
+   */
+  public static getDeploymentStatus({
+    id,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+  }): CancelablePromise<ResourceStatus | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/deployments/{id}/status',
+      path: {
+        'id': id,
       },
     });
   }
