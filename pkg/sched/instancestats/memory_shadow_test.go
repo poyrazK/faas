@@ -41,6 +41,20 @@ func TestMemoryShadow(t *testing.T) {
 	}
 }
 
+// adr: 20261031143521 — a frozen instance is charged with the frozen floor
+// (8 MB), a running one with the measured floor (64 MB).
+func TestMemoryShadowChargesFrozenInstancesTheirFrozenFloor(t *testing.T) {
+	instances := []state.Instance{
+		{ID: "frozen", NodeID: "n1", State: string(state.StateFrozen), RAMMB: 1024},
+		{ID: "running", NodeID: "n1", State: string(state.StateRunning), RAMMB: 1024},
+	}
+	rows := []InstanceStat{{InstanceID: "frozen", RSSMB: 4}, {InstanceID: "running", RSSMB: 4}}
+	got := memoryShadow(instances, rows, nil)
+	if want := 10 + 80; got["n1"].MeasuredMB != want {
+		t.Fatalf("measured = %d MB, want %d (a compressed frozen VM at 10, a running one at 80)", got["n1"].MeasuredMB, want)
+	}
+}
+
 func TestReaderMeasuredMB(t *testing.T) {
 	r := NewReader()
 	now := time.Unix(1_800_000_000, 0)

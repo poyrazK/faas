@@ -382,6 +382,7 @@ what you used.
 | CORS rules per bucket | 100 |
 | Anonymous reads of a public bucket | 75% of the account's monthly request and egress ceilings; 100 per second per bucket |
 | Requests through `s3.gregale.dev` | 100 per second per account, bursts of 200; more answer `503 SlowDown`, which S3 SDKs retry with backoff |
+| Egress each month | 10 times your plan's included storage: Free 10 GiB, Hobby 100 GiB, Pro 500 GiB, Scale 2,000 GiB ([plans](plans.md#object-storage)). Public objects served from the CDN's cache do not count. At the limit, every request except deletes is refused until the month ends |
 
 Your plan and account also cap stored bytes, requests and egress each month.
 

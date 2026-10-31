@@ -3335,6 +3335,13 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 		api.WriteProblem(w, prob)
 		return
 	}
+	// A preview is torn down with its pull request or lease; a domain on it
+	// would stop serving then and keep its slot until the purge.
+	if app.PreviewOfSlug != "" {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+			"Previews cannot have custom domains", "attach the domain to the production app; a preview answers on its own pr-<N>-<app> host"))
+		return
+	}
 	if !s.domainOutsideForeignWildcard(r.Context(), w, domain, acct.ID) {
 		return
 	}
