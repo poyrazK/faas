@@ -151,6 +151,9 @@ func harnessWritablePaths(env []string) []string {
 	add(os.TempDir())
 	for _, kv := range env {
 		_, v, ok := strings.Cut(kv, "=")
+		// vmmd's listen address is a unix:// URL; its socket directory must
+		// be writable, or the sandbox's read-only /tmp refuses the bind.
+		v = strings.TrimPrefix(v, "unix://")
 		if !ok || !filepath.IsAbs(v) || strings.ContainsAny(v, " :") {
 			continue
 		}
