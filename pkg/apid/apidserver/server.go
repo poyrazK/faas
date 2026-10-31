@@ -4514,7 +4514,7 @@ func (s *server) handler() http.Handler {
 	mux.Handle("POST /v1/admin/ops/nodes/{name}/retire",
 		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postObsNodeRetire))))
 	// ADR-1027: move or restart a native managed database.
-	managedpg.Operations{AdminAllows: s.adminAllows, Intents: s.store, Notifier: s.notif, Audit: s.audit}.Register(mux, middleware.TraceID, s.authLimited, s.requireAdminMutation)
+	managedpg.Operations{AdminAllows: s.adminAllows, Intents: s.store, Notifier: s.notif, Audit: s.audit, Log: s.log}.Register(mux, middleware.TraceID, s.authLimited, s.requireAdminMutation)
 
 	// ADR-132 — typed runtime configuration. GET is MFA-gated; PATCH and
 	// rollback use the strict operator-session policy

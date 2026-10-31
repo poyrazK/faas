@@ -2,6 +2,7 @@ package managedpg
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -28,6 +29,8 @@ type Restart struct {
 	Audit interface {
 		Emit(ctx context.Context, kind string, accountID *string, data map[string]any)
 	}
+	// Log records why a request failed; nil drops it.
+	Log *slog.Logger
 }
 
 // Post records the restart. ?confirm=true is required and ?reason=
@@ -37,7 +40,7 @@ func (rs Restart) Post(w http.ResponseWriter, r *http.Request, acct state.Accoun
 	if !ok {
 		return
 	}
-	intentID, ok := enqueue(w, r, rs.Intents, rs.Notifier, rs.Audit, acct, state.OperatorIntentKindDatabaseRestart, databaseID, reason, nil, nil)
+	intentID, ok := enqueue(w, r, rs.Intents, rs.Notifier, rs.Audit, rs.Log, acct, state.OperatorIntentKindDatabaseRestart, databaseID, reason, nil, nil)
 	if !ok {
 		return
 	}
@@ -89,6 +92,8 @@ type Operations struct {
 	Audit interface {
 		Emit(ctx context.Context, kind string, accountID *string, data map[string]any)
 	}
+	// Log records why a request failed; nil drops it.
+	Log *slog.Logger
 }
 
 // Register serves the move, the restart and the switchover on mux behind

@@ -2,6 +2,7 @@ package managedpg
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -27,6 +28,8 @@ type Switchover struct {
 	Audit interface {
 		Emit(ctx context.Context, kind string, accountID *string, data map[string]any)
 	}
+	// Log records why a request failed; nil drops it.
+	Log *slog.Logger
 }
 
 // Post records the switchover. ?confirm=true is required and ?reason=
@@ -36,7 +39,7 @@ func (sw Switchover) Post(w http.ResponseWriter, r *http.Request, acct state.Acc
 	if !ok {
 		return
 	}
-	intentID, ok := enqueue(w, r, sw.Intents, sw.Notifier, sw.Audit, acct, state.OperatorIntentKindDatabaseSwitchover, databaseID, reason, nil, nil)
+	intentID, ok := enqueue(w, r, sw.Intents, sw.Notifier, sw.Audit, sw.Log, acct, state.OperatorIntentKindDatabaseSwitchover, databaseID, reason, nil, nil)
 	if !ok {
 		return
 	}

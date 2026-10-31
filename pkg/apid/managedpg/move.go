@@ -3,6 +3,7 @@ package managedpg
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"time"
@@ -33,6 +34,8 @@ type Move struct {
 	Audit interface {
 		Emit(ctx context.Context, kind string, accountID *string, data map[string]any)
 	}
+	// Log records why a request failed; nil drops it.
+	Log *slog.Logger
 }
 
 // IntentWriter records operator intents (state.Store).
@@ -66,10 +69,11 @@ func (m Move) Post(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	}
 	metadata, err := json.Marshal(state.DatabaseMoveIntentMetadata{TargetNode: node})
 	if err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal, "encode operator intent failed", err.Error()))
+		httpkit.LogCustomerFailure(m.Log, "encode operator intent failed", err)
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal, "encode operator intent failed", api.DetailServerFailure))
 		return
 	}
-	intentID, ok := enqueue(w, r, m.Intents, m.Notifier, m.Audit, acct, state.OperatorIntentKindDatabaseMove, databaseID, reason, metadata,
+	intentID, ok := enqueue(w, r, m.Intents, m.Notifier, m.Audit, m.Log, acct, state.OperatorIntentKindDatabaseMove, databaseID, reason, metadata,
 		map[string]any{"target_node": node})
 	if !ok {
 		return
@@ -87,10 +91,11 @@ func enqueue(w http.ResponseWriter, r *http.Request, intents IntentWriter, notif
 	Notify(ctx context.Context, channel, payload string) error
 }, audit interface {
 	Emit(ctx context.Context, kind string, accountID *string, data map[string]any)
-}, acct state.Account, kind state.OperatorIntentKind, databaseID, reason string, metadata json.RawMessage, extra map[string]any) (string, bool) {
+}, log *slog.Logger, acct state.Account, kind state.OperatorIntentKind, databaseID, reason string, metadata json.RawMessage, extra map[string]any) (string, bool) {
 	intentID, err := intents.InsertOperatorIntent(r.Context(), kind, databaseID, nil, acct.ID, reason, metadata, middleware.TraceIDFrom(r))
 	if err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal, "insert operator intent failed", err.Error()))
+		httpkit.LogCustomerFailure(log, "insert operator intent failed", err)
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal, "insert operator intent failed", api.DetailServerFailure))
 		return "", false
 	}
 	payload, _ := json.Marshal(map[string]string{"intent_id": intentID, "kind": string(kind), "target_id": databaseID})
