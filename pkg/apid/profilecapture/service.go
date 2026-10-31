@@ -61,16 +61,13 @@ func (s *Service) CaptureStore() (state.ProfileCaptureStore, bool) {
 	return store, ok
 }
 
-// Target gates a capture request on installation, plan and store, then
-// loads the app named by the {slug} path value. On failure it has already
-// written the response.
+// Target gates a capture request on installation and store, loads the app
+// named by the {slug} path value, and gates it on the plan of the app's
+// resource owner: an organization's app is judged by the organization's plan,
+// whoever asks. On failure it has already written the response.
 func (s *Service) Target(w http.ResponseWriter, r *http.Request, acct state.Account) (state.App, state.ProfileCaptureStore, bool) {
 	if !s.Enabled {
 		api.WriteProblemForRequest(w, r, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "On-demand profiling unavailable", "on-demand profiling is not enabled on this installation"))
-		return state.App{}, nil, false
-	}
-	if !api.MustLimitsFor(acct.Plan).Profiling.Enabled {
-		api.WriteProblemForRequest(w, r, api.ErrPlanFeatureGated("profiling", acct.Plan))
 		return state.App{}, nil, false
 	}
 	store, ok := s.CaptureStore()
@@ -79,7 +76,19 @@ func (s *Service) Target(w http.ResponseWriter, r *http.Request, acct state.Acco
 		return state.App{}, nil, false
 	}
 	app, ok := s.Host.LoadApp(w, r, acct, r.PathValue("slug"))
-	return app, store, ok
+	if !ok {
+		return app, nil, false
+	}
+	owner, err := state.AppResourceAccount(r.Context(), s.Host.Store(), app)
+	if err != nil {
+		api.WriteProblemForRequest(w, r, api.ErrCapacity("profile captures are unavailable"))
+		return state.App{}, nil, false
+	}
+	if !api.MustLimitsFor(owner.Plan).Profiling.Enabled {
+		api.WriteProblemForRequest(w, r, api.ErrPlanFeatureGated("profiling", owner.Plan))
+		return state.App{}, nil, false
+	}
+	return app, store, true
 }
 
 // Create handles POST /v1/apps/{slug}/profiles/captures.
@@ -93,7 +102,7 @@ func (s *Service) Create(w http.ResponseWriter, r *http.Request, acct state.Acco
 		api.WriteProblemForRequest(w, r, api.ErrValidation("invalid profile capture request"))
 		return
 	}
-	capture, problem := s.Queue(r.Context(), acct, app, store, req)
+	capture, problem := s.Queue(r.Context(), app, store, req)
 	if problem != nil {
 		api.WriteProblemForRequest(w, r, problem)
 		return
@@ -101,18 +110,25 @@ func (s *Service) Create(w http.ResponseWriter, r *http.Request, acct state.Acco
 	httpkit.WriteJSON(w, http.StatusAccepted, capture)
 }
 
-// Queue validates, stores and announces one capture. The queued row is the
+// Queue validates, stores and announces one capture. Its quotas and storage
+// are the app's resource owner's: the owner's plan, counted in the owner's
+// pool, as schedd counts automatic captures (ADR-1155). The queued row is the
 // source of truth; schedd's safety tick claims it if the notification is
 // lost.
-func (s *Service) Queue(ctx context.Context, acct state.Account, app state.App, store state.ProfileCaptureStore, req api.CreateProfileCaptureRequest) (api.ProfileCapture, *api.Problem) {
+func (s *Service) Queue(ctx context.Context, app state.App, store state.ProfileCaptureStore, req api.CreateProfileCaptureRequest) (api.ProfileCapture, *api.Problem) {
 	if err := req.Normalize(); err != nil {
 		return api.ProfileCapture{}, api.ErrValidation(err.Error())
+	}
+	owner, err := state.AppResourceAccount(ctx, s.Host.Store(), app)
+	if err != nil {
+		return api.ProfileCapture{}, api.ErrCapacity("profile capture could not be queued")
 	}
 	now := time.Now().UTC()
 	capture := api.ProfileCapture{ID: uuid.NewString(), AppID: app.ID, Status: api.ProfileCaptureQueued, Kinds: req.Kinds,
 		DurationSeconds: req.DurationSeconds, RequestedInstanceID: req.InstanceID, Profiles: []api.ProfileCaptureProfile{},
 		CreatedAt: now, ExpiresAt: now.Add(api.ProfileCaptureRetention)}
-	if err := store.CreateProfileCapture(ctx, acct.ID, app.ID, capture, api.MustLimitsFor(acct.Plan).Profiling.CaptureStorageBytes); err != nil {
+	limits := state.ProfileCaptureLimits{StorageBytes: api.MustLimitsFor(owner.Plan).Profiling.CaptureStorageBytes, Pool: owner.ResourceOwnerID()}
+	if err := store.CreateProfileCapture(ctx, app.AccountID, app.ID, capture, limits); err != nil {
 		return capture, createProblem(err)
 	}
 	payload, _ := json.Marshal(map[string]string{"capture_id": capture.ID})
@@ -150,7 +166,7 @@ func (s *Service) List(w http.ResponseWriter, r *http.Request, acct state.Accoun
 	if !ok {
 		return
 	}
-	captures, err := store.ListProfileCaptures(r.Context(), acct.ID, app.ID)
+	captures, err := store.ListProfileCaptures(r.Context(), app.AccountID, app.ID)
 	if err != nil {
 		api.WriteProblemForRequest(w, r, api.ErrCapacity("profile captures are unavailable"))
 		return
@@ -173,7 +189,7 @@ func (s *Service) Get(w http.ResponseWriter, r *http.Request, acct state.Account
 // Owned loads the capture named by the {id} path value, collapsing
 // malformed, missing and other apps' captures to the same 404.
 func (s *Service) Owned(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App, store state.ProfileCaptureStore) (api.ProfileCapture, bool) {
-	capture, problem := load(r.Context(), acct, app, store, r.PathValue("id"))
+	capture, problem := load(r.Context(), app, store, r.PathValue("id"))
 	if problem != nil {
 		api.WriteProblemForRequest(w, r, problem)
 		return capture, false
@@ -181,39 +197,47 @@ func (s *Service) Owned(w http.ResponseWriter, r *http.Request, acct state.Accou
 	return capture, true
 }
 
-// Delete handles DELETE /v1/apps/{slug}/profiles/captures/{id}. Its
-// storage frees at once; a capture still running finishes into nothing.
+// Delete handles DELETE /v1/apps/{slug}/profiles/captures/{id}.
 func (s *Service) Delete(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	app, store, ok := s.Target(w, r, acct)
 	if !ok {
 		return
 	}
-	id := r.PathValue("id")
-	if _, err := uuid.Parse(id); err != nil {
-		api.WriteProblemForRequest(w, r, captureNotFound())
+	if problem := s.Remove(r.Context(), acct, app, store, r.PathValue("id")); problem != nil {
+		api.WriteProblemForRequest(w, r, problem)
 		return
 	}
-	if err := store.DeleteProfileCapture(r.Context(), acct.ID, app.ID, id); errors.Is(err, state.ErrNotFound) {
-		api.WriteProblemForRequest(w, r, captureNotFound())
-		return
-	} else if err != nil {
-		api.WriteProblemForRequest(w, r, api.ErrCapacity("profile capture could not be deleted"))
-		return
-	}
-	s.Host.Audit(r.Context(), "profile_capture.deleted", acct.ID, map[string]any{"app_id": app.ID, "capture_id": id})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// Remove deletes one capture of app and audits it as acct's. Its storage
+// frees at once; a capture still running finishes into nothing.
+func (s *Service) Remove(ctx context.Context, acct state.Account, app state.App, store state.ProfileCaptureStore, id string) *api.Problem {
+	if _, err := uuid.Parse(id); err != nil {
+		return captureNotFound()
+	}
+	if err := store.DeleteProfileCapture(ctx, app.AccountID, app.ID, id); errors.Is(err, state.ErrNotFound) {
+		return captureNotFound()
+	} else if err != nil {
+		return api.ErrCapacity("profile capture could not be deleted")
+	}
+	s.Host.Audit(ctx, "profile_capture.deleted", acct.ID, map[string]any{"app_id": app.ID, "capture_id": id})
+	return nil
 }
 
 func captureNotFound() *api.Problem {
 	return api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Capture not found", "profile capture does not exist")
 }
 
-func load(ctx context.Context, acct state.Account, app state.App, store state.ProfileCaptureStore, id string) (api.ProfileCapture, *api.Problem) {
+// load reads one capture of app. Captures are stored under the app's
+// account, whichever member queued them, so every member the app is shared
+// with reads the same captures.
+func load(ctx context.Context, app state.App, store state.ProfileCaptureStore, id string) (api.ProfileCapture, *api.Problem) {
 	notFound := captureNotFound()
 	if _, err := uuid.Parse(id); err != nil {
 		return api.ProfileCapture{}, notFound
 	}
-	capture, err := store.GetProfileCapture(ctx, acct.ID, app.ID, id)
+	capture, err := store.GetProfileCapture(ctx, app.AccountID, app.ID, id)
 	if errors.Is(err, state.ErrNotFound) {
 		return capture, notFound
 	}

@@ -5290,7 +5290,9 @@ func (s *server) handler() http.Handler {
 	mux.Handle("POST /dashboard/apps/{slug}/issues/ownership-rules", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueOwnershipRulesHandler))))
 	mux.Handle("POST /dashboard/apps/{slug}/profiles/deployment-policy", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardSaveProfileDeploymentPolicy))))
 	// ADR-1155: on-demand capture form, capture page and session-authenticated pprof download.
+	mux.Handle("GET /dashboard/apps/{slug}/profiles/captures", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardProfileCaptures))))
 	mux.Handle("POST /dashboard/apps/{slug}/profiles/captures", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardCreateProfileCapture))))
+	mux.Handle("POST /dashboard/apps/{slug}/profiles/captures/{id}/delete", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDeleteProfileCapture))))
 	mux.Handle("GET /dashboard/apps/{slug}/profiles/captures/{id}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardProfileCapture))))
 	mux.Handle("GET /dashboard/apps/{slug}/profiles/captures/{id}/pprof", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDownloadProfileCapture))))
 	mux.Handle("GET /dashboard/apps/{slug}/profiles/captures/{id}/diff", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardProfileCaptureDiff))))

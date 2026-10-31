@@ -74,7 +74,7 @@ func TestProfileCaptureAutomaticLimits(t *testing.T) {
 				}
 			}
 			queueAutomatic := func(app string, c api.ProfileCapture, limit int64) error {
-				return store.QueueAutomaticProfileCapture(ctx, acct.ID, app, c, time.Nanosecond, limit)
+				return store.QueueAutomaticProfileCapture(ctx, acct.ID, app, c, time.Nanosecond, state.ProfileCaptureLimits{StorageBytes: limit})
 			}
 
 			// Automatic captures may use half the limit: room for one reservation
@@ -130,7 +130,7 @@ func TestProfileCaptureAutomaticLimits(t *testing.T) {
 			// A manual capture is claimed before the older queued automatic one
 			// and fits the half automatic captures cannot use.
 			manual := capture(now.Add(10*time.Second), "")
-			if err := store.CreateProfileCapture(ctx, acct.ID, apps[0], manual, limit); err != nil {
+			if err := store.CreateProfileCapture(ctx, acct.ID, apps[0], manual, state.ProfileCaptureLimits{StorageBytes: limit}); err != nil {
 				t.Fatalf("manual capture refused beside automatic ones: %v", err)
 			}
 			run(manual.ID, now.Add(11*time.Second), "instance-a", 0)
@@ -151,7 +151,7 @@ func TestProfileCaptureAutomaticLimits(t *testing.T) {
 			}
 			// Deleting a queued capture cancels it.
 			queued := capture(now.Add(13*time.Second), "")
-			if err := store.CreateProfileCapture(ctx, acct.ID, apps[2], queued, limit); err != nil {
+			if err := store.CreateProfileCapture(ctx, acct.ID, apps[2], queued, state.ProfileCaptureLimits{StorageBytes: limit}); err != nil {
 				t.Fatal(err)
 			}
 			if err := store.DeleteProfileCapture(ctx, acct.ID, apps[2], queued.ID); err != nil {

@@ -152,11 +152,13 @@ func (e *Engine) queueAutomaticCapture(ctx context.Context, instanceID string, c
 	if err != nil {
 		return false, "", err
 	}
-	acct, err := e.store.AccountByID(ctx, app.AccountID)
+	// An organization's app counts under the organization: its plan and its
+	// pool, as apid counts manual captures (ADR-1155).
+	owner, err := state.AppResourceAccount(ctx, e.store, app)
 	if err != nil {
 		return false, "", err
 	}
-	limits, ok := api.LimitsFor(acct.Plan)
+	limits, ok := api.LimitsFor(owner.Plan)
 	if !ok || !limits.Profiling.Enabled {
 		return skip("plan", "plan does not include profiling")
 	}
@@ -169,7 +171,8 @@ func (e *Engine) queueAutomaticCapture(ctx context.Context, instanceID string, c
 	now := time.Now().UTC()
 	capture.ID, capture.AppID, capture.RequestedInstanceID = uuid.NewString(), app.ID, ins.ID
 	capture.CreatedAt, capture.ExpiresAt = now, now.Add(api.ProfileCaptureRetention)
-	switch err := queue.QueueAutomaticProfileCapture(ctx, app.AccountID, app.ID, capture, minInterval, limits.Profiling.CaptureStorageBytes); {
+	switch err := queue.QueueAutomaticProfileCapture(ctx, app.AccountID, app.ID, capture, minInterval,
+		state.ProfileCaptureLimits{StorageBytes: limits.Profiling.CaptureStorageBytes, Pool: owner.ResourceOwnerID()}); {
 	case errors.Is(err, state.ErrProfileCaptureRecent):
 		return skip("interval", "an automatic capture ran for this app within the minimum interval")
 	case errors.Is(err, state.ErrProfileCaptureActive):

@@ -68,6 +68,7 @@ type window struct {
 	epoch      string
 	from       time.Time
 	span       time.Duration
+	capture    bool
 	cpu        bool
 	heap       bool
 	checkpoint time.Time
@@ -126,8 +127,17 @@ func run(ctx context.Context, endpoint string) {
 		}
 		cfg, err := readControl(ctx, client, endpoint, pid)
 		if err != nil {
-			if active != nil && time.Since(active.from) >= active.span {
-				stop(false)
+			if w := active; w != nil && time.Since(w.from) >= w.span {
+				// A capture's window that just ended is still sent: the person
+				// waiting on it would otherwise get nothing for one failed
+				// poll. Past the capture grace nobody takes it, and a window
+				// frozen across a snapshot must not be relabelled, so it and
+				// a continuous window are discarded.
+				ended := w.capture && time.Since(w.from) <= w.span+api.ProfileCaptureGrace
+				if ended {
+					finished = w.epoch
+				}
+				stop(ended)
 			}
 			delay = api.ProfileControlPollInterval
 			continue
@@ -159,7 +169,7 @@ func run(ctx context.Context, endpoint string) {
 				}
 			}
 		} else if cfg.Enabled && active == nil && cfg.Epoch != "" && (!cfg.Capture || cfg.Epoch != finished) {
-			w := &window{epoch: cfg.Epoch, from: time.Now(), span: time.Duration(cfg.WindowSeconds) * time.Second, heap: cfg.wants(api.ProfileKindHeap)}
+			w := &window{epoch: cfg.Epoch, from: time.Now(), span: time.Duration(cfg.WindowSeconds) * time.Second, capture: cfg.Capture, heap: cfg.wants(api.ProfileKindHeap)}
 			w.checkpoint = w.from
 			buffer.Reset()
 			if cfg.wants(api.ProfileKindCPU) {

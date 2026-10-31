@@ -37,7 +37,7 @@ func (s *Service) Compare(ctx context.Context, acct state.Account, app state.App
 	if baseID == "" || baseID == cand.ID {
 		return api.ProfileCaptureDiff{}, api.ErrValidation("base must name another capture of this app")
 	}
-	base, problem := load(ctx, acct, app, store, baseID)
+	base, problem := load(ctx, app, store, baseID)
 	if problem != nil {
 		if problem.Status == http.StatusNotFound {
 			return api.ProfileCaptureDiff{}, api.ErrValidation("base must name another capture of this app")

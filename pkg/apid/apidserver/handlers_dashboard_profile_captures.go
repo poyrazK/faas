@@ -26,24 +26,104 @@ const profileCaptureCookie = "faas_csrf_profile_capture"
 // when on-demand profiling is unavailable to this account.
 func (s *server) profileCapturesView(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App) *dashboard.ProfileCapturesView {
 	store, ok := s.profileCaptures.CaptureStore()
-	if !ok || !api.MustLimitsFor(acct.Plan).Profiling.Enabled || s.sessions == nil {
+	if !ok || !api.MustLimitsFor(acct.Plan).Profiling.Enabled {
+		return nil
+	}
+	return s.buildProfileCapturesView(w, r, acct, app, store)
+}
+
+// buildProfileCapturesView lists the app's captures and arms the capture
+// form; nil when the session store is unavailable.
+func (s *server) buildProfileCapturesView(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App, store state.ProfileCaptureStore) *dashboard.ProfileCapturesView {
+	if s.sessions == nil {
 		return nil
 	}
 	view := &dashboard.ProfileCapturesView{AppSlug: app.Slug, MaxDuration: int(api.ProfileCaptureMaxDuration / time.Second)}
-	captures, err := store.ListProfileCaptures(r.Context(), acct.ID, app.ID)
+	captures, err := store.ListProfileCaptures(r.Context(), app.AccountID, app.ID)
 	if err != nil {
 		view.Error = "Recent captures could not be listed."
 	}
 	view.Captures = captures
+	if view.CSRF = s.issueProfileCaptureCSRF(w, acct); view.CSRF == "" {
+		view.Error = "Captures are temporarily unavailable."
+	}
+	return view
+}
+
+// issueProfileCaptureCSRF arms the capture forms of one page; "" when no
+// token could be issued, which hides or disables them.
+func (s *server) issueProfileCaptureCSRF(w http.ResponseWriter, acct state.Account) string {
+	if s.sessions == nil {
+		return ""
+	}
 	token, err := middleware.IssueForAuthenticatedNamed(s.sessions, profileCaptureAction, acct.ID, profileCaptureCookie)
 	if err != nil {
-		view.Error = "Captures are temporarily unavailable."
-		return view
+		return ""
 	}
-	view.CSRF = token
 	// #nosec G124 -- configured production domains use Secure; empty domain supports local HTTP development.
 	http.SetCookie(w, &http.Cookie{Name: profileCaptureCookie, Value: token, Path: "/", HttpOnly: true, Secure: s.domain != "", SameSite: http.SameSiteLaxMode, MaxAge: int(middleware.DefaultCSRFTTL.Seconds())})
-	return view
+	return token
+}
+
+// verifyProfileCaptureForm parses a capture form and checks its CSRF token;
+// on failure it has already written the response.
+func (s *server) verifyProfileCaptureForm(w http.ResponseWriter, r *http.Request, acct state.Account, verb string) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, api.ProfileControlMaxBytes)
+	if err := r.ParseForm(); err != nil {
+		api.WriteProblemForRequest(w, r, api.ErrValidation("invalid profile capture form"))
+		return false
+	}
+	if err := middleware.VerifyAuthenticatedNamed(s.sessions, r, profileCaptureAction, acct.ID, profileCaptureCookie); err != nil {
+		api.WriteProblemForRequest(w, r, api.ErrValidation("invalid CSRF token; reload before "+verb+" a capture"))
+		return false
+	}
+	return true
+}
+
+// dashboardProfileCaptures is the app's captures page: the capture form and
+// recent captures on a page of their own, so accounts released
+// profile-captures reach them without the traffic-profiles page.
+func (s *server) dashboardProfileCaptures(w http.ResponseWriter, r *http.Request) {
+	acct, ok := AccountFrom(r.Context())
+	if !ok {
+		writeDashboardUnauthorized(w, r)
+		return
+	}
+	app, store, ok := s.profileCaptures.Target(w, r, acct)
+	if !ok {
+		return
+	}
+	view := s.buildProfileCapturesView(w, r, acct, app, store)
+	if view == nil {
+		api.WriteProblemForRequest(w, r, api.ErrCapacity("profile captures are temporarily unavailable"))
+		return
+	}
+	count, _ := s.store.CountDeployedApps(r.Context(), acct.ID)
+	if err := dashboard.Render(w, s.log, httpsec.NonceFromContext(r.Context()), dashboard.Page{Title: app.Slug + " profile captures", Body: "app_profile_captures", Account: dashboardAccountView(acct, count), Data: view}); err != nil {
+		renderProblem(w, s.log, err)
+	}
+}
+
+// dashboardDeleteProfileCapture deletes a capture from its page and returns
+// to the app's captures.
+func (s *server) dashboardDeleteProfileCapture(w http.ResponseWriter, r *http.Request) {
+	acct, ok := AccountFrom(r.Context())
+	if !ok {
+		writeDashboardUnauthorized(w, r)
+		return
+	}
+	if !s.verifyProfileCaptureForm(w, r, acct, "deleting") {
+		return
+	}
+	app, store, ok := s.profileCaptures.Target(w, r, acct)
+	if !ok {
+		return
+	}
+	if problem := s.profileCaptures.Remove(r.Context(), acct, app, store, r.PathValue("id")); problem != nil {
+		api.WriteProblemForRequest(w, r, problem)
+		return
+	}
+	http.Redirect(w, r, dashboard.ProfileCapturesURL(app.Slug), http.StatusSeeOther)
 }
 
 func (s *server) dashboardCreateProfileCapture(w http.ResponseWriter, r *http.Request) {
@@ -52,13 +132,7 @@ func (s *server) dashboardCreateProfileCapture(w http.ResponseWriter, r *http.Re
 		writeDashboardUnauthorized(w, r)
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, api.ProfileControlMaxBytes)
-	if err := r.ParseForm(); err != nil {
-		api.WriteProblemForRequest(w, r, api.ErrValidation("invalid profile capture form"))
-		return
-	}
-	if err := middleware.VerifyAuthenticatedNamed(s.sessions, r, profileCaptureAction, acct.ID, profileCaptureCookie); err != nil {
-		api.WriteProblemForRequest(w, r, api.ErrValidation("invalid CSRF token; reload before starting a capture"))
+	if !s.verifyProfileCaptureForm(w, r, acct, "starting") {
 		return
 	}
 	app, store, ok := s.profileCaptures.Target(w, r, acct)
@@ -71,7 +145,7 @@ func (s *server) dashboardCreateProfileCapture(w http.ResponseWriter, r *http.Re
 		return
 	}
 	req := api.CreateProfileCaptureRequest{Kinds: r.PostForm["kind"], DurationSeconds: duration, InstanceID: r.PostForm.Get("instance_id")}
-	capture, problem := s.profileCaptures.Queue(r.Context(), acct, app, store, req)
+	capture, problem := s.profileCaptures.Queue(r.Context(), app, store, req)
 	if problem != nil {
 		api.WriteProblemForRequest(w, r, problem)
 		return
@@ -93,10 +167,10 @@ func (s *server) dashboardProfileCapture(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	page := dashboard.ProfileCapturePage{AppSlug: app.Slug, Capture: capture, Refresh: !capture.Done()}
+	page := dashboard.ProfileCapturePage{AppSlug: app.Slug, Capture: capture, Refresh: !capture.Done(), CSRF: s.issueProfileCaptureCSRF(w, acct)}
 	if capture.Status == api.ProfileCaptureReady {
 		page.Kinds = s.profileCaptureKinds(r, acct, app, store, capture)
-		if all, err := store.ListProfileCaptures(r.Context(), acct.ID, app.ID); err == nil {
+		if all, err := store.ListProfileCaptures(r.Context(), app.AccountID, app.ID); err == nil {
 			page.Compare = dashboard.ProfileCaptureCompareOptions(profilecapture.Comparable(capture, all))
 		}
 	}
@@ -107,7 +181,7 @@ func (s *server) dashboardProfileCapture(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *server) profileCaptureKinds(r *http.Request, acct state.Account, app state.App, store state.ProfileCaptureStore, capture api.ProfileCapture) []dashboard.ProfileCaptureKindView {
-	blobs, err := store.ProfileCaptureBlobs(r.Context(), acct.ID, app.ID, capture.ID)
+	blobs, err := store.ProfileCaptureBlobs(r.Context(), app.AccountID, app.ID, capture.ID)
 	out := make([]dashboard.ProfileCaptureKindView, 0, len(capture.Kinds))
 	for _, kind := range capture.Kinds {
 		if err != nil {
@@ -120,7 +194,7 @@ func (s *server) profileCaptureKinds(r *http.Request, acct state.Account, app st
 			out = append(out, dashboard.ProfileCaptureKindView{Kind: kind, Error: "The profile exceeds what the dashboard can display; download the pprof file instead."})
 			continue
 		}
-		s.profileCaptures.LinkSources(r.Context(), acct, capture, &view)
+		s.profileCaptures.LinkSources(r.Context(), app, capture, &view)
 		out = append(out, dashboard.BuildProfileCaptureKind(app.Slug, capture.ID, view))
 	}
 	return out
@@ -162,7 +236,7 @@ func (s *server) requestProfileCaptureID(ctx context.Context, acct state.Account
 	if !ok || traceID == "" {
 		return ""
 	}
-	c, err := store.ProfileCaptureForRequest(ctx, acct.ID, app.ID, traceID)
+	c, err := store.ProfileCaptureForRequest(ctx, app.AccountID, app.ID, traceID)
 	if err != nil {
 		return ""
 	}
@@ -177,7 +251,7 @@ func (s *server) announcedProfileCaptures(ctx context.Context, log *slog.Logger,
 	if !ok || !api.MustLimitsFor(acct.Plan).Profiling.Enabled {
 		return nil
 	}
-	captures, err := store.ListProfileCaptures(ctx, acct.ID, app.ID)
+	captures, err := store.ListProfileCaptures(ctx, app.AccountID, app.ID)
 	if err != nil {
 		log.Warn("dashboard renderAppDetail: list profile captures", "account_id", acct.ID, "app_id", app.ID, "err", err)
 		return nil
@@ -192,7 +266,7 @@ func (s *server) oomProfileCaptureURL(ctx context.Context, acct state.Account, a
 	if !ok {
 		return ""
 	}
-	c, err := store.LatestOOMProfileCapture(ctx, acct.ID, app.ID, dep.ID)
+	c, err := store.LatestOOMProfileCapture(ctx, app.AccountID, app.ID, dep.ID)
 	if err != nil {
 		return ""
 	}

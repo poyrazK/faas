@@ -15,6 +15,13 @@ import (
 // profileCapturePollInterval paces status polls while a capture runs.
 var profileCapturePollInterval = time.Second
 
+// profileCaptureWait bounds a wait on one capture: it may stay queued until
+// schedd's queued timeout, then runs its window and the collectors' grace;
+// the slack covers the sweep that fails it.
+func profileCaptureWait(capture api.ProfileCapture) time.Duration {
+	return api.ProfileCaptureQueuedTimeout + time.Duration(capture.DurationSeconds)*time.Second + api.ProfileCaptureGrace + 2*time.Minute
+}
+
 const profileCaptureUsage = "usage: gregale debug capture <slug> [--type cpu,heap,stacks] [--duration 10s] [--instance UUID] [--output DIR] [--top N] [--no-wait]"
 
 // cmdDebugCapture runs an on-demand CPU/heap capture on a running instance
@@ -119,7 +126,7 @@ func cmdDebugCaptures(args []string) int {
 }
 
 func waitProfileCapture(ctx context.Context, client *Client, slug string, capture api.ProfileCapture) (api.ProfileCapture, error) {
-	deadline := time.Now().Add(time.Duration(capture.DurationSeconds)*time.Second + 2*time.Minute)
+	deadline := time.Now().Add(profileCaptureWait(capture))
 	for !capture.Done() {
 		if time.Now().After(deadline) {
 			return capture, fmt.Errorf("capture %s is still %s; check it later with `gregale debug captures %s %s`", capture.ID, capture.Status, slug, capture.ID)

@@ -761,6 +761,9 @@ const (
 	ProfileCaptureDefaultDuration = 10 * time.Second
 	// ProfileCaptureGrace covers the collectors' final flush after the window.
 	ProfileCaptureGrace = 3 * time.Second
+	// ProfileCaptureQueuedTimeout fails a capture no schedd claimed in time;
+	// `gregale debug capture` waits at least this long.
+	ProfileCaptureQueuedTimeout = 10 * time.Minute
 	// ProfileCaptureMaxProfiles bounds one reply; profiles are per process and kind.
 	ProfileCaptureMaxProfiles = 8
 	// ProfileCaptureMaxProfileBytes bounds the summed compressed profiles so each

@@ -361,9 +361,11 @@ Otherwise the request fails with 429 `quota_exhausted` with `limit_bytes` and
 `observed_bytes`, and an automatic capture is skipped with a reason. The
 store checks it in the queueing transaction under a per-account advisory lock,
 which also serializes the hourly quota across the account's apps; both
-manual and automatic captures pass the plan's limit in, since the plan of an
-organization's app is the organization's. No column or migration is added:
-the stored bytes are summed from `profile_capture_data`.
+manual and automatic captures pass the plan's limit in. (As shipped, apid and
+schedd read the plan and counted the pool by account rather than by an
+organization's app's owner; the round-2 amendment below corrects it.) No
+column or migration is added: the stored bytes are summed from
+`profile_capture_data`.
 
 ## Amendment: automatic captures beside manual ones (GA review, 2026-10-27)
 
@@ -458,6 +460,40 @@ them.
   process it verified; automatic deployment checks stop retrying a backend
   outage at the attempt limit, and a failing check stage no longer skips the
   canary and periodic checks.
+
+## Amendment: organizations, dashboard deletion (review round 2, 2026-10-30)
+
+A second review found these gaps:
+
+- **Organization apps.** Captures of an organization's app were judged by
+  the requesting member's plan in apid and by the creating member's plan in
+  schedd, and their quotas and storage were counted per member. A Free member
+  of a Pro organization could not capture its apps; each member had their own
+  quota. Both now take the plan of the app's resource owner
+  (`state.AppResourceAccount`, as imaged and wake admission do) and count the
+  hourly quotas, the storage limit and automatic rotation in the owner's pool:
+  the organization, or the account for a personal app. A capture row records
+  its pool in the capture document (`pool`); rows without one count in their
+  account's pool, so no migration is needed. The rows are stored under the
+  app's account, whichever member queued them, and every member the app is
+  shared with reads, compares, downloads and deletes the same captures.
+- **Dashboard.** The capture form and list sat only on the profiles page,
+  which belongs to `traffic-profiles` (internal), so accounts released
+  `profile-captures` alone could not reach them. They now have their own page,
+  `/dashboard/apps/{slug}/profiles/captures`, linked from the app page; a
+  capture page links back to it and has a delete button (session CSRF, the
+  same delete and audit as the API).
+- **OOM links.** An OOM kill linked to the newest heap capture of the
+  instance whatever its status. It now links only a capture still capturing or
+  ready: a failed capture has no heap profile to explain the kill.
+- **CLI wait.** `gregale debug capture` gave up two minutes after the window,
+  while a capture may stay queued for `ProfileCaptureQueuedTimeout` (10
+  minutes). It now waits the queued timeout, the window, the grace and two
+  minutes for the sweep.
+- **Go collector.** A control poll that failed just as a capture window ended
+  discarded the window, so the capture came back empty. The collector now
+  sends a capture window that ended within the capture grace; a continuous
+  window, or one frozen across a snapshot, is still discarded.
 
 ## Rejected alternatives
 

@@ -17,9 +17,10 @@ import (
 // compiler a wrapper per method (teststorecheck).
 type profileCaptureBackend = contractTestStore
 
-// profileCaptureStorage is the capture storage limit the queue tests pass;
-// TestProfileCaptureStorageLimit covers the limit itself.
-var profileCaptureStorage = api.MustLimitsFor(api.PlanPro).Profiling.CaptureStorageBytes
+// profileCaptureStorage is the capture limits the queue tests pass: Pro's
+// storage, counted per account. TestProfileCaptureStorageLimit covers the
+// limit itself, TestProfileCapturePool the pool.
+var profileCaptureStorage = state.ProfileCaptureLimits{StorageBytes: api.MustLimitsFor(api.PlanPro).Profiling.CaptureStorageBytes}
 
 func TestProfileCaptureLifecycle(t *testing.T) {
 	t.Setenv(pgtest.UseTemplateDatabase, "1")

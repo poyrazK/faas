@@ -9,8 +9,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// ProfileCapturesView is the profiles-page panel for on-demand captures
-// (ADR-1155): a capture form and the app's recent captures.
+// ProfileCapturesView is the panel for on-demand captures (ADR-1155): a
+// capture form and the app's recent captures, on the captures page and on
+// the profiles page.
 type ProfileCapturesView struct {
 	AppSlug     string
 	CSRF        string
@@ -26,6 +27,8 @@ type ProfileCapturePage struct {
 	Capture api.ProfileCapture
 	Kinds   []ProfileCaptureKindView
 	Refresh bool
+	// CSRF guards the delete form; empty hides it.
+	CSRF string
 	// Compare lists earlier ready captures the page can be diffed against.
 	Compare []ProfileCaptureCompareOption
 }
@@ -58,7 +61,7 @@ func BuildAnnouncedProfileCaptures(slug string, captures []api.ProfileCapture) *
 		if out == nil {
 			out = &AnnouncedProfileCapturesView{Days: int(api.ProfileCaptureRetention / (24 * time.Hour)), Latest: c,
 				LatestURL: ProfileCaptureURL(slug, c.ID), LatestTrigger: ProfileCaptureTriggerLabel(c.Trigger),
-				ListURL: "/dashboard/apps/" + url.PathEscape(slug) + "/profiles#profile-captures"}
+				ListURL: ProfileCapturesURL(slug)}
 		}
 		out.Count++
 		if c.OOMKilledAt != nil {
@@ -181,7 +184,7 @@ type ProfileCaptureRow struct {
 const ProfileCaptureTopFunctions = 25
 
 func ProfileCaptureURL(slug, id string) string {
-	return "/dashboard/apps/" + url.PathEscape(slug) + "/profiles/captures/" + url.PathEscape(id)
+	return ProfileCapturesURL(slug) + "/" + url.PathEscape(id)
 }
 
 // BuildProfileCaptureKind summarizes one merged kind for the capture page.
@@ -232,4 +235,9 @@ func FormatProfileAmount(v int64, unit string) string {
 		return fmt.Sprintf("%.1f KiB", float64(v)/(1<<10))
 	}
 	return fmt.Sprintf("%d B", v)
+}
+
+// ProfileCapturesURL is the app's captures page.
+func ProfileCapturesURL(slug string) string {
+	return "/dashboard/apps/" + url.PathEscape(slug) + "/profiles/captures"
 }

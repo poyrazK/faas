@@ -4,25 +4,27 @@
 -- Lifecycle columns are merged into the public capture document on read.
 
 -- name: LockProfileCaptureAccount :exec
--- Serializes the account-wide quota and storage checks across its apps.
-SELECT pg_advisory_xact_lock(hashtextextended('profile_captures:' || sqlc.arg(account_id)::text, 0));
+-- Serializes the pool-wide quota and storage checks across its apps. The pool
+-- is the app's resource owner: an organization, or an account (ADR-1155).
+SELECT pg_advisory_xact_lock(hashtextextended('profile_captures:' || sqlc.arg(pool)::text, 0));
 
 -- name: ProfileCaptureAccountStorage :one
--- Stored bytes of the account's unexpired captures and how many of its
--- captures are still queued or running, in total and for automatic captures
--- alone. A capture without a trigger predates automatic captures: manual.
+-- Stored bytes of the pool's unexpired captures and how many of its captures
+-- are still queued or running, in total and for automatic captures alone. A
+-- capture without a trigger predates automatic captures: manual. One without
+-- a pool predates pools and counts in its account's.
 SELECT
   (SELECT coalesce(sum(octet_length(d.profile)), 0) FROM profile_capture_data d
      JOIN profile_captures p ON p.id = d.capture_id
-   WHERE p.account_id = sqlc.arg(account_id)::text::uuid AND p.expires_at >= sqlc.arg(now)::timestamptz)::bigint AS stored_bytes,
+   WHERE coalesce(p.capture->>'pool', p.account_id::text) = sqlc.arg(pool)::text AND p.expires_at >= sqlc.arg(now)::timestamptz)::bigint AS stored_bytes,
   (SELECT count(*) FROM profile_captures
-   WHERE account_id = sqlc.arg(account_id)::text::uuid AND status IN ('queued', 'capturing'))::bigint AS active,
+   WHERE coalesce(capture->>'pool', account_id::text) = sqlc.arg(pool)::text AND status IN ('queued', 'capturing'))::bigint AS active,
   (SELECT coalesce(sum(octet_length(d.profile)), 0) FROM profile_capture_data d
      JOIN profile_captures p ON p.id = d.capture_id
-   WHERE p.account_id = sqlc.arg(account_id)::text::uuid AND p.expires_at >= sqlc.arg(now)::timestamptz
+   WHERE coalesce(p.capture->>'pool', p.account_id::text) = sqlc.arg(pool)::text AND p.expires_at >= sqlc.arg(now)::timestamptz
      AND coalesce(p.capture->>'trigger', 'manual') <> 'manual')::bigint AS automatic_stored_bytes,
   (SELECT count(*) FROM profile_captures
-   WHERE account_id = sqlc.arg(account_id)::text::uuid AND status IN ('queued', 'capturing')
+   WHERE coalesce(capture->>'pool', account_id::text) = sqlc.arg(pool)::text AND status IN ('queued', 'capturing')
      AND coalesce(capture->>'trigger', 'manual') <> 'manual')::bigint AS automatic_active;
 
 -- name: ListEvictableAutomaticProfileCaptures :many
@@ -31,7 +33,7 @@ SELECT
 -- room for a newer automatic capture (ADR-1155).
 SELECT p.id::text AS id, coalesce(sum(octet_length(d.profile)), 0)::bigint AS bytes
 FROM profile_captures p LEFT JOIN profile_capture_data d ON d.capture_id = p.id
-WHERE p.account_id = sqlc.arg(account_id)::text::uuid AND p.status IN ('ready', 'failed')
+WHERE coalesce(p.capture->>'pool', p.account_id::text) = sqlc.arg(pool)::text AND p.status IN ('ready', 'failed')
   AND coalesce(p.capture->>'trigger', 'manual') <> 'manual' AND p.capture->>'oom_killed_at' IS NULL
   AND p.expires_at >= sqlc.arg(now)::timestamptz
 GROUP BY p.id, p.created_at
@@ -40,7 +42,7 @@ LIMIT sqlc.arg(max_rows)::int;
 
 -- name: DeleteAccountProfileCaptures :execrows
 DELETE FROM profile_captures
-WHERE account_id = sqlc.arg(account_id)::text::uuid AND id = ANY(sqlc.arg(ids)::text[]::uuid[]);
+WHERE coalesce(capture->>'pool', account_id::text) = sqlc.arg(pool)::text AND id = ANY(sqlc.arg(ids)::text[]::uuid[]);
 
 -- name: DeleteProfileCapture :execrows
 -- A customer deletes one capture of a live app; its profiles cascade.
@@ -55,7 +57,7 @@ SELECT id FROM apps WHERE id = sqlc.arg(app_id)::text::uuid AND account_id = sql
 -- name: CountRecentProfileCaptures :one
 -- Manual and automatic captures have separate hourly quotas (ADR-1155).
 SELECT count(*) FROM profile_captures
-WHERE account_id = sqlc.arg(account_id)::text::uuid AND created_at >= sqlc.arg(since)::timestamptz
+WHERE coalesce(capture->>'pool', account_id::text) = sqlc.arg(pool)::text AND created_at >= sqlc.arg(since)::timestamptz
   AND (coalesce(capture->>'trigger', 'manual') <> 'manual') = sqlc.arg(automatic)::boolean;
 
 -- name: CountActiveProfileCaptures :one
@@ -107,10 +109,13 @@ UPDATE profile_captures SET capture = capture || jsonb_build_object('instance_id
 WHERE id = sqlc.arg(id)::text::uuid AND status = 'capturing';
 
 -- name: StampProfileCaptureOOM :one
--- first_link is true when the capture had no OOM kill before this stamp.
+-- first_link is true when the capture had no OOM kill before this stamp. A
+-- failed capture holds no heap profile to explain the kill, so it is never
+-- linked.
 WITH target AS (
   SELECT q.id, (q.capture->>'oom_killed_at' IS NULL) AS first_link FROM profile_captures q
   WHERE q.app_id = sqlc.arg(app_id)::text::uuid AND q.capture->>'instance_id' = sqlc.arg(instance_id)::text
+    AND q.status IN ('capturing', 'ready')
     AND q.capture->'kinds' @> '["heap"]'::jsonb AND q.created_at >= sqlc.arg(since)::timestamptz
   ORDER BY q.created_at DESC, q.id LIMIT 1 FOR UPDATE)
 UPDATE profile_captures p SET capture = p.capture || jsonb_build_object('oom_killed_at', sqlc.arg(killed_at)::timestamptz, 'oom_peak_mb', sqlc.arg(peak_mb)::int, 'oom_plan_mb', sqlc.arg(plan_mb)::int)

@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -22,8 +23,10 @@ import (
 )
 
 type fakeHost struct {
-	mem      *state.MemStore
-	app      state.App
+	mem *state.MemStore
+	app state.App
+	// members are the other accounts the app is shared with.
+	members  []string
 	notified []string
 	audited  []string
 }
@@ -33,7 +36,7 @@ func (h *fakeHost) Audit(_ context.Context, action, _ string, details map[string
 }
 
 func (h *fakeHost) LoadApp(w http.ResponseWriter, _ *http.Request, acct state.Account, slug string) (state.App, bool) {
-	if slug != h.app.Slug || acct.ID != h.app.AccountID {
+	if slug != h.app.Slug || acct.ID != h.app.AccountID && !slices.Contains(h.members, acct.ID) {
 		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "App not found", "the app does not exist"))
 		return state.App{}, false
 	}
@@ -144,6 +147,45 @@ func TestCaptureDelete(t *testing.T) {
 	free, _, freeAcct := newService(t, api.PlanFree, true)
 	if rec := serve(free, freeAcct, http.MethodDelete, target, ""); rec.Code != http.StatusPaymentRequired {
 		t.Fatalf("plan without profiling = %d", rec.Code)
+	}
+}
+
+// TestOrgAppCaptures pins that an organization's app is judged by the
+// organization's plan, whichever member asks, and that its captures are the
+// app's: every member reads and deletes the same ones.
+func TestOrgAppCaptures(t *testing.T) {
+	ctx := t.Context()
+	mem := state.NewMemStore()
+	creator, err := mem.CreateAccount(ctx, "org-creator@example.com", api.PlanFree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	member, err := mem.CreateAccount(ctx, "org-member@example.com", api.PlanFree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	org, err := mem.CreateOrg(ctx, state.Org{Slug: "capture-team", Name: "Team", Plan: api.PlanPro, Status: state.OrgStatusActive, ResourceOwnershipEnabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := mem.CreateApp(ctx, state.App{AccountID: creator.ID, OrgID: org.ID, Slug: "capture", Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := &profilecapture.Service{Host: &fakeHost{mem: mem, app: app, members: []string{member.ID}}, Enabled: true}
+
+	rec := serve(svc, member, http.MethodPost, "/v1/apps/capture/profiles/captures", `{"kinds":["cpu"],"duration_seconds":5}`)
+	var created api.ProfileCapture
+	if rec.Code != http.StatusAccepted || json.Unmarshal(rec.Body.Bytes(), &created) != nil {
+		t.Fatalf("Free member's capture of a Pro organization's app = %d: %s", rec.Code, rec.Body)
+	}
+	var list api.ProfileCaptureList
+	if rec := serve(svc, creator, http.MethodGet, "/v1/apps/capture/profiles/captures", ""); rec.Code != http.StatusOK ||
+		json.Unmarshal(rec.Body.Bytes(), &list) != nil || len(list.Captures) != 1 || list.Captures[0].ID != created.ID {
+		t.Fatalf("another member's list = %d: %s", rec.Code, rec.Body)
+	}
+	if rec := serve(svc, creator, http.MethodDelete, "/v1/apps/capture/profiles/captures/"+created.ID, ""); rec.Code != http.StatusNoContent {
+		t.Fatalf("another member's delete = %d: %s", rec.Code, rec.Body)
 	}
 }
 

@@ -129,3 +129,50 @@ func TestProfileCaptureOOMLink(t *testing.T) {
 		})
 	}
 }
+
+// TestProfileCaptureOOMSkipsFailedCaptures pins that an OOM kill links the
+// newest heap capture that ran, not a newer one that failed: a failed
+// capture holds no heap profile to explain the kill.
+func TestProfileCaptureOOMSkipsFailedCaptures(t *testing.T) {
+	t.Setenv(pgtest.UseTemplateDatabase, "1")
+	for _, backend := range []string{"mem", "pg"} {
+		t.Run(backend, func(t *testing.T) {
+			store := profileCaptureTestStore(t, backend)
+			ctx := t.Context()
+			acct, err := store.CreateAccount(ctx, "profile-oom-failed@example.com", api.PlanPro)
+			if err != nil {
+				t.Fatal(err)
+			}
+			app, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "profile-oom-failed", Status: state.AppActive})
+			if err != nil {
+				t.Fatal(err)
+			}
+			now := time.Now().UTC().Truncate(time.Millisecond)
+			instance := uuid.NewString()
+			run := func(at time.Time, status string) string {
+				t.Helper()
+				c := api.ProfileCapture{ID: uuid.NewString(), Kinds: []string{api.ProfileKindHeap}, DurationSeconds: 10, CreatedAt: at, ExpiresAt: at.Add(api.ProfileCaptureRetention)}
+				if err := store.CreateProfileCapture(ctx, acct.ID, app.ID, c, profileCaptureStorage); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := store.ClaimProfileCapture(ctx, at); err != nil {
+					t.Fatal(err)
+				}
+				if err := store.StartProfileCapture(ctx, c.ID, instance, uuid.NewString()); err != nil {
+					t.Fatal(err)
+				}
+				result := api.ProfileCapture{Status: status, InstanceID: instance, Reason: "no collector answered"}
+				if err := store.FinishProfileCapture(ctx, c.ID, result, nil, at.Add(12*time.Second)); err != nil {
+					t.Fatal(err)
+				}
+				return c.ID
+			}
+			ready := run(now.Add(-5*time.Minute), api.ProfileCaptureReady)
+			run(now.Add(-time.Minute), api.ProfileCaptureFailed)
+			oom := state.ProfileCaptureOOM{KilledAt: now, PeakMB: 263, PlanMB: 256}
+			if id, err := store.StampProfileCaptureOOM(ctx, app.ID, instance, oom, now.Add(-api.ProfileCaptureOOMLinkWindow)); err != nil || id != ready {
+				t.Fatalf("stamp = %q, %v; want the ready capture %q", id, err, ready)
+			}
+		})
+	}
+}

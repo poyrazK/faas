@@ -27,14 +27,14 @@ func requestKind(r *http.Request, capture api.ProfileCapture) string {
 // mergeKind merges one kind of a ready capture across its processes.
 // Parsing happens here, outside vmmd and schedd, with the same bounds as
 // continuous profile queries.
-func mergeKind(ctx context.Context, acct state.Account, app state.App, store state.ProfileCaptureStore, capture api.ProfileCapture, kind string) (*profile.Profile, *api.Problem) {
+func mergeKind(ctx context.Context, app state.App, store state.ProfileCaptureStore, capture api.ProfileCapture, kind string) (*profile.Profile, *api.Problem) {
 	if !slices.Contains(capture.Kinds, kind) {
 		return nil, api.ErrValidation("kind must be one of the capture's kinds")
 	}
 	if capture.Status != api.ProfileCaptureReady {
 		return nil, api.NewProblem(http.StatusConflict, api.CodeConflict, "Capture not ready", fmt.Sprintf("profile capture is %s", capture.Status))
 	}
-	blobs, err := store.ProfileCaptureBlobs(ctx, acct.ID, app.ID, capture.ID)
+	blobs, err := store.ProfileCaptureBlobs(ctx, app.AccountID, app.ID, capture.ID)
 	if err != nil {
 		return nil, api.ErrCapacity("profile capture data is unavailable")
 	}
@@ -47,7 +47,7 @@ func mergeKind(ctx context.Context, acct state.Account, app state.App, store sta
 
 // KindView is one kind of a ready capture as a source-linked view.
 func (s *Service) KindView(ctx context.Context, acct state.Account, app state.App, store state.ProfileCaptureStore, capture api.ProfileCapture, kind string) (api.ProfileCaptureView, *api.Problem) {
-	merged, problem := mergeKind(ctx, acct, app, store, capture, kind)
+	merged, problem := mergeKind(ctx, app, store, capture, kind)
 	if problem != nil {
 		return api.ProfileCaptureView{}, problem
 	}
@@ -56,7 +56,7 @@ func (s *Service) KindView(ctx context.Context, acct state.Account, app state.Ap
 		return view, api.ErrCapacity("profile exceeds supported view bounds; download the pprof file instead")
 	}
 	view.Capture = capture
-	s.LinkSources(ctx, acct, capture, &view)
+	s.LinkSources(ctx, app, capture, &view)
 	return view, nil
 }
 
@@ -91,17 +91,13 @@ func (s *Service) View(w http.ResponseWriter, r *http.Request, acct state.Accoun
 
 // LinkSources links frames to the capture deployment's recorded commit,
 // exactly like continuous profiles. Captures without a deployment (failed
-// before reaching an instance) keep plain symbols.
-func (s *Service) LinkSources(ctx context.Context, acct state.Account, capture api.ProfileCapture, view *api.ProfileCaptureView) {
-	if capture.DeploymentID == "" {
+// before reaching an instance) keep plain symbols. app is the app the
+// caller was granted, so any member who can read the app gets the links.
+func (s *Service) LinkSources(ctx context.Context, app state.App, capture api.ProfileCapture, view *api.ProfileCaptureView) {
+	if capture.DeploymentID == "" || capture.AppID != app.ID {
 		return
 	}
-	store := s.Host.Store()
-	app, err := store.AppByID(ctx, capture.AppID)
-	if err != nil || app.AccountID != acct.ID {
-		return
-	}
-	dep, err := store.DeploymentByID(ctx, capture.DeploymentID)
+	dep, err := s.Host.Store().DeploymentByID(ctx, capture.DeploymentID)
 	if err != nil || dep.AppID != app.ID {
 		return
 	}
@@ -120,7 +116,7 @@ func (s *Service) Download(w http.ResponseWriter, r *http.Request, acct state.Ac
 		return
 	}
 	kind := requestKind(r, capture)
-	merged, problem := mergeKind(r.Context(), acct, app, store, capture, kind)
+	merged, problem := mergeKind(r.Context(), app, store, capture, kind)
 	if problem != nil {
 		api.WriteProblemForRequest(w, r, problem)
 		return

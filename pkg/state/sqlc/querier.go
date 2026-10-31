@@ -3970,8 +3970,9 @@ type Querier interface {
 	// schedd claims, finishes and expires them. Reads join the owning app so a
 	// deleted app's captures are invisible before the cascade removes them.
 	// Lifecycle columns are merged into the public capture document on read.
-	// Serializes the account-wide quota and storage checks across its apps.
-	LockProfileCaptureAccount(ctx context.Context, db DBTX, accountID string) error
+	// Serializes the pool-wide quota and storage checks across its apps. The pool
+	// is the app's resource owner: an organization, or an account (ADR-1155).
+	LockProfileCaptureAccount(ctx context.Context, db DBTX, pool string) error
 	LockProfileCaptureApp(ctx context.Context, db DBTX, arg LockProfileCaptureAppParams) (pgtype.UUID, error)
 	LockProfilePeriodicMonitor(ctx context.Context, db DBTX, arg LockProfilePeriodicMonitorParams) ([]byte, error)
 	LockProjectBindingVerificationRun(ctx context.Context, db DBTX, arg LockProjectBindingVerificationRunParams) (ProjectBindingVerificationRun, error)
@@ -4947,9 +4948,10 @@ type Querier interface {
 	// Customer-safe fields are selected explicitly. Permission and realm filters
 	// apply before pagination; owner notes, prices, snapshots and handoffs stay out.
 	ProductWorkspaceActivity(ctx context.Context, db DBTX, arg ProductWorkspaceActivityParams) ([]ProductWorkspaceActivityRow, error)
-	// Stored bytes of the account's unexpired captures and how many of its
-	// captures are still queued or running, in total and for automatic captures
-	// alone. A capture without a trigger predates automatic captures: manual.
+	// Stored bytes of the pool's unexpired captures and how many of its captures
+	// are still queued or running, in total and for automatic captures alone. A
+	// capture without a trigger predates automatic captures: manual. One without
+	// a pool predates pools and counts in its account's.
 	ProfileCaptureAccountStorage(ctx context.Context, db DBTX, arg ProfileCaptureAccountStorageParams) (ProfileCaptureAccountStorageRow, error)
 	ProfileCaptureForRequest(ctx context.Context, db DBTX, arg ProfileCaptureForRequestParams) ([]byte, error)
 	ProfileInvestigationAppOwned(ctx context.Context, db DBTX, arg ProfileInvestigationAppOwnedParams) (bool, error)
@@ -6679,7 +6681,9 @@ type Querier interface {
 	StampLegacyProductionScaleIn(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error)
 	StampLegacyProductionScaleOut(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.UUID, error)
 	StampManagedPostgresActivationRuntimeConfig(ctx context.Context, db DBTX, appID string) error
-	// first_link is true when the capture had no OOM kill before this stamp.
+	// first_link is true when the capture had no OOM kill before this stamp. A
+	// failed capture holds no heap profile to explain the kill, so it is never
+	// linked.
 	StampProfileCaptureOOM(ctx context.Context, db DBTX, arg StampProfileCaptureOOMParams) (StampProfileCaptureOOMRow, error)
 	StampRuntimeMigrationApp(ctx context.Context, db DBTX, appID pgtype.UUID) error
 	StampSafeReleaseWorkerLease(ctx context.Context, db DBTX, ttlSeconds int64) error
