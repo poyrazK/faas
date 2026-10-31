@@ -118,12 +118,10 @@ CreateBuildProvenance
 CreateBuildWithID
 CreateConsumerKey
 CreateConsumerKeyForConsumerIfUnderQuota
-CreateCorsPresetIfUnderQuota
 CreateCreditLedgerEntry
 CreateCronIfUnderQuotaWithOptions
 CreateCustomDomain
 CreateDeploymentScopeExclusion
-CreateEdgeRule
 CreateEdgeRuleIfUnderQuota
 CreateOrgAPIKey
 CreateOrgAPIKeyWithProvenance
@@ -340,7 +338,6 @@ ListDistinctUpstreamHostHashes
 ListDomainsForAccount
 ListDomainsForApp
 ListDueInvocations
-ListEdgeRulesForAccount
 ListEdgeRulesForApp
 ListEgressCircuitCandidates
 ListEnabledAlertRules

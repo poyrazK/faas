@@ -1476,6 +1476,10 @@ written in one batch per process every second
   for 2 s per member: removing a member or changing their role stops their
   credentials' reads within 2 s (30 s while the database is unreachable).
   Writes still check the fence in their transaction.
+- `GET` and `HEAD` reuse a credential's resolution, with its opened secret,
+  for 2 s (30 s while the database is unreachable); revoking a credential
+  stops its reads within that window and its writes at once. Signed-URL
+  credentials and other methods resolve on every request.
 - Public bucket reads on app hostnames are admitted the same way by
   `gatewayd-public`, against the anonymous share (75%) of the ceilings, with
   their own metrics (`gatewayd_public_object_read_*`) and alert

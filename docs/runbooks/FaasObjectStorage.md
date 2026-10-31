@@ -18,6 +18,7 @@ Metrics: `faas_object_storage_inventory_scans_total{outcome}`,
 `s3_gateway_read_admission_decisions_total{source}`,
 `s3_gateway_read_usage_flushes_total{outcome}`,
 `s3_gateway_org_access_checks_total{source}`,
+`s3_gateway_credential_resolutions_total{source}`,
 `gatewayd_public_object_read_admission_decisions_total{source}`,
 `gatewayd_public_object_read_usage_flushes_total{outcome}`.
 Decision records: [ADR 20261023223000](../adr/20261023223000-object-storage-bucket-scoped-availability.md),
