@@ -50,7 +50,11 @@ type QuotaResult struct {
 // financial model prices against, and overage revenue for paid plans
 // depends on the warning firing at exactly 100 % (not 95 %, not 105 %).
 func CheckQuota(plan api.Plan, usedGB float64) QuotaResult {
-	q := plan.PlanIncludedGBHours()
+	return checkQuotaAgainst(plan, usedGB, plan.PlanIncludedGBHours())
+}
+
+// checkQuotaAgainst applies the ladder to an explicit monthly allowance q.
+func checkQuotaAgainst(plan api.Plan, usedGB float64, q int) QuotaResult {
 	res := QuotaResult{Plan: plan, UsedGB: usedGB, QuotaGB: q}
 	if q <= 0 {
 		// No quota band — never reached. Reserved for an internal/dev plan.

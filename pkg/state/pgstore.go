@@ -22879,9 +22879,11 @@ func (s *PgStore) LoadAllOverageCapCents(ctx context.Context) (map[string]int64,
 // money (CLAUDE.md).
 //
 // Hand-written: the formula is meterd-internal and not on the read
-// surface. The migration on usage_minutes is unchanged; we SELECT
-// against the existing table. Provider-policy secondary meters are added by
-// meterd/apid before comparing the total with the account cap.
+// surface. Like UsageByMonth, a tracked month reads the trigger-kept
+// usage_month_totals rather than summing its minutes: meterd's quota tick
+// calls this for every capped account each minute, and every paid account
+// starts with a cap (ADR-20261030120000). Provider-policy secondary meters
+// are added by meterd/apid before comparing the total with the account cap.
 func (s *PgStore) CurrentMonthOverageCents(ctx context.Context, accountID string) (int64, error) {
 	// Anchor the month lower bound in UTC on the Go side. The previous
 	// shape `minute >= date_trunc('month', now())` returned the local
@@ -22896,12 +22898,20 @@ func (s *PgStore) CurrentMonthOverageCents(ctx context.Context, accountID string
 	var mbSeconds int64
 	var plan api.Plan
 	if err := s.pool.QueryRow(ctx,
-		`select COALESCE(SUM(u.mb_seconds), 0)::bigint,
+		`with tracking as (select tracked_from from usage_month_totals_tracking)
+		 select (COALESCE((select SUM(t.mb_seconds)
+		                     from usage_month_totals t
+		                    where t.account_id = $1
+		                      and t.month = $2::timestamptz
+		                      and t.minute_rows > 0
+		                      and $2::timestamptz >= (select tracked_from from tracking)), 0)
+		       + COALESCE((select SUM(u.mb_seconds)
+		                     from usage_minutes u
+		                    where u.account_id = $1
+		                      and u.minute >= $2
+		                      and $2::timestamptz < COALESCE((select tracked_from from tracking), 'infinity'::timestamptz)), 0))::bigint,
 		        COALESCE((select a.plan from accounts a where a.id = $1),
-		                 (select o.plan from orgs o where o.id = $1 and not o.personal_org), 'free')
-		   from usage_minutes u
-		  where u.account_id = $1
-		    and u.minute >= $2`,
+		                 (select o.plan from orgs o where o.id = $1 and not o.personal_org), 'free')`,
 		accountID, monthStart).Scan(&mbSeconds, &plan); err != nil {
 		return 0, err
 	}
