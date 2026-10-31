@@ -11854,12 +11854,16 @@ func (m *MemStore) UpsertAppOpenAPIDocIfUnderQuota(_ context.Context, appID, acc
 	if !ok || app.AccountID != accountID {
 		return ErrNotFound
 	}
-	if _, ok := m.accounts[accountID]; !ok {
+	if _, ok := m.accounts[accountID]; !ok || app.Status == AppDeleted {
 		return ErrNotFound
 	}
+	// The allowance belongs to the app's billing subject
+	// (ADR-202610171904): a company's once it adopted billing, whichever
+	// member's app holds the import.
+	subject := m.appBillingSubjectLocked(app.AccountID, app.ID)
 	observed := 0
 	for _, r := range m.openAPIImports {
-		if r.AccountID == accountID {
+		if m.countsTowardQuotaSubjectLocked(r.AccountID, r.AppID, subject) {
 			observed++
 		}
 	}
@@ -18882,13 +18886,10 @@ func (m *MemStore) appendEventLocked(actor, kind string, subject *string, data [
 		Data:    append([]byte(nil), data...),
 	}
 	if kind == "event.published" {
-		created, err := m.enqueuePublishedEventLocked(subj, data, at)
-		if err != nil {
-			return err
-		}
-		if !created && customerPublishedEvent(kind, data) {
-			return nil
-		}
+		// ADR-20261030170000: the receipt is the event's one copy, as the
+		// Postgres fanout trigger skips the events row.
+		_, err := m.enqueuePublishedEventLocked(subj, data, at)
+		return err
 	}
 	m.events = append(m.events, e)
 	return nil

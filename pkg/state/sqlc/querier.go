@@ -5470,6 +5470,8 @@ type Querier interface {
 	ReadMigrationSource(ctx context.Context, db DBTX, leaseToken string) (MigrationSource, error)
 	ReadMigrationTaskForUpdate(ctx context.Context, db DBTX, id string) (AppTask, error)
 	ReadNodeLifecycleCompletion(ctx context.Context, db DBTX, arg ReadNodeLifecycleCompletionParams) (NodeLifecycleCompletion, error)
+	// The imports of the app's billing subject (ADR-202610171904): its
+	// organization's once the organization adopted billing, else its creator's.
 	ReadOpenAPIImportQuota(ctx context.Context, db DBTX, arg ReadOpenAPIImportQuotaParams) (ReadOpenAPIImportQuotaRow, error)
 	ReadOperatorNodeExecution(ctx context.Context, db DBTX, id pgtype.UUID) (OperatorNodeExecution, error)
 	ReadOperatorRecoveryApp(ctx context.Context, db DBTX, slug string) (ReadOperatorRecoveryAppRow, error)

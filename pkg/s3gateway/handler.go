@@ -71,8 +71,11 @@ type Config struct {
 	Log               *slog.Logger
 	// ReadAdmitter admits gateway-safety GETs and HEADs from cached
 	// decisions and batches their counts; nil keeps the locking admission
-	// (ADR-20261030075301). AccountLimiter bounds each owner's requests.
+	// (ADR-20261030075301). OrgAccess checks organization-fenced
+	// credentials for those reads; nil sends them the locking way.
+	// AccountLimiter bounds each owner's requests.
 	ReadAdmitter   *objectstorage.ReadAdmitter
+	OrgAccess      *objectstorage.OrgAccessCache
 	AccountLimiter *objectstorage.AccountRequestLimiter
 }
 
@@ -82,6 +85,7 @@ type Handler struct {
 	multipartStore  state.ObjectMultipartUploadStore
 	requestMetrics  state.ObjectStorageProviderUsageStore
 	readAdmitter    *objectstorage.ReadAdmitter
+	orgAccess       *objectstorage.OrgAccessCache
 	accountLimiter  *objectstorage.AccountRequestLimiter
 	openSecret      func([]byte) (string, error)
 	client          *http.Client
@@ -182,7 +186,7 @@ func New(c Config) (*Handler, error) {
 		c.Log = slog.Default()
 	}
 	return &Handler{
-		registry: c.Registry, store: c.Store, requestMetrics: c.RequestMetrics, readAdmitter: c.ReadAdmitter, accountLimiter: c.AccountLimiter, openSecret: c.OpenSecret, client: c.HTTPClient,
+		registry: c.Registry, store: c.Store, requestMetrics: c.RequestMetrics, readAdmitter: c.ReadAdmitter, orgAccess: c.OrgAccess, accountLimiter: c.AccountLimiter, openSecret: c.OpenSecret, client: c.HTTPClient,
 		multipartStore: multipartStore(c.Store),
 		enabled:        c.Enabled, host: strings.ToLower(c.Host), region: c.Region, spoolDir: c.SpoolDir,
 		maxPutBytes: c.MaxPutBytes, uploadGrants: c.UploadGrants, putSlots: make(chan struct{}, c.MaxConcurrentPuts),
@@ -308,8 +312,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeS3Error(w, http.StatusForbidden, "InvalidAccessKeyId", "The AWS access key ID you provided does not exist in Gregale.", r.URL.Path, requestID)
 		return
 	}
-	if credential.IssuerAccountID != "" && bucket.OrgID != "" {
-		fenced, release := state.WithOrgAccessFence(ctx, state.OrgAccessFence{OrgID: bucket.OrgID, AccountID: credential.IssuerAccountID, Revision: credential.IssuerAccessRevision})
+	if fence, ok := credentialOrgFence(credential, bucket); ok {
+		fenced, release := state.WithOrgAccessFence(ctx, fence)
 		defer release(nil)
 		ctx = fenced
 		r = r.WithContext(ctx)
@@ -686,12 +690,28 @@ func (h *Handler) require(w http.ResponseWriter, req requestContext, permission,
 	return false
 }
 
-// admitRead admits a GET or HEAD from the cached read decision when it can
-// (ADR-20261030075301): gateway-safety accounting and a credential without
-// an organization access fence, whose check still needs a transaction.
+// credentialOrgFence is the organization access fence of a credential its
+// issuer made for an organization's bucket.
+func credentialOrgFence(credential state.ObjectS3Credential, bucket state.ObjectBucket) (state.OrgAccessFence, bool) {
+	if credential.IssuerAccountID == "" || bucket.OrgID == "" {
+		return state.OrgAccessFence{}, false
+	}
+	return state.OrgAccessFence{OrgID: bucket.OrgID, AccountID: credential.IssuerAccountID, Revision: credential.IssuerAccessRevision}, true
+}
+
+// admitRead admits a GET or HEAD from the cached read decision under
+// gateway-safety accounting (ADR-20261030075301). A credential's organization
+// access fence is checked against cached membership revisions (step 3); a
+// gateway without that cache admits fenced reads through the locking path.
 func (h *Handler) admitRead(w http.ResponseWriter, r *http.Request, req *requestContext, key string) bool {
-	if h.readAdmitter == nil || !h.registry.Accounting.GatewaySafety() || req.credential.IssuerAccountID != "" && req.bucket.OrgID != "" {
+	fence, fenced := credentialOrgFence(req.credential, req.bucket)
+	if h.readAdmitter == nil || !h.registry.Accounting.GatewaySafety() || fenced && h.orgAccess == nil {
 		return h.admit(w, r, *req, key, 0, false)
+	}
+	if fenced {
+		if err := h.orgAccess.Check(r.Context(), fence); err != nil {
+			return h.writeAdmissionError(w, r, *req, err)
+		}
 	}
 	admitted, err := h.readAdmitter.AdmitRead(r.Context(), req.bucket)
 	if err != nil {
