@@ -105,6 +105,9 @@ func (s *Service) Undelete(ctx context.Context, accountID, databaseID string) (D
 		return Database{}, ErrUnsupported
 	}
 	now := s.now()
+	if err := s.undeleteNeedsRoom(ctx, accountID, databaseID, now); err != nil {
+		return Database{}, err
+	}
 	leaseToken := s.newLeaseToken()
 	claimed, err := store.ClaimUndelete(ctx, accountID, databaseID, leaseToken, now, now.Add(s.leaseDuration))
 	if err != nil {

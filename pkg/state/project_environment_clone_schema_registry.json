@@ -9987,6 +9987,7 @@
       "purge_after",
       "region",
       "restore_point_in_time",
+      "restore_slot_until",
       "restore_source_database_id",
       "restore_source_resource_id",
       "restore_window_seconds",

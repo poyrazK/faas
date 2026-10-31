@@ -56,11 +56,27 @@ func (notInPlanError) Error() string {
 
 func (notInPlanError) Unwrap() error { return ErrQuotaExceeded }
 
+// ErrRestoreSlotInUse refuses a restore past the plan's database limit while
+// another copy already holds the restore slot (ADR-20261031123259). It unwraps
+// to ErrQuotaExceeded.
+var ErrRestoreSlotInUse error = restoreSlotInUseError{}
+
+type restoreSlotInUseError struct{}
+
+func (restoreSlotInUseError) Error() string {
+	return "another restored database already holds the restore slot past the plan's database limit; purge it first"
+}
+
+func (restoreSlotInUseError) Unwrap() error { return ErrQuotaExceeded }
+
 // QuotaProblem names an ErrQuotaExceeded refusal for API problems, telling a
 // plan entitlement apart from a usage quota.
 func QuotaProblem(err error) (status int, code, title string) {
 	if errors.Is(err, ErrNotInPlan) {
 		return 403, "managed_postgres_not_in_plan", "Managed PostgreSQL is not included in this plan"
+	}
+	if errors.Is(err, ErrRestoreSlotInUse) {
+		return 403, "managed_postgres_restore_slot_in_use", "Another restored database holds the restore slot"
 	}
 	return 403, "managed_postgres_quota_exceeded", "Managed PostgreSQL quota exceeded"
 }
@@ -953,6 +969,10 @@ type Database struct {
 	// (ADR-20261029174950); zero unless the database is deleting on a
 	// schedule. An immediate delete clears it.
 	PurgeAfter time.Time
+	// RestoreSlotUntil is set while a restored database holds the restore
+	// slot past its owner's database limit (ADR-20261031123259): when it
+	// passes with no room, the database's delete is scheduled.
+	RestoreSlotUntil time.Time
 }
 
 // Restorable reports whether a scheduled delete can still be undone at now.
