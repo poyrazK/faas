@@ -813,6 +813,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_SCHEDD_AGENT_RUN_SNAPSHOTS` | schedd | `default` |  |  | `` | ADR-20261027090010 §2 preset snapshots: 1 restores agent runs from a snapshot of their node and machine shape, captured by vmmd after the shape's first cold-boot run there under that run's reservation; unset cold-boots every run |
 | `FAAS_SCHEDD_AGENT_STEPS` | schedd | `default` |  |  | `` | ADR-20261027090010 §9 automation agent steps: 1 lets the workflow orchestrator admit agent runs for agent steps and deliver their ends; unset fails agent steps before they start |
 | `FAAS_SCHEDD_AGENT_TRIGGERS` | schedd | `default` |  |  | `` | ADR-20261027090010 §9 agent trigger targets: 1 polls broker triggers that name an agent and admits one agent run per record; unset leaves their records with the broker |
+| `FAAS_SCHEDD_AGENT_WAIT_PAUSE` | schedd | `default` |  |  | `` | ADR-20261027090012 §1 model-wait pause: 1 marks agent runs whose version has not opted out (pause_during_model_calls) for vmmd's agent_wait_pause; unset keeps every run VM running |
 | `FAAS_SCHEDD_APP_TASK_DISPATCH_CONCURRENCY` | schedd | `default` |  |  | `` | bounded app-task worker pool; 1 by default and at most 32; only consulted when FAAS_APP_TASK_DISPATCH=1 |
 | `FAAS_SCHEDD_CONFIG` | schedd | `default` |  |  | `` |  |
 | `FAAS_SCHEDD_EXECUTION_DISPATCH_CONCURRENCY` | schedd | `default` |  |  | `` | bounded disposable-execution worker pool; 1 by default and at most 32; only consulted when FAAS_EXECUTION_DISPATCH=1 |
