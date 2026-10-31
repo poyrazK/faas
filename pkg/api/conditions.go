@@ -36,6 +36,10 @@ const (
 const (
 	ResourceKindApp        = "app"
 	ResourceKindDeployment = "deployment"
+	ResourceKindDatabase   = "database"
+	ResourceKindDomain     = "domain"
+	ResourceKindCron       = "cron"
+	ResourceKindJobRun     = "job_run"
 )
 
 // Condition types.
@@ -44,6 +48,11 @@ const (
 	ConditionProgressing = "Progressing"
 	ConditionDegraded    = "Degraded"
 	ConditionRolledOut   = "RolledOut"
+
+	ConditionVerified         = "Verified"
+	ConditionCertificateReady = "CertificateReady"
+	ConditionLastRunSucceeded = "LastRunSucceeded"
+	ConditionSucceeded        = "Succeeded"
 )
 
 // ConditionTypes are the condition types each kind reports, in the order
@@ -51,10 +60,15 @@ const (
 var ConditionTypes = map[string][]string{
 	ResourceKindApp:        {ConditionReady, ConditionProgressing, ConditionDegraded},
 	ResourceKindDeployment: {ConditionReady, ConditionProgressing, ConditionRolledOut},
+	ResourceKindDatabase:   {ConditionReady, ConditionProgressing, ConditionDegraded},
+	ResourceKindDomain:     {ConditionReady, ConditionVerified, ConditionCertificateReady},
+	ResourceKindCron:       {ConditionReady, ConditionLastRunSucceeded},
+	ResourceKindJobRun:     {ConditionSucceeded, ConditionProgressing},
 }
 
 // Condition reasons that are not an app health phase, an app health check
-// code or a deployment status, which are reasons as they are.
+// code, a deployment, database, certificate or job run status, a cron
+// suspension or a cron run outcome, which are reasons as they are.
 const (
 	ConditionReasonNotAssessed            = "not_assessed"
 	ConditionReasonDeploying              = "deploying"
@@ -65,4 +79,12 @@ const (
 	ConditionReasonRollingOut             = "rolling_out"
 	ConditionReasonRolledOut              = "rolled_out"
 	ConditionReasonRolloutAborted         = "rollout_aborted"
+	ConditionReasonSuspended              = "suspended"
+	ConditionReasonStale                  = "stale"
+	ConditionReasonVerified               = "verified"
+	ConditionReasonDNSPending             = "dns_pending"
+	ConditionReasonServing                = "serving"
+	ConditionReasonScheduled              = "scheduled"
+	ConditionReasonDisabled               = "disabled"
+	ConditionReasonNeverRun               = "never_run"
 )

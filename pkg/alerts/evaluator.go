@@ -481,7 +481,27 @@ func (e *Evaluator) purgeDeliveries(ctx context.Context, now time.Time) int64 {
 			break
 		}
 	}
+	e.purgeDeletedRuleEpisodes(ctx, cutoff)
 	return purged
+}
+
+// purgeDeletedRuleEpisodes deletes deleted rules' episodes resolved before
+// cutoff, and their notes, in the same bounded batches (ADR-20261030214500).
+func (e *Evaluator) purgeDeletedRuleEpisodes(ctx context.Context, cutoff time.Time) {
+	purger, ok := e.store.(state.AlertEpisodePurger)
+	if !ok {
+		return
+	}
+	for range api.AlertDeliveryPurgeBatches {
+		n, err := purger.PurgeDeletedRuleEpisodesBefore(ctx, cutoff, api.AlertDeliveryPurgeBatch)
+		if err != nil {
+			e.log.Warn("alerts: purge deleted rules' episodes", "err", err)
+			return
+		}
+		if n < api.AlertDeliveryPurgeBatch {
+			return
+		}
+	}
 }
 
 // evalRule evaluates a single rule. The body is split out so the

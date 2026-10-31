@@ -8218,6 +8218,37 @@ func (c *Client) GetDeploymentStatus(ctx context.Context, id string) (ResourceSt
 	return out, err
 }
 
+// GetManagedPostgresDatabaseStatus returns a managed database's conditions
+// (GET /v1/postgres/databases/{id}/status).
+func (c *Client) GetManagedPostgresDatabaseStatus(ctx context.Context, id string) (ResourceStatus, error) {
+	var out ResourceStatus
+	err := c.do(ctx, "GET", "/v1/postgres/databases/"+url.PathEscape(id)+"/status", nil, &out)
+	return out, err
+}
+
+// GetDomainStatus returns a custom domain's conditions
+// (GET /v1/domains/{domain}/status).
+func (c *Client) GetDomainStatus(ctx context.Context, domain string) (ResourceStatus, error) {
+	var out ResourceStatus
+	err := c.do(ctx, "GET", "/v1/domains/"+url.PathEscape(domain)+"/status", nil, &out)
+	return out, err
+}
+
+// GetCronStatus returns a cron's conditions (GET /v1/crons/{id}/status).
+func (c *Client) GetCronStatus(ctx context.Context, id string) (ResourceStatus, error) {
+	var out ResourceStatus
+	err := c.do(ctx, "GET", "/v1/crons/"+url.PathEscape(id)+"/status", nil, &out)
+	return out, err
+}
+
+// GetJobRunStatus returns a job run's conditions
+// (GET /v1/jobs/{name}/runs/{id}/status).
+func (c *Client) GetJobRunStatus(ctx context.Context, name, runID string) (ResourceStatus, error) {
+	var out ResourceStatus
+	err := c.do(ctx, "GET", "/v1/jobs/"+url.PathEscape(name)+"/runs/"+url.PathEscape(runID)+"/status", nil, &out)
+	return out, err
+}
+
 func (c *Client) ListAppHealthHistory(ctx context.Context, slug string, limit int, before string) (AppHealthHistoryPage, error) {
 	query := url.Values{}
 	if limit > 0 {

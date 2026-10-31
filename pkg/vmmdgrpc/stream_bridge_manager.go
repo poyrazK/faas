@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -144,6 +145,16 @@ type streamBridgeManager struct {
 	// instead of queueing requests, and the bridge sizes its guest pool to
 	// its stream cap with a short guest dial timeout.
 	headroom atomic.Bool
+
+	// gomaxprocs and gogc are vmmd's stream_bridge_gomaxprocs and
+	// stream_bridge_gogc, passed to each bridge it starts; 0 keeps Go's
+	// default.
+	gomaxprocs, gogc atomic.Int64
+}
+
+func (m *streamBridgeManager) setGoRuntime(gomaxprocs, gogc int) {
+	m.gomaxprocs.Store(int64(gomaxprocs))
+	m.gogc.Store(int64(gogc))
 }
 
 // bridgeGuestHeadroomEnv tells a bridge to size its guest pool to its stream
@@ -513,6 +524,12 @@ func (m *streamBridgeManager) bridgeEnv(req *vmmdpb.ForwardHTTPRequestInit, targ
 	env := netns.PublicForwardEnv(streamBridgeStaticEnv(req), target)
 	if m.headroom.Load() {
 		env = append(env, bridgeGuestHeadroomEnv+"=1")
+	}
+	if n := m.gomaxprocs.Load(); n > 0 {
+		env = append(env, "GOMAXPROCS="+strconv.FormatInt(n, 10))
+	}
+	if n := m.gogc.Load(); n > 0 {
+		env = append(env, "GOGC="+strconv.FormatInt(n, 10))
 	}
 	return env
 }

@@ -121,6 +121,7 @@ func TestRouteHealthHistoryPostgresAtomicityAndRecovery(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			awayFromRouteHealthWindowEdge(t)
 			windows := routehealth.Windows(time.Now().UTC())
 			seed := func(latency int32) {
 				t.Helper()
@@ -359,6 +360,18 @@ func TestRouteHealthHistoryPostgresRetentionAndCursor(t *testing.T) {
 // PostgreSQL timestamps and JSON timestamps can describe the same instant with
 // different location metadata. Keep comparing every decision field and compare
 // CheckedAt by its instant rather than time.Time's internal representation.
+// awayFromRouteHealthWindowEdge waits for the next window when little of the
+// current one is left. An evaluation past the edge reads new windows, which
+// is new evidence, so a retry there no longer replays the saved decision.
+func awayFromRouteHealthWindowEdge(t *testing.T) {
+	t.Helper()
+	const margin = 10 * time.Second
+	lagged := time.Now().UTC().Add(-api.RouteHealthIngestionLag)
+	if left := lagged.Truncate(api.RouteHealthWindow).Add(api.RouteHealthWindow).Sub(lagged); left < margin {
+		time.Sleep(left + 50*time.Millisecond)
+	}
+}
+
 func routeHealthDecisionsEqual(a, b api.RouteHealthDecision) bool {
 	if !a.CheckedAt.Equal(b.CheckedAt) {
 		return false

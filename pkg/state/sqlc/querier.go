@@ -810,8 +810,13 @@ type Querier interface {
 	CutoverCheckedRollbackTarget(ctx context.Context, db DBTX, targetID pgtype.UUID) error
 	DataRepairHealthSnapshot(ctx context.Context, db DBTX, arg DataRepairHealthSnapshotParams) ([]byte, error)
 	DeactivateProjectReleaseSets(ctx context.Context, db DBTX, arg DeactivateProjectReleaseSetsParams) error
+	// ADR-20261031101000: replay resets attempts, so a keyed row whose pending
+	// deadline has passed would only expire again.
+	DeadLetterInvocationWorkExpired(ctx context.Context, db DBTX, invocationID pgtype.UUID) (bool, error)
 	// event_route entries cannot be replayed (DeadLetterReplayable), so they never
-	// take a page from replay-all.
+	// take a page from replay-all. Neither does keyed work whose pending deadline
+	// has passed (ADR-20261031101000); replaying one entry by id still reaches it,
+	// so the refusal names the deadline.
 	DeadLetterReplayCandidateIDs(ctx context.Context, db DBTX, arg DeadLetterReplayCandidateIDsParams) ([]string, error)
 	// issue #667 / ADR-078 — canonical "tail task reached terminal" path.
 	// Equivalent to BumpInstanceTailCount(ctx, id, -n) but kept as a
@@ -5132,6 +5137,9 @@ type Querier interface {
 	// MCP connection health and the delivery CLI read it, and so does a delivery
 	// with a rollback action, which would cascade away with it.
 	PurgeAlertDeliveriesBefore(ctx context.Context, db DBTX, arg PurgeAlertDeliveriesBeforeParams) (int64, error)
+	// Deletes up to max_rows resolved episodes, oldest first, whose rule was
+	// deleted before the cutoff, and their notes with them (ADR-20261030214500).
+	PurgeDeletedRuleEpisodesBefore(ctx context.Context, db DBTX, arg PurgeDeletedRuleEpisodesBeforeParams) (int64, error)
 	PurgeSLOHoursBefore(ctx context.Context, db DBTX, before pgtype.Timestamptz) (int64, error)
 	PurgeSyntheticCheckRunsBefore(ctx context.Context, db DBTX, before pgtype.Timestamptz) (int64, error)
 	PutAppEgressCircuits(ctx context.Context, db DBTX, arg PutAppEgressCircuitsParams) (PutAppEgressCircuitsRow, error)

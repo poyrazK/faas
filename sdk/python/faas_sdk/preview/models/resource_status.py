@@ -22,7 +22,7 @@ class ResourceStatus:
 
     kind: ResourceStatusKind
     name: str
-    """The app slug or deployment ID."""
+    """The app slug, deployment ID, database name, domain, cron ID or job run ID."""
     observed_at: datetime.datetime
     """When the evidence behind the conditions was read."""
     conditions: list[Condition]

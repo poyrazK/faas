@@ -68,6 +68,9 @@ func (m *MemStore) PendingQueueWorkInLane(_ context.Context, appID, policyName s
 
 // ExpirePendingKeyedInvocations makes pending TTLs effective even when a
 // source due time is later than the expiry and no later row enters the lane.
+// Only work that never started expires (ADR-20261031101000): a row with an
+// attempt behind it is waiting out a retry, and it keeps retrying until it
+// succeeds or is dead-lettered, so a failure is never lost silently.
 func (s *PgStore) ExpirePendingKeyedInvocations(ctx context.Context, now time.Time, limit int) (int, error) {
 	if limit <= 0 {
 		limit = 64
@@ -81,7 +84,7 @@ func (s *PgStore) ExpirePendingKeyedInvocations(ctx context.Context, now time.Ti
 		with due as (
 			select id from invocations
 			where work_policy_name is not null and state = 'pending'
-			  and work_expires_at <= $1
+			  and attempts = 0 and work_expires_at <= $1
 			order by work_expires_at, id
 			for update skip locked limit $2
 		), updated as (
@@ -98,7 +101,7 @@ func (s *PgStore) ExpirePendingKeyedInvocations(ctx context.Context, now time.Ti
 		with due as (
 			select id from trigger_records
 			where work_policy_name is not null and state in ('pending','retry')
-			  and work_expires_at <= $1
+			  and attempts = 0 and work_expires_at <= $1
 			order by work_expires_at, id
 			for update skip locked limit $2
 		), updated as (
@@ -121,7 +124,7 @@ func (m *MemStore) ExpirePendingKeyedInvocations(_ context.Context, now time.Tim
 	defer m.mu.Unlock()
 	expired := 0
 	for id, inv := range m.invocations {
-		if inv.WorkPolicyName == "" || inv.State != InvocationPending ||
+		if inv.WorkPolicyName == "" || inv.State != InvocationPending || inv.Attempts > 0 ||
 			inv.WorkExpiresAt == nil || inv.WorkExpiresAt.After(now) {
 			continue
 		}
@@ -218,11 +221,12 @@ func lockWorkLaneClaimTx(ctx context.Context, tx pgx.Tx, id, appID, policyName s
 		return fmt.Errorf("state: keyed claim lane lock: %w", err)
 	}
 	// Expiry is evaluated while holding the lane lock. A newer row can
-	// clear an expired older head even if that head was never due.
+	// clear an expired older head even if that head was never due. A head
+	// that already started keeps its place (ADR-20261031101000).
 	expiredRows, err := tx.Exec(ctx, `
 		update invocations set state = 'expired', outcome = 'expired', completed_at = clock_timestamp()
 		where app_id = $1 and work_policy_name = $2 and work_key_digest = $3
-		  and state = 'pending' and work_expires_at <= clock_timestamp()`,
+		  and state = 'pending' and attempts = 0 and work_expires_at <= clock_timestamp()`,
 		appID, policyName, digest)
 	if err != nil {
 		return fmt.Errorf("state: keyed claim expiry: %w", err)
@@ -232,7 +236,7 @@ func lockWorkLaneClaimTx(ctx context.Context, tx pgx.Tx, id, appID, policyName s
 		claim_expires_at=null
 		from triggers t where t.id=tr.trigger_id and t.app_id=$1
 		  and tr.work_policy_name=$2 and tr.work_key_digest=$3
-		  and tr.state in ('pending','retry')
+		  and tr.state in ('pending','retry') and tr.attempts = 0
 		  and tr.work_expires_at <= clock_timestamp()`, appID, policyName, digest)
 	if err != nil {
 		return fmt.Errorf("state: keyed claim broker expiry: %w", err)
@@ -417,7 +421,7 @@ func (m *MemStore) keyedClaimAllowedLocked(inv Invocation, now time.Time) error 
 	}
 	for id, old := range m.invocations {
 		if old.AppID == inv.AppID && old.WorkPolicyName == inv.WorkPolicyName &&
-			bytes.Equal(old.WorkKeyDigest, inv.WorkKeyDigest) && old.State == InvocationPending &&
+			bytes.Equal(old.WorkKeyDigest, inv.WorkKeyDigest) && old.State == InvocationPending && old.Attempts == 0 &&
 			old.WorkExpiresAt != nil && !old.WorkExpiresAt.After(now) {
 			old.State = InvocationExpired
 			outcome := OutcomeExpired
