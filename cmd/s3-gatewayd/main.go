@@ -181,9 +181,15 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// (ADR-20261030075301 step 4).
 	credentials := s3gateway.NewCredentialCache(nil)
 	ops.Registry().MustRegister(credentials.Collectors()...)
+	// A gateway on a compute node keeps to its share of the node's port
+	// (ADR-20261031122757 §3).
+	transfers := objectstorage.NewTransferLimiter(registry.Transfer.MaxBytesPerSecond, "s3_gateway")
+	if transfers != nil {
+		ops.Registry().MustRegister(transfers.Collectors()...)
+	}
 	handler, err := s3gateway.New(s3gateway.Config{
 		Registry: registry, Store: store, RequestMetrics: requestMetrics, Enabled: serving, SpoolDir: os.Getenv("FAAS_S3_GATEWAY_SPOOL_DIR"), Log: log,
-		ReadAdmitter: readAdmitter, OrgAccess: orgAccess, AccountLimiter: objectstorage.NewAccountRequestLimiter(), Credentials: credentials,
+		ReadAdmitter: readAdmitter, OrgAccess: orgAccess, AccountLimiter: objectstorage.NewAccountRequestLimiter(), Credentials: credentials, Transfers: transfers,
 		OpenSecret: func(sealed []byte) (string, error) {
 			namespace, plaintext, err := secretbox.OpenBytesMulti(readers, sealed)
 			if err != nil || namespace != s3gateway.CredentialSecretNamespace || len(plaintext) != 40 {
