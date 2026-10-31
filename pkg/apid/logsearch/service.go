@@ -29,6 +29,9 @@ type Host interface {
 	LogEvents() state.LogEventStore
 	SavedSearches() state.LogSavedSearchStore
 	Logger() *slog.Logger
+	// Audit records a saved search change in the account's audit log
+	// (ADR-20261031144636).
+	Audit(ctx context.Context, kind string, accountID string, data map[string]any)
 }
 
 // Service serves the search. Enabled is the FAAS_LOG_SEARCH_ENABLED operator

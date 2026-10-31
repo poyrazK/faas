@@ -142,6 +142,14 @@ Channels receive the fire and, when the rule recovers, a resolve: PagerDuty
 closes the incident the fire opened, and Slack and email get a "Resolved"
 message. Each channel is delivered to independently, so a broken Slack
 webhook never delays PagerDuty, the rule's webhook, or a rollback action.
+A notice a channel refuses with a 5xx or 429, or cannot be reached for, is
+retried for a few seconds. After that a fire is sent again after the rule's
+cool-down while the breach lasts, and a resolve is retried with backoff (a
+minute, doubling, at most an hour apart) for up to a day, so a PagerDuty
+incident is not left open by a short outage; a new fire of the rule replaces
+the pending resolve. Every failed channel notice is recorded in the audit log
+as `notification_channel.delivery_failed`, and a resolve given up after a
+day as `notification_channel.resolve_abandoned`.
 Presets take channels too: `gregale alert preset enable availability --app
 shop --channel OPS_SLACK_ID`.
 

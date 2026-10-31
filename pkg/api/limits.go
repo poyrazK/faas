@@ -8190,6 +8190,10 @@ const (
 	// than its last value, so an app whose pusher died scales down on its
 	// other signals instead of holding the fleet at a frozen backlog.
 	CustomMetricFreshnessSeconds = 300
+	// CustomMetricMaxFutureSkewSeconds bounds how far ahead of apid's clock
+	// an OTLP data point may be stamped. A later stamp would keep the value
+	// fresh after its pusher stopped (ADR-20261031144636).
+	CustomMetricMaxFutureSkewSeconds = 300
 
 	// CustomMetricExportMaxSeries caps one ADR-745 exporter scrape. The
 	// per-app name cap already bounds the table; this bounds a scrape even
@@ -15113,6 +15117,17 @@ const (
 	AlertDeliveryPurgeInterval = time.Hour
 )
 
+// Channel recovery notices (ADR-20261031144636): a resolve a notification
+// channel did not take is retried, the wait doubling from a minute up to
+// AlertChannelResolveRetryBackoffMax, for AlertChannelResolveRetryWindow
+// after the rule recovered; each tick retries at most
+// AlertChannelResolveRetryBatch of them.
+const (
+	AlertChannelResolveRetryWindow     = 24 * time.Hour
+	AlertChannelResolveRetryBackoffMax = time.Hour
+	AlertChannelResolveRetryBatch      = 100
+)
+
 // NotificationChannelTestsPerAccountMinute caps test sends to an account's
 // notification channels (ADR-20261028101615): each one is a real Slack post,
 // PagerDuty event or email.
@@ -15241,6 +15256,11 @@ const (
 	SyntheticCheckPathMaxBytes     = 512
 	SyntheticCheckRunRetentionDays = 7
 	SyntheticCheckRecentRuns       = 20
+	// SyntheticCheckStaleIntervals: once a check's newest run is older than
+	// this many intervals (paused, its app made internal, or the runner
+	// stopped), its consecutive-failures alert has no current value and goes
+	// unknown instead of re-paging on old failures (ADR-20261031144636).
+	SyntheticCheckStaleIntervals = 2
 )
 
 // SyntheticCheckIntervalsSeconds is the closed set synthetic_checks accepts.

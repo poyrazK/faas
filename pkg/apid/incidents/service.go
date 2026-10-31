@@ -231,8 +231,10 @@ func markAcknowledged(inc *api.Incident, ack state.IncidentNote) {
 
 // apps maps app ids to slugs, reading each app once per request, and
 // reports whether the caller may read the app's incidents. An app that is
-// hidden, or that cannot be read, hides its incidents. The filtered app is
-// known up front.
+// hidden, or that cannot be read, hides its incidents. A purged app's
+// incidents outlive it (ADR-20261030214500): they have no slug, and only the
+// account's own view, never an organization member's or an app-bound key's,
+// reads them (ADR-20261031144636). The filtered app is known up front.
 func (s *Service) apps(ctx context.Context, acct state.Account, known state.App) func(string) (string, bool) {
 	type resolved struct {
 		slug    string
@@ -248,9 +250,12 @@ func (s *Service) apps(ctx context.Context, acct state.Account, known state.App)
 		}
 		var r resolved
 		app, err := s.Host.Store().AppByID(ctx, id)
-		if err != nil {
+		switch {
+		case errors.Is(err, state.ErrNotFound):
+			r = resolved{"", s.Host.AppVisible(ctx, acct, state.App{ID: id, AccountID: acct.ID})}
+		case err != nil:
 			s.Host.Logger().WarnContext(ctx, "incidents: resolve app", "app_id", id, "err", err)
-		} else {
+		default:
 			r = resolved{app.Slug, s.Host.AppVisible(ctx, acct, app)}
 		}
 		seen[id] = r

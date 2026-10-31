@@ -250,6 +250,7 @@ func (m *MemStore) DeleteNotificationChannel(_ context.Context, accountID, id st
 			return inUse
 		}
 		m.notificationChannels[accountID] = append(chans[:i:i], chans[i+1:]...)
+		m.clearAlertChannelResolveRetriesLocked(func(k alertChannelRetryKey) bool { return k.channel == id })
 		return nil
 	}
 	return ErrNotFound

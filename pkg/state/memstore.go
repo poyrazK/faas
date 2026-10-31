@@ -421,8 +421,9 @@ type MemStore struct {
 	// object storage timeline fence (ADR-20261025111015 amendment).
 	objectStorageTimeline         string
 	acceptedObjectStorageTimeline string
-	alertRuleChannels             map[string][]string // rule id → channel ids (ADR-749)
-	appSLOs                       map[string][]SLO    // app id → definitions (ADR-747), lazily made
+	alertRuleChannels             map[string][]string                               // rule id → channel ids (ADR-749)
+	alertChannelResolveRetries    map[alertChannelRetryKey]AlertChannelResolveRetry // ADR-20261031144636
+	appSLOs                       map[string][]SLO                                  // app id → definitions (ADR-747), lazily made
 	sloHours                      map[string]map[time.Time]memSLOHour
 	syntheticChecks               map[string][]SyntheticCheck // app id → checks (ADR-748), lazily made
 	syntheticRuns                 map[string][]SyntheticCheckRun
@@ -7652,6 +7653,8 @@ func (m *MemStore) DeleteAppPermanently(ctx context.Context, id string) error {
 	m.deleteWorkflowDispatchCursorsLocked(id)
 	m.deleteEventExecutionLedgerAppLocked(id)
 	m.deleteScenarioWorkerFaultsForAppLocked(id)
+	// alert_rules.app_id ON DELETE CASCADE; the episodes stay (ADR-20261030214500).
+	m.deleteAlertRulesLocked(func(r AlertRule) bool { return r.AppID == id })
 	delete(m.apps, id)
 	delete(m.applicationStandardEnrollments, id)
 	m.eraseStandardAppExceptionsLocked(id)
@@ -24686,6 +24689,7 @@ func (m *MemStore) deleteAlertRulesLocked(match func(AlertRule) bool) {
 // (ADR-20261030214500) and everything else of the rule cascades.
 func (m *MemStore) deleteAlertRuleLocked(id string) {
 	m.keepDeletedRuleEpisodesLocked(m.alertRules[id], time.Now().UTC())
+	m.clearAlertChannelResolveRetriesLocked(func(k alertChannelRetryKey) bool { return k.rule == id })
 	delete(m.alertRules, id)
 	delete(m.readinessIncidentCursors, id)
 	delete(m.readinessPagerDutyPolicies, id)

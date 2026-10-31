@@ -394,6 +394,10 @@ type Stats struct {
 	ResolvesDelivered, ResolvesFailed int
 	// DeliveriesPurged counts deliveries deleted past their retention.
 	DeliveriesPurged int64
+	// ChannelResolvesRetried and ChannelResolvesAbandoned count recovery
+	// notices re-sent to channels that had not taken them, and those given
+	// up after AlertChannelResolveRetryWindow (ADR-20261031144636).
+	ChannelResolvesRetried, ChannelResolvesAbandoned int
 }
 
 // add sums the per-rule counters of an account's tick into s; Evaluated and
@@ -455,6 +459,7 @@ func (e *Evaluator) RunOnce(ctx context.Context) (Stats, error) {
 		}
 	}
 	stats.ReleaseApprovalNotices = e.deliverReleaseApprovalEvents(ctx, e.now())
+	stats.ChannelResolvesRetried, stats.ChannelResolvesAbandoned = e.retryChannelResolves(ctx, e.now())
 	stats.DeliveriesPurged = e.purgeDeliveries(ctx, e.now())
 	return stats, nil
 }

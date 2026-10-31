@@ -63,6 +63,10 @@ Checks run only while your plan includes them (Hobby and above). After a
 move to the Free plan your checks are kept but no longer run, so they stop
 waking your app; they resume when you upgrade.
 
+Checks need a public app. An internal app is not served on its public
+hostname, so a check cannot be created or resumed on one (`409`), and the
+checks of an app made internal stop running until it is public again.
+
 ## Alert on a check
 
 Two alert metrics watch one check, named with `synthetic_check_id`
@@ -86,8 +90,10 @@ printf '%s\n' "$ALERT_SECRET" | gregale alert create --app shop --name "health s
   success; the rule's `window_spec` is required but ignored.
 - `synthetic_check_latency_p95_ms` covers successful runs in the window and
   includes wakes, so set the threshold above your app's wake time.
-- A check with no runs yet leaves the rule `unknown`. Deleting the check
-  deletes its rules.
+- A check with no runs yet leaves the rule `unknown`. So does a paused
+  check, and a check whose newest run is more than two intervals old (for
+  example because its app was made internal): old failures do not keep
+  paging. Deleting the check deletes its rules.
 
 The dashboard's app page lists every check with its uptime, p95 latency and
 last result under **Synthetic checks**.

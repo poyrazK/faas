@@ -29004,6 +29004,23 @@ COMMENT ON TABLE public.agents IS 'ADR-20261027090010 agent definitions; apid is
 
 
 --
+-- Name: alert_channel_resolve_retries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.alert_channel_resolve_retries (
+    rule_id uuid NOT NULL,
+    channel_id uuid NOT NULL,
+    observed double precision NOT NULL,
+    resolved_at timestamp with time zone NOT NULL,
+    attempts integer NOT NULL,
+    next_attempt_at timestamp with time zone NOT NULL,
+    last_error text DEFAULT ''::text NOT NULL,
+    CONSTRAINT alert_channel_resolve_retries_attempts_check CHECK ((attempts > 0)),
+    CONSTRAINT alert_channel_resolve_retries_last_error_check CHECK ((char_length(last_error) <= 512))
+);
+
+
+--
 -- Name: alert_deliveries; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -56888,6 +56905,14 @@ ALTER TABLE ONLY public.agents
 
 
 --
+-- Name: alert_channel_resolve_retries alert_channel_resolve_retries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alert_channel_resolve_retries
+    ADD CONSTRAINT alert_channel_resolve_retries_pkey PRIMARY KEY (rule_id, channel_id);
+
+
+--
 -- Name: alert_deliveries alert_deliveries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -69332,6 +69357,20 @@ CREATE INDEX agent_runs_workflow_finished_idx ON public.agent_runs USING btree (
 --
 
 CREATE UNIQUE INDEX agents_account_name_active_idx ON public.agents USING btree (account_id, name) WHERE (state = 'active'::text);
+
+
+--
+-- Name: alert_channel_resolve_retries_channel_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX alert_channel_resolve_retries_channel_idx ON public.alert_channel_resolve_retries USING btree (channel_id);
+
+
+--
+-- Name: alert_channel_resolve_retries_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX alert_channel_resolve_retries_due_idx ON public.alert_channel_resolve_retries USING btree (next_attempt_at);
 
 
 --
@@ -86645,6 +86684,22 @@ ALTER TABLE ONLY public.agent_versions
 
 ALTER TABLE ONLY public.agents
     ADD CONSTRAINT agents_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: alert_channel_resolve_retries alert_channel_resolve_retries_channel_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alert_channel_resolve_retries
+    ADD CONSTRAINT alert_channel_resolve_retries_channel_id_fkey FOREIGN KEY (channel_id) REFERENCES public.notification_channels(id) ON DELETE CASCADE;
+
+
+--
+-- Name: alert_channel_resolve_retries alert_channel_resolve_retries_rule_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alert_channel_resolve_retries
+    ADD CONSTRAINT alert_channel_resolve_retries_rule_id_fkey FOREIGN KEY (rule_id) REFERENCES public.alert_rules(id) ON DELETE CASCADE;
 
 
 --

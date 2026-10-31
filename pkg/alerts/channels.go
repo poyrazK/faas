@@ -59,6 +59,11 @@ func (e *Evaluator) notifyChannels(ctx context.Context, rule state.AlertRule, ev
 	if len(chans) == 0 {
 		return 0, 0
 	}
+	if event == alertchannels.EventFire {
+		// A new incident supersedes a recovery notice a channel never took;
+		// sent now, it would resolve the incident this fire opens.
+		e.clearChannelResolves(ctx, rule.ID)
+	}
 	msg := e.channelMessage(ctx, rule, event, observed, now)
 	ids := e.unsealIdentities()
 	sctx, cancel := context.WithTimeout(ctx, channelSendBudget)
@@ -77,6 +82,12 @@ func (e *Evaluator) notifyChannels(ctx context.Context, rule state.AlertRule, ev
 				outcome, errMsg = ChannelOutcomeFailed, err.Error()
 			}
 			e.recordChannel(ctx, ch, now, errMsg, outcome)
+			if event == alertchannels.EventResolve {
+				e.trackChannelResolve(ctx, rule, ch, observed, now, errMsg)
+			}
+			if errMsg != "" {
+				e.auditChannelFailure(ctx, rule, ch, event, errMsg)
+			}
 			mu.Lock()
 			defer mu.Unlock()
 			if outcome == ChannelOutcomeDelivered {

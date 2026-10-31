@@ -34,6 +34,9 @@ type Host interface {
 	Dashboards() state.DashboardStore
 	Sources() Sources
 	Logger() *slog.Logger
+	// Audit records a dashboard change in the account's audit log
+	// (ADR-20261031144636).
+	Audit(ctx context.Context, kind string, accountID string, data map[string]any)
 }
 
 // Service serves the dashboards API. Enabled is the
@@ -92,6 +95,7 @@ func (s *Service) Create(w http.ResponseWriter, r *http.Request, acct state.Acco
 	if s.writeErr(w, r, "create dashboard", err) {
 		return
 	}
+	s.audit(r.Context(), "dashboard.created", acct, created)
 	httpkit.WriteJSON(w, http.StatusCreated, dto(created))
 }
 
@@ -124,6 +128,7 @@ func (s *Service) Replace(w http.ResponseWriter, r *http.Request, acct state.Acc
 	if s.writeErr(w, r, "replace dashboard", err) {
 		return
 	}
+	s.audit(r.Context(), "dashboard.replaced", acct, replaced)
 	httpkit.WriteJSON(w, http.StatusOK, dto(replaced))
 }
 
@@ -132,13 +137,21 @@ func (s *Service) Delete(w http.ResponseWriter, r *http.Request, acct state.Acco
 	if !s.gate(w) {
 		return
 	}
-	if _, err := s.dashboard(r.Context(), acct, r.PathValue("id")); s.writeErr(w, r, "read dashboard", err) {
+	existing, err := s.dashboard(r.Context(), acct, r.PathValue("id"))
+	if s.writeErr(w, r, "read dashboard", err) {
 		return
 	}
-	if s.writeErr(w, r, "delete dashboard", s.Host.Dashboards().DeleteDashboard(r.Context(), acct.ID, r.PathValue("id"))) {
+	if s.writeErr(w, r, "delete dashboard", s.Host.Dashboards().DeleteDashboard(r.Context(), acct.ID, existing.ID)) {
 		return
 	}
+	s.audit(r.Context(), "dashboard.deleted", acct, existing)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// audit records one dashboard change; the widgets themselves stay out of the
+// log, only how many there are.
+func (s *Service) audit(ctx context.Context, kind string, acct state.Account, row state.Dashboard) {
+	s.Host.Audit(ctx, kind, acct.ID, map[string]any{"dashboard_id": row.ID, "name": row.Name, "widgets": len(dto(row).Widgets)})
 }
 
 // dashboard reads one of the account's dashboards that the request's

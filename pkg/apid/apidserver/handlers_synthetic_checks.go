@@ -59,6 +59,10 @@ func (s *server) createSyntheticCheck(w http.ResponseWriter, r *http.Request, ac
 	if !ok {
 		return
 	}
+	if api.NormalizeAppVisibility(app.Visibility) == api.AppVisibilityInternal {
+		api.WriteProblem(w, api.ErrSyntheticCheckAppInternal())
+		return
+	}
 	row, err := store.CreateSyntheticCheck(r.Context(), state.SyntheticCheck{
 		AccountID: acct.ID, AppID: app.ID, Name: req.Name, Method: req.Method, Path: req.Path,
 		ExpectedStatus: req.ExpectedStatus, TimeoutMS: req.TimeoutMS, IntervalSeconds: req.IntervalSeconds,
@@ -107,6 +111,10 @@ func (s *server) updateSyntheticCheck(w http.ResponseWriter, r *http.Request, ac
 	}
 	store, app, ok := s.syntheticApp(w, r, acct)
 	if !ok {
+		return
+	}
+	if req.Enabled && api.NormalizeAppVisibility(app.Visibility) == api.AppVisibilityInternal {
+		api.WriteProblem(w, api.ErrSyntheticCheckAppInternal())
 		return
 	}
 	row, err := store.SetSyntheticCheckEnabled(r.Context(), app.ID, r.PathValue("id"), req.Enabled)

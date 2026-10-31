@@ -158,7 +158,7 @@ key:
 ```sh
 OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=https://api.gregale.dev/v1/apps/my-api/otlp/v1/metrics
 OTEL_EXPORTER_OTLP_METRICS_HEADERS="Authorization=Bearer $GREGALE_METRICS_KEY"
-OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=cumulative
+OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=delta
 ```
 
 Both `http/protobuf` and `http/json` work, uncompressed or with gzip
@@ -167,14 +167,24 @@ are limited to 1 MiB, also once decompressed.
 Each data point becomes a custom metric under the same per-app name cap:
 
 - **Gauges** are stored like a pushed value and can drive scaling.
-- **Cumulative monotonic sums** (counters) are stored as counters. Their
-  history shows a per-second rate over 5 minutes, and they never drive
-  scaling, because a total that only grows would mean scaling out for ever.
+- **Monotonic sums** (counters) are stored as counters. Their history shows
+  a per-second rate over 5 minutes, and they never drive scaling, because a
+  total that only grows would mean scaling out for ever.
+- **Send counters with delta temporality.** Each delta is added to a total
+  Gregale keeps, so every instance of your app adds to the same counter, and
+  a restart, a restore from a snapshot or a new instance changes nothing. A
+  cumulative counter is each process's own running total: it is stored as
+  sent and only reads correctly from an app that runs a single instance. One
+  export cannot mix delta and cumulative points for a name. A delta export
+  that is retried after a server error can count twice.
+- **Timestamps** may be at most 5 minutes ahead of Gregale's clock. A value
+  stamped before the one already stored is ignored, so a delayed export
+  cannot move a gauge backwards.
 - **Names are normalised:** lowercase, with `.`, `-` and `/` turned into `_`,
   so `orders.pending` becomes `orders_pending`.
 - **Rejected:** data points with attributes (each attribute value would be a
-  separate series), delta or non-monotonic sums, histograms, summaries,
-  negative values, and new names beyond the cap. The response's
+  separate series), non-monotonic sums, histograms, summaries, negative
+  values, timestamps too far ahead, and new names beyond the cap. The response's
   `partial_success` says how many points were rejected and why; the rest are
   stored.
 

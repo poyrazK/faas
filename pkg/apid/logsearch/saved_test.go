@@ -68,6 +68,10 @@ func TestSavedSearchLifecycle(t *testing.T) {
 	if w := serveSaved(t, svc.DeleteSaved, acct, http.MethodDelete, "checkout-5xx", ""); w.Code != http.StatusNotFound {
 		t.Fatalf("second delete = %d, want 404", w.Code)
 	}
+	// adr: 20261031144636 — saves and deletes are audited; refused ones are not.
+	if got, want := strings.Join(*svc.Host.(fakeHost).audits, ","), "log_saved_search.saved checkout-5xx,log_saved_search.deleted checkout-5xx"; got != want {
+		t.Fatalf("audits = %s, want %s", got, want)
+	}
 }
 
 func TestSavedSearchQuotaAndGate(t *testing.T) {

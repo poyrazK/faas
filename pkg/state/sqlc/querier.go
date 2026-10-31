@@ -441,6 +441,8 @@ type Querier interface {
 	// Claims always allow an event to inspect demand and drain surplus workers.
 	// The returned failure deadline gates new admission inside the reconciler.
 	ClaimWorkerRecovery(ctx context.Context, db DBTX, arg ClaimWorkerRecoveryParams) (WorkerRecovery, error)
+	// A new fire of the rule supersedes the recovery it had not delivered.
+	ClearAlertChannelResolveRetries(ctx context.Context, db DBTX, ruleID pgtype.UUID) error
 	ClearAppSecretRuntimeProcessAck(ctx context.Context, db DBTX, arg ClearAppSecretRuntimeProcessAckParams) (int64, error)
 	ClearApplicationStandardControlBindings(ctx context.Context, db DBTX, appID pgtype.UUID) error
 	ClearComputeNodeVMMDRestartNotice(ctx context.Context, db DBTX, nodeID pgtype.UUID) (int64, error)
@@ -843,6 +845,7 @@ type Querier interface {
 	DeleteAccountEnvironmentGitSources(ctx context.Context, db DBTX, accountID pgtype.UUID) error
 	DeleteAccountPassword(ctx context.Context, db DBTX, id pgtype.UUID) error
 	DeleteAccountProfileCaptures(ctx context.Context, db DBTX, arg DeleteAccountProfileCapturesParams) (int64, error)
+	DeleteAlertChannelResolveRetry(ctx context.Context, db DBTX, arg DeleteAlertChannelResolveRetryParams) error
 	// ADR-749 slice 2: alert rule -> notification channel bindings.
 	DeleteAlertRuleChannels(ctx context.Context, db DBTX, ruleID pgtype.UUID) error
 	DeleteApp(ctx context.Context, db DBTX, id pgtype.UUID) error
@@ -999,6 +1002,8 @@ type Querier interface {
 	DiscoverProfilePeriodicCandidates(ctx context.Context, db DBTX, maxRows int32) ([][]byte, error)
 	DomainByName(ctx context.Context, db DBTX, domain interface{}) (DomainByNameRow, error)
 	DrainEnvironmentWorkloadRetirementDeployments(ctx context.Context, db DBTX, arg DrainEnvironmentWorkloadRetirementDeploymentsParams) (int64, error)
+	// Retries due now whose rule is still enabled and recovered.
+	DueAlertChannelResolveRetries(ctx context.Context, db DBTX, arg DueAlertChannelResolveRetriesParams) ([]DueAlertChannelResolveRetriesRow, error)
 	DueManagedPostgresCutoverSourceFences(ctx context.Context, db DBTX, arg DueManagedPostgresCutoverSourceFencesParams) ([]ManagedPostgresCutover, error)
 	DueManagedPostgresLifecycleDatabases(ctx context.Context, db DBTX, arg DueManagedPostgresLifecycleDatabasesParams) ([]ManagedPostgresDatabase, error)
 	// The customer's override wins over the default.
@@ -3617,8 +3622,9 @@ type Querier interface {
 	// leave them no destination (ADR-20261029203000).
 	ListRulesOnlyNotifyingChannel(ctx context.Context, db DBTX, arg ListRulesOnlyNotifyingChannelParams) ([]ListRulesOnlyNotifyingChannelRow, error)
 	// ADR-748 slice 2: synthetic check runs (meterd is the only writer).
-	// Every enabled check on a live app, with its app slug and last run time;
-	// the runner decides which are due.
+	// Every enabled check on a live public app, with its app slug and last run
+	// time; the runner decides which are due. The public edge does not serve an
+	// internal app, so its checks wait until it is public (ADR-20261031144636).
 	ListRunnableSyntheticChecks(ctx context.Context, db DBTX) ([]ListRunnableSyntheticChecksRow, error)
 	ListRuntimeReleases(ctx context.Context, db DBTX, arg ListRuntimeReleasesParams) ([]RuntimeRelease, error)
 	ListRuntimeUpgradeGatewayDrainRepairApps(ctx context.Context, db DBTX, arg ListRuntimeUpgradeGatewayDrainRepairAppsParams) ([]string, error)
@@ -5863,6 +5869,10 @@ type Querier interface {
 	ReclaimOperatorIntentAttempts(ctx context.Context, db DBTX, threshold pgtype.Timestamptz) (int64, error)
 	RecomputeCustomerOperationJobRun(ctx context.Context, db DBTX, runID pgtype.UUID) error
 	ReconcileManagedPostgresLegacyResource(ctx context.Context, db DBTX, arg ReconcileManagedPostgresLegacyResourceParams) (int64, error)
+	// A failed recovery notice for one channel (ADR-20261031144636). The first
+	// failure keeps the observation and time it reports; each later one counts
+	// an attempt and moves the next try.
+	RecordAlertChannelResolveRetry(ctx context.Context, db DBTX, arg RecordAlertChannelResolveRetryParams) error
 	RecordAppConfigGuardChange(ctx context.Context, db DBTX, arg RecordAppConfigGuardChangeParams) (int64, error)
 	RecordAppSecretDeliveryFailure(ctx context.Context, db DBTX, arg RecordAppSecretDeliveryFailureParams) (int64, error)
 	RecordAppSecretDeliverySuccess(ctx context.Context, db DBTX, arg RecordAppSecretDeliverySuccessParams) (int64, error)

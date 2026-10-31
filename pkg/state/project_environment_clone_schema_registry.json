@@ -426,6 +426,19 @@
     "kind": "operational"
   },
   {
+    "table": "alert_channel_resolve_retries",
+    "columns": [
+      "attempts",
+      "channel_id",
+      "last_error",
+      "next_attempt_at",
+      "observed",
+      "resolved_at",
+      "rule_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "alert_deliveries",
     "columns": [
       "account_id",

@@ -2,6 +2,8 @@ package alerts
 
 import (
 	"context"
+	"errors"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -11,11 +13,18 @@ import (
 // run history. Consecutive failures count failed runs back to the most
 // recent success, so "gte 2" ignores a single blip; latency is the p95 of
 // successful runs in the rule window. A check with no runs in scope has no
-// value, so the rule goes unknown rather than reading as healthy.
+// value, so the rule goes unknown rather than reading as healthy. So does a
+// paused check, and a check whose newest run is older than
+// SyntheticCheckStaleIntervals intervals: old failures must not keep paging
+// (ADR-20261031144636).
 func (e *Evaluator) observeSyntheticCheck(ctx context.Context, rule state.AlertRule) (float64, bool, string) {
 	runs, ok := e.store.(state.SyntheticRunStore)
 	if !ok {
 		return 0, false, skipDegraded
+	}
+	check, skip := e.liveSyntheticCheck(ctx, rule)
+	if skip != "" {
+		return 0, false, skip
 	}
 	var observed float64
 	switch rule.Metric {
@@ -25,7 +34,8 @@ func (e *Evaluator) observeSyntheticCheck(ctx context.Context, rule state.AlertR
 			e.log.Warn("alerts: read synthetic check runs", "rule", rule.ID, "err", err)
 			return 0, false, skipDegraded
 		}
-		if len(recent) == 0 {
+		stale := time.Duration(api.SyntheticCheckStaleIntervals*check.IntervalSeconds) * time.Second
+		if len(recent) == 0 || e.now().Sub(recent[0].StartedAt) > stale {
 			return 0, false, skipInsufficient
 		}
 		for _, run := range recent {
@@ -46,4 +56,24 @@ func (e *Evaluator) observeSyntheticCheck(ctx context.Context, rule state.AlertR
 		observed = st.P95LatencyMS
 	}
 	return observed, compareFloat(observed, rule.Comparison, rule.Threshold), ""
+}
+
+// liveSyntheticCheck reads the rule's check; a paused or missing check has no
+// value to alert on.
+func (e *Evaluator) liveSyntheticCheck(ctx context.Context, rule state.AlertRule) (state.SyntheticCheck, string) {
+	checks, ok := e.store.(state.SyntheticCheckStore)
+	if !ok {
+		return state.SyntheticCheck{}, skipDegraded
+	}
+	check, err := checks.GetSyntheticCheck(ctx, rule.AppID, rule.SyntheticCheckID)
+	switch {
+	case errors.Is(err, state.ErrNotFound):
+		return state.SyntheticCheck{}, skipInsufficient
+	case err != nil:
+		e.log.Warn("alerts: read synthetic check", "rule", rule.ID, "err", err)
+		return state.SyntheticCheck{}, skipDegraded
+	case !check.Enabled:
+		return state.SyntheticCheck{}, skipInsufficient
+	}
+	return check, ""
 }

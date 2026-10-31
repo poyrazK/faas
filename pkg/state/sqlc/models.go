@@ -343,6 +343,16 @@ type AgentVersion struct {
 	PauseDuringModelCalls bool
 }
 
+type AlertChannelResolveRetry struct {
+	RuleID        pgtype.UUID
+	ChannelID     pgtype.UUID
+	Observed      float64
+	ResolvedAt    pgtype.Timestamptz
+	Attempts      int32
+	NextAttemptAt pgtype.Timestamptz
+	LastError     string
+}
+
 type AlertDelivery struct {
 	ID                      pgtype.UUID
 	RuleID                  pgtype.UUID

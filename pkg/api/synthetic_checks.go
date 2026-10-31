@@ -108,6 +108,15 @@ func ErrSyntheticCheckInvalid(reason string) *Problem {
 		WithDocs(docsBase + "/synthetic-checks")
 }
 
+// ErrSyntheticCheckAppInternal is a 409 for a check on an internal app: the
+// public edge does not serve it, so every probe would fail
+// (ADR-20261031144636).
+func ErrSyntheticCheckAppInternal() *Problem {
+	return NewProblem(http.StatusConflict, CodeSyntheticCheckInvalid, "App is internal",
+		"synthetic checks probe the app's public hostname, which an internal app does not serve; make the app public to run checks").
+		WithDocs(docsBase + "/synthetic-checks")
+}
+
 // ErrSyntheticCheckLimitReached is a 422 naming the per-app cap.
 func ErrSyntheticCheckLimitReached(observed int) *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeSyntheticCheckLimit, "Synthetic check limit reached",

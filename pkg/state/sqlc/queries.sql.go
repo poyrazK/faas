@@ -7666,6 +7666,16 @@ func (q *Queries) ClaimTriggerRecordsByItems(ctx context.Context, db DBTX, arg C
 	return items, nil
 }
 
+const clearAlertChannelResolveRetries = `-- name: ClearAlertChannelResolveRetries :exec
+DELETE FROM alert_channel_resolve_retries WHERE rule_id = $1::uuid
+`
+
+// A new fire of the rule supersedes the recovery it had not delivered.
+func (q *Queries) ClearAlertChannelResolveRetries(ctx context.Context, db DBTX, ruleID pgtype.UUID) error {
+	_, err := db.Exec(ctx, clearAlertChannelResolveRetries, ruleID)
+	return err
+}
+
 const clearAppSecretRuntimeProcessAck = `-- name: ClearAppSecretRuntimeProcessAck :execrows
 UPDATE app_secret_runtime_reload_observations
 SET application_ack_version = NULL, application_ack_status = NULL,
@@ -13738,6 +13748,21 @@ func (q *Queries) DeleteAccountEnvironmentGitSources(ctx context.Context, db DBT
 	return err
 }
 
+const deleteAlertChannelResolveRetry = `-- name: DeleteAlertChannelResolveRetry :exec
+DELETE FROM alert_channel_resolve_retries
+ WHERE rule_id = $1::uuid AND channel_id = $2::uuid
+`
+
+type DeleteAlertChannelResolveRetryParams struct {
+	RuleID    pgtype.UUID
+	ChannelID pgtype.UUID
+}
+
+func (q *Queries) DeleteAlertChannelResolveRetry(ctx context.Context, db DBTX, arg DeleteAlertChannelResolveRetryParams) error {
+	_, err := db.Exec(ctx, deleteAlertChannelResolveRetry, arg.RuleID, arg.ChannelID)
+	return err
+}
+
 const deleteAlertRuleChannels = `-- name: DeleteAlertRuleChannels :exec
 
 DELETE FROM alert_rule_channels WHERE rule_id = $1::uuid
@@ -15267,6 +15292,55 @@ func (q *Queries) DomainByName(ctx context.Context, db DBTX, domain interface{})
 		&i.EnvironmentID,
 	)
 	return i, err
+}
+
+const dueAlertChannelResolveRetries = `-- name: DueAlertChannelResolveRetries :many
+SELECT x.rule_id::text AS rule_id, x.channel_id::text AS channel_id, x.observed, x.resolved_at, x.attempts
+  FROM alert_channel_resolve_retries x
+  JOIN alert_rules r ON r.id = x.rule_id
+ WHERE x.next_attempt_at <= $1::timestamptz AND r.enabled AND r.state = 'ok'
+ ORDER BY x.next_attempt_at, x.rule_id, x.channel_id
+ LIMIT $2::integer
+`
+
+type DueAlertChannelResolveRetriesParams struct {
+	Now     pgtype.Timestamptz
+	MaxRows int32
+}
+
+type DueAlertChannelResolveRetriesRow struct {
+	RuleID     string
+	ChannelID  string
+	Observed   float64
+	ResolvedAt pgtype.Timestamptz
+	Attempts   int32
+}
+
+// Retries due now whose rule is still enabled and recovered.
+func (q *Queries) DueAlertChannelResolveRetries(ctx context.Context, db DBTX, arg DueAlertChannelResolveRetriesParams) ([]DueAlertChannelResolveRetriesRow, error) {
+	rows, err := db.Query(ctx, dueAlertChannelResolveRetries, arg.Now, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DueAlertChannelResolveRetriesRow{}
+	for rows.Next() {
+		var i DueAlertChannelResolveRetriesRow
+		if err := rows.Scan(
+			&i.RuleID,
+			&i.ChannelID,
+			&i.Observed,
+			&i.ResolvedAt,
+			&i.Attempts,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const dueManagedPostgresLifecycleDatabases = `-- name: DueManagedPostgresLifecycleDatabases :many
@@ -51745,7 +51819,7 @@ const listRunnableSyntheticChecks = `-- name: ListRunnableSyntheticChecks :many
 SELECT c.id, c.account_id, c.app_id, c.name, c.method, c.path, c.expected_status, c.timeout_ms, c.interval_seconds, c.enabled, c.created_at, c.updated_at, a.slug AS app_slug,
  (SELECT max(r.started_at) FROM synthetic_check_runs r WHERE r.check_id = c.id)::timestamptz AS last_run_at
 FROM synthetic_checks c JOIN apps a ON a.id = c.app_id
-WHERE c.enabled AND a.status <> 'deleted'
+WHERE c.enabled AND a.status <> 'deleted' AND a.visibility <> 'internal'
 ORDER BY c.id
 `
 
@@ -51767,8 +51841,9 @@ type ListRunnableSyntheticChecksRow struct {
 }
 
 // ADR-748 slice 2: synthetic check runs (meterd is the only writer).
-// Every enabled check on a live app, with its app slug and last run time;
-// the runner decides which are due.
+// Every enabled check on a live public app, with its app slug and last run
+// time; the runner decides which are due. The public edge does not serve an
+// internal app, so its checks wait until it is public (ADR-20261031144636).
 func (q *Queries) ListRunnableSyntheticChecks(ctx context.Context, db DBTX) ([]ListRunnableSyntheticChecksRow, error) {
 	rows, err := db.Query(ctx, listRunnableSyntheticChecks)
 	if err != nil {
@@ -87614,6 +87689,40 @@ func (q *Queries) ReconcileManagedPostgresLegacyResource(ctx context.Context, db
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const recordAlertChannelResolveRetry = `-- name: RecordAlertChannelResolveRetry :exec
+INSERT INTO alert_channel_resolve_retries (rule_id, channel_id, observed, resolved_at, attempts, next_attempt_at, last_error)
+VALUES ($1::uuid, $2::uuid, $3::double precision,
+        $4::timestamptz, 1, $5::timestamptz, $6::text)
+ON CONFLICT (rule_id, channel_id) DO UPDATE
+   SET attempts = alert_channel_resolve_retries.attempts + 1,
+       next_attempt_at = EXCLUDED.next_attempt_at,
+       last_error = EXCLUDED.last_error
+`
+
+type RecordAlertChannelResolveRetryParams struct {
+	RuleID        pgtype.UUID
+	ChannelID     pgtype.UUID
+	Observed      float64
+	ResolvedAt    pgtype.Timestamptz
+	NextAttemptAt pgtype.Timestamptz
+	LastError     string
+}
+
+// A failed recovery notice for one channel (ADR-20261031144636). The first
+// failure keeps the observation and time it reports; each later one counts
+// an attempt and moves the next try.
+func (q *Queries) RecordAlertChannelResolveRetry(ctx context.Context, db DBTX, arg RecordAlertChannelResolveRetryParams) error {
+	_, err := db.Exec(ctx, recordAlertChannelResolveRetry,
+		arg.RuleID,
+		arg.ChannelID,
+		arg.Observed,
+		arg.ResolvedAt,
+		arg.NextAttemptAt,
+		arg.LastError,
+	)
+	return err
 }
 
 const recordAppSecretDeliveryFailure = `-- name: RecordAppSecretDeliveryFailure :execrows
