@@ -73,9 +73,9 @@ func (m *MemStore) IncidentAcknowledgements(_ context.Context, accountID string,
 // stand-in for ON DELETE CASCADE.
 func (m *MemStore) incidentSourceExistsLocked(incidentID string) bool {
 	if key, ok := strings.CutPrefix(incidentID, "alert-"); ok {
-		ep, found := m.alertEpisodes[key]
-		_, ruleFound := m.alertRules[ep.RuleID]
-		return found && ruleFound
+		// An episode outlives its rule (ADR-20261030214500).
+		_, found := m.alertEpisodes[key]
+		return found
 	}
 	if key, ok := strings.CutPrefix(incidentID, "route-"); ok {
 		for _, incidents := range m.routeMonitorIncidents {

@@ -14,7 +14,8 @@ import (
 // testIncidentNotesFollowTheirIncident pins ADR-20261022193512 slice 2's
 // notes: one acknowledgement per account and incident, notes oldest first,
 // account-scoped reads, the per-incident cap, an unknown incident not found,
-// platform incidents noted per account, and notes going with a deleted rule.
+// platform incidents noted per account, and notes outliving a deleted rule
+// (ADR-20261030214500): its episode keeps the rule's name and is resolved.
 func testIncidentNotesFollowTheirIncident(t *testing.T, fx *Fixture) {
 	t.Helper()
 	rule := createEpisodeRule(t, fx)
@@ -108,14 +109,51 @@ func testIncidentNotesFollowTheirIncident(t *testing.T, fx *Fixture) {
 		t.Fatalf("another account's platform acknowledgements = %+v, %v; want none", got, err)
 	}
 
-	// Notes go with their incident.
+	// The incident and its notes outlive the rule; the episode keeps the
+	// rule's name and app and is resolved.
 	if err := fx.Store.DeleteAlertRule(fx.Ctx, rule.ID); err != nil {
 		t.Fatalf("DeleteAlertRule: %v", err)
 	}
-	if got, err := fx.Store.ListIncidentNotes(fx.Ctx, fx.Account.ID, incidentID, 10); err != nil || len(got) != 0 {
-		t.Fatalf("notes after the rule was deleted = %+v, %v; want none", got, err)
+	if got, err := fx.Store.ListIncidentNotes(fx.Ctx, fx.Account.ID, incidentID, 10); err != nil || len(got) != 3 {
+		t.Fatalf("notes after the rule was deleted = %+v, %v; want all three", got, err)
 	}
-	if got, err := fx.Store.IncidentAcknowledgements(fx.Ctx, fx.Account.ID, []string{incidentID, platformID}); err != nil || len(got) != 1 || got[platformID].ID == "" {
-		t.Fatalf("acknowledgements after the rule was deleted = %+v, %v; want only the platform one", got, err)
+	if got, err := fx.Store.IncidentAcknowledgements(fx.Ctx, fx.Account.ID, []string{incidentID, platformID}); err != nil || len(got) != 2 || got[incidentID].ID != ack.ID {
+		t.Fatalf("acknowledgements after the rule was deleted = %+v, %v; want both", got, err)
+	}
+	kept, err := fx.Store.AlertEpisodeByID(fx.Ctx, fx.Account.ID, strings.TrimPrefix(incidentID, "alert-"))
+	if err != nil || kept.RuleName != rule.Name || kept.AppID != fx.App.ID || kept.ResolvedAt == nil {
+		t.Fatalf("episode after the rule was deleted = %+v, %v; want it resolved, with the rule's name and app", kept, err)
+	}
+	listed, err := fx.Store.ListAlertEpisodes(fx.Ctx, fx.Account.ID, fx.App.ID, t0.Add(-time.Hour), 1000)
+	if err != nil {
+		t.Fatalf("ListAlertEpisodes after the rule was deleted: %v", err)
+	}
+	found := false
+	for _, ep := range listed {
+		found = found || ep.ID == kept.ID
+	}
+	if !found {
+		t.Fatalf("the deleted rule's episode is not listed for its app: %+v", listed)
+	}
+
+	// Retention purges it, with its notes, once resolved before the cutoff.
+	purger, ok := fx.Store.(state.AlertEpisodePurger)
+	if !ok {
+		return
+	}
+	if _, err := purger.PurgeDeletedRuleEpisodesBefore(fx.Ctx, kept.ResolvedAt.Add(-time.Hour), 1000); err != nil {
+		t.Fatalf("PurgeDeletedRuleEpisodesBefore(before it resolved): %v", err)
+	}
+	if _, err := fx.Store.AlertEpisodeByID(fx.Ctx, fx.Account.ID, kept.ID); err != nil {
+		t.Fatalf("episode purged before its retention: %v", err)
+	}
+	if n, err := purger.PurgeDeletedRuleEpisodesBefore(fx.Ctx, kept.ResolvedAt.Add(time.Hour), 1000); err != nil || n < 1 {
+		t.Fatalf("PurgeDeletedRuleEpisodesBefore(after it resolved) = %d, %v; want it purged", n, err)
+	}
+	if _, err := fx.Store.AlertEpisodeByID(fx.Ctx, fx.Account.ID, kept.ID); err == nil {
+		t.Fatalf("episode %s survived its purge", kept.ID)
+	}
+	if got, err := fx.Store.ListIncidentNotes(fx.Ctx, fx.Account.ID, incidentID, 10); err != nil || len(got) != 0 {
+		t.Fatalf("notes after the purge = %+v, %v; want none", got, err)
 	}
 }
