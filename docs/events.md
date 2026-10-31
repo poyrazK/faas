@@ -254,7 +254,9 @@ Each plan caps the enabled subscriptions per app and per account:
 
 A deploy that would go past a cap is refused with `403
 plan_event_subscription_quota`, naming the limit and the count it would have
-reached, and changes nothing. Numbers in filters are kept exactly, so a filter
+reached, and changes nothing. The caps hold on every path that adds a
+subscription: a stage deploy and `POST /v1/triggers:batch_create` keep what
+is there, but what they add counts. Numbers in filters are kept exactly, so a filter
 on an integer ID larger than 2^53 matches only that ID.
 
 ### Delivery identity
