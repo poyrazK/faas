@@ -175,10 +175,15 @@ func TestManagedPostgresStorageResize(t *testing.T) {
 			t.Fatal(tc.name, rec.Code, rec.Body.String())
 		}
 	}
-	rec := e.Do(t, http.MethodPost, path, map[string]any{"request_id": uuid.NewString(), "storage_limit_bytes": int64(51) << 30}, nil)
+	limits, ok := api.ManagedPostgresLimitsFor(api.PlanPro)
+	if !ok {
+		t.Fatal("no managed Postgres limits for Pro")
+	}
+	above := limits.StorageLimitBytes + 1<<30
+	rec := e.Do(t, http.MethodPost, path, map[string]any{"request_id": uuid.NewString(), "storage_limit_bytes": above}, nil)
 	var problem api.Problem
-	if err := json.Unmarshal(rec.Body.Bytes(), &problem); err != nil || rec.Code != http.StatusForbidden || problem.Limit == nil || *problem.Limit != 50<<30 ||
-		problem.Observed == nil || *problem.Observed != 51<<30 || problem.DocsURL == "" {
+	if err := json.Unmarshal(rec.Body.Bytes(), &problem); err != nil || rec.Code != http.StatusForbidden || problem.Limit == nil || *problem.Limit != limits.StorageLimitBytes ||
+		problem.Observed == nil || *problem.Observed != above || problem.DocsURL == "" {
 		t.Fatal("plan storage limit", rec.Code, rec.Body.String())
 	}
 	id := uuid.NewString()

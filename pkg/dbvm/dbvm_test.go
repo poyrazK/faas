@@ -64,8 +64,8 @@ func TestBuildConfigIsNetworklessAndDurable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(raw), "network-interfaces") {
-		t.Fatalf("Firecracker config carries network-interfaces: %s", raw)
+	if !strings.Contains(string(raw), `"network-interfaces":[]`) {
+		t.Fatalf("Firecracker config must list no interfaces, never null: %s", raw)
 	}
 	if !strings.Contains(string(raw), `"cache_type":"Writeback"`) {
 		t.Fatalf("Firecracker config lacks write-back volume caching: %s", raw)

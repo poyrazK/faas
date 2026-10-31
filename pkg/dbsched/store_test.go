@@ -20,7 +20,7 @@ func storeFactories(t *testing.T) map[string]func(t *testing.T) Store {
 	return map[string]func(t *testing.T) Store{
 		"mem": func(*testing.T) Store { return NewMemStore() },
 		"pg": func(t *testing.T) Store {
-			pool := pgtest.Open(t)
+			pool := pgtest.OpenMigrated(t)
 			if err := db.MigrateUp(context.Background(), pool); err != nil {
 				t.Fatalf("migrate: %v", err)
 			}

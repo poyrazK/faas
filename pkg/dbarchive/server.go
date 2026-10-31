@@ -49,11 +49,17 @@ type Server struct {
 	now     func() time.Time
 }
 
+// log is Log, or slog.Default when unset. Serve never writes Log: one
+// Server may serve several listeners at once.
+func (s *Server) log() *slog.Logger {
+	if s.Log != nil {
+		return s.Log
+	}
+	return slog.Default()
+}
+
 // Serve accepts streams until ctx ends or ln fails.
 func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
-	if s.Log == nil {
-		s.Log = slog.Default()
-	}
 	stop := context.AfterFunc(ctx, func() { _ = ln.Close() })
 	defer stop()
 	var wg sync.WaitGroup
@@ -79,7 +85,7 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 	br := bufio.NewReader(conn)
 	var header Header
 	if err := ReadLine(br, &header); err != nil || header.Validate() != nil {
-		s.Log.Warn("dbarchive: refused stream without a valid header", "err", err)
+		s.log().Warn("dbarchive: refused stream without a valid header", "err", err)
 		return
 	}
 	if header.Admin {
@@ -88,14 +94,14 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 	}
 	if s.Retention != nil && header.RestoreWindowSeconds > 0 {
 		if err := s.Retention.NoteWindow(header.DatabaseID, header.RestoreWindowSeconds); err != nil {
-			s.Log.Warn("dbarchive: record restore window", "database_id", header.DatabaseID, "err", err)
+			s.log().Warn("dbarchive: record restore window", "database_id", header.DatabaseID, "err", err)
 		}
 	}
 	for {
 		var req Request
 		if err := ReadLine(br, &req); err != nil {
 			if !errors.Is(err, io.EOF) {
-				s.Log.Warn("dbarchive: bad request", "database_id", header.DatabaseID, "err", err)
+				s.log().Warn("dbarchive: bad request", "database_id", header.DatabaseID, "err", err)
 			}
 			return
 		}
@@ -119,7 +125,7 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 			}
 			err := s.Store.PutWAL(ctx, header.DatabaseID, req.Name, io.LimitReader(br, req.Size), req.Size)
 			if err != nil {
-				s.Log.Warn("dbarchive: archive failed", "database_id", header.DatabaseID, "name", req.Name, "err", err)
+				s.log().Warn("dbarchive: archive failed", "database_id", header.DatabaseID, "name", req.Name, "err", err)
 			}
 			if WriteLine(conn, Response{Error: codeFor(err)}) != nil || (err != nil && !errors.Is(err, ErrConflict)) {
 				// The payload may be partly unread; the stream is unusable.
@@ -179,9 +185,9 @@ func (s *Server) handleAdmin(ctx context.Context, conn net.Conn, br *bufio.Reade
 	if req.Op == OpPrune {
 		res, err := s.Retention.PruneBucket(ctx, header.DatabaseID, req.WindowSeconds)
 		if err != nil {
-			s.Log.Warn("dbarchive: bucket prune failed", "database_id", header.DatabaseID, "err", err)
+			s.log().Warn("dbarchive: bucket prune failed", "database_id", header.DatabaseID, "err", err)
 		} else if res.Backups+res.WAL > 0 {
-			s.Log.Info("dbarchive: bucket pruned", "database_id", header.DatabaseID, "backups", res.Backups, "wal", res.WAL)
+			s.log().Info("dbarchive: bucket pruned", "database_id", header.DatabaseID, "backups", res.Backups, "wal", res.WAL)
 		}
 		if err == nil {
 			// Only a lost node's databases are pruned in the bucket: no node
@@ -193,9 +199,9 @@ func (s *Server) handleAdmin(ctx context.Context, conn net.Conn, br *bufio.Reade
 	}
 	err := s.Retention.Drop(ctx, header.DatabaseID)
 	if err != nil {
-		s.Log.Warn("dbarchive: drop failed", "database_id", header.DatabaseID, "err", err)
+		s.log().Warn("dbarchive: drop failed", "database_id", header.DatabaseID, "err", err)
 	} else {
-		s.Log.Info("dbarchive: archive dropped", "database_id", header.DatabaseID)
+		s.log().Info("dbarchive: archive dropped", "database_id", header.DatabaseID)
 	}
 	_ = WriteLine(conn, Response{Error: codeFor(err)})
 }
@@ -207,9 +213,9 @@ func (s *Server) backfillMirror(ctx context.Context, databaseID string) {
 	n, err := s.Retention.BackfillMirror(ctx, databaseID)
 	switch {
 	case err != nil:
-		s.Log.Warn("dbarchive: mirror backfill failed", "database_id", databaseID, "err", err)
+		s.log().Warn("dbarchive: mirror backfill failed", "database_id", databaseID, "err", err)
 	case n > 0:
-		s.Log.Info("dbarchive: mirror backfill queued", "database_id", databaseID, "files", n)
+		s.log().Info("dbarchive: mirror backfill queued", "database_id", databaseID, "files", n)
 	}
 }
 
@@ -230,18 +236,18 @@ func (s *Server) handleHold(ctx context.Context, conn net.Conn, header Header, r
 		}
 		hold, err = s.Retention.PutHold(ctx, header.DatabaseID, req.Name, point)
 		if err == nil {
-			s.Log.Info("dbarchive: hold placed", "database_id", header.DatabaseID, "hold", req.Name, "point_in_time", hold.PointInTime)
+			s.log().Info("dbarchive: hold placed", "database_id", header.DatabaseID, "hold", req.Name, "point_in_time", hold.PointInTime)
 		}
 	case OpGetHold:
 		hold, err = s.Retention.GetHold(ctx, header.DatabaseID, req.Name)
 	default:
 		err = s.Retention.DeleteHold(ctx, header.DatabaseID, req.Name)
 		if err == nil {
-			s.Log.Info("dbarchive: hold removed", "database_id", header.DatabaseID, "hold", req.Name)
+			s.log().Info("dbarchive: hold removed", "database_id", header.DatabaseID, "hold", req.Name)
 		}
 	}
 	if err != nil && !errors.Is(err, ErrNotFound) {
-		s.Log.Warn("dbarchive: hold op failed", "database_id", header.DatabaseID, "op", req.Op, "err", err)
+		s.log().Warn("dbarchive: hold op failed", "database_id", header.DatabaseID, "op", req.Op, "err", err)
 	}
 	resp := Response{Error: codeFor(err)}
 	if err == nil && req.Op != OpUnhold {
@@ -259,16 +265,16 @@ func (s *Server) handleHandoff(ctx context.Context, conn net.Conn, header Header
 	if req.Op == OpSync {
 		n, err := s.Handoff.SyncDatabase(ctx, header.DatabaseID)
 		if err != nil {
-			s.Log.Warn("dbarchive: archive sync failed", "database_id", header.DatabaseID, "err", err)
+			s.log().Warn("dbarchive: archive sync failed", "database_id", header.DatabaseID, "err", err)
 		}
 		_ = WriteLine(conn, Response{Error: codeFor(err), Size: int64(n)})
 		return
 	}
 	err := s.Handoff.Release(ctx, header.DatabaseID)
 	if err != nil {
-		s.Log.Warn("dbarchive: archive release failed", "database_id", header.DatabaseID, "err", err)
+		s.log().Warn("dbarchive: archive release failed", "database_id", header.DatabaseID, "err", err)
 	} else {
-		s.Log.Info("dbarchive: archive released to the bucket", "database_id", header.DatabaseID)
+		s.log().Info("dbarchive: archive released to the bucket", "database_id", header.DatabaseID)
 	}
 	_ = WriteLine(conn, Response{Error: codeFor(err)})
 }
@@ -373,11 +379,11 @@ func (s *Server) handleBackup(ctx context.Context, conn net.Conn, br *bufio.Read
 			return false
 		}
 		if err != nil {
-			s.Log.Warn("dbarchive: base backup failed", "database_id", header.DatabaseID, "err", err)
+			s.log().Warn("dbarchive: base backup failed", "database_id", header.DatabaseID, "err", err)
 			_ = WriteLine(conn, Response{Error: codeFor(err)})
 			return false
 		}
-		s.Log.Info("dbarchive: base backup stored", "database_id", header.DatabaseID, "backup", m.ID, "bytes", m.Bytes)
+		s.log().Info("dbarchive: base backup stored", "database_id", header.DatabaseID, "backup", m.ID, "bytes", m.Bytes)
 		return WriteLine(conn, Response{Name: m.ID}) == nil
 	}
 	source := header.DatabaseID
@@ -423,11 +429,11 @@ func (s *Server) quotaRoom(header Header) (int64, error) {
 
 func (s *Server) refuseOverQuota(conn net.Conn, header Header, err error) {
 	if err != nil {
-		s.Log.Warn("dbarchive: size the archive for its quota", "database_id", header.DatabaseID, "err", err)
+		s.log().Warn("dbarchive: size the archive for its quota", "database_id", header.DatabaseID, "err", err)
 		_ = WriteLine(conn, Response{Error: ErrCodeInternal})
 		return
 	}
-	s.Log.Warn("dbarchive: archive quota exceeded; refusing", "database_id", header.DatabaseID, "quota_bytes", header.QuotaBytes)
+	s.log().Warn("dbarchive: archive quota exceeded; refusing", "database_id", header.DatabaseID, "quota_bytes", header.QuotaBytes)
 	_ = WriteLine(conn, Response{Error: ErrCodeQuota})
 }
 

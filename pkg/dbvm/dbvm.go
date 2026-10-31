@@ -142,8 +142,10 @@ func BuildConfig(s Spec) (fcvm.VMConfig, error) {
 		BootSource:    fcvm.BootSource{KernelImagePath: s.KernelPath, BootArgs: bootArgs},
 		Drives:        drives,
 		MachineConfig: fcvm.Machine{VcpuCount: s.VcpuCount, MemSizeMib: s.MemSizeMiB},
-		Entropy:       &fcvm.Entropy{},
-		VsockDevice:   &fcvm.VsockDevice{GuestCID: s.GuestCID, UDSSocket: s.VsockUDS},
+		// Networkless: an empty list, never null (Firecracker 1.7 rejects null).
+		NetworkInterfaces: []fcvm.NetIface{},
+		Entropy:           &fcvm.Entropy{},
+		VsockDevice:       &fcvm.VsockDevice{GuestCID: s.GuestCID, UDSSocket: s.VsockUDS},
 	}, nil
 }
 

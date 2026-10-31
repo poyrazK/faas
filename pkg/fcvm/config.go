@@ -19,10 +19,10 @@ type VMConfig struct {
 	BootSource    BootSource `json:"boot-source"`
 	Drives        []Drive    `json:"drives"`
 	MachineConfig Machine    `json:"machine-config"`
-	// NetworkInterfaces is omitted when empty: Firecracker rejects a JSON
-	// null here ("expected a sequence"), which a nil slice would marshal to
-	// for networkless execution and database VMs (ADR-1027).
-	NetworkInterfaces []NetIface `json:"network-interfaces,omitempty"`
+	// NetworkInterfaces is never nil: Firecracker 1.7 rejects a JSON null
+	// here ("expected a sequence"), so networkless execution and database
+	// VMs (ADR-1027) carry an empty list.
+	NetworkInterfaces []NetIface `json:"network-interfaces"`
 	// Entropy is an empty object to attach virtio-rng (always on, spec §11).
 	Entropy *Entropy `json:"entropy,omitempty"`
 	// VsockDevice, when set, attaches a vsock device (ADR-022). The host dials

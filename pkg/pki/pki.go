@@ -390,7 +390,17 @@ func rolesForComputeOnly() []Role {
 		"egress":                   true, // egress/egress server (gatewayd-internal listener)
 		"gatewayd-internal-public": true, // fsn-2's standby dialer (ADR-084)
 	}
-	return filterRolesByDirectory(keep)
+	roles := filterRolesByDirectory(keep)
+	// vmmd/database-peer-client is a database node's (ADR-1027): only a
+	// database node's vmmd dials another for standby replication, so
+	// compute nodes, which already run, need no new leaf.
+	out := roles[:0]
+	for _, r := range roles {
+		if r.Directory != "vmmd" || r.Filename != "database-peer-client" {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // rolesForDatabase returns the leaves a database node needs (ADR-1027). It

@@ -290,7 +290,7 @@ func TestVerifierStoreRoundTrip(t *testing.T) {
 	if dsn == "" || os.Getenv("FAAS_SKIP_PG_TESTS") != "" {
 		t.Skip("DATABASE_URL required")
 	}
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if err := db.MigrateUp(context.Background(), pool); err != nil {
 		t.Fatal(err)
 	}

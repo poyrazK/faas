@@ -79,6 +79,7 @@ func TestDatabaseVmmdTemplateLoads(t *testing.T) {
 	rendered := strings.NewReplacer(
 		"{{ database_vmmd_overlay_ip }}", "100.64.7.1",
 		"{{ database_vmmd_port }}", "50051",
+		"{{ database_vmmd_metrics_addr }}", "127.0.0.1:9104",
 		"{{ fc_release | regex_replace('^v', '') }}", "1.7.0",
 		"{{ database_vmmd_volume_root }}", "/srv/db/volumes",
 		"{% if dbbackupd_enabled | default(false) | bool %}\n", "",
@@ -106,7 +107,7 @@ func TestDatabaseVmmdTemplateLoads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Role != "database" || cfg.ListenAddr != "tcp://100.64.7.1:50051" || cfg.TLSCertPath != "/etc/faas/tls/vmmd/server.crt" || cfg.DatabaseVMs == nil ||
+	if cfg.Role != "database" || cfg.ListenAddr != "tcp://100.64.7.1:50051" || cfg.MetricsAddr != "127.0.0.1:9104" || cfg.TLSCertPath != "/etc/faas/tls/vmmd/server.crt" || cfg.DatabaseVMs == nil ||
 		cfg.DatabaseVMs.KernelPath != "/srv/fc/kernel/1.7.0" || cfg.DatabaseVMs.Images["17"] != testPinnedImage ||
 		cfg.DatabaseVMs.ArchiveSocket != "/run/faas-dbbackupd/dbbackupd.sock" || len(cfg.DatabaseVMs.Spares) != 1 || cfg.DatabaseVMs.Spares[0].Count != 2 ||
 		cfg.DatabaseVMs.PeerTLSCertPath != "/etc/faas/tls/vmmd/database-peer-client.crt" || cfg.DatabaseVMs.PeerTLSKeyPath != "/etc/faas/tls/vmmd/database-peer-client.key" {

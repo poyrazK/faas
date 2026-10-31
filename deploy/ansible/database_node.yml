@@ -73,6 +73,7 @@
         password: "{{ faas_pgproxyd_database_password }}"
         role_attr_flags: LOGIN,NOSUPERUSER,NOCREATEDB,NOCREATEROLE,NOINHERIT
         state: present
+      become: true
       become_user: postgres
       no_log: true
 
@@ -82,6 +83,7 @@
         roles: faas_pgproxyd
         type: database
         privs: CONNECT
+      become: true
       become_user: postgres
 
     - name: database nodes — let faas_pgproxyd read role verifiers only
@@ -92,6 +94,7 @@
         schema: public
         objs: database_role_verifiers
         privs: SELECT
+      become: true
       become_user: postgres
 
     - name: database nodes — let faas_pgproxyd resolve the public schema
@@ -101,6 +104,7 @@
         type: schema
         objs: public
         privs: USAGE
+      become: true
       become_user: postgres
 
 # Order: the spec §11 host baseline compute nodes get (cgroups v2, the
