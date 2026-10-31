@@ -411,6 +411,10 @@ type server struct {
 	// (ADR-20261028101615); built on first use.
 	channelTestsOnce sync.Once
 	channelTests     *peraccount.Limiter
+	// presetTests caps alert preset test sends per account
+	// (ADR-20261030214500); built on first use.
+	presetTestsOnce sync.Once
+	presetTests     *peraccount.Limiter
 	// dashboardAuthLimiter is the shared per-IP bucket for the
 	// dashboard auth surface (/login, /auth/verify). Separate from
 	// apiAuthLimiter because the two surfaces count different

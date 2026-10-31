@@ -99,7 +99,8 @@ func agentRunStartFromProto(start *scheddpb.AgentRunStart) (sched.AgentRunAdmiss
 		return sched.AgentRunAdmission{}, agentrunproto.Request{}, status.Error(codes.InvalidArgument, "the first frame must be start")
 	}
 	admission := sched.AgentRunAdmission{RunID: start.GetRunId(), AccountID: start.GetAccountId(), Plan: api.Plan(start.GetPlan()),
-		RAMMB: int(start.GetRamMb()), VCPU: int(start.GetVcpu()), CPUMillicores: int(start.GetCpuMillicores())}
+		RAMMB: int(start.GetRamMb()), VCPU: int(start.GetVcpu()), CPUMillicores: int(start.GetCpuMillicores()),
+		PauseDuringModelCalls: start.GetPauseDuringModelCalls()}
 	var run agentrunproto.Request
 	if err := json.Unmarshal(start.GetRun(), &run); err != nil {
 		return sched.AgentRunAdmission{}, agentrunproto.Request{}, status.Error(codes.InvalidArgument, "run is not an agent run request")

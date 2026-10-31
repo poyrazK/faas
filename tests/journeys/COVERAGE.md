@@ -76,3 +76,16 @@ custom metric history, SLOs and synthetic checks were hidden for it.
 | 128 | SLOs and error budgets (preview) | `TestCustomMetricsSLOsAndSynthetics/slo` (create, status) | attainment, budget and burn numbers (hourly rollups; a fresh app has none); SLO alerts |
 | 129 | Synthetic checks (preview) | `TestCustomMetricsSLOsAndSynthetics/synthetic_check` (create, first run passes, delete) | 24 h and 7 d uptime; failing runs; synthetic check alerts |
 | 168 | On-demand profile captures (preview) | `TestProfileCaptures`: `capture` (CPU and heap of the running probe while requests keep it busy; ready, both views, CPU not empty), `capture_listed`, `pprof_download` (merged gzip pprof per kind), `capture_diff` (a second heap capture against the first), `delete` (the capture is gone), `slow_request_captured` (the probe's `/slow` held past 10 s yields an automatic `slow_request` capture). It skips while `profile-captures` is hidden for the account or the installation has on-demand profiling off | automatic memory-pressure and CPU-saturation captures and OOM linking (`cmd/e2e` metal tests cover the first and the last), Go block and mutex profiles and `pprof_port` (the probe is Node), Node stuck-thread stacks, opting out with `profiling.automatic_captures`, the dashboard capture page, `profile.capture_ready` webhooks |
+
+## Regression journeys
+
+`TestBazaarRegressions` replays the bugs that three rounds of deploying a
+multi-service project (bazaar) by hand found, one subtest per area, each
+check naming the change that fixed it (#5934, #6001, #6060): an
+unpublished Compose service created internal with its `gregale.yaml`
+workflows (rows 19, 65); a burst over a throttle rule answered 429, never
+503, and a cache hit sending each `X-RateLimit-*` header once (row 74); an
+alias whose revision a rollback superseded answering 409 (row 24); a job
+that exits at once keeping its output, its command given after `--`; the
+standalone default RAM; and `metrics --services` explaining a hidden
+service map. A check fails on a release cut before its fix.

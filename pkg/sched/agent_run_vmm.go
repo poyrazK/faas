@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"time"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/agentrunproto"
@@ -33,6 +34,9 @@ type AgentRunSpec struct {
 	// Snapshot is the preset snapshot to restore; vmmd cold-boots when it
 	// is nil, stale or fails (ADR-005).
 	Snapshot *AgentRunSnapshot
+	// ModelWaitPauseAfter is the model-wait pause delay (ADR-20261027090012);
+	// zero keeps the VM running.
+	ModelWaitPauseAfter time.Duration
 }
 
 // AgentRunSnapshot locates a preset snapshot vmmd captured (ADR-20261027090010 §2).
@@ -104,6 +108,7 @@ func (c *VMMClient) RunAgent(ctx context.Context, spec AgentRunSpec, run agentru
 		Instance: spec.Instance, AccountId: spec.AccountID, Plan: string(spec.Plan), BaseKey: spec.BaseKey, LayerKey: spec.LayerKey,
 		VcpuCount: int32(spec.VCPU), MemSizeMib: int32(spec.MemSizeMiB), CpuMillicores: int32(spec.CPUMillicores), Run: body,
 		Relay: relayToProto(spec.Relay), InputKey: spec.InputKey, Snapshot: snapshotToProto(spec.Snapshot),
+		ModelWaitPauseAfterMs: int32(spec.ModelWaitPauseAfter / time.Millisecond),
 	}}}); err != nil {
 		return agentrunproto.Result{}, liftErr(err)
 	}

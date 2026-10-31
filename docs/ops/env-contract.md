@@ -274,6 +274,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_E2E_VMMD_SYSTEMD` | shared | `dev-only` |  |  | `` | test-harness only; 1 runs the e2e harness's vmmd as a transient systemd service with the production unit's sandbox (private mount namespace), so metal tests see what faas-vmmd.service sees; must never be set on a production host |
 | `FAAS_EDGE_CHALLENGE_KEY_FILE` | gatewayd-internal | `dropin` |  |  | `path-exists` | ADR-831 amendment 17: Ansible projects one fleet-vault challenge key through LoadCredential so every gateway honours the others' challenge passes; unset, a gateway signs with its own session key |
 | `FAAS_EDGE_CRAWLER_RANGES_REFRESH` | apid | `default` |  |  | `` | ADR-20261022083601: "0" turns off the refresh of crawler operators' published IP ranges on installs without outbound internet; gateways then verify search crawlers by DNS only and never verify AI crawlers |
+| `FAAS_EDGE_PLACEMENT_ROUTING` | gatewayd-public | `default` |  | 0 | `` | ADR-20261031105055: 1 makes a compute edge send each app host to the gatewayd-internal of the node that last served it, named by gatewayd-internal on the response; its own node when unknown, unready, excluded or failing; uses only the in-memory node inventory; default off |
 | `FAAS_EDGE_WAF_INLINE_DISABLED` | gatewayd-internal | `default` |  |  | `` | ADR-831 amendment 4 operator kill switch; "1" turns off in-path kind=waf checks so warn and block rules only observe |
 | `FAAS_EGRESS_ALLOW_LOOPBACK` | shared | `dev-only` |  |  | `` | must never be set on a production host |
 | `FAAS_EGRESS_CIRCUIT_BREAKER` | apid, schedd, vmmd | `default` |  |  | `` | ADR-201 §3 / ADR-570; off by default; enable on schedd and each vmmd to reject new tenant connections to an unhealthy declared upstream, and on apid so customers may opt an upstream in |
@@ -812,6 +813,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_SCHEDD_AGENT_RUN_SNAPSHOTS` | schedd | `default` |  |  | `` | ADR-20261027090010 §2 preset snapshots: 1 restores agent runs from a snapshot of their node and machine shape, captured by vmmd after the shape's first cold-boot run there under that run's reservation; unset cold-boots every run |
 | `FAAS_SCHEDD_AGENT_STEPS` | schedd | `default` |  |  | `` | ADR-20261027090010 §9 automation agent steps: 1 lets the workflow orchestrator admit agent runs for agent steps and deliver their ends; unset fails agent steps before they start |
 | `FAAS_SCHEDD_AGENT_TRIGGERS` | schedd | `default` |  |  | `` | ADR-20261027090010 §9 agent trigger targets: 1 polls broker triggers that name an agent and admits one agent run per record; unset leaves their records with the broker |
+| `FAAS_SCHEDD_AGENT_WAIT_PAUSE` | schedd | `default` |  |  | `` | ADR-20261027090012 §1 model-wait pause: 1 marks agent runs whose version has not opted out (pause_during_model_calls) for vmmd's agent_wait_pause; unset keeps every run VM running |
 | `FAAS_SCHEDD_APP_TASK_DISPATCH_CONCURRENCY` | schedd | `default` |  |  | `` | bounded app-task worker pool; 1 by default and at most 32; only consulted when FAAS_APP_TASK_DISPATCH=1 |
 | `FAAS_SCHEDD_CONFIG` | schedd | `default` |  |  | `` |  |
 | `FAAS_SCHEDD_EXECUTION_DISPATCH_CONCURRENCY` | schedd | `default` |  |  | `` | bounded disposable-execution worker pool; 1 by default and at most 32; only consulted when FAAS_EXECUTION_DISPATCH=1 |
@@ -886,6 +888,8 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_STORAGE_ROOT` | builderd, imaged, vmmd, shared | `default` |  |  | `` |  |
 | `FAAS_STORAGE_SNAPSHOT_COMPRESSION` | shared | `envfile` |  |  | `` | remote snapshot-memory encoding; default none; enable zstd only after every compute node runs a compatible reader (ADR-165) |
 | `FAAS_STORAGE_SPARSE_EXTENTS` | shared | `envfile` |  |  | `` | GCS writers store compressed drives, rootfs images and snapshot memory as data extents only; default off; enable only after every node runs a compatible reader (ADR-1135) |
+| `FAAS_STREAM_BRIDGE_GOGC` | vmmd | `default` |  |  | `` | optional integer: GOGC for the stream bridges vmmd starts; 0 or unset keeps Go's default (stream_bridge_gogc in vmmd.toml) |
+| `FAAS_STREAM_BRIDGE_GOMAXPROCS` | vmmd | `default` |  |  | `` | optional integer: GOMAXPROCS for the stream bridges vmmd starts; 0 or unset keeps Go's default (stream_bridge_gomaxprocs in vmmd.toml) |
 | `FAAS_STREAM_BRIDGE_PERSISTENT` | shared | `default` |  |  | `` |  |
 | `FAAS_STREAM_BRIDGE_VERSION` | shared | `default` |  |  | `` | rollback lever, see docs/ops/h2c-rollback.md |
 | `FAAS_STRIPE_INTERVAL` | meterd | `default` |  |  | `` |  |

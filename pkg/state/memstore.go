@@ -24668,6 +24668,24 @@ func (m *MemStore) DeleteAlertRule(_ context.Context, id string) error {
 	if _, ok := m.alertRules[id]; !ok {
 		return ErrNotFound
 	}
+	m.deleteAlertRuleLocked(id)
+	return nil
+}
+
+// deleteAlertRulesLocked deletes the rules matching match, as an SLO or a
+// synthetic check delete cascades to the rules built on it in PostgreSQL.
+func (m *MemStore) deleteAlertRulesLocked(match func(AlertRule) bool) {
+	for id, r := range m.alertRules {
+		if match(r) {
+			m.deleteAlertRuleLocked(id)
+		}
+	}
+}
+
+// deleteAlertRuleLocked mirrors the alert_rules delete: its episodes stay
+// (ADR-20261030214500) and everything else of the rule cascades.
+func (m *MemStore) deleteAlertRuleLocked(id string) {
+	m.keepDeletedRuleEpisodesLocked(m.alertRules[id], time.Now().UTC())
 	delete(m.alertRules, id)
 	delete(m.readinessIncidentCursors, id)
 	delete(m.readinessPagerDutyPolicies, id)
@@ -24707,7 +24725,6 @@ func (m *MemStore) DeleteAlertRule(_ context.Context, id string) error {
 			delete(m.alertRollbacks, alertRollbackFireID(delivery.ID))
 		}
 	}
-	return nil
 }
 
 func (m *MemStore) ListAlertRulesForAccount(_ context.Context, accountID string) ([]AlertRule, error) {
