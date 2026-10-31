@@ -174,23 +174,23 @@ func (p *parser) next() {
 		p.tok = token{kind: tokEOF, pos: start}
 		return
 	}
-	switch c := p.src[p.pos]; {
-	case c == ',':
+	switch p.src[p.pos] {
+	case ',':
 		p.pos++
 		p.tok = token{kind: tokComma, text: ",", pos: start}
-	case c == '(':
+	case '(':
 		p.pos++
 		p.tok = token{kind: tokOpen, text: "(", pos: start}
-	case c == ')':
+	case ')':
 		p.pos++
 		p.tok = token{kind: tokClose, text: ")", pos: start}
-	case c == '=':
+	case '=':
 		p.pos++
 		if p.pos < len(p.src) && p.src[p.pos] == '=' {
 			p.pos++
 		}
 		p.tok = token{kind: tokEquals, text: p.src[start:p.pos], pos: start}
-	case c == '!':
+	case '!':
 		p.pos++
 		if p.pos < len(p.src) && p.src[p.pos] == '=' {
 			p.pos++
