@@ -255,6 +255,11 @@ func forwardedResponseHeaderWithUpgrade(ctx context.Context, dst http.Header, na
 	if strings.EqualFold(strings.TrimSpace(name), api.ErrorCodeHeader) {
 		return
 	}
+	// Only gatewayd-internal names the instance's node; a guest's copy would
+	// steer the edge's routing (ADR-20261031105055).
+	if strings.EqualFold(strings.TrimSpace(name), InstanceNodeHeader) {
+		return
+	}
 	// Response headers cross the internal bridge before they reach the
 	// customer-facing writer. Connection-management headers belong only to
 	// that hop (RFC 7230 §6.1) and must not be exposed as guest application
@@ -338,6 +343,7 @@ func stripGuestEvidenceResponseHeaders(resp *http.Response) {
 	resp.Header.Del(api.DeploymentIDHeader)
 	resp.Header.Del(apihostingreceipt.ServedResponseHeader)
 	resp.Header.Del(api.ErrorCodeHeader)
+	resp.Header.Del(InstanceNodeHeader)
 	for name := range resp.Header {
 		if isTrafficResponseControlHeader(name) {
 			resp.Header.Del(name)

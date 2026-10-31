@@ -6022,6 +6022,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// The public edge's nonce for a not-dispatched marker lives in the
 	// request context from here on (ADR-20261022184531 step 5).
 	r = takeDispatchNonce(r)
+	// The compute edge's request for the instance's node, likewise
+	// (ADR-20261031105055).
+	r = takeEdgePlacement(r)
 	if h.devBridgeAuthorize != nil {
 		if problem := h.devBridgeAuthorize(r); problem != nil {
 			api.WriteProblem(w, problem)
