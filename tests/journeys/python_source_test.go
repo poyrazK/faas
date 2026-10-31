@@ -2,6 +2,7 @@ package journeys
 
 import (
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -24,7 +25,7 @@ func TestPythonSourceDeploys(t *testing.T) {
 			s := newStory(t)
 			var base, deployID string
 			if !s.step("deploy", func(t *testing.T) {
-				receipt := tg.deploy(t, slug, "--path", filepath.Join("testdata", "python-"+variant))
+				receipt := tg.deploy(t, slug, "--path", fixtureSource(t, "python-"+variant))
 				deployID = str(receipt, "id")
 				if base = strings.TrimRight(str(receipt, "app_url"), "/"); base == "" {
 					base = tg.appURL(slug)
@@ -56,6 +57,29 @@ func TestPythonSourceDeploys(t *testing.T) {
 			})
 		})
 	}
+}
+
+// fixtureSource copies testdata/name into a fresh directory and returns its
+// absolute path: the CLI runs in a per-test working directory, as with
+// probeSource.
+func fixtureSource(t *testing.T, name string) string {
+	t.Helper()
+	dir := t.TempDir()
+	src := filepath.Join("testdata", name)
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		t.Fatalf("read %s: %v", src, err)
+	}
+	for _, e := range entries {
+		b, err := os.ReadFile(filepath.Join(src, e.Name()))
+		if err != nil {
+			t.Fatalf("read %s: %v", src, err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, e.Name()), b, 0o644); err != nil {
+			t.Fatalf("write %s: %v", src, err)
+		}
+	}
+	return dir
 }
 
 // expectPythonOnSharedBase waits for the probe at base to answer as variant
