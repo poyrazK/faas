@@ -2257,7 +2257,7 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	// DaemonMaxConnections cap above is measurable rather than arithmetic.
 	wire.RegisterPoolMetrics(gatewayOps, pool)
 	eventsPlatform := events.NewPlatform("gatewayd", pgStore, log, gatewayOps, nil)
-	deps.nodeCache = newNodeCache(pgStore, vmmdTLS, log, deps.metrics).
+	deps.nodeCache = newNodeCache(pgStore, vmmdTLS, log, deps.metrics, newLocalVmmd(osGetenv(localVmmdEnv) == "1", cfg.NodeName)).
 		WithEvents(eventsPlatform).WithActivityTracker(runtimeActivity)
 	// Synthetic invocations share the same per-node HTTP→vmmd bridge as
 	// public requests. This assignment happens after nodeCache creation so
