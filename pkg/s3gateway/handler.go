@@ -14,6 +14,7 @@ import (
 	"encoding/hex"
 	"encoding/xml"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -735,7 +736,7 @@ func (h *Handler) writeAdmissionError(w http.ResponseWriter, r *http.Request, re
 		if errors.Is(err, state.ErrOrgAccessRevoked) {
 			status, code, message = http.StatusForbidden, "AccessDenied", "The storage credential is no longer authorized."
 		} else if errors.Is(err, state.ErrObjectBudget) {
-			status, code, message = http.StatusPaymentRequired, "AccountProblem", "The object storage safety budget has been reached."
+			status, code, message = http.StatusPaymentRequired, "AccountProblem", objectBudgetMessage(err)
 		} else if errors.Is(err, state.ErrObjectCapacity) {
 			status, code, message = http.StatusConflict, "OperationAborted", "The object storage capacity reservation would be exceeded."
 		} else if errors.Is(err, state.ErrConflict) {
@@ -745,6 +746,16 @@ func (h *Handler) writeAdmissionError(w http.ResponseWriter, r *http.Request, re
 		return false
 	}
 	return true
+}
+
+// objectBudgetMessage names the monthly limit an account reached, its value
+// and the usage that reached it, as every limit error must.
+func objectBudgetMessage(err error) string {
+	var limit *state.ObjectStorageLimitError
+	if !errors.As(err, &limit) {
+		return "The object storage safety budget has been reached."
+	}
+	return fmt.Sprintf("The account reached its object storage %s limit for the month: limit %d, observed %d. See %s.", limit.Kind, limit.Limit, limit.Observed, api.ObjectStorageLimitsDocsURL)
 }
 
 func (h *Handler) upload(w http.ResponseWriter, r *http.Request, req requestContext, key string) {

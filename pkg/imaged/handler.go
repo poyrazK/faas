@@ -139,6 +139,12 @@ type Handler struct {
 	// deferLegacyParentBases lets the rolling pre-stage skip child bases the
 	// serving vmmd cannot materialize; the post-switch imaged stages them.
 	deferLegacyParentBases bool
+	// releasePrestage marks the release-bound pre-stage one-shot: it always
+	// rebuilds a base whose producer has another guest-init. servingSince is
+	// when this imaged started; a serving imaged keeps a producer another
+	// release published after it (ADR-20261026181418, amendment 2026-10-31).
+	releasePrestage bool
+	servingSince    time.Time
 	// nodeName is the compute_node identity of this imaged process. A
 	// snapshot_boot notification is fleet-wide, while the builder's OCI
 	// export is local to the node that produced it. Named multi-box daemons
@@ -349,7 +355,7 @@ func New(store state.Store, notif Notifier, puller oci.Puller, b LayerBuilder,
 	}
 	return &Handler{
 		store: store, notif: notif, oci: puller, builder: b, layerDigests: &publishedLayerDigests{},
-		guestInitPath: guestInitPath, appsRoot: appsRoot, log: log,
+		guestInitPath: guestInitPath, appsRoot: appsRoot, log: log, servingSince: time.Now().UTC(),
 	}
 }
 
@@ -628,6 +634,13 @@ func (h *Handler) WithReleasePhaseEnabled(enabled bool) *Handler {
 // for the serving imaged, which stages it against the new vmmd before ready.
 func (h *Handler) WithLegacyParentDeferral(enabled bool) *Handler {
 	h.deferLegacyParentBases = enabled
+	return h
+}
+
+// WithReleasePrestage marks the release-bound pre-stage one-shot, which
+// stages every base with its own release's guest-init.
+func (h *Handler) WithReleasePrestage(enabled bool) *Handler {
+	h.releasePrestage = enabled
 	return h
 }
 

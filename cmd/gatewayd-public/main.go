@@ -196,7 +196,7 @@ func loadPublicStorageRegistry(getenv func(string) string) (*objectstorage.Regis
 		}
 		return nil, fmt.Errorf("object storage: inspect configuration: %w", err)
 	}
-	return objectstorage.Load(getenv)
+	return objectstorage.LoadGateway(getenv)
 }
 
 func main() {
