@@ -32277,7 +32277,7 @@ paths:
       tags: [deployments]
       operationId: decideReleaseApproval
       summary: Approve or reject a release.
-      description: "Records one decision per person. A rejection is final and aborts the rollout, restoring the previous release. 403 `release_approval_self` when the deployer approves their own release and the policy does not allow it; 409 `release_approval_decided` for a second decision or a release that no longer accepts one."
+      description: "Records one decision per person. An approval needs a signed-in dashboard session: 403 `release_approval_session_required` to an API key or token, with the release's approval page as the hint; a rejection is accepted from either. A rejection is final and aborts the rollout, restoring the previous release. 403 `release_approval_self` when the deployer approves their own release and the policy does not allow it; 409 `release_approval_decided` for a second decision or a release that no longer accepts one."
       requestBody:
         required: true
         content:
@@ -94291,6 +94291,7 @@ components:
           maxItems: 10
           items: { $ref: '#/components/schemas/ReleaseGateResult' }
           description: "The release gates judged with this decision."
+        rollback_skipped: { type: string, description: "Post-release watch decisions only: the problem code that kept the release from being rolled back automatically, such as rollback_crosses_release. The regression was found; the release keeps serving until someone rolls back or ships a fix." }
         decided_at: { type: string, format: date-time }
 
     RolloutDecisionSample:
@@ -111661,7 +111662,7 @@ components:
         at: { type: string, format: date-time }
         kind:
           type: string
-          enum: [created, scheduled, schedule_started, schedule_blocked, schedule_cancelled, approval_requested, approved, rejected, approval_expired, rollout_started, advanced, traffic_changed, held, completed, aborted, rollback_requested, rolled_back, watch_passed, superseded, note]
+          enum: [created, scheduled, schedule_started, schedule_blocked, schedule_cancelled, approval_requested, approved, rejected, approval_expired, rollout_started, advanced, traffic_changed, held, completed, aborted, rollback_requested, rolled_back, watch_passed, watch_regressed, superseded, note]
         summary: { type: string, description: "What happened, in one sentence." }
         actor: { type: string, description: "A person's email, or Gregale for automatic steps." }
         traffic_percent: { type: integer, minimum: 0, maximum: 100, description: "The release's traffic share after this event." }

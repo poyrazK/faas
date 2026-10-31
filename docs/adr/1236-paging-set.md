@@ -150,7 +150,9 @@ A routing pass that fails every claim still completes, so
 counts routing results in `schedd_event_routing_outcomes_total{outcome}`
 (`routed`, `waiting`, `retry`, `failed`, `claim_error`). The page also fires
 when, for fifteen minutes, sweeps hit claim errors and route no recipient at
-all. It is still the only event-routing page. A new warn,
+all, while an event has waited over ten minutes
+(`schedd_event_routing_oldest_pending_seconds`), so one transient claim error
+on a quiet fleet does not page. It is still the only event-routing page. A new warn,
 `FaasEventRoutingFailing`, fires when more than half of the recipients routed
 in fifteen minutes (and at least 50) failed or went back to retry.
 `FaasDeadLetterSpike` now counts recipients whose routing failed alongside
