@@ -3,6 +3,7 @@
 
 -- +goose Up
 -- +goose StatementBegin
+SET LOCAL lock_timeout = '5s';
 -- ADR-520 amendment 2 (bug hunt 32 M7): an optional allowlist of the names
 -- below a wildcard custom domain that may hold an on-demand certificate.
 -- name is the part of the host before the wildcard's suffix (`app` for
