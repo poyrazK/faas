@@ -272,6 +272,9 @@ type Server struct {
 	// appTaskAttach pairs interactive app tasks with their attached client
 	// (ADR-1037). The zero value is ready to use.
 	appTaskAttach appTaskAttachRegistry
+	// hostCPU is the host CPU busy window Stats reports (ADR 20261030100950).
+	// The zero value is ready to use.
+	hostCPU hostCPUSampler
 
 	vmm VmmdAPI
 	ops *wire.OpsMetrics
@@ -1558,6 +1561,7 @@ func (s *Server) Stats(ctx context.Context, _ *vmmdpb.StatsRequest) (*vmmdpb.Sta
 		LiveCount:   int32(s.vmm.LiveCount()),
 		LeasedCount: int32(s.vmm.LeasedCount()),
 	}
+	s.setCPUPressureReadings(resp, time.Now())
 
 	resident, ok := leakcheck.ResidentBytes()
 	if !ok {

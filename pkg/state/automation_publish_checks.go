@@ -127,7 +127,7 @@ func evaluatePublicationChecks(ctx context.Context, store AutomationStore, outbo
 	}
 	token := hex.EncodeToString(entropy[:])
 	expiry := time.Now().UTC().Add(api.AutomationPublishCheckReceiptTTL)
-	receipt := automationPublishReceipt{AppID: appID, Name: name, AccountID: accountID, APIKeyID: keyID, TokenHash: automationReceiptHash(token), PolicyVersion: policy.Version, ExpiresAt: expiry, Evidence: evidence}
+	receipt := automationPublishReceipt{AppID: appID, Name: name, AccountID: accountID, APIKeyID: keyID, TokenHash: storedCredentialHex(credTagPublishReceipt, automationReceiptHash(token)), PolicyVersion: policy.Version, ExpiresAt: expiry, Evidence: evidence}
 	return receipt, api.CheckAutomationPublicationResponse{Receipt: token, ExpiresAt: expiry, Evidence: evidence}, nil
 }
 func validatePublicationReceipt(p api.AutomationPublishPolicy, r automationPublishReceipt, appID, name string, m *AutomationMutation, previous *Automation) error {
@@ -140,7 +140,7 @@ func validatePublicationReceipt(p api.AutomationPublishPolicy, r automationPubli
 	if previous == nil {
 		return ErrNotFound
 	}
-	if r.TokenHash == "" || r.TokenHash != automationReceiptHash(m.CheckReceipt) || r.AppID != appID || r.Name != name || r.AccountID != m.ActorAccountID || r.APIKeyID != m.ActorAPIKeyID || r.PolicyVersion != p.Version || !time.Now().Before(r.ExpiresAt) || r.Evidence.CheckedVersion != previous.Version {
+	if r.TokenHash == "" || !credentialHexMatches(credTagPublishReceipt, automationReceiptHash(m.CheckReceipt), r.TokenHash) || r.AppID != appID || r.Name != name || r.AccountID != m.ActorAccountID || r.APIKeyID != m.ActorAPIKeyID || r.PolicyVersion != p.Version || !time.Now().Before(r.ExpiresAt) || r.Evidence.CheckedVersion != previous.Version {
 		return ErrAutomationPublishCheckRequired
 	}
 	var def api.WorkflowSpec

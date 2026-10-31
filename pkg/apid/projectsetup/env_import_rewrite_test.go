@@ -27,7 +27,7 @@ func TestPlanEnvImportRewritesServiceAddresses(t *testing.T) {
 		"billing": {}, "billing_api": {}, "cache": {},
 	}}
 	callable := []string{"web", "billing", "billing_api"} // cache is an image-only datastore
-	got := PlanEnvImport(env, "web", callable, api.MustLimitsFor(api.PlanPro))
+	got := PlanEnvImport(env, "web", callable, api.MustLimitsFor(api.PlanPro), true)
 	wantValues := map[string]string{
 		"BILLING_URL":  "http://billing.svc.gregale:10081/v1?x=1",
 		"EVENTS_WS":    "ws://billing-api.svc.gregale:10081/events",
@@ -49,8 +49,42 @@ func TestPlanEnvImportRewritesServiceAddresses(t *testing.T) {
 	// Without the opt-in a rewritable value is reported for import, not as a
 	// Docker address the developer must replace by hand.
 	env.Import = false
-	got = PlanEnvImport(env, "web", callable, api.MustLimitsFor(api.PlanPro))
+	got = PlanEnvImport(env, "web", callable, api.MustLimitsFor(api.PlanPro), true)
 	if got.Skipped["BILLING_URL"] != EnvSkipNotOptedIn || len(got.Rewritten) != 0 {
 		t.Fatalf("without the opt-in: skipped %v, rewritten %v", got.Skipped, got.Rewritten)
+	}
+}
+
+// ADR-20261029230000: without private service HTTPS an https or wss value
+// imports as the plaintext service address, which answers, and the plan
+// note says so.
+func TestPlanEnvImportWithoutPrivateHTTPS(t *testing.T) {
+	value := func(s string) *string { return &s }
+	env := reposcan.ComposeEnv{Import: true, Services: map[string]map[string]*string{
+		"web": {
+			"SECURE_URL":  value("https://Billing_API/health"),
+			"EVENTS_WSS":  value("wss://billing_api:9443/events"),
+			"BILLING_URL": value("http://billing_api:8080/v1"),
+		},
+		"billing_api": {},
+	}}
+	got := PlanEnvImport(env, "web", []string{"web", "billing_api"}, api.MustLimitsFor(api.PlanPro), false)
+	want := map[string]string{
+		"SECURE_URL":  "http://billing-api.svc.gregale:10081/health",
+		"EVENTS_WSS":  "ws://billing-api.svc.gregale:10081/events",
+		"BILLING_URL": "http://billing-api.svc.gregale:10081/v1",
+	}
+	if !maps.Equal(got.Values, want) {
+		t.Fatalf("imported %v, want %v", got.Values, want)
+	}
+	notes := RewrittenEnvNotes("web", []string{"BILLING_URL", "EVENTS_WSS", "SECURE_URL"}, got)
+	plaintext := 0
+	for _, note := range notes {
+		if strings.Contains(note, "because private service HTTPS is not enabled") {
+			plaintext++
+		}
+	}
+	if len(notes) != 3 || plaintext != 2 {
+		t.Fatalf("notes = %q; want the two secure values marked plaintext", notes)
 	}
 }

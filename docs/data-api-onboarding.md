@@ -29,7 +29,7 @@ does not count as activation. Existing nonempty projects are refused; use
 Start the API in one terminal:
 
 ```sh
-gregale data-api dev --port 0 --check
+gregale data-api serve --port 0 --check
 ```
 
 Open its private inspector link to browse the schema and replay scenarios.
@@ -73,7 +73,7 @@ fields; update a projection if the application needs the label.
 Stop dev before verification in a separate disposable database:
 
 ```sh
-gregale data-api dev --port 0 --once --check-types --check --replay data-api.requests.json
+gregale data-api serve --port 0 --once --check-types --check --replay data-api.requests.json
 ```
 
 Commit the migration and regenerated types together. `--check-types` refuses

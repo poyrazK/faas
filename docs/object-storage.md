@@ -314,7 +314,7 @@ enabled for your account, your own enrolled keys. See the
 
 - Tag objects with `gregale bucket tags`, or with S3 tagging calls.
 - `CopyObject` copies within a bucket. To copy from another of your buckets, give
-  the S3 credential a copy-source grant on it (`gregale bucket copy-sources`).
+  the S3 credential a copy-source grant on it (`gregale bucket copy-source`).
 - Conditional writes (`If-None-Match: *`, `If-Match`) work on single uploads.
 - Where your bucket's storage supports them, multipart uploads can carry CRC32,
   CRC32C, CRC64NVME, SHA1 or SHA256 checksums, validated on every part, and
@@ -356,7 +356,7 @@ is not authorization, and every request still needs a signature or grant.
 ## Usage
 
 ```sh
-gregale billing usage object-storage
+gregale bucket usage
 ```
 
 shows stored bytes, requests and egress for the current month, and marks any

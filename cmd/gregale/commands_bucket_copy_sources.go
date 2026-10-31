@@ -44,7 +44,7 @@ func validBucketCopySourceArgs(args []string) bool {
 }
 func cmdBucketCopySources(args []string) int {
 	if !validBucketCopySourceArgs(args) {
-		PrintUsage(osStderr, "usage: gregale bucket copy-sources <list|grant|revoke> <app> <bucket-id> <credential-id> [source-bucket-id] [prefix]", "bucket")
+		PrintUsage(osStderr, "usage: gregale bucket copy-source <list|grant|revoke> <app> <bucket-id> <credential-id> [source-bucket-id] [prefix]", "bucket")
 		return 1
 	}
 	c, err := authedClient()

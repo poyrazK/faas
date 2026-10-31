@@ -18,6 +18,26 @@ import (
 // account's channel cap.
 var ErrNotificationChannelLimit = errors.New("state: notification channel limit reached")
 
+// channelInUseMaxRules bounds the rules a refused delete names.
+const channelInUseMaxRules = 20
+
+// ChannelRule names an alert rule in a refused channel delete.
+type ChannelRule struct {
+	ID, Name string
+}
+
+// NotificationChannelInUseError refuses deleting a channel that is the only
+// destination of these rules: they have no webhook and no other channel, so
+// they would fire into nothing (ADR-20261029203000). Rules is at most
+// channelInUseMaxRules long.
+type NotificationChannelInUseError struct {
+	Rules []ChannelRule
+}
+
+func (e *NotificationChannelInUseError) Error() string {
+	return fmt.Sprintf("state: notification channel is the only destination of %d alert rule(s)", len(e.Rules))
+}
+
 // NotificationChannel is an alert destination (ADR-749). TargetSealed holds
 // the sealed Slack URL or PagerDuty routing key; TargetHint is a short,
 // non-secret label (the Slack workspace path prefix, the key's last four
@@ -43,6 +63,8 @@ type NotificationChannelStore interface {
 	CreateNotificationChannel(ctx context.Context, in NotificationChannel, maxPerAccount int) (NotificationChannel, error)
 	ListNotificationChannels(ctx context.Context, accountID string) ([]NotificationChannel, error)
 	GetNotificationChannel(ctx context.Context, accountID, id string) (NotificationChannel, error)
+	// DeleteNotificationChannel returns *NotificationChannelInUseError, and
+	// deletes nothing, while the channel is a rule's only destination.
 	DeleteNotificationChannel(ctx context.Context, accountID, id string) error
 	// RecordNotificationChannelDelivery stores the latest outcome; an empty
 	// errMsg is a success.
@@ -133,14 +155,30 @@ func (s *PgStore) DeleteNotificationChannel(ctx context.Context, accountID, id s
 	if err != nil {
 		return err
 	}
-	n, err := sqlc.New().DeleteNotificationChannel(ctx, s.pool, sqlc.DeleteNotificationChannelParams{AccountID: acct, ID: key})
-	if err != nil {
-		return fmt.Errorf("state: delete notification channel %s: %w", id, err)
-	}
-	if n == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		q := sqlc.New()
+		if _, err := q.LockNotificationChannel(ctx, tx, sqlc.LockNotificationChannelParams{AccountID: acct, ID: key}); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrNotFound
+			}
+			return fmt.Errorf("state: lock notification channel %s: %w", id, err)
+		}
+		rows, err := q.ListRulesOnlyNotifyingChannel(ctx, tx, sqlc.ListRulesOnlyNotifyingChannelParams{ChannelID: key, AccountID: acct, MaxRows: channelInUseMaxRules})
+		if err != nil {
+			return fmt.Errorf("state: rules notifying channel %s: %w", id, err)
+		}
+		if len(rows) > 0 {
+			inUse := &NotificationChannelInUseError{Rules: make([]ChannelRule, 0, len(rows))}
+			for _, row := range rows {
+				inUse.Rules = append(inUse.Rules, ChannelRule{ID: row.ID, Name: row.Name})
+			}
+			return inUse
+		}
+		if _, err := q.DeleteNotificationChannel(ctx, tx, sqlc.DeleteNotificationChannelParams{AccountID: acct, ID: key}); err != nil {
+			return fmt.Errorf("state: delete notification channel %s: %w", id, err)
+		}
+		return nil
+	})
 }
 
 // RecordNotificationChannelDelivery stores the latest delivery outcome.
@@ -205,12 +243,49 @@ func (m *MemStore) DeleteNotificationChannel(_ context.Context, accountID, id st
 	defer m.mu.Unlock()
 	chans := m.notificationChannels[accountID]
 	for i, c := range chans {
-		if c.ID == id {
-			m.notificationChannels[accountID] = append(chans[:i:i], chans[i+1:]...)
-			return nil
+		if c.ID != id {
+			continue
 		}
+		if inUse := m.rulesOnlyNotifying(accountID, id); inUse != nil {
+			return inUse
+		}
+		m.notificationChannels[accountID] = append(chans[:i:i], chans[i+1:]...)
+		return nil
 	}
 	return ErrNotFound
+}
+
+// rulesOnlyNotifying mirrors ListRulesOnlyNotifyingChannel; m.mu is held.
+func (m *MemStore) rulesOnlyNotifying(accountID, channelID string) *NotificationChannelInUseError {
+	live := map[string]bool{}
+	for _, c := range m.notificationChannels[accountID] {
+		live[c.ID] = true
+	}
+	var rules []ChannelRule
+	for _, r := range m.alertRules {
+		if r.AccountID != accountID || r.WebhookURL != "" {
+			continue
+		}
+		var bound []string
+		for _, ch := range m.alertRuleChannels[r.ID] {
+			if live[ch] {
+				bound = append(bound, ch)
+			}
+		}
+		if len(bound) == 1 && bound[0] == channelID {
+			rules = append(rules, ChannelRule{ID: r.ID, Name: r.Name})
+		}
+	}
+	if len(rules) == 0 {
+		return nil
+	}
+	sort.Slice(rules, func(i, j int) bool {
+		if rules[i].Name != rules[j].Name {
+			return rules[i].Name < rules[j].Name
+		}
+		return rules[i].ID < rules[j].ID
+	})
+	return &NotificationChannelInUseError{Rules: rules[:min(len(rules), channelInUseMaxRules)]}
 }
 
 // RecordNotificationChannelDelivery mirrors PgStore.

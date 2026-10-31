@@ -161,7 +161,9 @@ func (l *Limiter) leaseConsume(ctx context.Context, batch CentralBatchBackend, s
 	t := l.lease
 	key := centralBatchKey{scope: scope, subjectID: subjectID, plan: plan}
 	now := l.now()
-	deadline := now.Add(centralConsultTimeout)
+	// A waiting request may need the statement in flight and then its own,
+	// each bounded by centralConsumeTimeout (ADR-20261027173012 amendment 2).
+	deadline := now.Add(centralBatchWait)
 	waited, waits := false, 0
 
 	t.mu.Lock()
@@ -268,7 +270,10 @@ func (t *leaseTable) startLocked(l *Limiter, ctx context.Context, batch CentralB
 // it, so it keeps the triggering request's values but not its cancellation.
 func (t *leaseTable) run(l *Limiter, ctx context.Context, batch CentralBatchBackend, key centralBatchKey, st *leaseState, call *leaseCall, size, owed int, rps, burst float64) {
 	defer t.calls.Done()
-	leaseCtx, cancel := context.WithTimeout(ctx, centralConsultTimeout)
+	// A lease is an authoritative consume, so it gets the consume bound: a
+	// counter commit past 250 ms (a checkpoint or fsync stall) failed the
+	// lease, opened the breaker and refused requests within their limit.
+	leaseCtx, cancel := context.WithTimeout(ctx, centralConsumeTimeout)
 	granted, remaining, err := batch.ConsumeTokens(leaseCtx, key.scope, key.subjectID, key.plan, rps, burst, size+owed)
 	cancel()
 	now := l.now()

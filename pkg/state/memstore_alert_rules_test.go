@@ -210,6 +210,16 @@ func TestMemStoreAlertRule_DuplicateNameRejected(t *testing.T) {
 	if _, err := m.CreateAlertRule(ctx, r); !errors.Is(err, state.ErrConflict) {
 		t.Errorf("duplicate: expected ErrConflict, got %v", err)
 	}
+	// adr: 20261029203000 — names are unique per app, so another app of
+	// the account may use the name.
+	other, err := m.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "dup-other-" + uuid.NewString(), RAMMB: 256, Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.AppID = other.ID
+	if _, err := m.CreateAlertRule(ctx, r); err != nil {
+		t.Errorf("same name on another app: %v, want it accepted", err)
+	}
 }
 
 func TestMemStoreAlertRule_ListAndFilter(t *testing.T) {
@@ -239,6 +249,15 @@ func TestMemStoreAlertRule_ListAndFilter(t *testing.T) {
 	listAll, err := m.ListEnabledAlertRules(ctx)
 	if err != nil || len(listAll) != 3 {
 		t.Errorf("ListEnabledAlertRules = %d entries (%v)", len(listAll), listAll)
+	}
+	// adr: 20261029203000 — a deleted app's rules wait out its restore
+	// grace without evaluating; the account-wide rule beta is unaffected.
+	if err := m.DeleteApp(ctx, app.ID); err != nil {
+		t.Fatal(err)
+	}
+	listAll, err = m.ListEnabledAlertRules(ctx)
+	if err != nil || len(listAll) != 2 {
+		t.Errorf("after deleting the app, ListEnabledAlertRules = %d entries (%v), want beta and gamma", len(listAll), listAll)
 	}
 }
 

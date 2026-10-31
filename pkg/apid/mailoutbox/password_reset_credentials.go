@@ -51,7 +51,9 @@ func (c *ResetCredentials) redeem(ctx context.Context, hash []byte, phc string, 
 			return "", err
 		}
 	}
-	account, err := queries.LockPasswordResetCredentialAccount(ctx, tx, hash)
+	account, hash, err := lockByTokenHash(tagPasswordReset, hash, func(value []byte) (q.LockPasswordResetCredentialAccountRow, error) {
+		return queries.LockPasswordResetCredentialAccount(ctx, tx, value)
+	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", ErrPasswordResetUnknown
 	}

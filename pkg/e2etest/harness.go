@@ -920,6 +920,7 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 			"FAAS_APID_METRICS_ADDR="+metricsAddrFor(t, "apid"),
 			"FAAS_APID_REQUEST_TELEMETRY_SOCKET="+requestTelemetrySock,
 			"FAAS_APID_OTEL_SPANS_WRITER_SOCKET="+filepath.Join(h.SockDir, "otel_spans_writer.sock"),
+			apidAuthSocketEnv(h.SockDir),
 			"FAAS_SPOOL_ROOT="+spoolRoot,
 			"FAAS_SCAN_SPOOL_ROOT="+scanRoot,
 		)
@@ -1048,6 +1049,7 @@ func startAPID(t *testing.T, h *Harness, bin, dbURL string, extraEnv ...string) 
 		"FAAS_APID_METRICS_ADDR="+metricsAddrFor(t, "apid"),
 		"FAAS_APID_REQUEST_TELEMETRY_SOCKET="+requestTelemetrySock,
 		"FAAS_APID_OTEL_SPANS_WRITER_SOCKET="+filepath.Join(h.SockDir, "otel_spans_writer.sock"),
+		apidAuthSocketEnv(h.SockDir),
 		"FAAS_SPOOL_ROOT="+spoolRoot,
 		"FAAS_SCAN_SPOOL_ROOT="+scanRoot,
 	)
@@ -1213,6 +1215,7 @@ func startGatewayd(t *testing.T, h *Harness, bin, dbURL string, extraEnv []strin
 		"FAAS_GATEWAY_SYNTH_SOCKET="+synthSock,
 		"FAAS_SCHEDD_SOCKET="+h.ScheddSock,
 		"FAAS_APID_REQUEST_TELEMETRY_SOCKET="+filepath.Join(h.SockDir, "request_telemetry.sock"),
+		apidAuthSocketEnv(h.SockDir),
 		"FAAS_GATEWAY_WAKE_AHEAD_STATE_DIR="+filepath.Join(h.TmpDir, "wake-ahead"),
 		"FAAS_APPS_DOMAIN="+testDomain,
 	)
@@ -1272,7 +1275,7 @@ func (h *Harness) StartAdditionalGatewayPublic(nodeName string, extraEnv ...stri
 	dbURL = daemonDSN(dbURL, h.Pool)
 	publicAddr := freeTCPAddr(h.T)
 	controlAddr := freeTCPAddr(h.T)
-	env := gatewaydPublicEnv(dbURL, publicAddr, controlAddr, internalSocket, h.ScheddSock, extraEnv)
+	env := gatewaydPublicEnv(dbURL, publicAddr, controlAddr, internalSocket, h.ScheddSock, h.SockDir, extraEnv)
 	h.procs = append(h.procs, startProc(h.T, h.BinDir, "gatewayd-public", env))
 	waitReadyz(h.T, controlAddr, 30*time.Second)
 	return "http://" + publicAddr, internalURL
@@ -1313,6 +1316,7 @@ func (h *Harness) startAdditionalGatewayWithControl(nodeName string, extraEnv ..
 		"FAAS_GATEWAY_SYNTH_SOCKET="+filepath.Join(dir, "gatewayd-internal.sock"),
 		"FAAS_SCHEDD_SOCKET="+h.ScheddSock,
 		"FAAS_APID_REQUEST_TELEMETRY_SOCKET="+filepath.Join(h.SockDir, "request_telemetry.sock"),
+		apidAuthSocketEnv(h.SockDir),
 		"FAAS_GATEWAY_WAKE_AHEAD_STATE_DIR="+filepath.Join(dir, "wake-ahead"),
 		"FAAS_APPS_DOMAIN="+testDomain,
 		"FAAS_NODE_NAME="+nodeName,
@@ -1380,15 +1384,24 @@ func startGatewaydPublic(t *testing.T, h *Harness, bin, dbURL string, extraEnv [
 	publicAddr := freeTCPAddr(t)
 	controlAddr := freeTCPAddr(t)
 	internalSocket := filepath.Join(h.SockDir, "gatewayd-internal.sock")
-	env := gatewaydPublicEnv(dbURL, publicAddr, controlAddr, internalSocket, h.ScheddSock, extraEnv)
+	env := gatewaydPublicEnv(dbURL, publicAddr, controlAddr, internalSocket, h.ScheddSock, h.SockDir, extraEnv)
 	h.procs = append(h.procs, startProc(t, bin, "gatewayd-public", env))
 	h.GatewayPublicURL = "http://" + publicAddr
 	h.GatewayPublicControlURL = "http://" + controlAddr
 	waitReadyz(t, controlAddr, 30*time.Second)
 }
 
-func gatewaydPublicEnv(dbURL, publicAddr, controlAddr, internalSocket, scheddSock string, extraEnv []string) []string {
+// apidAuthSocketEnv gives a test's apid and gateways their own auth socket.
+// Gateways resolve API keys through apid (ADR 20261029202403); on the shared
+// /run/faas/auth.sock default, parallel tests' gateways reached another
+// test's apid and rejected every key.
+func apidAuthSocketEnv(sockDir string) string {
+	return "FAAS_APID_AUTH_SOCKET=" + filepath.Join(sockDir, "auth.sock")
+}
+
+func gatewaydPublicEnv(dbURL, publicAddr, controlAddr, internalSocket, scheddSock, sockDir string, extraEnv []string) []string {
 	env := append(testEnvCommon(dbURL),
+		apidAuthSocketEnv(sockDir),
 		"FAAS_PUBLIC_LISTEN_ADDR="+publicAddr,
 		"FAAS_PUBLIC_CONTROL_ADDR="+controlAddr,
 		"FAAS_INTERNAL_SOCKET="+internalSocket,
@@ -1886,6 +1899,9 @@ func (h *Harness) stop() {
 	for _, p := range h.procs {
 		needsRuntime := false
 		for _, arg := range p.Args {
+			if isVMMDProc(p) {
+				break
+			}
 			switch filepath.Base(arg) {
 			case "builderd", "imaged", "schedd":
 				needsRuntime = true
@@ -1907,6 +1923,10 @@ func (h *Harness) stopProcs(procs []*exec.Cmd) {
 		if p.Process == nil {
 			continue
 		}
+		if isVMMDProc(p) {
+			_ = stopVMMD(p)
+			continue
+		}
 		_ = p.Process.Signal(syscall.SIGTERM)
 	}
 	for _, proc := range procs {
@@ -1921,6 +1941,9 @@ func (h *Harness) stopProcs(procs []*exec.Cmd) {
 		select {
 		case <-done:
 		case <-time.After(5 * time.Second):
+			if vmmdUnitOf(proc) != "" {
+				_ = killVMMD(proc)
+			}
 			_ = proc.Process.Kill()
 			<-done
 		}
@@ -2141,14 +2164,14 @@ func (h *Harness) PlannedRestartVMMD(stopTimeout time.Duration) error {
 	}
 	var old *exec.Cmd
 	for _, proc := range h.procs {
-		if proc != nil && proc.Process != nil && filepath.Base(proc.Path) == "vmmd" && proc.ProcessState == nil {
+		if proc != nil && proc.Process != nil && isVMMDProc(proc) && proc.ProcessState == nil {
 			old = proc
 		}
 	}
 	if old == nil {
 		return fmt.Errorf("e2etest: vmmd process not found")
 	}
-	if err := old.Process.Signal(syscall.SIGTERM); err != nil {
+	if err := stopVMMD(old); err != nil {
 		return fmt.Errorf("e2etest: stop vmmd: %w", err)
 	}
 	exited := make(chan error, 1)
@@ -2559,6 +2582,9 @@ func startProc(t *testing.T, bin, name string, env []string) *exec.Cmd {
 	t.Helper()
 	argv := append(boundingSetPrefix(t, name), filepath.Join(bin, name))
 	argv = append(argv, daemonConfigArgs(name, env)...)
+	if name == "vmmd" && VMMDUnderSystemd() {
+		argv = vmmdSystemdArgv(t, argv[0], argv[1:], env)
+	}
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Env = append(os.Environ(), env...)
 	cmd.Stdout = &safeBuffer{}
@@ -2721,7 +2747,7 @@ func (h *Harness) MeterdLogs() string {
 // fallback (vs the planner-side cold-boot rejection) actually ran.
 func (h *Harness) VmmdLogs() string {
 	for _, p := range h.procs {
-		if filepath.Base(p.Path) != "vmmd" {
+		if !isVMMDProc(p) {
 			continue
 		}
 		if buf, ok := p.Stdout.(*safeBuffer); ok {

@@ -22,7 +22,9 @@ const RetainHours = 31 * 24
 // RollupStats summarises one pass for logs and tests.
 type RollupStats struct {
 	SLOs, Recorded, Failed int
-	Purged                 int64
+	// NotReleased counts SLOs skipped because Released refused them.
+	NotReleased int
+	Purged      int64
 }
 
 // Rollup records each SLO's completed hours (ADR-747). It is idempotent:
@@ -31,6 +33,10 @@ type Rollup struct {
 	Store state.SLOBudgetStore
 	Prom  PromQL
 	Log   *slog.Logger
+	// Released decides whether an SLO still gets rollups: its account's plan
+	// and the custom-slos capability (ADR-20261029203000). nil rolls up
+	// every SLO.
+	Released func(ctx context.Context, def state.SLO) bool
 }
 
 // RunOnce fills missing completed hours for every SLO, back to the later of
@@ -45,6 +51,10 @@ func (r *Rollup) RunOnce(ctx context.Context, now time.Time) (RollupStats, error
 	horizon := current.Add(-time.Duration(api.SLORollupBackfillHours) * time.Hour)
 	for _, def := range defs {
 		stats.SLOs++
+		if r.Released != nil && !r.Released(ctx, def) {
+			stats.NotReleased++
+			continue
+		}
 		start := def.CreatedAt.UTC().Truncate(time.Hour)
 		if start.Before(horizon) {
 			start = horizon

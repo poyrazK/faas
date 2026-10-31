@@ -336,3 +336,27 @@ func TestBuildCapacityReport_CarriesInstanceBridgeMemory(t *testing.T) {
 		t.Fatal("bridge memory reported with bridge units off")
 	}
 }
+
+// adr: 20261030100950 — the CPU pressure readings ride the capacity stream
+// for the node's schedd.
+func TestBuildCapacityReport_CarriesCPUPressureReadings(t *testing.T) {
+	resident := func() (map[string]int64, bool) { return nil, false }
+	stats := telemetryReader(func(context.Context) (*vmmdpb.StatsResponse, error) {
+		return &vmmdpb.StatsResponse{TotalResidentBytes: wrapperspb.Int64(0),
+			TenantCpuPressureSomeAvg10: wrapperspb.Double(27.5), HostCpuBusyPercent: wrapperspb.Double(96)}, nil
+	})
+	got := buildCapacityReport(context.Background(), nil, nil, "node-a", ComputeNodeConfig{MemMB: 1024}, resident, silentLogger(), stats)
+	if v := got.GetTenantCpuPressureSomeAvg10(); v == nil || v.GetValue() != 27.5 {
+		t.Fatalf("pressure = %v, want 27.5", v)
+	}
+	if v := got.GetHostCpuBusyPercent(); v == nil || v.GetValue() != 96 {
+		t.Fatalf("busy = %v, want 96", v)
+	}
+	none := telemetryReader(func(context.Context) (*vmmdpb.StatsResponse, error) {
+		return &vmmdpb.StatsResponse{TotalResidentBytes: wrapperspb.Int64(0)}, nil
+	})
+	got = buildCapacityReport(context.Background(), nil, nil, "node-a", ComputeNodeConfig{MemMB: 1024}, resident, silentLogger(), none)
+	if got.GetTenantCpuPressureSomeAvg10() != nil || got.GetHostCpuBusyPercent() != nil {
+		t.Fatal("readings reported by a host without them")
+	}
+}

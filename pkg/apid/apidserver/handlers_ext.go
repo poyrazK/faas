@@ -1079,6 +1079,10 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, serviceTransportProblem)
 		return
 	}
+	if problem := api.PrivateServiceHTTPSTransportProblem(serviceTransport, s.privateServiceHTTPS(acct)); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	selectedBindings := app.Manifest.ServiceBindings
 	if req.ServiceBindingTargets != nil {
 		selectedBindings = bindings
@@ -1967,6 +1971,16 @@ func resolveUpdateResourceProfile(req *api.UpdateAppRequest) *api.Problem {
 func (s *server) deleteApp(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
 	if !ok {
+		return
+	}
+	// A PR preview is one workload of its PR environment. Deleted alone it
+	// left its siblings serving to the end of their lease and stayed
+	// restorable; delete tears down the whole environment, as
+	// POST /v1/preview/{slug}/destroy does.
+	if app.PreviewOfSlug != "" && app.PreviewPrNumber > 0 {
+		if s.tearDownPreviewEnvironment(w, r, acct, app, "preview.destroyed_by_customer") {
+			w.WriteHeader(http.StatusNoContent)
+		}
 		return
 	}
 	if st, ok := s.store.(state.ObjectBucketStore); ok {
@@ -5334,6 +5348,12 @@ func (s *server) raiseOverageCap(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, api.ErrInternal("could not update overage cap"))
 		return
 	}
+	if acct.ResourceOrgID != "" {
+		// POST /v1/orgs/{slug}/overage-cap: an organization has no account
+		// body to return (ADR-20261030093512).
+		writeJSON(w, http.StatusOK, api.AccountOverageCapResponse{OverageCapCents: req.OverageCapCents})
+		return
+	}
 	writeJSON(w, http.StatusOK, s.accountResponse(r.Context(), updated, r))
 }
 
@@ -5352,7 +5372,7 @@ func (s *server) raiseOverageCapSvc(ctx context.Context, acct state.Account, cen
 	if err := s.store.UpdateAccountOverageCapCents(ctx, acct.ID, cents); err != nil {
 		return acct, err
 	}
-	updated, err := s.store.AccountByID(ctx, acct.ID)
+	updated, err := state.BillingResourceAccount(ctx, s.store, acct.ID)
 	if err != nil {
 		return acct, err
 	}
