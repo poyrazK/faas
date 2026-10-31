@@ -29,6 +29,20 @@ func (s *cachedReadStore) RecordObjectReadUsage(_ context.Context, usage []state
 	return nil
 }
 
+type orgMembers struct {
+	revision map[string]int64
+	reads    int
+}
+
+func (m *orgMembers) OrgAccessSnapshot(_ context.Context, org, account string) (state.OrgAccessSnapshot, error) {
+	m.reads++
+	revision, ok := m.revision[org+"/"+account]
+	if !ok {
+		return state.OrgAccessSnapshot{}, state.ErrNotFound
+	}
+	return state.OrgAccessSnapshot{Role: state.OrgRoleDeveloper, Revision: revision}, nil
+}
+
 // adr: 20261030075301
 func TestGatewayReadsUseCachedAdmission(t *testing.T) {
 	h, store, _ := newGatewayTestHandler(t, state.ObjectBucketPermissionRead, nil)
@@ -68,9 +82,23 @@ func TestGatewayReadsUseCachedAdmission(t *testing.T) {
 
 	fenced := requestContext{bucket: store.bucket, credential: store.credential}
 	fenced.credential.IssuerAccountID = "member"
+	fenced.credential.IssuerAccessRevision = 4
 	fenced.bucket.OrgID = "company"
 	if !h.admitRead(httptest.NewRecorder(), r, &fenced, "fenced-key") || fenced.read != nil || len(store.admitted) != 1 {
-		t.Fatalf("an organization-fenced credential skipped the locking admission: %v", store.admitted)
+		t.Fatalf("without a membership cache, an organization-fenced credential skipped the locking admission: %v", store.admitted)
+	}
+	// Step 3: the fence is checked against cached membership revisions.
+	members := &orgMembers{revision: map[string]int64{"company/member": 4}}
+	h.orgAccess = objectstorage.NewOrgAccessCache(members, nil)
+	cachedFence := requestContext{bucket: fenced.bucket, credential: fenced.credential}
+	if !h.admitRead(httptest.NewRecorder(), r, &cachedFence, "fenced-key") || cachedFence.read == nil || len(store.admitted) != 1 || members.reads != 1 {
+		t.Fatalf("a fenced read took the locking admission: %v, %d membership reads", store.admitted, members.reads)
+	}
+	stale := requestContext{bucket: fenced.bucket, credential: fenced.credential}
+	stale.credential.IssuerAccessRevision = 3
+	denied := httptest.NewRecorder()
+	if h.admitRead(denied, r, &stale, "fenced-key") || denied.Code != http.StatusForbidden || !strings.Contains(denied.Body.String(), "AccessDenied") || len(store.admitted) != 1 {
+		t.Fatalf("a credential from an older membership = %d %q", denied.Code, denied.Body.String())
 	}
 
 	h.registry.Accounting.AccountingMode = ""
