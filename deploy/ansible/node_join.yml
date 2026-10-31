@@ -798,11 +798,14 @@
       # ADR-1343 §4: a node that runs the app edge also holds back the edge
       # daemons' CPU and RAM. --edge is passed only then, so a fleet without
       # the edge keeps working with an operator binary that predates it.
+      # ADR-20261031122757: a node that also runs the S3 gateway holds back
+      # the gateway's too (--object-gateway, only with --edge).
       ansible.builtin.command:
         argv: >-
           {{ ['/usr/local/bin/gregalectl', 'compute-nodes', 'sizing',
               '--role', faas_box_role | default('compute-only', true), '--json']
-             + (['--edge'] if (faas_edge_on_compute_nodes | default(false) | bool) else []) }}
+             + (['--edge'] if (faas_edge_on_compute_nodes | default(false) | bool) else [])
+             + (['--object-gateway'] if (faas_object_gateway_on_compute_nodes | default(false) | bool) else []) }}
       changed_when: false
       register: faas_node_sizing_raw
 

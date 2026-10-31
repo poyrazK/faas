@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/manifest"
 	"github.com/onebox-faas/faas/pkg/roleTemplating"
 )
@@ -215,6 +216,7 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 			}
 		}
 		body += renderComputeEdgeVars(m.PublicEdge.ComputeNodes, host.Role, postgresListenAddress, computeAllowedCIDRs)
+		body += renderComputeObjectGatewayVars(m.ObjectStorage, host)
 		body += renderLogArchiveVars(m.LogArchive)
 		body += renderWorkloadIdentityVars(m.WorkloadIdentity)
 		if host.Role == roleComputeOnly && m.Egress.TenantGateway != nil {
@@ -289,6 +291,23 @@ func renderObjectStorageGatewayVars(o manifest.ObjectStorage) string {
 	if o.ProviderEnvSrc != "" {
 		fmt.Fprintf(&b, "faas_object_storage_provider_env_src: %q\n", o.ProviderEnvSrc)
 	}
+	return b.String()
+}
+
+// renderComputeObjectGatewayVars runs the object gateway on a compute host
+// (ADR-20261031122757): the provider registry, the gateway-only credential,
+// and the host's share of its port in bytes per second, from its declared
+// port speed and api.ObjectGatewayNodePortSharePercent.
+func renderComputeObjectGatewayVars(o manifest.ObjectStorage, host manifest.Host) string {
+	if !o.ComputeNodes || host.Role != roleComputeOnly {
+		return ""
+	}
+	share := int64(host.PortMbps) * 1_000_000 / 8 * api.ObjectGatewayNodePortSharePercent / 100
+	var b strings.Builder
+	b.WriteString("faas_object_gateway_on_compute_nodes: true\n")
+	fmt.Fprintf(&b, "faas_object_storage_config_src: %q\n", o.ConfigSrc)
+	fmt.Fprintf(&b, "faas_object_storage_gateway_provider_env_src: %q\n", o.GatewayProviderEnvSrc)
+	fmt.Fprintf(&b, "faas_object_gateway_max_bytes_per_second: %d\n", share)
 	return b.String()
 }
 

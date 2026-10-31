@@ -1,0 +1,10 @@
+# Managed by the seal_domains role (ADR 20261022111812, ADR-20261031122757):
+# the S3 gateway on a compute node opens Gregale S3 secret access keys with
+# the storage seal-domain identity alone. Its unit loads no fleet or host
+# identity, and it refuses to start with one.
+[Service]
+LoadCredential=faas_seal_domain_storage:/etc/faas/secrets/domains/storage.age
+{% if faas_seal_domain_storage_previous_identity_src | length > 0 %}
+LoadCredential=faas_seal_domain_storage_previous:/etc/faas/secrets/domains/storage.age.previous
+{% endif %}
+Environment=FAAS_SEAL_DOMAIN_STORAGE_IDENTITY_PATH=%d/faas_seal_domain_storage
