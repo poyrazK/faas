@@ -621,7 +621,7 @@ func (r *drainSynth) Transient() *atomic.Bool { return &r.transient }
 func (r *drainSynth) Refused() *atomic.Bool   { return &r.refused }
 
 // AppStatus makes the fake gateway answer as if the app's own code returned
-// that status (ADR-20261031100000).
+// that status (ADR-20261031100001).
 func (r *drainSynth) AppStatus() *atomic.Int64 { return &r.appStatus }
 
 // XHTTPGatewaySynth is the drain's real gateway client pointed at base.
