@@ -7,9 +7,9 @@ import type { Condition } from './Condition.js';
  * A resource's status subresource: conditions derived when read, never stored.
  */
 export type ResourceStatus = {
-  kind: 'app' | 'deployment';
+  kind: 'app' | 'deployment' | 'database' | 'domain' | 'cron' | 'job_run';
   /**
-   * The app slug or deployment ID.
+   * The app slug, deployment ID, database name, domain, cron ID or job run ID.
    */
   name: string;
   /**

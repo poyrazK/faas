@@ -246,7 +246,11 @@ whether pull requests opened by bots such as Dependabot and Renovate, and draft
 pull requests, get previews. The PR's author decides, not whoever pushed to it.
 A skipped pull request gets a neutral `gregale-preview` check that says why;
 with draft previews off, a draft gets its preview when it is marked ready for
-review. Closing a pull request always tears its preview down.
+review. A pull request whose preview is live and whose next head is skipped
+(converted back to a draft with draft previews off, or a bot's pull request
+after bot previews are turned off) has that preview torn down, so the preview
+link never serves an older head than the one the check reports. Closing a
+pull request always tears its preview down.
 
 When all changed files match ignored paths, githubd records the delivery as a
 successful no-op and does not enqueue builds. The same holds for a push to a
@@ -340,6 +344,7 @@ to the target branch and triggers the normal deployment event.
 - ADR-310 (production trigger ownership and separate preview quota).
 - ADR-20261026090000 (environment allowance, environment-wide destroy, setup failures on the PR, gate sync).
 - ADR-20261031090000 (route contract on previews, turning previews off tears them down).
+- ADR-20261031120000 (new services' gates and org, skipped heads retire the preview, production protocols, no custom domains).
 - `docs/runbooks/PreviewSubdomainRouting.md` — operator
   recovery for routing failures.
 - `pkg/githubd` — webhook receiver (PR-A surface).
@@ -406,12 +411,17 @@ IP allowlist, signed-request and consumer-auth requirements, the egress
 allowlist, the app's visibility, and its declared-route contract: when
 production answers only the routes its imported OpenAPI document declares, so
 do its previews, held to the production app's document. A gate changed on the
-production app applies to its live previews at once. Previews also apply the production
+production app applies to its live previews at once. Previews also serve the
+protocols production serves: its WebSocket and streaming settings follow on
+every head, and a preview starts with production's CPU. Previews also apply the production
 app's `@app` edge rules (`jwt`, `ip`, `geo`, `waf`, `challenge` and the other
 kinds, except `route` and `async`) as well as their own; see
 [edge rules](./edge-rules.md#matching). A service the PR adds takes the bound
-app's gates and the visibility production would give it, so a service
-without ports stays internal.
+app's access and egress gates, which follow the bound app's changes, its
+project's organization, and the visibility production would give it, so a
+service without ports stays internal. It takes no declared-route contract: the
+bound app's routes are another service's. Preview apps cannot have custom
+domains; attach the domain to the production app.
 When a dependency preview is absent, the gateway considers the **production**
 service and its side effects are real if policy permits it.
 

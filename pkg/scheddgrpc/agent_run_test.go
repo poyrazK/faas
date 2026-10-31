@@ -138,6 +138,29 @@ func TestRunAgentRelaysPlacementBootOutputAndResult(t *testing.T) {
 	}
 }
 
+// adr: 20261027090012 — the version's model-wait pause opt-in reaches
+// admission; an older agentd that does not send it gets no pause.
+func TestRunAgentCarriesTheModelWaitPauseOptIn(t *testing.T) {
+	for _, optIn := range []bool{false, true} {
+		runner := &fakeAgentRunner{}
+		stream, err := agentRunScheddClient(t, runner).RunAgent(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		start := agentRunStartFrame(t, "codex")
+		start.GetStart().PauseDuringModelCalls = optIn
+		if err := stream.Send(start); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := drainAgentRun(stream); err != nil {
+			t.Fatal(err)
+		}
+		if runner.admission.PauseDuringModelCalls != optIn {
+			t.Fatalf("PauseDuringModelCalls = %v, want %v", runner.admission.PauseDuringModelCalls, optIn)
+		}
+	}
+}
+
 func TestRunAgentCancelFrame(t *testing.T) {
 	runner := &fakeAgentRunner{}
 	stream, err := agentRunScheddClient(t, runner).RunAgent(context.Background())

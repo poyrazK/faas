@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -184,6 +185,33 @@ func TestCreateAgentDefaults(t *testing.T) {
 		}
 		if len(store.audits) != 1 || store.audits[0] != "agent.created" {
 			t.Errorf("%s: audits %v", plan, store.audits)
+		}
+	}
+}
+
+// adr: 20261027090012 — a version allows the model-wait pause unless it says
+// pause_during_model_calls: false, and the version it returns always says
+// which.
+func TestCreateAgentModelWaitPauseOptOut(t *testing.T) {
+	for name, tc := range map[string]struct {
+		body     string
+		optedOut bool
+	}{
+		"omitted": {body: `{"name":"t","harness":{"preset":"codex"},"prompt_template":"p"}`},
+		"true":    {body: `{"name":"t","harness":{"preset":"codex"},"prompt_template":"p","pause_during_model_calls":true}`},
+		"false":   {body: `{"name":"t","harness":{"preset":"codex"},"prompt_template":"p","pause_during_model_calls":false}`, optedOut: true},
+	} {
+		store := &fakeStore{}
+		rec := serve(newHandler(store).CreateAgent, api.PlanPro, http.MethodPost, "/v1/agents", tc.body, nil)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("%s: %d %s", name, rec.Code, rec.Body)
+		}
+		if store.spec.NoModelWaitPause != tc.optedOut {
+			t.Errorf("%s: NoModelWaitPause = %v, want %v", name, store.spec.NoModelWaitPause, tc.optedOut)
+		}
+		want := fmt.Sprintf(`"pause_during_model_calls":%v`, !tc.optedOut)
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("%s: response lacks %s: %s", name, want, rec.Body)
 		}
 	}
 }
