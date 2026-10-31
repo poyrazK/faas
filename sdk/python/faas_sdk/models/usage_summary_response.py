@@ -36,9 +36,8 @@ class UsageSummaryResponse:
     overage_cents: int
     """Integer cents. Includes compute at $0.01/GB-h and configured live egress overage; shadow egress is excluded."""
     quiet_paused_gb_hours: float | Unset = UNSET
-    """GB-hours this month that an instance spent quiet-paused between requests and was not billed for, in the same
-    plan RAM + 8 MB unit as used_gb_hours and not part of it (ADR-20261023171905). Absent while zero, which it stays
-    until unbilled quiet pause is released to the account."""
+    """GB-hours this month that instances spent quiet-paused between requests and were not billed for, in the same
+    plan RAM + 8 MB unit as used_gb_hours and not included in it. Absent while zero."""
     used_cpu_hours: float | Unset = UNSET
     """Per-month CPU-hours (informational; not billed)."""
     used_egress_gb: float | Unset = UNSET

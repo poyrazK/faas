@@ -17,7 +17,7 @@ export type UsageSummaryResponse = {
    */
   overage_cents: number;
   /**
-   * GB-hours this month that an instance spent quiet-paused between requests and was not billed for, in the same plan RAM + 8 MB unit as used_gb_hours and not part of it (ADR-20261023171905). Absent while zero, which it stays until unbilled quiet pause is released to the account.
+   * GB-hours this month that instances spent quiet-paused between requests and were not billed for, in the same plan RAM + 8 MB unit as used_gb_hours and not included in it. Absent while zero.
    */
   quiet_paused_gb_hours?: number;
   /**
