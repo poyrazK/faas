@@ -2468,7 +2468,7 @@ export class DeploymentsService {
     });
   }
   /**
-   * Show a release's phase and history (ADR-20261022120744).
+   * Show a release's phase and history.
    * Composes what Gregale recorded about one release into a phase, a one-line summary and its events, oldest first: creation, schedule, approvals, rollout start, each canary step with the decision and gate results behind it, holds, completion, the post-release watch, abort or rollback, and the release that replaced it. Reads at most 500 audit rows; truncated=true means older history was left out.
    * @returns ReleaseTimeline The release timeline.
    * @throws ApiError

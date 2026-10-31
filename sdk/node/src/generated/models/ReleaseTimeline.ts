@@ -7,7 +7,7 @@ import type { ReleaseGateResult } from './ReleaseGateResult.js';
 import type { ReleaseTimelineEvent } from './ReleaseTimelineEvent.js';
 import type { ScheduledRelease } from './ScheduledRelease.js';
 /**
- * One release's phase and what happened to it (ADR-20261022120744).
+ * One release's phase and what happened to it.
  */
 export type ReleaseTimeline = {
   deployment_id: string;

@@ -23,7 +23,7 @@ T = TypeVar("T", bound="ReleaseTimeline")
 
 @_attrs_define
 class ReleaseTimeline:
-    """One release's phase and what happened to it (ADR-20261022120744)."""
+    """One release's phase and what happened to it."""
 
     deployment_id: UUID
     app: str

@@ -70,7 +70,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Problem | ReleaseTimeline]:
-    """Show a release's phase and history (ADR-20261022120744).
+    """Show a release's phase and history.
 
      Composes what Gregale recorded about one release into a phase, a one-line summary and its events,
     oldest first: creation, schedule, approvals, rollout start, each canary step with the decision and
@@ -105,7 +105,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> Problem | ReleaseTimeline | None:
-    """Show a release's phase and history (ADR-20261022120744).
+    """Show a release's phase and history.
 
      Composes what Gregale recorded about one release into a phase, a one-line summary and its events,
     oldest first: creation, schedule, approvals, rollout start, each canary step with the decision and
@@ -135,7 +135,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Problem | ReleaseTimeline]:
-    """Show a release's phase and history (ADR-20261022120744).
+    """Show a release's phase and history.
 
      Composes what Gregale recorded about one release into a phase, a one-line summary and its events,
     oldest first: creation, schedule, approvals, rollout start, each canary step with the decision and
@@ -168,7 +168,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> Problem | ReleaseTimeline | None:
-    """Show a release's phase and history (ADR-20261022120744).
+    """Show a release's phase and history.
 
      Composes what Gregale recorded about one release into a phase, a one-line summary and its events,
     oldest first: creation, schedule, approvals, rollout start, each canary step with the decision and

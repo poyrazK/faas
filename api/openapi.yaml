@@ -32327,7 +32327,7 @@ paths:
     get:
       tags: [deployments]
       operationId: getReleaseTimeline
-      summary: Show a release's phase and history (ADR-20261022120744).
+      summary: Show a release's phase and history.
       description: "Composes what Gregale recorded about one release into a phase, a one-line summary and its events, oldest first: creation, schedule, approvals, rollout start, each canary step with the decision and gate results behind it, holds, completion, the post-release watch, abort or rollback, and the release that replaced it. Reads at most 500 audit rows; truncated=true means older history was left out."
       responses:
         '200':
@@ -111414,7 +111414,7 @@ components:
         active: { type: array, items: { $ref: '#/components/schemas/ReleaseFreeze' }, description: "The freezes refusing a production release now." }
         next: { $ref: '#/components/schemas/ReleaseFreeze' }
     ReleaseGate:
-      description: "One of an app's release gates (ADR-20261019071734, ADR-20261022082305)."
+      description: "One of an app's release gates."
       type: object
       required: [name, kind, min_samples, created_by, created_at]
       properties:
@@ -111620,7 +111620,7 @@ components:
       properties:
         items: { type: array, items: { $ref: '#/components/schemas/ReleaseApprovalStatus' } }
     ReleaseTimeline:
-      description: "One release's phase and what happened to it (ADR-20261022120744)."
+      description: "One release's phase and what happened to it."
       type: object
       required: [deployment_id, app, status, phase, summary, traffic_percent, created_at, events]
       properties:

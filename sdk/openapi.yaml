@@ -7368,7 +7368,7 @@ paths:
     get:
       tags: [deployments]
       operationId: getReleaseTimeline
-      summary: Show a release's phase and history (ADR-20261022120744).
+      summary: Show a release's phase and history.
       description: "Composes what Gregale recorded about one release into a phase, a one-line summary and its events, oldest first: creation, schedule, approvals, rollout start, each canary step with the decision and gate results behind it, holds, completion, the post-release watch, abort or rollback, and the release that replaced it. Reads at most 500 audit rows; truncated=true means older history was left out."
       responses:
         '200':
@@ -35300,7 +35300,7 @@ components:
         expires_at: {type: string, format: date-time, description: "When a release still waiting is aborted."}
         decisions: {type: array, items: {$ref: '#/components/schemas/ReleaseApprovalDecision'}}
     ReleaseTimeline:
-      description: "One release's phase and what happened to it (ADR-20261022120744)."
+      description: "One release's phase and what happened to it."
       type: object
       required: [deployment_id, app, status, phase, summary, traffic_percent, created_at, events]
       properties:
