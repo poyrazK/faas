@@ -65,7 +65,7 @@ func (e *Engine) promoteFrozenInstanceLocked(ctx context.Context, app state.App,
 	// honours the account's spend cap like any wake (ADR-1162, Hunt 18). It
 	// ran before the request gates; the ordinary gate answers the refusal
 	// and the reaper parks the frozen VMs.
-	if e.spendCapReached(ctx, app.AccountID) {
+	if e.spendCapReached(ctx, e.spendCapSubject(ctx, app)) {
 		return WakeResult{}, false, nil
 	}
 	thawer, ok := e.vmm.(FrozenVMM)

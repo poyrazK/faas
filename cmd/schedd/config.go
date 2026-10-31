@@ -203,6 +203,15 @@ type Config struct {
 	// A node without a fresh sample counts every booking.
 	MeasuredCPUAdmission bool `toml:"measured_cpu_admission"`
 
+	// CPUPressureBackstop (ADR 20261030100950) makes this schedd hold the
+	// nodes whose readings it receives under CPU pressure while their tenant
+	// tasks wait for CPU (api.NodeCPUPressureStallPercent) and their CPUs
+	// are nearly all busy (api.NodeCPUPressureBusyPercent). Every schedd
+	// honours a hold: placement prefers other nodes and admission counts the
+	// node's bookings in full. Off by default; the readings' gauges are
+	// published either way.
+	CPUPressureBackstop bool `toml:"cpu_pressure_backstop"`
+
 	// QuietPauseLedger (ADR-20261023171905) records the quiet pauses this
 	// schedd's node reports in the pause ledger, for meterd to subtract from
 	// billed seconds once its quiet_pause_unbilled switch is on. Off by
