@@ -979,6 +979,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		if archiveClient != nil {
 			srv.logArchive = archiveClient
 		}
+		reportLogArchiveEnabled(srv, archiveClient != nil)
 		graceLoop := grace.New(grace.Params{
 			Store:               srv.store,
 			BeforeAccountDelete: srv.beforeAccountDelete,
