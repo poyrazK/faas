@@ -1201,6 +1201,8 @@ export type { KafkaSASLConfig } from './KafkaSASLConfig.js';
 export type { KafkaSASLMechanism } from './KafkaSASLMechanism.js';
 export type { KafkaTLSConfig } from './KafkaTLSConfig.js';
 export type { KafkaTriggerConfig } from './KafkaTriggerConfig.js';
+export type { LabelChange } from './LabelChange.js';
+export type { LabelsResponse } from './LabelsResponse.js';
 export type { LatestDeploymentsByAppResponse } from './LatestDeploymentsByAppResponse.js';
 export type { LinkPlatformTenantConsumerRequest } from './LinkPlatformTenantConsumerRequest.js';
 export type { LinkPlatformTenantSurfaceRequest } from './LinkPlatformTenantSurfaceRequest.js';

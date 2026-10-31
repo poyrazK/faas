@@ -125,10 +125,7 @@ func (s *server) postReleaseRollback(ctx context.Context, store state.PostReleas
 		if problem.Code == api.CodeRollbackCrossesRelease {
 			// ADR-1448: automation never runs code on changes it has not
 			// served with. The release keeps serving; a person decides.
-			s.log.Warn("post-release watch: rollback skipped; it would cross release commands",
-				"app", app.ID, "deployment", c.DeploymentID, "target", target, "detail", problem.Detail)
-			s.releaseMetrics.Decision(releasemetrics.GuardPostRelease, "kept")
-			return nil
+			return s.postReleaseRollbackSkipped(ctx, store, c, acct, app, decision, problem)
 		}
 		return fmt.Errorf("roll back to %s: %s: %s", target, problem.Code, problem.Detail)
 	}
@@ -147,6 +144,34 @@ func (s *server) postReleaseRollback(ctx context.Context, store state.PostReleas
 		"target", target, "rule", decision.Rule, "summary", decision.Summary)
 	s.audit.Emit(ctx, "app.post_release_rollback", &acct.ID, map[string]any{
 		"app_id": app.ID, "from": c.DeploymentID, "to": target, "rule": decision.Rule, "summary": decision.Summary,
+	})
+	return nil
+}
+
+// postReleaseRollbackSkipped records a regression the watch found but could
+// not roll back. The decision on the release carries rollback_skipped, so the
+// release, its timeline and `gregale release get` show the regression, and
+// the watch does not judge it again (release review 2026-10-31: the skip was
+// only logged, every sweep, and the timeline then said the watch passed).
+func (s *server) postReleaseRollbackSkipped(ctx context.Context, store state.PostReleaseWatchStore, c state.PostReleaseWatchCandidate,
+	acct state.Account, app state.App, decision api.RolloutDecision, problem *api.Problem) error {
+	decision.RollbackSkipped = problem.Code
+	if err := decision.Validate(); err != nil {
+		return fmt.Errorf("post-release decision: %w", err)
+	}
+	raw, err := json.Marshal(decision)
+	if err != nil {
+		return fmt.Errorf("encode post-release decision: %w", err)
+	}
+	if err := store.RecordPostReleaseRolloutDecision(ctx, c.DeploymentID, raw); err != nil {
+		return fmt.Errorf("record skipped post-release rollback: %w", err)
+	}
+	s.releaseMetrics.Decision(releasemetrics.GuardPostRelease, "kept")
+	s.log.Warn("post-release watch: rollback skipped; it would cross release commands",
+		"app", app.ID, "deployment", c.DeploymentID, "target", c.PredecessorID, "detail", problem.Detail)
+	s.audit.Emit(ctx, "app.post_release_rollback_skipped", &acct.ID, map[string]any{
+		"app_id": app.ID, "deployment": c.DeploymentID, "target": c.PredecessorID, "rule": decision.Rule,
+		"summary": decision.Summary, "reason": problem.Code,
 	})
 	return nil
 }
