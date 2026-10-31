@@ -1659,7 +1659,9 @@ func (m *Middleware) deployTokenBoundTo(r *http.Request, key state.APIKey) (bool
 func (m *Middleware) deployTokenBoundToDeployment(r *http.Request, key state.APIKey) (bool, error) {
 	resolver, ok := m.Authn.(DeploymentAppResolver)
 	id := r.PathValue("id")
-	if !ok || key.AppID == "" || uuid.Validate(id) != nil {
+	// A malformed id names no deployment: 404, never a store error.
+	wellFormed := uuid.Validate(id) == nil
+	if !ok || key.AppID == "" || !wellFormed {
 		return false, nil
 	}
 	appID, err := resolver.DeploymentAppID(r.Context(), id)

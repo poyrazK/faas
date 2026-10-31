@@ -63,7 +63,7 @@ func (a storeAuthAdapter) TouchDeployTokenLastUsed(ctx context.Context, tokenID 
 var _ middleware.DeploymentAppResolver = storeAuthAdapter{}
 
 func (a storeAuthAdapter) DeploymentAppID(ctx context.Context, deploymentID string) (string, error) {
-	d, err := a.Store.DeploymentByID(ctx, deploymentID)
+	d, err := a.DeploymentByID(ctx, deploymentID)
 	if err != nil {
 		return "", err
 	}
