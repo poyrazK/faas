@@ -355,6 +355,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_GATEWAY_EGRESS_PENDING_PATH` | gatewayd-internal | `default` |  | /var/lib/faas/egress-meter/pending.json | `` | optional durable egress journal path; independent gateway instances need private roots, while replacement generations inherit the same root and use generation slots |
 | `FAAS_GATEWAY_EGRESS_SOCKET` | shared | `default` |  |  | `` |  |
 | `FAAS_GATEWAY_LISTEN` | gatewayd-internal, shared | `unit` |  |  | `` |  |
+| `FAAS_GATEWAY_LOCAL_VMMD_SOCKET` | gatewayd-internal | `default` |  | 0 | `` | ADR-20261030230157; 1 sends this gateway's own node (FAAS_NODE_NAME) to vmmd's local data socket without TLS while that vmmd serves it (FAAS_VMMD_LOCAL_DATA_SOCKET), mTLS otherwise; default off |
 | `FAAS_GATEWAY_METRICS_URL` | schedd | `dropin` |  |  | `` |  |
 | `FAAS_GATEWAY_PRIVATE_CONTROL_LISTEN` | gatewayd-internal | `dropin` |  |  | `` | compute-only private control listener for apid (route observations, streaming caps, MCP replica probes, response checks), 0.0.0.0:9097 behind the control-plane nftables rule; empty disables (ADR-20261022004500) |
 | `FAAS_GATEWAY_RAW_STREAM_ENABLED` | gatewayd-internal | `default` |  |  | `` |  |
@@ -957,6 +958,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_VMMD_CONFIG` | vmmd | `default` |  |  | `` |  |
 | `FAAS_VMMD_DBURL` | vmmd | `envfile` |  |  | `` |  |
 | `FAAS_VMMD_LISTEN_ADDR` | vmmd | `dropin` |  |  | `` |  |
+| `FAAS_VMMD_LOCAL_DATA_SOCKET` | vmmd | `default` |  |  | `` | optional boolean switch (ADR-20261030230157): vmmd also serves /run/faas/vmmd-data.sock to this node's gatewayd-internal, by peer uid and for its forwarding RPCs only; overrides TOML local_data_socket; default off, and off removes the socket |
 | `FAAS_VMMD_LOG_ARCHIVE_SPOOL_ROOT` | vmmd, shared | `default` |  |  | `` | optional compute-side spool override; defaults to /var/log/faas/vmmd-archive so vmmd and apid do not share active files on single-box hosts |
 | `FAAS_VMMD_NODE_KEY_PATH` | vmmd | `default` |  |  | `` |  |
 | `FAAS_VMMD_OUTBOUND_CLIENT_TLS_CA_PATH` | vmmd | `dropin` |  |  | `` | split-box app outbound relay (ADR-989); vmmd_service 99-faas-outbound-relay.conf |

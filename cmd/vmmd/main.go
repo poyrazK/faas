@@ -1910,6 +1910,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 	}
 	impl.Register(gsrv)
+	localData := newLocalDataSocket(ctx, cfg.LocalDataSocket, api.VmmdLocalDataSocket, cfg.OwnerUser, impl.Register, log)
 	defer func() {
 		if err := impl.Close(context.WithoutCancel(ctx)); err != nil {
 			log.Warn("vmmd: stream bridge cleanup during shutdown failed", "err", err)
@@ -1985,6 +1986,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		grpcBound.MarkBound()
 		serveErr <- gsrv.Serve(lis)
 	}()
+	localData.serve(log)
 	if adoptionReport != nil {
 		endRestartNotice(ctx, store, adoptionReport.NodeID, log)
 	}
@@ -2225,7 +2227,9 @@ heartbeat:
 		// The caller ctx is already done; the notice is shutdown work.
 		announceRestart(context.WithoutCancel(ctx), store, adoptionReport.NodeID, log)
 	}
+	localDataStopped := localData.stop(cfg.AdoptRunningVMs, log)
 	stopGRPC(gsrv, cfg.AdoptRunningVMs, log)
+	<-localDataStopped
 	// The successor adopts from the journal: write what the last RPCs changed.
 	mgr.FlushAdoptionRecords()
 	if adminSrv != nil {

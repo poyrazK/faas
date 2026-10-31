@@ -7356,6 +7356,14 @@ const (
 	GatewaydInternalControlWriteTimeoutSecondsDefault = 30 // control + unix-socket
 	GatewaydInternalControlIdleTimeoutSecondsDefault  = 60 // control + unix-socket keep-alive
 
+	// VmmdLocalDataSocket is where vmmd serves its own node's
+	// gatewayd-internal without TLS, admitting only GatewaydInternalUser by
+	// peer uid and only the RPCs the gateway calls (ADR-20261030230157).
+	VmmdLocalDataSocket = "/run/faas/vmmd-data.sock"
+	// GatewaydInternalUser is the user gatewayd-internal runs as
+	// (pkg/daemonunitspec), the one uid vmmd's local data socket admits.
+	GatewaydInternalUser = "faas"
+
 	// MaxEdgeRuleLimitBodyBytesStreaming (ADR-091 D24 / kind=limit
 	// streaming carve-out) is the upper bound on the optional
 	// `max_body_bytes_streaming` field of a kind=limit edge rule.

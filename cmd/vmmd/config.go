@@ -153,6 +153,12 @@ type Config struct {
 	// shortens its guest dial timeout (ADR-20261026120000). On by default
 	// (amendment 2026-10-27); FAAS_BRIDGE_STREAM_HEADROOM overrides TOML.
 	BridgeStreamHeadroom bool `toml:"bridge_stream_headroom"`
+	// LocalDataSocket serves this node's gatewayd-internal on
+	// api.VmmdLocalDataSocket: no TLS, only the gateway's uid by peer
+	// credentials and only its forwarding RPCs (ADR-20261030230157). Off by
+	// default; off also removes a socket an earlier run left, so the gateway
+	// goes back to mTLS. FAAS_VMMD_LOCAL_DATA_SOCKET overrides TOML.
+	LocalDataSocket bool `toml:"local_data_socket"`
 	// RequireSecretBinding refuses runtime secret envelopes that carry no
 	// account binding (ADR-20261023173624, contract step). Off by default;
 	// the seal_domains role turns it on once every stored envelope is
@@ -936,6 +942,13 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("vmmd: FAAS_BRIDGE_STREAM_HEADROOM must be a boolean (got %q)", v)
 		}
 		c.BridgeStreamHeadroom = enabled
+	}
+	if v := os.Getenv("FAAS_VMMD_LOCAL_DATA_SOCKET"); v != "" {
+		enabled, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_VMMD_LOCAL_DATA_SOCKET must be a boolean (got %q)", v)
+		}
+		c.LocalDataSocket = enabled
 	}
 	if v := os.Getenv("FAAS_INVOKE_HOOK_BACKOFF"); v != "" {
 		enabled, perr := strconv.ParseBool(v)
