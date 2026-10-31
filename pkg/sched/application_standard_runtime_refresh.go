@@ -74,7 +74,7 @@ func (e *Engine) standardRefreshInstanceStale(ctx context.Context, instance stat
 }
 
 func (e *Engine) verifyApplicationStandardRefreshInstances(ctx context.Context, r state.ApplicationStandardRuntimeRefreshRequest) error {
-	instances, err := e.store.ListInstancesForApp(ctx, r.AppID)
+	instances, err := e.liveInstancesForApp(ctx, r.AppID)
 	if err != nil {
 		return err
 	}

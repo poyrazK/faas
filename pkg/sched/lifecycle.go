@@ -148,7 +148,7 @@ func (e *Engine) observeServiceReplicaStatus(ctx context.Context, app state.App,
 			desired += target
 		}
 	}
-	instances, err := e.store.ListInstancesForApp(ctx, app.ID)
+	instances, err := e.liveInstancesForApp(ctx, app.ID)
 	if err != nil {
 		e.log.Warn("sched: observe service replica status", "app", app.ID, "err", err)
 		return
@@ -182,7 +182,7 @@ func (e *Engine) observeServiceReplicaStatus(ctx context.Context, app state.App,
 }
 
 func listLiveDeploymentInstances(ctx context.Context, store state.Store, appID, deploymentID string) ([]state.Instance, error) {
-	instances, err := store.ListInstancesForApp(ctx, appID)
+	instances, err := liveInstancesOf(ctx, store, appID)
 	if err != nil {
 		return nil, err
 	}
