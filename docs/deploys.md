@@ -218,6 +218,14 @@ gregale app deploy-token rotate <token-id> --app my-api   # the old token stops 
 gregale app deploy-token delete <token-id> --app my-api
 ```
 
+With the token in `FAAS_TOKEN`, `gregale deploy --name my-api … --wait` reads
+the app, deploys it and follows the deployment to the end. The token reaches
+no other app, and it cannot read build logs: the wait reports the
+deployment's status and failure reason instead. Use a key with `apps:read`
+and `gregale logs my-api --deployment <id>` to read the build. A key created
+with only `deploy:write` and the deploy Action's OIDC credential work the
+same way, for any app in the account.
+
 ## Safe changes
 
 Preview a change with `gregale deploy --diff` or `--dry-run`. For a bad live

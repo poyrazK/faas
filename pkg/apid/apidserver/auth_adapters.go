@@ -58,6 +58,18 @@ func (a storeAuthAdapter) TouchDeployTokenLastUsed(ctx context.Context, tokenID 
 	return d.TouchDeployTokenLastUsed(ctx, tokenID)
 }
 
+// A deploy token follows the deployments of its own app
+// (ADR-20261031162858); the middleware binds those reads by their app.
+var _ middleware.DeploymentAppResolver = storeAuthAdapter{}
+
+func (a storeAuthAdapter) DeploymentAppID(ctx context.Context, deploymentID string) (string, error) {
+	d, err := a.Store.DeploymentByID(ctx, deploymentID)
+	if err != nil {
+		return "", err
+	}
+	return d.AppID, nil
+}
+
 // AuthenticatePlatformTenantAccessToken forwards this optional credential
 // capability without making it part of the broad state.Store contract.
 func (a storeAuthAdapter) AuthenticatePlatformTenantAccessToken(ctx context.Context, hash []byte) (state.Account, state.PlatformTenantAccessToken, error) {
