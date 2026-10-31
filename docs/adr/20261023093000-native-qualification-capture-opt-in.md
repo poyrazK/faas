@@ -321,6 +321,15 @@ ADR-568 requires.
   - The first queue delivery dead-lettered. All five attempts ran out while
     the worker's cold boots waited on slow `nft` and `debugfs` steps.
   - gitlab's capture was cancelled mid-copy of its private image.
+- 2026-10-31, n2, rerun with 4472b400d9:
+  - Both graphs, github and gitlab, were captured, restored, qualified and
+    activated natively, and each completed its first customer queue
+    delivery.
+  - github's serving evidence completed (`Serving:true`, no blocking
+    reasons).
+  - The applied revision was still never recorded. Every apid pass ended
+    `environment_runtime_unacknowledged`, which points at the runtime
+    readiness checks that follow serving convergence.
 - Pending: the n2 native GitOps journey through serving and the resilience
   phases.
 
