@@ -331,6 +331,7 @@ ListDeploymentAudit
 ListDeploymentAuditByAlertRule
 ListDeploymentLogs
 ListDeploymentScopeExclusions
+ListDeploymentSidecarEnvReseals
 ListDeploymentSidecarLayers
 ListDeploymentsByNodeID
 ListDeploymentsForAccount
@@ -602,6 +603,7 @@ UpsertAppTrustedSigner
 UpsertComputeNode
 UpsertComputeNodeFromOperator
 UpsertDeploymentOpenAPIDoc
+UpsertDeploymentOpenAPIDocIfUnderQuota
 UpsertDeploymentScanResult
 UpsertDeploymentSecretFindings
 UpsertDoctorObservation
