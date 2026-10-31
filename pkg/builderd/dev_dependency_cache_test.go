@@ -71,7 +71,7 @@ func TestPublishDependencyCacheReplacesAtomically(t *testing.T) {
 		t.Fatal(err)
 	}
 	dst := filepath.Join(root, "stable")
-	if err := publishDependencyCache(src, dst, 1<<20); err != nil {
+	if _, err := publishDependencyCache(src, dst, 1<<20, nil); err != nil {
 		t.Fatal(err)
 	}
 	assertCacheFixture(t, dst, "first")
@@ -87,7 +87,7 @@ func TestPublishDependencyCacheReplacesAtomically(t *testing.T) {
 	}
 
 	writeCacheFixture(t, src, "second")
-	if err := publishDependencyCache(src, dst, 1<<20); err != nil {
+	if _, err := publishDependencyCache(src, dst, 1<<20, nil); err != nil {
 		t.Fatal(err)
 	}
 	assertCacheFixture(t, dst, "second")

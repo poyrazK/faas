@@ -17,12 +17,14 @@ func agentJSON(a agentstore.Agent, latest *agentstore.Version) api.Agent {
 
 func versionJSON(v agentstore.Version) api.AgentVersion {
 	h := v.Harness
+	pause := !v.NoModelWaitPause
 	return api.AgentVersion{
 		Version: v.Version,
 		AgentVersionSpec: api.AgentVersionSpec{
 			Harness:        api.AgentHarness{Preset: h.Preset, Image: h.Image, Run: h.Run, Models: h.Models},
 			PromptTemplate: v.PromptTemplate, RAMMB: v.RAMMB, TimeoutSec: v.TimeoutSec,
 			Integrations: v.Integrations, AIBudgetMillicents: v.AIBudgetMillicents, Deliveries: deliveriesJSON(v.Deliveries),
+			PauseDuringModelCalls: &pause,
 		},
 		CreatedAt: v.CreatedAt,
 	}

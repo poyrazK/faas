@@ -60,7 +60,8 @@ to value, with Kubernetes syntax so a selector copied from `kubectl` works:
   never Secret data.
 
 The limits live in `pkg/api/limits.go` (`LabelsPerResourceMax`,
-`LabelKeyNameMax`, `LabelKeyPrefixMax`, `LabelValueMax`) and are the same on
+`LabelKeyNameMax`, `LabelKeyPrefixMax`, `LabelValueMax`, and
+`LabelSelectorMaxBytes` (4096), which bounds a selector) and are the same on
 every plan: labels hold no resources, so they cost nothing.
 
 Annotations (free-form metadata that selectors cannot match) are out of scope.

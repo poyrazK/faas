@@ -121,6 +121,7 @@ func (s *server) deleteSLO(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, p)
 		return
 	}
+	rules := s.rulesRemovedWith(r.Context(), acct, func(rule state.AlertRule) bool { return rule.SLOID == id })
 	if err := store.DeleteSLO(r.Context(), app.ID, id); err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			s.notFound(w, "no such SLO")
@@ -130,6 +131,7 @@ func (s *server) deleteSLO(w http.ResponseWriter, r *http.Request, acct state.Ac
 		return
 	}
 	s.audit.Emit(r.Context(), "slo.deleted", &acct.ID, map[string]any{"slo_id": id, "app_id": app.ID})
+	s.auditRulesRemovedWith(r.Context(), acct, rules, "slo", id)
 	w.WriteHeader(http.StatusNoContent)
 }
 

@@ -2,10 +2,12 @@
 
 Alerts: `FaasObjectStorageInventoryFailing`, `FaasS3GatewayErrorRateHigh`,
 `FaasObjectStorageUsageExportStale`, `FaasObjectStorageRegionNearlyFull`,
-`FaasObjectStorageRegionFull`, `FaasS3GatewayReadUsageFlushFailing`.
+`FaasObjectStorageRegionFull`, `FaasS3GatewayReadUsageFlushFailing`,
+`FaasPublicObjectReadUsageFlushFailing`.
 Sources: apid's inventory sweep (`pkg/apid/object/storage_accounting.go`),
 `s3-gatewayd` (`pkg/s3gateway`) and its usage exporter
-(`cmd/s3-gatewayd/main.go`).
+(`cmd/s3-gatewayd/main.go`), and public bucket reads in `gatewayd-public`
+(`pkg/objectstorage/public_read.go`).
 Metrics: `faas_object_storage_inventory_scans_total{outcome}`,
 `faas_object_storage_inventory_provider_requests_total`,
 `s3_gateway_ops_total{op="s3_request",code}`,
@@ -16,7 +18,9 @@ Metrics: `faas_object_storage_inventory_scans_total{outcome}`,
 `s3_gateway_read_admission_decisions_total{source}`,
 `s3_gateway_read_usage_flushes_total{outcome}`,
 `s3_gateway_org_access_checks_total{source}`,
-`s3_gateway_credential_resolutions_total{source}`.
+`s3_gateway_credential_resolutions_total{source}`,
+`gatewayd_public_object_read_admission_decisions_total{source}`,
+`gatewayd_public_object_read_usage_flushes_total{outcome}`.
 Decision records: [ADR 20261023223000](../adr/20261023223000-object-storage-bucket-scoped-availability.md),
 [ADR 20261030100835](../adr/20261030100835-object-storage-resumable-inventory.md) (resumable inventory),
 [ADR 20261029174627](../adr/20261029174627-object-storage-backend-pools.md) (bucket placement),
@@ -36,8 +40,9 @@ Severity: warn.
 - **Usage export stale.** With provider-report accounting, admission refuses
   transfers on every bucket of that backend once reports exceed
   `max_report_age_seconds`.
-- **Read count flushes failing.** `s3-gatewayd` admits `GET`/`HEAD` from a
-  per-bucket decision it caches for 2 s and writes read counts every second.
+- **Read count flushes failing.** `s3-gatewayd`, and `gatewayd-public` for
+  public bucket reads, admit `GET`/`HEAD` from a per-bucket decision they
+  cache for 2 s and write read counts every second.
   While flushes fail, counts wait in memory; while the decisions cannot be
   refreshed, reads keep working for 30 s and then answer `503`.
 - **Region nearly full or full.** Each customer bucket is its own provider
@@ -67,7 +72,9 @@ Severity: warn.
    and `s3_gateway_read_admission_decisions_total{source="failed"|"stale"}`
    for database reachability from the gateway;
    `s3_gateway_org_access_checks_total{source="failed"}` for reads under
-   organization-fenced credentials.
+   organization-fenced credentials. For public reads:
+   `journalctl -u faas-gatewayd-public | grep "public read usage flush failed"`
+   and `gatewayd_public_object_read_admission_decisions_total`.
 5. Capacity: `faas_object_storage_backend_buckets` against
    `faas_object_storage_backend_bucket_limit` per backend, and
    `journalctl -u faas-apid | grep "no backend with room"` for refusals.

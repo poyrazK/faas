@@ -55,6 +55,17 @@ func shopCompose(s shop) string {
 // Compose file.
 func shopSource(t *testing.T, s shop) string {
 	t.Helper()
+	dir := shopServices(t)
+	if err := os.WriteFile(filepath.Join(dir, "compose.yaml"), []byte(shopCompose(s)), 0o644); err != nil {
+		t.Fatalf("write compose.yaml: %v", err)
+	}
+	return dir
+}
+
+// shopServices copies testdata/project-shop's web and api services into a
+// fresh directory, without a Compose file.
+func shopServices(t *testing.T) string {
+	t.Helper()
 	dir := t.TempDir()
 	for _, service := range []string{"web", "api"} {
 		src := filepath.Join("testdata", "project-shop", service)
@@ -74,9 +85,6 @@ func shopSource(t *testing.T, s shop) string {
 				t.Fatalf("write shop source: %v", err)
 			}
 		}
-	}
-	if err := os.WriteFile(filepath.Join(dir, "compose.yaml"), []byte(shopCompose(s)), 0o644); err != nil {
-		t.Fatalf("write compose.yaml: %v", err)
 	}
 	return dir
 }
