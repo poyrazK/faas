@@ -15041,6 +15041,32 @@
     "kind": "operational"
   },
   {
+    "table": "project_environment_branch_deployments",
+    "columns": [
+      "app_id",
+      "created_at",
+      "deployment_id",
+      "environment_id",
+      "source_deployment_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_environment_branches",
+    "columns": [
+      "account_id",
+      "branch_point",
+      "created_at",
+      "depth",
+      "egress_mode",
+      "environment_id",
+      "expires_at",
+      "parent_environment_id",
+      "project_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "project_environment_cleanup_jobs",
     "columns": [
       "account_id",

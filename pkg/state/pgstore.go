@@ -5660,18 +5660,21 @@ func (s *PgStore) deleteProjectEnvironmentWithCleanup(
 	leaseDuration time.Duration,
 ) (ProjectEnvironmentCleanupJob, error) {
 	return retryTrafficSerialization(ctx, func() (ProjectEnvironmentCleanupJob, error) {
-		return s.deleteProjectEnvironmentOnce(ctx, accountID, projectID, slug, resources, leaseToken, leaseDuration)
+		return s.deleteProjectEnvironmentOnce(ctx, accountID, projectID, slug, resources, leaseToken, leaseDuration, false)
 	})
 }
 
 // The environment's bound custom domains cascade with it, which can expose a
 // foreign wildcard fallback, so the delete joins the binding guard (ADR-570).
+// retireBranch first ends an environment branch's deployments
+// (ADR-20261031193635); an ordinary delete refuses live releases instead.
 func (s *PgStore) deleteProjectEnvironmentOnce(
 	ctx context.Context,
 	accountID, projectID, slug string,
 	resources ProjectEnvironmentCleanupResources,
 	leaseToken string,
 	leaseDuration time.Duration,
+	retireBranch bool,
 ) (ProjectEnvironmentCleanupJob, error) {
 	tx, err := s.beginAccountAppTrafficMutation(ctx, accountID, "")
 	if err != nil {
@@ -5696,6 +5699,24 @@ func (s *PgStore) deleteProjectEnvironmentOnce(
 	}
 	if slug == "production" || slug == DefaultEnvScope || protected {
 		return ProjectEnvironmentCleanupJob{}, ErrConflict
+	}
+	var hasBranches bool
+	if err := tx.QueryRow(ctx, `
+		select exists (
+			select 1 from project_environment_branches b
+			  join project_environments e on e.id = b.parent_environment_id
+			 where e.project_id = $1 and e.slug = $2
+		)
+	`, projectID, slug).Scan(&hasBranches); err != nil {
+		return ProjectEnvironmentCleanupJob{}, mapErr(err)
+	}
+	if hasBranches {
+		return ProjectEnvironmentCleanupJob{}, ErrProjectEnvironmentBranchChildren
+	}
+	if retireBranch {
+		if err := retireProjectEnvironmentBranchDeploymentsTx(ctx, tx, accountID, projectID, slug); err != nil {
+			return ProjectEnvironmentCleanupJob{}, err
+		}
 	}
 
 	var hasLiveRelease bool
@@ -7395,6 +7416,24 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 			return Deployment{}, 0, err
 		}
 	}
+	branchInput, branchSourceID := d.branchInput, ""
+	if branchInput != nil {
+		if len(cloneInputs) > 0 || promotionInput != nil || activity != nil {
+			return Deployment{}, 0, ErrInvalidArgument
+		}
+		branchDeployment, existing, sourceID, err := prepareBranchDeploymentTx(ctx, tx, d)
+		if err != nil {
+			return Deployment{}, 0, err
+		}
+		if existing != nil {
+			return *existing, 0, nil
+		}
+		if err := validateDeploymentReleaseCommand(branchDeployment.ReleaseCommand, branchDeployment.ReleaseCommandShell); err != nil {
+			return Deployment{}, 0, err
+		}
+		d, branchSourceID = branchDeployment, sourceID
+		d.branchInput = nil
+	}
 	if promotionInput != nil {
 		capture, err := scanPromotionWorkloadSpec(tx.QueryRow(ctx, promotionWorkloadSpecSelect+`
 			where promotion_id = $1 and app_id = $2`, promotionInput.PromotionID, d.AppID))
@@ -7648,6 +7687,11 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 		}
 		created.RootfsPath, created.RootfsKey, created.RootfsBytes = d.RootfsPath, d.RootfsKey, d.RootfsBytes
 		created.SecretReloadSignal, created.SecretReloadSignalKnown = d.SecretReloadSignal, d.SecretReloadSignalKnown
+	}
+	if branchInput != nil {
+		if err := attachBranchDeploymentTx(ctx, tx, *branchInput, branchSourceID, d, &created); err != nil {
+			return Deployment{}, 0, err
+		}
 	}
 	if promotionInput != nil {
 		if err := preparePromotionWorkloadSpecTx(ctx, tx, created, *promotionInput); err != nil {

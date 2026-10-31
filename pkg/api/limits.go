@@ -3477,6 +3477,10 @@ type Limits struct {
 	// request's preview holds none (ADR-20261026090000). A preview lease is
 	// temporary and never consumes a DeployedApps slot.
 	PreviewApps int
+	// EnvironmentBranches caps an account's live environment branches
+	// (ADR-20261031193635). A branch boots nothing until it is called, so the
+	// cap bounds rows and parked deployments, not running compute.
+	EnvironmentBranches int
 	// OutboundRequestsPerDayMax (ADR-257) caps the customer-selected daily
 	// request limit on any one managed outbound integration. It is a policy
 	// ceiling, not an included usage allowance; an omitted limit remains uncapped.
@@ -5094,6 +5098,7 @@ var planLimits = map[Plan]Limits{
 		Plan:                      PlanFree,
 		DeployedApps:              1,
 		PreviewApps:               1,
+		EnvironmentBranches:       1,
 		OutboundRequestsPerDayMax: 100_000,
 		OutboundRatePerSecondMax:  10, OutboundBurstMax: 20, OutboundMaxInFlightMax: 10, OutboundRequestTimeoutMSMax: 30_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 60,
 		DeveloperLeaseMaxHours: 24, // `gregale dev --ttl` ceiling
@@ -5513,6 +5518,7 @@ var planLimits = map[Plan]Limits{
 		Plan:                      PlanHobby,
 		DeployedApps:              5,
 		PreviewApps:               2,
+		EnvironmentBranches:       2,
 		OutboundRequestsPerDayMax: 1_000_000,
 		OutboundRatePerSecondMax:  20, OutboundBurstMax: 100, OutboundMaxInFlightMax: 50, OutboundRequestTimeoutMSMax: 60_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 120,
 		DeveloperLeaseMaxHours: 72, // `gregale dev --ttl` ceiling
@@ -5953,6 +5959,7 @@ var planLimits = map[Plan]Limits{
 		Plan:                      PlanPro,
 		DeployedApps:              25,
 		PreviewApps:               5,
+		EnvironmentBranches:       5,
 		OutboundRequestsPerDayMax: 10_000_000,
 		OutboundRatePerSecondMax:  100, OutboundBurstMax: 500, OutboundMaxInFlightMax: 250, OutboundRequestTimeoutMSMax: 120_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 600,
 		DeveloperLeaseMaxHours: 168, // `gregale dev --ttl` ceiling
@@ -6358,6 +6365,7 @@ var planLimits = map[Plan]Limits{
 		Plan:                      PlanScale,
 		DeployedApps:              100,
 		PreviewApps:               20,
+		EnvironmentBranches:       20,
 		OutboundRequestsPerDayMax: MaxOutboundRequestsPerDay,
 		OutboundRatePerSecondMax:  500, OutboundBurstMax: 2000, OutboundMaxInFlightMax: 1000, OutboundRequestTimeoutMSMax: 300_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 3000,
 		DeveloperLeaseMaxHours: 336, // `gregale dev --ttl` ceiling
@@ -7019,6 +7027,15 @@ const (
 	AppForkDefaultTTL = time.Hour
 	AppForkMinTTL     = time.Minute
 	AppForkMaxTTL     = 4 * time.Hour
+
+	// Environment branches (ADR-20261031193635) expire at their TTL, which
+	// matches the preview range. A branch of a branch may go this deep.
+	EnvironmentBranchDefaultTTL = 7 * 24 * time.Hour
+	EnvironmentBranchMinTTL     = time.Hour
+	EnvironmentBranchMaxTTL     = 30 * 24 * time.Hour
+	EnvironmentBranchMaxDepth   = 2
+	// EnvironmentBranchSweepBatch bounds one expiry sweep.
+	EnvironmentBranchSweepBatch = 50
 
 	// Live forks (ADR-732) capture the newest running instance when the
 	// fork is created. The capture pauses a serving instance, so a new one

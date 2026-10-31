@@ -165,6 +165,15 @@ func (s *PgStore) cloneProjectEnvironmentOnce(ctx context.Context, clone Project
 	if err != nil {
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
 	}
+	if clone.branch != nil {
+		branch, err := insertProjectEnvironmentBranchTx(ctx, tx, *clone.branch, created)
+		if err != nil {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+		}
+		if clone.branchOut != nil {
+			*clone.branchOut = branch
+		}
+	}
 	if err := copyCloneFeatureFlagsTx(ctx, tx, created, flagSnapshot); err != nil {
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
 	}

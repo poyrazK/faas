@@ -6729,6 +6729,22 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	} else if memberErr != nil && !errors.Is(memberErr, state.ErrNotFound) {
 		return memberErr
 	}
+	// ADR-20261031193635: a deployment an environment branch created from its
+	// parent's artifact activates without a boot. Its first request cold boots
+	// and the branch then captures its own snapshots. Workers keep the normal
+	// prime because they run continuously; jobs are artifact-only below.
+	if mode := executionModeForApp(app); upgradeTarget == nil && (mode == api.ExecutionModeRequest || mode == api.ExecutionModeService) {
+		lazy, err := e.environmentBranchDeployment(ctx, dep.ID)
+		if err != nil {
+			return err
+		}
+		if lazy {
+			if err := e.verifyPrimeLayer(ctx, appID, primeLayer); err != nil {
+				return err
+			}
+			return e.emitDeploymentReady(ctx, deploymentID, mode, "", state.EnvironmentBranchActivationReason)
+		}
+	}
 	if executionModeForApp(app) == api.ExecutionModeJob {
 		if err := e.verifyPrimeLayer(ctx, appID, primeLayer); err != nil {
 			return err

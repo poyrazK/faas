@@ -50118,6 +50118,55 @@ CREATE TABLE public.project_environment_approvals (
 
 
 --
+-- Name: project_environment_branch_deployments; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_branch_deployments (
+    deployment_id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    source_deployment_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT project_environment_branch_deployments_not_self CHECK ((source_deployment_id <> deployment_id))
+);
+
+
+--
+-- Name: TABLE project_environment_branch_deployments; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.project_environment_branch_deployments IS 'ADR-20261031193635 deployments an environment branch created from its parent''s artifacts; they activate on first request.';
+
+
+--
+-- Name: project_environment_branches; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_environment_branches (
+    environment_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    parent_environment_id uuid NOT NULL,
+    branch_point timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    egress_mode text DEFAULT 'live'::text NOT NULL,
+    depth smallint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT project_environment_branches_depth CHECK (((depth >= 1) AND (depth <= 8))),
+    CONSTRAINT project_environment_branches_egress_mode CHECK ((egress_mode = ANY (ARRAY['live'::text, 'contained'::text, 'simulated'::text]))),
+    CONSTRAINT project_environment_branches_expiry CHECK ((expires_at > created_at)),
+    CONSTRAINT project_environment_branches_not_self CHECK ((parent_environment_id <> environment_id))
+);
+
+
+--
+-- Name: TABLE project_environment_branches; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.project_environment_branches IS 'ADR-20261031193635 environment branches: a lazy copy of a parent project environment as of branch_point, deleted at expires_at.';
+
+
+--
 -- Name: project_environment_cleanup_jobs; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -66254,6 +66303,30 @@ ALTER TABLE ONLY public.project_environment_approvals
 
 
 --
+-- Name: project_environment_branch_deployments project_environment_branch_deployments_one_per_app; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_branch_deployments
+    ADD CONSTRAINT project_environment_branch_deployments_one_per_app UNIQUE (environment_id, app_id);
+
+
+--
+-- Name: project_environment_branch_deployments project_environment_branch_deployments_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_branch_deployments
+    ADD CONSTRAINT project_environment_branch_deployments_pkey PRIMARY KEY (deployment_id);
+
+
+--
+-- Name: project_environment_branches project_environment_branches_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_branches
+    ADD CONSTRAINT project_environment_branches_pkey PRIMARY KEY (environment_id);
+
+
+--
 -- Name: project_environment_cleanup_jobs project_environment_cleanup_jobs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -77356,6 +77429,27 @@ CREATE INDEX project_environment_approvals_id_lookup_idx ON public.project_envir
 --
 
 CREATE INDEX project_environment_approvals_lookup_idx ON public.project_environment_approvals USING btree (account_id, project_slug, environment_slug, plan_token_hash, expires_at);
+
+
+--
+-- Name: project_environment_branches_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_environment_branches_expiry_idx ON public.project_environment_branches USING btree (expires_at);
+
+
+--
+-- Name: project_environment_branches_parent_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_environment_branches_parent_idx ON public.project_environment_branches USING btree (parent_environment_id);
+
+
+--
+-- Name: project_environment_branches_project_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_environment_branches_project_idx ON public.project_environment_branches USING btree (account_id, project_id);
 
 
 --
@@ -98160,6 +98254,62 @@ ALTER TABLE ONLY public.project_binding_verification_runs
 
 ALTER TABLE ONLY public.project_environment_approvals
     ADD CONSTRAINT project_environment_approvals_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_branch_deployments project_environment_branch_deployments_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_branch_deployments
+    ADD CONSTRAINT project_environment_branch_deployments_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_branch_deployments project_environment_branch_deployments_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_branch_deployments
+    ADD CONSTRAINT project_environment_branch_deployments_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_branch_deployments project_environment_branch_deployments_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_branch_deployments
+    ADD CONSTRAINT project_environment_branch_deployments_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environment_branches(environment_id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_branches project_environment_branches_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_branches
+    ADD CONSTRAINT project_environment_branches_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_branches project_environment_branches_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_branches
+    ADD CONSTRAINT project_environment_branches_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_environment_branches project_environment_branches_parent_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_branches
+    ADD CONSTRAINT project_environment_branches_parent_environment_id_fkey FOREIGN KEY (parent_environment_id) REFERENCES public.project_environments(id);
+
+
+--
+-- Name: project_environment_branches project_environment_branches_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_environment_branches
+    ADD CONSTRAINT project_environment_branches_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
 
 
 --

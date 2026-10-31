@@ -2507,6 +2507,9 @@ type Deployment struct {
 	releaseWorkerAttempt string
 	releaseConfigAttempt string
 	retryDeploymentID    string
+	// branchInput copies a parent deployment's artifact into an environment
+	// branch (ADR-20261031193635). Creation-only, never persisted as such.
+	branchInput *projectEnvironmentBranchDeploymentInput
 	// BuildDependencies is trusted APID admission input, captured atomically in
 	// a separate durable gate before the build can enter the queue.
 	BuildDependencies []DeploymentDependencyPin `json:"-"`

@@ -68,6 +68,7 @@ type ProjectEnvironmentResponse struct {
 	ClonedFrom     string                                    `json:"cloned_from,omitempty"`
 	Clone          *ProjectEnvironmentCloneResponse          `json:"clone,omitempty"`
 	CloneOperation *ProjectEnvironmentCloneOperationResponse `json:"clone_operation,omitempty"`
+	Branch         *ProjectEnvironmentBranchResponse         `json:"branch,omitempty"`
 }
 
 // ProjectEnvironmentCloneResponse reports non-secret counts copied by an

@@ -11945,6 +11945,28 @@ type ProjectEnvironmentApproval struct {
 	ApprovedByAccountID pgtype.UUID
 }
 
+// ADR-20261031193635 environment branches: a lazy copy of a parent project environment as of branch_point, deleted at expires_at.
+type ProjectEnvironmentBranch struct {
+	EnvironmentID       pgtype.UUID
+	AccountID           pgtype.UUID
+	ProjectID           pgtype.UUID
+	ParentEnvironmentID pgtype.UUID
+	BranchPoint         pgtype.Timestamptz
+	ExpiresAt           pgtype.Timestamptz
+	EgressMode          string
+	Depth               int16
+	CreatedAt           pgtype.Timestamptz
+}
+
+// ADR-20261031193635 deployments an environment branch created from its parent's artifacts; they activate on first request.
+type ProjectEnvironmentBranchDeployment struct {
+	DeploymentID       pgtype.UUID
+	EnvironmentID      pgtype.UUID
+	AppID              pgtype.UUID
+	SourceDeploymentID pgtype.UUID
+	CreatedAt          pgtype.Timestamptz
+}
+
 type ProjectEnvironmentCleanupJob struct {
 	ID              pgtype.UUID
 	AccountID       pgtype.UUID

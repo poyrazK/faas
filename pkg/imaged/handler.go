@@ -3598,6 +3598,10 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 			if err := h.validateColdStartActivation(ctx, app, dep, *ready); err != nil {
 				return err
 			}
+		} else if ready.NoSnapshotReason == state.EnvironmentBranchActivationReason {
+			if err := h.validateEnvironmentBranchActivation(ctx, dep, *ready, mode); err != nil {
+				return err
+			}
 		} else {
 			switch mode {
 			case api.ExecutionModeWorker:

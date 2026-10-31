@@ -38,6 +38,10 @@ type ProjectEnvironmentClone struct {
 	capturedValues         map[string]projectCloneWorkloadValues
 	capturedValueScopes    map[string]string
 	capturedPolicies       map[string]projectCloneScopedPolicies
+	// branch makes the target an environment branch of the source, recorded in
+	// the same transaction (ADR-20261031193635); branchOut receives its row.
+	branch    *ProjectEnvironmentBranchCreate
+	branchOut *ProjectEnvironmentBranch
 }
 
 // ProjectEnvironmentCloneResult contains non-secret copy counts.
@@ -289,6 +293,13 @@ func (m *MemStore) CloneProjectEnvironment(ctx context.Context, clone ProjectEnv
 		}
 	}
 	now := time.Now().UTC()
+	var branch ProjectEnvironmentBranch
+	if clone.branch != nil {
+		branch, err = m.prepareProjectEnvironmentBranchLocked(*clone.branch, source, now)
+		if err != nil {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+		}
+	}
 	created := ProjectEnvironment{
 		ID: newID(), AccountID: clone.AccountID, ProjectID: clone.ProjectID,
 		Slug: clone.TargetSlug, Protected: clone.TargetProtected,
@@ -305,6 +316,13 @@ func (m *MemStore) CloneProjectEnvironment(ctx context.Context, clone ProjectEnv
 		return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
 	}
 	m.projectEnvironments[created.ID] = created
+	if clone.branch != nil {
+		branch.EnvironmentID, branch.Slug = created.ID, created.Slug
+		m.projectEnvironmentBranches[created.ID] = branch
+		if clone.branchOut != nil {
+			*clone.branchOut = branch
+		}
+	}
 	m.copyCloneFeatureFlagsLocked(created, flagSnapshot)
 	for appID, captured := range settings {
 		hash, _ := WorkloadSettingsHash(captured) // validated before any target writes
