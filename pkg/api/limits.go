@@ -15115,6 +15115,11 @@ const (
 // PagerDuty event or email.
 const NotificationChannelTestsPerAccountMinute = 10
 
+// AlertPresetTestsPerAccountMinute caps preset test sends per account
+// (ADR-20261030214500): each one posts to the rule's webhook and records a
+// test delivery.
+const AlertPresetTestsPerAccountMinute = 10
+
 // Custom dashboards (ADR-20261022173833).
 const (
 	DashboardsPerAccount   = 20

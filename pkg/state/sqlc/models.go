@@ -369,6 +369,9 @@ type AlertEpisode struct {
 	AccountID  pgtype.UUID
 	OpenedAt   pgtype.Timestamptz
 	ResolvedAt pgtype.Timestamptz
+	RuleName   pgtype.Text
+	RuleMetric pgtype.Text
+	AppID      pgtype.UUID
 }
 
 type AlertHistoricalRollbackClaim struct {
