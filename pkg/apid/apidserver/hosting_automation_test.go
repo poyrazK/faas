@@ -75,7 +75,7 @@ func TestHostingAutomationBearerCannotEscapeSiteOrOperations(t *testing.T) {
 	if err := manager.Apply("frontend_hosting_retention_enabled", []byte("true")); err != nil {
 		t.Fatal(err)
 	}
-	minted := env.Do(t, "POST", root+"/automation-credentials", api.CreateHostingAutomationCredentialRequest{Label: "CI"}, nil)
+	minted := env.DoOperator(t, "POST", root+"/automation-credentials", api.CreateHostingAutomationCredentialRequest{Label: "CI"}, nil)
 	var credential api.HostingAutomationCredentialResponse
 	if minted.Code != 201 || json.Unmarshal(minted.Body.Bytes(), &credential) != nil {
 		t.Fatal(minted.Code, minted.Body)
@@ -118,7 +118,7 @@ func TestHostingAutomationBearerCannotEscapeSiteOrOperations(t *testing.T) {
 	if err := manager.Apply("frontend_hosting_automation_enabled", []byte("true")); err != nil {
 		t.Fatal(err)
 	}
-	revoked := env.Do(t, "DELETE", root+"/automation-credentials/"+credential.Credential.ID, nil, nil)
+	revoked := env.DoOperator(t, "DELETE", root+"/automation-credentials/"+credential.Credential.ID, nil, nil)
 	if revoked.Code != 204 {
 		t.Fatal(revoked.Code, revoked.Body)
 	}
