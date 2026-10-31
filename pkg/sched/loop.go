@@ -228,6 +228,10 @@ type Loop struct {
 	// stay in the DB (Mega-1 cluster-wide gate).
 	jobsDispatched bool
 
+	// apps serves the reaper's and the scaling-policy observer's app lists
+	// (WithAppSnapshot); nil reads the store.
+	apps appLister
+
 	// profileCaptureSlots bounds concurrent on-demand profile captures
 	// (ADR-1155); allocated on first drain by the loop goroutine.
 	profileCaptureSlots chan struct{}
@@ -289,6 +293,23 @@ func NewLoop(pool *pgxpool.Pool, engine *Engine, log *slog.Logger) *Loop {
 func (l *Loop) WithJobsDispatched(enabled bool) *Loop {
 	l.jobsDispatched = enabled
 	return l
+}
+
+// WithAppSnapshot serves the reaper's and the scaling-policy observer's app
+// lists from s, which the scale-up, targets and floor triggers share.
+func (l *Loop) WithAppSnapshot(s *AppSnapshot) *Loop {
+	if s != nil {
+		l.apps = s
+	}
+	return l
+}
+
+// appLists returns where the loop's app lists come from.
+func (l *Loop) appLists(store state.Store) appLister {
+	if l.apps != nil {
+		return l.apps
+	}
+	return store
 }
 
 // WithWorkflowsDispatched opts the Loop into the workflow dispatch ticker (ADR-081).
@@ -1926,10 +1947,10 @@ func (l *Loop) runScalingPolicyObservation(ctx context.Context) {
 	ownerNodeID := l.engine.OwnerNodeID()
 	var apps []state.App
 	var err error
-	if ownerNodeID != "" {
-		apps, err = store.ListAppsByNodeID(ctx, ownerNodeID)
+	if lists := l.appLists(store); ownerNodeID != "" {
+		apps, err = lists.ListAppsByNodeID(ctx, ownerNodeID)
 	} else {
-		apps, err = store.ListAllApps(ctx)
+		apps, err = lists.ListAllApps(ctx)
 	}
 	if err != nil {
 		if !errors.Is(err, context.Canceled) {
@@ -2539,10 +2560,10 @@ func (l *Loop) runReaper(ctx context.Context) {
 	// migration 00090.
 	var apps []state.App
 	var err error
-	if owner := l.engine.OwnerNodeID(); owner != "" {
-		apps, err = store.ListAppsByNodeID(ctx, owner)
+	if lists, owner := l.appLists(store), l.engine.OwnerNodeID(); owner != "" {
+		apps, err = lists.ListAppsByNodeID(ctx, owner)
 	} else {
-		apps, err = store.ListAllApps(ctx)
+		apps, err = lists.ListAllApps(ctx)
 	}
 	if err != nil {
 		l.log.Warn("reaper: list apps", "err", err)

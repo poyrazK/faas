@@ -1595,6 +1595,9 @@ func (r testEnv) Do(p0 *testing.T, p1 string, p2 string, p3 any, p4 map[string]s
 func (r testEnv) DoAdmin(p0 *testing.T, p1 string, p2 string, p3 any, p4 map[string]string) *httptest.ResponseRecorder {
 	return r.doAdmin(p0, p1, p2, p3, p4)
 }
+func (r testEnv) DoSession(p0 *testing.T, p1, p2, p3 string, p4 any, p5 map[string]string) *httptest.ResponseRecorder {
+	return r.doSession(p0, p1, p2, p3, p4, p5)
+}
 func (r testEnv) DoOperator(p0 *testing.T, p1 string, p2 string, p3 any, p4 map[string]string) *httptest.ResponseRecorder {
 	return r.doOperator(p0, p1, p2, p3, p4)
 }
