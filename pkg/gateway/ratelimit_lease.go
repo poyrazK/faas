@@ -428,9 +428,12 @@ func (t *leaseTable) leaseSize(st *leaseState) int {
 }
 
 // allowance is how many requests one counter may admit on this gateway
-// before their tokens are debited.
+// before their tokens are debited. A counter whose burst is below
+// 1/AllowanceFraction (20 at the default) gets none: one unverified request
+// per gateway would be a large share of a small burst, such as a sign-in
+// throttle's, so its requests wait for a lease instead.
 func (t *leaseTable) allowance(burst float64) int {
-	return max(1, int(math.Floor(t.cfg.AllowanceFraction*burst)))
+	return int(math.Floor(t.cfg.AllowanceFraction * burst))
 }
 
 func (t *leaseTable) count(scope, outcome string, n int) {

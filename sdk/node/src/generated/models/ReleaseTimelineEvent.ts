@@ -8,7 +8,7 @@ import type { RolloutDecision } from './RolloutDecision.js';
  */
 export type ReleaseTimelineEvent = {
   at: string;
-  kind: 'created' | 'scheduled' | 'schedule_started' | 'schedule_blocked' | 'schedule_cancelled' | 'approval_requested' | 'approved' | 'rejected' | 'approval_expired' | 'rollout_started' | 'advanced' | 'traffic_changed' | 'held' | 'completed' | 'aborted' | 'rollback_requested' | 'rolled_back' | 'watch_passed' | 'superseded' | 'note';
+  kind: 'created' | 'scheduled' | 'schedule_started' | 'schedule_blocked' | 'schedule_cancelled' | 'approval_requested' | 'approved' | 'rejected' | 'approval_expired' | 'rollout_started' | 'advanced' | 'traffic_changed' | 'held' | 'completed' | 'aborted' | 'rollback_requested' | 'rolled_back' | 'watch_passed' | 'watch_regressed' | 'superseded' | 'note';
   /**
    * What happened, in one sentence.
    */

@@ -191,7 +191,8 @@ func releaseEmailContent(n ReleaseNotice) (subject, body string) {
 		if link := reviewLink(n.ReviewURL, "approve"); link != "" {
 			fmt.Fprintf(&b, "\nApprove: %s\nReject: %s\n", link, reviewLink(n.ReviewURL, "reject"))
 		}
-		fmt.Fprintf(&b, "Or from a terminal: gregale approvals approve %s\n", n.DeploymentID)
+		// ADR-20261020085706 amendment 4: only a signed-in person approves.
+		b.WriteString("Approve it signed in to the Gregale dashboard; an API key or token cannot approve a release.\n")
 	} else if link := reviewLink(n.ReviewURL, ""); link != "" {
 		fmt.Fprintf(&b, "\nReview: %s\n", link)
 	}

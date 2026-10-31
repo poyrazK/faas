@@ -55,7 +55,7 @@ func TestReleaseSlackPayloadButtonsAndEscaping(t *testing.T) {
 func TestReleaseEmailAndPagerDuty(t *testing.T) {
 	subject, body := EmailContent(ReleaseMessage(requestedNotice(), time.Now()))
 	if subject != "[Gregale] Approval needed: release v42 of shop" || !strings.Contains(body, "Approve: https://console.gregale.dev/") ||
-		!strings.Contains(body, "gregale approvals approve 3f9c1e2a-0b7d-4c55-9e1a-2d6f8b4c7e10") {
+		!strings.Contains(body, "signed in to the Gregale dashboard") || strings.Contains(body, "gregale approvals approve") {
 		t.Fatalf("email = %q\n%s", subject, body)
 	}
 	rejected := requestedNotice()

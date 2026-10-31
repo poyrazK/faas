@@ -1952,7 +1952,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// systemd watchdog (started next to NotifyReadyWhen below) stops
 	// pinging when the beat is older than sched.MainLoopBudget.
 	liveness := wire.NewLiveness()
+	// One app snapshot for every poller that lists apps each second: the
+	// scale-up, targets and floor triggers, the reaper and the scaling-policy
+	// observer. It rereads the rows only when their version changed.
+	appSnapshot := sched.NewAppSnapshot(store)
 	loop := sched.NewLoop(pool, engine, log).
+		WithAppSnapshot(appSnapshot).
 		WithEventRecipientClaims(eventRecipientClaimsEnabled(os.Getenv("FAAS_EVENT_RECIPIENT_CLAIMS_ENABLED"))).
 		WithLiveness(liveness).
 		WithAppDeleteSubscriber(appDeleteSub).
@@ -2138,7 +2143,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// same interface but the scaleup trigger itself does
 		// not read it (the concurrent_requests axis lives in
 		// pkg/sched/targets — see loop.WithTargets below).
-		store, autoscaleReader, scraper,
+		appSnapshot, autoscaleReader, scraper,
 		schedScaleUpEngine{engine: engine},
 		engine.Ledger(),
 		scaleup.Options{
@@ -2157,7 +2162,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// instance stats enabled, but queue-depth autoscaling must still run.
 	// Tick treats a missing reader as no-signal for that metric.
 	targetsTrigger := targets.New(
-		store, autoscaleReader,
+		appSnapshot, autoscaleReader,
 		schedTargetsEngine{engine: engine},
 		schedTargetsLedger{ledger: engine.Ledger()},
 		targets.Options{
@@ -2208,7 +2213,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		floorInterval = time.Duration(n) * time.Second
 	}
 	floorTrigger := floor.New(
-		store,
+		appSnapshot,
 		store, // deploymentStore — issue #557 closure / ADR-074 (per-deployment walk)
 		schedFloorLedger{ledger: engine.Ledger()},
 		schedFloorEngine{engine: engine},
