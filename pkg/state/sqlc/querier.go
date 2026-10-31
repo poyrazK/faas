@@ -811,8 +811,13 @@ type Querier interface {
 	CutoverCheckedRollbackTarget(ctx context.Context, db DBTX, targetID pgtype.UUID) error
 	DataRepairHealthSnapshot(ctx context.Context, db DBTX, arg DataRepairHealthSnapshotParams) ([]byte, error)
 	DeactivateProjectReleaseSets(ctx context.Context, db DBTX, arg DeactivateProjectReleaseSetsParams) error
+	// ADR-20261031101000: replay resets attempts, so a keyed row whose pending
+	// deadline has passed would only expire again.
+	DeadLetterInvocationWorkExpired(ctx context.Context, db DBTX, invocationID pgtype.UUID) (bool, error)
 	// event_route entries cannot be replayed (DeadLetterReplayable), so they never
-	// take a page from replay-all.
+	// take a page from replay-all. Neither does keyed work whose pending deadline
+	// has passed (ADR-20261031101000); replaying one entry by id still reaches it,
+	// so the refusal names the deadline.
 	DeadLetterReplayCandidateIDs(ctx context.Context, db DBTX, arg DeadLetterReplayCandidateIDsParams) ([]string, error)
 	// issue #667 / ADR-078 — canonical "tail task reached terminal" path.
 	// Equivalent to BumpInstanceTailCount(ctx, id, -n) but kept as a
@@ -3661,6 +3666,12 @@ type Querier interface {
 	ListStuckDeployments(ctx context.Context, db DBTX, arg ListStuckDeploymentsParams) ([]ListStuckDeploymentsRow, error)
 	ListSyntheticCheckRuns(ctx context.Context, db DBTX, arg ListSyntheticCheckRunsParams) ([]SyntheticCheckRun, error)
 	ListSyntheticChecks(ctx context.Context, db DBTX, appID pgtype.UUID) ([]SyntheticCheck, error)
+	// ADR-20261022082305: synthetic gates probe canaries.
+	// Each synthetic gate (with an enabled check) of a request app whose
+	// default-scope canary is rolling out beside a serving predecessor. An app
+	// with several serving predecessors returns several rows per gate and is
+	// skipped by the caller.
+	ListSyntheticGateProbeTargets(ctx context.Context, db DBTX, batchLimit int32) ([]ListSyntheticGateProbeTargetsRow, error)
 	ListTCPListenerTLSObservations(ctx context.Context, db DBTX, listenerID pgtype.UUID) ([]AppTcpListenerTlsObservation, error)
 	// Tenant schedule candidates are one row per active tenant/app binding. The
 	// composite cursor prevents large tenants from being starved by the page cap.
@@ -5104,6 +5115,7 @@ type Querier interface {
 	PruneProjectBindingVerificationRuns(ctx context.Context, db DBTX, projectID pgtype.UUID) error
 	PruneProjectMigrations(ctx context.Context, db DBTX, arg PruneProjectMigrationsParams) error
 	PruneReadinessNotifications(ctx context.Context, db DBTX, arg PruneReadinessNotificationsParams) error
+	PruneReleaseGateProbeResults(ctx context.Context, db DBTX, before pgtype.Timestamptz) error
 	PruneRouteCheckHistory(ctx context.Context, db DBTX, arg PruneRouteCheckHistoryParams) error
 	PruneRouteHealthHistory(ctx context.Context, db DBTX, arg PruneRouteHealthHistoryParams) error
 	PruneRouteMonitorIncidents(ctx context.Context, db DBTX, arg PruneRouteMonitorIncidentsParams) error
@@ -5979,6 +5991,8 @@ type Querier interface {
 	// repeated open report never reopens or shortens a closed pause, and the
 	// node's watermark only moves forward. The caller sends each pause once.
 	RecordQuietPauses(ctx context.Context, db DBTX, arg RecordQuietPausesParams) error
+	// Adds one round's probe counts for a gate and revision.
+	RecordReleaseGateProbeResult(ctx context.Context, db DBTX, arg RecordReleaseGateProbeResultParams) error
 	// The request-ID journal is independent from sampled request telemetry. Only
 	// insert when the app is still owned by the authenticated account. The
 	// caller-generated record UUID makes an RPC retry idempotent without
@@ -6054,6 +6068,7 @@ type Querier interface {
 	// events, largest first. Error classes are a closed set; routes and
 	// messages are not returned.
 	ReleaseGateNewErrorGroups(ctx context.Context, db DBTX, arg ReleaseGateNewErrorGroupsParams) ([]ReleaseGateNewErrorGroupsRow, error)
+	ReleaseGateProbeTotals(ctx context.Context, db DBTX, arg ReleaseGateProbeTotalsParams) (ReleaseGateProbeTotalsRow, error)
 	ReleaseManagedPostgresCutover(ctx context.Context, db DBTX, arg ReleaseManagedPostgresCutoverParams) (int64, error)
 	ReleaseManagedPostgresDrainHostPorts(ctx context.Context, db DBTX, arg ReleaseManagedPostgresDrainHostPortsParams) error
 	ReleaseManagedPostgresLifecycleLease(ctx context.Context, db DBTX, arg ReleaseManagedPostgresLifecycleLeaseParams) (int64, error)

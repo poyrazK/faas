@@ -4,14 +4,18 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
+	"strconv"
+	"sync/atomic"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"golang.org/x/sys/unix"
 )
 
@@ -23,7 +27,18 @@ import (
 const (
 	eventPublishType    = byte(0x07)
 	eventPublishMaxBody = 64 << 10
+	// eventPublishVerdictType asks vmmd for its verdict (ADR-20261031102000):
+	// a 4-byte big-endian body length, the body, then vmmd's reply.
+	eventPublishVerdictType = byte(0x0B)
+	// eventPublishVerdictTimeout stays under the proxy's 5 s write timeout,
+	// so an unanswered publish still gets a 503 back to the app.
+	eventPublishVerdictTimeout = 4 * time.Second
 )
+
+// eventPublishVerdict is set when the host vmmd answers publishes with a
+// verdict: from the boot command line on cold boot, and from each resume
+// request after a restore.
+var eventPublishVerdict atomic.Bool
 
 // startEventPublishProxy exposes the metadata-style event ingress inside the
 // guest. The listener is restricted to the loopback-local link address; the
@@ -46,13 +61,9 @@ func startEventPublishProxy(log *slog.Logger) error {
 	mux.HandleFunc(metadataEnvPath, metadataEnvHandler)
 	mux.HandleFunc(metadataSecretReloadAckPath, metadataSecretReloadAckHandler)
 	mux.HandleFunc(crashCapturePath, crashCaptureHandler)
+	eventPublishVerdict.Store(bootArgSet(api.EventPublishVerdictBootArg))
 	mux.HandleFunc(eventPublishPath, func(w http.ResponseWriter, r *http.Request) {
-		handleEventPublishRequest(w, r, func(body []byte) error {
-			frame := make([]byte, 1+len(body))
-			frame[0] = eventPublishType
-			copy(frame[1:], body)
-			return sendGuestEventFrame(frame, 2*time.Second)
-		})
+		handleEventPublishRequest(w, r, sendEventPublish)
 	})
 	srv := &http.Server{
 		Handler:           mux,
@@ -129,7 +140,23 @@ func setMetadataLoopbackIPv4(fd int, operation uint, address []byte) error {
 	return nil
 }
 
-func handleEventPublishRequest(w http.ResponseWriter, r *http.Request, send func([]byte) error) {
+// sendEventPublish forwards one event to vmmd. Under a vmmd that answers,
+// the app gets vmmd's verdict; under an older one the frame is fire-and-forget
+// and the endpoint answers 202 once it is handed over, as before.
+func sendEventPublish(body []byte) (api.EventPublishVerdict, error) {
+	if eventPublishVerdict.Load() {
+		return sendGuestEventPublishForVerdict(body, eventPublishVerdictTimeout)
+	}
+	frame := make([]byte, 1+len(body))
+	frame[0] = eventPublishType
+	copy(frame[1:], body)
+	if err := sendGuestEventFrame(frame, 2*time.Second); err != nil {
+		return api.EventPublishVerdict{}, err
+	}
+	return api.EventPublishVerdict{Status: http.StatusAccepted}, nil
+}
+
+func handleEventPublishRequest(w http.ResponseWriter, r *http.Request, send func([]byte) (api.EventPublishVerdict, error)) {
 	if r.Method != http.MethodPost {
 		writeEventPublishError(w, http.StatusMethodNotAllowed, "method_not_allowed")
 		return
@@ -147,13 +174,35 @@ func handleEventPublishRequest(w http.ResponseWriter, r *http.Request, send func
 		writeEventPublishError(w, http.StatusBadRequest, "invalid_event")
 		return
 	}
-	if err := send(body); err != nil {
-		writeEventPublishError(w, http.StatusServiceUnavailable, "event_publish_unavailable")
+	verdict, err := send(body)
+	if err != nil {
+		// Unconfirmed: vmmd has the event but no answer came back, so it may
+		// have been accepted. Publishing it again with the same id is safe.
+		code := "event_publish_unavailable"
+		if errors.Is(err, errEventPublishUnconfirmed) {
+			code = "event_publish_unconfirmed"
+		}
+		w.Header().Set("Retry-After", "1")
+		writeEventPublishError(w, http.StatusServiceUnavailable, code)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusAccepted)
-	_, _ = io.WriteString(w, `{"accepted":true}`)
+	if verdict.Status == http.StatusAccepted {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = io.WriteString(w, `{"accepted":true}`)
+		return
+	}
+	status, code := verdict.Status, verdict.Code
+	if status < 400 || status > 599 {
+		status = http.StatusServiceUnavailable
+	}
+	if code == "" {
+		code = "event_publish_refused"
+	}
+	if verdict.RetryAfterSeconds > 0 {
+		w.Header().Set("Retry-After", strconv.Itoa(verdict.RetryAfterSeconds))
+	}
+	writeEventPublishError(w, status, code)
 }
 
 func writeEventPublishError(w http.ResponseWriter, status int, code string) {

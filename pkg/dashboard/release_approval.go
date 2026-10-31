@@ -8,3 +8,10 @@ type ReleaseApprovalPageData struct {
 	// Intent is "approve", "reject" or empty; it only preselects a button.
 	Intent string
 }
+
+// ReleasePageData is the /dashboard/releases/{id} page
+// (ADR-20261022120744). Like the approval page it carries only the release
+// ID; the page reads the timeline and the diff through the API.
+type ReleasePageData struct {
+	DeploymentID string
+}

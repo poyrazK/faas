@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -914,6 +915,53 @@ func TestNewHandler_BridgeFramingHeader(t *testing.T) {
 			// WriteHeader time, not earlier).
 			if rw.Code != http.StatusBadGateway {
 				t.Errorf("status code = %d, want %d (closed-port dial-fail path)", rw.Code, http.StatusBadGateway)
+			}
+		})
+	}
+}
+
+type flushCountingWriter struct {
+	*httptest.ResponseRecorder
+	flushes int
+}
+
+func (w *flushCountingWriter) Flush() { w.flushes++ }
+
+// chunkReader returns one chunk per Read, like a guest body arriving in pieces.
+type chunkReader struct{ chunks []string }
+
+func (r *chunkReader) Read(p []byte) (int, error) {
+	if len(r.chunks) == 0 {
+		return 0, io.EOF
+	}
+	n := copy(p, r.chunks[0])
+	r.chunks = r.chunks[1:]
+	return n, nil
+}
+
+// A body of unknown length streams: every chunk is flushed as it arrives. A
+// known-length body flushes each chunk but the last, which the handler's
+// return sends together with END_STREAM.
+func TestCopyStreamingSizedSkipsOnlyTheFinalFlush(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		length      int64
+		chunks      []string
+		wantFlushes int
+	}{
+		{"unknown length", -1, []string{"data: 1\n\n", "data: 2\n\n"}, 2},
+		{"known length in one chunk", 5, []string{"hello"}, 0},
+		{"known length in three chunks", 9, []string{"abc", "def", "ghi"}, 2},
+		{"short body", 10, []string{"abc"}, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := &flushCountingWriter{ResponseRecorder: httptest.NewRecorder()}
+			n, err := copyStreamingSized(w, &chunkReader{chunks: slices.Clone(tc.chunks)}, tc.length)
+			if err != nil || n != int64(len(strings.Join(tc.chunks, ""))) || w.Body.String() != strings.Join(tc.chunks, "") {
+				t.Fatalf("copied %d %q, %v", n, w.Body.String(), err)
+			}
+			if w.flushes != tc.wantFlushes {
+				t.Fatalf("flushes = %d, want %d", w.flushes, tc.wantFlushes)
 			}
 		})
 	}

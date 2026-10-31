@@ -107,6 +107,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"release resume", "deploy resume"},
 	{"release recover", "deploy recover"},
 	{"release diff", "deployment diff"},
+	{"release timeline", "deployment timeline"},
 	{"release hide", "deploys clear"},
 	{"release prune", "deploys clear-obsolete"},
 	{"release reorder", "deploys reorder"},
@@ -996,7 +997,7 @@ func lookupCliTreeTopic(words []string, help bool) (cliTreeTopic, bool) {
 		return cliTreeTopic{}, false
 	}
 	if len(words) == 1 {
-		if today && !cliTreeReshapes(noun.Name) {
+		if today && (!cliTreeReshapes(noun.Name) || !cliTreeListsNoun(noun.Name)) {
 			return cliTreeTopic{}, false
 		}
 		return cliTreeTopic{Path: words, Short: noun.Short}, true
@@ -1011,6 +1012,14 @@ func lookupCliTreeTopic(words []string, help bool) (cliTreeTopic, bool) {
 		}
 	}
 	return cliTreeTopic{Path: words, Short: "Commands under gregale " + path}, true
+}
+
+// cliTreeListsNoun reports whether the tree can list the noun's command. An
+// operator command (postgres) stays out of the tree (cliTreeDiscovery.node),
+// so it keeps today's help rather than a topic that lists nothing.
+func cliTreeListsNoun(noun string) bool {
+	command, ok := lookupCliCommand(cliTreeNounCommand(noun))
+	return ok && command.Audience == cliAudienceCustomer
 }
 
 // cliTreeReshapes reports a noun whose tree verbs differ from today's
