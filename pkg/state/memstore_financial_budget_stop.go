@@ -67,12 +67,14 @@ func (m *MemStore) RecordFinancialBudgetStopTarget(_ context.Context, account, i
 	if !exists || s.AccountID != account {
 		return ErrNotFound
 	}
-	if !financialBudgetStopActive(s, m.financialBudgets[s.PolicyID], target.ObservedAt) || !s.Matches(m.apps[target.AppID], target.EnvironmentID) {
+	app := m.apps[target.AppID]
+	if !financialBudgetStopActive(s, m.financialBudgets[s.PolicyID], target.ObservedAt) || !s.Matches(app, target.EnvironmentID) ||
+		m.financialBudgetPayerLocked(app.AccountID, app.OrgID) != account {
 		return ErrConflict
 	}
 	if s.Spec.Scope.Kind == "environment" {
-		env := m.projectEnvironments[s.Spec.Scope.ID]
-		if env.AccountID != account || env.ProjectID != m.apps[target.AppID].ProjectID {
+		env, ok := m.projectEnvironments[s.Spec.Scope.ID]
+		if !ok || env.ProjectID != app.ProjectID {
 			return ErrConflict
 		}
 	}

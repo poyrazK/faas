@@ -25,11 +25,13 @@ func (q *Queries) FinancialBudgetAccountLock(ctx context.Context, db DBTX, accou
 
 const financialBudgetAppActionEligible = `-- name: FinancialBudgetAppActionEligible :one
 SELECT EXISTS(
-  SELECT 1 FROM apps WHERE id = $1::uuid AND account_id = $2::uuid
-    AND status != 'deleted'
+  SELECT 1 FROM apps a
+  LEFT JOIN orgs o ON o.id = a.org_id AND o.resource_ownership_enabled AND NOT o.personal_org
+  WHERE a.id = $1::uuid AND a.status != 'deleted'
+    AND CASE WHEN o.id IS NULL THEN a.account_id = $2::uuid ELSE o.id = $2::uuid END
     AND CASE $3::text
-      WHEN 'stop_previews' THEN preview_of_slug IS NOT NULL AND preview_of_slug != ''
-      WHEN 'suspend_background' THEN workload_class IN ('worker','job')
+      WHEN 'stop_previews' THEN a.preview_of_slug IS NOT NULL AND a.preview_of_slug != ''
+      WHEN 'suspend_background' THEN a.workload_class IN ('worker','job')
       ELSE true END
 )::boolean AS eligible
 `
@@ -179,6 +181,33 @@ func (q *Queries) FinancialBudgetList(ctx context.Context, db DBTX, arg Financia
 	return items, nil
 }
 
+const financialBudgetMonitoredSubjects = `-- name: FinancialBudgetMonitoredSubjects :many
+SELECT DISTINCT account_id FROM financial_budget_policies
+WHERE deleted_at IS NULL AND spec->>'enabled' = 'true' AND spec->>'mode' = 'monitored'
+ORDER BY account_id
+`
+
+// The subjects meterd evaluates: one read per pass instead of one per account.
+func (q *Queries) FinancialBudgetMonitoredSubjects(ctx context.Context, db DBTX) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, financialBudgetMonitoredSubjects)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var account_id pgtype.UUID
+		if err := rows.Scan(&account_id); err != nil {
+			return nil, err
+		}
+		items = append(items, account_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const financialBudgetRevisionInsert = `-- name: FinancialBudgetRevisionInsert :exec
 INSERT INTO financial_budget_revisions(account_id, policy_id, revision, actor, mutation, spec)
 VALUES($1::uuid, $2::uuid, $3::bigint, $4::text, $5::text, $6::jsonb)
@@ -256,10 +285,20 @@ func (q *Queries) FinancialBudgetRevisionList(ctx context.Context, db DBTX, arg 
 const financialBudgetScopeOwned = `-- name: FinancialBudgetScopeOwned :one
 SELECT CASE $1::text
   WHEN 'account' THEN EXISTS(SELECT 1 FROM resource_namespaces WHERE id = $2::uuid)
-  WHEN 'app' THEN EXISTS(SELECT 1 FROM apps WHERE id = $3::uuid AND account_id = $2::uuid AND status != 'deleted')
+  WHEN 'app' THEN EXISTS(SELECT 1 FROM apps a
+    LEFT JOIN orgs o ON o.id = a.org_id AND o.resource_ownership_enabled AND NOT o.personal_org
+    WHERE a.id = $3::uuid AND a.status != 'deleted'
+      AND CASE WHEN o.id IS NULL THEN a.account_id = $2::uuid ELSE o.id = $2::uuid END)
   WHEN 'job' THEN EXISTS(SELECT 1 FROM jobs WHERE id = $3::uuid AND account_id = $2::uuid AND status != 'deleted')
-  WHEN 'project' THEN EXISTS(SELECT 1 FROM projects WHERE id = $3::uuid AND account_id = $2::uuid)
-  WHEN 'environment' THEN EXISTS(SELECT 1 FROM project_environments WHERE id = $3::uuid AND account_id = $2::uuid)
+  WHEN 'project' THEN EXISTS(SELECT 1 FROM projects p
+    LEFT JOIN orgs o ON o.id = p.org_id AND o.resource_ownership_enabled AND NOT o.personal_org
+    WHERE p.id = $3::uuid
+      AND CASE WHEN o.id IS NULL THEN p.account_id = $2::uuid ELSE o.id = $2::uuid END)
+  WHEN 'environment' THEN EXISTS(SELECT 1 FROM project_environments e
+    JOIN projects p ON p.id = e.project_id
+    LEFT JOIN orgs o ON o.id = p.org_id AND o.resource_ownership_enabled AND NOT o.personal_org
+    WHERE e.id = $3::uuid
+      AND CASE WHEN o.id IS NULL THEN e.account_id = $2::uuid ELSE o.id = $2::uuid END)
   ELSE false END::boolean AS owned
 `
 
@@ -269,6 +308,10 @@ type FinancialBudgetScopeOwnedParams struct {
 	ScopeID   pgtype.UUID
 }
 
+// A budget covers what its billing subject pays for (ADR-20261031211500): an
+// organization that owns its resources pays for its apps and projects, and the
+// member who created one does not. Usage evidence is recorded under the same
+// subject, so a scope billed elsewhere would read no spending.
 func (q *Queries) FinancialBudgetScopeOwned(ctx context.Context, db DBTX, arg FinancialBudgetScopeOwnedParams) (bool, error) {
 	row := db.QueryRow(ctx, financialBudgetScopeOwned, arg.ScopeKind, arg.AccountID, arg.ScopeID)
 	var owned bool

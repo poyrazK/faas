@@ -19,6 +19,7 @@ func cmdBillingBudgetPreview(args []string) int {
 	fs := newFlagSet("billing budget-preview", flag.ContinueOnError)
 	file := fs.String("file", "", "budget spec JSON file")
 	asJSON := fs.Bool("json", false, "print the machine-readable preview")
+	org := fs.String("org", "", "organization slug; preview an organization budget")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -36,7 +37,12 @@ func cmdBillingBudgetPreview(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	preview, err := client.PreviewFinancialBudget(context.Background(), spec)
+	var preview api.FinancialBudgetPreviewResponse
+	if *org != "" {
+		preview, err = client.PreviewOrgFinancialBudget(context.Background(), *org, spec)
+	} else {
+		preview, err = client.PreviewFinancialBudget(context.Background(), spec)
+	}
 	if err != nil {
 		return printErr("Could not preview budget", err)
 	}

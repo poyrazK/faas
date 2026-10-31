@@ -19,6 +19,10 @@ func cmdBillingFinancial(command string, args []string) int {
 	fs := newFlagSet("billing "+command, flag.ContinueOnError)
 	month := fs.String("month", "", "UTC usage month (YYYY-MM; default current)")
 	asJSON := fs.Bool("json", false, "print the machine-readable response")
+	var org string
+	if command == "costs" {
+		fs.StringVar(&org, "org", "", "organization slug; read the costs of an organization that owns its resources")
+	}
 	// The global --json is consumed before dispatch and sets jsonOutput,
 	// so `billing costs --json` printed the table (Hunt 12 H12-42).
 	wantJSON := func() bool { return *asJSON || jsonOutput }
@@ -55,7 +59,12 @@ func cmdBillingFinancial(command string, args []string) int {
 		printFinancialForecast(osStdout, response)
 		return 0
 	}
-	response, err := client.GetFinancialCosts(context.Background(), *month)
+	var response api.FinancialCostsResponse
+	if org != "" {
+		response, err = client.GetOrgFinancialCosts(context.Background(), org, *month)
+	} else {
+		response, err = client.GetFinancialCosts(context.Background(), *month)
+	}
 	if err != nil {
 		return printErr("Could not read financial costs", err)
 	}

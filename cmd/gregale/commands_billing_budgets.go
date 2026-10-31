@@ -28,9 +28,14 @@ func cmdBillingBudgets(args []string) int {
 	}
 	fs := newFlagSet("billing budgets "+verb, flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "print machine-readable data")
-	var file, key string
+	var file, key, org string
 	var expected, after int64
 	limit := api.FinancialBudgetHistoryMax
+	if verb != "channels" {
+		// An organization's budgets alert its billing contact; channels stay
+		// with account budgets (ADR-20261031211500).
+		fs.StringVar(&org, "org", "", "organization slug; manage the budgets of an organization that owns its resources")
+	}
 	if verb == "create" || verb == "update" {
 		fs.StringVar(&file, "file", "", "budget spec JSON file")
 	}
@@ -76,7 +81,49 @@ func cmdBillingBudgets(args []string) int {
 		return runBillingBudgetChannels(id, set, clear, *asJSON || jsonOutput)
 	}
 	// The global --json is consumed before dispatch (Hunt 12 H12-42).
-	return runBillingBudget(verb, id, file, key, expected, after, limit, *asJSON || jsonOutput)
+	return runBillingBudget(budgetCall{verb: verb, org: org, id: id, file: file, key: key, expected: expected, after: after, limit: limit}, *asJSON || jsonOutput)
+}
+
+// budgetCall is one parsed `billing budgets` request; org selects an
+// organization's budgets instead of the account's.
+type budgetCall struct {
+	verb, org, id, file, key string
+	expected, after          int64
+	limit                    int
+}
+
+func (b budgetCall) send(ctx context.Context, client *api.Client, request api.CreateFinancialBudgetRequest) (any, error) {
+	update := api.UpdateFinancialBudgetRequest{ExpectedRevision: b.expected, Spec: request.Spec}
+	if b.org != "" {
+		switch b.verb {
+		case "list":
+			return client.ListOrgFinancialBudgets(ctx, b.org)
+		case "get":
+			return client.GetOrgFinancialBudget(ctx, b.org, b.id)
+		case "create":
+			return client.CreateOrgFinancialBudget(ctx, b.org, request)
+		case "update":
+			return client.UpdateOrgFinancialBudget(ctx, b.org, b.id, update)
+		case "delete":
+			return client.DeleteOrgFinancialBudget(ctx, b.org, b.id, b.expected)
+		default:
+			return client.ListOrgFinancialBudgetRevisions(ctx, b.org, b.id, b.after, b.limit)
+		}
+	}
+	switch b.verb {
+	case "list":
+		return client.ListFinancialBudgets(ctx)
+	case "get":
+		return client.GetFinancialBudget(ctx, b.id)
+	case "create":
+		return client.CreateFinancialBudget(ctx, request)
+	case "update":
+		return client.UpdateFinancialBudget(ctx, b.id, update)
+	case "delete":
+		return client.DeleteFinancialBudget(ctx, b.id, b.expected)
+	default:
+		return client.ListFinancialBudgetRevisions(ctx, b.id, b.after, b.limit)
+	}
 }
 
 // runBillingBudgetChannels shows or replaces a budget's alert channels
@@ -137,13 +184,13 @@ func printBillingBudgetChannels(out api.FinancialBudgetChannelsResponse) error {
 	return tw.Flush()
 }
 
-func runBillingBudget(verb, id, file, key string, expected, after int64, limit int, asJSON bool) int {
+func runBillingBudget(call budgetCall, asJSON bool) int {
 	var request api.CreateFinancialBudgetRequest
-	if verb == "create" || verb == "update" {
-		if file == "" {
+	if call.verb == "create" || call.verb == "update" {
+		if call.file == "" {
 			return printErr("Budget file required", errors.New("use --file PATH"))
 		}
-		spec, err := readFinancialBudgetSpec(file)
+		spec, err := readFinancialBudgetSpec(call.file)
 		if err != nil {
 			return printErr("Invalid budget spec", err)
 		}
@@ -154,24 +201,10 @@ func runBillingBudget(verb, id, file, key string, expected, after int64, limit i
 		return printErr("Not logged in", err)
 	}
 	ctx := context.Background()
-	if key != "" {
-		ctx = api.ContextWithIdempotencyKey(ctx, key)
+	if call.key != "" {
+		ctx = api.ContextWithIdempotencyKey(ctx, call.key)
 	}
-	var out any
-	switch verb {
-	case "list":
-		out, err = client.ListFinancialBudgets(ctx)
-	case "get":
-		out, err = client.GetFinancialBudget(ctx, id)
-	case "create":
-		out, err = client.CreateFinancialBudget(ctx, request)
-	case "update":
-		out, err = client.UpdateFinancialBudget(ctx, id, api.UpdateFinancialBudgetRequest{ExpectedRevision: expected, Spec: request.Spec})
-	case "delete":
-		out, err = client.DeleteFinancialBudget(ctx, id, expected)
-	case "history":
-		out, err = client.ListFinancialBudgetRevisions(ctx, id, after, limit)
-	}
+	out, err := call.send(ctx, client, request)
 	if err != nil {
 		return printErr("Budget operation failed", err)
 	}

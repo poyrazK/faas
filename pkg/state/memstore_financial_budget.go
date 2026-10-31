@@ -67,6 +67,16 @@ func (m *MemStore) resolveFinancialBudgetScopeLocked(p financial.BudgetSpec) fin
 	return p
 }
 
+// financialBudgetPayerLocked is the billing subject that pays for a resource
+// of account in org: the organization when it owns its resources, else the
+// account (ADR-20261031211500, the FinancialBudgetScopeOwned query).
+func (m *MemStore) financialBudgetPayerLocked(account, orgID string) string {
+	if org, ok := m.orgs[orgID]; ok && !org.Personal && org.ResourceOwnershipEnabled {
+		return org.ID
+	}
+	return account
+}
+
 func (m *MemStore) financialBudgetScopeOwnedLocked(account string, p financial.BudgetSpec) error {
 	s := p.Scope
 	switch s.Kind {
@@ -74,7 +84,7 @@ func (m *MemStore) financialBudgetScopeOwnedLocked(account string, p financial.B
 		return nil
 	case "app":
 		app, ok := m.apps[s.ID]
-		if !ok || app.AccountID != account || app.Status == AppDeleted {
+		if !ok || m.financialBudgetPayerLocked(app.AccountID, app.OrgID) != account || app.Status == AppDeleted {
 			return ErrNotFound
 		}
 		if p.Action == "stop_previews" && app.PreviewOfSlug == "" {
@@ -89,17 +99,40 @@ func (m *MemStore) financialBudgetScopeOwnedLocked(account string, p financial.B
 			return nil
 		}
 	case "project":
-		if project, ok := m.projects[s.ID]; ok && project.AccountID == account {
+		if project, ok := m.projects[s.ID]; ok && m.financialBudgetPayerLocked(project.AccountID, project.OrgID) == account {
 			return nil
 		}
 	case "environment":
 		for _, environment := range m.projectEnvironments {
-			if environment.ID == s.ID && environment.AccountID == account {
+			if environment.ID != s.ID {
+				continue
+			}
+			project, ok := m.projects[environment.ProjectID]
+			if ok && m.financialBudgetPayerLocked(environment.AccountID, project.OrgID) == account {
 				return nil
 			}
 		}
 	}
 	return ErrNotFound
+}
+
+// ListFinancialBudgetMonitoredSubjects is every billing subject with an
+// enabled monitored budget.
+func (m *MemStore) ListFinancialBudgetMonitoredSubjects(context.Context) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	seen := map[string]bool{}
+	for _, p := range m.financialBudgets {
+		if p.DeletedAt == nil && p.Spec.Enabled && p.Spec.Mode == "monitored" {
+			seen[p.AccountID] = true
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for id := range seen {
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
 func (m *MemStore) CreateFinancialBudget(_ context.Context, account, id, actor string, spec financial.BudgetSpec) (FinancialBudget, error) {

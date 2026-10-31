@@ -2,6 +2,7 @@ package billing
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"time"
@@ -134,6 +135,25 @@ type financialBudgetMember struct {
 	traffic, preview, background bool
 }
 
+// financialBudgetSubjectApps lists the apps a billing subject may pay for: an
+// organization's apps, or the apps an account created.
+func financialBudgetSubjectApps(ctx context.Context, store state.Store, subject string) ([]state.App, error) {
+	org, err := store.OrgByID(ctx, subject)
+	if err == nil && !org.Personal {
+		lister, ok := store.(interface {
+			ListAppsByOrg(context.Context, string) ([]state.App, error)
+		})
+		if !ok {
+			return nil, ErrFinancialUnavailable
+		}
+		return lister.ListAppsByOrg(ctx, subject)
+	}
+	if err != nil && !errors.Is(err, state.ErrNotFound) {
+		return nil, err
+	}
+	return store.ListApps(ctx, subject)
+}
+
 func financialBudgetMembers(ctx context.Context, store state.Store, account string, scope financial.BudgetScope) ([]financialBudgetMember, error) {
 	var environment state.ProjectEnvironment
 	if scope.Kind == "environment" {
@@ -144,21 +164,34 @@ func financialBudgetMembers(ctx context.Context, store state.Store, account stri
 			return nil, ErrFinancialUnavailable
 		}
 		var err error
+		// PreviewFinancialBudget validated the environment against the paying
+		// subject; its account is only the member who created it.
 		environment, err = lookup.ProjectEnvironmentByID(ctx, scope.ID)
 		if err != nil {
 			return nil, err
 		}
-		if environment.AccountID != account {
-			return nil, state.ErrNotFound
-		}
 	}
-	apps, err := store.ListApps(ctx, account)
+	apps, err := financialBudgetSubjectApps(ctx, store, account)
 	if err != nil {
 		return nil, err
 	}
+	payers := map[string]string{}
 	out := []financialBudgetMember{}
 	for _, app := range apps {
-		if app.Status == state.AppDeleted || app.AccountID != account {
+		if app.Status == state.AppDeleted {
+			continue
+		}
+		// A budget covers what its subject pays for (ADR-20261031211500): an
+		// organization's apps, or the member's own apps but not those the
+		// member created for an organization that pays for them.
+		payer, known := payers[app.OrgID]
+		if !known {
+			if payer, err = state.FinancialBudgetPayer(ctx, store, state.App{AccountID: account, OrgID: app.OrgID}); err != nil {
+				return nil, err
+			}
+			payers[app.OrgID] = payer
+		}
+		if payer != account {
 			continue
 		}
 		identity := financial.Attribution{AppID: app.ID, ProjectID: app.ProjectID}

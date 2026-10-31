@@ -243,6 +243,18 @@ func (s *PgStore) ListFinancialBudgets(ctx context.Context, account string) ([]F
 	return out, nil
 }
 
+func (s *PgStore) ListFinancialBudgetMonitoredSubjects(ctx context.Context) ([]string, error) {
+	rows, err := sqlc.New().FinancialBudgetMonitoredSubjects(ctx, s.pool)
+	if err != nil {
+		return nil, fmt.Errorf("financial budget subjects: %w", err)
+	}
+	out := make([]string, 0, len(rows))
+	for _, id := range rows {
+		out = append(out, pgUUIDString(id))
+	}
+	return out, nil
+}
+
 func (s *PgStore) ListFinancialBudgetRevisions(ctx context.Context, account, id string, after int64, limit int) ([]FinancialBudgetRevision, error) {
 	if uuid.Validate(account) != nil || uuid.Validate(id) != nil || after < 0 || after > api.FinancialBudgetRevisionMax || limit < 1 || limit > api.FinancialBudgetHistoryMax {
 		return nil, ErrInvalidArgument

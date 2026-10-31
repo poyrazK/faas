@@ -38,13 +38,15 @@ func Response(ctx context.Context, store state.Store, p state.FinancialBudget, n
 		out.Status = "active"
 		out.EnforcementReady = true
 		out.Runtime = &financial.BudgetRuntime{Compute: &balance, Alerts: []financial.BudgetAlert{}}
-		out.Reasons = []string{"strict_app_gross_compute", "conservative_compute_commitments", "funded_execution_window_only", "subscription_storage_egress_tax_excluded"}
+		// ADR-1750 funds warm and frozen instances like running ones, so the
+		// commitments can exceed the invoice (ADR-20261031211500).
+		out.Reasons = []string{"strict_app_gross_compute", "conservative_compute_commitments", "commitments_include_paused_time", "funded_execution_window_only", "subscription_storage_egress_tax_excluded"}
 		if financial.StrictAccountCompute(p.Spec) {
 			out.Reasons[0] = "strict_account_net_compute"
 			out.Reasons = append(out.Reasons, "shared_quantity_allowance", "funded_job_attempts")
 		}
 		if financial.StrictAccountEgress(p.Spec) {
-			out.Reasons = []string{"strict_account_net_compute_egress", "one_paid_limit_two_quantity_allowances", "kernel_byte_credits", "unused_egress_credits_commit_conservatively", "egress_period_rate_pinned", "subscription_storage_builds_object_delivery_tax_excluded"}
+			out.Reasons = []string{"strict_account_net_compute_egress", "one_paid_limit_two_quantity_allowances", "kernel_byte_credits", "unused_egress_credits_commit_conservatively", "commitments_include_paused_time", "egress_period_rate_pinned", "subscription_storage_builds_object_delivery_tax_excluded"}
 		}
 		if financial.StrictJobCompute(p.Spec) {
 			out.Reasons[0] = "strict_job_gross_compute"

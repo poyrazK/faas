@@ -18165,6 +18165,237 @@ paths:
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/orgs/{slug}/billing/costs:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+    get:
+      tags: [orgs]
+      operationId: getOrgFinancialCosts
+      summary: Read the organization's attributable usage costs.
+      description: |
+        Requires current organization membership, usage:read and session MFA.
+        An organization that owns its resources pays for its apps, so their
+        usage evidence is recorded under it rather than under the members who
+        created them. Same report as GET /v1/billing/costs, for the organization.
+      parameters:
+        - name: month
+          in: query
+          description: Current or historical UTC usage month; defaults to the current month.
+          schema: {type: string, pattern: '^\d{4}-(0[1-9]|1[0-2])$'}
+      responses:
+        '200':
+          description: Organization-owned cost breakdown, coverage, forecasts, and separate invoice facts.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FinancialCostsResponse'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /v1/orgs/{slug}/billing/budgets:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+    get:
+      tags: [orgs]
+      operationId: listOrgFinancialBudgets
+      summary: List the organization's budget policies.
+      description: Requires current organization membership, usage:read and session MFA. Deleted policies are omitted. Drafts do not enforce limits.
+      responses:
+        '200':
+          description: Organization-owned policies, bounded to 128.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FinancialBudgetListResponse'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+    post:
+      tags: [orgs]
+      operationId: createOrgFinancialBudget
+      summary: Save an organization budget policy.
+      description: |
+        Requires the organization owner or billing role, admin scope, session MFA
+        and an Idempotency-Key (1..255 bytes). A budget covers what the
+        organization pays for: its apps, projects and environments, and its
+        whole account scope. The organization must own its resources. Monitored
+        notify and compute-only stop_previews policies can activate; alerts go
+        to the organization's billing contact. Strict policies return 422
+        financial_budget_activation_unavailable.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: Stable creation operation identity, required for retries across replay-cache retention.
+          schema: {type: string, minLength: 1, maxLength: 255}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateFinancialBudgetRequest'}
+      responses:
+        '201':
+          description: Saved policy with revision 1; retries retain its identity.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FinancialBudgetResponse'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422':
+          description: Invalid policy count or financial_budget_activation_unavailable; no policy mutation occurred.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /v1/orgs/{slug}/billing/budgets/preview:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+    post:
+      tags: [orgs]
+      operationId: previewOrgFinancialBudget
+      summary: Preview an organization budget and its workload consequences without writes.
+      description: Requires current organization membership, usage:read and session MFA. Same preview as POST /v1/billing/budgets/preview, over the apps the organization pays for. No policies, holds or decisions are written.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/FinancialBudgetPreviewRequest'}
+      responses:
+        '200':
+          description: Financial observation, workload consequences and enforcement readiness.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FinancialBudgetPreviewResponse'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /v1/orgs/{slug}/billing/budgets/{id}:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+      - name: id
+        in: path
+        required: true
+        description: Stable identity of an organization-owned budget policy.
+        schema: {type: string, format: uuid}
+    get:
+      tags: [orgs]
+      operationId: getOrgFinancialBudget
+      summary: Read an organization budget, including its deletion tombstone.
+      description: Requires current organization membership, usage:read and session MFA. Foreign or missing policies return 404.
+      responses:
+        '200':
+          description: Saved intent and explicit enforcement readiness.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FinancialBudgetResponse'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+    put:
+      tags: [orgs]
+      operationId: updateOrgFinancialBudget
+      summary: Replace an organization budget at its expected revision.
+      description: Requires the organization owner or billing role, admin scope, session MFA and Idempotency-Key. expected_revision must match the current policy; stale edits return 409. Strict policies return 422 financial_budget_activation_unavailable.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: Retry key for this replacement at its expected policy revision.
+          schema: {type: string, minLength: 1, maxLength: 255}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/UpdateFinancialBudgetRequest'}
+      responses:
+        '200':
+          description: Updated policy and incremented revision.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FinancialBudgetResponse'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422':
+          description: financial_budget_activation_unavailable; the existing policy revision is unchanged.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+    delete:
+      tags: [orgs]
+      operationId: deleteOrgFinancialBudget
+      summary: Tombstone an organization budget while retaining its revision history.
+      description: Requires the organization owner or billing role, admin scope, session MFA and Idempotency-Key. expected_revision prevents stale deletion.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: Retry identity for this policy tombstone operation.
+          schema: {type: string, minLength: 1, maxLength: 255}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DeleteFinancialBudgetRequest'}
+      responses:
+        '200':
+          description: Tombstone and incremented revision.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FinancialBudgetResponse'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /v1/orgs/{slug}/billing/budgets/{id}/revisions:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+    get:
+      tags: [orgs]
+      operationId: listOrgFinancialBudgetRevisions
+      summary: Page through an organization budget's immutable revisions.
+      description: Requires current organization membership, usage:read and session MFA. Use next_revision as after_revision for continuation.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Budget identity whose immutable revision audit is being listed.
+          schema: {type: string, format: uuid}
+        - name: after_revision
+          in: query
+          description: Exclusive revision cursor; use the previous response's next_revision.
+          schema: {type: integer, format: int64, minimum: 0, maximum: 9007199254740991, default: 0}
+        - name: limit
+          in: query
+          description: Maximum number of immutable revision records in this page.
+          schema: {type: integer, minimum: 1, maximum: 100, default: 100}
+      responses:
+        '200':
+          description: Revision page in ascending order.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FinancialBudgetHistoryResponse'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
   /v1/orgs/{organization}/projects:
     parameters:
       - $ref: '#/components/parameters/OrgProjectOrganization'

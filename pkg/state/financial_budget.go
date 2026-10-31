@@ -45,6 +45,42 @@ type FinancialBudgetStore interface {
 	ValidateFinancialBudgetScope(context.Context, string, financial.BudgetSpec) error
 }
 
+// FinancialBudgetPayer is the billing subject whose budgets cover app: its
+// organization when that organization owns its resources and is billed for
+// them, else the account that created it (ADR-20261031211500). It mirrors the
+// FinancialBudgetScopeOwned query and meterd's billing subject. A missing
+// organization falls back to the account, as AppResourceAccount's callers do.
+func FinancialBudgetPayer(ctx context.Context, store interface {
+	OrgByID(context.Context, string) (Org, error)
+}, app App) (string, error) {
+	if app.OrgID == "" {
+		return app.AccountID, nil
+	}
+	org, err := store.OrgByID(ctx, app.OrgID)
+	if errors.Is(err, ErrNotFound) {
+		return app.AccountID, nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if !org.Personal && org.ResourceOwnershipEnabled {
+		return org.ID, nil
+	}
+	return app.AccountID, nil
+}
+
+// FinancialBudgetSubjectLister lists every billing subject, account or
+// organization, with an enabled monitored budget, so meterd evaluates
+// organizations too and reads no policy table per idle account.
+type FinancialBudgetSubjectLister interface {
+	ListFinancialBudgetMonitoredSubjects(context.Context) ([]string, error)
+}
+
+var (
+	_ FinancialBudgetSubjectLister = (*MemStore)(nil)
+	_ FinancialBudgetSubjectLister = (*PgStore)(nil)
+)
+
 func ValidateFinancialBudgetSpec(p financial.BudgetSpec) error {
 	if financial.ValidateBudget(p) != nil || len(p.Name) > api.FinancialBudgetNameBytes || len(p.NotifyMillicents) > api.FinancialBudgetThresholds || p.LimitMillicents > api.FinancialBudgetMoneyMax || p.DrainSeconds > api.FinancialBudgetDrainMax {
 		return ErrInvalidArgument

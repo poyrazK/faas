@@ -1613,6 +1613,8 @@ type Querier interface {
 	FinancialBudgetGet(ctx context.Context, db DBTX, arg FinancialBudgetGetParams) (FinancialBudgetPolicy, error)
 	FinancialBudgetInsert(ctx context.Context, db DBTX, arg FinancialBudgetInsertParams) (FinancialBudgetPolicy, error)
 	FinancialBudgetList(ctx context.Context, db DBTX, arg FinancialBudgetListParams) ([]FinancialBudgetPolicy, error)
+	// The subjects meterd evaluates: one read per pass instead of one per account.
+	FinancialBudgetMonitoredSubjects(ctx context.Context, db DBTX) ([]pgtype.UUID, error)
 	FinancialBudgetProjectionChannelsEnqueue(ctx context.Context, db DBTX, arg FinancialBudgetProjectionChannelsEnqueueParams) error
 	FinancialBudgetProjectionClaim(ctx context.Context, db DBTX, arg FinancialBudgetProjectionClaimParams) (FinancialBudgetProjectionAlert, error)
 	FinancialBudgetProjectionDeliveryGet(ctx context.Context, db DBTX, arg FinancialBudgetProjectionDeliveryGetParams) (FinancialBudgetProjectionAlert, error)
@@ -1622,10 +1624,16 @@ type Querier interface {
 	FinancialBudgetProjectionSettle(ctx context.Context, db DBTX, arg FinancialBudgetProjectionSettleParams) (pgtype.UUID, error)
 	FinancialBudgetRevisionInsert(ctx context.Context, db DBTX, arg FinancialBudgetRevisionInsertParams) error
 	FinancialBudgetRevisionList(ctx context.Context, db DBTX, arg FinancialBudgetRevisionListParams) ([]FinancialBudgetRevision, error)
+	// A budget covers what its billing subject pays for (ADR-20261031211500): an
+	// organization that owns its resources pays for its apps and projects, and the
+	// member who created one does not. Usage evidence is recorded under the same
+	// subject, so a scope billed elsewhere would read no spending.
 	FinancialBudgetScopeOwned(ctx context.Context, db DBTX, arg FinancialBudgetScopeOwnedParams) (bool, error)
 	FinancialBudgetStopActive(ctx context.Context, db DBTX, arg FinancialBudgetStopActiveParams) ([]FinancialBudgetStopActiveRow, error)
 	FinancialBudgetStopInsert(ctx context.Context, db DBTX, arg FinancialBudgetStopInsertParams) error
 	FinancialBudgetStopTargetList(ctx context.Context, db DBTX, arg FinancialBudgetStopTargetListParams) ([]FinancialBudgetStopTarget, error)
+	// The stop's subject pays for the app: its organization when that owns its
+	// resources, else its account (ADR-20261031211500).
 	FinancialBudgetStopTargetPut(ctx context.Context, db DBTX, arg FinancialBudgetStopTargetPutParams) (int64, error)
 	FinancialBudgetUpdate(ctx context.Context, db DBTX, arg FinancialBudgetUpdateParams) (FinancialBudgetPolicy, error)
 	FinancialCompletedComputeMinutes(ctx context.Context, db DBTX, arg FinancialCompletedComputeMinutesParams) ([]pgtype.Timestamptz, error)

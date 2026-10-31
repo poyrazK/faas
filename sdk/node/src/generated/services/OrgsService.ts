@@ -30,9 +30,17 @@ import type { CreateApplicationStandardLogDestinationRequest } from '../models/C
 import type { CreateApplicationStandardPublisherRequest } from '../models/CreateApplicationStandardPublisherRequest.js';
 import type { CreateApplicationStandardVersionRequest } from '../models/CreateApplicationStandardVersionRequest.js';
 import type { CreateAppRequest } from '../models/CreateAppRequest.js';
+import type { CreateFinancialBudgetRequest } from '../models/CreateFinancialBudgetRequest.js';
 import type { CreateOrgAPIKeyRequest } from '../models/CreateOrgAPIKeyRequest.js';
 import type { CreateOrgRequest } from '../models/CreateOrgRequest.js';
 import type { CreateReleaseFreezeRequest } from '../models/CreateReleaseFreezeRequest.js';
+import type { DeleteFinancialBudgetRequest } from '../models/DeleteFinancialBudgetRequest.js';
+import type { FinancialBudgetHistoryResponse } from '../models/FinancialBudgetHistoryResponse.js';
+import type { FinancialBudgetListResponse } from '../models/FinancialBudgetListResponse.js';
+import type { FinancialBudgetPreviewRequest } from '../models/FinancialBudgetPreviewRequest.js';
+import type { FinancialBudgetPreviewResponse } from '../models/FinancialBudgetPreviewResponse.js';
+import type { FinancialBudgetResponse } from '../models/FinancialBudgetResponse.js';
+import type { FinancialCostsResponse } from '../models/FinancialCostsResponse.js';
 import type { InvitationListResponse } from '../models/InvitationListResponse.js';
 import type { InvitationWithTokenResponse } from '../models/InvitationWithTokenResponse.js';
 import type { InviteMemberRequest } from '../models/InviteMemberRequest.js';
@@ -58,6 +66,7 @@ import type { RotateOrgAPIKeyResponse } from '../models/RotateOrgAPIKeyResponse.
 import type { SeatUsageResponse } from '../models/SeatUsageResponse.js';
 import type { SetApplicationStandardLocalIntentRequest } from '../models/SetApplicationStandardLocalIntentRequest.js';
 import type { TransferOwnershipRequest } from '../models/TransferOwnershipRequest.js';
+import type { UpdateFinancialBudgetRequest } from '../models/UpdateFinancialBudgetRequest.js';
 import type { UsageResponse } from '../models/UsageResponse.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
@@ -2996,6 +3005,390 @@ export class OrgsService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Read the organization's attributable usage costs.
+   * Requires current organization membership, usage:read and session MFA.
+   * An organization that owns its resources pays for its apps, so their
+   * usage evidence is recorded under it rather than under the members who
+   * created them. Same report as GET /v1/billing/costs, for the organization.
+   *
+   * @returns FinancialCostsResponse Organization-owned cost breakdown, coverage, forecasts, and separate invoice facts.
+   * @throws ApiError
+   */
+  public static getOrgFinancialCosts({
+    slug,
+    month,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+    /**
+     * Current or historical UTC usage month; defaults to the current month.
+     */
+    month?: string,
+  }): CancelablePromise<FinancialCostsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{slug}/billing/costs',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'month': month,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * List the organization's budget policies.
+   * Requires current organization membership, usage:read and session MFA. Deleted policies are omitted. Drafts do not enforce limits.
+   * @returns FinancialBudgetListResponse Organization-owned policies, bounded to 128.
+   * @throws ApiError
+   */
+  public static listOrgFinancialBudgets({
+    slug,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+  }): CancelablePromise<FinancialBudgetListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{slug}/billing/budgets',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Save an organization budget policy.
+   * Requires the organization owner or billing role, admin scope, session MFA
+   * and an Idempotency-Key (1..255 bytes). A budget covers what the
+   * organization pays for: its apps, projects and environments, and its
+   * whole account scope. The organization must own its resources. Monitored
+   * notify and compute-only stop_previews policies can activate; alerts go
+   * to the organization's billing contact. Strict policies return 422
+   * financial_budget_activation_unavailable.
+   *
+   * @returns FinancialBudgetResponse Saved policy with revision 1; retries retain its identity.
+   * @throws ApiError
+   */
+  public static createOrgFinancialBudget({
+    slug,
+    idempotencyKey,
+    requestBody,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+    /**
+     * Stable creation operation identity, required for retries across replay-cache retention.
+     */
+    idempotencyKey: string,
+    requestBody: CreateFinancialBudgetRequest,
+  }): CancelablePromise<FinancialBudgetResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{slug}/billing/budgets',
+      path: {
+        'slug': slug,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `Invalid policy count or financial_budget_activation_unavailable; no policy mutation occurred.`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Preview an organization budget and its workload consequences without writes.
+   * Requires current organization membership, usage:read and session MFA. Same preview as POST /v1/billing/budgets/preview, over the apps the organization pays for. No policies, holds or decisions are written.
+   * @returns FinancialBudgetPreviewResponse Financial observation, workload consequences and enforcement readiness.
+   * @throws ApiError
+   */
+  public static previewOrgFinancialBudget({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+    requestBody: FinancialBudgetPreviewRequest,
+  }): CancelablePromise<FinancialBudgetPreviewResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{slug}/billing/budgets/preview',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read an organization budget, including its deletion tombstone.
+   * Requires current organization membership, usage:read and session MFA. Foreign or missing policies return 404.
+   * @returns FinancialBudgetResponse Saved intent and explicit enforcement readiness.
+   * @throws ApiError
+   */
+  public static getOrgFinancialBudget({
+    slug,
+    id,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+    /**
+     * Stable identity of an organization-owned budget policy.
+     */
+    id: string,
+  }): CancelablePromise<FinancialBudgetResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{slug}/billing/budgets/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Replace an organization budget at its expected revision.
+   * Requires the organization owner or billing role, admin scope, session MFA and Idempotency-Key. expected_revision must match the current policy; stale edits return 409. Strict policies return 422 financial_budget_activation_unavailable.
+   * @returns FinancialBudgetResponse Updated policy and incremented revision.
+   * @throws ApiError
+   */
+  public static updateOrgFinancialBudget({
+    slug,
+    id,
+    idempotencyKey,
+    requestBody,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+    /**
+     * Stable identity of an organization-owned budget policy.
+     */
+    id: string,
+    /**
+     * Retry key for this replacement at its expected policy revision.
+     */
+    idempotencyKey: string,
+    requestBody: UpdateFinancialBudgetRequest,
+  }): CancelablePromise<FinancialBudgetResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/orgs/{slug}/billing/budgets/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        422: `financial_budget_activation_unavailable; the existing policy revision is unchanged.`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Tombstone an organization budget while retaining its revision history.
+   * Requires the organization owner or billing role, admin scope, session MFA and Idempotency-Key. expected_revision prevents stale deletion.
+   * @returns FinancialBudgetResponse Tombstone and incremented revision.
+   * @throws ApiError
+   */
+  public static deleteOrgFinancialBudget({
+    slug,
+    id,
+    idempotencyKey,
+    requestBody,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+    /**
+     * Stable identity of an organization-owned budget policy.
+     */
+    id: string,
+    /**
+     * Retry identity for this policy tombstone operation.
+     */
+    idempotencyKey: string,
+    requestBody: DeleteFinancialBudgetRequest,
+  }): CancelablePromise<FinancialBudgetResponse> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/orgs/{slug}/billing/budgets/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Page through an organization budget's immutable revisions.
+   * Requires current organization membership, usage:read and session MFA. Use next_revision as after_revision for continuation.
+   * @returns FinancialBudgetHistoryResponse Revision page in ascending order.
+   * @throws ApiError
+   */
+  public static listOrgFinancialBudgetRevisions({
+    slug,
+    id,
+    afterRevision,
+    limit = 100,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+    /**
+     * Budget identity whose immutable revision audit is being listed.
+     */
+    id: string,
+    /**
+     * Exclusive revision cursor; use the previous response's next_revision.
+     */
+    afterRevision?: number,
+    /**
+     * Maximum number of immutable revision records in this page.
+     */
+    limit?: number,
+  }): CancelablePromise<FinancialBudgetHistoryResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{slug}/billing/budgets/{id}/revisions',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      query: {
+        'after_revision': afterRevision,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
         `,
       },
     });

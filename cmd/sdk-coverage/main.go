@@ -537,6 +537,14 @@ var methodRouteMap = map[string]string{
 	"PATCH /v1/orgs/{slug}/plan":                                                                                       "ChangeOrgPlan",
 	"GET /v1/orgs/{slug}/overage-cap":                                                                                  "GetOrgOverageCap", // ADR-20261030093512
 	"POST /v1/orgs/{slug}/overage-cap":                                                                                 "SetOrgOverageCap",
+	"GET /v1/orgs/{slug}/billing/costs":                                                                                "GetOrgFinancialCosts", // ADR-20261031211500
+	"POST /v1/orgs/{slug}/billing/budgets/preview":                                                                     "PreviewOrgFinancialBudget",
+	"GET /v1/orgs/{slug}/billing/budgets":                                                                              "ListOrgFinancialBudgets",
+	"POST /v1/orgs/{slug}/billing/budgets":                                                                             "CreateOrgFinancialBudget",
+	"GET /v1/orgs/{slug}/billing/budgets/{id}":                                                                         "GetOrgFinancialBudget",
+	"PUT /v1/orgs/{slug}/billing/budgets/{id}":                                                                         "UpdateOrgFinancialBudget",
+	"DELETE /v1/orgs/{slug}/billing/budgets/{id}":                                                                      "DeleteOrgFinancialBudget",
+	"GET /v1/orgs/{slug}/billing/budgets/{id}/revisions":                                                               "ListOrgFinancialBudgetRevisions",
 	"GET /v1/orgs/{organization}/projects":                                                                             "ListOrgProjects",
 	"GET /v1/orgs/{organization}/projects/{slug}":                                                                      "GetOrgProject",
 	"PATCH /v1/orgs/{organization}/projects/{slug}":                                                                    "UpdateOrgProject",
