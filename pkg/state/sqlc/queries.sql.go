@@ -17386,7 +17386,7 @@ func (q *Queries) EventAckExpire(ctx context.Context, db DBTX, arg EventAckExpir
 }
 
 const eventAckExpired = `-- name: EventAckExpired :many
-SELECT i.id,i.account_id,i.app_id,i.attempts,i.replay_generation,i.quota_reserved,a.max_attempts,a.retry_delay_ms,coalesce(i.headers->>'x-gregale-event-subscription-id','')::text AS subscription_id FROM invocations i JOIN event_delivery_acknowledgments a ON a.invocation_id=i.id AND a.attempt=i.attempts AND a.replay_generation=i.replay_generation
+SELECT i.id,i.account_id,i.app_id,i.attempts,i.replay_generation,i.quota_reserved,coalesce(i.async_quota_subject_id,i.account_id) AS quota_subject_id,a.max_attempts,a.retry_delay_ms,coalesce(i.headers->>'x-gregale-event-subscription-id','')::text AS subscription_id FROM invocations i JOIN event_delivery_acknowledgments a ON a.invocation_id=i.id AND a.attempt=i.attempts AND a.replay_generation=i.replay_generation
 WHERE i.state='dispatching' AND a.phase='awaiting' AND i.lease_expires_at<=clock_timestamp()
 ORDER BY i.lease_expires_at,i.id LIMIT $1::integer FOR UPDATE OF i SKIP LOCKED
 `
@@ -17398,6 +17398,7 @@ type EventAckExpiredRow struct {
 	Attempts         int32
 	ReplayGeneration int64
 	QuotaReserved    bool
+	QuotaSubjectID   pgtype.UUID
 	MaxAttempts      int32
 	RetryDelayMs     int64
 	SubscriptionID   string
@@ -17419,6 +17420,7 @@ func (q *Queries) EventAckExpired(ctx context.Context, db DBTX, batchLimit int32
 			&i.Attempts,
 			&i.ReplayGeneration,
 			&i.QuotaReserved,
+			&i.QuotaSubjectID,
 			&i.MaxAttempts,
 			&i.RetryDelayMs,
 			&i.SubscriptionID,
@@ -17470,7 +17472,7 @@ func (q *Queries) EventAckGet(ctx context.Context, db DBTX, invocationID pgtype.
 }
 
 const eventAckInvocationLock = `-- name: EventAckInvocationLock :one
-SELECT i.id,i.account_id,i.app_id,i.source,i.state,i.attempts,i.replay_generation,i.headers,i.operation_id,i.on_success_destination_id,i.on_failure_destination_id,i.lease_expires_at,i.result,i.quota_reserved FROM invocations i JOIN apps a ON a.id=i.app_id AND a.account_id=i.account_id
+SELECT i.id,i.account_id,i.app_id,i.source,i.state,i.attempts,i.replay_generation,i.headers,i.operation_id,i.on_success_destination_id,i.on_failure_destination_id,i.lease_expires_at,i.result,i.quota_reserved,coalesce(i.async_quota_subject_id,i.account_id) AS quota_subject_id FROM invocations i JOIN apps a ON a.id=i.app_id AND a.account_id=i.account_id
 WHERE i.id=$1::uuid AND i.account_id=$2::uuid AND i.app_id=$3::uuid AND a.status<>'deleted' FOR UPDATE OF i
 `
 
@@ -17495,6 +17497,7 @@ type EventAckInvocationLockRow struct {
 	LeaseExpiresAt         pgtype.Timestamptz
 	Result                 []byte
 	QuotaReserved          bool
+	QuotaSubjectID         pgtype.UUID
 }
 
 func (q *Queries) EventAckInvocationLock(ctx context.Context, db DBTX, arg EventAckInvocationLockParams) (EventAckInvocationLockRow, error) {
@@ -17515,6 +17518,7 @@ func (q *Queries) EventAckInvocationLock(ctx context.Context, db DBTX, arg Event
 		&i.LeaseExpiresAt,
 		&i.Result,
 		&i.QuotaReserved,
+		&i.QuotaSubjectID,
 	)
 	return i, err
 }

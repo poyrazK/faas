@@ -146,6 +146,12 @@ func newEventAdmissionPlan(ctx context.Context, receipt *PublishedEventWork, cla
 	headerMap := propagation.MapCarrier{"x-gregale-event-id": envelope.ID, "x-gregale-event-source": envelope.Source,
 		"x-gregale-event-type": envelope.Type, "x-gregale-event-subscription-id": r.ID,
 		"x-gregale-event-acceptance-id": strconv.FormatInt(receipt.ID, 10)}
+	// ADR-1411: a subscription with an acknowledgment lease gets
+	// it on every delivery, so the scheduler issues the consumer a token.
+	// Only the legacy routeSubscription path stamped it before.
+	if receipt.ID > 0 && r.AcknowledgmentLeaseSeconds > 0 {
+		headerMap[eventAcknowledgmentSecondsHeader] = strconv.Itoa(r.AcknowledgmentLeaseSeconds)
+	}
 	otel.GetTextMapPropagator().Inject(traceContext, headerMap)
 	if span := trace.SpanContextFromContext(traceContext); span.IsValid() {
 		headerMap[api.TraceIDHeader] = span.TraceID().String()
