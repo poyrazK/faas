@@ -7,6 +7,25 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Managed PostgreSQL GA — 2026-10-31 (not released)
+
+[ADR-20261031091607](adr/20261031091607-managed-postgres-ga.md) moves
+`managed-postgres`, `postgres-bindings` and `postgres-restore` to `ga` and
+resize and organization databases to `beta`. Rollbacks that restore the
+database become their own preview, `database-rollbacks`. The code-side GA
+blockers from the 2026-10-23 review are closed (caps, storage pool, delete
+undo window, SQL probe, the Neon review fixes); all of it is unreleased.
+
+Open evidence:
+- `tests/journeys/postgres_test.go::TestManagedPostgres` has not run against
+  production yet. It needs the release, an approved production backend and
+  the owner's account released by the `managed_postgres` flag (the
+  [GA rollout](managed-postgres.md#ga-rollout)).
+- The compute and storage cap qualifications, the deletion hold check and the
+  enforcement switches are operator steps in the same rollout.
+- Free and Hobby cannot restore: a restore is a second database and those
+  plans allow one.
+
 ## Crons GA blockers — 2026-10-26 (#5649, merged 2026-10-27, not released)
 
 The 2026-10-26 crons GA review found four blockers; #5649 fixes them

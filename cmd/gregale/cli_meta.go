@@ -5720,10 +5720,9 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
-		Name:     "postgres",
-		DocSlug:  "postgres",
-		Short:    "Operator preview: manage PostgreSQL databases and bindings",
-		Audience: cliAudienceOperator,
+		Name:    "postgres",
+		DocSlug: "postgres",
+		Short:   "Create, attach and restore managed PostgreSQL databases",
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List managed PostgreSQL databases"},
 			{Name: "capabilities", Short: "Show plan and region PostgreSQL feature support", Flags: []cliFlag{
@@ -5774,7 +5773,7 @@ var cliCommands = []cliCommand{
 				{Name: "name", Short: "name for the restored database", Req: true, Value: "NAME"},
 				{Name: "point-in-time", Short: "RFC3339 restore timestamp", Req: true, Value: "TIMESTAMP"},
 			}},
-			{Name: "live", Short: "Enable live queries and manage the live secret (operator preview)", Subcommands: []cliSub{
+			{Name: "live", Short: "Enable live queries and manage the live secret (preview)", Subcommands: []cliSub{
 				{Name: "status", Short: "Show whether live queries are enabled and the live secrets' key IDs", Positionals: []string{"<database>"}},
 				{Name: "enable", Short: "Enable live queries and issue the live secret", Positionals: []string{"<database>"}, Flags: []cliFlag{
 					{Name: "app", Short: "store the secret as an app secret on this app", Value: "APP"},

@@ -589,6 +589,9 @@ var cliTreeAliases = []cliTreeAlias{
 	{"admin postgres reconcile", "postgres reconcile"},
 	{"admin postgres usage-import", "postgres usage-import"},
 	{"admin postgres diagnostics", "postgres diagnostics"},
+	// Sealed live queries stay an operator preview (ADR-20261016151947);
+	// customers read live through `data-api live`.
+	{"admin postgres live", "postgres live"},
 	{"admin billing refresh-invoice", "billing refresh-invoice"},
 	{"admin billing backfill-invoices", "billing backfill-invoices"},
 }

@@ -241,14 +241,14 @@ func TestReleaseSafetyDashboardShowsTheAppsGuards(t *testing.T) {
 	}
 }
 
-func TestRollbackRestoreDatabasesIsHiddenWithoutPostgresRestore(t *testing.T) {
+func TestRollbackRestoreDatabasesIsHiddenWithoutDatabaseRollbacks(t *testing.T) {
 	f := newSwitchFixture(t)
 	if err := f.env.InstallCapabilityGate(); err != nil {
 		t.Fatal(err)
 	}
 	w := f.do(t, http.MethodPost, "/v1/apps/"+f.slug+"/rollback", api.RollbackRequest{TargetDeploymentID: &f.v1.ID, RestoreDatabases: true, AcknowledgeReleases: true})
 	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), `unknown field \"restore_databases\"`) {
-		t.Fatalf("restore_databases with postgres-restore off = %d %s, want the unknown-field answer", w.Code, w.Body)
+		t.Fatalf("restore_databases with database-rollbacks off = %d %s, want the unknown-field answer", w.Code, w.Body)
 	}
 }
 
