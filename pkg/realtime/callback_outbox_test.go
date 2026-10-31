@@ -964,7 +964,8 @@ func TestCallbackOutboxLimitsEachAccountToItsShare(t *testing.T) {
 	event := func(account, endpoint string, n int) Event {
 		e := testCallbackEvent()
 		e.ID = fmt.Sprintf("evt_%s_%s_%d", account, endpoint, n)
-		e.AccountID, e.EndpointID = account, endpoint
+		// Endpoint IDs are UUIDs, unique across accounts.
+		e.AccountID, e.EndpointID = account, account+"-"+endpoint
 		e.ConnectionID = fmt.Sprintf("conn_%s_%s_%d", account, endpoint, n)
 		return e
 	}
