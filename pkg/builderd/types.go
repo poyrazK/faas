@@ -200,6 +200,9 @@ type BuildOutcome struct {
 	// result. The orchestrator surfaces a warning when the next sync will be cold.
 	DependencyCacheStored     bool
 	DependencyCacheStoreError string
+	// DependencyCacheSharedBytes: bytes of the stored cache that link to
+	// shared platform layers instead of being its own (ADR-20261031103801).
+	DependencyCacheSharedBytes int64
 	// DependencyCacheUnchanged: the guest kept the imported cache because
 	// the build's plan and install inputs matched it, so nothing was stored.
 	DependencyCacheUnchanged bool
