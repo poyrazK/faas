@@ -167,11 +167,11 @@ func MonthBilledComputeMBSeconds(current api.Plan, snapshots []FinancialPriceSna
 				return 0, err
 			}
 		}
+		// The first segment's hours end by its end; a later segment's hours
+		// use its own activation from its first hour on.
 		allowanceAt := end
 		if i > 0 {
 			allowanceAt = segmentStart.Add(time.Hour)
-		} else if len(bounds) > 0 {
-			allowanceAt = min(end, through)
 		}
 		included := MonthComputeIncludedMBSeconds(current, snapshots, allowanceAt)
 		billed += api.BillableMBSecondsAbove(included, usageAtEnd) - api.BillableMBSecondsAbove(included, usageAtStart)
