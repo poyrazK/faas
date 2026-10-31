@@ -2,11 +2,18 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"hash/maphash"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
+	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -231,13 +238,199 @@ func BenchmarkTrafficPolicyFreeze(b *testing.B) {
 		b.Fatal(err)
 	}
 	app := App{ID: "app", AccountID: "owner", Plan: api.PlanScale, PublicAuth: PublicAuthConfig{Mode: "open"},
-		CORSDefaultOrigins: []string{"https://app.test"}, DeclaredRoutes: []DeclaredRoute{{Path: "/orders/{id}", Methods: []string{"GET", "POST"}}}}
-	b.ReportAllocs()
-	for b.Loop() {
-		if _, _, err := freezeTrafficApp(ctx, app); err != nil {
-			b.Fatal(err)
+		CORSDefaultOrigins: []string{"https://app.test"}, DeclaredRoutes: []DeclaredRoute{{Path: "/orders/{id}", Methods: []string{"GET", "POST"}}},
+		Favicon: bytes.Repeat([]byte{0x89, 'P', 'N', 'G'}, 2048)}
+	for _, bench := range []struct {
+		name    string
+		freezes *appFreezes
+	}{{"unmemoized", nil}, {"memoized", newAppFreezes()}} {
+		b.Run(bench.name, func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				if _, _, err := bench.freezes.freeze(ctx, app); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+// legacyFreezeTrafficApp is the freeze as it was before memoization. The
+// memoized one must produce the same copy and byte-for-byte the same digest:
+// the revision is response and span evidence, and gateways on both sides of a
+// release must name one policy the same way.
+func legacyFreezeTrafficApp(ctx context.Context, app App) (App, string, error) {
+	encoded, err := json.Marshal(app)
+	if err != nil {
+		return App{}, "", err
+	}
+	var frozen App
+	if err := json.Unmarshal(encoded, &frozen); err != nil {
+		return App{}, "", err
+	}
+	pinned, _ := ctx.Value(pinnedEdgePoliciesKey{}).(map[string]*edgePolicySnapshot)
+	hosts := make(map[string]string, len(pinned))
+	for host, entry := range pinned {
+		hosts[host] = entry.revision
+	}
+	limits, _ := api.LimitsFor(app.Plan)
+	effective, err := json.Marshal(struct {
+		App            json.RawMessage
+		Hosts          map[string]string
+		Limits         api.Limits
+		DeclaredRoutes string `json:",omitempty"`
+	}{encoded, hosts, limits, declaredRoutePolicyRevision(ctx)})
+	if err != nil {
+		return App{}, "", err
+	}
+	return frozen, policyDigest(effective), nil
+}
+
+func TestAppFreezesMatchTheUnmemoizedFreeze(t *testing.T) {
+	enabled := true
+	apps := map[string]App{
+		"empty": {},
+		"minimal": {ID: "app", AccountID: "owner", Plan: api.PlanFree},
+		"unknown plan": {ID: "app", AccountID: "owner", Plan: "legacy-plan"},
+		"escaped strings": {ID: "app", AccountID: "owner", Plan: api.PlanPro,
+			RobotsTxt: "User-agent: *\nDisallow: /<admin>&\u2028\u2029\"quoted\"", CanonicalHost: "ünïcode.test"},
+		"nested values": {ID: "app", AccountID: "owner", Plan: api.PlanScale, Favicon: bytes.Repeat([]byte{0, 0xff, '<'}, 700),
+			CORSDefaultEnabled: &enabled, CORSDefaultOrigins: []string{"https://a.test", "https://b.test"},
+			DeclaredRoutes: []DeclaredRoute{{Path: "/orders/{id}", Methods: []string{"GET", "POST"}}, {Path: "/empty", Methods: []string{}}},
+			Sidecars: []AppSidecar{{Name: "metrics", Port: 9100}}, Ports: []AppPort{{Name: "http", Port: 8080, Protocol: "http"}},
+			PreAuthRateLimit: &api.PreAuthRateLimitConfig{Mode: "enforce", RequestsPerSecond: 10, Burst: 20},
+			PublicAuth: PublicAuthConfig{Mode: "basic", BasicSealed: []byte("sealed"), IPAllowlist: []netip.Prefix{netip.MustParsePrefix("203.0.113.0/24")}},
+			ImportedRoutePolicy: &ImportedRoutePolicy{Document: []byte("not encoded"), Found: true}},
+		"empty slices": {ID: "app", AccountID: "owner", Plan: api.PlanHobby, CORSDefaultOrigins: []string{}, DeclaredRoutes: []DeclaredRoute{}},
+	}
+	hostA := &HostEntry{Host: "a.test", Budget: []EdgeRuleBudgetResolved{{ID: "budget", BudgetMs: 1000}}}
+	hostB := &HostEntry{Host: "b.test"}
+	for _, entry := range []*HostEntry{hostA, hostB} {
+		if err := entry.SealPolicy(); err != nil {
+			t.Fatal(err)
 		}
 	}
+	pinnedOne, err := WithPinnedHostPolicy(t.Context(), hostA.Host, hostA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pinnedTwo, err := WithPinnedHostPolicy(pinnedOne, hostB.Host, hostB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contexts := map[string]context.Context{
+		"no pins":         t.Context(),
+		"one pinned host": pinnedOne,
+		"two pinned hosts and declared routes": context.WithValue(pinnedTwo, declaredRoutePolicyRevisionKey{},
+			"declared-routes-v1:<&>"),
+	}
+	freezes := newAppFreezes()
+	for appName, app := range apps {
+		for ctxName, ctx := range contexts {
+			wantApp, wantRevision, err := legacyFreezeTrafficApp(ctx, app)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, pass := range []string{"miss", "hit"} {
+				gotApp, gotRevision, err := freezes.freeze(ctx, app)
+				if err != nil {
+					t.Fatalf("%s/%s/%s: %v", appName, ctxName, pass, err)
+				}
+				if gotRevision != wantRevision || !reflect.DeepEqual(gotApp, wantApp) {
+					t.Fatalf("%s/%s/%s: memoized freeze diverged: %s, want %s", appName, ctxName, pass, gotRevision, wantRevision)
+				}
+			}
+		}
+	}
+}
+
+func TestAppFreezesShareOnlyAnIdenticalEncoding(t *testing.T) {
+	freezes := newAppFreezes()
+	app := App{ID: "app", AccountID: "owner", Plan: api.PlanPro, CORSDefaultOrigins: []string{"https://old.test"}}
+	first, revision, err := freezes.freeze(t.Context(), app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, same, err := freezes.freeze(t.Context(), app)
+	if err != nil || same != revision || &again.CORSDefaultOrigins[0] != &first.CORSDefaultOrigins[0] {
+		t.Fatalf("identical encoding was not shared: %s %s %v", revision, same, err)
+	}
+	if &first.CORSDefaultOrigins[0] == &app.CORSDefaultOrigins[0] {
+		t.Fatal("the shared copy aliases the source app")
+	}
+	app.CORSDefaultOrigins[0] = "https://new.test"
+	changed, changedRevision, err := freezes.freeze(t.Context(), app)
+	if err != nil || changedRevision == revision || changed.CORSDefaultOrigins[0] != "https://new.test" || first.CORSDefaultOrigins[0] != "https://old.test" {
+		t.Fatalf("a changed app reused the old policy: %s %v", changedRevision, err)
+	}
+
+	// Two encodings that share a hash key: the cached one is not returned.
+	other := App{ID: "other", AccountID: "owner", Plan: api.PlanFree}
+	encoded, err := json.Marshal(other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	impostor, err := sealAppFreeze(0, []byte(`{"ID":"impostor"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	impostor.key = maphash.Bytes(freezes.seed, encoded)
+	freezes.store(impostor)
+	frozen, otherRevision, err := freezes.freeze(t.Context(), other)
+	if err != nil || frozen.ID != "other" {
+		t.Fatalf("a colliding entry answered for another app: %+v %v", frozen.ID, err)
+	}
+	if _, want, _ := legacyFreezeTrafficApp(t.Context(), other); otherRevision != want {
+		t.Fatalf("collision changed the digest: %s, want %s", otherRevision, want)
+	}
+}
+
+func TestAppFreezesStayWithinTheirByteBudget(t *testing.T) {
+	freezes := newAppFreezes()
+	oversized := App{ID: "oversized", Favicon: make([]byte, appFreezeCacheBytes/16)}
+	if _, _, err := freezes.freeze(t.Context(), oversized); err != nil {
+		t.Fatal(err)
+	}
+	if len(freezes.index) != 0 {
+		t.Fatal("an encoding above the per-entry bound was kept")
+	}
+	favicon := make([]byte, appFreezeCacheBytes/64)
+	for i := range 64 {
+		if _, _, err := freezes.freeze(t.Context(), App{ID: fmt.Sprintf("app-%d", i), Favicon: favicon}); err != nil {
+			t.Fatal(err)
+		}
+		if freezes.bytes > appFreezeCacheBytes || freezes.order.Len() != len(freezes.index) {
+			t.Fatalf("cache over budget after %d apps: %d bytes, %d/%d entries", i+1, freezes.bytes, freezes.order.Len(), len(freezes.index))
+		}
+	}
+	if freezes.order.Len() == 64 {
+		t.Fatal("no entry was evicted")
+	}
+	newest := freezes.order.Front().Value.(*appFreeze)
+	if newest.frozen.ID != "app-63" {
+		t.Fatalf("most recent entry = %s, want app-63", newest.frozen.ID)
+	}
+}
+
+func TestAppFreezesAreSafeForConcurrentRequests(t *testing.T) {
+	freezes := newAppFreezes()
+	var wg sync.WaitGroup
+	for worker := range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range 200 {
+				app := App{ID: fmt.Sprintf("app-%d", (worker+i)%5), AccountID: "owner", Plan: api.PlanPro}
+				got, revision, err := freezes.freeze(context.Background(), app)
+				_, want, _ := legacyFreezeTrafficApp(context.Background(), app)
+				if err != nil || got.ID != app.ID || revision != want {
+					t.Errorf("concurrent freeze of %s: %s, want %s (%v)", app.ID, revision, want, err)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
 }
 
 // A pinned policy is a JSON copy of the cached entry. ADR-962 conditions must
