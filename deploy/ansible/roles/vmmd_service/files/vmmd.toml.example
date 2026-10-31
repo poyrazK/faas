@@ -168,6 +168,13 @@
 # stream_bridge_gomaxprocs = 1
 # stream_bridge_gogc = 200
 
+# local_data_socket: also serve /run/faas/vmmd-data.sock to this node's
+# gatewayd-internal without TLS, admitting only its uid and only its
+# forwarding RPCs (ADR-20261030230157). Off also removes the socket, so the
+# gateway goes back to mTLS. FAAS_VMMD_LOCAL_DATA_SOCKET overrides.
+# Default: false
+# local_data_socket = true
+
 # kernel_path: path to the Firecracker-compatible kernel image. The daemon
 # refuses to start if this file does not exist. Default: /srv/fc/base/vmlinux-6.1
 # kernel_path = "/srv/fc/base/vmlinux-6.1"

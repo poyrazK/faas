@@ -39,3 +39,23 @@ tests:
         alertname: FaasBaseScanRefusingBoots
       - eval_time: 30m
         alertname: FaasBaseScanRefusingBoots
+
+  - interval: 1m
+    name: "a shared-base scan failure held on the last complete scan pages"
+    input_series:
+      - series: 'imaged_base_scan_failures_held_total{job="imaged",instance="10.0.0.3:9105",base="base/releases/runner-node22-amd64-33df.ext4",reason="scanner_unavailable"}'
+        values: '0+1x30'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: FaasBaseScanFailureHeld
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              component: imaged
+              family: base_scan_gate
+              base: base/releases/runner-node22-amd64-33df.ext4
+              reason: scanner_unavailable
+            exp_annotations:
+              summary: "Scans of base/releases/runner-node22-amd64-33df.ext4 keep failing (scanner_unavailable); boots run on its last complete scan"
+              description: "imaged's renewals of base/releases/runner-node22-amd64-33df.ext4 have kept failing with scanner_unavailable for ten minutes. Boots continue on the last complete scan of the same bytes, but vmmd refuses every boot on the base once that scan is 24 hours old. scanner_unavailable and scanner_invalid point at Grype or its database, artifact_read at the artifact store."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBaseScanRefusingBoots.md"

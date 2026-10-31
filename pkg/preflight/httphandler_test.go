@@ -100,3 +100,26 @@ func newCountingGitHubStub(t *testing.T, calls *int, files map[string][]byte) *h
 	t.Cleanup(inner.Close)
 	return counting
 }
+
+// Only a few unauthenticated checks fetch and unpack a repository at once;
+// past that a check is refused instead of adding another unpack to the
+// control plane (bug hunt 2026-10-28 B39).
+func TestHandler_RefusesChecksPastTheConcurrencyCap(t *testing.T) {
+	stub := newGitHubStub(t, map[string][]byte{"package.json": []byte(`{"name":"api"}`)})
+	defer stub.Close()
+	h := newTestHandler(t, stub)
+	for range cap(h.running) {
+		h.running <- struct{}{}
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/preflight?source=gregale/busy", nil))
+	if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Retry-After") == "" {
+		t.Fatalf("busy check = %d (Retry-After %q), want 503 with Retry-After", rec.Code, rec.Header().Get("Retry-After"))
+	}
+	<-h.running
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/preflight?source=gregale/busy", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("check with a free slot = %d, want 200 (body %s)", rec.Code, rec.Body.String())
+	}
+}

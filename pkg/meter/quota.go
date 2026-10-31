@@ -98,6 +98,20 @@ type QuotaParams struct {
 func (p QuotaParams) Enforce(ctx context.Context, account state.Account, usedGB float64, at time.Time) (QuotaAction, error) {
 	store, notif, schedd, mailer, log := p.Store, p.Notif, p.Parker, p.Mailer, p.Log
 	res := CheckQuota(account.Plan, usedGB)
+	if account.Plan.IsPaid() && usedGB >= float64(smallestPaidAllowanceGB()) {
+		// A paid month bills overage above the allowance its recorded plans
+		// grant (ADR-1162, time-weighted by ADR-20261030093512), so it warns
+		// above that allowance too (ADR-20261030120000). After an upgrade the
+		// allowance can sit below the current plan's, so the history is read
+		// from the smallest paid allowance on. Free keeps its own allowance:
+		// its hard stop is what the financial model prices, whatever plan the
+		// month began on.
+		quota, err := monthQuotaGB(ctx, store, account, at)
+		if err != nil {
+			return QuotaAction{AccountID: account.ID, Plan: account.Plan}, err
+		}
+		res = checkQuotaAgainst(account.Plan, usedGB, quota)
+	}
 	act := QuotaAction{
 		AccountID: account.ID, Plan: account.Plan,
 		Action: res.Action, UsedGB: res.UsedGB, QuotaGB: res.QuotaGB,
@@ -240,4 +254,32 @@ func notifyAccountAppLifecycle(ctx context.Context, store state.Store, notif Not
 			log.Warn("meter: account lifecycle notify app", "account", accountID, "app", app.ID, "kind", kind, "err", err)
 		}
 	}
+}
+
+// smallestPaidAllowanceGB is the lowest monthly allowance of any paid plan, a
+// floor for any month a paid account's plans grant.
+func smallestPaidAllowanceGB() int {
+	smallest := 0
+	for _, plan := range api.Plans {
+		if q := plan.PlanIncludedGBHours(); plan.IsPaid() && (smallest == 0 || q < smallest) {
+			smallest = q
+		}
+	}
+	return smallest
+}
+
+// monthQuotaGB is a paid account's quota ladder allowance in GB-RAM-hours:
+// the compute allowance the month's recorded plans grant, computed exactly as
+// the provider pusher removes it (state.MonthComputeIncludedMBSeconds). Stores
+// without plan history keep the current plan's.
+func monthQuotaGB(ctx context.Context, store state.Store, account state.Account, at time.Time) (int, error) {
+	history, ok := store.(state.FinancialStore)
+	if !ok {
+		return account.Plan.PlanIncludedGBHours(), nil
+	}
+	snapshots, err := history.ListFinancialPriceSnapshots(ctx, account.ID, AccountMonthKey(at))
+	if err != nil {
+		return 0, fmt.Errorf("meter: quota plan history for %s: %w", account.ID, err)
+	}
+	return int(state.MonthComputeIncludedMBSeconds(account.Plan, snapshots, at) / api.SecondsPerGBHour), nil
 }

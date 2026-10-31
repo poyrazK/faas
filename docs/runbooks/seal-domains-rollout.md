@@ -555,6 +555,53 @@ again, and restart schedd.
 Rollback: set `faas_seal_domain_runtime_binding_required: false`, converge
 the compute nodes, and restart vmmd. Bound secrets stay bound.
 
+### 4g. Contract: vmmd drops the fleet and host keys
+
+This step needs:
+
+- 4d complete;
+- the build contract (6e), because a contracted vmmd also opens registry
+  passwords with the build domain alone;
+- the release that sends sidecar env copies past its rollback window.
+
+On a compute host, check what still holds vmmd to the fleet key, as in 4d:
+
+```bash
+sudo gregalectl seal-domain migrate --domain runtime --check --db-env /etc/faas/compute-db.env
+```
+
+- Go on only once it reports `0 pending` and nothing left on the fleet key.
+- If anything is pending, run the 4d migration again.
+- Short-lived copies and old crash capture keys clear on their own.
+
+Then restart schedd on every node, one at a time. A schedd whose owner cache
+predates the last migration run can still send a secret's old ciphertext.
+
+Add to the local variables file and converge the compute nodes:
+
+```yaml
+faas_seal_domain_runtime_contracted: true
+```
+
+The role runs the same check and fails while anything is pending. It then
+writes the switch into vmmd's drop-in, but does not restart vmmd. vmmd
+applies the switch at its next start (the next release, or a planned
+restart):
+
+- It then reads neither `fleet.age` nor `host.age`, and reports
+  `faas_seal_domain_legacy_identities 0`.
+- It refuses to start without `runtime.age` and `build.age`.
+
+`host.age` stays on the node, because the join check and other units still
+load it.
+
+Restart one vmmd first, wake a test app that has secrets and sidecar env,
+and run a build from a private base image. Then let the release restart the
+rest.
+
+Rollback: set `faas_seal_domain_runtime_contracted: false`, converge the
+compute nodes, and restart vmmd. It loads the fleet and host keys again.
+
 ## 5. Source seal domain
 
 githubd is the only reader of GitHub install tokens and webhook secrets, and

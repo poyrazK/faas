@@ -918,6 +918,38 @@ an app whose sidecars have env.
   release has left the rollback window. Until then, every vmmd still
   holds the fleet identity, which opens either.
 
+
+## Implemented: the vmmd contract step
+
+`faas_seal_domain_runtime_contracted` contracts vmmd, the last legacy reader
+of runtime values on compute nodes.
+
+- **A switch, not a credential reset.** vmmd runs as root and reads the
+  secrets directory itself, so there is no `LoadCredential=` line to drop.
+  The role adds `FAAS_SEAL_DOMAIN_RUNTIME_CONTRACTED=true` to vmmd's
+  existing drop-in. vmmd reads it at start and then:
+  - never loads `fleet.age` or `host.age` for opening;
+  - opens runtime secrets with the runtime domain alone;
+  - opens registry passwords with the build domain alone.
+- **Fail closed.** A contracted vmmd refuses to start without both
+  `runtime.age` and `build.age`, since nothing else would open what was
+  re-sealed to them.
+- **`host.age` stays.** vmmd still creates and loads it on first start,
+  because the join's fleet-seal check and other units on the node still load
+  it as a credential. It no longer opens anything with it.
+- **The role checks first.** It requires `writes=domain` and the build
+  contract, and runs `seal-domain migrate --domain runtime --check` before it
+  writes the switch. The build check ran in the build contract.
+- **No restart from the role.** As with the binding and signature switches,
+  vmmd applies it at its next start, and
+  `faas_seal_domain_legacy_identities` reports how many legacy identities
+  each vmmd still holds: 0 once contracted.
+- **The drop-in renders unchanged while the switch is off.** Converging with
+  it off therefore changes nothing on the node.
+- **`fleet.age` stays on compute nodes for now.** schedd (delivery,
+  control) and gatewayd-internal (edge) still load it, so node join keeps
+  staging it until those domains contract.
+
 ## CD and node join stage the domain keys
 
 Each domain's key pair is a pair of GitHub environment secrets:

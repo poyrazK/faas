@@ -162,6 +162,12 @@ type Config struct {
 	// FAAS_STREAM_BRIDGE_GOGC override TOML.
 	StreamBridgeGOMAXPROCS int `toml:"stream_bridge_gomaxprocs"`
 	StreamBridgeGOGC       int `toml:"stream_bridge_gogc"`
+	// LocalDataSocket serves this node's gatewayd-internal on
+	// api.VmmdLocalDataSocket: no TLS, only the gateway's uid by peer
+	// credentials and only its forwarding RPCs (ADR-20261030230157). Off by
+	// default; off also removes a socket an earlier run left, so the gateway
+	// goes back to mTLS. FAAS_VMMD_LOCAL_DATA_SOCKET overrides TOML.
+	LocalDataSocket bool `toml:"local_data_socket"`
 	// RequireSecretBinding refuses runtime secret envelopes that carry no
 	// account binding (ADR-20261023173624, contract step). Off by default;
 	// the seal_domains role turns it on once every stored envelope is
@@ -177,6 +183,13 @@ type Config struct {
 	// (the contract step). It needs RuntimeSecretSignatureKeysFile.
 	// FAAS_RUNTIME_SECRET_SIGNATURE_REQUIRED overrides TOML.
 	RequireRuntimeSecretSignatures bool `toml:"require_runtime_secret_signatures"`
+	// RuntimeSealDomainContracted drops the fleet and host identities
+	// (ADR 20261022111812, contract step): vmmd opens runtime secrets with
+	// the runtime seal domain alone and registry passwords with the build
+	// domain alone, and refuses to start without both. The seal_domains
+	// role sets it once `seal-domain migrate --check` passes for both.
+	// FAAS_SEAL_DOMAIN_RUNTIME_CONTRACTED overrides TOML.
+	RuntimeSealDomainContracted bool `toml:"runtime_seal_domain_contracted"`
 	// PmemBaseDir enables per-account pmem bases (ADR-908): app VMs map a
 	// reflinked per-account copy of their base with DAX instead of reading
 	// it over virtio-blk. "auto" (the default) keeps each copy on the mount
@@ -936,6 +949,13 @@ func LoadConfig(path string) (*Config, error) {
 		}
 		c.RequireRuntimeSecretSignatures = required
 	}
+	if v := os.Getenv("FAAS_SEAL_DOMAIN_RUNTIME_CONTRACTED"); v != "" {
+		contracted, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_SEAL_DOMAIN_RUNTIME_CONTRACTED must be a boolean (got %q)", v)
+		}
+		c.RuntimeSealDomainContracted = contracted
+	}
 	if c.RequireRuntimeSecretSignatures && c.RuntimeSecretSignatureKeysFile == "" {
 		return nil, errors.New("vmmd: requiring runtime secret signatures needs runtime_secret_signature_keys_file (FAAS_RUNTIME_SECRET_SIGNATURE_KEYS_FILE)")
 	}
@@ -963,6 +983,13 @@ func LoadConfig(path string) (*Config, error) {
 		if *knob.value < 0 {
 			return nil, fmt.Errorf("vmmd: %s (%s) must be 0 for Go's default or a positive integer (got %d)", knob.key, knob.env, *knob.value)
 		}
+	}
+	if v := os.Getenv("FAAS_VMMD_LOCAL_DATA_SOCKET"); v != "" {
+		enabled, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_VMMD_LOCAL_DATA_SOCKET must be a boolean (got %q)", v)
+		}
+		c.LocalDataSocket = enabled
 	}
 	if v := os.Getenv("FAAS_INVOKE_HOOK_BACKOFF"); v != "" {
 		enabled, perr := strconv.ParseBool(v)

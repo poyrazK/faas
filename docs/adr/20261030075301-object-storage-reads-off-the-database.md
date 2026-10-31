@@ -78,6 +78,10 @@ monthly counters, enforced by those same writes.
 2. Public bucket reads in `gatewayd-public` use the same admitter.
 3. Organization-fenced credentials: cache the fence check per credential and
    membership revision with the same TTL, and move those reads to the cache.
+   The gateway caches each (organization, member) revision, read without
+   locks (`s3_gateway_org_access_checks_total`), and a bucket's decision is
+   refreshed without the triggering request's fence, since every credential
+   shares it.
 4. Cache resolved credentials and invalidate them on revocation through
    `pg_notify`, so a read needs no database round trip at all.
 
