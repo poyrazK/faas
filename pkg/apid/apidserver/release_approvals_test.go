@@ -180,8 +180,12 @@ func TestReleaseApprovalHoldsTheCanaryUntilApproved(t *testing.T) {
 		t.Fatalf("rollout_hold = %+v", hold)
 	}
 
+	// adr: 20261020085706 amendment 4 — an API key cannot approve; the
+	// signed-in person can.
+	apidserver.AssertProblem(t, f.e.Do(t, http.MethodPost, "/v1/deployments/"+id+"/approvals",
+		api.DecideReleaseApprovalRequest{Decision: api.ReleaseApprovalDecisionApprove}, nil), http.StatusForbidden, api.CodeReleaseApprovalSessionRequired)
 	var status api.ReleaseApprovalStatus
-	rec = guardDo(t, f.e, http.MethodPost, "/v1/deployments/"+id+"/approvals",
+	rec = sessionDo(t, f.e, http.MethodPost, "/v1/deployments/"+id+"/approvals",
 		api.DecideReleaseApprovalRequest{Decision: api.ReleaseApprovalDecisionApprove, Comment: "canary looks clean"}, &status)
 	if rec.Code != http.StatusOK || status.State != api.ReleaseApprovalStateApproved || status.Approvals != 1 ||
 		len(status.Decisions) != 1 || status.Decisions[0].Role != state.ReleaseApproverRolePersonal || !status.Decisions[0].Counted {
@@ -247,7 +251,7 @@ func TestReleaseApprovalRefusesTheDeployersOwnApproval(t *testing.T) {
 	if _, err := approvals.SetReleaseApprovalPolicy(ctx, policy, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	apidserver.AssertProblem(t, f.e.Do(t, http.MethodPost, "/v1/deployments/"+f.canary.ID+"/approvals",
+	apidserver.AssertProblem(t, f.e.DoSession(t, "", http.MethodPost, "/v1/deployments/"+f.canary.ID+"/approvals",
 		api.DecideReleaseApprovalRequest{Decision: api.ReleaseApprovalDecisionApprove}, nil), http.StatusForbidden, api.CodeReleaseApprovalSelf)
 	// The deployer may still reject their own release.
 	var status api.ReleaseApprovalStatus
@@ -381,7 +385,7 @@ func TestReleaseApprovalEventsAreRecordedOncePerTransition(t *testing.T) {
 		!strings.HasSuffix(requested.ReviewURL, "/dashboard/releases/"+f.canary.ID+"/approval") {
 		t.Fatalf("events = %+v", events)
 	}
-	if rec := f.e.Do(t, http.MethodPost, "/v1/deployments/"+f.canary.ID+"/approvals",
+	if rec := f.e.DoSession(t, "", http.MethodPost, "/v1/deployments/"+f.canary.ID+"/approvals",
 		api.DecideReleaseApprovalRequest{Decision: api.ReleaseApprovalDecisionApprove, Comment: "looks clean"}, nil); rec.Code != http.StatusOK {
 		t.Fatalf("approve = %d %s", rec.Code, rec.Body)
 	}

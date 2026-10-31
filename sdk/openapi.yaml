@@ -27444,6 +27444,7 @@ components:
           maxItems: 10
           items: {$ref: '#/components/schemas/ReleaseGateResult'}
           description: "The release gates judged with this decision."
+        rollback_skipped: {type: string, description: "Post-release watch decisions only: the problem code that kept the release from being rolled back automatically, such as rollback_crosses_release. The regression was found; the release keeps serving until someone rolls back or ships a fix."}
         decided_at: {type: string, format: date-time}
     RolloutDecisionSample:
       description: "One side's aggregates over the observation window. Request counts are organic requests; probe counts are reported separately."
@@ -36598,7 +36599,7 @@ components:
         at: {type: string, format: date-time}
         kind:
           type: string
-          enum: [created, scheduled, schedule_started, schedule_blocked, schedule_cancelled, approval_requested, approved, rejected, approval_expired, rollout_started, advanced, traffic_changed, held, completed, aborted, rollback_requested, rolled_back, watch_passed, superseded, note]
+          enum: [created, scheduled, schedule_started, schedule_blocked, schedule_cancelled, approval_requested, approved, rejected, approval_expired, rollout_started, advanced, traffic_changed, held, completed, aborted, rollback_requested, rolled_back, watch_passed, watch_regressed, superseded, note]
         summary: {type: string, description: "What happened, in one sentence."}
         actor: {type: string, description: "A person's email, or Gregale for automatic steps."}
         traffic_percent: {type: integer, minimum: 0, maximum: 100, description: "The release's traffic share after this event."}

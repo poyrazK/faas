@@ -3072,6 +3072,13 @@ type CustomDomain struct {
 	EnvironmentID                 pgtype.UUID
 }
 
+type CustomDomainTlsAdmission struct {
+	Host             interface{}
+	RegisteredDomain interface{}
+	OwnerID          pgtype.UUID
+	AdmittedAt       pgtype.Timestamptz
+}
+
 type CustomDomainTlsHost struct {
 	Host           interface{}
 	WildcardDomain interface{}
