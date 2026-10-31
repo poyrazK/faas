@@ -322,3 +322,22 @@ func TestCmdEventsFanoutHistoryDisplaysRecipientTimeline(t *testing.T) {
 		}
 	}
 }
+
+// A publish without --id that fails names the id it used, so a retry with
+// --id cannot deliver the event twice if the first attempt went through.
+func TestCmdEventsPublish_FailureNamesGeneratedID(t *testing.T) {
+	main.ResetJSONOut(t)
+	f := main.AuthedFakeAPI(t, `{"type":"about:blank","title":"Bad request","status":400,"code":"bad_request","detail":"rejected"}`, http.StatusBadRequest)
+	code, captured := main.RunWithStderr(t, func() int {
+		return main.CmdEventsPublish([]string{"billing.stripe", "invoice.paid", "--data", `{"amount":150}`})
+	})
+	var sent struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal((*f.SawBody()), &sent); err != nil || sent.ID == "" {
+		t.Fatalf("body=%s err=%v", (*f.SawBody()), err)
+	}
+	if code == 0 || !strings.Contains(captured, "--id "+sent.ID) {
+		t.Fatalf("exit=%d stderr=%q, want a retry hint naming %s", code, captured, sent.ID)
+	}
+}
