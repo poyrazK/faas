@@ -226,6 +226,8 @@ func (m *MemStore) DeleteSyntheticCheck(_ context.Context, appID, id string) err
 	for i, c := range checks {
 		if c.ID == id {
 			m.syntheticChecks[appID] = append(checks[:i:i], checks[i+1:]...)
+			// alert_rules.synthetic_check_id ON DELETE CASCADE
+			m.deleteAlertRulesLocked(func(r AlertRule) bool { return r.SyntheticCheckID == id })
 			return nil
 		}
 	}

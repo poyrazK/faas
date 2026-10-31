@@ -73269,6 +73269,29 @@ func (q *Queries) PurgeAlertDeliveriesBefore(ctx context.Context, db DBTX, arg P
 	return result.RowsAffected(), nil
 }
 
+const purgeDeletedRuleEpisodesBefore = `-- name: PurgeDeletedRuleEpisodesBefore :execrows
+DELETE FROM alert_episodes e WHERE e.id IN (
+  SELECT o.id FROM alert_episodes o
+  WHERE o.resolved_at < $1::timestamptz
+    AND NOT EXISTS (SELECT 1 FROM alert_rules r WHERE r.id = o.rule_id)
+  ORDER BY o.resolved_at LIMIT $2::integer)
+`
+
+type PurgeDeletedRuleEpisodesBeforeParams struct {
+	Before  pgtype.Timestamptz
+	MaxRows int32
+}
+
+// Deletes up to max_rows resolved episodes, oldest first, whose rule was
+// deleted before the cutoff, and their notes with them (ADR-20261030214500).
+func (q *Queries) PurgeDeletedRuleEpisodesBefore(ctx context.Context, db DBTX, arg PurgeDeletedRuleEpisodesBeforeParams) (int64, error) {
+	result, err := db.Exec(ctx, purgeDeletedRuleEpisodesBefore, arg.Before, arg.MaxRows)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const purgeSLOHoursBefore = `-- name: PurgeSLOHoursBefore :execrows
 DELETE FROM app_slo_hourly WHERE hour < $1::timestamptz
 `

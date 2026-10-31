@@ -277,6 +277,7 @@ var memDispatched = map[string]bool{
 	"PinnedProjectReleaseWorkers":                   true,
 	"HeldProjectReleaseWorkers":                     true,
 	"ListConsumerKeysForApp":                        true,
+	"GetSLO":                                        true,
 }
 
 func (s *Mem) AppTaskByID(ctx context.Context, account, app, id string) (state.AppTask, error) {
@@ -4739,4 +4740,13 @@ func (s *Mem) HeldProjectReleaseWorkers(p0 context.Context, p1 string) ([]string
 		return o.HeldProjectReleaseWorkers(p0, p1)
 	}
 	return s.MemStore.HeldProjectReleaseWorkers(p0, p1)
+}
+
+func (s *Mem) GetSLO(p0 context.Context, p1 string, p2 string) (state.SLO, error) {
+	if o, ok := s.over.(interface {
+		GetSLO(context.Context, string, string) (state.SLO, error)
+	}); ok {
+		return o.GetSLO(p0, p1, p2)
+	}
+	return s.MemStore.GetSLO(p0, p1, p2)
 }

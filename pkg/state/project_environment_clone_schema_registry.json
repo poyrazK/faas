@@ -452,10 +452,13 @@
     "table": "alert_episodes",
     "columns": [
       "account_id",
+      "app_id",
       "id",
       "opened_at",
       "resolved_at",
-      "rule_id"
+      "rule_id",
+      "rule_metric",
+      "rule_name"
     ],
     "kind": "operational"
   },

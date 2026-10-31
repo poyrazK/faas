@@ -5132,6 +5132,9 @@ type Querier interface {
 	// MCP connection health and the delivery CLI read it, and so does a delivery
 	// with a rollback action, which would cascade away with it.
 	PurgeAlertDeliveriesBefore(ctx context.Context, db DBTX, arg PurgeAlertDeliveriesBeforeParams) (int64, error)
+	// Deletes up to max_rows resolved episodes, oldest first, whose rule was
+	// deleted before the cutoff, and their notes with them (ADR-20261030214500).
+	PurgeDeletedRuleEpisodesBefore(ctx context.Context, db DBTX, arg PurgeDeletedRuleEpisodesBeforeParams) (int64, error)
 	PurgeSLOHoursBefore(ctx context.Context, db DBTX, before pgtype.Timestamptz) (int64, error)
 	PurgeSyntheticCheckRunsBefore(ctx context.Context, db DBTX, before pgtype.Timestamptz) (int64, error)
 	PutAppEgressCircuits(ctx context.Context, db DBTX, arg PutAppEgressCircuitsParams) (PutAppEgressCircuitsRow, error)
