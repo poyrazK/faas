@@ -619,6 +619,10 @@ func (r *drainSynth) Calls() *atomic.Int64    { return &r.calls }
 func (r *drainSynth) Transient() *atomic.Bool { return &r.transient }
 func (r *drainSynth) Refused() *atomic.Bool   { return &r.refused }
 
+// AppStatus makes the fake gateway answer as if the app's own code returned
+// that status (ADR-20261031100000).
+func (r *drainSynth) AppStatus() *atomic.Int64 { return &r.appStatus }
+
 // XHTTPGatewaySynth is the drain's real gateway client pointed at base.
 func XHTTPGatewaySynth(client *http.Client, base string) interface {
 	InvokeWithWake(context.Context, string, state.Invocation, WakeResult) (state.Invocation, error)

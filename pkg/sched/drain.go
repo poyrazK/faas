@@ -40,6 +40,18 @@ var _ dispatch.JobKind = dispatch.JobKindInvocation
 // retried bad payload just keeps failing.
 var ErrPermanentInvoke = errors.New("sched: permanent invoke error")
 
+// applicationStatusError is a failure the app's own code returned: a 4xx,
+// or a 500 the runner marked handler_error. It wraps ErrPermanentInvoke and
+// keeps the status, so an event delivery can tell a handler that threw from
+// one that refused its input (ADR-20261031100000).
+type applicationStatusError struct {
+	status int
+	err    error
+}
+
+func (e applicationStatusError) Error() string { return e.err.Error() }
+func (e applicationStatusError) Unwrap() error { return e.err }
+
 // ErrDispatchRefused marks a 5xx answer from gatewayd-internal's dispatch
 // endpoint. The endpoint answers 200 with the app's response whenever the
 // app received the request, so a 5xx means the gateway refused or failed
@@ -785,7 +797,11 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 	}
 	if err := state.CheckFinancialBudgetAdmissionForScope(ctx, d.store, app, inv.DeploymentScope, "", d.engine.financialBudgetNow()); err != nil {
 		// Keep pending work and its attempt count intact. A held budget is
-		// an admission decision, not a failed customer execution.
+		// an admission decision, not a failed customer execution. The row
+		// moves back by a minute (ADR-20261031100000): left due, a held
+		// app's rows stayed at the head of every walk, and a walk's 2,048
+		// rows of them hid other tenants' work behind them.
+		_ = d.store.FailInvocation(ctx, inv.ID, "held by the app's compute budget", financialHoldDeferral, 0)
 		d.log.Debug("drain: preview budget admission deferred", "inv", inv.ID, "app_id", app.ID)
 		return
 	}
@@ -1135,6 +1151,7 @@ func (d *Drain) deliverClaimed(ctx context.Context, inv state.Invocation, timeou
 			retryAfter = 0
 		}
 		budget := d.invocationAttemptBudget(ctx, inv)
+		retryAfter, budget = d.eventDeliveryFailure(ctx, inv, err, retryAfter, budget)
 		if errors.Is(err, ErrDispatchRefused) {
 			retryAfter, budget = cronPlatformRetry(inv, retryAfter, budget)
 		}
@@ -1471,19 +1488,54 @@ func invocationRetryPolicy(inv state.Invocation, app *state.App) dispatch.RetryP
 	if !policy.Zero() || !state.IsEventDelivery(inv) {
 		return policy
 	}
-	if app != nil {
-		if appPolicy := app.RetryPolicy(); !appPolicy.Zero() {
-			return appPolicy
-		}
-	}
 	maxSeconds := float64(api.EventDeliveryRetryMaxSeconds)
 	if inv.WorkPolicyName != "" {
 		// A pending delivery holds every younger one of its key, so a
 		// keyed delivery backs off only to 30 s.
 		maxSeconds = api.EventDeliveryKeyedRetryMaxSeconds
 	}
+	if app != nil {
+		if appPolicy := app.RetryPolicy(); !appPolicy.Zero() {
+			// The app's curve applies within bounds (ADR-20261031100000): an
+			// app policy with no cap took the default event cap, and none may
+			// wait past 5 minutes between attempts, or a keyed delivery could
+			// hold its key for days.
+			if appPolicy.MaxSeconds <= 0 {
+				appPolicy.MaxSeconds = maxSeconds
+			}
+			appPolicy.MaxSeconds = min(appPolicy.MaxSeconds, float64(api.EventDeliveryRetryMaxSeconds))
+			return appPolicy
+		}
+	}
 	return dispatch.RetryPolicy{BaseSeconds: api.EventDeliveryRetryBaseSeconds,
 		MaxSeconds: maxSeconds, JitterSeconds: api.EventDeliveryRetryJitter}
+}
+
+// financialHoldDeferral is how far a row of an app held by its compute
+// budget moves back: out of the head of the walk, attempts untouched.
+const financialHoldDeferral = time.Minute
+
+// eventDeliveryFailure applies ADR-20261031100000 to a failed event
+// delivery. A handler that threw (the runner's 500) or asked to be retried
+// (408, 429) retries with the event backoff and is dead-lettered when its
+// attempts run out; any other 4xx is final but dead-lettered at once, so it
+// can be replayed after a fix. Every other invocation keeps the gateway's
+// verdict, as does a failure the app's code did not return.
+func (d *Drain) eventDeliveryFailure(ctx context.Context, inv state.Invocation, err error, retryAfter time.Duration, budget int) (time.Duration, int) {
+	var appErr applicationStatusError
+	if !state.IsEventDelivery(inv) || !errors.As(err, &appErr) {
+		return retryAfter, budget
+	}
+	delay := d.invocationRetryDelay(ctx, inv)
+	if delay <= 0 {
+		delay = time.Second
+	}
+	if appErr.status >= http.StatusInternalServerError || appErr.status == http.StatusRequestTimeout || appErr.status == http.StatusTooManyRequests {
+		return delay, budget
+	}
+	// A budget the attempt has already reached makes FailInvocation
+	// dead-letter the row instead of failing it.
+	return delay, max(inv.Attempts, 1)
 }
 
 // retryAfterFor is retained as a compatibility wrapper for drain callers
