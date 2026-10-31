@@ -372,7 +372,8 @@ func TestLeaseOutlastsASlowCommit(t *testing.T) {
 	hold := make(chan struct{})
 	bucket := &sharedBucket{clock: clock, hold: hold}
 	l, _ := leasingGateway(bucket, clock)
-	const rps, burst = 10.0, 10.0
+	// A burst of 20 is the smallest with a local allowance (one request).
+	const rps, burst = 10.0, 20.0
 	// The first request is admitted from the allowance and starts a lease
 	// that stalls in Postgres; the second has no allowance left and waits.
 	if !l.AllowWithCentralParams(t.Context(), "lease-app", rps, burst, leaseTestKey) {
