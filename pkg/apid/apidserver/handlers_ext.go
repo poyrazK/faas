@@ -3288,11 +3288,11 @@ func (s *server) listInstances(w http.ResponseWriter, r *http.Request, acct stat
 
 // --- custom domains --------------------------------------------------------
 
-// domainOutsideForeignWildcard refuses a domain below another account's
+// domainOutsideForeignWildcard refuses a domain below another tenant's
 // verified wildcard (state.ForeignVerifiedWildcard) and reports whether the
 // create may continue.
-func (s *server) domainOutsideForeignWildcard(ctx context.Context, w http.ResponseWriter, domain, accountID string) bool {
-	wildcard, err := state.ForeignVerifiedWildcard(ctx, s.store, domain, accountID)
+func (s *server) domainOutsideForeignWildcard(ctx context.Context, w http.ResponseWriter, domain string, app state.App) bool {
+	wildcard, err := state.ForeignVerifiedWildcard(ctx, s.store, domain, app)
 	if err != nil {
 		s.log.Warn("create domain: wildcard ownership check failed", "err", err)
 		api.WriteProblem(w, api.ErrCapacity("could not check wildcard-domain ownership"))
@@ -3300,7 +3300,7 @@ func (s *server) domainOutsideForeignWildcard(ctx context.Context, w http.Respon
 	}
 	if wildcard != "" {
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation, "Domain taken",
-			fmt.Sprintf("%s is below the verified wildcard domain %s, which belongs to another account", domain, wildcard)))
+			fmt.Sprintf("%s is below the verified wildcard domain %s, which belongs to another account or organization", domain, wildcard)))
 		return false
 	}
 	return true
@@ -3327,21 +3327,21 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 			"Invalid domain", err.Error()))
 		return
 	}
-	app, err := s.store.AppByID(r.Context(), req.AppID)
-	if err != nil {
-		// The public CLI documents --app as an app slug. Keep accepting IDs
-		// for existing API clients, but resolve the documented slug form too.
-		app, err = s.store.AppBySlug(r.Context(), req.AppID)
-	}
-	if err != nil || app.AccountID != acct.ID {
-		s.notFound(w, "no such app")
-		return
-	}
-	if prob := s.authorizeNamedApp(r, acct, app); prob != nil {
+	// The public CLI documents --app as an app slug. Keep accepting IDs
+	// for existing API clients, but resolve the documented slug form too.
+	app, acct, prob := s.namedAppAs(r, acct, req.AppID, true)
+	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
-	if !s.domainOutsideForeignWildcard(r.Context(), w, domain, acct.ID) {
+	// A preview is torn down with its pull request or lease; a domain on it
+	// would stop serving then and keep its slot until the purge.
+	if app.PreviewOfSlug != "" {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
+			"Previews cannot have custom domains", "attach the domain to the production app; a preview answers on its own pr-<N>-<app> host"))
+		return
+	}
+	if !s.domainOutsideForeignWildcard(r.Context(), w, domain, app) {
 		return
 	}
 	environmentID := ""
@@ -3413,6 +3413,7 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 		Data: activityData(map[string]any{"app_id": app.ID, "environment": req.Environment}),
 	}
 	var d state.CustomDomain
+	var err error
 	var activityOutboxID int64
 	var activityMutationAtomic bool
 	if mutationStore, ok := s.store.(state.OrgActivityDomainMutationStore); ok {
@@ -4204,22 +4205,23 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 	// a migration that wrote a stale plan value — surfaces as a clean
 	// 402 rather than a process panic → 500. Fail-closed: an unknown
 	// plan is treated as if crons weren't unlocked.
+	//
+	// The plan is the app's resource account's (bug hunt 2026-10-28 B9): a
+	// company app's crons follow the organization's plan, whoever adds them.
+	// An app the caller cannot see is judged on the caller's own plan; a
+	// member the organization refuses is told so first.
+	app, acct, appProblem := s.namedAppAs(r, acct, req.AppID, true)
+	if appProblem != nil && appProblem.Status != http.StatusNotFound {
+		api.WriteProblem(w, appProblem)
+		return
+	}
 	limits, ok := api.LimitsFor(acct.Plan)
 	if !ok || limits.CronLimitPerApp == 0 {
 		api.WriteProblem(w, api.ErrPlanCronsNotAllowed(acct.Plan))
 		return
 	}
-	app, err := s.store.AppByID(r.Context(), req.AppID)
-	if err != nil || app.AccountID != acct.ID {
-		if a, aerr := s.store.AppBySlug(r.Context(), req.AppID); aerr == nil && a.AccountID == acct.ID {
-			app = a
-		} else {
-			s.notFound(w, "no such app")
-			return
-		}
-	}
-	if prob := s.authorizeNamedApp(r, acct, app); prob != nil {
-		api.WriteProblem(w, prob)
+	if appProblem != nil {
+		api.WriteProblem(w, appProblem)
 		return
 	}
 	enabled := true

@@ -52188,6 +52188,41 @@ func (q *Queries) ListSnapshotDeploymentIDs(ctx context.Context, db DBTX) ([]str
 	return items, nil
 }
 
+const listSoonestExpiringCustomDomainCerts = `-- name: ListSoonestExpiringCustomDomainCerts :many
+select domain::text as domain, cert_expires_at::timestamptz as cert_expires_at
+from custom_domains
+where verified_at is not null and cert_expires_at is not null
+order by cert_expires_at, domain
+limit $1
+`
+
+type ListSoonestExpiringCustomDomainCertsRow struct {
+	Domain        string
+	CertExpiresAt pgtype.Timestamptz
+}
+
+// Verified custom domains whose edge certificate the domain doctor observed,
+// soonest expiry first: the source of the certificate-expiry alerts.
+func (q *Queries) ListSoonestExpiringCustomDomainCerts(ctx context.Context, db DBTX, limit int32) ([]ListSoonestExpiringCustomDomainCertsRow, error) {
+	rows, err := db.Query(ctx, listSoonestExpiringCustomDomainCerts, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSoonestExpiringCustomDomainCertsRow{}
+	for rows.Next() {
+		var i ListSoonestExpiringCustomDomainCertsRow
+		if err := rows.Scan(&i.Domain, &i.CertExpiresAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSyntheticCheckRuns = `-- name: ListSyntheticCheckRuns :many
 SELECT check_id, started_at, ok, status_code, latency_ms, error_class FROM synthetic_check_runs WHERE check_id = $1::uuid
 ORDER BY started_at DESC LIMIT $2::integer
@@ -73269,6 +73304,29 @@ type PurgeAlertDeliveriesBeforeParams struct {
 // with a rollback action, which would cascade away with it.
 func (q *Queries) PurgeAlertDeliveriesBefore(ctx context.Context, db DBTX, arg PurgeAlertDeliveriesBeforeParams) (int64, error) {
 	result, err := db.Exec(ctx, purgeAlertDeliveriesBefore, arg.Before, arg.MaxRows)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const purgeDeletedRuleEpisodesBefore = `-- name: PurgeDeletedRuleEpisodesBefore :execrows
+DELETE FROM alert_episodes e WHERE e.id IN (
+  SELECT o.id FROM alert_episodes o
+  WHERE o.resolved_at < $1::timestamptz
+    AND NOT EXISTS (SELECT 1 FROM alert_rules r WHERE r.id = o.rule_id)
+  ORDER BY o.resolved_at LIMIT $2::integer)
+`
+
+type PurgeDeletedRuleEpisodesBeforeParams struct {
+	Before  pgtype.Timestamptz
+	MaxRows int32
+}
+
+// Deletes up to max_rows resolved episodes, oldest first, whose rule was
+// deleted before the cutoff, and their notes with them (ADR-20261030214500).
+func (q *Queries) PurgeDeletedRuleEpisodesBefore(ctx context.Context, db DBTX, arg PurgeDeletedRuleEpisodesBeforeParams) (int64, error) {
+	result, err := db.Exec(ctx, purgeDeletedRuleEpisodesBefore, arg.Before, arg.MaxRows)
 	if err != nil {
 		return 0, err
 	}

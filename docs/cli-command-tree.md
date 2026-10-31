@@ -154,6 +154,7 @@ touch them. The tables below map each earlier name.
 
 | Earlier | Now |
 |---|---|
+| `gregale account billing-connection status` | `gregale account billing-connection get` |
 | `gregale account billing-run schedule-delete` | `gregale account billing-run schedule delete` |
 | `gregale account billing-run schedule-set` | `gregale account billing-run schedule set` |
 | `gregale account billing-run schedule` | `gregale account billing-run schedule get` |
@@ -299,6 +300,7 @@ touch them. The tables below map each earlier name.
 | `gregale deployment runtime` | `gregale release runtime` |
 | `gregale deployment status` | `gregale release status` |
 | `gregale deployment summary` | `gregale release summary` |
+| `gregale deployment timeline` | `gregale release timeline` |
 | `gregale deployment wait` | `gregale release wait` |
 | `gregale deployments alias` | `gregale release alias` |
 | `gregale deploys cancel` | `gregale release cancel` |
@@ -313,6 +315,7 @@ touch them. The tables below map each earlier name.
 | `gregale edge-rules attack-mode` | `gregale edge rule attack-mode get` |
 | `gregale edge-rules attack-mode` | `gregale edge rule attack-mode set` |
 | `gregale edge-rules recipe` | `gregale edge rule recipe apply` |
+| `gregale edge-rules waf-exclude` | `gregale edge rule waf update` |
 | `gregale edge-rules waf-review` | `gregale edge rule waf review` |
 | `gregale events backfill-cancel` | `gregale event backfill cancel` |
 | `gregale events backfill-items` | `gregale event backfill items` |

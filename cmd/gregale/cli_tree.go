@@ -107,6 +107,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"release resume", "deploy resume"},
 	{"release recover", "deploy recover"},
 	{"release diff", "deployment diff"},
+	{"release timeline", "deployment timeline"},
 	{"release hide", "deploys clear"},
 	{"release prune", "deploys clear-obsolete"},
 	{"release reorder", "deploys reorder"},
@@ -568,6 +569,20 @@ var cliTreeAliases = []cliTreeAlias{
 	{"debug issue source-map get", "issues source-maps"},
 	{"debug issue source-map publish", "issues source-maps"},
 	{"edge rule attack-mode get", "edge-rules attack-mode"},
+	// Round 11 (2026-10-31): the last customer paths in the baseline. A
+	// WAF exclusion change updates the rule's WAF beside `waf review`;
+	// billing-connection's modes are manifest verbs, and status reads a
+	// stored record.
+	{"edge rule waf update", "edge-rules waf-exclude"},
+	{"account billing-connection get", "account billing-connection status"},
+	// Round 12 (2026-10-31): the postgres verbs. Overage shows or sets a
+	// setting, so it gets both verbs; a compute policy is set, and the
+	// progress of a policy change or a resize is read with status.
+	{"postgres overage get", "postgres overage"},
+	{"postgres overage set", "postgres overage"},
+	{"postgres compute-policy set", "postgres compute-policy"},
+	{"postgres compute-policy status", "postgres compute-policy-status"},
+	{"postgres resize status", "postgres resize-status"},
 
 	// Operator tools live under the hidden admin command (rule 7) and keep
 	// their names; the naming rules cover the customer tree.
@@ -979,7 +994,7 @@ func lookupCliTreeTopic(words []string, help bool) (cliTreeTopic, bool) {
 		return cliTreeTopic{}, false
 	}
 	if len(words) == 1 {
-		if today && !cliTreeReshapes(noun.Name) {
+		if today && (!cliTreeReshapes(noun.Name) || !cliTreeListsNoun(noun.Name)) {
 			return cliTreeTopic{}, false
 		}
 		return cliTreeTopic{Path: words, Short: noun.Short}, true
@@ -994,6 +1009,14 @@ func lookupCliTreeTopic(words []string, help bool) (cliTreeTopic, bool) {
 		}
 	}
 	return cliTreeTopic{Path: words, Short: "Commands under gregale " + path}, true
+}
+
+// cliTreeListsNoun reports whether the tree can list the noun's command. An
+// operator command (postgres) stays out of the tree (cliTreeDiscovery.node),
+// so it keeps today's help rather than a topic that lists nothing.
+func cliTreeListsNoun(noun string) bool {
+	command, ok := lookupCliCommand(cliTreeNounCommand(noun))
+	return ok && command.Audience == cliAudienceCustomer
 }
 
 // cliTreeReshapes reports a noun whose tree verbs differ from today's

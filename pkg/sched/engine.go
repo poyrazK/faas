@@ -812,6 +812,13 @@ type Engine struct {
 	// (ADR 20261030100950, node_cpu_pressure.go).
 	cpuPressureReadings CPUPressureReadings
 	cpuPressureHolds    *cpuPressureHolds
+	// frozenProactiveCompress, compressBackoff and frozenCompressOne drive
+	// proactive compression of frozen VMs (ADR 20261031143521,
+	// frozen_proactive_compress.go); frozenCompressOne replaces the vmmd
+	// call in tests.
+	frozenProactiveCompress bool
+	compressBackoff         *frozenCompressBackoff
+	frozenCompressOne       func(ctx context.Context, instanceID string) string
 
 	// telemetryCache is the receiver for the batched vmmd Stats rows carried
 	// on the persistent ReportCapacity stream. The instance-stats poller
@@ -2058,7 +2065,7 @@ func (e *Engine) runningInstanceForWake(ctx context.Context, appID, deploymentID
 			return state.Instance{}, err
 		}
 	}
-	instances, err := e.store.ListInstancesForApp(ctx, appID)
+	instances, err := e.liveInstancesForApp(ctx, appID)
 	if err != nil {
 		return state.Instance{}, err
 	}
@@ -4398,7 +4405,12 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	// park re-snapshots. Best-effort — failure here doesn't block the
 	// RUNNING transition (the stale snapshot also gets the next-park
 	// treatment from snapshotAndPark).
-	if bootInput.haveSnap && out.Method == vmmdpb.WakeMethod_WAKE_COLD_BOOT {
+	if bootInput.haveSnap && out.Method == vmmdpb.WakeMethod_WAKE_COLD_BOOT && out.RestoreFallbackReason == fcvm.RestoreFallbackNodeLocal {
+		// The restore failed for this node's reasons (a full disk, an image or
+		// identity it could not read, jail setup): the snapshot is still good
+		// for every other node, so it stays live (bug hunt 2026-10-28 B12).
+		e.log.Info("wake: restore fell back to cold boot on this node; snapshot kept", "app", logsanitize.Field(bootInput.appID), "instance", bootInput.insID, "node", bootInput.nodeID, "snapshot", bootInput.snapID, "wake_id", logsanitize.Field(bootInput.wakeID))
+	} else if bootInput.haveSnap && out.Method == vmmdpb.WakeMethod_WAKE_COLD_BOOT {
 		// A catalog-bound fallback still validates its selected capture through
 		// receipt acknowledgment and publication. Invalidate after that attempt
 		// so our own cache retirement cannot reject a verified cold runtime.
@@ -5699,7 +5711,7 @@ func (e *Engine) RebalancePressuredApps(ctx context.Context, appID string) error
 // appHasResidentInstances reports whether any instance of appID still holds
 // resident RAM (state.CountsForRAM), wherever it runs.
 func (e *Engine) appHasResidentInstances(ctx context.Context, appID string) (bool, error) {
-	instances, err := e.store.ListInstancesForApp(ctx, appID)
+	instances, err := e.liveInstancesForApp(ctx, appID)
 	if err != nil {
 		return false, err
 	}
@@ -8102,7 +8114,7 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 		if !ok {
 			continue
 		}
-		instances, err := e.store.ListInstancesForApp(ctx, app.ID)
+		instances, err := e.liveInstancesForApp(ctx, app.ID)
 		if err != nil {
 			continue
 		}

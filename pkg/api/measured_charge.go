@@ -15,3 +15,17 @@ func MeasuredChargeMB(ramMB int, rssMB float64) int {
 	used := math.Max(rssMB, MeasuredChargeFloorMB)
 	return min(int(math.Ceil(used*(100+MeasuredChargeHeadroomPercent)/100)), full)
 }
+
+// FrozenChargeMB is the charge for a frozen instance (ADR 20261031143521):
+// MeasuredChargeMB with FrozenChargeFloorMB as its floor. A frozen VM is
+// paused and cannot grow, and a thaw re-admits its full reservation like a
+// wake, so it needs no room for a next request. A compressed one holds a few
+// MB. A missing sample books the full reservation.
+func FrozenChargeMB(ramMB int, rssMB float64) int {
+	full := BillableRAMMB(ramMB)
+	if math.IsNaN(rssMB) || rssMB < 0 {
+		return full
+	}
+	used := math.Max(rssMB, FrozenChargeFloorMB)
+	return min(int(math.Ceil(used*(100+MeasuredChargeHeadroomPercent)/100)), full)
+}

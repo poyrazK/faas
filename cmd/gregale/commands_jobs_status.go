@@ -12,6 +12,7 @@ import (
 func cmdJobsStatus(args []string) int {
 	fs := newFlagSet("jobs status", flag.ContinueOnError)
 	check := fs.Bool("check", false, "exit successfully only when the run has succeeded")
+	showConditions := fs.Bool("conditions", false, "print the run's conditions (Succeeded, Progressing) instead of its summary")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
@@ -51,6 +52,13 @@ func cmdJobsStatus(args []string) int {
 	id, err := resolveJobRunReadArg(ctx, client, args[0], args[1])
 	if err != nil {
 		return printErr("Could not resolve Job run", err)
+	}
+	if *showConditions {
+		status, err := client.GetJobRunStatus(ctx, args[0], id)
+		if err != nil {
+			return printErr("Could not read conditions", jobRunStatusError(args[0], id, err))
+		}
+		return renderResourceStatus(status)
 	}
 	run, err := client.GetJobRun(ctx, args[0], id)
 	if err != nil {

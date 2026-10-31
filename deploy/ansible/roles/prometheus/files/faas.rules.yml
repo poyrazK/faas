@@ -3569,21 +3569,21 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTrafficAnomaly.md"
 
       # ─────────────────────────────────────────────────────────────────
-      # TLS cert expiry (gatewayd-public / gateway_tls_cert_expiry_seconds).
-      # ADR-024 H3 closure: page at ≤14 days, warn between 14 and 30.
-      # The gauge carries min(notAfter − now) across cached certs on
-      # cfg.StorageDir/certificates/...; first-mint pre-boot state is
-      # +Inf (the gauge default), which legitimately fails the < 14d
-      # comparator. Operators expect a missing cert at startup, not a
-      # page.
+      # TLS cert expiry (gateway_tls_cert_expiry_seconds and
+      # gateway_tls_cert_expiry_by_host_seconds). ADR-024 H3 closure: page
+      # at ≤14 days, warn between 14 and 30; ADR-1236 adds the 72-hour page.
       #
-      # The gauge is ticked every 5 minutes by
-      # pkg/gateway.StartCertExpiryRefresher; a stale gauge would mean
-      # the refresher goroutine died (visible as gateway_tls_cert_expiry_seconds
-      # not changing for > 6m — separate drift signal, not in this rule).
+      # Caddy on the public edge holds every customer certificate, obtained
+      # on demand (ADR-520). apid exports these gauges from the expiries its
+      # domain doctor records when it completes a TLS handshake with each
+      # verified custom domain (custom_domains.cert_expires_at, at most
+      # every 30 s; pkg/apid/certexpiry). Before bug hunt 32 M6 nothing in
+      # production set them, so these rules could never fire. Every apid
+      # replica exports the same values, hence min(). No series until a
+      # certificate is observed; a store error exports none.
       # ─────────────────────────────────────────────────────────────────
       - alert: FaasTLSCertExpiryPage
-        expr: gateway_tls_cert_expiry_seconds < (14 * 86400)
+        expr: min(gateway_tls_cert_expiry_seconds) < (14 * 86400)
         for: 5m
         labels:
           severity: warn
@@ -3591,13 +3591,13 @@ groups:
           family: tls_cert_expiry
         annotations:
           summary: "TLS cert expires in ≤14 days"
-          description: "The smallest remaining lifetime across cached certs is below 14 days. A renewal has failed (or never ran) — HTTPS serving across the box will start failing within hours. Re-run `make bootstrap` on the EX44 to refresh certmagic + the Hetzner DNS-01 token, then force-renew via `faas cert refresh`."
+          description: "The soonest-expiring edge certificate apid's domain doctor observed on a verified custom domain has under 14 days left. Caddy renews on-demand certificates at about 30 days, so renewal has been failing for two weeks. Check the public edge's Caddy log for that host, the on-demand ask decisions (gateway_tls_on_demand_* on gatewayd-public), HTTP-01 reachability on port 80 and the domain's CAA records."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTLSCertExpiryPage.md"
 
       # ADR-1236: the 14-day alert above is warn; this is the page, sized
       # so a failed renewal still leaves time to issue by hand.
       - alert: FaasTLSCertExpiryImminent
-        expr: gateway_tls_cert_expiry_seconds < (3 * 86400)
+        expr: min(gateway_tls_cert_expiry_seconds) < (3 * 86400)
         for: 5m
         labels:
           severity: page
@@ -3605,11 +3605,11 @@ groups:
           family: tls_cert_expiry
         annotations:
           summary: "TLS cert expires in under 72 hours"
-          description: "The smallest remaining lifetime across cached certs is below 72 hours, so renewal has failed for at least eleven days. HTTPS for the affected hosts fails when the cert expires; renew it now."
+          description: "The soonest-expiring edge certificate on a verified custom domain has under 72 hours left, so renewal has failed for at least eleven days. HTTPS for that host fails when the certificate expires; renew it now."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTLSCertExpiryPage.md"
 
       - alert: FaasTLSCertExpiryWarn
-        expr: gateway_tls_cert_expiry_seconds < (30 * 86400) and gateway_tls_cert_expiry_seconds >= (14 * 86400)
+        expr: min(gateway_tls_cert_expiry_seconds) < (30 * 86400) and min(gateway_tls_cert_expiry_seconds) >= (14 * 86400)
         for: 5m
         labels:
           severity: warn
@@ -3617,21 +3617,17 @@ groups:
           family: tls_cert_expiry
         annotations:
           summary: "TLS cert expiry < 30 days"
-          description: "Smallest remaining lifetime is between 14 and 30 days. Renewals normally fire at 30d; verify certmagic's renew-loop is alive (a log line every few minutes post-first-mint) and that the Hetzner DNS-01 token still has zone-write permission on the apps domain."
+          description: "The soonest-expiring edge certificate on a verified custom domain has between 14 and 30 days left. Caddy renews at about 30 days, so this is usually a renewal that has just started failing; check the public edge's Caddy log for the host."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTLSCertExpiryWarn.md"
 
       # ─────────────────────────────────────────────────────────────────
-      # Per-host TLS cert expiry (Finding 2 / ADR-024 H3 follow-up).
-      # The aggregate rule above covers the box-level signal; these
-      # rules attach a hostname + kind label so the alert routes to
-      # the right custom domain. `hostname!="__other__"` excludes the
-      # bounded-admission overflow (an admission overflow means we've
-      # run past hostnameLabelSetCap and don't have a real host name
-      # to attribute). `kind!="unknown"` excludes misclassifications
-      # so an issuer-key wiring bug doesn't page.
+      # Per-host TLS cert expiry (ADR-024 H3 follow-up). apid exports the
+      # soonest-expiring verified domains (CustomDomainCertExpiryExportMaxHosts)
+      # with kind="ondemand"; the __other__ and unknown filters stay for the
+      # old refresher's label shape.
       # ─────────────────────────────────────────────────────────────────
       - alert: FaasTLSCertExpiryPageByHost
-        expr: gateway_tls_cert_expiry_by_host_seconds{hostname!="__other__",kind!="unknown"} < (14 * 86400)
+        expr: min by (hostname, kind) (gateway_tls_cert_expiry_by_host_seconds{hostname!="__other__",kind!="unknown"}) < (14 * 86400)
         for: 5m
         labels:
           severity: warn
@@ -3641,11 +3637,11 @@ groups:
           kind: "{{ $labels.kind }}"
         annotations:
           summary: "TLS cert for {{ $labels.hostname }} expires in ≤14 days"
-          description: "Per-host cert expiry below 14 days. kind={{ $labels.kind }} tells you whether the wildcard (DNS-01) or an on-demand (HTTP-01) cert is affected — wildcard renewals auto-recover via DNS-01; on-demand renewals need the customer to keep the custom_domains row active and the HTTP-01 challenge endpoint reachable. Verify certmagic's renew-loop for this host (check the slog for {{ $labels.hostname }} renew lines)."
+          description: "The edge certificate apid's domain doctor observed for {{ $labels.hostname }} has under 14 days left. On-demand renewals need the custom_domains row verified, the ask endpoint allowing the host, HTTP-01 reachable on port 80 and CAA allowing Let's Encrypt. Check the public edge's Caddy log for {{ $labels.hostname }}."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTLSCertExpiryPageByHost.md"
 
       - alert: FaasTLSCertExpiryWarnByHost
-        expr: gateway_tls_cert_expiry_by_host_seconds{hostname!="__other__",kind!="unknown"} < (30 * 86400) and gateway_tls_cert_expiry_by_host_seconds{hostname!="__other__",kind!="unknown"} >= (14 * 86400)
+        expr: min by (hostname, kind) (gateway_tls_cert_expiry_by_host_seconds{hostname!="__other__",kind!="unknown"}) < (30 * 86400) and min by (hostname, kind) (gateway_tls_cert_expiry_by_host_seconds{hostname!="__other__",kind!="unknown"}) >= (14 * 86400)
         for: 10m
         labels:
           severity: warn
@@ -3655,7 +3651,7 @@ groups:
           kind: "{{ $labels.kind }}"
         annotations:
           summary: "TLS cert for {{ $labels.hostname }} expiry < 30 days"
-          description: "Per-host cert expiry is between 14 and 30 days. Renewals normally fire at 30d; if no renew log line surfaces for this host within the next 12h, force-renew via `faas cert refresh --host={{ $labels.hostname }}`."
+          description: "The edge certificate for {{ $labels.hostname }} has between 14 and 30 days left. Caddy renews at about 30 days; if the Caddy log shows no renewal for this host within the next 12 hours, follow the runbook."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasTLSCertExpiryWarnByHost.md"
 
       # ─────────────────────────────────────────────────────────────────
@@ -4257,6 +4253,22 @@ groups:
         annotations:
           summary: "vmmd refuses to boot {{ $labels.base }} ({{ $labels.reason }}) on {{ $labels.node }}"
           description: "vmmd's base scan gate has kept refusing boots on {{ $labels.base }} for fifteen minutes with reason {{ $labels.reason }}. No instance on that base can cold boot or restore, so every app on its runtime fails to deploy and to wake. critical means the node-side Grype scan found a fixable CRITICAL vulnerability: publish a patched base. sidecar_missing, incomplete and generation_* mean the scan record is absent or stale: rerun the base stage."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBaseScanRefusingBoots.md"
+
+      # Bug hunt 2026-10-28 H102: a shared-base scan that fails for a reason
+      # other than the bytes keeps the last complete scan in force for
+      # api.SharedBaseScanFailureGrace instead of refusing every boot. Boots
+      # continue, but the base is refused once the hold runs out.
+      - alert: FaasBaseScanFailureHeld
+        expr: sum by (base, reason) (increase(imaged_base_scan_failures_held_total[10m])) > 0
+        for: 10m
+        labels:
+          severity: page
+          component: imaged
+          family: base_scan_gate
+        annotations:
+          summary: "Scans of {{ $labels.base }} keep failing ({{ $labels.reason }}); boots run on its last complete scan"
+          description: "imaged's renewals of {{ $labels.base }} have kept failing with {{ $labels.reason }} for ten minutes. Boots continue on the last complete scan of the same bytes, but vmmd refuses every boot on the base once that scan is 24 hours old. scanner_unavailable and scanner_invalid point at Grype or its database, artifact_read at the artifact store."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBaseScanRefusingBoots.md"
 
       # ADR-20261029155852: imaged checks a platform base's SLSA provenance
@@ -6865,7 +6877,12 @@ groups:
       # sweep runs every 5 s on every schedd and on every publish; a fleet
       # with no completed sweep for ten minutes routes no event at all.
       - alert: FaasEventRoutingStalled
-        expr: sum(increase(schedd_loop_work_duration_seconds_count{kind="event_fanout"}[10m])) == 0
+        expr: |
+          sum(increase(schedd_loop_work_duration_seconds_count{kind="event_fanout"}[10m])) == 0
+          or (
+            sum(increase(schedd_event_routing_outcomes_total{outcome="claim_error"}[10m])) > 0
+            and sum(increase(schedd_event_routing_outcomes_total{outcome=~"routed|waiting|retry|failed"}[10m])) == 0
+          )
         for: 5m
         labels:
           severity: page
@@ -6874,7 +6891,7 @@ groups:
           public_status: internal
         annotations:
           summary: "Event routing has stopped on every schedd"
-          description: "No schedd has completed an event routing sweep for fifteen minutes, so published events, object notifications and webhook automations are accepted but not delivered. Check schedd health, the event_fanout work kind and database latency."
+          description: "For fifteen minutes no schedd has completed an event routing sweep, or the sweeps that ran could not claim any routing work and routed nothing, so published events, object notifications and webhook automations are accepted but not delivered. Check schedd health and its claim errors, the event_fanout work kind and database latency."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEventDriven.md"
       - alert: FaasEventRoutingSweepSlow
         expr: |
@@ -6902,8 +6919,25 @@ groups:
           summary: "Many event deliveries are waiting for consumer capacity"
           description: "{{ $value }} event deliveries platform-wide have waited for consumer capacity for thirty minutes. One account's slow consumer is the usual cause; many accounts at once point at the invocation drain or node capacity."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEventDriven.md"
+      - alert: FaasEventRoutingFailing
+        expr: |
+          sum(increase(schedd_event_routing_outcomes_total{outcome=~"retry|failed"}[15m]))
+            / sum(increase(schedd_event_routing_outcomes_total{outcome=~"routed|waiting|retry|failed"}[15m])) > 0.5
+          and on () sum(increase(schedd_event_routing_outcomes_total{outcome=~"retry|failed"}[15m])) >= 50
+        for: 15m
+        labels:
+          severity: warn
+          component: schedd
+          family: event_routing
+          public_status: internal
+        annotations:
+          summary: "Most event recipients are failing to route"
+          description: "More than half of the event recipients routed in fifteen minutes failed or were put back to retry. Routing is running but not delivering. One subscription whose target is gone is the usual cause; many apps at once point at the database or the invocation queue."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEventDriven.md"
       - alert: FaasDeadLetterSpike
-        expr: sum(increase(faas_dlq_events_total[10m])) > 200
+        expr: |
+          (sum(increase(faas_dlq_events_total[10m])) or vector(0))
+            + (sum(increase(schedd_event_routing_outcomes_total{outcome="failed"}[10m])) or vector(0)) > 200
         for: 5m
         labels:
           severity: warn
@@ -6912,7 +6946,7 @@ groups:
           public_status: internal
         annotations:
           summary: "Dead letters are arriving fast"
-          description: "More than 200 invocations and trigger records reached the dead-letter queue in ten minutes, fleet-wide. One app's failing handler is the usual cause; many apps at once point at the gateway, wakes or a broker."
+          description: "More than 200 invocations, trigger records and event recipients whose routing failed reached the dead-letter queue in ten minutes, fleet-wide. One app's failing handler is the usual cause; many apps at once point at the gateway, wakes, a broker or event routing."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEventDriven.md"
       - alert: FaasBrokerTriggerPollErrors
         expr: |
@@ -7359,6 +7393,19 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
           summary: "s3-gatewayd cannot write its batched read counts"
           description: "Read count flushes on {{ $labels.instance }} have failed for 10 minutes. Reads keep being served from cached decisions for up to 30 s and then fail closed; counts stay in memory until a flush succeeds."
+      # ADR-20261030075301 step 2: gatewayd-public admits public bucket reads
+      # the same way and batches their counts every second.
+      - alert: FaasPublicObjectReadUsageFlushFailing
+        expr: sum by (instance) (rate(gatewayd_public_object_read_usage_flushes_total{outcome="failed"}[5m])) > 0
+        for: 10m
+        labels:
+          severity: warn
+          component: gatewayd-public
+          family: object_storage
+        annotations:
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
+          summary: "gatewayd-public cannot write its batched public read counts"
+          description: "Public bucket read count flushes on {{ $labels.instance }} have failed for 10 minutes. Public reads keep being served from cached decisions for up to 30 s and then fail closed; counts stay in memory until a flush succeeds."
       - alert: FaasObjectStorageUsageExportStale
         expr: time() - s3_gateway_usage_export_last_success_timestamp_seconds > 3600
         for: 15m

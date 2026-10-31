@@ -364,7 +364,7 @@ func (s *PgStore) CreateAccountWithPersonalOrg(ctx context.Context, params Creat
 	return CreateAccountWithPersonalOrgResult{Account: acct, PersonalOrg: org}, nil
 }
 
-func (s *PgStore) AccountByID(ctx context.Context, id string) (Account, error) {
+func (s *pgCore) AccountByID(ctx context.Context, id string) (Account, error) {
 	row := s.pool.QueryRow(ctx,
 		`select id, email, plan, status, coalesce(provider_customer_id,''), coalesce(stripe_subscription_item,''), created_at, deletion_requested_at, last_quota_warning_at, past_due_at, mfa_enrolled_at, mfa_secret_encrypted, mfa_recovery_codes_hash, mfa_required, egress_allowlist_extra, email_verified_at, coalesce(business_name,''), coalesce(billing_address,''), coalesce(tax_id,''), abuse_hold_at, coalesce(abuse_hold_reason,'') from accounts where id = $1`, id)
 	return scanAccount(row)
@@ -2770,9 +2770,14 @@ func createAppIfUnderQuotaTx(ctx context.Context, tx pgx.Tx, app App, limits api
 	// The access and egress gates are written too: PR previews copy their
 	// parent's gates through this path, and dropping them left a preview of
 	// an IP-allowlisted, password-protected or egress-restricted app open.
-	insertAppSQL := `insert into apps (id, account_id, slug, type, runtime, ram_mb, idle_timeout_s, max_concurrency, status, manifest, min_instances, streaming_enabled, project_id, root_dir, workload_name, workload_class, start_command, node_id, warm_snapshot_enabled, warm_snapshot_min_requests, warm_snapshot_min_ms, warm_pool_size, eviction_priority, require_authn, public_auth_mode, websocket_enabled, route_metrics_enabled, overflow_node, preview_of_slug, preview_pr_number, preview_pr_state, preview_expires_at, preview_destroy_commented_at, maintenance_mode, app_protocol, cpu_millicores, visibility, retry_policy, org_id, platform_tenant_required, egress_allowlist, public_auth_ip_allowlist, public_auth_basic, require_signed, consumer_auth_mode)
-		 values (coalesce(nullif($40, '')::uuid, gen_random_uuid()), $1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37::jsonb, coalesce(nullif($38, '')::uuid, (select id from orgs where personal_org = true and personal_owner_account_id = $1)), $39, $41, $42, $43, $44, $45)
+	// The declared-route contract is one of those gates.
+	insertAppSQL := `insert into apps (id, account_id, slug, type, runtime, ram_mb, idle_timeout_s, max_concurrency, status, manifest, min_instances, streaming_enabled, project_id, root_dir, workload_name, workload_class, start_command, node_id, warm_snapshot_enabled, warm_snapshot_min_requests, warm_snapshot_min_ms, warm_pool_size, eviction_priority, require_authn, public_auth_mode, websocket_enabled, route_metrics_enabled, overflow_node, preview_of_slug, preview_pr_number, preview_pr_state, preview_expires_at, preview_destroy_commented_at, maintenance_mode, app_protocol, cpu_millicores, visibility, retry_policy, org_id, platform_tenant_required, egress_allowlist, public_auth_ip_allowlist, public_auth_basic, require_signed, consumer_auth_mode, only_declared_routes, declared_routes)
+		 values (coalesce(nullif($40, '')::uuid, gen_random_uuid()), $1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37::jsonb, coalesce(nullif($38, '')::uuid, (select id from orgs where personal_org = true and personal_owner_account_id = $1)), $39, $41, $42, $43, $44, $45, $46, $47::jsonb)
 		returning ` + appsSelectColumns
+	declaredRoutes, err := json.Marshal(previewDeclaredRoutes(app.DeclaredRoutes))
+	if err != nil {
+		return App{}, fmt.Errorf("state: encode declared routes: %w", err)
+	}
 	consumerAuth := app.ConsumerAuthMode
 	if consumerAuth == "" {
 		consumerAuth = ConsumerAuthModeOptional
@@ -2839,7 +2844,7 @@ func createAppIfUnderQuotaTx(ctx context.Context, tx pgx.Tx, app App, limits api
 		// default. Mirrors the binding in CreateApp above.
 		appProtocol, cpuMillicores, string(visibility), retryPolicy, nullString(app.OrgID), app.PlatformTenantRequired, app.ID,
 		cidrPrefixesToArray(app.EgressAllowlist), cidrPrefixesToArray(app.PublicAuthIPAllowlist), app.PublicAuthBasicSealed,
-		app.RequireSigned, string(consumerAuth))
+		app.RequireSigned, string(consumerAuth), app.OnlyAllowDeclaredRoutes, string(declaredRoutes))
 	created, err := scanApp(row)
 	if err != nil {
 		return App{}, err
@@ -15114,6 +15119,36 @@ func (s *PgStore) ListEdgeRulesForAccount(ctx context.Context, accountID string)
 	return scanEdgeRules(rows)
 }
 
+func (s *PgStore) ListEdgeRulesUsingCorsPreset(ctx context.Context, accountID, presetID string) ([]EdgeRule, error) {
+	// cors_preset_id is a uuid: an id that does not parse names no preset,
+	// so no rule uses it.
+	if _, err := uuid.Parse(presetID); err != nil {
+		return nil, nil
+	}
+	rows, err := s.pool.Query(ctx,
+		`select `+edgeRuleSelectCols+` from edge_rules
+		 where account_id = $1 and cors_preset_id = $2
+		 order by priority asc, created_at asc, id asc`, accountID, presetID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanEdgeRules(rows)
+}
+
+func (s *PgStore) ListRouteRulesTargeting(ctx context.Context, accountID, targetSlug string) ([]EdgeRule, error) {
+	rows, err := s.pool.Query(ctx,
+		`select `+edgeRuleSelectCols+` from edge_rules
+		 where account_id = $1 and kind = 'route'
+		   and action->'route'->>'target_app_slug' = $2
+		 order by priority asc, created_at asc, id asc`, accountID, targetSlug)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanEdgeRules(rows)
+}
+
 func (s *PgStore) ListEdgeRulesForApp(ctx context.Context, appID string) ([]EdgeRule, error) {
 	rows, err := s.pool.Query(ctx,
 		`select `+edgeRuleSelectCols+` from edge_rules
@@ -22914,7 +22949,21 @@ func (s *PgStore) CurrentMonthOverageCents(ctx context.Context, accountID string
 	if err != nil {
 		return 0, err
 	}
-	return monthOverageCents(plan, snapshots, now, mbSeconds), nil
+	// Only an account that changed plan this month reads its usage before the
+	// change: the month's total less the usage since, a short indexed range.
+	monthEnd := monthStart.AddDate(0, 1, 0)
+	usageBefore := func(at time.Time) (int64, error) {
+		var since int64
+		if err := s.pool.QueryRow(ctx,
+			`select COALESCE(SUM(mb_seconds), 0)::bigint
+			   from usage_minutes
+			  where account_id = $1 and minute >= $2 and minute < $3`,
+			accountID, at.UTC(), monthEnd).Scan(&since); err != nil {
+			return 0, err
+		}
+		return max(mbSeconds-since, 0), nil
+	}
+	return monthOverageCents(plan, snapshots, now, mbSeconds, usageBefore)
 }
 
 // UsageByHour returns per-app usage rolled up from the per-minute rows
@@ -22995,18 +23044,34 @@ func (s *PgStore) UsageWindows(ctx context.Context, start, end time.Time) ([]Usa
 	return out, rows.Err()
 }
 
+// pendingBillingSubjectsSQL lists provider's billing identities whose subject,
+// an account or a company organization, is on a paid plan. A cancelled
+// subject keeps its identity but is Free, and the pusher never delivers a Free
+// subject's hours, so scanning them only grew every pass and let their
+// month-old hours fill the row limit ahead of paying subjects' current ones
+// (ADR-20261031100000).
+const pendingBillingSubjectsSQL = `paid as (
+		   select bi.account_id, bi.billing_from
+		     from billing_identities bi
+		     left join accounts a on a.id = bi.account_id
+		     left join orgs o on o.id = bi.account_id and not o.personal_org
+		    where bi.provider = $1
+		      and coalesce(a.plan, o.plan, 'free') <> 'free'
+		 )`
+
 // PendingBillingUsageWindows returns bounded positive hourly usage without a
 // pusher-owned receipt for provider. billing_identities.billing_from prevents
 // a newly selected backend from charging pre-checkout/provider-switch usage.
+// Only paid subjects are listed.
 func (s *PgStore) PendingBillingUsageWindows(ctx context.Context, provider string, start, end time.Time) ([]UsageWindow, error) {
 	rows, err := s.pool.Query(ctx,
-		`with hourly as (
+		`with `+pendingBillingSubjectsSQL+`, hourly as (
 		   select u.account_id,
 		          date_trunc('hour', u.minute at time zone 'UTC') at time zone 'UTC' as window_start,
 		          sum(u.mb_seconds)::bigint as mb_seconds
 		     from usage_minutes u
-		     join billing_identities bi
-		       on bi.account_id = u.account_id and bi.provider = $1
+		     join paid bi
+		       on bi.account_id = u.account_id
 		    where u.minute >= $2 and u.minute < $3
 		      and u.minute >= bi.billing_from
 		    group by u.account_id, window_start
@@ -23065,13 +23130,13 @@ func (s *PgStore) PendingBillingMeterUsageWindows(ctx context.Context, provider 
 		return nil, fmt.Errorf("unsupported billing meter %q", meter)
 	}
 	rows, err := s.pool.Query(ctx,
-		`with hourly as (
+		`with `+pendingBillingSubjectsSQL+`, hourly as (
 		   select u.account_id,
 		          date_trunc('hour', u.minute at time zone 'UTC') at time zone 'UTC' as window_start,
 		          sum(u.net_tx_bytes)::bigint as quantity
 		     from usage_minutes u
-		     join billing_identities bi
-		       on bi.account_id = u.account_id and bi.provider = $1
+		     join paid bi
+		       on bi.account_id = u.account_id
 		    where u.minute >= $2 and u.minute < $3
 		      and u.minute >= bi.billing_from
 		    group by u.account_id, window_start
@@ -28891,7 +28956,7 @@ func nullIfEmpty(s string) any {
 }
 
 // OrgByID is the canonical primary-key lookup.
-func (s *PgStore) OrgByID(ctx context.Context, id string) (Org, error) {
+func (s *pgCore) OrgByID(ctx context.Context, id string) (Org, error) {
 	row := s.pool.QueryRow(ctx, `
 		select id, slug, name, personal_org, personal_owner_account_id,
 		       plan, status, provider_customer_id, stripe_subscription_item,
@@ -32014,6 +32079,11 @@ func replayDeadLetterEventTx(ctx context.Context, tx pgx.Tx, accountID, appID st
 			return time.Time{}, parseErr
 		}
 		if err := lockInvocationReplayLaneTx(ctx, tx, mustPgUUID(ev.SourceID), mustPgUUID(accountID), mustPgUUID(appID)); err != nil {
+			return time.Time{}, mapErr(err)
+		}
+		if expired, err := sqlc.New().DeadLetterInvocationWorkExpired(ctx, tx, args.EventID); err == nil && expired {
+			return time.Time{}, ErrKeyedReplayExpired
+		} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return time.Time{}, mapErr(err)
 		}
 		if err := refreshEventReplayCapacity(ctx, tx, ev.SourceID); err != nil {

@@ -1367,6 +1367,15 @@ update custom_domains set verified_at = now() where domain = $1;
 -- name: DeleteCustomDomain :exec
 delete from custom_domains where domain = $1;
 
+-- name: ListSoonestExpiringCustomDomainCerts :many
+-- Verified custom domains whose edge certificate the domain doctor observed,
+-- soonest expiry first: the source of the certificate-expiry alerts.
+select domain::text as domain, cert_expires_at::timestamptz as cert_expires_at
+from custom_domains
+where verified_at is not null and cert_expires_at is not null
+order by cert_expires_at, domain
+limit $1;
+
 -- name: CreateCron :one
 insert into crons (id, app_id, schedule, path, enabled, timezone, skip_if_running)
 values (gen_random_uuid(), $1, $2, $3, $4, $5, $6)
@@ -19829,6 +19838,15 @@ SELECT * FROM alert_rules WHERE id=sqlc.arg(id);
 
 -- name: ListCustomerAlertRulesForAccount :many
 SELECT * FROM alert_rules WHERE account_id=sqlc.arg(account_id) ORDER BY created_at DESC;
+
+-- name: PurgeDeletedRuleEpisodesBefore :execrows
+-- Deletes up to max_rows resolved episodes, oldest first, whose rule was
+-- deleted before the cutoff, and their notes with them (ADR-20261030214500).
+DELETE FROM alert_episodes e WHERE e.id IN (
+  SELECT o.id FROM alert_episodes o
+  WHERE o.resolved_at < sqlc.arg(before)::timestamptz
+    AND NOT EXISTS (SELECT 1 FROM alert_rules r WHERE r.id = o.rule_id)
+  ORDER BY o.resolved_at LIMIT sqlc.arg(max_rows)::integer);
 
 -- name: PurgeAlertDeliveriesBefore :execrows
 -- Deletes up to max_rows settled deliveries fired before the cutoff, oldest

@@ -1,7 +1,8 @@
 # ADR 20261030100950 · CPU pressure backstop
 
 - **Status:** proposed. Built behind the schedd switch
-  `cpu_pressure_backstop`, off by default.
+  `cpu_pressure_backstop`, on by default since the amendment of
+  2026-10-31.
 - **Date:** 2026-10-30
 - **Amends:** ADR 20261029151111 (measured CPU admission: its "planned
   next" pressure backstop), ADR-1151 §3 ("CPU pressure (PSI) alerts on it")
@@ -129,3 +130,29 @@ are nearly all busy.
   pressured one, and admission withholds the discount on a pressured node
   and names the pressure in its refusal.
 - schedd: the switch is off by default and parses from TOML.
+
+## Amendment 2026-10-31: on by default
+
+The owner turned `quiet_pause_admission`, `measured_cpu_admission` and
+`cpu_pressure_backstop` on in production on 2026-10-31, 09:13-09:16 UTC, by
+hand in `/etc/faas/schedd.toml` on fsn-3, fsn-2 and the control plane
+(rc.311), one node at a time. Every schedd restarted cleanly, logged each
+switch enabled and raised no new warnings. The nodes were about 3% busy with
+no CPU pressure, and no node was held. vmmd's `quiet_pause` has been on by
+default since 2026-10-27.
+
+`cpu_pressure_backstop` now defaults to on (`cmd/schedd/config.go`), with
+measured CPU admission, whose overcommit it bounds;
+`cpu_pressure_backstop = false` in `schedd.toml` turns it off, and
+`FAAS_CPU_PRESSURE_BACKSTOP` overrides the file either way (an environment
+drop-in is the opt-out that survives manifest renders). The
+thresholds stay the initial values, to be tuned from
+`schedd_node_cpu_pressure_some_avg10` and `schedd_node_cpu_busy_percent`
+once nodes run dense.
+
+Release rollouts run `gregalectl manifest render` on every node, which
+rewrites `/etc/faas/schedd.toml` from the manifest, so the hand edit would be
+lost at the next rollout and would never reach a new node. The production
+manifest cannot carry a new key until every node's `gregalectl` and `imaged`
+parse it, as ADR-1151's 2026-10-27 amendment found. A default in the binary
+reaches every node with the release itself.
