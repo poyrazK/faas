@@ -114,7 +114,8 @@ func writeFingerprintField(w io.Writer, field string) {
 // canonicalBody returns the body in a form that is equal for equivalent
 // requests: JSON re-encoded with sorted keys, multipart parts without the
 // random boundary. Anything else, or a body that does not parse, is its
-// bytes.
+// bytes. As in the query, a JSON object's "environment" naming the default
+// (production) is the body that omits it.
 func canonicalBody(mediaType string, params map[string]string, body []byte) (string, []byte) {
 	if len(body) == 0 {
 		return "empty", nil
@@ -141,6 +142,9 @@ func canonicalJSON(body []byte) ([]byte, bool) {
 	var v any
 	if err := dec.Decode(&v); err != nil {
 		return nil, false
+	}
+	if obj, ok := v.(map[string]any); ok && obj["environment"] == "production" {
+		delete(obj, "environment")
 	}
 	var out bytes.Buffer
 	enc := json.NewEncoder(&out)

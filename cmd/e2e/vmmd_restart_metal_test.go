@@ -127,6 +127,17 @@ func TestVMMDRestartKeepsRunningAppMetal(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// FAAS_E2E_SUCCESSOR_BRIDGE_UNIT=1 restarts into a vmmd with bridge units
+	// switched on, as a node joining vmmd_bridge_canary_nodes does without a
+	// drain: the successor serves the adopted guest through a new unit.
+	unitsOnAfter := !unitsOn && os.Getenv("FAAS_E2E_SUCCESSOR_BRIDGE_UNIT") == "1"
+	if unitsOnAfter {
+		for _, key := range []string{"FAAS_BRIDGE_UNPRIVILEGED", "FAAS_INSTANCE_BRIDGE_SESSIONS", "FAAS_INSTANCE_BRIDGE_UNIT"} {
+			if err := h.SetVMMDEnv(key, "1"); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 
 	// Traffic through the whole restart. A running guest is proxied
 	// directly; nothing on the request path needs vmmd.
@@ -176,7 +187,13 @@ func TestVMMDRestartKeepsRunningAppMetal(t *testing.T) {
 	close(stop)
 	<-done
 	t.Logf("vmmd restart: %s; requests during it: %d ok, %d failed (first: %v)", restarted, ok.Load(), failed.Load(), firstFailure.Load())
-	if failed.Load() != 0 || ok.Load() == 0 {
+	// Production's unit (KillMode=control-group) reaps vmmd's bridge
+	// processes when it stops, so without bridge units the guest is
+	// unreachable until the successor starts new ones; only a bridge unit
+	// carries requests through. A harness vmmd outside systemd leaves its
+	// bridges running, which hid that gap.
+	mustServe := unitsOn || !e2etest.VMMDUnderSystemd()
+	if ok.Load() == 0 || (mustServe && failed.Load() != 0) {
 		t.Fatalf("the app did not keep serving through the vmmd restart: %d ok, %d failed (first: %v)", ok.Load(), failed.Load(), firstFailure.Load())
 	}
 	after := instanceByID(t, pool, before.ID)
@@ -203,6 +220,11 @@ func TestVMMDRestartKeepsRunningAppMetal(t *testing.T) {
 			run["MainPID"] != bridgeRun["MainPID"] || run["ActiveState"] != "active" {
 			t.Fatalf("bridge after the restart: units %v run %v; before %s %v (the successor must adopt it)", units, run, bridgeUnit, bridgeRun)
 		}
+	} else if unitsOnAfter {
+		upgradeEchoRound(t, gateway, host, "after the restart")
+		if units := bridgeUnits(t, before.ID); len(units) != 1 {
+			t.Fatalf("successor with bridge units on serves the adopted guest through units %v, want one", units)
+		}
 	}
 
 	// The successor serves the platform: park, then wake again. Parking
@@ -215,7 +237,7 @@ func TestVMMDRestartKeepsRunningAppMetal(t *testing.T) {
 	if got := firecrackerPID(t, before.ID); got != 0 {
 		t.Fatalf("adopted guest still running after park: pid %d", got)
 	}
-	if unitsOn {
+	if unitsOn || unitsOnAfter {
 		if left := bridgeUnits(t, before.ID); len(left) != 0 {
 			t.Fatalf("adopted guest parked with bridge units %v", left)
 		}

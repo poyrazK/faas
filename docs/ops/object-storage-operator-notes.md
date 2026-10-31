@@ -1470,8 +1470,12 @@ written in one batch per process every second
 - Every authenticated request takes a token from its owner's bucket:
   100 per second, bursts of 200, per gateway process. Over that, clients get
   `503 SlowDown`.
-- Writes, provider-report accounting and credentials issued under an
-  organization access fence keep the locking admission.
+- Writes and provider-report accounting keep the locking admission.
+- A credential issued under an organization access fence is checked
+  against the issuer's membership revision, read without locks and cached
+  for 2 s per member: removing a member or changing their role stops their
+  credentials' reads within 2 s (30 s while the database is unreachable).
+  Writes still check the fence in their transaction.
 - Public bucket reads on app hostnames are admitted the same way by
   `gatewayd-public`, against the anonymous share (75%) of the ceilings, with
   their own metrics (`gatewayd_public_object_read_*`) and alert

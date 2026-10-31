@@ -88,6 +88,14 @@ vmmd opens at wake:
    `faas_seal_domain_runtime_signatures_required: true` makes vmmd refuse
    unsigned ones at its next start. Order and checks: runbook
    seal-domains-rollout.md §14.
+6. Contract: once `seal-domain migrate --domain runtime --check` finds
+   nothing pending and the build domain is contracted, set
+   `faas_seal_domain_runtime_contracted: true` and converge the compute
+   hosts. The role runs the check again, then adds
+   `FAAS_SEAL_DOMAIN_RUNTIME_CONTRACTED=true` to vmmd's drop-in. At its next
+   start vmmd opens runtime secrets and registry passwords with the runtime
+   and build domains alone, and reports `faas_seal_domain_legacy_identities
+   0`. Order and checks: runbook seal-domains-rollout.md §4g.
 
 The `source` domain covers GitHub install tokens and webhook secret copies,
 which githubd opens. Set `faas_seal_domain_source_identity_src` and

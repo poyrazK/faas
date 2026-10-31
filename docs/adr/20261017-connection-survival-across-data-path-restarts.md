@@ -789,6 +789,15 @@ its own.
       reproduces the 225/NETWORK failure with the old path, and serves a
       request through a unit bridge. The canary stays paused until a
       release carries the fix.
+    - Canary resumed (2026-10-31): rc.309 carries the fix, and `fsn-2.faas`
+      is back in `vmmd_bridge_canary_nodes`. The harness now runs vmmd under
+      faas-vmmd.service's sandbox (`FAAS_E2E_VMMD_SYSTEMD=1`); there, with
+      the fix reverted, bridge units fail with 225/NETWORK as on rc.305, and
+      with it a no-drain restart hands a unit over and serves every request
+      through it (229 ok, 0 failed). fsn-2's first restart with the switch
+      on goes from units off to on: its predecessor's bridge processes die
+      with the vmmd unit, and the successor serves the adopted guest
+      through a new unit (`FAAS_E2E_SUCCESSOR_BRIDGE_UNIT=1`).
   - 1d: gate and counters move to the bridge, with ADR-1151 property tests.
 
   After P1, bridges survive vmmd, but streams are still cut, because the

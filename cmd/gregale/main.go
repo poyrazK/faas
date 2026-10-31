@@ -155,6 +155,9 @@ func run(args []string) (status int) {
 		}
 	}
 	if topic, ok := cliTreeHelpTopic(args); ok {
+		if cliTreeTopicHidden(topic) {
+			return unknownCommand(strings.Join(leadingTreeWords(typed), " "))
+		}
 		printCliTreeHelp(osStdout, topic)
 		return 0
 	}

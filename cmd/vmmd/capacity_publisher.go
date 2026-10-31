@@ -415,6 +415,8 @@ func buildCapacityReport(
 	}
 	if stats != nil {
 		report.InstanceBridgeResidentBytes = stats.GetInstanceBridgeResidentBytes()
+		report.TenantCpuPressureSomeAvg10 = stats.GetTenantCpuPressureSomeAvg10()
+		report.HostCpuBusyPercent = stats.GetHostCpuBusyPercent()
 		report.Instances = make([]*scheddpb.InstanceTelemetry, 0, len(stats.GetInstances()))
 		for _, in := range stats.GetInstances() {
 			if in == nil || in.GetInstance() == "" {

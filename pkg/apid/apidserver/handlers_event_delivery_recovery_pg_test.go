@@ -326,7 +326,10 @@ func seedEventDeliveryRecoveryConsumers(t *testing.T, store *state.PgStore, acco
 
 func waitEventRecoveryCondition(t *testing.T, condition func() bool) {
 	t.Helper()
-	deadline := time.NewTimer(10 * time.Second)
+	// Event deliveries back off 5 s doubling, +/-20 % (ADR-20261029190000):
+	// the Hobby poison delivery dead-letters about 15 s after its first
+	// attempt, up to ~13 s after the settlement loss this test waits on.
+	deadline := time.NewTimer(30 * time.Second)
 	defer deadline.Stop()
 	tick := time.NewTicker(25 * time.Millisecond)
 	defer tick.Stop()

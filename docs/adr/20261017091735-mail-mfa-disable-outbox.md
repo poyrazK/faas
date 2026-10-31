@@ -94,3 +94,23 @@ intent or audit history. Flag rollback preserves all saved security bindings.
 Maild admission is distinct from destination delivery. Qualification remains
 separate. There is no forced resend, cooldown bypass, deadline extension, key
 enrollment, DNS mutation, deployment or flag activation in this change.
+
+## Amendment 1 (2026-10-31): legacy links open the confirmation page
+
+With the outbox off (production), the legacy inline path mailed
+`/v1/account/mfa/disable-email/confirm?token=…`, which is POST-only: a mail
+client opens it with GET and gets 405, and the page that turns a link into the
+POST was default-off. Email-assisted MFA recovery did not work at all (bug hunt
+2026-10-28 B38).
+
+- The legacy path mails `/auth/reset/mfa?token=…` on the same host it used
+  before. The page accepts its longer age-sealed token as well as the durable
+  raw token, and the existing confirmation endpoint still decides which reader
+  opens it.
+- The page is served whenever a link can be mailed: always while the outbox is
+  off, and while it is on only when the outbox is available. Flag rollback no
+  longer hides it; saved durable links keep opening it, and their credentials
+  stay enforced at the confirmation endpoint as before.
+- The page is unchanged otherwise: a signed-in session, no-store,
+  no-referrer, CSP nonces, no token consumption on GET or prefetch, and the
+  explicit button posts with the account/action-bound CSRF token.

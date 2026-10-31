@@ -17,6 +17,7 @@ Metrics: `faas_object_storage_inventory_scans_total{outcome}`,
 `faas_object_storage_region_full{region}`,
 `s3_gateway_read_admission_decisions_total{source}`,
 `s3_gateway_read_usage_flushes_total{outcome}`,
+`s3_gateway_org_access_checks_total{source}`,
 `gatewayd_public_object_read_admission_decisions_total{source}`,
 `gatewayd_public_object_read_usage_flushes_total{outcome}`.
 Decision records: [ADR 20261023223000](../adr/20261023223000-object-storage-bucket-scoped-availability.md),
@@ -68,7 +69,9 @@ Severity: warn.
    exporter's provider credentials.
 4. Read counts: `journalctl -u faas-s3-gatewayd | grep "read usage flush failed"`
    and `s3_gateway_read_admission_decisions_total{source="failed"|"stale"}`
-   for database reachability from the gateway. For public reads:
+   for database reachability from the gateway;
+   `s3_gateway_org_access_checks_total{source="failed"}` for reads under
+   organization-fenced credentials. For public reads:
    `journalctl -u faas-gatewayd-public | grep "public read usage flush failed"`
    and `gatewayd_public_object_read_admission_decisions_total`.
 5. Capacity: `faas_object_storage_backend_buckets` against

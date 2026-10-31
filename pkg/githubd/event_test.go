@@ -218,7 +218,7 @@ func TestDecodePullRequest_ActionsAccepted(t *testing.T) {
 
 func TestDecodePullRequest_RejectsUnknownAction(t *testing.T) {
 	t.Parallel()
-	cases := []string{"assigned", "labeled", "review_requested", "edited", "ready_for_review"}
+	cases := []string{"assigned", "labeled", "review_requested", "edited", "converted_to_draft"}
 	for _, a := range cases {
 		a := a
 		t.Run(a, func(t *testing.T) {

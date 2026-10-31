@@ -704,9 +704,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// either key. The first-boot / restart single-identity path
 	// above already wrote host.age.pub from the current identity,
 	// so the apid-side sealing endpoint keeps working unchanged.
-	hostIdentities, err := loadHostIdentities(deps, filepath.Dir(keyPath))
-	if err != nil {
-		return fmt.Errorf("vmmd: load host identities (%s): %w", filepath.Dir(keyPath), err)
+	// ADR 20261022111812, contract step: a contracted vmmd does not read the
+	// fleet and host identities at all. host.age above stays, since the
+	// node's other units and the join check still load it.
+	var legacyIdentities []*age.X25519Identity
+	if !cfg.RuntimeSealDomainContracted {
+		legacyIdentities, err = loadHostIdentities(deps, filepath.Dir(keyPath))
+		if err != nil {
+			return fmt.Errorf("vmmd: load host identities (%s): %w", filepath.Dir(keyPath), err)
+		}
 	}
 	// ADR 20261022111812: runtime secrets sealed to the runtime seal domain
 	// open with its identity; the fleet and host identities keep opening
@@ -721,10 +727,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return fmt.Errorf("vmmd: load build seal domain: %w", err)
 	}
-	registryIdentities := append(append([]*age.X25519Identity(nil), buildIdentities...), hostIdentities...)
-	hostIdentities = append(runtimeIdentities, hostIdentities...)
+	hostIdentities, registryIdentities, err := unsealIdentities(runtimeIdentities, buildIdentities, legacyIdentities, cfg.RuntimeSealDomainContracted)
+	if err != nil {
+		return err
+	}
 	sealdomain.RegisterLoadedDomains(ops.Registry(), map[sealdomain.Domain]bool{sealdomain.Runtime: len(runtimeIdentities) > 0, sealdomain.Build: len(buildIdentities) > 0})
-	log.Info("vmmd: unseal identities loaded", "runtime_domain", len(runtimeIdentities) > 0, "identities", len(hostIdentities))
+	sealdomain.RegisterLegacyIdentities(ops.Registry(), len(legacyIdentities))
+	log.Info("vmmd: unseal identities loaded", "runtime_domain", len(runtimeIdentities) > 0, "identities", len(hostIdentities),
+		"contracted", cfg.RuntimeSealDomainContracted, "legacy_identities", len(legacyIdentities))
 
 	// Issue #98 / ADR-028: vmmd self-registers in compute_nodes
 	// before the gRPC listener binds. Fail-closed: if the upsert
@@ -1910,6 +1920,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 	}
 	impl.Register(gsrv)
+	localData := newLocalDataSocket(ctx, cfg.LocalDataSocket, api.VmmdLocalDataSocket, cfg.OwnerUser, impl.Register, log)
 	defer func() {
 		if err := impl.Close(context.WithoutCancel(ctx)); err != nil {
 			log.Warn("vmmd: stream bridge cleanup during shutdown failed", "err", err)
@@ -1985,6 +1996,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		grpcBound.MarkBound()
 		serveErr <- gsrv.Serve(lis)
 	}()
+	localData.serve(log)
 	if adoptionReport != nil {
 		endRestartNotice(ctx, store, adoptionReport.NodeID, log)
 	}
@@ -2225,7 +2237,9 @@ heartbeat:
 		// The caller ctx is already done; the notice is shutdown work.
 		announceRestart(context.WithoutCancel(ctx), store, adoptionReport.NodeID, log)
 	}
+	localDataStopped := localData.stop(cfg.AdoptRunningVMs, log)
 	stopGRPC(gsrv, cfg.AdoptRunningVMs, log)
+	<-localDataStopped
 	// The successor adopts from the journal: write what the last RPCs changed.
 	mgr.FlushAdoptionRecords()
 	if adminSrv != nil {

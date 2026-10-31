@@ -62,7 +62,8 @@ it does not delete existing applications.
 
 Other per-account plan allowances follow the app's billing subject
 (ADR-202610171904): API consumer keys, log drains, realtime endpoints, inbound
-and outbound webhooks, alert rules, CORS presets, triggers, crons (created
+and outbound webhooks, alert rules, CORS presets, triggers, captured and imported OpenAPI
+documents, crons (created
 singly, by a deploy or by a project apply) and reserved
 (`eviction_priority: reserved`) apps. Once an
 organization has adopted billing, a company app's resources count toward the
@@ -100,9 +101,10 @@ Organization financial APIs are scoped by URL:
 - `GET /v1/orgs/{slug}/billing/status` and `GET /v1/orgs/{slug}/usage` require organization view permission.
 - `GET /v1/orgs/{slug}/invoices` requires billing permission.
 - `GET /v1/orgs/{slug}/billing/portal` and `PATCH /v1/orgs/{slug}/plan` require the owner, admin credential scope and the existing verification/step-up posture.
+- `GET /v1/orgs/{slug}/overage-cap` requires organization view permission; `POST /v1/orgs/{slug}/overage-cap` sets or clears the organization's monthly spend cap and requires the owner like a plan change. The organization's apps stop at its cap, not at a member's (ADR-20261030093512).
 
 The Go client exposes `GetOrgBillingStatus`, `GetOrgUsage`, `ListOrgInvoices`,
-`GetOrgBillingPortal` and `ChangeOrgPlan`. The OpenAPI contract and generated Node
+`GetOrgBillingPortal`, `ChangeOrgPlan`, `GetOrgOverageCap` and `SetOrgOverageCap`. The OpenAPI contract and generated Node
 and Python clients include these operations. Paid plan changes remain pending
 until the provider confirms them.
 

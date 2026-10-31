@@ -215,7 +215,7 @@ func TestTrafficFleetDaemonProcess(t *testing.T) {
 		t.Fatal(err)
 	}
 	deps.backend, deps.metrics, deps.edgeRulesMatcher, deps.responseCache = backend, metrics, matcher, cache
-	deps.nodeCache = newNodeCache(store, nil, log, metrics)
+	deps.nodeCache = newNodeCache(store, nil, log, metrics, nil)
 	deps.capCheck = func() error { return nil }
 	if spec.DNSUpstream != "" {
 		deps.serviceDNSUpstreams = func() []string { return []string{spec.DNSUpstream} }

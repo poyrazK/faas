@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -52,6 +53,10 @@ func TestAccountPublishRoutesRefuseAppSources(t *testing.T) {
 // adr: 20261026140000
 func TestEventPublishRateLimit(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanFree)
+	// The Free bucket refills an event every 200 ms, which a loaded CI runner
+	// can spend between two of these calls; the clock stays put instead.
+	clock := time.Now()
+	apidserver.SetEventPublishClock(e, func() time.Time { return clock })
 	limits := api.MustLimitsFor(api.PlanFree).EventPublish
 	if r := e.Do(t, http.MethodPost, "/v1/apps", api.CreateAppRequest{Slug: "busy-producer", RAMMB: 256}, nil); r.Code != http.StatusCreated {
 		t.Fatalf("create app: %d %s", r.Code, r.Body)

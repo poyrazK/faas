@@ -76,6 +76,9 @@ func measuredCPUCharge(measured, booked int) int {
 // it (the sample cannot have seen it), and instances booked by another
 // schedd are not in this ledger, so the discount can only undercount.
 func (l *NodeLedger) cpuDiscount_locked(nodeID string) (vcpu, cpuMillicores int) {
+	if l.nodeCPUPressured_locked(nodeID) {
+		return 0, 0
+	}
 	var paused map[string]struct{}
 	var pausedAsOf time.Time
 	if l.quietPaused != nil {
@@ -118,6 +121,13 @@ func (l *NodeLedger) cpuDiscount_locked(nodeID string) (vcpu, cpuMillicores int)
 		cpuMillicores += c
 	}
 	return vcpu, cpuMillicores
+}
+
+// nodeCPUPressured_locked reports whether the node is held under CPU
+// pressure (ADR 20261030100950): its CPU discount is withheld, so the gates
+// and the durable guard count every booking there.
+func (l *NodeLedger) nodeCPUPressured_locked(nodeID string) bool {
+	return l.cpuPressured != nil && l.cpuPressured(nodeID, l.clock())
 }
 
 // overcommitCap_locked is the share of a budget a node's bookings may

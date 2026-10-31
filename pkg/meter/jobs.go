@@ -174,7 +174,7 @@ func (s *Sampler) SampleJobsAndRoll(ctx context.Context) ([]JobRolledRow, error)
 	if _, ok := s.store.(instanceBillingSecondsStore); !ok {
 		return s.rollJobs(ctx, MinuteKey(observedAt), false)
 	}
-	newest := observedAt.Truncate(time.Minute).Add(-time.Minute)
+	newest := s.newestClosedMinute(observedAt)
 	pending, rolled, _, err := s.minutesToCatchUp(ctx, s.jobRolled, newest)
 	s.jobRolled = rolled
 	if err != nil {

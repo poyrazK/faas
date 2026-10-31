@@ -146,8 +146,11 @@ func (a *ReadAdmitter) decision(ctx context.Context, b state.ObjectBucket) (stat
 			return fresh, nil
 		}
 		a.mu.Unlock()
-		// A detached read: one caller's cancellation must not fail the others.
-		readCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), api.ObjectReadAdmissionTimeout)
+		// A detached read: one caller's cancellation must not fail the
+		// others. The decision is the bucket's, shared by every credential,
+		// so it is read without the caller's organization access fence;
+		// the gateway checks each credential's fence itself (step 3).
+		readCtx, cancel := context.WithTimeout(state.WithoutOrgAccessFence(context.WithoutCancel(ctx)), api.ObjectReadAdmissionTimeout)
 		defer cancel()
 		d, err := a.store.ObjectReadAdmission(readCtx, b.AccountID, b.ID, now, a.policy)
 		if err != nil {
