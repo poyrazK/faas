@@ -1414,6 +1414,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	} else if out.DependencyCacheUnchanged {
 		b.emitBuildLog(ctx, build.ID, "dependencies unchanged — kept the dependency cache for the next build\n")
 	} else if out.DependencyCacheStored {
+		b.logSharedPlatformBytes(build, out)
 		b.emitBuildLog(ctx, build.ID, "dependency cache saved for the next build\n")
 	} else if cacheOwed {
 		b.emitBuildLog(ctx, build.ID, "dependency cache will be saved after the image is handed off\n")
@@ -1583,6 +1584,7 @@ func (b *Builderd) exportDeferredCache(ctx context.Context, vm DeferredCacheVM, 
 	}
 	b.log.Info("builderd: deferred dependency cache saved", "build", build.ID,
 		"deployment", build.DeploymentID, "duration_ms", time.Since(start).Milliseconds())
+	b.logSharedPlatformBytes(build, out)
 	b.emitBuildLog(ctx, build.ID, "dependency cache saved for the next build\n")
 }
 

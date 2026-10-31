@@ -44,7 +44,10 @@ const (
 	// released. Failure fences and reaps the bridge process instead.
 	TrafficBridgeCompletionTimeout    = 5 * time.Second
 	TrafficBridgeCompletionMaxEntries = 128
-	TrafficBridgeFenceDialTimeout     = 100 * time.Millisecond
+	// A bridge keeps this many recent completions, so vmmd's fallback wait
+	// after a canceled exchange still finds one that just finished.
+	TrafficBridgeCompletionRetained = 1024
+	TrafficBridgeFenceDialTimeout   = 100 * time.Millisecond
 )
 
 // DeploymentAttemptIDBytes is the encoded size of a random 128-bit submission identity.
@@ -3215,6 +3218,26 @@ const (
 func RealtimeLimitsFor(p Plan) (RealtimeLimits, bool) {
 	l, ok := realtimeLimits[p]
 	return l, ok
+}
+
+// RealtimeAllowedFor reports whether a plan includes managed realtime. Free
+// has no endpoints, and the zero limits it carries read as "no cap" where
+// they are enforced, so every realtime entry point checks this first.
+func RealtimeAllowedFor(p Plan) bool {
+	l, ok := realtimeLimits[p]
+	return ok && l.EndpointsPerApp > 0
+}
+
+// RealtimePlans lists the plans that include managed realtime, for queries
+// that admit only their accounts.
+func RealtimePlans() []string {
+	var out []string
+	for _, p := range Plans {
+		if RealtimeAllowedFor(p) {
+			out = append(out, string(p))
+		}
+	}
+	return out
 }
 
 // GDPR self-service export rate limit (issue #755 / PR-5.1). Single

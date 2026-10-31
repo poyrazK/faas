@@ -291,6 +291,7 @@ var WorkflowFinalOutput = workflowFinalOutput
 var WorkflowJSONEqual = workflowJSONEqual
 var WorkflowStepIdempotencyKey = workflowStepIdempotencyKey
 var XBaseKey = baseKey
+var XEventRoutingOutcome = eventRoutingOutcome
 var XDeploymentRuntimePort = deploymentRuntimePort
 var XLayerKey = layerKey
 var XNewEngine = newEngine
