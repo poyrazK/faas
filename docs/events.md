@@ -184,6 +184,9 @@ doubling to 5 minutes, with ±20 % jitter. The plan limits the attempts (3 on
 Hobby, 10 on Pro, 25 on Scale), so a delivery that keeps failing is
 dead-lettered after about 15 seconds on Hobby, 20 minutes on Pro and 95
 minutes on Scale ([ADR 20261029190000](adr/20261029190000-event-delivery-retry-backoff.md)).
+A delivery with a `work_policy` holds the younger deliveries of its key while
+it waits, so it backs off only to 30 seconds and is dead-lettered after about
+15 seconds, 4 minutes or 11 minutes.
 When a delivery reaches a terminal failure, inspect and replay it through the
 app's unified dead-letter queue (`gregale dlq list <app>`); its origin is shown as
 `event_subscription`.
@@ -940,7 +943,7 @@ routing outcomes and replay requests for one published event, use
 `events fanout-history`:
 
 ```bash
-gregale event fanout-history APP \
+gregale event fanout history APP \
   --event-source billing.stripe \
   --event-id evt-123
 ```
@@ -1415,7 +1418,7 @@ Before switching a producer to a new version, check consumer version coverage
 and validate event data with a read-only rollout preview:
 
 ```sh
-gregale event schema-rollout-preview billing.stripe invoice.paid \
+gregale event schema check billing.stripe invoice.paid \
   --version v2 --schema @invoice-v2.schema.json \
   --samples @invoice-samples.json \
   --from 2026-10-01T00:00:00Z --until 2026-10-08T00:00:00Z \

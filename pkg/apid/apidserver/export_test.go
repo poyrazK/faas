@@ -10,6 +10,7 @@
 package apidserver
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -421,6 +422,23 @@ var Contains = contains
 var CookieDo = cookieDo
 var CountAffectedRequests = countAffectedRequests
 var CreateApp = createApp
+
+// CustomHistoryEnv is setup with custom metric history (and so OTLP ingest) on.
+var CustomHistoryEnv = customHistoryEnv
+
+// PostOTLPEncoded sends one OTLP metrics export to app shop with a
+// Content-Encoding (ADR-20261029203000).
+func PostOTLPEncoded(t *testing.T, e testEnv, contentType, encoding string, body []byte) *httptest.ResponseRecorder {
+	t.Helper()
+	r := httptest.NewRequest(http.MethodPost, "/v1/apps/shop/otlp/v1/metrics", bytes.NewReader(body))
+	r.Header.Set("Authorization", "Bearer "+e.key)
+	r.Header.Set("Content-Type", contentType)
+	r.Header.Set("Content-Encoding", encoding)
+	rec := httptest.NewRecorder()
+	e.h.ServeHTTP(rec, r)
+	return rec
+}
+
 var CreateAppTaskForTest = createAppTaskForTest
 var CreateExecutionAs = createExecutionAs
 var CreateProjectEnvironmentConfigFixture = createProjectEnvironmentConfigFixture
@@ -1924,3 +1942,6 @@ var SealOAuthCodeState = sealOAuthCodeState
 // ProjectReadinessOverrides exposes projectReadinessOverrides to the
 // external test package.
 var ProjectReadinessOverrides = projectReadinessOverrides
+
+// SetEventPublishClock pins the event publish rate limiter's clock.
+func SetEventPublishClock(e TestEnv, now func() time.Time) { e.s.eventPublishLimiter.Now = now }

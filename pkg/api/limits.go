@@ -494,6 +494,15 @@ const (
 	// fail-closed.
 	ApplicationStandardBaseScanTimeout = 20 * time.Minute
 
+	// SharedBaseScanFailureGrace is how long the last clean scan of a shared
+	// base's unchanged bytes stays in force while renewals fail for a reason
+	// other than the bytes or their findings (the scanner, its database, a
+	// storage read, a refused publication). Publishing the refusal on the
+	// first such failure stopped every boot on the base: three production
+	// outages in three days (bug hunt 2026-10-28 H102). Changed bytes and
+	// blocking findings still refuse at once.
+	SharedBaseScanFailureGrace = 24 * time.Hour
+
 	// Safety bounds for a complete filesystem projection handed to Grype.
 	// These are separate from the tenant's rootfs/disk entitlements.
 	ApplicationStandardRuntimeScanMaxBytes           int64 = 32 << 30
@@ -2480,6 +2489,13 @@ const (
 	// deletes cannot starve inventory (ADR-20261025115958).
 	ObjectInventoryDeletionDrain = 10 * time.Second
 	ObjectInventoryDeletionYield = ObjectInventoryDeletionDrain + ObjectCapacityInventoryTimeout
+	// A bucket's listing resumes across attempts from its last listed key
+	// (ADR-20261030100835). While it advanced within
+	// ObjectInventoryScanProgressWindow, its bucket stays fresh on an
+	// observation up to ObjectInventoryScanMaxAge old; a listing that started
+	// longer ago than that starts again.
+	ObjectInventoryScanMaxAge         = time.Hour
+	ObjectInventoryScanProgressWindow = 5 * time.Minute
 	// Read-only owned-node audits retain bounded diagnostics and publish cached
 	// metrics. These are operator work bounds, not customer allowances.
 	ObjectNodeInventoryInterval         = time.Minute
@@ -6795,6 +6811,19 @@ const (
 	// admission to 606 apps; at 700% measured CPU binds first, at 1,122. The
 	// durable guard bounds every discount by this cap.
 	MeasuredCPUMaxOvercommitPercent = 700
+	// CPU pressure backstop (ADR 20261030100950). A node is under CPU
+	// pressure when its tenant slice's cpu.pressure "some avg10" is at least
+	// NodeCPUPressureStallPercent and its host CPUs were at least
+	// NodeCPUPressureBusyPercent busy over the last NodeCPUBusyWindowSeconds:
+	// tasks wait and the CPUs are nearly all in use, so the wait is not one
+	// app's own cpu.max quota. The node's schedd then holds it pressured for
+	// NodeCPUPressureHoldSeconds past the last such reading. Initial values,
+	// to be tuned from schedd_node_cpu_pressure_some_avg10 and
+	// schedd_node_cpu_busy_percent.
+	NodeCPUPressureStallPercent = 20
+	NodeCPUPressureBusyPercent  = 90
+	NodeCPUPressureHoldSeconds  = 30
+	NodeCPUBusyWindowSeconds    = 10
 	// QuietPauseLedgerFlushSeconds is how often schedd writes a node's quiet
 	// pauses and watermark to the pause ledger (ADR-20261023171905): one
 	// statement per node per flush, however many requests the node serves.
@@ -6961,6 +6990,12 @@ const (
 
 	// PreflightCacheMaxEntries bounds the in-process verdict cache.
 	PreflightCacheMaxEntries = 2_048
+
+	// PreflightConcurrentChecks caps how many unauthenticated checks fetch
+	// and unpack a repository on the control plane at once; the per-IP limit
+	// alone let many addresses unpack hostile archives together (bug hunt
+	// 2026-10-28 B39).
+	PreflightConcurrentChecks = 2
 
 	// Builder VM (spec §4.5, §1). Builds live in the control-plane slice, never
 	// tenant RAM.
@@ -7366,6 +7401,14 @@ const (
 	GatewaydInternalControlWriteTimeoutSecondsDefault = 30 // control + unix-socket
 	GatewaydInternalControlIdleTimeoutSecondsDefault  = 60 // control + unix-socket keep-alive
 
+	// VmmdLocalDataSocket is where vmmd serves its own node's
+	// gatewayd-internal without TLS, admitting only GatewaydInternalUser by
+	// peer uid and only the RPCs the gateway calls (ADR-20261030230157).
+	VmmdLocalDataSocket = "/run/faas/vmmd-data.sock"
+	// GatewaydInternalUser is the user gatewayd-internal runs as
+	// (pkg/daemonunitspec), the one uid vmmd's local data socket admits.
+	GatewaydInternalUser = "faas"
+
 	// MaxEdgeRuleLimitBodyBytesStreaming (ADR-091 D24 / kind=limit
 	// streaming carve-out) is the upper bound on the optional
 	// `max_body_bytes_streaming` field of a kind=limit edge rule.
@@ -7480,6 +7523,13 @@ const (
 	EventDeliveryRetryBaseSeconds = 5
 	EventDeliveryRetryMaxSeconds  = 300
 	EventDeliveryRetryJitter      = 0.2
+	// EventDeliveryKeyedRetryMaxSeconds caps that backoff for a delivery in
+	// a keyed lane (a work policy, ordered or not): a pending delivery holds
+	// every younger one of its key, so a failing one is dead-lettered after
+	// about 15 s on Hobby, 4 minutes on Pro and 11 minutes on Scale instead
+	// of stalling its key for up to 95 minutes (ADR-20261029190000
+	// amendment).
+	EventDeliveryKeyedRetryMaxSeconds = 30
 	// MaxAsyncRouteAgeSeconds bounds a customer-authored async edge
 	// rule age before the serving plan applies its lower deadline cap.
 	// The Scale plan currently owns the largest invocation deadline.
@@ -9167,6 +9217,13 @@ const (
 	// AgentRunStopGraceSec is how long a timed-out or cancelled harness has
 	// between SIGTERM and SIGKILL.
 	AgentRunStopGraceSec = 10
+	// AgentWaitPauseCPUMaxMillis is the most CPU an agent run VM may use over
+	// its quiet window and still be paused while it waits on the model
+	// (ADR-20261027090012 §2). A harness running tests is not paused.
+	AgentWaitPauseCPUMaxMillis = 50
+	// AgentWaitPauseAfterMaxMillis bounds the model-wait pause delay a run
+	// spec may carry (ADR-20261027090012 §1).
+	AgentWaitPauseAfterMaxMillis = 60_000
 	// AgentModelIntegrationsMax bounds a version's model integrations: one
 	// per model provider a harness may point at the relay.
 	AgentModelIntegrationsMax = 2
@@ -11731,15 +11788,35 @@ func BillableRAMMBWithSidecars(ramMB int, sidecarMBs []int) int {
 // (instance, minute). MeterCatchUpMinutesPerTick bounds the extra work one
 // sample tick takes on, so a long backlog drains over several ticks instead
 // of starving the control plane.
-const MeterCatchUpWindow = 24 * time.Hour
+//
+// The window covers a weekend-long meterd outage: residency comes from the
+// instance billing ledger, which outlives it (instances are kept 30 days),
+// and 15 minutes a tick drain 72 hours in under five
+// (ADR-20261030120000).
+const MeterCatchUpWindow = 72 * time.Hour
 const MeterCatchUpMinutesPerTick = 15
+
+// MeterTelemetryDrainWindow is how long after an instance stops the sampler
+// still lists it, so the gateway and network counters its sources hold for
+// it are drained into usage rows. It is independent of how far catch-up
+// reaches back, which drains no live counter.
+const MeterTelemetryDrainWindow = 24 * time.Hour
+
+// MeterRollSettle is how long after a minute closes meterd waits before
+// rolling it. Residency intervals are stamped inside their writer's
+// transaction and become visible at commit; a roll right at the boundary
+// missed a transition still committing, and first-write-wins kept the short
+// row (ADR-20261030120000).
+const MeterRollSettle = 15 * time.Second
 
 // MeterUsageFinalAfter is how long after a minute starts meterd may still write
 // compute usage for it: the catch-up window, the sampler's newest-closed-minute
-// offset, and one tick of skew. The provider pusher delivers an hour only when
-// every minute up to its end is recorded compute-complete or older than this,
-// so late catch-up rows can never land in an hour already delivered (ADR-1162).
-const MeterUsageFinalAfter = MeterCatchUpWindow + 2*time.Minute
+// offset, one tick of skew and the roll settle, rounded up to a whole minute
+// so the pusher's completeness read stays minute-aligned. The provider pusher
+// delivers an hour only when every minute up to its end is recorded
+// compute-complete or older than this, so late catch-up rows can never land in
+// an hour already delivered (ADR-1162).
+const MeterUsageFinalAfter = MeterCatchUpWindow + 3*time.Minute
 
 // SpendCapJobDeferInterval is how long a queued job task of an account at its
 // monthly spend cap waits before the dispatcher re-checks the cap (ADR-1162).
@@ -15037,6 +15114,18 @@ const (
 	AlertAccountTickBudget = 45 * time.Second
 )
 
+// Alert delivery retention (ADR-20261029203000): meterd deletes settled
+// deliveries fired more than AlertDeliveryRetentionDays ago, at most
+// AlertDeliveryPurgeBatch rows per statement and AlertDeliveryPurgeBatches
+// statements per AlertDeliveryPurgeInterval. A rule's newest delivery, and a
+// delivery with a rollback action, stay.
+const (
+	AlertDeliveryRetentionDays = 90
+	AlertDeliveryPurgeBatch    = 1000
+	AlertDeliveryPurgeBatches  = 20
+	AlertDeliveryPurgeInterval = time.Hour
+)
+
 // NotificationChannelTestsPerAccountMinute caps test sends to an account's
 // notification channels (ADR-20261028101615): each one is a real Slack post,
 // PagerDuty event or email.
@@ -15149,8 +15238,9 @@ var (
 )
 
 // Synthetic checks (ADR-748). The 5-minute floor keeps a check from pinning
-// an app resident on Free, Hobby and Pro (idle timeouts 30/60/300 s); the
-// timeout ceiling matches the gateway wake hold.
+// a Hobby app resident (idle timeout 60 s; Free has no checks); on Pro
+// (300 s) a 5-minute check keeps the app warm. The timeout ceiling matches
+// the gateway wake hold.
 const (
 	MaxSyntheticChecksPerApp       = 5
 	SyntheticCheckTimeoutMinMS     = 1000

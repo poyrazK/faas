@@ -744,6 +744,9 @@ from .compose_process import ComposeProcess
 from .compose_process_stop_signal import ComposeProcessStopSignal
 from .compose_resources import ComposeResources
 from .compose_resources_cpu_millicores import ComposeResourcesCpuMillicores
+from .condition import Condition
+from .condition_status import ConditionStatus
+from .condition_type import ConditionType
 from .config_change_receipt import ConfigChangeReceipt
 from .config_guard import ConfigGuard
 from .config_guard_decision import ConfigGuardDecision
@@ -5039,6 +5042,8 @@ from .resize_managed_postgres_database_request import ResizeManagedPostgresDatab
 from .resize_managed_postgres_database_request_service_class import ResizeManagedPostgresDatabaseRequestServiceClass
 from .resolved_execution_limits import ResolvedExecutionLimits
 from .resource_profile import ResourceProfile
+from .resource_status import ResourceStatus
+from .resource_status_kind import ResourceStatusKind
 from .restore_app_body import RestoreAppBody
 from .restore_automation_revision_request import RestoreAutomationRevisionRequest
 from .restore_deleted_app_body import RestoreDeletedAppBody
@@ -6954,6 +6959,9 @@ __all__ = (
     "ComposeProcessStopSignal",
     "ComposeResources",
     "ComposeResourcesCpuMillicores",
+    "Condition",
+    "ConditionStatus",
+    "ConditionType",
     "ConfigChangeReceipt",
     "ConfigGuard",
     "ConfigGuardDecision",
@@ -10953,6 +10961,8 @@ __all__ = (
     "ResizeManagedPostgresDatabaseRequestServiceClass",
     "ResolvedExecutionLimits",
     "ResourceProfile",
+    "ResourceStatus",
+    "ResourceStatusKind",
     "RestoreAppBody",
     "RestoreAutomationRevisionRequest",
     "RestoreDeletedAppBody",

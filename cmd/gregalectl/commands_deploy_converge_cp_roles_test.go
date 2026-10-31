@@ -204,3 +204,99 @@ func TestControlPlaneConvergePlaybookLaneModeRecordsNothing(t *testing.T) {
 		t.Fatal("lane mode must refuse to run without the stateful restart guard, before bootstrap.yml")
 	}
 }
+
+// adr: 20261030150000
+
+// A full release converges the requested roles as the whole play would:
+// PostgreSQL and pgbouncer may restart, and the playbook records the
+// contract. Only the role selection and the environment check are the
+// lane's.
+func TestConvergeControlPlaneFullReleaseRolesMode(t *testing.T) {
+	opts := convergeFixture(t)
+	opts.Roles = []string{"grafana"}
+	opts.FullRelease = true
+	report, vars := convergeVarsOf(t, opts)
+	if got := strings.Join(report.Roles, ","); got != "grafana" {
+		t.Errorf("report roles = %q", got)
+	}
+	if requested, _ := vars["faas_cp_converge_roles_requested"].([]any); len(requested) != 1 || requested[0] != "grafana" {
+		t.Errorf("faas_cp_converge_roles_requested = %v", vars["faas_cp_converge_roles_requested"])
+	}
+	if vars["faas_cp_environment_sha256"] != report.Environment || vars["faas_cp_full_release"] != true {
+		t.Errorf("a full release's --roles must pass the environment and faas_cp_full_release; vars = %v", vars)
+	}
+	for _, key := range []string{"faas_cp_record_contract", "faas_stateful_restart_allowed"} {
+		if _, ok := vars[key]; ok {
+			t.Errorf("a full release must not pass %s: it records the contract and may restart PostgreSQL", key)
+		}
+	}
+	if vars["faas_join_defer_service_handlers"] != true {
+		t.Errorf("activation restarts the FaaS daemons; vars = %v", vars)
+	}
+}
+
+// With --json, callers redirect stdout to a file and parse it, so the
+// play's own output must go to stderr.
+func TestCmdDeployConvergeControlPlaneJSONKeepsPlayOutputOffStdout(t *testing.T) {
+	opts := convergeFixture(t)
+	ansiblePlaybookRunner = func(context.Context, string, []string) error {
+		_, err := os.Stdout.WriteString("PLAY RECAP *****\nfsn-1 : ok=3 changed=1\n")
+		return err
+	}
+	var code int
+	var stderr string
+	stdout, _ := captureStdoutComputeNodes(t, func() {
+		stderr = captureStderrComputeNodes(t, func() {
+			code = cmdDeployDispatch([]string{"converge-control-plane", "--manifest-file", opts.ManifestFile,
+				"--ssh-known-hosts-file", opts.SSHKnownHostsFile, "--ansible-vars-file", opts.AnsibleVarsFile,
+				"--repo-root", opts.RepoRoot, "--roles", "grafana", "--full-release", "--json"})
+		})
+	})
+	if code != 0 {
+		t.Fatalf("exit code = %d; stderr %q", code, stderr)
+	}
+	var report deployConvergeControlPlaneReport
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatalf("stdout is not only the JSON report: %v\n%s", err, stdout)
+	}
+	if !strings.HasPrefix(report.Contract, "sha256:") || !strings.HasPrefix(report.Environment, "sha256:") {
+		t.Errorf("report = %+v", report)
+	}
+	if !strings.Contains(stderr, "PLAY RECAP") {
+		t.Errorf("the play's output must reach stderr; stderr = %q", stderr)
+	}
+}
+
+// Requested roles were picked by content hash, which covers inputs the
+// contract misses, so they run even when the contract is current; the
+// stateful guard binds the lane, not a full release.
+func TestControlPlaneConvergePlaybookRolesSkipTheContractFastPath(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", controlPlaneConvergePlaybook))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var plays []struct {
+		Tasks []map[string]any `yaml:"tasks"`
+	}
+	if err := yaml.Unmarshal(body, &plays); err != nil {
+		t.Fatal(err)
+	}
+	var fastPath string
+	var guardWhen []any
+	for _, task := range plays[0].Tasks {
+		switch task["name"] {
+		case "Select convergence or the unchanged fast path":
+			facts, _ := task["ansible.builtin.set_fact"].(map[string]any)
+			fastPath, _ = facts["faas_join_bootstrap_contract_current"].(string)
+		case "Require the stateful restart guard in lane mode":
+			guardWhen, _ = task["when"].([]any)
+		}
+	}
+	if !strings.HasPrefix(strings.TrimSpace(fastPath), "{{ faas_cp_converge_roles_requested is not defined") {
+		t.Errorf("requested roles must never take the contract fast path: %q", fastPath)
+	}
+	if len(guardWhen) != 2 || guardWhen[0] != "faas_cp_converge_roles_requested is defined" ||
+		guardWhen[1] != "not (faas_cp_full_release | default(false) | bool)" {
+		t.Errorf("the stateful guard must bind every --roles run except a full release's: when = %v", guardWhen)
+	}
+}

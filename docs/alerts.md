@@ -71,7 +71,7 @@ is being rejected or would be:
   (503) are not counted. Break the total down by gate with
   `gateway_edge_rejections_total{app="APP_ID"}`, whose `kind` and `status`
   labels name the gate and response. When a flood comes from more sources
-  than rules can keep up with, `gregale edge rule attack-mode on` challenges
+  than rules can keep up with, `gregale edge rule attack-mode set on` challenges
   every visitor for a set time ([attack mode](security.md#attack-mode)).
 - `edge_waf_detections` (Pro and above) fires when `kind=waf` edge rules detect
   more than 25 likely attacks in 15 minutes, counting sampled detections and
@@ -97,7 +97,9 @@ or call `GET /v1/apps/{slug}/edge-protection?range=24h`.
 Because outside traffic drives these signals, these alerts can never run a
 deployment action such as rollback; the API and the database both reject one.
 
-Deliveries include an event id, timestamp, alert state, and signature. Verify the signature before processing, deduplicate by event id, and return a 2xx response quickly. Retryable failures are retried with backoff; a permanently failing endpoint is paused so it cannot amplify an incident.
+Each webhook delivery is a JSON body with `event` (`alert.fired`), the rule, metric, threshold and observed value. `X-Faas-Alert-Signature` is `sha256=` followed by the hex HMAC-SHA256 of `<X-Faas-Alert-Timestamp>.<X-Faas-Alert-Id>.<body>`, keyed with the rule's webhook secret. Verify it before processing, deduplicate by `X-Faas-Alert-Id`, and return a 2xx quickly. A 5xx, 408, 429 or network error is retried with backoff for up to 30 seconds; any other status is final. Every fire and its outcome is listed by `gregale alert deliveries`. A failing endpoint is not paused: each new fire is attempted again.
+
+Add `--notify-resolved` (`notify_resolved` in the API) to also receive a signed `alert.resolved` event, with the same headers, when the rule recovers. It is off by default because receivers written before it count every delivery as a fire; turn it on once yours checks `event`. Notification channels always receive resolves.
 
 For dashboards and SLOs, use the app metrics endpoint and correlate alert event ids with deployment ids. Never put credentials in an alert URL.
 
@@ -143,8 +145,11 @@ webhook never delays PagerDuty, the rule's webhook, or a rollback action.
 Presets take channels too: `gregale alert preset enable availability --app
 shop --channel OPS_SLACK_ID`.
 
-Deleting a channel removes it from every rule; a rule left with no webhook
-and no channel stops notifying. The app dashboard's Alerts panel shows where
+Deleting a channel removes it from every rule. A channel that is the only
+destination of a rule, with no webhook and no other channel, cannot be
+deleted: the request fails with `409 notification_channel_in_use`, naming the
+rules, until they get a webhook or another channel or are deleted. The app
+dashboard's Alerts panel shows where
 each rule delivers ("Delivers to") and lists every channel with its last
 delivery or error, so a rule delivering nowhere or a revoked Slack webhook is
 visible before an incident.

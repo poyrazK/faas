@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"net/netip"
+	"strconv"
 	"strings"
 	"time"
 
@@ -200,7 +201,7 @@ func prHeadComposeValues(fsys fs.FS, scan reposcan.Result, opts reposcan.ScanOpt
 	}
 	out := make(map[string]map[string]string, len(scan.Workloads))
 	for _, workload := range scan.Workloads {
-		if values := projectsetup.PlanEnvImport(env, workload.Name, callable, limits).Values; len(values) > 0 {
+		if values := projectsetup.PlanEnvImport(env, workload.Name, callable, limits, !opts.HTTPSTransportUnavailable).Values; len(values) > 0 {
 			out[strings.ToLower(workload.Name)] = values
 		}
 	}
@@ -236,6 +237,10 @@ func withParentAccessGates(preview, parent state.App) state.App {
 	preview.ConsumerAuthMode = parent.ConsumerAuthMode
 	preview.RequireSigned = parent.RequireSigned
 	preview.EgressAllowlist = append([]netip.Prefix(nil), parent.EgressAllowlist...)
+	// The declared-route contract answers undeclared paths at the gateway; a
+	// preview without it served every path the production app hides.
+	preview.OnlyAllowDeclaredRoutes = parent.OnlyAllowDeclaredRoutes
+	preview.DeclaredRoutes = append([]state.DeclaredRoute(nil), parent.DeclaredRoutes...)
 	return preview
 }
 
@@ -256,12 +261,18 @@ func makePRDependencyPreview(parent state.App, prNumber int, expiresAt time.Time
 	}, policy), parent), nil
 }
 
-func (s *Service) applyPRHeadWorkload(ctx context.Context, preview state.App, workload reposcan.Workload, available map[string]struct{}, policy state.GitHubDeployPolicy, headValues map[string]string) (state.App, error) {
+func (s *Service) applyPRHeadWorkload(ctx context.Context, preview state.App, workload reposcan.Workload, available map[string]struct{}, policy state.GitHubDeployPolicy, headValues, platform map[string]string) (state.App, error) {
 	// Also clear environment values on an existing preview. Earlier preview
 	// rows inherited parent values; a synchronize event must not retain them.
 	preview.Manifest = previewManifest(preview.Manifest)
 	desired := reconcile.ApplyScannedWorkloadToApp(preview, workload, available)
 	desired.Manifest.Env = withPRHeadValues(desired.Manifest.Env, headValues)
+	if len(platform) > 0 && desired.Manifest.Env == nil {
+		desired.Manifest.Env = make(map[string]string, len(platform))
+	}
+	for key, value := range platform {
+		desired.Manifest.Env[key] = value // GREGALE_ is reserved: the platform's values win
+	}
 	desired = applyGitHubRootPolicy(desired, policy)
 	params := state.UpdateAppParams{
 		RootDir: &desired.RootDir, WorkloadName: &desired.WorkloadName,
@@ -273,6 +284,18 @@ func (s *Service) applyPRHeadWorkload(ctx context.Context, preview state.App, wo
 		params.RAMMB, params.CPUMillicores, params.MaxConcurrency = &desired.RAMMB, &desired.CPUMillicores, &desired.MaxConcurrency
 	}
 	return s.Reconcile.Store.UpdateApp(ctx, preview.ID, params)
+}
+
+// previewPlatformEnv tells a PR preview what it is running: app code could
+// otherwise not tell a preview from production without a value the customer
+// set in the pr-preview scope. The values follow the PR head on every push.
+func previewPlatformEnv(ev PullRequestEvent) map[string]string {
+	return map[string]string{
+		"GREGALE_PREVIEW":    "1",
+		"GREGALE_PR_NUMBER":  strconv.Itoa(ev.Number),
+		"GREGALE_GIT_BRANCH": ev.PullRequest.HeadRef,
+		"GREGALE_GIT_COMMIT": ev.PullRequest.HeadSHA,
+	}
 }
 
 // closePRDependencies advances every sibling in the same project and PR to

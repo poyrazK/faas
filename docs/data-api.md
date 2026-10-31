@@ -626,7 +626,7 @@ For a shared-team application, use the embedded `data-api-teams` starter:
 ```sh
 gregale data-api onboard --template data-api-teams --path team-orders --bundle /path/to/data-api-bundle.json
 cd team-orders
-gregale data-api dev --port 0 --check
+gregale data-api serve --port 0 --check
 ```
 
 Build and serve its browser client with `npm run build:browser --prefix client`
@@ -656,13 +656,13 @@ Initialize the starter and run a disposable API without a Gregale account:
 ```sh
 gregale init --template data-api-starter --path notes
 cd notes
-gregale data-api dev
+gregale data-api serve
 ```
 
 The starter also ships `data-api.requests.json` with `notes-crud`, `notes-rls`, and `notes-rpc` scenarios. Run them immediately after initialization:
 
 ```sh
-gregale data-api dev --port 0 --once --replay data-api.requests.json
+gregale data-api serve --port 0 --once --replay data-api.requests.json
 ```
 
 The scenarios exercise CRUD and managed note versions, Alice/Bob isolation, and the approved `create_note_with_tags` RPC. They capture generated IDs, delete the records they create, and verify cleanup, so repeated inspector replays work in the same local session. Select one with `--scenario notes-rls`, or open the inspector and use **Replay all scenarios**.
@@ -675,7 +675,7 @@ The local dev server prints a private **Inspector** link. Open it to browse tabl
 Use **Saved requests** to save the current method, path, JSON body, and Alice/Bob identity in `data-api.requests.json` at the project root. Set an expected HTTP status and optionally an exact JSON response (object key order is ignored). Load or delete individual requests, replay one, or replay all sequentially; each replay reports passing and failing assertions. Replay executes writes as saved, so POST, PATCH, DELETE and RPC calls can change local data. Session tokens and authentication headers are never saved. The collection survives dev restarts and can be committed for teammates; use test data in request bodies. Saved requests are excluded from newly initialized migration app deployments. Conflicting edits require reloading the collection before saving. Run the same scenarios from the CLI or CI with:
 
 ```sh
-gregale data-api dev --port 0 --once --replay data-api.requests.json
+gregale data-api serve --port 0 --once --replay data-api.requests.json
 # Machine-readable JSON lines:
 gregale --json data-api dev --port 0 --once --replay data-api.requests.json
 ```
@@ -738,7 +738,7 @@ Organize independent workflows as version 2 named scenarios:
 The inspector can create, select and delete scenarios, edit each scenario's requests, replay the selected scenario, or replay all scenarios. Creating a named scenario upgrades a version 1 collection while preserving its requests in `default`. Version 1 files still work unchanged as that implicit scenario. Keep at least one scenario; delete its requests to empty it.
 
 ```sh
-gregale data-api dev --port 0 --once --replay data-api.requests.json --scenario notes-rls
+gregale data-api serve --port 0 --once --replay data-api.requests.json --scenario notes-rls
 ```
 
 Omit `--scenario` to run every scenario in file order. The flag requires `--replay`, and unknown names fail before Docker services start. Each scenario gets fresh variables; all scenarios share the same disposable database, so workflows should clean up their own rows or account for earlier writes. A failure in one scenario does not stop later scenarios. Scenario names are unique identifiers starting with a letter, followed by letters, digits, underscores or hyphens (maximum 64 characters). Request names must be unique within a scenario; there is an aggregate limit of 100 requests and a 64 KiB file limit.
@@ -768,8 +768,8 @@ After installing the pinned SDK and starter client dependencies as described in
 the starter README, run:
 
 ```sh
-gregale data-api dev --check
-gregale data-api dev --port 0 --check --once
+gregale data-api serve --check
+gregale data-api serve --port 0 --check --once
 ```
 
 `--check` runs client typecheck and tests; `--once` verifies and exits.
@@ -813,9 +813,9 @@ For CI, save a baseline outside the ignored `.gregale` directory and select it
 explicitly. Selected baselines are read-only and remain fixed across reloads:
 
 ```sh
-gregale data-api dev --once
+gregale data-api serve --once
 cp .gregale/data-api-contract.json schema.json
-gregale data-api dev --once --check-breaking --baseline schema.json
+gregale data-api serve --once --check-breaking --baseline schema.json
 ```
 
 Commit `schema.json` alongside the application when using it as a CI baseline.
@@ -850,7 +850,7 @@ project with no notes table or starter client dependency:
 
 ```sh
 cd examples/data-api-orders
-gregale data-api dev --port 0 --once
+gregale data-api serve --port 0 --once
 ```
 
 ```json
@@ -1117,7 +1117,7 @@ signed-in users. Request logs and `data-api diagnostics` record the access kind,
 never client addresses.
 
 Add `"public_read": ["api.products"]` to `data-api.dev.json` to try anonymous
-reads in `gregale data-api dev`; the same RLS check runs locally.
+reads in `gregale data-api serve`; the same RLS check runs locally.
 
 From TypeScript, create the client with `anonymous: true`. It sends no
 `Authorization` header when there is no token, and `accessToken` may return
@@ -1179,7 +1179,7 @@ reviewing the function body is part of making it public. Embedded resources in
 
 Public RPC calls share the anonymous rate limit with public reads. Add
 `"public_rpc": ["api.search_products"]` to `data-api.dev.json` to try them in
-`gregale data-api dev`, where the same startup check runs.
+`gregale data-api serve`, where the same startup check runs.
 
 ### Cache public reads at the edge
 
@@ -1402,7 +1402,7 @@ and server keys apply as for REST.
    guard trigger, and includes example policies to adapt:
 
    ```sh
-   gregale data-api storage sql > migrations/0005_storage.sql
+   gregale data-api storage export > migrations/0005_storage.sql
    ```
 
    ```sql
@@ -1472,7 +1472,7 @@ Each route asks PostgreSQL first, as the caller:
   guard trigger and `object_key`, storage routes answer
   `503 storage_unavailable` and the rest of the API keeps serving. A table
   created before `object_key` existed needs
-  `gregale data-api storage sql --upgrade` applied as a migration.
+  `gregale data-api storage export --upgrade` applied as a migration.
 
 ## Aggregates
 
@@ -2917,9 +2917,9 @@ This policy shares the startup-contract guard's live-DDL limitation.
 Load the reviewed policy without staging credentials:
 
 ```sh
-gregale data-api dev --directory . --accepted-contracts accepted-contracts.json
+gregale data-api serve --directory . --accepted-contracts accepted-contracts.json
 # CI, with pinned old/current clients in the request collection:
-gregale data-api dev --directory . --accepted-contracts accepted-contracts.json \
+gregale data-api serve --directory . --accepted-contracts accepted-contracts.json \
   --once --replay rollout.requests.json
 ```
 
@@ -3070,7 +3070,7 @@ Commit the approval alongside the baseline and migration, then check the candida
 ```sh
 gregale --json data-api diff --baseline schema.json --current candidate.json \
   --check-compatible --approval compatibility-approval.json
-gregale data-api dev --once --baseline schema.json --check-breaking \
+gregale data-api serve --once --baseline schema.json --check-breaking \
   --approval compatibility-approval.json
 ```
 
@@ -3118,7 +3118,7 @@ the request and does not change PostgREST errors or database authorization.
 
 ### Check committed types in local CI
 
-Run `gregale data-api dev --port 0 --once --check-types --check` after installing
+Run `gregale data-api serve --port 0 --once --check-types --check` after installing
 client dependencies. The disposable database applies your project migrations,
 verifies authorization scenarios, and compares generated types byte-for-byte
 with the configured output file. Missing or stale types exit nonzero without
@@ -3126,7 +3126,7 @@ creating or overwriting that file. `--check` then runs configured client checks;
 `--check-types` requires `--once`. Containers and volumes are removed on success
 and failure. No hosted account or staging credentials are required.
 
-To update types, run `gregale data-api dev --port 0 --once` with the same
+To update types, run `gregale data-api serve --port 0 --once` with the same
 `--directory`, `--config` and `--output` options, then commit the generated file.
 This detects drift; use `--check-breaking` separately for compatibility checks.
 The workflow still creates local contract artifacts and runs configured setup
@@ -3608,7 +3608,7 @@ with snapshot export are supported without redeployment. Local CI can produce
 its candidate from project migrations before running the offline check:
 
 ```sh
-gregale data-api dev --port 0 --once --output .gregale/ci-database.types.ts
+gregale data-api serve --port 0 --once --output .gregale/ci-database.types.ts
 # dev writes disposable CI types and its current contract outside the baseline.
 gregale --json data-api check --current .gregale/data-api-contract.json \
   --baseline schema.json --types client/src/database.types.ts
@@ -5034,14 +5034,14 @@ do not alter that contract. Use `--validators --check` to detect changes to the
 complete generated file, including those rules. Existing plain type generation
 and contract snapshots keep their format.
 
-For local development, opt in with `gregale data-api dev --validators`. Initial
+For local development, opt in with `gregale data-api serve --validators`. Initial
 startup and each successful migration reload regenerate types and parsers together
 from one read-only catalog transaction, after compatibility and authorization
 checks pass. Use the same flag in CI:
 
 ```sh
-gregale data-api dev --validators --check --once
-gregale data-api dev --validators --check-types --once
+gregale data-api serve --validators --check --once
+gregale data-api serve --validators --check-types --once
 ```
 
 `--check-types` compares the entire generated module, including catalog-only

@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -47,6 +48,16 @@ var (
 	_ PreviewTombstoneStore = (*PgStore)(nil)
 	_ PreviewTombstoneStore = (*MemStore)(nil)
 )
+
+// previewTornDown reports a preview the janitor or a destroy has torn down
+// (or is tearing down). Such a tombstone is never restored: the janitor skips
+// torn-down rows and a preview that is not open holds no allowance, so a
+// restored one would serve its PR code forever outside the quota and keep the
+// PR from getting a new preview.
+func previewTornDown(app App) bool {
+	return app.PreviewOfSlug != "" &&
+		(app.PreviewPrState == PreviewPrStateTearingDown || app.PreviewPrState == PreviewPrStateTornDown)
+}
 
 // releasesPreviewTombstone reports whether existing is a deleted row of the
 // preview desired re-creates: same account, organization, project, parent and
@@ -337,19 +348,23 @@ func refreshPreviewGatesTx(ctx context.Context, tx pgx.Tx, id string, desired Ap
 		consumerAuth = ConsumerAuthModeOptional
 	}
 	visibility := string(api.NormalizeAppVisibility(desired.Visibility))
-	_, err := tx.Exec(ctx, `with changed as (
+	declaredRoutes, err := json.Marshal(previewDeclaredRoutes(desired.DeclaredRoutes))
+	if err != nil {
+		return fmt.Errorf("state: encode PR preview declared routes: %w", err)
+	}
+	_, err = tx.Exec(ctx, `with changed as (
 			update apps set require_authn = $2, public_auth_mode = $3, public_auth_basic = $4,
 			       public_auth_ip_allowlist = $5, consumer_auth_mode = $6, require_signed = $7,
-			       egress_allowlist = $8, visibility = $9
+			       egress_allowlist = $8, visibility = $9, only_declared_routes = $10, declared_routes = $11::jsonb
 			where id = $1
 			  and (require_authn, public_auth_mode, public_auth_basic, public_auth_ip_allowlist,
-			       consumer_auth_mode, require_signed, egress_allowlist, visibility)
-			      is distinct from ($2, $3, $4::bytea, $5::cidr[], $6, $7, $8::cidr[], $9)
+			       consumer_auth_mode, require_signed, egress_allowlist, visibility, only_declared_routes, declared_routes)
+			      is distinct from ($2, $3, $4::bytea, $5::cidr[], $6, $7, $8::cidr[], $9, $10, $11::jsonb)
 			returning id)
 		select pg_notify('app_changed', id::text) from changed`,
 		id, desired.RequireAuthn, publicAuthMode, desired.PublicAuthBasicSealed,
 		cidrPrefixesToArray(desired.PublicAuthIPAllowlist), string(consumerAuth), desired.RequireSigned,
-		cidrPrefixesToArray(desired.EgressAllowlist), visibility)
+		cidrPrefixesToArray(desired.EgressAllowlist), visibility, desired.OnlyAllowDeclaredRoutes, string(declaredRoutes))
 	if err != nil {
 		return fmt.Errorf("state: refresh PR preview gates: %w", err)
 	}
@@ -366,7 +381,16 @@ func copyPreviewGates(row, desired App) App {
 	row.RequireSigned = desired.RequireSigned
 	row.EgressAllowlist = append([]netip.Prefix(nil), desired.EgressAllowlist...)
 	row.Visibility = desired.Visibility
+	row.OnlyAllowDeclaredRoutes = desired.OnlyAllowDeclaredRoutes
+	row.DeclaredRoutes = previewDeclaredRoutes(desired.DeclaredRoutes)
 	return row
+}
+
+// previewDeclaredRoutes copies a production app's declared-route contract
+// for its preview. An empty list encodes as [] (the column's default), never
+// JSON null.
+func previewDeclaredRoutes(routes []DeclaredRoute) []DeclaredRoute {
+	return append(make([]DeclaredRoute, 0, len(routes)), routes...)
 }
 
 // PRPreviewSetupFailureStore records why githubd could not reserve or start

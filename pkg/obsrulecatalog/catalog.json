@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "761a0be43740a495e1ed9c8069cbe28d32318dd3136f996246daf536c43cbc44",
+      "revision": "63e5afc28ac936e2e414d178e29569ff4ad527ae239dd42842e8494d2e193db4",
       "files": [
         "faas.rules.yml"
       ],
@@ -761,6 +761,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "f1dcf8eacd89b2b89d8c5681800ed87879d70f9d665bc13c270976886ed92020"
+          }
+        },
+        {
+          "id": "19979251c1e29c6d85a4113fa354c74a72a79141874ac480006d0ee52943d5e6",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_billing",
+          "rule_name": "FaasBaseScanFailureHeld",
+          "definition": {
+            "expression_hash": "863c7c8a322b3ce3f2a5b5d6b5c7386be1ce3c19bd0369eb4357a137ae657687",
+            "labels_hash": "aebbad069ab89dcbd1f799806cb1f75efca90884a73ed3f9dd93efffe834eed8",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "bdd0bc8e78c6fe9da16b7962aaafc3abc39186d759097ecf734a87d6a1eb5417"
           }
         },
         {
@@ -3429,6 +3442,19 @@
           }
         },
         {
+          "id": "84abb605b5b1da05320d069224d54811a466f58524a41b286f8d5a83caef4c95",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_object_storage",
+          "rule_name": "FaasPublicObjectReadUsageFlushFailing",
+          "definition": {
+            "expression_hash": "dfdae28c80242ae44bec6fa3eb604c9f856ca261546733c7c38c2e3c9fcc9856",
+            "labels_hash": "a3b79899300e8163cb3b09bc4e691d336d1a251b35d405f6884fe7d576c6d213",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "adfc970b6815e8cba9ef059ff2c304f48ef13480ac69fabb3131f791e2db013e"
+          }
+        },
+        {
           "id": "84d16f2ceb9c9736119e5651810d7119d19efd5a7609c5b0619ddad57f1b7828",
           "file_name": "faas.rules.yml",
           "group_name": "faas_app_tasks",
@@ -3881,6 +3907,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "b044ff90777c1cb60c99433fe2db66308b74e0506039015d855aad1953c2f4e3"
+          }
+        },
+        {
+          "id": "975441c093f5af2f07e3121caed1853285111507143a61fa50f2c8e1d0a3746a",
+          "file_name": "faas.rules.yml",
+          "group_name": "postgres_capacity",
+          "rule_name": "FaasRealtimeChannelHeadsGrowing",
+          "definition": {
+            "expression_hash": "905c52320c1d846e0eeb91348ff41410a10fad89f6c31a14dddb24acdfc5ba61",
+            "labels_hash": "afb98c8c7552e032f7edb9e4f94c609f980e163c7fade7ada0dcd8729b576728",
+            "for_seconds": 3600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "8e35362bdc4783891e07d0dcf236a8adac091850b0d847a2310a5c6d1c081c8a"
           }
         },
         {
@@ -6487,7 +6526,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "46182b80dafa049a21a883bc3c9e8d6a4493b9253eeafd4c47504d851333b6ab",
+      "revision": "c922ffe114eaef72d80c1eed38b0590114c49312721b444f623194429b403812",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -7274,6 +7313,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "f1dcf8eacd89b2b89d8c5681800ed87879d70f9d665bc13c270976886ed92020"
+          }
+        },
+        {
+          "id": "19979251c1e29c6d85a4113fa354c74a72a79141874ac480006d0ee52943d5e6",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_billing",
+          "rule_name": "FaasBaseScanFailureHeld",
+          "definition": {
+            "expression_hash": "863c7c8a322b3ce3f2a5b5d6b5c7386be1ce3c19bd0369eb4357a137ae657687",
+            "labels_hash": "aebbad069ab89dcbd1f799806cb1f75efca90884a73ed3f9dd93efffe834eed8",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "bdd0bc8e78c6fe9da16b7962aaafc3abc39186d759097ecf734a87d6a1eb5417"
           }
         },
         {
@@ -10085,6 +10137,19 @@
           }
         },
         {
+          "id": "84abb605b5b1da05320d069224d54811a466f58524a41b286f8d5a83caef4c95",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_object_storage",
+          "rule_name": "FaasPublicObjectReadUsageFlushFailing",
+          "definition": {
+            "expression_hash": "dfdae28c80242ae44bec6fa3eb604c9f856ca261546733c7c38c2e3c9fcc9856",
+            "labels_hash": "a3b79899300e8163cb3b09bc4e691d336d1a251b35d405f6884fe7d576c6d213",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "adfc970b6815e8cba9ef059ff2c304f48ef13480ac69fabb3131f791e2db013e"
+          }
+        },
+        {
           "id": "84d16f2ceb9c9736119e5651810d7119d19efd5a7609c5b0619ddad57f1b7828",
           "file_name": "faas.rules.yml",
           "group_name": "faas_app_tasks",
@@ -10550,6 +10615,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "b044ff90777c1cb60c99433fe2db66308b74e0506039015d855aad1953c2f4e3"
+          }
+        },
+        {
+          "id": "975441c093f5af2f07e3121caed1853285111507143a61fa50f2c8e1d0a3746a",
+          "file_name": "faas.rules.yml",
+          "group_name": "postgres_capacity",
+          "rule_name": "FaasRealtimeChannelHeadsGrowing",
+          "definition": {
+            "expression_hash": "905c52320c1d846e0eeb91348ff41410a10fad89f6c31a14dddb24acdfc5ba61",
+            "labels_hash": "afb98c8c7552e032f7edb9e4f94c609f980e163c7fade7ada0dcd8729b576728",
+            "for_seconds": 3600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "8e35362bdc4783891e07d0dcf236a8adac091850b0d847a2310a5c6d1c081c8a"
           }
         },
         {

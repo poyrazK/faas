@@ -731,7 +731,9 @@ func (s *server) mfaDisableEmailLink(r *http.Request, raw []byte) string {
 		host = platform
 		scheme = schemeHTTPS
 	}
-	return fmt.Sprintf("%s://%s/v1/account/mfa/disable-email/confirm?token=%s", scheme, host, base64.RawURLEncoding.EncodeToString(raw))
+	// The confirmation page, not the POST-only endpoint it calls: a mail
+	// client opens links with GET (bug hunt 2026-10-28 B38).
+	return fmt.Sprintf("%s://%s/auth/reset/mfa?token=%s", scheme, host, base64.RawURLEncoding.EncodeToString(raw))
 }
 
 func (s *server) mfaHostIdentities() []*age.X25519Identity {

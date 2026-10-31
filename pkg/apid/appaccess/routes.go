@@ -222,6 +222,37 @@ var routeActions = map[string]authz.OrgAction{
 	"POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/credentials/{credential_id}/rotate": authz.OrgActionManageAppSecurity,
 	"POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/groups/{group}/credentials/{credential_id}/revoke": authz.OrgActionManageAppSecurity,
 
+	// Custom domains, crons and invocations (ADR-20261026151103 amendment 4).
+	// Their URLs name a domain, cron or invocation, or the create request
+	// names the app in its body; indirectlyAddressedApp or the handler
+	// resolves the app. Unmapped, only the app's creator reached them, so a
+	// company's owners could not remove a production domain or stop a cron on
+	// an app another member created, and the creator's personal plan priced
+	// them (bug hunt 2026-10-28 B9, H90). Members read them; members who
+	// deploy configure and operate them, as they do the app's code and
+	// environment. Legacy /v1/triggers stay personal-only (QueuePattern;
+	// docs/organization-queues.md).
+	"POST /v1/domains":                         authz.OrgActionConfigureApp,
+	"GET /v1/domains/{domain}":                 authz.OrgActionReadApp,
+	"GET /v1/domains/{domain}/doctor":          authz.OrgActionReadApp,
+	"DELETE /v1/domains/{domain}":              authz.OrgActionConfigureApp,
+	"POST /v1/domains/{domain}/verify":         authz.OrgActionConfigureApp,
+	"POST /v1/domains/{domain}/default":        authz.OrgActionConfigureApp,
+	"POST /v1/domains/{domain}/retry":          authz.OrgActionConfigureApp,
+	"GET /v1/crons":                            authz.OrgActionReadApp,
+	"POST /v1/crons":                           authz.OrgActionConfigureApp,
+	"GET /v1/crons/{id}":                       authz.OrgActionReadApp,
+	"PATCH /v1/crons/{id}":                     authz.OrgActionConfigureApp,
+	"DELETE /v1/crons/{id}":                    authz.OrgActionConfigureApp,
+	"GET /v1/crons/{id}/occurrences":           authz.OrgActionReadApp,
+	"GET /v1/crons/{id}/runs":                  authz.OrgActionReadApp,
+	"GET /v1/crons/{id}/runs/{run_id}":         authz.OrgActionReadAppLogs,
+	"POST /v1/crons/{id}/run":                  authz.OrgActionDeployApp,
+	"POST /v1/crons/{id}/runs/{run_id}/cancel": authz.OrgActionDeployApp,
+	"GET /v1/invocations/{id}":                 authz.OrgActionReadAppLogs,
+	"POST /v1/invocations/{id}/replay":         authz.OrgActionDeployApp,
+	"POST /v1/invocations/{id}/replay-keyed":   authz.OrgActionDeployApp,
+
 	// Session-only dashboard and GitHub install routes (Authorize, called
 	// from the dashboard session gate). Their reads take OrgActionReadApp
 	// (see dashboardRead); writes with a /v1 twin take the twin's action, and

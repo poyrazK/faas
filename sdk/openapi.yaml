@@ -3122,13 +3122,14 @@ paths:
     delete:
       operationId: deleteNotificationChannel
       summary: Delete a notification channel
-      description: "Removes the channel; alert rules stop delivering to it."
+      description: "Removes the channel; alert rules stop delivering to it. Refused with 409 notification_channel_in_use while the channel is the only destination of a rule (no webhook and no other channel), naming those rules."
       tags: [alert_rules]
       responses:
         '204':
           description: The channel was deleted.
         '402': {$ref: '#/components/responses/PaymentRequired'}
         '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
   /v1/notification-channels/{id}/test:
     parameters:
       - name: id
@@ -17726,6 +17727,54 @@ paths:
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/orgs/{slug}/overage-cap:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+    get:
+      tags: [orgs]
+      operationId: getOrgOverageCap
+      summary: Read the organization's monthly spend cap.
+      description: "Requires current organization membership and usage:read. Integer cents, zero when no overage is allowed, or null when no cap is set. An organization that owns its resources is billed, and capped, apart from its members."
+      responses:
+        '200':
+          description: The saved monthly spend cap.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AccountOverageCapResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+    post:
+      tags: [orgs]
+      operationId: setOrgOverageCap
+      summary: Set or clear the organization's monthly spend cap.
+      description: |
+        Requires the organization owner, admin credential scope, verified email,
+        MFA and recent step-up. `{"overage_cap_cents": <int|null>}`: null clears
+        the cap, 0 allows no overage. Once the organization's overage this month
+        meets the cap, the scheduler stops its apps' wakes (HTTP 402
+        `admission_refused`) until the cap is raised or the month ends. A paid
+        organization starts with its plan's default cap.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RaiseOverageCapRequest'}
+            example: {"overage_cap_cents": 10000}
+      responses:
+        '200':
+          description: The organization's spend cap after the change.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AccountOverageCapResponse'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
   /v1/orgs/{organization}/projects:
     parameters:
       - $ref: '#/components/parameters/OrgProjectOrganization'
@@ -22047,6 +22096,14 @@ components:
           description: Exact paths, one-segment globs, or trailing /** directory patterns that do not trigger builds.
         preview_enabled: {type: boolean, default: true}
         preview_ttl_hours: {type: integer, minimum: 1, maximum: 720, default: 168}
+        preview_bot_prs:
+          type: boolean
+          default: false
+          description: Preview pull requests opened by bots such as Dependabot and Renovate. Off by default so they do not use up the preview allowance.
+        preview_draft_prs:
+          type: boolean
+          default: true
+          description: Preview draft pull requests. When off, a draft gets its preview once it is marked ready for review.
         preview_service_policy:
           type: string
           enum: [deny, allow_marked]
@@ -22074,6 +22131,8 @@ components:
           items: {type: string, minLength: 1, maxLength: 255}
         preview_enabled: {type: boolean}
         preview_ttl_hours: {type: integer, minimum: 1, maximum: 720}
+        preview_bot_prs: {type: boolean}
+        preview_draft_prs: {type: boolean}
         preview_service_policy:
           type: string
           enum: [deny, allow_marked]
@@ -32202,6 +32261,9 @@ components:
           minimum: 0
           maximum: 3600
           description: Configured completed-release rollback eligibility window in seconds; 0 is disabled. Acceptance requires deployment-specific error_rate_pct evidence, a gt or gte comparison, and recorded predecessor lineage.
+        notify_resolved:
+          type: boolean
+          description: "The webhook also receives a signed alert.resolved event when the rule recovers. Omitted when false."
         id: {type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef"}
         app_id:
           type: string
@@ -32392,6 +32454,9 @@ components:
           minimum: 0
           maximum: 3600
           description: Enable completed-release rollback for this many seconds after cutover; 0 disables it. Requires action=rollback. Only deployment-specific error_rate_pct breaches with gt or gte comparisons can qualify.
+        notify_resolved:
+          type: boolean
+          description: "Also send the webhook a signed alert.resolved event when the rule recovers. Requires webhook_url; notification channels always receive resolves. Defaults to false, because receivers that predate it count every delivery as a fire."
         name: {type: string, example: "p99 > 500ms"}
         enabled: {type: boolean, example: true}
         metric:
@@ -32476,6 +32541,9 @@ components:
           minimum: 0
           maximum: 3600
           description: Change the completed-release recovery window. Omission preserves it and explicit 0 disables it. Positive values require action=rollback; only error_rate_pct with gt or gte and sufficient exact deployment telemetry qualifies.
+        notify_resolved:
+          type: boolean
+          description: "Turn the webhook's alert.resolved events on or off. Turning them on requires the rule to have a webhook_url."
         name: {type: string}
         enabled: {type: boolean}
         metric:

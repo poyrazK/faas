@@ -1,0 +1,20 @@
+# ADR-20261030070000: PR preview lifecycle and policy gaps
+
+- **Status:** accepted
+- **Date:** 2026-10-30
+- **Amends:** ADR-095 (PR preview environments), ADR-20261029214500 (preview binding, names, renames and checks)
+- **Decision:** A fourth code review of PR previews found these gaps; this ADR fixes them.
+  1. **A torn-down preview is not restorable.** A preview torn down by the janitor or a destroy keeps a soft-deleted row for the seven-day restore window. `POST /v1/apps/{slug}/restore` brought it back `active` but still `torn_down`: the janitor skips torn-down rows and a preview that is not open holds no allowance, so it served its PR code forever outside the quota, and it kept the PR from getting a new preview. Restore now refuses a preview that is tearing down or torn down (409 `app_not_restorable`), and the deleted-apps list leaves such previews out.
+  2. **Disconnecting a repository tears its previews down.** Uninstalling the GitHub App and removing a repository from it already marked the previews stale. Disconnecting one app (`gregale github disconnect`, the dashboard, or apid detaching an inaccessible repository) only cleared the binding, so no close event reached the previews and they served PR code to the end of their lease. The binding delete now marks the app's PR environments stale in the same transaction. An environment belongs to its root's production app, the anchor the orphan sweep uses, so another app's environment that previews this app as a dependency is left alone.
+  3. **Bot and draft pull requests follow the project's policy.** The GitHub deploy policy gains `preview_bot_prs` (default off) and `preview_draft_prs` (default on). A pull request whose author GitHub types as `Bot` (Dependabot, Renovate) is skipped unless bot previews are on, so a batch of dependency updates no longer uses up a Free or Hobby preview allowance. With draft previews off, a draft is skipped and gets its preview on `ready_for_review`. A skipped pull request gets a neutral `gregale-preview` check that says why. The author, not the event sender, decides: a human pushing to a Dependabot branch is still a bot pull request. A close always proceeds. `gregale github setup` sets both with `--preview-bots`/`--no-preview-bots` and `--preview-drafts`/`--no-preview-drafts`.
+  4. **Reopening reuses a live preview.** A pull request reopened within its close grace at the head its preview still serves is reopened in place (`ReopenPRPreview`, under the environment allowance): no rebuild, no hourly deploy budget, and the check and comment say it is live. A new head, a set that is not live, or a full allowance takes the normal path.
+  5. **Deleting a preview app tears down its PR environment.** `DELETE /v1/apps/{slug}` on a PR preview removed that one workload, left its siblings serving to the end of their lease, and left it restorable. It now tears down the whole environment, as `POST /v1/preview/{slug}/destroy` does.
+  6. **A preview knows it is a preview.** PR previews run with `GREGALE_PREVIEW=1`, `GREGALE_PR_NUMBER`, `GREGALE_GIT_BRANCH` and `GREGALE_GIT_COMMIT`, refreshed on every head. `GREGALE_` is reserved, so the platform's values win over the PR head's.
+- **Why:** These let a preview outlive its PR or quota, let bots crowd out people, wasted builds, and left app code unable to tell a preview from production.
+- **Consequences:**
+  - One expand migration adds the two policy columns with constant defaults; an older apid ignores them and an older githubd previews every PR.
+  - The policy API, the SDKs and `gregale github setup` gain the two settings.
+  - A restore request for a torn-down preview now fails; push a commit to the open pull request to get a new preview.
+- **Rejected alternatives:**
+  - **Preview bot pull requests only when labeled.** It needs a label per pull request and does not let a project opt in once.
+  - **Purge a preview at teardown instead of refusing its restore.** Teardown keeps the soft delete so the slug, logs and billing records follow the normal deletion window.

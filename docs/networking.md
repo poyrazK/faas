@@ -144,8 +144,10 @@ services:
 With this setting, each canonical `_URL` uses `https://<service>.internal`;
 the `_HTTPS_URL` companion remains available with the same value. Plain HTTP
 calls from that caller are rejected by the service proxy, so client retries do
-not silently downgrade. Enable private HTTPS and workload CA trust on the
-compute path before adopting the setting. Omitted transport keeps existing
+not silently downgrade. The transport needs private HTTPS and workload CA
+trust on the compute path: until the operator enables the
+`private-service-https` capability, Gregale refuses the setting with that
+reason ([ADR-20261029230000](adr/20261029230000-private-service-https-capability.md)). Omitted transport keeps existing
 workloads' stored choice and defaults new workloads to HTTP; set the extension
 to `http` to explicitly return to the legacy endpoint. The app API exposes the
 same choice as `service_binding_transport` for standalone apps. `gregale
@@ -156,9 +158,13 @@ The same declared edges are exposed as service bindings by the app API and by
 and outbound integration bindings. New project workloads use the `project`
 caller policy
 ([ADR-20261022111119](adr/20261022111119-project-service-binding-policy.md)):
-they may call every service in their own project without listing it, while
-calls to services outside the project need `depends_on` and get 403 without
-it. A target's `x-gregale-allow-callers` list still applies. Existing apps
+they may call every service in their own project without listing it. A
+project service's `depends_on` bindings name only its own project's services
+([ADR-20261030131528](adr/20261030131528-project-bindings-name-project-services.md)):
+a bound name never resolves to an app outside the project, and a call to a
+service outside the project gets 403 unless the caller sets
+`x-gregale-service-policy: account`. A target's `x-gregale-allow-callers` list
+still applies. Existing apps
 retain their persisted policy on reapply; set `x-gregale-service-policy:
 project` on a service to move it over, or `declared` to require `depends_on`
 for every call. A top-level `x-gregale-service-policy` sets the policy of
@@ -451,7 +457,7 @@ Customer-sealed outbound integrations can opt into verification by declaring a
 provider endpoint safe to call:
 
 ```sh
-gregale app binding probe-policy INTEGRATION_ID --path /health --method GET --expect-status 200
+gregale app binding probe-policy set INTEGRATION_ID --path /health --method GET --expect-status 200
 gregale app binding verify public-api --release v12 --outbound INTEGRATION_ID
 gregale app binding check public-api --release v12
 gregale release traffic promote --app public-api --release v12 --require-bindings
@@ -513,8 +519,10 @@ app outside the project matches by its slug only when no service of the
 target's project has that name. A deleted service keeps its name until it is
 purged (7 days after the delete, while it can still be restored): its siblings'
 `depends_on` names and caller lists neither resolve to nor admit an app outside
-the project that holds the name as a slug. Calls to it fail as not found until
-it is restored or a project apply removes the dependency. This target check runs before routing or waking `billing`. Preview callers
+the project that holds the name as a slug. After the purge, a sibling's
+`depends_on` binding still resolves only inside the project. Calls to the
+service fail as not found until it is restored or a project apply removes the
+dependency. This target check runs before routing or waking `billing`. Preview callers
 must also pass the existing project and target preview policies.
 
 For least-privilege access, a target can grant each caller only specific HTTP
@@ -603,7 +611,9 @@ Gregale does not claim the customer's entire private namespace. The existing
 `*.svc.gregale` endpoint and default generated URLs remain unchanged for
 rolling-upgrade compatibility; callers may opt into HTTPS-first URLs after the
 listener and trust are ready. The private HTTPS listener is not enabled on
-every installation. Where it is, guest-init builds a per-workload bundle in `/tmp`, exports
+every installation, and `_HTTPS_URL` answers only where it is: the operator
+enables the `private-service-https` capability once every compute node runs
+it. Where it is, guest-init builds a per-workload bundle in `/tmp`, exports
 `GREGALE_SERVICE_CA_BUNDLE`, and configures common TLS clients (`SSL_CERT_FILE`,
 Python Requests, and curl) to trust the private endpoint when the image includes
 a standard system CA bundle. Node receives the CA through its additive
@@ -858,7 +868,7 @@ Then run:
 ```sh
 gregale environment qualify shop staging --profile gregale-qualification.yaml
 gregale environment preview shop --from staging --to production
-gregale environment preflight shop --from staging --to production \
+gregale environment check shop --from staging --to production \
   --profile gregale-qualification.yaml --json
 ```
 
@@ -902,7 +912,7 @@ availability without invoking customer code. To exercise a handler on one
 exact deployment, use an explicit smoke request from the caller:
 
 ```bash
-gregale app binding smoke public-api billing \
+gregale app binding call public-api billing \
   --caller-deployment v12 \
   --target-deployment TARGET_DEPLOYMENT_ID \
   --path /health \
@@ -1560,7 +1570,7 @@ dark-deployment preparation workflow first. GitOps-managed workloads, active
 service rollouts, mirror recipients and deactivation manifests are excluded.
 
 ```bash
-gregale environment release-sets stage shop production \
+gregale environment release-sets stage create shop production \
   --file manifest.json --ttl-seconds 600 --json > stage.json
 stage_id=$(jq -r .id stage.json)
 gregale environment release-sets stage status shop production \
@@ -1684,9 +1694,9 @@ The CLI prints the run ID before requesting creation and includes `run_id` in
 its verification report.
 
 ```sh
-gregale app binding verification-runs status my-api RUN_ID --json
-gregale app binding verification-runs resume my-api RUN_ID --concurrency 2 --json
-gregale app binding verification-runs cancel my-api RUN_ID --json
+gregale app binding verification status my-api RUN_ID --json
+gregale app binding verification resume my-api RUN_ID --concurrency 2 --json
+gregale app binding verification cancel my-api RUN_ID --json
 ```
 
 Status shows the original plan, resource IDs, ownership and current progress.
@@ -1731,9 +1741,9 @@ receipt commit together and share that fixed deadline. The CLI prints the parent
 ID before creation, so a lost creation response is recoverable with the same UUID.
 
 ```sh
-gregale environment release-sets verification-runs status my-project production RUN_UUID --json
-gregale environment release-sets verification-runs resume my-project production RUN_UUID --concurrency 2 --json
-gregale environment release-sets verification-runs cancel my-project production RUN_UUID --json
+gregale environment release-sets verification status my-project production RUN_UUID --json
+gregale environment release-sets verification resume my-project production RUN_UUID --concurrency 2 --json
+gregale environment release-sets verification cancel my-project production RUN_UUID --json
 ```
 
 Resume retains membership, routing expectations, policy revisions, exact service
@@ -1775,7 +1785,7 @@ SDK transport failures, caller stops and progress callback failures preserve ser
 
 ### Explain blocked verification receipts
 
-Use `gregale app binding verification-runs diagnostics APP RUN_ID --json` or `gregale environment release-sets verification-runs diagnostics PROJECT ENVIRONMENT RUN_ID --json` to inspect blockers and recovery suggestions. The corresponding GET endpoints end in `/verification-runs/{run}/diagnostics` on the app binding or project environment release-set surface.
+Use `gregale app binding verification diagnostics APP RUN_ID --json` or `gregale environment release-sets verification diagnostics PROJECT ENVIRONMENT RUN_ID --json` to inspect blockers and recovery suggestions. The corresponding GET endpoints end in `/verification-runs/{run}/diagnostics` on the app binding or project environment release-set surface.
 
 Responses preserve the original run ID and expiry and include `complete`, optional `check_passed`, `blockers`, `changes` and `recovery`. `complete` means applicable diagnostic reads succeeded; `check_passed` describes current public policy/evidence. Neither grants admission, confirms receipt completion or authorizes traffic changes. A previously passed or expired receipt can have current blockers.
 
@@ -1813,7 +1823,7 @@ Set `--status-read-retries 0` on durable CLI verify or receipt resume to disable
 
 ### Discover retained verification receipts
 
-Use `gregale app binding verification-runs list APP --json` or `gregale environment release-sets verification-runs list PROJECT ENVIRONMENT --json` when you need to recover a receipt ID. Lists are read-only summaries; they do not refresh evidence, admit work, resume or cancel receipts. A listed passed state does not establish current qualification.
+Use `gregale app binding verification list APP --json` or `gregale environment release-sets verification list PROJECT ENVIRONMENT --json` when you need to recover a receipt ID. Lists are read-only summaries; they do not refresh evidence, admit work, resume or cancel receipts. A listed passed state does not establish current qualification.
 
 Pages default to 20 entries (maximum 100), newest first by creation time and UUID. Use `--limit`, `--cursor`, `--deployment UUID` and `--status pending|passed|cancelled|expired`. App lists additionally accept `--scope` and `--include-members`; by default they omit graph members. Project lists show root receipts and match deployment filters against reviewed members. Included app members expose their original `graph_run_id`.
 
@@ -1839,7 +1849,7 @@ For CI, keep stdout as one final JSON report and stream typed events on stderr:
 
 ```sh
 gregale app binding verify api --release-policy --durable --json --progress ndjson
-gregale environment release-sets verification-runs resume project production RUN_ID --json --progress ndjson
+gregale environment release-sets verification resume project production RUN_ID --json --progress ndjson
 ```
 
 `binding_verification_progress` events include root/member IDs, step/resource status, `waiting_for_qualification` conditions, read retries and `reconciling` operations. Graph events also identify project and environment. During execution, cleanup failures use `binding_verification_notice` with code `cleanup_failed`. Pre-execution argument/authentication failures retain the normal CLI error contract.

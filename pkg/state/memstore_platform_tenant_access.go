@@ -13,6 +13,7 @@ func (m *MemStore) CreatePlatformTenantAccessToken(_ context.Context, in Platfor
 	if err := validatePlatformTenantAccessTokenInput(in); err != nil {
 		return PlatformTenantAccessToken{}, err
 	}
+	in.TokenHash = storedCredential(credTagTenantAccessToken, in.TokenHash)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	tenant, ok := m.platformTenants[in.TenantID]
@@ -95,7 +96,13 @@ func (m *MemStore) AuthenticatePlatformTenantAccessToken(_ context.Context, hash
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	id := m.platformTenantAccessTokenByHash[string(hash)]
+	var id string
+	for _, value := range credentialLookups(credTagTenantAccessToken, hash) {
+		if found, ok := m.platformTenantAccessTokenByHash[string(value)]; ok {
+			id = found
+			break
+		}
+	}
 	token, ok := m.platformTenantAccessTokens[id]
 	if !ok || token.RevokedAt != nil || !time.Now().UTC().Before(token.ExpiresAt) {
 		return Account{}, PlatformTenantAccessToken{}, ErrNotFound

@@ -704,9 +704,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// either key. The first-boot / restart single-identity path
 	// above already wrote host.age.pub from the current identity,
 	// so the apid-side sealing endpoint keeps working unchanged.
-	hostIdentities, err := loadHostIdentities(deps, filepath.Dir(keyPath))
-	if err != nil {
-		return fmt.Errorf("vmmd: load host identities (%s): %w", filepath.Dir(keyPath), err)
+	// ADR 20261022111812, contract step: a contracted vmmd does not read the
+	// fleet and host identities at all. host.age above stays, since the
+	// node's other units and the join check still load it.
+	var legacyIdentities []*age.X25519Identity
+	if !cfg.RuntimeSealDomainContracted {
+		legacyIdentities, err = loadHostIdentities(deps, filepath.Dir(keyPath))
+		if err != nil {
+			return fmt.Errorf("vmmd: load host identities (%s): %w", filepath.Dir(keyPath), err)
+		}
 	}
 	// ADR 20261022111812: runtime secrets sealed to the runtime seal domain
 	// open with its identity; the fleet and host identities keep opening
@@ -721,10 +727,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return fmt.Errorf("vmmd: load build seal domain: %w", err)
 	}
-	registryIdentities := append(append([]*age.X25519Identity(nil), buildIdentities...), hostIdentities...)
-	hostIdentities = append(runtimeIdentities, hostIdentities...)
+	hostIdentities, registryIdentities, err := unsealIdentities(runtimeIdentities, buildIdentities, legacyIdentities, cfg.RuntimeSealDomainContracted)
+	if err != nil {
+		return err
+	}
 	sealdomain.RegisterLoadedDomains(ops.Registry(), map[sealdomain.Domain]bool{sealdomain.Runtime: len(runtimeIdentities) > 0, sealdomain.Build: len(buildIdentities) > 0})
-	log.Info("vmmd: unseal identities loaded", "runtime_domain", len(runtimeIdentities) > 0, "identities", len(hostIdentities))
+	sealdomain.RegisterLegacyIdentities(ops.Registry(), len(legacyIdentities))
+	log.Info("vmmd: unseal identities loaded", "runtime_domain", len(runtimeIdentities) > 0, "identities", len(hostIdentities),
+		"contracted", cfg.RuntimeSealDomainContracted, "legacy_identities", len(legacyIdentities))
 
 	// Issue #98 / ADR-028: vmmd self-registers in compute_nodes
 	// before the gRPC listener binds. Fail-closed: if the upsert
@@ -1279,6 +1289,22 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return err
 	}
 	mgr.WithRuntimeSecretSignatures(signatures)
+	// CPU cache: a per-instance rate + accumulator over cgroup
+	// usage_usec, fed by runCPUSampleLoop below and consumed by
+	// vmmdgrpc.Server.Stats and the model-wait pause. issue #279 / PR-B.
+	// nil-safe so tests that don't care about CPU can pass a fresh
+	// cpustats.NewWithDefaults() and skip the sample loop
+	// entirely via runCPUSampleInterval=0.
+	cpuCache := cpustats.NewWithDefaults()
+	// ADR-20261027090012: pause an eligible agent run VM while it waits on
+	// the model. It shares ADR-1151's pause pass below.
+	if cfg.AgentWaitPause {
+		mgr.WithAgentWaitPause(fcvm.AgentWaitPauseConfig{
+			CPU:     agentWaitCPU{cache: cpuCache},
+			Metrics: fcvm.NewAgentWaitMetrics(ops.Registry()),
+		})
+		log.Info("agent run model-wait pause enabled (ADR-20261027090012)")
+	}
 	// ADR-1151 quiet pause: pause eligible instances between requests. schedd
 	// marks which instances are eligible; this flag lets an operator keep
 	// the whole node out of it. Observe mode measures the pauses instead of
@@ -1293,12 +1319,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			Metrics:  fcvm.NewQuietPauseMetrics(ops.Registry()),
 			Observe:  observe,
 		})
-		go mgr.RunQuietPause(ctx)
 		if observe {
 			log.Info("quiet pause observe mode enabled (ADR-1151): measuring would-be pauses, pausing nothing")
 		} else {
 			log.Info("quiet pause enabled (ADR-1151)")
 		}
+	}
+	if cfg.QuietPause || cfg.QuietPauseObserve || cfg.AgentWaitPause {
+		go mgr.RunQuietPause(ctx)
 	}
 	// ADR-1151 frozen tier: nothing is frozen until schedd calls
 	// FreezeInstance. The activity tracker lets a freeze refuse an instance
@@ -1829,13 +1857,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// setup below cannot leave /readyz reporting ready while
 	// no gRPC server is actually running (PR #1091 review
 	// Finding 5).
-	// CPU cache: a per-instance rate + accumulator over cgroup
-	// usage_usec, fed by runCPUSampleLoop below and consumed by
-	// vmmdgrpc.Server.Stats. issue #279 / PR-B. nil-safe so
-	// tests that don't care about CPU can pass a fresh
-	// cpustats.NewWithDefaults() and skip the sample loop
-	// entirely via runCPUSampleInterval=0.
-	cpuCache := cpustats.NewWithDefaults()
+	// cpuCache (created before quiet pause below) feeds
+	// vmmdgrpc.Server.Stats.
 	// Netstats cache: per-instance byte-counter over root-side
 	// vethHost.rx_bytes, fed by runNetworkEgressPoll below and
 	// consumed by vmmdgrpc.Server.Stats as the net_tx_bytes
@@ -1861,6 +1884,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithDivergedInstances(divergedInstances).
 		WithInvokeHookBackoff(cfg.InvokeHookBackoff).
 		WithBridgeStreamHeadroom(cfg.BridgeStreamHeadroom).
+		WithStreamBridgeGoRuntime(cfg.StreamBridgeGOMAXPROCS, cfg.StreamBridgeGOGC).
 		// ADR-20261027090010 §1: agent runs stay off unless this node opts in.
 		WithAgentRuns(strings.TrimSpace(os.Getenv("FAAS_VMMD_AGENT_RUNS")) == "1")
 	// ADR-20261022184531: Ping tells schedd whether this vmmd can adopt each
@@ -1897,6 +1921,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 	}
 	impl.Register(gsrv)
+	localData := newLocalDataSocket(ctx, cfg.LocalDataSocket, api.VmmdLocalDataSocket, cfg.OwnerUser, impl.Register, log)
 	defer func() {
 		if err := impl.Close(context.WithoutCancel(ctx)); err != nil {
 			log.Warn("vmmd: stream bridge cleanup during shutdown failed", "err", err)
@@ -1972,6 +1997,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		grpcBound.MarkBound()
 		serveErr <- gsrv.Serve(lis)
 	}()
+	localData.serve(log)
 	if adoptionReport != nil {
 		endRestartNotice(ctx, store, adoptionReport.NodeID, log)
 	}
@@ -2212,7 +2238,9 @@ heartbeat:
 		// The caller ctx is already done; the notice is shutdown work.
 		announceRestart(context.WithoutCancel(ctx), store, adoptionReport.NodeID, log)
 	}
+	localDataStopped := localData.stop(cfg.AdoptRunningVMs, log)
 	stopGRPC(gsrv, cfg.AdoptRunningVMs, log)
+	<-localDataStopped
 	// The successor adopts from the journal: write what the last RPCs changed.
 	mgr.FlushAdoptionRecords()
 	if adminSrv != nil {

@@ -390,7 +390,7 @@ func cmdEventsRecoveryHealth(args []string) int {
 			_, _ = fmt.Fprintf(osStdout, "Partial notification counts: up to %d oldest candidate jobs; counts are lower bounds and cannot clear alerts.\n", notifications.JobLimit)
 		}
 		for _, job := range notifications.Jobs {
-			_, _ = fmt.Fprintf(osStdout, "%s | %s notification | overdue: %t | dead: %t | unknown: %t | no receivers: %t\n  Details: gregale event recovery-notifications %s\n", oneLine(job.JobID), oneLine(job.Kind), job.Overdue, job.Dead, job.Unknown, job.NoReceivers, oneLine(job.JobID))
+			_, _ = fmt.Fprintf(osStdout, "%s | %s notification | overdue: %t | dead: %t | unknown: %t | no receivers: %t\n  Details: gregale event recovery-notification list %s\n", oneLine(job.JobID), oneLine(job.Kind), job.Overdue, job.Dead, job.Unknown, job.NoReceivers, oneLine(job.JobID))
 		}
 	}
 	return 0
@@ -403,7 +403,7 @@ func cmdEventsRecoveryPreflight(args []string) int {
 		return 1
 	}
 	if len(positional) != 1 || rejectUnexpectedFlagArgs(fs) {
-		PrintUsage(os.Stderr, "usage: gregale event recovery-preflight <job-id>", "events")
+		PrintUsage(os.Stderr, "usage: gregale event recovery check <job-id>", "events")
 		return 1
 	}
 	if _, err := uuid.Parse(positional[0]); err != nil {

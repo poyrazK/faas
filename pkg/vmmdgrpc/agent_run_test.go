@@ -311,6 +311,39 @@ func TestRunAgentRestoresASnapshot(t *testing.T) {
 	}
 }
 
+// adr: 20261027090012 — the run spec's model-wait pause delay reaches vmmd's
+// wake; 0 (an older schedd) leaves the run unpaused, and a negative or
+// oversized delay is refused before a VM boots.
+func TestRunAgentCarriesTheModelWaitPauseDelay(t *testing.T) {
+	fake := &agentRunFake{fakeVMM: &fakeVMM{}}
+	cli := newAgentRunServer(t, fake, true)
+	send := func(ms int32) codes.Code {
+		req := agentRunStart(t, "codex")
+		req.GetStart().ModelWaitPauseAfterMs = ms
+		stream, err := cli.RunAgent(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = stream.Send(req)
+		_ = stream.CloseSend()
+		_, err = collect(t, stream)
+		return status.Code(err)
+	}
+	for _, ms := range []int32{0, 2000} {
+		if code := send(ms); code != codes.OK {
+			t.Fatalf("delay %d ms: %v", ms, code)
+		}
+	}
+	for _, ms := range []int32{-1, 60_001} {
+		if code := send(ms); code != codes.InvalidArgument {
+			t.Fatalf("delay %d ms: %v, want InvalidArgument", ms, code)
+		}
+	}
+	if len(fake.woke) != 2 || fake.woke[0].ModelWaitPauseAfter != 0 || fake.woke[1].ModelWaitPauseAfter != 2*time.Second {
+		t.Fatalf("wakes %+v", fake.woke)
+	}
+}
+
 func TestCaptureAgentSnapshot(t *testing.T) {
 	req := &vmmdpb.CaptureAgentSnapshotRequest{Instance: "agent-x", Plan: "pro", BaseKey: "base", LayerKey: "layer", VcpuCount: 1,
 		MemSizeMib: 1024, CpuMillicores: 1000, Namespace: "agent-preset", CaptureId: "abc"}

@@ -272,6 +272,9 @@ type Server struct {
 	// appTaskAttach pairs interactive app tasks with their attached client
 	// (ADR-1037). The zero value is ready to use.
 	appTaskAttach appTaskAttachRegistry
+	// hostCPU is the host CPU busy window Stats reports (ADR 20261030100950).
+	// The zero value is ready to use.
+	hostCPU hostCPUSampler
 
 	vmm VmmdAPI
 	ops *wire.OpsMetrics
@@ -329,6 +332,9 @@ type Server struct {
 	// bridgeStreamHeadroom is vmmd's bridge_stream_headroom switch
 	// (ADR-20261026120000); every stream bridge manager takes it.
 	bridgeStreamHeadroom bool
+	// streamBridgeGOMAXPROCS and streamBridgeGOGC are vmmd's
+	// stream_bridge_gomaxprocs and stream_bridge_gogc; 0 keeps Go's default.
+	streamBridgeGOMAXPROCS, streamBridgeGOGC int
 	// identitySigner mints execution-only assertions for the scheduler's
 	// outbound relay. Tokens are sent only over the vmmd↔schedd stream.
 	identitySigner *workloadidentity.Signer
@@ -527,11 +533,24 @@ func (s *Server) WithBridgeStreamHeadroom(on bool) *Server {
 	return s
 }
 
+// WithStreamBridgeGoRuntime sets GOMAXPROCS and GOGC for the stream bridges
+// this server starts from now on; 0 keeps Go's default for that setting.
+func (s *Server) WithStreamBridgeGoRuntime(gomaxprocs, gogc int) *Server {
+	if s != nil {
+		s.streamBridgeGOMAXPROCS, s.streamBridgeGOGC = gomaxprocs, gogc
+		if s.streamBridges != nil {
+			s.streamBridges.setGoRuntime(gomaxprocs, gogc)
+		}
+	}
+	return s
+}
+
 // newBridgeManager builds a stream bridge manager carrying this server's
 // bridge settings.
 func (s *Server) newBridgeManager() *streamBridgeManager {
 	m := newStreamBridgeManager(s.log)
 	m.headroom.Store(s.bridgeStreamHeadroom)
+	m.setGoRuntime(s.streamBridgeGOMAXPROCS, s.streamBridgeGOGC)
 	return m
 }
 
@@ -1558,6 +1577,7 @@ func (s *Server) Stats(ctx context.Context, _ *vmmdpb.StatsRequest) (*vmmdpb.Sta
 		LiveCount:   int32(s.vmm.LiveCount()),
 		LeasedCount: int32(s.vmm.LeasedCount()),
 	}
+	s.setCPUPressureReadings(resp, time.Now())
 
 	resident, ok := leakcheck.ResidentBytes()
 	if !ok {

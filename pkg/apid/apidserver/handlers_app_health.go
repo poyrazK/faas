@@ -12,14 +12,23 @@ import (
 // Read-only evidence projection. Ownership is resolved before any telemetry
 // fetch. It never calls a scheduler, VM manager, or customer endpoint.
 func (s *server) getAppHealth(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if _, assessment, ok := s.collectAppHealth(w, r, acct); ok {
+		writeJSON(w, http.StatusOK, assessment)
+	}
+}
+
+// collectAppHealth assesses the request's app in its environment scope, or
+// writes the problem and returns false. The app health and app status routes
+// share it (ADR-20261030151810), so both read the same bounded evidence.
+func (s *server) collectAppHealth(w http.ResponseWriter, r *http.Request, acct state.Account) (state.App, api.AppHealthResponse, bool) {
 	app, ok := s.loadApp(w, r, acct, r.PathValue("slug")) //nolint:contextcheck // loadApp uses r.Context().
 	if !ok {
-		return
+		return state.App{}, api.AppHealthResponse{}, false
 	}
 	app, environment, problem := s.appEnvironmentSettings(w, r, acct, app, false)
 	if problem != nil {
 		api.WriteProblem(w, problem)
-		return
+		return state.App{}, api.AppHealthResponse{}, false
 	}
 	scope := api.DefaultEnvScope
 	if environment.ID != "" {
@@ -33,9 +42,9 @@ func (s *server) getAppHealth(w http.ResponseWriter, r *http.Request, acct state
 		current, err := s.store.ProjectEnvironmentBySlug(ctx, acct.ID, app.ProjectID, scope)
 		if err != nil || current.ID != environment.ID {
 			api.WriteProblem(w, api.NewProblem(409, api.CodeConflict, "Environment changed", "Inspect the environment again"))
-			return
+			return state.App{}, api.AppHealthResponse{}, false
 		}
 		assessment.ProjectID, assessment.EnvironmentID = app.ProjectID, environment.ID
 	}
-	writeJSON(w, http.StatusOK, assessment)
+	return app, assessment, true
 }

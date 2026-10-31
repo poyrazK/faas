@@ -10,6 +10,8 @@ export type GitHubDeploymentPolicyPatch = {
   ignored_paths?: Array<string>;
   preview_enabled?: boolean;
   preview_ttl_hours?: number;
+  preview_bot_prs?: boolean;
+  preview_draft_prs?: boolean;
   preview_service_policy?: 'deny' | 'allow_marked';
   production_trigger?: 'webhook' | 'actions';
 };
