@@ -110508,6 +110508,7 @@ components:
       example: {id: "3f2c9a7e-1b4d-4c8e-9f0a-6d5e4c3b2a19", kind: hosted_mcp, client_name: Claude, client_site: claude.ai, label: mcp-login, prefix: "fp_live_ab12cd34", scopes: ["apps:read"], created_at: "2026-10-30T11:25:00Z", last_used_at: "2026-10-30T12:05:00Z", expires_at: "2026-11-06T12:05:00Z"}
 
     AgentConnectionsResponse:
+      description: The agents connected to the account, newest first.
       type: object
       required: [items]
       properties:
@@ -110516,12 +110517,14 @@ components:
           items: { $ref: '#/components/schemas/AgentConnectionResponse' }
 
     AgentConnectionsRevokeAllResponse:
+      description: The result of revoking every connected agent.
       type: object
       required: [revoked]
       properties:
-        revoked: { type: integer, minimum: 0, description: How many connections were revoked. }
+        revoked: { type: integer, minimum: 0, description: The number of agent keys revoked. }
 
     AgentClientRequest:
+      description: The client a hosted MCP connection's key belongs to, named once by the hosted MCP server.
       type: object
       required: [client_name]
       additionalProperties: false

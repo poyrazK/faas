@@ -12,6 +12,8 @@ T = TypeVar("T", bound="AgentClientRequest")
 
 @_attrs_define
 class AgentClientRequest:
+    """The client a hosted MCP connection's key belongs to, named once by the hosted MCP server."""
+
     client_name: str
     """Printable client name, without control characters or surrounding spaces."""
     client_site: str | Unset = UNSET

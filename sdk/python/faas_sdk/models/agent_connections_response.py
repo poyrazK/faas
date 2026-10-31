@@ -15,6 +15,8 @@ T = TypeVar("T", bound="AgentConnectionsResponse")
 
 @_attrs_define
 class AgentConnectionsResponse:
+    """The agents connected to the account, newest first."""
+
     items: list[AgentConnectionResponse]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

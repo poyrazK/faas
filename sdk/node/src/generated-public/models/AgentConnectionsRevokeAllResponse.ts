@@ -2,9 +2,12 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * The result of revoking every connected agent.
+ */
 export type AgentConnectionsRevokeAllResponse = {
   /**
-   * How many connections were revoked.
+   * The number of agent keys revoked.
    */
   revoked: number;
 };

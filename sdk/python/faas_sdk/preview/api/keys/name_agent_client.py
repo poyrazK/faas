@@ -81,7 +81,8 @@ def sync_detailed(
     The first name wins.
 
     Args:
-        body (AgentClientRequest):
+        body (AgentClientRequest): The client a hosted MCP connection's key belongs to, named once
+            by the hosted MCP server.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -114,7 +115,8 @@ def sync(
     The first name wins.
 
     Args:
-        body (AgentClientRequest):
+        body (AgentClientRequest): The client a hosted MCP connection's key belongs to, named once
+            by the hosted MCP server.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -142,7 +144,8 @@ async def asyncio_detailed(
     The first name wins.
 
     Args:
-        body (AgentClientRequest):
+        body (AgentClientRequest): The client a hosted MCP connection's key belongs to, named once
+            by the hosted MCP server.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -173,7 +176,8 @@ async def asyncio(
     The first name wins.
 
     Args:
-        body (AgentClientRequest):
+        body (AgentClientRequest): The client a hosted MCP connection's key belongs to, named once
+            by the hosted MCP server.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

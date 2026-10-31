@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * The client a hosted MCP connection's key belongs to, named once by the hosted MCP server.
+ */
 export type AgentClientRequest = {
   /**
    * Printable client name, without control characters or surrounding spaces.
