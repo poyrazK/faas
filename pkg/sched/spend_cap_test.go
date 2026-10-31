@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -115,5 +117,51 @@ func TestParkApp_ParksRunningInstanceAtSpendCap(t *testing.T) {
 	}
 	if state.State(ins.State).CountsForRAM() {
 		t.Fatalf("instance state after ParkApp = %q, want a non-resident state", ins.State)
+	}
+}
+
+// adr: 20261030093512 — the reaper parks an organization's app at the
+// organization's spend cap, the subject meterd bills and the wake gate checks,
+// never at the cap of the member who created the app.
+func TestAppMustPark_SpendCapFollowsTheBillingOrganization(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	member, err := store.CreateAccount(ctx, "park-member-"+uuid.NewString()+"@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	org, err := store.CreateOrg(ctx, state.Org{Slug: "park-" + uuid.NewString()[:8], Name: "park", Plan: api.PlanFree, Status: state.OrgStatusActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// As in TestSpendCapSubjectIsTheBillingOrganization: the plan update makes
+	// the organization its own billing subject.
+	if err := store.UpdateAccountPlan(ctx, org.ID, api.PlanPro); err != nil {
+		t.Fatal(err)
+	}
+	app := state.App{ID: uuid.NewString(), AccountID: member.ID, OrgID: org.ID, Status: state.AppActive}
+	account, err := state.AppResourceAccount(ctx, store, app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name   string
+		capped string
+		parked bool
+	}{
+		{"organization at its cap", org.ID, true},
+		{"only the creating member at its cap", member.ID, false},
+	} {
+		capped := tc.capped
+		checker := sched.NewMockChecker(func(_ context.Context, subject string) (sched.OverageStatus, int64, int64, error) {
+			if subject == capped {
+				return sched.OverageReached, 1_500, 1_000, nil
+			}
+			return sched.OverageOK, 0, 0, nil
+		})
+		e := sched.XNewEngine(t, store, &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0").WithOverageChecker(checker)
+		if got := e.AppMustPark(ctx, app, account); got != tc.parked {
+			t.Errorf("%s: appMustPark = %v, want %v", tc.name, got, tc.parked)
+		}
 	}
 }

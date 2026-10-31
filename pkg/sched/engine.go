@@ -7269,14 +7269,18 @@ func (e *Engine) reconcileAppAdmission(ctx context.Context, appID string) (int, 
 }
 
 // appMustPark reports whether no instance of app may stay live: the app is
-// evicted_cold, its account is suspended or abuse-held, or the account has
-// reached its monthly spend cap. The cap check is cached and fails open
-// (OverageChecker), so a transient read error never parks an app.
+// evicted_cold, its account is suspended or abuse-held, or its billing
+// subject has reached its monthly spend cap. The subject is the one the wake
+// gate checks: the organization when it owns and is billed for its resources,
+// else the account (ADR-20261030093512). account.ID is the creator's storage
+// namespace even for an organization's app, so it never selects the cap. The
+// cap check is cached and fails open (OverageChecker), so a transient read
+// error never parks an app.
 func (e *Engine) appMustPark(ctx context.Context, app state.App, account state.Account) bool {
 	if app.Status == state.AppEvictedCold || account.Status == state.AccountSuspended || account.AbuseHeld() {
 		return true
 	}
-	return e.spendCapReached(ctx, account.ID)
+	return e.spendCapReached(ctx, e.spendCapSubject(ctx, app))
 }
 
 // ParkApp tears down every live instance of an app whose lifecycle has already
