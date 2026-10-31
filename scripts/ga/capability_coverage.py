@@ -359,6 +359,8 @@ PRIORITY_RULES = [
     (r"^apislogs$", "Logs, tail"),
     (r"^routestatus$", "Discovered routes"),
     (r"^s3gateway$|^s3-gatewayd$", "Object storage"),
+    # ADR-1027: the native backend's connection proxy and SCRAM verifiers.
+    (r"^pgproxyd?$|^pgscram$", "Managed Postgres"),
     (r"^apihosting(contract|receipt|scorecard)$|^api-hosting-(contract|scorecard)$", "Framework profiles"),
     (r"^mirror-(dispatch|redact)$", "Traffic mirroring"),
     (r"^api-discovery-enabled$", "OpenAPI:"),
