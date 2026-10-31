@@ -19,7 +19,7 @@ func cmdPostgresComputePolicy(args []string) int {
 	}
 	id, err := uuid.Parse(*request)
 	if fs.NArg() != 1 || (*policy != "true" && *policy != "false") || err != nil || id == uuid.Nil || id.String() != *request {
-		PrintUsage(os.Stderr, "usage: gregale postgres compute-policy DATABASE --scale-to-zero true|false --request-id UUID", "postgres")
+		PrintUsage(os.Stderr, "usage: gregale postgres compute-policy set DATABASE --scale-to-zero true|false --request-id UUID", "postgres")
 		return 1
 	}
 	client, err := authedClient()
@@ -45,7 +45,7 @@ func cmdPostgresComputePolicy(args []string) int {
 func cmdPostgresComputePolicyStatus(args []string) int {
 	fs := newFlagSet("postgres compute-policy-status", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil || fs.NArg() != 2 {
-		PrintUsage(os.Stderr, "usage: gregale postgres compute-policy-status DATABASE REQUEST_UUID", "postgres")
+		PrintUsage(os.Stderr, "usage: gregale postgres compute-policy status DATABASE REQUEST_UUID", "postgres")
 		return 1
 	}
 	client, err := authedClient()

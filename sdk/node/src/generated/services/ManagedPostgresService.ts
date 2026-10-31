@@ -28,6 +28,7 @@ import type { ManagedPostgresUsageResponse } from '../models/ManagedPostgresUsag
 import type { PrepareManagedPostgresCutoverRequest } from '../models/PrepareManagedPostgresCutoverRequest.js';
 import type { Problem } from '../models/Problem.js';
 import type { ResizeManagedPostgresDatabaseRequest } from '../models/ResizeManagedPostgresDatabaseRequest.js';
+import type { ResourceStatus } from '../models/ResourceStatus.js';
 import type { RestoreManagedPostgresDatabaseRequest } from '../models/RestoreManagedPostgresDatabaseRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
@@ -188,6 +189,36 @@ export class ManagedPostgresService {
       },
       query: {
         'purge': purge,
+      },
+    });
+  }
+  /**
+   * Read a managed database's conditions.
+   * Preview (resource-conditions capability). The database's Ready,
+   * Progressing and Degraded conditions, mapped from the response
+   * GET /v1/postgres/databases/{id} returns, cached health included, and
+   * never stored. Ready follows the lifecycle state; a database whose
+   * compute scaled to zero is Ready=True with reason suspended. Failed,
+   * deleting and deleted databases report terminal conditions.
+   * Cache-Control no-store.
+   *
+   * @returns ResourceStatus The managed database's conditions.
+   * @returns Problem Missing sign-in, database read scope or MFA, a database this account does not own, managed databases not configured, the capability turned off, or the rate limit.
+   * @throws ApiError
+   */
+  public static getManagedPostgresDatabaseStatus({
+    id,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+  }): CancelablePromise<ResourceStatus | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/postgres/databases/{id}/status',
+      path: {
+        'id': id,
       },
     });
   }

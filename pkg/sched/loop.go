@@ -3897,7 +3897,8 @@ func (h *httpGatewaySynth) invoke(ctx context.Context, appID string, inv state.I
 		if detail == "" {
 			detail = http.StatusText(statusCode)
 		}
-		err = fmt.Errorf("%w: application returned HTTP %d: %s", ErrPermanentInvoke, statusCode, detail)
+		err = applicationStatusError{status: statusCode,
+			err: fmt.Errorf("%w: application returned HTTP %d: %s", ErrPermanentInvoke, statusCode, detail)}
 	} else if err == nil && statusCode >= http.StatusInternalServerError {
 		// An ordinary 5xx is retryable under the durable invocation contract.
 		// Runner-caught exceptions are marked InvocationFailed above and take

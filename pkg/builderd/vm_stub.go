@@ -37,6 +37,9 @@ func (s *VMMDriver) WithDockerHubMirrors(_ []string) *VMMDriver { return s }
 // WithDriveSpaceReclaimer mirrors the metal setter; the stub creates no drive.
 func (s *VMMDriver) WithDriveSpaceReclaimer(_ BuildDriveSpaceReclaimer) *VMMDriver { return s }
 
+// WithSharedPlatformBlobs mirrors the metal setter; the stub stores no cache.
+func (s *VMMDriver) WithSharedPlatformBlobs(_ bool) *VMMDriver { return s }
+
 // BuildEnvironment keeps non-metal binaries from reading or writing cache
 // entries they cannot prove were produced by the active builder toolchain.
 func (s *VMMDriver) BuildEnvironment() (BuildEnvironment, error) {

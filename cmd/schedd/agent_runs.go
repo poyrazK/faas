@@ -36,6 +36,8 @@ func agentRunConfigFromEnv(getenv func(string) string) sched.AgentRunConfig {
 		Nodes:    strings.Split(getenv("FAAS_SCHEDD_AGENT_RUN_NODES"), ","),
 		// ADR-20261027090010 §2: preset snapshots, captured per node and machine shape.
 		Snapshots: strings.TrimSpace(getenv("FAAS_SCHEDD_AGENT_RUN_SNAPSHOTS")) == "1",
+		// ADR-20261027090012 §1: mark eligible runs for vmmd's model-wait pause.
+		WaitPause: strings.TrimSpace(getenv("FAAS_SCHEDD_AGENT_WAIT_PAUSE")) == "1",
 	}
 	if cfg.BaseKey == "" {
 		cfg.BaseKey = sched.BaseKeyForArch(sched.AgentRunBaseRuntime, agentRunArch)
