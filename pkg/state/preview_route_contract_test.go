@@ -152,3 +152,39 @@ func TestPgStoreProductionRouteContractReachesPreviews(t *testing.T) {
 		t.Fatalf("preview after production contract change = (%t, %+v, %v), want production's", got.OnlyAllowDeclaredRoutes, got.DeclaredRoutes, err)
 	}
 }
+
+// A service the PR adds has no production app; its preview follows the
+// access gates of the app the PR previews when that app changes them, but
+// keeps its own visibility and takes no route contract.
+func TestPgStoreNewServicePreviewFollowsBoundAppGates(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	if err := db.MigrateUp(context.Background(), pool); err != nil {
+		t.Fatalf("db.MigrateUp: %v", err)
+	}
+	store := state.NewPgStore(pool)
+	ctx := context.Background()
+	f := newPreviewEnvironmentFixture(t, ctx, store, api.PlanPro)
+	bound, err := store.CreateApp(ctx, state.App{AccountID: f.account.ID, ProjectID: f.project.ID, Slug: f.prefix + "-web",
+		WorkloadName: "web", Type: state.AppTypeApp, RAMMB: 256, MaxConcurrency: 1, Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reserved, err := f.reserve(ctx, 9, 'a', api.MustLimitsFor(api.PlanPro), "web", "worker")
+	if err != nil || len(reserved) != 2 {
+		t.Fatalf("reserve = (%d, %v)", len(reserved), err)
+	}
+	if _, err := pool.Exec(ctx, `update apps set require_signed = true, visibility = 'internal', only_declared_routes = true,
+		declared_routes = '[{"path":"/api/items","methods":["GET"]}]'::jsonb where id = $1`, bound.ID); err != nil {
+		t.Fatalf("change the bound app's gates: %v", err)
+	}
+	root, err := store.AppByID(ctx, reserved[0].ID)
+	if err != nil || !root.RequireSigned || root.Visibility != api.AppVisibilityInternal || !root.OnlyAllowDeclaredRoutes {
+		t.Fatalf("bound app's preview = (%+v, %v), want all of its gates", root, err)
+	}
+	service, err := store.AppByID(ctx, reserved[1].ID)
+	if err != nil || !service.RequireSigned || service.Visibility == api.AppVisibilityInternal ||
+		service.OnlyAllowDeclaredRoutes || len(service.DeclaredRoutes) != 0 {
+		t.Fatalf("new service's preview = signed %t, visibility %q, contract (%t, %v) (%v); want the access gate only",
+			service.RequireSigned, service.Visibility, service.OnlyAllowDeclaredRoutes, service.DeclaredRoutes, err)
+	}
+}
