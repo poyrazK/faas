@@ -8294,7 +8294,12 @@ haveApp:
 	// bytes that didn't egress would be wrong on both ends of the
 	// financial model. nil-safe for unit tests.
 	h.recordEgress(rec, completionTarget, app)
-	if cold && h.metrics != nil {
+	// A request that found no routable target went through wake admission:
+	// it admitted a wake (cold, with the scheduler's method) or joined one
+	// already in flight. The latter is cold on the pinned path but admitted
+	// nothing, so it carries no method of its own.
+	waitedOnWake := cold || !platformWakeStart.IsZero()
+	if waitedOnWake && h.metrics != nil {
 		// Wake latency is "request-received to first upstream byte". The
 		// wake-timing RoundTripper stamps the inbound request's recorder at
 		// GotFirstResponseByte; reading it back here yields the actual wake
@@ -8308,24 +8313,26 @@ haveApp:
 				"app", app.ID, "node", target.NodeID, "instance", target.InstanceID)
 			firstByteAt = time.Now()
 		}
-		h.metrics.ObserveColdBootWithTrace(app.ID, firstByteAt.Sub(wakeStart), target.NodeID, traceIDFromContext(r.Context()))
-		if !platformWakeStart.IsZero() {
-			h.metrics.ObservePlatformWakeWithTrace(firstByteAt.Sub(platformWakeStart), traceIDFromContext(r.Context()))
-			platformWakeTrace.observe(h.metrics, firstByteAt)
-		}
-		// Wake-locality classifier (PR scale-out readiness). Increment
-		// AFTER the existing first-byte observation so the 350 ms
-		// measurement path is unchanged. Only fires on a real admit, so
-		// warm requests, at-capacity benign outcomes, and admission
-		// errors do not enumerate. Today's outcomes are local_snapshot /
-		// local_coldboot; remote_* outcomes slot in when a second compute
-		// node joins.
-		//
-		// A pinned-routing request that joined another request's wake is
-		// cold but admitted nothing, so it carries no method of its own.
-		// Counting it filed every such follower as local_coldboot: 8,497
-		// in a 2026-10-31 load test whose 15 wakes were all restores.
-		if wakeMethod != WakeMethodUnspecified {
+		traceID := traceIDFromContext(r.Context())
+		// What every caller saw, including the queue behind a wake in flight.
+		h.metrics.ObserveWakeRequestLatencyWithTrace(firstByteAt.Sub(wakeStart), traceID)
+		// The §12 wake SLO, its per-node and platform views, the phase
+		// breakdown, the cold-boot counter, locality and tier hold one sample
+		// per admitted wake. Counting joiners too filed each one as
+		// local_coldboot (8,497 in a 2026-10-31 load test whose 15 wakes were
+		// all restores) and weighted the SLO by how many requests piled up
+		// behind a wake rather than by how long the wake took.
+		if cold && wakeMethod != WakeMethodUnspecified {
+			h.metrics.ObserveColdBootWithTrace(app.ID, firstByteAt.Sub(wakeStart), target.NodeID, traceID)
+			if !platformWakeStart.IsZero() {
+				h.metrics.ObservePlatformWakeWithTrace(firstByteAt.Sub(platformWakeStart), traceID)
+				platformWakeTrace.observe(h.metrics, firstByteAt)
+			}
+			// Wake-locality classifier (PR scale-out readiness). Increment
+			// AFTER the first-byte observation so the 350 ms measurement
+			// path is unchanged. Today's outcomes are local_snapshot /
+			// local_coldboot; remote_* outcomes slot in when a second
+			// compute node joins.
 			h.metrics.ObserveWakeLocality(wakeMethod.String())
 			// Snapshot-tier counter (issue #470 / PR #470-FU-B). The
 			// tier ∈ {warm, init, cold} refinement of the wake
