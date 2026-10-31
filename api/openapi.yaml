@@ -21589,6 +21589,47 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+  /v1/apps/{slug}/labels:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    patch:
+      tags: [apps]
+      operationId: updateAppLabels
+      summary: Set and remove an app's labels.
+      description: |
+        Preview (resource-labels capability). Sets and removes labels in one
+        atomic write and returns every label the app carries after it. The
+        write is idempotent. A result over 32 labels is refused with
+        label_limit_exceeded; an invalid key or value with invalid_label_key
+        or invalid_label_value; a key under gregale.dev/ with
+        reserved_label_key. Emits a resource.labels.changed audit event.
+        Requires apps:deploy or admin scope and MFA. While the capability is
+        on, GET /v1/apps and GET /v1/apps/{slug} include each app's labels,
+        and GET /v1/apps and GET /v1/domains take ?selector=, a Kubernetes
+        label selector such as team=billing,tier in (web,api),!canary (=,
+        ==, !=, key, !key, in, notin; at most 4096 bytes); a domain matches
+        through its app. An invalid selector is a 400
+        invalid_label_selector, and a selector while the capability is off
+        a 403 capability_not_released. These fields join the GA
+        description of those routes when the capability does.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LabelChange'
+      responses:
+        '200':
+          description: The app's labels after the write.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LabelsResponse'
+        default:
+          description: An invalid change, missing sign-in, deploy scope or MFA, an app this account does not own, the capability turned off, or the rate limit.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/apps/{slug}/health/history:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -112217,6 +112258,33 @@ components:
           type: string
           enum: [healthy, degraded, unhealthy, unknown]
         assessment: { $ref: '#/components/schemas/AppHealthResponse' }
+    LabelChange:
+      description: "Labels to set and keys to remove, applied together. Setting a key to its current value and removing an absent key change nothing. A key may not be both set and removed, and keys under gregale.dev/ cannot be changed."
+      type: object
+      additionalProperties: false
+      properties:
+        set:
+          description: "Keys to set and their values."
+          type: object
+          maxProperties: 32
+          additionalProperties: { type: string, maxLength: 63 }
+        remove:
+          description: "Keys to remove."
+          type: array
+          maxItems: 32
+          items: { type: string, maxLength: 317 }
+      example: {"set":{"team":"billing"},"remove":["tier"]}
+    LabelsResponse:
+      description: "Every label the resource carries after a write."
+      type: object
+      required: [labels]
+      properties:
+        labels:
+          description: "Key/value labels with Kubernetes syntax, at most 32. A key is an optional DNS-subdomain prefix and a slash, then a name of 1-63 letters, digits, '.', '_' or '-' that starts and ends with a letter or digit; a value is empty or 1-63 of the same. Keys under gregale.dev/ belong to Gregale. Labels are not secret: they appear in lists and audit events."
+          type: object
+          maxProperties: 32
+          additionalProperties: { type: string, maxLength: 63 }
+          example: {"team":"billing","tier":"web"}
     ResourceStatus:
       type: object
       description: "A resource's status subresource: conditions derived when read, never stored."

@@ -4315,6 +4315,7 @@
         "/v1/deployments/{}/canary/advance",
         "/v1/deployments/{}/promote",
         "/v1/deployments/{}/promote-with-application-ack",
+        "/v1/deployments/{}/timeline",
         "/v1/deployments/{}/traffic"
       ],
       "cli": [
@@ -4797,6 +4798,24 @@
         "domains wait",
         "crons status",
         "crons wait"
+      ]
+    },
+    {
+      "id": "resource-labels",
+      "name": "Resource labels",
+      "category": "delivery",
+      "description": "Label apps with key/value pairs and filter app and domain lists with a selector.",
+      "maturity": "preview",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/apps",
+      "acceptance_test": "pkg/apid/apidserver/handlers_resource_labels_test.go::TestAppLabelsAPI",
+      "routes": [
+        "/v1/apps/{}/labels"
       ]
     },
     {

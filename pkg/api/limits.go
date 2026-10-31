@@ -14819,6 +14819,13 @@ const (
 	RealtimeConsumerGroupRetryMaxSeconds       = 300
 	RealtimeConsumerGroupFailureMaxBytes       = 64
 	RealtimeConsumerGroupBodyMaxBytes          = 4096
+
+	// RealtimeConsumerGroupWaitersPerAccount is one account's share of an
+	// apid's RealtimeConsumerGroupWaitersMax long-poll claims. SDK workers
+	// long-poll by default, so without a share one account's idle workers held
+	// every slot; a claim past the share is answered at once instead of
+	// waiting.
+	RealtimeConsumerGroupWaitersPerAccount = 8
 )
 
 // Scoped backend realtime worker credentials (ADR-1031).
