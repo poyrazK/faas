@@ -352,7 +352,8 @@ func (s *server) queueSendBatch(w http.ResponseWriter, r *http.Request, acct sta
 	if !ok {
 		return
 	}
-	if api.MustLimitsFor(acct.Plan).MaxQueueDepth == 0 {
+	limits := api.MustLimitsFor(acct.Plan)
+	if limits.MaxQueueDepth == 0 {
 		api.WriteProblem(w, api.ErrPlanFeatureGated("queues", acct.Plan))
 		return
 	}
@@ -369,6 +370,12 @@ func (s *server) queueSendBatch(w http.ResponseWriter, r *http.Request, acct sta
 	for i, message := range req.Messages {
 		resp.Results[i] = api.QueueSendBatchResult{Index: i, Status: "not_attempted"}
 		if refused != nil {
+			continue
+		}
+		// A single send's body limit is its message size; a batch checks each.
+		if len(message.Payload) > limits.MaxSourceBytesPerInvocation {
+			refused = api.ErrPlanSourceBytes(limits.MaxSourceBytesPerInvocation, int64(len(message.Payload)))
+			resp.Results[i] = api.QueueSendBatchResult{Index: i, Status: "rejected", Problem: refused}
 			continue
 		}
 		inv, traceID, problem := s.enqueueAppMessage(r.Context(), r.Header, acct, app, message.Payload, "", req.QueueName, req.Environment, req.RetryPolicy, nil)
