@@ -6878,6 +6878,22 @@ const (
 	// the same capacity as 1 h in the ADR's simulation while holding fewer
 	// resident VMs.
 	FrozenTTLSeconds = 600
+	// FrozenChargeFloorMB is a frozen instance's charge floor in place of
+	// MeasuredChargeFloorMB (ADR 20261031143521): a paused VM cannot grow and
+	// a thaw re-admits its full reservation. See FrozenChargeMB.
+	FrozenChargeFloorMB = 8
+	// Proactive compression (ADR 20261031143521). On a node whose admission
+	// usage reaches FrozenCompressHighWaterPercent of its ceiling, schedd
+	// compresses frozen VMs frozen at least FrozenCompressMinAgeSeconds,
+	// longest frozen first, at most FrozenCompressPerNodePerTick per reaper
+	// tick, until the charges it freed bring the node under
+	// FrozenCompressLowWaterPercent. A node whose vmmd cannot compress (no
+	// zswap) is not asked again for FrozenCompressUnavailableBackoffSeconds.
+	FrozenCompressHighWaterPercent          = 85
+	FrozenCompressLowWaterPercent           = 75
+	FrozenCompressMinAgeSeconds             = 60
+	FrozenCompressPerNodePerTick            = 4
+	FrozenCompressUnavailableBackoffSeconds = 600
 	// FrozenEarlyFreezeMinSeconds and FrozenEarlyFreezeMaxSeconds bound
 	// schedd's frozen_tier_early_freeze_after_s (ADR-20261021215353): at
 	// least the 2 s quiet pause, and well inside the shortest app idle
