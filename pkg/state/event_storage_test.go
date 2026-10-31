@@ -270,8 +270,10 @@ func TestPgEventStorageIdentityJSONBEquality(t *testing.T) {
 		t.Fatalf("equivalent jsonb=%v", err)
 	}
 	after, _ := store.EventStorageUsage(ctx, account.ID)
+	// ADR-20261030170000: the receipt is the event's only copy, so even the
+	// direct insert leaves no ledger row.
 	ledger, _ := store.ListEvents(ctx, account.ID, 10)
-	if before.RetainedEvents != 1 || before.RetainedBytes == 0 || after.RetainedBytes != before.RetainedBytes || len(ledger) != 1 {
+	if before.RetainedEvents != 1 || before.RetainedBytes == 0 || after.RetainedBytes != before.RetainedBytes || len(ledger) != 0 {
 		t.Fatalf("before=%+v after=%+v ledger=%d", before, after, len(ledger))
 	}
 }
