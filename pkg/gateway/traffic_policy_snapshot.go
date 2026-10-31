@@ -2,15 +2,20 @@
 package gateway
 
 import (
+	"bytes"
+	"container/list"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
+	"hash/maphash"
 	"net/http"
 	"reflect"
 	"slices"
+	"sync"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -158,9 +163,11 @@ func ValidatePinnedHostPolicies(ctx context.Context, account string) error {
 	return nil
 }
 
+const policyDigestPrefix = "traffic-v1:"
+
 func policyDigest(encoded []byte) string {
 	hash := sha256.Sum256(encoded)
-	return "traffic-v1:" + hex.EncodeToString(hash[:])
+	return policyDigestPrefix + hex.EncodeToString(hash[:])
 }
 
 func (h *Handler) pinHostTrafficPolicy(w http.ResponseWriter, r *http.Request, hosts ...string) bool {
@@ -187,31 +194,157 @@ func (h *Handler) pinHostTrafficPolicy(w http.ResponseWriter, r *http.Request, h
 
 // App snapshots include host-specific tenant/auth/routing flags and the plan
 // table used by the runtime. Only their digest leaves this private carrier.
+// This is the unmemoized freeze; the handler uses its appFreezes cache.
 func freezeTrafficApp(ctx context.Context, app App) (App, string, error) {
+	return (*appFreezes)(nil).freeze(ctx, app)
+}
+
+// appFreezeCacheBytes bounds the memoized app policies one gateway holds. An
+// entry costs about twice its JSON encoding (the bytes and the decoded copy);
+// one larger than a sixteenth of the budget is sealed but not kept.
+const appFreezeCacheBytes = 16 << 20
+
+// appFreezes memoizes the app freeze by the app's exact JSON encoding, so a
+// warm request encodes its app once instead of encoding, decoding, re-encoding
+// and hashing the whole effective policy. The digest is unchanged: it resumes
+// from a hash of the effective policy's App member. A nil cache memoizes nothing.
+type appFreezes struct {
+	seed  maphash.Seed
+	mu    sync.Mutex
+	bytes int
+	order *list.List // of *appFreeze, most recently used first
+	index map[uint64]*list.Element
+}
+
+// appFreeze is one sealed app policy. Every request with the same encoding
+// shares frozen's nested slices, maps and pointers, so they are read-only,
+// like a sealed HostEntry.
+type appFreeze struct {
+	key     uint64
+	encoded []byte
+	frozen  App
+	limits  []byte      // the JSON of api.LimitsFor(frozen.Plan)
+	prefix  hash.Cloner // sha256 over the effective policy up to its App member
+}
+
+func newAppFreezes() *appFreezes {
+	return &appFreezes{seed: maphash.MakeSeed(), order: list.New(), index: make(map[uint64]*list.Element)}
+}
+
+func (c *appFreezes) freeze(ctx context.Context, app App) (App, string, error) {
 	encoded, err := json.Marshal(app)
 	if err != nil {
 		return App{}, "", fmt.Errorf("encode app policy: %w", err)
 	}
-	var frozen App
-	if err := json.Unmarshal(encoded, &frozen); err != nil {
-		return App{}, "", fmt.Errorf("copy app policy: %w", err)
+	sealed, err := c.seal(encoded)
+	if err != nil {
+		return App{}, "", err
 	}
 	pinned, _ := ctx.Value(pinnedEdgePoliciesKey{}).(map[string]*edgePolicySnapshot)
 	hosts := make(map[string]string, len(pinned))
 	for host, entry := range pinned {
 		hosts[host] = entry.revision
 	}
-	limits, _ := api.LimitsFor(app.Plan)
-	effective, err := json.Marshal(struct {
-		App            json.RawMessage
-		Hosts          map[string]string
-		Limits         api.Limits
-		DeclaredRoutes string `json:",omitempty"`
-	}{encoded, hosts, limits, declaredRoutePolicyRevision(ctx)})
+	encodedHosts, err := json.Marshal(hosts)
 	if err != nil {
 		return App{}, "", fmt.Errorf("encode effective policy: %w", err)
 	}
-	return frozen, policyDigest(effective), nil
+	digest, err := sealed.prefix.Clone()
+	if err != nil {
+		return App{}, "", fmt.Errorf("encode effective policy: %w", err)
+	}
+	// The rest of json.Marshal(struct{App json.RawMessage; Hosts
+	// map[string]string; Limits api.Limits; DeclaredRoutes string
+	// `json:",omitempty"`}), the document traffic-v1 digests.
+	_, _ = digest.Write([]byte(`,"Hosts":`))
+	_, _ = digest.Write(encodedHosts)
+	_, _ = digest.Write([]byte(`,"Limits":`))
+	_, _ = digest.Write(sealed.limits)
+	if declared := declaredRoutePolicyRevision(ctx); declared != "" {
+		encodedDeclared, err := json.Marshal(declared)
+		if err != nil {
+			return App{}, "", fmt.Errorf("encode effective policy: %w", err)
+		}
+		_, _ = digest.Write([]byte(`,"DeclaredRoutes":`))
+		_, _ = digest.Write(encodedDeclared)
+	}
+	_, _ = digest.Write([]byte(`}`))
+	return sealed.frozen, policyDigestPrefix + hex.EncodeToString(digest.Sum(nil)), nil
+}
+
+// seal returns the sealed policy for an app encoding, from the cache when an
+// identical encoding is there.
+func (c *appFreezes) seal(encoded []byte) (*appFreeze, error) {
+	if c == nil {
+		return sealAppFreeze(0, encoded)
+	}
+	key := maphash.Bytes(c.seed, encoded)
+	c.mu.Lock()
+	var cached *appFreeze
+	if element, ok := c.index[key]; ok {
+		c.order.MoveToFront(element)
+		cached = element.Value.(*appFreeze)
+	}
+	c.mu.Unlock()
+	if cached != nil && bytes.Equal(cached.encoded, encoded) {
+		return cached, nil
+	}
+	sealed, err := sealAppFreeze(key, encoded)
+	if err != nil {
+		return nil, err
+	}
+	c.store(sealed)
+	return sealed, nil
+}
+
+func sealAppFreeze(key uint64, encoded []byte) (*appFreeze, error) {
+	sealed := &appFreeze{key: key, encoded: encoded}
+	if err := json.Unmarshal(encoded, &sealed.frozen); err != nil {
+		return nil, fmt.Errorf("copy app policy: %w", err)
+	}
+	limits, _ := api.LimitsFor(sealed.frozen.Plan)
+	encodedLimits, err := json.Marshal(limits)
+	if err != nil {
+		return nil, fmt.Errorf("encode effective policy: %w", err)
+	}
+	sealed.limits = encodedLimits
+	prefix, ok := sha256.New().(hash.Cloner)
+	if !ok {
+		return nil, errors.New("encode effective policy: sha256 state cannot be cloned")
+	}
+	// encoded is already compact, HTML-escaped JSON, which is exactly what
+	// json.Marshal writes for a json.RawMessage member.
+	_, _ = prefix.Write([]byte(`{"App":`))
+	_, _ = prefix.Write(encoded)
+	sealed.prefix = prefix
+	return sealed, nil
+}
+
+func (c *appFreezes) store(sealed *appFreeze) {
+	cost := sealed.cost()
+	if cost > appFreezeCacheBytes/16 {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if element, ok := c.index[sealed.key]; ok {
+		c.removeLocked(element)
+	}
+	c.index[sealed.key] = c.order.PushFront(sealed)
+	c.bytes += cost
+	for c.bytes > appFreezeCacheBytes {
+		c.removeLocked(c.order.Back())
+	}
+}
+
+func (c *appFreezes) removeLocked(element *list.Element) {
+	sealed := c.order.Remove(element).(*appFreeze)
+	delete(c.index, sealed.key)
+	c.bytes -= sealed.cost()
+}
+
+func (f *appFreeze) cost() int {
+	return 2*len(f.encoded) + len(f.limits) + 512
 }
 
 func (h *Handler) pinAppTrafficPolicy(w http.ResponseWriter, r *http.Request, app *App) bool {
@@ -247,7 +380,7 @@ func (h *Handler) pinAppTrafficPolicy(w http.ResponseWriter, r *http.Request, ap
 		*app = resolved
 		*r = *r.WithContext(context.WithValue(ctx, declaredRoutePolicyRevisionKey{}, revision))
 	}
-	frozen, revision, err := freezeTrafficApp(r.Context(), *app)
+	frozen, revision, err := h.appFreezes.freeze(r.Context(), *app)
 	if err != nil {
 		h.writeTrafficPolicyUnavailable(w, r)
 		return true
@@ -263,14 +396,25 @@ func (h *Handler) pinAppTrafficPolicy(w http.ResponseWriter, r *http.Request, ap
 // per (host, app). The loader refuses a generation change since the host pin.
 // The authoritative owner policy already carries them (pinResolvedOwnerPolicies).
 func (h *Handler) pinAppEdgePolicies(w http.ResponseWriter, r *http.Request, appID string) bool {
+	ctx, err := h.pinAppEdgeHosts(r.Context(), appID)
+	if err != nil {
+		h.writeTrafficPolicyUnavailable(w, r)
+		return true
+	}
+	*r = *r.WithContext(ctx)
+	return false
+}
+
+// pinAppEdgeHosts is pinAppEdgePolicies on a context: ctx must carry appID's
+// edge-rule scope, and an error means the request fails closed.
+func (h *Handler) pinAppEdgeHosts(ctx context.Context, appID string) (context.Context, error) {
 	loader, ok := h.edgeRules.(EdgePolicySnapshotter)
 	if !ok || appID == "" {
-		return false
+		return ctx, nil
 	}
 	if owner, required := h.edgeRules.(EdgeOwnerPolicySnapshotter); required && owner.RequiresOwnerPolicySnapshot() {
-		return false
+		return ctx, nil
 	}
-	ctx := r.Context()
 	pinned, _ := ctx.Value(pinnedEdgePoliciesKey{}).(map[string]*edgePolicySnapshot)
 	hosts := make([]string, 0, len(pinned))
 	for key := range pinned {
@@ -285,12 +429,10 @@ func (h *Handler) pinAppEdgePolicies(w http.ResponseWriter, r *http.Request, app
 		}
 		var err error
 		if ctx, err = loader.PinHostPolicy(ctx, host); err != nil {
-			h.writeTrafficPolicyUnavailable(w, r)
-			return true
+			return nil, err
 		}
 	}
-	*r = *r.WithContext(ctx)
-	return false
+	return ctx, nil
 }
 
 func (h *Handler) writeTrafficPolicyUnavailable(w http.ResponseWriter, r *http.Request) {

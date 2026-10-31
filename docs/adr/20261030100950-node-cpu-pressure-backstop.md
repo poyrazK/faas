@@ -143,7 +143,9 @@ default since 2026-10-27.
 
 `cpu_pressure_backstop` now defaults to on (`cmd/schedd/config.go`), with
 measured CPU admission, whose overcommit it bounds;
-`cpu_pressure_backstop = false` in `schedd.toml` turns it off. The
+`cpu_pressure_backstop = false` in `schedd.toml` turns it off, and
+`FAAS_CPU_PRESSURE_BACKSTOP` overrides the file either way (an environment
+drop-in is the opt-out that survives manifest renders). The
 thresholds stay the initial values, to be tuned from
 `schedd_node_cpu_pressure_some_avg10` and `schedd_node_cpu_busy_percent`
 once nodes run dense.

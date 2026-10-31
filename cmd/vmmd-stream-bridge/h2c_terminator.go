@@ -342,6 +342,14 @@ func newGuestH2CTransport(guestIP string, guestPort uint16) *http2.Transport {
 // buffering that first read in net/http's ResponseWriter would deadlock the
 // exchange. The deadline context controls cancellation.
 func copyStreaming(dst http.ResponseWriter, src interface{ Read(p []byte) (int, error) }) (int64, error) {
+	return copyStreamingSized(dst, src, -1)
+}
+
+// copyStreamingSized is copyStreaming for a body of known length. Once the
+// last declared byte is written there is nothing left to stream, so it skips
+// that flush: the handler's return then sends the final DATA and END_STREAM
+// with the headers in one write instead of two.
+func copyStreamingSized(dst http.ResponseWriter, src interface{ Read(p []byte) (int, error) }, length int64) (int64, error) {
 	// We don't pre-buffer; HTTP/2 DATA frames are buffer-bound at
 	// the transport layer (default flow-control window).
 	flusher, canFlush := dst.(http.Flusher)
@@ -358,7 +366,7 @@ func copyStreaming(dst http.ResponseWriter, src interface{ Read(p []byte) (int, 
 			if written != n {
 				return total, io.ErrShortWrite
 			}
-			if canFlush {
+			if canFlush && (length < 0 || total < length) {
 				flusher.Flush()
 			}
 		}

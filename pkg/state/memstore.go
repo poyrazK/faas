@@ -384,6 +384,9 @@ type MemStore struct {
 	releaseFreezes map[string]ReleaseFreeze
 	// releaseGates mirrors app_release_gates (ADR-20261019071734).
 	releaseGates map[string]ReleaseGate
+	// releaseGateProbes mirrors release_gate_probe_results
+	// (ADR-20261022082305).
+	releaseGateProbes map[releaseGateProbeKey]ReleaseGateProbeResult
 	// releaseApprovalPolicies mirrors app_release_approval_policies, keyed by
 	// app ID; releaseApprovals mirrors deployment_release_approvals
 	// (ADR-20261020085706).
@@ -20529,7 +20532,16 @@ func (m *MemStore) CurrentMonthOverageCents(_ context.Context, accountID string)
 			snapshots = append(snapshots, p)
 		}
 	}
-	return monthOverageCents(plan, snapshots, now, mbSeconds), nil
+	usageBefore := func(at time.Time) (int64, error) {
+		var before int64
+		for _, u := range m.usage {
+			if u.AccountID == accountID && !u.Minute.Before(monthStart) && u.Minute.Before(at) {
+				before += u.MBSeconds
+			}
+		}
+		return before, nil
+	}
+	return monthOverageCents(plan, snapshots, now, mbSeconds, usageBefore)
 }
 
 // UpdateAccountOverageCapCents writes accounts.overage_cap_cents for
@@ -20743,6 +20755,10 @@ func (m *MemStore) pendingBillingMeterUsageWindows(provider string, meter Billin
 	for _, row := range m.usage {
 		identity, ok := m.billingIdentities[billingIdentityKey(row.AccountID, provider)]
 		if !ok || row.Minute.Before(start) || !row.Minute.Before(end) || row.Minute.Before(identity.BillingFrom) {
+			continue
+		}
+		// Only paid subjects are pending, as in PgStore (ADR-20261031100000).
+		if !m.billingSubjectPaidLocked(row.AccountID) {
 			continue
 		}
 		hour := row.Minute.UTC().Truncate(time.Hour)
@@ -24671,6 +24687,24 @@ func (m *MemStore) DeleteAlertRule(_ context.Context, id string) error {
 	if _, ok := m.alertRules[id]; !ok {
 		return ErrNotFound
 	}
+	m.deleteAlertRuleLocked(id)
+	return nil
+}
+
+// deleteAlertRulesLocked deletes the rules matching match, as an SLO or a
+// synthetic check delete cascades to the rules built on it in PostgreSQL.
+func (m *MemStore) deleteAlertRulesLocked(match func(AlertRule) bool) {
+	for id, r := range m.alertRules {
+		if match(r) {
+			m.deleteAlertRuleLocked(id)
+		}
+	}
+}
+
+// deleteAlertRuleLocked mirrors the alert_rules delete: its episodes stay
+// (ADR-20261030214500) and everything else of the rule cascades.
+func (m *MemStore) deleteAlertRuleLocked(id string) {
+	m.keepDeletedRuleEpisodesLocked(m.alertRules[id], time.Now().UTC())
 	delete(m.alertRules, id)
 	delete(m.readinessIncidentCursors, id)
 	delete(m.readinessPagerDutyPolicies, id)
@@ -24710,7 +24744,6 @@ func (m *MemStore) DeleteAlertRule(_ context.Context, id string) error {
 			delete(m.alertRollbacks, alertRollbackFireID(delivery.ID))
 		}
 	}
-	return nil
 }
 
 func (m *MemStore) ListAlertRulesForAccount(_ context.Context, accountID string) ([]AlertRule, error) {
@@ -29022,7 +29055,7 @@ func (m *MemStore) ReplayDeadLetterEventsForAccount(_ context.Context, accountID
 		} else {
 			_, err = m.replayAccountJobDeadLetterLocked(accountID, ev)
 		}
-		if errors.Is(err, ErrNotFound) {
+		if errors.Is(err, ErrNotFound) || errors.Is(err, ErrKeyedReplayExpired) {
 			continue
 		}
 		if err != nil {
@@ -29112,6 +29145,11 @@ func (m *MemStore) replayDeadLetterEventLocked(accountID, appID, eventID string)
 		}
 		if InvocationHasOperation(inv) {
 			return DeadLetterEvent{}, ErrNotFound
+		}
+		// ADR-20261031101000: replay resets attempts, so keyed work past its
+		// pending deadline would only expire again.
+		if inv.WorkPolicyName != "" && inv.WorkExpiresAt != nil && !inv.WorkExpiresAt.After(now) {
+			return DeadLetterEvent{}, ErrKeyedReplayExpired
 		}
 		if _, err := m.retryQueueDeadLetterLocked(accountID, event.SourceID, now); err != nil {
 			return DeadLetterEvent{}, err
@@ -29247,7 +29285,7 @@ func (m *MemStore) ReplayDeadLetterEvents(_ context.Context, accountID, appID st
 			continue
 		}
 		if _, err := m.replayDeadLetterEventLocked(accountID, appID, ev.ID); err != nil {
-			if errors.Is(err, ErrNotFound) {
+			if errors.Is(err, ErrNotFound) || errors.Is(err, ErrKeyedReplayExpired) {
 				continue
 			}
 			return replayed, err
@@ -29654,4 +29692,16 @@ func requireAPIKeyScopes(scopes []string) error {
 		return fmt.Errorf("%w: api key scopes must not be empty", ErrInvalidArgument)
 	}
 	return nil
+}
+
+// billingSubjectPaidLocked reports whether a billing subject, an account or a
+// company organization, is on a paid plan. Caller holds m.mu.
+func (m *MemStore) billingSubjectPaidLocked(id string) bool {
+	if a, ok := m.accounts[id]; ok {
+		return a.Plan.IsPaid()
+	}
+	if o, ok := m.orgs[id]; ok && !o.Personal {
+		return o.Plan.IsPaid()
+	}
+	return false
 }

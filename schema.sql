@@ -626,6 +626,25 @@ $$;
 
 
 --
+-- Name: alert_episodes_keep_deleted_rule(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.alert_episodes_keep_deleted_rule() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    UPDATE alert_episodes
+       SET rule_name = OLD.name,
+           rule_metric = OLD.metric,
+           app_id = OLD.app_id,
+           resolved_at = coalesce(resolved_at, greatest(now(), opened_at))
+     WHERE rule_id = OLD.id;
+    RETURN OLD;
+END;
+$$;
+
+
+--
 -- Name: alert_presets_set_updated_at(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -27668,6 +27687,42 @@ BEGIN
     LOOP
         PERFORM pg_notify('app_changed', preview_id::text);
     END LOOP;
+    -- A service the PR adds has no production app; its preview keeps the
+    -- access and egress gates of the app the PR previews (the root of its
+    -- PR environment), not that app's visibility or route contract.
+    FOR preview_id IN
+        UPDATE apps service
+        SET require_authn = NEW.require_authn,
+            public_auth_mode = NEW.public_auth_mode,
+            public_auth_basic = NEW.public_auth_basic,
+            public_auth_ip_allowlist = NEW.public_auth_ip_allowlist,
+            consumer_auth_mode = NEW.consumer_auth_mode,
+            require_signed = NEW.require_signed,
+            egress_allowlist = NEW.egress_allowlist
+        FROM pr_preview_sets preview_set
+        JOIN apps root ON root.id = preview_set.root_app_id
+        WHERE root.account_id = NEW.account_id
+          AND root.preview_of_slug = NEW.slug
+          AND preview_set.member_app_ids @> ARRAY[service.id::text]
+          AND service.id <> root.id
+          AND service.account_id = NEW.account_id
+          AND service.status <> 'deleted'
+          AND NOT EXISTS (
+              SELECT 1 FROM apps production
+              WHERE production.account_id = service.account_id
+                AND production.slug = service.preview_of_slug
+                AND production.preview_of_slug IS NULL
+                AND production.status <> 'deleted')
+          AND (service.require_authn, service.public_auth_mode, service.public_auth_basic,
+               service.public_auth_ip_allowlist, service.consumer_auth_mode, service.require_signed,
+               service.egress_allowlist)
+              IS DISTINCT FROM (NEW.require_authn, NEW.public_auth_mode, NEW.public_auth_basic,
+               NEW.public_auth_ip_allowlist, NEW.consumer_auth_mode, NEW.require_signed,
+               NEW.egress_allowlist)
+        RETURNING service.id
+    LOOP
+        PERFORM pg_notify('app_changed', preview_id::text);
+    END LOOP;
     RETURN NULL;
 END;
 $$;
@@ -28931,6 +28986,7 @@ CREATE TABLE public.agent_versions (
     model_integrations jsonb DEFAULT '{}'::jsonb NOT NULL,
     ai_budget_millicents bigint,
     deliveries jsonb DEFAULT '[]'::jsonb NOT NULL,
+    pause_during_model_calls boolean DEFAULT true NOT NULL,
     CONSTRAINT agent_versions_ai_budget_millicents_check CHECK (((ai_budget_millicents IS NULL) OR ((ai_budget_millicents >= 1) AND (ai_budget_millicents <= '1000000000000'::bigint)))),
     CONSTRAINT agent_versions_deliveries_check CHECK (((jsonb_typeof(deliveries) = 'array'::text) AND (jsonb_array_length(deliveries) <= 4))),
     CONSTRAINT agent_versions_harness_check CHECK (((harness_preset IS NULL) <> (harness_image IS NULL))),
@@ -29022,6 +29078,9 @@ CREATE TABLE public.alert_episodes (
     account_id uuid NOT NULL,
     opened_at timestamp with time zone NOT NULL,
     resolved_at timestamp with time zone,
+    rule_name text,
+    rule_metric text,
+    app_id uuid,
     CONSTRAINT alert_episodes_resolved_after_open CHECK (((resolved_at IS NULL) OR (resolved_at >= opened_at)))
 );
 
@@ -30784,19 +30843,23 @@ CREATE TABLE public.app_release_gates (
     min_samples integer NOT NULL,
     created_by text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    synthetic_check_id uuid,
+    max_failure_percent integer,
+    max_change_percent integer,
     CONSTRAINT app_release_gates_ai_check CHECK (((kind <> 'ai'::text) OR ((metric_name = ANY (ARRAY['error_rate'::text, 'flagged_rate'::text, 'cost_per_call'::text, 'ttfb_ms'::text])) AND (threshold IS NOT NULL) AND ((threshold >= (1)::double precision) AND (threshold <= (1000)::double precision)) AND (comparison IS NULL) AND (slo_id IS NULL) AND (max_burn_rate IS NULL) AND (max_new_groups IS NULL) AND (min_events IS NULL)))),
     CONSTRAINT app_release_gates_check CHECK (((kind <> 'slo'::text) OR ((slo_id IS NOT NULL) AND (max_burn_rate IS NOT NULL) AND (max_new_groups IS NULL) AND (min_events IS NULL) AND (metric_name IS NULL) AND (comparison IS NULL) AND (threshold IS NULL)))),
     CONSTRAINT app_release_gates_check1 CHECK (((kind <> 'new_errors'::text) OR ((max_new_groups IS NOT NULL) AND (min_events IS NOT NULL) AND (slo_id IS NULL) AND (max_burn_rate IS NULL) AND (metric_name IS NULL) AND (comparison IS NULL) AND (threshold IS NULL)))),
     CONSTRAINT app_release_gates_check2 CHECK (((kind <> 'custom_metric'::text) OR ((metric_name IS NOT NULL) AND (comparison IS NOT NULL) AND (threshold IS NOT NULL) AND (slo_id IS NULL) AND (max_burn_rate IS NULL) AND (max_new_groups IS NULL) AND (min_events IS NULL)))),
     CONSTRAINT app_release_gates_comparison_check CHECK (((comparison IS NULL) OR (comparison = ANY (ARRAY['below'::text, 'above'::text])))),
     CONSTRAINT app_release_gates_created_by_check CHECK (((length(created_by) >= 1) AND (length(created_by) <= 320))),
-    CONSTRAINT app_release_gates_kind_check CHECK ((kind = ANY (ARRAY['slo'::text, 'new_errors'::text, 'custom_metric'::text, 'ai'::text]))),
+    CONSTRAINT app_release_gates_kind_check CHECK ((kind = ANY (ARRAY['slo'::text, 'new_errors'::text, 'custom_metric'::text, 'ai'::text, 'synthetic'::text, 'metric_change'::text]))),
     CONSTRAINT app_release_gates_max_burn_rate_check CHECK (((max_burn_rate IS NULL) OR ((max_burn_rate >= 1) AND (max_burn_rate <= 1000)))),
     CONSTRAINT app_release_gates_max_new_groups_check CHECK (((max_new_groups IS NULL) OR ((max_new_groups >= 0) AND (max_new_groups <= 100)))),
     CONSTRAINT app_release_gates_metric_name_check CHECK (((metric_name IS NULL) OR (metric_name ~ '^[a-z][a-z0-9_]{0,62}$'::text))),
     CONSTRAINT app_release_gates_min_events_check CHECK (((min_events IS NULL) OR ((min_events >= 1) AND (min_events <= 100000)))),
     CONSTRAINT app_release_gates_min_samples_check CHECK (((min_samples >= 1) AND (min_samples <= 1000000))),
     CONSTRAINT app_release_gates_name_check CHECK ((name ~ '^[a-z][a-z0-9_-]{0,62}$'::text)),
+    CONSTRAINT app_release_gates_probe_change_chk CHECK ((((kind = 'synthetic'::text) = (synthetic_check_id IS NOT NULL)) AND ((kind = 'synthetic'::text) = (max_failure_percent IS NOT NULL)) AND ((kind = 'metric_change'::text) = (max_change_percent IS NOT NULL)) AND ((kind <> 'synthetic'::text) OR ((slo_id IS NULL) AND (max_burn_rate IS NULL) AND (max_new_groups IS NULL) AND (min_events IS NULL) AND (metric_name IS NULL) AND (comparison IS NULL) AND (threshold IS NULL))) AND ((kind <> 'metric_change'::text) OR ((metric_name IS NOT NULL) AND (comparison IS NOT NULL) AND (threshold IS NULL) AND (slo_id IS NULL) AND (max_burn_rate IS NULL) AND (max_new_groups IS NULL) AND (min_events IS NULL))) AND ((max_failure_percent IS NULL) OR ((max_failure_percent >= 0) AND (max_failure_percent <= 100))) AND ((max_change_percent IS NULL) OR ((max_change_percent >= 1) AND (max_change_percent <= 1000))))),
     CONSTRAINT app_release_gates_threshold_check CHECK (((threshold IS NULL) OR ((threshold = threshold) AND (threshold > '-Infinity'::double precision) AND (threshold < 'Infinity'::double precision))))
 );
 
@@ -52814,6 +52877,23 @@ CREATE TABLE public.release_freezes (
 
 
 --
+-- Name: release_gate_probe_results; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.release_gate_probe_results (
+    gate_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    window_start timestamp with time zone NOT NULL,
+    requests integer NOT NULL,
+    failures integer NOT NULL,
+    CONSTRAINT release_gate_probe_results_check CHECK (((failures >= 0) AND (failures <= requests))),
+    CONSTRAINT release_gate_probe_results_requests_check CHECK (((requests >= 1) AND (requests <= 10000))),
+    CONSTRAINT release_gate_probe_results_window_start_check CHECK ((date_trunc('minute'::text, window_start) = window_start))
+);
+
+
+--
 -- Name: release_secret_key_retirement_fence; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -67454,6 +67534,14 @@ ALTER TABLE ONLY public.release_freezes
 
 
 --
+-- Name: release_gate_probe_results release_gate_probe_results_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.release_gate_probe_results
+    ADD CONSTRAINT release_gate_probe_results_pkey PRIMARY KEY (gate_id, deployment_id, window_start);
+
+
+--
 -- Name: release_secret_key_retirement_fence release_secret_key_retirement_fence_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -69932,6 +70020,13 @@ CREATE INDEX app_registry_credentials_account_idx ON public.app_registry_credent
 --
 
 CREATE INDEX app_release_gates_slo ON public.app_release_gates USING btree (slo_id) WHERE (slo_id IS NOT NULL);
+
+
+--
+-- Name: app_release_gates_synthetic_check; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_release_gates_synthetic_check ON public.app_release_gates USING btree (synthetic_check_id) WHERE (synthetic_check_id IS NOT NULL);
 
 
 --
@@ -77877,6 +77972,13 @@ CREATE INDEX release_freezes_unlifted ON public.release_freezes USING btree (acc
 
 
 --
+-- Name: release_gate_probe_results_window; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX release_gate_probe_results_window ON public.release_gate_probe_results USING btree (window_start);
+
+
+--
 -- Name: request_audit_events_app_route_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -79817,6 +79919,13 @@ CREATE TRIGGER accounts_traffic_security_epoch AFTER INSERT OR DELETE OR UPDATE 
 --
 
 CREATE TRIGGER alert_presets_set_updated_at_trg BEFORE UPDATE ON public.alert_presets FOR EACH ROW EXECUTE FUNCTION public.alert_presets_set_updated_at();
+
+
+--
+-- Name: alert_rules alert_rules_keep_episodes; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER alert_rules_keep_episodes BEFORE DELETE ON public.alert_rules FOR EACH ROW EXECUTE FUNCTION public.alert_episodes_keep_deleted_rule();
 
 
 --
@@ -86684,14 +86793,6 @@ ALTER TABLE ONLY public.alert_episodes
 
 
 --
--- Name: alert_episodes alert_episodes_rule_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.alert_episodes
-    ADD CONSTRAINT alert_episodes_rule_id_fkey FOREIGN KEY (rule_id) REFERENCES public.alert_rules(id) ON DELETE CASCADE;
-
-
---
 -- Name: alert_historical_rollback_claims alert_historical_rollback_claims_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -87993,6 +88094,14 @@ ALTER TABLE ONLY public.app_release_gates
 
 ALTER TABLE ONLY public.app_release_gates
     ADD CONSTRAINT app_release_gates_slo_id_fkey FOREIGN KEY (slo_id) REFERENCES public.app_slos(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_release_gates app_release_gates_synthetic_check_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_release_gates
+    ADD CONSTRAINT app_release_gates_synthetic_check_id_fkey FOREIGN KEY (synthetic_check_id) REFERENCES public.synthetic_checks(id) ON DELETE CASCADE;
 
 
 --
@@ -99929,6 +100038,30 @@ ALTER TABLE ONLY public.release_freezes
 
 ALTER TABLE ONLY public.release_freezes
     ADD CONSTRAINT release_freezes_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: release_gate_probe_results release_gate_probe_results_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.release_gate_probe_results
+    ADD CONSTRAINT release_gate_probe_results_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: release_gate_probe_results release_gate_probe_results_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.release_gate_probe_results
+    ADD CONSTRAINT release_gate_probe_results_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: release_gate_probe_results release_gate_probe_results_gate_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.release_gate_probe_results
+    ADD CONSTRAINT release_gate_probe_results_gate_id_fkey FOREIGN KEY (gate_id) REFERENCES public.app_release_gates(id) ON DELETE CASCADE;
 
 
 --

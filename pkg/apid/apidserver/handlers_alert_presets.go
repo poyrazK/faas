@@ -442,6 +442,10 @@ func (s *server) sendTestAlertPresetCore(ctx context.Context, acct state.Account
 	if rule.WebhookURL == "" {
 		return api.TestAlertPresetResponse{}, api.ErrAlertPresetInvalid("this preset rule delivers only to notification channels; test them with POST /v1/notification-channels/{id}/test")
 	}
+	if prob := s.testSendAllowed(&s.presetTestsOnce, &s.presetTests, acct,
+		api.AlertPresetTestsPerAccountMinute, api.ErrAlertPresetTestRateLimited); prob != nil {
+		return api.TestAlertPresetResponse{}, prob
+	}
 	deliveryID, evt, observed, prob := buildTestAlertEvent(acct, app, rule, preset)
 	if prob != nil {
 		return api.TestAlertPresetResponse{}, prob
