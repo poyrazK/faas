@@ -52600,7 +52600,7 @@ paths:
       operationId: listAgentConnections
       summary: List the agents connected to the account.
       description: |
-        The account's connected agents (ADR-20261030133644), newest first:
+        The account's connected agents, newest first:
         hosted MCP sign-ins, whose `mcp-login` keys the hosted MCP server
         holds, and API keys with the `agent` scope. Only keys that still work
         are listed. A hosted sign-in shows the client name its consent page
@@ -110491,7 +110491,7 @@ components:
     # ─── API keys ─────────────────────────────────────────────────────────
 
     AgentConnectionResponse:
-      description: "One agent connected to the account (ADR-20261030133644). `id` is the API key the agent uses; revoking the connection revokes that key."
+      description: "One agent connected to the account. `id` is the API key the agent uses; revoking the connection revokes that key."
       type: object
       required: [id, kind, prefix, scopes, created_at]
       properties:

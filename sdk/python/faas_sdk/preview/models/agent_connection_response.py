@@ -15,13 +15,12 @@ T = TypeVar("T", bound="AgentConnectionResponse")
 
 @_attrs_define
 class AgentConnectionResponse:
-    """One agent connected to the account (ADR-20261030133644). `id` is the API key the agent uses; revoking the connection
-    revokes that key.
+    """One agent connected to the account. `id` is the API key the agent uses; revoking the connection revokes that key.
 
-        Example:
-            {'id': '3f2c9a7e-1b4d-4c8e-9f0a-6d5e4c3b2a19', 'kind': 'hosted_mcp', 'client_name': 'Claude', 'client_site':
-                'claude.ai', 'label': 'mcp-login', 'prefix': 'fp_live_ab12cd34', 'scopes': ['apps:read'], 'created_at':
-                '2026-10-30T11:25:00Z', 'last_used_at': '2026-10-30T12:05:00Z', 'expires_at': '2026-11-06T12:05:00Z'}
+    Example:
+        {'id': '3f2c9a7e-1b4d-4c8e-9f0a-6d5e4c3b2a19', 'kind': 'hosted_mcp', 'client_name': 'Claude', 'client_site':
+            'claude.ai', 'label': 'mcp-login', 'prefix': 'fp_live_ab12cd34', 'scopes': ['apps:read'], 'created_at':
+            '2026-10-30T11:25:00Z', 'last_used_at': '2026-10-30T12:05:00Z', 'expires_at': '2026-11-06T12:05:00Z'}
 
     """
 

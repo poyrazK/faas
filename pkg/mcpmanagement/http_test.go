@@ -38,15 +38,15 @@ type remoteFixture struct {
 	mu       sync.Mutex
 	accounts map[string]string
 	// keyScopes are the scopes /v1/account reports for a key (agent keys).
-	keyScopes  map[string][]string
-	apiHook    func(http.ResponseWriter, *http.Request, string) bool
-	mints      []api.CliAuthCodeRequest
+	keyScopes map[string][]string
+	apiHook   func(http.ResponseWriter, *http.Request, string) bool
+	mints     []api.CliAuthCodeRequest
 	// agentClients and disconnects record what the bridge told apid about
 	// its keys (ADR-20261030133644), by key.
 	agentClients map[string]api.AgentClientRequest
 	disconnects  map[string]int
-	opts       HTTPOptions
-	setHandler func(http.Handler)
+	opts         HTTPOptions
+	setHandler   func(http.Handler)
 	// prefix is /mcp on a hosted bridge, whose OAuth routes live under it.
 	prefix string
 }

@@ -61,7 +61,7 @@ def sync_detailed(
 ) -> Response[AgentConnectionsResponse | Problem]:
     """List the agents connected to the account.
 
-     The account's connected agents (ADR-20261030133644), newest first:
+     The account's connected agents, newest first:
     hosted MCP sign-ins, whose `mcp-login` keys the hosted MCP server
     holds, and API keys with the `agent` scope. Only keys that still work
     are listed. A hosted sign-in shows the client name its consent page
@@ -90,7 +90,7 @@ def sync(
 ) -> AgentConnectionsResponse | Problem | None:
     """List the agents connected to the account.
 
-     The account's connected agents (ADR-20261030133644), newest first:
+     The account's connected agents, newest first:
     hosted MCP sign-ins, whose `mcp-login` keys the hosted MCP server
     holds, and API keys with the `agent` scope. Only keys that still work
     are listed. A hosted sign-in shows the client name its consent page
@@ -115,7 +115,7 @@ async def asyncio_detailed(
 ) -> Response[AgentConnectionsResponse | Problem]:
     """List the agents connected to the account.
 
-     The account's connected agents (ADR-20261030133644), newest first:
+     The account's connected agents, newest first:
     hosted MCP sign-ins, whose `mcp-login` keys the hosted MCP server
     holds, and API keys with the `agent` scope. Only keys that still work
     are listed. A hosted sign-in shows the client name its consent page
@@ -142,7 +142,7 @@ async def asyncio(
 ) -> AgentConnectionsResponse | Problem | None:
     """List the agents connected to the account.
 
-     The account's connected agents (ADR-20261030133644), newest first:
+     The account's connected agents, newest first:
     hosted MCP sign-ins, whose `mcp-login` keys the hosted MCP server
     holds, and API keys with the `agent` scope. Only keys that still work
     are listed. A hosted sign-in shows the client name its consent page

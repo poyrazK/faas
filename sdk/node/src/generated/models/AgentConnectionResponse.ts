@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * One agent connected to the account (ADR-20261030133644). `id` is the API key the agent uses; revoking the connection revokes that key.
+ * One agent connected to the account. `id` is the API key the agent uses; revoking the connection revokes that key.
  */
 export type AgentConnectionResponse = {
   /**
