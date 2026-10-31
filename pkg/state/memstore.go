@@ -642,6 +642,9 @@ type MemStore struct {
 	// customDomainTLSHosts mirrors custom_domain_tls_hosts (ADR-520),
 	// keyed by host. Lazily initialised by AdmitCustomDomainTLSHost.
 	customDomainTLSHosts map[string]customDomainTLSHost
+	// customDomainTLSAdmissions mirrors custom_domain_tls_admissions
+	// (ADR-520 amendment 1), oldest first.
+	customDomainTLSAdmissions []customDomainTLSAdmission
 	// customDomainTLSAllowedHosts mirrors custom_domain_tls_allowed_hosts
 	// (ADR-520 amendment 2): wildcard → sorted names.
 	customDomainTLSAllowedHosts map[string][]string

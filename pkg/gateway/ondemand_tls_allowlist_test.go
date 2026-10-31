@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -46,7 +45,7 @@ func TestOnDemandTLSPolicyHonoursTheWildcardHostAllowlist(t *testing.T) {
 	}
 
 	// Refused names spend no budget.
-	for i := range api.OnDemandTLSWildcardNewHostsPerWeek + 5 {
+	for i := range api.OnDemandTLSRegisteredDomainNewHostsPerWeek + 5 {
 		p.Decide(ctx, fmt.Sprintf("scan-%d.tenants.example.net", i))
 	}
 	if err := s.SetCustomDomainTLSAllowedHosts(ctx, "*.tenants.example.net", nil); err != nil {
@@ -68,8 +67,8 @@ func (f allowlistFailingTLSStore) WildcardDomainForHost(ctx context.Context, hos
 	return f.mem.WildcardDomainForHost(ctx, host)
 }
 
-func (f allowlistFailingTLSStore) AdmitCustomDomainTLSHost(ctx context.Context, wildcardDomain, host string, now time.Time, window time.Duration, limit int) (bool, error) {
-	return f.mem.AdmitCustomDomainTLSHost(ctx, wildcardDomain, host, now, window, limit)
+func (f allowlistFailingTLSStore) AdmitCustomDomainTLSHost(ctx context.Context, a state.CustomDomainTLSAdmission) (state.CustomDomainTLSVerdict, error) {
+	return f.mem.AdmitCustomDomainTLSHost(ctx, a)
 }
 
 func (f allowlistFailingTLSStore) AppByID(ctx context.Context, id string) (state.App, error) {
